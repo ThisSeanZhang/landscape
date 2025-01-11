@@ -33,7 +33,11 @@ pub enum WallRuleSource {
     GeoKey { key: String },
 }
 
-pub async fn create_mark_service(ifindex: i32, service_status: watch::Sender<ServiceStatus>) {
+pub async fn create_mark_service(
+    ifindex: i32,
+    has_mac: bool,
+    service_status: watch::Sender<ServiceStatus>,
+) {
     service_status.send_replace(ServiceStatus::Staring);
     let (tx, rx) = oneshot::channel::<()>();
     let (other_tx, other_rx) = oneshot::channel::<()>();
@@ -52,7 +56,7 @@ pub async fn create_mark_service(ifindex: i32, service_status: watch::Sender<Ser
     });
     std::thread::spawn(move || {
         println!("启动 packet_mark 在 ifindex: {:?}", ifindex);
-        landscape_ebpf::packet_mark::init_packet_mark(ifindex, rx);
+        landscape_ebpf::packet_mark::init_packet_mark(ifindex, has_mac, rx);
         println!("向外部线程发送解除阻塞信号");
         let _ = other_tx.send(());
     });

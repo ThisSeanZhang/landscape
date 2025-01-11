@@ -43,8 +43,15 @@ const mark_type_option = [
     <!-- 后续能够设置 docker 网卡 -->
     <n-input-number
       :show-button="false"
-      v-if="mark.t === MarkType.Redirect || mark.t === MarkType.RedirectNetns"
-      placeholder="重定向的网卡index"
+      v-if="mark.t === MarkType.Redirect"
+      placeholder="重定向的网卡 index"
+      v-model:value="mark.index"
+      type="text"
+    />
+    <n-input-number
+      :show-button="false"
+      v-else-if="mark.t === MarkType.RedirectNetns"
+      placeholder="Docker 处理的流 ID"
       v-model:value="mark.index"
       type="text"
     />

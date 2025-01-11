@@ -2,7 +2,7 @@ use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
 use axum::{
     extract::{Path, State},
-    routing::get,
+    routing::{get, post},
     Json, Router,
 };
 use landscape::service::{
@@ -36,6 +36,7 @@ pub async fn get_iface_packet_mark_paths(home_path: PathBuf) -> Router {
                 .post(handle_iface_nat_status)
                 .delete(delete_and_stop_iface_nat),
         )
+        .route("/packet_marks/:iface_name/restart", post(restart_mark_service_status))
         .with_state(share_state)
 }
 
@@ -98,4 +99,23 @@ async fn delete_and_stop_iface_nat(
     data.stop().await;
     let result = serde_json::to_value(data);
     Json(result.unwrap())
+}
+
+async fn restart_mark_service_status(
+    State(state): State<LandscapeIfaceMarkServices>,
+    Path(iface_name): Path<String>,
+) -> Result<Json<Value>, LandscapeApiError> {
+    let mut result = SimpleResult { success: false };
+
+    let mut read_lock = state.store.lock().await;
+    if let Some(service_config) = read_lock.get(&iface_name) {
+        if let Ok(()) = state.service.start_new_service(service_config).await {
+            result.success = true;
+        }
+    } else {
+        return Err(LandscapeApiError::NotFound("can not find".into()));
+    }
+
+    let result = serde_json::to_value(result);
+    Ok(Json(result.unwrap()))
 }

@@ -1,8 +1,11 @@
 use std::{net::IpAddr, path::PathBuf};
 
 use clap::{arg, Parser};
+use once_cell::sync::Lazy;
 
-#[derive(Parser, Debug)]
+pub static LAND_ARGS: Lazy<WebCommArgs> = Lazy::new(WebCommArgs::parse);
+
+#[derive(Parser, Debug, Clone)]
 #[command(version, about, long_about = None)]
 pub struct WebCommArgs {
     /// static html location

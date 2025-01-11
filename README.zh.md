@@ -13,6 +13,7 @@ Landscape 是一个基于 Web UI 的工具，可以轻松将您喜爱的 Linux �
 
 ### 系统要求
 - 支持的 Linux 内核版本：`6.1` 及以上。
+- 安装 `iptables (pppd 版本 pppoe mss 钳制)`, `docker`
 
 ### 启动步骤
 1. 创建配置文件夹：
@@ -89,10 +90,7 @@ apt install pkg-config bpftool build-essential clang libelf1 libelf-dev zlib1g-d
    - 数据包超出 MTU 大小，可能由 `GRO` 或 `GSO` 引起。关闭该功能会增加网卡消耗，目前使用 `pppd` 规避。
    - 相关代码参考：[PPPoE egress 实现](https://github.com/ThisSeanZhang/landscape/blob/424b842c29c469e4ad14503ee2bf9190ee24fd11/landscape/landscape-ebpf/src/bpf/pppoe.bpf.c#L68-L74)
 
-2. **容器 DNS 问题**
-   - 容器内指定宿主机为 DNS 服务器时，`dig` 命令正常，但 `curl` 无法访问（提示找不到主机）。宿主机无此问题。
-
-3. **代码结构问题**
+2. **代码结构问题**
    - 代码结构较为混乱，模块化逻辑尚未理清。
 
 ---

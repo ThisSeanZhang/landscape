@@ -168,7 +168,7 @@ impl ResolutionRule {
                 eprintln!("DNS resolution failed for {}: {}", domain, e);
                 let result = match e.kind() {
                     hickory_resolver::error::ResolveErrorKind::NoRecordsFound { .. } => {
-                        ResponseCode::NXDomain
+                        ResponseCode::NoError
                     }
                     _ => ResponseCode::ServFail,
                 };

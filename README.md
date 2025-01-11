@@ -17,6 +17,7 @@
 
 ### System Requirements
 - Supported Linux kernel version: `6.1` or higher.
+- `iptables (require for mss clamping)`, `docker`
 
 ### Startup Steps
 1. Create the configuration folder:
@@ -87,16 +88,13 @@ For cross-compilation on an x86 host to target `aarch64`, refer to [Cross Compil
 
 ---
 
-## Help Wanted
+## Help Wanted 😥
 
 1. **PPPoE MTU Issues**
    - Observed packets exceeding MTU size, likely caused by `GRO` or `GSO`. Disabling the feature increases NIC load. Currently, using `pppd` avoids the issue.
    - Relevant code reference: [PPPoE egress implementation](https://github.com/ThisSeanZhang/landscape/blob/424b842c29c469e4ad14503ee2bf9190ee24fd11/landscape/landscape-ebpf/src/bpf/pppoe.bpf.c#L68-L74)
 
-2. **Container DNS Issues**
-   - When a container sets the host as the DNS server, `dig` works correctly, but `curl` fails to resolve hosts. The issue does not occur on the host system.
-
-3. **Code Structure Issues**
+2. **Code Structure Issues**
    - The code structure is currently unorganized, requiring better modularization.
 
 ---

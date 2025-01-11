@@ -95,6 +95,7 @@ async fn new_iface_service_thread(
                     tokio::spawn(async move {
                         crate::packet_mark::create_mark_service(
                             iface.index as i32,
+                            iface.mac.is_some(),
                             service_status_clone,
                         )
                         .await

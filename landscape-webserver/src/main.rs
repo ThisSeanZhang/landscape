@@ -1,14 +1,11 @@
 use std::net::SocketAddr;
 
 use axum::{handler::HandlerWithoutStateExt, http::StatusCode, routing::get, Router};
-use clap::Parser;
 
+use landscape_common::args::LAND_ARGS;
 use serde::{Deserialize, Serialize};
 use tower_http::{services::ServeDir, trace::TraceLayer};
 
-use crate::args::WebCommArgs;
-
-mod args;
 mod docker;
 mod dump;
 mod error;
@@ -23,7 +20,7 @@ struct SimpleResult {
 
 #[tokio::main]
 async fn main() {
-    let args = WebCommArgs::parse();
+    let args = LAND_ARGS.clone();
     println!("test: {args:?}");
 
     let addr = SocketAddr::from((args.address, args.port));

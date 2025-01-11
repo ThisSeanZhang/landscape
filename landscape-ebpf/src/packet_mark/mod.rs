@@ -17,7 +17,7 @@ mod firewall {
     include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/packet_mark.skel.rs"));
 }
 
-pub fn init_packet_mark(ifindex: i32, service_status: oneshot::Receiver<()>) {
+pub fn init_packet_mark(ifindex: i32, has_mac: bool, service_status: oneshot::Receiver<()>) {
     let mut landscape_builder = PacketMarkSkelBuilder::default();
     landscape_builder.obj_builder.debug(true);
 
@@ -30,6 +30,10 @@ pub fn init_packet_mark(ifindex: i32, service_status: oneshot::Receiver<()>) {
     // {
     //     println!("error: {e:?}");
     // }
+    if !has_mac {
+        landscape_open.maps.rodata_data.current_eth_net_offset = 0;
+    }
+
     if let Err(e) = landscape_open
         .maps
         .packet_mark_map

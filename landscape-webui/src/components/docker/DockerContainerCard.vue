@@ -6,7 +6,7 @@ import {
 } from "@/api/docker_service";
 import { DockerContainerSummary, DockerBtnShow } from "@/lib/docker";
 import { useDockerStore } from "@/stores/status_docker";
-import { computed, onMounted, ref } from "vue";
+import { computed } from "vue";
 
 const props = defineProps<{
   container: DockerContainerSummary;
@@ -52,23 +52,49 @@ async function remove() {
 }
 </script>
 <template>
-  <n-card :title="title">
+  <n-card class="docker-container-exhibit-card" :title="title" size="small">
     <template #header-extra>
-      <n-ellipsis style="max-width: 240px">
-        {{ props.container.Image }}
-      </n-ellipsis>
+      <n-flex>
+        <n-button
+          secondary
+          size="small"
+          @click="start"
+          type="success"
+          :disabled="!show_btn.start"
+        >
+          start
+        </n-button>
+        <n-button
+          secondary
+          size="small"
+          @click="stop"
+          type="warning"
+          :disabled="!show_btn.stop"
+        >
+          stop
+        </n-button>
+        <n-button
+          secondary
+          size="small"
+          @click="remove"
+          type="error"
+          :disabled="!show_btn.remove"
+        >
+          remove
+        </n-button>
+      </n-flex>
     </template>
 
     <n-descriptions :column="1" label-placement="left">
-      <n-descriptions-item
-        v-if="props.container.get_redirect_id() !== undefined"
-        label="接收的转发 ID 为"
-      >
-        {{ props.container.get_redirect_id() }}
+      <n-descriptions-item label="镜像">
+        <n-ellipsis style="max-width: 240px">
+          {{ props.container.Image }}
+        </n-ellipsis>
       </n-descriptions-item>
       <n-descriptions-item label="状态">
         {{ props.container.State }}
       </n-descriptions-item>
+
       <n-descriptions-item label="创建时间">
         <n-time v-if="time !== undefined" :time="time" />
         <span v-else>N/A</span>
@@ -78,11 +104,14 @@ async function remove() {
     <!-- {{ props.container }} -->
 
     <template #action>
-      <n-flex>
-        <n-button @click="start" :disabled="!show_btn.start">start</n-button>
-        <n-button @click="stop" :disabled="!show_btn.stop">stop</n-button>
-        <n-button @click="remove" :disabled="!show_btn.remove">remove</n-button>
-      </n-flex>
+      <n-tag v-for="tag of props.container.Labels" :bordered="false">
+        {{ `${tag[0]}: ${tag[1]}` }}
+      </n-tag>
     </template>
   </n-card>
 </template>
+<style scoped>
+.docker-container-exhibit-card {
+  flex: 1;
+}
+</style>

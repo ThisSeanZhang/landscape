@@ -11,6 +11,18 @@
 const volatile u8 LOG_LEVEL = BPF_LOG_LEVEL_DEBUG;
 char LICENSE[] SEC("license") = "Dual BSD/GPL";
 
+const volatile int current_eth_net_offset = 14;
+
+static int prepend_dummy_mac(struct __sk_buff *skb) {
+    char mac[] = {0x1, 0x2, 0x3, 0x4, 0x5, 0x6, 0xf, 0xe, 0xd, 0xc, 0xb, 0xa, 0x08, 0x00};
+
+    if (bpf_skb_change_head(skb, 14, 0)) return -1;
+
+    if (bpf_skb_store_bytes(skb, 0, mac, sizeof(mac), 0)) return -1;
+
+    return 0;
+}
+
 SEC("tc")
 int egress_packet_mark(struct __sk_buff *skb) {
 #define BPF_LOG_TOPIC "<-|<- egress_packet_mark <-|<-"
@@ -20,24 +32,41 @@ int egress_packet_mark(struct __sk_buff *skb) {
         skb->mark == DIRECT_MARK;
         bpf_skb_vlan_pop(skb);
     }
+
     u8 action = 0;
     u8 index = 0;
+
     if (skb->mark == 0) {
-        int offset = 0;
-        struct ethhdr *eth;
-        if (VALIDATE_READ_DATA(skb, &eth, offset, sizeof(*eth))) {
-            return TC_ACT_UNSPEC;
+        if (current_eth_net_offset != 0) {
+            struct ethhdr *eth;
+            if (VALIDATE_READ_DATA(skb, &eth, 0, sizeof(*eth))) {
+                return TC_ACT_UNSPEC;
+            }
+
+            if (eth->h_proto == ETH_ARP) {
+                // bpf_log_info("has arp");
+                return TC_ACT_OK;
+            }
+
+            if (eth->h_proto != ETH_IPV4 && eth->h_proto != ETH_IPV6) {
+                // bpf_log_debug("has wrong h_proto: %u", eth->h_proto);
+                return TC_ACT_UNSPEC;
+            }
+
+        } else {
+            u8 *p_version;
+            if (VALIDATE_READ_DATA(skb, &p_version, 0, sizeof(*p_version))) {
+                return TC_ACT_UNSPEC;
+            }
+            u8 ip_version = (*p_version) >> 4;
+
+            if (ip_version != 4 && ip_version != 6) {
+                // bpf_log_debug("has wrong h_proto: %u", ip_version);
+                return TC_ACT_UNSPEC;
+            }
         }
 
-        if (eth->h_proto == ETH_ARP) {
-            // bpf_log_info("has arp");
-            return TC_ACT_OK;
-        }
-        if (eth->h_proto != ETH_IPV4 && eth->h_proto != ETH_IPV6) {
-            // 丢弃
-            return TC_ACT_UNSPEC;
-        }
-        offset = 14;
+        int offset = current_eth_net_offset;
         struct iphdr *iph;
         if (VALIDATE_READ_DATA(skb, &iph, offset, sizeof(*iph))) {
             return TC_ACT_UNSPEC;
@@ -83,6 +112,11 @@ int egress_packet_mark(struct __sk_buff *skb) {
         bpf_log_info("REDIRECT_NETNS_MARK %u", skb->mark);
         u32 *outer_ifindex = bpf_map_lookup_elem(&redirect_index_map, &index);
         if (outer_ifindex != NULL) {
+            if (current_eth_net_offset == 0) {
+                if (prepend_dummy_mac(skb) != 0) {
+                    return TC_ACT_SHOT;
+                }
+            }
             bpf_skb_vlan_push(skb, ETH_P_8021Q, LAND_REDIRECT_NETNS_VLAN_ID);
             return bpf_redirect(*outer_ifindex, 0);
         }
@@ -104,6 +138,7 @@ int ingress_packet_mark(struct __sk_buff *skb) {
         return TC_ACT_OK;
     }
     if (eth->h_proto != ETH_IPV4 && eth->h_proto != ETH_IPV6) {
+        bpf_log_info("has wrong h_proto: %u", eth->h_proto);
         // 丢弃
         return TC_ACT_UNSPEC;
     }

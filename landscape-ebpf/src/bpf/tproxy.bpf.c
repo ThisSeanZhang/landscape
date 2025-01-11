@@ -116,11 +116,10 @@ int tproxy_ingress(struct __sk_buff *skb) {
 #define BPF_LOG_TOPIC "tproxy_ingress"
 
     u32 vlan_id = skb->vlan_tci;
-    bpf_skb_vlan_pop(skb);
-
     if (vlan_id != LAND_REDIRECT_NETNS_VLAN_ID) {
         return TC_ACT_OK;
     }
+    bpf_skb_vlan_pop(skb);
 
     struct bpf_sock_tuple *tuple;
     u16 l3_protocol;

@@ -30,10 +30,6 @@ vmlinux = { git = "https://github.com/libbpf/vmlinux.h.git", rev = "a9c092aa7713
 
 
 [[bin]]
-name = "tc_test"
-path = "src/bin/tc_test.rs"
-
-[[bin]]
 name = "xdp_test"
 path = "src/bin/xdp_test.rs"
 

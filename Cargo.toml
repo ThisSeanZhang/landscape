@@ -18,6 +18,8 @@ default-members = ["landscape-webserver"]
 
 [workspace.dependencies]
 const_format = "0.2.34"
+
+once_cell = "*"
 ctrlc = "3.2"
 libc = "0.2.159"
 libbpf-rs = { version = "0.24.8" }

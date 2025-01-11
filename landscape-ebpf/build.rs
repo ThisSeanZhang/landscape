@@ -1,10 +1,9 @@
 #![feature(path_file_prefix)]
 
 use libbpf_cargo::SkeletonBuilder;
-use std::{env, fs};
 use std::ffi::OsStr;
 use std::path::PathBuf;
-
+use std::{env, fs};
 
 /// Main function of the build script.
 fn main() {
