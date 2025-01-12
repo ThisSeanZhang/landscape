@@ -30,7 +30,7 @@ use landscape_ebpf::ns_proxy::ns_proxy::*;
 
 #[derive(Debug, Parser)]
 pub struct Params {
-    #[clap(long, short = 'm', default_value_t = true)]
+    #[clap(long, short = 'm', default_value_t = false)]
     has_mac: bool,
 
     #[clap(long, short)]
@@ -42,10 +42,10 @@ pub struct Params {
     #[clap(long, short)]
     target_addr: Ipv4Addr,
 
-    #[clap(long, short, default_value = "0.0.0.0")]
+    #[clap(long = "ld", default_value = "0.0.0.0")]
     listen_addr: Ipv4Addr,
 
-    #[clap(long, short, default_value_t = 12345)]
+    #[clap(long = "lp", default_value_t = 12345)]
     listen_port: u16,
 }
 
@@ -77,6 +77,7 @@ fn main() {
 
     let params = Params::parse();
 
+    println!("parmas: {:?}", params);
     bump_memlock_rlimit();
 
     let running = Arc::new(AtomicBool::new(true));
@@ -108,19 +109,33 @@ fn main() {
 
     let inner_xdp = landscape_skel.progs.inner_xdp;
     let ns_ingress = landscape_skel.progs.ns_ingress;
+    let handle_setsockopt_enter = landscape_skel.progs.handle_setsockopt_enter;
+    // let handle__ksyscall = landscape_skel.progs.handle__ksyscall;
+    // let cgroup_socket = landscape_skel.progs.sock_create;
     // let ns_peer_ingress = landscape_skel.progs.ns_peer_ingress;
     let wan_egress = landscape_skel.progs.wan_egress;
 
     let current_ns = File::open("/proc/self/ns/net").unwrap();
 
     let mut ns_inner_ingress_hook =
-        TcHookProxy::new(&ns_ingress, params.ns_index - 1, TC_INGRESS, 2);
+        TcHookProxy::new(&ns_ingress, params.ns_index - 1, TC_INGRESS, 1);
     // let mut ns_outer_ingress_hook = TcHookProxy::new(&ns_peer_ingress, 9, TC_INGRESS, 2);
-    let mut wan_egress_hook = TcHookProxy::new(&wan_egress, params.wan_index, TC_EGRESS, 2);
+    let mut wan_egress_hook = TcHookProxy::new(&wan_egress, params.wan_index, TC_EGRESS, 1);
 
     wan_egress_hook.attach();
     // ns_outer_ingress_hook.attach();
     enter_namespace("/var/run/netns/tpns").unwrap();
+    let handle_setsockopt_enter_point =
+        handle_setsockopt_enter.attach_tracepoint("syscalls", "sys_enter_setsockopt").unwrap();
+    // let handle__ksyscall_link =
+    //     handle__ksyscall.attach_ksyscall(false, "__sys_setsockopt").unwrap();
+    // let cgroup_fd = std::fs::OpenOptions::new()
+    //     .read(true)
+    //     .custom_flags(libc::O_DIRECTORY)
+    //     .open("/sys/fs/cgroup")
+    //     .unwrap()
+    //     .into_raw_fd();
+    // let cgroup_socket_attach = cgroup_socket.attach_cgroup(cgroup_fd).unwrap();
     ns_inner_ingress_hook.attach();
     let xdp = inner_xdp.attach_xdp(params.ns_index - 1).unwrap();
 
@@ -131,6 +146,9 @@ fn main() {
 
     enter_namespace("/var/run/netns/tpns").unwrap();
     drop(ns_inner_ingress_hook);
+    let _ = handle_setsockopt_enter_point.detach();
+    // let _ = cgroup_socket_attach.detach();
+    // handle__ksyscall_link.detach().unwrap();
     sched::setns(&current_ns, sched::CloneFlags::CLONE_NEWNET).unwrap();
     // drop(ns_outer_ingress_hook);
     drop(wan_egress_hook);

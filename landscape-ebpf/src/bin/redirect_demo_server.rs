@@ -2,7 +2,6 @@ use std::net::TcpListener;
 use std::net::TcpStream;
 use std::os::unix::io::AsRawFd as _;
 use std::str::FromStr;
-use std::thread;
 
 use nix::sys::socket::bind;
 use nix::sys::socket::listen;
@@ -32,6 +31,10 @@ fn main() {
 
     // Set some sockopts
     setsockopt(&fd, ReuseAddr, &true).unwrap();
+    // unmark this the service will not work in linux 6.1.y
+    // look at https://elixir.bootlin.com/linux/v6.1.121/source/net/core/filter.c#L73782
+    // setsockopt(&fd, ReusePort, &true).unwrap();
+    // 6.6.y or higher is ok
     setsockopt(&fd, IpTransparent, &true).unwrap();
 
     // Bind to addr

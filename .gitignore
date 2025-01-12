@@ -9,3 +9,4 @@ landscape-ebpf/src/bpf/vmlinux.h
 # docker build dir
 dockerfiles/redirect_prog/apps
 redirect_server*
+push_arm.sh
