@@ -32,6 +32,8 @@ volatile const __be32 target_addr = 0;
 volatile const __be32 proxy_addr = 0;
 volatile const __be16 proxy_port = 0;
 
+const volatile int current_eth_net_offset = 14;
+
 static inline struct bpf_sock_tuple *get_tuple(struct __sk_buff *skb, u16 *l3_protocol,
                                                u8 *l4_protocol) {
     void *data_end = (void *)(long)skb->data_end;
@@ -292,6 +294,16 @@ int ns_ingress(struct __sk_buff *skb) {
 // #undef BPF_LOG_TOPIC
 // }
 
+static int prepend_dummy_mac(struct __sk_buff *skb) {
+    char mac[] = {0x1, 0x2, 0x3, 0x4, 0x5, 0x6, 0xf, 0xe, 0xd, 0xc, 0xb, 0xa, 0x08, 0x00};
+
+    if (bpf_skb_change_head(skb, 14, 0)) return -1;
+
+    if (bpf_skb_store_bytes(skb, 0, mac, sizeof(mac), 0)) return -1;
+
+    return 0;
+}
+
 SEC("tc")
 int wan_egress(struct __sk_buff *skb) {
 #define BPF_LOG_TOPIC "wan_egress"
@@ -308,6 +320,13 @@ int wan_egress(struct __sk_buff *skb) {
     if ((void *)tuple + tuple_len > (void *)(long)skb->data_end) return TC_ACT_SHOT;
 
     if (tuple->ipv4.daddr != target_addr) return TC_ACT_OK;
+    if (current_eth_net_offset == 0) {
+        bpf_log_info("current_eth_net_offset is 0");
+        if (prepend_dummy_mac(skb) != 0) {
+            bpf_log_info("prepend_dummy_mac error");
+            return TC_ACT_SHOT;
+        }
+    }
     bpf_skb_vlan_push(skb, ETH_P_8021Q, LAND_REDIRECT_NETNS_VLAN_ID);
 
     // if (tuple->ipv4.sport && tuple->ipv4.dport) {

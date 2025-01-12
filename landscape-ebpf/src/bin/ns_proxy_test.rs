@@ -1,3 +1,54 @@
+use clap::Parser;
+use std::{
+    fs::File,
+    mem::MaybeUninit,
+    net::Ipv4Addr,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
+    thread::sleep,
+    time::Duration,
+};
+
+use libbpf_rs::{
+    skel::{OpenSkel, SkelBuilder},
+    TC_EGRESS, TC_INGRESS,
+};
+use nix::sched;
+
+use landscape_ebpf::landscape::TcHookProxy;
+fn bump_memlock_rlimit() {
+    let rlimit = libc::rlimit { rlim_cur: 128 << 20, rlim_max: 128 << 20 };
+
+    if unsafe { libc::setrlimit(libc::RLIMIT_MEMLOCK, &rlimit) } != 0 {
+        panic!("Failed to increase rlimit");
+    }
+}
+
+use landscape_ebpf::ns_proxy::ns_proxy::*;
+
+#[derive(Debug, Parser)]
+pub struct Params {
+    #[clap(long, short = 'm', default_value_t = true)]
+    has_mac: bool,
+
+    #[clap(long, short)]
+    wan_index: i32,
+
+    #[clap(long, short)]
+    ns_index: i32,
+
+    #[clap(long, short)]
+    target_addr: Ipv4Addr,
+
+    #[clap(long, short, default_value = "0.0.0.0")]
+    listen_addr: Ipv4Addr,
+
+    #[clap(long, short, default_value_t = 12345)]
+    listen_port: u16,
+}
+
 fn main() {
     // ip netns add tpns
     // ip link add veth0 type veth peer name veth1
@@ -23,5 +74,71 @@ fn main() {
     //
     // nc -lu 2235
     // nc -u 223.5.5.5.5 2235
-    landscape_ebpf::ns_proxy::run()
+
+    let params = Params::parse();
+
+    bump_memlock_rlimit();
+
+    let running = Arc::new(AtomicBool::new(true));
+    let r = running.clone();
+    ctrlc::set_handler(move || {
+        r.store(false, Ordering::SeqCst);
+    })
+    .unwrap();
+
+    let mut landscape_builder = NsProxySkelBuilder::default();
+    landscape_builder.obj_builder.debug(true);
+
+    let target_addr: u32 = params.target_addr.into();
+    let proxy_addr: u32 = params.listen_addr.into();
+
+    let mut open_object = MaybeUninit::uninit();
+    let landscape_open = landscape_builder.open(&mut open_object).unwrap();
+    landscape_open.maps.rodata_data.outer_ifindex = params.ns_index as u32;
+    landscape_open.maps.rodata_data.target_addr = target_addr.to_be();
+
+    landscape_open.maps.rodata_data.proxy_addr = proxy_addr.to_be();
+    landscape_open.maps.rodata_data.proxy_port = params.listen_port.to_be();
+
+    if !params.has_mac {
+        landscape_open.maps.rodata_data.current_eth_net_offset = 0;
+    }
+
+    let landscape_skel = landscape_open.load().unwrap();
+
+    let inner_xdp = landscape_skel.progs.inner_xdp;
+    let ns_ingress = landscape_skel.progs.ns_ingress;
+    // let ns_peer_ingress = landscape_skel.progs.ns_peer_ingress;
+    let wan_egress = landscape_skel.progs.wan_egress;
+
+    let current_ns = File::open("/proc/self/ns/net").unwrap();
+
+    let mut ns_inner_ingress_hook =
+        TcHookProxy::new(&ns_ingress, params.ns_index - 1, TC_INGRESS, 2);
+    // let mut ns_outer_ingress_hook = TcHookProxy::new(&ns_peer_ingress, 9, TC_INGRESS, 2);
+    let mut wan_egress_hook = TcHookProxy::new(&wan_egress, params.wan_index, TC_EGRESS, 2);
+
+    wan_egress_hook.attach();
+    // ns_outer_ingress_hook.attach();
+    enter_namespace("/var/run/netns/tpns").unwrap();
+    ns_inner_ingress_hook.attach();
+    let xdp = inner_xdp.attach_xdp(params.ns_index - 1).unwrap();
+
+    sched::setns(&current_ns, sched::CloneFlags::CLONE_NEWNET).unwrap();
+    while running.load(Ordering::SeqCst) {
+        sleep(Duration::new(1, 0));
+    }
+
+    enter_namespace("/var/run/netns/tpns").unwrap();
+    drop(ns_inner_ingress_hook);
+    sched::setns(&current_ns, sched::CloneFlags::CLONE_NEWNET).unwrap();
+    // drop(ns_outer_ingress_hook);
+    drop(wan_egress_hook);
+    let _ = xdp.detach();
+}
+
+fn enter_namespace(ns_path: &str) -> nix::Result<()> {
+    let ns_file = File::open(ns_path).unwrap();
+    sched::setns(ns_file, sched::CloneFlags::CLONE_NEWNET)?;
+    Ok(())
 }
