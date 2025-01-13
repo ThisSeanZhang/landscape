@@ -1,6 +1,8 @@
 <script setup lang="ts">
-import { NCard } from "naive-ui";
-import { onMounted, ref } from "vue";
+import { computed, onMounted, ref } from "vue";
+
+import { DotMark } from "@vicons/carbon";
+import { useThemeVars } from "naive-ui";
 
 import {
   get_dns_rule,
@@ -8,11 +10,12 @@ import {
   start_dns_service,
   stop_dns_service,
 } from "@/api/dns_service";
-import { ServiceStatus } from "@/lib/services";
 import DnsRuleDrawer from "@/components/dns/DnsRuleDrawer.vue";
 import { useDnsStore } from "@/stores/status_dns";
+import { ServiceStatusType } from "@/lib/services";
 
 const dnsStore = useDnsStore();
+const themeVars = ref(useThemeVars());
 
 const show_rule_drawer = ref(false);
 
@@ -25,7 +28,13 @@ async function stop_dns() {
 }
 </script>
 <template>
-  <n-card title="DNS 服务">
+  <n-card content-style="display: flex;">
+    <template #header>
+      <n-icon :color="dnsStore.dns_status.get_color(themeVars)" size="16">
+        <DotMark />
+      </n-icon>
+      DNS
+    </template>
     <template #header-extra>
       <n-flex>
         <n-button @click="show_rule_drawer = true">域名解析规则</n-button>
@@ -33,7 +42,10 @@ async function stop_dns() {
         <n-button v-else @click="stop_dns">关闭</n-button>
       </n-flex>
     </template>
-    {{ dnsStore.dns_status }}
+    <n-flex justify="center" align="center" style="flex: 1">
+      <n-empty description="TODO"> </n-empty>
+    </n-flex>
+    <!-- {{ dnsStore.dns_status }} -->
     <!-- <template #footer> #footer </template>
     <template #action> #action </template> -->
     <DnsRuleDrawer v-model:show="show_rule_drawer" />

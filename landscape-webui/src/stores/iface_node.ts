@@ -14,6 +14,8 @@ export const useIfaceNodeStore = defineStore("iface_node", () => {
   const bridges = ref<any>([]);
   const eths = ref<any>([]);
 
+  const node_call_back = ref<any>();
+
   watch(net_devs, async (new_value, _old_value) => {
     const tmp_nodes: any[] = [];
     const tmp_edges: any[] = [];
@@ -80,10 +82,36 @@ export const useIfaceNodeStore = defineStore("iface_node", () => {
 
     nodes.value = tmp_nodes;
     edges.value = tmp_edges;
+
+    if (node_call_back.value != undefined) {
+      node_call_back.value();
+    }
   });
 
   async function UPDATE_INFO() {
     net_devs.value = await ifaces();
+  }
+
+  async function SETTING_CALL_BACK(call_back: any) {
+    node_call_back.value = call_back;
+  }
+
+  function FIND_BRIDGE_BY_IFINDEX(ifindex: any): boolean {
+    for (const bridge of bridges.value) {
+      if (bridge.ifindex == ifindex) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function FIND_DEV_BY_IFINDEX(ifindex: any): NetDev | undefined {
+    for (const dev of net_devs.value) {
+      if (dev.index == ifindex) {
+        return dev;
+      }
+    }
+    return undefined;
   }
 
   return {
@@ -92,5 +120,8 @@ export const useIfaceNodeStore = defineStore("iface_node", () => {
     bridges,
     eths,
     UPDATE_INFO,
+    SETTING_CALL_BACK,
+    FIND_DEV_BY_IFINDEX,
+    FIND_BRIDGE_BY_IFINDEX,
   };
 });

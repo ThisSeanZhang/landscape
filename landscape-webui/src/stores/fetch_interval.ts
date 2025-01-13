@@ -19,6 +19,9 @@ export const useFetchIntervalStore = defineStore("fetch_interval", () => {
   const dnsStore = useDnsStore();
 
   const interval_function = async () => {
+    if (start_count_down_callback.value !== undefined) {
+      start_count_down_callback.value();
+    }
     try {
       await sysinfo.UPDATE_INFO();
       await dockerStore.UPDATE_INFO();
@@ -43,12 +46,12 @@ export const useFetchIntervalStore = defineStore("fetch_interval", () => {
 
   const error_message = ref<string | undefined>(undefined);
   const enable_interval = ref<boolean>(true);
-  const interval_time = ref<number>(10000);
+  const interval_time = ref<number>(3000);
   const interval_timer = ref<any>(undefined);
 
-  const show_btn = computed(() => {});
+  const start_count_down_callback = ref<any>();
 
-  set_interval();
+  // set_interval();
   function set_interval() {
     interval_function();
     interval_timer.value = setInterval(interval_function, interval_time.value);
@@ -58,6 +61,7 @@ export const useFetchIntervalStore = defineStore("fetch_interval", () => {
     clearInterval(interval_timer.value);
     interval_timer.value = undefined;
   }
+
   watch(enable_interval, (new_value, _) => {
     if (new_value) {
       set_interval();
@@ -81,6 +85,17 @@ export const useFetchIntervalStore = defineStore("fetch_interval", () => {
   function IMMEDIATELY_EXECUTE() {
     clean_interval();
     set_interval();
+    enable_interval.value = true;
   }
-  return { enable_interval, error_message, IMMEDIATELY_EXECUTE };
+
+  async function SETTING_CALLBACK(call_back: any) {
+    start_count_down_callback.value = call_back;
+  }
+  return {
+    enable_interval,
+    interval_time,
+    error_message,
+    IMMEDIATELY_EXECUTE,
+    SETTING_CALLBACK,
+  };
 });

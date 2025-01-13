@@ -7,22 +7,59 @@ import FlowHeaderExtra from "@/components/flow/FlowHeaderExtra.vue";
 import FlowNode from "@/components/flow/FlowNode.vue";
 import { add_controller } from "@/api/network";
 
-import {
-  NButton,
-  NInputGroup,
-  NSelect,
-  NInputGroupLabel,
-  SelectOption,
-} from "naive-ui";
+import { useMessage, SelectOption } from "naive-ui";
 
-import { ref } from "vue";
+import { onMounted, ref } from "vue";
 import { useIfaceNodeStore } from "@/stores/iface_node";
 
-const { zoomOnScroll } = useVueFlow();
+const { zoomOnScroll, fitView, onConnect } = useVueFlow();
+const naive_message = useMessage();
 
 zoomOnScroll.value = false;
 let ifaceNodeStore = useIfaceNodeStore();
 
+ifaceNodeStore.SETTING_CALL_BACK(() => {
+  fitView({ padding: 0.23 });
+});
+
+onMounted(() => {
+  ifaceNodeStore.UPDATE_INFO();
+});
+
+onConnect(async (params: any) => {
+  // source 相当于 master_ifindex
+  const is_source_bridge = ifaceNodeStore.FIND_BRIDGE_BY_IFINDEX(params.source);
+  const is_target_bridge = ifaceNodeStore.FIND_BRIDGE_BY_IFINDEX(params.target);
+  if (is_source_bridge && is_target_bridge) {
+    naive_message.warning("还没做好 Bridge 环路检测");
+  } else if (is_target_bridge) {
+    naive_message.warning("只能从 Bridge 的右边开始连");
+  } else if (!is_source_bridge && !is_target_bridge) {
+    naive_message.warning(
+      "连接的双方, 必须要有一个是 Bridge, 且只能从 Bridge 的右边开始连"
+    );
+  }
+
+  let dev = ifaceNodeStore.FIND_DEV_BY_IFINDEX(params.target);
+  if (dev) {
+    if (dev.controller_id || dev.controller) {
+      naive_message.error("此设备已有上级设备了");
+    }
+    let result = await add_controller({
+      link_name: dev.name,
+      link_ifindex: parseInt(params.target),
+      master_ifindex: parseInt(params.source),
+      master_name: undefined,
+    });
+    if (result) {
+      await ifaceNodeStore.UPDATE_INFO();
+    }
+    // 检查 target 是否有
+    console.log(params);
+  } else {
+    naive_message.error("找不到设备");
+  }
+});
 const controlelr_config = ref<any>({});
 
 async function create_connection() {
@@ -44,7 +81,7 @@ function handleIfaceUpdate(value: string, option: SelectOption) {
 </script>
 
 <template>
-  <n-input-group>
+  <!-- <n-input-group>
     <n-input-group-label>Bridge</n-input-group-label>
     <n-select
       :style="{ width: '50%' }"
@@ -60,8 +97,7 @@ function handleIfaceUpdate(value: string, option: SelectOption) {
       :options="ifaceNodeStore.eths"
     />
     <n-button type="primary" @click="create_connection" ghost> Add </n-button>
-  </n-input-group>
-
+  </n-input-group> -->
   <!-- {{ net_devs }} -->
   <VueFlow
     :nodes="ifaceNodeStore.nodes"
@@ -77,7 +113,7 @@ function handleIfaceUpdate(value: string, option: SelectOption) {
     <!-- <template #edge-special="specialEdgeProps">
         <SpecialEdge v-bind="specialEdgeProps" />
       </template> -->
-    <MiniMap pannable zoomable />
+    <!-- <MiniMap pannable zoomable /> -->
     <!-- <Controls position="top-right">
         <n-button style="font-size: 16px; padding: 5px;" text >
           <n-icon>

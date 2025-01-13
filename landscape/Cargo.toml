@@ -13,7 +13,7 @@ const_format = { workspace = true }
 rusty_network_manager = "0.5.1"
 tokio-stream = "0.1.14"
 zbus = "4.1.2"
-sysinfo = "0.30.12"
+sysinfo = { workspace = true }
 
 rtnetlink = { workspace = true }
 netlink-sys = { workspace = true }

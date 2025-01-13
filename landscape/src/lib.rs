@@ -1,12 +1,12 @@
-use dev::{DevState, DeviceKind, LandScapeInterface};
-use iface::{config::NetworkIfaceConfig, get_iface_by_name};
-pub use message::*;
 use std::{
     collections::{HashMap, HashSet},
     net::{IpAddr, Ipv4Addr},
 };
 
-pub mod base_info;
+use dev::{DevState, DeviceKind, LandScapeInterface};
+use iface::{config::NetworkIfaceConfig, get_iface_by_name};
+pub use routerstatus::*;
+
 pub mod config;
 pub mod dev;
 pub mod dhcp_client;
@@ -15,25 +15,13 @@ pub mod docker;
 pub mod dump;
 pub mod iface;
 pub mod macaddr;
-pub mod message;
 pub mod nat;
 pub mod packet_mark;
 pub mod pppd_client;
 pub mod pppoe_client;
+pub mod routerstatus;
 pub mod service;
 pub mod store;
-
-/// 进行初始化
-pub fn init_landscape() -> (LandscapeStatic, LandscapeStatus) {
-    // 读取配置, 使用 json 文件的方式
-
-    // 先进行设备的创建
-
-    // server::dhcp_server::init_dhcp_server(DhcpServerIpv4Config::default());
-
-    // landscape_ebpf::init_ebpf();
-    base_info::init_base_info()
-}
 
 fn gen_default_config(
     interface_map: &HashMap<String, LandScapeInterface>,

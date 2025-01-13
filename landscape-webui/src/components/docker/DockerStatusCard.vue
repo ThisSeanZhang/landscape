@@ -1,6 +1,9 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
 
+import { DotMark } from "@vicons/carbon";
+import { useThemeVars } from "naive-ui";
+
 import { ServiceStatusType } from "@/lib/services";
 import { useDockerStore } from "@/stores/status_docker";
 
@@ -11,7 +14,7 @@ import {
 } from "@/api/docker_service";
 
 const dockerStatus = useDockerStore();
-
+const themeVars = ref(useThemeVars());
 const show_image_drawer = ref(false);
 
 const is_down = computed(() => {
@@ -26,7 +29,16 @@ async function stop() {
 }
 </script>
 <template>
-  <n-card title="Docker">
+  <n-card content-style="display: flex;">
+    <template #header>
+      <n-icon
+        :color="dockerStatus.docker_status.get_color(themeVars)"
+        size="16"
+      >
+        <DotMark />
+      </n-icon>
+      Docker
+    </template>
     <template #header-extra>
       <n-flex>
         <n-button @click="show_image_drawer = true">查看镜像</n-button>
@@ -34,8 +46,11 @@ async function stop() {
         <n-button v-else @click="stop">关闭 docker 事件监听服务</n-button>
       </n-flex>
     </template>
-    // TODO 展示使用资源
-    {{ dockerStatus.docker_status }}
+    <n-flex justify="center" align="center" style="flex: 1">
+      <n-empty description="TODO"> </n-empty>
+    </n-flex>
+    <!-- // TODO 展示使用资源
+    {{ dockerStatus.docker_status }} -->
     <!-- <template #footer> #footer </template>
     <template #action> #action </template> -->
     <DockerImageDrawer v-model:show="show_image_drawer" />

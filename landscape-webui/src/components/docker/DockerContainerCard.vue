@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { computed } from "vue";
+
 import {
   remove_container,
   start_container,
@@ -6,7 +8,6 @@ import {
 } from "@/api/docker_service";
 import { DockerContainerSummary, DockerBtnShow } from "@/lib/docker";
 import { useDockerStore } from "@/stores/status_docker";
-import { computed } from "vue";
 
 const props = defineProps<{
   container: DockerContainerSummary;
@@ -52,7 +53,15 @@ async function remove() {
 }
 </script>
 <template>
-  <n-card class="docker-container-exhibit-card" :title="title" size="small">
+  <n-card class="docker-container-exhibit-card" size="small">
+    <template #header>
+      <!-- <n-marquee :speed="13">
+        {{ title }}
+      </n-marquee> -->
+      <n-ellipsis>
+        {{ title }}
+      </n-ellipsis>
+    </template>
     <template #header-extra>
       <n-flex>
         <n-button

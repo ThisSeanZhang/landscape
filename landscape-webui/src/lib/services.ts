@@ -16,6 +16,10 @@ export class ServiceStatus {
     this.t = obj?.t ?? ServiceStatusType.Stop;
     this.message = obj?.message;
   }
+
+  get_color(themeVars: any) {
+    return this.t === ServiceStatusType.Running ? themeVars.successColor : "";
+  }
 }
 
 export class ServiceExhibitSwitch {

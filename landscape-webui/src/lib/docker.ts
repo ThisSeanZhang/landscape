@@ -1,4 +1,5 @@
 import { KeyValuePair } from "./common";
+import { useThemeVars } from "naive-ui";
 
 const LAND_REDIRECT_ID_KEY = "ld_red_id";
 export class DockerContainerSummary {
@@ -26,6 +27,13 @@ export class DockerContainerSummary {
       }
       this.Labels = map;
     }
+  }
+
+  get_color() {
+    const themeVars = useThemeVars();
+    return this.State === DockerContainerStatus.running
+      ? themeVars.value.successColor
+      : "";
   }
 
   get_redirect_id(): string | undefined {

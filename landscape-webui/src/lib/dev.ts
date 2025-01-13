@@ -33,6 +33,29 @@ export class NetDev {
     this.netns_id = obj.netns_id;
     this.peer_link_id = obj.peer_link_id;
   }
+  // left Handle
+  has_target_hook() {
+    if (this.zone_type == ZoneType.Wan) {
+      return false;
+    } else if (this.zone_type == ZoneType.Lan) {
+      return false;
+    } else if (this.zone_type == ZoneType.Undefined) {
+      return true;
+    }
+  }
+
+  // right Handle
+  has_source_hook() {
+    if (this.zone_type == ZoneType.Wan) {
+      return false;
+    } else if (this.dev_kind == "Bridge") {
+      return true;
+    } else if (this.zone_type == ZoneType.Lan) {
+      return true;
+    } else if (this.zone_type == ZoneType.Undefined) {
+      return false;
+    }
+  }
 }
 
 export function filter(array: Array<any>): Map<number, Array<any>> {

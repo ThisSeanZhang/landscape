@@ -1,19 +1,17 @@
-import { get_cpu, get_mem } from "@/api/sys";
+import { interval_fetch_info } from "@/api/sys";
+import { LandscapeStatus } from "@/lib/sys";
 import { defineStore } from "pinia";
 import { ref } from "vue";
 
 export const useSysInfo = defineStore("sysinfo", () => {
-  const cpus = ref<any>();
-  const mem = ref<any>({});
+  const router_status = ref<LandscapeStatus>(new LandscapeStatus());
 
   async function UPDATE_INFO() {
-    mem.value = await get_mem();
-    cpus.value = await get_cpu();
+    router_status.value = await interval_fetch_info();
   }
 
   return {
-    cpus,
-    mem,
+    router_status,
     UPDATE_INFO,
   };
 });

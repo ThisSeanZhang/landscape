@@ -1,10 +1,7 @@
 <script setup lang="ts">
-import {
-  Handle,
-  Position,
-  useHandleConnections,
-  useNodesData,
-} from "@vue-flow/core";
+import { Handle, Position, useNodesData } from "@vue-flow/core";
+import { useThemeVars } from "naive-ui";
+
 import IpConfigModal from "@/components/ipconfig/IpConfigModal.vue";
 import NATEditModal from "@/components/nat/NATEditModal.vue";
 import MarkEditModal from "@/components/mark/MarkEditModal.vue";
@@ -13,7 +10,7 @@ import IfaceChangeZone from "../iface/IfaceChangeZone.vue";
 import IPConfigStatusBtn from "@/components/status_btn/IPConfigStatusBtn.vue";
 import NetAddrTransBtn from "@/components/status_btn/NetAddrTransBtn.vue";
 import PacketMarkStatusBtn from "@/components/status_btn/PacketMarkStatusBtn.vue";
-import { AreaCustom, Power, Link } from "@vicons/carbon";
+import { AreaCustom, Power, Link, DotMark } from "@vicons/carbon";
 import { PlugDisconnected20Regular } from "@vicons/fluent";
 import { Ethernet } from "@vicons/fa";
 import { computed, ref } from "vue";
@@ -28,6 +25,7 @@ import { ServiceExhibitSwitch } from "@/lib/services";
 
 const props = defineProps(["node"]);
 
+const themeVars = ref(useThemeVars());
 const ifaceNodeStore = useIfaceNodeStore();
 // const connections = useHandleConnections({
 //   type: 'target',
@@ -95,20 +93,22 @@ const show_switch = computed(() => {
       @update:show="handleUpdateShow"
     >
       <template #trigger>
-        <n-card
-          size="small"
-          :class="node.zone_type"
-          :title="node.name"
-          style="min-width: 200px"
-        >
+        <n-card size="small" style="min-width: 220px">
+          <template #header>
+            <n-flex style="gap: 3px" inline align="center">
+              <n-icon
+                v-if="show_switch.carrier"
+                :color="node.carrier ? themeVars.successColor : ''"
+                size="16"
+              >
+                <DotMark />
+              </n-icon>
+              {{ node.name }}
+            </n-flex>
+          </template>
           <template #header-extra>
-            <!-- {{ node.zone_type }} -->
-            <!-- <n-button size="small" @click="iface_edit_show = true"> IP </n-button> -->
-            <!-- <n-button size="small" @click="iface_service_edit_show = true">
-            服务配置
-          </n-button> -->
             <n-flex>
-              <n-button
+              <!-- <n-button
                 v-if="show_switch.carrier"
                 text
                 :type="node.carrier ? 'info' : 'default'"
@@ -118,7 +118,7 @@ const show_switch = computed(() => {
                 <n-icon>
                   <Ethernet></Ethernet>
                 </n-icon>
-              </n-button>
+              </n-button> -->
               <n-button
                 v-if="show_switch.enable_in_boot"
                 text
@@ -135,6 +135,7 @@ const show_switch = computed(() => {
               </n-button>
               <n-button
                 v-if="show_switch.zone_type"
+                :class="node.zone_type"
                 text
                 :focusable="false"
                 style="font-size: 16px"
@@ -220,12 +221,12 @@ const show_switch = computed(() => {
   </n-flex>
 
   <Handle
-    v-if="node.zone_type === ZoneType.Undefined"
+    v-if="node.has_target_hook()"
     type="target"
     :position="Position.Left"
   />
   <Handle
-    v-if="node.zone_type !== ZoneType.Wan"
+    v-if="node.has_source_hook()"
     type="source"
     :position="Position.Right"
   />
@@ -265,14 +266,14 @@ const show_switch = computed(() => {
 
 <style scoped>
 .undefined {
-  background-color: whitesmoke;
+  color: whitesmoke;
 }
 
 .wan {
-  background-color: rgba(249, 184, 45, 0.66);
+  color: rgb(255, 99, 71);
 }
 
 .lan {
-  background-color: rgba(78, 197, 197, 0.66);
+  color: rgb(0, 102, 204);
 }
 </style>
