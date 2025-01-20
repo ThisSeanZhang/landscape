@@ -15,7 +15,8 @@
     "@vue-flow/node-toolbar": "^1.1.0",
     "axios": "^1.6.8",
     "pinia": "^2.2.6",
-    "vue": "^3.4.21"
+    "vue": "^3.4.21",
+    "vue-i18n": "10"
   },
   "devDependencies": {
     "@types/netmask": "^2.0.5",

@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { darkTheme } from "naive-ui";
+import { dateZhCN, zhCN } from "naive-ui";
+import { useI18n } from "vue-i18n";
 
 import PacketDump from "@/components/PacketDump.vue";
 import CPUUsage from "@/components/sysinfo/CPUUsage.vue";
@@ -9,16 +11,21 @@ import DockerStatusCard from "@/components/docker/DockerStatusCard.vue";
 import DockerAllContainer from "@/components/docker/DockerAllContainer.vue";
 import FireWallStatusCard from "@/components/firewall/FireWallStatusCard.vue";
 import SystemInfo from "@/components/sysinfo/SystemInfo.vue";
-import IntervalFetch from "./components/head/IntervalFetch.vue";
+import IntervalFetch from "@/components/head/IntervalFetch.vue";
+import LanguageSetting from "@/components/head/LanguageSetting.vue";
 
 import NetFlow from "@/components/flow/NetFlow.vue";
 import { computed, onMounted, ref } from "vue";
 const show_dump = ref(false);
+
+const { t } = useI18n({ useScope: "global" });
 </script>
 
 <template>
   <n-message-provider>
     <n-config-provider
+      :locale="zhCN"
+      :date-locale="dateZhCN"
       :theme="darkTheme"
       :theme-overrides="{ common: { fontWeightStrong: '600' } }"
     >
@@ -27,7 +34,10 @@ const show_dump = ref(false);
           <n-layout-header style="height: 24px; padding: 0 10px; display: flex">
             <n-flex style="flex: 1" justify="space-between" align="center">
               <n-flex>Landscape</n-flex>
-              <n-flex><IntervalFetch /></n-flex>
+              <n-flex>
+                <LanguageSetting />
+                <IntervalFetch />
+              </n-flex>
             </n-flex>
           </n-layout-header>
           <!-- <n-layout has-sider>
@@ -67,11 +77,11 @@ const show_dump = ref(false);
             </n-gi> -->
               </n-grid>
               <n-divider style="margin: 16px 0" title-placement="left">
-                Docker 容器
+                {{ t("docker_divider") }}
               </n-divider>
               <DockerAllContainer></DockerAllContainer>
               <n-divider style="margin: 16px 0" title-placement="left">
-                网络拓扑
+                {{ t("topology_divider") }}
               </n-divider>
               <NetFlow></NetFlow>
             </n-flex>
