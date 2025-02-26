@@ -17,10 +17,12 @@ steps:
   image: node:18.20.7-alpine3.21
   commands:
   - cd landscape-webui
-  - yarn install 
-  - yarn build
-  - mkdir -p dockerfiles/landscape/apps/.landscape-router/static
-  - cp -r dist/* dockerfiles/landscape/apps/.landscape-router/static/
+  - yarn install --cache-folder /yarn
+  - NODE_OPTIONS="--max-old-space-size=1700" yarn build
+  - mkdir -p ../dockerfiles/landscape/apps/.landscape-router/static
+  - cp -r dist/* ../dockerfiles/landscape/apps/.landscape-router/static/
+  volumes:
+  - /d/agent_cache/yarn:/yarn
 
 - name: check-file
   image: debian:latest
