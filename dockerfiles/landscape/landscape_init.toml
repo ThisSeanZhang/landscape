@@ -31,6 +31,10 @@ ipv4_mask = 16
 iface_name = "eth0"
 enable = true
 
+[[marks]]
+iface_name = "eth0"
+enable = true
+
 # Config IP ( You don’t need to put similar configurations together )
 [[ipconfigs]]
 iface_name = "br_lan"

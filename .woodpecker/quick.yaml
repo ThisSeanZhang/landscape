@@ -5,12 +5,30 @@ labels:
   name: la24
 
 steps:
-- name: build
+- name: build-rust
   image: thisseanzhang/landscape:build_base
   commands:
   - cargo build --release
-- name: test
+  - mkdir -p dockerfiles/landscape/apps
+  - cp target/release/landscape-webserver dockerfiles/landscape/apps/landscape-webserver
+  - cp dockerfiles/landscape/start.sh dockerfiles/landscape/apps/start.sh
+
+- name: build-front
+  image: node:18.20.7-alpine3.21
+  commands:
+  - cd landscape-webui
+  - yarn install 
+  - yarn build
+  - mkdir -p dockerfiles/landscape/apps/.landscape-router/static
+  - cp -r dist/* dockerfiles/landscape/apps/.landscape-router/static/
+
+- name: check-file
   image: debian:latest
   commands:
-  - ls -la
-  - ls -la target/release
+  - ls -la dockerfiles/landscape
+  - ls -la dockerfiles/landscape/apps
+  - ls -la dockerfiles/landscape/apps/.landscape-router/static
+  - curl -L -o geosite.dat https://github.com/Loyalsoldier/domain-list-custom/releases/download/20250223232811/geosite.dat
+  - curl -L -o geoip.dat https://github.com/Loyalsoldier/geoip/releases/download/202502200018/geoip.dat
+  - ls -la dockerfiles/landscape/apps/.landscape-router
+
