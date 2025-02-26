@@ -1,0 +1,16 @@
+when:
+  - event: [manual]
+    evaluate: 'QUICK == "true"'
+labels:
+  name: la24
+
+steps:
+- name: build
+  image: thisseanzhang/landscape:build_base
+  commands:
+  - cargo build --release
+- name: test
+  image: debian:latest
+  commands:
+  - ls -la
+  - ls -la target/release

@@ -1,5 +1,3 @@
-#![feature(path_file_prefix)]
-
 use libbpf_cargo::SkeletonBuilder;
 use std::ffi::OsStr;
 use std::path::PathBuf;

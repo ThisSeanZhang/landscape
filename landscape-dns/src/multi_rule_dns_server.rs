@@ -32,7 +32,10 @@ fn check_resolver_conf() {
             if resolver_file_back.exists() {
                 fs::remove_file(&resolver_file).unwrap();
             } else {
-                fs::rename(&resolver_file, &resolver_file_back).unwrap();
+                let Ok(()) = fs::rename(&resolver_file, &resolver_file_back) else {
+                    println!("move {resolver_file:?} error, Skip it");
+                    return;
+                };
             }
         } else {
             panic!("other kind file");
