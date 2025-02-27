@@ -25,10 +25,11 @@ steps:
   - /d/agent_cache/yarn:/yarn
 
 - name: check-file
-  image: curlimages/curl:8.12.1
+  image: debian:latest
   user: root
   commands:
   - whoami
+  - apt-get update && apt-get install -y curl && apt-get clean
   - ls -ld
   - ls -la dockerfiles/landscape
   - ls -la dockerfiles/landscape/apps
