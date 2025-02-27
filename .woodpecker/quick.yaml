@@ -25,7 +25,7 @@ steps:
   - /d/agent_cache/yarn:/yarn
 
 - name: check-file
-  image: debian:latest
+  image: curlimages/curl:8.12.1
   commands:
   - ls -la dockerfiles/landscape
   - ls -la dockerfiles/landscape/apps
