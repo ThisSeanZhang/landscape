@@ -29,21 +29,10 @@ steps:
   volumes:
   - /d/agent_cache/yarn:/yarn
 
-- name: check-file
-  image: debian:latest
-  commands:
-  - apt-get update && apt-get install -y curl && apt-get clean
-  - ls -ld
-  - ls -la output
-  - curl -L -o output/geosite.dat https://github.com/Loyalsoldier/domain-list-custom/releases/download/20250223232811/geosite.dat
-  - curl -L -o output/geoip.dat https://github.com/Loyalsoldier/geoip/releases/download/202502200018/geoip.dat
-  - ls -la output
-
-
 - name: publish
   image: woodpeckerci/plugin-release
   settings:
-    title: "Release v0.3.2"
+    title: "Release v0.3.2-beta"
     prerelease: true
     generate-release-notes: true
     target: main
