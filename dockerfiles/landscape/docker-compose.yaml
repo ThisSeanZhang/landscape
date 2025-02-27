@@ -34,3 +34,5 @@ networks:
     ipam:
       config:
         - subnet: 172.123.0.0/16
+          gateway: 172.123.0.1
+

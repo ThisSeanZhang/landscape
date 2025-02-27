@@ -1,6 +1,7 @@
 when:
-  - event: [manual]
-    evaluate: 'RELEASE == "true"'
+  # - event: [manual]
+  #   evaluate: 'RELEASE == "true"'
+  - event: tag
 labels:
   name: la24
 
@@ -30,7 +31,6 @@ steps:
 
 - name: check-file
   image: debian:latest
-  user: root
   commands:
   - apt-get update && apt-get install -y curl && apt-get clean
   - ls -ld

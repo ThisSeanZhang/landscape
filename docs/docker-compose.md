@@ -47,6 +47,11 @@ ipv4_mask = 16
 iface_name = "eth0"
 enable = true
 
+# 对 eth0 启用 Mark 服务
+[[marks]]
+iface_name = "eth0"
+enable = true
+
 # 配置 br_lan 网卡启用 DHCP Server
 [[ipconfigs]]
 iface_name = "br_lan"
@@ -91,10 +96,10 @@ source = [
 ```yaml{11}
 services:
   landscap:
-    image: landscape:x86_64
+    image: thisseanzhang/landscape:quick
     container_name: land_rt
     privileged: true
-    pull_policy: if_not_present
+    pull_policy: missing
     environment:
       LANDSCAPE_EBPF_MAP_SPACE: docker
     volumes:
@@ -102,7 +107,6 @@ services:
       - ./landscape_init.toml:/root/.landscape-router/landscape_init.toml
       # 需要将 eBPF 映射入容器
       - /sys/fs/bpf/docker/:/sys/fs/bpf/
-      # geosite.dat / geoip.dat 也需要进行映射
     networks:
       out:
         ipv4_address: 172.123.0.2
