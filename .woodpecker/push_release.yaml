@@ -50,9 +50,7 @@ steps:
     checksum: sha256
     checksum-file: SHASUM256sum.txt
     files:
-      - 'output/static.zip'
-      - 'output/landscape-webserver-aarch64'
-      - 'output/landscape-webserver-x86_64'
+      - 'output/*'
     api_key:
       from_secret: LD_PUSH
       
