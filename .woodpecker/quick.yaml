@@ -27,10 +27,23 @@ steps:
 - name: check-file
   image: curlimages/curl:8.12.1
   commands:
+  - whoami
+  - ls -ld
   - ls -la dockerfiles/landscape
   - ls -la dockerfiles/landscape/apps
   - ls -la dockerfiles/landscape/apps/.landscape-router/static
-  - curl -L -o geosite.dat https://github.com/Loyalsoldier/domain-list-custom/releases/download/20250223232811/geosite.dat
-  - curl -L -o geoip.dat https://github.com/Loyalsoldier/geoip/releases/download/202502200018/geoip.dat
+  - curl -L -o dockerfiles/landscape/apps/.landscape-router/geosite.dat https://github.com/Loyalsoldier/domain-list-custom/releases/download/20250223232811/geosite.dat
+  - curl -L -o dockerfiles/landscape/apps/.landscape-router/geoip.dat https://github.com/Loyalsoldier/geoip/releases/download/202502200018/geoip.dat
   - ls -la dockerfiles/landscape/apps/.landscape-router
 
+- name: "build quick img"
+  image: woodpeckerci/plugin-docker-buildx
+  settings:
+    repo: thisseanzhang/landscape
+    dockerfile: dockerfiles/landscape/Dockerfile
+    tags: quick
+    context: ./dockerfiles/landscape
+    username: 
+      from_secret: DOCKER_HUB_REPO_USER
+    password:
+      from_secret: DOCKER_HUB_REPO_TOKEN
