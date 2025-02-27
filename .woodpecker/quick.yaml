@@ -26,6 +26,7 @@ steps:
 
 - name: check-file
   image: curlimages/curl:8.12.1
+  user: root
   commands:
   - whoami
   - ls -ld
