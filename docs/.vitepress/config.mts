@@ -16,12 +16,16 @@ export default defineConfig({
         text: "介绍",
         items: [
           { text: "简介", link: "/introduction" },
-          { text: "快速体验", link: "/docker-compose" },
+          { text: "快速体验", link: "/quick" },
         ],
       },
       {
         text: "编译",
-        items: [{ text: "交叉编译", link: "/compilation/cross.md" }],
+        items: [
+          { text: "编译", link: "/compilation/index.md" },
+          { text: "与 Armbian 集成", link: "/compilation/armbian.md" },
+          { text: "交叉编译", link: "/compilation/cross.md" },
+        ],
       },
       // {
       //   text: "拓扑",

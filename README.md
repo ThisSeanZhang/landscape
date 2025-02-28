@@ -1,109 +1,106 @@
-# Landscape - Linux Router Configuration Tool
+# Landscape - Linux Router Configuration Tool  
 
-**Landscape** is a tool with a web-based UI that allows you to configure your favorite `Linux distribution` as a `router` easily.
+Landscape is a Web UI-based tool that allows you to easily configure your favorite Linux distribution as a router.  
 
-> Built with Rust / eBPF / AF_PACKET.
+> Developed using Rust / eBPF / AF_PACKET.  
 
+[中文文档](./README.zh.md) | [English](./README.md)  
 
-[中文 README](README.zh.md)
+## Screenshots  
+![](docs/images/1.png)  
 
-## Screenshot
+---  
+## Features  
+> ✅ Implemented and tested  
+> ⚠ Feasible but untested  
+> ❌ Not implemented  
 
-![](docs/images/1.png)
+- <u>IP Configuration</u>  
+    - *Static IP Configuration*  
+        - ✅ Specify IP  
+        - ✅ Configure gateway and set default route  
+    - *DHCP Client*  
+        - ✅ Specify hostname  
+        - ❌ Custom Options  
+    - *PPPoE (PPPD Version)*  
+        - ✅ Default route assignment  
+        - ⚠ Multi-NIC dial-up  
+        - ✅ Specify network interface  
+    - *PPPoE (eBPF Version)*  
+        - ✅ Protocol core implementation  
+        - ❌ Packet size exceeding MTU due to NIC GRO/GSO (Unresolved)  
+    - *DHCP Server*  
+        - ✅ Provides simple IP allocation and renewal services  
+        - ✅ Customizable gateway, subnet, and access rules for assigned IPs  
+- <u>Traffic Tagging Module</u>  
+    - ✅ Forward tagged traffic based on tag settings (Direct/Drop/Block Hole Punching/Redirect to Docker container or network interface)  
+    - ❌ Traffic statistics  
+    - ❌ Connection tracking tagging  
+    - ✅ Internal network IP behavior control based on tagging rules  
+    - ✅ External network IP behavior control based on tagging rules, with support for `geoip.dat`  
+    - ❌ Automatic GeoIP file updates  
+- <u>DNS</u>  
+    - ✅ Assign specific upstream DNS for designated domains  
+    - ✅ DNS hijacking (Returning A records)  
+    - ❌ DNS hijacking returning multiple records (other than A records)  
+    - ✅ Tagging DNS resolution results and processing them using the tagging module  
+    - ✅ GeoSite file support  
+    - ❌ Automatic scheduled GeoSite file updates  
+    - ❌ Cache Docker container image names in DNS resolution  
+- <u>NAT (eBPF-based) Implementation</u>  
+    - ✅ Basic NAT  
+    - ⚠ Static mapping / Port forwarding (UI incomplete)  
+    - ✅ Hole punching prevention - restricts access to open ports based on tagged IP rules  
+- <u>Docker</u>  
+    - ✅ Basic Docker container management  
+    - ⚠ Image pulling  
+    - ✅ Redirect traffic into a Docker container running TProxy  
+- <u>WIFI</u>  
+    - ❌ Create a WIFI hotspot  
+    - ❌ Connect to a WIFI hotspot  
+- <u>Miscellaneous</u>  
+    - ✅ Login page  
+    - ❌ English version of the frontend  
+    - ❌ Standardized logging  
+    - ❌ Network interface XPS/RPS optimization to distribute NIC load across different CPU cores for better throughput  
 
----
+---  
 
-## Startup and Limitations
+## Startup and Limitations  
 
-### System Requirements
-- Supported Linux kernel version: `6.1` or higher.
-- `iptables (require for mss clamping)`, `docker`
+### System Requirements  
+- Supported Linux Kernel Version: `6.1` and above.  
+- Requires `iptables (for PPPoE MSS clamping)`, `docker`.  
 
-### Startup Steps
-1. Create the configuration folder:
+### Standard Startup Steps  
+1. Create the configuration directory:  
    ```shell
    mkdir -p ~/.landscape-router
    ```
-2. Place the `geosite.dat` file into the above folder.
+2. Create an initial configuration file `landscape_init.toml`, refer to [Quick Start Configuration](https://landscape.whileaway.dev/quick.html).  
 
-3. Start the service:
-   After compiling, run the following command to start the service (default port: `6300`):
+3. Start the service:  
+   Download the required version from [Releases](https://github.com/ThisSeanZhang/landscape/releases) and run the following command to start the service (default port: `6300`):  
    ```shell
    ./landscape-webserver
    ```
 
----
+### Docker Compose Quick Start  
+Refer to [Quick Start](https://landscape.whileaway.dev/quick.html).  
 
-## Compilation
+### Armbian Integration  
+Refer to [Armbian Integration](https://landscape.whileaway.dev/compilation/armbian.html).  
 
-### Dependencies Installation
-Ensure the following dependencies are installed:
-```shell
-apt install pkg-config bpftool build-essential clang libelf1 libelf-dev zlib1g-dev
-```
+---  
 
-### Compilation Steps
-Make sure `node`, `yarn`, and `rust` are installed, then run the following command to compile:
-```shell
-./build.sh
-```
+## Compilation  
+Refer to [Compilation](https://landscape.whileaway.dev/compilation/).  
 
-The compiled output will be located in the `output` folder.
-For cross-compilation on an x86 host to target `aarch64`, refer to [Cross Compilation for aarch64](./docs/CROSS_COMPILATION.md).
+## LICENSE  
 
----
+- `landscape-ebpf`: [GNU General Public License v2.0](https://www.gnu.org/licenses/old-licenses/gpl-2.0.html)  
+- Other parts: [GNU General Public License v3.0](https://www.gnu.org/licenses/gpl-3.0.html)  
 
-## Features
+---  
 
-| Feature Module  | Status | Description |
-|-----------------|--------|-------------|
-| **IP Configuration** |        |             |
-| PPPoE           | ✅     | Supports multiple connections using the PPPD client |
-| PPPoE           | ❌     | eBPF-based data packet handling cannot solve GSO/GRO issues |
-| DHCP Client     | ✅     | Supports IP requests and IP configuration |
-| DHCP Client     | ❌     | Specify DHCP options |
-| DHCP Server     | ✅     | Provides simple IP address allocation and renewal  (default subnet: `192.168.5.1/24`) |
-| DHCP Server     | ❌     | Custom configuration |
-| **Marking Module** |      |             |
-| Traffic Forwarding | ✅  | Forwards DNS-marked traffic to specific Docker containers |
-| Traffic Statistics | ❌  | Logs and analyzes specific traffic |
-| **DNS Configuration** |    |             |
-| Upstream DNS    | ✅     | Resolves specific URLs using designated upstream DNS |
-| GeoSite Support | ✅     | Uses `geosite.dat` to mark relevant traffic and avoid incorrect connections |
-| GeoSite Updates | ❌     | Periodic updates to `geosite.dat` file; downloads if absent |
-| **NAT Features** |       |             |
-| Basic NAT       | ✅     | Implements basic NAT functionality using eBPF |
-| Symmetric NAT   | ❌     | Restricts certain IPs or websites from NAT traversal with DNS and marking module |
-| **Docker Support** |     |             |
-| Container Management | ✅ | Supports simple Docker container management |
-| Traffic Redirection | ✅ | Redirects traffic to tproxy programs running in Docker |
-| **Wi-Fi**        |        |             |
-| Create AP        | ❌     | Creates a Wi-Fi hotspot |
-| Connect to AP    | ❌     | Connects to a Wi-Fi hotspot |
-| **Miscellaneous** |      |             |
-| Login UI        | ❌     | Adds login logic and interface |
-| Log Standardization | ❌ | Improves logging standardization |
-| English UI      | ❌     | Adds English version of the frontend page |
-| NIC XPS/RSP Optimization | ❌ | Balances NIC load across CPU cores to improve throughput |
-
----
-
-## Help Wanted 😥
-
-1. **PPPoE MTU Issues**
-   - Observed packets exceeding MTU size, likely caused by `GRO` or `GSO`. Disabling the feature increases NIC load. Currently, using `pppd` avoids the issue.
-   - Relevant code reference: [PPPoE egress implementation](https://github.com/ThisSeanZhang/landscape/blob/424b842c29c469e4ad14503ee2bf9190ee24fd11/landscape/landscape-ebpf/src/bpf/pppoe.bpf.c#L68-L74)
-
-2. **Code Structure Issues**
-   - The code structure is currently unorganized, requiring better modularization.
-
----
-
-## LICENSE
-
-- `landscape-ebpf`: [GNU General Public License v2.0](https://www.gnu.org/licenses/old-licenses/gpl-2.0.html)
-- Other parts: [GNU General Public License v3.0](https://www.gnu.org/licenses/gpl-3.0.html)
-
----
-
-For any suggestions or questions, feel free to submit feedback via [issues](./issues/new).
+If you have any suggestions or issues, feel free to submit feedback on the [issues](./issues/new) page.  

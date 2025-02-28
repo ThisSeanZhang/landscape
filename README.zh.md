@@ -4,8 +4,65 @@ Landscape 是一个基于 Web UI 的工具，可以轻松将您喜爱的 Linux �
 
 > 基于 Rust / eBPF / AF_PACKET 开发。
 
+[中文文档](./README.zh.md) | [English](./README.md)
+
 ## 截图
 ![](docs/images/1.png)
+
+---
+## 功能
+> ✅ 已经实现并且已经测试  
+> ⚠ 可行但是未测试  
+> ❌ 未实现  
+
+- <u>IP 配置</u>
+    - *静态 IP 配置*
+        - ✅ 指定 IP 
+        - ✅ 配置网关指定默认路由
+    - *DHCP Client*
+        - ✅ 指定主机名称
+        - ❌ 自定义 Option
+    - *PPPoE ( PPPD 版 )*
+        - ✅ 默认路由指定
+        - ⚠ 多网卡拨号
+        - ✅ 网卡名称指定
+    - *PPPoE ( eBPF 版 )*
+        - ✅ 协议主体实现
+        - ❌ 网卡 GRO/GSO 导致的数据包大小超 MTU (未解决)
+    - *DHCP Server*
+        - ✅ 提供简单 IP 地址分配和续期服务
+        - ✅ 自定义分配 IP 的 网关 网段 访问 配置
+- <u>标记模块</u>
+    - ✅ 将被标记流量按照标记配置( 直连/丢弃/禁止打洞/重定向到 Docker 容器或者网卡 )进行转发 
+    - ❌ 流量统计
+    - ❌ 流量跟踪标记
+    - ✅ 内网 IP 行为控制, 按照标记的规则控制内网 IP
+    - ✅ 外网 IP 行为控制, 按照标记的规则控制外网 IP, 并支持使用 `geoip.dat` 协助配置
+    - ❌ GeoIP 文件自动更新
+- <u>DNS</u>
+    - ✅ 支持指定网址使用特定上游 DNS
+    - ✅ DNS 劫持 ( 返回 A 解析 )
+    - ❌ DNS 劫持返回多条记录 ( 除了 A 解析之外的)
+    - ✅ 对指定 DNS 解析结果进行 IP 标记, 配置标记模块进行处理
+    - ✅ GeoSite 文件支持
+    - ❌ 自动定时更新 GeoSite 文件
+    - ❌ 支持将 Docker 容器镜像名加入解析缓存
+- <u>NAT (eBPF) 实现</u>
+    - ✅ 基础 NAT 
+    - ⚠ 静态映射 / 开放指定端口 ( UI 界面未完善 )
+    - ✅ NAT 打洞禁止, 依据标记模块的标记对指定 IP 开启的端口禁止其他 IP 进行连接
+- <u> Docker </u>
+    - ✅ 支持简单运行和管理 Docker 容器
+    - ⚠ 镜像拉取
+    - ✅ 将流量导入运行 TProxy 的 Docker 容器
+- <u> WIFI </u>
+    - ❌ 创建 WIFI 热点
+    - ❌ 接入 WIFI 热点
+- <u> 杂项 </u>
+    - ✅ 登录界面
+    - ❌ 添加英文版前端页面
+    - ❌ 规范化日志记录 
+    - ❌ 网卡 XPS/RSP 优化, 将网卡压力负载到不同的核心, 提升整体吞吐
 
 ---
 
@@ -15,85 +72,30 @@ Landscape 是一个基于 Web UI 的工具，可以轻松将您喜爱的 Linux �
 - 支持的 Linux 内核版本：`6.1` 及以上。
 - 安装 `iptables (pppd 版本 pppoe mss 钳制)`, `docker`
 
-### 启动步骤
+### 常规启动步骤
 1. 创建配置文件夹：
    ```shell
    mkdir -p ~/.landscape-router
    ```
-2. 将 `geosite.dat` 文件放入上述文件夹。
+2. 创建初始文件 `landscape_init.toml` 可参考 [快速启动中配置](https://landscape.whileaway.dev/quick.html)
 
 3. 启动服务：
-   编译完成后，运行以下命令启动服务（默认端口：`6300`）：
+   从 [Release](https://github.com/ThisSeanZhang/landscape/releases) 中下载需要的版本，运行以下命令启动服务（默认端口：`6300`）：
    ```shell
    ./landscape-webserver
    ```
 
+### Docker Compose 启动体验
+见文档 [快速启动](https://landscape.whileaway.dev/quick.html)
+
+
+### Armbian 集成
+见文档 [Armbian 集成](https://landscape.whileaway.dev/compilation/armbian.html)
+
 ---
 
 ## 编译
-
-### 依赖安装
-请确保安装以下依赖：
-```shell
-apt install pkg-config bpftool build-essential clang libelf1 libelf-dev zlib1g-dev
-```
-
-### 编译步骤
-确保系统已安装 `node`、`yarn` 和 `rust`，然后运行以下命令进行编译：
-```shell
-./build.sh
-```
-
-编译完成后，产物将存放在 `output` 文件夹中。
-
- 如果需要在 x86 主机上进行交叉编译，请参考 [交叉编译 aarch64](./docs/CROSS_COMPILATION.zh.md)
----
-
-## 功能
-
-| 功能模块       | 状态 | 说明 |
-|----------------|-------|------|
-| **IP 配置**    |       |      |
-| PPPoE (pppd)         | ✅    | 使用 pppd 客户端支持多个连接 |
-| PPPoE (eBPF)         | ❌    | eBPF 数据包处理暂未解决 GSO/GRO 问题 |
-| DHCP 客户端    | ✅    | 可进行 IP 请求并配置 IP |
-| DHCP 客户端    | ❌    | 支持指定 DHCP Option |
-| DHCP 服务端    | ✅    | 提供简单 IP 地址分配和续期服务（默认网段为 `192.168.5.1/24`） |
-| DHCP 服务端    | ❌    | 自定义配置 |
-| **标记模块**   |       |      |
-| 流量转发       | ✅    | 将 DNS 标记的流量转发到指定 Docker 容器 |
-| 流量统计       | ❌    | 对特定流量进行统计和记录 |
-| **DNS 配置**   |       |      |
-| 上游 DNS       | ✅    | 支持指定网址使用特定上游 DNS |
-| GeoSite 支持   | ✅    | 使用 `geosite.dat` 标记相关流量避免错误连接 |
-| GeoSite 更新   | ❌    | 定时更新 `geosite.dat` 文件，不存在时自动下载 |
-| **NAT 功能**   |       |      |
-| 基础 NAT       | ✅    | 基于 eBPF 实现基础 NAT 功能 |
-| Symmetric NAT | ❌    | 配合 DNS 和标记模块，限制某些网站打洞 |
-| **Docker 支持**|       |      |
-| 容器管理       | ✅    | 支持简单运行和管理 Docker 容器 |
-| 流量导入       | ✅    | 将流量导入运行 tproxy 的 Docker 容器 |
-| **WIFI**       |       |      |
-| 创建 AP    |    ❌   |   创建 WIFI 热点   |
-| 接入热点    |    ❌   |   接入 WIFI 热点   |
-| **杂项**       |       |      |
-| 登录界面       | ❌    | 添加登录逻辑和界面 |
-| 日志记录       | ❌    | 规范化日志记录 |
-| 英文界面       | ❌    | 添加英文版前端页面 |
-| 网卡 XPS/RSP 优化 | ❌ | 将网卡压力负载到不同的核心, 提升整体吞吐 |
-
----
-
-## 当前问题 😥
-
-1. **PPPoE MTU 问题**
-   - 数据包超出 MTU 大小，可能由 `GRO` 或 `GSO` 引起。关闭该功能会增加网卡消耗，目前使用 `pppd` 规避。
-   - 相关代码参考：[PPPoE egress 实现](https://github.com/ThisSeanZhang/landscape/blob/424b842c29c469e4ad14503ee2bf9190ee24fd11/landscape/landscape-ebpf/src/bpf/pppoe.bpf.c#L68-L74)
-
-2. **代码结构问题**
-   - 代码结构较为混乱，模块化逻辑尚未理清。
-
----
+见文档 [编译](https://landscape.whileaway.dev/compilation/)
 
 ## LICENSE
 

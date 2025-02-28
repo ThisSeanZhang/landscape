@@ -26,7 +26,6 @@ steps:
 
 - name: check-file
   image: debian:latest
-  user: root
   commands:
   - whoami
   - apt-get update && apt-get install -y curl && apt-get clean

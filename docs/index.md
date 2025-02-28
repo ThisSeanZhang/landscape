@@ -12,7 +12,7 @@ hero:
       link: /introduction
     - theme: alt
       text: 使用 Docker Compose 一键启动体验
-      link: /docker-compose
+      link: /quick
 
 features:
   - title: Linux 为基础

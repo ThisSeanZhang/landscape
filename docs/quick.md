@@ -3,9 +3,10 @@ outline: deep
 ---
 
 # 快速体验
-可以使用 Docker Compose 快速进行启动体验, (不建议使用这样的方式进行部署)
+可以使用 Docker Compose 快速进行启动体验, (不建议使用这样的方式进行实际使用部署)
 
-## 初始化配置文件准备 ( 命名为: **landscape_init.toml** )
+## 初始化配置文件准备
+文件命名为: **landscape_init.toml**
 ```toml
 # 定义第一张网卡
 [[ifaces]]
