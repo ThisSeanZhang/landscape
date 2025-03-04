@@ -56,8 +56,8 @@ fn main() {
 
     let proxy_addr: u32 = params.tproxy_server_address.into();
 
-    let mut skel_builder = TproxySkelBuilder::default();
-    skel_builder.obj_builder.debug(true);
+    let skel_builder = TproxySkelBuilder::default();
+    // skel_builder.obj_builder.debug(true);
 
     let mut open_object = MaybeUninit::uninit();
     let open_skel = skel_builder.open(&mut open_object).unwrap();

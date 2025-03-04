@@ -53,8 +53,8 @@ pub fn init_nat(
     static_mappings: Option<Vec<(Ipv4Addr, u16, Ipv4Addr, u16)>>,
 ) {
     // bump_memlock_rlimit();
-    let mut landscape_builder = LandNatSkelBuilder::default();
-    landscape_builder.obj_builder.debug(true);
+    let landscape_builder = LandNatSkelBuilder::default();
+    // landscape_builder.obj_builder.debug(true);
 
     let mut open_object = MaybeUninit::uninit();
     let mut landscape_open = landscape_builder.open(&mut open_object).unwrap();
@@ -63,17 +63,17 @@ pub fn init_nat(
     landscape_open.maps.static_nat_mappings.set_pin_path(&MAP_PATHS.static_nat_mappings).unwrap();
     landscape_open.maps.nat_expose_ports.set_pin_path(&MAP_PATHS.nat_expose_ports).unwrap();
     if let Err(e) = landscape_open.maps.wan_ipv4_binding.reuse_pinned_map(&MAP_PATHS.wan_ip) {
-        println!("error: {e:?}");
+        tracing::error!("error: {e:?}");
     }
     if let Err(e) =
         landscape_open.maps.static_nat_mappings.reuse_pinned_map(&MAP_PATHS.static_nat_mappings)
     {
-        println!("error: {e:?}");
+        tracing::error!("error: {e:?}");
     }
     if let Err(e) =
         landscape_open.maps.nat_expose_ports.reuse_pinned_map(&MAP_PATHS.nat_expose_ports)
     {
-        println!("error: {e:?}");
+        tracing::error!("error: {e:?}");
     }
     landscape_open.maps.rodata_data.tcp_range_start = config.tcp_range.start;
     landscape_open.maps.rodata_data.tcp_range_end = config.tcp_range.end;

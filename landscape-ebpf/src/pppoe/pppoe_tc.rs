@@ -24,9 +24,9 @@ pub async fn create_pppoe_tc_ebpf<'a>(
     session_id: u16,
     obj: &'a mut MaybeUninit<OpenObject>,
 ) -> (tokio::sync::broadcast::Sender<()>, PppoeSkel<'a>) {
-    let mut pppoe_builder = PppoeSkelBuilder::default();
+    let pppoe_builder = PppoeSkelBuilder::default();
 
-    pppoe_builder.obj_builder.debug(true);
+    // pppoe_builder.obj_builder.debug(true);
 
     let pppoe_open: OpenPppoeSkel<'a> = pppoe_builder.open(obj).unwrap();
     pppoe_open.maps.rodata_data.session_id = session_id;
@@ -141,20 +141,20 @@ pub fn handle_icmp(ipv4_sockt: &Socket, data: Box<Vec<u8>>, mtu: u16) {
             return;
         }
         let size = (data[1] & 0xf) * 4;
-        println!("size is : {size:?}");
+        tracing::info!("size is : {size:?}");
         let ipv4 = Ipv4Addr::new(data[13], data[14], data[15], data[16]);
-        println!("ip is : {ipv4:?}");
+        tracing::info!("ip is : {ipv4:?}");
         let packet_start = 1;
         // let packet_end = packet_start + (size as usize) + 8;
         let icmp_packet = IcmpV4Hdr::new(&data[packet_start..], mtu);
-        println!("icmp packet: {:?}", icmp_packet);
+        tracing::info!("icmp packet: {:?}", icmp_packet);
         if let Err(e) = ipv4_sockt
             .send_to(&icmp_packet.get_bytes(), &SockAddr::from(SocketAddrV4::new(ipv4, 0)))
         {
-            println!("e: {e:?}");
+            tracing::error!("e: {e:?}");
         }
     } else {
-        println!("data.len() is : {:?}", data.len());
+        tracing::info!("data.len() is : {:?}", data.len());
     }
 }
 pub async fn create_pppoe_tc_ebpf_3(
@@ -180,7 +180,7 @@ pub async fn create_pppoe_tc_ebpf_3(
             handle_icmp(&socket_v4, data, mtu);
         }
 
-        println!("exit icmp too large loop");
+        tracing::info!("exit icmp too large loop");
     });
     let (notice_tx, mut notice_rx) =
         tokio::sync::oneshot::channel::<tokio::sync::oneshot::Sender<()>>();
@@ -244,7 +244,7 @@ pub async fn create_pppoe_tc_ebpf_3(
                 Err(TryRecvError::Closed) => break 'wait_stoop None,
             }
         };
-        println!("退出 pppoe");
+        tracing::info!("退出 pppoe");
         // drop(pppoe_egress_pkt_size_filter);
         drop(pppoe_egress_builder);
         drop(pppoe_ingress_builder);

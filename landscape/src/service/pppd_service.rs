@@ -48,11 +48,11 @@ impl PPPDServiceManager {
             let result = if let Err(e) = sender.try_send(service_config) {
                 match e {
                     mpsc::error::TrySendError::Full(_) => {
-                        println!("已经有配置在等待了");
+                        tracing::error!("已经有配置在等待了");
                         Err(())
                     }
                     mpsc::error::TrySendError::Closed(_) => {
-                        println!("内部错误");
+                        tracing::error!("内部错误");
                         Err(())
                     }
                 }

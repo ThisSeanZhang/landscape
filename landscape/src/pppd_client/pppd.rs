@@ -26,15 +26,15 @@ pub async fn create_pppd_thread(
             matches!(status, ServiceStatus::Stopping)
                 || matches!(status, ServiceStatus::Stop { .. })
         });
-        println!("等待外部停止信号");
+        tracing::info!("等待外部停止信号");
         let _ = stop_wait.await;
-        println!("接收外部停止信号");
+        tracing::info!("接收外部停止信号");
         let _ = tx.send(());
-        println!("向内部发送停止信号");
+        tracing::info!("向内部发送停止信号");
     });
 
     let Ok(_) = pppd_conf.write_config(&attach_iface_name, &ppp_iface_name) else {
-        println!("pppd 配置写入失败");
+        tracing::error!("pppd 配置写入失败");
         service_status.send_replace(ServiceStatus::Stop { message: None });
         return;
     };
@@ -57,9 +57,9 @@ pub async fn create_pppd_thread(
         }
     });
 
-    println!("pppd 配置写入成功");
+    tracing::info!("pppd 配置写入成功");
     std::thread::spawn(move || {
-        println!("pppd 启动中");
+        tracing::info!("pppd 启动中");
         let mut child = match Command::new("pppd")
             .arg("nodetach")
             .arg("call")
@@ -70,7 +70,7 @@ pub async fn create_pppd_thread(
         {
             Ok(child) => child,
             Err(e) => {
-                eprintln!("启动 pppd 失败: {}", e);
+                tracing::error!("启动 pppd 失败: {}", e);
                 return;
             }
         };
@@ -80,14 +80,14 @@ pub async fn create_pppd_thread(
             updata_ip.send_replace(());
             match child.try_wait() {
                 Ok(Some(status)) => {
-                    println!("pppd 退出， 状态码： {:?}", status);
+                    tracing::warn!("pppd 退出， 状态码： {:?}", status);
                     break;
                 }
                 Ok(None) => {
                     check_error_times = 0;
                 }
                 Err(e) => {
-                    println!("pppd error: {e:?}");
+                    tracing::error!("pppd error: {e:?}");
                     if check_error_times > 3 {
                         break;
                     }
@@ -98,18 +98,18 @@ pub async fn create_pppd_thread(
             match rx.try_recv() {
                 Err(tokio::sync::oneshot::error::TryRecvError::Empty) => {}
                 Ok(_) | Err(tokio::sync::oneshot::error::TryRecvError::Closed) => {
-                    println!("rx, 通知错误");
+                    tracing::error!("rx, 通知错误");
                     break;
                 }
             }
         }
         let _ = child.kill();
-        println!("向外部线程发送解除阻塞信号");
+        tracing::info!("向外部线程发送解除阻塞信号");
         let _ = other_tx.send(());
         pppd_conf.delete_config(&ppp_iface_name);
     });
 
     let _ = other_rx.await;
-    println!("结束外部线程阻塞");
+    tracing::info!("结束外部线程阻塞");
     service_status.send_replace(ServiceStatus::Stop { message: None });
 }

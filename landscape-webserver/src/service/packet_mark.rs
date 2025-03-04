@@ -35,7 +35,7 @@ pub async fn get_iface_packet_mark_paths(
         while let Ok(msg) = dev_observer.recv().await {
             match msg {
                 IfaceObserverAction::Up(iface_name) => {
-                    println!("restart {iface_name} Mark service");
+                    tracing::info!("restart {iface_name} Mark service");
                     let mut read_lock = share_state_copy.store.lock().await;
                     let service_config = if let Some(service_config) = read_lock.get(&iface_name) {
                         service_config

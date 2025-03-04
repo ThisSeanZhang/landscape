@@ -15,11 +15,11 @@ use landscape_common::{
     dns::DNSRuleConfig,
     error::{LdError, LdResult},
     ip_mark::{LanIPRuleConfig, WanIPRuleConfig},
+    INIT_FILE_NAME, INIT_LOCK_FILE_NAME,
 };
 
-const INIT_FILE_NAME: &'static str = "landscape_init.toml";
+pub mod log;
 
-const INIT_LOCK_FILE_NAME: &'static str = "landscape_init.lock";
 const INIT_LOCK_FILE_CONTENT: &'static str = r#"⚠ 警告 ⚠
 如果您不知道删除这个文件的操作是否正确, 请不要删除这个文件.
 此文件用于确定当前的 Landscape Router 是否已经初始化.

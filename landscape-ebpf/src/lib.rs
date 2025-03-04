@@ -65,3 +65,20 @@ pub fn init_ebpf() {
         landscape::test();
     });
 }
+
+pub fn setting_libbpf_log() {
+    use libbpf_rs::PrintLevel;
+    use tracing::{debug, info, span, warn};
+    libbpf_rs::set_print(Some((PrintLevel::Debug, |level, msg| {
+        let span = span!(tracing::Level::ERROR, "libbpf-rs");
+        let _enter = span.enter();
+
+        let msg = msg.trim_start_matches("libbpf: ").trim_end_matches('\n');
+
+        match level {
+            PrintLevel::Info => info!("{}", msg),
+            PrintLevel::Warn => warn!("{}", msg),
+            PrintLevel::Debug => debug!("{}", msg),
+        }
+    })));
+}

@@ -44,7 +44,7 @@ pub async fn create_pppoe_client(
                     // 接收到数据包
                     pkt_manager.handle_packet(*receive_data, &tx).await;
                     if pkt_manager.error_count > 10 {
-                        println!("出现致命错误, 退出");
+                        tracing::error!("出现致命错误, 退出");
                         break;
                     }
 
@@ -62,7 +62,7 @@ pub async fn create_pppoe_client(
             // 发送超时发送
             _ = &mut resend_timeout_timer => {
                 if timeout_times > 3 {
-                    println!("超时次数过多");
+                    tracing::error!("超时次数过多");
                     break;
                 }
                 pkt_manager.send_packet(&tx).await;
@@ -84,7 +84,7 @@ pub async fn create_pppoe_client(
             // 外部状态变化回调
             change_result = service_status_rx.changed() => {
                 if let Err(_) = change_result {
-                    println!("get change result error. exit loop");
+                    tracing::error!("get change result error. exit loop");
                     break;
                 }
 
@@ -96,7 +96,7 @@ pub async fn create_pppoe_client(
                 let current_status = &*service_status.borrow();
                 match current_status {
                     ServiceStatus::Stopping => {
-                        println!("pppoe reciver thread exit");
+                        tracing::error!("pppoe reciver thread exit");
                         break;
                     },
                     _ => {}
@@ -113,7 +113,7 @@ pub async fn create_pppoe_client(
     }
 
     service_status.send_replace(ServiceStatus::Stop { message: None });
-    println!("pppoe client down");
+    tracing::info!("pppoe client down");
 }
 
 /// PPPoE 的连接状态
@@ -167,7 +167,7 @@ impl PPPoEClientManager {
     ) -> Option<Vec<Vec<u8>>> {
         // TODO: 比较 mac 地址
         let Some(mut pppoe_data) = PPPoEFrame::new(&packet[14..]) else {
-            println!("conversion to pppoe error, data is: {packet:?}");
+            tracing::error!("conversion to pppoe error, data is: {packet:?}");
             self.error_count += 1;
             return None;
         };
@@ -225,7 +225,7 @@ impl PPPoEClientManager {
                         self.error_count += 1;
                         return None;
                     }
-                    println!("got a confirm message");
+                    tracing::info!("got a confirm message");
                     let mut confirm = false;
                     for tag in PPPoETag::from_bytes(&pppoe_data.payload).into_iter() {
                         match tag {
@@ -654,7 +654,7 @@ impl PPPoEClientManager {
     /// 函数需要返回一个值 提示是否进行超时调用
     /// 比如如果需要 那么就开始超时计时
     pub async fn send_packet(&self, data_sender: &mpsc::Sender<Box<Vec<u8>>>) -> bool {
-        println!("send_packet, cueernt_status: {:?}", self.pppoe_status);
+        tracing::info!("send_packet, cueernt_status: {:?}", self.pppoe_status);
         let (eth_head_data, sid) = match &self.pppoe_status {
             PPPoEConnectState::Discovering => {
                 let eth_head_data = [
@@ -679,7 +679,7 @@ impl PPPoEClientManager {
                 .concat();
 
                 let request = PPPoEFrame::get_request(self.my_host_id, ac_cookie.clone());
-                println!("pppoe request: {:?}, ac_cookie: {ac_cookie:?}", request);
+                tracing::info!("pppoe request: {:?}, ac_cookie: {ac_cookie:?}", request);
                 data_sender
                     .send(Box::new([eth_head_data, request.convert_to_payload()].concat()))
                     .await
@@ -813,9 +813,12 @@ impl PPPoEClientManager {
         else {
             return None;
         };
-        println!(
+        tracing::info!(
             "server_ip: {:?}, client_ip: {:?}, server_ifece_id: {:?}, client_ipv6_id: {:?}",
-            server_ip, client_ip, server_ifece_id, client_ifece_id
+            server_ip,
+            client_ip,
+            server_ifece_id,
+            client_ifece_id
         );
 
         let (outside_notice_tx, outside_notice_rx) = oneshot::channel::<oneshot::Sender<()>>();
@@ -864,7 +867,7 @@ impl PPPoEClientManager {
                 ])
                 .output();
             if let Err(e) = neight_run_result {
-                println!("add neigh error: {e:?}");
+                tracing::error!("add neigh error: {e:?}");
             }
             let notise = pppoe::pppoe_tc::create_pppoe_tc_ebpf_3(index, session_id, mru).await;
             let outside_callback = outside_notice_rx.await;
@@ -873,7 +876,7 @@ impl PPPoEClientManager {
             let (tx, rx) = tokio::sync::oneshot::channel();
             if let Ok(_) = notise.send(tx) {
                 if let Err(e) = rx.await {
-                    println!("wait ebpf tc detach fail: {e:?}");
+                    tracing::error!("wait ebpf tc detach fail: {e:?}");
                 }
             }
 

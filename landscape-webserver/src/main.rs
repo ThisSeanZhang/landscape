@@ -7,7 +7,7 @@ use axum::{
     Router,
 };
 
-use landscape::boot::{boot_check, init_ports, InitConfig};
+use landscape::boot::{boot_check, init_ports, log::init_logger, InitConfig};
 use landscape_common::{
     args::{LAND_ARGS, LAND_HOME_PATH, LAND_WEB_ARGS},
     error::LdResult,
@@ -30,6 +30,7 @@ use service::ipconfig::get_iface_ipconfig_paths;
 use service::nat::get_iface_nat_paths;
 use service::packet_mark::get_iface_packet_mark_paths;
 use service::pppd::get_iface_pppd_paths;
+use tracing::{error, info};
 
 #[derive(Clone, Serialize, Deserialize)]
 struct SimpleResult {
@@ -39,11 +40,14 @@ struct SimpleResult {
 #[tokio::main]
 async fn main() -> LdResult<()> {
     let args = LAND_ARGS.clone();
-    println!("using args: {args:?}");
+    if let Err(e) = init_logger() {
+        panic!("init log error: {e:?}");
+    }
+    info!("using args: {args:#?}");
     init_ports();
     let home_path = LAND_HOME_PATH.clone();
 
-    println!("config path: {home_path:?}");
+    info!("config path: {home_path:?}");
 
     let dev_obs = landscape::observer::dev_observer().await;
     let mut iface_store = StoreFileManager::new(home_path.clone(), "iface".to_string());
@@ -63,7 +67,7 @@ async fn main() -> LdResult<()> {
 
     let need_init_config = boot_check(&home_path)?;
 
-    println!("init config: {need_init_config:?}");
+    info!("init config: {need_init_config:#?}");
 
     if let Some(InitConfig {
         ifaces,
@@ -122,14 +126,14 @@ async fn main() -> LdResult<()> {
     if let Err(e) =
         std::process::Command::new("iptables").args(["-A", "FORWARD", "-j", "ACCEPT"]).output()
     {
-        println!("iptables cmd exec err: {e:?}");
+        error!("iptables cmd exec err: {e:#?}");
     }
 
     // need procps
     if let Err(e) =
         std::process::Command::new("sysctl").args(["-w", "net.ipv4.ip_forward=1"]).output()
     {
-        println!("sysctl cmd exec err: {e:?}");
+        error!("sysctl cmd exec err: {e:#?}");
     }
 
     let addr = SocketAddr::from((LAND_WEB_ARGS.address, LAND_WEB_ARGS.port));
@@ -142,6 +146,9 @@ async fn main() -> LdResult<()> {
     // .unwrap();
 
     let service = handle_404.into_service();
+
+    info!("web root is: {:?}", LAND_WEB_ARGS.web_root);
+    info!("listen at: {:?}:{:?}", LAND_ARGS.address, LAND_ARGS.port);
     let serve_dir = ServeDir::new(&LAND_WEB_ARGS.web_root).not_found_service(service);
 
     let source_route = Router::new()

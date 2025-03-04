@@ -8,6 +8,7 @@ use libbpf_rs::{
     skel::{OpenSkel, SkelBuilder},
     Program, TcAttachPoint, TcHook, TcHookBuilder, TC_EGRESS, TC_INGRESS,
 };
+use tracing::debug;
 
 fn bump_memlock_rlimit() {
     let rlimit = libc::rlimit { rlim_cur: 128 << 20, rlim_max: 128 << 20 };
@@ -27,8 +28,8 @@ pub fn test() {
     // })
     // .unwrap();
 
-    let mut landscape_builder = LandscapeSkelBuilder::default();
-    landscape_builder.obj_builder.debug(true);
+    let landscape_builder = LandscapeSkelBuilder::default();
+    // landscape_builder.obj_builder.debug(true);
 
     let mut open_object = MaybeUninit::uninit();
     let landscape_open = landscape_builder.open(&mut open_object).unwrap();
@@ -118,8 +119,8 @@ pub fn test() {
 }
 
 pub async fn xdp_test() {
-    let mut landscape_builder = LandscapeSkelBuilder::default();
-    landscape_builder.obj_builder.debug(true);
+    let landscape_builder = LandscapeSkelBuilder::default();
+    // landscape_builder.obj_builder.debug(true);
 
     let mut open_object = MaybeUninit::uninit();
     let landscape_open = landscape_builder.open(&mut open_object).unwrap();
@@ -145,15 +146,15 @@ impl TcHookProxy {
     pub fn attach(&mut self) {
         if let Some(hook) = self.hook.as_mut() {
             let result = hook.query();
-            println!("1 - the hook is exist? {:?}", result);
+            debug!("1 - the hook is exist? {:?}", result);
             hook.create().unwrap();
 
             let result = hook.query();
-            println!("2 - the hook is exist? {:?}", result);
+            debug!("2 - the hook is exist? {:?}", result);
             hook.attach().unwrap();
 
             let result = hook.query();
-            println!("3 - the hook is exist? {:?}", result);
+            debug!("3 - the hook is exist? {:?}", result);
         }
     }
 }
@@ -161,17 +162,17 @@ impl TcHookProxy {
 impl Drop for TcHookProxy {
     fn drop(&mut self) {
         if let Some(mut hook) = self.hook {
-            println!("detach hook");
+            debug!("detach hook");
             if let Ok(_) = hook.query() {
-                println!("start detach success");
+                debug!("start detach success");
                 if let Err(e) = hook.detach() {
-                    println!("detach error: {:?}", e);
+                    debug!("detach error: {:?}", e);
                 } else {
-                    println!("detach success");
+                    debug!("detach success");
                 }
             }
             if let Err(e) = hook.destroy() {
-                println!("destroy error: {:?}", e);
+                debug!("destroy error: {:?}", e);
             }
         }
         // if let Ok(_) = self.query() {

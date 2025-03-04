@@ -280,7 +280,7 @@ where
         for key in self.readers.keys() {
             let stale_file_path = self.path.join(format!("{}.{}", key, &self.name));
             if let Err(e) = std::fs::remove_file(&stale_file_path) {
-                println!("{:?} cannot be deleted: {}", stale_file_path, e);
+                tracing::error!("{:?} cannot be deleted: {}", stale_file_path, e);
             }
         }
         self.readers = new_readers;

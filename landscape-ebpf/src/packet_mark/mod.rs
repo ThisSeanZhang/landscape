@@ -17,8 +17,8 @@ mod firewall {
 }
 
 pub fn init_packet_mark(ifindex: i32, has_mac: bool, service_status: oneshot::Receiver<()>) {
-    let mut landscape_builder = PacketMarkSkelBuilder::default();
-    landscape_builder.obj_builder.debug(true);
+    let landscape_builder = PacketMarkSkelBuilder::default();
+    // landscape_builder.obj_builder.debug(true);
 
     let mut open_object = MaybeUninit::uninit();
     let mut landscape_open = landscape_builder.open(&mut open_object).unwrap();
@@ -38,18 +38,18 @@ pub fn init_packet_mark(ifindex: i32, has_mac: bool, service_status: oneshot::Re
     landscape_open.maps.packet_mark_map.set_pin_path(&MAP_PATHS.packet_mark).unwrap();
     landscape_open.maps.redirect_index_map.set_pin_path(&MAP_PATHS.redirect_index).unwrap();
     if let Err(e) = landscape_open.maps.packet_mark_map.reuse_pinned_map(&MAP_PATHS.packet_mark) {
-        println!("error: {e:?}");
+        tracing::error!("error: {e:?}");
     }
     if let Err(e) =
         landscape_open.maps.redirect_index_map.reuse_pinned_map(&MAP_PATHS.redirect_index)
     {
-        println!("error: {e:?}");
+        tracing::error!("error: {e:?}");
     }
     if let Err(e) = landscape_open.maps.lanip_mark_map.reuse_pinned_map(&MAP_PATHS.lanip_mark) {
-        println!("error: {e:?}");
+        tracing::error!("error: {e:?}");
     }
     if let Err(e) = landscape_open.maps.wanip_mark_map.reuse_pinned_map(&MAP_PATHS.wanip_mark) {
-        println!("error: {e:?}");
+        tracing::error!("error: {e:?}");
     }
 
     let landscape_skel = landscape_open.load().unwrap();

@@ -41,9 +41,9 @@ fn open_raw_socket(prog_fd: i32) -> Result<i32, ()> {
 pub async fn start(
     index: u32,
 ) -> Result<(mpsc::Sender<Box<Vec<u8>>>, mpsc::Receiver<Box<Vec<u8>>>), ()> {
-    let mut pppoe_builder = PppoeClientSkelBuilder::default();
+    let pppoe_builder = PppoeClientSkelBuilder::default();
 
-    pppoe_builder.obj_builder.debug(true);
+    // pppoe_builder.obj_builder.debug(true);
 
     let mut open_object = MaybeUninit::uninit();
     let pppoe_open = pppoe_builder.open(&mut open_object).unwrap();
@@ -80,7 +80,7 @@ pub async fn start(
             loop {
                 match rx.next() {
                     Ok(packet) => {
-                        println!("{:?}", packet);
+                        tracing::info!("{:?}", packet);
                         out_tx.try_send(Box::new(packet.to_vec())).unwrap();
                     }
                     Err(e) => {

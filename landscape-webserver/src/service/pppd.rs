@@ -37,7 +37,7 @@ pub fn write_context(path: PathBuf, context: &str) -> Result<(), ()> {
     // 设置文件权限为 755
     let permissions = <std::fs::Permissions as std::os::unix::fs::PermissionsExt>::from_mode(0o755); // 755 权限
     if let Err(e) = std::fs::set_permissions(path, permissions) {
-        println!("set permissions error: {:?}", e);
+        tracing::error!("set permissions error: {:?}", e);
     };
 
     Ok(())

@@ -21,6 +21,7 @@ nix = { version = "0.28", default-features = false, features = [
 socket2 = { workspace = true }
 serde = { workspace = true }
 plain = "0.2"
+tracing = { workspace = true }
 
 [build-dependencies]
 libbpf-cargo = { workspace = true }

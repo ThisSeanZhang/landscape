@@ -16,8 +16,8 @@ use types::{ipv4_lpm_key, ipv4_mark_action};
 use crate::{LandscapeMapPath, MAP_PATHS};
 
 pub(crate) fn init_path(paths: LandscapeMapPath) {
-    let mut landscape_builder = ShareMapSkelBuilder::default();
-    landscape_builder.obj_builder.debug(true);
+    let landscape_builder = ShareMapSkelBuilder::default();
+    // landscape_builder.obj_builder.debug(true);
     let mut open_object = MaybeUninit::uninit();
     let mut landscape_open = landscape_builder.open(&mut open_object).unwrap();
 
@@ -32,16 +32,16 @@ pub(crate) fn init_path(paths: LandscapeMapPath) {
 }
 
 pub fn add_wan_ip(ifindex: u32, addr: Ipv4Addr) {
-    println!("add wan index - 1: {ifindex:?}");
+    tracing::debug!("add wan index - 1: {ifindex:?}");
     let wan_ipv4_binding = libbpf_rs::MapHandle::from_pinned_path(&MAP_PATHS.wan_ip).unwrap();
 
     let addr_num: u32 = addr.clone().into();
     if let Err(e) =
         wan_ipv4_binding.update(&ifindex.to_le_bytes(), &addr_num.to_be_bytes(), MapFlags::ANY)
     {
-        println!("setting wan ip error:{e:?}");
+        tracing::error!("setting wan ip error:{e:?}");
     } else {
-        println!("setting wan index: {ifindex:?} addr:{addr:?}");
+        tracing::info!("setting wan index: {ifindex:?} addr:{addr:?}");
     }
 
     // if LAND_ARGS.export_manager {
@@ -55,12 +55,12 @@ pub fn add_wan_ip(ifindex: u32, addr: Ipv4Addr) {
 }
 
 pub fn del_wan_ip(ifindex: u32) {
-    println!("del wan index - 1: {ifindex:?}");
+    tracing::debug!("del wan index - 1: {ifindex:?}");
     let wan_ipv4_binding = libbpf_rs::MapHandle::from_pinned_path(&MAP_PATHS.wan_ip).unwrap();
     if let Err(e) = wan_ipv4_binding.delete(&ifindex.to_le_bytes()) {
-        println!("delete wan ip error:{e:?}");
+        tracing::error!("delete wan ip error:{e:?}");
     } else {
-        println!("delete wan index: {ifindex:?}");
+        tracing::info!("delete wan index: {ifindex:?}");
     }
 }
 
@@ -70,7 +70,7 @@ pub fn add_expose_port(port: u16) {
 
     let key = port.to_be_bytes();
     if let Err(e) = nat_expose_ports.update(&key, &[0], MapFlags::ANY) {
-        println!("add_expose_port:{e:?}");
+        tracing::error!("add_expose_port:{e:?}");
     }
 }
 
@@ -79,7 +79,7 @@ pub fn del_expose_port(port: u16) {
         libbpf_rs::MapHandle::from_pinned_path(&MAP_PATHS.nat_expose_ports).unwrap();
     let key = port.to_be_bytes();
     if let Err(e) = nat_expose_ports.delete(&key) {
-        println!("del_expose_port:{e:?}");
+        tracing::error!("del_expose_port:{e:?}");
     }
 }
 
@@ -87,7 +87,7 @@ pub fn add_wan_ip_mark(ips: Vec<IpMarkInfo>) {
     let wanip_mark_map = libbpf_rs::MapHandle::from_pinned_path(&MAP_PATHS.wanip_mark).unwrap();
 
     if let Err(e) = add_mark_ip_rules(&wanip_mark_map, ips) {
-        println!("add_wan_ip_mark:{e:?}");
+        tracing::error!("add_wan_ip_mark:{e:?}");
     }
 }
 
@@ -95,7 +95,7 @@ pub fn del_wan_ip_mark(ips: Vec<IpConfig>) {
     let wanip_mark_map = libbpf_rs::MapHandle::from_pinned_path(&MAP_PATHS.wanip_mark).unwrap();
 
     if let Err(e) = del_mark_ip_rules(&wanip_mark_map, ips) {
-        println!("del_wan_ip_mark:{e:?}");
+        tracing::error!("del_wan_ip_mark:{e:?}");
     }
 }
 
@@ -103,7 +103,7 @@ pub fn add_lan_ip_mark(ips: Vec<IpMarkInfo>) {
     let lanip_mark_map = libbpf_rs::MapHandle::from_pinned_path(&MAP_PATHS.lanip_mark).unwrap();
 
     if let Err(e) = add_mark_ip_rules(&lanip_mark_map, ips) {
-        println!("add_lan_ip_mark:{e:?}");
+        tracing::error!("add_lan_ip_mark:{e:?}");
     }
 }
 
@@ -111,7 +111,7 @@ pub fn del_lan_ip_mark(ips: Vec<IpConfig>) {
     let lanip_mark_map = libbpf_rs::MapHandle::from_pinned_path(&MAP_PATHS.lanip_mark).unwrap();
 
     if let Err(e) = del_mark_ip_rules(&lanip_mark_map, ips) {
-        println!("del_lan_ip_mark:{e:?}");
+        tracing::error!("del_lan_ip_mark:{e:?}");
     }
 }
 
@@ -194,7 +194,7 @@ pub fn add_dns_marks(ip_marks: Vec<IpMarkInfo>) {
     if let Err(e) =
         packet_mark_map.update_batch(&keys, &values, counts, MapFlags::ANY, MapFlags::ANY)
     {
-        println!("add_dns_marks error:{e:?}");
+        tracing::error!("add_dns_marks error:{e:?}");
     }
 }
 
@@ -218,7 +218,7 @@ pub fn del_dns_marks(ip_marks: Vec<IpConfig>) {
     }
 
     if let Err(e) = packet_mark_map.delete_batch(&keys, counts, MapFlags::ANY, MapFlags::ANY) {
-        println!("add_dns_marks error:{e:?}");
+        tracing::error!("add_dns_marks error:{e:?}");
     }
 }
 
@@ -228,7 +228,7 @@ pub fn add_redirect_iface_pair(redirect_index: u8, ifindex: u32) {
     let key = [redirect_index];
     let value = ifindex.to_le_bytes();
     if let Err(e) = redirect_index_map.update(&key, &value, MapFlags::ANY) {
-        println!("add block ip error:{e:?}");
+        tracing::error!("add block ip error:{e:?}");
     }
 }
 
@@ -238,6 +238,6 @@ pub fn del_redirect_iface_pair(redirect_index: u8) {
 
     let key = [redirect_index];
     if let Err(e) = redirect_index_map.delete(&key) {
-        println!("add block ip error:{e:?}");
+        tracing::error!("add block ip error:{e:?}");
     }
 }

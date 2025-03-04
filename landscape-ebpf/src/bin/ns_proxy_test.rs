@@ -87,8 +87,8 @@ fn main() {
     })
     .unwrap();
 
-    let mut landscape_builder = NsProxySkelBuilder::default();
-    landscape_builder.obj_builder.debug(true);
+    let landscape_builder = NsProxySkelBuilder::default();
+    // landscape_builder.obj_builder.debug(true);
 
     let target_addr: u32 = params.target_addr.into();
     let proxy_addr: u32 = params.listen_addr.into();

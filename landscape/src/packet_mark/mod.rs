@@ -48,19 +48,19 @@ pub async fn create_mark_service(
             matches!(status, ServiceStatus::Stopping)
                 || matches!(status, ServiceStatus::Stop { .. })
         });
-        println!("等待外部停止信号");
+        tracing::info!("等待外部停止信号");
         let _ = stop_wait.await;
-        println!("接收外部停止信号");
+        tracing::info!("接收外部停止信号");
         let _ = tx.send(());
-        println!("向内部发送停止信号");
+        tracing::info!("向内部发送停止信号");
     });
     std::thread::spawn(move || {
-        println!("启动 packet_mark 在 ifindex: {:?}", ifindex);
+        tracing::info!("启动 packet_mark 在 ifindex: {:?}", ifindex);
         landscape_ebpf::packet_mark::init_packet_mark(ifindex, has_mac, rx);
-        println!("向外部线程发送解除阻塞信号");
+        tracing::info!("向外部线程发送解除阻塞信号");
         let _ = other_tx.send(());
     });
     let _ = other_rx.await;
-    println!("结束外部线程阻塞");
+    tracing::info!("结束外部线程阻塞");
     service_status.send_replace(ServiceStatus::Stop { message: None });
 }

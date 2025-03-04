@@ -20,38 +20,46 @@ default-members = ["landscape-webserver"]
 const_format = "0.2.34"
 sysinfo = "0.30.12"
 
+# base
 once_cell = "*"
 ctrlc = "3.2"
 libc = "0.2.159"
+homedir = "0.3.4"
+thiserror = "2"
+rand = "0.8.5"
+regex = "*"
+socket2 = "0.5.7"
+
+# libbpf
 libbpf-rs = { version = "0.24.8" }
 libbpf-cargo = { version = "0.24.8" }
 libbpf-sys = { version = "*" }
-rand = "0.8.5"
+
+# web
+axum = { version = "0.7.7", features = ["ws"] }
+axum-extra = { version = "0.9.4", features = ["typed-header"] }
+
+# serde
 serde = { version = "*", features = ["derive"] }
 serde_json = { version = "1.0.117" }
+toml = "0.8.19"
+toml_edit = "0.22.22"
 
 rtnetlink = { version = "0.14.1" }
 netlink-packet-route = { version = "0.19.0" }
 netlink-packet-core = { version = "0.7.0" }
-
-axum = { version = "0.7.7", features = ["ws"] }
-axum-extra = { version = "0.9.4", features = ["typed-header"] }
 netlink-sys = { version = "0.8.6" }
-homedir = "0.3.4"
-log = "0.4.22"
-thiserror = "2"
-
-toml = "0.8.19"
-toml_edit = "0.22.22"
-
-tokio-util = { version = "0.7.0", features = ["codec", "net"] }
-
-socket2 = "0.5.7"
-regex = "*"
 
 # for docker
 bollard = "0.18.1"
 
+# logs
+log = "0.4.22"
+tracing = "0.1.41"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-appender = "0.2"
+
+tokio-util = { version = "0.7.0", features = ["codec", "net"] }
 [workspace.dependencies.tokio]
 version = "1.38.0"
 

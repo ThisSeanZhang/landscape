@@ -1,5 +1,6 @@
 use serde::{Serialize, Serializer};
 use tokio::sync::watch;
+use tracing::info;
 
 pub mod ipconfig;
 pub mod nat_service;
@@ -52,7 +53,7 @@ impl Serialize for WatchServiceStatus {
 async fn wait_status_stop(ip_service_status: &watch::Sender<ServiceStatus>) {
     let mut do_wait = false;
     ip_service_status.send_if_modified(|status| {
-        println!("当前服务的状态: {:?}", status);
+        info!("当前服务的状态: {:?}", status);
         // 修改当前状态, 并决定是否进行等待
         match status {
             ServiceStatus::Staring | ServiceStatus::Running => {
@@ -70,15 +71,15 @@ async fn wait_status_stop(ip_service_status: &watch::Sender<ServiceStatus>) {
             }
         }
     });
-    println!("当前需要等待之前状态结束吗?: {do_wait}");
+    info!("当前需要等待之前状态结束吗?: {do_wait}");
     if do_wait {
-        println!("那么进行等待");
+        info!("那么进行等待");
         // 等待已有 IP 配置服务停止
         let _ = ip_service_status
             .subscribe()
             .wait_for(|status| matches!(status, ServiceStatus::Stop { .. }))
             .await;
-        println!("前一个服务等待停止结束");
+        info!("前一个服务等待停止结束");
     }
     // let _ = drop(do_wait);
 }

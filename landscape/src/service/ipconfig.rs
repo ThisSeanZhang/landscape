@@ -123,11 +123,11 @@ impl IpConfigManager {
             let result = if let Err(e) = sender.try_send(service_config) {
                 match e {
                     mpsc::error::TrySendError::Full(_) => {
-                        println!("已经有配置在等待了");
+                        tracing::error!("已经有配置在等待了");
                         Err(())
                     }
                     mpsc::error::TrySendError::Closed(_) => {
-                        println!("内部错误");
+                        tracing::error!("内部错误");
                         Err(())
                     }
                 }
@@ -216,7 +216,7 @@ async fn init_service_from_config(
                     let ip_config = ipconfig_clone;
                     ip_config.send_replace(ServiceStatus::Staring);
                     // let ipv4 = Ipv4Addr::new(ipv4[0], ipv4[1], ipv4[2], ipv4[3]);
-                    println!("set ipv4 is: {}", ipv4);
+                    tracing::info!("set ipv4 is: {}", ipv4);
                     let _ = std::process::Command::new("ip")
                         .args(&[
                             "addr",
@@ -226,7 +226,7 @@ async fn init_service_from_config(
                             &iface_name,
                         ])
                         .output();
-                    println!("start setting");
+                    tracing::debug!("start setting");
                     landscape_ebpf::map_setting::add_wan_ip(iface.index, ipv4);
 
                     if default_router {
@@ -235,7 +235,7 @@ async fn init_service_from_config(
                                 && !default_router_ip.is_unspecified()
                                 && !default_router_ip.is_loopback()
                             {
-                                println!("setting default route: {:?}", default_router_ip);
+                                tracing::info!("setting default route: {:?}", default_router_ip);
                                 let result = std::process::Command::new("ip")
                                     .args(&[
                                         "route",
@@ -248,7 +248,7 @@ async fn init_service_from_config(
                                     ])
                                     .output();
                                 if let Err(e) = result {
-                                    println!("replace route error: {e:?}")
+                                    tracing::error!("replace route error: {e:?}")
                                 }
                             }
                         }
@@ -326,7 +326,7 @@ async fn init_service_from_config(
             }
         }
         IfaceIpModelConfig::DhcpServer(config) => {
-            println!("使用的  DHCP server 配置是: {config:?}");
+            tracing::info!("使用的  DHCP server 配置是: {config:?}");
             init_dhcp_server(iface.name.clone(), config, ip_config.clone()).await;
         }
     };

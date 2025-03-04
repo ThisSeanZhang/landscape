@@ -57,7 +57,7 @@ impl LandscapeDnsService {
                 result.insert(entry.country_code.to_string(), domains);
             }
         } else {
-            println!("geo file don't exists or not a file, return empty map");
+            tracing::error!("geo file don't exists or not a file, return empty map");
         }
 
         result

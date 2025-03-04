@@ -144,22 +144,22 @@ pub async fn dhcp_client(
                             // println!("Received {} bytes from {}", len, addr);
                             let message = buf[..len].to_vec();
                             if let Err(e) = message_tx.try_send((message, addr)) {
-                                println!("Error sending message to channel: {:?}", e);
+                                tracing::error!("Error sending message to channel: {:?}", e);
                             }
                         }
                         Err(e) => {
-                            println!("Error receiving data: {:?}", e);
+                            tracing::error!("Error receiving data: {:?}", e);
                         }
                     }
                 },
                 _ = message_tx.closed() => {
-                    println!("message_tx closed");
+                    tracing::error!("message_tx closed");
                     break;
                 }
             }
         }
 
-        println!("DHCP recv client loop");
+        tracing::info!("DHCP recv client loop");
     });
 
     let (status_tx, mut status_rx) = watch::channel::<DhcpState>(DhcpState::init_status(None));
@@ -173,13 +173,13 @@ pub async fn dhcp_client(
             tokio::select! {
                 change_result = hdcp_rx_status.changed() => {
                     if let Err(_) = change_result {
-                        println!("get change result error. exit loop");
+                        tracing::error!("get change result error. exit loop");
                         break;
                     }
                     let current_status = &*hdcp_rx_status.borrow();
                     match current_status {
                         DhcpState::Stopping| DhcpState::Stop => {
-                            println!("stop exit");
+                            tracing::error!("stop exit");
                             break;
                         },
                         _ => {}
@@ -218,7 +218,7 @@ pub async fn dhcp_client(
             );
             match wait_change.await {
                 Ok(Err(_)) => {
-                    println!("watch 的另外一端丢弃了");
+                    tracing::error!("watch 的另外一端丢弃了");
                     // 退出
                     break;
                 }
@@ -257,11 +257,11 @@ pub async fn dhcp_client(
                         .await
                     {
                         Ok(len) => {
-                            println!("send len: {:?}", len);
-                            println!("dhcp fram: {:?}", dhcp_discover);
+                            tracing::debug!("send len: {:?}", len);
+                            tracing::debug!("dhcp fram: {:?}", dhcp_discover);
                         }
                         Err(e) => {
-                            println!("error: {:?}", e);
+                            tracing::error!("error: {:?}", e);
                         }
                     }
                 }
@@ -291,11 +291,11 @@ pub async fn dhcp_client(
                         .await
                     {
                         Ok(len) => {
-                            println!("send len: {:?}", len);
-                            println!("dhcp fram: {:?}", dhcp_discover);
+                            tracing::debug!("send len: {:?}", len);
+                            tracing::debug!("dhcp fram: {:?}", dhcp_discover);
                         }
                         Err(e) => {
-                            println!("error: {:?}", e);
+                            tracing::error!("error: {:?}", e);
                         }
                     }
 
@@ -306,7 +306,13 @@ pub async fn dhcp_client(
                 DhcpState::Bound { xid, ciaddr, yiaddr, siaddr, options } => {
                     // 进行一个等待, 等待到租期时间到 70% 后 将当前的状态设置为 Renewing 以便进行续期
 
-                    println!("start Bound ip: {} {} {} {:?}", ciaddr, yiaddr, siaddr, options);
+                    tracing::info!(
+                        "start Bound ip: {} {} {} {:?}",
+                        ciaddr,
+                        yiaddr,
+                        siaddr,
+                        options
+                    );
                     let Some((renew_time, rebinding_time)) = options.get_renew_time() else {
                         continue;
                     };
@@ -317,11 +323,12 @@ pub async fn dhcp_client(
                     } else {
                         24
                     };
-                    println!("setting ip: {} {} {} {:?}", ciaddr, yiaddr, siaddr, options);
+                    tracing::info!("setting ip: {} {} {} {:?}", ciaddr, yiaddr, siaddr, options);
                     landscape_ebpf::map_setting::add_wan_ip(index, yiaddr.clone());
                     if let Some(args) = ip_arg.take() {
-                        let result = std::process::Command::new("ip").args(&args).output();
-                        println!("{:?}", result);
+                        if let Err(result) = std::process::Command::new("ip").args(&args).output() {
+                            tracing::error!("{:?}", result);
+                        }
                     }
                     let mut args =
                         vec!["addr".to_string(), "add".to_string(), format!("{}/{}", yiaddr, mask)];
@@ -331,10 +338,10 @@ pub async fn dhcp_client(
                     }
                     args.extend(["dev".to_string(), iface_name.clone()]);
 
-                    println!("{:?}", args);
+                    tracing::info!("{:?}", args);
                     let result = std::process::Command::new("ip").args(&args).output();
                     if let Err(e) = result {
-                        println!("{:?}", e);
+                        tracing::error!("{:?}", e);
                     } else {
                         if let Some(value) = args.get_mut(1) {
                             *value = "del".to_string();
@@ -362,7 +369,7 @@ pub async fn dhcp_client(
                     // 进行等待超时
                     tokio::select! {
                         _ = tokio::time::sleep_until(sleep_time) => {
-                            println!("Time to renew lease, switching to Renewing...");
+                            tracing::error!("Time to renew lease, switching to Renewing...");
                             status_tx_status.send(DhcpState::Renewing {xid, ciaddr: yiaddr.clone(), yiaddr, siaddr, options, rebinding_time }).unwrap();
                         },
                         _ = status_rx.changed() => {
@@ -401,11 +408,11 @@ pub async fn dhcp_client(
                         .await
                     {
                         Ok(len) => {
-                            println!("send len: {:?}", len);
+                            tracing::debug!("send len: {:?}", len);
                             // println!("Renewing dhcp: {:?}", dhcp_discover);
                         }
                         Err(e) => {
-                            println!("error: {:?}", e);
+                            tracing::error!("error: {:?}", e);
                         }
                     }
 
@@ -417,17 +424,17 @@ pub async fn dhcp_client(
                 DhcpState::Stopping | DhcpState::Stop => {
                     if let Some(args) = ip_arg.take() {
                         let result = std::process::Command::new("ip").args(&args).output();
-                        println!("{:?}", result);
+                        tracing::info!("{:?}", result);
                     }
                     status_tx_status.send(DhcpState::Stop).unwrap();
-                    println!("stop dhcp client");
+                    tracing::info!("stop dhcp client");
                     break;
                 }
             }
         }
 
         service_status.send_replace(ServiceStatus::Stop { message: None });
-        println!("dhcp message send loop exit");
+        tracing::info!("dhcp message send loop exit");
     });
 
     service_status.send_replace(ServiceStatus::Running);
@@ -438,7 +445,7 @@ pub async fn dhcp_client(
         tokio::select! {
             change_result = status_rx.changed() => {
                 if let Err(_) = change_result {
-                    println!("get change result error. exit loop");
+                    tracing::error!("get change result error. exit loop");
                     break;
                 }
                 let current_status = status_rx.borrow().clone();
@@ -448,7 +455,7 @@ pub async fn dhcp_client(
             },
             change_result = service_status_rx.changed() => {
                 if let Err(_) = change_result {
-                    println!("get change result error. exit loop");
+                    tracing::error!("get change result error. exit loop");
                     break;
                 }
                 let current_status = service_status_rx.borrow().clone();
@@ -465,12 +472,12 @@ pub async fn dhcp_client(
 async fn handle_packet(status: &watch::Sender<DhcpState>, (msg, _msg_addr): (Vec<u8>, SocketAddr)) {
     let dhcp = DhcpEthFrame::new(&msg);
     let Some(dhcp) = dhcp else {
-        println!("handle message error");
+        tracing::error!("handle message error");
         return;
     };
     // println!("dhcp: {dhcp:?}");
     if dhcp.op != 2 {
-        println!("is not server op");
+        tracing::error!("is not server op");
         return;
     }
 
@@ -480,9 +487,9 @@ async fn handle_packet(status: &watch::Sender<DhcpState>, (msg, _msg_addr): (Vec
         return;
     }
     if !current_client_status.can_handle_message(&dhcp.options.message_type) {
-        println!("self: {current_client_status:?}");
-        println!("dhcp: {dhcp:?}");
-        println!("current status can not handle this status");
+        tracing::error!("self: {current_client_status:?}");
+        tracing::error!("dhcp: {dhcp:?}");
+        tracing::error!("current status can not handle this status");
         return;
     }
     match current_client_status {
@@ -507,7 +514,7 @@ async fn handle_packet(status: &watch::Sender<DhcpState>, (msg, _msg_addr): (Vec
                         let new_siaddr = dhcp.siaddr;
 
                         let options = dhcp.options;
-                        println!("get bound ip, {:?}", yiaddr);
+                        tracing::debug!("get bound ip, {:?}", yiaddr);
 
                         // 这个 ID 是下次 Renewing 的时候使用
                         let xid = rand::random();
@@ -519,7 +526,7 @@ async fn handle_packet(status: &watch::Sender<DhcpState>, (msg, _msg_addr): (Vec
                             options,
                         });
                     } else {
-                        println!("IP 地址不符合")
+                        tracing::error!("IP 地址不符合")
                     }
                 }
                 DhcpOptionMessageType::Nak => {

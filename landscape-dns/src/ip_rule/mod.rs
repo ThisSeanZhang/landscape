@@ -37,15 +37,15 @@ pub async fn update_wan_rules(
     rules.sort_by(|a, b| a.index.cmp(&b.index));
     old_rules.sort_by(|a, b| a.index.cmp(&b.index));
     let old_path = if let Some(old_path) = old_path { old_path } else { new_path.clone() };
-    println!("path: {:?} / {:?}", new_path, old_path);
+    tracing::debug!("path: {:?} / {:?}", new_path, old_path);
     let mut rules = wan_mark_into_map(rules, new_path).await;
     let old_rules = wan_mark_into_map(old_rules, old_path).await;
-    println!("rules: {:?}", rules);
-    println!("old_rules: {:?}", old_rules);
+    tracing::debug!("rules: {:?}", rules);
+    tracing::debug!("old_rules: {:?}", old_rules);
 
     let delete_keys = find_delete_rule_keys(&mut rules, old_rules);
-    println!("update_config: {:?}", rules);
-    println!("delete_keys: {:?}", delete_keys);
+    tracing::debug!("update_config: {:?}", rules);
+    tracing::debug!("delete_keys: {:?}", delete_keys);
 
     landscape_ebpf::map_setting::add_wan_ip_mark(convert_mark_map_to_vec_mark(rules));
     landscape_ebpf::map_setting::del_wan_ip_mark(delete_keys);
@@ -174,7 +174,7 @@ pub async fn get_geo_ip_map(geo_file_path: PathBuf) -> HashMap<String, Vec<IpCon
             result.insert(entry.country_code.to_string(), domains);
         }
     } else {
-        println!("geo file don't exists or not a file, return empty map");
+        tracing::error!("geo file don't exists or not a file, return empty map");
     }
 
     result

@@ -58,7 +58,7 @@ async fn add_address(link_name: &str, ip: IpAddr, prefix_length: u8, handle: Han
                 if ip_equal && perfix_len_equal {
                     need_create_ip = false;
                 } else {
-                    println!("del: {addr:?}");
+                    tracing::info!("del: {addr:?}");
                     handle.address().del(addr).execute().await.unwrap();
                     need_create_ip = true;
                 }
@@ -66,7 +66,7 @@ async fn add_address(link_name: &str, ip: IpAddr, prefix_length: u8, handle: Han
         }
 
         if need_create_ip {
-            // println!("need create ip: {need_create_ip:?}");
+            // tracing::info!("need create ip: {need_create_ip:?}");
             handle.address().add(link.header.index, ip, prefix_length).execute().await.unwrap()
         }
     }
@@ -115,14 +115,14 @@ pub async fn init_dhcp_server(
                     // 接收数据包
                     match result {
                         Ok((len, addr)) => {
-                            // println!("Received {} bytes from {}", len, addr);
+                            // tracing::debug!("Received {} bytes from {}", len, addr);
                             let message = buf[..len].to_vec();
                             if let Err(e) = message_tx.try_send((message, addr)) {
-                                println!("Error sending message to channel: {:?}", e);
+                                tracing::error!("Error sending message to channel: {:?}", e);
                             }
                         }
                         Err(e) => {
-                            println!("Error receiving data: {:?}", e);
+                            tracing::error!("Error receiving data: {:?}", e);
                         }
                     }
                 },
@@ -154,7 +154,7 @@ pub async fn init_dhcp_server(
                         match message {
                             Some(message) => handle_dhcp_message(&mut dhcp_status, &send_socket, message).await,
                             None => {
-                                println!("dhcp server handle server fail, exit loop");
+                                tracing::error!("dhcp server handle server fail, exit loop");
                                 break;
                             }
                         }
@@ -167,14 +167,14 @@ pub async fn init_dhcp_server(
                     // 处理外部关闭服务通知
                     change_result = dhcp_server_service_status.changed() => {
                         if let Err(_) = change_result {
-                            println!("get change result error. exit loop");
+                            tracing::error!("get change result error. exit loop");
                             break;
                         }
 
                         let current_status = &*dhcp_server_service_status.borrow();
                         match current_status {
                             ServiceStatus::Stopping | ServiceStatus::Stop{..} => {
-                                println!("stop exit");
+                                tracing::error!("stop exit");
                                 break;
                             },
                             _ => {}
@@ -182,7 +182,7 @@ pub async fn init_dhcp_server(
                     }
                 }
             }
-            println!("dhcp server handle loop end");
+            tracing::warn!("dhcp server handle loop end");
             dhcp_server_status.send_replace(ServiceStatus::Stop { message: None });
         }
     });
@@ -194,10 +194,10 @@ async fn handle_dhcp_message(
     (message, msg_addr): (Vec<u8>, SocketAddr),
 ) {
     let dhcp = DhcpEthFrame::new(&message);
-    // println!("dhcp: {dhcp:?}");
+    // tracing::info!("dhcp: {dhcp:?}");
 
     if let Some(dhcp) = dhcp {
-        // println!("dhcp xid: {:04x}", dhcp.xid);
+        // tracing::info!("dhcp xid: {:04x}", dhcp.xid);
         match dhcp.op {
             1 => match dhcp.options.message_type {
                 DhcpOptionMessageType::Discover => {
@@ -212,7 +212,7 @@ async fn handle_dhcp_message(
                             // println!("send len: {:?}", len);
                         }
                         Err(e) => {
-                            println!("error: {:?}", e);
+                            tracing::error!("error: {:?}", e);
                         }
                     }
                 }
@@ -240,7 +240,7 @@ async fn handle_dhcp_message(
                             // println!("send len: {:?}", len);
                         }
                         Err(e) => {
-                            println!("error: {:?}", e);
+                            tracing::error!("error: {:?}", e);
                         }
                     }
                 }
@@ -248,7 +248,7 @@ async fn handle_dhcp_message(
                 DhcpOptionMessageType::Ack => todo!(),
                 DhcpOptionMessageType::Nak => todo!(),
                 DhcpOptionMessageType::Release => {
-                    println!("{dhcp:?}");
+                    tracing::info!("{dhcp:?}");
                 }
                 DhcpOptionMessageType::Inform => todo!(),
                 DhcpOptionMessageType::ForceRenew => todo!(),
@@ -323,7 +323,7 @@ impl DhcpServerStatus {
                 if let Some(opt) = self.options_map.get(&each_index) {
                     options.push(opt.clone());
                 } else {
-                    println!("在配置中找不到这个 option 配置, index: {each_index:?}");
+                    tracing::warn!("在配置中找不到这个 option 配置, index: {each_index:?}");
                 }
             }
         }
@@ -340,7 +340,7 @@ impl DhcpServerStatus {
         let client_addr = if let Some((ip_add, _)) = self.ip_map.get(&frame.chaddr) {
             ip_add.clone()
         } else {
-            // println!("checksum: {:?}", frame.chaddr.u32_ckecksum());
+            // tracing::info!("checksum: {:?}", frame.chaddr.u32_ckecksum());
             let host_id = get_host_id(
                 self.range_capacity,
                 frame.chaddr.u32_ckecksum(),
@@ -352,7 +352,7 @@ impl DhcpServerStatus {
             self.ip_map.insert(frame.chaddr, (client_addr.address(), expire_instant));
             client_addr.address()
         };
-        println!("allocated ip: {:?} for mac: {:?}", client_addr, frame.chaddr);
+        tracing::info!("allocated ip: {:?} for mac: {:?}", client_addr, frame.chaddr);
 
         let offer = DhcpEthFrame {
             op: 2,
@@ -429,7 +429,7 @@ impl DhcpServerStatus {
         let now = Instant::now();
         self.ip_map.retain(|mac_addr, (ip, time)| {
             if *time > now {
-                println!("mac: {mac_addr}, ip: {ip}, expire");
+                tracing::warn!("mac: {mac_addr}, ip: {ip}, expire");
                 true
             } else {
                 false

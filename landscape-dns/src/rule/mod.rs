@@ -81,7 +81,7 @@ impl ResolverType {
                 match resolver.resolver.lookup(domain, query_type).await {
                     Ok(lookup) => Ok(lookup.records().to_vec()),
                     Err(e) => {
-                        eprintln!("DNS resolution failed for {}: {}", domain, e);
+                        tracing::error!("DNS resolution failed for {}: {}", domain, e);
                         let result = match e.kind() {
                             hickory_resolver::error::ResolveErrorKind::NoRecordsFound {
                                 ..

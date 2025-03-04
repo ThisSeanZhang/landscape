@@ -47,7 +47,7 @@ impl LandscapeDockerService {
                             if let Ok(msg) = e {
                                 handle_event(&docker, msg).await;
                             } else {
-                                println!("err event loop: event_msg");
+                                tracing::error!("err event loop: event_msg");
                             }
                         } else {
                             break;
@@ -55,11 +55,11 @@ impl LandscapeDockerService {
                     },
                     change_result = receiver.changed() => {
                         if let Err(_) = change_result {
-                            println!("get change result error. exit loop");
+                            tracing::error!("get change result error. exit loop");
                             break;
                         }
                         if matches!(*status.borrow(), ServiceStatus::Stopping | ServiceStatus::Stop { .. }) {
-                            println!("stop exit");
+                            tracing::error!("stop exit");
                             break;
                         }
 
@@ -73,7 +73,7 @@ impl LandscapeDockerService {
                                 Err(e) => {
                                     timeout_times += 1;
                                     if timeout_times >= 3 {
-                                        println!("exit docker event listen, cause ping error: {e:?}");
+                                        tracing::error!("exit docker event listen, cause ping error: {e:?}");
                                         break;
                                     }
                                 }
@@ -106,7 +106,7 @@ pub async fn handle_event(docker: &Docker, emsg: bollard::secret::EventMessage) 
             }
         }
         _ => {
-            println!("{:?}", emsg);
+            tracing::error!("{:?}", emsg);
         }
     }
 }
@@ -150,7 +150,7 @@ pub async fn handle_redirect_id_set(docker: &Docker, actor: EventActor) {
                     if let Some(pid) = state.pid {
                         let file_path = format!("/proc/{:?}/net/igmp", pid);
                         if let Ok(Some(if_id)) = read_igmp_index(&file_path) {
-                            println!("inner if id: {if_id:?}");
+                            tracing::debug!("inner if id: {if_id:?}");
 
                             let devs = get_all_devices().await;
                             for dev in devs {
@@ -160,7 +160,7 @@ pub async fn handle_redirect_id_set(docker: &Docker, actor: EventActor) {
                                             redirect_id,
                                             dev.index,
                                         );
-                                        println!("peer_id is :{:?}", dev.index);
+                                        tracing::debug!("peer_id is :{:?}", dev.index);
                                     }
                                 }
                             }

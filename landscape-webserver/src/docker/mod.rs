@@ -83,13 +83,13 @@ async fn run_container(
         .await
     {
         result.success = false;
-        println!("create_container error: {:?}", e);
+        tracing::error!("create_container error: {:?}", e);
     } else {
         if let Err(e) =
             &docker.start_container(&container_name, None::<StartContainerOptions<String>>).await
         {
             result.success = false;
-            println!("start_container error: {:?}", e);
+            tracing::info!("start_container error: {:?}", e);
         } else {
             result.success = true;
         }
@@ -106,7 +106,7 @@ async fn start_container(Path(container_name): Path<String>) -> Json<Value> {
         &docker.start_container(&container_name, None::<StartContainerOptions<String>>).await
     {
         result.success = false;
-        println!("start_container error: {:?}", e);
+        tracing::error!("start_container error: {:?}", e);
     } else {
         result.success = true;
     }
@@ -121,7 +121,7 @@ async fn stop_container(Path(container_name): Path<String>) -> Json<Value> {
 
     if let Err(e) = &docker.stop_container(&container_name, None::<StopContainerOptions>).await {
         result.success = false;
-        println!("stop_container error: {:?}", e);
+        tracing::error!("stop_container error: {:?}", e);
     } else {
         result.success = true;
     }
@@ -137,7 +137,7 @@ async fn remove_container(Path(container_name): Path<String>) -> Json<Value> {
     let config = RemoveContainerOptions { force: true, v: false, link: false };
     if let Err(e) = &docker.remove_container(&container_name, Some(config)).await {
         result.success = false;
-        println!("remove_container error: {:?}", e);
+        tracing::error!("remove_container error: {:?}", e);
     } else {
         result.success = true;
     }
@@ -149,7 +149,7 @@ async fn remove_container(Path(container_name): Path<String>) -> Json<Value> {
 async fn run_cmd_container(Json(docker_cmd): Json<DockerCmd>) -> Json<Value> {
     let mut result = SimpleResult { success: false };
     if let Err(e) = docker_cmd.execute_docker_command().await {
-        println!("error: {:?}", e);
+        tracing::error!("error: {:?}", e);
     } else {
         result.success = true;
     };
@@ -230,7 +230,7 @@ impl DockerCmd {
 
         command.push(self.image_name.clone());
 
-        println!("command: {:?}", command);
+        tracing::info!("command: {:?}", command);
         command
     }
 
@@ -241,9 +241,9 @@ impl DockerCmd {
             tokio::process::Command::new(&command[0]).args(&command[1..]).status().await
         {
             if status.success() {
-                println!("Docker command executed successfully.");
+                tracing::info!("Docker command executed successfully.");
             } else {
-                eprintln!("Docker command failed with status: {:?}", status);
+                tracing::error!("Docker command failed with status: {:?}", status);
                 return Err(());
             }
         } else {

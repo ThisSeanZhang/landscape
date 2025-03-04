@@ -38,9 +38,9 @@ async fn pull_image_by_image_name(Path(image_name): Path<String>) -> Json<Value>
     {
         if status.success() {
             result.success = true;
-            println!("Docker command executed successfully.");
+            tracing::info!("Docker command executed successfully.");
         } else {
-            eprintln!("Docker command failed with status: {:?}", status);
+            tracing::error!("Docker command failed with status: {:?}", status);
         }
     }
 
@@ -56,9 +56,9 @@ async fn delete_image_by_id(Path(image_id): Path<String>) -> Json<Value> {
     {
         if status.success() {
             result.success = true;
-            println!("Docker command executed successfully.");
+            tracing::info!("Docker command executed successfully.");
         } else {
-            eprintln!("Docker command failed with status: {:?}", status);
+            tracing::error!("Docker command failed with status: {:?}", status);
         }
     }
 

@@ -17,6 +17,14 @@ pub const LAND_CONFIG: &'static str = "landscape.toml";
 
 /// Home Path
 pub const LANDSCAPE_CONFIG_DIR_NAME: &'static str = ".landscape-router";
+/// LOG Path
+pub const LANDSCAPE_LOG_DIR_NAME: &'static str = "logs";
+/// web resource
+pub const LANDSCAPE_WEBROOT_DIR_NAME: &'static str = "static";
+/// init file name
+pub const INIT_FILE_NAME: &'static str = "landscape_init.toml";
+/// init lock file name
+pub const INIT_LOCK_FILE_NAME: &'static str = "landscape_init.lock";
 
 pub const GEO_SITE_FILE_NAME: &'static str = "geosite.dat";
 pub const GEO_IP_FILE_NAME: &'static str = "geoip.dat";

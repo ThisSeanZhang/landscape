@@ -18,7 +18,7 @@ hickory-resolver = "0.24.1"
 hickory-proto = "0.24.1"
 tokio = { workspace = true, features = ['fs'] }
 clap = { workspace = true }
-log = { workspace = true }
+tracing = { workspace = true }
 thiserror = { workspace = true }
 libc = { workspace = true }
 async-trait = "*"

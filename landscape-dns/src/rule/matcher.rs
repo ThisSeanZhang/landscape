@@ -1,6 +1,7 @@
 use aho_corasick::AhoCorasick;
 use regex::Regex;
 use std::collections::HashSet;
+use tracing::debug;
 use trie_rs::TrieBuilder;
 
 use crate::rule::DomainMatchType;
@@ -54,9 +55,9 @@ impl DomainMatcher {
         let size = subdomain_trie.iter::<Vec<u8>, _>().count();
         // 返回构建好的 DomainMatcher 实例
 
-        println!("total {:?}", sum_count);
-        println!("full_domains {:?}", full_domains.len());
-        println!("subdomain_trie {:?}", size);
+        debug!("total {:?}", sum_count);
+        debug!("full_domains {:?}", full_domains.len());
+        debug!("subdomain_trie {:?}", size);
         DomainMatcher {
             regex_domains,
             full_domains,

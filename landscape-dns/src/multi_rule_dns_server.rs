@@ -44,7 +44,7 @@ fn check_resolver_conf() {
                 fs::remove_file(&resolver_file).unwrap();
             } else {
                 let Ok(()) = fs::rename(&resolver_file, &resolver_file_back) else {
-                    println!("move {resolver_file:?} error, Skip it");
+                    tracing::error!("move {resolver_file:?} error, Skip it");
                     return;
                 };
             }
@@ -146,8 +146,8 @@ impl DnsServer {
                         }
                     }
                 }
-                println!("add_dns_marks: {:?}", update_dns_mark_list);
-                println!("del_dns_marks: {:?}", del_dns_mark_list);
+                tracing::info!("add_dns_marks: {:?}", update_dns_mark_list);
+                tracing::info!("del_dns_marks: {:?}", del_dns_mark_list);
                 landscape_ebpf::map_setting::add_dns_marks(
                     update_dns_mark_list.into_iter().collect(),
                 );
@@ -233,7 +233,7 @@ impl DnsServer {
         drop(cache);
         // 将 mark 写入 mark ebpf map
         if mark.need_add_mark_config() {
-            println!("setting ips: {:?}, Mark: {:?}", update_dns_mark_list, mark);
+            tracing::info!("setting ips: {:?}, Mark: {:?}", update_dns_mark_list, mark);
             // TODO: 如果写入错误 返回错误后 向客户端返回查询错误
             landscape_ebpf::map_setting::add_dns_marks(update_dns_mark_list.into_iter().collect());
         }
@@ -278,7 +278,7 @@ impl RequestHandler for DnsServer {
                             let result = response_handle.send_response(response).await;
                             return match result {
                                 Err(e) => {
-                                    log::error!("Request failed: {}", e);
+                                    tracing::error!("Request failed: {}", e);
                                     serve_failed()
                                 }
                                 Ok(info) => info,
@@ -297,7 +297,7 @@ impl RequestHandler for DnsServer {
             let result = response_handle.send_response(response).await;
             return match result {
                 Err(e) => {
-                    log::error!("Request failed: {}", e);
+                    tracing::error!("Request failed: {}", e);
                     serve_failed()
                 }
                 Ok(info) => info,
@@ -315,7 +315,7 @@ impl RequestHandler for DnsServer {
         let result = response_handle.send_response(response).await;
         match result {
             Err(e) => {
-                log::error!("Request failed: {}", e);
+                tracing::error!("Request failed: {}", e);
                 serve_failed()
             }
             Ok(info) => info,

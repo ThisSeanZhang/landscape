@@ -37,3 +37,6 @@ serde_json = { version = "*" }
 bollard = { workspace = true }
 
 rand = { workspace = true }
+
+# logs
+tracing = { workspace = true }
