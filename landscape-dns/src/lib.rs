@@ -3,17 +3,18 @@ use hickory_server::ServerFuture;
 use landscape_common::args::LAND_HOME_PATH;
 use landscape_common::dns::{DNSRuleConfig, DomainConfig};
 use landscape_common::mark::PacketMark;
+use landscape_common::service::{DefaultServiceStatus, DefaultWatchServiceStatus};
 use landscape_common::GEO_SITE_FILE_NAME;
 use lru::LruCache;
 use multi_rule_dns_server::DnsServer;
 use protos::geo::GeoSiteListOwned;
-use serde::{Serialize, Serializer};
+use serde::Serialize;
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::net::{TcpListener, UdpSocket};
-use tokio::sync::{watch, Mutex};
+use tokio::sync::Mutex;
 
 mod connection;
 pub mod ip_rule;
@@ -23,41 +24,6 @@ pub mod rule;
 
 /// Timeout for TCP connections.
 const TCP_TIMEOUT: Duration = Duration::from_secs(10);
-
-#[derive(Serialize, Debug, PartialEq, Clone)]
-#[serde(tag = "t")]
-#[serde(rename_all = "lowercase")]
-pub enum ServiceStatus {
-    // 启动中
-    Staring,
-    // 正在运行
-    Running,
-    // 正在停止
-    Stopping,
-    // 停止运行
-    Stop { message: Option<String> },
-}
-
-fn serialize_status<S>(
-    sender: &watch::Sender<ServiceStatus>,
-    serializer: S,
-) -> Result<S::Ok, S::Error>
-where
-    S: Serializer,
-{
-    sender.borrow().serialize(serializer)
-}
-
-// fn serialize_rules<S>(
-//     rules: &Arc<RwLock<Vec<DNSRuleConfig>>>,
-//     serializer: S,
-// ) -> Result<S::Ok, S::Error>
-// where
-//     S: Serializer,
-// {
-//     let read_locl = rules.blocking_read();
-//     read_locl.serialize(serializer)
-// }
 
 pub struct CacheDNSItem {
     rdatas: Vec<Record>,
@@ -69,14 +35,12 @@ pub type DNSCache = LruCache<(String, RecordType), Vec<CacheDNSItem>>;
 
 #[derive(Serialize, Debug, Clone)]
 pub struct LandscapeDnsService {
-    #[serde(serialize_with = "serialize_status")]
-    pub status: watch::Sender<ServiceStatus>,
+    pub status: DefaultWatchServiceStatus,
 }
 
 impl LandscapeDnsService {
     pub async fn new() -> Self {
-        let (status, _) = watch::channel(ServiceStatus::Stop { message: None });
-        LandscapeDnsService { status }
+        LandscapeDnsService { status: DefaultWatchServiceStatus::new() }
     }
 
     pub async fn read_geo_site_file(&self) -> HashMap<String, Vec<DomainConfig>> {
@@ -114,7 +78,7 @@ impl LandscapeDnsService {
 
         let status_clone = self.status.clone();
 
-        status_clone.send_replace(ServiceStatus::Staring);
+        status_clone.send_replace(DefaultServiceStatus::Staring);
         // register UDP listeners
         server.register_socket(
             UdpSocket::bind(SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), udp_port))
@@ -132,9 +96,10 @@ impl LandscapeDnsService {
         }
 
         tokio::spawn(async move {
-            status_clone.send_replace(ServiceStatus::Running);
+            status_clone.send_replace(DefaultServiceStatus::Running);
             let mut status_rx = status_clone.subscribe();
-            let state_end_loop = status_rx.wait_for(|status| status == &ServiceStatus::Stopping);
+            let state_end_loop =
+                status_rx.wait_for(|status| status == &DefaultServiceStatus::Stopping);
 
             let trigger_by_ui = tokio::select! {
                 _ = state_end_loop => {
@@ -146,16 +111,17 @@ impl LandscapeDnsService {
                     } else {
                         None
                     };
-                    status_clone.send_replace(ServiceStatus::Stop { message });
+                    status_clone.send_replace(DefaultServiceStatus::Stop { message });
                     false
                 }
             };
 
             if trigger_by_ui {
                 if let Err(e) = server.shutdown_gracefully().await {
-                    status_clone.send_replace(ServiceStatus::Stop { message: Some(e.to_string()) });
+                    status_clone
+                        .send_replace(DefaultServiceStatus::Stop { message: Some(e.to_string()) });
                 } else {
-                    status_clone.send_replace(ServiceStatus::Stop { message: None });
+                    status_clone.send_replace(DefaultServiceStatus::Stop { message: None });
                 }
             }
         });
@@ -163,10 +129,10 @@ impl LandscapeDnsService {
     }
 
     pub fn stop(&self) {
-        let if_need_stop = |state: &mut ServiceStatus| match state {
-            ServiceStatus::Stop { message: _ } => false,
+        let if_need_stop = |state: &mut DefaultServiceStatus| match state {
+            DefaultServiceStatus::Stop { message: _ } => false,
             _ => {
-                *state = ServiceStatus::Stopping;
+                *state = DefaultServiceStatus::Stopping;
                 true
             }
         };
