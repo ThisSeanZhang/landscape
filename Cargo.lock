@@ -1481,7 +1481,6 @@ dependencies = [
  "netlink-packet-core",
  "netlink-packet-route",
  "netlink-sys",
- "nix 0.29.0",
  "pnet",
  "rand",
  "regex",

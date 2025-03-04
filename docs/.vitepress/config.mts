@@ -16,7 +16,7 @@ export default defineConfig({
         text: "介绍",
         items: [
           { text: "简介", link: "/introduction" },
-          { text: "快速体验", link: "/quick" },
+          { text: "快速体验 (只是体验界面)", link: "/quick" },
         ],
       },
       {

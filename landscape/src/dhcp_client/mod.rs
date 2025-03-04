@@ -258,7 +258,7 @@ pub async fn dhcp_client(
                     {
                         Ok(len) => {
                             tracing::debug!("send len: {:?}", len);
-                            tracing::debug!("dhcp fram: {:?}", dhcp_discover);
+                            tracing::debug!("dhcp fram: {:#?}", dhcp_discover);
                         }
                         Err(e) => {
                             tracing::error!("error: {:?}", e);
@@ -292,7 +292,7 @@ pub async fn dhcp_client(
                     {
                         Ok(len) => {
                             tracing::debug!("send len: {:?}", len);
-                            tracing::debug!("dhcp fram: {:?}", dhcp_discover);
+                            tracing::debug!("dhcp fram: {:#?}", dhcp_discover);
                         }
                         Err(e) => {
                             tracing::error!("error: {:?}", e);

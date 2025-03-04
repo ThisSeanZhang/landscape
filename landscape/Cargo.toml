@@ -22,7 +22,6 @@ netlink-packet-core = { workspace = true }
 # async-std = { version = "1.9.0", features = ["attributes"] }
 libc = "*"
 futures = "0.3.11"
-nix = { version = "*", features = ["socket"] }
 ctrlc = { workspace = true }
 
 cidr = { version = "0.2.3" }
