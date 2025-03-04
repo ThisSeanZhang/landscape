@@ -119,13 +119,18 @@ async fn main() -> LdResult<()> {
     }
 
     // need iproute2
-    std::process::Command::new("iptables")
-        .args(["-A", "FORWARD", "-j", "ACCEPT"])
-        .output()
-        .unwrap();
+    if let Err(e) =
+        std::process::Command::new("iptables").args(["-A", "FORWARD", "-j", "ACCEPT"]).output()
+    {
+        println!("iptables cmd exec err: {e:?}");
+    }
 
     // need procps
-    std::process::Command::new("sysctl").args(["-w", "net.ipv4.ip_forward=1"]).output().unwrap();
+    if let Err(e) =
+        std::process::Command::new("sysctl").args(["-w", "net.ipv4.ip_forward=1"]).output()
+    {
+        println!("sysctl cmd exec err: {e:?}");
+    }
 
     let addr = SocketAddr::from((LAND_WEB_ARGS.address, LAND_WEB_ARGS.port));
     let listener = tokio::net::TcpListener::bind(addr).await.unwrap();

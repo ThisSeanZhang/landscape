@@ -67,6 +67,7 @@ pub struct WebCommArgs {
     pub dev: bool,
 
     /// config home path
+    /// By default, "/root/.landscape-router" is used
     #[clap(short, long)]
     pub config_path: Option<PathBuf>,
 
