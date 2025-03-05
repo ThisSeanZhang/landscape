@@ -3,6 +3,7 @@ use pnet::util::Octets;
 use serde::{Deserialize, Serialize};
 
 pub mod dhcp;
+pub mod dhcp_v6;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct UdpEthFrame {

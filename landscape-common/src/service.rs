@@ -29,6 +29,10 @@ impl<T: WatchServiceTrait> WatchService<T> {
     {
         self.0.send_if_modified(function)
     }
+
+    pub async fn changed(&self) -> Result<(), watch::error::RecvError> {
+        self.0.subscribe().changed().await
+    }
 }
 
 impl<T: WatchServiceTrait> Serialize for WatchService<T> {

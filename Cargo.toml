@@ -30,6 +30,8 @@ rand = "0.8.5"
 regex = "*"
 socket2 = "0.5.7"
 
+dhcproto = "0.12.0"
+
 # libbpf
 libbpf-rs = { version = "0.24.8" }
 libbpf-cargo = { version = "0.24.8" }

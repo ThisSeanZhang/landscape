@@ -1,7 +1,7 @@
 use cidr::Ipv4Inet;
 use landscape_common::{
     LANDSCAPE_DEFAULE_LAN_DHCP_RANGE_START, LANDSCAPE_DEFAULE_LAN_DHCP_SERVER_IP,
-    LANDSCAPE_DEFAULT_LAN_DHCP_SERVER_NETMASK,
+    LANDSCAPE_DEFAULT_LAN_DHCP_SERVER_NETMASK, LANDSCAPE_DHCP_DEFAULT_ADDRESS_LEASE_TIME,
 };
 use serde::{Deserialize, Serialize};
 use std::net::Ipv4Addr;
@@ -88,8 +88,7 @@ impl DhcpServerIpv4Config {
         options.push(DhcpOptions::ServerIdentifier(server_ip_addr));
         options.push(DhcpOptions::DomainNameServer(vec![server_ip_addr]));
 
-        // TODO: for debug
-        options.push(DhcpOptions::AddressLeaseTime(40));
+        options.push(DhcpOptions::AddressLeaseTime(LANDSCAPE_DHCP_DEFAULT_ADDRESS_LEASE_TIME));
         options
     }
 }

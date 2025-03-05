@@ -35,3 +35,12 @@ pub const LANDSCAPE_DEFAULT_LAN_NAME: &'static str = "br_lan";
 pub const LANDSCAPE_DEFAULE_LAN_DHCP_SERVER_IP: Ipv4Addr = Ipv4Addr::new(192, 168, 5, 1);
 pub const LANDSCAPE_DEFAULT_LAN_DHCP_SERVER_NETMASK: u8 = 24_u8;
 pub const LANDSCAPE_DEFAULE_LAN_DHCP_RANGE_START: Ipv4Addr = Ipv4Addr::new(192, 168, 5, 100);
+
+pub const LANDSCAPE_DEFAULE_DHCP_V6_CLIENT_PORT: u16 = 546;
+pub const LANDSCAPE_DEFAULE_DHCP_V6_SERVER_PORT: u16 = 547;
+
+#[cfg(debug_assertions)]
+pub const LANDSCAPE_DHCP_DEFAULT_ADDRESS_LEASE_TIME: u32 = 40;
+
+#[cfg(not(debug_assertions))]
+pub const LANDSCAPE_DHCP_DEFAULT_ADDRESS_LEASE_TIME: u32 = 60 * 60 * 2;

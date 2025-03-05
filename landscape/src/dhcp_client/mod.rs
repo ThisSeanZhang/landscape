@@ -16,7 +16,9 @@ use crate::{
     macaddr::MacAddr,
 };
 
-const DEFAULT_TIME_OUT: u64 = 4;
+pub mod v6;
+
+pub const DEFAULT_TIME_OUT: u64 = 4;
 
 #[derive(Clone, Debug)]
 pub enum DhcpState {
@@ -542,6 +544,9 @@ async fn handle_packet(status: &watch::Sender<DhcpState>, (msg, _msg_addr): (Vec
     }
 }
 
+/// 检查超时次数的策略
+/// 比如超过 3 次就退出重发
+/// 或者超过 3 次只是, 退回到某种状态
 struct TimeoutModel {
     limit_check: Box<dyn Fn(u32) -> bool + Send + Sync>,
 }
