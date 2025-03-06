@@ -1,4 +1,4 @@
-use dhcproto::v6::{DhcpOption, DhcpOptions, OptionCode, ORO};
+use dhcproto::v6::{DhcpOption, DhcpOptions, OptionCode, IAPD, ORO};
 
 pub fn get_solicit_options() -> DhcpOptions {
     let mut options = DhcpOptions::new();
@@ -6,9 +6,9 @@ pub fn get_solicit_options() -> DhcpOptions {
         opts: vec![OptionCode::DomainSearchList, OptionCode::IAPrefix],
     };
 
-    // let iapd = IAPD { id: 0, t1: 0, t2: 0, opts: vec![] };
+    let iapd = IAPD { id: 1, t1: 0, t2: 0, opts: DhcpOptions::new() };
     options.insert(DhcpOption::ORO(oro));
-    // options.insert(DhcpOption::IAPD(iapd));
+    options.insert(DhcpOption::IAPD(iapd));
     options.insert(DhcpOption::ReconfAccept);
     options
 }
