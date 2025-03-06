@@ -3,7 +3,7 @@ use hickory_server::ServerFuture;
 use landscape_common::args::LAND_HOME_PATH;
 use landscape_common::dns::{DNSRuleConfig, DomainConfig};
 use landscape_common::mark::PacketMark;
-use landscape_common::service::{DefaultServiceStatus, DefaultWatchServiceStatus};
+use landscape_common::service::{DefaultWatchServiceStatus, ServiceStatus};
 use landscape_common::GEO_SITE_FILE_NAME;
 use lru::LruCache;
 use multi_rule_dns_server::DnsServer;
@@ -78,7 +78,7 @@ impl LandscapeDnsService {
 
         let status_clone = self.status.clone();
 
-        status_clone.send_replace(DefaultServiceStatus::Staring);
+        status_clone.just_change_status(ServiceStatus::Staring);
         // register UDP listeners
         server.register_socket(
             UdpSocket::bind(SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), udp_port))
@@ -96,11 +96,9 @@ impl LandscapeDnsService {
         }
 
         tokio::spawn(async move {
-            status_clone.send_replace(DefaultServiceStatus::Running);
-            let mut status_rx = status_clone.subscribe();
-            let state_end_loop =
-                status_rx.wait_for(|status| status == &DefaultServiceStatus::Stopping);
+            status_clone.just_change_status(ServiceStatus::Running);
 
+            let state_end_loop = status_clone.wait_to_stopping();
             let trigger_by_ui = tokio::select! {
                 _ = state_end_loop => {
                     true
@@ -111,17 +109,19 @@ impl LandscapeDnsService {
                     } else {
                         None
                     };
-                    status_clone.send_replace(DefaultServiceStatus::Stop { message });
+                    tracing::error!("DNS Stop by Error: {message:?}");
+                    status_clone.just_change_status(ServiceStatus::Stop);
                     false
                 }
             };
 
             if trigger_by_ui {
+                tracing::info!("DNS stopping trigger by ui");
                 if let Err(e) = server.shutdown_gracefully().await {
-                    status_clone
-                        .send_replace(DefaultServiceStatus::Stop { message: Some(e.to_string()) });
+                    tracing::error!("{e:?}");
+                    status_clone.just_change_status(ServiceStatus::Stop);
                 } else {
-                    status_clone.send_replace(DefaultServiceStatus::Stop { message: None });
+                    status_clone.just_change_status(ServiceStatus::Stop);
                 }
             }
         });
@@ -129,13 +129,6 @@ impl LandscapeDnsService {
     }
 
     pub fn stop(&self) {
-        let if_need_stop = |state: &mut DefaultServiceStatus| match state {
-            DefaultServiceStatus::Stop { message: _ } => false,
-            _ => {
-                *state = DefaultServiceStatus::Stopping;
-                true
-            }
-        };
-        self.status.send_if_modified(if_need_stop);
+        self.status.just_change_status(ServiceStatus::Stopping);
     }
 }

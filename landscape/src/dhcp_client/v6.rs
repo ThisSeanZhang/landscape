@@ -15,7 +15,7 @@ use tokio::{net::UdpSocket, time::Instant};
 
 use crate::{dump::udp_packet::dhcp_v6::get_solicit_options, macaddr::MacAddr};
 use landscape_common::{
-    service::{DefaultServiceStatus, DefaultWatchServiceStatus},
+    service::{DefaultWatchServiceStatus, ServiceStatus},
     LANDSCAPE_DEFAULE_DHCP_V6_SERVER_PORT,
 };
 
@@ -65,7 +65,7 @@ pub enum IpV6PdState {
     },
 
     ///
-    Release,
+    Release { xid: u32, service_id: Vec<u8> },
     ///
     Decline,
     /// 结束
@@ -92,9 +92,25 @@ impl IpV6PdState {
             IpV6PdState::Renew { xid, .. } => xid.clone(),
             IpV6PdState::WaitToRebind { xid, .. } => xid.clone(),
             IpV6PdState::Rebind { xid, .. } => xid.clone(),
-            IpV6PdState::Release => todo!(),
+            IpV6PdState::Release { xid, .. } => xid.clone(),
             IpV6PdState::Decline => todo!(),
             IpV6PdState::Stop => 0,
+        }
+    }
+
+    pub fn into_release(self) -> Option<Vec<u8>> {
+        match self {
+            IpV6PdState::Solicit { .. } => None,
+            IpV6PdState::Request { service_id, .. }
+            | IpV6PdState::Bound { service_id, .. }
+            | IpV6PdState::Renew { service_id, .. }
+            | IpV6PdState::WaitToRebind { service_id, .. }
+            // TODO: simple exit
+            | IpV6PdState::Rebind { service_id, .. } => Some(service_id),
+            IpV6PdState::Confirm => todo!(),
+            IpV6PdState::Release { .. } => None,
+            IpV6PdState::Decline => None,
+            IpV6PdState::Stop => None,
         }
     }
 }
@@ -152,7 +168,7 @@ pub async fn dhcp_v6_pd_client(
     service_status: DefaultWatchServiceStatus,
 ) {
     let client_id = gen_client_id(mac_addr);
-    service_status.send_replace(DefaultServiceStatus::Staring);
+    service_status.just_change_status(ServiceStatus::Staring);
 
     tracing::info!("DHCP V6 Client Staring");
     landscape_ebpf::map_setting::add_expose_port(client_port);
@@ -208,7 +224,7 @@ pub async fn dhcp_v6_pd_client(
         tracing::info!("DHCP recv client loop");
     });
 
-    service_status.send_replace(DefaultServiceStatus::Running);
+    service_status.just_change_status(ServiceStatus::Running);
     tracing::info!("DHCP V6 Client Running");
 
     // 超时次数
@@ -272,20 +288,33 @@ pub async fn dhcp_v6_pd_client(
                     tracing::error!("get change result error. exit loop");
                     break;
                 }
-                let current_status = &*service_status_subscribe.borrow();
-                match current_status {
-                    DefaultServiceStatus::Stopping | DefaultServiceStatus::Stop {..} => {
-                        tracing::error!("stop exit");
-                        break;
-                    },
-                    _ => {}
+                // let exit =  {
+                //     let current_status = &*service_status_subscribe.borrow();
+                //     match current_status {
+                //         ServiceStatus::Stopping |ServiceStatus::Stop => true,
+                //         _ => false
+                //     }
+                // };
+                if service_status.is_exit() {
+                    if let Some(service_id) = status.into_release() {
+                        let mut send_msg = v6::Message::new(V6MessageType::Release);
+                        send_msg.opts_mut().insert(DhcpOption::ServerId(service_id));
+                        send_msg.opts_mut().insert(DhcpOption::ClientId(client_id));
+                        send_msg.opts_mut().insert(v6::DhcpOption::ElapsedTime(0));
+                        send_data(&send_msg, &send_socket, None).await;
+                    }
+                    service_status.just_change_status(ServiceStatus::Stop);
+                    tracing::info!("release send and stop");
+                    break;
                 }
             }
         }
     }
     tracing::info!("DHCP V6 Client Stop: {:#?}", service_status);
-    // TODO: 检查是不是 Stop
-    service_status.send_replace(DefaultServiceStatus::Stop { message: None });
+
+    if !service_status.is_stop() {
+        service_status.just_change_status(ServiceStatus::Stop);
+    }
 }
 
 /// 处理当前状态应该发送什么数据包
@@ -418,7 +447,7 @@ async fn send_current_status_packet(
 
             send_data(&send_msg, send_socket, None).await;
         }
-        IpV6PdState::Release => todo!(),
+        IpV6PdState::Release { .. } => todo!(),
         IpV6PdState::Decline => todo!(),
         IpV6PdState::Stop => todo!(),
     }
@@ -589,7 +618,7 @@ async fn handle_packet(
             }
             _ => {}
         },
-        IpV6PdState::Release => {}
+        IpV6PdState::Release { .. } => {}
         IpV6PdState::Stop => {}
         _ => {}
     }
