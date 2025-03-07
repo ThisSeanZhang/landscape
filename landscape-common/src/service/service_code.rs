@@ -11,8 +11,6 @@ pub trait Watchable {
 
     fn modify_curent_status(&mut self, status: ServiceStatus);
 
-    fn init() -> Self;
-
     fn change_status(&mut self, new_status: ServiceStatus, data: Option<Self::HoleData>) -> bool;
 }
 
@@ -82,6 +80,7 @@ impl<T: WatchServiceTrait> WatchService<T> {
             .await;
     }
 
+    /// will send `stopping` to service, and wait until stop
     pub async fn wait_stop(&self) {
         wait_status_stop(&self.0).await;
     }

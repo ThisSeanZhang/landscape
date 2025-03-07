@@ -1,11 +1,8 @@
-use std::{collections::HashMap, fmt::Debug, sync::Arc};
+use std::fmt::Debug;
 
 use serde::Serialize;
 
 use service_code::{WatchService, Watchable};
-use tokio::sync::{mpsc, watch, RwLock};
-
-use crate::store::storev2::LandScapeStore;
 
 pub mod service_code;
 pub mod service_manager;
@@ -54,13 +51,10 @@ impl Watchable for DefaultServiceStatus {
         self.0 = status;
     }
 
-    fn init() -> Self {
-        DefaultServiceStatus(ServiceStatus::Staring)
-    }
-
     fn change_status(&mut self, new_status: ServiceStatus, data: Option<()>) -> bool {
         let _ = data;
         if self.0.can_transition_to(&new_status) {
+            tracing::debug!("change to new status: {new_status:?}");
             self.0 = new_status;
         }
         true

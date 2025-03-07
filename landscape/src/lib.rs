@@ -19,7 +19,6 @@ pub mod docker;
 pub mod dump;
 pub mod iface;
 pub mod macaddr;
-pub mod nat;
 pub mod observer;
 pub mod packet_mark;
 pub mod pppd_client;

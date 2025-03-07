@@ -5,11 +5,12 @@ use axum::{
     routing::get,
     Json, Router,
 };
-use landscape::service::{
-    nat_service::{NatServiceConfig, NatServiceManager},
-    WatchServiceStatus,
+use landscape::service::nat_service::{NatService, NatServiceConfig};
+use landscape_common::{
+    observer::IfaceObserverAction,
+    service::{service_manager::ServiceManager, DefaultWatchServiceStatus},
+    store::storev2::StoreFileManager,
 };
-use landscape_common::{observer::IfaceObserverAction, store::storev2::StoreFileManager};
 use serde_json::Value;
 use tokio::sync::{broadcast, Mutex};
 
@@ -17,7 +18,7 @@ use crate::{error::LandscapeApiError, SimpleResult};
 
 #[derive(Clone)]
 struct LandscapeIfaceNatServices {
-    service: NatServiceManager,
+    service: ServiceManager<NatService>,
     store: Arc<Mutex<StoreFileManager<NatServiceConfig>>>,
 }
 
@@ -26,7 +27,7 @@ pub async fn get_iface_nat_paths(
     mut dev_observer: broadcast::Receiver<IfaceObserverAction>,
 ) -> Router {
     let share_state = LandscapeIfaceNatServices {
-        service: NatServiceManager::init(store.list()).await,
+        service: ServiceManager::init(store.list()).await,
         store: Arc::new(Mutex::new(store)),
     };
 
@@ -43,7 +44,7 @@ pub async fn get_iface_nat_paths(
                         continue;
                     };
                     drop(read_lock);
-                    let _ = share_state_copy.service.start_new_service(service_config).await;
+                    let _ = share_state_copy.service.update_service(service_config).await;
                 }
                 IfaceObserverAction::Down(_) => {}
             }
@@ -92,7 +93,7 @@ async fn handle_iface_nat_status(
     let result = SimpleResult { success: true };
 
     // TODO 调用 IfaceIpModelConfig 的 check_iface_status 检查当前的 iface 是否能切换这个状态
-    if let Ok(()) = state.service.start_new_service(service_config.clone()).await {
+    if let Ok(()) = state.service.update_service(service_config.clone()).await {
         let mut write_lock = state.store.lock().await;
         write_lock.set(service_config);
         drop(write_lock);
@@ -113,11 +114,11 @@ async fn delete_and_stop_iface_nat(
     let data = if let Some((iface_status, _)) = write_lock.remove(&iface_name) {
         iface_status
     } else {
-        WatchServiceStatus::default()
+        DefaultWatchServiceStatus::new()
     };
     drop(write_lock);
     // 停止服务
-    data.stop().await;
+    data.wait_stop().await;
     let result = serde_json::to_value(data);
     Json(result.unwrap())
 }
