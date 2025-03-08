@@ -88,7 +88,7 @@ impl DhcpServerIpv4Config {
         options.push(DhcpOptions::ServerIdentifier(server_ip_addr));
         options.push(DhcpOptions::DomainNameServer(vec![server_ip_addr]));
 
-        options.push(DhcpOptions::AddressLeaseTime(LANDSCAPE_DHCP_DEFAULT_ADDRESS_LEASE_TIME));
+        // options.push(DhcpOptions::AddressLeaseTime(LANDSCAPE_DHCP_DEFAULT_ADDRESS_LEASE_TIME));
         options
     }
 }

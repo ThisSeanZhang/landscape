@@ -68,10 +68,6 @@ pub struct WebCommArgs {
     #[arg(short, long, default_value = "true")]
     pub export_manager: bool,
 
-    /// Developer Model
-    #[arg(long, default_value = "false")]
-    pub dev: bool,
-
     /// All Config DIR, Not file Path [default: /root/.landscape-router]
     #[clap(short, long)]
     pub config_dir: Option<PathBuf>,

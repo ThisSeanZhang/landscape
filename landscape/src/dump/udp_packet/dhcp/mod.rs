@@ -115,12 +115,12 @@ impl DhcpOptionFrame {
         None
     }
 
-    pub fn modify_option(&mut self, new_option: DhcpOptions) {
-        for option in self.options.iter_mut() {
-            if new_option.get_index() == option.get_index() {
-                *option = new_option;
-                break;
-            }
+    pub fn update_or_create_option(&mut self, new_option: DhcpOptions) {
+        let new_index = new_option.get_index();
+        if let Some(pos) = self.options.iter().position(|opt| opt.get_index() == new_index) {
+            self.options[pos] = new_option;
+        } else {
+            self.options.push(new_option);
         }
     }
 

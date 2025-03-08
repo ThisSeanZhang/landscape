@@ -274,7 +274,7 @@ pub async fn dhcp_client(
                 DhcpState::Requesting { xid, ciaddr, yiaddr, mut options, .. } => {
                     current_model = &times_ulimit_send;
                     if let Some(DhcpOptions::AddressLeaseTime(time)) = options.has_option(51) {
-                        options.modify_option(DhcpOptions::AddressLeaseTime(time));
+                        options.update_or_create_option(DhcpOptions::AddressLeaseTime(time));
                     }
 
                     // if let Some(DhcpOptions::AddressLeaseTime(time)) = options.has_option(51); {

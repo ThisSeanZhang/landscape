@@ -16,6 +16,7 @@ use crate::{
 
 use cidr::Ipv4Inet;
 use futures::TryStreamExt;
+use landscape_common::LANDSCAPE_DHCP_DEFAULT_ADDRESS_LEASE_TIME;
 use netlink_packet_route::address::AddressAttribute;
 use rtnetlink::{new_connection, Handle};
 use socket2::{Domain, Protocol, Type};
@@ -383,9 +384,6 @@ impl DhcpServerStatus {
             crate::dump::udp_packet::dhcp::get_default_request_list()
         };
         if let DhcpOptions::ParameterRequestList(info_list) = request_params {
-            if !info_list.contains(&51) {
-                options.push(DhcpOptions::AddressLeaseTime(40));
-            }
             for each_index in info_list {
                 if let Some(opt) = self.options_map.get(&each_index) {
                     options.push(opt.clone());
@@ -402,7 +400,12 @@ impl DhcpServerStatus {
                 (DhcpOptionMessageType::Nak, Ipv4Addr::UNSPECIFIED)
             };
 
-        let options = DhcpOptionFrame { message_type, options, end: vec![255] };
+        let mut options = DhcpOptionFrame { message_type, options, end: vec![255] };
+        options.update_or_create_option(DhcpOptions::AddressLeaseTime(
+            LANDSCAPE_DHCP_DEFAULT_ADDRESS_LEASE_TIME,
+        ));
+
+        options.update_or_create_option(DhcpOptions::ServerIdentifier(self.server_ip));
 
         let offer = DhcpEthFrame {
             op: 2,

@@ -81,11 +81,15 @@ pub struct InitConfig {
 pub fn init_ports() {
     // ssh port
     map_setting::add_expose_port(22);
-    if LAND_ARGS.dev {
-        // vite server port
+
+    #[cfg(debug_assertions)]
+    {
         map_setting::add_expose_port(5173);
         map_setting::add_expose_port(5800);
     }
+    #[cfg(not(debug_assertions))]
+    {}
+
     if LAND_ARGS.export_manager {
         map_setting::add_expose_port(LAND_ARGS.port);
     }

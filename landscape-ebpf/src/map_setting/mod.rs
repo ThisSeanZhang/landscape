@@ -65,8 +65,14 @@ pub fn del_wan_ip(ifindex: u32) {
 }
 
 pub fn add_expose_port(port: u16) {
-    let nat_expose_ports =
-        libbpf_rs::MapHandle::from_pinned_path(&MAP_PATHS.nat_expose_ports).unwrap();
+    let nat_expose_ports = match libbpf_rs::MapHandle::from_pinned_path(&MAP_PATHS.nat_expose_ports)
+    {
+        Ok(nat_expose_ports) => nat_expose_ports,
+        Err(e) => {
+            tracing::error!("reuse map nat_expose_ports error: {e:?}");
+            return;
+        }
+    };
 
     let key = port.to_be_bytes();
     if let Err(e) = nat_expose_ports.update(&key, &[0], MapFlags::ANY) {

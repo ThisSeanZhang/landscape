@@ -73,6 +73,25 @@ impl MacAddr {
         sum += ((self.4 as u32) << 24) + (self.5 as u32) << 16;
         sum
     }
+
+    // TODO: Use Result instead
+    pub fn from_str(value: &str) -> Option<MacAddr> {
+        let parts: Vec<&str> = value.split(|c| c == ':' || c == '-').collect();
+        if parts.len() != 6 {
+            return None;
+        }
+
+        let mut bytes = [0u8; 6];
+        for (i, part) in parts.iter().enumerate() {
+            if let Ok(num) = u8::from_str_radix(part, 16) {
+                bytes[i] = num;
+            } else {
+                return None;
+            }
+        }
+
+        Some(MacAddr::new(bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5]))
+    }
 }
 
 impl From<EtherAddr> for MacAddr {
