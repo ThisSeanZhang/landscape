@@ -57,6 +57,7 @@ macro_rules! define_options {
                     #[doc = $desc]
                     $variant($data_type),
                 )*
+                UnknownOption($code_type, Vec<u8>),
             }
 
             // 选项代码
@@ -99,6 +100,7 @@ macro_rules! define_options {
                         $(
                             $name::$variant(_) => [<$name Code>]::$variant,
                         )*
+                        $name::UnknownOption(code, _) => [<$name Code>]::Unknown(*code)
                     }
                 }
             }
@@ -121,12 +123,14 @@ macro_rules! define_options {
                         $(
                             $name::$variant(_) => $code,
                         )*
+                        $name::UnknownOption(code, _) => *code
                     };
 
                     let other_code: $code_type = match other {
                         $(
                             $name::$variant(_) => $code,
                         )*
+                        $name::UnknownOption(code, _) => *code
                     };
 
                     self_code == other_code
@@ -141,12 +145,14 @@ macro_rules! define_options {
                         $(
                             $name::$variant(_) => $code,
                         )*
+                        $name::UnknownOption(code, _) => *code
                     };
 
                     let other_code: $code_type = match other {
                         $(
                             $name::$variant(_) => $code,
                         )*
+                        $name::UnknownOption(code, _) => *code
                     };
 
                     Some(self_code.cmp(&other_code))
@@ -159,12 +165,14 @@ macro_rules! define_options {
                         $(
                             $name::$variant(_) => $code,
                         )*
+                        $name::UnknownOption(code, _) => *code
                     };
 
                     let other_code: $code_type = match other {
                         $(
                             $name::$variant(_) => $code,
                         )*
+                        $name::UnknownOption(code, _) => *code
                     };
 
                     self_code.cmp(&other_code)
@@ -188,6 +196,7 @@ macro_rules! define_options {
                             $(
                                 $name::$variant(_) => $code,
                             )*
+                            $name::UnknownOption(code, _) => *code
                         };
                         let code_val: $code_type = code.into();
                         x_code.cmp(&code_val)
@@ -202,6 +211,7 @@ macro_rules! define_options {
                             $(
                                 $name::$variant(_) => $code,
                             )*
+                            $name::UnknownOption(code, _) => *code
                         };
                         let code_val: $code_type = code.into();
                         x_code.cmp(&code_val)
@@ -216,6 +226,7 @@ macro_rules! define_options {
                             $(
                                 $name::$variant(_) => $code,
                             )*
+                            $name::UnknownOption(code, _) => *code
                         };
                         let code_val: $code_type = code.into();
                         x_code.cmp(&code_val)
@@ -230,6 +241,7 @@ macro_rules! define_options {
                             $(
                                 $name::$variant(_) => $code,
                             )*
+                            $name::UnknownOption(code, _) => *code
                         };
                         let code_val: $code_type = code.into();
                         x_code.cmp(&code_val)
@@ -244,6 +256,7 @@ macro_rules! define_options {
                             $(
                                 $name::$variant(_) => $code,
                             )*
+                            $name::UnknownOption(code, _) => *code
                         };
                         let code_val: $code_type = code.into();
                         x_code.cmp(&code_val)
@@ -261,6 +274,7 @@ macro_rules! define_options {
                             $(
                                 $name::$variant(_) => $code,
                             )*
+                            $name::UnknownOption(code, _) => *code
                         };
                         let code_val: $code_type = code.into();
                         x_code.cmp(&code_val)
@@ -314,7 +328,7 @@ define_options!(IcmpV6Option, u8, u8, {
     {4,   RedirectedHeader, "Redirected Header", Vec<u8>},
     {5,   MTU, "MTU", Vec<u8>},
     {6,   NBMAShortcutLimit, "NBMA Shortcut Limit Option", Vec<u8>},
-    {7,   AdvertisementInterval, "Advertisement Interval Option", Vec<u8>},
+    {7,   AdvertisementInterval, "Advertisement Interval Option - ms \n\n https://www.rfc-editor.org/rfc/rfc6275.html#section-7.3", Vec<u8>},
     {8,   HomeAgentInformation, "Home Agent Information Option", Vec<u8>},
     {9,   SourceAddressList, "Source Address List", Vec<u8>},
     {10,  TargetAddressList, "Target Address List", Vec<u8>},
@@ -355,6 +369,33 @@ define_options!(IcmpV6Option, u8, u8, {
     {253, RFC3692Experiment1, "RFC3692-style Experiment 1", Vec<u8>},
     {254, RFC3692Experiment2, "RFC3692-style Experiment 2", Vec<u8>},
 });
+
+impl dhcproto::Decodable for IcmpV6Options {
+    fn decode(decoder: &mut dhcproto::Decoder<'_>) -> dhcproto::error::DecodeResult<Self> {
+        let mut opts = Vec::new();
+        while let Ok(opt) = IcmpV6Option::decode(decoder) {
+            opts.push(opt);
+        }
+        // sorts by OptionCode
+        opts.sort_unstable();
+        Ok(IcmpV6Options(opts))
+    }
+}
+
+impl dhcproto::Decodable for IcmpV6Option {
+    fn decode(decoder: &mut dhcproto::Decoder<'_>) -> dhcproto::error::DecodeResult<Self> {
+        let code = decoder.read_u8()?.into();
+        let len = decoder.read_u8()? as usize;
+
+        let result = match code {
+            IcmpV6OptionCode::SourceLinkLayerAddress => {
+                IcmpV6Option::SourceAddressList(decoder.read_slice(len)?.to_vec())
+            }
+            code => IcmpV6Option::UnknownOption(code.into(), decoder.read_slice(len)?.to_vec()),
+        };
+        Ok(result)
+    }
+}
 
 #[cfg(test)]
 mod tests {

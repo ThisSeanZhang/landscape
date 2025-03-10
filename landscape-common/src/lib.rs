@@ -3,6 +3,7 @@ use std::net::Ipv4Addr;
 pub mod args;
 pub mod dns;
 pub mod error;
+pub mod global_const;
 pub mod info;
 pub mod ip_mark;
 pub mod mark;
@@ -11,6 +12,7 @@ pub mod service;
 pub mod store;
 pub mod sys_config;
 pub mod util;
+pub mod utils;
 
 /// Config file
 pub const LAND_CONFIG: &'static str = "landscape.toml";

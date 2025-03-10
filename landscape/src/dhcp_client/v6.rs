@@ -15,6 +15,7 @@ use tokio::{net::UdpSocket, time::Instant};
 
 use crate::{dump::udp_packet::dhcp_v6::get_solicit_options, macaddr::MacAddr};
 use landscape_common::{
+    global_const::LD_PD_WATCHES,
     service::{DefaultWatchServiceStatus, ServiceStatus},
     LANDSCAPE_DEFAULE_DHCP_V6_SERVER_PORT,
 };
@@ -167,6 +168,7 @@ pub async fn dhcp_v6_pd_client(
     client_port: u16,
     service_status: DefaultWatchServiceStatus,
 ) {
+    LD_PD_WATCHES.init(&iface_name).await;
     let client_id = gen_client_id(mac_addr);
     service_status.just_change_status(ServiceStatus::Staring);
 
@@ -221,7 +223,7 @@ pub async fn dhcp_v6_pd_client(
             }
         }
 
-        tracing::info!("DHCP recv client loop");
+        tracing::info!("DHCP recv client loop down");
     });
 
     service_status.just_change_status(ServiceStatus::Running);
@@ -272,7 +274,7 @@ pub async fn dhcp_v6_pd_client(
                 // 处理接收到的数据包
                 match message_result {
                     Some(data) => {
-                        let need_reset_time = handle_packet(&client_id, &mut status, data, ).await;
+                        let need_reset_time = handle_packet(&iface_name, &client_id, &mut status, data, ).await;
                         if need_reset_time {
                             timeout_times = get_status_timeout_config(&status, 0, active_send.as_mut());
                             // current_timeout_time = t2;
@@ -497,6 +499,7 @@ fn get_status_timeout_config(
 /// 处理接收到的报文，根据当前状态决定如何处理
 /// 返回值为是否要进行检查刷新超时时间
 async fn handle_packet(
+    iface_name: &str,
     my_client_id: &[u8],
     current_status: &mut IpV6PdState,
     (msg, msg_addr): (Vec<u8>, SocketAddr),
@@ -586,6 +589,7 @@ async fn handle_packet(
 
                 if let Some(v6::DhcpOption::IAPD(iapd)) = new_v6_msg.opts().get(OptionCode::IAPD) {
                     let mut success = true;
+                    let mut ia_prefix = None;
                     for opt in iapd.opts.iter() {
                         match opt {
                             DhcpOption::StatusCode(code) => {
@@ -600,19 +604,39 @@ async fn handle_packet(
                                     );
                                 }
                             }
+                            DhcpOption::IAPrefix(data) => {
+                                ia_prefix = Some(data);
+                            }
                             _ => {}
                         }
                     }
-                    if success {
-                        *current_status = IpV6PdState::Bound {
-                            xid: get_new_ipv6_xid(),
-                            service_id,
-                            iapd: iapd.clone(),
-                            bound_time: Instant::now(),
-                        };
-                        tracing::debug!("current status move to: {:#?}", current_status);
-                        return true;
+                    if let Some(ia_prefix) = ia_prefix {
+                        if success {
+                            *current_status = IpV6PdState::Bound {
+                                xid: get_new_ipv6_xid(),
+                                service_id,
+                                iapd: iapd.clone(),
+                                bound_time: Instant::now(),
+                            };
+                            // setting IA prefix to IAPrefixMap
+                            LD_PD_WATCHES
+                                .insert_or_replace(
+                                    iface_name,
+                                    landscape_common::global_const::LDIAPrefix {
+                                        preferred_lifetime: ia_prefix.preferred_lifetime,
+                                        valid_lifetime: ia_prefix.valid_lifetime,
+                                        prefix_len: ia_prefix.prefix_len,
+                                        prefix_ip: ia_prefix.prefix_ip,
+                                    },
+                                )
+                                .await;
+                            tracing::debug!("current status move to: {:#?}", current_status);
+                            return true;
+                        } else {
+                            tracing::error!("current status error: {:#?}", new_v6_msg);
+                        }
                     } else {
+                        tracing::error!("current msg without ia_prefix: {:#?}", new_v6_msg);
                     }
                 }
             }
