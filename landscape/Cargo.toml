@@ -8,6 +8,7 @@ default-run = "test"
 landscape-ebpf = { path = "../landscape-ebpf" }
 landscape-common = { path = "../landscape-common" }
 
+paste = { workspace = true }
 toml = { workspace = true }
 const_format = { workspace = true }
 rusty_network_manager = "0.5.1"

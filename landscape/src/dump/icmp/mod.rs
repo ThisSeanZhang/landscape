@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+pub mod v6;
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct IcmpEthFrame {
     pub icmp_type: u8,

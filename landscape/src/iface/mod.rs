@@ -6,6 +6,7 @@ use serde::Serialize;
 use crate::dev::LandScapeInterface;
 
 pub mod config;
+pub mod ip;
 
 // 前端渲染拓扑节点
 #[derive(Serialize, Debug, Clone)]

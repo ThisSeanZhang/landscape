@@ -28,7 +28,8 @@ homedir = "0.3.4"
 thiserror = "2"
 rand = "0.8.5"
 regex = "*"
-socket2 = "0.5.7"
+socket2 = "0.5.8"
+paste = "*"
 
 dhcproto = "0.12.0"
 

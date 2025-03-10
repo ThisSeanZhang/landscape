@@ -22,28 +22,32 @@ async fn main() -> Result<(), String> {
         // | RTMGRP_IPV6_ROUTE
         ;
 
-    let addr = SocketAddr::new(0, mgroup_flags);
-    connection.socket_mut().socket_mut().bind(&addr).expect("failed to bind");
+    // let addr = SocketAddr::new(0, mgroup_flags);
+    // connection.socket_mut().socket_mut().bind(&addr).expect("failed to bind");
     tokio::spawn(connection);
 
-    while let Some((message, _)) = messages.next().await {
-        // println!("Route change message - {message:?}");
-        let result = landscape::observer::filter_message_status(message);
-        println!("result - {result:?}");
-        // match message.payload {
-        //     NetlinkPayload::InnerMessage(inner_message) => {
-        //         // 处理 InnerMessage
-        //         println!("Received Inner message: {:?}", inner_message);
-        //     }
-        //     _ => todo!(),
-        // }
-    }
+    // while let Some((message, _)) = messages.next().await {
+    //     // println!("Route change message - {message:?}");
+    //     let result = landscape::observer::filter_message_status(message);
+    //     println!("result - {result:?}");
+    //     // match message.payload {
+    //     //     NetlinkPayload::InnerMessage(inner_message) => {
+    //     //         // 处理 InnerMessage
+    //     //         println!("Received Inner message: {:?}", inner_message);
+    //     //     }
+    //     //     _ => todo!(),
+    //     // }
+    // }
 
+    dump_addresses(&handle, "ens3".to_string()).await;
+
+    dump_addresses(&handle, "ens5".to_string()).await;
+    dump_addresses(&handle, "ens4".to_string()).await;
     // flush_addresses(handle, "veth-host".to_string()).await;
     Ok(())
 }
 
-async fn flush_addresses(handle: Handle, link: String) -> () {
+async fn flush_addresses(handle: &Handle, link: String) -> () {
     let mut links = handle.link().get().match_name(link.clone()).execute();
     if let Some(link) = links.try_next().await.unwrap() {
         // We should have received only one message
@@ -58,5 +62,19 @@ async fn flush_addresses(handle: Handle, link: String) -> () {
     } else {
         eprintln!("link {link} not found");
         ()
+    }
+}
+
+async fn dump_addresses(handle: &Handle, link: String) {
+    println!("dumping address for link \"{link}\"");
+    let mut links = handle.link().get().match_name(link.clone()).execute();
+    if let Some(link) = links.try_next().await.unwrap() {
+        let mut addresses =
+            handle.address().get().set_link_index_filter(link.header.index).execute();
+        while let Some(msg) = addresses.try_next().await.unwrap() {
+            println!("{msg:?}");
+        }
+    } else {
+        eprintln!("link {link} not found");
     }
 }

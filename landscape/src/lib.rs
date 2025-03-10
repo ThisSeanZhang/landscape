@@ -17,6 +17,7 @@ pub mod dhcp_client;
 pub mod dhcp_server;
 pub mod docker;
 pub mod dump;
+pub mod icmp;
 pub mod iface;
 pub mod macaddr;
 pub mod observer;
