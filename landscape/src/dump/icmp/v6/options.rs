@@ -164,6 +164,7 @@ impl From<Icmpv6Type> for u8 {
     }
 }
 
+#[derive(Debug)]
 pub enum Icmpv6Message {
     RouterSolicitation(RouterSolicitation),
     RouterAdvertisement(RouterAdvertisement),
@@ -181,6 +182,19 @@ impl dhcproto::Decodable for Icmpv6Message {
             // Icmpv6Type::RouterAdvertisement => RouterAdvertisement::decode(decoder)?,
             msg_type => Icmpv6Message::Unassigned(msg_type.into(), decoder.buffer().to_vec()),
         })
+    }
+}
+
+impl dhcproto::Encodable for Icmpv6Message {
+    fn encode(&self, e: &mut dhcproto::Encoder<'_>) -> dhcproto::v6::EncodeResult<()> {
+        match self {
+            Icmpv6Message::RouterSolicitation(router_solicitation) => todo!(),
+            Icmpv6Message::RouterAdvertisement(router_advertisement) => {
+                router_advertisement.encode(e)?;
+            }
+            Icmpv6Message::Unassigned(_, items) => todo!(),
+        }
+        Ok(())
     }
 }
 
@@ -223,7 +237,7 @@ impl dhcproto::Decodable for RouterSolicitation {
 #[derive(Debug)]
 pub struct RouterAdvertisement {
     /// 8 位消息类型（RA 的类型值通常为 134）
-    pub msg_type: u8,
+    pub msg_type: Icmpv6Type,
     /// 8 位消息代码（RA 的代码值为 0）
     pub msg_code: u8,
     /// 16 位校验和
@@ -245,6 +259,23 @@ pub struct RouterAdvertisement {
     pub opts: IcmpV6Options,
 }
 
+impl RouterAdvertisement {
+    pub fn new(opts: IcmpV6Options) -> Self {
+        Self {
+            msg_type: Icmpv6Type::RouterAdvertisement,
+            msg_code: 0,
+            checksum: 0,
+            cur_hop_limit: 64,
+            flags: 0xc0,
+            // flags: 0x00,
+            router_lifetime: 1800,
+            reachable_time: 0,
+            retrans_timer: 0,
+            opts,
+        }
+    }
+}
+
 impl dhcproto::Decodable for RouterAdvertisement {
     fn decode(decoder: &mut dhcproto::Decoder<'_>) -> dhcproto::error::DecodeResult<Self> {
         Ok(Self {
@@ -258,5 +289,20 @@ impl dhcproto::Decodable for RouterAdvertisement {
             retrans_timer: decoder.read_u32()?,
             opts: IcmpV6Options::decode(decoder)?,
         })
+    }
+}
+
+impl dhcproto::Encodable for RouterAdvertisement {
+    fn encode(&self, e: &mut dhcproto::Encoder<'_>) -> dhcproto::v6::EncodeResult<()> {
+        e.write_u8(self.msg_type.into())?;
+        e.write_u8(self.msg_code)?;
+        e.write_u16(self.checksum)?;
+        e.write_u8(self.cur_hop_limit)?;
+        e.write_u8(self.flags)?;
+        e.write_u16(self.router_lifetime)?;
+        e.write_u32(self.reachable_time)?;
+        e.write_u32(self.retrans_timer)?;
+        self.opts.encode(e)?;
+        Ok(())
     }
 }

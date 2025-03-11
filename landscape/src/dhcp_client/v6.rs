@@ -598,7 +598,7 @@ async fn handle_packet(
                                 } else {
                                     success = false;
                                     tracing::error!(
-                                        "cueernt_status {:#?}, replay error: {:?}",
+                                        "current_status {:#?}, replay error: {:?}",
                                         current_status,
                                         new_v6_msg
                                     );

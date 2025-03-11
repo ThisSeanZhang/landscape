@@ -1,4 +1,7 @@
+use std::net::Ipv6Addr;
+
 use paste::paste;
+use serde::{Deserialize, Serialize};
 
 /// 二分查找第一个匹配条件的元素的索引
 fn first<T, F>(slice: &[T], mut compare: F) -> Option<usize>
@@ -324,11 +327,11 @@ macro_rules! define_options {
 define_options!(IcmpV6Option, u8, u8, {
     {1,   SourceLinkLayerAddress, "Source Link-layer Address", Vec<u8>},
     {2,   TargetLinkLayerAddress, "Target Link-layer Address", Vec<u8>},
-    {3,   PrefixInformation, "Prefix Information", Vec<u8>},
+    {3,   PrefixInformation, "Prefix Information", PrefixInformation},
     {4,   RedirectedHeader, "Redirected Header", Vec<u8>},
-    {5,   MTU, "MTU", Vec<u8>},
+    {5,   MTU, "MTU", u32},
     {6,   NBMAShortcutLimit, "NBMA Shortcut Limit Option", Vec<u8>},
-    {7,   AdvertisementInterval, "Advertisement Interval Option - ms \n\n https://www.rfc-editor.org/rfc/rfc6275.html#section-7.3", Vec<u8>},
+    {7,   AdvertisementInterval, "Advertisement Interval Option - ms \n\n https://www.rfc-editor.org/rfc/rfc6275.html#section-7.3", u32},
     {8,   HomeAgentInformation, "Home Agent Information Option", Vec<u8>},
     {9,   SourceAddressList, "Source Address List", Vec<u8>},
     {10,  TargetAddressList, "Target Address List", Vec<u8>},
@@ -344,8 +347,8 @@ define_options!(IcmpV6Option, u8, u8, {
     {20,  NeighborAdvertisementAcknowledgment, "Neighbor Advertisement Acknowledgment Option", Vec<u8>},
     {21,  PvDIDRouterAdvertisement, "PvD ID Router Advertisement Option", Vec<u8>},
     {23,  MAP, "MAP Option", Vec<u8>},
-    {24,  RouteInformation, "Route Information Option", Vec<u8>},
-    {25,  RecursiveDNSServer, "Recursive DNS Server Option", Vec<u8>},
+    {24,  RouteInformation, "Route Information Option", RouteInformation},
+    {25,  RecursiveDNSServer, "Recursive DNS Server Option", (u32, Ipv6Addr)},
     {26,  RAFlagsExtension, "RA Flags Extension Option", Vec<u8>},
     {27,  HandoverKeyRequest, "Handover Key Request Option", Vec<u8>},
     {28,  HandoverKeyReply, "Handover Key Reply Option", Vec<u8>},
@@ -382,6 +385,12 @@ impl dhcproto::Decodable for IcmpV6Options {
     }
 }
 
+impl dhcproto::Encodable for IcmpV6Options {
+    fn encode(&self, e: &mut dhcproto::Encoder<'_>) -> dhcproto::v6::EncodeResult<()> {
+        self.0.iter().try_for_each(|opt| opt.encode(e))
+    }
+}
+
 impl dhcproto::Decodable for IcmpV6Option {
     fn decode(decoder: &mut dhcproto::Decoder<'_>) -> dhcproto::error::DecodeResult<Self> {
         let code = decoder.read_u8()?.into();
@@ -394,6 +403,179 @@ impl dhcproto::Decodable for IcmpV6Option {
             code => IcmpV6Option::UnknownOption(code.into(), decoder.read_slice(len)?.to_vec()),
         };
         Ok(result)
+    }
+}
+
+impl dhcproto::Encodable for IcmpV6Option {
+    fn encode(&self, e: &mut dhcproto::Encoder<'_>) -> dhcproto::v6::EncodeResult<()> {
+        let code: IcmpV6OptionCode = self.into();
+        e.write_u8(code.into())?;
+        match self {
+            IcmpV6Option::SourceAddressList(data) | IcmpV6Option::SourceLinkLayerAddress(data) => {
+                let len = ((data.len() as u8) + 2) / 8;
+                e.write_u8(len)?;
+                e.write_slice(data)?;
+            }
+            IcmpV6Option::TargetLinkLayerAddress(items) => todo!(),
+            IcmpV6Option::PrefixInformation(items) => {
+                let mut buf = Vec::new();
+                let mut item_enc = dhcproto::Encoder::new(&mut buf);
+                items.encode(&mut item_enc)?;
+                let len = ((buf.len() as u8) + 2) / 8;
+                e.write_u8(len)?;
+                e.write_slice(&buf)?;
+            }
+            IcmpV6Option::RedirectedHeader(items) => todo!(),
+            IcmpV6Option::MTU(mtu) => {
+                e.write_u8(1)?;
+                e.write_u16(0)?;
+                e.write_u32(*mtu)?;
+            }
+            IcmpV6Option::NBMAShortcutLimit(items) => todo!(),
+            IcmpV6Option::AdvertisementInterval(interval) => {
+                e.write_u8(1)?;
+                e.write_u16(0)?;
+                e.write_u32(*interval)?;
+            }
+            IcmpV6Option::HomeAgentInformation(items) => todo!(),
+            IcmpV6Option::TargetAddressList(items) => todo!(),
+            IcmpV6Option::CGAOption(items) => todo!(),
+            IcmpV6Option::RSASignature(items) => todo!(),
+            IcmpV6Option::Timestamp(items) => todo!(),
+            IcmpV6Option::Nonce(items) => todo!(),
+            IcmpV6Option::TrustAnchor(items) => todo!(),
+            IcmpV6Option::Certificate(items) => todo!(),
+            IcmpV6Option::IPAddressPrefix(items) => todo!(),
+            IcmpV6Option::NewRouterPrefixInformation(items) => todo!(),
+            IcmpV6Option::LinkLayerAddress(items) => todo!(),
+            IcmpV6Option::NeighborAdvertisementAcknowledgment(items) => todo!(),
+            IcmpV6Option::PvDIDRouterAdvertisement(items) => todo!(),
+            IcmpV6Option::MAP(items) => todo!(),
+            IcmpV6Option::RouteInformation(items) => {
+                let mut buf = Vec::new();
+                let mut item_enc = dhcproto::Encoder::new(&mut buf);
+                items.encode(&mut item_enc)?;
+                let len = ((buf.len() as u8) + 2) / 8;
+                e.write_u8(len)?;
+                e.write_slice(&buf)?;
+            }
+            IcmpV6Option::RecursiveDNSServer((lifetime, ip)) => {
+                e.write_u8(3)?;
+                e.write_u16(0)?;
+                e.write_u32(*lifetime)?;
+                e.write_slice(&ip.octets())?;
+            }
+            IcmpV6Option::RAFlagsExtension(items) => todo!(),
+            IcmpV6Option::HandoverKeyRequest(items) => todo!(),
+            IcmpV6Option::HandoverKeyReply(items) => todo!(),
+            IcmpV6Option::HandoverAssistInformation(items) => todo!(),
+            IcmpV6Option::MobileNodeIdentifier(items) => todo!(),
+            IcmpV6Option::DNSSearchList(items) => todo!(),
+            IcmpV6Option::ProxySignature(items) => todo!(),
+            IcmpV6Option::AddressRegistration(items) => todo!(),
+            IcmpV6Option::LowPANContext(items) => todo!(),
+            IcmpV6Option::AuthoritativeBorderRouter(items) => todo!(),
+            IcmpV6Option::LowPANCapabilityIndication(items) => todo!(),
+            IcmpV6Option::DHCPCaptivePortal(items) => todo!(),
+            IcmpV6Option::PREF64(items) => todo!(),
+            IcmpV6Option::CryptoIDParameters(items) => todo!(),
+            IcmpV6Option::NDPSignature(items) => todo!(),
+            IcmpV6Option::ResourceDirectoryAddress(items) => todo!(),
+            IcmpV6Option::ConsistentUptime(items) => todo!(),
+            IcmpV6Option::CARDRequest(items) => todo!(),
+            IcmpV6Option::CARDReply(items) => todo!(),
+            IcmpV6Option::EncryptedDNS(items) => todo!(),
+            IcmpV6Option::RFC3692Experiment1(items) => todo!(),
+            IcmpV6Option::RFC3692Experiment2(items) => todo!(),
+            IcmpV6Option::UnknownOption(_, data) => {
+                e.write_u8(data.len() as u8)?;
+                e.write_slice(data)?;
+            }
+        }
+        Ok(())
+    }
+}
+
+/// https://www.rfc-editor.org/rfc/rfc4861.html#section-4.6.2
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PrefixInformation {
+    /// 前缀长度（有效前导位数，范围 0 ~ 128）
+    pub prefix_length: u8,
+    /// 标志字段：最高位为 L（on-link 标志），次高位为 A（autonomous 标志），其余6位保留，发送时应置 0，接收时忽略。
+    pub flags: u8,
+    /// 有效生存期（单位：秒），0xffffffff 表示无限期
+    pub valid_lifetime: u32,
+    /// 首选生存期（单位：秒），0xffffffff 表示无限期；注意其值不能超过 valid_lifetime
+    pub preferred_lifetime: u32,
+    /// 保留字段，发送时置 0，接收时忽略
+    pub reserved2: u32,
+    /// IPv6 前缀地址，后面(不在 prefix_length 指定范围内)的位必须置 0
+    pub prefix: Ipv6Addr,
+}
+
+impl PrefixInformation {
+    pub fn new(
+        prefix_length: u8,
+        valid_lifetime: u32,
+        preferred_lifetime: u32,
+        prefix: Ipv6Addr,
+    ) -> Self {
+        PrefixInformation {
+            prefix_length,
+            flags: 0xc0,
+            valid_lifetime,
+            preferred_lifetime,
+            reserved2: 0,
+            prefix,
+        }
+    }
+}
+
+impl dhcproto::Encodable for PrefixInformation {
+    fn encode(&self, e: &mut dhcproto::Encoder<'_>) -> dhcproto::v6::EncodeResult<()> {
+        e.write_u8(self.prefix_length)?;
+        e.write_u8(self.flags)?;
+        e.write_u32(self.valid_lifetime)?;
+        e.write_u32(self.preferred_lifetime)?;
+        e.write_u32(self.reserved2)?;
+        e.write_slice(&self.prefix.octets())?;
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RouteInformation {
+    /// 前缀中有效位数，范围 0～128
+    pub prefix_length: u8,
+    /// 8 位字段，其中：
+    /// - 高 3 位：保留，发送方置零，接收方忽略
+    /// - 中间 2 位：路由偏好（prf），为 2 位有符号整数（取值范围：-2 ~ 1）
+    /// - 低 3 位：保留，发送方置零，接收方忽略
+    pub flags: u8,
+    /// 路由生存时间（秒），0xffffffff 表示无限期
+    pub route_lifetime: u32,
+    /// 前缀字段，实际有效长度由 `length` 决定（可能为 0、8 或 16 字节）
+    pub prefix: Ipv6Addr,
+}
+
+impl RouteInformation {
+    pub fn new(prefix_length: u8, prefix: Ipv6Addr) -> Self {
+        RouteInformation {
+            prefix_length,
+            flags: 0,
+            route_lifetime: 1800,
+            prefix,
+        }
+    }
+}
+
+impl dhcproto::Encodable for RouteInformation {
+    fn encode(&self, e: &mut dhcproto::Encoder<'_>) -> dhcproto::v6::EncodeResult<()> {
+        e.write_u8(self.prefix_length)?;
+        e.write_u8(self.flags)?;
+        e.write_u32(self.route_lifetime)?;
+        e.write_slice(&self.prefix.octets())?;
+        Ok(())
     }
 }
 

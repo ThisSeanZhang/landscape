@@ -7,7 +7,9 @@ pub static LD_PD_WATCHES: Lazy<IAPrefixMap> = Lazy::new(|| IAPrefixMap::new());
 
 #[derive(Debug, Clone)]
 pub struct LDIAPrefix {
+    /// unit: s
     pub preferred_lifetime: u32,
+    /// unit: s
     pub valid_lifetime: u32,
     pub prefix_len: u8,
     pub prefix_ip: Ipv6Addr,
