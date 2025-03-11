@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref } from "vue";
+import { onMounted, onUnmounted, ref } from "vue";
 
 import { CountdownInst, CountdownProps } from "naive-ui";
 import { SpinnerIos20Regular } from "@vicons/fluent";
@@ -18,6 +18,11 @@ onMounted(() => {
   });
   fetchIntervalStore.IMMEDIATELY_EXECUTE();
 });
+
+onUnmounted(() => {
+  fetchIntervalStore.destroy();
+});
+
 const renderCountdown: CountdownProps["render"] = ({
   hours,
   minutes,

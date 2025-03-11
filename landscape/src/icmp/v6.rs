@@ -33,6 +33,7 @@ pub async fn icmp_ra_server(
     subnet_index: u128,
     mac_addr: MacAddr,
     iface_name: String,
+    depend_iface: String,
     service_status: DefaultWatchServiceStatus,
 ) -> LdResult<()> {
     // TODO: ip link set ens5 addrgenmode none
@@ -122,7 +123,7 @@ pub async fn icmp_ra_server(
     });
 
     service_status.just_change_status(ServiceStatus::Running);
-    let mut ia_config_watch = LD_PD_WATCHES.get_ia_prefix(&iface_name).await;
+    let mut ia_config_watch = LD_PD_WATCHES.get_ia_prefix(&depend_iface).await;
 
     let mut advertised_ip: HashSet<Ipv6Addr> = HashSet::new();
     let mut current_config_info: Option<ICMPv6ConfigInfo> = None;
@@ -137,7 +138,7 @@ pub async fn icmp_ra_server(
         );
     }
     tracing::info!("ICMP v6 RA Server Running");
-    let mut interval = tokio::time::interval(Duration::from_secs(10));
+    let mut interval = tokio::time::interval(Duration::from_secs(500));
 
     loop {
         let mut service_status_subscribe = service_status.subscribe();
@@ -174,6 +175,7 @@ pub async fn icmp_ra_server(
             },
             // IA_PREFIX change
             change_result = ia_config_watch.changed() => {
+                tracing::info!("IA_PREFIX update");
                 if let Err(_) = change_result {
                     tracing::error!("get change result error. exit loop");
                     break;

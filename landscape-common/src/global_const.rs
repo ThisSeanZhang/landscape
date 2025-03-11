@@ -38,7 +38,7 @@ impl IAPrefixMap {
     pub async fn clean(&self, iface_name: &str) {
         let infos = self.infos.read().await;
         if let Some(sender) = infos.get(iface_name) {
-            let _ = sender.send(None);
+            let _ = sender.send_replace(None);
         }
     }
 
@@ -46,9 +46,11 @@ impl IAPrefixMap {
     pub async fn insert_or_replace(&self, iface_name: &str, ia_prefix: LDIAPrefix) {
         let mut infos = self.infos.write().await;
         if let Some(sender) = infos.get(iface_name) {
+            tracing::debug!("replace new ia_prefix: {:#?}", ia_prefix);
             // 通过 send 更新 channel 中的值
-            let _ = sender.send(Some(ia_prefix));
+            let _ = sender.send_replace(Some(ia_prefix));
         } else {
+            tracing::debug!("insert new ia_prefix: {:#?}", ia_prefix);
             // 如果还没有为该接口创建 channel，则创建一个新的，并设置初始值
             let (tx, _rx) = watch::channel(Some(ia_prefix));
             infos.insert(iface_name.to_string(), tx);
@@ -59,8 +61,10 @@ impl IAPrefixMap {
     pub async fn get_ia_prefix(&self, iface_name: &str) -> watch::Receiver<Option<LDIAPrefix>> {
         let mut infos = self.infos.write().await;
         if let Some(sender) = infos.get(iface_name) {
+            tracing::debug!("reuse a sender: {:?}", iface_name);
             sender.subscribe()
         } else {
+            tracing::debug!("create a new sender: {:?}", iface_name);
             // 如果没有找到，则先创建一个 channel，然后返回其 receiver
             let (tx, rx) = watch::channel(None);
             infos.insert(iface_name.to_string(), tx);

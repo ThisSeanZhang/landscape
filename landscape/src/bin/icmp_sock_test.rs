@@ -16,6 +16,9 @@ use tracing::Level;
 
 #[derive(Parser, Debug, Clone)]
 pub struct Args {
+    #[arg(short, long, default_value = "veth0")]
+    pub depend_iface: String,
+
     #[arg(short, long, default_value = "ens5")]
     pub iface_name: String,
 }
@@ -34,7 +37,7 @@ async fn main() {
 
     LD_PD_WATCHES
         .insert_or_replace(
-            &args.iface_name,
+            &args.depend_iface,
             LDIAPrefix {
                 preferred_lifetime: 60 * 60 * 24 * 1,
                 valid_lifetime: 60 * 60 * 24 * 2,
@@ -57,7 +60,7 @@ async fn main() {
     tokio::spawn(async move {
         if let Some(iface) = get_iface_by_name(&args.iface_name).await {
             if let Some(mac) = iface.mac {
-                icmp_ra_server(64, 1, mac, iface.name, status).await.unwrap();
+                icmp_ra_server(64, 1, mac, iface.name, args.depend_iface, status).await.unwrap();
             }
         }
     });

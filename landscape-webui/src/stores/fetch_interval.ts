@@ -51,8 +51,12 @@ export const useFetchIntervalStore = defineStore("fetch_interval", () => {
 
   const start_count_down_callback = ref<any>();
 
-  // set_interval();
   function set_interval() {
+    // 如果已经存在计时器，先清理掉
+    if (interval_timer.value !== undefined) {
+      clean_interval();
+    }
+    // 立即执行一次函数，然后设置新的计时器
     interval_function();
     interval_timer.value = setInterval(interval_function, interval_time.value);
   }
@@ -70,7 +74,7 @@ export const useFetchIntervalStore = defineStore("fetch_interval", () => {
     }
   });
 
-  document.addEventListener("visibilitychange", () => {
+  const visibilityChangeHandler = () => {
     if (document.hidden) {
       if (interval_timer.value != undefined) {
         clean_interval();
@@ -80,10 +84,16 @@ export const useFetchIntervalStore = defineStore("fetch_interval", () => {
         set_interval();
       }
     }
-  });
+  };
+
+  function destroy() {
+    clean_interval();
+    document.removeEventListener("visibilitychange", visibilityChangeHandler);
+  }
+
+  document.addEventListener("visibilitychange", visibilityChangeHandler);
 
   function IMMEDIATELY_EXECUTE() {
-    clean_interval();
     set_interval();
     enable_interval.value = true;
   }
@@ -97,5 +107,6 @@ export const useFetchIntervalStore = defineStore("fetch_interval", () => {
     error_message,
     IMMEDIATELY_EXECUTE,
     SETTING_CALLBACK,
+    destroy,
   };
 });
