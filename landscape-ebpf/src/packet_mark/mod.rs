@@ -1,6 +1,6 @@
 use std::mem::MaybeUninit;
 
-use firewall::*;
+use landscape_mark::*;
 use libbpf_rs::{
     skel::{OpenSkel, SkelBuilder},
     TC_EGRESS, TC_INGRESS,
@@ -8,11 +8,9 @@ use libbpf_rs::{
 
 use tokio::sync::oneshot;
 
-use crate::{
-    landscape::TcHookProxy, FIREWALL_EGRESS_PRIORITY, FIREWALL_INGRESS_PRIORITY, MAP_PATHS,
-};
+use crate::{landscape::TcHookProxy, MAP_PATHS, MARK_EGRESS_PRIORITY, MARK_INGRESS_PRIORITY};
 
-mod firewall {
+mod landscape_mark {
     include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/packet_mark.skel.rs"));
 }
 
@@ -57,9 +55,9 @@ pub fn init_packet_mark(ifindex: i32, has_mac: bool, service_status: oneshot::Re
     let nat_ingress = landscape_skel.progs.ingress_packet_mark;
 
     let mut nat_egress_hook =
-        TcHookProxy::new(&nat_egress, ifindex, TC_EGRESS, FIREWALL_EGRESS_PRIORITY);
+        TcHookProxy::new(&nat_egress, ifindex, TC_EGRESS, MARK_EGRESS_PRIORITY);
     let mut nat_ingress_hook =
-        TcHookProxy::new(&nat_ingress, ifindex, TC_INGRESS, FIREWALL_INGRESS_PRIORITY);
+        TcHookProxy::new(&nat_ingress, ifindex, TC_INGRESS, MARK_INGRESS_PRIORITY);
 
     nat_egress_hook.attach();
     nat_ingress_hook.attach();

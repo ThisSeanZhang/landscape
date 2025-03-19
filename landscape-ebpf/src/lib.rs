@@ -3,6 +3,8 @@ use std::path::PathBuf;
 use landscape_common::args::LAND_ARGS;
 use once_cell::sync::Lazy;
 
+pub mod bpf_error;
+pub mod firewall;
 pub mod landscape;
 pub mod map_setting;
 pub mod nat;
@@ -55,13 +57,15 @@ pub(crate) struct LandscapeMapPath {
 // pppoe -> Fire wall -> nat
 const PPPOE_INGRESS_PRIORITY: u32 = 1;
 const FIREWALL_INGRESS_PRIORITY: u32 = 2;
-const NAT_INGRESS_PRIORITY: u32 = 3;
+const MARK_INGRESS_PRIORITY: u32 = 3;
+const NAT_INGRESS_PRIORITY: u32 = 4;
 
 // Fire wall -> nat -> pppoe
 // const PPPOE_MTU_FILTER_EGRESS_PRIORITY: u32 = 1;
-const FIREWALL_EGRESS_PRIORITY: u32 = 2;
+const MARK_EGRESS_PRIORITY: u32 = 2;
 const NAT_EGRESS_PRIORITY: u32 = 3;
-const PPPOE_EGRESS_PRIORITY: u32 = 4;
+const FIREWALL_EGRESS_PRIORITY: u32 = 4;
+const PPPOE_EGRESS_PRIORITY: u32 = 5;
 pub fn init_ebpf() {
     std::thread::spawn(|| {
         landscape::test();

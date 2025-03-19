@@ -30,6 +30,7 @@ rand = "0.8.5"
 regex = "*"
 socket2 = "0.5.8"
 paste = "*"
+# self_cell = "*"
 
 dhcproto = "0.12.0"
 

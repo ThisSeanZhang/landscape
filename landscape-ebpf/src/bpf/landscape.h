@@ -1,3 +1,5 @@
+#ifndef __LD_LANDSCAPE_H__
+#define __LD_LANDSCAPE_H__
 #include "vmlinux.h"
 #include "landscape_log.h"
 
@@ -15,6 +17,9 @@
 #define ETH_IPV4 bpf_htons(0x0800) /* ETH IPV4 packet */
 #define ETH_IPV6 bpf_htons(0x86DD) /* ETH IPv6 packet */
 #define ETH_ARP bpf_htons(0x0806)  /* ETH ARP packet */
+
+// L4 proto number
+#define IPPROTO_ICMPV6 58
 
 #define OK_MARK 0
 #define DIRECT_MARK 1
@@ -52,3 +57,5 @@ static __always_inline int _validate_read(struct __sk_buff *skb, void **hdr_, u3
 }
 
 #define VALIDATE_READ_DATA(skb, hdr, off, len) (_validate_read(skb, (void **)hdr, off, len))
+
+#endif /* __LD_LANDSCAPE_H__ */

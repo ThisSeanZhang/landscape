@@ -1615,8 +1615,11 @@ dependencies = [
  "pnet",
  "serde",
  "socket2",
+ "thiserror 2.0.9",
  "tokio",
  "tracing",
+ "tracing-appender",
+ "tracing-subscriber",
  "vmlinux",
 ]
 

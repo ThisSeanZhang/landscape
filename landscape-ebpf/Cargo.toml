@@ -5,12 +5,15 @@ edition.workspace = true
 
 [dependencies]
 landscape-common = { path = "../landscape-common" }
+
+thiserror = { workspace = true }
 libbpf-rs = { workspace = true }
 clap = { workspace = true }
 libc = { workspace = true }
 ctrlc = { workspace = true }
 pnet = { workspace = true }
 once_cell = { workspace = true }
+# self_cell = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
 nix = { version = "0.28", default-features = false, features = [
     "net",
@@ -21,7 +24,12 @@ nix = { version = "0.28", default-features = false, features = [
 socket2 = { workspace = true }
 serde = { workspace = true }
 plain = "0.2"
+
+# logs
 tracing = { workspace = true }
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
+tracing-appender = { workspace = true }
+
 
 [build-dependencies]
 libbpf-cargo = { workspace = true }
