@@ -58,4 +58,18 @@ static __always_inline int _validate_read(struct __sk_buff *skb, void **hdr_, u3
 
 #define VALIDATE_READ_DATA(skb, hdr, off, len) (_validate_read(skb, (void **)hdr, off, len))
 
+struct ipv4_lpm_key {
+    __u32 prefixlen;
+    __be32 addr;
+};
+
+struct ipv6_lpm_key {
+    __u32 prefixlen;
+    struct in6_addr addr;
+};
+
+struct ipv4_mark_action {
+    __u32 mark;
+};
+
 #endif /* __LD_LANDSCAPE_H__ */

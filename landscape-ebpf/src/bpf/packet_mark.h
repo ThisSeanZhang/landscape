@@ -1,19 +1,6 @@
 #include "vmlinux.h"
-#include "landscape_log.h"
-
-struct ipv4_lpm_key {
-    __u32 prefixlen;
-    __be32 addr;
-};
-
-//
-struct ipv4_block_action {
-    __u32 value;
-};
-
-struct ipv4_mark_action {
-    __u32 mark;
-};
+#include <bpf/bpf_helpers.h>
+#include "landscape.h"
 
 // DNS (目前) 或者 其他程序 可控制的 map,
 // 其中的记录会变化

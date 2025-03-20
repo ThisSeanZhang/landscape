@@ -7,6 +7,7 @@
 
 #include "landscape.h"
 #include "firewall.h"
+#include "firewall_share.h"
 
 char LICENSE[] SEC("license") = "Dual BSD/GPL";
 
@@ -44,14 +45,6 @@ struct {
     __type(value, struct fragment_cache_value);
     __uint(max_entries, FRAG_CACHE_SIZE);
 } fragment_cache SEC(".maps");
-
-#define COPY_ADDR_FROM(t, s) (__builtin_memcpy((t), (s), sizeof(t)))
-
-static __always_inline bool ipv6_addr_equal(const union u_inet_addr *a,
-                                            const union u_inet_addr *b) {
-    return a->all[0] == b->all[0] && a->all[1] == b->all[1] && a->all[2] == b->all[2] &&
-           a->all[3] == b->all[3];
-}
 
 static __always_inline int icmp_msg_type(struct icmphdr *icmph);
 static __always_inline bool is_icmp_error_pkt(const struct packet_context *pkt) {
@@ -410,12 +403,11 @@ delete_timer:
 #undef BPF_LOG_TOPIC
 }
 
-static __always_inline int
-lookup_static_conntrack(struct firewall_conntrack_key *timer_key,
-                        struct firewall_static_ct_action **timer_value_) {
-#define BPF_LOG_TOPIC "lookup_static_conntrack"
+static __always_inline int lookup_static_rules(struct firewall_static_rule_key *timer_key,
+                                               struct firewall_static_ct_action **timer_value_) {
+#define BPF_LOG_TOPIC "lookup_static_rules"
     struct nat_mapping_value *action;
-    action = bpf_map_lookup_elem(&firewall_static_ct_map, timer_key);
+    action = bpf_map_lookup_elem(&firewall_allow_rules_map, timer_key);
     if (action) {
         *timer_value_ = action;
         return TC_ACT_OK;
@@ -519,6 +511,7 @@ static __always_inline int extract_v4_packet_info(struct __sk_buff *skb,
         if (VALIDATE_READ_DATA(skb, &icmph, pcxt->l4_payload_offset, sizeof(struct icmphdr))) {
             return TC_ACT_SHOT;
         }
+        pcxt->ip_hdr.icmp_type = icmph->type;
         switch (icmp_msg_type(icmph)) {
         case ICMP_ERROR_MSG: {
             struct ip_context icmp_error_ip_ctx = {0};
@@ -542,8 +535,8 @@ static __always_inline int extract_v4_packet_info(struct __sk_buff *skb,
                           bpf_ntohs(icmp_error_ip_ctx.pair_ip.src_port),
                           bpf_ntohs(icmp_error_ip_ctx.pair_ip.dst_port));
 
-            if (!ipv6_addr_equal(&pcxt->ip_hdr.pair_ip.dst_addr,
-                                 &icmp_error_ip_ctx.pair_ip.src_addr)) {
+            if (!ip_addr_equal(&pcxt->ip_hdr.pair_ip.dst_addr,
+                               &icmp_error_ip_ctx.pair_ip.src_addr)) {
                 bpf_log_error("IP destination address does not match source "
                               "address inside ICMP error message");
                 return TC_ACT_SHOT;
@@ -632,6 +625,7 @@ static __always_inline int extract_v6_packet_info(struct __sk_buff *skb,
         if (VALIDATE_READ_DATA(skb, &icmph, pcxt->l4_payload_offset, sizeof(struct icmphdr))) {
             return TC_ACT_SHOT;
         }
+        pcxt->ip_hdr.icmp_type = icmph->type;
         switch (icmp6_msg_type(icmph)) {
         case ICMP_ERROR_MSG: {
             struct ip_context icmp_error_ip_ctx = {0};
@@ -655,8 +649,8 @@ static __always_inline int extract_v6_packet_info(struct __sk_buff *skb,
                           bpf_ntohs(icmp_error_ip_ctx.pair_ip.src_port),
                           bpf_ntohs(icmp_error_ip_ctx.pair_ip.dst_port));
 
-            if (!ipv6_addr_equal(&pcxt->ip_hdr.pair_ip.dst_addr,
-                                 &icmp_error_ip_ctx.pair_ip.src_addr)) {
+            if (!ip_addr_equal(&pcxt->ip_hdr.pair_ip.dst_addr,
+                               &icmp_error_ip_ctx.pair_ip.src_addr)) {
                 bpf_log_error("IP destination address does not match source "
                               "address inside ICMP error message");
                 return TC_ACT_SHOT;
@@ -671,7 +665,7 @@ static __always_inline int extract_v6_packet_info(struct __sk_buff *skb,
         case ICMP_QUERY_MSG: {
             pcxt->ip_hdr.pair_ip.src_port = pcxt->ip_hdr.pair_ip.dst_port =
                 get_icmpx_query_id(icmph);
-                bpf_log_info("ICMP query, id:%d", bpf_ntohs(pcxt->ip_hdr.pair_ip.src_port));
+            bpf_log_info("ICMP query, id:%d", bpf_ntohs(pcxt->ip_hdr.pair_ip.src_port));
             break;
         }
         case ICMP_ACT_UNSPEC:
@@ -760,15 +754,26 @@ int ipv4_egress_firewall(struct __sk_buff *skb) {
         return TC_ACT_SHOT;
     }
 
-    // 先检查用户是否已配置端口开放了
-    struct firewall_conntrack_key conntrack_key = {.ip_type = 1,
-                                                   .ip_protocol = packet_info.ip_hdr.ip_protocol,
-                                                   .local_port =
-                                                       packet_info.ip_hdr.pair_ip.src_port};
-    COPY_ADDR_FROM(conntrack_key.local_addr.all, &packet_info.ip_hdr.pair_ip.src_addr.all);
+    // 先检查是否有规则已经放行
+    struct firewall_static_rule_key rule_key = {
+        .prefixlen = 64,
+        .ip_type = LANDSCAPE_IPV4_TYPE,
+        .ip_protocol = packet_info.ip_hdr.ip_protocol,
+        .local_port = packet_info.ip_hdr.pair_ip.src_port,
+    };
+    COPY_ADDR_FROM(rule_key.remote_address.all, &packet_info.ip_hdr.pair_ip.src_addr.all);
+
+    if (packet_info.ip_hdr.icmp_type != 0) {
+        rule_key.local_port = ((u16)packet_info.ip_hdr.icmp_type << 8);
+    }
     struct firewall_static_ct_action *static_ct_value = NULL;
-    ret = lookup_static_conntrack(&conntrack_key, &static_ct_value);
+    ret = lookup_static_rules(&rule_key, &static_ct_value);
     if (static_ct_value == NULL) {
+        struct firewall_conntrack_key conntrack_key = {
+            .ip_type = LANDSCAPE_IPV4_TYPE,
+            .ip_protocol = packet_info.ip_hdr.ip_protocol,
+            .local_port = packet_info.ip_hdr.pair_ip.src_port};
+        COPY_ADDR_FROM(conntrack_key.local_addr.all, &packet_info.ip_hdr.pair_ip.src_addr.all);
         // 需要进行创建
         bool is_icmpx_error = is_icmp_error_pkt(&packet_info);
         bool allow_create_mapping =
@@ -788,7 +793,7 @@ int ipv4_egress_firewall(struct __sk_buff *skb) {
                                 ct_timer_value);
         }
     } else {
-        bpf_log_info("has static conntrack");
+        bpf_log_info("has export rule");
     }
 
     return TC_ACT_UNSPEC;
@@ -834,32 +839,51 @@ int ipv4_ingress_firewall(struct __sk_buff *skb) {
         return TC_ACT_SHOT;
     }
 
-    // 先检查用户是否已配置端口开放了
-    struct firewall_conntrack_key conntrack_key = {.ip_type = 1,
+    // 先检查是否已经有旧连接了
+    struct firewall_conntrack_key conntrack_key = {.ip_type = LANDSCAPE_IPV4_TYPE,
                                                    .ip_protocol = packet_info.ip_hdr.ip_protocol,
                                                    .local_port =
                                                        packet_info.ip_hdr.pair_ip.dst_port};
     COPY_ADDR_FROM(conntrack_key.local_addr.all, &packet_info.ip_hdr.pair_ip.dst_addr.all);
-    struct firewall_static_ct_action *static_ct_value = NULL;
-    ret = lookup_static_conntrack(&conntrack_key, &static_ct_value);
-    if (static_ct_value == NULL) {
-        // 没有端口开放 那就进行检查是否已经动态添加过了
-        struct firewall_conntrack_action *ct_timer_value;
-        ret = lookup_or_create_ct(false, &conntrack_key, &packet_info.ip_hdr.pair_ip.src_addr,
-                                  &packet_info.ip_hdr.pair_ip.src_port, &ct_timer_value);
 
-        if (ret == TIMER_NOT_FOUND || ret == TIMER_ERROR) {
-            bpf_log_info("can not find exist conntrack");
-            return TC_ACT_SHOT;
-        }
-        if (ct_timer_value != NULL) {
-            ct_state_transition(packet_info.ip_hdr.ip_protocol, packet_info.ip_hdr.pkt_type,
-                                ct_timer_value);
-            return TC_ACT_UNSPEC;
-        }
+    struct firewall_conntrack_action *ct_timer_value;
+    ret = lookup_or_create_ct(false, &conntrack_key, &packet_info.ip_hdr.pair_ip.src_addr,
+                              &packet_info.ip_hdr.pair_ip.src_port, &ct_timer_value);
+
+    if (ret == TIMER_NOT_FOUND || ret == TIMER_ERROR) {
         bpf_log_info("can not find exist conntrack");
-    } else {
-        bpf_log_info("has static conntrack");
+        return TC_ACT_SHOT;
+    }
+    if (ct_timer_value != NULL) {
+        ct_state_transition(packet_info.ip_hdr.ip_protocol, packet_info.ip_hdr.pkt_type,
+                            ct_timer_value);
+        return TC_ACT_UNSPEC;
+    }
+    bpf_log_info("can not find exist conntrack");
+
+    // 检查用户是否已配置端口开放了
+    struct firewall_static_rule_key rule_key = {
+        .prefixlen = 64,
+        .ip_type = LANDSCAPE_IPV4_TYPE,
+        .ip_protocol = packet_info.ip_hdr.ip_protocol,
+        .local_port = packet_info.ip_hdr.pair_ip.dst_port,
+    };
+    COPY_ADDR_FROM(rule_key.remote_address.all, &packet_info.ip_hdr.pair_ip.dst_addr.all);
+
+    if (packet_info.ip_hdr.icmp_type != 0) {
+        rule_key.local_port = ((u16)packet_info.ip_hdr.icmp_type << 8);
+    }
+    struct firewall_static_ct_action *static_ct_value = NULL;
+    ret = lookup_static_rules(&rule_key, &static_ct_value);
+    if (static_ct_value != NULL) {
+        // 没有端口开放 那就进行检查是否已经动态添加过了
+        bpf_log_info("EXPORT RULE");
+
+        bpf_log_info(
+            "packet ip:%pI4:%d->%pI4:%d, ip_protocol: %d", &packet_info.ip_hdr.pair_ip.src_addr,
+            bpf_ntohs(packet_info.ip_hdr.pair_ip.src_port), &packet_info.ip_hdr.pair_ip.dst_addr,
+            bpf_ntohs(packet_info.ip_hdr.pair_ip.dst_port), packet_info.ip_hdr.ip_protocol);
+        return TC_ACT_UNSPEC;
     }
     return TC_ACT_SHOT;
 #undef BPF_LOG_TOPIC
@@ -886,9 +910,8 @@ int ipv6_egress_firewall(struct __sk_buff *skb) {
         }
     }
 
-    bpf_log_info("packet ip:%pI6->%pI6", &packet_info.ip_hdr.pair_ip.src_addr,
+    bpf_log_info("packet ip: [%pI6c]->[%pI6c]", &packet_info.ip_hdr.pair_ip.src_addr,
                  &packet_info.ip_hdr.pair_ip.dst_addr);
-
     bpf_log_info("packet ip_protocol: %u ", packet_info.ip_hdr.ip_protocol);
     bpf_log_info("packet src port: %u ", bpf_ntohs(packet_info.ip_hdr.pair_ip.src_port));
     bpf_log_info("packet dst port: %u ", bpf_ntohs(packet_info.ip_hdr.pair_ip.dst_port));
@@ -898,21 +921,32 @@ int ipv6_egress_firewall(struct __sk_buff *skb) {
         .addr = packet_info.ip_hdr.pair_ip.dst_addr.ip,
     };
     struct firewall_action *mark_value =
-        bpf_map_lookup_elem(&firewall_block_ip4_map, &block_search_key);
+        bpf_map_lookup_elem(&firewall_block_ip6_map, &block_search_key);
 
     if (mark_value) {
         return TC_ACT_SHOT;
     }
 
-    // 先检查用户是否已配置端口开放了
-    struct firewall_conntrack_key conntrack_key = {.ip_type = 1,
-                                                   .ip_protocol = packet_info.ip_hdr.ip_protocol,
-                                                   .local_port =
-                                                       packet_info.ip_hdr.pair_ip.src_port};
-    COPY_ADDR_FROM(conntrack_key.local_addr.all, &packet_info.ip_hdr.pair_ip.src_addr.all);
+    // 先检查是否有规则已经放行
+    struct firewall_static_rule_key rule_key = {
+        .prefixlen = 64,
+        .ip_type = LANDSCAPE_IPV6_TYPE,
+        .ip_protocol = packet_info.ip_hdr.ip_protocol,
+        .local_port = packet_info.ip_hdr.pair_ip.src_port,
+    };
+    if (packet_info.ip_hdr.icmp_type != 0) {
+        rule_key.local_port = ((u16)packet_info.ip_hdr.icmp_type << 8);
+    }
+    COPY_ADDR_FROM(rule_key.remote_address.all, &packet_info.ip_hdr.pair_ip.src_addr.all);
+
     struct firewall_static_ct_action *static_ct_value = NULL;
-    ret = lookup_static_conntrack(&conntrack_key, &static_ct_value);
+    ret = lookup_static_rules(&rule_key, &static_ct_value);
     if (static_ct_value == NULL) {
+        struct firewall_conntrack_key conntrack_key = {
+            .ip_type = LANDSCAPE_IPV6_TYPE,
+            .ip_protocol = packet_info.ip_hdr.ip_protocol,
+            .local_port = packet_info.ip_hdr.pair_ip.src_port};
+        COPY_ADDR_FROM(conntrack_key.local_addr.all, &packet_info.ip_hdr.pair_ip.src_addr.all);
         // 需要进行创建
         bool is_icmpx_error = is_icmp_error_pkt(&packet_info);
         bool allow_create_mapping =
@@ -932,7 +966,7 @@ int ipv6_egress_firewall(struct __sk_buff *skb) {
                                 ct_timer_value);
         }
     } else {
-        bpf_log_info("has static conntrack");
+        bpf_log_info("has export rule");
     }
 
     return TC_ACT_UNSPEC;
@@ -960,7 +994,7 @@ int ipv6_ingress_firewall(struct __sk_buff *skb) {
         }
     }
 
-    bpf_log_info("packet ip:%pI6->%pI6", &packet_info.ip_hdr.pair_ip.src_addr,
+    bpf_log_info("packet ip: [%pI6c]->[%pI6c]", &packet_info.ip_hdr.pair_ip.src_addr,
                  &packet_info.ip_hdr.pair_ip.dst_addr);
     bpf_log_info("packet ip_protocol: %u ", packet_info.ip_hdr.ip_protocol);
     bpf_log_info("packet src port: %u ", bpf_ntohs(packet_info.ip_hdr.pair_ip.src_port));
@@ -977,34 +1011,52 @@ int ipv6_ingress_firewall(struct __sk_buff *skb) {
         return TC_ACT_SHOT;
     }
 
-    // 先检查用户是否已配置端口开放了
-    struct firewall_conntrack_key conntrack_key = {.ip_type = 1,
+    // 先检查是否已经有旧连接了
+    struct firewall_conntrack_key conntrack_key = {.ip_type = LANDSCAPE_IPV6_TYPE,
                                                    .ip_protocol = packet_info.ip_hdr.ip_protocol,
                                                    .local_port =
                                                        packet_info.ip_hdr.pair_ip.dst_port};
     COPY_ADDR_FROM(conntrack_key.local_addr.all, &packet_info.ip_hdr.pair_ip.dst_addr.all);
-    struct firewall_static_ct_action *static_ct_value = NULL;
-    ret = lookup_static_conntrack(&conntrack_key, &static_ct_value);
-    if (static_ct_value == NULL) {
-        // 没有端口开放 那就进行检查是否已经动态添加过了
-        struct firewall_conntrack_action *ct_timer_value;
-        ret = lookup_or_create_ct(false, &conntrack_key, &packet_info.ip_hdr.pair_ip.src_addr,
-                                  &packet_info.ip_hdr.pair_ip.dst_port, &ct_timer_value);
 
-        if (ret == TIMER_NOT_FOUND || ret == TIMER_ERROR) {
-            bpf_log_info("can not find exist conntrack");
-            return TC_ACT_SHOT;
-        }
-        if (ct_timer_value != NULL) {
-            ct_state_transition(packet_info.ip_hdr.ip_protocol, packet_info.ip_hdr.pkt_type,
-                                ct_timer_value);
-            return TC_ACT_UNSPEC;
-        }
+    struct firewall_conntrack_action *ct_timer_value;
+    ret = lookup_or_create_ct(false, &conntrack_key, &packet_info.ip_hdr.pair_ip.src_addr,
+                              &packet_info.ip_hdr.pair_ip.src_port, &ct_timer_value);
+
+    if (ret == TIMER_NOT_FOUND || ret == TIMER_ERROR) {
         bpf_log_info("can not find exist conntrack");
-    } else {
-        bpf_log_info("has static conntrack");
+        return TC_ACT_SHOT;
     }
+    if (ct_timer_value != NULL) {
+        ct_state_transition(packet_info.ip_hdr.ip_protocol, packet_info.ip_hdr.pkt_type,
+                            ct_timer_value);
+        return TC_ACT_UNSPEC;
+    }
+    bpf_log_info("can not find exist conntrack");
 
+    // 检查用户是否已配置端口开放了
+    struct firewall_static_rule_key rule_key = {
+        .prefixlen = 64,
+        .ip_type = LANDSCAPE_IPV6_TYPE,
+        .ip_protocol = packet_info.ip_hdr.ip_protocol,
+        .local_port = packet_info.ip_hdr.pair_ip.dst_port,
+    };
+    COPY_ADDR_FROM(rule_key.remote_address.all, &packet_info.ip_hdr.pair_ip.dst_addr.all);
+
+    if (packet_info.ip_hdr.icmp_type != 0) {
+        rule_key.local_port = ((u16)packet_info.ip_hdr.icmp_type << 8);
+    }
+    struct firewall_static_ct_action *static_ct_value = NULL;
+    ret = lookup_static_rules(&rule_key, &static_ct_value);
+    if (static_ct_value != NULL) {
+        // 没有端口开放 那就进行检查是否已经动态添加过了
+        bpf_log_info("EXPORT RULE");
+
+        bpf_log_info(
+            "packet ip:%pI4:%d->%pI4:%d, ip_protocol: %d", &packet_info.ip_hdr.pair_ip.src_addr,
+            bpf_ntohs(packet_info.ip_hdr.pair_ip.src_port), &packet_info.ip_hdr.pair_ip.dst_addr,
+            bpf_ntohs(packet_info.ip_hdr.pair_ip.dst_port), packet_info.ip_hdr.ip_protocol);
+        return TC_ACT_UNSPEC;
+    }
     return TC_ACT_SHOT;
 #undef BPF_LOG_TOPIC
 }

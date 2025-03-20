@@ -19,11 +19,6 @@ const volatile u8 LOG_LEVEL = BPF_LOG_LEVEL_DEBUG;
 // #define ETH_IPV4 bpf_htons(0x0800) /* ETH IPV4 packet */
 // #define ETH_IPV6 bpf_htons(0x86DD) /* ETH IPv6 packet */
 
-#define IP_MF bpf_htons(0x2000)     /* Flag: "More Fragments"	*/
-#define IP_OFFSET bpf_htons(0x1FFF) /* "Fragment Offset" part	*/
-
-#define ICMP_HDR_LEN sizeof(struct icmphdr)
-
 const volatile int current_eth_net_offset = 14;
 
 const volatile u64 TCP_SYN_TIMEOUT = 1E9 * 6;
@@ -548,15 +543,14 @@ egress_lookup_or_new_mapping(struct __sk_buff *skb, u8 ip_protocol, bool allow_c
             bpf_log_error("can't find the wan ip, using ifindex: %d", skb->ifindex);
             return TC_ACT_SHOT;
         }
-        struct nat_mapping_value new_nat_egress_value = {
-            .addr = {.ip = *wan_ip},
-            .port = egress_key.from_port,  // 尽量先试试使用客户端发起时候的端口
-            .trigger_addr = pkt_ip_pair->dst_addr,
-            .trigger_port = pkt_ip_pair->dst_port,
-            .is_static = 0,
-            .active_time = bpf_ktime_get_ns(),
-            ._pad = {0, 0, 0},
-        };
+        struct nat_mapping_value new_nat_egress_value = {0};
+
+        new_nat_egress_value.addr.ip = *wan_ip;
+        new_nat_egress_value.port = egress_key.from_port;  // 尽量先试试使用客户端发起时候的端口
+        new_nat_egress_value.trigger_addr = pkt_ip_pair->dst_addr;
+        new_nat_egress_value.trigger_port = pkt_ip_pair->dst_port;
+        new_nat_egress_value.is_static = 0;
+        new_nat_egress_value.active_time = bpf_ktime_get_ns();
 
         int ret;
         struct search_port_ctx ctx = {
@@ -1053,9 +1047,9 @@ int ingress_nat(struct __sk_buff *skb) {
             return TC_ACT_SHOT;
         }
 
-        // bpf_log_info("ingress value, %lu : %u", bpf_ntohl(nat_ingress_value->addr.ip),
+        // bpf_log_info("ingress value, %pI4 : %u", &nat_ingress_value->addr,
         //              bpf_ntohs(nat_ingress_value->port));
-        // bpf_log_info("egress  value, %lu : %u", bpf_ntohl(nat_egress_value->addr.ip),
+        // bpf_log_info("egress  value, %pI4 : %u", &nat_egress_value->addr.ip,
         //              bpf_ntohs(nat_egress_value->port));
 
         if (!nat_egress_value->is_static) {
@@ -1077,19 +1071,9 @@ int ingress_nat(struct __sk_buff *skb) {
         //     bpf_log_info("modify dst port:  %u -> %u", bpf_ntohs(packet_info.pair_ip.src_port),
         //                  bpf_ntohs(nat_ingress_value->port));
 
-        //     bpf_log_info("src IP: %d.%d.%d.%d,", packet_info.pair_ip.src_addr.ip & 0xFF,
-        //                  (packet_info.pair_ip.src_addr.ip >> 8) & 0xFF,
-        //                  (packet_info.pair_ip.src_addr.ip >> 16) & 0xFF,
-        //                  (packet_info.pair_ip.src_addr.ip >> 24) & 0xFF);
-
-        //     bpf_log_info("dst IP: %d.%d.%d.%d,", packet_info.pair_ip.dst_addr.ip & 0xFF,
-        //                  (packet_info.pair_ip.dst_addr.ip >> 8) & 0xFF,
-        //                  (packet_info.pair_ip.dst_addr.ip >> 16) & 0xFF,
-        //                  (packet_info.pair_ip.dst_addr.ip >> 24) & 0xFF);
-        //     bpf_log_info("real IP: %d.%d.%d.%d,", nat_ingress_value->addr.ip & 0xFF,
-        //                  (nat_ingress_value->addr.ip >> 8) & 0xFF,
-        //                  (nat_ingress_value->addr.ip >> 16) & 0xFF,
-        //                  (nat_ingress_value->addr.ip >> 24) & 0xFF);
+        //     bpf_log_info("src IP: %pI4,", &packet_info.pair_ip.src_addr);
+        //     bpf_log_info("dst IP: %pI4,", &packet_info.pair_ip.dst_addr);
+        //     bpf_log_info("real IP: %pI4,", &nat_ingress_value->addr);
     }
 
     // modify source
@@ -1112,7 +1096,7 @@ static __always_inline int self_packet(struct __sk_buff *skb, struct ip_packet_i
         return TC_ACT_UNSPEC;
     }
     struct bpf_sock_tuple server = {0};
-    struct bpf_sock *sk;
+    struct bpf_sock *sk = NULL;
 
     server.ipv4.saddr = pkt->pair_ip.dst_addr.ip;
     server.ipv4.sport = pkt->pair_ip.dst_port;
@@ -1125,7 +1109,7 @@ static __always_inline int self_packet(struct __sk_buff *skb, struct ip_packet_i
     }
 
     // 找到了 SK
-    if (sk) {
+    if (sk != NULL) {
         bpf_sk_release(sk);
         // bpf_log_info("find sk");
         return TC_ACT_OK;
@@ -1194,21 +1178,14 @@ int egress_nat(struct __sk_buff *skb) {
         u8 action = skb->mark & ACTION_MASK;
         if (action == SYMMETRIC_NAT) {
             // SYMMETRIC_NAT check
-            if (!U_INET_ADDR_EQUAL(packet_info.pair_ip.dst_addr, nat_egress_value->trigger_addr) ||
+            if (!ip_addr_equal(&packet_info.pair_ip.dst_addr, &nat_egress_value->trigger_addr) ||
                 packet_info.pair_ip.dst_port != nat_egress_value->trigger_port) {
                 bpf_log_info("SYMMETRIC_NAT MARK DROP PACKET");
-                bpf_log_info("dst IP: %d.%d.%d.%d,", packet_info.pair_ip.dst_addr.ip & 0xFF,
-                             (packet_info.pair_ip.dst_addr.ip >> 8) & 0xFF,
-                             (packet_info.pair_ip.dst_addr.ip >> 16) & 0xFF,
-                             (packet_info.pair_ip.dst_addr.ip >> 24) & 0xFF);
-                bpf_log_info("trigger_addr IP: %d.%d.%d.%d,",
-                             nat_egress_value->trigger_addr.ip & 0xFF,
-                             (nat_egress_value->trigger_addr.ip >> 8) & 0xFF,
-                             (nat_egress_value->trigger_addr.ip >> 16) & 0xFF,
-                             (nat_egress_value->trigger_addr.ip >> 24) & 0xFF);
-                bpf_log_info("compare ip result: %d",
-                             U_INET_ADDR_EQUAL(packet_info.pair_ip.dst_addr,
-                                               nat_egress_value->trigger_addr));
+                bpf_log_info("dst IP: %pI4,", &packet_info.pair_ip.dst_addr);
+                bpf_log_info("trigger_addr IP: %pI4,", &nat_egress_value->trigger_addr);
+                bpf_log_info(
+                    "compare ip result: %d",
+                    ip_addr_equal(&packet_info.pair_ip.dst_addr, &nat_egress_value->trigger_addr));
                 bpf_log_info("trigger_port: %u,", bpf_ntohs(nat_egress_value->trigger_port));
                 bpf_log_info("dst_port: %u,", bpf_ntohs(packet_info.pair_ip.dst_port));
                 bpf_log_info("compare port result: %d",
@@ -1217,9 +1194,10 @@ int egress_nat(struct __sk_buff *skb) {
             }
         }
 
-        // bpf_log_info("ingress value, %lu : %u", bpf_ntohl(nat_ingress_value->addr.ip),
-        // bpf_ntohs(nat_ingress_value->port)); bpf_log_info("egress  value, %lu : %u",
-        // bpf_ntohl(nat_egress_value->addr.ip), bpf_ntohs(nat_egress_value->port));
+        // bpf_log_info("ingress value, %pI4 : %u", &nat_ingress_value->addr,
+        //              bpf_ntohs(nat_ingress_value->port));
+        // bpf_log_info("egress  value, %pI4 : %u", &nat_egress_value->addr.ip,
+        //              bpf_ntohs(nat_egress_value->port));
 
         if (!nat_egress_value->is_static) {
             struct nat_timer_value *ct_timer_value;
@@ -1241,18 +1219,9 @@ int egress_nat(struct __sk_buff *skb) {
     // bpf_log_info("modify src port:  %u -> %u", bpf_ntohs(nat_egress_value->port),
     //              bpf_ntohs(packet_info.pair_ip.dst_port));
 
-    // bpf_log_info("src IP: %d.%d.%d.%d,", packet_info.pair_ip.src_addr.ip & 0xFF,
-    //              (packet_info.pair_ip.src_addr.ip >> 8) & 0xFF,
-    //              (packet_info.pair_ip.src_addr.ip >> 16) & 0xFF,
-    //              (packet_info.pair_ip.src_addr.ip >> 24) & 0xFF);
-
-    // bpf_log_info("dst IP: %d.%d.%d.%d,", packet_info.pair_ip.dst_addr.ip & 0xFF,
-    //              (packet_info.pair_ip.dst_addr.ip >> 8) & 0xFF,
-    //              (packet_info.pair_ip.dst_addr.ip >> 16) & 0xFF,
-    //              (packet_info.pair_ip.dst_addr.ip >> 24) & 0xFF);
-    // bpf_log_info("mapping IP: %d.%d.%d.%d,", nat_egress_value->addr.ip & 0xFF,
-    //              (nat_egress_value->addr.ip >> 8) & 0xFF, (nat_egress_value->addr.ip >> 16) &
-    //              0xFF, (nat_egress_value->addr.ip >> 24) & 0xFF);
+    // bpf_log_info("src IP: %pI4,", &packet_info.pair_ip.src_addr);
+    // bpf_log_info("dst IP: %pI4,", &packet_info.pair_ip.dst_addr);
+    // bpf_log_info("mapping IP: %pI4,", &nat_egress_value->addr);
 
     // modify source
     ret = modify_headers(skb, true, is_icmpx_error, packet_info.ip_protocol, current_eth_net_offset,

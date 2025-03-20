@@ -1,6 +1,9 @@
 use std::{mem::MaybeUninit, net::Ipv4Addr};
 
-use landscape_common::ip_mark::{IpConfig, IpMarkInfo};
+use landscape_common::{
+    firewall::{FirewallRuleConfig, LandscapeIpType},
+    ip_mark::{IpConfig, IpMarkInfo},
+};
 use libbpf_rs::{
     skel::{OpenSkel, SkelBuilder},
     MapCore, MapFlags,
@@ -28,6 +31,15 @@ pub(crate) fn init_path(paths: LandscapeMapPath) {
     landscape_open.maps.lanip_mark_map.set_pin_path(&paths.lanip_mark).unwrap();
     landscape_open.maps.wanip_mark_map.set_pin_path(&paths.wanip_mark).unwrap();
     landscape_open.maps.redirect_index_map.set_pin_path(&paths.redirect_index).unwrap();
+
+    // firewall
+    landscape_open.maps.firewall_block_ip4_map.set_pin_path(&paths.firewall_ipv4_block).unwrap();
+    landscape_open.maps.firewall_block_ip6_map.set_pin_path(&paths.firewall_ipv6_block).unwrap();
+    landscape_open
+        .maps
+        .firewall_allow_rules_map
+        .set_pin_path(&paths.firewall_allow_rules_map)
+        .unwrap();
     let _landscape_skel = landscape_open.load().unwrap();
 }
 
@@ -256,5 +268,56 @@ pub fn del_redirect_iface_pair(redirect_index: u8) {
     let key = [redirect_index];
     if let Err(e) = redirect_index_map.delete(&key) {
         tracing::error!("add block ip error:{e:?}");
+    }
+}
+
+pub fn add_firewall_rule(rules: Vec<FirewallRuleConfig>) {
+    let firewall_allow_rules_map =
+        libbpf_rs::MapHandle::from_pinned_path(&MAP_PATHS.firewall_allow_rules_map).unwrap();
+
+    if let Err(e) = add_firewall_rules(&firewall_allow_rules_map, rules) {
+        tracing::error!("add_lan_ip_mark:{e:?}");
+    }
+}
+
+fn add_firewall_rules<'obj, T>(map: &T, rules: Vec<FirewallRuleConfig>) -> libbpf_rs::Result<()>
+where
+    T: MapCore,
+{
+    if rules.is_empty() {
+        return Ok(());
+    }
+
+    let mut keys = vec![];
+    let mut values = vec![];
+
+    let count = rules.len() as u32;
+    for rule in rules.into_iter() {
+        let rule = conver_rule(rule);
+        let value = 0_u32;
+        keys.extend_from_slice(unsafe { plain::as_bytes(&rule) });
+        values.extend_from_slice(unsafe { plain::as_bytes(&value) });
+    }
+
+    map.update_batch(&keys, &values, count, MapFlags::ANY, MapFlags::ANY)
+}
+
+fn conver_rule(rule: FirewallRuleConfig) -> crate::map_setting::types::firewall_static_rule_key {
+    use crate::map_setting::types::u_inet_addr;
+
+    let (ip_type, remote_address) = match rule.address {
+        std::net::IpAddr::V4(ipv4_addr) => {
+            (LandscapeIpType::Ipv4, u_inet_addr { ip: ipv4_addr.to_bits().to_be() })
+        }
+        std::net::IpAddr::V6(ipv6_addr) => {
+            (LandscapeIpType::Ipv6, u_inet_addr { bits: ipv6_addr.to_bits().to_be_bytes() })
+        }
+    };
+    crate::map_setting::types::firewall_static_rule_key {
+        prefixlen: rule.prefixlen as u32 + 32,
+        ip_type: ip_type as u8,
+        ip_protocol: rule.ip_protocol,
+        local_port: rule.local_port.to_be(),
+        remote_address,
     }
 }

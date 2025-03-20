@@ -31,6 +31,13 @@ static MAP_PATHS: Lazy<LandscapeMapPath> = Lazy::new(|| {
         wanip_mark: PathBuf::from(format!("{}/wanip_mark_map", ebpf_map_path)),
         packet_mark: PathBuf::from(format!("{}/packet_mark_map", ebpf_map_path)),
         redirect_index: PathBuf::from(format!("{}/redirect_index_map", ebpf_map_path)),
+
+        firewall_ipv4_block: PathBuf::from(format!("{}/firewall_block_ip4_map", ebpf_map_path)),
+        firewall_ipv6_block: PathBuf::from(format!("{}/firewall_block_ip6_map", ebpf_map_path)),
+        firewall_allow_rules_map: PathBuf::from(format!(
+            "{}/firewall_allow_rules_map",
+            ebpf_map_path
+        )),
     };
     tracing::info!("ebpf map paths is: {paths:#?}");
     map_setting::init_path(paths.clone());
@@ -52,6 +59,12 @@ pub(crate) struct LandscapeMapPath {
     pub wanip_mark: PathBuf,
 
     pub redirect_index: PathBuf,
+
+    // 防火墙黑名单
+    pub firewall_ipv4_block: PathBuf,
+    pub firewall_ipv6_block: PathBuf,
+    // 允许通过的协议
+    pub firewall_allow_rules_map: PathBuf,
 }
 
 // pppoe -> Fire wall -> nat

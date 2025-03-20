@@ -2,62 +2,10 @@
 #define LD_NAT_H
 #include "vmlinux.h"
 #include "landscape_log.h"
-
-// #include <linux/icmp.h>
-#define ICMP_DEST_UNREACH 3   /* Destination Unreachable	*/
-#define ICMP_TIME_EXCEEDED 11 /* Time Exceeded		*/
-#define ICMP_PARAMETERPROB 12 /* Parameter Problem		*/
-
-#define ICMP_ECHOREPLY 0       /* Echo Reply			*/
-#define ICMP_ECHO 8            /* Echo Request			*/
-#define ICMP_TIMESTAMP 13      /* Timestamp Request		*/
-#define ICMP_TIMESTAMPREPLY 14 /* Timestamp Reply		*/
-
-#define CLOCK_MONOTONIC 1
+#include "packet_def.h"
 
 #define GRESS_MASK (1 << 0)
 
-enum {
-    ICMP_ERROR_MSG,
-    ICMP_QUERY_MSG,
-    ICMP_ACT_UNSPEC,
-    ICMP_ACT_SHOT,
-};
-
-enum fragment_type {
-    // 还有分片
-    // offect 且 more 被设置
-    MORE_F,
-    // 结束分片
-    // offect 的值不为 0
-    END_F,
-    // 没有分片
-    NOT_F
-};
-
-enum {
-    // 无连接
-    PKT_CONNLESS,
-    //
-    PKT_TCP_DATA,
-    PKT_TCP_SYN,
-    PKT_TCP_RST,
-    PKT_TCP_FIN,
-};
-
-// TODO: for ipv6
-union u_inet_addr {
-    __u32 all[1];
-    __be32 ip;
-};
-
-struct inet_pair {
-    union u_inet_addr src_addr;
-    union u_inet_addr dst_addr;
-    __be16 src_port;
-    __be16 dst_port;
-};
-#define U_INET_ADDR_EQUAL(a, b) (__builtin_memcmp(&(a), &(b), sizeof(a)) == 0)
 #define COPY_ADDR_FROM(t, s) (__builtin_memcpy((t), (s), sizeof(t)))
 static __always_inline void inet_addr_set_ip(union u_inet_addr *addr, __be32 ip) { addr->ip = ip; }
 static __always_inline bool inet_addr_equal(const union u_inet_addr *a,
@@ -96,20 +44,6 @@ struct ip_packet_info {
     int icmp_error_payload_offset;
 
     struct inet_pair pair_ip;
-};
-
-/// 作为 fragment 缓存的 key
-struct fragment_cache_key {
-    u8 _pad[3];
-    u8 l4proto;
-    u32 id;
-    union u_inet_addr saddr;
-    union u_inet_addr daddr;
-};
-
-struct fragment_cache_value {
-    u16 sport;
-    u16 dport;
 };
 
 // 所能映射的范围
@@ -155,16 +89,6 @@ struct nat_static_mapping_key {
     union u_inet_addr from_addr;
 };
 
-// Timer 状态
-enum {
-    TIMER_INIT = 0ULL,  // 0ULL ensures the value is of type u64
-    TCP_SYN = 1ULL,
-    TCP_SYN_ACK = 2ULL,
-    TCP_EST = 3ULL,
-    OTHER_EST = 4ULL
-};
-// Timer 创建情况
-enum { TIMER_EXIST, TIMER_NOT_FOUND, TIMER_ERROR, TIMER_CREATED };
 //
 struct nat_timer_key {
     u8 l4proto;

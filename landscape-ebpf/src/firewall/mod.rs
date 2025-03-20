@@ -14,7 +14,7 @@ use tokio::sync::oneshot;
 
 use crate::{
     bpf_error::LdEbpfResult, landscape::TcHookProxy, FIREWALL_EGRESS_PRIORITY,
-    FIREWALL_INGRESS_PRIORITY,
+    FIREWALL_INGRESS_PRIORITY, MAP_PATHS,
 };
 
 pub fn new_firewall(
@@ -24,10 +24,21 @@ pub fn new_firewall(
 ) -> LdEbpfResult<()> {
     let mut open_object = MaybeUninit::zeroed();
     let firewall_builder = FirewallSkelBuilder::default();
-    let open_skel = firewall_builder.open(&mut open_object)?;
+    let mut open_skel = firewall_builder.open(&mut open_object)?;
     if !has_mac {
         open_skel.maps.rodata_data.current_eth_net_offset = 0;
     }
+
+    open_skel.maps.firewall_block_ip4_map.set_pin_path(&MAP_PATHS.firewall_ipv4_block)?;
+    open_skel.maps.firewall_block_ip6_map.set_pin_path(&MAP_PATHS.firewall_ipv6_block)?;
+    open_skel.maps.firewall_allow_rules_map.set_pin_path(&MAP_PATHS.firewall_allow_rules_map)?;
+
+    open_skel.maps.firewall_block_ip4_map.reuse_pinned_map(&MAP_PATHS.firewall_ipv4_block)?;
+    open_skel.maps.firewall_block_ip6_map.reuse_pinned_map(&MAP_PATHS.firewall_ipv6_block)?;
+    open_skel
+        .maps
+        .firewall_allow_rules_map
+        .reuse_pinned_map(&MAP_PATHS.firewall_allow_rules_map)?;
 
     let skel = open_skel.load()?;
 
