@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
-use std::net::{IpAddr, Ipv6Addr};
+use std::net::IpAddr;
 
-use crate::{mark::PacketMark, store::storev2::LandScapeStore};
+use crate::{mark::PacketMark, network::LandscapeIpProtocolCode, store::storev2::LandScapeStore};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct FirewallRuleConfig {
@@ -22,8 +22,10 @@ impl LandScapeStore for FirewallRuleConfig {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash)]
+#[serde(rename_all = "lowercase")]
 pub struct FirewallRuleItem {
-    pub ip_protocol: u8,
+    // IP 承载的协议
+    pub ip_protocol: Option<LandscapeIpProtocolCode>,
     pub local_port: Option<u16>,
     pub address: IpAddr,
     pub ip_prefixlen: u8,

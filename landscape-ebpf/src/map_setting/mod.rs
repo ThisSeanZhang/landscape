@@ -346,7 +346,9 @@ fn conver_rule(rule: FirewallRuleItem) -> crate::map_setting::types::firewall_st
         }
     };
     let mut rule_port = 0;
-    if rule.ip_protocol != 0 {
+    let mut ip_protocol = 0;
+    if let Some(proto) = rule.ip_protocol {
+        ip_protocol = proto as u8;
         prefixlen += 8;
         if let Some(port) = rule.local_port {
             prefixlen += 16;
@@ -356,7 +358,7 @@ fn conver_rule(rule: FirewallRuleItem) -> crate::map_setting::types::firewall_st
     crate::map_setting::types::firewall_static_rule_key {
         prefixlen: rule.ip_prefixlen as u32 + prefixlen,
         ip_type: ip_type as u8,
-        ip_protocol: rule.ip_protocol,
+        ip_protocol,
         local_port: rule_port.to_be(),
         remote_address,
     }

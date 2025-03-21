@@ -1,5 +1,5 @@
 use std::{
-    net::{IpAddr, Ipv6Addr},
+    net::{IpAddr, Ipv4Addr, Ipv6Addr},
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
@@ -12,6 +12,7 @@ use landscape::iface::get_iface_by_name;
 use landscape_common::{
     firewall::{FirewallRuleItem, FirewallRuleMark},
     mark::PacketMark,
+    network::LandscapeIpProtocolCode,
 };
 use landscape_ebpf::map_setting::add_firewall_rule;
 use tokio::{sync::oneshot, time::sleep};
@@ -56,6 +57,8 @@ pub async fn main() {
             println!("向外部线程发送解除阻塞信号");
             let _ = other_tx.send(());
         });
+    } else {
+        let _ = other_tx.send(());
     }
 
     while running.load(Ordering::SeqCst) {
@@ -70,7 +73,7 @@ fn get_allow_icmp_echo() -> Vec<FirewallRuleMark> {
     vec![
         FirewallRuleMark {
             item: FirewallRuleItem {
-                ip_protocol: 58,
+                ip_protocol: Some(LandscapeIpProtocolCode::ICMPV6),
                 local_port: Some(128),
                 address: IpAddr::V6(Ipv6Addr::UNSPECIFIED),
                 ip_prefixlen: 0,
@@ -79,30 +82,30 @@ fn get_allow_icmp_echo() -> Vec<FirewallRuleMark> {
         },
         FirewallRuleMark {
             item: FirewallRuleItem {
-                ip_protocol: 58,
+                ip_protocol: Some(LandscapeIpProtocolCode::ICMPV6),
                 local_port: Some(129),
                 address: IpAddr::V6(Ipv6Addr::UNSPECIFIED),
                 ip_prefixlen: 0,
             },
             mark: PacketMark::default(),
-            // },
-            // FirewallRuleMark {
-            //     item: FirewallRuleItem {
-            //         ip_protocol: 1,
-            //         local_port: Some(0),
-            //         address: IpAddr::V4(Ipv4Addr::UNSPECIFIED),
-            //         ip_prefixlen: 0,
-            //     },
-            //     mark: PacketMark::default(),
-            // },
-            // FirewallRuleMark {
-            //     item: FirewallRuleItem {
-            //         ip_protocol: 1,
-            //         local_port: Some(8),
-            //         address: IpAddr::V4(Ipv4Addr::UNSPECIFIED),
-            //         ip_prefixlen: 0,
-            //     },
-            //     mark: PacketMark::default(),
+        },
+        FirewallRuleMark {
+            item: FirewallRuleItem {
+                ip_protocol: Some(LandscapeIpProtocolCode::ICMP),
+                local_port: Some(0),
+                address: IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+                ip_prefixlen: 0,
+            },
+            mark: PacketMark::default(),
+        },
+        FirewallRuleMark {
+            item: FirewallRuleItem {
+                ip_protocol: Some(LandscapeIpProtocolCode::ICMP),
+                local_port: Some(8),
+                address: IpAddr::V4(Ipv4Addr::BROADCAST),
+                ip_prefixlen: 0,
+            },
+            mark: PacketMark::default(),
         },
     ]
 }
