@@ -378,13 +378,11 @@ static __always_inline int lookup_or_new_ct(u8 l4proto, bool do_new,
         return TIMER_NOT_FOUND;
     }
 
-    struct nat_timer_value timer_value_new = {
-        .trigger_saddr = nat_ingress_value->trigger_addr,
-        .trigger_port = nat_ingress_value->trigger_port,
-        .status = TIMER_INIT,
-        ._pad = 0,
-        .gress = NAT_MAPPING_EGRESS,
-    };
+    struct nat_timer_value timer_value_new = {0};
+    timer_value_new.trigger_port = nat_ingress_value->trigger_port;
+    timer_value_new.status = TIMER_INIT;
+    timer_value_new.gress = NAT_MAPPING_EGRESS;
+    COPY_ADDR_FROM(timer_value_new.trigger_saddr.all, nat_egress_value->trigger_addr.all);
     timer_value = insert_new_nat_timer(l4proto, &timer_key, &timer_value_new);
     if (timer_value == NULL) {
         return TIMER_ERROR;

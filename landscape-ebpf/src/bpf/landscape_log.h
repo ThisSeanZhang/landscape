@@ -23,6 +23,7 @@ static const char *bpf_log_level_str[] = {"NONE ", "ERROR", "WARN ", "INFO ", "D
 #define BPF_LOG_TOPIC "default"
 #endif
 
+// https://docs.kernel.org/core-api/printk-formats.html
 #define _bpf_vprintk_exists bpf_core_enum_value_exists(enum bpf_func_id, BPF_FUNC_trace_vprintk)
 
 #define _bpf_log_logv(level, fmt, args...)                                                         \

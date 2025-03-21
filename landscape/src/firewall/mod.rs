@@ -4,7 +4,7 @@ use landscape_common::{
 };
 use serde::{Deserialize, Serialize};
 
-mod rules;
+pub mod rules;
 
 #[derive(Clone)]
 pub struct FirewallService;

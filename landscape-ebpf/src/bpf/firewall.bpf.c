@@ -404,9 +404,9 @@ delete_timer:
 }
 
 static __always_inline int lookup_static_rules(struct firewall_static_rule_key *timer_key,
-                                               struct firewall_static_ct_action **timer_value_) {
+                                               struct firewall_conntrack_action **timer_value_) {
 #define BPF_LOG_TOPIC "lookup_static_rules"
-    struct nat_mapping_value *action;
+    struct firewall_conntrack_action *action;
     action = bpf_map_lookup_elem(&firewall_allow_rules_map, timer_key);
     if (action) {
         *timer_value_ = action;
@@ -551,7 +551,7 @@ static __always_inline int extract_v4_packet_info(struct __sk_buff *skb,
         case ICMP_QUERY_MSG: {
             pcxt->ip_hdr.pair_ip.src_port = pcxt->ip_hdr.pair_ip.dst_port =
                 get_icmpx_query_id(icmph);
-            bpf_log_info("ICMP query, id:%d", bpf_ntohs(pcxt->ip_hdr.pair_ip.src_port));
+            // bpf_log_info("ICMP query, id:%d", bpf_ntohs(pcxt->ip_hdr.pair_ip.src_port));
             break;
         }
         case ICMP_ACT_UNSPEC:
@@ -665,7 +665,7 @@ static __always_inline int extract_v6_packet_info(struct __sk_buff *skb,
         case ICMP_QUERY_MSG: {
             pcxt->ip_hdr.pair_ip.src_port = pcxt->ip_hdr.pair_ip.dst_port =
                 get_icmpx_query_id(icmph);
-            bpf_log_info("ICMP query, id:%d", bpf_ntohs(pcxt->ip_hdr.pair_ip.src_port));
+            // bpf_log_info("ICMP query, id:%d", bpf_ntohs(pcxt->ip_hdr.pair_ip.src_port));
             break;
         }
         case ICMP_ACT_UNSPEC:
@@ -738,8 +738,8 @@ int ipv4_egress_firewall(struct __sk_buff *skb) {
 
     // bpf_log_trace("packet ip:%pI4->%pI4", &packet_info.ip_hdr.pair_ip.src_addr,
     //               &packet_info.ip_hdr.pair_ip.dst_addr);
-
     // bpf_log_info("packet ip_protocol: %u ", packet_info.ip_hdr.ip_protocol);
+    // bpf_log_info("packet ICMP type: %u ", packet_info.ip_hdr.icmp_type);
     // bpf_log_info("packet src port: %u ", bpf_ntohs(packet_info.ip_hdr.pair_ip.src_port));
     // bpf_log_info("packet dst port: %u ", bpf_ntohs(packet_info.ip_hdr.pair_ip.dst_port));
 
@@ -763,7 +763,7 @@ int ipv4_egress_firewall(struct __sk_buff *skb) {
     };
     COPY_ADDR_FROM(rule_key.remote_address.all, &packet_info.ip_hdr.pair_ip.src_addr.all);
 
-    if (packet_info.ip_hdr.icmp_type != 0) {
+    if (packet_info.ip_hdr.ip_protocol == IPPROTO_ICMP) {
         rule_key.local_port = ((u16)packet_info.ip_hdr.icmp_type << 8);
     }
     struct firewall_static_ct_action *static_ct_value = NULL;
@@ -793,7 +793,7 @@ int ipv4_egress_firewall(struct __sk_buff *skb) {
                                 ct_timer_value);
         }
     } else {
-        bpf_log_info("has export rule");
+        // bpf_log_info("has firewall rule");
     }
 
     return TC_ACT_UNSPEC;
@@ -850,16 +850,15 @@ int ipv4_ingress_firewall(struct __sk_buff *skb) {
     ret = lookup_or_create_ct(false, &conntrack_key, &packet_info.ip_hdr.pair_ip.src_addr,
                               &packet_info.ip_hdr.pair_ip.src_port, &ct_timer_value);
 
-    if (ret == TIMER_NOT_FOUND || ret == TIMER_ERROR) {
-        bpf_log_info("can not find exist conntrack");
+    if (ret == TIMER_EXIST || ret == TIMER_CREATED) {
+        if (ct_timer_value != NULL) {
+            ct_state_transition(packet_info.ip_hdr.ip_protocol, packet_info.ip_hdr.pkt_type,
+                                ct_timer_value);
+            return TC_ACT_UNSPEC;
+        }
+        bpf_log_error("ct_timer_value is NULL");
         return TC_ACT_SHOT;
     }
-    if (ct_timer_value != NULL) {
-        ct_state_transition(packet_info.ip_hdr.ip_protocol, packet_info.ip_hdr.pkt_type,
-                            ct_timer_value);
-        return TC_ACT_UNSPEC;
-    }
-    bpf_log_info("can not find exist conntrack");
 
     // 检查用户是否已配置端口开放了
     struct firewall_static_rule_key rule_key = {
@@ -870,19 +869,17 @@ int ipv4_ingress_firewall(struct __sk_buff *skb) {
     };
     COPY_ADDR_FROM(rule_key.remote_address.all, &packet_info.ip_hdr.pair_ip.dst_addr.all);
 
-    if (packet_info.ip_hdr.icmp_type != 0) {
+    if (packet_info.ip_hdr.ip_protocol == IPPROTO_ICMP) {
         rule_key.local_port = ((u16)packet_info.ip_hdr.icmp_type << 8);
     }
     struct firewall_static_ct_action *static_ct_value = NULL;
     ret = lookup_static_rules(&rule_key, &static_ct_value);
     if (static_ct_value != NULL) {
-        // 没有端口开放 那就进行检查是否已经动态添加过了
-        bpf_log_info("EXPORT RULE");
-
-        bpf_log_info(
-            "packet ip:%pI4:%d->%pI4:%d, ip_protocol: %d", &packet_info.ip_hdr.pair_ip.src_addr,
-            bpf_ntohs(packet_info.ip_hdr.pair_ip.src_port), &packet_info.ip_hdr.pair_ip.dst_addr,
-            bpf_ntohs(packet_info.ip_hdr.pair_ip.dst_port), packet_info.ip_hdr.ip_protocol);
+        // bpf_log_info("has firewall rule");
+        // bpf_log_info(
+        //     "packet ip:%pI4:%d->%pI4:%d, ip_protocol: %d", &packet_info.ip_hdr.pair_ip.src_addr,
+        //     bpf_ntohs(packet_info.ip_hdr.pair_ip.src_port), &packet_info.ip_hdr.pair_ip.dst_addr,
+        //     bpf_ntohs(packet_info.ip_hdr.pair_ip.dst_port), packet_info.ip_hdr.ip_protocol);
         return TC_ACT_UNSPEC;
     }
     return TC_ACT_SHOT;
@@ -910,11 +907,11 @@ int ipv6_egress_firewall(struct __sk_buff *skb) {
         }
     }
 
-    bpf_log_info("packet ip: [%pI6c]->[%pI6c]", &packet_info.ip_hdr.pair_ip.src_addr,
-                 &packet_info.ip_hdr.pair_ip.dst_addr);
-    bpf_log_info("packet ip_protocol: %u ", packet_info.ip_hdr.ip_protocol);
-    bpf_log_info("packet src port: %u ", bpf_ntohs(packet_info.ip_hdr.pair_ip.src_port));
-    bpf_log_info("packet dst port: %u ", bpf_ntohs(packet_info.ip_hdr.pair_ip.dst_port));
+    // bpf_log_info("packet ip: [%pI6c]->[%pI6c]", &packet_info.ip_hdr.pair_ip.src_addr,
+    //              &packet_info.ip_hdr.pair_ip.dst_addr);
+    // bpf_log_info("packet ip_protocol: %u ", packet_info.ip_hdr.ip_protocol);
+    // bpf_log_info("packet src port: %u ", bpf_ntohs(packet_info.ip_hdr.pair_ip.src_port));
+    // bpf_log_info("packet dst port: %u ", bpf_ntohs(packet_info.ip_hdr.pair_ip.dst_port));
 
     struct ipv6_lpm_key block_search_key = {
         .prefixlen = 128,
@@ -929,12 +926,12 @@ int ipv6_egress_firewall(struct __sk_buff *skb) {
 
     // 先检查是否有规则已经放行
     struct firewall_static_rule_key rule_key = {
-        .prefixlen = 64,
+        .prefixlen = 160,
         .ip_type = LANDSCAPE_IPV6_TYPE,
         .ip_protocol = packet_info.ip_hdr.ip_protocol,
         .local_port = packet_info.ip_hdr.pair_ip.src_port,
     };
-    if (packet_info.ip_hdr.icmp_type != 0) {
+    if (packet_info.ip_hdr.ip_protocol == IPPROTO_ICMPV6) {
         rule_key.local_port = ((u16)packet_info.ip_hdr.icmp_type << 8);
     }
     COPY_ADDR_FROM(rule_key.remote_address.all, &packet_info.ip_hdr.pair_ip.src_addr.all);
@@ -966,7 +963,7 @@ int ipv6_egress_firewall(struct __sk_buff *skb) {
                                 ct_timer_value);
         }
     } else {
-        bpf_log_info("has export rule");
+        // bpf_log_info("has firewall rule");
     }
 
     return TC_ACT_UNSPEC;
@@ -994,11 +991,11 @@ int ipv6_ingress_firewall(struct __sk_buff *skb) {
         }
     }
 
-    bpf_log_info("packet ip: [%pI6c]->[%pI6c]", &packet_info.ip_hdr.pair_ip.src_addr,
-                 &packet_info.ip_hdr.pair_ip.dst_addr);
-    bpf_log_info("packet ip_protocol: %u ", packet_info.ip_hdr.ip_protocol);
-    bpf_log_info("packet src port: %u ", bpf_ntohs(packet_info.ip_hdr.pair_ip.src_port));
-    bpf_log_info("packet dst port: %u ", bpf_ntohs(packet_info.ip_hdr.pair_ip.dst_port));
+    // bpf_log_info("packet ip: [%pI6c]->[%pI6c]", &packet_info.ip_hdr.pair_ip.src_addr,
+    //              &packet_info.ip_hdr.pair_ip.dst_addr);
+    // bpf_log_info("packet ip_protocol: %u ", packet_info.ip_hdr.ip_protocol);
+    // bpf_log_info("packet src port: %u ", bpf_ntohs(packet_info.ip_hdr.pair_ip.src_port));
+    // bpf_log_info("packet dst port: %u ", bpf_ntohs(packet_info.ip_hdr.pair_ip.dst_port));
 
     struct ipv6_lpm_key block_search_key = {
         .prefixlen = 128,
@@ -1022,39 +1019,38 @@ int ipv6_ingress_firewall(struct __sk_buff *skb) {
     ret = lookup_or_create_ct(false, &conntrack_key, &packet_info.ip_hdr.pair_ip.src_addr,
                               &packet_info.ip_hdr.pair_ip.src_port, &ct_timer_value);
 
-    if (ret == TIMER_NOT_FOUND || ret == TIMER_ERROR) {
-        bpf_log_info("can not find exist conntrack");
+    if (ret == TIMER_EXIST || ret == TIMER_CREATED) {
+        if (ct_timer_value != NULL) {
+            ct_state_transition(packet_info.ip_hdr.ip_protocol, packet_info.ip_hdr.pkt_type,
+                                ct_timer_value);
+            return TC_ACT_UNSPEC;
+        }
+        bpf_log_info("ct_timer_value is NULL");
         return TC_ACT_SHOT;
     }
-    if (ct_timer_value != NULL) {
-        ct_state_transition(packet_info.ip_hdr.ip_protocol, packet_info.ip_hdr.pkt_type,
-                            ct_timer_value);
-        return TC_ACT_UNSPEC;
-    }
-    bpf_log_info("can not find exist conntrack");
+
+    // bpf_log_info("can not find exist conntrack");
 
     // 检查用户是否已配置端口开放了
     struct firewall_static_rule_key rule_key = {
-        .prefixlen = 64,
+        .prefixlen = 160,
         .ip_type = LANDSCAPE_IPV6_TYPE,
         .ip_protocol = packet_info.ip_hdr.ip_protocol,
         .local_port = packet_info.ip_hdr.pair_ip.dst_port,
     };
     COPY_ADDR_FROM(rule_key.remote_address.all, &packet_info.ip_hdr.pair_ip.dst_addr.all);
 
-    if (packet_info.ip_hdr.icmp_type != 0) {
+    if (packet_info.ip_hdr.ip_protocol == IPPROTO_ICMPV6) {
         rule_key.local_port = ((u16)packet_info.ip_hdr.icmp_type << 8);
     }
     struct firewall_static_ct_action *static_ct_value = NULL;
     ret = lookup_static_rules(&rule_key, &static_ct_value);
     if (static_ct_value != NULL) {
-        // 没有端口开放 那就进行检查是否已经动态添加过了
-        bpf_log_info("EXPORT RULE");
-
-        bpf_log_info(
-            "packet ip:%pI4:%d->%pI4:%d, ip_protocol: %d", &packet_info.ip_hdr.pair_ip.src_addr,
-            bpf_ntohs(packet_info.ip_hdr.pair_ip.src_port), &packet_info.ip_hdr.pair_ip.dst_addr,
-            bpf_ntohs(packet_info.ip_hdr.pair_ip.dst_port), packet_info.ip_hdr.ip_protocol);
+        // bpf_log_info("has firewall rule");
+        // bpf_log_info(
+        //     "packet ip:%pI4:%d->%pI4:%d, ip_protocol: %d", &packet_info.ip_hdr.pair_ip.src_addr,
+        //     bpf_ntohs(packet_info.ip_hdr.pair_ip.src_port), &packet_info.ip_hdr.pair_ip.dst_addr,
+        //     bpf_ntohs(packet_info.ip_hdr.pair_ip.dst_port), packet_info.ip_hdr.ip_protocol);
         return TC_ACT_UNSPEC;
     }
     return TC_ACT_SHOT;

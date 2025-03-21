@@ -24,7 +24,7 @@ struct {
 
 // local_port + TRIE remote ip
 struct {
-    __uint(type, BPF_MAP_TYPE_HASH);
+    __uint(type, BPF_MAP_TYPE_LPM_TRIE);
     __type(key, struct firewall_static_rule_key);
     __type(value, struct firewall_static_ct_action);
     __uint(max_entries, 35565);
