@@ -70,9 +70,7 @@ async function on_modal_enter() {
 async function update_mode() {
   if (iface_data.value !== undefined) {
     try {
-      let config = await update_iface_server_config(
-        iface_data.value
-      );
+      let config = await update_iface_server_config(iface_data.value);
       emit("refresh");
       show_model.value = false;
     } catch (error) {}
@@ -198,9 +196,13 @@ function select_ip_model(value: IfaceIpMode) {
             ></DhcpServerConfigForm>
           </n-flex>
           <n-flex
+            vertical
             style="flex: 1"
             v-else-if="iface_data.ip_model.t === IfaceIpMode.DHCPClient"
           >
+            <n-alert type="warning">
+              本端口如果有开启防火墙, 那么需要配置规则将 68 端口开放
+            </n-alert>
             <n-form style="flex: 1" :model="iface_data.ip_model" :cols="5">
               <n-grid :cols="5">
                 <n-form-item-gi label="是否设置默认路由" :span="5">

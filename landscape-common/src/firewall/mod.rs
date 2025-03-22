@@ -9,6 +9,7 @@ pub struct FirewallRuleConfig {
     pub index: u32,
     pub enable: bool,
 
+    pub remark: String,
     pub items: Vec<FirewallRuleItem>,
     /// 流量标记
     #[serde(default)]

@@ -736,13 +736,19 @@ int ipv4_egress_firewall(struct __sk_buff *skb) {
         }
     }
 
-    // bpf_log_trace("packet ip:%pI4->%pI4", &packet_info.ip_hdr.pair_ip.src_addr,
-    //               &packet_info.ip_hdr.pair_ip.dst_addr);
-    // bpf_log_info("packet ip_protocol: %u ", packet_info.ip_hdr.ip_protocol);
-    // bpf_log_info("packet ICMP type: %u ", packet_info.ip_hdr.icmp_type);
-    // bpf_log_info("packet src port: %u ", bpf_ntohs(packet_info.ip_hdr.pair_ip.src_port));
-    // bpf_log_info("packet dst port: %u ", bpf_ntohs(packet_info.ip_hdr.pair_ip.dst_port));
+    // if (bpf_ntohs(packet_info.ip_hdr.pair_ip.src_port) == 68) {
+    //     bpf_log_info(
+    //         "packet ip_protocol: %u, ip:%pI4:%u->%pI4:%u", packet_info.ip_hdr.ip_protocol,
+    //         &packet_info.ip_hdr.pair_ip.src_addr, bpf_ntohs(packet_info.ip_hdr.pair_ip.src_port),
+    //         &packet_info.ip_hdr.pair_ip.dst_addr,
+    //         bpf_ntohs(packet_info.ip_hdr.pair_ip.dst_port));
+    // }
 
+    // bpf_log_info(
+    //     "packet ip_protocol: %u, ip:%pI4:%u->%pI4:%u", packet_info.ip_hdr.ip_protocol,
+    //     &packet_info.ip_hdr.pair_ip.src_addr, bpf_ntohs(packet_info.ip_hdr.pair_ip.src_port),
+    //     &packet_info.ip_hdr.pair_ip.dst_addr, bpf_ntohs(packet_info.ip_hdr.pair_ip.dst_port));
+    // bpf_log_info("packet ICMP type: %u ", packet_info.ip_hdr.icmp_type);
     struct ipv4_lpm_key block_search_key = {
         .prefixlen = 32,
         .addr = packet_info.ip_hdr.pair_ip.dst_addr.ip,
@@ -761,7 +767,8 @@ int ipv4_egress_firewall(struct __sk_buff *skb) {
         .ip_protocol = packet_info.ip_hdr.ip_protocol,
         .local_port = packet_info.ip_hdr.pair_ip.src_port,
     };
-    COPY_ADDR_FROM(rule_key.remote_address.all, &packet_info.ip_hdr.pair_ip.src_addr.all);
+    // 限制的是可访问的 IP
+    COPY_ADDR_FROM(rule_key.remote_address.all, &packet_info.ip_hdr.pair_ip.dst_addr.all);
 
     if (packet_info.ip_hdr.ip_protocol == IPPROTO_ICMP) {
         rule_key.local_port = ((u16)packet_info.ip_hdr.icmp_type << 8);
@@ -769,6 +776,7 @@ int ipv4_egress_firewall(struct __sk_buff *skb) {
     struct firewall_static_ct_action *static_ct_value = NULL;
     ret = lookup_static_rules(&rule_key, &static_ct_value);
     if (static_ct_value == NULL) {
+        // 没有端口开放 那就进行检查是否已经动态添加过了
         struct firewall_conntrack_key conntrack_key = {
             .ip_type = LANDSCAPE_IPV4_TYPE,
             .ip_protocol = packet_info.ip_hdr.ip_protocol,
@@ -779,7 +787,6 @@ int ipv4_egress_firewall(struct __sk_buff *skb) {
         bool allow_create_mapping =
             !is_icmpx_error && pkt_allow_initiating_ct(packet_info.ip_hdr.pkt_type);
 
-        // 没有端口开放 那就进行检查是否已经动态添加过了
         struct firewall_conntrack_action *ct_timer_value;
         ret = lookup_or_create_ct(allow_create_mapping, &conntrack_key,
                                   &packet_info.ip_hdr.pair_ip.dst_addr,
@@ -821,8 +828,16 @@ int ipv4_ingress_firewall(struct __sk_buff *skb) {
         }
     }
 
+    // if (bpf_ntohs(packet_info.ip_hdr.pair_ip.dst_port) == 68) {
+    //     bpf_log_info(
+    //         "packet ip_protocol: %u, ip:%pI4:%u->%pI4:%u", packet_info.ip_hdr.ip_protocol,
+    //         &packet_info.ip_hdr.pair_ip.src_addr, bpf_ntohs(packet_info.ip_hdr.pair_ip.src_port),
+    //         &packet_info.ip_hdr.pair_ip.dst_addr,
+    //         bpf_ntohs(packet_info.ip_hdr.pair_ip.dst_port));
+    // }
+
     // bpf_log_info("packet ip:%pI4->%pI4", &packet_info.ip_hdr.pair_ip.src_addr,
-    //     &packet_info.ip_hdr.pair_ip.dst_addr);
+    //              &packet_info.ip_hdr.pair_ip.dst_addr);
 
     // bpf_log_info("packet ip_protocol: %u ", packet_info.ip_hdr.ip_protocol);
     // bpf_log_info("packet src port: %u ", bpf_ntohs(packet_info.ip_hdr.pair_ip.src_port));
@@ -867,7 +882,8 @@ int ipv4_ingress_firewall(struct __sk_buff *skb) {
         .ip_protocol = packet_info.ip_hdr.ip_protocol,
         .local_port = packet_info.ip_hdr.pair_ip.dst_port,
     };
-    COPY_ADDR_FROM(rule_key.remote_address.all, &packet_info.ip_hdr.pair_ip.dst_addr.all);
+    // 限制的是可访问的 IP
+    COPY_ADDR_FROM(rule_key.remote_address.all, &packet_info.ip_hdr.pair_ip.src_addr.all);
 
     if (packet_info.ip_hdr.ip_protocol == IPPROTO_ICMP) {
         rule_key.local_port = ((u16)packet_info.ip_hdr.icmp_type << 8);
@@ -934,7 +950,8 @@ int ipv6_egress_firewall(struct __sk_buff *skb) {
     if (packet_info.ip_hdr.ip_protocol == IPPROTO_ICMPV6) {
         rule_key.local_port = ((u16)packet_info.ip_hdr.icmp_type << 8);
     }
-    COPY_ADDR_FROM(rule_key.remote_address.all, &packet_info.ip_hdr.pair_ip.src_addr.all);
+    // 限制的是可访问的 IP
+    COPY_ADDR_FROM(rule_key.remote_address.all, &packet_info.ip_hdr.pair_ip.dst_addr.all);
 
     struct firewall_static_ct_action *static_ct_value = NULL;
     ret = lookup_static_rules(&rule_key, &static_ct_value);
@@ -1038,7 +1055,8 @@ int ipv6_ingress_firewall(struct __sk_buff *skb) {
         .ip_protocol = packet_info.ip_hdr.ip_protocol,
         .local_port = packet_info.ip_hdr.pair_ip.dst_port,
     };
-    COPY_ADDR_FROM(rule_key.remote_address.all, &packet_info.ip_hdr.pair_ip.dst_addr.all);
+    // 限制的是可访问的 IP
+    COPY_ADDR_FROM(rule_key.remote_address.all, &packet_info.ip_hdr.pair_ip.src_addr.all);
 
     if (packet_info.ip_hdr.ip_protocol == IPPROTO_ICMPV6) {
         rule_key.local_port = ((u16)packet_info.ip_hdr.icmp_type << 8);

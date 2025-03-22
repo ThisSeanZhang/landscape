@@ -55,7 +55,7 @@ async function save_config() {
   >
     <n-card
       style="width: 600px"
-      title="ICMPv6 PD 配置"
+      title="ICMPv6 RA 配置"
       :bordered="false"
       size="small"
       role="dialog"

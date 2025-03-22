@@ -26,8 +26,8 @@ mod iface;
 mod service;
 mod sysinfo;
 
-use service::packet_mark::get_iface_packet_mark_paths;
 use service::pppd::get_iface_pppd_paths;
+use service::{firewall::get_firewall_service_paths, packet_mark::get_iface_packet_mark_paths};
 use service::{icmp_ra::get_iface_icmpv6ra_paths, nat::get_iface_nat_paths};
 use service::{ipconfig::get_iface_ipconfig_paths, ipvpd::get_iface_pdclient_paths};
 use tracing::{error, info};
@@ -73,6 +73,12 @@ async fn main() -> LdResult<()> {
     let mut icmpv6ra_store =
         StoreFileManager::new(home_path.clone(), "icmpv6ra_service".to_string());
 
+    let mut firewall_store =
+        StoreFileManager::new(home_path.clone(), "firewall_service".to_string());
+
+    let mut firewall_rules_store =
+        StoreFileManager::new(home_path.clone(), "firewall_rules".to_string());
+
     let need_init_config = boot_check(&home_path)?;
 
     info!("init config: {need_init_config:#?}");
@@ -89,6 +95,8 @@ async fn main() -> LdResult<()> {
         wan_ip_mark,
         dhcpv6pds,
         icmpras,
+        firewalls,
+        firewall_rules,
     }) = need_init_config
     {
         iface_store.truncate();
@@ -101,6 +109,8 @@ async fn main() -> LdResult<()> {
         wan_ip_mark_store.truncate();
         ipv6pd_store.truncate();
         icmpv6ra_store.truncate();
+        firewall_store.truncate();
+        firewall_rules_store.truncate();
 
         for each_config in ifaces {
             iface_store.set(each_config);
@@ -140,6 +150,13 @@ async fn main() -> LdResult<()> {
 
         for each_config in icmpras {
             icmpv6ra_store.set(each_config);
+        }
+
+        for each_config in firewalls {
+            firewall_store.set(each_config);
+        }
+        for each_config in firewall_rules {
+            firewall_rules_store.set(each_config);
         }
     }
 
@@ -191,12 +208,18 @@ async fn main() -> LdResult<()> {
         .nest("/iface", iface::get_network_paths(iface_store).await)
         .nest(
             "/global_mark",
-            global_mark::get_global_mark_paths(lan_ip_mark_store, wan_ip_mark_store).await,
+            global_mark::get_global_mark_paths(
+                lan_ip_mark_store,
+                wan_ip_mark_store,
+                firewall_rules_store,
+            )
+            .await,
         )
         .nest("/dns", dns::get_dns_paths(dns_store).await)
         .nest(
             "/services",
             Router::new()
+                .merge(get_firewall_service_paths(firewall_store, dev_obs.resubscribe()).await)
                 .merge(get_iface_ipconfig_paths(iface_ipconfig_store, dev_obs.resubscribe()).await)
                 .merge(get_iface_pppd_paths(iface_pppd_store).await)
                 .merge(get_iface_pdclient_paths(ipv6pd_store, dev_obs.resubscribe()).await)

@@ -7,7 +7,7 @@ import MemUsage from "@/components/sysinfo/MemUsage.vue";
 import DnsStatusCard from "@/components/dns/DnsStatusCard.vue";
 import DockerStatusCard from "@/components/docker/DockerStatusCard.vue";
 import DockerAllContainer from "@/components/docker/DockerAllContainer.vue";
-// import FireWallStatusCard from "@/components/firewall/FireWallStatusCard.vue";
+import FirewallCard from "@/components/firewall/FirewallCard.vue";
 import SystemInfo from "@/components/sysinfo/SystemInfo.vue";
 import IntervalFetch from "@/components/head/IntervalFetch.vue";
 import LanguageSetting from "@/components/head/LanguageSetting.vue";
@@ -68,6 +68,9 @@ const { t } = useI18n({ useScope: "global" });
           </n-gi>
           <n-gi style="display: flex; height: 320px" :span="1">
             <MarkRuleCard></MarkRuleCard>
+          </n-gi>
+          <n-gi style="display: flex; height: 320px" :span="1">
+            <FirewallCard></FirewallCard>
           </n-gi>
           <!-- <n-gi style="display: flex; height: 320px" :span="1">
             <FireWallStatusCard></FireWallStatusCard>

@@ -23,6 +23,7 @@ import { ServiceExhibitSwitch } from "@/lib/services";
 import IPv6PDStatusBtn from "../status_btn/IPv6PDStatusBtn.vue";
 import ICMPv6RAStatusBtn from "../status_btn/ICMPv6RAStatusBtn.vue";
 
+import FirewallServiceEditModal from "@/components/firewall/FirewallServiceEditModal.vue";
 import IPv6PDEditModal from "../ipv6pd/IPv6PDEditModal.vue";
 
 // import { NodeToolbar } from "@vue-flow/node-toolbar";
@@ -37,6 +38,7 @@ const ifaceNodeStore = useIfaceNodeStore();
 
 // const nodesData = useNodesData(() => connections.value[0]?.source)
 
+const iface_firewall_edit_show = ref(false);
 const iface_icmpv6ra_edit_show = ref(false);
 const iface_ipv6pd_edit_show = ref(false);
 const iface_mark_edit_show = ref(false);
@@ -232,6 +234,12 @@ const show_switch = computed(() => {
         :iface_name="node.name"
         :zone="node.zone_type"
       />
+      <FirewallStatusBtn
+        v-if="show_switch.nat_config"
+        @click="iface_firewall_edit_show = true"
+        :iface_name="node.name"
+        :zone="node.zone_type"
+      />
       <!-- NAT 配置 按钮 -->
       <NetAddrTransBtn
         v-if="show_switch.nat_config"
@@ -314,6 +322,13 @@ const show_switch = computed(() => {
   />
   <IcmpRAEditModal
     v-model:show="iface_icmpv6ra_edit_show"
+    :zone="node.zone_type"
+    :iface_name="node.name"
+    :mac="node.mac"
+    @refresh="refresh"
+  />
+  <FirewallServiceEditModal
+    v-model:show="iface_firewall_edit_show"
     :zone="node.zone_type"
     :iface_name="node.name"
     :mac="node.mac"

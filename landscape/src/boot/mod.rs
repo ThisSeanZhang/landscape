@@ -4,6 +4,7 @@ use landscape_ebpf::map_setting;
 use serde::{Deserialize, Serialize};
 
 use crate::{
+    firewall::FirewallServiceConfig,
     iface::config::NetworkIfaceConfig,
     service::{
         ipconfig::IfaceIpServiceConfig, ipv6pd::IPV6PDServiceConfig, nat_service::NatServiceConfig,
@@ -15,6 +16,7 @@ use landscape_common::{
     args::LAND_ARGS,
     dns::DNSRuleConfig,
     error::{LdError, LdResult},
+    firewall::FirewallRuleConfig,
     ip_mark::{LanIPRuleConfig, WanIPRuleConfig},
     INIT_FILE_NAME, INIT_LOCK_FILE_NAME,
 };
@@ -80,6 +82,9 @@ pub struct InitConfig {
 
     pub dhcpv6pds: Vec<IPV6PDServiceConfig>,
     pub icmpras: Vec<IPV6RAServiceConfig>,
+
+    pub firewalls: Vec<FirewallServiceConfig>,
+    pub firewall_rules: Vec<FirewallRuleConfig>,
 }
 
 pub fn init_ports() {

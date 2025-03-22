@@ -10,6 +10,7 @@ import { useDockerStore } from "./status_docker";
 import { useDnsStore } from "./status_dns";
 import { useIPv6PDStore } from "./status_ipv6pd";
 import { useICMPv6RAStore } from "./status_icmpv6ra";
+import { useFirewallConfigStore } from "./status_firewall";
 
 export const useFetchIntervalStore = defineStore("fetch_interval", () => {
   const sysinfo = useSysInfo();
@@ -21,6 +22,7 @@ export const useFetchIntervalStore = defineStore("fetch_interval", () => {
   const dnsStore = useDnsStore();
   const ipv6PDStore = useIPv6PDStore();
   const icmpv6raStore = useICMPv6RAStore();
+  const firewallConfigStore = useFirewallConfigStore();
 
   const interval_function = async () => {
     if (start_count_down_callback.value !== undefined) {
@@ -36,6 +38,7 @@ export const useFetchIntervalStore = defineStore("fetch_interval", () => {
       await markConfigStore.UPDATE_INFO();
       await ipv6PDStore.UPDATE_INFO();
       await icmpv6raStore.UPDATE_INFO();
+      await firewallConfigStore.UPDATE_INFO();
     } catch (error) {
       // console.log("1111");
       enable_interval.value = false;
