@@ -776,6 +776,11 @@ int ipv4_egress_firewall(struct __sk_buff *skb) {
     struct firewall_static_ct_action *static_ct_value = NULL;
     ret = lookup_static_rules(&rule_key, &static_ct_value);
     if (static_ct_value == NULL) {
+        bool is_icmp_reply =
+            packet_info.ip_hdr.ip_protocol == IPPROTO_ICMP && packet_info.ip_hdr.icmp_type == 0;
+        if (is_icmp_reply) {
+            return TC_ACT_UNSPEC;
+        }
         // 没有端口开放 那就进行检查是否已经动态添加过了
         struct firewall_conntrack_key conntrack_key = {
             .ip_type = LANDSCAPE_IPV4_TYPE,
@@ -828,7 +833,7 @@ int ipv4_ingress_firewall(struct __sk_buff *skb) {
         }
     }
 
-    // if (bpf_ntohs(packet_info.ip_hdr.pair_ip.dst_port) == 68) {
+    // if (packet_info.ip_hdr.ip_protocol == IPPROTO_ICMP) {
     //     bpf_log_info(
     //         "packet ip_protocol: %u, ip:%pI4:%u->%pI4:%u", packet_info.ip_hdr.ip_protocol,
     //         &packet_info.ip_hdr.pair_ip.src_addr, bpf_ntohs(packet_info.ip_hdr.pair_ip.src_port),
@@ -956,6 +961,11 @@ int ipv6_egress_firewall(struct __sk_buff *skb) {
     struct firewall_static_ct_action *static_ct_value = NULL;
     ret = lookup_static_rules(&rule_key, &static_ct_value);
     if (static_ct_value == NULL) {
+        bool is_icmp_reply =
+            packet_info.ip_hdr.ip_protocol == IPPROTO_ICMP && packet_info.ip_hdr.icmp_type == 129;
+        if (is_icmp_reply) {
+            return TC_ACT_UNSPEC;
+        }
         struct firewall_conntrack_key conntrack_key = {
             .ip_type = LANDSCAPE_IPV6_TYPE,
             .ip_protocol = packet_info.ip_hdr.ip_protocol,
