@@ -20,7 +20,7 @@ const show_create_modal = ref(false);
     width="500px"
     placement="right"
   >
-    <n-drawer-content title="编辑防火墙规则" closable>
+    <n-drawer-content title="编辑防火墙白名单" closable>
       <n-flex style="height: 100%" vertical>
         <!-- <n-alert type="warning"> 规则编辑后 </n-alert> -->
         <n-button @click="show_create_modal = true">增加规则</n-button>

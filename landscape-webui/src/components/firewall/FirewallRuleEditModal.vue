@@ -8,6 +8,9 @@ import { post_firewall_rules } from "@/api/mark";
 import PacketMark from "@/components/mark/PacketMark.vue";
 import NewIpEdit from "@/components/NewIpEdit.vue";
 import {
+  IPProtocol,
+  icmp6_options,
+  icmp_options,
   protocol_options,
   FirewallRuleConfig,
   FirewallRuleItem,
@@ -59,7 +62,7 @@ async function saveRule() {
     style="width: 700px"
     class="custom-card"
     preset="card"
-    title="防火墙规则编辑"
+    title="防火墙白名单编辑"
     :bordered="false"
   >
     <!-- {{ isModified }} -->
@@ -91,14 +94,31 @@ async function saveRule() {
           <template #default="{ value, index }">
             <n-input-group>
               <n-select
-                style="width: 200px"
+                style="width: 220px"
                 v-model:value="value.ip_protocol"
                 :options="protocol_options()"
               />
+
               <n-input-number
+                v-if="
+                  value.ip_protocol == IPProtocol.TCP ||
+                  value.ip_protocol == IPProtocol.UDP
+                "
                 :show-button="false"
                 placeholder="端口"
                 v-model:value="value.local_port"
+              />
+              <n-select
+                v-if="value.ip_protocol == IPProtocol.ICMP"
+                filterable
+                v-model:value="value.local_port"
+                :options="icmp_options()"
+              />
+              <n-select
+                v-if="value.ip_protocol == IPProtocol.ICMPV6"
+                filterable
+                v-model:value="value.local_port"
+                :options="icmp6_options()"
               />
               <n-input
                 v-model:value="value.address"
