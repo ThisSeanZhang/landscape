@@ -22,10 +22,8 @@ impl ServiceHandler for FirewallService {
 
     async fn initialize(config: FirewallServiceConfig) -> DefaultWatchServiceStatus {
         let service_status = DefaultWatchServiceStatus::new();
-        // service_status.just_change_status(ServiceStatus::Staring);
 
         if config.enable {
-            // 具体的 NAT 服务启动逻辑
             if let Some(iface) = get_iface_by_name(&config.iface_name).await {
                 let status_clone = service_status.clone();
                 tokio::spawn(async move {

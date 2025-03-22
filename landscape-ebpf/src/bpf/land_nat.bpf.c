@@ -978,6 +978,8 @@ static __always_inline int current_pkg_type(struct __sk_buff *skb) {
     }
     return TC_ACT_OK;
 }
+
+// static __always_inline int is_out_nat_range(struct __sk_buff *skb) {}
 SEC("tc")
 int ingress_nat(struct __sk_buff *skb) {
 #define BPF_LOG_TOPIC ">>> ingress_nat >>>"
