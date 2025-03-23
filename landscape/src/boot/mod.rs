@@ -11,6 +11,7 @@ use crate::{
         packet_mark_service::PacketMarkServiceConfig, pppd_service::PPPDServiceConfig,
         ra::IPV6RAServiceConfig,
     },
+    wifi::WifiServiceConfig,
 };
 use landscape_common::{
     args::LAND_ARGS,
@@ -85,6 +86,8 @@ pub struct InitConfig {
 
     pub firewalls: Vec<FirewallServiceConfig>,
     pub firewall_rules: Vec<FirewallRuleConfig>,
+
+    pub wifi_configs: Vec<WifiServiceConfig>,
 }
 
 pub fn init_ports() {

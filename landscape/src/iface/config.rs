@@ -14,8 +14,12 @@ pub struct NetworkIfaceConfig {
     pub controller_name: Option<String>,
     #[serde(default)]
     pub zone_type: IfaceZoneType,
+
     #[serde(default = "yes")]
     pub enable_in_boot: bool,
+
+    #[serde(default)]
+    pub wifi_mode: WifiMode,
 }
 
 impl LandScapeStore for NetworkIfaceConfig {
@@ -40,6 +44,7 @@ impl NetworkIfaceConfig {
             controller_name: None,
             enable_in_boot: matches!(iface.dev_status, crate::dev::DevState::Up),
             zone_type,
+            wifi_mode: WifiMode::default(),
         }
     }
 
@@ -57,6 +62,7 @@ impl NetworkIfaceConfig {
             controller_name: None,
             enable_in_boot: true,
             zone_type: zone_type.unwrap_or_default(),
+            wifi_mode: WifiMode::default(),
         }
     }
 }
@@ -91,4 +97,13 @@ impl CreateDevType {
             }
         }
     }
+}
+
+#[derive(Debug, Serialize, Deserialize, Default, Clone)]
+#[serde(rename_all = "lowercase")]
+pub enum WifiMode {
+    #[default]
+    Undefined,
+    Client,
+    AP,
 }

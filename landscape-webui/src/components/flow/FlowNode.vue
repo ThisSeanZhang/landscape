@@ -2,31 +2,30 @@
 import { Handle, Position, useNodesData } from "@vue-flow/core";
 import { useThemeVars } from "naive-ui";
 
+import IPConfigStatusBtn from "@/components/status_btn/IPConfigStatusBtn.vue";
+import PacketMarkStatusBtn from "@/components/status_btn/PacketMarkStatusBtn.vue";
+import IPv6PDStatusBtn from "../status_btn/IPv6PDStatusBtn.vue";
+import ICMPv6RAStatusBtn from "../status_btn/ICMPv6RAStatusBtn.vue";
+import WifiStatusBtn from "@/components/status_btn/WifiStatusBtn.vue";
+import NetAddrTransBtn from "@/components/status_btn/NetAddrTransBtn.vue";
+
 import IpConfigModal from "@/components/ipconfig/IpConfigModal.vue";
 import NATEditModal from "@/components/nat/NATEditModal.vue";
 import MarkEditModal from "@/components/mark/MarkEditModal.vue";
+import FirewallServiceEditModal from "@/components/firewall/FirewallServiceEditModal.vue";
+import IPv6PDEditModal from "../ipv6pd/IPv6PDEditModal.vue";
+import WifiServiceEditModal from "@/components/wifi/WifiServiceEditModal.vue";
 
 import IfaceChangeZone from "../iface/IfaceChangeZone.vue";
-import IPConfigStatusBtn from "@/components/status_btn/IPConfigStatusBtn.vue";
-import NetAddrTransBtn from "@/components/status_btn/NetAddrTransBtn.vue";
-import PacketMarkStatusBtn from "@/components/status_btn/PacketMarkStatusBtn.vue";
-import { AreaCustom, Power, Link, DotMark } from "@vicons/carbon";
+import { AreaCustom, Power, Link, DotMark, Wifi } from "@vicons/carbon";
 import { PlugDisconnected20Regular } from "@vicons/fluent";
-import { Ethernet } from "@vicons/fa";
+import { SpatialAudioOutlined } from "@vicons/material";
 import { computed, ref } from "vue";
 
 import { DevStateType } from "@/lib/dev";
 import { useIfaceNodeStore } from "@/stores/iface_node";
 import { add_controller, change_iface_status } from "@/api/network";
-import { ZoneType } from "@/lib/service_ipconfig";
 import { ServiceExhibitSwitch } from "@/lib/services";
-import IPv6PDStatusBtn from "../status_btn/IPv6PDStatusBtn.vue";
-import ICMPv6RAStatusBtn from "../status_btn/ICMPv6RAStatusBtn.vue";
-
-import FirewallServiceEditModal from "@/components/firewall/FirewallServiceEditModal.vue";
-import IPv6PDEditModal from "../ipv6pd/IPv6PDEditModal.vue";
-
-// import { NodeToolbar } from "@vue-flow/node-toolbar";
 
 const props = defineProps(["node"]);
 
@@ -38,6 +37,7 @@ const ifaceNodeStore = useIfaceNodeStore();
 
 // const nodesData = useNodesData(() => connections.value[0]?.source)
 
+const iface_wifi_edit_show = ref(false);
 const iface_firewall_edit_show = ref(false);
 const iface_icmpv6ra_edit_show = ref(false);
 const iface_ipv6pd_edit_show = ref(false);
@@ -155,9 +155,9 @@ const show_switch = computed(() => {
                     </n-icon>
                   </n-button>
                 </template>
-                确定{{
-                  node.dev_status.t === DevStateType.Up ? "关闭" : "开启"
-                }}网卡吗
+                确定
+                {{ node.dev_status.t === DevStateType.Up ? "关闭" : "开启" }}
+                网卡吗
               </n-popconfirm>
               <n-button
                 v-if="show_switch.zone_type"
@@ -181,6 +181,30 @@ const show_switch = computed(() => {
               >
                 <n-icon>
                   <Link></Link>
+                </n-icon>
+              </n-button>
+
+              <n-button
+                v-if="show_switch.wifi"
+                text
+                :focusable="false"
+                style="font-size: 16px"
+                @click="show_pppd_drawer = true"
+              >
+                <n-icon>
+                  <Wifi></Wifi>
+                </n-icon>
+              </n-button>
+
+              <n-button
+                v-if="show_switch.station"
+                text
+                :focusable="false"
+                style="font-size: 16px"
+                @click="show_pppd_drawer = true"
+              >
+                <n-icon>
+                  <SpatialAudioOutlined></SpatialAudioOutlined>
                 </n-icon>
               </n-button>
             </n-flex>
@@ -223,10 +247,7 @@ const show_switch = computed(() => {
       <!-- <n-divider /> -->
     </n-popover>
 
-    <n-flex
-      v-if="node.controller_id == undefined"
-      style="min-width: 230px; max-width: 230px"
-    >
+    <n-flex style="min-width: 230px; max-width: 230px">
       <!-- IP 配置 按钮 -->
       <IPConfigStatusBtn
         v-if="show_switch.ip_config"
@@ -265,6 +286,14 @@ const show_switch = computed(() => {
       <ICMPv6RAStatusBtn
         v-if="show_switch.icmpv6ra"
         @click="iface_icmpv6ra_edit_show = true"
+        :iface_name="node.name"
+        :zone="node.zone_type"
+      />
+
+      <!-- Wifi -->
+      <WifiStatusBtn
+        v-if="show_switch.wifi"
+        @click="iface_wifi_edit_show = true"
         :iface_name="node.name"
         :zone="node.zone_type"
       />
@@ -329,6 +358,13 @@ const show_switch = computed(() => {
   />
   <FirewallServiceEditModal
     v-model:show="iface_firewall_edit_show"
+    :zone="node.zone_type"
+    :iface_name="node.name"
+    :mac="node.mac"
+    @refresh="refresh"
+  />
+  <WifiServiceEditModal
+    v-model:show="iface_wifi_edit_show"
     :zone="node.zone_type"
     :iface_name="node.name"
     :mac="node.mac"

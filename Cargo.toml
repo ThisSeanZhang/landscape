@@ -53,6 +53,7 @@ rtnetlink = { version = "0.14.1" }
 netlink-packet-route = { version = "0.19.0" }
 netlink-packet-core = { version = "0.7.0" }
 netlink-sys = { version = "0.8.6" }
+wl-nl80211 = { version = "0.2.0" }
 
 # for docker
 bollard = "0.18.1"

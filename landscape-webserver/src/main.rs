@@ -26,10 +26,10 @@ mod iface;
 mod service;
 mod sysinfo;
 
-use service::pppd::get_iface_pppd_paths;
 use service::{firewall::get_firewall_service_paths, packet_mark::get_iface_packet_mark_paths};
 use service::{icmp_ra::get_iface_icmpv6ra_paths, nat::get_iface_nat_paths};
 use service::{ipconfig::get_iface_ipconfig_paths, ipvpd::get_iface_pdclient_paths};
+use service::{pppd::get_iface_pppd_paths, wifi::get_wifi_service_paths};
 use tracing::{error, info};
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -79,6 +79,8 @@ async fn main() -> LdResult<()> {
     let mut firewall_rules_store =
         StoreFileManager::new(home_path.clone(), "firewall_rules".to_string());
 
+    let mut wifi_config_store = StoreFileManager::new(home_path.clone(), "iface_wifi".to_string());
+
     let need_init_config = boot_check(&home_path)?;
 
     info!("init config: {need_init_config:#?}");
@@ -97,6 +99,7 @@ async fn main() -> LdResult<()> {
         icmpras,
         firewalls,
         firewall_rules,
+        wifi_configs,
     }) = need_init_config
     {
         iface_store.truncate();
@@ -111,6 +114,7 @@ async fn main() -> LdResult<()> {
         icmpv6ra_store.truncate();
         firewall_store.truncate();
         firewall_rules_store.truncate();
+        wifi_config_store.truncate();
 
         for each_config in ifaces {
             iface_store.set(each_config);
@@ -157,6 +161,10 @@ async fn main() -> LdResult<()> {
         }
         for each_config in firewall_rules {
             firewall_rules_store.set(each_config);
+        }
+
+        for each_config in wifi_configs {
+            wifi_config_store.set(each_config);
         }
     }
 
@@ -221,6 +229,7 @@ async fn main() -> LdResult<()> {
             Router::new()
                 .merge(get_firewall_service_paths(firewall_store, dev_obs.resubscribe()).await)
                 .merge(get_iface_ipconfig_paths(iface_ipconfig_store, dev_obs.resubscribe()).await)
+                .merge(get_wifi_service_paths(wifi_config_store, dev_obs.resubscribe()).await)
                 .merge(get_iface_pppd_paths(iface_pppd_store).await)
                 .merge(get_iface_pdclient_paths(ipv6pd_store, dev_obs.resubscribe()).await)
                 .merge(get_iface_icmpv6ra_paths(icmpv6ra_store).await)

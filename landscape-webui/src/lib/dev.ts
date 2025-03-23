@@ -17,6 +17,8 @@ export class NetDev {
   netns_id: number | undefined;
   peer_link_id: number | undefined;
 
+  wifi_info: WifiIface | undefined;
+
   constructor(obj: any) {
     this.name = obj.name;
     this.index = obj.index;
@@ -32,6 +34,8 @@ export class NetDev {
     this.enable_in_boot = obj.enable_in_boot;
     this.netns_id = obj.netns_id;
     this.peer_link_id = obj.peer_link_id;
+    this.wifi_info =
+      obj.wifi_info != null ? new WifiIface(obj.wifi_info) : undefined;
   }
   // left Handle
   has_target_hook() {
@@ -101,3 +105,50 @@ export type DevState =
   | { t: DevStateType.Dormant }
   | { t: DevStateType.Up }
   | { t: DevStateType.Other; c: number }; // 仅 "Other" 类型有额外字段 c
+
+export class WifiIface {
+  name: string;
+  index: number;
+  wifi_type: WLANType;
+
+  constructor(obj?: { name: string; index: number; wifi_type: WLANType }) {
+    this.name = obj?.name ?? "";
+    this.index = obj?.index ?? 0;
+    this.wifi_type = obj?.wifi_type ?? { t: WLANTypeTag.Unspecified };
+  }
+}
+
+// 定义 WLANType 枚举类型
+export enum WLANTypeTag {
+  Unspecified = "Unspecified",
+  Adhoc = "Adhoc",
+  Station = "Station",
+  Ap = "Ap",
+  ApVlan = "ApVlan",
+  Wds = "Wds",
+  Monitor = "Monitor",
+  MeshPoint = "MeshPoint",
+  P2pClient = "P2pClient",
+  P2pGo = "P2pGo",
+  P2pDevice = "P2pDevice",
+  Ocb = "Ocb",
+  Nan = "Nan",
+  Other = "Other",
+}
+
+// 定义 WLANType 类型，使用 WLANTypeTag 来表示 `t` 字段
+export type WLANType =
+  | { t: WLANTypeTag.Unspecified }
+  | { t: WLANTypeTag.Adhoc }
+  | { t: WLANTypeTag.Station }
+  | { t: WLANTypeTag.Ap }
+  | { t: WLANTypeTag.ApVlan }
+  | { t: WLANTypeTag.Wds }
+  | { t: WLANTypeTag.Monitor }
+  | { t: WLANTypeTag.MeshPoint }
+  | { t: WLANTypeTag.P2pClient }
+  | { t: WLANTypeTag.P2pGo }
+  | { t: WLANTypeTag.P2pDevice }
+  | { t: WLANTypeTag.Ocb }
+  | { t: WLANTypeTag.Nan }
+  | { t: WLANTypeTag.Other; c: number }; // 仅 "Other" 类型有额外字段 c

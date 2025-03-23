@@ -1027,6 +1027,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "genetlink"
+version = "0.2.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1f890076c1faa1298bf747ce3694a8d9e0d2cc4b06fe293f12dd95742bfd079f"
+dependencies = [
+ "futures",
+ "log",
+ "netlink-packet-core",
+ "netlink-packet-generic",
+ "netlink-packet-utils",
+ "netlink-proto",
+ "thiserror 1.0.64",
+]
+
+[[package]]
 name = "getrandom"
 version = "0.2.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1550,6 +1565,7 @@ dependencies = [
  "tracing",
  "tracing-appender",
  "tracing-subscriber",
+ "wl-nl80211",
  "zbus",
 ]
 
@@ -1862,6 +1878,18 @@ checksum = "72724faf704479d67b388da142b186f916188505e7e0b26719019c525882eda4"
 dependencies = [
  "anyhow",
  "byteorder",
+ "netlink-packet-utils",
+]
+
+[[package]]
+name = "netlink-packet-generic"
+version = "0.3.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1cd7eb8ad331c84c6b8cb7f685b448133e5ad82e1ffd5acafac374af4a5a308b"
+dependencies = [
+ "anyhow",
+ "byteorder",
+ "netlink-packet-core",
  "netlink-packet-utils",
 ]
 
@@ -3696,6 +3724,27 @@ checksum = "524e57b2c537c0f9b1e69f1965311ec12182b4122e45035b1508cd24d2adadb1"
 dependencies = [
  "cfg-if",
  "windows-sys 0.48.0",
+]
+
+[[package]]
+name = "wl-nl80211"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5cffcf1e1dca38467779e22768bfc7f294f1b7b3bd99727edf13280eb2429789"
+dependencies = [
+ "anyhow",
+ "bitflags 2.6.0",
+ "byteorder",
+ "futures",
+ "genetlink",
+ "log",
+ "netlink-packet-core",
+ "netlink-packet-generic",
+ "netlink-packet-utils",
+ "netlink-proto",
+ "netlink-sys",
+ "thiserror 1.0.64",
+ "tokio",
 ]
 
 [[package]]

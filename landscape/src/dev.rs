@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::macaddr::MacAddr;
 
-/// 用于读取配置的结构体 考虑改为 Status
+/// 当前硬件状态结构体
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct LandScapeInterface {
     pub name: String,

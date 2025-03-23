@@ -6,7 +6,7 @@ use axum::{
     Json, Router,
 };
 
-use landscape::firewall::{FirewallService, FirewallServiceConfig};
+use landscape::wifi::{WifiService, WifiServiceConfig};
 use landscape_common::{
     observer::IfaceObserverAction,
     service::{service_manager::ServiceManager, DefaultWatchServiceStatus},
@@ -19,16 +19,16 @@ use tokio::sync::{broadcast, Mutex};
 use crate::{error::LandscapeApiError, SimpleResult};
 
 #[derive(Clone)]
-struct LandscapeFirewallService {
-    service: ServiceManager<FirewallService>,
-    store: Arc<Mutex<StoreFileManager<FirewallServiceConfig>>>,
+struct LandscapeWifiService {
+    service: ServiceManager<WifiService>,
+    store: Arc<Mutex<StoreFileManager<WifiServiceConfig>>>,
 }
 
-pub async fn get_firewall_service_paths(
-    mut store: StoreFileManager<FirewallServiceConfig>,
+pub async fn get_wifi_service_paths(
+    mut store: StoreFileManager<WifiServiceConfig>,
     mut dev_observer: broadcast::Receiver<IfaceObserverAction>,
 ) -> Router {
-    let share_state = LandscapeFirewallService {
+    let share_state = LandscapeWifiService {
         service: ServiceManager::init(store.list()).await,
         store: Arc::new(Mutex::new(store)),
     };
@@ -38,7 +38,7 @@ pub async fn get_firewall_service_paths(
         while let Ok(msg) = dev_observer.recv().await {
             match msg {
                 IfaceObserverAction::Up(iface_name) => {
-                    tracing::info!("restart {iface_name} Firewall service");
+                    tracing::info!("restart {iface_name} Wifi service");
                     let mut read_lock = share_state_copy.store.lock().await;
                     let service_config = if let Some(service_config) = read_lock.get(&iface_name) {
                         service_config
@@ -53,19 +53,16 @@ pub async fn get_firewall_service_paths(
         }
     });
     Router::new()
-        .route("/firewall/status", get(get_all_iface_service_status))
-        .route("/firewall", post(handle_service_config))
+        .route("/wifi/status", get(get_all_iface_service_status))
+        .route("/wifi", post(handle_service_config))
         .route(
-            "/firewall/:iface_name",
+            "/wifi/:iface_name",
             get(get_iface_service_conifg).delete(delete_and_stop_iface_service),
         )
-        // .route("/firewall/:iface_name/restart", post(restart_mark_service_status))
         .with_state(share_state)
 }
 
-async fn get_all_iface_service_status(
-    State(state): State<LandscapeFirewallService>,
-) -> Json<Value> {
+async fn get_all_iface_service_status(State(state): State<LandscapeWifiService>) -> Json<Value> {
     let read_lock = state.service.services.read().await;
     let mut result = HashMap::new();
     for (key, (iface_status, _)) in read_lock.iter() {
@@ -77,9 +74,9 @@ async fn get_all_iface_service_status(
 }
 
 async fn get_iface_service_conifg(
-    State(state): State<LandscapeFirewallService>,
+    State(state): State<LandscapeWifiService>,
     Path(iface_name): Path<String>,
-) -> Result<Json<FirewallServiceConfig>, LandscapeApiError> {
+) -> Result<Json<WifiServiceConfig>, LandscapeApiError> {
     let mut read_lock = state.store.lock().await;
     if let Some(iface_config) = read_lock.get(&iface_name) {
         Ok(Json(iface_config))
@@ -89,8 +86,8 @@ async fn get_iface_service_conifg(
 }
 
 async fn handle_service_config(
-    State(state): State<LandscapeFirewallService>,
-    Json(service_config): Json<FirewallServiceConfig>,
+    State(state): State<LandscapeWifiService>,
+    Json(service_config): Json<WifiServiceConfig>,
 ) -> Json<Value> {
     let result = SimpleResult { success: true };
 
@@ -105,7 +102,7 @@ async fn handle_service_config(
 }
 
 async fn delete_and_stop_iface_service(
-    State(state): State<LandscapeFirewallService>,
+    State(state): State<LandscapeWifiService>,
     Path(iface_name): Path<String>,
 ) -> Json<Value> {
     let mut write_lock = state.store.lock().await;

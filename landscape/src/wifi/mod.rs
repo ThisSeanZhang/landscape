@@ -11,7 +11,7 @@ use landscape_common::{
         ServiceStatus,
     },
     store::storev2::LandScapeStore,
-    LANDSCAPE_HOSTAPD_DIR,
+    LANDSCAPE_HOSTAPD_TMP_DIR,
 };
 use serde::{Deserialize, Serialize};
 use tokio::sync::oneshot;
@@ -136,18 +136,34 @@ pub async fn create_wifi_service(
 }
 
 fn write_config(iface_name: &str, config: &str) -> Result<String, ()> {
-    let file_dir = LAND_HOME_PATH.join(LANDSCAPE_HOSTAPD_DIR).join(format!("{}.conf", &iface_name));
-    let path_str = format!("{:?}", file_dir);
+    let file_dir = LAND_HOME_PATH.join(LANDSCAPE_HOSTAPD_TMP_DIR);
+    if !file_dir.exists() {
+        std::fs::create_dir_all(&file_dir).unwrap();
+    } else {
+        if !file_dir.is_dir() {
+            tracing::error!("{:?} is not a dir", file_dir);
+            return Err(());
+        }
+    }
+
+    let file_path = file_dir.join(format!("{}.conf", &iface_name));
+    let path_str = format!("{}", file_path.display());
     tracing::debug!("write config into: {}", path_str);
-    let Ok(mut file) = OpenOptions::new()
+    let file = OpenOptions::new()
         .write(true) // 打开文件以进行写入
         .truncate(true) // 文件存在时会被截断
         .create(true) // 如果文件不存在，则会创建
-        .open(file_dir)
-    else {
-        return Err(());
+        .open(&path_str);
+
+    let mut file = match file {
+        Ok(f) => f,
+        Err(e) => {
+            tracing::error!("打开文件错误: {:?}", e);
+            return Err(());
+        }
     };
 
+    tracing::debug!("write config: {:?}", config);
     let Ok(_) = file.write_all(config.as_bytes()) else {
         return Err(());
     };
@@ -156,6 +172,6 @@ fn write_config(iface_name: &str, config: &str) -> Result<String, ()> {
 }
 fn delete_config(iface_name: &str) {
     let _ = std::fs::remove_file(
-        LAND_HOME_PATH.join(LANDSCAPE_HOSTAPD_DIR).join(format!("{}.conf", &iface_name)),
+        LAND_HOME_PATH.join(LANDSCAPE_HOSTAPD_TMP_DIR).join(format!("{}.conf", &iface_name)),
     );
 }

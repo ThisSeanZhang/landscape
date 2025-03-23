@@ -44,6 +44,7 @@ pub async fn get_network_paths(mut store: StoreFileManager<NetworkIfaceConfig>) 
 
 async fn get_ifaces(State(state): State<NetworkState>) -> Json<Value> {
     let all_alive_devs = landscape::get_all_devices().await;
+    let add_wifi_dev = landscape::get_all_wifi_devices().await;
     let mut store_lock = state.store.lock().await;
     let all_config = store_lock.list();
     drop(store_lock);
@@ -63,7 +64,9 @@ async fn get_ifaces(State(state): State<NetworkState>) -> Json<Value> {
         } else {
             NetworkIfaceConfig::from_phy_dev(&each)
         };
-        info.push(IfaceTopology { config, status: each });
+
+        let wifi_info = add_wifi_dev.get(&config.name).cloned();
+        info.push(IfaceTopology { config, status: each, wifi_info });
     }
 
     let result = serde_json::to_value(&info);

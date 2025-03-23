@@ -6,6 +6,7 @@ use std::{
 use dev::{DevState, LandScapeInterface};
 use iface::{
     config::{CreateDevType, NetworkIfaceConfig},
+    dev_wifi::LandScapeWifiInterface,
     get_iface_by_name,
 };
 pub use routerstatus::*;
@@ -159,6 +160,19 @@ pub async fn init_devs(network_config: Vec<NetworkIfaceConfig>) -> Vec<NetworkIf
     need_store_config
 }
 
+pub async fn get_all_wifi_devices() -> HashMap<String, LandScapeWifiInterface> {
+    let (connection, handle, _) = wl_nl80211::new_connection().unwrap();
+    tokio::spawn(connection);
+    let mut interface_handle = handle.interface().get().execute().await;
+    let mut result = HashMap::new();
+    while let Some(msg) = interface_handle.try_next().await.unwrap() {
+        if let Some(data) = LandScapeWifiInterface::new(msg.payload) {
+            result.insert(data.name.clone(), data);
+        }
+    }
+    result
+}
+
 pub async fn get_all_devices() -> Vec<LandScapeInterface> {
     let (connection, handle, _) = new_connection().unwrap();
     tokio::spawn(connection);
@@ -169,9 +183,6 @@ pub async fn get_all_devices() -> Vec<LandScapeInterface> {
             result.push(data);
         }
     }
-    // handle.link().add().bridge("my-bridge-1".into()).execute().await.map_err(|e| format!("{e}"));
-    // handle.link().set(27).controller(12);
-
     result
 }
 

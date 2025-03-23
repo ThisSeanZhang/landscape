@@ -5,7 +5,7 @@ import FirewallRuleDrawer from "@/components/firewall/FirewallRuleDrawer.vue";
 const show_rule_drawer = ref(false);
 </script>
 <template>
-  <n-card title="防火墙">
+  <n-card title="防火墙" content-style="display: flex;">
     <template #header-extra>
       <n-button
         :focusable="false"
@@ -15,6 +15,9 @@ const show_rule_drawer = ref(false);
         规则配置
       </n-button>
     </template>
+    <n-flex justify="center" align="center" style="flex: 1">
+      <n-empty description="TODO"> </n-empty>
+    </n-flex>
     <FirewallRuleDrawer v-model:show="show_rule_drawer" />
   </n-card>
 </template>

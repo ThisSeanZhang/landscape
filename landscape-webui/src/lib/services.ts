@@ -1,4 +1,4 @@
-import { NetDev } from "./dev";
+import { NetDev, WLANTypeTag } from "./dev";
 import { ZoneType } from "./service_ipconfig";
 
 export enum ServiceStatusType {
@@ -33,6 +33,8 @@ export class ServiceExhibitSwitch {
   ipv6pd: boolean;
   icmpv6ra: boolean;
   firewall: boolean;
+  wifi: boolean;
+  station: boolean;
 
   constructor(dev: NetDev) {
     this.carrier = true;
@@ -45,7 +47,16 @@ export class ServiceExhibitSwitch {
     this.ipv6pd = false;
     this.icmpv6ra = false;
     this.firewall = false;
+    this.wifi = false;
+    this.station = false;
 
+    if (dev.wifi_info !== undefined) {
+      if (dev.wifi_info.wifi_type.t == WLANTypeTag.Station) {
+        this.station = true;
+      } else if (dev.wifi_info.wifi_type.t == WLANTypeTag.Ap) {
+        this.wifi = true;
+      }
+    }
     if (dev.controller != undefined || dev.controller_id != undefined) {
       this.zone_type = false;
       this.enable_in_boot = false;
