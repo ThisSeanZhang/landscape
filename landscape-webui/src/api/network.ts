@@ -1,7 +1,7 @@
 import { IpConfigMode, NetworkConfig } from "@lib/network_config";
 import api from "../api";
 import { ZoneType } from "@/lib/service_ipconfig";
-import { NetDev } from "@/lib/dev";
+import { NetDev, WifiMode } from "@/lib/dev";
 
 export async function ifaces(): Promise<NetDev[]> {
   let data = await api.api.get("iface");
@@ -55,5 +55,13 @@ export async function change_iface_status(
   status: boolean
 ): Promise<any> {
   let result = await api.api.post(`iface/${iface_name}/status/${status}`);
+  return result.data;
+}
+
+export async function change_wifi_mode(
+  iface_name: string,
+  mode: WifiMode
+): Promise<any> {
+  let result = await api.api.post(`iface/${iface_name}/wifi_mode/${mode}`);
   return result.data;
 }

@@ -5,9 +5,12 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
-use landscape::iface::{
-    config::{IfaceZoneType, NetworkIfaceConfig},
-    get_iface_by_name, IfaceTopology,
+use landscape::{
+    iface::{
+        config::{IfaceZoneType, NetworkIfaceConfig, WifiMode},
+        get_iface_by_name, IfaceTopology,
+    },
+    using_iw_change_wifi_mode,
 };
 use landscape_common::store::storev2::LandScapeStore;
 use landscape_common::store::storev2::StoreFileManager;
@@ -39,6 +42,7 @@ pub async fn get_network_paths(mut store: StoreFileManager<NetworkIfaceConfig>) 
         .route("/controller", post(set_controller))
         .route("/zone", post(change_zone))
         .route("/:iface_name/status/:status", post(change_dev_status))
+        .route("/:iface_name/wifi_mode/:mode", post(change_wifi_mode))
         .with_state(share_state)
 }
 
@@ -140,6 +144,38 @@ async fn change_zone(
             link_config.controller_name = None;
         }
         link_config.zone_type = zone;
+        store_lock.set(link_config);
+        drop(store_lock);
+    }
+
+    Json(SimpleResult { success })
+}
+
+async fn change_wifi_mode(
+    State(state): State<NetworkState>,
+    Path((iface_name, mode)): Path<(String, WifiMode)>,
+) -> Json<SimpleResult> {
+    let success = false;
+    let mut store_lock = state.store.lock().await;
+
+    let link_config = if let Some(link_config) = store_lock.get(&iface_name) {
+        Some(link_config)
+    } else {
+        if let Some(iface) = get_iface_by_name(&iface_name).await {
+            Some(NetworkIfaceConfig::from_phy_dev(&iface))
+        } else {
+            None
+        }
+    };
+
+    if let Some(mut link_config) = link_config {
+        // 如果设置为 client 需要清理 controller 配置
+        if matches!(mode, WifiMode::Client) {
+            landscape::set_controller(&iface_name, None).await;
+            link_config.controller_name = None;
+        }
+        using_iw_change_wifi_mode(&link_config.name, &mode);
+        link_config.wifi_mode = mode;
         store_lock.set(link_config);
         drop(store_lock);
     }

@@ -11,6 +11,7 @@ import { useMessage, SelectOption } from "naive-ui";
 
 import { onMounted, ref } from "vue";
 import { useIfaceNodeStore } from "@/stores/iface_node";
+import { WLANTypeTag } from "@/lib/dev";
 
 const { zoomOnScroll, fitView, onConnect } = useVueFlow();
 const naive_message = useMessage();
@@ -41,9 +42,16 @@ onConnect(async (params: any) => {
   }
 
   let dev = ifaceNodeStore.FIND_DEV_BY_IFINDEX(params.target);
+  if (dev?.wifi_info !== undefined) {
+    if (dev.wifi_info.wifi_type.t !== WLANTypeTag.Ap) {
+      naive_message.warning(
+        "当前无线网卡为客户端模式, 需要转为 AP 模式才能加入桥接网络"
+      );
+    }
+  }
   let master_dev = ifaceNodeStore.FIND_DEV_BY_IFINDEX(params.source);
   if (dev) {
-    if (dev.controller_id || dev.controller) {
+    if (dev.controller_id || dev.controller_name) {
       naive_message.error("此设备已有上级设备了");
     }
     let result = await add_controller({

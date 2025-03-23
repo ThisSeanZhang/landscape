@@ -5,7 +5,7 @@ use std::{
 
 use dev::{DevState, LandScapeInterface};
 use iface::{
-    config::{CreateDevType, NetworkIfaceConfig},
+    config::{CreateDevType, NetworkIfaceConfig, WifiMode},
     dev_wifi::LandScapeWifiInterface,
     get_iface_by_name,
 };
@@ -88,6 +88,9 @@ pub async fn init_devs(network_config: Vec<NetworkIfaceConfig>) -> Vec<NetworkIf
             tokio::sync::mpsc::unbounded_channel::<(u8, NetworkIfaceConfig)>();
 
         for config in network_config.iter() {
+            // 检查 wifi 类型
+            using_iw_change_wifi_mode(&config.name, &config.wifi_mode);
+
             dev_tx.send((0, config.clone())).unwrap();
         }
 
@@ -158,6 +161,25 @@ pub async fn init_devs(network_config: Vec<NetworkIfaceConfig>) -> Vec<NetworkIf
     // }
 
     need_store_config
+}
+
+pub fn using_iw_change_wifi_mode(iface_name: &str, mode: &WifiMode) {
+    tracing::debug!("setting {} to mode: {:?}", iface_name, mode);
+    match mode {
+        iface::config::WifiMode::Undefined => {}
+        iface::config::WifiMode::Client => {
+            std::process::Command::new("iw")
+                .args(["dev", iface_name, "set", "type", "managed"])
+                .output()
+                .unwrap();
+        }
+        iface::config::WifiMode::AP => {
+            std::process::Command::new("iw")
+                .args(["dev", iface_name, "set", "type", "__ap"])
+                .output()
+                .unwrap();
+        }
+    }
 }
 
 pub async fn get_all_wifi_devices() -> HashMap<String, LandScapeWifiInterface> {

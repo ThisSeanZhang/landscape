@@ -1,6 +1,9 @@
 <script setup lang="ts">
 import { change_zone } from "@/api/network";
+import { stop_and_del_iface_firewall } from "@/api/service_firewall";
 import { stop_and_del_iface_config } from "@/api/service_ipconfig";
+import { stop_and_del_iface_ipv6pd } from "@/api/service_ipv6pd";
+import { stop_and_del_iface_mark } from "@/api/service_mark";
 import { stop_and_del_iface_nat } from "@/api/service_nat";
 import { delete_and_stop_iface_pppd_by_attach_iface_name } from "@/api/service_pppd";
 import { ZoneType } from "@/lib/service_ipconfig";
@@ -25,6 +28,9 @@ async function chageIfaceZone() {
     await delete_and_stop_iface_pppd_by_attach_iface_name(
       iface_info.iface_name
     );
+    await stop_and_del_iface_ipv6pd(iface_info.iface_name);
+    await stop_and_del_iface_firewall(iface_info.iface_name);
+    await stop_and_del_iface_mark(iface_info.iface_name);
     await change_zone({
       iface_name: iface_info.iface_name,
       zone: temp_zone.value,

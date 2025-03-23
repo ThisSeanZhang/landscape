@@ -17,9 +17,8 @@ import IPv6PDEditModal from "../ipv6pd/IPv6PDEditModal.vue";
 import WifiServiceEditModal from "@/components/wifi/WifiServiceEditModal.vue";
 
 import IfaceChangeZone from "../iface/IfaceChangeZone.vue";
-import { AreaCustom, Power, Link, DotMark, Wifi } from "@vicons/carbon";
+import { AreaCustom, Power, Link, DotMark } from "@vicons/carbon";
 import { PlugDisconnected20Regular } from "@vicons/fluent";
-import { SpatialAudioOutlined } from "@vicons/material";
 import { computed, ref } from "vue";
 
 import { DevStateType } from "@/lib/dev";
@@ -184,29 +183,11 @@ const show_switch = computed(() => {
                 </n-icon>
               </n-button>
 
-              <n-button
-                v-if="show_switch.wifi"
-                text
-                :focusable="false"
-                style="font-size: 16px"
-                @click="show_pppd_drawer = true"
-              >
-                <n-icon>
-                  <Wifi></Wifi>
-                </n-icon>
-              </n-button>
-
-              <n-button
-                v-if="show_switch.station"
-                text
-                :focusable="false"
-                style="font-size: 16px"
-                @click="show_pppd_drawer = true"
-              >
-                <n-icon>
-                  <SpatialAudioOutlined></SpatialAudioOutlined>
-                </n-icon>
-              </n-button>
+              <WifiModeChange
+                :iface_name="node.name"
+                :show_switch="show_switch"
+                @refresh="refresh"
+              />
             </n-flex>
           </template>
         </n-card>

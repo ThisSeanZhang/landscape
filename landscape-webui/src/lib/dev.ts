@@ -8,7 +8,7 @@ export class NetDev {
   dev_type: string;
   dev_kind: string;
   dev_status: DevState;
-  controller: string | undefined;
+  controller_name: string | undefined;
   controller_id: number | undefined;
   carrier: boolean;
   zone_type: ZoneType;
@@ -18,6 +18,7 @@ export class NetDev {
   peer_link_id: number | undefined;
 
   wifi_info: WifiIface | undefined;
+  wifi_mode: WifiMode | undefined;
 
   constructor(obj: any) {
     this.name = obj.name;
@@ -27,7 +28,7 @@ export class NetDev {
     this.dev_type = obj.dev_type;
     this.dev_kind = obj.dev_kind;
     this.dev_status = { ...obj.dev_status };
-    this.controller = obj.controller;
+    this.controller_name = obj.controller_name;
     this.controller_id = obj.controller_id;
     this.carrier = obj.carrier;
     this.zone_type = obj.zone_type;
@@ -36,6 +37,7 @@ export class NetDev {
     this.peer_link_id = obj.peer_link_id;
     this.wifi_info =
       obj.wifi_info != null ? new WifiIface(obj.wifi_info) : undefined;
+    this.wifi_mode = obj.wifi_mode ?? WifiMode.Undefined;
   }
   // left Handle
   has_target_hook() {
@@ -81,6 +83,12 @@ export function filter(array: Array<any>): Map<number, Array<any>> {
     }
   }
   return a;
+}
+
+export enum WifiMode {
+  Undefined = "undefined",
+  Client = "client",
+  AP = "ap",
 }
 
 // 定义一个单独的枚举类型，用来表示变体的标签 `t`

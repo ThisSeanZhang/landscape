@@ -57,7 +57,7 @@ export class ServiceExhibitSwitch {
         this.wifi = true;
       }
     }
-    if (dev.controller != undefined || dev.controller_id != undefined) {
+    if (dev.controller_name != undefined || dev.controller_id != undefined) {
       this.zone_type = false;
       this.enable_in_boot = false;
       this.ip_config = false;
