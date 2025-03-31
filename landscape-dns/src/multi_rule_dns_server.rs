@@ -104,26 +104,24 @@ impl DnsServer {
                                 // println!("old mark: {mark:?}, new_mark: {new_mark:?}");
                                 if new_mark != *mark {
                                     for rdata in rdatas.iter() {
-                                        if let Some(data) = rdata.data() {
-                                            match data {
-                                                hickory_proto::rr::RData::A(a) => {
-                                                    if matches!(new_mark, PacketMark::NoMark) {
-                                                        del_dns_mark_list.insert(IpConfig {
+                                        match rdata.data() {
+                                            hickory_proto::rr::RData::A(a) => {
+                                                if matches!(new_mark, PacketMark::NoMark) {
+                                                    del_dns_mark_list.insert(IpConfig {
+                                                        ip: std::net::IpAddr::V4(a.0),
+                                                        prefix: 32_u32,
+                                                    });
+                                                } else {
+                                                    update_dns_mark_list.insert(IpMarkInfo {
+                                                        mark: new_mark,
+                                                        cidr: IpConfig {
                                                             ip: std::net::IpAddr::V4(a.0),
                                                             prefix: 32_u32,
-                                                        });
-                                                    } else {
-                                                        update_dns_mark_list.insert(IpMarkInfo {
-                                                            mark: new_mark,
-                                                            cidr: IpConfig {
-                                                                ip: std::net::IpAddr::V4(a.0),
-                                                                prefix: 32_u32,
-                                                            },
-                                                        });
-                                                    }
+                                                        },
+                                                    });
                                                 }
-                                                _ => {}
                                             }
+                                            _ => {}
                                         }
                                     }
                                     cache_items.push(CacheDNSItem {
@@ -211,16 +209,14 @@ impl DnsServer {
         let mut update_dns_mark_list = HashSet::new();
         let mut rdatas = vec![];
         for rdata in rdata_ttl_vec.into_iter() {
-            if let Some(data) = rdata.data() {
-                match data {
-                    hickory_proto::rr::RData::A(a) => {
-                        update_dns_mark_list.insert(IpMarkInfo {
-                            mark: mark.clone(),
-                            cidr: IpConfig { ip: std::net::IpAddr::V4(a.0), prefix: 32_u32 },
-                        });
-                    }
-                    _ => {}
+            match rdata.data() {
+                hickory_proto::rr::RData::A(a) => {
+                    update_dns_mark_list.insert(IpMarkInfo {
+                        mark: mark.clone(),
+                        cidr: IpConfig { ip: std::net::IpAddr::V4(a.0), prefix: 32_u32 },
+                    });
                 }
+                _ => {}
             }
             rdatas.push(rdata);
         }
@@ -247,8 +243,26 @@ impl RequestHandler for DnsServer {
         request: &Request,
         mut response_handle: R,
     ) -> ResponseInfo {
-        let domain = request.query().name().to_string();
-        let query_type = request.query().query_type();
+        let queries = request.queries();
+        if queries.is_empty() {
+            let mut header = Header::response_from_request(request.header());
+            header.set_response_code(ResponseCode::FormErr);
+            let response =
+                MessageResponseBuilder::from_message_request(request).build_no_records(header);
+            let result = response_handle.send_response(response).await;
+            return match result {
+                Err(e) => {
+                    tracing::error!("Request failed: {}", e);
+                    serve_failed()
+                }
+                Ok(info) => info,
+            };
+        }
+
+        // 先只处理第一个查询
+        let req = &queries[0];
+        let domain = req.name().to_string();
+        let query_type = req.query_type();
 
         let response_builder = MessageResponseBuilder::from_message_request(request);
         let mut header = Header::response_from_request(request.header());
@@ -266,8 +280,15 @@ impl RequestHandler for DnsServer {
                 if resolver.is_match(&domain) {
                     records = match resolver.lookup(&domain, query_type).await {
                         Ok(rdata_vec) => {
-                            self.insert(&domain, query_type, rdata_vec.clone(), resolver.mark())
+                            if rdata_vec.len() > 0 {
+                                self.insert(
+                                    &domain,
+                                    query_type,
+                                    rdata_vec.clone(),
+                                    resolver.mark(),
+                                )
                                 .await;
+                            }
                             rdata_vec
                         }
                         Err(error_code) => {

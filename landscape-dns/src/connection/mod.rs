@@ -3,16 +3,15 @@ use std::os::fd::RawFd;
 use std::os::unix::io::AsRawFd;
 use std::{future::Future, io, pin::Pin};
 
-use hickory_client::proto::iocompat::AsyncIoTokioAsStd;
-use hickory_client::proto::TokioTime;
 use hickory_resolver::{
-    name_server::{GenericConnector, RuntimeProvider},
-    TokioHandle,
+    name_server::GenericConnector,
+    proto::runtime::{iocompat::AsyncIoTokioAsStd, RuntimeProvider, TokioHandle, TokioTime},
 };
 
 use libc::{setsockopt, SOL_SOCKET, SO_MARK};
-use tokio::net::TcpStream as TokioTcpStream;
+use std::time::Duration;
 use tokio::net::UdpSocket as TokioUdpSocket;
+use tokio::net::{TcpSocket, TcpStream as TokioTcpStream};
 
 pub type MarkConnectionProvider = GenericConnector<MarkRuntimeProvider>;
 
@@ -43,26 +42,51 @@ impl RuntimeProvider for MarkRuntimeProvider {
     fn connect_tcp(
         &self,
         server_addr: SocketAddr,
+        bind_addr: Option<SocketAddr>,
+        wait_for: Option<Duration>,
     ) -> Pin<Box<dyn Send + Future<Output = io::Result<Self::Tcp>>>> {
         let mark_value = self.mark_value;
         Box::pin(async move {
-            let socket = TokioTcpStream::connect(server_addr).await?;
-            let fd = socket.as_raw_fd();
-            set_socket_mark(fd, mark_value)?;
-            Ok(AsyncIoTokioAsStd(socket))
+            let socket = match server_addr {
+                SocketAddr::V4(_) => TcpSocket::new_v4(),
+                SocketAddr::V6(_) => TcpSocket::new_v6(),
+            }?;
+
+            if let Some(bind_addr) = bind_addr {
+                socket.bind(bind_addr)?;
+            }
+
+            socket.set_nodelay(true)?;
+
+            let future = socket.connect(server_addr);
+            let wait_for = wait_for.unwrap_or_else(|| Duration::from_secs(5));
+
+            match tokio::time::timeout(wait_for, future).await {
+                Ok(Ok(socket)) => {
+                    let fd = socket.as_raw_fd();
+                    set_socket_mark(fd, mark_value)?;
+                    Ok(AsyncIoTokioAsStd(socket))
+                }
+                Ok(Err(e)) => Err(e),
+                Err(_) => Err(io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    format!("connection to {server_addr:?} timed out after {wait_for:?}"),
+                )),
+            }
         })
     }
 
     fn bind_udp(
         &self,
         local_addr: SocketAddr,
-        _server_addr: SocketAddr,
-    ) -> Pin<Box<dyn Send + Future<Output = io::Result<Self::Udp>>>> {
+        server_addr: SocketAddr,
+    ) -> Pin<Box<dyn Send + Future<Output = std::io::Result<Self::Udp>>>> {
         let mark_value = self.mark_value;
         Box::pin(async move {
             let socket = TokioUdpSocket::bind(local_addr).await?;
             let fd = socket.as_raw_fd();
             set_socket_mark(fd, mark_value)?;
+            tracing::info!("Create udp local_addr: {}, server_addr: {}", local_addr, server_addr);
             Ok(socket)
         })
     }

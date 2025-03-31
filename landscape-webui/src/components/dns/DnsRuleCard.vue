@@ -28,8 +28,8 @@ async function del() {
         <n-descriptions-item label="流量标记">
           {{ rule.mark }}
         </n-descriptions-item>
-        <n-descriptions-item label="上游 DNS" :span="2">
-          {{ rule.dns_resolve_ip }}
+        <n-descriptions-item label="DNS 处理方式" :span="2">
+          {{ rule.resolve_mode }}
         </n-descriptions-item>
         <n-descriptions-item label="匹配规则">
           {{ rule.source }}

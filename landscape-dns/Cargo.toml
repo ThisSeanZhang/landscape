@@ -7,11 +7,20 @@ edition.workspace = true
 landscape-ebpf = { path = "../landscape-ebpf" }
 landscape-common = { path = "../landscape-common" }
 
-hickory-server = "0.24.1"
-hickory-client = "0.24.1"
-hickory-resolver = "0.24.1"
-hickory-proto = "0.24.1"
-tokio = { workspace = true, features = ['fs'] }
+hickory-server = "0.25.1"
+hickory-client = "0.25.1"
+hickory-resolver = { version = "0.25.1", features = [
+    "system-config",
+    "__tls",
+    "__https",
+    "rustls-platform-verifier",
+] }
+hickory-proto = { version = "0.25.1", features = [
+    "__https",
+    "__tls",
+    "tls-ring",
+] }
+tokio = { workspace = true, features = ['fs', 'net'] }
 clap = { workspace = true }
 tracing = { workspace = true }
 thiserror = { workspace = true }
@@ -20,10 +29,8 @@ async-trait = "*"
 socket2 = "*"
 
 lru = "*"
-
 serde = { workspace = true }
 serde_json = { workspace = true }
-
 homedir = { workspace = true }
 
 quick-protobuf = "0.8" # 确保使用最新版本

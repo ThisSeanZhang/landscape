@@ -1,12 +1,21 @@
 <script setup lang="ts">
 import { push_dns_rule } from "@/api/dns_service";
-import { DnsRule, DomainMatchType, RuleSource } from "@/lib/dns";
+import {
+  DnsRule,
+  DomainMatchType,
+  RuleSource,
+  get_dns_resolve_mode_options,
+  get_dns_upstream_type_options,
+  DNSResolveModeEnum,
+  DnsUpstreamTypeEnum,
+  CloudFlareMode,
+} from "@/lib/dns";
 import { useMessage } from "naive-ui";
 
 import { ChangeCatalog } from "@vicons/carbon";
 import { computed, onMounted } from "vue";
 import { ref } from "vue";
-
+import UpstreamEdit from "@/components/dns/upstream/UpstreamEdit.vue";
 import PacketMark from "@/components/mark/PacketMark.vue";
 
 const message = useMessage();
@@ -22,6 +31,10 @@ const commit_spin = ref(false);
 const isModified = computed(() => {
   return JSON.stringify(rule.value) !== JSON.stringify(origin_rule.value);
 });
+
+function enter() {
+  rule.value = new DnsRule(origin_rule.value);
+}
 
 function onCreate(): RuleSource {
   return {
@@ -79,6 +92,31 @@ const source_style = [
     value: DomainMatchType.Plain,
   },
 ];
+
+function update_resolve_mode(t: DNSResolveModeEnum) {
+  switch (t) {
+    case DNSResolveModeEnum.Redirect: {
+      rule.value.resolve_mode = { t: DNSResolveModeEnum.Redirect, ip: "" };
+      break;
+    }
+    case DNSResolveModeEnum.Upstream: {
+      rule.value.resolve_mode = {
+        t: DNSResolveModeEnum.Upstream,
+        upstream: { t: DnsUpstreamTypeEnum.Plaintext },
+        ips: [],
+        port: 53,
+      };
+      break;
+    }
+    case DNSResolveModeEnum.CloudFlare: {
+      rule.value.resolve_mode = {
+        t: DNSResolveModeEnum.CloudFlare,
+        mode: CloudFlareMode.Tls,
+      };
+      break;
+    }
+  }
+}
 </script>
 
 <template>
@@ -88,6 +126,7 @@ const source_style = [
     class="custom-card"
     preset="card"
     title="规则编辑"
+    @after-enter="enter"
     :bordered="false"
   >
     <!-- {{ isModified }} -->
@@ -102,14 +141,15 @@ const source_style = [
             <template #unchecked> 禁用 </template>
           </n-switch>
         </n-form-item-gi>
-        <n-form-item-gi label="重定向" :span="1">
-          <n-switch v-model:value="rule.redirection">
-            <template #checked> 启用 </template>
-            <template #unchecked> 禁用 </template>
-          </n-switch>
-        </n-form-item-gi>
 
-        <n-form-item-gi v-if="!rule.redirection" :span="5" label="流量标记">
+        <n-form-item-gi :span="2" label="备注">
+          <n-input v-model:value="rule.name" type="text" />
+        </n-form-item-gi>
+        <n-form-item-gi
+          v-if="!rule.redirection"
+          :span="5"
+          label="流量标记 (IPv6 暂不支持)"
+        >
           <!-- <n-popover trigger="hover">
             <template #trigger>
               <n-switch v-model:value="rule.mark">
@@ -121,25 +161,61 @@ const source_style = [
           </n-popover> -->
           <PacketMark v-model:mark="rule.mark"></PacketMark>
         </n-form-item-gi>
+        <n-form-item-gi :span="5" label="解析模式">
+          <n-radio-group
+            :value="rule.resolve_mode.t"
+            name="ra_flag"
+            @update:value="update_resolve_mode"
+          >
+            <n-radio-button
+              v-for="opt in get_dns_resolve_mode_options()"
+              :key="opt.value"
+              :value="opt.value"
+              :label="opt.label"
+            />
+          </n-radio-group>
+        </n-form-item-gi>
+        <n-form-item-gi
+          v-if="rule.resolve_mode.t === DNSResolveModeEnum.CloudFlare"
+          :span="5"
+          label="CloudFlare 连接方式"
+        >
+          <n-radio-group v-model:value="rule.resolve_mode.mode" name="ra_flag">
+            <n-radio-button
+              v-for="opt in get_dns_upstream_type_options()"
+              :key="opt.value"
+              :value="opt.value"
+              :label="opt.label"
+            />
+          </n-radio-group>
+        </n-form-item-gi>
+
+        <!-- <n-form-item-gi
+          v-else-if="rule.resolve_mode.t === DNSResolveModeEnum.Upstream"
+          :span="5"
+        >
+          <UpstreamEdit v-model:value="rule.resolve_mode"> </UpstreamEdit>
+        </n-form-item-gi> -->
+
+        <n-form-item-gi
+          v-else-if="rule.resolve_mode.t === DNSResolveModeEnum.Redirect"
+          :span="5"
+          label="重定向配置"
+        >
+          <n-dynamic-input
+            v-model:value="rule.resolve_mode.ips"
+            :on-create="() => '0.0.0.0'"
+          >
+            <template #create-button-default> 填入返回的 IP 记录 </template>
+          </n-dynamic-input>
+        </n-form-item-gi>
       </n-grid>
-      <n-form-item label="名称">
-        <n-input v-model:value="rule.name" type="text" />
-      </n-form-item>
-      <n-form-item v-if="rule.redirection" label="重定向 IP">
-        <n-input
-          placeholder="默认使用: 1.1.1.1"
-          v-model:value="rule.dns_resolve_ip"
-          type="text"
-        />
-      </n-form-item>
-      <n-form-item v-else label="上游 DNS">
-        <n-input
-          placeholder="默认使用: 1.1.1.1"
-          v-model:value="rule.dns_resolve_ip"
-          type="text"
-        />
-      </n-form-item>
-      <n-form-item label="匹配规则 (为空则全部匹配, 规则不分先后)">
+      <UpstreamEdit
+        v-if="rule.resolve_mode.t === DNSResolveModeEnum.Upstream"
+        v-model:value="rule.resolve_mode"
+      >
+      </UpstreamEdit>
+      <n-form-item label="处理域名匹配规则 (为空则全部匹配, 规则不分先后)">
         <n-dynamic-input v-model:value="rule.source" :on-create="onCreate">
           <template #create-button-default> 增加一条规则来源 </template>
           <template #default="{ value, index }">

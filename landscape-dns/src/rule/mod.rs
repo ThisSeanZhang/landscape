@@ -1,21 +1,23 @@
 use hickory_proto::{
     op::ResponseCode,
-    rr::{rdata::A, RData, Record, RecordType},
+    rr::{
+        rdata::{A, AAAA},
+        RData, Record, RecordType,
+    },
 };
 use hickory_resolver::{
-    config::{NameServerConfigGroup, ResolverConfig, ResolverOpts},
-    AsyncResolver,
+    config::{NameServerConfigGroup, ResolverConfig},
+    Resolver,
 };
 use landscape_common::{
-    dns::{DNSRuleConfig, DomainConfig, DomainMatchType, RuleSource},
+    dns::{
+        DNSResolveMode, DNSRuleConfig, DnsUpstreamType, DomainConfig, DomainMatchType, RuleSource,
+    },
     mark::PacketMark,
 };
 use matcher::DomainMatcher;
 use std::str::FromStr;
-use std::{
-    collections::HashMap,
-    net::{IpAddr, Ipv4Addr},
-};
+use std::{collections::HashMap, net::IpAddr};
 
 use crate::{
     connection::{MarkConnectionProvider, MarkRuntimeProvider},
@@ -25,44 +27,71 @@ use crate::{
 mod matcher;
 
 pub struct CacheResolver {
-    pub resolver: AsyncResolver<MarkConnectionProvider>,
+    pub resolver: Resolver<MarkConnectionProvider>,
 }
 
 impl CacheResolver {
-    pub fn new(config: &DNSRuleConfig) -> Self {
-        let mark_value = match config.mark.clone() {
+    pub fn new(resolve: ResolverConfig, mark: &PacketMark) -> Self {
+        let mark_value = match mark.clone() {
             PacketMark::Redirect { index } => PacketMark::Redirect { index }.into(),
             _ => PacketMark::Direct.into(),
         };
-        let resolve = if let Ok(ip) = config.dns_resolve_ip.parse::<Ipv4Addr>() {
-            ResolverConfig::from_parts(
-                None,
-                vec![],
-                NameServerConfigGroup::from_ips_clear(&[IpAddr::V4(ip)], 53, true),
-            )
-        } else {
-            ResolverConfig::cloudflare()
-        };
 
-        let resolver = AsyncResolver::new_with_conn(
+        let resolver = Resolver::builder_with_config(
             resolve,
-            ResolverOpts::default(),
             MarkConnectionProvider::new(MarkRuntimeProvider::new(mark_value)),
-        );
+        )
+        .build();
         CacheResolver { resolver }
     }
 }
 
 pub enum ResolverType {
-    RedirectResolver(String),
+    RedirectResolver(Vec<IpAddr>),
     CacheResolver(CacheResolver),
 }
 impl ResolverType {
     pub fn new(config: &DNSRuleConfig) -> Self {
-        if config.redirection {
-            ResolverType::RedirectResolver(config.dns_resolve_ip.clone())
-        } else {
-            ResolverType::CacheResolver(CacheResolver::new(config))
+        match &config.resolve_mode {
+            DNSResolveMode::Redirect { ips } => ResolverType::RedirectResolver(ips.clone()),
+            DNSResolveMode::Upstream { upstream, ips, port } => {
+                let name_server = match upstream {
+                    DnsUpstreamType::Plaintext => {
+                        NameServerConfigGroup::from_ips_clear(ips, port.unwrap_or(53), true)
+                    }
+                    DnsUpstreamType::Tls { domain } => NameServerConfigGroup::from_ips_tls(
+                        ips,
+                        port.unwrap_or(843),
+                        domain.to_string(),
+                        true,
+                    ),
+                    DnsUpstreamType::Https { domain } => NameServerConfigGroup::from_ips_https(
+                        ips,
+                        port.unwrap_or(443),
+                        domain.to_string(),
+                        true,
+                    ),
+                };
+
+                let resolve = ResolverConfig::from_parts(None, vec![], name_server);
+
+                ResolverType::CacheResolver(CacheResolver::new(resolve, &config.mark))
+            }
+            DNSResolveMode::CloudFlare { mode } => {
+                let server = match mode {
+                    landscape_common::dns::CloudFlareMode::Standard => {
+                        NameServerConfigGroup::cloudflare()
+                    }
+                    landscape_common::dns::CloudFlareMode::Tls => {
+                        NameServerConfigGroup::cloudflare_tls()
+                    }
+                    landscape_common::dns::CloudFlareMode::Https => {
+                        NameServerConfigGroup::cloudflare_https()
+                    }
+                };
+                let resolve = ResolverConfig::from_parts(None, vec![], server);
+                ResolverType::CacheResolver(CacheResolver::new(resolve, &config.mark))
+            }
         }
     }
 
@@ -72,21 +101,30 @@ impl ResolverType {
         query_type: RecordType,
     ) -> Result<Vec<Record>, ResponseCode> {
         match self {
-            ResolverType::RedirectResolver(result_ip) => Ok(vec![Record::from_rdata(
-                hickory_resolver::Name::from_str(domain).unwrap(),
-                300,
-                RData::A(A::from_str(result_ip).unwrap()),
-            )]),
+            ResolverType::RedirectResolver(result_ip) => {
+                let mut result = vec![];
+                for ip in result_ip {
+                    let rdata_ip = match ip {
+                        IpAddr::V4(ip) => RData::A(A(ip.clone())),
+                        IpAddr::V6(ip) => RData::AAAA(AAAA(ip.clone())),
+                    };
+                    result.push(Record::from_rdata(
+                        hickory_resolver::Name::from_str(domain).unwrap(),
+                        300,
+                        rdata_ip,
+                    ));
+                }
+                Ok(vec![])
+            }
             ResolverType::CacheResolver(resolver) => {
                 match resolver.resolver.lookup(domain, query_type).await {
                     Ok(lookup) => Ok(lookup.records().to_vec()),
                     Err(e) => {
                         tracing::error!("DNS resolution failed for {}: {}", domain, e);
-                        let result = match e.kind() {
-                            hickory_resolver::error::ResolveErrorKind::NoRecordsFound {
-                                ..
-                            } => ResponseCode::NoError,
-                            _ => ResponseCode::ServFail,
+                        let result = if e.is_no_records_found() {
+                            ResponseCode::NoError
+                        } else {
+                            ResponseCode::ServFail
                         };
                         Err(result)
                     }
@@ -136,108 +174,9 @@ impl ResolutionRule {
         domain: &str,
         query_type: RecordType,
     ) -> Result<Vec<Record>, ResponseCode> {
+        // TODO: do fiter in here
         self.resolver.lookup(domain, query_type).await
     }
-
-    // // 检查缓存并根据 TTL 判断是否过期
-    // // 不同的记录可能的过期时间不同
-    // pub async fn lookup(&self, domain: &str, query_type: RecordType) -> Option<Vec<Record>> {
-    //     let mut cache = self.cache.lock().await;
-    //     if let Some(records) = cache.get(&(domain.to_string(), query_type)) {
-    //         let mut is_expire = false;
-    //         let mut valid_records: Vec<Record> = vec![];
-    //         for (rdata, insert_time) in records.iter() {
-    //             if insert_time.elapsed().as_secs() > rdata.ttl() as u64 {
-    //                 is_expire = true;
-    //                 break;
-    //             }
-    //             valid_records.push(rdata.clone());
-    //         }
-
-    //         if is_expire {
-    //             return None;
-    //         }
-
-    //         // 如果有有效的记录，返回它们
-    //         if !valid_records.is_empty() {
-    //             return Some(valid_records);
-    //         }
-    //     }
-    //     None
-    // }
-
-    // // 将解析结果插入缓存，为每个 (domain, RecordType) 设置单独的 TTL
-    // pub async fn insert(&self, domain: String, query_type: RecordType, rdata_ttl_vec: Vec<Record>) {
-    //     let mut cache = self.cache.lock().await;
-    //     let now = Instant::now();
-
-    //     // 将记录和插入时间存储到缓存中
-    //     let mut records_with_expiration: Vec<(Record, Instant)> = vec![];
-    //     let mut ipv4s = vec![];
-    //     for rdata in rdata_ttl_vec.into_iter() {
-    //         if let Some(data) = rdata.data() {
-    //             match data {
-    //                 hickory_proto::rr::RData::A(a) => {
-    //                     ipv4s.push((a.0, 32_u32));
-    //                 }
-    //                 _ => {}
-    //             }
-    //         }
-    //         records_with_expiration.push((rdata, now));
-    //     }
-    //     // let records_with_expiration: Vec<(Record, Instant)> =
-    //     //     rdata_ttl_vec.into_iter().map(|rdata| (rdata, now)).collect();
-
-    //     cache.put((domain, query_type), records_with_expiration);
-    //     // 将 mark 写入 mark ebpf map
-    //     if self.config.mark.need_add_mark_config() {
-    //         println!("setting ips: {:?}, Mark: {:?}", ipv4s, self.config.mark);
-    //         // TODO: 如果写入错误 返回错误后 向客户端返回查询错误
-    //         landscape_ebpf::map_setting::add_ips_mark(ipv4s, self.config.mark.clone().into());
-    //     }
-    // }
-
-    // // 根据请求的类型解析域名，返回 RData
-    // pub async fn resolve_domain(
-    //     &self,
-    //     domain: &str,
-    //     query_type: RecordType,
-    // ) -> Result<Vec<Record>, ResponseCode> {
-    //     match self.resolver.lookup(domain, query_type).await {
-    //         Ok(lookup) => {
-    //             let records: Vec<Record> = lookup
-    //                 .record_iter()
-    //                 .map(|record| record.clone())
-    //                 // .into()
-    //                 // .filter_map(|record| {
-    //                 //     // 过滤匹配的记录类型
-    //                 //     if record.record_type() == query_type {
-    //                 //         Some(record.clone())
-    //                 //     } else {
-    //                 //         None
-    //                 //     }
-    //                 // })
-    //                 .collect();
-
-    //             if !records.is_empty() {
-    //                 Ok(records)
-    //             } else {
-    //                 Err(ResponseCode::ServFail)
-    //             }
-    //         }
-    //         Err(e) => {
-    //             eprintln!("DNS resolution failed for {}: {}", domain, e);
-    //             let result = match e.kind() {
-    //                 hickory_resolver::error::ResolveErrorKind::NoRecordsFound {
-    //                     response_code,
-    //                     ..
-    //                 } => response_code.clone(),
-    //                 _ => ResponseCode::ServFail,
-    //             };
-    //             Err(result)
-    //         }
-    //     }
-    // }
 }
 
 pub fn convert_config_to_runtime_rule(

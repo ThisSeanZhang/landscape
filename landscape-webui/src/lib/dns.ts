@@ -2,27 +2,29 @@ export class DnsRule {
   index: number;
   name: string;
   enable: boolean;
-  redirection: boolean;
   mark: PacketMark;
-  dns_resolve_ip: string;
   source: RuleSource[];
+  resolve_mode: DNSResolveMode;
 
   constructor(obj?: {
     index?: number;
     name?: string;
     enable?: boolean;
-    redirection?: boolean;
     mark?: PacketMark;
-    dns_resolve_ip?: string;
     source?: RuleSource[];
+    resolve_mode?: DNSResolveMode;
   }) {
     this.index = obj?.index ?? -1;
     this.name = obj?.name ?? "";
     this.enable = obj?.enable ?? true;
-    this.redirection = obj?.redirection ?? false;
     this.mark = obj?.mark ? { ...obj.mark } : { t: MarkType.NoMark };
-    this.dns_resolve_ip = obj?.dns_resolve_ip ?? "1.1.1.1";
     this.source = obj?.source ?? [];
+    this.resolve_mode = obj?.resolve_mode
+      ? { ...obj.resolve_mode }
+      : {
+          t: DNSResolveModeEnum.CloudFlare,
+          mode: CloudFlareMode.Tls,
+        };
   }
 }
 
@@ -57,3 +59,66 @@ export type PacketMark =
   | { t: MarkType.Redirect; index: number }
   | { t: MarkType.SymmetricNat }
   | { t: MarkType.RedirectNetns; index: number };
+
+export function get_dns_resolve_mode_options(): {
+  label: string;
+  value: string;
+}[] {
+  return [
+    { label: "重定向", value: DNSResolveModeEnum.Redirect },
+    { label: "自定义上游", value: DNSResolveModeEnum.Upstream },
+    { label: "CloudFlare", value: DNSResolveModeEnum.CloudFlare },
+  ];
+}
+
+export function get_dns_upstream_type_options(): {
+  label: string;
+  value: string;
+}[] {
+  return [
+    { label: "无加密", value: DnsUpstreamTypeEnum.Plaintext },
+    { label: "TLS", value: DnsUpstreamTypeEnum.Tls },
+    { label: "HTTPS", value: DnsUpstreamTypeEnum.Https },
+  ];
+}
+
+export enum DNSResolveModeEnum {
+  Redirect = "redirect",
+  Upstream = "upstream",
+  CloudFlare = "cloudflare",
+}
+
+export enum DnsUpstreamTypeEnum {
+  Plaintext = "plaintext",
+  Tls = "tls",
+  Https = "https",
+}
+
+export enum CloudFlareMode {
+  Standard = "standard",
+  Tls = "tls",
+  Https = "https",
+}
+
+export type DnsUpstreamType =
+  | { t: DnsUpstreamTypeEnum.Plaintext }
+  | { t: DnsUpstreamTypeEnum.Tls; domain: string }
+  | { t: DnsUpstreamTypeEnum.Https; domain: string };
+
+export type DNSResolveMode =
+  | { t: DNSResolveModeEnum.Redirect; ips: string[] }
+  | DnsUpstreamMode
+  | { t: DNSResolveModeEnum.CloudFlare; mode: CloudFlareMode };
+
+export type DnsUpstreamMode = {
+  t: DNSResolveModeEnum.Upstream;
+  upstream: DnsUpstreamType;
+  ips: string[];
+  port?: number;
+};
+
+export enum FilterResultEnum {
+  Unfilter = "unfilter",
+  OnlyIPv4 = "only_ipv4",
+  OnlyIPv6 = "only_ipv6",
+}
