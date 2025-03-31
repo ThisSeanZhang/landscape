@@ -17,12 +17,19 @@ export class DHCPv4ServiceConfig {
   }
 }
 
+export interface MacBindingRecord {
+  mac: string;
+  ip: string;
+  expire_time: number;
+}
+
 export class DHCPv4ServerConfig {
   options: any[];
   server_ip_addr: string;
   network_mask: number;
   ip_range_start: string;
   ip_range_end: string | undefined;
+  mac_binding_records: MacBindingRecord[];
 
   constructor(obj?: {
     options?: any[];
@@ -30,6 +37,7 @@ export class DHCPv4ServerConfig {
     network_mask?: number;
     ip_range_start?: string;
     ip_range_end?: string;
+    mac_binding_records?: MacBindingRecord[];
   }) {
     this.options = obj?.options ?? [];
     this.server_ip_addr = obj?.server_ip_addr ?? "192.168.5.1";
@@ -40,6 +48,7 @@ export class DHCPv4ServerConfig {
     // console.log(end);
     this.ip_range_start = obj?.ip_range_start ?? start;
     this.ip_range_end = obj?.ip_range_end ?? end;
+    this.mac_binding_records = obj?.mac_binding_records ?? [];
   }
 }
 

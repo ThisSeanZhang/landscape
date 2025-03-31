@@ -41,6 +41,10 @@ pub struct DHCPv4ServerConfig {
 
     #[serde(default)]
     pub address_lease_time: Option<u32>,
+
+    #[serde(default)]
+    /// Static MAC --> IP address binding
+    pub mac_binding_records: Vec<MacBindingRecord>,
 }
 
 impl Default for DHCPv4ServerConfig {
@@ -51,6 +55,14 @@ impl Default for DHCPv4ServerConfig {
             server_ip_addr: LANDSCAPE_DEFAULE_LAN_DHCP_SERVER_IP,
             network_mask: LANDSCAPE_DEFAULT_LAN_DHCP_SERVER_NETMASK,
             address_lease_time: Some(LANDSCAPE_DHCP_DEFAULT_ADDRESS_LEASE_TIME),
+            mac_binding_records: vec![],
         }
     }
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct MacBindingRecord {
+    pub mac: MacAddr,
+    pub ip: Ipv4Addr,
+    pub expire_time: u32,
 }
