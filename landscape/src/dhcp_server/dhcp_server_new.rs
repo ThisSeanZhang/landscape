@@ -149,7 +149,7 @@ pub async fn dhcp_v4_server(
                     Some(message) => {
                         let need_update_data = handle_dhcp_message(&mut dhcp_server, &send_socket, message).await;
                         if need_update_data {
-                            service_status.just_change_data(dhcp_server.get_offed_info());
+                            service_status.just_change_data(dhcp_server.get_offered_info());
                         }
                     },
                     None => {
@@ -162,7 +162,7 @@ pub async fn dhcp_v4_server(
             _ = &mut timeout_timer => {
                 // dhcp_status.expire_check();
                 timeout_timer.as_mut().reset(tokio::time::Instant::now() + tokio::time::Duration::from_secs(IP_EXPIRE_INTERVAL));
-                service_status.just_change_data(dhcp_server.get_offed_info());
+                service_status.just_change_data(dhcp_server.get_offered_info());
             }
             // 处理外部关闭服务通知
             change_result = dhcp_server_service_status.changed() => {
@@ -271,6 +271,20 @@ async fn handle_dhcp_message(
 }
 
 #[derive(Debug)]
+struct DHCPv4ServerOfferedCache {
+    ip: Ipv4Addr,
+    relative_offer_time: u64,
+    valid_time: u32,
+    is_static: bool,
+}
+
+impl DHCPv4ServerOfferedCache {
+    fn get_expire_time(&self) -> u64 {
+        self.relative_offer_time + self.valid_time as u64
+    }
+}
+
+#[derive(Debug)]
 pub struct DHCPv4Server {
     /// DHCP 服务启动时间
     relative_boot_time: Instant,
@@ -283,7 +297,7 @@ pub struct DHCPv4Server {
     /// 已分配的 IP 列表
     allocated_host: HashSet<Ipv4Addr>,
     /// 已分配的 IP
-    offered_ip: HashMap<MacAddr, (Ipv4Addr, u64, u32)>,
+    offered_ip: HashMap<MacAddr, DHCPv4ServerOfferedCache>,
 
     /// 持有的 OPTIONS
     options_map: HashMap<u8, DhcpOptions>,
@@ -329,6 +343,21 @@ impl DHCPv4Server {
             options_map.insert(each.get_index(), each.clone());
         }
 
+        let mut allocated_host = HashSet::new();
+        let mut offered_ip = HashMap::new();
+        for each in config.mac_binding_records {
+            allocated_host.insert(each.ip);
+            offered_ip.insert(
+                each.mac,
+                DHCPv4ServerOfferedCache {
+                    ip: each.ip,
+                    relative_offer_time: 0,
+                    valid_time: each.expire_time,
+                    is_static: true,
+                },
+            );
+        }
+
         let address_lease_time =
             config.address_lease_time.unwrap_or(LANDSCAPE_DHCP_DEFAULT_ADDRESS_LEASE_TIME);
 
@@ -337,8 +366,8 @@ impl DHCPv4Server {
             server_ip: config.server_ip_addr,
             ip_range_start,
             range_capacity,
-            allocated_host: HashSet::new(),
-            offered_ip: HashMap::new(),
+            allocated_host,
+            offered_ip,
             options_map,
             address_lease_time,
         }
@@ -346,7 +375,7 @@ impl DHCPv4Server {
 
     ///
     fn offer_ip(&mut self, mac_addr: &MacAddr) -> Option<Ipv4Addr> {
-        if let Some((ip, _, _)) = self.offered_ip.get(mac_addr) {
+        if let Some(DHCPv4ServerOfferedCache { ip, .. }) = self.offered_ip.get(mac_addr) {
             return Some(ip.clone());
         }
 
@@ -367,7 +396,12 @@ impl DHCPv4Server {
             } else {
                 self.offered_ip.insert(
                     mac_addr.clone(),
-                    (address, self.relative_boot_time.elapsed().as_secs(), OFFER_VALID_TIME),
+                    DHCPv4ServerOfferedCache {
+                        ip: address,
+                        relative_offer_time: self.relative_boot_time.elapsed().as_secs(),
+                        valid_time: OFFER_VALID_TIME,
+                        is_static: false,
+                    },
                 );
                 self.allocated_host.insert(address);
                 return Some(address);
@@ -383,12 +417,17 @@ impl DHCPv4Server {
         let current_time = self.relative_boot_time.elapsed().as_secs();
 
         let mut remove_keys = vec![];
-        self.offered_ip.retain(|_key, &mut value| {
-            if current_time > (value.1 + value.2 as u64) {
-                remove_keys.push(value.0);
-                false
-            } else {
+        self.offered_ip.retain(|_key, value| {
+            // 静态设置的不清理
+            if value.is_static {
                 true
+            } else {
+                if current_time > value.get_expire_time() {
+                    remove_keys.push(value.ip.clone());
+                    false
+                } else {
+                    true
+                }
             }
         });
 
@@ -401,31 +440,40 @@ impl DHCPv4Server {
 
     /// 检查是否存在过, 存在过直接刷新时间
     pub fn ack_request(&mut self, mac_addr: &MacAddr, ip_addr: Ipv4Addr) -> bool {
-        if let Some((ip, offer_time, valid_time)) = self.offered_ip.get_mut(mac_addr) {
-            if *ip == ip_addr {
-                *offer_time = self.relative_boot_time.elapsed().as_secs();
-                *valid_time = self.address_lease_time;
+        if let Some(offered_cache) = self.offered_ip.get_mut(mac_addr) {
+            if offered_cache.ip == ip_addr {
+                if !offered_cache.is_static {
+                    // 非静态刷新掉 offer 时间
+                    offered_cache.valid_time = self.address_lease_time;
+                }
+                // 静态和非静态都刷新相对分配时间
+                offered_cache.relative_offer_time = self.relative_boot_time.elapsed().as_secs();
                 return true;
             } else {
                 tracing::error!(
-                    "client: {mac_addr:?} request ip: {ip_addr:?}, not same as offer: {ip:?}"
+                    "client: {mac_addr:?} request ip: {ip_addr:?}, not same as offer: {:?}",
+                    offered_cache.ip
                 )
             }
         } else {
             tracing::error!("can not find this request offer record client: {mac_addr:?} request ip: {ip_addr:?}")
         }
+
+        // TODO: 检查此 IP 是否未被 offered, 没有被 offered 那就可以被分配
         false
     }
 
-    pub fn get_offed_info(&self) -> DHCPv4OfferInfo {
+    pub fn get_offered_info(&self) -> DHCPv4OfferInfo {
         let mut offered_ips = Vec::with_capacity(self.offered_ip.len());
         let relative_boot_time = self.relative_boot_time.elapsed().as_secs();
-        for (mac, (ip, relative_active_time, expire_time)) in self.offered_ip.iter() {
+        for (mac, DHCPv4ServerOfferedCache { ip, relative_offer_time, valid_time, .. }) in
+            self.offered_ip.iter()
+        {
             offered_ips.push(DHCPv4OfferInfoItem {
                 mac: mac.clone(),
                 ip: ip.clone(),
-                relative_active_time: *relative_active_time,
-                expire_time: *expire_time,
+                relative_active_time: *relative_offer_time,
+                expire_time: *valid_time,
             });
         }
         DHCPv4OfferInfo { relative_boot_time, offered_ips }

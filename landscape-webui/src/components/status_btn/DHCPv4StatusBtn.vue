@@ -30,13 +30,13 @@ const columns = [
     key: "ip",
   },
   {
-    title: "剩余时间",
+    title: "分配租期时间 (s)",
     key: "time_left",
-    render(row: DHCPv4OfferInfoShow) {
-      return h(NCountdown, {
-        duration: row.time_left * 1000,
-      });
-    },
+    // render(row: DHCPv4OfferInfoShow) {
+    //   return h(NCountdown, {
+    //     duration: row.time_left * 1000,
+    //   });
+    // },
   },
 ];
 

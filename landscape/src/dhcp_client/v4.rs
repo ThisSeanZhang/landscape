@@ -291,11 +291,12 @@ pub async fn dhcp_v4_client(
             }
         }
     }
-    tracing::info!("DHCP V6 Client Stop: {:#?}", service_status);
+    tracing::info!("DHCPv4 Client Stop: {:#?}", service_status);
 
     if default_router {
         LD_ALL_ROUTERS.del_route_by_iface(&iface_name).await;
     }
+
     if !service_status.is_stop() {
         service_status.just_change_status(ServiceStatus::Stop);
     }

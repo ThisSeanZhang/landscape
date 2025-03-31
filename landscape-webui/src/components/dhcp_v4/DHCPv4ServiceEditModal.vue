@@ -2,7 +2,11 @@
 import { computed, ref } from "vue";
 import NewIpEdit from "../NewIpEdit.vue";
 import { ZoneType } from "@/lib/service_ipconfig";
-import { DHCPv4ServiceConfig, get_dhcp_range } from "@/lib/dhcp_v4";
+import {
+  DHCPv4ServiceConfig,
+  get_dhcp_range,
+  MacBindingRecord,
+} from "@/lib/dhcp_v4";
 import { useDHCPv4ConfigStore } from "@/stores/status_dhcp_v4";
 import {
   get_iface_dhcp_v4_config,
@@ -71,6 +75,14 @@ const network_mask = computed({
     service_config.value.config.ip_range_end = end;
   },
 });
+
+function onCreateBinding(): MacBindingRecord {
+  return {
+    mac: "",
+    ip: "",
+    expire_time: 300,
+  };
+}
 </script>
 
 <template>
@@ -103,14 +115,6 @@ const network_mask = computed({
               :mask_max="30"
             ></NewIpEdit>
           </n-form-item-gi>
-          <!-- <n-form-item-gi label="IP 掩码" :span="5">
-        <n-input-number
-          v-model:value="ip_model.network_mask"
-          min="0"
-          max="32"
-          placeholder=""
-        />
-      </n-form-item-gi> -->
           <n-form-item-gi label="分配 IP起始地址 (包含)" :span="5">
             <NewIpEdit
               v-model:ip="service_config.config.ip_range_start"
@@ -120,6 +124,36 @@ const network_mask = computed({
             <NewIpEdit
               v-model:ip="service_config.config.ip_range_end"
             ></NewIpEdit>
+          </n-form-item-gi>
+          <n-form-item-gi label="Mac IP 地址绑定" :span="5">
+            <n-dynamic-input
+              v-model:value="service_config.config.mac_binding_records"
+              :on-create="onCreateBinding"
+            >
+              <template #create-button-default>
+                新建 MAC 静态 IP 映射
+              </template>
+              <template #default="{ value }">
+                <n-input-group>
+                  <n-input
+                    v-model:value="value.mac"
+                    type="text"
+                    placeholder="Mac"
+                  />
+                  <n-input
+                    v-model:value="value.ip"
+                    type="text"
+                    placeholder="IPv4"
+                  />
+                  <n-input-number
+                    v-model:value="value.expire_time"
+                    style="width: 230px"
+                    placeholder="过期时间"
+                    :show-button="false"
+                  />
+                </n-input-group>
+              </template>
+            </n-dynamic-input>
           </n-form-item-gi>
         </n-grid>
       </n-form>
