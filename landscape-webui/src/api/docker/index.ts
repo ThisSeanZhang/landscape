@@ -1,5 +1,5 @@
 import { ServiceStatus } from "@/lib/services";
-import api from ".";
+import api from "@/api";
 import {
   DockerCmd,
   DockerContainerSummary,

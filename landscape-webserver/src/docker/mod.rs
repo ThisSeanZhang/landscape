@@ -11,6 +11,7 @@ use bollard::{container::ListContainersOptions, secret::ContainerSummary, Docker
 
 use image::get_docker_images_paths;
 use landscape::docker::LandscapeDockerService;
+use network::get_docker_networks_paths;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::path::PathBuf;
@@ -18,6 +19,7 @@ use std::path::PathBuf;
 use crate::SimpleResult;
 
 mod image;
+mod network;
 
 pub async fn get_docker_paths(home_path: PathBuf) -> Router {
     let docker_service = LandscapeDockerService::new(home_path.join("docker_info"));
@@ -35,6 +37,7 @@ pub async fn get_docker_paths(home_path: PathBuf) -> Router {
         .route("/remove/:container_name", post(remove_container))
         .with_state(docker_service)
         .nest("/images", get_docker_images_paths().await)
+        .nest("/networks", get_docker_networks_paths().await)
 }
 
 async fn get_docker_status(State(state): State<LandscapeDockerService>) -> Json<Value> {

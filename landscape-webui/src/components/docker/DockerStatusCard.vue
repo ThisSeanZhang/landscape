@@ -8,10 +8,7 @@ import { ServiceStatusType } from "@/lib/services";
 import { useDockerStore } from "@/stores/status_docker";
 
 import DockerImageDrawer from "@/components/docker/image/DockerImageDrawer.vue";
-import {
-  start_docker_service,
-  stop_docker_service,
-} from "@/api/docker_service";
+import { start_docker_service, stop_docker_service } from "@/api/docker";
 
 const dockerStatus = useDockerStore();
 const themeVars = ref(useThemeVars());

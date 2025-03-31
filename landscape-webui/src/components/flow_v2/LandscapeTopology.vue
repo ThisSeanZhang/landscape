@@ -3,7 +3,8 @@ import { VueFlow, useVueFlow } from "@vue-flow/core";
 import { MiniMap } from "@vue-flow/minimap";
 import InteractionControls from "@/components/flow/InteractionControls.vue";
 import FlowHeaderExtra from "@/components/flow_v2/FlowHeaderExtra.vue";
-import FlowNode from "@/components/flow/FlowNode.vue";
+import TopologyNetNode from "@/components/flow_v2/TopologyNetNode.vue";
+import TopologyDockerNode from "@/components/flow_v2/TopologyDockerNode.vue";
 import { add_controller } from "@/api/network";
 
 import { useMessage, SelectOption } from "naive-ui";
@@ -26,8 +27,8 @@ onMounted(async () => {
 
 onConnect(async (params: any) => {
   // source 相当于 master_ifindex
-  const is_source_bridge = ifaceNodeStore.FIND_BRIDGE_BY_IFINDEX(params.source);
-  const is_target_bridge = ifaceNodeStore.FIND_BRIDGE_BY_IFINDEX(params.target);
+  const is_source_bridge = ifaceNodeStore.FIND_BRIDGE_BY_IFNAME(params.source);
+  const is_target_bridge = ifaceNodeStore.FIND_BRIDGE_BY_IFNAME(params.target);
   if (is_source_bridge && is_target_bridge) {
     naive_message.warning("还没做好 Bridge 环路检测");
   } else if (is_target_bridge) {
@@ -38,7 +39,7 @@ onConnect(async (params: any) => {
     );
   }
 
-  let dev = ifaceNodeStore.FIND_DEV_BY_IFINDEX(params.target);
+  let dev = ifaceNodeStore.FIND_DEV_BY_IFNAME(params.target);
   if (dev?.wifi_info !== undefined) {
     if (dev.wifi_info.wifi_type.t !== WLANTypeTag.Ap) {
       naive_message.warning(
@@ -46,7 +47,7 @@ onConnect(async (params: any) => {
       );
     }
   }
-  let master_dev = ifaceNodeStore.FIND_DEV_BY_IFINDEX(params.source);
+  let master_dev = ifaceNodeStore.FIND_DEV_BY_IFNAME(params.source);
   if (dev) {
     if (dev.controller_id || dev.controller_name) {
       naive_message.error("此设备已有上级设备了");
@@ -107,8 +108,13 @@ function handleIfaceUpdate(value: string, option: SelectOption) {
     <!-- <MiniMap pannable zoomable /> -->
     <template #node-netflow="{ data }">
       <!-- {{ nodeProps }} -->
-      <FlowNode :node="data" />
+      <TopologyNetNode :node="data.dev" />
     </template>
+    <template #node-docker="{ data }">
+      <!-- {{ nodeProps }} -->
+      <TopologyDockerNode :node="data.dev" />
+    </template>
+
     <!-- <InteractionControls /> -->
 
     <FlowHeaderExtra />

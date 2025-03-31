@@ -1,7 +1,4 @@
-import {
-  get_docker_container_summarys,
-  get_docker_status,
-} from "@/api/docker_service";
+import { get_docker_container_summarys, get_docker_status } from "@/api/docker";
 import { ServiceStatus } from "@/lib/services";
 import { defineStore } from "pinia";
 import { ref } from "vue";

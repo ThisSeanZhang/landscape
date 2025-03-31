@@ -3,6 +3,7 @@ use std::net::Ipv4Addr;
 pub mod args;
 pub mod dhcp;
 pub mod dns;
+pub mod docker;
 pub mod error;
 pub mod firewall;
 pub mod global_const;

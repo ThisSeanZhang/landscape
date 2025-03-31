@@ -1,4 +1,4 @@
-import { FlowNodeType, NodePositionType } from "./flow";
+import { FlowNodeType, NodePositionType } from "@/lib/flow";
 import { ZoneType } from "./service_ipconfig";
 
 export class NetDev {

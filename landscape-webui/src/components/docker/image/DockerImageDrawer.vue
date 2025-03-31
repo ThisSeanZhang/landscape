@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { get_docker_images, pull_docker_image } from "@/api/docker_service";
+import { get_docker_images, pull_docker_image } from "@/api/docker";
 import { ref } from "vue";
 import DockerImageCard from "@/components/docker/image/DockerImageCard.vue";
 const show = defineModel<boolean>("show", { required: true });

@@ -5,7 +5,7 @@ import {
   remove_container,
   start_container,
   stop_container,
-} from "@/api/docker_service";
+} from "@/api/docker";
 import {
   DockerContainerSummary,
   DockerBtnShow,

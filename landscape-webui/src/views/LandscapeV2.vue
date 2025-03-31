@@ -14,7 +14,7 @@ import LanguageSetting from "@/components/head/LanguageSetting.vue";
 
 import CopyRight from "@/components/CopyRight.vue";
 import NetFlow from "@/components/flow/NetFlow.vue";
-import NetTopology from "@/components/flow_v2/NetTopology.vue";
+import NetTopology from "@/components/flow_v2/LandscapeTopology.vue";
 
 import { ref } from "vue";
 import MarkRuleCard from "@/components/mark/MarkRuleCard.vue";

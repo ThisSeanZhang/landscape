@@ -11,6 +11,8 @@ use tokio_stream::StreamExt;
 
 use crate::get_all_devices;
 
+pub mod network;
+
 const REDIRECT_ID_LABEL_NAME: &str = "ld_red_id";
 
 /// docker 监听服务的状态结构体

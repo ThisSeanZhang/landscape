@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { delete_docker_image } from "@/api/docker_service";
+import { delete_docker_image } from "@/api/docker";
 import { DockerImageSummary } from "@/lib/docker";
 import { computed, ref } from "vue";
 

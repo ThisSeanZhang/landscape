@@ -1,4 +1,4 @@
-import { KeyValuePair } from "./common";
+import { KeyValuePair } from "@/lib/common";
 import { useThemeVars } from "naive-ui";
 
 export const LAND_REDIRECT_ID_KEY = "ld_red_id";
