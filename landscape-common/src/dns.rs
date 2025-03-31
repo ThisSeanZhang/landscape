@@ -83,7 +83,7 @@ pub enum DNSResolveMode {
 
 impl Default for DNSResolveMode {
     fn default() -> Self {
-        DNSResolveMode::CloudFlare { mode: CloudFlareMode::Tls }
+        DNSResolveMode::CloudFlare { mode: CloudFlareMode::Plaintext }
     }
 }
 
@@ -104,9 +104,9 @@ pub enum DnsUpstreamType {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "lowercase")]
 pub enum CloudFlareMode {
-    Standard, // 1.1.1.1 (UDP/TCP)
-    Tls,      // tls://1.1.1.1
-    Https,    // https://cloudflare-dns.com/dns-query
+    Plaintext, // 1.1.1.1 (UDP/TCP)
+    Tls,       // tls://1.1.1.1
+    Https,     // https://cloudflare-dns.com/dns-query
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]

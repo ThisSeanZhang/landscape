@@ -79,7 +79,7 @@ impl ResolverType {
             }
             DNSResolveMode::CloudFlare { mode } => {
                 let server = match mode {
-                    landscape_common::dns::CloudFlareMode::Standard => {
+                    landscape_common::dns::CloudFlareMode::Plaintext => {
                         NameServerConfigGroup::cloudflare()
                     }
                     landscape_common::dns::CloudFlareMode::Tls => {

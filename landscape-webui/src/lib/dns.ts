@@ -95,7 +95,7 @@ export enum DnsUpstreamTypeEnum {
 }
 
 export enum CloudFlareMode {
-  Standard = "standard",
+  Plaintext = "plaintext",
   Tls = "tls",
   Https = "https",
 }
