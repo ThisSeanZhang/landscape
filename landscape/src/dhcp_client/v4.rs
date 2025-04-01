@@ -147,6 +147,7 @@ impl DhcpState {
     }
 }
 
+#[tracing::instrument(skip(ifindex, mac_addr, client_port, service_status, hostname))]
 pub async fn dhcp_v4_client(
     ifindex: u32,
     iface_name: String,
@@ -418,12 +419,20 @@ async fn send_current_status_packet(
                 *siaddr
             };
 
+            let mut request_option = DhcpOptionFrame {
+                message_type: DhcpOptionMessageType::Request,
+                options: vec![],
+                end: vec![255],
+            };
+
+            request_option.update_or_create_option(DhcpOptions::Hostname(hostname.to_string()));
+
             let dhcp_discover = crate::dump::udp_packet::dhcp::gen_request(
                 *xid,
                 mac_addr,
                 *ciaddr,
                 *yiaddr,
-                options.clone(),
+                request_option,
             );
 
             match send_socket
@@ -567,7 +576,7 @@ async fn handle_packet(
         DhcpState::Requesting { yiaddr, .. } | DhcpState::Renewing { yiaddr, .. } => {
             match dhcp.options.message_type {
                 DhcpOptionMessageType::Ack => {
-                    if dhcp.yiaddr == *yiaddr {
+                    if *yiaddr == Ipv4Addr::UNSPECIFIED || dhcp.yiaddr == *yiaddr {
                         // 成功获得 IP
                         let new_ciaddr = dhcp.ciaddr;
                         let new_yiaddr = dhcp.yiaddr;
@@ -616,7 +625,11 @@ async fn handle_packet(
                         tracing::debug!("current status move to: {:#?}", current_status);
                         return true;
                     } else {
-                        tracing::error!("IP 地址不符合")
+                        tracing::error!(
+                            "IP 地址不符合: new ip: {:?}, old ip: {:?}",
+                            dhcp.yiaddr,
+                            *yiaddr
+                        )
                     }
                 }
                 DhcpOptionMessageType::Nak => {

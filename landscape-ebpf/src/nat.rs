@@ -5,7 +5,6 @@ use land_nat::{
     types::{nat_mapping_key, nat_mapping_value, u_inet_addr},
     *,
 };
-// use landscape_common::args::LAND_ARGS;
 use libbpf_rs::{
     skel::{OpenSkel, SkelBuilder},
     MapCore, MapFlags, TC_EGRESS, TC_INGRESS,
@@ -50,7 +49,6 @@ pub fn init_nat(
     has_mac: bool,
     service_status: oneshot::Receiver<()>,
     config: NatConfig,
-    static_mappings: Option<Vec<(Ipv4Addr, u16, Ipv4Addr, u16)>>,
 ) {
     // bump_memlock_rlimit();
     let landscape_builder = LandNatSkelBuilder::default();
@@ -82,10 +80,6 @@ pub fn init_nat(
     }
 
     let landscape_skel = landscape_open.load().unwrap();
-    // let map = landscape_skel.maps.static_nat_mappings;
-    // if let Some(addr) = LAND_ARGS.get_ipv4_listen() {
-    //     get_static_mapping((addr.0, addr.1, addr.0, addr.1), &map);
-    // }
 
     let nat_egress = landscape_skel.progs.egress_nat;
     let nat_ingress = landscape_skel.progs.ingress_nat;
@@ -102,6 +96,7 @@ pub fn init_nat(
     drop(nat_ingress_hook);
 }
 
+#[allow(dead_code)]
 pub(crate) fn set_nat_static_mapping<'obj, T>(mapping: (Ipv4Addr, u16, Ipv4Addr, u16), map: &T)
 where
     T: MapCore,

@@ -185,6 +185,7 @@ macro_rules! define_options {
             #[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
             pub struct [<$name s>](Vec<$name>); // vec maintains sorted on OptionCode
 
+            #[allow(dead_code)]
             impl [<$name s>] {
                 /// construct empty Options
                 pub fn new() -> Self {

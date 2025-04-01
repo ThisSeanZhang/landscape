@@ -4,11 +4,15 @@ use std::{
 };
 
 use dev::{DevState, LandScapeInterface};
+use futures::stream::TryStreamExt;
 use iface::{
     config::{CreateDevType, NetworkIfaceConfig, WifiMode},
     dev_wifi::LandScapeWifiInterface,
     get_iface_by_name,
 };
+use netlink_packet_route::AddressFamily;
+use rtnetlink::new_connection;
+
 pub use routerstatus::*;
 
 pub mod boot;
@@ -100,8 +104,11 @@ pub async fn init_devs(network_config: Vec<NetworkIfaceConfig>) {
                 match &ifconfig.create_dev_type {
                     // 目前仅处理桥接设别的创建
                     CreateDevType::Bridge => {
-                        let create_result =
-                            handle.link().add().bridge(ifconfig.name.clone()).execute().await;
+                        if let Err(e) =
+                            handle.link().add().bridge(ifconfig.name.clone()).execute().await
+                        {
+                            tracing::error!("create bridge error: {e:?}");
+                        }
                     }
                     _ => (),
                 }
@@ -126,6 +133,9 @@ pub async fn init_devs(network_config: Vec<NetworkIfaceConfig>) {
                         .controller(master_iface.index)
                         .execute()
                         .await;
+                    if let Err(e) = create_result {
+                        tracing::error!("set controller error: {e:?}");
+                    }
                 } else {
                     // 找不到 也就是目标还未初始化
                     dev_tx.send((time + 1, ifconfig)).unwrap();
@@ -327,39 +337,6 @@ mod tests {
             println!("{component:?}");
         }
     }
-
-    use netlink_packet_route::{
-        link::{LinkAttribute, LinkExtentMask},
-        AddressFamily,
-    };
-    use rtnetlink::{new_connection, Error, Handle};
-
-    #[tokio::test]
-    async fn netlink() {
-        let (connection, handle, _) = new_connection().unwrap();
-        tokio::spawn(connection);
-        super::dump_links(handle).await;
-    }
-}
-
-use futures::stream::TryStreamExt;
-use netlink_packet_route::{
-    link::{LinkAttribute, LinkExtentMask},
-    AddressFamily,
-};
-use rtnetlink::{new_connection, Error, Handle};
-async fn dump_links(handle: Handle) -> Result<(), Error> {
-    let mut links = handle.link().get().execute();
-    'outer: while let Some(msg) = links.try_next().await? {
-        for nla in msg.attributes.into_iter() {
-            if let LinkAttribute::IfName(name) = nla {
-                println!("found link {} ({})", msg.header.index, name);
-                continue 'outer;
-            }
-        }
-        eprintln!("found link {}, but the link has no name", msg.header.index);
-    }
-    Ok(())
 }
 
 #[macro_export]

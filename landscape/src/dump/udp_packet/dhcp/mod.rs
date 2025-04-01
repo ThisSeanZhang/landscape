@@ -372,14 +372,22 @@ pub fn gen_request(
     mut options: DhcpOptionFrame,
 ) -> DhcpEthFrame {
     // 增加 所要使用的 ip 地址 option
-    options.options.push(DhcpOptions::RequestedIpAddress(yiaddr));
-    options.options.push(DhcpOptions::ClassIdentifier(mac_addr.octets().to_vec()));
+    options.options.push(DhcpOptions::ClassIdentifier("MSFT 5.0".as_bytes().to_vec()));
+    let mut client_identifier = mac_addr.octets().to_vec();
+    client_identifier.insert(0, 1);
+    options.options.push(DhcpOptions::ClientIdentifier(client_identifier));
     options.options.push(get_default_request_list());
 
     options.message_type = DhcpOptionMessageType::Request;
 
     // Flags: Broadcast
-    let flags = if ciaddr.is_unspecified() { 0x8000 } else { 0 };
+    let flags = if ciaddr.is_unspecified() {
+        // CI addr 为空 那就设置 Option
+        options.options.push(DhcpOptions::RequestedIpAddress(yiaddr));
+        0x8000
+    } else {
+        0
+    };
     let offer = DhcpEthFrame {
         op: 1,
         htype: 1,

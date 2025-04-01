@@ -548,7 +548,18 @@ fn gen_ack(server: &mut DHCPv4Server, frame: DhcpEthFrame) -> Option<DhcpEthFram
         }
     }
 
-    let Some(DhcpOptions::RequestedIpAddress(client_ip)) = frame.options.has_option(50) else {
+    let mut client_ip = None;
+    if frame.ciaddr != Ipv4Addr::UNSPECIFIED {
+        tracing::debug!("client ip in ciaddr");
+        client_ip = Some(frame.ciaddr);
+    }
+
+    if let Some(DhcpOptions::RequestedIpAddress(ciaddr)) = frame.options.has_option(50) {
+        tracing::debug!("client ip in option");
+        client_ip = Some(ciaddr);
+    }
+
+    let Some(client_ip) = client_ip else {
         tracing::warn!("can not find client request ip");
         return None;
     };

@@ -83,7 +83,7 @@ async fn handle_dump_msg(packet: Box<EthFram>, socket: &mut WebSocket) {
     // }
 }
 
-async fn handle_websocket_msg(msg: Message, dump_tx: &mut Sender<Vec<u8>>) -> ControlFlow<(), ()> {
+async fn handle_websocket_msg(msg: Message, _dump_tx: &mut Sender<Vec<u8>>) -> ControlFlow<(), ()> {
     match msg {
         Message::Text(t) => {
             println!(">>> sent str: {t:?}");

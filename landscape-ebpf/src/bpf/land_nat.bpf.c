@@ -1134,9 +1134,16 @@ int egress_nat(struct __sk_buff *skb) {
                                 &packet_info.pair_ip, &nat_egress_value, &nat_ingress_value);
 
     if (ret != TC_ACT_OK) {
+        u32 wan_ip_key = skb->ifindex;
+        __be32 *wan_ip = bpf_map_lookup_elem(&wan_ipv4_binding, &wan_ip_key);
+        if (!wan_ip) {
+            bpf_log_error("can't find the wan ip, using ifindex: %d", skb->ifindex);
+            return TC_ACT_SHOT;
+        }
+        bool is_current_ip = packet_info.pair_ip.src_addr.ip == *wan_ip;
         /// 在映射范围之外的端口直接通过
         u16 src_port = bpf_ntohs(packet_info.pair_ip.src_port);
-        if (is_out_nat_range(&packet_info, src_port)) {
+        if (is_current_ip && is_out_nat_range(&packet_info, src_port)) {
             return TC_ACT_UNSPEC;
         }
 

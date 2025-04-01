@@ -95,7 +95,7 @@ async fn set_controller(
     State(state): State<NetworkState>,
     Json(AddController {
         link_name,
-        link_ifindex,
+        link_ifindex: _,
         master_name,
         master_ifindex,
     }): Json<AddController>,
