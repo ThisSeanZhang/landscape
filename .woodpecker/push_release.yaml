@@ -32,7 +32,7 @@ steps:
 - name: publish
   image: woodpeckerci/plugin-release
   settings:
-    title: "Release v0.4.6-beta"
+    title: "Release v0.4.7-beta"
     prerelease: true
     generate-release-notes: true
     target: main

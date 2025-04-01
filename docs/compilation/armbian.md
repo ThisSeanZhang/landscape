@@ -113,11 +113,11 @@ EOF
 
 	if [ "$BOARD" = "uefi-x86" ]; then
 		# 当 BOARD 为 "uefi-x86" 时执行的操作
-		curl -L -o /root/landscape-webserver https://github.com/ThisSeanZhang/landscape/releases/download/v0.4.6-beta/landscape-webserver-x86_64
+		curl -L -o /root/landscape-webserver https://github.com/ThisSeanZhang/landscape/releases/download/v0.4.7-beta/landscape-webserver-x86_64
 		sudo sed -i 's/^GRUB_CMDLINE_LINUX="/GRUB_CMDLINE_LINUX="net.ifnames=0 biosdevname=0 /' /etc/default/grub
 		sudo update-grub
 	else
-		curl -L -o /root/landscape-webserver https://github.com/ThisSeanZhang/landscape/releases/download/v0.4.6-beta/landscape-webserver-aarch64
+		curl -L -o /root/landscape-webserver https://github.com/ThisSeanZhang/landscape/releases/download/v0.4.7-beta/landscape-webserver-aarch64
 		# 当 BOARD 为其他值时执行的操作
 		cat /boot/armbianEnv.txt
 		# 使用默认的方式进行命名
@@ -127,7 +127,7 @@ EOF
 	mkdir -p /root/.landscape-router/
 	cp /tmp/overlay/landscape_init.toml /root/.landscape-router/landscape_init.toml
 	chmod +x /root/landscape-webserver
-	curl -L -o /root/static.zip https://github.com/ThisSeanZhang/landscape/releases/download/v0.4.6-beta/static.zip
+	curl -L -o /root/static.zip https://github.com/ThisSeanZhang/landscape/releases/download/v0.4.7-beta/static.zip
 	unzip /root/static.zip -d /root/.landscape-router
 	cat <<EOF > /etc/systemd/system/landscape-router.service
 [Unit]
