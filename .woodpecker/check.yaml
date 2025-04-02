@@ -7,4 +7,8 @@ steps:
 - name: ckeck
   image: thisseanzhang/landscape:build_base
   commands:
+  - rustup install nightly
+  - rustup default nightly
+  - rustc --version
+  - rustup component add rustfmt
   - cargo fmt -- --check
