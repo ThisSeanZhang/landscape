@@ -70,7 +70,7 @@ impl MacAddr {
             + ((self.1 as u32) << 16)
             + ((self.2 as u32) << 8)
             + self.3 as u32;
-        sum += ((self.4 as u32) << 24) + (self.5 as u32) << 16;
+        sum += (((self.4 as u32) << 24) + (self.5 as u32)) << 16;
         sum
     }
 

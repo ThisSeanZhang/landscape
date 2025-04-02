@@ -5,7 +5,7 @@ use tokio::sync::{watch, RwLock};
 
 pub mod default_router;
 
-pub static LD_PD_WATCHES: Lazy<IAPrefixMap> = Lazy::new(|| IAPrefixMap::new());
+pub static LD_PD_WATCHES: Lazy<IAPrefixMap> = Lazy::new(IAPrefixMap::new);
 
 #[derive(Debug, Clone)]
 pub struct LDIAPrefix {

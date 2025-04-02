@@ -6,7 +6,7 @@ use std::{
 use once_cell::sync::Lazy;
 use tokio::sync::RwLock;
 
-pub static LD_ALL_ROUTERS: Lazy<DefaultRouterManager> = Lazy::new(|| DefaultRouterManager::new());
+pub static LD_ALL_ROUTERS: Lazy<DefaultRouterManager> = Lazy::new(DefaultRouterManager::new);
 
 #[derive(Eq, Hash, PartialEq, Debug)]
 pub struct RouteInfo {

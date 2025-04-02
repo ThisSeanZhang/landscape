@@ -20,28 +20,28 @@ pub mod util;
 pub mod utils;
 
 /// Config file
-pub const LAND_CONFIG: &'static str = "landscape.toml";
+pub const LAND_CONFIG: &str = "landscape.toml";
 
 /// Home Path
-pub const LANDSCAPE_CONFIG_DIR_NAME: &'static str = ".landscape-router";
+pub const LANDSCAPE_CONFIG_DIR_NAME: &str = ".landscape-router";
 /// LOG Path
-pub const LANDSCAPE_LOG_DIR_NAME: &'static str = "logs";
+pub const LANDSCAPE_LOG_DIR_NAME: &str = "logs";
 /// web resource
-pub const LANDSCAPE_WEBROOT_DIR_NAME: &'static str = "static";
+pub const LANDSCAPE_WEBROOT_DIR_NAME: &str = "static";
 /// init file name
-pub const INIT_FILE_NAME: &'static str = "landscape_init.toml";
+pub const INIT_FILE_NAME: &str = "landscape_init.toml";
 /// LOG Path
-pub const LANDSCAPE_HOSTAPD_TMP_DIR: &'static str = "hostapd_tmp";
+pub const LANDSCAPE_HOSTAPD_TMP_DIR: &str = "hostapd_tmp";
 /// init lock file name
-pub const INIT_LOCK_FILE_NAME: &'static str = "landscape_init.lock";
+pub const INIT_LOCK_FILE_NAME: &str = "landscape_init.lock";
 /// sys token
-pub const LANDSCAPE_SYS_TOKEN_FILE_ANME: &'static str = "landscape_api_token";
+pub const LANDSCAPE_SYS_TOKEN_FILE_ANME: &str = "landscape_api_token";
 
-pub const GEO_SITE_FILE_NAME: &'static str = "geosite.dat";
-pub const GEO_IP_FILE_NAME: &'static str = "geoip.dat";
+pub const GEO_SITE_FILE_NAME: &str = "geosite.dat";
+pub const GEO_IP_FILE_NAME: &str = "geoip.dat";
 
 /// Landscape default lan bridge name
-pub const LANDSCAPE_DEFAULT_LAN_NAME: &'static str = "br_lan";
+pub const LANDSCAPE_DEFAULT_LAN_NAME: &str = "br_lan";
 
 pub const LANDSCAPE_DEFAULE_LAN_DHCP_SERVER_IP: Ipv4Addr = Ipv4Addr::new(192, 168, 5, 1);
 pub const LANDSCAPE_DEFAULT_LAN_DHCP_SERVER_NETMASK: u8 = 24_u8;

@@ -1,0 +1,10 @@
+when:
+  - event: [push]
+labels:
+  name: la24
+
+steps:
+- name: ckeck
+  image: thisseanzhang/landscape:build_base
+  commands:
+  - cargo fmt -- --check

@@ -347,11 +347,10 @@ where
         if let Some(old_unit) = self.index.remove(key) {
             // 自身写一个 Delete 记录
             let del_unit = SaveUnit::<T>::Del(key.to_string());
-
-            let cur_pos = self.writer.seek(SeekFrom::Current(0)).unwrap();
+            let cur_pos = self.writer.stream_position().unwrap();
             serde_json::to_writer(&mut self.writer, &del_unit).unwrap();
             self.writer.flush().unwrap();
-            let new_pos = self.writer.seek(SeekFrom::Current(0)).unwrap();
+            let new_pos = self.writer.stream_position().unwrap();
 
             // 垃圾空间增加
             self.junk_data_size += (new_pos - cur_pos) + old_unit.len;
