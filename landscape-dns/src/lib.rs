@@ -1,126 +1,52 @@
 use hickory_proto::rr::{Record, RecordType};
-use hickory_server::ServerFuture;
-use landscape_common::args::LAND_HOME_PATH;
-use landscape_common::dns::{DNSRuleConfig, DomainConfig};
-use landscape_common::mark::PacketMark;
-use landscape_common::service::{DefaultWatchServiceStatus, ServiceStatus};
-use landscape_common::GEO_SITE_FILE_NAME;
+use landscape_common::flow::{mark::FlowDnsMark, FlowDnsMarkInfo};
 use lru::LruCache;
-use multi_rule_dns_server::DnsServer;
-use serde::Serialize;
-use std::collections::HashMap;
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-use std::sync::Arc;
-use std::time::{Duration, Instant};
-use tokio::net::{TcpListener, UdpSocket};
-use tokio::sync::Mutex;
+use std::{collections::HashSet, time::Instant};
 
 pub mod connection;
 pub mod diff_server;
 pub mod ip_rule;
-pub mod multi_rule_dns_server;
 pub mod rule;
 pub mod server;
 pub mod socket;
 
-/// Timeout for TCP connections.
-const TCP_TIMEOUT: Duration = Duration::from_secs(10);
-
+#[derive(Clone)]
 pub struct CacheDNSItem {
     rdatas: Vec<Record>,
     insert_time: Instant,
-    mark: PacketMark,
+    mark: FlowDnsMark,
+}
+
+impl CacheDNSItem {
+    fn get_update_rules(&self) -> HashSet<FlowDnsMarkInfo> {
+        self.get_update_rules_with_mark(&self.mark)
+    }
+
+    fn get_update_rules_with_mark(&self, mark: &FlowDnsMark) -> HashSet<FlowDnsMarkInfo> {
+        let mut result = HashSet::new();
+        for rdata in self.rdatas.iter() {
+            match rdata.data() {
+                hickory_proto::rr::RData::A(a) => {
+                    if mark.need_insert_in_ebpf_map() {
+                        result.insert(FlowDnsMarkInfo {
+                            mark: self.mark.clone().into(),
+                            ip: std::net::IpAddr::V4(a.0),
+                        });
+                    }
+                }
+                hickory_proto::rr::RData::AAAA(a) => {
+                    if mark.need_insert_in_ebpf_map() {
+                        result.insert(FlowDnsMarkInfo {
+                            mark: self.mark.clone().into(),
+                            ip: std::net::IpAddr::V6(a.0),
+                        });
+                    }
+                }
+                _ => {}
+            }
+        }
+        result
+    }
 }
 
 pub type DNSCache = LruCache<(String, RecordType), Vec<CacheDNSItem>>;
-
-#[derive(Serialize, Debug, Clone)]
-pub struct LandscapeDnsService {
-    pub status: DefaultWatchServiceStatus,
-}
-
-impl LandscapeDnsService {
-    pub async fn new() -> Self {
-        LandscapeDnsService { status: DefaultWatchServiceStatus::new() }
-    }
-
-    pub async fn read_geo_site_file(&self) -> HashMap<String, Vec<DomainConfig>> {
-        let geo_file_path = LAND_HOME_PATH.join(GEO_SITE_FILE_NAME);
-
-        if geo_file_path.exists() && geo_file_path.is_file() {
-            landscape_protobuf::read_geo_sites(geo_file_path).await
-        } else {
-            tracing::error!("geo file don't exists or not a file, return empty map");
-            HashMap::new()
-        }
-    }
-
-    pub async fn start(
-        &self,
-        udp_port: u16,
-        tcp_port: Option<u16>,
-        dns_rules: Vec<DNSRuleConfig>,
-        old_cache: Option<Arc<Mutex<DNSCache>>>,
-    ) -> Arc<Mutex<DNSCache>> {
-        let dns_rules = dns_rules.into_iter().filter(|rule| rule.enable).collect();
-        let handler = DnsServer::new(dns_rules, self.read_geo_site_file().await, old_cache);
-        let cache = handler.clone_cache();
-
-        let mut server = ServerFuture::new(handler);
-
-        let status_clone = self.status.clone();
-
-        status_clone.just_change_status(ServiceStatus::Staring);
-        // register UDP listeners
-        server.register_socket(
-            UdpSocket::bind(SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), udp_port))
-                .await
-                .unwrap(),
-        );
-
-        if let Some(tcp_port) = tcp_port {
-            server.register_listener(
-                TcpListener::bind(SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), tcp_port))
-                    .await
-                    .unwrap(),
-                TCP_TIMEOUT,
-            );
-        }
-
-        tokio::spawn(async move {
-            status_clone.just_change_status(ServiceStatus::Running);
-
-            let state_end_loop = status_clone.wait_to_stopping();
-            let trigger_by_ui = tokio::select! {
-                _ = state_end_loop => {
-                    true
-                },
-                result = server.block_until_done() => {
-                    let message = if let Err(e) = result {
-                        Some(e.to_string())
-                    } else {
-                        None
-                    };
-                    tracing::error!("DNS Stop by Error: {message:?}");
-                    status_clone.just_change_status(ServiceStatus::Stop);
-                    false
-                }
-            };
-
-            if trigger_by_ui {
-                tracing::info!("DNS stopping trigger by ui");
-                if let Err(e) = server.shutdown_gracefully().await {
-                    tracing::error!("{e:?}");
-                    status_clone.just_change_status(ServiceStatus::Stop);
-                } else {
-                    status_clone.just_change_status(ServiceStatus::Stop);
-                }
-            }
-        });
-        cache
-    }
-
-    pub fn stop(&self) {
-        self.status.just_change_status(ServiceStatus::Stopping);
-    }
-}

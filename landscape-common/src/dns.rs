@@ -3,7 +3,7 @@ use std::net::IpAddr;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-use crate::{mark::PacketMark, store::storev2::LandScapeStore};
+use crate::{flow::mark::FlowDnsMark, store::storev2::LandScapeStore};
 
 /// DNS 配置
 #[derive(Serialize, Deserialize, Debug, Clone, TS)]
@@ -21,7 +21,7 @@ pub struct DNSRuleConfig {
     pub resolve_mode: DNSResolveMode,
     /// 流量标记
     #[serde(default)]
-    pub mark: PacketMark,
+    pub mark: FlowDnsMark,
     /// 匹配规则列表
     #[serde(default)]
     pub source: Vec<RuleSource>,
@@ -43,7 +43,7 @@ impl LandScapeStore for DNSRuleConfig {
 impl Default for DNSRuleConfig {
     fn default() -> Self {
         Self {
-            name: "default rule".into(),
+            name: "Landscape Router default rule".into(),
             index: 10000,
             enable: true,
             filter: FilterResult::default(),
@@ -97,7 +97,7 @@ pub enum DNSResolveMode {
 
 impl Default for DNSResolveMode {
     fn default() -> Self {
-        DNSResolveMode::CloudFlare { mode: CloudFlareMode::Plaintext }
+        DNSResolveMode::CloudFlare { mode: CloudFlareMode::Https }
     }
 }
 

@@ -1,3 +1,4 @@
+use std::net::IpAddr;
 use std::os::fd::AsRawFd;
 use std::{
     collections::HashMap,
@@ -16,6 +17,7 @@ use hickory_server::{
     authority::MessageRequest,
     server::{Request, RequestHandler, ResponseHandler},
 };
+use landscape_common::flow::PacketMatchMark;
 use socket2::{Domain, MsgHdrMut, Type};
 use tokio::sync::RwLock;
 use tokio::{io::unix::AsyncFd, sync::mpsc, task::JoinSet};
@@ -27,15 +29,20 @@ use crate::socket::{RecvDnsMessage, SendDnsMessage};
 pub struct DiffFlowServer<T: RequestHandler + Clone> {
     /// flow_id <-> Handler
     handlers: Arc<RwLock<HashMap<u32, T>>>,
+    dispatch_rules: Arc<RwLock<HashMap<PacketMatchMark, u32>>>,
     join_set: JoinSet<Result<(), ProtoError>>,
     shutdown_token: CancellationToken,
 }
 
 /// Copied and adapted from hickory
 impl<T: RequestHandler + Clone> DiffFlowServer<T> {
-    pub fn new(handlers: Arc<RwLock<HashMap<u32, T>>>) -> Self {
+    pub fn new(
+        handlers: Arc<RwLock<HashMap<u32, T>>>,
+        dispatch_rules: Arc<RwLock<HashMap<PacketMatchMark, u32>>>,
+    ) -> Self {
         Self {
             handlers,
+            dispatch_rules,
             join_set: JoinSet::new(),
             shutdown_token: CancellationToken::new(),
         }
@@ -52,7 +59,7 @@ impl<T: RequestHandler + Clone> DiffFlowServer<T> {
 
         let fd = socket2.as_raw_fd();
         let _ = crate::socket::set_socket_rcvmark(fd).unwrap();
-
+        socket2.set_recv_tos(true).unwrap();
         socket2.set_nonblocking(true).unwrap();
         socket2.bind(&socket_addr.into()).unwrap();
 
@@ -65,6 +72,7 @@ impl<T: RequestHandler + Clone> DiffFlowServer<T> {
 
         let shutdown = self.shutdown_token.clone();
         let handlers = self.handlers.clone();
+        let dispatch_rules = self.dispatch_rules.clone();
 
         self.join_set.spawn({
             async move {
@@ -108,7 +116,7 @@ impl<T: RequestHandler + Clone> DiffFlowServer<T> {
                 let mut inner_join_set = JoinSet::new();
                 tracing::info!("start recv_msg_rc");
                 loop {
-                    let RecvDnsMessage { message, addr, mark } = tokio::select! {
+                    let RecvDnsMessage { message, addr, tos, .. } = tokio::select! {
                         result = recv_msg_rc.recv() => match result {
                             Some(c) => c,
                             None => {
@@ -120,7 +128,23 @@ impl<T: RequestHandler + Clone> DiffFlowServer<T> {
                         },
                     };
 
-                    tracing::info!("mark: {mark:?}, addr: {addr:?}");
+                    tracing::info!("tos: {tos:?}, addr: {addr:?}, is_ipv4: {}", addr.is_ipv4());
+                    let qos = if tos == 0 { None } else { Some(tos) };
+
+                    let ip = match landscape_common::utils::ip::extract_real_ip(addr) {
+                        std::net::IpAddr::V4(ipv4_addr) => IpAddr::V4(ipv4_addr),
+                        std::net::IpAddr::V6(ipv6_addr) => IpAddr::V6(ipv6_addr),
+                    };
+                    let find_key = PacketMatchMark { ip, vlan_id: None, qos };
+                    let mark = if let Some(mark) = dispatch_rules.read().await.get(&find_key) {
+                        let mark = mark.clone();
+                        // tracing::debug!("get mark: {mark:?}, using: {find_key:?}");
+                        mark
+                    } else {
+                        // tracing::debug!("can not get mark, using: {find_key:?}");
+                        0
+                    };
+
                     if let Some(request_handler) =
                         handlers.read().await.get(&mark).map(Clone::clone)
                     {
@@ -130,7 +154,10 @@ impl<T: RequestHandler + Clone> DiffFlowServer<T> {
                                 .await;
                         });
                     } else {
-                        tracing::error!("mark: {mark:?}, can not found handler, addr: {addr:?}");
+                        tracing::error!(
+                            "mark: {mark:?}, can not found handler, addr: {addr:?}, \
+                        Or maybe you just forgot to add the DNS rules in this flow config"
+                        );
                     }
 
                     reap_tasks(&mut inner_join_set);
@@ -178,6 +205,7 @@ impl<T: RequestHandler + Clone> DiffFlowServer<T> {
                         match read_socket.try_io(|inner| inner.get_ref().recvmsg(&mut msg_hdr, 0)) {
                             Ok(Ok(size)) => {
                                 let mut mark = 0;
+                                let mut tos = 0;
                                 tracing::debug!("Received {} bytes", size);
 
                                 // 解析辅助数据
@@ -216,6 +244,15 @@ impl<T: RequestHandler + Clone> DiffFlowServer<T> {
                                             tracing::debug!("Received SO_RCVMARK: {}", mark);
                                         }
 
+                                        if cmsg_ref.cmsg_level == libc::SOL_IP
+                                            && cmsg_ref.cmsg_type == libc::IP_TOS
+                                        {
+                                            let tos_ptr =
+                                                unsafe { libc::CMSG_DATA(cmsg) } as *const u8;
+                                            tos = unsafe { *tos_ptr };
+                                            println!("Received IP_TOS: {}", tos);
+                                        }
+
                                         cmsg = unsafe { libc::CMSG_NXTHDR(control_ptr, cmsg) };
                                     }
                                 }
@@ -233,6 +270,7 @@ impl<T: RequestHandler + Clone> DiffFlowServer<T> {
                                     message: received_data,
                                     addr: socket_addr.as_socket().unwrap(),
                                     mark,
+                                    tos,
                                 }
                             }
                             Ok(Err(e)) => {

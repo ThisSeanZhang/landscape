@@ -34,6 +34,35 @@
 #define ACTION_MASK 0x00FF
 #define INDEX_MASK 0xFF00
 
+#define FLOW_KEEP_GOING 0
+#define FLOW_DIRECT 1
+#define FLOW_DROP 2
+#define FLOW_REDIRECT 3
+#define FLOW_ALLOW_REUSE 4
+
+#define FLOW_ID_MASK 0x000000FF
+#define FLOW_ACTION_MASK 0x0000FF00
+
+// 替换 FLOW_ID_MASK 对应的 0~7 位
+static __always_inline u32 replace_flow_id(u32 original, u8 new_id) {
+    original &= ~FLOW_ID_MASK;         // 清除原来的 ID 部分
+    original |= ((u32)new_id & 0xFF);  // 设置新的 ID 部分
+    return original;
+}
+
+// 替换 FLOW_ACTION_MASK 对应的 8~15 位
+static __always_inline u32 replace_flow_action(u32 original, u8 new_action) {
+    original &= ~FLOW_ACTION_MASK;              // 清除原来的 Action 部分
+    original |= ((u32)new_action & 0xFF) << 8;  // 设置新的 Action 部分
+    return original;
+}
+
+static __always_inline u8 get_flow_id(u32 original) { return (original & FLOW_ID_MASK); }
+
+static __always_inline u8 get_flow_action(u32 original) {
+    return (original & FLOW_ACTION_MASK) >> 8;
+}
+
 #define PRINT_MAC_ADDR(mac)                                                                        \
     bpf_log_info("mac: %02x:%02x:%02x:%02x:%02x:%02x", (mac)[0], (mac)[1], (mac)[2], (mac)[3],     \
                  (mac)[4], (mac)[5])

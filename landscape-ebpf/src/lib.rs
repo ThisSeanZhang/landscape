@@ -83,15 +83,19 @@ const NAT_INGRESS_PRIORITY: u32 = 4;
 
 // Fire wall -> nat -> pppoe
 // const PPPOE_MTU_FILTER_EGRESS_PRIORITY: u32 = 1;
-const MARK_EGRESS_PRIORITY: u32 = 2;
-const NAT_EGRESS_PRIORITY: u32 = 3;
-const FIREWALL_EGRESS_PRIORITY: u32 = 4;
-const PPPOE_EGRESS_PRIORITY: u32 = 5;
+const FLOW_EGRESS_PRIORITY: u32 = 2;
+const MARK_EGRESS_PRIORITY: u32 = 3;
+const NAT_EGRESS_PRIORITY: u32 = 4;
+const FIREWALL_EGRESS_PRIORITY: u32 = 5;
+const PPPOE_EGRESS_PRIORITY: u32 = 6;
 
 // MARK ->
 const LAN_FLOW_MARK_INGRESS_PRIORITY: u32 = 2;
 // MARK ->
 const LAN_FLOW_MARK_EGRESS_PRIORITY: u32 = 2;
+
+const LANDSCAPE_IPV4_TYPE: u8 = 0;
+const LANDSCAPE_IPV6_TYPE: u8 = 1;
 
 pub fn init_ebpf() {
     std::thread::spawn(|| {

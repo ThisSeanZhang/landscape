@@ -23,8 +23,7 @@ use tokio::sync::Mutex;
 use crate::{rule::ResolutionRule, CacheDNSItem, DNSCache};
 use landscape_common::{
     dns::{DNSRuleConfig, DomainConfig},
-    flow::FlowDnsMarkInfo,
-    mark::PacketMark,
+    flow::{mark::FlowDnsMark, FlowDnsMarkInfo},
 };
 
 static RESOLVER_CONF: &'static str = "/etc/resolv.conf";
@@ -78,11 +77,11 @@ impl LandscapeDnsRequestHandle {
         let mut resolves = BTreeMap::new();
         for rule in dns_rules.into_iter() {
             // println!("dns_rules: {:?}", rule);
-            resolves.insert(rule.index, Arc::new(ResolutionRule::new(rule, geo_map)));
+            resolves.insert(rule.index, Arc::new(ResolutionRule::new(rule, geo_map, flow_id)));
         }
         let cache = Arc::new(Mutex::new(LruCache::new(NonZeroUsize::new(2048).unwrap())));
 
-        landscape_ebpf::map_setting::flow::create_flow_dns_inner_map(flow_id, vec![]);
+        // landscape_ebpf::map_setting::flow::create_flow_dns_inner_map(flow_id, vec![]);
         LandscapeDnsRequestHandle { resolves, cache, flow_id }
     }
 
@@ -96,53 +95,56 @@ impl LandscapeDnsRequestHandle {
         let mut resolves = BTreeMap::new();
         for rule in dns_rules.into_iter() {
             // println!("dns_rules: {:?}", rule);
-            resolves.insert(rule.index, Arc::new(ResolutionRule::new(rule, geo_map)));
+            resolves.insert(rule.index, Arc::new(ResolutionRule::new(rule, geo_map, self.flow_id)));
         }
 
         let mut cache = LruCache::new(NonZeroUsize::new(2048).unwrap());
 
         if let Ok(old_cache) = self.cache.try_lock() {
             let mut update_dns_mark_list: HashSet<FlowDnsMarkInfo> = HashSet::new();
+            let mut del_dns_mark_list: HashSet<FlowDnsMarkInfo> = HashSet::new();
 
             for ((domain, req_type), value) in old_cache.iter() {
                 'resolver: for (_index, resolver) in resolves.iter() {
-                    // println!("old domain: {domain:?}");
                     if resolver.is_match(&domain) {
+                        println!("resolves: {:?}: match: {domain:?}", resolver.config);
                         let new_mark = resolver.mark().clone();
                         // println!("old domain match resolver: {domain:?}");
                         let mut cache_items = vec![];
-                        for CacheDNSItem { rdatas, insert_time, .. } in value.iter() {
+                        for cache_item in value.iter() {
                             // 新配置是 NoMark 的排除
-                            if matches!(new_mark, PacketMark::NoMark) {
-                                continue;
-                            }
-
-                            for rdata in rdatas.iter() {
-                                match rdata.data() {
-                                    hickory_proto::rr::RData::A(a) => {
-                                        if !matches!(new_mark, PacketMark::NoMark) {
-                                            update_dns_mark_list.insert(FlowDnsMarkInfo {
-                                                mark: new_mark.into(),
-                                                ip: std::net::IpAddr::V4(a.0),
-                                            });
-                                        }
+                            match (
+                                cache_item.mark.need_insert_in_ebpf_map(),
+                                new_mark.need_insert_in_ebpf_map(),
+                            ) {
+                                (true, true) => {
+                                    // 规则更新前后都需要写入 ebpf map
+                                    // 所以检查不相同才需要更新
+                                    if new_mark != cache_item.mark {
+                                        update_dns_mark_list.extend(
+                                            cache_item.get_update_rules_with_mark(&new_mark),
+                                        );
                                     }
-                                    hickory_proto::rr::RData::AAAA(a) => {
-                                        if !matches!(new_mark, PacketMark::NoMark) {
-                                            update_dns_mark_list.insert(FlowDnsMarkInfo {
-                                                mark: new_mark.into(),
-                                                ip: std::net::IpAddr::V6(a.0),
-                                            });
-                                        }
-                                    }
-                                    _ => {}
+                                }
+                                (true, false) => {
+                                    // 原先已经写入了
+                                    // 现在不需要了
+                                    del_dns_mark_list.extend(cache_item.get_update_rules());
+                                }
+                                (false, true) => {
+                                    // 原先没写入
+                                    // 目前需要缓存了
+                                    update_dns_mark_list
+                                        .extend(cache_item.get_update_rules_with_mark(&new_mark));
+                                }
+                                (false, false) => {
+                                    // 原先没缓存，现在也不需要存储的
                                 }
                             }
-                            cache_items.push(CacheDNSItem {
-                                rdatas: rdatas.clone(),
-                                insert_time: insert_time.clone(),
-                                mark: new_mark.clone(),
-                            });
+
+                            let mut new_record = cache_item.clone();
+                            new_record.mark = new_mark;
+                            cache_items.push(new_record);
                         }
                         if !cache_items.is_empty() {
                             cache.push((domain.clone(), req_type.clone()), cache_items);
@@ -153,9 +155,13 @@ impl LandscapeDnsRequestHandle {
             }
             tracing::info!("add_dns_marks: {:?}", update_dns_mark_list);
 
-            landscape_ebpf::map_setting::flow::create_flow_dns_inner_map(
+            landscape_ebpf::map_setting::flow_dns::update_flow_dns_mark_rules(
                 self.flow_id,
                 update_dns_mark_list.into_iter().collect(),
+            );
+            landscape_ebpf::map_setting::flow_dns::del_flow_dns_mark_rules(
+                self.flow_id,
+                del_dns_mark_list.into_iter().collect(),
             );
         }
 
@@ -200,39 +206,23 @@ impl LandscapeDnsRequestHandle {
         domain: &str,
         query_type: RecordType,
         rdata_ttl_vec: Vec<Record>,
-        mark: &PacketMark,
+        mark: &FlowDnsMark,
     ) {
-        let insert_time = Instant::now();
-
-        // 将记录和插入时间存储到缓存中
-        let mut records_with_expiration: Vec<CacheDNSItem> = vec![];
-        // TODO: 目前仅记录 IPV4 缓存
-        let mut update_dns_mark_list: HashSet<FlowDnsMarkInfo> = HashSet::new();
-        let mut rdatas = vec![];
-        for rdata in rdata_ttl_vec.into_iter() {
-            match rdata.data() {
-                hickory_proto::rr::RData::A(a) => {
-                    update_dns_mark_list.insert(FlowDnsMarkInfo {
-                        mark: mark.clone().into(),
-                        ip: std::net::IpAddr::V4(a.0),
-                    });
-                }
-                _ => {}
-            }
-            rdatas.push(rdata);
-        }
-        records_with_expiration.push(CacheDNSItem { rdatas, insert_time, mark: mark.clone() });
-        // let records_with_expiration: Vec<(Record, Instant)> =
-        //     rdata_ttl_vec.into_iter().map(|rdata| (rdata, now)).collect();
+        let cache_item = CacheDNSItem {
+            rdatas: rdata_ttl_vec,
+            insert_time: Instant::now(),
+            mark: mark.clone(),
+        };
+        let update_dns_mark_list = cache_item.get_update_rules();
 
         let mut cache = self.cache.lock().await;
-        cache.put((domain.to_string(), query_type), records_with_expiration);
+        cache.put((domain.to_string(), query_type), vec![cache_item]);
         drop(cache);
         // 将 mark 写入 mark ebpf map
-        if mark.need_add_mark_config() {
+        if mark.need_insert_in_ebpf_map() {
             tracing::info!("setting ips: {:?}, Mark: {:?}", update_dns_mark_list, mark);
             // TODO: 如果写入错误 返回错误后 向客户端返回查询错误
-            landscape_ebpf::map_setting::flow::update_flow_dns_rule(
+            landscape_ebpf::map_setting::flow_dns::update_flow_dns_mark_rules(
                 self.flow_id,
                 update_dns_mark_list.into_iter().collect(),
             );

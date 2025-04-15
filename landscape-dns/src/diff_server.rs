@@ -1,5 +1,6 @@
 use landscape_common::args::LAND_HOME_PATH;
 use landscape_common::dns::{DNSRuleConfig, DomainConfig};
+use landscape_common::flow::{FlowConfig, PacketMatchMark};
 use landscape_common::service::{DefaultWatchServiceStatus, ServiceStatus};
 use landscape_common::GEO_SITE_FILE_NAME;
 use serde::Serialize;
@@ -16,13 +17,16 @@ pub struct LandscapeFiffFlowDnsService {
     pub status: DefaultWatchServiceStatus,
     #[serde(skip)]
     handlers: Arc<RwLock<HashMap<u32, LandscapeDnsRequestHandle>>>,
+    #[serde(skip)]
+    dispatch_rules: Arc<RwLock<HashMap<PacketMatchMark, u32>>>,
 }
 
 impl LandscapeFiffFlowDnsService {
     pub async fn new() -> Self {
         let status = DefaultWatchServiceStatus::new();
         let handlers = Arc::new(RwLock::new(HashMap::new()));
-        LandscapeFiffFlowDnsService { status, handlers }
+        let dispatch_rules = Arc::new(RwLock::new(HashMap::new()));
+        LandscapeFiffFlowDnsService { status, handlers, dispatch_rules }
     }
 
     pub async fn restart(&self, listen_port: u16) {
@@ -30,7 +34,8 @@ impl LandscapeFiffFlowDnsService {
         service_status.wait_stop().await;
 
         let handlers = self.handlers.clone();
-        let mut server = DiffFlowServer::new(handlers.clone());
+        let dispatch_rules = self.dispatch_rules.clone();
+        let mut server = DiffFlowServer::new(handlers, dispatch_rules);
 
         server.listen_on(SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), listen_port));
 
@@ -104,20 +109,38 @@ impl LandscapeFiffFlowDnsService {
         }
     }
 
+    pub async fn update_flow_map(&self, flow_config: &Vec<FlowConfig>) {
+        let mut new_map = HashMap::new();
+        for config in flow_config.iter() {
+            for each_rule in config.flow_match_rules.iter() {
+                new_map.insert(each_rule.clone(), config.flow_id);
+            }
+        }
+
+        tracing::debug!("update dispatch_rules: {new_map:?}");
+        let mut map = self.dispatch_rules.write().await;
+        *map = new_map;
+    }
+
     pub async fn flush_specific_flow_dns_rule(&self, flow_id: u32, dns_rules: Vec<DNSRuleConfig>) {
-        let dns_rules = dns_rules
+        let dns_rules: Vec<DNSRuleConfig> = dns_rules
             .into_iter()
             .filter(|rule| rule.flow_id == flow_id)
             .filter(|rule| rule.enable)
             .collect();
         let geo_map = self.read_geo_site_file().await;
         let mut write = self.handlers.write().await;
-        match write.entry(flow_id) {
-            std::collections::hash_map::Entry::Occupied(mut entry) => {
-                entry.get_mut().renew_rules(dns_rules, &geo_map);
-            }
-            std::collections::hash_map::Entry::Vacant(entry) => {
-                entry.insert(LandscapeDnsRequestHandle::new(dns_rules, &geo_map, flow_id));
+
+        if dns_rules.len() == 0 {
+            write.remove(&flow_id);
+        } else {
+            match write.entry(flow_id) {
+                std::collections::hash_map::Entry::Occupied(mut entry) => {
+                    entry.get_mut().renew_rules(dns_rules, &geo_map);
+                }
+                std::collections::hash_map::Entry::Vacant(entry) => {
+                    entry.insert(LandscapeDnsRequestHandle::new(dns_rules, &geo_map, flow_id));
+                }
             }
         }
     }

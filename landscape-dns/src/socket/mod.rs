@@ -5,6 +5,7 @@ pub struct RecvDnsMessage {
     pub message: Vec<u8>,
     pub addr: SocketAddr,
     pub mark: u32,
+    pub tos: u8,
 }
 
 pub struct SendDnsMessage {

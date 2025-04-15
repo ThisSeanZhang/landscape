@@ -31,7 +31,6 @@ pub async fn get_flow_paths(
     }
 
     let rules = store.list();
-    landscape::flow::update_flow_matchs(rules, vec![]).await;
     let share_state = LandscapeFlowServices {
         dns_service: LandscapeFiffFlowDnsService::new().await,
         store: Arc::new(Mutex::new(store)),
@@ -39,7 +38,11 @@ pub async fn get_flow_paths(
     };
 
     share_state.dns_service.restart(53).await;
+    share_state.dns_service.update_flow_map(&rules).await;
     share_state.dns_service.init_handle(dns_rules).await;
+
+    tracing::debug!("init flow configs: {:?}", rules);
+    landscape::flow::update_flow_matchs(rules, vec![]).await;
 
     Router::new()
         .route("/", get(get_flow_configs).post(new_flow_config))
@@ -95,6 +98,7 @@ async fn new_flow_config(
     let new_records = get_store.list();
     drop(get_store);
 
+    state.dns_service.update_flow_map(&new_records).await;
     landscape::flow::update_flow_matchs(new_records, old_records).await;
 
     let result = serde_json::to_value(SimpleResult { success: true });
@@ -111,6 +115,7 @@ async fn del_flow_config(
     let new_records = get_store.list();
     drop(get_store);
 
+    state.dns_service.update_flow_map(&new_records).await;
     landscape::flow::update_flow_matchs(new_records, old_records).await;
 
     let result = serde_json::to_value(SimpleResult { success: true });

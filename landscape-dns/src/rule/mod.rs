@@ -13,7 +13,7 @@ use landscape_common::{
     dns::{
         DNSResolveMode, DNSRuleConfig, DnsUpstreamType, DomainConfig, DomainMatchType, RuleSource,
     },
-    mark::PacketMark,
+    flow::mark::FlowDnsMark,
 };
 use matcher::DomainMatcher;
 use std::str::FromStr;
@@ -29,10 +29,12 @@ pub struct CacheResolver {
 }
 
 impl CacheResolver {
-    pub fn new(resolve: ResolverConfig, mark: &PacketMark) -> Self {
+    pub fn new(resolve: ResolverConfig, mark: &FlowDnsMark, flow_id: u32) -> Self {
         let mark_value = match mark.clone() {
-            PacketMark::Redirect { index } => PacketMark::Redirect { index }.into(),
-            _ => PacketMark::Direct.into(),
+            // 转发时候使用目标 flow 进行标记 DNS 请求
+            FlowDnsMark::Redirect { flow_id } => flow_id as u32,
+            // 其余情况使用 当前规则所属的 flow 进行标记
+            _ => flow_id,
         };
 
         let resolver = Resolver::builder_with_config(
@@ -50,7 +52,7 @@ pub enum ResolverType {
     CacheResolver(CacheResolver),
 }
 impl ResolverType {
-    pub fn new(config: &DNSRuleConfig) -> Self {
+    pub fn new(config: &DNSRuleConfig, flow_id: u32) -> Self {
         match &config.resolve_mode {
             DNSResolveMode::Redirect { ips } => ResolverType::RedirectResolver(ips.clone()),
             DNSResolveMode::Upstream { upstream, ips, port } => {
@@ -74,7 +76,7 @@ impl ResolverType {
 
                 let resolve = ResolverConfig::from_parts(None, vec![], name_server);
 
-                ResolverType::CacheResolver(CacheResolver::new(resolve, &config.mark))
+                ResolverType::CacheResolver(CacheResolver::new(resolve, &config.mark, flow_id))
             }
             DNSResolveMode::CloudFlare { mode } => {
                 let server = match mode {
@@ -89,7 +91,7 @@ impl ResolverType {
                     }
                 };
                 let resolve = ResolverConfig::from_parts(None, vec![], server);
-                ResolverType::CacheResolver(CacheResolver::new(resolve, &config.mark))
+                ResolverType::CacheResolver(CacheResolver::new(resolve, &config.mark, flow_id))
             }
         }
     }
@@ -139,21 +141,25 @@ pub struct ResolutionRule {
     // 启动之后配置的 matcher
     matcher: DomainMatcher,
     //
-    config: DNSRuleConfig,
+    pub config: DNSRuleConfig,
 
     resolver: ResolverType,
 }
 
 impl ResolutionRule {
-    pub fn new(config: DNSRuleConfig, geo_file: &HashMap<String, Vec<DomainConfig>>) -> Self {
+    pub fn new(
+        config: DNSRuleConfig,
+        geo_file: &HashMap<String, Vec<DomainConfig>>,
+        flow_id: u32,
+    ) -> Self {
         let matcher = DomainMatcher::new(convert_config_to_runtime_rule(&config, geo_file));
 
-        let resolver = ResolverType::new(&config);
+        let resolver = ResolverType::new(&config, flow_id);
 
         ResolutionRule { matcher, config, resolver }
     }
 
-    pub fn mark(&self) -> &PacketMark {
+    pub fn mark(&self) -> &FlowDnsMark {
         &self.config.mark
     }
 

@@ -26,9 +26,9 @@ const show_dns_rule = ref(false);
     </template>
 
     <template #footer>
-      <n-flex>
+      <!-- <n-flex>
         <n-tag :bordered="false" v-for="rule in config.flow_match_rules">
-          {{ `${rule.mac} - ${rule.qos ?? "N/A"} - ${rule.vlan_id ?? "N/A"}` }}
+          {{ `${rule.ip} - ${rule.qos ?? "N/A"} - ${rule.vlan_id ?? "N/A"}` }}
         </n-tag>
       </n-flex>
     </template>
@@ -45,7 +45,7 @@ const show_dns_rule = ref(false);
               : target.name
           }}
         </n-tag>
-      </n-flex>
+      </n-flex> -->
     </template>
 
     <n-descriptions :column="1" label-placement="left">

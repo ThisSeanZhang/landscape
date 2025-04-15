@@ -19,7 +19,10 @@ async fn main() -> std::io::Result<()> {
     let handler = LandscapeDnsRequestHandle::new(default_rule, &HashMap::new(), 100);
     let mut handlers_map = HashMap::new();
     handlers_map.insert(100, handler);
-    let mut server = DiffFlowServer::new(Arc::new(RwLock::new(handlers_map)));
+    let mut server = DiffFlowServer::new(
+        Arc::new(RwLock::new(handlers_map)),
+        Arc::new(RwLock::new(HashMap::new())),
+    );
 
     server.listen_on(SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), listen_port));
 

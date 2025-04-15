@@ -159,7 +159,7 @@ int flow_ingress(struct __sk_buff *skb) {
     if (target_info == NULL) {
         int rc = bpf_fib_lookup(skb, &fib_params, sizeof(fib_params), 0);
 
-        bpf_log_info("bpf_fib_lookup result is: %d", BPF_FIB_LKUP_RET_NOT_FWDED);
+        bpf_log_info("bpf_fib_lookup result is: %d", rc);
         if (rc == BPF_FIB_LKUP_RET_NOT_FWDED) {
             // 缓存查询结果
             struct flow_target_info lo_cache = {0};
@@ -167,6 +167,8 @@ int flow_ingress(struct __sk_buff *skb) {
             // 发往本机的直接放行
             return TC_ACT_UNSPEC;
         }
+
+        print_bpf_fib_lookup(&fib_params);
         // 不是发往本机的
         // 1. 先检查有没有额外的 DNS Mark 配置
 

@@ -19,6 +19,7 @@ use types::{ipv4_lpm_key, ipv4_mark_action};
 use crate::{LandscapeMapPath, MAP_PATHS};
 
 pub mod flow;
+pub mod flow_dns;
 pub mod flow_target;
 
 pub(crate) fn init_path(paths: LandscapeMapPath) {

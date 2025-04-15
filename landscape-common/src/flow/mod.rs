@@ -3,8 +3,9 @@ use std::net::IpAddr;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-use crate::{net::MacAddr, store::storev2::LandScapeStore};
+use crate::store::storev2::LandScapeStore;
 
+pub mod mark;
 pub mod target;
 
 /// 流控配置结构体
@@ -34,7 +35,7 @@ impl LandScapeStore for FlowConfig {
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, Hash, TS)]
 #[ts(export, export_to = "flow.ts")]
 pub struct PacketMatchMark {
-    pub mac: MacAddr,
+    pub ip: IpAddr,
     pub vlan_id: Option<u32>,
     pub qos: Option<u8>,
 }

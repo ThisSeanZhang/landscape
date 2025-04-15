@@ -1,4 +1,4 @@
-use landscape_common::{mark::PacketMark, service::ServiceStatus};
+use landscape_common::service::ServiceStatus;
 use landscape_common::{
     service::{service_manager::ServiceHandler, DefaultServiceStatus, DefaultWatchServiceStatus},
     store::storev2::LandScapeStore,
@@ -46,29 +46,6 @@ impl LandScapeStore for PacketMarkServiceConfig {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-/// Mark 标记的配置
-pub struct MarkRuleConfig {
-    pub name: String,
-    // 优先级
-    pub index: u32,
-    // IP 来源
-    pub source: Vec<WallRuleSource>,
-
-    pub mark: PacketMark,
-}
-
-impl Default for MarkRuleConfig {
-    fn default() -> Self {
-        Self {
-            name: "default rule".into(),
-            index: 10000,
-            mark: Default::default(),
-            source: vec![],
-        }
-    }
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum WallRuleSource {
     Text { target_ip: [u8; 4], mask: u8 },
     GeoKey { key: String },
@@ -94,7 +71,8 @@ pub async fn create_mark_service(
     });
     std::thread::spawn(move || {
         tracing::info!("启动 packet_mark 在 ifindex: {:?}", ifindex);
-        landscape_ebpf::packet_mark::init_packet_mark(ifindex, has_mac, rx);
+        // landscape_ebpf::packet_mark::init_packet_mark(ifindex, has_mac, rx);
+        landscape_ebpf::flow::verdict::attach_verdict_flow(ifindex, has_mac, rx).unwrap();
         tracing::info!("向外部线程发送解除阻塞信号");
         let _ = other_tx.send(());
     });

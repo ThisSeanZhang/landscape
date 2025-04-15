@@ -7,7 +7,7 @@ const match_rules = defineModel<PacketMatchMark[]>("match_rules", {
 
 function onCreate(): PacketMatchMark {
   return {
-    mac: "",
+    ip: "",
     vlan_id: null,
     qos: null,
   };
@@ -19,17 +19,6 @@ function onCreate(): PacketMatchMark {
     <template #create-button-default> 增加一条匹配 </template>
     <template #default="{ value, index }">
       <n-input-group>
-        <n-input
-          v-model:value="value.mac"
-          :style="{ width: '33%' }"
-          placeholder="Mac 地址"
-        />
-        <n-input-number
-          v-model:value="value.vlan_id"
-          :style="{ width: '33%' }"
-          placeholder="VLAN ID"
-          :show-button="false"
-        />
         <n-input-number
           v-model:value="value.qos"
           min="0"
@@ -38,6 +27,17 @@ function onCreate(): PacketMatchMark {
           placeholder="QoS"
           :show-button="false"
         />
+        <n-input
+          v-model:value="value.ip"
+          :style="{ width: '66%' }"
+          placeholder="IP 地址"
+        />
+        <!-- <n-input-number
+          v-model:value="value.vlan_id"
+          :style="{ width: '33%' }"
+          placeholder="VLAN ID"
+          :show-button="false"
+        /> -->
       </n-input-group>
     </template>
   </n-dynamic-input>

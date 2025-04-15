@@ -85,8 +85,7 @@ function switch_target() {}
         <n-form-item-gi :span="2" label="备注">
           <n-input v-model:value="rule.remark" type="text" />
         </n-form-item-gi>
-        <n-form-item-gi :span="5" label="分流目标网卡">
-          <!-- <n-input v-model:value="rule.packet_handle_iface_name[0]"></n-input> -->
+        <!-- <n-form-item-gi :span="5" label="分流目标网卡">
           <n-dynamic-input
             v-model:value="rule.packet_handle_iface_name"
             :on-create="create_target"
@@ -115,7 +114,7 @@ function switch_target() {}
               </n-input-group>
             </template>
           </n-dynamic-input>
-        </n-form-item-gi>
+        </n-form-item-gi> -->
       </n-grid>
       <n-form-item label="流匹配规则">
         <FlowMatchRule v-model:match_rules="rule.flow_match_rules">
