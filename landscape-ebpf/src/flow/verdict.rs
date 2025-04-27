@@ -25,9 +25,6 @@ pub fn attach_verdict_flow(
     open_skel.maps.flow_v_dns_map.set_pin_path(&MAP_PATHS.flow_verdict_dns_map)?;
     open_skel.maps.flow_v_dns_map.reuse_pinned_map(&MAP_PATHS.flow_verdict_dns_map)?;
 
-    open_skel.maps.flow_v_dns_map_test.set_pin_path(&MAP_PATHS.flow_verdict_dns_map_test)?;
-    open_skel.maps.flow_v_dns_map_test.reuse_pinned_map(&MAP_PATHS.flow_verdict_dns_map_test)?;
-
     open_skel.maps.flow_v_ip_map.set_pin_path(&MAP_PATHS.flow_verdict_ip_map)?;
     open_skel.maps.flow_v_ip_map.reuse_pinned_map(&MAP_PATHS.flow_verdict_ip_map)?;
 

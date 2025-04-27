@@ -38,10 +38,6 @@ static MAP_PATHS: Lazy<LandscapeMapPath> = Lazy::new(|| {
             ebpf_map_path
         )),
         flow_verdict_dns_map: PathBuf::from(format!("{}/flow_verdict_dns_map", ebpf_map_path)),
-        flow_verdict_dns_map_test: PathBuf::from(format!(
-            "{}/flow_verdict_dns_map_test",
-            ebpf_map_path
-        )),
         flow_verdict_ip_map: PathBuf::from(format!("{}/flow_verdict_ip_map", ebpf_map_path)),
         flow_match_map: PathBuf::from(format!("{}/flow_match_map", ebpf_map_path)),
         flow_target_map: PathBuf::from(format!("{}/flow_target_map", ebpf_map_path)),
@@ -73,7 +69,6 @@ pub(crate) struct LandscapeMapPath {
 
     /// Flow
     pub flow_verdict_dns_map: PathBuf,
-    pub flow_verdict_dns_map_test: PathBuf,
     pub flow_verdict_ip_map: PathBuf,
     pub flow_match_map: PathBuf,
     /// 存储 flow 目标的主机

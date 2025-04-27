@@ -98,16 +98,19 @@ struct flow_mark {
 // };
 
 
-struct test_key {
+
+struct flow_dns_match_key {
     union u_inet_addr addr;
-} test;
-// 使用时出现   libbpf: map 'flow_v_dns_map.inner': can't determine key size for type [115]: -22.
+    u8 l3_protocol;
+    u8 _pad[3];
+} __flow_dns_match_key;
+
 // 每个流中特定的 DNS 规则
 struct each_flow_dns {
     __uint(type, BPF_MAP_TYPE_LRU_HASH);
     // __uint(key_size, 16);
-    __uint(map_flags, BPF_F_NO_COMMON_LRU);
-    __type(key, struct test_key);
+    // __uint(map_flags, BPF_F_NO_COMMON_LRU);
+    __type(key, struct flow_dns_match_key);
     __type(value, u32);
     __uint(max_entries, 2048);
 } each_flow_dns_map SEC(".maps");
@@ -119,21 +122,17 @@ struct {
     __uint(max_entries, 512);
     __uint(pinning, LIBBPF_PIN_BY_NAME);
     __array(values, struct each_flow_dns);
-} flow_v_dns_map_test SEC(".maps");
-
-
-struct flow_dns_match_key {
-    u32 flow_id;
-    union u_inet_addr addr;
-};
-
-struct {
-    __uint(type, BPF_MAP_TYPE_HASH);
-    __type(key, struct flow_dns_match_key);
-    __uint(max_entries, 65536);
-    __uint(pinning, LIBBPF_PIN_BY_NAME);
-    __type(value, u32);
 } flow_v_dns_map SEC(".maps");
+
+
+
+// struct {
+//     __uint(type, BPF_MAP_TYPE_HASH);
+//     __type(key, struct flow_dns_match_key);
+//     __uint(max_entries, 65536);
+//     __uint(pinning, LIBBPF_PIN_BY_NAME);
+//     __type(value, u32);
+// } flow_v_dns_map SEC(".maps");
 
 // 
 struct flow_ip_trie_key {

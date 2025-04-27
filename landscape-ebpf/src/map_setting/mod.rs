@@ -41,7 +41,6 @@ pub(crate) fn init_path(paths: LandscapeMapPath) {
         .set_pin_path(&paths.firewall_allow_rules_map)
         .unwrap();
     // flow verdict map
-    landscape_open.maps.flow_v_dns_map_test.set_pin_path(&paths.flow_verdict_dns_map_test).unwrap();
     landscape_open.maps.flow_v_dns_map.set_pin_path(&paths.flow_verdict_dns_map).unwrap();
     landscape_open.maps.flow_v_ip_map.set_pin_path(&paths.flow_verdict_ip_map).unwrap();
     landscape_open.maps.flow_match_map.set_pin_path(&paths.flow_match_map).unwrap();
