@@ -4,25 +4,50 @@ import { ref } from "vue";
 import { useMessage } from "naive-ui";
 import { ChangeCatalog } from "@vicons/carbon";
 
-import { post_wan_ip_rules } from "@/api/mark";
-import PacketMark from "@/components/mark/PacketMark.vue";
+import {
+  post_wan_ip_rules,
+  get_wan_ip_rule,
+  update_wan_ip_rules,
+} from "@/api/flow/wanip";
+import FlowDnsMark from "@/components/flow/FlowDnsMark.vue";
 import NewIpEdit from "@/components/NewIpEdit.vue";
-import { new_wan_rules, WanIPRuleConfig, WanIPRuleSource } from "@/lib/mark";
+import { WanIPRuleSource, WanIPRuleConfig } from "@/rust_bindings/flow";
+
+import { new_wan_rules, WanIPRuleConfigClass } from "@/lib/mark";
+
+interface Props {
+  flow_id: number;
+  id?: string;
+}
+
+const props = defineProps<Props>();
 
 const message = useMessage();
-
 const emit = defineEmits(["refresh"]);
-
 const show = defineModel<boolean>("show", { required: true });
 
-const origin_rule = defineModel<WanIPRuleConfig>("rule", {
-  default: new WanIPRuleConfig(),
-});
-const rule = ref<WanIPRuleConfig>(new WanIPRuleConfig(origin_rule.value));
+async function enter() {
+  if (props.id) {
+    rule.value = await get_wan_ip_rule(props.flow_id, props.id);
+  } else {
+    rule.value = new WanIPRuleConfigClass({
+      flow_id: props.flow_id,
+    });
+  }
+  origin_rule_json.value = JSON.stringify(rule.value);
+}
+
+const origin_rule_json = ref("");
+// const origin_rule = defineModel<WanIPRuleConfig>("rule", {
+//   default: new WanIPRuleConfigClass({
+//     flow_id: props.flow_id,
+//   }),
+// });
+const rule = ref<WanIPRuleConfig>();
 
 const commit_spin = ref(false);
 const isModified = computed(() => {
-  return JSON.stringify(rule.value) !== JSON.stringify(origin_rule.value);
+  return origin_rule_json.value !== JSON.stringify(rule.value);
 });
 
 function onCreate(): WanIPRuleSource {
@@ -30,34 +55,41 @@ function onCreate(): WanIPRuleSource {
 }
 
 function changeCurrentRuleType(value: WanIPRuleSource, index: number) {
-  if (value.t == "config") {
-    rule.value.source[index] = { t: "geokey", key: "" };
-  } else {
-    rule.value.source[index] = new_wan_rules({
-      t: "config",
-      ip: "0.0.0.0",
-      prefix: 32,
-    });
+  if (rule.value) {
+    if (value.t == "config") {
+      rule.value.source[index] = { t: "geokey", country_code: "" };
+    } else {
+      rule.value.source[index] = new_wan_rules({
+        t: "config",
+        ip: "0.0.0.0",
+        prefix: 32,
+      });
+    }
   }
 }
 
 async function saveRule() {
-  if (rule.value.index == -1) {
-    message.warning("**优先级** 值不能为 -1, 且不能重复, 否则将会覆盖规则");
-    return;
+  if (rule.value) {
+    if (rule.value.index == -1) {
+      message.warning("**优先级** 值不能为 -1, 且不能重复, 否则将会覆盖规则");
+      return;
+    }
+    try {
+      commit_spin.value = true;
+      if (props.id) {
+        await update_wan_ip_rules(props.flow_id, props.id, rule.value);
+      } else {
+        await post_wan_ip_rules(props.flow_id, rule.value);
+      }
+      console.log("submit success");
+      show.value = false;
+    } catch (e: any) {
+      message.error(`${e.response.data}`);
+    } finally {
+      commit_spin.value = false;
+    }
+    emit("refresh");
   }
-  try {
-    commit_spin.value = true;
-    await post_wan_ip_rules(rule.value);
-    console.log("submit success");
-    origin_rule.value = rule.value;
-    show.value = false;
-  } catch (e: any) {
-    message.error(`${e.response.data}`);
-  } finally {
-    commit_spin.value = false;
-  }
-  emit("refresh");
 }
 </script>
 
@@ -68,10 +100,11 @@ async function saveRule() {
     class="custom-card"
     preset="card"
     title="规则编辑"
+    @after-enter="enter"
     :bordered="false"
   >
     <!-- {{ isModified }} -->
-    <n-form style="flex: 1" ref="formRef" :model="rule" :cols="5">
+    <n-form v-if="rule" style="flex: 1" ref="formRef" :model="rule" :cols="5">
       <n-grid :cols="5">
         <n-form-item-gi label="优先级" :span="2">
           <n-input-number v-model:value="rule.index" clearable />
@@ -82,9 +115,15 @@ async function saveRule() {
             <template #unchecked> 禁用 </template>
           </n-switch>
         </n-form-item-gi>
+        <n-form-item-gi label="覆盖 DNS 配置" :span="1">
+          <n-switch v-model:value="rule.override_dns">
+            <template #checked> 覆盖 </template>
+            <template #unchecked> 不覆盖 </template>
+          </n-switch>
+        </n-form-item-gi>
 
         <n-form-item-gi :span="5" label="流量标记">
-          <PacketMark v-model:mark="rule.mark"></PacketMark>
+          <FlowDnsMark v-model:mark="rule.mark"></FlowDnsMark>
         </n-form-item-gi>
       </n-grid>
       <n-form-item label="备注">

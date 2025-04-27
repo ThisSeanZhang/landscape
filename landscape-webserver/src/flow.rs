@@ -5,24 +5,32 @@ use axum::{
     routing::{delete, get},
     Json, Router,
 };
-use landscape_common::{dns::DNSRuleConfig, flow::FlowConfig, store::storev2::StoreFileManager};
-use landscape_dns::diff_server::LandscapeFiffFlowDnsService;
+use landscape_common::{
+    args::LAND_HOME_PATH, dns::DNSRuleConfig, flow::FlowConfig, ip_mark::WanIPRuleConfig,
+    store::storev2::StoreFileManager, GEO_IP_FILE_NAME,
+};
+use landscape_dns::{diff_server::LandscapeFiffFlowDnsService, ip_rule::update_wan_rules};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::sync::Mutex;
 
-use crate::SimpleResult;
+use crate::{
+    error::{LandscapeApiError, LandscapeResult},
+    SimpleResult,
+};
 
 #[derive(Clone)]
 struct LandscapeFlowServices {
     dns_service: LandscapeFiffFlowDnsService,
     store: Arc<Mutex<StoreFileManager<FlowConfig>>>,
     dns_store: Arc<Mutex<StoreFileManager<DNSRuleConfig>>>,
+    wanip_store: Arc<Mutex<StoreFileManager<WanIPRuleConfig>>>,
 }
 
 pub async fn get_flow_paths(
     mut store: StoreFileManager<FlowConfig>,
     mut dns_store: StoreFileManager<DNSRuleConfig>,
+    mut wanip_store: StoreFileManager<WanIPRuleConfig>,
 ) -> Router {
     let mut dns_rules = dns_store.list();
     if dns_rules.is_empty() {
@@ -31,10 +39,12 @@ pub async fn get_flow_paths(
     }
 
     let rules = store.list();
+    let wanip_rules = wanip_store.list();
     let share_state = LandscapeFlowServices {
         dns_service: LandscapeFiffFlowDnsService::new().await,
         store: Arc::new(Mutex::new(store)),
         dns_store: Arc::new(Mutex::new(dns_store)),
+        wanip_store: Arc::new(Mutex::new(wanip_store)),
     };
 
     share_state.dns_service.restart(53).await;
@@ -44,12 +54,17 @@ pub async fn get_flow_paths(
     tracing::debug!("init flow configs: {:?}", rules);
     landscape::flow::update_flow_matchs(rules, vec![]).await;
 
+    update_wan_rules(wanip_rules, vec![], LAND_HOME_PATH.join(GEO_IP_FILE_NAME), None).await;
+
     Router::new()
         .route("/", get(get_flow_configs).post(new_flow_config))
         .route("/:index", delete(del_flow_config))
         .route("/dns", get(get_dns_service_status).post(start_dns_service).delete(stop_dns_service))
         .route("/dns/rules", get(get_dns_rules).post(add_dns_rules))
         .route("/dns/rules/:index", delete(del_dns_rules))
+        .route("/:flow_id/wans", get(list_wan_ip_rules).post(add_wan_ip_rule))
+        .route("/:flow_id/wans/:rule_id", get(get_wan_ip_rule).put(update_wan_ip_rule))
+        // .route("/:flow_id/wans/:wans_id",delete() )
         .with_state(share_state)
 }
 
@@ -164,6 +179,85 @@ async fn del_dns_rules(
     }
 
     let result = serde_json::to_value(SimpleResult { success: true });
+    Json(result.unwrap())
+}
+
+async fn get_wan_ip_rule(
+    State(state): State<LandscapeFlowServices>,
+    Path((_flow_id, rule_id)): Path<(u32, String)>,
+) -> LandscapeResult<Json<WanIPRuleConfig>> {
+    let result = {
+        let mut store_lock = state.wanip_store.lock().await;
+        let result = store_lock.get(&rule_id);
+        drop(store_lock);
+        result
+    };
+
+    if let Some(result) = result {
+        Ok(Json(result))
+    } else {
+        Err(LandscapeApiError::NotFound(format!("id: {rule_id}")))
+    }
+}
+
+async fn list_wan_ip_rules(
+    State(state): State<LandscapeFlowServices>,
+    Path(flow_id): Path<u32>,
+) -> Json<Value> {
+    let mut store_lock = state.wanip_store.lock().await;
+    let mut results = store_lock.list();
+    drop(store_lock);
+
+    results.sort_by(|a, b| a.index.cmp(&b.index));
+    results.retain(|rule| rule.flow_id == flow_id);
+
+    let result = serde_json::to_value(results);
+    Json(result.unwrap())
+}
+
+async fn add_wan_ip_rule(
+    State(state): State<LandscapeFlowServices>,
+    Path(flow_id): Path<u32>,
+    Json(mut wan_config): Json<WanIPRuleConfig>,
+) -> Json<Value> {
+    let result = SimpleResult { success: true };
+    wan_config.id = landscape_common::utils::id::gen_uuid();
+    let mut store_lock = state.wanip_store.lock().await;
+    let mut old_rules = store_lock.list();
+    store_lock.set(wan_config.clone());
+    let mut new_rules = store_lock.list();
+    drop(store_lock);
+
+    old_rules.retain(|e| e.flow_id == flow_id);
+    new_rules.retain(|e| e.flow_id == flow_id);
+
+    update_wan_rules(new_rules, old_rules, LAND_HOME_PATH.join(GEO_IP_FILE_NAME), None).await;
+
+    let result = serde_json::to_value(result);
+    Json(result.unwrap())
+}
+
+/// TODO: reduce code copy
+async fn update_wan_ip_rule(
+    State(state): State<LandscapeFlowServices>,
+    Path((flow_id, rule_id)): Path<(u32, String)>,
+    Json(mut wan_config): Json<WanIPRuleConfig>,
+) -> Json<Value> {
+    let result = SimpleResult { success: true };
+    wan_config.id = rule_id;
+    wan_config.flow_id = flow_id;
+    let mut store_lock = state.wanip_store.lock().await;
+    let mut old_rules = store_lock.list();
+    store_lock.set(wan_config.clone());
+    let mut new_rules = store_lock.list();
+    drop(store_lock);
+
+    old_rules.retain(|e| e.flow_id == flow_id);
+    new_rules.retain(|e| e.flow_id == flow_id);
+
+    update_wan_rules(new_rules, old_rules, LAND_HOME_PATH.join(GEO_IP_FILE_NAME), None).await;
+
+    let result = serde_json::to_value(result);
     Json(result.unwrap())
 }
 

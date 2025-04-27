@@ -238,16 +238,8 @@ async fn main() -> LdResult<()> {
     let source_route = Router::new()
         .nest("/docker", docker::get_docker_paths(home_path.clone()).await)
         .nest("/iface", iface::get_network_paths(iface_store).await)
-        .nest(
-            "/global_mark",
-            global_mark::get_global_mark_paths(
-                lan_ip_mark_store,
-                wan_ip_mark_store,
-                firewall_rules_store,
-            )
-            .await,
-        )
-        .nest("/flow", flow::get_flow_paths(flow_store, dns_store).await)
+        .nest("/global_mark", global_mark::get_global_mark_paths(firewall_rules_store).await)
+        .nest("/flow", flow::get_flow_paths(flow_store, dns_store, wan_ip_mark_store).await)
         .nest(
             "/services",
             Router::new()

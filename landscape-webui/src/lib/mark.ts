@@ -1,4 +1,13 @@
-import { MarkType, PacketMark } from "./dns";
+import { PacketMark } from "@/rust_bindings/mark";
+import { MarkType } from "./dns";
+
+export enum FlowMarkType {
+  KEEP_GOING = "keepgoing",
+  DIRECT = "direct",
+  DROP = "drop",
+  REDIRECT = "redirect",
+  ALLOW_REUSE_PORT = "allowreuseport",
+}
 
 export class MarkServiceConfig {
   iface_name: string;
@@ -42,37 +51,38 @@ export class LanIPRuleConfig {
   }
 }
 
-export class WanIPRuleConfig {
+import type {
+  FlowDnsMark,
+  WanIPRuleConfig,
+  WanIPRuleSource,
+} from "@/rust_bindings/flow";
+export class WanIPRuleConfigClass implements WanIPRuleConfig {
+  id: string;
   index: number;
   enable: boolean;
-  mark: PacketMark;
+  mark: FlowDnsMark;
   source: WanIPRuleSource[];
   remark: string;
+  flow_id: number;
+  override_dns: boolean;
 
-  constructor(obj?: {
-    index?: number;
-    enable?: boolean;
-    mark?: PacketMark;
-    source?: WanIPRuleSource[];
-    remark?: string;
-  }) {
+  constructor(obj: Partial<WanIPRuleConfig> = {}) {
+    this.id = obj?.id ?? "";
     this.index = obj?.index ?? -1;
     this.enable = obj?.enable ?? true;
-    this.mark = obj?.mark ? { ...obj.mark } : { t: MarkType.NoMark };
+    this.mark = obj?.mark ? { ...obj.mark } : { t: FlowMarkType.KEEP_GOING };
     this.source = obj?.source ? obj?.source.map(new_wan_rules) : [];
     this.remark = obj?.remark ?? "";
+    this.flow_id = obj?.flow_id ?? 0;
+    this.override_dns = obj?.override_dns ?? false;
   }
 }
-
-export type WanIPRuleSource =
-  | { t: "geokey"; key: string }
-  | { t: "config"; ip: string; prefix: number };
 
 export function new_wan_rules(e: any): WanIPRuleSource {
   if (e.t == "config") {
     return { t: "config", ip: e.ip, prefix: e.prefix };
   } else {
-    return { t: "geokey", key: e.key };
+    return { t: "geokey", country_code: e.key };
   }
 }
 

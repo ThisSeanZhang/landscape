@@ -18,3 +18,5 @@ toml_edit = { workspace = true }
 tracing = { workspace = true }
 
 ts-rs = { workspace = true, features = ["serde-compat"] }
+
+uuid = { workspace = true }

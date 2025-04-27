@@ -2,7 +2,7 @@
 import { ref } from "vue";
 import FirewallRuleEditModal from "./FirewallRuleEditModal.vue";
 import { del_firewall_rules } from "@/api/mark";
-import { FirewallRuleConfig, WanIPRuleConfig } from "@/lib/mark";
+import { FirewallRuleConfig } from "@/lib/mark";
 const rule = defineModel<FirewallRuleConfig>("rule", { required: true });
 
 const show_edit_modal = ref(false);

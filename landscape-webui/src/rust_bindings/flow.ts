@@ -30,7 +30,24 @@ export type FlowDnsMark = { "t": "keepgoing" } | { "t": "direct" } | { "t": "dro
 
 export type FlowTarget = { "t": "interface", name: string, } | { "t": "netns", container_name: string, };
 
+export type IpConfig = { ip: string, prefix: number, };
+
 /**
  * 数据包匹配该流控标志
  */
 export type PacketMatchMark = { ip: string, vlan_id: number | null, qos: number | null, };
+
+/**
+ * 对于外部 IP 规则
+ */
+export type WanIPRuleConfig = { id: string, index: number, enable: boolean, 
+/**
+ * 流量标记
+ */
+mark: FlowDnsMark, 
+/**
+ * 匹配规则列表
+ */
+source: Array<WanIPRuleSource>, remark: string, flow_id: number, override_dns: boolean, };
+
+export type WanIPRuleSource = { "t": "geokey", country_code: string, } | { "t": "config" } & IpConfig;

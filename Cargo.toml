@@ -70,6 +70,10 @@ tracing-appender = "0.2"
 ts-rs = "10.1"
 
 tokio-util = { version = "0.7.0", features = ["codec", "net"] }
+
+[workspace.dependencies.uuid]
+version = "1.16.0"
+features = ["v4"]
 [workspace.dependencies.tokio]
 version = "1.38.0"
 

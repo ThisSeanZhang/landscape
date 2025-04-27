@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { MarkType, PacketMark } from "@/lib/dns";
+import { MarkType } from "@/lib/dns";
+import { PacketMark } from "@/rust_bindings/mark";
 import { ref } from "vue";
 
 const mark = defineModel<PacketMark>("mark", { required: true });

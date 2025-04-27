@@ -1907,6 +1907,7 @@ dependencies = [
  "toml_edit",
  "tracing",
  "ts-rs",
+ "uuid",
 ]
 
 [[package]]

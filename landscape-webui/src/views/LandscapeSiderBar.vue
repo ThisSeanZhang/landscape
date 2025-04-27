@@ -46,11 +46,11 @@ const menuOptions: MenuOption[] = [
     key: "",
     icon: renderIcon(CicsSystemGroup),
   },
-  {
-    label: "网络拓扑",
-    key: "topology",
-    icon: renderIcon(Network4),
-  },
+  // {
+  //   label: "网络拓扑",
+  //   key: "topology",
+  //   icon: renderIcon(Network4),
+  // },
   {
     label: "NAT",
     key: "nat",

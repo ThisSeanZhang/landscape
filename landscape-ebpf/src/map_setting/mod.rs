@@ -1,9 +1,6 @@
 use std::{mem::MaybeUninit, net::Ipv4Addr};
 
-use landscape_common::{
-    firewall::{FirewallRuleItem, FirewallRuleMark, LandscapeIpType},
-    ip_mark::{IpConfig, IpMarkInfo},
-};
+use landscape_common::firewall::{FirewallRuleItem, FirewallRuleMark, LandscapeIpType};
 use libbpf_rs::{
     skel::{OpenSkel, SkelBuilder},
     MapCore, MapFlags,
@@ -14,13 +11,13 @@ mod share_map {
 }
 
 use share_map::*;
-use types::{ipv4_lpm_key, ipv4_mark_action};
 
 use crate::{LandscapeMapPath, MAP_PATHS};
 
 pub mod flow;
 pub mod flow_dns;
 pub mod flow_target;
+pub mod flow_wanip;
 
 pub(crate) fn init_path(paths: LandscapeMapPath) {
     let landscape_builder = ShareMapSkelBuilder::default();
@@ -44,6 +41,7 @@ pub(crate) fn init_path(paths: LandscapeMapPath) {
         .set_pin_path(&paths.firewall_allow_rules_map)
         .unwrap();
     // flow verdict map
+    landscape_open.maps.flow_v_dns_map_test.set_pin_path(&paths.flow_verdict_dns_map_test).unwrap();
     landscape_open.maps.flow_v_dns_map.set_pin_path(&paths.flow_verdict_dns_map).unwrap();
     landscape_open.maps.flow_v_ip_map.set_pin_path(&paths.flow_verdict_ip_map).unwrap();
     landscape_open.maps.flow_match_map.set_pin_path(&paths.flow_match_map).unwrap();
@@ -85,144 +83,148 @@ pub fn del_wan_ip(ifindex: u32) {
     }
 }
 
-pub fn add_wan_ip_mark(ips: Vec<IpMarkInfo>) {
-    let wanip_mark_map = libbpf_rs::MapHandle::from_pinned_path(&MAP_PATHS.wanip_mark).unwrap();
+// #[deprecated]
+// pub fn add_wan_ip_mark(ips: Vec<IpMarkInfo>) {
+//     let wanip_mark_map = libbpf_rs::MapHandle::from_pinned_path(&MAP_PATHS.wanip_mark).unwrap();
 
-    if let Err(e) = add_mark_ip_rules(&wanip_mark_map, ips) {
-        tracing::error!("add_wan_ip_mark:{e:?}");
-    }
-}
+//     if let Err(e) = add_mark_ip_rules(&wanip_mark_map, ips) {
+//         tracing::error!("add_wan_ip_mark:{e:?}");
+//     }
+// }
 
-pub fn del_wan_ip_mark(ips: Vec<IpConfig>) {
-    let wanip_mark_map = libbpf_rs::MapHandle::from_pinned_path(&MAP_PATHS.wanip_mark).unwrap();
+// #[deprecated]
+// pub fn del_wan_ip_mark(ips: Vec<IpConfig>) {
+//     let wanip_mark_map = libbpf_rs::MapHandle::from_pinned_path(&MAP_PATHS.wanip_mark).unwrap();
 
-    if let Err(e) = del_mark_ip_rules(&wanip_mark_map, ips) {
-        tracing::error!("del_wan_ip_mark:{e:?}");
-    }
-}
+//     if let Err(e) = del_mark_ip_rules(&wanip_mark_map, ips) {
+//         tracing::error!("del_wan_ip_mark:{e:?}");
+//     }
+// }
 
-pub fn add_lan_ip_mark(ips: Vec<IpMarkInfo>) {
-    let lanip_mark_map = libbpf_rs::MapHandle::from_pinned_path(&MAP_PATHS.lanip_mark).unwrap();
+// #[deprecated]
+// pub fn add_lan_ip_mark(ips: Vec<IpMarkInfo>) {
+//     let lanip_mark_map = libbpf_rs::MapHandle::from_pinned_path(&MAP_PATHS.lanip_mark).unwrap();
 
-    if let Err(e) = add_mark_ip_rules(&lanip_mark_map, ips) {
-        tracing::error!("add_lan_ip_mark:{e:?}");
-    }
-}
+//     if let Err(e) = add_mark_ip_rules(&lanip_mark_map, ips) {
+//         tracing::error!("add_lan_ip_mark:{e:?}");
+//     }
+// }
 
-pub fn del_lan_ip_mark(ips: Vec<IpConfig>) {
-    let lanip_mark_map = libbpf_rs::MapHandle::from_pinned_path(&MAP_PATHS.lanip_mark).unwrap();
+// #[deprecated]
+// pub fn del_lan_ip_mark(ips: Vec<IpConfig>) {
+//     let lanip_mark_map = libbpf_rs::MapHandle::from_pinned_path(&MAP_PATHS.lanip_mark).unwrap();
 
-    if let Err(e) = del_mark_ip_rules(&lanip_mark_map, ips) {
-        tracing::error!("del_lan_ip_mark:{e:?}");
-    }
-}
+//     if let Err(e) = del_mark_ip_rules(&lanip_mark_map, ips) {
+//         tracing::error!("del_lan_ip_mark:{e:?}");
+//     }
+// }
 
-fn del_mark_ip_rules<'obj, T>(map: &T, ips: Vec<IpConfig>) -> libbpf_rs::Result<()>
-where
-    T: MapCore,
-{
-    if ips.is_empty() {
-        return Ok(());
-    }
-    let mut keys = vec![];
+// fn del_mark_ip_rules<'obj, T>(map: &T, ips: Vec<IpConfig>) -> libbpf_rs::Result<()>
+// where
+//     T: MapCore,
+// {
+//     if ips.is_empty() {
+//         return Ok(());
+//     }
+//     let mut keys = vec![];
 
-    let count = ips.len() as u32;
-    for cidr in ips.into_iter() {
-        let addr: u32 = match cidr.ip {
-            std::net::IpAddr::V4(ipv4_addr) => ipv4_addr.into(),
-            std::net::IpAddr::V6(_) => continue,
-        };
-        let prefixlen = cidr.prefix;
-        let data = ipv4_lpm_key { prefixlen, addr: addr.to_be() };
-        keys.extend_from_slice(unsafe { plain::as_bytes(&data) });
-    }
+//     let count = ips.len() as u32;
+//     for cidr in ips.into_iter() {
+//         let addr: u32 = match cidr.ip {
+//             std::net::IpAddr::V4(ipv4_addr) => ipv4_addr.into(),
+//             std::net::IpAddr::V6(_) => continue,
+//         };
+//         let prefixlen = cidr.prefix;
+//         let data = ipv4_lpm_key { prefixlen, addr: addr.to_be() };
+//         keys.extend_from_slice(unsafe { plain::as_bytes(&data) });
+//     }
 
-    map.delete_batch(&keys, count, MapFlags::ANY, MapFlags::ANY)
-}
+//     map.delete_batch(&keys, count, MapFlags::ANY, MapFlags::ANY)
+// }
 
-fn add_mark_ip_rules<'obj, T>(map: &T, ips: Vec<IpMarkInfo>) -> libbpf_rs::Result<()>
-where
-    T: MapCore,
-{
-    if ips.is_empty() {
-        return Ok(());
-    }
+// fn add_mark_ip_rules<'obj, T>(map: &T, ips: Vec<IpMarkInfo>) -> libbpf_rs::Result<()>
+// where
+//     T: MapCore,
+// {
+//     if ips.is_empty() {
+//         return Ok(());
+//     }
 
-    let mut keys = vec![];
-    let mut values = vec![];
+//     let mut keys = vec![];
+//     let mut values = vec![];
 
-    let count = ips.len() as u32;
-    for IpMarkInfo { mark, cidr } in ips.into_iter() {
-        let mark: u32 = mark.into();
-        let mark_action = ipv4_mark_action { mark };
+//     let count = ips.len() as u32;
+//     for IpMarkInfo { mark, cidr } in ips.into_iter() {
+//         let mark: u32 = mark.into();
+//         let mark_action = ipv4_mark_action { mark };
 
-        let addr: u32 = match cidr.ip {
-            std::net::IpAddr::V4(ipv4_addr) => ipv4_addr.into(),
-            std::net::IpAddr::V6(_) => continue,
-        };
-        let prefixlen = cidr.prefix;
-        let data = ipv4_lpm_key { prefixlen, addr: addr.to_be() };
+//         let addr: u32 = match cidr.ip {
+//             std::net::IpAddr::V4(ipv4_addr) => ipv4_addr.into(),
+//             std::net::IpAddr::V6(_) => continue,
+//         };
+//         let prefixlen = cidr.prefix;
+//         let data = ipv4_lpm_key { prefixlen, addr: addr.to_be() };
 
-        keys.extend_from_slice(unsafe { plain::as_bytes(&data) });
-        values.extend_from_slice(unsafe { plain::as_bytes(&mark_action) });
-    }
+//         keys.extend_from_slice(unsafe { plain::as_bytes(&data) });
+//         values.extend_from_slice(unsafe { plain::as_bytes(&mark_action) });
+//     }
 
-    map.update_batch(&keys, &values, count, MapFlags::ANY, MapFlags::ANY)
-}
+//     map.update_batch(&keys, &values, count, MapFlags::ANY, MapFlags::ANY)
+// }
 
-pub fn add_dns_marks(ip_marks: Vec<IpMarkInfo>) {
-    if ip_marks.is_empty() {
-        return;
-    }
-    let packet_mark_map = libbpf_rs::MapHandle::from_pinned_path(&MAP_PATHS.packet_mark).unwrap();
-    let mut keys = vec![];
-    let mut values = vec![];
-    let counts = ip_marks.len() as u32;
+// pub fn add_dns_marks(ip_marks: Vec<IpMarkInfo>) {
+//     if ip_marks.is_empty() {
+//         return;
+//     }
+//     let packet_mark_map = libbpf_rs::MapHandle::from_pinned_path(&MAP_PATHS.packet_mark).unwrap();
+//     let mut keys = vec![];
+//     let mut values = vec![];
+//     let counts = ip_marks.len() as u32;
 
-    for IpMarkInfo { mark, cidr } in ip_marks.into_iter() {
-        let mark: u32 = mark.into();
-        let mark_action = ipv4_mark_action { mark };
+//     for IpMarkInfo { mark, cidr } in ip_marks.into_iter() {
+//         let mark: u32 = mark.into();
+//         let mark_action = ipv4_mark_action { mark };
 
-        let addr: u32 = match cidr.ip {
-            std::net::IpAddr::V4(ipv4_addr) => ipv4_addr.into(),
-            std::net::IpAddr::V6(_) => continue,
-        };
-        let prefixlen = cidr.prefix;
-        let data = ipv4_lpm_key { prefixlen, addr: addr.to_be() };
+//         let addr: u32 = match cidr.ip {
+//             std::net::IpAddr::V4(ipv4_addr) => ipv4_addr.into(),
+//             std::net::IpAddr::V6(_) => continue,
+//         };
+//         let prefixlen = cidr.prefix;
+//         let data = ipv4_lpm_key { prefixlen, addr: addr.to_be() };
 
-        keys.extend_from_slice(unsafe { plain::as_bytes(&data) });
-        values.extend_from_slice(unsafe { plain::as_bytes(&mark_action) });
-    }
-    if let Err(e) =
-        packet_mark_map.update_batch(&keys, &values, counts, MapFlags::ANY, MapFlags::ANY)
-    {
-        tracing::error!("add_dns_marks error:{e:?}");
-    }
-}
+//         keys.extend_from_slice(unsafe { plain::as_bytes(&data) });
+//         values.extend_from_slice(unsafe { plain::as_bytes(&mark_action) });
+//     }
+//     if let Err(e) =
+//         packet_mark_map.update_batch(&keys, &values, counts, MapFlags::ANY, MapFlags::ANY)
+//     {
+//         tracing::error!("add_dns_marks error:{e:?}");
+//     }
+// }
 
-pub fn del_dns_marks(ip_marks: Vec<IpConfig>) {
-    if ip_marks.is_empty() {
-        return;
-    }
+// pub fn del_dns_marks(ip_marks: Vec<IpConfig>) {
+//     if ip_marks.is_empty() {
+//         return;
+//     }
 
-    let packet_mark_map = libbpf_rs::MapHandle::from_pinned_path(&MAP_PATHS.packet_mark).unwrap();
-    let mut keys = vec![];
-    let counts = ip_marks.len() as u32;
+//     let packet_mark_map = libbpf_rs::MapHandle::from_pinned_path(&MAP_PATHS.packet_mark).unwrap();
+//     let mut keys = vec![];
+//     let counts = ip_marks.len() as u32;
 
-    for cidr in ip_marks.into_iter() {
-        let addr: u32 = match cidr.ip {
-            std::net::IpAddr::V4(ipv4_addr) => ipv4_addr.into(),
-            std::net::IpAddr::V6(_) => continue,
-        };
-        let prefixlen = cidr.prefix;
-        let data = ipv4_lpm_key { prefixlen, addr: addr.to_be() };
-        keys.extend_from_slice(unsafe { plain::as_bytes(&data) });
-    }
+//     for cidr in ip_marks.into_iter() {
+//         let addr: u32 = match cidr.ip {
+//             std::net::IpAddr::V4(ipv4_addr) => ipv4_addr.into(),
+//             std::net::IpAddr::V6(_) => continue,
+//         };
+//         let prefixlen = cidr.prefix;
+//         let data = ipv4_lpm_key { prefixlen, addr: addr.to_be() };
+//         keys.extend_from_slice(unsafe { plain::as_bytes(&data) });
+//     }
 
-    if let Err(e) = packet_mark_map.delete_batch(&keys, counts, MapFlags::ANY, MapFlags::ANY) {
-        tracing::error!("add_dns_marks error:{e:?}");
-    }
-}
+//     if let Err(e) = packet_mark_map.delete_batch(&keys, counts, MapFlags::ANY, MapFlags::ANY) {
+//         tracing::error!("add_dns_marks error:{e:?}");
+//     }
+// }
 
 #[deprecated]
 pub fn add_redirect_iface_pair(redirect_index: u8, ifindex: u32) {

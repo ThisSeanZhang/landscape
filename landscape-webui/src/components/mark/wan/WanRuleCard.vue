@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { ref } from "vue";
 import WanRuleEditModal from "./WanRuleEditModal.vue";
-import { del_wan_ip_rules } from "@/api/mark";
-import { WanIPRuleConfig } from "@/lib/mark";
+import { del_wan_ip_rules } from "@/api/flow/wanip";
+import { WanIPRuleConfig } from "@/rust_bindings/flow";
 const rule = defineModel<WanIPRuleConfig>("rule", { required: true });
 
 const show_edit_modal = ref(false);
@@ -48,6 +48,8 @@ async function del() {
       </template>
     </n-card>
     <WanRuleEditModal
+      :flow_id="rule.flow_id"
+      :id="rule.id"
       @refresh="emit('refresh')"
       :rule="rule"
       v-model:show="show_edit_modal"

@@ -13,6 +13,7 @@ const props = defineProps<Props>();
 
 const show_edit = ref(false);
 const show_dns_rule = ref(false);
+const show_ip_rule = ref(false);
 </script>
 
 <template>
@@ -21,7 +22,7 @@ const show_dns_rule = ref(false);
       <n-flex>
         <n-button @click="show_edit = true" size="small">修改配置</n-button>
         <n-button @click="show_dns_rule = true" size="small"> DNS </n-button>
-        <n-button size="small" disabled>目标 IP</n-button>
+        <n-button @click="show_ip_rule = true" size="small">目标 IP</n-button>
       </n-flex>
     </template>
 
@@ -59,9 +60,11 @@ const show_dns_rule = ref(false);
     <!-- {{ config }} -->
     <FlowEditModal v-model:show="show_edit" :rule="props.config">
     </FlowEditModal>
-    <DnsRuleDrawer
-      v-model:show="show_dns_rule"
+    <DnsRuleDrawer v-model:show="show_dns_rule" :flow_id="props.config.flow_id">
+    </DnsRuleDrawer>
+    <WanIpRuleDrawer
       :flow_id="props.config.flow_id"
-    ></DnsRuleDrawer>
+      v-model:show="show_ip_rule"
+    />
   </n-card>
 </template>

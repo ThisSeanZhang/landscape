@@ -9,7 +9,7 @@ enum flow_chache_type {
     REDIRECT = 1,
 };
 
-struct flow_ip_match_key {
+struct flow_match_key {
     // 源 IP 地址
     union u_inet_addr src_addr;
     // vlan id
@@ -26,11 +26,11 @@ struct flow_ip_match_key {
 struct flow_ip_cache_key {
     // 目标 IP 地址
     union u_inet_addr dst_addr;
-    struct flow_ip_match_key match_key;
+    struct flow_match_key match_key;
 };
 
 // 准备删除 切换到使用 IP 进行匹配
-struct flow_match_key {
+struct old_flow_match_key {
     // 源 mac 地址
     unsigned char h_source[6];
     // vlan id
@@ -40,11 +40,11 @@ struct flow_match_key {
     u8 _pad;
 };
 
-// 准备删除 切换到使用 IP 进行匹配
-struct flow_cache_key {
+// // 准备删除 切换到使用 IP 进行匹配
+struct old_flow_cache_key {
     union u_inet_addr src_addr;
     union u_inet_addr dst_addr;
-    struct flow_match_key match_key;
+    struct old_flow_match_key match_key;
 };
 
 struct flow_target_info {
@@ -65,7 +65,7 @@ struct {
 
 struct {
     __uint(type, BPF_MAP_TYPE_HASH);
-    __type(key, struct flow_ip_match_key);
+    __type(key, struct flow_match_key);
     __type(value, u32);
     __uint(max_entries, 65536);
     __uint(pinning, LIBBPF_PIN_BY_NAME);
@@ -97,24 +97,30 @@ struct flow_mark {
 //     union u_inet_addr addr;
 // };
 
+
+struct test_key {
+    union u_inet_addr addr;
+} test;
 // 使用时出现   libbpf: map 'flow_v_dns_map.inner': can't determine key size for type [115]: -22.
 // 每个流中特定的 DNS 规则
-// struct each_flow_dns {
-//     __uint(type, BPF_MAP_TYPE_LRU_HASH);
-//     __uint(key_size, 16);
-//     // __type(key, struct flow_dns_match_key);
-//     __type(value, u32);
-//     __uint(max_entries, 2048);
-// } each_flow_dns_map SEC(".maps");
+struct each_flow_dns {
+    __uint(type, BPF_MAP_TYPE_LRU_HASH);
+    // __uint(key_size, 16);
+    __uint(map_flags, BPF_F_NO_COMMON_LRU);
+    __type(key, struct test_key);
+    __type(value, u32);
+    __uint(max_entries, 2048);
+} each_flow_dns_map SEC(".maps");
 
-// // flow <-> 对应规则 map
-// struct {
-//     __uint(type, BPF_MAP_TYPE_HASH_OF_MAPS);
-//     __type(key, u32);
-//     __uint(max_entries, 512);
-//     __uint(pinning, LIBBPF_PIN_BY_NAME);
-//     __array(values, struct each_flow_dns);
-// } flow_v_dns_map SEC(".maps");
+// flow <-> 对应规则 map
+struct {
+    __uint(type, BPF_MAP_TYPE_HASH_OF_MAPS);
+    __type(key, u32);
+    __uint(max_entries, 512);
+    __uint(pinning, LIBBPF_PIN_BY_NAME);
+    __array(values, struct each_flow_dns);
+} flow_v_dns_map_test SEC(".maps");
+
 
 struct flow_dns_match_key {
     u32 flow_id;
@@ -128,5 +134,18 @@ struct {
     __uint(pinning, LIBBPF_PIN_BY_NAME);
     __type(value, u32);
 } flow_v_dns_map SEC(".maps");
+
+// 
+struct flow_ip_trie_key {
+    __u32 prefixlen;
+    u8 l3_protocol;
+    u8 _pad[3];
+    union u_inet_addr addr;
+} __flow_ip_trie_key;
+
+struct flow_ip_trie_value {
+    u32 mark;
+    u8 override_dns;
+} __flow_ip_trie_value;
 
 #endif /* __LD_FLOW_H__ */

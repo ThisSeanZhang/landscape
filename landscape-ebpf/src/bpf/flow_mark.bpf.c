@@ -16,7 +16,7 @@ const volatile int current_eth_net_offset = 14;
 struct {
     __uint(type, BPF_MAP_TYPE_LRU_HASH);
     __uint(map_flags, BPF_F_NO_COMMON_LRU);
-    __type(key, struct flow_cache_key);
+    __type(key, struct old_flow_cache_key);
     __type(value, struct flow_target_info);
     __uint(max_entries, 4096);
 } flow_cache_map SEC(".maps");
@@ -61,7 +61,7 @@ int flow_ingress(struct __sk_buff *skb) {
     bool is_ipv4;
 
     skb->cb[4] = 111;
-    struct flow_cache_key cache_key = {0};
+    struct old_flow_cache_key cache_key = {0};
     int ret;
     if (current_pkg_type(skb, current_eth_net_offset, &is_ipv4) != TC_ACT_OK) {
         return TC_ACT_UNSPEC;
