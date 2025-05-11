@@ -4,7 +4,7 @@ import { BareMetalServer02 } from "@vicons/carbon";
 
 import StatusBtn from "@/components/status_btn/StatusBtn.vue";
 import { useIPv6PDStore } from "@/stores/status_ipv6pd";
-import { IfaceZoneType } from "@/rust_bindings/common_iface";
+import { IfaceZoneType } from "@/rust_bindings/common/iface";
 
 const ipv6PDStore = useIPv6PDStore();
 

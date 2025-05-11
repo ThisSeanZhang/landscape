@@ -12,7 +12,7 @@ import {
   get_iface_dhcp_v4_config,
   update_dhcp_v4_config,
 } from "@/api/service_dhcp_v4";
-import { IfaceZoneType } from "@/rust_bindings/common_iface";
+import { IfaceZoneType } from "@/rust_bindings/common/iface";
 
 const dhcpv4ConfigStore = useDHCPv4ConfigStore();
 

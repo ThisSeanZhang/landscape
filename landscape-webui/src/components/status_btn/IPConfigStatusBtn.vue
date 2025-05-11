@@ -4,7 +4,7 @@ import { ZoneType } from "@/lib/service_ipconfig";
 import { NetworkPublic, Cloud, NetworkEnterprise } from "@vicons/carbon";
 
 import StatusBtn from "@/components/status_btn/StatusBtn.vue";
-import { IfaceZoneType } from "@/rust_bindings/common_iface";
+import { IfaceZoneType } from "@/rust_bindings/common/iface";
 
 const ipConfigStore = useIpConfigStore();
 

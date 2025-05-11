@@ -10,7 +10,7 @@ import {
 } from "@/lib/service_ipconfig";
 import { computed, ref } from "vue";
 import NewIpEdit from "../NewIpEdit.vue";
-import { IfaceZoneType } from "@/rust_bindings/common_iface";
+import { IfaceZoneType } from "@/rust_bindings/common/iface";
 
 const show_model = defineModel<boolean>("show", { required: true });
 const emit = defineEmits(["refresh"]);

@@ -11,4 +11,6 @@ export type BridgeCreate = { name: string };
 
 export type ChangeZone = { iface_name: string; zone: IfaceZoneType };
 
+export type IfaceCpuSoftBalance = { xps: string; rps: string };
+
 export type IfaceZoneType = "undefined" | "wan" | "lan";

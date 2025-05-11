@@ -47,6 +47,8 @@ const iface_nat_edit_show = ref(false);
 const iface_service_edit_show = ref(false);
 const show_zone_change = ref(false);
 const show_pppd_drawer = ref(false);
+
+const show_cpu_balance_btn = ref(false);
 function handleUpdateShow(show: boolean) {
   if (show) {
   }
@@ -207,7 +209,7 @@ const show_switch = computed(() => {
         <n-descriptions-item label="状态">
           {{ node.dev_status ?? "N/A" }}
         </n-descriptions-item>
-        <n-descriptions-item label="上层控制设备(配置)">
+        <n-descriptions-item :span="2" label="上层控制设备(配置)">
           {{ node.controller_id == undefined ? "N/A" : node.controller_id }}
           ({{
             node.controller_name == undefined ? "N/A" : node.controller_name
@@ -224,6 +226,17 @@ const show_switch = computed(() => {
                 <PlugDisconnected20Regular></PlugDisconnected20Regular>
               </n-icon>
             </template>
+          </n-button>
+        </n-descriptions-item>
+
+        <n-descriptions-item label="CPU 平衡" :span="2">
+          <n-button
+            tertiary
+            size="tiny"
+            :focusable="false"
+            @click="show_cpu_balance_btn = true"
+          >
+            修改平衡设置
           </n-button>
         </n-descriptions-item>
       </n-descriptions>
@@ -366,6 +379,12 @@ const show_switch = computed(() => {
     :mac="node.mac"
     @refresh="refresh"
   />
+
+  <IfaceCpuSoftBalance
+    v-model:show="show_cpu_balance_btn"
+    :iface_name="node.name"
+  >
+  </IfaceCpuSoftBalance>
 </template>
 
 <style scoped>

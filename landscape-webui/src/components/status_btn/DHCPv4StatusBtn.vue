@@ -8,7 +8,7 @@ import { NCountdown } from "naive-ui";
 import { computed, h } from "vue";
 import { DHCPv4OfferInfoShow, conver_to_show } from "@/lib/dhcp_v4";
 import { ServiceStatusType } from "@/lib/services";
-import { IfaceZoneType } from "@/rust_bindings/common_iface";
+import { IfaceZoneType } from "@/rust_bindings/common/iface";
 
 const dhcpv4ConfigStore = useDHCPv4ConfigStore();
 

@@ -10,6 +10,9 @@ pub enum LdError {
 
     #[error("homedir error occurred: {0}")]
     HomeError(#[from] homedir::GetHomeError),
+
+    #[error("setting cpu balance error: {0}")]
+    SettingCpuBalanceError(String),
 }
 
 pub type LdResult<T> = Result<T, LdError>;

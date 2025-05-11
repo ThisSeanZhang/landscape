@@ -7,7 +7,7 @@ import {
   get_iface_mark_config,
   update_iface_mark_config,
 } from "@/api/service_mark";
-import { IfaceZoneType } from "@/rust_bindings/common_iface";
+import { IfaceZoneType } from "@/rust_bindings/common/iface";
 
 let markConfigStore = useMarkConfigStore();
 const show_model = defineModel<boolean>("show", { required: true });

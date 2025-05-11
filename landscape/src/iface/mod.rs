@@ -1,9 +1,12 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, path::PathBuf};
 
 use config::{NetworkIfaceConfig, WifiMode};
 use dev_wifi::LandScapeWifiInterface;
 use futures::stream::TryStreamExt;
-use landscape_common::iface::{AddController, BridgeCreate, ChangeZone, IfaceZoneType};
+use landscape_common::{
+    error::LdResult,
+    iface::{AddController, BridgeCreate, ChangeZone, IfaceCpuSoftBalance, IfaceZoneType},
+};
 use rtnetlink::new_connection;
 use serde::Serialize;
 use ts_rs::TS;
@@ -210,13 +213,46 @@ impl IfaceManagerService {
         }
     }
 
+    pub async fn change_cpu_balance(
+        &self,
+        iface_name: String,
+        balance: Option<IfaceCpuSoftBalance>,
+    ) {
+        let link_config = if let Some(link_config) = self.get_iface_config(&iface_name).await {
+            Some(link_config)
+        } else {
+            if let Some(iface) = get_iface_by_name(&iface_name).await {
+                Some(NetworkIfaceConfig::from_phy_dev(&iface))
+            } else {
+                None
+            }
+        };
+
+        if let Some(mut link_config) = link_config {
+            match (&link_config.xps_rps, balance) {
+                (None, Some(config)) | (Some(_), Some(config)) => {
+                    setting_iface_balance(&link_config.name, config.clone()).unwrap();
+                    link_config.xps_rps = Some(config);
+                }
+                (Some(_), None) => {
+                    link_config.xps_rps = None;
+                    reset_iface_balance(&link_config.name).unwrap();
+                }
+                (None, None) => {
+                    // nothing to do
+                }
+            }
+            self.set_iface_config(link_config).await;
+        }
+    }
+
     async fn set_iface_config(&self, config: NetworkIfaceConfig) {
         let mut store = self.store_service.iface_store.lock().await;
         store.set(config);
         drop(store);
     }
 
-    async fn get_iface_config(&self, key: &str) -> Option<NetworkIfaceConfig> {
+    pub async fn get_iface_config(&self, key: &str) -> Option<NetworkIfaceConfig> {
         let mut store = self.store_service.iface_store.lock().await;
         store.get(key)
     }
@@ -252,4 +288,51 @@ pub struct RawIfaceInfo {
 pub struct IfacesInfo {
     managed: Vec<IfaceInfo>,
     unmanaged: Vec<RawIfaceInfo>,
+}
+fn reset_iface_balance(iface_name: &str) -> LdResult<()> {
+    setting_iface_balance(iface_name, IfaceCpuSoftBalance { xps: "0".into(), rps: "0".into() })
+}
+
+fn setting_iface_balance(iface_name: &str, balance: IfaceCpuSoftBalance) -> LdResult<()> {
+    let xps_cpus_path =
+        PathBuf::from(format!("/sys/class/net/{}/queues/tx-0/xps_cpus", iface_name));
+    let rps_cpus_path =
+        PathBuf::from(format!("/sys/class/net/{}/queues/rx-0/rps_cpus", iface_name));
+
+    if xps_cpus_path.exists() {
+        if let Err(e) = std::fs::write(xps_cpus_path, balance.xps) {
+            // TODO: define error
+            tracing::error!("setting xps_cpus error: {:?}", e);
+        }
+    }
+
+    if rps_cpus_path.exists() {
+        if let Err(e) = std::fs::write(rps_cpus_path, balance.rps) {
+            // TODO: define error
+            tracing::error!("setting rps_cpus error: {:?}", e);
+        }
+    }
+    Ok(())
+}
+
+pub fn cpu_nums() -> usize {
+    std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1)
+}
+
+#[cfg(test)]
+mod tests {
+    use landscape_common::iface::IfaceCpuSoftBalance;
+
+    use super::setting_iface_balance;
+
+    #[test]
+    fn test_setting_balance() {
+        setting_iface_balance("ens6", IfaceCpuSoftBalance { xps: "6".into(), rps: "6".into() })
+            .unwrap();
+    }
+
+    #[test]
+    fn test_reset_balance() {
+        super::reset_iface_balance("ens6").unwrap();
+    }
 }

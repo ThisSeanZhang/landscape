@@ -4,7 +4,7 @@ import { Wifi } from "@vicons/carbon";
 
 import StatusBtn from "@/components/status_btn/StatusBtn.vue";
 import { useWifiConfigStore } from "@/stores/status_wifi";
-import { IfaceZoneType } from "@/rust_bindings/common_iface";
+import { IfaceZoneType } from "@/rust_bindings/common/iface";
 
 const wifiConfigStore = useWifiConfigStore();
 

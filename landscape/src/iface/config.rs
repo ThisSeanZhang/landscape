@@ -1,5 +1,7 @@
 use landscape_common::{
-    iface::IfaceZoneType, store::storev2::LandScapeStore, LANDSCAPE_DEFAULT_LAN_NAME,
+    iface::{IfaceCpuSoftBalance, IfaceZoneType},
+    store::storev2::LandScapeStore,
+    LANDSCAPE_DEFAULT_LAN_NAME,
 };
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
@@ -27,6 +29,10 @@ pub struct NetworkIfaceConfig {
 
     #[serde(default)]
     pub wifi_mode: WifiMode,
+
+    /// NIC XPS / RPS Config
+    #[serde(default)]
+    pub xps_rps: Option<IfaceCpuSoftBalance>,
 }
 
 impl LandScapeStore for NetworkIfaceConfig {
@@ -72,6 +78,7 @@ impl NetworkIfaceConfig {
             enable_in_boot: matches!(iface.dev_status, crate::dev::DevState::Up),
             zone_type,
             wifi_mode,
+            xps_rps: None,
         }
     }
 
@@ -90,6 +97,7 @@ impl NetworkIfaceConfig {
             enable_in_boot: true,
             zone_type: zone_type.unwrap_or_default(),
             wifi_mode: WifiMode::default(),
+            xps_rps: None,
         }
     }
 }

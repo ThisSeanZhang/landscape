@@ -7,8 +7,8 @@ use landscape::{
     iface::{config::WifiMode, IfaceManagerService},
     store::LandscapeStoreServiceProvider,
 };
-use landscape_common::iface::BridgeCreate;
 use landscape_common::iface::{AddController, ChangeZone};
+use landscape_common::iface::{BridgeCreate, IfaceCpuSoftBalance};
 use serde_json::Value;
 
 use crate::SimpleResult;
@@ -35,6 +35,7 @@ pub async fn get_network_paths(store: LandscapeStoreServiceProvider) -> Router {
         .route("/zone", post(change_zone))
         .route("/:iface_name/status/:status", post(change_dev_status))
         .route("/:iface_name/wifi_mode/:mode", post(change_wifi_mode))
+        .route("/:iface_name/cpu_balance", get(get_cpu_balance).post(set_cpu_balance))
         .with_state(share_state)
 }
 
@@ -97,6 +98,24 @@ async fn change_dev_status(
     Path((iface_name, enable_in_boot)): Path<(String, bool)>,
 ) -> Json<SimpleResult> {
     state.change_dev_status(iface_name, enable_in_boot).await;
+    let result = SimpleResult { success: true };
+    Json(result)
+}
+
+async fn get_cpu_balance(
+    State(state): State<IfaceManagerService>,
+    Path(iface_name): Path<String>,
+) -> Json<Option<IfaceCpuSoftBalance>> {
+    let iface = state.get_iface_config(&iface_name).await;
+    Json(iface.and_then(|iface| iface.xps_rps))
+}
+
+async fn set_cpu_balance(
+    State(state): State<IfaceManagerService>,
+    Path(iface_name): Path<String>,
+    Json(balance): Json<Option<IfaceCpuSoftBalance>>,
+) -> Json<SimpleResult> {
+    state.change_cpu_balance(iface_name, balance).await;
     let result = SimpleResult { success: true };
     Json(result)
 }

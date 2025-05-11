@@ -4,7 +4,7 @@ import { Bookmark } from "@vicons/carbon";
 
 import StatusBtn from "@/components/status_btn/StatusBtn.vue";
 import { useMarkConfigStore } from "@/stores/status_mark";
-import { IfaceZoneType } from "@/rust_bindings/common_iface";
+import { IfaceZoneType } from "@/rust_bindings/common/iface";
 
 const markConfigStore = useMarkConfigStore();
 

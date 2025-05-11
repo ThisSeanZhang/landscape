@@ -2,7 +2,7 @@ import { IpConfigMode, NetworkConfig } from "@lib/network_config";
 import api from "../api";
 import { ZoneType } from "@/lib/service_ipconfig";
 import { NetDev, WifiMode } from "@/lib/dev";
-import { IfaceZoneType } from "@/rust_bindings/common_iface";
+import { IfaceZoneType } from "@/rust_bindings/common/iface";
 
 export async function ifaces(): Promise<NetDev[]> {
   let data = await api.api.get("iface");

@@ -9,7 +9,7 @@ import {
 } from "@/api/service_ipv6pd";
 import { useIPv6PDStore } from "@/stores/status_ipv6pd";
 import { generateValidMAC } from "@/lib/util";
-import { IfaceZoneType } from "@/rust_bindings/common_iface";
+import { IfaceZoneType } from "@/rust_bindings/common/iface";
 
 let ipv6PDStore = useIPv6PDStore();
 const message = useMessage();
