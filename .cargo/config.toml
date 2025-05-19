@@ -2,5 +2,8 @@
 linker = "aarch64-linux-gnu-gcc"
 # rustflags = ["-C", "target-feature=+crt-static"]
 
+[target.armv7-unknown-linux-gnueabihf]
+linker = "arm-linux-gnueabihf-gcc"
+
 [env]
 TS_RS_EXPORT_DIR = { value = "./landscape-webui/src/rust_bindings", relative = true }

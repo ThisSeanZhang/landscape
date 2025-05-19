@@ -13,12 +13,14 @@ IMAGE_NAME="landscape"
 declare -A TARGETS=(
     ["x86_64"]="x86_64-unknown-linux-gnu"
     ["aarch64"]="aarch64-unknown-linux-gnu"
+    ["armv7"]="armv7-unknown-linux-gnueabihf"
 )
 
 # 对应 Docker 平台的架构
 declare -A DOCKER_ARCHS=(
     ["x86_64"]="amd64"
     ["aarch64"]="arm64"
+    ["armv7"]="arm/v7"
 )
 
 # 默认目标架构
