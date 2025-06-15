@@ -1,4 +1,4 @@
-import api from "@/api";
+import axiosService from "@/api";
 import { GeoConfigKey, QueryGeoKey } from "@/rust_bindings/common/geo";
 import {
   GeoDomainConfig,
@@ -8,7 +8,7 @@ import {
 export async function get_geo_site_configs(
   name?: string
 ): Promise<GeoSiteSourceConfig[]> {
-  let data = await api.api.get(`config/geo_sites`, {
+  let data = await axiosService.get(`config/geo_sites`, {
     params: {
       name,
     },
@@ -19,43 +19,43 @@ export async function get_geo_site_configs(
 export async function get_geo_site_config(
   id: string
 ): Promise<GeoSiteSourceConfig> {
-  let data = await api.api.get(`config/geo_sites/${id}`);
+  let data = await axiosService.get(`config/geo_sites/${id}`);
   return data.data;
 }
 
 export async function push_geo_site_config(
   config: GeoSiteSourceConfig
 ): Promise<void> {
-  let data = await api.api.post(`config/geo_sites`, config);
+  let data = await axiosService.post(`config/geo_sites`, config);
 }
 
 export async function push_many_geo_site_rule(
   rules: GeoSiteSourceConfig[]
 ): Promise<void> {
-  let data = await api.api.post(`config/geo_sites/set_many`, rules);
+  let data = await axiosService.post(`config/geo_sites/set_many`, rules);
 }
 
 export async function delete_geo_site_config(id: string): Promise<void> {
-  let data = await api.api.delete(`config/geo_sites/${id}`);
+  let data = await axiosService.delete(`config/geo_sites/${id}`);
 }
 
 export async function get_geo_cache_key(
   filter: QueryGeoKey
 ): Promise<GeoConfigKey[]> {
-  let data = await api.api.get(`config/geo_sites/cache`, {
+  let data = await axiosService.get(`config/geo_sites/cache`, {
     params: { ...filter },
   });
   return data.data;
 }
 
 export async function refresh_geo_cache_key(): Promise<void> {
-  let data = await api.api.post(`config/geo_sites/cache`);
+  let data = await axiosService.post(`config/geo_sites/cache`);
 }
 
 export async function search_geo_site_cache(
   query: QueryGeoKey
 ): Promise<GeoConfigKey[]> {
-  let data = await api.api.get(`config/geo_sites/cache/search`, {
+  let data = await axiosService.get(`config/geo_sites/cache/search`, {
     params: {
       ...query,
     },
@@ -66,7 +66,7 @@ export async function search_geo_site_cache(
 export async function get_geo_site_cache_detail(
   key: GeoConfigKey
 ): Promise<GeoDomainConfig> {
-  let data = await api.api.get(`config/geo_sites/cache/detail`, {
+  let data = await axiosService.get(`config/geo_sites/cache/detail`, {
     params: {
       ...key,
     },

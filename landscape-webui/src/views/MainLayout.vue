@@ -32,7 +32,7 @@ import LandscapeSiderBar from "@/views/LandscapeSiderBar.vue";
             display: flex;
             padding-left: 25px;
           "
-          content-style="flex:1; display: flex; padding-right: 15px;"
+          content-style="flex:1; display: flex; padding-right: 15px; height: 100%;"
           content-class="main-body"
         >
           <RouterView />

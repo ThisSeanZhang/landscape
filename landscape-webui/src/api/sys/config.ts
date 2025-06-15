@@ -1,8 +1,8 @@
-import api from "@/api";
+import axiosService from "@/api";
 
 export async function get_init_config(): Promise<void> {
   try {
-    const response = await api.api.get(`sys_service/config/export`, {
+    const response = await axiosService.get(`sys_service/config/export`, {
       responseType: "blob", // 重点！要加这一行，告诉 axios 你期望拿到 blob（二进制）
     });
 

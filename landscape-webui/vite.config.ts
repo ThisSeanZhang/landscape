@@ -1,4 +1,4 @@
-import { defineConfig } from "vite";
+import { defineConfig, loadEnv } from "vite";
 import vue from "@vitejs/plugin-vue";
 import path from "node:path";
 import { readFileSync } from "fs";
@@ -8,9 +8,9 @@ import AutoImport from "unplugin-auto-import/vite";
 import Components from "unplugin-vue-components/vite";
 import { NaiveUiResolver } from "unplugin-vue-components/resolvers";
 
-const HOST_PORT = "localhost:6443";
-
 const pkg = JSON.parse(readFileSync("./package.json", "utf-8"));
+
+const env = loadEnv("development", "./");
 
 // https://vitejs.dev/config/
 export default defineConfig({
@@ -44,9 +44,11 @@ export default defineConfig({
     },
   },
   server: {
+    host: "localhost",
+    port: 5173,
     proxy: {
       "/api": {
-        target: `https://${HOST_PORT}`,
+        target: `https://${env.VITE_PROXY_ADDRESS}`,
         changeOrigin: true,
         secure: false,
         configure: (proxy: any, options: any) => {
@@ -54,7 +56,7 @@ export default defineConfig({
         },
       },
       "/ws": {
-        target: `ws://${HOST_PORT}`,
+        target: `ws://${env.VITE_PROXY_ADDRESS}`,
         changeOrigin: true,
         ws: true,
         rewrite: (path: any) => path.replace(/^\/ws/, ""),

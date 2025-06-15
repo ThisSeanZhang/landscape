@@ -1,12 +1,12 @@
 import { LandscapeStatus, SysInfo } from "@/lib/sys";
-import api from "../api";
+import axiosService from ".";
 
 export async function get_sysinfo(): Promise<SysInfo> {
-  let data = await api.api.get("sysinfo/sys");
+  let data = await axiosService.get("sysinfo/sys");
   return data.data;
 }
 
 export async function interval_fetch_info(): Promise<LandscapeStatus> {
-  let data = await api.api.get("sysinfo/interval_fetch_info");
+  let data = await axiosService.get("sysinfo/interval_fetch_info");
   return data.data;
 }
