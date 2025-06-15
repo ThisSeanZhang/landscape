@@ -3,17 +3,12 @@ import router from "@/router";
 import { LANDSCAPE_TOKEN_KEY } from "@/lib/common";
 
 const base_url = import.meta.env.VITE_AXIOS_BASE_URL;
-const instance = axios.create({
-  baseURL: `${base_url}src/`,
+const axiosService = axios.create({
+  baseURL: `${base_url}/src`,
   timeout: 10000,
 });
 
-const auth_instance = axios.create({
-  baseURL: `${base_url}auth/`,
-  timeout: 10000,
-});
-
-instance.interceptors.request.use(
+axiosService.interceptors.request.use(
   (config) => {
     const token = localStorage.getItem(LANDSCAPE_TOKEN_KEY);
     if (token) {
@@ -27,7 +22,7 @@ instance.interceptors.request.use(
   }
 );
 
-instance.interceptors.response.use(
+axiosService.interceptors.response.use(
   (response) => response,
   (error) => {
     if (error.response && error.response.status === 401) {
@@ -44,7 +39,4 @@ instance.interceptors.response.use(
   }
 );
 
-export default {
-  api: instance,
-  auth: auth_instance,
-};
+export default axiosService;
