@@ -1,45 +1,45 @@
-when:
-  # - event: [manual]
-  #   evaluate: 'RELEASE == "true"'
-  - event: tag
-labels:
-  name: la24
+# when:
+#   # - event: [manual]
+#   #   evaluate: 'RELEASE == "true"'
+#   - event: tag
+# labels:
+#   name: la24
 
-steps:
-- name: build-rust
-  image: thisseanzhang/landscape:build_base
-  commands:
-  - ls -la
-  - mkdir output
-  - ls -la
-  - cargo build --release
-  - cp target/release/landscape-webserver output/landscape-webserver-x86_64
-  - cargo build --target aarch64-unknown-linux-gnu --release
-  - cp target/aarch64-unknown-linux-gnu/release/landscape-webserver output/landscape-webserver-aarch64
+# steps:
+# - name: build-rust
+#   image: thisseanzhang/landscape:build_base
+#   commands:
+#   - ls -la
+#   - mkdir output
+#   - ls -la
+#   - cargo build --release
+#   - cp target/release/landscape-webserver output/landscape-webserver-x86_64
+#   - cargo build --target aarch64-unknown-linux-gnu --release
+#   - cp target/aarch64-unknown-linux-gnu/release/landscape-webserver output/landscape-webserver-aarch64
 
-- name: build-front
-  image: node:18.20.7-alpine3.21
-  commands:
-  - cd landscape-webui
-  - yarn install --cache-folder /yarn
-  - NODE_OPTIONS="--max-old-space-size=1700" yarn build
-  - mkdir static && mv dist/* static/
-  - apk add zip
-  - zip -r ../output/static.zip static
-  volumes:
-  - /d/agent_cache/yarn:/yarn
+# - name: build-front
+#   image: node:18.20.7-alpine3.21
+#   commands:
+#   - cd landscape-webui
+#   - yarn install --cache-folder /yarn
+#   - NODE_OPTIONS="--max-old-space-size=1700" yarn build
+#   - mkdir static && mv dist/* static/
+#   - apk add zip
+#   - zip -r ../output/static.zip static
+#   volumes:
+#   - /d/agent_cache/yarn:/yarn
 
-- name: publish
-  image: woodpeckerci/plugin-release
-  settings:
-    title: "Release v0.5.4-beta"
-    prerelease: true
-    generate-release-notes: true
-    target: main
-    checksum: sha256
-    checksum-file: SHASUM256sum.txt
-    files:
-      - 'output/*'
-    api_key:
-      from_secret: LD_PUSH
+# - name: publish
+#   image: woodpeckerci/plugin-release
+#   settings:
+#     title: "Release v0.5.4-beta"
+#     prerelease: true
+#     generate-release-notes: true
+#     target: main
+#     checksum: sha256
+#     checksum-file: SHASUM256sum.txt
+#     files:
+#       - 'output/*'
+#     api_key:
+#       from_secret: LD_PUSH
       
