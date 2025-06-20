@@ -2,8 +2,11 @@ name: "build and release"
 
 on:
   push:
+    branches:
+      - ci
     # tags:
-    #   - '*'  # 任何 tag 都触发
+    #   - 'v*'
+
 
 jobs:
   build-rust:
@@ -12,20 +15,18 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Build Rust binaries
         run: |
-          ls -la
           mkdir output
-          ls -la
           cargo build --release
           cp target/release/landscape-webserver output/landscape-webserver-x86_64
           cargo build --target aarch64-unknown-linux-gnu --release
           cp target/aarch64-unknown-linux-gnu/release/landscape-webserver output/landscape-webserver-aarch64
 
       - name: Upload Rust Artifacts
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: rust-output
           path: output/*
@@ -37,11 +38,7 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
-
-      - name: Setup cache volume
-        run: |
-          mkdir -p /yarn
+        uses: actions/checkout@v4
 
       - name: Build frontend
         run: |
@@ -53,7 +50,7 @@ jobs:
           zip -r ../output/static.zip static
 
       - name: Upload Frontend Artifacts
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: frontend-output
           path: output/static.zip
@@ -64,11 +61,18 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
-      - name: Download artifacts
-        uses: actions/download-artifact@v3
+      - name: Download Rust artifacts
+        uses: actions/download-artifact@v4
         with:
+          name: rust-output
+          path: ./output
+
+      - name: Download Frontend artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend-output
           path: ./output
 
       - name: Generate SHASUM
@@ -88,4 +92,4 @@ jobs:
           files: |
             output/*
         env:
-          GITHUB_TOKEN: ${{ secrets.LD_PUSH }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
