@@ -42,6 +42,7 @@ jobs:
 
       - name: Build frontend
         run: |
+          mkdir output
           cd landscape-webui
           yarn install --cache-folder /yarn
           NODE_OPTIONS="--max-old-space-size=1700" yarn build
