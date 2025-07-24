@@ -4,7 +4,10 @@ use landscape_common::flow::FlowDnsMarkInfo;
 use libbpf_rs::{libbpf_sys, MapCore, MapFlags, MapHandle, MapType};
 
 use crate::{
-    map_setting::share_map::types::{flow_dns_match_key, flow_dns_match_value},
+    map_setting::share_map::types::{
+        flow_dns_match_key,
+        // flow_dns_match_value
+    },
     LANDSCAPE_IPV4_TYPE, LANDSCAPE_IPV6_TYPE, MAP_PATHS,
 };
 
@@ -22,7 +25,8 @@ pub fn create_flow_dns_inner_map(flow_id: u32, data: Vec<FlowDnsMarkInfo>) {
     };
 
     let key_size = size_of::<flow_dns_match_key>() as u32;
-    let value_size = size_of::<flow_dns_match_value>() as u32;
+    let value_size = size_of::<u32>() as u32;
+    // let value_size = size_of::<flow_dns_match_value>() as u32;
 
     let map = MapHandle::create(
         MapType::LruHash,
@@ -84,9 +88,10 @@ where
 
     for FlowDnsMarkInfo { ip, mark, priority } in ips.into_iter() {
         let mut key = flow_dns_match_key::default();
-        let mut value = flow_dns_match_value::default();
-        value.mark = mark;
-        value.priority = priority;
+        // let mut value = flow_dns_match_value::default();
+        // value.mark = mark;
+        // value.priority = priority;
+        let value: u32 = ((priority as u32) << 16) | mark;
         match ip {
             std::net::IpAddr::V4(ipv4_addr) => {
                 key.addr.ip = ipv4_addr.to_bits().to_be();
