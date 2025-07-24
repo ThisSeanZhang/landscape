@@ -71,22 +71,6 @@ struct {
     __uint(pinning, LIBBPF_PIN_BY_NAME);
 } flow_match_map SEC(".maps");
 
-// struct each_flow_target {
-//     __uint(type, BPF_MAP_TYPE_HASH);
-//     __uint(map_flags, BPF_F_NO_PREALLOC);
-//     __type(key, u32);
-//     __type(value, struct flow_target_info);
-//     __uint(max_entries, 2048);
-// } each_flow_target_map SEC(".maps");
-
-// struct {
-//     __uint(type, BPF_MAP_TYPE_HASH_OF_MAPS);
-//     __type(key, u32);
-//     __uint(max_entries, 512);
-//     __uint(pinning, LIBBPF_PIN_BY_NAME);
-//     __array(values, struct each_flow_target);
-// } flow_target_map SEC(".maps");
-
 struct flow_mark {
     u16 trace_id;
     u8 flow_action;
@@ -103,11 +87,11 @@ struct flow_dns_match_key {
     u8 _pad[3];
 } __flow_dns_match_key;
 
-struct flow_dns_match_value {
-    u32 mark;
-    u16 priority;
-    u8 _pad[2];
-} __flow_dns_match_value;
+// struct flow_dns_match_value {
+//     u32 mark;
+//     u16 priority;
+//     u8 _pad[2];
+// } __flow_dns_match_value;
 
 // 每个流中特定的 DNS 规则
 struct each_flow_dns {
@@ -115,7 +99,7 @@ struct each_flow_dns {
     // __uint(key_size, 16);
     // __uint(map_flags, BPF_F_NO_COMMON_LRU);
     __type(key, struct flow_dns_match_key);
-    __type(value, struct flow_dns_match_value);
+    __type(value, u32);
     __uint(max_entries, 4096);
 } each_flow_dns_map SEC(".maps");
 
@@ -136,18 +120,18 @@ struct flow_ip_trie_key {
     u8 addr[16];
 } __flow_ip_trie_key;
 
-struct flow_ip_trie_value {
-    u32 mark;
-    u16 priority;
-    u8 _pad[2];
-} __flow_ip_trie_value;
+// struct flow_ip_trie_value {
+//     u32 mark;
+//     u16 priority;
+//     u8 _pad[2];
+// } __flow_ip_trie_value;
 
 // 每个流中特定的 目标 IP 规则
 struct each_flow_ip_trie {
     __uint(type, BPF_MAP_TYPE_LPM_TRIE);
     __uint(map_flags, BPF_F_NO_PREALLOC);
     __type(key, struct flow_ip_trie_key);
-    __type(value, struct flow_ip_trie_value);
+    __type(value, u32);
     __uint(max_entries, 65536);
 } each_flow_ip_map SEC(".maps");
 

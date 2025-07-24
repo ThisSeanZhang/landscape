@@ -315,13 +315,17 @@ static __always_inline int flow_verdict(struct __sk_buff *skb, int current_eth_n
     ip_trie_key.l3_protocol = context->l3_protocol;
 
     COPY_ADDR_FROM(ip_trie_key.addr, cache_key.dst_addr.all);
-    struct flow_ip_trie_value *ip_flow_mark_value = NULL;
+    // struct flow_ip_trie_value *ip_flow_mark_value = NULL;
+    u32 *ip_flow_mark_value = NULL;
     void *ip_rules_map = bpf_map_lookup_elem(&flow_v_ip_map, &flow_id);
     if (ip_rules_map != NULL) {
         ip_flow_mark_value = bpf_map_lookup_elem(ip_rules_map, &ip_trie_key);
         if (ip_flow_mark_value != NULL) {
-            flow_mark_action = ip_flow_mark_value->mark;
-            priority = ip_flow_mark_value->priority;
+            __u32 ip_flow_mark_v = *ip_flow_mark_value;
+            __u16 tmp_p = ip_flow_mark_v >> 16;
+            __u16 mark_low16 = ip_flow_mark_v & 0xFFFF;
+            flow_mark_action = mark_low16;
+            priority = tmp_p;
             // bpf_log_info("find ip map mark: %d", flow_mark_action);
             // if (ip_flow_mark->override_dns == 1) {
             //     goto apply_action;
@@ -332,7 +336,8 @@ static __always_inline int flow_verdict(struct __sk_buff *skb, int current_eth_n
     }
 
     struct flow_dns_match_key key = {0};
-    struct flow_dns_match_value *dns_rule_value = NULL;
+    // struct flow_dns_match_value *dns_rule_value = NULL;
+    u32 *dns_rule_value = NULL;
     key.l3_protocol = context->l3_protocol;
     COPY_ADDR_FROM(key.addr.all, cache_key.dst_addr.all);
 
@@ -344,9 +349,12 @@ static __always_inline int flow_verdict(struct __sk_buff *skb, int current_eth_n
     if (dns_rules_map != NULL) {
         dns_rule_value = bpf_map_lookup_elem(dns_rules_map, &key);
         if (dns_rule_value != NULL) {
-            if (dns_rule_value->priority <= priority) {
-                flow_mark_action = dns_rule_value->mark;
-                priority = dns_rule_value->priority;
+            __u32 dns_rule_value_v = *dns_rule_value;
+            __u16 tmp_p = dns_rule_value_v >> 16;
+            __u16 mark_low16 = dns_rule_value_v & 0xFFFF;
+            if (tmp_p <= priority) {
+                flow_mark_action = mark_low16;
+                priority = tmp_p;
             }
             // bpf_log_info("dns_flow_mark is:%d for: %pI4", flow_mark_action,
             // &cache_key.dst_addr.ip);

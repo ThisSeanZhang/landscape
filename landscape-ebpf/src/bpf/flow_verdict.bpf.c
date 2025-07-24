@@ -138,7 +138,8 @@ int flow_verdict_egress(struct __sk_buff *skb) {
     ip_trie_key.prefixlen = is_ipv4 ? 64 : 160;
     ip_trie_key.l3_protocol = is_ipv4 ? LANDSCAPE_IPV4_TYPE : LANDSCAPE_IPV6_TYPE;
     COPY_ADDR_FROM(ip_trie_key.addr, cache_key.dst_addr.all);
-    struct flow_ip_trie_value *ip_flow_mark;
+    // struct flow_ip_trie_value *ip_flow_mark;
+    u32 *ip_flow_mark;
     void *ip_rules_map = bpf_map_lookup_elem(&flow_v_ip_map, &flow_id);
     if (ip_rules_map != NULL) {
         ip_flow_mark = bpf_map_lookup_elem(ip_rules_map, &ip_trie_key);
@@ -154,7 +155,8 @@ int flow_verdict_egress(struct __sk_buff *skb) {
     }
 
     struct flow_dns_match_key key = {0};
-    struct flow_dns_match_value *dns_rule_value;
+    // struct flow_dns_match_value *dns_rule_value;
+    u32 *dns_rule_value;
     key.l3_protocol = is_ipv4 ? LANDSCAPE_IPV4_TYPE : LANDSCAPE_IPV6_TYPE;
     COPY_ADDR_FROM(key.addr.all, cache_key.dst_addr.all);
 
@@ -171,18 +173,6 @@ int flow_verdict_egress(struct __sk_buff *skb) {
         // }
     } else {
         // bpf_log_info("flow_id: %d, dns map is empty", *flow_id_ptr);
-    }
-
-    if (ip_flow_mark != NULL && dns_rule_value != NULL) {
-        if (ip_flow_mark->priority > dns_rule_value->priority) {
-            flow_mark_action = ip_flow_mark->mark;
-        } else {
-            flow_mark_action = dns_rule_value->mark;
-        }
-    } else if (dns_rule_value != NULL) {
-        flow_mark_action = dns_rule_value->mark;
-    } else if (ip_flow_mark != NULL) {
-        flow_mark_action = ip_flow_mark->mark;
     }
 
     // bpf_log_info("flow_id %d, flow_mark_action: %u", flow_id, flow_mark_action);
