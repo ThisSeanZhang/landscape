@@ -8,7 +8,10 @@ use crate::{
     LANDSCAPE_IPV4_TYPE, LANDSCAPE_IPV6_TYPE, MAP_PATHS,
 };
 
-use super::share_map::types::{flow_ip_trie_key, flow_ip_trie_value};
+use super::share_map::types::{
+    flow_ip_trie_key,
+    // flow_ip_trie_value
+};
 
 const IP_MATCH_MAX_ENTRIES: u32 = 65536;
 
@@ -22,7 +25,8 @@ fn create_inner_flow_match_map(flow_id: u32, ips: Vec<IpMarkInfo>) -> LdEbpfResu
     };
 
     let key_size = size_of::<flow_ip_trie_key>() as u32;
-    let value_size = size_of::<flow_ip_trie_value>() as u32;
+    let value_size = size_of::<u32>() as u32;
+    // let value_size = size_of::<flow_ip_trie_value>() as u32;
 
     let map = MapHandle::create(
         MapType::LpmTrie,
@@ -95,10 +99,12 @@ where
     let count = ips.len() as u32;
     for IpMarkInfo { mark, cidr, priority } in ips.into_iter() {
         let mark: u32 = mark.into();
-        let mut value = flow_ip_trie_value::default();
+        // let mut value = flow_ip_trie_value::default();
 
-        value.mark = mark;
-        value.priority = priority;
+        // value.mark = mark;
+        // value.priority = priority;
+
+        let value: u32 = ((priority as u32) << 16) | mark;
 
         // TODO: 抽取转换逻辑
         let mut key = flow_ip_trie_key::default();
