@@ -16,7 +16,7 @@ hero:
 
 features:
   - title: Linux 为基础
-    details: "自由选择你想要的发行版 <br> (注: 内核 6.9.x 以上, 6.1 有部分功能可能无法使用, musl 暂时不支持)"
+    details: "自由选择你想要的发行版 <br> (注: 内核 6.9.x 以上, 6.1 有部分功能无法使用, musl 暂时不支持)"
   - title: DNS
     details: "控制任意域名流量的行为, 无论是劫持还是重定向到另一个流中 <br> ( 注: 需要将 DNS 指向本路由程序 )"
   - title: 分流

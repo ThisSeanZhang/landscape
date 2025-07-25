@@ -9,6 +9,7 @@
 ```text
 userpatches/overlay/landscape_init.toml
 ```
+
 配置需根据目标开发板的硬件配置进行决定
 ```toml
 # Config Interface

@@ -52,6 +52,46 @@ systemctl disable systemd-resolved
 systemctl mask systemd-resolved
 ```
 
+## 手动启动验证
+在配置 systemd 服务之前, 可以先手动直接运行 `/root/landscape-webserver`, 确认是否能够执行.
+运行成功时会输出如下内容, 展示当前的配置, 可以验证下 Auth 以及对应的 Web 路径是否正确:
+```text
+██╗      █████╗ ███╗   ██╗██████╗ ███████╗ ██████╗ █████╗ ██████╗ ███████╗
+██║     ██╔══██╗████╗  ██║██╔══██╗██╔════╝██╔════╝██╔══██╗██╔══██╗██╔════╝
+██║     ███████║██╔██╗ ██║██║  ██║███████╗██║     ███████║██████╔╝█████╗  
+██║     ██╔══██║██║╚██╗██║██║  ██║╚════██║██║     ██╔══██║██╔═══╝ ██╔══╝  
+███████╗██║  ██║██║ ╚████║██████╔╝███████║╚██████╗██║  ██║██║     ███████╗
+╚══════╝╚═╝  ╚═╝╚═╝  ╚═══╝╚═════╝ ╚══════╝ ╚═════╝╚═╝  ╚═╝╚═╝     ╚══════╝
+                                                                          
+██████╗  ██████╗ ██╗   ██╗████████╗███████╗██████╗                        
+██╔══██╗██╔═══██╗██║   ██║╚══██╔══╝██╔════╝██╔══██╗                       
+██████╔╝██║   ██║██║   ██║   ██║   █████╗  ██████╔╝                       
+██╔══██╗██║   ██║██║   ██║   ██║   ██╔══╝  ██╔══██╗                       
+██║  ██║╚██████╔╝╚██████╔╝   ██║   ███████╗██║  ██║                       
+╚═╝  ╚═╝ ╚═════╝  ╚═════╝    ╚═╝   ╚══════╝╚═╝  ╚═╝                       
+
+Landscape Home Path: /root/.landscape-router
+
+[Auth]
+Admin User: admin
+Admin Pass: root
+
+[Log]
+Log Path: /root/.landscape-router/logs
+Debug: true
+Log Output In Terminal: true
+Max Log Files: 7
+
+[Web]
+Web Root Path: /root/.landscape-router/static
+Listen HTTP on: http://[::]:6300
+Listen HTTPS on: https://[::]:6443
+
+[Store]
+Database Connect: sqlite://./db.sqlite?mode=rwc
+```
+
+
 ## 创建 systemd 服务文件
 创建 `/etc/systemd/system/landscape-router.service`
 文件内容: 

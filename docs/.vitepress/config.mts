@@ -16,9 +16,22 @@ export default defineConfig({
         text: "介绍",
         items: [
           { text: "简介", link: "/introduction" },
-          { text: "手工部署", link: "/manual" },
-          { text: "注意事项", link: "/attention" },
           { text: "部分界面截图", link: "/screenshot" },
+        ],
+      },
+      {
+        text: "部署指南",
+        items: [
+          { text: "注意 Linux 版本 / 内核要求", link: "/attention" },
+          { text: "手工部署", link: "/manual" },
+          { text: "康康其他人怎么做 (链接)", link: "/community-guides" },
+        ],
+      },
+      {
+        text: "配置介绍",
+        items: [
+          { text: ".landscape-router 目录介绍", link: "/config/home_path.md" },
+          { text: "配置文件介绍", link: "/config/index.md" },
         ],
       },
       {
@@ -27,10 +40,6 @@ export default defineConfig({
           { text: "分流控制", link: "/flow" },
           { text: "eBPF 路由", link: "/feature/route.md" },
         ],
-      },
-      {
-        text: "配置",
-        items: [{ text: "配置介绍", link: "/config/index.md" }],
       },
       {
         text: "编译",
@@ -45,7 +54,7 @@ export default defineConfig({
         items: [
           { text: "DNS 服务相关", link: "/faq/dns.md" },
           // { text: "在已有网络基础上运行", link: "/faq/coexist.md" },
-          { text: "与 iptable 的关系", link: "/faq/iptables.md" },
+          { text: "与 iptable 的关系是-没关系", link: "/faq/iptables.md" },
         ],
       },
       // {
@@ -80,6 +89,12 @@ export default defineConfig({
     footer: {
       message: "",
       copyright: "Copyright © 2025-present Sean",
+    },
+
+    editLink: {
+      pattern:
+        "https://github.com/ThisSeanZhang/landscape/edit/docs/docs/:path",
+      text: "在 GitHub 上编辑此页",
     },
   },
 });
