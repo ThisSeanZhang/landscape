@@ -25,7 +25,9 @@ async function del() {
           {{ rule.name }}
         </n-descriptions-item>
         <n-descriptions-item label="启用">
-          {{ rule.enable }}
+          <span :style="{ color: rule.enable ? 'var(--success-color)' : '' }">
+            {{ rule.enable }}
+          </span>
         </n-descriptions-item>
         <n-descriptions-item label="流量标记">
           {{ rule.mark }}

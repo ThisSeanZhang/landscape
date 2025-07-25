@@ -22,7 +22,9 @@ async function del() {
       <!-- {{ rule }} -->
       <n-descriptions bordered label-placement="top" :column="2">
         <n-descriptions-item label="启用">
-          {{ rule.enable }}
+          <span :style="{ color: rule.enable ? 'var(--success-color)' : '' }">
+            {{ rule.enable }}
+          </span>
         </n-descriptions-item>
         <!-- <n-descriptions-item label="流量标记">
           {{ rule.mark }}
