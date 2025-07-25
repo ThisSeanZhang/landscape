@@ -35,7 +35,12 @@ tracing-appender = { workspace = true }
 
 [build-dependencies]
 libbpf-cargo = { workspace = true }
-# linux 6.1 如果是使用 
-vmlinux = { git = "https://github.com/libbpf/vmlinux.h.git", rev = "a9c092aa771310bf8b00b5018f7d40a1fdb6ec82" }
-# linux 6.6
-# vmlinux = { git = "https://github.com/libbpf/vmlinux.h.git", rev = "83a228cf37fc65f2d14e4896a04922b5ee531a94" }
+
+vmlinux_6_1_dep = { package = "vmlinux", git = "https://github.com/libbpf/vmlinux.h.git", rev = "a9c092aa771310bf8b00b5018f7d40a1fdb6ec82", optional = true }
+vmlinux_6_6_dep = { package = "vmlinux", git = "https://github.com/libbpf/vmlinux.h.git", rev = "83a228cf37fc65f2d14e4896a04922b5ee531a94", optional = true }
+vmlinux_latest_dep = { package = "vmlinux", git = "https://github.com/libbpf/vmlinux.h.git", rev = "8f91e9fd5b488ff57074e589e3960940f3387830", optional = true }
+
+[features]
+vmlinux_6_1 = ["dep:vmlinux_6_1_dep"]
+vmlinux_6_6 = ["dep:vmlinux_6_6_dep"]
+vmlinux_latest = ["dep:vmlinux_latest_dep"]

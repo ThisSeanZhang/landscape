@@ -3,6 +3,15 @@ use std::ffi::OsStr;
 use std::path::PathBuf;
 use std::{env, fs};
 
+#[cfg(all(feature = "vmlinux_6_1", feature = "vmlinux_6_6"))]
+compile_error!("features `vmlinux_6_1` and `vmlinux_6_6` cannot be enabled at the same time");
+
+#[cfg(all(feature = "vmlinux_6_6", feature = "vmlinux_latest"))]
+compile_error!("features `vmlinux_6_6` and `vmlinux_latest` cannot be enabled at the same time");
+
+#[cfg(all(feature = "vmlinux_latest", feature = "vmlinux_6_1"))]
+compile_error!("features `vmlinux_latest` and `vmlinux_6_1` cannot be enabled at the same time");
+
 /// Main function of the build script.
 fn main() {
     let project_root = PathBuf::from(
@@ -52,7 +61,12 @@ fn main() {
                 OsStr::new("-Wall"),
                 OsStr::new("-Wno-compare-distinct-pointer-types"),
                 OsStr::new("-I"),
-                vmlinux::include_path_root().join(&target_arch).as_os_str(),
+                #[cfg(feature = "vmlinux_6_1")]
+                vmlinux_6_1_dep::include_path_root().join(&target_arch).as_os_str(),
+                #[cfg(feature = "vmlinux_6_6")]
+                vmlinux_6_6_dep::include_path_root().join(&target_arch).as_os_str(),
+                #[cfg(feature = "vmlinux_latest")]
+                vmlinux_latest_dep::include_path_root().join(&target_arch).as_os_str(),
                 OsStr::new("-mcpu=v2"),
             ])
             .build_and_generate(&output_file)
