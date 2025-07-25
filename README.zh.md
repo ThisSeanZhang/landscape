@@ -8,14 +8,10 @@ Landscape 是一个基于 Web UI 的工具，可以轻松将您喜爱的 Linux �
 
 > 基于 Rust / eBPF / AF_PACKET 开发。
 
-[简体中文](./README.zh.md) | [English](./README.md)
+[简体中文](./README.zh.md) | [English](./README.md)  
 
-## 完整文档
-
-完整文档包括安装指南、配置选项和高级用法等，请访问我们的官方文档网站：
-
-📖 [Landscape 文档网站](https://landscape.whileaway.dev/introduction.html) | [Landscape 文档仓库](https://github.com/ThisSeanZhang/landscape/tree/docs/docs)
-
+## 文档
+更多信息请阅读 [文档](https://landscape.whileaway.dev/introduction.html)
 
 ---
 

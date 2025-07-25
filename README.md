@@ -11,13 +11,6 @@ Landscape is a web-based tool that helps you easily configure your favorite Linu
 
 [简体中文](./README.zh.md) | [English](./README.md)
 
-## Complete Documentation
-
-For detailed documentation, including installation guides, configuration options,  advanced usage, and so forth, visit our official documentation website:
-
-📖 [Landscape Documentation Website](https://landscape.whileaway.dev/introduction.html) | [Landscape Documentation Repository](https://github.com/ThisSeanZhang/landscape/tree/docs/docs)
-
-
 ---
 
 
