@@ -3286,7 +3286,9 @@ dependencies = [
  "tracing",
  "tracing-appender",
  "tracing-subscriber",
- "vmlinux",
+ "vmlinux 0.0.0 (git+https://github.com/libbpf/vmlinux.h.git?rev=83a228cf37fc65f2d14e4896a04922b5ee531a94)",
+ "vmlinux 0.0.0 (git+https://github.com/libbpf/vmlinux.h.git?rev=8f91e9fd5b488ff57074e589e3960940f3387830)",
+ "vmlinux 0.0.0 (git+https://github.com/libbpf/vmlinux.h.git?rev=a9c092aa771310bf8b00b5018f7d40a1fdb6ec82)",
 ]
 
 [[package]]
@@ -3322,6 +3324,7 @@ dependencies = [
  "landscape-common",
  "landscape-database",
  "landscape-dns",
+ "landscape-ebpf",
  "once_cell",
  "rand 0.9.1",
  "rcgen",
@@ -7571,6 +7574,16 @@ name = "version_check"
 version = "0.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
+
+[[package]]
+name = "vmlinux"
+version = "0.0.0"
+source = "git+https://github.com/libbpf/vmlinux.h.git?rev=83a228cf37fc65f2d14e4896a04922b5ee531a94#83a228cf37fc65f2d14e4896a04922b5ee531a94"
+
+[[package]]
+name = "vmlinux"
+version = "0.0.0"
+source = "git+https://github.com/libbpf/vmlinux.h.git?rev=8f91e9fd5b488ff57074e589e3960940f3387830#8f91e9fd5b488ff57074e589e3960940f3387830"
 
 [[package]]
 name = "vmlinux"

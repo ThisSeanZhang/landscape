@@ -8,6 +8,7 @@ landscape = { path = "../landscape" }
 landscape-dns = { path = "../landscape-dns" }
 landscape-common = { path = "../landscape-common" }
 landscape-database = { path = "../landscape-database" }
+landscape-ebpf = { path = "../landscape-ebpf" }
 
 
 rustls = { workspace = true }
@@ -52,3 +53,9 @@ rand = { workspace = true }
 # logs
 tracing = { workspace = true }
 ts-rs = { workspace = true, features = ["serde-compat"] }
+
+[features]
+default = ["vmlinux_6_1"]
+vmlinux_6_1 = ["landscape-ebpf/vmlinux_6_1"]
+vmlinux_6_6 = ["landscape-ebpf/vmlinux_6_6"]
+vmlinux_latest = ["landscape-ebpf/vmlinux_latest"]
