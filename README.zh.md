@@ -10,6 +10,15 @@ Landscape 是一个基于 Web UI 的工具，可以轻松将您喜爱的 Linux �
 
 [简体中文](./README.zh.md) | [English](./README.md)
 
+## 完整文档
+
+完整文档包括安装指南、配置选项和高级用法等，请访问我们的官方文档网站：
+
+📖 [Landscape 文档网站](https://landscape.whileaway.dev/introduction.html) | [Landscape 文档仓库](https://github.com/ThisSeanZhang/landscape/tree/docs/docs)
+
+
+---
+
 ## 截图
 ![](docs/images/1.png)
 
@@ -150,3 +159,13 @@ Landscape 是一个基于 Web UI 的工具，可以轻松将您喜爱的 Linux �
 ---
 
 如果您有任何建议或问题，可以在 [issues](./issues/new) 页面提交您的反馈。
+
+## Star History
+
+<a href="https://www.star-history.com/#ThisSeanZhang/landscape&Date">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=ThisSeanZhang/landscape&type=Date&theme=dark" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=ThisSeanZhang/landscape&type=Date" />
+   <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=ThisSeanZhang/landscape&type=Date" />
+ </picture>
+</a>
