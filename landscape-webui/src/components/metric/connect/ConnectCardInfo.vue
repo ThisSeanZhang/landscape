@@ -26,7 +26,7 @@ const emit = defineEmits(["show:key"]);
 </script>
 
 <template>
-  <n-card size="small">
+  <n-card size="small" style="height: 100%">
     <template #header>
       <n-time :time="conn.create_time" />
     </template>
@@ -39,13 +39,24 @@ const emit = defineEmits(["show:key"]);
       </n-button>
     </template>
 
-    {{
-      `${
-        frontEndStore.presentation_mode ? mask_string(conn.src_ip) : conn.src_ip
-      }:${conn.src_port} => ${
-        frontEndStore.presentation_mode ? mask_string(conn.dst_ip) : conn.dst_ip
-      }:${conn.dst_port}`
-    }}
+    <n-flex vertical>
+      <n-text>
+        {{
+          `${
+            frontEndStore.presentation_mode ? mask_string(conn.src_ip) : conn.src_ip
+          }:${conn.src_port}`
+        }}
+      </n-text>
+     <!-- =&gt 是箭头符号，箭头和dip放在第二行，一行的情况，有的卡片能放下，有的卡片放不下，导致卡片高度不一致 -->
+      <n-text>
+        =&gt;
+        {{
+          `${
+            frontEndStore.presentation_mode ? mask_string(conn.dst_ip) : conn.dst_ip
+          }:${conn.dst_port}`
+        }}
+      </n-text>
+    </n-flex>
 
     <template #action>
       <n-flex>

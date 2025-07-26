@@ -97,6 +97,28 @@ const show_switch = computed(() => {
   );
 });
 
+const devStatusText = computed(() => {
+  const status = props.status.dev_status.t;
+  switch (status) {
+    case "up":
+      return "启用";
+    case "down":
+      return "停用";
+    case "unknown":
+      return "未知";
+    case "notpresent":
+      return "不存在";
+    case "lowerlayerdown":
+      return "下层停用";
+    case "testing":
+      return "测试中";
+    case "dormant":
+      return "休眠";
+    default:
+      return status;
+  }
+});
+
 function has_target_hook() {
   if (props.config.zone_type == ZoneType.Wan) {
     return false;
@@ -237,7 +259,7 @@ function has_source_hook() {
           {{ status.dev_type ?? "N/A" }}/{{ status.dev_kind ?? "N/A" }}
         </n-descriptions-item>
         <n-descriptions-item label="状态">
-          {{ status.dev_status ?? "N/A" }}
+          {{ devStatusText }}
         </n-descriptions-item>
         <n-descriptions-item label="上层控制设备(配置)">
           {{ status.controller_id == undefined ? "N/A" : status.controller_id }}

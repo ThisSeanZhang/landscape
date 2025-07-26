@@ -5,14 +5,35 @@ import { ConnectFilter } from "@/lib/metric.rs";
 
 const metricStore = useMetricStore();
 
+// 添加防抖和加载状态
+const loading = ref(false);
+let updateInfoTimeout: number | null = null;
+
 onMounted(async () => {
   metricStore.SET_ENABLE(true);
-  await metricStore.UPDATE_INFO();
+  await updateInfoWithDebounce();
 });
 
 onUnmounted(() => {
   metricStore.SET_ENABLE(false);
+  if (updateInfoTimeout) {
+    clearTimeout(updateInfoTimeout);
+  }
 });
+
+// 防抖更新信息
+async function updateInfoWithDebounce() {
+  if (updateInfoTimeout) {
+    clearTimeout(updateInfoTimeout);
+  }
+  
+  loading.value = true;
+  // 延迟100ms执行更新，避免频繁请求
+  updateInfoTimeout = window.setTimeout(async () => {
+    await metricStore.UPDATE_INFO();
+    loading.value = false;
+  }, 100);
+}
 
 // 初始化过滤器
 const filter = ref(new ConnectFilter());
@@ -95,8 +116,10 @@ const resetFilter = () => {
   filter.value = new ConnectFilter();
 };
 
-// 应用过滤器 (计算属性会自动更新，这里只是占位)
-const applyFilter = () => {};
+// 应用过滤器 (防抖)
+const applyFilter = () => {
+  updateInfoWithDebounce();
+};
 </script>
 
 <template>
@@ -169,12 +192,28 @@ const applyFilter = () => {};
         style="width: 120px"
       />
 
-      <n-button @click="applyFilter" type="primary">过滤</n-button>
-      <n-button @click="resetFilter">重置</n-button>
+      <n-button @click="applyFilter" type="primary" :loading="loading">过滤</n-button>
+      <n-button @click="resetFilter" :disabled="loading">重置</n-button>
     </n-flex>
 
-    <n-scrollbar style="flex: 1">
-      <ConnectList :connect_metrics="filteredConnectMetrics" />
-    </n-scrollbar>
+    <n-spin :show="loading">
+      <n-virtual-list 
+        v-if="filteredConnectMetrics.length > 0" 
+        :item-height="180" 
+        :items="filteredConnectMetrics" 
+        style="flex: 1"
+        height="100%"
+      >
+        <template #default="{ item }">
+          <ConnectList :connect_metrics="[item]" :key="item" />
+        </template>
+      </n-virtual-list>
+      
+      <n-empty 
+        v-else
+        description="没有连接数据"
+        style="flex: 1; display: flex; align-items: center; justify-content: center;"
+      />
+    </n-spin>
   </n-flex>
 </template>

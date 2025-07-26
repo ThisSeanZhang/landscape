@@ -12,7 +12,9 @@ onMounted(async () => {
 });
 
 async function refresh() {
-  flows.value = await get_flow_rules();
+  const flowRules = await get_flow_rules();
+  // 按flow_id从小到大排序
+  flows.value = flowRules.sort((a, b) => a.flow_id - b.flow_id);
 }
 </script>
 <template>

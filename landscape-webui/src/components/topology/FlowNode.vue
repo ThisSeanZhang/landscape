@@ -90,6 +90,28 @@ const show_switch = computed(() => {
   return new ServiceExhibitSwitch(props.node);
 });
 
+const devStatusText = computed(() => {
+  const status = props.node.dev_status.t;
+  switch (status) {
+    case "up":
+      return "启用";
+    case "down":
+      return "停用";
+    case "unknown":
+      return "未知";
+    case "notpresent":
+      return "不存在";
+    case "lowerlayerdown":
+      return "下层停用";
+    case "testing":
+      return "测试中";
+    case "dormant":
+      return "休眠";
+    default:
+      return status;
+  }
+});
+
 // const card_style = computed(() => {
 //   if (props.node.zone_type == ZoneType.Wan) {
 //     return "min-width: 330px";
@@ -221,7 +243,7 @@ const show_switch = computed(() => {
           {{ node.dev_type ?? "N/A" }}/{{ node.dev_kind ?? "N/A" }}
         </n-descriptions-item>
         <n-descriptions-item label="状态">
-          {{ node.dev_status ?? "N/A" }}
+          {{ devStatusText }}
         </n-descriptions-item>
         <n-descriptions-item :span="2" label="上层控制设备(配置)">
           {{ node.controller_id == undefined ? "N/A" : node.controller_id }}

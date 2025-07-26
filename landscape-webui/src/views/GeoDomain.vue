@@ -5,8 +5,12 @@ import { onMounted, ref } from "vue";
 
 const rules = ref<any>([]);
 
+// 添加加载状态
+const loading = ref(false);
+let refreshTimeout: number | null = null;
+
 onMounted(async () => {
-  await refresh();
+  await refreshWithDebounce();
 });
 
 const filter = ref<QueryGeoKey>({
@@ -14,17 +18,33 @@ const filter = ref<QueryGeoKey>({
   key: null,
 });
 
-async function refresh() {
-  rules.value = await search_geo_site_cache(filter.value);
+// 防抖刷新函数
+async function refreshWithDebounce() {
+  if (refreshTimeout) {
+    clearTimeout(refreshTimeout);
+  }
+  
+  loading.value = true;
+  // 延迟100ms执行更新，避免频繁请求
+  refreshTimeout = window.setTimeout(async () => {
+    try {
+      rules.value = await search_geo_site_cache(filter.value);
+    } finally {
+      loading.value = false;
+    }
+  }, 100);
 }
 
-const loading = ref(false);
+async function refresh() {
+  await refreshWithDebounce();
+}
+
 async function refresh_cache() {
   (async () => {
     loading.value = true;
     try {
       await refresh_geo_cache_key();
-      await refresh();
+      await refreshWithDebounce();
     } finally {
       loading.value = false;
     }
@@ -38,37 +58,51 @@ const show_geo_drawer_modal = ref(false);
     <n-flex vertical>
       <n-flex :wrap="false">
         <!-- {{ filter }} -->
-        <n-button @click="show_geo_drawer_modal = true">Geo 配置</n-button>
+        <n-button @click="show_geo_drawer_modal = true" :disabled="loading">Geo 配置</n-button>
         <n-popconfirm
           :positive-button-props="{ loading: loading }"
           @positive-click="refresh_cache"
         >
           <template #trigger>
-            <n-button>强制刷新</n-button>
+            <n-button :disabled="loading">强制刷新</n-button>
           </template>
           强制刷新吗? 将会清空所有 key 并且重新下载
         </n-popconfirm>
         <GeoSiteNameSelect
           v-model:name="filter.name"
           @refresh="refresh"
+          :disabled="loading"
         ></GeoSiteNameSelect>
         <GeoSiteKeySelect
           v-model:geo_key="filter.key"
           v-model:name="filter.name"
           @refresh="refresh"
+          :disabled="loading"
         ></GeoSiteKeySelect>
       </n-flex>
 
-      <!-- {{ rules }} -->
-      <n-grid x-gap="12" y-gap="10" cols="1 600:2 900:3 1200:4 1600:5">
-        <n-grid-item
-          v-for="rule in rules"
-          :key="rule.index"
-          style="display: flex"
+      <n-spin :show="loading">
+        <!-- {{ rules }} -->
+        <n-virtual-list 
+          v-if="rules && rules.length > 0" 
+          :item-height="150" 
+          :items="rules" 
+          style="flex: 1"
+          height="100%"
         >
-          <GeoSiteCacheCard :geo_site="rule"></GeoSiteCacheCard>
-        </n-grid-item>
-      </n-grid>
+          <template #default="{ item }">
+            <n-grid-item :key="item.index" style="display: flex; padding: 5px;">
+              <GeoSiteCacheCard :geo_site="item"></GeoSiteCacheCard>
+            </n-grid-item>
+          </template>
+        </n-virtual-list>
+        
+        <n-empty 
+          v-else
+          description="没有Geo数据"
+          style="flex: 1; display: flex; align-items: center; justify-content: center; height: 200px;"
+        />
+      </n-spin>
     </n-flex>
 
     <GeoSiteDrawer
