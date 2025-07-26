@@ -10,9 +10,9 @@ Landscape 是一个基于 Web UI 的工具，可以轻松将您喜爱的 Linux �
 
 [简体中文](./README.zh.md) | [English](./README.md)  
 
-## 更多信息请阅读[文档](https://landscape.whileaway.dev/introduction.html)
+## 更多信息请阅读 [文档](https://landscape.whileaway.dev/introduction.html)
 
----
+
 
 ## 截图
 ![](docs/images/1.png)
