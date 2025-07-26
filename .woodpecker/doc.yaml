@@ -11,6 +11,7 @@ steps:
 - name: build
   image: node:18.20.7-alpine3.21
   commands:
+  - apk add --no-cache git  
   - cd docs
   - ls -la
   - yarn install --cache-folder /yarn
