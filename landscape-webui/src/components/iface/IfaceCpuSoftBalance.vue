@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { get_iface_cpu_balance, set_iface_cpu_balance } from "@/api/iface";
 import { IfaceCpuSoftBalance } from "@/rust_bindings/common/iface";
-import { ref, computed } from "vue";
+import { ref } from "vue";
 
 const show_model = defineModel<boolean>("show", { required: true });
 const loading = ref(false);
@@ -12,20 +12,6 @@ const props = defineProps<{
 const balance_config = ref<IfaceCpuSoftBalance>({
   xps: "",
   rps: "",
-});
-
-// 计算属性，用于处理十进制和二进制之间的转换
-const binary_balance_config = computed({
-  get: () => {
-    return {
-      xps: balance_config.value.xps ? parseInt(balance_config.value.xps, 10).toString(2) : "",
-      rps: balance_config.value.rps ? parseInt(balance_config.value.rps, 10).toString(2) : ""
-    };
-  },
-  set: (val) => {
-    balance_config.value.xps = val.xps ? parseInt(val.xps, 2).toString(10) : "";
-    balance_config.value.rps = val.rps ? parseInt(val.rps, 2).toString(10) : "";
-  }
 });
 
 async function get_current_config() {
@@ -64,19 +50,16 @@ async function save_config() {
     >
       <n-flex vertical>
         <n-alert type="info">
-          输入二进制数字来配置CPU核心负载。例如：
-          要将CPU负载在0核心，二进制是1；
-          要负载在0-1核心，二进制是11；
-          要负载在0-2核心，二进制是111；
-          要负载在1-2核心，二进制是110；
-          清除配置留空或输入0
+          比如要将CPU 负载在 0 核心, 二进制是 1. 如果要负载在 1-2 核心, 二进制是
+          11 设置值为 3. 如果要负载在 2-3 核心, 二进制是 110 设置为 6. 以此类推.
+          重置设置为 0
         </n-alert>
-        <n-form v-if="balance_config" :model="binary_balance_config">
-          <n-form-item label="发送核心负载 (二进制)">
-            <n-input v-model:value="binary_balance_config.xps" placeholder="例如: 110"></n-input>
+        <n-form v-if="balance_config" :model="balance_config">
+          <n-form-item label="发送核心负载">
+            <n-input v-model:value="balance_config.xps"></n-input>
           </n-form-item>
-          <n-form-item label="接收核心负载 (二进制)">
-            <n-input v-model:value="binary_balance_config.rps" placeholder="例如: 110"></n-input>
+          <n-form-item label="接收核心负载">
+            <n-input v-model:value="balance_config.rps"></n-input>
           </n-form-item>
         </n-form>
       </n-flex>
