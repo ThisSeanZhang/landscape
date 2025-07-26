@@ -2,12 +2,20 @@
 
 > 有任何想法欢迎在此发布评论, 或者新建一个也是可以的: https://github.com/ThisSeanZhang/landscape/discussions/88
 
-## 分流
-* Flow: 一组策略，拥有入口和出口
+## 分流概述
+* Flow: 一组策略，拥有入口和出口，中文“流”
 * 入口： 一组内网客户端, 使用 IP 地址 + QoS 标识进行匹配
 * 出口： Docker 容器，之后将会增加多 WAN
+* 其他流：Flow 1~254，按照入口规则匹配，匹配成功则进入此流
+* 默认流：Flow 0，所有未匹配的流量，默认进入此流
 
-通过侧边栏的 `分流设置` 进入配置
+## 默认分流设置
+通过主页右上方的 `DNS卡片` 进入配置   
+具体设置参考下面 其他分流设置   
+![](./images/flow/flow-6.png)
+
+## 其他分流设置
+通过侧边栏的 `分流设置` 进入配置  
 ![](./images/flow/flow-1.png)
 
 每个流拥有独立的 DNS 缓存以及自己的规则， 可通过各流卡片上方的 DNS 进行配置专属于该流的配置。
@@ -27,7 +35,7 @@
 * 忽略 Flow 设置: 忽略当前 Flow 指定的出口, 将这个数据包按照默认行为进行处理
 * 禁止连接: 丢弃该数据包
 * 重定向至流: 使用另一个 Flow 的出口发送这个数据包
-* 允许端口共享: 允许访问此目标的接口被用于 其他IP 进行使用, 在使用 STUN 建立组网时使用.
+<!-- * 允许端口共享: 允许访问此目标的接口被用于 其他IP 进行使用, 在使用 STUN 建立组网时使用. -->
 
 当前 Flow 的流量出口仅有 Docker 容器 (容器中的程序需要与[接应程序](#接应程序)配合使用), 当前还不支持 `多WAN` 作为流的出口.
 
@@ -65,7 +73,7 @@ docker run -d \
 ```yaml
 services:
   your_service:
-    image: your_image
+    image: ghcr.io/thisseanzhang/landscape-edge:amd64-xx
     sysctls:
       - net.ipv4.conf.lo.accept_local=1
     cap_add:
