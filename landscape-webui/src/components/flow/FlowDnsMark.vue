@@ -34,17 +34,39 @@ onMounted(async () => {
 });
 
 const flow_rules = ref<any[]>([]);
+const search_key = ref("");
+
 const flow_options = computed(() => {
   // 先按照flow_id排序
-  const sortedFlowRules = [...flow_rules.value].sort((a, b) => a.flow_id - b.flow_id);
+  let filteredFlowRules = flow_rules.value;
+  if (search_key.value) {
+    // 根据搜索关键词过滤规则
+    const keyword = search_key.value.toLowerCase();
+    filteredFlowRules = flow_rules.value.filter(
+      (e) => 
+        e.flow_id.toString().includes(keyword) || 
+        (e.remark && e.remark.toLowerCase().includes(keyword))
+    );
+  }
+  
+  const sortedFlowRules = [...filteredFlowRules].sort((a, b) => a.flow_id - b.flow_id);
   return sortedFlowRules.map((e) => ({
     value: e.flow_id,
     label: e.remark ? `${e.flow_id} - ${e.remark}` : e.flow_id,
   }));
 });
+
 const flow_search_loading = ref(false);
-async function search_flows() {
-  flow_rules.value = await get_flow_rules();
+async function search_flows(query: string = "") {
+  search_key.value = query;
+  if (!query) {
+    flow_search_loading.value = true;
+    try {
+      flow_rules.value = await get_flow_rules();
+    } finally {
+      flow_search_loading.value = false;
+    }
+  }
 }
 </script>
 
