@@ -4,8 +4,10 @@ import { defineConfig } from "vitepress";
 export default defineConfig({
   title: "Landscape Router",
   description: "Configuring Linux as a Router",
+  lastUpdated: true,
   themeConfig: {
     // https://vitepress.dev/reference/default-theme-config
+    lastUpdatedText: '最后更新时间',
     nav: [
       { text: "主页", link: "/" },
       { text: "文档", link: "/introduction" },
