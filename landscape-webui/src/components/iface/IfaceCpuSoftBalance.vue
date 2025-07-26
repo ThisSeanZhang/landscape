@@ -65,11 +65,11 @@ async function save_config() {
       <n-flex vertical>
         <n-alert type="info">
           输入二进制数字来配置CPU核心负载。例如：
-          要将CPU负载在0核心，二进制是1；
-          要负载在0-1核心，二进制是11；
-          要负载在0-2核心，二进制是111；
-          要负载在1-2核心，二进制是110；
-          清除配置留空或输入0
+          要将CPU负载在0核心，二进制是 1
+          负载在0-1核心，二进制是 11
+          负载在1-2核心，0核心不负载，二进制是 110
+          负载在2-3核心，0-1核心不负载，二进制是 1100
+          清除配置留空或输入 0
         </n-alert>
         <n-form v-if="balance_config" :model="binary_balance_config">
           <n-form-item label="发送核心负载 (二进制)">
