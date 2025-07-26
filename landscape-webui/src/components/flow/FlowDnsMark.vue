@@ -35,7 +35,9 @@ onMounted(async () => {
 
 const flow_rules = ref<any[]>([]);
 const flow_options = computed(() => {
-  return flow_rules.value.map((e) => ({
+  // 先按照flow_id排序
+  const sortedFlowRules = [...flow_rules.value].sort((a, b) => a.flow_id - b.flow_id);
+  return sortedFlowRules.map((e) => ({
     value: e.flow_id,
     label: e.remark ? `${e.flow_id} - ${e.remark}` : e.flow_id,
   }));
