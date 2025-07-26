@@ -18,14 +18,16 @@ async function show_chart_drawer(key: ConnectKey) {
 </script>
 
 <template>
-  <n-grid x-gap="12" y-gap="12" cols="2 400:2 600:5">
-    <n-grid-item v-for="conn of connect_metrics" :key="conn">
-      <ConnectCardInfo @show:key="show_chart_drawer" :conn="conn" />
-    </n-grid-item>
-  </n-grid>
+  <div>
+    <n-grid x-gap="12" y-gap="12" cols="2 400:2 600:5">
+      <n-grid-item v-for="conn of connect_metrics" :key="JSON.stringify(conn)">
+        <ConnectCardInfo @show:key="show_chart_drawer" :conn="conn" />
+      </n-grid-item>
+    </n-grid>
 
-  <ConnectChartDrawer
-    v-model:show="show_chart"
-    :conn="show_chart_key"
-  ></ConnectChartDrawer>
+    <ConnectChartDrawer
+      v-model:show="show_chart"
+      :conn="show_chart_key"
+    ></ConnectChartDrawer>
+  </div>
 </template>
