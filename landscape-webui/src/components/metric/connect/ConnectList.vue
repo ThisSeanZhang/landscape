@@ -20,7 +20,7 @@ async function show_chart_drawer(key: ConnectKey) {
 <template>
   <div>
     <n-grid x-gap="12" y-gap="12" cols="2 400:2 600:5">
-      <n-grid-item v-for="conn of connect_metrics" :key="JSON.stringify(conn)">
+      <n-grid-item v-for="conn of connect_metrics" :key="JSON.stringify(conn)" style="display: flex">
         <ConnectCardInfo @show:key="show_chart_drawer" :conn="conn" />
       </n-grid-item>
     </n-grid>
