@@ -50,7 +50,9 @@ const onGeoUpload = async (formData: FormData) => {
           }}
         </n-descriptions-item>
         <n-descriptions-item label="启用">
-          {{ geo_site.enable }}
+          <n-tag :bordered="false" :type="geo_site.enable ? 'success' : ''">
+            {{ geo_site.enable }}
+          </n-tag>
         </n-descriptions-item>
         <n-descriptions-item label="URL">
           {{
@@ -60,7 +62,10 @@ const onGeoUpload = async (formData: FormData) => {
           }}
         </n-descriptions-item>
         <n-descriptions-item label="下次更新时间">
-          {{ geo_site.next_update_at }}
+          <n-time
+            :time="geo_site.next_update_at"
+            format="yyyy-MM-dd hh:mm:ss"
+          />
         </n-descriptions-item>
       </n-descriptions>
       <template #header-extra>

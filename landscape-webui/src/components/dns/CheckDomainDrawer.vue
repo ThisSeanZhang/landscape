@@ -157,7 +157,12 @@ async function quick_btn(record_type: LandscapeDnsRecordType, domain: string) {
                 {{ result.config.name }}
               </n-descriptions-item>
               <n-descriptions-item label="启用">
-                {{ result.config.enable }}
+                <n-tag
+                  :bordered="false"
+                  :type="result.config.enable ? 'success' : ''"
+                >
+                  {{ result.config.enable }}
+                </n-tag>
               </n-descriptions-item>
               <n-descriptions-item label="流量标记">
                 {{ result.config.mark }}

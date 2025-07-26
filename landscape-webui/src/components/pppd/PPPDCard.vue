@@ -27,7 +27,9 @@ async function del() {
           {{ config.attach_iface_name }}
         </n-descriptions-item>
         <n-descriptions-item label="启用">
-          {{ config.enable }}
+          <n-tag :bordered="false" :type="config.enable ? 'success' : ''">
+            {{ config.enable }}
+          </n-tag>
         </n-descriptions-item>
         <n-descriptions-item label="默认路由">
           {{ config.pppd_config.default_route }}

@@ -17,7 +17,8 @@ pub async fn get_flow_rule_config_paths() -> Router<LandscapeApp> {
 }
 
 async fn get_flow_rules(State(state): State<LandscapeApp>) -> LandscapeApiResult<Vec<FlowConfig>> {
-    let result = state.flow_rule_service.list().await;
+    let mut result = state.flow_rule_service.list().await;
+    result.sort_by(|a, b| a.flow_id.cmp(&b.flow_id));
     LandscapeApiResp::success(result)
 }
 

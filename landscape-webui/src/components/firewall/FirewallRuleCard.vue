@@ -18,11 +18,13 @@ async function del() {
 </script>
 <template>
   <n-flex>
-    <n-card :title="`优先级:${rule.index}`" size="small">
+    <n-card :title="`优先级:${rule.index}`" size="small" style="flex: 1">
       <!-- {{ rule }} -->
       <n-descriptions bordered label-placement="top" :column="2">
         <n-descriptions-item label="启用">
-          {{ rule.enable }}
+          <n-tag :bordered="false" :type="rule.enable ? 'success' : ''">
+            {{ rule.enable }}
+          </n-tag>
         </n-descriptions-item>
         <!-- <n-descriptions-item label="流量标记">
           {{ rule.mark }}
