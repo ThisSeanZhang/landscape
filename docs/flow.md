@@ -1,14 +1,21 @@
+# 分流控制
 分流可以`定义`一组目标 IP 行为, `应用`在一组客户端
 
 > 有任何想法欢迎在此发布评论, 或者新建一个也是可以的: https://github.com/ThisSeanZhang/landscape/discussions/88
 
 ## 分流概述
-* Flow: 一组策略，拥有入口和出口，中文“流”
+* Flow： 一组策略，拥有入口和出口，中文“流”
 * 入口： 一组内网客户端, 使用 IP 地址 + QoS 标识进行匹配
 * 出口： Docker 容器，之后将会增加多 WAN
 * 其他流：Flow 1~254，按照入口规则匹配，匹配成功则进入此流
 * 默认流：Flow 0，所有未匹配的流量，默认进入此流
+* 规则匹配方式： 按照优先级，匹配上即发送至出口，后续规则不在进行匹配（只会与一条规则匹配上）
 
+## 流 DNS 设置
+* 每一条DNS规则，可以指定上游DNS服务器，或域名重定向
+* 每一个Flow，拥有独立的DNS缓存
+* 任何Flow，应当至少有一条兜底DNS规则，用于配置上游默认 DNS 服务器  
+![](images/flow/flow-7.png)
 ## 默认分流设置
 通过主页右上方的 `DNS卡片` 进入配置   
 具体设置参考下面 其他分流设置   
@@ -90,8 +97,8 @@ services:
 
 可将需要的程序挂载在 `/app/server` 目录下， `/app/start.sh` 默认会去执行 `/app/server/run.sh` 脚本。
 
-### /app/start.sh 文件
-```
+## /app/start.sh 文件
+```bash
 #!/bin/bash
 
 ip rule add fwmark 0x1/0x1 lookup 100
