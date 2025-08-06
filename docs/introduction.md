@@ -7,7 +7,7 @@ Landscape Router 是一个使用了 eBPF / Rust / Vue 开发
 ![](./images/1.png)
 
 ## 核心特性
-* 分流控制（SIP、Qos(dscp)、DIP、域名 匹配规则）
+* 分流控制（SIP、Qos(dscp)、DIP、域名、Geo 匹配规则）
 * eBPF 路由（性能优于iptable）
 * 每个流 Flow 独立dns配置以及缓存（避免dns污染、泄露）
 * 流量导入docker容器

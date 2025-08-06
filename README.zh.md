@@ -20,7 +20,7 @@ Landscape 是一个基于 Web UI 的工具，可以轻松将您喜爱的 Linux �
 ---
 
 ## 核心特性
-* 分流控制（SIP、QoS(dscp)、DIP、域名 匹配规则）  
+* 分流控制（SIP、QoS(dscp)、DIP、域名、Geo 匹配规则）  
 * eBPF 路由（性能优于iptable）   
 * 每个流 Flow 独立dns配置以及缓存（避免dns污染、泄露）  
 * 流量导入docker容器 
