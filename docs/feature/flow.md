@@ -80,6 +80,7 @@
 * **工作程序** 需监听 `12345` 端口作为tproxy入口  
 * **接应程序** 将待处理流量转发到 **工作程序** 的tproxy入口 
 * 通过环境变量 `LAND_PROXY_SERVER_PORT` 可修改 **接应程序** 之目的端口（默认 `12345` ）  
+* landscape 0.6.7+ 版本容器出口默认为 Flow 0 出口  
 
 ### 接应程序（镜像）
 项目提供了一个 **测试接应程序** 以便进行测试, [装有 **接应程序** 的镜像在此](https://github.com/ThisSeanZhang/landscape/pkgs/container/landscape-edge):
