@@ -74,13 +74,15 @@
 ( 大多数情况应该属于多此一举 ) -->
 ## Docker 容器作为流出口
 
-* 仅有由接应程序镜像创建的容器，可作为有效的流出口容器  
-* 可挂载 `/app/start.sh` 文件在容器内运行任意程序  
-* 该程序需监听 `12345` 端口作为tproxy入口  
-* 接应程序将流量发送至该程序的tproxy入口    
+* 仅有由[装有 **接应程序** 的镜像](https://github.com/ThisSeanZhang/landscape/pkgs/container/landscape-edge)启动的容器，可作为有效的流出口容器  
+* 可挂载任意程序在`/app/server` 目录下作为 **工作程序**
+* 可挂载 `/app/server/run.sh` 脚本用于启动 **工作程序**  
+* **工作程序** 需监听 `12345` 端口作为tproxy入口  
+* **接应程序** 将待处理流量转发到 **工作程序** 的tproxy入口 
+* 通过环境变量 `LAND_PROXY_SERVER_PORT` 可修改 **接应程序** 之目的端口（默认 `12345` ）  
 
 ### 接应程序（镜像）
-项目提供了一个测试接应程序以便进行测试, 镜像[在此](https://github.com/ThisSeanZhang/landscape/pkgs/container/landscape-edge):
+项目提供了一个 **测试接应程序** 以便进行测试, [装有 **接应程序** 的镜像在此](https://github.com/ThisSeanZhang/landscape/pkgs/container/landscape-edge):
 
 如果使用 UI 上的镜像运行界面运行, 记得点击按钮, 将会添加一个 label. (手动添加一个也可以, 后台运行时会自动添加,下方手动运行需要的设置)
 ![](../images/flow/flow-5.png)
@@ -95,7 +97,8 @@ docker run -d \
   --cap-add=BPF \
   --cap-add=PERFMON \
   --privileged \
-  -v /root/.landscape-router/unix_link/:/ld_unix_link/:ro \
+  -v /root/.landscape-router/unix_link/:/ld_unix_link/:ro \ # 必要映射
+  # 可挂载 任意工作程序及其启动脚本等所需文件
   ghcr.io/thisseanzhang/landscape-edge:amd64-xx # xx需修改为合适版本
 ```
 
@@ -113,14 +116,19 @@ services:
     privileged: true
     volumes:
       - /root/.landscape-router/unix_link/:/ld_unix_link/:ro # 必要映射
+      # 可挂载 任意工作程序及其启动脚本等所需文件
 ```
-默认设置下， 容器有一个[演示程序](https://github.com/ThisSeanZhang/landscape/blob/main/landscape-ebpf/src/bin/redirect_demo_server.rs) 放置在 `/app/server` 监听 `12345` 端口。
+默认设置下， 容器有一个[**演示工作程序** ](https://github.com/ThisSeanZhang/landscape/blob/main/landscape-ebpf/src/bin/redirect_demo_server.rs) 放置在 `/app/server` 监听 `12345` 端口作为tproxy入口。
 
-而接应程序是放置在 `/app`， 默认情况下是会将待处理流量转发到，演示程序监听的端口 `12345`。 可以通过设置容器的环境变量改变监听端口: `LAND_PROXY_SERVER_PORT`
+而 **接应程序** 是放置在 `/app`， 默认情况下是会将待处理流量转发到，演示 **工作程序** 监听端口 `12345`的tproxy入口。 可以通过设置容器的环境变量改变监听端口: `LAND_PROXY_SERVER_PORT`。
 
-可将需要的程序挂载在 `/app/server` 目录下， `/app/start.sh` 默认会去执行 `/app/server/run.sh` 脚本。
+可将需要的 **工作程序** 挂载在 `/app/server` 目录下以替换 **演示工作程序**，将 **工作程序** 启动脚本挂载为 `/app/server/run.sh` ， `/app/start.sh` 默认会去执行`/app/server/run.sh`以启动 **工作程序** 或 **演示工作程序** 。
 
-### /app/start.sh 文件
+
+### /app/start.sh 文件（非 **工作程序** 启动脚本）
+
+**[测试接应程序镜像](https://github.com/ThisSeanZhang/landscape/pkgs/container/landscape-edge)中已包含，无需自行添加/挂载**
+
 ```bash
 #!/bin/bash
 
