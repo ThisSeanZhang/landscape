@@ -26,7 +26,7 @@ export default defineConfig({
         items: [
           { text: "注意 Linux 版本 / 内核要求", link: "/attention" },
           { text: "手工部署", link: "/manual" },
-          { text: "康康大家的花活 (链接)", link: "/community-guides" },
+          { text: "康康其他人怎么做 (链接)", link: "/community-guides" },
         ],
       },
       {

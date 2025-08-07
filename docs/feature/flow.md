@@ -48,7 +48,7 @@
 
 ### dst 目的匹配规则说明 
 
-* 每个流中可添加DNS/IP 规则 共 2^32 条  
+* 每个流中可添加DNS/IP 规则 共 2^16 条  
 * 每个流拥有独立的 DNS 缓存  
 * 可通过各流卡片上方的 DNS/目标IP 进行配置专属于该流的配置。 
 
@@ -74,12 +74,10 @@
 ( 大多数情况应该属于多此一举 ) -->
 ## Docker 容器作为流出口
 
-* 仅有由[装有 **接应程序** 的镜像](https://github.com/ThisSeanZhang/landscape/pkgs/container/landscape-edge)启动的容器，可作为有效的流出口容器  
-* 可挂载任意程序在`/app/server` 目录下作为 **工作程序**
-* 可挂载 `/app/server/run.sh` 脚本用于启动 **工作程序**  
-* **工作程序** 需监听 `12345` 端口作为tproxy入口  
-* **接应程序** 将待处理流量转发到 **工作程序** 的tproxy入口 
-* 通过环境变量 `LAND_PROXY_SERVER_PORT` 可修改 **接应程序** 之目的端口（默认 `12345` ）  
+* 仅搭配 [**接应程序**](https://github.com/ThisSeanZhang/landscape/blob/main/landscape-ebpf/src/bin/redirect_pkg_handler.rs) 进行打包的容器，可作为有效的流 **出口容器**  
+* 可挂载任意程序在 `/app/server` 目录下作为 **工作程序**, 需要自行编写 `/app/server/run.sh` 脚本用于启动
+* **工作程序** 需监听 `12345` 端口作为 tproxy 入口, 其他端口需要通过环境变量 `LAND_PROXY_SERVER_PORT` 修改 **接应程序** 默认监听端口
+* **接应程序** 会将待处理流量转发到 **工作程序** 的 tproxy 入口 
 * landscape 0.6.7+ 版本容器出口默认为 Flow 0 出口  
 
 ### 接应程序（镜像）
@@ -88,7 +86,7 @@
 如果使用 UI 上的镜像运行界面运行, 记得点击按钮, 将会添加一个 label. (手动添加一个也可以, 后台运行时会自动添加,下方手动运行需要的设置)
 ![](../images/flow/flow-5.png)
 
-进行启动可以忽略, 如果使用第三方或者手动启动则需要注意添加以下参数:
+当使用 UI 进行启动,并点击 label 添加后可以忽略, 如果使用第三方或者手动启动则需要注意添加以下参数:
 * docker run
 ```shell
 docker run -d \
@@ -141,6 +139,6 @@ ip route add local default dev lo table 100
 
 wait
 ```
-## 分流在代码中的流程示意图:
+## 分流在代码中的流程示意图
 
 ![](../images/flow/flow-4.png)
