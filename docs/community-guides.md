@@ -6,4 +6,4 @@
 
 ## 图文教程
 - 时间 标题 [版本号] 这样的格式
-- 2025-07-25 [在debian里，玩转landscape和其他花活。](https://github.com/CyberRookie-X/play_with_landscape_and_other_tricks_on_debian)[v0.6.7]
+- 2025-07-25 [在debian里，玩转landscape和其他花活（持续更新中）](https://github.com/CyberRookie-X/play_with_landscape_and_other_tricks_on_debian)[v0.6.7]

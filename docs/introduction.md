@@ -6,6 +6,13 @@ Landscape Router 是一个使用了 eBPF / Rust / Vue 开发
 ## 整体界面
 ![](./images/1.png)
 
+## 核心特性
+* 分流控制（SIP、Qos(dscp)、DIP、域名、Geo 匹配规则）
+* eBPF 路由（性能优于 iptable）
+* 每个流 Flow 独立 dns 配置以及缓存（避免 dns 污染、泄露）
+* 流量导入 Docker 容器
+* Geo 管理
+
 ## 主要功能
 > ✅ 已经实现并且已经测试  
 > ⚠ 可行但是未测试  
@@ -34,7 +41,7 @@ Landscape Router 是一个使用了 eBPF / Rust / Vue 开发
         - ✅ 使用 DHCPv6-PD 向上级路由请求前缀
         - ✅ 使用 RA 对下级设备通告前缀
 - <u>流控模块</u>
-    - ✅ 允许使用 IP + QoS 值进行区分流.
+    - ✅ 允许使用 IP + QoS(dscp) 值进行区分流.
     - ✅ 每个流配置中含有自己独立的 DNS 配置, 以及 DNS 缓存.
     - ✅ 将被标记流量按照标记配置( 直连/丢弃/允许复用端口/重定向到 Docker 容器或者网卡 )进行转发 
     - ❌ 对指定数据设置跟踪标记

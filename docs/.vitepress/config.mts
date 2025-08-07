@@ -37,10 +37,26 @@ export default defineConfig({
         ],
       },
       {
-        text: "特性",
+        text: "核心特性",
         items: [
-          { text: "分流控制", link: "/flow" },
-          { text: "eBPF 路由", link: "/feature/route.md" },
+          { text: "分流控制", link: "/feature/flow" },
+          { text: "eBPF 路由", link: "/feature/route" },
+        ],
+      },
+      {
+        text: "基础功能设置",
+        items: [
+          { text: "系统基本设置", link: "/other-features/sys-info" },
+          //  { text: "NAT", link: "/feature/route.md" },
+          { text: "防火墙设置", link: "/other-features/firewall" },
+          // { text: "分流设置", link: "/other-features/" },
+          //  { text: "Docker", link: "/flow.md" },
+          //  { text: "连接信息", link: "/flow.md" },
+          { text: "Geo 管理", link: "/other-features/domain-ip-collection" },
+          {
+            text: "系统配置导出",
+            link: "/other-features/settings",
+          },
         ],
       },
       {
