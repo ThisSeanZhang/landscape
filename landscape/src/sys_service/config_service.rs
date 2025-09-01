@@ -36,6 +36,7 @@ impl LandscapeConfigService {
             route_lans: self.store.route_lan_service_store().list().await.unwrap(),
             route_wans: self.store.route_wan_service_store().list().await.unwrap(),
             static_nat_mappings: self.store.static_nat_mapping_store().list().await.unwrap(),
+            dns_redirects: self.store.dns_redirect_rule_store().list().await.unwrap(),
         }
     }
 }

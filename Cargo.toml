@@ -11,6 +11,7 @@ members = [
     "landscape-database/migration",
     "landscape-dns",
     "landscape-ebpf",
+    "landscape-macro",
     "landscape-protobuf",
     "landscape-webserver",
 ]

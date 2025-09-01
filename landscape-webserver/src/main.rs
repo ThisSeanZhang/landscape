@@ -13,7 +13,7 @@ use landscape::{
     boot::{boot_check, log::init_logger},
     cert::load_or_generate_cert,
     config_service::{
-        dns_rule::DNSRuleService, dst_ip_rule::DstIpRuleService,
+        dns::redirect::DNSRedirectService, dns_rule::DNSRuleService, dst_ip_rule::DstIpRuleService,
         firewall_rule::FirewallRuleService, flow_rule::FlowRuleService,
         geo_ip_service::GeoIpService, geo_site_service::GeoSiteService,
         static_nat_mapping::StaticNatMappingService,
@@ -62,7 +62,10 @@ use service::{pppd::get_iface_pppd_paths, wifi::get_wifi_service_paths};
 use tracing::info;
 
 use crate::{
-    config_service::static_nat_mapping::get_static_nat_mapping_config_paths,
+    config_service::{
+        dns_redirect::get_dns_redirect_config_paths,
+        static_nat_mapping::get_static_nat_mapping_config_paths,
+    },
     service::{route_lan::get_route_lan_paths, route_wan::get_route_wan_paths},
     sys_service::config_service::get_config_paths,
 };
@@ -108,6 +111,9 @@ pub struct LandscapeApp {
 
     // Static NAT Mapping
     static_nat_mapping_config_service: StaticNatMappingService,
+
+    /// DNS Redirect Service
+    dns_redirect_service: DNSRedirectService,
 }
 
 async fn run(home_path: PathBuf, config: RuntimeConfig) -> LdResult<()> {
@@ -201,6 +207,8 @@ async fn run(home_path: PathBuf, config: RuntimeConfig) -> LdResult<()> {
     let static_nat_mapping_config_service =
         StaticNatMappingService::new(db_store_provider.clone()).await;
 
+    let dns_redirect_service = DNSRedirectService::new(db_store_provider.clone()).await;
+
     docker_service.start_to_listen_event().await;
 
     metric_service.start_service().await;
@@ -230,6 +238,7 @@ async fn run(home_path: PathBuf, config: RuntimeConfig) -> LdResult<()> {
         ipv6_pd_service,
         ipv6_ra_service,
         static_nat_mapping_config_service,
+        dns_redirect_service,
     };
     // 初始化结束
 
@@ -297,6 +306,7 @@ async fn run(home_path: PathBuf, config: RuntimeConfig) -> LdResult<()> {
                 .merge(get_geo_ip_config_paths().await)
                 .merge(get_dst_ip_rule_config_paths().await)
                 .merge(get_static_nat_mapping_config_paths().await)
+                .merge(get_dns_redirect_config_paths().await)
                 .with_state(landscape_app_status.clone()),
         )
         .nest(

@@ -44,6 +44,7 @@ use crate::{
         route_lan::RouteLanServiceConfig,
         route_wan::RouteWanServiceConfig,
     },
+    dns::redirect::DNSRedirectRule,
     firewall::FirewallRuleConfig,
     flow::FlowConfig,
     ip_mark::WanIpRuleConfig,
@@ -108,6 +109,9 @@ pub struct InitConfig {
 
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub static_nat_mappings: Vec<StaticNatMappingConfig>,
+
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub dns_redirects: Vec<DNSRedirectRule>,
 }
 
 /// auth realte config

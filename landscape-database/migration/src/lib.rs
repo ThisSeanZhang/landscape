@@ -20,6 +20,7 @@ mod m20250530_142817_geo_ip;
 mod m20250706_165958_route_lan;
 mod m20250706_170000_route_wan;
 mod m20250814_084024_static_nat_mapping;
+mod m20250901_031230_dns_redirect;
 mod tables;
 
 pub struct Migrator;
@@ -48,6 +49,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20250706_165958_route_lan::Migration),
             Box::new(m20250706_170000_route_wan::Migration),
             Box::new(m20250814_084024_static_nat_mapping::Migration),
+            Box::new(m20250901_031230_dns_redirect::Migration),
         ]
     }
 }

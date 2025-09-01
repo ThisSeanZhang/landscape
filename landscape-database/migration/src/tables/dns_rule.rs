@@ -14,3 +14,15 @@ pub enum DNSRuleConfigs {
     FlowId,
     UpdateAt,
 }
+
+#[derive(Iden)]
+pub enum DNSRedirectRuleConfigs {
+    Table,
+    Id,
+    Remark,
+    Enable,
+    MatchRules,
+    ResultInfo,
+    ApplyFlows,
+    UpdateAt,
+}

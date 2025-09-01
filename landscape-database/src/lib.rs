@@ -13,7 +13,6 @@ pub mod provider;
 pub mod ra;
 pub mod wifi;
 
-pub mod dns_rule;
 pub mod dst_ip_rule;
 pub mod firewall_rule;
 pub mod flow_rule;
@@ -26,6 +25,9 @@ pub mod route_wan;
 
 pub mod nat;
 pub mod static_nat_mapping;
+
+pub mod dns_redirect;
+pub mod dns_rule;
 
 /// 定义 ID 类型
 pub(crate) type DBId = Uuid;

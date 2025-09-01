@@ -10,6 +10,8 @@ use crate::config::dns::{CloudflareMode, DnsUpstreamType, DomainConfig, FilterRe
 use crate::flow::mark::FlowMark;
 use crate::flow::DnsRuntimeMarkInfo;
 
+pub mod redirect;
+
 #[derive(Debug, Clone)]
 pub struct RuleHandlerInfo {
     pub rule_id: Option<Uuid>,

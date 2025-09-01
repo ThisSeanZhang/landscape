@@ -90,6 +90,10 @@ async function select_key(value: string, option: any) {
 
 const attributes = ref<Set<string> | null>(null);
 async function typing_attribute(name: string, key: string) {
+  if (!(name && key)) {
+    return;
+  }
+
   try {
     loading_attrs.value = true;
     let config = await get_geo_site_cache_detail({
@@ -151,7 +155,7 @@ const attribute_options = computed(() => {
       />
 
       <n-select
-        :style="{ width: '100px' }"
+        :style="{ width: '120px' }"
         v-model:value="attribute_key"
         filterable
         placeholder="筛选 attr"

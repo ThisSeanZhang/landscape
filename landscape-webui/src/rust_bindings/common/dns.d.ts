@@ -4,6 +4,21 @@ import type { GeoConfigKey } from "./geo.d";
 
 export type CloudflareMode = "plaintext" | "tls" | "https";
 
+export type DNSRedirectRuleConfig = {
+  id: string;
+  remark: string;
+  enable: boolean;
+  /**
+   * DNS Query Result
+   */
+  result: Array<string>;
+  /**
+   * Match Domains
+   */
+  source: Array<DomainConfig>;
+  update_at: number;
+};
+
 export type DNSResolveMode = { "t": "redirect"; ips: Array<string> } | {
   "t": "upstream";
   upstream: DnsUpstreamType;
@@ -44,6 +59,13 @@ export type DNSRuleConfig = {
   flow_id: number;
   update_at: number;
 };
+
+export type DnsUpstreamMode = {
+  "t": "upstream";
+  upstream: DnsUpstreamType;
+  ips: Array<string>;
+  port: number | null;
+} | { "t": "cloudflare"; mode: CloudflareMode };
 
 export type DnsUpstreamType = { "t": "plaintext" } | {
   "t": "tls";
