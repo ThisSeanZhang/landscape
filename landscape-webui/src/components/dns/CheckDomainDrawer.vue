@@ -81,7 +81,10 @@ async function quick_btn(record_type: LandscapeDnsRecordType, domain: string) {
     placement="right"
     :mask-closable="false"
   >
-    <n-drawer-content title="测试域名查询 (结果不会被缓存)" closable>
+    <n-drawer-content
+      :title="`测试 flow: ${flow_id} 域名查询 (结果不会被缓存)`"
+      closable
+    >
       <n-flex style="height: 100%" vertical>
         <n-flex :wrap="false" justify="space-between">
           <n-button

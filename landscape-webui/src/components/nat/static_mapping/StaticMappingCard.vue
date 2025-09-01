@@ -1,14 +1,12 @@
 <script setup lang="ts">
 import { delete_static_nat_mapping } from "@/api/static_nat_mapping";
 import { StaticNatMappingConfig } from "@/rust_bindings/common/nat";
-import { useThemeVars } from "naive-ui";
 import { computed, ref } from "vue";
 import { DotMark } from "@vicons/carbon";
 
 const rule = defineModel<StaticNatMappingConfig>("rule", { required: true });
 
 const show_edit_modal = ref(false);
-const themeVars = ref(useThemeVars());
 
 const emit = defineEmits(["refresh"]);
 
@@ -35,15 +33,9 @@ async function del() {
   <n-flex>
     <n-card size="small" style="flex: 1; min-height: 150px">
       <template #header>
-        <n-flex align="center" :wrap="false">
-          <n-icon :color="rule.enable ? themeVars.successColor : ''" size="14">
-            <DotMark />
-          </n-icon>
-          <n-ellipsis>
-            {{ rule.remark !== "" ? rule.remark : "无备注" }}
-          </n-ellipsis>
-        </n-flex>
+        <StatusTitle :enable="rule.enable" :remark="rule.remark"></StatusTitle>
       </template>
+
       <!-- {{ rule }} -->
 
       <n-descriptions
@@ -59,15 +51,8 @@ async function del() {
             {{ rule.enable }}
           </n-tag>
         </n-descriptions-item> -->
-        <n-descriptions-item label="IPv4 映射">
-          {{
-            rule.lan_ipv4
-              ? `${rule.wan_port} => ${rule.lan_ipv4}:${rule.lan_port}`
-              : "无映射"
-          }}
-        </n-descriptions-item>
 
-        <n-descriptions-item label="协议" content-style="width:120px">
+        <n-descriptions-item label="IPv4 协议" content-style="width:120px">
           <n-flex>
             <n-tag
               :bordered="false"
@@ -79,15 +64,15 @@ async function del() {
           </n-flex>
         </n-descriptions-item>
 
-        <n-descriptions-item label="IPv6 映射">
+        <n-descriptions-item label="IPv4 映射">
           {{
-            rule.lan_ipv6
-              ? `${rule.wan_port} => [${rule.lan_ipv6}]:${rule.lan_port}`
+            rule.lan_ipv4
+              ? `${rule.wan_port} => ${rule.lan_ipv4}:${rule.lan_port}`
               : "无映射"
           }}
         </n-descriptions-item>
 
-        <n-descriptions-item label="协议" content-style="width:120px">
+        <n-descriptions-item label="IPv6 协议" content-style="width:120px">
           <n-flex>
             <n-tag
               :bordered="false"
@@ -98,12 +83,21 @@ async function del() {
             </n-tag>
           </n-flex>
         </n-descriptions-item>
-        <!-- <n-descriptions-item label="备注">
-          {{ rule.remark === "" ? "无备注" : rule.remark }}
-        </n-descriptions-item> -->
+
         <n-descriptions-item label="创建时间">
           <n-time :time="rule.update_at" format="yyyy-MM-dd hh:mm:ss" />
         </n-descriptions-item>
+
+        <n-descriptions-item label="IPv6 映射" span="2">
+          {{
+            rule.lan_ipv6
+              ? `${rule.wan_port} => [${rule.lan_ipv6}]:${rule.lan_port}`
+              : "无映射"
+          }}
+        </n-descriptions-item>
+        <!-- <n-descriptions-item label="备注">
+          {{ rule.remark === "" ? "无备注" : rule.remark }}
+        </n-descriptions-item> -->
       </n-descriptions>
       <template #header-extra>
         <n-flex>

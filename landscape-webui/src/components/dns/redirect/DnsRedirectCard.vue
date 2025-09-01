@@ -33,14 +33,16 @@ async function del() {
       size="small"
     >
       <n-descriptions-item label="匹配规则">
-        <n-flex>
-          <RuleSourceExhibit v-for="rule in rule.match_rules" :source="rule">
-          </RuleSourceExhibit>
-        </n-flex>
+        <n-scrollbar style="height: 120px">
+          <n-flex>
+            <RuleSourceExhibit v-for="rule in rule.match_rules" :source="rule">
+            </RuleSourceExhibit>
+          </n-flex>
+        </n-scrollbar>
         <!-- {{ rule.match_rules }} -->
       </n-descriptions-item>
 
-      <n-descriptions-item label="响应记录">
+      <n-descriptions-item label="回应信息">
         {{ rule.result_info }}
       </n-descriptions-item>
     </n-descriptions>

@@ -184,56 +184,58 @@ const isIndeterminate = computed(() => {
     @after-enter="enter"
     :bordered="false"
   >
-    <!-- {{ isModified }} -->
-    <n-form
-      v-if="rule"
-      :rules="rules"
-      style="flex: 1"
-      ref="formRef"
-      :model="rule"
-      :cols="5"
-    >
-      <n-grid :cols="2">
-        <!-- <n-form-item-gi label="优先级" :span="2">
+    <n-flex vertical>
+      <n-alert type="info"> 当前需要额外在防火墙开放静态映射端口 </n-alert>
+      <!-- {{ isModified }} -->
+      <n-form
+        v-if="rule"
+        :rules="rules"
+        style="flex: 1"
+        ref="formRef"
+        :model="rule"
+        :cols="5"
+      >
+        <n-grid :cols="2">
+          <!-- <n-form-item-gi label="优先级" :span="2">
           <n-input-number v-model:value="rule.index" clearable />
         </n-form-item-gi> -->
-        <n-form-item-gi label="启用" :span="2">
-          <n-switch v-model:value="rule.enable">
-            <template #checked> 启用 </template>
-            <template #unchecked> 禁用 </template>
-          </n-switch>
-        </n-form-item-gi>
+          <n-form-item-gi label="启用" :span="2">
+            <n-switch v-model:value="rule.enable">
+              <template #checked> 启用 </template>
+              <template #unchecked> 禁用 </template>
+            </n-switch>
+          </n-form-item-gi>
 
-        <n-form-item-gi label="允许协议" :span="2">
-          <n-flex justify="space-between" style="flex: 1">
-            <n-flex>
-              <n-checkbox
-                v-model:checked="allSelected"
-                :indeterminate="isIndeterminate"
-              >
-                全选
-              </n-checkbox>
+          <n-form-item-gi label="允许协议" :span="2">
+            <n-flex justify="space-between" style="flex: 1">
+              <n-flex>
+                <n-checkbox
+                  v-model:checked="allSelected"
+                  :indeterminate="isIndeterminate"
+                >
+                  全选
+                </n-checkbox>
+              </n-flex>
+              <n-flex>
+                <n-checkbox-group v-model:value="rule.ipv4_l4_protocol">
+                  <n-space item-style="display: flex;">
+                    <n-checkbox :value="6" label="TCP v4" />
+                    <n-checkbox :value="17" label="UDP v4" />
+                  </n-space>
+                </n-checkbox-group>
+              </n-flex>
+              <n-flex>
+                <n-checkbox-group v-model:value="rule.ipv6_l4_protocol">
+                  <n-space item-style="display: flex;">
+                    <n-checkbox :value="6" label="TCP v6" />
+                    <n-checkbox :value="17" label="UDP v6" />
+                  </n-space>
+                </n-checkbox-group>
+              </n-flex>
             </n-flex>
-            <n-flex>
-              <n-checkbox-group v-model:value="rule.ipv4_l4_protocol">
-                <n-space item-style="display: flex;">
-                  <n-checkbox :value="6" label="TCP v4" />
-                  <n-checkbox :value="17" label="UDP v4" />
-                </n-space>
-              </n-checkbox-group>
-            </n-flex>
-            <n-flex>
-              <n-checkbox-group v-model:value="rule.ipv6_l4_protocol">
-                <n-space item-style="display: flex;">
-                  <n-checkbox :value="6" label="TCP v6" />
-                  <n-checkbox :value="17" label="UDP v6" />
-                </n-space>
-              </n-checkbox-group>
-            </n-flex>
-          </n-flex>
-        </n-form-item-gi>
+          </n-form-item-gi>
 
-        <!-- <n-form-item-gi :span="5" label="进入的 wan">
+          <!-- <n-form-item-gi :span="5" label="进入的 wan">
           <n-radio-group v-model:value="rule.wan_iface_name" name="filter">
             <n-radio-button
               v-for="opt in get_dns_filter_options()"
@@ -244,40 +246,42 @@ const isIndeterminate = computed(() => {
           </n-radio-group>
         </n-form-item-gi> -->
 
-        <n-form-item-gi
-          path="wan_port"
-          :span="1"
-          label="开放端口 (不能与 NAT 映射端口重叠)"
-        >
-          <n-input-number
-            style="flex: 1; padding-right: 10px"
-            v-model:value="rule.wan_port"
-          />
-        </n-form-item-gi>
+          <n-form-item-gi
+            path="wan_port"
+            :span="1"
+            label="开放端口 (不能与 NAT 映射端口重叠)"
+          >
+            <n-input-number
+              style="flex: 1; padding-right: 10px"
+              v-model:value="rule.wan_port"
+            />
+          </n-form-item-gi>
 
-        <n-form-item-gi path="lan_port" :span="1" label="内网目标端口">
-          <n-input-number style="flex: 1" v-model:value="rule.lan_port" />
-        </n-form-item-gi>
+          <n-form-item-gi path="lan_port" :span="1" label="内网目标端口">
+            <n-input-number style="flex: 1" v-model:value="rule.lan_port" />
+          </n-form-item-gi>
 
-        <n-form-item-gi :span="2" path="lan_ipv4" label="内网目标 IPv4">
-          <n-input
-            placeholder="如果开放的是路由的端口，那么就设置为 0.0.0.0 不映射留空即可"
-            v-model:value="rule.lan_ipv4"
-          />
-        </n-form-item-gi>
+          <n-form-item-gi :span="2" path="lan_ipv4" label="内网目标 IPv4">
+            <n-input
+              placeholder="如果开放的是路由的端口，那么就设置为 0.0.0.0 不映射留空即可"
+              v-model:value="rule.lan_ipv4"
+            />
+          </n-form-item-gi>
 
-        <n-form-item-gi :span="2" path="lan_ipv6" label="内网目标 IPv6">
-          <n-input
-            placeholder="如果开放的是路由的端口，那么就设置为 :: 不映射留空即可"
-            v-model:value="rule.lan_ipv6"
-          />
-        </n-form-item-gi>
+          <n-form-item-gi :span="2" path="lan_ipv6" label="内网目标 IPv6">
+            <n-input
+              placeholder="如果开放的是路由的端口，那么就设置为 :: 不映射留空即可"
+              v-model:value="rule.lan_ipv6"
+            />
+          </n-form-item-gi>
 
-        <n-form-item-gi :span="2" label="备注">
-          <n-input v-model:value="rule.remark" type="textarea" />
-        </n-form-item-gi>
-      </n-grid>
-    </n-form>
+          <n-form-item-gi :span="2" label="备注">
+            <n-input v-model:value="rule.remark" type="textarea" />
+          </n-form-item-gi>
+        </n-grid>
+      </n-form>
+    </n-flex>
+
     <template #footer>
       <n-flex justify="space-between">
         <n-button @click="show = false">取消</n-button>

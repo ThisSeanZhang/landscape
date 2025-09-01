@@ -13,7 +13,7 @@ type Props = {
 const props = defineProps<Props>();
 </script>
 <template>
-  <n-flex align="center" :wrap="false">
+  <n-flex align="center" :size="[3, 0]" :wrap="false">
     <n-icon :color="enable ? themeVars.successColor : ''" size="14">
       <DotMark />
     </n-icon>
