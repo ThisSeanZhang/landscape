@@ -119,10 +119,15 @@ async function saveRule() {
 
 const flow_rules = ref<any[]>([]);
 const flow_options = computed(() => {
-  return flow_rules.value.map((e) => ({
+  const result = flow_rules.value.map((e) => ({
     value: e.flow_id,
     label: e.remark ? `${e.flow_id} - ${e.remark}` : e.flow_id,
   }));
+  result.unshift({
+    label: "默认流",
+    value: 0,
+  });
+  return result;
 });
 const flow_search_loading = ref(false);
 async function search_flows() {

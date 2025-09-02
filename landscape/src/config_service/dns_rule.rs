@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use landscape_common::{
     config::dns::DNSRuleConfig,
     event::dns::DnsEvent,
-    service::controller_service::{ConfigController, FlowConfigController},
+    service::controller_service_v2::{ConfigController, FlowConfigController},
 };
 use landscape_database::{
     dns_rule::repository::DNSRuleRepository, provider::LandscapeDBServiceProvider,

@@ -186,84 +186,126 @@ impl GeoSiteService {
 
     pub async fn convert_config_to_runtime_rule(
         &self,
-        configs: Vec<DNSRuleConfig>,
+        mut configs: Vec<DNSRuleConfig>,
     ) -> Vec<DNSRuntimeRule> {
         let time = Instant::now();
-        let mut lock = self.file_cache.lock().await;
         let mut result = Vec::with_capacity(configs.len());
+
+        let mut applied_config = HashSet::new();
+        configs.sort_by(|a, b| a.index.cmp(&b.index));
+
         for config in configs.into_iter() {
             if !config.enable {
                 continue;
             }
 
-            let mut usage_keys = HashSet::new();
-            let mut source = vec![];
-
-            let mut inverse_keys: HashMap<String, HashSet<String>> = HashMap::new();
-            for each in config.source.into_iter() {
-                match each {
-                    RuleSource::GeoKey(k) if k.inverse => {
-                        inverse_keys.entry(k.name).or_default().insert(k.key);
-                    }
-                    RuleSource::GeoKey(k) => {
-                        let file_cache_key = k.get_file_cache_key();
-                        let predicate: Box<dyn Fn(&GeoSiteFileConfig) -> bool> =
-                            if let Some(attr) = k.attribute_key {
-                                let attr = attr.clone();
-                                Box::new(move |config: &GeoSiteFileConfig| {
-                                    config.attributes.contains(&attr)
-                                })
-                            } else {
-                                Box::new(move |_: &GeoSiteFileConfig| true)
-                            };
-                        if let Some(domains) = lock.get(&file_cache_key) {
-                            source.extend(
-                                domains.values.into_iter().filter(predicate).map(Into::into),
-                            );
-                        }
-                        usage_keys.insert(file_cache_key);
-                    }
-                    RuleSource::Config(c) => {
-                        source.push(c);
-                    }
+            let insert_source = if config.source.len() > 0 {
+                let source = self.get_geo_key_rules_v2(config.source, &mut applied_config).await;
+                if source.len() == 0 {
+                    // 去重后匹配的规则为空 不设置
+                    tracing::info!("[{}:{}] final DNS match rule is: 0", config.index, config.name);
+                    None
+                } else {
+                    tracing::info!(
+                        "[{}:{}] match rule size is: {}",
+                        config.index,
+                        config.name,
+                        source.len()
+                    );
+                    Some(source)
                 }
-            }
+            } else {
+                // 本就是空的 那就直接设置
+                Some(vec![])
+            };
 
-            if inverse_keys.len() > 0 {
-                let all_keys: Vec<_> = lock.keys();
-                tracing::debug!("all_keys {:?}", all_keys.len());
-                tracing::debug!("{:?}", inverse_keys);
-                for (inverse_key, excluded_names) in inverse_keys {
-                    for key in all_keys.iter().filter(|k| k.name == inverse_key) {
-                        if !excluded_names.contains(&key.key) {
-                            if let Some(domains) = lock.get(key) {
-                                if !usage_keys.contains(key) {
-                                    usage_keys.insert(key.clone());
-                                    source.extend(domains.values.into_iter().map(Into::into));
-                                }
-                            }
-                            // } else {
-                            //     tracing::debug!("excluded_names: {:#?}", key);
-                        }
-                    }
-                }
-                tracing::debug!("using key len: {:#?}", usage_keys.len());
-            }
+            tracing::debug!(
+                "[{}:{}] covert config current time: {:?}ms",
+                config.index,
+                config.name,
+                time.elapsed().as_millis()
+            );
 
-            result.push(DNSRuntimeRule {
-                source,
-                id: config.id,
-                name: config.name,
-                index: config.index,
-                enable: config.enable,
-                filter: config.filter,
-                resolve_mode: config.resolve_mode,
-                mark: config.mark,
-                flow_id: config.flow_id,
-            });
+            if let Some(source) = insert_source {
+                result.push(DNSRuntimeRule {
+                    source,
+                    id: config.id,
+                    name: config.name,
+                    index: config.index,
+                    enable: config.enable,
+                    filter: config.filter,
+                    resolve_mode: config.resolve_mode,
+                    mark: config.mark,
+                    flow_id: config.flow_id,
+                });
+            }
         }
-        tracing::debug!("covert config time: {:?}s", time.elapsed().as_secs());
         result
+    }
+
+    async fn get_geo_key_rules_v2(
+        &self,
+        rule_source: Vec<RuleSource>,
+        applied_config: &mut HashSet<GeoFileCacheKey>,
+    ) -> Vec<DomainConfig> {
+        let mut lock = self.file_cache.lock().await;
+
+        let mut source = vec![];
+
+        let mut inverse_keys: HashMap<String, HashSet<String>> = HashMap::new();
+        for each in rule_source.into_iter() {
+            match each {
+                RuleSource::GeoKey(k) if k.inverse => {
+                    inverse_keys.entry(k.name).or_default().insert(k.key);
+                }
+                RuleSource::GeoKey(k) => {
+                    let file_cache_key = k.get_file_cache_key();
+                    if applied_config.contains(&file_cache_key) {
+                        continue;
+                    }
+                    let predicate: Box<dyn Fn(&GeoSiteFileConfig) -> bool> =
+                        if let Some(attr) = k.attribute_key {
+                            let attr = attr.clone();
+                            Box::new(move |config: &GeoSiteFileConfig| {
+                                config.attributes.contains(&attr)
+                            })
+                        } else {
+                            Box::new(move |_: &GeoSiteFileConfig| true)
+                        };
+                    if let Some(domains) = lock.get(&file_cache_key) {
+                        source.extend(domains.values.into_iter().filter(predicate).map(Into::into));
+                    }
+                    applied_config.insert(file_cache_key);
+                }
+                RuleSource::Config(c) => {
+                    source.push(c);
+                }
+            }
+        }
+
+        if inverse_keys.len() > 0 {
+            let time = Instant::now();
+            tracing::debug!("{:?}", inverse_keys);
+            for (inverse_key, excluded_names) in inverse_keys {
+                let all_keys: Vec<_> =
+                    lock.filter_keys(|k| k.name == inverse_key).cloned().collect();
+                for key in all_keys.iter() {
+                    if !excluded_names.contains(&key.key) {
+                        if !applied_config.contains(key) {
+                            if let Some(domains) = lock.get(key) {
+                                applied_config.insert(key.clone());
+                                source.extend(domains.values.into_iter().map(Into::into));
+                            }
+                        }
+                        // } else {
+                        //     tracing::debug!("excluded_names: {:#?}", key);
+                    }
+                }
+            }
+            tracing::debug!("inverse insert time: {}ms", time.elapsed().as_millis());
+        }
+
+        source
     }
 
     pub async fn refresh(&self, force: bool) {

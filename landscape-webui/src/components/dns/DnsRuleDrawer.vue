@@ -21,7 +21,12 @@ const show = defineModel<boolean>("show", { required: true });
 const rules = ref<any>([]);
 
 async function read_rules() {
-  rules.value = await get_flow_dns_rules(props.flow_id);
+  rule_loading_spin.value = true;
+  try {
+    rules.value = await get_flow_dns_rules(props.flow_id);
+  } finally {
+    rule_loading_spin.value = false;
+  }
 }
 
 const show_create_modal = ref(false);
@@ -66,6 +71,7 @@ const title = computed(() => {
     return `编辑 Flow: ${props.flow_id} DNS 规则`;
   }
 });
+const rule_loading_spin = ref(false);
 </script>
 <template>
   <n-drawer
@@ -74,43 +80,55 @@ const title = computed(() => {
     width="500px"
     placement="right"
   >
-    <n-drawer-content :title="title" closable>
-      <n-flex style="height: 100%" vertical>
-        <n-flex>
-          <n-button style="flex: 1" @click="show_create_modal = true">
-            增加规则
-          </n-button>
-          <n-button style="flex: 1" @click="export_config">
-            导出规则至剪贴板
-          </n-button>
-          <n-popconfirm @positive-click="import_rules">
-            <template #trigger>
-              <n-button style="flex: 1" @click=""> 从剪贴板导入规则 </n-button>
-            </template>
-            确定从剪贴板导入吗?
-          </n-popconfirm>
-          <n-button @click="show_query_modal = true">
-            <template #icon>
-              <n-icon>
-                <SearchLocate />
-              </n-icon>
-            </template>
-          </n-button>
-        </n-flex>
-
-        <n-scrollbar>
-          <n-flex vertical>
-            <DnsRuleCard
-              @refresh="read_rules()"
-              v-for="rule in rules"
-              :key="rule.index"
-              :rule="rule"
-            >
-            </DnsRuleCard>
+    <n-drawer-content
+      :loading="true"
+      :title="title"
+      closable
+      :native-scrollbar="false"
+      body-content-style="height: 100%; padding: 14px 16px"
+    >
+      <n-spin
+        style="height: 100%"
+        content-style="height: 100%"
+        :show="rule_loading_spin"
+      >
+        <n-flex style="height: 100%" vertical>
+          <n-flex>
+            <n-button style="flex: 1" @click="show_create_modal = true">
+              增加规则
+            </n-button>
+            <n-button style="flex: 1" @click="export_config">
+              导出规则至剪贴板
+            </n-button>
+            <n-popconfirm @positive-click="import_rules">
+              <template #trigger>
+                <n-button style="flex: 1" @click="">
+                  从剪贴板导入规则
+                </n-button>
+              </template>
+              确定从剪贴板导入吗?
+            </n-popconfirm>
+            <n-button @click="show_query_modal = true">
+              <template #icon>
+                <n-icon>
+                  <SearchLocate />
+                </n-icon>
+              </template>
+            </n-button>
           </n-flex>
-        </n-scrollbar>
-      </n-flex>
-
+          <n-scrollbar>
+            <n-flex vertical>
+              <DnsRuleCard
+                @refresh="read_rules()"
+                v-for="rule in rules"
+                :key="rule.index"
+                :rule="rule"
+              >
+              </DnsRuleCard>
+            </n-flex>
+          </n-scrollbar>
+        </n-flex>
+      </n-spin>
       <DnsRuleEditModal
         v-model:show="show_create_modal"
         :flow_id="props.flow_id"

@@ -1,4 +1,8 @@
-use landscape_common::{database::repository::UpdateActiveModel, dns::redirect::DNSRedirectRule};
+use landscape_common::{
+    database::{repository::UpdateActiveModel, LandscapeDBFlowFilterExpr},
+    dns::redirect::DNSRedirectRule,
+};
+use migration::SimpleExpr;
 use sea_orm::{entity::prelude::*, ActiveValue::Set};
 use serde::{Deserialize, Serialize};
 use serde_json;
@@ -87,5 +91,14 @@ impl UpdateActiveModel<ActiveModel> for DNSRedirectRule {
         active.result_info = Set(serde_json::to_value(self.result_info).unwrap().into());
         active.apply_flows = Set(serde_json::to_value(self.apply_flows).unwrap().into());
         active.update_at = Set(self.update_at);
+    }
+}
+
+impl LandscapeDBFlowFilterExpr for DNSRedirectRuleConfigModel {
+    fn get_flow_filter(id: landscape_common::config::FlowId) -> SimpleExpr {
+        Expr::cust_with_values(
+            "EXISTS (SELECT 1 FROM json_each(apply_flows) WHERE json_each.value = ?)",
+            vec![Value::String(Some(Box::new(id.to_string())))],
+        )
     }
 }

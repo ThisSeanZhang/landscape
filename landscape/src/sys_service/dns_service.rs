@@ -2,7 +2,7 @@ use std::time::Instant;
 
 use landscape_common::{
     event::dns::DnsEvent,
-    service::{controller_service::FlowConfigController, DefaultWatchServiceStatus},
+    service::{controller_service_v2::FlowConfigController, DefaultWatchServiceStatus},
 };
 use landscape_dns::{
     reuseport_chain_server::LandscapeReusePortChainDnsServer, CheckDnsReq, CheckDnsResult,
@@ -10,7 +10,7 @@ use landscape_dns::{
 use tokio::sync::mpsc;
 
 use crate::config_service::{
-    dns_rule::DNSRuleService, flow_rule::FlowRuleService, geo_site_service::GeoSiteService,
+    dns::redirect::DNSRedirectService, dns_rule::DNSRuleService, geo_site_service::GeoSiteService,
 };
 
 #[derive(Clone)]
@@ -18,7 +18,7 @@ use crate::config_service::{
 pub struct LandscapeDnsService {
     dns_service: LandscapeReusePortChainDnsServer,
     dns_rule_service: DNSRuleService,
-    flow_rule_service: FlowRuleService,
+    dns_redirect_rule_service: DNSRedirectService,
     geo_site_service: GeoSiteService,
 }
 
@@ -26,7 +26,7 @@ impl LandscapeDnsService {
     pub async fn new(
         mut receiver: mpsc::Receiver<DnsEvent>,
         dns_rule_service: DNSRuleService,
-        flow_rule_service: FlowRuleService,
+        dns_redirect_rule_service: DNSRedirectService,
         geo_site_service: GeoSiteService,
     ) -> Self {
         let dns_service = LandscapeReusePortChainDnsServer::new(53);
@@ -35,6 +35,7 @@ impl LandscapeDnsService {
         for (flow_id, value) in dns_rules {
             let dns_rules = geo_site_service.convert_config_to_runtime_rule(value).await;
             // let info = geo_site_service.convert_config_to_init_info(value).await;
+            // let dns_redirect_rules = dns_redirect_rule_service.list_flow_configs(flow_id).await;
             dns_service.refresh_flow_server(flow_id, dns_rules).await;
         }
 
@@ -99,7 +100,7 @@ impl LandscapeDnsService {
         Self {
             dns_service,
             dns_rule_service,
-            flow_rule_service,
+            dns_redirect_rule_service,
             geo_site_service,
         }
     }

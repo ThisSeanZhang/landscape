@@ -33,7 +33,7 @@ async function del() {
       size="small"
     >
       <n-descriptions-item label="匹配规则">
-        <n-scrollbar style="height: 120px">
+        <n-scrollbar style="height: 90px">
           <n-flex>
             <RuleSourceExhibit v-for="rule in rule.match_rules" :source="rule">
             </RuleSourceExhibit>
@@ -45,18 +45,18 @@ async function del() {
       <n-descriptions-item label="回应信息">
         {{ rule.result_info }}
       </n-descriptions-item>
+
+      <n-descriptions-item label="应用于">
+        <n-flex v-if="rule.apply_flows.length > 0">
+          <n-tag v-for="value in rule.apply_flows" :bordered="false">
+            {{ value === 0 ? "默认流" : value }}
+          </n-tag>
+        </n-flex>
+        <n-flex v-else>
+          <span style="min-height: 28px">全部 Flow </span>
+        </n-flex>
+      </n-descriptions-item>
     </n-descriptions>
-    <template #action>
-      <n-flex v-if="rule.apply_flows.length > 0">
-        <n-tag v-for="value in rule.apply_flows" :bordered="false">
-          {{ value }}
-        </n-tag>
-      </n-flex>
-      <n-flex v-else>
-        <span style="min-height: 28px">全部 Flow 应用</span>
-      </n-flex>
-      <!-- {{ rule.apply_flows }} -->
-    </template>
 
     <template #header-extra>
       <n-flex>

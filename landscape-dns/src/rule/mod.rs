@@ -210,24 +210,3 @@ impl ResolutionRule {
         self.resolver.lookup(domain, query_type).await
     }
 }
-
-// pub fn convert_config_to_runtime_rule(
-//     config: &DNSRuleConfig,
-//     geo_file: &HashMap<String, Vec<DomainConfig>>,
-// ) -> Vec<DomainConfig> {
-//     let mut all_domain_rules = vec![];
-//     for each in config.source.iter() {
-//         match each {
-//             RuleSource::GeoKey(config_key) => {
-//                 if let Some(domains) = geo_file.get(&key.to_uppercase()) {
-//                     all_domain_rules.extend(domains.iter().cloned());
-//                 }
-//             }
-//             RuleSource::Config(c) => {
-//                 // all_domain_rules.extend(vec.iter().cloned());
-//                 all_domain_rules.push(c.clone());
-//             }
-//         }
-//     }
-//     all_domain_rules
-// }

@@ -145,10 +145,12 @@ async fn run(home_path: PathBuf, config: RuntimeConfig) -> LdResult<()> {
     )
     .await;
 
+    let dns_redirect_service = DNSRedirectService::new(db_store_provider.clone()).await;
+
     let dns_service = LandscapeDnsService::new(
         dns_service_rx,
         dns_rule_service.clone(),
-        flow_rule_service.clone(),
+        dns_redirect_service.clone(),
         geo_site_service.clone(),
     )
     .await;
@@ -206,8 +208,6 @@ async fn run(home_path: PathBuf, config: RuntimeConfig) -> LdResult<()> {
 
     let static_nat_mapping_config_service =
         StaticNatMappingService::new(db_store_provider.clone()).await;
-
-    let dns_redirect_service = DNSRedirectService::new(db_store_provider.clone()).await;
 
     docker_service.start_to_listen_event().await;
 

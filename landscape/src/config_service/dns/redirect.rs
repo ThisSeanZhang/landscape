@@ -1,5 +1,6 @@
 use landscape_common::{
-    dns::redirect::DNSRedirectRule, service::controller_service_v2::ConfigController,
+    dns::redirect::DNSRedirectRule,
+    service::controller_service_v2::{ConfigController, FlowConfigController},
 };
 use landscape_database::{
     dns_redirect::repository::DNSRedirectRuleRepository, provider::LandscapeDBServiceProvider,
@@ -22,6 +23,8 @@ impl DNSRedirectService {
         dns_rule_service
     }
 }
+
+impl FlowConfigController for DNSRedirectService {}
 
 #[async_trait::async_trait]
 impl ConfigController for DNSRedirectService {

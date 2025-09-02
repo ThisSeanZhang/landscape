@@ -1,5 +1,5 @@
 use landscape_common::{
-    database::{repository::Repository, LandscapeDBTrait},
+    database::{repository::Repository, LandscapeDBTrait, LandscapeFlowTrait},
     dns::redirect::DNSRedirectRule,
     // error::LdError,
 };
@@ -42,6 +42,9 @@ impl DNSRedirectRuleRepository {
 
 #[async_trait::async_trait]
 impl LandscapeDBTrait for DNSRedirectRuleRepository {}
+
+#[async_trait::async_trait]
+impl LandscapeFlowTrait for DNSRedirectRuleRepository {}
 
 #[async_trait::async_trait]
 impl Repository for DNSRedirectRuleRepository {
