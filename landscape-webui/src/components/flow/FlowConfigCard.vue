@@ -123,17 +123,19 @@ const title_name = computed(() =>
         </n-tag>
       </n-descriptions-item>
     </n-descriptions> -->
-    <n-tag v-if="config.flow_match_rules.length > 0" :bordered="false">
-      {{
-        `${
-          config.flow_match_rules[0].vlan_id
-            ? `${config.flow_match_rules[0].vlan_id}@`
-            : ""
-        }${config.flow_match_rules[0].ip}`
-      }}
-    </n-tag>
-    <n-flex style="flex: 1" justify="center" align="center" v-else>
+
+    <n-flex
+      align="center"
+      justify="center"
+      v-if="config.flow_match_rules.length == 0"
+      style="flex: 1"
+    >
       <n-empty :show-icon="false" description="没有入口规则"> </n-empty>
+    </n-flex>
+    <n-flex v-else>
+      <n-tag v-for="item in config.flow_match_rules" :bordered="false">
+        {{ `${item.vlan_id ? `${item.vlan_id}@` : ""}${item.ip}` }}
+      </n-tag>
     </n-flex>
     <template #action>
       <n-tag v-for="each in config.flow_targets" :bordered="false">

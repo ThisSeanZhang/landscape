@@ -133,6 +133,22 @@ const flow_search_loading = ref(false);
 async function search_flows() {
   flow_rules.value = await get_flow_rules();
 }
+
+async function export_config() {
+  if (rule.value) {
+    let configs = rule.value.match_rules;
+    await copy_context_to_clipboard(message, JSON.stringify(configs, null, 2));
+  }
+}
+
+async function import_rules() {
+  try {
+    if (rule.value) {
+      let rules = JSON.parse(await read_context_from_clipboard());
+      rule.value.match_rules = rules;
+    }
+  } catch (e) {}
+}
 </script>
 
 <template>
@@ -169,9 +185,18 @@ async function search_flows() {
           <n-input v-model:value="rule.remark" />
         </n-form-item-gi>
 
-        <n-form-item-gi :span="2" label="匹配域名规则" path="match_rules">
-          <DomainMatchInput v-model:source="rule.match_rules">
-          </DomainMatchInput>
+        <n-form-item-gi :span="2" label="选择应用的 Flow, 为空时全部 Flow 应用">
+          <n-select
+            multiple
+            v-model:value="rule.apply_flows"
+            filterable
+            placeholder="选择应用的流 ID"
+            :options="flow_options"
+            :loading="flow_search_loading"
+            clearable
+            remote
+            @search="search_flows"
+          />
         </n-form-item-gi>
 
         <n-form-item-gi :span="2" label="返回的重定向结果" path="result_info">
@@ -185,6 +210,7 @@ async function search_flows() {
               :rule="ipRule"
               ignore-path-change
               :show-label="false"
+              :show-feedback="false"
               style="margin-bottom: 0; flex: 1"
             >
               <n-input
@@ -196,18 +222,39 @@ async function search_flows() {
           </n-dynamic-input>
         </n-form-item-gi>
 
-        <n-form-item-gi :span="2" label="选择应用的 Flow, 为空时全部 Flow 应用">
-          <n-select
-            multiple
-            v-model:value="rule.apply_flows"
-            filterable
-            placeholder="选择应用的流 ID"
-            :options="flow_options"
-            :loading="flow_search_loading"
-            clearable
-            remote
-            @search="search_flows"
-          />
+        <n-form-item-gi :span="2" label="匹配域名规则" path="match_rules">
+          <template #label>
+            <n-flex
+              align="center"
+              justify="space-between"
+              :wrap="false"
+              @click.stop
+            >
+              <n-flex> 处理域名匹配规则 (为空则全部匹配, 规则不分先后) </n-flex>
+              <n-flex>
+                <!-- 不确定为什么点击 label 会触发第一个按钮, 所以放置一个不可见的按钮 -->
+                <button
+                  style="
+                    width: 0;
+                    height: 0;
+                    overflow: hidden;
+                    opacity: 0;
+                    position: absolute;
+                  "
+                ></button>
+
+                <n-button :focusable="false" size="tiny" @click="export_config">
+                  复制
+                </n-button>
+                <n-button :focusable="false" size="tiny" @click="import_rules">
+                  粘贴
+                </n-button>
+              </n-flex>
+            </n-flex>
+          </template>
+
+          <DomainMatchInput v-model:source="rule.match_rules">
+          </DomainMatchInput>
         </n-form-item-gi>
       </n-grid>
     </n-form>
