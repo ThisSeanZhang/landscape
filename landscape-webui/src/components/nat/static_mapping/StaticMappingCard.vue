@@ -11,7 +11,7 @@ const show_edit_modal = ref(false);
 const emit = defineEmits(["refresh"]);
 
 async function del() {
-  if (rule.value.id !== null) {
+  if (rule.value.id) {
     await delete_static_nat_mapping(rule.value.id);
     emit("refresh");
   }

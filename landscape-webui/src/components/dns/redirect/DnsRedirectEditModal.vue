@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { useMessage } from "naive-ui";
-import { v4 as uuidv4 } from "uuid";
 
 import { computed, onMounted } from "vue";
 import { ref } from "vue";
@@ -42,13 +41,11 @@ async function enter() {
     rule.value = await get_dns_redirect(props.rule_id);
   } else {
     rule.value = {
-      id: uuidv4(),
       enable: true,
       remark: "",
       match_rules: [],
       result_info: [],
       apply_flows: [],
-      update_at: new Date().getTime(),
     };
   }
   origin_rule_json.value = JSON.stringify(rule.value);

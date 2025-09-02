@@ -1,3 +1,9 @@
+use uuid::Uuid;
+
 pub fn gen_uuid() -> String {
-    uuid::Uuid::new_v4().to_string()
+    Uuid::new_v4().to_string()
+}
+
+pub fn gen_database_uuid() -> Uuid {
+    Uuid::new_v4()
 }

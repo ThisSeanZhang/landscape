@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { useMessage } from "naive-ui";
 import { StaticNatMappingConfig } from "@/rust_bindings/common/nat";
-import { v4 as uuidv4 } from "uuid";
 
 import { computed } from "vue";
 import { ref } from "vue";
@@ -93,7 +92,6 @@ async function enter() {
     rule.value = await get_static_nat_mapping(props.rule_id);
   } else {
     rule.value = {
-      id: uuidv4(),
       enable: true,
       wan_port: 0,
       wan_iface_name: null,
@@ -103,7 +101,6 @@ async function enter() {
       remark: "",
       ipv4_l4_protocol: [6],
       ipv6_l4_protocol: [],
-      update_at: 0,
     };
   }
   origin_rule_json.value = JSON.stringify(rule.value);

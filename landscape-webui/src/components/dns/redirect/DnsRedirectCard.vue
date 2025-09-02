@@ -12,7 +12,7 @@ const emit = defineEmits(["refresh"]);
 
 const show_edit_modal = ref(false);
 async function del() {
-  if (props.rule.id !== null) {
+  if (props.rule.id) {
     await delete_dns_redirect(props.rule.id);
     emit("refresh");
   }

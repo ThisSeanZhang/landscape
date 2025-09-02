@@ -6,6 +6,7 @@ use uuid::Uuid;
 
 use crate::database::repository::LandscapeDBStore;
 use crate::store::storev2::LandscapeStore;
+use crate::utils::id::gen_database_uuid;
 use crate::utils::time::get_f64_timestamp;
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -52,8 +53,8 @@ impl Default for NatConfig {
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "common/nat.d.ts")]
 pub struct StaticNatMappingConfig {
-    #[serde(default)]
-    #[ts(as = "Option<_>")]
+    #[serde(default = "gen_database_uuid")]
+    #[ts(as = "Option<_>", optional)]
     pub id: Uuid,
     pub enable: bool,
     pub remark: String,
@@ -68,6 +69,7 @@ pub struct StaticNatMappingConfig {
     pub ipv4_l4_protocol: Vec<u8>,
     pub ipv6_l4_protocol: Vec<u8>,
     #[serde(default = "get_f64_timestamp")]
+    #[ts(as = "Option<_>", optional)]
     pub update_at: f64,
 }
 

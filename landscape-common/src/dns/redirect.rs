@@ -1,23 +1,24 @@
+use serde::{Deserialize, Serialize};
 use std::net::IpAddr;
+use ts_rs::TS;
+use uuid::Uuid;
 
+use crate::utils::id::gen_database_uuid;
+use crate::utils::time::get_f64_timestamp;
 use crate::{
     config::{
         dns::{DomainConfig, RuleSource},
         FlowId,
     },
     database::repository::LandscapeDBStore,
-    utils::time::get_f64_timestamp,
 };
-use landscape_macro::LandscapeRequestModel;
-use serde::{Deserialize, Serialize};
-use ts_rs::TS;
-use uuid::Uuid;
 
 /// 用于定义 DNS 重定向的单元配置
-#[derive(LandscapeRequestModel, Serialize, Deserialize, Debug, Clone, TS)]
+#[derive(Serialize, Deserialize, Debug, Clone, TS)]
 #[ts(export, export_to = "common/dns_redirect.d.ts")]
 pub struct DNSRedirectRule {
-    #[skip]
+    #[serde(default = "gen_database_uuid")]
+    #[ts(as = "Option<_>", optional)]
     pub id: Uuid,
 
     pub remark: String,
@@ -30,7 +31,8 @@ pub struct DNSRedirectRule {
 
     pub apply_flows: Vec<FlowId>,
 
-    #[skip(default = "get_f64_timestamp")]
+    #[serde(default = "get_f64_timestamp")]
+    #[ts(as = "Option<_>", optional)]
     pub update_at: f64,
 }
 

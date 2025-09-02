@@ -5,19 +5,11 @@ import type { RuleSource } from "./dns.d";
  * 用于定义 DNS 重定向的单元配置
  */
 export type DNSRedirectRule = {
-  id: string;
+  id?: string;
   remark: string;
   enable: boolean;
   match_rules: Array<RuleSource>;
   result_info: Array<string>;
   apply_flows: Array<number>;
-  update_at: number;
-};
-
-export type DNSRedirectRuleRequest = {
-  remark: string;
-  enable: boolean;
-  match_rules: Array<RuleSource>;
-  result_info: Array<string>;
-  apply_flows: Array<number>;
+  update_at?: number;
 };
