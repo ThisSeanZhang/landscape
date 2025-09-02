@@ -1,7 +1,10 @@
 use std::net::IpAddr;
 
 use crate::{
-    config::{dns::RuleSource, FlowId},
+    config::{
+        dns::{DomainConfig, RuleSource},
+        FlowId,
+    },
     database::repository::LandscapeDBStore,
     utils::time::get_f64_timestamp,
 };
@@ -35,4 +38,11 @@ impl LandscapeDBStore<Uuid> for DNSRedirectRule {
     fn get_id(&self) -> Uuid {
         self.id
     }
+}
+
+#[derive(Default, Debug)]
+pub struct DNSRedirectRuntimeRule {
+    pub id: Uuid,
+    pub match_rules: Vec<DomainConfig>,
+    pub result_info: Vec<IpAddr>,
 }

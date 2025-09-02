@@ -2,9 +2,13 @@
 import { ref } from "vue";
 import { useMessage } from "naive-ui";
 import { SearchLocate } from "@vicons/carbon";
-import { CheckDnsReq, CheckDnsResult } from "@/rust_bindings/dns";
+import { CheckChainDnsResult, CheckDnsReq } from "@/rust_bindings/dns";
 import { check_domain } from "@/api/dns_service";
 import { LandscapeDnsRecordType } from "@/rust_bindings/common/dns_record_type";
+import { DnsRule } from "@/lib/dns";
+import { get_dns_rule } from "@/api/dns_rule";
+import { DNSRedirectRule } from "@/rust_bindings/common/dns_redirect";
+import { get_dns_redirect } from "@/api/dns_rule/redirect";
 const message = useMessage();
 
 interface Props {
@@ -21,8 +25,9 @@ const req = ref<CheckDnsReq>({
   domain: "",
   record_type: "A",
 });
-const result = ref<CheckDnsResult>({
-  config: undefined,
+const result = ref<CheckChainDnsResult>({
+  redirect_id: null,
+  rule_id: null,
   records: null,
   cache_records: null,
 });
@@ -34,7 +39,8 @@ async function init_req() {
     record_type: "A",
   };
   result.value = {
-    config: undefined,
+    redirect_id: null,
+    rule_id: null,
     records: null,
     cache_records: null,
   };
@@ -51,11 +57,21 @@ const options = [
 ];
 
 const loading = ref(false);
+const config_rule = ref<DnsRule>();
+const redirect_rule = ref<DNSRedirectRule>();
 async function query() {
   if (req.value.domain !== "") {
     loading.value = true;
     try {
+      config_rule.value = undefined;
+      redirect_rule.value = undefined;
       result.value = await check_domain(req.value);
+      if (result.value.rule_id) {
+        config_rule.value = await get_dns_rule(result.value.rule_id);
+      }
+      if (result.value.redirect_id) {
+        redirect_rule.value = await get_dns_redirect(result.value.redirect_id);
+      }
     } finally {
       loading.value = false;
     }
@@ -82,7 +98,7 @@ async function quick_btn(record_type: LandscapeDnsRecordType, domain: string) {
     :mask-closable="false"
   >
     <n-drawer-content
-      :title="`测试 flow: ${flow_id} 域名查询 (结果不会被缓存)`"
+      :title="`测试 flow: ${flow_id} 域名查询 (结果不缓存)`"
       closable
     >
       <n-flex style="height: 100%" vertical>
@@ -148,42 +164,9 @@ async function quick_btn(record_type: LandscapeDnsRecordType, domain: string) {
         </n-spin>
 
         <n-scrollbar>
-          <n-flex vertical>
-            <n-descriptions
-              v-if="result.config"
-              bordered
-              title="匹配配置"
-              label-placement="top"
-              :column="3"
-            >
-              <n-descriptions-item label="名称">
-                {{ result.config.name }}
-              </n-descriptions-item>
-              <n-descriptions-item label="启用">
-                <n-tag
-                  :bordered="false"
-                  :type="result.config.enable ? 'success' : ''"
-                >
-                  {{ result.config.enable }}
-                </n-tag>
-              </n-descriptions-item>
-              <n-descriptions-item label="流量标记">
-                {{ result.config.mark }}
-              </n-descriptions-item>
-              <n-descriptions-item label="DNS 处理方式" :span="2">
-                {{ result.config.resolve_mode }}
-              </n-descriptions-item>
+          <n-flex v-if="config_rule" vertical>
+            <DnsRuleCard :rule="config_rule"> </DnsRuleCard>
 
-              <n-descriptions-item label="匹配规则">
-                <n-button
-                  v-if="result.config.source.length > 0"
-                  @click="showInner = true"
-                >
-                  详情
-                </n-button>
-                <span v-else>无内容</span>
-              </n-descriptions-item>
-            </n-descriptions>
             <n-divider title-placement="left"> DNS 上游查询结果 </n-divider>
             <n-flex v-if="result.records">
               <n-flex v-for="each in result.records">
@@ -197,19 +180,18 @@ async function quick_btn(record_type: LandscapeDnsRecordType, domain: string) {
               </n-flex>
             </n-flex>
           </n-flex>
+
+          <n-flex v-if="redirect_rule" vertical>
+            <DnsRedirectCard :rule="redirect_rule"></DnsRedirectCard>
+            <n-divider title-placement="left"> 域名重定向结果 </n-divider>
+            <n-flex v-if="result.records">
+              <n-flex v-for="each in result.records">
+                {{ each }}
+              </n-flex>
+            </n-flex>
+          </n-flex>
         </n-scrollbar>
       </n-flex>
     </n-drawer-content>
-
-    <n-drawer :mask-closable="false" v-model:show="showInner" width="50%">
-      <n-drawer-content title="详情" closable>
-        <n-flex v-if="result.config" vertical>
-          <n-flex v-for="each in result.config.source" :wrap="false">
-            <span>{{ each.match_type }}</span>
-            <n-flex> {{ each.value }} </n-flex>
-          </n-flex>
-        </n-flex>
-      </n-drawer-content>
-    </n-drawer>
   </n-drawer>
 </template>

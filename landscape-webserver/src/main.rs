@@ -145,7 +145,8 @@ async fn run(home_path: PathBuf, config: RuntimeConfig) -> LdResult<()> {
     )
     .await;
 
-    let dns_redirect_service = DNSRedirectService::new(db_store_provider.clone()).await;
+    let dns_redirect_service =
+        DNSRedirectService::new(db_store_provider.clone(), dns_service_tx.clone()).await;
 
     let dns_service = LandscapeDnsService::new(
         dns_service_rx,

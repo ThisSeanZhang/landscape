@@ -4,7 +4,7 @@ use axum::{
     Router,
 };
 use landscape_common::service::DefaultWatchServiceStatus;
-use landscape_dns::{CheckDnsReq, CheckDnsResult};
+use landscape_dns::{CheckChainDnsResult, CheckDnsReq};
 
 use crate::LandscapeApp;
 
@@ -33,6 +33,6 @@ async fn stop_dns_service(State(state): State<LandscapeApp>) {
 async fn check_domain(
     State(state): State<LandscapeApp>,
     Query(req): Query<CheckDnsReq>,
-) -> LandscapeApiResult<CheckDnsResult> {
+) -> LandscapeApiResult<CheckChainDnsResult> {
     LandscapeApiResp::success(state.dns_service.check_domain(req).await)
 }

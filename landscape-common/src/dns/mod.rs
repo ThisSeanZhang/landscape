@@ -6,7 +6,10 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 use uuid::Uuid;
 
-use crate::config::dns::{CloudflareMode, DnsUpstreamType, DomainConfig, FilterResult};
+use crate::config::dns::{
+    CloudflareMode, DNSRuntimeRule, DnsUpstreamType, DomainConfig, FilterResult,
+};
+use crate::dns::redirect::DNSRedirectRuntimeRule;
 use crate::flow::mark::FlowMark;
 use crate::flow::DnsRuntimeMarkInfo;
 
@@ -42,6 +45,12 @@ pub struct DnsServerInitInfo {
     pub redirect_rules: HashMap<DomainConfig, Arc<RedirectInfo>>,
     pub resolver_configs: Vec<DnsResolverConfig>,
     pub default_resolver: Option<RuleHandlerInfo>,
+}
+
+#[derive(Default, Debug)]
+pub struct ChainDnsServerInitInfo {
+    pub dns_rules: Vec<DNSRuntimeRule>,
+    pub redirect_rules: Vec<DNSRedirectRuntimeRule>,
 }
 
 #[derive(Clone, Debug)]

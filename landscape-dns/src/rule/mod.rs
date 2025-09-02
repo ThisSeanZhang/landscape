@@ -19,10 +19,11 @@ use landscape_common::{
 use matcher::DomainMatcher;
 use std::net::IpAddr;
 use std::str::FromStr;
+use uuid::Uuid;
 
 use crate::connection::{MarkConnectionProvider, MarkRuntimeProvider};
 
-mod matcher;
+pub mod matcher;
 
 #[derive(Debug)]
 pub struct CacheResolver {
@@ -187,6 +188,10 @@ impl ResolutionRule {
 
     pub fn get_runtime_config(&self) -> DNSRuntimeRule {
         self.config.clone()
+    }
+
+    pub fn get_config_id(&self) -> Option<Uuid> {
+        self.config.id
     }
 
     /// 确定是不是当前规则进行处理

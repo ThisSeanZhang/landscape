@@ -98,7 +98,7 @@ impl LandscapeDBFlowFilterExpr for DNSRedirectRuleConfigModel {
     fn get_flow_filter(id: landscape_common::config::FlowId) -> SimpleExpr {
         Expr::cust_with_values(
             "EXISTS (SELECT 1 FROM json_each(apply_flows) WHERE json_each.value = ?)",
-            vec![Value::String(Some(Box::new(id.to_string())))],
+            vec![Value::Int(Some(id as i32))],
         )
     }
 }

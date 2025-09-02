@@ -4,7 +4,11 @@ use landscape_common::{
         geo::{GeoDomainConfig, GeoFileCacheKey, GeoSiteFileConfig},
     },
     database::LandscapeDBTrait,
-    dns::{DnsResolverConfig, DnsServerInitInfo, DnsUpstreamMode, RedirectInfo, RuleHandlerInfo},
+    dns::{
+        redirect::{DNSRedirectRule, DNSRedirectRuntimeRule},
+        ChainDnsServerInitInfo, DnsResolverConfig, DnsServerInitInfo, DnsUpstreamMode,
+        RedirectInfo, RuleHandlerInfo,
+    },
     flow::DnsRuntimeMarkInfo,
     service::controller_service::ConfigController,
     store::storev4::LandscapeStoreTrait,
@@ -182,6 +186,80 @@ impl GeoSiteService {
         }
 
         source
+    }
+
+    pub async fn convert_to_chain_init_config(
+        &self,
+        mut rules: Vec<DNSRuleConfig>,
+        redirects: Vec<DNSRedirectRule>,
+    ) -> ChainDnsServerInitInfo {
+        let time = Instant::now();
+        let mut applied_config = HashSet::new();
+
+        let mut redirect_rules = Vec::with_capacity(redirects.len());
+        // redirect
+        for redirect in redirects.into_iter() {
+            if redirect.match_rules.len() > 0 {
+                let source =
+                    self.get_geo_key_rules_v2(redirect.match_rules, &mut applied_config).await;
+
+                redirect_rules.push(DNSRedirectRuntimeRule {
+                    id: redirect.id,
+                    match_rules: source,
+                    result_info: redirect.result_info,
+                });
+            }
+        }
+        let mut dns_rules = Vec::with_capacity(rules.len());
+
+        rules.sort_by(|a, b| a.index.cmp(&b.index));
+
+        for config in rules.into_iter() {
+            if !config.enable {
+                continue;
+            }
+
+            let insert_source = if config.source.len() > 0 {
+                let source = self.get_geo_key_rules_v2(config.source, &mut applied_config).await;
+                if source.len() == 0 {
+                    // 去重后匹配的规则为空 不设置
+                    tracing::info!("[{}:{}] final DNS match rule is: 0", config.index, config.name);
+                    None
+                } else {
+                    tracing::info!(
+                        "[{}:{}] match rule size is: {}",
+                        config.index,
+                        config.name,
+                        source.len()
+                    );
+                    Some(source)
+                }
+            } else {
+                Some(vec![])
+            };
+
+            tracing::debug!(
+                "[{}:{}] covert config current time: {:?}ms",
+                config.index,
+                config.name,
+                time.elapsed().as_millis()
+            );
+
+            if let Some(source) = insert_source {
+                dns_rules.push(DNSRuntimeRule {
+                    source,
+                    id: config.id,
+                    name: config.name,
+                    index: config.index,
+                    enable: config.enable,
+                    filter: config.filter,
+                    resolve_mode: config.resolve_mode,
+                    mark: config.mark,
+                    flow_id: config.flow_id,
+                });
+            }
+        }
+        ChainDnsServerInitInfo { dns_rules, redirect_rules }
     }
 
     pub async fn convert_config_to_runtime_rule(

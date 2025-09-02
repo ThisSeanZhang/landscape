@@ -5,7 +5,7 @@ use landscape_common::{
     service::{controller_service_v2::FlowConfigController, DefaultWatchServiceStatus},
 };
 use landscape_dns::{
-    reuseport_chain_server::LandscapeReusePortChainDnsServer, CheckDnsReq, CheckDnsResult,
+    reuseport_chain_server::LandscapeReusePortChainDnsServer, CheckChainDnsResult, CheckDnsReq,
 };
 use tokio::sync::mpsc;
 
@@ -33,9 +33,11 @@ impl LandscapeDnsService {
         let dns_rules = dns_rule_service.get_flow_hashmap().await;
 
         for (flow_id, value) in dns_rules {
-            let dns_rules = geo_site_service.convert_config_to_runtime_rule(value).await;
+            // let dns_rules = geo_site_service.convert_config_to_runtime_rule(value).await;
             // let info = geo_site_service.convert_config_to_init_info(value).await;
-            // let dns_redirect_rules = dns_redirect_rule_service.list_flow_configs(flow_id).await;
+            let dns_redirect_rules = dns_redirect_rule_service.list_flow_configs(flow_id).await;
+            let dns_rules =
+                geo_site_service.convert_to_chain_init_config(value, dns_redirect_rules).await;
             dns_service.refresh_flow_server(flow_id, dns_rules).await;
         }
 
@@ -43,7 +45,7 @@ impl LandscapeDnsService {
         // dns_service.update_flow_map(&flow_rule_service.list().await).await;
 
         let dns_rule_service_clone = dns_rule_service.clone();
-        // let flow_rule_service_clone = flow_rule_service.clone();
+        let dns_redirect_rule_service_clone = dns_redirect_rule_service.clone();
         let dns_service_clone = dns_service.clone();
         let geo_site_service_clone = geo_site_service.clone();
         tokio::spawn(async move {
@@ -59,8 +61,11 @@ impl LandscapeDnsService {
                             // let info =
                             //     geo_site_service_clone.convert_config_to_init_info(value).await;
 
-                            let dns_rules =
-                                geo_site_service_clone.convert_config_to_runtime_rule(value).await;
+                            let dns_redirect_rules =
+                                dns_redirect_rule_service_clone.list_flow_configs(flow_id).await;
+                            let dns_rules = geo_site_service_clone
+                                .convert_to_chain_init_config(value, dns_redirect_rules)
+                                .await;
                             dns_service_clone.refresh_flow_server(flow_id, dns_rules).await;
                         }
 
@@ -73,15 +78,13 @@ impl LandscapeDnsService {
                             dns_rule_service_clone.list_flow_configs(flow_id).await;
                         tracing::info!("load rule: {:?}ms", time.elapsed().as_millis());
 
-                        // let info = geo_site_service_clone
-                        //     .convert_config_to_init_info(flow_dns_rules)
-                        //     .await;
-
+                        let dns_redirect_rules =
+                            dns_redirect_rule_service_clone.list_flow_configs(flow_id).await;
                         let dns_rules = geo_site_service_clone
-                            .convert_config_to_runtime_rule(flow_dns_rules)
+                            .convert_to_chain_init_config(flow_dns_rules, dns_redirect_rules)
                             .await;
-                        tracing::info!("convert rule: {:?}ms", time.elapsed().as_millis());
 
+                        tracing::info!("convert rule: {:?}ms", time.elapsed().as_millis());
                         dns_service_clone.refresh_flow_server(flow_id, dns_rules).await;
                         tracing::info!(
                             "[flow_id: {flow_id}] init all DNS rule: {:?}ms",
@@ -123,7 +126,7 @@ impl LandscapeDnsService {
         // self.dns_service.stop();
     }
 
-    pub async fn check_domain(&self, req: CheckDnsReq) -> CheckDnsResult {
+    pub async fn check_domain(&self, req: CheckDnsReq) -> CheckChainDnsResult {
         self.dns_service.check_domain(req).await
     }
 }

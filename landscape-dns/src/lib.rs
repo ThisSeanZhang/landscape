@@ -10,6 +10,7 @@ use lru::LruCache;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashSet, path::PathBuf, time::Instant};
 use ts_rs::TS;
+use uuid::Uuid;
 
 pub mod connection;
 pub mod diff_server;
@@ -62,6 +63,17 @@ pub struct CheckDnsResult {
     pub cache_records: Option<Vec<Record>>,
 }
 
+#[derive(Serialize, Deserialize, Debug, Default, TS)]
+#[ts(export, export_to = "dns.d.ts")]
+pub struct CheckChainDnsResult {
+    pub redirect_id: Option<Uuid>,
+    pub rule_id: Option<Uuid>,
+    #[ts(type = "Array<any>|null")]
+    pub records: Option<Vec<Record>>,
+    #[ts(type = "Array<any>|null")]
+    pub cache_records: Option<Vec<Record>>,
+}
+
 #[derive(Serialize, Deserialize, Debug, TS)]
 #[ts(export, export_to = "dns.d.ts")]
 pub struct CheckDnsReq {
@@ -83,7 +95,7 @@ fn convert_record_type(record_type: LandscapeDnsRecordType) -> RecordType {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct CacheDNSItem {
     rdatas: Vec<Record>,
     insert_time: Instant,
