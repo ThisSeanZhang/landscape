@@ -41,15 +41,18 @@ impl ConfigController for DNSRedirectService {
         &self.store
     }
 
-    async fn update_one_config(&self, config: Self::Config) {
-        for flow_id in config.apply_flows {
-            let _ = self.dns_events_tx.send(DnsEvent::RuleUpdated { flow_id: Some(flow_id) }).await;
-        }
+    async fn update_one_config(&self, _: Self::Config) {
+        let _ = self.dns_events_tx.send(DnsEvent::RuleUpdated { flow_id: None }).await;
     }
 
     async fn delete_one_config(&self, config: Self::Config) {
-        for flow_id in config.apply_flows {
-            let _ = self.dns_events_tx.send(DnsEvent::RuleUpdated { flow_id: Some(flow_id) }).await;
+        if config.apply_flows.is_empty() {
+            let _ = self.dns_events_tx.send(DnsEvent::RuleUpdated { flow_id: None }).await;
+        } else {
+            for flow_id in config.apply_flows {
+                let _ =
+                    self.dns_events_tx.send(DnsEvent::RuleUpdated { flow_id: Some(flow_id) }).await;
+            }
         }
     }
 

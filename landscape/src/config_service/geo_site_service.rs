@@ -199,6 +199,10 @@ impl GeoSiteService {
         let mut redirect_rules = Vec::with_capacity(redirects.len());
         // redirect
         for redirect in redirects.into_iter() {
+            if !redirect.enable {
+                continue;
+            }
+
             if redirect.match_rules.len() > 0 {
                 let source =
                     self.get_geo_key_rules_v2(redirect.match_rules, &mut applied_config).await;

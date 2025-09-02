@@ -96,9 +96,14 @@ impl UpdateActiveModel<ActiveModel> for DNSRedirectRule {
 
 impl LandscapeDBFlowFilterExpr for DNSRedirectRuleConfigModel {
     fn get_flow_filter(id: landscape_common::config::FlowId) -> SimpleExpr {
-        Expr::cust_with_values(
+        let search_exp = Expr::cust_with_values(
             "EXISTS (SELECT 1 FROM json_each(apply_flows) WHERE json_each.value = ?)",
             vec![Value::Int(Some(id as i32))],
-        )
+        );
+        Column::ApplyFlows
+            .is_null()
+            .or(Column::ApplyFlows.eq(""))
+            .or(Expr::cust("json_array_length(apply_flows) = 0"))
+            .or(search_exp)
     }
 }
