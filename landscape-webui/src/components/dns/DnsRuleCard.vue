@@ -41,7 +41,8 @@ const title_name = computed(() =>
           <!-- {{ rule.mark }} -->
         </n-descriptions-item>
         <n-descriptions-item label="DNS 上游配置">
-          {{ rule.resolve_mode }}
+          <UpstreamExhibit  :rule_id="rule.upstream_id"></UpstreamExhibit>
+          <!-- {{ rule.resolve_mode }} -->
         </n-descriptions-item>
         <n-descriptions-item label="匹配规则" span="2">
           <n-scrollbar v-if="rule.source.length > 0" style="max-height: 120px">

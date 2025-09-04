@@ -6,9 +6,12 @@ import { delete_dns_upstream } from "@/api/dns_rule/upstream";
 
 type Props = {
   rule: DnsUpstreamConfig;
+  show_action: boolean;
 };
 
-const props = defineProps<Props>();
+const props = withDefaults(defineProps<Props>(), {
+  show_action: true,
+});
 const emit = defineEmits(["refresh"]);
 
 const show_edit_modal = ref(false);
@@ -73,7 +76,7 @@ async function del() {
       </n-descriptions-item>
     </n-descriptions>
 
-    <template #header-extra>
+    <template v-if="show_action" #header-extra>
       <n-flex>
         <n-button
           size="small"

@@ -3732,6 +3732,8 @@ version = "0.6.8"
 dependencies = [
  "async-std",
  "sea-orm-migration",
+ "serde_json",
+ "uuid",
 ]
 
 [[package]]
