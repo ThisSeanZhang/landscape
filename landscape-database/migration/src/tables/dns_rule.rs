@@ -26,3 +26,14 @@ pub enum DNSRedirectRuleConfigs {
     ApplyFlows,
     UpdateAt,
 }
+
+#[derive(Iden)]
+pub enum DNSUpstreamConfigs {
+    Table,
+    Id,
+    Remark,
+    Mode,
+    Ips,
+    Port,
+    UpdateAt,
+}

@@ -7,6 +7,43 @@ import {
   RuleSource,
 } from "@/rust_bindings/common/dns";
 
+export enum DnsUpstreamModeTsEnum {
+  Plaintext = "plaintext",
+  Tls = "tls",
+  Https = "https",
+  Quic = "quic",
+}
+
+export const UPSTREAM_OPTIONS = [
+  {
+    label: "UDP",
+    value: DnsUpstreamModeTsEnum.Plaintext,
+  },
+  {
+    label: "DoH",
+    value: DnsUpstreamModeTsEnum.Https,
+  },
+  {
+    label: "DoT",
+    value: DnsUpstreamModeTsEnum.Tls,
+  },
+  {
+    label: "DoQ",
+    value: DnsUpstreamModeTsEnum.Quic,
+  },
+];
+
+export function upstream_mode_exhibit_name(
+  mode: DnsUpstreamModeTsEnum
+): string {
+  for (const each of UPSTREAM_OPTIONS) {
+    if (each.value === mode) {
+      return each.label;
+    }
+  }
+  return mode;
+}
+
 export function convert_flow_mark(flow_mark?: FlowMark): FlowMark {
   if (flow_mark) {
     return flow_mark;

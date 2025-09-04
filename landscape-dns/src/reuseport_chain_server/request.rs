@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, HashSet},
+    collections::{BTreeMap, HashMap, HashSet},
     num::NonZeroUsize,
     sync::Arc,
     time::Instant,
@@ -31,6 +31,7 @@ use landscape_common::{
 #[derive(Clone, Debug)]
 pub struct ChainDnsRequestHandle {
     redirect_solution: Arc<ArcSwap<Vec<RedirectSolution>>>,
+    // upstream_solution: Arc<ArcSwap<HashMap<Uuid, RedirectSolution>>>,
     resolves: BTreeMap<u32, Arc<ResolutionRule>>,
     pub cache: Arc<Mutex<DNSCache>>,
     pub flow_id: u32,
@@ -51,6 +52,7 @@ impl ChainDnsRequestHandle {
             resolves,
             cache,
             flow_id,
+            // upstream_solution: Arc::new(ArcSwap::from_pointee(HashMap::new())),
             redirect_solution: Arc::new(ArcSwap::from_pointee(redirect_solution)),
         }
     }

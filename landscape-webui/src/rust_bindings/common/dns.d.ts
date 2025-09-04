@@ -19,12 +19,15 @@ export type DNSRedirectRuleConfig = {
   update_at: number;
 };
 
-export type DNSResolveMode = { "t": "redirect"; ips: Array<string> } | {
-  "t": "upstream";
-  upstream: DnsUpstreamType;
-  ips: Array<string>;
-  port: number | null;
-} | { "t": "cloudflare"; mode: CloudflareMode };
+export type DNSResolveMode =
+  | { t: "redirect"; ips: Array<string> }
+  | {
+      t: "upstream";
+      upstream: DnsUpstreamType;
+      ips: Array<string>;
+      port: number | null;
+    }
+  | { t: "cloudflare"; mode: CloudflareMode };
 
 /**
  * DNS 配置
@@ -60,17 +63,28 @@ export type DNSRuleConfig = {
   update_at: number;
 };
 
-export type DnsUpstreamMode = {
-  "t": "upstream";
-  upstream: DnsUpstreamType;
+export type DnsUpstreamConfig = {
+  id?: string;
+  remark: string;
+  mode: DnsUpstreamMode;
   ips: Array<string>;
   port: number | null;
-} | { "t": "cloudflare"; mode: CloudflareMode };
+  update_at?: number;
+};
 
-export type DnsUpstreamType = { "t": "plaintext" } | {
-  "t": "tls";
-  domain: string;
-} | { "t": "https"; domain: string };
+export type DnsUpstreamMode =
+  | { t: "plaintext" }
+  | { t: "tls"; domain: string }
+  | { t: "https"; domain: string }
+  | { t: "quic"; domain: string };
+
+export type DnsUpstreamType =
+  | { t: "plaintext" }
+  | {
+      t: "tls";
+      domain: string;
+    }
+  | { t: "https"; domain: string };
 
 export type DomainConfig = { match_type: DomainMatchType; value: string };
 
@@ -79,5 +93,5 @@ export type DomainMatchType = "plain" | "regex" | "domain" | "full";
 export type FilterResult = "unfilter" | "only_ipv4" | "only_ipv6";
 
 export type RuleSource =
-  | { "t": "geo_key" } & GeoConfigKey
-  | { "t": "config" } & DomainConfig;
+  | ({ t: "geo_key" } & GeoConfigKey)
+  | ({ t: "config" } & DomainConfig);

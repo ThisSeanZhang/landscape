@@ -14,11 +14,13 @@ hickory-resolver = { workspace = true, features = [
     "system-config",
     "__tls",
     "__https",
+    "quic-ring",
     "rustls-platform-verifier",
 ] }
 hickory-proto = { workspace = true, features = [
     "__https",
     "__tls",
+    "quic-ring",
     "tls-ring",
 ] }
 

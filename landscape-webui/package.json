@@ -16,6 +16,7 @@
     "apexcharts": "^4.7.0",
     "axios": "^1.6.8",
     "ip-num": "^1.5.1",
+    "is-ip": "^5.0.1",
     "pinia": "^3.0.0",
     "pinia-plugin-persistedstate": "^4.3.0",
     "vue": "^3.4.21",

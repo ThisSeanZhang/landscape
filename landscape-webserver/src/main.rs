@@ -13,9 +13,13 @@ use landscape::{
     boot::{boot_check, log::init_logger},
     cert::load_or_generate_cert,
     config_service::{
-        dns::redirect::DNSRedirectService, dns_rule::DNSRuleService, dst_ip_rule::DstIpRuleService,
-        firewall_rule::FirewallRuleService, flow_rule::FlowRuleService,
-        geo_ip_service::GeoIpService, geo_site_service::GeoSiteService,
+        dns::{redirect::DNSRedirectService, upstream::DnsUpstreamService},
+        dns_rule::DNSRuleService,
+        dst_ip_rule::DstIpRuleService,
+        firewall_rule::FirewallRuleService,
+        flow_rule::FlowRuleService,
+        geo_ip_service::GeoIpService,
+        geo_site_service::GeoSiteService,
         static_nat_mapping::StaticNatMappingService,
     },
     docker::LandscapeDockerService,
@@ -63,7 +67,7 @@ use tracing::info;
 
 use crate::{
     config_service::{
-        dns_redirect::get_dns_redirect_config_paths,
+        dns_redirect::get_dns_redirect_config_paths, dns_upstream::get_dns_upstream_config_paths,
         static_nat_mapping::get_static_nat_mapping_config_paths,
     },
     service::{route_lan::get_route_lan_paths, route_wan::get_route_wan_paths},
@@ -114,6 +118,8 @@ pub struct LandscapeApp {
 
     /// DNS Redirect Service
     dns_redirect_service: DNSRedirectService,
+
+    dns_upstream_service: DnsUpstreamService,
 }
 
 async fn run(home_path: PathBuf, config: RuntimeConfig) -> LdResult<()> {
@@ -148,11 +154,15 @@ async fn run(home_path: PathBuf, config: RuntimeConfig) -> LdResult<()> {
     let dns_redirect_service =
         DNSRedirectService::new(db_store_provider.clone(), dns_service_tx.clone()).await;
 
+    let dns_upstream_service =
+        DnsUpstreamService::new(db_store_provider.clone(), dns_service_tx.clone()).await;
+
     let dns_service = LandscapeDnsService::new(
         dns_service_rx,
         dns_rule_service.clone(),
         dns_redirect_service.clone(),
         geo_site_service.clone(),
+        dns_upstream_service.clone(),
     )
     .await;
     let fire_wall_rule_service = FirewallRuleService::new(db_store_provider.clone()).await;
@@ -240,6 +250,7 @@ async fn run(home_path: PathBuf, config: RuntimeConfig) -> LdResult<()> {
         ipv6_ra_service,
         static_nat_mapping_config_service,
         dns_redirect_service,
+        dns_upstream_service,
     };
     // 初始化结束
 
@@ -308,6 +319,7 @@ async fn run(home_path: PathBuf, config: RuntimeConfig) -> LdResult<()> {
                 .merge(get_dst_ip_rule_config_paths().await)
                 .merge(get_static_nat_mapping_config_paths().await)
                 .merge(get_dns_redirect_config_paths().await)
+                .merge(get_dns_upstream_config_paths().await)
                 .with_state(landscape_app_status.clone()),
         )
         .nest(

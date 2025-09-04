@@ -67,13 +67,11 @@ const menuOptions: MenuOption[] = [
     children: [
       {
         label: "重定向规则管理",
-        key: "redirect",
+        key: "dns-redirect",
       },
-
       {
-        label: "上游 DNS 管理",
+        label: "上游 DNS 配置管理",
         key: "dns-upstream",
-        disabled: true,
       },
     ],
   },

@@ -14,6 +14,7 @@ use crate::flow::mark::FlowMark;
 use crate::flow::DnsRuntimeMarkInfo;
 
 pub mod redirect;
+pub mod upstream;
 
 #[derive(Debug, Clone)]
 pub struct RuleHandlerInfo {
@@ -39,6 +40,13 @@ impl RuleHandlerInfo {
     }
 }
 
+#[derive(Default, Debug)]
+pub struct ChainDnsServerInitInfo {
+    pub dns_rules: Vec<DNSRuntimeRule>,
+    pub redirect_rules: Vec<DNSRedirectRuntimeRule>,
+}
+
+#[deprecated]
 #[derive(Default, Clone, Debug)]
 pub struct DnsServerInitInfo {
     pub rules: HashMap<DomainConfig, Arc<RuleHandlerInfo>>,
@@ -47,12 +55,7 @@ pub struct DnsServerInitInfo {
     pub default_resolver: Option<RuleHandlerInfo>,
 }
 
-#[derive(Default, Debug)]
-pub struct ChainDnsServerInitInfo {
-    pub dns_rules: Vec<DNSRuntimeRule>,
-    pub redirect_rules: Vec<DNSRedirectRuntimeRule>,
-}
-
+#[deprecated]
 #[derive(Clone, Debug)]
 pub struct DnsResolverConfig {
     pub id: Uuid,
@@ -61,8 +64,8 @@ pub struct DnsResolverConfig {
     pub flow_id: u32,
 }
 
+#[deprecated]
 #[derive(Serialize, Deserialize, Debug, Clone, TS)]
-#[ts(export, export_to = "common/dns.d.ts")]
 #[serde(tag = "t")]
 #[serde(rename_all = "snake_case")]
 pub enum DnsUpstreamMode {

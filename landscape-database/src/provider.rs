@@ -12,7 +12,8 @@ use crate::{
     dhcp_v4_server::repository::DHCPv4ServerRepository,
     dhcp_v6_client::repository::DHCPv6ClientRepository,
     dns_redirect::repository::DNSRedirectRuleRepository, dns_rule::repository::DNSRuleRepository,
-    dst_ip_rule::repository::DstIpRuleRepository, firewall::repository::FirewallServiceRepository,
+    dns_upstream::repository::DnsUpstreamRepository, dst_ip_rule::repository::DstIpRuleRepository,
+    firewall::repository::FirewallServiceRepository,
     firewall_rule::repository::FirewallRuleRepository, flow_rule::repository::FlowConfigRepository,
     flow_wan::repository::FlowWanServiceRepository,
     geo_ip::repository::GeoIpSourceConfigRepository, geo_site::repository::GeoSiteConfigRepository,
@@ -109,6 +110,7 @@ define_store!(
     route_wan_service_store: (RouteWanServiceRepository, route_wans),
     static_nat_mapping_store: (StaticNatMappingConfigRepository, static_nat_mappings),
     dns_redirect_rule_store: (DNSRedirectRuleRepository, dns_redirects),
+    dns_upstream_config_store: (DnsUpstreamRepository, dns_upstream_configs),
 );
 
 #[cfg(test)]

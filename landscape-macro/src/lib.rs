@@ -2,6 +2,13 @@ use proc_macro::TokenStream;
 use quote::{format_ident, quote};
 use syn::{parse_macro_input, Attribute, DeriveInput, Lit, Meta, MetaList, NestedMeta};
 
+mod ts;
+
+#[proc_macro_derive(ExportTsEnum)]
+pub fn derive_export_ts_enum(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
+    ts::export_ts_enum(input)
+}
+
 #[proc_macro_derive(LandscapeRequestModel, attributes(skip, ts))]
 pub fn derive_request_model(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);

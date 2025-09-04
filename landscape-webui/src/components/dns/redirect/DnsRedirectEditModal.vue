@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { useMessage } from "naive-ui";
 
+import { isIP } from "is-ip";
 import { computed, onMounted } from "vue";
 import { ref } from "vue";
 import {
@@ -53,27 +54,11 @@ async function enter() {
 
 const formRef = ref();
 
-/**
- * IPv4 / IPv6 校验
- */
-function isValidIP(ip: string) {
-  // IPv4 正则
-  const ipv4Regex =
-    /^(25[0-5]|2[0-4]\d|1\d{2}|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d{2}|[1-9]?\d)){3}$/;
-  // IPv6 正则，支持缩写 (::1 等)
-  const ipv6Regex =
-    /^(([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}|(([0-9a-fA-F]{1,4}:){1,7}:)|(::([0-9a-fA-F]{1,4}:){0,6}[0-9a-fA-F]{1,4})|::)$/;
-  return ipv4Regex.test(ip) || ipv6Regex.test(ip);
-}
-
-/**
- * 动态 IP 校验规则
- */
 const ipRule = {
   trigger: ["input", "blur"],
   validator(_: unknown, value: string) {
     if (!value) return new Error("IP 地址不能为空");
-    if (!isValidIP(value)) return new Error("请输入有效的 IPv4 或 IPv6 地址");
+    if (!isIP(value)) return new Error("请输入有效的 IPv4 或 IPv6 地址");
     return true;
   },
 };
