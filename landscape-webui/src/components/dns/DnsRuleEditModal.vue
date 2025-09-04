@@ -166,11 +166,7 @@ async function import_rules() {
         <n-form-item-gi :span="2" label="备注">
           <n-input v-model:value="rule.name" type="text" />
         </n-form-item-gi>
-        <n-form-item-gi
-          v-if="rule.resolve_mode.t !== DNSResolveModeEnum.Redirect"
-          :span="5"
-          label="流量动作"
-        >
+        <n-form-item-gi :span="5" label="流量动作">
           <!-- <n-popover trigger="hover">
             <template #trigger>
               <n-switch v-model:value="rule.mark">
