@@ -1,29 +1,20 @@
 use std::{net::IpAddr, str::FromStr as _};
 
-use hickory_proto::{
-    op::ResponseCode,
-    rr::{
-        rdata::{A, AAAA},
-        RData, Record, RecordType,
-    },
-};
-use hickory_resolver::{
-    config::{NameServerConfigGroup, ResolverConfig, ResolverOpts},
-    Resolver,
-};
-use landscape_common::{
-    dns::{
-        redirect::DNSRedirectRuntimeRule,
-        upstream::{DnsUpstreamConfig, DnsUpstreamMode},
-    },
-    flow::mark::FlowMark,
+use hickory_proto::op::ResponseCode;
+use hickory_proto::rr::{
+    rdata::{A, AAAA},
+    RData, Record, RecordType,
 };
 use uuid::Uuid;
 
-use crate::{
-    connection::{MarkConnectionProvider, MarkRuntimeProvider},
-    rule::matcher::DomainMatcher,
+use landscape_common::dns::redirect::DNSRedirectRuntimeRule;
+use landscape_common::{
+    config::dns::{DNSRuntimeRule, FilterResult},
+    flow::DnsRuntimeMarkInfo,
 };
+
+use crate::connection::LandscapeMarkDNSResolver;
+use crate::reuseport_chain_server::matcher::DomainMatcher;
 
 #[derive(Debug)]
 pub struct RedirectSolution {
@@ -70,59 +61,52 @@ impl RedirectSolution {
 }
 
 #[derive(Debug)]
-pub struct UpstreamSolution {
-    flow_id: u32,
-    resolver_id: Uuid,
-    resolver: Resolver<MarkConnectionProvider>,
+pub struct ResolutionRule {
+    matcher: DomainMatcher,
+    config: DNSRuntimeRule,
+    mark: DnsRuntimeMarkInfo,
+    resolver: LandscapeMarkDNSResolver,
 }
 
-impl UpstreamSolution {
-    pub fn new(
-        flow_id: u32,
-        mark: FlowMark,
-        DnsUpstreamConfig { id, mode, ips, port, .. }: DnsUpstreamConfig,
-    ) -> Self {
-        let name_server = match mode {
-            DnsUpstreamMode::Plaintext => {
-                NameServerConfigGroup::from_ips_clear(&ips, port.unwrap_or(53), true)
-            }
-            DnsUpstreamMode::Tls { domain } => NameServerConfigGroup::from_ips_tls(
-                &ips,
-                port.unwrap_or(843),
-                domain.to_string(),
-                true,
-            ),
-            DnsUpstreamMode::Https { domain } => NameServerConfigGroup::from_ips_https(
-                &ips,
-                port.unwrap_or(443),
-                domain.to_string(),
-                true,
-            ),
-            DnsUpstreamMode::Quic { domain } => NameServerConfigGroup::from_ips_quic(
-                &ips,
-                port.unwrap_or(443),
-                domain.to_string(),
-                true,
-            ),
+impl ResolutionRule {
+    pub fn new(config: DNSRuntimeRule, flow_id: u32) -> Self {
+        let span = tracing::info_span!("dns_rule", flow_id = flow_id);
+        let _ = span.enter();
+
+        let matcher = DomainMatcher::new(config.source.clone());
+
+        let resolver =
+            crate::connection::create_resolver(flow_id, config.mark, config.resolve_mode.clone());
+
+        let mark = DnsRuntimeMarkInfo {
+            mark: config.mark.clone(),
+            priority: config.index as u16,
         };
+        ResolutionRule { matcher, config, resolver, mark }
+    }
 
-        let resolve = ResolverConfig::from_parts(None, vec![], name_server);
+    pub fn mark(&self) -> &DnsRuntimeMarkInfo {
+        &self.mark
+    }
 
-        let mark_value = mark.get_dns_mark(flow_id);
+    pub fn filter_mode(&self) -> FilterResult {
+        self.config.filter.clone()
+    }
 
-        let mut options = ResolverOpts::default();
-        options.cache_size = 0;
-        options.num_concurrent_reqs = 4;
-        options.preserve_intermediates = true;
-        // options.use_hosts_file = ResolveHosts::Never;
-        let resolver = Resolver::builder_with_config(
-            resolve,
-            MarkConnectionProvider::new(MarkRuntimeProvider::new(mark_value)),
-        )
-        .with_options(options)
-        .build();
+    pub fn get_config_id(&self) -> Uuid {
+        self.config.id
+    }
 
-        Self { resolver_id: id, resolver, flow_id }
+    /// 确定是不是当前规则进行处理
+    pub fn is_match(&self, domain: &str) -> bool {
+        let match_result = if self.config.source.is_empty() {
+            true
+        } else {
+            let domain =
+                if let Some(stripped) = domain.strip_suffix('.') { stripped } else { domain };
+            self.matcher.is_match(domain)
+        };
+        match_result
     }
 
     pub async fn lookup(
@@ -138,8 +122,8 @@ impl UpstreamSolution {
                 } else {
                     tracing::error!(
                         "[flow_id: {:?}, config: {}] DNS resolution failed for {}: {}",
-                        self.flow_id,
-                        self.resolver_id,
+                        self.config.flow_id,
+                        self.config.resolve_mode.id,
                         domain,
                         e
                     );

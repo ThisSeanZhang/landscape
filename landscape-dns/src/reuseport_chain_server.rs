@@ -14,6 +14,7 @@ use crate::{
     CheckChainDnsResult, CheckDnsReq,
 };
 
+pub(crate) mod matcher;
 pub(crate) mod request;
 pub(crate) mod solution;
 

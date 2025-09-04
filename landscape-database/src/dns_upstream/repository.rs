@@ -1,5 +1,5 @@
 use landscape_common::database::{repository::Repository, LandscapeDBTrait};
-use landscape_common::dns::upstream::DnsUpstreamConfig;
+use landscape_common::dns::config::DnsUpstreamConfig;
 use sea_orm::DatabaseConnection;
 
 use crate::dns_upstream::entity::{

@@ -1,12 +1,9 @@
 use aho_corasick::AhoCorasick;
+use landscape_common::config::dns::{DomainConfig, DomainMatchType};
 use regex::Regex;
 use std::{collections::HashSet, time::Instant};
 use tracing::debug;
 use trie_rs::TrieBuilder;
-
-use crate::rule::DomainMatchType;
-
-use super::DomainConfig;
 
 #[derive(Debug)]
 pub struct DomainMatcher {
@@ -121,8 +118,8 @@ mod tests {
 
     use jemalloc_ctl::{epoch, stats};
 
-    use crate::rule::{DomainConfig, DomainMatchType};
     use landscape_common::{
+        config::dns::{DomainConfig, DomainMatchType},
         config::geo::{GeoDomainConfig, GeoFileCacheKey},
         store::storev4::StoreFileManager,
         LANDSCAPE_GEO_CACHE_TMP_DIR,

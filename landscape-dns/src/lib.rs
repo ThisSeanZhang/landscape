@@ -12,11 +12,7 @@ use std::{collections::HashSet, path::PathBuf, time::Instant};
 use ts_rs::TS;
 use uuid::Uuid;
 
-pub mod connection;
-pub mod diff_server;
-pub mod rule;
-pub mod server;
-pub mod socket;
+pub(crate) mod connection;
 
 pub mod reuseport_chain_server;
 pub mod reuseport_server;

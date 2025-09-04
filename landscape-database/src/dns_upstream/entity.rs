@@ -1,4 +1,4 @@
-use landscape_common::{database::repository::UpdateActiveModel, dns::upstream::DnsUpstreamConfig};
+use landscape_common::{database::repository::UpdateActiveModel, dns::config::DnsUpstreamConfig};
 use sea_orm::{entity::prelude::*, ActiveValue::Set};
 use serde::{Deserialize, Serialize};
 

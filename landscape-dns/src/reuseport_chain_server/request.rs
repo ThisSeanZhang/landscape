@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, HashMap, HashSet},
+    collections::{BTreeMap, HashSet},
     num::NonZeroUsize,
     sync::Arc,
     time::Instant,
@@ -17,16 +17,14 @@ use hickory_server::{
 };
 use lru::LruCache;
 use tokio::sync::Mutex;
-use uuid::Uuid;
 
 use crate::{
-    reuseport_chain_server::solution::{RedirectSolution, UpstreamSolution},
-    rule::ResolutionRule,
+    reuseport_chain_server::solution::{RedirectSolution, ResolutionRule},
     CacheDNSItem, CheckChainDnsResult, DNSCache,
 };
 use landscape_common::{
     config::dns::FilterResult,
-    dns::{upstream::DnsUpstreamConfig, ChainDnsServerInitInfo},
+    dns::ChainDnsServerInitInfo,
     flow::{DnsRuntimeMarkInfo, FlowMarkInfo},
 };
 

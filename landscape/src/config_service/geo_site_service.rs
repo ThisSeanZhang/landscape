@@ -5,8 +5,8 @@ use landscape_common::{
     },
     database::LandscapeDBTrait,
     dns::{
+        config::DnsUpstreamConfig,
         redirect::{DNSRedirectRule, DNSRedirectRuntimeRule},
-        upstream::DnsUpstreamConfig,
         ChainDnsServerInitInfo,
     },
     service::controller_service::ConfigController,

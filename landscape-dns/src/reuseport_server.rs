@@ -12,14 +12,9 @@ use hickory_proto::{
         RData, Record, RecordType,
     },
 };
-use hickory_resolver::{
-    config::{NameServerConfigGroup, ResolverConfig, ResolverOpts},
-    Resolver,
-};
 use hickory_server::ServerFuture;
 use landscape_common::{
-    config::dns::DnsUpstreamType,
-    dns::{DnsResolverConfig, DnsServerInitInfo, DnsUpstreamMode, RedirectInfo, RuleHandlerInfo},
+    dns::{DnsServerInitInfo, RedirectInfo, RuleHandlerInfo},
     service::DefaultWatchServiceStatus,
 };
 use tokio::sync::Mutex;
@@ -27,7 +22,7 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use crate::{
-    connection::{MarkConnectionProvider, MarkRuntimeProvider},
+    connection::{create_resolver, LandscapeMarkDNSResolver},
     convert_record_type,
     reuseport_server::{matcher::DomainMatcher, request::LandscapeDnsRequestHandle},
     CheckDnsReq, CheckDnsResult,
@@ -132,7 +127,7 @@ pub async fn start_dns_server(
 pub struct FlowDnsServer {
     redirect_matcher: DomainMatcher<RedirectInfo>,
     matcher: DomainMatcher<RuleHandlerInfo>,
-    resolver_map: HashMap<Uuid, Resolver<MarkConnectionProvider>>,
+    resolver_map: HashMap<Uuid, LandscapeMarkDNSResolver>,
     default_resolver: Option<RuleHandlerInfo>,
     // cache: Arc<Mutex<DNSCache>>,
 }
@@ -146,7 +141,7 @@ impl FlowDnsServer {
             resolver_map: info
                 .resolver_configs
                 .into_iter()
-                .map(|e| (e.id, new_resolver(e)))
+                .map(|e| (e.id, create_resolver(e.flow_id, e.mark, e.resolve_mode)))
                 .collect(),
             default_resolver: info.default_resolver,
         }
@@ -212,58 +207,4 @@ impl FlowDnsServer {
 
         Err(ResponseCode::ServFail)
     }
-}
-
-pub fn new_resolver(config: DnsResolverConfig) -> Resolver<MarkConnectionProvider> {
-    let mark_value = config.mark.get_dns_mark(config.flow_id);
-    let resolve_config = match config.resolve_mode {
-        DnsUpstreamMode::Upstream { upstream, ips, port } => {
-            let name_server = match upstream {
-                DnsUpstreamType::Plaintext => {
-                    NameServerConfigGroup::from_ips_clear(&ips, port.unwrap_or(53), true)
-                }
-                DnsUpstreamType::Tls { domain } => NameServerConfigGroup::from_ips_tls(
-                    &ips,
-                    port.unwrap_or(843),
-                    domain.to_string(),
-                    true,
-                ),
-                DnsUpstreamType::Https { domain } => NameServerConfigGroup::from_ips_https(
-                    &ips,
-                    port.unwrap_or(443),
-                    domain.to_string(),
-                    true,
-                ),
-            };
-
-            ResolverConfig::from_parts(None, vec![], name_server)
-        }
-        DnsUpstreamMode::Cloudflare { mode } => {
-            let server = match mode {
-                landscape_common::config::dns::CloudflareMode::Plaintext => {
-                    NameServerConfigGroup::cloudflare()
-                }
-                landscape_common::config::dns::CloudflareMode::Tls => {
-                    NameServerConfigGroup::cloudflare_tls()
-                }
-                landscape_common::config::dns::CloudflareMode::Https => {
-                    NameServerConfigGroup::cloudflare_https()
-                }
-            };
-            ResolverConfig::from_parts(None, vec![], server)
-        }
-    };
-
-    let mut options = ResolverOpts::default();
-    options.cache_size = 0;
-    options.num_concurrent_reqs = 1;
-    options.preserve_intermediates = true;
-    // options.use_hosts_file = ResolveHosts::Never;
-    let resolver = Resolver::builder_with_config(
-        resolve_config,
-        MarkConnectionProvider::new(MarkRuntimeProvider::new(mark_value)),
-    )
-    .with_options(options)
-    .build();
-    resolver
 }

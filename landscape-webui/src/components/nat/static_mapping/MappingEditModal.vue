@@ -14,7 +14,7 @@ import {
 } from "@/api/static_nat_mapping";
 
 type Props = {
-  rule_id: string | null;
+  rule_id?: string;
 };
 
 const props = defineProps<Props>();
@@ -88,7 +88,7 @@ const rules = {
 };
 
 async function enter() {
-  if (props.rule_id != null) {
+  if (props.rule_id) {
     rule.value = await get_static_nat_mapping(props.rule_id);
   } else {
     rule.value = {

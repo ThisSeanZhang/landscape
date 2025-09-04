@@ -44,7 +44,7 @@ use crate::{
         route_lan::RouteLanServiceConfig,
         route_wan::RouteWanServiceConfig,
     },
-    dns::{redirect::DNSRedirectRule, upstream::DnsUpstreamConfig},
+    dns::{config::DnsUpstreamConfig, redirect::DNSRedirectRule},
     firewall::FirewallRuleConfig,
     flow::FlowConfig,
     ip_mark::WanIpRuleConfig,

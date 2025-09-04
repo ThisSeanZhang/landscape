@@ -5,7 +5,7 @@ use ts_rs::TS;
 use uuid::Uuid;
 
 use crate::database::repository::LandscapeDBStore;
-use crate::dns::upstream::DnsUpstreamConfig;
+use crate::dns::config::DnsUpstreamConfig;
 use crate::utils::id::gen_database_uuid;
 use crate::utils::time::get_f64_timestamp;
 use crate::{flow::mark::FlowMark, store::storev2::LandscapeStore};
@@ -28,12 +28,6 @@ pub struct DNSRedirectRuleConfig {
 
     #[serde(default = "get_f64_timestamp")]
     pub update_at: f64,
-}
-
-pub struct DNSApplyInfo {
-    pub id: Uuid,
-    pub redirect_rule_id: Uuid,
-    pub flow_id: u8,
 }
 
 /// DNS 配置
@@ -135,46 +129,6 @@ pub enum DomainMatchType {
     Full = 3,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, TS)]
-#[ts(export, export_to = "common/dns.d.ts")]
-#[serde(tag = "t")]
-#[serde(rename_all = "snake_case")]
-pub enum DNSResolveMode {
-    Redirect { ips: Vec<IpAddr> },
-    Upstream { upstream: DnsUpstreamType, ips: Vec<IpAddr>, port: Option<u16> },
-    Cloudflare { mode: CloudflareMode },
-}
-
-impl Default for DNSResolveMode {
-    fn default() -> Self {
-        DNSResolveMode::Cloudflare { mode: CloudflareMode::Tls }
-    }
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, Default, TS)]
-#[ts(export, export_to = "common/dns.d.ts")]
-#[serde(rename_all = "snake_case")]
-#[serde(tag = "t")]
-pub enum DnsUpstreamType {
-    #[default]
-    Plaintext, // 传统 DNS（UDP/TCP，无加密）
-    Tls {
-        domain: String,
-    }, // DNS over TLS (DoT)
-    Https {
-        domain: String,
-    }, // DNS over HTTPS (DoH)
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, TS)]
-#[ts(export, export_to = "common/dns.d.ts")]
-#[serde(rename_all = "snake_case")]
-pub enum CloudflareMode {
-    Plaintext, // 1.1.1.1 (UDP/TCP)
-    Tls,       // tls://1.1.1.1
-    Https,     // https://cloudflare-dns.com/dns-query
-}
-
 #[derive(Serialize, Deserialize, Debug, Clone, Default, TS)]
 #[ts(export, export_to = "common/dns.d.ts")]
 #[serde(rename_all = "snake_case")]
@@ -193,22 +147,4 @@ pub enum FilterResult {
 pub enum LandscapeDnsRecordType {
     A,
     AAAA,
-}
-
-#[cfg(test)]
-mod tests {
-    use std::net::{IpAddr, Ipv4Addr};
-
-    use super::DNSResolveMode;
-
-    #[test]
-    fn test_serde() {
-        let value = DNSResolveMode::Upstream {
-            upstream: super::DnsUpstreamType::Https { domain: "cloudflare-dns.com".to_string() },
-            ips: vec![IpAddr::V4(Ipv4Addr::new(1, 1, 1, 1))],
-            port: Some(443),
-        };
-        let result = serde_json::to_string(&value).unwrap();
-        println!("{result}");
-    }
 }

@@ -6,7 +6,7 @@ import { delete_dns_upstream } from "@/api/dns_rule/upstream";
 
 type Props = {
   rule: DnsUpstreamConfig;
-  show_action: boolean;
+  show_action?: boolean;
 };
 
 const props = withDefaults(defineProps<Props>(), {
