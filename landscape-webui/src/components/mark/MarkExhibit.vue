@@ -21,29 +21,27 @@ enum FlowMarkActionCode {
       :bordered="false"
       v-if="mark.action.t == FlowMarkActionCode.KEEP_GOING"
     >
-      {{
-        flow_id === 0 ? `将使用默认出口发出` : `将使用 flow: ${flow_id} 的出口`
-      }}
+      {{ flow_id === 0 ? `默认路由出口发出` : `Flow ID ${flow_id} 的出口` }}
     </n-tag>
     <n-tag
       :bordered="false"
       v-else-if="mark.action.t == FlowMarkActionCode.DIRECT"
     >
-      将使用默认出口发出
+      默认路由出口发出
     </n-tag>
     <n-tag
       :bordered="false"
       v-else-if="mark.action.t == FlowMarkActionCode.DROP"
       type="error"
     >
-      将丢弃相关数据包
+      丢弃
     </n-tag>
     <n-tag
       :bordered="false"
       v-else-if="mark.action.t == FlowMarkActionCode.REDIRECT"
       type="warning"
     >
-      将使用 flow: {{ mark.flow_id }} 的出口
+      <FlowExhibit :flow_id="mark.flow_id"></FlowExhibit>
     </n-tag>
 
     <n-tag v-if="mark.allow_reuse_port" :bordered="false" type="success">

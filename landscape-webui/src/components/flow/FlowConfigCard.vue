@@ -13,9 +13,12 @@ const frontEndStore = useFrontEndStore();
 
 interface Props {
   config: FlowConfig;
+  show_action?: boolean;
 }
 
-const props = defineProps<Props>();
+const props = withDefaults(defineProps<Props>(), {
+  show_action: true,
+});
 
 const emit = defineEmits(["refresh"]);
 
@@ -56,7 +59,7 @@ const title_name = computed(() =>
       ></StatusTitle>
     </template>
 
-    <template #header-extra>
+    <template v-if="show_action" #header-extra>
       <n-flex>
         <n-button secondary @click="show_edit = true" size="small">
           修改配置
