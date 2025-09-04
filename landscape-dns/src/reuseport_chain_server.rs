@@ -14,8 +14,8 @@ use crate::{
     CheckChainDnsResult, CheckDnsReq,
 };
 
-mod request;
-mod solution;
+pub(crate) mod request;
+pub(crate) mod solution;
 
 #[derive(Clone)]
 pub struct LandscapeReusePortChainDnsServer {

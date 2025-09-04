@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, HashSet},
+    collections::{BTreeMap, HashMap, HashSet},
     num::NonZeroUsize,
     sync::Arc,
     time::Instant,
@@ -17,21 +17,22 @@ use hickory_server::{
 };
 use lru::LruCache;
 use tokio::sync::Mutex;
+use uuid::Uuid;
 
 use crate::{
-    reuseport_chain_server::solution::RedirectSolution, rule::ResolutionRule, CacheDNSItem,
-    CheckChainDnsResult, DNSCache,
+    reuseport_chain_server::solution::{RedirectSolution, UpstreamSolution},
+    rule::ResolutionRule,
+    CacheDNSItem, CheckChainDnsResult, DNSCache,
 };
 use landscape_common::{
     config::dns::FilterResult,
-    dns::ChainDnsServerInitInfo,
+    dns::{upstream::DnsUpstreamConfig, ChainDnsServerInitInfo},
     flow::{DnsRuntimeMarkInfo, FlowMarkInfo},
 };
 
 #[derive(Clone, Debug)]
 pub struct ChainDnsRequestHandle {
     redirect_solution: Arc<ArcSwap<Vec<RedirectSolution>>>,
-    // upstream_solution: Arc<ArcSwap<HashMap<Uuid, RedirectSolution>>>,
     resolves: BTreeMap<u32, Arc<ResolutionRule>>,
     pub cache: Arc<Mutex<DNSCache>>,
     pub flow_id: u32,
@@ -52,7 +53,6 @@ impl ChainDnsRequestHandle {
             resolves,
             cache,
             flow_id,
-            // upstream_solution: Arc::new(ArcSwap::from_pointee(HashMap::new())),
             redirect_solution: Arc::new(ArcSwap::from_pointee(redirect_solution)),
         }
     }

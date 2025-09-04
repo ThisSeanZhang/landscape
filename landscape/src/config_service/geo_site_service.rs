@@ -1,15 +1,14 @@
 use landscape_common::{
     config::{
-        dns::{DNSResolveMode, DNSRuleConfig, DNSRuntimeRule, DomainConfig, RuleSource},
+        dns::{DNSRuleConfig, DNSRuntimeRule, DomainConfig, RuleSource},
         geo::{GeoDomainConfig, GeoFileCacheKey, GeoSiteFileConfig},
     },
     database::LandscapeDBTrait,
     dns::{
         redirect::{DNSRedirectRule, DNSRedirectRuntimeRule},
-        ChainDnsServerInitInfo, DnsResolverConfig, DnsServerInitInfo, DnsUpstreamMode,
-        RedirectInfo, RuleHandlerInfo,
+        upstream::DnsUpstreamConfig,
+        ChainDnsServerInitInfo,
     },
-    flow::DnsRuntimeMarkInfo,
     service::controller_service::ConfigController,
     store::storev4::LandscapeStoreTrait,
     utils::time::{get_f64_timestamp, MILL_A_DAY},
@@ -69,130 +68,134 @@ impl GeoSiteService {
         service
     }
 
-    pub async fn convert_config_to_init_info(
-        &self,
-        rules: Vec<DNSRuleConfig>,
-    ) -> DnsServerInitInfo {
-        let mut rules: Vec<DNSRuleConfig> = rules.into_iter().filter(|e| e.enable).collect();
-        rules.sort_by(|a, b| b.index.cmp(&a.index));
+    // pub async fn convert_config_to_init_info(
+    //     &self,
+    //     rules: Vec<DNSRuleConfig>,
+    // ) -> DnsServerInitInfo {
+    //     let mut rules: Vec<DNSRuleConfig> = rules.into_iter().filter(|e| e.enable).collect();
+    //     rules.sort_by(|a, b| b.index.cmp(&a.index));
 
-        let mut init_info = DnsServerInitInfo::default();
+    //     let mut init_info = DnsServerInitInfo::default();
 
-        for each in rules {
-            let resolve_mode = match each.resolve_mode {
-                DNSResolveMode::Redirect { ips } => {
-                    let info = Arc::new(RedirectInfo { result_ip: ips });
+    //     for each in rules {
+    //         let resolve_mode = match each.resolve_mode {
+    //             DNSResolveMode::Redirect { ips } => {
+    //                 let info = Arc::new(RedirectInfo { result_ip: ips });
 
-                    for domain_config in self.get_geo_key_rules(each.source).await.into_iter() {
-                        init_info.redirect_rules.insert(domain_config, info.clone());
-                    }
-                    break;
-                }
-                DNSResolveMode::Upstream { upstream, ips, port } => {
-                    DnsUpstreamMode::Upstream { upstream, ips, port }
-                }
-                DNSResolveMode::Cloudflare { mode } => DnsUpstreamMode::Cloudflare { mode },
-            };
-            let resolver_config = DnsResolverConfig {
-                id: Uuid::new_v4(),
-                resolve_mode: resolve_mode,
-                mark: each.mark,
-                flow_id: each.flow_id,
-            };
+    //                 for domain_config in self.get_geo_key_rules(each.source).await.into_iter() {
+    //                     init_info.redirect_rules.insert(domain_config, info.clone());
+    //                 }
+    //                 break;
+    //             }
+    //             DNSResolveMode::Upstream { upstream, ips, port } => {
+    //                 DnsUpstreamMode::Upstream { upstream, ips, port }
+    //             }
+    //             DNSResolveMode::Cloudflare { mode } => DnsUpstreamMode::Cloudflare { mode },
+    //         };
+    //         let resolver_config = DnsResolverConfig {
+    //             id: Uuid::new_v4(),
+    //             resolve_mode: resolve_mode,
+    //             mark: each.mark,
+    //             flow_id: each.flow_id,
+    //         };
 
-            let info = RuleHandlerInfo {
-                rule_id: each.id,
-                flow_id: each.flow_id,
-                resolver_id: resolver_config.id,
-                mark: DnsRuntimeMarkInfo { mark: each.mark, priority: each.index as u16 },
-                filter: each.filter,
-            };
+    //         let info = RuleHandlerInfo {
+    //             rule_id: each.id,
+    //             flow_id: each.flow_id,
+    //             resolver_id: resolver_config.id,
+    //             mark: DnsRuntimeMarkInfo { mark: each.mark, priority: each.index as u16 },
+    //             filter: each.filter,
+    //         };
 
-            init_info.resolver_configs.push(resolver_config);
+    //         init_info.resolver_configs.push(resolver_config);
 
-            if each.source.is_empty() {
-                init_info.default_resolver = Some(info);
-            } else {
-                let info = Arc::new(info);
+    //         if each.source.is_empty() {
+    //             init_info.default_resolver = Some(info);
+    //         } else {
+    //             let info = Arc::new(info);
 
-                for domain_config in self.get_geo_key_rules(each.source).await.into_iter() {
-                    init_info.rules.insert(domain_config, info.clone());
-                }
-            }
-        }
+    //             for domain_config in self.get_geo_key_rules(each.source).await.into_iter() {
+    //                 init_info.rules.insert(domain_config, info.clone());
+    //             }
+    //         }
+    //     }
 
-        init_info
-    }
+    //     init_info
+    // }
 
-    async fn get_geo_key_rules(&self, rule_source: Vec<RuleSource>) -> Vec<DomainConfig> {
-        let mut lock = self.file_cache.lock().await;
+    // async fn get_geo_key_rules(&self, rule_source: Vec<RuleSource>) -> Vec<DomainConfig> {
+    //     let mut lock = self.file_cache.lock().await;
 
-        let mut usage_keys = HashSet::new();
-        let mut source = vec![];
+    //     let mut usage_keys = HashSet::new();
+    //     let mut source = vec![];
 
-        let mut inverse_keys: HashMap<String, HashSet<String>> = HashMap::new();
-        for each in rule_source.into_iter() {
-            match each {
-                RuleSource::GeoKey(k) if k.inverse => {
-                    inverse_keys.entry(k.name).or_default().insert(k.key);
-                }
-                RuleSource::GeoKey(k) => {
-                    let file_cache_key = k.get_file_cache_key();
-                    let predicate: Box<dyn Fn(&GeoSiteFileConfig) -> bool> =
-                        if let Some(attr) = k.attribute_key {
-                            let attr = attr.clone();
-                            Box::new(move |config: &GeoSiteFileConfig| {
-                                config.attributes.contains(&attr)
-                            })
-                        } else {
-                            Box::new(move |_: &GeoSiteFileConfig| true)
-                        };
-                    if let Some(domains) = lock.get(&file_cache_key) {
-                        source.extend(domains.values.into_iter().filter(predicate).map(Into::into));
-                    }
-                    usage_keys.insert(file_cache_key);
-                }
-                RuleSource::Config(c) => {
-                    source.push(c);
-                }
-            }
-        }
+    //     let mut inverse_keys: HashMap<String, HashSet<String>> = HashMap::new();
+    //     for each in rule_source.into_iter() {
+    //         match each {
+    //             RuleSource::GeoKey(k) if k.inverse => {
+    //                 inverse_keys.entry(k.name).or_default().insert(k.key);
+    //             }
+    //             RuleSource::GeoKey(k) => {
+    //                 let file_cache_key = k.get_file_cache_key();
+    //                 let predicate: Box<dyn Fn(&GeoSiteFileConfig) -> bool> =
+    //                     if let Some(attr) = k.attribute_key {
+    //                         let attr = attr.clone();
+    //                         Box::new(move |config: &GeoSiteFileConfig| {
+    //                             config.attributes.contains(&attr)
+    //                         })
+    //                     } else {
+    //                         Box::new(move |_: &GeoSiteFileConfig| true)
+    //                     };
+    //                 if let Some(domains) = lock.get(&file_cache_key) {
+    //                     source.extend(domains.values.into_iter().filter(predicate).map(Into::into));
+    //                 }
+    //                 usage_keys.insert(file_cache_key);
+    //             }
+    //             RuleSource::Config(c) => {
+    //                 source.push(c);
+    //             }
+    //         }
+    //     }
 
-        if inverse_keys.len() > 0 {
-            let time = Instant::now();
-            tracing::debug!("{:?}", inverse_keys);
-            for (inverse_key, excluded_names) in inverse_keys {
-                let all_keys: Vec<_> =
-                    lock.filter_keys(|k| k.name == inverse_key).cloned().collect();
-                for key in all_keys.iter() {
-                    if !excluded_names.contains(&key.key) {
-                        if !usage_keys.contains(key) {
-                            if let Some(domains) = lock.get(key) {
-                                usage_keys.insert(key.clone());
-                                source.extend(domains.values.into_iter().map(Into::into));
-                            }
-                        }
-                        // } else {
-                        //     tracing::debug!("excluded_names: {:#?}", key);
-                    }
-                }
-            }
-            tracing::debug!(
-                "using key len: {:#?}, all len: {}, time: {}",
-                usage_keys.len(),
-                lock.len(),
-                time.elapsed().as_secs()
-            );
-        }
+    //     if inverse_keys.len() > 0 {
+    //         let time = Instant::now();
+    //         tracing::debug!("{:?}", inverse_keys);
+    //         for (inverse_key, excluded_names) in inverse_keys {
+    //             let all_keys: Vec<_> =
+    //                 lock.filter_keys(|k| k.name == inverse_key).cloned().collect();
+    //             for key in all_keys.iter() {
+    //                 if !excluded_names.contains(&key.key) {
+    //                     if !usage_keys.contains(key) {
+    //                         if let Some(domains) = lock.get(key) {
+    //                             usage_keys.insert(key.clone());
+    //                             source.extend(domains.values.into_iter().map(Into::into));
+    //                         }
+    //                     }
+    //                     // } else {
+    //                     //     tracing::debug!("excluded_names: {:#?}", key);
+    //                 }
+    //             }
+    //         }
+    //         tracing::debug!(
+    //             "using key len: {:#?}, all len: {}, time: {}",
+    //             usage_keys.len(),
+    //             lock.len(),
+    //             time.elapsed().as_secs()
+    //         );
+    //     }
 
-        source
-    }
+    //     source
+    // }
 
     pub async fn convert_to_chain_init_config(
         &self,
         mut rules: Vec<DNSRuleConfig>,
         redirects: Vec<DNSRedirectRule>,
+        upstream_configs: Vec<DnsUpstreamConfig>,
     ) -> ChainDnsServerInitInfo {
+        let upstream_dict: HashMap<Uuid, DnsUpstreamConfig> =
+            upstream_configs.into_iter().map(|e| (e.id, e)).collect();
+
         let time = Instant::now();
         let mut applied_config = HashSet::new();
 
@@ -250,80 +253,82 @@ impl GeoSiteService {
             );
 
             if let Some(source) = insert_source {
-                dns_rules.push(DNSRuntimeRule {
-                    source,
-                    id: config.id,
-                    name: config.name,
-                    index: config.index,
-                    enable: config.enable,
-                    filter: config.filter,
-                    resolve_mode: config.resolve_mode,
-                    mark: config.mark,
-                    flow_id: config.flow_id,
-                });
+                if let Some(upstream_config) = upstream_dict.get(&config.upstream_id) {
+                    dns_rules.push(DNSRuntimeRule {
+                        source,
+                        id: config.id,
+                        name: config.name,
+                        index: config.index,
+                        enable: config.enable,
+                        filter: config.filter,
+                        resolve_mode: upstream_config.clone(),
+                        mark: config.mark,
+                        flow_id: config.flow_id,
+                    });
+                }
             }
         }
         ChainDnsServerInitInfo { dns_rules, redirect_rules }
     }
 
-    pub async fn convert_config_to_runtime_rule(
-        &self,
-        mut configs: Vec<DNSRuleConfig>,
-    ) -> Vec<DNSRuntimeRule> {
-        let time = Instant::now();
-        let mut result = Vec::with_capacity(configs.len());
+    // pub async fn convert_config_to_runtime_rule(
+    //     &self,
+    //     mut configs: Vec<DNSRuleConfig>,
+    // ) -> Vec<DNSRuntimeRule> {
+    //     let time = Instant::now();
+    //     let mut result = Vec::with_capacity(configs.len());
 
-        let mut applied_config = HashSet::new();
-        configs.sort_by(|a, b| a.index.cmp(&b.index));
+    //     let mut applied_config = HashSet::new();
+    //     configs.sort_by(|a, b| a.index.cmp(&b.index));
 
-        for config in configs.into_iter() {
-            if !config.enable {
-                continue;
-            }
+    //     for config in configs.into_iter() {
+    //         if !config.enable {
+    //             continue;
+    //         }
 
-            let insert_source = if config.source.len() > 0 {
-                let source = self.get_geo_key_rules_v2(config.source, &mut applied_config).await;
-                if source.len() == 0 {
-                    // 去重后匹配的规则为空 不设置
-                    tracing::info!("[{}:{}] final DNS match rule is: 0", config.index, config.name);
-                    None
-                } else {
-                    tracing::info!(
-                        "[{}:{}] match rule size is: {}",
-                        config.index,
-                        config.name,
-                        source.len()
-                    );
-                    Some(source)
-                }
-            } else {
-                // 本就是空的 那就直接设置
-                Some(vec![])
-            };
+    //         let insert_source = if config.source.len() > 0 {
+    //             let source = self.get_geo_key_rules_v2(config.source, &mut applied_config).await;
+    //             if source.len() == 0 {
+    //                 // 去重后匹配的规则为空 不设置
+    //                 tracing::info!("[{}:{}] final DNS match rule is: 0", config.index, config.name);
+    //                 None
+    //             } else {
+    //                 tracing::info!(
+    //                     "[{}:{}] match rule size is: {}",
+    //                     config.index,
+    //                     config.name,
+    //                     source.len()
+    //                 );
+    //                 Some(source)
+    //             }
+    //         } else {
+    //             // 本就是空的 那就直接设置
+    //             Some(vec![])
+    //         };
 
-            tracing::debug!(
-                "[{}:{}] covert config current time: {:?}ms",
-                config.index,
-                config.name,
-                time.elapsed().as_millis()
-            );
+    //         tracing::debug!(
+    //             "[{}:{}] covert config current time: {:?}ms",
+    //             config.index,
+    //             config.name,
+    //             time.elapsed().as_millis()
+    //         );
 
-            if let Some(source) = insert_source {
-                result.push(DNSRuntimeRule {
-                    source,
-                    id: config.id,
-                    name: config.name,
-                    index: config.index,
-                    enable: config.enable,
-                    filter: config.filter,
-                    resolve_mode: config.resolve_mode,
-                    mark: config.mark,
-                    flow_id: config.flow_id,
-                });
-            }
-        }
-        result
-    }
+    //         if let Some(source) = insert_source {
+    //             result.push(DNSRuntimeRule {
+    //                 source,
+    //                 id: config.id,
+    //                 name: config.name,
+    //                 index: config.index,
+    //                 enable: config.enable,
+    //                 filter: config.filter,
+    //                 resolve_mode: config.resolve_mode,
+    //                 mark: config.mark,
+    //                 flow_id: config.flow_id,
+    //             });
+    //         }
+    //     }
+    //     result
+    // }
 
     async fn get_geo_key_rules_v2(
         &self,

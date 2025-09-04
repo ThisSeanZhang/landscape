@@ -16,7 +16,6 @@ import { useMessage } from "naive-ui";
 import { ChangeCatalog } from "@vicons/carbon";
 import { computed, onMounted } from "vue";
 import { ref } from "vue";
-import UpstreamEdit from "@/components/dns/upstream/UpstreamEdit.vue";
 import FlowMarkEdit from "@/components/flow/FlowMarkEdit.vue";
 import { RuleSource } from "@/rust_bindings/common/dns";
 import {
@@ -116,31 +115,6 @@ const source_style = [
   },
 ];
 
-function update_resolve_mode(t: DNSResolveModeEnum) {
-  switch (t) {
-    case DNSResolveModeEnum.Redirect: {
-      rule.value.resolve_mode = { t: DNSResolveModeEnum.Redirect, ip: "" };
-      break;
-    }
-    case DNSResolveModeEnum.Upstream: {
-      rule.value.resolve_mode = {
-        t: DNSResolveModeEnum.Upstream,
-        upstream: { t: DnsUpstreamTypeEnum.Plaintext },
-        ips: [],
-        port: 53,
-      };
-      break;
-    }
-    case DNSResolveModeEnum.Cloudflare: {
-      rule.value.resolve_mode = {
-        t: DNSResolveModeEnum.Cloudflare,
-        mode: CloudflareMode.Tls,
-      };
-      break;
-    }
-  }
-}
-
 async function export_config() {
   let configs = rule.value.source;
   await copy_context_to_clipboard(message, JSON.stringify(configs, null, 2));
@@ -208,60 +182,12 @@ async function import_rules() {
           </n-popover> -->
           <FlowMarkEdit v-model:mark="rule.mark"></FlowMarkEdit>
         </n-form-item-gi>
-        <n-form-item-gi :span="5" label="解析模式">
-          <n-radio-group
-            :value="rule.resolve_mode.t"
-            name="ra_flag"
-            @update:value="update_resolve_mode"
-          >
-            <n-radio-button
-              v-for="opt in get_dns_resolve_mode_options()"
-              :key="opt.value"
-              :value="opt.value"
-              :label="opt.label"
-            />
-          </n-radio-group>
-        </n-form-item-gi>
-        <n-form-item-gi
-          v-if="rule.resolve_mode.t === DNSResolveModeEnum.Cloudflare"
-          :span="5"
-          label="Cloudflare 连接方式"
-        >
-          <n-radio-group v-model:value="rule.resolve_mode.mode" name="ra_flag">
-            <n-radio-button
-              v-for="opt in get_dns_upstream_type_options()"
-              :key="opt.value"
-              :value="opt.value"
-              :label="opt.label"
-            />
-          </n-radio-group>
-        </n-form-item-gi>
 
-        <!-- <n-form-item-gi
-          v-else-if="rule.resolve_mode.t === DNSResolveModeEnum.Upstream"
-          :span="5"
-        >
-          <UpstreamEdit v-model:value="rule.resolve_mode"> </UpstreamEdit>
-        </n-form-item-gi> -->
-
-        <n-form-item-gi
-          v-else-if="rule.resolve_mode.t === DNSResolveModeEnum.Redirect"
-          :span="5"
-          label="重定向配置"
-        >
-          <n-dynamic-input
-            v-model:value="rule.resolve_mode.ips"
-            :on-create="() => '0.0.0.0'"
-          >
-            <template #create-button-default> 填入返回的 IP 记录 </template>
-          </n-dynamic-input>
+        <n-form-item-gi :span="5" label="上游选择">
+          <SelectUpstream v-model:upstream_id="rule.upstream_id">
+          </SelectUpstream>
         </n-form-item-gi>
       </n-grid>
-      <UpstreamEdit
-        v-if="rule.resolve_mode.t === DNSResolveModeEnum.Upstream"
-        v-model:value="rule.resolve_mode"
-      >
-      </UpstreamEdit>
       <n-form-item>
         <template #label>
           <n-flex

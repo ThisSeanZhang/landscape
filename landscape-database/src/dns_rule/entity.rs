@@ -24,7 +24,6 @@ pub struct Model {
     pub name: String,
     pub enable: bool,
     pub filter: DBJson,
-    pub resolve_mode: DBJson,
     pub upstream_id: DBId,
     pub mark: u32,
     /// 虽然是 JSON 但是考虑到可能存储较多信息
@@ -58,7 +57,6 @@ impl From<Model> for DNSRuleConfig {
             index: entity.index,
             enable: entity.enable,
             filter: serde_json::from_value(entity.filter).unwrap(),
-            resolve_mode: serde_json::from_value(entity.resolve_mode).unwrap(),
             upstream_id: entity.upstream_id,
             mark: entity.mark.into(),
             source: serde_json::from_str(&entity.source).unwrap(),
@@ -82,7 +80,6 @@ impl UpdateActiveModel<ActiveModel> for DNSRuleConfig {
         active.index = Set(self.index);
         active.enable = Set(self.enable);
         active.filter = Set(serde_json::to_value(self.filter).unwrap().into());
-        active.resolve_mode = Set(serde_json::to_value(self.resolve_mode).unwrap().into());
         active.upstream_id = Set(self.upstream_id);
         active.mark = Set(self.mark.into());
         active.source = Set(serde_json::to_string(&self.source).unwrap());

@@ -44,10 +44,6 @@ export type DNSRuleConfig = {
    * 过滤模式
    */
   filter: FilterResult;
-  /**
-   * 解析模式
-   */
-  resolve_mode: DNSResolveMode;
   upstream_id: string;
   /**
    * 流量标记

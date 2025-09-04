@@ -94,6 +94,10 @@ pub trait ConfigController {
         self.get_repository().find_by_id(id).await.ok()?
     }
 
+    async fn find_by_ids(&self, ids: Vec<Self::Id>) -> Vec<Self::Config> {
+        self.get_repository().find_by_ids(ids).await
+    }
+
     async fn delete(&self, id: Self::Id) {
         if let Some(config) = self.find_by_id(id.clone()).await {
             let old_configs = self.list().await;

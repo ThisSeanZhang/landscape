@@ -5,6 +5,7 @@ use ts_rs::TS;
 use uuid::Uuid;
 
 use crate::database::repository::LandscapeDBStore;
+use crate::dns::upstream::DnsUpstreamConfig;
 use crate::utils::id::gen_database_uuid;
 use crate::utils::time::get_f64_timestamp;
 use crate::{flow::mark::FlowMark, store::storev2::LandscapeStore};
@@ -51,10 +52,6 @@ pub struct DNSRuleConfig {
     /// 过滤模式
     #[serde(default)]
     pub filter: FilterResult,
-    /// 解析模式
-    #[serde(default)]
-    #[deprecated]
-    pub resolve_mode: DNSResolveMode,
 
     pub upstream_id: Uuid,
     /// 流量标记
@@ -87,7 +84,7 @@ pub struct DNSRuntimeRule {
     /// 过滤模式
     pub filter: FilterResult,
     /// 解析模式
-    pub resolve_mode: DNSResolveMode,
+    pub resolve_mode: DnsUpstreamConfig,
     /// 流量标记
     pub mark: FlowMark,
     /// 匹配规则列表

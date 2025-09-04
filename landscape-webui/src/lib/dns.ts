@@ -61,7 +61,6 @@ export class DnsRule implements DNSRuleConfig {
   enable: boolean;
   mark: FlowMark;
   source: RuleSource[];
-  resolve_mode: DNSResolveMode;
   flow_id: number;
   filter: FilterResult;
   update_at?: number;
@@ -74,12 +73,6 @@ export class DnsRule implements DNSRuleConfig {
     this.enable = obj?.enable ?? true;
     this.mark = convert_flow_mark(obj?.mark);
     this.source = obj?.source ?? [];
-    this.resolve_mode = obj?.resolve_mode
-      ? { ...obj.resolve_mode }
-      : {
-          t: DNSResolveModeEnum.Cloudflare,
-          mode: CloudflareMode.Https,
-        };
     this.flow_id = obj?.flow_id ?? 0;
     this.filter = obj?.filter ?? "unfilter";
     this.update_at = obj?.update_at;

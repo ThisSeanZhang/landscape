@@ -2,7 +2,10 @@ use std::time::Instant;
 
 use landscape_common::{
     event::dns::DnsEvent,
-    service::{controller_service_v2::FlowConfigController, DefaultWatchServiceStatus},
+    service::{
+        controller_service_v2::{ConfigController, FlowConfigController},
+        DefaultWatchServiceStatus,
+    },
 };
 use landscape_dns::{
     reuseport_chain_server::LandscapeReusePortChainDnsServer, CheckChainDnsResult, CheckDnsReq,
@@ -94,14 +97,25 @@ impl LandscapeDnsService {
         if let Some(flow_id) = flow_id {
             tracing::info!("refresh dns rule: flow_id: {flow_id}");
             let time = Instant::now();
-            let flow_dns_rules = self.dns_rule_service.list_flow_configs(flow_id).await;
-            tracing::info!("load rule: {:?}ms", time.elapsed().as_millis());
 
+            // Read ALL Rules
+            let flow_dns_rules = self.dns_rule_service.list_flow_configs(flow_id).await;
+
+            // Read All Upstream
+            let upstream_ids: Vec<_> =
+                flow_dns_rules.iter().map(|e| e.upstream_id.clone()).collect();
+            let upstream_configs = self.dns_upstream_service.find_by_ids(upstream_ids).await;
+
+            // Read All Redirect Rule
             let dns_redirect_rules =
                 self.dns_redirect_rule_service.list_flow_configs(flow_id).await;
+
+            tracing::info!("load rule: {:?}ms", time.elapsed().as_millis());
+
+            // convert init
             let dns_rules = self
                 .geo_site_service
-                .convert_to_chain_init_config(flow_dns_rules, dns_redirect_rules)
+                .convert_to_chain_init_config(flow_dns_rules, dns_redirect_rules, upstream_configs)
                 .await;
 
             tracing::info!("convert rule: {:?}ms", time.elapsed().as_millis());
@@ -111,19 +125,29 @@ impl LandscapeDnsService {
                 time.elapsed().as_millis()
             );
         } else {
+            let time = Instant::now();
             let dns_rules = self.dns_rule_service.get_flow_hashmap().await;
 
-            for (flow_id, value) in dns_rules {
-                // let dns_rules = geo_site_service.convert_config_to_runtime_rule(value).await;
-                // let info = geo_site_service.convert_config_to_init_info(value).await;
+            for (flow_id, flow_dns_rules) in dns_rules {
+                let upstream_ids: Vec<_> =
+                    flow_dns_rules.iter().map(|e| e.upstream_id.clone()).collect();
+                let upstream_configs = self.dns_upstream_service.find_by_ids(upstream_ids).await;
+
                 let dns_redirect_rules =
                     self.dns_redirect_rule_service.list_flow_configs(flow_id).await;
+
                 let dns_rules = self
                     .geo_site_service
-                    .convert_to_chain_init_config(value, dns_redirect_rules)
+                    .convert_to_chain_init_config(
+                        flow_dns_rules,
+                        dns_redirect_rules,
+                        upstream_configs,
+                    )
                     .await;
+
                 self.dns_service.refresh_flow_server(flow_id, dns_rules).await;
             }
+            tracing::info!("convert rule: {:?}ms", time.elapsed().as_millis());
         }
     }
 }

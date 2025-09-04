@@ -1,8 +1,11 @@
 use std::{net::IpAddr, str::FromStr as _};
 
-use hickory_proto::rr::{
-    rdata::{A, AAAA},
-    RData, Record, RecordType,
+use hickory_proto::{
+    op::ResponseCode,
+    rr::{
+        rdata::{A, AAAA},
+        RData, Record, RecordType,
+    },
 };
 use hickory_resolver::{
     config::{NameServerConfigGroup, ResolverConfig, ResolverOpts},
@@ -68,9 +71,9 @@ impl RedirectSolution {
 
 #[derive(Debug)]
 pub struct UpstreamSolution {
+    flow_id: u32,
     resolver_id: Uuid,
-
-    pub resolver: Resolver<MarkConnectionProvider>,
+    resolver: Resolver<MarkConnectionProvider>,
 }
 
 impl UpstreamSolution {
@@ -109,7 +112,7 @@ impl UpstreamSolution {
 
         let mut options = ResolverOpts::default();
         options.cache_size = 0;
-        options.num_concurrent_reqs = 1;
+        options.num_concurrent_reqs = 4;
         options.preserve_intermediates = true;
         // options.use_hosts_file = ResolveHosts::Never;
         let resolver = Resolver::builder_with_config(
@@ -119,6 +122,31 @@ impl UpstreamSolution {
         .with_options(options)
         .build();
 
-        Self { resolver_id: id, resolver }
+        Self { resolver_id: id, resolver, flow_id }
+    }
+
+    pub async fn lookup(
+        &self,
+        domain: &str,
+        query_type: RecordType,
+    ) -> Result<Vec<Record>, ResponseCode> {
+        match self.resolver.lookup(domain, query_type).await {
+            Ok(lookup) => Ok(lookup.records().to_vec()),
+            Err(e) => {
+                let result = if e.is_no_records_found() {
+                    ResponseCode::NoError
+                } else {
+                    tracing::error!(
+                        "[flow_id: {:?}, config: {}] DNS resolution failed for {}: {}",
+                        self.flow_id,
+                        self.resolver_id,
+                        domain,
+                        e
+                    );
+                    ResponseCode::ServFail
+                };
+                Err(result)
+            }
+        }
     }
 }

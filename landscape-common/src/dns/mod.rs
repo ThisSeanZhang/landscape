@@ -93,7 +93,6 @@ pub fn gen_default_dns_rule_and_upstream() -> (DNSRuleConfig, DnsUpstreamConfig)
         filter: FilterResult::default(),
         mark: Default::default(),
         source: vec![],
-        resolve_mode: DNSResolveMode::default(),
         flow_id: default_flow_id(),
         update_at: get_f64_timestamp(),
         upstream_id: upstream.id,

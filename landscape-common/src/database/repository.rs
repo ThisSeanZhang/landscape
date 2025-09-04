@@ -1,6 +1,12 @@
+use std::collections::HashSet;
 use std::fmt::Debug;
 
 use async_trait::async_trait;
+use sea_orm::sea_query::IntoValueTuple;
+use sea_orm::ColumnTrait;
+use sea_orm::Iterable;
+use sea_orm::PrimaryKeyToColumn;
+use sea_orm::QueryFilter;
 use sea_orm::{
     ActiveModelBehavior, ActiveModelTrait, DatabaseConnection, EntityTrait, FromQueryResult,
     IntoActiveModel, PrimaryKeyTrait,
@@ -60,6 +66,17 @@ where
         let pk_value = id.into();
         let result = <Self::Entity as EntityTrait>::find_by_id(pk_value).one(self.db()).await?;
         Ok(result.map(From::from))
+    }
+
+    #[allow(dead_code)]
+    async fn find_by_ids(&self, ids: Vec<Self::Id>) -> Vec<Self::Data> {
+        let mut result = Vec::with_capacity(ids.len());
+        for id in ids.into_iter() {
+            if let Ok(Some(r)) = self.find_by_id(id).await {
+                result.push(r);
+            }
+        }
+        result
     }
 
     /// 清空

@@ -1,4 +1,7 @@
-use landscape_common::{config::dns::DNSRuntimeRule, dns::ChainDnsServerInitInfo};
+use landscape_common::{
+    config::dns::DNSRuntimeRule,
+    dns::{upstream::DnsUpstreamConfig, ChainDnsServerInitInfo},
+};
 use landscape_dns::reuseport_chain_server::LandscapeReusePortChainDnsServer;
 
 /// cargo run --package landscape-dns --bin test_reuseport_chain_server

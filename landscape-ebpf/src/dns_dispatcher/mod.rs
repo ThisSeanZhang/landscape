@@ -28,8 +28,8 @@ pub fn attach_reuseport_ebpf(sock_fd: i32) -> LdEbpfResult<()> {
     let reuseport_dns_dispatcher = skel.progs.reuseport_dns_dispatcher;
     let prog_fd: i32 = reuseport_dns_dispatcher.as_fd().as_raw_fd();
 
-    println!("is_supported {:?}", reuseport_dns_dispatcher.prog_type().is_supported());
-    println!("{:?}", reuseport_dns_dispatcher.attach_type());
+    // println!("is_supported {:?}", reuseport_dns_dispatcher.prog_type().is_supported());
+    // println!("{:?}", reuseport_dns_dispatcher.attach_type());
 
     unsafe {
         let ret = setsockopt(
