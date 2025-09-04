@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, HashMap, HashSet},
+    collections::{BTreeMap, HashSet},
     num::NonZeroUsize,
     sync::Arc,
     time::Instant,
@@ -164,7 +164,7 @@ impl ChainDnsRequestHandle {
         if records.is_empty() {
             for (_index, resolver) in self.resolves.iter() {
                 if resolver.is_match(&domain) {
-                    result.rule_id = resolver.get_config_id();
+                    result.rule_id = Some(resolver.get_config_id());
 
                     match tokio::time::timeout(
                         tokio::time::Duration::from_secs(5),

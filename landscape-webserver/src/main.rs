@@ -142,8 +142,17 @@ async fn run(home_path: PathBuf, config: RuntimeConfig) -> LdResult<()> {
 
     let geo_site_service =
         GeoSiteService::new(db_store_provider.clone(), dns_service_tx.clone()).await;
-    let dns_rule_service =
-        DNSRuleService::new(db_store_provider.clone(), dns_service_tx.clone()).await;
+
+    let dns_upstream_service =
+        DnsUpstreamService::new(db_store_provider.clone(), dns_service_tx.clone()).await;
+
+    let dns_rule_service = DNSRuleService::new(
+        db_store_provider.clone(),
+        dns_service_tx.clone(),
+        dns_upstream_service.clone(),
+    )
+    .await;
+
     let flow_rule_service = FlowRuleService::new(
         db_store_provider.clone(),
         dns_service_tx.clone(),
@@ -153,9 +162,6 @@ async fn run(home_path: PathBuf, config: RuntimeConfig) -> LdResult<()> {
 
     let dns_redirect_service =
         DNSRedirectService::new(db_store_provider.clone(), dns_service_tx.clone()).await;
-
-    let dns_upstream_service =
-        DnsUpstreamService::new(db_store_provider.clone(), dns_service_tx.clone()).await;
 
     let dns_service = LandscapeDnsService::new(
         dns_service_rx,

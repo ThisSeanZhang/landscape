@@ -5,6 +5,7 @@ use ts_rs::TS;
 use uuid::Uuid;
 
 use crate::database::repository::LandscapeDBStore;
+use crate::utils::id::gen_database_uuid;
 use crate::utils::time::get_f64_timestamp;
 use crate::{flow::mark::FlowMark, store::storev2::LandscapeStore};
 
@@ -38,7 +39,10 @@ pub struct DNSApplyInfo {
 #[derive(Serialize, Deserialize, Debug, Clone, TS)]
 #[ts(export, export_to = "common/dns.d.ts")]
 pub struct DNSRuleConfig {
-    pub id: Option<Uuid>,
+    #[serde(default = "gen_database_uuid")]
+    #[ts(as = "Option<_>", optional)]
+    pub id: Uuid,
+
     pub name: String,
     /// 优先级
     pub index: u32,
@@ -49,7 +53,10 @@ pub struct DNSRuleConfig {
     pub filter: FilterResult,
     /// 解析模式
     #[serde(default)]
+    #[deprecated]
     pub resolve_mode: DNSResolveMode,
+
+    pub upstream_id: Uuid,
     /// 流量标记
     #[serde(default)]
     pub mark: FlowMark,
@@ -61,12 +68,17 @@ pub struct DNSRuleConfig {
     pub flow_id: u32,
 
     #[serde(default = "get_f64_timestamp")]
+    #[ts(as = "Option<_>", optional)]
     pub update_at: f64,
+}
+
+pub fn default_flow_id() -> u32 {
+    0_u32
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct DNSRuntimeRule {
-    pub id: Option<Uuid>,
+    pub id: Uuid,
     pub name: String,
     /// 优先级
     pub index: u32,
@@ -84,10 +96,6 @@ pub struct DNSRuntimeRule {
     pub flow_id: u32,
 }
 
-fn default_flow_id() -> u32 {
-    0_u32
-}
-
 impl LandscapeStore for DNSRuleConfig {
     fn get_store_key(&self) -> String {
         self.index.to_string()
@@ -96,24 +104,7 @@ impl LandscapeStore for DNSRuleConfig {
 
 impl LandscapeDBStore<Uuid> for DNSRuleConfig {
     fn get_id(&self) -> Uuid {
-        self.id.unwrap_or(Uuid::new_v4())
-    }
-}
-
-impl Default for DNSRuleConfig {
-    fn default() -> Self {
-        Self {
-            id: None,
-            name: "Landscape Router default rule".into(),
-            index: 10000,
-            enable: true,
-            filter: FilterResult::default(),
-            mark: Default::default(),
-            source: vec![],
-            resolve_mode: DNSResolveMode::default(),
-            flow_id: default_flow_id(),
-            update_at: get_f64_timestamp(),
-        }
+        self.id
     }
 }
 

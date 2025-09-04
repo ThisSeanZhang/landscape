@@ -25,6 +25,7 @@ pub struct Model {
     pub enable: bool,
     pub filter: DBJson,
     pub resolve_mode: DBJson,
+    pub upstream_id: DBId,
     pub mark: u32,
     /// 虽然是 JSON 但是考虑到可能存储较多信息
     #[sea_orm(column_type = "Text")]
@@ -52,12 +53,13 @@ impl ActiveModelBehavior for ActiveModel {
 impl From<Model> for DNSRuleConfig {
     fn from(entity: Model) -> Self {
         DNSRuleConfig {
-            id: Some(entity.id),
+            id: entity.id,
             name: entity.name,
             index: entity.index,
             enable: entity.enable,
             filter: serde_json::from_value(entity.filter).unwrap(),
             resolve_mode: serde_json::from_value(entity.resolve_mode).unwrap(),
+            upstream_id: entity.upstream_id,
             mark: entity.mark.into(),
             source: serde_json::from_str(&entity.source).unwrap(),
             flow_id: entity.flow_id,
@@ -68,10 +70,7 @@ impl From<Model> for DNSRuleConfig {
 
 impl Into<ActiveModel> for DNSRuleConfig {
     fn into(self) -> ActiveModel {
-        let mut active = ActiveModel {
-            id: Set(self.id.unwrap_or_else(Uuid::new_v4)),
-            ..Default::default()
-        };
+        let mut active = ActiveModel { id: Set(self.id), ..Default::default() };
         self.update(&mut active);
         active
     }
@@ -84,6 +83,7 @@ impl UpdateActiveModel<ActiveModel> for DNSRuleConfig {
         active.enable = Set(self.enable);
         active.filter = Set(serde_json::to_value(self.filter).unwrap().into());
         active.resolve_mode = Set(serde_json::to_value(self.resolve_mode).unwrap().into());
+        active.upstream_id = Set(self.upstream_id);
         active.mark = Set(self.mark.into());
         active.source = Set(serde_json::to_string(&self.source).unwrap());
         active.flow_id = Set(self.flow_id);

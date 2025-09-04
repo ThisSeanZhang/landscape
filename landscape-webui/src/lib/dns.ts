@@ -33,9 +33,7 @@ export const UPSTREAM_OPTIONS = [
   },
 ];
 
-export function upstream_mode_exhibit_name(
-  mode: DnsUpstreamModeTsEnum
-): string {
+export function upstream_mode_exhibit_name(mode: string): string {
   for (const each of UPSTREAM_OPTIONS) {
     if (each.value === mode) {
       return each.label;
@@ -57,7 +55,7 @@ export function convert_flow_mark(flow_mark?: FlowMark): FlowMark {
 }
 
 export class DnsRule implements DNSRuleConfig {
-  id: string | null;
+  id?: string;
   index: number;
   name: string;
   enable: boolean;
@@ -66,10 +64,11 @@ export class DnsRule implements DNSRuleConfig {
   resolve_mode: DNSResolveMode;
   flow_id: number;
   filter: FilterResult;
-  update_at: number;
+  update_at?: number;
+  upstream_id: string;
 
   constructor(obj?: Partial<DNSRuleConfig>) {
-    this.id = obj?.id ?? null;
+    this.id = obj?.id;
     this.index = obj?.index ?? -1;
     this.name = obj?.name ?? "";
     this.enable = obj?.enable ?? true;
@@ -83,7 +82,8 @@ export class DnsRule implements DNSRuleConfig {
         };
     this.flow_id = obj?.flow_id ?? 0;
     this.filter = obj?.filter ?? "unfilter";
-    this.update_at = obj?.update_at ?? new Date().getTime();
+    this.update_at = obj?.update_at;
+    this.upstream_id = obj?.upstream_id ?? "";
   }
 }
 

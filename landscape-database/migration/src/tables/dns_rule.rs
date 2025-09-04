@@ -9,6 +9,7 @@ pub enum DNSRuleConfigs {
     Enable,
     Filter,
     ResolveMode,
+    UpstreamId,
     Mark,
     Source,
     FlowId,

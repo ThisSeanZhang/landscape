@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::net::IpAddr;
+use std::net::{IpAddr, Ipv4Addr};
 use ts_rs::TS;
 use uuid::Uuid;
 
@@ -30,6 +30,19 @@ pub struct DnsUpstreamConfig {
 impl LandscapeDBStore<Uuid> for DnsUpstreamConfig {
     fn get_id(&self) -> Uuid {
         self.id
+    }
+}
+
+impl Default for DnsUpstreamConfig {
+    fn default() -> Self {
+        Self {
+            id: Uuid::new_v4(),
+            remark: "Landscape Router Default DNS Upstream".to_string(),
+            mode: DnsUpstreamMode::Plaintext,
+            ips: vec![IpAddr::V4(Ipv4Addr::new(1, 1, 1, 1))],
+            port: Some(53),
+            update_at: get_f64_timestamp(),
+        }
     }
 }
 

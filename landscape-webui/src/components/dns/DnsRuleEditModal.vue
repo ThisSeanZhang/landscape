@@ -26,7 +26,7 @@ import {
 
 type Props = {
   flow_id: number;
-  rule_id: string | null;
+  rule_id?: string;
 };
 
 const props = defineProps<Props>();

@@ -11,7 +11,7 @@ const show_edit_modal = ref(false);
 const emit = defineEmits(["refresh"]);
 
 async function del() {
-  if (rule.value.id !== null) {
+  if (rule.value.id) {
     await delete_dns_rule(rule.value.id);
     emit("refresh");
   }

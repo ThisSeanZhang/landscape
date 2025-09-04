@@ -190,7 +190,7 @@ impl ResolutionRule {
         self.config.clone()
     }
 
-    pub fn get_config_id(&self) -> Option<Uuid> {
+    pub fn get_config_id(&self) -> Uuid {
         self.config.id
     }
 
