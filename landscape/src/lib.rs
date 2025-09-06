@@ -4,7 +4,7 @@ use std::{
 };
 
 use dev::{DevState, LandscapeInterface};
-use futures::stream::TryStreamExt;
+use futures::{stream::TryStreamExt, StreamExt};
 use iface::{dev_wifi::LandscapeWifiInterface, get_iface_by_name};
 use landscape_common::config::iface::{CreateDevType, NetworkIfaceConfig, WifiMode};
 use netlink_packet_route::AddressFamily;
@@ -255,6 +255,31 @@ pub async fn create_bridge(name: String) -> bool {
     tokio::spawn(connection);
     let create_result = handle.link().add().bridge(name).execute().await;
     create_result.is_ok()
+}
+
+pub async fn delete_bridge(name: String) -> bool {
+    let (connection, handle, _) = new_connection().unwrap();
+    tokio::spawn(connection);
+    let mut result = handle.link().get().match_name(name).execute();
+    loop {
+        match result.try_next().await {
+            Ok(link) => match link {
+                Some(link) => {
+                    let del_result = handle.link().del(link.header.index).execute().await;
+                    if del_result.is_ok() {
+                        return true;
+                    }
+                }
+                None => {
+                    return false;
+                }
+            },
+            Err(e) => {
+                tracing::error!("delete bridge error: {e:?}");
+                return false;
+            }
+        }
+    }
 }
 
 /// Attach the link to a bridge (its controller).

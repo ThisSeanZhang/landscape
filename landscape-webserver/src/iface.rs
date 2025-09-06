@@ -11,6 +11,7 @@ use landscape_common::{
 use landscape_common::{
     config::iface::{IfaceCpuSoftBalance, NetworkIfaceConfig},
     iface::BridgeCreate,
+    iface::BridgeDelete,
 };
 use landscape_database::provider::LandscapeDBServiceProvider;
 
@@ -23,6 +24,7 @@ pub async fn get_network_paths(store: LandscapeDBServiceProvider) -> Router {
         .route("/wan_configs", get(get_wan_ifaces))
         .route("/manage/{iface_name}", post(manage_ifaces))
         .route("/bridge", post(create_bridge))
+        .route("/bridge/delete", post(delete_bridge))
         .route("/controller", post(set_controller))
         .route("/zone", post(change_zone))
         .route("/{iface_name}/status/{status}", post(change_dev_status))
@@ -58,6 +60,14 @@ async fn create_bridge(
     Json(bridge_create_request): Json<BridgeCreate>,
 ) -> LandscapeApiResult<()> {
     state.create_bridge(bridge_create_request).await;
+    LandscapeApiResp::success(())
+}
+
+async fn delete_bridge(
+    State(state): State<IfaceManagerService>,
+    Json(bridge_delete_request): Json<BridgeDelete>,
+) -> LandscapeApiResult<()> {
+    state.delete_bridge(bridge_delete_request).await;
     LandscapeApiResp::success(())
 }
 

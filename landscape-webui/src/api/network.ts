@@ -42,6 +42,14 @@ export async function create_bridge(name: string): Promise<any> {
   return data.data;
 }
 
+export async function delete_bridge(name: string): Promise<any> {
+  let data = await axiosService.post("iface/bridge/delete", {
+    name,
+  });
+  // console.log(data.data);
+  return data.data;
+}
+
 export async function change_zone(data: {
   iface_name: string;
   zone: IfaceZoneType;
