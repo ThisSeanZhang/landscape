@@ -4,13 +4,17 @@ import { ref } from "vue";
 
 const showModal = defineModel<boolean>("show", { required: true });
 
+const loading = ref(false);
 const bridge_name = ref<string>("");
 async function add_bridge() {
   if (bridge_name.value !== "") {
-    let result = await create_bridge(bridge_name.value);
-    if (result) {
-      // console.log("add success");
+    try {
+      loading.value = true;
+      await create_bridge(bridge_name.value);
       showModal.value = false;
+      bridge_name.value = "";
+    } finally {
+      loading.value = false;
     }
   }
 }
@@ -31,7 +35,7 @@ async function add_bridge() {
           :style="{ width: '50%', flex: '1' }"
           placeholder="bridge name"
         />
-        <n-button type="primary" @click="add_bridge" ghost>
+        <n-button :loading="loading" type="primary" @click="add_bridge" ghost>
           add bridge
         </n-button>
       </n-input-group>

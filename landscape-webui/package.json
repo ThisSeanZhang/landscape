@@ -9,7 +9,6 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@imengyu/vue3-context-menu": "^1.5.2",
     "@vue-flow/controls": "^1.1.2",
     "@vue-flow/core": "^1.43.1",
     "@vue-flow/minimap": "^1.5.3",

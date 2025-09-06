@@ -4,7 +4,7 @@ use std::{
 };
 
 use dev::{DevState, LandscapeInterface};
-use futures::{stream::TryStreamExt, StreamExt};
+use futures::stream::TryStreamExt;
 use iface::{dev_wifi::LandscapeWifiInterface, get_iface_by_name};
 use landscape_common::config::iface::{CreateDevType, NetworkIfaceConfig, WifiMode};
 use netlink_packet_route::AddressFamily;

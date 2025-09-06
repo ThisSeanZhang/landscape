@@ -19,20 +19,20 @@ import WifiServiceEditModal from "@/components/wifi/WifiServiceEditModal.vue";
 import DHCPv4ServiceEditModal from "@/components/dhcp_v4/DHCPv4ServiceEditModal.vue";
 
 import IfaceChangeZone from "../iface/IfaceChangeZone.vue";
-import { AreaCustom, Power, Link, DotMark } from "@vicons/carbon";
+import { AreaCustom, Power, Link, DotMark, Delete } from "@vicons/carbon";
 import { PlugDisconnected20Regular } from "@vicons/fluent";
 import { computed, ref, reactive } from "vue";
 
 import { DevStateType } from "@/lib/dev";
 import { useIfaceNodeStore } from "@/stores/iface_node";
-import { add_controller, change_iface_status, delete_bridge  } from "@/api/network";
+import {
+  add_controller,
+  change_iface_status,
+  delete_bridge,
+} from "@/api/network";
 import { ServiceExhibitSwitch } from "@/lib/services";
 import { useFrontEndStore } from "@/stores/front_end_config";
 import { mask_string } from "@/lib/common";
-import type { MenuOptions } from '@imengyu/vue3-context-menu';
-import { ContextMenu, ContextMenuItem} from '@imengyu/vue3-context-menu'
-
-import '@imengyu/vue3-context-menu/lib/vue3-context-menu.css'
 
 const frontEndStore = useFrontEndStore();
 const props = defineProps(["node"]);
@@ -90,55 +90,25 @@ async function remove_controller() {
   await refresh();
 }
 
-const message = useMessage()
-const dialog = useDialog()
+const message = useMessage();
+const dialog = useDialog();
 
-// 添加删除桥接的方法
+const delete_loading = ref(false);
 async function handleDeleteBridge() {
   if (props.node === undefined) {
     return;
   }
-  // 使用 Naive UI 的对话框进行确认
-  console.log("================= ");
-  let confirm = dialog.warning({
-    title: '确认删除',
-    content: `确定删除桥接 ${props.node.name} 吗？`,
-    positiveText: '确定',
-          negativeText: '取消',
-    onPositiveClick: async () => {
-      try {
-        await delete_bridge(props.node.name);
-        await refresh();
-        message.info('已删除')
-      } catch (error) {
-        window.$message.error('删除失败');
-      }
-    },
-    onNegativeClick: () => {
-      message.info('已取消')
-    }
-  });
+  try {
+    delete_loading.value = true;
+    await delete_bridge(props.node.name);
+    await refresh();
+    message.info("删除成功");
+  } catch (error) {
+    window.$message.error("删除失败");
+  } finally {
+    delete_loading.value = false;
+  }
 }
-
-const show = ref(false)
-const optionsComponent = reactive<MenuOptions>({
-  // iconFontClass: 'iconfont',
-  // customClass: "class-a",
-  // zIndex: 3,
-  minWidth: 230,
-  x: 100,
-  y: 100,
-})
-
-const onContextMenu = (e: MouseEvent) => {
-  e.preventDefault()
-  //Set the mouse position
-  optionsComponent.x = e.x
-  optionsComponent.y = e.y
-  //Show menu
-  show.value = true
-}
-
 
 const show_switch = computed(() => {
   return new ServiceExhibitSwitch(props.node);
@@ -167,13 +137,6 @@ const show_switch = computed(() => {
     <button>Action3</button>
   </NodeToolbar> -->
   <!-- {{ node }} -->
-  <context-menu
-    v-model:show="show"
-    :options="optionsComponent"
-  >
-    <context-menu-item label="删除网桥" :clickClose="false" @click="handleDeleteBridge" />
-  </context-menu>
-
   <n-flex vertical>
     <n-popover
       trigger="hover"
@@ -181,7 +144,7 @@ const show_switch = computed(() => {
       @update:show="handleUpdateShow"
     >
       <template #trigger>
-        <n-card size="small" style="min-width: 250px; max-width: 250px"  @contextmenu="onContextMenu($event)">
+        <n-card size="small" style="min-width: 250px; max-width: 250px">
           <template #header>
             <n-flex style="gap: 3px" inline align="center">
               <n-icon
@@ -195,7 +158,7 @@ const show_switch = computed(() => {
             </n-flex>
           </template>
           <template #header-extra>
-            <n-flex>
+            <n-flex :size="[10, 0]">
               <!-- <n-button
                 v-if="show_switch.carrier"
                 text
@@ -259,11 +222,38 @@ const show_switch = computed(() => {
                 :show_switch="show_switch"
                 @refresh="refresh"
               />
+
+              <n-popconfirm
+                v-if="
+                  node.dev_kind === 'bridge' &&
+                  node.name !== 'docker0' &&
+                  node.dev_status.t === 'down'
+                "
+                :show-icon="false"
+                :positive-button-props="{ type: 'error', ghost: true }"
+                positive-text="删除!"
+                @positive-click="handleDeleteBridge"
+                trigger="click"
+              >
+                <template #trigger>
+                  <n-button
+                    :loading="delete_loading"
+                    type="error"
+                    text
+                    style="font-size: 16px"
+                  >
+                    <n-icon>
+                      <Delete />
+                    </n-icon>
+                  </n-button>
+                </template>
+                <span>删除桥接设备</span>
+              </n-popconfirm>
             </n-flex>
           </template>
         </n-card>
       </template>
-      <n-descriptions label-placement="left" :column="2">
+      <n-descriptions label-placement="left" :column="2" size="small">
         <n-descriptions-item label="mac地址">
           {{
             frontEndStore.presentation_mode
@@ -278,7 +268,7 @@ const show_switch = computed(() => {
               : node.perm_mac ?? "N/A"
           }}
         </n-descriptions-item>
-        <n-descriptions-item label="网路类型">
+        <n-descriptions-item label="设备类型">
           {{ node.dev_type ?? "N/A" }}/{{ node.dev_kind ?? "N/A" }}
         </n-descriptions-item>
         <n-descriptions-item label="状态">
@@ -315,7 +305,6 @@ const show_switch = computed(() => {
           </n-button>
         </n-descriptions-item>
       </n-descriptions>
-      <!-- <n-divider /> -->
     </n-popover>
 
     <n-flex style="min-width: 230px; max-width: 230px">

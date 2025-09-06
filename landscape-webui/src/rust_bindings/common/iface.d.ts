@@ -9,8 +9,6 @@ export type AddController = {
 
 export type BridgeCreate = { name: string };
 
-export type BridgeDelete = { name: string };
-
 export type ChangeZone = { iface_name: string; zone: IfaceZoneType };
 
 /**

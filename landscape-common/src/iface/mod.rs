@@ -11,12 +11,6 @@ pub struct BridgeCreate {
 
 #[derive(Clone, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "common/iface.d.ts")]
-pub struct BridgeDelete {
-    pub name: String,
-}
-
-#[derive(Clone, Serialize, Deserialize, TS)]
-#[ts(export, export_to = "common/iface.d.ts")]
 pub struct AddController {
     pub link_name: String,
     pub link_ifindex: u32,
