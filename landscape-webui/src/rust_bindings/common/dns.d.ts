@@ -2,8 +2,6 @@
 import type { FlowMark } from "../flow";
 import type { GeoConfigKey } from "./geo.d";
 
-export type CloudflareMode = "plaintext" | "tls" | "https";
-
 export type DNSRedirectRuleConfig = {
   id: string;
   remark: string;
@@ -18,13 +16,6 @@ export type DNSRedirectRuleConfig = {
   source: Array<DomainConfig>;
   update_at: number;
 };
-
-export type DNSResolveMode = { "t": "redirect"; ips: Array<string> } | {
-  "t": "upstream";
-  upstream: DnsUpstreamType;
-  ips: Array<string>;
-  port: number | null;
-} | { "t": "cloudflare"; mode: CloudflareMode };
 
 /**
  * DNS 配置
@@ -71,11 +62,6 @@ export type DnsUpstreamMode =
   | { "t": "tls"; domain: string }
   | { "t": "https"; domain: string }
   | { "t": "quic"; domain: string };
-
-export type DnsUpstreamType = { "t": "plaintext" } | {
-  "t": "tls";
-  domain: string;
-} | { "t": "https"; domain: string };
 
 export type DomainConfig = { match_type: DomainMatchType; value: string };
 

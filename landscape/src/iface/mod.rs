@@ -8,7 +8,7 @@ use landscape_common::database::{LandscapeDBTrait, LandscapeServiceDBTrait};
 use landscape_common::{
     config::iface::{IfaceCpuSoftBalance, IfaceZoneType, NetworkIfaceConfig, WifiMode},
     error::LdResult,
-    iface::{AddController, BridgeCreate, ChangeZone},
+    iface::{AddController, BridgeCreate, BridgeDelete, ChangeZone},
 };
 use landscape_database::iface::repository::NetIfaceRepository;
 use landscape_database::provider::LandscapeDBServiceProvider;
@@ -140,6 +140,12 @@ impl IfaceManagerService {
         }
     }
 
+    pub async fn delete_bridge(&self, bridge_delete_request: BridgeDelete) {
+        if crate::delete_bridge(bridge_delete_request.name.clone()).await {
+            self.del_iface_config(bridge_delete_request.name.clone()).await;
+        }
+    }
+
     pub async fn set_controller(
         &self,
         AddController {
@@ -267,6 +273,15 @@ impl IfaceManagerService {
     pub async fn get_iface_config(&self, key: String) -> Option<NetworkIfaceConfig> {
         let store = self.store_service.iface_store();
         store.find_by_iface_name(key).await.ok()?
+    }
+
+    pub async fn del_iface_config(&self, key: String) -> bool {
+        let store = self.store_service.iface_store();
+        let res = store.delete(key).await;
+        match res {
+            Ok(_) => true,
+            Err(_) => false,
+        }
     }
 
     async fn get_iface_configs(&self) -> Vec<NetworkIfaceConfig> {

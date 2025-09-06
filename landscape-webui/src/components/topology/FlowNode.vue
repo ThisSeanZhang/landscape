@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { Handle, Position, useNodesData } from "@vue-flow/core";
-import { useThemeVars } from "naive-ui";
+import { useDialog, useMessage, useThemeVars } from "naive-ui";
 
 import IPConfigStatusBtn from "@/components/status_btn/IPConfigStatusBtn.vue";
 import PacketMarkStatusBtn from "@/components/status_btn/PacketMarkStatusBtn.vue";
@@ -21,14 +21,18 @@ import DHCPv4ServiceEditModal from "@/components/dhcp_v4/DHCPv4ServiceEditModal.
 import IfaceChangeZone from "../iface/IfaceChangeZone.vue";
 import { AreaCustom, Power, Link, DotMark } from "@vicons/carbon";
 import { PlugDisconnected20Regular } from "@vicons/fluent";
-import { computed, ref } from "vue";
+import { computed, ref, reactive } from "vue";
 
 import { DevStateType } from "@/lib/dev";
 import { useIfaceNodeStore } from "@/stores/iface_node";
-import { add_controller, change_iface_status } from "@/api/network";
+import { add_controller, change_iface_status, delete_bridge  } from "@/api/network";
 import { ServiceExhibitSwitch } from "@/lib/services";
 import { useFrontEndStore } from "@/stores/front_end_config";
 import { mask_string } from "@/lib/common";
+import type { MenuOptions } from '@imengyu/vue3-context-menu';
+import { ContextMenu, ContextMenuItem} from '@imengyu/vue3-context-menu'
+
+import '@imengyu/vue3-context-menu/lib/vue3-context-menu.css'
 
 const frontEndStore = useFrontEndStore();
 const props = defineProps(["node"]);
@@ -86,6 +90,56 @@ async function remove_controller() {
   await refresh();
 }
 
+const message = useMessage()
+const dialog = useDialog()
+
+// 添加删除桥接的方法
+async function handleDeleteBridge() {
+  if (props.node === undefined) {
+    return;
+  }
+  // 使用 Naive UI 的对话框进行确认
+  console.log("================= ");
+  let confirm = dialog.warning({
+    title: '确认删除',
+    content: `确定删除桥接 ${props.node.name} 吗？`,
+    positiveText: '确定',
+          negativeText: '取消',
+    onPositiveClick: async () => {
+      try {
+        await delete_bridge(props.node.name);
+        await refresh();
+        message.info('已删除')
+      } catch (error) {
+        window.$message.error('删除失败');
+      }
+    },
+    onNegativeClick: () => {
+      message.info('已取消')
+    }
+  });
+}
+
+const show = ref(false)
+const optionsComponent = reactive<MenuOptions>({
+  // iconFontClass: 'iconfont',
+  // customClass: "class-a",
+  // zIndex: 3,
+  minWidth: 230,
+  x: 100,
+  y: 100,
+})
+
+const onContextMenu = (e: MouseEvent) => {
+  e.preventDefault()
+  //Set the mouse position
+  optionsComponent.x = e.x
+  optionsComponent.y = e.y
+  //Show menu
+  show.value = true
+}
+
+
 const show_switch = computed(() => {
   return new ServiceExhibitSwitch(props.node);
 });
@@ -113,6 +167,13 @@ const show_switch = computed(() => {
     <button>Action3</button>
   </NodeToolbar> -->
   <!-- {{ node }} -->
+  <context-menu
+    v-model:show="show"
+    :options="optionsComponent"
+  >
+    <context-menu-item label="删除网桥" :clickClose="false" @click="handleDeleteBridge" />
+  </context-menu>
+
   <n-flex vertical>
     <n-popover
       trigger="hover"
@@ -120,7 +181,7 @@ const show_switch = computed(() => {
       @update:show="handleUpdateShow"
     >
       <template #trigger>
-        <n-card size="small" style="min-width: 250px; max-width: 250px">
+        <n-card size="small" style="min-width: 250px; max-width: 250px"  @contextmenu="onContextMenu($event)">
           <template #header>
             <n-flex style="gap: 3px" inline align="center">
               <n-icon

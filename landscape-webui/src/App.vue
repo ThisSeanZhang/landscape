@@ -15,11 +15,14 @@ import Env from "@/components/Env.vue";
   >
     <n-message-provider>
       <n-notification-provider>
-        <Env></Env>
-        <RouterView />
+        <n-dialog-provider>
+          <Env></Env>
+          <RouterView />
+        </n-dialog-provider>
       </n-notification-provider>
     </n-message-provider>
   </n-config-provider>
+
 </template>
 
 <style>
