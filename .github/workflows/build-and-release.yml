@@ -42,6 +42,12 @@ jobs:
           cp target/release/landscape-webserver output/landscape-webserver-x86_64
           cargo build --target aarch64-unknown-linux-gnu --release
           cp target/aarch64-unknown-linux-gnu/release/landscape-webserver output/landscape-webserver-aarch64
+          # redirect_pkg_handler
+          cargo build --package landscape-ebpf --bin redirect_pkg_handler --release
+          cp target/release/redirect_pkg_handler output/redirect_pkg_handler-x86_64
+          cargo build --package landscape-ebpf --bin redirect_pkg_handler \ 
+          --target aarch64-unknown-linux-gnu --release
+          cp target/aarch64-unknown-linux-gnu/release/redirect_pkg_handler output/redirect_pkg_handler-aarch64
 
       - name: Upload Rust x86_64 binary
         uses: actions/upload-artifact@v4
