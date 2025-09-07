@@ -19,3 +19,14 @@ steps:
         from_secret: DOCKER_HUB_REPO_USER
       password:
         from_secret: DOCKER_HUB_REPO_TOKEN
+  - name: "build musl img"
+    image: woodpeckerci/plugin-docker-buildx
+    settings:
+      repo: thisseanzhang/landscape
+      dockerfile: dockerfiles/build-musl/Dockerfile
+      context: ./dockerfiles/build-musl/
+      tags: build_base_musl
+      username: 
+        from_secret: DOCKER_HUB_REPO_USER
+      password:
+        from_secret: DOCKER_HUB_REPO_TOKEN

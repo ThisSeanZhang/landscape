@@ -20,12 +20,21 @@ jobs:
           apk update && apk add --no-cache clang gcc build-base make pkgconf elfutils-dev linux-headers
           cargo build --release
           cp target/release/landscape-webserver output/landscape-webserver-x86_64-musl
+          # redirect_pkg_handler
+          cargo build --package landscape-ebpf --bin redirect_pkg_handler --release
+          cp target/release/redirect_pkg_handler output/redirect_pkg_handler-x86_64-musl
 
       - name: Upload Rust x86_64 binary
         uses: actions/upload-artifact@v4
         with:
           name: landscape-webserver-x86_64-musl
           path: output/landscape-webserver-x86_64-musl
+      
+      - name: Upload redirect_pkg_handler x86_64 binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: redirect_pkg_handler-x86_64-musl
+          path: output/redirect_pkg_handler-x86_64-musl
 
   build-rust:
     runs-on: ubuntu-latest
@@ -75,7 +84,6 @@ jobs:
   build-front:
     runs-on: ubuntu-latest
     container: node:18.20.7-alpine3.21
-    needs: build-rust
 
     steps:
       - name: Checkout code
@@ -100,7 +108,7 @@ jobs:
   publish:
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
-    needs: [build-rust, build-front]
+    needs: [build-rust, build-front, build-musl]
 
     steps:
       - name: Checkout code
