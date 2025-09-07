@@ -6,6 +6,27 @@ on:
       - '*'
 
 jobs:
+  build-musl:
+    runs-on: ubuntu-latest
+    container: rust:alpine3.22
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Build Rust binaries
+        run: |
+          mkdir -p output
+          rustup component add rustfmt
+          apk update && apk add --no-cache clang gcc build-base make pkgconf elfutils-dev linux-headers
+          cargo build --release
+          cp target/release/landscape-webserver output/landscape-webserver-x86_64-musl
+
+      - name: Upload Rust x86_64 binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: landscape-webserver-x86_64-musl
+          path: output/landscape-webserver-x86_64-musl
+
   build-rust:
     runs-on: ubuntu-latest
     container: thisseanzhang/landscape:build_base
