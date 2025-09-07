@@ -3217,7 +3217,6 @@ dependencies = [
  "hickory-proto",
  "homedir",
  "hostname 0.4.1",
- "landscape-macro",
  "libc",
  "once_cell",
  "paste",
@@ -3299,6 +3298,7 @@ dependencies = [
  "landscape-common",
  "libbpf-cargo",
  "libbpf-rs",
+ "libbpf-sys",
  "libc",
  "nix 0.28.0",
  "once_cell",
@@ -3314,14 +3314,6 @@ dependencies = [
  "tracing-appender",
  "tracing-subscriber",
  "vmlinux",
-]
-
-[[package]]
-name = "landscape-macro"
-version = "0.6.9"
-dependencies = [
- "quote",
- "syn 1.0.109",
 ]
 
 [[package]]
@@ -3357,6 +3349,7 @@ dependencies = [
  "landscape-common",
  "landscape-database",
  "landscape-dns",
+ "landscape-ebpf",
  "once_cell",
  "rand 0.9.1",
  "rcgen",
@@ -3485,12 +3478,12 @@ dependencies = [
 
 [[package]]
 name = "libbpf-sys"
-version = "1.4.5+v1.4.5"
+version = "1.5.1+v1.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5cabee52b6f7e73308d6fd4f8e6bbbdcb97670f49f6e581c5897e4d2410b6019"
+checksum = "912fae30b08bcbdb861d4b85bd09c05352c0ac9d7b93765ced5ca23709e7e590"
 dependencies = [
  "cc",
- "nix 0.29.0",
+ "nix 0.30.1",
  "pkg-config",
 ]
 

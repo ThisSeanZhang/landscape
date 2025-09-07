@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
-landscape-macro = { path = "../landscape-macro" }
+# landscape-macro = { path = "../landscape-macro" }
 
 serde = { workspace = true }
 clap = { workspace = true }
