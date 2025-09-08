@@ -10,9 +10,6 @@ jobs:
     runs-on: ubuntu-24.04-arm
     container: rust:alpine3.22
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
       - name: Build Rust binaries
         run: |
           mkdir -p output
