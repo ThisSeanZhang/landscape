@@ -6,36 +6,38 @@ on:
       - '*'
 
 jobs:
-  build-arm-musl:
-    runs-on: ubuntu-24.04-arm
-    container: rust:alpine3.22
-    steps:
-      - name: Build Rust binaries
-        run: |
-          mkdir -p output
-          rustup component add rustfmt
-          apk update && apk add --no-cache clang gcc build-base make pkgconf elfutils-dev linux-headers
-          pwd
-          ls -la
-          cargo build --release
-          cp target/release/landscape-webserver output/landscape-webserver-aarch64-musl
-          # redirect_pkg_handler
-          cargo build --package landscape-ebpf --bin redirect_pkg_handler --release
-          cp target/release/redirect_pkg_handler output/redirect_pkg_handler-aarch64-musl
+  # build-arm-musl:
+  #   runs-on: ubuntu-24.04-arm
+  #   container: rust:alpine3.22
+  #   steps:
+  #     - name: Checkout code
+  #       uses: actions/checkout@v4
 
-      - name: Upload Rust aarch64 binary
-        uses: actions/upload-artifact@v4
-        with:
-          name: landscape-webserver-aarch64-musl
-          path: output/landscape-webserver-aarch64-musl
+  #     - name: Build Rust binaries
+  #       run: |
+  #         mkdir -p output
+  #         rustup component add rustfmt
+  #         apk update && apk add --no-cache clang gcc build-base make pkgconf elfutils-dev linux-headers
+  #         pwd
+  #         ls -la
+  #         cargo build --release
+  #         cp target/release/landscape-webserver output/landscape-webserver-aarch64-musl
+  #         # redirect_pkg_handler
+  #         cargo build --package landscape-ebpf --bin redirect_pkg_handler --release
+  #         cp target/release/redirect_pkg_handler output/redirect_pkg_handler-aarch64-musl
+
+  #     - name: Upload Rust aarch64 binary
+  #       uses: actions/upload-artifact@v4
+  #       with:
+  #         name: landscape-webserver-aarch64-musl
+  #         path: output/landscape-webserver-aarch64-musl
       
-      - name: Upload redirect_pkg_handler aarch64 binary
-        uses: actions/upload-artifact@v4
-        with:
-          name: redirect_pkg_handler-aarch64-musl
-          path: output/redirect_pkg_handler-aarch64-musl
+  #     - name: Upload redirect_pkg_handler aarch64 binary
+  #       uses: actions/upload-artifact@v4
+  #       with:
+  #         name: redirect_pkg_handler-aarch64-musl
+  #         path: output/redirect_pkg_handler-aarch64-musl
   build-musl:
-    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     container: thisseanzhang/landscape:build_base_musl
     steps:
@@ -64,7 +66,6 @@ jobs:
           path: output/redirect_pkg_handler-x86_64-musl
 
   build-rust:
-    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     container: thisseanzhang/landscape:build_base
 
@@ -110,7 +111,6 @@ jobs:
           path: output/landscape-webserver-aarch64
 
   build-front:
-    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     container: node:18.20.7-alpine3.21
 
