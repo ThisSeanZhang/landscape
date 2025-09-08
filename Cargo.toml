@@ -8,6 +8,7 @@ members = [
     "landscape",
     "landscape-common",
     "landscape-database",
+    "landscape-macro",
     "landscape-database/migration",
     "landscape-dns",
     "landscape-ebpf",

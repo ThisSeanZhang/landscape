@@ -3217,6 +3217,7 @@ dependencies = [
  "hickory-proto",
  "homedir",
  "hostname 0.4.1",
+ "landscape-macro",
  "libc",
  "once_cell",
  "paste",
@@ -3314,6 +3315,14 @@ dependencies = [
  "tracing-appender",
  "tracing-subscriber",
  "vmlinux",
+]
+
+[[package]]
+name = "landscape-macro"
+version = "0.6.9"
+dependencies = [
+ "quote",
+ "syn 1.0.109",
 ]
 
 [[package]]
