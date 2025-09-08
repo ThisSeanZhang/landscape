@@ -15,7 +15,7 @@ jobs:
           mkdir -p output
           rustup component add rustfmt
           apk update && apk add --no-cache clang gcc build-base make pkgconf elfutils-dev linux-headers
-          password
+          pwd
           ls -la
           cargo build --release
           cp target/release/landscape-webserver output/landscape-webserver-aarch64-musl
