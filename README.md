@@ -20,7 +20,7 @@ Landscape is a web-based tool that helps you easily configure your favorite Linu
 ---
 
 ## CORE Features
-* Traffic diversion control (SIP, QoS (dscp), DIP, domain, Geo matching rules)  
+* Traffic diversion control (SIP-CIDR, QoS (dscp), DIP, domain, Geo matching rules)  
 * eBPF routing
 * Independent DNS configuration and caching for each flow (to prevent DNS pollution and leaks) 
 * Traffic import into Docker containers 
@@ -79,7 +79,7 @@ Landscape is a web-based tool that helps you easily configure your favorite Linu
 
 * <u>DNS</u>
 
-  * ✅ Support DNS over HTTPS and DNS over TLS for upstream
+  * ✅ Support DNS over HTTPS, DNS over TLS and DNS over Quic for upstream
   * ✅ Assign specific upstream DNS by domain
   * ✅ DNS Hijacking (return A records)
   * ❌ Hijack to return multiple records (other than A)
@@ -91,7 +91,7 @@ Landscape is a web-based tool that helps you easily configure your favorite Linu
 * <u>NAT (eBPF)</u>
 
   * ✅ Basic NAT support
-  * ⚠ Static mapping / Port forwarding (UI incomplete)
+  * ✅ Static mapping / Port forwarding 
   * ✅ NAT disables port reuse by default; reuse allowed via tagging rules
 
 * <u>Metrics</u>

@@ -49,6 +49,7 @@ export default defineConfig({
           { text: "系统基本设置", link: "/other-features/sys-info" },
           //  { text: "NAT", link: "/feature/route.md" },
           { text: "防火墙设置", link: "/other-features/firewall" },
+          { text: "DNS 相关", link: "/other-features/serverdns" },
           // { text: "分流设置", link: "/other-features/" },
           //  { text: "Docker", link: "/flow.md" },
           //  { text: "连接信息", link: "/flow.md" },

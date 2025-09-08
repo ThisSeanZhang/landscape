@@ -20,11 +20,11 @@ Landscape 是一个基于 Web UI 的工具，可以轻松将您喜爱的 Linux �
 ---
 
 ## 核心特性
-* 分流控制（SIP、Qos(dscp)、DIP、域名、Geo 匹配规则）
+* 分流控制（SIP-CIDR、Qos(dscp)、DIP、域名、Geo 匹配规则）
 * eBPF 路由
 * 每个流 Flow 独立 dns 配置以及缓存（避免 dns 污染、泄露）
 * 流量导入 Docker 容器
-* Geo 管理
+* 地理关系库管理
 
 ---
 
@@ -62,11 +62,11 @@ Landscape 是一个基于 Web UI 的工具，可以轻松将您喜爱的 Linux �
     - ❌ 对指定数据设置跟踪标记
     - ✅ 外网 IP 行为控制, 按照标记的规则控制外网 IP, 并支持使用 `geoip.dat` 协助配置
     - ✅ IP 规则和 DNS 规则冲突时, 依据规则的优先级进行判定 (值越小越高)
-- <u>Geo 管理</u>
-    - ✅ 多 Geo 来源管理
+- <u>地理关系库管理</u>
+    - ✅ 多 地理关系库 来源管理
     - ✅ Geo IP/Site 自动更新
 - <u>DNS</u>
-    - ✅ 支持使用 DNS over HTTPS 和 DNS over TLS 向上游请求 DNS
+    - ✅ 支持使用 DNS over HTTPS、DNS over TLS 和 DNS over Quic 向上游请求 DNS
     - ✅ 支持指定网址使用特定上游 DNS
     - ✅ DNS 劫持 ( 返回 A 解析 )
     - ❌ DNS 劫持返回多条记录 ( 除了 A 解析之外的)
@@ -76,7 +76,7 @@ Landscape 是一个基于 Web UI 的工具，可以轻松将您喜爱的 Linux �
     - ✅ 支持进行测试域名查询
 - <u>NAT (eBPF) 实现</u>
     - ✅ 基础 NAT 
-    - ⚠ 静态映射 / 开放指定端口 ( UI 界面未完善 )
+    - ✅ 静态映射 / 开放指定端口
     - ✅ NAT 默认阻止端口复用, 依据标记模块配置可动态允许 IP 开启的端口能够复用
 - <u> 指标模块 </u>
     - ✅ 每 5s 定时上报连接信息(字节数 / 数据包个数)

@@ -3,11 +3,13 @@
 ## 文件准备
 1. Landscape Router 文件主体, 可从 [此处](https://github.com/ThisSeanZhang/landscape/releases/) 下载
 2. 静态页面文件, 可从 [此处](https://github.com/ThisSeanZhang/landscape/releases/) 下载, 并且解压到 `/root/.landscape-router/static` 文件夹中
-3. (可选) 安装 Docker.
-4. (*假如有桌面环境, 并有浏览器时可选*) 准备初始化配置文件  
+3. webserver environment
+4. (可选) 安装 PPP，用于 pppoe 拨号
+5. (可选) 安装 Docker.
+6. (*假如有桌面环境, 并有浏览器时可选*) 准备初始化配置文件  
   (注意, 此配置文件只在第一次运行被读取):   
     放置在 -> `/root/.landscape-router/landscape_init.toml`
-5. (可选) geosite/geoip 文件
+7. (可选) geosite/geoip 文件
 
 ## 关闭本机自动配置 IP 服务 / DNS 服务
 1. Debian:
@@ -115,6 +117,13 @@ WantedBy=multi-user.target
 systemctl start landscape-router.service
 # 开机启动服务 ( 确认没有问题之后执行 )
 systemctl enable landscape-router.service
+# 停止服务
+systemctl stop landscape-router.service
 ```
+## 升级 landscape-router
 
+1. 下载新版 `landscape-webserver` 与 `static` 并解压
+2. 停止 landscape-router.service
+3. 换入新版 `landscape-webserver` 与 `static`  
+4. 重启系统（仅重启 landscape-router.service 会导致分流功能不可用）
 
