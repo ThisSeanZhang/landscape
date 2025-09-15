@@ -1,4 +1,3 @@
-import { PacketMark } from "@/rust_bindings/mark";
 import { convert_flow_mark, MarkType } from "./dns";
 
 export class MarkServiceConfig {
@@ -8,38 +7,6 @@ export class MarkServiceConfig {
   constructor(obj: { iface_name: string; enable?: boolean }) {
     this.iface_name = obj?.iface_name ?? "";
     this.enable = obj?.enable ?? true;
-  }
-}
-
-export class IpConfig {
-  ip: string;
-  prefix: number;
-
-  constructor(obj?: { ip?: string; prefix?: number }) {
-    this.ip = obj?.ip ?? "0.0.0.0";
-    this.prefix = obj?.prefix ?? 32;
-  }
-}
-
-export class LanIPRuleConfig {
-  index: number;
-  enable: boolean;
-  mark: PacketMark;
-  source: IpConfig[];
-  remark: string;
-
-  constructor(obj?: {
-    index?: number;
-    enable?: boolean;
-    mark?: PacketMark;
-    source?: IpConfig[];
-    remark?: string;
-  }) {
-    this.index = obj?.index ?? -1;
-    this.enable = obj?.enable ?? true;
-    this.mark = obj?.mark ? { ...obj.mark } : { t: MarkType.NoMark };
-    this.source = obj?.source ? obj?.source.map((e) => new IpConfig(e)) : [];
-    this.remark = obj?.remark ?? "";
   }
 }
 

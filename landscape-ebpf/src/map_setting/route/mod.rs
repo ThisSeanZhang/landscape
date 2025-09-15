@@ -92,7 +92,7 @@ pub fn add_wan_route(flow_id: FlowId, wan_info: RouteTargetInfo) {
     let value = unsafe { plain::as_bytes(&value) };
 
     if let Err(e) = rt_target_map.update(&key, &value, MapFlags::ANY) {
-        tracing::error!("add lan config error:{e:?}");
+        tracing::error!("add wan config error:{e:?}");
     }
 }
 

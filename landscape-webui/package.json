@@ -1,7 +1,7 @@
 {
   "name": "landscape-webui",
   "private": true,
-  "version": "0.6.8",
+  "version": "0.7.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -16,9 +16,9 @@
     "apexcharts": "^4.7.0",
     "axios": "^1.6.8",
     "ip-num": "^1.5.1",
+    "is-ip": "^5.0.1",
     "pinia": "^3.0.0",
     "pinia-plugin-persistedstate": "^4.3.0",
-    "uuid": "^11.1.0",
     "vue": "^3.4.21",
     "vue-i18n": "10",
     "vue-router": "4",

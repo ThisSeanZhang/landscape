@@ -1,6 +1,9 @@
+use std::collections::HashMap;
 use std::net::IpAddr;
 use std::net::Ipv6Addr;
 
+use landscape_common::ipv6_pd::IAPrefixMap;
+use landscape_common::ipv6_pd::LDIAPrefix;
 use landscape_common::route::RouteTargetInfo;
 use landscape_common::service::service_manager_v2::ServiceStarterTrait;
 use tokio::sync::broadcast;
@@ -26,11 +29,12 @@ use crate::route::IpRouteService;
 #[derive(Clone)]
 pub struct IPV6PDService {
     route_service: IpRouteService,
+    prefix_map: IAPrefixMap,
 }
 
 impl IPV6PDService {
-    pub fn new(route_service: IpRouteService) -> Self {
-        Self { route_service }
+    pub fn new(route_service: IpRouteService, prefix_map: IAPrefixMap) -> Self {
+        Self { route_service, prefix_map }
     }
 }
 
@@ -41,8 +45,9 @@ impl ServiceStarterTrait for IPV6PDService {
 
     async fn start(&self, config: IPV6PDServiceConfig) -> DefaultWatchServiceStatus {
         let service_status = DefaultWatchServiceStatus::new();
-        let route_service = self.route_service.clone();
         if config.enable {
+            let route_service = self.route_service.clone();
+            let prefix_map = self.prefix_map.clone();
             if let Some(iface) = get_iface_by_name(&config.iface_name).await {
                 let route_info = RouteTargetInfo {
                     ifindex: iface.index,
@@ -63,6 +68,7 @@ impl ServiceStarterTrait for IPV6PDService {
                         status_clone,
                         route_info,
                         route_service,
+                        prefix_map,
                     )
                     .await;
                 });
@@ -79,6 +85,7 @@ impl ServiceStarterTrait for IPV6PDService {
 pub struct DHCPv6ClientManagerService {
     store: DHCPv6ClientRepository,
     service: ServiceManager<IPV6PDService>,
+    prefix_map: IAPrefixMap,
 }
 
 impl ControllerService for DHCPv6ClientManagerService {
@@ -101,9 +108,10 @@ impl DHCPv6ClientManagerService {
         store_service: LandscapeDBServiceProvider,
         mut dev_observer: broadcast::Receiver<IfaceObserverAction>,
         route_service: IpRouteService,
+        prefix_map: IAPrefixMap,
     ) -> Self {
         let store = store_service.dhcp_v6_client_store();
-        let server_starter = IPV6PDService::new(route_service);
+        let server_starter = IPV6PDService::new(route_service, prefix_map.clone());
         let service = ServiceManager::init(store.list().await.unwrap(), server_starter).await;
 
         let service_clone = service.clone();
@@ -128,6 +136,10 @@ impl DHCPv6ClientManagerService {
         });
 
         let store = store_service.dhcp_v6_client_store();
-        Self { service, store }
+        Self { service, store, prefix_map }
+    }
+
+    pub async fn get_ipv6_prefix_infos(&self) -> HashMap<String, Option<LDIAPrefix>> {
+        self.prefix_map.get_info().await
     }
 }

@@ -832,6 +832,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "bincode"
+version = "2.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "36eaf5d7b090263e8150820482d5d93cd964a81e4019913c972f4edcc6edb740"
+dependencies = [
+ "bincode_derive",
+ "serde",
+ "unty",
+]
+
+[[package]]
+name = "bincode_derive"
+version = "2.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bf95709a440f45e986983918d0e8a1f30a9b1df04918fc828670606804ac3c09"
+dependencies = [
+ "virtue",
+]
+
+[[package]]
 name = "bindgen"
 version = "0.69.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2447,6 +2467,8 @@ dependencies = [
  "idna 1.0.3",
  "ipnet",
  "once_cell",
+ "pin-project-lite",
+ "quinn",
  "rand 0.9.1",
  "ring",
  "rustls",
@@ -2473,6 +2495,7 @@ dependencies = [
  "moka",
  "once_cell",
  "parking_lot",
+ "quinn",
  "rand 0.9.1",
  "resolv-conf",
  "rustls",
@@ -3134,7 +3157,7 @@ dependencies = [
 
 [[package]]
 name = "landscape"
-version = "0.6.8"
+version = "0.7.0"
 dependencies = [
  "async-trait",
  "bollard",
@@ -3182,9 +3205,10 @@ dependencies = [
 
 [[package]]
 name = "landscape-common"
-version = "0.6.8"
+version = "0.7.0"
 dependencies = [
  "async-trait",
+ "bincode 2.0.1",
  "chrono",
  "clap 4.5.39",
  "dhcproto",
@@ -3193,6 +3217,7 @@ dependencies = [
  "hickory-proto",
  "homedir",
  "hostname 0.4.1",
+ "landscape-macro",
  "libc",
  "once_cell",
  "paste",
@@ -3212,7 +3237,7 @@ dependencies = [
 
 [[package]]
 name = "landscape-database"
-version = "0.6.8"
+version = "0.7.0"
 dependencies = [
  "async-trait",
  "landscape-common",
@@ -3229,9 +3254,10 @@ dependencies = [
 
 [[package]]
 name = "landscape-dns"
-version = "0.6.8"
+version = "0.7.0"
 dependencies = [
  "aho-corasick",
+ "arc-swap",
  "async-trait",
  "clap 4.5.39",
  "ctrlc",
@@ -3261,17 +3287,19 @@ dependencies = [
  "tracing-subscriber",
  "trie-rs",
  "ts-rs",
+ "uuid",
 ]
 
 [[package]]
 name = "landscape-ebpf"
-version = "0.6.8"
+version = "0.7.0"
 dependencies = [
  "clap 4.5.39",
  "ctrlc",
  "landscape-common",
  "libbpf-cargo",
  "libbpf-rs",
+ "libbpf-sys",
  "libc",
  "nix 0.28.0",
  "once_cell",
@@ -3290,8 +3318,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "landscape-macro"
+version = "0.7.0"
+dependencies = [
+ "quote",
+ "syn 1.0.109",
+]
+
+[[package]]
 name = "landscape-protobuf"
-version = "0.6.8"
+version = "0.7.0"
 dependencies = [
  "homedir",
  "jemalloc-ctl",
@@ -3305,7 +3341,7 @@ dependencies = [
 
 [[package]]
 name = "landscape-webserver"
-version = "0.6.8"
+version = "0.7.0"
 dependencies = [
  "axum",
  "axum-extra",
@@ -3322,6 +3358,7 @@ dependencies = [
  "landscape-common",
  "landscape-database",
  "landscape-dns",
+ "landscape-ebpf",
  "once_cell",
  "rand 0.9.1",
  "rcgen",
@@ -3450,12 +3487,12 @@ dependencies = [
 
 [[package]]
 name = "libbpf-sys"
-version = "1.4.5+v1.4.5"
+version = "1.5.1+v1.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5cabee52b6f7e73308d6fd4f8e6bbbdcb97670f49f6e581c5897e4d2410b6019"
+checksum = "912fae30b08bcbdb861d4b85bd09c05352c0ac9d7b93765ced5ca23709e7e590"
 dependencies = [
  "cc",
- "nix 0.29.0",
+ "nix 0.30.1",
  "pkg-config",
 ]
 
@@ -3693,10 +3730,12 @@ dependencies = [
 
 [[package]]
 name = "migration"
-version = "0.6.8"
+version = "0.7.0"
 dependencies = [
  "async-std",
  "sea-orm-migration",
+ "serde_json",
+ "uuid",
 ]
 
 [[package]]
@@ -4998,7 +5037,7 @@ version = "0.48.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2c50cd0dac46936771793eb22cb7aeeef97d6aaa4f832f4209637e73178d39aa"
 dependencies = [
- "bincode",
+ "bincode 1.3.3",
  "bytemuck",
  "bytes",
  "compact_str",
@@ -7495,6 +7534,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8ecb6da28b8a351d773b68d5825ac39017e680750f980f3a1a85cd8dd28a47c1"
 
 [[package]]
+name = "unty"
+version = "0.0.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6d49784317cd0d1ee7ec5c716dd598ec5b4483ea832a2dced265471cc0f690ae"
+
+[[package]]
 name = "url"
 version = "2.5.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7571,6 +7616,12 @@ name = "version_check"
 version = "0.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
+
+[[package]]
+name = "virtue"
+version = "0.0.18"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "051eb1abcf10076295e815102942cc58f9d5e3b4560e46e53c21e8ff6f3af7b1"
 
 [[package]]
 name = "vmlinux"

@@ -3,24 +3,11 @@
 #include <bpf/bpf_helpers.h>
 #include "landscape.h"
 #include "packet_def.h"
+#include "flow_match.h"
 
 enum flow_chache_type {
     PASS = 0,
     REDIRECT = 1,
-};
-
-struct flow_match_key {
-    // 源 IP 地址
-    union u_inet_addr src_addr;
-    // vlan id
-    u32 vlan_tci;
-    // tos value
-    u8 tos;
-    // IP 协议: IPv4 Ipv6
-    u8 l3_protocol;
-    // IP 层协议: TCP / UDP
-    u8 l4_protocol;
-    u8 _pad;
 };
 
 struct flow_ip_cache_key {
@@ -63,13 +50,6 @@ struct {
     __uint(max_entries, 2048);
 } flow_target_map SEC(".maps");
 
-struct {
-    __uint(type, BPF_MAP_TYPE_HASH);
-    __type(key, struct flow_match_key);
-    __type(value, u32);
-    __uint(max_entries, 65536);
-    __uint(pinning, LIBBPF_PIN_BY_NAME);
-} flow_match_map SEC(".maps");
 
 // struct each_flow_target {
 //     __uint(type, BPF_MAP_TYPE_HASH);
@@ -199,6 +179,8 @@ struct route_context {
     u8 l4_protocol;
     // tos value
     u8 tos;
+    // TODO
+    // u16 dst_port;
     u8 smac[6];
     u8 _pad[3];
 };

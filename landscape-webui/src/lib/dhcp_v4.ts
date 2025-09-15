@@ -1,3 +1,4 @@
+import { DHCPv4OfferInfo } from "@/rust_bindings/common/dhcp_v4_server";
 import { IPv4, IPv4CidrRange } from "ip-num";
 
 export class DHCPv4ServiceConfig {
@@ -67,21 +68,10 @@ export function get_dhcp_range(cidr: string): [string, string] {
   return [nthIp.toString(), range.getLast().toString()];
 }
 
-export type DHCPv4OfferInfo = {
-  relative_boot_time: number;
-  offered_ips: DHCPv4OfferInfoItem[];
-};
 export type DHCPv4OfferInfoShow = {
   mac: string;
   ip: string;
   time_left: number;
-};
-
-export type DHCPv4OfferInfoItem = {
-  mac: string;
-  ip: string;
-  relative_active_time: number;
-  expire_time: number;
 };
 
 export function conver_to_show(

@@ -15,11 +15,28 @@ import Config from "@/views/Config.vue";
 import Login from "@/views/Login.vue";
 import StaticNatMapping from "@/views/StaticNatMapping.vue";
 
+import DnsRedirect from "@/views/dns/DnsRedirect.vue";
+import DnsUpstream from "@/views/dns/DnsUpstream.vue";
+
+
+import service_status_route from "./service_status";
+
 const inner_zone: Array<RouteRecordRaw> = [
   {
     path: "/",
     name: "",
     component: Landscape,
+  },
+  {
+    path: "/dns-redirect",
+    name: "dns-redirect",
+    component: DnsRedirect,
+  },
+  ...service_status_route,
+  {
+    path: "/dns-upstream",
+    name: "dns-upstream",
+    component: DnsUpstream,
   },
   {
     path: "/nat",

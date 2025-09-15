@@ -5,6 +5,8 @@
 #include "flow_verdict_share.h"
 #include "flow.h"
 #include "metric.h"
+#include "flow_match.h"
+#include "land_dns_dispatcher.h"
 
 char LICENSE[] SEC("license") = "Dual BSD/GPL";
 

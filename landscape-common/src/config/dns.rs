@@ -5,16 +5,39 @@ use ts_rs::TS;
 use uuid::Uuid;
 
 use crate::database::repository::LandscapeDBStore;
+use crate::dns::config::DnsUpstreamConfig;
+use crate::utils::id::gen_database_uuid;
 use crate::utils::time::get_f64_timestamp;
 use crate::{flow::mark::FlowMark, store::storev2::LandscapeStore};
 
 use super::geo::GeoConfigKey;
 
+#[derive(Serialize, Deserialize, Debug, Clone, TS)]
+#[ts(export, export_to = "common/dns.d.ts")]
+pub struct DNSRedirectRuleConfig {
+    pub id: Uuid,
+    pub remark: String,
+    pub enable: bool,
+
+    /// DNS Query Result
+    pub result: Vec<IpAddr>,
+
+    /// Match Domains
+    #[serde(default)]
+    pub source: Vec<DomainConfig>,
+
+    #[serde(default = "get_f64_timestamp")]
+    pub update_at: f64,
+}
+
 /// DNS 配置
 #[derive(Serialize, Deserialize, Debug, Clone, TS)]
 #[ts(export, export_to = "common/dns.d.ts")]
 pub struct DNSRuleConfig {
-    pub id: Option<Uuid>,
+    #[serde(default = "gen_database_uuid")]
+    #[ts(as = "Option<_>", optional)]
+    pub id: Uuid,
+
     pub name: String,
     /// 优先级
     pub index: u32,
@@ -23,9 +46,8 @@ pub struct DNSRuleConfig {
     /// 过滤模式
     #[serde(default)]
     pub filter: FilterResult,
-    /// 解析模式
-    #[serde(default)]
-    pub resolve_mode: DNSResolveMode,
+
+    pub upstream_id: Uuid,
     /// 流量标记
     #[serde(default)]
     pub mark: FlowMark,
@@ -37,12 +59,17 @@ pub struct DNSRuleConfig {
     pub flow_id: u32,
 
     #[serde(default = "get_f64_timestamp")]
+    #[ts(as = "Option<_>", optional)]
     pub update_at: f64,
+}
+
+pub fn default_flow_id() -> u32 {
+    0_u32
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct DNSRuntimeRule {
-    pub id: Option<Uuid>,
+    pub id: Uuid,
     pub name: String,
     /// 优先级
     pub index: u32,
@@ -51,17 +78,13 @@ pub struct DNSRuntimeRule {
     /// 过滤模式
     pub filter: FilterResult,
     /// 解析模式
-    pub resolve_mode: DNSResolveMode,
+    pub resolve_mode: DnsUpstreamConfig,
     /// 流量标记
     pub mark: FlowMark,
     /// 匹配规则列表
     pub source: Vec<DomainConfig>,
 
     pub flow_id: u32,
-}
-
-fn default_flow_id() -> u32 {
-    0_u32
 }
 
 impl LandscapeStore for DNSRuleConfig {
@@ -72,24 +95,7 @@ impl LandscapeStore for DNSRuleConfig {
 
 impl LandscapeDBStore<Uuid> for DNSRuleConfig {
     fn get_id(&self) -> Uuid {
-        self.id.unwrap_or(Uuid::new_v4())
-    }
-}
-
-impl Default for DNSRuleConfig {
-    fn default() -> Self {
-        Self {
-            id: None,
-            name: "Landscape Router default rule".into(),
-            index: 10000,
-            enable: true,
-            filter: FilterResult::default(),
-            mark: Default::default(),
-            source: vec![],
-            resolve_mode: DNSResolveMode::default(),
-            flow_id: default_flow_id(),
-            update_at: get_f64_timestamp(),
-        }
+        self.id
     }
 }
 
@@ -123,46 +129,6 @@ pub enum DomainMatchType {
     Full = 3,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, TS)]
-#[ts(export, export_to = "common/dns.d.ts")]
-#[serde(tag = "t")]
-#[serde(rename_all = "snake_case")]
-pub enum DNSResolveMode {
-    Redirect { ips: Vec<IpAddr> },
-    Upstream { upstream: DnsUpstreamType, ips: Vec<IpAddr>, port: Option<u16> },
-    Cloudflare { mode: CloudflareMode },
-}
-
-impl Default for DNSResolveMode {
-    fn default() -> Self {
-        DNSResolveMode::Cloudflare { mode: CloudflareMode::Https }
-    }
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, Default, TS)]
-#[ts(export, export_to = "common/dns.d.ts")]
-#[serde(rename_all = "snake_case")]
-#[serde(tag = "t")]
-pub enum DnsUpstreamType {
-    #[default]
-    Plaintext, // 传统 DNS（UDP/TCP，无加密）
-    Tls {
-        domain: String,
-    }, // DNS over TLS (DoT)
-    Https {
-        domain: String,
-    }, // DNS over HTTPS (DoH)
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, TS)]
-#[ts(export, export_to = "common/dns.d.ts")]
-#[serde(rename_all = "snake_case")]
-pub enum CloudflareMode {
-    Plaintext, // 1.1.1.1 (UDP/TCP)
-    Tls,       // tls://1.1.1.1
-    Https,     // https://cloudflare-dns.com/dns-query
-}
-
 #[derive(Serialize, Deserialize, Debug, Clone, Default, TS)]
 #[ts(export, export_to = "common/dns.d.ts")]
 #[serde(rename_all = "snake_case")]
@@ -181,22 +147,4 @@ pub enum FilterResult {
 pub enum LandscapeDnsRecordType {
     A,
     AAAA,
-}
-
-#[cfg(test)]
-mod tests {
-    use std::net::{IpAddr, Ipv4Addr};
-
-    use super::DNSResolveMode;
-
-    #[test]
-    fn test_serde() {
-        let value = DNSResolveMode::Upstream {
-            upstream: super::DnsUpstreamType::Https { domain: "cloudflare-dns.com".to_string() },
-            ips: vec![IpAddr::V4(Ipv4Addr::new(1, 1, 1, 1))],
-            port: Some(443),
-        };
-        let result = serde_json::to_string(&value).unwrap();
-        println!("{result}");
-    }
 }

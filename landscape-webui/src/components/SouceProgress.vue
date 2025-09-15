@@ -60,9 +60,14 @@ const percentage_color = computed(() => {
     :percentage="percentage"
   >
     <template v-if="props.showLabel" #default>
-      <span :style="{ color: percentage_color }">
-        {{ displayText }}
-      </span>
+      <n-tooltip trigger="hover">
+        <template #trigger>
+          <span :style="{ color: percentage_color, fontSize: '20px' }">
+            {{ percentage }}%
+          </span>
+        </template>
+        {{ label }}
+      </n-tooltip>
     </template>
   </n-progress>
 

@@ -3,6 +3,7 @@ use std::net::Ipv6Addr;
 
 use landscape_common::database::LandscapeDBTrait;
 use landscape_common::database::LandscapeServiceDBTrait;
+use landscape_common::ipv6_pd::IAPrefixMap;
 use landscape_common::observer::IfaceObserverAction;
 use landscape_common::route::LanRouteInfo;
 use landscape_common::service::controller_service_v2::ControllerService;
@@ -23,11 +24,12 @@ use crate::route::IpRouteService;
 #[derive(Clone)]
 pub struct IPV6RAService {
     route_service: IpRouteService,
+    prefix_map: IAPrefixMap,
 }
 
 impl IPV6RAService {
-    pub fn new(route_service: IpRouteService) -> Self {
-        Self { route_service }
+    pub fn new(route_service: IpRouteService, prefix_map: IAPrefixMap) -> Self {
+        Self { route_service, prefix_map }
     }
 }
 
@@ -38,8 +40,9 @@ impl ServiceStarterTrait for IPV6RAService {
 
     async fn start(&self, config: IPV6RAServiceConfig) -> DefaultWatchServiceStatus {
         let service_status = DefaultWatchServiceStatus::new();
-        let route_service = self.route_service.clone();
         if config.enable {
+            let route_service = self.route_service.clone();
+            let prefix_map = self.prefix_map.clone();
             let status_clone = service_status.clone();
             if let Some(iface) = get_iface_by_name(&config.iface_name).await {
                 if let Some(mac) = iface.mac {
@@ -58,6 +61,7 @@ impl ServiceStarterTrait for IPV6RAService {
                             status_clone,
                             lan_info,
                             route_service,
+                            prefix_map,
                         )
                         .await;
                     });
@@ -95,9 +99,10 @@ impl IPV6RAManagerService {
         store_service: LandscapeDBServiceProvider,
         mut dev_observer: broadcast::Receiver<IfaceObserverAction>,
         route_service: IpRouteService,
+        prefix_map: IAPrefixMap,
     ) -> Self {
         let store = store_service.ra_service_store();
-        let server_starter = IPV6RAService::new(route_service);
+        let server_starter = IPV6RAService::new(route_service, prefix_map);
         let service = ServiceManager::init(store.list().await.unwrap(), server_starter).await;
 
         let service_clone = service.clone();

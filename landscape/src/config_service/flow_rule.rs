@@ -1,6 +1,6 @@
 use landscape_common::{
     event::{dns::DnsEvent, route::RouteEvent},
-    flow::FlowConfig,
+    flow::config::FlowConfig,
     service::controller_service::{ConfigController, FlowConfigController},
 };
 use landscape_database::{

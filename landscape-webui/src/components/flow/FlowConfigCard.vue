@@ -1,19 +1,23 @@
 <script setup lang="ts">
-import { ref } from "vue";
+import { computed, ref } from "vue";
 import { FlowConfig } from "@/rust_bindings/common/flow";
 import FlowEditModal from "@/components/flow/FlowEditModal.vue";
 import DnsRuleDrawer from "@/components/dns/DnsRuleDrawer.vue";
 import { useFrontEndStore } from "@/stores/front_end_config";
-import { mask_string } from "@/lib/common";
 import { del_flow_rules } from "@/api/flow";
+
+import { Docker, NetworkWired } from "@vicons/fa";
 
 const frontEndStore = useFrontEndStore();
 
 interface Props {
   config: FlowConfig;
+  show_action?: boolean;
 }
 
-const props = defineProps<Props>();
+const props = withDefaults(defineProps<Props>(), {
+  show_action: true,
+});
 
 const emit = defineEmits(["refresh"]);
 
@@ -31,16 +35,28 @@ async function del() {
     await refresh();
   }
 }
+const title_name = computed(() =>
+  props.config.remark == null || props.config.remark === ""
+    ? `无备注`
+    : frontEndStore.MASK_INFO(props.config.remark)
+);
 </script>
 
 <template>
   <n-card
     style="min-height: 224px"
+    content-style="display: flex"
     size="small"
-    :title="`ID: ${config.flow_id}`"
     :hoverable="true"
   >
-    <template #header-extra>
+    <template #header>
+      <StatusTitle
+        :enable="config.enable"
+        :remark="`${config.flow_id}: ${title_name}`"
+      ></StatusTitle>
+    </template>
+
+    <template v-if="show_action" #header-extra>
       <n-flex>
         <n-button secondary @click="show_edit = true" size="small">
           修改配置
@@ -83,18 +99,61 @@ async function del() {
       </n-flex> -->
     </template>
 
-    <n-descriptions :column="1" label-placement="left">
-      <n-descriptions-item label="状态">
-        {{ config.enable ? "启用" : "禁用" }}
+    <!-- <n-descriptions bordered :column="1" label-placement="left">
+      <n-descriptions-item label="入口规则">
+        <n-tag v-if="config.flow_match_rules.length > 0" :bordered="false">
+          {{
+            `${
+              config.flow_match_rules[0].vlan_id
+                ? `${config.flow_match_rules[0].vlan_id}@`
+                : ""
+            }${config.flow_match_rules[0].ip}`
+          }}
+        </n-tag>
+        <n-empty :show-icon="false" v-else description="没有入口规则">
+        </n-empty>
       </n-descriptions-item>
-      <n-descriptions-item label="备注">
+      <n-descriptions-item label="分流出口">
+
+        <n-tag v-for="each in config.flow_targets" :bordered="false">
+          {{ each.t === "netns" ? each.container_name : each.name }}
+          <template #icon>
+            <n-icon :component="each.t === 'netns' ? Docker : NetworkWired" />
+          </template>
+        </n-tag>
+      </n-descriptions-item>
+    </n-descriptions> -->
+
+    <n-flex
+      align="center"
+      justify="center"
+      v-if="config.flow_match_rules.length == 0"
+      style="flex: 1"
+    >
+      <n-empty :show-icon="false" description="没有入口规则"> </n-empty>
+    </n-flex>
+    <n-flex v-else>
+      <n-tag v-for="item in config.flow_match_rules" :bordered="false">
         {{
-          frontEndStore.presentation_mode
-            ? mask_string(config.remark)
-            : config.remark
+          `${item.vlan_id ? `${item.vlan_id}@` : ""}${frontEndStore.MASK_INFO(
+            item.ip
+          )}/${item.prefix_len}`
         }}
-      </n-descriptions-item>
-    </n-descriptions>
+      </n-tag>
+    </n-flex>
+    <template #action>
+      <n-tag v-for="each in config.flow_targets" :bordered="false">
+        {{
+          each.t === "netns"
+            ? frontEndStore.MASK_INFO(each.container_name)
+            : frontEndStore.MASK_INFO(each.name)
+        }}
+        <template #icon>
+          <n-icon :component="each.t === 'netns' ? Docker : NetworkWired" />
+        </template>
+      </n-tag>
+    </template>
+
     <!-- {{ config }} -->
     <FlowEditModal
       @refresh="refresh"

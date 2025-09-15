@@ -5,7 +5,7 @@ import type { FlowMark, WanIPRuleSource } from "../flow";
  * 流控配置结构体
  */
 export type FlowConfig = {
-  id: string | null;
+  id?: string;
   /**
    * 是否启用
    */
@@ -27,7 +27,7 @@ export type FlowConfig = {
    * 备注
    */
   remark: string;
-  update_at: number;
+  update_at?: number;
 };
 
 export type FlowTarget = { "t": "interface"; name: string } | {
@@ -48,6 +48,7 @@ export type PacketMatchMark = {
   ip: string;
   vlan_id: number | null;
   qos: number | null;
+  prefix_len: number;
 };
 
 /**

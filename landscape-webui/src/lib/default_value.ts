@@ -2,13 +2,11 @@ import { FlowConfig } from "@/rust_bindings/common/flow";
 
 export function flow_config_default(): FlowConfig {
   return {
-    id: null,
     enable: true,
     flow_id: -1,
     flow_match_rules: [],
     flow_targets: [],
     remark: "",
-    update_at: new Date().getTime(),
   };
 }
 

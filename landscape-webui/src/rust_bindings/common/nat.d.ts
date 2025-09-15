@@ -14,7 +14,7 @@ export type NatServiceConfig = {
 };
 
 export type StaticNatMappingConfig = {
-  id: string | null;
+  id?: string;
   enable: boolean;
   remark: string;
   wan_port: number;
@@ -31,5 +31,5 @@ export type StaticNatMappingConfig = {
    */
   ipv4_l4_protocol: Array<number>;
   ipv6_l4_protocol: Array<number>;
-  update_at: number;
+  update_at?: number;
 };

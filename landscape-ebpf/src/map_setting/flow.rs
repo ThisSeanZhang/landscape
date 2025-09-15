@@ -19,6 +19,7 @@ pub fn update_flow_match_rule(rules: Vec<FlowMathPair>) {
 
     for FlowMathPair { match_rule, flow_id } in rules.into_iter() {
         let mut match_key = flow_match_key {
+            prefixlen: 64 + match_rule.prefix_len as u32,
             vlan_tci: match_rule.vlan_id.unwrap_or(0),
             tos: match_rule.qos.unwrap_or(0),
             // 暂时不区分协议
@@ -33,7 +34,7 @@ pub fn update_flow_match_rule(rules: Vec<FlowMathPair>) {
             }
             std::net::IpAddr::V6(ipv6_addr) => {
                 match_key.l3_protocol = LANDSCAPE_IPV6_TYPE;
-                match_key.src_addr.bits = ipv6_addr.to_bits().to_be_bytes()
+                match_key.src_addr.bits = ipv6_addr.to_bits().to_be_bytes();
             }
         }
         keys.extend_from_slice(unsafe { plain::as_bytes(&match_key) });

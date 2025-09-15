@@ -9,8 +9,32 @@ pub enum DNSRuleConfigs {
     Enable,
     Filter,
     ResolveMode,
+    UpstreamId,
     Mark,
     Source,
     FlowId,
+    UpdateAt,
+}
+
+#[derive(Iden)]
+pub enum DNSRedirectRuleConfigs {
+    Table,
+    Id,
+    Remark,
+    Enable,
+    MatchRules,
+    ResultInfo,
+    ApplyFlows,
+    UpdateAt,
+}
+
+#[derive(Iden)]
+pub enum DNSUpstreamConfigs {
+    Table,
+    Id,
+    Remark,
+    Mode,
+    Ips,
+    Port,
     UpdateAt,
 }

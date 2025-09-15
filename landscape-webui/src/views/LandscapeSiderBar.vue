@@ -11,6 +11,9 @@ import {
   CicsSystemGroup,
   ModelBuilder,
   ChartCombo,
+  ServerDns,
+  NetworkPublic,
+  Dashboard,
 } from "@vicons/carbon";
 import { ImportExportRound } from "@vicons/material";
 import { Wall } from "@vicons/tabler";
@@ -48,6 +51,22 @@ const menuOptions: MenuOption[] = [
     key: "",
     icon: renderIcon(CicsSystemGroup),
   },
+  {
+    label: "服务状态",
+    key: "status",
+    icon: renderIcon(Dashboard),
+    children: [
+      {
+        label: "IPv6-PD  服务",
+        key: "ipv6-pd",
+      },
+      {
+        label: "DHCPv4 服务",
+        key: "dhcp-v4",
+        disabled: false,
+      },
+    ],
+  },
   // {
   //   label: "网络拓扑",
   //   key: "topology",
@@ -64,21 +83,29 @@ const menuOptions: MenuOption[] = [
     key: "firewall",
     icon: renderIcon(Wall),
   },
-  //   {
-  //     label: "网络管理",
-  //     key: "net",
-  //     icon: renderIcon(NetworkPublic),
-  //     children: [
-  //       {
-  //         label: "NAT",
-  //         key: "nat",
-  //       },
-  //       {
-  //         label: "防火墙",
-  //         key: "firewall",
-  //       },
-  //     ],
-  //   },
+  {
+    label: "DNS 相关",
+    key: "dns",
+    icon: renderIcon(ServerDns),
+    children: [
+      {
+        label: "重定向规则管理",
+        key: "dns-redirect",
+      },
+      {
+        label: "上游 DNS 配置管理",
+        key: "dns-upstream",
+      },
+    ],
+  },
+  // {
+  //   label: "网络管理",
+  //   key: "net",
+  //   icon: renderIcon(NetworkPublic),
+  //   children: [
+
+  //   ],
+  // },
   {
     label: "分流设置",
     key: "flow",

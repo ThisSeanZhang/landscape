@@ -9,6 +9,8 @@ path = "src/lib.rs"
 
 [dependencies]
 async-std = { version = "1", features = ["attributes", "tokio1"] }
+serde_json = { workspace = true }
+uuid = { workspace = true }
 
 [dependencies.sea-orm-migration]
 workspace = true
@@ -20,4 +22,6 @@ features = [
     "sqlx-postgres",
     "sqlx-mysql",
     "sqlx-sqlite",
+    "with-uuid",
+    "with-json",
 ]

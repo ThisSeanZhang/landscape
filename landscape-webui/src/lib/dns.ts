@@ -1,11 +1,45 @@
 import { FlowMark } from "@/rust_bindings/flow";
 import { FlowMarkType } from "./default_value";
 import {
-  DNSResolveMode,
   DNSRuleConfig,
   FilterResult,
   RuleSource,
 } from "@/rust_bindings/common/dns";
+
+export enum DnsUpstreamModeTsEnum {
+  Plaintext = "plaintext",
+  Tls = "tls",
+  Https = "https",
+  Quic = "quic",
+}
+
+export const UPSTREAM_OPTIONS = [
+  {
+    label: "UDP",
+    value: DnsUpstreamModeTsEnum.Plaintext,
+  },
+  {
+    label: "DoH",
+    value: DnsUpstreamModeTsEnum.Https,
+  },
+  {
+    label: "DoT",
+    value: DnsUpstreamModeTsEnum.Tls,
+  },
+  {
+    label: "DoQ",
+    value: DnsUpstreamModeTsEnum.Quic,
+  },
+];
+
+export function upstream_mode_exhibit_name(mode: string): string {
+  for (const each of UPSTREAM_OPTIONS) {
+    if (each.value === mode) {
+      return each.label;
+    }
+  }
+  return mode;
+}
 
 export function convert_flow_mark(flow_mark?: FlowMark): FlowMark {
   if (flow_mark) {
@@ -20,33 +54,28 @@ export function convert_flow_mark(flow_mark?: FlowMark): FlowMark {
 }
 
 export class DnsRule implements DNSRuleConfig {
-  id: string | null;
+  id?: string;
   index: number;
   name: string;
   enable: boolean;
   mark: FlowMark;
   source: RuleSource[];
-  resolve_mode: DNSResolveMode;
   flow_id: number;
   filter: FilterResult;
-  update_at: number;
+  update_at?: number;
+  upstream_id: string;
 
   constructor(obj?: Partial<DNSRuleConfig>) {
-    this.id = obj?.id ?? null;
+    this.id = obj?.id;
     this.index = obj?.index ?? -1;
     this.name = obj?.name ?? "";
     this.enable = obj?.enable ?? true;
     this.mark = convert_flow_mark(obj?.mark);
     this.source = obj?.source ?? [];
-    this.resolve_mode = obj?.resolve_mode
-      ? { ...obj.resolve_mode }
-      : {
-          t: DNSResolveModeEnum.Cloudflare,
-          mode: CloudflareMode.Https,
-        };
     this.flow_id = obj?.flow_id ?? 0;
     this.filter = obj?.filter ?? "unfilter";
-    this.update_at = obj?.update_at ?? new Date().getTime();
+    this.update_at = obj?.update_at;
+    this.upstream_id = obj?.upstream_id ?? "";
   }
 }
 

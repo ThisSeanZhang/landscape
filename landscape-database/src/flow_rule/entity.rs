@@ -1,6 +1,6 @@
 use landscape_common::{
     database::{repository::UpdateActiveModel, LandscapeDBFlowFilterExpr},
-    flow::FlowConfig,
+    flow::config::FlowConfig,
 };
 use migration::SimpleExpr;
 use sea_orm::{entity::prelude::*, ActiveValue::Set};
@@ -47,7 +47,7 @@ impl ActiveModelBehavior for ActiveModel {
 impl From<Model> for FlowConfig {
     fn from(entity: Model) -> Self {
         FlowConfig {
-            id: Some(entity.id),
+            id: entity.id,
             enable: entity.enable,
             flow_id: entity.flow_id,
             flow_match_rules: serde_json::from_value(entity.flow_match_rules).unwrap(),
@@ -60,10 +60,7 @@ impl From<Model> for FlowConfig {
 
 impl Into<ActiveModel> for FlowConfig {
     fn into(self) -> ActiveModel {
-        let mut active = ActiveModel {
-            id: Set(self.id.unwrap_or_else(Uuid::new_v4)),
-            ..Default::default()
-        };
+        let mut active = ActiveModel { id: Set(self.id), ..Default::default() };
         self.update(&mut active);
         active
     }

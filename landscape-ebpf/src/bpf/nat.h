@@ -72,7 +72,8 @@ struct nat_mapping_value {
     __be16 port;
     __be16 trigger_port;
     u8 is_static;
-    u8 _pad[3];
+    u8 is_allow_reuse;
+    u8 _pad[2];
     // 增加一个最后活跃时间
     u64 active_time;
     //

@@ -25,9 +25,9 @@ async function stop_dns() {
 <template>
   <n-card content-style="display: flex;">
     <template #header>
-      <n-icon :color="dnsStore.dns_status.get_color(themeVars)" size="16">
+      <!-- <n-icon :color="dnsStore.dns_status.get_color(themeVars)" size="16">
         <DotMark />
-      </n-icon>
+      </n-icon> -->
       DNS
     </template>
     <template #header-extra>
@@ -42,7 +42,7 @@ async function stop_dns() {
         <n-button :focusable="false" size="small" @click="show_ip_rule = true">
           默认 IP 规则
         </n-button>
-        <n-button
+        <!-- <n-button
           :focusable="false"
           size="small"
           @click="start_dns"
@@ -57,7 +57,7 @@ async function stop_dns() {
             </n-button>
           </template>
           确定停止吗
-        </n-popconfirm>
+        </n-popconfirm> -->
       </n-flex>
     </template>
     <n-flex justify="center" align="center" style="flex: 1">

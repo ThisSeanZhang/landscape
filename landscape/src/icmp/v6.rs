@@ -1,7 +1,7 @@
 use dhcproto::{Decodable, Decoder, Encodable, Encoder};
 use landscape_common::config::ra::{IPV6RAConfig, RouterFlags};
 use landscape_common::error::LdResult;
-use landscape_common::global_const::{LDIAPrefix, LD_PD_WATCHES};
+use landscape_common::ipv6_pd::{IAPrefixMap, LDIAPrefix};
 use landscape_common::route::LanRouteInfo;
 use landscape_common::service::{DefaultWatchServiceStatus, ServiceStatus};
 use tokio::net::UdpSocket;
@@ -30,6 +30,7 @@ pub struct ICMPv6ConfigInfo {
     subnet_router: Ipv6Addr,
 }
 
+#[tracing::instrument(skip(config, mac_addr, service_status, lan_info, route_service, prefix_map))]
 pub async fn icmp_ra_server(
     config: IPV6RAConfig,
     // RA 通告要发送的 网卡 MAC 信息
@@ -39,6 +40,7 @@ pub async fn icmp_ra_server(
     service_status: DefaultWatchServiceStatus,
     lan_info: LanRouteInfo,
     route_service: IpRouteService,
+    prefix_map: IAPrefixMap,
 ) -> LdResult<()> {
     let IPV6RAConfig {
         subnet_prefix,
@@ -72,6 +74,17 @@ pub async fn icmp_ra_server(
     // 如果您发送多播消息，还需要设置多播 Hop Limit
     socket.set_multicast_hops_v6(255)?;
     socket.bind_device(Some(iface_name.as_bytes()))?;
+
+    let setting_result = crate::set_iface_ip_no_limit(
+        &iface_name,
+        std::net::IpAddr::V6(mac_addr.to_ipv6_link_local()),
+        64,
+    )
+    .await;
+
+    if !setting_result {
+        tracing::error!("setting unicast_link_local error");
+    }
 
     let address = addresses_by_iface_name(iface_name.to_string()).await;
     let mut link_ipv6_addr = None;
@@ -141,8 +154,8 @@ pub async fn icmp_ra_server(
     });
 
     service_status.just_change_status(ServiceStatus::Running);
-    let mut ia_config_watch = LD_PD_WATCHES.get_ia_prefix(&depend_iface).await;
-    tracing::debug!("ICMP get LD_PD_WATCHES");
+    let mut ia_config_watch = prefix_map.get_ia_prefix(&depend_iface).await;
+    tracing::debug!("ICMP get IPv6 Prefix Watch");
     let mut current_config_info: Option<ICMPv6ConfigInfo> = None;
     // let mut count_down = LdCountdown::new(Duration::from_secs(0));
 
@@ -513,7 +526,7 @@ async fn build_and_send_ra(
 #[cfg(test)]
 mod tests {
     use crate::icmp::v6::allocate_subnet;
-    use landscape_common::global_const::LDIAPrefix;
+    use landscape_common::ipv6_pd::LDIAPrefix;
 
     #[test]
     fn test() {
@@ -523,6 +536,7 @@ mod tests {
             valid_lifetime: 7200,
             prefix_len: 48,
             prefix_ip: "2001:db8::".parse().unwrap(),
+            last_update_time: 0.0,
         };
         let sub_prefix_len = 64;
         let subnet_index = 2; // 0 表示第一个子网，1 表示第二个子网，以此类推

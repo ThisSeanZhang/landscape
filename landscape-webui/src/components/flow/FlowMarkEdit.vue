@@ -53,7 +53,7 @@ const show_other_function = computed(() => {
 });
 
 function mark_action_update(value: FlowMarkType) {
-  console.log(value);
+  // console.log(value);
   switch (value) {
     case FlowMarkType.KeepGoing:
     case FlowMarkType.Direct: {

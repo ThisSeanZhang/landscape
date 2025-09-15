@@ -14,26 +14,31 @@ hickory-resolver = { workspace = true, features = [
     "system-config",
     "__tls",
     "__https",
+    "quic-ring",
     "rustls-platform-verifier",
 ] }
 hickory-proto = { workspace = true, features = [
     "__https",
     "__tls",
+    "quic-ring",
     "tls-ring",
 ] }
+
+uuid = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+ctrlc = { workspace = true }
+socket2 = { workspace = true }
+arc-swap = "1.7.1"
+
 tokio-util = { workspace = true, features = ["codec", "net"] }
 tokio = { workspace = true, features = ['fs', 'net'] }
 clap = { workspace = true }
 thiserror = { workspace = true }
 libc = { workspace = true }
 async-trait = "*"
-socket2 = "*"
 
 lru = "*"
-serde = { workspace = true }
-serde_json = { workspace = true }
-ctrlc = { workspace = true }
-
 trie-rs = "0.4.2"
 regex = "*"
 aho-corasick = "1.1.3"

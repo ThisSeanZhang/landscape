@@ -562,6 +562,7 @@ egress_lookup_or_new_mapping(struct __sk_buff *skb, u8 ip_protocol, bool allow_c
             bpf_log_info("can't find the wan ip, using ifindex: %d", skb->ifindex);
             return TC_ACT_SHOT;
         }
+        bool allow_reuse_port = get_flow_allow_reuse_port(skb->mark);
         struct nat_mapping_value new_nat_egress_value = {0};
 
         new_nat_egress_value.addr.ip = wan_ip_info->addr.ip;
@@ -570,6 +571,7 @@ egress_lookup_or_new_mapping(struct __sk_buff *skb, u8 ip_protocol, bool allow_c
         new_nat_egress_value.trigger_port = pkt_ip_pair->dst_port;
         new_nat_egress_value.is_static = 0;
         new_nat_egress_value.active_time = bpf_ktime_get_ns();
+        new_nat_egress_value.is_allow_reuse = allow_reuse_port ? 1 : 0;
 
         int ret;
         struct search_port_ctx ctx = {
@@ -1197,11 +1199,11 @@ int egress_nat(struct __sk_buff *skb) {
             return TC_ACT_SHOT;
         }
 
-        bool allow_reuse_port = get_flow_allow_reuse_port(skb->mark);
+        // bool allow_reuse_port = get_flow_allow_reuse_port(skb->mark);
         // if (allow_reuse_port) {
         //     bpf_log_info("allow_reuse_port: %u, skb->mark: %u", allow_reuse_port, skb->mark);
         // }
-        if (!allow_reuse_port && packet_info.ip_protocol != IPPROTO_ICMP) {
+        if (nat_egress_value->is_allow_reuse == 0 && packet_info.ip_protocol != IPPROTO_ICMP) {
             // PORT REUSE check
             if (!ip_addr_equal(&packet_info.pair_ip.dst_addr, &nat_egress_value->trigger_addr) ||
                 packet_info.pair_ip.dst_port != nat_egress_value->trigger_port) {

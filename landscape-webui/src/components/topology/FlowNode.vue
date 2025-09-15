@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { Handle, Position, useNodesData } from "@vue-flow/core";
-import { useThemeVars } from "naive-ui";
+import { useDialog, useMessage, useThemeVars } from "naive-ui";
 
 import IPConfigStatusBtn from "@/components/status_btn/IPConfigStatusBtn.vue";
 import PacketMarkStatusBtn from "@/components/status_btn/PacketMarkStatusBtn.vue";
@@ -19,13 +19,17 @@ import WifiServiceEditModal from "@/components/wifi/WifiServiceEditModal.vue";
 import DHCPv4ServiceEditModal from "@/components/dhcp_v4/DHCPv4ServiceEditModal.vue";
 
 import IfaceChangeZone from "../iface/IfaceChangeZone.vue";
-import { AreaCustom, Power, Link, DotMark } from "@vicons/carbon";
+import { AreaCustom, Power, Link, DotMark, Delete } from "@vicons/carbon";
 import { PlugDisconnected20Regular } from "@vicons/fluent";
-import { computed, ref } from "vue";
+import { computed, ref, reactive } from "vue";
 
 import { DevStateType } from "@/lib/dev";
 import { useIfaceNodeStore } from "@/stores/iface_node";
-import { add_controller, change_iface_status } from "@/api/network";
+import {
+  add_controller,
+  change_iface_status,
+  delete_bridge,
+} from "@/api/network";
 import { ServiceExhibitSwitch } from "@/lib/services";
 import { useFrontEndStore } from "@/stores/front_end_config";
 import { mask_string } from "@/lib/common";
@@ -86,6 +90,26 @@ async function remove_controller() {
   await refresh();
 }
 
+const message = useMessage();
+const dialog = useDialog();
+
+const delete_loading = ref(false);
+async function handleDeleteBridge() {
+  if (props.node === undefined) {
+    return;
+  }
+  try {
+    delete_loading.value = true;
+    await delete_bridge(props.node.name);
+    await refresh();
+    message.info("删除成功");
+  } catch (error) {
+    window.$message.error("删除失败");
+  } finally {
+    delete_loading.value = false;
+  }
+}
+
 const show_switch = computed(() => {
   return new ServiceExhibitSwitch(props.node);
 });
@@ -134,7 +158,7 @@ const show_switch = computed(() => {
             </n-flex>
           </template>
           <template #header-extra>
-            <n-flex>
+            <n-flex :size="[10, 0]">
               <!-- <n-button
                 v-if="show_switch.carrier"
                 text
@@ -198,11 +222,38 @@ const show_switch = computed(() => {
                 :show_switch="show_switch"
                 @refresh="refresh"
               />
+
+              <n-popconfirm
+                v-if="
+                  node.dev_kind === 'bridge' &&
+                  node.name !== 'docker0' &&
+                  node.dev_status.t === 'down'
+                "
+                :show-icon="false"
+                :positive-button-props="{ type: 'error', ghost: true }"
+                positive-text="删除!"
+                @positive-click="handleDeleteBridge"
+                trigger="click"
+              >
+                <template #trigger>
+                  <n-button
+                    :loading="delete_loading"
+                    type="error"
+                    text
+                    style="font-size: 16px"
+                  >
+                    <n-icon>
+                      <Delete />
+                    </n-icon>
+                  </n-button>
+                </template>
+                <span>删除桥接设备</span>
+              </n-popconfirm>
             </n-flex>
           </template>
         </n-card>
       </template>
-      <n-descriptions label-placement="left" :column="2">
+      <n-descriptions label-placement="left" :column="2" size="small">
         <n-descriptions-item label="mac地址">
           {{
             frontEndStore.presentation_mode
@@ -217,7 +268,7 @@ const show_switch = computed(() => {
               : node.perm_mac ?? "N/A"
           }}
         </n-descriptions-item>
-        <n-descriptions-item label="网路类型">
+        <n-descriptions-item label="设备类型">
           {{ node.dev_type ?? "N/A" }}/{{ node.dev_kind ?? "N/A" }}
         </n-descriptions-item>
         <n-descriptions-item label="状态">
@@ -254,7 +305,6 @@ const show_switch = computed(() => {
           </n-button>
         </n-descriptions-item>
       </n-descriptions>
-      <!-- <n-divider /> -->
     </n-popover>
 
     <n-flex style="min-width: 230px; max-width: 230px">

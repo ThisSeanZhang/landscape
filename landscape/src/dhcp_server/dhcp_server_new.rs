@@ -16,6 +16,7 @@ use landscape_common::config::dhcp_v4_server::DHCPv4ServerConfig;
 use landscape_common::dhcp::{DHCPv4OfferInfo, DHCPv4OfferInfoItem};
 use landscape_common::net::MacAddr;
 use landscape_common::service::{DefaultWatchServiceStatus, ServiceStatus};
+use landscape_common::utils::time::get_f64_timestamp;
 use landscape_common::{
     LANDSCAPE_DEFAULE_DHCP_V4_SERVER_PORT, LANDSCAPE_DHCP_DEFAULT_ADDRESS_LEASE_TIME,
 };
@@ -167,7 +168,7 @@ pub async fn dhcp_v4_server(
             _ = &mut timeout_timer => {
                 // dhcp_status.expire_check();
                 timeout_timer.as_mut().reset(tokio::time::Instant::now() + tokio::time::Duration::from_secs(IP_EXPIRE_INTERVAL));
-                            update_assign_info(assigned_ips.clone(), dhcp_server.get_offered_info()).await;
+                update_assign_info(assigned_ips.clone(), dhcp_server.get_offered_info()).await;
             }
             // 处理外部关闭服务通知
             change_result = dhcp_server_service_status.changed() => {
@@ -299,6 +300,8 @@ impl DHCPv4ServerOfferedCache {
 #[derive(Debug)]
 pub struct DHCPv4Server {
     /// DHCP 服务启动时间
+    boot_time: f64,
+    /// DHCP 服务启动 相对时间
     relative_boot_time: Instant,
     /// 服务器 IP
     server_ip: Ipv4Addr,
@@ -385,6 +388,7 @@ impl DHCPv4Server {
             config.address_lease_time.unwrap_or(LANDSCAPE_DHCP_DEFAULT_ADDRESS_LEASE_TIME);
 
         DHCPv4Server {
+            boot_time: get_f64_timestamp(),
             relative_boot_time: Instant::now(),
             server_ip: config.server_ip_addr,
             ip_range_start,
@@ -527,7 +531,7 @@ impl DHCPv4Server {
     pub fn get_offered_info(&self) -> DHCPv4OfferInfo {
         let mut offered_ips = Vec::with_capacity(self.offered_ip.len());
         let relative_boot_time = self.relative_boot_time.elapsed().as_secs();
-        for (mac, DHCPv4ServerOfferedCache { ip, relative_offer_time, valid_time, .. }) in
+        for (mac, DHCPv4ServerOfferedCache { ip, relative_offer_time, valid_time, is_static }) in
             self.offered_ip.iter()
         {
             offered_ips.push(DHCPv4OfferInfoItem {
@@ -535,9 +539,14 @@ impl DHCPv4Server {
                 ip: ip.clone(),
                 relative_active_time: *relative_offer_time,
                 expire_time: *valid_time,
+                is_static: *is_static,
             });
         }
-        DHCPv4OfferInfo { relative_boot_time, offered_ips }
+        DHCPv4OfferInfo {
+            boot_time: self.boot_time,
+            relative_boot_time,
+            offered_ips,
+        }
     }
 }
 

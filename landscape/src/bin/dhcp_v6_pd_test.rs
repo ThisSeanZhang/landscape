@@ -13,6 +13,7 @@ use landscape::{
 };
 use landscape_common::{
     config::ra::IPV6RAConfig,
+    ipv6_pd::IAPrefixMap,
     net::MacAddr,
     route::{LanRouteInfo, RouteTargetInfo},
 };
@@ -59,6 +60,9 @@ async fn main() {
     let (_, ip_route) = landscape::route::test_used_ip_route().await;
     let status = dhcp_service_status.clone();
     let ip_route_service = ip_route.clone();
+
+    let prefix_map = IAPrefixMap::new();
+    let prefix_map_clone = prefix_map.clone();
     tokio::spawn(async move {
         let route_info = RouteTargetInfo {
             ifindex: 6,
@@ -77,12 +81,14 @@ async fn main() {
             status,
             route_info,
             ip_route_service,
+            prefix_map_clone,
         )
         .await;
     });
     let icmp_service_status = DefaultWatchServiceStatus::new();
     let ip_route_service = ip_route.clone();
     let status = icmp_service_status.clone();
+    let prefix_map_clone = prefix_map.clone();
     tokio::spawn(async move {
         if let Some(iface) = get_iface_by_name(&args.icmp_ra_iface).await {
             if let Some(mac) = iface.mac {
@@ -93,9 +99,17 @@ async fn main() {
                     mac: Some(mac.clone()),
                     prefix: 128,
                 };
-                icmp_ra_server(config, mac, iface.name, status, lan_info, ip_route_service)
-                    .await
-                    .unwrap();
+                icmp_ra_server(
+                    config,
+                    mac,
+                    iface.name,
+                    status,
+                    lan_info,
+                    ip_route_service,
+                    prefix_map_clone,
+                )
+                .await
+                .unwrap();
             }
         }
     });

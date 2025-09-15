@@ -1,11 +1,9 @@
 use landscape_common::config::FlowId;
 use landscape_common::database::LandscapeFlowTrait;
+use landscape_common::database::{repository::Repository, LandscapeDBTrait};
 use landscape_common::error::LdError;
+use landscape_common::flow::config::FlowConfig;
 use landscape_common::flow::FlowTarget;
-use landscape_common::{
-    database::{repository::Repository, LandscapeDBTrait},
-    flow::FlowConfig,
-};
 use migration::Expr;
 use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter};
 

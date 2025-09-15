@@ -2,8 +2,7 @@ use bollard::{
     secret::{ContainerSummary, EventMessageTypeEnum},
     Docker,
 };
-use landscape_common::NAMESPACE_REGISTER_SOCK_PATH;
-use landscape_common::{docker::DockerTargetEnroll, NAMESPACE_REGISTER_SOCK};
+use landscape_common::docker::DockerTargetEnroll;
 use landscape_common::{
     route::RouteTargetInfo,
     service::{DefaultWatchServiceStatus, ServiceStatus},
@@ -11,7 +10,6 @@ use landscape_common::{
 use regex::Regex;
 use serde::Serialize;
 use std::{fs::File, io::BufRead, path::PathBuf};
-use tokio::net::UnixListener;
 use tokio::net::UnixStream;
 use tokio::{io::AsyncWriteExt, net::unix::SocketAddr};
 use tokio_stream::StreamExt;
@@ -19,6 +17,7 @@ use tokio_stream::StreamExt;
 use crate::{get_all_devices, route::IpRouteService};
 
 pub mod network;
+pub mod unix_sock;
 
 /// Docker Service
 #[derive(Serialize, Clone)]
@@ -28,25 +27,6 @@ pub struct LandscapeDockerService {
     route_service: IpRouteService,
     #[serde(skip)]
     home_path: PathBuf,
-}
-
-pub async fn listen_unix_sock(home_path: PathBuf) -> UnixListener {
-    let socket_path = home_path.join(NAMESPACE_REGISTER_SOCK_PATH);
-
-    if !socket_path.exists() {
-        std::fs::create_dir_all(&socket_path).expect("fail to create namespace socket");
-    }
-
-    let socket_path = socket_path.join(NAMESPACE_REGISTER_SOCK);
-
-    if socket_path.exists() {
-        std::fs::remove_file(&socket_path).expect("fail to remove");
-    }
-
-    tracing::info!("Listening on {:?}", socket_path);
-    let listener = UnixListener::bind(socket_path);
-
-    listener.expect("Listen fail")
 }
 
 impl LandscapeDockerService {
@@ -66,7 +46,7 @@ impl LandscapeDockerService {
             let docker = Docker::connect_with_socket_defaults();
             let docker = docker.unwrap();
 
-            let unix_socket = listen_unix_sock(path).await;
+            let unix_socket = unix_sock::listen_unix_sock(path).await;
 
             route_service.remove_all_wan_docker().await;
             // scan_and_set_all_docker(&route_service, &docker).await;

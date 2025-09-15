@@ -89,3 +89,7 @@ export function generateValidMAC() {
   ).slice(-2);
   return mac.join(":");
 }
+
+export function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}

@@ -20,7 +20,7 @@ const show_edit_modal = ref(false);
     <n-flex>
       <n-button @click="show_edit_modal = true">创建</n-button>
     </n-flex>
-    <n-flex vertical="false" style="flex: 1">
+    <n-flex>
       <n-grid x-gap="12" y-gap="10" cols="1 600:2 1200:3 1600:3">
         <n-grid-item v-for="rule in mapping_rules" :key="rule.id">
           <StaticMappingCard @refresh="refresh_rules()" :rule="rule">

@@ -138,6 +138,7 @@ fn get_first_non_loopback_with_peer() -> Result<(String, i32, i32), io::Error> {
 
 async fn run_connection_loop(socket_path: PathBuf, enroll: DockerTargetEnroll) {
     let data = serde_json::to_vec(&enroll).unwrap();
+    let loop_interval = 60;
     loop {
         match UnixStream::connect(&socket_path).await {
             Ok(stream) => {
@@ -154,10 +155,10 @@ async fn run_connection_loop(socket_path: PathBuf, enroll: DockerTargetEnroll) {
                 }
             }
             Err(e) => {
-                tracing::error!("Connect fail: {:?}", e);
+                tracing::warn!("Error registering Edge to Landscape. The next registration attempt will be in {loop_interval} seconds. Error: {:?}", e);
             }
         }
-        tokio::time::sleep(tokio::time::Duration::from_secs(60)).await;
+        tokio::time::sleep(tokio::time::Duration::from_secs(loop_interval)).await;
     }
 }
 

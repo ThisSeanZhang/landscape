@@ -7,7 +7,7 @@ use dev::{DevState, LandscapeInterface};
 use futures::stream::TryStreamExt;
 use iface::{dev_wifi::LandscapeWifiInterface, get_iface_by_name};
 use landscape_common::config::iface::{CreateDevType, NetworkIfaceConfig, WifiMode};
-use netlink_packet_route::AddressFamily;
+use netlink_packet_route::{address::AddressAttribute, AddressFamily};
 use rtnetlink::new_connection;
 
 pub use routerstatus::*;
@@ -212,6 +212,38 @@ pub async fn get_all_devices() -> Vec<LandscapeInterface> {
     result
 }
 
+pub async fn set_iface_ip_no_limit(link_name: &str, ip: IpAddr, prefix_length: u8) -> bool {
+    let (connection, handle, _) = new_connection().unwrap();
+    tokio::spawn(connection);
+
+    let mut links = handle.link().get().match_name(link_name.to_string()).execute();
+    if let Some(link) = links.try_next().await.unwrap() {
+        let mut addr_iter = handle.address().get().execute();
+
+        let mut has_same_ip = false;
+        'search_same_ip: while let Some(addr) = addr_iter.try_next().await.unwrap() {
+            if addr.header.index == link.header.index && addr.header.prefix_len == prefix_length {
+                for nla in addr.attributes.iter() {
+                    if let AddressAttribute::Address(bytes) = nla {
+                        has_same_ip = *bytes == ip;
+                        if has_same_ip {
+                            break 'search_same_ip;
+                        }
+                    }
+                }
+            }
+        }
+
+        if !has_same_ip {
+            tracing::info!("without same ip, add it");
+            handle.address().add(link.header.index, ip, prefix_length).execute().await.unwrap();
+        }
+        true
+    } else {
+        false
+    }
+}
+
 pub async fn get_ppp_address(
     iface_name: &str,
 ) -> Option<(u32, Option<Ipv4Addr>, Option<Ipv4Addr>)> {
@@ -255,6 +287,31 @@ pub async fn create_bridge(name: String) -> bool {
     tokio::spawn(connection);
     let create_result = handle.link().add().bridge(name).execute().await;
     create_result.is_ok()
+}
+
+pub async fn delete_bridge(name: String) -> bool {
+    let (connection, handle, _) = new_connection().unwrap();
+    tokio::spawn(connection);
+    let mut result = handle.link().get().match_name(name).execute();
+    loop {
+        match result.try_next().await {
+            Ok(link) => match link {
+                Some(link) => {
+                    let del_result = handle.link().del(link.header.index).execute().await;
+                    if del_result.is_ok() {
+                        return true;
+                    }
+                }
+                None => {
+                    return false;
+                }
+            },
+            Err(e) => {
+                tracing::error!("delete bridge error: {e:?}");
+                return false;
+            }
+        }
+    }
 }
 
 /// Attach the link to a bridge (its controller).

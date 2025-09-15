@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use landscape_common::flow::{FlowConfig, FlowMathPair, PacketMatchMark};
+use landscape_common::flow::{config::FlowConfig, FlowMathPair, PacketMatchMark};
 
 fn convert_mark_map_to_vec_mark(value: HashMap<PacketMatchMark, u32>) -> Vec<FlowMathPair> {
     let mut result = Vec::with_capacity(value.len());

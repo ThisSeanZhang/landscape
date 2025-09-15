@@ -4,7 +4,7 @@ use std::{
 };
 
 use land_nat::{
-    types::{nat_conn_event, nat_mapping_key, nat_mapping_value, u_inet_addr},
+    types::{nat_conn_event, u_inet_addr},
     *,
 };
 use landscape_common::{
@@ -13,7 +13,7 @@ use landscape_common::{
 };
 use libbpf_rs::{
     skel::{OpenSkel, SkelBuilder},
-    MapCore, MapFlags, TC_EGRESS, TC_INGRESS,
+    TC_EGRESS, TC_INGRESS,
 };
 use tokio::sync::oneshot;
 
@@ -151,56 +151,4 @@ pub fn init_nat(
     let _ = service_status.blocking_recv();
     drop(nat_egress_hook);
     drop(nat_ingress_hook);
-}
-
-#[allow(dead_code)]
-pub(crate) fn set_nat_static_mapping<'obj, T>(mapping: (Ipv4Addr, u16, Ipv4Addr, u16), map: &T)
-where
-    T: MapCore,
-{
-    let an = mapping.0.to_bits().to_be();
-    let pn = mapping.1.to_be();
-    let ac = mapping.2.to_bits().to_be();
-    let pc = mapping.3.to_be();
-
-    let kn = nat_mapping_key {
-        gress: 0,
-        l4proto: 6,
-        from_port: pn,
-        from_addr: u_inet_addr { ip: an },
-    };
-    let kn = unsafe { plain::as_bytes(&kn) };
-
-    let vn = nat_mapping_value {
-        addr: u_inet_addr { ip: ac },
-        trigger_addr: u_inet_addr { ip: 0 },
-        port: pc,
-        trigger_port: 0,
-        is_static: 1,
-        _pad: [0; 3],
-        active_time: 0,
-    };
-    let vn = unsafe { plain::as_bytes(&vn) };
-
-    let kc = nat_mapping_key {
-        gress: 1,
-        l4proto: 6,
-        from_port: pc,
-        from_addr: u_inet_addr { ip: ac },
-    };
-    let kc = unsafe { plain::as_bytes(&kc) };
-
-    let vc = nat_mapping_value {
-        addr: u_inet_addr { ip: an },
-        trigger_addr: u_inet_addr { ip: 0 },
-        port: pn,
-        trigger_port: 0,
-        is_static: 1,
-        _pad: [0; 3],
-        active_time: 0,
-    };
-    let vc = unsafe { plain::as_bytes(&vc) };
-
-    map.update(kn, vn, MapFlags::ANY).unwrap();
-    map.update(kc, vc, MapFlags::ANY).unwrap();
 }

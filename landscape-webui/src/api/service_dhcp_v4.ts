@@ -1,6 +1,7 @@
-import { DHCPv4OfferInfo, DHCPv4ServiceConfig } from "@/lib/dhcp_v4";
+import { DHCPv4ServiceConfig } from "@/lib/dhcp_v4";
 import axiosService from ".";
 import { ServiceStatus } from "@/lib/services";
+import { DHCPv4OfferInfo } from "@/rust_bindings/common/dhcp_v4_server";
 
 export async function get_all_dhcp_v4_status(): Promise<
   Map<string, ServiceStatus>
@@ -15,10 +16,14 @@ export async function get_all_dhcp_v4_status(): Promise<
 }
 
 export async function get_dhcp_v4_assigned_ips(): Promise<
-  Map<string, DHCPv4OfferInfo>
+  Map<string, DHCPv4OfferInfo | null>
 > {
   let data = await axiosService.get(`services/dhcp_v4/assigned_ips`);
-  return data.data;
+  let map = new Map<string, DHCPv4OfferInfo | null>();
+  for (const [key, value] of Object.entries(data.data)) {
+    map.set(key, value as DHCPv4OfferInfo);
+  }
+  return map;
 }
 
 export async function get_dhcp_v4_assigned_ips_by_iface_name(

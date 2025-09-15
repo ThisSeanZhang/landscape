@@ -8,6 +8,7 @@ landscape-common = { path = "../landscape-common" }
 
 thiserror = { workspace = true }
 libbpf-rs = { workspace = true }
+libbpf-sys = { workspace = true }
 clap = { workspace = true }
 libc = { workspace = true }
 ctrlc = { workspace = true }
@@ -39,3 +40,9 @@ libbpf-cargo = { workspace = true }
 vmlinux = { git = "https://github.com/libbpf/vmlinux.h.git", rev = "a9c092aa771310bf8b00b5018f7d40a1fdb6ec82" }
 # linux 6.6
 # vmlinux = { git = "https://github.com/libbpf/vmlinux.h.git", rev = "83a228cf37fc65f2d14e4896a04922b5ee531a94" }
+
+[features]
+default = []
+# # autoconf automake libtool pkg-config m4 make cmake clang llvm autopoint gawk
+# apt-get install musl-tools musl-dev libargp-dev
+static = ["libbpf-sys/static", "libbpf-sys/vendored"]

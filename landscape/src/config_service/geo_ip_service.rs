@@ -1,4 +1,4 @@
-use landscape_common::store::storev3::LandscapeStoreTrait;
+use landscape_common::store::storev4::LandscapeStoreTrait;
 use landscape_common::{
     config::geo::{GeoFileCacheKey, GeoIpConfig, GeoIpSourceConfig},
     database::LandscapeDBTrait,
@@ -15,7 +15,7 @@ use std::{
 };
 
 use landscape_common::{
-    args::LAND_HOME_PATH, event::dns::DstIpEvent, store::storev3::StoreFileManager,
+    args::LAND_HOME_PATH, event::dns::DstIpEvent, store::storev4::StoreFileManager,
     LANDSCAPE_GEO_CACHE_TMP_DIR,
 };
 use landscape_database::{
@@ -231,7 +231,7 @@ mod tests {
 
     use landscape_common::{
         config::geo::{GeoFileCacheKey, GeoIpConfig},
-        store::storev3::StoreFileManager,
+        store::storev4::StoreFileManager,
         LANDSCAPE_GEO_CACHE_TMP_DIR,
     };
     use std::path::PathBuf;

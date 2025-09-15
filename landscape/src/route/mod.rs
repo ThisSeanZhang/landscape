@@ -4,7 +4,7 @@ use std::{collections::HashMap, sync::Arc};
 use landscape_common::{
     config::FlowId,
     event::route::RouteEvent,
-    flow::{FlowConfig, FlowTarget},
+    flow::{config::FlowConfig, FlowTarget},
     route::{LanRouteInfo, RouteTargetInfo},
 };
 use landscape_database::flow_rule::repository::FlowConfigRepository;

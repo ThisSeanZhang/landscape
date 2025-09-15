@@ -39,7 +39,9 @@ const show_geo_drawer_modal = ref(false);
     <n-flex vertical>
       <n-flex :wrap="false">
         <!-- {{ filter }} -->
-        <n-button @click="show_geo_drawer_modal = true">Geo IP 配置</n-button>
+        <n-button @click="show_geo_drawer_modal = true">
+          IP 规则来源配置
+        </n-button>
         <n-popconfirm
           :positive-button-props="{ loading: loading }"
           @positive-click="refresh_cache"
@@ -62,6 +64,11 @@ const show_geo_drawer_modal = ref(false);
       </n-flex>
 
       <!-- {{ rules }} -->
+      <!-- <n-virtual-list :items="rules" :item-size="rules.length">
+        <template #default="{ item }">
+          <n-flex> <GeoIpCacheCard :geo_site="item"></GeoIpCacheCard></n-flex>
+        </template>
+      </n-virtual-list> -->
       <n-grid x-gap="12" y-gap="10" cols="1 600:2 900:3 1200:4 1600:5">
         <n-grid-item
           v-for="rule in rules"

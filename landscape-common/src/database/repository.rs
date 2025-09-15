@@ -62,6 +62,17 @@ where
         Ok(result.map(From::from))
     }
 
+    #[allow(dead_code)]
+    async fn find_by_ids(&self, ids: Vec<Self::Id>) -> Vec<Self::Data> {
+        let mut result = Vec::with_capacity(ids.len());
+        for id in ids.into_iter() {
+            if let Ok(Some(r)) = self.find_by_id(id).await {
+                result.push(r);
+            }
+        }
+        result
+    }
+
     /// 清空
     #[allow(dead_code)]
     async fn truncate_table(&self) -> Result<(), LdError> {

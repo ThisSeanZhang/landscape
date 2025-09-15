@@ -84,10 +84,6 @@ async function saveRule() {
             <template #unchecked> 禁用 </template>
           </n-switch>
         </n-form-item-gi>
-
-        <!-- <n-form-item-gi :span="5" label="流量标记">
-          <PacketMark v-model:mark="rule.mark"></PacketMark>
-        </n-form-item-gi> -->
       </n-grid>
       <n-form-item label="备注">
         <n-input v-model:value="rule.remark" type="text" />

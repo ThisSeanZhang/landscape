@@ -47,6 +47,10 @@ impl FlowMark {
         tracing::debug!("dns mark_value: {mark_value}");
         mark_value
     }
+
+    pub fn set_reuseport(&mut self, value: bool) {
+        self.allow_reuse_port = value;
+    }
 }
 
 impl From<u32> for FlowMark {

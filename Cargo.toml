@@ -1,5 +1,5 @@
 [workspace.package]
-version = "0.6.8"
+version = "0.7.0"
 edition = "2021"
 
 
@@ -8,6 +8,7 @@ members = [
     "landscape",
     "landscape-common",
     "landscape-database",
+    "landscape-macro",
     "landscape-database/migration",
     "landscape-dns",
     "landscape-ebpf",
@@ -59,7 +60,7 @@ dhcproto = "0.12.0"
 # libbpf
 libbpf-rs = { version = "0.24.8" }
 libbpf-cargo = { version = "0.24.8" }
-libbpf-sys = { version = "*" }
+libbpf-sys = { version = "1.4.1" }
 
 # web
 axum = { version = "0.8.4", features = ["ws", "multipart"] }
@@ -69,6 +70,7 @@ axum-server = "0.7.2"
 # serde
 serde = { version = "1.0.219", features = ["derive"] }
 serde_json = { version = "1.0.140" }
+bincode = { version = "2.0.1", features = ["std", "serde"] }
 toml = "0.8.22"
 
 rtnetlink = { version = "0.14.1" }

@@ -1,4 +1,4 @@
-import { CheckDnsReq, CheckDnsResult } from "@/rust_bindings/dns";
+import { CheckDnsReq, CheckChainDnsResult } from "@/rust_bindings/dns";
 import axiosService from ".";
 import { ServiceStatus } from "@/lib/services";
 
@@ -24,7 +24,9 @@ export async function stop_dns_service(): Promise<ServiceStatus> {
   return new ServiceStatus(data.data.status);
 }
 
-export async function check_domain(req: CheckDnsReq): Promise<CheckDnsResult> {
+export async function check_domain(
+  req: CheckDnsReq
+): Promise<CheckChainDnsResult> {
   let data = await axiosService.get("sys_service/dns/check", {
     params: { ...req },
   });

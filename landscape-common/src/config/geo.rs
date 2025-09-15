@@ -8,7 +8,7 @@ use crate::{
     config::dns::{DomainConfig, DomainMatchType},
     database::repository::LandscapeDBStore,
     ip_mark::IpConfig,
-    store::storev3::LandscapeStoreTrait,
+    store::storev4::LandscapeStoreTrait,
 };
 
 #[derive(Serialize, Deserialize, Clone, Debug, TS)]

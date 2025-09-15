@@ -338,6 +338,25 @@ where
         result
     }
 
+    pub fn keys_ref(&self) -> Vec<&K> {
+        let mut result = Vec::new();
+        for (key, _) in &self.index {
+            result.push(key);
+        }
+        result
+    }
+
+    pub fn len(&self) -> usize {
+        self.index.len()
+    }
+
+    pub fn filter_keys<F>(&self, fun: F) -> impl Iterator<Item = &K>
+    where
+        F: Fn(&K) -> bool,
+    {
+        self.index.iter().map(|(key, _)| key).filter(move |&k| fun(k))
+    }
+
     pub fn list(&mut self) -> Vec<V> {
         let mut result = Vec::new();
         for (_, pos) in &self.index {

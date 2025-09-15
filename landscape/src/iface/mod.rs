@@ -140,6 +140,12 @@ impl IfaceManagerService {
         }
     }
 
+    pub async fn delete_bridge(&self, name: String) {
+        if crate::delete_bridge(name.clone()).await {
+            self.del_iface_config(name).await;
+        }
+    }
+
     pub async fn set_controller(
         &self,
         AddController {
@@ -267,6 +273,15 @@ impl IfaceManagerService {
     pub async fn get_iface_config(&self, key: String) -> Option<NetworkIfaceConfig> {
         let store = self.store_service.iface_store();
         store.find_by_iface_name(key).await.ok()?
+    }
+
+    pub async fn del_iface_config(&self, key: String) -> bool {
+        let store = self.store_service.iface_store();
+        let res = store.delete(key).await;
+        match res {
+            Ok(_) => true,
+            Err(_) => false,
+        }
     }
 
     async fn get_iface_configs(&self) -> Vec<NetworkIfaceConfig> {

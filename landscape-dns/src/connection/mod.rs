@@ -1,148 +1,60 @@
-use std::fmt;
-use std::net::SocketAddr;
-use std::os::fd::RawFd;
-use std::os::unix::io::AsRawFd;
-use std::{future::Future, io, pin::Pin};
-
 use hickory_resolver::{
-    name_server::GenericConnector,
-    proto::runtime::{iocompat::AsyncIoTokioAsStd, RuntimeProvider, TokioHandle, TokioTime},
+    config::{NameServerConfigGroup, ResolverConfig, ResolverOpts},
+    Resolver,
 };
 
-use libc::{setsockopt, SOL_SOCKET, SO_MARK, SO_RCVMARK};
-use std::time::Duration;
-use tokio::net::UdpSocket as TokioUdpSocket;
-use tokio::net::{TcpSocket, TcpStream as TokioTcpStream};
+use landscape_common::{
+    dns::{config::DnsUpstreamConfig, upstream::DnsUpstreamMode},
+    flow::mark::FlowMark,
+};
 
-pub type MarkConnectionProvider = GenericConnector<MarkRuntimeProvider>;
+use crate::connection::provider::{MarkConnectionProvider, MarkRuntimeProvider};
 
-/// The Tokio Runtime for async execution
-#[derive(Clone)]
-pub struct MarkRuntimeProvider {
-    handler: TokioHandle,
-    mark_value: u32,
-}
+pub(crate) mod provider;
 
-impl fmt::Debug for MarkRuntimeProvider {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("MarkRuntimeProvider")
-            .field("mark_value", &self.mark_value)
-            // .field("secret", &self.secret) // 手动跳过
-            .finish()
-    }
-}
+pub(crate) type LandscapeMarkDNSResolver = Resolver<MarkConnectionProvider>;
 
-impl MarkRuntimeProvider {
-    /// Create a Tokio runtime with a specific mark value
-    pub fn new(mark_value: u32) -> Self {
-        MarkRuntimeProvider { handler: TokioHandle::default(), mark_value }
-    }
-}
-
-impl RuntimeProvider for MarkRuntimeProvider {
-    type Handle = TokioHandle;
-    type Timer = TokioTime;
-    type Udp = TokioUdpSocket;
-    type Tcp = AsyncIoTokioAsStd<TokioTcpStream>;
-
-    fn create_handle(&self) -> Self::Handle {
-        self.handler.clone()
-    }
-
-    fn connect_tcp(
-        &self,
-        server_addr: SocketAddr,
-        bind_addr: Option<SocketAddr>,
-        wait_for: Option<Duration>,
-    ) -> Pin<Box<dyn Send + Future<Output = io::Result<Self::Tcp>>>> {
-        let mark_value = self.mark_value;
-        Box::pin(async move {
-            let socket = match server_addr {
-                SocketAddr::V4(_) => TcpSocket::new_v4(),
-                SocketAddr::V6(_) => TcpSocket::new_v6(),
-            }?;
-
-            // tracing::info!(
-            //     "Create tcp local_addr: {:?}, server_addr: {}, mark_value: {mark_value}",
-            //     bind_addr,
-            //     server_addr
-            // );
-            if let Some(bind_addr) = bind_addr {
-                socket.bind(bind_addr)?;
-            }
-
-            socket.set_nodelay(true)?;
-            let fd = socket.as_raw_fd();
-            set_socket_mark(fd, mark_value)?;
-
-            let future = socket.connect(server_addr);
-            let wait_for = wait_for.unwrap_or_else(|| Duration::from_secs(5));
-
-            match tokio::time::timeout(wait_for, future).await {
-                Ok(Ok(socket)) => Ok(AsyncIoTokioAsStd(socket)),
-                Ok(Err(e)) => Err(e),
-                Err(_) => Err(io::Error::new(
-                    io::ErrorKind::TimedOut,
-                    format!("connection to {server_addr:?} timed out after {wait_for:?}"),
-                )),
-            }
-        })
-    }
-
-    fn bind_udp(
-        &self,
-        local_addr: SocketAddr,
-        _server_addr: SocketAddr,
-    ) -> Pin<Box<dyn Send + Future<Output = std::io::Result<Self::Udp>>>> {
-        let mark_value = self.mark_value;
-        Box::pin(async move {
-            let socket = TokioUdpSocket::bind(local_addr).await?;
-            let fd = socket.as_raw_fd();
-            set_socket_mark(fd, mark_value)?;
-            // tracing::info!(
-            //     "Create udp local_addr: {}, server_addr: {}, mark_value: {mark_value}",
-            //     local_addr,
-            //     server_addr
-            // );
-            Ok(socket)
-        })
-    }
-}
-
-pub fn set_socket_mark(fd: RawFd, mark_value: u32) -> io::Result<()> {
-    // 设置 SO_MARK 选项
-    let result = unsafe {
-        setsockopt(
-            fd,
-            SOL_SOCKET,
-            SO_MARK,
-            &mark_value as *const u32 as *const libc::c_void,
-            std::mem::size_of::<u32>() as libc::socklen_t,
-        )
+pub(crate) fn create_resolver(
+    flow_id: u32,
+    mark: FlowMark,
+    DnsUpstreamConfig { mode, ips, port, .. }: DnsUpstreamConfig,
+) -> LandscapeMarkDNSResolver {
+    let name_server = match mode {
+        DnsUpstreamMode::Plaintext => {
+            NameServerConfigGroup::from_ips_clear(&ips, port.unwrap_or(53), true)
+        }
+        DnsUpstreamMode::Tls { domain } => {
+            NameServerConfigGroup::from_ips_tls(&ips, port.unwrap_or(843), domain.to_string(), true)
+        }
+        DnsUpstreamMode::Https { domain } => NameServerConfigGroup::from_ips_https(
+            &ips,
+            port.unwrap_or(443),
+            domain.to_string(),
+            true,
+        ),
+        DnsUpstreamMode::Quic { domain } => NameServerConfigGroup::from_ips_quic(
+            &ips,
+            port.unwrap_or(443),
+            domain.to_string(),
+            true,
+        ),
     };
 
-    if result == -1 {
-        Err(std::io::Error::last_os_error())
-    } else {
-        Ok(())
-    }
-}
+    let resolve = ResolverConfig::from_parts(None, vec![], name_server);
 
-pub fn set_socket_income_mark(fd: RawFd, mark_value: u32) -> io::Result<()> {
-    // 设置 SO_MARK 选项
-    let result = unsafe {
-        setsockopt(
-            fd,
-            SOL_SOCKET,
-            SO_RCVMARK,
-            &mark_value as *const u32 as *const libc::c_void,
-            std::mem::size_of::<u32>() as libc::socklen_t,
-        )
-    };
+    let mark_value = mark.get_dns_mark(flow_id);
 
-    if result == -1 {
-        Err(std::io::Error::last_os_error())
-    } else {
-        Ok(())
-    }
+    let mut options = ResolverOpts::default();
+    options.cache_size = 0;
+    options.num_concurrent_reqs = 4;
+    options.preserve_intermediates = true;
+    // options.use_hosts_file = ResolveHosts::Never;
+    let resolver = Resolver::builder_with_config(
+        resolve,
+        MarkConnectionProvider::new(MarkRuntimeProvider::new(mark_value)),
+    )
+    .with_options(options)
+    .build();
+
+    resolver
 }

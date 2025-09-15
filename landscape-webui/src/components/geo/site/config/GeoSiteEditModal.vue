@@ -61,7 +61,20 @@ const formRef = ref<FormInst | null>(null);
 
 const rules: FormRules = {
   name: [
-    { required: true, message: "名称不能为空", trigger: ["input", "blur"] },
+    {
+      required: true,
+      validator: (rule, value: string) => {
+        if (!value) {
+          return new Error("名称不能为空");
+        }
+        const nameRegex = /^[a-zA-Z0-9._-]+$/;
+        if (!nameRegex.test(value)) {
+          return new Error("名称只能包含字母、数字、点、下划线和中划线");
+        }
+        return true;
+      },
+      trigger: ["input", "blur"],
+    },
   ],
   url: [
     {

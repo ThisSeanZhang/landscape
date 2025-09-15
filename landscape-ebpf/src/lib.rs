@@ -16,6 +16,8 @@ pub mod pppoe;
 pub mod route;
 pub mod tproxy;
 
+pub mod dns_dispatcher;
+
 static MAP_PATHS: Lazy<LandscapeMapPath> = Lazy::new(|| {
     let ebpf_map_space = &LAND_ARGS.ebpf_map_space;
     tracing::info!("ebpf_map_space is: {ebpf_map_space}");
@@ -39,6 +41,7 @@ static MAP_PATHS: Lazy<LandscapeMapPath> = Lazy::new(|| {
         flow_verdict_ip_map: PathBuf::from(format!("{}/flow_verdict_ip_map", ebpf_map_path)),
         flow_match_map: PathBuf::from(format!("{}/flow_match_map", ebpf_map_path)),
         flow_target_map: PathBuf::from(format!("{}/flow_target_map", ebpf_map_path)),
+        dns_flow_socks: PathBuf::from(format!("{}/dns_flow_socks", ebpf_map_path)),
         // metric
         metric_map: PathBuf::from(format!("{}/metric_map", ebpf_map_path)),
         nat_conn_events: PathBuf::from(format!("{}/nat_conn_events", ebpf_map_path)),
@@ -77,6 +80,8 @@ pub(crate) struct LandscapeMapPath {
     pub flow_match_map: PathBuf,
     /// 存储 flow 目标的主机
     pub flow_target_map: PathBuf,
+    /// DNS Socket fd <=> Flow ID
+    pub dns_flow_socks: PathBuf,
 
     /// metric
     pub metric_map: PathBuf,

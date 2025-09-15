@@ -307,6 +307,7 @@ static __always_inline int flow_verdict(struct __sk_buff *skb, int current_eth_n
 
     // cache_key.match_key.l4_protocol; // 暂时不区分协议
     cache_key.match_key.l3_protocol = context->l3_protocol;
+    cache_key.match_key.prefixlen = context->l3_protocol == LANDSCAPE_IPV4_TYPE ? 96 : 192;
     COPY_ADDR_FROM(cache_key.match_key.src_addr.all, context->saddr.in6_u.u6_addr32);
     COPY_ADDR_FROM(cache_key.dst_addr.all, context->daddr.in6_u.u6_addr32);
 
@@ -349,7 +350,8 @@ static __always_inline int flow_verdict(struct __sk_buff *skb, int current_eth_n
             flow_mark_action = ip_flow_mark_value->mark;
             priority = ip_flow_mark_value->priority;
             // bpf_log_info("find ip map mark: %d", flow_mark_action);
-            // bpf_log_info("get_flow_allow_reuse_port: %d", get_flow_allow_reuse_port(flow_mark_action));
+            // bpf_log_info("get_flow_allow_reuse_port: %d",
+            // get_flow_allow_reuse_port(flow_mark_action));
         }
     } else {
         // bpf_log_info("flow_id: %d, ip map is empty", *flow_id_ptr);
@@ -880,16 +882,3 @@ int wan_route_egress(struct __sk_buff *skb) {
 //     return ret;
 // #undef BPF_LOG_TOPIC
 // }
-
-SEC("tc/egress")
-int flow_egress(struct __sk_buff *skb) {
-#define BPF_LOG_TOPIC ">> flow_egress"
-    // TODO: 需要记录的是 通过 NAT 而来的 静态映射流量, 避免分流到其他端口
-
-    // bpf_log_info("mark: %d", skb->mark);
-    // bpf_log_info("ifindex: %d", skb->ifindex);
-    // bpf_log_info("ingress_ifindex: %d", skb->ingress_ifindex);
-
-    return TC_ACT_UNSPEC;
-#undef BPF_LOG_TOPIC
-}

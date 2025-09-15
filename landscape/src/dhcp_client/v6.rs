@@ -16,8 +16,9 @@ use tokio::{net::UdpSocket, time::Instant};
 use crate::{dump::udp_packet::dhcp_v6::get_solicit_options, route::IpRouteService};
 
 use landscape_common::{
-    global_const::LD_PD_WATCHES,
+    ipv6_pd::IAPrefixMap,
     service::{DefaultWatchServiceStatus, ServiceStatus},
+    utils::time::get_f64_timestamp,
     LANDSCAPE_DEFAULE_DHCP_V6_SERVER_PORT,
 };
 use landscape_common::{net::MacAddr, route::RouteTargetInfo};
@@ -177,8 +178,9 @@ pub async fn dhcp_v6_pd_client(
     service_status: DefaultWatchServiceStatus,
     wan_route_info: RouteTargetInfo,
     route_service: IpRouteService,
+    prefix_map: IAPrefixMap,
 ) {
-    LD_PD_WATCHES.init(&iface_name).await;
+    prefix_map.init(&iface_name).await;
     let client_id = gen_client_id(mac_addr);
     service_status.just_change_status(ServiceStatus::Staring);
 
@@ -295,7 +297,7 @@ pub async fn dhcp_v6_pd_client(
                 // 处理接收到的数据包
                 match message_result {
                     Some(data) => {
-                        let need_reset_time = handle_packet(&iface_name, &client_id, &mut status, data, &wan_route_info, &route_service).await;
+                        let need_reset_time = handle_packet(&iface_name, &client_id, &mut status, data, &wan_route_info, &route_service, &prefix_map).await;
                         if need_reset_time {
                             timeout_times = get_status_timeout_config(&status, 0, active_send.as_mut());
                             // current_timeout_time = t2;
@@ -530,6 +532,7 @@ async fn handle_packet(
     (msg, msg_addr): (Vec<u8>, SocketAddr),
     wan_route_info: &RouteTargetInfo,
     route_service: &IpRouteService,
+    prefix_map: &IAPrefixMap,
 ) -> bool {
     let IpAddr::V6(ipv6addr) = msg_addr.ip() else {
         tracing::error!("unexpected IPV4 packet");
@@ -661,14 +664,15 @@ async fn handle_packet(
                             route_service.insert_ipv6_wan_route(&iface_name, info).await;
                             replace_ip_route(&ia_prefix, ipv6addr, iface_name);
                             // setting IA prefix to IAPrefixMap
-                            LD_PD_WATCHES
+                            prefix_map
                                 .insert_or_replace(
                                     iface_name,
-                                    landscape_common::global_const::LDIAPrefix {
+                                    landscape_common::ipv6_pd::LDIAPrefix {
                                         preferred_lifetime: ia_prefix.preferred_lifetime,
                                         valid_lifetime: ia_prefix.valid_lifetime,
                                         prefix_len: ia_prefix.prefix_len,
                                         prefix_ip: ia_prefix.prefix_ip,
+                                        last_update_time: get_f64_timestamp(),
                                     },
                                 )
                                 .await;

@@ -13,7 +13,7 @@ pub mod global_const;
 pub mod iface;
 pub mod info;
 pub mod ip_mark;
-pub mod mark;
+pub mod ipv6_pd;
 pub mod metric;
 pub mod net;
 pub mod net_proto;
@@ -24,6 +24,8 @@ pub mod service;
 pub mod store;
 pub mod test;
 pub mod utils;
+
+pub mod dns;
 
 /// Home Path
 pub const LANDSCAPE_CONFIG_DIR_NAME: &str = ".landscape-router";

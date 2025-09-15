@@ -29,10 +29,6 @@ async function refresh() {
         <FlowConfigCard @refresh="refresh" :config="flow"></FlowConfigCard>
       </n-grid-item>
     </n-grid>
-    <FlowEditModal
-      :rule_id="null"
-      @refresh="refresh"
-      v-model:show="show_edit"
-    />
+    <FlowEditModal @refresh="refresh" v-model:show="show_edit" />
   </n-layout>
 </template>

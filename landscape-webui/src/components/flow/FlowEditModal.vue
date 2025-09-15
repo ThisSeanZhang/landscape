@@ -8,7 +8,7 @@ import { flow_config_default, FlowTargetTypes } from "@/lib/default_value";
 import { FlowConfig, FlowTarget } from "@/rust_bindings/common/flow";
 import { useFrontEndStore } from "@/stores/front_end_config";
 interface Props {
-  rule_id: string | null;
+  rule_id?: string;
 }
 
 const props = defineProps<Props>();

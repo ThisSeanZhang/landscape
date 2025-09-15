@@ -9,7 +9,7 @@ use std::{
 
 use clap::Parser;
 use landscape::dhcp_client::v6::dhcp_v6_pd_client;
-use landscape_common::{net::MacAddr, route::RouteTargetInfo};
+use landscape_common::{ipv6_pd::IAPrefixMap, net::MacAddr, route::RouteTargetInfo};
 use landscape_common::{
     service::{DefaultWatchServiceStatus, ServiceStatus},
     LANDSCAPE_DEFAULE_DHCP_V6_CLIENT_PORT,
@@ -46,6 +46,7 @@ async fn main() {
     let service_status = DefaultWatchServiceStatus::new();
     let (_, ip_route) = landscape::route::test_used_ip_route().await;
     let status = service_status.clone();
+    let prefix_map = IAPrefixMap::new();
     tokio::spawn(async move {
         let route_info = RouteTargetInfo {
             ifindex: 6,
@@ -64,6 +65,7 @@ async fn main() {
             status,
             route_info,
             ip_route,
+            prefix_map,
         )
         .await;
     });

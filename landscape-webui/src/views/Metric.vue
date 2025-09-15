@@ -106,6 +106,7 @@ const applyFilter = () => {};
       后续还将修改
     </n-alert>
     <n-flex :wrap="false">
+      <n-flex> 总连接数为: {{ metricStore.firewall_info?.length }} </n-flex>
       <!-- 源 IP -->
       <n-input
         v-model:value="filter.src_ip"

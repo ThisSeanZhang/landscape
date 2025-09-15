@@ -11,7 +11,7 @@ use clap::Parser;
 use landscape::{icmp::v6::icmp_ra_server, iface::get_iface_by_name};
 use landscape_common::{
     config::ra::IPV6RAConfig,
-    global_const::{LDIAPrefix, LD_PD_WATCHES},
+    ipv6_pd::{IAPrefixMap, LDIAPrefix},
     route::LanRouteInfo,
     service::{DefaultWatchServiceStatus, ServiceStatus},
 };
@@ -38,7 +38,8 @@ async fn main() {
     let args = Args::parse();
     tracing::info!("using args is: {:#?}", args);
 
-    LD_PD_WATCHES
+    let prefix_map = IAPrefixMap::new();
+    prefix_map
         .insert_or_replace(
             &args.depend_iface,
             LDIAPrefix {
@@ -46,6 +47,7 @@ async fn main() {
                 valid_lifetime: 60 * 60 * 24 * 2,
                 prefix_len: 48,
                 prefix_ip: "fd00:abcd:1234::".parse().unwrap(),
+                last_update_time: 0.0,
             },
         )
         .await;
@@ -72,7 +74,9 @@ async fn main() {
                     mac: Some(mac.clone()),
                     prefix: 128,
                 };
-                icmp_ra_server(config, mac, iface.name, status, lan_info, ip_route).await.unwrap();
+                icmp_ra_server(config, mac, iface.name, status, lan_info, ip_route, prefix_map)
+                    .await
+                    .unwrap();
             }
         }
     });
