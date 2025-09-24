@@ -196,5 +196,8 @@ jobs:
             output/landscape-webserver-aarch64
             output/static.zip
             output/SHASUM256sum.txt
+            output/redirect_pkg_handler-x86_64
+            output/redirect_pkg_handler-x86_64-musl
+            output/redirect_pkg_handler-aarch64
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
