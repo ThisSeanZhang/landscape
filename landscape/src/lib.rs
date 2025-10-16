@@ -188,7 +188,7 @@ pub async fn get_all_wifi_devices() -> HashMap<String, LandscapeWifiInterface> {
         Ok(conn) => conn,
         Err(_) => return HashMap::new(),
     };
-    tokio::spawn(connection);
+    let conn_task = tokio::spawn(connection);
 
     let mut interface_handle = handle.interface().get().execute().await;
     let mut result = HashMap::new();
@@ -209,12 +209,13 @@ pub async fn get_all_wifi_devices() -> HashMap<String, LandscapeWifiInterface> {
         }
     }
 
+    conn_task.abort();
     result
 }
 
 pub async fn get_all_devices() -> Vec<LandscapeInterface> {
     let (connection, handle, _) = new_connection().unwrap();
-    tokio::spawn(connection);
+    let conn_task = tokio::spawn(connection);
     let mut links = handle.link().get().execute();
     let mut result = vec![];
     while let Some(msg) = links.try_next().await.unwrap() {
@@ -225,6 +226,7 @@ pub async fn get_all_devices() -> Vec<LandscapeInterface> {
             result.push(data);
         }
     }
+    conn_task.abort();
     result
 }
 
