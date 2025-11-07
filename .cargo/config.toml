@@ -1,13 +1,48 @@
 [target.aarch64-unknown-linux-gnu]
 linker = "aarch64-linux-gnu-gcc"
-# rustflags = ["-C", "target-feature=+crt-static"]
+
+[target.armv7-unknown-linux-gnueabihf]
+linker = "arm-linux-gnueabihf-gcc"
+
+[target.loongarch64-unknown-linux-gnu]
+linker = "loongarch64-linux-gnu-gcc"
+
+[target.s390x-unknown-linux-gnu]
+linker = "s390x-linux-gnu-gcc"
+
+[target.riscv64gc-unknown-linux-gnu]
+linker = "riscv64-linux-gnu-gcc"
+
+[target.powerpc64le-unknown-linux-gnu]
+linker = "powerpc64le-linux-gnu-gcc"
+
+[target.aarch64-unknown-linux-musl]
+linker = "gcc"
+rustflags = ["-C", "target-feature=-crt-static"]
+
+[target.armv7-unknown-linux-musleabihf]
+linker = "gcc"
+rustflags = ["-C", "target-feature=-crt-static"]
+
+[target.loongarch64-unknown-linux-musl]
+linker = "gcc"
+rustflags = ["-C", "target-feature=-crt-static"]
+
+[target.powerpc64le-unknown-linux-musl]
+linker = "gcc"
+rustflags = ["-C", "target-feature=-crt-static"]
+
+[target.riscv64gc-unknown-linux-musl]
+linker = "gcc"
+rustflags = ["-C", "target-feature=-crt-static"]
+
+[target.s390x-unknown-linux-musl]
+linker = "gcc"
+rustflags = ["-C", "target-feature=-crt-static"]
 
 [target.x86_64-unknown-linux-musl]
 linker = "gcc"
 rustflags = ["-C", "target-feature=-crt-static"]
-
-[target.armv7-unknown-linux-gnueabihf]
-linker = "arm-linux-gnueabihf-gcc"
 
 [env]
 TS_RS_EXPORT_DIR = { value = "./landscape-webui/src/rust_bindings", relative = true }
