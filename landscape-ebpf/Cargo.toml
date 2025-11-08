@@ -44,4 +44,4 @@ vmlinux = { git = "https://github.com/libbpf/vmlinux.h.git", rev = "83a228cf37fc
 default = []
 # # autoconf automake libtool pkg-config m4 make cmake clang llvm autopoint gawk
 # apt-get install musl-tools musl-dev libargp-dev
-static = ["libbpf-sys/static", "libbpf-sys/vendored"]
+vendored = ["libbpf-sys/vendored"]

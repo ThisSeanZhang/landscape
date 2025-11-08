@@ -17,31 +17,31 @@ linker = "riscv64-linux-gnu-gcc"
 linker = "powerpc64le-linux-gnu-gcc"
 
 [target.aarch64-unknown-linux-musl]
-linker = "gcc"
+linker = "aarch64-unknown-linux-musl-gcc"
 rustflags = ["-C", "target-feature=-crt-static"]
 
 [target.armv7-unknown-linux-musleabihf]
-linker = "gcc"
+linker = "arm-unknown-linux-musleabihf-gcc"
 rustflags = ["-C", "target-feature=-crt-static"]
 
 [target.loongarch64-unknown-linux-musl]
-linker = "gcc"
+linker = "loongarch64-unknown-linux-musl-gcc"
 rustflags = ["-C", "target-feature=-crt-static"]
 
 [target.powerpc64le-unknown-linux-musl]
-linker = "gcc"
+linker = "powerpc64le-unknown-linux-musl-gcc"
 rustflags = ["-C", "target-feature=-crt-static"]
 
 [target.riscv64gc-unknown-linux-musl]
-linker = "gcc"
+linker = "riscv64-unknown-linux-musl-gcc"
 rustflags = ["-C", "target-feature=-crt-static"]
 
 [target.s390x-unknown-linux-musl]
-linker = "gcc"
+linker = "s390x-unknown-linux-musl-gcc"
 rustflags = ["-C", "target-feature=-crt-static"]
 
 [target.x86_64-unknown-linux-musl]
-linker = "gcc"
+linker = "x86_64-unknown-linux-musl-gcc"
 rustflags = ["-C", "target-feature=-crt-static"]
 
 [env]

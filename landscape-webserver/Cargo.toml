@@ -56,4 +56,4 @@ ts-rs = { workspace = true, features = ["serde-compat"] }
 
 [features]
 default = []
-static = ["landscape-ebpf/static"]
+vendored = ["landscape-ebpf/vendored"]

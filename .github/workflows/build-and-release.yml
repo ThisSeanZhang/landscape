@@ -2,11 +2,15 @@ name: build and release
 
 on:
   push:
+  pull_request:
+    types:
+      - opened
+      - synchronize
+      - reopened
 
 env:
   sccache_version: 'v0.12.0'
-  zlib_version: '1.3.1'
-  elfutils_version: '0.192'
+  tools_version: '20250929'
 
 jobs:
   linux-build:
@@ -21,7 +25,7 @@ jobs:
             toolchain: stable
             bindgen: false
 
-          # - host: ubuntu-22.04-arm
+          # - host: ubuntu-24.04
           #   architecture: armv7l
           #   target: armv7-unknown-linux-gnueabihf
           #   toolchain: nightly
@@ -33,7 +37,7 @@ jobs:
             toolchain: stable
             bindgen: false
 
-          # - host: ubuntu-22.04
+          # - host: ubuntu-24.04
           #   architecture: ppc64le
           #   target: powerpc64le-unknown-linux-gnu
           #   toolchain: stable
@@ -64,11 +68,11 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake clang curl gcc llvm make pkg-config libelf-dev libclang-dev zlib1g-dev zstd
+          sudo apt-get install -y autopoint bison cmake clang curl gcc flex llvm make musl-tools pkg-config libelf-dev libclang-dev zlib1g-dev zstd
 
       - name: Setup sccache
         run: |
-          sccache_arch=${{ matrix.settings.architecture }}
+          sccache_arch=$(uname -m)
           if [ "${sccache_arch}" = "x86_64" ] || [ "${sccache_arch}" = "aarch64" ]; then
             wget -qO- https://github.com/mozilla/sccache/releases/download/${sccache_version}/sccache-${sccache_version}-${sccache_arch}-unknown-linux-musl.tar.gz | sudo tar -xzf - -C /usr/local/bin/ --strip-components=1
             echo "RUSTC_WRAPPER=sccache" >> $GITHUB_ENV
@@ -103,27 +107,7 @@ jobs:
           sudo update-alternatives \
             --install /usr/bin/${TOOLCHAIN_TRIPLET}-cpp ${TOOLCHAIN_TRIPLET}-cpp /usr/bin/${TOOLCHAIN_TRIPLET}-cpp-13 100
 
-          cd /tmp
-          wget -q https://zlib.net/zlib-${zlib_version}.tar.gz
-          wget -q https://sourceware.org/elfutils/ftp/${elfutils_version}/elfutils-${elfutils_version}.tar.bz2
-          tar xf zlib-${zlib_version}.tar.gz
-          tar xf elfutils-${elfutils_version}.tar.bz2
-
-          export CC=${TOOLCHAIN_TRIPLET}-gcc
-          export CXX=${TOOLCHAIN_TRIPLET}-g++
-          export PREFIX=/usr/${TOOLCHAIN_TRIPLET}
-          export LIBRARY_PATH=$PREFIX/lib
-          export LD_LIBRARY_PATH=$PREFIX/lib
-
-          cd /tmp/zlib-${zlib_version}
-          CHOST=${TOOLCHAIN_TRIPLET} ./configure --prefix=${PREFIX}
-          make -j$(nproc)
-          sudo make install
-
-          cd /tmp/elfutils-${elfutils_version}
-          ./configure --host=${TOOLCHAIN_TRIPLET} --prefix=${PREFIX} --with-zlib=${PREFIX} --disable-libdebuginfod --disable-debuginfod CFLAGS="-I${PREFIX}/include" LDFLAGS="-L${PREFIX}/lib -Wl,-rpath,$PREFIX/lib" LIBS="-lz"
-          make -j$(nproc)
-          sudo make install
+          sed -i 's/libbpf-sys = { version = "1.5.0" }/libbpf-sys = { version = "1.5.0", default-features = false, features = ["vendored"] }/g' Cargo.toml
 
       - name: Setup rust
         uses: dtolnay/rust-toolchain@stable
@@ -169,21 +153,119 @@ jobs:
             toolchain: stable
             bindgen: false
 
-    container: 
-      image: thisseanzhang/landscape:build_base_musl
+          # - host: ubuntu-24.04
+          #   architecture: armv7l
+          #   target: armv7-unknown-linux-musleabihf
+          #   toolchain: stable
+          #   bindgen: true
+
+          - host: ubuntu-24.04
+            architecture: aarch64
+            target: aarch64-unknown-linux-musl
+            toolchain: stable
+            bindgen: false
+
+          # - host: ubuntu-24.04
+          #   architecture: ppc64le
+          #   target: powerpc64le-unknown-linux-musl
+          #   toolchain: stable
+          #   bindgen: true
+
+          - host: ubuntu-24.04
+            architecture: riscv64
+            target: riscv64gc-unknown-linux-musl
+            toolchain: stable
+            bindgen: true
+
+          # - host: ubuntu-24.04
+          #   architecture: s390x
+          #   target: s390x-unknown-linux-musl
+          #   toolchain: stable
+          #   bindgen: true
+
+          - host: ubuntu-24.04
+            architecture: loongarch64
+            target: loongarch64-unknown-linux-musl
+            toolchain: stable
+            bindgen: true
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
 
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y autopoint bison cmake clang curl gcc gcc-multilib flex llvm make musl-tools pkg-config libelf-dev libclang-dev zlib1g-dev zstd
+
       - name: Setup sccache
         run: |
-          apk add --no-cache curl gzip tar wget
-          sccache_arch=${{ matrix.settings.architecture }}
+          sccache_arch=$(uname -m)
           if [ "${sccache_arch}" = "x86_64" ] || [ "${sccache_arch}" = "aarch64" ]; then
-            wget -qO- https://github.com/mozilla/sccache/releases/download/${sccache_version}/sccache-${sccache_version}-${sccache_arch}-unknown-linux-musl.tar.gz | tar -xzf - -C /usr/local/bin/ --strip-components=1
+            wget -qO- https://github.com/mozilla/sccache/releases/download/${sccache_version}/sccache-${sccache_version}-${sccache_arch}-unknown-linux-musl.tar.gz | sudo tar -xzf - -C /usr/local/bin/ --strip-components=1
             echo "RUSTC_WRAPPER=sccache" >> $GITHUB_ENV
           fi
+
+      - name: Setup cross-tools
+        run: |
+          ARCH=${{ matrix.settings.architecture }}
+          case "$ARCH" in
+            armv7l)
+              TOOLCHAIN_TRIPLET="arm-unknown-linux-musleabihf"
+              ;;
+            ppc64le)
+              TOOLCHAIN_TRIPLET="powerpc64le-unknown-linux-musl"
+              ;;
+            *)
+              TOOLCHAIN_TRIPLET="${ARCH}-unknown-linux-musl"
+              ;;
+          esac
+          wget -qO - https://github.com/cross-tools/musl-cross/releases/download/${tools_version}/${TOOLCHAIN_TRIPLET}.tar.xz | sudo tar -xJf - -C /usr/
+
+          sudo update-alternatives \
+            --install /usr/bin/${TOOLCHAIN_TRIPLET}-gcc ${TOOLCHAIN_TRIPLET}-gcc /usr/${TOOLCHAIN_TRIPLET}/bin/${TOOLCHAIN_TRIPLET}-gcc 100 \
+            --slave /usr/bin/${TOOLCHAIN_TRIPLET}-gcc-ar ${TOOLCHAIN_TRIPLET}-gcc-ar /usr/${TOOLCHAIN_TRIPLET}/bin/${TOOLCHAIN_TRIPLET}-gcc-ar \
+            --slave /usr/bin/${TOOLCHAIN_TRIPLET}-gcc-nm ${TOOLCHAIN_TRIPLET}-gcc-nm /usr/${TOOLCHAIN_TRIPLET}/bin/${TOOLCHAIN_TRIPLET}-gcc-nm \
+            --slave /usr/bin/${TOOLCHAIN_TRIPLET}-gcc-ranlib ${TOOLCHAIN_TRIPLET}-gcc-ranlib /usr/${TOOLCHAIN_TRIPLET}/bin/${TOOLCHAIN_TRIPLET}-gcc-ranlib \
+            --slave /usr/bin/${TOOLCHAIN_TRIPLET}-gcov ${TOOLCHAIN_TRIPLET}-gcov /usr/${TOOLCHAIN_TRIPLET}/bin/${TOOLCHAIN_TRIPLET}-gcov \
+            --slave /usr/bin/${TOOLCHAIN_TRIPLET}-gcov-dump ${TOOLCHAIN_TRIPLET}-gcov-dump /usr/${TOOLCHAIN_TRIPLET}/bin/${TOOLCHAIN_TRIPLET}-gcov-dump \
+            --slave /usr/bin/${TOOLCHAIN_TRIPLET}-gcov-tool ${TOOLCHAIN_TRIPLET}-gcov-tool /usr/${TOOLCHAIN_TRIPLET}/bin/${TOOLCHAIN_TRIPLET}-gcov-tool \
+            --slave /usr/bin/${TOOLCHAIN_TRIPLET}-gprof ${TOOLCHAIN_TRIPLET}-gprof /usr/${TOOLCHAIN_TRIPLET}/bin/${TOOLCHAIN_TRIPLET}-gprof \
+            --slave /usr/bin/${TOOLCHAIN_TRIPLET}-addr2line ${TOOLCHAIN_TRIPLET}-addr2line /usr/${TOOLCHAIN_TRIPLET}/bin/${TOOLCHAIN_TRIPLET}-addr2line \
+            --slave /usr/bin/${TOOLCHAIN_TRIPLET}-ar ${TOOLCHAIN_TRIPLET}-ar /usr/${TOOLCHAIN_TRIPLET}/bin/${TOOLCHAIN_TRIPLET}-ar \
+            --slave /usr/bin/${TOOLCHAIN_TRIPLET}-as ${TOOLCHAIN_TRIPLET}-as /usr/${TOOLCHAIN_TRIPLET}/bin/${TOOLCHAIN_TRIPLET}-as \
+            --slave /usr/bin/${TOOLCHAIN_TRIPLET}-c++ ${TOOLCHAIN_TRIPLET}-c++ /usr/${TOOLCHAIN_TRIPLET}/bin/${TOOLCHAIN_TRIPLET}-c++ \
+            --slave /usr/bin/${TOOLCHAIN_TRIPLET}-c++filt ${TOOLCHAIN_TRIPLET}-c++filt /usr/${TOOLCHAIN_TRIPLET}/bin/${TOOLCHAIN_TRIPLET}-c++filt \
+            --slave /usr/bin/${TOOLCHAIN_TRIPLET}-cc ${TOOLCHAIN_TRIPLET}-cc /usr/${TOOLCHAIN_TRIPLET}/bin/${TOOLCHAIN_TRIPLET}-cc \
+            --slave /usr/bin/${TOOLCHAIN_TRIPLET}-cpp ${TOOLCHAIN_TRIPLET}-cpp /usr/${TOOLCHAIN_TRIPLET}/bin/${TOOLCHAIN_TRIPLET}-cpp \
+            --slave /usr/bin/${TOOLCHAIN_TRIPLET}-elfedit ${TOOLCHAIN_TRIPLET}-elfedit /usr/${TOOLCHAIN_TRIPLET}/bin/${TOOLCHAIN_TRIPLET}-elfedit \
+            --slave /usr/bin/${TOOLCHAIN_TRIPLET}-g++ ${TOOLCHAIN_TRIPLET}-g++ /usr/${TOOLCHAIN_TRIPLET}/bin/${TOOLCHAIN_TRIPLET}-g++ \
+            --slave /usr/bin/${TOOLCHAIN_TRIPLET}-ld ${TOOLCHAIN_TRIPLET}-ld /usr/${TOOLCHAIN_TRIPLET}/bin/${TOOLCHAIN_TRIPLET}-ld \
+            --slave /usr/bin/${TOOLCHAIN_TRIPLET}-ld.bfd ${TOOLCHAIN_TRIPLET}-ld.bfd /usr/${TOOLCHAIN_TRIPLET}/bin/${TOOLCHAIN_TRIPLET}-ld.bfd \
+            --slave /usr/bin/${TOOLCHAIN_TRIPLET}-ldd ${TOOLCHAIN_TRIPLET}-ldd /usr/${TOOLCHAIN_TRIPLET}/bin/${TOOLCHAIN_TRIPLET}-ldd \
+            --slave /usr/bin/${TOOLCHAIN_TRIPLET}-lto-dump ${TOOLCHAIN_TRIPLET}-lto-dump /usr/${TOOLCHAIN_TRIPLET}/bin/${TOOLCHAIN_TRIPLET}-lto-dump \
+            --slave /usr/bin/${TOOLCHAIN_TRIPLET}-nm ${TOOLCHAIN_TRIPLET}-nm /usr/${TOOLCHAIN_TRIPLET}/bin/${TOOLCHAIN_TRIPLET}-nm \
+            --slave /usr/bin/${TOOLCHAIN_TRIPLET}-objcopy ${TOOLCHAIN_TRIPLET}-objcopy /usr/${TOOLCHAIN_TRIPLET}/bin/${TOOLCHAIN_TRIPLET}-objcopy \
+            --slave /usr/bin/${TOOLCHAIN_TRIPLET}-objdump ${TOOLCHAIN_TRIPLET}-objdump /usr/${TOOLCHAIN_TRIPLET}/bin/${TOOLCHAIN_TRIPLET}-objdump \
+            --slave /usr/bin/${TOOLCHAIN_TRIPLET}-populate ${TOOLCHAIN_TRIPLET}-populate /usr/${TOOLCHAIN_TRIPLET}/bin/${TOOLCHAIN_TRIPLET}-populate \
+            --slave /usr/bin/${TOOLCHAIN_TRIPLET}-ranlib ${TOOLCHAIN_TRIPLET}-ranlib /usr/${TOOLCHAIN_TRIPLET}/bin/${TOOLCHAIN_TRIPLET}-ranlib \
+            --slave /usr/bin/${TOOLCHAIN_TRIPLET}-readelf ${TOOLCHAIN_TRIPLET}-readelf /usr/${TOOLCHAIN_TRIPLET}/bin/${TOOLCHAIN_TRIPLET}-readelf \
+            --slave /usr/bin/${TOOLCHAIN_TRIPLET}-size ${TOOLCHAIN_TRIPLET}-size /usr/${TOOLCHAIN_TRIPLET}/bin/${TOOLCHAIN_TRIPLET}-size \
+            --slave /usr/bin/${TOOLCHAIN_TRIPLET}-strings ${TOOLCHAIN_TRIPLET}-strings /usr/${TOOLCHAIN_TRIPLET}/bin/${TOOLCHAIN_TRIPLET}-strings \
+            --slave /usr/bin/${TOOLCHAIN_TRIPLET}-strip ${TOOLCHAIN_TRIPLET}-strip /usr/${TOOLCHAIN_TRIPLET}/bin/${TOOLCHAIN_TRIPLET}-strip
+
+          sed -i 's/libbpf-sys = { version = "1.5.0" }/libbpf-sys = { version = "1.5.0", default-features = false, features = ["vendored"] }/g' Cargo.toml
+          # sed -i 's@static = ["libbpf-sys/static", "libbpf-sys/vendored"]@vendored = ["libbpf-sys/vendored"]@g' landscape-ebpf/Cargo.toml
+          echo '[patch.crates-io]' >> Cargo.toml
+          echo 'libbpf-sys = { git = "https://github.com/wojiushixiaobai/libbpf-sys", branch = "patch-1.5.0" }' >> Cargo.toml
+          cargo update -p libbpf-sys
+
+      - name: Setup rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ matrix.settings.toolchain }}
+          targets: ${{ matrix.settings.target }}
+          components: rustfmt
 
       - name: Setup cache
         uses: actions/cache@v4
@@ -193,14 +275,16 @@ jobs:
           key: ${{ runner.os }}-${{ matrix.settings.target }}-${{ github.sha }}
           restore-keys: ${{ runner.os }}-${{ matrix.settings.target }}-
 
-      - name: Build Rust binaries
+      - name: Build binaries
         run: |
-          mkdir -p output
-          cargo build --release
-          cp target/release/landscape-webserver output/landscape-webserver-${{ matrix.settings.architecture }}-musl
-          # redirect_pkg_handler
-          cargo build --package landscape-ebpf --bin redirect_pkg_handler --release
-          cp target/release/redirect_pkg_handler output/redirect_pkg_handler-${{ matrix.settings.architecture }}-musl
+            if [ "${{ matrix.settings.bindgen }}" = "true" ]; then
+              cargo install --force --locked bindgen-cli
+            fi
+            cargo build --release --target ${{ matrix.settings.target }}
+            cargo build --release --package landscape-ebpf --bin redirect_pkg_handler --target ${{ matrix.settings.target }}
+            mkdir -p output
+            cp target/${{ matrix.settings.target }}/release/landscape-webserver output/landscape-webserver-${{ matrix.settings.architecture }}-musl
+            cp target/${{ matrix.settings.target }}/release/redirect_pkg_handler output/redirect_pkg_handler-${{ matrix.settings.architecture }}-musl
 
       - name: Upload binary
         uses: actions/upload-artifact@v4
