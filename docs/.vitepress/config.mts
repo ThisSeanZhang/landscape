@@ -15,22 +15,16 @@ export default defineConfig({
 
     sidebar: [
       {
-        text: "介绍",
         items: [
           { text: "简介", link: "/introduction" },
           // { text: "部分界面截图", link: "/screenshot" },
-        ],
-      },
-      {
-        text: "部署指南",
-        items: [
-          { text: "注意 Linux 版本 / 内核要求", link: "/attention" },
+          { text: "系统运行基本要求!!! (必读)", link: "/attention" },
           { text: "手工部署", link: "/manual" },
           { text: "康康其他人怎么做 (链接)", link: "/community-guides" },
         ],
       },
       {
-        text: "配置介绍",
+        text: "目录结构 & 配置",
         items: [
           { text: ".landscape-router 目录介绍", link: "/config/home_path.md" },
           { text: "配置文件介绍", link: "/config/index.md" },
@@ -46,13 +40,28 @@ export default defineConfig({
       {
         text: "基础功能设置",
         items: [
-          { text: "系统基本设置", link: "/other-features/sys-info" },
+          {
+            text: "系统基本设置",
+            collapsed: true,
+            items: [
+              { text: "区域切换", link: "/other-features/basic/zone" },
+              { text: "其他", link: "/other-features/basic/basic" },
+            ],
+          },
           { text: "IPv6 相关", link: "/other-features/ipv6" },
           { text: "DHCPv4 相关", link: "/other-features/dhcpv4" },
           //  { text: "NAT", link: "/feature/route.md" },
           { text: "防火墙设置", link: "/other-features/firewall" },
           { text: "DNS 相关", link: "/other-features/serverdns" },
-          { text: "虚拟组网", link: "/other-features/overlay-network" },
+          {
+            text: "虚拟组网",
+            link: "/other-features/overlay/overlay-network",
+            collapsed: true,
+            items: [
+              { text: "Zerotier", link: "/other-features/overlay/zerotier" },
+              { text: "Tailscale", link: "/other-features/overlay/tailscale" },
+            ],
+          },
           //  { text: "Docker", link: "/flow.md" },
           //  { text: "连接信息", link: "/flow.md" },
           {
@@ -67,6 +76,7 @@ export default defineConfig({
       },
       {
         text: "编译",
+        collapsed: true,
         items: [
           { text: "编译", link: "/compilation/index.md" },
           { text: "与 Armbian 集成", link: "/compilation/armbian.md" },
@@ -74,7 +84,7 @@ export default defineConfig({
         ],
       },
       {
-        text: "FAQ",
+        text: "常见问题",
         items: [
           { text: "DNS 服务相关", link: "/faq/dns.md" },
           // { text: "在已有网络基础上运行", link: "/faq/coexist.md" },

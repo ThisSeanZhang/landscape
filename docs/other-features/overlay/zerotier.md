@@ -1,8 +1,4 @@
-# 虚拟组网
-你可以使用 Landscape 提供的镜像进行部署，也可以自己编译镜像进行部署。
-
-
-## zerotier
+# Zerotier
 首先从 gtihub 下载 handler
 这边使用 x86 作为例子
 ```shell
@@ -118,7 +114,7 @@ networks:
 ]
 ```
 
-![](../images/other-features/overlay/1.png)
+![](./images/1.png)
 
 成功后可见
 ```
@@ -133,11 +129,11 @@ cafefd6717 -      PLANET   137 DIRECT   172      25038    79.127.159.187/9993
 ```
 
 然后创建一个新流, 将 zerotier 的容器设置该流的出口.
-![](../images/other-features/overlay/2.png)
+![](./images/2.png)
 
 
 然后在默认流, 将 zerotier 网段的数据传到 zerotier 容器中. 
-![](../images/other-features/overlay/3.png)
+![](./images/3.png)
 
 除此之外要记得
 ```text
@@ -151,60 +147,6 @@ docker exec <容器名称> ip add
        valid_lft forever preferred_lft forever
 ```
 将你的 内网 (我这是 `10.1.1.0/24`) 配置到 zerotier 中, via 字段填的是 上方查询到的 容器内的 IP `(172.26.41.197)`
-![](../images/other-features/overlay/4.png)
+![](./images/4.png)
 
 此时你再使用另一个客户端连接上, 就可以访问你的内网资源了.
-
-## tailscale
-大致方式是
-1. 将容器所属的 bridge 转为 LAN 类型网卡
-2. 并且将 bridge 网卡开启 LAN 路由转发服务
-3. 然后再使用静态 NAT 映射配置, 需要将`容器的 IP` 填写到 `内网目标 IPV4` 上.
-
-```yaml
-services:
-  tailscale:
-    image: tailscale/tailscale:latest
-    container_name: <容器名称>
-    restart: unless-stopped
-    cap_add:
-      - NET_ADMIN
-      - SYS_ADMIN
-      - PERFMON
-    devices:
-      - /dev/net/tun
-    environment:
-      - TS_AUTHKEY=tskey-auth-<AUTH KEY>
-      - TS_STATE_DIR=/var/lib/tailscale
-      - TS_EXTRA_ARGS=--accept-dns=false --advertise-routes=<代理的内网网段>
-      - TS_USERSPACE=false
-      - TS_TAILSCALED_EXTRA_ARGS=--port=<指定端口>
-    sysctls:
-      net.ipv4.ip_forward: "1"
-      net.ipv6.conf.all.forwarding: "1"
-    volumes:
-      - <tailscale 持久化路径>::/var/lib/tailscale
-    networks:
-      my-tailscale-bridge:
-        ipv4_address: 172.188.0.10  # 可选指定容器 IP
-    dns:
-      - 172.188.0.1 # 设置为 bridge IP 可以使用默认流的 DNS 配置
-
-networks:
-  my-tailscale-bridge:
-    driver: bridge
-    driver_opts:
-      com.docker.network.bridge.name: tail-br0<网卡名称. 必须指定>
-    ipam:
-      config:
-        - subnet: 172.188.0.0/24
-          gateway: 172.188.0.1
-```
-按照如上方式配置后, 在 UI 上转换该网卡的区域, 并且开启 LAN 路由转发. 如下图所示:
-![](../images/other-features/overlay/5.png)
-
-然后在 `静态 NAT 管理` 中添加端口映射为静态 NAT
-![](../images/other-features/overlay/6.png)
-
-最终从另一个主机A ping 路由下的一个 LAN `10.10.10.112` 主机
-![](../images/other-features/overlay/7.png)

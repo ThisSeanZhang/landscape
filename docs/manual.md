@@ -7,6 +7,11 @@
 3. 以下的可选是在没有使用到时可选
 :::
 
+::: warning
+记得先使用 ```ss -lutp``` 检查当前主机是否有 DNS 服务已经占用了 `53` 端口, 如果已被占用则无法启动.
+:::
+
+
 1. Landscape Router 文件主体, 可从 [此处](https://github.com/ThisSeanZhang/landscape/releases/) 下载
 2. 静态页面文件, 可从 [此处](https://github.com/ThisSeanZhang/landscape/releases/) 下载, 并且解压到 `/root/.landscape-router/static` 文件夹中
 3. (可选) 安装 PPP，用于 pppoe 拨号
