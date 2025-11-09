@@ -5,28 +5,8 @@
 2、为网桥绑定网卡  
 ![](../../images/other-features/CicsSystemGroup/13.png)  
 
-
 ## 开启/关闭 网卡
 ![](../../images/other-features/CicsSystemGroup/3.png) 
-
-
-<!-- ## 默认路由
-默认路由为 flow 0 出口 -->
-
-## 设置 PPPOE 网卡为默认路由（添加 PPPOE 账号）
-1、在wan网卡上添加PPPOE账号  
-2、在PPPOE账号里设为默认路由  
-![](../../images/other-features/CicsSystemGroup/4.png)  
-![](../../images/other-features/CicsSystemGroup/5.png)  
-![](../../images/other-features/CicsSystemGroup/6.png)  
-![](../../images/other-features/CicsSystemGroup/7.png) 
-
-
-## 设置 Wan 网卡为默认路由
-为网卡配置ip后，可开启默认路由  
-![](../../images/other-features/CicsSystemGroup/8.png)  
-![](../../images/other-features/CicsSystemGroup/9.png)  
-
 
 ## 无线网卡 
 将 hostapt 配置填入输入框中即可
