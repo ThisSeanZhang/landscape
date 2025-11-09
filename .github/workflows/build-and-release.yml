@@ -2,11 +2,15 @@ name: build and release
 
 on:
   push:
+  pull_request:
+    types:
+      - opened
+      - synchronize
+      - reopened
 
 env:
   sccache_version: 'v0.12.0'
-  zlib_version: '1.3.1'
-  elfutils_version: '0.192'
+  tools_version: '20250929'
 
 jobs:
   linux-build:
@@ -21,7 +25,7 @@ jobs:
             toolchain: stable
             bindgen: false
 
-          # - host: ubuntu-22.04-arm
+          # - host: ubuntu-24.04
           #   architecture: armv7l
           #   target: armv7-unknown-linux-gnueabihf
           #   toolchain: nightly
@@ -33,7 +37,7 @@ jobs:
             toolchain: stable
             bindgen: false
 
-          # - host: ubuntu-22.04
+          # - host: ubuntu-24.04
           #   architecture: ppc64le
           #   target: powerpc64le-unknown-linux-gnu
           #   toolchain: stable
@@ -64,11 +68,11 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake clang curl gcc llvm make pkg-config libelf-dev libclang-dev zlib1g-dev zstd
+          sudo apt-get install -y autopoint bison cmake clang curl gcc flex llvm make musl-tools pkg-config libelf-dev libclang-dev zlib1g-dev zstd
 
       - name: Setup sccache
         run: |
-          sccache_arch=${{ matrix.settings.architecture }}
+          sccache_arch=$(uname -m)
           if [ "${sccache_arch}" = "x86_64" ] || [ "${sccache_arch}" = "aarch64" ]; then
             wget -qO- https://github.com/mozilla/sccache/releases/download/${sccache_version}/sccache-${sccache_version}-${sccache_arch}-unknown-linux-musl.tar.gz | sudo tar -xzf - -C /usr/local/bin/ --strip-components=1
             echo "RUSTC_WRAPPER=sccache" >> $GITHUB_ENV
@@ -103,27 +107,7 @@ jobs:
           sudo update-alternatives \
             --install /usr/bin/${TOOLCHAIN_TRIPLET}-cpp ${TOOLCHAIN_TRIPLET}-cpp /usr/bin/${TOOLCHAIN_TRIPLET}-cpp-13 100
 
-          cd /tmp
-          wget -q https://zlib.net/zlib-${zlib_version}.tar.gz
-          wget -q https://sourceware.org/elfutils/ftp/${elfutils_version}/elfutils-${elfutils_version}.tar.bz2
-          tar xf zlib-${zlib_version}.tar.gz
-          tar xf elfutils-${elfutils_version}.tar.bz2
-
-          export CC=${TOOLCHAIN_TRIPLET}-gcc
-          export CXX=${TOOLCHAIN_TRIPLET}-g++
-          export PREFIX=/usr/${TOOLCHAIN_TRIPLET}
-          export LIBRARY_PATH=$PREFIX/lib
-          export LD_LIBRARY_PATH=$PREFIX/lib
-
-          cd /tmp/zlib-${zlib_version}
-          CHOST=${TOOLCHAIN_TRIPLET} ./configure --prefix=${PREFIX}
-          make -j$(nproc)
-          sudo make install
-
-          cd /tmp/elfutils-${elfutils_version}
-          ./configure --host=${TOOLCHAIN_TRIPLET} --prefix=${PREFIX} --with-zlib=${PREFIX} --disable-libdebuginfod --disable-debuginfod CFLAGS="-I${PREFIX}/include" LDFLAGS="-L${PREFIX}/lib -Wl,-rpath,$PREFIX/lib" LIBS="-lz"
-          make -j$(nproc)
-          sudo make install
+          sed -i 's/libbpf-sys = { version = "1.5.0" }/libbpf-sys = { version = "1.5.0", default-features = false, features = ["vendored"] }/g' Cargo.toml
 
       - name: Setup rust
         uses: dtolnay/rust-toolchain@stable
@@ -179,7 +163,7 @@ jobs:
       - name: Setup sccache
         run: |
           apk add --no-cache curl gzip tar wget
-          sccache_arch=${{ matrix.settings.architecture }}
+          sccache_arch=$(uname -m)
           if [ "${sccache_arch}" = "x86_64" ] || [ "${sccache_arch}" = "aarch64" ]; then
             wget -qO- https://github.com/mozilla/sccache/releases/download/${sccache_version}/sccache-${sccache_version}-${sccache_arch}-unknown-linux-musl.tar.gz | tar -xzf - -C /usr/local/bin/ --strip-components=1
             echo "RUSTC_WRAPPER=sccache" >> $GITHUB_ENV
@@ -193,7 +177,7 @@ jobs:
           key: ${{ runner.os }}-${{ matrix.settings.target }}-${{ github.sha }}
           restore-keys: ${{ runner.os }}-${{ matrix.settings.target }}-
 
-      - name: Build Rust binaries
+      - name: Build binaries
         run: |
           mkdir -p output
           cargo build --release
