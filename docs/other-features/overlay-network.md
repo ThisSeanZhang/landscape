@@ -154,3 +154,78 @@ docker exec <容器名称> ip add
 ![](../images/other-features/overlay/4.png)
 
 此时你再使用另一个客户端连接上, 就可以访问你的内网资源了.
+
+
+## tailscale
+创建compose文件如下
+
+```yaml
+
+services:
+  tailscale:
+    image: ghcr.io/landscape-router/landscape-apps/tailscale:latest
+    mac_address: "<mac地址>" # 可选，ipv6需要
+    container_name: tailscale
+    restart: unless-stopped
+    cap_add:
+      - NET_ADMIN
+      - SYS_ADMIN
+      - PERFMON
+    devices:
+      - /dev/net/tun
+    environment:
+      - TS_AUTHKEY=tskey-auth-<AUTH KEY>
+      - TS_STATE_DIR=/var/lib/tailscale
+      - TS_EXTRA_ARGS=--accept-dns=false --advertise-routes=<代理的内网网段> --accept-routes
+      - TS_USERSPACE=false
+      - TS_TAILSCALED_EXTRA_ARGS=--port=<指定端口>
+    sysctls:
+      net.ipv4.ip_forward: "1"
+      net.ipv6.conf.all.forwarding: "1"
+      net.ipv6.conf.all.accept_ra: "2"
+      net.ipv6.conf.all.autoconf: "1"
+      net.ipv6.conf.default.accept_ra: "2"
+    volumes:
+      - <tailscale 持久化路径>:/var/lib/tailscale
+      - /root/.landscape-router/unix_link/:/ld_unix_link/:ro
+    networks:
+      my-tailscale-bridge:
+        ipv4_address: 172.188.0.10  # 可选指定容器 IP
+    dns:
+      - 172.188.0.1 # 设置为 bridge IP 可以使用默认流的 DNS 配置
+
+networks:
+  my-tailscale-bridge:
+    driver: bridge
+    enable_ipv6: true
+    driver_opts:
+      com.docker.network.bridge.name: tail-br0 # 网卡名称，必须指定
+    ipam:
+      config:
+        - subnet: 172.188.0.0/24
+          gateway: 172.188.0.1
+
+```
+
+配置并启动容器后，在UI上转换该网卡的区域，并且开启LAN路由转发，如下图所示：
+![](../images/other-features/overlay/5.png)
+
+### 访问内网
+开启容器ipv6（可选）
+在`ICMPv6 RA配置`里选择`增加`前缀，注意`子网索引`不要与其他LAN接口冲突
+![](../images/other-features/overlay/6.png)
+![](../images/other-features/overlay/7.png)
+
+在静态NAT管理中添加端口映射为静态NAT，如果容器选定了固定mac地址，就可以通过指定后缀的方式避免宽带重拨导致ipv6规则失效
+![](../images/other-features/overlay/8.png)
+
+此时，内网环境已经可以正常被tailscale对端访问
+
+### 访问tailscale宣告的其他子网
+进入`分流设置`，选择`创建一个新Flow`
+![](../images/other-features/overlay/9.png)
+
+然后在默认流`目标IP`添加一条新规则，把相应ip段制定由tailscale出口
+![](../images/other-features/overlay/10.png)
+
+这样就能正常访问tailscale宣告的其他子网了
