@@ -65,7 +65,10 @@ pub async fn create_firewall_service(
         tracing::info!("向内部发送停止信号");
     });
     std::thread::spawn(move || {
-        if let Err(e) = landscape_ebpf::firewall::new_firewall(ifindex, has_mac, rx) {
+        // if let Err(e) = landscape_ebpf::firewall::new_firewall(ifindex, has_mac, rx) {
+        //     tracing::error!("{e:?}");
+        // }
+        if let Err(e) = landscape_ebpf::firewall::v2::firewall_v2(ifindex, has_mac, rx) {
             tracing::error!("{e:?}");
         }
         tracing::info!("向外部线程发送解除阻塞信号");
