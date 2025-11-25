@@ -2,7 +2,28 @@
 #define __LD_FIREWALL_SHARE_H__
 #include <bpf/bpf_helpers.h>
 #include "landscape.h"
-#include "firewall.h"
+
+// ipv4 = 32 + 8 + 8 + 16 = 64
+// ipv6 = 128 + 8 + 8 + 16 = 160
+struct firewall_static_rule_key {
+    __u32 prefixlen;
+    // l3_proto
+    u8 ip_type;
+    // l4_proto
+    u8 ip_protocol;
+    __be16 local_port;
+    union u_inet_addr remote_address;
+};
+
+// 静态配置开放端口
+struct firewall_static_ct_action {
+    __u32 mark;
+};
+
+/// IP Fragment Related End
+struct firewall_action {
+    __u32 mark;
+};
 
 struct {
     __uint(type, BPF_MAP_TYPE_LPM_TRIE);
