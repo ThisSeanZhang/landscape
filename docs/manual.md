@@ -137,3 +137,8 @@ systemctl stop landscape-router.service
 3. 换入新版 `landscape-webserver` 与 `static`  
 4. 重启系统（仅重启 landscape-router.service 会导致分流功能不可用）
 
+## 使用升级脚本
+- 仅限于可执行文件landscape-webserver和.landscape-router配置目录都在/root/目录下时可使用
+- 从仓库中下载update.sh到root目录下，并执行update.sh脚本，执行完重启系统即可
+- 脚本会自动从仓库的最新Release下载，新下载的文件会放在downloads目录下，当前可执行文件会放在backup目录下
+- 旧的web静态文件会重命名为static_bak
