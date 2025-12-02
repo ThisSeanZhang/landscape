@@ -20,7 +20,6 @@ export default defineConfig({
           // { text: "部分界面截图", link: "/screenshot" },
           { text: "系统运行基本要求!!! (必读)", link: "/attention" },
           { text: "手工部署", link: "/manual" },
-          { text: "康康其他人怎么做 (链接)", link: "/community-guides" },
         ],
       },
       {
@@ -35,6 +34,16 @@ export default defineConfig({
         items: [
           { text: "分流控制", link: "/feature/flow" },
           { text: "eBPF 路由", link: "/feature/route" },
+        ],
+      },
+      {
+        text: "使用样例",
+        items: [
+          {
+            text: "Site To Site 网络配置",
+            link: "/other-features/overlay/site-to-site",
+          },
+          { text: "康康其他人怎么做 (链接)", link: "/community-guides" },
         ],
       },
       {
