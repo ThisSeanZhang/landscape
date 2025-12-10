@@ -56,6 +56,8 @@ static MAP_PATHS: Lazy<LandscapeMapPath> = Lazy::new(|| {
         rt_lan_map: PathBuf::from(format!("{}/rt_lan_map", ebpf_map_path)),
         rt_target_map: PathBuf::from(format!("{}/rt_target_map", ebpf_map_path)),
         rt_cache_map: PathBuf::from(format!("{}/rt_cache_map", ebpf_map_path)),
+
+        debug_counter: PathBuf::from(format!("{}/debug_counter", ebpf_map_path)),
     };
     tracing::info!("ebpf map paths is: {paths:#?}");
     map_setting::init_path(&paths);
@@ -93,6 +95,8 @@ pub(crate) struct LandscapeMapPath {
     pub rt_lan_map: PathBuf,
     pub rt_target_map: PathBuf,
     pub rt_cache_map: PathBuf,
+
+    pub debug_counter: PathBuf,
 }
 
 // pppoe -> Fire wall -> nat -> route

@@ -8,16 +8,19 @@
 #include "landscape.h"
 #include "flow_lan_share.h"
 #include "land_wan_ip.h"
+#include "counter.h"
 
 char LICENSE[] SEC("license") = "Dual BSD/GPL";
 
 const volatile u32 current_l3_offset = 14;
 
 static __always_inline int is_broadcast_mac(struct __sk_buff *skb) {
+#define BPF_LOG_TOPIC "is_broadcast_mac"
     u8 mac[6];
 
     // 从 skb 中 offset = 0 处读取 6 字节目的 MAC 地址
     if (bpf_skb_load_bytes(skb, 0, mac, 6) < 0) {
+        bpf_log_info("load bytes error drop");
         return TC_ACT_UNSPEC;
     }
 
@@ -32,6 +35,7 @@ static __always_inline int is_broadcast_mac(struct __sk_buff *skb) {
     } else {
         return TC_ACT_OK;
     }
+#undef BPF_LOG_TOPIC
 }
 
 static __always_inline int is_broadcast_ip(const struct route_context *context) {
@@ -79,6 +83,7 @@ static __always_inline int get_route_context(struct __sk_buff *skb, u32 current_
     if (current_l3_offset != 0) {
         struct ethhdr *eth;
         if (VALIDATE_READ_DATA(skb, &eth, 0, sizeof(*eth))) {
+            bpf_log_info("read ethhdr drop");
             return TC_ACT_UNSPEC;
         }
 
@@ -119,6 +124,8 @@ static __always_inline int get_route_context(struct __sk_buff *skb, u32 current_
         context->l4_protocol = iph.protocol;
         context->daddr.in6_u.u6_addr32[0] = iph.daddr;
         context->saddr.in6_u.u6_addr32[0] = iph.saddr;
+        
+        context->l4_offset = (iph.ihl * 4) + current_l3_offset;
     } else {
         struct ipv6hdr ip6h;
         // 读取 IPv6 头部
@@ -129,7 +136,8 @@ static __always_inline int get_route_context(struct __sk_buff *skb, u32 current_
         }
         context->l3_protocol = LANDSCAPE_IPV6_TYPE;
         // l4 proto
-        // context->l4_protocol
+        context->l4_protocol = ip6h.nexthdr;
+        context->l4_offset = sizeof(struct ipv6hdr) + current_l3_offset;
         COPY_ADDR_FROM(context->saddr.in6_u.u6_addr32, ip6h.saddr.in6_u.u6_addr32);
         COPY_ADDR_FROM(context->daddr.in6_u.u6_addr32, ip6h.daddr.in6_u.u6_addr32);
     }
@@ -537,6 +545,19 @@ int lan_route_ingress(struct __sk_buff *skb) {
         return TC_ACT_UNSPEC;
     }
 
+    if (context.l4_protocol == NEXTHDR_ICMP) {
+        struct icmphdr *icmph;
+        if (!VALIDATE_READ_DATA(skb, &icmph, context.l4_offset, sizeof(struct icmphdr))) {
+            if (icmph->type == 128) {
+                u32 key = 0;
+                u64 *count = bpf_map_lookup_elem(&debug_counter, &key);
+                if (count) {
+                    __sync_fetch_and_add(count, 1);
+                }
+            }
+        }
+    }
+
     ret = is_broadcast_ip(&context);
     if (ret != TC_ACT_OK) {
         return TC_ACT_UNSPEC;
@@ -572,6 +593,33 @@ int lan_route_ingress(struct __sk_buff *skb) {
 
     if (ret == TC_ACT_REDIRECT) {
         setting_cache_in_lan(&context, flow_mark);
+        
+        if (context.l4_protocol == NEXTHDR_ICMP) {
+            struct icmphdr *icmph;
+            if (!VALIDATE_READ_DATA(skb, &icmph, context.l4_offset, sizeof(struct icmphdr))) {
+                if (icmph->type == 128) {
+                    u32 key = 1;
+                    u64 *count = bpf_map_lookup_elem(&debug_counter, &key);
+                    if (count) {
+                        __sync_fetch_and_add(count, 1);
+                    }
+                }
+            }
+        }
+    }
+    
+    
+    if (context.l4_protocol == NEXTHDR_ICMP) {
+        struct icmphdr *icmph;
+        if (!VALIDATE_READ_DATA(skb, &icmph, context.l4_offset, sizeof(struct icmphdr))) {
+            if (icmph->type == 128) {
+                u32 key = 2;
+                u64 *count = bpf_map_lookup_elem(&debug_counter, &key);
+                if (count) {
+                    __sync_fetch_and_add(count, 1);
+                }
+            }
+        }
     }
     return ret;
 #undef BPF_LOG_TOPIC
@@ -637,6 +685,19 @@ int wan_route_egress(struct __sk_buff *skb) {
 
     if (skb->ingress_ifindex != 0) {
         // 端口转发数据, 相对于是已经决定使用这个出口, 所以直接发送
+        
+        if (context.l4_protocol == NEXTHDR_ICMP) {
+            struct icmphdr *icmph;
+            if (!VALIDATE_READ_DATA(skb, &icmph, context.l4_offset, sizeof(struct icmphdr))) {
+                if (icmph->type == 128) {
+                    u32 key = 3;
+                    u64 *count = bpf_map_lookup_elem(&debug_counter, &key);
+                    if (count) {
+                        __sync_fetch_and_add(count, 1);
+                    }
+                }
+            }
+        }
         return TC_ACT_UNSPEC;
     }
 

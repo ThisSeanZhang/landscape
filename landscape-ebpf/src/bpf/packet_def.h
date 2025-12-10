@@ -80,7 +80,8 @@ struct route_context {
     // TODO
     // u16 dst_port;
     u8 smac[6];
-    u8 _pad[3];
+    u16 l4_offset;
+    u8 _pad[1];
 };
 
 // struct inet_pair {

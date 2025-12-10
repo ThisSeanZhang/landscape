@@ -6,6 +6,7 @@
 #include "pkg_fragment.h"
 #include "land_nat_common.h"
 #include "share_ifindex_ip.h"
+#include "counter.h"
 
 ///
 struct ip_packet_info_v2 {
@@ -158,6 +159,20 @@ ipv6_egress_prefix_check_and_replace(struct __sk_buff *skb, struct packet_offset
         }
     }
 
+    
+    if (offset_info->l4_protocol == NEXTHDR_ICMP) {
+        struct icmphdr *icmph;
+        if (!VALIDATE_READ_DATA(skb, &icmph, offset_info->l4_offset, sizeof(struct icmphdr))) {
+            if (icmph->type == 128) {
+                u32 key = 4;
+                u64 *count = bpf_map_lookup_elem(&debug_counter, &key);
+                if (count) {
+                    __sync_fetch_and_add(count, 1);
+                }
+            }
+        }
+    }
+
     struct wan_ip_info_key wan_search_key = {0};
     wan_search_key.ifindex = skb->ifindex;
     wan_search_key.l3_protocol = LANDSCAPE_IPV6_TYPE;
@@ -252,6 +267,36 @@ ipv6_egress_prefix_check_and_replace(struct __sk_buff *skb, struct packet_offset
         bpf_skb_store_bytes(skb, ip_src_offset, &new_ip_prefix, 8, 0);
         L4_CSUM_REPLACE_U64_OR_SHOT(skb, l4_checksum_offset, old_ip_prefix, new_ip_prefix,
                                     BPF_F_PSEUDO_HDR);
+
+                                    
+    
+        if (offset_info->l4_protocol == NEXTHDR_ICMP) {
+            struct icmphdr *icmph;
+            if (!VALIDATE_READ_DATA(skb, &icmph, offset_info->l4_offset, sizeof(struct icmphdr))) {
+                if (icmph->type == 128) {
+                    u32 key = 5;
+                    u64 *count = bpf_map_lookup_elem(&debug_counter, &key);
+                    if (count) {
+                        __sync_fetch_and_add(count, 1);
+                    }
+                }
+            }
+        }
+    }
+
+    
+    
+    if (offset_info->l4_protocol == NEXTHDR_ICMP) {
+        struct icmphdr *icmph;
+        if (!VALIDATE_READ_DATA(skb, &icmph, offset_info->l4_offset, sizeof(struct icmphdr))) {
+            if (icmph->type == 128) {
+                u32 key = 6;
+                u64 *count = bpf_map_lookup_elem(&debug_counter, &key);
+                if (count) {
+                    __sync_fetch_and_add(count, 1);
+                }
+            }
+        }
     }
 
     return TC_ACT_UNSPEC;
@@ -320,6 +365,18 @@ ipv6_ingress_prefix_check_and_replace(struct __sk_buff *skb, struct packet_offse
         // bpf_printk("client_suffix: %02x %02x", key.client_suffix[0], key.client_suffix[1]);
         key.l4_protocol = offset_info->l4_protocol;
 
+        if (offset_info->l4_protocol == NEXTHDR_ICMP) {
+            struct icmphdr *icmph;
+            if (!VALIDATE_READ_DATA(skb, &icmph, offset_info->l4_offset, sizeof(struct icmphdr))) {
+                if (icmph->type == 129) {
+                    u32 key = 11;
+                    u64 *count = bpf_map_lookup_elem(&debug_counter, &key);
+                    if (count) {
+                        __sync_fetch_and_add(count, 1);
+                    }
+                }
+            }
+        }
         struct ipv6_prefix_mapping_value *value = bpf_map_lookup_elem(&ip6_client_map, &key);
         if (value == NULL) {
             bpf_printk("lookup client prefix error, key.id_byte: %x", key.id_byte);
@@ -345,6 +402,19 @@ ipv6_ingress_prefix_check_and_replace(struct __sk_buff *skb, struct packet_offse
                 bpf_printk("trigger ip: [%pI6]:%u,", &value->trigger_addr,
                         bpf_ntohs(value->trigger_port));
                 return TC_ACT_SHOT;
+            }
+        }
+
+        if (offset_info->l4_protocol == NEXTHDR_ICMP) {
+            struct icmphdr *icmph;
+            if (!VALIDATE_READ_DATA(skb, &icmph, offset_info->l4_offset, sizeof(struct icmphdr))) {
+                if (icmph->type == 129) {
+                    u32 key = 12;
+                    u64 *count = bpf_map_lookup_elem(&debug_counter, &key);
+                    if (count) {
+                        __sync_fetch_and_add(count, 1);
+                    }
+                }
             }
         }
     }
@@ -415,6 +485,31 @@ ipv6_ingress_prefix_check_and_replace(struct __sk_buff *skb, struct packet_offse
 
         L4_CSUM_REPLACE_U64_OR_SHOT(skb, l4_checksum_offset, old_ip_prefix, local_client_prefix,
                                     BPF_F_PSEUDO_HDR);
+        if (offset_info->l4_protocol == NEXTHDR_ICMP) {
+            struct icmphdr *icmph;
+            if (!VALIDATE_READ_DATA(skb, &icmph, offset_info->l4_offset, sizeof(struct icmphdr))) {
+                if (icmph->type == 129) {
+                    u32 key = 13;
+                    u64 *count = bpf_map_lookup_elem(&debug_counter, &key);
+                    if (count) {
+                        __sync_fetch_and_add(count, 1);
+                    }
+                }
+            }
+        }
+    }
+
+    if (offset_info->l4_protocol == NEXTHDR_ICMP) {
+        struct icmphdr *icmph;
+        if (!VALIDATE_READ_DATA(skb, &icmph, offset_info->l4_offset, sizeof(struct icmphdr))) {
+            if (icmph->type == 129) {
+                u32 key = 14;
+                u64 *count = bpf_map_lookup_elem(&debug_counter, &key);
+                if (count) {
+                    __sync_fetch_and_add(count,1);
+                }
+            }
+        }
     }
 
     return TC_ACT_UNSPEC;

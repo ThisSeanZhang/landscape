@@ -6,6 +6,7 @@
 #include "metric.h"
 #include "flow_match.h"
 #include "land_dns_dispatcher.h"
+#include "counter.h"
 
 char LICENSE[] SEC("license") = "Dual BSD/GPL";
 

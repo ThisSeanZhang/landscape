@@ -45,6 +45,9 @@ pub fn firewall_v2(
         rodata_data.current_l3_offset = 0;
     }
 
+    open_skel.maps.debug_counter.set_pin_path(&MAP_PATHS.debug_counter)?;
+    open_skel.maps.debug_counter.reuse_pinned_map(&MAP_PATHS.debug_counter)?;
+
     open_skel.maps.firewall_block_ip4_map.set_pin_path(&MAP_PATHS.firewall_ipv4_block)?;
     open_skel.maps.firewall_block_ip6_map.set_pin_path(&MAP_PATHS.firewall_ipv6_block)?;
     open_skel.maps.firewall_conn_events.set_pin_path(&MAP_PATHS.firewall_conn_events)?;

@@ -66,6 +66,8 @@ pub(crate) fn init_path(paths: &LandscapeMapPath) {
     landscape_open.maps.rt_target_map.set_pin_path(&paths.rt_target_map).unwrap();
     landscape_open.maps.rt_cache_map.set_pin_path(&paths.rt_cache_map).unwrap();
 
+    landscape_open.maps.debug_counter.set_pin_path(&paths.debug_counter).unwrap();
+
     let _landscape_skel = landscape_open.load().unwrap();
     route::cache::init_route_wan_cache_inner_map(paths);
     route::cache::init_route_lan_cache_inner_map(paths);

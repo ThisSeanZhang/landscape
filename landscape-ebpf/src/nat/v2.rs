@@ -27,6 +27,10 @@ pub fn init_nat_v2(
     let mut open_object = MaybeUninit::uninit();
     let mut landscape_open = landscape_builder.open(&mut open_object).unwrap();
     // println!("reuse_pinned_map: {:?}", MAP_PATHS.wan_ip);
+
+    landscape_open.maps.debug_counter.set_pin_path(&MAP_PATHS.debug_counter).unwrap();
+    landscape_open.maps.debug_counter.reuse_pinned_map(&MAP_PATHS.debug_counter).unwrap();
+
     landscape_open.maps.wan_ipv4_binding.set_pin_path(&MAP_PATHS.wan_ip).unwrap();
     landscape_open.maps.static_nat_mappings.set_pin_path(&MAP_PATHS.static_nat_mappings).unwrap();
     landscape_open.maps.nat_conn_events.set_pin_path(&MAP_PATHS.nat_conn_events).unwrap();

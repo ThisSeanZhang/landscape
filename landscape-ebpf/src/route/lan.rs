@@ -47,6 +47,9 @@ pub fn attach_match_flow(
     open_skel.maps.rt_cache_map.set_pin_path(&MAP_PATHS.rt_cache_map)?;
     open_skel.maps.rt_cache_map.reuse_pinned_map(&MAP_PATHS.rt_cache_map)?;
 
+    open_skel.maps.debug_counter.set_pin_path(&MAP_PATHS.debug_counter)?;
+    open_skel.maps.debug_counter.reuse_pinned_map(&MAP_PATHS.debug_counter)?;
+
     let rodata_data =
         open_skel.maps.rodata_data.as_deref_mut().expect("`rodata` is not memery mapped");
     if !has_mac {

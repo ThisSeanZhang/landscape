@@ -8,6 +8,7 @@
 #include "landscape.h"
 #include "firewall_v2.h"
 #include "firewall_share.h"
+#include "counter.h"
 
 char LICENSE[] SEC("license") = "Dual BSD/GPL";
 
@@ -335,6 +336,19 @@ int egress_firewall(struct __sk_buff *skb) {
         return ret;
     }
 
+    if (pkg_offset.l4_protocol == NEXTHDR_ICMP) {
+        struct icmphdr *icmph;
+        if (!VALIDATE_READ_DATA(skb, &icmph, pkg_offset.l4_offset, sizeof(struct icmphdr))) {
+            if (icmph->type == 128) {
+                u32 key = 7;
+                u64 *count = bpf_map_lookup_elem(&debug_counter, &key);
+                if (count) {
+                    __sync_fetch_and_add(count, 1);
+                }
+            }
+        }
+    }
+
     ret = is_handle_protocol(pkg_offset.l4_protocol);
     if (ret != TC_ACT_OK) {
         return ret;
@@ -427,6 +441,20 @@ int ingress_firewall(struct __sk_buff *skb) {
         return ret;
     }
 
+    // 统计 ICMPv6 echo reply
+    if (pkg_offset.l4_protocol == NEXTHDR_ICMP) {
+        struct icmphdr *icmph;
+        if (!VALIDATE_READ_DATA(skb, &icmph, pkg_offset.l4_offset, sizeof(struct icmphdr))) {
+            if (icmph->type == 129) {
+                u32 key = 8;
+                u64 *count = bpf_map_lookup_elem(&debug_counter, &key);
+                if (count) {
+                    __sync_fetch_and_add(count, 1);
+                }
+            }
+        }
+    }
+
     ret = is_handle_protocol(pkg_offset.l4_protocol);
     if (ret != TC_ACT_OK) {
         return ret;
@@ -460,8 +488,34 @@ int ingress_firewall(struct __sk_buff *skb) {
 
     if (ret == TIMER_EXIST || ret == TIMER_CREATED) {
         if (ct_timer_value != NULL) {
+            
+            // 统计 ICMPv6 echo reply
+            if (pkg_offset.l4_protocol == NEXTHDR_ICMP) {
+                struct icmphdr *icmph;
+                if (!VALIDATE_READ_DATA(skb, &icmph, pkg_offset.l4_offset, sizeof(struct icmphdr))) {
+                    if (icmph->type == 129) {
+                        u32 key = 9;
+                        u64 *count = bpf_map_lookup_elem(&debug_counter, &key);
+                        if (count) {
+                            __sync_fetch_and_add(count, 1);
+                        }
+                    }
+                }
+            }
             ct_state_transition(pkg_offset.l4_protocol, pkg_offset.pkt_type, ct_timer_value);
             firewall_metric_accumulate(skb, true, ct_timer_value);
+            if (pkg_offset.l4_protocol == NEXTHDR_ICMP) {
+                struct icmphdr *icmph;
+                if (!VALIDATE_READ_DATA(skb, &icmph, pkg_offset.l4_offset, sizeof(struct icmphdr))) {
+                    if (icmph->type == 129) {
+                        u32 key = 10;
+                        u64 *count = bpf_map_lookup_elem(&debug_counter, &key);
+                        if (count) {
+                            __sync_fetch_and_add(count, 1);
+                        }
+                    }
+                }
+            }
             return TC_ACT_UNSPEC;
         }
         bpf_log_error("ct_timer_value is NULL");
