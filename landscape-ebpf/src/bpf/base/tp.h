@@ -1,7 +1,7 @@
 #ifndef LD_TP_H
 #define LD_TP_H
 #include <bpf/bpf_helpers.h>
-#include "vmlinux.h"
+#include "vmlinux_wrapper.h"
 
 #define ETH_P_8021Q 0x8100
 #define LAND_REDIRECT_NETNS_VLAN_ID 0xc00

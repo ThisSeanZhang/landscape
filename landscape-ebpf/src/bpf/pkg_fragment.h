@@ -1,7 +1,6 @@
 #ifndef __LD_PACKET_FRAGMENT_H__
 #define __LD_PACKET_FRAGMENT_H__
 
-#include "vmlinux.h"
 
 #include <bpf/bpf_endian.h>
 #include <bpf/bpf_helpers.h>

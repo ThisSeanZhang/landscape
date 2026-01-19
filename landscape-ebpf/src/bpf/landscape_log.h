@@ -1,6 +1,5 @@
 #ifndef __LANDSCAPE_LOG_H__
 #define __LANDSCAPE_LOG_H__
-#include "vmlinux.h"
 #include <bpf/bpf_helpers.h>
 
 enum bpf_log_level {

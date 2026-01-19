@@ -1,6 +1,6 @@
 #ifndef __LD_ROUTE_MAP_V6_H__
 #define __LD_ROUTE_MAP_V6_H__
-#include "vmlinux.h"
+#include "vmlinux_wrapper.h"
 #include <bpf/bpf_helpers.h>
 #include "../landscape.h"
 

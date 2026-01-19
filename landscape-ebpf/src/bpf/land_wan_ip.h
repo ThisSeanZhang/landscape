@@ -2,7 +2,6 @@
 #define __LD_WAN_IP_H__
 #include <bpf/bpf_helpers.h>
 
-#include "vmlinux.h"
 
 
 #define IPV6_WAN_ADDR_PREFIX_LEN 7

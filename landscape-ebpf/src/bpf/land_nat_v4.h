@@ -1,6 +1,5 @@
 #ifndef LD_NAT_V4_H
 #define LD_NAT_V4_H
-#include "vmlinux.h"
 #include "landscape_log.h"
 #include "pkg_scanner.h"
 #include "pkg_fragment.h"

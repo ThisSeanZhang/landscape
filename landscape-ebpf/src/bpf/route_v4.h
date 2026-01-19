@@ -1,6 +1,5 @@
 #ifndef __LD_FLOW_ROUTE_V4_H__
 #define __LD_FLOW_ROUTE_V4_H__
-#include "vmlinux.h"
 
 #include <bpf/bpf_helpers.h>
 

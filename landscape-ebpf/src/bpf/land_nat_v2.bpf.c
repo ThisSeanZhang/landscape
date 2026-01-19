@@ -1,4 +1,4 @@
-#include "vmlinux.h"
+#include "vmlinux_wrapper.h"
 
 #include <bpf/bpf_endian.h>
 #include <bpf/bpf_helpers.h>
@@ -141,10 +141,10 @@ int nat_v4_egress(struct __sk_buff *skb) {
 
         if (!nat_egress_value->is_static) {
             struct nat4_ct_value *ct_value;
-            // ret = lookup_or_new_ct4(pkg_offset.l4_protocol, allow_create_mapping, &ip_pair,
+            ret = lookup_or_new_ct4(pkg_offset.l4_protocol, allow_create_mapping, &ip_pair,
             //                         nat_egress_value, nat_ingress_value, &ct_value);
 
-            ret = lookup_or_new_ct(skb, pkg_offset.l4_protocol, allow_create_mapping, &ip_pair,
+            // ret = lookup_or_new_ct(skb, pkg_offset.l4_protocol, allow_create_mapping, &ip_pair,
                                    nat_egress_value, nat_ingress_value, &ct_value);
             if (ret == TIMER_NOT_FOUND || ret == TIMER_ERROR) {
                 return TC_ACT_SHOT;
@@ -263,9 +263,9 @@ int nat_v4_ingress(struct __sk_buff *skb) {
 
         if (!nat_egress_value->is_static) {
             struct nat_timer_value *ct_timer_value;
-            // ret = lookup_or_new_ct4(pkg_offset.l4_protocol, allow_create_mapping, &ip_pair,
+            ret = lookup_or_new_ct4(pkg_offset.l4_protocol, allow_create_mapping, &ip_pair,
             //                        nat_egress_value, nat_ingress_value, &ct_timer_value);
-            ret = lookup_or_new_ct(skb, pkg_offset.l4_protocol, allow_create_mapping, &ip_pair,
+            // ret = lookup_or_new_ct(skb, pkg_offset.l4_protocol, allow_create_mapping, &ip_pair,
                                    nat_egress_value, nat_ingress_value, &ct_timer_value);
             if (ret == TIMER_NOT_FOUND || ret == TIMER_ERROR) {
                 bpf_log_info("connect ret :%u", ret);

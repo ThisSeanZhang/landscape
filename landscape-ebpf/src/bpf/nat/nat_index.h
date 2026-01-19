@@ -2,7 +2,7 @@
 #define LD_NAT_INDEX_H
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_endian.h>
-#include "vmlinux.h"
+#include "vmlinux_wrapper.h"
 #include "../landscape.h"
 
 #define GRESS_MASK (1 << 0)

@@ -2,7 +2,6 @@
 #define __LD_FIREWALL_H__
 #include <bpf/bpf_endian.h>
 
-#include "vmlinux.h"
 #include "landscape_log.h"
 #include "landscape.h"
 #include "pkg_def.h"

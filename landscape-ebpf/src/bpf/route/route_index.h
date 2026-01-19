@@ -1,6 +1,6 @@
 #ifndef __LD_ROUTE_INDEX_H__
 #define __LD_ROUTE_INDEX_H__
-#include "vmlinux.h"
+#include "vmlinux_wrapper.h"
 #include <bpf/bpf_endian.h>
 
 #define WAN_CACHE 0

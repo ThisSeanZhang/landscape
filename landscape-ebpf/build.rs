@@ -17,14 +17,28 @@ fn main() {
 
     println!("cargo:rerun-if-changed=src/bpf/*");
 
-    let vmlinux_path = vmlinux::include_path_root().join(&target_arch);
-    let clang_args = vec![
+    let bpf_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap()).join("src").join("bpf");
+    let mut clang_args = vec![
         OsStr::new("-Wall"),
         OsStr::new("-Wno-compare-distinct-pointer-types"),
         OsStr::new("-I"),
-        vmlinux_path.as_os_str(),
+        Box::leak(bpf_dir.into_os_string().into_boxed_os_str()), // Always include local headers
         OsStr::new("-mcpu=v2"),
     ];
+
+    if env::var("LANDSCAPE_NO_CORE").is_err() {
+        println!("Building with CO-RE support");
+        let vmlinux_path = vmlinux::include_path_root().join(&target_arch);
+        clang_args.push(OsStr::new("-I"));
+        // We need to keep the OsString alive if we want to use its reference.
+        // For a build script, leaking is fine or we can just use Box::leak.
+        let path_str = vmlinux_path.into_os_string();
+        clang_args.push(Box::leak(path_str.into_boxed_os_str()));
+    } else {
+        println!("Building WITHOUT CO-RE support (native compilation)");
+        clang_args.push(OsStr::new("-DLANDSCAPE_NO_CORE"));
+        // In native build, we rely on system headers and don't include BTF vmlinux.h
+    }
 
     for entry in fs::read_dir("src/bpf/").expect("Failed to read directory: src/bpf/") {
         let path = match entry {
@@ -48,6 +62,13 @@ fn main() {
         if !file_name.ends_with(".bpf.c") {
             continue;
         }
+
+        // if env::var("LANDSCAPE_NO_CORE").is_ok() {
+        //      if file_name == "neigh_update.bpf.c" {
+        //          println!("Skipping neigh_update.bpf.c in native build (requires kernel internal structs)");
+        //          continue;
+        //      }
+        // }
 
         let file_stem = file_name.trim_end_matches(".bpf.c");
         let output_skel_file = project_root.join(format!("{}.skel.rs", file_stem));

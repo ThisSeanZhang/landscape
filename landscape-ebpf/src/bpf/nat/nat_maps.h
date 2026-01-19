@@ -2,7 +2,7 @@
 #define __LD_NAT_STATIC_H__
 #include <bpf/bpf_helpers.h>
 
-#include "vmlinux.h"
+#include "vmlinux_wrapper.h"
 #include "../landscape.h"
 
 #define STATIC_NAT_MAPPING_CACHE_SIZE 1024 * 64

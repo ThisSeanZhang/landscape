@@ -1,7 +1,7 @@
 #ifndef LD_MARK_H
 #define LD_MARK_H
 #include <bpf/bpf_helpers.h>
-#include "vmlinux.h"
+#include "vmlinux_wrapper.h"
 
 #define FLOW_KEEP_GOING 0
 #define FLOW_DIRECT 1

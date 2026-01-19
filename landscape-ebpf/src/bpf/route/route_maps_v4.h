@@ -1,6 +1,6 @@
 #ifndef __LD_ROUTE_MAP_v4_H__
 #define __LD_ROUTE_MAP_v4_H__
-#include "vmlinux.h"
+#include "vmlinux_wrapper.h"
 #include <bpf/bpf_helpers.h>
 
 struct lan_route_key_v4 {
