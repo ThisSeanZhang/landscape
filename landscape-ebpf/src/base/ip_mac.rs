@@ -22,18 +22,46 @@ use crate::{bpf_error::LdEbpfResult, MAP_PATHS};
 pub fn neigh_update(mut service_status: oneshot::Receiver<()>) -> LdEbpfResult<()> {
     let mut open_object = MaybeUninit::zeroed();
     let builder = NeighUpdateSkelBuilder::default();
-    let mut open_skel = builder.open(&mut open_object)?;
 
-    open_skel.maps.ip_mac_v4.set_pin_path(&MAP_PATHS.ip_mac_v4).unwrap();
-    open_skel.maps.ip_mac_v4.reuse_pinned_map(&MAP_PATHS.ip_mac_v4).unwrap();
-
-    open_skel.maps.ip_mac_v6.set_pin_path(&MAP_PATHS.ip_mac_v6).unwrap();
-    open_skel.maps.ip_mac_v6.reuse_pinned_map(&MAP_PATHS.ip_mac_v6).unwrap();
-
-    let skel = open_skel.load()?;
-    let kprobe_neigh_update = skel.progs.kprobe_neigh_update;
-
-    let _link = kprobe_neigh_update.attach_kprobe(false, "neigh_update").unwrap();
+    // Use an Option to hold the link/skel to keep it alive during the loop if successful
+    let _bpf_guard = match builder.open(&mut open_object) {
+        Ok(mut open_skel) => {
+            if let Err(e) = open_skel
+                .maps
+                .ip_mac_v4
+                .set_pin_path(&MAP_PATHS.ip_mac_v4)
+                .and_then(|_| open_skel.maps.ip_mac_v4.reuse_pinned_map(&MAP_PATHS.ip_mac_v4))
+                .and_then(|_| open_skel.maps.ip_mac_v6.set_pin_path(&MAP_PATHS.ip_mac_v6))
+                .and_then(|_| open_skel.maps.ip_mac_v6.reuse_pinned_map(&MAP_PATHS.ip_mac_v6))
+            {
+                tracing::warn!("Failed to setup maps for neigh_update: {:?}, fallback only.", e);
+                None
+            } else {
+                match open_skel.load() {
+                    Ok(skel) => {
+                        match skel.progs.kprobe_neigh_update.attach_kprobe(false, "neigh_update") {
+                            Ok(link) => Some((skel, link)),
+                            Err(e) => {
+                                tracing::warn!(
+                                    "Failed to attach neigh_update kprobe: {:?}, fallback only.",
+                                    e
+                                );
+                                None
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to load neigh_update skeleton (BTF missing?): {:?}, fallback only.", e);
+                        None
+                    }
+                }
+            }
+        }
+        Err(e) => {
+            tracing::warn!("Failed to open neigh_update skeleton: {:?}, fallback only.", e);
+            None
+        }
+    };
 
     'm: loop {
         tracing::info!("syn curren arpv4 info");

@@ -37,6 +37,8 @@ fn main() {
     } else {
         println!("Building WITHOUT CO-RE support (native compilation)");
         clang_args.push(OsStr::new("-DLANDSCAPE_NO_CORE"));
+        // Lower optimization for native builds to avoid verifier issues
+        clang_args.push(OsStr::new("-O1"));
         // In native build, we rely on system headers and don't include BTF vmlinux.h
     }
 
