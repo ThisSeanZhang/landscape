@@ -88,14 +88,11 @@ async function save_config() {
     const new_xps = coresToBitmask(xps_selected_cores.value);
     const new_rps = coresToBitmask(rps_selected_cores.value);
 
-    // 只有当有配置时才保存
-    if (new_xps !== "0" || new_rps !== "0") {
-      const new_config = {
-        xps: new_xps,
-        rps: new_rps
-      };
-      await set_iface_cpu_balance(props.iface_name, new_config);
-    }
+    const new_config = {
+      xps: new_xps,
+      rps: new_rps
+    };
+    await set_iface_cpu_balance(props.iface_name, new_config);
   } catch (error) {
     console.error('保存配置失败:', error);
   } finally {
