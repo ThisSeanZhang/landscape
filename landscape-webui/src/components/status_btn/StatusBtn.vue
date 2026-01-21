@@ -38,10 +38,8 @@ const control_show = computed(() => {
         break;
       }
       case ServiceStatusType.Stop: {
-        if (iface_info.status.message == undefined) {
-          info.btn_type = "default";
-        } else {
-          info.btn_type = "error";
+        info.btn_type = "error";
+        if (iface_info.status.message != undefined) {
           info.disabled_popover = false;
         }
         info.btn_message = "停止";
