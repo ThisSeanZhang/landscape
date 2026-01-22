@@ -4,14 +4,15 @@ import {
   get_geo_site_configs,
   search_geo_site_cache,
 } from "@/api/geo/site";
+import { renderGeoSelectLabel, sortGeoKeys } from "@/lib/geo_utils";
 import { GeoConfigKey } from "@/rust_bindings/common/geo";
 import { GeoSiteSourceConfig } from "@/rust_bindings/common/geo_site";
 import { computed, onMounted, ref } from "vue";
 
-const key = defineModel<string>("geo_key", {
+const key = defineModel<string | null | undefined>("geo_key", {
   required: true,
 });
-const name = defineModel<string>("geo_name", {
+const name = defineModel<string | null | undefined>("geo_name", {
   required: true,
 });
 const inverse = defineModel<boolean>("geo_inverse", {
@@ -54,26 +55,60 @@ const geo_name_options = computed(() => {
   return result;
 });
 
+let searchTimer: NodeJS.Timeout | null = null;
+function handleSearch(query: string) {
+  if (searchTimer) clearTimeout(searchTimer);
+  searchTimer = setTimeout(() => {
+    typing_key(query);
+  }, 300);
+}
+
 async function typing_key(query: string) {
   try {
     loading_key.value = true;
-    keys.value = await search_geo_site_cache({
+    const result = await search_geo_site_cache({
       name: name.value,
       key: query,
     });
+
+    keys.value = sortGeoKeys(result, query);
   } finally {
     loading_key.value = false;
   }
 }
 
 const keys = ref<GeoConfigKey[]>();
+
+// Composite value logic
+const compositeValue = computed({
+  get() {
+    if (name.value && key.value) {
+      return `${name.value}###${key.value}`;
+    }
+    return null;
+  },
+  set(val: string | null) {
+    if (val) {
+      const [n, k] = val.split("###");
+      name.value = n;
+      key.value = k;
+      // Also reset attribute when key changes
+      attribute_key.value = null;
+    } else {
+      name.value = ""; // Assuming empty string as per defineModel type might be string
+      key.value = "";
+      attribute_key.value = null;
+    }
+  },
+});
+
 const geo_key_options = computed(() => {
   let result = [];
   if (keys.value) {
     for (const each_key of keys.value) {
       result.push({
-        label: `${each_key.key}-${each_key.name}`,
-        value: each_key.key,
+        label: each_key.key,
+        value: `${each_key.name}###${each_key.key}`,
         data: each_key,
       });
     }
@@ -81,24 +116,24 @@ const geo_key_options = computed(() => {
   return result;
 });
 
-async function select_key(value: string, option: any) {
-  key.value = value;
-  name.value = option.data.name;
-  attribute_key.value = null;
-  await typing_attribute(option.data.name, value);
+async function handleKeySelect() {
+  // name and key are already set by compositeValue
+  if (name.value && key.value) {
+    await typing_attribute(name.value, key.value);
+  }
 }
 
 const attributes = ref<Set<string> | null>(null);
-async function typing_attribute(name: string, key: string) {
-  if (!(name && key)) {
+async function typing_attribute(n: string, k: string) {
+  if (!(n && k)) {
     return;
   }
 
   try {
     loading_attrs.value = true;
     let config = await get_geo_site_cache_detail({
-      name,
-      key,
+      name: n,
+      key: k,
     });
     attributes.value = new Set(
       config.values.flatMap((value) => value.attributes)
@@ -143,15 +178,17 @@ const attribute_options = computed(() => {
         @search="typing_name_key"
       />
       <n-select
-        v-model:value="key"
+        v-model:value="compositeValue"
         filterable
         placeholder="筛选key"
         :options="geo_key_options"
         :loading="loading_key"
         clearable
         remote
-        @update:value="select_key"
-        @search="typing_key"
+        :render-label="renderGeoSelectLabel"
+        @update:value="handleKeySelect"
+        @search="handleSearch"
+        @focus="() => typing_key('')"
       />
 
       <n-select
