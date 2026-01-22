@@ -8,6 +8,7 @@ import {
   get_dhcp_range,
   MacBindingRecord,
 } from "@/lib/dhcp_v4";
+import { formatMacAddress } from "@/lib/util";
 import { useDHCPv4ConfigStore } from "@/stores/status_dhcp_v4";
 import {
   get_iface_dhcp_v4_config,
@@ -153,7 +154,10 @@ function onCreateBinding(): MacBindingRecord {
                 <template #default="{ value }">
                   <n-input-group>
                     <n-input
-                      v-model:value="value.mac"
+                      :value="value.mac"
+                      @update:value="
+                        (v: string) => (value.mac = formatMacAddress(v))
+                      "
                       type="text"
                       placeholder="Mac"
                     />

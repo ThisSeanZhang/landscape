@@ -2,6 +2,7 @@
 import { FlowEntryRule } from "@/rust_bindings/common/flow";
 import { useFrontEndStore } from "@/stores/front_end_config";
 import { ChangeCatalog } from "@vicons/carbon";
+import { formatMacAddress } from "@/lib/util";
 
 const frontEndStore = useFrontEndStore();
 const match_rules = defineModel<FlowEntryRule[]>("match_rules", {
@@ -64,7 +65,10 @@ function change_mode(value: FlowEntryRule, index: number) {
         <n-input
           v-if="value.mode.t == 'mac'"
           :type="frontEndStore.presentation_mode ? 'password' : 'text'"
-          v-model:value="value.mode.mac_addr"
+          :value="value.mode.mac_addr"
+          @update:value="
+            (v: string) => (value.mode.mac_addr = formatMacAddress(v))
+          "
           placeholder="请输入 MAC 地址，优先级比 IP 低"
         />
         <n-input-group v-else>

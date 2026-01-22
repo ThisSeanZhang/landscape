@@ -8,7 +8,7 @@ import {
   update_ipv6pd_config,
 } from "@/api/service_ipv6pd";
 import { useIPv6PDStore } from "@/stores/status_ipv6pd";
-import { generateValidMAC } from "@/lib/util";
+import { generateValidMAC, formatMacAddress } from "@/lib/util";
 import { IfaceZoneType } from "@/rust_bindings/common/iface";
 
 let ipv6PDStore = useIPv6PDStore();
@@ -85,7 +85,12 @@ async function save_config() {
           </n-switch>
         </n-form-item>
         <n-form-item label="申请使用的 mac 地址 (PPP网卡上是生成虚拟的)">
-          <n-input v-model:value="service_config.config.mac"></n-input>
+          <n-input
+            :value="service_config.config.mac"
+            @update:value="
+              (v: string) => (service_config.config.mac = formatMacAddress(v))
+            "
+          ></n-input>
         </n-form-item>
       </n-form>
 
