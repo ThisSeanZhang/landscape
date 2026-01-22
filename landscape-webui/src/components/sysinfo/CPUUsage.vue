@@ -2,11 +2,13 @@
 import { computed } from "vue";
 import { useThemeVars } from "naive-ui";
 import { useSysInfo } from "@/stores/systeminfo";
+import { useFrontEndStore } from "@/stores/front_end_config";
 import { useI18n } from "vue-i18n";
 
 const { t } = useI18n({ useScope: "global" });
 const themeVars = useThemeVars();
 const sysinfo = useSysInfo();
+const frontEndStore = useFrontEndStore();
 
 const cpus = computed(() => sysinfo.router_status.cpus);
 
@@ -14,7 +16,13 @@ const cpuCount = computed(() => cpus.value.length);
 
 const cpuModel = computed(() => {
   const cpu = cpus.value[0];
-  return cpu ? cpu.brand : "";
+  if (!cpu) return "";
+  const brand = cpu.brand;
+  if (frontEndStore.presentation_mode) {
+    const firstSpace = brand.indexOf(" ");
+    return firstSpace > 0 ? brand.substring(0, firstSpace) + " ***" : brand;
+  }
+  return brand;
 });
 
 const load_avg = computed(() => sysinfo.router_status.load_avg);
