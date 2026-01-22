@@ -17,6 +17,9 @@ const percentage = computed(() => {
 
 const swap_percentage = computed(() => {
   // console.log(sysinfo.mem.used_mem / sysinfo.mem.total_mem);
+  if (sysinfo.router_status.mem.total_swap === 0) {
+    return 0;
+  }
   return (
     sysinfo.router_status.mem.used_swap / sysinfo.router_status.mem.total_swap
   );
