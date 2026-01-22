@@ -31,8 +31,18 @@ const edit_range = computed({
         style="flex: 1"
         v-model:value="range.start"
         size="small"
+        :min="1"
+        :max="65535"
+        placeholder="Start"
       />
-      <n-input-number style="flex: 1" v-model:value="range.end" size="small" />
+      <n-input-number
+        style="flex: 1"
+        v-model:value="range.end"
+        size="small"
+        :min="1"
+        :max="65535"
+        placeholder="End"
+      />
     </n-flex>
   </n-flex>
 </template>

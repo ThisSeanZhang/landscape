@@ -47,6 +47,9 @@ const rules = {
         if (value <= 0) {
           return new Error("开放端口必须大于 0");
         }
+        if (value > 65535) {
+          return new Error("开放端口必须小于等于 65535");
+        }
         return true;
       },
       trigger: ["blur", "input"],
@@ -63,6 +66,9 @@ const rules = {
       validator(rule: any, value: number) {
         if (value <= 0) {
           return new Error("内网目标端口必须大于 0");
+        }
+        if (value > 65535) {
+          return new Error("内网目标端口必须小于等于 65535");
         }
         return true;
       },
@@ -251,11 +257,20 @@ const isIndeterminate = computed(() => {
             <n-input-number
               style="flex: 1; padding-right: 10px"
               v-model:value="rule.wan_port"
+              :min="1"
+              :max="65535"
+              placeholder="1-65535"
             />
           </n-form-item-gi>
 
           <n-form-item-gi path="lan_port" :span="1" label="内网目标端口">
-            <n-input-number style="flex: 1" v-model:value="rule.lan_port" />
+            <n-input-number
+              style="flex: 1"
+              v-model:value="rule.lan_port"
+              :min="1"
+              :max="65535"
+              placeholder="1-65535"
+            />
           </n-form-item-gi>
 
           <n-form-item-gi :span="2" path="lan_ipv4" label="内网目标 IPv4">
