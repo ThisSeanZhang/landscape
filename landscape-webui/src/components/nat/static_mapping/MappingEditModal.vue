@@ -11,6 +11,7 @@ import {
 
 type Props = {
   rule_id?: string;
+  initialFocusIndex?: number;
 };
 
 const props = defineProps<Props>();
@@ -24,6 +25,7 @@ const show = defineModel<boolean>("show", { required: true });
 const origin_rule_json = ref<string>("");
 
 const rule = ref<StaticNatMappingConfig>();
+const portInputRefs = ref<any[]>([]); // Array to store input refs
 
 const commit_spin = ref(false);
 const isModified = computed(() => {
@@ -67,12 +69,32 @@ async function enter() {
     };
   }
   origin_rule_json.value = JSON.stringify(rule.value);
+
+  // Handle auto-focus on specific port index
+  const focusIdx = props.initialFocusIndex;
+  if (focusIdx !== undefined && focusIdx >= 0) {
+    // Small delay to ensure rendering is complete
+    setTimeout(() => {
+      const targetInput = portInputRefs.value[focusIdx];
+      if (targetInput) {
+        targetInput.focus();
+        // Optional: scroll into view if the list is long
+        targetInput.$el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+    }, 100);
+  }
 }
 
 // Functions to manage port pairs
 function addPortPair() {
   if (rule.value) {
     rule.value.mapping_pair_ports.push({ wan_port: 0, lan_port: 0 });
+    // Focus the new input in next tick
+    setTimeout(() => {
+      const index = rule.value!.mapping_pair_ports.length - 1;
+      const input = portInputRefs.value[index];
+      if (input) input.focus();
+    }, 100);
   }
 }
 
@@ -279,7 +301,11 @@ const mappingPortsRule = {
               <n-flex v-for="(pair, index) in rule.mapping_pair_ports" :key="index" align="center" style="gap: 8px">
                 <n-form-item style="flex: 1; margin-bottom: 0" :show-label="false" :show-feedback="false"
                   :path="`mapping_pair_ports[${index}].wan_port`" :rule="wanPortRule">
-                  <n-input-number v-model:value="pair.wan_port" :min="1" :max="65535" placeholder="开放端口"
+                  <n-input-number 
+                    :ref="(el: any) => { if(el) portInputRefs[index] = el }"
+                    v-model:value="pair.wan_port" 
+                    :min="1" :max="65535" 
+                    placeholder="开放端口"
                     style="width: 100%" />
                 </n-form-item>
                 <span style="color: #999">→</span>

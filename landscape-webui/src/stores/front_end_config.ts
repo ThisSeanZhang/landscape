@@ -16,9 +16,21 @@ export const useFrontEndStore = defineStore(
         return value;
       }
     }
+
+    function MASK_PORT(
+      value: string | number | undefined | null
+    ): string | number | undefined | null {
+      if (value) {
+        return presentation_mode.value ? "****" : value;
+      } else {
+        return value;
+      }
+    }
+
     return {
       presentation_mode,
       MASK_INFO,
+      MASK_PORT,
     };
   },
   {
