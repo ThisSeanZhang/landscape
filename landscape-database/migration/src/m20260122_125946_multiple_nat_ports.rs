@@ -12,7 +12,7 @@ impl MigrationTrait for Migration {
         use sea_orm_migration::sea_orm::{ConnectionTrait, TransactionTrait};
 
         let db = manager.get_connection();
-        
+
         // Wrap everything in a transaction to ensure data safety
         let txn = db.begin().await?;
 
@@ -45,7 +45,8 @@ impl MigrationTrait for Migration {
             .await?;
 
         // 3. Create new table with mapping_pair_ports field
-        txn.execute(builder.build(
+        txn.execute(
+            builder.build(
                 &Table::create()
                     .table(StaticNatMappingConfigs::Table)
                     .if_not_exists()
@@ -59,9 +60,10 @@ impl MigrationTrait for Migration {
                     .col(json(StaticNatMappingConfigs::Ipv4L4Protocol))
                     .col(json(StaticNatMappingConfigs::Ipv6L4Protocol))
                     .col(double(StaticNatMappingConfigs::UpdateAt).default(0))
-                    .to_owned()
-            ))
-            .await?;
+                    .to_owned(),
+            ),
+        )
+        .await?;
 
         // 4. Migrate existing data: convert single port pair to array of port pairs
         // Use batch insert for better performance
@@ -90,10 +92,12 @@ impl MigrationTrait for Migration {
                 }]);
 
                 // Parse ipv4_l4_protocol and ipv6_l4_protocol as JSON values
-                let ipv4_l4_protocol: serde_json::Value = serde_json::from_str(&row.ipv4_l4_protocol)
-                    .unwrap_or_else(|_| serde_json::json!(null));
-                let ipv6_l4_protocol: serde_json::Value = serde_json::from_str(&row.ipv6_l4_protocol)
-                    .unwrap_or_else(|_| serde_json::json!(null));
+                let ipv4_l4_protocol: serde_json::Value =
+                    serde_json::from_str(&row.ipv4_l4_protocol)
+                        .unwrap_or_else(|_| serde_json::json!(null));
+                let ipv6_l4_protocol: serde_json::Value =
+                    serde_json::from_str(&row.ipv6_l4_protocol)
+                        .unwrap_or_else(|_| serde_json::json!(null));
 
                 insert.values_panic([
                     row.id.into(),
@@ -122,7 +126,7 @@ impl MigrationTrait for Migration {
         use sea_orm_migration::sea_orm::{ConnectionTrait, TransactionTrait};
 
         let db = manager.get_connection();
-        
+
         // Wrap everything in a transaction to ensure data safety
         let txn = db.begin().await?;
 
@@ -154,7 +158,8 @@ impl MigrationTrait for Migration {
             .await?;
 
         // 3. Recreate old table structure with single port fields
-        txn.execute(builder.build(
+        txn.execute(
+            builder.build(
                 &Table::create()
                     .table(StaticNatMappingConfigs::Table)
                     .if_not_exists()
@@ -169,9 +174,10 @@ impl MigrationTrait for Migration {
                     .col(json(StaticNatMappingConfigs::Ipv4L4Protocol))
                     .col(json(StaticNatMappingConfigs::Ipv6L4Protocol))
                     .col(double(StaticNatMappingConfigs::UpdateAt).default(0))
-                    .to_owned()
-            ))
-            .await?;
+                    .to_owned(),
+            ),
+        )
+        .await?;
 
         // 4. Restore data: extract first port pair from mapping_pair_ports array
         // Use batch insert for better performance
@@ -194,7 +200,7 @@ impl MigrationTrait for Migration {
                 .to_owned();
 
             for row in rows {
-                let mapping_pair_ports: Result<Vec<serde_json::Value>, _> = 
+                let mapping_pair_ports: Result<Vec<serde_json::Value>, _> =
                     serde_json::from_str(&row.mapping_pair_ports);
 
                 // Extract first port pair, or use default values
@@ -212,10 +218,12 @@ impl MigrationTrait for Migration {
                 };
 
                 // Parse ipv4_l4_protocol and ipv6_l4_protocol as JSON values
-                let ipv4_l4_protocol: serde_json::Value = serde_json::from_str(&row.ipv4_l4_protocol)
-                    .unwrap_or_else(|_| serde_json::json!(null));
-                let ipv6_l4_protocol: serde_json::Value = serde_json::from_str(&row.ipv6_l4_protocol)
-                    .unwrap_or_else(|_| serde_json::json!(null));
+                let ipv4_l4_protocol: serde_json::Value =
+                    serde_json::from_str(&row.ipv4_l4_protocol)
+                        .unwrap_or_else(|_| serde_json::json!(null));
+                let ipv6_l4_protocol: serde_json::Value =
+                    serde_json::from_str(&row.ipv6_l4_protocol)
+                        .unwrap_or_else(|_| serde_json::json!(null));
 
                 insert.values_panic([
                     row.id.into(),
