@@ -137,6 +137,7 @@ function has_source_hook() {
       trigger="hover"
       :show-arrow="false"
       @update:show="handleUpdateShow"
+      style="padding: 0; background: transparent;"
     >
       <template #trigger>
         <n-card size="small" style="min-width: 220px; max-width: 230px">
@@ -154,17 +155,6 @@ function has_source_hook() {
           </template>
           <template #header-extra>
             <n-flex>
-              <!-- <n-button
-                v-if="show_switch.carrier"
-                text
-                :type="node.carrier ? 'info' : 'default'"
-                :focusable="false"
-                style="font-size: 16px"
-              >
-                <n-icon>
-                  <Ethernet></Ethernet>
-                </n-icon>
-              </n-button> -->
               <n-popconfirm
                 v-if="show_switch.enable_in_boot"
                 @positive-click="change_dev_status"
@@ -223,42 +213,75 @@ function has_source_hook() {
           </template>
         </n-card>
       </template>
-      <n-descriptions label-placement="left" :column="2">
-        <n-descriptions-item label="mac地址">
-          {{ status.mac ?? "N/A" }}
-        </n-descriptions-item>
-        <n-descriptions-item label="物理mca">
-          {{ status.perm_mac ?? "N/A" }}
-        </n-descriptions-item>
-        <n-descriptions-item label="网路类型">
-          {{ status.dev_type ?? "N/A" }}/{{ status.dev_kind ?? "N/A" }}
-        </n-descriptions-item>
-        <n-descriptions-item label="状态">
-          {{ status.dev_status ?? "N/A" }}
-        </n-descriptions-item>
-        <n-descriptions-item label="上层控制设备(配置)">
-          {{ status.controller_id == undefined ? "N/A" : status.controller_id }}
-          ({{
-            config.controller_name == undefined
-              ? "N/A"
-              : config.controller_name
-          }})
-          <n-button
-            v-if="config.controller_name || status.controller_id"
-            tertiary
-            size="tiny"
-            :focusable="false"
-            @click="remove_controller"
-            >断开连接
-            <template #icon>
-              <n-icon>
-                <PlugDisconnected20Regular></PlugDisconnected20Regular>
-              </n-icon>
-            </template>
-          </n-button>
-        </n-descriptions-item>
-      </n-descriptions>
-      <!-- <n-divider /> -->
+      
+      <n-card size="small" style="min-width: 260px; max-width: 300px; border: none;">
+          <n-flex align="center" justify="space-between" style="margin-bottom: 12px;">
+             <span style="font-weight: 600">设备详情</span>
+             <n-tag
+                size="small"
+                :bordered="false"
+                :type="status.dev_status.t === DevStateType.Up ? 'success' : 'error'"
+              >
+                {{ status.dev_status.t }}
+              </n-tag>
+          </n-flex>
+
+          <!-- Mac Addresses -->
+          <n-grid :cols="1" :y-gap="4" style="margin-bottom: 12px">
+             <n-gi>
+                <n-text depth="3" style="font-size: 12px">MAC: {{ status.mac ?? "N/A" }}</n-text>
+             </n-gi>
+             <n-gi>
+                <n-text depth="3" style="font-size: 12px">Perm MAC: {{ status.perm_mac ?? "N/A" }}</n-text>
+             </n-gi>
+          </n-grid>
+
+          <n-divider style="margin: 0 0 12px 0" />
+
+          <!-- Details Grid -->
+          <n-grid :cols="2" :x-gap="12" :y-gap="8" style="margin-bottom: 12px">
+            <n-gi>
+              <n-statistic label="类型" style="zoom: 0.9">
+                <template #default>
+                  <n-tag size="small" :bordered="false" type="info">
+                    {{ status.dev_type ?? "N/A" }}
+                  </n-tag>
+                </template>
+              </n-statistic>
+            </n-gi>
+            <n-gi>
+              <n-statistic label="Kind" style="zoom: 0.9">
+                <template #default>
+                  <n-tag size="small" :bordered="false">
+                    {{ status.dev_kind ?? "N/A" }}
+                  </n-tag>
+                </template>
+              </n-statistic>
+            </n-gi>
+          </n-grid>
+
+           <!-- Controller Info if present -->
+          <div v-if="config.controller_name || status.controller_id">
+             <n-text depth="3" style="font-size: 12px; display: block; margin-bottom: 4px">上层设备</n-text>
+             <n-flex align="center" justify="space-between" style="background: rgba(128,128,128,0.1); padding: 4px 8px; border-radius: 4px;">
+                <n-text>
+                  {{ status.controller_id ?? "N/A" }}
+                  <span v-if="config.controller_name" style="opacity: 0.7">({{ config.controller_name }})</span>
+                </n-text>
+                 <n-button
+                    tertiary
+                    type="error"
+                    size="tiny"
+                    :focusable="false"
+                    @click="remove_controller"
+                  >
+                    <template #icon>
+                      <n-icon><PlugDisconnected20Regular /></n-icon>
+                    </template>
+                  </n-button>
+             </n-flex>
+          </div>
+      </n-card>
     </n-popover>
 
     <n-flex style="min-width: 240px; max-width: 240px">
