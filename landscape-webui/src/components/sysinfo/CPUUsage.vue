@@ -29,10 +29,19 @@ const load_avg = computed(() => sysinfo.router_status.load_avg);
 
 const globalUsage = computed(() => sysinfo.router_status.global_cpu_info);
 
+const globalTemp = computed(() => sysinfo.router_status.global_cpu_temp);
+
 // Helper to get color based on usage percentage (0-100)
 const getUsageColor = (usage: number) => {
   if (usage >= 80) return themeVars.value.errorColor;
   if (usage >= 50) return themeVars.value.warningColor;
+  return themeVars.value.successColor;
+};
+
+// Helper to get color based on temperature (Celsius)
+const getTempColor = (temp: number) => {
+  if (temp >= 80) return themeVars.value.errorColor;
+  if (temp >= 60) return themeVars.value.warningColor;
   return themeVars.value.successColor;
 };
 
@@ -85,20 +94,22 @@ const getCpuIndex = (name: string, index: number) => {
     <template #header>
       <n-flex align="center" justify="space-between">
         <span>CPU</span>
-        <n-tag size="small" :bordered="false">
-          {{ cpuCount }} Cores
-        </n-tag>
+        <n-tag size="small" :bordered="false"> {{ cpuCount }} Cores </n-tag>
       </n-flex>
     </template>
 
     <!-- CPU Model -->
-    <n-text v-if="cpuModel" depth="3" style="font-size: 12px; margin-bottom: 12px; display: block;">
+    <n-text
+      v-if="cpuModel"
+      depth="3"
+      style="font-size: 12px; margin-bottom: 12px; display: block"
+    >
       <n-ellipsis :tooltip="{ width: 300 }">{{ cpuModel }}</n-ellipsis>
     </n-text>
 
     <!-- Global Stats -->
-    <n-grid :cols="2" :x-gap="12" style="margin-bottom: 12px;">
-      <n-gi>
+    <div style="display: flex; margin-bottom: 12px; gap: 8px">
+      <div style="flex: 0 0 85px">
         <n-statistic :label="t('total_cpu_usage')">
           <template #default>
             <n-text :style="{ color: getUsageColor(globalUsage) }">
@@ -106,23 +117,62 @@ const getCpuIndex = (name: string, index: number) => {
             </n-text>
           </template>
         </n-statistic>
-      </n-gi>
-      <n-gi>
-        <n-statistic :label="t('average_load')">
+      </div>
+      <div style="flex: 0 0 95px">
+        <n-statistic :label="t('cpu_temp')">
           <template #default>
-            <span style="font-size: 0.85em">
-              {{ load_avg.one }} / {{ load_avg.five }} / {{ load_avg.fifteen }}
-            </span>
+            <n-text
+              v-if="globalTemp"
+              :style="{ color: getTempColor(globalTemp) }"
+            >
+              {{ globalTemp.toFixed(1) }}°C
+            </n-text>
+            <n-tooltip v-else trigger="hover">
+              <template #trigger>
+                <span
+                  style="
+                    color: var(--n-text-color-3);
+                    font-size: 0.9em;
+                    cursor: help;
+                  "
+                >
+                  N/A
+                </span>
+              </template>
+              {{ t("no_sensor") }}
+            </n-tooltip>
           </template>
         </n-statistic>
-      </n-gi>
-    </n-grid>
+      </div>
+      <div style="flex: 1; min-width: 0">
+        <n-statistic :label="t('average_load')">
+          <template #default>
+            <n-tooltip trigger="hover">
+              <template #trigger>
+                <div
+                  style="
+                    white-space: nowrap;
+                    overflow: hidden;
+                    text-overflow: ellipsis;
+                    max-width: 100%;
+                  "
+                >
+                  {{ load_avg.one }} / {{ load_avg.five }} /
+                  {{ load_avg.fifteen }}
+                </div>
+              </template>
+              {{ load_avg.one }} / {{ load_avg.five }} / {{ load_avg.fifteen }}
+            </n-tooltip>
+          </template>
+        </n-statistic>
+      </div>
+    </div>
 
     <n-divider style="margin: 0 0 12px 0" />
 
     <!-- CPU Cores Visualization -->
     <div class="cpu-cores-wrapper">
-      <n-scrollbar style="max-height: 100%;">
+      <n-scrollbar style="max-height: 100%">
         <!-- Extra padding wrapper to prevent hover clipping -->
         <div class="cpu-cores-inner">
           <div :style="gridStyle">
@@ -150,17 +200,33 @@ const getCpuIndex = (name: string, index: number) => {
                     }"
                   ></div>
                   <!-- Label overlay (only for large/medium modes) -->
-                  <div v-if="layoutMode === 'large' || layoutMode === 'medium'" class="cpu-core-label">
-                    <span class="cpu-index">{{ getCpuIndex(cpu.name, index) }}</span>
-                    <span v-if="layoutMode === 'large'" class="cpu-usage">{{ Math.round(cpu.usage) }}%</span>
+                  <div
+                    v-if="layoutMode === 'large' || layoutMode === 'medium'"
+                    class="cpu-core-label"
+                  >
+                    <span class="cpu-index">{{
+                      getCpuIndex(cpu.name, index)
+                    }}</span>
+                    <span v-if="layoutMode === 'large'" class="cpu-usage"
+                      >{{ Math.round(cpu.usage) }}%</span
+                    >
                   </div>
                 </div>
               </template>
               <!-- Tooltip Content -->
-              <div style="text-align: center;">
-                <div style="font-weight: 600; margin-bottom: 4px;">{{ cpu.name }}</div>
-                <div style="font-size: 1.1em;">{{ cpu.usage.toFixed(1) }}%</div>
-                <div style="font-size: 0.85em; opacity: 0.7; margin-top: 2px;">
+              <div style="text-align: center">
+                <div style="font-weight: 600; margin-bottom: 4px">
+                  {{ cpu.name }}
+                </div>
+                <div style="font-size: 1.1em">{{ cpu.usage.toFixed(1) }}%</div>
+                <div
+                  v-if="cpu.temperature"
+                  style="font-size: 1em; margin-top: 2px"
+                  :style="{ color: getTempColor(cpu.temperature) }"
+                >
+                  {{ cpu.temperature.toFixed(1) }}°C
+                </div>
+                <div style="font-size: 0.85em; opacity: 0.7; margin-top: 2px">
                   {{ cpu.frequency }} MHz
                 </div>
               </div>
@@ -194,7 +260,10 @@ const getCpuIndex = (name: string, index: number) => {
   align-items: flex-end;
   overflow: hidden;
   cursor: pointer;
-  transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
+  transition:
+    transform 0.15s ease,
+    box-shadow 0.15s ease,
+    border-color 0.15s ease;
 }
 
 .cpu-core-box:hover {
@@ -206,7 +275,9 @@ const getCpuIndex = (name: string, index: number) => {
 
 .cpu-core-fill {
   width: 100%;
-  transition: height 0.3s ease, background-color 0.3s ease;
+  transition:
+    height 0.3s ease,
+    background-color 0.3s ease;
   min-height: 2px;
   border-radius: 0 0 3px 3px;
 }

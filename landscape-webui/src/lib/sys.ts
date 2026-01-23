@@ -15,6 +15,7 @@ export type CpuUsage = {
   vendor_id: string; // 厂商ID
   brand: string; // 品牌
   frequency: number; // 频率
+  temperature?: number; // 温度 (Optional)
 };
 
 // 内存使用情况
@@ -34,6 +35,7 @@ export type LoadAvg = {
 
 export class LandscapeStatus {
   global_cpu_info: number; // 全局 CPU 信息
+  global_cpu_temp?: number; // 全局 CPU 温度
   cpus: CpuUsage[]; // CPU 使用情况数组
   mem: MemUsage; // 内存使用情况
   uptime: number; // 系统运行时间
@@ -41,12 +43,14 @@ export class LandscapeStatus {
 
   constructor(obj?: {
     global_cpu_info: number;
+    global_cpu_temp?: number;
     cpus: CpuUsage[];
     mem: MemUsage;
     uptime: number;
     load_avg: LoadAvg;
   }) {
     this.global_cpu_info = obj?.global_cpu_info ?? 0;
+    this.global_cpu_temp = obj?.global_cpu_temp;
     this.cpus = obj?.cpus ?? [];
     this.mem = obj?.mem ?? {
       total_mem: 0,
