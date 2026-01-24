@@ -19,7 +19,6 @@ import DnsRedirect from "@/views/dns/DnsRedirect.vue";
 import DnsUpstream from "@/views/dns/DnsUpstream.vue";
 
 import service_status_route from "./service_status";
-import web_pty_route from "./web_pty";
 
 const inner_zone: Array<RouteRecordRaw> = [
   {
@@ -33,7 +32,6 @@ const inner_zone: Array<RouteRecordRaw> = [
     component: DnsRedirect,
   },
   ...service_status_route,
-  ...web_pty_route,
   {
     path: "/dns-upstream",
     name: "dns-upstream",

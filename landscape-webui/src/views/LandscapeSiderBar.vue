@@ -22,12 +22,14 @@ import { Docker } from "@vicons/fa";
 import { BookGlobe20Regular } from "@vicons/fluent";
 
 import CopyRight from "@/components/CopyRight.vue";
+import { usePtyStore } from "@/stores/pty";
 
 const route = useRoute();
 const router = useRouter();
+const ptyStore = usePtyStore();
 
 const menu_active_key = ref(
-  route.name && typeof route.name === "string" ? route.name : ""
+  route.name && typeof route.name === "string" ? route.name : "",
 );
 
 // const route_path = computed(() => route.name);
@@ -37,6 +39,15 @@ const menu_active_key = ref(
 const collapsed = ref(true);
 
 function click_menu(key: string) {
+  // Special handler for WebShell
+  if (key === "web-pty") {
+    ptyStore.toggleOpen();
+    // Reset selection to current route so WebShell doesn't look "selected" as a page
+    menu_active_key.value =
+      route.name && typeof route.name === "string" ? route.name : "";
+    return;
+  }
+
   router.push({
     path: `/${key}`,
   });
@@ -109,7 +120,7 @@ const menuOptions: MenuOption[] = [
   //   key: "net",
   //   icon: renderIcon(NetworkPublic),
   //   children: [
-
+  //
   //   ],
   // },
   {
