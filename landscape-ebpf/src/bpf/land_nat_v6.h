@@ -480,14 +480,19 @@ ipv6_egress_prefix_check_and_replace(struct __sk_buff *skb, struct packet_offset
         u32 inner_l3_ip_dst_offset =
             offset_info->icmp_error_l3_offset + offsetof(struct ipv6hdr, daddr);
 
-        __be64 *error_sender_point;
         __be64 old_sender_ip_prefix, new_sender_ip_prefix;
+#if defined(__riscv) || defined(__riscv__)
+        if (bpf_skb_load_bytes(skb, error_sender_offset, &old_sender_ip_prefix, 8)) {
+            return TC_ACT_SHOT;
+        }
+#else
+        __be64 *error_sender_point;
         if (VALIDATE_READ_DATA(skb, &error_sender_point, error_sender_offset,
                                sizeof(*error_sender_point))) {
             return TC_ACT_SHOT;
         }
-
-        __builtin_memcpy(&old_sender_ip_prefix, error_sender_point, 8);
+        old_sender_ip_prefix = *error_sender_point;
+#endif
         COPY_ADDR_FROM(&new_sender_ip_prefix, wan_ip_info->addr.all);
 
         new_sender_ip_prefix = (old_sender_ip_prefix & LAND_IPV6_NET_PREFIX_TRANS_MASK) |
@@ -661,13 +666,19 @@ ipv6_ingress_prefix_check_and_replace(struct __sk_buff *skb, struct packet_offse
         u32 inner_l3_ip_src_offset =
             offset_info->icmp_error_l3_offset + offsetof(struct ipv6hdr, saddr);
 
-        __be64 *old_inner_ip_point;
         __be64 old_inner_ip_prefix;
+#if defined(__riscv) || defined(__riscv__)
+        if (bpf_skb_load_bytes(skb, inner_l3_ip_src_offset, &old_inner_ip_prefix, 8)) {
+            return TC_ACT_SHOT;
+        }
+#else
+        __be64 *old_inner_ip_point;
         if (VALIDATE_READ_DATA(skb, &old_inner_ip_point, inner_l3_ip_src_offset,
                                sizeof(*old_inner_ip_point))) {
             return TC_ACT_SHOT;
         }
-        __builtin_memcpy(&old_inner_ip_prefix, old_inner_ip_point, 8);
+        old_inner_ip_prefix = *old_inner_ip_point;
+#endif
 
         u32 inner_l4_checksum_offset = 0;
         u32 l4_checksum_offset = 0;
