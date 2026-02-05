@@ -88,7 +88,8 @@ static __always_inline void nat6_metric_accumulate(struct __sk_buff *skb, bool i
 }
 
 static __always_inline int nat_metric_try_report_v6(struct nat_timer_key_v6 *timer_key,
-                                                    struct nat_timer_value_v6 *timer_value, u8 status) {
+                                                    struct nat_timer_value_v6 *timer_value,
+                                                    u8 status) {
 #define BPF_LOG_TOPIC "nat_metric_try_report_v6"
 
     struct nat_conn_metric_event *event;
@@ -486,7 +487,7 @@ ipv6_egress_prefix_check_and_replace(struct __sk_buff *skb, struct packet_offset
             return TC_ACT_SHOT;
         }
 
-        old_sender_ip_prefix = *error_sender_point;
+        __builtin_memcpy(&old_sender_ip_prefix, error_sender_point, 8);
         COPY_ADDR_FROM(&new_sender_ip_prefix, wan_ip_info->addr.all);
 
         new_sender_ip_prefix = (old_sender_ip_prefix & LAND_IPV6_NET_PREFIX_TRANS_MASK) |
@@ -666,7 +667,7 @@ ipv6_ingress_prefix_check_and_replace(struct __sk_buff *skb, struct packet_offse
                                sizeof(*old_inner_ip_point))) {
             return TC_ACT_SHOT;
         }
-        old_inner_ip_prefix = *old_inner_ip_point;
+        __builtin_memcpy(&old_inner_ip_prefix, old_inner_ip_point, 8);
 
         u32 inner_l4_checksum_offset = 0;
         u32 l4_checksum_offset = 0;
