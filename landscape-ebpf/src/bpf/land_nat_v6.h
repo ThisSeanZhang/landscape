@@ -481,7 +481,7 @@ ipv6_egress_prefix_check_and_replace(struct __sk_buff *skb, struct packet_offset
             offset_info->icmp_error_l3_offset + offsetof(struct ipv6hdr, daddr);
 
         __be64 old_sender_ip_prefix, new_sender_ip_prefix;
-#if defined(__riscv) || defined(__riscv__)
+#if defined(LAND_ARCH_RISCV)
         if (bpf_skb_load_bytes(skb, error_sender_offset, &old_sender_ip_prefix, 8)) {
             return TC_ACT_SHOT;
         }
@@ -667,7 +667,7 @@ ipv6_ingress_prefix_check_and_replace(struct __sk_buff *skb, struct packet_offse
             offset_info->icmp_error_l3_offset + offsetof(struct ipv6hdr, saddr);
 
         __be64 old_inner_ip_prefix;
-#if defined(__riscv) || defined(__riscv__)
+#if defined(LAND_ARCH_RISCV)
         if (bpf_skb_load_bytes(skb, inner_l3_ip_src_offset, &old_inner_ip_prefix, 8)) {
             return TC_ACT_SHOT;
         }

@@ -97,13 +97,31 @@ static __always_inline void do_mss_clamp(struct __sk_buff *skb, u32 offset, u16 
         }
 
         if (top_hdr->kind == MAX_SEGMENT_SIZE) {
+#if defined(LAND_ARCH_RISCV)
+            __be16 mss_val;
+            if (bpf_skb_load_bytes(skb, option_offset + 2, &mss_val, sizeof(mss_val))) {
+                return;
+            }
+            if (bpf_ntohs(mss_val) > mss_value) {
+                __be16 target_mss = bpf_htons(mss_value);
+                if (bpf_l4_csum_replace(skb, offset + offsetof(struct tcphdr, check), mss_val,
+                                        target_mss, 2 | 0)) {
+                    bpf_log_error("modify checksum error");
+                    return;
+                }
+                if (bpf_skb_store_bytes(skb, option_offset + 2, &target_mss, sizeof(target_mss),
+                                        0)) {
+                    bpf_log_error("modify mss error");
+                    return;
+                }
+            }
+#else
+            u16 *mss;
             if (VALIDATE_READ_DATA(skb, &mss, option_offset + 2, sizeof(*mss))) {
                 return;
             }
-            // bpf_log_info("fond mss: %u", *mss);
-            // bpf_log_info("fond mss: %u", bpf_ntohs(*mss));
             if (bpf_ntohs(*mss) > mss_value) {
-                __be16 target_mss = bpf_ntohs(mss_value);
+                __be16 target_mss = bpf_htons(mss_value);
                 if (bpf_l4_csum_replace(skb, offset + offsetof(struct tcphdr, check), *mss,
                                         target_mss, 2 | 0)) {
                     bpf_log_error("modify checksum error");
@@ -115,7 +133,7 @@ static __always_inline void do_mss_clamp(struct __sk_buff *skb, u32 offset, u16 
                     return;
                 }
             }
-
+#endif
             return;
         }
         option_offset = option_offset + top_hdr->len;

@@ -18,13 +18,17 @@ fn main() {
     println!("cargo:rerun-if-changed=src/bpf/*");
 
     let vmlinux_path = vmlinux::include_path_root().join(&target_arch);
-    let clang_args = vec![
+    let mut clang_args = vec![
         OsStr::new("-Wall"),
         OsStr::new("-Wno-compare-distinct-pointer-types"),
         OsStr::new("-I"),
         vmlinux_path.as_os_str(),
         OsStr::new("-mcpu=v2"),
     ];
+
+    if target_arch.contains("riscv") {
+        clang_args.push(OsStr::new("-DLAND_ARCH_RISCV"));
+    }
 
     for entry in fs::read_dir("src/bpf/").expect("Failed to read directory: src/bpf/") {
         let path = match entry {
