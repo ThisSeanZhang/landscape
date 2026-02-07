@@ -1,10 +1,10 @@
-use bytes::{Buf, BufMut, BytesMut};
 use crate::net_proto::error::NetProtoError;
 use crate::net_proto::NetProtoCodec;
+use bytes::{Buf, BytesMut};
 
 pub use dhcproto::v4;
 pub use dhcproto::v6;
-pub use dhcproto::{Decoder, Encoder, Decodable, Encodable};
+pub use dhcproto::{Decodable, Decoder, Encodable, Encoder};
 
 /// Unified type for DHCPv4 messages.
 pub type DhcpV4Message = v4::Message;
@@ -32,6 +32,10 @@ pub use v6::DhcpOption as DhcpV6Option;
 
 /// DHCPv4 Options collection.
 pub use v4::DhcpOptions as DhcpV4Options;
+/// DHCPv4 Flags.
+pub use v4::Flags as DhcpV4Flags;
+/// DHCPv4 OpCode.
+pub use v4::Opcode as DhcpV4OpCode;
 
 /// DHCPv6 Options collection.
 pub use v6::DhcpOptions as DhcpV6Options;
@@ -42,16 +46,17 @@ impl NetProtoCodec for DhcpV4Message {
             return Ok(None);
         }
         let mut decoder = Decoder::new(&src[..]);
-        let msg = Self::decode(&mut decoder)?;
+        let msg = <Self as Decodable>::decode(&mut decoder)?;
         // In UDP/DHCP, we usually consume the whole buffer
         src.advance(src.len());
         Ok(Some(msg))
     }
 
     fn encode(&self, dst: &mut BytesMut) -> Result<(), NetProtoError> {
-        let mut writer = dst.writer();
-        let mut encoder = Encoder::new(&mut writer);
-        self.encode(&mut encoder)?;
+        let mut buffer = Vec::new();
+        let mut encoder = Encoder::new(&mut buffer);
+        <Self as Encodable>::encode(self, &mut encoder)?;
+        dst.extend_from_slice(&buffer);
         Ok(())
     }
 }
@@ -62,15 +67,16 @@ impl NetProtoCodec for DhcpV6Message {
             return Ok(None);
         }
         let mut decoder = Decoder::new(&src[..]);
-        let msg = Self::decode(&mut decoder)?;
+        let msg = <Self as Decodable>::decode(&mut decoder)?;
         src.advance(src.len());
         Ok(Some(msg))
     }
 
     fn encode(&self, dst: &mut BytesMut) -> Result<(), NetProtoError> {
-        let mut writer = dst.writer();
-        let mut encoder = Encoder::new(&mut writer);
-        self.encode(&mut encoder)?;
+        let mut buffer = Vec::new();
+        let mut encoder = Encoder::new(&mut buffer);
+        <Self as Encodable>::encode(self, &mut encoder)?;
+        dst.extend_from_slice(&buffer);
         Ok(())
     }
 }

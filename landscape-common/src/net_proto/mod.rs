@@ -2,6 +2,7 @@ pub mod error;
 pub mod icmpv6;
 pub mod options;
 pub mod udp;
+pub use udp::dhcp;
 
 /// 定义通用数据包 Option 序列化 trait
 pub trait EthFrameOption {

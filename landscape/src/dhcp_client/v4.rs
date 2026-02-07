@@ -8,20 +8,23 @@ use std::{
 use socket2::{Domain, Protocol, Type};
 use tokio::{net::UdpSocket, time::Instant};
 
-use crate::{
-    dump::udp_packet::dhcp::{
-        options::{DhcpOptionMessageType, DhcpOptions},
-        DhcpEthFrame, DhcpOptionFrame,
-    },
-    route::IpRouteService,
-};
+use crate::route::IpRouteService;
+use bytes::BytesMut;
 use landscape_common::{
     global_const::default_router::{RouteInfo, RouteType, LD_ALL_ROUTERS},
+    net::MacAddr,
+    net_proto::{
+        dhcp::{
+            DhcpV4Flags, DhcpV4Message, DhcpV4MessageType as MessageType, DhcpV4OpCode,
+            DhcpV4Option as DhcpOption, DhcpV4OptionCode as OptionCode, DhcpV4Options,
+        },
+        NetProtoCodec,
+    },
+    route::RouteTargetInfo,
     route::{LanRouteInfo, LanRouteMode},
     service::{DefaultWatchServiceStatus, ServiceStatus},
     SYSCTL_IPV4_RP_FILTER_PATTERN,
 };
-use landscape_common::{net::MacAddr, route::RouteTargetInfo};
 
 pub const DEFAULT_TIME_OUT: u64 = 4;
 
@@ -46,7 +49,7 @@ pub enum DhcpState {
         ciaddr: Ipv4Addr,
         yiaddr: Ipv4Addr,
         siaddr: Ipv4Addr,
-        options: DhcpOptionFrame,
+        options: DhcpV4Options,
     },
     /// 获得了 服务端的响应, 但是可能是 AKC 或者 ANK, 但是停止发送 Request 或者 Renew 请求
     Bound {
@@ -54,7 +57,7 @@ pub enum DhcpState {
         ciaddr: Ipv4Addr,
         yiaddr: Ipv4Addr,
         siaddr: Ipv4Addr,
-        options: DhcpOptionFrame,
+        options: DhcpV4Options,
         // 对 IP 进行续期的时间
         renew_time: Instant,
         // 对 IP 进行重新绑定
@@ -68,7 +71,7 @@ pub enum DhcpState {
         ciaddr: Ipv4Addr,
         yiaddr: Ipv4Addr,
         siaddr: Ipv4Addr,
-        options: DhcpOptionFrame,
+        options: DhcpV4Options,
         // 对 IP 进行续期的时间
         renew_time: Instant,
         // 对 IP 进行重新绑定
@@ -82,7 +85,7 @@ pub enum DhcpState {
         ciaddr: Ipv4Addr,
         yiaddr: Ipv4Addr,
         siaddr: Ipv4Addr,
-        options: DhcpOptionFrame,
+        options: DhcpV4Options,
         // 对 IP 进行重新绑定
         rebinding_time: Instant,
         // 租期到期，重新获取
@@ -93,7 +96,7 @@ pub enum DhcpState {
         ciaddr: Ipv4Addr,
         yiaddr: Ipv4Addr,
         siaddr: Ipv4Addr,
-        options: DhcpOptionFrame,
+        options: DhcpV4Options,
         // 租期到期，重新获取
         lease_time: Instant,
     },
@@ -124,21 +127,21 @@ impl DhcpState {
         }
     }
 
-    pub fn can_handle_message(&self, message_type: &DhcpOptionMessageType) -> bool {
+    pub fn can_handle_message(&self, message_type: &MessageType) -> bool {
         match self {
-            DhcpState::Discovering { .. } => matches!(message_type, DhcpOptionMessageType::Offer),
+            DhcpState::Discovering { .. } => matches!(message_type, MessageType::Offer),
             // DhcpState::Offer { .. } => matches!(message_type, DhcpOptionMessageType::Request),
             DhcpState::Requesting { .. } => {
-                matches!(message_type, DhcpOptionMessageType::Ack | DhcpOptionMessageType::Nak)
+                matches!(message_type, MessageType::Ack | MessageType::Nak)
             }
             DhcpState::Renewing { .. } => {
-                matches!(message_type, DhcpOptionMessageType::Ack | DhcpOptionMessageType::Nak)
+                matches!(message_type, MessageType::Ack | MessageType::Nak)
             }
             DhcpState::Rebind { .. } => {
-                matches!(message_type, DhcpOptionMessageType::Ack | DhcpOptionMessageType::Nak)
+                matches!(message_type, MessageType::Ack | MessageType::Nak)
             }
             DhcpState::WaitToRebind { .. } => {
-                matches!(message_type, DhcpOptionMessageType::Ack | DhcpOptionMessageType::Nak)
+                matches!(message_type, MessageType::Ack | MessageType::Nak)
             }
             _ => false,
         }
@@ -328,28 +331,23 @@ async fn send_current_status_packet(
     current_status: &mut DhcpState,
     hostname: &str,
 ) -> bool {
+    let mut buf = BytesMut::new();
     match current_status {
         DhcpState::Discovering { ciaddr, xid } => {
-            let dhcp_discover = crate::dump::udp_packet::dhcp::gen_discover(
-                *xid,
-                mac_addr,
-                ciaddr.clone(),
-                hostname.to_string(),
-            );
+            let dhcp_discover = gen_discover(*xid, mac_addr, *ciaddr, hostname.to_string());
 
-            match send_socket
-                .send_to(
-                    &dhcp_discover.convert_to_payload(),
-                    &SocketAddr::new(IpAddr::V4(Ipv4Addr::BROADCAST), 67),
-                )
-                .await
-            {
-                Ok(len) => {
-                    tracing::debug!("send len: {:?}", len);
-                    tracing::debug!("dhcp fram: {:?}", dhcp_discover);
-                }
-                Err(e) => {
-                    tracing::error!("error: {:?}", e);
+            if let Ok(_) = dhcp_discover.encode(&mut buf) {
+                match send_socket
+                    .send_to(&buf, &SocketAddr::new(IpAddr::V4(Ipv4Addr::BROADCAST), 67))
+                    .await
+                {
+                    Ok(len) => {
+                        tracing::debug!("send len: {:?}", len);
+                        tracing::debug!("dhcp fram: {:?}", dhcp_discover);
+                    }
+                    Err(e) => {
+                        tracing::error!("error: {:?}", e);
+                    }
                 }
             }
         }
@@ -361,35 +359,22 @@ async fn send_current_status_packet(
                 return true;
             }
 
-            if let Some(DhcpOptions::AddressLeaseTime(time)) = options.has_option(51) {
-                options.update_or_create_option(DhcpOptions::AddressLeaseTime(time));
-            }
-
-            // if let Some(DhcpOptions::AddressLeaseTime(time)) = options.has_option(51); {
-            //     options.modify_option(DhcpOptions::AddressLeaseTime(20));
-            // }
             // send request
-            let dhcp_discover = crate::dump::udp_packet::dhcp::gen_request(
-                *xid,
-                mac_addr,
-                ciaddr.clone(),
-                yiaddr.clone(),
-                options.clone(),
-            );
+            let dhcp_request =
+                gen_request(*xid, mac_addr, *ciaddr, *yiaddr, options.clone(), hostname);
 
-            match send_socket
-                .send_to(
-                    &dhcp_discover.convert_to_payload(),
-                    &SocketAddr::new(IpAddr::V4(Ipv4Addr::BROADCAST), 67),
-                )
-                .await
-            {
-                Ok(len) => {
-                    tracing::debug!("send len: {:?}", len);
-                    tracing::debug!("dhcp fram: {:?}", dhcp_discover);
-                }
-                Err(e) => {
-                    tracing::error!("error: {:?}", e);
+            if let Ok(_) = dhcp_request.encode(&mut buf) {
+                match send_socket
+                    .send_to(&buf, &SocketAddr::new(IpAddr::V4(Ipv4Addr::BROADCAST), 67))
+                    .await
+                {
+                    Ok(len) => {
+                        tracing::debug!("send len: {:?}", len);
+                        tracing::debug!("dhcp fram: {:?}", dhcp_request);
+                    }
+                    Err(e) => {
+                        tracing::error!("error: {:?}", e);
+                    }
                 }
             }
         }
@@ -427,8 +412,10 @@ async fn send_current_status_packet(
         } => {
             tracing::error!("Time to renew lease, Renewing Strat...");
             let addr = if siaddr.is_unspecified() {
-                if let Some(DhcpOptions::ServerIdentifier(addr)) = options.has_option(54) {
-                    addr
+                if let Some(DhcpOption::ServerIdentifier(addr)) =
+                    options.get(OptionCode::ServerIdentifier)
+                {
+                    *addr
                 } else {
                     Ipv4Addr::BROADCAST
                 }
@@ -436,35 +423,22 @@ async fn send_current_status_packet(
                 *siaddr
             };
 
-            let mut request_option = DhcpOptionFrame {
-                message_type: DhcpOptionMessageType::Request,
-                options: vec![],
-                end: vec![255],
-            };
+            let mut request_options = DhcpV4Options::default();
+            request_options.insert(DhcpOption::MessageType(MessageType::Request));
+            request_options.insert(DhcpOption::Hostname(hostname.to_string()));
 
-            request_option.update_or_create_option(DhcpOptions::Hostname(hostname.to_string()));
+            let dhcp_renew =
+                gen_request(*xid, mac_addr, *ciaddr, *yiaddr, request_options, hostname);
 
-            let dhcp_discover = crate::dump::udp_packet::dhcp::gen_request(
-                *xid,
-                mac_addr,
-                *ciaddr,
-                *yiaddr,
-                request_option,
-            );
-
-            match send_socket
-                .send_to(
-                    &dhcp_discover.convert_to_payload(),
-                    &SocketAddr::new(IpAddr::V4(addr), 67),
-                )
-                .await
-            {
-                Ok(len) => {
-                    tracing::debug!("send len: {:?}", len);
-                    // println!("Renewing dhcp: {:?}", dhcp_discover);
-                }
-                Err(e) => {
-                    tracing::error!("error: {:?}", e);
+            if let Ok(_) = dhcp_renew.encode(&mut buf) {
+                match send_socket.send_to(&buf, &SocketAddr::new(IpAddr::V4(addr), 67)).await {
+                    Ok(len) => {
+                        tracing::debug!("send len: {:?}", len);
+                        // println!("Renewing dhcp: {:?}", dhcp_discover);
+                    }
+                    Err(e) => {
+                        tracing::error!("error: {:?}", e);
+                    }
                 }
             }
 
@@ -502,7 +476,6 @@ async fn send_current_status_packet(
                 *current_status = DhcpState::init_status(None);
                 return true;
             }
-            // TODO
         }
         DhcpState::Stopping | DhcpState::Stop => {}
     }
@@ -548,22 +521,26 @@ async fn handle_packet(
     route_service: &IpRouteService,
     mac_addr: &MacAddr,
 ) -> bool {
-    let dhcp = DhcpEthFrame::new(&msg);
-    let Some(dhcp) = dhcp else {
+    let mut buf = BytesMut::from(&msg[..]);
+    let Ok(Some(dhcp)) = DhcpV4Message::decode(&mut buf) else {
         tracing::error!("handle message error");
         return true;
     };
-    // println!("dhcp: {dhcp:?}");
-    if dhcp.op != 2 {
+
+    if dhcp.opcode() != DhcpV4OpCode::BootReply {
         tracing::error!("is not server op");
         return true;
     }
 
-    if dhcp.xid != current_status.get_xid() {
+    if dhcp.xid() != current_status.get_xid() {
         return false;
     }
 
-    if !current_status.can_handle_message(&dhcp.options.message_type) {
+    let Some(DhcpOption::MessageType(msg_type)) = dhcp.opts().get(OptionCode::MessageType) else {
+        return false;
+    };
+
+    if !current_status.can_handle_message(&msg_type) {
         tracing::error!("self: {current_status:?}");
         tracing::error!("recv msg: {msg:?}");
         tracing::error!("current status can not handle this status");
@@ -574,11 +551,11 @@ async fn handle_packet(
 
     match current_status {
         DhcpState::Discovering { xid, .. } => {
-            let ciaddr = dhcp.ciaddr;
-            let yiaddr = dhcp.yiaddr;
-            let siaddr = dhcp.siaddr;
+            let ciaddr = dhcp.ciaddr();
+            let yiaddr = dhcp.yiaddr();
+            let siaddr = dhcp.siaddr();
 
-            let options = dhcp.options;
+            let options = dhcp.opts().clone();
             // TODO: 判断是否符合, 不符合退回 Discovering 状态
             *current_status = DhcpState::Requesting {
                 send_times: 0,
@@ -593,15 +570,15 @@ async fn handle_packet(
             return true;
         }
         DhcpState::Requesting { yiaddr, .. } | DhcpState::Renewing { yiaddr, .. } => {
-            match dhcp.options.message_type {
-                DhcpOptionMessageType::Ack => {
-                    if *yiaddr == Ipv4Addr::UNSPECIFIED || dhcp.yiaddr == *yiaddr {
+            match msg_type {
+                MessageType::Ack => {
+                    if *yiaddr == Ipv4Addr::UNSPECIFIED || dhcp.yiaddr() == *yiaddr {
                         // 成功获得 IP
-                        let new_ciaddr = dhcp.ciaddr;
-                        let new_yiaddr = dhcp.yiaddr;
-                        let new_siaddr = dhcp.siaddr;
+                        let new_ciaddr = dhcp.ciaddr();
+                        let new_yiaddr = dhcp.yiaddr();
+                        let new_siaddr = dhcp.siaddr();
 
-                        let options = dhcp.options;
+                        let options = dhcp.opts().clone();
                         tracing::debug!("get bound ip, {:?}", yiaddr);
 
                         tracing::info!(
@@ -612,18 +589,20 @@ async fn handle_packet(
                             options
                         );
                         let Some((renew_time, rebinding_time, lease_time)) =
-                            options.get_renew_time()
+                            get_renew_times(&options)
                         else {
                             tracing::error!("can not read renew time options");
                             return false;
                         };
 
-                        let Some(DhcpOptions::SubnetMask(mask)) = options.has_option(1) else {
+                        let Some(DhcpOption::SubnetMask(mask)) =
+                            options.get(OptionCode::SubnetMask)
+                        else {
                             tracing::error!("can not read mask in options");
                             return false;
                         };
 
-                        let mask = mask.to_bits().count_ones();
+                        let mask = u32::from_be_bytes(mask.octets()).count_ones();
 
                         *current_status = bind_ipv4(
                             renew_time,
@@ -648,12 +627,12 @@ async fn handle_packet(
                     } else {
                         tracing::error!(
                             "IP 地址不符合: new ip: {:?}, old ip: {:?}",
-                            dhcp.yiaddr,
+                            dhcp.yiaddr(),
                             *yiaddr
                         )
                     }
                 }
-                DhcpOptionMessageType::Nak => {
+                MessageType::Nak => {
                     // 获取 ip 失败 重新进入 discover
                     *current_status = DhcpState::init_status(None);
                     return true;
@@ -661,8 +640,6 @@ async fn handle_packet(
                 _ => {}
             }
         }
-        DhcpState::Stopping => {}
-        DhcpState::Stop => {}
         _ => {}
     }
 
@@ -677,7 +654,7 @@ async fn bind_ipv4(
     new_ciaddr: Ipv4Addr,
     new_yiaddr: Ipv4Addr,
     new_siaddr: Ipv4Addr,
-    options: DhcpOptionFrame,
+    options: DhcpV4Options,
     // TODO： 应该放在一个结构体中
     ip_arg: &mut Option<Vec<String>>,
     default_router: bool,
@@ -694,7 +671,7 @@ async fn bind_ipv4(
     let mut args =
         vec!["addr".to_string(), "replace".to_string(), format!("{}/{}", new_yiaddr, mask)];
 
-    if let Some(DhcpOptions::BroadcastAddr(broadcast)) = options.has_option(28) {
+    if let Some(DhcpOption::BroadcastAddr(broadcast)) = options.get(OptionCode::BroadcastAddr) {
         args.extend(["brd".to_string(), format!("{}", broadcast)]);
     }
     args.extend([
@@ -728,33 +705,35 @@ async fn bind_ipv4(
     route_service.insert_ipv4_lan_route(&iface_name, lan_info).await;
 
     let mut gateway_ip = None;
-    if let Some(DhcpOptions::Router(router_ip)) = options.has_option(3) {
-        gateway_ip = Some(router_ip.clone());
-        route_service
-            .insert_ipv4_wan_route(
-                &iface_name,
-                RouteTargetInfo {
-                    ifindex: ifindex,
-                    weight: 1,
-                    mac: Some(mac_addr.clone()),
-                    is_docker: false,
-                    default_route: default_router,
-                    iface_name: iface_name.to_string(),
-                    iface_ip: IpAddr::V4(new_yiaddr),
-                    gateway_ip: IpAddr::V4(router_ip.clone()),
-                },
-            )
-            .await;
-        if default_router {
-            LD_ALL_ROUTERS
-                .add_route(RouteInfo {
-                    iface_name: iface_name.to_string(),
-                    weight: 1,
-                    route: RouteType::Ipv4(router_ip),
-                })
+    if let Some(DhcpOption::Router(router_ips)) = options.get(OptionCode::Router) {
+        if let Some(router_ip) = router_ips.get(0) {
+            gateway_ip = Some(router_ip.clone());
+            route_service
+                .insert_ipv4_wan_route(
+                    &iface_name,
+                    RouteTargetInfo {
+                        ifindex: ifindex,
+                        weight: 1,
+                        mac: Some(mac_addr.clone()),
+                        is_docker: false,
+                        default_route: default_router,
+                        iface_name: iface_name.to_string(),
+                        iface_ip: IpAddr::V4(new_yiaddr),
+                        gateway_ip: IpAddr::V4(router_ip.clone()),
+                    },
+                )
                 .await;
-        } else {
-            LD_ALL_ROUTERS.del_route_by_iface(iface_name).await;
+            if default_router {
+                LD_ALL_ROUTERS
+                    .add_route(RouteInfo {
+                        iface_name: iface_name.to_string(),
+                        weight: 1,
+                        route: RouteType::Ipv4(router_ip.clone()),
+                    })
+                    .await;
+            } else {
+                LD_ALL_ROUTERS.del_route_by_iface(iface_name).await;
+            }
         }
     }
     landscape_ebpf::map_setting::add_ipv4_wan_ip(
@@ -794,4 +773,108 @@ fn set_iface_ipv4_rp_filter_to_0(iface_name: &str) {
             }
         }
     }
+}
+
+fn gen_discover(
+    xid: u32,
+    mac_addr: MacAddr,
+    ciaddr: Option<Ipv4Addr>,
+    hostname: String,
+) -> DhcpV4Message {
+    let mut msg = DhcpV4Message::default();
+    msg.set_opcode(DhcpV4OpCode::BootRequest);
+    msg.set_xid(xid);
+    let mut flags = DhcpV4Flags::default();
+    if ciaddr.is_none() {
+        flags = flags.set_broadcast();
+    }
+    msg.set_flags(flags);
+    msg.set_ciaddr(ciaddr.unwrap_or(Ipv4Addr::UNSPECIFIED));
+    let mut chaddr = [0u8; 16];
+    chaddr[..6].copy_from_slice(&mac_addr.octets());
+    msg.set_chaddr(&chaddr);
+
+    msg.opts_mut().insert(DhcpOption::MessageType(MessageType::Discover));
+    if let Some(ip) = ciaddr {
+        msg.opts_mut().insert(DhcpOption::RequestedIpAddress(ip));
+    }
+    msg.opts_mut().insert(DhcpOption::Hostname(hostname));
+    msg.opts_mut().insert(DhcpOption::ParameterRequestList(vec![
+        OptionCode::SubnetMask,
+        OptionCode::Router,
+        OptionCode::DomainNameServer,
+        OptionCode::DomainName,
+        OptionCode::InterfaceMtu,
+        OptionCode::BroadcastAddr,
+        OptionCode::Hostname,
+        OptionCode::NtpServers,
+        OptionCode::AddressLeaseTime,
+        OptionCode::DomainSearch,
+    ]));
+    msg
+}
+
+fn gen_request(
+    xid: u32,
+    mac_addr: MacAddr,
+    ciaddr: Ipv4Addr,
+    yiaddr: Ipv4Addr,
+    mut options: DhcpV4Options,
+    hostname: &str,
+) -> DhcpV4Message {
+    let mut msg = DhcpV4Message::default();
+    msg.set_opcode(DhcpV4OpCode::BootRequest);
+    msg.set_xid(xid);
+
+    let mut chaddr = [0u8; 16];
+    chaddr[..6].copy_from_slice(&mac_addr.octets());
+    msg.set_chaddr(&chaddr);
+
+    msg.set_ciaddr(ciaddr);
+
+    options.insert(DhcpOption::ClassIdentifier(b"MSFT 5.0".to_vec()));
+    let mut client_id = vec![1u8];
+    client_id.extend_from_slice(&mac_addr.octets());
+    options.insert(DhcpOption::ClientIdentifier(client_id));
+
+    options.insert(DhcpOption::MessageType(MessageType::Request));
+    options.insert(DhcpOption::Hostname(hostname.to_string()));
+    options.insert(DhcpOption::ParameterRequestList(vec![
+        OptionCode::SubnetMask,
+        OptionCode::Router,
+        OptionCode::DomainNameServer,
+        OptionCode::DomainName,
+        OptionCode::InterfaceMtu,
+        OptionCode::BroadcastAddr,
+        OptionCode::Hostname,
+        OptionCode::NtpServers,
+        OptionCode::AddressLeaseTime,
+        OptionCode::DomainSearch,
+    ]));
+
+    if ciaddr.is_unspecified() {
+        options.insert(DhcpOption::RequestedIpAddress(yiaddr));
+        msg.set_flags(DhcpV4Flags::default().set_broadcast());
+    } else {
+        msg.set_flags(DhcpV4Flags::default());
+    }
+
+    *msg.opts_mut() = options;
+    msg
+}
+
+fn get_renew_times(options: &DhcpV4Options) -> Option<(u64, u64, u64)> {
+    let lease_time = match options.get(OptionCode::AddressLeaseTime)? {
+        DhcpOption::AddressLeaseTime(t) => *t,
+        _ => return None,
+    };
+    let renew_time = match options.get(OptionCode::Renewal) {
+        Some(DhcpOption::Renewal(t)) => *t as u64,
+        _ => (lease_time / 2) as u64,
+    };
+    let rebind_time = match options.get(OptionCode::Rebinding) {
+        Some(DhcpOption::Rebinding(t)) => *t as u64,
+        _ => (lease_time * 7 / 8) as u64,
+    };
+    Some((renew_time, rebind_time, lease_time as u64))
 }

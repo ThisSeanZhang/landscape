@@ -17,7 +17,7 @@ thiserror = { workspace = true }
 arc-swap = { workspace = true }
 
 tokio = { workspace = true, features = ["full"] }
-tokio_util = "*"
+tokio-util = { workspace = true }
 bytes = "1.0"
 homedir = { workspace = true }
 hostname = { workspace = true }

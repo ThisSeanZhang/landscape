@@ -31,3 +31,5 @@ pub type NetProtoResult<T> = Result<T, NetProtoError>;
 // For backward compatibility if needed, you can aliase old types
 pub type DecodeError = NetProtoError;
 pub type EncodeError = NetProtoError;
+pub type DecodeResult<T> = Result<T, NetProtoError>;
+pub type EncodeResult<T> = Result<T, NetProtoError>;
