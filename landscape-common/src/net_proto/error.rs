@@ -1,33 +1,33 @@
 use std::io;
-
 use thiserror::Error;
 
-/// Convenience type for decode errors
-pub type DecodeResult<T> = Result<T, DecodeError>;
-
-/// Returned from types that decode
+/// Unified error type for network protocol encoding/decoding.
 #[derive(Error, Debug)]
-pub enum DecodeError {
-    /// io error
-    #[error("io error {0}")]
-    IoError(#[from] io::Error),
+pub enum NetProtoError {
+    /// IO error
+    #[error("IO error: {0}")]
+    Io(#[from] io::Error),
 
-    /// DHCP PROTO
-    #[error("dhcproto error {0}")]
-    DHCProtoError(#[from] dhcproto::error::DecodeError),
+    /// DHCPv4 or DHCPv6 decode error from dhcproto
+    #[error("DHCP decode error: {0}")]
+    DhcpDecode(#[from] dhcproto::error::DecodeError),
+
+    /// DHCPv4 or DHCPv6 encode error from dhcproto
+    #[error("DHCP encode error: {0}")]
+    DhcpEncode(#[from] dhcproto::error::EncodeError),
+
+    /// Generic packet error (e.g. invalid length, invalid data)
+    #[error("Protocol error: {0}")]
+    Protocol(String),
+
+    /// Custom error for specific protocol implementations
+    #[error("{0}")]
+    Other(String),
 }
 
-/// Returned from types that encode
-#[derive(Error, Debug)]
-pub enum EncodeError {
-    /// io error
-    #[error("io error {0}")]
-    IoError(#[from] io::Error),
+/// Convenience result type
+pub type NetProtoResult<T> = Result<T, NetProtoError>;
 
-    /// DHCP PROTO
-    #[error("dhcproto error {0}")]
-    DHCProtoError(#[from] dhcproto::error::EncodeError),
-}
-
-/// Convenience type for encode errors
-pub type EncodeResult<T> = Result<T, EncodeError>;
+// For backward compatibility if needed, you can aliase old types
+pub type DecodeError = NetProtoError;
+pub type EncodeError = NetProtoError;

@@ -14,6 +14,41 @@ pub trait EthFrameOption {
         Self: Sized;
 }
 
+/// 统一的网络协议解析接口
+pub trait NetProtoCodec: Sized {
+    /// 从原始字节流中解析出消息 (适配 Decoder)
+    /// 返回 Ok(Some(Self)) 表示解析成功，Ok(None) 表示长度不足
+    fn decode(src: &mut bytes::BytesMut) -> Result<Option<Self>, error::NetProtoError>;
+
+    /// 将消息编码到字节流中 (适配 Encoder)
+    fn encode(&self, dst: &mut bytes::BytesMut) -> Result<(), error::NetProtoError>;
+}
+
+pub struct LandscapeCodec<T>(pub std::marker::PhantomData<T>);
+
+impl<T> LandscapeCodec<T> {
+    pub fn new() -> Self {
+        Self(std::marker::PhantomData)
+    }
+}
+
+impl<T: NetProtoCodec> tokio_util::codec::Decoder for LandscapeCodec<T> {
+    type Item = T;
+    type Error = error::NetProtoError;
+
+    fn decode(&mut self, src: &mut bytes::BytesMut) -> Result<Option<T>, Self::Error> {
+        T::decode(src)
+    }
+}
+
+impl<T: NetProtoCodec> tokio_util::codec::Encoder<T> for LandscapeCodec<T> {
+    type Error = error::NetProtoError;
+
+    fn encode(&mut self, item: T, dst: &mut bytes::BytesMut) -> Result<(), Self::Error> {
+        item.encode(dst)
+    }
+}
+
 /// 暂时 pub 后续将所有协议的定义移动到 common
 /// 二分查找第一个匹配条件的元素的索引
 pub fn first<T, F>(slice: &[T], mut compare: F) -> Option<usize>
