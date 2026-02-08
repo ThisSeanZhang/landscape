@@ -6,6 +6,7 @@ pub enum IpMacBinding {
     Table,
     Id,
     UpdateAt,
+    IfaceName,
     Name,
     FakeName,
     Remark,

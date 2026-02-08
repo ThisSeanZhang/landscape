@@ -15,6 +15,7 @@ impl MigrationTrait for Migration {
                     .if_not_exists()
                     .col(ColumnDef::new(IpMacBinding::Id).uuid().not_null().primary_key())
                     .col(ColumnDef::new(IpMacBinding::UpdateAt).double().not_null())
+                    .col(ColumnDef::new(IpMacBinding::IfaceName).string())
                     .col(ColumnDef::new(IpMacBinding::Name).string().not_null())
                     .col(ColumnDef::new(IpMacBinding::FakeName).string())
                     .col(ColumnDef::new(IpMacBinding::Remark).string())

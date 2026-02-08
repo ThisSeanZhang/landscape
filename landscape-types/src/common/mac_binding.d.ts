@@ -5,6 +5,10 @@ export type IpMacBinding = {
   id?: string;
   update_at?: number;
   /**
+   * Optional interface name this binding belongs to
+   */
+  iface_name?: string;
+  /**
    * The display name chosen by the user
    */
   name: string;
