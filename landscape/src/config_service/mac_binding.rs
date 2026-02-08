@@ -67,4 +67,16 @@ impl MacBindingService {
         let ip_u32 = u32::from(ipv4);
         self.dhcp_repo.is_ip_in_range(iface_name, ip_u32).await
     }
+
+    pub async fn find_out_of_range_bindings(
+        &self,
+        iface_name: String,
+        server_ip: std::net::Ipv4Addr,
+        mask: u8,
+    ) -> Result<Vec<IpMacBinding>, String> {
+        self.store
+            .find_out_of_range_bindings(iface_name, server_ip, mask)
+            .await
+            .map_err(|e| e.to_string())
+    }
 }

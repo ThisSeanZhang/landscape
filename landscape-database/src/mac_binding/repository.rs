@@ -65,6 +65,33 @@ impl IpMacBindingRepository {
 
         Ok(models.into_iter().map(|m| m.into()).collect())
     }
+
+    /// 查找属于指定网卡，但 IP 不在给定范围内的绑定记录
+    pub async fn find_out_of_range_bindings(
+        &self,
+        iface_name: String,
+        server_ip: std::net::Ipv4Addr,
+        mask: u8,
+    ) -> Result<Vec<IpMacBinding>, LdError> {
+        let server_ip_u32 = u32::from(server_ip);
+        let mask_u32 = if mask == 0 { 0 } else { 0xFFFFFFFFu32 << (32 - mask) };
+        let network_start = server_ip_u32 & mask_u32;
+        let network_end = network_start | !mask_u32;
+
+        let models = IpMacBindingEntity::find()
+            .filter(
+                sea_orm::Condition::all().add(Column::IfaceName.eq(iface_name)).add(
+                    sea_orm::Condition::any()
+                        .add(Column::Ipv4Int.lt(network_start))
+                        .add(Column::Ipv4Int.gt(network_end))
+                        .add(Column::Ipv4Int.is_null()),
+                ),
+            )
+            .all(self.db())
+            .await?;
+
+        Ok(models.into_iter().map(|m| m.into()).collect())
+    }
 }
 
 #[async_trait::async_trait]

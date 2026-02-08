@@ -3,6 +3,7 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
+use landscape_common::service::controller_service_v2::ControllerService;
 use landscape_common::{
     config::ConfigId,
     mac_binding::{IpMacBinding, ValidateIpPayload},
@@ -18,6 +19,29 @@ pub async fn get_mac_binding_config_paths() -> Router<LandscapeApp> {
             "/mac_bindings/{id}",
             get(get_mac_binding).put(update_mac_binding).delete(delete_mac_binding),
         )
+        .route("/mac_bindings/check_invalid/{iface_name}", get(check_iface_validity))
+}
+
+async fn check_iface_validity(
+    State(app): State<LandscapeApp>,
+    Path(iface_name): Path<String>,
+) -> LandscapeApiResult<Vec<IpMacBinding>> {
+    // 获取该网卡的 DHCP 范围用于校验
+    let config = app.dhcp_v4_server_service.get_config_by_name(iface_name.clone()).await;
+
+    if let Some(c) = config {
+        let invalid = app
+            .mac_binding_service
+            .find_out_of_range_bindings(iface_name, c.config.server_ip_addr, c.config.network_mask)
+            .await
+            .map_err(crate::error::LandscapeApiError::BadRequest)?;
+
+        LandscapeApiResp::success(invalid)
+    } else {
+        // 如果网卡没开 DHCP，可以认为该网卡下的所有绑定都是“失效”的，或者返回空（由具体逻辑定）
+        // 这里根据需求，既然是为了“修改后提醒”，没开 DHCP 说明可能被删除了。
+        LandscapeApiResp::success(vec![])
+    }
 }
 
 async fn handle_validate_ip(
