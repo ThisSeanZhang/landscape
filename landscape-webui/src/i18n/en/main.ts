@@ -14,6 +14,9 @@ export default {
   sysinfo,
   config,
   error,
+  common: {
+    private_mode: "Private Mode",
+  },
   routes: {
     dashboard: "Dashboard",
     status: "Service Status",
@@ -41,5 +44,6 @@ export default {
     "ipv6-pd": "IPv6 PD",
     "dhcp-v4": "DHCPv4 Service",
     "ipv6-ra": "IPv6 RA",
+    "mac-binding": "Devices",
   },
 };

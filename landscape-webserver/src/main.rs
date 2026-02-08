@@ -14,6 +14,7 @@ use config_service::{
 use landscape::{
     boot::{boot_check, log::init_logger},
     cert::load_or_generate_cert,
+    config_service::mac_binding::MacBindingService,
     config_service::{
         dns::{redirect::DNSRedirectService, upstream::DnsUpstreamService},
         dns_rule::DNSRuleService,
@@ -85,6 +86,7 @@ use tracing::info;
 use crate::{
     config_service::{
         dns_redirect::get_dns_redirect_config_paths, dns_upstream::get_dns_upstream_config_paths,
+        mac_binding::get_mac_binding_config_paths,
         static_nat_mapping::get_static_nat_mapping_config_paths,
     },
     service::{
@@ -150,6 +152,7 @@ pub struct LandscapeApp {
     nat_service: NatServiceManagerService,
 
     ebpf_service: LandscapeEbpfService,
+    mac_binding_service: MacBindingService,
 }
 
 impl LandscapeApp {
@@ -236,6 +239,8 @@ async fn run(home_path: PathBuf, config: RuntimeConfig) -> LdResult<()> {
 
     let static_nat_mapping_config_service =
         StaticNatMappingService::new(db_store_provider.clone()).await;
+
+    let mac_binding_service = MacBindingService::new(db_store_provider.clone()).await;
 
     let route_lan_service = RouteLanServiceManagerService::new(
         db_store_provider.clone(),
@@ -333,6 +338,7 @@ async fn run(home_path: PathBuf, config: RuntimeConfig) -> LdResult<()> {
         nat_service,
         // ebpf
         ebpf_service,
+        mac_binding_service,
     };
 
     // 初始化结束
@@ -370,7 +376,8 @@ async fn run(home_path: PathBuf, config: RuntimeConfig) -> LdResult<()> {
                 .merge(get_dst_ip_rule_config_paths().await)
                 .merge(get_static_nat_mapping_config_paths().await)
                 .merge(get_dns_redirect_config_paths().await)
-                .merge(get_dns_upstream_config_paths().await),
+                .merge(get_dns_upstream_config_paths().await)
+                .merge(get_mac_binding_config_paths().await),
         )
         .nest(
             "/services",

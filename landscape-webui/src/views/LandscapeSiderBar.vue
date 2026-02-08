@@ -14,6 +14,7 @@ import {
   ChartCombo,
   ServerDns,
   NetworkPublic,
+  Devices,
   Dashboard,
 } from "@vicons/carbon";
 import { ImportExportRound } from "@vicons/material";
@@ -162,6 +163,11 @@ const menuOptions = computed<MenuOption[]>(() => [
         key: "geo-ip",
       },
     ],
+  },
+  {
+    label: t("routes.mac-binding"),
+    key: "mac-binding",
+    icon: renderIcon(Devices),
   },
   {
     label: t("routes.config"),
