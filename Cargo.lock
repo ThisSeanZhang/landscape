@@ -3259,6 +3259,7 @@ dependencies = [
  "ctrlc",
  "dhcproto",
  "duckdb",
+ "etherparse",
  "fs2",
  "futures",
  "hickory-proto",

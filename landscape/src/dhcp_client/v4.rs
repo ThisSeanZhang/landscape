@@ -1,29 +1,24 @@
 use std::{
     net::{IpAddr, Ipv4Addr, SocketAddr},
     pin::Pin,
-    sync::Arc,
     time::Duration,
 };
 
-use socket2::{Domain, Protocol, Type};
-use tokio::{net::UdpSocket, time::Instant};
+use tokio::time::Instant;
 
+use super::v4_raw_packet::AdaptiveDhcpV4Socket;
 use crate::route::IpRouteService;
-use bytes::BytesMut;
 use landscape_common::{
     global_const::default_router::{RouteInfo, RouteType, LD_ALL_ROUTERS},
     net::MacAddr,
-    net_proto::{
-        dhcp::{
-            DhcpV4Flags, DhcpV4Message, DhcpV4MessageType as MessageType, DhcpV4OpCode,
-            DhcpV4Option as DhcpOption, DhcpV4OptionCode as OptionCode, DhcpV4Options,
-        },
-        NetProtoCodec,
+    net_proto::dhcp::{
+        DhcpV4Flags, DhcpV4Message, DhcpV4MessageType as MessageType, DhcpV4OpCode,
+        DhcpV4Option as DhcpOption, DhcpV4OptionCode as OptionCode, DhcpV4Options,
     },
     route::RouteTargetInfo,
     route::{LanRouteInfo, LanRouteMode},
     service::{DefaultWatchServiceStatus, ServiceStatus},
-    SYSCTL_IPV4_RP_FILTER_PATTERN,
+    LANDSCAPE_DEFAULE_DHCP_V4_SERVER_PORT, SYSCTL_IPV4_RP_FILTER_PATTERN,
 };
 
 pub const DEFAULT_TIME_OUT: u64 = 4;
@@ -104,6 +99,15 @@ pub enum DhcpState {
     Stop,
 }
 
+impl DhcpState {
+    pub fn is_initial_phase(&self) -> bool {
+        matches!(
+            self,
+            DhcpState::Discovering { .. } | DhcpState::Requesting { .. } | DhcpState::Rebind { .. }
+        )
+    }
+}
+
 fn get_new_ipv4_xid() -> u32 {
     rand::random()
 }
@@ -174,137 +178,76 @@ pub async fn dhcp_v4_client(
     route_service: IpRouteService,
 ) {
     service_status.just_change_status(ServiceStatus::Staring);
-
-    // landscape_ebpf::map_setting::add_expose_port(client_port);
-
-    tracing::info!("DHCP V4 Client Staring");
+    tracing::info!("DHCP V4 Client Starting");
 
     set_iface_ipv4_rp_filter_to_0(&iface_name);
+    let server_port = LANDSCAPE_DEFAULE_DHCP_V4_SERVER_PORT;
 
-    let socket_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), client_port);
-
-    let socket2 = socket2::Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP)).unwrap();
-
-    // TODO: Error handle
-    socket2.set_reuse_address(true).unwrap();
-    socket2.set_reuse_port(true).unwrap();
-    socket2.bind(&socket_addr.into()).unwrap();
-    socket2.set_nonblocking(true).unwrap();
-    socket2.bind_device(Some(iface_name.as_bytes())).unwrap();
-    socket2.set_broadcast(true).unwrap();
-
-    // let router_iface_name = iface_name.clone();
-
-    let socket = UdpSocket::from_std(socket2.into()).unwrap();
-
-    let send_socket = Arc::new(socket);
-
-    let recive_socket_raw = send_socket.clone();
-
-    let (message_tx, mut message_rx) = tokio::sync::mpsc::channel::<(Vec<u8>, SocketAddr)>(1024);
-
-    // 接收数据
-    tokio::spawn(async move {
-        let mut buf = vec![0u8; 65535];
-        loop {
-            tokio::select! {
-                result = recive_socket_raw.recv_from(&mut buf) => {
-                    // 接收数据包
-                    match result {
-                        Ok((len, addr)) => {
-                            // println!("Received {} bytes from {}", len, addr);
-                            let message = buf[..len].to_vec();
-                            if let Err(e) = message_tx.try_send((message, addr)) {
-                                tracing::error!("Error sending message to channel: {:?}", e);
-                            }
-                        }
-                        Err(e) => {
-                            tracing::error!("Error receiving data: {:?}", e);
-                        }
-                    }
-                },
-                _ = message_tx.closed() => {
-                    tracing::error!("message_tx closed");
-                    break;
-                }
-            }
-        }
-
-        tracing::info!("DHCP V4 recv client loop");
-    });
+    let mut status = DhcpState::init_status(None);
+    let mut io = AdaptiveDhcpV4Socket::new(
+        &iface_name,
+        ifindex,
+        mac_addr.octets(),
+        client_port,
+        server_port,
+    );
 
     service_status.just_change_status(ServiceStatus::Running);
     tracing::info!("DHCP V4 Client Running");
 
-    // 超时次数
     let mut timeout_times: u64 = 1;
-    // 下一次超时事件
-    // let mut current_timeout_time = IPV6_TIMEOUT_DEFAULT_DURACTION;
-
     let mut active_send = Box::pin(tokio::time::sleep(Duration::from_secs(0)));
-
-    let mut status = DhcpState::init_status(None);
-    #[cfg(debug_assertions)]
-    let time = tokio::time::Instant::now();
-
     let mut ip_arg: Option<Vec<String>> = None;
-
     let mut service_status_subscribe = service_status.subscribe();
+
     loop {
+        // 自动管理 Socket 模式
+        if let Err(e) = io.update_mode(status.is_initial_phase()).await {
+            tracing::error!("Failed to update adaptive socket mode: {:?}", e);
+        }
+
         tokio::select! {
-            // 超时激发重发
+            // 分支 1: 发送逻辑
             _ = active_send.as_mut() => {
-                #[cfg(debug_assertions)]
-                {
-                    tracing::error!("Timeout active at: {:?}",  time.elapsed());
-                }
-                if timeout_times > 4 {
-                    // 如果当前状态是 Discovering 并且 超时 4 次 就退出
-                    if matches!(status, DhcpState::Discovering { .. }) {
-                        tracing::error!("Timeout exceeded limit");
-                        break;
-                    }
+                if timeout_times > 4 && matches!(status, DhcpState::Discovering { .. }) {
+                    tracing::error!("Timeout exceeded limit");
+                    break;
                 }
 
                 let need_reset_timeout = send_current_status_packet(
-                    mac_addr, &send_socket, &mut status, &hostname
+                    mac_addr,
+                    &io,
+                    &mut status,
+                    &hostname,
                 ).await;
+
                 if need_reset_timeout {
                     timeout_times = 0;
                 }
                 timeout_times = get_status_timeout_config(&status, timeout_times, active_send.as_mut());
             },
-            message_result = message_rx.recv() => {
-                // 处理接收到的数据包
-                match message_result {
-                    Some(data) => {
-                        let need_reset_time =
-                            handle_packet(&mut status, data,
+
+            // 分支 2: 统一的接收逻辑
+            packet_res = io.recv() => {
+                match packet_res {
+                    Ok(packet) => {
+                        let need_reset_time = handle_packet(&mut status, packet,
                             &mut ip_arg, default_router, &iface_name, ifindex, &route_service, &mac_addr).await;
                         if need_reset_time {
                             timeout_times = get_status_timeout_config(&status, 0, active_send.as_mut());
-                            // current_timeout_time = t2;
-
                         }
                     }
-                    // message_rx close
-                    None => break
+                    Err(e) => tracing::error!("Error receiving packet: {:?}", e),
                 }
             },
-            change_result = service_status_subscribe.changed() => {
-                if let Err(_) = change_result {
-                    tracing::error!("get change result error. exit loop");
-                    break;
-                }
-                if service_status.is_exit() {
-                    // 1. send release
 
-                    // 2. clean route
+            // 分支 3: 服务状态变更
+            change_result = service_status_subscribe.changed() => {
+                if let Err(_) = change_result { break; }
+                if service_status.is_exit() {
                     if let Some(args) = ip_arg.take() {
-                        let result = std::process::Command::new("ip").args(&args).output();
-                        tracing::info!("{:?}", result);
+                        let _ = std::process::Command::new("ip").args(&args).output();
                     }
-                    tracing::info!("dhcp release send and stop");
                     break;
                 }
             }
@@ -327,56 +270,23 @@ pub async fn dhcp_v4_client(
 /// 当需要重置 timeout 就返回 true
 async fn send_current_status_packet(
     mac_addr: MacAddr,
-    send_socket: &UdpSocket,
+    io: &AdaptiveDhcpV4Socket,
     current_status: &mut DhcpState,
     hostname: &str,
 ) -> bool {
-    let mut buf = BytesMut::new();
-    match current_status {
+    let send_res = match current_status {
         DhcpState::Discovering { ciaddr, xid } => {
-            let dhcp_discover = gen_discover(*xid, mac_addr, *ciaddr, hostname.to_string());
-
-            if let Ok(_) = dhcp_discover.encode(&mut buf) {
-                match send_socket
-                    .send_to(&buf, &SocketAddr::new(IpAddr::V4(Ipv4Addr::BROADCAST), 67))
-                    .await
-                {
-                    Ok(len) => {
-                        tracing::debug!("send len: {:?}", len);
-                        tracing::debug!("dhcp fram: {:?}", dhcp_discover);
-                    }
-                    Err(e) => {
-                        tracing::error!("error: {:?}", e);
-                    }
-                }
-            }
+            let msg = gen_discover(*xid, mac_addr, *ciaddr, hostname.to_string());
+            io.send(msg, Ipv4Addr::BROADCAST).await
         }
-        // DhcpState::Offer { .. } => {}
         DhcpState::Requesting { xid, send_times, ciaddr, yiaddr, options, .. } => {
             *send_times += 1;
             if *send_times > 3 {
                 *current_status = DhcpState::init_status(None);
                 return true;
             }
-
-            // send request
-            let dhcp_request =
-                gen_request(*xid, mac_addr, *ciaddr, *yiaddr, options.clone(), hostname);
-
-            if let Ok(_) = dhcp_request.encode(&mut buf) {
-                match send_socket
-                    .send_to(&buf, &SocketAddr::new(IpAddr::V4(Ipv4Addr::BROADCAST), 67))
-                    .await
-                {
-                    Ok(len) => {
-                        tracing::debug!("send len: {:?}", len);
-                        tracing::debug!("dhcp fram: {:?}", dhcp_request);
-                    }
-                    Err(e) => {
-                        tracing::error!("error: {:?}", e);
-                    }
-                }
-            }
+            let msg = gen_request(*xid, mac_addr, *ciaddr, *yiaddr, options.clone(), hostname);
+            io.send(msg, Ipv4Addr::BROADCAST).await
         }
         DhcpState::Bound {
             yiaddr,
@@ -427,25 +337,11 @@ async fn send_current_status_packet(
             request_options.insert(DhcpOption::MessageType(MessageType::Request));
             request_options.insert(DhcpOption::Hostname(hostname.to_string()));
 
-            let dhcp_renew =
-                gen_request(*xid, mac_addr, *ciaddr, *yiaddr, request_options, hostname);
-
-            if let Ok(_) = dhcp_renew.encode(&mut buf) {
-                match send_socket.send_to(&buf, &SocketAddr::new(IpAddr::V4(addr), 67)).await {
-                    Ok(len) => {
-                        tracing::debug!("send len: {:?}", len);
-                        // println!("Renewing dhcp: {:?}", dhcp_discover);
-                    }
-                    Err(e) => {
-                        tracing::error!("error: {:?}", e);
-                    }
-                }
-            }
+            let msg = gen_request(*xid, mac_addr, *ciaddr, *yiaddr, request_options, hostname);
+            let res = io.send(msg, addr).await;
 
             let lease_renew_time = (*rebinding_time - *renew_time).as_secs() / 6;
-
             if Instant::now() >= *rebinding_time - Duration::from_secs(lease_renew_time) {
-                // 超过租期的最后期限 尝试获得新的 DHCP 响应
                 *current_status = DhcpState::WaitToRebind {
                     xid: get_new_ipv4_xid(),
                     ciaddr: *ciaddr,
@@ -457,6 +353,7 @@ async fn send_current_status_packet(
                 };
                 return true;
             }
+            res
         }
         DhcpState::WaitToRebind { yiaddr, siaddr, options, lease_time, .. } => {
             *current_status = DhcpState::Rebind {
@@ -469,15 +366,20 @@ async fn send_current_status_packet(
             };
             return true;
         }
-        DhcpState::Rebind { lease_time, .. } => {
+        DhcpState::Rebind { xid, ciaddr, yiaddr, options, lease_time, .. } => {
             if Instant::now() > *lease_time {
                 tracing::warn!("Rebind turn to Discover");
-                // 切换状态为 Solicit 重新开始
                 *current_status = DhcpState::init_status(None);
                 return true;
             }
+            let msg = gen_request(*xid, mac_addr, *ciaddr, *yiaddr, options.clone(), hostname);
+            io.send(msg, Ipv4Addr::BROADCAST).await
         }
-        DhcpState::Stopping | DhcpState::Stop => {}
+        _ => Ok(()),
+    };
+
+    if let Err(e) = send_res {
+        tracing::error!("Error sending DHCP packet: {:?}", e);
     }
     false
 }
@@ -512,8 +414,7 @@ fn get_status_timeout_config(
 /// 返回值为是否要进行检查刷新超时时间
 async fn handle_packet(
     current_status: &mut DhcpState,
-    (msg, _msg_addr): (Vec<u8>, SocketAddr),
-
+    packet: (DhcpV4Message, SocketAddr),
     ip_arg: &mut Option<Vec<String>>,
     default_router: bool,
     iface_name: &str,
@@ -521,12 +422,7 @@ async fn handle_packet(
     route_service: &IpRouteService,
     mac_addr: &MacAddr,
 ) -> bool {
-    let mut buf = BytesMut::from(&msg[..]);
-    let Ok(Some(dhcp)) = DhcpV4Message::decode(&mut buf) else {
-        tracing::error!("handle message error");
-        return true;
-    };
-
+    let (dhcp, _msg_addr) = packet;
     if dhcp.opcode() != DhcpV4OpCode::BootReply {
         tracing::error!("is not server op");
         return true;
@@ -542,7 +438,6 @@ async fn handle_packet(
 
     if !current_status.can_handle_message(&msg_type) {
         tracing::error!("self: {current_status:?}");
-        tracing::error!("recv msg: {msg:?}");
         tracing::error!("current status can not handle this status");
         return false;
     }
@@ -876,5 +771,6 @@ fn get_renew_times(options: &DhcpV4Options) -> Option<(u64, u64, u64)> {
         Some(DhcpOption::Rebinding(t)) => *t as u64,
         _ => (lease_time * 7 / 8) as u64,
     };
+
     Some((renew_time, rebind_time, lease_time as u64))
 }

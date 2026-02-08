@@ -72,6 +72,8 @@ polars = { workspace = true, features = ["lazy", "parquet"], optional = true }
 duckdb = { workspace = true }
 r2d2 = { workspace = true }
 
+etherparse = { workspace = true }
+
 [dependencies.pnet]
 workspace = true
 
