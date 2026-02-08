@@ -10,6 +10,8 @@ pub enum DHCPv4ServerConfigs {
     IpRangeEnd,
     ServerIpAddr,
     NetworkMask,
+    NetworkStart,
+    NetworkEnd,
     AddressLeaseTime,
     MacBindingRecords,
     UpdateAt,

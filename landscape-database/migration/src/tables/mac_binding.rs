@@ -12,6 +12,7 @@ pub enum IpMacBinding {
     Remark,
     Mac,
     Ipv4,
+    Ipv4Int,
     Ipv6,
     Tag,
 }
