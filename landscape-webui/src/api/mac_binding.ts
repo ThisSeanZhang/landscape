@@ -27,3 +27,14 @@ export async function update_mac_binding(
 export async function delete_mac_binding(id: string): Promise<void> {
   return await axiosService.delete(`config/mac_bindings/${id}`);
 }
+
+export async function validate_mac_binding_ip(
+  iface_name: string,
+  ipv4: string,
+): Promise<boolean> {
+  let data = await axiosService.post(`config/mac_bindings/validate_ip`, {
+    iface_name,
+    ipv4,
+  });
+  return data.data;
+}

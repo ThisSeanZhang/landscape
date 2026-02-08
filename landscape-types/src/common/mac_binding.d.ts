@@ -37,3 +37,5 @@ export type IpMacBinding = {
    */
   tag: Array<string>;
 };
+
+export type ValidateIpPayload = { iface_name: string; ipv4: string };

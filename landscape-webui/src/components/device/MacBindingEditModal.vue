@@ -7,11 +7,7 @@ import {
   get_mac_binding_by_id,
   create_mac_binding,
   update_mac_binding,
-} from "@/api/mac_binding";
-import {
-  get_mac_binding_by_id,
-  create_mac_binding,
-  update_mac_binding,
+  validate_mac_binding_ip,
 } from "@/api/mac_binding";
 import { useI18n } from "vue-i18n";
 
@@ -74,8 +70,24 @@ const macRule = {
 
 const ipRule = {
   trigger: ["input", "blur"],
-  validator(_: unknown, value: string) {
+  async validator(_: unknown, value: string) {
     if (value && !isIP(value)) return new Error("请输入有效的 IP 地址");
+
+    if (value && rule.value.iface_name && isIP(value) === 4) {
+      try {
+        const isValid = await validate_mac_binding_ip(
+          rule.value.iface_name,
+          value,
+        );
+        if (!isValid) {
+          return new Error(
+            `IP 地址不在网卡 ${rule.value.iface_name} 的 DHCP 网段范围内`,
+          );
+        }
+      } catch (e) {
+        console.error("IP validation failed", e);
+      }
+    }
     return true;
   },
 };
