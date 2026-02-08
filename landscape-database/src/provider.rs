@@ -18,6 +18,7 @@ use crate::{
     flow_wan::repository::FlowWanServiceRepository,
     geo_ip::repository::GeoIpSourceConfigRepository, geo_site::repository::GeoSiteConfigRepository,
     iface::repository::NetIfaceRepository, iface_ip::repository::IfaceIpServiceRepository,
+    mac_binding::repository::IpMacBindingRepository,
     mss_clamp::repository::MssClampServiceRepository, nat::repository::NatServiceRepository,
     pppd::repository::PPPDServiceRepository, ra::repository::IPV6RAServiceRepository,
     route_lan::repository::RouteLanServiceRepository,
@@ -111,6 +112,7 @@ define_store!(
     static_nat_mapping_store: (StaticNatMappingConfigRepository, static_nat_mappings),
     dns_redirect_rule_store: (DNSRedirectRuleRepository, dns_redirects),
     dns_upstream_config_store: (DnsUpstreamRepository, dns_upstream_configs),
+    ip_mac_binding_store: (IpMacBindingRepository, ip_mac_bindings),
 );
 
 #[cfg(test)]

@@ -20,6 +20,7 @@ use std::{
 
 use crate::dhcp::v4_server::config::DHCPv4ServiceConfig;
 use crate::dhcp::v6_client::config::IPV6PDServiceConfig;
+use crate::mac_binding::IpMacBinding;
 use dns::DNSRuleConfig;
 use firewall::FirewallServiceConfig;
 use flow::FlowWanServiceConfig;
@@ -71,6 +72,7 @@ pub struct InitConfig {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub pppds: Vec<PPPDServiceConfig>,
 
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub flow_rules: Vec<FlowConfig>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub dns_rules: Vec<DNSRuleConfig>,
@@ -113,6 +115,9 @@ pub struct InitConfig {
 
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub dns_upstream_configs: Vec<DnsUpstreamConfig>,
+
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub ip_mac_bindings: Vec<IpMacBinding>,
 }
 
 /// auth realte config

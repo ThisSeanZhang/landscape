@@ -31,6 +31,8 @@ pub mod store;
 pub mod test;
 pub mod utils;
 
+pub mod mac_binding;
+
 pub mod auth;
 
 pub mod pty;
