@@ -1,0 +1,16 @@
+use sea_orm_migration::prelude::*;
+
+#[derive(DeriveIden)]
+pub enum IpMacBinding {
+    #[sea_orm(iden = "ip_mac_bindings")]
+    Table,
+    Id,
+    UpdateAt,
+    Name,
+    FakeName,
+    Remark,
+    Mac,
+    Ipv4,
+    Ipv6,
+    Tag,
+}

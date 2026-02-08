@@ -7,6 +7,7 @@ pub mod firewall;
 pub mod flow_wan;
 pub mod iface;
 pub mod iface_ip;
+pub mod mac_binding;
 pub mod mss_clamp;
 pub mod pppd;
 pub mod provider;
