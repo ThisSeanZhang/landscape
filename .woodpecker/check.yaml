@@ -1,5 +1,5 @@
 when:
-  - event: [push]
+  # - event: [push]
 labels:
   name: la24
 
