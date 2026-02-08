@@ -18,6 +18,11 @@ pub struct IpMacBinding {
     #[ts(as = "Option<_>", optional)]
     pub update_at: f64,
 
+    /// Optional interface name this binding belongs to
+    #[serde(default)]
+    #[ts(optional)]
+    pub iface_name: Option<String>,
+
     /// The display name chosen by the user
     pub name: String,
     /// Name to show when "Private Mode" is enabled

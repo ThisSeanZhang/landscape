@@ -8,6 +8,11 @@ import {
   create_mac_binding,
   update_mac_binding,
 } from "@/api/mac_binding";
+import {
+  get_mac_binding_by_id,
+  create_mac_binding,
+  update_mac_binding,
+} from "@/api/mac_binding";
 import { useI18n } from "vue-i18n";
 
 type Props = {
@@ -29,6 +34,7 @@ const rule = ref<IpMacBinding>({
 });
 
 const commit_spin = ref(false);
+
 const isModified = computed(() => {
   return JSON.stringify(rule.value) !== origin_rule_json.value;
 });
@@ -129,6 +135,14 @@ async function saveRule() {
 
         <n-form-item-gi :span="2" label="MAC 地址" path="mac">
           <n-input v-model:value="rule.mac" placeholder="00:11:22:33:44:55" />
+        </n-form-item-gi>
+
+        <n-form-item-gi :span="2" label="所属网络" path="iface_name">
+          <n-input
+            v-model:value="rule.iface_name"
+            placeholder="网卡名称 (可选), 例如: eth0"
+            clearable
+          />
         </n-form-item-gi>
 
         <n-form-item-gi :span="2" label="隐私名称" path="fake_name">
