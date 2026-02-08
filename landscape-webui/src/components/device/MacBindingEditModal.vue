@@ -9,6 +9,7 @@ import {
   update_mac_binding,
   validate_mac_binding_ip,
 } from "@/api/mac_binding";
+import { get_all_dhcp_v4_status } from "@/api/service_dhcp_v4";
 import { useI18n } from "vue-i18n";
 
 type Props = {
@@ -30,12 +31,24 @@ const rule = ref<IpMacBinding>({
 });
 
 const commit_spin = ref(false);
+const ifaceOptions = ref<{ label: string; value: string }[]>([]);
 
 const isModified = computed(() => {
   return JSON.stringify(rule.value) !== origin_rule_json.value;
 });
 
 async function enter() {
+  // 加载可用的网卡列表
+  try {
+    const statusMap = await get_all_dhcp_v4_status();
+    ifaceOptions.value = Array.from(statusMap.keys()).map((name) => ({
+      label: name,
+      value: name,
+    }));
+  } catch (e) {
+    console.error("Failed to fetch DHCP status", e);
+  }
+
   if (props.rule_id) {
     const fetched = await get_mac_binding_by_id(props.rule_id);
     if (fetched) {
@@ -60,10 +73,9 @@ const formRef = ref();
 const macRule = {
   trigger: ["input", "blur"],
   validator(_: unknown, value: string) {
-    if (!value) return new Error("MAC 地址不能为空");
+    if (!value) return new Error(t("mac_binding.mac_required"));
     const macRegex = /^([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})$/;
-    if (!macRegex.test(value))
-      return new Error("请输入有效的 MAC 地址 (XX:XX:XX:XX:XX:XX)");
+    if (!macRegex.test(value)) return new Error(t("mac_binding.mac_invalid"));
     return true;
   },
 };
@@ -71,7 +83,7 @@ const macRule = {
 const ipRule = {
   trigger: ["input", "blur"],
   async validator(_: unknown, value: string) {
-    if (value && !isIP(value)) return new Error("请输入有效的 IP 地址");
+    if (value && !isIP(value)) return new Error(t("mac_binding.ipv4_invalid"));
 
     if (value && rule.value.iface_name && isIP(value) === 4) {
       try {
@@ -81,7 +93,9 @@ const ipRule = {
         );
         if (!isValid) {
           return new Error(
-            `IP 地址不在网卡 ${rule.value.iface_name} 的 DHCP 网段范围内`,
+            t("mac_binding.ipv4_out_of_range", {
+              iface: rule.value.iface_name,
+            }),
           );
         }
       } catch (e) {
@@ -95,7 +109,7 @@ const ipRule = {
 const rules = {
   name: {
     required: true,
-    message: "请输入展示名称",
+    message: t("mac_binding.name_required"),
     trigger: "blur",
   },
   mac: macRule,
@@ -112,7 +126,7 @@ async function saveRule() {
     } else {
       await create_mac_binding(rule.value);
     }
-    message.success(t("config.save_success") || "保存成功");
+    message.success(t("mac_binding.save_success"));
     show.value = false;
     emit("refresh");
   } catch (e) {
@@ -129,7 +143,9 @@ async function saveRule() {
     v-model:show="show"
     style="width: 600px"
     preset="card"
-    title="设备管理"
+    :title="
+      props.rule_id ? t('mac_binding.edit_title') : t('mac_binding.add_title')
+    "
     @after-enter="enter"
   >
     <n-form
@@ -141,46 +157,71 @@ async function saveRule() {
       label-width="100"
     >
       <n-grid :cols="2" x-gap="12">
-        <n-form-item-gi :span="2" label="展示名称" path="name">
-          <n-input v-model:value="rule.name" placeholder="例如: 我的手机" />
-        </n-form-item-gi>
-
-        <n-form-item-gi :span="2" label="MAC 地址" path="mac">
-          <n-input v-model:value="rule.mac" placeholder="00:11:22:33:44:55" />
-        </n-form-item-gi>
-
-        <n-form-item-gi :span="2" label="所属网络" path="iface_name">
+        <n-form-item-gi :span="2" :label="t('mac_binding.name')" path="name">
           <n-input
+            v-model:value="rule.name"
+            :placeholder="t('mac_binding.name_placeholder')"
+          />
+        </n-form-item-gi>
+
+        <n-form-item-gi :span="2" :label="t('mac_binding.mac')" path="mac">
+          <n-input
+            v-model:value="rule.mac"
+            :placeholder="t('mac_binding.mac_placeholder')"
+          />
+        </n-form-item-gi>
+
+        <n-form-item-gi
+          :span="2"
+          :label="t('mac_binding.iface')"
+          path="iface_name"
+        >
+          <n-select
             v-model:value="rule.iface_name"
-            placeholder="网卡名称 (可选), 例如: eth0"
+            :options="ifaceOptions"
+            :placeholder="t('mac_binding.iface_placeholder')"
             clearable
           />
         </n-form-item-gi>
 
-        <n-form-item-gi :span="2" label="隐私名称" path="fake_name">
+        <n-form-item-gi
+          :span="2"
+          :label="t('mac_binding.fake_name')"
+          path="fake_name"
+        >
           <n-input
             v-model:value="rule.fake_name"
-            placeholder="可选: 隐私模式下显示的名称"
+            :placeholder="t('mac_binding.fake_name_placeholder')"
           />
         </n-form-item-gi>
 
-        <n-form-item-gi label="IPv4 映射" path="ipv4">
-          <n-input v-model:value="rule.ipv4" placeholder="可选: 192.168.x.x" />
+        <n-form-item-gi :label="t('mac_binding.ipv4')" path="ipv4">
+          <n-input
+            v-model:value="rule.ipv4"
+            :placeholder="t('mac_binding.ipv4_placeholder')"
+          />
         </n-form-item-gi>
 
-        <n-form-item-gi label="IPv6 映射" path="ipv6">
-          <n-input v-model:value="rule.ipv6" placeholder="可选: IPv6 地址" />
+        <n-form-item-gi :label="t('mac_binding.ipv6')" path="ipv6">
+          <n-input
+            v-model:value="rule.ipv6"
+            :placeholder="t('mac_binding.ipv6_placeholder')"
+          />
         </n-form-item-gi>
 
-        <n-form-item-gi :span="2" label="标签" path="tag">
+        <n-form-item-gi :span="2" :label="t('mac_binding.tag')" path="tag">
           <n-dynamic-tags v-model:value="rule.tag" />
         </n-form-item-gi>
 
-        <n-form-item-gi :span="2" label="备注" path="remark">
+        <n-form-item-gi
+          :span="2"
+          :label="t('mac_binding.remark')"
+          path="remark"
+        >
           <n-input
             v-model:value="rule.remark"
             type="textarea"
-            placeholder="关于该设备的更多信息..."
+            :placeholder="t('mac_binding.remark_placeholder')"
           />
         </n-form-item-gi>
       </n-grid>
@@ -189,14 +230,16 @@ async function saveRule() {
     <template #footer>
       <n-flex justify="end">
         <n-space>
-          <n-button @click="show = false">取消</n-button>
+          <n-button @click="show = false">{{
+            t("mac_binding.cancel")
+          }}</n-button>
           <n-button
             type="primary"
             :loading="commit_spin"
             @click="saveRule"
             :disabled="!isModified"
           >
-            保存
+            {{ t("mac_binding.save") }}
           </n-button>
         </n-space>
       </n-flex>

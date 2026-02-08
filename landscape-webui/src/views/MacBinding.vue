@@ -36,7 +36,7 @@ const show_edit_modal = ref(false);
         <template #icon>
           <n-icon><Add /></n-icon>
         </template>
-        新增设备
+        {{ t("mac_binding.add_btn") }}
       </n-button>
     </n-flex>
 
@@ -51,11 +51,13 @@ const show_edit_modal = ref(false);
 
       <n-empty
         v-if="bindings?.length === 0 && !loading"
-        description="暂无设备绑定信息"
+        :description="t('mac_binding.empty_desc')"
         style="margin-top: 100px"
       >
         <template #extra>
-          <n-button @click="show_edit_modal = true">立刻添加</n-button>
+          <n-button @click="show_edit_modal = true">{{
+            t("mac_binding.add_now")
+          }}</n-button>
         </template>
       </n-empty>
     </n-spin>
