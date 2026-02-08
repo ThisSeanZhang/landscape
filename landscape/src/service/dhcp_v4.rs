@@ -34,12 +34,17 @@ pub struct DHCPv4ServerStarter {
     iface_lease_map: Arc<RwLock<HashMap<String, Arc<RwLock<DHCPv4OfferInfo>>>>>,
     iface_scan_map: Arc<RwLock<HashMap<String, Arc<RwLock<ArpScanStatus>>>>>,
     route_service: IpRouteService,
+    db_provider: LandscapeDBServiceProvider,
 }
 
 impl DHCPv4ServerStarter {
-    pub fn new(route_service: IpRouteService) -> DHCPv4ServerStarter {
+    pub fn new(
+        route_service: IpRouteService,
+        db_provider: LandscapeDBServiceProvider,
+    ) -> DHCPv4ServerStarter {
         DHCPv4ServerStarter {
             route_service,
+            db_provider,
             iface_lease_map: Arc::new(RwLock::new(HashMap::new())),
             iface_scan_map: Arc::new(RwLock::new(HashMap::new())),
         }
@@ -51,10 +56,36 @@ impl ServiceStarterTrait for DHCPv4ServerStarter {
     type Status = DefaultServiceStatus;
     type Config = DHCPv4ServiceConfig;
 
-    async fn start(&self, config: DHCPv4ServiceConfig) -> DefaultWatchServiceStatus {
+    async fn start(&self, mut config: DHCPv4ServiceConfig) -> DefaultWatchServiceStatus {
         let service_status = DefaultWatchServiceStatus::new();
 
         if config.enable {
+            // 获取全局及本接口的 IP-MAC 绑定信息, 并同步到当前 DHCP 服务的静态绑定中
+            use landscape_common::dhcp::v4_server::config::MacBindingRecord;
+
+            let bindings = self
+                .db_provider
+                .ip_mac_binding_store()
+                .find_dhcp_bindings(
+                    config.iface_name.clone(),
+                    config.config.server_ip_addr,
+                    config.config.network_mask,
+                )
+                .await
+                .unwrap_or_default();
+
+            // 清理原有的静态绑定信息（已迁移到全局设备管理），以全局设备管理库为准
+            config.config.mac_binding_records.clear();
+
+            for binding in bindings {
+                if let Some(ipv4) = binding.ipv4 {
+                    config.config.mac_binding_records.push(MacBindingRecord {
+                        mac: binding.mac,
+                        ip: ipv4,
+                        expire_time: 86400,
+                    });
+                }
+            }
             if let Some(iface) = get_iface_by_name(&config.iface_name).await {
                 let store_key = config.get_store_key();
                 let assigned_ips = {
@@ -170,7 +201,7 @@ impl DHCPv4ServerManagerService {
         mut dev_observer: broadcast::Receiver<IfaceObserverAction>,
     ) -> Self {
         let store = store_service.dhcp_v4_server_store();
-        let server_starter = DHCPv4ServerStarter::new(route_service);
+        let server_starter = DHCPv4ServerStarter::new(route_service, store_service.clone());
         let service =
             ServiceManager::init(store.list().await.unwrap(), server_starter.clone()).await;
 

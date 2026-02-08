@@ -55,3 +55,10 @@ impl LandscapeDBStore<Uuid> for IpMacBinding {
         self.id
     }
 }
+
+#[derive(Serialize, Deserialize, Debug, Clone, TS)]
+#[ts(export, export_to = "common/mac_binding.d.ts")]
+pub struct ValidateIpPayload {
+    pub iface_name: String,
+    pub ipv4: String,
+}

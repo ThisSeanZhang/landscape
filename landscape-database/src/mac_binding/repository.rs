@@ -38,26 +38,32 @@ impl IpMacBindingRepository {
         Ok(models.into_iter().map(|m| m.into()).collect())
     }
 
-    pub async fn find_by_cidr(
+    pub async fn find_dhcp_bindings(
         &self,
+        iface_name: String,
         server_ip: Ipv4Addr,
         mask: u8,
     ) -> Result<Vec<IpMacBinding>, LdError> {
-        let all = self.list_all().await?;
         let server_ip_u32 = u32::from(server_ip);
         let mask_u32 = if mask == 0 { 0 } else { 0xFFFFFFFFu32 << (32 - mask) };
-        let network = server_ip_u32 & mask_u32;
+        let network_start = server_ip_u32 & mask_u32;
+        let network_end = network_start | !mask_u32;
 
-        Ok(all
-            .into_iter()
-            .filter(|binding| {
-                if let Some(ipv4) = binding.ipv4 {
-                    (u32::from(ipv4) & mask_u32) == network
-                } else {
-                    false
-                }
-            })
-            .collect())
+        let models = IpMacBindingEntity::find()
+            .filter(
+                sea_orm::Condition::all()
+                    .add(
+                        sea_orm::Condition::any()
+                            .add(Column::IfaceName.eq(iface_name))
+                            .add(Column::IfaceName.is_null()),
+                    )
+                    .add(Column::Ipv4Int.gte(network_start))
+                    .add(Column::Ipv4Int.lte(network_end)),
+            )
+            .all(self.db())
+            .await?;
+
+        Ok(models.into_iter().map(|m| m.into()).collect())
     }
 }
 
