@@ -14,6 +14,9 @@ export default {
   sysinfo,
   config,
   error,
+  common: {
+    private_mode: "隐私模式",
+  },
   routes: {
     dashboard: "系统概览",
     status: "服务状态",
@@ -41,5 +44,6 @@ export default {
     "ipv6-pd": "IPv6 PD",
     "dhcp-v4": "DHCPv4 服务",
     "ipv6-ra": "IPv6 RA",
+    "mac-binding": "设备管理",
   },
 };

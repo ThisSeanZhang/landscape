@@ -8,3 +8,4 @@ pub mod geo_site_service;
 pub mod static_nat_mapping;
 
 pub mod dns;
+pub mod mac_binding;
