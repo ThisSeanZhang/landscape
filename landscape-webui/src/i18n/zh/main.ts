@@ -3,6 +3,7 @@ import connect from "./metric/connect";
 import sysinfo from "./sysinfo";
 import config from "./config";
 import error from "./error";
+import mac_binding from "./mac_binding";
 
 export default {
   docker_divider: "Docker 容器",
@@ -14,6 +15,7 @@ export default {
   sysinfo,
   config,
   error,
+  mac_binding,
   common: {
     private_mode: "隐私模式",
   },

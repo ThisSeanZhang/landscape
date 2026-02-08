@@ -1,15 +1,16 @@
 <script setup lang="ts">
 import { ref } from "vue";
 import { IpMacBinding } from "landscape-types/common/mac_binding";
-import { delete_mac_binding } from "@/api/mac_binding";
+import { delete_mac_binding, validate_mac_binding_ip } from "@/api/mac_binding";
 import { useFrontEndStore } from "@/stores/front_end_config";
 import { useI18n } from "vue-i18n";
 import { Settings, TrashCan } from "@vicons/carbon";
 import MacBindingEditModal from "./MacBindingEditModal.vue";
-import { computed } from "vue";
+import { computed, onMounted } from "vue";
 
 const { t } = useI18n();
 const frontEndStore = useFrontEndStore();
+const isValid = ref<boolean | null>(null);
 
 const displayName = computed(() => {
   if (frontEndStore.presentation_mode && props.rule.fake_name) {
@@ -30,6 +31,25 @@ const props = withDefaults(defineProps<Props>(), {
 const emit = defineEmits(["refresh"]);
 
 const show_edit_modal = ref(false);
+
+async function validate() {
+  if (props.rule.iface_name && props.rule.ipv4) {
+    try {
+      isValid.value = await validate_mac_binding_ip(
+        props.rule.iface_name,
+        props.rule.ipv4,
+      );
+    } catch (e) {
+      console.error("Async validation failed", e);
+    }
+  } else {
+    isValid.value = true;
+  }
+}
+
+onMounted(() => {
+  validate();
+});
 
 async function del() {
   if (props.rule.id) {
@@ -57,6 +77,14 @@ async function del() {
         >
           {{ t("common.private_mode") || "隐私模式" }}
         </n-tag>
+        <n-tooltip v-if="isValid === false" trigger="hover">
+          <template #trigger>
+            <n-tag size="small" type="error" round>
+              {{ t("mac_binding.invalid_status") }}
+            </n-tag>
+          </template>
+          {{ t("mac_binding.ipv4_out_of_range", { iface: rule.iface_name }) }}
+        </n-tooltip>
       </n-space>
     </template>
 
@@ -67,27 +95,33 @@ async function del() {
       :column="1"
       size="small"
     >
-      <n-descriptions-item label="MAC 地址">
+      <n-descriptions-item :label="t('mac_binding.mac')">
         <code>{{ frontEndStore.MASK_INFO(rule.mac) }}</code>
       </n-descriptions-item>
 
-      <n-descriptions-item v-if="rule.iface_name" label="所属网络">
+      <n-descriptions-item
+        v-if="rule.iface_name"
+        :label="t('mac_binding.iface')"
+      >
         <n-tag size="small" type="primary" :bordered="false">{{
           rule.iface_name
         }}</n-tag>
       </n-descriptions-item>
 
-      <n-descriptions-item v-if="rule.ipv4" label="IPv4">
+      <n-descriptions-item v-if="rule.ipv4" :label="t('mac_binding.ipv4')">
         {{ frontEndStore.MASK_INFO(rule.ipv4) }}
       </n-descriptions-item>
 
-      <n-descriptions-item v-if="rule.ipv6" label="IPv6">
+      <n-descriptions-item v-if="rule.ipv6" :label="t('mac_binding.ipv6')">
         <n-ellipsis style="max-width: 200px">
           {{ frontEndStore.MASK_INFO(rule.ipv6) }}
         </n-ellipsis>
       </n-descriptions-item>
 
-      <n-descriptions-item v-if="rule.tag && rule.tag.length > 0" label="标签">
+      <n-descriptions-item
+        v-if="rule.tag && rule.tag.length > 0"
+        :label="t('mac_binding.tag')"
+      >
         <n-space size="small">
           <n-tag
             v-for="tag in rule.tag"
@@ -102,7 +136,7 @@ async function del() {
         </n-space>
       </n-descriptions-item>
 
-      <n-descriptions-item v-if="rule.remark" label="备注">
+      <n-descriptions-item v-if="rule.remark" :label="t('mac_binding.remark')">
         <n-ellipsis :line-clamp="1">
           {{ rule.remark }}
         </n-ellipsis>
@@ -131,7 +165,7 @@ async function del() {
               </template>
             </n-button>
           </template>
-          确定删除吗?
+          {{ t("mac_binding.delete_confirm") }}
         </n-popconfirm>
       </n-flex>
     </template>

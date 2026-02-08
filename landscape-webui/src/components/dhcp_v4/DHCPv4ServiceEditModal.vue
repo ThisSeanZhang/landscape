@@ -1,21 +1,24 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
-import { useMessage } from "naive-ui";
+import { computed, h, ref } from "vue";
+import { NButton, useMessage, useNotification } from "naive-ui";
 import NewIpEdit from "../NewIpEdit.vue";
 import { ZoneType } from "@/lib/service_ipconfig";
-import {
-  DHCPv4ServiceConfig,
-  get_dhcp_range,
-  MacBindingRecord,
-} from "@/lib/dhcp_v4";
+import { DHCPv4ServiceConfig, get_dhcp_range } from "@/lib/dhcp_v4";
 import { formatMacAddress } from "@/lib/util";
 import { useDHCPv4ConfigStore } from "@/stores/status_dhcp_v4";
 import {
   get_iface_dhcp_v4_config,
   update_dhcp_v4_config,
 } from "@/api/service_dhcp_v4";
+import { check_iface_mac_bindings_validity } from "@/api/mac_binding";
 import { IfaceZoneType } from "landscape-types/common/iface";
+import { useI18n } from "vue-i18n";
+import { useRouter } from "vue-router";
+
 const message = useMessage();
+const notification = useNotification();
+const router = useRouter();
+const { t } = useI18n();
 
 const dhcpv4ConfigStore = useDHCPv4ConfigStore();
 
@@ -50,12 +53,43 @@ async function on_modal_enter() {
 async function save_config() {
   commit_loading.value = true;
   try {
-    let config = await update_dhcp_v4_config(service_config.value);
+    await update_dhcp_v4_config(service_config.value);
     await dhcpv4ConfigStore.UPDATE_INFO();
     show_model.value = false;
+
+    // 提交成功后检查现有绑定的合法性
+    const invalidBindings = await check_iface_mac_bindings_validity(
+      iface_info.iface_name,
+    );
+    if (invalidBindings.length > 0) {
+      notification.warning({
+        title: t("mac_binding.invalid_bindings_title"),
+        content: t("mac_binding.invalid_bindings_warning", {
+          iface: iface_info.iface_name,
+          count: invalidBindings.length,
+        }),
+        duration: 15000,
+        action: () =>
+          h(
+            NButton,
+            {
+              text: true,
+              type: "primary",
+              onClick: () => {
+                router.push("/mac-binding");
+              },
+            },
+            {
+              default: () => t("mac_binding.go_to_manage"),
+            },
+          ),
+      });
+    } else {
+      message.success(t("config.save_success") || "保存成功");
+    }
   } catch (e: any) {
     console.log(e);
-    message.error(e.response.data.msg);
+    message.error(e.response?.data?.msg || "保存失败");
   } finally {
     commit_loading.value = false;
   }
@@ -88,14 +122,6 @@ const network_mask = computed({
     service_config.value.config.ip_range_end = end;
   },
 });
-
-function onCreateBinding(): MacBindingRecord {
-  return {
-    mac: "",
-    ip: "",
-    expire_time: 300,
-  };
-}
 </script>
 
 <template>
@@ -103,7 +129,6 @@ function onCreateBinding(): MacBindingRecord {
     :auto-focus="false"
     v-model:show="show_model"
     @after-enter="on_modal_enter"
-    :mask-closable="false"
   >
     <n-card
       style="width: 600px"
@@ -142,39 +167,6 @@ function onCreateBinding(): MacBindingRecord {
               <NewIpEdit
                 v-model:ip="service_config.config.ip_range_end"
               ></NewIpEdit>
-            </n-form-item-gi>
-            <n-form-item-gi label="Mac IP 地址绑定" :span="5">
-              <n-dynamic-input
-                v-model:value="service_config.config.mac_binding_records"
-                :on-create="onCreateBinding"
-              >
-                <template #create-button-default>
-                  新建 MAC 静态 IP 映射
-                </template>
-                <template #default="{ value }">
-                  <n-input-group>
-                    <n-input
-                      :value="value.mac"
-                      @update:value="
-                        (v: string) => (value.mac = formatMacAddress(v))
-                      "
-                      type="text"
-                      placeholder="Mac"
-                    />
-                    <n-input
-                      v-model:value="value.ip"
-                      type="text"
-                      placeholder="IPv4"
-                    />
-                    <n-input-number
-                      v-model:value="value.expire_time"
-                      style="width: 230px"
-                      placeholder="过期时间"
-                      :show-button="false"
-                    />
-                  </n-input-group>
-                </template>
-              </n-dynamic-input>
             </n-form-item-gi>
           </n-grid>
         </n-form>

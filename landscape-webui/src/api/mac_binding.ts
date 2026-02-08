@@ -38,3 +38,12 @@ export async function validate_mac_binding_ip(
   });
   return data.data;
 }
+
+export async function check_iface_mac_bindings_validity(
+  iface_name: string,
+): Promise<IpMacBinding[]> {
+  let data = await axiosService.get(
+    `config/mac_bindings/check_invalid/${iface_name}`,
+  );
+  return data.data;
+}
