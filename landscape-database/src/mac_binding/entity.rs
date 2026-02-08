@@ -23,6 +23,7 @@ pub struct Model {
     pub remark: Option<String>,
     pub mac: String,
     pub ipv4: Option<String>,
+    pub ipv4_int: Option<u32>,
     pub ipv6: Option<String>,
     pub tag: DBJson,
 }
@@ -72,6 +73,7 @@ pub(crate) fn update(data: IpMacBinding, active: &mut ActiveModel) {
     active.remark = Set(data.remark);
     active.mac = Set(data.mac.to_string());
     active.ipv4 = Set(data.ipv4.map(|ip| ip.to_string()));
+    active.ipv4_int = Set(data.ipv4.map(|ip| u32::from(ip)));
     active.ipv6 = Set(data.ipv6.map(|ip| ip.to_string()));
     active.tag = Set(serde_json::to_value(&data.tag).unwrap_or(serde_json::Value::Array(vec![])));
 }
