@@ -24,6 +24,8 @@ pub struct Model {
 
     pub server_ip_addr: String,
     pub network_mask: u8,
+    pub network_start: u32,
+    pub network_end: u32,
 
     pub address_lease_time: Option<u32>,
 
@@ -74,6 +76,14 @@ impl UpdateActiveModel<ActiveModel> for DHCPv4ServiceConfig {
         active.ip_range_end = Set(self.config.ip_range_end.map(|ip| ip.to_string()));
         active.server_ip_addr = Set(self.config.server_ip_addr.to_string());
         active.network_mask = Set(self.config.network_mask);
+        let ip_u32 = u32::from(self.config.server_ip_addr);
+        let mask_u32 = if self.config.network_mask == 0 {
+            0
+        } else {
+            0xFFFFFFFFu32 << (32 - self.config.network_mask)
+        };
+        active.network_start = Set(ip_u32 & mask_u32);
+        active.network_end = Set((ip_u32 & mask_u32) | !mask_u32);
         active.address_lease_time = Set(self.config.address_lease_time);
         active.mac_binding_records = Set(serde_json::to_value(&self.config.mac_binding_records)
             .unwrap_or(serde_json::Value::Array(vec![])));
@@ -87,6 +97,14 @@ pub(crate) fn update(config: DHCPv4ServiceConfig, active: &mut ActiveModel) {
     active.ip_range_end = Set(config.config.ip_range_end.map(|ip| ip.to_string()));
     active.server_ip_addr = Set(config.config.server_ip_addr.to_string());
     active.network_mask = Set(config.config.network_mask);
+    let ip_u32 = u32::from(config.config.server_ip_addr);
+    let mask_u32 = if config.config.network_mask == 0 {
+        0
+    } else {
+        0xFFFFFFFFu32 << (32 - config.config.network_mask)
+    };
+    active.network_start = Set(ip_u32 & mask_u32);
+    active.network_end = Set((ip_u32 & mask_u32) | !mask_u32);
     active.address_lease_time = Set(config.config.address_lease_time);
     active.mac_binding_records = Set(serde_json::to_value(&config.config.mac_binding_records)
         .unwrap_or(serde_json::Value::Array(vec![])));
