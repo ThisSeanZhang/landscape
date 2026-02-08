@@ -71,6 +71,12 @@ async function del() {
         <code>{{ frontEndStore.MASK_INFO(rule.mac) }}</code>
       </n-descriptions-item>
 
+      <n-descriptions-item v-if="rule.iface_name" label="所属网络">
+        <n-tag size="small" type="primary" :bordered="false">{{
+          rule.iface_name
+        }}</n-tag>
+      </n-descriptions-item>
+
       <n-descriptions-item v-if="rule.ipv4" label="IPv4">
         {{ frontEndStore.MASK_INFO(rule.ipv4) }}
       </n-descriptions-item>

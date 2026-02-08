@@ -17,6 +17,7 @@ pub struct Model {
     #[sea_orm(primary_key, auto_increment = false)]
     pub id: DBId,
     pub update_at: DBTimestamp,
+    pub iface_name: Option<String>,
     pub name: String,
     pub fake_name: Option<String>,
     pub remark: Option<String>,
@@ -37,6 +38,7 @@ impl From<Model> for IpMacBinding {
         IpMacBinding {
             id: entity.id,
             update_at: entity.update_at,
+            iface_name: entity.iface_name,
             name: entity.name,
             fake_name: entity.fake_name,
             remark: entity.remark,
@@ -64,6 +66,7 @@ impl UpdateActiveModel<ActiveModel> for IpMacBinding {
 
 pub(crate) fn update(data: IpMacBinding, active: &mut ActiveModel) {
     active.update_at = Set(data.update_at);
+    active.iface_name = Set(data.iface_name);
     active.name = Set(data.name);
     active.fake_name = Set(data.fake_name);
     active.remark = Set(data.remark);
