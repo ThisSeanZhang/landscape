@@ -13,6 +13,7 @@ import Config from "@/views/Config.vue";
 
 import Login from "@/views/Login.vue";
 import StaticNatMapping from "@/views/StaticNatMapping.vue";
+import MacBinding from "@/views/MacBinding.vue";
 
 import DnsRedirect from "@/views/dns/DnsRedirect.vue";
 import DnsUpstream from "@/views/dns/DnsUpstream.vue";
@@ -78,6 +79,11 @@ const inner_zone: Array<RouteRecordRaw> = [
     path: "/config",
     name: "routes.config",
     component: Config,
+  },
+  {
+    path: "/mac-binding",
+    name: "routes.mac-binding",
+    component: MacBinding,
   },
   {
     path: "/:pathMatch(.*)*",

@@ -10,3 +10,4 @@ pub mod static_nat_mapping;
 pub mod dns_redirect;
 pub mod dns_rule;
 pub mod dns_upstream;
+pub mod mac_binding;
