@@ -1,11 +1,11 @@
-when:
-  # - event: [push]
-labels:
-  name: la24
+# when:
+#  - event: [push]
+# labels:
+#   name: la24
 
-steps:
-- name: ckeck
-  image: thisseanzhang/landscape:build_base
-  commands:
-  - rustc --version
-  - cargo fmt -- --check
+# steps:
+# - name: ckeck
+#   image: thisseanzhang/landscape:build_base
+#   commands:
+#   - rustc --version
+#   - cargo fmt -- --check
