@@ -152,11 +152,7 @@ function build_ip_map(data: ArpScanInfo[]): Map<string, ArpInfo> {
       <tbody>
         <tr v-for="item in show_item">
           <td class="assign-item">
-            {{
-              frontEndStore.presentation_mode
-                ? mask_string(item.hostname)
-                : item.hostname
-            }}
+            {{ frontEndStore.MASK_INFO(item.hostname) }}
           </td>
           <td class="assign-item">
             <DHCPMacExhibit
@@ -166,9 +162,7 @@ function build_ip_map(data: ArpScanInfo[]): Map<string, ArpInfo> {
             </DHCPMacExhibit>
           </td>
           <td class="assign-item">
-            {{
-              frontEndStore.presentation_mode ? mask_string(item.ip) : item.ip
-            }}
+            {{ frontEndStore.MASK_INFO(item.ip) }}
           </td>
 
           <td class="assign-item">
@@ -204,9 +198,7 @@ function build_ip_map(data: ArpScanInfo[]): Map<string, ArpInfo> {
             </DHCPMacExhibit>
           </td>
           <td class="not-assign-item">
-            {{
-              frontEndStore.presentation_mode ? mask_string(item.ip) : item.ip
-            }}
+            {{ frontEndStore.MASK_INFO(item.ip) }}
           </td>
           <td class="not-assign-item">未知</td>
           <td class="not-assign-item">未知</td>

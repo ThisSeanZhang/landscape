@@ -12,13 +12,11 @@ export const useFrontEndStore = defineStore(
       username.value = name;
     }
 
-    function MASK_INFO(
-      value: string | undefined | null,
-    ): string | undefined | null {
+    function MASK_INFO(value: string | undefined | null): string {
       if (value) {
         return presentation_mode.value ? mask_string(value) : value;
       } else {
-        return value;
+        return "";
       }
     }
 
