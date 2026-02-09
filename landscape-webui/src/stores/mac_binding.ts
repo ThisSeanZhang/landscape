@@ -3,8 +3,10 @@ import { ref, computed } from "vue";
 import { IpMacBinding } from "landscape-types/common/mac_binding";
 import { get_mac_bindings } from "@/api/mac_binding";
 import { mask_string } from "@/lib/common";
+import { useFrontEndStore } from "./front_end_config";
 
 export const useMacBindingStore = defineStore("mac_binding", () => {
+  const frontEndStore = useFrontEndStore();
   const bindings = ref<IpMacBinding[]>([]);
   const loading = ref(false);
 
@@ -40,30 +42,56 @@ export const useMacBindingStore = defineStore("mac_binding", () => {
   }
 
   /**
-   * 获取显示文本
-   * @param key IP 地址、MAC 地址或主机名
-   * @param isPrivacyMode 是否开启隐私模式
-   * @returns 匹配到的名称或原始值的脱敏显示
+   * 获取名称显示，支持自定义 fallback（如 DHCP 主机名）
+   * @param key IP 或 MAC
+   * @param fallback 当无绑定记录时返回的备选值，默认为 key
    */
-  function GET_DISPLAY_NAME(
+  function GET_NAME_WITH_FALLBACK(
     key: string | undefined | null,
-    isPrivacyMode: boolean,
+    fallback?: string | null,
   ): string {
+    const isPrivacyMode = frontEndStore.presentation_mode;
+    const finalFallback = fallback ?? key ?? "";
+
+    if (!key) return isPrivacyMode ? mask_string(finalFallback) : finalFallback;
+
+    const lowerKey = key.toLowerCase();
+    const binding = macMap.value.get(lowerKey) || ipMap.value.get(lowerKey);
+
+    if (isPrivacyMode) {
+      if (binding && binding.fake_name) return binding.fake_name;
+      return mask_string(finalFallback);
+    }
+
+    return binding ? binding.name : finalFallback;
+  }
+
+  /**
+   * 获取显示文本 (IP/MAC 专用，无绑定则显示原始值的脱敏)
+   */
+  function GET_DISPLAY_NAME(key: string | undefined | null): string {
+    const isPrivacyMode = frontEndStore.presentation_mode;
     if (!key) return "";
 
     const lowerKey = key.toLowerCase();
     const binding = macMap.value.get(lowerKey) || ipMap.value.get(lowerKey);
 
     if (isPrivacyMode) {
-      // 隐私模式：如果有 fake_name 则使用，否则一律对原始值（IP/MAC）进行脱敏显示
-      if (binding && binding.fake_name) {
-        return binding.fake_name;
-      }
+      if (binding && binding.fake_name) return binding.fake_name;
       return mask_string(key);
     }
 
-    // 正常模式：优先显示绑定名称，无绑定显示原始值
     return binding ? binding.name : key;
+  }
+
+  /**
+   * 获取绑定的 ID (用于快速跳转编辑)
+   */
+  function GET_BINDING_ID(key: string | undefined | null): string | null {
+    if (!key) return null;
+    const lowerKey = key.toLowerCase();
+    const binding = macMap.value.get(lowerKey) || ipMap.value.get(lowerKey);
+    return binding ? (binding.id ?? null) : null;
   }
 
   return {
@@ -71,5 +99,7 @@ export const useMacBindingStore = defineStore("mac_binding", () => {
     loading,
     UPDATE_INFO,
     GET_DISPLAY_NAME,
+    GET_NAME_WITH_FALLBACK,
+    GET_BINDING_ID,
   };
 });
