@@ -13,7 +13,9 @@ import { usePreferenceStore } from "@/stores/preference";
 const prefStore = usePreferenceStore();
 import { mask_string } from "@/lib/common";
 import { Key } from "@vicons/tabler";
+import { AddAlt, Edit } from "@vicons/carbon";
 import { useMacBindingStore } from "@/stores/mac_binding";
+import MacBindingEditModal from "@/components/device/MacBindingEditModal.vue";
 
 const frontEndStore = useFrontEndStore();
 const macBindingStore = useMacBindingStore();
@@ -113,6 +115,30 @@ function build_ip_map(data: ArpScanInfo[]): Map<string, ArpInfo> {
 
   return map;
 }
+
+const showQuickBind = ref(false);
+const initialValues = ref<{
+  mac?: string;
+  ipv4?: string;
+  name?: string;
+  iface_name?: string;
+}>({});
+const bindRuleId = ref<string | null>(null);
+
+function quickBind(ip: string, mac?: string, hostname?: string | null) {
+  const targetMac = mac || Array.from(arp_ip_map.value.get(ip)?.macs || [])[0];
+  if (!targetMac) return;
+
+  const existingId = macBindingStore.GET_BINDING_ID(targetMac);
+  bindRuleId.value = existingId;
+  initialValues.value = {
+    mac: targetMac,
+    ipv4: ip,
+    name: hostname || "",
+    iface_name: props.iface_name,
+  };
+  showQuickBind.value = true;
+}
 </script>
 
 <template>
@@ -149,12 +175,15 @@ function build_ip_map(data: ArpScanInfo[]): Map<string, ArpInfo> {
               </template>
             </Notice>
           </th>
+          <th class="assign-head" style="width: 80px">操作</th>
         </tr>
       </thead>
       <tbody>
         <tr v-for="item in show_item">
           <td class="assign-item">
-            {{ frontEndStore.MASK_INFO(item.hostname) }}
+            {{
+              macBindingStore.GET_NAME_WITH_FALLBACK(item.mac, item.hostname)
+            }}
           </td>
           <td class="assign-item">
             <DHCPMacExhibit
@@ -164,12 +193,7 @@ function build_ip_map(data: ArpScanInfo[]): Map<string, ArpInfo> {
             </DHCPMacExhibit>
           </td>
           <td class="assign-item">
-            {{
-              macBindingStore.GET_DISPLAY_NAME(
-                item.mac,
-                frontEndStore.presentation_mode,
-              )
-            }}
+            {{ frontEndStore.MASK_INFO(item.ip) }}
           </td>
 
           <td class="assign-item">
@@ -194,7 +218,21 @@ function build_ip_map(data: ArpScanInfo[]): Map<string, ArpInfo> {
             <OnlineStatus
               :ip_status="arp_ip_map.get(item.ip)?.ip_status"
             ></OnlineStatus>
-            <!-- {{ arp_ip_map.get(item.ip) }} -->
+          </td>
+          <td class="assign-item">
+            <n-button
+              size="tiny"
+              quaternary
+              circle
+              @click="quickBind(item.ip, item.mac, item.hostname)"
+            >
+              <template #icon>
+                <n-icon>
+                  <Edit v-if="macBindingStore.GET_BINDING_ID(item.mac)" />
+                  <AddAlt v-else />
+                </n-icon>
+              </template>
+            </n-button>
           </td>
         </tr>
 
@@ -205,12 +243,7 @@ function build_ip_map(data: ArpScanInfo[]): Map<string, ArpInfo> {
             </DHCPMacExhibit>
           </td>
           <td class="not-assign-item">
-            {{
-              macBindingStore.GET_DISPLAY_NAME(
-                item.ip,
-                frontEndStore.presentation_mode,
-              )
-            }}
+            {{ frontEndStore.MASK_INFO(item.ip) }}
           </td>
           <td class="not-assign-item">未知</td>
           <td class="not-assign-item">未知</td>
@@ -220,10 +253,39 @@ function build_ip_map(data: ArpScanInfo[]): Map<string, ArpInfo> {
             ></OnlineStatus>
             <!-- {{ arp_ip_map.get(item.ip) }} -->
           </td>
+          <td class="not-assign-item">
+            <n-button
+              size="tiny"
+              quaternary
+              circle
+              @click="quickBind(item.ip)"
+              :disabled="!arp_ip_map.get(item.ip)?.macs.size"
+            >
+              <template #icon>
+                <n-icon>
+                  <Edit
+                    v-if="
+                      macBindingStore.GET_BINDING_ID(
+                        Array.from(arp_ip_map.get(item.ip)?.macs || [])[0],
+                      )
+                    "
+                  />
+                  <AddAlt v-else />
+                </n-icon>
+              </template>
+            </n-button>
+          </td>
         </tr>
       </tbody>
     </n-table>
   </n-card>
+
+  <MacBindingEditModal
+    v-model:show="showQuickBind"
+    :rule_id="bindRuleId"
+    :initial-values="initialValues"
+    @refresh="emit('refresh')"
+  />
 </template>
 <style scoped>
 .assign-head {
