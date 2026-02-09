@@ -7,6 +7,9 @@ import { useI18n } from "vue-i18n";
 import { Settings, TrashCan } from "@vicons/carbon";
 import MacBindingEditModal from "./MacBindingEditModal.vue";
 import { computed, onMounted } from "vue";
+import { useMacBindingStore } from "@/stores/mac_binding";
+
+const macBindingStore = useMacBindingStore();
 
 const { t } = useI18n();
 const frontEndStore = useFrontEndStore();
@@ -54,6 +57,7 @@ onMounted(() => {
 async function del() {
   if (props.rule.id) {
     await delete_mac_binding(props.rule.id);
+    await macBindingStore.UPDATE_INFO();
     emit("refresh");
   }
 }

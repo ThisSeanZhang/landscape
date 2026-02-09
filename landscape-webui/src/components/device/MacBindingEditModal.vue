@@ -11,6 +11,9 @@ import {
 } from "@/api/mac_binding";
 import { get_all_dhcp_v4_status } from "@/api/service_dhcp_v4";
 import { useI18n } from "vue-i18n";
+import { useMacBindingStore } from "@/stores/mac_binding";
+
+const macBindingStore = useMacBindingStore();
 
 type Props = {
   rule_id: string | null;
@@ -128,6 +131,7 @@ async function saveRule() {
     }
     message.success(t("mac_binding.save_success"));
     show.value = false;
+    await macBindingStore.UPDATE_INFO();
     emit("refresh");
   } catch (e) {
     console.error(e);
