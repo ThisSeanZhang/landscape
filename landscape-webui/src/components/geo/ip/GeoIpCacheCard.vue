@@ -19,20 +19,12 @@ const show_detail_modal = ref(false);
       <n-flex>
         <n-flex>
           <n-tag :bordered="false">
-            {{
-              frontEndStore.presentation_mode
-                ? mask_string(geo_site.name)
-                : geo_site.name
-            }}
+            {{ frontEndStore.MASK_INFO(geo_site.name) }}
           </n-tag>
         </n-flex>
 
         <n-flex>
-          {{
-            frontEndStore.presentation_mode
-              ? mask_string(geo_site.key)
-              : geo_site.key
-          }}
+          {{ frontEndStore.MASK_INFO(geo_site.key) }}
         </n-flex>
       </n-flex>
 

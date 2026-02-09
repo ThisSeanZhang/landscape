@@ -257,18 +257,10 @@ const show_switch = computed(() => {
           {{ node.name }}
         </n-descriptions-item>
         <n-descriptions-item label="mac地址">
-          {{
-            frontEndStore.presentation_mode
-              ? mask_string(node.mac)
-              : (node.mac ?? "N/A")
-          }}
+          {{ frontEndStore.MASK_INFO(node.mac ?? "N/A") }}
         </n-descriptions-item>
         <n-descriptions-item label="mac">
-          {{
-            frontEndStore.presentation_mode
-              ? mask_string(node.perm_mac)
-              : (node.perm_mac ?? "N/A")
-          }}
+          {{ frontEndStore.MASK_INFO(node.perm_mac ?? "N/A") }}
         </n-descriptions-item>
         <n-descriptions-item label="设备类型">
           {{ node.dev_type ?? "N/A" }}/{{ node.dev_kind ?? "N/A" }}

@@ -106,7 +106,7 @@ const tags = computed(() => {
         {{ title }}
       </n-marquee> -->
       <n-ellipsis>
-        {{ frontEndStore.presentation_mode ? mask_string(title) : title }}
+        {{ frontEndStore.MASK_INFO(title) }}
       </n-ellipsis>
     </template>
     <template #header-extra>
@@ -160,11 +160,7 @@ const tags = computed(() => {
     <n-descriptions :column="1" label-placement="left">
       <n-descriptions-item label="镜像">
         <n-ellipsis style="max-width: 220px">
-          {{
-            frontEndStore.presentation_mode
-              ? mask_string(props.container.Image)
-              : props.container.Image
-          }}
+          {{ frontEndStore.MASK_INFO(props.container.Image) }}
         </n-ellipsis>
       </n-descriptions-item>
       <n-descriptions-item label="状态">

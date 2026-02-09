@@ -39,7 +39,7 @@ const columns = computed(() => [
           h(
             "span",
             { style: { fontWeight: "500" } },
-            frontEndStore.presentation_mode ? mask_string(row.ip) : row.ip,
+            frontEndStore.MASK_INFO(row.ip),
           ),
           h(
             NTooltip,
