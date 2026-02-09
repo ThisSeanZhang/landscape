@@ -13,8 +13,10 @@ import FlowExhibit from "@/components/flow/FlowExhibit.vue";
 import { useI18n } from "vue-i18n";
 import { useFrontEndStore } from "@/stores/front_end_config";
 import { mask_string } from "@/lib/common";
+import { useMacBindingStore } from "@/stores/mac_binding";
 
 const frontEndStore = useFrontEndStore();
+const macBindingStore = useMacBindingStore();
 
 const props = defineProps<{
   stats: IpHistoryStat[];
@@ -39,11 +41,21 @@ const columns = computed(() => [
         "div",
         { style: { display: "flex", alignItems: "center", gap: "12px" } },
         [
-          h(
-            "span",
-            { style: { fontWeight: "500" } },
-            frontEndStore.MASK_INFO(row.ip),
-          ),
+          h("div", { style: { display: "flex", flexDirection: "column" } }, [
+            h(
+              "span",
+              { style: { fontWeight: "500" } },
+              macBindingStore.GET_NAME_WITH_FALLBACK(row.ip),
+            ),
+            macBindingStore.GET_NAME_WITH_FALLBACK(row.ip) !==
+            frontEndStore.MASK_INFO(row.ip)
+              ? h(
+                  "span",
+                  { style: { fontSize: "12px", opacity: 0.5 } },
+                  frontEndStore.MASK_INFO(row.ip),
+                )
+              : null,
+          ]),
           h(
             NTooltip,
             { trigger: "hover", placement: "right" },

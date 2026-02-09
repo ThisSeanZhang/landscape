@@ -9,6 +9,9 @@ import { ChartLine, ArrowUp, ArrowDown, Search, Flash } from "@vicons/carbon";
 import { mask_string } from "@/lib/common";
 import { formatSize, formatCount } from "@/lib/util";
 import { useThemeVars } from "naive-ui";
+import { useMacBindingStore } from "@/stores/mac_binding";
+
+const macBindingStore = useMacBindingStore();
 
 const frontEndStore = useFrontEndStore();
 const themeVars = useThemeVars();
@@ -141,11 +144,11 @@ const emit = defineEmits([
           >
             <span>
               {{
-                `${frontEndStore.MASK_INFO(
+                `${macBindingStore.GET_NAME_WITH_FALLBACK(
                   history.src_ip,
                 )}:${frontEndStore.MASK_PORT(
                   history.src_port,
-                )} => ${frontEndStore.MASK_INFO(
+                )} => ${macBindingStore.GET_NAME_WITH_FALLBACK(
                   history.dst_ip,
                 )}:${frontEndStore.MASK_PORT(history.dst_port)}`
               }}

@@ -20,6 +20,9 @@ import {
   NEllipsis,
   NFlex,
 } from "naive-ui";
+import { useMacBindingStore } from "@/stores/mac_binding";
+
+const macBindingStore = useMacBindingStore();
 
 const props = defineProps<{
   timeRange: [number, number] | null;
@@ -370,7 +373,9 @@ defineExpose({ refresh: loadSummary });
                         >
                           {{
                             list.type === "client"
-                              ? frontEndStore.MASK_INFO(item.name)
+                              ? macBindingStore.GET_NAME_WITH_FALLBACK(
+                                  item.name,
+                                )
                               : item.name
                           }}
                         </n-ellipsis>

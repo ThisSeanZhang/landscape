@@ -17,6 +17,12 @@ const macBindingStore = useMacBindingStore();
 
 type Props = {
   rule_id: string | null;
+  initialValues?: {
+    mac?: string;
+    ipv4?: string;
+    name?: string;
+    iface_name?: string;
+  };
 };
 
 const props = defineProps<Props>();
@@ -59,13 +65,14 @@ async function enter() {
     }
   } else {
     rule.value = {
-      name: "",
-      mac: "",
+      name: props.initialValues?.name ?? "",
+      mac: props.initialValues?.mac ?? "",
       tag: [],
       remark: "",
       fake_name: "",
-      ipv4: undefined,
+      ipv4: props.initialValues?.ipv4 ?? undefined,
       ipv6: undefined,
+      iface_name: props.initialValues?.iface_name ?? undefined,
     };
   }
   origin_rule_json.value = JSON.stringify(rule.value);
