@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { useMessage } from "naive-ui";
-import { isIP } from "is-ip";
+import { isIP, isIPv4 } from "is-ip";
 import { computed, ref } from "vue";
 import { IpMacBinding } from "landscape-types/common/mac_binding";
 import {
@@ -85,7 +85,7 @@ const ipRule = {
   async validator(_: unknown, value: string) {
     if (value && !isIP(value)) return new Error(t("mac_binding.ipv4_invalid"));
 
-    if (value && rule.value.iface_name && isIP(value) === 4) {
+    if (value && rule.value.iface_name && isIPv4(value)) {
       try {
         const isValid = await validate_mac_binding_ip(
           rule.value.iface_name,
