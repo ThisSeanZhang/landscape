@@ -13,8 +13,10 @@ import { usePreferenceStore } from "@/stores/preference";
 const prefStore = usePreferenceStore();
 import { mask_string } from "@/lib/common";
 import { Key } from "@vicons/tabler";
+import { useMacBindingStore } from "@/stores/mac_binding";
 
 const frontEndStore = useFrontEndStore();
+const macBindingStore = useMacBindingStore();
 const emit = defineEmits(["refresh"]);
 type Props = {
   arp_info: ArpScanInfo[];
@@ -162,7 +164,12 @@ function build_ip_map(data: ArpScanInfo[]): Map<string, ArpInfo> {
             </DHCPMacExhibit>
           </td>
           <td class="assign-item">
-            {{ frontEndStore.MASK_INFO(item.ip) }}
+            {{
+              macBindingStore.GET_DISPLAY_NAME(
+                item.mac,
+                frontEndStore.presentation_mode,
+              )
+            }}
           </td>
 
           <td class="assign-item">
@@ -198,7 +205,12 @@ function build_ip_map(data: ArpScanInfo[]): Map<string, ArpInfo> {
             </DHCPMacExhibit>
           </td>
           <td class="not-assign-item">
-            {{ frontEndStore.MASK_INFO(item.ip) }}
+            {{
+              macBindingStore.GET_DISPLAY_NAME(
+                item.ip,
+                frontEndStore.presentation_mode,
+              )
+            }}
           </td>
           <td class="not-assign-item">未知</td>
           <td class="not-assign-item">未知</td>
