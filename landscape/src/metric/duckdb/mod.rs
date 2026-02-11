@@ -113,18 +113,18 @@ pub fn start_db_thread(
                             }
                         }
                         DBMessage::InsertDnsMetric(metric) => {
-                            // let _ = dns_appender.append_row(params![
-                            //     metric.flow_id as i64,
-                            //     metric.domain,
-                            //     metric.query_type,
-                            //     metric.response_code,
-                            //     metric.report_time as i64,
-                            //     metric.duration_ms as i64,
-                            //     clean_ip_string(&metric.src_ip),
-                            //     serde_json::to_string(&metric.answers).unwrap_or_default(),
-                            //     serde_json::to_string(&metric.status).unwrap_or_default(),
-                            // ]);
-                            // batch_count += 1;
+                            let _ = dns_appender.append_row(params![
+                                metric.flow_id as i64,
+                                metric.domain,
+                                metric.query_type,
+                                metric.response_code,
+                                metric.report_time as i64,
+                                metric.duration_ms as i64,
+                                clean_ip_string(&metric.src_ip),
+                                serde_json::to_string(&metric.answers).unwrap_or_default(),
+                                serde_json::to_string(&metric.status).unwrap_or_default(),
+                            ]);
+                            batch_count += 1;
                         }
 
                         // --- 管理类操作 ---
