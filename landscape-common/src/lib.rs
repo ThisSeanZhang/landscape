@@ -76,8 +76,8 @@ pub const DEFAULT_CONN_METRIC_RETENTION_DAYS_1D: u64 = 30;
 pub const DEFAULT_DNS_METRIC_RETENTION_DAYS: u64 = 7;
 
 // Metric Performance & Storage Defaults
-pub const DEFAULT_METRIC_BATCH_SIZE: usize = 5000;
-pub const DEFAULT_METRIC_FLUSH_INTERVAL_SECS: u64 = 5;
+pub const DEFAULT_METRIC_BATCH_SIZE: usize = 20000;
+pub const DEFAULT_METRIC_FLUSH_INTERVAL_SECS: u64 = 60;
 pub const DEFAULT_METRIC_MAX_MEMORY: usize = 256;
 pub const DEFAULT_METRIC_MAX_THREADS: usize = 4;
 

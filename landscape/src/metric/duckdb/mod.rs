@@ -242,6 +242,11 @@ impl DuckMetricStore {
         connect::create_metrics_table(&conn_conn).expect("Failed to create connect metrics tables");
         dns::create_dns_table(&conn_dns).expect("Failed to create DNS metrics tables");
 
+        // Performance optimizations: decrease checkpoint frequency
+        // This keeps more data in WAL and reduces disk sync frequency
+        let _ = conn_conn.execute("PRAGMA wal_autocheckpoint='256MB'", []);
+        let _ = conn_dns.execute("PRAGMA wal_autocheckpoint='256MB'", []);
+
         // Initial aggregation
         let _ = connect::aggregate_global_stats(&conn_conn);
 
