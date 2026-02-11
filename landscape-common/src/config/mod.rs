@@ -163,7 +163,10 @@ pub struct LandscapeStoreConfig {
 pub struct LandscapeMetricConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
-    pub conn_retention_days: Option<u64>,
+    pub conn_retention_mins: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub conn_retention_minute_days: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub conn_retention_hour_days: Option<u64>,
@@ -376,10 +379,14 @@ impl RuntimeConfig {
         };
 
         let metric = MetricRuntimeConfig {
-            conn_retention_days: config
+            conn_retention_mins: config
                 .metric
-                .conn_retention_days
-                .unwrap_or(crate::DEFAULT_CONN_METRIC_RETENTION_DAYS),
+                .conn_retention_mins
+                .unwrap_or(crate::DEFAULT_CONN_METRIC_RETENTION_MINS),
+            conn_retention_minute_days: config
+                .metric
+                .conn_retention_minute_days
+                .unwrap_or(crate::DEFAULT_CONN_METRIC_RETENTION_DAYS_1M),
             conn_retention_hour_days: config
                 .metric
                 .conn_retention_hour_days
@@ -457,7 +464,8 @@ impl RuntimeConfig {
          Database Connect: {}\n\
          \n\
           [Metric]\n\
-         Retention Days (Raw): {} days\n\
+         Retention Mins (Raw): {} mins\n\
+         Retention Days (1m): {} days\n\
          Retention Days (1h): {} days\n\
          Retention Days (1d): {} days\n\
          Retention Days (DNS): {} days\n\
@@ -476,7 +484,8 @@ impl RuntimeConfig {
             address_http_str,
             address_https_str,
             self.store.database_path,
-            self.metric.conn_retention_days,
+            self.metric.conn_retention_mins,
+            self.metric.conn_retention_minute_days,
             self.metric.conn_retention_hour_days,
             self.metric.conn_retention_day_days,
             self.metric.dns_retention_days,
@@ -527,7 +536,8 @@ pub struct StoreRuntimeConfig {
 
 #[derive(Clone, Debug)]
 pub struct MetricRuntimeConfig {
-    pub conn_retention_days: u64,
+    pub conn_retention_mins: u64,
+    pub conn_retention_minute_days: u64,
     pub conn_retention_hour_days: u64,
     pub conn_retention_day_days: u64,
     pub dns_retention_days: u64,
@@ -546,8 +556,11 @@ pub struct DnsRuntimeConfig {
 
 impl MetricRuntimeConfig {
     pub fn update_from_file_config(&mut self, config: &LandscapeMetricConfig) {
-        if let Some(v) = config.conn_retention_days {
-            self.conn_retention_days = v;
+        if let Some(v) = config.conn_retention_mins {
+            self.conn_retention_mins = v;
+        }
+        if let Some(v) = config.conn_retention_minute_days {
+            self.conn_retention_minute_days = v;
         }
         if let Some(v) = config.conn_retention_hour_days {
             self.conn_retention_hour_days = v;

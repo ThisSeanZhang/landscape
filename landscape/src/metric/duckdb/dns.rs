@@ -91,9 +91,21 @@ pub fn query_dns_history(
     // 1. 获取总数
     let count_stmt_str = format!("SELECT COUNT(*) FROM dns_metrics {}", where_stmt);
     let total: usize = {
-        let mut stmt = conn.prepare(&count_stmt_str).unwrap();
-        let param_refs: Vec<&dyn duckdb::ToSql> = sql_params.iter().map(|p| p.as_ref()).collect();
-        stmt.query_row(&param_refs[..], |row| row.get(0)).unwrap_or(0)
+        match conn.prepare(&count_stmt_str) {
+            Ok(mut stmt) => {
+                let param_refs: Vec<&dyn duckdb::ToSql> =
+                    sql_params.iter().map(|p| p.as_ref()).collect();
+                stmt.query_row(&param_refs[..], |row| row.get(0)).unwrap_or(0)
+            }
+            Err(e) => {
+                tracing::error!(
+                    "Failed to prepare DNS count SQL: {}, error: {}",
+                    count_stmt_str,
+                    e
+                );
+                0
+            }
+        }
     };
 
     // 2. 排序
@@ -282,72 +294,100 @@ pub fn query_dns_summary(conn: &Connection, params: DnsSummaryQueryParams) -> Dn
         "SELECT src_ip, COUNT(*) as c FROM dns_metrics {} GROUP BY src_ip ORDER BY c DESC LIMIT 10",
         where_stmt
     );
-    let mut stmt = conn.prepare(&top_clients_sql).unwrap();
-    let top_clients = stmt
-        .query_map(&param_refs[..], |row| {
-            Ok(DnsStatEntry {
-                name: row.get(0)?,
-                count: row.get::<_, i64>(1)? as usize,
-                value: None,
+    let top_clients = match conn.prepare(&top_clients_sql) {
+        Ok(mut stmt) => stmt
+            .query_map(&param_refs[..], |row| {
+                Ok(DnsStatEntry {
+                    name: row.get(0)?,
+                    count: row.get::<_, i64>(1)? as usize,
+                    value: None,
+                })
             })
-        })
-        .unwrap()
-        .filter_map(Result::ok)
-        .collect();
+            .map(|r| r.filter_map(Result::ok).collect())
+            .unwrap_or_else(|e| {
+                tracing::error!("Failed to execute top_clients query: {}", e);
+                Vec::new()
+            }),
+        Err(e) => {
+            tracing::error!("Failed to prepare top_clients SQL: {}, error: {}", top_clients_sql, e);
+            Vec::new()
+        }
+    };
 
     // 3. Top Domains
     let top_domains_sql = format!(
         "SELECT domain, COUNT(*) as c FROM dns_metrics {} GROUP BY domain ORDER BY c DESC LIMIT 10",
         where_stmt
     );
-    let mut stmt = conn.prepare(&top_domains_sql).unwrap();
-    let top_domains = stmt
-        .query_map(&param_refs[..], |row| {
-            Ok(DnsStatEntry {
-                name: row.get(0)?,
-                count: row.get::<_, i64>(1)? as usize,
-                value: None,
+    let top_domains = match conn.prepare(&top_domains_sql) {
+        Ok(mut stmt) => stmt
+            .query_map(&param_refs[..], |row| {
+                Ok(DnsStatEntry {
+                    name: row.get(0)?,
+                    count: row.get::<_, i64>(1)? as usize,
+                    value: None,
+                })
             })
-        })
-        .unwrap()
-        .filter_map(Result::ok)
-        .collect();
+            .map(|r| r.filter_map(Result::ok).collect())
+            .unwrap_or_else(|e| {
+                tracing::error!("Failed to execute top_domains query: {}", e);
+                Vec::new()
+            }),
+        Err(e) => {
+            tracing::error!("Failed to prepare top_domains SQL: {}, error: {}", top_domains_sql, e);
+            Vec::new()
+        }
+    };
 
     // 4. Top Blocked
     let top_blocked_sql = format!(
         "SELECT domain, COUNT(*) as c FROM dns_metrics {} AND status = '\"block\"' GROUP BY domain ORDER BY c DESC LIMIT 10",
         if where_stmt.is_empty() { "WHERE 1=1" } else { &where_stmt }
     );
-    let mut stmt = conn.prepare(&top_blocked_sql).unwrap();
-    let top_blocked = stmt
-        .query_map(&param_refs[..], |row| {
-            Ok(DnsStatEntry {
-                name: row.get(0)?,
-                count: row.get::<_, i64>(1)? as usize,
-                value: None,
+    let top_blocked = match conn.prepare(&top_blocked_sql) {
+        Ok(mut stmt) => stmt
+            .query_map(&param_refs[..], |row| {
+                Ok(DnsStatEntry {
+                    name: row.get(0)?,
+                    count: row.get::<_, i64>(1)? as usize,
+                    value: None,
+                })
             })
-        })
-        .unwrap()
-        .filter_map(Result::ok)
-        .collect();
+            .map(|r| r.filter_map(Result::ok).collect())
+            .unwrap_or_else(|e| {
+                tracing::error!("Failed to execute top_blocked query: {}", e);
+                Vec::new()
+            }),
+        Err(e) => {
+            tracing::error!("Failed to prepare top_blocked SQL: {}, error: {}", top_blocked_sql, e);
+            Vec::new()
+        }
+    };
 
     // 5. Slowest Domains
     let slowest_sql = format!(
         "SELECT domain, AVG(duration_ms) as avg_d, COUNT(*) as c FROM dns_metrics {} GROUP BY domain HAVING c > 2 ORDER BY avg_d DESC LIMIT 10",
         where_stmt
     );
-    let mut stmt = conn.prepare(&slowest_sql).unwrap();
-    let slowest_domains = stmt
-        .query_map(&param_refs[..], |row| {
-            Ok(DnsStatEntry {
-                name: row.get(0)?,
-                count: row.get::<_, i64>(2)? as usize,
-                value: Some(row.get(1)?),
+    let slowest_domains = match conn.prepare(&slowest_sql) {
+        Ok(mut stmt) => stmt
+            .query_map(&param_refs[..], |row| {
+                Ok(DnsStatEntry {
+                    name: row.get(0)?,
+                    count: row.get::<_, i64>(2)? as usize,
+                    value: Some(row.get(1)?),
+                })
             })
-        })
-        .unwrap()
-        .filter_map(Result::ok)
-        .collect();
+            .map(|r| r.filter_map(Result::ok).collect())
+            .unwrap_or_else(|e| {
+                tracing::error!("Failed to execute slowest_domains query: {}", e);
+                Vec::new()
+            }),
+        Err(e) => {
+            tracing::error!("Failed to prepare slowest_domains SQL: {}, error: {}", slowest_sql, e);
+            Vec::new()
+        }
+    };
 
     DnsSummaryResponse {
         total_queries,

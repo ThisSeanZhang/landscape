@@ -268,17 +268,26 @@ onMounted(() => {
             >
           </n-flex>
 
-          <n-button
-            quaternary
-            circle
-            size="tiny"
-            @click="refreshGlobalStats"
-            :loading="refreshingGlobalStats"
-          >
-            <template #icon>
-              <n-icon><Renew /></n-icon>
+          <n-tooltip trigger="hover">
+            <template #trigger>
+              <n-button
+                quaternary
+                circle
+                size="tiny"
+                @click="refreshGlobalStats"
+                :loading="refreshingGlobalStats"
+              >
+                <template #icon>
+                  <n-icon><Renew /></n-icon>
+                </template>
+              </n-button>
             </template>
-          </n-button>
+            最后汇总时间:
+            <n-time
+              :time="globalStats.last_calculate_time"
+              format="yyyy-MM-dd HH:mm:ss"
+            />
+          </n-tooltip>
         </n-flex>
         <div v-else style="height: 34px"></div>
       </n-flex>

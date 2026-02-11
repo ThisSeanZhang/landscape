@@ -122,6 +122,6 @@ export type MetricChartRequest = {
   resolution?: MetricResolution;
 };
 
-export type MetricResolution = "second" | "hour" | "day";
+export type MetricResolution = "second" | "minute" | "hour" | "day";
 
 export type SortOrder = "asc" | "desc";

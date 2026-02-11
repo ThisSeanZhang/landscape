@@ -24,9 +24,10 @@ const resolution = ref<MetricResolution>("second");
 const loading = ref(false);
 
 const resolutionOptions = [
-  { label: "秒级 (实时)", value: "second" },
-  { label: "小时级 (30天保留)", value: "hour" },
-  { label: "天级 (180天保留)", value: "day" },
+  { label: "秒级 (5分钟保留)", value: "second" },
+  { label: "分钟级 (1天保留)", value: "minute" },
+  { label: "小时级 (7天保留)", value: "hour" },
+  { label: "天级 (30天保留)", value: "day" },
 ];
 
 async function fetchData() {

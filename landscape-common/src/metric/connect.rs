@@ -27,6 +27,8 @@ pub enum ConnectStatusType {
 pub enum MetricResolution {
     #[serde(rename = "second")]
     Second,
+    #[serde(rename = "minute")]
+    Minute,
     #[serde(rename = "hour")]
     Hour,
     #[serde(rename = "day")]
