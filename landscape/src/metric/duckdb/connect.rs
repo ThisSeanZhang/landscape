@@ -33,6 +33,14 @@ pub const METRICS_1D_INSERT_SQL: &str = "
     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
 ";
 
+pub const LIVE_METRIC_INSERT_SQL: &str = "
+    INSERT OR REPLACE INTO conn_realtime (
+        create_time, cpu_id, src_ip, dst_ip, src_port, dst_port, l4_proto, l3_proto, flow_id, trace_id,
+        ingress_bytes, egress_bytes, ingress_packets, egress_packets, ingress_bps, egress_bps, ingress_pps, egress_pps,
+        last_report_time, status
+    ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)
+";
+
 pub fn update_summary_by_metric(
     stmt: &mut Statement,
     metric: &ConnectMetric,
@@ -56,6 +64,41 @@ pub fn update_summary_by_metric(
         metric.egress_bytes as i64,
         metric.ingress_packets as i64,
         metric.egress_packets as i64,
+        event_type_val as i64,
+    ])
+}
+
+pub fn update_live_metric(
+    stmt: &mut Statement,
+    metric: &ConnectMetric,
+    bps_ingress: u64,
+    bps_egress: u64,
+    pps_ingress: u64,
+    pps_egress: u64,
+) -> duckdb::Result<usize> {
+    let key = &metric.key;
+    let event_type_val: u8 = metric.status.clone().into();
+
+    stmt.execute(params![
+        key.create_time as i64,
+        key.cpu_id as i64,
+        metric.src_ip.to_string(),
+        metric.dst_ip.to_string(),
+        metric.src_port as i64,
+        metric.dst_port as i64,
+        metric.l4_proto as i64,
+        metric.l3_proto as i64,
+        metric.flow_id as i64,
+        metric.trace_id as i64,
+        metric.ingress_bytes as i64,
+        metric.egress_bytes as i64,
+        metric.ingress_packets as i64,
+        metric.egress_packets as i64,
+        bps_ingress as i64,
+        bps_egress as i64,
+        pps_ingress as i64,
+        pps_egress as i64,
+        metric.report_time as i64,
         event_type_val as i64,
     ])
 }
@@ -143,6 +186,36 @@ pub fn create_metrics_table(conn: &Connection) -> duckdb::Result<()> {
             total_egress_pkts BIGINT,
             total_connect_count BIGINT,
             last_calculate_time UBIGINT
+        );
+        ",
+    )
+}
+
+pub fn create_live_tables(conn: &Connection) -> duckdb::Result<()> {
+    conn.execute_batch(
+        "
+        CREATE TABLE IF NOT EXISTS conn_realtime (
+            create_time UBIGINT,
+            cpu_id INTEGER,
+            src_ip VARCHAR,
+            dst_ip VARCHAR,
+            src_port INTEGER,
+            dst_port INTEGER,
+            l4_proto INTEGER,
+            l3_proto INTEGER,
+            flow_id INTEGER,
+            trace_id INTEGER,
+            ingress_bytes UBIGINT,
+            egress_bytes UBIGINT,
+            ingress_packets UBIGINT,
+            egress_packets UBIGINT,
+            ingress_bps UBIGINT,
+            egress_bps UBIGINT,
+            ingress_pps UBIGINT,
+            egress_pps UBIGINT,
+            last_report_time UBIGINT,
+            status INTEGER,
+            PRIMARY KEY (create_time, cpu_id)
         );
         ",
     )
