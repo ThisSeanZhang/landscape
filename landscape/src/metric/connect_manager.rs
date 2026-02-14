@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-use std::net::IpAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -8,15 +6,11 @@ use tokio::sync::{mpsc, RwLock};
 
 use landscape_common::event::ConnectMessage;
 use landscape_common::metric::connect::{
-    ConnectGlobalStats, ConnectHistoryQueryParams, ConnectHistoryStatus, ConnectKey, ConnectMetric,
-    ConnectRealtimeStatus, ConnectStatusType, IpAggregatedStats, IpRealtimeStat, MetricResolution,
+    ConnectGlobalStats, ConnectHistoryQueryParams, ConnectHistoryStatus, ConnectKey,
+    ConnectMetricPoint, ConnectRealtimeStatus, IpRealtimeStat, MetricResolution,
 };
 
 use crate::metric::duckdb::DuckMetricStore;
-
-const HOUR_RESOLUTION_THRESHOLD_MS: u64 = 30 * 24 * 3600 * 1000;
-const DAY_RESOLUTION_THRESHOLD_MS: u64 = 180 * 24 * 3600 * 1000;
-const STALE_TIMEOUT_MS: u64 = 60000;
 
 #[derive(Clone)]
 pub struct ConnectMetricManager {
@@ -90,16 +84,22 @@ impl ConnectMetricManager {
         self.metric_store.connect_infos().await
     }
 
-    pub async fn query_metric_by_key(&self, key: ConnectKey) -> Vec<ConnectMetric> {
+    pub async fn query_metric_by_key(&self, key: ConnectKey) -> Vec<ConnectMetricPoint> {
         let now = landscape_common::utils::time::get_current_time_ms().unwrap_or_default();
         let age_ms = now.saturating_sub(key.create_time);
 
-        let resolution = if age_ms > DAY_RESOLUTION_THRESHOLD_MS {
-            MetricResolution::Day
-        } else if age_ms > HOUR_RESOLUTION_THRESHOLD_MS {
+        let hour_threshold = 3600 * 1000;
+        let day_threshold = 24 * 3600 * 1000;
+        let month_threshold = 30 * 24 * 3600 * 1000;
+
+        let resolution = if age_ms < hour_threshold {
+            MetricResolution::Second
+        } else if age_ms < day_threshold {
+            MetricResolution::Minute
+        } else if age_ms < month_threshold {
             MetricResolution::Hour
         } else {
-            MetricResolution::Second
+            MetricResolution::Day
         };
 
         self.metric_store.query_metric_by_key(key, resolution).await
@@ -109,7 +109,7 @@ impl ConnectMetricManager {
         &self,
         key: ConnectKey,
         resolution: MetricResolution,
-    ) -> Vec<ConnectMetric> {
+    ) -> Vec<ConnectMetricPoint> {
         self.metric_store.query_metric_by_key(key, resolution).await
     }
 

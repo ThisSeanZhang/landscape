@@ -71,6 +71,15 @@ export type ConnectMetric = {
   status: ConnectStatusType;
 };
 
+export type ConnectMetricPoint = {
+  report_time: number;
+  ingress_bytes: number;
+  ingress_packets: number;
+  egress_bytes: number;
+  egress_packets: number;
+  status: ConnectStatusType;
+};
+
 export type ConnectRealtimeStatus = {
   key: ConnectKey;
   src_ip: string;
@@ -85,7 +94,8 @@ export type ConnectRealtimeStatus = {
   egress_bps: number;
   ingress_pps: number;
   egress_pps: number;
-  last_metric: ConnectMetric | null;
+  last_report_time: number;
+  status: ConnectStatusType;
 };
 
 export type ConnectSortKey =

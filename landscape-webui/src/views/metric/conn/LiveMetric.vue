@@ -108,8 +108,8 @@ const filteredConnectMetrics = computed(() => {
   return filtered.sort((a, b) => {
     let result = 0;
     if (sortKey.value === "time") {
-      const timeA = a.last_metric?.report_time || a.key.create_time || 0;
-      const timeB = b.last_metric?.report_time || b.key.create_time || 0;
+      const timeA = a.last_report_time || a.key.create_time || 0;
+      const timeB = b.last_report_time || b.key.create_time || 0;
       result = timeA - timeB;
     } else if (sortKey.value === "port") {
       result = (a.src_port || 0) - (b.src_port || 0);

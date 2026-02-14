@@ -3,7 +3,7 @@ import { ref, onMounted, onUnmounted, computed } from "vue";
 import { get_connect_metric_info } from "@/api/metric";
 import {
   ConnectKey,
-  ConnectMetric,
+  ConnectMetricPoint,
 } from "landscape-types/common/metric/connect";
 import { ApexOptions } from "apexcharts";
 import VueApexCharts from "vue3-apexcharts";
@@ -18,7 +18,7 @@ interface Props {
 }
 
 const props = defineProps<Props>();
-const chartData = ref<ConnectMetric[]>([]);
+const chartData = ref<ConnectMetricPoint[]>([]);
 const interval = ref<any>(null);
 
 async function fetchData() {

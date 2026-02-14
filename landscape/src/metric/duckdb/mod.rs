@@ -1,7 +1,7 @@
 use duckdb::{params, DuckdbConnectionManager};
 use landscape_common::metric::connect::{
     ConnectGlobalStats, ConnectHistoryQueryParams, ConnectHistoryStatus, ConnectKey, ConnectMetric,
-    MetricResolution,
+    ConnectMetricPoint, MetricResolution,
 };
 use landscape_common::metric::dns::{
     DnsHistoryQueryParams, DnsHistoryResponse, DnsLightweightSummaryResponse, DnsMetric,
@@ -33,7 +33,6 @@ use landscape_common::config::MetricRuntimeConfig;
 
 const A_MIN: u64 = 60 * 1000;
 const MS_PER_MINUTE: u64 = A_MIN;
-const MS_PER_HOUR: u64 = 3600 * 1000;
 const MS_PER_DAY: u64 = 24 * 3600 * 1000;
 const STALE_TIMEOUT_MS: u64 = A_MIN;
 
@@ -67,20 +66,16 @@ pub struct DuckMetricStore {
 pub fn start_db_thread(
     mut rx: mpsc::Receiver<DBMessage>,
     metric_config: MetricRuntimeConfig,
+    db_path: PathBuf,
     conn_conn: PooledConnection<DuckdbConnectionManager>,
     conn_dns: PooledConnection<DuckdbConnectionManager>,
     conn_live: PooledConnection<DuckdbConnectionManager>,
 ) {
     // 状态管理
-    let mut metrics_appender = conn_conn.appender("conn_metrics").unwrap();
+    let mut metrics_appender = conn_live.appender("conn_metrics").unwrap();
     let mut dns_appender = conn_dns.appender("dns_metrics").unwrap();
-    let mut summary_stmt = conn_conn.prepare(connect::SUMMARY_INSERT_SQL).unwrap();
+    let mut summary_stmt = conn_live.prepare(connect::SUMMARY_INSERT_SQL).unwrap();
     let mut live_stmt = conn_live.prepare(connect::LIVE_METRIC_INSERT_SQL).unwrap();
-
-    // Cache for session rates calculation (Single-threaded, no lock needed)
-    // Map: ConnectKey -> (last_report_time, ingress_bytes, egress_bytes, ingress_packets, egress_packets)
-    let mut last_session_stats: std::collections::HashMap<ConnectKey, (u64, u64, u64, u64, u64)> =
-        std::collections::HashMap::with_capacity(10000);
 
     let mut batch_count = 0;
     let flush_interval_duration =
@@ -98,7 +93,7 @@ pub fn start_db_thread(
                     if batch_count > 0 {
                         let _ = metrics_appender.flush();
                         let _ = dns_appender.flush();
-                        let _ = connect::perform_batch_rollup(&conn_conn);
+                        let _ = connect::perform_batch_rollup(&conn_live, &db_path);
                         batch_count = 0;
                     }
                 }
@@ -116,7 +111,7 @@ pub fn start_db_thread(
                     batch_count = 0;
 
                     let _ = connect::collect_and_cleanup_old_metrics(
-                        &conn_conn, cutoff_raw, cutoff_1m, cutoff_1h, cutoff_1d,
+                        &conn_live, cutoff_raw, cutoff_1m, cutoff_1h, cutoff_1d, &db_path,
                     );
                     dns::cleanup_old_dns_metrics(&conn_dns, cutoff_dns);
                     let _ = connect::aggregate_global_stats(&conn_conn);
@@ -127,8 +122,6 @@ pub fn start_db_thread(
                         "DELETE FROM conn_realtime WHERE last_report_time < ?1",
                         params![cutoff_live as i64],
                     );
-                    // Also cleanup the rate calculation cache
-                    last_session_stats.retain(|_, (last_time, _, _, _, _)| *last_time >= cutoff_live);
 
                     tracing::info!(
                         "Auto cleanup metrics, raw: {}, 1m: {}, 1h: {}, 1d: {}, dns: {}",
@@ -163,54 +156,12 @@ pub fn start_db_thread(
                                                 },
                                             ]);
 
-                                            // Calculate rates
-                                            let mut bps_i = 0;
-                                            let mut bps_e = 0;
-                                            let mut pps_i = 0;
-                                            let mut pps_e = 0;
+                                            // Update live table (rates are calculated by SQL inside)
+                                            let _ = connect::update_live_metric(&mut live_stmt, &metric);
 
-                                            if let Some((prev_time, prev_bi, prev_be, prev_pi, prev_pe)) =
-                                                last_session_stats.get(key)
-                                            {
-                                                let delta_ms = metric.report_time.saturating_sub(*prev_time);
-                                                if delta_ms > 0 {
-                                                    let d_bi = metric.ingress_bytes.saturating_sub(*prev_bi);
-                                                    let d_be = metric.egress_bytes.saturating_sub(*prev_be);
-                                                    let d_pi = metric.ingress_packets.saturating_sub(*prev_pi);
-                                                    let d_pe = metric.egress_packets.saturating_sub(*prev_pe);
-
-                                                    bps_i = (d_bi * 8000) / delta_ms;
-                                                    bps_e = (d_be * 8000) / delta_ms;
-                                                    pps_i = (d_pi * 1000) / delta_ms;
-                                                    pps_e = (d_pe * 1000) / delta_ms;
-                                                }
-                                            }
-
-                                            // Update live table
-                                            let _ = connect::update_live_metric(
-                                                &mut live_stmt,
-                                                &metric,
-                                                bps_i,
-                                                bps_e,
-                                                pps_i,
-                                                pps_e,
-                                            );
-
-                                            // Update stats cache
-                                            last_session_stats.insert(
-                                                key.clone(),
-                                                (
-                                                    metric.report_time,
-                                                    metric.ingress_bytes,
-                                                    metric.egress_bytes,
-                                                    metric.ingress_packets,
-                                                    metric.egress_packets,
-                                                ),
-                                            );
-
-                                            if connect::update_summary_by_metric(&mut summary_stmt, &metric).is_ok() {
-                                                batch_count += 1;
-                                            }
+                                            // Update memory summary 
+                                            let _ = connect::update_summary_by_metric(&mut summary_stmt, &metric);
+                                            batch_count += 1;
                                         }
                                         DBMessage::InsertDnsMetric(metric) => {
                                             let _ = dns_appender.append_row(params![
@@ -236,10 +187,10 @@ pub fn start_db_thread(
                                         } => {
                                             let _ = metrics_appender.flush();
                                             let _ = dns_appender.flush();
-                                            let _ = connect::perform_batch_rollup(&conn_conn);
+                                            let _ = connect::perform_batch_rollup(&conn_live, &db_path);
                                             batch_count = 0;
                                             let result = connect::collect_and_cleanup_old_metrics(
-                                                &conn_conn, cutoff_raw, cutoff_1m, cutoff_1h, cutoff_1d,
+                                                &conn_live, cutoff_raw, cutoff_1m, cutoff_1h, cutoff_1d, &db_path,
                                             );
 
                                             dns::cleanup_old_dns_metrics(&conn_dns, cutoff_dns);
@@ -250,7 +201,7 @@ pub fn start_db_thread(
                                     if batch_count >= metric_config.batch_size {
                                         let _ = metrics_appender.flush();
                                         let _ = dns_appender.flush();
-                                        let _ = connect::perform_batch_rollup(&conn_conn);
+                                        let _ = connect::perform_batch_rollup(&conn_live, &db_path);
                                         batch_count = 0;
                                     }
                                 }
@@ -335,8 +286,9 @@ impl DuckMetricStore {
         // Initial aggregation
         let _ = connect::aggregate_global_stats(&conn_conn);
 
+        let thread_db_path = db_path.clone();
         thread::spawn(move || {
-            start_db_thread(rx, config_clone, conn_conn, conn_dns, conn_live);
+            start_db_thread(rx, config_clone, thread_db_path, conn_conn, conn_dns, conn_live);
         });
 
         DuckMetricStore { tx, db_path, live_db_path, config, pool, live_pool }
@@ -368,6 +320,7 @@ impl DuckMetricStore {
                 SELECT 
                     create_time, cpu_id, src_ip, dst_ip, src_port, dst_port, 
                     l4_proto, l3_proto, flow_id, trace_id,
+                    ingress_bytes, egress_bytes, ingress_packets, egress_packets,
                     ingress_bps, egress_bps, ingress_pps, egress_pps,
                     status, last_report_time
                 FROM conn_realtime
@@ -397,11 +350,12 @@ impl DuckMetricStore {
                         l3_proto: row.get::<_, i64>(7)? as u8,
                         flow_id: row.get::<_, i64>(8)? as u8,
                         trace_id: row.get::<_, i64>(9)? as u8,
-                        ingress_bps: row.get::<_, i64>(10)? as u64,
-                        egress_bps: row.get::<_, i64>(11)? as u64,
-                        ingress_pps: row.get::<_, i64>(12)? as u64,
-                        egress_pps: row.get::<_, i64>(13)? as u64,
-                        last_metric: None,
+                        ingress_bps: row.get::<_, i64>(14)? as u64,
+                        egress_bps: row.get::<_, i64>(15)? as u64,
+                        ingress_pps: row.get::<_, i64>(16)? as u64,
+                        egress_pps: row.get::<_, i64>(17)? as u64,
+                        last_report_time: row.get::<_, i64>(19)? as u64,
+                        status: row.get::<_, u8>(18)?.into(),
                     })
                 })
                 .unwrap();
@@ -459,11 +413,11 @@ impl DuckMetricStore {
         &self,
         key: ConnectKey,
         resolution: MetricResolution,
-    ) -> Vec<ConnectMetric> {
+    ) -> Vec<ConnectMetricPoint> {
         let store = self.clone();
-        tokio::task::spawn_blocking(move || {
-            let conn = store.get_read_conn();
-            connect::query_metric_by_key(&conn, &key, resolution)
+        tokio::task::spawn_blocking(move || -> Vec<ConnectMetricPoint> {
+            let conn = store.get_live_conn();
+            connect::query_metric_by_key(&conn, &key, resolution, Some(&store.db_path))
         })
         .await
         .unwrap_or_default()
@@ -471,7 +425,7 @@ impl DuckMetricStore {
 
     pub async fn current_active_connect_keys(&self) -> Vec<ConnectKey> {
         let store = self.clone();
-        tokio::task::spawn_blocking(move || {
+        tokio::task::spawn_blocking(move || -> Vec<ConnectKey> {
             let conn = store.get_read_conn();
             connect::current_active_connect_keys(&conn)
         })

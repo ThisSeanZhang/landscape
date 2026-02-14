@@ -3,7 +3,7 @@ import { ref, onMounted, watch, computed } from "vue";
 import { get_connect_metric_info } from "@/api/metric";
 import {
   ConnectKey,
-  ConnectMetric,
+  ConnectMetricPoint,
   MetricResolution,
 } from "landscape-types/common/metric/connect";
 import { ApexOptions } from "apexcharts";
@@ -19,7 +19,7 @@ interface Props {
 }
 
 const props = defineProps<Props>();
-const chartData = ref<ConnectMetric[]>([]);
+const chartData = ref<ConnectMetricPoint[]>([]);
 const resolution = ref<MetricResolution>("second");
 const loading = ref(false);
 

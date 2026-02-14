@@ -57,7 +57,7 @@ function formatDuration(start: number, end: number): string {
 }
 
 const lastActiveTime = (conn: ConnectRealtimeStatus) => {
-  return conn.last_metric?.report_time || Date.now();
+  return conn.last_report_time || Date.now();
 };
 
 const goToHistory = (conn: ConnectRealtimeStatus) => {

@@ -94,6 +94,24 @@ pub struct ConnectMetric {
 
 #[derive(Debug, Serialize, Deserialize, Eq, Hash, PartialEq, Clone, TS)]
 #[ts(export, export_to = "common/metric/connect.d.ts")]
+pub struct ConnectMetricPoint {
+    #[ts(type = "number")]
+    pub report_time: u64,
+
+    #[ts(type = "number")]
+    pub ingress_bytes: u64,
+    #[ts(type = "number")]
+    pub ingress_packets: u64,
+    #[ts(type = "number")]
+    pub egress_bytes: u64,
+    #[ts(type = "number")]
+    pub egress_packets: u64,
+
+    pub status: ConnectStatusType,
+}
+
+#[derive(Debug, Serialize, Deserialize, Eq, Hash, PartialEq, Clone, TS)]
+#[ts(export, export_to = "common/metric/connect.d.ts")]
 pub struct ConnectAgg {
     #[ts(type = "number")]
     pub ingress_bytes: u64,
@@ -129,8 +147,9 @@ pub struct ConnectRealtimeStatus {
     pub ingress_pps: u64,
     #[ts(type = "number")]
     pub egress_pps: u64,
-
-    pub last_metric: Option<ConnectMetric>,
+    #[ts(type = "number")]
+    pub last_report_time: u64,
+    pub status: ConnectStatusType,
 }
 
 #[derive(Debug, Serialize, Deserialize, Default, Clone, TS)]
