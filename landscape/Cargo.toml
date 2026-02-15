@@ -35,7 +35,6 @@ netlink-packet-core = { workspace = true }
 wl-nl80211 = { workspace = true }
 # async-std = { version = "1.9.0", features = ["attributes"] }
 libc = { workspace = true }
-bytes = "1.0"
 futures = "0.3.11"
 ctrlc = { workspace = true }
 
@@ -71,8 +70,6 @@ portable-pty = { workspace = true }
 polars = { workspace = true, features = ["lazy", "parquet"], optional = true }
 duckdb = { workspace = true }
 r2d2 = { workspace = true }
-
-etherparse = { workspace = true }
 
 [dependencies.pnet]
 workspace = true

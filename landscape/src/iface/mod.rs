@@ -296,48 +296,24 @@ pub(crate) fn setting_iface_balance(
     iface_name: &str,
     balance: IfaceCpuSoftBalance,
 ) -> LdResult<()> {
-    let queues_path = PathBuf::from(format!("/sys/class/net/{}/queues", iface_name));
-    if !queues_path.exists() {
-        return Ok(());
-    }
+    let xps_cpus_path =
+        PathBuf::from(format!("/sys/class/net/{}/queues/tx-0/xps_cpus", iface_name));
+    let rps_cpus_path =
+        PathBuf::from(format!("/sys/class/net/{}/queues/rx-0/rps_cpus", iface_name));
 
-    if let Ok(entries) = std::fs::read_dir(queues_path) {
-        for entry in entries.flatten() {
-            let file_name = entry.file_name();
-            let name = file_name.to_string_lossy();
-
-            // 处理发送队列 (XPS)
-            if name.starts_with("tx-") {
-                let xps_path = entry.path().join("xps_cpus");
-                if xps_path.exists() {
-                    if let Err(e) = std::fs::write(&xps_path, &balance.xps) {
-                        tracing::error!(
-                            "setting xps_cpus for {} at {:?} error: {:?}",
-                            name,
-                            xps_path,
-                            e
-                        );
-                    }
-                }
-            }
-
-            // 处理接收队列 (RPS)
-            if name.starts_with("rx-") {
-                let rps_path = entry.path().join("rps_cpus");
-                if rps_path.exists() {
-                    if let Err(e) = std::fs::write(&rps_path, &balance.rps) {
-                        tracing::error!(
-                            "setting rps_cpus for {} at {:?} error: {:?}",
-                            name,
-                            rps_path,
-                            e
-                        );
-                    }
-                }
-            }
+    if xps_cpus_path.exists() {
+        if let Err(e) = std::fs::write(xps_cpus_path, balance.xps) {
+            // TODO: define error
+            tracing::error!("setting xps_cpus error: {:?}", e);
         }
     }
 
+    if rps_cpus_path.exists() {
+        if let Err(e) = std::fs::write(rps_cpus_path, balance.rps) {
+            // TODO: define error
+            tracing::error!("setting rps_cpus error: {:?}", e);
+        }
+    }
     Ok(())
 }
 

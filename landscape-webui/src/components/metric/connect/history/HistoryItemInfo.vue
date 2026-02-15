@@ -107,7 +107,7 @@ const emit = defineEmits([
                       {{ $t("metric.connect.filter.duration") }}
                       {{
                         formatDuration(
-                          history.create_time_ms,
+                          history.key.create_time,
                           history.last_report_time,
                         )
                       }}
@@ -115,7 +115,7 @@ const emit = defineEmits([
                   </template>
                   {{ $t("metric.connect.filter.create_time") }}:
                   <n-time
-                    :time="history.create_time_ms"
+                    :time="history.key.create_time"
                     format="yyyy-MM-dd HH:mm:ss"
                     type="date"
                     :time-zone="prefStore.timezone"

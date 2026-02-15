@@ -13,8 +13,6 @@ interface Props {
   conn: ConnectKey | null;
   title?: string;
   type?: "live" | "history";
-  createTimeMs?: number;
-  lastReportTime?: number;
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -40,18 +38,8 @@ watch(show, (val) => {
   <n-drawer v-model:show="show" width="80%" placement="right">
     <n-drawer-content closable :title="title">
       <template v-if="conn">
-        <LiveConnectChart
-          v-if="type === 'live'"
-          :conn="conn"
-          :create-time-ms="createTimeMs"
-          :last-report-time="lastReportTime"
-        />
-        <HistoryConnectChart
-          v-else-if="type === 'history'"
-          :conn="conn"
-          :create-time-ms="createTimeMs"
-          :last-report-time="lastReportTime"
-        />
+        <LiveConnectChart v-if="type === 'live'" :conn="conn" />
+        <HistoryConnectChart v-else-if="type === 'history'" :conn="conn" />
       </template>
     </n-drawer-content>
   </n-drawer>

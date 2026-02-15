@@ -66,19 +66,18 @@ pub const LANDSCAPE_LOG_DIR_NAME: &str = "logs";
 pub const LANDSCAPE_WEBROOT_DIR_NAME: &str = "static";
 // --- Metric Settings ---
 pub const LANDSCAPE_METRIC_DIR_NAME: &str = "metric";
-pub const LANDSCAPE_METRIC_DB_VERSION: u32 = 7;
+pub const LANDSCAPE_METRIC_DB_VERSION: u32 = 3;
 
-// Metric Retention Defaults
-pub const DEFAULT_CONN_METRIC_RETENTION_MINS: u64 = 5;
-pub const DEFAULT_CONN_METRIC_RETENTION_DAYS_1M: u64 = 1;
-pub const DEFAULT_CONN_METRIC_RETENTION_DAYS_1H: u64 = 7;
-pub const DEFAULT_CONN_METRIC_RETENTION_DAYS_1D: u64 = 30;
+// Metric Retention Defaults (Days)
+pub const DEFAULT_CONN_METRIC_RETENTION_DAYS: u64 = 7;
+pub const DEFAULT_CONN_METRIC_RETENTION_DAYS_1H: u64 = 30;
+pub const DEFAULT_CONN_METRIC_RETENTION_DAYS_1D: u64 = 180;
 pub const DEFAULT_DNS_METRIC_RETENTION_DAYS: u64 = 7;
 
 // Metric Performance & Storage Defaults
-pub const DEFAULT_METRIC_BATCH_SIZE: usize = 20000;
-pub const DEFAULT_METRIC_FLUSH_INTERVAL_SECS: u64 = 60;
-pub const DEFAULT_METRIC_MAX_MEMORY: usize = 256;
+pub const DEFAULT_METRIC_BATCH_SIZE: usize = 2000;
+pub const DEFAULT_METRIC_FLUSH_INTERVAL_SECS: u64 = 5;
+pub const DEFAULT_METRIC_MAX_MEMORY: usize = 128;
 pub const DEFAULT_METRIC_MAX_THREADS: usize = 4;
 
 // --- DNS Settings ---
@@ -87,9 +86,9 @@ pub const DEFAULT_DNS_CACHE_TTL: u32 = 24 * 60 * 60;
 pub const DEFAULT_DNS_NEGATIVE_CACHE_TTL: u32 = 120;
 
 #[cfg(debug_assertions)]
-pub const DEFAULT_METRIC_CLEANUP_INTERVAL_SECS: u64 = 60;
+pub const DEFAULT_METRIC_CLEANUP_INTERVAL_SECS: u64 = 30 * 60;
 #[cfg(not(debug_assertions))]
-pub const DEFAULT_METRIC_CLEANUP_INTERVAL_SECS: u64 = 300;
+pub const DEFAULT_METRIC_CLEANUP_INTERVAL_SECS: u64 = 12 * 60 * 60;
 
 /// default sqlite path
 pub const LANDSCAPE_DB_SQLITE_NAME: &str = "landscape_db.sqlite";

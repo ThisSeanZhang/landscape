@@ -65,10 +65,6 @@ export default {
     ip_rules: "IP Rules",
     refresh: "Refresh Metrics",
     recent_5m: "(5 mins)",
-    latency_tip:
-      "Latency statistics only cover requests requiring upstream resolution. Local rules, cache hits, blocks, filters, and errors are excluded.",
-    cache_hit_tip:
-      "Hit rate is based on effective queries (excluding blocks, filters, and errors).",
   },
   tip: {
     default_flow: "Default Flow",

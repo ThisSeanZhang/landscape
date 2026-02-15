@@ -1,4 +1,4 @@
-use std::{collections::HashMap, net::SocketAddr, path::PathBuf, sync::Arc};
+use std::{net::SocketAddr, path::PathBuf, sync::Arc};
 
 use axum::{
     handler::HandlerWithoutStateExt, http::StatusCode, response::IntoResponse, routing::get, Router,
@@ -42,9 +42,6 @@ use landscape::{
     },
     wifi::WifiServiceManagerService,
 };
-use landscape_common::config::route_lan::RouteLanServiceConfig;
-use landscape_common::database::repository::Repository;
-use landscape_common::dhcp::v4_server::config::DHCPv4ServiceConfig;
 use landscape_common::{
     args::{LandscapeAction, LAND_ARGS, LAND_HOME_PATH},
     config::RuntimeConfig,
@@ -232,33 +229,6 @@ async fn run(home_path: PathBuf, config: RuntimeConfig) -> LdResult<()> {
         LandscapeConfigService::new(config.clone(), db_store_provider.clone()).await;
 
     let route_service = IpRouteService::new(route_service_rx, db_store_provider.flow_rule_store());
-    let ebpf_service = LandscapeEbpfService::new();
-
-    let static_nat_mapping_config_service =
-        StaticNatMappingService::new(db_store_provider.clone()).await;
-
-    let route_lan_service = RouteLanServiceManagerService::new(
-        db_store_provider.clone(),
-        route_service.clone(),
-        dev_obs.resubscribe(),
-    )
-    .await;
-    let route_wan_service =
-        RouteWanServiceManagerService::new(db_store_provider.clone(), dev_obs.resubscribe()).await;
-
-    let mss_clamp_service =
-        MssClampServiceManagerService::new(db_store_provider.clone(), dev_obs.resubscribe()).await;
-
-    let firewall_service =
-        FirewallServiceManagerService::new(db_store_provider.clone(), dev_obs.resubscribe()).await;
-
-    let nat_service =
-        NatServiceManagerService::new(db_store_provider.clone(), dev_obs.resubscribe()).await;
-
-    let wifi_service = WifiServiceManagerService::new(db_store_provider.clone()).await;
-
-    let iface_config_service = IfaceManagerService::new(db_store_provider.clone()).await;
-
     let dhcp_v4_server_service = DHCPv4ServerManagerService::new(
         route_service.clone(),
         db_store_provider.clone(),
@@ -272,6 +242,15 @@ async fn run(home_path: PathBuf, config: RuntimeConfig) -> LdResult<()> {
         dev_obs.resubscribe(),
     )
     .await;
+
+    let route_lan_service = RouteLanServiceManagerService::new(
+        db_store_provider.clone(),
+        route_service.clone(),
+        dev_obs.resubscribe(),
+    )
+    .await;
+    let route_wan_service =
+        RouteWanServiceManagerService::new(db_store_provider.clone(), dev_obs.resubscribe()).await;
 
     let docker_service = LandscapeDockerService::new(home_path.clone(), route_service.clone());
 
@@ -295,6 +274,23 @@ async fn run(home_path: PathBuf, config: RuntimeConfig) -> LdResult<()> {
     )
     .await;
 
+    let static_nat_mapping_config_service =
+        StaticNatMappingService::new(db_store_provider.clone()).await;
+
+    let iface_config_service = IfaceManagerService::new(db_store_provider.clone()).await;
+
+    let mss_clamp_service =
+        MssClampServiceManagerService::new(db_store_provider.clone(), dev_obs.resubscribe()).await;
+
+    let firewall_service =
+        FirewallServiceManagerService::new(db_store_provider.clone(), dev_obs.resubscribe()).await;
+
+    let wifi_service = WifiServiceManagerService::new(db_store_provider.clone()).await;
+
+    let nat_service =
+        NatServiceManagerService::new(db_store_provider.clone(), dev_obs.resubscribe()).await;
+
+    let ebpf_service = LandscapeEbpfService::new();
     docker_service.start_to_listen_event().await;
 
     metric_service.start_service().await;
@@ -427,38 +423,11 @@ async fn run(home_path: PathBuf, config: RuntimeConfig) -> LdResult<()> {
 
 #[tokio::main]
 async fn main() -> LdResult<()> {
-    let home_path = LAND_HOME_PATH.clone();
-
-    let lock_exists = home_path.join(landscape_common::INIT_LOCK_FILE_NAME).exists();
-    let init_exists = home_path.join(landscape_common::INIT_FILE_NAME).exists();
-    let db_exists = home_path.join(landscape_common::LANDSCAPE_DB_SQLITE_NAME).exists();
-
     let config = RuntimeConfig::new((*LAND_ARGS).clone());
+    let home_path = LAND_HOME_PATH.clone();
 
     if let Err(e) = init_logger(config.log.clone()) {
         panic!("init log error: {e:?}");
-    }
-
-    if config.auto {
-        if lock_exists || init_exists || db_exists {
-            let mut reasons = vec![];
-            if lock_exists {
-                reasons
-                    .push(format!("lock file ({}) exists", landscape_common::INIT_LOCK_FILE_NAME));
-            }
-            if init_exists {
-                reasons.push(format!("init toml ({}) exists", landscape_common::INIT_FILE_NAME));
-            }
-            if db_exists {
-                reasons.push(format!(
-                    "database ({}) exists",
-                    landscape_common::LANDSCAPE_DB_SQLITE_NAME
-                ));
-            }
-            tracing::info!("Auto init skipped: {}.", reasons.join(", "));
-        } else {
-            do_auto_init(&home_path, &config).await?;
-        }
     }
 
     banner(&config);
@@ -474,63 +443,6 @@ async fn main() -> LdResult<()> {
     } else {
         run(home_path, config).await
     }
-}
-
-async fn do_auto_init(home_path: &PathBuf, config: &RuntimeConfig) -> LdResult<()> {
-    use std::io::Write;
-
-    let mut interface_map = HashMap::new();
-    let devs = landscape::get_all_devices().await;
-    tracing::info!("Discovered {} total interfaces.", devs.len());
-    for dev in devs {
-        interface_map.insert(dev.name.clone(), dev);
-    }
-
-    let default_configs = landscape::gen_default_config(&interface_map);
-    if default_configs.is_empty() {
-        tracing::warn!("Auto init: no physical interfaces found.");
-        return Ok(());
-    }
-
-    let db_store_provider = LandscapeDBServiceProvider::new(&config.store).await;
-    let store = db_store_provider.iface_store();
-    for cfg in default_configs {
-        store.set_or_update_model(cfg.name.clone(), cfg).await.unwrap();
-    }
-
-    // 创建 lock 文件 避免重复进行初始化
-    let lock_path = home_path.join(landscape_common::INIT_LOCK_FILE_NAME);
-    let mut file = std::fs::File::create(lock_path)?;
-    file.write_all(landscape::boot::INIT_LOCK_FILE_CONTENT.as_bytes())?;
-
-    // 初始化 br_lan 的服务
-    let dhcp_store = db_store_provider.dhcp_v4_server_store();
-    dhcp_store
-        .set_or_update_model(
-            landscape_common::LANDSCAPE_DEFAULT_LAN_NAME.to_string(),
-            DHCPv4ServiceConfig::default(),
-        )
-        .await
-        .unwrap();
-
-    let route_lan_store = db_store_provider.route_lan_service_store();
-    route_lan_store
-        .set_or_update_model(
-            landscape_common::LANDSCAPE_DEFAULT_LAN_NAME.to_string(),
-            RouteLanServiceConfig {
-                iface_name: landscape_common::LANDSCAPE_DEFAULT_LAN_NAME.to_string(),
-                enable: true,
-                update_at: landscape_common::utils::time::get_f64_timestamp(),
-                static_routes: None,
-            },
-        )
-        .await
-        .unwrap();
-
-    tracing::info!(
-        "Auto init: bridge, IP, DHCP and Route services configuration saved to database."
-    );
-    Ok(())
 }
 
 /// NOT Found

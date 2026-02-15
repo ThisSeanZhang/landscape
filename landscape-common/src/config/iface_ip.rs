@@ -6,7 +6,7 @@ use ts_rs::TS;
 use super::iface::NetworkIfaceConfig;
 use crate::config::iface::IfaceZoneType;
 use crate::database::repository::LandscapeDBStore;
-use crate::net_proto::udp::dhcp::DhcpV4Options;
+use crate::net_proto::udp::dhcp::DhcpOption;
 use crate::store::storev2::LandscapeStore;
 use crate::utils::time::get_f64_timestamp;
 
@@ -65,7 +65,7 @@ pub enum IfaceIpModelConfig {
         /// Custome Options
         #[serde(default)]
         #[ts(type = "Array<any>")]
-        custome_opts: Vec<DhcpV4Options>,
+        custome_opts: Vec<DhcpOption>,
     },
 }
 

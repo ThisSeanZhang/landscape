@@ -11,7 +11,8 @@ dockerfiles/redirect_prog/apps
 redirect_server*
 dockerfiles/landscape/.landscape-router
 dockerfiles/landscape/apps
-push_*.sh
+push_arm.sh
+push_x86.sh
 net.sh
 *.sqlite
 

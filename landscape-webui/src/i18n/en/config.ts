@@ -23,16 +23,13 @@ export default {
   cache_negative_ttl_desc:
     "Retention time for negative (NXDOMAIN/NODATA) DNS records",
 
-  conn_retention_mins: "Raw Data Retention (Mins)",
-  conn_retention_mins_desc:
-    "Retention period for raw connection metrics (seconds interval) in minutes",
-  conn_retention_minute_days: "Aggregated Data (Minute)",
-  conn_retention_minute_days_desc:
-    "Retention period for minute aggregated connection metrics in days",
-  conn_retention_hour_days: "Aggregated Data (Hour)",
+  conn_retention_days: "Conn Retention (Raw)",
+  conn_retention_days_desc:
+    "Retention period for raw connection metrics (5s interval) in days",
+  conn_retention_hour_days: "Conn Retention (Hour)",
   conn_retention_hour_days_desc:
     "Retention period for hourly aggregated connection metrics in days",
-  conn_retention_day_days: "Aggregated Data (Day)",
+  conn_retention_day_days: "Conn Retention (Day)",
   conn_retention_day_days_desc:
     "Retention period for daily aggregated connection metrics in days",
   dns_retention_days: "DNS Retention (Days)",

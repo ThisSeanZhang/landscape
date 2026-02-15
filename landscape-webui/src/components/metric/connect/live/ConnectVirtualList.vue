@@ -18,14 +18,9 @@ const props = defineProps<Props>();
 const show_chart = ref(false);
 const show_chart_key = ref<ConnectKey | null>(null);
 const show_chart_title = ref("");
-const show_chart_create_time_ms = ref<number | undefined>();
-const show_chart_last_report_time = ref<number | undefined>();
-
 async function show_chart_drawer(conn: ConnectRealtimeStatus) {
   show_chart_key.value = conn.key;
   show_chart_title.value = `${frontEndStore.MASK_INFO(conn.src_ip)}:${frontEndStore.MASK_PORT(conn.src_port)} => ${frontEndStore.MASK_INFO(conn.dst_ip)}:${frontEndStore.MASK_PORT(conn.dst_port)}`;
-  show_chart_create_time_ms.value = conn.create_time_ms;
-  show_chart_last_report_time.value = conn.last_report_time;
   show_chart.value = true;
 }
 const emit = defineEmits(["search:tuple", "search:src", "search:dst"]);
@@ -49,8 +44,6 @@ const emit = defineEmits(["search:tuple", "search:src", "search:dst"]);
     v-model:show="show_chart"
     :conn="show_chart_key"
     :title="show_chart_title"
-    :create-time-ms="show_chart_create_time_ms"
-    :last-report-time="show_chart_last_report_time"
   />
 </template>
 

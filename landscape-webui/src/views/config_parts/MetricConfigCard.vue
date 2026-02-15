@@ -30,34 +30,20 @@ async function handleSaveMetric() {
     </template>
     <n-form label-placement="left" label-width="120">
       <n-divider title-placement="left">
-        {{ t("config.conn_retention_mins") }}
+        {{ t("config.conn_retention_days") }}
       </n-divider>
-      <n-grid x-gap="12" :cols="2">
+      <n-grid x-gap="12" :cols="3">
         <n-gi>
-          <n-form-item :label="t('config.conn_retention_mins')">
+          <n-form-item :label="t('config.conn_retention_days')">
             <n-input-number
-              v-model:value="metricStore.connRetentionMins"
-              :min="1"
-              :max="1440"
-              placeholder="5"
-              style="width: 100%"
-            />
-            <template #feedback>
-              {{ t("config.conn_retention_mins_desc") }}
-            </template>
-          </n-form-item>
-        </n-gi>
-        <n-gi>
-          <n-form-item :label="t('config.conn_retention_minute_days')">
-            <n-input-number
-              v-model:value="metricStore.connRetentionMinuteDays"
+              v-model:value="metricStore.connRetentionDays"
               :min="1"
               :max="365"
-              placeholder="1"
+              placeholder="7"
               style="width: 100%"
             />
             <template #feedback>
-              {{ t("config.conn_retention_minute_days_desc") }}
+              {{ t("config.conn_retention_days_desc") }}
             </template>
           </n-form-item>
         </n-gi>
@@ -67,7 +53,7 @@ async function handleSaveMetric() {
               v-model:value="metricStore.connRetentionHourDays"
               :min="1"
               :max="365"
-              placeholder="7"
+              placeholder="30"
               style="width: 100%"
             />
             <template #feedback>
@@ -81,7 +67,7 @@ async function handleSaveMetric() {
               v-model:value="metricStore.connRetentionDayDays"
               :min="1"
               :max="3650"
-              placeholder="30"
+              placeholder="180"
               style="width: 100%"
             />
             <template #feedback>

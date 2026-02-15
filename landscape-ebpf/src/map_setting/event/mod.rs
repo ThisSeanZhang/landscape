@@ -27,7 +27,6 @@ impl From<&nat_conn_metric_event> for ConnectMetric {
             flow_id: ev.flow_id,
             trace_id: ev.trace_id,
             report_time: ev.time,
-            create_time_ms: 0,
             ingress_bytes: ev.ingress_bytes,
             ingress_packets: ev.ingress_packets,
             egress_bytes: ev.egress_bytes,

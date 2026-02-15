@@ -7,8 +7,7 @@ use ts_rs::TS;
 #[derive(Debug, Serialize, Deserialize, Eq, Hash, PartialEq, Clone, TS)]
 #[ts(export, export_to = "common/metric/connect.d.ts")]
 pub struct ConnectKey {
-    #[ts(type = "string")]
-    #[serde(with = "crate::utils::serde_helper")]
+    #[ts(type = "number")]
     pub create_time: u64,
     pub cpu_id: u32,
 }
@@ -28,8 +27,6 @@ pub enum ConnectStatusType {
 pub enum MetricResolution {
     #[serde(rename = "second")]
     Second,
-    #[serde(rename = "minute")]
-    Minute,
     #[serde(rename = "hour")]
     Hour,
     #[serde(rename = "day")]
@@ -82,27 +79,6 @@ pub struct ConnectMetric {
     pub report_time: u64,
 
     #[ts(type = "number")]
-    pub create_time_ms: u64,
-
-    #[ts(type = "number")]
-    pub ingress_bytes: u64,
-    #[ts(type = "number")]
-    pub ingress_packets: u64,
-    #[ts(type = "number")]
-    pub egress_bytes: u64,
-    #[ts(type = "number")]
-    pub egress_packets: u64,
-
-    pub status: ConnectStatusType,
-}
-
-#[derive(Debug, Serialize, Deserialize, Eq, Hash, PartialEq, Clone, TS)]
-#[ts(export, export_to = "common/metric/connect.d.ts")]
-pub struct ConnectMetricPoint {
-    #[ts(type = "number")]
-    pub report_time: u64,
-
-    #[ts(type = "number")]
     pub ingress_bytes: u64,
     #[ts(type = "number")]
     pub ingress_packets: u64,
@@ -144,9 +120,6 @@ pub struct ConnectRealtimeStatus {
     pub trace_id: u8,
 
     #[ts(type = "number")]
-    pub create_time_ms: u64,
-
-    #[ts(type = "number")]
     pub ingress_bps: u64,
     #[ts(type = "number")]
     pub egress_bps: u64,
@@ -154,9 +127,8 @@ pub struct ConnectRealtimeStatus {
     pub ingress_pps: u64,
     #[ts(type = "number")]
     pub egress_pps: u64,
-    #[ts(type = "number")]
-    pub last_report_time: u64,
-    pub status: ConnectStatusType,
+
+    pub last_metric: Option<ConnectMetric>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Default, Clone, TS)]
@@ -245,9 +217,6 @@ pub struct ConnectHistoryStatus {
 
     pub flow_id: u8,
     pub trace_id: u8,
-
-    #[ts(type = "number")]
-    pub create_time_ms: u64,
 
     #[ts(type = "number")]
     pub total_ingress_bytes: u64,

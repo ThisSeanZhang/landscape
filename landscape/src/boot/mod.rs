@@ -8,7 +8,7 @@ use landscape_common::{
 
 pub mod log;
 
-pub const INIT_LOCK_FILE_CONTENT: &'static str = r#"⚠ 警告 ⚠
+const INIT_LOCK_FILE_CONTENT: &'static str = r#"⚠ 警告 ⚠
 如果您不知道删除这个文件的操作是否正确, 请不要删除这个文件.
 此文件用于确定当前的 Landscape Router 是否已经初始化.
 删除后将会依照 landscape_init.toml 中的配置进行初始化.

@@ -12,7 +12,7 @@ import {
   NIcon,
   NTooltip,
 } from "naive-ui";
-import { Refresh, HelpCircleOutline } from "@vicons/ionicons5";
+import { Refresh } from "@vicons/ionicons5";
 
 import {
   get_dns_lightweight_summary,
@@ -157,20 +157,7 @@ defineExpose({ refresh: loadSummary });
 
         <!-- Cache Hit Rate -->
         <n-gi>
-          <n-statistic>
-            <template #label>
-              <n-flex align="center" :size="4">
-                {{ t("metric.dns.dash.cache_hit_rate") }}
-                <n-tooltip trigger="hover" :width="240">
-                  <template #trigger>
-                    <n-icon size="14" depth="3" style="cursor: help">
-                      <HelpCircleOutline />
-                    </n-icon>
-                  </template>
-                  {{ t("metric.dns.dash.cache_hit_tip") }}
-                </n-tooltip>
-              </n-flex>
-            </template>
+          <n-statistic :label="t('metric.dns.dash.cache_hit_rate')">
             <template
               #suffix
               v-if="
@@ -252,19 +239,9 @@ defineExpose({ refresh: loadSummary });
 
       <!-- Latency Section -->
       <n-flex vertical :size="8">
-        <n-flex align="center" :size="4">
-          <n-text depth="3" style="font-size: 11px">
-            {{ t("metric.dns.dash.query_latency") }} (ms)
-          </n-text>
-          <n-tooltip trigger="hover" :width="280">
-            <template #trigger>
-              <n-icon size="13" depth="3" style="cursor: help">
-                <HelpCircleOutline />
-              </n-icon>
-            </template>
-            {{ t("metric.dns.dash.latency_tip") }}
-          </n-tooltip>
-        </n-flex>
+        <n-text depth="3" style="font-size: 11px"
+          >{{ t("metric.dns.dash.query_latency") }} (ms)</n-text
+        >
         <n-flex justify="space-between">
           <n-flex
             vertical
