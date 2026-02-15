@@ -268,10 +268,19 @@ impl DuckMetricStore {
 
         let conn_live = live_pool.get().expect("Failed to get LIVE writer connection from pool");
 
-        // Ensure tables are created before returning to avoid race conditions
-        connect::create_summaries_table(&conn_live);
-        connect::create_metrics_table(&conn_live).expect("Failed to create connect metrics tables");
-        dns::create_dns_table(&conn_live).expect("Failed to create DNS metrics tables");
+        // Ensure tables are created in memory database (main)
+        connect::create_summaries_table(&conn_live, "");
+        connect::create_metrics_table(&conn_live, "")
+            .expect("Failed to create connect metrics tables in memory");
+        dns::create_dns_table(&conn_live, "")
+            .expect("Failed to create DNS metrics tables in memory");
+
+        // Ensure tables are created in history database (disk)
+        connect::create_summaries_table(&conn_live, "history");
+        connect::create_metrics_table(&conn_live, "history")
+            .expect("Failed to create connect metrics tables on disk");
+        dns::create_dns_table(&conn_live, "history")
+            .expect("Failed to create DNS metrics tables on disk");
 
         // Attach memory database for live metrics (only once)
         connect::create_live_tables(&conn_live).expect("Failed to create live tables");

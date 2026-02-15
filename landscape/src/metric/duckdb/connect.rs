@@ -126,9 +126,11 @@ pub fn update_live_metric(stmt: &mut Statement, metric: &ConnectMetric) -> duckd
     ])
 }
 
-pub fn create_summaries_table(conn: &Connection) {
-    conn.execute(
-        "CREATE TABLE IF NOT EXISTS conn_summaries (
+pub fn create_summaries_table(conn: &Connection, schema: &str) {
+    let prefix = if schema.is_empty() { "".to_string() } else { format!("{}.", schema) };
+    let sql = format!(
+        "
+        CREATE TABLE IF NOT EXISTS {}conn_summaries (
             create_time UBIGINT,
             cpu_id INTEGER,
             src_ip VARCHAR,
@@ -148,17 +150,19 @@ pub fn create_summaries_table(conn: &Connection) {
             create_time_ms UBIGINT,
             PRIMARY KEY (create_time, cpu_id)
         );
-        CREATE INDEX IF NOT EXISTS idx_conn_summaries_time ON conn_summaries (last_report_time);
-        ",
-        [],
-    )
-    .unwrap();
+        CREATE INDEX IF NOT EXISTS idx_conn_summaries_time ON {}conn_summaries (last_report_time);
+    ",
+        prefix, prefix
+    );
+
+    conn.execute_batch(&sql).expect("Failed to create summaries table");
 }
 
-pub fn create_metrics_table(conn: &Connection) -> duckdb::Result<()> {
-    conn.execute_batch(
+pub fn create_metrics_table(conn: &Connection, schema: &str) -> duckdb::Result<()> {
+    let prefix = if schema.is_empty() { "".to_string() } else { format!("{}.", schema) };
+    let sql = format!(
         "
-        CREATE TABLE IF NOT EXISTS conn_metrics_1m (
+        CREATE TABLE IF NOT EXISTS {}conn_metrics_1m (
             create_time UBIGINT,
             cpu_id INTEGER,
             report_time BIGINT,
@@ -171,7 +175,7 @@ pub fn create_metrics_table(conn: &Connection) -> duckdb::Result<()> {
             PRIMARY KEY (create_time, cpu_id, report_time)
         );
 
-        CREATE TABLE IF NOT EXISTS conn_metrics_1h (
+        CREATE TABLE IF NOT EXISTS {}conn_metrics_1h (
             create_time UBIGINT,
             cpu_id INTEGER,
             report_time BIGINT,
@@ -184,7 +188,7 @@ pub fn create_metrics_table(conn: &Connection) -> duckdb::Result<()> {
             PRIMARY KEY (create_time, cpu_id, report_time)
         );
 
-        CREATE TABLE IF NOT EXISTS conn_metrics_1d (
+        CREATE TABLE IF NOT EXISTS {}conn_metrics_1d (
             create_time UBIGINT,
             cpu_id INTEGER,
             report_time BIGINT,
@@ -197,7 +201,7 @@ pub fn create_metrics_table(conn: &Connection) -> duckdb::Result<()> {
             PRIMARY KEY (create_time, cpu_id, report_time)
         );
 
-        CREATE TABLE IF NOT EXISTS global_stats (
+        CREATE TABLE IF NOT EXISTS {}global_stats (
             total_ingress_bytes BIGINT,
             total_egress_bytes BIGINT,
             total_ingress_pkts BIGINT,
@@ -205,8 +209,11 @@ pub fn create_metrics_table(conn: &Connection) -> duckdb::Result<()> {
             total_connect_count BIGINT,
             last_calculate_time UBIGINT
         );
-        ",
-    )
+    ",
+        prefix, prefix, prefix, prefix
+    );
+
+    conn.execute_batch(&sql)
 }
 
 pub fn create_live_tables(conn: &Connection) -> duckdb::Result<()> {
