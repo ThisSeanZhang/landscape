@@ -84,32 +84,13 @@ impl ConnectMetricManager {
         self.metric_store.connect_infos().await
     }
 
-    pub async fn query_metric_by_key(&self, key: ConnectKey) -> Vec<ConnectMetricPoint> {
-        let now = landscape_common::utils::time::get_current_time_ms().unwrap_or_default();
-        let age_ms = now.saturating_sub(key.create_time);
-
-        let hour_threshold = 3600 * 1000;
-        let day_threshold = 24 * 3600 * 1000;
-        let month_threshold = 30 * 24 * 3600 * 1000;
-
-        let resolution = if age_ms < hour_threshold {
-            MetricResolution::Second
-        } else if age_ms < day_threshold {
-            MetricResolution::Minute
-        } else if age_ms < month_threshold {
-            MetricResolution::Hour
-        } else {
-            MetricResolution::Day
-        };
-
-        self.metric_store.query_metric_by_key(key, resolution).await
-    }
-
-    pub async fn query_metric_by_key_with_resolution(
+    pub async fn query_metric_by_key(
         &self,
         key: ConnectKey,
-        resolution: MetricResolution,
+        resolution: Option<MetricResolution>,
     ) -> Vec<ConnectMetricPoint> {
+        let resolution = resolution.unwrap_or(MetricResolution::Second);
+
         self.metric_store.query_metric_by_key(key, resolution).await
     }
 

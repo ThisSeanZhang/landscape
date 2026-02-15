@@ -7,7 +7,8 @@ use ts_rs::TS;
 #[derive(Debug, Serialize, Deserialize, Eq, Hash, PartialEq, Clone, TS)]
 #[ts(export, export_to = "common/metric/connect.d.ts")]
 pub struct ConnectKey {
-    #[ts(type = "number")]
+    #[ts(type = "string")]
+    #[serde(with = "crate::utils::serde_helper")]
     pub create_time: u64,
     pub cpu_id: u32,
 }
@@ -81,6 +82,9 @@ pub struct ConnectMetric {
     pub report_time: u64,
 
     #[ts(type = "number")]
+    pub create_time_ms: u64,
+
+    #[ts(type = "number")]
     pub ingress_bytes: u64,
     #[ts(type = "number")]
     pub ingress_packets: u64,
@@ -138,6 +142,9 @@ pub struct ConnectRealtimeStatus {
 
     pub flow_id: u8,
     pub trace_id: u8,
+
+    #[ts(type = "number")]
+    pub create_time_ms: u64,
 
     #[ts(type = "number")]
     pub ingress_bps: u64,
@@ -238,6 +245,9 @@ pub struct ConnectHistoryStatus {
 
     pub flow_id: u8,
     pub trace_id: u8,
+
+    #[ts(type = "number")]
+    pub create_time_ms: u64,
 
     #[ts(type = "number")]
     pub total_ingress_bytes: u64,

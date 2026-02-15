@@ -42,6 +42,7 @@ export type ConnectHistoryStatus = {
   l3_proto: number;
   flow_id: number;
   trace_id: number;
+  create_time_ms: number;
   total_ingress_bytes: number;
   total_egress_bytes: number;
   total_ingress_pkts: number;
@@ -51,7 +52,7 @@ export type ConnectHistoryStatus = {
 };
 
 /** */
-export type ConnectKey = { create_time: number; cpu_id: number };
+export type ConnectKey = { create_time: string; cpu_id: number };
 
 export type ConnectMetric = {
   key: ConnectKey;
@@ -64,6 +65,7 @@ export type ConnectMetric = {
   flow_id: number;
   trace_id: number;
   report_time: number;
+  create_time_ms: number;
   ingress_bytes: number;
   ingress_packets: number;
   egress_bytes: number;
@@ -90,6 +92,7 @@ export type ConnectRealtimeStatus = {
   l3_proto: number;
   flow_id: number;
   trace_id: number;
+  create_time_ms: number;
   ingress_bps: number;
   egress_bps: number;
   ingress_pps: number;

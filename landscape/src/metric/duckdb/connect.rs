@@ -9,37 +9,37 @@ use std::path::PathBuf;
 pub const SUMMARY_INSERT_SQL: &str = "
     INSERT OR REPLACE INTO conn_summaries (
         create_time, cpu_id, src_ip, dst_ip, src_port, dst_port, l4_proto, l3_proto, flow_id, trace_id,
-        last_report_time, total_ingress_bytes, total_egress_bytes, total_ingress_pkts, total_egress_pkts, status
-    ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
+        last_report_time, total_ingress_bytes, total_egress_bytes, total_ingress_pkts, total_egress_pkts, status, create_time_ms
+    ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)
 ";
 
 pub const METRICS_1M_INSERT_SQL: &str = "
     INSERT OR REPLACE INTO conn_metrics_1m (
         create_time, cpu_id, report_time, 
-        ingress_bytes, ingress_packets, egress_bytes, egress_packets, status
-    ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+        ingress_bytes, ingress_packets, egress_bytes, egress_packets, status, create_time_ms
+    ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
 ";
 
 pub const METRICS_1H_INSERT_SQL: &str = "
     INSERT OR REPLACE INTO conn_metrics_1h (
         create_time, cpu_id, report_time, 
-        ingress_bytes, ingress_packets, egress_bytes, egress_packets, status
-    ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+        ingress_bytes, ingress_packets, egress_bytes, egress_packets, status, create_time_ms
+    ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
 ";
 
 pub const METRICS_1D_INSERT_SQL: &str = "
     INSERT OR REPLACE INTO conn_metrics_1d (
         create_time, cpu_id, report_time, 
-        ingress_bytes, ingress_packets, egress_bytes, egress_packets, status
-    ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+        ingress_bytes, ingress_packets, egress_bytes, egress_packets, status, create_time_ms
+    ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
 ";
 
 pub const LIVE_METRIC_INSERT_SQL: &str = "
     INSERT INTO conn_realtime (
         create_time, cpu_id, src_ip, dst_ip, src_port, dst_port, l4_proto, l3_proto, flow_id, trace_id,
         ingress_bytes, egress_bytes, ingress_packets, egress_packets, ingress_bps, egress_bps, ingress_pps, egress_pps,
-        last_report_time, status
-    ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)
+        last_report_time, status, create_time_ms
+    ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)
     ON CONFLICT (create_time, cpu_id) DO UPDATE SET
         ingress_bps = CASE 
             WHEN (EXCLUDED.last_report_time - last_report_time) > 0 
@@ -93,6 +93,7 @@ pub fn update_summary_by_metric(
         metric.ingress_packets as i64,
         metric.egress_packets as i64,
         event_type_val as i64,
+        metric.create_time_ms as i64,
     ])
 }
 
@@ -115,12 +116,13 @@ pub fn update_live_metric(stmt: &mut Statement, metric: &ConnectMetric) -> duckd
         metric.egress_bytes as i64,
         metric.ingress_packets as i64,
         metric.egress_packets as i64,
-        0i64, // Placeholder for ingress_bps
-        0i64, // Placeholder for egress_bps
-        0i64, // Placeholder for ingress_pps
-        0i64, // Placeholder for egress_pps
+        0i64,
+        0i64,
+        0i64,
+        0i64,
         metric.report_time as i64,
         event_type_val as i64,
+        metric.create_time_ms as i64,
     ])
 }
 
@@ -143,8 +145,11 @@ pub fn create_summaries_table(conn: &Connection) {
             total_ingress_pkts UBIGINT,
             total_egress_pkts UBIGINT,
             status INTEGER,
+            create_time_ms UBIGINT,
             PRIMARY KEY (create_time, cpu_id)
-        )",
+        );
+        CREATE INDEX IF NOT EXISTS idx_conn_summaries_time ON conn_summaries (last_report_time);
+        ",
         [],
     )
     .unwrap();
@@ -162,6 +167,7 @@ pub fn create_metrics_table(conn: &Connection) -> duckdb::Result<()> {
             egress_bytes BIGINT,
             egress_packets BIGINT,
             status INTEGER,
+            create_time_ms UBIGINT,
             PRIMARY KEY (create_time, cpu_id, report_time)
         );
 
@@ -174,6 +180,7 @@ pub fn create_metrics_table(conn: &Connection) -> duckdb::Result<()> {
             egress_bytes BIGINT,
             egress_packets BIGINT,
             status INTEGER,
+            create_time_ms UBIGINT,
             PRIMARY KEY (create_time, cpu_id, report_time)
         );
 
@@ -186,6 +193,7 @@ pub fn create_metrics_table(conn: &Connection) -> duckdb::Result<()> {
             egress_bytes BIGINT,
             egress_packets BIGINT,
             status INTEGER,
+            create_time_ms UBIGINT,
             PRIMARY KEY (create_time, cpu_id, report_time)
         );
 
@@ -225,6 +233,7 @@ pub fn create_live_tables(conn: &Connection) -> duckdb::Result<()> {
             egress_pps UBIGINT,
             last_report_time UBIGINT,
             status INTEGER,
+            create_time_ms UBIGINT,
             PRIMARY KEY (create_time, cpu_id)
         );
 
@@ -236,7 +245,8 @@ pub fn create_live_tables(conn: &Connection) -> duckdb::Result<()> {
             ingress_packets BIGINT,
             egress_bytes BIGINT,
             egress_packets BIGINT,
-            status INTEGER
+            status INTEGER,
+            create_time_ms UBIGINT
         );
 
         CREATE TABLE IF NOT EXISTS conn_summaries (
@@ -256,6 +266,7 @@ pub fn create_live_tables(conn: &Connection) -> duckdb::Result<()> {
             total_ingress_pkts UBIGINT,
             total_egress_pkts UBIGINT,
             status INTEGER,
+            create_time_ms UBIGINT,
             PRIMARY KEY (create_time, cpu_id)
         );
         ",
@@ -266,7 +277,7 @@ pub fn query_metric_by_key(
     conn: &Connection,
     key: &ConnectKey,
     resolution: MetricResolution,
-    history_db_path: Option<&PathBuf>,
+    _history_db_path: Option<&PathBuf>,
 ) -> Vec<ConnectMetricPoint> {
     let table = match resolution {
         MetricResolution::Second => "conn_metrics",
@@ -274,11 +285,6 @@ pub fn query_metric_by_key(
         MetricResolution::Hour => "history.conn_metrics_1h",
         MetricResolution::Day => "history.conn_metrics_1d",
     };
-
-    if let Some(path) = history_db_path {
-        let attach_sql = format!("ATTACH IF NOT EXISTS '{}' AS history;", path.to_string_lossy());
-        let _ = conn.execute_batch(&attach_sql);
-    }
 
     let stmt_str = format!(
         "
@@ -331,7 +337,25 @@ pub fn query_metric_by_key(
 pub fn query_historical_summaries_complex(
     conn: &Connection,
     params: ConnectHistoryQueryParams,
+    history_db_path: Option<&PathBuf>,
 ) -> Vec<ConnectHistoryStatus> {
+    let now = landscape_common::utils::time::get_current_time_ms().unwrap_or_default();
+
+    let table_name = if history_db_path.is_some() {
+        "history.conn_summaries".to_string()
+    } else {
+        "conn_summaries".to_string()
+    };
+
+    if let Some(start) = params.start_time {
+        tracing::debug!(
+            "History Query - StartTime: {}, Now: {}, Diff: {}ms",
+            start,
+            now,
+            now.saturating_sub(start)
+        );
+    }
+
     let mut where_clauses = Vec::new();
     if let Some(start) = params.start_time {
         where_clauses.push(format!("last_report_time >= {}", start));
@@ -379,8 +403,8 @@ pub fn query_historical_summaries_complex(
         ConnectSortKey::Port => "src_port",
         ConnectSortKey::Ingress => "total_ingress_bytes",
         ConnectSortKey::Egress => "total_egress_bytes",
-        ConnectSortKey::Time => "create_time",
-        ConnectSortKey::Duration => "(last_report_time - create_time)",
+        ConnectSortKey::Time => "last_report_time",
+        ConnectSortKey::Duration => "(last_report_time - create_time_ms)",
     };
     let sort_order_str = match params.sort_order.unwrap_or_default() {
         SortOrder::Asc => "ASC",
@@ -390,25 +414,26 @@ pub fn query_historical_summaries_complex(
     let limit_clause =
         if let Some(l) = params.limit { format!("LIMIT {}", l) } else { String::new() };
 
-    let stmt = format!("
+    let stmt_str = format!("
         SELECT 
             create_time, cpu_id, src_ip, dst_ip, src_port, dst_port, l4_proto, l3_proto, flow_id, trace_id,
-            total_ingress_bytes, total_egress_bytes, total_ingress_pkts, total_egress_pkts, last_report_time, status
-        FROM conn_summaries
+            total_ingress_bytes, total_egress_bytes, total_ingress_pkts, total_egress_pkts, last_report_time, status, create_time_ms
+        FROM {}
         {}
         ORDER BY {} {}
         {}
-    ", where_stmt, sort_col, sort_order_str, limit_clause);
+    ", table_name, where_stmt, sort_col, sort_order_str, limit_clause);
 
-    let mut stmt = match conn.prepare(&stmt) {
+    let mut stmt = match conn.prepare(&stmt_str) {
         Ok(s) => s,
         Err(e) => {
-            tracing::error!("Failed to prepare SQL: {}, error: {}", stmt, e);
+            tracing::error!("Failed to prepare SQL: {}, error: {}", stmt_str, e);
             return Vec::new();
         }
     };
 
     let rows = stmt.query_map([], |row| {
+        let create_time_ms: u64 = row.get::<_, i64>(16)? as u64;
         let key = ConnectKey {
             create_time: row.get::<_, i64>(0)? as u64,
             cpu_id: row.get::<_, i64>(1)? as u32,
@@ -429,6 +454,7 @@ pub fn query_historical_summaries_complex(
             total_egress_pkts: row.get::<_, i64>(13)? as u64,
             last_report_time: row.get::<_, i64>(14)? as u64,
             status: row.get::<_, i64>(15)? as u8,
+            create_time_ms,
         })
     });
 
@@ -532,72 +558,67 @@ pub fn aggregate_global_stats(conn: &Connection) -> duckdb::Result<()> {
     )
 }
 
-pub fn perform_batch_rollup(conn: &Connection, history_db_path: &PathBuf) -> duckdb::Result<()> {
-    let attach_sql =
-        format!("ATTACH IF NOT EXISTS '{}' AS history;", history_db_path.to_string_lossy());
-    conn.execute_batch(&attach_sql)?;
-
-    conn.execute_batch(
-        "
-        -- Rollup to 1m
-        INSERT OR REPLACE INTO history.conn_metrics_1m 
+pub fn perform_batch_rollup(conn: &Connection, _history_db_path: &PathBuf) -> duckdb::Result<()> {
+    let sql_1m = "
+        INSERT OR REPLACE INTO history.conn_metrics_1m (
+            create_time, cpu_id, report_time, 
+            ingress_bytes, ingress_packets, egress_bytes, egress_packets, status, create_time_ms
+        )
         SELECT 
             create_time, cpu_id, (report_time // 60000) * 60000 as rt, 
-            MAX(ingress_bytes), MAX(ingress_packets), MAX(egress_bytes), MAX(egress_packets), MAX(status)
+            MAX(ingress_bytes), MAX(ingress_packets), MAX(egress_bytes), MAX(egress_packets), MAX(status), MAX(create_time_ms)
         FROM conn_metrics 
-        GROUP BY 1, 2, 3;
+        GROUP BY 1, 2, 3;";
 
-        -- Rollup to 1h
-        INSERT OR REPLACE INTO history.conn_metrics_1h 
+    let sql_1h = "
+        INSERT OR REPLACE INTO history.conn_metrics_1h (
+            create_time, cpu_id, report_time, 
+            ingress_bytes, ingress_packets, egress_bytes, egress_packets, status, create_time_ms
+        )
         SELECT 
             create_time, cpu_id, (report_time // 3600000) * 3600000 as rt, 
-            MAX(ingress_bytes), MAX(ingress_packets), MAX(egress_bytes), MAX(egress_packets), MAX(status)
+            MAX(ingress_bytes), MAX(ingress_packets), MAX(egress_bytes), MAX(egress_packets), MAX(status), MAX(create_time_ms)
         FROM conn_metrics 
-        GROUP BY 1, 2, 3;
+        GROUP BY 1, 2, 3;";
 
-        -- Rollup to 1d
-        INSERT OR REPLACE INTO history.conn_metrics_1d 
+    let sql_1d = "
+        INSERT OR REPLACE INTO history.conn_metrics_1d (
+            create_time, cpu_id, report_time, 
+            ingress_bytes, ingress_packets, egress_bytes, egress_packets, status, create_time_ms
+        )
         SELECT 
             create_time, cpu_id, (report_time // 86400000) * 86400000 as rt, 
-            MAX(ingress_bytes), MAX(ingress_packets), MAX(egress_bytes), MAX(egress_packets), MAX(status)
+            MAX(ingress_bytes), MAX(ingress_packets), MAX(egress_bytes), MAX(egress_packets), MAX(status), MAX(create_time_ms)
         FROM conn_metrics 
-        GROUP BY 1, 2, 3;
+        GROUP BY 1, 2, 3;";
 
-        -- Sync metadata from memory summaries to disk summaries
-        INSERT OR IGNORE INTO history.conn_summaries (
+    let sql_summary = "
+        INSERT OR REPLACE INTO history.conn_summaries (
             create_time, cpu_id, src_ip, dst_ip, src_port, dst_port, 
-            l4_proto, l3_proto, flow_id, trace_id, status
+            l4_proto, l3_proto, flow_id, trace_id,
+            last_report_time, total_ingress_bytes, total_egress_bytes, 
+            total_ingress_pkts, total_egress_pkts, status, create_time_ms
         )
         SELECT 
             create_time, cpu_id, src_ip, dst_ip, src_port, dst_port, 
-            l4_proto, l3_proto, flow_id, trace_id, status
-        FROM conn_summaries;
+            l4_proto, l3_proto, flow_id, trace_id,
+            last_report_time, total_ingress_bytes, total_egress_bytes, 
+            total_ingress_pkts, total_egress_pkts, status, create_time_ms
+        FROM main.conn_summaries;";
 
-        -- Update summaries with latest stats from memory
-        UPDATE history.conn_summaries
-        SET 
-            last_report_time = m.max_rt,
-            total_ingress_bytes = m.max_ib,
-            total_egress_bytes = m.max_eb,
-            total_ingress_pkts = m.max_ip,
-            total_egress_pkts = m.max_ep,
-            status = m.max_st
-        FROM (
-            SELECT 
-                create_time, cpu_id, 
-                MAX(report_time) as max_rt,
-                MAX(ingress_bytes) as max_ib,
-                MAX(egress_bytes) as max_eb,
-                MAX(ingress_packets) as max_ip,
-                MAX(egress_packets) as max_ep,
-                MAX(status) as max_st
-            FROM conn_metrics
-            GROUP BY 1, 2
-        ) AS m
-        WHERE history.conn_summaries.create_time = m.create_time 
-          AND history.conn_summaries.cpu_id = m.cpu_id;
-    ",
-    )
+    let r_1m = conn.execute(sql_1m, [])?;
+    let r_1h = conn.execute(sql_1h, [])?;
+    let r_1d = conn.execute(sql_1d, [])?;
+    let r_summary = conn.execute(sql_summary, [])?;
+
+    // 显式刷新磁盘库，确保数据对其他连接（如查询连接）立即可见
+    if let Err(e) = conn.execute_batch("CHECKPOINT history;") {
+        tracing::error!("Failed to checkpoint history database: {}", e);
+    }
+
+    tracing::info!("Batch rollup: 1m:{} 1h:{} 1d:{} sum:{}", r_1m, r_1h, r_1d, r_summary);
+
+    Ok(())
 }
 
 pub fn collect_and_cleanup_old_metrics(
@@ -606,17 +627,13 @@ pub fn collect_and_cleanup_old_metrics(
     cutoff_1m: u64,
     cutoff_1h: u64,
     cutoff_1d: u64,
-    history_db_path: &PathBuf,
+    _history_db_path: &PathBuf,
 ) -> Box<Vec<ConnectMetric>> {
-    let attach_sql =
-        format!("ATTACH IF NOT EXISTS '{}' AS history;", history_db_path.to_string_lossy());
-    let _ = conn.execute_batch(&attach_sql);
-
     // Fetch expired metric records
     let stmt = "
         SELECT 
             s.create_time, s.cpu_id, s.src_ip, s.dst_ip, s.src_port, s.dst_port, s.l4_proto, s.l3_proto, s.flow_id, s.trace_id,
-            m.report_time, m.ingress_bytes, m.ingress_packets, m.egress_bytes, m.egress_packets, m.status
+            m.report_time, m.ingress_bytes, m.ingress_packets, m.egress_bytes, m.egress_packets, m.status, s.create_time_ms
         FROM conn_metrics m
         JOIN history.conn_summaries s ON m.create_time = s.create_time AND m.cpu_id = s.cpu_id
         WHERE m.report_time < ?1
@@ -647,6 +664,7 @@ pub fn collect_and_cleanup_old_metrics(
             flow_id: row.get::<_, i64>(8)? as u8,
             trace_id: row.get::<_, i64>(9)? as u8,
             report_time: row.get(10)?,
+            create_time_ms: row.get(16)?,
             ingress_bytes: row.get(11)?,
             ingress_packets: row.get(12)?,
             egress_bytes: row.get(13)?,
@@ -701,12 +719,12 @@ pub fn collect_and_cleanup_old_metrics(
     };
 
     tracing::info!(
-        "Cleanup complete: deleted {} metric records, remaining: {}",
+        "Cleanup complete: deleted {} metric records from memory, remaining in memory: {}",
         deleted_metrics,
         size
     );
 
-    let deleted_summaries = conn
+    let deleted_history_summaries = conn
         .execute(
             "DELETE FROM history.conn_summaries WHERE last_report_time < ?1",
             params![cutoff_1d as i64],
@@ -714,12 +732,18 @@ pub fn collect_and_cleanup_old_metrics(
         .unwrap_or(0);
 
     // Also cleanup memory summaries (more aggressively, e.g., same as raw metrics)
-    let _ = conn.execute(
-        "DELETE FROM conn_summaries WHERE last_report_time < ?1",
-        params![cutoff_raw as i64],
-    );
+    let deleted_memory_summaries = conn
+        .execute(
+            "DELETE FROM conn_summaries WHERE last_report_time < ?1",
+            params![cutoff_raw as i64],
+        )
+        .unwrap_or(0);
 
-    tracing::info!("Cleanup summaries complete: deleted {} history records", deleted_summaries);
+    tracing::info!(
+        "Cleanup summaries complete: deleted {} history disk records, deleted {} memory cache records",
+        deleted_history_summaries,
+        deleted_memory_summaries
+    );
 
     Box::new(metrics)
 }
@@ -728,8 +752,13 @@ pub fn query_connection_ip_history(
     conn: &Connection,
     params: ConnectHistoryQueryParams,
     is_src: bool,
+    history_db_path: Option<&PathBuf>,
 ) -> Vec<landscape_common::metric::connect::IpHistoryStat> {
+    let table_prefix = if history_db_path.is_some() { "history." } else { "" };
+    let table_name = format!("{}conn_summaries", table_prefix);
+
     let mut where_clauses = Vec::new();
+    let col = if is_src { "src_ip" } else { "dst_ip" };
     if let Some(start) = params.start_time {
         where_clauses.push(format!("last_report_time >= {}", start));
     }
@@ -756,45 +785,26 @@ pub fn query_connection_ip_history(
         format!("WHERE {}", where_clauses.join(" AND "))
     };
 
-    let group_col = if is_src { "src_ip" } else { "dst_ip" };
-
-    let sort_col = match params.sort_key.unwrap_or_default() {
-        ConnectSortKey::Ingress => "SUM(total_ingress_bytes)",
-        ConnectSortKey::Egress => "SUM(total_egress_bytes)",
-        ConnectSortKey::Time => "COUNT(*)",
-        _ => "SUM(total_egress_bytes)",
-    };
-    let sort_order_str = match params.sort_order.unwrap_or_default() {
-        SortOrder::Asc => "ASC",
-        SortOrder::Desc => "DESC",
-    };
-
-    let limit_clause =
-        if let Some(l) = params.limit { format!("LIMIT {}", l) } else { "LIMIT 50".to_string() };
-
-    let stmt = format!(
+    let stmt_str = format!(
         "
         SELECT 
             {}, 
-            flow_id,
-            SUM(total_ingress_bytes), 
-            SUM(total_egress_bytes), 
-            SUM(total_ingress_pkts), 
-            SUM(total_egress_pkts), 
+            SUM(total_ingress_bytes), SUM(total_egress_bytes), 
+            SUM(total_ingress_pkts), SUM(total_egress_pkts), 
             COUNT(*)
-        FROM conn_summaries
+        FROM {}
         {}
-        GROUP BY {}, flow_id
-        ORDER BY {} {}
-        {}
+        GROUP BY 1
+        ORDER BY 2 DESC 
+        LIMIT 10
     ",
-        group_col, where_stmt, group_col, sort_col, sort_order_str, limit_clause
+        col, table_name, where_stmt
     );
 
-    let mut stmt = match conn.prepare(&stmt) {
+    let mut stmt = match conn.prepare(&stmt_str) {
         Ok(s) => s,
         Err(e) => {
-            tracing::error!("Failed to prepare IP history SQL: {}, error: {}", stmt, e);
+            tracing::error!("Failed to prepare IP history SQL: {}, error: {}", stmt_str, e);
             return Vec::new();
         }
     };
@@ -802,12 +812,12 @@ pub fn query_connection_ip_history(
     let rows = stmt.query_map([], |row| {
         Ok(landscape_common::metric::connect::IpHistoryStat {
             ip: row.get::<_, String>(0)?.parse().unwrap_or("0.0.0.0".parse().unwrap()),
-            flow_id: row.get::<_, i64>(1)? as u8,
-            total_ingress_bytes: row.get::<_, Option<i64>>(2)?.unwrap_or(0) as u64,
-            total_egress_bytes: row.get::<_, Option<i64>>(3)?.unwrap_or(0) as u64,
-            total_ingress_pkts: row.get::<_, Option<i64>>(4)?.unwrap_or(0) as u64,
-            total_egress_pkts: row.get::<_, Option<i64>>(5)?.unwrap_or(0) as u64,
-            connect_count: row.get::<_, i64>(6)? as u32,
+            flow_id: 0,
+            total_ingress_bytes: row.get::<_, Option<i64>>(1)?.unwrap_or(0) as u64,
+            total_egress_bytes: row.get::<_, Option<i64>>(2)?.unwrap_or(0) as u64,
+            total_ingress_pkts: row.get::<_, Option<i64>>(3)?.unwrap_or(0) as u64,
+            total_egress_pkts: row.get::<_, Option<i64>>(4)?.unwrap_or(0) as u64,
+            connect_count: row.get::<_, i64>(5)? as u32,
         })
     });
 

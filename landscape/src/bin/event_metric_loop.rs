@@ -29,7 +29,8 @@ async fn main() {
     let metric_service = MetricData::new(
         metric_path,
         landscape_common::config::MetricRuntimeConfig {
-            conn_retention_days: landscape_common::DEFAULT_CONN_METRIC_RETENTION_DAYS,
+            conn_retention_mins: landscape_common::DEFAULT_CONN_METRIC_RETENTION_MINS,
+            conn_retention_minute_days: landscape_common::DEFAULT_CONN_METRIC_RETENTION_DAYS_1M,
             conn_retention_hour_days: landscape_common::DEFAULT_CONN_METRIC_RETENTION_DAYS_1H,
             conn_retention_day_days: landscape_common::DEFAULT_CONN_METRIC_RETENTION_DAYS_1D,
             dns_retention_days: landscape_common::DEFAULT_DNS_METRIC_RETENTION_DAYS,
