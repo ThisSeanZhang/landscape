@@ -411,7 +411,9 @@ pub fn query_historical_summaries_complex(
         ConnectSortKey::Ingress => "total_ingress_bytes",
         ConnectSortKey::Egress => "total_egress_bytes",
         ConnectSortKey::Time => "last_report_time",
-        ConnectSortKey::Duration => "(last_report_time - create_time_ms)",
+        ConnectSortKey::Duration => {
+            "(CAST(last_report_time AS BIGINT) - CAST(create_time_ms AS BIGINT))"
+        }
     };
     let sort_order_str = match params.sort_order.unwrap_or_default() {
         SortOrder::Asc => "ASC",
@@ -600,18 +602,34 @@ pub fn perform_batch_rollup(conn: &Connection, _history_db_path: &PathBuf) -> du
         GROUP BY 1, 2, 3;";
 
     let sql_summary = "
-        INSERT OR REPLACE INTO history.conn_summaries (
+        INSERT INTO history.conn_summaries (
             create_time, cpu_id, src_ip, dst_ip, src_port, dst_port, 
             l4_proto, l3_proto, flow_id, trace_id,
             last_report_time, total_ingress_bytes, total_egress_bytes, 
             total_ingress_pkts, total_egress_pkts, status, create_time_ms
         )
         SELECT 
-            create_time, cpu_id, src_ip, dst_ip, src_port, dst_port, 
-            l4_proto, l3_proto, flow_id, trace_id,
-            last_report_time, total_ingress_bytes, total_egress_bytes, 
-            total_ingress_pkts, total_egress_pkts, status, create_time_ms
-        FROM main.conn_summaries;";
+            s.create_time, s.cpu_id, s.src_ip, s.dst_ip, s.src_port, s.dst_port, 
+            s.l4_proto, s.l3_proto, s.flow_id, s.trace_id,
+            MAX(m.report_time) as last_report_time,
+            MAX(m.ingress_bytes) as total_ingress_bytes,
+            MAX(m.egress_bytes) as total_egress_bytes,
+            MAX(m.ingress_packets) as total_ingress_pkts,
+            MAX(m.egress_packets) as total_egress_pkts,
+            MAX(m.status) as status,
+            LEAST(s.create_time_ms, MAX(m.report_time)) as create_time_ms
+        FROM main.conn_summaries s
+        JOIN history.conn_metrics_1m m ON s.create_time = m.create_time AND s.cpu_id = m.cpu_id
+        GROUP BY s.create_time, s.cpu_id, s.src_ip, s.dst_ip, s.src_port, s.dst_port, s.l4_proto, s.l3_proto, s.flow_id, s.trace_id, s.create_time_ms
+        ON CONFLICT (create_time, cpu_id) DO UPDATE SET
+            last_report_time = GREATEST(history.conn_summaries.last_report_time, EXCLUDED.last_report_time),
+            total_ingress_bytes = GREATEST(history.conn_summaries.total_ingress_bytes, EXCLUDED.total_ingress_bytes),
+            total_egress_bytes = GREATEST(history.conn_summaries.total_egress_bytes, EXCLUDED.total_egress_bytes),
+            total_ingress_pkts = GREATEST(history.conn_summaries.total_ingress_pkts, EXCLUDED.total_ingress_pkts),
+            total_egress_pkts = GREATEST(history.conn_summaries.total_egress_pkts, EXCLUDED.total_egress_pkts),
+            create_time_ms = LEAST(history.conn_summaries.create_time_ms, EXCLUDED.create_time_ms),
+            status = EXCLUDED.status;
+    ";
 
     let r_1m = conn.execute(sql_1m, [])?;
     let r_1h = conn.execute(sql_1h, [])?;
