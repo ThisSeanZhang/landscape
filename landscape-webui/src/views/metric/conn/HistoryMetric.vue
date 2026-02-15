@@ -55,6 +55,8 @@ const refreshGlobalStats = async () => {
 const showChart = ref(false);
 const showChartKey = ref<ConnectKey | null>(null);
 const showChartTitle = ref("");
+const showChartCreateTimeMs = ref<number | undefined>();
+const showChartLastReportTime = ref<number | undefined>();
 const loading = ref(false);
 
 // 自定义时间段
@@ -64,6 +66,8 @@ const customTimeRange = ref<[number, number] | null>(null);
 const showChartDrawer = (history: any) => {
   showChartKey.value = history.key;
   showChartTitle.value = `${frontEndStore.MASK_INFO(history.src_ip)}:${frontEndStore.MASK_PORT(history.src_port)} => ${frontEndStore.MASK_INFO(history.dst_ip)}:${frontEndStore.MASK_PORT(history.dst_port)}`;
+  showChartCreateTimeMs.value = history.create_time_ms;
+  showChartLastReportTime.value = history.last_report_time;
   showChart.value = true;
 };
 
@@ -268,17 +272,26 @@ onMounted(() => {
             >
           </n-flex>
 
-          <n-button
-            quaternary
-            circle
-            size="tiny"
-            @click="refreshGlobalStats"
-            :loading="refreshingGlobalStats"
-          >
-            <template #icon>
-              <n-icon><Renew /></n-icon>
+          <n-tooltip trigger="hover">
+            <template #trigger>
+              <n-button
+                quaternary
+                circle
+                size="tiny"
+                @click="refreshGlobalStats"
+                :loading="refreshingGlobalStats"
+              >
+                <template #icon>
+                  <n-icon><Renew /></n-icon>
+                </template>
+              </n-button>
             </template>
-          </n-button>
+            最后汇总时间:
+            <n-time
+              :time="globalStats.last_calculate_time"
+              format="yyyy-MM-dd HH:mm:ss"
+            />
+          </n-tooltip>
         </n-flex>
         <div v-else style="height: 34px"></div>
       </n-flex>
@@ -505,6 +518,8 @@ onMounted(() => {
       v-model:show="showChart"
       :conn="showChartKey"
       :title="showChartTitle"
+      :create-time-ms="showChartCreateTimeMs"
+      :last-report-time="showChartLastReportTime"
       type="history"
     />
   </n-flex>

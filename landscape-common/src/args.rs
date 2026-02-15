@@ -37,7 +37,7 @@ pub struct WebCommArgs {
     #[arg(short, long, env = "LANDSCAPE_WEB_HTTP_PORT")]
     pub port: Option<u16>,
 
-    /// Listen HTTPS port [default: 6300]
+    /// Listen HTTPS port [default: 6443]
     #[arg(short = 's', long = "https", env = "LANDSCAPE_WEB_HTTPS_PORT")]
     pub https_port: Option<u16>,
 
@@ -81,13 +81,17 @@ pub struct WebCommArgs {
     pub debug: Option<bool>,
 
     /// Log output location [default: false]
-    #[arg(long, env = "LANDSCAPE_LOG_PATH")]
+    #[arg(short = 'o', long, env = "LANDSCAPE_LOG_TERMINAL")]
     pub log_output_in_terminal: Option<bool>,
 
     /// Max log files number
     /// [default: 7]
     #[arg(long, env = "LANDSCAPE_LOG_FILE_LIMIT")]
     pub max_log_files: Option<usize>,
+
+    /// Auto init Default Net [default: false]
+    #[arg(long, env = "LANDSCAPE_AUTO")]
+    pub auto: bool,
 
     #[command(subcommand)]
     pub action: Option<LandscapeAction>,

@@ -3,6 +3,7 @@ import { ServiceStatus } from "@/lib/services";
 import {
   ConnectKey,
   ConnectMetric,
+  ConnectMetricPoint,
   ConnectRealtimeStatus,
   ConnectHistoryStatus,
   ConnectGlobalStats,
@@ -51,7 +52,7 @@ export async function get_connect_history(
 export async function get_connect_metric_info(
   key: ConnectKey,
   resolution?: MetricResolution,
-): Promise<ConnectMetric[]> {
+): Promise<ConnectMetricPoint[]> {
   let data = await axiosService.post("metric/connects/chart", {
     key,
     resolution,

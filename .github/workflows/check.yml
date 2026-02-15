@@ -1,0 +1,55 @@
+name: Code Quality Check
+
+on:
+  push:
+    branches:
+      - main
+      - dev
+  pull_request:
+    branches:
+      - main
+      - dev
+
+jobs:
+  rust-format-check:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          toolchain: nightly
+          components: rustfmt
+
+      - name: Check Rust version
+        run: rustc --version
+
+      - name: Check Rust code formatting
+        run: cargo fmt -- --check
+
+  frontend-format-check:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: 'yarn'
+          cache-dependency-path: landscape-webui/yarn.lock
+
+      - name: Install dependencies
+        run: |
+          cd landscape-webui
+          yarn install --frozen-lockfile
+
+      - name: Check frontend code formatting
+        run: |
+          cd landscape-webui
+          yarn prettier --check "src/**/*.{vue,ts,js,json,css,scss}"

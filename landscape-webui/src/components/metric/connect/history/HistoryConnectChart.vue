@@ -3,7 +3,7 @@ import { ref, onMounted, watch, computed } from "vue";
 import { get_connect_metric_info } from "@/api/metric";
 import {
   ConnectKey,
-  ConnectMetric,
+  ConnectMetricPoint,
   MetricResolution,
 } from "landscape-types/common/metric/connect";
 import { ApexOptions } from "apexcharts";
@@ -16,17 +16,34 @@ const { t } = useI18n();
 
 interface Props {
   conn: ConnectKey;
+  createTimeMs?: number;
+  lastReportTime?: number;
 }
 
 const props = defineProps<Props>();
-const chartData = ref<ConnectMetric[]>([]);
-const resolution = ref<MetricResolution>("second");
+const chartData = ref<ConnectMetricPoint[]>([]);
 const loading = ref(false);
 
+// 自动选择合适的初始分辨率
+const resolution = ref<MetricResolution>(
+  (() => {
+    const now = Date.now();
+    const startTime =
+      props.createTimeMs || Number(props.conn.create_time) / 1000000;
+    const ageMs = now - startTime;
+
+    if (ageMs < 5 * 60 * 1000) return "second"; // 5分钟内看秒级
+    if (ageMs < 24 * 3600 * 1000) return "minute"; // 1天内看分钟级
+    if (ageMs < 7 * 24 * 3600 * 1000) return "hour"; // 7天内看小时级
+    return "day"; // 其余看天级
+  })(),
+);
+
 const resolutionOptions = [
-  { label: "秒级 (实时)", value: "second" },
-  { label: "小时级 (30天保留)", value: "hour" },
-  { label: "天级 (180天保留)", value: "day" },
+  { label: "秒级 (5分钟保留)", value: "second" },
+  { label: "分钟级 (1天保留)", value: "minute" },
+  { label: "小时级 (7天保留)", value: "hour" },
+  { label: "天级 (30天保留)", value: "day" },
 ];
 
 async function fetchData() {

@@ -4,7 +4,8 @@ import type { LandscapeMetricConfig } from "landscape-types/common/config";
 import { get_metric_config_edit, update_metric_config } from "@/api/sys/config";
 
 export const useMetricConfigStore = defineStore("metric_config", () => {
-  const connRetentionDays = ref<number | undefined>(undefined);
+  const connRetentionMins = ref<number | undefined>(undefined);
+  const connRetentionMinuteDays = ref<number | undefined>(undefined);
   const connRetentionHourDays = ref<number | undefined>(undefined);
   const connRetentionDayDays = ref<number | undefined>(undefined);
   const dnsRetentionDays = ref<number | undefined>(undefined);
@@ -16,8 +17,11 @@ export const useMetricConfigStore = defineStore("metric_config", () => {
 
   async function loadMetricConfig() {
     const { metric, hash } = await get_metric_config_edit();
-    connRetentionDays.value = metric.conn_retention_days
-      ? Number(metric.conn_retention_days)
+    connRetentionMins.value = metric.conn_retention_mins
+      ? Number(metric.conn_retention_mins)
+      : undefined;
+    connRetentionMinuteDays.value = metric.conn_retention_minute_days
+      ? Number(metric.conn_retention_minute_days)
       : undefined;
     connRetentionHourDays.value = metric.conn_retention_hour_days
       ? Number(metric.conn_retention_hour_days)
@@ -39,9 +43,13 @@ export const useMetricConfigStore = defineStore("metric_config", () => {
 
   async function saveMetricConfig() {
     const new_metric: LandscapeMetricConfig = {
-      conn_retention_days:
-        connRetentionDays.value !== undefined
-          ? BigInt(connRetentionDays.value)
+      conn_retention_mins:
+        connRetentionMins.value !== undefined
+          ? BigInt(connRetentionMins.value)
+          : undefined,
+      conn_retention_minute_days:
+        connRetentionMinuteDays.value !== undefined
+          ? BigInt(connRetentionMinuteDays.value)
           : undefined,
       conn_retention_hour_days:
         connRetentionHourDays.value !== undefined
@@ -74,7 +82,8 @@ export const useMetricConfigStore = defineStore("metric_config", () => {
   }
 
   return {
-    connRetentionDays,
+    connRetentionMins,
+    connRetentionMinuteDays,
     connRetentionHourDays,
     connRetentionDayDays,
     dnsRetentionDays,

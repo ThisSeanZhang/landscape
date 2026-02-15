@@ -4,7 +4,7 @@ use axum::{
     Json, Router,
 };
 use landscape_common::metric::connect::{
-    ConnectGlobalStats, ConnectHistoryQueryParams, ConnectHistoryStatus, ConnectMetric,
+    ConnectGlobalStats, ConnectHistoryQueryParams, ConnectHistoryStatus, ConnectMetricPoint,
     ConnectRealtimeStatus, IpRealtimeStat, MetricChartRequest,
 };
 use landscape_common::metric::dns::{
@@ -47,17 +47,9 @@ pub async fn get_connects_info(
 pub async fn get_connect_metric_info(
     State(state): State<LandscapeApp>,
     Json(req): Json<MetricChartRequest>,
-) -> LandscapeApiResult<Vec<ConnectMetric>> {
-    let data = if let Some(res) = req.resolution {
-        state
-            .metric_service
-            .data
-            .connect_metric
-            .query_metric_by_key_with_resolution(req.key, res)
-            .await
-    } else {
-        state.metric_service.data.connect_metric.query_metric_by_key(req.key).await
-    };
+) -> LandscapeApiResult<Vec<ConnectMetricPoint>> {
+    let data =
+        state.metric_service.data.connect_metric.query_metric_by_key(req.key, req.resolution).await;
     LandscapeApiResp::success(data)
 }
 

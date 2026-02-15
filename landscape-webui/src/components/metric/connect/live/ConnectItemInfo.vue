@@ -57,7 +57,7 @@ function formatDuration(start: number, end: number): string {
 }
 
 const lastActiveTime = (conn: ConnectRealtimeStatus) => {
-  return conn.last_metric?.report_time || Date.now();
+  return conn.last_report_time || Date.now();
 };
 
 const goToHistory = (conn: ConnectRealtimeStatus) => {
@@ -114,7 +114,7 @@ const emit = defineEmits([
                     <span style="color: #888; font-size: 12px">
                       {{
                         formatDuration(
-                          conn.key.create_time,
+                          conn.create_time_ms,
                           lastActiveTime(conn),
                         )
                       }}
@@ -124,7 +124,7 @@ const emit = defineEmits([
               </template>
               {{ $t("metric.connect.filter.create_time") }}:
               <n-time
-                :time="conn.key.create_time"
+                :time="conn.create_time_ms"
                 format="yyyy-MM-dd HH:mm:ss"
                 :time-zone="prefStore.timezone"
               />

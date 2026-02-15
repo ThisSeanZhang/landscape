@@ -65,6 +65,9 @@ export default {
     ip_rules: "IP 规则",
     refresh: "刷新指标",
     recent_5m: "(近5分钟)",
+    latency_tip:
+      "延迟统计仅包含需要上游解析的请求，已排除本地规则、缓存命中、拦截、过滤及错误。",
+    cache_hit_tip: "命中率基于有效查询（排除拦截、过滤及错误）。",
   },
   tip: {
     default_flow: "默认 Flow",

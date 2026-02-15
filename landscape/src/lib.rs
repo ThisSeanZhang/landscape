@@ -33,35 +33,44 @@ pub mod service;
 pub mod sys_service;
 pub mod wifi;
 
-// fn gen_default_config(
-//     interface_map: &HashMap<String, LandscapeInterface>,
-// ) -> Vec<NetworkIfaceConfig> {
-//     let mut interfaces: Vec<&LandscapeInterface> = interface_map
-//         .values()
-//         .filter(|ifce| !ifce.is_lo())
-//         .filter(|d| !d.is_virtual_dev())
-//         .collect();
-//     interfaces.sort_by(|&a, &b| b.index.cmp(&a.index));
-//     if interfaces.len() < 2 {
-//         // 只有一个设备不支持
-//         return vec![];
-//     }
-//     let _wan_iface = interfaces.pop().unwrap();
+pub fn gen_default_config(
+    interface_map: &HashMap<String, LandscapeInterface>,
+) -> Vec<NetworkIfaceConfig> {
+    tracing::info!("Scanning all interfaces: {:?}", interface_map.keys().collect::<Vec<&String>>());
+    let interfaces: Vec<&LandscapeInterface> = interface_map
+        .values()
+        .filter(|ifce| !ifce.is_lo())
+        .filter(|d| !d.is_virtual_dev())
+        .collect();
 
-//     let br = NetworkIfaceConfig::crate_default_br_lan();
-//     let mut dev_configs = vec![];
-//     for other_eth in interfaces {
-//         // 如果已经有对应的 controller 了就不进行处理了
-//         if other_eth.controller_id.is_some() {
-//             continue;
-//         }
-//         let mut dev = NetworkIfaceConfig::from_phy_dev(other_eth);
-//         dev.controller_name = Some(br.name.clone());
-//         dev_configs.push(dev);
-//     }
-//     dev_configs.push(br);
-//     return dev_configs;
-// }
+    if interfaces.is_empty() {
+        tracing::info!("No physical interfaces found for auto-init.");
+        return vec![];
+    }
+
+    let br = NetworkIfaceConfig::crate_default_br_lan();
+    let mut dev_configs = vec![];
+    let mut added_ifaces = vec![];
+    for eth in interfaces {
+        // 如果已经有对应的 controller 了就不进行处理了
+        if eth.controller_id.is_some() {
+            tracing::info!(
+                "Skip interface {} because it already has a controller (index: {:?})",
+                eth.name,
+                eth.controller_id
+            );
+            continue;
+        }
+        let mut dev = iface::config::from_phy_dev(eth);
+        dev.controller_name = Some(br.name.clone());
+        dev.enable_in_boot = true;
+        added_ifaces.push(eth.name.clone());
+        dev_configs.push(dev);
+    }
+    tracing::info!("Interfaces added to bridge {}: {:?}", br.name, added_ifaces);
+    dev_configs.push(br);
+    dev_configs
+}
 
 // 初始化配置
 pub async fn init_devs(network_config: Vec<NetworkIfaceConfig>) {

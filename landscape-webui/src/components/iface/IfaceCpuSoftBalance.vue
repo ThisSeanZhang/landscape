@@ -28,24 +28,34 @@ const available_cores = computed(() => {
 function coresToBitmask(selected_cores: Set<number>): string {
   if (selected_cores.size === 0) return "0";
 
-  let bitmask = 0;
+  let bitmask = BigInt(0);
   selected_cores.forEach((core) => {
-    bitmask |= 1 << core;
+    bitmask |= BigInt(1) << BigInt(core);
   });
-  return bitmask.toString();
+  return bitmask.toString(16);
 }
 
 // 将位掩码数值转换为选中核心
 function bitmaskToCores(bitmask_str: string): Set<number> {
   const cores = new Set<number>();
-  const bitmask = parseInt(bitmask_str);
+  if (!bitmask_str) return cores;
 
-  if (isNaN(bitmask) || bitmask === 0) return cores;
+  try {
+    // 兼容可能带有 0x 前缀或纯 16 进制字符串
+    const hex_str = bitmask_str.startsWith("0x")
+      ? bitmask_str
+      : "0x" + bitmask_str;
+    const bitmask = BigInt(hex_str);
 
-  for (let i = 0; i < cpu_count.value; i++) {
-    if (bitmask & (1 << i)) {
-      cores.add(i);
+    if (bitmask === BigInt(0)) return cores;
+
+    for (let i = 0; i < cpu_count.value; i++) {
+      if (bitmask & (BigInt(1) << BigInt(i))) {
+        cores.add(i);
+      }
     }
+  } catch (e) {
+    console.error("解析位掩码失败:", e);
   }
   return cores;
 }
@@ -172,7 +182,7 @@ function setRpsToZero() {
                     .sort((a, b) => a - b)
                     .join(", ") || "无"
                 }}
-                (位掩码: {{ coresToBitmask(xps_selected_cores) }})
+                (位掩码: 0x{{ coresToBitmask(xps_selected_cores) }})
               </n-text>
             </div>
           </div>
@@ -209,7 +219,7 @@ function setRpsToZero() {
                     .sort((a, b) => a - b)
                     .join(", ") || "无"
                 }}
-                (位掩码: {{ coresToBitmask(rps_selected_cores) }})
+                (位掩码: 0x{{ coresToBitmask(rps_selected_cores) }})
               </n-text>
             </div>
           </div>

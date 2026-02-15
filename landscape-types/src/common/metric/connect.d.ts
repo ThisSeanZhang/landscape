@@ -42,6 +42,7 @@ export type ConnectHistoryStatus = {
   l3_proto: number;
   flow_id: number;
   trace_id: number;
+  create_time_ms: number;
   total_ingress_bytes: number;
   total_egress_bytes: number;
   total_ingress_pkts: number;
@@ -51,7 +52,7 @@ export type ConnectHistoryStatus = {
 };
 
 /** */
-export type ConnectKey = { create_time: number; cpu_id: number };
+export type ConnectKey = { create_time: string; cpu_id: number };
 
 export type ConnectMetric = {
   key: ConnectKey;
@@ -63,6 +64,16 @@ export type ConnectMetric = {
   l3_proto: number;
   flow_id: number;
   trace_id: number;
+  report_time: number;
+  create_time_ms: number;
+  ingress_bytes: number;
+  ingress_packets: number;
+  egress_bytes: number;
+  egress_packets: number;
+  status: ConnectStatusType;
+};
+
+export type ConnectMetricPoint = {
   report_time: number;
   ingress_bytes: number;
   ingress_packets: number;
@@ -81,11 +92,13 @@ export type ConnectRealtimeStatus = {
   l3_proto: number;
   flow_id: number;
   trace_id: number;
+  create_time_ms: number;
   ingress_bps: number;
   egress_bps: number;
   ingress_pps: number;
   egress_pps: number;
-  last_metric: ConnectMetric | null;
+  last_report_time: number;
+  status: ConnectStatusType;
 };
 
 export type ConnectSortKey =
@@ -122,6 +135,6 @@ export type MetricChartRequest = {
   resolution?: MetricResolution;
 };
 
-export type MetricResolution = "second" | "hour" | "day";
+export type MetricResolution = "second" | "minute" | "hour" | "day";
 
 export type SortOrder = "asc" | "desc";
