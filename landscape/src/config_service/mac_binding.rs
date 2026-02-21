@@ -46,6 +46,17 @@ impl MacBindingService {
             }
         }
 
+        // 校验 IPv4 是否已被其他 MAC 占用
+        if let Some(ipv4) = &data.ipv4 {
+            if let Some(existing) =
+                self.store.find_by_ipv4(*ipv4).await.map_err(|e| e.to_string())?
+            {
+                if existing.id != data.id {
+                    return Err(format!("IP 地址 {} 已被 MAC {} 占用", ipv4, existing.mac));
+                }
+            }
+        }
+
         let id = data.id;
         self.store.set_or_update_model(id, data).await.map_err(|e| e.to_string())?;
         Ok(())
