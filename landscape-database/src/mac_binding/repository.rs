@@ -20,6 +20,13 @@ impl IpMacBindingRepository {
         Self { db }
     }
 
+    pub async fn find_by_ipv4(&self, ipv4: Ipv4Addr) -> Result<Option<IpMacBinding>, LdError> {
+        let ip_u32 = u32::from(ipv4);
+        let model =
+            IpMacBindingEntity::find().filter(Column::Ipv4Int.eq(ip_u32)).one(self.db()).await?;
+        Ok(model.map(|m| m.into()))
+    }
+
     pub async fn find_by_mac(&self, mac: String) -> Result<Option<IpMacBinding>, String> {
         let model = IpMacBindingEntity::find()
             .filter(Column::Mac.eq(mac))
