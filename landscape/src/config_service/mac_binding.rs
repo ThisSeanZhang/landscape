@@ -46,6 +46,12 @@ impl MacBindingService {
             }
         }
 
+        if let Some(existing) = self.store.find_by_mac(data.mac.to_string()).await? {
+            if existing.id != data.id {
+                return Err(format!("MAC 地址 {} 已存在绑定记录", data.mac));
+            }
+        }
+
         // 校验 IPv4 是否已被其他 MAC 占用
         if let Some(ipv4) = &data.ipv4 {
             if let Some(existing) =
