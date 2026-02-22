@@ -8,20 +8,19 @@ enum DefaultDnsConfig {
   ALI_UDP = "ali-udp",
   ALI_DOH = "ali-doh",
   ALI_DOT = "ali-dot",
+  ALI_DOQ = "ali-doq",
 
   DNSPOD_UDP = "dnspod-udp",
   DNSPOD_DOH = "dnspod-doh",
-  DNSPOD_DOT = "dnspod-dot",
+  // DNSPOD_DOT = "dnspod-dot",
 
   CLOUDFLARE_UDP = "cloudflare-udp",
   CLOUDFLARE_DOH = "cloudflare-doh",
   CLOUDFLARE_DOT = "cloudflare-dot",
-  CLOUDFLARE_DOQ = "cloudflare-doq",
 
   GOOGLE_UDP = "google-udp",
   GOOGLE_DOH = "google-doh",
   GOOGLE_DOT = "google-dot",
-  GOOGLE_DOQ = "google-doq",
 }
 
 const DEFAULT_CONFIGS: Record<
@@ -51,6 +50,12 @@ const DEFAULT_CONFIGS: Record<
     port: 853,
     enable_ip_validation: false,
   },
+  [DefaultDnsConfig.ALI_DOQ]: {
+    mode: { t: DnsUpstreamModeTsEnum.Quic, domain: "dns.alidns.com" },
+    ips: ["223.5.5.5", "223.6.6.6", "2400:3200::1", "2400:3200:baba::1"],
+    port: 853,
+    enable_ip_validation: false,
+  },
 
   // DNSPod
   [DefaultDnsConfig.DNSPOD_UDP]: {
@@ -72,16 +77,16 @@ const DEFAULT_CONFIGS: Record<
       domain: "dns.pub",
       http_endpoint: null,
     },
-    ips: ["1.12.12.12", "120.53.53.53"],
+    ips: ["1.12.12.21", "120.53.53.53"],
     port: 443,
     enable_ip_validation: false,
   },
-  [DefaultDnsConfig.DNSPOD_DOT]: {
-    mode: { t: DnsUpstreamModeTsEnum.Tls, domain: "dot.pub" },
-    ips: ["1.12.12.12", "120.53.53.53"],
-    port: 853,
-    enable_ip_validation: false,
-  },
+  // [DefaultDnsConfig.DNSPOD_DOT]: {
+  //   mode: { t: DnsUpstreamModeTsEnum.Tls, domain: "dot.pub" },
+  //   ips: ["1.12.12.21", "120.53.53.53"],
+  //   port: 853,
+  //   enable_ip_validation: false,
+  // },
 
   // Cloudflare
   [DefaultDnsConfig.CLOUDFLARE_UDP]: {
@@ -104,12 +109,6 @@ const DEFAULT_CONFIGS: Record<
     mode: { t: DnsUpstreamModeTsEnum.Tls, domain: "cloudflare-dns.com" },
     ips: ["1.1.1.1", "1.0.0.1", "2606:4700:4700::1111", "2606:4700:4700::1001"],
     port: 853,
-    enable_ip_validation: false,
-  },
-  [DefaultDnsConfig.CLOUDFLARE_DOQ]: {
-    mode: { t: DnsUpstreamModeTsEnum.Quic, domain: "cloudflare-dns.com" },
-    ips: ["1.1.1.1", "1.0.0.1", "2606:4700:4700::1111", "2606:4700:4700::1001"],
-    port: 784,
     enable_ip_validation: false,
   },
 
@@ -136,12 +135,6 @@ const DEFAULT_CONFIGS: Record<
     port: 853,
     enable_ip_validation: false,
   },
-  [DefaultDnsConfig.GOOGLE_DOQ]: {
-    mode: { t: DnsUpstreamModeTsEnum.Quic, domain: "dns.google" },
-    ips: ["8.8.8.8", "8.8.4.4", "2001:4860:4860::8888", "2001:4860:4860::8844"],
-    port: 784,
-    enable_ip_validation: false,
-  },
 };
 
 function replace_default(config: DefaultDnsConfig) {
@@ -155,8 +148,8 @@ function replace_default(config: DefaultDnsConfig) {
 const btn_size = "small";
 </script>
 <template>
-  <n-flex align="center" justify="space-between">
-    <n-flex>
+  <n-flex justify="space-between" :size="[12, 8]">
+    <n-flex vertical :size="8">
       <n-input-group>
         <n-input-group-label :size="btn_size" class="label-len">
           阿里
@@ -166,69 +159,30 @@ const btn_size = "small";
           :size="btn_size"
           secondary
           strong
+          >UDP</n-button
         >
-          UDP
-        </n-button>
         <n-button
           @click="replace_default(DefaultDnsConfig.ALI_DOH)"
           :size="btn_size"
           secondary
           strong
+          >DoH</n-button
         >
-          DoH
-        </n-button>
         <n-button
           @click="replace_default(DefaultDnsConfig.ALI_DOT)"
           :size="btn_size"
           secondary
           strong
+          >DoT</n-button
         >
-          DoT
-        </n-button>
+        <n-button
+          @click="replace_default(DefaultDnsConfig.ALI_DOQ)"
+          :size="btn_size"
+          secondary
+          strong
+          >DoQ</n-button
+        >
       </n-input-group>
-    </n-flex>
-
-    <n-flex>
-      <n-input-group>
-        <n-input-group-label :size="btn_size" class="label-len">
-          Cloudflare
-        </n-input-group-label>
-        <n-button
-          @click="replace_default(DefaultDnsConfig.CLOUDFLARE_UDP)"
-          :size="btn_size"
-          secondary
-          strong
-        >
-          UDP
-        </n-button>
-        <n-button
-          @click="replace_default(DefaultDnsConfig.CLOUDFLARE_DOH)"
-          :size="btn_size"
-          secondary
-          strong
-        >
-          DoH
-        </n-button>
-        <n-button
-          @click="replace_default(DefaultDnsConfig.CLOUDFLARE_DOT)"
-          :size="btn_size"
-          secondary
-          strong
-        >
-          DoT
-        </n-button>
-        <n-button
-          @click="replace_default(DefaultDnsConfig.CLOUDFLARE_DOQ)"
-          :size="btn_size"
-          secondary
-          strong
-        >
-          DoQ
-        </n-button>
-      </n-input-group>
-    </n-flex>
-
-    <n-flex>
       <n-input-group>
         <n-input-group-label :size="btn_size" class="label-len">
           DNSPod
@@ -238,29 +192,51 @@ const btn_size = "small";
           :size="btn_size"
           secondary
           strong
+          >UDP</n-button
         >
-          UDP
-        </n-button>
         <n-button
           @click="replace_default(DefaultDnsConfig.DNSPOD_DOH)"
           :size="btn_size"
           secondary
           strong
+          >DoH</n-button
         >
-          DoH
-        </n-button>
-        <n-button
+        <!-- <n-button
           @click="replace_default(DefaultDnsConfig.DNSPOD_DOT)"
           :size="btn_size"
           secondary
           strong
-        >
-          DoT
-        </n-button>
+          >DoT</n-button
+        > -->
       </n-input-group>
     </n-flex>
-
-    <n-flex>
+    <n-flex vertical :size="8">
+      <n-input-group>
+        <n-input-group-label :size="btn_size" class="label-len">
+          Cloudflare
+        </n-input-group-label>
+        <n-button
+          @click="replace_default(DefaultDnsConfig.CLOUDFLARE_UDP)"
+          :size="btn_size"
+          secondary
+          strong
+          >UDP</n-button
+        >
+        <n-button
+          @click="replace_default(DefaultDnsConfig.CLOUDFLARE_DOH)"
+          :size="btn_size"
+          secondary
+          strong
+          >DoH</n-button
+        >
+        <n-button
+          @click="replace_default(DefaultDnsConfig.CLOUDFLARE_DOT)"
+          :size="btn_size"
+          secondary
+          strong
+          >DoT</n-button
+        >
+      </n-input-group>
       <n-input-group>
         <n-input-group-label :size="btn_size" class="label-len">
           Google
@@ -270,38 +246,27 @@ const btn_size = "small";
           :size="btn_size"
           secondary
           strong
+          >UDP</n-button
         >
-          UDP
-        </n-button>
         <n-button
           @click="replace_default(DefaultDnsConfig.GOOGLE_DOH)"
           :size="btn_size"
           secondary
           strong
+          >DoH</n-button
         >
-          DoH
-        </n-button>
         <n-button
           @click="replace_default(DefaultDnsConfig.GOOGLE_DOT)"
           :size="btn_size"
           secondary
           strong
+          >DoT</n-button
         >
-          DoT
-        </n-button>
-        <n-button
-          @click="replace_default(DefaultDnsConfig.GOOGLE_DOQ)"
-          :size="btn_size"
-          secondary
-          strong
-        >
-          DoQ
-        </n-button>
       </n-input-group>
     </n-flex>
   </n-flex>
 </template>
-<style scope>
+<style scoped>
 .label-len {
   width: 90px;
   text-align: center;

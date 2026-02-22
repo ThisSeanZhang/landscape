@@ -2,11 +2,14 @@ use std::fmt;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::os::fd::RawFd;
 use std::os::unix::io::AsRawFd;
+use std::sync::Arc;
 use std::{future::Future, io, pin::Pin};
 
 use hickory_resolver::{
     name_server::GenericConnector,
-    proto::runtime::{iocompat::AsyncIoTokioAsStd, RuntimeProvider, TokioHandle, TokioTime},
+    proto::runtime::{
+        iocompat::AsyncIoTokioAsStd, QuicSocketBinder, RuntimeProvider, TokioHandle, TokioTime,
+    },
 };
 
 use landscape_common::dns::config::DnsBindConfig;
@@ -24,6 +27,7 @@ pub struct MarkRuntimeProvider {
     mark_value: u32,
     bind_addr4: Option<Ipv4Addr>,
     bind_addr6: Option<Ipv6Addr>,
+    quic_binder: MarkQuicSocketBinder,
 }
 
 impl fmt::Debug for MarkRuntimeProvider {
@@ -44,6 +48,7 @@ impl MarkRuntimeProvider {
             mark_value,
             bind_addr4,
             bind_addr6,
+            quic_binder: MarkQuicSocketBinder { mark_value },
         }
     }
 }
@@ -152,6 +157,28 @@ impl RuntimeProvider for MarkRuntimeProvider {
 
             Ok(socket)
         })
+    }
+
+    fn quic_binder(&self) -> Option<&dyn QuicSocketBinder> {
+        Some(&self.quic_binder)
+    }
+}
+
+#[derive(Clone)]
+struct MarkQuicSocketBinder {
+    mark_value: u32,
+}
+
+impl QuicSocketBinder for MarkQuicSocketBinder {
+    fn bind_quic(
+        &self,
+        local_addr: SocketAddr,
+        _server_addr: SocketAddr,
+    ) -> Result<Arc<dyn quinn::AsyncUdpSocket>, io::Error> {
+        use quinn::Runtime;
+        let socket = std::net::UdpSocket::bind(local_addr)?;
+        set_socket_mark(socket.as_raw_fd(), self.mark_value)?;
+        quinn::TokioRuntime.wrap_udp_socket(socket)
     }
 }
 

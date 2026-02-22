@@ -31,7 +31,7 @@ pub(crate) fn create_resolver(
             NameServerConfigGroup::from_ips_clear(&ips, port.unwrap_or(53), true)
         }
         DnsUpstreamMode::Tls { domain } => {
-            NameServerConfigGroup::from_ips_tls(&ips, port.unwrap_or(843), domain.to_string(), true)
+            NameServerConfigGroup::from_ips_tls(&ips, port.unwrap_or(853), domain.to_string(), true)
         }
         DnsUpstreamMode::Https { domain, http_endpoint } => {
             let mut group = NameServerConfigGroup::with_capacity(ips.len());
@@ -51,7 +51,7 @@ pub(crate) fn create_resolver(
         }
         DnsUpstreamMode::Quic { domain } => NameServerConfigGroup::from_ips_quic(
             &ips,
-            port.unwrap_or(443),
+            port.unwrap_or(853),
             domain.to_string(),
             true,
         ),
