@@ -2,12 +2,13 @@
 import { useMessage } from "naive-ui";
 import { StaticNatMappingConfig } from "landscape-types/common/nat";
 
-import { computed } from "vue";
-import { ref } from "vue";
+import { computed, ref } from "vue";
 import {
   get_static_nat_mapping,
   push_static_nat_mapping,
 } from "@/api/static_nat_mapping";
+import { useEnrolledDeviceStore } from "@/stores/enrolled_device";
+import { ChangeCatalog } from "@vicons/carbon";
 
 type Props = {
   rule_id?: string;
@@ -26,6 +27,18 @@ const origin_rule_json = ref<string>("");
 
 const rule = ref<StaticNatMappingConfig>();
 const portInputRefs = ref<any[]>([]); // Array to store input refs
+
+const enrolledDeviceStore = useEnrolledDeviceStore();
+const ipv4SelectMode = ref(true);
+
+const deviceIpv4Options = computed(() =>
+  enrolledDeviceStore.bindings
+    .filter((d) => d.ipv4)
+    .map((d) => ({
+      label: `${d.name} (${d.ipv4})`,
+      value: d.ipv4!,
+    })),
+);
 
 const commit_spin = ref(false);
 const isModified = computed(() => {
@@ -385,10 +398,30 @@ const mappingPortsRule = {
           </n-form-item-gi>
 
           <n-form-item-gi :span="2" path="lan_ipv4" label="内网目标 IPv4">
-            <n-input
-              placeholder="如果开放的是路由的端口，那么就设置为 0.0.0.0 不映射留空即可"
-              v-model:value="rule.lan_ipv4"
-            />
+            <n-flex :wrap="false" style="flex: 1">
+              <n-button @click="ipv4SelectMode = !ipv4SelectMode">
+                <n-icon><ChangeCatalog /></n-icon>
+              </n-button>
+              <n-select
+                v-if="ipv4SelectMode"
+                :options="deviceIpv4Options"
+                :value="rule.lan_ipv4 || null"
+                @update:value="
+                  (v: string) => {
+                    if (rule) rule.lan_ipv4 = v;
+                  }
+                "
+                placeholder="选择已登记设备"
+                clearable
+                filterable
+                style="flex: 1"
+              />
+              <n-input
+                v-else
+                placeholder="如果开放的是路由的端口，那么就设置为 0.0.0.0 不映射留空即可"
+                v-model:value="rule.lan_ipv4"
+              />
+            </n-flex>
           </n-form-item-gi>
 
           <n-form-item-gi :span="2" path="lan_ipv6" label="内网目标 IPv6">
