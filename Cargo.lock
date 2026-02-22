@@ -3273,7 +3273,7 @@ dependencies = [
 
 [[package]]
 name = "landscape"
-version = "0.12.8"
+version = "0.13.0"
 dependencies = [
  "arc-swap",
  "async-trait",
@@ -3332,7 +3332,7 @@ dependencies = [
 
 [[package]]
 name = "landscape-common"
-version = "0.12.8"
+version = "0.13.0"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -3365,7 +3365,7 @@ dependencies = [
 
 [[package]]
 name = "landscape-database"
-version = "0.12.8"
+version = "0.13.0"
 dependencies = [
  "async-trait",
  "landscape-common",
@@ -3382,7 +3382,7 @@ dependencies = [
 
 [[package]]
 name = "landscape-dns"
-version = "0.12.8"
+version = "0.13.0"
 dependencies = [
  "aho-corasick",
  "arc-swap",
@@ -3420,7 +3420,7 @@ dependencies = [
 
 [[package]]
 name = "landscape-ebpf"
-version = "0.12.8"
+version = "0.13.0"
 dependencies = [
  "clap 4.5.53",
  "ctrlc",
@@ -3449,7 +3449,7 @@ dependencies = [
 
 [[package]]
 name = "landscape-macro"
-version = "0.12.8"
+version = "0.13.0"
 dependencies = [
  "quote",
  "syn 2.0.91",
@@ -3457,7 +3457,7 @@ dependencies = [
 
 [[package]]
 name = "landscape-protobuf"
-version = "0.12.8"
+version = "0.13.0"
 dependencies = [
  "homedir",
  "jemalloc-ctl",
@@ -3471,7 +3471,7 @@ dependencies = [
 
 [[package]]
 name = "landscape-webserver"
-version = "0.12.8"
+version = "0.13.0"
 dependencies = [
  "axum",
  "axum-extra",
@@ -3817,7 +3817,7 @@ dependencies = [
 
 [[package]]
 name = "migration"
-version = "0.12.8"
+version = "0.13.0"
 dependencies = [
  "async-std",
  "sea-orm-migration",
