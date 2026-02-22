@@ -20,9 +20,9 @@ import {
   NEllipsis,
   NFlex,
 } from "naive-ui";
-import { useMacBindingStore } from "@/stores/mac_binding";
+import { useEnrolledDeviceStore } from "@/stores/enrolled_device";
 
-const macBindingStore = useMacBindingStore();
+const enrolledDeviceStore = useEnrolledDeviceStore();
 
 const props = defineProps<{
   timeRange: [number, number] | null;
@@ -373,7 +373,7 @@ defineExpose({ refresh: loadSummary });
                         >
                           {{
                             list.type === "client"
-                              ? macBindingStore.GET_NAME_WITH_FALLBACK(
+                              ? enrolledDeviceStore.GET_NAME_WITH_FALLBACK(
                                   item.name,
                                 )
                               : item.name

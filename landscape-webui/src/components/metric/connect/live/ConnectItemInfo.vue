@@ -9,9 +9,9 @@ import { ChartLine, ArrowUp, ArrowDown, Search, Catalog } from "@vicons/carbon";
 import { mask_string } from "@/lib/common";
 import { formatRate, formatPackets } from "@/lib/util";
 import { useThemeVars } from "naive-ui";
-import { useMacBindingStore } from "@/stores/mac_binding";
+import { useEnrolledDeviceStore } from "@/stores/enrolled_device";
 
-const macBindingStore = useMacBindingStore();
+const enrolledDeviceStore = useEnrolledDeviceStore();
 
 const frontEndStore = useFrontEndStore();
 const themeVars = useThemeVars();
@@ -159,11 +159,11 @@ const emit = defineEmits([
           >
             <span>
               {{
-                `${macBindingStore.GET_NAME_WITH_FALLBACK(
+                `${enrolledDeviceStore.GET_NAME_WITH_FALLBACK(
                   conn.src_ip,
                 )}:${frontEndStore.MASK_PORT(
                   conn.src_port,
-                )} => ${macBindingStore.GET_NAME_WITH_FALLBACK(
+                )} => ${enrolledDeviceStore.GET_NAME_WITH_FALLBACK(
                   conn.dst_ip,
                 )}:${frontEndStore.MASK_PORT(conn.dst_port)}`
               }}

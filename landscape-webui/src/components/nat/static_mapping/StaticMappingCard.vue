@@ -4,9 +4,9 @@ import { StaticNatMappingConfig } from "landscape-types/common/nat";
 import { ref } from "vue";
 import { ArrowRight, Edit, TrashCan } from "@vicons/carbon";
 import { useFrontEndStore } from "@/stores/front_end_config";
-import { useMacBindingStore } from "@/stores/mac_binding";
+import { useEnrolledDeviceStore } from "@/stores/enrolled_device";
 
-const macBindingStore = useMacBindingStore();
+const enrolledDeviceStore = useEnrolledDeviceStore();
 import { usePreferenceStore } from "@/stores/preference";
 const prefStore = usePreferenceStore();
 
@@ -40,7 +40,7 @@ async function del() {
 // e.g. 2001:0db8:85a3:0000:0000:8a2e:0370:7334 -> ...:8a2e:0370:7334
 function formatIPv6(ip: string | null): string {
   if (!ip) return "";
-  const masked = macBindingStore.GET_NAME_WITH_FALLBACK(ip);
+  const masked = enrolledDeviceStore.GET_NAME_WITH_FALLBACK(ip);
   if (!masked) return "";
 
   // If it's a short address (e.g. ::1), just return it
@@ -103,7 +103,9 @@ function formatIPv6(ip: string | null): string {
             <div class="stat-value-row">
               <template v-if="rule.lan_ipv4">
                 <div class="stat-value">
-                  {{ macBindingStore.GET_NAME_WITH_FALLBACK(rule.lan_ipv4) }}
+                  {{
+                    enrolledDeviceStore.GET_NAME_WITH_FALLBACK(rule.lan_ipv4)
+                  }}
                 </div>
                 <div class="stat-tags">
                   <n-tag

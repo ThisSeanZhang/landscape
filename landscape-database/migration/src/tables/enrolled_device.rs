@@ -1,8 +1,8 @@
 use sea_orm_migration::prelude::*;
 
 #[derive(DeriveIden)]
-pub enum IpMacBinding {
-    #[sea_orm(iden = "ip_mac_bindings")]
+pub enum EnrolledDevice {
+    #[sea_orm(iden = "enrolled_devices")]
     Table,
     Id,
     UpdateAt,

@@ -19,4 +19,4 @@ pub mod geo;
 
 pub mod route;
 
-pub mod mac_binding;
+pub mod enrolled_device;

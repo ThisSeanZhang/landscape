@@ -3,7 +3,7 @@ import connect from "./metric/connect";
 import sysinfo from "./sysinfo";
 import config from "./config";
 import error from "./error";
-import mac_binding from "./mac_binding";
+import enrolled_device from "./enrolled_device";
 
 export default {
   docker_divider: "Docker 容器",
@@ -15,7 +15,7 @@ export default {
   sysinfo,
   config,
   error,
-  mac_binding,
+  enrolled_device,
   common: {
     private_mode: "隐私模式",
   },

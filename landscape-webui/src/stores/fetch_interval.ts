@@ -17,7 +17,7 @@ import { useMetricStore } from "./status_metric";
 import { useMSSClampConfigStore } from "./status_mss_clamp";
 import { useRouteLanConfigStore } from "./status_route_lan";
 import { useRouteWanConfigStore } from "./status_route_wan";
-import { useMacBindingStore } from "./mac_binding";
+import { useEnrolledDeviceStore } from "./enrolled_device";
 
 import useDockerImgTask from "@/stores/docker_img_task";
 
@@ -38,7 +38,7 @@ export const useFetchIntervalStore = defineStore("fetch_interval", () => {
   const mssclampConfigStore = useMSSClampConfigStore();
   const routeLanConfigStore = useRouteLanConfigStore();
   const routeWanConfigStore = useRouteWanConfigStore();
-  const macBindingStore = useMacBindingStore();
+  const enrolledDeviceStore = useEnrolledDeviceStore();
 
   // SOCK
   const dockerImgTask = useDockerImgTask();
@@ -65,7 +65,7 @@ export const useFetchIntervalStore = defineStore("fetch_interval", () => {
 
       await routeLanConfigStore.UPDATE_INFO();
       await routeWanConfigStore.UPDATE_INFO();
-      await macBindingStore.UPDATE_INFO();
+      await enrolledDeviceStore.UPDATE_INFO();
 
       dockerImgTask.CONNECT();
     } catch (error) {

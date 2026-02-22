@@ -1,17 +1,17 @@
 use landscape_common::{
-    database::repository::UpdateActiveModel, mac_binding::IpMacBinding, net::MacAddr,
+    database::repository::UpdateActiveModel, enrolled_device::EnrolledDevice, net::MacAddr,
 };
 use sea_orm::{entity::prelude::*, ActiveValue::Set};
 use serde::{Deserialize, Serialize};
 
 use crate::{DBId, DBJson, DBTimestamp};
 
-pub type IpMacBindingModel = Model;
-pub type IpMacBindingEntity = Entity;
-pub type IpMacBindingActiveModel = ActiveModel;
+pub type EnrolledDeviceModel = Model;
+pub type EnrolledDeviceEntity = Entity;
+pub type EnrolledDeviceActiveModel = ActiveModel;
 
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel, Serialize, Deserialize)]
-#[sea_orm(table_name = "ip_mac_bindings")]
+#[sea_orm(table_name = "enrolled_devices")]
 #[cfg_attr(feature = "postgres", sea_orm(schema_name = "public"))]
 pub struct Model {
     #[sea_orm(primary_key, auto_increment = false)]
@@ -34,9 +34,9 @@ pub enum Relation {}
 #[async_trait::async_trait]
 impl ActiveModelBehavior for ActiveModel {}
 
-impl From<Model> for IpMacBinding {
+impl From<Model> for EnrolledDevice {
     fn from(entity: Model) -> Self {
-        IpMacBinding {
+        EnrolledDevice {
             id: entity.id,
             update_at: entity.update_at,
             iface_name: entity.iface_name,
@@ -51,7 +51,7 @@ impl From<Model> for IpMacBinding {
     }
 }
 
-impl Into<ActiveModel> for IpMacBinding {
+impl Into<ActiveModel> for EnrolledDevice {
     fn into(self) -> ActiveModel {
         let mut active = ActiveModel { id: Set(self.id), ..Default::default() };
         update(self, &mut active);
@@ -59,13 +59,13 @@ impl Into<ActiveModel> for IpMacBinding {
     }
 }
 
-impl UpdateActiveModel<ActiveModel> for IpMacBinding {
+impl UpdateActiveModel<ActiveModel> for EnrolledDevice {
     fn update(self, active: &mut ActiveModel) {
         update(self, active);
     }
 }
 
-pub(crate) fn update(data: IpMacBinding, active: &mut ActiveModel) {
+pub(crate) fn update(data: EnrolledDevice, active: &mut ActiveModel) {
     active.update_at = Set(data.update_at);
     active.iface_name = Set(data.iface_name);
     active.name = Set(data.name);

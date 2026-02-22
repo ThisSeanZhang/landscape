@@ -20,7 +20,7 @@ use std::{
 
 use crate::dhcp::v4_server::config::DHCPv4ServiceConfig;
 use crate::dhcp::v6_client::config::IPV6PDServiceConfig;
-use crate::mac_binding::IpMacBinding;
+use crate::enrolled_device::EnrolledDevice;
 use dns::DNSRuleConfig;
 use firewall::FirewallServiceConfig;
 use flow::FlowWanServiceConfig;
@@ -117,7 +117,7 @@ pub struct InitConfig {
     pub dns_upstream_configs: Vec<DnsUpstreamConfig>,
 
     #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub ip_mac_bindings: Vec<IpMacBinding>,
+    pub enrolled_devices: Vec<EnrolledDevice>,
 }
 
 /// auth realte config

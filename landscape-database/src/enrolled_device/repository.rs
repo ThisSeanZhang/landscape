@@ -1,34 +1,34 @@
 use landscape_common::{
     database::{repository::Repository, LandscapeDBTrait, LandscapeServiceDBTrait},
+    enrolled_device::EnrolledDevice,
     error::LdError,
-    mac_binding::IpMacBinding,
 };
 use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter};
 use std::net::Ipv4Addr;
 
 use crate::DBId;
 
-use super::entity::{Column, IpMacBindingActiveModel, IpMacBindingEntity, IpMacBindingModel};
+use super::entity::{Column, EnrolledDeviceActiveModel, EnrolledDeviceEntity, EnrolledDeviceModel};
 
 #[derive(Clone)]
-pub struct IpMacBindingRepository {
+pub struct EnrolledDeviceRepository {
     db: DatabaseConnection,
 }
 
-impl IpMacBindingRepository {
+impl EnrolledDeviceRepository {
     pub fn new(db: DatabaseConnection) -> Self {
         Self { db }
     }
 
-    pub async fn find_by_ipv4(&self, ipv4: Ipv4Addr) -> Result<Option<IpMacBinding>, LdError> {
+    pub async fn find_by_ipv4(&self, ipv4: Ipv4Addr) -> Result<Option<EnrolledDevice>, LdError> {
         let ip_u32 = u32::from(ipv4);
         let model =
-            IpMacBindingEntity::find().filter(Column::Ipv4Int.eq(ip_u32)).one(self.db()).await?;
+            EnrolledDeviceEntity::find().filter(Column::Ipv4Int.eq(ip_u32)).one(self.db()).await?;
         Ok(model.map(|m| m.into()))
     }
 
-    pub async fn find_by_mac(&self, mac: String) -> Result<Option<IpMacBinding>, String> {
-        let model = IpMacBindingEntity::find()
+    pub async fn find_by_mac(&self, mac: String) -> Result<Option<EnrolledDevice>, String> {
+        let model = EnrolledDeviceEntity::find()
             .filter(Column::Mac.eq(mac))
             .one(self.db())
             .await
@@ -37,8 +37,8 @@ impl IpMacBindingRepository {
         Ok(model.map(|m| m.into()))
     }
 
-    pub async fn find_by_iface(&self, iface_name: String) -> Result<Vec<IpMacBinding>, LdError> {
-        let models = IpMacBindingEntity::find()
+    pub async fn find_by_iface(&self, iface_name: String) -> Result<Vec<EnrolledDevice>, LdError> {
+        let models = EnrolledDeviceEntity::find()
             .filter(Column::IfaceName.eq(iface_name))
             .all(self.db())
             .await?;
@@ -50,13 +50,13 @@ impl IpMacBindingRepository {
         iface_name: String,
         server_ip: Ipv4Addr,
         mask: u8,
-    ) -> Result<Vec<IpMacBinding>, LdError> {
+    ) -> Result<Vec<EnrolledDevice>, LdError> {
         let server_ip_u32 = u32::from(server_ip);
         let mask_u32 = if mask == 0 { 0 } else { 0xFFFFFFFFu32 << (32 - mask) };
         let network_start = server_ip_u32 & mask_u32;
         let network_end = network_start | !mask_u32;
 
-        let models = IpMacBindingEntity::find()
+        let models = EnrolledDeviceEntity::find()
             .filter(
                 sea_orm::Condition::all()
                     .add(
@@ -79,13 +79,13 @@ impl IpMacBindingRepository {
         iface_name: String,
         server_ip: std::net::Ipv4Addr,
         mask: u8,
-    ) -> Result<Vec<IpMacBinding>, LdError> {
+    ) -> Result<Vec<EnrolledDevice>, LdError> {
         let server_ip_u32 = u32::from(server_ip);
         let mask_u32 = if mask == 0 { 0 } else { 0xFFFFFFFFu32 << (32 - mask) };
         let network_start = server_ip_u32 & mask_u32;
         let network_end = network_start | !mask_u32;
 
-        let models = IpMacBindingEntity::find()
+        let models = EnrolledDeviceEntity::find()
             .filter(
                 sea_orm::Condition::all().add(Column::IfaceName.eq(iface_name)).add(
                     sea_orm::Condition::any()
@@ -102,17 +102,17 @@ impl IpMacBindingRepository {
 }
 
 #[async_trait::async_trait]
-impl LandscapeServiceDBTrait for IpMacBindingRepository {}
+impl LandscapeServiceDBTrait for EnrolledDeviceRepository {}
 
 #[async_trait::async_trait]
-impl LandscapeDBTrait for IpMacBindingRepository {}
+impl LandscapeDBTrait for EnrolledDeviceRepository {}
 
 #[async_trait::async_trait]
-impl Repository for IpMacBindingRepository {
-    type Model = IpMacBindingModel;
-    type Entity = IpMacBindingEntity;
-    type ActiveModel = IpMacBindingActiveModel;
-    type Data = IpMacBinding;
+impl Repository for EnrolledDeviceRepository {
+    type Model = EnrolledDeviceModel;
+    type Entity = EnrolledDeviceEntity;
+    type ActiveModel = EnrolledDeviceActiveModel;
+    type Data = EnrolledDevice;
     type Id = DBId;
 
     fn db(&self) -> &DatabaseConnection {

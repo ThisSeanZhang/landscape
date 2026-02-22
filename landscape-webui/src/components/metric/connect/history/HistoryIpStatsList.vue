@@ -13,10 +13,10 @@ import FlowExhibit from "@/components/flow/FlowExhibit.vue";
 import { useI18n } from "vue-i18n";
 import { useFrontEndStore } from "@/stores/front_end_config";
 import { mask_string } from "@/lib/common";
-import { useMacBindingStore } from "@/stores/mac_binding";
+import { useEnrolledDeviceStore } from "@/stores/enrolled_device";
 
 const frontEndStore = useFrontEndStore();
-const macBindingStore = useMacBindingStore();
+const enrolledDeviceStore = useEnrolledDeviceStore();
 
 const props = defineProps<{
   stats: IpHistoryStat[];
@@ -45,9 +45,9 @@ const columns = computed(() => [
             h(
               "span",
               { style: { fontWeight: "500" } },
-              macBindingStore.GET_NAME_WITH_FALLBACK(row.ip),
+              enrolledDeviceStore.GET_NAME_WITH_FALLBACK(row.ip),
             ),
-            macBindingStore.GET_NAME_WITH_FALLBACK(row.ip) !==
+            enrolledDeviceStore.GET_NAME_WITH_FALLBACK(row.ip) !==
             frontEndStore.MASK_INFO(row.ip)
               ? h(
                   "span",

@@ -9,8 +9,8 @@ use crate::utils::id::gen_database_uuid;
 use crate::utils::time::get_f64_timestamp;
 
 #[derive(Serialize, Deserialize, Debug, Clone, TS)]
-#[ts(export, export_to = "common/mac_binding.d.ts")]
-pub struct IpMacBinding {
+#[ts(export, export_to = "common/enrolled_device.d.ts")]
+pub struct EnrolledDevice {
     #[serde(default = "gen_database_uuid")]
     #[ts(as = "Option<_>", optional)]
     pub id: Uuid,
@@ -50,14 +50,14 @@ pub struct IpMacBinding {
     pub tag: Vec<String>,
 }
 
-impl LandscapeDBStore<Uuid> for IpMacBinding {
+impl LandscapeDBStore<Uuid> for EnrolledDevice {
     fn get_id(&self) -> Uuid {
         self.id
     }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, TS)]
-#[ts(export, export_to = "common/mac_binding.d.ts")]
+#[ts(export, export_to = "common/enrolled_device.d.ts")]
 pub struct ValidateIpPayload {
     pub iface_name: String,
     pub ipv4: String,

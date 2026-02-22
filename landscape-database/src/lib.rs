@@ -2,12 +2,12 @@ use sea_orm::prelude::Uuid;
 
 pub mod dhcp_v4_server;
 pub mod dhcp_v6_client;
+pub mod enrolled_device;
 pub mod error;
 pub mod firewall;
 pub mod flow_wan;
 pub mod iface;
 pub mod iface_ip;
-pub mod mac_binding;
 pub mod mss_clamp;
 pub mod pppd;
 pub mod provider;

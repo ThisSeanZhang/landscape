@@ -1,23 +1,23 @@
 use landscape_common::database::repository::Repository;
-use landscape_common::mac_binding::IpMacBinding;
-use landscape_database::mac_binding::repository::IpMacBindingRepository;
+use landscape_common::enrolled_device::EnrolledDevice;
+use landscape_database::enrolled_device::repository::EnrolledDeviceRepository;
 use landscape_database::provider::LandscapeDBServiceProvider;
 use uuid::Uuid;
 
 #[derive(Clone)]
-pub struct MacBindingService {
-    store: IpMacBindingRepository,
+pub struct EnrolledDeviceService {
+    store: EnrolledDeviceRepository,
     dhcp_repo: landscape_database::dhcp_v4_server::repository::DHCPv4ServerRepository,
 }
 
-impl MacBindingService {
+impl EnrolledDeviceService {
     pub async fn new(store_provider: LandscapeDBServiceProvider) -> Self {
-        let store = store_provider.ip_mac_binding_store();
+        let store = store_provider.enrolled_device_store();
         let dhcp_repo = store_provider.dhcp_v4_server_store();
         Self { store, dhcp_repo }
     }
 
-    pub async fn list(&self) -> Vec<IpMacBinding> {
+    pub async fn list(&self) -> Vec<EnrolledDevice> {
         match self.store.list_all().await {
             Ok(data) => data,
             Err(e) => {
@@ -27,11 +27,11 @@ impl MacBindingService {
         }
     }
 
-    pub async fn get(&self, id: Uuid) -> Option<IpMacBinding> {
+    pub async fn get(&self, id: Uuid) -> Option<EnrolledDevice> {
         self.store.find_by_id(id).await.ok().flatten()
     }
 
-    pub async fn push(&self, data: IpMacBinding) -> Result<(), String> {
+    pub async fn push(&self, data: EnrolledDevice) -> Result<(), String> {
         // 校验 IP 是否属于指定网卡的 DHCP 范围内
         if let (Some(iface), Some(ipv4)) = (&data.iface_name, &data.ipv4) {
             let ip_u32 = u32::from(*ipv4);
@@ -90,7 +90,7 @@ impl MacBindingService {
         iface_name: String,
         server_ip: std::net::Ipv4Addr,
         mask: u8,
-    ) -> Result<Vec<IpMacBinding>, String> {
+    ) -> Result<Vec<EnrolledDevice>, String> {
         self.store
             .find_out_of_range_bindings(iface_name, server_ip, mask)
             .await

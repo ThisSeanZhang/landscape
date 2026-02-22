@@ -31,7 +31,7 @@ pub mod store;
 pub mod test;
 pub mod utils;
 
-pub mod mac_binding;
+pub mod enrolled_device;
 
 pub mod auth;
 

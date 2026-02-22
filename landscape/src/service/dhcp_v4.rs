@@ -65,7 +65,7 @@ impl ServiceStarterTrait for DHCPv4ServerStarter {
 
             let bindings = self
                 .db_provider
-                .ip_mac_binding_store()
+                .enrolled_device_store()
                 .find_dhcp_bindings(
                     config.iface_name.clone(),
                     config.config.server_ip_addr,

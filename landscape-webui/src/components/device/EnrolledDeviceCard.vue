@@ -1,15 +1,18 @@
 <script setup lang="ts">
 import { ref } from "vue";
-import { IpMacBinding } from "landscape-types/common/mac_binding";
-import { delete_mac_binding, validate_mac_binding_ip } from "@/api/mac_binding";
+import { EnrolledDevice } from "landscape-types/common/enrolled_device";
+import {
+  delete_enrolled_device,
+  validate_enrolled_device_ip,
+} from "@/api/enrolled_device";
 import { useFrontEndStore } from "@/stores/front_end_config";
 import { useI18n } from "vue-i18n";
 import { Settings, TrashCan } from "@vicons/carbon";
-import MacBindingEditModal from "./MacBindingEditModal.vue";
+import EnrolledDeviceEditModal from "./EnrolledDeviceEditModal.vue";
 import { computed, onMounted } from "vue";
-import { useMacBindingStore } from "@/stores/mac_binding";
+import { useEnrolledDeviceStore } from "@/stores/enrolled_device";
 
-const macBindingStore = useMacBindingStore();
+const enrolledDeviceStore = useEnrolledDeviceStore();
 
 const { t } = useI18n();
 const frontEndStore = useFrontEndStore();
@@ -23,7 +26,7 @@ const displayName = computed(() => {
 });
 
 type Props = {
-  rule: IpMacBinding;
+  rule: EnrolledDevice;
   show_action?: boolean;
 };
 
@@ -38,7 +41,7 @@ const show_edit_modal = ref(false);
 async function validate() {
   if (props.rule.iface_name && props.rule.ipv4) {
     try {
-      isValid.value = await validate_mac_binding_ip(
+      isValid.value = await validate_enrolled_device_ip(
         props.rule.iface_name,
         props.rule.ipv4,
       );
@@ -56,8 +59,8 @@ onMounted(() => {
 
 async function del() {
   if (props.rule.id) {
-    await delete_mac_binding(props.rule.id);
-    await macBindingStore.UPDATE_INFO();
+    await delete_enrolled_device(props.rule.id);
+    await enrolledDeviceStore.UPDATE_INFO();
     emit("refresh");
   }
 }
@@ -84,10 +87,12 @@ async function del() {
         <n-tooltip v-if="isValid === false" trigger="hover">
           <template #trigger>
             <n-tag size="small" type="error" round>
-              {{ t("mac_binding.invalid_status") }}
+              {{ t("enrolled_device.invalid_status") }}
             </n-tag>
           </template>
-          {{ t("mac_binding.ipv4_out_of_range", { iface: rule.iface_name }) }}
+          {{
+            t("enrolled_device.ipv4_out_of_range", { iface: rule.iface_name })
+          }}
         </n-tooltip>
       </n-space>
     </template>
@@ -99,24 +104,24 @@ async function del() {
       :column="1"
       size="small"
     >
-      <n-descriptions-item :label="t('mac_binding.mac')">
+      <n-descriptions-item :label="t('enrolled_device.mac')">
         <code>{{ frontEndStore.MASK_INFO(rule.mac) }}</code>
       </n-descriptions-item>
 
       <n-descriptions-item
         v-if="rule.iface_name"
-        :label="t('mac_binding.iface')"
+        :label="t('enrolled_device.iface')"
       >
         <n-tag size="small" type="primary" :bordered="false">{{
           rule.iface_name
         }}</n-tag>
       </n-descriptions-item>
 
-      <n-descriptions-item v-if="rule.ipv4" :label="t('mac_binding.ipv4')">
+      <n-descriptions-item v-if="rule.ipv4" :label="t('enrolled_device.ipv4')">
         {{ frontEndStore.MASK_INFO(rule.ipv4) }}
       </n-descriptions-item>
 
-      <n-descriptions-item v-if="rule.ipv6" :label="t('mac_binding.ipv6')">
+      <n-descriptions-item v-if="rule.ipv6" :label="t('enrolled_device.ipv6')">
         <n-ellipsis style="max-width: 200px">
           {{ frontEndStore.MASK_INFO(rule.ipv6) }}
         </n-ellipsis>
@@ -124,7 +129,7 @@ async function del() {
 
       <n-descriptions-item
         v-if="rule.tag && rule.tag.length > 0"
-        :label="t('mac_binding.tag')"
+        :label="t('enrolled_device.tag')"
       >
         <n-space size="small">
           <n-tag
@@ -140,7 +145,10 @@ async function del() {
         </n-space>
       </n-descriptions-item>
 
-      <n-descriptions-item v-if="rule.remark" :label="t('mac_binding.remark')">
+      <n-descriptions-item
+        v-if="rule.remark"
+        :label="t('enrolled_device.remark')"
+      >
         <n-ellipsis :line-clamp="1">
           {{ rule.remark }}
         </n-ellipsis>
@@ -169,13 +177,13 @@ async function del() {
               </template>
             </n-button>
           </template>
-          {{ t("mac_binding.delete_confirm") }}
+          {{ t("enrolled_device.delete_confirm") }}
         </n-popconfirm>
       </n-flex>
     </template>
   </n-card>
 
-  <MacBindingEditModal
+  <EnrolledDeviceEditModal
     @refresh="emit('refresh')"
     :rule_id="rule.id ?? null"
     v-model:show="show_edit_modal"

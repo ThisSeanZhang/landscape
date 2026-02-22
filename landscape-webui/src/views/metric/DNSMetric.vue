@@ -19,9 +19,9 @@ import {
   NFlex,
   NEllipsis,
 } from "naive-ui";
-import { useMacBindingStore } from "@/stores/mac_binding";
+import { useEnrolledDeviceStore } from "@/stores/enrolled_device";
 
-const macBindingStore = useMacBindingStore();
+const enrolledDeviceStore = useEnrolledDeviceStore();
 import { useFrontEndStore } from "@/stores/front_end_config";
 import type { DataTableColumns } from "naive-ui";
 import {
@@ -248,7 +248,7 @@ const columns = computed<DataTableColumns<DnsMetric>>(() => [
     key: "src_ip",
     width: 140,
     render(row) {
-      return macBindingStore.GET_NAME_WITH_FALLBACK(
+      return enrolledDeviceStore.GET_NAME_WITH_FALLBACK(
         formatIp(String(row.src_ip)),
       );
     },
@@ -339,7 +339,7 @@ const columns = computed<DataTableColumns<DnsMetric>>(() => [
     render(row) {
       if (!row.answers || row.answers.length === 0) return "-";
       return row.answers
-        .map((ip) => macBindingStore.GET_NAME_WITH_FALLBACK(formatIp(ip)))
+        .map((ip) => enrolledDeviceStore.GET_NAME_WITH_FALLBACK(formatIp(ip)))
         .join(", ");
     },
   },

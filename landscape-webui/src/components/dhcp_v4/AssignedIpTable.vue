@@ -14,11 +14,11 @@ const prefStore = usePreferenceStore();
 import { mask_string } from "@/lib/common";
 import { Key } from "@vicons/tabler";
 import { AddAlt, Edit } from "@vicons/carbon";
-import { useMacBindingStore } from "@/stores/mac_binding";
-import MacBindingEditModal from "@/components/device/MacBindingEditModal.vue";
+import { useEnrolledDeviceStore } from "@/stores/enrolled_device";
+import EnrolledDeviceEditModal from "@/components/device/EnrolledDeviceEditModal.vue";
 
 const frontEndStore = useFrontEndStore();
-const macBindingStore = useMacBindingStore();
+const enrolledDeviceStore = useEnrolledDeviceStore();
 const emit = defineEmits(["refresh"]);
 type Props = {
   arp_info: ArpScanInfo[];
@@ -129,7 +129,7 @@ function quickBind(ip: string, mac?: string, hostname?: string | null) {
   const targetMac = mac || Array.from(arp_ip_map.value.get(ip)?.macs || [])[0];
   if (!targetMac) return;
 
-  const existingId = macBindingStore.GET_BINDING_ID(targetMac);
+  const existingId = enrolledDeviceStore.GET_BINDING_ID(targetMac);
   bindRuleId.value = existingId;
   initialValues.value = {
     mac: targetMac,
@@ -182,7 +182,10 @@ function quickBind(ip: string, mac?: string, hostname?: string | null) {
         <tr v-for="item in show_item">
           <td class="assign-item">
             {{
-              macBindingStore.GET_NAME_WITH_FALLBACK(item.mac, item.hostname)
+              enrolledDeviceStore.GET_NAME_WITH_FALLBACK(
+                item.mac,
+                item.hostname,
+              )
             }}
           </td>
           <td class="assign-item">
@@ -228,7 +231,7 @@ function quickBind(ip: string, mac?: string, hostname?: string | null) {
             >
               <template #icon>
                 <n-icon>
-                  <Edit v-if="macBindingStore.GET_BINDING_ID(item.mac)" />
+                  <Edit v-if="enrolledDeviceStore.GET_BINDING_ID(item.mac)" />
                   <AddAlt v-else />
                 </n-icon>
               </template>
@@ -265,7 +268,7 @@ function quickBind(ip: string, mac?: string, hostname?: string | null) {
                 <n-icon>
                   <Edit
                     v-if="
-                      macBindingStore.GET_BINDING_ID(
+                      enrolledDeviceStore.GET_BINDING_ID(
                         Array.from(arp_ip_map.get(item.ip)?.macs || [])[0],
                       )
                     "
@@ -280,7 +283,7 @@ function quickBind(ip: string, mac?: string, hostname?: string | null) {
     </n-table>
   </n-card>
 
-  <MacBindingEditModal
+  <EnrolledDeviceEditModal
     v-model:show="showQuickBind"
     :rule_id="bindRuleId"
     :initial-values="initialValues"

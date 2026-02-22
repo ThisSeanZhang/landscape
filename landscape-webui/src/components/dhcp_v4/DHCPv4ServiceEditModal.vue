@@ -10,7 +10,7 @@ import {
   get_iface_dhcp_v4_config,
   update_dhcp_v4_config,
 } from "@/api/service_dhcp_v4";
-import { check_iface_mac_bindings_validity } from "@/api/mac_binding";
+import { check_iface_enrolled_devices_validity } from "@/api/enrolled_device";
 import { IfaceZoneType } from "landscape-types/common/iface";
 import { useI18n } from "vue-i18n";
 import { useRouter } from "vue-router";
@@ -58,13 +58,13 @@ async function save_config() {
     show_model.value = false;
 
     // 提交成功后检查现有绑定的合法性
-    const invalidBindings = await check_iface_mac_bindings_validity(
+    const invalidBindings = await check_iface_enrolled_devices_validity(
       iface_info.iface_name,
     );
     if (invalidBindings.length > 0) {
       notification.warning({
-        title: t("mac_binding.invalid_bindings_title"),
-        content: t("mac_binding.invalid_bindings_warning", {
+        title: t("enrolled_device.invalid_bindings_title"),
+        content: t("enrolled_device.invalid_bindings_warning", {
           iface: iface_info.iface_name,
           count: invalidBindings.length,
         }),
@@ -80,7 +80,7 @@ async function save_config() {
               },
             },
             {
-              default: () => t("mac_binding.go_to_manage"),
+              default: () => t("enrolled_device.go_to_manage"),
             },
           ),
       });

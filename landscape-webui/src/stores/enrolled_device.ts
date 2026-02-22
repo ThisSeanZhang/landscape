@@ -1,18 +1,18 @@
 import { defineStore } from "pinia";
 import { ref, computed } from "vue";
-import { IpMacBinding } from "landscape-types/common/mac_binding";
-import { get_mac_bindings } from "@/api/mac_binding";
+import { EnrolledDevice } from "landscape-types/common/enrolled_device";
+import { get_enrolled_devices } from "@/api/enrolled_device";
 import { mask_string } from "@/lib/common";
 import { useFrontEndStore } from "./front_end_config";
 
-export const useMacBindingStore = defineStore("mac_binding", () => {
+export const useEnrolledDeviceStore = defineStore("enrolled_device", () => {
   const frontEndStore = useFrontEndStore();
-  const bindings = ref<IpMacBinding[]>([]);
+  const bindings = ref<EnrolledDevice[]>([]);
   const loading = ref(false);
 
   // 建立 MAC 地址索引 Map
   const macMap = computed(() => {
-    const map = new Map<string, IpMacBinding>();
+    const map = new Map<string, EnrolledDevice>();
     bindings.value.forEach((b) => {
       map.set(b.mac.toLowerCase(), b);
     });
@@ -21,7 +21,7 @@ export const useMacBindingStore = defineStore("mac_binding", () => {
 
   // 建立 IP 地址索引 Map
   const ipMap = computed(() => {
-    const map = new Map<string, IpMacBinding>();
+    const map = new Map<string, EnrolledDevice>();
     bindings.value.forEach((b) => {
       if (b.ipv4) map.set(b.ipv4, b);
       if (b.ipv6) map.set(b.ipv6.toLowerCase(), b);
@@ -32,10 +32,10 @@ export const useMacBindingStore = defineStore("mac_binding", () => {
   async function UPDATE_INFO() {
     loading.value = true;
     try {
-      const data = await get_mac_bindings();
+      const data = await get_enrolled_devices();
       bindings.value = data;
     } catch (error) {
-      console.error("Failed to fetch mac bindings:", error);
+      console.error("Failed to fetch enrolled devices:", error);
     } finally {
       loading.value = false;
     }

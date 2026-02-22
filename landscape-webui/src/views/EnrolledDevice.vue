@@ -1,20 +1,20 @@
 <script lang="ts" setup>
 import { ref, onMounted } from "vue";
 import { useI18n } from "vue-i18n";
-import { get_mac_bindings } from "@/api/mac_binding";
-import { IpMacBinding } from "landscape-types/common/mac_binding";
-import MacBindingCard from "@/components/device/MacBindingCard.vue";
-import MacBindingEditModal from "@/components/device/MacBindingEditModal.vue";
+import { get_enrolled_devices } from "@/api/enrolled_device";
+import { EnrolledDevice } from "landscape-types/common/enrolled_device";
+import EnrolledDeviceCard from "@/components/device/EnrolledDeviceCard.vue";
+import EnrolledDeviceEditModal from "@/components/device/EnrolledDeviceEditModal.vue";
 import { Add } from "@vicons/carbon";
 
 const { t } = useI18n();
-const bindings = ref<IpMacBinding[]>([]);
+const bindings = ref<EnrolledDevice[]>([]);
 const loading = ref(false);
 
 async function refresh() {
   loading.value = true;
   try {
-    bindings.value = await get_mac_bindings();
+    bindings.value = await get_enrolled_devices();
   } catch (e) {
     console.error(e);
   } finally {
@@ -36,7 +36,7 @@ const show_edit_modal = ref(false);
         <template #icon>
           <n-icon><Add /></n-icon>
         </template>
-        {{ t("mac_binding.add_btn") }}
+        {{ t("enrolled_device.add_btn") }}
       </n-button>
     </n-flex>
 
@@ -45,24 +45,24 @@ const show_edit_modal = ref(false);
     <n-spin :show="loading">
       <n-grid x-gap="12" y-gap="12" cols="1 600:2 1000:3 1400:4">
         <n-grid-item v-for="item in bindings" :key="item.id">
-          <MacBindingCard :rule="item" @refresh="refresh" />
+          <EnrolledDeviceCard :rule="item" @refresh="refresh" />
         </n-grid-item>
       </n-grid>
 
       <n-empty
         v-if="bindings?.length === 0 && !loading"
-        :description="t('mac_binding.empty_desc')"
+        :description="t('enrolled_device.empty_desc')"
         style="margin-top: 100px"
       >
         <template #extra>
           <n-button @click="show_edit_modal = true">{{
-            t("mac_binding.add_now")
+            t("enrolled_device.add_now")
           }}</n-button>
         </template>
       </n-empty>
     </n-spin>
 
-    <MacBindingEditModal
+    <EnrolledDeviceEditModal
       :rule_id="null"
       @refresh="refresh"
       v-model:show="show_edit_modal"

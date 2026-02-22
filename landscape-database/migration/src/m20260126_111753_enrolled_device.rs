@@ -2,7 +2,7 @@ use crate::sea_orm::Statement;
 use sea_orm_migration::prelude::*;
 
 use super::tables::dhcp_v4_server::DHCPv4ServerConfigs;
-use super::tables::mac_binding::IpMacBinding;
+use super::tables::enrolled_device::EnrolledDevice;
 
 #[derive(DeriveMigrationName)]
 pub struct Migration;
@@ -13,19 +13,19 @@ impl MigrationTrait for Migration {
         manager
             .create_table(
                 Table::create()
-                    .table(IpMacBinding::Table)
+                    .table(EnrolledDevice::Table)
                     .if_not_exists()
-                    .col(ColumnDef::new(IpMacBinding::Id).uuid().not_null().primary_key())
-                    .col(ColumnDef::new(IpMacBinding::UpdateAt).double().not_null())
-                    .col(ColumnDef::new(IpMacBinding::IfaceName).string())
-                    .col(ColumnDef::new(IpMacBinding::Name).string().not_null())
-                    .col(ColumnDef::new(IpMacBinding::FakeName).string())
-                    .col(ColumnDef::new(IpMacBinding::Remark).string())
-                    .col(ColumnDef::new(IpMacBinding::Mac).string().not_null())
-                    .col(ColumnDef::new(IpMacBinding::Ipv4).string())
-                    .col(ColumnDef::new(IpMacBinding::Ipv4Int).unsigned())
-                    .col(ColumnDef::new(IpMacBinding::Ipv6).string())
-                    .col(ColumnDef::new(IpMacBinding::Tag).json().not_null())
+                    .col(ColumnDef::new(EnrolledDevice::Id).uuid().not_null().primary_key())
+                    .col(ColumnDef::new(EnrolledDevice::UpdateAt).double().not_null())
+                    .col(ColumnDef::new(EnrolledDevice::IfaceName).string())
+                    .col(ColumnDef::new(EnrolledDevice::Name).string().not_null())
+                    .col(ColumnDef::new(EnrolledDevice::FakeName).string())
+                    .col(ColumnDef::new(EnrolledDevice::Remark).string())
+                    .col(ColumnDef::new(EnrolledDevice::Mac).string().not_null())
+                    .col(ColumnDef::new(EnrolledDevice::Ipv4).string())
+                    .col(ColumnDef::new(EnrolledDevice::Ipv4Int).unsigned())
+                    .col(ColumnDef::new(EnrolledDevice::Ipv6).string())
+                    .col(ColumnDef::new(EnrolledDevice::Tag).json().not_null())
                     .to_owned(),
             )
             .await?;
@@ -91,9 +91,9 @@ impl MigrationTrait for Migration {
         manager
             .create_index(
                 Index::create()
-                    .name("idx-mac-binding-mac")
-                    .table(IpMacBinding::Table)
-                    .col(IpMacBinding::Mac)
+                    .name("idx-enrolled-device-mac")
+                    .table(EnrolledDevice::Table)
+                    .col(EnrolledDevice::Mac)
                     .unique()
                     .to_owned(),
             )
@@ -104,12 +104,12 @@ impl MigrationTrait for Migration {
         // from being assigned the same static IPv4 address.
         db.execute(sea_orm::Statement::from_string(
             manager.get_database_backend(),
-            "CREATE UNIQUE INDEX IF NOT EXISTS idx_mac_binding_ipv4_int \
-             ON ip_mac_bindings (ipv4_int) WHERE ipv4_int IS NOT NULL",
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_enrolled_device_ipv4_int \
+             ON enrolled_devices (ipv4_int) WHERE ipv4_int IS NOT NULL",
         ))
         .await?;
 
-        // Populate IpMacBinding from existing DHCP MacBindingRecords
+        // Populate EnrolledDevice from existing DHCP MacBindingRecords
         let rows = db
             .query_all(Statement::from_string(
                 manager.get_database_backend(),
@@ -141,7 +141,7 @@ impl MigrationTrait for Migration {
 
                             db.execute(Statement::from_sql_and_values(
                                 manager.get_database_backend(),
-                                "INSERT OR IGNORE INTO ip_mac_bindings (id, update_at, iface_name, name, mac, ipv4, ipv4_int, tag) 
+                                "INSERT OR IGNORE INTO enrolled_devices (id, update_at, iface_name, name, mac, ipv4, ipv4_int, tag)
                                  VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                                 [
                                     uuid::Uuid::new_v4().into(),
@@ -168,7 +168,7 @@ impl MigrationTrait for Migration {
         let db = manager.get_connection();
         db.execute(sea_orm::Statement::from_string(
             manager.get_database_backend(),
-            "DROP INDEX IF EXISTS idx_mac_binding_ipv4_int",
+            "DROP INDEX IF EXISTS idx_enrolled_device_ipv4_int",
         ))
         .await?;
 
@@ -190,6 +190,6 @@ impl MigrationTrait for Migration {
             )
             .await?;
 
-        manager.drop_table(Table::drop().table(IpMacBinding::Table).to_owned()).await
+        manager.drop_table(Table::drop().table(EnrolledDevice::Table).to_owned()).await
     }
 }
