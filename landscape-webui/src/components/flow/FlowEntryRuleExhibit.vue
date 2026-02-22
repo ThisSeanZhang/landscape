@@ -1,20 +1,25 @@
 <script setup lang="ts">
 import { FlowEntryRule } from "landscape-types/common/flow";
-import { useFrontEndStore } from "@/stores/front_end_config";
+import { useEnrolledDeviceStore } from "@/stores/enrolled_device";
 
 interface Prop {
   rule: FlowEntryRule;
 }
 
-const frontEndStore = useFrontEndStore();
+const enrolledDeviceStore = useEnrolledDeviceStore();
 defineProps<Prop>();
 </script>
 
 <template>
   <n-tag :bordered="false" v-if="rule.mode.t === 'mac'">
-    {{ frontEndStore.MASK_INFO(rule.mode.mac_addr) }}
+    {{ enrolledDeviceStore.GET_NAME_WITH_FALLBACK(rule.mode.mac_addr) }}
   </n-tag>
   <n-tag :bordered="false" v-else>
-    {{ `${frontEndStore.MASK_INFO(rule.mode.ip)}/${rule.mode.prefix_len}` }}
+    {{
+      enrolledDeviceStore.GET_NAME_WITH_FALLBACK(
+        rule.mode.ip,
+        `${rule.mode.ip}/${rule.mode.prefix_len}`,
+      )
+    }}
   </n-tag>
 </template>
