@@ -57,7 +57,7 @@ impl LandscapeDBStore<Uuid> for WanIpRuleConfig {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, TS)]
-#[ts(export, export_to = "flow.d.ts")]
+#[ts(export, export_to = "common/flow.d.ts")]
 #[serde(tag = "t")]
 #[serde(rename_all = "snake_case")]
 pub enum WanIPRuleSource {
@@ -66,7 +66,7 @@ pub enum WanIPRuleSource {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash, TS)]
-#[ts(export, export_to = "flow.d.ts")]
+#[ts(export, export_to = "common/flow.d.ts")]
 pub struct IpConfig {
     pub ip: IpAddr,
     pub prefix: u32,

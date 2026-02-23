@@ -11,7 +11,7 @@ const FLOW_DROP: u8 = 2;
 const FLOW_REDIRECT: u8 = 3;
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Copy, Eq, Hash, TS)]
-#[ts(export, export_to = "flow.d.ts")]
+#[ts(export, export_to = "common/flow.d.ts")]
 pub struct FlowMark {
     /// Action
     action: FlowMarkAction,
@@ -82,7 +82,7 @@ impl Into<u32> for FlowMark {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Copy, Eq, Hash, TS)]
-#[ts(export, export_to = "flow.d.ts")]
+#[ts(export, export_to = "common/flow.d.ts")]
 #[serde(tag = "t")]
 #[serde(rename_all = "snake_case")]
 pub enum FlowMarkAction {

@@ -3,7 +3,7 @@ import {
   IfaceCpuSoftBalance,
   NetworkIfaceConfig,
 } from "landscape-types/common/iface";
-import { IfacesInfo } from "landscape-types/iface";
+import { IfacesInfo } from "landscape-types/common/iface";
 
 export async function ifaces(): Promise<IfacesInfo> {
   let data = await axiosService.get("iface");

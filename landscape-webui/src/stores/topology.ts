@@ -12,7 +12,7 @@ import { new_ifaces } from "@/api/iface";
 import { get_all_docker_networks } from "@/api/docker/network";
 import { LandscapeDockerNetwork } from "@/lib/docker/network";
 import { UnfoldLessFilled } from "@vicons/material";
-import { IfaceInfo, RawIfaceInfo } from "landscape-types/iface";
+import { IfaceInfo, RawIfaceInfo } from "landscape-types/common/iface";
 
 type DevInfo = IfaceInfo | RawIfaceInfo;
 

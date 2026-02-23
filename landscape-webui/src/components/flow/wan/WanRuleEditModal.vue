@@ -6,7 +6,7 @@ import { ChangeCatalog } from "@vicons/carbon";
 
 import FlowMarkEdit from "@/components/flow/FlowMarkEdit.vue";
 import IpEdit from "@/components/IpEdit.vue";
-import { WanIPRuleSource } from "landscape-types/flow";
+import { WanIPRuleSource } from "landscape-types/common/flow";
 
 import { new_wan_rules, WanIpRuleConfigClass } from "@/lib/mark";
 import { WanIpRuleConfig } from "landscape-types/common/flow";

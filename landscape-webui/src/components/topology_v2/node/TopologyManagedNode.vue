@@ -28,7 +28,7 @@ import { TopologyServiceExhibitSwitch } from "@/lib/services";
 import {
   LandscapeInterface,
   LandscapeWifiInterface,
-} from "landscape-types/iface";
+} from "landscape-types/common/iface";
 import { NetworkIfaceConfig } from "landscape-types/common/iface";
 import { ZoneType } from "@/lib/service_ipconfig";
 

@@ -5,7 +5,7 @@ use uuid::Uuid;
 use crate::config::{dns::DNSRuntimeRule, dns::LandscapeDnsRecordType, FlowId};
 
 #[derive(Serialize, Deserialize, Debug, Clone, TS)]
-#[ts(export, export_to = "dns.d.ts")]
+#[ts(export, export_to = "common/dns.d.ts")]
 pub struct LandscapeRecord {
     pub name: String,
     pub rr_type: String,
@@ -14,7 +14,7 @@ pub struct LandscapeRecord {
 }
 
 #[derive(Serialize, Deserialize, Debug, Default, TS)]
-#[ts(export, export_to = "dns.d.ts")]
+#[ts(export, export_to = "common/dns.d.ts")]
 pub struct CheckDnsResult {
     #[ts(type = "any | null")]
     pub config: Option<DNSRuntimeRule>,
@@ -23,7 +23,7 @@ pub struct CheckDnsResult {
 }
 
 #[derive(Serialize, Deserialize, Debug, Default, TS)]
-#[ts(export, export_to = "dns.d.ts")]
+#[ts(export, export_to = "common/dns.d.ts")]
 pub struct CheckChainDnsResult {
     pub redirect_id: Option<Uuid>,
     pub rule_id: Option<Uuid>,
@@ -32,7 +32,7 @@ pub struct CheckChainDnsResult {
 }
 
 #[derive(Serialize, Deserialize, Debug, TS)]
-#[ts(export, export_to = "dns.d.ts")]
+#[ts(export, export_to = "common/dns.d.ts")]
 pub struct CheckDnsReq {
     pub flow_id: FlowId,
     pub domain: String,

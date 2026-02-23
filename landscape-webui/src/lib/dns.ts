@@ -1,4 +1,4 @@
-import { FlowMark } from "landscape-types/flow";
+import { FlowMark } from "landscape-types/common/flow";
 import { FlowMarkType } from "./default_value";
 import {
   DnsBindConfig,

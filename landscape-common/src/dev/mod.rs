@@ -6,7 +6,7 @@ use ts_rs::TS;
 
 /// 当前硬件状态结构体
 #[derive(Debug, Serialize, Clone, TS)]
-#[ts(export, export_to = "iface.d.ts")]
+#[ts(export, export_to = "common/iface.d.ts")]
 pub struct LandscapeInterface {
     #[serde(rename = "iface_name")]
     pub name: String,
@@ -35,7 +35,7 @@ impl LandscapeInterface {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default, TS)]
-#[ts(export, export_to = "iface.d.ts")]
+#[ts(export, export_to = "common/iface.d.ts")]
 #[serde(rename_all = "lowercase")]
 #[serde(tag = "t", content = "c")]
 pub enum DevState {
@@ -61,7 +61,7 @@ pub enum DevState {
 
 /// 设备类型小类
 #[derive(Debug, Serialize, Deserialize, Clone, Default, TS)]
-#[ts(export, export_to = "iface.d.ts")]
+#[ts(export, export_to = "common/iface.d.ts")]
 #[serde(rename_all = "lowercase")]
 pub enum DeviceKind {
     Dummy,
@@ -97,7 +97,7 @@ pub enum DeviceKind {
 
 /// 设备类型大类
 #[derive(Debug, Serialize, Deserialize, Clone, TS)]
-#[ts(export, export_to = "iface.d.ts")]
+#[ts(export, export_to = "common/iface.d.ts")]
 #[serde(rename_all = "lowercase")]
 pub enum DeviceType {
     UnSupport,

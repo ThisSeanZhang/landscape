@@ -3,7 +3,7 @@ use ts_rs::TS;
 
 /// 无线接口类型
 #[derive(Debug, Serialize, Deserialize, Clone, TS)]
-#[ts(export, export_to = "iface.d.ts")]
+#[ts(export, export_to = "common/iface.d.ts")]
 #[serde(tag = "t")]
 pub enum WLANType {
     Unspecified,
@@ -24,7 +24,7 @@ pub enum WLANType {
 
 /// 当前硬件状态结构体
 #[derive(Debug, Serialize, Deserialize, Clone, TS)]
-#[ts(export, export_to = "iface.d.ts")]
+#[ts(export, export_to = "common/iface.d.ts")]
 pub struct LandscapeWifiInterface {
     pub name: String,
     pub index: u32,

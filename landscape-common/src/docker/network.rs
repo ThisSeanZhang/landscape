@@ -5,7 +5,7 @@ use ts_rs::TS;
 use crate::{dev::get_interface_index_by_name, net::MacAddr, route::LanRouteInfo};
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default, TS)]
-#[ts(export, export_to = "docker.d.ts")]
+#[ts(export, export_to = "common/docker.d.ts")]
 pub struct LandscapeDockerNetwork {
     // Name
     pub name: String,
@@ -18,14 +18,14 @@ pub struct LandscapeDockerNetwork {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default, TS)]
-#[ts(export, export_to = "docker.d.ts")]
+#[ts(export, export_to = "common/docker.d.ts")]
 pub struct LandscapeDockerNetworkContainer {
     pub name: String,
     pub mac: Option<MacAddr>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, TS)]
-#[ts(export, export_to = "docker.d.ts")]
+#[ts(export, export_to = "common/docker.d.ts")]
 pub struct LandscapeDockerIpInfo {
     pub subnet_ip: IpAddr,
     pub prefix: u8,

@@ -1,4 +1,4 @@
-import { CheckDnsReq, CheckChainDnsResult } from "landscape-types/dns";
+import { CheckDnsReq, CheckChainDnsResult } from "landscape-types/common/dns";
 import axiosService from ".";
 import { ServiceStatus } from "@/lib/services";
 

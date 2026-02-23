@@ -13,7 +13,7 @@ const LOCAL_ADDR_BIT: u8 = 0x02;
 const MULTICAST_ADDR_BIT: u8 = 0x01;
 
 #[derive(Clone, Copy, Default, Hash, PartialOrd, Eq, TS)]
-#[ts(export, export_to = "network.d.ts")]
+#[ts(export, export_to = "common/network.d.ts")]
 #[ts(as = "String")]
 pub struct MacAddr(pub u8, pub u8, pub u8, pub u8, pub u8, pub u8);
 

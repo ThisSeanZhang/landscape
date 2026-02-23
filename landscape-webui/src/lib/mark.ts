@@ -1,6 +1,6 @@
 import { convert_flow_mark, MarkType } from "./dns";
 
-import type { FlowMark, WanIPRuleSource } from "landscape-types/flow";
+import type { FlowMark, WanIPRuleSource } from "landscape-types/common/flow";
 import {
   FirewallRuleConfig,
   FirewallRuleConfigItem,

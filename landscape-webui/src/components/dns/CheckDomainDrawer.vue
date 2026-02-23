@@ -2,7 +2,7 @@
 import { ref } from "vue";
 import { useMessage } from "naive-ui";
 import { SearchLocate } from "@vicons/carbon";
-import { CheckChainDnsResult, CheckDnsReq } from "landscape-types/dns";
+import { CheckChainDnsResult, CheckDnsReq } from "landscape-types/common/dns";
 import { check_domain } from "@/api/dns_service";
 import { LandscapeDnsRecordType } from "landscape-types/common/dns_record_type";
 import { DnsRule } from "@/lib/dns";

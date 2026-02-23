@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { FlowMarkType } from "@/lib/default_value";
-import { FlowMark } from "landscape-types/flow";
+import { FlowMark } from "landscape-types/common/flow";
 import { computed } from "vue";
 import FlowSelect from "./FlowSelect.vue";
 

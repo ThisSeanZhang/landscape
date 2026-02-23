@@ -33,7 +33,7 @@ pub struct ChangeZone {
 
 /// 已管理的网卡
 #[derive(Serialize, Debug, Clone, TS)]
-#[ts(export, export_to = "iface.d.ts")]
+#[ts(export, export_to = "common/iface.d.ts")]
 pub struct IfaceInfo {
     /// 持久化的配置
     pub config: NetworkIfaceConfig,
@@ -44,7 +44,7 @@ pub struct IfaceInfo {
 
 /// 未纳入配置的网卡
 #[derive(Serialize, Debug, Clone, TS)]
-#[ts(export, export_to = "iface.d.ts")]
+#[ts(export, export_to = "common/iface.d.ts")]
 pub struct RawIfaceInfo {
     /// 当前网卡的配置
     pub status: LandscapeInterface,
@@ -52,7 +52,7 @@ pub struct RawIfaceInfo {
 }
 
 #[derive(Clone, Serialize, TS)]
-#[ts(export, export_to = "iface.d.ts")]
+#[ts(export, export_to = "common/iface.d.ts")]
 pub struct IfacesInfo {
     pub managed: Vec<IfaceInfo>,
     pub unmanaged: Vec<RawIfaceInfo>,
