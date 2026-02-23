@@ -37,20 +37,25 @@ pub struct DNSRuleConfig {
     pub enable: bool,
     /// 过滤模式
     #[serde(default)]
+    #[cfg_attr(feature = "openapi", schema(required = true))]
     pub filter: FilterResult,
     /// 上游配置 ID
     pub upstream_id: Uuid,
     /// 源 IP 绑定配置
     #[serde(default)]
+    #[cfg_attr(feature = "openapi", schema(required = true))]
     pub bind_config: DnsBindConfig,
     /// 流量标记
     #[serde(default)]
+    #[cfg_attr(feature = "openapi", schema(required = true))]
     pub mark: FlowMark,
     /// 匹配规则列表
     #[serde(default)]
+    #[cfg_attr(feature = "openapi", schema(required = true))]
     pub source: Vec<RuleSource>,
     /// 关联 Flow ID
     #[serde(default = "default_flow_id")]
+    #[cfg_attr(feature = "openapi", schema(required = true))]
     pub flow_id: u32,
     /// 最近一次更新时间
     #[serde(default = "get_f64_timestamp")]

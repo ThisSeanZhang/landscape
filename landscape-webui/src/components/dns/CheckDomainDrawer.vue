@@ -6,7 +6,7 @@ import { CheckChainDnsResult, CheckDnsReq } from "landscape-types/common/dns";
 import { check_domain } from "@/api/dns_service";
 import { LandscapeDnsRecordType } from "landscape-types/common/dns_record_type";
 import { DnsRule } from "@/lib/dns";
-import { get_dns_rule } from "@/api/dns_rule";
+import { getDnsRule } from "landscape-types/api/dns-rules/dns-rules";
 import { DNSRedirectRule } from "landscape-types/common/dns_redirect";
 import { get_dns_redirect } from "@/api/dns_rule/redirect";
 const message = useMessage();
@@ -90,7 +90,7 @@ async function query() {
       redirect_rule.value = undefined;
       result.value = await check_domain({ ...req.value, domain });
       if (result.value.rule_id) {
-        config_rule.value = await get_dns_rule(result.value.rule_id);
+        config_rule.value = new DnsRule(await getDnsRule(result.value.rule_id));
       }
       if (result.value.redirect_id) {
         redirect_rule.value = await get_dns_redirect(result.value.redirect_id);

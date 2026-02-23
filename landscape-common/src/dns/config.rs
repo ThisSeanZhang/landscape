@@ -62,11 +62,11 @@ pub struct DnsBindConfig {
     /// 绑定地址 v4 (可选)
     #[ts(optional)]
     #[serde(default)]
-    #[cfg_attr(feature = "openapi", schema(required = false, value_type = Option<String>))]
+    #[cfg_attr(feature = "openapi", schema(required = false, nullable = false, value_type = String))]
     pub bind_addr4: Option<Ipv4Addr>,
     /// 绑定地址 v6 (可选)
     #[ts(optional)]
     #[serde(default)]
-    #[cfg_attr(feature = "openapi", schema(required = false, value_type = Option<String>))]
+    #[cfg_attr(feature = "openapi", schema(required = false, nullable = false, value_type = String))]
     pub bind_addr6: Option<Ipv6Addr>,
 }

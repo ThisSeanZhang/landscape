@@ -134,8 +134,10 @@ pub struct GeoConfigKey {
     pub name: String,
     pub key: String,
     #[serde(default)]
+    #[cfg_attr(feature = "openapi", schema(required = true))]
     pub inverse: bool,
     #[serde(default)]
+    #[cfg_attr(feature = "openapi", schema(required = true, nullable = true))]
     pub attribute_key: Option<String>,
 }
 

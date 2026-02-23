@@ -1,7 +1,10 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
 import DnsRuleCard from "@/components/dns/DnsRuleCard.vue";
-import { get_flow_dns_rules, push_many_dns_rule } from "@/api/dns_rule";
+import {
+  getFlowDnsRules,
+  addManyDnsRules,
+} from "landscape-types/api/dns-rules/dns-rules";
 import {
   copy_context_to_clipboard,
   read_context_from_clipboard,
@@ -23,7 +26,7 @@ const rules = ref<any>([]);
 async function read_rules() {
   rule_loading_spin.value = true;
   try {
-    rules.value = await get_flow_dns_rules(props.flow_id);
+    rules.value = await getFlowDnsRules(props.flow_id);
   } finally {
     rule_loading_spin.value = false;
   }
@@ -33,7 +36,7 @@ const show_create_modal = ref(false);
 const show_query_modal = ref(false);
 
 async function export_config() {
-  let configs = await get_flow_dns_rules(props.flow_id);
+  let configs = await getFlowDnsRules(props.flow_id);
   await copy_context_to_clipboard(
     message,
     JSON.stringify(
@@ -58,7 +61,7 @@ async function import_rules() {
     for (const rule of rules) {
       rule.flow_id = props.flow_id;
     }
-    await push_many_dns_rule(rules);
+    await addManyDnsRules(rules);
     message.success("Import Success");
     await read_rules();
   } catch (e) {}

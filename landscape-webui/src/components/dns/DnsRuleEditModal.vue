@@ -1,5 +1,8 @@
 <script setup lang="ts">
-import { get_dns_rule, push_dns_rule } from "@/api/dns_rule";
+import {
+  getDnsRule,
+  addDnsRules,
+} from "landscape-types/api/dns-rules/dns-rules";
 import {
   DnsRule,
   get_dns_resolve_mode_options,
@@ -47,7 +50,7 @@ const isModified = computed(() => {
 
 async function enter() {
   if (props.rule_id != null) {
-    rule.value = await get_dns_rule(props.rule_id);
+    rule.value = new DnsRule(await getDnsRule(props.rule_id));
   } else {
     rule.value = new DnsRule({
       flow_id: props.flow_id,
@@ -100,11 +103,10 @@ async function saveRule() {
 
   try {
     commit_spin.value = true;
-    await push_dns_rule(rule.value);
-    console.log("submit success");
+    await addDnsRules(rule.value);
     show.value = false;
   } catch (e: any) {
-    message.error(`${e.response.data}`);
+    // interceptor already shows error toast; e = { error_id, message, args }
   } finally {
     commit_spin.value = false;
   }

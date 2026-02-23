@@ -2,7 +2,7 @@
 import { computed, ref } from "vue";
 import DnsRuleEditModal from "@/components/dns/DnsRuleEditModal.vue";
 import { DnsRule } from "@/lib/dns";
-import { delete_dns_rule } from "@/api/dns_rule";
+import { delDnsRules } from "landscape-types/api/dns-rules/dns-rules";
 import { CheckmarkOutline } from "@vicons/carbon";
 import FlowMarkExhibit from "@/components/flow/FlowMarkExhibit.vue";
 const rule = defineModel<DnsRule>("rule", { required: true });
@@ -13,7 +13,7 @@ const emit = defineEmits(["refresh"]);
 
 async function del() {
   if (rule.value.id) {
-    await delete_dns_rule(rule.value.id);
+    await delDnsRules(rule.value.id);
     emit("refresh");
   }
 }
