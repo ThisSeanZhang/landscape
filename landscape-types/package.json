@@ -22,6 +22,7 @@
     "axios": ">=1.0.0"
   },
   "devDependencies": {
+    "axios": "^1.13.5",
     "orval": "^8.4.2"
   }
 }

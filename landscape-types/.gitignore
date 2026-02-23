@@ -5,7 +5,7 @@ node_modules
 .yarn/install-state.gz
 .yarn/unplugged
 
-# openapi spec fetched from running server
+# generated from Rust OpenAPI spec — regenerate via gen_ts_bindings.sh
 openapi.json
 
 # orval generated files — regenerate via `yarn generate`
