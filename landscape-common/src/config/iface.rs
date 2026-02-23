@@ -8,31 +8,38 @@ use crate::database::repository::LandscapeDBStore;
 
 /// 用于存储网卡信息的结构体
 #[derive(Debug, Serialize, Deserialize, Clone, TS)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[ts(export, export_to = "common/iface.d.ts")]
 pub struct NetworkIfaceConfig {
     // 名称 关联的网卡名称 相当于网卡的唯一 id
     pub name: String,
 
     #[serde(default)]
+    #[cfg_attr(feature = "openapi", schema(required = true))]
     pub create_dev_type: CreateDevType,
 
     // 是否有 master 使用 name 因为 Linux 中名称是唯一的
     pub controller_name: Option<String>,
 
     #[serde(default)]
+    #[cfg_attr(feature = "openapi", schema(required = true))]
     pub zone_type: IfaceZoneType,
 
     #[serde(default = "yes")]
+    #[cfg_attr(feature = "openapi", schema(required = true))]
     pub enable_in_boot: bool,
 
     #[serde(default)]
+    #[cfg_attr(feature = "openapi", schema(required = true))]
     pub wifi_mode: WifiMode,
 
     /// NIC XPS / RPS Config
     #[serde(default)]
+    #[cfg_attr(feature = "openapi", schema(required = true, nullable = true))]
     pub xps_rps: Option<IfaceCpuSoftBalance>,
 
     #[serde(default = "get_f64_timestamp")]
+    #[cfg_attr(feature = "openapi", schema(required = true))]
     pub update_at: f64,
 }
 
@@ -80,6 +87,7 @@ impl NetworkIfaceConfig {
 
 /// 需要创建的设备类型
 #[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq, Eq, Hash, Default)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[ts(export, export_to = "common/iface.d.ts")]
 #[serde(rename_all = "snake_case")]
 #[derive(EnumIter, DeriveActiveEnum)]
@@ -91,6 +99,7 @@ pub enum CreateDevType {
 }
 
 #[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq, Eq, Hash, Default)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[ts(export, export_to = "common/iface.d.ts")]
 #[serde(rename_all = "snake_case")]
 #[derive(EnumIter, DeriveActiveEnum)]
@@ -104,6 +113,7 @@ pub enum WifiMode {
 }
 
 #[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq, Eq, Hash, Default)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[ts(export, export_to = "common/iface.d.ts")]
 #[serde(rename_all = "snake_case")]
 #[derive(EnumIter, DeriveActiveEnum)]
@@ -117,6 +127,7 @@ pub enum IfaceZoneType {
 }
 
 #[derive(Debug, Serialize, Deserialize, Default, Clone, TS)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[ts(export, export_to = "common/iface.d.ts")]
 pub struct IfaceCpuSoftBalance {
     pub xps: String,

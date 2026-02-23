@@ -6,12 +6,7 @@ use axum::{
 
 use axum_server::tls_rustls::RustlsConfig;
 use colored::Colorize;
-use config_service::{
-    dst_ip_rule::get_dst_ip_rule_config_paths,
-    firewall_blacklist::get_firewall_blacklist_config_paths,
-    firewall_rule::get_firewall_rule_config_paths, geo_ip::get_geo_ip_config_paths,
-    geo_site::get_geo_site_config_paths,
-};
+use config_service::{geo_ip::get_geo_ip_upload_path, geo_site::get_geo_site_upload_path};
 use landscape::{
     boot::{boot_check, log::init_logger},
     cert::load_or_generate_cert,
@@ -88,11 +83,6 @@ use service::{pppd::get_iface_pppd_paths, wifi::get_wifi_service_paths};
 use tracing::info;
 
 use crate::{
-    config_service::{
-        dns_redirect::get_dns_redirect_config_paths, dns_upstream::get_dns_upstream_config_paths,
-        enrolled_device::get_enrolled_device_config_paths,
-        static_nat_mapping::get_static_nat_mapping_config_paths,
-    },
     service::{
         route::get_route_paths, route_lan::get_route_lan_paths, route_wan::get_route_wan_paths,
     },
@@ -388,15 +378,8 @@ async fn run(home_path: PathBuf, config: RuntimeConfig) -> LdResult<()> {
             "/config",
             Router::new()
                 .merge(openapi_config_router)
-                .merge(get_firewall_rule_config_paths().await)
-                .merge(get_firewall_blacklist_config_paths().await)
-                .merge(get_geo_site_config_paths().await)
-                .merge(get_geo_ip_config_paths().await)
-                .merge(get_dst_ip_rule_config_paths().await)
-                .merge(get_static_nat_mapping_config_paths().await)
-                .merge(get_dns_redirect_config_paths().await)
-                .merge(get_dns_upstream_config_paths().await)
-                .merge(get_enrolled_device_config_paths().await),
+                .merge(get_geo_site_upload_path())
+                .merge(get_geo_ip_upload_path()),
         )
         .nest(
             "/services",

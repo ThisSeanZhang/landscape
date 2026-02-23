@@ -1,23 +1,30 @@
-use axum::{
-    extract::{Path, State},
-    routing::{get, post},
-    Json, Router,
-};
+use axum::extract::{Path, State};
+use landscape_common::api_response::LandscapeApiResp as CommonApiResp;
+use landscape_common::config::ConfigId;
+use landscape_common::dns::config::DnsUpstreamConfig;
 use landscape_common::service::controller_service_v2::ConfigController;
-use landscape_common::{config::ConfigId, dns::config::DnsUpstreamConfig};
+use utoipa_axum::router::OpenApiRouter;
+use utoipa_axum::routes;
 
 use landscape_common::dns::upstream::DnsUpstreamError;
 
+use crate::api::JsonBody;
 use crate::LandscapeApp;
 use crate::{api::LandscapeApiResp, error::LandscapeApiResult};
 
-pub async fn get_dns_upstream_config_paths() -> Router<LandscapeApp> {
-    Router::new()
-        .route("/dns_upstreams", get(get_dns_upstreams).post(add_dns_upstream))
-        .route("/dns_upstreams/set_many", post(add_many_dns_upstreams))
-        .route("/dns_upstreams/{id}", get(get_dns_upstream).delete(del_dns_upstream))
+pub fn get_dns_upstream_config_paths() -> OpenApiRouter<LandscapeApp> {
+    OpenApiRouter::new()
+        .routes(routes!(get_dns_upstreams, add_dns_upstream))
+        .routes(routes!(add_many_dns_upstreams))
+        .routes(routes!(get_dns_upstream, del_dns_upstream))
 }
 
+#[utoipa::path(
+    get,
+    path = "/dns_upstreams",
+    tag = "DNS Upstreams",
+    responses((status = 200, body = inline(CommonApiResp<Vec<DnsUpstreamConfig>>)))
+)]
 async fn get_dns_upstreams(
     State(state): State<LandscapeApp>,
 ) -> LandscapeApiResult<Vec<DnsUpstreamConfig>> {
@@ -25,6 +32,16 @@ async fn get_dns_upstreams(
     LandscapeApiResp::success(result)
 }
 
+#[utoipa::path(
+    get,
+    path = "/dns_upstreams/{id}",
+    tag = "DNS Upstreams",
+    params(("id" = Uuid, Path, description = "DNS upstream config ID")),
+    responses(
+        (status = 200, body = inline(CommonApiResp<DnsUpstreamConfig>)),
+        (status = 404, description = "Not found")
+    )
+)]
 async fn get_dns_upstream(
     State(state): State<LandscapeApp>,
     Path(id): Path<ConfigId>,
@@ -37,22 +54,46 @@ async fn get_dns_upstream(
     }
 }
 
+#[utoipa::path(
+    post,
+    path = "/dns_upstreams/set_many",
+    tag = "DNS Upstreams",
+    request_body = Vec<DnsUpstreamConfig>,
+    responses((status = 200, description = "Success"))
+)]
 async fn add_many_dns_upstreams(
     State(state): State<LandscapeApp>,
-    Json(dns_upstreams): Json<Vec<DnsUpstreamConfig>>,
+    JsonBody(dns_upstreams): JsonBody<Vec<DnsUpstreamConfig>>,
 ) -> LandscapeApiResult<()> {
     state.dns_upstream_service.set_list(dns_upstreams).await;
     LandscapeApiResp::success(())
 }
 
+#[utoipa::path(
+    post,
+    path = "/dns_upstreams",
+    tag = "DNS Upstreams",
+    request_body = DnsUpstreamConfig,
+    responses((status = 200, body = inline(CommonApiResp<DnsUpstreamConfig>)))
+)]
 async fn add_dns_upstream(
     State(state): State<LandscapeApp>,
-    Json(dns_upstream): Json<DnsUpstreamConfig>,
+    JsonBody(dns_upstream): JsonBody<DnsUpstreamConfig>,
 ) -> LandscapeApiResult<DnsUpstreamConfig> {
     let result = state.dns_upstream_service.set(dns_upstream).await;
     LandscapeApiResp::success(result)
 }
 
+#[utoipa::path(
+    delete,
+    path = "/dns_upstreams/{id}",
+    tag = "DNS Upstreams",
+    params(("id" = Uuid, Path, description = "DNS upstream config ID")),
+    responses(
+        (status = 200, description = "Success"),
+        (status = 404, description = "Not found")
+    )
+)]
 async fn del_dns_upstream(
     State(state): State<LandscapeApp>,
     Path(id): Path<ConfigId>,

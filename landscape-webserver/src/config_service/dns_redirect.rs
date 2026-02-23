@@ -1,23 +1,30 @@
-use axum::{
-    extract::{Path, State},
-    routing::{get, post},
-    Json, Router,
-};
+use axum::extract::{Path, State};
+use landscape_common::api_response::LandscapeApiResp as CommonApiResp;
+use landscape_common::config::ConfigId;
+use landscape_common::dns::redirect::DNSRedirectRule;
 use landscape_common::service::controller_service_v2::ConfigController;
-use landscape_common::{config::ConfigId, dns::redirect::DNSRedirectRule};
+use utoipa_axum::router::OpenApiRouter;
+use utoipa_axum::routes;
 
 use landscape_common::dns::redirect::DnsRedirectError;
 
+use crate::api::JsonBody;
 use crate::LandscapeApp;
 use crate::{api::LandscapeApiResp, error::LandscapeApiResult};
 
-pub async fn get_dns_redirect_config_paths() -> Router<LandscapeApp> {
-    Router::new()
-        .route("/dns_redirects", get(get_dns_redirects).post(add_dns_redirects))
-        .route("/dns_redirects/set_many", post(add_many_dns_redirects))
-        .route("/dns_redirects/{id}", get(get_dns_redirect).delete(del_dns_redirects))
+pub fn get_dns_redirect_config_paths() -> OpenApiRouter<LandscapeApp> {
+    OpenApiRouter::new()
+        .routes(routes!(get_dns_redirects, add_dns_redirects))
+        .routes(routes!(add_many_dns_redirects))
+        .routes(routes!(get_dns_redirect, del_dns_redirects))
 }
 
+#[utoipa::path(
+    get,
+    path = "/dns_redirects",
+    tag = "DNS Redirects",
+    responses((status = 200, body = inline(CommonApiResp<Vec<DNSRedirectRule>>)))
+)]
 async fn get_dns_redirects(
     State(state): State<LandscapeApp>,
 ) -> LandscapeApiResult<Vec<DNSRedirectRule>> {
@@ -25,6 +32,16 @@ async fn get_dns_redirects(
     LandscapeApiResp::success(result)
 }
 
+#[utoipa::path(
+    get,
+    path = "/dns_redirects/{id}",
+    tag = "DNS Redirects",
+    params(("id" = Uuid, Path, description = "DNS redirect rule ID")),
+    responses(
+        (status = 200, body = inline(CommonApiResp<DNSRedirectRule>)),
+        (status = 404, description = "Not found")
+    )
+)]
 async fn get_dns_redirect(
     State(state): State<LandscapeApp>,
     Path(id): Path<ConfigId>,
@@ -37,22 +54,46 @@ async fn get_dns_redirect(
     }
 }
 
+#[utoipa::path(
+    post,
+    path = "/dns_redirects/set_many",
+    tag = "DNS Redirects",
+    request_body = Vec<DNSRedirectRule>,
+    responses((status = 200, description = "Success"))
+)]
 async fn add_many_dns_redirects(
     State(state): State<LandscapeApp>,
-    Json(dns_redirects): Json<Vec<DNSRedirectRule>>,
+    JsonBody(dns_redirects): JsonBody<Vec<DNSRedirectRule>>,
 ) -> LandscapeApiResult<()> {
     state.dns_redirect_service.set_list(dns_redirects).await;
     LandscapeApiResp::success(())
 }
 
+#[utoipa::path(
+    post,
+    path = "/dns_redirects",
+    tag = "DNS Redirects",
+    request_body = DNSRedirectRule,
+    responses((status = 200, body = inline(CommonApiResp<DNSRedirectRule>)))
+)]
 async fn add_dns_redirects(
     State(state): State<LandscapeApp>,
-    Json(dns_redirect): Json<DNSRedirectRule>,
+    JsonBody(dns_redirect): JsonBody<DNSRedirectRule>,
 ) -> LandscapeApiResult<DNSRedirectRule> {
     let result = state.dns_redirect_service.set(dns_redirect).await;
     LandscapeApiResp::success(result)
 }
 
+#[utoipa::path(
+    delete,
+    path = "/dns_redirects/{id}",
+    tag = "DNS Redirects",
+    params(("id" = Uuid, Path, description = "DNS redirect rule ID")),
+    responses(
+        (status = 200, description = "Success"),
+        (status = 404, description = "Not found")
+    )
+)]
 async fn del_dns_redirects(
     State(state): State<LandscapeApp>,
     Path(id): Path<ConfigId>,

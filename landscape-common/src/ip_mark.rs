@@ -19,6 +19,7 @@ pub enum DstIpRuleError {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, TS)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[ts(export, export_to = "common/flow.d.ts")]
 /// 对于外部 IP 规则
 pub struct WanIpRuleConfig {
@@ -29,20 +30,25 @@ pub struct WanIpRuleConfig {
     pub enable: bool,
     /// 流量标记
     #[serde(default)]
+    #[cfg_attr(feature = "openapi", schema(required = true))]
     pub mark: FlowMark,
     /// 匹配规则列表
     #[serde(default)]
+    #[cfg_attr(feature = "openapi", schema(required = true))]
     pub source: Vec<WanIPRuleSource>,
     // 备注
     pub remark: String,
 
     #[serde(default = "default_flow_id")]
+    #[cfg_attr(feature = "openapi", schema(required = true))]
     pub flow_id: u32,
 
     #[serde(default)]
+    #[cfg_attr(feature = "openapi", schema(required = true))]
     pub override_dns: bool,
 
     #[serde(default = "get_f64_timestamp")]
+    #[cfg_attr(feature = "openapi", schema(required = true))]
     pub update_at: f64,
 }
 
@@ -57,6 +63,7 @@ impl LandscapeDBStore<Uuid> for WanIpRuleConfig {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, TS)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[ts(export, export_to = "common/flow.d.ts")]
 #[serde(tag = "t")]
 #[serde(rename_all = "snake_case")]
@@ -66,8 +73,10 @@ pub enum WanIPRuleSource {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash, TS)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[ts(export, export_to = "common/flow.d.ts")]
 pub struct IpConfig {
+    #[cfg_attr(feature = "openapi", schema(value_type = String))]
     pub ip: IpAddr,
     pub prefix: u32,
     // pub reverse_match: String,

@@ -124,6 +124,7 @@ pub struct InitConfig {
 
 /// auth realte config
 #[derive(Debug, Serialize, Deserialize, Clone, Default, TS)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[ts(export, export_to = "common/config.d.ts")]
 pub struct LandscapeAuthConfig {
     /// login user
@@ -135,9 +136,11 @@ pub struct LandscapeAuthConfig {
 
 /// web realte config
 #[derive(Debug, Serialize, Deserialize, Clone, Default, TS)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[ts(export, export_to = "common/config.d.ts")]
 pub struct LandscapeWebConfig {
     /// Web Root
+    #[cfg_attr(feature = "openapi", schema(value_type = Option<String>))]
     pub web_root: Option<PathBuf>,
 
     /// Listen HTTP port
@@ -147,12 +150,15 @@ pub struct LandscapeWebConfig {
     pub https_port: Option<u16>,
 
     /// Listen address
+    #[cfg_attr(feature = "openapi", schema(value_type = Option<String>))]
     pub address: Option<IpAddr>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default, TS)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[ts(export, export_to = "common/config.d.ts")]
 pub struct LandscapeLogConfig {
+    #[cfg_attr(feature = "openapi", schema(value_type = Option<String>))]
     pub log_path: Option<PathBuf>,
     pub debug: Option<bool>,
     pub log_output_in_terminal: Option<bool>,
@@ -160,73 +166,93 @@ pub struct LandscapeLogConfig {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default, TS)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[ts(export, export_to = "common/config.d.ts")]
 pub struct LandscapeStoreConfig {
     pub database_path: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default, TS)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[ts(export, export_to = "common/config.d.ts")]
 pub struct LandscapeMetricConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
+    #[cfg_attr(feature = "openapi", schema(required = false))]
     pub conn_retention_mins: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
+    #[cfg_attr(feature = "openapi", schema(required = false))]
     pub conn_retention_minute_days: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
+    #[cfg_attr(feature = "openapi", schema(required = false))]
     pub conn_retention_hour_days: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
+    #[cfg_attr(feature = "openapi", schema(required = false))]
     pub conn_retention_day_days: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
+    #[cfg_attr(feature = "openapi", schema(required = false))]
     pub dns_retention_days: Option<u64>,
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
+    #[cfg_attr(feature = "openapi", schema(required = false))]
     pub batch_size: Option<usize>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
+    #[cfg_attr(feature = "openapi", schema(required = false))]
     pub flush_interval_secs: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
+    #[cfg_attr(feature = "openapi", schema(required = false))]
     pub max_memory: Option<usize>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
+    #[cfg_attr(feature = "openapi", schema(required = false))]
     pub max_threads: Option<usize>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default, TS)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[ts(export, export_to = "common/config.d.ts")]
 pub struct LandscapeDnsConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
+    #[cfg_attr(feature = "openapi", schema(required = false))]
     pub cache_capacity: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
+    #[cfg_attr(feature = "openapi", schema(required = false))]
     pub cache_ttl: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
+    #[cfg_attr(feature = "openapi", schema(required = false))]
     pub negative_cache_ttl: Option<u32>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default, TS)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[ts(export, export_to = "common/config.d.ts")]
 pub struct LandscapeUIConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
+    #[cfg_attr(feature = "openapi", schema(required = false))]
     pub language: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
+    #[cfg_attr(feature = "openapi", schema(required = false))]
     pub timezone: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
+    #[cfg_attr(feature = "openapi", schema(required = false))]
     pub theme: Option<String>,
 }
 
 #[derive(Serialize, TS, Debug, Clone)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[ts(export, export_to = "common/config.d.ts")]
 pub struct GetUIConfigResponse {
     pub ui: LandscapeUIConfig,
@@ -234,6 +260,7 @@ pub struct GetUIConfigResponse {
 }
 
 #[derive(Deserialize, TS, Debug, Clone)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[ts(export, export_to = "common/config.d.ts")]
 pub struct UpdateUIConfigRequest {
     pub new_ui: LandscapeUIConfig,
@@ -241,6 +268,7 @@ pub struct UpdateUIConfigRequest {
 }
 
 #[derive(Serialize, TS, Debug, Clone)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[ts(export, export_to = "common/config.d.ts")]
 pub struct GetMetricConfigResponse {
     pub metric: LandscapeMetricConfig,
@@ -248,6 +276,7 @@ pub struct GetMetricConfigResponse {
 }
 
 #[derive(Deserialize, TS, Debug, Clone)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[ts(export, export_to = "common/config.d.ts")]
 pub struct UpdateMetricConfigRequest {
     pub new_metric: LandscapeMetricConfig,
@@ -255,6 +284,7 @@ pub struct UpdateMetricConfigRequest {
 }
 
 #[derive(Serialize, TS, Debug, Clone)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[ts(export, export_to = "common/config.d.ts")]
 pub struct GetDnsConfigResponse {
     pub dns: LandscapeDnsConfig,
@@ -262,6 +292,7 @@ pub struct GetDnsConfigResponse {
 }
 
 #[derive(Deserialize, TS, Debug, Clone)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[ts(export, export_to = "common/config.d.ts")]
 pub struct UpdateDnsConfigRequest {
     pub new_dns: LandscapeDnsConfig,
@@ -270,21 +301,29 @@ pub struct UpdateDnsConfigRequest {
 
 /// Read & Write <CONFIG_PATH>/landscape.toml
 #[derive(Debug, Serialize, Deserialize, Clone, Default, TS)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[ts(export, export_to = "common/config.d.ts")]
 pub struct LandscapeConfig {
     #[serde(default)]
+    #[cfg_attr(feature = "openapi", schema(required = true))]
     pub auth: LandscapeAuthConfig,
     #[serde(default)]
+    #[cfg_attr(feature = "openapi", schema(required = true))]
     pub web: LandscapeWebConfig,
     #[serde(default)]
+    #[cfg_attr(feature = "openapi", schema(required = true))]
     pub log: LandscapeLogConfig,
     #[serde(default)]
+    #[cfg_attr(feature = "openapi", schema(required = true))]
     pub store: LandscapeStoreConfig,
     #[serde(default)]
+    #[cfg_attr(feature = "openapi", schema(required = true))]
     pub metric: LandscapeMetricConfig,
     #[serde(default)]
+    #[cfg_attr(feature = "openapi", schema(required = true))]
     pub dns: LandscapeDnsConfig,
     #[serde(default)]
+    #[cfg_attr(feature = "openapi", schema(required = true))]
     pub ui: LandscapeUIConfig,
 }
 

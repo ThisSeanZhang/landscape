@@ -6,11 +6,13 @@ use crate::store::storev2::LandscapeStore;
 use crate::utils::time::get_f64_timestamp;
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[ts(export, export_to = "common/firewall.d.ts")]
 pub struct FirewallServiceConfig {
     pub iface_name: String,
     pub enable: bool,
     #[serde(default = "get_f64_timestamp")]
+    #[cfg_attr(feature = "openapi", schema(required = true))]
     pub update_at: f64,
 }
 

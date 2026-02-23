@@ -1,8 +1,8 @@
 use axum::{
     extract::{DefaultBodyLimit, Multipart, Path, Query, State},
-    routing::{get, post},
-    Json, Router,
+    routing::post,
 };
+use landscape_common::api_response::LandscapeApiResp as CommonApiResp;
 use landscape_common::config::{
     geo::{
         GeoDomainConfig, GeoFileCacheKey, GeoSiteError, GeoSiteSourceConfig, QueryGeoDomainConfig,
@@ -11,24 +11,44 @@ use landscape_common::config::{
     ConfigId,
 };
 use landscape_common::service::controller_service_v2::ConfigController;
+use utoipa_axum::router::OpenApiRouter;
+use utoipa_axum::routes;
 
+use crate::api::JsonBody;
 use crate::LandscapeApp;
 use crate::{api::LandscapeApiResp, error::LandscapeApiResult, UPLOAD_GEO_FILE_SIZE_LIMIT};
 
-pub async fn get_geo_site_config_paths() -> Router<LandscapeApp> {
-    Router::new()
-        .route("/geo_sites", get(get_geo_sites).post(add_geo_site))
-        .route("/geo_sites/set_many", post(add_many_geo_sites))
-        .route("/geo_sites/{id}", get(get_geo_rule).delete(del_geo_site))
-        .route("/geo_sites/cache", get(get_geo_site_cache).post(refresh_geo_site_cache))
-        .route("/geo_sites/cache/search", get(search_geo_site_cache))
-        .route("/geo_sites/cache/detail", get(get_geo_site_cache_detail))
-        .route(
-            "/geo_sites/{name}/update_by_upload",
-            post(update_by_upload).layer(DefaultBodyLimit::max(UPLOAD_GEO_FILE_SIZE_LIMIT)),
-        )
+pub fn get_geo_site_config_paths() -> OpenApiRouter<LandscapeApp> {
+    OpenApiRouter::new()
+        .routes(routes!(get_geo_sites, add_geo_site))
+        .routes(routes!(add_many_geo_sites))
+        .routes(routes!(get_geo_rule, del_geo_site))
+        .routes(routes!(get_geo_site_cache, refresh_geo_site_cache))
+        .routes(routes!(search_geo_site_cache))
+        .routes(routes!(get_geo_site_cache_detail))
 }
 
+/// Returns a separate Router for the upload endpoint that cannot use utoipa annotations.
+pub fn get_geo_site_upload_path() -> axum::Router<LandscapeApp> {
+    axum::Router::new().route(
+        "/geo_sites/{name}/update_by_upload",
+        post(update_by_upload).layer(DefaultBodyLimit::max(UPLOAD_GEO_FILE_SIZE_LIMIT)),
+    )
+}
+
+#[utoipa::path(
+    get,
+    path = "/geo_sites/cache/detail",
+    tag = "Geo Sites",
+    params(
+        ("name" = String, Query, description = "Geo file name"),
+        ("key" = String, Query, description = "Geo cache key")
+    ),
+    responses(
+        (status = 200, body = inline(CommonApiResp<GeoDomainConfig>)),
+        (status = 404, description = "Not found")
+    )
+)]
 async fn get_geo_site_cache_detail(
     State(state): State<LandscapeApp>,
     Query(key): Query<GeoFileCacheKey>,
@@ -41,6 +61,16 @@ async fn get_geo_site_cache_detail(
     }
 }
 
+#[utoipa::path(
+    get,
+    path = "/geo_sites/cache/search",
+    tag = "Geo Sites",
+    params(
+        ("name" = Option<String>, Query, description = "Filter by name"),
+        ("key" = Option<String>, Query, description = "Filter by key")
+    ),
+    responses((status = 200, body = inline(CommonApiResp<Vec<GeoFileCacheKey>>)))
+)]
 async fn search_geo_site_cache(
     State(state): State<LandscapeApp>,
     Query(query): Query<QueryGeoKey>,
@@ -63,6 +93,12 @@ async fn search_geo_site_cache(
     LandscapeApiResp::success(result)
 }
 
+#[utoipa::path(
+    get,
+    path = "/geo_sites/cache",
+    tag = "Geo Sites",
+    responses((status = 200, body = inline(CommonApiResp<Vec<GeoFileCacheKey>>)))
+)]
 async fn get_geo_site_cache(
     State(state): State<LandscapeApp>,
 ) -> LandscapeApiResult<Vec<GeoFileCacheKey>> {
@@ -70,11 +106,26 @@ async fn get_geo_site_cache(
     LandscapeApiResp::success(result)
 }
 
+#[utoipa::path(
+    post,
+    path = "/geo_sites/cache",
+    tag = "Geo Sites",
+    responses((status = 200, description = "Success"))
+)]
 async fn refresh_geo_site_cache(State(state): State<LandscapeApp>) -> LandscapeApiResult<()> {
     state.geo_site_service.refresh(true).await;
     LandscapeApiResp::success(())
 }
 
+#[utoipa::path(
+    get,
+    path = "/geo_sites",
+    tag = "Geo Sites",
+    params(
+        ("name" = Option<String>, Query, description = "Filter by name")
+    ),
+    responses((status = 200, body = inline(CommonApiResp<Vec<GeoSiteSourceConfig>>)))
+)]
 async fn get_geo_sites(
     State(state): State<LandscapeApp>,
     Query(q): Query<QueryGeoDomainConfig>,
@@ -83,6 +134,16 @@ async fn get_geo_sites(
     LandscapeApiResp::success(result)
 }
 
+#[utoipa::path(
+    get,
+    path = "/geo_sites/{id}",
+    tag = "Geo Sites",
+    params(("id" = Uuid, Path, description = "Geo site rule ID")),
+    responses(
+        (status = 200, body = inline(CommonApiResp<GeoSiteSourceConfig>)),
+        (status = 404, description = "Not found")
+    )
+)]
 async fn get_geo_rule(
     State(state): State<LandscapeApp>,
     Path(id): Path<ConfigId>,
@@ -95,22 +156,46 @@ async fn get_geo_rule(
     }
 }
 
+#[utoipa::path(
+    post,
+    path = "/geo_sites",
+    tag = "Geo Sites",
+    request_body = GeoSiteSourceConfig,
+    responses((status = 200, body = inline(CommonApiResp<GeoSiteSourceConfig>)))
+)]
 async fn add_geo_site(
     State(state): State<LandscapeApp>,
-    Json(dns_rule): Json<GeoSiteSourceConfig>,
+    JsonBody(dns_rule): JsonBody<GeoSiteSourceConfig>,
 ) -> LandscapeApiResult<GeoSiteSourceConfig> {
     let result = state.geo_site_service.set(dns_rule).await;
     LandscapeApiResp::success(result)
 }
 
+#[utoipa::path(
+    post,
+    path = "/geo_sites/set_many",
+    tag = "Geo Sites",
+    request_body = Vec<GeoSiteSourceConfig>,
+    responses((status = 200, description = "Success"))
+)]
 async fn add_many_geo_sites(
     State(state): State<LandscapeApp>,
-    Json(rules): Json<Vec<GeoSiteSourceConfig>>,
+    JsonBody(rules): JsonBody<Vec<GeoSiteSourceConfig>>,
 ) -> LandscapeApiResult<()> {
     state.geo_site_service.set_list(rules).await;
     LandscapeApiResp::success(())
 }
 
+#[utoipa::path(
+    delete,
+    path = "/geo_sites/{id}",
+    tag = "Geo Sites",
+    params(("id" = Uuid, Path, description = "Geo site rule ID")),
+    responses(
+        (status = 200, description = "Success"),
+        (status = 404, description = "Not found")
+    )
+)]
 async fn del_geo_site(
     State(state): State<LandscapeApp>,
     Path(id): Path<ConfigId>,

@@ -11,12 +11,14 @@ use crate::store::storev2::LandscapeStore;
 use crate::utils::time::get_f64_timestamp;
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[ts(export, export_to = "common/wanip.d.ts")]
 pub struct IfaceIpServiceConfig {
     pub iface_name: String,
     pub enable: bool,
     pub ip_model: IfaceIpModelConfig,
     #[serde(default = "get_f64_timestamp")]
+    #[cfg_attr(feature = "openapi", schema(required = true))]
     pub update_at: f64,
 }
 
@@ -33,6 +35,7 @@ impl LandscapeDBStore<String> for IfaceIpServiceConfig {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default, TS)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[ts(export, export_to = "common/wanip.d.ts")]
 #[serde(tag = "t")]
 #[serde(rename_all = "lowercase")]
@@ -41,18 +44,24 @@ pub enum IfaceIpModelConfig {
     Nothing,
     Static {
         #[serde(default)]
+        #[cfg_attr(feature = "openapi", schema(required = true, nullable = true, value_type = Option<String>))]
         default_router_ip: Option<Ipv4Addr>,
         #[serde(default)]
+        #[cfg_attr(feature = "openapi", schema(required = true))]
         default_router: bool,
         #[serde(default)]
+        #[cfg_attr(feature = "openapi", schema(required = true, nullable = true, value_type = Option<String>))]
         ipv4: Option<Ipv4Addr>,
         #[serde(default)]
+        #[cfg_attr(feature = "openapi", schema(required = true))]
         ipv4_mask: u8,
         #[serde(default)]
+        #[cfg_attr(feature = "openapi", schema(required = true, nullable = true, value_type = Option<String>))]
         ipv6: Option<Ipv6Addr>,
     },
     PPPoE {
         #[serde(default)]
+        #[cfg_attr(feature = "openapi", schema(required = true))]
         default_router: bool,
         username: String,
         password: String,
@@ -60,10 +69,12 @@ pub enum IfaceIpModelConfig {
     },
     DhcpClient {
         #[serde(default)]
+        #[cfg_attr(feature = "openapi", schema(required = true))]
         default_router: bool,
         hostname: Option<String>,
         /// Custome Options
         #[serde(default)]
+        #[cfg_attr(feature = "openapi", schema(required = true, value_type = Vec<serde_json::Value>))]
         #[ts(type = "Array<any>")]
         custome_opts: Vec<DhcpV4Options>,
     },

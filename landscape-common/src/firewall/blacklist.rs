@@ -19,6 +19,7 @@ pub enum FirewallBlacklistError {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, TS)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[ts(export, export_to = "common/firewall_blacklist.d.ts")]
 #[serde(tag = "t", rename_all = "snake_case")]
 pub enum FirewallBlacklistSource {
@@ -27,16 +28,19 @@ pub enum FirewallBlacklistSource {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, TS)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[ts(export, export_to = "common/firewall_blacklist.d.ts")]
 pub struct FirewallBlacklistConfig {
     #[serde(default = "gen_database_uuid")]
     #[ts(as = "Option<_>", optional)]
+    #[cfg_attr(feature = "openapi", schema(required = false))]
     pub id: Uuid,
     pub enable: bool,
     pub source: Vec<FirewallBlacklistSource>,
     pub remark: String,
     #[serde(default = "get_f64_timestamp")]
     #[ts(as = "Option<_>", optional)]
+    #[cfg_attr(feature = "openapi", schema(required = false))]
     pub update_at: f64,
 }
 

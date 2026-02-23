@@ -27,6 +27,7 @@ pub struct DnsUpstreamConfig {
     pub port: Option<u16>,
 
     #[serde(default)]
+    #[cfg_attr(feature = "openapi", schema(required = true, nullable = true))]
     pub enable_ip_validation: Option<bool>,
 
     #[serde(default = "get_f64_timestamp")]

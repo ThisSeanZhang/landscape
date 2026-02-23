@@ -25,6 +25,7 @@ use crate::database::repository::LandscapeDBStore;
 use crate::utils::time::get_f64_timestamp;
 
 #[derive(Serialize, Deserialize, Debug, Clone, TS)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[ts(export, export_to = "common/firewall.d.ts")]
 pub struct FirewallRuleConfig {
     pub id: Option<Uuid>,
@@ -36,9 +37,11 @@ pub struct FirewallRuleConfig {
     pub items: Vec<FirewallRuleConfigItem>,
     /// 流量标记
     #[serde(default)]
+    #[cfg_attr(feature = "openapi", schema(required = true))]
     pub mark: FlowMark,
 
     #[serde(default = "get_f64_timestamp")]
+    #[cfg_attr(feature = "openapi", schema(required = true))]
     pub update_at: f64,
 }
 
@@ -56,11 +59,13 @@ impl LandscapeDBStore<Uuid> for FirewallRuleConfig {
 
 /// 配置的小项
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash, TS)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[ts(export, export_to = "common/firewall.d.ts")]
 pub struct FirewallRuleConfigItem {
     // IP 承载的协议
     pub ip_protocol: Option<LandscapeIpProtocolCode>,
     pub local_port: Option<String>,
+    #[cfg_attr(feature = "openapi", schema(value_type = String))]
     pub address: IpAddr,
     pub ip_prefixlen: u8,
 }

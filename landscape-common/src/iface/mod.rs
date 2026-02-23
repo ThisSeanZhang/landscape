@@ -8,23 +8,28 @@ use dev_wifi::LandscapeWifiInterface;
 pub mod dev_wifi;
 
 #[derive(Clone, Serialize, Deserialize, TS)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[ts(export, export_to = "common/iface.d.ts")]
 pub struct BridgeCreate {
     pub name: String,
 }
 
 #[derive(Clone, Serialize, Deserialize, TS)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[ts(export, export_to = "common/iface.d.ts")]
 pub struct AddController {
     pub link_name: String,
     pub link_ifindex: u32,
     #[serde(default)]
+    #[cfg_attr(feature = "openapi", schema(required = true, nullable = true))]
     pub master_name: Option<String>,
     #[serde(default)]
+    #[cfg_attr(feature = "openapi", schema(required = true, nullable = true))]
     pub master_ifindex: Option<u32>,
 }
 
 #[derive(Clone, Serialize, Deserialize, TS)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[ts(export, export_to = "common/iface.d.ts")]
 pub struct ChangeZone {
     pub iface_name: String,

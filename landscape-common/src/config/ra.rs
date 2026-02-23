@@ -9,6 +9,7 @@ use crate::store::storev2::LandscapeStore;
 use crate::utils::time::get_f64_timestamp;
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[ts(export, export_to = "common/ra.d.ts")]
 pub struct IPV6RAServiceConfig {
     pub iface_name: String,
@@ -17,6 +18,7 @@ pub struct IPV6RAServiceConfig {
 
     #[serde(default = "get_f64_timestamp")]
     #[ts(as = "Option<_>", optional)]
+    #[cfg_attr(feature = "openapi", schema(required = false))]
     pub update_at: f64,
 }
 
@@ -27,6 +29,7 @@ impl LandscapeDBStore<String> for IPV6RAServiceConfig {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, TS)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[ts(export, export_to = "common/ra.d.ts")]
 #[serde(tag = "t")]
 #[serde(rename_all = "snake_case")]
@@ -36,9 +39,11 @@ pub enum IPV6RaConfigSource {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, TS)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[ts(export, export_to = "common/ra.d.ts")]
 pub struct IPv6RaStaticConfig {
     /// Base Prefix
+    #[cfg_attr(feature = "openapi", schema(value_type = String))]
     pub base_prefix: Ipv6Addr,
 
     /// subnet prefix length default 64
@@ -52,6 +57,7 @@ pub struct IPv6RaStaticConfig {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, TS)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[ts(export, export_to = "common/ra.d.ts")]
 pub struct IPv6RaPdConfig {
     pub depend_iface: String,
@@ -65,12 +71,14 @@ pub struct IPv6RaPdConfig {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, TS)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[ts(export, export_to = "common/ra.d.ts")]
 pub struct IPV6RAConfig {
     /// Router Advertisement Interval
     pub ad_interval: u32,
     /// Router Advertisement Flag
     #[serde(default = "ra_flag_default")]
+    #[cfg_attr(feature = "openapi", schema(required = true))]
     pub ra_flag: RouterFlags,
     /// Ip Source
     pub source: Vec<IPV6RaConfigSource>,
@@ -116,6 +124,7 @@ impl IPV6RAConfig {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Copy, TS)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[ts(export, export_to = "common/ra.d.ts")]
 pub struct RouterFlags {
     pub managed_address_config: bool, // 0b1000_0000

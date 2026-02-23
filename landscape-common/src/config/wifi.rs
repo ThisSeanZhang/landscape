@@ -6,6 +6,7 @@ use crate::store::storev2::LandscapeStore;
 use crate::utils::time::get_f64_timestamp;
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[ts(export, export_to = "common/config.d.ts")]
 pub struct WifiServiceConfig {
     pub iface_name: String,
@@ -13,6 +14,7 @@ pub struct WifiServiceConfig {
     /// hostapd config file
     pub config: String,
     #[serde(default = "get_f64_timestamp")]
+    #[cfg_attr(feature = "openapi", schema(required = true))]
     pub update_at: f64,
 }
 

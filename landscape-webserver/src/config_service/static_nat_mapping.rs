@@ -1,26 +1,29 @@
-use axum::{
-    extract::{Path, State},
-    routing::{get, post},
-    Json, Router,
-};
+use axum::extract::{Path, State};
+use landscape_common::api_response::LandscapeApiResp as CommonApiResp;
 use landscape_common::config::{nat::StaticNatMappingConfig, ConfigId};
 use landscape_common::service::controller_service_v2::ConfigController;
+use utoipa_axum::router::OpenApiRouter;
+use utoipa_axum::routes;
 
 use landscape_common::config::nat::StaticNatError;
 
+use crate::api::JsonBody;
 use crate::LandscapeApp;
 use crate::{api::LandscapeApiResp, error::LandscapeApiResult};
 
-pub async fn get_static_nat_mapping_config_paths() -> Router<LandscapeApp> {
-    Router::new()
-        .route("/static_nat_mappings", get(get_static_nat_mappings).post(add_static_nat_mappings))
-        .route("/static_nat_mappings/set_many", post(add_many_static_nat_mappings))
-        .route(
-            "/static_nat_mappings/{id}",
-            get(get_static_nat_mapping).delete(del_static_nat_mappings),
-        )
+pub fn get_static_nat_mapping_config_paths() -> OpenApiRouter<LandscapeApp> {
+    OpenApiRouter::new()
+        .routes(routes!(get_static_nat_mappings, add_static_nat_mappings))
+        .routes(routes!(add_many_static_nat_mappings))
+        .routes(routes!(get_static_nat_mapping, del_static_nat_mappings))
 }
 
+#[utoipa::path(
+    get,
+    path = "/static_nat_mappings",
+    tag = "Static NAT Mappings",
+    responses((status = 200, body = inline(CommonApiResp<Vec<StaticNatMappingConfig>>)))
+)]
 async fn get_static_nat_mappings(
     State(state): State<LandscapeApp>,
 ) -> LandscapeApiResult<Vec<StaticNatMappingConfig>> {
@@ -28,6 +31,16 @@ async fn get_static_nat_mappings(
     LandscapeApiResp::success(result)
 }
 
+#[utoipa::path(
+    get,
+    path = "/static_nat_mappings/{id}",
+    tag = "Static NAT Mappings",
+    params(("id" = Uuid, Path, description = "Static NAT mapping ID")),
+    responses(
+        (status = 200, body = inline(CommonApiResp<StaticNatMappingConfig>)),
+        (status = 404, description = "Not found")
+    )
+)]
 async fn get_static_nat_mapping(
     State(state): State<LandscapeApp>,
     Path(id): Path<ConfigId>,
@@ -40,22 +53,46 @@ async fn get_static_nat_mapping(
     }
 }
 
+#[utoipa::path(
+    post,
+    path = "/static_nat_mappings/set_many",
+    tag = "Static NAT Mappings",
+    request_body = Vec<StaticNatMappingConfig>,
+    responses((status = 200, description = "Success"))
+)]
 async fn add_many_static_nat_mappings(
     State(state): State<LandscapeApp>,
-    Json(static_nat_mappings): Json<Vec<StaticNatMappingConfig>>,
+    JsonBody(static_nat_mappings): JsonBody<Vec<StaticNatMappingConfig>>,
 ) -> LandscapeApiResult<()> {
     state.static_nat_mapping_config_service.set_list(static_nat_mappings).await;
     LandscapeApiResp::success(())
 }
 
+#[utoipa::path(
+    post,
+    path = "/static_nat_mappings",
+    tag = "Static NAT Mappings",
+    request_body = StaticNatMappingConfig,
+    responses((status = 200, body = inline(CommonApiResp<StaticNatMappingConfig>)))
+)]
 async fn add_static_nat_mappings(
     State(state): State<LandscapeApp>,
-    Json(static_nat_mapping): Json<StaticNatMappingConfig>,
+    JsonBody(static_nat_mapping): JsonBody<StaticNatMappingConfig>,
 ) -> LandscapeApiResult<StaticNatMappingConfig> {
     let result = state.static_nat_mapping_config_service.set(static_nat_mapping).await;
     LandscapeApiResp::success(result)
 }
 
+#[utoipa::path(
+    delete,
+    path = "/static_nat_mappings/{id}",
+    tag = "Static NAT Mappings",
+    params(("id" = Uuid, Path, description = "Static NAT mapping ID")),
+    responses(
+        (status = 200, description = "Success"),
+        (status = 404, description = "Not found")
+    )
+)]
 async fn del_static_nat_mappings(
     State(state): State<LandscapeApp>,
     Path(id): Path<ConfigId>,

@@ -3,8 +3,17 @@ use utoipa::OpenApi;
 use utoipa_axum::router::OpenApiRouter;
 
 use crate::auth::get_auth_openapi_router;
+use crate::config_service::dns_redirect::get_dns_redirect_config_paths;
 use crate::config_service::dns_rule::get_dns_rule_config_paths;
+use crate::config_service::dns_upstream::get_dns_upstream_config_paths;
+use crate::config_service::dst_ip_rule::get_dst_ip_rule_config_paths;
+use crate::config_service::enrolled_device::get_enrolled_device_config_paths;
+use crate::config_service::firewall_blacklist::get_firewall_blacklist_config_paths;
+use crate::config_service::firewall_rule::get_firewall_rule_config_paths;
 use crate::config_service::flow_rule::get_flow_rule_config_paths;
+use crate::config_service::geo_ip::get_geo_ip_config_paths;
+use crate::config_service::geo_site::get_geo_site_config_paths;
+use crate::config_service::static_nat_mapping::get_static_nat_mapping_config_paths;
 use crate::LandscapeApp;
 
 #[derive(OpenApi)]
@@ -17,7 +26,16 @@ use crate::LandscapeApp;
     tags(
         (name = "Auth", description = "Authentication"),
         (name = "DNS Rules", description = "DNS rule configuration"),
-        (name = "Flow Rules", description = "Flow rule configuration")
+        (name = "DNS Redirects", description = "DNS redirect configuration"),
+        (name = "DNS Upstreams", description = "DNS upstream configuration"),
+        (name = "Flow Rules", description = "Flow rule configuration"),
+        (name = "Firewall Rules", description = "Firewall rule configuration"),
+        (name = "Firewall Blacklists", description = "Firewall blacklist configuration"),
+        (name = "Destination IP Rules", description = "Destination IP rule configuration"),
+        (name = "Static NAT Mappings", description = "Static NAT mapping configuration"),
+        (name = "Enrolled Devices", description = "Enrolled device management"),
+        (name = "Geo Sites", description = "Geo site configuration"),
+        (name = "Geo IPs", description = "Geo IP configuration"),
     )
 )]
 pub struct ApiDoc;
@@ -28,6 +46,15 @@ pub fn build_openapi_router() -> OpenApiRouter<LandscapeApp> {
     OpenApiRouter::with_openapi(ApiDoc::openapi())
         .merge(get_dns_rule_config_paths())
         .merge(get_flow_rule_config_paths())
+        .merge(get_dns_redirect_config_paths())
+        .merge(get_dns_upstream_config_paths())
+        .merge(get_firewall_rule_config_paths())
+        .merge(get_firewall_blacklist_config_paths())
+        .merge(get_dst_ip_rule_config_paths())
+        .merge(get_static_nat_mapping_config_paths())
+        .merge(get_enrolled_device_config_paths())
+        .merge(get_geo_site_config_paths())
+        .merge(get_geo_ip_config_paths())
 }
 
 /// Prepend a prefix to all OpenAPI paths in the spec.

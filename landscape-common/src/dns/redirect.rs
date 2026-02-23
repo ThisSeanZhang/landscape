@@ -26,10 +26,12 @@ use crate::{
 
 /// 用于定义 DNS 重定向的单元配置
 #[derive(Serialize, Deserialize, Debug, Clone, TS)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[ts(export, export_to = "common/dns_redirect.d.ts")]
 pub struct DNSRedirectRule {
     #[serde(default = "gen_database_uuid")]
     #[ts(as = "Option<_>", optional)]
+    #[cfg_attr(feature = "openapi", schema(required = false))]
     pub id: Uuid,
 
     pub remark: String,
@@ -38,12 +40,14 @@ pub struct DNSRedirectRule {
 
     pub match_rules: Vec<RuleSource>,
 
+    #[cfg_attr(feature = "openapi", schema(value_type = Vec<String>))]
     pub result_info: Vec<IpAddr>,
 
     pub apply_flows: Vec<FlowId>,
 
     #[serde(default = "get_f64_timestamp")]
     #[ts(as = "Option<_>", optional)]
+    #[cfg_attr(feature = "openapi", schema(required = false))]
     pub update_at: f64,
 }
 

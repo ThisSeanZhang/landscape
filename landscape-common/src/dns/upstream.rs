@@ -26,6 +26,7 @@ pub enum DnsUpstreamMode {
     Https {
         domain: String,
         #[serde(default)]
+        #[cfg_attr(feature = "openapi", schema(required = true, nullable = true))]
         http_endpoint: Option<String>,
     }, // DNS over HTTPS (DoH)
     Quic {

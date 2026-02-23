@@ -9,6 +9,7 @@ use crate::store::storev2::LandscapeStore;
 use crate::utils::time::get_f64_timestamp;
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[ts(export, export_to = "common/ppp.d.ts")]
 pub struct PPPDServiceConfig {
     pub attach_iface_name: String,
@@ -16,6 +17,7 @@ pub struct PPPDServiceConfig {
     pub enable: bool,
     pub pppd_config: PPPDConfig,
     #[serde(default = "get_f64_timestamp")]
+    #[cfg_attr(feature = "openapi", schema(required = true))]
     pub update_at: f64,
 }
 
@@ -32,6 +34,7 @@ impl LandscapeDBStore<String> for PPPDServiceConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[ts(export, export_to = "common/ppp.d.ts")]
 pub struct PPPDConfig {
     pub default_route: bool,

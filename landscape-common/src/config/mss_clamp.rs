@@ -6,14 +6,17 @@ use crate::store::storev2::LandscapeStore;
 use crate::utils::time::get_f64_timestamp;
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[ts(export, export_to = "common/mss_clamp.d.ts")]
 pub struct MSSClampServiceConfig {
     pub iface_name: String,
     pub enable: bool,
 
     #[serde(default = "default_clamp_size")]
+    #[cfg_attr(feature = "openapi", schema(required = true))]
     pub clamp_size: u16,
     #[serde(default = "get_f64_timestamp")]
+    #[cfg_attr(feature = "openapi", schema(required = true))]
     pub update_at: f64,
 }
 

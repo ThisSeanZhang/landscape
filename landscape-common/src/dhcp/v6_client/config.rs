@@ -8,18 +8,22 @@ use ts_rs::TS;
 use crate::net::MacAddr;
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[ts(export, export_to = "common/dhcp_v6_client.d.ts")]
 pub struct IPV6PDServiceConfig {
     pub iface_name: String,
     pub enable: bool,
     pub config: IPV6PDConfig,
     #[serde(default = "get_f64_timestamp")]
+    #[cfg_attr(feature = "openapi", schema(required = true))]
     pub update_at: f64,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, TS)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[ts(export, export_to = "common/dhcp_v6_client.d.ts")]
 pub struct IPV6PDConfig {
+    #[cfg_attr(feature = "openapi", schema(value_type = String))]
     pub mac: MacAddr,
 }
 

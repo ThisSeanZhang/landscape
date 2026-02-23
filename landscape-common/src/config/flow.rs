@@ -6,11 +6,13 @@ use crate::{database::repository::LandscapeDBStore, store::storev2::LandscapeSto
 
 /// 可移除
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[ts(export, export_to = "common/flow.d.ts")]
 pub struct FlowWanServiceConfig {
     pub iface_name: String,
     pub enable: bool,
     #[serde(default = "get_f64_timestamp")]
+    #[cfg_attr(feature = "openapi", schema(required = true))]
     pub update_at: f64,
 }
 

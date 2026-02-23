@@ -1,27 +1,29 @@
-use axum::{
-    extract::{Path, State},
-    routing::{get, post},
-    Json, Router,
-};
+use axum::extract::{Path, State};
+use landscape_common::api_response::LandscapeApiResp as CommonApiResp;
+use landscape_common::config::ConfigId;
+use landscape_common::enrolled_device::{EnrolledDevice, EnrolledDeviceError, ValidateIpPayload};
 use landscape_common::service::controller_service_v2::ControllerService;
-use landscape_common::{
-    config::ConfigId,
-    enrolled_device::{EnrolledDevice, EnrolledDeviceError, ValidateIpPayload},
-};
+use utoipa_axum::router::OpenApiRouter;
+use utoipa_axum::routes;
 
+use crate::api::JsonBody;
 use crate::{api::LandscapeApiResp, error::LandscapeApiResult, LandscapeApp};
 
-pub async fn get_enrolled_device_config_paths() -> Router<LandscapeApp> {
-    Router::new()
-        .route("/enrolled_devices", get(list_enrolled_devices).post(push_enrolled_device))
-        .route("/enrolled_devices/validate_ip", post(handle_validate_ip))
-        .route(
-            "/enrolled_devices/{id}",
-            get(get_enrolled_device).put(update_enrolled_device).delete(delete_enrolled_device),
-        )
-        .route("/enrolled_devices/check_invalid/{iface_name}", get(check_iface_validity))
+pub fn get_enrolled_device_config_paths() -> OpenApiRouter<LandscapeApp> {
+    OpenApiRouter::new()
+        .routes(routes!(list_enrolled_devices, push_enrolled_device))
+        .routes(routes!(handle_validate_ip))
+        .routes(routes!(get_enrolled_device, update_enrolled_device, delete_enrolled_device))
+        .routes(routes!(check_iface_validity))
 }
 
+#[utoipa::path(
+    get,
+    path = "/enrolled_devices/check_invalid/{iface_name}",
+    tag = "Enrolled Devices",
+    params(("iface_name" = String, Path, description = "Interface name")),
+    responses((status = 200, body = inline(CommonApiResp<Vec<EnrolledDevice>>)))
+)]
 async fn check_iface_validity(
     State(app): State<LandscapeApp>,
     Path(iface_name): Path<String>,
@@ -44,9 +46,16 @@ async fn check_iface_validity(
     }
 }
 
+#[utoipa::path(
+    post,
+    path = "/enrolled_devices/validate_ip",
+    tag = "Enrolled Devices",
+    request_body = ValidateIpPayload,
+    responses((status = 200, body = inline(CommonApiResp<bool>)))
+)]
 async fn handle_validate_ip(
     State(app): State<LandscapeApp>,
-    Json(payload): Json<ValidateIpPayload>,
+    JsonBody(payload): JsonBody<ValidateIpPayload>,
 ) -> LandscapeApiResult<bool> {
     let result = app
         .enrolled_device_service
@@ -56,6 +65,12 @@ async fn handle_validate_ip(
     LandscapeApiResp::success(result)
 }
 
+#[utoipa::path(
+    get,
+    path = "/enrolled_devices",
+    tag = "Enrolled Devices",
+    responses((status = 200, body = inline(CommonApiResp<Vec<EnrolledDevice>>)))
+)]
 async fn list_enrolled_devices(
     State(app): State<LandscapeApp>,
 ) -> LandscapeApiResult<Vec<EnrolledDevice>> {
@@ -63,6 +78,13 @@ async fn list_enrolled_devices(
     LandscapeApiResp::success(result)
 }
 
+#[utoipa::path(
+    get,
+    path = "/enrolled_devices/{id}",
+    tag = "Enrolled Devices",
+    params(("id" = Uuid, Path, description = "Enrolled device ID")),
+    responses((status = 200, body = inline(CommonApiResp<Option<EnrolledDevice>>)))
+)]
 async fn get_enrolled_device(
     State(app): State<LandscapeApp>,
     Path(id): Path<ConfigId>,
@@ -71,24 +93,49 @@ async fn get_enrolled_device(
     LandscapeApiResp::success(result)
 }
 
+#[utoipa::path(
+    post,
+    path = "/enrolled_devices",
+    tag = "Enrolled Devices",
+    request_body = EnrolledDevice,
+    responses((status = 200, description = "Success"))
+)]
 async fn push_enrolled_device(
     State(app): State<LandscapeApp>,
-    Json(payload): Json<EnrolledDevice>,
+    JsonBody(payload): JsonBody<EnrolledDevice>,
 ) -> LandscapeApiResult<()> {
     app.enrolled_device_service.push(payload).await.map_err(EnrolledDeviceError::InvalidData)?;
     LandscapeApiResp::success(())
 }
 
+#[utoipa::path(
+    put,
+    path = "/enrolled_devices/{id}",
+    tag = "Enrolled Devices",
+    params(("id" = Uuid, Path, description = "Enrolled device ID")),
+    request_body = EnrolledDevice,
+    responses((status = 200, description = "Success"))
+)]
 async fn update_enrolled_device(
     State(app): State<LandscapeApp>,
     Path(id): Path<ConfigId>,
-    Json(mut payload): Json<EnrolledDevice>,
+    JsonBody(mut payload): JsonBody<EnrolledDevice>,
 ) -> LandscapeApiResult<()> {
     payload.id = id.into();
     app.enrolled_device_service.push(payload).await.map_err(EnrolledDeviceError::InvalidData)?;
     LandscapeApiResp::success(())
 }
 
+#[utoipa::path(
+    delete,
+    path = "/enrolled_devices/{id}",
+    tag = "Enrolled Devices",
+    params(("id" = Uuid, Path, description = "Enrolled device ID")),
+    responses(
+        (status = 200, description = "Success"),
+        (status = 404, description = "Not found")
+    )
+)]
 async fn delete_enrolled_device(
     State(app): State<LandscapeApp>,
     Path(id): Path<ConfigId>,

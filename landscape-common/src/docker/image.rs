@@ -5,14 +5,17 @@ use ts_rs::TS;
 use uuid::Uuid;
 
 #[derive(Debug, Serialize, Deserialize, TS)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[ts(export, export_to = "common/docker.d.ts")]
 pub struct PullImageReq {
     pub image_name: String,
     #[serde(default)]
+    #[cfg_attr(feature = "openapi", schema(required = true, nullable = true))]
     pub tag: Option<String>,
 }
 
 #[derive(Clone, Serialize, Deserialize, TS)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[ts(export, export_to = "common/docker.d.ts")]
 pub struct PullImgTask {
     pub id: Uuid,
@@ -22,6 +25,7 @@ pub struct PullImgTask {
 }
 
 #[derive(Default, Clone, Serialize, Deserialize, Debug, TS)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[ts(export, export_to = "common/docker.d.ts")]
 pub struct PullImgTaskItem {
     pub id: String,
@@ -32,6 +36,7 @@ pub struct PullImgTaskItem {
 }
 
 #[derive(Clone, Serialize, Debug, TS)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[ts(export, export_to = "common/docker.d.ts")]
 pub struct ImgPullEvent {
     pub task_id: Uuid,

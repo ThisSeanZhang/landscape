@@ -1,25 +1,29 @@
-use axum::{
-    extract::{Path, State},
-    routing::get,
-    Json, Router,
-};
+use axum::extract::{Path, State};
+use landscape_common::api_response::LandscapeApiResp as CommonApiResp;
+use landscape_common::config::ConfigId;
+use landscape_common::firewall::blacklist::FirewallBlacklistConfig;
 use landscape_common::service::controller_service_v2::ConfigController;
-use landscape_common::{config::ConfigId, firewall::blacklist::FirewallBlacklistConfig};
+use utoipa_axum::router::OpenApiRouter;
+use utoipa_axum::routes;
 
 use landscape_common::firewall::blacklist::FirewallBlacklistError;
 
+use crate::api::JsonBody;
 use crate::LandscapeApp;
 use crate::{api::LandscapeApiResp, error::LandscapeApiResult};
 
-pub async fn get_firewall_blacklist_config_paths() -> Router<LandscapeApp> {
-    Router::new()
-        .route("/firewall_blacklists", get(get_firewall_blacklists).post(add_firewall_blacklist))
-        .route(
-            "/firewall_blacklists/{id}",
-            get(get_firewall_blacklist).delete(del_firewall_blacklist),
-        )
+pub fn get_firewall_blacklist_config_paths() -> OpenApiRouter<LandscapeApp> {
+    OpenApiRouter::new()
+        .routes(routes!(get_firewall_blacklists, add_firewall_blacklist))
+        .routes(routes!(get_firewall_blacklist, del_firewall_blacklist))
 }
 
+#[utoipa::path(
+    get,
+    path = "/firewall_blacklists",
+    tag = "Firewall Blacklists",
+    responses((status = 200, body = inline(CommonApiResp<Vec<FirewallBlacklistConfig>>)))
+)]
 async fn get_firewall_blacklists(
     State(state): State<LandscapeApp>,
 ) -> LandscapeApiResult<Vec<FirewallBlacklistConfig>> {
@@ -27,6 +31,16 @@ async fn get_firewall_blacklists(
     LandscapeApiResp::success(result)
 }
 
+#[utoipa::path(
+    get,
+    path = "/firewall_blacklists/{id}",
+    tag = "Firewall Blacklists",
+    params(("id" = Uuid, Path, description = "Firewall blacklist ID")),
+    responses(
+        (status = 200, body = inline(CommonApiResp<FirewallBlacklistConfig>)),
+        (status = 404, description = "Not found")
+    )
+)]
 async fn get_firewall_blacklist(
     State(state): State<LandscapeApp>,
     Path(id): Path<ConfigId>,
@@ -39,14 +53,31 @@ async fn get_firewall_blacklist(
     }
 }
 
+#[utoipa::path(
+    post,
+    path = "/firewall_blacklists",
+    tag = "Firewall Blacklists",
+    request_body = FirewallBlacklistConfig,
+    responses((status = 200, body = inline(CommonApiResp<FirewallBlacklistConfig>)))
+)]
 async fn add_firewall_blacklist(
     State(state): State<LandscapeApp>,
-    Json(config): Json<FirewallBlacklistConfig>,
+    JsonBody(config): JsonBody<FirewallBlacklistConfig>,
 ) -> LandscapeApiResult<FirewallBlacklistConfig> {
     let result = state.firewall_blacklist_service.set(config).await;
     LandscapeApiResp::success(result)
 }
 
+#[utoipa::path(
+    delete,
+    path = "/firewall_blacklists/{id}",
+    tag = "Firewall Blacklists",
+    params(("id" = Uuid, Path, description = "Firewall blacklist ID")),
+    responses(
+        (status = 200, description = "Success"),
+        (status = 404, description = "Not found")
+    )
+)]
 async fn del_firewall_blacklist(
     State(state): State<LandscapeApp>,
     Path(id): Path<ConfigId>,

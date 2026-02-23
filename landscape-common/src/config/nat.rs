@@ -20,13 +20,16 @@ pub enum StaticNatError {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[ts(export, export_to = "common/nat.d.ts")]
 pub struct NatServiceConfig {
     pub iface_name: String,
     pub enable: bool,
     #[serde(default)]
+    #[cfg_attr(feature = "openapi", schema(required = true))]
     pub nat_config: NatConfig,
     #[serde(default = "get_f64_timestamp")]
+    #[cfg_attr(feature = "openapi", schema(required = true))]
     pub update_at: f64,
 }
 
@@ -43,10 +46,14 @@ impl LandscapeDBStore<String> for NatServiceConfig {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, TS)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[ts(export, export_to = "common/nat.d.ts")]
 pub struct NatConfig {
+    #[cfg_attr(feature = "openapi", schema(value_type = Object))]
     pub tcp_range: Range<u16>,
+    #[cfg_attr(feature = "openapi", schema(value_type = Object))]
     pub udp_range: Range<u16>,
+    #[cfg_attr(feature = "openapi", schema(value_type = Object))]
     pub icmp_in_range: Range<u16>,
 }
 
@@ -61,6 +68,7 @@ impl Default for NatConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[ts(export, export_to = "common/nat.d.ts")]
 pub struct StaticMapPair {
     pub wan_port: u16,
@@ -68,10 +76,12 @@ pub struct StaticMapPair {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[ts(export, export_to = "common/nat.d.ts")]
 pub struct StaticNatMappingConfig {
     #[serde(default = "gen_database_uuid")]
     #[ts(as = "Option<_>", optional)]
+    #[cfg_attr(feature = "openapi", schema(required = false))]
     pub id: Uuid,
     pub enable: bool,
     pub remark: String,
@@ -79,13 +89,16 @@ pub struct StaticNatMappingConfig {
     pub mapping_pair_ports: Vec<StaticMapPair>,
     /// If set to `UNSPECIFIED` (e.g., 0.0.0.0 or ::), the mapping targets
     /// the router's own address instead of an internal host.
+    #[cfg_attr(feature = "openapi", schema(value_type = Option<String>))]
     pub lan_ipv4: Option<Ipv4Addr>,
+    #[cfg_attr(feature = "openapi", schema(value_type = Option<String>))]
     pub lan_ipv6: Option<Ipv6Addr>,
     /// TCP / UDP
     pub ipv4_l4_protocol: Vec<u8>,
     pub ipv6_l4_protocol: Vec<u8>,
     #[serde(default = "get_f64_timestamp")]
     #[ts(as = "Option<_>", optional)]
+    #[cfg_attr(feature = "openapi", schema(required = false))]
     pub update_at: f64,
 }
 

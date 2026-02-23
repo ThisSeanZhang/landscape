@@ -15,14 +15,17 @@ use crate::{
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[ts(export, export_to = "common/dhcp_v4_server.d.ts")]
 pub struct DHCPv4ServiceConfig {
     pub iface_name: String,
     pub enable: bool,
     #[serde(default)]
+    #[cfg_attr(feature = "openapi", schema(required = true))]
     pub config: DHCPv4ServerConfig,
     /// 最近一次编译时间
     #[serde(default = "get_f64_timestamp")]
+    #[cfg_attr(feature = "openapi", schema(required = true))]
     pub update_at: f64,
 }
 
@@ -51,26 +54,32 @@ impl LandscapeDBStore<String> for DHCPv4ServiceConfig {
 
 /// DHCP Server IPv4 Config
 #[derive(Debug, Serialize, Deserialize, Clone, TS)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[ts(export, export_to = "common/dhcp_v4_server.d.ts")]
 pub struct DHCPv4ServerConfig {
     /// dhcp options
     // #[serde(default)]
     // options: Vec<DhcpOptions>,
     /// range start
+    #[cfg_attr(feature = "openapi", schema(value_type = String))]
     pub ip_range_start: Ipv4Addr,
     /// range end [not include]
     #[serde(default)]
+    #[cfg_attr(feature = "openapi", schema(required = true, nullable = true, value_type = Option<String>))]
     pub ip_range_end: Option<Ipv4Addr>,
 
     /// DHCP Server Addr e.g. 192.168.1.1
+    #[cfg_attr(feature = "openapi", schema(value_type = String))]
     pub server_ip_addr: Ipv4Addr,
     /// network mask e.g. 255.255.255.0 = 24
     pub network_mask: u8,
 
     #[serde(default)]
+    #[cfg_attr(feature = "openapi", schema(required = true, nullable = true))]
     pub address_lease_time: Option<u32>,
 
     #[serde(default)]
+    #[cfg_attr(feature = "openapi", schema(required = true))]
     /// Static MAC --> IP address binding
     pub mac_binding_records: Vec<MacBindingRecord>,
 }
@@ -117,11 +126,15 @@ impl Default for DHCPv4ServerConfig {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, TS)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[ts(export, export_to = "common/dhcp_v4_server.d.ts")]
 pub struct MacBindingRecord {
+    #[cfg_attr(feature = "openapi", schema(value_type = String))]
     pub mac: MacAddr,
+    #[cfg_attr(feature = "openapi", schema(value_type = String))]
     pub ip: Ipv4Addr,
     #[serde(default = "default_binding_record")]
+    #[cfg_attr(feature = "openapi", schema(required = true))]
     pub expire_time: u32,
 }
 
