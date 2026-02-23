@@ -1,12 +1,22 @@
+use landscape_macro::LdApiError;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 use uuid::Uuid;
 
+use crate::config::ConfigId;
 use crate::database::repository::LandscapeDBStore;
 use crate::dns::config::{DnsBindConfig, DnsUpstreamConfig};
 use crate::utils::id::gen_database_uuid;
 use crate::utils::time::get_f64_timestamp;
 use crate::{flow::mark::FlowMark, store::storev2::LandscapeStore};
+
+#[derive(thiserror::Error, Debug, LdApiError)]
+#[api_error(crate_path = "crate")]
+pub enum DnsRuleError {
+    #[error("DNS rule '{0}' not found")]
+    #[api_error(id = "dns_rule.not_found", status = 404)]
+    NotFound(ConfigId),
+}
 
 use super::geo::GeoConfigKey;
 

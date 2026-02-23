@@ -10,8 +10,9 @@ use landscape_common::{
     config::firewall::FirewallServiceConfig, service::DefaultWatchServiceStatus,
 };
 
-use crate::{error::LandscapeApiError, LandscapeApp};
+use landscape_common::service::ServiceConfigError;
 
+use crate::LandscapeApp;
 use crate::{api::LandscapeApiResp, error::LandscapeApiResult};
 
 pub async fn get_firewall_service_paths() -> Router<LandscapeApp> {
@@ -38,7 +39,7 @@ async fn get_iface_service_conifg(
     if let Some(iface_config) = state.firewall_service.get_config_by_name(iface_name).await {
         LandscapeApiResp::success(iface_config)
     } else {
-        Err(LandscapeApiError::NotFound("Firewall Service Config".into()))
+        Err(ServiceConfigError::NotFound { service_name: "Firewall" })?
     }
 }
 

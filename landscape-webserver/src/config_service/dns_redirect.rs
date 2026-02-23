@@ -6,8 +6,10 @@ use axum::{
 use landscape_common::service::controller_service_v2::ConfigController;
 use landscape_common::{config::ConfigId, dns::redirect::DNSRedirectRule};
 
+use landscape_common::dns::redirect::DnsRedirectError;
+
+use crate::LandscapeApp;
 use crate::{api::LandscapeApiResp, error::LandscapeApiResult};
-use crate::{error::LandscapeApiError, LandscapeApp};
 
 pub async fn get_dns_redirect_config_paths() -> Router<LandscapeApp> {
     Router::new()
@@ -31,7 +33,7 @@ async fn get_dns_redirect(
     if let Some(config) = result {
         LandscapeApiResp::success(config)
     } else {
-        Err(LandscapeApiError::NotFound(format!("Dns Redirect Rule id: {:?}", id)))
+        Err(DnsRedirectError::NotFound(id))?
     }
 }
 

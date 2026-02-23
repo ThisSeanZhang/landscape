@@ -1,3 +1,4 @@
+use landscape_macro::LdApiError;
 use serde::{Deserialize, Serialize};
 use std::net::{Ipv4Addr, Ipv6Addr};
 use ts_rs::TS;
@@ -7,6 +8,14 @@ use crate::database::repository::LandscapeDBStore;
 use crate::net::MacAddr;
 use crate::utils::id::gen_database_uuid;
 use crate::utils::time::get_f64_timestamp;
+
+#[derive(thiserror::Error, Debug, LdApiError)]
+#[api_error(crate_path = "crate")]
+pub enum EnrolledDeviceError {
+    #[error("Invalid enrolled device data: {0}")]
+    #[api_error(id = "enrolled_device.invalid", status = 400)]
+    InvalidData(String),
+}
 
 #[derive(Serialize, Deserialize, Debug, Clone, TS)]
 #[ts(export, export_to = "common/enrolled_device.d.ts")]

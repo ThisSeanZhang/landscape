@@ -6,8 +6,9 @@ use axum::{
 use landscape_common::service::controller_service_v2::ConfigController;
 use landscape_common::{config::ConfigId, firewall::blacklist::FirewallBlacklistConfig};
 
-use crate::{error::LandscapeApiError, LandscapeApp};
+use landscape_common::firewall::blacklist::FirewallBlacklistError;
 
+use crate::LandscapeApp;
 use crate::{api::LandscapeApiResp, error::LandscapeApiResult};
 
 pub async fn get_firewall_blacklist_config_paths() -> Router<LandscapeApp> {
@@ -34,7 +35,7 @@ async fn get_firewall_blacklist(
     if let Some(config) = result {
         LandscapeApiResp::success(config)
     } else {
-        Err(LandscapeApiError::NotFound(format!("Firewall Blacklist id: {:?}", id)))
+        Err(FirewallBlacklistError::NotFound(id))?
     }
 }
 

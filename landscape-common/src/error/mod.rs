@@ -41,21 +41,11 @@ pub enum LdError {
 
 pub type LdResult<T> = Result<T, LdError>;
 
-pub trait LandscapeErrRespTrait
-where
-    Self: std::fmt::Display,
-{
-    fn get_code(&self) -> u32;
-
-    fn get_message(&self) -> String {
-        self.to_string()
+/// All domain errors implement this trait to provide error_id and HTTP status code.
+pub trait LdApiErrorInfo {
+    fn error_id(&self) -> &'static str;
+    fn http_status_code(&self) -> u16;
+    fn error_args(&self) -> serde_json::Value {
+        serde_json::json!({})
     }
-
-    // fn error_to_response(&self) -> (u16, String) {
-    //     let code = self.get_code();
-    //     let http_code = code % 1000; // 取后三位作为 HTTP code
-    //     let msg = self.get_message();
-
-    //     (http_code as u16, msg)
-    // }
 }

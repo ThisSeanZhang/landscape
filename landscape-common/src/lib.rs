@@ -1,5 +1,7 @@
 use std::net::Ipv4Addr;
 
+pub use landscape_macro::LdApiError;
+
 pub mod api_response;
 pub mod args;
 pub mod sys_config;

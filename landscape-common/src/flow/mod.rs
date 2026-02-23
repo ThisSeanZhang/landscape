@@ -1,13 +1,31 @@
 use std::{fmt, net::IpAddr};
 
+use landscape_macro::LdApiError;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
+use crate::config::ConfigId;
 use crate::{flow::mark::FlowMark, net::MacAddr};
 
 pub mod config;
 pub mod mark;
 pub mod target;
+
+#[derive(thiserror::Error, Debug, LdApiError)]
+#[api_error(crate_path = "crate")]
+pub enum FlowRuleError {
+    #[error("Flow rule '{0}' not found")]
+    #[api_error(id = "flow_rule.not_found", status = 404)]
+    NotFound(ConfigId),
+
+    #[error("Duplicate entry match rule: {0}")]
+    #[api_error(id = "flow_rule.duplicate_entry", status = 400)]
+    DuplicateEntryRule(String),
+
+    #[error("Entry rule '{rule}' conflicts with flow '{flow_remark}' (ID: {flow_id})")]
+    #[api_error(id = "flow_rule.conflict_entry", status = 400)]
+    ConflictEntryRule { rule: String, flow_remark: String, flow_id: u32 },
+}
 
 /// Flow 入口匹配规则
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, Hash, TS)]

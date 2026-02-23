@@ -1,15 +1,57 @@
 use std::collections::HashSet;
 
+use landscape_macro::LdApiError;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 use uuid::Uuid;
 
 use crate::{
     config::dns::{DomainConfig, DomainMatchType},
+    config::ConfigId,
     database::repository::LandscapeDBStore,
     ip_mark::IpConfig,
     store::storev4::LandscapeStoreTrait,
 };
+
+#[derive(thiserror::Error, Debug, LdApiError)]
+#[api_error(crate_path = "crate")]
+pub enum GeoSiteError {
+    #[error("Geo site '{0}' not found")]
+    #[api_error(id = "geo_site.not_found", status = 404)]
+    NotFound(ConfigId),
+
+    #[error("Geo site cache key '{0}' not found")]
+    #[api_error(id = "geo_site.cache_not_found", status = 404)]
+    CacheNotFound(String),
+
+    #[error("Geo site file not found in upload")]
+    #[api_error(id = "geo_site.file_not_found", status = 400)]
+    FileNotFound,
+
+    #[error("Geo site file read error")]
+    #[api_error(id = "geo_site.file_read_error", status = 400)]
+    FileReadError,
+}
+
+#[derive(thiserror::Error, Debug, LdApiError)]
+#[api_error(crate_path = "crate")]
+pub enum GeoIpError {
+    #[error("Geo IP '{0}' not found")]
+    #[api_error(id = "geo_ip.not_found", status = 404)]
+    NotFound(ConfigId),
+
+    #[error("Geo IP cache key '{0}' not found")]
+    #[api_error(id = "geo_ip.cache_not_found", status = 404)]
+    CacheNotFound(String),
+
+    #[error("Geo IP file not found in upload")]
+    #[api_error(id = "geo_ip.file_not_found", status = 400)]
+    FileNotFound,
+
+    #[error("Geo IP file read error")]
+    #[api_error(id = "geo_ip.file_read_error", status = 400)]
+    FileReadError,
+}
 
 #[derive(Serialize, Deserialize, Clone, Debug, TS)]
 #[ts(export, export_to = "common/geo_site.d.ts")]

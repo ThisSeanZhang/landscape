@@ -9,8 +9,10 @@ use landscape_common::database::LandscapeDBTrait;
 use landscape_common::service::controller_service_v2::ControllerService;
 use landscape_common::{config::ppp::PPPDServiceConfig, service::DefaultWatchServiceStatus};
 
+use landscape_common::service::ServiceConfigError;
+
+use crate::LandscapeApp;
 use crate::{api::LandscapeApiResp, error::LandscapeApiResult};
-use crate::{error::LandscapeApiError, LandscapeApp};
 
 pub async fn get_iface_pppd_paths() -> Router<LandscapeApp> {
     Router::new()
@@ -52,7 +54,7 @@ async fn get_iface_pppd_conifg(
     if let Some(iface_config) = state.pppd_service.get_config_by_name(iface_name).await {
         LandscapeApiResp::success(iface_config)
     } else {
-        Err(LandscapeApiError::NotFound("PPPD Service Config".into()))
+        Err(ServiceConfigError::NotFound { service_name: "PPPD" })?
     }
 }
 

@@ -1,7 +1,18 @@
+use landscape_macro::LdApiError;
 use serde::{Deserialize, Serialize};
 use std::net::IpAddr;
 use ts_rs::TS;
 use uuid::Uuid;
+
+use crate::config::ConfigId;
+
+#[derive(thiserror::Error, Debug, LdApiError)]
+#[api_error(crate_path = "crate")]
+pub enum DnsRedirectError {
+    #[error("DNS redirect rule '{0}' not found")]
+    #[api_error(id = "dns_redirect.not_found", status = 404)]
+    NotFound(ConfigId),
+}
 
 use crate::utils::id::gen_database_uuid;
 use crate::utils::time::get_f64_timestamp;

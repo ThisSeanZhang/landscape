@@ -10,8 +10,10 @@ use landscape_common::{
     config::route_wan::RouteWanServiceConfig, service::controller_service_v2::ControllerService,
 };
 
+use landscape_common::service::ServiceConfigError;
+
+use crate::LandscapeApp;
 use crate::{api::LandscapeApiResp, error::LandscapeApiResult};
-use crate::{error::LandscapeApiError, LandscapeApp};
 
 pub async fn get_route_wan_paths() -> Router<LandscapeApp> {
     Router::new()
@@ -36,7 +38,7 @@ async fn get_route_wan_conifg(
     if let Some(iface_config) = state.route_wan_service.get_config_by_name(iface_name).await {
         LandscapeApiResp::success(iface_config)
     } else {
-        Err(LandscapeApiError::NotFound("Route Wan Service Config".into()))
+        Err(ServiceConfigError::NotFound { service_name: "Route Wan" })?
     }
 }
 

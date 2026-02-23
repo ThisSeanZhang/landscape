@@ -1,5 +1,6 @@
 import axios from "axios";
 import router from "@/router";
+import i18n from "@/i18n";
 import { LANDSCAPE_TOKEN_KEY } from "@/lib/common";
 
 const base_url = import.meta.env.VITE_AXIOS_BASE_URL;
@@ -33,7 +34,7 @@ axiosService.interceptors.response.use(
   (error) => {
     if (error.response != undefined && error.response.status != undefined) {
       const code = error.response.status;
-      const msg = error.response.data.message;
+      const { error_id, message, args } = error.response.data;
       if (code === 401) {
         localStorage.removeItem(LANDSCAPE_TOKEN_KEY);
 
@@ -44,8 +45,14 @@ axiosService.interceptors.response.use(
         });
       }
 
-      if (msg && window.$message) {
-        window.$message.error(msg);
+      const errorKey = error_id ? `errors.${error_id}` : "";
+      const displayMsg =
+        errorKey && i18n.global.te(errorKey)
+          ? (i18n.global.t(errorKey, args || {}) as string)
+          : message;
+
+      if (displayMsg && window.$message) {
+        window.$message.error(displayMsg);
       }
       return Promise.reject(error.response.data);
     }

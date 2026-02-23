@@ -11,8 +11,10 @@ use landscape_common::{
     config::iface_ip::IfaceIpServiceConfig, service::DefaultWatchServiceStatus,
 };
 
+use landscape_common::service::ServiceConfigError;
+
+use crate::LandscapeApp;
 use crate::{api::LandscapeApiResp, error::LandscapeApiResult};
-use crate::{error::LandscapeApiError, LandscapeApp};
 
 pub async fn get_iface_ipconfig_paths() -> Router<LandscapeApp> {
     Router::new()
@@ -38,7 +40,7 @@ async fn get_iface_service_conifg(
     if let Some(iface_config) = state.wan_ip_service.get_config_by_name(iface_name).await {
         LandscapeApiResp::success(iface_config)
     } else {
-        Err(LandscapeApiError::NotFound("Iface Ip Service Config".into()))
+        Err(ServiceConfigError::NotFound { service_name: "Iface Ip" })?
     }
 }
 

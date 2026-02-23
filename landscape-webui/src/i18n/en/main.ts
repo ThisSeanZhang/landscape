@@ -3,6 +3,7 @@ import connect from "./metric/connect";
 import sysinfo from "./sysinfo";
 import config from "./config";
 import error from "./error";
+import errors from "./errors";
 
 export default {
   docker_divider: "Docker Containers",
@@ -14,6 +15,7 @@ export default {
   sysinfo,
   config,
   error,
+  errors,
   common: {
     private_mode: "Private Mode",
   },

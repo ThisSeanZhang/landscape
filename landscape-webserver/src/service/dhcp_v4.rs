@@ -14,8 +14,9 @@ use landscape_common::{
     dhcp::v4_server::status::DHCPv4OfferInfo, service::controller_service_v2::ControllerService,
 };
 
-use crate::{error::LandscapeApiError, LandscapeApp};
+use landscape_common::dhcp::DhcpError;
 
+use crate::LandscapeApp;
 use crate::{api::LandscapeApiResp, error::LandscapeApiResult};
 
 pub async fn get_dhcp_v4_service_paths() -> Router<LandscapeApp> {
@@ -76,7 +77,7 @@ async fn get_iface_service_conifg(
     if let Some(iface_config) = state.dhcp_v4_server_service.get_config_by_name(iface_name).await {
         LandscapeApiResp::success(iface_config)
     } else {
-        Err(LandscapeApiError::NotFound("DHCPv4 Service Config".into()))
+        Err(DhcpError::ConfigNotFound("DHCPv4".into()))?
     }
 }
 
@@ -85,7 +86,7 @@ async fn handle_service_config(
     Json(config): Json<DHCPv4ServiceConfig>,
 ) -> LandscapeApiResult<()> {
     if let Err(conflict_msg) = state.dhcp_v4_server_service.check_ip_range_conflict(&config).await {
-        return Err(LandscapeApiError::DHCPConflict(conflict_msg));
+        return Err(DhcpError::IpConflict(conflict_msg))?;
     }
 
     state.dhcp_v4_server_service.handle_service_config(config).await;

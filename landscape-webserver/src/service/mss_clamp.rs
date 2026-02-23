@@ -11,8 +11,10 @@ use landscape_common::{
     config::mss_clamp::MSSClampServiceConfig, service::DefaultWatchServiceStatus,
 };
 
+use landscape_common::service::ServiceConfigError;
+
+use crate::LandscapeApp;
 use crate::{api::LandscapeApiResp, error::LandscapeApiResult};
-use crate::{error::LandscapeApiError, LandscapeApp};
 
 pub async fn get_mss_clamp_service_paths() -> Router<LandscapeApp> {
     Router::new()
@@ -38,7 +40,7 @@ async fn get_iface_service_conifg(
     if let Some(iface_config) = state.mss_clamp_service.get_config_by_name(iface_name).await {
         LandscapeApiResp::success(iface_config)
     } else {
-        Err(LandscapeApiError::NotFound("MSS Clamp Service Config".into()))
+        Err(ServiceConfigError::NotFound { service_name: "MSS Clamp" })?
     }
 }
 

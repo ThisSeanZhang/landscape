@@ -1,13 +1,23 @@
 use core::ops::Range;
+use landscape_macro::LdApiError;
 use serde::{Deserialize, Serialize};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use ts_rs::TS;
 use uuid::Uuid;
 
+use crate::config::ConfigId;
 use crate::database::repository::LandscapeDBStore;
 use crate::store::storev2::LandscapeStore;
 use crate::utils::id::gen_database_uuid;
 use crate::utils::time::get_f64_timestamp;
+
+#[derive(thiserror::Error, Debug, LdApiError)]
+#[api_error(crate_path = "crate")]
+pub enum StaticNatError {
+    #[error("Static NAT mapping '{0}' not found")]
+    #[api_error(id = "static_nat.not_found", status = 404)]
+    NotFound(ConfigId),
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "common/nat.d.ts")]

@@ -7,8 +7,9 @@ use landscape_common::service::controller_service_v2::FlowConfigController;
 use landscape_common::{config::ConfigId, flow::config::FlowConfig};
 use landscape_common::{config::FlowId, service::controller_service_v2::ConfigController};
 
-use crate::{error::LandscapeApiError, LandscapeApp};
+use landscape_common::flow::FlowRuleError;
 
+use crate::LandscapeApp;
 use crate::{api::LandscapeApiResp, error::LandscapeApiResult};
 
 pub async fn get_flow_rule_config_paths() -> Router<LandscapeApp> {
@@ -32,7 +33,7 @@ async fn get_flow_rule_by_flow_id(
     if result.len() > 0 {
         LandscapeApiResp::success(result.first().cloned().unwrap())
     } else {
-        Err(LandscapeApiError::NotFound(format!("flow_id rule id: {:?}", id)))
+        Err(FlowRuleError::NotFound(Default::default()))?
     }
 }
 
@@ -44,7 +45,7 @@ async fn get_flow_rule(
     if let Some(config) = result {
         LandscapeApiResp::success(config)
     } else {
-        Err(LandscapeApiError::NotFound(format!("Flow rule id: {:?}", id)))
+        Err(FlowRuleError::NotFound(id))?
     }
 }
 
@@ -57,26 +58,21 @@ async fn add_flow_rule(
         let mut seen = std::collections::HashSet::new();
         for rule in &flow_rule.flow_match_rules {
             if !seen.insert(&rule.mode) {
-                return Err(LandscapeApiError::BadRequest(format!(
-                    "入口匹配规则存在重复项: {}",
-                    rule.mode
-                )));
+                Err(FlowRuleError::DuplicateEntryRule(rule.mode.to_string()))?;
             }
         }
     }
 
     // Check for overlap with other flows' entry rules via DB query
     for rule in &flow_rule.flow_match_rules {
-        if let Some(conflict) = state
-            .flow_rule_service
-            .find_conflict_by_entry_mode(flow_rule.id, &rule.mode)
-            .await
-            .map_err(LandscapeApiError::LdError)?
+        if let Some(conflict) =
+            state.flow_rule_service.find_conflict_by_entry_mode(flow_rule.id, &rule.mode).await?
         {
-            return Err(LandscapeApiError::BadRequest(format!(
-                "入口匹配规则 {} 与流 {} (ID: {}) 中的规则重复",
-                rule.mode, conflict.remark, conflict.flow_id
-            )));
+            Err(FlowRuleError::ConflictEntryRule {
+                rule: rule.mode.to_string(),
+                flow_remark: conflict.remark,
+                flow_id: conflict.flow_id,
+            })?;
         }
     }
 

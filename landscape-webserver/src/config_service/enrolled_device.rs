@@ -6,7 +6,7 @@ use axum::{
 use landscape_common::service::controller_service_v2::ControllerService;
 use landscape_common::{
     config::ConfigId,
-    enrolled_device::{EnrolledDevice, ValidateIpPayload},
+    enrolled_device::{EnrolledDevice, EnrolledDeviceError, ValidateIpPayload},
 };
 
 use crate::{api::LandscapeApiResp, error::LandscapeApiResult, LandscapeApp};
@@ -34,12 +34,12 @@ async fn check_iface_validity(
             .enrolled_device_service
             .find_out_of_range_bindings(iface_name, c.config.server_ip_addr, c.config.network_mask)
             .await
-            .map_err(crate::error::LandscapeApiError::BadRequest)?;
+            .map_err(EnrolledDeviceError::InvalidData)?;
 
         LandscapeApiResp::success(invalid)
     } else {
-        // 如果网卡没开 DHCP，可以认为该网卡下的所有绑定都是”失效”的，或者返回空（由具体逻辑定）
-        // 这里根据需求，既然是为了”修改后提醒”，没开 DHCP 说明可能被删除了。
+        // 如果网卡没开 DHCP，可以认为该网卡下的所有绑定都是"失效"的，或者返回空（由具体逻辑定）
+        // 这里根据需求，既然是为了"修改后提醒"，没开 DHCP 说明可能被删除了。
         LandscapeApiResp::success(vec![])
     }
 }
@@ -52,7 +52,7 @@ async fn handle_validate_ip(
         .enrolled_device_service
         .validate_ip_range(payload.iface_name, payload.ipv4)
         .await
-        .map_err(crate::error::LandscapeApiError::BadRequest)?;
+        .map_err(EnrolledDeviceError::InvalidData)?;
     LandscapeApiResp::success(result)
 }
 
@@ -75,10 +75,7 @@ async fn push_enrolled_device(
     State(app): State<LandscapeApp>,
     Json(payload): Json<EnrolledDevice>,
 ) -> LandscapeApiResult<()> {
-    app.enrolled_device_service
-        .push(payload)
-        .await
-        .map_err(crate::error::LandscapeApiError::BadRequest)?;
+    app.enrolled_device_service.push(payload).await.map_err(EnrolledDeviceError::InvalidData)?;
     LandscapeApiResp::success(())
 }
 
@@ -88,10 +85,7 @@ async fn update_enrolled_device(
     Json(mut payload): Json<EnrolledDevice>,
 ) -> LandscapeApiResult<()> {
     payload.id = id.into();
-    app.enrolled_device_service
-        .push(payload)
-        .await
-        .map_err(crate::error::LandscapeApiError::BadRequest)?;
+    app.enrolled_device_service.push(payload).await.map_err(EnrolledDeviceError::InvalidData)?;
     LandscapeApiResp::success(())
 }
 
@@ -102,6 +96,6 @@ async fn delete_enrolled_device(
     app.enrolled_device_service
         .delete(id.into())
         .await
-        .map_err(crate::error::LandscapeApiError::BadRequest)?;
+        .map_err(EnrolledDeviceError::InvalidData)?;
     LandscapeApiResp::success(())
 }

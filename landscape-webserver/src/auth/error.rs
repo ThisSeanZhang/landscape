@@ -1,36 +1,28 @@
-use landscape_common::error::LandscapeErrRespTrait;
-use thiserror::Error;
+use landscape_common::LdApiError;
 
-#[derive(Debug, Error)]
+#[derive(Debug, thiserror::Error, LdApiError)]
 pub enum AuthError {
     #[error("Missing Authorization header")]
+    #[api_error(id = "auth.missing_header", status = 401)]
     MissingAuthorizationHeader,
 
     #[error("Invalid Authorization header format")]
+    #[api_error(id = "auth.invalid_format", status = 401)]
     InvalidAuthorizationHeaderFormat,
 
     #[error("Invalid token")]
+    #[api_error(id = "auth.invalid_token", status = 401)]
     InvalidToken,
 
-    #[error("Invalid token")]
+    #[error("Unauthorized user")]
+    #[api_error(id = "auth.unauthorized", status = 401)]
     UnauthorizedUser,
 
     #[error("Invalid username or password")]
+    #[api_error(id = "auth.invalid_credentials", status = 401)]
     InvalidUsernameOrPassword,
 
     #[error("Token creation failed: {0}")]
+    #[api_error(id = "auth.token_creation_failed", status = 500)]
     JwtCreationFailed(#[from] jsonwebtoken::errors::Error),
-}
-
-impl LandscapeErrRespTrait for AuthError {
-    fn get_code(&self) -> u32 {
-        match self {
-            AuthError::MissingAuthorizationHeader => 401_401,
-            AuthError::InvalidAuthorizationHeaderFormat => 402_401,
-            AuthError::InvalidToken => 403_401,
-            AuthError::UnauthorizedUser => 404_401,
-            AuthError::InvalidUsernameOrPassword => 405_401,
-            AuthError::JwtCreationFailed(_) => 406_500,
-        }
-    }
 }

@@ -8,8 +8,10 @@ use axum::{
 use landscape_common::service::controller_service_v2::ControllerService;
 use landscape_common::{config::nat::NatServiceConfig, service::DefaultWatchServiceStatus};
 
+use landscape_common::service::ServiceConfigError;
+
+use crate::LandscapeApp;
 use crate::{api::LandscapeApiResp, error::LandscapeApiResult};
-use crate::{error::LandscapeApiError, LandscapeApp};
 
 pub async fn get_iface_nat_paths() -> Router<LandscapeApp> {
     Router::new()
@@ -32,7 +34,7 @@ async fn get_iface_nat_conifg(
     if let Some(iface_config) = state.nat_service.get_config_by_name(iface_name).await {
         LandscapeApiResp::success(iface_config)
     } else {
-        Err(LandscapeApiError::NotFound("Nat Service Config".into()))
+        Err(ServiceConfigError::NotFound { service_name: "Nat" })?
     }
 }
 

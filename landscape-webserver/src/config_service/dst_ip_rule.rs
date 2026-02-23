@@ -9,8 +9,10 @@ use landscape_common::{
     ip_mark::WanIpRuleConfig,
 };
 
+use landscape_common::ip_mark::DstIpRuleError;
+
+use crate::LandscapeApp;
 use crate::{api::LandscapeApiResp, error::LandscapeApiResult};
-use crate::{error::LandscapeApiError, LandscapeApp};
 
 pub async fn get_dst_ip_rule_config_paths() -> Router<LandscapeApp> {
     Router::new()
@@ -47,7 +49,7 @@ async fn get_dst_ip_rule(
     if let Some(config) = result {
         LandscapeApiResp::success(config)
     } else {
-        Err(LandscapeApiError::NotFound(format!("DstIpRule id: {:?}", id)))
+        Err(DstIpRuleError::NotFound(id))?
     }
 }
 

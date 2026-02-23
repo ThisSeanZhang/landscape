@@ -6,8 +6,9 @@ use axum::{
 use landscape_common::service::controller_service_v2::ConfigController;
 use landscape_common::{config::ConfigId, firewall::FirewallRuleConfig};
 
-use crate::{error::LandscapeApiError, LandscapeApp};
+use landscape_common::firewall::FirewallRuleError;
 
+use crate::LandscapeApp;
 use crate::{api::LandscapeApiResp, error::LandscapeApiResult};
 
 pub async fn get_firewall_rule_config_paths() -> Router<LandscapeApp> {
@@ -32,7 +33,7 @@ async fn get_firewall_rule(
     if let Some(config) = result {
         LandscapeApiResp::success(config)
     } else {
-        Err(LandscapeApiError::NotFound(format!("Firewall Rule id: {:?}", id)))
+        Err(FirewallRuleError::NotFound(id))?
     }
 }
 

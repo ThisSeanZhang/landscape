@@ -10,8 +10,10 @@ use landscape_common::{
 };
 use landscape_common::{ipv6_pd::LDIAPrefix, service::controller_service_v2::ControllerService};
 
+use landscape_common::service::ServiceConfigError;
+
+use crate::LandscapeApp;
 use crate::{api::LandscapeApiResp, error::LandscapeApiResult};
-use crate::{error::LandscapeApiError, LandscapeApp};
 
 pub async fn get_iface_pdclient_paths() -> Router<LandscapeApp> {
     Router::new()
@@ -44,7 +46,7 @@ async fn get_iface_pd_conifg(
     if let Some(iface_config) = state.ipv6_pd_service.get_config_by_name(iface_name).await {
         LandscapeApiResp::success(iface_config)
     } else {
-        Err(LandscapeApiError::NotFound("IPV6PD Service Config".into()))
+        Err(ServiceConfigError::NotFound { service_name: "IPV6PD" })?
     }
 }
 

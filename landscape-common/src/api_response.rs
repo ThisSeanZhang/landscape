@@ -1,24 +1,52 @@
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use ts_rs::TS;
 
 #[derive(Debug, Serialize, Deserialize, Default, Clone, TS)]
 #[ts(export, export_to = "common/api.d.ts")]
 pub struct LandscapeApiResp<T> {
-    pub code: u32,
-    pub message: String,
     pub data: Option<T>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub error_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub message: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional, type = "Record<string, unknown>")]
+    pub args: Option<Value>,
 }
 
 impl<T> LandscapeApiResp<T> {
     pub fn success(data: T) -> Self {
         Self {
-            code: 200,
-            message: "success".to_string(),
             data: Some(data),
+            error_id: None,
+            message: None,
+            args: None,
         }
     }
 
-    pub fn error(code: u32, message: impl Into<String>) -> Self {
-        Self { code, message: message.into(), data: None }
+    pub fn error(error_id: impl Into<String>, message: impl Into<String>) -> Self {
+        Self {
+            data: None,
+            error_id: Some(error_id.into()),
+            message: Some(message.into()),
+            args: None,
+        }
+    }
+
+    pub fn error_with_args(
+        error_id: impl Into<String>,
+        message: impl Into<String>,
+        args: Value,
+    ) -> Self {
+        let args = if args.as_object().map_or(true, |m| m.is_empty()) { None } else { Some(args) };
+        Self {
+            data: None,
+            error_id: Some(error_id.into()),
+            message: Some(message.into()),
+            args,
+        }
     }
 }

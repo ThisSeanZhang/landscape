@@ -3,6 +3,7 @@ import connect from "./metric/connect";
 import sysinfo from "./sysinfo";
 import config from "./config";
 import error from "./error";
+import errors from "./errors";
 import enrolled_device from "./enrolled_device";
 
 export default {
@@ -15,6 +16,7 @@ export default {
   sysinfo,
   config,
   error,
+  errors,
   enrolled_device,
   common: {
     private_mode: "隐私模式",

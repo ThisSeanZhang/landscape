@@ -1,31 +1,24 @@
-use landscape_common::error::LandscapeErrRespTrait;
+use landscape_common::LdApiError;
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, thiserror::Error, LdApiError)]
 pub enum DockerError {
-    #[error("create container error")]
+    #[error("Create container error")]
+    #[api_error(id = "docker.create_failed", status = 500)]
     CreateContainerError,
 
-    #[error("run container error")]
+    #[error("Start container error")]
+    #[api_error(id = "docker.start_failed", status = 500)]
     StartContainerError,
 
-    #[error("stop container error")]
+    #[error("Stop container error")]
+    #[api_error(id = "docker.stop_failed", status = 500)]
     StopContainerError,
 
-    #[error("remove container error")]
+    #[error("Remove container error")]
+    #[api_error(id = "docker.remove_failed", status = 500)]
     FailToRemoveContainer,
 
-    #[error("run container error")]
+    #[error("Run container by cmd error")]
+    #[api_error(id = "docker.run_cmd_failed", status = 500)]
     FailToRunContainerByCmd,
-}
-
-impl LandscapeErrRespTrait for DockerError {
-    fn get_code(&self) -> u32 {
-        match self {
-            DockerError::CreateContainerError => 501_500,
-            DockerError::StartContainerError => 502_500,
-            DockerError::StopContainerError => 503_500,
-            DockerError::FailToRemoveContainer => 504_500,
-            DockerError::FailToRunContainerByCmd => 505_500,
-        }
-    }
 }

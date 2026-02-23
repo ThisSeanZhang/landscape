@@ -2,6 +2,7 @@ use std::fmt::Debug;
 
 use serde::Serialize;
 
+use landscape_macro::LdApiError;
 use service_code::{WatchService, Watchable};
 use ts_rs::TS;
 
@@ -10,6 +11,14 @@ pub mod controller_service_v2;
 pub mod service_code;
 // pub mod service_manager;
 pub mod service_manager_v2;
+
+#[derive(thiserror::Error, Debug, LdApiError)]
+#[api_error(crate_path = "crate")]
+pub enum ServiceConfigError {
+    #[error("{service_name} service config not found")]
+    #[api_error(id = "service.config_not_found", status = 404)]
+    NotFound { service_name: &'static str },
+}
 
 #[derive(Serialize, Debug, PartialEq, Clone, Default, TS)]
 #[serde(tag = "t")]

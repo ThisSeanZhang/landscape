@@ -6,8 +6,10 @@ use axum::{
 use landscape_common::config::{nat::StaticNatMappingConfig, ConfigId};
 use landscape_common::service::controller_service_v2::ConfigController;
 
+use landscape_common::config::nat::StaticNatError;
+
+use crate::LandscapeApp;
 use crate::{api::LandscapeApiResp, error::LandscapeApiResult};
-use crate::{error::LandscapeApiError, LandscapeApp};
 
 pub async fn get_static_nat_mapping_config_paths() -> Router<LandscapeApp> {
     Router::new()
@@ -34,7 +36,7 @@ async fn get_static_nat_mapping(
     if let Some(config) = result {
         LandscapeApiResp::success(config)
     } else {
-        Err(LandscapeApiError::NotFound(format!("Static Nat Mapping id: {:?}", id)))
+        Err(StaticNatError::NotFound(id))?
     }
 }
 

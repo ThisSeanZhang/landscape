@@ -1,11 +1,22 @@
 use std::net::IpAddr;
 
+use landscape_macro::LdApiError;
+
 use crate::config::geo::GeoConfigKey;
+use crate::config::ConfigId;
 use crate::utils::time::get_f64_timestamp;
 use crate::{database::repository::LandscapeDBStore, flow::mark::FlowMark};
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 use uuid::Uuid;
+
+#[derive(thiserror::Error, Debug, LdApiError)]
+#[api_error(crate_path = "crate")]
+pub enum DstIpRuleError {
+    #[error("Destination IP rule '{0}' not found")]
+    #[api_error(id = "dst_ip_rule.not_found", status = 404)]
+    NotFound(ConfigId),
+}
 
 #[derive(Serialize, Deserialize, Debug, Clone, TS)]
 #[ts(export, export_to = "common/flow.d.ts")]

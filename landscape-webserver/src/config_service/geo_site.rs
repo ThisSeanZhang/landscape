@@ -5,14 +5,15 @@ use axum::{
 };
 use landscape_common::config::{
     geo::{
-        GeoDomainConfig, GeoFileCacheKey, GeoSiteSourceConfig, QueryGeoDomainConfig, QueryGeoKey,
+        GeoDomainConfig, GeoFileCacheKey, GeoSiteError, GeoSiteSourceConfig, QueryGeoDomainConfig,
+        QueryGeoKey,
     },
     ConfigId,
 };
 use landscape_common::service::controller_service_v2::ConfigController;
 
+use crate::LandscapeApp;
 use crate::{api::LandscapeApiResp, error::LandscapeApiResult, UPLOAD_GEO_FILE_SIZE_LIMIT};
-use crate::{error::LandscapeApiError, LandscapeApp};
 
 pub async fn get_geo_site_config_paths() -> Router<LandscapeApp> {
     Router::new()
@@ -36,7 +37,7 @@ async fn get_geo_site_cache_detail(
     if let Some(result) = result {
         LandscapeApiResp::success(result)
     } else {
-        Err(LandscapeApiError::NotFound(format!("{key:?}")))
+        Err(GeoSiteError::CacheNotFound(format!("{key:?}")))?
     }
 }
 
@@ -90,7 +91,7 @@ async fn get_geo_rule(
     if let Some(config) = result {
         LandscapeApiResp::success(config)
     } else {
-        Err(LandscapeApiError::NotFound(format!("Dns Rule id: {:?}", id)))
+        Err(GeoSiteError::NotFound(id))?
     }
 }
 
@@ -130,11 +131,11 @@ async fn update_by_upload(
 
     let file = multipart.next_field().await;
     let Ok(Some(field)) = file else {
-        return Err(LandscapeApiError::BadRequest("geo site file not found".to_string()));
+        return Err(GeoSiteError::FileNotFound)?;
     };
 
     let Ok(bytes) = field.bytes().await else {
-        return Err(LandscapeApiError::BadRequest("geo site file read error".to_string()));
+        return Err(GeoSiteError::FileReadError)?;
     };
 
     state.geo_site_service.update_geo_config_by_bytes(name, bytes).await;

@@ -1,15 +1,25 @@
 pub mod blacklist;
 
+use landscape_macro::LdApiError;
 use serde::{Deserialize, Serialize};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use ts_rs::TS;
 use uuid::Uuid;
 
+use crate::config::ConfigId;
 use crate::flow::mark::FlowMark;
 use crate::{
     network::LandscapeIpProtocolCode, store::storev2::LandscapeStore,
     LANDSCAPE_DEFAULE_DHCP_V6_CLIENT_PORT,
 };
+
+#[derive(thiserror::Error, Debug, LdApiError)]
+#[api_error(crate_path = "crate")]
+pub enum FirewallRuleError {
+    #[error("Firewall rule '{0}' not found")]
+    #[api_error(id = "firewall_rule.not_found", status = 404)]
+    NotFound(ConfigId),
+}
 
 use crate::database::repository::LandscapeDBStore;
 use crate::utils::time::get_f64_timestamp;

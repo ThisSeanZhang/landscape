@@ -14,7 +14,8 @@ use landscape_common::{
 use landscape_database::provider::LandscapeDBServiceProvider;
 use tokio::sync::broadcast;
 
-use crate::error::LandscapeApiError;
+use landscape_common::service::ServiceConfigError;
+
 use crate::{api::LandscapeApiResp, error::LandscapeApiResult};
 
 pub async fn get_iface_flow_wan_paths(
@@ -47,7 +48,7 @@ async fn get_iface_nat_conifg(
     if let Some(iface_config) = state.get_config_by_name(iface_name).await {
         LandscapeApiResp::success(iface_config)
     } else {
-        Err(LandscapeApiError::NotFound("Flow Wan Service Config".into()))
+        Err(ServiceConfigError::NotFound { service_name: "Flow Wan" })?
     }
 }
 
