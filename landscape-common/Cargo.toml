@@ -43,5 +43,10 @@ toml = { workspace = true }
 
 sysctl = { workspace = true }
 
+utoipa = { workspace = true, optional = true }
+
+[features]
+openapi = ["utoipa"]
+
 [dev-dependencies]
 tempfile = "*"

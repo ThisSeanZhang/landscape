@@ -128,6 +128,7 @@ pub struct GeoFileCacheKey {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, TS)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[ts(export, export_to = "common/geo.d.ts")]
 pub struct GeoConfigKey {
     pub name: String,

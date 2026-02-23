@@ -1,0 +1,13 @@
+node_modules
+
+# yarn
+.pnp.*
+.yarn/install-state.gz
+.yarn/unplugged
+
+# openapi spec fetched from running server
+openapi.json
+
+# orval generated files — regenerate via `yarn generate`
+src/api/*
+!src/api/mutator.ts

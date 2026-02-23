@@ -1,25 +1,31 @@
-use axum::{
-    extract::{Path, State},
-    routing::{get, post},
-    Json, Router,
-};
+use axum::extract::{Path, State};
+use landscape_common::api_response::LandscapeApiResp as CommonApiResp;
 use landscape_common::config::{dns::DNSRuleConfig, ConfigId, FlowId};
 use landscape_common::service::controller_service_v2::ConfigController;
 use landscape_common::service::controller_service_v2::FlowConfigController;
+use utoipa_axum::router::OpenApiRouter;
+use utoipa_axum::routes;
 
 use landscape_common::config::dns::DnsRuleError;
 
+use crate::api::JsonBody;
 use crate::LandscapeApp;
 use crate::{api::LandscapeApiResp, error::LandscapeApiResult};
 
-pub async fn get_dns_rule_config_paths() -> Router<LandscapeApp> {
-    Router::new()
-        .route("/dns_rules", get(get_dns_rules).post(add_dns_rules))
-        .route("/dns_rules/set_many", post(add_many_dns_rules))
-        .route("/dns_rules/{id}", get(get_dns_rule).delete(del_dns_rules))
-        .route("/dns_rules/flow/{flow_id}", get(get_flow_dns_rules))
+pub fn get_dns_rule_config_paths() -> OpenApiRouter<LandscapeApp> {
+    OpenApiRouter::new()
+        .routes(routes!(get_dns_rules, add_dns_rules))
+        .routes(routes!(add_many_dns_rules))
+        .routes(routes!(get_dns_rule, del_dns_rules))
+        .routes(routes!(get_flow_dns_rules))
 }
 
+#[utoipa::path(
+    get,
+    path = "/dns_rules",
+    tag = "DNS Rules",
+    responses((status = 200, body = inline(CommonApiResp<Vec<DNSRuleConfig>>)))
+)]
 async fn get_dns_rules(
     State(state): State<LandscapeApp>,
 ) -> LandscapeApiResult<Vec<DNSRuleConfig>> {
@@ -27,6 +33,13 @@ async fn get_dns_rules(
     LandscapeApiResp::success(result)
 }
 
+#[utoipa::path(
+    get,
+    path = "/dns_rules/flow/{flow_id}",
+    tag = "DNS Rules",
+    params(("flow_id" = u32, Path, description = "Flow ID")),
+    responses((status = 200, body = inline(CommonApiResp<Vec<DNSRuleConfig>>)))
+)]
 async fn get_flow_dns_rules(
     State(state): State<LandscapeApp>,
     Path(id): Path<FlowId>,
@@ -36,6 +49,16 @@ async fn get_flow_dns_rules(
     LandscapeApiResp::success(result)
 }
 
+#[utoipa::path(
+    get,
+    path = "/dns_rules/{id}",
+    tag = "DNS Rules",
+    params(("id" = Uuid, Path, description = "DNS rule ID")),
+    responses(
+        (status = 200, body = inline(CommonApiResp<DNSRuleConfig>)),
+        (status = 404, description = "Not found")
+    )
+)]
 async fn get_dns_rule(
     State(state): State<LandscapeApp>,
     Path(id): Path<ConfigId>,
@@ -48,22 +71,46 @@ async fn get_dns_rule(
     }
 }
 
+#[utoipa::path(
+    post,
+    path = "/dns_rules/set_many",
+    tag = "DNS Rules",
+    request_body = Vec<DNSRuleConfig>,
+    responses((status = 200, description = "Success"))
+)]
 async fn add_many_dns_rules(
     State(state): State<LandscapeApp>,
-    Json(dns_rules): Json<Vec<DNSRuleConfig>>,
+    JsonBody(dns_rules): JsonBody<Vec<DNSRuleConfig>>,
 ) -> LandscapeApiResult<()> {
     state.dns_rule_service.set_list(dns_rules).await;
     LandscapeApiResp::success(())
 }
 
+#[utoipa::path(
+    post,
+    path = "/dns_rules",
+    tag = "DNS Rules",
+    request_body = DNSRuleConfig,
+    responses((status = 200, body = inline(CommonApiResp<DNSRuleConfig>)))
+)]
 async fn add_dns_rules(
     State(state): State<LandscapeApp>,
-    Json(dns_rule): Json<DNSRuleConfig>,
+    JsonBody(dns_rule): JsonBody<DNSRuleConfig>,
 ) -> LandscapeApiResult<DNSRuleConfig> {
     let result = state.dns_rule_service.set(dns_rule).await;
     LandscapeApiResp::success(result)
 }
 
+#[utoipa::path(
+    delete,
+    path = "/dns_rules/{id}",
+    tag = "DNS Rules",
+    params(("id" = Uuid, Path, description = "DNS rule ID")),
+    responses(
+        (status = 200, description = "Success"),
+        (status = 404, description = "Not found")
+    )
+)]
 async fn del_dns_rules(
     State(state): State<LandscapeApp>,
     Path(id): Path<ConfigId>,

@@ -13,6 +13,7 @@ pub enum DnsUpstreamError {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default, TS)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[ts(export, export_to = "common/dns.d.ts")]
 #[serde(rename_all = "snake_case")]
 #[serde(tag = "t")]

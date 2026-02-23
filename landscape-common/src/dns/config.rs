@@ -9,16 +9,19 @@ use crate::utils::id::gen_database_uuid;
 use crate::utils::time::get_f64_timestamp;
 
 #[derive(Serialize, Deserialize, Debug, Clone, TS)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[ts(export, export_to = "common/dns.d.ts")]
 pub struct DnsUpstreamConfig {
     #[serde(default = "gen_database_uuid")]
     #[ts(as = "Option<_>", optional)]
+    #[cfg_attr(feature = "openapi", schema(required = false))]
     pub id: Uuid,
 
     pub remark: String,
 
     pub mode: DnsUpstreamMode,
 
+    #[cfg_attr(feature = "openapi", schema(value_type = Vec<String>))]
     pub ips: Vec<IpAddr>,
 
     pub port: Option<u16>,
@@ -28,6 +31,7 @@ pub struct DnsUpstreamConfig {
 
     #[serde(default = "get_f64_timestamp")]
     #[ts(as = "Option<_>", optional)]
+    #[cfg_attr(feature = "openapi", schema(required = false))]
     pub update_at: f64,
 }
 
@@ -52,14 +56,17 @@ impl Default for DnsUpstreamConfig {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, TS, Default)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[ts(export, export_to = "common/dns.d.ts")]
 pub struct DnsBindConfig {
     /// 绑定地址 v4 (可选)
     #[ts(optional)]
     #[serde(default)]
+    #[cfg_attr(feature = "openapi", schema(required = false, value_type = Option<String>))]
     pub bind_addr4: Option<Ipv4Addr>,
     /// 绑定地址 v6 (可选)
     #[ts(optional)]
     #[serde(default)]
+    #[cfg_attr(feature = "openapi", schema(required = false, value_type = Option<String>))]
     pub bind_addr6: Option<Ipv6Addr>,
 }

@@ -5,16 +5,17 @@ use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
 
 use axum::extract::State;
-use axum::routing::post;
-use axum::Json;
 use axum::Router;
 use axum::{extract::Request, middleware::Next, response::Response};
+use landscape_common::api_response::LandscapeApiResp as CommonApiResp;
 use landscape_common::args::LAND_HOME_PATH;
 use landscape_common::auth::LoginInfo;
 use landscape_common::auth::LoginResult;
 use landscape_common::config::AuthRuntimeConfig;
 use landscape_common::LANDSCAPE_SYS_TOKEN_FILE_ANME;
 use once_cell::sync::Lazy;
+use utoipa_axum::router::OpenApiRouter;
+use utoipa_axum::routes;
 
 use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
 use rand::Rng;
@@ -22,6 +23,7 @@ use serde::{Deserialize, Serialize};
 use tokio::fs::OpenOptions;
 use tokio::io::AsyncWriteExt;
 
+use crate::api::JsonBody;
 use crate::api::LandscapeApiResp;
 use crate::auth::error::AuthError;
 use crate::error::LandscapeApiError;
@@ -156,13 +158,30 @@ pub async fn auth_handler_from_query(
     }
 }
 
-pub fn get_auth_route(auth: Arc<AuthRuntimeConfig>) -> Router {
-    Router::new().route("/login", post(login_handler)).with_state(auth)
+/// Build the OpenApiRouter for auth (different state type from LandscapeApp).
+/// Used by openapi.rs to extract the spec, and by main.rs to serve.
+pub fn get_auth_openapi_router() -> OpenApiRouter<Arc<AuthRuntimeConfig>> {
+    OpenApiRouter::new().routes(routes!(login_handler))
 }
 
+pub fn get_auth_route(auth: Arc<AuthRuntimeConfig>) -> Router {
+    let (router, _) = get_auth_openapi_router().split_for_parts();
+    router.with_state(auth)
+}
+
+#[utoipa::path(
+    post,
+    path = "/login",
+    tag = "Auth",
+    request_body = LoginInfo,
+    responses(
+        (status = 200, body = inline(CommonApiResp<LoginResult>)),
+        (status = 401, description = "Invalid credentials")
+    )
+)]
 async fn login_handler(
     State(auth): State<Arc<AuthRuntimeConfig>>,
-    Json(LoginInfo { username, password }): Json<LoginInfo>,
+    JsonBody(LoginInfo { username, password }): JsonBody<LoginInfo>,
 ) -> LandscapeApiResult<LoginResult> {
     let mut result = LoginResult { success: false, token: "".to_string() };
     if username == auth.admin_user && password == auth.admin_pass {

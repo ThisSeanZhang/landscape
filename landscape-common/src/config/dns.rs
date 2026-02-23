@@ -22,10 +22,12 @@ use super::geo::GeoConfigKey;
 
 /// DNS 配置
 #[derive(Serialize, Deserialize, Debug, Clone, TS)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[ts(export, export_to = "common/dns.d.ts")]
 pub struct DNSRuleConfig {
     #[serde(default = "gen_database_uuid")]
     #[ts(as = "Option<_>", optional)]
+    #[cfg_attr(feature = "openapi", schema(required = false))]
     pub id: Uuid,
     /// 名称
     pub name: String,
@@ -53,6 +55,7 @@ pub struct DNSRuleConfig {
     /// 最近一次更新时间
     #[serde(default = "get_f64_timestamp")]
     #[ts(as = "Option<_>", optional)]
+    #[cfg_attr(feature = "openapi", schema(required = false))]
     pub update_at: f64,
 }
 
@@ -95,6 +98,7 @@ impl LandscapeDBStore<Uuid> for DNSRuleConfig {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, TS)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[ts(export, export_to = "common/dns.d.ts")]
 #[serde(tag = "t")]
 #[serde(rename_all = "snake_case")]
@@ -104,6 +108,7 @@ pub enum RuleSource {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Hash, PartialEq, Eq, TS)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[ts(export, export_to = "common/dns.d.ts")]
 pub struct DomainConfig {
     pub match_type: DomainMatchType,
@@ -111,6 +116,7 @@ pub struct DomainConfig {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Hash, PartialEq, Eq, TS)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[ts(export, export_to = "common/dns.d.ts")]
 #[serde(rename_all = "snake_case")]
 pub enum DomainMatchType {
@@ -125,6 +131,7 @@ pub enum DomainMatchType {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default, TS)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[ts(export, export_to = "common/dns.d.ts")]
 #[serde(rename_all = "snake_case")]
 pub enum FilterResult {

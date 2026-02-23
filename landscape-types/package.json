@@ -14,5 +14,14 @@
         "src/*.ts"
       ]
     }
+  },
+  "scripts": {
+    "generate": "orval"
+  },
+  "peerDependencies": {
+    "axios": ">=1.0.0"
+  },
+  "devDependencies": {
+    "orval": "^8.4.2"
   }
 }

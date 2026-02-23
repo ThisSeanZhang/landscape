@@ -7,10 +7,10 @@ use axum::{
 use axum_server::tls_rustls::RustlsConfig;
 use colored::Colorize;
 use config_service::{
-    dns_rule::get_dns_rule_config_paths, dst_ip_rule::get_dst_ip_rule_config_paths,
+    dst_ip_rule::get_dst_ip_rule_config_paths,
     firewall_blacklist::get_firewall_blacklist_config_paths,
-    firewall_rule::get_firewall_rule_config_paths, flow_rule::get_flow_rule_config_paths,
-    geo_ip::get_geo_ip_config_paths, geo_site::get_geo_site_config_paths,
+    firewall_rule::get_firewall_rule_config_paths, geo_ip::get_geo_ip_config_paths,
+    geo_site::get_geo_site_config_paths,
 };
 use landscape::{
     boot::{boot_check, log::init_logger},
@@ -60,6 +60,7 @@ use landscape_database::provider::LandscapeDBServiceProvider;
 use sys_service::dns_service::get_dns_paths;
 use tokio::sync::mpsc;
 use tower_http::{services::ServeDir, trace::TraceLayer};
+use utoipa_scalar::{Scalar, Servable};
 
 mod api;
 mod auth;
@@ -69,6 +70,7 @@ mod dump;
 mod error;
 mod iface;
 mod metric;
+mod openapi;
 mod redirect_https;
 mod service;
 mod sys_service;
@@ -368,6 +370,10 @@ async fn run(home_path: PathBuf, config: RuntimeConfig) -> LdResult<()> {
 
     let auth_share = Arc::new(config.auth.clone());
     auth::output_sys_token(&config.auth).await;
+    // Build OpenApiRouter for annotated modules, then split into Router + OpenAPI spec
+    let (openapi_config_router, _) = openapi::build_openapi_router().split_for_parts();
+    let openapi = openapi::build_full_openapi_spec();
+
     let source_route = Router::new()
         .nest("/iface", iface::get_network_paths().await)
         .nest("/metric", metric::get_metric_service_paths().await)
@@ -381,10 +387,9 @@ async fn run(home_path: PathBuf, config: RuntimeConfig) -> LdResult<()> {
         .nest(
             "/config",
             Router::new()
-                .merge(get_dns_rule_config_paths().await)
+                .merge(openapi_config_router)
                 .merge(get_firewall_rule_config_paths().await)
                 .merge(get_firewall_blacklist_config_paths().await)
-                .merge(get_flow_rule_config_paths().await)
                 .merge(get_geo_site_config_paths().await)
                 .merge(get_geo_ip_config_paths().await)
                 .merge(get_dst_ip_rule_config_paths().await)
@@ -429,7 +434,9 @@ async fn run(home_path: PathBuf, config: RuntimeConfig) -> LdResult<()> {
         // 认证方式有别
         .nest("/sock", sockets_route)
         // 认证路由
-        .nest("/auth", auth::get_auth_route(auth_share));
+        .nest("/auth", auth::get_auth_route(auth_share))
+        // OpenAPI Scalar UI (no auth required)
+        .merge(Scalar::with_url("/scalar", openapi));
     let app = Router::new()
         .nest("/api", api_route)
         // .nest("/sock", sockets_route)

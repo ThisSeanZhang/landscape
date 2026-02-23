@@ -6,7 +6,7 @@ edition.workspace = true
 [dependencies]
 landscape = { path = "../landscape" }
 landscape-dns = { path = "../landscape-dns" }
-landscape-common = { path = "../landscape-common" }
+landscape-common = { path = "../landscape-common", features = ["openapi"] }
 landscape-database = { path = "../landscape-database" }
 landscape-ebpf = { path = "../landscape-ebpf" }
 
@@ -49,6 +49,10 @@ serde_json = { version = "*" }
 bollard = { workspace = true }
 
 rand = { workspace = true }
+
+utoipa = { workspace = true }
+utoipa-axum = { workspace = true }
+utoipa-scalar = { workspace = true }
 
 # logs
 tracing = { workspace = true }

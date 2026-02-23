@@ -9,10 +9,12 @@ use crate::utils::time::get_f64_timestamp;
 
 /// 流控配置结构体
 #[derive(Serialize, Deserialize, Clone, Debug, TS)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[ts(export, export_to = "common/flow.d.ts")]
 pub struct FlowConfig {
     #[serde(default = "gen_database_uuid")]
     #[ts(as = "Option<_>", optional)]
+    #[cfg_attr(feature = "openapi", schema(required = false))]
     pub id: Uuid,
     /// 是否启用
     pub enable: bool,
@@ -28,6 +30,7 @@ pub struct FlowConfig {
 
     #[serde(default = "get_f64_timestamp")]
     #[ts(as = "Option<_>", optional)]
+    #[cfg_attr(feature = "openapi", schema(required = false))]
     pub update_at: f64,
 }
 

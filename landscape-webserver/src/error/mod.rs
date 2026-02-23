@@ -1,3 +1,4 @@
+use axum::extract::rejection::JsonRejection;
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::Json;
@@ -59,6 +60,8 @@ pub enum LandscapeApiError {
     Internal(#[from] LdError),
     #[error("Invalid JSON: {0}")]
     JsonError(#[from] serde_json::Error),
+    #[error("Invalid request body: {0}")]
+    JsonRejection(JsonRejection),
 }
 
 impl LandscapeApiError {
@@ -84,6 +87,7 @@ impl LandscapeApiError {
                 _ => "internal.error",
             },
             Self::JsonError(_) => "request.invalid_json",
+            Self::JsonRejection(_) => "request.invalid_body",
         }
     }
 
@@ -109,6 +113,7 @@ impl LandscapeApiError {
                 _ => StatusCode::INTERNAL_SERVER_ERROR,
             },
             Self::JsonError(_) => StatusCode::BAD_REQUEST,
+            Self::JsonRejection(r) => r.status(),
         }
     }
 
@@ -129,7 +134,9 @@ impl LandscapeApiError {
             Self::ServiceConfig(e) => e.error_args(),
             Self::Auth(e) => e.error_args(),
             Self::Docker(e) => e.error_args(),
-            Self::Internal(_) | Self::JsonError(_) => serde_json::json!({}),
+            Self::Internal(_) | Self::JsonError(_) | Self::JsonRejection(_) => {
+                serde_json::json!({})
+            }
         }
     }
 }

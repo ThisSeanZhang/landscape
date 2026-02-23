@@ -3,17 +3,21 @@ use serde_json::Value;
 use ts_rs::TS;
 
 #[derive(Debug, Serialize, Deserialize, Default, Clone, TS)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[ts(export, export_to = "common/api.d.ts")]
 pub struct LandscapeApiResp<T> {
     pub data: Option<T>,
     #[serde(skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
+    #[cfg_attr(feature = "openapi", schema(required = false))]
     pub error_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
+    #[cfg_attr(feature = "openapi", schema(required = false))]
     pub message: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     #[ts(optional, type = "Record<string, unknown>")]
+    #[cfg_attr(feature = "openapi", schema(required = false, value_type = Object))]
     pub args: Option<Value>,
 }
 

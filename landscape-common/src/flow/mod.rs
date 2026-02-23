@@ -29,6 +29,7 @@ pub enum FlowRuleError {
 
 /// Flow 入口匹配规则
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, Hash, TS)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[ts(export, export_to = "common/flow.d.ts")]
 pub struct FlowEntryRule {
     // pub vlan_id: Option<u32>,
@@ -38,14 +39,17 @@ pub struct FlowEntryRule {
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, Hash, TS)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[ts(export, export_to = "common/flow.d.ts")]
 #[serde(tag = "t")]
 #[serde(rename_all = "snake_case")]
 pub enum FlowEntryMatchMode {
     Mac {
+        #[cfg_attr(feature = "openapi", schema(value_type = String))]
         mac_addr: MacAddr,
     },
     Ip {
+        #[cfg_attr(feature = "openapi", schema(value_type = String))]
         ip: IpAddr,
         #[serde(default = "default_prefix_len")]
         prefix_len: u8,
@@ -78,6 +82,7 @@ fn default_prefix_len() -> u8 {
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, TS)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[ts(export, export_to = "common/flow.d.ts")]
 #[serde(tag = "t")]
 #[serde(rename_all = "snake_case")]

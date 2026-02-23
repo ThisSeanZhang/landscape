@@ -11,6 +11,7 @@ const FLOW_DROP: u8 = 2;
 const FLOW_REDIRECT: u8 = 3;
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Copy, Eq, Hash, TS)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[ts(export, export_to = "common/flow.d.ts")]
 pub struct FlowMark {
     /// Action
@@ -82,6 +83,7 @@ impl Into<u32> for FlowMark {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Copy, Eq, Hash, TS)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[ts(export, export_to = "common/flow.d.ts")]
 #[serde(tag = "t")]
 #[serde(rename_all = "snake_case")]
