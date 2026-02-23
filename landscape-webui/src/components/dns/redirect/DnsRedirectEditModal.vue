@@ -10,7 +10,7 @@ import {
 } from "@/lib/common";
 import { DNSRedirectRule } from "landscape-types/common/dns_redirect";
 import { get_dns_redirect, push_dns_redirect } from "@/api/dns_rule/redirect";
-import { get_flow_rules } from "@/api/flow";
+import { getFlowRules } from "landscape-types/api/flow-rules/flow-rules";
 
 type Props = {
   rule_id: string | null;
@@ -104,7 +104,7 @@ const flow_options = computed(() => {
 });
 const flow_search_loading = ref(false);
 async function search_flows() {
-  flow_rules.value = await get_flow_rules();
+  flow_rules.value = await getFlowRules();
 }
 
 async function export_config() {

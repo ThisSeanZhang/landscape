@@ -1,5 +1,8 @@
 <script setup lang="ts">
-import { get_flow_rule, push_flow_rules } from "@/api/flow";
+import {
+  getFlowRule,
+  addFlowRule,
+} from "landscape-types/api/flow-rules/flow-rules";
 import { useMessage } from "naive-ui";
 import { computed } from "vue";
 import { ref } from "vue";
@@ -35,7 +38,7 @@ const isModified = computed(() => {
 
 async function enter() {
   if (props.rule_id) {
-    rule.value = await get_flow_rule(props.rule_id);
+    rule.value = await getFlowRule(props.rule_id);
   } else {
     rule.value = flow_config_default();
   }
@@ -83,7 +86,7 @@ async function saveRule() {
 
   try {
     commit_spin.value = true;
-    await push_flow_rules(rule.value);
+    await addFlowRule(rule.value);
     console.log("submit success");
     show.value = false;
   } catch (_e: any) {

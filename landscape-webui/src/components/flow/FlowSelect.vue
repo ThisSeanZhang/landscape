@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from "vue";
-import { get_flow_rules } from "@/api/flow";
+import { getFlowRules } from "landscape-types/api/flow-rules/flow-rules";
 
 interface Props {
   placeholder?: string;
@@ -41,7 +41,7 @@ const flowOptions = computed(() => {
 async function loadFlowRules() {
   loading.value = true;
   try {
-    flowRules.value = await get_flow_rules();
+    flowRules.value = await getFlowRules();
   } catch (error) {
     console.error("获取 Flow 列表失败:", error);
   } finally {

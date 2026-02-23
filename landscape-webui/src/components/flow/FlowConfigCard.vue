@@ -4,7 +4,7 @@ import { FlowConfig } from "landscape-types/common/flow";
 import FlowEditModal from "@/components/flow/FlowEditModal.vue";
 import DnsRuleDrawer from "@/components/dns/DnsRuleDrawer.vue";
 import { useFrontEndStore } from "@/stores/front_end_config";
-import { del_flow_rules } from "@/api/flow";
+import { delFlowRule } from "landscape-types/api/flow-rules/flow-rules";
 import FlowEntryRuleExhibit from "@/components/flow/FlowEntryRuleExhibit.vue";
 
 import { Docker, NetworkWired } from "@vicons/fa";
@@ -32,7 +32,7 @@ async function refresh() {
 
 async function del() {
   if (props.config.id) {
-    await del_flow_rules(props.config.id);
+    await delFlowRule(props.config.id);
     await refresh();
   }
 }

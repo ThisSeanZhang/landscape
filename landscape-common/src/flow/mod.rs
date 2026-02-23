@@ -34,6 +34,7 @@ pub enum FlowRuleError {
 pub struct FlowEntryRule {
     // pub vlan_id: Option<u32>,
     #[serde(default)]
+    #[cfg_attr(feature = "openapi", schema(required = true, nullable = true))]
     pub qos: Option<u32>,
     pub mode: FlowEntryMatchMode,
 }
@@ -52,6 +53,7 @@ pub enum FlowEntryMatchMode {
         #[cfg_attr(feature = "openapi", schema(value_type = String))]
         ip: IpAddr,
         #[serde(default = "default_prefix_len")]
+        #[cfg_attr(feature = "openapi", schema(required = true))]
         prefix_len: u8,
     },
 }

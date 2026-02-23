@@ -37,7 +37,7 @@ import FlowExhibit from "@/components/flow/FlowExhibit.vue";
 import CheckDomainDrawer from "@/components/dns/CheckDomainDrawer.vue";
 import { SearchLocate } from "@vicons/carbon";
 import { usePreferenceStore } from "@/stores/preference";
-import { get_flow_rules } from "@/api/flow";
+import { getFlowRules } from "landscape-types/api/flow-rules/flow-rules";
 import { FlowConfig } from "landscape-types/common/flow";
 const prefStore = usePreferenceStore();
 
@@ -131,7 +131,7 @@ const flowOptions = computed(() => {
 });
 
 const loadFlows = async () => {
-  flows.value = await get_flow_rules();
+  flows.value = await getFlowRules();
 };
 
 const columns = computed<DataTableColumns<DnsMetric>>(() => [

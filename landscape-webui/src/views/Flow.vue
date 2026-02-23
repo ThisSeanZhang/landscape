@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref } from "vue";
 import { FlowConfig } from "landscape-types/common/flow";
-import { get_flow_rules } from "@/api/flow";
+import { getFlowRules } from "landscape-types/api/flow-rules/flow-rules";
 import FlowEditModal from "@/components/flow/FlowEditModal.vue";
 
 const flows = ref<FlowConfig[]>([]);
@@ -12,7 +12,7 @@ onMounted(async () => {
 });
 
 async function refresh() {
-  flows.value = await get_flow_rules();
+  flows.value = await getFlowRules();
 }
 </script>
 <template>

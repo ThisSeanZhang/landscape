@@ -1,5 +1,5 @@
 <script lang="ts" setup>
-import { get_flow_rule_by_flow_id } from "@/api/flow";
+import { getFlowRuleByFlowId } from "landscape-types/api/flow-rules/flow-rules";
 import { FlowConfig } from "landscape-types/common/flow";
 import { onMounted, ref, watch, watchEffect } from "vue";
 import { Docker, NetworkWired } from "@vicons/fa";
@@ -25,7 +25,7 @@ watch(
 
 const config = ref<FlowConfig>();
 async function refresh() {
-  config.value = await get_flow_rule_by_flow_id(props.flow_id);
+  config.value = await getFlowRuleByFlowId(props.flow_id);
 }
 </script>
 <template>
