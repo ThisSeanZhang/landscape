@@ -54,6 +54,6 @@ jobs:
           pnpm pkg set version="$VERSION"
 
       - name: Publish to npm
-        run: pnpm --filter @landscape-router/types publish --no-git-checks --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          echo "//registry.npmjs.org/:_authToken=${{ secrets.NPM_TOKEN }}" > ~/.npmrc
+          pnpm --filter @landscape-router/types publish --no-git-checks --access public
