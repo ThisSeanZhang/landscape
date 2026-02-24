@@ -9,7 +9,7 @@ let _axiosInstance: AxiosInstance;
  * @example
  * ```ts
  * import axios from "axios";
- * import { setAxiosInstance } from "landscape-types/api/mutator";
+ * import { setAxiosInstance } from "landscape-types/mutator";
  *
  * const instance = axios.create({ timeout: 30000 });
  * setAxiosInstance(instance);

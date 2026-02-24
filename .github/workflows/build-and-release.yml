@@ -73,11 +73,11 @@ jobs:
             cp target/${{ matrix.settings.target }}/release/redirect_pkg_handler output/redirect_pkg_handler-${{ matrix.settings.architecture }}
 
       - name: Export OpenAPI spec
-        if: matrix.settings.architecture == 'x86_64'
+        if: matrix.settings.architecture == 'aarch64'
         run: cargo test -p landscape-webserver export_openapi_json -- --nocapture
 
       - name: Upload OpenAPI spec
-        if: matrix.settings.architecture == 'x86_64'
+        if: matrix.settings.architecture == 'aarch64'
         uses: actions/upload-artifact@v4
         with:
           name: openapi-spec

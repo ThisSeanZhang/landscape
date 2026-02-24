@@ -12,7 +12,7 @@ export default defineConfig({
       mode: "tags-split",
       override: {
         mutator: {
-          path: "./src/api/mutator.ts",
+          path: "./src/mutator.ts",
           name: "customInstance",
         },
       },

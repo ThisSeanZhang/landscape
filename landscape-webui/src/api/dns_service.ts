@@ -1,5 +1,5 @@
 import type {
-  CheckDomain200Data,
+  CheckChainDnsResult,
   CheckDomainParams,
 } from "landscape-types/api/schemas";
 import {
@@ -25,6 +25,6 @@ export async function stop_dns_service(): Promise<void> {
 
 export async function check_domain(
   req: CheckDomainParams,
-): Promise<CheckDomain200Data> {
+): Promise<CheckChainDnsResult> {
   return await checkDomain(req);
 }

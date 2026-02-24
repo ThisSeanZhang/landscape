@@ -9,5 +9,4 @@ node_modules
 openapi.json
 
 # orval generated files — regenerate via `pnpm generate`
-src/api/*
-!src/api/mutator.ts
+src/api/
