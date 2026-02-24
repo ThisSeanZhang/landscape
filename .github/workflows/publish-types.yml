@@ -18,6 +18,11 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v5
 
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake clang curl gcc llvm make pkg-config libelf-dev libclang-dev zlib1g-dev
+
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
