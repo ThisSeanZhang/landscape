@@ -37,19 +37,17 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v5
 
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
           node-version: 22
-          cache: 'yarn'
-          cache-dependency-path: landscape-webui/yarn.lock
+          cache: 'pnpm'
 
       - name: Install dependencies
-        run: |
-          cd landscape-webui
-          yarn install --frozen-lockfile
+        run: pnpm install --frozen-lockfile
 
       - name: Check frontend code formatting
-        run: |
-          cd landscape-webui
-          yarn prettier --check "src/**/*.{vue,ts,js,json,css,scss}"
+        run: pnpm --filter landscape-webui exec prettier --check "src/**/*.{vue,ts,js,json,css,scss}"

@@ -231,19 +231,21 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v5
 
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
           node-version: 22
-          cache: 'yarn'
-          cache-dependency-path: landscape-webui/yarn.lock
+          cache: 'pnpm'
 
       - name: Build frontend
         run: |
           mkdir -p output
+          pnpm install --frozen-lockfile
+          pnpm --filter landscape-webui build
           cd landscape-webui
-          yarn install
-          yarn build
           mkdir static && mv dist/* static/
           zip -r ../output/static.zip static
         env:

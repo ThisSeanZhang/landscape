@@ -21,3 +21,6 @@ net.sh
 
 # DuckDB local library
 libduckdb/
+
+# Node
+node_modules/

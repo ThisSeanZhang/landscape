@@ -20,7 +20,7 @@
     "axios": "^1.6.8",
     "ip-num": "^1.5.1",
     "is-ip": "^5.0.1",
-    "landscape-types": "file:../landscape-types",
+    "landscape-types": "workspace:*",
     "pinia": "^3.0.0",
     "pinia-plugin-persistedstate": "^4.3.0",
     "vue": "^3.4.21",
@@ -50,6 +50,5 @@
     "vfonts": "^0.0.3",
     "vite": "^7.3.0",
     "vue-tsc": "^3.2.1"
-  },
-  "packageManager": "yarn@1.22.22+sha512.a6b2f7906b721bba3d67d4aff083df04dad64c399707841b7acf00f6b133b7ac24255f2652fa22ae3534329dc6180534e98d17432037ff6fd140556e2bb3137e"
+  }
 }
