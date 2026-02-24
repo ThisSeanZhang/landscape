@@ -1,6 +1,6 @@
 <script lang="ts" setup>
 import { get_icmpra_assigned_ips } from "@/api/service_icmpv6ra";
-import { IPv6NAInfo } from "landscape-types/common/ipv6_ra_server";
+import type { IPv6NAInfo } from "@/api/service_icmpv6ra";
 import { computed, onMounted, ref } from "vue";
 
 onMounted(async () => {

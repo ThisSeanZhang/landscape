@@ -1,35 +1,50 @@
 use std::collections::HashMap;
 
-use axum::{
-    extract::{Path, State},
-    routing::{get, post},
-    Json, Router,
-};
-
+use axum::extract::{Path, State};
+use landscape_common::api_response::LandscapeApiResp as CommonApiResp;
+use landscape_common::config::wifi::WifiServiceConfig;
 use landscape_common::service::controller_service_v2::ControllerService;
-use landscape_common::{config::wifi::WifiServiceConfig, service::DefaultWatchServiceStatus};
+use landscape_common::service::{DefaultWatchServiceStatus, ServiceStatus};
+use utoipa_axum::router::OpenApiRouter;
+use utoipa_axum::routes;
 
 use landscape_common::service::ServiceConfigError;
 
+use crate::api::JsonBody;
 use crate::LandscapeApp;
 use crate::{api::LandscapeApiResp, error::LandscapeApiResult};
 
-pub async fn get_wifi_service_paths() -> Router<LandscapeApp> {
-    Router::new()
-        .route("/wifi/status", get(get_all_iface_service_status))
-        .route("/wifi", post(handle_service_config))
-        .route(
-            "/wifi/{iface_name}",
-            get(get_iface_service_conifg).delete(delete_and_stop_iface_service),
-        )
+pub fn get_wifi_service_paths() -> OpenApiRouter<LandscapeApp> {
+    OpenApiRouter::new()
+        .routes(routes!(get_all_iface_service_status))
+        .routes(routes!(handle_service_config))
+        .routes(routes!(get_iface_service_conifg, delete_and_stop_iface_service))
 }
 
+#[utoipa::path(
+    get,
+    path = "/wifi/status",
+    tag = "WiFi",
+    operation_id = "get_all_wifi_service_status",
+    responses((status = 200, body = inline(CommonApiResp<HashMap<String, ServiceStatus>>)))
+)]
 async fn get_all_iface_service_status(
     State(state): State<LandscapeApp>,
 ) -> LandscapeApiResult<HashMap<String, DefaultWatchServiceStatus>> {
     LandscapeApiResp::success(state.wifi_service.get_all_status().await)
 }
 
+#[utoipa::path(
+    get,
+    path = "/wifi/{iface_name}",
+    tag = "WiFi",
+    operation_id = "get_wifi_service_config",
+    params(("iface_name" = String, Path, description = "Interface name")),
+    responses(
+        (status = 200, body = inline(CommonApiResp<WifiServiceConfig>)),
+        (status = 404, description = "Not found")
+    )
+)]
 async fn get_iface_service_conifg(
     State(state): State<LandscapeApp>,
     Path(iface_name): Path<String>,
@@ -41,14 +56,30 @@ async fn get_iface_service_conifg(
     }
 }
 
+#[utoipa::path(
+    post,
+    path = "/wifi",
+    tag = "WiFi",
+    operation_id = "handle_wifi_service_config",
+    request_body = WifiServiceConfig,
+    responses((status = 200, description = "Success"))
+)]
 async fn handle_service_config(
     State(state): State<LandscapeApp>,
-    Json(config): Json<WifiServiceConfig>,
+    JsonBody(config): JsonBody<WifiServiceConfig>,
 ) -> LandscapeApiResult<()> {
     state.wifi_service.handle_service_config(config).await;
     LandscapeApiResp::success(())
 }
 
+#[utoipa::path(
+    delete,
+    path = "/wifi/{iface_name}",
+    tag = "WiFi",
+    operation_id = "delete_and_stop_wifi_service",
+    params(("iface_name" = String, Path, description = "Interface name")),
+    responses((status = 200, body = inline(CommonApiResp<Option<ServiceStatus>>)))
+)]
 async fn delete_and_stop_iface_service(
     State(state): State<LandscapeApp>,
     Path(iface_name): Path<String>,

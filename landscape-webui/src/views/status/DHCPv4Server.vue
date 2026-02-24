@@ -3,10 +3,7 @@ import {
   get_all_iface_arp_scan_info,
   get_dhcp_v4_assigned_ips,
 } from "@/api/service_dhcp_v4";
-import {
-  ArpScanInfo,
-  DHCPv4OfferInfo,
-} from "landscape-types/common/dhcp_v4_server";
+import type { ArpScanInfo, DHCPv4OfferInfo } from "@/api/service_dhcp_v4";
 import { info } from "console";
 import { computed, onMounted, ref } from "vue";
 

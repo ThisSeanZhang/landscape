@@ -14,6 +14,18 @@ use crate::config_service::flow_rule::get_flow_rule_config_paths;
 use crate::config_service::geo_ip::get_geo_ip_config_paths;
 use crate::config_service::geo_site::get_geo_site_config_paths;
 use crate::config_service::static_nat_mapping::get_static_nat_mapping_config_paths;
+use crate::service::dhcp_v4::get_dhcp_v4_service_paths;
+use crate::service::firewall::get_firewall_service_paths;
+use crate::service::icmp_ra::get_iface_icmpv6ra_paths;
+use crate::service::ipconfig::get_iface_ipconfig_paths;
+use crate::service::ipv6pd::get_iface_pdclient_paths;
+use crate::service::mss_clamp::get_mss_clamp_service_paths;
+use crate::service::nat::get_iface_nat_paths;
+use crate::service::pppd::get_iface_pppd_paths;
+use crate::service::route::get_route_paths;
+use crate::service::route_lan::get_route_lan_paths;
+use crate::service::route_wan::get_route_wan_paths;
+use crate::service::wifi::get_wifi_service_paths;
 use crate::LandscapeApp;
 
 #[derive(OpenApi)]
@@ -36,6 +48,18 @@ use crate::LandscapeApp;
         (name = "Enrolled Devices", description = "Enrolled device management"),
         (name = "Geo Sites", description = "Geo site configuration"),
         (name = "Geo IPs", description = "Geo IP configuration"),
+        (name = "Route", description = "Route tracing and cache management"),
+        (name = "Route WAN", description = "WAN route service management"),
+        (name = "Route LAN", description = "LAN route service management"),
+        (name = "MSS Clamp", description = "MSS clamping service"),
+        (name = "Firewall Service", description = "Interface firewall service"),
+        (name = "IP Config", description = "Interface IP configuration service"),
+        (name = "DHCPv4", description = "DHCPv4 server service"),
+        (name = "PPPoE", description = "PPPoE service"),
+        (name = "WiFi", description = "WiFi service"),
+        (name = "IPv6 PD", description = "IPv6 prefix delegation service"),
+        (name = "ICMPv6 RA", description = "ICMPv6 router advertisement service"),
+        (name = "NAT Service", description = "NAT service"),
     ),
     components(schemas(
         landscape_common::config::geo::GeoFileCacheKey,
@@ -63,6 +87,23 @@ pub fn build_openapi_router() -> OpenApiRouter<LandscapeApp> {
         .merge(get_geo_ip_config_paths())
 }
 
+/// Build the OpenApiRouter with all annotated service modules merged.
+pub fn build_services_openapi_router() -> OpenApiRouter<LandscapeApp> {
+    OpenApiRouter::new()
+        .merge(get_route_paths())
+        .merge(get_route_wan_paths())
+        .merge(get_route_lan_paths())
+        .merge(get_mss_clamp_service_paths())
+        .merge(get_firewall_service_paths())
+        .merge(get_iface_ipconfig_paths())
+        .merge(get_dhcp_v4_service_paths())
+        .merge(get_iface_pppd_paths())
+        .merge(get_wifi_service_paths())
+        .merge(get_iface_pdclient_paths())
+        .merge(get_iface_icmpv6ra_paths())
+        .merge(get_iface_nat_paths())
+}
+
 /// Prepend a prefix to all OpenAPI paths in the spec.
 fn prefix_paths(openapi: &mut utoipa::openapi::OpenApi, prefix: &str) {
     let old_paths: std::collections::BTreeMap<String, PathItem> =
@@ -83,7 +124,12 @@ pub fn build_full_openapi_spec() -> utoipa::openapi::OpenApi {
     let (_, mut auth_openapi) = get_auth_openapi_router().split_for_parts();
     prefix_paths(&mut auth_openapi, "/api/auth");
 
+    // Service modules (state = LandscapeApp) — paths are relative (e.g. /route_wans)
+    let (_, mut services_openapi) = build_services_openapi_router().split_for_parts();
+    prefix_paths(&mut services_openapi, "/api/src/services");
+
     config_openapi.merge(auth_openapi);
+    config_openapi.merge(services_openapi);
     config_openapi
 }
 

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { IPV6RaConfigSource } from "landscape-types/common/ra";
+import type { IPV6RaConfigSource } from "landscape-types/api/schemas";
 import { computed, ref } from "vue";
 import { Edit, Delete } from "@vicons/carbon";
 

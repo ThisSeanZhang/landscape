@@ -1,21 +1,24 @@
-import axiosService from "@/api";
 import type {
   FlowMatchRequest,
-  FlowMatchResult,
   FlowVerdictRequest,
-  FlowVerdictResult,
-} from "landscape-types/common/route_trace";
+} from "landscape-types/api/schemas";
+import { traceFlowMatch, traceVerdict } from "landscape-types/api/route/route";
+import type {
+  TraceFlowMatch200Data,
+  TraceVerdict200Data,
+} from "landscape-types/api/schemas";
+
+export type FlowMatchResult = TraceFlowMatch200Data;
+export type FlowVerdictResult = TraceVerdict200Data;
 
 export async function trace_flow_match(
   req: FlowMatchRequest,
 ): Promise<FlowMatchResult> {
-  const data = await axiosService.post("services/route/trace/flow_match", req);
-  return data.data;
+  return await traceFlowMatch(req);
 }
 
 export async function trace_verdict(
   req: FlowVerdictRequest,
 ): Promise<FlowVerdictResult> {
-  const data = await axiosService.post("services/route/trace/verdict", req);
-  return data.data;
+  return await traceVerdict(req);
 }

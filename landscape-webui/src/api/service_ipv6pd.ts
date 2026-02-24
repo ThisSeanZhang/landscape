@@ -1,14 +1,22 @@
 import { IPV6PDServiceConfig } from "@/lib/ipv6pd";
 import { ServiceStatus } from "@/lib/services";
-import axiosService from ".";
-import { LDIAPrefix } from "landscape-types/common/ipv6_pd";
+import {
+  getAllIpv6pdStatus,
+  getIfacePdConifg,
+  handleIfacePd,
+  deleteAndStopIpv6pdService,
+  getCurrentIpPrefixInfo,
+} from "landscape-types/api/ipv6-pd/ipv6-pd";
+import type { GetCurrentIpPrefixInfo200Data } from "landscape-types/api/schemas";
+
+type LDIAPrefix = NonNullable<GetCurrentIpPrefixInfo200Data[string]>;
 
 export async function get_all_ipv6pd_status(): Promise<
   Map<string, ServiceStatus>
 > {
-  let data = await axiosService.get(`services/ipv6pd/status`);
-  let map = new Map<string, ServiceStatus>();
-  for (const [key, value] of Object.entries(data.data)) {
+  const data = await getAllIpv6pdStatus();
+  const map = new Map<string, ServiceStatus>();
+  for (const [key, value] of Object.entries(data)) {
     map.set(key, value as ServiceStatus);
   }
   return map;
@@ -17,32 +25,29 @@ export async function get_all_ipv6pd_status(): Promise<
 export async function get_iface_ipv6pd_config(
   iface_name: string,
 ): Promise<IPV6PDServiceConfig> {
-  let data = await axiosService.get(`services/ipv6pd/${iface_name}`);
-  return data.data;
+  const data = await getIfacePdConifg(iface_name);
+  return new IPV6PDServiceConfig(data);
 }
 
 export async function get_current_ip_prefix_info(): Promise<
   Map<string, LDIAPrefix | null>
 > {
-  let data = await axiosService.get(`services/ipv6pd/infos`);
-  let map = new Map<string, LDIAPrefix | null>();
-  for (const [key, value] of Object.entries(data.data)) {
-    map.set(key, value as LDIAPrefix);
+  const data = await getCurrentIpPrefixInfo();
+  const map = new Map<string, LDIAPrefix | null>();
+  for (const [key, value] of Object.entries(data)) {
+    map.set(key, value as LDIAPrefix | null);
   }
   return map;
 }
 
-// 新建新的 PD Client 配置
 export async function update_ipv6pd_config(
   ipv6pd_config: IPV6PDServiceConfig,
 ): Promise<void> {
-  let data = await axiosService.post(`services/ipv6pd`, {
-    ...ipv6pd_config,
-  });
-  console.log(data.data);
-  return data.data;
+  await handleIfacePd(ipv6pd_config as any);
 }
 
 export async function stop_and_del_iface_ipv6pd(name: string): Promise<void> {
-  return axiosService.delete(`services/ipv6pd/${name}`);
+  await deleteAndStopIpv6pdService(name);
 }
+
+export type { LDIAPrefix };

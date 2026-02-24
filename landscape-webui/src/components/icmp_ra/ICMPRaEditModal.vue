@@ -7,12 +7,12 @@ import {
   get_iface_icmpv6ra_config,
   update_icmpv6ra_config,
 } from "@/api/service_icmpv6ra";
-import {
+import type {
   IPV6RaConfigSource,
   IPv6RaPdConfig,
   IPV6RAServiceConfig,
   IPv6RaStaticConfig,
-} from "landscape-types/common/ra";
+} from "landscape-types/api/schemas";
 import { indexMap } from "seemly";
 
 let ipv6PDStore = useIPv6PDStore();

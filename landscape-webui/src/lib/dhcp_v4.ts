@@ -1,4 +1,4 @@
-import { DHCPv4OfferInfo } from "landscape-types/common/dhcp_v4_server";
+import type { DHCPv4OfferInfo } from "@/api/service_dhcp_v4";
 import { IPv4, IPv4CidrRange } from "ip-num";
 
 export class DHCPv4ServiceConfig {
@@ -85,7 +85,7 @@ export function conver_to_show(
       const time_left =
         each.relative_active_time + each.expire_time - relative_boot_time;
       result.push({
-        mac: each.mac,
+        mac: each.mac as unknown as string,
         ip: each.ip,
         time_left: time_left,
       });

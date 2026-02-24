@@ -21,6 +21,7 @@ pub enum ServiceConfigError {
 }
 
 #[derive(Serialize, Debug, PartialEq, Clone, Default, TS)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[serde(tag = "t")]
 #[serde(rename_all = "lowercase")]
 #[ts(export, export_to = "common/service.d.ts")]

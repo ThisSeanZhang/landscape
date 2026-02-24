@@ -2,7 +2,7 @@
 import { computed } from "vue";
 
 import { HelpFilled, Time } from "@vicons/carbon";
-import { IPv6NAInfo } from "landscape-types/common/ipv6_ra_server";
+import type { IPv6NAInfo } from "@/api/service_icmpv6ra";
 import { useFrontEndStore } from "@/stores/front_end_config";
 import { usePreferenceStore } from "@/stores/preference";
 const prefStore = usePreferenceStore();
@@ -44,7 +44,7 @@ const info = computed(() => {
       // console.log(time - each_time);
       result.push({
         ip: value.ip,
-        mac: value.mac,
+        mac: value.mac as unknown as string,
         active: each_time,
         stale: time - each_time < 30 * 1000,
       });

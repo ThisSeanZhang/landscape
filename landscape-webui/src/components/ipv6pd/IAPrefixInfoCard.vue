@@ -2,7 +2,7 @@
 import { computed } from "vue";
 
 import { HelpFilled } from "@vicons/carbon";
-import { LDIAPrefix } from "landscape-types/common/ipv6_pd";
+import type { LDIAPrefix } from "@/api/service_ipv6pd";
 import { useFrontEndStore } from "@/stores/front_end_config";
 import { usePreferenceStore } from "@/stores/preference";
 const prefStore = usePreferenceStore();

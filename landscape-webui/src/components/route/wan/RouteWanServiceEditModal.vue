@@ -2,7 +2,7 @@
 import { ref } from "vue";
 
 import { IfaceZoneType } from "landscape-types/common/iface";
-import { RouteWanServiceConfig } from "landscape-types/common/route";
+import type { RouteWanServiceConfig } from "landscape-types/api/schemas";
 import { useRouteWanConfigStore } from "@/stores/status_route_wan";
 import {
   get_route_wan_config,

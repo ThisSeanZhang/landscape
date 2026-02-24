@@ -73,21 +73,9 @@ mod sysinfo;
 
 mod websocket;
 
-use service::{
-    dhcp_v4::get_dhcp_v4_service_paths, firewall::get_firewall_service_paths,
-    mss_clamp::get_mss_clamp_service_paths,
-};
-use service::{icmp_ra::get_iface_icmpv6ra_paths, nat::get_iface_nat_paths};
-use service::{ipconfig::get_iface_ipconfig_paths, ipv6pd::get_iface_pdclient_paths};
-use service::{pppd::get_iface_pppd_paths, wifi::get_wifi_service_paths};
 use tracing::info;
 
-use crate::{
-    service::{
-        route::get_route_paths, route_lan::get_route_lan_paths, route_wan::get_route_wan_paths,
-    },
-    sys_service::config::get_config_paths,
-};
+use crate::sys_service::config::get_config_paths;
 
 const DNS_EVENT_CHANNEL_SIZE: usize = 128;
 const DST_IP_EVENT_CHANNEL_SIZE: usize = 128;
@@ -362,6 +350,7 @@ async fn run(home_path: PathBuf, config: RuntimeConfig) -> LdResult<()> {
     auth::output_sys_token(&config.auth).await;
     // Build OpenApiRouter for annotated modules, then split into Router + OpenAPI spec
     let (openapi_config_router, _) = openapi::build_openapi_router().split_for_parts();
+    let (openapi_services_router, _) = openapi::build_services_openapi_router().split_for_parts();
     let openapi = openapi::build_full_openapi_spec();
 
     let source_route = Router::new()
@@ -381,22 +370,7 @@ async fn run(home_path: PathBuf, config: RuntimeConfig) -> LdResult<()> {
                 .merge(get_geo_site_upload_path())
                 .merge(get_geo_ip_upload_path()),
         )
-        .nest(
-            "/services",
-            Router::new()
-                .merge(get_route_paths().await)
-                .merge(get_route_wan_paths().await)
-                .merge(get_route_lan_paths().await)
-                .merge(get_mss_clamp_service_paths().await)
-                .merge(get_firewall_service_paths().await)
-                .merge(get_iface_ipconfig_paths().await)
-                .merge(get_dhcp_v4_service_paths().await)
-                .merge(get_iface_pppd_paths().await)
-                .merge(get_wifi_service_paths().await)
-                .merge(get_iface_pdclient_paths().await)
-                .merge(get_iface_icmpv6ra_paths().await)
-                .merge(get_iface_nat_paths().await),
-        )
+        .nest("/services", openapi_services_router)
         .with_state(landscape_app_status.clone())
         .nest("/sysinfo", sysinfo::get_sys_info_route())
         .route_layer(axum::middleware::from_fn_with_state(auth_share.clone(), auth::auth_handler));

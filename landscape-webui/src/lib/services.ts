@@ -6,8 +6,11 @@ import { NetworkIfaceConfig } from "landscape-types/common/iface";
 import { NetDev, WLANTypeTag } from "./dev";
 import { ZoneType } from "./service_ipconfig";
 
-import { ServiceStatus } from "landscape-types/common/service";
-export type { ServiceStatus } from "landscape-types/common/service";
+export type ServiceStatus =
+  | { t: "staring" }
+  | { t: "running" }
+  | { t: "stopping" }
+  | { t: "stop" };
 
 export enum ServiceStatusType {
   Staring = "staring",

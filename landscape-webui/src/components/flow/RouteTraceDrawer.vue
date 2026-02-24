@@ -7,8 +7,8 @@ import { reset_cache } from "@/api/route/cache";
 import { useEnrolledDeviceStore } from "@/stores/enrolled_device";
 import { useFrontEndStore } from "@/stores/front_end_config";
 import FlowExhibit from "@/components/flow/FlowExhibit.vue";
-import type { FlowMatchResult } from "landscape-types/common/route_trace";
-import type { FlowVerdictResult } from "landscape-types/common/route_trace";
+import type { FlowMatchResult } from "@/api/route/trace";
+import type { FlowVerdictResult } from "@/api/route/trace";
 
 const show = defineModel<boolean>("show", { required: true });
 

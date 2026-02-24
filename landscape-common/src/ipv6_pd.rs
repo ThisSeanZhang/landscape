@@ -4,6 +4,7 @@ use tokio::sync::{watch, RwLock};
 use ts_rs::TS;
 
 #[derive(Debug, Clone, serde::Serialize, TS)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[ts(export, export_to = "common/ipv6_pd.d.ts")]
 pub struct LDIAPrefix {
     /// unit: s
@@ -11,6 +12,7 @@ pub struct LDIAPrefix {
     /// unit: s
     pub valid_lifetime: u32,
     pub prefix_len: u8,
+    #[cfg_attr(feature = "openapi", schema(value_type = String))]
     pub prefix_ip: Ipv6Addr,
 
     pub last_update_time: f64,

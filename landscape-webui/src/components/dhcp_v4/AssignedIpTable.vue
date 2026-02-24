@@ -1,10 +1,7 @@
 <script lang="ts" setup>
 import { sleep } from "@/lib/util";
-import {
-  ArpScanInfo,
-  DHCPv4OfferInfo,
-  DHCPv4OfferInfoItem,
-} from "landscape-types/common/dhcp_v4_server";
+import type { ArpScanInfo, DHCPv4OfferInfo } from "@/api/service_dhcp_v4";
+import type { DHCPv4OfferInfoItem } from "landscape-types/api/schemas";
 import { CountdownInst } from "naive-ui";
 import { computed, nextTick, ref, watch } from "vue";
 
@@ -33,6 +30,11 @@ interface ArpInfo {
 
 const props = withDefaults(defineProps<Props>(), {});
 
+// MacAddr is typed as string[] in ORVAL schema but serialized as string at runtime
+function mac_as_string(mac: unknown): string {
+  return mac as string;
+}
+
 function caculate_time(item: DHCPv4OfferInfoItem): number {
   const expire_time =
     (item.relative_active_time + item.expire_time) * 1000 +
@@ -51,6 +53,7 @@ const show_item = computed(() => {
       real_request_time: request_time(each),
       real_expire_time: caculate_time(each),
       ...each,
+      mac: mac_as_string(each.mac),
     });
   }
   return reuslt;
@@ -108,7 +111,7 @@ function build_ip_map(data: ArpScanInfo[]): Map<string, ArpInfo> {
         }
         const arr = map.get(item.ip)!;
         arr.ip_status[idx] = true;
-        arr.macs.add(item.mac);
+        arr.macs.add(mac_as_string(item.mac));
       });
     });
   }

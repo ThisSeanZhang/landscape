@@ -1,13 +1,18 @@
 import { FirewallServiceConfig } from "@/lib/firewall";
 import { ServiceStatus } from "@/lib/services";
-import axiosService from ".";
+import {
+  getAllFirewallServiceStatus,
+  getFirewallServiceConfig,
+  handleFirewallServiceConfig,
+  deleteAndStopFirewallService,
+} from "landscape-types/api/firewall-service/firewall-service";
 
 export async function get_all_firewall_status(): Promise<
   Map<string, ServiceStatus>
 > {
-  let data = await axiosService.get(`services/firewall/status`);
-  let map = new Map<string, ServiceStatus>();
-  for (const [key, value] of Object.entries(data.data)) {
+  const data = await getAllFirewallServiceStatus();
+  const map = new Map<string, ServiceStatus>();
+  for (const [key, value] of Object.entries(data)) {
     map.set(key, value as ServiceStatus);
   }
   return map;
@@ -16,21 +21,16 @@ export async function get_all_firewall_status(): Promise<
 export async function get_iface_firewall_config(
   iface_name: string,
 ): Promise<FirewallServiceConfig> {
-  let data = await axiosService.get(`services/firewall/${iface_name}`);
-  console.log(data.data);
-  return data.data;
+  const data = await getFirewallServiceConfig(iface_name);
+  return new FirewallServiceConfig(data);
 }
 
 export async function update_firewall_config(
   firewall_config: FirewallServiceConfig,
 ): Promise<void> {
-  let data = await axiosService.post(`services/firewall`, {
-    ...firewall_config,
-  });
-  console.log(data.data);
-  return data.data;
+  await handleFirewallServiceConfig(firewall_config as any);
 }
 
 export async function stop_and_del_iface_firewall(name: string): Promise<void> {
-  return axiosService.delete(`services/firewall/${name}`);
+  await deleteAndStopFirewallService(name);
 }

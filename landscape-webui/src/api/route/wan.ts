@@ -1,13 +1,18 @@
-import axiosService from "@/api";
 import { ServiceStatus } from "@/lib/services";
-import { RouteWanServiceConfig } from "landscape-types/common/route";
+import type { RouteWanServiceConfig } from "landscape-types/api/schemas";
+import {
+  getAllRouteWanStatus,
+  getRouteWanConifg,
+  handleRouteWanStatus,
+  deleteAndStopRouteWan,
+} from "landscape-types/api/route-wan/route-wan";
 
 export async function get_all_route_wan_status(): Promise<
   Map<string, ServiceStatus>
 > {
-  let data = await axiosService.get(`services/route_wans/status`);
-  let map = new Map<string, ServiceStatus>();
-  for (const [key, value] of Object.entries(data.data)) {
+  const data = await getAllRouteWanStatus();
+  const map = new Map<string, ServiceStatus>();
+  for (const [key, value] of Object.entries(data)) {
     map.set(key, value as ServiceStatus);
   }
   return map;
@@ -16,16 +21,15 @@ export async function get_all_route_wan_status(): Promise<
 export async function get_route_wan_config(
   id: string,
 ): Promise<RouteWanServiceConfig> {
-  let result = await axiosService.get(`services/route_wans/${id}`);
-  return result.data;
+  return await getRouteWanConifg(id);
 }
 
 export async function update_route_wans_config(
   config: RouteWanServiceConfig,
 ): Promise<void> {
-  await axiosService.post(`services/route_wans`, config);
+  await handleRouteWanStatus(config);
 }
 
 export async function del_route_wans(iface_name: string): Promise<void> {
-  await axiosService.delete(`services/route_wans/${iface_name}`);
+  await deleteAndStopRouteWan(iface_name);
 }

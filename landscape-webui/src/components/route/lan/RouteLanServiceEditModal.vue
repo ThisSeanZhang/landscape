@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { ref } from "vue";
 
-import {
+import type {
   RouteLanServiceConfig,
   StaticRouteConfig,
-} from "landscape-types/common/route";
+} from "landscape-types/api/schemas";
 import {
   get_route_lan_config,
   update_route_lans_config,

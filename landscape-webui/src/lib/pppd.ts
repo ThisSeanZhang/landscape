@@ -1,4 +1,4 @@
-import { PPPDConfig } from "landscape-types/common/ppp";
+import type { PPPDConfig } from "landscape-types/api/schemas";
 
 const ADAY = 60 * 60 * 24;
 

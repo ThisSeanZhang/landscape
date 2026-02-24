@@ -6,6 +6,7 @@ use ts_rs::TS;
 use crate::{net::MacAddr, LAND_ARP_INFO_SIZE};
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default, TS)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[ts(export, export_to = "common/dhcp_v4_server.d.ts")]
 pub struct DHCPv4OfferInfo {
     pub boot_time: f64,
@@ -15,10 +16,12 @@ pub struct DHCPv4OfferInfo {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, TS)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[ts(export, export_to = "common/dhcp_v4_server.d.ts")]
 pub struct DHCPv4OfferInfoItem {
     pub hostname: Option<String>,
     pub mac: MacAddr,
+    #[cfg_attr(feature = "openapi", schema(value_type = String))]
     pub ip: Ipv4Addr,
     #[ts(type = "number")]
     pub relative_active_time: u64,
@@ -49,6 +52,7 @@ impl ArpScanStatus {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, TS)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[ts(export, export_to = "common/dhcp_v4_server.d.ts")]
 pub struct ArpScanInfo {
     infos: Vec<ArpScanInfoItem>,
@@ -61,8 +65,10 @@ impl ArpScanInfo {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, TS)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[ts(export, export_to = "common/dhcp_v4_server.d.ts")]
 pub struct ArpScanInfoItem {
+    #[cfg_attr(feature = "openapi", schema(value_type = String))]
     pub ip: Ipv4Addr,
     pub mac: MacAddr,
 }

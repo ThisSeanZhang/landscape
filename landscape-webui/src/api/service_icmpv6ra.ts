@@ -1,15 +1,22 @@
-import api from ".";
 import { ServiceStatus } from "@/lib/services";
-import axiosService from ".";
-import { IPV6RAServiceConfig } from "landscape-types/common/ra";
-import { IPv6NAInfo } from "landscape-types/common/ipv6_ra_server";
+import type { IPV6RAServiceConfig } from "landscape-types/api/schemas";
+import {
+  getAllIcmpv6raStatus,
+  getIfaceIcmpv6Conifg,
+  handleIfaceIcmpv6,
+  deleteAndStopIfaceIcmpv6,
+  getAllIcmpv6raAssignedIps,
+} from "landscape-types/api/icmpv6-ra/icmpv6-ra";
+import type { GetAllIcmpv6raAssignedIps200Data } from "landscape-types/api/schemas";
+
+type IPv6NAInfo = GetAllIcmpv6raAssignedIps200Data[string];
 
 export async function get_all_icmpv6ra_status(): Promise<
   Map<string, ServiceStatus>
 > {
-  let data = await axiosService.get(`services/icmpv6ra/status`);
-  let map = new Map<string, ServiceStatus>();
-  for (const [key, value] of Object.entries(data.data)) {
+  const data = await getAllIcmpv6raStatus();
+  const map = new Map<string, ServiceStatus>();
+  for (const [key, value] of Object.entries(data)) {
     map.set(key, value as ServiceStatus);
   }
   return map;
@@ -18,32 +25,28 @@ export async function get_all_icmpv6ra_status(): Promise<
 export async function get_iface_icmpv6ra_config(
   iface_name: string,
 ): Promise<IPV6RAServiceConfig> {
-  let data = await axiosService.get(`services/icmpv6ra/${iface_name}`);
-  console.log(data.data);
-  return data.data;
+  return await getIfaceIcmpv6Conifg(iface_name);
 }
 
 export async function update_icmpv6ra_config(
   icmpv6ra_config: IPV6RAServiceConfig,
 ): Promise<void> {
-  let data = await axiosService.post(`services/icmpv6ra`, {
-    ...icmpv6ra_config,
-  });
-  console.log(data.data);
-  return data.data;
+  await handleIfaceIcmpv6(icmpv6ra_config);
 }
 
 export async function stop_and_del_iface_icmpv6ra(name: string): Promise<void> {
-  return axiosService.delete(`services/icmpv6ra/${name}`);
+  await deleteAndStopIfaceIcmpv6(name);
 }
 
 export async function get_icmpra_assigned_ips(): Promise<
   Map<string, IPv6NAInfo | null>
 > {
-  let data = await axiosService.get(`services/icmpv6ra/assigned_ips`);
-  let map = new Map<string, IPv6NAInfo | null>();
-  for (const [key, value] of Object.entries(data.data)) {
+  const data = await getAllIcmpv6raAssignedIps();
+  const map = new Map<string, IPv6NAInfo | null>();
+  for (const [key, value] of Object.entries(data)) {
     map.set(key, value as IPv6NAInfo);
   }
   return map;
 }
+
+export type { IPv6NAInfo };

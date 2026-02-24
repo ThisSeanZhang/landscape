@@ -1,38 +1,49 @@
 use std::collections::HashMap;
 
-use axum::{
-    extract::{Path, State},
-    routing::{get, post},
-    Json, Router,
-};
+use axum::extract::{Path, State};
+use landscape_common::api_response::LandscapeApiResp as CommonApiResp;
+use landscape_common::config::iface_ip::IfaceIpServiceConfig;
 use landscape_common::service::controller_service_v2::ControllerService;
-
-use landscape_common::{
-    config::iface_ip::IfaceIpServiceConfig, service::DefaultWatchServiceStatus,
-};
+use landscape_common::service::{DefaultWatchServiceStatus, ServiceStatus};
+use utoipa_axum::router::OpenApiRouter;
+use utoipa_axum::routes;
 
 use landscape_common::service::ServiceConfigError;
 
+use crate::api::JsonBody;
 use crate::LandscapeApp;
 use crate::{api::LandscapeApiResp, error::LandscapeApiResult};
 
-pub async fn get_iface_ipconfig_paths() -> Router<LandscapeApp> {
-    Router::new()
-        .route("/ipconfigs/status", get(get_all_ipconfig_status))
-        .route("/ipconfigs", post(handle_iface_service_status))
-        .route(
-            "/ipconfigs/{iface_name}",
-            get(get_iface_service_conifg).delete(delete_and_stop_iface_service),
-        )
-    // .route("/ipconfigs/{iface_name}/status", get(get_iface_service_status))
+pub fn get_iface_ipconfig_paths() -> OpenApiRouter<LandscapeApp> {
+    OpenApiRouter::new()
+        .routes(routes!(get_all_ipconfig_status))
+        .routes(routes!(handle_iface_service_status))
+        .routes(routes!(get_iface_service_conifg, delete_and_stop_iface_service))
 }
 
+#[utoipa::path(
+    get,
+    path = "/ipconfigs/status",
+    tag = "IP Config",
+    responses((status = 200, body = inline(CommonApiResp<HashMap<String, ServiceStatus>>)))
+)]
 async fn get_all_ipconfig_status(
     State(state): State<LandscapeApp>,
 ) -> LandscapeApiResult<HashMap<String, DefaultWatchServiceStatus>> {
     LandscapeApiResp::success(state.wan_ip_service.get_all_status().await)
 }
 
+#[utoipa::path(
+    get,
+    path = "/ipconfigs/{iface_name}",
+    tag = "IP Config",
+    operation_id = "get_ipconfig_service_config",
+    params(("iface_name" = String, Path, description = "Interface name")),
+    responses(
+        (status = 200, body = inline(CommonApiResp<IfaceIpServiceConfig>)),
+        (status = 404, description = "Not found")
+    )
+)]
 async fn get_iface_service_conifg(
     State(state): State<LandscapeApp>,
     Path(iface_name): Path<String>,
@@ -44,28 +55,29 @@ async fn get_iface_service_conifg(
     }
 }
 
-// async fn get_iface_service_status(
-//     State(state): State<LandscapeApp>,
-//     Path(iface_name): Path<String>,
-// ) -> Json<Value> {
-//     let read_lock = state.wan_ip_service.service.services.read().await;
-//     let data = if let Some((iface_status, _)) = read_lock.get(&iface_name) {
-//         iface_status.clone()
-//     } else {
-//         DefaultWatchServiceStatus::new()
-//     };
-//     let result = serde_json::to_value(data);
-//     Json(result.unwrap())
-// }
-
+#[utoipa::path(
+    post,
+    path = "/ipconfigs",
+    tag = "IP Config",
+    request_body = IfaceIpServiceConfig,
+    responses((status = 200, description = "Success"))
+)]
 async fn handle_iface_service_status(
     State(state): State<LandscapeApp>,
-    Json(config): Json<IfaceIpServiceConfig>,
+    JsonBody(config): JsonBody<IfaceIpServiceConfig>,
 ) -> LandscapeApiResult<()> {
     state.wan_ip_service.handle_service_config(config).await;
     LandscapeApiResp::success(())
 }
 
+#[utoipa::path(
+    delete,
+    path = "/ipconfigs/{iface_name}",
+    tag = "IP Config",
+    operation_id = "delete_and_stop_ipconfig_service",
+    params(("iface_name" = String, Path, description = "Interface name")),
+    responses((status = 200, body = inline(CommonApiResp<Option<ServiceStatus>>)))
+)]
 async fn delete_and_stop_iface_service(
     State(state): State<LandscapeApp>,
     Path(iface_name): Path<String>,
