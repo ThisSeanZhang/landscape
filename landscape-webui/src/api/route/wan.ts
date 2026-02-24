@@ -2,7 +2,7 @@ import { ServiceStatus } from "@/lib/services";
 import type { RouteWanServiceConfig } from "landscape-types/api/schemas";
 import {
   getAllRouteWanStatus,
-  getRouteWanConifg,
+  getRouteWanConfig,
   handleRouteWanStatus,
   deleteAndStopRouteWan,
 } from "landscape-types/api/route-wan/route-wan";
@@ -21,7 +21,7 @@ export async function get_all_route_wan_status(): Promise<
 export async function get_route_wan_config(
   id: string,
 ): Promise<RouteWanServiceConfig> {
-  return await getRouteWanConifg(id);
+  return await getRouteWanConfig(id);
 }
 
 export async function update_route_wans_config(

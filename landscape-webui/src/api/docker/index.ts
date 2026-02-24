@@ -8,7 +8,7 @@ import {
   getDockerStatus as _getDockerStatus,
   startDockerStatus as _startDockerStatus,
   stopDockerStatus as _stopDockerStatus,
-  getAllContainerSummarys,
+  getAllContainers,
   startContainer as _startContainer,
   stopContainer as _stopContainer,
   removeContainer as _removeContainer,
@@ -38,7 +38,7 @@ export async function stop_docker_service(): Promise<ServiceStatus> {
 export async function get_docker_container_summarys(): Promise<
   DockerContainerSummary[]
 > {
-  const data: any[] = (await getAllContainerSummarys()) as any;
+  const data: any[] = (await getAllContainers()) as any;
   return data.map((d: any) => new DockerContainerSummary(d));
 }
 

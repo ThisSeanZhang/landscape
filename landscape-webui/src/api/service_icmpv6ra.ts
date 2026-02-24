@@ -2,7 +2,7 @@ import { ServiceStatus } from "@/lib/services";
 import type { IPV6RAServiceConfig } from "landscape-types/api/schemas";
 import {
   getAllIcmpv6raStatus,
-  getIfaceIcmpv6Conifg,
+  getIfaceIcmpv6Config,
   handleIfaceIcmpv6,
   deleteAndStopIfaceIcmpv6,
   getAllIcmpv6raAssignedIps,
@@ -25,7 +25,7 @@ export async function get_all_icmpv6ra_status(): Promise<
 export async function get_iface_icmpv6ra_config(
   iface_name: string,
 ): Promise<IPV6RAServiceConfig> {
-  return await getIfaceIcmpv6Conifg(iface_name);
+  return await getIfaceIcmpv6Config(iface_name);
 }
 
 export async function update_icmpv6ra_config(

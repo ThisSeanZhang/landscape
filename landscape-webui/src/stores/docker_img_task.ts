@@ -18,7 +18,7 @@ export const useDockerImgTask = defineStore("docker-img_task", () => {
 
     const token = localStorage.getItem(LANDSCAPE_TOKEN_KEY);
     socket.value = new WebSocket(
-      `wss://${window.location.hostname}:${window.location.port}/api/sock/docker/listen_docker_task?token=${token}`,
+      `wss://${window.location.hostname}:${window.location.port}/api/ws/docker/tasks?token=${token}`,
     );
     socket.value.addEventListener("open", function (event) {
       socket.value?.send("Hello Server!");

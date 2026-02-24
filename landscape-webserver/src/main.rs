@@ -58,18 +58,21 @@ use utoipa_scalar::{Scalar, Servable};
 
 mod api;
 mod auth;
-mod config_service;
+mod devices;
+mod dns;
 mod docker;
 mod dump;
 mod error;
-mod iface;
-mod metric;
+mod firewall;
+mod flow;
+mod geo;
+mod interfaces;
+mod metrics;
+mod nat;
 mod openapi;
 mod redirect_https;
-mod service;
-mod sys_service;
-mod sysinfo;
-
+mod services;
+mod system;
 mod websocket;
 
 use tracing::info;
@@ -345,26 +348,45 @@ async fn run(home_path: PathBuf, config: RuntimeConfig) -> LdResult<()> {
 
     let auth_share = Arc::new(config.auth.clone());
     auth::output_sys_token(&config.auth).await;
-    // Build OpenApiRouter for annotated modules, then split into Router + OpenAPI spec
-    let (openapi_config_router, _) = openapi::build_openapi_router().split_for_parts();
-    let (openapi_services_router, _) = openapi::build_services_openapi_router().split_for_parts();
-    let (openapi_iface_router, _) = openapi::build_iface_openapi_router().split_for_parts();
-    let (openapi_metric_router, _) = openapi::build_metric_openapi_router().split_for_parts();
-    let (openapi_sys_service_router, _) =
-        openapi::build_sys_service_openapi_router().split_for_parts();
+    // Build OpenApiRouter for each domain, then split into plain Router + discard local spec
+    let (interfaces_router, _) = openapi::build_interfaces_openapi_router().split_for_parts();
+    let (system_router, _) = openapi::build_system_openapi_router().split_for_parts();
+    let (services_router, _) = openapi::build_services_openapi_router().split_for_parts();
+    let (dns_router, _) = openapi::build_dns_openapi_router().split_for_parts();
+    let (firewall_router, _) = openapi::build_firewall_openapi_router().split_for_parts();
+    let (flow_router, _) = openapi::build_flow_openapi_router().split_for_parts();
+    let (nat_router, _) = openapi::build_nat_openapi_router().split_for_parts();
+    let (geo_router, _) = openapi::build_geo_openapi_router().split_for_parts();
+    let (devices_router, _) = openapi::build_devices_openapi_router().split_for_parts();
+    let (docker_router, _) = openapi::build_docker_openapi_router().split_for_parts();
+    let (metrics_router, _) = openapi::build_metrics_openapi_router().split_for_parts();
     let openapi = openapi::build_full_openapi_spec();
 
-    let source_route = Router::new()
-        .merge(openapi_iface_router)
-        .nest("/metric", openapi_metric_router)
-        .nest("/sys_service", openapi_sys_service_router)
-        .nest("/config", openapi_config_router)
-        .nest("/services", openapi_services_router)
+    // /system combines two routers with different state types:
+    // - system_router (LandscapeApp state): /config/...
+    // - sysinfo (WatchResource state): /info/...
+    let system_combined = system_router
         .with_state(landscape_app_status.clone())
-        .nest("/sysinfo", sysinfo::get_sys_info_route())
+        .merge(system::info::get_sys_info_route());
+
+    // /api/v1 — all authenticated HTTP routes (Bearer token)
+    let v1_route = Router::new()
+        .nest("/interfaces", interfaces_router)
+        .nest("/services", services_router)
+        .nest("/dns", dns_router)
+        .nest("/firewall", firewall_router)
+        .nest("/flow", flow_router)
+        .nest("/nat", nat_router)
+        .nest("/geo", geo_router)
+        .nest("/devices", devices_router)
+        .nest("/docker", docker_router)
+        .nest("/metrics", metrics_router)
+        .with_state(landscape_app_status.clone())
+        .nest("/system", system_combined)
         .route_layer(axum::middleware::from_fn_with_state(auth_share.clone(), auth::auth_handler));
 
-    let sockets_route = Router::new()
+    // /api/ws — WebSocket routes (query string token auth)
+    let ws_route = Router::new()
         .nest("/docker", websocket::docker_task::get_docker_images_socks_paths().await)
         .nest("/pty", websocket::web_pty::get_web_pty_socks_paths().await)
         .with_state(landscape_app_status.clone())
@@ -375,13 +397,9 @@ async fn run(home_path: PathBuf, config: RuntimeConfig) -> LdResult<()> {
         ));
 
     let api_route = Router::new()
-        // 资源路由 需要认证
-        .nest("/src", source_route)
-        // 认证方式有别
-        .nest("/sock", sockets_route)
-        // 认证路由
+        .nest("/v1", v1_route)
+        .nest("/ws", ws_route)
         .nest("/auth", auth::get_auth_route(auth_share))
-        // OpenAPI Scalar UI (no auth required)
         .merge(Scalar::with_url("/scalar", openapi));
     let app = Router::new()
         .nest("/api", api_route)

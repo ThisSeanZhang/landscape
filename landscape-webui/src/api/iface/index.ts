@@ -1,16 +1,16 @@
 import {
-  getIfaces,
-  getNewIfaces,
+  getIfacesOld,
+  getIfacesNew,
   getWanIfaces,
   manageIface,
   getCpuBalance,
   setCpuBalance,
-} from "landscape-types/api/iface/iface";
+} from "landscape-types/api/interfaces/interfaces";
 import type { IfaceCpuSoftBalance } from "landscape-types/api/schemas";
 
 export {
-  getIfaces as ifaces,
-  getNewIfaces as new_ifaces,
+  getIfacesOld as ifaces,
+  getIfacesNew as new_ifaces,
   getWanIfaces as get_wan_ifaces,
   manageIface as manage_iface,
   getCpuBalance as get_iface_cpu_balance,

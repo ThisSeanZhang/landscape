@@ -15,7 +15,7 @@ use tokio::sync::{broadcast, mpsc};
 use crate::LandscapeApp;
 
 pub async fn get_web_pty_socks_paths() -> Router<LandscapeApp> {
-    Router::new().route("/create_session", get(create_pty))
+    Router::new().route("/sessions", get(create_pty))
 }
 
 async fn create_pty(

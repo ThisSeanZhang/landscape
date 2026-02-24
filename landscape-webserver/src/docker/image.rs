@@ -19,7 +19,7 @@ pub fn get_docker_images_paths() -> OpenApiRouter<LandscapeApp> {
 
 #[utoipa::path(
     get,
-    path = "/docker/images/tasks",
+    path = "/images/tasks",
     tag = "Docker Images",
     operation_id = "get_docker_pull_tasks",
     responses((status = 200, body = inline(CommonApiResp<Vec<PullImgTask>>)))
@@ -32,7 +32,7 @@ async fn get_current_task(
 
 #[utoipa::path(
     get,
-    path = "/docker/images",
+    path = "/images",
     tag = "Docker Images",
     operation_id = "get_all_docker_images",
     responses((status = 200, body = inline(CommonApiResp<serde_json::Value>)))
@@ -52,7 +52,7 @@ async fn get_all_images() -> LandscapeApiResult<Vec<ImageSummary>> {
 
 #[utoipa::path(
     post,
-    path = "/docker/images/pull",
+    path = "/images/pull",
     tag = "Docker Images",
     operation_id = "pull_docker_image",
     request_body = PullImageReq,
@@ -68,10 +68,10 @@ async fn pull_image_by_image_name(
 
 #[utoipa::path(
     delete,
-    path = "/docker/images/id/{image_id}",
+    path = "/images/{id}",
     tag = "Docker Images",
     operation_id = "delete_docker_image",
-    params(("image_id" = String, Path, description = "Image ID")),
+    params(("id" = String, Path, description = "Image ID")),
     responses((status = 200, description = "Success"))
 )]
 async fn delete_image_by_id(Path(image_id): Path<String>) -> LandscapeApiResult<()> {

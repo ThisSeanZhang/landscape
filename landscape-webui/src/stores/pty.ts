@@ -159,7 +159,7 @@ export const usePtyStore = defineStore("pty", () => {
 
     initMasterTerminal();
 
-    const url = `wss://${window.location.hostname}:${window.location.port}/api/sock/pty/create_session?${objToQuery(config.value)}`;
+    const url = `wss://${window.location.hostname}:${window.location.port}/api/ws/pty/sessions?${objToQuery(config.value)}`;
     const ws = new WebSocket(url);
 
     ws.onopen = () => {

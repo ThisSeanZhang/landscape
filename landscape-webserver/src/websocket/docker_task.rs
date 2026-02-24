@@ -13,7 +13,7 @@ use tokio::sync::broadcast;
 use crate::LandscapeApp;
 
 pub async fn get_docker_images_socks_paths() -> Router<LandscapeApp> {
-    Router::new().route("/listen_docker_task", get(listen_task_event))
+    Router::new().route("/tasks", get(listen_task_event))
 }
 
 async fn listen_task_event(

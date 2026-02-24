@@ -1,13 +1,13 @@
 import { NetDev } from "@/lib/dev";
 import {
-  getIfaces,
+  getIfacesOld,
   setController as add_controller,
   createBridge,
   deleteBridge as delete_bridge,
   changeZone as change_zone,
   changeDevStatus as change_iface_status,
   changeWifiMode as change_wifi_mode,
-} from "landscape-types/api/iface/iface";
+} from "landscape-types/api/interfaces/interfaces";
 
 export {
   add_controller,
@@ -18,7 +18,7 @@ export {
 };
 
 export async function ifaces(): Promise<NetDev[]> {
-  let data = await getIfaces();
+  let data = await getIfacesOld();
   return data.map((e: any) => new NetDev(e));
 }
 

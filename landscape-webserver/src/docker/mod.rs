@@ -30,7 +30,7 @@ mod network;
 pub fn get_docker_paths() -> OpenApiRouter<LandscapeApp> {
     OpenApiRouter::new()
         .routes(routes!(get_docker_status, start_docker_status, stop_docker_status))
-        .routes(routes!(get_all_container_summarys))
+        .routes(routes!(get_all_containers))
         .routes(routes!(run_container))
         .routes(routes!(run_cmd_container))
         .routes(routes!(start_container))
@@ -42,7 +42,7 @@ pub fn get_docker_paths() -> OpenApiRouter<LandscapeApp> {
 
 #[utoipa::path(
     get,
-    path = "/docker/status",
+    path = "/service",
     tag = "Docker",
     operation_id = "get_docker_status",
     responses((status = 200, body = inline(CommonApiResp<ServiceStatus>)))
@@ -55,7 +55,7 @@ async fn get_docker_status(
 
 #[utoipa::path(
     post,
-    path = "/docker/status",
+    path = "/service",
     tag = "Docker",
     operation_id = "start_docker_status",
     responses((status = 200, body = inline(CommonApiResp<ServiceStatus>)))
@@ -69,7 +69,7 @@ async fn start_docker_status(
 
 #[utoipa::path(
     delete,
-    path = "/docker/status",
+    path = "/service",
     tag = "Docker",
     operation_id = "stop_docker_status",
     responses((status = 200, body = inline(CommonApiResp<ServiceStatus>)))
@@ -83,12 +83,12 @@ async fn stop_docker_status(
 
 #[utoipa::path(
     get,
-    path = "/docker/container_summarys",
+    path = "/containers",
     tag = "Docker",
-    operation_id = "get_all_container_summarys",
+    operation_id = "get_all_containers",
     responses((status = 200, body = inline(CommonApiResp<serde_json::Value>)))
 )]
-async fn get_all_container_summarys() -> LandscapeApiResult<Vec<ContainerSummary>> {
+async fn get_all_containers() -> LandscapeApiResult<Vec<ContainerSummary>> {
     let mut container_summarys: Vec<ContainerSummary> = vec![];
     let docker = Docker::connect_with_socket_defaults();
 
@@ -104,7 +104,7 @@ async fn get_all_container_summarys() -> LandscapeApiResult<Vec<ContainerSummary
 
 #[utoipa::path(
     post,
-    path = "/docker/run/{container_name}",
+    path = "/containers/run/{container_name}",
     tag = "Docker",
     operation_id = "run_container",
     params(("container_name" = String, Path, description = "Container name")),
@@ -140,7 +140,7 @@ async fn run_container(
 
 #[utoipa::path(
     post,
-    path = "/docker/run_cmd",
+    path = "/containers/run_cmd",
     tag = "Docker",
     operation_id = "run_cmd_container",
     request_body = DockerCmd,
@@ -158,7 +158,7 @@ async fn run_cmd_container(
 
 #[utoipa::path(
     post,
-    path = "/docker/start/{container_name}",
+    path = "/containers/start/{container_name}",
     tag = "Docker",
     operation_id = "start_container",
     params(("container_name" = String, Path, description = "Container name")),
@@ -177,7 +177,7 @@ async fn start_container(Path(container_name): Path<String>) -> LandscapeApiResu
 
 #[utoipa::path(
     post,
-    path = "/docker/stop/{container_name}",
+    path = "/containers/stop/{container_name}",
     tag = "Docker",
     operation_id = "stop_container",
     params(("container_name" = String, Path, description = "Container name")),
@@ -196,7 +196,7 @@ async fn stop_container(Path(container_name): Path<String>) -> LandscapeApiResul
 
 #[utoipa::path(
     post,
-    path = "/docker/remove/{container_name}",
+    path = "/containers/remove/{container_name}",
     tag = "Docker",
     operation_id = "remove_container",
     params(("container_name" = String, Path, description = "Container name")),

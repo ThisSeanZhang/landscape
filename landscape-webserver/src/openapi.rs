@@ -3,34 +3,34 @@ use utoipa::OpenApi;
 use utoipa_axum::router::OpenApiRouter;
 
 use crate::auth::get_auth_openapi_router;
-use crate::config_service::dns_redirect::get_dns_redirect_config_paths;
-use crate::config_service::dns_rule::get_dns_rule_config_paths;
-use crate::config_service::dns_upstream::get_dns_upstream_config_paths;
-use crate::config_service::dst_ip_rule::get_dst_ip_rule_config_paths;
-use crate::config_service::enrolled_device::get_enrolled_device_config_paths;
-use crate::config_service::firewall_blacklist::get_firewall_blacklist_config_paths;
-use crate::config_service::firewall_rule::get_firewall_rule_config_paths;
-use crate::config_service::flow_rule::get_flow_rule_config_paths;
-use crate::config_service::geo_ip::get_geo_ip_config_paths;
-use crate::config_service::geo_site::get_geo_site_config_paths;
-use crate::config_service::static_nat_mapping::get_static_nat_mapping_config_paths;
+use crate::devices::get_enrolled_device_config_paths;
+use crate::dns::redirects::get_dns_redirect_config_paths;
+use crate::dns::rules::get_dns_rule_config_paths;
+use crate::dns::service::get_dns_service_paths;
+use crate::dns::upstreams::get_dns_upstream_config_paths;
 use crate::docker::get_docker_paths;
-use crate::iface::get_iface_paths;
-use crate::metric::get_metric_paths;
-use crate::service::dhcp_v4::get_dhcp_v4_service_paths;
-use crate::service::firewall::get_firewall_service_paths;
-use crate::service::icmp_ra::get_iface_icmpv6ra_paths;
-use crate::service::ipconfig::get_iface_ipconfig_paths;
-use crate::service::ipv6pd::get_iface_pdclient_paths;
-use crate::service::mss_clamp::get_mss_clamp_service_paths;
-use crate::service::nat::get_iface_nat_paths;
-use crate::service::pppd::get_iface_pppd_paths;
-use crate::service::route::get_route_paths;
-use crate::service::route_lan::get_route_lan_paths;
-use crate::service::route_wan::get_route_wan_paths;
-use crate::service::wifi::get_wifi_service_paths;
-use crate::sys_service::config::get_sys_config_paths;
-use crate::sys_service::dns_service::get_dns_service_paths;
+use crate::firewall::blacklists::get_firewall_blacklist_config_paths;
+use crate::firewall::rules::get_firewall_rule_config_paths;
+use crate::flow::dst_ip_rules::get_dst_ip_rule_config_paths;
+use crate::flow::rules::get_flow_rule_config_paths;
+use crate::geo::ips::get_geo_ip_config_paths;
+use crate::geo::sites::get_geo_site_config_paths;
+use crate::interfaces::get_iface_paths;
+use crate::metrics::get_metric_paths;
+use crate::nat::static_mappings::get_static_nat_mapping_config_paths;
+use crate::services::dhcp_v4::get_dhcp_v4_service_paths;
+use crate::services::firewall::get_firewall_service_paths;
+use crate::services::icmp_ra::get_iface_icmpv6ra_paths;
+use crate::services::ip::get_iface_ipconfig_paths;
+use crate::services::ipv6pd::get_iface_pdclient_paths;
+use crate::services::lan::get_route_lan_paths;
+use crate::services::mss_clamp::get_mss_clamp_service_paths;
+use crate::services::nat::get_iface_nat_paths;
+use crate::services::pppoe::get_iface_pppd_paths;
+use crate::services::routing::get_route_paths;
+use crate::services::wan::get_route_wan_paths;
+use crate::services::wifi::get_wifi_service_paths;
+use crate::system::config::get_sys_config_paths;
 use crate::LandscapeApp;
 
 #[derive(OpenApi)]
@@ -42,17 +42,9 @@ use crate::LandscapeApp;
     ),
     tags(
         (name = "Auth", description = "Authentication"),
-        (name = "DNS Rules", description = "DNS rule configuration"),
-        (name = "DNS Redirects", description = "DNS redirect configuration"),
-        (name = "DNS Upstreams", description = "DNS upstream configuration"),
-        (name = "Flow Rules", description = "Flow rule configuration"),
-        (name = "Firewall Rules", description = "Firewall rule configuration"),
-        (name = "Firewall Blacklists", description = "Firewall blacklist configuration"),
-        (name = "Destination IP Rules", description = "Destination IP rule configuration"),
-        (name = "Static NAT Mappings", description = "Static NAT mapping configuration"),
-        (name = "Enrolled Devices", description = "Enrolled device management"),
-        (name = "Geo Sites", description = "Geo site configuration"),
-        (name = "Geo IPs", description = "Geo IP configuration"),
+        (name = "Interfaces", description = "Network interface management"),
+        (name = "System Config", description = "System configuration management"),
+        (name = "System Info", description = "System information and status"),
         (name = "Route", description = "Route tracing and cache management"),
         (name = "Route WAN", description = "WAN route service management"),
         (name = "Route LAN", description = "LAN route service management"),
@@ -65,14 +57,22 @@ use crate::LandscapeApp;
         (name = "IPv6 PD", description = "IPv6 prefix delegation service"),
         (name = "ICMPv6 RA", description = "ICMPv6 router advertisement service"),
         (name = "NAT Service", description = "NAT service"),
-        (name = "Iface", description = "Network interface management"),
-        (name = "System Config", description = "System configuration management"),
         (name = "DNS Service", description = "DNS service management"),
-        (name = "System Info", description = "System information and status"),
-        (name = "Metric", description = "Metric data and statistics"),
+        (name = "DNS Rules", description = "DNS rule configuration"),
+        (name = "DNS Redirects", description = "DNS redirect configuration"),
+        (name = "DNS Upstreams", description = "DNS upstream configuration"),
+        (name = "Firewall Rules", description = "Firewall rule configuration"),
+        (name = "Firewall Blacklists", description = "Firewall blacklist configuration"),
+        (name = "Flow Rules", description = "Flow rule configuration"),
+        (name = "Destination IP Rules", description = "Destination IP rule configuration"),
+        (name = "Static NAT Mappings", description = "Static NAT mapping configuration"),
+        (name = "Geo Sites", description = "Geo site configuration"),
+        (name = "Geo IPs", description = "Geo IP configuration"),
+        (name = "Enrolled Devices", description = "Enrolled device management"),
         (name = "Docker", description = "Docker container management"),
         (name = "Docker Images", description = "Docker image management"),
         (name = "Docker Networks", description = "Docker network management"),
+        (name = "Metric", description = "Metric data and statistics"),
     ),
     components(schemas(
         landscape_common::config::geo::GeoFileCacheKey,
@@ -98,42 +98,19 @@ use crate::LandscapeApp;
 )]
 pub struct ApiDoc;
 
-/// Build the OpenApiRouter with all annotated config modules merged.
-/// Used by main.rs for serving and by tests for spec export.
-pub fn build_openapi_router() -> OpenApiRouter<LandscapeApp> {
-    OpenApiRouter::with_openapi(ApiDoc::openapi())
-        .merge(get_dns_rule_config_paths())
-        .merge(get_flow_rule_config_paths())
-        .merge(get_dns_redirect_config_paths())
-        .merge(get_dns_upstream_config_paths())
-        .merge(get_firewall_rule_config_paths())
-        .merge(get_firewall_blacklist_config_paths())
-        .merge(get_dst_ip_rule_config_paths())
-        .merge(get_static_nat_mapping_config_paths())
-        .merge(get_enrolled_device_config_paths())
-        .merge(get_geo_site_config_paths())
-        .merge(get_geo_ip_config_paths())
-}
+// ── Domain-based OpenApiRouter builders ──────────────────────────────
 
-/// Build the OpenApiRouter for iface module.
-pub fn build_iface_openapi_router() -> OpenApiRouter<LandscapeApp> {
+/// /interfaces — network interface management
+pub fn build_interfaces_openapi_router() -> OpenApiRouter<LandscapeApp> {
     OpenApiRouter::new().merge(get_iface_paths())
 }
 
-/// Build the OpenApiRouter for metric module.
-pub fn build_metric_openapi_router() -> OpenApiRouter<LandscapeApp> {
-    OpenApiRouter::new().merge(get_metric_paths())
+/// /system — system info + global config (sysinfo has its own state type, handled separately)
+pub fn build_system_openapi_router() -> OpenApiRouter<LandscapeApp> {
+    OpenApiRouter::new().merge(get_sys_config_paths())
 }
 
-/// Build the OpenApiRouter for sys_service modules (config, dns_service, docker).
-pub fn build_sys_service_openapi_router() -> OpenApiRouter<LandscapeApp> {
-    OpenApiRouter::new()
-        .merge(get_sys_config_paths())
-        .merge(get_dns_service_paths())
-        .merge(get_docker_paths())
-}
-
-/// Build the OpenApiRouter with all annotated service modules merged.
+/// /services — per-interface network services
 pub fn build_services_openapi_router() -> OpenApiRouter<LandscapeApp> {
     OpenApiRouter::new()
         .merge(get_route_paths())
@@ -150,6 +127,54 @@ pub fn build_services_openapi_router() -> OpenApiRouter<LandscapeApp> {
         .merge(get_iface_nat_paths())
 }
 
+/// /dns — DNS service + rules + redirects + upstreams
+pub fn build_dns_openapi_router() -> OpenApiRouter<LandscapeApp> {
+    OpenApiRouter::new()
+        .merge(get_dns_service_paths())
+        .merge(get_dns_rule_config_paths())
+        .merge(get_dns_redirect_config_paths())
+        .merge(get_dns_upstream_config_paths())
+}
+
+/// /firewall — firewall rules + blacklists
+pub fn build_firewall_openapi_router() -> OpenApiRouter<LandscapeApp> {
+    OpenApiRouter::new()
+        .merge(get_firewall_rule_config_paths())
+        .merge(get_firewall_blacklist_config_paths())
+}
+
+/// /flow — flow rules + destination IP rules
+pub fn build_flow_openapi_router() -> OpenApiRouter<LandscapeApp> {
+    OpenApiRouter::new().merge(get_flow_rule_config_paths()).merge(get_dst_ip_rule_config_paths())
+}
+
+/// /nat — static NAT mappings
+pub fn build_nat_openapi_router() -> OpenApiRouter<LandscapeApp> {
+    OpenApiRouter::new().merge(get_static_nat_mapping_config_paths())
+}
+
+/// /geo — geo sites + geo IPs
+pub fn build_geo_openapi_router() -> OpenApiRouter<LandscapeApp> {
+    OpenApiRouter::new().merge(get_geo_site_config_paths()).merge(get_geo_ip_config_paths())
+}
+
+/// /devices — enrolled devices
+pub fn build_devices_openapi_router() -> OpenApiRouter<LandscapeApp> {
+    OpenApiRouter::new().merge(get_enrolled_device_config_paths())
+}
+
+/// /docker — Docker service + containers + images + networks
+pub fn build_docker_openapi_router() -> OpenApiRouter<LandscapeApp> {
+    OpenApiRouter::new().merge(get_docker_paths())
+}
+
+/// /metrics — monitoring metrics
+pub fn build_metrics_openapi_router() -> OpenApiRouter<LandscapeApp> {
+    OpenApiRouter::new().merge(get_metric_paths())
+}
+
+// ── OpenAPI spec assembly ────────────────────────────────────────────
+
 /// Prepend a prefix to all OpenAPI paths in the spec.
 fn prefix_paths(openapi: &mut utoipa::openapi::OpenApi, prefix: &str) {
     let old_paths: std::collections::BTreeMap<String, PathItem> =
@@ -159,43 +184,77 @@ fn prefix_paths(openapi: &mut utoipa::openapi::OpenApi, prefix: &str) {
     }
 }
 
-/// Build the full OpenAPI spec, including modules with different state types (e.g. auth).
-/// Adds the correct URL prefixes so the spec matches the actual served routes.
+/// Build the full OpenAPI spec with correct URL prefixes matching actual served routes.
 pub fn build_full_openapi_spec() -> utoipa::openapi::OpenApi {
-    // Config modules (state = LandscapeApp) — paths are relative (e.g. /dns_rules)
-    let (_, mut config_openapi) = build_openapi_router().split_for_parts();
-    prefix_paths(&mut config_openapi, "/api/src/config");
+    // We need one router that carries the ApiDoc base spec
+    let (_, mut spec) =
+        OpenApiRouter::<LandscapeApp>::with_openapi(ApiDoc::openapi()).split_for_parts();
 
-    // Auth module (state = Arc<AuthRuntimeConfig>) — paths are relative (e.g. /login)
+    // Auth (state = Arc<AuthRuntimeConfig>)
     let (_, mut auth_openapi) = get_auth_openapi_router().split_for_parts();
     prefix_paths(&mut auth_openapi, "/api/auth");
+    spec.merge(auth_openapi);
 
-    // Service modules (state = LandscapeApp) — paths are relative (e.g. /route_wans)
+    // /api/v1/system — system config (LandscapeApp state)
+    let (_, mut system_openapi) = build_system_openapi_router().split_for_parts();
+    prefix_paths(&mut system_openapi, "/api/v1/system");
+    spec.merge(system_openapi);
+
+    // /api/v1/system — sysinfo (special WatchResource state)
+    let (_, mut sysinfo_openapi) =
+        crate::system::info::build_sysinfo_openapi_router().split_for_parts();
+    prefix_paths(&mut sysinfo_openapi, "/api/v1/system");
+    spec.merge(sysinfo_openapi);
+
+    // /api/v1/interfaces
+    let (_, mut interfaces_openapi) = build_interfaces_openapi_router().split_for_parts();
+    prefix_paths(&mut interfaces_openapi, "/api/v1/interfaces");
+    spec.merge(interfaces_openapi);
+
+    // /api/v1/services
     let (_, mut services_openapi) = build_services_openapi_router().split_for_parts();
-    prefix_paths(&mut services_openapi, "/api/src/services");
+    prefix_paths(&mut services_openapi, "/api/v1/services");
+    spec.merge(services_openapi);
 
-    // Iface module (state = LandscapeApp) — paths include /iface prefix (e.g. /iface, /iface/new)
-    let (_, mut iface_openapi) = build_iface_openapi_router().split_for_parts();
-    prefix_paths(&mut iface_openapi, "/api/src");
+    // /api/v1/dns
+    let (_, mut dns_openapi) = build_dns_openapi_router().split_for_parts();
+    prefix_paths(&mut dns_openapi, "/api/v1/dns");
+    spec.merge(dns_openapi);
 
-    // Metric module (state = LandscapeApp) — paths are relative (e.g. /status, /connects)
-    let (_, mut metric_openapi) = build_metric_openapi_router().split_for_parts();
-    prefix_paths(&mut metric_openapi, "/api/src/metric");
+    // /api/v1/firewall
+    let (_, mut firewall_openapi) = build_firewall_openapi_router().split_for_parts();
+    prefix_paths(&mut firewall_openapi, "/api/v1/firewall");
+    spec.merge(firewall_openapi);
 
-    // Sys service modules (config, dns_service, docker) — paths are relative (e.g. /config/export)
-    let (_, mut sys_service_openapi) = build_sys_service_openapi_router().split_for_parts();
-    prefix_paths(&mut sys_service_openapi, "/api/src/sys_service");
+    // /api/v1/flow
+    let (_, mut flow_openapi) = build_flow_openapi_router().split_for_parts();
+    prefix_paths(&mut flow_openapi, "/api/v1/flow");
+    spec.merge(flow_openapi);
 
-    // Sysinfo module (special state type) — paths are relative (e.g. /sys, /interval_fetch_info)
-    let (_, mut sysinfo_openapi) = crate::sysinfo::build_sysinfo_openapi_router().split_for_parts();
-    prefix_paths(&mut sysinfo_openapi, "/api/src/sysinfo");
+    // /api/v1/nat
+    let (_, mut nat_openapi) = build_nat_openapi_router().split_for_parts();
+    prefix_paths(&mut nat_openapi, "/api/v1/nat");
+    spec.merge(nat_openapi);
 
-    config_openapi.merge(auth_openapi);
-    config_openapi.merge(services_openapi);
-    config_openapi.merge(iface_openapi);
-    config_openapi.merge(metric_openapi);
-    config_openapi.merge(sys_service_openapi);
-    config_openapi.merge(sysinfo_openapi);
+    // /api/v1/geo
+    let (_, mut geo_openapi) = build_geo_openapi_router().split_for_parts();
+    prefix_paths(&mut geo_openapi, "/api/v1/geo");
+    spec.merge(geo_openapi);
+
+    // /api/v1/devices
+    let (_, mut devices_openapi) = build_devices_openapi_router().split_for_parts();
+    prefix_paths(&mut devices_openapi, "/api/v1/devices");
+    spec.merge(devices_openapi);
+
+    // /api/v1/docker
+    let (_, mut docker_openapi) = build_docker_openapi_router().split_for_parts();
+    prefix_paths(&mut docker_openapi, "/api/v1/docker");
+    spec.merge(docker_openapi);
+
+    // /api/v1/metrics
+    let (_, mut metrics_openapi) = build_metrics_openapi_router().split_for_parts();
+    prefix_paths(&mut metrics_openapi, "/api/v1/metrics");
+    spec.merge(metrics_openapi);
 
     // Add x-tagGroups for Scalar UI sidebar grouping
     let tag_groups = serde_json::json!([
@@ -204,24 +263,15 @@ pub fn build_full_openapi_spec() -> utoipa::openapi::OpenApi {
             "tags": ["Auth"]
         },
         {
-            "name": "Network Interface",
-            "tags": ["Iface"]
+            "name": "System",
+            "tags": [
+                "System Config",
+                "System Info"
+            ]
         },
         {
-            "name": "Configuration",
-            "tags": [
-                "DNS Rules",
-                "DNS Redirects",
-                "DNS Upstreams",
-                "Flow Rules",
-                "Firewall Rules",
-                "Firewall Blacklists",
-                "Destination IP Rules",
-                "Static NAT Mappings",
-                "Enrolled Devices",
-                "Geo Sites",
-                "Geo IPs"
-            ]
+            "name": "Network Interfaces",
+            "tags": ["Interfaces"]
         },
         {
             "name": "Interface Services",
@@ -241,16 +291,42 @@ pub fn build_full_openapi_spec() -> utoipa::openapi::OpenApi {
             ]
         },
         {
-            "name": "System",
+            "name": "DNS",
             "tags": [
-                "System Config",
-                "System Info",
-                "DNS Service"
+                "DNS Service",
+                "DNS Rules",
+                "DNS Redirects",
+                "DNS Upstreams"
             ]
         },
         {
-            "name": "Metric",
-            "tags": ["Metric"]
+            "name": "Firewall",
+            "tags": [
+                "Firewall Rules",
+                "Firewall Blacklists"
+            ]
+        },
+        {
+            "name": "Flow",
+            "tags": [
+                "Flow Rules",
+                "Destination IP Rules"
+            ]
+        },
+        {
+            "name": "NAT",
+            "tags": ["Static NAT Mappings"]
+        },
+        {
+            "name": "Geo",
+            "tags": [
+                "Geo Sites",
+                "Geo IPs"
+            ]
+        },
+        {
+            "name": "Devices",
+            "tags": ["Enrolled Devices"]
         },
         {
             "name": "Docker",
@@ -259,14 +335,17 @@ pub fn build_full_openapi_spec() -> utoipa::openapi::OpenApi {
                 "Docker Images",
                 "Docker Networks"
             ]
+        },
+        {
+            "name": "Metrics",
+            "tags": ["Metric"]
         }
     ]);
-    config_openapi
-        .extensions
+    spec.extensions
         .get_or_insert_with(Default::default)
         .insert("x-tagGroups".to_string(), tag_groups);
 
-    config_openapi
+    spec
 }
 
 #[cfg(test)]

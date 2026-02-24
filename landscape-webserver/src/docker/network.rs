@@ -13,7 +13,7 @@ pub fn get_docker_networks_paths() -> OpenApiRouter<LandscapeApp> {
 
 #[utoipa::path(
     get,
-    path = "/docker/networks",
+    path = "/networks",
     tag = "Docker Networks",
     operation_id = "get_all_docker_networks",
     responses((status = 200, body = inline(CommonApiResp<Vec<LandscapeDockerNetwork>>)))

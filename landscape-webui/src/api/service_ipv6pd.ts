@@ -2,7 +2,7 @@ import { IPV6PDServiceConfig } from "@/lib/ipv6pd";
 import { ServiceStatus } from "@/lib/services";
 import {
   getAllIpv6pdStatus,
-  getIfacePdConifg,
+  getIfacePdConfig,
   handleIfacePd,
   deleteAndStopIpv6pdService,
   getCurrentIpPrefixInfo,
@@ -25,7 +25,7 @@ export async function get_all_ipv6pd_status(): Promise<
 export async function get_iface_ipv6pd_config(
   iface_name: string,
 ): Promise<IPV6PDServiceConfig> {
-  const data = await getIfacePdConifg(iface_name);
+  const data = await getIfacePdConfig(iface_name);
   return new IPV6PDServiceConfig(data);
 }
 

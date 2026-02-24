@@ -3,11 +3,11 @@ import { ServiceStatus } from "@/lib/services";
 import {
   getAllPppdStatus,
   getAllPppdConfigs,
-  getIfacePppdConifg,
+  getIfacePppdConfig,
   handleIfacePppdConfig,
   deleteAndStopIfacePppd,
   deleteAndStopIfacePppdByAttachIfaceName,
-  getIfacePppdConifgByAttachIfaceName,
+  getIfacePppdConfigByAttachIfaceName,
 } from "landscape-types/api/pppo-e/pppo-e";
 
 export async function get_all_pppd_status(): Promise<
@@ -31,7 +31,7 @@ export async function get_all_iface_pppd_config(): Promise<
 export async function get_iface_pppd_config(
   iface_name: string,
 ): Promise<PPPDServiceConfig> {
-  const data = await getIfacePppdConifg(iface_name);
+  const data = await getIfacePppdConfig(iface_name);
   return data as PPPDServiceConfig;
 }
 
@@ -54,6 +54,6 @@ export async function delete_and_stop_iface_pppd_by_attach_iface_name(
 export async function get_attach_iface_pppd_config(
   iface_name: string,
 ): Promise<PPPDServiceConfig[]> {
-  const data = await getIfacePppdConifgByAttachIfaceName(iface_name);
+  const data = await getIfacePppdConfigByAttachIfaceName(iface_name);
   return data as PPPDServiceConfig[];
 }
