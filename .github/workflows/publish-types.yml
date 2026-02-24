@@ -36,7 +36,6 @@ jobs:
         uses: actions/setup-node@v6
         with:
           node-version: 22
-          registry-url: 'https://registry.npmjs.org'
 
       - name: Install dependencies & generate types
         run: |
@@ -53,7 +52,22 @@ jobs:
           cd landscape-types
           pnpm pkg set version="$VERSION"
 
+      - name: Verify npm token
+        run: |
+          if [ -z "$NPM_TOKEN" ]; then
+            echo "::error::NPM_TOKEN secret is empty!"
+            exit 1
+          fi
+          echo "Token starts with: ${NPM_TOKEN:0:8}..."
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+
       - name: Publish to npm
         run: |
-          echo "//registry.npmjs.org/:_authToken=${{ secrets.NPM_TOKEN }}" > ~/.npmrc
+          echo "//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}" > ~/.npmrc
+          cat ~/.npmrc | head -c 50
+          echo "..."
+          npm whoami --registry https://registry.npmjs.org || echo "whoami failed"
           pnpm --filter @landscape-router/types publish --no-git-checks --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
