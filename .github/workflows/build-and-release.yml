@@ -72,6 +72,17 @@ jobs:
             cp target/${{ matrix.settings.target }}/release/landscape-webserver output/landscape-webserver-${{ matrix.settings.architecture }}
             cp target/${{ matrix.settings.target }}/release/redirect_pkg_handler output/redirect_pkg_handler-${{ matrix.settings.architecture }}
 
+      - name: Export OpenAPI spec
+        if: matrix.settings.architecture == 'aarch64'
+        run: cargo test -p landscape-webserver export_openapi_json -- --nocapture
+
+      - name: Upload OpenAPI spec
+        if: matrix.settings.architecture == 'aarch64'
+        uses: actions/upload-artifact@v4
+        with:
+          name: openapi-spec
+          path: landscape-types/openapi.json
+
       - name: Upload binary
         uses: actions/upload-artifact@v4
         with:
@@ -212,6 +223,7 @@ jobs:
           path: output/*
 
   linux-musl-build:
+    if: startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/build'
     runs-on: ${{ matrix.settings.host }}
     strategy:
       fail-fast: false
@@ -263,11 +275,18 @@ jobs:
           path: output/*
 
   build-front:
+    needs: linux-build
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
+
+      - name: Download OpenAPI spec
+        uses: actions/download-artifact@v4
+        with:
+          name: openapi-spec
+          path: landscape-types
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
@@ -282,6 +301,7 @@ jobs:
         run: |
           mkdir -p output
           pnpm install --frozen-lockfile
+          pnpm --filter landscape-types generate
           pnpm --filter landscape-webui build
           cd landscape-webui
           mkdir static && mv dist/* static/

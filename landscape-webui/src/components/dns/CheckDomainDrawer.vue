@@ -3,7 +3,7 @@ import { ref } from "vue";
 import { useMessage } from "naive-ui";
 import { SearchLocate } from "@vicons/carbon";
 import type {
-  CheckDomain200Data,
+  CheckChainDnsResult,
   CheckDomainParams,
   DNSRedirectRule,
   LandscapeDnsRecordType,
@@ -32,7 +32,7 @@ const req = ref<CheckDomainParams>({
   domain: "",
   record_type: "A",
 });
-const result = ref<CheckDomain200Data>({
+const result = ref<CheckChainDnsResult>({
   redirect_id: undefined,
   rule_id: undefined,
   records: undefined,

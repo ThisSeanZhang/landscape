@@ -12,7 +12,7 @@ import "./style.css";
 
 import App from "./App.vue";
 import { useMessage } from "naive-ui";
-import { setAxiosInstance } from "landscape-types/api/mutator";
+import { setAxiosInstance } from "landscape-types/mutator";
 import { applyInterceptors } from "./api";
 
 declare global {

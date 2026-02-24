@@ -9,9 +9,9 @@ API_DIR="$TYPES_DIR/src/api"
 echo "Exporting OpenAPI spec..."
 cargo test -p landscape-webserver export_openapi_json -- --nocapture
 
-# 2. Clean all generated files (keep only mutator.ts)
+# 2. Full clean generated dir
 echo "Cleaning generated API clients and schemas..."
-find "$API_DIR" -mindepth 1 -maxdepth 1 ! -name 'mutator.ts' -exec rm -rf {} +
+rm -rf "$API_DIR"
 
 # 3. Regenerate via orval
 echo "Running orval..."

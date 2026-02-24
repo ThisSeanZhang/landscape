@@ -13,6 +13,7 @@
     "@vue-flow/core": "^1.43.1",
     "@vue-flow/minimap": "^1.5.3",
     "@vue-flow/node-toolbar": "^1.1.0",
+    "@vueuse/core": "^14.2.1",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/addon-serialize": "^0.14.0",
     "@xterm/xterm": "^6.0.0",
