@@ -14,6 +14,7 @@ use crate::config_service::flow_rule::get_flow_rule_config_paths;
 use crate::config_service::geo_ip::get_geo_ip_config_paths;
 use crate::config_service::geo_site::get_geo_site_config_paths;
 use crate::config_service::static_nat_mapping::get_static_nat_mapping_config_paths;
+use crate::iface::get_iface_paths;
 use crate::service::dhcp_v4::get_dhcp_v4_service_paths;
 use crate::service::firewall::get_firewall_service_paths;
 use crate::service::icmp_ra::get_iface_icmpv6ra_paths;
@@ -60,6 +61,7 @@ use crate::LandscapeApp;
         (name = "IPv6 PD", description = "IPv6 prefix delegation service"),
         (name = "ICMPv6 RA", description = "ICMPv6 router advertisement service"),
         (name = "NAT Service", description = "NAT service"),
+        (name = "Iface", description = "Network interface management"),
     ),
     components(schemas(
         landscape_common::config::geo::GeoFileCacheKey,
@@ -85,6 +87,11 @@ pub fn build_openapi_router() -> OpenApiRouter<LandscapeApp> {
         .merge(get_enrolled_device_config_paths())
         .merge(get_geo_site_config_paths())
         .merge(get_geo_ip_config_paths())
+}
+
+/// Build the OpenApiRouter for iface module.
+pub fn build_iface_openapi_router() -> OpenApiRouter<LandscapeApp> {
+    OpenApiRouter::new().merge(get_iface_paths())
 }
 
 /// Build the OpenApiRouter with all annotated service modules merged.
@@ -128,8 +135,13 @@ pub fn build_full_openapi_spec() -> utoipa::openapi::OpenApi {
     let (_, mut services_openapi) = build_services_openapi_router().split_for_parts();
     prefix_paths(&mut services_openapi, "/api/src/services");
 
+    // Iface module (state = LandscapeApp) — paths include /iface prefix (e.g. /iface, /iface/new)
+    let (_, mut iface_openapi) = build_iface_openapi_router().split_for_parts();
+    prefix_paths(&mut iface_openapi, "/api/src");
+
     config_openapi.merge(auth_openapi);
     config_openapi.merge(services_openapi);
+    config_openapi.merge(iface_openapi);
     config_openapi
 }
 

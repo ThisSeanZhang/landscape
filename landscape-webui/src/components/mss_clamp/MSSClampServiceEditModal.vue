@@ -5,7 +5,7 @@ import {
   get_iface_mss_clamp_config,
   update_mss_clamp_config,
 } from "@/api/service/mss_clamp";
-import { IfaceZoneType } from "landscape-types/common/iface";
+import { IfaceZoneType } from "landscape-types/api/schemas";
 import type { MSSClampServiceConfig } from "landscape-types/api/schemas";
 
 const show_model = defineModel<boolean>("show", { required: true });

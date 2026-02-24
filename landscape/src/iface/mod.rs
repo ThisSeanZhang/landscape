@@ -5,8 +5,7 @@ use futures::stream::TryStreamExt;
 use landscape_common::database::repository::Repository;
 use landscape_common::database::LandscapeServiceDBTrait;
 use landscape_common::dev::LandscapeInterface;
-use landscape_common::iface::dev_wifi::LandscapeWifiInterface;
-pub use landscape_common::iface::{IfaceInfo, IfacesInfo, RawIfaceInfo};
+pub use landscape_common::iface::{IfaceInfo, IfaceTopology, IfacesInfo, RawIfaceInfo};
 use landscape_common::service::controller_service_v2::ConfigController;
 use landscape_common::{
     config::iface::{IfaceCpuSoftBalance, IfaceZoneType, NetworkIfaceConfig, WifiMode},
@@ -16,24 +15,10 @@ use landscape_common::{
 use landscape_database::iface::repository::NetIfaceRepository;
 use landscape_database::provider::LandscapeDBServiceProvider;
 use rtnetlink::new_connection;
-use serde::Serialize;
 
 pub mod config;
 pub mod dev_wifi;
 pub mod ip;
-
-// 前端渲染拓扑节点
-#[derive(Serialize, Debug, Clone)]
-pub struct IfaceTopology {
-    // 配置
-    #[serde(flatten)]
-    pub config: NetworkIfaceConfig,
-    // 当前的状态: 除了 IP 之类的
-    #[serde(flatten)]
-    pub status: LandscapeInterface,
-
-    pub wifi_info: Option<LandscapeWifiInterface>,
-}
 
 pub async fn get_iface_by_name(name: &str) -> Option<LandscapeInterface> {
     let (connection, handle, _) = new_connection().unwrap();

@@ -25,7 +25,7 @@ import { DevStateType, NetDev } from "@/lib/dev";
 import { useIfaceNodeStore } from "@/stores/iface_node";
 import { add_controller, change_iface_status } from "@/api/network";
 import { ServiceExhibitSwitch } from "@/lib/services";
-import { NetworkIfaceConfig } from "landscape-types/common/iface";
+import type { NetworkIfaceConfig } from "landscape-types/api/schemas";
 
 const props = defineProps<{
   config: NetworkIfaceConfig;

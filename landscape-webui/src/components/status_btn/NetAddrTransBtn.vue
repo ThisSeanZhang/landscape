@@ -4,7 +4,7 @@ import { ImportExportRound } from "@vicons/material";
 
 import StatusBtn from "@/components/status_btn/StatusBtn.vue";
 import { useNATConfigStore } from "@/stores/status_nats";
-import { IfaceZoneType } from "landscape-types/common/iface";
+import { IfaceZoneType } from "landscape-types/api/schemas";
 
 const natConfigStore = useNATConfigStore();
 

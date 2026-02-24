@@ -10,7 +10,7 @@ import {
 } from "@/lib/service_ipconfig";
 import { computed, ref } from "vue";
 import IpEdit from "../IpEdit.vue";
-import { IfaceZoneType } from "landscape-types/common/iface";
+import { IfaceZoneType } from "landscape-types/api/schemas";
 
 const show_model = defineModel<boolean>("show", { required: true });
 const emit = defineEmits(["refresh"]);

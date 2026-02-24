@@ -36,8 +36,23 @@ pub struct ChangeZone {
     pub zone: IfaceZoneType,
 }
 
+// 前端渲染拓扑节点
+#[derive(Serialize, Debug, Clone)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+pub struct IfaceTopology {
+    // 配置
+    #[serde(flatten)]
+    pub config: NetworkIfaceConfig,
+    // 当前的状态: 除了 IP 之类的
+    #[serde(flatten)]
+    pub status: LandscapeInterface,
+
+    pub wifi_info: Option<LandscapeWifiInterface>,
+}
+
 /// 已管理的网卡
 #[derive(Serialize, Debug, Clone, TS)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[ts(export, export_to = "common/iface.d.ts")]
 pub struct IfaceInfo {
     /// 持久化的配置
@@ -49,6 +64,7 @@ pub struct IfaceInfo {
 
 /// 未纳入配置的网卡
 #[derive(Serialize, Debug, Clone, TS)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[ts(export, export_to = "common/iface.d.ts")]
 pub struct RawIfaceInfo {
     /// 当前网卡的配置
@@ -57,6 +73,7 @@ pub struct RawIfaceInfo {
 }
 
 #[derive(Clone, Serialize, TS)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[ts(export, export_to = "common/iface.d.ts")]
 pub struct IfacesInfo {
     pub managed: Vec<IfaceInfo>,

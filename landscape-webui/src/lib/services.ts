@@ -1,8 +1,8 @@
-import {
+import type {
   LandscapeInterface,
   LandscapeWifiInterface,
-} from "landscape-types/common/iface";
-import { NetworkIfaceConfig } from "landscape-types/common/iface";
+  NetworkIfaceConfig,
+} from "landscape-types/api/schemas";
 import { NetDev, WLANTypeTag } from "./dev";
 import { ZoneType } from "./service_ipconfig";
 

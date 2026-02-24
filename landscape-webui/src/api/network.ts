@@ -1,57 +1,27 @@
-import { NetDev, WifiMode } from "@/lib/dev";
-import { IfaceZoneType } from "landscape-types/common/iface";
-import axiosService from "../api";
+import { NetDev } from "@/lib/dev";
+import {
+  getIfaces,
+  setController as add_controller,
+  createBridge,
+  deleteBridge as delete_bridge,
+  changeZone as change_zone,
+  changeDevStatus as change_iface_status,
+  changeWifiMode as change_wifi_mode,
+} from "landscape-types/api/iface/iface";
+
+export {
+  add_controller,
+  delete_bridge,
+  change_zone,
+  change_iface_status,
+  change_wifi_mode,
+};
 
 export async function ifaces(): Promise<NetDev[]> {
-  let data = await axiosService.get("iface");
-  // console.log(data.data);
-  return data.data.map((e: any) => new NetDev(e));
+  let data = await getIfaces();
+  return data.map((e: any) => new NetDev(e));
 }
 
-export async function add_controller(data: {
-  link_name: string;
-  link_ifindex: number;
-  master_name: string | undefined;
-  master_ifindex: number | undefined;
-}): Promise<any> {
-  let result = await axiosService.post("iface/controller", data);
-  return result.data;
-}
-
-export async function create_bridge(name: string): Promise<any> {
-  let data = await axiosService.post("iface/bridge", {
-    name,
-  });
-  // console.log(data.data);
-  return data.data;
-}
-
-export async function delete_bridge(name: string): Promise<any> {
-  let data = await axiosService.delete(`iface/bridge/${name}`);
-  // console.log(data.data);
-  return data.data;
-}
-
-export async function change_zone(data: {
-  iface_name: string;
-  zone: IfaceZoneType;
-}): Promise<any> {
-  let result = await axiosService.post("iface/zone", data);
-  return result.data;
-}
-
-export async function change_iface_status(
-  iface_name: string,
-  status: boolean,
-): Promise<any> {
-  let result = await axiosService.post(`iface/${iface_name}/status/${status}`);
-  return result.data;
-}
-
-export async function change_wifi_mode(
-  iface_name: string,
-  mode: WifiMode,
-): Promise<any> {
-  let result = await axiosService.post(`iface/${iface_name}/wifi_mode/${mode}`);
-  return result.data;
+export async function create_bridge(name: string) {
+  return createBridge({ name });
 }

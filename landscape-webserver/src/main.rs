@@ -351,10 +351,11 @@ async fn run(home_path: PathBuf, config: RuntimeConfig) -> LdResult<()> {
     // Build OpenApiRouter for annotated modules, then split into Router + OpenAPI spec
     let (openapi_config_router, _) = openapi::build_openapi_router().split_for_parts();
     let (openapi_services_router, _) = openapi::build_services_openapi_router().split_for_parts();
+    let (openapi_iface_router, _) = openapi::build_iface_openapi_router().split_for_parts();
     let openapi = openapi::build_full_openapi_spec();
 
     let source_route = Router::new()
-        .nest("/iface", iface::get_network_paths().await)
+        .merge(openapi_iface_router)
         .nest("/metric", metric::get_metric_service_paths().await)
         .nest(
             "/sys_service",

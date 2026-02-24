@@ -25,11 +25,11 @@ import { DevStateType, NetDev } from "@/lib/dev";
 import { useIfaceNodeStore } from "@/stores/iface_node";
 import { add_controller, change_iface_status } from "@/api/network";
 import { TopologyServiceExhibitSwitch } from "@/lib/services";
-import {
+import type {
   LandscapeInterface,
   LandscapeWifiInterface,
-} from "landscape-types/common/iface";
-import { NetworkIfaceConfig } from "landscape-types/common/iface";
+  NetworkIfaceConfig,
+} from "landscape-types/api/schemas";
 import { ZoneType } from "@/lib/service_ipconfig";
 
 const props = defineProps<{
@@ -80,8 +80,8 @@ async function remove_controller() {
   await add_controller({
     link_name: props.status.iface_name as string,
     link_ifindex: props.status.index as number,
-    master_name: undefined,
-    master_ifindex: undefined,
+    master_name: null,
+    master_ifindex: null,
   });
   await refresh();
 }
@@ -401,14 +401,14 @@ function has_source_hook() {
     v-model:show="iface_ipv6pd_edit_show"
     :zone="config.zone_type"
     :iface_name="config.name"
-    :mac="status.mac"
+    :mac="status.mac ?? null"
     @refresh="refresh"
   />
   <ICMPRaEditModal
     v-model:show="iface_icmpv6ra_edit_show"
     :zone="config.zone_type"
     :iface_name="config.name"
-    :mac="status.mac"
+    :mac="status.mac ?? null"
     @refresh="refresh"
   />
   <FirewallServiceEditModal

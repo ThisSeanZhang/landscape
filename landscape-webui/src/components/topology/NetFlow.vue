@@ -65,11 +65,9 @@ onConnect(async (params: any) => {
       link_name: dev.name,
       link_ifindex: parseInt(params.target),
       master_ifindex: parseInt(params.source),
-      master_name: master_dev?.name,
+      master_name: master_dev?.name ?? null,
     });
-    if (result) {
-      await ifaceNodeStore.UPDATE_INFO();
-    }
+    await ifaceNodeStore.UPDATE_INFO();
     // 检查 target 是否有
     console.log(params);
   } else {

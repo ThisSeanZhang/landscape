@@ -1,50 +1,24 @@
-import axiosService from "@/api";
 import {
-  IfaceCpuSoftBalance,
-  NetworkIfaceConfig,
-} from "landscape-types/common/iface";
-import { IfacesInfo } from "landscape-types/common/iface";
+  getIfaces,
+  getNewIfaces,
+  getWanIfaces,
+  manageIface,
+  getCpuBalance,
+  setCpuBalance,
+} from "landscape-types/api/iface/iface";
+import type { IfaceCpuSoftBalance } from "landscape-types/api/schemas";
 
-export async function ifaces(): Promise<IfacesInfo> {
-  let data = await axiosService.get("iface");
-  // console.log(data.data);
-  return data.data;
-}
-
-export async function new_ifaces(): Promise<IfacesInfo> {
-  let data = await axiosService.get("iface/new");
-  // console.log(data.data);
-  return data.data;
-}
-
-// TODO: Fix type
-export async function get_wan_ifaces(): Promise<any[]> {
-  let data = await axiosService.get("iface/wan_configs");
-  // console.log(data.data);
-  return data.data;
-}
-
-export async function manage_iface(dev_name: String): Promise<IfacesInfo> {
-  let data = await axiosService.post(`iface/manage/${dev_name}`);
-  // console.log(data.data);
-  return data.data;
-}
-
-export async function get_iface_cpu_balance(
-  dev_name: String,
-): Promise<IfaceCpuSoftBalance | undefined> {
-  let data = await axiosService.get(`iface/${dev_name}/cpu_balance`);
-  // console.log(data.data);
-  return data.data;
-}
+export {
+  getIfaces as ifaces,
+  getNewIfaces as new_ifaces,
+  getWanIfaces as get_wan_ifaces,
+  manageIface as manage_iface,
+  getCpuBalance as get_iface_cpu_balance,
+};
 
 export async function set_iface_cpu_balance(
-  dev_name: String,
+  dev_name: string,
   cpu_balance: IfaceCpuSoftBalance | undefined,
-): Promise<void> {
-  let data = await axiosService.post(`iface/${dev_name}/cpu_balance`, {
-    ...cpu_balance,
-  });
-  // console.log(data.data);
-  return data.data;
+) {
+  return setCpuBalance(dev_name, cpu_balance ?? null);
 }

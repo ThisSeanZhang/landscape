@@ -81,8 +81,8 @@ async function remove_controller() {
   await add_controller({
     link_name: props.node.name as string,
     link_ifindex: props.node.index as number,
-    master_name: undefined,
-    master_ifindex: undefined,
+    master_name: null,
+    master_ifindex: null,
   });
   await refresh();
 }

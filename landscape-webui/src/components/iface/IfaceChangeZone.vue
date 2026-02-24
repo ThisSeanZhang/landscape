@@ -10,7 +10,7 @@ import { stop_and_del_iface_ipv6pd } from "@/api/service_ipv6pd";
 import { stop_and_del_iface_nat } from "@/api/service_nat";
 import { delete_and_stop_iface_pppd_by_attach_iface_name } from "@/api/service_pppd";
 import { ZoneType } from "@/lib/service_ipconfig";
-import { IfaceZoneType } from "landscape-types/common/iface";
+import { IfaceZoneType } from "landscape-types/api/schemas";
 import { ref } from "vue";
 
 const showModal = defineModel<boolean>("show", { required: true });

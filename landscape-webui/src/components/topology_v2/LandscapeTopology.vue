@@ -58,15 +58,13 @@ onConnect(async (params: any) => {
     if (dev.controller_id || dev.controller_name) {
       naive_message.error("此设备已有上级设备了");
     }
-    let result = await add_controller({
+    await add_controller({
       link_name: dev.name,
       link_ifindex: parseInt(params.target),
       master_ifindex: parseInt(params.source),
-      master_name: master_dev?.name,
+      master_name: master_dev?.name ?? null,
     });
-    if (result) {
-      await ifaceNodeStore.UPDATE_INFO();
-    }
+    await ifaceNodeStore.UPDATE_INFO();
     // 检查 target 是否有
     console.log(params);
   } else {
@@ -76,11 +74,9 @@ onConnect(async (params: any) => {
 const controlelr_config = ref<any>({});
 
 async function create_connection() {
-  let result = await add_controller(controlelr_config.value);
+  await add_controller(controlelr_config.value);
   controlelr_config.value = {};
-  if (result) {
-    await ifaceNodeStore.UPDATE_INFO();
-  }
+  await ifaceNodeStore.UPDATE_INFO();
 }
 // onConnect((connection) => {
 //   console.log(connection);
