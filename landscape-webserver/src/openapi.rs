@@ -1,5 +1,6 @@
+use utoipa::openapi::security::{HttpAuthScheme, HttpBuilder, SecurityScheme};
 use utoipa::openapi::PathItem;
-use utoipa::OpenApi;
+use utoipa::{Modify, OpenApi};
 use utoipa_axum::router::OpenApiRouter;
 
 use crate::auth::get_auth_openapi_router;
@@ -10,7 +11,6 @@ use crate::dns::service::get_dns_service_paths;
 use crate::dns::upstreams::get_dns_upstream_config_paths;
 use crate::docker::get_docker_paths;
 use crate::firewall::blacklists::get_firewall_blacklist_config_paths;
-use crate::firewall::rules::get_firewall_rule_config_paths;
 use crate::flow::dst_ip_rules::get_dst_ip_rule_config_paths;
 use crate::flow::rules::get_flow_rule_config_paths;
 use crate::geo::ips::get_geo_ip_config_paths;
@@ -33,8 +33,28 @@ use crate::services::wifi::get_wifi_service_paths;
 use crate::system::config::get_sys_config_paths;
 use crate::LandscapeApp;
 
+struct SecurityAddon;
+
+impl Modify for SecurityAddon {
+    fn modify(&self, openapi: &mut utoipa::openapi::OpenApi) {
+        let components = openapi.components.get_or_insert_with(Default::default);
+        components.add_security_scheme(
+            "bearer_auth",
+            SecurityScheme::Http(
+                HttpBuilder::new()
+                    .scheme(HttpAuthScheme::Bearer)
+                    .bearer_format("JWT")
+                    .description(Some("Login via /api/auth/login, then paste the token here"))
+                    .build(),
+            ),
+        );
+    }
+}
+
 #[derive(OpenApi)]
 #[openapi(
+    modifiers(&SecurityAddon),
+    security(("bearer_auth" = [])),
     info(
         title = "Landscape Router API",
         version = env!("CARGO_PKG_VERSION"),
@@ -61,7 +81,6 @@ use crate::LandscapeApp;
         (name = "DNS Rules", description = "DNS rule configuration"),
         (name = "DNS Redirects", description = "DNS redirect configuration"),
         (name = "DNS Upstreams", description = "DNS upstream configuration"),
-        (name = "Firewall Rules", description = "Firewall rule configuration"),
         (name = "Firewall Blacklists", description = "Firewall blacklist configuration"),
         (name = "Flow Rules", description = "Flow rule configuration"),
         (name = "Destination IP Rules", description = "Destination IP rule configuration"),
@@ -136,10 +155,9 @@ pub fn build_dns_openapi_router() -> OpenApiRouter<LandscapeApp> {
         .merge(get_dns_upstream_config_paths())
 }
 
-/// /firewall — firewall rules + blacklists
+/// /firewall — firewall blacklists (rules temporarily disabled)
 pub fn build_firewall_openapi_router() -> OpenApiRouter<LandscapeApp> {
     OpenApiRouter::new()
-        .merge(get_firewall_rule_config_paths())
         .merge(get_firewall_blacklist_config_paths())
 }
 
@@ -302,7 +320,6 @@ pub fn build_full_openapi_spec() -> utoipa::openapi::OpenApi {
         {
             "name": "Firewall",
             "tags": [
-                "Firewall Rules",
                 "Firewall Blacklists"
             ]
         },

@@ -173,6 +173,7 @@ pub fn get_auth_route(auth: Arc<AuthRuntimeConfig>) -> Router {
     post,
     path = "/login",
     tag = "Auth",
+    security(()),
     request_body = LoginInfo,
     responses(
         (status = 200, body = CommonApiResp<LoginResult>),
