@@ -10,5 +10,5 @@ else
     export DUCKDB_DOWNLOAD_LIB=1
 fi
 
-# Run cargo with any arguments passed to this script
-cargo run "$@"
+# Run cargo with metric-duckdb enabled (dynamic linking) plus any extra arguments
+cargo run --features metric-duckdb "$@"

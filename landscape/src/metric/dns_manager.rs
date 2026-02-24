@@ -1,4 +1,4 @@
-pub use crate::metric::duckdb::DuckMetricStore;
+use crate::metric::MetricStore;
 use landscape_common::event::DnsMetricMessage;
 use landscape_common::metric::dns::{
     DnsHistoryQueryParams, DnsHistoryResponse, DnsLightweightSummaryResponse, DnsMetric,
@@ -8,12 +8,12 @@ use tokio::sync::mpsc;
 
 #[derive(Clone)]
 pub struct DnsMetricManager {
-    metric_store: DuckMetricStore,
+    metric_store: MetricStore,
     msg_tx: mpsc::Sender<DnsMetricMessage>,
 }
 
 impl DnsMetricManager {
-    pub fn with_store(metric_store: DuckMetricStore) -> Self {
+    pub fn with_store(metric_store: MetricStore) -> Self {
         let (msg_tx, mut msg_rx) = mpsc::channel::<DnsMetricMessage>(1024);
         let store_clone = metric_store.clone();
 

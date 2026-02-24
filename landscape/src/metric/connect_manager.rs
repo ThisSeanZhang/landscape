@@ -8,17 +8,17 @@ use landscape_common::metric::connect::{
     ConnectMetricPoint, ConnectRealtimeStatus, IpRealtimeStat, MetricResolution,
 };
 
-use crate::metric::duckdb::DuckMetricStore;
+use crate::metric::MetricStore;
 
 #[derive(Clone)]
 pub struct ConnectMetricManager {
     msg_channel: mpsc::Sender<ConnectMessage>,
-    metric_store: DuckMetricStore,
+    metric_store: MetricStore,
     global_stats: Arc<RwLock<ConnectGlobalStats>>,
 }
 
 impl ConnectMetricManager {
-    pub fn with_store(metric_store: DuckMetricStore) -> Self {
+    pub fn with_store(metric_store: MetricStore) -> Self {
         let (msg_channel, mut message_rx) = mpsc::channel(1024);
 
         let metric_store_clone = metric_store.clone();

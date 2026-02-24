@@ -8,9 +8,17 @@ use tokio::sync::oneshot;
 
 pub mod connect_manager;
 pub mod dns_manager;
+#[cfg(feature = "metric-duckdb")]
 pub mod duckdb;
+pub mod noop_store;
 #[cfg(feature = "polars")]
 pub mod polars;
+
+#[cfg(feature = "metric-duckdb")]
+pub type MetricStore = duckdb::DuckMetricStore;
+#[cfg(not(feature = "metric-duckdb"))]
+pub type MetricStore = noop_store::NoopMetricStore;
+
 use crate::metric::connect_manager::ConnectMetricManager;
 use crate::metric::dns_manager::DnsMetricManager;
 use landscape_common::config::MetricRuntimeConfig;
@@ -23,7 +31,7 @@ pub struct MetricData {
 
 impl MetricData {
     pub async fn new(home_path: PathBuf, config: MetricRuntimeConfig) -> Self {
-        let store = crate::metric::duckdb::DuckMetricStore::new(home_path, config).await;
+        let store = MetricStore::new(home_path, config).await;
         MetricData {
             connect_metric: ConnectMetricManager::with_store(store.clone()),
             dns_metric: DnsMetricManager::with_store(store),

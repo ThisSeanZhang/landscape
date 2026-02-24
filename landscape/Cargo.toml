@@ -69,11 +69,11 @@ portable-pty = { workspace = true }
 # pseudoterminal = { version = "0.2.1", features = ["non-blocking"] }
 
 polars = { workspace = true, features = ["lazy", "parquet"], optional = true }
-duckdb = { workspace = true }
-r2d2 = { workspace = true }
+duckdb = { workspace = true, optional = true }
+r2d2 = { workspace = true, optional = true }
 
 etherparse = { workspace = true }
-dashmap = "6.1.0"
+dashmap = { version = "6.1.0", optional = true }
 
 [dependencies.pnet]
 workspace = true
@@ -81,4 +81,5 @@ workspace = true
 [features]
 default = []
 polars = ["dep:polars"]
-duckdb-bundled = ["duckdb/bundled"]
+metric-duckdb = ["dep:duckdb", "dep:r2d2", "dep:dashmap"]
+duckdb-bundled = ["metric-duckdb", "duckdb/bundled"]
