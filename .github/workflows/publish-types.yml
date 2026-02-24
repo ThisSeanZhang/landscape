@@ -18,15 +18,26 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v5
 
+      - name: Cache OpenAPI spec
+        if: github.event_name == 'push'
+        id: cache-openapi
+        uses: actions/cache@v4
+        with:
+          path: landscape-types/openapi.json
+          key: openapi-spec-${{ hashFiles('landscape-webserver/src/**', 'Cargo.lock') }}
+
       - name: Install system dependencies
+        if: steps.cache-openapi.outputs.cache-hit != 'true'
         run: |
           sudo apt-get update
           sudo apt-get install -y cmake clang curl gcc llvm make pkg-config libelf-dev libclang-dev zlib1g-dev
 
       - name: Setup Rust
+        if: steps.cache-openapi.outputs.cache-hit != 'true'
         uses: dtolnay/rust-toolchain@stable
 
       - name: Generate OpenAPI spec
+        if: steps.cache-openapi.outputs.cache-hit != 'true'
         run: cargo test -p landscape-webserver export_openapi_json -- --nocapture
 
       - name: Setup pnpm
