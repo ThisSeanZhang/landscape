@@ -24,7 +24,10 @@ jobs:
         uses: actions/cache@v4
         with:
           path: landscape-types/openapi.json
-          key: openapi-spec-${{ hashFiles('landscape-webserver/src/**', 'Cargo.lock') }}
+          key: openapi-spec-${{ hashFiles('Cargo.lock') }}-${{ github.sha }}
+          restore-keys: |
+            openapi-spec-${{ hashFiles('Cargo.lock') }}-
+            openapi-spec-
 
       - name: Install system dependencies
         if: steps.cache-openapi.outputs.cache-hit != 'true'
@@ -58,7 +61,8 @@ jobs:
           if [ -n "${{ github.event.inputs.version }}" ]; then
             VERSION="${{ github.event.inputs.version }}"
           else
-            VERSION=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "landscape-webserver") | .version')
+            BASE=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "landscape-webserver") | .version')
+            VERSION="${BASE}-build.${{ github.run_id }}"
           fi
           cd landscape-types
           pnpm pkg set version="$VERSION"
