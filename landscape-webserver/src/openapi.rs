@@ -157,8 +157,7 @@ pub fn build_dns_openapi_router() -> OpenApiRouter<LandscapeApp> {
 
 /// /firewall — firewall blacklists (rules temporarily disabled)
 pub fn build_firewall_openapi_router() -> OpenApiRouter<LandscapeApp> {
-    OpenApiRouter::new()
-        .merge(get_firewall_blacklist_config_paths())
+    OpenApiRouter::new().merge(get_firewall_blacklist_config_paths())
 }
 
 /// /flow — flow rules + destination IP rules
