@@ -1,6 +1,6 @@
 import { defineStore } from "pinia";
 import { ref } from "vue";
-import type { LandscapeMetricConfig } from "landscape-types/api/schemas";
+import type { LandscapeMetricConfig } from "@landscape-router/types/api/schemas";
 import { get_metric_config_edit, update_metric_config } from "@/api/sys/config";
 
 export const useMetricConfigStore = defineStore("metric_config", () => {

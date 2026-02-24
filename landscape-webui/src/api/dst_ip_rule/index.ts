@@ -6,8 +6,8 @@ import {
   modifyDstIpRules,
   delDstIpRule,
   addManyDstIpRules,
-} from "landscape-types/api/destination-ip-rules/destination-ip-rules";
-import type { WanIpRuleConfig } from "landscape-types/api/schemas";
+} from "@landscape-router/types/api/destination-ip-rules/destination-ip-rules";
+import type { WanIpRuleConfig } from "@landscape-router/types/api/schemas";
 
 export async function get_flow_dst_ip_rules(
   flow_id: number,

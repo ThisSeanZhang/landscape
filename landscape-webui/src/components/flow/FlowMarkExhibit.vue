@@ -1,5 +1,5 @@
 <script lang="ts" setup>
-import type { FlowMark } from "landscape-types/api/schemas";
+import type { FlowMark } from "@landscape-router/types/api/schemas";
 
 type Props = {
   mark: FlowMark;

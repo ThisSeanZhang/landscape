@@ -2,7 +2,7 @@ import type {
   LandscapeInterface,
   LandscapeWifiInterface,
   NetworkIfaceConfig,
-} from "landscape-types/api/schemas";
+} from "@landscape-router/types/api/schemas";
 import { NetDev, WLANTypeTag } from "./dev";
 import { ZoneType } from "./service_ipconfig";
 

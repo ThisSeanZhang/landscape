@@ -4,8 +4,8 @@ import {
   addDnsUpstream,
   delDnsUpstream,
   addManyDnsUpstreams,
-} from "landscape-types/api/dns-upstreams/dns-upstreams";
-import type { DnsUpstreamConfig } from "landscape-types/api/schemas";
+} from "@landscape-router/types/api/dns-upstreams/dns-upstreams";
+import type { DnsUpstreamConfig } from "@landscape-router/types/api/schemas";
 
 export async function get_dns_upstreams(): Promise<DnsUpstreamConfig[]> {
   return getDnsUpstreams();

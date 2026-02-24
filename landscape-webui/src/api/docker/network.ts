@@ -1,5 +1,5 @@
 import { LandscapeDockerNetwork } from "@/lib/docker/network";
-import { getAllDockerNetworks } from "landscape-types/api/docker-networks/docker-networks";
+import { getAllDockerNetworks } from "@landscape-router/types/api/docker-networks/docker-networks";
 
 export async function get_all_docker_networks(): Promise<
   LandscapeDockerNetwork[]

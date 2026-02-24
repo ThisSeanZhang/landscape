@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { manage_iface } from "@/api/iface";
-import type { NetworkIfaceConfig } from "landscape-types/api/schemas";
+import type { NetworkIfaceConfig } from "@landscape-router/types/api/schemas";
 
 const props = defineProps<{
   node: NetworkIfaceConfig;

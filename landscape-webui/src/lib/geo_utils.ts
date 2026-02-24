@@ -1,4 +1,4 @@
-import type { GeoFileCacheKey } from "landscape-types/api/schemas";
+import type { GeoFileCacheKey } from "@landscape-router/types/api/schemas";
 import { NTag, NText, SelectOption } from "naive-ui";
 import { h } from "vue";
 

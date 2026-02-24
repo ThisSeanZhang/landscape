@@ -1,4 +1,4 @@
-import type { PPPDConfig } from "landscape-types/api/schemas";
+import type { PPPDConfig } from "@landscape-router/types/api/schemas";
 
 const ADAY = 60 * 60 * 24;
 

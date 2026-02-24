@@ -14,7 +14,7 @@ import type {
   ConnectRealtimeStatus,
   IpRealtimeStat,
   ConnectGlobalStats,
-} from "landscape-types/api/schemas";
+} from "@landscape-router/types/api/schemas";
 
 export const useMetricStore = defineStore("dns_metric", () => {
   const activeModes = ref(new Set<"live" | "src" | "dst">());

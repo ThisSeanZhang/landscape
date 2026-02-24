@@ -3,8 +3,8 @@ import {
   getFirewallBlacklist,
   addFirewallBlacklist,
   delFirewallBlacklist,
-} from "landscape-types/api/firewall-blacklists/firewall-blacklists";
-import type { FirewallBlacklistConfig } from "landscape-types/api/schemas";
+} from "@landscape-router/types/api/firewall-blacklists/firewall-blacklists";
+import type { FirewallBlacklistConfig } from "@landscape-router/types/api/schemas";
 
 export async function get_firewall_blacklists(): Promise<
   FirewallBlacklistConfig[]

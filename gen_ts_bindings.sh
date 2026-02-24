@@ -15,6 +15,6 @@ rm -rf "$API_DIR"
 
 # 3. Regenerate via orval
 echo "Running orval..."
-cd "$SCRIPT_DIR" && pnpm --filter landscape-types generate
+cd "$SCRIPT_DIR" && pnpm --filter @landscape-router/types generate
 
 echo "Done."

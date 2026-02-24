@@ -5,7 +5,7 @@ import {
   getIpconfigServiceConfig,
   handleIfaceServiceStatus,
   deleteAndStopIpconfigService,
-} from "landscape-types/api/ip-config/ip-config";
+} from "@landscape-router/types/api/ip-config/ip-config";
 
 export async function get_all_ipconfig_status(): Promise<
   Map<string, ServiceStatus>

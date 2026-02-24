@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
-import type { FlowConfig } from "landscape-types/api/schemas";
+import type { FlowConfig } from "@landscape-router/types/api/schemas";
 import FlowEditModal from "@/components/flow/FlowEditModal.vue";
 import DnsRuleDrawer from "@/components/dns/DnsRuleDrawer.vue";
 import { useFrontEndStore } from "@/stores/front_end_config";
-import { delFlowRule } from "landscape-types/api/flow-rules/flow-rules";
+import { delFlowRule } from "@landscape-router/types/api/flow-rules/flow-rules";
 import FlowEntryRuleExhibit from "@/components/flow/FlowEntryRuleExhibit.vue";
 
 import { Docker, NetworkWired } from "@vicons/fa";

@@ -4,7 +4,7 @@ import type {
   FlowMark,
   WanIPRuleSource,
   WanIpRuleConfig,
-} from "landscape-types/api/schemas";
+} from "@landscape-router/types/api/schemas";
 export class WanIpRuleConfigClass implements WanIpRuleConfig {
   id: string | null;
   index: number;

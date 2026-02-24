@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from "vue";
-import { getFlowRules } from "landscape-types/api/flow-rules/flow-rules";
+import { getFlowRules } from "@landscape-router/types/api/flow-rules/flow-rules";
 
 interface Props {
   placeholder?: string;

@@ -8,7 +8,7 @@ import { renderGeoSelectLabel, sortGeoKeys } from "@/lib/geo_utils";
 import type {
   GeoFileCacheKey,
   GeoSiteSourceConfig,
-} from "landscape-types/api/schemas";
+} from "@landscape-router/types/api/schemas";
 import { computed, onMounted, ref } from "vue";
 
 const key = defineModel<string | null>("geo_key", {

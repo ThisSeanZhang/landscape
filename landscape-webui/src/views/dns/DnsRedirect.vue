@@ -1,6 +1,6 @@
 <script lang="ts" setup>
 import { get_dns_redirects } from "@/api/dns_rule/redirect";
-import type { DNSRedirectRule } from "landscape-types/api/schemas";
+import type { DNSRedirectRule } from "@landscape-router/types/api/schemas";
 import { ref, onMounted } from "vue";
 
 const redirect_rules = ref<DNSRedirectRule[]>([]);

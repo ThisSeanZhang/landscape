@@ -1,5 +1,8 @@
 import { get_current_tasks } from "@/api/docker";
-import type { ImgPullEvent, PullImgTask } from "landscape-types/api/schemas";
+import type {
+  ImgPullEvent,
+  PullImgTask,
+} from "@landscape-router/types/api/schemas";
 import { defineStore } from "pinia";
 import { ref } from "vue";
 import { LANDSCAPE_TOKEN_KEY } from "@/lib/common";

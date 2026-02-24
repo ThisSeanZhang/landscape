@@ -29,7 +29,7 @@ import type {
   LandscapeInterface,
   LandscapeWifiInterface,
   NetworkIfaceConfig,
-} from "landscape-types/api/schemas";
+} from "@landscape-router/types/api/schemas";
 import { ZoneType } from "@/lib/service_ipconfig";
 
 const props = defineProps<{

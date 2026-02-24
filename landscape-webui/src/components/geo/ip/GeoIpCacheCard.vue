@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { GeoIpConfig } from "landscape-types/api/schemas";
+import type { GeoIpConfig } from "@landscape-router/types/api/schemas";
 import { ref } from "vue";
 import { useFrontEndStore } from "@/stores/front_end_config";
 import { mask_string } from "@/lib/common";

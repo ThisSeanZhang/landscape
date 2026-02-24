@@ -5,7 +5,7 @@ import type {
   GeoSiteSource,
   GeoSiteDirectItem,
   GeoSiteFileConfig,
-} from "landscape-types/api/schemas";
+} from "@landscape-router/types/api/schemas";
 import { FormInst, FormRules } from "naive-ui";
 import { computed, ref } from "vue";
 

@@ -4,7 +4,7 @@ import type {
   MemUsage,
   LoadAvg,
   LandscapeStatus as LandscapeStatusType,
-} from "landscape-types/api/schemas";
+} from "@landscape-router/types/api/schemas";
 
 export type LandscapeSystemInfo = LandscapeSystemInfoType;
 export type { CpuUsage, MemUsage, LoadAvg };

@@ -4,8 +4,8 @@ import {
   getFlowRuleByFlowId,
   addFlowRule,
   delFlowRule,
-} from "landscape-types/api/flow-rules/flow-rules";
-import type { FlowConfig } from "landscape-types/api/schemas";
+} from "@landscape-router/types/api/flow-rules/flow-rules";
+import type { FlowConfig } from "@landscape-router/types/api/schemas";
 
 export async function get_flow_rules(): Promise<FlowConfig[]> {
   return getFlowRules();

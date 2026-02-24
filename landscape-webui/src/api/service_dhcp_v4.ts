@@ -8,11 +8,11 @@ import {
   getDhcpV4ServiceConfig,
   handleDhcpV4ServiceConfig,
   deleteAndStopDhcpV4Service,
-} from "landscape-types/api/dhcpv4/dhcpv4";
+} from "@landscape-router/types/api/dhcpv4/dhcpv4";
 import type {
   DHCPv4OfferInfo as DHCPv4OfferInfoType,
   ArpScanInfo as ArpScanInfoType,
-} from "landscape-types/api/schemas";
+} from "@landscape-router/types/api/schemas";
 
 export type DHCPv4OfferInfo = DHCPv4OfferInfoType;
 export type ArpScanInfo = ArpScanInfoType;

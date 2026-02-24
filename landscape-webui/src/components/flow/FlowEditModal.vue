@@ -2,7 +2,7 @@
 import {
   getFlowRule,
   addFlowRule,
-} from "landscape-types/api/flow-rules/flow-rules";
+} from "@landscape-router/types/api/flow-rules/flow-rules";
 import { useMessage } from "naive-ui";
 import { computed } from "vue";
 import { ref } from "vue";
@@ -12,7 +12,7 @@ import type {
   FlowConfig,
   FlowEntryRule,
   FlowTarget,
-} from "landscape-types/api/schemas";
+} from "@landscape-router/types/api/schemas";
 import { useFrontEndStore } from "@/stores/front_end_config";
 interface Props {
   rule_id?: string;

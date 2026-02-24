@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { useMetricStore } from "@/stores/status_metric";
 import { useFrontEndStore } from "@/stores/front_end_config";
-import type { ConnectKey } from "landscape-types/api/schemas";
+import type { ConnectKey } from "@landscape-router/types/api/schemas";
 import { computed, watch } from "vue";
 import LiveConnectChart from "./live/LiveConnectChart.vue";
 import HistoryConnectChart from "./history/HistoryConnectChart.vue";

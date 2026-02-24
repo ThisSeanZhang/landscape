@@ -3,7 +3,7 @@ import { ref, computed, h } from "vue";
 import { formatRate, formatPackets } from "@/lib/util";
 import { useThemeVars, NTooltip, NIcon, NButton } from "naive-ui";
 import { Search } from "@vicons/carbon";
-import type { IpRealtimeStat } from "landscape-types/api/schemas";
+import type { IpRealtimeStat } from "@landscape-router/types/api/schemas";
 import FlowExhibit from "@/components/flow/FlowExhibit.vue";
 
 import { useI18n } from "vue-i18n";

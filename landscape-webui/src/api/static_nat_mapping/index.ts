@@ -4,8 +4,8 @@ import {
   addStaticNatMappings,
   delStaticNatMappings,
   addManyStaticNatMappings,
-} from "landscape-types/api/static-nat-mappings/static-nat-mappings";
-import type { StaticNatMappingConfig } from "landscape-types/api/schemas";
+} from "@landscape-router/types/api/static-nat-mappings/static-nat-mappings";
+import type { StaticNatMappingConfig } from "@landscape-router/types/api/schemas";
 
 export async function get_static_nat_mappings(): Promise<
   StaticNatMappingConfig[]

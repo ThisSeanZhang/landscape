@@ -1,5 +1,8 @@
 <script setup lang="ts">
-import type { PullImgTask, PullImgTaskItem } from "landscape-types/api/schemas";
+import type {
+  PullImgTask,
+  PullImgTaskItem,
+} from "@landscape-router/types/api/schemas";
 import { Task } from "@vicons/carbon";
 import { computed } from "vue";
 

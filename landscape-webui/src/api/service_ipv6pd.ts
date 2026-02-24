@@ -6,8 +6,8 @@ import {
   handleIfacePd,
   deleteAndStopIpv6pdService,
   getCurrentIpPrefixInfo,
-} from "landscape-types/api/ipv6-pd/ipv6-pd";
-import type { LDIAPrefix } from "landscape-types/api/schemas";
+} from "@landscape-router/types/api/ipv6-pd/ipv6-pd";
+import type { LDIAPrefix } from "@landscape-router/types/api/schemas";
 
 // LDIAPrefix is now directly imported from generated types
 

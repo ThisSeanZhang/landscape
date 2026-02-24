@@ -1,6 +1,6 @@
 import { defineStore } from "pinia";
 import { ref, computed } from "vue";
-import type { EnrolledDevice } from "landscape-types/api/schemas";
+import type { EnrolledDevice } from "@landscape-router/types/api/schemas";
 import { get_enrolled_devices } from "@/api/enrolled_device";
 import { mask_string } from "@/lib/common";
 import { useFrontEndStore } from "./front_end_config";

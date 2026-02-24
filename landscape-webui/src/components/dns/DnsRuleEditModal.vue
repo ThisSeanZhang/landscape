@@ -2,7 +2,7 @@
 import {
   getDnsRule,
   addDnsRules,
-} from "landscape-types/api/dns-rules/dns-rules";
+} from "@landscape-router/types/api/dns-rules/dns-rules";
 import {
   DnsRule,
   get_dns_resolve_mode_options,
@@ -20,7 +20,7 @@ import { ChangeCatalog } from "@vicons/carbon";
 import { computed, onMounted } from "vue";
 import { ref } from "vue";
 import FlowMarkEdit from "@/components/flow/FlowMarkEdit.vue";
-import type { RuleSource } from "landscape-types/api/schemas";
+import type { RuleSource } from "@landscape-router/types/api/schemas";
 import {
   copy_context_to_clipboard,
   read_context_from_clipboard,

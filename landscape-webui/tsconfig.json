@@ -25,7 +25,7 @@
       "@lib/*": ["./src/lib/*"],
       "@views/*": ["./src/views/*"],
       "@components/*": ["./src/components/*"],
-      "landscape-types/*": ["../landscape-types/src/*"]
+      "@landscape-router/types/*": ["../landscape-types/src/*"]
     }
   },
   "include": ["src/**/*.ts", "src/**/*.tsx", "src/**/*.vue"],

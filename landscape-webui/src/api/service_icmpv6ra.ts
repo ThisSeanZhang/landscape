@@ -1,13 +1,13 @@
 import { ServiceStatus } from "@/lib/services";
-import type { IPV6RAServiceConfig } from "landscape-types/api/schemas";
+import type { IPV6RAServiceConfig } from "@landscape-router/types/api/schemas";
 import {
   getAllIcmpv6raStatus,
   getIfaceIcmpv6Config,
   handleIfaceIcmpv6,
   deleteAndStopIfaceIcmpv6,
   getAllIcmpv6raAssignedIps,
-} from "landscape-types/api/icmpv6-ra/icmpv6-ra";
-import type { IPv6NAInfo } from "landscape-types/api/schemas";
+} from "@landscape-router/types/api/icmpv6-ra/icmpv6-ra";
+import type { IPv6NAInfo } from "@landscape-router/types/api/schemas";
 
 // IPv6NAInfo is now directly imported from generated types
 

@@ -5,7 +5,7 @@ import {
   getIfaceNatConfig,
   handleIfaceNatStatus,
   deleteAndStopIfaceNat,
-} from "landscape-types/api/nat-service/nat-service";
+} from "@landscape-router/types/api/nat-service/nat-service";
 
 export async function get_all_nat_status(): Promise<
   Map<string, ServiceStatus>

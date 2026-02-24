@@ -1,12 +1,15 @@
 import type {
   FlowMatchRequest,
   FlowVerdictRequest,
-} from "landscape-types/api/schemas";
-import { traceFlowMatch, traceVerdict } from "landscape-types/api/route/route";
+} from "@landscape-router/types/api/schemas";
+import {
+  traceFlowMatch,
+  traceVerdict,
+} from "@landscape-router/types/api/route/route";
 import type {
   FlowMatchResult as FlowMatchResultType,
   FlowVerdictResult as FlowVerdictResultType,
-} from "landscape-types/api/schemas";
+} from "@landscape-router/types/api/schemas";
 
 export type FlowMatchResult = FlowMatchResultType;
 export type FlowVerdictResult = FlowVerdictResultType;

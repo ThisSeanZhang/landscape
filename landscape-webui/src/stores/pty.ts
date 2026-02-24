@@ -7,7 +7,7 @@ import { LANDSCAPE_TOKEN_KEY } from "@/lib/common";
 import type {
   LandscapePtyConfig,
   PtyOutMessage,
-} from "landscape-types/api/schemas";
+} from "@landscape-router/types/api/schemas";
 import "@xterm/xterm/css/xterm.css";
 
 export const usePtyStore = defineStore("pty", () => {

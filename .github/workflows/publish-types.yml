@@ -1,0 +1,54 @@
+name: Publish Types to npm
+
+on:
+  push:
+    branches:
+      - npm
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to publish (e.g. 0.14.0)'
+        required: true
+
+jobs:
+  publish-types:
+    runs-on: ubuntu-22.04-arm
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Generate OpenAPI spec
+        run: cargo test -p landscape-webserver export_openapi_json -- --nocapture
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Install dependencies & generate types
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm --filter @landscape-router/types generate
+
+      - name: Set version
+        run: |
+          if [ -n "${{ github.event.inputs.version }}" ]; then
+            VERSION="${{ github.event.inputs.version }}"
+          else
+            VERSION=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "landscape-webserver") | .version')
+          fi
+          cd landscape-types
+          pnpm pkg set version="$VERSION"
+
+      - name: Publish to npm
+        run: pnpm --filter @landscape-router/types publish --no-git-checks --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

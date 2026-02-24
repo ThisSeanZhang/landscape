@@ -8,9 +8,9 @@ import {
   copy_context_to_clipboard,
   read_context_from_clipboard,
 } from "@/lib/common";
-import type { DNSRedirectRule } from "landscape-types/api/schemas";
+import type { DNSRedirectRule } from "@landscape-router/types/api/schemas";
 import { get_dns_redirect, push_dns_redirect } from "@/api/dns_rule/redirect";
-import { getFlowRules } from "landscape-types/api/flow-rules/flow-rules";
+import { getFlowRules } from "@landscape-router/types/api/flow-rules/flow-rules";
 
 type Props = {
   rule_id: string | null;

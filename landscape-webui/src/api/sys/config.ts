@@ -8,7 +8,7 @@ import type {
   LandscapeUIConfig,
   UpdateMetricConfigRequest,
   UpdateUIConfigRequest,
-} from "landscape-types/api/schemas";
+} from "@landscape-router/types/api/schemas";
 import {
   exportInitConfig,
   getUiConfigFast,
@@ -20,7 +20,7 @@ import {
   getDnsConfigFast,
   getDnsConfig,
   updateDnsConfig,
-} from "landscape-types/api/system-config/system-config";
+} from "@landscape-router/types/api/system-config/system-config";
 
 /** Local type -- backend accepts serde_json::Value, so no ORVAL-generated request type exists. */
 interface UpdateDnsConfigRequest {

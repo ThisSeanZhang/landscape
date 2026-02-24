@@ -14,7 +14,7 @@ import type {
   IpHistoryStat,
   ConnectSortKey,
   SortOrder,
-} from "landscape-types/api/schemas";
+} from "@landscape-router/types/api/schemas";
 import { usePreferenceStore } from "@/stores/preference";
 
 const metricStore = useMetricStore();

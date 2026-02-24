@@ -3,7 +3,7 @@ import { get_geo_ip_config, push_geo_ip_config } from "@/api/geo/ip";
 import type {
   GeoIpSourceConfig,
   GeoIpDirectItem,
-} from "landscape-types/api/schemas";
+} from "@landscape-router/types/api/schemas";
 import { computed, ref } from "vue";
 import { FormInst, FormRules } from "naive-ui";
 

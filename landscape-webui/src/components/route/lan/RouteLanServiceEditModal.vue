@@ -4,7 +4,7 @@ import { ref } from "vue";
 import type {
   RouteLanServiceConfig,
   StaticRouteConfig,
-} from "landscape-types/api/schemas";
+} from "@landscape-router/types/api/schemas";
 import {
   get_route_lan_config,
   update_route_lans_config,

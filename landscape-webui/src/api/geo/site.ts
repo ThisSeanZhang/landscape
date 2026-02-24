@@ -9,13 +9,13 @@ import {
   searchGeoSiteCache,
   getGeoSiteCacheDetail,
   updateGeoSiteByUpload as _updateGeoSiteByUpload,
-} from "landscape-types/api/geo-sites/geo-sites";
+} from "@landscape-router/types/api/geo-sites/geo-sites";
 import type {
   GeoFileCacheKey,
   QueryGeoKey,
   GeoDomainConfig,
   GeoSiteSourceConfig,
-} from "landscape-types/api/schemas";
+} from "@landscape-router/types/api/schemas";
 
 export async function get_geo_site_configs(
   name?: string,

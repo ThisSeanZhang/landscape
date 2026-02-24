@@ -1,6 +1,6 @@
 <script lang="ts" setup>
 import { computed } from "vue";
-import type { FirewallBlacklistSource } from "landscape-types/api/schemas";
+import type { FirewallBlacklistSource } from "@landscape-router/types/api/schemas";
 import { useFrontEndStore } from "@/stores/front_end_config";
 
 const frontEndStore = useFrontEndStore();

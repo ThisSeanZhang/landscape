@@ -1,6 +1,9 @@
 <script setup lang="ts">
 import { get_geo_ip_cache_detail } from "@/api/geo/ip";
-import type { GeoConfigKey, GeoIpConfig } from "landscape-types/api/schemas";
+import type {
+  GeoConfigKey,
+  GeoIpConfig,
+} from "@landscape-router/types/api/schemas";
 import { onMounted, ref } from "vue";
 
 const key = defineModel<GeoConfigKey>("geo_key", {

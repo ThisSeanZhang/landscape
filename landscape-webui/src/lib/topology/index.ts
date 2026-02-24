@@ -1,6 +1,9 @@
 import { NetDev } from "@/lib/dev";
 import { LandscapeDockerNetwork } from "@/lib/docker/network";
-import type { IfaceInfo, RawIfaceInfo } from "landscape-types/api/schemas";
+import type {
+  IfaceInfo,
+  RawIfaceInfo,
+} from "@landscape-router/types/api/schemas";
 import { ZoneType } from "../service_ipconfig";
 
 export function gen_default_router_node() {}

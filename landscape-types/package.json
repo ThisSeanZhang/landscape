@@ -1,7 +1,6 @@
 {
-  "name": "landscape-types",
+  "name": "@landscape-router/types",
   "version": "0.13.1",
-  "private": true,
   "type": "module",
   "exports": {
     "./*": "./src/*"
@@ -15,8 +14,12 @@
       ]
     }
   },
+  "files": [
+    "src"
+  ],
   "scripts": {
-    "generate": "orval"
+    "generate": "orval",
+    "prepublishOnly": "echo 'Run gen_ts_bindings.sh before publishing' && test -f src/api/schemas/index.ts"
   },
   "peerDependencies": {
     "axios": ">=1.0.0"

@@ -9,13 +9,13 @@ import {
   searchGeoIpCache,
   getGeoIpCacheDetail,
   updateGeoIpByUpload as _updateGeoIpByUpload,
-} from "landscape-types/api/geo-ips/geo-ips";
+} from "@landscape-router/types/api/geo-ips/geo-ips";
 import type {
   GeoFileCacheKey,
   QueryGeoKey,
   GeoIpConfig,
   GeoIpSourceConfig,
-} from "landscape-types/api/schemas";
+} from "@landscape-router/types/api/schemas";
 
 export async function get_geo_ip_configs(
   name?: string,

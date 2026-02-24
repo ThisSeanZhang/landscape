@@ -1,11 +1,11 @@
 import { ServiceStatus } from "@/lib/services";
-import type { MSSClampServiceConfig } from "landscape-types/api/schemas";
+import type { MSSClampServiceConfig } from "@landscape-router/types/api/schemas";
 import {
   getAllMssClampServiceStatus,
   getMssClampServiceConfig,
   handleMssClampServiceConfig,
   deleteAndStopMssClampService,
-} from "landscape-types/api/mss-clamp/mss-clamp";
+} from "@landscape-router/types/api/mss-clamp/mss-clamp";
 
 export async function get_all_mss_clamp_status(): Promise<
   Map<string, ServiceStatus>

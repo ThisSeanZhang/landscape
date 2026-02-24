@@ -12,7 +12,7 @@ import type {
   IPv6RaPdConfig,
   IPV6RAServiceConfig,
   IPv6RaStaticConfig,
-} from "landscape-types/api/schemas";
+} from "@landscape-router/types/api/schemas";
 import { indexMap } from "seemly";
 
 let ipv6PDStore = useIPv6PDStore();

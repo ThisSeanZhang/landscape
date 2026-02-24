@@ -4,7 +4,7 @@ import type {
   DNSRuleConfig,
   FilterResult,
   RuleSource,
-} from "landscape-types/api/schemas";
+} from "@landscape-router/types/api/schemas";
 import { FlowMarkType } from "./default_value";
 
 export enum DnsUpstreamModeTsEnum {

@@ -5,7 +5,7 @@ import {
   getWifiServiceConfig,
   handleWifiServiceConfig,
   deleteAndStopWifiService,
-} from "landscape-types/api/wi-fi/wi-fi";
+} from "@landscape-router/types/api/wi-fi/wi-fi";
 
 export async function get_all_wifi_status(): Promise<
   Map<string, ServiceStatus>

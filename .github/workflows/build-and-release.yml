@@ -301,7 +301,7 @@ jobs:
         run: |
           mkdir -p output
           pnpm install --frozen-lockfile
-          pnpm --filter landscape-types generate
+          pnpm --filter @landscape-router/types generate
           pnpm --filter landscape-webui build
           cd landscape-webui
           mkdir static && mv dist/* static/

@@ -9,7 +9,7 @@ import type {
   IpHistoryStat,
   GetConnectHistoryParams as ConnectHistoryQueryParams,
   MetricResolution,
-} from "landscape-types/api/schemas";
+} from "@landscape-router/types/api/schemas";
 import {
   getSrcIpStats as _getSrcIpStats,
   getDstIpStats as _getDstIpStats,
@@ -20,7 +20,7 @@ import {
   getConnectMetricInfo as _getConnectMetricInfo,
   getHistorySrcIpStats as _getHistorySrcIpStats,
   getHistoryDstIpStats as _getHistoryDstIpStats,
-} from "landscape-types/api/metric/metric";
+} from "@landscape-router/types/api/metric/metric";
 
 export * from "./dns";
 

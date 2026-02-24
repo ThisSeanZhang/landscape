@@ -14,7 +14,7 @@ import FlowSelect from "@/components/flow/FlowSelect.vue";
 import type {
   ConnectKey,
   ConnectGlobalStats,
-} from "landscape-types/api/schemas";
+} from "@landscape-router/types/api/schemas";
 import { usePreferenceStore } from "@/stores/preference";
 import { Renew } from "@vicons/carbon";
 import ConnectViewSwitcher from "@/components/metric/connect/ConnectViewSwitcher.vue";

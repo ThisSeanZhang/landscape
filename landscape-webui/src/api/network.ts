@@ -7,7 +7,7 @@ import {
   changeZone as change_zone,
   changeDevStatus as change_iface_status,
   changeWifiMode as change_wifi_mode,
-} from "landscape-types/api/interfaces/interfaces";
+} from "@landscape-router/types/api/interfaces/interfaces";
 
 export {
   add_controller,

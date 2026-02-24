@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref } from "vue";
 import { do_login } from "@/api/auth";
-import type { LoginInfo } from "landscape-types/api/schemas";
+import type { LoginInfo } from "@landscape-router/types/api/schemas";
 import { useRouter, useRoute } from "vue-router";
 import { useMessage } from "naive-ui";
 

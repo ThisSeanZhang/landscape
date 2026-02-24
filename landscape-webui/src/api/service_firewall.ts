@@ -5,7 +5,7 @@ import {
   getFirewallServiceConfig,
   handleFirewallServiceConfig,
   deleteAndStopFirewallService,
-} from "landscape-types/api/firewall-service/firewall-service";
+} from "@landscape-router/types/api/firewall-service/firewall-service";
 
 export async function get_all_firewall_status(): Promise<
   Map<string, ServiceStatus>

@@ -4,7 +4,7 @@ import { Ad } from "@vicons/tabler";
 
 import StatusBtn from "@/components/status_btn/StatusBtn.vue";
 import { useICMPv6RAStore } from "@/stores/status_icmpv6ra";
-import { IfaceZoneType } from "landscape-types/api/schemas";
+import { IfaceZoneType } from "@landscape-router/types/api/schemas";
 
 const icmpv6PDStore = useICMPv6RAStore();
 

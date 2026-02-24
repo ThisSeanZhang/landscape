@@ -1,6 +1,6 @@
 import { defineStore } from "pinia";
 import { ref, watch } from "vue";
-import type { LandscapeUIConfig } from "landscape-types/api/schemas";
+import type { LandscapeUIConfig } from "@landscape-router/types/api/schemas";
 import {
   get_ui_config,
   get_ui_config_edit,

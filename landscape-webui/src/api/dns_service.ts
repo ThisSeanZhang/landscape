@@ -1,13 +1,13 @@
 import type {
   CheckChainDnsResult,
   CheckDomainParams,
-} from "landscape-types/api/schemas";
+} from "@landscape-router/types/api/schemas";
 import {
   getDnsServiceStatus,
   startDnsService,
   stopDnsService,
   checkDomain,
-} from "landscape-types/api/dns-service/dns-service";
+} from "@landscape-router/types/api/dns-service/dns-service";
 import type { ServiceStatus } from "@/lib/services";
 
 export async function get_dns_status(): Promise<ServiceStatus> {

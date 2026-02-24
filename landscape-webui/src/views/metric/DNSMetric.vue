@@ -37,11 +37,11 @@ import FlowExhibit from "@/components/flow/FlowExhibit.vue";
 import CheckDomainDrawer from "@/components/dns/CheckDomainDrawer.vue";
 import { SearchLocate } from "@vicons/carbon";
 import { usePreferenceStore } from "@/stores/preference";
-import { getFlowRules } from "landscape-types/api/flow-rules/flow-rules";
+import { getFlowRules } from "@landscape-router/types/api/flow-rules/flow-rules";
 import type {
   FlowConfig,
   LandscapeDnsRecordType,
-} from "landscape-types/api/schemas";
+} from "@landscape-router/types/api/schemas";
 const prefStore = usePreferenceStore();
 
 const activeTab = ref("dashboard");

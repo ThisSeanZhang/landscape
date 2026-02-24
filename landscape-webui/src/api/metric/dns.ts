@@ -7,12 +7,12 @@ import type {
   GetDnsHistoryParams,
   GetDnsSummaryParams,
   GetDnsLightweightSummaryParams,
-} from "landscape-types/api/schemas";
+} from "@landscape-router/types/api/schemas";
 import {
   getDnsHistory as _getDnsHistory,
   getDnsSummary as _getDnsSummary,
   getDnsLightweightSummary as _getDnsLightweightSummary,
-} from "landscape-types/api/metric/metric";
+} from "@landscape-router/types/api/metric/metric";
 
 export type {
   DnsMetric,

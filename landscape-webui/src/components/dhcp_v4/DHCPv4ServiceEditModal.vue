@@ -11,7 +11,7 @@ import {
   update_dhcp_v4_config,
 } from "@/api/service_dhcp_v4";
 import { check_iface_enrolled_devices_validity } from "@/api/enrolled_device";
-import { IfaceZoneType } from "landscape-types/api/schemas";
+import { IfaceZoneType } from "@landscape-router/types/api/schemas";
 import { useI18n } from "vue-i18n";
 import { useRouter } from "vue-router";
 

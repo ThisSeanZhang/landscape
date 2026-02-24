@@ -1,11 +1,11 @@
 import { ServiceStatus } from "@/lib/services";
-import type { RouteWanServiceConfig } from "landscape-types/api/schemas";
+import type { RouteWanServiceConfig } from "@landscape-router/types/api/schemas";
 import {
   getAllRouteWanStatus,
   getRouteWanConfig,
   handleRouteWanStatus,
   deleteAndStopRouteWan,
-} from "landscape-types/api/route-wan/route-wan";
+} from "@landscape-router/types/api/route-wan/route-wan";
 
 export async function get_all_route_wan_status(): Promise<
   Map<string, ServiceStatus>

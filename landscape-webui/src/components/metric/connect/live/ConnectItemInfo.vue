@@ -2,7 +2,7 @@
 import type {
   ConnectKey,
   ConnectRealtimeStatus,
-} from "landscape-types/api/schemas";
+} from "@landscape-router/types/api/schemas";
 import { useFrontEndStore } from "@/stores/front_end_config";
 import { useRouter } from "vue-router";
 import {

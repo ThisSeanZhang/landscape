@@ -2,7 +2,7 @@
 import { run_cmd } from "@/api/docker";
 import { KeyValuePair } from "@/lib/common";
 import { LAND_REDIRECT_ID_KEY } from "@/lib/docker";
-import { DockerCmd } from "landscape-types/api/schemas";
+import { DockerCmd } from "@landscape-router/types/api/schemas";
 import { useDockerStore } from "@/stores/status_docker";
 import { useNotification } from "naive-ui";
 import { computed, ref } from "vue";

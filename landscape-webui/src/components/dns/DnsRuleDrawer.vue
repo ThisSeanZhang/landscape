@@ -4,7 +4,7 @@ import DnsRuleCard from "@/components/dns/DnsRuleCard.vue";
 import {
   getFlowDnsRules,
   addManyDnsRules,
-} from "landscape-types/api/dns-rules/dns-rules";
+} from "@landscape-router/types/api/dns-rules/dns-rules";
 import {
   copy_context_to_clipboard,
   read_context_from_clipboard,

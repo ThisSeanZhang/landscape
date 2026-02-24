@@ -3,7 +3,7 @@ import { get_geo_site_cache_detail } from "@/api/geo/site";
 import type {
   GeoConfigKey,
   GeoDomainConfig,
-} from "landscape-types/api/schemas";
+} from "@landscape-router/types/api/schemas";
 import { onMounted, ref } from "vue";
 
 const key = defineModel<GeoConfigKey>("geo_key", {

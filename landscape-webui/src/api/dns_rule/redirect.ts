@@ -4,8 +4,8 @@ import {
   addDnsRedirects,
   delDnsRedirects,
   addManyDnsRedirects,
-} from "landscape-types/api/dns-redirects/dns-redirects";
-import type { DNSRedirectRule } from "landscape-types/api/schemas";
+} from "@landscape-router/types/api/dns-redirects/dns-redirects";
+import type { DNSRedirectRule } from "@landscape-router/types/api/schemas";
 
 export async function get_dns_redirects(): Promise<DNSRedirectRule[]> {
   return getDnsRedirects();

@@ -1,6 +1,6 @@
 import { ServiceStatus } from "@/lib/services";
 import { DockerContainerSummary, DockerImageSummary } from "@/lib/docker";
-import { DockerCmd, PullImgTask } from "landscape-types/api/schemas";
+import { DockerCmd, PullImgTask } from "@landscape-router/types/api/schemas";
 import {
   getDockerStatus as _getDockerStatus,
   startDockerStatus as _startDockerStatus,
@@ -10,13 +10,13 @@ import {
   stopContainer as _stopContainer,
   removeContainer as _removeContainer,
   runCmdContainer as _runCmdContainer,
-} from "landscape-types/api/docker/docker";
+} from "@landscape-router/types/api/docker/docker";
 import {
   getAllDockerImages,
   pullDockerImage as _pullDockerImage,
   getDockerPullTasks,
   deleteDockerImage as _deleteDockerImage,
-} from "landscape-types/api/docker-images/docker-images";
+} from "@landscape-router/types/api/docker-images/docker-images";
 
 export type { PullImgTask };
 

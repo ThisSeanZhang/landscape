@@ -2,7 +2,7 @@
 import { Router } from "@vicons/carbon";
 
 import StatusBtn from "@/components/status_btn/StatusBtn.vue";
-import { IfaceZoneType } from "landscape-types/api/schemas";
+import { IfaceZoneType } from "@landscape-router/types/api/schemas";
 import { useRouteLanConfigStore } from "@/stores/status_route_lan";
 
 const routeLanConfigStore = useRouteLanConfigStore();

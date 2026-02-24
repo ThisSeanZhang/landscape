@@ -1,5 +1,5 @@
 <script lang="ts" setup>
-import type { RuleSource } from "landscape-types/api/schemas";
+import type { RuleSource } from "@landscape-router/types/api/schemas";
 import { DomainMatchTypeEnum, RuleSourceEnum } from "@/lib/dns";
 import { useFrontEndStore } from "@/stores/front_end_config";
 

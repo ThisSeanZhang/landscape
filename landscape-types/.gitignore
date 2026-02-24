@@ -8,5 +8,5 @@ node_modules
 # generated from Rust OpenAPI spec — regenerate via gen_ts_bindings.sh
 openapi.json
 
-# orval generated files — regenerate via `pnpm generate`
+# orval generated files — regenerate via gen_ts_bindings.sh
 src/api/

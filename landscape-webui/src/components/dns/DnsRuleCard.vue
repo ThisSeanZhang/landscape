@@ -2,7 +2,7 @@
 import { computed, ref } from "vue";
 import DnsRuleEditModal from "@/components/dns/DnsRuleEditModal.vue";
 import { DnsRule } from "@/lib/dns";
-import { delDnsRules } from "landscape-types/api/dns-rules/dns-rules";
+import { delDnsRules } from "@landscape-router/types/api/dns-rules/dns-rules";
 import { CheckmarkOutline } from "@vicons/carbon";
 import FlowMarkExhibit from "@/components/flow/FlowMarkExhibit.vue";
 const rule = defineModel<DnsRule>("rule", { required: true });

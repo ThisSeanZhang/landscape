@@ -8,7 +8,7 @@ import {
   deleteAndStopIfacePppd,
   deleteAndStopIfacePppdByAttachIfaceName,
   getIfacePppdConfigByAttachIfaceName,
-} from "landscape-types/api/pppo-e/pppo-e";
+} from "@landscape-router/types/api/pppo-e/pppo-e";
 
 export async function get_all_pppd_status(): Promise<
   Map<string, ServiceStatus>

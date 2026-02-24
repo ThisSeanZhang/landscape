@@ -1,6 +1,6 @@
 <script lang="ts" setup>
 import { get_dns_upstreams } from "@/api/dns_rule/upstream";
-import type { DnsUpstreamConfig } from "landscape-types/api/schemas";
+import type { DnsUpstreamConfig } from "@landscape-router/types/api/schemas";
 import { ref, onMounted } from "vue";
 
 const redirect_rules = ref<DnsUpstreamConfig[]>([]);

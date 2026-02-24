@@ -9,7 +9,7 @@ import {
 } from "@/api/service_ipv6pd";
 import { useIPv6PDStore } from "@/stores/status_ipv6pd";
 import { generateValidMAC, formatMacAddress } from "@/lib/util";
-import { IfaceZoneType } from "landscape-types/api/schemas";
+import { IfaceZoneType } from "@landscape-router/types/api/schemas";
 
 let ipv6PDStore = useIPv6PDStore();
 const message = useMessage();

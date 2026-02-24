@@ -6,8 +6,8 @@ import {
   deleteEnrolledDevice,
   handleValidateIp,
   checkIfaceValidity,
-} from "landscape-types/api/enrolled-devices/enrolled-devices";
-import type { EnrolledDevice } from "landscape-types/api/schemas";
+} from "@landscape-router/types/api/enrolled-devices/enrolled-devices";
+import type { EnrolledDevice } from "@landscape-router/types/api/schemas";
 
 export async function get_enrolled_devices(): Promise<EnrolledDevice[]> {
   return listEnrolledDevices();

@@ -4,7 +4,7 @@ import {
   getBasicSysInfo,
   getIntervalFetchInfo,
   getCpuCount,
-} from "landscape-types/api/system-info/system-info";
+} from "@landscape-router/types/api/system-info/system-info";
 
 export async function get_sysinfo(): Promise<LandscapeSystemInfo> {
   return await getBasicSysInfo();

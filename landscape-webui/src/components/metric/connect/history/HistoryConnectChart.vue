@@ -5,7 +5,7 @@ import type {
   ConnectKey,
   ConnectMetricPoint,
   MetricResolution,
-} from "landscape-types/api/schemas";
+} from "@landscape-router/types/api/schemas";
 import { ApexOptions } from "apexcharts";
 import VueApexCharts from "vue3-apexcharts";
 import { useThemeVars } from "naive-ui";

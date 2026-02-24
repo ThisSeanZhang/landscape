@@ -5,7 +5,7 @@ import {
   addDnsRules,
   delDnsRules,
   addManyDnsRules,
-} from "landscape-types/api/dns-rules/dns-rules";
+} from "@landscape-router/types/api/dns-rules/dns-rules";
 
 export async function get_flow_dns_rules(flow_id: number): Promise<DnsRule[]> {
   const data = await getFlowDnsRules(flow_id);

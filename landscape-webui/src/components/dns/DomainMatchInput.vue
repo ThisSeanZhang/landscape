@@ -1,6 +1,6 @@
 <script lang="ts" setup>
 import { DomainMatchTypeEnum, RuleSourceEnum } from "@/lib/dns";
-import type { RuleSource } from "landscape-types/api/schemas";
+import type { RuleSource } from "@landscape-router/types/api/schemas";
 
 import { ChangeCatalog } from "@vicons/carbon";
 

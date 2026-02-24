@@ -2,7 +2,7 @@
 import { get_firewall_blacklists } from "@/api/firewall_blacklist";
 import FirewallBlacklistEditModal from "@/components/firewall/FirewallBlacklistEditModal.vue";
 import FirewallBlacklistCard from "@/components/firewall/FirewallBlacklistCard.vue";
-import type { FirewallBlacklistConfig } from "landscape-types/api/schemas";
+import type { FirewallBlacklistConfig } from "@landscape-router/types/api/schemas";
 import { onMounted, ref } from "vue";
 
 const configs = ref<FirewallBlacklistConfig[]>([]);

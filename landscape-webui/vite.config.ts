@@ -44,7 +44,10 @@ export default defineConfig({
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
-      "landscape-types": path.resolve(__dirname, "../landscape-types/src"),
+      "@landscape-router/types": path.resolve(
+        __dirname,
+        "../landscape-types/src",
+      ),
     },
   },
   server: {

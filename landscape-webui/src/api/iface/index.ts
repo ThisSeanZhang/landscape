@@ -5,8 +5,8 @@ import {
   manageIface,
   getCpuBalance,
   setCpuBalance,
-} from "landscape-types/api/interfaces/interfaces";
-import type { IfaceCpuSoftBalance } from "landscape-types/api/schemas";
+} from "@landscape-router/types/api/interfaces/interfaces";
+import type { IfaceCpuSoftBalance } from "@landscape-router/types/api/schemas";
 
 export {
   getIfacesOld as ifaces,

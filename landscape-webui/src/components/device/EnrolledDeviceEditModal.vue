@@ -2,7 +2,7 @@
 import { useMessage } from "naive-ui";
 import { isIP, isIPv4 } from "is-ip";
 import { computed, ref } from "vue";
-import type { EnrolledDevice } from "landscape-types/api/schemas";
+import type { EnrolledDevice } from "@landscape-router/types/api/schemas";
 import {
   get_enrolled_device_by_id,
   create_enrolled_device,

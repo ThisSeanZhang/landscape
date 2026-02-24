@@ -13,7 +13,7 @@ import {
 import type {
   FirewallBlacklistConfig,
   FirewallBlacklistSource,
-} from "landscape-types/api/schemas";
+} from "@landscape-router/types/api/schemas";
 
 interface Props {
   id: string | null;

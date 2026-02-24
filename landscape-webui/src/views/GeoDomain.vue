@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { refresh_geo_cache_key, search_geo_site_cache } from "@/api/geo/site";
 import { sortGeoKeys } from "@/lib/geo_utils";
-import type { QueryGeoKey } from "landscape-types/api/schemas";
+import type { QueryGeoKey } from "@landscape-router/types/api/schemas";
 import { onMounted, ref } from "vue";
 
 const rules = ref<any>([]);

@@ -1,7 +1,7 @@
 <script lang="ts" setup>
 import { sleep } from "@/lib/util";
 import type { ArpScanInfo, DHCPv4OfferInfo } from "@/api/service_dhcp_v4";
-import type { DHCPv4OfferInfoItem } from "landscape-types/api/schemas";
+import type { DHCPv4OfferInfoItem } from "@landscape-router/types/api/schemas";
 import { CountdownInst } from "naive-ui";
 import { computed, nextTick, ref, watch } from "vue";
 

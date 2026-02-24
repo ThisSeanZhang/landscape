@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref } from "vue";
-import type { FlowConfig } from "landscape-types/api/schemas";
-import { getFlowRules } from "landscape-types/api/flow-rules/flow-rules";
+import type { FlowConfig } from "@landscape-router/types/api/schemas";
+import { getFlowRules } from "@landscape-router/types/api/flow-rules/flow-rules";
 import FlowEditModal from "@/components/flow/FlowEditModal.vue";
 
 const flows = ref<FlowConfig[]>([]);

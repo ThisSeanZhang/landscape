@@ -2,7 +2,7 @@
 import { computed, ref } from "vue";
 import WanRuleEditModal from "./WanRuleEditModal.vue";
 import FlowMarkExhibit from "@/components/flow/FlowMarkExhibit.vue";
-import type { WanIpRuleConfig } from "landscape-types/api/schemas";
+import type { WanIpRuleConfig } from "@landscape-router/types/api/schemas";
 import { delete_dst_ip_rules_rule } from "@/api/dst_ip_rule";
 import { Warning } from "@vicons/carbon";
 const rule = defineModel<WanIpRuleConfig>("rule", { required: true });

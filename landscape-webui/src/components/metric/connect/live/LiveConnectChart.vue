@@ -4,7 +4,7 @@ import { get_connect_metric_info } from "@/api/metric";
 import type {
   ConnectKey,
   ConnectMetricPoint,
-} from "landscape-types/api/schemas";
+} from "@landscape-router/types/api/schemas";
 import { ApexOptions } from "apexcharts";
 import VueApexCharts from "vue3-apexcharts";
 import { useThemeVars } from "naive-ui";

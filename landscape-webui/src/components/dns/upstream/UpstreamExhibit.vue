@@ -1,6 +1,6 @@
 <script lang="ts" setup>
 import { get_dns_upstream } from "@/api/dns_rule/upstream";
-import type { DnsUpstreamConfig } from "landscape-types/api/schemas";
+import type { DnsUpstreamConfig } from "@landscape-router/types/api/schemas";
 import { onMounted, watch, ref } from "vue";
 
 type Props = {
