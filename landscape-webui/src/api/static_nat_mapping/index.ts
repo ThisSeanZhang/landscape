@@ -1,35 +1,36 @@
-import axiosService from "@/api";
-import { StaticNatMappingConfig } from "landscape-types/common/nat";
+import {
+  getStaticNatMappings,
+  getStaticNatMapping,
+  addStaticNatMappings,
+  delStaticNatMappings,
+  addManyStaticNatMappings,
+} from "landscape-types/api/static-nat-mappings/static-nat-mappings";
+import type { StaticNatMappingConfig } from "landscape-types/api/schemas";
 
 export async function get_static_nat_mappings(): Promise<
   StaticNatMappingConfig[]
 > {
-  let data = await axiosService.get(`config/static_nat_mappings`);
-  return data.data;
+  return getStaticNatMappings();
 }
 
 export async function get_static_nat_mapping(
   id: string,
 ): Promise<StaticNatMappingConfig> {
-  let data = await axiosService.get(`config/static_nat_mappings/${id}`);
-  return data.data;
+  return getStaticNatMapping(id);
 }
 
 export async function push_static_nat_mapping(
   rule: StaticNatMappingConfig,
 ): Promise<void> {
-  let data = await axiosService.post(`config/static_nat_mappings`, rule);
+  await addStaticNatMappings(rule);
 }
 
 export async function delete_static_nat_mapping(id: string): Promise<void> {
-  let data = await axiosService.delete(`config/static_nat_mappings/${id}`);
+  await delStaticNatMappings(id);
 }
 
 export async function push_many_static_nat_mapping(
   rule: StaticNatMappingConfig[],
 ): Promise<void> {
-  let data = await axiosService.post(
-    `config/static_nat_mappings/set_many`,
-    rule,
-  );
+  await addManyStaticNatMappings(rule);
 }

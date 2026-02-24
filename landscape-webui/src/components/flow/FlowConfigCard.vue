@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
-import { FlowConfig } from "landscape-types/common/flow";
+import type { FlowConfig } from "landscape-types/api/schemas";
 import FlowEditModal from "@/components/flow/FlowEditModal.vue";
 import DnsRuleDrawer from "@/components/dns/DnsRuleDrawer.vue";
 import { useFrontEndStore } from "@/stores/front_end_config";

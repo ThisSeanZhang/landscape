@@ -24,6 +24,7 @@ pub struct DnsUpstreamConfig {
     #[cfg_attr(feature = "openapi", schema(value_type = Vec<String>))]
     pub ips: Vec<IpAddr>,
 
+    #[cfg_attr(feature = "openapi", schema(required = true, nullable = true))]
     pub port: Option<u16>,
 
     #[serde(default)]

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onMounted, ref } from "vue";
-import { FlowConfig } from "landscape-types/common/flow";
+import type { FlowConfig } from "landscape-types/api/schemas";
 import { getFlowRules } from "landscape-types/api/flow-rules/flow-rules";
 import FlowEditModal from "@/components/flow/FlowEditModal.vue";
 

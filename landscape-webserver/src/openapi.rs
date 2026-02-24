@@ -36,7 +36,13 @@ use crate::LandscapeApp;
         (name = "Enrolled Devices", description = "Enrolled device management"),
         (name = "Geo Sites", description = "Geo site configuration"),
         (name = "Geo IPs", description = "Geo IP configuration"),
-    )
+    ),
+    components(schemas(
+        landscape_common::config::geo::GeoFileCacheKey,
+        landscape_common::config::geo::QueryGeoKey,
+        landscape_common::config::geo::GeoDomainConfig,
+        landscape_common::config::geo::GeoIpConfig,
+    ))
 )]
 pub struct ApiDoc;
 

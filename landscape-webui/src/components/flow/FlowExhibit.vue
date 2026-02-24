@@ -1,6 +1,6 @@
 <script lang="ts" setup>
 import { getFlowRuleByFlowId } from "landscape-types/api/flow-rules/flow-rules";
-import { FlowConfig } from "landscape-types/common/flow";
+import type { FlowConfig } from "landscape-types/api/schemas";
 import { onMounted, ref, watch, watchEffect } from "vue";
 import { Docker, NetworkWired } from "@vicons/fa";
 import { useFrontEndStore } from "@/stores/front_end_config";

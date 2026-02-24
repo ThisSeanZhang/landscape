@@ -28,6 +28,7 @@ use crate::utils::time::get_f64_timestamp;
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[ts(export, export_to = "common/firewall.d.ts")]
 pub struct FirewallRuleConfig {
+    #[cfg_attr(feature = "openapi", schema(required = true))]
     pub id: Option<Uuid>,
     // 优先级
     pub index: u32,
@@ -63,7 +64,9 @@ impl LandscapeDBStore<Uuid> for FirewallRuleConfig {
 #[ts(export, export_to = "common/firewall.d.ts")]
 pub struct FirewallRuleConfigItem {
     // IP 承载的协议
+    #[cfg_attr(feature = "openapi", schema(required = true, nullable = true))]
     pub ip_protocol: Option<LandscapeIpProtocolCode>,
+    #[cfg_attr(feature = "openapi", schema(required = true, nullable = true))]
     pub local_port: Option<String>,
     #[cfg_attr(feature = "openapi", schema(value_type = String))]
     pub address: IpAddr,

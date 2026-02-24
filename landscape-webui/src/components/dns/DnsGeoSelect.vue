@@ -5,8 +5,10 @@ import {
   search_geo_site_cache,
 } from "@/api/geo/site";
 import { renderGeoSelectLabel, sortGeoKeys } from "@/lib/geo_utils";
-import { GeoConfigKey } from "landscape-types/common/geo";
-import { GeoSiteSourceConfig } from "landscape-types/common/geo_site";
+import type {
+  GeoFileCacheKey,
+  GeoSiteSourceConfig,
+} from "landscape-types/api/schemas";
 import { computed, onMounted, ref } from "vue";
 
 const key = defineModel<string | null>("geo_key", {
@@ -81,7 +83,7 @@ async function typing_key(query: string) {
   }
 }
 
-const keys = ref<GeoConfigKey[]>();
+const keys = ref<GeoFileCacheKey[]>();
 
 // Composite value logic
 const compositeValue = computed({

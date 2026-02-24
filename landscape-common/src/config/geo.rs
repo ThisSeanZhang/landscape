@@ -58,6 +58,7 @@ pub enum GeoIpError {
 #[ts(export, export_to = "common/geo_site.d.ts")]
 pub struct GeoSiteSourceConfig {
     /// 用这个 ID 作为文件名称
+    #[cfg_attr(feature = "openapi", schema(required = true))]
     pub id: Option<Uuid>,
     /// 记录更新时间
     pub update_at: f64,
@@ -175,6 +176,7 @@ pub struct QueryGeoDomainConfig {
 #[ts(export, export_to = "common/geo_ip.d.ts")]
 pub struct GeoIpSourceConfig {
     /// 用这个 ID 作为文件名称
+    #[cfg_attr(feature = "openapi", schema(required = true))]
     pub id: Option<Uuid>,
     /// 记录更新时间
     pub update_at: f64,

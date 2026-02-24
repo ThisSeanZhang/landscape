@@ -6,10 +6,12 @@ import { ChangeCatalog } from "@vicons/carbon";
 
 import FlowMarkEdit from "@/components/flow/FlowMarkEdit.vue";
 import IpEdit from "@/components/IpEdit.vue";
-import { WanIPRuleSource } from "landscape-types/common/flow";
+import type {
+  WanIPRuleSource,
+  WanIpRuleConfig,
+} from "landscape-types/api/schemas";
 
 import { new_wan_rules, WanIpRuleConfigClass } from "@/lib/mark";
-import { WanIpRuleConfig } from "landscape-types/common/flow";
 import {
   get_dst_ip_rules_rule,
   push_dst_ip_rules_rule,

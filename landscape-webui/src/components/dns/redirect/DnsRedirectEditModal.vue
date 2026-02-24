@@ -8,7 +8,7 @@ import {
   copy_context_to_clipboard,
   read_context_from_clipboard,
 } from "@/lib/common";
-import { DNSRedirectRule } from "landscape-types/common/dns_redirect";
+import type { DNSRedirectRule } from "landscape-types/api/schemas";
 import { get_dns_redirect, push_dns_redirect } from "@/api/dns_rule/redirect";
 import { getFlowRules } from "landscape-types/api/flow-rules/flow-rules";
 

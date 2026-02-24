@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, reactive } from "vue";
-import { FlowEntryRule } from "landscape-types/common/flow";
+import type { FlowEntryRule } from "landscape-types/api/schemas";
 import { useFrontEndStore } from "@/stores/front_end_config";
 import { useEnrolledDeviceStore } from "@/stores/enrolled_device";
 import { ChangeCatalog } from "@vicons/carbon";

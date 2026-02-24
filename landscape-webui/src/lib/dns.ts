@@ -1,11 +1,11 @@
-import { FlowMark } from "landscape-types/common/flow";
-import { FlowMarkType } from "./default_value";
-import {
+import type {
+  FlowMark,
   DnsBindConfig,
   DNSRuleConfig,
   FilterResult,
   RuleSource,
-} from "landscape-types/common/dns";
+} from "landscape-types/api/schemas";
+import { FlowMarkType } from "./default_value";
 
 export enum DnsUpstreamModeTsEnum {
   Plaintext = "plaintext",

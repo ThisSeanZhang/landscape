@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { get_geo_site_cache_detail } from "@/api/geo/site";
-import { GeoConfigKey } from "landscape-types/common/geo";
-import { GeoDomainConfig } from "landscape-types/common/geo_site";
+import type {
+  GeoConfigKey,
+  GeoDomainConfig,
+} from "landscape-types/api/schemas";
 import { onMounted, ref } from "vue";
 
 const key = defineModel<GeoConfigKey>("geo_key", {

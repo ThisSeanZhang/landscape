@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { get_geo_site_configs, search_geo_site_cache } from "@/api/geo/site";
 import { renderGeoSelectLabel, sortGeoKeys } from "@/lib/geo_utils";
-import { GeoConfigKey } from "landscape-types/common/geo";
-import { GeoSiteSourceConfig } from "landscape-types/common/geo_site";
+import type {
+  GeoFileCacheKey,
+  GeoSiteSourceConfig,
+} from "landscape-types/api/schemas";
 import { computed, ref } from "vue";
 
 const key = defineModel<string | null>("geo_key", {
@@ -60,7 +62,7 @@ async function typing_key(query: string) {
   }
 }
 
-const keys = ref<GeoConfigKey[]>();
+const keys = ref<GeoFileCacheKey[]>();
 const geo_key_options = computed(() => {
   let result = [];
   if (keys.value) {

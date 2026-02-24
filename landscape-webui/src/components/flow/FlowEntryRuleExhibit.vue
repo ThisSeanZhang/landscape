@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { FlowEntryRule } from "landscape-types/common/flow";
+import type { FlowEntryRule } from "landscape-types/api/schemas";
 import { useEnrolledDeviceStore } from "@/stores/enrolled_device";
 
 interface Prop {

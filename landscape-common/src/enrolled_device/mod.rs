@@ -33,7 +33,7 @@ pub struct EnrolledDevice {
     /// Optional interface name this binding belongs to
     #[serde(default)]
     #[ts(optional)]
-    #[cfg_attr(feature = "openapi", schema(required = false))]
+    #[cfg_attr(feature = "openapi", schema(required = false, nullable = false))]
     pub iface_name: Option<String>,
 
     /// The display name chosen by the user
@@ -41,13 +41,13 @@ pub struct EnrolledDevice {
     /// Name to show when "Private Mode" is enabled
     #[serde(default)]
     #[ts(optional)]
-    #[cfg_attr(feature = "openapi", schema(required = false))]
+    #[cfg_attr(feature = "openapi", schema(required = false, nullable = false))]
     pub fake_name: Option<String>,
 
     /// Optional remark for the device
     #[serde(default)]
     #[ts(optional)]
-    #[cfg_attr(feature = "openapi", schema(required = false))]
+    #[cfg_attr(feature = "openapi", schema(required = false, nullable = false))]
     pub remark: Option<String>,
 
     /// Unique MacAddr for this binding

@@ -1,4 +1,4 @@
-import { FlowConfig } from "landscape-types/common/flow";
+import type { FlowConfig } from "landscape-types/api/schemas";
 
 export function flow_config_default(): FlowConfig {
   return {

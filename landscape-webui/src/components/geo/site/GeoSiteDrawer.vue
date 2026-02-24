@@ -4,7 +4,7 @@ import {
   copy_context_to_clipboard,
   read_context_from_clipboard,
 } from "@/lib/common";
-import { GeoSiteSourceConfig } from "landscape-types/common/geo_site";
+import type { GeoSiteSourceConfig } from "landscape-types/api/schemas";
 import { onMounted, ref } from "vue";
 
 import { useMessage } from "naive-ui";

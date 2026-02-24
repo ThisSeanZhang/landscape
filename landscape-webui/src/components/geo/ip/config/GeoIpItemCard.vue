@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { delete_geo_ip_config, update_geo_ip_by_upload } from "@/api/geo/ip";
-import { GeoIpSourceConfig } from "landscape-types/common/geo_ip";
+import type { GeoIpSourceConfig } from "landscape-types/api/schemas";
 import { computed, ref } from "vue";
 import { useFrontEndStore } from "@/stores/front_end_config";
 import { mask_string } from "@/lib/common";

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref } from "vue";
-import { EnrolledDevice } from "landscape-types/common/enrolled_device";
+import type { EnrolledDevice } from "landscape-types/api/schemas";
 import {
   delete_enrolled_device,
   validate_enrolled_device_ip,

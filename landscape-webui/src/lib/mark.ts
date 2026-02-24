@@ -1,12 +1,13 @@
 import { convert_flow_mark, MarkType } from "./dns";
 
-import type { FlowMark, WanIPRuleSource } from "landscape-types/common/flow";
-import {
+import type {
+  FlowMark,
+  WanIPRuleSource,
+  WanIpRuleConfig,
   FirewallRuleConfig,
   FirewallRuleConfigItem,
   LandscapeIpProtocolCode,
-} from "landscape-types/common/firewall";
-import { WanIpRuleConfig } from "landscape-types/common/flow";
+} from "landscape-types/api/schemas";
 export class WanIpRuleConfigClass implements WanIpRuleConfig {
   id: string | null;
   index: number;
@@ -31,7 +32,7 @@ export class WanIpRuleConfigClass implements WanIpRuleConfig {
   }
 }
 
-export function new_wan_rules(e: any): WanIPRuleSource {
+export function new_wan_rules(e: WanIPRuleSource): WanIPRuleSource {
   if (e.t == "config") {
     return { t: "config", ip: e.ip, prefix: e.prefix };
   } else {

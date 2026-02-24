@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { get_dns_upstreams } from "@/api/dns_rule/upstream";
-import { DnsUpstreamConfig } from "landscape-types/common/dns";
+import type { DnsUpstreamConfig } from "landscape-types/api/schemas";
 import { computed, onMounted, ref } from "vue";
 
 const upstream_id = defineModel<string>("upstream_id", { required: true });

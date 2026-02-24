@@ -7,7 +7,7 @@ import { check_domain } from "@/api/dns_service";
 import { LandscapeDnsRecordType } from "landscape-types/common/dns_record_type";
 import { DnsRule } from "@/lib/dns";
 import { getDnsRule } from "landscape-types/api/dns-rules/dns-rules";
-import { DNSRedirectRule } from "landscape-types/common/dns_redirect";
+import type { DNSRedirectRule } from "landscape-types/api/schemas";
 import { get_dns_redirect } from "@/api/dns_rule/redirect";
 const message = useMessage();
 

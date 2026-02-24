@@ -38,7 +38,7 @@ import CheckDomainDrawer from "@/components/dns/CheckDomainDrawer.vue";
 import { SearchLocate } from "@vicons/carbon";
 import { usePreferenceStore } from "@/stores/preference";
 import { getFlowRules } from "landscape-types/api/flow-rules/flow-rules";
-import { FlowConfig } from "landscape-types/common/flow";
+import type { FlowConfig } from "landscape-types/api/schemas";
 const prefStore = usePreferenceStore();
 
 const activeTab = ref("dashboard");

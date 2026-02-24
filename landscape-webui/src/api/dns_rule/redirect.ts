@@ -1,26 +1,30 @@
-import axiosService from "@/api";
-import { DNSRedirectRule } from "landscape-types/common/dns_redirect";
+import {
+  getDnsRedirects,
+  getDnsRedirect,
+  addDnsRedirects,
+  delDnsRedirects,
+  addManyDnsRedirects,
+} from "landscape-types/api/dns-redirects/dns-redirects";
+import type { DNSRedirectRule } from "landscape-types/api/schemas";
 
 export async function get_dns_redirects(): Promise<DNSRedirectRule[]> {
-  let data = await axiosService.get(`config/dns_redirects`);
-  return data.data;
+  return getDnsRedirects();
 }
 
 export async function get_dns_redirect(id: string): Promise<DNSRedirectRule> {
-  let data = await axiosService.get(`config/dns_redirects/${id}`);
-  return data.data;
+  return getDnsRedirect(id);
 }
 
 export async function push_dns_redirect(rule: DNSRedirectRule): Promise<void> {
-  let data = await axiosService.post(`config/dns_redirects`, rule);
+  await addDnsRedirects(rule);
 }
 
 export async function delete_dns_redirect(id: string): Promise<void> {
-  let data = await axiosService.delete(`config/dns_redirects/${id}`);
+  await delDnsRedirects(id);
 }
 
 export async function push_many_dns_redirect(
   rule: DNSRedirectRule[],
 ): Promise<void> {
-  let data = await axiosService.post(`config/dns_redirects/set_many`, rule);
+  await addManyDnsRedirects(rule);
 }

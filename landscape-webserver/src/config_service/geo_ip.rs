@@ -21,7 +21,7 @@ pub fn get_geo_ip_config_paths() -> OpenApiRouter<LandscapeApp> {
     OpenApiRouter::new()
         .routes(routes!(get_geo_ips, add_geo_ip))
         .routes(routes!(add_many_geo_ips))
-        .routes(routes!(get_geo_rule, del_geo_ip))
+        .routes(routes!(get_geo_ip_rule, del_geo_ip))
         .routes(routes!(get_geo_ip_cache, refresh_geo_ip_cache))
         .routes(routes!(search_geo_ip_cache))
         .routes(routes!(get_geo_ip_cache_detail))
@@ -143,7 +143,7 @@ async fn get_geo_ips(
         (status = 404, description = "Not found")
     )
 )]
-async fn get_geo_rule(
+async fn get_geo_ip_rule(
     State(state): State<LandscapeApp>,
     Path(id): Path<ConfigId>,
 ) -> LandscapeApiResult<GeoIpSourceConfig> {

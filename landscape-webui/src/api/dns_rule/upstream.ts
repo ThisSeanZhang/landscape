@@ -1,28 +1,32 @@
-import axiosService from "@/api";
-import { DnsUpstreamConfig } from "landscape-types/common/dns";
+import {
+  getDnsUpstreams,
+  getDnsUpstream,
+  addDnsUpstream,
+  delDnsUpstream,
+  addManyDnsUpstreams,
+} from "landscape-types/api/dns-upstreams/dns-upstreams";
+import type { DnsUpstreamConfig } from "landscape-types/api/schemas";
 
 export async function get_dns_upstreams(): Promise<DnsUpstreamConfig[]> {
-  let data = await axiosService.get(`config/dns_upstreams`);
-  return data.data;
+  return getDnsUpstreams();
 }
 
 export async function get_dns_upstream(id: string): Promise<DnsUpstreamConfig> {
-  let data = await axiosService.get(`config/dns_upstreams/${id}`);
-  return data.data;
+  return getDnsUpstream(id);
 }
 
 export async function push_dns_upstream(
   rule: DnsUpstreamConfig,
 ): Promise<void> {
-  let data = await axiosService.post(`config/dns_upstreams`, rule);
+  await addDnsUpstream(rule);
 }
 
 export async function delete_dns_upstream(id: string): Promise<void> {
-  let data = await axiosService.delete(`config/dns_upstreams/${id}`);
+  await delDnsUpstream(id);
 }
 
 export async function push_many_dns_upstream(
   rule: DnsUpstreamConfig[],
 ): Promise<void> {
-  let data = await axiosService.post(`config/dns_upstreams/set_many`, rule);
+  await addManyDnsUpstreams(rule);
 }

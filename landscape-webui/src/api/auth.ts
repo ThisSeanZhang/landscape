@@ -1,9 +1,6 @@
-import { LoginInfo, LoginResult } from "landscape-types/common/auth";
-import axiosService from ".";
+import type { LoginInfo } from "landscape-types/api/schemas";
+import { loginHandler } from "landscape-types/api/auth/auth";
 
-export async function do_login(login: LoginInfo): Promise<LoginResult> {
-  axiosService.defaults.baseURL = "/api/auth";
-  let data = await axiosService.post("/login", login);
-  axiosService.defaults.baseURL = "/api/src";
-  return data.data;
+export async function do_login(login: LoginInfo) {
+  return loginHandler(login);
 }

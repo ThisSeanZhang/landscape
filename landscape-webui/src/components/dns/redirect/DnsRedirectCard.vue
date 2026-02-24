@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref } from "vue";
 import { delete_dns_redirect } from "@/api/dns_rule/redirect";
-import { DNSRedirectRule } from "landscape-types/common/dns_redirect";
+import type { DNSRedirectRule } from "landscape-types/api/schemas";
 import { useFrontEndStore } from "@/stores/front_end_config";
 
 const frontEndStore = useFrontEndStore();

@@ -1,11 +1,11 @@
 <script setup lang="ts">
 import { get_geo_site_config, push_geo_site_config } from "@/api/geo/site";
-import {
+import type {
   GeoSiteSourceConfig,
   GeoSiteSource,
   GeoSiteDirectItem,
   GeoSiteFileConfig,
-} from "landscape-types/common/geo_site";
+} from "landscape-types/api/schemas";
 import { FormInst, FormRules } from "naive-ui";
 import { computed, ref } from "vue";
 

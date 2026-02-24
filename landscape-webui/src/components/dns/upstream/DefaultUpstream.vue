@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { DnsUpstreamConfig } from "landscape-types/common/dns";
+import type { DnsUpstreamConfig } from "landscape-types/api/schemas";
 import { DnsUpstreamModeTsEnum } from "@/lib/dns";
 
 const rule = defineModel<DnsUpstreamConfig>("rule", { required: true });

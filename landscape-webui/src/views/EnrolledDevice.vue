@@ -2,7 +2,7 @@
 import { ref, onMounted } from "vue";
 import { useI18n } from "vue-i18n";
 import { get_enrolled_devices } from "@/api/enrolled_device";
-import { EnrolledDevice } from "landscape-types/common/enrolled_device";
+import type { EnrolledDevice } from "landscape-types/api/schemas";
 import EnrolledDeviceCard from "@/components/device/EnrolledDeviceCard.vue";
 import EnrolledDeviceEditModal from "@/components/device/EnrolledDeviceEditModal.vue";
 import { Add } from "@vicons/carbon";

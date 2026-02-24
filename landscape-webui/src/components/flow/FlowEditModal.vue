@@ -8,11 +8,11 @@ import { computed } from "vue";
 import { ref } from "vue";
 import FlowMatchRule from "./match/FlowMatchRule.vue";
 import { flow_config_default, FlowTargetTypes } from "@/lib/default_value";
-import {
+import type {
   FlowConfig,
   FlowEntryRule,
   FlowTarget,
-} from "landscape-types/common/flow";
+} from "landscape-types/api/schemas";
 import { useFrontEndStore } from "@/stores/front_end_config";
 interface Props {
   rule_id?: string;

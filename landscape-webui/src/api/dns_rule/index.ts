@@ -1,24 +1,30 @@
-import axiosService from "@/api";
 import { DnsRule } from "@/lib/dns";
+import {
+  getFlowDnsRules,
+  getDnsRule,
+  addDnsRules,
+  delDnsRules,
+  addManyDnsRules,
+} from "landscape-types/api/dns-rules/dns-rules";
 
 export async function get_flow_dns_rules(flow_id: number): Promise<DnsRule[]> {
-  let data = await axiosService.get(`config/dns_rules/flow/${flow_id}`);
-  return data.data.map((d: any) => new DnsRule(d));
+  const data = await getFlowDnsRules(flow_id);
+  return data.map((d) => new DnsRule(d));
 }
 
 export async function get_dns_rule(id: string): Promise<DnsRule> {
-  let data = await axiosService.get(`config/dns_rules/${id}`);
-  return new DnsRule(data.data);
+  const data = await getDnsRule(id);
+  return new DnsRule(data);
 }
 
 export async function push_dns_rule(rule: DnsRule): Promise<void> {
-  let data = await axiosService.post(`config/dns_rules`, rule);
+  await addDnsRules(rule);
 }
 
 export async function delete_dns_rule(id: string): Promise<void> {
-  let data = await axiosService.delete(`config/dns_rules/${id}`);
+  await delDnsRules(id);
 }
 
 export async function push_many_dns_rule(rule: DnsRule[]): Promise<void> {
-  let data = await axiosService.post(`config/dns_rules/set_many`, rule);
+  await addManyDnsRules(rule);
 }

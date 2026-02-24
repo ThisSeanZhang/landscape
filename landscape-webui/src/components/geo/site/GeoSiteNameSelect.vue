@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { get_geo_site_configs } from "@/api/geo/site";
-import { GeoSiteSourceConfig } from "landscape-types/common/geo_site";
+import type { GeoSiteSourceConfig } from "landscape-types/api/schemas";
 import { computed, onMounted, ref } from "vue";
 
 const name = defineModel<string | null>("name", { required: true });

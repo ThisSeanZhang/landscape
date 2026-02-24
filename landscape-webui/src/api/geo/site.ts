@@ -1,81 +1,73 @@
 import axiosService from "@/api";
 import {
-  GeoConfigKey,
+  getGeoSites,
+  getGeoRule,
+  addGeoSite,
+  addManyGeoSites,
+  delGeoSite,
+  getGeoSiteCache,
+  refreshGeoSiteCache,
+  searchGeoSiteCache,
+  getGeoSiteCacheDetail,
+} from "landscape-types/api/geo-sites/geo-sites";
+import type {
   GeoFileCacheKey,
   QueryGeoKey,
-} from "landscape-types/common/geo";
-import {
   GeoDomainConfig,
   GeoSiteSourceConfig,
-} from "landscape-types/common/geo_site";
+} from "landscape-types/api/schemas";
 
 export async function get_geo_site_configs(
   name?: string,
 ): Promise<GeoSiteSourceConfig[]> {
-  let data = await axiosService.get(`config/geo_sites`, {
-    params: {
-      name,
-    },
-  });
-  return data.data;
+  return getGeoSites({ name });
 }
 
 export async function get_geo_site_config(
   id: string,
 ): Promise<GeoSiteSourceConfig> {
-  let data = await axiosService.get(`config/geo_sites/${id}`);
-  return data.data;
+  return getGeoRule(id);
 }
 
 export async function push_geo_site_config(
   config: GeoSiteSourceConfig,
 ): Promise<void> {
-  let data = await axiosService.post(`config/geo_sites`, config);
+  await addGeoSite(config);
 }
 
 export async function push_many_geo_site_rule(
   rules: GeoSiteSourceConfig[],
 ): Promise<void> {
-  let data = await axiosService.post(`config/geo_sites/set_many`, rules);
+  await addManyGeoSites(rules);
 }
 
 export async function delete_geo_site_config(id: string): Promise<void> {
-  let data = await axiosService.delete(`config/geo_sites/${id}`);
+  await delGeoSite(id);
 }
 
 export async function get_geo_cache_key(
   filter: QueryGeoKey,
-): Promise<GeoConfigKey[]> {
-  let data = await axiosService.get(`config/geo_sites/cache`, {
-    params: { ...filter },
-  });
-  return data.data;
+): Promise<GeoFileCacheKey[]> {
+  return getGeoSiteCache();
 }
 
 export async function refresh_geo_cache_key(): Promise<void> {
-  let data = await axiosService.post(`config/geo_sites/cache`);
+  await refreshGeoSiteCache();
 }
 
 export async function search_geo_site_cache(
   query: QueryGeoKey,
-): Promise<GeoConfigKey[]> {
-  let data = await axiosService.get(`config/geo_sites/cache/search`, {
-    params: {
-      ...query,
-    },
+): Promise<GeoFileCacheKey[]> {
+  return searchGeoSiteCache({
+    name: query.name ?? undefined,
+    key: query.key ?? undefined,
   });
-  return data.data;
 }
 
 export async function get_geo_site_cache_detail(
   key: GeoFileCacheKey,
 ): Promise<GeoDomainConfig> {
-  let data = await axiosService.get(`config/geo_sites/cache/detail`, {
-    params: {
-      ...key,
-    },
-  });
-  return data.data;
+  return getGeoSiteCacheDetail(key);
 }
 
 export async function update_geo_site_by_upload(

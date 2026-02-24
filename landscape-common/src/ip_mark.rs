@@ -23,6 +23,7 @@ pub enum DstIpRuleError {
 #[ts(export, export_to = "common/flow.d.ts")]
 /// 对于外部 IP 规则
 pub struct WanIpRuleConfig {
+    #[cfg_attr(feature = "openapi", schema(required = true))]
     pub id: Option<Uuid>,
     // 优先级 用作存储主键
     pub index: u32,

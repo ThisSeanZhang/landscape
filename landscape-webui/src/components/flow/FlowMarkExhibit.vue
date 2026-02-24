@@ -1,5 +1,5 @@
 <script lang="ts" setup>
-import { FlowMark } from "landscape-types/common/flow";
+import type { FlowMark } from "landscape-types/api/schemas";
 
 type Props = {
   mark: FlowMark;

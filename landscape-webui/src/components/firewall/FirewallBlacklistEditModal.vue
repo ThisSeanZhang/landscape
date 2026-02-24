@@ -10,10 +10,10 @@ import {
   push_firewall_blacklist,
   get_firewall_blacklist,
 } from "@/api/firewall_blacklist";
-import {
+import type {
   FirewallBlacklistConfig,
   FirewallBlacklistSource,
-} from "landscape-types/common/firewall_blacklist";
+} from "landscape-types/api/schemas";
 
 interface Props {
   id: string | null;

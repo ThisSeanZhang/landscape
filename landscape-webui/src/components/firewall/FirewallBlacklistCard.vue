@@ -4,7 +4,7 @@ import { Warning } from "@vicons/carbon";
 import FirewallBlacklistEditModal from "./FirewallBlacklistEditModal.vue";
 import BlacklistSourceExhibit from "./BlacklistSourceExhibit.vue";
 import { delete_firewall_blacklist } from "@/api/firewall_blacklist";
-import { FirewallBlacklistConfig } from "landscape-types/common/firewall_blacklist";
+import type { FirewallBlacklistConfig } from "landscape-types/api/schemas";
 
 const rule = defineModel<FirewallBlacklistConfig>("rule", { required: true });
 

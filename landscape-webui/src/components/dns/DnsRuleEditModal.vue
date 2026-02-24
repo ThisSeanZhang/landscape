@@ -20,7 +20,7 @@ import { ChangeCatalog } from "@vicons/carbon";
 import { computed, onMounted } from "vue";
 import { ref } from "vue";
 import FlowMarkEdit from "@/components/flow/FlowMarkEdit.vue";
-import { RuleSource } from "landscape-types/common/dns";
+import type { RuleSource } from "landscape-types/api/schemas";
 import {
   copy_context_to_clipboard,
   read_context_from_clipboard,

@@ -1,74 +1,73 @@
 import axiosService from "@/api";
-import { GeoConfigKey, QueryGeoKey } from "landscape-types/common/geo";
-import { GeoIpConfig, GeoIpSourceConfig } from "landscape-types/common/geo_ip";
+import {
+  getGeoIps,
+  getGeoIpRule,
+  addGeoIp,
+  addManyGeoIps,
+  delGeoIp,
+  getGeoIpCache,
+  refreshGeoIpCache,
+  searchGeoIpCache,
+  getGeoIpCacheDetail,
+} from "landscape-types/api/geo-ips/geo-ips";
+import type {
+  GeoFileCacheKey,
+  QueryGeoKey,
+  GeoIpConfig,
+  GeoIpSourceConfig,
+} from "landscape-types/api/schemas";
 
 export async function get_geo_ip_configs(
   name?: string,
 ): Promise<GeoIpSourceConfig[]> {
-  let data = await axiosService.get(`config/geo_ips`, {
-    params: {
-      name,
-    },
-  });
-  return data.data;
+  return getGeoIps({ name });
 }
 
 export async function get_geo_ip_config(
   id: string,
 ): Promise<GeoIpSourceConfig> {
-  let data = await axiosService.get(`config/geo_ips/${id}`);
-  return data.data;
+  return getGeoIpRule(id);
 }
 
 export async function push_geo_ip_config(
   config: GeoIpSourceConfig,
 ): Promise<void> {
-  let data = await axiosService.post(`config/geo_ips`, config);
+  await addGeoIp(config);
 }
 
 export async function push_many_geo_ip_rule(
   rules: GeoIpSourceConfig[],
 ): Promise<void> {
-  let data = await axiosService.post(`config/geo_ips/set_many`, rules);
+  await addManyGeoIps(rules);
 }
 
 export async function delete_geo_ip_config(id: string): Promise<void> {
-  let data = await axiosService.delete(`config/geo_ips/${id}`);
+  await delGeoIp(id);
 }
 
 export async function get_geo_cache_key(
   filter: QueryGeoKey,
-): Promise<GeoConfigKey[]> {
-  let data = await axiosService.get(`config/geo_ips/cache`, {
-    params: { ...filter },
-  });
-  return data.data;
+): Promise<GeoFileCacheKey[]> {
+  return getGeoIpCache();
 }
 
 export async function refresh_geo_cache_key(): Promise<void> {
-  let data = await axiosService.post(`config/geo_ips/cache`);
+  await refreshGeoIpCache();
 }
 
 export async function search_geo_ip_cache(
   query: QueryGeoKey,
-): Promise<GeoConfigKey[]> {
-  let data = await axiosService.get(`config/geo_ips/cache/search`, {
-    params: {
-      ...query,
-    },
+): Promise<GeoFileCacheKey[]> {
+  return searchGeoIpCache({
+    name: query.name ?? undefined,
+    key: query.key ?? undefined,
   });
-  return data.data;
 }
 
 export async function get_geo_ip_cache_detail(
-  key: GeoConfigKey,
+  key: GeoFileCacheKey,
 ): Promise<GeoIpConfig> {
-  let data = await axiosService.get(`config/geo_ips/cache/detail`, {
-    params: {
-      ...key,
-    },
-  });
-  return data.data;
+  return getGeoIpCacheDetail(key);
 }
 
 export async function update_geo_ip_by_upload(

@@ -1,17 +1,17 @@
-import { GeoConfigKey } from "landscape-types/common/geo";
+import type { GeoFileCacheKey } from "landscape-types/api/schemas";
 import { NTag, NText, SelectOption } from "naive-ui";
 import { h } from "vue";
 
 /**
- * Sorts GeoConfigKey results by relevance to the query.
+ * Sorts GeoFileCacheKey results by relevance to the query.
  * 1. Exact match (Key)
  * 2. Starts with (Key)
  * 3. Alphabetical (Key, then Name)
  */
 export function sortGeoKeys(
-  results: GeoConfigKey[],
+  results: GeoFileCacheKey[],
   query: string,
-): GeoConfigKey[] {
+): GeoFileCacheKey[] {
   const q = (query || "").toUpperCase();
   if (!results) return [];
 
@@ -41,7 +41,7 @@ export function sortGeoKeys(
  * Handles overflow with ellipsis.
  */
 export const renderGeoSelectLabel = (option: SelectOption) => {
-  const data = option.data as GeoConfigKey | undefined;
+  const data = option.data as GeoFileCacheKey | undefined;
 
   // Fallback if data is missing (e.g., when Select creates a fallback option for a value not in list)
   if (!data || !data.name) {

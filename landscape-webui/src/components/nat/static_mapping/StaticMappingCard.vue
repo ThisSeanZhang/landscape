@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { delete_static_nat_mapping } from "@/api/static_nat_mapping";
-import { StaticNatMappingConfig } from "landscape-types/common/nat";
+import type { StaticNatMappingConfig } from "landscape-types/api/schemas";
 import { ref } from "vue";
 import { ArrowRight, Edit, TrashCan } from "@vicons/carbon";
 import { useFrontEndStore } from "@/stores/front_end_config";

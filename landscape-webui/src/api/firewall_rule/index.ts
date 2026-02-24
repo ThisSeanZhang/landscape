@@ -1,25 +1,30 @@
-import axiosService from "@/api";
 import { FirewallRule } from "@/lib/mark";
-import { FirewallRuleConfig } from "landscape-types/common/firewall";
+import {
+  getFirewallRules,
+  getFirewallRule,
+  addFirewallRule,
+  delFirewallRule,
+} from "landscape-types/api/firewall-rules/firewall-rules";
+import type { FirewallRuleConfig } from "landscape-types/api/schemas";
 
 export async function get_firewall_rules(): Promise<FirewallRuleConfig[]> {
-  let data = await axiosService.get(`config/firewall_rules`);
-  return data.data.map((d: any) => new FirewallRule(d));
+  const data = await getFirewallRules();
+  return data.map((d) => new FirewallRule(d));
 }
 
 export async function get_firewall_rule(
   id: string,
 ): Promise<FirewallRuleConfig> {
-  let data = await axiosService.get(`config/firewall_rules/${id}`);
-  return new FirewallRule(data.data);
+  const data = await getFirewallRule(id);
+  return new FirewallRule(data);
 }
 
 export async function push_firewall_rule(
   rule: FirewallRuleConfig,
 ): Promise<void> {
-  let data = await axiosService.post(`config/firewall_rules`, rule);
+  await addFirewallRule(rule);
 }
 
 export async function delete_firewall_rule(id: string): Promise<void> {
-  let data = await axiosService.delete(`config/firewall_rules/${id}`);
+  await delFirewallRule(id);
 }
