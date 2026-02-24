@@ -22,7 +22,7 @@ pub fn get_firewall_blacklist_config_paths() -> OpenApiRouter<LandscapeApp> {
     get,
     path = "/blacklists",
     tag = "Firewall Blacklists",
-    responses((status = 200, body = inline(CommonApiResp<Vec<FirewallBlacklistConfig>>)))
+    responses((status = 200, body = CommonApiResp<Vec<FirewallBlacklistConfig>>))
 )]
 async fn get_firewall_blacklists(
     State(state): State<LandscapeApp>,
@@ -37,7 +37,7 @@ async fn get_firewall_blacklists(
     tag = "Firewall Blacklists",
     params(("id" = Uuid, Path, description = "Firewall blacklist ID")),
     responses(
-        (status = 200, body = inline(CommonApiResp<FirewallBlacklistConfig>)),
+        (status = 200, body = CommonApiResp<FirewallBlacklistConfig>),
         (status = 404, description = "Not found")
     )
 )]
@@ -58,7 +58,7 @@ async fn get_firewall_blacklist(
     path = "/blacklists",
     tag = "Firewall Blacklists",
     request_body = FirewallBlacklistConfig,
-    responses((status = 200, body = inline(CommonApiResp<FirewallBlacklistConfig>)))
+    responses((status = 200, body = CommonApiResp<FirewallBlacklistConfig>))
 )]
 async fn add_firewall_blacklist(
     State(state): State<LandscapeApp>,

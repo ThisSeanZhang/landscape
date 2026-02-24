@@ -400,7 +400,7 @@ async fn run(home_path: PathBuf, config: RuntimeConfig) -> LdResult<()> {
         .nest("/v1", v1_route)
         .nest("/ws", ws_route)
         .nest("/auth", auth::get_auth_route(auth_share))
-        .merge(Scalar::with_url("/scalar", openapi));
+        .merge(Scalar::with_url("/docs", openapi));
     let app = Router::new()
         .nest("/api", api_route)
         // .nest("/sock", sockets_route)

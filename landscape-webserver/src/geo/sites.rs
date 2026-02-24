@@ -39,7 +39,7 @@ pub fn get_geo_site_config_paths() -> OpenApiRouter<LandscapeApp> {
         ("key" = String, Query, description = "Geo cache key")
     ),
     responses(
-        (status = 200, body = inline(CommonApiResp<GeoDomainConfig>)),
+        (status = 200, body = CommonApiResp<GeoDomainConfig>),
         (status = 404, description = "Not found")
     )
 )]
@@ -63,7 +63,7 @@ async fn get_geo_site_cache_detail(
         ("name" = Option<String>, Query, description = "Filter by name"),
         ("key" = Option<String>, Query, description = "Filter by key")
     ),
-    responses((status = 200, body = inline(CommonApiResp<Vec<GeoFileCacheKey>>)))
+    responses((status = 200, body = CommonApiResp<Vec<GeoFileCacheKey>>))
 )]
 async fn search_geo_site_cache(
     State(state): State<LandscapeApp>,
@@ -91,7 +91,7 @@ async fn search_geo_site_cache(
     get,
     path = "/sites/cache",
     tag = "Geo Sites",
-    responses((status = 200, body = inline(CommonApiResp<Vec<GeoFileCacheKey>>)))
+    responses((status = 200, body = CommonApiResp<Vec<GeoFileCacheKey>>))
 )]
 async fn get_geo_site_cache(
     State(state): State<LandscapeApp>,
@@ -118,7 +118,7 @@ async fn refresh_geo_site_cache(State(state): State<LandscapeApp>) -> LandscapeA
     params(
         ("name" = Option<String>, Query, description = "Filter by name")
     ),
-    responses((status = 200, body = inline(CommonApiResp<Vec<GeoSiteSourceConfig>>)))
+    responses((status = 200, body = CommonApiResp<Vec<GeoSiteSourceConfig>>))
 )]
 async fn get_geo_sites(
     State(state): State<LandscapeApp>,
@@ -134,7 +134,7 @@ async fn get_geo_sites(
     tag = "Geo Sites",
     params(("id" = Uuid, Path, description = "Geo site rule ID")),
     responses(
-        (status = 200, body = inline(CommonApiResp<GeoSiteSourceConfig>)),
+        (status = 200, body = CommonApiResp<GeoSiteSourceConfig>),
         (status = 404, description = "Not found")
     )
 )]
@@ -155,7 +155,7 @@ async fn get_geo_rule(
     path = "/sites",
     tag = "Geo Sites",
     request_body = GeoSiteSourceConfig,
-    responses((status = 200, body = inline(CommonApiResp<GeoSiteSourceConfig>)))
+    responses((status = 200, body = CommonApiResp<GeoSiteSourceConfig>))
 )]
 async fn add_geo_site(
     State(state): State<LandscapeApp>,

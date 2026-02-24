@@ -1,15 +1,15 @@
 import type {
-  GetBasicSysInfo200Data,
+  LandscapeSystemInfo as LandscapeSystemInfoType,
   CpuUsage,
   MemUsage,
   LoadAvg,
-  GetIntervalFetchInfo200Data,
+  LandscapeStatus as LandscapeStatusType,
 } from "landscape-types/api/schemas";
 
-export type LandscapeSystemInfo = GetBasicSysInfo200Data;
+export type LandscapeSystemInfo = LandscapeSystemInfoType;
 export type { CpuUsage, MemUsage, LoadAvg };
 
-export class LandscapeStatus implements GetIntervalFetchInfo200Data {
+export class LandscapeStatus implements LandscapeStatusType {
   global_cpu_info: number;
   global_cpu_temp?: number;
   cpus: CpuUsage[];
@@ -17,7 +17,7 @@ export class LandscapeStatus implements GetIntervalFetchInfo200Data {
   uptime: number;
   load_avg: LoadAvg;
 
-  constructor(obj?: GetIntervalFetchInfo200Data) {
+  constructor(obj?: LandscapeStatusType) {
     this.global_cpu_info = obj?.global_cpu_info ?? 0;
     this.global_cpu_temp = obj?.global_cpu_temp;
     this.cpus = obj?.cpus ?? [];

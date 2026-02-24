@@ -33,7 +33,7 @@ async fn reset_cache() -> LandscapeApiResult<()> {
     path = "/routing/trace/flow_match",
     tag = "Route",
     request_body = FlowMatchRequest,
-    responses((status = 200, body = inline(CommonApiResp<FlowMatchResult>)))
+    responses((status = 200, body = CommonApiResp<FlowMatchResult>))
 )]
 async fn trace_flow_match(
     JsonBody(req): JsonBody<FlowMatchRequest>,
@@ -47,7 +47,7 @@ async fn trace_flow_match(
     path = "/routing/trace/verdict",
     tag = "Route",
     request_body = FlowVerdictRequest,
-    responses((status = 200, body = inline(CommonApiResp<FlowVerdictResult>)))
+    responses((status = 200, body = CommonApiResp<FlowVerdictResult>))
 )]
 async fn trace_verdict(
     JsonBody(req): JsonBody<FlowVerdictRequest>,

@@ -27,7 +27,7 @@ pub fn get_iface_pdclient_paths() -> OpenApiRouter<LandscapeApp> {
     get,
     path = "/ipv6pd/infos",
     tag = "IPv6 PD",
-    responses((status = 200, body = inline(CommonApiResp<HashMap<String, Option<LDIAPrefix>>>)))
+    responses((status = 200, body = CommonApiResp<HashMap<String, Option<LDIAPrefix>>>))
 )]
 async fn get_current_ip_prefix_info(
     State(state): State<LandscapeApp>,
@@ -40,7 +40,7 @@ async fn get_current_ip_prefix_info(
     path = "/ipv6pd/status",
     tag = "IPv6 PD",
     operation_id = "get_all_ipv6pd_status",
-    responses((status = 200, body = inline(CommonApiResp<HashMap<String, ServiceStatus>>)))
+    responses((status = 200, body = CommonApiResp<HashMap<String, ServiceStatus>>))
 )]
 async fn get_all_status(
     State(state): State<LandscapeApp>,
@@ -54,7 +54,7 @@ async fn get_all_status(
     tag = "IPv6 PD",
     params(("iface_name" = String, Path, description = "Interface name")),
     responses(
-        (status = 200, body = inline(CommonApiResp<IPV6PDServiceConfig>)),
+        (status = 200, body = CommonApiResp<IPV6PDServiceConfig>),
         (status = 404, description = "Not found")
     )
 )]
@@ -90,7 +90,7 @@ async fn handle_iface_pd(
     tag = "IPv6 PD",
     operation_id = "delete_and_stop_ipv6pd_service",
     params(("iface_name" = String, Path, description = "Interface name")),
-    responses((status = 200, body = inline(CommonApiResp<Option<ServiceStatus>>)))
+    responses((status = 200, body = CommonApiResp<Option<ServiceStatus>>))
 )]
 async fn delete_and_stop_iface_service(
     State(state): State<LandscapeApp>,

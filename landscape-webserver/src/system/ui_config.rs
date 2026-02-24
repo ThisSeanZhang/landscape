@@ -11,7 +11,7 @@ use crate::LandscapeApp;
     path = "/config/edit/ui",
     tag = "System Config",
     operation_id = "get_ui_config",
-    responses((status = 200, body = inline(CommonApiResp<GetUIConfigResponse>)))
+    responses((status = 200, body = CommonApiResp<GetUIConfigResponse>))
 )]
 pub async fn get_ui_config(
     State(state): State<LandscapeApp>,
@@ -25,7 +25,7 @@ pub async fn get_ui_config(
     path = "/config/ui",
     tag = "System Config",
     operation_id = "get_ui_config_fast",
-    responses((status = 200, body = inline(CommonApiResp<LandscapeUIConfig>)))
+    responses((status = 200, body = CommonApiResp<LandscapeUIConfig>))
 )]
 pub async fn get_ui_config_fast(
     State(state): State<LandscapeApp>,

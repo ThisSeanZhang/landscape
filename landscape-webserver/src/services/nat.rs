@@ -25,7 +25,7 @@ pub fn get_iface_nat_paths() -> OpenApiRouter<LandscapeApp> {
     get,
     path = "/nat/status",
     tag = "NAT Service",
-    responses((status = 200, body = inline(CommonApiResp<HashMap<String, ServiceStatus>>)))
+    responses((status = 200, body = CommonApiResp<HashMap<String, ServiceStatus>>))
 )]
 async fn get_all_nat_status(
     State(state): State<LandscapeApp>,
@@ -39,7 +39,7 @@ async fn get_all_nat_status(
     tag = "NAT Service",
     params(("iface_name" = String, Path, description = "Interface name")),
     responses(
-        (status = 200, body = inline(CommonApiResp<NatServiceConfig>)),
+        (status = 200, body = CommonApiResp<NatServiceConfig>),
         (status = 404, description = "Not found")
     )
 )]
@@ -74,7 +74,7 @@ async fn handle_iface_nat_status(
     path = "/nat/{iface_name}",
     tag = "NAT Service",
     params(("iface_name" = String, Path, description = "Interface name")),
-    responses((status = 200, body = inline(CommonApiResp<Option<ServiceStatus>>)))
+    responses((status = 200, body = CommonApiResp<Option<ServiceStatus>>))
 )]
 async fn delete_and_stop_iface_nat(
     State(state): State<LandscapeApp>,

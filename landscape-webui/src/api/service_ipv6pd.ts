@@ -7,9 +7,9 @@ import {
   deleteAndStopIpv6pdService,
   getCurrentIpPrefixInfo,
 } from "landscape-types/api/ipv6-pd/ipv6-pd";
-import type { GetCurrentIpPrefixInfo200Data } from "landscape-types/api/schemas";
+import type { LDIAPrefix } from "landscape-types/api/schemas";
 
-type LDIAPrefix = NonNullable<GetCurrentIpPrefixInfo200Data[string]>;
+// LDIAPrefix is now directly imported from generated types
 
 export async function get_all_ipv6pd_status(): Promise<
   Map<string, ServiceStatus>

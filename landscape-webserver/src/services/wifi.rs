@@ -26,7 +26,7 @@ pub fn get_wifi_service_paths() -> OpenApiRouter<LandscapeApp> {
     path = "/wifi/status",
     tag = "WiFi",
     operation_id = "get_all_wifi_service_status",
-    responses((status = 200, body = inline(CommonApiResp<HashMap<String, ServiceStatus>>)))
+    responses((status = 200, body = CommonApiResp<HashMap<String, ServiceStatus>>))
 )]
 async fn get_all_iface_service_status(
     State(state): State<LandscapeApp>,
@@ -41,7 +41,7 @@ async fn get_all_iface_service_status(
     operation_id = "get_wifi_service_config",
     params(("iface_name" = String, Path, description = "Interface name")),
     responses(
-        (status = 200, body = inline(CommonApiResp<WifiServiceConfig>)),
+        (status = 200, body = CommonApiResp<WifiServiceConfig>),
         (status = 404, description = "Not found")
     )
 )]
@@ -78,7 +78,7 @@ async fn handle_service_config(
     tag = "WiFi",
     operation_id = "delete_and_stop_wifi_service",
     params(("iface_name" = String, Path, description = "Interface name")),
-    responses((status = 200, body = inline(CommonApiResp<Option<ServiceStatus>>)))
+    responses((status = 200, body = CommonApiResp<Option<ServiceStatus>>))
 )]
 async fn delete_and_stop_iface_service(
     State(state): State<LandscapeApp>,

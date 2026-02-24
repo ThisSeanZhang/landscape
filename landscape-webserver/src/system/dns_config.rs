@@ -11,7 +11,7 @@ use crate::LandscapeApp;
     path = "/config/dns",
     tag = "System Config",
     operation_id = "get_dns_config_fast",
-    responses((status = 200, body = inline(CommonApiResp<GetDnsConfigResponse>)))
+    responses((status = 200, body = CommonApiResp<GetDnsConfigResponse>))
 )]
 pub async fn get_dns_config_fast(
     State(state): State<LandscapeApp>,
@@ -25,7 +25,7 @@ pub async fn get_dns_config_fast(
     path = "/config/edit/dns",
     tag = "System Config",
     operation_id = "get_dns_config",
-    responses((status = 200, body = inline(CommonApiResp<GetDnsConfigResponse>)))
+    responses((status = 200, body = CommonApiResp<GetDnsConfigResponse>))
 )]
 pub async fn get_dns_config(
     State(state): State<LandscapeApp>,
@@ -40,7 +40,7 @@ pub async fn get_dns_config(
     tag = "System Config",
     operation_id = "update_dns_config",
     request_body = serde_json::Value,
-    responses((status = 200, body = inline(CommonApiResp<String>)))
+    responses((status = 200, body = CommonApiResp<String>))
 )]
 pub async fn update_dns_config(
     State(state): State<LandscapeApp>,

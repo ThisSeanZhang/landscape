@@ -23,7 +23,7 @@ pub fn get_dns_redirect_config_paths() -> OpenApiRouter<LandscapeApp> {
     get,
     path = "/redirects",
     tag = "DNS Redirects",
-    responses((status = 200, body = inline(CommonApiResp<Vec<DNSRedirectRule>>)))
+    responses((status = 200, body = CommonApiResp<Vec<DNSRedirectRule>>))
 )]
 async fn get_dns_redirects(
     State(state): State<LandscapeApp>,
@@ -38,7 +38,7 @@ async fn get_dns_redirects(
     tag = "DNS Redirects",
     params(("id" = Uuid, Path, description = "DNS redirect rule ID")),
     responses(
-        (status = 200, body = inline(CommonApiResp<DNSRedirectRule>)),
+        (status = 200, body = CommonApiResp<DNSRedirectRule>),
         (status = 404, description = "Not found")
     )
 )]
@@ -74,7 +74,7 @@ async fn add_many_dns_redirects(
     path = "/redirects",
     tag = "DNS Redirects",
     request_body = DNSRedirectRule,
-    responses((status = 200, body = inline(CommonApiResp<DNSRedirectRule>)))
+    responses((status = 200, body = CommonApiResp<DNSRedirectRule>))
 )]
 async fn add_dns_redirects(
     State(state): State<LandscapeApp>,

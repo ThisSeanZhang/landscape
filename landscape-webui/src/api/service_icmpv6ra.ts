@@ -7,9 +7,9 @@ import {
   deleteAndStopIfaceIcmpv6,
   getAllIcmpv6raAssignedIps,
 } from "landscape-types/api/icmpv6-ra/icmpv6-ra";
-import type { GetAllIcmpv6raAssignedIps200Data } from "landscape-types/api/schemas";
+import type { IPv6NAInfo } from "landscape-types/api/schemas";
 
-type IPv6NAInfo = GetAllIcmpv6raAssignedIps200Data[string];
+// IPv6NAInfo is now directly imported from generated types
 
 export async function get_all_icmpv6ra_status(): Promise<
   Map<string, ServiceStatus>

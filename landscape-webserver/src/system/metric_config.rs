@@ -13,7 +13,7 @@ use crate::LandscapeApp;
     path = "/config/edit/metric",
     tag = "System Config",
     operation_id = "get_metric_config",
-    responses((status = 200, body = inline(CommonApiResp<GetMetricConfigResponse>)))
+    responses((status = 200, body = CommonApiResp<GetMetricConfigResponse>))
 )]
 pub async fn get_metric_config(
     State(state): State<LandscapeApp>,
@@ -27,7 +27,7 @@ pub async fn get_metric_config(
     path = "/config/metric",
     tag = "System Config",
     operation_id = "get_metric_config_fast",
-    responses((status = 200, body = inline(CommonApiResp<LandscapeMetricConfig>)))
+    responses((status = 200, body = CommonApiResp<LandscapeMetricConfig>))
 )]
 pub async fn get_metric_config_fast(
     State(state): State<LandscapeApp>,

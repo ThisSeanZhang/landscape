@@ -26,7 +26,7 @@ pub fn get_sys_config_paths() -> OpenApiRouter<LandscapeApp> {
     path = "/config/export",
     tag = "System Config",
     operation_id = "export_init_config",
-    responses((status = 200, body = inline(CommonApiResp<String>)))
+    responses((status = 200, body = CommonApiResp<String>))
 )]
 async fn export_init_config(State(state): State<LandscapeApp>) -> LandscapeApiResult<String> {
     let config = state.config_service.export_init_config().await;

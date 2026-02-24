@@ -1,9 +1,6 @@
 import { ServiceStatus } from "@/lib/services";
 import { DockerContainerSummary, DockerImageSummary } from "@/lib/docker";
-import {
-  DockerCmd,
-  GetDockerPullTasks200DataItem as PullImgTask,
-} from "landscape-types/api/schemas";
+import { DockerCmd, PullImgTask } from "landscape-types/api/schemas";
 import {
   getDockerStatus as _getDockerStatus,
   startDockerStatus as _startDockerStatus,

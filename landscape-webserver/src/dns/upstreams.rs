@@ -23,7 +23,7 @@ pub fn get_dns_upstream_config_paths() -> OpenApiRouter<LandscapeApp> {
     get,
     path = "/upstreams",
     tag = "DNS Upstreams",
-    responses((status = 200, body = inline(CommonApiResp<Vec<DnsUpstreamConfig>>)))
+    responses((status = 200, body = CommonApiResp<Vec<DnsUpstreamConfig>>))
 )]
 async fn get_dns_upstreams(
     State(state): State<LandscapeApp>,
@@ -38,7 +38,7 @@ async fn get_dns_upstreams(
     tag = "DNS Upstreams",
     params(("id" = Uuid, Path, description = "DNS upstream config ID")),
     responses(
-        (status = 200, body = inline(CommonApiResp<DnsUpstreamConfig>)),
+        (status = 200, body = CommonApiResp<DnsUpstreamConfig>),
         (status = 404, description = "Not found")
     )
 )]
@@ -74,7 +74,7 @@ async fn add_many_dns_upstreams(
     path = "/upstreams",
     tag = "DNS Upstreams",
     request_body = DnsUpstreamConfig,
-    responses((status = 200, body = inline(CommonApiResp<DnsUpstreamConfig>)))
+    responses((status = 200, body = CommonApiResp<DnsUpstreamConfig>))
 )]
 async fn add_dns_upstream(
     State(state): State<LandscapeApp>,

@@ -45,7 +45,7 @@ pub fn get_docker_paths() -> OpenApiRouter<LandscapeApp> {
     path = "/service",
     tag = "Docker",
     operation_id = "get_docker_status",
-    responses((status = 200, body = inline(CommonApiResp<ServiceStatus>)))
+    responses((status = 200, body = CommonApiResp<ServiceStatus>))
 )]
 async fn get_docker_status(
     State(state): State<LandscapeApp>,
@@ -58,7 +58,7 @@ async fn get_docker_status(
     path = "/service",
     tag = "Docker",
     operation_id = "start_docker_status",
-    responses((status = 200, body = inline(CommonApiResp<ServiceStatus>)))
+    responses((status = 200, body = CommonApiResp<ServiceStatus>))
 )]
 async fn start_docker_status(
     State(state): State<LandscapeApp>,
@@ -72,7 +72,7 @@ async fn start_docker_status(
     path = "/service",
     tag = "Docker",
     operation_id = "stop_docker_status",
-    responses((status = 200, body = inline(CommonApiResp<ServiceStatus>)))
+    responses((status = 200, body = CommonApiResp<ServiceStatus>))
 )]
 async fn stop_docker_status(
     State(state): State<LandscapeApp>,

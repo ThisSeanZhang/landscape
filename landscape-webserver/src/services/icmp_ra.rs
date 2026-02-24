@@ -29,7 +29,7 @@ pub fn get_iface_icmpv6ra_paths() -> OpenApiRouter<LandscapeApp> {
     path = "/icmpv6ra/assigned_ips",
     tag = "ICMPv6 RA",
     operation_id = "get_all_icmpv6ra_assigned_ips",
-    responses((status = 200, body = inline(CommonApiResp<HashMap<String, IPv6NAInfo>>)))
+    responses((status = 200, body = CommonApiResp<HashMap<String, IPv6NAInfo>>))
 )]
 async fn get_all_iface_assigned_ips(
     State(state): State<LandscapeApp>,
@@ -43,7 +43,7 @@ async fn get_all_iface_assigned_ips(
     tag = "ICMPv6 RA",
     operation_id = "get_icmpv6ra_assigned_ips_by_iface_name",
     params(("iface_name" = String, Path, description = "Interface name")),
-    responses((status = 200, body = inline(CommonApiResp<Option<IPv6NAInfo>>)))
+    responses((status = 200, body = CommonApiResp<Option<IPv6NAInfo>>))
 )]
 async fn get_assigned_ips_by_iface_name(
     State(state): State<LandscapeApp>,
@@ -59,7 +59,7 @@ async fn get_assigned_ips_by_iface_name(
     path = "/icmpv6ra/status",
     tag = "ICMPv6 RA",
     operation_id = "get_all_icmpv6ra_status",
-    responses((status = 200, body = inline(CommonApiResp<HashMap<String, ServiceStatus>>)))
+    responses((status = 200, body = CommonApiResp<HashMap<String, ServiceStatus>>))
 )]
 async fn get_all_status(
     State(state): State<LandscapeApp>,
@@ -73,7 +73,7 @@ async fn get_all_status(
     tag = "ICMPv6 RA",
     params(("iface_name" = String, Path, description = "Interface name")),
     responses(
-        (status = 200, body = inline(CommonApiResp<IPV6RAServiceConfig>)),
+        (status = 200, body = CommonApiResp<IPV6RAServiceConfig>),
         (status = 404, description = "Not found")
     )
 )]
@@ -108,7 +108,7 @@ async fn handle_iface_icmpv6(
     path = "/icmpv6ra/{iface_name}",
     tag = "ICMPv6 RA",
     params(("iface_name" = String, Path, description = "Interface name")),
-    responses((status = 200, body = inline(CommonApiResp<Option<ServiceStatus>>)))
+    responses((status = 200, body = CommonApiResp<Option<ServiceStatus>>))
 )]
 async fn delete_and_stop_iface_icmpv6(
     State(state): State<LandscapeApp>,

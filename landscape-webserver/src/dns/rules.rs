@@ -24,7 +24,7 @@ pub fn get_dns_rule_config_paths() -> OpenApiRouter<LandscapeApp> {
     get,
     path = "/rules",
     tag = "DNS Rules",
-    responses((status = 200, body = inline(CommonApiResp<Vec<DNSRuleConfig>>)))
+    responses((status = 200, body = CommonApiResp<Vec<DNSRuleConfig>>))
 )]
 async fn get_dns_rules(
     State(state): State<LandscapeApp>,
@@ -38,7 +38,7 @@ async fn get_dns_rules(
     path = "/rules/flow/{flow_id}",
     tag = "DNS Rules",
     params(("flow_id" = u32, Path, description = "Flow ID")),
-    responses((status = 200, body = inline(CommonApiResp<Vec<DNSRuleConfig>>)))
+    responses((status = 200, body = CommonApiResp<Vec<DNSRuleConfig>>))
 )]
 async fn get_flow_dns_rules(
     State(state): State<LandscapeApp>,
@@ -55,7 +55,7 @@ async fn get_flow_dns_rules(
     tag = "DNS Rules",
     params(("id" = Uuid, Path, description = "DNS rule ID")),
     responses(
-        (status = 200, body = inline(CommonApiResp<DNSRuleConfig>)),
+        (status = 200, body = CommonApiResp<DNSRuleConfig>),
         (status = 404, description = "Not found")
     )
 )]
@@ -91,7 +91,7 @@ async fn add_many_dns_rules(
     path = "/rules",
     tag = "DNS Rules",
     request_body = DNSRuleConfig,
-    responses((status = 200, body = inline(CommonApiResp<DNSRuleConfig>)))
+    responses((status = 200, body = CommonApiResp<DNSRuleConfig>))
 )]
 async fn add_dns_rules(
     State(state): State<LandscapeApp>,

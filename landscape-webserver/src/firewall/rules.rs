@@ -22,7 +22,7 @@ pub fn get_firewall_rule_config_paths() -> OpenApiRouter<LandscapeApp> {
     get,
     path = "/rules",
     tag = "Firewall Rules",
-    responses((status = 200, body = inline(CommonApiResp<Vec<FirewallRuleConfig>>)))
+    responses((status = 200, body = CommonApiResp<Vec<FirewallRuleConfig>>))
 )]
 async fn get_firewall_rules(
     State(state): State<LandscapeApp>,
@@ -38,7 +38,7 @@ async fn get_firewall_rules(
     tag = "Firewall Rules",
     params(("id" = Uuid, Path, description = "Firewall rule ID")),
     responses(
-        (status = 200, body = inline(CommonApiResp<FirewallRuleConfig>)),
+        (status = 200, body = CommonApiResp<FirewallRuleConfig>),
         (status = 404, description = "Not found")
     )
 )]
@@ -59,7 +59,7 @@ async fn get_firewall_rule(
     path = "/rules",
     tag = "Firewall Rules",
     request_body = FirewallRuleConfig,
-    responses((status = 200, body = inline(CommonApiResp<FirewallRuleConfig>)))
+    responses((status = 200, body = CommonApiResp<FirewallRuleConfig>))
 )]
 async fn add_firewall_rule(
     State(state): State<LandscapeApp>,

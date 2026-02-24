@@ -38,7 +38,7 @@ pub fn get_sys_info_route() -> Router {
     path = "/info/net_dev",
     tag = "System Info",
     operation_id = "get_net_dev",
-    responses((status = 200, body = inline(CommonApiResp<Vec<LandscapeInterface>>)))
+    responses((status = 200, body = CommonApiResp<Vec<LandscapeInterface>>))
 )]
 async fn net_dev() -> LandscapeApiResult<Vec<LandscapeInterface>> {
     let devs = landscape::get_all_devices().await;
@@ -50,7 +50,7 @@ async fn net_dev() -> LandscapeApiResult<Vec<LandscapeInterface>> {
     path = "/info",
     tag = "System Info",
     operation_id = "get_basic_sys_info",
-    responses((status = 200, body = inline(CommonApiResp<LandscapeSystemInfo>)))
+    responses((status = 200, body = CommonApiResp<LandscapeSystemInfo>))
 )]
 async fn basic_sys_info() -> LandscapeApiResult<LandscapeSystemInfo> {
     LandscapeApiResp::success(LAND_SYS_BASE_INFO.clone())
@@ -61,7 +61,7 @@ async fn basic_sys_info() -> LandscapeApiResult<LandscapeSystemInfo> {
     path = "/info/interval",
     tag = "System Info",
     operation_id = "get_interval_fetch_info",
-    responses((status = 200, body = inline(CommonApiResp<LandscapeStatus>)))
+    responses((status = 200, body = CommonApiResp<LandscapeStatus>))
 )]
 async fn interval_fetch_info(State(state): State<SysStatus>) -> LandscapeApiResult<SysStatus> {
     LandscapeApiResp::success(state)
@@ -72,7 +72,7 @@ async fn interval_fetch_info(State(state): State<SysStatus>) -> LandscapeApiResu
     path = "/info/cpu_count",
     tag = "System Info",
     operation_id = "get_cpu_count",
-    responses((status = 200, body = inline(CommonApiResp<usize>)))
+    responses((status = 200, body = CommonApiResp<usize>))
 )]
 async fn get_cpu_count(State(state): State<SysStatus>) -> LandscapeApiResult<usize> {
     let cpu_count = state.0.borrow().cpus.len();

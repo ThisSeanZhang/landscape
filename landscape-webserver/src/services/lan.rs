@@ -25,7 +25,7 @@ pub fn get_route_lan_paths() -> OpenApiRouter<LandscapeApp> {
     get,
     path = "/lan/status",
     tag = "Route LAN",
-    responses((status = 200, body = inline(CommonApiResp<HashMap<String, ServiceStatus>>)))
+    responses((status = 200, body = CommonApiResp<HashMap<String, ServiceStatus>>))
 )]
 async fn get_all_route_lan_status(
     State(state): State<LandscapeApp>,
@@ -39,7 +39,7 @@ async fn get_all_route_lan_status(
     tag = "Route LAN",
     params(("iface_name" = String, Path, description = "Interface name")),
     responses(
-        (status = 200, body = inline(CommonApiResp<RouteLanServiceConfig>)),
+        (status = 200, body = CommonApiResp<RouteLanServiceConfig>),
         (status = 404, description = "Not found")
     )
 )]
@@ -74,7 +74,7 @@ async fn handle_route_lan_status(
     path = "/lan/{iface_name}",
     tag = "Route LAN",
     params(("iface_name" = String, Path, description = "Interface name")),
-    responses((status = 200, body = inline(CommonApiResp<Option<ServiceStatus>>)))
+    responses((status = 200, body = CommonApiResp<Option<ServiceStatus>>))
 )]
 async fn delete_and_stop_route_lan(
     State(state): State<LandscapeApp>,

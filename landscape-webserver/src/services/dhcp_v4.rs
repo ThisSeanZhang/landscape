@@ -31,7 +31,7 @@ pub fn get_dhcp_v4_service_paths() -> OpenApiRouter<LandscapeApp> {
     path = "/dhcp_v4/assigned_ips",
     tag = "DHCPv4",
     operation_id = "get_all_dhcp_v4_assigned_ips",
-    responses((status = 200, body = inline(CommonApiResp<HashMap<String, DHCPv4OfferInfo>>)))
+    responses((status = 200, body = CommonApiResp<HashMap<String, DHCPv4OfferInfo>>))
 )]
 async fn get_all_iface_assigned_ips(
     State(state): State<LandscapeApp>,
@@ -45,7 +45,7 @@ async fn get_all_iface_assigned_ips(
     tag = "DHCPv4",
     operation_id = "get_dhcp_v4_assigned_ips_by_iface_name",
     params(("iface_name" = String, Path, description = "Interface name")),
-    responses((status = 200, body = inline(CommonApiResp<Option<DHCPv4OfferInfo>>)))
+    responses((status = 200, body = CommonApiResp<Option<DHCPv4OfferInfo>>))
 )]
 async fn get_assigned_ips_by_iface_name(
     State(state): State<LandscapeApp>,
@@ -60,7 +60,7 @@ async fn get_assigned_ips_by_iface_name(
     get,
     path = "/dhcp_v4/arp_scan_info",
     tag = "DHCPv4",
-    responses((status = 200, body = inline(CommonApiResp<HashMap<String, Vec<ArpScanInfo>>>)))
+    responses((status = 200, body = CommonApiResp<HashMap<String, Vec<ArpScanInfo>>>))
 )]
 async fn get_all_iface_arp_scan_info(
     State(state): State<LandscapeApp>,
@@ -73,7 +73,7 @@ async fn get_all_iface_arp_scan_info(
     path = "/dhcp_v4/{iface_name}/arp_scan_info",
     tag = "DHCPv4",
     params(("iface_name" = String, Path, description = "Interface name")),
-    responses((status = 200, body = inline(CommonApiResp<Option<Vec<ArpScanInfo>>>)))
+    responses((status = 200, body = CommonApiResp<Option<Vec<ArpScanInfo>>>))
 )]
 async fn get_arp_scan_info_by_iface_name(
     State(state): State<LandscapeApp>,
@@ -89,7 +89,7 @@ async fn get_arp_scan_info_by_iface_name(
     path = "/dhcp_v4/status",
     tag = "DHCPv4",
     operation_id = "get_all_dhcp_v4_service_status",
-    responses((status = 200, body = inline(CommonApiResp<HashMap<String, ServiceStatus>>)))
+    responses((status = 200, body = CommonApiResp<HashMap<String, ServiceStatus>>))
 )]
 async fn get_all_iface_service_status(
     State(state): State<LandscapeApp>,
@@ -104,7 +104,7 @@ async fn get_all_iface_service_status(
     operation_id = "get_dhcp_v4_service_config",
     params(("iface_name" = String, Path, description = "Interface name")),
     responses(
-        (status = 200, body = inline(CommonApiResp<DHCPv4ServiceConfig>)),
+        (status = 200, body = CommonApiResp<DHCPv4ServiceConfig>),
         (status = 404, description = "Not found")
     )
 )]
@@ -145,7 +145,7 @@ async fn handle_service_config(
     tag = "DHCPv4",
     operation_id = "delete_and_stop_dhcp_v4_service",
     params(("iface_name" = String, Path, description = "Interface name")),
-    responses((status = 200, body = inline(CommonApiResp<Option<ServiceStatus>>)))
+    responses((status = 200, body = CommonApiResp<Option<ServiceStatus>>))
 )]
 async fn delete_and_stop_iface_service(
     State(state): State<LandscapeApp>,

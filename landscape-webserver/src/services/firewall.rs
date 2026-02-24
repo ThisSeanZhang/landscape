@@ -26,7 +26,7 @@ pub fn get_firewall_service_paths() -> OpenApiRouter<LandscapeApp> {
     path = "/firewall/status",
     tag = "Firewall Service",
     operation_id = "get_all_firewall_service_status",
-    responses((status = 200, body = inline(CommonApiResp<HashMap<String, ServiceStatus>>)))
+    responses((status = 200, body = CommonApiResp<HashMap<String, ServiceStatus>>))
 )]
 async fn get_all_iface_service_status(
     State(state): State<LandscapeApp>,
@@ -41,7 +41,7 @@ async fn get_all_iface_service_status(
     operation_id = "get_firewall_service_config",
     params(("iface_name" = String, Path, description = "Interface name")),
     responses(
-        (status = 200, body = inline(CommonApiResp<FirewallServiceConfig>)),
+        (status = 200, body = CommonApiResp<FirewallServiceConfig>),
         (status = 404, description = "Not found")
     )
 )]
@@ -78,7 +78,7 @@ async fn handle_service_config(
     tag = "Firewall Service",
     operation_id = "delete_and_stop_firewall_service",
     params(("iface_name" = String, Path, description = "Interface name")),
-    responses((status = 200, body = inline(CommonApiResp<Option<ServiceStatus>>)))
+    responses((status = 200, body = CommonApiResp<Option<ServiceStatus>>))
 )]
 async fn delete_and_stop_iface_service(
     State(state): State<LandscapeApp>,

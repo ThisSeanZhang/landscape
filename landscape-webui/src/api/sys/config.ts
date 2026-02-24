@@ -1,8 +1,8 @@
 import type {
-  GetDnsConfig200Data,
-  GetDnsConfigFast200Data,
-  GetMetricConfig200Data,
-  GetUiConfig200Data,
+  GetDnsConfigResponse,
+  GetDnsConfigResponse as GetDnsConfigFastResponse,
+  GetMetricConfigResponse,
+  GetUIConfigResponse,
   LandscapeDnsConfig,
   LandscapeMetricConfig,
   LandscapeUIConfig,
@@ -54,7 +54,7 @@ export async function get_ui_config(): Promise<LandscapeUIConfig> {
   return await getUiConfigFast();
 }
 
-export async function get_ui_config_edit(): Promise<GetUiConfig200Data> {
+export async function get_ui_config_edit(): Promise<GetUIConfigResponse> {
   return await getUiConfig();
 }
 
@@ -68,7 +68,7 @@ export async function get_metric_config(): Promise<LandscapeMetricConfig> {
   return await getMetricConfigFast();
 }
 
-export async function get_metric_config_edit(): Promise<GetMetricConfig200Data> {
+export async function get_metric_config_edit(): Promise<GetMetricConfigResponse> {
   return await getMetricConfig();
 }
 
@@ -78,11 +78,11 @@ export async function update_metric_config(
   await updateMetricConfig(payload);
 }
 
-export async function get_dns_config(): Promise<GetDnsConfigFast200Data> {
+export async function get_dns_config(): Promise<GetDnsConfigFastResponse> {
   return await getDnsConfigFast();
 }
 
-export async function get_dns_config_edit(): Promise<GetDnsConfig200Data> {
+export async function get_dns_config_edit(): Promise<GetDnsConfigResponse> {
   return await getDnsConfig();
 }
 

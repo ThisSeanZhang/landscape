@@ -16,7 +16,7 @@ pub fn get_docker_networks_paths() -> OpenApiRouter<LandscapeApp> {
     path = "/networks",
     tag = "Docker Networks",
     operation_id = "get_all_docker_networks",
-    responses((status = 200, body = inline(CommonApiResp<Vec<LandscapeDockerNetwork>>)))
+    responses((status = 200, body = CommonApiResp<Vec<LandscapeDockerNetwork>>))
 )]
 async fn get_all_networks() -> LandscapeApiResult<Vec<LandscapeDockerNetwork>> {
     let networks = inspect_all_networks().await;

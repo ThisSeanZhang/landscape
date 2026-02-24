@@ -10,12 +10,12 @@ import {
   deleteAndStopDhcpV4Service,
 } from "landscape-types/api/dhcpv4/dhcpv4";
 import type {
-  GetAllDhcpV4AssignedIps200Data,
-  GetAllIfaceArpScanInfo200DataItem,
+  DHCPv4OfferInfo as DHCPv4OfferInfoType,
+  ArpScanInfo as ArpScanInfoType,
 } from "landscape-types/api/schemas";
 
-export type DHCPv4OfferInfo = GetAllDhcpV4AssignedIps200Data[string];
-export type ArpScanInfo = GetAllIfaceArpScanInfo200DataItem;
+export type DHCPv4OfferInfo = DHCPv4OfferInfoType;
+export type ArpScanInfo = ArpScanInfoType;
 
 export async function get_all_dhcp_v4_status(): Promise<
   Map<string, ServiceStatus>

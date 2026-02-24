@@ -25,7 +25,7 @@ pub fn get_route_wan_paths() -> OpenApiRouter<LandscapeApp> {
     get,
     path = "/wan/status",
     tag = "Route WAN",
-    responses((status = 200, body = inline(CommonApiResp<HashMap<String, ServiceStatus>>)))
+    responses((status = 200, body = CommonApiResp<HashMap<String, ServiceStatus>>))
 )]
 async fn get_all_route_wan_status(
     State(state): State<LandscapeApp>,
@@ -39,7 +39,7 @@ async fn get_all_route_wan_status(
     tag = "Route WAN",
     params(("iface_name" = String, Path, description = "Interface name")),
     responses(
-        (status = 200, body = inline(CommonApiResp<RouteWanServiceConfig>)),
+        (status = 200, body = CommonApiResp<RouteWanServiceConfig>),
         (status = 404, description = "Not found")
     )
 )]
@@ -74,7 +74,7 @@ async fn handle_route_wan_status(
     path = "/wan/{iface_name}",
     tag = "Route WAN",
     params(("iface_name" = String, Path, description = "Interface name")),
-    responses((status = 200, body = inline(CommonApiResp<Option<ServiceStatus>>)))
+    responses((status = 200, body = CommonApiResp<Option<ServiceStatus>>))
 )]
 async fn delete_and_stop_route_wan(
     State(state): State<LandscapeApp>,

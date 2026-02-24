@@ -20,7 +20,7 @@ pub fn get_dns_service_paths() -> OpenApiRouter<LandscapeApp> {
     path = "/service",
     tag = "DNS Service",
     operation_id = "get_dns_service_status",
-    responses((status = 200, body = inline(CommonApiResp<ServiceStatus>)))
+    responses((status = 200, body = CommonApiResp<ServiceStatus>))
 )]
 async fn get_dns_service_status(
     State(state): State<LandscapeApp>,
@@ -58,7 +58,7 @@ async fn stop_dns_service(State(state): State<LandscapeApp>) -> LandscapeApiResu
     tag = "DNS Service",
     operation_id = "check_domain",
     params(CheckDnsReq),
-    responses((status = 200, body = inline(CommonApiResp<CheckChainDnsResult>)))
+    responses((status = 200, body = CommonApiResp<CheckChainDnsResult>))
 )]
 async fn check_domain(
     State(state): State<LandscapeApp>,
