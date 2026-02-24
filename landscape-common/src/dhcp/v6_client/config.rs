@@ -3,13 +3,11 @@ use crate::{
     utils::time::get_f64_timestamp,
 };
 use serde::{Deserialize, Serialize};
-use ts_rs::TS;
 
 use crate::net::MacAddr;
 
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
-#[ts(export, export_to = "common/dhcp_v6_client.d.ts")]
 pub struct IPV6PDServiceConfig {
     pub iface_name: String,
     pub enable: bool,
@@ -19,9 +17,8 @@ pub struct IPV6PDServiceConfig {
     pub update_at: f64,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, TS)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
-#[ts(export, export_to = "common/dhcp_v6_client.d.ts")]
 pub struct IPV6PDConfig {
     #[cfg_attr(feature = "openapi", schema(value_type = String))]
     pub mac: MacAddr,

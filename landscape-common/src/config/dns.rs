@@ -21,12 +21,10 @@ pub enum DnsRuleError {
 use super::geo::GeoConfigKey;
 
 /// DNS 配置
-#[derive(Serialize, Deserialize, Debug, Clone, TS)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
-#[ts(export, export_to = "common/dns.d.ts")]
 pub struct DNSRuleConfig {
     #[serde(default = "gen_database_uuid")]
-    #[ts(as = "Option<_>", optional)]
     #[cfg_attr(feature = "openapi", schema(required = false))]
     pub id: Uuid,
     /// 名称
@@ -59,7 +57,6 @@ pub struct DNSRuleConfig {
     pub flow_id: u32,
     /// 最近一次更新时间
     #[serde(default = "get_f64_timestamp")]
-    #[ts(as = "Option<_>", optional)]
     #[cfg_attr(feature = "openapi", schema(required = false))]
     pub update_at: f64,
 }
@@ -102,9 +99,8 @@ impl LandscapeDBStore<Uuid> for DNSRuleConfig {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, TS)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
-#[ts(export, export_to = "common/dns.d.ts")]
 #[serde(tag = "t")]
 #[serde(rename_all = "snake_case")]
 pub enum RuleSource {
@@ -112,17 +108,15 @@ pub enum RuleSource {
     Config(DomainConfig),
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Hash, PartialEq, Eq, TS)]
+#[derive(Serialize, Deserialize, Debug, Clone, Hash, PartialEq, Eq)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
-#[ts(export, export_to = "common/dns.d.ts")]
 pub struct DomainConfig {
     pub match_type: DomainMatchType,
     pub value: String,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Hash, PartialEq, Eq, TS)]
+#[derive(Serialize, Deserialize, Debug, Clone, Hash, PartialEq, Eq)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
-#[ts(export, export_to = "common/dns.d.ts")]
 #[serde(rename_all = "snake_case")]
 pub enum DomainMatchType {
     /// The value is used as is.
@@ -135,9 +129,8 @@ pub enum DomainMatchType {
     Full = 3,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Default, TS)]
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
-#[ts(export, export_to = "common/dns.d.ts")]
 #[serde(rename_all = "snake_case")]
 pub enum FilterResult {
     #[default]

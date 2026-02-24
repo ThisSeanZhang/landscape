@@ -1,7 +1,6 @@
 use landscape_macro::LdApiError;
 use serde::{Deserialize, Serialize};
 use std::net::IpAddr;
-use ts_rs::TS;
 use uuid::Uuid;
 
 use crate::config::ConfigId;
@@ -25,12 +24,10 @@ use crate::{
 };
 
 /// 用于定义 DNS 重定向的单元配置
-#[derive(Serialize, Deserialize, Debug, Clone, TS)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
-#[ts(export, export_to = "common/dns_redirect.d.ts")]
 pub struct DNSRedirectRule {
     #[serde(default = "gen_database_uuid")]
-    #[ts(as = "Option<_>", optional)]
     #[cfg_attr(feature = "openapi", schema(required = false))]
     pub id: Uuid,
 
@@ -46,7 +43,6 @@ pub struct DNSRedirectRule {
     pub apply_flows: Vec<FlowId>,
 
     #[serde(default = "get_f64_timestamp")]
-    #[ts(as = "Option<_>", optional)]
     #[cfg_attr(feature = "openapi", schema(required = false))]
     pub update_at: f64,
 }

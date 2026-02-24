@@ -1,6 +1,5 @@
 use landscape_macro::LdApiError;
 use serde::{Deserialize, Serialize};
-use ts_rs::TS;
 use uuid::Uuid;
 
 use crate::config::geo::GeoConfigKey;
@@ -18,28 +17,24 @@ pub enum FirewallBlacklistError {
     NotFound(ConfigId),
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, TS)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
-#[ts(export, export_to = "common/firewall_blacklist.d.ts")]
 #[serde(tag = "t", rename_all = "snake_case")]
 pub enum FirewallBlacklistSource {
     GeoKey(GeoConfigKey),
     Config(IpConfig),
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, TS)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
-#[ts(export, export_to = "common/firewall_blacklist.d.ts")]
 pub struct FirewallBlacklistConfig {
     #[serde(default = "gen_database_uuid")]
-    #[ts(as = "Option<_>", optional)]
     #[cfg_attr(feature = "openapi", schema(required = false))]
     pub id: Uuid,
     pub enable: bool,
     pub source: Vec<FirewallBlacklistSource>,
     pub remark: String,
     #[serde(default = "get_f64_timestamp")]
-    #[ts(as = "Option<_>", optional)]
     #[cfg_attr(feature = "openapi", schema(required = false))]
     pub update_at: f64,
 }

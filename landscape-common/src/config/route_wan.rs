@@ -1,12 +1,10 @@
 use serde::{Deserialize, Serialize};
-use ts_rs::TS;
 
 use crate::utils::time::get_f64_timestamp;
 use crate::{database::repository::LandscapeDBStore, store::storev2::LandscapeStore};
 
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
-#[ts(export, export_to = "common/route.d.ts")]
 pub struct RouteWanServiceConfig {
     pub iface_name: String,
     pub enable: bool,

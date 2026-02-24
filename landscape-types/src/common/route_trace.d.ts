@@ -16,13 +16,6 @@ export type FlowMatchResult = {
 
 export type FlowRuleMatchResult = { mark: FlowMark; priority: number };
 
-export type FlowVerdictRequest = {
-  flow_id: number;
-  src_ipv4?: string;
-  src_ipv6?: string;
-  dst_ips: Array<string>;
-};
-
 export type FlowVerdictResult = { verdicts: Array<SingleVerdictResult> };
 
 export type SingleVerdictResult = {

@@ -1,5 +1,4 @@
 use serde::{Deserialize, Serialize};
-use ts_rs::TS;
 
 const FLOW_ID_MASK: u32 = 0x000000FF;
 const FLOW_ACTION_MASK: u32 = 0x00007F00;
@@ -10,9 +9,8 @@ const FLOW_DIRECT: u8 = 1;
 const FLOW_DROP: u8 = 2;
 const FLOW_REDIRECT: u8 = 3;
 
-#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Copy, Eq, Hash, TS)]
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Copy, Eq, Hash)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
-#[ts(export, export_to = "common/flow.d.ts")]
 pub struct FlowMark {
     /// Action
     action: FlowMarkAction,
@@ -82,9 +80,8 @@ impl Into<u32> for FlowMark {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Copy, Eq, Hash, TS)]
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Copy, Eq, Hash)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
-#[ts(export, export_to = "common/flow.d.ts")]
 #[serde(tag = "t")]
 #[serde(rename_all = "snake_case")]
 pub enum FlowMarkAction {

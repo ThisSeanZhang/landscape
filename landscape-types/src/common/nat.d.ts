@@ -5,32 +5,3 @@ export type NatConfig = {
   udp_range: { start: number; end: number };
   icmp_in_range: { start: number; end: number };
 };
-
-export type NatServiceConfig = {
-  iface_name: string;
-  enable: boolean;
-  nat_config: NatConfig;
-  update_at: number;
-};
-
-export type StaticMapPair = { wan_port: number; lan_port: number };
-
-export type StaticNatMappingConfig = {
-  id?: string;
-  enable: boolean;
-  remark: string;
-  wan_iface_name: string | null;
-  mapping_pair_ports: Array<StaticMapPair>;
-  /**
-   * If set to `UNSPECIFIED` (e.g., 0.0.0.0 or ::), the mapping targets
-   * the router's own address instead of an internal host.
-   */
-  lan_ipv4: string | null;
-  lan_ipv6: string | null;
-  /**
-   * TCP / UDP
-   */
-  ipv4_l4_protocol: Array<number>;
-  ipv6_l4_protocol: Array<number>;
-  update_at?: number;
-};

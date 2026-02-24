@@ -1,16 +1,14 @@
 use std::net::IpAddr;
 
 use serde::{Deserialize, Serialize};
-use ts_rs::TS;
 
 use crate::net::MacAddr;
 use crate::route::{LanRouteInfo, LanRouteMode};
 use crate::utils::time::get_f64_timestamp;
 use crate::{database::repository::LandscapeDBStore, store::storev2::LandscapeStore};
 
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
-#[ts(export, export_to = "common/route.d.ts")]
 pub struct RouteLanServiceConfig {
     pub iface_name: String,
     pub enable: bool,
@@ -34,9 +32,8 @@ impl LandscapeDBStore<String> for RouteLanServiceConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
-#[ts(export, export_to = "common/route.d.ts")]
 pub struct StaticRouteConfig {
     /// Next hop gateway address
     #[cfg_attr(feature = "openapi", schema(value_type = String))]

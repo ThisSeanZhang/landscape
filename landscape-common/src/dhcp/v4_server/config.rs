@@ -1,7 +1,6 @@
 use std::net::Ipv4Addr;
 
 use serde::{Deserialize, Serialize};
-use ts_rs::TS;
 
 use crate::database::repository::LandscapeDBStore;
 use crate::net::MacAddr;
@@ -14,9 +13,8 @@ use crate::{
     LANDSCAPE_DEFAULT_LAN_DHCP_SERVER_NETMASK, LANDSCAPE_DHCP_DEFAULT_ADDRESS_LEASE_TIME,
 };
 
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
-#[ts(export, export_to = "common/dhcp_v4_server.d.ts")]
 pub struct DHCPv4ServiceConfig {
     pub iface_name: String,
     pub enable: bool,
@@ -53,9 +51,8 @@ impl LandscapeDBStore<String> for DHCPv4ServiceConfig {
 }
 
 /// DHCP Server IPv4 Config
-#[derive(Debug, Serialize, Deserialize, Clone, TS)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
-#[ts(export, export_to = "common/dhcp_v4_server.d.ts")]
 pub struct DHCPv4ServerConfig {
     /// dhcp options
     // #[serde(default)]
@@ -125,9 +122,8 @@ impl Default for DHCPv4ServerConfig {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, TS)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
-#[ts(export, export_to = "common/dhcp_v4_server.d.ts")]
 pub struct MacBindingRecord {
     #[cfg_attr(feature = "openapi", schema(value_type = String))]
     pub mac: MacAddr,

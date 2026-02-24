@@ -2,7 +2,6 @@ use std::{fmt, net::IpAddr};
 
 use landscape_macro::LdApiError;
 use serde::{Deserialize, Serialize};
-use ts_rs::TS;
 
 use crate::config::ConfigId;
 use crate::{flow::mark::FlowMark, net::MacAddr};
@@ -28,9 +27,8 @@ pub enum FlowRuleError {
 }
 
 /// Flow 入口匹配规则
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, Hash, TS)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
-#[ts(export, export_to = "common/flow.d.ts")]
 pub struct FlowEntryRule {
     // pub vlan_id: Option<u32>,
     #[serde(default)]
@@ -39,9 +37,8 @@ pub struct FlowEntryRule {
     pub mode: FlowEntryMatchMode,
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, Hash, TS)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
-#[ts(export, export_to = "common/flow.d.ts")]
 #[serde(tag = "t")]
 #[serde(rename_all = "snake_case")]
 pub enum FlowEntryMatchMode {
@@ -83,9 +80,8 @@ fn default_prefix_len() -> u8 {
     32
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug, TS)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
-#[ts(export, export_to = "common/flow.d.ts")]
 #[serde(tag = "t")]
 #[serde(rename_all = "snake_case")]
 pub enum FlowTarget {

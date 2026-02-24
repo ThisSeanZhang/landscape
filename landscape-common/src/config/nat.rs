@@ -19,9 +19,8 @@ pub enum StaticNatError {
     NotFound(ConfigId),
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
-#[ts(export, export_to = "common/nat.d.ts")]
 pub struct NatServiceConfig {
     pub iface_name: String,
     pub enable: bool,
@@ -67,20 +66,17 @@ impl Default for NatConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
-#[ts(export, export_to = "common/nat.d.ts")]
 pub struct StaticMapPair {
     pub wan_port: u16,
     pub lan_port: u16,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
-#[ts(export, export_to = "common/nat.d.ts")]
 pub struct StaticNatMappingConfig {
     #[serde(default = "gen_database_uuid")]
-    #[ts(as = "Option<_>", optional)]
     #[cfg_attr(feature = "openapi", schema(required = false))]
     pub id: Uuid,
     pub enable: bool,
@@ -98,7 +94,6 @@ pub struct StaticNatMappingConfig {
     pub ipv4_l4_protocol: Vec<u8>,
     pub ipv6_l4_protocol: Vec<u8>,
     #[serde(default = "get_f64_timestamp")]
-    #[ts(as = "Option<_>", optional)]
     #[cfg_attr(feature = "openapi", schema(required = false))]
     pub update_at: f64,
 }

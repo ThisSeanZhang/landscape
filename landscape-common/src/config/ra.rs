@@ -2,22 +2,19 @@ use std::collections::HashSet;
 use std::net::Ipv6Addr;
 
 use serde::{Deserialize, Serialize};
-use ts_rs::TS;
 
 use crate::database::repository::LandscapeDBStore;
 use crate::store::storev2::LandscapeStore;
 use crate::utils::time::get_f64_timestamp;
 
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
-#[ts(export, export_to = "common/ra.d.ts")]
 pub struct IPV6RAServiceConfig {
     pub iface_name: String,
     pub enable: bool,
     pub config: IPV6RAConfig,
 
     #[serde(default = "get_f64_timestamp")]
-    #[ts(as = "Option<_>", optional)]
     #[cfg_attr(feature = "openapi", schema(required = false))]
     pub update_at: f64,
 }
@@ -28,9 +25,8 @@ impl LandscapeDBStore<String> for IPV6RAServiceConfig {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, TS)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
-#[ts(export, export_to = "common/ra.d.ts")]
 #[serde(tag = "t")]
 #[serde(rename_all = "snake_case")]
 pub enum IPV6RaConfigSource {
@@ -38,9 +34,8 @@ pub enum IPV6RaConfigSource {
     Pd(IPv6RaPdConfig),
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, TS)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
-#[ts(export, export_to = "common/ra.d.ts")]
 pub struct IPv6RaStaticConfig {
     /// Base Prefix
     #[cfg_attr(feature = "openapi", schema(value_type = String))]
@@ -56,9 +51,8 @@ pub struct IPv6RaStaticConfig {
     pub ra_valid_lifetime: u32,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, TS)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
-#[ts(export, export_to = "common/ra.d.ts")]
 pub struct IPv6RaPdConfig {
     pub depend_iface: String,
 
@@ -70,9 +64,8 @@ pub struct IPv6RaPdConfig {
     pub ra_valid_lifetime: u32,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, TS)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
-#[ts(export, export_to = "common/ra.d.ts")]
 pub struct IPV6RAConfig {
     /// Router Advertisement Interval
     pub ad_interval: u32,
@@ -123,9 +116,8 @@ impl IPV6RAConfig {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, Copy, TS)]
+#[derive(Debug, Serialize, Deserialize, Clone, Copy)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
-#[ts(export, export_to = "common/ra.d.ts")]
 pub struct RouterFlags {
     pub managed_address_config: bool, // 0b1000_0000
     pub other_config: bool,           // 0b0100_0000

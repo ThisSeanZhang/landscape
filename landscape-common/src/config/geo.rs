@@ -53,9 +53,8 @@ pub enum GeoIpError {
     FileReadError,
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug, TS)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
-#[ts(export, export_to = "common/geo_site.d.ts")]
 pub struct GeoSiteSourceConfig {
     /// 用这个 ID 作为文件名称
     #[cfg_attr(feature = "openapi", schema(required = true))]
@@ -70,18 +69,16 @@ pub struct GeoSiteSourceConfig {
     pub source: GeoSiteSource,
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug, TS)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[serde(tag = "t", rename_all = "snake_case")]
-#[ts(export, export_to = "common/geo_site.d.ts")]
 pub enum GeoSiteSource {
     Url { url: String, next_update_at: f64, geo_keys: Vec<String> },
     Direct { data: Vec<GeoSiteDirectItem> },
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug, TS)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
-#[ts(export, export_to = "common/geo_site.d.ts")]
 pub struct GeoSiteDirectItem {
     pub key: String,
     pub values: Vec<GeoSiteFileConfig>,
@@ -94,9 +91,8 @@ impl LandscapeDBStore<Uuid> for GeoSiteSourceConfig {
 }
 
 /// 存储在 file cache 中
-#[derive(Serialize, Deserialize, Debug, Clone, TS)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
-#[ts(export, export_to = "common/geo_site.d.ts")]
 pub struct GeoDomainConfig {
     pub name: String,
     pub key: String,
@@ -110,9 +106,8 @@ impl LandscapeStoreTrait for GeoDomainConfig {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, TS)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
-#[ts(export, export_to = "common/geo_site.d.ts")]
 pub struct GeoSiteFileConfig {
     pub match_type: DomainMatchType,
     pub value: String,
@@ -127,17 +122,15 @@ impl Into<DomainConfig> for GeoSiteFileConfig {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Hash, PartialEq, Eq, TS)]
+#[derive(Serialize, Deserialize, Debug, Clone, Hash, PartialEq, Eq)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
-#[ts(export, export_to = "common/geo.d.ts")]
 pub struct GeoFileCacheKey {
     pub name: String,
     pub key: String,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, TS)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
-#[ts(export, export_to = "common/geo.d.ts")]
 pub struct GeoConfigKey {
     pub name: String,
     pub key: String,
@@ -171,9 +164,8 @@ pub struct QueryGeoDomainConfig {
 }
 
 /// Geo IP
-#[derive(Serialize, Deserialize, Clone, Debug, TS)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
-#[ts(export, export_to = "common/geo_ip.d.ts")]
 pub struct GeoIpSourceConfig {
     /// 用这个 ID 作为文件名称
     #[cfg_attr(feature = "openapi", schema(required = true))]
@@ -188,18 +180,16 @@ pub struct GeoIpSourceConfig {
     pub source: GeoIpSource,
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug, TS)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[serde(tag = "t", rename_all = "snake_case")]
-#[ts(export, export_to = "common/geo_ip.d.ts")]
 pub enum GeoIpSource {
     Url { url: String, next_update_at: f64 },
     Direct { data: Vec<GeoIpDirectItem> },
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug, TS)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
-#[ts(export, export_to = "common/geo_ip.d.ts")]
 pub struct GeoIpDirectItem {
     pub key: String,
     pub values: Vec<IpConfig>,
@@ -211,9 +201,8 @@ impl LandscapeDBStore<Uuid> for GeoIpSourceConfig {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, TS)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
-#[ts(export, export_to = "common/geo_ip.d.ts")]
 pub struct GeoIpConfig {
     pub name: String,
     pub key: String,

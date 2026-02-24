@@ -1,5 +1,4 @@
 use serde::{Deserialize, Serialize};
-use ts_rs::TS;
 use uuid::Uuid;
 
 use crate::database::repository::LandscapeDBStore;
@@ -8,12 +7,10 @@ use crate::utils::id::gen_database_uuid;
 use crate::utils::time::get_f64_timestamp;
 
 /// 流控配置结构体
-#[derive(Serialize, Deserialize, Clone, Debug, TS)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
-#[ts(export, export_to = "common/flow.d.ts")]
 pub struct FlowConfig {
     #[serde(default = "gen_database_uuid")]
-    #[ts(as = "Option<_>", optional)]
     #[cfg_attr(feature = "openapi", schema(required = false))]
     pub id: Uuid,
     /// 是否启用
@@ -29,7 +26,6 @@ pub struct FlowConfig {
     pub remark: String,
 
     #[serde(default = "get_f64_timestamp")]
-    #[ts(as = "Option<_>", optional)]
     #[cfg_attr(feature = "openapi", schema(required = false))]
     pub update_at: f64,
 }

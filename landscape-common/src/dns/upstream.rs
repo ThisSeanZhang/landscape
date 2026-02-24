@@ -1,6 +1,5 @@
 use landscape_macro::LdApiError;
 use serde::{Deserialize, Serialize};
-use ts_rs::TS;
 
 use crate::config::ConfigId;
 
@@ -12,9 +11,8 @@ pub enum DnsUpstreamError {
     NotFound(ConfigId),
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Default, TS)]
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
-#[ts(export, export_to = "common/dns.d.ts")]
 #[serde(rename_all = "snake_case")]
 #[serde(tag = "t")]
 pub enum DnsUpstreamMode {

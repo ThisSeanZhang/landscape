@@ -1,13 +1,11 @@
 use serde::{Deserialize, Serialize};
-use ts_rs::TS;
 
 use crate::database::repository::LandscapeDBStore;
 use crate::store::storev2::LandscapeStore;
 use crate::utils::time::get_f64_timestamp;
 
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
-#[ts(export, export_to = "common/firewall.d.ts")]
 pub struct FirewallServiceConfig {
     pub iface_name: String,
     pub enable: bool,

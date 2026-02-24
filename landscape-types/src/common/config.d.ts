@@ -105,13 +105,3 @@ export type UpdateUIConfigRequest = {
   new_ui: LandscapeUIConfig;
   expected_hash: string;
 };
-
-export type WifiServiceConfig = {
-  iface_name: string;
-  enable: boolean;
-  /**
-   * hostapd config file
-   */
-  config: string;
-  update_at: number;
-};

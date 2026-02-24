@@ -10,9 +10,8 @@ use crate::net_proto::udp::dhcp::DhcpV4Options;
 use crate::store::storev2::LandscapeStore;
 use crate::utils::time::get_f64_timestamp;
 
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
-#[ts(export, export_to = "common/wanip.d.ts")]
 pub struct IfaceIpServiceConfig {
     pub iface_name: String,
     pub enable: bool,

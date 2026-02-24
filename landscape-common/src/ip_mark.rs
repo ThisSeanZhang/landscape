@@ -7,7 +7,6 @@ use crate::config::ConfigId;
 use crate::utils::time::get_f64_timestamp;
 use crate::{database::repository::LandscapeDBStore, flow::mark::FlowMark};
 use serde::{Deserialize, Serialize};
-use ts_rs::TS;
 use uuid::Uuid;
 
 #[derive(thiserror::Error, Debug, LdApiError)]
@@ -18,9 +17,8 @@ pub enum DstIpRuleError {
     NotFound(ConfigId),
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, TS)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
-#[ts(export, export_to = "common/flow.d.ts")]
 /// 对于外部 IP 规则
 pub struct WanIpRuleConfig {
     #[cfg_attr(feature = "openapi", schema(required = true))]
@@ -63,9 +61,8 @@ impl LandscapeDBStore<Uuid> for WanIpRuleConfig {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, TS)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
-#[ts(export, export_to = "common/flow.d.ts")]
 #[serde(tag = "t")]
 #[serde(rename_all = "snake_case")]
 pub enum WanIPRuleSource {
@@ -73,9 +70,8 @@ pub enum WanIPRuleSource {
     Config(IpConfig),
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash, TS)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
-#[ts(export, export_to = "common/flow.d.ts")]
 pub struct IpConfig {
     #[cfg_attr(feature = "openapi", schema(value_type = String))]
     pub ip: IpAddr,

@@ -2,15 +2,13 @@ use std::path::PathBuf;
 use std::{fs::OpenOptions, io::Write};
 
 use serde::{Deserialize, Serialize};
-use ts_rs::TS;
 
 use crate::database::repository::LandscapeDBStore;
 use crate::store::storev2::LandscapeStore;
 use crate::utils::time::get_f64_timestamp;
 
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
-#[ts(export, export_to = "common/ppp.d.ts")]
 pub struct PPPDServiceConfig {
     pub attach_iface_name: String,
     pub iface_name: String,
@@ -33,9 +31,8 @@ impl LandscapeDBStore<String> for PPPDServiceConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
-#[ts(export, export_to = "common/ppp.d.ts")]
 pub struct PPPDConfig {
     pub default_route: bool,
     pub peer_id: String,

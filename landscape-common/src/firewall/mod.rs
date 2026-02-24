@@ -3,7 +3,6 @@ pub mod blacklist;
 use landscape_macro::LdApiError;
 use serde::{Deserialize, Serialize};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
-use ts_rs::TS;
 use uuid::Uuid;
 
 use crate::config::ConfigId;
@@ -24,9 +23,8 @@ pub enum FirewallRuleError {
 use crate::database::repository::LandscapeDBStore;
 use crate::utils::time::get_f64_timestamp;
 
-#[derive(Serialize, Deserialize, Debug, Clone, TS)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
-#[ts(export, export_to = "common/firewall.d.ts")]
 pub struct FirewallRuleConfig {
     #[cfg_attr(feature = "openapi", schema(required = true))]
     pub id: Option<Uuid>,
@@ -59,9 +57,8 @@ impl LandscapeDBStore<Uuid> for FirewallRuleConfig {
 }
 
 /// 配置的小项
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash, TS)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
-#[ts(export, export_to = "common/firewall.d.ts")]
 pub struct FirewallRuleConfigItem {
     // IP 承载的协议
     #[cfg_attr(feature = "openapi", schema(required = true, nullable = true))]
