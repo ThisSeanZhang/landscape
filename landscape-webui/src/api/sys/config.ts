@@ -1,27 +1,42 @@
-import axiosService from "@/api";
 import type {
-  GetDnsConfigResponse,
-  GetMetricConfigResponse,
-  GetUIConfigResponse,
+  GetDnsConfig200Data,
+  GetDnsConfigFast200Data,
+  GetMetricConfig200Data,
+  GetUiConfig200Data,
   LandscapeDnsConfig,
   LandscapeMetricConfig,
   LandscapeUIConfig,
-  UpdateDnsConfigRequest,
   UpdateMetricConfigRequest,
   UpdateUIConfigRequest,
-} from "landscape-types/common/config";
+} from "landscape-types/api/schemas";
+import {
+  exportInitConfig,
+  getUiConfigFast,
+  getUiConfig,
+  updateUiConfig,
+  getMetricConfigFast,
+  getMetricConfig,
+  updateMetricConfig,
+  getDnsConfigFast,
+  getDnsConfig,
+  updateDnsConfig,
+} from "landscape-types/api/system-config/system-config";
+
+/** Local type -- backend accepts serde_json::Value, so no ORVAL-generated request type exists. */
+interface UpdateDnsConfigRequest {
+  new_dns: LandscapeDnsConfig;
+  expected_hash: string;
+}
 
 export async function get_init_config(): Promise<void> {
   try {
-    const response = await axiosService.get(`sys_service/config/export`);
-    const jsonStr = response.data;
+    const jsonStr = await exportInitConfig();
 
-    let filename = "landscape_init.toml";
+    const filename = "landscape_init.toml";
 
     const blob = new Blob([jsonStr], { type: "application/octet-stream" });
     const url = window.URL.createObjectURL(blob);
 
-    // 创建 a 标签模拟点击
     const a = document.createElement("a");
     a.href = url;
     a.download = filename;
@@ -29,7 +44,6 @@ export async function get_init_config(): Promise<void> {
     a.click();
     a.remove();
 
-    // 释放 URL
     window.URL.revokeObjectURL(url);
   } catch (error) {
     console.error("下载配置失败", error);
@@ -37,49 +51,43 @@ export async function get_init_config(): Promise<void> {
 }
 
 export async function get_ui_config(): Promise<LandscapeUIConfig> {
-  const response = await axiosService.get(`sys_service/config/ui`);
-  return response.data;
+  return await getUiConfigFast();
 }
 
-export async function get_ui_config_edit(): Promise<GetUIConfigResponse> {
-  const response = await axiosService.get(`sys_service/config/edit/ui`);
-  return response.data;
+export async function get_ui_config_edit(): Promise<GetUiConfig200Data> {
+  return await getUiConfig();
 }
 
 export async function update_ui_config(
   payload: UpdateUIConfigRequest,
 ): Promise<void> {
-  await axiosService.post(`sys_service/config/edit/ui`, payload);
+  await updateUiConfig(payload);
 }
 
 export async function get_metric_config(): Promise<LandscapeMetricConfig> {
-  const response = await axiosService.get(`sys_service/config/metric`);
-  return response.data;
+  return await getMetricConfigFast();
 }
 
-export async function get_metric_config_edit(): Promise<GetMetricConfigResponse> {
-  const response = await axiosService.get(`sys_service/config/edit/metric`);
-  return response.data;
+export async function get_metric_config_edit(): Promise<GetMetricConfig200Data> {
+  return await getMetricConfig();
 }
 
 export async function update_metric_config(
   payload: UpdateMetricConfigRequest,
 ): Promise<void> {
-  await axiosService.post(`sys_service/config/edit/metric`, payload);
+  await updateMetricConfig(payload);
 }
 
-export async function get_dns_config(): Promise<LandscapeDnsConfig> {
-  const response = await axiosService.get(`sys_service/config/dns`);
-  return response.data;
+export async function get_dns_config(): Promise<GetDnsConfigFast200Data> {
+  return await getDnsConfigFast();
 }
 
-export async function get_dns_config_edit(): Promise<GetDnsConfigResponse> {
-  const response = await axiosService.get(`sys_service/config/edit/dns`);
-  return response.data;
+export async function get_dns_config_edit(): Promise<GetDnsConfig200Data> {
+  return await getDnsConfig();
 }
 
 export async function update_dns_config(
   payload: UpdateDnsConfigRequest,
 ): Promise<void> {
-  await axiosService.post(`sys_service/config/edit/dns`, payload);
+  await updateDnsConfig(payload);
 }

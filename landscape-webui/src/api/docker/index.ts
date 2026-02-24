@@ -1,82 +1,76 @@
 import { ServiceStatus } from "@/lib/services";
 import { DockerContainerSummary, DockerImageSummary } from "@/lib/docker";
-import axiosService from "@/api";
-import { DockerCmd, PullImgTask } from "landscape-types/common/docker";
+import {
+  DockerCmd,
+  GetDockerPullTasks200DataItem as PullImgTask,
+} from "landscape-types/api/schemas";
+import {
+  getDockerStatus as _getDockerStatus,
+  startDockerStatus as _startDockerStatus,
+  stopDockerStatus as _stopDockerStatus,
+  getAllContainerSummarys,
+  startContainer as _startContainer,
+  stopContainer as _stopContainer,
+  removeContainer as _removeContainer,
+  runCmdContainer as _runCmdContainer,
+} from "landscape-types/api/docker/docker";
+import {
+  getAllDockerImages,
+  pullDockerImage as _pullDockerImage,
+  getDockerPullTasks,
+  deleteDockerImage as _deleteDockerImage,
+} from "landscape-types/api/docker-images/docker-images";
+
+export type { PullImgTask };
 
 export async function get_docker_status(): Promise<ServiceStatus> {
-  let data = await axiosService.get("sys_service/docker/status");
-  //   console.log(data.data);
-  return data.data;
+  return _getDockerStatus();
 }
 
 export async function start_docker_service(): Promise<ServiceStatus> {
-  let data = await axiosService.post("sys_service/docker/status");
-  //   console.log(data.data);
-  return data.data;
+  return _startDockerStatus();
 }
+
 export async function stop_docker_service(): Promise<ServiceStatus> {
-  let data = await axiosService.delete("sys_service/docker/status");
-  //   console.log(data.data);
-  return data.data;
+  return _stopDockerStatus();
 }
 
 export async function get_docker_container_summarys(): Promise<
   DockerContainerSummary[]
 > {
-  let data = await axiosService.get("sys_service/docker/container_summarys");
-  // console.log(data.data);
-  return data.data.map((d: any) => new DockerContainerSummary(d));
+  const data: any[] = (await getAllContainerSummarys()) as any;
+  return data.map((d: any) => new DockerContainerSummary(d));
 }
 
-export async function start_container(name: string): Promise<any> {
-  let data = await axiosService.post(`sys_service/docker/start/${name}`);
-  console.log(data.data);
-  return;
+export async function start_container(name: string): Promise<void> {
+  await _startContainer(name);
 }
 
-export async function stop_container(name: string): Promise<any> {
-  let data = await axiosService.post(
-    `sys_service/docker/stop/${name}`,
-    undefined,
-    {
-      timeout: 60000,
-    },
-  );
-  console.log(data.data);
-  return;
+export async function stop_container(name: string): Promise<void> {
+  await _stopContainer(name);
 }
 
-export async function remove_container(name: string): Promise<any> {
-  let data = await axiosService.post(`sys_service/docker/remove/${name}`);
-  console.log(data.data);
-  return;
+export async function remove_container(name: string): Promise<void> {
+  await _removeContainer(name);
 }
 
-export async function run_cmd(docker_cmd: DockerCmd): Promise<any> {
-  let data = await axiosService.post(`sys_service/docker/run_cmd`, docker_cmd);
-  console.log(data.data);
-  return;
+export async function run_cmd(docker_cmd: DockerCmd): Promise<void> {
+  await _runCmdContainer(docker_cmd);
 }
 
 export async function get_docker_images(): Promise<DockerImageSummary[]> {
-  let data = await axiosService.get("sys_service/docker/images");
-  // console.log(data.data);
-  return data.data.map((d: any) => new DockerImageSummary(d));
+  const data: any[] = (await getAllDockerImages()) as any;
+  return data.map((d: any) => new DockerImageSummary(d));
 }
 
 export async function pull_docker_image(image_name: string): Promise<void> {
-  await axiosService.post(`sys_service/docker/images/pull`, {
-    image_name,
-  });
+  await _pullDockerImage({ image_name, tag: null });
 }
 
 export async function get_current_tasks(): Promise<PullImgTask[]> {
-  let data = await axiosService.get(`sys_service/docker/images/tasks`);
-  return data.data;
+  return getDockerPullTasks();
 }
 
 export async function delete_docker_image(id: string): Promise<void> {
-  let data = await axiosService.delete(`sys_service/docker/images/id/${id}`);
-  // console.log(data.data);
-  return;
+  await _deleteDockerImage(id);
 }

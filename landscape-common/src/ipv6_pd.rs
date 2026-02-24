@@ -1,11 +1,9 @@
 use std::{collections::HashMap, net::Ipv6Addr, sync::Arc};
 
 use tokio::sync::{watch, RwLock};
-use ts_rs::TS;
 
-#[derive(Debug, Clone, serde::Serialize, TS)]
+#[derive(Debug, Clone, serde::Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
-#[ts(export, export_to = "common/ipv6_pd.d.ts")]
 pub struct LDIAPrefix {
     /// unit: s
     pub preferred_lifetime: u32,

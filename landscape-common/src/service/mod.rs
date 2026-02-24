@@ -4,7 +4,6 @@ use serde::Serialize;
 
 use landscape_macro::LdApiError;
 use service_code::{WatchService, Watchable};
-use ts_rs::TS;
 
 // pub mod controller_service;
 pub mod controller_service_v2;
@@ -20,11 +19,10 @@ pub enum ServiceConfigError {
     NotFound { service_name: &'static str },
 }
 
-#[derive(Serialize, Debug, PartialEq, Clone, Default, TS)]
+#[derive(Serialize, Debug, PartialEq, Clone, Default)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[serde(tag = "t")]
 #[serde(rename_all = "lowercase")]
-#[ts(export, export_to = "common/service.d.ts")]
 pub enum ServiceStatus {
     // 启动中
     Staring,

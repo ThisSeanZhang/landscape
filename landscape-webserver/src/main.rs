@@ -6,7 +6,7 @@ use axum::{
 
 use axum_server::tls_rustls::RustlsConfig;
 use colored::Colorize;
-use config_service::{geo_ip::get_geo_ip_upload_path, geo_site::get_geo_site_upload_path};
+
 use landscape::{
     boot::{boot_check, log::init_logger},
     cert::load_or_generate_cert,
@@ -52,7 +52,6 @@ use landscape_common::{
     VERSION,
 };
 use landscape_database::provider::LandscapeDBServiceProvider;
-use sys_service::dns_service::get_dns_paths;
 use tokio::sync::mpsc;
 use tower_http::{services::ServeDir, trace::TraceLayer};
 use utoipa_scalar::{Scalar, Servable};
@@ -74,8 +73,6 @@ mod sysinfo;
 mod websocket;
 
 use tracing::info;
-
-use crate::sys_service::config::get_config_paths;
 
 const DNS_EVENT_CHANNEL_SIZE: usize = 128;
 const DST_IP_EVENT_CHANNEL_SIZE: usize = 128;
@@ -352,25 +349,16 @@ async fn run(home_path: PathBuf, config: RuntimeConfig) -> LdResult<()> {
     let (openapi_config_router, _) = openapi::build_openapi_router().split_for_parts();
     let (openapi_services_router, _) = openapi::build_services_openapi_router().split_for_parts();
     let (openapi_iface_router, _) = openapi::build_iface_openapi_router().split_for_parts();
+    let (openapi_metric_router, _) = openapi::build_metric_openapi_router().split_for_parts();
+    let (openapi_sys_service_router, _) =
+        openapi::build_sys_service_openapi_router().split_for_parts();
     let openapi = openapi::build_full_openapi_spec();
 
     let source_route = Router::new()
         .merge(openapi_iface_router)
-        .nest("/metric", metric::get_metric_service_paths().await)
-        .nest(
-            "/sys_service",
-            Router::new()
-                .merge(get_dns_paths().await)
-                .merge(get_config_paths().await)
-                .nest("/docker", docker::get_docker_paths().await),
-        )
-        .nest(
-            "/config",
-            Router::new()
-                .merge(openapi_config_router)
-                .merge(get_geo_site_upload_path())
-                .merge(get_geo_ip_upload_path()),
-        )
+        .nest("/metric", openapi_metric_router)
+        .nest("/sys_service", openapi_sys_service_router)
+        .nest("/config", openapi_config_router)
         .nest("/services", openapi_services_router)
         .with_state(landscape_app_status.clone())
         .nest("/sysinfo", sysinfo::get_sys_info_route())

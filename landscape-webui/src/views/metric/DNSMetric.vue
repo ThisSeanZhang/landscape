@@ -38,7 +38,10 @@ import CheckDomainDrawer from "@/components/dns/CheckDomainDrawer.vue";
 import { SearchLocate } from "@vicons/carbon";
 import { usePreferenceStore } from "@/stores/preference";
 import { getFlowRules } from "landscape-types/api/flow-rules/flow-rules";
-import type { FlowConfig } from "landscape-types/api/schemas";
+import type {
+  FlowConfig,
+  LandscapeDnsRecordType,
+} from "landscape-types/api/schemas";
 const prefStore = usePreferenceStore();
 
 const activeTab = ref("dashboard");
@@ -46,7 +49,7 @@ const dashboardRef = ref<any>(null);
 const showCheckDomainDrawer = ref(false);
 const checkDomainName = ref("");
 const checkDomainFlowId = ref(0);
-const checkDomainType = ref("A");
+const checkDomainType = ref<LandscapeDnsRecordType>("A");
 const { t } = useI18n();
 const frontEndStore = useFrontEndStore();
 
@@ -214,7 +217,8 @@ const columns = computed<DataTableColumns<DnsMetric>>(() => [
                         e.stopPropagation();
                         checkDomainName.value = row.domain;
                         checkDomainFlowId.value = row.flow_id || 0;
-                        checkDomainType.value = row.query_type || "A";
+                        checkDomainType.value = (row.query_type ||
+                          "A") as LandscapeDnsRecordType;
                         showCheckDomainDrawer.value = true;
                       },
                     },

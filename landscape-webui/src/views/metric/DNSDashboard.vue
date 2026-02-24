@@ -121,8 +121,8 @@ const dashboardLists = computed(() => [
   },
 ]);
 
-const formatDuration = (ms: number | undefined) => {
-  if (ms === undefined) return "-";
+const formatDuration = (ms: number | null | undefined) => {
+  if (ms == null) return "-";
   if (ms >= 1000) {
     return (ms / 1000).toFixed(2) + "s";
   }

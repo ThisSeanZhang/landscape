@@ -1,20 +1,19 @@
 use std::net::IpAddr;
 
 use serde::{Deserialize, Serialize};
-use ts_rs::TS;
 
 ///
-#[derive(Debug, Serialize, Deserialize, Eq, Hash, PartialEq, Clone, TS)]
-#[ts(export, export_to = "common/metric/connect.d.ts")]
+#[derive(Debug, Serialize, Deserialize, Eq, Hash, PartialEq, Clone)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct ConnectKey {
-    #[ts(type = "string")]
     #[serde(with = "crate::utils::serde_helper")]
+    #[cfg_attr(feature = "openapi", schema(value_type = String))]
     pub create_time: u64,
     pub cpu_id: u32,
 }
 
-#[derive(Debug, Serialize, Deserialize, Default, Clone, Eq, Hash, PartialEq, TS)]
-#[ts(export, export_to = "common/metric/connect.d.ts")]
+#[derive(Debug, Serialize, Deserialize, Default, Clone, Eq, Hash, PartialEq)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum ConnectStatusType {
     #[default]
@@ -23,8 +22,8 @@ pub enum ConnectStatusType {
     Disabled,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, TS)]
-#[ts(export, export_to = "common/metric/connect.d.ts")]
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub enum MetricResolution {
     #[serde(rename = "second")]
     Second,
@@ -62,8 +61,7 @@ impl Into<u8> for ConnectStatusType {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, Eq, Hash, PartialEq, Clone, TS)]
-#[ts(export, export_to = "common/metric/connect.d.ts")]
+#[derive(Debug, Serialize, Deserialize, Eq, Hash, PartialEq, Clone)]
 pub struct ConnectMetric {
     pub key: ConnectKey,
 
@@ -79,61 +77,47 @@ pub struct ConnectMetric {
     pub trace_id: u8,
     pub gress: u8,
 
-    #[ts(type = "number")]
     pub report_time: u64,
 
-    #[ts(type = "number")]
     pub create_time_ms: u64,
 
-    #[ts(type = "number")]
     pub ingress_bytes: u64,
-    #[ts(type = "number")]
     pub ingress_packets: u64,
-    #[ts(type = "number")]
     pub egress_bytes: u64,
-    #[ts(type = "number")]
     pub egress_packets: u64,
 
     pub status: ConnectStatusType,
 }
 
-#[derive(Debug, Serialize, Deserialize, Eq, Hash, PartialEq, Clone, TS)]
-#[ts(export, export_to = "common/metric/connect.d.ts")]
+#[derive(Debug, Serialize, Deserialize, Eq, Hash, PartialEq, Clone)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct ConnectMetricPoint {
-    #[ts(type = "number")]
     pub report_time: u64,
 
-    #[ts(type = "number")]
     pub ingress_bytes: u64,
-    #[ts(type = "number")]
     pub ingress_packets: u64,
-    #[ts(type = "number")]
     pub egress_bytes: u64,
-    #[ts(type = "number")]
     pub egress_packets: u64,
 
     pub status: ConnectStatusType,
 }
 
-#[derive(Debug, Serialize, Deserialize, Eq, Hash, PartialEq, Clone, TS)]
-#[ts(export, export_to = "common/metric/connect.d.ts")]
+#[derive(Debug, Serialize, Deserialize, Eq, Hash, PartialEq, Clone)]
 pub struct ConnectAgg {
-    #[ts(type = "number")]
     pub ingress_bytes: u64,
-    #[ts(type = "number")]
     pub ingress_packets: u64,
-    #[ts(type = "number")]
     pub egress_bytes: u64,
-    #[ts(type = "number")]
     pub egress_packets: u64,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, TS)]
-#[ts(export, export_to = "common/metric/connect.d.ts")]
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct ConnectRealtimeStatus {
     pub key: ConnectKey,
 
+    #[cfg_attr(feature = "openapi", schema(value_type = String))]
     pub src_ip: IpAddr,
+    #[cfg_attr(feature = "openapi", schema(value_type = String))]
     pub dst_ip: IpAddr,
     pub src_port: u16,
     pub dst_port: u16,
@@ -145,41 +129,29 @@ pub struct ConnectRealtimeStatus {
     pub trace_id: u8,
     pub gress: u8,
 
-    #[ts(type = "number")]
     pub create_time_ms: u64,
 
-    #[ts(type = "number")]
     pub ingress_bps: u64,
-    #[ts(type = "number")]
     pub egress_bps: u64,
-    #[ts(type = "number")]
     pub ingress_pps: u64,
-    #[ts(type = "number")]
     pub egress_pps: u64,
-    #[ts(type = "number")]
     pub last_report_time: u64,
     pub status: ConnectStatusType,
 }
 
-#[derive(Debug, Serialize, Deserialize, Default, Clone, TS)]
-#[ts(export, export_to = "common/metric/connect.d.ts")]
+#[derive(Debug, Serialize, Deserialize, Default, Clone)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct ConnectGlobalStats {
-    #[ts(type = "number")]
     pub total_ingress_bytes: u64,
-    #[ts(type = "number")]
     pub total_egress_bytes: u64,
-    #[ts(type = "number")]
     pub total_ingress_pkts: u64,
-    #[ts(type = "number")]
     pub total_egress_pkts: u64,
-    #[ts(type = "number")]
     pub total_connect_count: u64,
-    #[ts(type = "number")]
     pub last_calculate_time: u64,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, Default, TS)]
-#[ts(export, export_to = "common/metric/connect.d.ts")]
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[serde(rename_all = "lowercase")]
 pub enum ConnectSortKey {
     #[default]
@@ -190,8 +162,8 @@ pub enum ConnectSortKey {
     Duration,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, Default, TS)]
-#[ts(export, export_to = "common/metric/connect.d.ts")]
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[serde(rename_all = "lowercase")]
 pub enum SortOrder {
     Asc,
@@ -199,47 +171,48 @@ pub enum SortOrder {
     Desc,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, Default, TS)]
-#[ts(export, export_to = "common/metric/connect.d.ts")]
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema, utoipa::IntoParams))]
+#[cfg_attr(feature = "openapi", into_params(parameter_in = Query))]
 pub struct ConnectHistoryQueryParams {
-    #[ts(optional)]
-    #[ts(type = "number")]
+    #[cfg_attr(feature = "openapi", schema(nullable = false))]
     pub start_time: Option<u64>,
-    #[ts(optional)]
-    #[ts(type = "number")]
+    #[cfg_attr(feature = "openapi", schema(nullable = false))]
     pub end_time: Option<u64>,
-    #[ts(optional)]
+    #[cfg_attr(feature = "openapi", schema(nullable = false))]
     pub limit: Option<usize>,
-    #[ts(optional)]
+    #[cfg_attr(feature = "openapi", schema(nullable = false))]
     pub src_ip: Option<String>,
-    #[ts(optional)]
+    #[cfg_attr(feature = "openapi", schema(nullable = false))]
     pub dst_ip: Option<String>,
-    #[ts(optional)]
+    #[cfg_attr(feature = "openapi", schema(nullable = false))]
     pub port_start: Option<u16>,
-    #[ts(optional)]
+    #[cfg_attr(feature = "openapi", schema(nullable = false))]
     pub port_end: Option<u16>,
-    #[ts(optional)]
+    #[cfg_attr(feature = "openapi", schema(nullable = false))]
     pub l3_proto: Option<u8>,
-    #[ts(optional)]
+    #[cfg_attr(feature = "openapi", schema(nullable = false))]
     pub l4_proto: Option<u8>,
-    #[ts(optional)]
+    #[cfg_attr(feature = "openapi", schema(nullable = false))]
     pub flow_id: Option<u8>,
-    #[ts(optional)]
+    #[cfg_attr(feature = "openapi", schema(nullable = false))]
     pub sort_key: Option<ConnectSortKey>,
-    #[ts(optional)]
+    #[cfg_attr(feature = "openapi", schema(nullable = false))]
     pub sort_order: Option<SortOrder>,
-    #[ts(optional)]
+    #[cfg_attr(feature = "openapi", schema(nullable = false))]
     pub status: Option<u8>, // 0: Active, 1: Closed
-    #[ts(optional)]
+    #[cfg_attr(feature = "openapi", schema(nullable = false))]
     pub gress: Option<u8>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, TS)]
-#[ts(export, export_to = "common/metric/connect.d.ts")]
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct ConnectHistoryStatus {
     pub key: ConnectKey,
 
+    #[cfg_attr(feature = "openapi", schema(value_type = String))]
     pub src_ip: IpAddr,
+    #[cfg_attr(feature = "openapi", schema(value_type = String))]
     pub dst_ip: IpAddr,
     pub src_port: u16,
     pub dst_port: u16,
@@ -251,64 +224,52 @@ pub struct ConnectHistoryStatus {
     pub trace_id: u8,
     pub gress: u8,
 
-    #[ts(type = "number")]
     pub create_time_ms: u64,
 
-    #[ts(type = "number")]
     pub total_ingress_bytes: u64,
-    #[ts(type = "number")]
     pub total_egress_bytes: u64,
-    #[ts(type = "number")]
     pub total_ingress_pkts: u64,
-    #[ts(type = "number")]
     pub total_egress_pkts: u64,
-    #[ts(type = "number")]
     pub last_report_time: u64,
 
     pub status: u8,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, Default, TS)]
-#[ts(export, export_to = "common/metric/connect.d.ts")]
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct IpAggregatedStats {
-    #[ts(type = "number")]
     pub ingress_bps: u64,
-    #[ts(type = "number")]
     pub egress_bps: u64,
-    #[ts(type = "number")]
     pub ingress_pps: u64,
-    #[ts(type = "number")]
     pub egress_pps: u64,
     pub active_conns: u32,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, TS)]
-#[ts(export, export_to = "common/metric/connect.d.ts")]
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct IpRealtimeStat {
+    #[cfg_attr(feature = "openapi", schema(value_type = String))]
     pub ip: IpAddr,
     pub stats: IpAggregatedStats,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, TS)]
-#[ts(export, export_to = "common/metric/connect.d.ts")]
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct IpHistoryStat {
+    #[cfg_attr(feature = "openapi", schema(value_type = String))]
     pub ip: IpAddr,
     pub flow_id: u8,
-    #[ts(type = "number")]
     pub total_ingress_bytes: u64,
-    #[ts(type = "number")]
     pub total_egress_bytes: u64,
-    #[ts(type = "number")]
     pub total_ingress_pkts: u64,
-    #[ts(type = "number")]
     pub total_egress_pkts: u64,
     pub connect_count: u32,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, TS)]
-#[ts(export, export_to = "common/metric/connect.d.ts")]
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct MetricChartRequest {
     pub key: ConnectKey,
-    #[ts(optional)]
+    #[cfg_attr(feature = "openapi", schema(nullable = false))]
     pub resolution: Option<MetricResolution>,
 }

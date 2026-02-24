@@ -1,79 +1,70 @@
-import axiosService from "@/api";
 import { ServiceStatus } from "@/lib/services";
-import {
+import type {
   ConnectKey,
-  ConnectMetric,
   ConnectMetricPoint,
   ConnectRealtimeStatus,
   ConnectHistoryStatus,
   ConnectGlobalStats,
-  ConnectHistoryQueryParams,
   IpRealtimeStat,
   IpHistoryStat,
+  GetConnectHistoryParams as ConnectHistoryQueryParams,
   MetricResolution,
-} from "landscape-types/common/metric/connect";
+} from "landscape-types/api/schemas";
+import {
+  getSrcIpStats as _getSrcIpStats,
+  getDstIpStats as _getDstIpStats,
+  getConnectGlobalStats as _getConnectGlobalStats,
+  getMetricStatus as _getMetricStatus,
+  getConnectsInfo as _getConnectsInfo,
+  getConnectHistory as _getConnectHistory,
+  getConnectMetricInfo as _getConnectMetricInfo,
+  getHistorySrcIpStats as _getHistorySrcIpStats,
+  getHistoryDstIpStats as _getHistoryDstIpStats,
+} from "landscape-types/api/metric/metric";
 
 export * from "./dns";
 
 export async function get_src_ip_stats(): Promise<IpRealtimeStat[]> {
-  let data = await axiosService.get("metric/connects/src_ip_stats");
-  return data.data;
+  return _getSrcIpStats();
 }
 
 export async function get_dst_ip_stats(): Promise<IpRealtimeStat[]> {
-  let data = await axiosService.get("metric/connects/dst_ip_stats");
-  return data.data;
+  return _getDstIpStats();
 }
 
 export async function get_connect_global_stats(): Promise<ConnectGlobalStats> {
-  let data = await axiosService.get("metric/connects/global_stats");
-  return data.data;
+  return _getConnectGlobalStats();
 }
 
 export async function get_metric_status(): Promise<ServiceStatus> {
-  let data = await axiosService.get("metric/status");
-  return data.data;
+  return _getMetricStatus() as Promise<ServiceStatus>;
 }
 
 export async function get_connects_info(): Promise<ConnectRealtimeStatus[]> {
-  let data = await axiosService.get("metric/connects");
-  return data.data;
+  return _getConnectsInfo();
 }
 
 export async function get_connect_history(
   params?: ConnectHistoryQueryParams,
 ): Promise<ConnectHistoryStatus[]> {
-  let data = await axiosService.get("metric/connects/history", {
-    params,
-  });
-  return data.data;
+  return _getConnectHistory(params);
 }
 
 export async function get_connect_metric_info(
   key: ConnectKey,
   resolution?: MetricResolution,
 ): Promise<ConnectMetricPoint[]> {
-  let data = await axiosService.post("metric/connects/chart", {
-    key,
-    resolution,
-  });
-  return data.data;
+  return _getConnectMetricInfo({ key, resolution });
 }
 
 export async function get_history_src_ip_stats(
   params?: ConnectHistoryQueryParams,
 ): Promise<IpHistoryStat[]> {
-  let data = await axiosService.get("metric/connects/history/src_ip_stats", {
-    params,
-  });
-  return data.data;
+  return _getHistorySrcIpStats(params);
 }
 
 export async function get_history_dst_ip_stats(
   params?: ConnectHistoryQueryParams,
 ): Promise<IpHistoryStat[]> {
-  let data = await axiosService.get("metric/connects/history/dst_ip_stats", {
-    params,
-  });
-  return data.data;
+  return _getHistoryDstIpStats(params);
 }

@@ -1,8 +1,7 @@
-use axum::{
-    extract::State,
-    routing::{get, post},
-    Router,
-};
+use axum::extract::State;
+use landscape_common::api_response::LandscapeApiResp as CommonApiResp;
+use utoipa_axum::router::OpenApiRouter;
+use utoipa_axum::routes;
 
 use crate::api::LandscapeApiResp;
 use crate::error::LandscapeApiResult;
@@ -12,23 +11,24 @@ pub mod dns;
 pub mod metric;
 pub mod ui;
 
-pub async fn get_config_paths() -> Router<LandscapeApp> {
-    Router::new()
-        .route("/config/export", get(export_init_config))
-        // UI Config
-        .route("/config/ui", get(ui::get_ui_config_fast))
-        .route("/config/edit/ui", get(ui::get_ui_config))
-        .route("/config/edit/ui", post(ui::update_ui_config))
-        // Metric Config
-        .route("/config/metric", get(metric::get_metric_config_fast))
-        .route("/config/edit/metric", get(metric::get_metric_config))
-        .route("/config/edit/metric", post(metric::update_metric_config))
-        // DNS Config
-        .route("/config/dns", get(dns::get_dns_config_fast))
-        .route("/config/edit/dns", get(dns::get_dns_config))
-        .route("/config/edit/dns", post(dns::update_dns_config))
+pub fn get_sys_config_paths() -> OpenApiRouter<LandscapeApp> {
+    OpenApiRouter::new()
+        .routes(routes!(export_init_config))
+        .routes(routes!(ui::get_ui_config_fast))
+        .routes(routes!(ui::get_ui_config, ui::update_ui_config))
+        .routes(routes!(metric::get_metric_config_fast))
+        .routes(routes!(metric::get_metric_config, metric::update_metric_config))
+        .routes(routes!(dns::get_dns_config_fast))
+        .routes(routes!(dns::get_dns_config, dns::update_dns_config))
 }
 
+#[utoipa::path(
+    get,
+    path = "/config/export",
+    tag = "System Config",
+    operation_id = "export_init_config",
+    responses((status = 200, body = inline(CommonApiResp<String>)))
+)]
 async fn export_init_config(State(state): State<LandscapeApp>) -> LandscapeApiResult<String> {
     let config = state.config_service.export_init_config().await;
     let config_file_content = toml::to_string(&config).unwrap();

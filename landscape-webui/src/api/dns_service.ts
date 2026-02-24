@@ -1,34 +1,30 @@
-import { CheckDnsReq, CheckChainDnsResult } from "landscape-types/common/dns";
-import axiosService from ".";
-import { ServiceStatus } from "@/lib/services";
+import type {
+  CheckDomain200Data,
+  CheckDomainParams,
+} from "landscape-types/api/schemas";
+import {
+  getDnsServiceStatus,
+  startDnsService,
+  stopDnsService,
+  checkDomain,
+} from "landscape-types/api/dns-service/dns-service";
+import type { ServiceStatus } from "@/lib/services";
 
 export async function get_dns_status(): Promise<ServiceStatus> {
-  let data = await axiosService.get("sys_service/dns");
-  // console.log(data.data);
-  return data.data;
+  const data = await getDnsServiceStatus();
+  return data as ServiceStatus;
 }
 
-export async function start_dns_service(
-  udp_port: number,
-): Promise<ServiceStatus> {
-  let data = await axiosService.post("sys_service/dns", {
-    udp_port,
-  });
-  // console.log(data.data);
-  return data.data.status;
+export async function start_dns_service(): Promise<void> {
+  await startDnsService();
 }
 
-export async function stop_dns_service(): Promise<ServiceStatus> {
-  let data = await axiosService.delete("sys_service/dns");
-  // console.log(data.data);
-  return data.data.status;
+export async function stop_dns_service(): Promise<void> {
+  await stopDnsService();
 }
 
 export async function check_domain(
-  req: CheckDnsReq,
-): Promise<CheckChainDnsResult> {
-  let data = await axiosService.get("sys_service/dns/check", {
-    params: { ...req },
-  });
-  return data.data;
+  req: CheckDomainParams,
+): Promise<CheckDomain200Data> {
+  return await checkDomain(req);
 }

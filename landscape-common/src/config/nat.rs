@@ -2,7 +2,6 @@ use core::ops::Range;
 use landscape_macro::LdApiError;
 use serde::{Deserialize, Serialize};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
-use ts_rs::TS;
 use uuid::Uuid;
 
 use crate::config::ConfigId;
@@ -44,9 +43,8 @@ impl LandscapeDBStore<String> for NatServiceConfig {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, TS)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
-#[ts(export, export_to = "common/nat.d.ts")]
 pub struct NatConfig {
     #[cfg_attr(feature = "openapi", schema(value_type = Object))]
     pub tcp_range: Range<u16>,

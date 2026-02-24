@@ -4,7 +4,10 @@ import { Terminal } from "@xterm/xterm";
 import { SerializeAddon } from "@xterm/addon-serialize";
 import { FitAddon } from "@xterm/addon-fit";
 import { LANDSCAPE_TOKEN_KEY } from "@/lib/common";
-import { LandscapePtyConfig, PtyOutMessage } from "landscape-types/common/pty";
+import type {
+  LandscapePtyConfig,
+  PtyOutMessage,
+} from "landscape-types/api/schemas";
 import "@xterm/xterm/css/xterm.css";
 
 export const usePtyStore = defineStore("pty", () => {

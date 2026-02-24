@@ -1,7 +1,6 @@
 use std::{fmt, net::Ipv6Addr};
 
 use serde::{Deserialize, Deserializer, Serialize};
-use ts_rs::TS;
 
 /// The number of bytes in an ethernet (MAC) address.
 pub const ETHER_ADDR_LEN: usize = 6;
@@ -12,11 +11,9 @@ type EtherAddr = [u8; ETHER_ADDR_LEN];
 const LOCAL_ADDR_BIT: u8 = 0x02;
 const MULTICAST_ADDR_BIT: u8 = 0x01;
 
-#[derive(Clone, Copy, Default, Hash, PartialOrd, Eq, TS)]
+#[derive(Clone, Copy, Default, Hash, PartialOrd, Eq)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[cfg_attr(feature = "openapi", schema(value_type = String, example = "00:11:22:33:44:55"))]
-#[ts(export, export_to = "common/network.d.ts")]
-#[ts(as = "String")]
 pub struct MacAddr(pub u8, pub u8, pub u8, pub u8, pub u8, pub u8);
 
 impl MacAddr {

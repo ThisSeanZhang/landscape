@@ -2,19 +2,22 @@
 import { ref } from "vue";
 import { useMessage } from "naive-ui";
 import { SearchLocate } from "@vicons/carbon";
-import { CheckChainDnsResult, CheckDnsReq } from "landscape-types/common/dns";
+import type {
+  CheckDomain200Data,
+  CheckDomainParams,
+  DNSRedirectRule,
+  LandscapeDnsRecordType,
+} from "landscape-types/api/schemas";
 import { check_domain } from "@/api/dns_service";
-import { LandscapeDnsRecordType } from "landscape-types/common/dns_record_type";
 import { DnsRule } from "@/lib/dns";
 import { getDnsRule } from "landscape-types/api/dns-rules/dns-rules";
-import type { DNSRedirectRule } from "landscape-types/api/schemas";
 import { get_dns_redirect } from "@/api/dns_rule/redirect";
 const message = useMessage();
 
 interface Props {
   flow_id?: number;
   initialDomain?: string;
-  initialType?: string;
+  initialType?: LandscapeDnsRecordType;
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -24,29 +27,29 @@ const props = withDefaults(defineProps<Props>(), {
 });
 
 const show = defineModel<boolean>("show", { required: true });
-const req = ref<CheckDnsReq>({
+const req = ref<CheckDomainParams>({
   flow_id: 0,
   domain: "",
   record_type: "A",
 });
-const result = ref<CheckChainDnsResult>({
-  redirect_id: null,
-  rule_id: null,
-  records: null,
-  cache_records: null,
+const result = ref<CheckDomain200Data>({
+  redirect_id: undefined,
+  rule_id: undefined,
+  records: undefined,
+  cache_records: undefined,
 });
 
 async function init_req(isEnter = false) {
   req.value = {
     flow_id: props.flow_id,
     domain: props.initialDomain || "",
-    record_type: (props.initialType as any) || "A",
+    record_type: props.initialType || "A",
   };
   result.value = {
-    redirect_id: null,
-    rule_id: null,
-    records: null,
-    cache_records: null,
+    redirect_id: undefined,
+    rule_id: undefined,
+    records: undefined,
+    cache_records: undefined,
   };
   if (isEnter && req.value.domain) {
     query();
@@ -104,7 +107,7 @@ async function query() {
 }
 const showInner = ref(false);
 
-async function quick_btn(record_type: LandscapeDnsRecordType, domain: string) {
+async function quick_btn(record_type: "A" | "AAAA", domain: string) {
   req.value.domain = domain;
   req.value.record_type = record_type;
   query();

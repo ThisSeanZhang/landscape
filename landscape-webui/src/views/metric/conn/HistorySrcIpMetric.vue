@@ -9,12 +9,12 @@ import { useThemeVars } from "naive-ui";
 import HistoryIpStatsList from "@/components/metric/connect/history/HistoryIpStatsList.vue";
 import ConnectViewSwitcher from "@/components/metric/connect/ConnectViewSwitcher.vue";
 import FlowSelect from "@/components/flow/FlowSelect.vue";
-import {
-  ConnectHistoryQueryParams,
+import type {
   IpHistoryStat,
+  GetHistorySrcIpStatsParams as ConnectHistoryQueryParams,
   ConnectSortKey,
   SortOrder,
-} from "landscape-types/common/metric/connect";
+} from "landscape-types/api/schemas";
 import { usePreferenceStore } from "@/stores/preference";
 
 const metricStore = useMetricStore();

@@ -1,4 +1,3 @@
-import axiosService from "@/api";
 import {
   getGeoSites,
   getGeoRule,
@@ -9,6 +8,7 @@ import {
   refreshGeoSiteCache,
   searchGeoSiteCache,
   getGeoSiteCacheDetail,
+  updateGeoSiteByUpload as _updateGeoSiteByUpload,
 } from "landscape-types/api/geo-sites/geo-sites";
 import type {
   GeoFileCacheKey,
@@ -73,10 +73,7 @@ export async function get_geo_site_cache_detail(
 export async function update_geo_site_by_upload(
   name: string,
   form_data: FormData,
-): Promise<GeoDomainConfig> {
-  let data = await axiosService.post(
-    `config/geo_sites/${name}/update_by_upload`,
-    form_data,
-  );
-  return data.data;
+): Promise<void> {
+  const file = form_data.get("file") as Blob;
+  await _updateGeoSiteByUpload(name, { file });
 }

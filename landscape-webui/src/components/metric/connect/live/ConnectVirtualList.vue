@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { ref } from "vue";
-import {
+import type {
   ConnectKey,
   ConnectRealtimeStatus,
-} from "landscape-types/common/metric/connect";
+} from "landscape-types/api/schemas";
 import { useFrontEndStore } from "@/stores/front_end_config";
 import ConnectItemInfo from "./ConnectItemInfo.vue";
 import ConnectChartDrawer from "../ConnectChartDrawer.vue";

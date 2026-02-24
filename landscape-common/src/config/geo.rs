@@ -2,7 +2,6 @@ use std::collections::HashSet;
 
 use landscape_macro::LdApiError;
 use serde::{Deserialize, Serialize};
-use ts_rs::TS;
 use uuid::Uuid;
 
 use crate::{
@@ -148,17 +147,15 @@ impl GeoConfigKey {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Hash, PartialEq, Eq, TS)]
+#[derive(Serialize, Deserialize, Debug, Clone, Hash, PartialEq, Eq)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
-#[ts(export, export_to = "common/geo.d.ts")]
 pub struct QueryGeoKey {
     pub name: Option<String>,
     pub key: Option<String>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Hash, PartialEq, Eq, TS)]
+#[derive(Serialize, Deserialize, Debug, Clone, Hash, PartialEq, Eq)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
-#[ts(export, export_to = "common/geo_site.d.ts")]
 pub struct QueryGeoDomainConfig {
     pub name: Option<String>,
 }
@@ -216,9 +213,8 @@ impl LandscapeStoreTrait for GeoIpConfig {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Hash, PartialEq, Eq, TS)]
+#[derive(Serialize, Deserialize, Debug, Clone, Hash, PartialEq, Eq)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
-#[ts(export, export_to = "common/geo_ip.d.ts")]
 pub struct QueryGeoIpConfig {
     pub name: Option<String>,
 }

@@ -9,12 +9,12 @@ import {
   get_connect_global_stats,
 } from "@/api/metric";
 import { ServiceStatus, ServiceStatusType } from "@/lib/services";
-import {
+import type {
   ConnectKey,
   ConnectRealtimeStatus,
   IpRealtimeStat,
   ConnectGlobalStats,
-} from "landscape-types/common/metric/connect";
+} from "landscape-types/api/schemas";
 
 export const useMetricStore = defineStore("dns_metric", () => {
   const activeModes = ref(new Set<"live" | "src" | "dst">());

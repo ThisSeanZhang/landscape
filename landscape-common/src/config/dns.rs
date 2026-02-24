@@ -1,6 +1,5 @@
 use landscape_macro::LdApiError;
 use serde::{Deserialize, Serialize};
-use ts_rs::TS;
 use uuid::Uuid;
 
 use crate::config::ConfigId;
@@ -141,8 +140,8 @@ pub enum FilterResult {
     OnlyIPv6,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, TS)]
-#[ts(export, export_to = "common/dns_record_type.d.ts")]
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[serde(rename_all = "UPPERCASE")]
 pub enum LandscapeDnsRecordType {
     A,

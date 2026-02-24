@@ -1,15 +1,12 @@
+use crate::database::repository::LandscapeDBStore;
 use crate::utils::time::get_f64_timestamp;
 use crate::{store::storev2::LandscapeStore, LANDSCAPE_DEFAULT_LAN_NAME};
 use sea_orm::{prelude::StringLen, DeriveActiveEnum, EnumIter};
 use serde::{Deserialize, Serialize};
-use ts_rs::TS;
-
-use crate::database::repository::LandscapeDBStore;
 
 /// 用于存储网卡信息的结构体
-#[derive(Debug, Serialize, Deserialize, Clone, TS)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
-#[ts(export, export_to = "common/iface.d.ts")]
 pub struct NetworkIfaceConfig {
     // 名称 关联的网卡名称 相当于网卡的唯一 id
     pub name: String,
@@ -86,9 +83,8 @@ impl NetworkIfaceConfig {
 }
 
 /// 需要创建的设备类型
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq, Eq, Hash, Default)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash, Default)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
-#[ts(export, export_to = "common/iface.d.ts")]
 #[serde(rename_all = "snake_case")]
 #[derive(EnumIter, DeriveActiveEnum)]
 #[sea_orm(rs_type = "String", db_type = "String(StringLen::N(100))", rename_all = "snake_case")]
@@ -98,9 +94,8 @@ pub enum CreateDevType {
     Bridge,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq, Eq, Hash, Default)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash, Default)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
-#[ts(export, export_to = "common/iface.d.ts")]
 #[serde(rename_all = "snake_case")]
 #[derive(EnumIter, DeriveActiveEnum)]
 #[sea_orm(rs_type = "String", db_type = "String(StringLen::N(100))", rename_all = "snake_case")]
@@ -112,9 +107,8 @@ pub enum WifiMode {
     AP,
 }
 
-#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq, Eq, Hash, Default)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash, Default)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
-#[ts(export, export_to = "common/iface.d.ts")]
 #[serde(rename_all = "snake_case")]
 #[derive(EnumIter, DeriveActiveEnum)]
 #[sea_orm(rs_type = "String", db_type = "String(StringLen::N(100))", rename_all = "snake_case")]
@@ -126,9 +120,8 @@ pub enum IfaceZoneType {
     Lan,
 }
 
-#[derive(Debug, Serialize, Deserialize, Default, Clone, TS)]
+#[derive(Debug, Serialize, Deserialize, Default, Clone)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
-#[ts(export, export_to = "common/iface.d.ts")]
 pub struct IfaceCpuSoftBalance {
     pub xps: String,
     pub rps: String,

@@ -1,20 +1,18 @@
 use serde::{Deserialize, Serialize};
 use tokio::sync::{broadcast, mpsc};
-use ts_rs::TS;
 
-#[derive(Serialize, Deserialize, Debug, Clone, TS)]
-#[ts(export, export_to = "common/pty.d.ts")]
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[serde(tag = "t")]
 #[serde(rename_all = "snake_case")]
-
 pub enum SessionStatus {
     On,
     Exited(u32),
     Error(String),
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, TS)]
-#[ts(export, export_to = "common/pty.d.ts")]
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct LandscapePtySize {
     pub rows: u16,
     pub cols: u16,
@@ -33,8 +31,8 @@ impl Default for LandscapePtySize {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, TS)]
-#[ts(export, export_to = "common/pty.d.ts")]
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct LandscapePtyConfig {
     #[serde(flatten)]
     pub size: LandscapePtySize,
@@ -55,21 +53,31 @@ pub struct SessionChannel {
     pub input_events: mpsc::Sender<PtyInMessage>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, TS)]
-#[ts(export, export_to = "common/pty.d.ts")]
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[serde(tag = "t")]
 #[serde(rename_all = "snake_case")]
 pub enum PtyInMessage {
-    Size { size: LandscapePtySize },
-    Data { data: Box<Vec<u8>> },
+    Size {
+        size: LandscapePtySize,
+    },
+    Data {
+        #[cfg_attr(feature = "openapi", schema(value_type = Vec<u8>))]
+        data: Box<Vec<u8>>,
+    },
     Exit,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, TS)]
-#[ts(export, export_to = "common/pty.d.ts")]
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[serde(tag = "t")]
 #[serde(rename_all = "snake_case")]
 pub enum PtyOutMessage {
-    Data { data: Box<Vec<u8>> },
-    Exit { msg: String },
+    Data {
+        #[cfg_attr(feature = "openapi", schema(value_type = Vec<u8>))]
+        data: Box<Vec<u8>>,
+    },
+    Exit {
+        msg: String,
+    },
 }

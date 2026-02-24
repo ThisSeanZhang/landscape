@@ -1,7 +1,6 @@
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
-use ts_rs::TS;
 
 use crate::{NAMESPACE_REGISTER_SOCK_PATH, NAMESPACE_REGISTER_SOCK_PATH_IN_DOCKER};
 
@@ -20,18 +19,27 @@ pub struct DockerTargetEnroll {
     pub ifindex: u32,
 }
 
-#[derive(Debug, Serialize, Deserialize, TS)]
-#[ts(export, export_to = "common/docker.d.ts")]
+#[derive(Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct DockerCmd {
     pub image_name: String,
+    #[cfg_attr(feature = "openapi", schema(nullable = false))]
     pub restart: Option<String>,
+    #[cfg_attr(feature = "openapi", schema(nullable = false))]
     pub restart_max_retries: Option<u32>,
+    #[cfg_attr(feature = "openapi", schema(nullable = false))]
     pub container_name: Option<String>,
+    #[cfg_attr(feature = "openapi", schema(nullable = false))]
     pub ports: Option<Vec<KeyValuePair>>,
+    #[cfg_attr(feature = "openapi", schema(nullable = false))]
     pub environment: Option<Vec<KeyValuePair>>,
+    #[cfg_attr(feature = "openapi", schema(nullable = false))]
     pub volumes: Option<Vec<KeyValuePair>>,
+    #[cfg_attr(feature = "openapi", schema(nullable = false))]
     pub labels: Option<Vec<KeyValuePair>>,
+    #[cfg_attr(feature = "openapi", schema(nullable = false))]
     pub entrypoint: Option<String>,
+    #[cfg_attr(feature = "openapi", schema(nullable = false))]
     pub params: Option<String>,
 }
 
@@ -136,8 +144,8 @@ impl DockerCmd {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, TS)]
-#[ts(export, export_to = "common/docker.d.ts")]
+#[derive(Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct KeyValuePair {
     pub key: String,
     pub value: String,

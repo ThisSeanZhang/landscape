@@ -1,17 +1,20 @@
-import { LandscapeStatus, LandscapeSystemInfo } from "@/lib/sys";
-import axiosService from ".";
+import { LandscapeStatus } from "@/lib/sys";
+import type { LandscapeSystemInfo } from "@/lib/sys";
+import {
+  getBasicSysInfo,
+  getIntervalFetchInfo,
+  getCpuCount,
+} from "landscape-types/api/system-info/system-info";
 
 export async function get_sysinfo(): Promise<LandscapeSystemInfo> {
-  let data = await axiosService.get("sysinfo/sys");
-  return data.data;
+  return await getBasicSysInfo();
 }
 
 export async function interval_fetch_info(): Promise<LandscapeStatus> {
-  let data = await axiosService.get("sysinfo/interval_fetch_info");
-  return data.data;
+  const data = await getIntervalFetchInfo();
+  return new LandscapeStatus(data);
 }
 
 export async function get_cpu_count(): Promise<number> {
-  let data = await axiosService.get("sysinfo/cpu_count");
-  return data.data;
+  return await getCpuCount();
 }

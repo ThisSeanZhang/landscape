@@ -1,16 +1,13 @@
 use std::{collections::HashMap, net::Ipv6Addr};
 
 use serde::{Deserialize, Serialize};
-use ts_rs::TS;
 
 use crate::net::MacAddr;
 
-#[derive(Debug, Serialize, Deserialize, Clone, TS)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
-#[ts(export, export_to = "common/ipv6_ra_server.d.ts")]
 pub struct IPv6NAInfo {
     pub boot_time: f64,
-    #[ts(type = "number")]
     #[cfg_attr(feature = "openapi", schema(value_type = HashMap<String, IPv6NAInfoItem>))]
     pub offered_ips: HashMap<Ipv6Addr, IPv6NAInfoItem>,
 }
@@ -28,15 +25,13 @@ impl IPv6NAInfo {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, TS)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
-#[ts(export, export_to = "common/ipv6_ra_server.d.ts")]
 pub struct IPv6NAInfoItem {
     pub mac: MacAddr,
     #[cfg_attr(feature = "openapi", schema(value_type = String))]
     pub ip: Ipv6Addr,
     /// Relative to the start time of RA
-    #[ts(type = "number")]
     pub relative_active_time: u64,
     // valid_time in config, default is 600
     // pub expire_time: u32,

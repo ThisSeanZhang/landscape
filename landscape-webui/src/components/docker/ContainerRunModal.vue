@@ -2,7 +2,7 @@
 import { run_cmd } from "@/api/docker";
 import { KeyValuePair } from "@/lib/common";
 import { LAND_REDIRECT_ID_KEY } from "@/lib/docker";
-import { DockerCmd } from "landscape-types/common/docker";
+import { DockerCmd } from "landscape-types/api/schemas";
 import { useDockerStore } from "@/stores/status_docker";
 import { useNotification } from "naive-ui";
 import { computed, ref } from "vue";
@@ -26,13 +26,13 @@ async function on_modal_enter() {
     image_name: props.image_name,
     restart: DockerRestartPolicy.NO,
     restart_max_retries: 3,
-    container_name: null,
-    ports: null,
-    environment: null,
-    volumes: null,
-    labels: null,
-    entrypoint: null,
-    params: null,
+    container_name: undefined,
+    ports: undefined,
+    environment: undefined,
+    volumes: undefined,
+    labels: undefined,
+    entrypoint: undefined,
+    params: undefined,
   };
 }
 

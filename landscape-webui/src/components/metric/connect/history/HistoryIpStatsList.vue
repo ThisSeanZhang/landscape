@@ -6,7 +6,7 @@ import { Search } from "@vicons/carbon";
 import type {
   IpHistoryStat,
   ConnectSortKey,
-} from "landscape-types/common/metric/connect";
+} from "landscape-types/api/schemas";
 
 import FlowExhibit from "@/components/flow/FlowExhibit.vue";
 

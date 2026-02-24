@@ -1,6 +1,6 @@
 import { defineStore } from "pinia";
 import { ref } from "vue";
-import type { LandscapeDnsConfig } from "landscape-types/common/config";
+import type { LandscapeDnsConfig } from "landscape-types/api/schemas";
 import { get_dns_config_edit, update_dns_config } from "@/api/sys/config";
 
 export const useDnsConfigStore = defineStore("dns_config", () => {
@@ -11,9 +11,9 @@ export const useDnsConfigStore = defineStore("dns_config", () => {
 
   async function loadDnsConfig() {
     const { dns, hash } = await get_dns_config_edit();
-    cacheCapacity.value = dns.cache_capacity;
-    cacheTtl.value = dns.cache_ttl;
-    cacheNegativeTtl.value = dns.negative_cache_ttl;
+    cacheCapacity.value = dns.cache_capacity ?? undefined;
+    cacheTtl.value = dns.cache_ttl ?? undefined;
+    cacheNegativeTtl.value = dns.negative_cache_ttl ?? undefined;
     expectedHash.value = hash;
   }
 

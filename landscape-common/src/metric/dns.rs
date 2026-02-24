@@ -1,9 +1,8 @@
 use serde::{Deserialize, Serialize};
 use std::net::IpAddr;
-use ts_rs::TS;
 
-#[derive(Debug, Serialize, Deserialize, Clone, Copy, TS, PartialEq, Eq, Default)]
-#[ts(export, export_to = "common/metric/dns.d.ts")]
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Default)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[serde(rename_all = "lowercase")]
 pub enum DnsResultStatus {
     Local,    // 重定向有值
@@ -16,23 +15,23 @@ pub enum DnsResultStatus {
     Error,    // 异常
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, TS)]
-#[ts(export, export_to = "common/metric/dns.d.ts")]
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct DnsMetric {
     pub flow_id: u32,
     pub domain: String,
     pub query_type: String,
     pub response_code: String,
     pub status: DnsResultStatus,
-    #[ts(type = "number")]
     pub report_time: u64,
     pub duration_ms: u32,
+    #[cfg_attr(feature = "openapi", schema(value_type = String))]
     pub src_ip: IpAddr,
     pub answers: Vec<String>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Default, Clone, TS)]
-#[ts(export, export_to = "common/metric/dns.d.ts")]
+#[derive(Debug, Serialize, Deserialize, Default, Clone)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[serde(rename_all = "lowercase")]
 pub enum DnsSortKey {
     #[default]
@@ -41,57 +40,57 @@ pub enum DnsSortKey {
     Duration,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, Default, TS)]
-#[ts(export, export_to = "common/metric/dns.d.ts")]
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema, utoipa::IntoParams))]
+#[cfg_attr(feature = "openapi", into_params(parameter_in = Query))]
 pub struct DnsHistoryQueryParams {
-    #[ts(optional, type = "number")]
+    #[cfg_attr(feature = "openapi", schema(nullable = false))]
     pub start_time: Option<u64>,
-    #[ts(optional, type = "number")]
+    #[cfg_attr(feature = "openapi", schema(nullable = false))]
     pub end_time: Option<u64>,
-    #[ts(optional)]
+    #[cfg_attr(feature = "openapi", schema(nullable = false))]
     pub limit: Option<usize>,
-    #[ts(optional)]
+    #[cfg_attr(feature = "openapi", schema(nullable = false))]
     pub offset: Option<usize>,
-    #[ts(optional)]
+    #[cfg_attr(feature = "openapi", schema(nullable = false))]
     pub domain: Option<String>,
-    #[ts(optional)]
+    #[cfg_attr(feature = "openapi", schema(nullable = false))]
     pub src_ip: Option<String>,
-    #[ts(optional)]
+    #[cfg_attr(feature = "openapi", schema(nullable = false))]
     pub query_type: Option<String>,
-    #[ts(optional)]
+    #[cfg_attr(feature = "openapi", schema(nullable = false))]
     pub status: Option<DnsResultStatus>,
-    #[ts(optional)]
+    #[cfg_attr(feature = "openapi", schema(nullable = false))]
     pub min_duration_ms: Option<u32>,
-    #[ts(optional)]
+    #[cfg_attr(feature = "openapi", schema(nullable = false))]
     pub max_duration_ms: Option<u32>,
-    #[ts(optional)]
+    #[cfg_attr(feature = "openapi", schema(nullable = false))]
     pub sort_key: Option<DnsSortKey>,
-    #[ts(optional)]
+    #[cfg_attr(feature = "openapi", schema(nullable = false))]
     pub sort_order: Option<crate::metric::connect::SortOrder>,
-    #[ts(optional, type = "number")]
+    #[cfg_attr(feature = "openapi", schema(nullable = false))]
     pub flow_id: Option<u32>,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, Default, TS)]
-#[ts(export, export_to = "common/metric/dns.d.ts")]
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema, utoipa::IntoParams))]
+#[cfg_attr(feature = "openapi", into_params(parameter_in = Query))]
 pub struct DnsSummaryQueryParams {
-    #[ts(type = "number")]
     pub start_time: u64,
-    #[ts(type = "number")]
     pub end_time: u64,
-    #[ts(optional, type = "number")]
+    #[cfg_attr(feature = "openapi", schema(nullable = false))]
     pub flow_id: Option<u32>,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, TS)]
-#[ts(export, export_to = "common/metric/dns.d.ts")]
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct DnsHistoryResponse {
     pub items: Vec<DnsMetric>,
     pub total: usize,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, TS, Default)]
-#[ts(export, export_to = "common/metric/dns.d.ts")]
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct DnsSummaryResponse {
     pub total_queries: usize,
     pub total_effective_queries: usize,
@@ -117,8 +116,8 @@ pub struct DnsSummaryResponse {
     pub slowest_domains: Vec<DnsStatEntry>,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, TS, Default)]
-#[ts(export, export_to = "common/metric/dns.d.ts")]
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct DnsLightweightSummaryResponse {
     pub total_queries: usize,
     pub total_effective_queries: usize,
@@ -140,11 +139,11 @@ pub struct DnsLightweightSummaryResponse {
     pub max_duration_ms: f64,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, TS)]
-#[ts(export, export_to = "common/metric/dns.d.ts")]
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct DnsStatEntry {
     pub name: String,
     pub count: usize,
-    #[ts(optional)]
+    #[cfg_attr(feature = "openapi", schema(nullable = false))]
     pub value: Option<f64>,
 }

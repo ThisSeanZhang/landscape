@@ -1,5 +1,8 @@
 <script setup lang="ts">
-import { PullImgTask, PullImgTaskItem } from "landscape-types/common/docker";
+import {
+  GetDockerPullTasks200DataItem as PullImgTask,
+  PullImgTaskItem,
+} from "landscape-types/api/schemas";
 import { Task } from "@vicons/carbon";
 import { computed } from "vue";
 

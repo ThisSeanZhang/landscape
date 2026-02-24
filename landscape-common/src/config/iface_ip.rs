@@ -1,7 +1,6 @@
 use std::net::{Ipv4Addr, Ipv6Addr};
 
 use serde::{Deserialize, Serialize};
-use ts_rs::TS;
 
 use super::iface::NetworkIfaceConfig;
 use crate::config::iface::IfaceZoneType;
@@ -33,9 +32,8 @@ impl LandscapeDBStore<String> for IfaceIpServiceConfig {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, Default, TS)]
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
-#[ts(export, export_to = "common/wanip.d.ts")]
 #[serde(tag = "t")]
 #[serde(rename_all = "lowercase")]
 pub enum IfaceIpModelConfig {
@@ -74,7 +72,6 @@ pub enum IfaceIpModelConfig {
         /// Custome Options
         #[serde(default)]
         #[cfg_attr(feature = "openapi", schema(required = true, value_type = Vec<serde_json::Value>))]
-        #[ts(type = "Array<any>")]
         custome_opts: Vec<DhcpV4Options>,
     },
 }

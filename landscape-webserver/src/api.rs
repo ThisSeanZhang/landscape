@@ -9,6 +9,13 @@ use serde::{de::DeserializeOwned, Serialize};
 
 use crate::error::LandscapeApiError;
 
+#[derive(utoipa::ToSchema)]
+#[allow(dead_code)]
+pub struct UploadFileForm {
+    #[schema(value_type = String, format = Binary)]
+    pub file: String,
+}
+
 #[derive(Debug, Serialize, Default, Clone)]
 pub struct LandscapeApiResp<T>(pub CommonLandscapeApiResp<T>);
 

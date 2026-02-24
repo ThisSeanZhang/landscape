@@ -1,9 +1,7 @@
-import axios, { type AxiosInstance } from "axios";
+import type { AxiosInstance } from "axios";
 import router from "@/router";
 import i18n from "@/i18n";
 import { LANDSCAPE_TOKEN_KEY } from "@/lib/common";
-
-const base_url = import.meta.env.VITE_AXIOS_BASE_URL;
 
 /**
  * Apply common interceptors (auth token, token refresh, error handling)
@@ -62,13 +60,3 @@ export function applyInterceptors(instance: AxiosInstance): AxiosInstance {
 
   return instance;
 }
-
-// Legacy axios instance for hand-written API files (baseURL includes /src)
-const axiosService = applyInterceptors(
-  axios.create({
-    baseURL: `${base_url}/src`,
-    timeout: 30000,
-  }),
-);
-
-export default axiosService;

@@ -1,7 +1,4 @@
-use axum::{
-    extract::{DefaultBodyLimit, Multipart, Path, Query, State},
-    routing::post,
-};
+use axum::extract::{DefaultBodyLimit, Multipart, Path, Query, State};
 use landscape_common::api_response::LandscapeApiResp as CommonApiResp;
 use landscape_common::config::{
     geo::{
@@ -14,11 +11,15 @@ use landscape_common::service::controller_service_v2::ConfigController;
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 
-use crate::api::JsonBody;
+use crate::api::{JsonBody, UploadFileForm};
 use crate::LandscapeApp;
 use crate::{api::LandscapeApiResp, error::LandscapeApiResult, UPLOAD_GEO_FILE_SIZE_LIMIT};
 
 pub fn get_geo_site_config_paths() -> OpenApiRouter<LandscapeApp> {
+    let upload_router = OpenApiRouter::new()
+        .routes(routes!(update_by_upload))
+        .layer(DefaultBodyLimit::max(UPLOAD_GEO_FILE_SIZE_LIMIT));
+
     OpenApiRouter::new()
         .routes(routes!(get_geo_sites, add_geo_site))
         .routes(routes!(add_many_geo_sites))
@@ -26,14 +27,7 @@ pub fn get_geo_site_config_paths() -> OpenApiRouter<LandscapeApp> {
         .routes(routes!(get_geo_site_cache, refresh_geo_site_cache))
         .routes(routes!(search_geo_site_cache))
         .routes(routes!(get_geo_site_cache_detail))
-}
-
-/// Returns a separate Router for the upload endpoint that cannot use utoipa annotations.
-pub fn get_geo_site_upload_path() -> axum::Router<LandscapeApp> {
-    axum::Router::new().route(
-        "/geo_sites/{name}/update_by_upload",
-        post(update_by_upload).layer(DefaultBodyLimit::max(UPLOAD_GEO_FILE_SIZE_LIMIT)),
-    )
+        .merge(upload_router)
 }
 
 #[utoipa::path(
@@ -204,9 +198,15 @@ async fn del_geo_site(
     LandscapeApiResp::success(())
 }
 
-// curl -vvv -k -X POST https://localhost:6443/api/src/config/geo_sites/test2/update_by_upload
-// -H "Authorization: Bearer $(cat ../.landscape-router/landscape_api_token)"
-//  -F "file=@../.landscape-router/geosite.dat1"
+#[utoipa::path(
+    post,
+    path = "/geo_sites/{name}/update_by_upload",
+    tag = "Geo Sites",
+    operation_id = "update_geo_site_by_upload",
+    params(("name" = String, Path, description = "Geo site config name")),
+    request_body(content = inline(UploadFileForm), content_type = "multipart/form-data"),
+    responses((status = 200, description = "Success"))
+)]
 async fn update_by_upload(
     State(state): State<LandscapeApp>,
     Path(name): Path<String>,

@@ -1,6 +1,6 @@
 import { defineStore } from "pinia";
 import { ref } from "vue";
-import type { LandscapeMetricConfig } from "landscape-types/common/config";
+import type { LandscapeMetricConfig } from "landscape-types/api/schemas";
 import { get_metric_config_edit, update_metric_config } from "@/api/sys/config";
 
 export const useMetricConfigStore = defineStore("metric_config", () => {
@@ -17,59 +17,30 @@ export const useMetricConfigStore = defineStore("metric_config", () => {
 
   async function loadMetricConfig() {
     const { metric, hash } = await get_metric_config_edit();
-    connRetentionMins.value = metric.conn_retention_mins
-      ? Number(metric.conn_retention_mins)
-      : undefined;
-    connRetentionMinuteDays.value = metric.conn_retention_minute_days
-      ? Number(metric.conn_retention_minute_days)
-      : undefined;
-    connRetentionHourDays.value = metric.conn_retention_hour_days
-      ? Number(metric.conn_retention_hour_days)
-      : undefined;
-    connRetentionDayDays.value = metric.conn_retention_day_days
-      ? Number(metric.conn_retention_day_days)
-      : undefined;
-    dnsRetentionDays.value = metric.dns_retention_days
-      ? Number(metric.dns_retention_days)
-      : undefined;
-    batchSize.value = metric.batch_size;
-    flushIntervalSecs.value = metric.flush_interval_secs
-      ? Number(metric.flush_interval_secs)
-      : undefined;
-    maxMemory.value = metric.max_memory;
-    maxThreads.value = metric.max_threads;
+    connRetentionMins.value = metric.conn_retention_mins ?? undefined;
+    connRetentionMinuteDays.value =
+      metric.conn_retention_minute_days ?? undefined;
+    connRetentionHourDays.value = metric.conn_retention_hour_days ?? undefined;
+    connRetentionDayDays.value = metric.conn_retention_day_days ?? undefined;
+    dnsRetentionDays.value = metric.dns_retention_days ?? undefined;
+    batchSize.value = metric.batch_size ?? undefined;
+    flushIntervalSecs.value = metric.flush_interval_secs ?? undefined;
+    maxMemory.value = metric.max_memory ?? undefined;
+    maxThreads.value = metric.max_threads ?? undefined;
     expectedHash.value = hash;
   }
 
   async function saveMetricConfig() {
     const new_metric: LandscapeMetricConfig = {
-      conn_retention_mins:
-        connRetentionMins.value !== undefined
-          ? BigInt(connRetentionMins.value)
-          : undefined,
-      conn_retention_minute_days:
-        connRetentionMinuteDays.value !== undefined
-          ? BigInt(connRetentionMinuteDays.value)
-          : undefined,
-      conn_retention_hour_days:
-        connRetentionHourDays.value !== undefined
-          ? BigInt(connRetentionHourDays.value)
-          : undefined,
-      conn_retention_day_days:
-        connRetentionDayDays.value !== undefined
-          ? BigInt(connRetentionDayDays.value)
-          : undefined,
-      dns_retention_days:
-        dnsRetentionDays.value !== undefined
-          ? BigInt(dnsRetentionDays.value)
-          : undefined,
-      batch_size: batchSize.value || undefined,
-      flush_interval_secs:
-        flushIntervalSecs.value !== undefined
-          ? BigInt(flushIntervalSecs.value)
-          : undefined,
-      max_memory: maxMemory.value || undefined,
-      max_threads: maxThreads.value || undefined,
+      conn_retention_mins: connRetentionMins.value,
+      conn_retention_minute_days: connRetentionMinuteDays.value,
+      conn_retention_hour_days: connRetentionHourDays.value,
+      conn_retention_day_days: connRetentionDayDays.value,
+      dns_retention_days: dnsRetentionDays.value,
+      batch_size: batchSize.value,
+      flush_interval_secs: flushIntervalSecs.value,
+      max_memory: maxMemory.value,
+      max_threads: maxThreads.value,
     };
     await update_metric_config({
       new_metric,

@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import {
+import type {
   ConnectKey,
   ConnectRealtimeStatus,
-} from "landscape-types/common/metric/connect";
+} from "landscape-types/api/schemas";
 import { useFrontEndStore } from "@/stores/front_end_config";
 import { useRouter } from "vue-router";
 import {

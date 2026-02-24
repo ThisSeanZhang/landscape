@@ -175,7 +175,7 @@ pub fn get_auth_route(auth: Arc<AuthRuntimeConfig>) -> Router {
     tag = "Auth",
     request_body = LoginInfo,
     responses(
-        (status = 200, body = inline(CommonApiResp<LoginResult>)),
+        (status = 200, body = CommonApiResp<LoginResult>),
         (status = 401, description = "Invalid credentials")
     )
 )]

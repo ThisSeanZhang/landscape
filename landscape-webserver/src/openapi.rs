@@ -14,7 +14,9 @@ use crate::config_service::flow_rule::get_flow_rule_config_paths;
 use crate::config_service::geo_ip::get_geo_ip_config_paths;
 use crate::config_service::geo_site::get_geo_site_config_paths;
 use crate::config_service::static_nat_mapping::get_static_nat_mapping_config_paths;
+use crate::docker::get_docker_paths;
 use crate::iface::get_iface_paths;
+use crate::metric::get_metric_paths;
 use crate::service::dhcp_v4::get_dhcp_v4_service_paths;
 use crate::service::firewall::get_firewall_service_paths;
 use crate::service::icmp_ra::get_iface_icmpv6ra_paths;
@@ -27,6 +29,8 @@ use crate::service::route::get_route_paths;
 use crate::service::route_lan::get_route_lan_paths;
 use crate::service::route_wan::get_route_wan_paths;
 use crate::service::wifi::get_wifi_service_paths;
+use crate::sys_service::config::get_sys_config_paths;
+use crate::sys_service::dns_service::get_dns_service_paths;
 use crate::LandscapeApp;
 
 #[derive(OpenApi)]
@@ -62,12 +66,34 @@ use crate::LandscapeApp;
         (name = "ICMPv6 RA", description = "ICMPv6 router advertisement service"),
         (name = "NAT Service", description = "NAT service"),
         (name = "Iface", description = "Network interface management"),
+        (name = "System Config", description = "System configuration management"),
+        (name = "DNS Service", description = "DNS service management"),
+        (name = "System Info", description = "System information and status"),
+        (name = "Metric", description = "Metric data and statistics"),
+        (name = "Docker", description = "Docker container management"),
+        (name = "Docker Images", description = "Docker image management"),
+        (name = "Docker Networks", description = "Docker network management"),
     ),
     components(schemas(
         landscape_common::config::geo::GeoFileCacheKey,
         landscape_common::config::geo::QueryGeoKey,
         landscape_common::config::geo::GeoDomainConfig,
         landscape_common::config::geo::GeoIpConfig,
+        // Auth types
+        landscape_common::auth::LoginResult,
+        // Schemas referenced by IntoParams but not auto-registered
+        landscape_common::metric::connect::ConnectSortKey,
+        landscape_common::metric::connect::SortOrder,
+        landscape_common::metric::dns::DnsSortKey,
+        landscape_common::metric::dns::DnsResultStatus,
+        landscape_common::config::dns::LandscapeDnsRecordType,
+        // WebSocket types (no endpoint, registered for ORVAL codegen)
+        landscape_common::docker::image::ImgPullEvent,
+        landscape_common::pty::SessionStatus,
+        landscape_common::pty::LandscapePtySize,
+        landscape_common::pty::LandscapePtyConfig,
+        landscape_common::pty::PtyInMessage,
+        landscape_common::pty::PtyOutMessage,
     ))
 )]
 pub struct ApiDoc;
@@ -92,6 +118,19 @@ pub fn build_openapi_router() -> OpenApiRouter<LandscapeApp> {
 /// Build the OpenApiRouter for iface module.
 pub fn build_iface_openapi_router() -> OpenApiRouter<LandscapeApp> {
     OpenApiRouter::new().merge(get_iface_paths())
+}
+
+/// Build the OpenApiRouter for metric module.
+pub fn build_metric_openapi_router() -> OpenApiRouter<LandscapeApp> {
+    OpenApiRouter::new().merge(get_metric_paths())
+}
+
+/// Build the OpenApiRouter for sys_service modules (config, dns_service, docker).
+pub fn build_sys_service_openapi_router() -> OpenApiRouter<LandscapeApp> {
+    OpenApiRouter::new()
+        .merge(get_sys_config_paths())
+        .merge(get_dns_service_paths())
+        .merge(get_docker_paths())
 }
 
 /// Build the OpenApiRouter with all annotated service modules merged.
@@ -139,9 +178,94 @@ pub fn build_full_openapi_spec() -> utoipa::openapi::OpenApi {
     let (_, mut iface_openapi) = build_iface_openapi_router().split_for_parts();
     prefix_paths(&mut iface_openapi, "/api/src");
 
+    // Metric module (state = LandscapeApp) — paths are relative (e.g. /status, /connects)
+    let (_, mut metric_openapi) = build_metric_openapi_router().split_for_parts();
+    prefix_paths(&mut metric_openapi, "/api/src/metric");
+
+    // Sys service modules (config, dns_service, docker) — paths are relative (e.g. /config/export)
+    let (_, mut sys_service_openapi) = build_sys_service_openapi_router().split_for_parts();
+    prefix_paths(&mut sys_service_openapi, "/api/src/sys_service");
+
+    // Sysinfo module (special state type) — paths are relative (e.g. /sys, /interval_fetch_info)
+    let (_, mut sysinfo_openapi) = crate::sysinfo::build_sysinfo_openapi_router().split_for_parts();
+    prefix_paths(&mut sysinfo_openapi, "/api/src/sysinfo");
+
     config_openapi.merge(auth_openapi);
     config_openapi.merge(services_openapi);
     config_openapi.merge(iface_openapi);
+    config_openapi.merge(metric_openapi);
+    config_openapi.merge(sys_service_openapi);
+    config_openapi.merge(sysinfo_openapi);
+
+    // Add x-tagGroups for Scalar UI sidebar grouping
+    let tag_groups = serde_json::json!([
+        {
+            "name": "Auth",
+            "tags": ["Auth"]
+        },
+        {
+            "name": "Network Interface",
+            "tags": ["Iface"]
+        },
+        {
+            "name": "Configuration",
+            "tags": [
+                "DNS Rules",
+                "DNS Redirects",
+                "DNS Upstreams",
+                "Flow Rules",
+                "Firewall Rules",
+                "Firewall Blacklists",
+                "Destination IP Rules",
+                "Static NAT Mappings",
+                "Enrolled Devices",
+                "Geo Sites",
+                "Geo IPs"
+            ]
+        },
+        {
+            "name": "Interface Services",
+            "tags": [
+                "Route",
+                "Route WAN",
+                "Route LAN",
+                "MSS Clamp",
+                "Firewall Service",
+                "IP Config",
+                "DHCPv4",
+                "PPPoE",
+                "WiFi",
+                "IPv6 PD",
+                "ICMPv6 RA",
+                "NAT Service"
+            ]
+        },
+        {
+            "name": "System",
+            "tags": [
+                "System Config",
+                "System Info",
+                "DNS Service"
+            ]
+        },
+        {
+            "name": "Metric",
+            "tags": ["Metric"]
+        },
+        {
+            "name": "Docker",
+            "tags": [
+                "Docker",
+                "Docker Images",
+                "Docker Networks"
+            ]
+        }
+    ]);
+    config_openapi
+        .extensions
+        .get_or_insert_with(Default::default)
+        .insert("x-tagGroups".to_string(), tag_groups);
+
     config_openapi
 }
 

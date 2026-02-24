@@ -1,11 +1,11 @@
 <script setup lang="ts">
 import { ref, onMounted, watch, computed } from "vue";
 import { get_connect_metric_info } from "@/api/metric";
-import {
+import type {
   ConnectKey,
   ConnectMetricPoint,
   MetricResolution,
-} from "landscape-types/common/metric/connect";
+} from "landscape-types/api/schemas";
 import { ApexOptions } from "apexcharts";
 import VueApexCharts from "vue3-apexcharts";
 import { useThemeVars } from "naive-ui";

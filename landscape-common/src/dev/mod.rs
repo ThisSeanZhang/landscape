@@ -2,27 +2,28 @@ use crate::net::MacAddr;
 use libc::{c_char, if_nametoindex};
 use serde::{Deserialize, Serialize};
 use std::ffi::CString;
-use ts_rs::TS;
 
 /// 当前硬件状态结构体
-#[derive(Debug, Serialize, Clone, TS)]
+#[derive(Debug, Serialize, Clone)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
-#[ts(export, export_to = "common/iface.d.ts")]
 pub struct LandscapeInterface {
     #[serde(rename = "iface_name")]
     pub name: String,
     pub index: u32,
-    #[cfg_attr(feature = "openapi", schema(value_type = Option<String>))]
+    #[cfg_attr(feature = "openapi", schema(value_type = Option<String>, nullable = false))]
     pub mac: Option<MacAddr>,
-    #[cfg_attr(feature = "openapi", schema(value_type = Option<String>))]
+    #[cfg_attr(feature = "openapi", schema(value_type = Option<String>, nullable = false))]
     pub perm_mac: Option<MacAddr>,
     pub dev_type: DeviceType,
     pub dev_kind: DeviceKind,
     pub dev_status: DevState,
+    #[cfg_attr(feature = "openapi", schema(nullable = false))]
     pub controller_id: Option<u32>,
     // 网线是否插入
     pub carrier: bool,
+    #[cfg_attr(feature = "openapi", schema(nullable = false))]
     pub netns_id: Option<i32>,
+    #[cfg_attr(feature = "openapi", schema(nullable = false))]
     pub peer_link_id: Option<u32>,
     pub is_wireless: bool,
 }
@@ -37,9 +38,8 @@ impl LandscapeInterface {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, Default, TS)]
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
-#[ts(export, export_to = "common/iface.d.ts")]
 #[serde(rename_all = "lowercase")]
 #[serde(tag = "t", content = "c")]
 pub enum DevState {
@@ -64,9 +64,8 @@ pub enum DevState {
 }
 
 /// 设备类型小类
-#[derive(Debug, Serialize, Deserialize, Clone, Default, TS)]
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
-#[ts(export, export_to = "common/iface.d.ts")]
 #[serde(rename_all = "lowercase")]
 pub enum DeviceKind {
     Dummy,
@@ -101,9 +100,8 @@ pub enum DeviceKind {
 }
 
 /// 设备类型大类
-#[derive(Debug, Serialize, Deserialize, Clone, TS)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
-#[ts(export, export_to = "common/iface.d.ts")]
 #[serde(rename_all = "lowercase")]
 pub enum DeviceType {
     UnSupport,

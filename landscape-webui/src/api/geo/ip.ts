@@ -1,4 +1,3 @@
-import axiosService from "@/api";
 import {
   getGeoIps,
   getGeoIpRule,
@@ -9,6 +8,7 @@ import {
   refreshGeoIpCache,
   searchGeoIpCache,
   getGeoIpCacheDetail,
+  updateGeoIpByUpload as _updateGeoIpByUpload,
 } from "landscape-types/api/geo-ips/geo-ips";
 import type {
   GeoFileCacheKey,
@@ -73,10 +73,7 @@ export async function get_geo_ip_cache_detail(
 export async function update_geo_ip_by_upload(
   name: string,
   form_data: FormData,
-): Promise<GeoIpConfig> {
-  let data = await axiosService.post(
-    `config/geo_ips/${name}/update_by_upload`,
-    form_data,
-  );
-  return data.data;
+): Promise<void> {
+  const file = form_data.get("file") as Blob;
+  await _updateGeoIpByUpload(name, { file });
 }

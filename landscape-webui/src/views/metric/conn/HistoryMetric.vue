@@ -11,10 +11,10 @@ import { useFrontEndStore } from "@/stores/front_end_config";
 import HistoryItemInfo from "@/components/metric/connect/history/HistoryItemInfo.vue";
 import ConnectChartDrawer from "@/components/metric/connect/ConnectChartDrawer.vue";
 import FlowSelect from "@/components/flow/FlowSelect.vue";
-import {
+import type {
   ConnectKey,
   ConnectGlobalStats,
-} from "landscape-types/common/metric/connect";
+} from "landscape-types/api/schemas";
 import { usePreferenceStore } from "@/stores/preference";
 import { Renew } from "@vicons/carbon";
 import ConnectViewSwitcher from "@/components/metric/connect/ConnectViewSwitcher.vue";
