@@ -90,4 +90,15 @@ export default {
     warn_default_endpoint: "Empty value will fallback to `/dns-query` (warning can be ignored)",
     warn_empty_endpoint_fill: "URL is empty, fallback to `/dns-query`",
   },
+  upstream_card: {
+    no_config: "No config",
+    no_remark: "No remark",
+    request_mode: "Request Mode",
+    request_port: "Request Port",
+    domain_addr: "Domain Address",
+    upstream_ip: "Upstream IP",
+    edit: "Edit",
+    delete: "Delete",
+    confirm_delete: "Confirm deletion?",
+  },
 };

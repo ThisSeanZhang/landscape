@@ -88,4 +88,15 @@ export default {
     warn_default_endpoint: "未指定, 将使用 `/dns-query` 警告可忽略",
     warn_empty_endpoint_fill: "未填写 URL, 将使用 `/dns-query`",
   },
+  upstream_card: {
+    no_config: "无配置",
+    no_remark: "无备注",
+    request_mode: "请求方式",
+    request_port: "请求端口",
+    domain_addr: "域名地址",
+    upstream_ip: "上游 IP",
+    edit: "编辑",
+    delete: "删除",
+    confirm_delete: "确定删除吗",
+  },
 };

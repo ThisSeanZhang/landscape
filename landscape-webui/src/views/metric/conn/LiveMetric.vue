@@ -17,10 +17,10 @@ const themeVars = useThemeVars();
 const route = useRoute();
 const { t } = useI18n();
 
-// 实时过滤器状态
+// Live filter state
 const liveFilter = reactive(new ConnectFilter());
 
-// 协议类型选项
+// Protocol options
 const protocolOptions = computed(() => [
   { label: t("metric.connect.all_types"), value: null },
   { label: "TCP", value: 6 },
@@ -29,21 +29,21 @@ const protocolOptions = computed(() => [
   { label: "ICMPv6", value: 58 },
 ]);
 
-// IP 类型选项
+// IP type options
 const ipTypeOptions = computed(() => [
   { label: t("metric.connect.all_types"), value: null },
   { label: "IPv4", value: 0 },
   { label: "IPv6", value: 1 },
 ]);
 
-// 方向选项
+// Direction options
 const gressOptions = computed(() => [
   { label: t("metric.connect.all_types"), value: null },
   { label: t("metric.connect.filter.gress_egress"), value: 1 },
   { label: t("metric.connect.filter.gress_ingress"), value: 0 },
 ]);
 
-// 排序状态
+// Sorting state
 const sortKey = computed(() => frontEndStore.conn_sort_key);
 const sortOrder = computed(() => frontEndStore.conn_sort_order);
 
@@ -66,7 +66,7 @@ const handleSearchTuple = (conn: any) => {
   liveFilter.port_start = conn.src_port;
   liveFilter.port_end = conn.dst_port;
 };
-// 系统全局汇总
+// System-wide summary
 const systemStats = computed(() => {
   const stats = {
     ingressBps: 0,
@@ -87,7 +87,7 @@ const systemStats = computed(() => {
   return stats;
 });
 
-// 计算过滤及排序后的连接指标
+// Calculate filtered and sorted connection metrics
 const filteredConnectMetrics = computed(() => {
   if (!metricStore.firewall_info) return [];
 
@@ -131,7 +131,7 @@ const filteredConnectMetrics = computed(() => {
   });
 });
 
-// 过滤后的数据汇总
+// Filtered data summary
 const totalStats = computed(() => {
   const stats = {
     ingressBps: 0,
@@ -153,7 +153,7 @@ const totalStats = computed(() => {
 });
 
 onMounted(async () => {
-  // 从路由参数初始化过滤器
+  // Initialize filters from route query
   if (route.query.src_ip) liveFilter.src_ip = route.query.src_ip as string;
   if (route.query.dst_ip) liveFilter.dst_ip = route.query.dst_ip as string;
   if (route.query.port_start)
@@ -174,7 +174,7 @@ onMounted(async () => {
 
 <template>
   <n-flex vertical style="flex: 1; overflow: hidden">
-    <!-- 系统全局活跃连接统计 -->
+    <!-- System-wide active connection stats -->
     <n-card
       size="small"
       :bordered="false"
@@ -213,7 +213,7 @@ onMounted(async () => {
       </n-flex>
     </n-card>
 
-    <!-- 实时模式专用工具栏 -->
+    <!-- Live mode toolbar -->
     <n-flex align="center" :wrap="true" style="margin-bottom: 12px">
       <n-input
         v-model:value="liveFilter.src_ip"

@@ -4,8 +4,10 @@ import type { DnsUpstreamConfig } from "@landscape-router/types/api/schemas";
 import { DnsUpstreamModeTsEnum, upstream_mode_exhibit_name } from "@/lib/dns";
 import { delete_dns_upstream } from "@/api/dns_rule/upstream";
 import { useFrontEndStore } from "@/stores/front_end_config";
+import { useI18n } from "vue-i18n";
 
 const frontEndStore = useFrontEndStore();
+const { t } = useI18n();
 type Props = {
   rule: DnsUpstreamConfig;
   show_action?: boolean;
@@ -26,7 +28,7 @@ async function del() {
 
 const domain = computed(() => {
   if (props.rule.mode.t === DnsUpstreamModeTsEnum.Plaintext) {
-    return "无配置";
+    return t("dns_editor.upstream_card.no_config");
   } else if (props.rule.mode.t === DnsUpstreamModeTsEnum.Https) {
     let url = props.rule.mode.http_endpoint ?? "/dns-query";
     return frontEndStore.MASK_INFO(`${props.rule.mode.domain}${url}`);
@@ -40,10 +42,9 @@ const domain = computed(() => {
   <n-card size="small">
     <template #header>
       <n-ellipsis>
-        {{ rule.remark !== "" ? rule.remark : "无备注" }}
+        {{ rule.remark !== "" ? rule.remark : t("dns_editor.upstream_card.no_remark") }}
       </n-ellipsis>
     </template>
-    <!-- {{ rule }} -->
     <n-descriptions
       label-style="width: 81px"
       bordered
@@ -51,30 +52,19 @@ const domain = computed(() => {
       :column="2"
       size="small"
     >
-      <!-- <n-descriptions-item label="应用于">
-        <n-flex v-if="rule.apply_flows.length > 0">
-          <n-tag v-for="value in rule.apply_flows" :bordered="false">
-            {{ value === 0 ? "默认流" : value }}
-          </n-tag>
-        </n-flex>
-        <n-flex v-else>
-          <span style="min-height: 28px">全部 Flow </span>
-        </n-flex>
-      </n-descriptions-item> -->
-
-      <n-descriptions-item label="请求方式">
+      <n-descriptions-item :label="t('dns_editor.upstream_card.request_mode')">
         {{ upstream_mode_exhibit_name(rule.mode.t) }}
       </n-descriptions-item>
 
-      <n-descriptions-item label="请求端口">
+      <n-descriptions-item :label="t('dns_editor.upstream_card.request_port')">
         {{ frontEndStore.MASK_INFO(rule.port?.toString()) }}
       </n-descriptions-item>
 
-      <n-descriptions-item span="2" label="域名地址">
+      <n-descriptions-item span="2" :label="t('dns_editor.upstream_card.domain_addr')">
         {{ domain }}
       </n-descriptions-item>
 
-      <n-descriptions-item span="2" label="上游 IP">
+      <n-descriptions-item span="2" :label="t('dns_editor.upstream_card.upstream_ip')">
         <n-scrollbar style="height: 90px">
           <n-flex>
             <n-flex v-for="ip in rule.ips">
@@ -93,16 +83,16 @@ const domain = computed(() => {
           secondary
           @click="show_edit_modal = true"
         >
-          编辑
+          {{ t("dns_editor.upstream_card.edit") }}
         </n-button>
 
         <n-popconfirm @positive-click="del()">
           <template #trigger>
             <n-button size="small" type="error" secondary @click="">
-              删除
+              {{ t("dns_editor.upstream_card.delete") }}
             </n-button>
           </template>
-          确定删除吗
+          {{ t("dns_editor.upstream_card.confirm_delete") }}
         </n-popconfirm>
       </n-flex>
     </template>
