@@ -2,6 +2,8 @@
 import { get_current_ip_prefix_info } from "@/api/service_ipv6pd";
 import type { LDIAPrefix } from "@/api/service_ipv6pd";
 import { computed, onMounted, ref } from "vue";
+import { useI18n } from "vue-i18n";
+const { t } = useI18n();
 
 onMounted(async () => {
   await get_info();
@@ -31,7 +33,9 @@ async function get_info() {
 <template>
   <n-flex vertical style="flex: 1">
     <n-flex>
-      <n-button :loading="loading" @click="get_info">刷新</n-button>
+      <n-button :loading="loading" @click="get_info">{{
+        t("common.refresh")
+      }}</n-button>
     </n-flex>
     <n-flex v-if="infos.length > 0">
       <n-grid x-gap="12" y-gap="10" cols="1 600:2 1200:3 1600:3">

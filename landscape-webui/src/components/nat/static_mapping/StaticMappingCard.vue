@@ -101,7 +101,7 @@ function formatIPv6(ip: string | null): string {
         <!-- IPv4 Stat -->
         <n-gi>
           <div class="stat-box" :class="{ 'is-inactive': !rule.lan_ipv4 }">
-            <div class="stat-label">IPv4 目标</div>
+            <div class="stat-label">{{ t("common.ipv4_target") }}</div>
             <div class="stat-value-row">
               <template v-if="rule.lan_ipv4">
                 <div class="stat-value">
@@ -131,7 +131,7 @@ function formatIPv6(ip: string | null): string {
         <!-- IPv6 Stat -->
         <n-gi>
           <div class="stat-box" :class="{ 'is-inactive': !rule.lan_ipv6 }">
-            <div class="stat-label">IPv6 目标</div>
+            <div class="stat-label">{{ t("common.ipv6_target") }}</div>
             <div class="stat-value-row">
               <template v-if="rule.lan_ipv6">
                 <!-- Using shortened IPv6 display -->
@@ -163,7 +163,7 @@ function formatIPv6(ip: string | null): string {
       <!-- Bottom Section: Port Mappings (Fixed Height Wrapper) -->
       <div class="ports-container">
         <div class="section-label">
-          端口映射 ({{ rule.mapping_pair_ports.length }})
+          {{ t("common.port_mapping") }} ({{ rule.mapping_pair_ports.length }})
         </div>
         <!-- Using a fixed height scrollbar to ensure consistent card height -->
         <n-scrollbar style="height: 100px; padding-right: 4px">
@@ -189,7 +189,7 @@ function formatIPv6(ip: string | null): string {
       <!-- Footer -->
       <div class="card-footer">
         <n-text depth="3" style="font-size: 12px">
-          更新于
+          {{ t("common.updated_at") }}
           <n-time
             :time="rule.update_at"
             format="yyyy-MM-dd HH:mm"

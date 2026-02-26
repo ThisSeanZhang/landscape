@@ -3,9 +3,11 @@ import { get_docker_images, pull_docker_image } from "@/api/docker";
 import { ref } from "vue";
 import DockerImageCard from "@/components/docker/image/DockerImageCard.vue";
 import { useMessage } from "naive-ui";
+import { useI18n } from "vue-i18n";
 const show = defineModel<boolean>("show", { required: true });
 const images = ref<any>([]);
 const message = useMessage();
+const { t } = useI18n();
 
 async function flush_images() {
   images.value = await get_docker_images();
@@ -17,7 +19,7 @@ async function pull_image() {
     pull_docker_image_name.value == undefined ||
     pull_docker_image_name.value == ""
   ) {
-    message.warning("拉取的镜像名称不能为空");
+    message.warning(t("common.pull_image_name_required"));
     return;
   }
   await pull_docker_image(pull_docker_image_name.value);
@@ -35,11 +37,11 @@ const show_pull_history = ref(false);
     placement="right"
     responsive
   >
-    <n-drawer-content title="Docker 镜像列表" closable>
+    <n-drawer-content :title="t('common.docker_image_list')" closable>
       <n-flex style="height: 100%" vertical>
         <n-input-group>
           <n-input v-model:value="pull_docker_image_name" />
-          <n-button @click="pull_image">拉取镜像</n-button>
+          <n-button @click="pull_image">{{ t("common.pull_image") }}</n-button>
           <n-button @click="show_pull_history = true">历史任务</n-button>
         </n-input-group>
         <!-- <n-input-group>

@@ -4,12 +4,14 @@ import { onMounted, onUnmounted, ref } from "vue";
 import { CountdownInst, CountdownProps } from "naive-ui";
 import { SpinnerIos20Regular } from "@vicons/fluent";
 import { PauseFilled, Renew } from "@vicons/carbon";
+import { useI18n } from "vue-i18n";
 
 import { useFetchIntervalStore } from "@/stores/fetch_interval";
 
 // import { Spinner } from "@vicons/fa";
 
 const fetchIntervalStore = useFetchIntervalStore();
+const { t } = useI18n();
 
 const countdownRef = ref<CountdownInst | null>();
 onMounted(() => {
@@ -86,7 +88,7 @@ function confirmChangeImterval() {
       </template>
 
       <n-input-group>
-        <n-input-group-label>设置刷新间隔 (ms):</n-input-group-label>
+        <n-input-group-label>{{ t("common.refresh_interval_ms") }}</n-input-group-label>
         <n-input-number
           style="width: 130px"
           :min="500"
@@ -96,7 +98,7 @@ function confirmChangeImterval() {
           button-placement="both"
         />
         <n-button @click="confirmChangeImterval" type="primary" ghost>
-          确定
+          {{ t("common.confirm") }}
         </n-button>
       </n-input-group>
     </n-popover>

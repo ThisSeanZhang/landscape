@@ -2,6 +2,8 @@
 import { get_icmpra_assigned_ips } from "@/api/service_icmpv6ra";
 import type { IPv6NAInfo } from "@/api/service_icmpv6ra";
 import { computed, onMounted, ref } from "vue";
+import { useI18n } from "vue-i18n";
+const { t } = useI18n();
 
 onMounted(async () => {
   await get_info();
@@ -31,11 +33,13 @@ async function get_info() {
 <template>
   <n-flex vertical style="flex: 1">
     <n-alert type="info">
-      目前列表不会自动刷新， 30s 不活跃的 IP 将会被标记为
+      {{ t("common.list_no_auto_refresh") }}
       <n-tag :bordered="false" type="warning">STALE</n-tag>
     </n-alert>
     <n-flex>
-      <n-button :loading="loading" @click="get_info">刷新</n-button>
+      <n-button :loading="loading" @click="get_info">{{
+        t("common.refresh")
+      }}</n-button>
     </n-flex>
     <n-flex v-if="infos.length > 0">
       <ICMPRaShowItem
