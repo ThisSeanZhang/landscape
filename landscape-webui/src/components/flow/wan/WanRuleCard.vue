@@ -42,11 +42,11 @@ const title_name = computed(() =>
             :flow_id="rule.flow_id"
           ></FlowMarkExhibit>
         </n-descriptions-item>
-        <n-descriptions-item label="匹配规则">
+        <n-descriptions-item :label="t('flow.wan_rule_card.match_rules')">
           <n-scrollbar v-if="rule.source.length > 0" style="max-height: 120px">
             {{ rule.source }}
           </n-scrollbar>
-          <n-empty v-else description="无匹配规则, 没有任何作用">
+          <n-empty v-else :description="t('flow.wan_rule_card.no_match_rules')">
             <template #icon>
               <n-icon>
                 <Warning />

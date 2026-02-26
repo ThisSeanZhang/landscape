@@ -161,7 +161,7 @@ const contentStyle = computed(() => {
                   circle
                   size="small"
                   @click="logout"
-                  title="退出登录"
+                  :title="t('common.logout')"
                 >
                   <template #icon>
                     <n-icon><Logout /></n-icon>

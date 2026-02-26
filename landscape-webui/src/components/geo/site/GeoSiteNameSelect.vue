@@ -2,8 +2,10 @@
 import { get_geo_site_configs } from "@/api/geo/site";
 import type { GeoSiteSourceConfig } from "@landscape-router/types/api/schemas";
 import { computed, onMounted, ref } from "vue";
+import { useI18n } from "vue-i18n";
 
 const name = defineModel<string | null>("name", { required: true });
+const { t } = useI18n();
 
 const loading = ref(false);
 
@@ -41,7 +43,7 @@ const geo_name_options = computed(() => {
   <n-select
     v-model:value="name"
     filterable
-    placeholder="选择 geo 名称"
+    :placeholder="t('common.select_geo_name')"
     :options="geo_name_options"
     :loading="loading"
     clearable

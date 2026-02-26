@@ -5,8 +5,10 @@ import { get_all_iface_pppd_config } from "@/api/service_pppd";
 import type { FlowTarget } from "@landscape-router/types/api/schemas";
 import { useFrontEndStore } from "@/stores/front_end_config";
 import { computed, onMounted, ref } from "vue";
+import { useI18n } from "vue-i18n";
 
 const frontEndStore = useFrontEndStore();
+const { t } = useI18n();
 
 const target_rules = defineModel<FlowTarget[]>("target_rules", {
   required: true,
@@ -63,11 +65,11 @@ function onCreate(): FlowTarget {
 function target_type_option(): any[] {
   return [
     {
-      label: "WAN 网卡",
+      label: t("flow.target_rule.type_wan"),
       value: "interface",
     },
     {
-      label: "Docker",
+      label: t("flow.target_rule.type_docker"),
       value: "netns",
     },
   ];
@@ -94,7 +96,9 @@ function handleUpdateValue(value: FlowTarget, index: number) {
     v-model:value="target_rules"
     :on-create="onCreate"
   >
-    <template #create-button-default> 增加一条出口规则 </template>
+    <template #create-button-default>
+      {{ t("flow.target_rule.add_target_rule") }}
+    </template>
     <template #default="{ value, index }">
       <n-input-group>
         <n-select
@@ -109,14 +113,14 @@ function handleUpdateValue(value: FlowTarget, index: number) {
           v-model:value="value.name"
           :style="{ width: '66%' }"
           :options="iface_wan_options"
-          placeholder="网卡名称"
+          :placeholder="t('flow.target_rule.iface_placeholder')"
         />
         <n-select
           v-else-if="value.t == 'netns'"
           v-model:value="value.container_name"
           :style="{ width: '66%' }"
           :options="docker_options"
-          placeholder="容器名称"
+          :placeholder="t('flow.target_rule.container_placeholder')"
         />
       </n-input-group>
     </template>

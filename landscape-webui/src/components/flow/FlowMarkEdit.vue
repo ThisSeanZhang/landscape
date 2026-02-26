@@ -3,24 +3,26 @@ import { FlowMarkType } from "@/lib/default_value";
 import type { FlowMark } from "@landscape-router/types/api/schemas";
 import { computed } from "vue";
 import FlowSelect from "./FlowSelect.vue";
+import { useI18n } from "vue-i18n";
 
 const mark = defineModel<FlowMark>("mark", { required: true });
+const { t } = useI18n();
 
 const mark_type_option = [
   {
-    label: "当前流的出口",
+    label: t("flow.mark_edit.option_current_flow"),
     value: FlowMarkType.KeepGoing,
   },
   {
-    label: "默认流的出口",
+    label: t("flow.mark_edit.option_default_flow"),
     value: FlowMarkType.Direct,
   },
   {
-    label: "禁止连接",
+    label: t("flow.mark_edit.option_block"),
     value: FlowMarkType.Drop,
   },
   {
-    label: "使用指定流出口",
+    label: t("flow.mark_edit.option_redirect"),
     value: FlowMarkType.Redirect,
   },
 ];
@@ -59,11 +61,11 @@ function mark_action_update(value: FlowMarkType) {
       v-model:value="mark.action.t"
       @update:value="mark_action_update"
       :options="mark_type_option"
-      placeholder="选择匹配方式"
+      :placeholder="t('flow.mark_edit.select_match_type')"
     />
 
     <n-flex align="center">
-      <span>&nbsp;全锥型 (NAT1)</span>
+      <span>&nbsp;{{ t("flow.mark_edit.nat1_label") }}</span>
       <n-switch v-model:value="mark.allow_reuse_port" :round="false" />
     </n-flex>
   </n-flex>
@@ -73,12 +75,12 @@ function mark_action_update(value: FlowMarkType) {
       v-model:value="mark.action.t"
       @update:value="mark_action_update"
       :options="mark_type_option"
-      placeholder="选择匹配方式"
+      :placeholder="t('flow.mark_edit.select_match_type')"
     />
     <FlowSelect
       v-model="mark.flow_id"
       :include-all="false"
-      placeholder="指定流的 ID"
+      :placeholder="t('flow.mark_edit.flow_id_placeholder')"
       width="50%"
     />
   </n-input-group>
@@ -88,6 +90,6 @@ function mark_action_update(value: FlowMarkType) {
     v-model:value="mark.action.t"
     @update:value="mark_action_update"
     :options="mark_type_option"
-    placeholder="选择匹配方式"
+    :placeholder="t('flow.mark_edit.select_match_type')"
   />
 </template>
