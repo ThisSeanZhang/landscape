@@ -11,7 +11,7 @@ import { useThemeVars } from "naive-ui";
 import { useI18n } from "vue-i18n";
 
 const themeVars = useThemeVars();
-const { t } = useI18n();
+const { t, locale } = useI18n();
 
 interface Props {
   conn: ConnectKey;
@@ -56,7 +56,7 @@ const categories = computed(() =>
   sampledIndices.value.map((idx) => {
     const m = chartData.value[idx];
     const d = new Date(m.report_time);
-    return d.toLocaleTimeString("zh-CN", {
+    return d.toLocaleTimeString(locale.value || "zh-CN", {
       hour: "2-digit",
       minute: "2-digit",
       second: "2-digit",

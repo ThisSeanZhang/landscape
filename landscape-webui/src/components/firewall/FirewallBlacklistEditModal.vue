@@ -14,6 +14,7 @@ import type {
   FirewallBlacklistConfig,
   FirewallBlacklistSource,
 } from "@landscape-router/types/api/schemas";
+import { useI18n } from "vue-i18n";
 
 interface Props {
   id: string | null;
@@ -22,6 +23,7 @@ interface Props {
 const props = defineProps<Props>();
 
 const message = useMessage();
+const { t } = useI18n();
 const emit = defineEmits(["refresh"]);
 const show = defineModel<boolean>("show", { required: true });
 
@@ -79,11 +81,11 @@ function validateSources(): boolean {
   for (let i = 0; i < config.value.source.length; i++) {
     const s = config.value.source[i];
     if (s.t === "geo_key" && (!s.key || !s.name)) {
-      message.warning(`第 ${i + 1} 条来源: GeoIP Key 不能为空`);
+      message.warning(t("firewall.blacklist_edit.geo_key_required", { index: i + 1 }));
       return false;
     }
     if (s.t === "config" && !s.ip) {
-      message.warning(`第 ${i + 1} 条来源: IP 地址不能为空`);
+      message.warning(t("firewall.blacklist_edit.ip_required", { index: i + 1 }));
       return false;
     }
   }
@@ -113,25 +115,27 @@ async function saveConfig() {
     style="width: 700px"
     class="custom-card"
     preset="card"
-    title="防火墙黑名单编辑"
+    :title="t('firewall.blacklist_edit.title')"
     @after-enter="enter"
     :bordered="false"
   >
     <n-form v-if="config" style="flex: 1" :model="config">
       <n-grid :cols="5">
-        <n-form-item-gi label="启用" :span="2">
+        <n-form-item-gi :label="t('firewall.blacklist_edit.enable')" :span="2">
           <n-switch v-model:value="config.enable">
-            <template #checked> 启用 </template>
-            <template #unchecked> 禁用 </template>
+            <template #checked> {{ t("firewall.blacklist_edit.enabled_yes") }} </template>
+            <template #unchecked> {{ t("firewall.blacklist_edit.enabled_no") }} </template>
           </n-switch>
         </n-form-item-gi>
       </n-grid>
-      <n-form-item label="备注">
+      <n-form-item :label="t('firewall.blacklist_edit.remark')">
         <n-input v-model:value="config.remark" type="text" />
       </n-form-item>
-      <n-form-item label="黑名单来源">
+      <n-form-item :label="t('firewall.blacklist_edit.source')">
         <n-dynamic-input v-model:value="config.source" :on-create="onCreate">
-          <template #create-button-default> 增加一条来源 </template>
+          <template #create-button-default>
+            {{ t("firewall.blacklist_edit.add_source") }}
+          </template>
           <template #default="{ value, index }">
             <n-flex style="flex: 1" :wrap="false">
               <n-button @click="changeCurrentSourceType(value, index)">
@@ -157,7 +161,7 @@ async function saveConfig() {
                       <WarningAlt />
                     </n-icon>
                   </template>
-                  将会阻止所有 IP 的访问
+                  {{ t("firewall.blacklist_edit.block_all_tip") }}
                 </n-tooltip>
               </n-flex>
             </n-flex>
@@ -167,13 +171,13 @@ async function saveConfig() {
     </n-form>
     <template #footer>
       <n-flex justify="space-between">
-        <n-button @click="show = false">取消</n-button>
+        <n-button @click="show = false">{{ t("firewall.blacklist_edit.cancel") }}</n-button>
         <n-button
           :loading="commit_spin"
           @click="saveConfig"
           :disabled="!isModified"
         >
-          保存
+          {{ t("firewall.blacklist_edit.save") }}
         </n-button>
       </n-flex>
     </template>

@@ -11,11 +11,11 @@ onMounted(() => {
 });
 
 const currentLocale = computed(() => {
-  return prefStore.language === "en" ? enUS : zhCN;
+  return prefStore.language?.startsWith("en") ? enUS : zhCN;
 });
 
 const currentDateLocale = computed(() => {
-  return prefStore.language === "en" ? dateEnUS : dateZhCN;
+  return prefStore.language?.startsWith("en") ? dateEnUS : dateZhCN;
 });
 
 const currentTheme = computed(() => {

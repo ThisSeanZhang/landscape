@@ -1,0 +1,32 @@
+export default {
+  mapping: {
+    edit_title: "Rule Editor",
+    enabled: "Enabled",
+    allowed_protocols: "Allowed Protocols",
+    select_all: "Select all",
+    port_mappings_label: "Port mappings (must not overlap with NAT mapped ports)",
+    public_port_placeholder: "Public port",
+    private_port_placeholder: "LAN port",
+    delete: "Delete",
+    add_port_pair: "+ Add port pair",
+    target_ipv4: "LAN Target IPv4",
+    target_ipv6: "LAN Target IPv6",
+    select_device_placeholder: "Select an enrolled device",
+    target_ipv4_hint:
+      "If opening router's own port, set 0.0.0.0 or leave empty for no mapping",
+    target_ipv6_hint:
+      "If opening router's own port, set :: or leave empty for no mapping",
+    remark: "Remark",
+    cancel: "Cancel",
+    save: "Save",
+    validation_ipv4: "Please enter a valid IPv4 address",
+    validation_ipv6: "Please enter a valid IPv6 address",
+    select_protocol_required: "Please select at least one protocol",
+    required: "Required",
+    range: "Range 1-65535",
+    invalid_port_value: "Invalid port value found",
+    duplicate_port_config: "Duplicate port mapping found",
+    enabled_yes: "Enabled",
+    enabled_no: "Disabled",
+  },
+};

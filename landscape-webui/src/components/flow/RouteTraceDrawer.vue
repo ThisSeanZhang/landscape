@@ -9,11 +9,13 @@ import { useFrontEndStore } from "@/stores/front_end_config";
 import FlowExhibit from "@/components/flow/FlowExhibit.vue";
 import type { FlowMatchResult } from "@/api/route/trace";
 import type { FlowVerdictResult } from "@/api/route/trace";
+import { useI18n } from "vue-i18n";
 
 const show = defineModel<boolean>("show", { required: true });
 
 const enrolledDeviceStore = useEnrolledDeviceStore();
 const frontEndStore = useFrontEndStore();
+const { t } = useI18n();
 
 // Step 1 state
 const selectMode = ref(true);
@@ -136,7 +138,7 @@ async function doVerdictByDomain() {
     }
 
     if (ips.length === 0) {
-      window.$message?.warning("DNS 解析未返回任何记录");
+      window.$message?.warning(t("flow.trace.dns_no_records"));
       return;
     }
 
@@ -172,7 +174,7 @@ async function doResetCache() {
   resetCacheLoading.value = true;
   try {
     await reset_cache();
-    window.$message?.success("缓存已清除");
+    window.$message?.success(t("flow.trace.cache_cleared"));
   } finally {
     resetCacheLoading.value = false;
   }
@@ -185,13 +187,13 @@ function onOpen() {
 function formatAction(mark: { action: { t: string }; flow_id: number }) {
   switch (mark.action.t) {
     case "keep_going":
-      return "KeepGoing (继续)";
+      return t("flow.trace.action_keep_going");
     case "direct":
-      return "Direct (直连)";
+      return t("flow.trace.action_direct");
     case "drop":
-      return "Drop (丢弃)";
+      return t("flow.trace.action_drop");
     case "redirect":
-      return `Redirect → Flow ${mark.flow_id}`;
+      return t("flow.trace.action_redirect", { flow_id: mark.flow_id });
     default:
       return mark.action.t;
   }
@@ -222,14 +224,14 @@ function actionTagType(
     @after-enter="onOpen"
   >
     <n-drawer-content
-      title="分流追踪"
+      :title="t('flow.trace.title')"
       closable
       :native-scrollbar="false"
       body-content-style="padding: 14px 16px"
     >
       <n-flex vertical :size="16">
         <!-- Step 1: Source client -->
-        <n-card size="small" title="第一步：匹配源客户端">
+        <n-card size="small" :title="t('flow.trace.step1_title')">
           <n-flex vertical :size="8">
             <n-flex :wrap="false" align="center">
               <n-button size="small" @click="selectMode = !selectMode">
@@ -242,7 +244,7 @@ function actionTagType(
                   :options="deviceOptions"
                   :value="selectedDevice"
                   @update:value="onDeviceSelect"
-                  placeholder="选择已登记设备"
+                  :placeholder="t('flow.trace.select_device_placeholder')"
                   clearable
                   filterable
                   style="flex: 1"
@@ -251,25 +253,31 @@ function actionTagType(
               <template v-else>
                 <n-input
                   v-model:value="srcIpv4"
-                  placeholder="源 IPv4 (可选)"
+                  :placeholder="t('flow.trace.src_ipv4_optional')"
                   style="flex: 1"
                 />
               </template>
             </n-flex>
             <template v-if="!selectMode">
-              <n-input v-model:value="srcIpv6" placeholder="源 IPv6 (可选)" />
-              <n-input v-model:value="srcMac" placeholder="源 MAC (可选)" />
+              <n-input
+                v-model:value="srcIpv6"
+                :placeholder="t('flow.trace.src_ipv6_optional')"
+              />
+              <n-input
+                v-model:value="srcMac"
+                :placeholder="t('flow.trace.src_mac_optional')"
+              />
             </template>
             <n-text
               v-if="selectMode && (srcIpv4 || srcMac)"
               depth="3"
               style="font-size: 12px"
             >
-              IPv4: {{ srcIpv4 ? frontEndStore.MASK_INFO(srcIpv4) : "无" }}
+              IPv4: {{ srcIpv4 ? frontEndStore.MASK_INFO(srcIpv4) : t("flow.trace.none") }}
               &nbsp; IPv6:
-              {{ srcIpv6 ? frontEndStore.MASK_INFO(srcIpv6) : "无" }}
+              {{ srcIpv6 ? frontEndStore.MASK_INFO(srcIpv6) : t("flow.trace.none") }}
               &nbsp; MAC:
-              {{ srcMac ? frontEndStore.MASK_INFO(srcMac) : "无" }}
+              {{ srcMac ? frontEndStore.MASK_INFO(srcMac) : t("flow.trace.none") }}
             </n-text>
             <n-button
               type="primary"
@@ -279,39 +287,43 @@ function actionTagType(
               block
               size="small"
             >
-              查询 Flow 匹配
+              {{ t("flow.trace.match_btn") }}
             </n-button>
           </n-flex>
         </n-card>
 
         <!-- Flow match result -->
-        <n-card v-if="matchResult" size="small" title="Flow 匹配结果">
+        <n-card
+          v-if="matchResult"
+          size="small"
+          :title="t('flow.trace.match_result_title')"
+        >
           <n-descriptions
             :column="1"
             label-placement="left"
             bordered
             size="small"
           >
-            <n-descriptions-item label="MAC 匹配">
+            <n-descriptions-item :label="t('flow.trace.mac_match')">
               <FlowExhibit
                 v-if="matchResult.flow_id_by_mac != null"
                 :flow_id="matchResult.flow_id_by_mac"
               />
-              <n-tag v-else type="default" size="small">无匹配</n-tag>
+              <n-tag v-else type="default" size="small">{{ t("flow.trace.no_match") }}</n-tag>
             </n-descriptions-item>
-            <n-descriptions-item label="IP 匹配">
+            <n-descriptions-item :label="t('flow.trace.ip_match')">
               <FlowExhibit
                 v-if="matchResult.flow_id_by_ip != null"
                 :flow_id="matchResult.flow_id_by_ip"
               />
-              <n-tag v-else type="default" size="small">无匹配</n-tag>
+              <n-tag v-else type="default" size="small">{{ t("flow.trace.no_match") }}</n-tag>
             </n-descriptions-item>
-            <n-descriptions-item label="生效 Flow">
+            <n-descriptions-item :label="t('flow.trace.effective_flow')">
               <n-tag
                 v-if="matchResult.effective_flow_id === 0"
                 type="info"
                 size="small"
-                >默认 Flow</n-tag
+                >{{ t("flow.trace.default_flow") }}</n-tag
               >
               <FlowExhibit v-else :flow_id="matchResult.effective_flow_id" />
             </n-descriptions-item>
@@ -320,11 +332,13 @@ function actionTagType(
 
         <!-- Step 2: Verdict query (shown after flow match) -->
         <template v-if="matchResult">
-          <n-card size="small" title="第二步：查询目标">
+          <n-card size="small" :title="t('flow.trace.step2_title')">
             <n-flex vertical :size="8">
               <n-radio-group v-model:value="queryMode" size="small">
-                <n-radio-button value="domain">域名查询</n-radio-button>
-                <n-radio-button value="ip">IP 查询</n-radio-button>
+                <n-radio-button value="domain">{{
+                  t("flow.trace.query_domain")
+                }}</n-radio-button>
+                <n-radio-button value="ip">{{ t("flow.trace.query_ip") }}</n-radio-button>
               </n-radio-group>
 
               <!-- Domain mode -->
@@ -332,7 +346,7 @@ function actionTagType(
                 <n-input
                   key="domain"
                   v-model:value="domainInput"
-                  placeholder="输入域名，如 www.baidu.com"
+                  :placeholder="t('flow.trace.domain_placeholder')"
                 />
                 <n-button
                   type="primary"
@@ -342,7 +356,7 @@ function actionTagType(
                   block
                   size="small"
                 >
-                  DNS 解析并查询
+                  {{ t("flow.trace.resolve_and_query") }}
                 </n-button>
               </template>
 
@@ -351,7 +365,7 @@ function actionTagType(
                 <n-input
                   key="ip"
                   v-model:value="ipInput"
-                  placeholder="输入目标 IP 地址 (IPv4 或 IPv6)"
+                  :placeholder="t('flow.trace.target_ip_placeholder')"
                 />
                 <n-button
                   type="primary"
@@ -361,7 +375,7 @@ function actionTagType(
                   block
                   size="small"
                 >
-                  查询
+                  {{ t("flow.trace.query_btn") }}
                 </n-button>
               </template>
             </n-flex>
@@ -372,8 +386,12 @@ function actionTagType(
         <template v-if="verdictResult">
           <n-flex v-if="resolvedDomain" align="center" justify="space-between">
             <n-text depth="3" style="font-size: 12px">
-              域名 {{ resolvedDomain }} 解析到
-              {{ verdictResult.verdicts.length }} 个 IP
+              {{
+                t("flow.trace.domain_resolved_count", {
+                  domain: resolvedDomain,
+                  count: verdictResult.verdicts.length,
+                })
+              }}
             </n-text>
             <n-button
               size="tiny"
@@ -382,7 +400,7 @@ function actionTagType(
               :loading="resetCacheLoading"
               @click="doResetCache"
             >
-              清除路由缓存
+              {{ t("flow.trace.reset_route_cache") }}
             </n-button>
           </n-flex>
           <n-card
@@ -397,7 +415,7 @@ function actionTagType(
               bordered
               size="small"
             >
-              <n-descriptions-item label="IP 规则">
+              <n-descriptions-item :label="t('flow.trace.ip_rule')">
                 <template v-if="v.ip_rule_match">
                   <n-flex align="center" :size="4">
                     <n-tag
@@ -407,13 +425,17 @@ function actionTagType(
                       {{ formatAction(v.ip_rule_match.mark as any) }}
                     </n-tag>
                     <n-text depth="3" style="font-size: 12px">
-                      优先级: {{ v.ip_rule_match.priority }}
+                      {{
+                        t("flow.trace.priority", {
+                          priority: v.ip_rule_match.priority,
+                        })
+                      }}
                     </n-text>
                   </n-flex>
                 </template>
-                <n-tag v-else type="default" size="small">无匹配</n-tag>
+                <n-tag v-else type="default" size="small">{{ t("flow.trace.no_match") }}</n-tag>
               </n-descriptions-item>
-              <n-descriptions-item label="DNS 规则">
+              <n-descriptions-item :label="t('flow.trace.dns_rule')">
                 <template v-if="v.dns_rule_match">
                   <n-flex align="center" :size="4">
                     <n-tag
@@ -423,19 +445,23 @@ function actionTagType(
                       {{ formatAction(v.dns_rule_match.mark as any) }}
                     </n-tag>
                     <n-text depth="3" style="font-size: 12px">
-                      优先级: {{ v.dns_rule_match.priority }}
+                      {{
+                        t("flow.trace.priority", {
+                          priority: v.dns_rule_match.priority,
+                        })
+                      }}
                     </n-text>
                   </n-flex>
                 </template>
-                <n-tag v-else type="default" size="small">无匹配</n-tag>
+                <n-tag v-else type="default" size="small">{{ t("flow.trace.no_match") }}</n-tag>
               </n-descriptions-item>
-              <n-descriptions-item label="最终动作">
+              <n-descriptions-item :label="t('flow.trace.final_action')">
                 <n-tag
                   v-if="!v.ip_rule_match && !v.dns_rule_match && !v.has_cache"
                   type="default"
                   size="small"
                 >
-                  请进行一次访问后再进行追踪
+                  {{ t("flow.trace.visit_first") }}
                 </n-tag>
                 <n-tag
                   v-else
@@ -445,16 +471,20 @@ function actionTagType(
                   {{ formatAction(v.effective_mark as any) }}
                 </n-tag>
               </n-descriptions-item>
-              <n-descriptions-item label="缓存">
+              <n-descriptions-item :label="t('flow.trace.cache')">
                 <template v-if="!v.has_cache">
-                  <n-tag type="default" size="small">无缓存</n-tag>
+                  <n-tag type="default" size="small">{{ t("flow.trace.no_cache") }}</n-tag>
                 </template>
                 <template v-else>
                   <n-tag
                     :type="v.cache_consistent ? 'success' : 'warning'"
                     size="small"
                   >
-                    {{ v.cache_consistent ? "一致" : "不一致" }}
+                    {{
+                      v.cache_consistent
+                        ? t("flow.trace.cache_consistent")
+                        : t("flow.trace.cache_inconsistent")
+                    }}
                   </n-tag>
                 </template>
               </n-descriptions-item>
@@ -464,7 +494,7 @@ function actionTagType(
               type="warning"
               style="margin-top: 8px"
             >
-              缓存与当前配置计算的结果不一致，可能需要清理路由缓存。
+              {{ t("flow.trace.cache_mismatch_alert") }}
             </n-alert>
           </n-card>
         </template>

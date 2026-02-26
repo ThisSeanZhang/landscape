@@ -5,6 +5,11 @@ import config from "./config";
 import error from "./error";
 import errors from "./errors";
 import lan_ipv6 from "./lan_ipv6";
+import enrolled_device from "./enrolled_device";
+import flow from "./flow";
+import nat from "./nat";
+import dns_editor from "./dns_editor";
+import firewall from "./firewall";
 
 export default {
   docker_divider: "Docker Containers",
@@ -18,6 +23,11 @@ export default {
   error,
   errors,
   lan_ipv6,
+  enrolled_device,
+  flow,
+  nat,
+  dns_editor,
+  firewall,
   common: {
     private_mode: "Private Mode",
   },

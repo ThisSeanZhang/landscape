@@ -8,6 +8,13 @@ import {
 } from "@/api/sys/config";
 import i18n from "@/i18n";
 
+function normalizeLanguage(lang?: string): string {
+  if (!lang) return "zh";
+  if (lang === "zh-CN" || lang.startsWith("zh")) return "zh";
+  if (lang === "en-US" || lang.startsWith("en")) return "en";
+  return "zh";
+}
+
 export const usePreferenceStore = defineStore("preference", () => {
   const language = ref<string | undefined>(undefined);
   const timezone = ref<string | undefined>(undefined);
@@ -17,7 +24,7 @@ export const usePreferenceStore = defineStore("preference", () => {
   async function loadPreference() {
     try {
       const config = await get_ui_config();
-      language.value = config.language || "zh-CN";
+      language.value = normalizeLanguage(config.language);
       timezone.value = config.timezone || "Asia/Shanghai";
       theme.value = config.theme || "dark";
 
@@ -29,7 +36,7 @@ export const usePreferenceStore = defineStore("preference", () => {
 
   async function loadPreferenceForEdit() {
     const { ui, hash } = await get_ui_config_edit();
-    language.value = ui.language || "zh-CN";
+    language.value = normalizeLanguage(ui.language);
     timezone.value = ui.timezone || "Asia/Shanghai";
     theme.value = ui.theme || "dark";
     expectedHash.value = hash;
@@ -43,7 +50,7 @@ export const usePreferenceStore = defineStore("preference", () => {
 
   async function savePreference() {
     const new_ui: LandscapeUIConfig = {
-      language: language.value === "zh-CN" ? undefined : language.value,
+      language: language.value === "zh" ? undefined : language.value,
       timezone: timezone.value === "Asia/Shanghai" ? undefined : timezone.value,
       theme: theme.value === "dark" ? undefined : theme.value,
     };

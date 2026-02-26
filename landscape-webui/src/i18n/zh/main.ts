@@ -6,6 +6,10 @@ import error from "./error";
 import errors from "./errors";
 import enrolled_device from "./enrolled_device";
 import lan_ipv6 from "./lan_ipv6";
+import flow from "./flow";
+import nat from "./nat";
+import dns_editor from "./dns_editor";
+import firewall from "./firewall";
 
 export default {
   docker_divider: "Docker 容器",
@@ -20,6 +24,10 @@ export default {
   errors,
   enrolled_device,
   lan_ipv6,
+  flow,
+  nat,
+  dns_editor,
+  firewall,
   common: {
     private_mode: "隐私模式",
   },

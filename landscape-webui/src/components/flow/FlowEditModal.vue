@@ -6,6 +6,7 @@ import {
 import { useMessage } from "naive-ui";
 import { computed } from "vue";
 import { ref } from "vue";
+import { useI18n } from "vue-i18n";
 import FlowMatchRule from "./match/FlowMatchRule.vue";
 import { flow_config_default, FlowTargetTypes } from "@/lib/default_value";
 import type {
@@ -23,6 +24,7 @@ const props = defineProps<Props>();
 const frontEndStore = useFrontEndStore();
 
 const message = useMessage();
+const { t } = useI18n();
 
 const emit = defineEmits(["refresh"]);
 
@@ -74,13 +76,13 @@ async function saveRule() {
   }
 
   if (rule.value.flow_id == -1) {
-    message.warning("**ID** 值不能为 -1, 且不能重复, 否则将会覆盖规则");
+    message.warning(t("flow.edit.duplicate_id_warning"));
     return;
   }
 
   const dup = findDuplicateEntryRules(rule.value.flow_match_rules);
   if (dup) {
-    message.warning(`入口匹配规则存在重复项: ${dup}`);
+    message.warning(t("flow.edit.duplicate_entry_warning", { dup }));
     return;
   }
 
@@ -110,7 +112,7 @@ function switch_target() {}
     style="width: 600px"
     class="custom-card"
     preset="card"
-    title="分流规则编辑"
+    :title="t('flow.edit.title')"
     @after-enter="enter"
     @after-leave="exit"
     :bordered="false"
@@ -118,7 +120,7 @@ function switch_target() {}
     <!-- {{ rule }} -->
     <n-form v-if="rule" style="flex: 1" ref="formRef" :model="rule" :cols="5">
       <n-grid :cols="5">
-        <n-form-item-gi label="流 ID 标识" :span="2">
+        <n-form-item-gi :label="t('flow.edit.flow_id_label')" :span="2">
           <n-input-number
             :min="1"
             :max="255"
@@ -126,14 +128,14 @@ function switch_target() {}
             clearable
           />
         </n-form-item-gi>
-        <n-form-item-gi label="启用" :offset="1" :span="1">
+        <n-form-item-gi :label="t('flow.edit.enabled')" :offset="1" :span="1">
           <n-switch v-model:value="rule.enable">
-            <template #checked> 启用 </template>
-            <template #unchecked> 禁用 </template>
+            <template #checked> {{ t("flow.common.enable") }} </template>
+            <template #unchecked> {{ t("flow.common.disable") }} </template>
           </n-switch>
         </n-form-item-gi>
 
-        <n-form-item-gi :span="5" label="备注">
+        <n-form-item-gi :span="5" :label="t('flow.edit.remark')">
           <n-input
             :type="frontEndStore.presentation_mode ? 'password' : 'text'"
             v-model:value="rule.remark"
@@ -143,11 +145,11 @@ function switch_target() {}
       <n-form-item>
         <template #label>
           <Notice
-            >分流入口匹配规则
+            >{{ t("flow.edit.entry_rules_title") }}
             <template #msg>
-              符合规则的客户端将会使用这个流<br />
-              注意优先级 IP > Mac <br />
-              注意不同 Flow 的规则是否重叠
+              {{ t("flow.edit.entry_rules_desc_1") }}<br />
+              {{ t("flow.edit.entry_rules_desc_2") }}<br />
+              {{ t("flow.edit.entry_rules_desc_3") }}
             </template>
           </Notice>
         </template>
@@ -157,10 +159,10 @@ function switch_target() {}
       <n-form-item label="">
         <template #label>
           <Notice>
-            分流出口规则 ( 当前仅支持一个出口 )
+            {{ t("flow.edit.target_rules_title") }}
             <template #msg>
-              符合规则的客户端将会默认使用这个出口进行发送流量<br />
-              除非 `DNS 规则` 或者 `目标 IP` 将流量重定向到别的流
+              {{ t("flow.edit.target_rules_desc_1") }}<br />
+              {{ t("flow.edit.target_rules_desc_2") }}
             </template>
           </Notice>
         </template>
@@ -171,13 +173,13 @@ function switch_target() {}
     </n-form>
     <template #footer>
       <n-flex justify="space-between">
-        <n-button @click="show = false">取消</n-button>
+        <n-button @click="show = false">{{ t("flow.common.cancel") }}</n-button>
         <n-button
           :loading="commit_spin"
           @click="saveRule"
           :disabled="!isModified"
         >
-          保存
+          {{ t("flow.common.save") }}
         </n-button>
       </n-flex>
     </template>
