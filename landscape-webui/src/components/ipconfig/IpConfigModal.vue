@@ -11,9 +11,11 @@ import {
 import { computed, ref } from "vue";
 import IpEdit from "../IpEdit.vue";
 import { IfaceZoneType } from "@landscape-router/types/api/schemas";
+import { useI18n } from "vue-i18n";
 
 const show_model = defineModel<boolean>("show", { required: true });
 const emit = defineEmits(["refresh"]);
+const { t } = useI18n();
 
 const iface_info = defineProps<{
   iface_name: string;
@@ -27,11 +29,11 @@ const iface_data = ref<IfaceIpServiceConfig>(
 const ip_config_options = computed(() => {
   let result = [
     {
-      label: "无",
+      label: t("ipconfig_editor.mode_none"),
       value: IfaceIpMode.Nothing,
     },
     {
-      label: "静态IP",
+      label: t("ipconfig_editor.mode_static"),
       value: IfaceIpMode.Static,
     },
   ];
@@ -41,7 +43,7 @@ const ip_config_options = computed(() => {
     //   value: IfaceIpMode.PPPoE,
     // });
     result.push({
-      label: "DHCP 客户端",
+      label: t("ipconfig_editor.mode_dhcp_client"),
       value: IfaceIpMode.DHCPClient,
     });
   }
@@ -109,7 +111,7 @@ function select_ip_model(value: IfaceIpMode) {
   >
     <n-card
       style="width: 600px"
-      title="网卡运行服务配置"
+      :title="t('ipconfig_editor.title')"
       :bordered="false"
       role="dialog"
       aria-modal="true"
@@ -118,8 +120,8 @@ function select_ip_model(value: IfaceIpMode) {
         <n-flex align="center" :wrap="false">
           <n-flex>
             <n-switch v-model:value="iface_data.enable">
-              <template #checked> 启用 </template>
-              <template #unchecked> 禁用 </template>
+              <template #checked> {{ t("ipconfig_editor.enabled_yes") }} </template>
+              <template #unchecked> {{ t("ipconfig_editor.enabled_no") }} </template>
             </n-switch>
           </n-flex>
           <n-flex style="flex: 1">
@@ -138,7 +140,7 @@ function select_ip_model(value: IfaceIpMode) {
           >
             <n-form style="flex: 1" :model="iface_data.ip_model" :cols="5">
               <n-grid :cols="5">
-                <n-form-item-gi label="静态 IP" :span="5">
+                <n-form-item-gi :label="t('ipconfig_editor.static_ip')" :span="5">
                   <IpEdit
                     v-model:ip="iface_data.ip_model.ipv4"
                     v-model:mask="iface_data.ip_model.ipv4_mask"
@@ -146,17 +148,17 @@ function select_ip_model(value: IfaceIpMode) {
                 </n-form-item-gi>
                 <n-form-item-gi
                   v-if="iface_info.zone == ZoneType.Wan"
-                  label="是否设置默认路由"
+                  :label="t('ipconfig_editor.set_default_route')"
                   :span="5"
                 >
                   <n-switch v-model:value="iface_data.ip_model.default_router">
-                    <template #checked> 是 </template>
-                    <template #unchecked> 否 </template>
+                    <template #checked> {{ t("ipconfig_editor.yes") }} </template>
+                    <template #unchecked> {{ t("ipconfig_editor.no") }} </template>
                   </n-switch>
                 </n-form-item-gi>
                 <n-form-item-gi
                   v-if="iface_info.zone == ZoneType.Wan"
-                  label="路由 IP"
+                  :label="t('ipconfig_editor.route_ip')"
                   :span="5"
                 >
                   <IpEdit
@@ -168,12 +170,12 @@ function select_ip_model(value: IfaceIpMode) {
           </n-flex>
           <n-flex v-else-if="iface_data.ip_model.t === IfaceIpMode.PPPoE">
             <n-input-group>
-              <n-input-group-label>用户名</n-input-group-label>
+              <n-input-group-label>{{ t("ipconfig_editor.username") }}</n-input-group-label>
               <n-input
                 v-model:value="iface_data.ip_model.username"
                 placeholder=""
               />
-              <n-input-group-label>密码</n-input-group-label>
+              <n-input-group-label>{{ t("ipconfig_editor.password") }}</n-input-group-label>
               <n-input
                 v-model:value="iface_data.ip_model.password"
                 placeholder=""
@@ -187,17 +189,17 @@ function select_ip_model(value: IfaceIpMode) {
             v-else-if="iface_data.ip_model.t === IfaceIpMode.DHCPClient"
           >
             <n-alert type="warning">
-              本端口如果有开启防火墙, 那么需要配置规则将 68 端口开放
+              {{ t("ipconfig_editor.dhcp_warn") }}
             </n-alert>
             <n-form style="flex: 1" :model="iface_data.ip_model" :cols="5">
               <n-grid :cols="5">
-                <n-form-item-gi label="是否设置默认路由" :span="5">
+                <n-form-item-gi :label="t('ipconfig_editor.set_default_route')" :span="5">
                   <n-switch v-model:value="iface_data.ip_model.default_router">
-                    <template #checked> 是 </template>
-                    <template #unchecked> 否 </template>
+                    <template #checked> {{ t("ipconfig_editor.yes") }} </template>
+                    <template #unchecked> {{ t("ipconfig_editor.no") }} </template>
                   </n-switch>
                 </n-form-item-gi>
-                <n-form-item-gi label="DHCP 时填充的主机名称" :span="5">
+                <n-form-item-gi :label="t('ipconfig_editor.dhcp_hostname')" :span="5">
                   <n-input
                     v-model:value="iface_data.ip_model.hostname"
                   ></n-input>
@@ -210,7 +212,9 @@ function select_ip_model(value: IfaceIpMode) {
 
       <template #footer>
         <n-flex justify="end">
-          <n-button round type="primary" @click="update_mode"> 更新 </n-button>
+          <n-button round type="primary" @click="update_mode">
+            {{ t("ipconfig_editor.update") }}
+          </n-button>
         </n-flex>
       </template>
     </n-card>

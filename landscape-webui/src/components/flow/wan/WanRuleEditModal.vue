@@ -21,6 +21,7 @@ import {
   copy_context_to_clipboard,
   read_context_from_clipboard,
 } from "@/lib/common";
+import { useI18n } from "vue-i18n";
 
 interface Props {
   flow_id: number;
@@ -30,6 +31,7 @@ interface Props {
 const props = defineProps<Props>();
 
 const message = useMessage();
+const { t } = useI18n();
 const emit = defineEmits(["refresh"]);
 const show = defineModel<boolean>("show", { required: true });
 
@@ -84,7 +86,7 @@ function changeCurrentRuleType(value: WanIPRuleSource, index: number) {
 async function saveRule() {
   if (rule.value) {
     if (rule.value.index == -1) {
-      message.warning("**优先级** 值不能为 -1, 且不能重复, 否则将会覆盖规则");
+      message.warning(t("flow.wan_rule_edit.duplicate_priority_warning"));
       return;
     }
     try {
@@ -137,20 +139,20 @@ async function append_import_rules() {
     style="width: 700px"
     class="custom-card"
     preset="card"
-    title="规则编辑"
+    :title="t('flow.wan_rule_edit.title')"
     @after-enter="enter"
     :bordered="false"
   >
     <!-- {{ isModified }} -->
     <n-form v-if="rule" style="flex: 1" ref="formRef" :model="rule" :cols="5">
       <n-grid :cols="5">
-        <n-form-item-gi label="优先级" :span="2">
+        <n-form-item-gi :label="t('flow.wan_rule_edit.priority')" :span="2">
           <n-input-number v-model:value="rule.index" clearable />
         </n-form-item-gi>
-        <n-form-item-gi label="启用" :offset="1" :span="1">
+        <n-form-item-gi :label="t('flow.wan_rule_edit.enabled')" :offset="1" :span="1">
           <n-switch v-model:value="rule.enable">
-            <template #checked> 启用 </template>
-            <template #unchecked> 禁用 </template>
+            <template #checked> {{ t("flow.common.enable") }} </template>
+            <template #unchecked> {{ t("flow.common.disable") }} </template>
           </n-switch>
         </n-form-item-gi>
         <!-- <n-form-item-gi label="覆盖 DNS 配置" :span="1">
@@ -160,11 +162,11 @@ async function append_import_rules() {
           </n-switch>
         </n-form-item-gi> -->
 
-        <n-form-item-gi :span="5" label="选择流量出口">
+        <n-form-item-gi :span="5" :label="t('flow.wan_rule_edit.egress_select')">
           <FlowMarkEdit v-model:mark="rule.mark"></FlowMarkEdit>
         </n-form-item-gi>
       </n-grid>
-      <n-form-item label="备注">
+      <n-form-item :label="t('flow.wan_rule_edit.remark')">
         <n-input v-model:value="rule.remark" type="text" />
       </n-form-item>
       <n-form-item>
@@ -175,7 +177,7 @@ async function append_import_rules() {
             :wrap="false"
             @click.stop
           >
-            <n-flex> 匹配的 IP </n-flex>
+            <n-flex> {{ t("flow.wan_rule_edit.matched_ips") }} </n-flex>
             <n-flex>
               <!-- 不确定为什么点击 label 会触发第一个按钮, 所以放置一个不可见的按钮 -->
               <button
@@ -189,23 +191,25 @@ async function append_import_rules() {
               ></button>
 
               <n-button :focusable="false" size="tiny" @click="export_config">
-                复制
+                {{ t("flow.wan_rule_edit.copy") }}
               </n-button>
               <n-button :focusable="false" size="tiny" @click="import_rules">
-                替换粘贴
+                {{ t("flow.wan_rule_edit.paste_replace") }}
               </n-button>
               <n-button
                 :focusable="false"
                 size="tiny"
                 @click="append_import_rules"
               >
-                增量粘贴
+                {{ t("flow.wan_rule_edit.paste_append") }}
               </n-button>
             </n-flex>
           </n-flex>
         </template>
         <n-dynamic-input v-model:value="rule.source" :on-create="onCreate">
-          <template #create-button-default> 增加一条 Wan 规则 </template>
+          <template #create-button-default>
+            {{ t("flow.wan_rule_edit.add_wan_rule") }}
+          </template>
           <template #default="{ value, index }">
             <n-flex style="flex: 1" :wrap="false">
               <n-button @click="changeCurrentRuleType(value, index)">
@@ -237,13 +241,13 @@ async function append_import_rules() {
     </n-form>
     <template #footer>
       <n-flex justify="space-between">
-        <n-button @click="show = false">取消</n-button>
+        <n-button @click="show = false">{{ t("flow.wan_rule_edit.cancel") }}</n-button>
         <n-button
           :loading="commit_spin"
           @click="saveRule"
           :disabled="!isModified"
         >
-          保存
+          {{ t("flow.wan_rule_edit.save") }}
         </n-button>
       </n-flex>
     </template>

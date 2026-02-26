@@ -26,35 +26,35 @@ const { t } = useI18n();
 const stats = ref<IpHistoryStat[]>([]);
 const loading = ref(false);
 
-const timeRange = ref<number | string | null>(300); // 默认 5 分钟
+const timeRange = ref<number | string | null>(300); // default 5 minutes
 const queryLimit = ref<number | null>(100);
 const flowId = ref<number | null>(null);
 const ipSearch = ref<string>("");
 const useCustomTimeRange = ref(false);
 const customTimeRange = ref<[number, number] | null>(null);
 
-// 排序状态
+// Sort state
 const sortKey = ref<ConnectSortKey>("egress");
 const sortOrder = ref<SortOrder>("desc");
 
 const globalStats = computed(() => metricStore.global_history_stats);
 
 const timeRangeOptions = computed(() => [
-  { label: "近 5 分钟", value: 300 },
-  { label: "近 15 分钟", value: 900 },
-  { label: "近 1 小时", value: 3600 },
-  { label: "近 6 小时", value: 21600 },
-  { label: "近 24 小时", value: 86400 },
-  { label: "近 3 天", value: 259200 },
-  { label: "自定义时间段", value: "custom" },
+  { label: t("metric.connect.filter.last_5m"), value: 300 },
+  { label: t("metric.connect.filter.last_15m"), value: 900 },
+  { label: t("metric.connect.filter.last_1h"), value: 3600 },
+  { label: t("metric.connect.filter.last_6h"), value: 21600 },
+  { label: t("metric.connect.filter.last_24h"), value: 86400 },
+  { label: t("metric.connect.filter.last_3d"), value: 259200 },
+  { label: t("metric.connect.filter.custom_range"), value: "custom" },
   { label: t("metric.connect.filter.all_status"), value: null },
 ]);
 
 const limitOptions = computed(() => [
-  { label: "限制 100 条", value: 100 },
-  { label: "限制 500 条", value: 500 },
-  { label: "限制 1000 条", value: 1000 },
-  { label: "不限制数量", value: null },
+  { label: t("metric.connect.filter.limit_100"), value: 100 },
+  { label: t("metric.connect.filter.limit_500"), value: 500 },
+  { label: t("metric.connect.filter.limit_1000"), value: 1000 },
+  { label: t("metric.connect.filter.unlimited"), value: null },
 ]);
 
 const fetchStats = async () => {
@@ -111,7 +111,7 @@ watch([queryLimit, flowId, customTimeRange], () => {
   fetchStats();
 });
 
-// 防抖查询
+// Debounced query
 let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 watch(ipSearch, () => {
   if (debounceTimer) clearTimeout(debounceTimer);
@@ -134,7 +134,7 @@ onMounted(() => {
 
 <template>
   <n-flex vertical style="flex: 1; overflow: hidden">
-    <!-- 历史全局汇总 -->
+    <!-- History global summary -->
     <n-card
       size="small"
       :bordered="false"
@@ -175,7 +175,7 @@ onMounted(() => {
       </n-flex>
     </n-card>
 
-    <!-- 过滤器工具栏 -->
+    <!-- Filter toolbar -->
     <n-flex
       align="center"
       :wrap="true"

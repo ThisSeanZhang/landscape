@@ -64,4 +64,20 @@ export default {
     action_drop: "Drop",
     action_redirect: "Redirect -> Flow {flow_id}",
   },
+  wan_rule_edit: {
+    title: "Rule Editor",
+    priority: "Priority",
+    enabled: "Enabled",
+    egress_select: "Select traffic egress",
+    remark: "Remark",
+    matched_ips: "Matched IPs",
+    copy: "Copy",
+    paste_replace: "Paste Replace",
+    paste_append: "Paste Append",
+    add_wan_rule: "Add a WAN rule",
+    duplicate_priority_warning:
+      "**Priority** cannot be -1 and must be unique, or it may overwrite existing rules",
+    cancel: "Cancel",
+    save: "Save",
+  },
 };

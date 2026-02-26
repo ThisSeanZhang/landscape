@@ -1,0 +1,16 @@
+export default {
+  title: "编辑 PPPD 服务",
+  enable: "启用",
+  enabled_yes: "启用",
+  enabled_no: "禁用",
+  default_route: "设置默认路由",
+  ppp_iface_name: "ppp网口名称",
+  iface_required: "网卡名称不能为空",
+  username: "用户名",
+  password: "密码",
+  ac_name: "请求连接的 AC 名称 (没有特殊需求的话请留空, 否则可能导致拨号异常)",
+  ac_name_tip: "设置后只会与 AC 名称一致的服务端进行连接",
+  plugin: "PPPoE Plugin",
+  cancel: "取消",
+  confirm: "确定",
+};

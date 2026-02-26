@@ -10,6 +10,11 @@ import nat from "./nat";
 import dns_editor from "./dns_editor";
 import firewall from "./firewall";
 import icmp_ra from "./icmp_ra";
+import misc from "./misc";
+import geo_editor from "./geo_editor";
+import ipconfig_editor from "./ipconfig_editor";
+import dhcp_editor from "./dhcp_editor";
+import pppd_editor from "./pppd_editor";
 
 export default {
   docker_divider: "Docker 容器",
@@ -28,6 +33,11 @@ export default {
   dns_editor,
   firewall,
   icmp_ra,
+  misc,
+  geo_editor,
+  ipconfig_editor,
+  dhcp_editor,
+  pppd_editor,
   common: {
     private_mode: "隐私模式",
   },

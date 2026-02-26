@@ -4,6 +4,7 @@ import { PPPDServiceConfig } from "@/lib/pppd";
 import { computed, ref } from "vue";
 import type { SelectOption } from "naive-ui";
 import { useFrontEndStore } from "@/stores/front_end_config";
+import { useI18n } from "vue-i18n";
 
 const pluginOptions: SelectOption[] = [
   { label: "rp-pppoe.so", value: "rp_pppoe" },
@@ -11,6 +12,7 @@ const pluginOptions: SelectOption[] = [
 ];
 
 const frontEndStore = useFrontEndStore();
+const { t } = useI18n();
 const show = defineModel<boolean>("show", { required: true });
 const props = defineProps<{
   attach_iface_name: string;
@@ -45,7 +47,7 @@ async function init_conf_value() {
 async function confirm_config() {
   if (isModified) {
     if (!value.value.iface_name || value.value.iface_name.trim() === "") {
-      window.$message.error("网卡名称不能为空");
+      window.$message.error(t("pppd_editor.iface_required"));
       return;
     }
     await update_iface_pppd_config(value.value);
@@ -59,7 +61,7 @@ async function confirm_config() {
     v-model:show="show"
     preset="card"
     style="width: 600px"
-    title="编辑 PPPD 服务"
+    :title="t('pppd_editor.title')"
     @after-enter="init_conf_value"
   >
     <!-- <template #header-extra> 噢! </template> -->
@@ -67,26 +69,26 @@ async function confirm_config() {
 
     <n-form style="flex: 1" ref="formRef" :model="value" :cols="4">
       <n-grid :cols="5">
-        <n-form-item-gi label="启用" :span="1">
+        <n-form-item-gi :label="t('pppd_editor.enable')" :span="1">
           <n-switch v-model:value="value.enable">
-            <template #checked> 启用 </template>
-            <template #unchecked> 禁用 </template>
+            <template #checked> {{ t("pppd_editor.enabled_yes") }} </template>
+            <template #unchecked> {{ t("pppd_editor.enabled_no") }} </template>
           </n-switch>
         </n-form-item-gi>
 
-        <n-form-item-gi :span="2" label="设置默认路由">
+        <n-form-item-gi :span="2" :label="t('pppd_editor.default_route')">
           <n-switch v-model:value="value.pppd_config.default_route">
-            <template #checked> 启用 </template>
-            <template #unchecked> 禁用 </template>
+            <template #checked> {{ t("pppd_editor.enabled_yes") }} </template>
+            <template #unchecked> {{ t("pppd_editor.enabled_no") }} </template>
           </n-switch>
         </n-form-item-gi>
 
-        <n-form-item-gi label="ppp网口名称" :span="2">
+        <n-form-item-gi :label="t('pppd_editor.ppp_iface_name')" :span="2">
           <n-input v-model:value="value.iface_name" clearable />
         </n-form-item-gi>
       </n-grid>
 
-      <n-form-item label="用户名">
+      <n-form-item :label="t('pppd_editor.username')">
         <n-input
           :type="frontEndStore.presentation_mode ? 'password' : 'text'"
           show-password-on="click"
@@ -94,7 +96,7 @@ async function confirm_config() {
         />
       </n-form-item>
 
-      <n-form-item label="密码">
+      <n-form-item :label="t('pppd_editor.password')">
         <n-input
           :type="frontEndStore.presentation_mode ? 'password' : 'text'"
           show-password-on="click"
@@ -105,8 +107,8 @@ async function confirm_config() {
       <n-form-item>
         <template #label>
           <Notice>
-            请求连接的 AC 名称 (没有特殊需求的话请留空, 否则可能导致拨号异常)
-            <template #msg> 设置后只会与 AC 名称一致的服务端进行连接 </template>
+            {{ t("pppd_editor.ac_name") }}
+            <template #msg> {{ t("pppd_editor.ac_name_tip") }} </template>
           </Notice>
         </template>
         <n-input
@@ -116,7 +118,7 @@ async function confirm_config() {
         />
       </n-form-item>
 
-      <n-form-item label="PPPoE Plugin">
+      <n-form-item :label="t('pppd_editor.plugin')">
         <n-select
           v-model:value="value.pppd_config.plugin"
           :options="pluginOptions"
@@ -125,13 +127,13 @@ async function confirm_config() {
     </n-form>
     <template #footer>
       <n-flex justify="space-between">
-        <n-button @click="show = false">取消</n-button>
+        <n-button @click="show = false">{{ t("pppd_editor.cancel") }}</n-button>
         <n-button
           @click="confirm_config()"
           type="success"
           :disabled="!isModified"
         >
-          确定
+          {{ t("pppd_editor.confirm") }}
         </n-button>
       </n-flex>
     </template>

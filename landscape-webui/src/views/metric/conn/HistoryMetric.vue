@@ -27,15 +27,15 @@ const { t } = useI18n();
 const themeVars = useThemeVars();
 const frontEndStore = useFrontEndStore();
 
-// 1. 声明所有基础响应式状态 (State)
+// 1. Declare all base reactive states.
 const historicalData = ref<any[]>([]);
-const timeRange = ref<number | string | null>(300); // 默认 5 分钟 (300秒)
-const queryLimit = ref<number | null>(100); // 默认限制 100 条
+const timeRange = ref<number | string | null>(300); // default 5 minutes (300s)
+const queryLimit = ref<number | null>(100); // default limit: 100
 const historyFilter = reactive(new ConnectFilter());
 const sortKey = computed(() => frontEndStore.history_conn_sort_key);
 const sortOrder = computed(() => frontEndStore.history_conn_sort_order);
 
-// 全局历史统计
+// Global history stats
 const globalStats = computed(() => metricStore.global_history_stats);
 const refreshingGlobalStats = ref(false);
 
@@ -51,7 +51,7 @@ const refreshGlobalStats = async () => {
   }
 };
 
-// 图表展示状态
+// Chart drawer state
 const showChart = ref(false);
 const showChartKey = ref<ConnectKey | null>(null);
 const showChartTitle = ref("");
@@ -59,7 +59,7 @@ const showChartCreateTimeMs = ref<number | undefined>();
 const showChartLastReportTime = ref<number | undefined>();
 const loading = ref(false);
 
-// 自定义时间段
+// Custom time range.
 const useCustomTimeRange = ref(false);
 const customTimeRange = ref<[number, number] | null>(null);
 
@@ -71,7 +71,7 @@ const showChartDrawer = (history: any) => {
   showChart.value = true;
 };
 
-// 2. 声明常量选项 (Options)
+// 2. Option constants
 const protocolOptions = computed(() => [
   { label: t("metric.connect.all_types"), value: null },
   { label: "TCP", value: 6 },
@@ -80,7 +80,7 @@ const protocolOptions = computed(() => [
   { label: "ICMPv6", value: 58 },
 ]);
 
-// 方向选项
+// Direction options.
 const gressOptions = computed(() => [
   { label: t("metric.connect.all_types"), value: null },
   { label: t("metric.connect.filter.gress_egress"), value: 1 },
@@ -88,25 +88,25 @@ const gressOptions = computed(() => [
 ]);
 
 const timeRangeOptions = computed(() => [
-  { label: "近 5 分钟", value: 300 },
-  { label: "近 15 分钟", value: 900 },
-  { label: "近 1 小时", value: 3600 },
-  { label: "近 6 小时", value: 21600 },
-  { label: "近 24 小时", value: 86400 },
-  { label: "近 3 天", value: 259200 },
-  { label: "自定义时间段", value: "custom" },
+  { label: t("metric.connect.filter.last_5m"), value: 300 },
+  { label: t("metric.connect.filter.last_15m"), value: 900 },
+  { label: t("metric.connect.filter.last_1h"), value: 3600 },
+  { label: t("metric.connect.filter.last_6h"), value: 21600 },
+  { label: t("metric.connect.filter.last_24h"), value: 86400 },
+  { label: t("metric.connect.filter.last_3d"), value: 259200 },
+  { label: t("metric.connect.filter.custom_range"), value: "custom" },
   { label: t("metric.connect.filter.all_status"), value: null },
 ]);
 
 const limitOptions = computed(() => [
-  { label: "限制 100 条", value: 100 },
-  { label: "限制 500 条", value: 500 },
-  { label: "限制 1000 条", value: 1000 },
-  { label: "限制 5000 条", value: 5000 },
-  { label: "不限制数量", value: null },
+  { label: t("metric.connect.filter.limit_100"), value: 100 },
+  { label: t("metric.connect.filter.limit_500"), value: 500 },
+  { label: t("metric.connect.filter.limit_1000"), value: 1000 },
+  { label: t("metric.connect.filter.limit_5000"), value: 5000 },
+  { label: t("metric.connect.filter.unlimited"), value: null },
 ]);
 
-// 3. 声明数据获取逻辑 (Actions)
+// 3. Data fetching actions
 const fetchHistory = async () => {
   loading.value = true;
   try {
@@ -114,11 +114,11 @@ const fetchHistory = async () => {
     let endTime: number | undefined;
 
     if (useCustomTimeRange.value && customTimeRange.value) {
-      // 使用自定义时间段
+      // Use custom time range.
       startTime = customTimeRange.value[0];
       endTime = customTimeRange.value[1];
     } else if (timeRange.value !== null && timeRange.value !== "custom") {
-      // 使用相对时间范围
+      // Use relative time range.
       startTime = Date.now() - (timeRange.value as number) * 1000;
     }
 
@@ -166,7 +166,7 @@ const handleSearchTuple = (history: any) => {
   historyFilter.port_end = history.dst_port;
 };
 
-// 4. 计算属性 (Computed)
+// 4. Computed values
 const filteredHistory = computed(() => {
   return historicalData.value || [];
 });
@@ -191,8 +191,8 @@ const historyTotalStats = computed(() => {
   return stats;
 });
 
-// 5. 监听器与生命周期 (Watchers & Lifecycle)
-// 监听时间范围选择，切换自定义模式
+// 5. Watchers & lifecycle
+// Watch time range selection and toggle custom mode.
 watch(timeRange, (newVal) => {
   if (newVal === "custom") {
     useCustomTimeRange.value = true;
@@ -203,19 +203,19 @@ watch(timeRange, (newVal) => {
   }
 });
 
-// 监听自定义时间段变化
+// Watch custom range changes.
 watch(customTimeRange, () => {
   if (useCustomTimeRange.value && customTimeRange.value) {
     fetchHistory();
   }
 });
 
-// 只在查询限制、排序变化时自动查询
+// Auto-query on limit/sort changes.
 watch([queryLimit, sortKey, sortOrder], () => {
   fetchHistory();
 });
 
-// 防抖查询：用户停止输入 800ms 后自动查询
+// Debounced query: trigger 800ms after typing stops.
 let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 watch(
   historyFilter,
@@ -225,13 +225,13 @@ watch(
     }
     debounceTimer = setTimeout(() => {
       fetchHistory();
-    }, 800); // 800ms 延迟
+    }, 800); // 800ms delay
   },
   { deep: true },
 );
 
 onMounted(() => {
-  // 从路由参数初始化过滤器
+  // Initialize filters from route query params.
   if (route.query.src_ip) historyFilter.src_ip = route.query.src_ip as string;
   if (route.query.dst_ip) historyFilter.dst_ip = route.query.dst_ip as string;
   if (route.query.port_start)
@@ -248,7 +248,7 @@ onMounted(() => {
 
 <template>
   <n-flex vertical style="flex: 1; overflow: hidden">
-    <!-- 历史全局统计面板 -->
+    <!-- History global summary -->
     <n-card
       size="small"
       :bordered="false"
@@ -259,21 +259,25 @@ onMounted(() => {
 
         <n-flex align="center" size="large" v-if="globalStats">
           <n-flex align="center" size="small">
-            <span style="color: #888; font-size: 13px">历史连接总数:</span>
-            <span style="font-weight: bold">{{
-              globalStats.total_connect_count
-            }}</span>
+            <span style="color: #888; font-size: 13px"
+              >{{ t("metric.connect.stats.total_history_conns") }}:</span
+            >
+            <span style="font-weight: bold">{{ globalStats.total_connect_count }}</span>
           </n-flex>
           <n-divider vertical />
           <n-flex align="center" size="small">
-            <span style="color: #888; font-size: 13px">累计总上传:</span>
+            <span style="color: #888; font-size: 13px"
+              >{{ t("metric.connect.stats.total_history_egress") }}:</span
+            >
             <span :style="{ fontWeight: 'bold', color: themeVars.infoColor }">{{
               formatSize(globalStats.total_egress_bytes)
             }}</span>
           </n-flex>
           <n-divider vertical />
           <n-flex align="center" size="small">
-            <span style="color: #888; font-size: 13px">累计总下载:</span>
+            <span style="color: #888; font-size: 13px"
+              >{{ t("metric.connect.stats.total_history_ingress") }}:</span
+            >
             <span
               :style="{ fontWeight: 'bold', color: themeVars.successColor }"
               >{{ formatSize(globalStats.total_ingress_bytes) }}</span
@@ -294,7 +298,7 @@ onMounted(() => {
                 </template>
               </n-button>
             </template>
-            最后汇总时间:
+            {{ t("metric.connect.stats.last_summary_time") }}:
             <n-time
               :time="globalStats.last_calculate_time"
               format="yyyy-MM-dd HH:mm:ss"
@@ -305,7 +309,7 @@ onMounted(() => {
       </n-flex>
     </n-card>
 
-    <!-- 历史模式专用工具栏 -->
+    <!-- Toolbar for history mode -->
     <n-flex
       align="center"
       :wrap="true"
@@ -374,7 +378,7 @@ onMounted(() => {
         style="width: 150px"
       />
 
-      <!-- 自定义时间段选择器 -->
+      <!-- Custom range picker -->
       <n-date-picker
         v-if="useCustomTimeRange"
         v-model:value="customTimeRange"

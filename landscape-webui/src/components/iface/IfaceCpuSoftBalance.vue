@@ -3,8 +3,10 @@ import { get_iface_cpu_balance, set_iface_cpu_balance } from "@/api/iface";
 import { get_cpu_count } from "@/api/sys";
 import type { IfaceCpuSoftBalance } from "@landscape-router/types/api/schemas";
 import { ref, computed } from "vue";
+import { useI18n } from "vue-i18n";
 
 const show_model = defineModel<boolean>("show", { required: true });
+const { t } = useI18n();
 const loading = ref(false);
 const props = defineProps<{
   iface_name: string;
@@ -136,7 +138,7 @@ function setRpsToZero() {
   >
     <n-card
       style="width: 700px"
-      title="配置网卡软负载"
+      :title="t('misc.iface_cpu_balance.title')"
       :bordered="false"
       size="small"
       role="dialog"
@@ -144,16 +146,16 @@ function setRpsToZero() {
     >
       <n-flex vertical>
         <n-alert type="info">
-          选择要处理网络队列的 CPU
-          核心。选中多个核心可以将负载分布到不同核心，提升性能。
+          {{ t("misc.iface_cpu_balance.intro") }}
           <br />
-          <strong>提示：</strong>可以点击下方的"设置为0"恢复默认
+          <strong>{{ t("misc.iface_cpu_balance.hint_prefix") }}</strong>
+          {{ t("misc.iface_cpu_balance.hint_suffix") }}
         </n-alert>
 
         <!-- CPU 核心选择区域 -->
         <div v-if="cpu_count > 0">
           <div class="core-selection-section">
-            <h4>发送队列 (XPS) 核心选择</h4>
+            <h4>{{ t("misc.iface_cpu_balance.tx_title") }}</h4>
             <n-space wrap>
               <n-tag
                 :type="xps_selected_cores.size === 0 ? 'warning' : 'default'"
@@ -161,7 +163,7 @@ function setRpsToZero() {
                 checkable
                 :checked="xps_selected_cores.size === 0"
               >
-                设置为0
+                {{ t("misc.iface_cpu_balance.set_zero") }}
               </n-tag>
               <n-tag
                 v-for="core in available_cores"
@@ -176,13 +178,15 @@ function setRpsToZero() {
             </n-space>
             <div class="selection-summary">
               <n-text depth="3">
-                已选择:
+                {{ t("misc.iface_cpu_balance.selected") }}:
                 {{
                   Array.from(xps_selected_cores)
                     .sort((a, b) => a - b)
-                    .join(", ") || "无"
+                    .join(", ") || t("misc.iface_cpu_balance.none")
                 }}
-                (位掩码: 0x{{ coresToBitmask(xps_selected_cores) }})
+                ({{ t("misc.iface_cpu_balance.bitmask") }}: 0x{{
+                  coresToBitmask(xps_selected_cores)
+                }})
               </n-text>
             </div>
           </div>
@@ -190,7 +194,7 @@ function setRpsToZero() {
           <n-divider />
 
           <div class="core-selection-section">
-            <h4>接收队列 (RPS) 核心选择</h4>
+            <h4>{{ t("misc.iface_cpu_balance.rx_title") }}</h4>
             <n-space wrap>
               <n-tag
                 :type="rps_selected_cores.size === 0 ? 'warning' : 'default'"
@@ -198,7 +202,7 @@ function setRpsToZero() {
                 checkable
                 :checked="rps_selected_cores.size === 0"
               >
-                设置为0
+                {{ t("misc.iface_cpu_balance.set_zero") }}
               </n-tag>
               <n-tag
                 v-for="core in available_cores"
@@ -213,33 +217,41 @@ function setRpsToZero() {
             </n-space>
             <div class="selection-summary">
               <n-text depth="3">
-                已选择:
+                {{ t("misc.iface_cpu_balance.selected") }}:
                 {{
                   Array.from(rps_selected_cores)
                     .sort((a, b) => a - b)
-                    .join(", ") || "无"
+                    .join(", ") || t("misc.iface_cpu_balance.none")
                 }}
-                (位掩码: 0x{{ coresToBitmask(rps_selected_cores) }})
+                ({{ t("misc.iface_cpu_balance.bitmask") }}: 0x{{
+                  coresToBitmask(rps_selected_cores)
+                }})
               </n-text>
             </div>
           </div>
         </div>
 
-        <div v-else><n-spin size="small" /> 正在获取 CPU 信息...</div>
+        <div v-else>
+          <n-spin size="small" /> {{ t("misc.iface_cpu_balance.loading_cpu") }}
+        </div>
       </n-flex>
 
       <template #footer>
         <n-flex justify="space-between" style="width: 100%">
-          <n-button @click="reset_config"> 重置选择 </n-button>
+          <n-button @click="reset_config">
+            {{ t("misc.iface_cpu_balance.reset") }}
+          </n-button>
           <n-space>
-            <n-button @click="show_model = false"> 取消 </n-button>
+            <n-button @click="show_model = false">
+              {{ t("misc.iface_cpu_balance.cancel") }}
+            </n-button>
             <n-button
               :loading="loading"
               round
               type="primary"
               @click="save_config"
             >
-              保存配置
+              {{ t("misc.iface_cpu_balance.save") }}
             </n-button>
           </n-space>
         </n-flex>
