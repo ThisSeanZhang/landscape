@@ -10,6 +10,7 @@ import type {
   GeoSiteSourceConfig,
 } from "@landscape-router/types/api/schemas";
 import { computed, onMounted, ref } from "vue";
+import { useI18n } from "vue-i18n";
 
 const key = defineModel<string | null>("geo_key", {
   required: true,
@@ -26,6 +27,7 @@ const inverse = defineModel<boolean>("geo_inverse", {
 const attribute_key = defineModel<string | null>("attr_key");
 
 const emit = defineEmits(["refresh"]);
+const { t } = useI18n();
 
 const loading_name = ref(false);
 const loading_key = ref(false);
@@ -168,14 +170,14 @@ const attribute_options = computed(() => {
       <template #trigger>
         <n-checkbox v-model:checked="inverse"> </n-checkbox>
       </template>
-      <span>反选 </span>
+      <span>{{ t("common.inverse") }} </span>
     </n-popover>
     <n-input-group>
       <n-select
         :style="{ width: '33%' }"
         v-model:value="name"
         filterable
-        placeholder="选择 geo 名称"
+        :placeholder="t('common.select_geo_name')"
         :options="geo_name_options"
         :loading="loading_name"
         clearable
@@ -186,7 +188,7 @@ const attribute_options = computed(() => {
       <n-select
         v-model:value="compositeValue"
         filterable
-        placeholder="筛选key"
+        :placeholder="t('common.filter_key')"
         :options="geo_key_options"
         :loading="loading_key"
         clearable
@@ -201,7 +203,7 @@ const attribute_options = computed(() => {
         :style="{ width: '120px' }"
         v-model:value="attribute_key"
         filterable
-        placeholder="筛选 attr"
+        :placeholder="t('common.filter_attr')"
         :options="attribute_options"
         :loading="loading_attrs"
         clearable

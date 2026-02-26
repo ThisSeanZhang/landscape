@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { useFrontEndStore } from "@/stores/front_end_config";
 import { IosEye, IosEyeOff } from "@vicons/ionicons4";
+import { useI18n } from "vue-i18n";
 
 const frontEndStore = useFrontEndStore();
+const { t } = useI18n();
 </script>
 <template>
   <n-popover trigger="hover">
@@ -33,7 +35,7 @@ const frontEndStore = useFrontEndStore();
       </n-button>
     </template>
     <span>
-      切换当前
+      {{ t("common.switch_current") }}
       <n-button
         style="cursor: default; pointer-events: none"
         @click.stop="() => {}"
@@ -41,10 +43,10 @@ const frontEndStore = useFrontEndStore();
         target="_blank"
         type="primary"
       >
-        隐私模式
+        {{ t("common.privacy_mode") }}
       </n-button>
       <br />
-      将会隐藏大部分的 IP MAC 等敏感信息
+      {{ t("common.privacy_mode_desc") }}
     </span>
   </n-popover>
 </template>

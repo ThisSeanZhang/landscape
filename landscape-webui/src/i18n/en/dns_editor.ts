@@ -101,6 +101,12 @@ export default {
     delete: "Delete",
     confirm_delete: "Confirm deletion?",
   },
+  rule_card: {
+    traffic_action: "Traffic Action",
+    upstream_config: "DNS Upstream Config",
+    match_rules: "Match Rules",
+    no_match_rules: "No match rules. All domains will match.",
+  },
   rule_drawer: {
     title_default: "Edit Default DNS Rules",
     title_flow: "Edit DNS Rules for Flow: {flow_id}",

@@ -97,4 +97,38 @@ export default {
     import_clipboard: "Import Rules from Clipboard",
     confirm_import: "Confirm import from clipboard?",
   },
+  mark_edit: {
+    option_current_flow: "Use current flow egress",
+    option_default_flow: "Use default flow egress",
+    option_block: "Block connection",
+    option_redirect: "Use specified flow egress",
+    select_match_type: "Select match type",
+    nat1_label: "Full Cone (NAT1)",
+    flow_id_placeholder: "Flow ID",
+  },
+  mark_exhibit: {
+    current_flow_egress: "Current flow egress",
+    default_flow_egress: "Default flow egress",
+    flow_id_egress: "Flow ID {flow_id} egress",
+    drop: "Drop",
+    nat1: "NAT1",
+  },
+  match_rule: {
+    add_entry_rule: "Add entry match rule",
+    select_device_placeholder: "Select an enrolled device",
+    mac_placeholder: "Enter MAC address",
+    ip_placeholder: "IP address",
+    prefix_placeholder: "Prefix length",
+  },
+  target_rule: {
+    add_target_rule: "Add egress rule",
+    type_wan: "WAN Interface",
+    type_docker: "Docker",
+    iface_placeholder: "Interface name",
+    container_placeholder: "Container name",
+  },
+  wan_rule_card: {
+    match_rules: "Match rules",
+    no_match_rules: "No match rules. No effect.",
+  },
 };

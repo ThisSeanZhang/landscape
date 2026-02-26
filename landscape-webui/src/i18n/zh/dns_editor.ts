@@ -99,6 +99,12 @@ export default {
     delete: "删除",
     confirm_delete: "确定删除吗",
   },
+  rule_card: {
+    traffic_action: "流量动作",
+    upstream_config: "DNS 上游配置",
+    match_rules: "匹配规则",
+    no_match_rules: "无匹配规则, 将会匹配所有域名",
+  },
   rule_drawer: {
     title_default: "编辑默认 DNS 规则",
     title_flow: "编辑 Flow: {flow_id} DNS 规则",

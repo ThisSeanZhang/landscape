@@ -6,6 +6,7 @@ import type {
   GeoIpSourceConfig,
 } from "@landscape-router/types/api/schemas";
 import { computed, ref } from "vue";
+import { useI18n } from "vue-i18n";
 
 const key = defineModel<string | null>("geo_key", {
   required: true,
@@ -15,6 +16,7 @@ const name = defineModel<string | null>("geo_name", {
   required: true,
   default: null,
 });
+const { t } = useI18n();
 const emit = defineEmits(["refresh"]);
 
 const loading_key = ref(false);
@@ -128,7 +130,7 @@ function handleKeySelect() {
       :style="{ width: '33%' }"
       v-model:value="name"
       filterable
-      placeholder="选择 geo 名称"
+      :placeholder="t('common.select_geo_name')"
       :options="geo_name_options"
       :loading="loading_name"
       clearable
@@ -140,7 +142,7 @@ function handleKeySelect() {
     <n-select
       v-model:value="compositeValue"
       filterable
-      placeholder="筛选key"
+      :placeholder="t('common.filter_key')"
       :options="geo_key_options"
       :loading="loading_key"
       clearable

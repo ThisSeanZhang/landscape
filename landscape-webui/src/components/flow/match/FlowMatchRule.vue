@@ -5,9 +5,11 @@ import { useFrontEndStore } from "@/stores/front_end_config";
 import { useEnrolledDeviceStore } from "@/stores/enrolled_device";
 import { ChangeCatalog } from "@vicons/carbon";
 import { formatMacAddress } from "@/lib/util";
+import { useI18n } from "vue-i18n";
 
 const frontEndStore = useFrontEndStore();
 const enrolledDeviceStore = useEnrolledDeviceStore();
+const { t } = useI18n();
 const match_rules = defineModel<FlowEntryRule[]>("match_rules", {
   required: true,
 });
@@ -71,7 +73,9 @@ function change_mode(value: FlowEntryRule, index: number) {
 
 <template>
   <n-dynamic-input v-model:value="match_rules" :on-create="onCreate">
-    <template #create-button-default> 增加一条入口匹配规则 </template>
+    <template #create-button-default>
+      {{ t("flow.match_rule.add_entry_rule") }}
+    </template>
     <template #default="{ value, index }">
       <n-flex style="flex: 1" :wrap="false">
         <n-button @click="change_mode(value, index)">
@@ -85,7 +89,7 @@ function change_mode(value: FlowEntryRule, index: number) {
           :options="deviceOptions"
           :value="value.mode.mac_addr || null"
           @update:value="(v: string) => (value.mode.mac_addr = v)"
-          placeholder="选择已登记设备"
+          :placeholder="t('flow.match_rule.select_device_placeholder')"
           clearable
           filterable
           :style="{ minWidth: '140px', flex: 1 }"
@@ -97,19 +101,19 @@ function change_mode(value: FlowEntryRule, index: number) {
           @update:value="
             (v: string) => (value.mode.mac_addr = formatMacAddress(v))
           "
-          placeholder="手动输入 MAC 地址"
+          :placeholder="t('flow.match_rule.mac_placeholder')"
         />
         <n-input-group v-else>
           <n-input
             :type="frontEndStore.presentation_mode ? 'password' : 'text'"
             v-model:value="value.mode.ip"
-            placeholder="IP 地址"
+            :placeholder="t('flow.match_rule.ip_placeholder')"
           />
           <n-input-group-label>/</n-input-group-label>
           <n-input-number
             v-model:value="value.mode.prefix_len"
             :style="{ width: '60px' }"
-            placeholder="前缀长度"
+            :placeholder="t('flow.match_rule.prefix_placeholder')"
             :show-button="false"
           />
         </n-input-group>

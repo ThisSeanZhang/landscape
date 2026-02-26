@@ -95,4 +95,38 @@ export default {
     import_clipboard: "从剪贴板导入规则",
     confirm_import: "确定从剪贴板导入吗?",
   },
+  mark_edit: {
+    option_current_flow: "当前流的出口",
+    option_default_flow: "默认流的出口",
+    option_block: "禁止连接",
+    option_redirect: "使用指定流出口",
+    select_match_type: "选择匹配方式",
+    nat1_label: "全锥型 (NAT1)",
+    flow_id_placeholder: "指定流的 ID",
+  },
+  mark_exhibit: {
+    current_flow_egress: "当前流的出口",
+    default_flow_egress: "默认流的出口",
+    flow_id_egress: "Flow ID {flow_id} 的出口",
+    drop: "丢弃",
+    nat1: "NAT1",
+  },
+  match_rule: {
+    add_entry_rule: "增加一条入口匹配规则",
+    select_device_placeholder: "选择已登记设备",
+    mac_placeholder: "手动输入 MAC 地址",
+    ip_placeholder: "IP 地址",
+    prefix_placeholder: "前缀长度",
+  },
+  target_rule: {
+    add_target_rule: "增加一条出口规则",
+    type_wan: "WAN 网卡",
+    type_docker: "Docker",
+    iface_placeholder: "网卡名称",
+    container_placeholder: "容器名称",
+  },
+  wan_rule_card: {
+    match_rules: "匹配规则",
+    no_match_rules: "无匹配规则, 没有任何作用",
+  },
 };

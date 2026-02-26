@@ -55,7 +55,7 @@ async function del() {
         </n-flex>
       </n-descriptions-item>
 
-      <n-descriptions-item label="匹配规则">
+      <n-descriptions-item :label="t('dns_editor.rule_card.match_rules')">
         <n-scrollbar style="height: 90px">
           <n-flex>
             <RuleSourceExhibit v-for="item in rule.match_rules" :source="item">

@@ -3,10 +3,12 @@ import { DomainMatchTypeEnum, RuleSourceEnum } from "@/lib/dns";
 import type { RuleSource } from "@landscape-router/types/api/schemas";
 
 import { ChangeCatalog } from "@vicons/carbon";
+import { useI18n } from "vue-i18n";
 
 const source = defineModel<RuleSource[]>("source", {
   default: [],
 });
+const { t } = useI18n();
 
 function onCreate(): RuleSource {
   return {
@@ -38,19 +40,19 @@ function changeCurrentRuleType(value: RuleSource, index: number) {
 
 const source_style = [
   {
-    label: "精确匹配",
+    label: t("dns_editor.rule_edit.source_style_full"),
     value: DomainMatchTypeEnum.Full,
   },
   {
-    label: "域名匹配",
+    label: t("dns_editor.rule_edit.source_style_domain"),
     value: DomainMatchTypeEnum.Domain,
   },
   {
-    label: "正则匹配",
+    label: t("dns_editor.rule_edit.source_style_regex"),
     value: DomainMatchTypeEnum.Regex,
   },
   {
-    label: "关键词匹配",
+    label: t("dns_editor.rule_edit.source_style_plain"),
     value: DomainMatchTypeEnum.Plain,
   },
 ];
@@ -81,35 +83,35 @@ function add_by_quick_btn(match_type: DomainMatchTypeEnum | undefined) {
         size="small"
         @click="add_by_quick_btn(undefined)"
       >
-        +地理关系库
+        {{ t("dns_editor.rule_edit.add_geo") }}
       </n-button>
       <n-button
         style="flex: 1"
         size="small"
         @click="add_by_quick_btn(DomainMatchTypeEnum.Full)"
       >
-        +精确匹配
+        {{ t("dns_editor.rule_edit.add_full") }}
       </n-button>
       <n-button
         style="flex: 1"
         size="small"
         @click="add_by_quick_btn(DomainMatchTypeEnum.Domain)"
       >
-        +域名匹配
+        {{ t("dns_editor.rule_edit.add_domain") }}
       </n-button>
       <n-button
         style="flex: 1"
         size="small"
         @click="add_by_quick_btn(DomainMatchTypeEnum.Plain)"
       >
-        +关键词匹配
+        {{ t("dns_editor.rule_edit.add_plain") }}
       </n-button>
       <n-button
         style="flex: 1"
         size="small"
         @click="add_by_quick_btn(DomainMatchTypeEnum.Regex)"
       >
-        +正则匹配
+        {{ t("dns_editor.rule_edit.add_regex") }}
       </n-button>
     </n-flex>
     <n-scrollbar style="max-height: 280px">
@@ -118,7 +120,9 @@ function add_by_quick_btn(match_type: DomainMatchTypeEnum | undefined) {
         v-model:value="source"
         :on-create="onCreate"
       >
-        <template #create-button-default> 增加一条规则来源 </template>
+        <template #create-button-default>
+          {{ t("dns_editor.rule_edit.add_source_rule") }}
+        </template>
         <template #default="{ value, index }">
           <n-flex :size="[10, 0]" style="flex: 1" :wrap="false">
             <n-button @click="changeCurrentRuleType(value, index)">
@@ -146,7 +150,7 @@ function add_by_quick_btn(match_type: DomainMatchTypeEnum | undefined) {
                   style="width: 38%"
                   v-model:value="value.match_type"
                   :options="source_style"
-                  placeholder="选择匹配方式"
+                  :placeholder="t('dns_editor.rule_edit.select_match_type')"
                 />
                 <n-input
                   placeholder=""
