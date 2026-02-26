@@ -24,7 +24,8 @@ export default {
     title: "Prefix Source Editor",
     mode_static: "Static Prefix",
     mode_pd: "IPv6 PD",
-    depend_iface: "Associated interface (must enable DHCPv6-PD on that interface)",
+    depend_iface:
+      "Associated interface (must enable DHCPv6-PD on that interface)",
     depend_iface_placeholder: "Select interface used for prefix delegation",
     subnet_index: "Subnet index",
     subnet_index_desc_1: "Subnet index applied to LAN",

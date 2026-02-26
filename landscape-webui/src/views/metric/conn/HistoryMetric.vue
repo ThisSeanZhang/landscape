@@ -262,7 +262,9 @@ onMounted(() => {
             <span style="color: #888; font-size: 13px"
               >{{ t("metric.connect.stats.total_history_conns") }}:</span
             >
-            <span style="font-weight: bold">{{ globalStats.total_connect_count }}</span>
+            <span style="font-weight: bold">{{
+              globalStats.total_connect_count
+            }}</span>
           </n-flex>
           <n-divider vertical />
           <n-flex align="center" size="small">

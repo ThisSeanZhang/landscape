@@ -195,7 +195,11 @@ const has_edge_label = computed({
             placeholder="请输入entrypoint params (可选)"
           />
         </n-form-item-gi> -->
-          <n-form-item-gi :span="6" :label="t('misc.docker_run.port_mapping')" path="ports">
+          <n-form-item-gi
+            :span="6"
+            :label="t('misc.docker_run.port_mapping')"
+            path="ports"
+          >
             <n-dynamic-input
               v-model:value="formModel.ports"
               preset="pair"
@@ -204,7 +208,11 @@ const has_edge_label = computed({
               :value-placeholder="t('misc.docker_run.container_port')"
             />
           </n-form-item-gi>
-          <n-form-item-gi :span="6" :label="t('misc.docker_run.env_vars')" path="environment">
+          <n-form-item-gi
+            :span="6"
+            :label="t('misc.docker_run.env_vars')"
+            path="environment"
+          >
             <n-dynamic-input
               v-model:value="formModel.environment"
               preset="pair"
@@ -213,7 +221,11 @@ const has_edge_label = computed({
               :value-placeholder="t('misc.docker_run.env_value')"
             />
           </n-form-item-gi>
-          <n-form-item-gi :span="6" :label="t('misc.docker_run.volume_mapping')" path="volumes">
+          <n-form-item-gi
+            :span="6"
+            :label="t('misc.docker_run.volume_mapping')"
+            path="volumes"
+          >
             <n-dynamic-input
               v-model:value="formModel.volumes"
               preset="pair"

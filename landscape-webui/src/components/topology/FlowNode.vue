@@ -260,7 +260,10 @@ const show_switch = computed(() => {
         </n-card>
       </template>
       <n-descriptions label-placement="left" :column="2" size="small">
-        <n-descriptions-item :span="2" :label="t('misc.topology_node.iface_name')">
+        <n-descriptions-item
+          :span="2"
+          :label="t('misc.topology_node.iface_name')"
+        >
           {{ node.name }}
         </n-descriptions-item>
         <n-descriptions-item :label="t('misc.topology_node.mac_addr')">
@@ -275,7 +278,10 @@ const show_switch = computed(() => {
         <n-descriptions-item :label="t('misc.topology_node.status')">
           {{ node.dev_status ?? "N/A" }}
         </n-descriptions-item>
-        <n-descriptions-item :span="2" :label="t('misc.topology_node.parent_ctrl')">
+        <n-descriptions-item
+          :span="2"
+          :label="t('misc.topology_node.parent_ctrl')"
+        >
           {{ node.controller_id == undefined ? "N/A" : node.controller_id }}
           ({{
             node.controller_name == undefined ? "N/A" : node.controller_name
@@ -295,7 +301,10 @@ const show_switch = computed(() => {
           </n-button>
         </n-descriptions-item>
 
-        <n-descriptions-item :label="t('misc.topology_node.cpu_balance')" :span="2">
+        <n-descriptions-item
+          :label="t('misc.topology_node.cpu_balance')"
+          :span="2"
+        >
           <n-button
             tertiary
             size="tiny"

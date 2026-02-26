@@ -88,7 +88,9 @@ function confirmChangeImterval() {
       </template>
 
       <n-input-group>
-        <n-input-group-label>{{ t("common.refresh_interval_ms") }}</n-input-group-label>
+        <n-input-group-label>{{
+          t("common.refresh_interval_ms")
+        }}</n-input-group-label>
         <n-input-number
           style="width: 130px"
           :min="500"

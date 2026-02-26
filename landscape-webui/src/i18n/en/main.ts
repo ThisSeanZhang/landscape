@@ -56,7 +56,8 @@ export default {
     add_bridge: "Add Bridge",
     refresh: "Refresh",
     force_refresh: "Force Refresh",
-    force_refresh_confirm: "Force refresh? This will clear all keys and re-download.",
+    force_refresh_confirm:
+      "Force refresh? This will clear all keys and re-download.",
     force_refresh_confirm_long:
       "Force refresh? This will clear all keys and re-download. It may take some time.",
     domain_rule_source_config: "Domain Rule Source Config",

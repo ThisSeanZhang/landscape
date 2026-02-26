@@ -130,9 +130,18 @@ const source_style = [
 ];
 
 const filter_options = [
-  { label: t("dns_editor.rule_edit.filter_unfilter"), value: FilterResultEnum.Unfilter },
-  { label: t("dns_editor.rule_edit.filter_ipv4"), value: FilterResultEnum.OnlyIPv4 },
-  { label: t("dns_editor.rule_edit.filter_ipv6"), value: FilterResultEnum.OnlyIPv6 },
+  {
+    label: t("dns_editor.rule_edit.filter_unfilter"),
+    value: FilterResultEnum.Unfilter,
+  },
+  {
+    label: t("dns_editor.rule_edit.filter_ipv4"),
+    value: FilterResultEnum.OnlyIPv4,
+  },
+  {
+    label: t("dns_editor.rule_edit.filter_ipv6"),
+    value: FilterResultEnum.OnlyIPv6,
+  },
 ];
 
 async function export_config() {
@@ -183,10 +192,18 @@ function add_by_quick_btn(match_type: DomainMatchTypeEnum | undefined) {
         <n-form-item-gi :label="t('dns_editor.rule_edit.priority')" :span="2">
           <n-input-number v-model:value="rule.index" clearable />
         </n-form-item-gi>
-        <n-form-item-gi :label="t('dns_editor.rule_edit.enable')" :offset="1" :span="1">
+        <n-form-item-gi
+          :label="t('dns_editor.rule_edit.enable')"
+          :offset="1"
+          :span="1"
+        >
           <n-switch v-model:value="rule.enable">
-            <template #checked> {{ t("dns_editor.rule_edit.enabled_yes") }} </template>
-            <template #unchecked> {{ t("dns_editor.rule_edit.enabled_no") }} </template>
+            <template #checked>
+              {{ t("dns_editor.rule_edit.enabled_yes") }}
+            </template>
+            <template #unchecked>
+              {{ t("dns_editor.rule_edit.enabled_no") }}
+            </template>
           </n-switch>
         </n-form-item-gi>
 
@@ -209,11 +226,17 @@ function add_by_quick_btn(match_type: DomainMatchTypeEnum | undefined) {
           </n-radio-group>
         </n-form-item-gi>
 
-        <n-form-item-gi :span="5" :label="t('dns_editor.rule_edit.flow_action')">
+        <n-form-item-gi
+          :span="5"
+          :label="t('dns_editor.rule_edit.flow_action')"
+        >
           <FlowMarkEdit v-model:mark="rule.mark"></FlowMarkEdit>
         </n-form-item-gi>
 
-        <n-form-item-gi :span="2" :label="t('dns_editor.rule_edit.upstream_select')">
+        <n-form-item-gi
+          :span="2"
+          :label="t('dns_editor.rule_edit.upstream_select')"
+        >
           <SelectUpstream v-model:upstream_id="rule.upstream_id">
           </SelectUpstream>
         </n-form-item-gi>
@@ -238,7 +261,9 @@ function add_by_quick_btn(match_type: DomainMatchTypeEnum | undefined) {
             :wrap="false"
             @click.stop
           >
-            <n-flex> {{ t("dns_editor.rule_edit.source_rules_title") }} </n-flex>
+            <n-flex>
+              {{ t("dns_editor.rule_edit.source_rules_title") }}
+            </n-flex>
             <n-flex>
               <!-- 不确定为什么点击 label 会触发第一个按钮, 所以放置一个不可见的按钮 -->
               <button
@@ -340,7 +365,9 @@ function add_by_quick_btn(match_type: DomainMatchTypeEnum | undefined) {
                         style="width: 38%"
                         v-model:value="value.match_type"
                         :options="source_style"
-                        :placeholder="t('dns_editor.rule_edit.select_match_type')"
+                        :placeholder="
+                          t('dns_editor.rule_edit.select_match_type')
+                        "
                       />
                       <n-input
                         placeholder=""
@@ -358,7 +385,9 @@ function add_by_quick_btn(match_type: DomainMatchTypeEnum | undefined) {
     </n-form>
     <template #footer>
       <n-flex justify="space-between">
-        <n-button @click="show = false">{{ t("dns_editor.rule_edit.cancel") }}</n-button>
+        <n-button @click="show = false">{{
+          t("dns_editor.rule_edit.cancel")
+        }}</n-button>
         <n-button
           :loading="commit_spin"
           @click="saveRule"

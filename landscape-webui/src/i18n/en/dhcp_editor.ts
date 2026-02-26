@@ -23,7 +23,8 @@ export default {
     lease_left: "Remaining Lease Time (s)",
     expire_time: "Expiration Time",
     online_24h: "24h Online Status",
-    online_24h_tip_1: "The last block indicates online status in the latest hour scan.",
+    online_24h_tip_1:
+      "The last block indicates online status in the latest hour scan.",
     online_24h_tip_2:
       "Because scans are periodic, newly assigned IPs may still appear offline in the latest hour.",
     actions: "Actions",

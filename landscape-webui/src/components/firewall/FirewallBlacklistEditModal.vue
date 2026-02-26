@@ -81,11 +81,15 @@ function validateSources(): boolean {
   for (let i = 0; i < config.value.source.length; i++) {
     const s = config.value.source[i];
     if (s.t === "geo_key" && (!s.key || !s.name)) {
-      message.warning(t("firewall.blacklist_edit.geo_key_required", { index: i + 1 }));
+      message.warning(
+        t("firewall.blacklist_edit.geo_key_required", { index: i + 1 }),
+      );
       return false;
     }
     if (s.t === "config" && !s.ip) {
-      message.warning(t("firewall.blacklist_edit.ip_required", { index: i + 1 }));
+      message.warning(
+        t("firewall.blacklist_edit.ip_required", { index: i + 1 }),
+      );
       return false;
     }
   }
@@ -123,8 +127,12 @@ async function saveConfig() {
       <n-grid :cols="5">
         <n-form-item-gi :label="t('firewall.blacklist_edit.enable')" :span="2">
           <n-switch v-model:value="config.enable">
-            <template #checked> {{ t("firewall.blacklist_edit.enabled_yes") }} </template>
-            <template #unchecked> {{ t("firewall.blacklist_edit.enabled_no") }} </template>
+            <template #checked>
+              {{ t("firewall.blacklist_edit.enabled_yes") }}
+            </template>
+            <template #unchecked>
+              {{ t("firewall.blacklist_edit.enabled_no") }}
+            </template>
           </n-switch>
         </n-form-item-gi>
       </n-grid>
@@ -171,7 +179,9 @@ async function saveConfig() {
     </n-form>
     <template #footer>
       <n-flex justify="space-between">
-        <n-button @click="show = false">{{ t("firewall.blacklist_edit.cancel") }}</n-button>
+        <n-button @click="show = false">{{
+          t("firewall.blacklist_edit.cancel")
+        }}</n-button>
         <n-button
           :loading="commit_spin"
           @click="saveConfig"

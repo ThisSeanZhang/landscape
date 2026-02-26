@@ -89,7 +89,9 @@ async function save_config() {
     }
   } catch (e: any) {
     console.log(e);
-    message.error(e.response?.data?.msg || t("dhcp_editor.service.save_failed"));
+    message.error(
+      e.response?.data?.msg || t("dhcp_editor.service.save_failed"),
+    );
   } finally {
     commit_loading.value = false;
   }
@@ -145,25 +147,38 @@ const network_mask = computed({
         <n-form :model="service_config">
           <n-form-item :label="t('dhcp_editor.service.enable')">
             <n-switch v-model:value="service_config.enable">
-              <template #checked> {{ t("dhcp_editor.service.enabled_yes") }} </template>
-              <template #unchecked> {{ t("dhcp_editor.service.enabled_no") }} </template>
+              <template #checked>
+                {{ t("dhcp_editor.service.enabled_yes") }}
+              </template>
+              <template #unchecked>
+                {{ t("dhcp_editor.service.enabled_no") }}
+              </template>
             </n-switch>
           </n-form-item>
 
           <n-grid :cols="5">
-            <n-form-item-gi :label="t('dhcp_editor.service.server_ip')" :span="5">
+            <n-form-item-gi
+              :label="t('dhcp_editor.service.server_ip')"
+              :span="5"
+            >
               <NewIpEdit
                 v-model:ip="server_ip_addr"
                 v-model:mask="network_mask"
                 :mask_max="30"
               ></NewIpEdit>
             </n-form-item-gi>
-            <n-form-item-gi :label="t('dhcp_editor.service.range_start')" :span="5">
+            <n-form-item-gi
+              :label="t('dhcp_editor.service.range_start')"
+              :span="5"
+            >
               <NewIpEdit
                 v-model:ip="service_config.config.ip_range_start"
               ></NewIpEdit>
             </n-form-item-gi>
-            <n-form-item-gi :label="t('dhcp_editor.service.range_end')" :span="5">
+            <n-form-item-gi
+              :label="t('dhcp_editor.service.range_end')"
+              :span="5"
+            >
               <NewIpEdit
                 v-model:ip="service_config.config.ip_range_end"
               ></NewIpEdit>

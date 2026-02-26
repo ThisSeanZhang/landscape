@@ -64,7 +64,8 @@ export default {
     ip_validation: "是否过滤非法结果",
     ip_validation_desc_1:
       "开启后将会过滤 DNS 服务端返回的所有私有地址, 回环地址等.",
-    ip_validation_desc_2: "假设你使用你自定的上游, 如果有返回私有地址, 就不要开启",
+    ip_validation_desc_2:
+      "假设你使用你自定的上游, 如果有返回私有地址, 就不要开启",
     ip_validation_on: "过滤",
     ip_validation_off: "不过滤",
     preset_fill: "点击按钮可以使用预设填充",

@@ -16,7 +16,8 @@ export default {
   assigned: {
     hostname: "主机名",
     mac_addr: "Mac 地址",
-    mac_tip_1: "ARP 扫描出的 IP 可能会出现 ARP 代应答，导致 IP 不同 Mac 却重复的情况",
+    mac_tip_1:
+      "ARP 扫描出的 IP 可能会出现 ARP 代应答，导致 IP 不同 Mac 却重复的情况",
     assigned_ip: "分配 IP",
     latest_request: "最近一次请求时间",
     lease_left: "剩余租期时间 (s)",

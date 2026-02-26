@@ -141,10 +141,18 @@ const matchTypeOptions = [
       :cols="5"
     >
       <n-grid :cols="5">
-        <n-form-item-gi :label="t('geo_editor.common.enable')" :offset="0" :span="1">
+        <n-form-item-gi
+          :label="t('geo_editor.common.enable')"
+          :offset="0"
+          :span="1"
+        >
           <n-switch v-model:value="rule.enable">
-            <template #checked> {{ t("geo_editor.common.enabled_yes") }} </template>
-            <template #unchecked> {{ t("geo_editor.common.enabled_no") }} </template>
+            <template #checked>
+              {{ t("geo_editor.common.enabled_yes") }}
+            </template>
+            <template #unchecked>
+              {{ t("geo_editor.common.enabled_no") }}
+            </template>
           </n-switch>
         </n-form-item-gi>
         <n-form-item-gi :label="t('geo_editor.common.source_type')" :span="4">
@@ -152,8 +160,12 @@ const matchTypeOptions = [
             v-model:value="sourceType"
             @update:value="switchSourceType"
           >
-            <n-radio value="url">{{ t("geo_editor.common.source_url_mode") }}</n-radio>
-            <n-radio value="direct">{{ t("geo_editor.common.source_direct_mode") }}</n-radio>
+            <n-radio value="url">{{
+              t("geo_editor.common.source_url_mode")
+            }}</n-radio>
+            <n-radio value="direct">{{
+              t("geo_editor.common.source_direct_mode")
+            }}</n-radio>
           </n-radio-group>
         </n-form-item-gi>
 
@@ -174,7 +186,10 @@ const matchTypeOptions = [
 
         <!-- Direct mode -->
         <template v-if="rule.source.t === 'direct'">
-          <n-form-item-gi :label="t('geo_editor.geo_site.domain_list')" :span="5">
+          <n-form-item-gi
+            :label="t('geo_editor.geo_site.domain_list')"
+            :span="5"
+          >
             <n-flex vertical style="width: 100%">
               <n-card
                 v-for="(item, idx) in rule.source.data"
@@ -241,7 +256,9 @@ const matchTypeOptions = [
     </n-form>
     <template #footer>
       <n-flex justify="space-between">
-        <n-button @click="show = false">{{ t("geo_editor.common.cancel") }}</n-button>
+        <n-button @click="show = false">{{
+          t("geo_editor.common.cancel")
+        }}</n-button>
         <n-button
           :loading="commit_spin"
           @click="saveRule"

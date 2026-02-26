@@ -149,7 +149,11 @@ async function append_import_rules() {
         <n-form-item-gi :label="t('flow.wan_rule_edit.priority')" :span="2">
           <n-input-number v-model:value="rule.index" clearable />
         </n-form-item-gi>
-        <n-form-item-gi :label="t('flow.wan_rule_edit.enabled')" :offset="1" :span="1">
+        <n-form-item-gi
+          :label="t('flow.wan_rule_edit.enabled')"
+          :offset="1"
+          :span="1"
+        >
           <n-switch v-model:value="rule.enable">
             <template #checked> {{ t("flow.common.enable") }} </template>
             <template #unchecked> {{ t("flow.common.disable") }} </template>
@@ -162,7 +166,10 @@ async function append_import_rules() {
           </n-switch>
         </n-form-item-gi> -->
 
-        <n-form-item-gi :span="5" :label="t('flow.wan_rule_edit.egress_select')">
+        <n-form-item-gi
+          :span="5"
+          :label="t('flow.wan_rule_edit.egress_select')"
+        >
           <FlowMarkEdit v-model:mark="rule.mark"></FlowMarkEdit>
         </n-form-item-gi>
       </n-grid>
@@ -241,7 +248,9 @@ async function append_import_rules() {
     </n-form>
     <template #footer>
       <n-flex justify="space-between">
-        <n-button @click="show = false">{{ t("flow.wan_rule_edit.cancel") }}</n-button>
+        <n-button @click="show = false">{{
+          t("flow.wan_rule_edit.cancel")
+        }}</n-button>
         <n-button
           :loading="commit_spin"
           @click="saveRule"

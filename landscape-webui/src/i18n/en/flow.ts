@@ -26,8 +26,10 @@ export default {
     entry_rules_desc_1: "Matched clients will use this flow",
     entry_rules_desc_2: "Priority: IP > MAC",
     entry_rules_desc_3: "Avoid overlap between rules across different flows",
-    target_rules_title: "Flow Egress Rules (currently only one egress is supported)",
-    target_rules_desc_1: "Matched clients will send traffic through this egress by default",
+    target_rules_title:
+      "Flow Egress Rules (currently only one egress is supported)",
+    target_rules_desc_1:
+      "Matched clients will send traffic through this egress by default",
     target_rules_desc_2:
       "unless DNS rules or destination IP rules redirect traffic to another flow",
   },

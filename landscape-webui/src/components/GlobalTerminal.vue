@@ -417,9 +417,9 @@ function onAfterLeave() {
                     </template>
                     {{ t("misc.terminal.disconnect_confirm") }}
                   </n-popconfirm>
-                  <n-button type="primary" size="small" @click="reconnect"
-                    >{{ t("misc.terminal.reconnect") }}</n-button
-                  >
+                  <n-button type="primary" size="small" @click="reconnect">{{
+                    t("misc.terminal.reconnect")
+                  }}</n-button>
                 </n-flex>
               </n-flex>
             </n-popover>
@@ -546,15 +546,18 @@ function onAfterLeave() {
                   :show-icon="false"
                 >
                   <template #trigger>
-                    <n-button type="error" size="small" :disabled="!isConnected"
+                    <n-button
+                      type="error"
+                      size="small"
+                      :disabled="!isConnected"
                       >{{ t("misc.terminal.disconnect") }}</n-button
                     >
                   </template>
                   {{ t("misc.terminal.disconnect_confirm") }}
                 </n-popconfirm>
-                <n-button type="primary" size="small" @click="reconnect"
-                  >{{ t("misc.terminal.reconnect") }}</n-button
-                >
+                <n-button type="primary" size="small" @click="reconnect">{{
+                  t("misc.terminal.reconnect")
+                }}</n-button>
               </n-flex>
             </n-flex>
           </n-popover>

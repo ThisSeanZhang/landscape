@@ -60,7 +60,8 @@ const ipRule = {
   trigger: ["input", "blur"],
   validator(_: unknown, value: string) {
     if (!value) return new Error(t("dns_editor.redirect_edit.err_ip_required"));
-    if (!isIP(value)) return new Error(t("dns_editor.redirect_edit.err_ip_invalid"));
+    if (!isIP(value))
+      return new Error(t("dns_editor.redirect_edit.err_ip_invalid"));
     return true;
   },
 };
@@ -70,7 +71,9 @@ const rules = {
     trigger: ["blur", "change"],
     validator(_: unknown, value: any[]) {
       if (!value || value.length === 0) {
-        return new Error(t("dns_editor.redirect_edit.err_match_rules_required"));
+        return new Error(
+          t("dns_editor.redirect_edit.err_match_rules_required"),
+        );
       }
       return true;
     },
@@ -160,8 +163,12 @@ async function append_import_rules() {
         </n-form-item-gi> -->
         <n-form-item-gi :label="t('dns_editor.redirect_edit.enable')" :span="1">
           <n-switch v-model:value="rule.enable">
-            <template #checked> {{ t("dns_editor.redirect_edit.enabled_yes") }} </template>
-            <template #unchecked> {{ t("dns_editor.redirect_edit.enabled_no") }} </template>
+            <template #checked>
+              {{ t("dns_editor.redirect_edit.enabled_yes") }}
+            </template>
+            <template #unchecked>
+              {{ t("dns_editor.redirect_edit.enabled_no") }}
+            </template>
           </n-switch>
         </n-form-item-gi>
 
@@ -169,7 +176,10 @@ async function append_import_rules() {
           <n-input v-model:value="rule.remark" />
         </n-form-item-gi>
 
-        <n-form-item-gi :span="2" :label="t('dns_editor.redirect_edit.apply_flows')">
+        <n-form-item-gi
+          :span="2"
+          :label="t('dns_editor.redirect_edit.apply_flows')"
+        >
           <n-select
             multiple
             v-model:value="rule.apply_flows"
@@ -222,7 +232,9 @@ async function append_import_rules() {
               :wrap="false"
               @click.stop
             >
-              <n-flex> {{ t("dns_editor.redirect_edit.match_rules_header") }} </n-flex>
+              <n-flex>
+                {{ t("dns_editor.redirect_edit.match_rules_header") }}
+              </n-flex>
               <n-flex>
                 <!-- 不确定为什么点击 label 会触发第一个按钮, 所以放置一个不可见的按钮 -->
                 <button
@@ -259,7 +271,9 @@ async function append_import_rules() {
     </n-form>
     <template #footer>
       <n-flex justify="space-between">
-        <n-button @click="show = false">{{ t("dns_editor.redirect_edit.cancel") }}</n-button>
+        <n-button @click="show = false">{{
+          t("dns_editor.redirect_edit.cancel")
+        }}</n-button>
         <n-button
           :loading="commit_spin"
           @click="saveRule"

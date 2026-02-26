@@ -55,7 +55,8 @@ const ipRule = {
   trigger: ["input", "blur"],
   validator(_: unknown, value: string) {
     if (!value) return new Error(t("dns_editor.upstream_edit.err_ip_required"));
-    if (!isIP(value)) return new Error(t("dns_editor.upstream_edit.err_ip_invalid"));
+    if (!isIP(value))
+      return new Error(t("dns_editor.upstream_edit.err_ip_invalid"));
     return true;
   },
 };
@@ -193,14 +194,19 @@ async function import_rules() {
           </template>
 
           <n-switch v-model:value="rule.enable_ip_validation">
-            <template #checked> {{ t("dns_editor.upstream_edit.ip_validation_on") }} </template>
+            <template #checked>
+              {{ t("dns_editor.upstream_edit.ip_validation_on") }}
+            </template>
             <template #unchecked>
               {{ t("dns_editor.upstream_edit.ip_validation_off") }}
             </template>
           </n-switch>
         </n-form-item-gi>
 
-        <n-form-item-gi :span="8" :label="t('dns_editor.upstream_edit.preset_fill')">
+        <n-form-item-gi
+          :span="8"
+          :label="t('dns_editor.upstream_edit.preset_fill')"
+        >
           <DefaultUpstream v-model:rule="rule"></DefaultUpstream>
         </n-form-item-gi>
 
@@ -296,7 +302,9 @@ async function import_rules() {
     </n-form>
     <template #footer>
       <n-flex justify="space-between">
-        <n-button @click="show = false">{{ t("dns_editor.upstream_edit.cancel") }}</n-button>
+        <n-button @click="show = false">{{
+          t("dns_editor.upstream_edit.cancel")
+        }}</n-button>
         <n-button
           :loading="commit_spin"
           @click="saveRule"

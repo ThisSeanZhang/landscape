@@ -27,8 +27,7 @@ export default {
     entry_rules_desc_3: "注意不同 Flow 的规则是否重叠",
     target_rules_title: "分流出口规则 ( 当前仅支持一个出口 )",
     target_rules_desc_1: "符合规则的客户端将会默认使用这个出口进行发送流量",
-    target_rules_desc_2:
-      "除非 `DNS 规则` 或者 `目标 IP` 将流量重定向到别的流",
+    target_rules_desc_2: "除非 `DNS 规则` 或者 `目标 IP` 将流量重定向到别的流",
   },
   trace: {
     title: "分流追踪",
@@ -63,7 +62,8 @@ export default {
     no_cache: "无缓存",
     cache_consistent: "一致",
     cache_inconsistent: "不一致",
-    cache_mismatch_alert: "缓存与当前配置计算的结果不一致，可能需要清理路由缓存。",
+    cache_mismatch_alert:
+      "缓存与当前配置计算的结果不一致，可能需要清理路由缓存。",
     dns_no_records: "DNS 解析未返回任何记录",
     cache_cleared: "缓存已清除",
     action_keep_going: "KeepGoing (继续)",

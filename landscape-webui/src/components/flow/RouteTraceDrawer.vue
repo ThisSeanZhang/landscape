@@ -273,11 +273,22 @@ function actionTagType(
               depth="3"
               style="font-size: 12px"
             >
-              IPv4: {{ srcIpv4 ? frontEndStore.MASK_INFO(srcIpv4) : t("flow.trace.none") }}
+              IPv4:
+              {{
+                srcIpv4
+                  ? frontEndStore.MASK_INFO(srcIpv4)
+                  : t("flow.trace.none")
+              }}
               &nbsp; IPv6:
-              {{ srcIpv6 ? frontEndStore.MASK_INFO(srcIpv6) : t("flow.trace.none") }}
+              {{
+                srcIpv6
+                  ? frontEndStore.MASK_INFO(srcIpv6)
+                  : t("flow.trace.none")
+              }}
               &nbsp; MAC:
-              {{ srcMac ? frontEndStore.MASK_INFO(srcMac) : t("flow.trace.none") }}
+              {{
+                srcMac ? frontEndStore.MASK_INFO(srcMac) : t("flow.trace.none")
+              }}
             </n-text>
             <n-button
               type="primary"
@@ -309,14 +320,18 @@ function actionTagType(
                 v-if="matchResult.flow_id_by_mac != null"
                 :flow_id="matchResult.flow_id_by_mac"
               />
-              <n-tag v-else type="default" size="small">{{ t("flow.trace.no_match") }}</n-tag>
+              <n-tag v-else type="default" size="small">{{
+                t("flow.trace.no_match")
+              }}</n-tag>
             </n-descriptions-item>
             <n-descriptions-item :label="t('flow.trace.ip_match')">
               <FlowExhibit
                 v-if="matchResult.flow_id_by_ip != null"
                 :flow_id="matchResult.flow_id_by_ip"
               />
-              <n-tag v-else type="default" size="small">{{ t("flow.trace.no_match") }}</n-tag>
+              <n-tag v-else type="default" size="small">{{
+                t("flow.trace.no_match")
+              }}</n-tag>
             </n-descriptions-item>
             <n-descriptions-item :label="t('flow.trace.effective_flow')">
               <n-tag
@@ -338,7 +353,9 @@ function actionTagType(
                 <n-radio-button value="domain">{{
                   t("flow.trace.query_domain")
                 }}</n-radio-button>
-                <n-radio-button value="ip">{{ t("flow.trace.query_ip") }}</n-radio-button>
+                <n-radio-button value="ip">{{
+                  t("flow.trace.query_ip")
+                }}</n-radio-button>
               </n-radio-group>
 
               <!-- Domain mode -->
@@ -433,7 +450,9 @@ function actionTagType(
                     </n-text>
                   </n-flex>
                 </template>
-                <n-tag v-else type="default" size="small">{{ t("flow.trace.no_match") }}</n-tag>
+                <n-tag v-else type="default" size="small">{{
+                  t("flow.trace.no_match")
+                }}</n-tag>
               </n-descriptions-item>
               <n-descriptions-item :label="t('flow.trace.dns_rule')">
                 <template v-if="v.dns_rule_match">
@@ -453,7 +472,9 @@ function actionTagType(
                     </n-text>
                   </n-flex>
                 </template>
-                <n-tag v-else type="default" size="small">{{ t("flow.trace.no_match") }}</n-tag>
+                <n-tag v-else type="default" size="small">{{
+                  t("flow.trace.no_match")
+                }}</n-tag>
               </n-descriptions-item>
               <n-descriptions-item :label="t('flow.trace.final_action')">
                 <n-tag
@@ -473,7 +494,9 @@ function actionTagType(
               </n-descriptions-item>
               <n-descriptions-item :label="t('flow.trace.cache')">
                 <template v-if="!v.has_cache">
-                  <n-tag type="default" size="small">{{ t("flow.trace.no_cache") }}</n-tag>
+                  <n-tag type="default" size="small">{{
+                    t("flow.trace.no_cache")
+                  }}</n-tag>
                 </template>
                 <template v-else>
                   <n-tag

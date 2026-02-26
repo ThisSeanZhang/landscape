@@ -165,12 +165,18 @@ function quickBind(ip: string, mac?: string, hostname?: string | null) {
               </template>
             </Notice>
           </th>
-          <th class="assign-head">{{ t("dhcp_editor.assigned.assigned_ip") }}</th>
-          <th class="assign-head">{{ t("dhcp_editor.assigned.latest_request") }}</th>
+          <th class="assign-head">
+            {{ t("dhcp_editor.assigned.assigned_ip") }}
+          </th>
+          <th class="assign-head">
+            {{ t("dhcp_editor.assigned.latest_request") }}
+          </th>
           <th class="assign-head">
             <Notice>
               {{ t("dhcp_editor.assigned.lease_left") }}
-              <template #msg>{{ t("dhcp_editor.assigned.expire_time") }}</template>
+              <template #msg>{{
+                t("dhcp_editor.assigned.expire_time")
+              }}</template>
             </Notice>
           </th>
           <th class="assign-head" style="width: 168px">
@@ -251,7 +257,9 @@ function quickBind(ip: string, mac?: string, hostname?: string | null) {
         </tr>
 
         <tr v-for="item in not_current_round_ips">
-          <td class="not-assign-item">{{ t("dhcp_editor.assigned.unknown") }}</td>
+          <td class="not-assign-item">
+            {{ t("dhcp_editor.assigned.unknown") }}
+          </td>
           <td class="not-assign-item">
             <DHCPMacExhibit :macs="arp_ip_map.get(item.ip)?.macs">
             </DHCPMacExhibit>
@@ -259,8 +267,12 @@ function quickBind(ip: string, mac?: string, hostname?: string | null) {
           <td class="not-assign-item">
             {{ frontEndStore.MASK_INFO(item.ip) }}
           </td>
-          <td class="not-assign-item">{{ t("dhcp_editor.assigned.unknown") }}</td>
-          <td class="not-assign-item">{{ t("dhcp_editor.assigned.unknown") }}</td>
+          <td class="not-assign-item">
+            {{ t("dhcp_editor.assigned.unknown") }}
+          </td>
+          <td class="not-assign-item">
+            {{ t("dhcp_editor.assigned.unknown") }}
+          </td>
           <td class="not-assign-item">
             <OnlineStatus
               :ip_status="arp_ip_map.get(item.ip)?.ip_status"

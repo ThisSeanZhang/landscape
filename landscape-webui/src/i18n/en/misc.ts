@@ -4,7 +4,7 @@ export default {
     intro:
       "Select CPU cores for network queue processing. Choosing multiple cores can distribute load and improve performance.",
     hint_prefix: "Tip:",
-    hint_suffix: "Click \"Set to 0\" below to restore defaults",
+    hint_suffix: 'Click "Set to 0" below to restore defaults',
     tx_title: "Transmit Queue (XPS) Core Selection",
     rx_title: "Receive Queue (RPS) Core Selection",
     set_zero: "Set to 0",

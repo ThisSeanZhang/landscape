@@ -4,7 +4,8 @@ export default {
     enabled: "Enabled",
     allowed_protocols: "Allowed Protocols",
     select_all: "Select all",
-    port_mappings_label: "Port mappings (must not overlap with NAT mapped ports)",
+    port_mappings_label:
+      "Port mappings (must not overlap with NAT mapped ports)",
     public_port_placeholder: "Public port",
     private_port_placeholder: "LAN port",
     delete: "Delete",

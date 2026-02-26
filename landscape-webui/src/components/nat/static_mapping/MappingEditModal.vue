@@ -288,7 +288,9 @@ const mappingPortsRule = {
           <n-form-item-gi :label="t('nat.mapping.enabled')" :span="2">
             <n-switch v-model:value="rule.enable">
               <template #checked> {{ t("nat.mapping.enabled_yes") }} </template>
-              <template #unchecked> {{ t("nat.mapping.enabled_no") }} </template>
+              <template #unchecked>
+                {{ t("nat.mapping.enabled_no") }}
+              </template>
             </n-switch>
           </n-form-item-gi>
 

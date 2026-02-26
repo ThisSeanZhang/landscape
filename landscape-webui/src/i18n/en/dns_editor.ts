@@ -87,7 +87,8 @@ export default {
     err_ips_required: "At least one DNS server IP is required",
     err_domain_required: "Upstream domain is required",
     err_domain_invalid: "Please enter a valid domain",
-    warn_default_endpoint: "Empty value will fallback to `/dns-query` (warning can be ignored)",
+    warn_default_endpoint:
+      "Empty value will fallback to `/dns-query` (warning can be ignored)",
     warn_empty_endpoint_fill: "URL is empty, fallback to `/dns-query`",
   },
   upstream_card: {

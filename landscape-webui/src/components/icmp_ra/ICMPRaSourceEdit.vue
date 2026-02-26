@@ -300,8 +300,12 @@ async function commit() {
 
     <template #footer>
       <n-flex justify="space-between">
-        <n-button @click="show = false">{{ t("icmp_ra.source_edit.cancel") }}</n-button>
-        <n-button @click="commit" type="success">{{ t("icmp_ra.source_edit.confirm") }}</n-button>
+        <n-button @click="show = false">{{
+          t("icmp_ra.source_edit.cancel")
+        }}</n-button>
+        <n-button @click="commit" type="success">{{
+          t("icmp_ra.source_edit.confirm")
+        }}</n-button>
       </n-flex>
     </template>
   </n-modal>

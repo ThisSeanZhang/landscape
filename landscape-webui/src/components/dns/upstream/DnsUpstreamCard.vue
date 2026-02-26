@@ -42,7 +42,11 @@ const domain = computed(() => {
   <n-card size="small">
     <template #header>
       <n-ellipsis>
-        {{ rule.remark !== "" ? rule.remark : t("dns_editor.upstream_card.no_remark") }}
+        {{
+          rule.remark !== ""
+            ? rule.remark
+            : t("dns_editor.upstream_card.no_remark")
+        }}
       </n-ellipsis>
     </template>
     <n-descriptions
@@ -60,11 +64,17 @@ const domain = computed(() => {
         {{ frontEndStore.MASK_INFO(rule.port?.toString()) }}
       </n-descriptions-item>
 
-      <n-descriptions-item span="2" :label="t('dns_editor.upstream_card.domain_addr')">
+      <n-descriptions-item
+        span="2"
+        :label="t('dns_editor.upstream_card.domain_addr')"
+      >
         {{ domain }}
       </n-descriptions-item>
 
-      <n-descriptions-item span="2" :label="t('dns_editor.upstream_card.upstream_ip')">
+      <n-descriptions-item
+        span="2"
+        :label="t('dns_editor.upstream_card.upstream_ip')"
+      >
         <n-scrollbar style="height: 90px">
           <n-flex>
             <n-flex v-for="ip in rule.ips">

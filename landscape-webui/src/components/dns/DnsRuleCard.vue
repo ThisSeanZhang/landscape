@@ -52,14 +52,20 @@ const title_name = computed(() =>
           <UpstreamExhibit :rule_id="rule.upstream_id"></UpstreamExhibit>
           <!-- {{ rule.resolve_mode }} -->
         </n-descriptions-item>
-        <n-descriptions-item :label="t('dns_editor.rule_card.match_rules')" span="2">
+        <n-descriptions-item
+          :label="t('dns_editor.rule_card.match_rules')"
+          span="2"
+        >
           <n-scrollbar v-if="rule.source.length > 0" style="max-height: 120px">
             <n-flex>
               <RuleSourceExhibit v-for="item in rule.source" :source="item">
               </RuleSourceExhibit>
             </n-flex>
           </n-scrollbar>
-          <n-empty v-else :description="t('dns_editor.rule_card.no_match_rules')">
+          <n-empty
+            v-else
+            :description="t('dns_editor.rule_card.no_match_rules')"
+          >
             <template #icon>
               <n-icon>
                 <CheckmarkOutline />

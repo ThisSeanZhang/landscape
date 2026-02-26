@@ -1,9 +1,10 @@
 export default {
   iface_cpu_balance: {
     title: "配置网卡软负载",
-    intro: "选择要处理网络队列的 CPU 核心。选中多个核心可以将负载分布到不同核心，提升性能。",
+    intro:
+      "选择要处理网络队列的 CPU 核心。选中多个核心可以将负载分布到不同核心，提升性能。",
     hint_prefix: "提示：",
-    hint_suffix: "可以点击下方的\"设置为0\"恢复默认",
+    hint_suffix: '可以点击下方的"设置为0"恢复默认',
     tx_title: "发送队列 (XPS) 核心选择",
     rx_title: "接收队列 (RPS) 核心选择",
     set_zero: "设置为0",

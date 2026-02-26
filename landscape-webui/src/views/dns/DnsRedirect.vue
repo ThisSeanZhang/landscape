@@ -20,7 +20,9 @@ const show_edit_modal = ref(false);
 <template>
   <n-flex vertical style="flex: 1">
     <n-flex>
-      <n-button @click="show_edit_modal = true">{{ t("common.create") }}</n-button>
+      <n-button @click="show_edit_modal = true">{{
+        t("common.create")
+      }}</n-button>
     </n-flex>
     <n-flex>
       <n-grid x-gap="12" y-gap="10" cols="1 600:2 1200:3 1600:3">

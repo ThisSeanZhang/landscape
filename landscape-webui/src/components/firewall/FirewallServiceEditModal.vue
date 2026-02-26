@@ -63,8 +63,12 @@ async function save_config() {
       <n-form :model="service_config">
         <n-form-item :label="t('firewall.service_edit.enable')">
           <n-switch v-model:value="service_config.enable">
-            <template #checked> {{ t("firewall.service_edit.enabled_yes") }} </template>
-            <template #unchecked> {{ t("firewall.service_edit.enabled_no") }} </template>
+            <template #checked>
+              {{ t("firewall.service_edit.enabled_yes") }}
+            </template>
+            <template #unchecked>
+              {{ t("firewall.service_edit.enabled_no") }}
+            </template>
           </n-switch>
         </n-form-item>
       </n-form>
