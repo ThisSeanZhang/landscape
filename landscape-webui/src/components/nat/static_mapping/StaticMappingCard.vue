@@ -5,12 +5,14 @@ import { ref } from "vue";
 import { ArrowRight, Edit, TrashCan } from "@vicons/carbon";
 import { useFrontEndStore } from "@/stores/front_end_config";
 import { useEnrolledDeviceStore } from "@/stores/enrolled_device";
+import { useI18n } from "vue-i18n";
 
 const enrolledDeviceStore = useEnrolledDeviceStore();
 import { usePreferenceStore } from "@/stores/preference";
 const prefStore = usePreferenceStore();
 
 const frontEndStore = useFrontEndStore();
+const { t } = useI18n();
 const rule = defineModel<StaticNatMappingConfig>("rule", { required: true });
 
 const show_edit_modal = ref(false);
@@ -80,16 +82,16 @@ function formatIPv6(ip: string | null): string {
             type="warning"
             @click.stop="openEditModal()"
           >
-            编辑
+            {{ t("common.edit") }}
           </n-button>
 
           <n-popconfirm @positive-click="del()">
             <template #trigger>
               <n-button secondary size="small" type="error" @click.stop>
-                删除
+                {{ t("common.delete") }}
               </n-button>
             </template>
-            确定删除吗
+            {{ t("common.confirm_delete") }}
           </n-popconfirm>
         </n-flex>
       </template>

@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
+import { useI18n } from "vue-i18n";
 import DnsRuleEditModal from "@/components/dns/DnsRuleEditModal.vue";
 import { DnsRule } from "@/lib/dns";
 import { delDnsRules } from "@landscape-router/types/api/dns-rules/dns-rules";
 import { CheckmarkOutline } from "@vicons/carbon";
 import FlowMarkExhibit from "@/components/flow/FlowMarkExhibit.vue";
 const rule = defineModel<DnsRule>("rule", { required: true });
+const { t } = useI18n();
 
 const show_edit_modal = ref(false);
 
@@ -20,7 +22,7 @@ async function del() {
 
 const title_name = computed(() =>
   rule.value.name == null || rule.value.name === ""
-    ? `无备注`
+    ? t("common.no_remark")
     : rule.value.name,
 );
 </script>
@@ -75,16 +77,16 @@ const title_name = computed(() =>
             secondary
             @click="show_edit_modal = true"
           >
-            编辑
+            {{ t("common.edit") }}
           </n-button>
 
           <n-popconfirm @positive-click="del()">
             <template #trigger>
               <n-button size="small" type="error" secondary @click="">
-                删除
+                {{ t("common.delete") }}
               </n-button>
             </template>
-            确定删除吗
+            {{ t("common.confirm_delete") }}
           </n-popconfirm>
         </n-flex>
       </template>

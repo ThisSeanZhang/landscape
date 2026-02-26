@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
+import { useI18n } from "vue-i18n";
 import type { FlowConfig } from "@landscape-router/types/api/schemas";
 import FlowEditModal from "@/components/flow/FlowEditModal.vue";
 import DnsRuleDrawer from "@/components/dns/DnsRuleDrawer.vue";
@@ -10,6 +11,7 @@ import FlowEntryRuleExhibit from "@/components/flow/FlowEntryRuleExhibit.vue";
 import { Docker, NetworkWired } from "@vicons/fa";
 
 const frontEndStore = useFrontEndStore();
+const { t } = useI18n();
 
 interface Props {
   config: FlowConfig;
@@ -38,7 +40,7 @@ async function del() {
 }
 const title_name = computed(() =>
   props.config.remark == null || props.config.remark === ""
-    ? `无备注`
+    ? t("common.no_remark")
     : frontEndStore.MASK_INFO(props.config.remark),
 );
 </script>
@@ -60,7 +62,7 @@ const title_name = computed(() =>
     <template v-if="show_action" #header-extra>
       <n-flex>
         <n-button secondary @click="show_edit = true" size="small">
-          修改配置
+          {{ t("common.edit") }}
         </n-button>
         <n-button secondary @click="show_dns_rule = true" size="small">
           DNS
@@ -70,9 +72,11 @@ const title_name = computed(() =>
         </n-button>
         <n-popconfirm @positive-click="del">
           <template #trigger>
-            <n-button type="error" secondary size="small">删除</n-button>
+            <n-button type="error" secondary size="small">{{
+              t("common.delete")
+            }}</n-button>
           </template>
-          确定删除吗?
+          {{ t("common.confirm_delete") }}
         </n-popconfirm>
       </n-flex>
     </template>

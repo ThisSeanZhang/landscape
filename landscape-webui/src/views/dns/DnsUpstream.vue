@@ -2,8 +2,10 @@
 import { get_dns_upstreams } from "@/api/dns_rule/upstream";
 import type { DnsUpstreamConfig } from "@landscape-router/types/api/schemas";
 import { ref, onMounted } from "vue";
+import { useI18n } from "vue-i18n";
 
 const redirect_rules = ref<DnsUpstreamConfig[]>([]);
+const { t } = useI18n();
 
 async function refresh_rules() {
   redirect_rules.value = await get_dns_upstreams();
@@ -18,7 +20,7 @@ const show_edit_modal = ref(false);
 <template>
   <n-flex vertical style="flex: 1">
     <n-flex>
-      <n-button @click="show_edit_modal = true">创建</n-button>
+      <n-button @click="show_edit_modal = true">{{ t("common.create") }}</n-button>
     </n-flex>
     <n-flex>
       <n-grid x-gap="12" y-gap="10" cols="1 600:2 1200:3 1600:3">

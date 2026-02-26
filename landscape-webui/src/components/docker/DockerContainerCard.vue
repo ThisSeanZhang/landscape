@@ -15,9 +15,11 @@ import { useDockerStore } from "@/stores/status_docker";
 import { useFrontEndStore } from "@/stores/front_end_config";
 import { mask_string } from "@/lib/common";
 import { usePreferenceStore } from "@/stores/preference";
+import { useI18n } from "vue-i18n";
 const prefStore = usePreferenceStore();
 
 const frontEndStore = useFrontEndStore();
+const { t } = useI18n();
 const props = defineProps<{
   container: DockerContainerSummary;
 }>();
@@ -137,7 +139,7 @@ const tags = computed(() => {
               stop
             </n-button>
           </template>
-          确定停止吗
+          {{ t("common.confirm_stop") }}
         </n-popconfirm>
 
         <n-popconfirm @positive-click="remove">
@@ -152,7 +154,7 @@ const tags = computed(() => {
               remove
             </n-button>
           </template>
-          确定删除吗
+          {{ t("common.confirm_delete") }}
         </n-popconfirm>
       </n-flex>
     </template>
@@ -167,7 +169,7 @@ const tags = computed(() => {
         {{ props.container.State }}
       </n-descriptions-item>
 
-      <n-descriptions-item label="创建时间">
+      <n-descriptions-item :label="t('common.created_at')">
         <n-time
           v-if="time !== undefined"
           :time="time"

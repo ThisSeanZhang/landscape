@@ -5,8 +5,10 @@ import FirewallBlacklistEditModal from "./FirewallBlacklistEditModal.vue";
 import BlacklistSourceExhibit from "./BlacklistSourceExhibit.vue";
 import { delete_firewall_blacklist } from "@/api/firewall_blacklist";
 import type { FirewallBlacklistConfig } from "@landscape-router/types/api/schemas";
+import { useI18n } from "vue-i18n";
 
 const rule = defineModel<FirewallBlacklistConfig>("rule", { required: true });
+const { t } = useI18n();
 
 const show_edit_modal = ref(false);
 
@@ -21,7 +23,7 @@ async function del() {
 
 const title_name = computed(() =>
   rule.value.remark == null || rule.value.remark === ""
-    ? "无备注"
+    ? t("common.no_remark")
     : rule.value.remark,
 );
 </script>
@@ -57,13 +59,15 @@ const title_name = computed(() =>
             secondary
             @click="show_edit_modal = true"
           >
-            编辑
+            {{ t("common.edit") }}
           </n-button>
           <n-popconfirm @positive-click="del()">
             <template #trigger>
-              <n-button size="small" type="error" secondary> 删除 </n-button>
+              <n-button size="small" type="error" secondary>
+                {{ t("common.delete") }}
+              </n-button>
             </template>
-            确定删除吗
+            {{ t("common.confirm_delete") }}
           </n-popconfirm>
         </n-flex>
       </template>
