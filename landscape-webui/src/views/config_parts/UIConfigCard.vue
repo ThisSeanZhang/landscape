@@ -8,7 +8,7 @@ const message = useMessage();
 const { t } = useI18n();
 
 const languageOptions = [
-  { label: "简体中文", value: "zh-CN" },
+  { label: "简体中文", value: "zh" },
   { label: "English", value: "en" },
 ];
 

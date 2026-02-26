@@ -11,6 +11,7 @@ import {
 import type { DNSRedirectRule } from "@landscape-router/types/api/schemas";
 import { get_dns_redirect, push_dns_redirect } from "@/api/dns_rule/redirect";
 import { getFlowRules } from "@landscape-router/types/api/flow-rules/flow-rules";
+import { useI18n } from "vue-i18n";
 
 type Props = {
   rule_id: string | null;
@@ -19,6 +20,7 @@ type Props = {
 const props = defineProps<Props>();
 
 const message = useMessage();
+const { t } = useI18n();
 
 const emit = defineEmits(["refresh"]);
 
@@ -57,8 +59,8 @@ const formRef = ref();
 const ipRule = {
   trigger: ["input", "blur"],
   validator(_: unknown, value: string) {
-    if (!value) return new Error("IP 地址不能为空");
-    if (!isIP(value)) return new Error("请输入有效的 IPv4 或 IPv6 地址");
+    if (!value) return new Error(t("dns_editor.redirect_edit.err_ip_required"));
+    if (!isIP(value)) return new Error(t("dns_editor.redirect_edit.err_ip_invalid"));
     return true;
   },
 };
@@ -68,7 +70,7 @@ const rules = {
     trigger: ["blur", "change"],
     validator(_: unknown, value: any[]) {
       if (!value || value.length === 0) {
-        return new Error("至少需要添加一条匹配域名规则");
+        return new Error(t("dns_editor.redirect_edit.err_match_rules_required"));
       }
       return true;
     },
@@ -97,7 +99,7 @@ const flow_options = computed(() => {
     label: e.remark ? `${e.flow_id} - ${e.remark}` : e.flow_id,
   }));
   result.unshift({
-    label: "默认流",
+    label: t("dns_editor.redirect_edit.default_flow"),
     value: 0,
   });
   return result;
@@ -139,7 +141,7 @@ async function append_import_rules() {
     style="width: 600px"
     class="custom-card"
     preset="card"
-    title="DNS 重定向配置"
+    :title="t('dns_editor.redirect_edit.title')"
     @after-enter="enter"
     :bordered="false"
   >
@@ -156,23 +158,23 @@ async function append_import_rules() {
         <!-- <n-form-item-gi label="优先级" :span="2">
           <n-input-number v-model:value="rule.index" clearable />
         </n-form-item-gi> -->
-        <n-form-item-gi label="启用" :span="1">
+        <n-form-item-gi :label="t('dns_editor.redirect_edit.enable')" :span="1">
           <n-switch v-model:value="rule.enable">
-            <template #checked> 启用 </template>
-            <template #unchecked> 禁用 </template>
+            <template #checked> {{ t("dns_editor.redirect_edit.enabled_yes") }} </template>
+            <template #unchecked> {{ t("dns_editor.redirect_edit.enabled_no") }} </template>
           </n-switch>
         </n-form-item-gi>
 
-        <n-form-item-gi :span="2" label="备注">
+        <n-form-item-gi :span="2" :label="t('dns_editor.redirect_edit.remark')">
           <n-input v-model:value="rule.remark" />
         </n-form-item-gi>
 
-        <n-form-item-gi :span="2" label="选择应用的 Flow, 为空时全部 Flow 应用">
+        <n-form-item-gi :span="2" :label="t('dns_editor.redirect_edit.apply_flows')">
           <n-select
             multiple
             v-model:value="rule.apply_flows"
             filterable
-            placeholder="选择应用的流 ID"
+            :placeholder="t('dns_editor.redirect_edit.apply_flows_placeholder')"
             :options="flow_options"
             :loading="flow_search_loading"
             clearable
@@ -181,10 +183,14 @@ async function append_import_rules() {
           />
         </n-form-item-gi>
 
-        <n-form-item-gi :span="2" label="返回的重定向结果" path="result_info">
+        <n-form-item-gi
+          :span="2"
+          :label="t('dns_editor.redirect_edit.redirect_result')"
+          path="result_info"
+        >
           <n-dynamic-input
             v-model:value="rule.result_info"
-            placeholder="请输入 IP"
+            :placeholder="t('dns_editor.redirect_edit.enter_ip')"
             #="{ index }"
           >
             <n-form-item
@@ -197,14 +203,18 @@ async function append_import_rules() {
             >
               <n-input
                 v-model:value="rule.result_info[index]"
-                placeholder="请输入 IPv4 或 IPv6 地址"
+                :placeholder="t('dns_editor.redirect_edit.enter_ip_v46')"
                 @keydown.enter.prevent
               />
             </n-form-item>
           </n-dynamic-input>
         </n-form-item-gi>
 
-        <n-form-item-gi :span="2" label="匹配域名规则" path="match_rules">
+        <n-form-item-gi
+          :span="2"
+          :label="t('dns_editor.redirect_edit.match_rules')"
+          path="match_rules"
+        >
           <template #label>
             <n-flex
               align="center"
@@ -212,7 +222,7 @@ async function append_import_rules() {
               :wrap="false"
               @click.stop
             >
-              <n-flex> 处理域名匹配规则 </n-flex>
+              <n-flex> {{ t("dns_editor.redirect_edit.match_rules_header") }} </n-flex>
               <n-flex>
                 <!-- 不确定为什么点击 label 会触发第一个按钮, 所以放置一个不可见的按钮 -->
                 <button
@@ -226,17 +236,17 @@ async function append_import_rules() {
                 ></button>
 
                 <n-button :focusable="false" size="tiny" @click="export_config">
-                  复制
+                  {{ t("dns_editor.redirect_edit.copy") }}
                 </n-button>
                 <n-button :focusable="false" size="tiny" @click="import_rules">
-                  替换粘贴
+                  {{ t("dns_editor.redirect_edit.paste_replace") }}
                 </n-button>
                 <n-button
                   :focusable="false"
                   size="tiny"
                   @click="append_import_rules"
                 >
-                  增量粘贴
+                  {{ t("dns_editor.redirect_edit.paste_append") }}
                 </n-button>
               </n-flex>
             </n-flex>
@@ -249,13 +259,13 @@ async function append_import_rules() {
     </n-form>
     <template #footer>
       <n-flex justify="space-between">
-        <n-button @click="show = false">取消</n-button>
+        <n-button @click="show = false">{{ t("dns_editor.redirect_edit.cancel") }}</n-button>
         <n-button
           :loading="commit_spin"
           @click="saveRule"
           :disabled="!isModified"
         >
-          保存
+          {{ t("dns_editor.redirect_edit.save") }}
         </n-button>
       </n-flex>
     </template>

@@ -4,6 +4,12 @@ import sysinfo from "./sysinfo";
 import config from "./config";
 import error from "./error";
 import errors from "./errors";
+import enrolled_device from "./enrolled_device";
+import flow from "./flow";
+import nat from "./nat";
+import dns_editor from "./dns_editor";
+import firewall from "./firewall";
+import icmp_ra from "./icmp_ra";
 
 export default {
   docker_divider: "Docker Containers",
@@ -16,6 +22,12 @@ export default {
   config,
   error,
   errors,
+  enrolled_device,
+  flow,
+  nat,
+  dns_editor,
+  firewall,
+  icmp_ra,
   common: {
     private_mode: "Private Mode",
   },

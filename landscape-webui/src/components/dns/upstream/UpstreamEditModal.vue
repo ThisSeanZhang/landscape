@@ -10,6 +10,7 @@ import {
   copy_context_to_clipboard,
   read_context_from_clipboard,
 } from "@/lib/common";
+import { useI18n } from "vue-i18n";
 
 type Props = {
   rule_id: string | null;
@@ -18,6 +19,7 @@ type Props = {
 const props = defineProps<Props>();
 
 const message = useMessage();
+const { t } = useI18n();
 
 const emit = defineEmits(["refresh"]);
 
@@ -52,8 +54,8 @@ const formRef = ref();
 const ipRule = {
   trigger: ["input", "blur"],
   validator(_: unknown, value: string) {
-    if (!value) return new Error("IP 地址不能为空");
-    if (!isIP(value)) return new Error("请输入有效的 IPv4 或 IPv6 地址");
+    if (!value) return new Error(t("dns_editor.upstream_edit.err_ip_required"));
+    if (!isIP(value)) return new Error(t("dns_editor.upstream_edit.err_ip_invalid"));
     return true;
   },
 };
@@ -63,7 +65,7 @@ const rules = {
     trigger: ["blur", "change"],
     validator(_: unknown, value: string[]) {
       if (!value || value.length === 0) {
-        return new Error("至少需要添加一个返回的 IP 地址");
+        return new Error(t("dns_editor.upstream_edit.err_ips_required"));
       }
       return true;
     },
@@ -76,12 +78,12 @@ const rules = {
         return true; // Plaintext 不校验 domain
       }
       if (!value || value.trim() === "") {
-        return new Error("上游域名不能为空");
+        return new Error(t("dns_editor.upstream_edit.err_domain_required"));
       }
       // 可选：简单域名正则
       const domainRegex = /^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
       if (!domainRegex.test(value)) {
-        return new Error("请输入有效的域名");
+        return new Error(t("dns_editor.upstream_edit.err_domain_invalid"));
       }
       return true;
     },
@@ -92,7 +94,7 @@ const rules = {
     level: "warning",
     validator(_: unknown, value: string) {
       if (!value || value.trim() === "") {
-        return new Error("未指定, 将使用 `/dns-query` 警告可忽略");
+        return new Error(t("dns_editor.upstream_edit.warn_default_endpoint"));
       }
       return true;
     },
@@ -109,7 +111,7 @@ async function saveRule() {
         (!rule.value.mode.http_endpoint ||
           rule.value.mode.http_endpoint.trim() === "")
       ) {
-        message.warning("未填写 URL, 将使用 `/dns-query`");
+        message.warning(t("dns_editor.upstream_edit.warn_empty_endpoint_fill"));
         rule.value.mode.http_endpoint = null as any;
       }
 
@@ -148,17 +150,17 @@ async function import_rules() {
     style="width: 600px"
     class="custom-card"
     preset="card"
-    title="DNS 上游配置"
+    :title="t('dns_editor.upstream_edit.title')"
     @after-enter="enter"
     :bordered="false"
   >
     <template #header-extra>
       <n-flex>
         <n-button :focusable="false" @click="export_config" size="tiny" strong>
-          复制
+          {{ t("dns_editor.upstream_edit.copy") }}
         </n-button>
         <n-button :focusable="false" @click="import_rules" size="tiny" strong>
-          粘贴
+          {{ t("dns_editor.upstream_edit.paste") }}
         </n-button>
       </n-flex>
     </template>
@@ -172,9 +174,9 @@ async function import_rules() {
       :cols="8"
     >
       <n-grid :cols="8">
-        <n-form-item-gi :span="4" label="备注">
+        <n-form-item-gi :span="4" :label="t('dns_editor.upstream_edit.remark')">
           <n-input
-            placeholder="DNS 规则中进行选择时与其他区分"
+            :placeholder="t('dns_editor.upstream_edit.remark_placeholder')"
             v-model:value="rule.remark"
           />
         </n-form-item-gi>
@@ -182,25 +184,31 @@ async function import_rules() {
         <n-form-item-gi :offset="1" :span="2">
           <template #label>
             <Notice>
-              是否过滤非法结果
+              {{ t("dns_editor.upstream_edit.ip_validation") }}
               <template #msg>
-                开启后将会过滤 DNS 服务端返回的所有私有地址, 回环地址等. <br />
-                假设你使用你自定的上游, 如果有返回私有地址, 就不要开启
+                {{ t("dns_editor.upstream_edit.ip_validation_desc_1") }} <br />
+                {{ t("dns_editor.upstream_edit.ip_validation_desc_2") }}
               </template>
             </Notice>
           </template>
 
           <n-switch v-model:value="rule.enable_ip_validation">
-            <template #checked> 过滤 </template>
-            <template #unchecked> 不过滤 </template>
+            <template #checked> {{ t("dns_editor.upstream_edit.ip_validation_on") }} </template>
+            <template #unchecked>
+              {{ t("dns_editor.upstream_edit.ip_validation_off") }}
+            </template>
           </n-switch>
         </n-form-item-gi>
 
-        <n-form-item-gi :span="8" label="点击按钮可以使用预设填充">
+        <n-form-item-gi :span="8" :label="t('dns_editor.upstream_edit.preset_fill')">
           <DefaultUpstream v-model:rule="rule"></DefaultUpstream>
         </n-form-item-gi>
 
-        <n-form-item-gi :span="4" label="上游请求模式" path="mode.domain">
+        <n-form-item-gi
+          :span="4"
+          :label="t('dns_editor.upstream_edit.request_mode')"
+          path="mode.domain"
+        >
           <n-radio-group
             v-model:value="rule.mode.t"
             name="dns_server_upstream_mode"
@@ -222,12 +230,12 @@ async function import_rules() {
           /> -->
         </n-form-item-gi>
 
-        <n-form-item-gi :span="4" label="端口">
+        <n-form-item-gi :span="4" :label="t('dns_editor.upstream_edit.port')">
           <n-input-number
             style="flex: 1"
             :min="1"
             :max="65535"
-            placeholder="DNS 规则中进行选择时用到"
+            :placeholder="t('dns_editor.upstream_edit.port_placeholder')"
             v-model:value="rule.port"
           />
         </n-form-item-gi>
@@ -235,11 +243,11 @@ async function import_rules() {
         <n-form-item-gi
           :span="4"
           v-if="rule.mode.t !== DnsUpstreamModeTsEnum.Plaintext"
-          label="域名"
+          :label="t('dns_editor.upstream_edit.domain')"
         >
           <n-input
             style="width: 230px"
-            placeholder="无需包含 https 以及尾部 /dns-query"
+            :placeholder="t('dns_editor.upstream_edit.domain_placeholder')"
             v-model:value="rule.mode.domain"
           >
           </n-input>
@@ -249,19 +257,23 @@ async function import_rules() {
           :span="4"
           path="mode.http_endpoint"
           v-if="rule.mode.t === DnsUpstreamModeTsEnum.Https"
-          label="URL"
+          :label="t('dns_editor.upstream_edit.url')"
         >
           <n-input
-            placeholder="例如: /dns-query"
+            :placeholder="t('dns_editor.upstream_edit.url_placeholder')"
             v-model:value="rule.mode.http_endpoint"
           >
           </n-input>
         </n-form-item-gi>
 
-        <n-form-item-gi :span="8" label="DNS 服务器 IP" path="ips">
+        <n-form-item-gi
+          :span="8"
+          :label="t('dns_editor.upstream_edit.server_ips')"
+          path="ips"
+        >
           <n-dynamic-input
             v-model:value="rule.ips"
-            placeholder="请输入 IP"
+            :placeholder="t('dns_editor.upstream_edit.enter_ip')"
             #="{ index }"
           >
             <n-form-item
@@ -274,7 +286,7 @@ async function import_rules() {
             >
               <n-input
                 v-model:value="rule.ips[index]"
-                placeholder="请输入 IPv4 或 IPv6 地址"
+                :placeholder="t('dns_editor.upstream_edit.enter_ip_v46')"
                 @keydown.enter.prevent
               />
             </n-form-item>
@@ -284,13 +296,13 @@ async function import_rules() {
     </n-form>
     <template #footer>
       <n-flex justify="space-between">
-        <n-button @click="show = false">取消</n-button>
+        <n-button @click="show = false">{{ t("dns_editor.upstream_edit.cancel") }}</n-button>
         <n-button
           :loading="commit_spin"
           @click="saveRule"
           :disabled="!isModified"
         >
-          保存
+          {{ t("dns_editor.upstream_edit.save") }}
         </n-button>
       </n-flex>
     </template>

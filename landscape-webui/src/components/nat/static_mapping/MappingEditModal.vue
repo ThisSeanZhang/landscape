@@ -9,6 +9,7 @@ import {
 } from "@/api/static_nat_mapping";
 import { useEnrolledDeviceStore } from "@/stores/enrolled_device";
 import { ChangeCatalog } from "@vicons/carbon";
+import { useI18n } from "vue-i18n";
 
 type Props = {
   rule_id?: string;
@@ -18,6 +19,7 @@ type Props = {
 const props = defineProps<Props>();
 
 const message = useMessage();
+const { t } = useI18n();
 
 const emit = defineEmits(["refresh"]);
 
@@ -50,7 +52,7 @@ const rules = {
     {
       pattern:
         /^(25[0-5]|2[0-4]\d|1\d{2}|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d{2}|[1-9]?\d)){3}$/,
-      message: "请输入合法的 IPv4 地址",
+      message: t("nat.mapping.validation_ipv4"),
       trigger: ["blur", "input"],
     },
   ],
@@ -58,7 +60,7 @@ const rules = {
     {
       pattern:
         /^(([0-9a-fA-F]{1,4}:){7}([0-9a-fA-F]{1,4}|:)|(([0-9a-fA-F]{1,4}:){1,7}:)|(([0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4})|(([0-9a-fA-F]{1,4}:){1,5}(:[0-9a-fA-F]{1,4}){1,2})|(([0-9a-fA-F]{1,4}:){1,4}(:[0-9a-fA-F]{1,4}){1,3})|(([0-9a-fA-F]{1,4}:){1,3}(:[0-9a-fA-F]{1,4}){1,4})|(([0-9a-fA-F]{1,4}:){1,2}(:[0-9a-fA-F]{1,4}){1,5})|([0-9a-fA-F]{1,4}:)((:[0-9a-fA-F]{1,4}){1,6})|:((:[0-9a-fA-F]{1,4}){1,7}|:)|fe80:(:[0-9a-fA-F]{0,4}){0,4}%[0-9a-zA-Z]{1,}|::(ffff(:0{1,4}){0,1}:){0,1}((25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])\.){3,3}(25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])|([0-9a-fA-F]{1,4}:){1,4}:((25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])\.){3,3}(25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9]))$/,
-      message: "请输入合法的 IPv6 地址",
+      message: t("nat.mapping.validation_ipv6"),
       trigger: ["blur", "input"],
     },
   ],
@@ -123,14 +125,14 @@ const formRef = ref();
 async function saveRule() {
   if (rule.value) {
     try {
-      // 验证表单
+      // Validate form
       await formRef.value?.validate();
 
       if (
         rule.value.ipv4_l4_protocol.length === 0 &&
         rule.value.ipv6_l4_protocol.length === 0
       ) {
-        message.error("请至少选择一个协议");
+        message.error(t("nat.mapping.select_protocol_required"));
         return;
       }
 
@@ -161,7 +163,7 @@ async function saveRule() {
 //   } catch (e) {}
 // }
 
-const allProtocols = [6, 17]; // 可选协议
+const allProtocols = [6, 17]; // Supported protocols
 const totalSelectable = allProtocols.length * 2; // 4
 
 const allSelected = computed({
@@ -194,12 +196,12 @@ const isIndeterminate = computed(() => {
   return selected.length > 0 && selected.length < totalSelectable;
 });
 
-// 端口验证规则
+// Port validation rules
 const wanPortRule = {
   trigger: ["blur", "input"],
   validator(ruleItem: any, value: number) {
-    if (!value && value !== 0) return new Error("不能为空");
-    if (value <= 0 || value > 65535) return new Error("范围 1-65535");
+    if (!value && value !== 0) return new Error(t("nat.mapping.required"));
+    if (value <= 0 || value > 65535) return new Error(t("nat.mapping.range"));
     return true;
   },
 };
@@ -207,27 +209,27 @@ const wanPortRule = {
 const lanPortRule = {
   trigger: ["blur", "input"],
   validator(ruleItem: any, value: number) {
-    if (!value && value !== 0) return new Error("不能为空");
-    if (value <= 0 || value > 65535) return new Error("范围 1-65535");
+    if (!value && value !== 0) return new Error(t("nat.mapping.required"));
+    if (value <= 0 || value > 65535) return new Error(t("nat.mapping.range"));
     return true;
   },
 };
 
-// 列表整体验证规则（用于显示汇总错误）
+// Aggregate list validation rule (for summarized error output)
 const mappingPortsRule = {
-  trigger: ["change"], // 监听变化
+  trigger: ["change"], // Listen for list changes
   validator(ruleItem: any, value: any[]) {
-    // value 可能为空（如果是 path 绑定问题），或者未触发更新
-    // 实际上 n-form-item 绑定 path="mapping_pair_ports" 会自动传入该数组
+    // Value can be empty if path binding fails or update is not triggered yet.
+    // n-form-item with path="mapping_pair_ports" should provide this array.
 
-    // 如果没有值，尝试直接从 rule 获取
+    // Fallback to current model when validator value is empty.
     const ports = value || (rule.value ? rule.value.mapping_pair_ports : []);
     if (!ports || ports.length === 0) return true;
 
-    // 收集所有错误
+    // Collect all validation issues.
     const errors: string[] = [];
 
-    // 检查是否有无效值
+    // Check invalid ranges/empty values.
     const hasInvalid = ports.some(
       (p: any) =>
         !p.wan_port ||
@@ -237,9 +239,9 @@ const mappingPortsRule = {
         p.lan_port <= 0 ||
         p.lan_port > 65535,
     );
-    if (hasInvalid) errors.push("存在无效的端口值");
+    if (hasInvalid) errors.push(t("nat.mapping.invalid_port_value"));
 
-    // 检查重复
+    // Check duplicate mappings.
     const wanPorts = ports.map((p: any) => p.wan_port);
     const hasDuplicateWan = wanPorts.length !== new Set(wanPorts).size;
 
@@ -247,11 +249,11 @@ const mappingPortsRule = {
     const hasDuplicateLan = lanPorts.length !== new Set(lanPorts).size;
 
     if (hasDuplicateWan || hasDuplicateLan) {
-      errors.push("存在重复的端口配置");
+      errors.push(t("nat.mapping.duplicate_port_config"));
     }
 
     if (errors.length > 0) {
-      return new Error(errors.join("，"));
+      return new Error(errors.join(", "));
     }
 
     return true;
@@ -265,7 +267,7 @@ const mappingPortsRule = {
     style="width: 600px"
     class="custom-card"
     preset="card"
-    title="规则编辑"
+    :title="t('nat.mapping.edit_title')"
     @after-enter="enter"
     :bordered="false"
   >
@@ -280,24 +282,24 @@ const mappingPortsRule = {
         :cols="5"
       >
         <n-grid :cols="2">
-          <!-- <n-form-item-gi label="优先级" :span="2">
+          <!-- <n-form-item-gi label="Priority" :span="2">
           <n-input-number v-model:value="rule.index" clearable />
         </n-form-item-gi> -->
-          <n-form-item-gi label="启用" :span="2">
+          <n-form-item-gi :label="t('nat.mapping.enabled')" :span="2">
             <n-switch v-model:value="rule.enable">
-              <template #checked> 启用 </template>
-              <template #unchecked> 禁用 </template>
+              <template #checked> {{ t("nat.mapping.enabled_yes") }} </template>
+              <template #unchecked> {{ t("nat.mapping.enabled_no") }} </template>
             </n-switch>
           </n-form-item-gi>
 
-          <n-form-item-gi label="允许协议" :span="2">
+          <n-form-item-gi :label="t('nat.mapping.allowed_protocols')" :span="2">
             <n-flex justify="space-between" style="flex: 1">
               <n-flex>
                 <n-checkbox
                   v-model:checked="allSelected"
                   :indeterminate="isIndeterminate"
                 >
-                  全选
+                  {{ t("nat.mapping.select_all") }}
                 </n-checkbox>
               </n-flex>
               <n-flex>
@@ -319,7 +321,7 @@ const mappingPortsRule = {
             </n-flex>
           </n-form-item-gi>
 
-          <!-- <n-form-item-gi :span="5" label="进入的 wan">
+          <!-- <n-form-item-gi :span="5" label="Ingress WAN">
           <n-radio-group v-model:value="rule.wan_iface_name" name="filter">
             <n-radio-button
               v-for="opt in get_dns_filter_options()"
@@ -330,10 +332,10 @@ const mappingPortsRule = {
           </n-radio-group>
         </n-form-item-gi> -->
 
-          <!-- 端口映射对列表 -->
+          <!-- Port mapping pair list -->
           <n-form-item-gi
             :span="2"
-            label="端口映射 (不能与 NAT 映射端口重叠)"
+            :label="t('nat.mapping.port_mappings_label')"
             path="mapping_pair_ports"
             :rule="mappingPortsRule"
           >
@@ -360,7 +362,7 @@ const mappingPortsRule = {
                     v-model:value="pair.wan_port"
                     :min="1"
                     :max="65535"
-                    placeholder="开放端口"
+                    :placeholder="t('nat.mapping.public_port_placeholder')"
                     style="width: 100%"
                   />
                 </n-form-item>
@@ -376,7 +378,7 @@ const mappingPortsRule = {
                     v-model:value="pair.lan_port"
                     :min="1"
                     :max="65535"
-                    placeholder="内网端口"
+                    :placeholder="t('nat.mapping.private_port_placeholder')"
                     style="width: 100%"
                   />
                 </n-form-item>
@@ -387,16 +389,20 @@ const mappingPortsRule = {
                   secondary
                   type="error"
                 >
-                  删除
+                  {{ t("nat.mapping.delete") }}
                 </n-button>
               </n-flex>
               <n-button @click="addPortPair" dashed block size="small">
-                + 添加端口对
+                {{ t("nat.mapping.add_port_pair") }}
               </n-button>
             </n-flex>
           </n-form-item-gi>
 
-          <n-form-item-gi :span="2" path="lan_ipv4" label="内网目标 IPv4">
+          <n-form-item-gi
+            :span="2"
+            path="lan_ipv4"
+            :label="t('nat.mapping.target_ipv4')"
+          >
             <n-flex :wrap="false" style="flex: 1">
               <n-button @click="ipv4SelectMode = !ipv4SelectMode">
                 <n-icon><ChangeCatalog /></n-icon>
@@ -410,27 +416,31 @@ const mappingPortsRule = {
                     if (rule) rule.lan_ipv4 = v;
                   }
                 "
-                placeholder="选择已登记设备"
+                :placeholder="t('nat.mapping.select_device_placeholder')"
                 clearable
                 filterable
                 style="flex: 1"
               />
               <n-input
                 v-else
-                placeholder="如果开放的是路由的端口，那么就设置为 0.0.0.0 不映射留空即可"
+                :placeholder="t('nat.mapping.target_ipv4_hint')"
                 v-model:value="rule.lan_ipv4"
               />
             </n-flex>
           </n-form-item-gi>
 
-          <n-form-item-gi :span="2" path="lan_ipv6" label="内网目标 IPv6">
+          <n-form-item-gi
+            :span="2"
+            path="lan_ipv6"
+            :label="t('nat.mapping.target_ipv6')"
+          >
             <n-input
-              placeholder="如果开放的是路由的端口，那么就设置为 :: 不映射留空即可"
+              :placeholder="t('nat.mapping.target_ipv6_hint')"
               v-model:value="rule.lan_ipv6"
             />
           </n-form-item-gi>
 
-          <n-form-item-gi :span="2" label="备注">
+          <n-form-item-gi :span="2" :label="t('nat.mapping.remark')">
             <n-input v-model:value="rule.remark" type="textarea" />
           </n-form-item-gi>
         </n-grid>
@@ -439,13 +449,13 @@ const mappingPortsRule = {
 
     <template #footer>
       <n-flex justify="space-between">
-        <n-button @click="show = false">取消</n-button>
+        <n-button @click="show = false">{{ t("nat.mapping.cancel") }}</n-button>
         <n-button
           :loading="commit_spin"
           @click="saveRule"
           :disabled="!isModified"
         >
-          保存
+          {{ t("nat.mapping.save") }}
         </n-button>
       </n-flex>
     </template>

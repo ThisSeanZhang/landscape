@@ -3,9 +3,11 @@ import { get_all_ipv6pd_status } from "@/api/service_ipv6pd";
 import { ServiceStatus } from "@/lib/services";
 import type { IPV6RaConfigSource } from "@landscape-router/types/api/schemas";
 import { computed, ref } from "vue";
+import { useI18n } from "vue-i18n";
 
 const show = defineModel<boolean>("show", { required: true });
 const source = defineModel<IPV6RaConfigSource>("source");
+const { t } = useI18n();
 
 const edit_source = ref<IPV6RaConfigSource>();
 
@@ -72,7 +74,7 @@ async function commit() {
   if (edit_source.value) {
     if (edit_source.value.t == "pd") {
       if (edit_source.value.depend_iface.trim() == "") {
-        window.$message.error("未选择 PD 网卡");
+        window.$message.error(t("icmp_ra.source_edit.pd_iface_required"));
         return;
       }
     }
@@ -88,7 +90,7 @@ async function commit() {
     v-model:show="show"
     class="custom-card"
     preset="card"
-    title="前缀来源编辑"
+    :title="t('icmp_ra.source_edit.title')"
     size="small"
     :bordered="false"
     @after-enter="enter"
@@ -101,8 +103,16 @@ async function commit() {
         name="prefix-source"
         size="small"
       >
-        <n-radio-button :key="'static'" :value="'static'" label="静态前缀" />
-        <n-radio-button :key="'pd'" :value="'pd'" label="IPv6 PD" />
+        <n-radio-button
+          :key="'static'"
+          :value="'static'"
+          :label="t('icmp_ra.source_edit.mode_static')"
+        />
+        <n-radio-button
+          :key="'pd'"
+          :value="'pd'"
+          :label="t('icmp_ra.source_edit.mode_pd')"
+        />
       </n-radio-group>
     </template>
     <n-flex v-if="edit_source">
@@ -115,12 +125,12 @@ async function commit() {
       >
         <n-form-item-gi
           span="4 m:4 l:4"
-          label="所关联的网卡 (须对应网卡开启 DHCPv6-PD)"
+          :label="t('icmp_ra.source_edit.depend_iface')"
         >
           <n-select
             v-model:value="edit_source.depend_iface"
             filterable
-            placeholder="选择进行前缀申请的网卡"
+            :placeholder="t('icmp_ra.source_edit.depend_iface_placeholder')"
             :options="ipv6_pd_options"
             :loading="loading_search_ipv6pd"
             clearable
@@ -138,11 +148,11 @@ async function commit() {
         <n-form-item-gi span="2 m:2 l:2">
           <template #label>
             <Notice>
-              子网索引
+              {{ t("icmp_ra.source_edit.subnet_index") }}
               <template #msg>
-                应用与内网的子网索引 <br />
-                由于 NPT 的实现原因 <br />
-                子网索引在同一个 LAN 中不可重复
+                {{ t("icmp_ra.source_edit.subnet_index_desc_1") }} <br />
+                {{ t("icmp_ra.source_edit.subnet_index_desc_2") }} <br />
+                {{ t("icmp_ra.source_edit.subnet_index_desc_3") }}
               </template>
             </Notice>
           </template>
@@ -157,8 +167,10 @@ async function commit() {
         <n-form-item-gi span="2 m:2 l:2">
           <template #label>
             <Notice>
-              子网前缀长度
-              <template #msg> 如遇问题可尝试设置 64 </template>
+              {{ t("icmp_ra.source_edit.subnet_prefix_len") }}
+              <template #msg>
+                {{ t("icmp_ra.source_edit.subnet_prefix_len_desc") }}
+              </template>
             </Notice>
           </template>
           <n-input-number
@@ -173,10 +185,10 @@ async function commit() {
         <n-form-item-gi span="2 m:2 l:2">
           <template #label>
             <Notice>
-              IP 首选状态时间 (s)
+              {{ t("icmp_ra.source_edit.preferred_lifetime") }}
               <template #msg>
-                主机会优先使用在首选时间内的 IP<br />
-                相对于超过首选时间但是未超过 有效时间 的 IP
+                {{ t("icmp_ra.source_edit.preferred_lifetime_desc_1") }}<br />
+                {{ t("icmp_ra.source_edit.preferred_lifetime_desc_2") }}
               </template>
             </Notice>
           </template>
@@ -186,7 +198,10 @@ async function commit() {
             clearable
           />
         </n-form-item-gi>
-        <n-form-item-gi span="2 m:2 l:2" label="IP 有效状态时间 (s)">
+        <n-form-item-gi
+          span="2 m:2 l:2"
+          :label="t('icmp_ra.source_edit.valid_lifetime')"
+        >
           <n-input-number
             style="flex: 1"
             v-model:value="edit_source.ra_valid_lifetime"
@@ -198,17 +213,15 @@ async function commit() {
         <n-form-item-gi span="4 m:4 l:4">
           <template #label>
             <Notice>
-              基础前缀定义
+              {{ t("icmp_ra.source_edit.base_prefix") }}
               <template #msg>
-                注意! 最多只可自定义到 /60, 格式需要保持 ::xxx0, 因为低位 0
-                不可省略
+                {{ t("icmp_ra.source_edit.base_prefix_desc") }}
               </template>
             </Notice>
           </template>
           <n-flex style="flex: 1" vertical>
             <n-alert type="warning">
-              注意! 最多只可自定义到 /60, 格式需要保持 ::xxx0, 因为低位 0
-              不可省略
+              {{ t("icmp_ra.source_edit.base_prefix_desc") }}
             </n-alert>
             <n-input
               style="flex: 1"
@@ -221,11 +234,11 @@ async function commit() {
         <n-form-item-gi span="2 m:2 l:2">
           <template #label>
             <Notice>
-              子网索引
+              {{ t("icmp_ra.source_edit.subnet_index") }}
               <template #msg>
-                应用与内网的子网索引 <br />
-                由于 NPT 的实现原因 <br />
-                子网索引在同一个 LAN 中不可重复
+                {{ t("icmp_ra.source_edit.subnet_index_desc_1") }} <br />
+                {{ t("icmp_ra.source_edit.subnet_index_desc_2") }} <br />
+                {{ t("icmp_ra.source_edit.subnet_index_desc_3") }}
               </template>
             </Notice>
           </template>
@@ -241,8 +254,10 @@ async function commit() {
         <n-form-item-gi span="2 m:2 l:2">
           <template #label>
             <Notice>
-              子网前缀长度
-              <template #msg> 如遇问题可尝试设置 64 </template>
+              {{ t("icmp_ra.source_edit.subnet_prefix_len") }}
+              <template #msg>
+                {{ t("icmp_ra.source_edit.subnet_prefix_len_desc") }}
+              </template>
             </Notice>
           </template>
           <n-input-number
@@ -257,10 +272,10 @@ async function commit() {
         <n-form-item-gi span="2 m:2 l:2">
           <template #label>
             <Notice>
-              IP 首选状态时间 (s)
+              {{ t("icmp_ra.source_edit.preferred_lifetime") }}
               <template #msg>
-                主机会优先使用在首选时间内的 IP<br />
-                相对于超过首选时间但是未超过 有效时间 的 IP
+                {{ t("icmp_ra.source_edit.preferred_lifetime_desc_1") }}<br />
+                {{ t("icmp_ra.source_edit.preferred_lifetime_desc_2") }}
               </template>
             </Notice>
           </template>
@@ -270,7 +285,10 @@ async function commit() {
             clearable
           />
         </n-form-item-gi>
-        <n-form-item-gi span="2 m:2 l:2" label="IP 有效状态时间 (s)">
+        <n-form-item-gi
+          span="2 m:2 l:2"
+          :label="t('icmp_ra.source_edit.valid_lifetime')"
+        >
           <n-input-number
             style="flex: 1"
             v-model:value="edit_source.ra_valid_lifetime"
@@ -282,8 +300,8 @@ async function commit() {
 
     <template #footer>
       <n-flex justify="space-between">
-        <n-button @click="show = false">取消</n-button>
-        <n-button @click="commit" type="success">确定</n-button>
+        <n-button @click="show = false">{{ t("icmp_ra.source_edit.cancel") }}</n-button>
+        <n-button @click="commit" type="success">{{ t("icmp_ra.source_edit.confirm") }}</n-button>
       </n-flex>
     </template>
   </n-modal>

@@ -12,7 +12,7 @@ import { useThemeVars } from "naive-ui";
 import { useI18n } from "vue-i18n";
 
 const themeVars = useThemeVars();
-const { t } = useI18n();
+const { t, locale } = useI18n();
 
 interface Props {
   conn: ConnectKey;
@@ -82,16 +82,19 @@ const categories = computed(() =>
       (chartData.value[0]?.report_time || 0);
     if (span > 2 * 24 * 3600 * 1000) {
       return (
-        d.toLocaleDateString("zh-CN", { month: "2-digit", day: "2-digit" }) +
+        d.toLocaleDateString(locale.value || "zh-CN", {
+          month: "2-digit",
+          day: "2-digit",
+        }) +
         " " +
-        d.toLocaleTimeString("zh-CN", {
+        d.toLocaleTimeString(locale.value || "zh-CN", {
           hour: "2-digit",
           minute: "2-digit",
           hour12: false,
         })
       );
     }
-    return d.toLocaleTimeString("zh-CN", {
+    return d.toLocaleTimeString(locale.value || "zh-CN", {
       hour: "2-digit",
       minute: "2-digit",
       second: "2-digit",

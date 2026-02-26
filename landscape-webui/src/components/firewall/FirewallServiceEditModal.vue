@@ -8,8 +8,10 @@ import {
   update_firewall_config,
 } from "@/api/service_firewall";
 import { IfaceZoneType } from "@landscape-router/types/api/schemas";
+import { useI18n } from "vue-i18n";
 
 const firewallConfigStore = useFirewallConfigStore();
+const { t } = useI18n();
 const show_model = defineModel<boolean>("show", { required: true });
 const emit = defineEmits(["refresh"]);
 
@@ -52,24 +54,26 @@ async function save_config() {
   >
     <n-card
       style="width: 600px"
-      title="防火墙服务配置"
+      :title="t('firewall.service_edit.title')"
       :bordered="false"
       size="small"
       role="dialog"
       aria-modal="true"
     >
       <n-form :model="service_config">
-        <n-form-item label="是否启用">
+        <n-form-item :label="t('firewall.service_edit.enable')">
           <n-switch v-model:value="service_config.enable">
-            <template #checked> 启用 </template>
-            <template #unchecked> 禁用 </template>
+            <template #checked> {{ t("firewall.service_edit.enabled_yes") }} </template>
+            <template #unchecked> {{ t("firewall.service_edit.enabled_no") }} </template>
           </n-switch>
         </n-form-item>
       </n-form>
 
       <template #footer>
         <n-flex justify="end">
-          <n-button round type="primary" @click="save_config"> 更新 </n-button>
+          <n-button round type="primary" @click="save_config">
+            {{ t("firewall.service_edit.update") }}
+          </n-button>
         </n-flex>
       </template>
     </n-card>
