@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, watch, CSSProperties } from "vue";
+import { useI18n } from "vue-i18n";
 import {
   Terminal as TerminalIcon,
   Expand,
@@ -23,6 +24,7 @@ const HANDLE_SIZE = 8;
 // Store
 const ptyStore = usePtyStore();
 const { config, isConnected, keepAlive } = storeToRefs(ptyStore);
+const { t } = useI18n();
 
 // Terminal instance
 const drawerContentRef = ref<HTMLDivElement | null>(null);
@@ -360,7 +362,11 @@ function onAfterLeave() {
               :bordered="false"
               style="height: 18px; padding: 0 4px"
             >
-              {{ isConnected ? "Connected" : "Disconnected" }}
+              {{
+                isConnected
+                  ? t("misc.terminal.connected")
+                  : t("misc.terminal.disconnected")
+              }}
             </n-tag>
           </n-flex>
 
@@ -383,7 +389,7 @@ function onAfterLeave() {
                 style="padding: 4px; min-width: 200px"
               >
                 <n-flex justify="space-between" align="center">
-                  <span>Shell:</span>
+                  <span>{{ t("misc.terminal.shell") }}:</span>
                   <n-input
                     v-model:value="config.shell"
                     placeholder="bash"
@@ -392,7 +398,7 @@ function onAfterLeave() {
                   />
                 </n-flex>
                 <n-flex justify="space-between" align="center">
-                  <span>保持会话:</span>
+                  <span>{{ t("misc.terminal.keep_alive") }}:</span>
                   <n-switch v-model:value="keepAlive" size="small" />
                 </n-flex>
                 <n-divider style="margin: 4px 0" />
@@ -406,13 +412,13 @@ function onAfterLeave() {
                         type="error"
                         size="small"
                         :disabled="!isConnected"
-                        >断开</n-button
+                        >{{ t("misc.terminal.disconnect") }}</n-button
                       >
                     </template>
-                    确认断开连接?
+                    {{ t("misc.terminal.disconnect_confirm") }}
                   </n-popconfirm>
                   <n-button type="primary" size="small" @click="reconnect"
-                    >重连</n-button
+                    >{{ t("misc.terminal.reconnect") }}</n-button
                   >
                 </n-flex>
               </n-flex>
@@ -435,7 +441,9 @@ function onAfterLeave() {
                 </n-button>
               </template>
               {{
-                ptyStore.dockPosition === "bottom" ? "切换到右侧" : "切换到底部"
+                ptyStore.dockPosition === "bottom"
+                  ? t("misc.terminal.switch_to_right")
+                  : t("misc.terminal.switch_to_bottom")
               }}
             </n-tooltip>
 
@@ -451,7 +459,7 @@ function onAfterLeave() {
                   <template #icon><n-icon :component="PushOutline" /></template>
                 </n-button>
               </template>
-              停靠模式
+              {{ t("misc.terminal.dock_mode") }}
             </n-tooltip>
 
             <n-divider vertical style="margin: 0 4px" />
@@ -492,7 +500,11 @@ function onAfterLeave() {
             :bordered="false"
             style="height: 18px; padding: 0 4px"
           >
-            {{ isConnected ? "Connected" : "Disconnected" }}
+            {{
+              isConnected
+                ? t("misc.terminal.connected")
+                : t("misc.terminal.disconnected")
+            }}
           </n-tag>
         </n-flex>
 
@@ -515,7 +527,7 @@ function onAfterLeave() {
               style="padding: 4px; min-width: 200px"
             >
               <n-flex justify="space-between" align="center">
-                <span>Shell:</span>
+                <span>{{ t("misc.terminal.shell") }}:</span>
                 <n-input
                   v-model:value="config.shell"
                   placeholder="bash"
@@ -524,7 +536,7 @@ function onAfterLeave() {
                 />
               </n-flex>
               <n-flex justify="space-between" align="center">
-                <span>保持会话:</span>
+                <span>{{ t("misc.terminal.keep_alive") }}:</span>
                 <n-switch v-model:value="keepAlive" size="small" />
               </n-flex>
               <n-divider style="margin: 4px 0" />
@@ -535,13 +547,13 @@ function onAfterLeave() {
                 >
                   <template #trigger>
                     <n-button type="error" size="small" :disabled="!isConnected"
-                      >断开</n-button
+                      >{{ t("misc.terminal.disconnect") }}</n-button
                     >
                   </template>
-                  确认断开连接?
+                  {{ t("misc.terminal.disconnect_confirm") }}
                 </n-popconfirm>
                 <n-button type="primary" size="small" @click="reconnect"
-                  >重连</n-button
+                  >{{ t("misc.terminal.reconnect") }}</n-button
                 >
               </n-flex>
             </n-flex>
@@ -564,7 +576,9 @@ function onAfterLeave() {
               </n-button>
             </template>
             {{
-              ptyStore.dockPosition === "bottom" ? "切换到右侧" : "切换到底部"
+              ptyStore.dockPosition === "bottom"
+                ? t("misc.terminal.switch_to_right")
+                : t("misc.terminal.switch_to_bottom")
             }}
           </n-tooltip>
 
@@ -584,7 +598,7 @@ function onAfterLeave() {
                 /></template>
               </n-button>
             </template>
-            悬浮模式
+            {{ t("misc.terminal.float_mode") }}
           </n-tooltip>
 
           <n-divider vertical style="margin: 0 4px" />
