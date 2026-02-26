@@ -6,6 +6,7 @@ import { useThemeVars } from "naive-ui";
 
 import { ServiceStatusType, get_service_status_color } from "@/lib/services";
 import { useDockerStore } from "@/stores/status_docker";
+import { useI18n } from "vue-i18n";
 
 import DockerImageDrawer from "@/components/docker/image/DockerImageDrawer.vue";
 import { start_docker_service, stop_docker_service } from "@/api/docker";
@@ -13,6 +14,7 @@ import { start_docker_service, stop_docker_service } from "@/api/docker";
 const dockerStatus = useDockerStore();
 const themeVars = ref(useThemeVars());
 const show_image_drawer = ref(false);
+const { t } = useI18n();
 
 const is_down = computed(() => {
   return dockerStatus.docker_status.t == ServiceStatusType.Stop;
@@ -43,7 +45,7 @@ async function stop() {
           size="small"
           @click="show_image_drawer = true"
         >
-          镜像
+          {{ t("common.image") }}
         </n-button>
         <n-button :focusable="false" size="small" @click="start" v-if="is_down">
           开启
@@ -51,10 +53,10 @@ async function stop() {
         <n-popconfirm v-else @positive-click="stop">
           <template #trigger>
             <n-button :focusable="false" size="small" @click="">
-              关闭监听
+              {{ t("common.close_listener") }}
             </n-button>
           </template>
-          确定停止吗
+          {{ t("common.confirm_stop") }}
         </n-popconfirm>
       </n-flex>
     </template>

@@ -6,6 +6,8 @@ import {
 import type { ArpScanInfo, DHCPv4OfferInfo } from "@/api/service_dhcp_v4";
 import { info } from "console";
 import { computed, onMounted, ref } from "vue";
+import { useI18n } from "vue-i18n";
+const { t } = useI18n();
 
 onMounted(async () => {
   await get_info();
@@ -41,7 +43,9 @@ async function get_info() {
 <template>
   <n-flex vertical style="flex: 1">
     <n-flex>
-      <n-button :loading="loading" @click="get_info">刷新</n-button>
+      <n-button :loading="loading" @click="get_info">{{
+        t("common.refresh")
+      }}</n-button>
     </n-flex>
     <!-- {{ infos }} -->
     <n-flex v-if="infos.length > 0">

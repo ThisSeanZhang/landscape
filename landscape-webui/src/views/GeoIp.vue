@@ -4,8 +4,10 @@ import { sortGeoKeys } from "@/lib/geo_utils";
 import type { QueryGeoKey } from "@landscape-router/types/api/schemas";
 import { sleep } from "seemly";
 import { onMounted, ref } from "vue";
+import { useI18n } from "vue-i18n";
 
 const rules = ref<any>([]);
+const { t } = useI18n();
 
 onMounted(async () => {
   await refresh();
@@ -41,16 +43,16 @@ const show_geo_drawer_modal = ref(false);
     <n-flex :wrap="false">
       <!-- {{ filter }} -->
       <n-button @click="show_geo_drawer_modal = true">
-        IP 规则来源配置
+        {{ t("common.ip_rule_source_config") }}
       </n-button>
       <n-popconfirm
         :positive-button-props="{ loading: loading }"
         @positive-click="refresh_cache"
       >
         <template #trigger>
-          <n-button>强制刷新</n-button>
+          <n-button>{{ t("common.force_refresh") }}</n-button>
         </template>
-        强制刷新吗? 将会清空所有 key 并且重新下载. 可能会持续一段时间
+        {{ t("common.force_refresh_confirm_long") }}
       </n-popconfirm>
 
       <GeoIpKeySelect

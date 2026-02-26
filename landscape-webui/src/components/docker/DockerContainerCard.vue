@@ -160,7 +160,7 @@ const tags = computed(() => {
     </template>
 
     <n-descriptions :column="1" label-placement="left">
-      <n-descriptions-item label="镜像">
+      <n-descriptions-item :label="t('common.image')">
         <n-ellipsis style="max-width: 220px">
           {{ frontEndStore.MASK_INFO(props.container.Image) }}
         </n-ellipsis>

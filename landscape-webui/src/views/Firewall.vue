@@ -44,7 +44,11 @@ onMounted(async () => {
       </n-grid-item>
     </n-grid>
 
-    <n-empty v-else description="暂无黑名单规则" style="margin-top: 100px" />
+    <n-empty
+      v-else
+      :description="t('common.no_firewall_rules')"
+      style="margin-top: 100px"
+    />
 
     <FirewallBlacklistEditModal
       v-model:show="show_create_modal"
