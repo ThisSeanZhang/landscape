@@ -99,4 +99,12 @@ export default {
     delete: "删除",
     confirm_delete: "确定删除吗",
   },
+  rule_drawer: {
+    title_default: "编辑默认 DNS 规则",
+    title_flow: "编辑 Flow: {flow_id} DNS 规则",
+    add_rule: "增加规则",
+    export_clipboard: "导出规则至剪贴板",
+    import_clipboard: "从剪贴板导入规则",
+    confirm_import: "确定从剪贴板导入吗?",
+  },
 };

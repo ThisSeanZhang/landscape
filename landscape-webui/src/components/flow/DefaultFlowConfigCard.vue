@@ -4,8 +4,10 @@ import { ModelBuilder } from "@vicons/carbon";
 import DnsRuleDrawer from "@/components/dns/DnsRuleDrawer.vue";
 import RouteTraceDrawer from "@/components/flow/RouteTraceDrawer.vue";
 import { reset_cache } from "@/api/route/cache";
+import { useI18n } from "vue-i18n";
 
 const emit = defineEmits(["create-flow"]);
+const { t } = useI18n();
 
 const show_dns_rule = ref(false);
 const show_ip_rule = ref(false);
@@ -24,7 +26,7 @@ async function clear_route_cache() {
   <n-card
     style="min-height: 224px"
     size="small"
-    title="默认 Flow"
+    :title="t('flow.default_card.title')"
     :hoverable="true"
   >
     <template #header-extra>
@@ -33,15 +35,15 @@ async function clear_route_cache() {
           DNS
         </n-button>
         <n-button secondary @click="show_ip_rule = true" size="small">
-          目标 IP
+          {{ t("flow.default_card.target_ip") }}
         </n-button>
       </n-flex>
     </template>
 
     <n-empty>
       <n-flex vertical align="center">
-        <n-flex>未被其他 Flow 匹配的流量</n-flex>
-        <n-flex>将按默认 Flow 中的规则进行处理</n-flex>
+        <n-flex>{{ t("flow.default_card.unmatched_traffic") }}</n-flex>
+        <n-flex>{{ t("flow.default_card.process_by_default") }}</n-flex>
       </n-flex>
 
       <template #icon>
@@ -52,13 +54,13 @@ async function clear_route_cache() {
       <template #extra>
         <n-flex>
           <n-button @click="create_flow" size="small">
-            创建一个新 Flow
+            {{ t("flow.default_card.create_new") }}
           </n-button>
           <n-button @click="clear_route_cache" size="small">
-            清理路由缓存
+            {{ t("flow.default_card.clear_route_cache") }}
           </n-button>
           <n-button @click="show_route_trace = true" size="small">
-            分流追踪
+            {{ t("flow.default_card.trace") }}
           </n-button>
         </n-flex>
       </template>

@@ -4,9 +4,11 @@ import FirewallBlacklistEditModal from "@/components/firewall/FirewallBlacklistE
 import FirewallBlacklistCard from "@/components/firewall/FirewallBlacklistCard.vue";
 import type { FirewallBlacklistConfig } from "@landscape-router/types/api/schemas";
 import { onMounted, ref } from "vue";
+import { useI18n } from "vue-i18n";
 
 const configs = ref<FirewallBlacklistConfig[]>([]);
 const show_create_modal = ref(false);
+const { t } = useI18n();
 
 async function read_configs() {
   configs.value = await get_firewall_blacklists();
@@ -19,7 +21,7 @@ onMounted(async () => {
 <template>
   <n-flex vertical style="flex: 1; padding: 10px">
     <n-flex align="center">
-      <n-button @click="show_create_modal = true"> 创建 </n-button>
+      <n-button @click="show_create_modal = true">{{ t("common.create") }}</n-button>
       <n-text depth="3">
         当前配置为 IP 黑名单, 命中规则的 IP 将被阻止访问. ICMP 默认不放行.
       </n-text>

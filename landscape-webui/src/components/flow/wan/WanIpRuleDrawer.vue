@@ -12,7 +12,9 @@ import {
 } from "@/lib/common";
 
 import { useMessage } from "naive-ui";
+import { useI18n } from "vue-i18n";
 const message = useMessage();
+const { t } = useI18n();
 
 interface Props {
   flow_id?: number;
@@ -65,9 +67,9 @@ async function import_rules() {
 
 const title = computed(() => {
   if (props.flow_id === 0) {
-    return "编辑 默认 目标 IP 规则";
+    return t("flow.wan_rule_drawer.title_default");
   } else {
-    return `编辑 Flow: ${props.flow_id} 目标 IP 规则`;
+    return t("flow.wan_rule_drawer.title_flow", { flow_id: props.flow_id });
   }
 });
 </script>
@@ -82,16 +84,18 @@ const title = computed(() => {
       <n-flex style="height: 100%" vertical>
         <n-flex>
           <n-button style="flex: 1" @click="show_create_modal = true">
-            增加规则
+            {{ t("flow.wan_rule_drawer.add_rule") }}
           </n-button>
           <n-button style="flex: 1" @click="export_config">
-            导出规则至剪贴板
+            {{ t("flow.wan_rule_drawer.export_clipboard") }}
           </n-button>
           <n-popconfirm @positive-click="import_rules">
             <template #trigger>
-              <n-button style="flex: 1" @click=""> 从剪贴板导入规则 </n-button>
+              <n-button style="flex: 1" @click="">
+                {{ t("flow.wan_rule_drawer.import_clipboard") }}
+              </n-button>
             </template>
-            确定从剪贴板导入吗?
+            {{ t("flow.wan_rule_drawer.confirm_import") }}
           </n-popconfirm>
         </n-flex>
 

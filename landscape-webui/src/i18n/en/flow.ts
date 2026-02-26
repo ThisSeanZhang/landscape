@@ -5,6 +5,15 @@ export default {
     cancel: "Cancel",
     save: "Save",
   },
+  default_card: {
+    title: "Default Flow",
+    target_ip: "Destination IP",
+    unmatched_traffic: "Traffic not matched by other flows",
+    process_by_default: "will be processed by rules in the default flow",
+    create_new: "Create a new Flow",
+    clear_route_cache: "Clear route cache",
+    trace: "Flow trace",
+  },
   edit: {
     title: "Flow Rule Editor",
     flow_id_label: "Flow ID",
@@ -79,5 +88,13 @@ export default {
       "**Priority** cannot be -1 and must be unique, or it may overwrite existing rules",
     cancel: "Cancel",
     save: "Save",
+  },
+  wan_rule_drawer: {
+    title_default: "Edit Default Destination IP Rules",
+    title_flow: "Edit Destination IP Rules for Flow: {flow_id}",
+    add_rule: "Add Rule",
+    export_clipboard: "Export Rules to Clipboard",
+    import_clipboard: "Import Rules from Clipboard",
+    confirm_import: "Confirm import from clipboard?",
   },
 };

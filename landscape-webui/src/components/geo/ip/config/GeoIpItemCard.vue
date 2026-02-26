@@ -5,9 +5,11 @@ import { computed, ref } from "vue";
 import { useFrontEndStore } from "@/stores/front_end_config";
 import { mask_string } from "@/lib/common";
 import { usePreferenceStore } from "@/stores/preference";
+import { useI18n } from "vue-i18n";
 const prefStore = usePreferenceStore();
 
 const frontEndStore = useFrontEndStore();
+const { t } = useI18n();
 const emit = defineEmits(["refresh", "refresh:keys"]);
 
 interface Prop {
@@ -95,16 +97,16 @@ const onGeoUpload = async (formData: FormData) => {
             secondary
             @click="show_edit_modal = true"
           >
-            编辑
+            {{ t("common.edit") }}
           </n-button>
 
           <n-popconfirm @positive-click="del()">
             <template #trigger>
               <n-button size="small" type="error" secondary @click="">
-                删除
+                {{ t("common.delete") }}
               </n-button>
             </template>
-            确定删除吗
+            {{ t("common.confirm_delete") }}
           </n-popconfirm>
         </n-flex>
       </template>

@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { create_bridge } from "@/api/network";
 import { ref } from "vue";
+import { useI18n } from "vue-i18n";
 
 const showModal = defineModel<boolean>("show", { required: true });
+const { t } = useI18n();
 
 const loading = ref(false);
 const bridge_name = ref<string>("");
@@ -24,7 +26,7 @@ async function add_bridge() {
   <n-modal v-model:show="showModal">
     <n-card
       style="width: 600px; display: flex"
-      title="创建桥接设备"
+      :title="t('common.create_bridge_device')"
       :bordered="false"
       role="dialog"
       aria-modal="true"
@@ -36,7 +38,7 @@ async function add_bridge() {
           placeholder="bridge name"
         />
         <n-button :loading="loading" type="primary" @click="add_bridge" ghost>
-          add bridge
+          {{ t("common.add_bridge") }}
         </n-button>
       </n-input-group>
     </n-card>

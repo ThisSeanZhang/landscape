@@ -5,6 +5,15 @@ export default {
     cancel: "取消",
     save: "保存",
   },
+  default_card: {
+    title: "默认 Flow",
+    target_ip: "目标 IP",
+    unmatched_traffic: "未被其他 Flow 匹配的流量",
+    process_by_default: "将按默认 Flow 中的规则进行处理",
+    create_new: "创建一个新 Flow",
+    clear_route_cache: "清理路由缓存",
+    trace: "分流追踪",
+  },
   edit: {
     title: "分流规则编辑",
     flow_id_label: "流 ID 标识",
@@ -77,5 +86,13 @@ export default {
       "**优先级** 值不能为 -1, 且不能重复, 否则将会覆盖规则",
     cancel: "取消",
     save: "保存",
+  },
+  wan_rule_drawer: {
+    title_default: "编辑默认目标 IP 规则",
+    title_flow: "编辑 Flow: {flow_id} 目标 IP 规则",
+    add_rule: "增加规则",
+    export_clipboard: "导出规则至剪贴板",
+    import_clipboard: "从剪贴板导入规则",
+    confirm_import: "确定从剪贴板导入吗?",
   },
 };

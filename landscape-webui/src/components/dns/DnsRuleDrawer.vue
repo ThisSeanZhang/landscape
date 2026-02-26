@@ -11,7 +11,9 @@ import {
 } from "@/lib/common";
 import { useMessage } from "naive-ui";
 import { SearchLocate } from "@vicons/carbon";
+import { useI18n } from "vue-i18n";
 const message = useMessage();
+const { t } = useI18n();
 interface Props {
   flow_id?: number;
 }
@@ -69,9 +71,9 @@ async function import_rules() {
 
 const title = computed(() => {
   if (props.flow_id === 0) {
-    return "编辑 默认 DNS 规则";
+    return t("dns_editor.rule_drawer.title_default");
   } else {
-    return `编辑 Flow: ${props.flow_id} DNS 规则`;
+    return t("dns_editor.rule_drawer.title_flow", { flow_id: props.flow_id });
   }
 });
 const rule_loading_spin = ref(false);
@@ -98,18 +100,18 @@ const rule_loading_spin = ref(false);
         <n-flex style="height: 100%" vertical>
           <n-flex>
             <n-button style="flex: 1" @click="show_create_modal = true">
-              增加规则
+              {{ t("dns_editor.rule_drawer.add_rule") }}
             </n-button>
             <n-button style="flex: 1" @click="export_config">
-              导出规则至剪贴板
+              {{ t("dns_editor.rule_drawer.export_clipboard") }}
             </n-button>
             <n-popconfirm @positive-click="import_rules">
               <template #trigger>
                 <n-button style="flex: 1" @click="">
-                  从剪贴板导入规则
+                  {{ t("dns_editor.rule_drawer.import_clipboard") }}
                 </n-button>
               </template>
-              确定从剪贴板导入吗?
+              {{ t("dns_editor.rule_drawer.confirm_import") }}
             </n-popconfirm>
             <n-button @click="show_query_modal = true">
               <template #icon>

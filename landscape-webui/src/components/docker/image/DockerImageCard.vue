@@ -3,7 +3,9 @@ import { delete_docker_image } from "@/api/docker";
 import { DockerImageSummary } from "@/lib/docker";
 import { computed, ref } from "vue";
 import { usePreferenceStore } from "@/stores/preference";
+import { useI18n } from "vue-i18n";
 const prefStore = usePreferenceStore();
+const { t } = useI18n();
 
 const props = defineProps<{
   image: DockerImageSummary;
@@ -68,7 +70,7 @@ const show_create_model = ref(false);
           :loading="loading"
           @click="show_create_model = true"
         >
-          create
+          {{ t("common.create") }}
         </n-button>
 
         <n-popconfirm @positive-click="delete_image">
@@ -80,16 +82,16 @@ const show_create_model = ref(false);
               type="error"
               :loading="loading"
             >
-              delete
+              {{ t("common.delete") }}
             </n-button>
           </template>
-          确定删除吗
+          {{ t("common.confirm_delete") }}
         </n-popconfirm>
       </n-flex>
     </template>
 
     <n-descriptions :column="1" label-placement="left">
-      <n-descriptions-item label="创建时间">
+      <n-descriptions-item :label="t('common.created_at')">
         <n-time
           v-if="time !== undefined"
           :time="time"

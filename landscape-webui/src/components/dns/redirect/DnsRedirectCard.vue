@@ -3,8 +3,10 @@ import { ref } from "vue";
 import { delete_dns_redirect } from "@/api/dns_rule/redirect";
 import type { DNSRedirectRule } from "@landscape-router/types/api/schemas";
 import { useFrontEndStore } from "@/stores/front_end_config";
+import { useI18n } from "vue-i18n";
 
 const frontEndStore = useFrontEndStore();
+const { t } = useI18n();
 type Props = {
   rule: DNSRedirectRule;
 };
@@ -72,16 +74,16 @@ async function del() {
           secondary
           @click="show_edit_modal = true"
         >
-          编辑
+          {{ t("common.edit") }}
         </n-button>
 
         <n-popconfirm @positive-click="del()">
           <template #trigger>
             <n-button size="small" type="error" secondary @click="">
-              删除
+              {{ t("common.delete") }}
             </n-button>
           </template>
-          确定删除吗
+          {{ t("common.confirm_delete") }}
         </n-popconfirm>
       </n-flex>
     </template>

@@ -101,4 +101,12 @@ export default {
     delete: "Delete",
     confirm_delete: "Confirm deletion?",
   },
+  rule_drawer: {
+    title_default: "Edit Default DNS Rules",
+    title_flow: "Edit DNS Rules for Flow: {flow_id}",
+    add_rule: "Add Rule",
+    export_clipboard: "Export Rules to Clipboard",
+    import_clipboard: "Import Rules from Clipboard",
+    confirm_import: "Confirm import from clipboard?",
+  },
 };

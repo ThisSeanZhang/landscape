@@ -5,8 +5,10 @@ import { PPPDServiceConfig } from "@/lib/pppd";
 import { stop_and_del_iface_pppd } from "@/api/service_pppd";
 import { useFrontEndStore } from "@/stores/front_end_config";
 import { mask_string } from "@/lib/common";
+import { useI18n } from "vue-i18n";
 
 const frontEndStore = useFrontEndStore();
+const { t } = useI18n();
 
 const config = defineModel<PPPDServiceConfig>("config", { required: true });
 
@@ -45,13 +47,15 @@ async function del() {
             secondary
             @click="show_create_pppd_modal = true"
           >
-            编辑
+            {{ t("common.edit") }}
           </n-button>
           <n-popconfirm @positive-click="del()">
             <template #trigger>
-              <n-button type="error" secondary @click=""> 删除 </n-button>
+              <n-button type="error" secondary @click="">
+                {{ t("common.delete") }}
+              </n-button>
             </template>
-            确定删除吗
+            {{ t("common.confirm_delete") }}
           </n-popconfirm>
         </n-flex>
       </template>
