@@ -31,8 +31,10 @@ import {
 import { ServiceExhibitSwitch } from "@/lib/services";
 import { useFrontEndStore } from "@/stores/front_end_config";
 import { mask_string } from "@/lib/common";
+import { useI18n } from "vue-i18n";
 
 const frontEndStore = useFrontEndStore();
+const { t } = useI18n();
 const props = defineProps(["node"]);
 
 const themeVars = ref(useThemeVars());
@@ -99,9 +101,9 @@ async function handleDeleteBridge() {
     delete_loading.value = true;
     await delete_bridge(props.node.name);
     await refresh();
-    message.info("删除成功");
+    message.info(t("misc.topology_node.delete_success"));
   } catch (error) {
-    window.$message.error("删除失败");
+    window.$message.error(t("misc.topology_node.delete_failed"));
   } finally {
     delete_loading.value = false;
   }
@@ -187,9 +189,14 @@ const show_switch = computed(() => {
                     </n-icon>
                   </n-button>
                 </template>
-                确定
-                {{ node.dev_status.t === DevStateType.Up ? "关闭" : "开启" }}
-                网卡吗
+                {{
+                  t("misc.topology_node.confirm_toggle_iface", {
+                    action:
+                      node.dev_status.t === DevStateType.Up
+                        ? t("misc.topology_node.action_disable")
+                        : t("misc.topology_node.action_enable"),
+                  })
+                }}
               </n-popconfirm>
               <n-button
                 v-if="show_switch.zone_type"
@@ -230,7 +237,7 @@ const show_switch = computed(() => {
                 "
                 :show-icon="false"
                 :positive-button-props="{ type: 'error', ghost: true }"
-                positive-text="删除!"
+                :positive-text="t('misc.topology_node.delete_btn')"
                 @positive-click="handleDeleteBridge"
                 trigger="click"
               >
@@ -246,29 +253,29 @@ const show_switch = computed(() => {
                     </n-icon>
                   </n-button>
                 </template>
-                <span>删除桥接设备</span>
+                <span>{{ t("misc.topology_node.delete_bridge") }}</span>
               </n-popconfirm>
             </n-flex>
           </template>
         </n-card>
       </template>
       <n-descriptions label-placement="left" :column="2" size="small">
-        <n-descriptions-item :span="2" label="网卡名称">
+        <n-descriptions-item :span="2" :label="t('misc.topology_node.iface_name')">
           {{ node.name }}
         </n-descriptions-item>
-        <n-descriptions-item label="mac地址">
+        <n-descriptions-item :label="t('misc.topology_node.mac_addr')">
           {{ frontEndStore.MASK_INFO(node.mac ?? "N/A") }}
         </n-descriptions-item>
-        <n-descriptions-item label="mac">
+        <n-descriptions-item :label="t('misc.topology_node.perm_mac')">
           {{ frontEndStore.MASK_INFO(node.perm_mac ?? "N/A") }}
         </n-descriptions-item>
-        <n-descriptions-item label="设备类型">
+        <n-descriptions-item :label="t('misc.topology_node.device_type')">
           {{ node.dev_type ?? "N/A" }}/{{ node.dev_kind ?? "N/A" }}
         </n-descriptions-item>
-        <n-descriptions-item label="状态">
+        <n-descriptions-item :label="t('misc.topology_node.status')">
           {{ node.dev_status ?? "N/A" }}
         </n-descriptions-item>
-        <n-descriptions-item :span="2" label="上层控制设备(配置)">
+        <n-descriptions-item :span="2" :label="t('misc.topology_node.parent_ctrl')">
           {{ node.controller_id == undefined ? "N/A" : node.controller_id }}
           ({{
             node.controller_name == undefined ? "N/A" : node.controller_name
@@ -279,7 +286,7 @@ const show_switch = computed(() => {
             size="tiny"
             :focusable="false"
             @click="remove_controller"
-            >断开连接
+            >{{ t("misc.topology_node.disconnect") }}
             <template #icon>
               <n-icon>
                 <PlugDisconnected20Regular></PlugDisconnected20Regular>
@@ -288,14 +295,14 @@ const show_switch = computed(() => {
           </n-button>
         </n-descriptions-item>
 
-        <n-descriptions-item label="CPU 平衡" :span="2">
+        <n-descriptions-item :label="t('misc.topology_node.cpu_balance')" :span="2">
           <n-button
             tertiary
             size="tiny"
             :focusable="false"
             @click="show_cpu_balance_btn = true"
           >
-            修改平衡设置
+            {{ t("misc.topology_node.edit_balance") }}
           </n-button>
         </n-descriptions-item>
       </n-descriptions>

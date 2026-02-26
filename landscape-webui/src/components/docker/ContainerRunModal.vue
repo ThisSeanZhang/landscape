@@ -6,6 +6,7 @@ import { DockerCmd } from "@landscape-router/types/api/schemas";
 import { useDockerStore } from "@/stores/status_docker";
 import { useNotification } from "naive-ui";
 import { computed, ref } from "vue";
+import { useI18n } from "vue-i18n";
 
 const show_model = defineModel<boolean>("show", { required: true });
 
@@ -17,6 +18,7 @@ const emit = defineEmits(["refresh"]);
 
 const dockerStore = useDockerStore();
 const notification = useNotification();
+const { t } = useI18n();
 
 // 定义表单的状态
 const formModel = ref<DockerCmd>();
@@ -60,23 +62,23 @@ enum DockerRestartPolicy {
 
 const restrt_options = [
   {
-    label: "不自动重启",
+    label: t("misc.docker_run.restart_no"),
     value: DockerRestartPolicy.NO,
   },
   {
-    label: "失败时自动重启",
+    label: t("misc.docker_run.restart_on_failure"),
     value: DockerRestartPolicy.ON_FAILURE,
   },
   {
-    label: "失败时自动重启（带最大重试次数）",
+    label: t("misc.docker_run.restart_on_failure_max"),
     value: DockerRestartPolicy.ON_FAILURE_WITH_MAX_RETRIES,
   },
   {
-    label: "总是自动重启",
+    label: t("misc.docker_run.restart_always"),
     value: DockerRestartPolicy.ALWAYS,
   },
   {
-    label: "除非手动停止，否则自动重启",
+    label: t("misc.docker_run.restart_unless_stopped"),
     value: DockerRestartPolicy.UNLESS_STOPPED,
   },
 ];
@@ -129,7 +131,7 @@ const has_edge_label = computed({
   >
     <n-card
       style="width: 600px"
-      :title="`运行镜像: ${props.image_name}`"
+      :title="t('misc.docker_run.title', { image: props.image_name })"
       :bordered="false"
       size="small"
       role="dialog"
@@ -137,22 +139,30 @@ const has_edge_label = computed({
     >
       <n-form v-if="formModel" :model="formModel" label-width="120px">
         <n-grid :cols="6" :x-gap="12">
-          <n-form-item-gi :span="3" label="容器名称" path="containerName">
+          <n-form-item-gi
+            :span="3"
+            :label="t('misc.docker_run.container_name')"
+            path="containerName"
+          >
             <n-input
               v-model:value="formModel.container_name"
-              placeholder="请输入容器名称 (可选)"
+              :placeholder="t('misc.docker_run.container_name_placeholder')"
             />
           </n-form-item-gi>
 
           <n-form-item-gi
             :offset="1"
             :span="2"
-            label="用作 Flow 出口"
+            :label="t('misc.docker_run.flow_egress')"
             path="imageName"
           >
             <n-switch v-model:value="has_edge_label"> </n-switch>
           </n-form-item-gi>
-          <n-form-item-gi :span="6" label="重启策略" path="containerName">
+          <n-form-item-gi
+            :span="6"
+            :label="t('misc.docker_run.restart_policy')"
+            path="containerName"
+          >
             <n-input-group>
               <n-select
                 v-model:value="formModel.restart"
@@ -169,10 +179,14 @@ const has_edge_label = computed({
             </n-input-group>
           </n-form-item-gi>
 
-          <n-form-item-gi :span="6" label="entrypoint" path="containerName">
+          <n-form-item-gi
+            :span="6"
+            :label="t('misc.docker_run.entrypoint')"
+            path="containerName"
+          >
             <n-input
               v-model:value="formModel.entrypoint"
-              placeholder="请输入 entrypoint (可选)"
+              :placeholder="t('misc.docker_run.entrypoint_placeholder')"
             />
           </n-form-item-gi>
           <!-- <n-form-item-gi label="entrypoint params" path="containerName">
@@ -181,31 +195,31 @@ const has_edge_label = computed({
             placeholder="请输入entrypoint params (可选)"
           />
         </n-form-item-gi> -->
-          <n-form-item-gi :span="6" label="端口映射" path="ports">
+          <n-form-item-gi :span="6" :label="t('misc.docker_run.port_mapping')" path="ports">
             <n-dynamic-input
               v-model:value="formModel.ports"
               preset="pair"
               separator=":"
-              key-placeholder="主机端口"
-              value-placeholder="容器端口"
+              :key-placeholder="t('misc.docker_run.host_port')"
+              :value-placeholder="t('misc.docker_run.container_port')"
             />
           </n-form-item-gi>
-          <n-form-item-gi :span="6" label="环境变量" path="environment">
+          <n-form-item-gi :span="6" :label="t('misc.docker_run.env_vars')" path="environment">
             <n-dynamic-input
               v-model:value="formModel.environment"
               preset="pair"
               separator=":"
-              key-placeholder="变量名"
-              value-placeholder="变量值"
+              :key-placeholder="t('misc.docker_run.env_name')"
+              :value-placeholder="t('misc.docker_run.env_value')"
             />
           </n-form-item-gi>
-          <n-form-item-gi :span="6" label="卷映射" path="volumes">
+          <n-form-item-gi :span="6" :label="t('misc.docker_run.volume_mapping')" path="volumes">
             <n-dynamic-input
               v-model:value="formModel.volumes"
               preset="pair"
               separator=":"
-              key-placeholder="主机目录"
-              value-placeholder="容器目录"
+              :key-placeholder="t('misc.docker_run.host_dir')"
+              :value-placeholder="t('misc.docker_run.container_dir')"
             />
           </n-form-item-gi>
           <!-- <n-form-item-gi label-style="width: 100%;" content-style="width: 100%;">
@@ -254,7 +268,7 @@ const has_edge_label = computed({
             type="primary"
             @click="save_config"
           >
-            创建容器
+            {{ t("misc.docker_run.create") }}
           </n-button>
         </n-flex>
       </template>

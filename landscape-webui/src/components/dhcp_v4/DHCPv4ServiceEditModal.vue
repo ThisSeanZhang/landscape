@@ -57,7 +57,7 @@ async function save_config() {
     await dhcpv4ConfigStore.UPDATE_INFO();
     show_model.value = false;
 
-    // 提交成功后检查现有绑定的合法性
+    // Check enrolled device binding validity after successful save.
     const invalidBindings = await check_iface_enrolled_devices_validity(
       iface_info.iface_name,
     );
@@ -85,11 +85,11 @@ async function save_config() {
           ),
       });
     } else {
-      message.success(t("config.save_success") || "保存成功");
+      message.success(t("dhcp_editor.service.save_success"));
     }
   } catch (e: any) {
     console.log(e);
-    message.error(e.response?.data?.msg || "保存失败");
+    message.error(e.response?.data?.msg || t("dhcp_editor.service.save_failed"));
   } finally {
     commit_loading.value = false;
   }
@@ -132,7 +132,7 @@ const network_mask = computed({
   >
     <n-card
       style="width: 600px"
-      title="DHCPv4 服务配置"
+      :title="t('dhcp_editor.service.title')"
       :bordered="false"
       size="small"
       role="dialog"
@@ -140,30 +140,30 @@ const network_mask = computed({
     >
       <n-flex style="flex: 1">
         <n-alert style="flex: 1" type="warning">
-          关闭 DHCP 服务将导致 LAN 下主机无法访问路由
+          {{ t("dhcp_editor.service.warning") }}
         </n-alert>
         <n-form :model="service_config">
-          <n-form-item label="是否启用">
+          <n-form-item :label="t('dhcp_editor.service.enable')">
             <n-switch v-model:value="service_config.enable">
-              <template #checked> 启用 </template>
-              <template #unchecked> 禁用 </template>
+              <template #checked> {{ t("dhcp_editor.service.enabled_yes") }} </template>
+              <template #unchecked> {{ t("dhcp_editor.service.enabled_no") }} </template>
             </n-switch>
           </n-form-item>
 
           <n-grid :cols="5">
-            <n-form-item-gi label="DHCP 服务 IP" :span="5">
+            <n-form-item-gi :label="t('dhcp_editor.service.server_ip')" :span="5">
               <NewIpEdit
                 v-model:ip="server_ip_addr"
                 v-model:mask="network_mask"
                 :mask_max="30"
               ></NewIpEdit>
             </n-form-item-gi>
-            <n-form-item-gi label="分配 IP起始地址 (包含)" :span="5">
+            <n-form-item-gi :label="t('dhcp_editor.service.range_start')" :span="5">
               <NewIpEdit
                 v-model:ip="service_config.config.ip_range_start"
               ></NewIpEdit>
             </n-form-item-gi>
-            <n-form-item-gi label="分配 IP结束地址 (不包含)" :span="5">
+            <n-form-item-gi :label="t('dhcp_editor.service.range_end')" :span="5">
               <NewIpEdit
                 v-model:ip="service_config.config.ip_range_end"
               ></NewIpEdit>
@@ -174,14 +174,16 @@ const network_mask = computed({
 
       <template #footer>
         <n-flex justify="space-between" align="center">
-          <n-button round @click="show_model = false"> 取消 </n-button>
+          <n-button round @click="show_model = false">
+            {{ t("dhcp_editor.service.cancel") }}
+          </n-button>
           <n-button
             :loading="commit_loading"
             round
             type="primary"
             @click="save_config"
           >
-            更新
+            {{ t("dhcp_editor.service.update") }}
           </n-button>
         </n-flex>
       </template>

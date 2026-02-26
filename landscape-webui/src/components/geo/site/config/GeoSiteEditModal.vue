@@ -8,6 +8,7 @@ import type {
 } from "@landscape-router/types/api/schemas";
 import { FormInst, FormRules } from "naive-ui";
 import { computed, ref } from "vue";
+import { useI18n } from "vue-i18n";
 
 const emit = defineEmits(["refresh"]);
 
@@ -17,6 +18,7 @@ interface Prop {
 }
 const props = defineProps<Prop>();
 const commit_spin = ref(false);
+const { t } = useI18n();
 
 const rule = ref<GeoSiteSourceConfig>();
 const rule_json = ref<string>("");
@@ -100,11 +102,11 @@ const rules: FormRules = {
       required: true,
       validator: (rule, value: string) => {
         if (!value) {
-          return new Error("名称不能为空");
+          return new Error(t("geo_editor.common.name_required"));
         }
         const nameRegex = /^[a-zA-Z0-9._-]+$/;
         if (!nameRegex.test(value)) {
-          return new Error("名称只能包含字母、数字、点、下划线和中划线");
+          return new Error(t("geo_editor.common.name_invalid"));
         }
         return true;
       },
@@ -125,7 +127,7 @@ const matchTypeOptions = [
     v-model:show="show"
     style="width: 600px"
     preset="card"
-    title="编辑 Geo Site"
+    :title="t('geo_editor.geo_site.title')"
     size="small"
     :bordered="false"
     @after-enter="enter"
@@ -139,24 +141,24 @@ const matchTypeOptions = [
       :cols="5"
     >
       <n-grid :cols="5">
-        <n-form-item-gi label="启用" :offset="0" :span="1">
+        <n-form-item-gi :label="t('geo_editor.common.enable')" :offset="0" :span="1">
           <n-switch v-model:value="rule.enable">
-            <template #checked> 启用 </template>
-            <template #unchecked> 禁用 </template>
+            <template #checked> {{ t("geo_editor.common.enabled_yes") }} </template>
+            <template #unchecked> {{ t("geo_editor.common.enabled_no") }} </template>
           </n-switch>
         </n-form-item-gi>
-        <n-form-item-gi label="来源类型" :span="4">
+        <n-form-item-gi :label="t('geo_editor.common.source_type')" :span="4">
           <n-radio-group
             v-model:value="sourceType"
             @update:value="switchSourceType"
           >
-            <n-radio value="url">URL 下载</n-radio>
-            <n-radio value="direct">直接定义</n-radio>
+            <n-radio value="url">{{ t("geo_editor.common.source_url_mode") }}</n-radio>
+            <n-radio value="direct">{{ t("geo_editor.common.source_direct_mode") }}</n-radio>
           </n-radio-group>
         </n-form-item-gi>
 
         <n-form-item-gi
-          label="名称 (与其他配置区分， 需要唯一)"
+          :label="t('geo_editor.common.name_unique')"
           path="name"
           :span="5"
         >
@@ -165,14 +167,14 @@ const matchTypeOptions = [
 
         <!-- URL mode -->
         <template v-if="rule.source.t === 'url'">
-          <n-form-item-gi label="下载 URL" :span="5">
+          <n-form-item-gi :label="t('geo_editor.common.source_url')" :span="5">
             <n-input v-model:value="rule.source.url" clearable />
           </n-form-item-gi>
         </template>
 
         <!-- Direct mode -->
         <template v-if="rule.source.t === 'direct'">
-          <n-form-item-gi label="域名列表" :span="5">
+          <n-form-item-gi :label="t('geo_editor.geo_site.domain_list')" :span="5">
             <n-flex vertical style="width: 100%">
               <n-card
                 v-for="(item, idx) in rule.source.data"
@@ -182,7 +184,7 @@ const matchTypeOptions = [
                 <template #header>
                   <n-input
                     v-model:value="item.key"
-                    placeholder="Key"
+                    :placeholder="t('geo_editor.common.key')"
                     size="small"
                   />
                 </template>
@@ -193,7 +195,7 @@ const matchTypeOptions = [
                     secondary
                     @click="removeDirectItem(idx)"
                   >
-                    删除
+                    {{ t("geo_editor.common.remove") }}
                   </n-button>
                 </template>
                 <n-flex vertical>
@@ -211,7 +213,7 @@ const matchTypeOptions = [
                     />
                     <n-input
                       v-model:value="domain.value"
-                      placeholder="域名"
+                      :placeholder="t('geo_editor.geo_site.domain_placeholder')"
                       size="small"
                       style="flex: 1"
                     />
@@ -225,11 +227,13 @@ const matchTypeOptions = [
                     </n-button>
                   </n-flex>
                   <n-button size="small" dashed @click="addDomainToItem(item)">
-                    添加域名
+                    {{ t("geo_editor.geo_site.add_domain") }}
                   </n-button>
                 </n-flex>
               </n-card>
-              <n-button dashed @click="addDirectItem"> 添加 Key 分组 </n-button>
+              <n-button dashed @click="addDirectItem">
+                {{ t("geo_editor.common.add_key_group") }}
+              </n-button>
             </n-flex>
           </n-form-item-gi>
         </template>
@@ -237,13 +241,13 @@ const matchTypeOptions = [
     </n-form>
     <template #footer>
       <n-flex justify="space-between">
-        <n-button @click="show = false">取消</n-button>
+        <n-button @click="show = false">{{ t("geo_editor.common.cancel") }}</n-button>
         <n-button
           :loading="commit_spin"
           @click="saveRule"
           :disabled="!isModified"
         >
-          保存
+          {{ t("geo_editor.common.save") }}
         </n-button>
       </n-flex>
     </template>

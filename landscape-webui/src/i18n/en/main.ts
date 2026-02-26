@@ -10,6 +10,11 @@ import flow from "./flow";
 import nat from "./nat";
 import dns_editor from "./dns_editor";
 import firewall from "./firewall";
+import misc from "./misc";
+import geo_editor from "./geo_editor";
+import ipconfig_editor from "./ipconfig_editor";
+import dhcp_editor from "./dhcp_editor";
+import pppd_editor from "./pppd_editor";
 
 export default {
   docker_divider: "Docker Containers",
@@ -28,6 +33,11 @@ export default {
   nat,
   dns_editor,
   firewall,
+  misc,
+  geo_editor,
+  ipconfig_editor,
+  dhcp_editor,
+  pppd_editor,
   common: {
     private_mode: "Private Mode",
   },

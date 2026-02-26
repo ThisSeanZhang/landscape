@@ -1,0 +1,32 @@
+export default {
+  common: {
+    enable: "启用",
+    enabled_yes: "启用",
+    enabled_no: "禁用",
+    source_type: "来源类型",
+    source_url: "下载 URL",
+    source_url_mode: "URL 下载",
+    source_direct_mode: "直接定义",
+    name_unique: "名称 (与其他配置区分， 需要唯一)",
+    name_required: "名称不能为空",
+    name_invalid: "名称只能包含字母、数字、点、下划线和中划线",
+    cancel: "取消",
+    save: "保存",
+    remove: "删除",
+    add_key_group: "添加 Key 分组",
+    key: "Key",
+  },
+  geo_ip: {
+    title: "编辑 Geo IP 规则来源",
+    ip_list: "IP 列表",
+    ip_placeholder: "IP 地址",
+    prefix_placeholder: "前缀",
+    add_ip: "添加 IP",
+  },
+  geo_site: {
+    title: "编辑 Geo Site",
+    domain_list: "域名列表",
+    domain_placeholder: "域名",
+    add_domain: "添加域名",
+  },
+};

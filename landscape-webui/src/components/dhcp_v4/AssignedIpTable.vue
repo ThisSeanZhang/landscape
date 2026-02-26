@@ -4,6 +4,7 @@ import type { ArpScanInfo, DHCPv4OfferInfo } from "@/api/service_dhcp_v4";
 import type { DHCPv4OfferInfoItem } from "@landscape-router/types/api/schemas";
 import { CountdownInst } from "naive-ui";
 import { computed, nextTick, ref, watch } from "vue";
+import { useI18n } from "vue-i18n";
 
 import { useFrontEndStore } from "@/stores/front_end_config";
 import { usePreferenceStore } from "@/stores/preference";
@@ -16,6 +17,7 @@ import EnrolledDeviceEditModal from "@/components/device/EnrolledDeviceEditModal
 
 const frontEndStore = useFrontEndStore();
 const enrolledDeviceStore = useEnrolledDeviceStore();
+const { t } = useI18n();
 const emit = defineEmits(["refresh"]);
 type Props = {
   arp_info: ArpScanInfo[];
@@ -152,33 +154,37 @@ function quickBind(ip: string, mac?: string, hostname?: string | null) {
     <n-table v-if="info" :bordered="true" striped>
       <thead>
         <tr>
-          <th class="assign-head" style="width: 20%">主机名</th>
+          <th class="assign-head" style="width: 20%">
+            {{ t("dhcp_editor.assigned.hostname") }}
+          </th>
           <th class="assign-head">
             <Notice>
-              Mac 地址
+              {{ t("dhcp_editor.assigned.mac_addr") }}
               <template #msg>
-                ARP 扫描出的 IP 可能会出现 ARP 代应答 <br />
-                导致 IP 不同 Mac 却重复的情况
+                {{ t("dhcp_editor.assigned.mac_tip_1") }}
               </template>
             </Notice>
           </th>
-          <th class="assign-head">分配 IP</th>
-          <th class="assign-head">最近一次请求时间</th>
+          <th class="assign-head">{{ t("dhcp_editor.assigned.assigned_ip") }}</th>
+          <th class="assign-head">{{ t("dhcp_editor.assigned.latest_request") }}</th>
           <th class="assign-head">
             <Notice>
-              剩余租期时间 (s) <template #msg>到期时间</template>
+              {{ t("dhcp_editor.assigned.lease_left") }}
+              <template #msg>{{ t("dhcp_editor.assigned.expire_time") }}</template>
             </Notice>
           </th>
           <th class="assign-head" style="width: 168px">
             <Notice>
-              24 小时在线情况
+              {{ t("dhcp_editor.assigned.online_24h") }}
               <template #msg>
-                最后一个是最近一小时检查时是否在线 <br />
-                定期扫描, 所以新分配的 IP 可能最近一小时显示为不在线
+                {{ t("dhcp_editor.assigned.online_24h_tip_1") }} <br />
+                {{ t("dhcp_editor.assigned.online_24h_tip_2") }}
               </template>
             </Notice>
           </th>
-          <th class="assign-head" style="width: 80px">操作</th>
+          <th class="assign-head" style="width: 80px">
+            {{ t("dhcp_editor.assigned.actions") }}
+          </th>
         </tr>
       </thead>
       <tbody>
@@ -210,7 +216,9 @@ function quickBind(ip: string, mac?: string, hostname?: string | null) {
           </td>
           <td class="assign-item">
             <!-- {{ item.real_expire_time }} -->
-            <n-flex justify="center" v-if="item.is_static">静态分配</n-flex>
+            <n-flex justify="center" v-if="item.is_static">
+              {{ t("dhcp_editor.assigned.static_assigned") }}
+            </n-flex>
             <n-countdown
               v-else
               ref="countdownRefs"
@@ -243,7 +251,7 @@ function quickBind(ip: string, mac?: string, hostname?: string | null) {
         </tr>
 
         <tr v-for="item in not_current_round_ips">
-          <td class="not-assign-item">未知</td>
+          <td class="not-assign-item">{{ t("dhcp_editor.assigned.unknown") }}</td>
           <td class="not-assign-item">
             <DHCPMacExhibit :macs="arp_ip_map.get(item.ip)?.macs">
             </DHCPMacExhibit>
@@ -251,8 +259,8 @@ function quickBind(ip: string, mac?: string, hostname?: string | null) {
           <td class="not-assign-item">
             {{ frontEndStore.MASK_INFO(item.ip) }}
           </td>
-          <td class="not-assign-item">未知</td>
-          <td class="not-assign-item">未知</td>
+          <td class="not-assign-item">{{ t("dhcp_editor.assigned.unknown") }}</td>
+          <td class="not-assign-item">{{ t("dhcp_editor.assigned.unknown") }}</td>
           <td class="not-assign-item">
             <OnlineStatus
               :ip_status="arp_ip_map.get(item.ip)?.ip_status"

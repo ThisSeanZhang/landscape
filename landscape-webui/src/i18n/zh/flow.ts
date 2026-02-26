@@ -62,4 +62,20 @@ export default {
     action_drop: "Drop (丢弃)",
     action_redirect: "Redirect → Flow {flow_id}",
   },
+  wan_rule_edit: {
+    title: "规则编辑",
+    priority: "优先级",
+    enabled: "启用",
+    egress_select: "选择流量出口",
+    remark: "备注",
+    matched_ips: "匹配的 IP",
+    copy: "复制",
+    paste_replace: "替换粘贴",
+    paste_append: "增量粘贴",
+    add_wan_rule: "增加一条 Wan 规则",
+    duplicate_priority_warning:
+      "**优先级** 值不能为 -1, 且不能重复, 否则将会覆盖规则",
+    cancel: "取消",
+    save: "保存",
+  },
 };

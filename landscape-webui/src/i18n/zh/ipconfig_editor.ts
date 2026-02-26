@@ -1,0 +1,18 @@
+export default {
+  title: "网卡运行服务配置",
+  mode_none: "无",
+  mode_static: "静态IP",
+  mode_dhcp_client: "DHCP 客户端",
+  enabled_yes: "启用",
+  enabled_no: "禁用",
+  static_ip: "静态 IP",
+  set_default_route: "是否设置默认路由",
+  yes: "是",
+  no: "否",
+  route_ip: "路由 IP",
+  username: "用户名",
+  password: "密码",
+  dhcp_warn: "本端口如果有开启防火墙, 那么需要配置规则将 68 端口开放",
+  dhcp_hostname: "DHCP 时填充的主机名称",
+  update: "更新",
+};
