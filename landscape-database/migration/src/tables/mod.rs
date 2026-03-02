@@ -19,6 +19,7 @@ pub mod geo;
 
 pub mod route;
 
+pub mod cert;
 pub mod enrolled_device;
 pub mod firewall_blacklist;
 pub mod lan_ipv6;

@@ -16,6 +16,7 @@ import ipconfig_editor from "./ipconfig_editor";
 import dhcp_editor from "./dhcp_editor";
 import pppd_editor from "./pppd_editor";
 import dhcp_v6 from "./dhcp_v6";
+import cert from "./cert";
 
 export default {
   metric: {
@@ -38,6 +39,7 @@ export default {
   dhcp_editor,
   pppd_editor,
   dhcp_v6,
+  cert,
   common: {
     private_mode: "Private Mode",
     create: "Create",
@@ -151,5 +153,8 @@ export default {
     "dhcp-v4": "DHCPv4 Service",
     "ipv6-ra": "IPv6 RA",
     "mac-binding": "Devices",
+    cert: "Certificate",
+    "cert-accounts": "ACME Accounts",
+    "cert-orders": "Certificate Orders",
   },
 };

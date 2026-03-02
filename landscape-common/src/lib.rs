@@ -9,7 +9,6 @@ pub mod sys_config;
 pub mod lan_services;
 
 pub mod config;
-pub mod database;
 pub mod dev;
 pub mod dhcp;
 pub mod docker;
@@ -23,23 +22,24 @@ pub mod info;
 pub mod ip_mark;
 pub mod ipv6_pd;
 pub mod metric;
-pub mod net;
-pub mod net_proto;
 pub mod network;
-pub mod observer;
 pub mod route;
 pub mod service;
-pub mod store;
-pub mod test;
-pub mod utils;
-
-pub mod enrolled_device;
 
 pub mod auth;
-
-pub mod pty;
-
+pub mod cert;
 pub mod dns;
+pub mod enrolled_device;
+
+pub mod database;
+pub mod net_proto;
+pub mod observer;
+pub mod pty;
+pub mod store;
+
+pub mod net;
+pub mod test;
+pub mod utils;
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 

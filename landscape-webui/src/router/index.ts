@@ -17,6 +17,8 @@ import EnrolledDevice from "@/views/EnrolledDevice.vue";
 
 import DnsRedirect from "@/views/dns/DnsRedirect.vue";
 import DnsUpstream from "@/views/dns/DnsUpstream.vue";
+import CertAccounts from "@/views/cert/CertAccounts.vue";
+import CertOrders from "@/views/cert/CertOrders.vue";
 import NotFound from "@/views/error/NotFound.vue";
 
 import service_status_route from "./service_status";
@@ -84,6 +86,16 @@ const inner_zone: Array<RouteRecordRaw> = [
     path: "/mac-binding",
     name: "routes.mac-binding",
     component: EnrolledDevice,
+  },
+  {
+    path: "/cert-accounts",
+    name: "routes.cert-accounts",
+    component: CertAccounts,
+  },
+  {
+    path: "/cert-orders",
+    name: "routes.cert-orders",
+    component: CertOrders,
   },
   {
     path: "/:pathMatch(.*)*",

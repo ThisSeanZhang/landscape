@@ -10,6 +10,7 @@ use colored::Colorize;
 use landscape::{
     boot::{boot_check, log::init_logger},
     cert::load_or_generate_cert,
+    config_service::cert::{CertAccountService, CertOrderService},
     config_service::enrolled_device::EnrolledDeviceService,
     config_service::{
         dns::{redirect::DNSRedirectService, upstream::DnsUpstreamService},
@@ -58,6 +59,7 @@ use utoipa_scalar::{Scalar, Servable};
 
 mod api;
 mod auth;
+mod cert;
 mod devices;
 mod dns;
 mod docker;
@@ -136,6 +138,9 @@ pub struct LandscapeApp {
 
     ebpf_service: LandscapeEbpfService,
     enrolled_device_service: EnrolledDeviceService,
+
+    cert_account_service: CertAccountService,
+    cert_order_service: CertOrderService,
 }
 
 impl LandscapeApp {
@@ -342,6 +347,9 @@ async fn run(home_path: PathBuf, config: RuntimeConfig) -> LdResult<()> {
 
     let enrolled_device_service = EnrolledDeviceService::new(db_store_provider.clone()).await;
 
+    let cert_account_service = CertAccountService::new(db_store_provider.clone()).await;
+    let cert_order_service = CertOrderService::new(db_store_provider.clone()).await;
+
     let route_lan_service = RouteLanServiceManagerService::new(
         db_store_provider.clone(),
         route_service.clone(),
@@ -440,6 +448,9 @@ async fn run(home_path: PathBuf, config: RuntimeConfig) -> LdResult<()> {
         // ebpf
         ebpf_service,
         enrolled_device_service,
+        // cert
+        cert_account_service,
+        cert_order_service,
     };
 
     // 初始化结束
@@ -466,6 +477,7 @@ async fn run(home_path: PathBuf, config: RuntimeConfig) -> LdResult<()> {
     let (nat_router, _) = openapi::build_nat_openapi_router().split_for_parts();
     let (geo_router, _) = openapi::build_geo_openapi_router().split_for_parts();
     let (devices_router, _) = openapi::build_devices_openapi_router().split_for_parts();
+    let (cert_router, _) = openapi::build_cert_openapi_router().split_for_parts();
     let (docker_router, _) = openapi::build_docker_openapi_router().split_for_parts();
     let (metrics_router, _) = openapi::build_metrics_openapi_router().split_for_parts();
     let openapi = openapi::build_full_openapi_spec();
@@ -487,6 +499,7 @@ async fn run(home_path: PathBuf, config: RuntimeConfig) -> LdResult<()> {
         .nest("/nat", nat_router)
         .nest("/geo", geo_router)
         .nest("/devices", devices_router)
+        .nest("/cert", cert_router)
         .nest("/docker", docker_router)
         .nest("/metrics", metrics_router)
         .with_state(landscape_app_status.clone())

@@ -19,6 +19,8 @@ use std::{
     path::PathBuf,
 };
 
+use crate::cert::account::CertAccountConfig;
+use crate::cert::order::CertOrderConfig;
 use crate::dhcp::v4_server::config::DHCPv4ServiceConfig;
 use crate::dhcp::v6_client::config::IPV6PDServiceConfig;
 use crate::enrolled_device::EnrolledDevice;
@@ -124,6 +126,11 @@ pub struct InitConfig {
 
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub enrolled_devices: Vec<EnrolledDevice>,
+
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub cert_accounts: Vec<CertAccountConfig>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub cert_orders: Vec<CertOrderConfig>,
 }
 
 /// auth realte config

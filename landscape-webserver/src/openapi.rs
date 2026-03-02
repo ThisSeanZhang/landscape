@@ -4,6 +4,8 @@ use utoipa::{Modify, OpenApi};
 use utoipa_axum::router::OpenApiRouter;
 
 use crate::auth::get_auth_openapi_router;
+use crate::cert::accounts::get_cert_account_paths;
+use crate::cert::orders::get_cert_order_paths;
 use crate::devices::get_enrolled_device_config_paths;
 use crate::dns::redirects::get_dns_redirect_config_paths;
 use crate::dns::rules::get_dns_rule_config_paths;
@@ -88,6 +90,8 @@ impl Modify for SecurityAddon {
         (name = "Geo Sites", description = "Geo site configuration"),
         (name = "Geo IPs", description = "Geo IP configuration"),
         (name = "Enrolled Devices", description = "Enrolled device management"),
+        (name = "Certificate Accounts", description = "ACME certificate account management"),
+        (name = "Certificate Orders", description = "Certificate order and issuance management"),
         (name = "Docker", description = "Docker container management"),
         (name = "Docker Images", description = "Docker image management"),
         (name = "Docker Networks", description = "Docker network management"),
@@ -180,6 +184,11 @@ pub fn build_devices_openapi_router() -> OpenApiRouter<LandscapeApp> {
     OpenApiRouter::new().merge(get_enrolled_device_config_paths())
 }
 
+/// /cert — certificate accounts + orders
+pub fn build_cert_openapi_router() -> OpenApiRouter<LandscapeApp> {
+    OpenApiRouter::new().merge(get_cert_account_paths()).merge(get_cert_order_paths())
+}
+
 /// /docker — Docker service + containers + images + networks
 pub fn build_docker_openapi_router() -> OpenApiRouter<LandscapeApp> {
     OpenApiRouter::new().merge(get_docker_paths())
@@ -263,6 +272,11 @@ pub fn build_full_openapi_spec() -> utoipa::openapi::OpenApi {
     prefix_paths(&mut devices_openapi, "/api/v1/devices");
     spec.merge(devices_openapi);
 
+    // /api/v1/cert
+    let (_, mut cert_openapi) = build_cert_openapi_router().split_for_parts();
+    prefix_paths(&mut cert_openapi, "/api/v1/cert");
+    spec.merge(cert_openapi);
+
     // /api/v1/docker
     let (_, mut docker_openapi) = build_docker_openapi_router().split_for_parts();
     prefix_paths(&mut docker_openapi, "/api/v1/docker");
@@ -343,6 +357,10 @@ pub fn build_full_openapi_spec() -> utoipa::openapi::OpenApi {
         {
             "name": "Devices",
             "tags": ["Enrolled Devices"]
+        },
+        {
+            "name": "Certificate",
+            "tags": ["Certificate Accounts", "Certificate Orders"]
         },
         {
             "name": "Docker",

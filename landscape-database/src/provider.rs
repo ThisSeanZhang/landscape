@@ -7,6 +7,7 @@ use sea_orm::{Database, DatabaseConnection};
 use migration::{Migrator, MigratorTrait};
 
 use crate::{
+    cert_account::repository::CertAccountRepository, cert_order::repository::CertOrderRepository,
     dhcp_v4_server::repository::DHCPv4ServerRepository,
     dhcp_v6_client::repository::DHCPv6ClientRepository,
     dns_redirect::repository::DNSRedirectRuleRepository, dns_rule::repository::DNSRuleRepository,
@@ -115,6 +116,8 @@ define_store!(
     dns_upstream_config_store: (DnsUpstreamRepository, dns_upstream_configs),
     enrolled_device_store: (EnrolledDeviceRepository, enrolled_devices),
     lan_ipv6_service_store: (LanIPv6ServiceRepository, lan_ipv6s),
+    cert_account_store: (CertAccountRepository, cert_accounts),
+    cert_order_store: (CertOrderRepository, cert_orders),
 );
 
 #[cfg(test)]

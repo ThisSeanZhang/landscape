@@ -3,6 +3,7 @@ use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::Json;
 use landscape_common::api_response::LandscapeApiResp as CommonLandscapeApiResp;
+use landscape_common::cert::CertError;
 use landscape_common::config::dns::DnsRuleError;
 use landscape_common::config::geo::{GeoIpError, GeoSiteError};
 use landscape_common::config::nat::StaticNatError;
@@ -24,6 +25,8 @@ use crate::docker::error::DockerError;
 #[derive(thiserror::Error, Debug)]
 pub enum LandscapeApiError {
     // Domain errors — each carries its own error_id and HTTP status
+    #[error(transparent)]
+    Cert(#[from] CertError),
     #[error(transparent)]
     DnsRule(#[from] DnsRuleError),
     #[error(transparent)]
@@ -67,6 +70,7 @@ pub enum LandscapeApiError {
 impl LandscapeApiError {
     pub fn error_id(&self) -> &str {
         match self {
+            Self::Cert(e) => e.error_id(),
             Self::DnsRule(e) => e.error_id(),
             Self::DnsUpstream(e) => e.error_id(),
             Self::DnsRedirect(e) => e.error_id(),
@@ -93,6 +97,7 @@ impl LandscapeApiError {
 
     pub fn http_status(&self) -> StatusCode {
         match self {
+            Self::Cert(e) => StatusCode::from_u16(e.http_status_code()).unwrap(),
             Self::DnsRule(e) => StatusCode::from_u16(e.http_status_code()).unwrap(),
             Self::DnsUpstream(e) => StatusCode::from_u16(e.http_status_code()).unwrap(),
             Self::DnsRedirect(e) => StatusCode::from_u16(e.http_status_code()).unwrap(),
@@ -119,6 +124,7 @@ impl LandscapeApiError {
 
     pub fn error_args(&self) -> serde_json::Value {
         match self {
+            Self::Cert(e) => e.error_args(),
             Self::DnsRule(e) => e.error_args(),
             Self::DnsUpstream(e) => e.error_args(),
             Self::DnsRedirect(e) => e.error_args(),

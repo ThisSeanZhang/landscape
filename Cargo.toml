@@ -137,6 +137,7 @@ rustls = { version = "0.23.35", default-features = false, features = [
 rustls-pki-types = "1.10"
 pem = "3.0"
 rcgen = "0.14.6"
+instant-acme = "0.7"
 sha2 = "0.10.8"
 
 # ============================================================================

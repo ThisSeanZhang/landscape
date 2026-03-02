@@ -16,6 +16,7 @@ import {
   NetworkPublic,
   Devices,
   Dashboard,
+  Certificate,
 } from "@vicons/carbon";
 import { ImportExportRound } from "@vicons/material";
 import { Wall } from "@vicons/tabler";
@@ -168,6 +169,21 @@ const menuOptions = computed<MenuOption[]>(() => [
     label: t("routes.mac-binding"),
     key: "mac-binding",
     icon: renderIcon(Devices),
+  },
+  {
+    label: t("routes.cert"),
+    key: "cert",
+    icon: renderIcon(Certificate),
+    children: [
+      {
+        label: t("routes.cert-accounts"),
+        key: "cert-accounts",
+      },
+      {
+        label: t("routes.cert-orders"),
+        key: "cert-orders",
+      },
+    ],
   },
   {
     label: t("routes.config"),

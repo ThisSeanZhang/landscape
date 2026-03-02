@@ -8,5 +8,6 @@ pub mod geo_site_service;
 
 pub mod static_nat_mapping;
 
+pub mod cert;
 pub mod dns;
 pub mod enrolled_device;
