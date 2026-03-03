@@ -93,8 +93,8 @@ const inner_zone: Array<RouteRecordRaw> = [
     component: CertAccounts,
   },
   {
-    path: "/cert-orders",
-    name: "routes.cert-orders",
+    path: "/certs",
+    name: "routes.certs",
     component: CertOrders,
   },
   {

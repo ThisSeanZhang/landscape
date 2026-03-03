@@ -180,8 +180,8 @@ const menuOptions = computed<MenuOption[]>(() => [
         key: "cert-accounts",
       },
       {
-        label: t("routes.cert-orders"),
-        key: "cert-orders",
+        label: t("routes.certs"),
+        key: "certs",
       },
     ],
   },

@@ -184,10 +184,26 @@ async function save() {
 
       <template v-if="is_zerossl">
         <n-form-item :label="t('cert.account_eab_kid')">
-          <n-input v-model:value="zeroSslEabKid" />
+          <n-input
+            v-model:value="zeroSslEabKid"
+            type="password"
+            :input-props="{
+              autocomplete: 'new-password',
+              'new-password': 'new-password',
+            }"
+            show-password-on="click"
+          />
         </n-form-item>
         <n-form-item :label="t('cert.account_eab_hmac')">
-          <n-input v-model:value="zeroSslEabHmacKey" show-password-on="click" />
+          <n-input
+            type="password"
+            v-model:value="zeroSslEabHmacKey"
+            :input-props="{
+              autocomplete: 'new-password',
+              'new-password': 'new-password',
+            }"
+            show-password-on="click"
+          />
         </n-form-item>
       </template>
 

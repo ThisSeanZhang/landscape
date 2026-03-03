@@ -1,25 +1,38 @@
 import {
-  listCertOrders,
-  getCertOrder,
-  createCertOrder,
-  deleteCertOrder,
-} from "@landscape-router/types/api/certificate-orders/certificate-orders";
-import type { CertOrderConfig } from "@landscape-router/types/api/schemas";
+  listCerts,
+  getCert,
+  createCert,
+  deleteCert,
+  issueCert,
+  revokeCert,
+  renewCert,
+} from "@landscape-router/types/api/certificates/certificates";
+import type { CertConfig } from "@landscape-router/types/api/schemas";
 
-export async function get_cert_orders(): Promise<CertOrderConfig[]> {
-  return listCertOrders();
+export async function get_certs(): Promise<CertConfig[]> {
+  return listCerts();
 }
 
-export async function get_cert_order(id: string): Promise<CertOrderConfig> {
-  return getCertOrder(id);
+export async function get_cert(id: string): Promise<CertConfig> {
+  return getCert(id);
 }
 
-export async function push_cert_order(
-  config: CertOrderConfig,
-): Promise<CertOrderConfig> {
-  return createCertOrder(config);
+export async function push_cert(config: CertConfig): Promise<CertConfig> {
+  return createCert(config);
 }
 
-export async function delete_cert_order(id: string): Promise<void> {
-  await deleteCertOrder(id);
+export async function delete_cert(id: string): Promise<void> {
+  await deleteCert(id);
+}
+
+export async function issue_cert(id: string): Promise<CertConfig> {
+  return issueCert(id);
+}
+
+export async function revoke_cert(id: string): Promise<CertConfig> {
+  return revokeCert(id);
+}
+
+export async function renew_cert(id: string): Promise<CertConfig> {
+  return renewCert(id);
 }

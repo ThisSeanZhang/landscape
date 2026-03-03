@@ -18,24 +18,19 @@ pub enum CertAccounts {
 }
 
 #[derive(DeriveIden)]
-pub enum CertOrders {
-    #[sea_orm(iden = "cert_orders")]
+pub enum Certs {
+    #[sea_orm(iden = "certs")]
     Table,
     Id,
     Name,
-    AccountId,
     Domains,
-    ChallengeType,
-    KeyType,
     Status,
     PrivateKey,
     Certificate,
     CertificateChain,
-    AcmeOrderUrl,
     ExpiresAt,
     IssuedAt,
-    AutoRenew,
-    RenewBeforeDays,
     StatusMessage,
+    CertType,
     UpdateAt,
 }

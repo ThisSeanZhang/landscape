@@ -10,7 +10,7 @@ use colored::Colorize;
 use landscape::{
     boot::{boot_check, log::init_logger},
     cert::load_or_generate_cert,
-    config_service::cert::{CertAccountService, CertOrderService},
+    config_service::cert::{CertAccountService, CertService},
     config_service::enrolled_device::EnrolledDeviceService,
     config_service::{
         dns::{redirect::DNSRedirectService, upstream::DnsUpstreamService},
@@ -140,7 +140,7 @@ pub struct LandscapeApp {
     enrolled_device_service: EnrolledDeviceService,
 
     cert_account_service: CertAccountService,
-    cert_order_service: CertOrderService,
+    cert_service: CertService,
 }
 
 impl LandscapeApp {
@@ -348,7 +348,8 @@ async fn run(home_path: PathBuf, config: RuntimeConfig) -> LdResult<()> {
     let enrolled_device_service = EnrolledDeviceService::new(db_store_provider.clone()).await;
 
     let cert_account_service = CertAccountService::new(db_store_provider.clone()).await;
-    let cert_order_service = CertOrderService::new(db_store_provider.clone()).await;
+    let cert_service =
+        CertService::new(db_store_provider.clone(), cert_account_service.clone()).await;
 
     let route_lan_service = RouteLanServiceManagerService::new(
         db_store_provider.clone(),
@@ -450,7 +451,7 @@ async fn run(home_path: PathBuf, config: RuntimeConfig) -> LdResult<()> {
         enrolled_device_service,
         // cert
         cert_account_service,
-        cert_order_service,
+        cert_service,
     };
 
     // 初始化结束

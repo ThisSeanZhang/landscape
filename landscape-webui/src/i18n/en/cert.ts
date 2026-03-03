@@ -21,25 +21,35 @@ export default {
   account_use_staging: "Use staging environment",
   account_has_credentials: "Registered",
 
-  // Order
-  order_title: "Certificate Orders",
-  order_name: "Order Name",
-  order_account: "ACME Account",
-  order_domains: "Domains",
-  order_challenge: "Challenge Type",
-  order_key_type: "Key Type",
-  order_status: "Status",
-  order_auto_renew: "Auto Renew",
-  order_expires: "Expires",
-  order_certificate: "Certificate",
-  order_certificate_chain: "Certificate Chain",
-  order_issued_at: "Issued At",
-  order_renew_before_days: "Renew Before (days)",
-  order_edit_title: "Certificate Order",
-  order_name_required: "Order name is required",
-  order_account_required: "ACME account is required",
-  order_domains_required: "At least one domain is required",
-  order_domain_invalid: "Invalid domain format",
+  // Certificate
+  cert_title: "Certificates",
+  cert_name: "Name",
+  cert_domains: "Domains",
+  cert_status: "Status",
+  cert_issued_at: "Issued At",
+  cert_expires: "Expires",
+  cert_edit_title: "Certificate",
+  cert_name_required: "Certificate name is required",
+  cert_domains_required: "At least one domain is required",
+  cert_domain_invalid: "Invalid domain format",
+
+  // Cert type
+  cert_type: "Type",
+  type_acme: "ACME",
+  type_manual: "Manual",
+
+  // Manual upload
+  upload_cert: "Certificate (PEM)",
+  upload_key: "Private Key (PEM)",
+  upload_chain: "Certificate Chain (PEM)",
+
+  // ACME fields
+  acme_account: "ACME Account",
+  acme_account_required: "ACME account is required",
+  acme_challenge: "Challenge Type",
+  acme_key_type: "Key Type",
+  acme_auto_renew: "Auto Renew",
+  acme_renew_before_days: "Renew Before (days)",
 
   // Challenge
   challenge_http: "HTTP-01",
@@ -81,12 +91,16 @@ export default {
   action_register: "Register",
   action_verify: "Verify",
   action_deactivate: "Deactivate",
+  action_issue: "Issue",
+  action_revoke: "Revoke",
+  action_renew: "Renew",
   confirm_deactivate:
     "Deactivate this ACME account? This action is irreversible.",
+  confirm_revoke: "Revoke this certificate? This action is irreversible.",
 
   // Misc
   days: "days",
   no_accounts: "No ACME accounts configured",
-  no_orders: "No certificate orders",
+  no_certs: "No certificates",
   no_accounts_hint: "Please create an ACME account first",
 };

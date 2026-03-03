@@ -155,6 +155,6 @@ export default {
     "mac-binding": "Devices",
     cert: "Certificate",
     "cert-accounts": "ACME Accounts",
-    "cert-orders": "Certificate Orders",
+    certs: "Certificates",
   },
 };

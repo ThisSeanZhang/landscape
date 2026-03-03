@@ -57,7 +57,7 @@ impl LandscapeConfigService {
             enrolled_devices: self.store.enrolled_device_store().list().await.unwrap(),
             lan_ipv6s: self.store.lan_ipv6_service_store().list().await.unwrap(),
             cert_accounts: self.store.cert_account_store().list().await.unwrap(),
-            cert_orders: self.store.cert_order_store().list().await.unwrap(),
+            certs: self.store.cert_store().list().await.unwrap(),
         }
     }
 

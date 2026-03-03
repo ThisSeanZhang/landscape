@@ -1,11 +1,11 @@
 <script setup lang="ts">
 import { ref } from "vue";
-import type { CertOrderConfig } from "@landscape-router/types/api/schemas";
-import { delete_cert_order } from "@/api/cert/order";
+import type { CertConfig } from "@landscape-router/types/api/schemas";
+import { delete_cert } from "@/api/cert/order";
 import { useI18n } from "vue-i18n";
 
 type Props = {
-  rule: CertOrderConfig;
+  rule: CertConfig;
 };
 
 const props = defineProps<Props>();
@@ -36,26 +36,11 @@ function status_label(status?: string) {
   return t(key);
 }
 
-function challenge_label(ct?: CertOrderConfig["challenge_type"]) {
-  if (!ct || typeof ct !== "object") return "-";
-  if ("http" in ct) return t("cert.challenge_http");
-  if ("dns" in ct) return t("cert.challenge_dns");
+function cert_type_label(ct?: CertConfig["cert_type"]) {
+  if (!ct) return "-";
+  if (ct.t === "acme") return t("cert.type_acme");
+  if (ct.t === "manual") return t("cert.type_manual");
   return "-";
-}
-
-function key_type_label(kt?: string) {
-  switch (kt) {
-    case "ecdsa_p256":
-      return t("cert.key_ecdsa_p256");
-    case "ecdsa_p384":
-      return t("cert.key_ecdsa_p384");
-    case "rsa2048":
-      return t("cert.key_rsa2048");
-    case "rsa4096":
-      return t("cert.key_rsa4096");
-    default:
-      return kt ?? "-";
-  }
 }
 
 function format_ts(ts?: number | null) {
@@ -65,7 +50,7 @@ function format_ts(ts?: number | null) {
 
 async function del() {
   if (props.rule.id) {
-    await delete_cert_order(props.rule.id);
+    await delete_cert(props.rule.id);
     emit("refresh");
   }
 }
@@ -84,7 +69,11 @@ async function del() {
       :column="1"
       size="small"
     >
-      <n-descriptions-item :label="t('cert.order_domains')">
+      <n-descriptions-item :label="t('cert.cert_type')">
+        {{ cert_type_label(rule.cert_type) }}
+      </n-descriptions-item>
+
+      <n-descriptions-item :label="t('cert.cert_domains')">
         <n-flex size="small">
           <n-tag v-for="d in rule.domains" :key="d" size="small">
             {{ d }}
@@ -92,38 +81,17 @@ async function del() {
         </n-flex>
       </n-descriptions-item>
 
-      <n-descriptions-item :label="t('cert.order_status')">
+      <n-descriptions-item :label="t('cert.cert_status')">
         <n-tag size="small" :type="status_type(rule.status)">
           {{ status_label(rule.status) }}
         </n-tag>
       </n-descriptions-item>
 
-      <n-descriptions-item :label="t('cert.order_challenge')">
-        {{ challenge_label(rule.challenge_type) }}
-      </n-descriptions-item>
-
-      <n-descriptions-item :label="t('cert.order_key_type')">
-        {{ key_type_label(rule.key_type) }}
-      </n-descriptions-item>
-
-      <n-descriptions-item :label="t('cert.order_auto_renew')">
-        <n-tag size="small" :type="rule.auto_renew ? 'success' : 'default'">
-          {{ rule.auto_renew ? t("common.enable") : t("common.disable") }}
-        </n-tag>
-      </n-descriptions-item>
-
-      <n-descriptions-item
-        v-if="rule.auto_renew"
-        :label="t('cert.order_renew_before_days')"
-      >
-        {{ rule.renew_before_days ?? 30 }} {{ t("cert.days") }}
-      </n-descriptions-item>
-
-      <n-descriptions-item :label="t('cert.order_issued_at')">
+      <n-descriptions-item :label="t('cert.cert_issued_at')">
         {{ format_ts(rule.issued_at) }}
       </n-descriptions-item>
 
-      <n-descriptions-item :label="t('cert.order_expires')">
+      <n-descriptions-item :label="t('cert.cert_expires')">
         {{ format_ts(rule.expires_at) }}
       </n-descriptions-item>
     </n-descriptions>

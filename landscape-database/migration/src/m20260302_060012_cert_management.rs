@@ -1,6 +1,6 @@
 use sea_orm_migration::prelude::*;
 
-use super::tables::cert::{CertAccounts, CertOrders};
+use super::tables::cert::{CertAccounts, Certs};
 
 #[derive(DeriveMigrationName)]
 pub struct Migration;
@@ -46,35 +46,20 @@ impl MigrationTrait for Migration {
         manager
             .create_table(
                 Table::create()
-                    .table(CertOrders::Table)
+                    .table(Certs::Table)
                     .if_not_exists()
-                    .col(ColumnDef::new(CertOrders::Id).uuid().not_null().primary_key())
-                    .col(ColumnDef::new(CertOrders::Name).string().not_null())
-                    .col(ColumnDef::new(CertOrders::AccountId).uuid().not_null())
-                    .col(ColumnDef::new(CertOrders::Domains).json().not_null())
-                    .col(ColumnDef::new(CertOrders::ChallengeType).json().not_null())
-                    .col(
-                        ColumnDef::new(CertOrders::KeyType)
-                            .string()
-                            .not_null()
-                            .default("ecdsa_p256"),
-                    )
-                    .col(ColumnDef::new(CertOrders::Status).string().not_null().default("pending"))
-                    .col(ColumnDef::new(CertOrders::PrivateKey).text())
-                    .col(ColumnDef::new(CertOrders::Certificate).text())
-                    .col(ColumnDef::new(CertOrders::CertificateChain).text())
-                    .col(ColumnDef::new(CertOrders::AcmeOrderUrl).text())
-                    .col(ColumnDef::new(CertOrders::ExpiresAt).double())
-                    .col(ColumnDef::new(CertOrders::IssuedAt).double())
-                    .col(ColumnDef::new(CertOrders::AutoRenew).boolean().not_null().default(false))
-                    .col(
-                        ColumnDef::new(CertOrders::RenewBeforeDays)
-                            .integer()
-                            .not_null()
-                            .default(30),
-                    )
-                    .col(ColumnDef::new(CertOrders::StatusMessage).text())
-                    .col(ColumnDef::new(CertOrders::UpdateAt).double().not_null().default(0.0))
+                    .col(ColumnDef::new(Certs::Id).uuid().not_null().primary_key())
+                    .col(ColumnDef::new(Certs::Name).string().not_null())
+                    .col(ColumnDef::new(Certs::Domains).json().not_null())
+                    .col(ColumnDef::new(Certs::Status).string().not_null().default("pending"))
+                    .col(ColumnDef::new(Certs::PrivateKey).text())
+                    .col(ColumnDef::new(Certs::Certificate).text())
+                    .col(ColumnDef::new(Certs::CertificateChain).text())
+                    .col(ColumnDef::new(Certs::ExpiresAt).double())
+                    .col(ColumnDef::new(Certs::IssuedAt).double())
+                    .col(ColumnDef::new(Certs::StatusMessage).text())
+                    .col(ColumnDef::new(Certs::CertType).json().not_null())
+                    .col(ColumnDef::new(Certs::UpdateAt).double().not_null().default(0.0))
                     .to_owned(),
             )
             .await?;
@@ -83,7 +68,7 @@ impl MigrationTrait for Migration {
     }
 
     async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
-        manager.drop_table(Table::drop().table(CertOrders::Table).to_owned()).await?;
+        manager.drop_table(Table::drop().table(Certs::Table).to_owned()).await?;
         manager.drop_table(Table::drop().table(CertAccounts::Table).to_owned()).await?;
         Ok(())
     }

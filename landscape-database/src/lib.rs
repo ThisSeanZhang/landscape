@@ -31,8 +31,8 @@ pub mod route_wan;
 pub mod nat;
 pub mod static_nat_mapping;
 
+pub mod cert;
 pub mod cert_account;
-pub mod cert_order;
 pub mod dns_redirect;
 pub mod dns_rule;
 pub mod dns_upstream;

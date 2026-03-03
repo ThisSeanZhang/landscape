@@ -5,7 +5,7 @@ use utoipa_axum::router::OpenApiRouter;
 
 use crate::auth::get_auth_openapi_router;
 use crate::cert::accounts::get_cert_account_paths;
-use crate::cert::orders::get_cert_order_paths;
+use crate::cert::certs::get_cert_paths;
 use crate::devices::get_enrolled_device_config_paths;
 use crate::dns::redirects::get_dns_redirect_config_paths;
 use crate::dns::rules::get_dns_rule_config_paths;
@@ -91,7 +91,7 @@ impl Modify for SecurityAddon {
         (name = "Geo IPs", description = "Geo IP configuration"),
         (name = "Enrolled Devices", description = "Enrolled device management"),
         (name = "Certificate Accounts", description = "ACME certificate account management"),
-        (name = "Certificate Orders", description = "Certificate order and issuance management"),
+        (name = "Certificates", description = "Certificate management"),
         (name = "Docker", description = "Docker container management"),
         (name = "Docker Images", description = "Docker image management"),
         (name = "Docker Networks", description = "Docker network management"),
@@ -186,7 +186,7 @@ pub fn build_devices_openapi_router() -> OpenApiRouter<LandscapeApp> {
 
 /// /cert — certificate accounts + orders
 pub fn build_cert_openapi_router() -> OpenApiRouter<LandscapeApp> {
-    OpenApiRouter::new().merge(get_cert_account_paths()).merge(get_cert_order_paths())
+    OpenApiRouter::new().merge(get_cert_account_paths()).merge(get_cert_paths())
 }
 
 /// /docker — Docker service + containers + images + networks
@@ -360,7 +360,7 @@ pub fn build_full_openapi_spec() -> utoipa::openapi::OpenApi {
         },
         {
             "name": "Certificate",
-            "tags": ["Certificate Accounts", "Certificate Orders"]
+            "tags": ["Certificate Accounts", "Certificates"]
         },
         {
             "name": "Docker",

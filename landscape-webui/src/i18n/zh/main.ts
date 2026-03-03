@@ -153,6 +153,6 @@ export default {
     "mac-binding": "设备管理",
     cert: "证书管理",
     "cert-accounts": "ACME 账户",
-    "cert-orders": "证书订单",
+    certs: "证书管理",
   },
 };

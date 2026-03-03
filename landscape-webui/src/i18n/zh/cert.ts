@@ -21,25 +21,35 @@ export default {
   account_use_staging: "使用测试环境",
   account_has_credentials: "已注册",
 
-  // Order
-  order_title: "证书订单",
-  order_name: "订单名称",
-  order_account: "ACME 账户",
-  order_domains: "域名",
-  order_challenge: "验证方式",
-  order_key_type: "密钥类型",
-  order_status: "状态",
-  order_auto_renew: "自动续期",
-  order_expires: "过期时间",
-  order_certificate: "证书",
-  order_certificate_chain: "证书链",
-  order_issued_at: "签发时间",
-  order_renew_before_days: "提前续期（天）",
-  order_edit_title: "证书订单",
-  order_name_required: "订单名称不能为空",
-  order_account_required: "请选择 ACME 账户",
-  order_domains_required: "至少需要一个域名",
-  order_domain_invalid: "域名格式不正确",
+  // Certificate
+  cert_title: "证书管理",
+  cert_name: "名称",
+  cert_domains: "域名",
+  cert_status: "状态",
+  cert_issued_at: "签发时间",
+  cert_expires: "过期时间",
+  cert_edit_title: "证书",
+  cert_name_required: "证书名称不能为空",
+  cert_domains_required: "至少需要一个域名",
+  cert_domain_invalid: "域名格式不正确",
+
+  // Cert type
+  cert_type: "类型",
+  type_acme: "ACME",
+  type_manual: "手动上传",
+
+  // Manual upload
+  upload_cert: "证书 (PEM)",
+  upload_key: "私钥 (PEM)",
+  upload_chain: "证书链 (PEM)",
+
+  // ACME fields
+  acme_account: "ACME 账户",
+  acme_account_required: "请选择 ACME 账户",
+  acme_challenge: "验证方式",
+  acme_key_type: "密钥类型",
+  acme_auto_renew: "自动续期",
+  acme_renew_before_days: "提前续期（天）",
 
   // Challenge
   challenge_http: "HTTP-01",
@@ -81,11 +91,15 @@ export default {
   action_register: "注册",
   action_verify: "验证",
   action_deactivate: "注销",
+  action_issue: "签发",
+  action_revoke: "吊销",
+  action_renew: "续期",
   confirm_deactivate: "注销此 ACME 账户？此操作不可撤销。",
+  confirm_revoke: "吊销此证书？此操作不可撤销。",
 
   // Misc
   days: "天",
   no_accounts: "暂无 ACME 账户",
-  no_orders: "暂无证书订单",
+  no_certs: "暂无证书",
   no_accounts_hint: "请先创建 ACME 账户",
 };

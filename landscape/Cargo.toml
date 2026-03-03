@@ -30,6 +30,7 @@ rustls-pki-types = { workspace = true }
 pem = { workspace = true }
 instant-acme = { workspace = true }
 base64 = { workspace = true }
+x509-parser = { workspace = true }
 
 rtnetlink = { workspace = true }
 netlink-sys = { workspace = true }

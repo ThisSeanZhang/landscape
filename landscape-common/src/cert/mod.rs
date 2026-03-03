@@ -12,9 +12,9 @@ pub enum CertError {
     #[api_error(id = "cert.account_not_found", status = 404)]
     AccountNotFound(ConfigId),
 
-    #[error("Certificate order '{0}' not found")]
-    #[api_error(id = "cert.order_not_found", status = 404)]
-    OrderNotFound(ConfigId),
+    #[error("Certificate '{0}' not found")]
+    #[api_error(id = "cert.cert_not_found", status = 404)]
+    CertNotFound(ConfigId),
 
     #[error("ACME registration failed: {0}")]
     #[api_error(id = "cert.registration_failed", status = 500)]
@@ -35,4 +35,16 @@ pub enum CertError {
     #[error("Operation not allowed: account is currently in '{0}' status")]
     #[api_error(id = "cert.invalid_status_transition", status = 409)]
     InvalidStatusTransition(String),
+
+    #[error("Certificate issuance failed: {0}")]
+    #[api_error(id = "cert.issuance_failed", status = 500)]
+    IssuanceFailed(String),
+
+    #[error("Certificate revocation failed: {0}")]
+    #[api_error(id = "cert.revocation_failed", status = 500)]
+    RevocationFailed(String),
+
+    #[error("DNS challenge setup failed: {0}")]
+    #[api_error(id = "cert.dns_challenge_failed", status = 500)]
+    DnsChallengeSetupFailed(String),
 }
