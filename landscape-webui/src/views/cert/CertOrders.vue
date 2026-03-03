@@ -17,11 +17,14 @@ import {
   type DataTableColumns,
 } from "naive-ui";
 import CertOrderEditModal from "@/components/cert/order/CertOrderEditModal.vue";
+import CertInfoModal from "@/components/cert/order/CertInfoModal.vue";
 
 const items = ref<CertConfig[]>([]);
 const { t } = useI18n();
 const show_edit_modal = ref(false);
 const edit_id = ref<string | null>(null);
+const show_info_modal = ref(false);
+const current_info_cert = ref<CertConfig | null>(null);
 const loading_ids = ref<Set<string>>(new Set());
 let poll_timer: ReturnType<typeof setInterval> | null = null;
 
@@ -140,6 +143,11 @@ function open_edit(id: string | null) {
   show_edit_modal.value = true;
 }
 
+function open_info(cert: CertConfig) {
+  current_info_cert.value = cert;
+  show_info_modal.value = true;
+}
+
 const columns = computed<DataTableColumns<CertConfig>>(() => [
   {
     title: t("cert.cert_name"),
@@ -200,19 +208,32 @@ const columns = computed<DataTableColumns<CertConfig>>(() => [
   {
     title: t("common.status"),
     key: "actions",
-    width: 260,
+    width: 320,
     fixed: "right",
     render(row) {
       const id = row.id!;
       const is_loading = loading_ids.value.has(id);
       const btns: any[] = [];
 
-      // Issue: pending | invalid | expired (ACME only)
+      btns.push(
+        h(
+          NButton,
+          {
+            size: "small",
+            secondary: true,
+            onClick: () => open_info(row),
+          },
+          () => t("cert.action_view"),
+        ),
+      );
+
+      // Issue: pending | invalid | expired | revoked (ACME only)
       if (
         is_acme(row) &&
         (row.status === "pending" ||
           row.status === "invalid" ||
-          row.status === "expired")
+          row.status === "expired" ||
+          row.status === "revoked")
       ) {
         btns.push(
           h(
@@ -329,5 +350,6 @@ const columns = computed<DataTableColumns<CertConfig>>(() => [
       @refresh="refresh"
       v-model:show="show_edit_modal"
     />
+    <CertInfoModal :cert="current_info_cert" v-model:show="show_info_modal" />
   </n-flex>
 </template>

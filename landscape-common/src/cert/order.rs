@@ -149,9 +149,28 @@ pub struct CertConfig {
     pub status_message: Option<String>,
     #[serde(default)]
     pub cert_type: CertType,
+    #[serde(default)]
+    #[cfg_attr(feature = "openapi", schema(required = false))]
+    pub for_api: bool,
+    #[serde(default)]
+    #[cfg_attr(feature = "openapi", schema(required = false))]
+    pub for_gateway: bool,
     #[serde(default = "get_f64_timestamp")]
     #[cfg_attr(feature = "openapi", schema(required = false))]
     pub update_at: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+pub struct CertParsedInfo {
+    pub subject: String,
+    pub issuer: String,
+    pub serial_number: String,
+    pub subject_alt_names: Vec<String>,
+    pub signature_algorithm: String,
+    pub not_before: f64,
+    pub not_after: f64,
+    pub fingerprint_sha256: String,
 }
 
 impl LandscapeDBStore<Uuid> for CertConfig {

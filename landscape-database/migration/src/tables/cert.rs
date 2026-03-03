@@ -32,5 +32,7 @@ pub enum Certs {
     IssuedAt,
     StatusMessage,
     CertType,
+    ForApi,
+    ForGateway,
     UpdateAt,
 }

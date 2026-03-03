@@ -1,13 +1,17 @@
 import {
   listCerts,
   getCert,
+  getCertInfo,
   createCert,
   deleteCert,
   issueCert,
   revokeCert,
   renewCert,
 } from "@landscape-router/types/api/certificates/certificates";
-import type { CertConfig } from "@landscape-router/types/api/schemas";
+import type {
+  CertConfig,
+  CertParsedInfo,
+} from "@landscape-router/types/api/schemas";
 
 export async function get_certs(): Promise<CertConfig[]> {
   return listCerts();
@@ -35,4 +39,8 @@ export async function revoke_cert(id: string): Promise<CertConfig> {
 
 export async function renew_cert(id: string): Promise<CertConfig> {
   return renewCert(id);
+}
+
+export async function get_cert_info(id: string): Promise<CertParsedInfo> {
+  return getCertInfo(id);
 }

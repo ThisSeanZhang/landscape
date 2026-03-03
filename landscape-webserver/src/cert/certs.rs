@@ -1,6 +1,6 @@
 use axum::extract::{Path, State};
 use landscape_common::api_response::LandscapeApiResp as CommonApiResp;
-use landscape_common::cert::order::CertConfig;
+use landscape_common::cert::order::{CertConfig, CertParsedInfo};
 use landscape_common::cert::CertError;
 use landscape_common::config::ConfigId;
 use landscape_common::service::controller::ConfigController;
@@ -15,6 +15,7 @@ pub fn get_cert_paths() -> OpenApiRouter<LandscapeApp> {
     OpenApiRouter::new()
         .routes(routes!(list_certs, create_cert))
         .routes(routes!(get_cert, delete_cert))
+        .routes(routes!(get_cert_info))
         .routes(routes!(issue_cert))
         .routes(routes!(revoke_cert))
         .routes(routes!(renew_cert))
@@ -66,6 +67,25 @@ async fn get_cert(
     } else {
         Err(CertError::CertNotFound(id))?
     }
+}
+
+#[utoipa::path(
+    get,
+    path = "/certs/{id}/info",
+    tag = "Certificates",
+    params(("id" = Uuid, Path, description = "Certificate ID")),
+    responses(
+        (status = 200, body = CommonApiResp<CertParsedInfo>),
+        (status = 404, description = "Not found"),
+        (status = 500, description = "Parse failed")
+    )
+)]
+async fn get_cert_info(
+    State(state): State<LandscapeApp>,
+    Path(id): Path<ConfigId>,
+) -> LandscapeApiResult<CertParsedInfo> {
+    let result = state.cert_service.get_cert_info(id).await?;
+    LandscapeApiResp::success(result)
 }
 
 #[utoipa::path(

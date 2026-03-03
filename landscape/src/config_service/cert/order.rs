@@ -1,15 +1,17 @@
+use std::collections::HashSet;
 use std::time::Duration;
 
 use instant_acme::{
     Account, ChallengeType as AcmeChallengeType, Identifier, NewOrder, OrderStatus, RetryPolicy,
     RevocationRequest,
 };
-use landscape_common::cert::order::{CertConfig, CertStatus, CertType};
+use landscape_common::cert::order::{CertConfig, CertParsedInfo, CertStatus, CertType};
 use landscape_common::cert::CertError;
 use landscape_common::service::controller::ConfigController;
 use landscape_database::cert::repository::CertRepository;
 use landscape_database::provider::LandscapeDBServiceProvider;
 use rustls_pki_types::CertificateDer;
+use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use super::dns_provider;
@@ -119,8 +121,56 @@ impl CertService {
                 config.status = CertStatus::Valid;
             }
         }
+
+        self.validate_for_api_domain_conflicts(&config).await?;
+
         let saved = self.set(config).await;
         Ok(saved)
+    }
+
+    async fn validate_for_api_domain_conflicts(
+        &self,
+        config: &CertConfig,
+    ) -> Result<(), CertError> {
+        if !config.for_api {
+            return Ok(());
+        }
+
+        let normalized_domains: HashSet<String> = config
+            .domains
+            .iter()
+            .map(|d| d.trim().to_ascii_lowercase())
+            .filter(|d| !d.is_empty())
+            .collect();
+
+        if normalized_domains.is_empty() {
+            return Ok(());
+        }
+
+        let certs = self.list().await;
+        let mut conflicts: HashSet<String> = HashSet::new();
+        for cert in certs {
+            if cert.id == config.id || !cert.for_api {
+                continue;
+            }
+            for domain in cert.domains {
+                let candidate = domain.trim().to_ascii_lowercase();
+                if normalized_domains.contains(&candidate) {
+                    conflicts.insert(candidate);
+                }
+            }
+        }
+
+        if conflicts.is_empty() {
+            return Ok(());
+        }
+
+        let mut conflict_list: Vec<String> = conflicts.into_iter().collect();
+        conflict_list.sort_unstable();
+        Err(CertError::InvalidStatusTransition(format!(
+            "for_api domain conflict: {}",
+            conflict_list.join(", ")
+        )))
     }
 
     /// Validate, set status to Processing, enqueue to background worker.
@@ -140,7 +190,10 @@ impl CertService {
 
         // Status guard
         match config.status {
-            CertStatus::Pending | CertStatus::Invalid | CertStatus::Expired => {}
+            CertStatus::Pending
+            | CertStatus::Invalid
+            | CertStatus::Expired
+            | CertStatus::Revoked => {}
             ref s => {
                 return Err(CertError::InvalidStatusTransition(format!("{s:?}")));
             }
@@ -458,6 +511,15 @@ impl CertService {
 
         Ok(saved)
     }
+
+    pub async fn get_cert_info(&self, id: Uuid) -> Result<CertParsedInfo, CertError> {
+        let config = self.find_by_id(id).await.ok_or(CertError::CertNotFound(id))?;
+        let cert_pem = config
+            .certificate
+            .as_ref()
+            .ok_or_else(|| CertError::IssuanceFailed("No certificate content".to_string()))?;
+        parse_cert_details(cert_pem)
+    }
 }
 
 #[async_trait::async_trait]
@@ -533,6 +595,63 @@ fn parse_cert_info(pem_str: &str) -> Result<(Vec<String>, f64, f64), CertError> 
     }
 
     Ok((domains, not_before, not_after))
+}
+
+fn parse_cert_details(pem_str: &str) -> Result<CertParsedInfo, CertError> {
+    let pem_obj = pem::parse(pem_str)
+        .map_err(|e| CertError::IssuanceFailed(format!("Failed to parse certificate PEM: {e}")))?;
+
+    let der = pem_obj.contents();
+    let (_, cert) = x509_parser::parse_x509_certificate(der).map_err(|e| {
+        CertError::IssuanceFailed(format!("Failed to parse X.509 certificate: {e}"))
+    })?;
+
+    let subject = cert.subject().to_string();
+    let issuer = cert.issuer().to_string();
+    let serial_number = hex_string(cert.tbs_certificate.raw_serial());
+    let signature_algorithm = format!("{:?}", cert.signature_algorithm.algorithm);
+    let not_before = cert.validity().not_before.timestamp() as f64;
+    let not_after = cert.validity().not_after.timestamp() as f64;
+
+    let mut subject_alt_names = Vec::new();
+    for ext in cert.extensions() {
+        if let x509_parser::extensions::ParsedExtension::SubjectAlternativeName(san) =
+            ext.parsed_extension()
+        {
+            for name in &san.general_names {
+                if let x509_parser::extensions::GeneralName::DNSName(dns) = name {
+                    subject_alt_names.push(dns.to_string());
+                }
+            }
+        }
+    }
+
+    if subject_alt_names.is_empty() {
+        if let Some(cn) = cert.subject().iter_common_name().next() {
+            if let Ok(cn_str) = cn.as_str() {
+                subject_alt_names.push(cn_str.to_string());
+            }
+        }
+    }
+
+    let mut hasher = Sha256::new();
+    hasher.update(der);
+    let fingerprint_sha256 = hex_string(&hasher.finalize());
+
+    Ok(CertParsedInfo {
+        subject,
+        issuer,
+        serial_number,
+        subject_alt_names,
+        signature_algorithm,
+        not_before,
+        not_after,
+        fingerprint_sha256,
+    })
+}
+
+fn hex_string(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02X}")).collect::<Vec<_>>().join(":")
 }
 
 /// Convert PEM-encoded certificate to DER bytes

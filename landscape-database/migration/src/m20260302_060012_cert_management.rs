@@ -58,6 +58,8 @@ impl MigrationTrait for Migration {
                     .col(ColumnDef::new(Certs::ExpiresAt).double())
                     .col(ColumnDef::new(Certs::IssuedAt).double())
                     .col(ColumnDef::new(Certs::StatusMessage).text())
+                    .col(ColumnDef::new(Certs::ForApi).boolean().not_null().default(false))
+                    .col(ColumnDef::new(Certs::ForGateway).boolean().not_null().default(false))
                     .col(ColumnDef::new(Certs::CertType).json().not_null())
                     .col(ColumnDef::new(Certs::UpdateAt).double().not_null().default(0.0))
                     .to_owned(),

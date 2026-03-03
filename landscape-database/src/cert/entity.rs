@@ -24,6 +24,8 @@ pub struct Model {
     pub issued_at: Option<DBTimestamp>,
     pub status_message: Option<String>,
     pub cert_type: DBJson,
+    pub for_api: bool,
+    pub for_gateway: bool,
     pub update_at: DBTimestamp,
 }
 
@@ -57,6 +59,8 @@ impl From<Model> for CertConfig {
             issued_at: entity.issued_at,
             status_message: entity.status_message,
             cert_type: serde_json::from_value(entity.cert_type).unwrap(),
+            for_api: entity.for_api,
+            for_gateway: entity.for_gateway,
             update_at: entity.update_at,
         }
     }
@@ -83,6 +87,8 @@ impl UpdateActiveModel<ActiveModel> for CertConfig {
         active.issued_at = Set(self.issued_at);
         active.status_message = Set(self.status_message);
         active.cert_type = Set(serde_json::to_value(&self.cert_type).unwrap());
+        active.for_api = Set(self.for_api);
+        active.for_gateway = Set(self.for_gateway);
         active.update_at = Set(self.update_at);
     }
 }
