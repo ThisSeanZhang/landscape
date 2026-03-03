@@ -22,8 +22,8 @@ pub async fn test_tcp() {
     let (listener1, sock_fd1) = create_tcp_listener("0.0.0.0:55").await.unwrap();
     let (listener2, sock_fd2) = create_tcp_listener("0.0.0.0:55").await.unwrap();
 
-    landscape_ebpf::map_setting::dns::setting_dns_sock_map(sock_fd1, 0);
-    landscape_ebpf::map_setting::dns::setting_dns_sock_map(sock_fd2, 10);
+    landscape_ebpf::map_setting::dns::setting_dns_sock_map_tcp(sock_fd1, 0);
+    landscape_ebpf::map_setting::dns::setting_dns_sock_map_tcp(sock_fd2, 10);
 
     // attach eBPF
     landscape_ebpf::dns_dispatcher::attach_reuseport_ebpf(sock_fd1).unwrap();
@@ -31,7 +31,7 @@ pub async fn test_tcp() {
     println!("Listening on TCP port 55 with sk_reuseport eBPF");
 
     let (listener3, sock_fd3) = create_tcp_listener("0.0.0.0:55").await.unwrap();
-    landscape_ebpf::map_setting::dns::setting_dns_sock_map(sock_fd3, 20);
+    landscape_ebpf::map_setting::dns::setting_dns_sock_map_tcp(sock_fd3, 20);
 
     tokio::select! {
         _ = tokio::signal::ctrl_c()=> {},

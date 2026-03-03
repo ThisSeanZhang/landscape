@@ -1,17 +1,27 @@
 use std::time::Instant;
 
 use landscape_common::{
-    event::dns::DnsEvent,
-    event::DnsMetricMessage,
+    config::DnsRuntimeConfig,
+    event::{dns::DnsEvent, DnsMetricMessage},
     service::{
         controller::{ConfigController, FlowConfigController},
         WatchService,
     },
 };
-use landscape_dns::{server::LandscapeDnsServer, CheckChainDnsResult, CheckDnsReq};
+use landscape_dns::{
+    server::{DohListenerConfig, LandscapeDnsServer},
+    CheckChainDnsResult, CheckDnsReq,
+};
+use rustls::server::ResolvesServerCert;
+use std::{
+    net::{Ipv6Addr, SocketAddr, SocketAddrV6},
+    sync::Arc,
+    time::Duration,
+};
 use tokio::sync::mpsc;
 
 use crate::config_service::{
+    cert::order::CertService,
     dns::{redirect::DNSRedirectService, upstream::DnsUpstreamService},
     dns_rule::DNSRuleService,
     geo_site_service::GeoSiteService,
@@ -35,10 +45,24 @@ impl LandscapeDnsService {
         dns_redirect_rule_service: DNSRedirectService,
         geo_site_service: GeoSiteService,
         dns_upstream_service: DnsUpstreamService,
-        dns_config: landscape_common::config::DnsRuntimeConfig,
+        dns_config: DnsRuntimeConfig,
+        cert_service: CertService,
         msg_tx: Option<mpsc::Sender<DnsMetricMessage>>,
     ) -> Self {
-        let dns_service = LandscapeDnsServer::new(53, msg_tx);
+        let doh = Some(DohListenerConfig {
+            addr: SocketAddr::V6(SocketAddrV6::new(
+                Ipv6Addr::UNSPECIFIED,
+                dns_config.doh_listen_port,
+                0,
+                0,
+            )),
+            handshake_timeout: Duration::from_secs(5),
+            server_cert_resolver: Arc::new(cert_service.api_tls_resolver())
+                as Arc<dyn ResolvesServerCert>,
+            dns_hostname: None,
+            http_endpoint: dns_config.doh_http_endpoint.clone(),
+        });
+        let dns_service = LandscapeDnsServer::new(53, msg_tx, doh);
 
         // dns_service.restart(53).await;
         // dns_service.update_flow_map(&flow_rule_service.list().await).await;

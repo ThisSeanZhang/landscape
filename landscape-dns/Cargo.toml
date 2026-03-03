@@ -8,7 +8,7 @@ landscape-ebpf = { path = "../landscape-ebpf" }
 landscape-common = { path = "../landscape-common" }
 landscape-protobuf = { path = "../landscape-protobuf" }
 
-hickory-server = { workspace = true }
+hickory-server = { workspace = true, features = ["https-ring"] }
 hickory-client = { workspace = true }
 hickory-resolver = { workspace = true, features = [
     "system-config",
@@ -46,6 +46,7 @@ tracing-subscriber = { workspace = true, features = ["env-filter"] }
 tracing-appender = { workspace = true }
 futures-util = { workspace = true }
 quinn = { workspace = true }
+rustls = { workspace = true }
 
 nix = { workspace = true, features = ["socket", "uio"] }
 moka = { workspace = true }

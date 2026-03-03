@@ -68,8 +68,15 @@ int reuseport_dns_dispatcher(struct sk_reuseport_md *reuse_md) {
         flow_id = *flow_id_ptr;
     }
 
-    // bpf_log_info("find flow_id: %d", flow_id);
-    ret = bpf_sk_select_reuseport(reuse_md, &dns_flow_socks, &flow_id, 0);
+    // keep UDP/TCP sockets in separate key spaces:
+    // key = (flow_id << 1) | proto_bit, where UDP=0, TCP=1
+    __u32 flow_sock_key = (flow_id << 1);
+    if (reuse_md->ip_protocol == IPPROTO_TCP) {
+        flow_sock_key |= 1;
+    }
+
+    // bpf_log_info("find flow_id: %d, key: %d", flow_id, flow_sock_key);
+    ret = bpf_sk_select_reuseport(reuse_md, &dns_flow_socks, &flow_sock_key, 0);
     if (ret) {
         bpf_log_info("bpf_sk_select_reuseport err: %d", ret);
         return SK_DROP;

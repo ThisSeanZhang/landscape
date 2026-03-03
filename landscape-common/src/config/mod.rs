@@ -232,6 +232,12 @@ pub struct LandscapeDnsConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "openapi", schema(required = false, nullable = false))]
     pub negative_cache_ttl: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "openapi", schema(required = false, nullable = false))]
+    pub doh_listen_port: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "openapi", schema(required = false, nullable = false))]
+    pub doh_http_endpoint: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
@@ -450,6 +456,15 @@ impl RuntimeConfig {
                 .dns
                 .negative_cache_ttl
                 .unwrap_or(crate::DEFAULT_DNS_NEGATIVE_CACHE_TTL),
+            doh_listen_port: config
+                .dns
+                .doh_listen_port
+                .unwrap_or(crate::DEFAULT_DNS_DOH_LISTEN_PORT),
+            doh_http_endpoint: config
+                .dns
+                .doh_http_endpoint
+                .clone()
+                .unwrap_or_else(|| "/dns-query".to_string()),
         };
 
         let runtime_config = RuntimeConfig {
@@ -588,6 +603,8 @@ pub struct DnsRuntimeConfig {
     pub cache_capacity: u32,
     pub cache_ttl: u32,
     pub negative_cache_ttl: u32,
+    pub doh_listen_port: u16,
+    pub doh_http_endpoint: String,
 }
 
 impl MetricRuntimeConfig {
@@ -632,6 +649,12 @@ impl DnsRuntimeConfig {
         }
         if let Some(v) = config.negative_cache_ttl {
             self.negative_cache_ttl = v;
+        }
+        if let Some(v) = config.doh_listen_port {
+            self.doh_listen_port = v;
+        }
+        if let Some(v) = &config.doh_http_endpoint {
+            self.doh_http_endpoint = v.clone();
         }
     }
 }

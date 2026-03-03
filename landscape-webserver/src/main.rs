@@ -309,6 +309,15 @@ async fn run(home_path: PathBuf, config: RuntimeConfig) -> LdResult<()> {
 
     let metric_service = MetricService::new(home_path.clone(), config.metric.clone()).await;
 
+    let cert_account_service = CertAccountService::new(db_store_provider.clone()).await;
+    let cert_service =
+        CertService::new(db_store_provider.clone(), cert_account_service.clone()).await;
+    if let Err(e) = cert_service.reload_api_tls_mapping().await {
+        return Err(landscape_common::error::LdError::ConfigError(format!(
+            "failed to load api tls certificates: {e}"
+        )));
+    }
+
     let dns_service = LandscapeDnsService::new(
         dns_service_rx,
         dns_rule_service.clone(),
@@ -316,6 +325,7 @@ async fn run(home_path: PathBuf, config: RuntimeConfig) -> LdResult<()> {
         geo_site_service.clone(),
         dns_upstream_service.clone(),
         config.dns.clone(),
+        cert_service.clone(),
         Some(metric_service.data.dns_metric.get_msg_channel()),
     )
     .await;
@@ -346,10 +356,6 @@ async fn run(home_path: PathBuf, config: RuntimeConfig) -> LdResult<()> {
         StaticNatMappingService::new(db_store_provider.clone()).await;
 
     let enrolled_device_service = EnrolledDeviceService::new(db_store_provider.clone()).await;
-
-    let cert_account_service = CertAccountService::new(db_store_provider.clone()).await;
-    let cert_service =
-        CertService::new(db_store_provider.clone(), cert_account_service.clone()).await;
 
     let route_lan_service = RouteLanServiceManagerService::new(
         db_store_provider.clone(),
@@ -455,11 +461,6 @@ async fn run(home_path: PathBuf, config: RuntimeConfig) -> LdResult<()> {
     };
 
     // 初始化结束
-    if let Err(e) = cert_service.reload_api_tls_mapping().await {
-        return Err(landscape_common::error::LdError::ConfigError(format!(
-            "failed to load api tls certificates: {e}"
-        )));
-    }
     let tls_config = build_tls_server_config_with_shared_resolver(cert_service.api_tls_resolver());
     landscape_common::sys_config::init_sysctl_setting();
 
