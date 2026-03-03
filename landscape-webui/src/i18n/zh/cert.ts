@@ -77,6 +77,12 @@ export default {
   key_rsa2048: "RSA 2048",
   key_rsa4096: "RSA 4096",
 
+  // Actions
+  action_register: "注册",
+  action_verify: "验证",
+  action_deactivate: "注销",
+  confirm_deactivate: "注销此 ACME 账户？此操作不可撤销。",
+
   // Misc
   days: "天",
   no_accounts: "暂无 ACME 账户",

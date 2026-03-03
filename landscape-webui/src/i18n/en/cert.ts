@@ -77,6 +77,13 @@ export default {
   key_rsa2048: "RSA 2048",
   key_rsa4096: "RSA 4096",
 
+  // Actions
+  action_register: "Register",
+  action_verify: "Verify",
+  action_deactivate: "Deactivate",
+  confirm_deactivate:
+    "Deactivate this ACME account? This action is irreversible.",
+
   // Misc
   days: "days",
   no_accounts: "No ACME accounts configured",

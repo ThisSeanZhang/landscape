@@ -12,7 +12,6 @@ pub enum CertAccounts {
     AcmeAccountUrl,
     UseStaging,
     TermsAgreed,
-    IsActive,
     Status,
     StatusMessage,
     UpdateAt,

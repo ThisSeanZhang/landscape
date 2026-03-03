@@ -51,8 +51,6 @@ pub struct CertAccountConfig {
     #[serde(default)]
     pub terms_agreed: bool,
     #[serde(default)]
-    pub is_active: bool,
-    #[serde(default)]
     pub status: AccountStatus,
     #[serde(default)]
     #[cfg_attr(feature = "openapi", schema(required = false, nullable = false))]
@@ -60,6 +58,15 @@ pub struct CertAccountConfig {
     #[serde(default = "get_f64_timestamp")]
     #[cfg_attr(feature = "openapi", schema(required = false))]
     pub update_at: f64,
+}
+
+impl CertAccountConfig {
+    pub fn validate(&self) -> Result<(), super::CertError> {
+        if matches!(self.provider_config, ProviderConfig::ZeroSsl { .. }) && self.use_staging {
+            return Err(super::CertError::StagingNotSupported);
+        }
+        Ok(())
+    }
 }
 
 impl LandscapeDBStore<Uuid> for CertAccountConfig {

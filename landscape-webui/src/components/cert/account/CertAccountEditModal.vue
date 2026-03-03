@@ -96,7 +96,6 @@ async function enter() {
         "lets_encrypt" as unknown as CertAccountConfig["provider_config"],
       use_staging: false,
       terms_agreed: true,
-      is_active: true,
       status: "unregistered",
     };
   }
@@ -109,6 +108,7 @@ function on_provider_change(val: string) {
     rule.value.provider_config = {
       zero_ssl: { eab_kid: "", eab_hmac_key: "" },
     } as unknown as CertAccountConfig["provider_config"];
+    rule.value.use_staging = false;
   } else {
     rule.value.provider_config =
       "lets_encrypt" as unknown as CertAccountConfig["provider_config"];
@@ -187,16 +187,12 @@ async function save() {
           <n-input v-model:value="zeroSslEabKid" />
         </n-form-item>
         <n-form-item :label="t('cert.account_eab_hmac')">
-          <n-input
-            v-model:value="zeroSslEabHmacKey"
-            type="password"
-            show-password-on="click"
-          />
+          <n-input v-model:value="zeroSslEabHmacKey" show-password-on="click" />
         </n-form-item>
       </template>
 
       <n-form-item :label="t('cert.account_staging')">
-        <n-switch v-model:value="rule.use_staging">
+        <n-switch v-model:value="rule.use_staging" :disabled="is_zerossl">
           <template #checked>{{ t("common.enable") }}</template>
           <template #unchecked>{{ t("common.disable") }}</template>
         </n-switch>

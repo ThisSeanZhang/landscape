@@ -1,7 +1,12 @@
 <script setup lang="ts">
 import { ref } from "vue";
 import type { CertAccountConfig } from "@landscape-router/types/api/schemas";
-import { delete_cert_account } from "@/api/cert/account";
+import {
+  delete_cert_account,
+  register_cert_account,
+  verify_cert_account,
+  deactivate_cert_account_api,
+} from "@/api/cert/account";
 import { useI18n } from "vue-i18n";
 
 type Props = {
@@ -13,6 +18,9 @@ const emit = defineEmits(["refresh"]);
 const { t } = useI18n();
 
 const show_edit_modal = ref(false);
+const register_spin = ref(false);
+const verify_spin = ref(false);
+const deactivate_spin = ref(false);
 
 function provider_label(config?: CertAccountConfig["provider_config"]) {
   if (!config) return "-";
@@ -62,6 +70,39 @@ async function del() {
     emit("refresh");
   }
 }
+
+async function register() {
+  if (!props.rule.id) return;
+  try {
+    register_spin.value = true;
+    await register_cert_account(props.rule.id);
+    emit("refresh");
+  } finally {
+    register_spin.value = false;
+  }
+}
+
+async function verify() {
+  if (!props.rule.id) return;
+  try {
+    verify_spin.value = true;
+    await verify_cert_account(props.rule.id);
+    emit("refresh");
+  } finally {
+    verify_spin.value = false;
+  }
+}
+
+async function deactivate() {
+  if (!props.rule.id) return;
+  try {
+    deactivate_spin.value = true;
+    await deactivate_cert_account_api(props.rule.id);
+    emit("refresh");
+  } finally {
+    deactivate_spin.value = false;
+  }
+}
 </script>
 
 <template>
@@ -100,6 +141,42 @@ async function del() {
 
     <template #header-extra>
       <n-flex>
+        <n-button
+          v-if="rule.status === 'unregistered' || rule.status === 'error'"
+          size="small"
+          type="success"
+          secondary
+          :loading="register_spin"
+          @click="register()"
+        >
+          {{ t("cert.action_register") }}
+        </n-button>
+        <n-button
+          v-if="rule.status === 'registered'"
+          size="small"
+          type="info"
+          secondary
+          :loading="verify_spin"
+          @click="verify()"
+        >
+          {{ t("cert.action_verify") }}
+        </n-button>
+        <n-popconfirm
+          v-if="rule.status === 'registered'"
+          @positive-click="deactivate()"
+        >
+          <template #trigger>
+            <n-button
+              size="small"
+              type="warning"
+              secondary
+              :loading="deactivate_spin"
+            >
+              {{ t("cert.action_deactivate") }}
+            </n-button>
+          </template>
+          {{ t("cert.confirm_deactivate") }}
+        </n-popconfirm>
         <n-button
           size="small"
           type="warning"

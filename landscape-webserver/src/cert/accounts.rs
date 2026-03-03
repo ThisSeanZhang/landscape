@@ -15,6 +15,9 @@ pub fn get_cert_account_paths() -> OpenApiRouter<LandscapeApp> {
     OpenApiRouter::new()
         .routes(routes!(list_cert_accounts, create_cert_account))
         .routes(routes!(get_cert_account, delete_cert_account))
+        .routes(routes!(register_cert_account))
+        .routes(routes!(verify_cert_account))
+        .routes(routes!(deactivate_cert_account))
 }
 
 #[utoipa::path(
@@ -41,6 +44,7 @@ async fn create_cert_account(
     State(state): State<LandscapeApp>,
     JsonBody(account): JsonBody<CertAccountConfig>,
 ) -> LandscapeApiResult<CertAccountConfig> {
+    account.validate()?;
     let result = state.cert_account_service.checked_set(account).await?;
     LandscapeApiResp::success(result)
 }
@@ -83,4 +87,62 @@ async fn delete_cert_account(
 ) -> LandscapeApiResult<()> {
     state.cert_account_service.delete(id).await;
     LandscapeApiResp::success(())
+}
+
+#[utoipa::path(
+    post,
+    path = "/accounts/{id}/register",
+    tag = "Certificate Accounts",
+    params(("id" = Uuid, Path, description = "Certificate account ID")),
+    responses(
+        (status = 200, body = CommonApiResp<CertAccountConfig>),
+        (status = 404, description = "Not found"),
+        (status = 400, description = "Staging not supported"),
+        (status = 500, description = "Registration failed")
+    )
+)]
+async fn register_cert_account(
+    State(state): State<LandscapeApp>,
+    Path(id): Path<ConfigId>,
+) -> LandscapeApiResult<CertAccountConfig> {
+    let result = state.cert_account_service.register_account(id).await?;
+    LandscapeApiResp::success(result)
+}
+
+#[utoipa::path(
+    post,
+    path = "/accounts/{id}/verify",
+    tag = "Certificate Accounts",
+    params(("id" = Uuid, Path, description = "Certificate account ID")),
+    responses(
+        (status = 200, body = CommonApiResp<CertAccountConfig>),
+        (status = 404, description = "Not found"),
+        (status = 500, description = "Verification failed")
+    )
+)]
+async fn verify_cert_account(
+    State(state): State<LandscapeApp>,
+    Path(id): Path<ConfigId>,
+) -> LandscapeApiResult<CertAccountConfig> {
+    let result = state.cert_account_service.verify_account(id).await?;
+    LandscapeApiResp::success(result)
+}
+
+#[utoipa::path(
+    post,
+    path = "/accounts/{id}/deactivate",
+    tag = "Certificate Accounts",
+    params(("id" = Uuid, Path, description = "Certificate account ID")),
+    responses(
+        (status = 200, body = CommonApiResp<CertAccountConfig>),
+        (status = 404, description = "Not found"),
+        (status = 500, description = "Deactivation failed")
+    )
+)]
+async fn deactivate_cert_account(
+    State(state): State<LandscapeApp>,
+    Path(id): Path<ConfigId>,
+) -> LandscapeApiResult<CertAccountConfig> {
+    let result = state.cert_account_service.deactivate_account(id).await?;
+    LandscapeApiResp::success(result)
 }

@@ -28,6 +28,8 @@ rcgen = { workspace = true }
 rustls = { workspace = true }
 rustls-pki-types = { workspace = true }
 pem = { workspace = true }
+instant-acme = { workspace = true }
+base64 = { workspace = true }
 
 rtnetlink = { workspace = true }
 netlink-sys = { workspace = true }

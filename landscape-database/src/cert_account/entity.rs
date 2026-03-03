@@ -21,7 +21,6 @@ pub struct Model {
     pub acme_account_url: Option<String>,
     pub use_staging: bool,
     pub terms_agreed: bool,
-    pub is_active: bool,
     pub status: String,
     pub status_message: Option<String>,
     pub update_at: DBTimestamp,
@@ -54,7 +53,6 @@ impl From<Model> for CertAccountConfig {
             acme_account_url: entity.acme_account_url,
             use_staging: entity.use_staging,
             terms_agreed: entity.terms_agreed,
-            is_active: entity.is_active,
             status: serde_json::from_value(serde_json::Value::String(entity.status)).unwrap(),
             status_message: entity.status_message,
             update_at: entity.update_at,
@@ -79,7 +77,6 @@ impl UpdateActiveModel<ActiveModel> for CertAccountConfig {
         active.acme_account_url = Set(self.acme_account_url);
         active.use_staging = Set(self.use_staging);
         active.terms_agreed = Set(self.terms_agreed);
-        active.is_active = Set(self.is_active);
         active.status =
             Set(serde_json::to_value(&self.status).unwrap().as_str().unwrap().to_string());
         active.status_message = Set(self.status_message);

@@ -15,4 +15,24 @@ pub enum CertError {
     #[error("Certificate order '{0}' not found")]
     #[api_error(id = "cert.order_not_found", status = 404)]
     OrderNotFound(ConfigId),
+
+    #[error("ACME registration failed: {0}")]
+    #[api_error(id = "cert.registration_failed", status = 500)]
+    RegistrationFailed(String),
+
+    #[error("ACME deactivation failed: {0}")]
+    #[api_error(id = "cert.deactivation_failed", status = 500)]
+    DeactivationFailed(String),
+
+    #[error("ACME account verification failed: {0}")]
+    #[api_error(id = "cert.verification_failed", status = 500)]
+    VerificationFailed(String),
+
+    #[error("Provider does not support staging environment")]
+    #[api_error(id = "cert.staging_not_supported", status = 400)]
+    StagingNotSupported,
+
+    #[error("Operation not allowed: account is currently in '{0}' status")]
+    #[api_error(id = "cert.invalid_status_transition", status = 409)]
+    InvalidStatusTransition(String),
 }

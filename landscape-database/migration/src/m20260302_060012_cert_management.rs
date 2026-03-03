@@ -31,7 +31,6 @@ impl MigrationTrait for Migration {
                             .not_null()
                             .default(false),
                     )
-                    .col(ColumnDef::new(CertAccounts::IsActive).boolean().not_null().default(false))
                     .col(
                         ColumnDef::new(CertAccounts::Status)
                             .string()
