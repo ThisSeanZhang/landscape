@@ -4,6 +4,7 @@ import type { CertConfig } from "@landscape-router/types/api/schemas";
 import type { CertParsedInfo } from "@landscape-router/types/api/schemas";
 import { get_cert_info } from "@/api/cert/order";
 import { useI18n } from "vue-i18n";
+import { useFrontEndStore } from "@/stores/front_end_config";
 
 const show = defineModel<boolean>("show", { required: true });
 
@@ -12,6 +13,7 @@ const props = defineProps<{
 }>();
 
 const { t } = useI18n();
+const frontEndStore = useFrontEndStore();
 const parsed_info = ref<CertParsedInfo | null>(null);
 const parsed_loading = ref(false);
 const parsed_error = ref("");
@@ -20,6 +22,11 @@ const collapse_names = ref<string[]>([]);
 function format_ts(ts?: number | null) {
   if (!ts) return "-";
   return new Date(ts * 1000).toLocaleString();
+}
+
+function mask_display(value?: string | null) {
+  if (!value || value === "-") return "-";
+  return frontEndStore.MASK_INFO(value);
 }
 
 function download_text_file(filename: string, content: string) {
@@ -104,19 +111,19 @@ watch(
     <n-flex v-else vertical :size="12">
       <n-descriptions bordered :column="2" label-placement="left">
         <n-descriptions-item :label="t('cert.cert_name')">
-          {{ cert.name || "-" }}
+          {{ mask_display(cert.name || "-") }}
         </n-descriptions-item>
         <n-descriptions-item :label="t('cert.cert_type')">
-          {{ cert_type_key }}
+          {{ mask_display(cert_type_key) }}
         </n-descriptions-item>
         <n-descriptions-item :label="t('cert.cert_status')">
-          {{ status_key }}
+          {{ mask_display(status_key) }}
         </n-descriptions-item>
         <n-descriptions-item :label="t('cert.cert_issued_at')">
-          {{ format_ts(cert.issued_at) }}
+          {{ mask_display(format_ts(cert.issued_at)) }}
         </n-descriptions-item>
         <n-descriptions-item :label="t('cert.cert_expires')">
-          {{ format_ts(cert.expires_at) }}
+          {{ mask_display(format_ts(cert.expires_at)) }}
         </n-descriptions-item>
       </n-descriptions>
 
@@ -129,7 +136,7 @@ watch(
             size="small"
             bordered
           >
-            {{ domain }}
+            {{ mask_display(domain) }}
           </n-tag>
           <span v-if="!cert.domains?.length">-</span>
         </n-flex>
@@ -173,25 +180,25 @@ watch(
             label-placement="left"
           >
             <n-descriptions-item :label="t('cert.cert_subject')">
-              {{ parsed_info.subject || "-" }}
+              {{ mask_display(parsed_info.subject || "-") }}
             </n-descriptions-item>
             <n-descriptions-item :label="t('cert.cert_issuer')">
-              {{ parsed_info.issuer || "-" }}
+              {{ mask_display(parsed_info.issuer || "-") }}
             </n-descriptions-item>
             <n-descriptions-item :label="t('cert.cert_serial_number')">
-              {{ parsed_info.serial_number || "-" }}
+              {{ mask_display(parsed_info.serial_number || "-") }}
             </n-descriptions-item>
             <n-descriptions-item :label="t('cert.cert_signature_algorithm')">
-              {{ parsed_info.signature_algorithm || "-" }}
+              {{ mask_display(parsed_info.signature_algorithm || "-") }}
             </n-descriptions-item>
             <n-descriptions-item :label="t('cert.cert_not_before')">
-              {{ format_ts(parsed_info.not_before) }}
+              {{ mask_display(format_ts(parsed_info.not_before)) }}
             </n-descriptions-item>
             <n-descriptions-item :label="t('cert.cert_not_after')">
-              {{ format_ts(parsed_info.not_after) }}
+              {{ mask_display(format_ts(parsed_info.not_after)) }}
             </n-descriptions-item>
             <n-descriptions-item :label="t('cert.cert_fingerprint_sha256')">
-              {{ parsed_info.fingerprint_sha256 || "-" }}
+              {{ mask_display(parsed_info.fingerprint_sha256 || "-") }}
             </n-descriptions-item>
             <n-descriptions-item :label="t('cert.cert_san')">
               <n-flex size="small" wrap>
@@ -200,7 +207,7 @@ watch(
                   :key="domain"
                   size="small"
                 >
-                  {{ domain }}
+                  {{ mask_display(domain) }}
                 </n-tag>
                 <span v-if="!parsed_info.subject_alt_names?.length">-</span>
               </n-flex>
@@ -251,7 +258,7 @@ watch(
 
       <n-alert v-if="cert.status_message" type="warning" :show-icon="true">
         <template #header>{{ t("cert.cert_status_message") }}</template>
-        {{ cert.status_message }}
+        {{ mask_display(cert.status_message) }}
       </n-alert>
     </n-flex>
 

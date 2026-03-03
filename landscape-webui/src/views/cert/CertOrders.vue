@@ -18,9 +18,11 @@ import {
 } from "naive-ui";
 import CertOrderEditModal from "@/components/cert/order/CertOrderEditModal.vue";
 import CertInfoModal from "@/components/cert/order/CertInfoModal.vue";
+import { useFrontEndStore } from "@/stores/front_end_config";
 
 const items = ref<CertConfig[]>([]);
 const { t } = useI18n();
+const frontEndStore = useFrontEndStore();
 const show_edit_modal = ref(false);
 const edit_id = ref<string | null>(null);
 const show_info_modal = ref(false);
@@ -93,6 +95,10 @@ function cert_type_tag_type(ct?: CertConfig["cert_type"]) {
   return ct.t === "acme" ? "info" : "success";
 }
 
+function bool_label(v?: boolean) {
+  return v ? t("common.enable") : t("common.disable");
+}
+
 function is_acme(row: CertConfig) {
   return row.cert_type?.t === "acme";
 }
@@ -154,6 +160,9 @@ const columns = computed<DataTableColumns<CertConfig>>(() => [
     key: "name",
     minWidth: 120,
     ellipsis: { tooltip: true },
+    render(row) {
+      return frontEndStore.MASK_INFO(row.name);
+    },
   },
   {
     title: t("cert.cert_type"),
@@ -174,8 +183,22 @@ const columns = computed<DataTableColumns<CertConfig>>(() => [
     render(row) {
       return h(NFlex, { size: "small", wrap: true }, () =>
         (row.domains ?? []).map((d: string) =>
-          h(NTag, { size: "small", bordered: false }, () => d),
+          h(NTag, { size: "small", bordered: false }, () =>
+            frontEndStore.MASK_INFO(d),
+          ),
         ),
+      );
+    },
+  },
+  {
+    title: t("cert.for_api"),
+    key: "for_api",
+    width: 90,
+    render(row) {
+      return h(
+        NTag,
+        { size: "small", type: row.for_api ? "success" : "default" },
+        () => bool_label(row.for_api),
       );
     },
   },

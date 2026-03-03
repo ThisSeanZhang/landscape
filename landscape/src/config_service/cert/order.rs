@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 use std::time::Duration;
 
+use crate::cert::{reload_api_tls_resolver, validate_certified_key_from_pem, SharedSniResolver};
 use instant_acme::{
     Account, ChallengeType as AcmeChallengeType, Identifier, NewOrder, OrderStatus, RetryPolicy,
     RevocationRequest,
@@ -21,6 +22,7 @@ use super::CertAccountService;
 pub struct CertService {
     store: CertRepository,
     account_service: CertAccountService,
+    api_tls_resolver: SharedSniResolver,
 }
 
 impl CertService {
@@ -29,7 +31,11 @@ impl CertService {
         account_service: CertAccountService,
     ) -> Self {
         let store = store_provider.cert_store();
-        let service = Self { store, account_service };
+        let service = Self {
+            store,
+            account_service,
+            api_tls_resolver: SharedSniResolver::new(),
+        };
 
         // Startup resume: re-trigger ACME certs stuck in Processing
         let certs = service.list().await;
@@ -62,6 +68,31 @@ impl CertService {
         service
     }
 
+    pub fn api_tls_resolver(&self) -> SharedSniResolver {
+        self.api_tls_resolver.clone()
+    }
+
+    pub async fn reload_api_tls_mapping(&self) -> Result<usize, CertError> {
+        reload_api_tls_resolver(self, &self.api_tls_resolver)
+            .await
+            .map_err(CertError::IssuanceFailed)
+    }
+
+    async fn set_and_notify(&self, config: CertConfig) -> CertConfig {
+        let saved = self.set(config).await;
+        if let Err(e) = self.reload_api_tls_mapping().await {
+            tracing::warn!("Failed to reload API TLS mapping after cert update: {e}");
+        }
+        saved
+    }
+
+    pub async fn delete_with_notify(&self, id: Uuid) {
+        self.delete(id).await;
+        if let Err(e) = self.reload_api_tls_mapping().await {
+            tracing::warn!("Failed to reload API TLS mapping after cert delete: {e}");
+        }
+    }
+
     async fn check_auto_renewals(&self) {
         let certs = self.list().await;
         let now = std::time::SystemTime::now()
@@ -92,7 +123,7 @@ impl CertService {
                 config.expires_at = None;
                 config.issued_at = None;
                 config.status_message = None;
-                let saved = self.set(config).await;
+                let saved = self.set_and_notify(config).await;
                 let svc = self.clone();
                 let id = saved.id;
                 tokio::spawn(async move {
@@ -111,8 +142,48 @@ impl CertService {
         mut config: CertConfig,
     ) -> Result<CertConfig, CertError> {
         if let CertType::Manual = &config.cert_type {
-            if let Some(cert_pem) = &config.certificate {
+            let cert_pem_opt = config.certificate.as_deref().map(str::trim);
+            let key_pem_opt = config.private_key.as_deref().map(str::trim);
+            let has_cert = cert_pem_opt.is_some_and(|v| !v.is_empty());
+            let has_key = key_pem_opt.is_some_and(|v| !v.is_empty());
+
+            if has_cert != has_key {
+                return Err(CertError::InvalidStatusTransition(
+                    "manual certificate and private key must be provided together".to_string(),
+                ));
+            }
+
+            if has_cert {
+                let cert_pem = cert_pem_opt.unwrap_or_default();
+                let key_pem = key_pem_opt.unwrap_or_default();
                 let (domains, not_before, not_after) = parse_cert_info(cert_pem)?;
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs_f64();
+
+                if now < not_before {
+                    return Err(CertError::InvalidStatusTransition(
+                        "manual certificate is not valid yet".to_string(),
+                    ));
+                }
+                if now > not_after {
+                    return Err(CertError::InvalidStatusTransition(
+                        "manual certificate is expired".to_string(),
+                    ));
+                }
+
+                validate_certified_key_from_pem(
+                    cert_pem,
+                    config.certificate_chain.as_deref(),
+                    key_pem,
+                )
+                .map_err(|e| {
+                    CertError::InvalidStatusTransition(format!(
+                        "manual certificate/private key validation failed: {e}"
+                    ))
+                })?;
+
                 if config.domains.is_empty() {
                     config.domains = domains;
                 }
@@ -124,7 +195,7 @@ impl CertService {
 
         self.validate_for_api_domain_conflicts(&config).await?;
 
-        let saved = self.set(config).await;
+        let saved = self.set_and_notify(config).await;
         Ok(saved)
     }
 
@@ -202,7 +273,7 @@ impl CertService {
         // Set to Processing and return immediately
         config.status = CertStatus::Processing;
         config.status_message = None;
-        let saved = self.set(config).await;
+        let saved = self.set_and_notify(config).await;
 
         // Spawn background issuance
         let svc = self.clone();
@@ -277,7 +348,7 @@ impl CertService {
             }
         }
 
-        self.set(config).await;
+        self.set_and_notify(config).await;
         Ok(())
     }
 
@@ -464,7 +535,7 @@ impl CertService {
             }
         }
 
-        let saved = self.set(config).await;
+        let saved = self.set_and_notify(config).await;
         Ok(saved)
     }
 
@@ -499,7 +570,7 @@ impl CertService {
         config.expires_at = None;
         config.issued_at = None;
         config.status_message = None;
-        let saved = self.set(config).await;
+        let saved = self.set_and_notify(config).await;
 
         // Spawn background issuance
         let svc = self.clone();

@@ -9,7 +9,7 @@ use colored::Colorize;
 
 use landscape::{
     boot::{boot_check, log::init_logger},
-    cert::load_or_generate_cert,
+    cert::build_tls_server_config_with_shared_resolver,
     config_service::cert::{CertAccountService, CertService},
     config_service::enrolled_device::EnrolledDeviceService,
     config_service::{
@@ -451,11 +451,16 @@ async fn run(home_path: PathBuf, config: RuntimeConfig) -> LdResult<()> {
         enrolled_device_service,
         // cert
         cert_account_service,
-        cert_service,
+        cert_service: cert_service.clone(),
     };
 
     // 初始化结束
-    let tls_config = load_or_generate_cert(home_path.clone()).await;
+    if let Err(e) = cert_service.reload_api_tls_mapping().await {
+        return Err(landscape_common::error::LdError::ConfigError(format!(
+            "failed to load api tls certificates: {e}"
+        )));
+    }
+    let tls_config = build_tls_server_config_with_shared_resolver(cert_service.api_tls_resolver());
     landscape_common::sys_config::init_sysctl_setting();
 
     let addr = SocketAddr::from((config.web.address, config.web.https_port));

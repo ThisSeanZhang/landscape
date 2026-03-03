@@ -102,7 +102,7 @@ async fn delete_cert(
     State(state): State<LandscapeApp>,
     Path(id): Path<ConfigId>,
 ) -> LandscapeApiResult<()> {
-    state.cert_service.delete(id).await;
+    state.cert_service.delete_with_notify(id).await;
     LandscapeApiResp::success(())
 }
 

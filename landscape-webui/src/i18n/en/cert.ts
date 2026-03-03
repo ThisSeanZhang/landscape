@@ -32,6 +32,8 @@ export default {
   cert_name_required: "Certificate name is required",
   cert_domains_required: "At least one domain is required",
   cert_domain_invalid: "Invalid domain format",
+  for_api: "For API",
+  for_gateway: "For Gateway",
 
   // Cert type
   cert_type: "Type",

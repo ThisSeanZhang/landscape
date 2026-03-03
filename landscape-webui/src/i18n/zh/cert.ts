@@ -32,6 +32,8 @@ export default {
   cert_name_required: "证书名称不能为空",
   cert_domains_required: "至少需要一个域名",
   cert_domain_invalid: "域名格式不正确",
+  for_api: "用于 API",
+  for_gateway: "用于网关",
 
   // Cert type
   cert_type: "类型",

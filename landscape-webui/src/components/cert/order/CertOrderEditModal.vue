@@ -199,6 +199,8 @@ async function enter() {
       name: "",
       domains: [],
       status: "pending",
+      for_api: false,
+      for_gateway: false,
       cert_type: {
         t: "acme",
         account_id: accounts.value[0]?.id ?? "",
@@ -324,6 +326,13 @@ async function save() {
 
       <n-form-item :label="t('cert.cert_name')" path="name">
         <n-input v-model:value="rule.name" />
+      </n-form-item>
+
+      <n-form-item :label="t('cert.for_api')">
+        <n-switch v-model:value="rule.for_api">
+          <template #checked>{{ t("common.enable") }}</template>
+          <template #unchecked>{{ t("common.disable") }}</template>
+        </n-switch>
       </n-form-item>
 
       <!-- ===== ACME mode ===== -->
