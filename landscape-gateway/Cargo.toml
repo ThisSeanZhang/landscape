@@ -8,7 +8,10 @@ landscape-common = { path = "../landscape-common" }
 landscape-database = { path = "../landscape-database" }
 pingora = { workspace = true }
 tokio = { workspace = true }
+tokio-rustls = { workspace = true }
+rustls = { workspace = true }
 tracing = { workspace = true }
 async-trait = { workspace = true }
 serde = { workspace = true }
 arc-swap = { workspace = true }
+uuid = { workspace = true }

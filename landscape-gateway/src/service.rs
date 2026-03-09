@@ -1,4 +1,4 @@
-use crate::GatewayManager;
+use crate::{GatewayManager, GatewayTlsConfig};
 use landscape_common::config::gateway::config::GatewayRuntimeConfig;
 use landscape_common::service::{ServiceStatus, WatchService};
 use landscape_database::gateway::repository::GatewayHttpUpstreamRepository;
@@ -19,9 +19,10 @@ impl GatewayService {
     pub async fn init_service(
         store: GatewayHttpUpstreamRepository,
         config: GatewayRuntimeConfig,
+        tls_config: Option<GatewayTlsConfig>,
     ) -> Self {
         let initial_rules = store.list_all().await.unwrap_or_default();
-        let manager = Arc::new(GatewayManager::new(initial_rules, config));
+        let manager = Arc::new(GatewayManager::new(initial_rules, config, tls_config));
 
         let service = Self::new(manager, store);
         if service.manager.config().enable {
@@ -40,6 +41,10 @@ impl GatewayService {
 
     pub fn config(&self) -> &GatewayRuntimeConfig {
         self.manager.config()
+    }
+
+    pub fn has_https_listener(&self) -> bool {
+        self.manager.has_https_listener()
     }
 
     pub fn start(&self) {

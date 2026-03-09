@@ -53,6 +53,7 @@ use landscape_common::{
 };
 use landscape_database::provider::LandscapeDBServiceProvider;
 use landscape_database::repository::Repository;
+use landscape_gateway::GatewayTlsConfig;
 use tokio::sync::mpsc;
 use tower_http::{services::ServeDir, trace::TraceLayer};
 use utoipa_scalar::{Scalar, Servable};
@@ -324,12 +325,34 @@ async fn run(home_path: PathBuf, config: RuntimeConfig) -> LdResult<()> {
             "failed to load api tls certificates: {e}"
         )));
     }
+    let gateway_tls_mapping_count = match cert_service.reload_gateway_tls_mapping().await {
+        Ok(count) => count,
+        Err(e) => {
+            return Err(landscape_common::error::LdError::ConfigError(format!(
+                "failed to load gateway tls certificates: {e}"
+            )));
+        }
+    };
+    let gateway_tls_config = if gateway_tls_mapping_count == 0 {
+        tracing::warn!(
+            "No valid for_gateway certificate found; gateway HTTPS listener will stay disabled"
+        );
+        None
+    } else {
+        let mut gateway_server_config =
+            build_tls_server_config_with_shared_resolver(cert_service.gateway_tls_resolver());
+        gateway_server_config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
+        Some(GatewayTlsConfig {
+            server_config: std::sync::Arc::new(gateway_server_config),
+        })
+    };
 
     // Gateway
     let gateway_store = db_store_provider.gateway_http_upstream_store();
     let gateway_service = landscape_gateway::service::GatewayService::init_service(
         gateway_store,
         config.gateway.clone(),
+        gateway_tls_config,
     )
     .await;
 

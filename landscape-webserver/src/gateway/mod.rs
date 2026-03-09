@@ -25,6 +25,7 @@ pub struct GatewayStatus {
     pub running: bool,
     pub http_port: u16,
     pub https_port: u16,
+    pub https_ready: bool,
     pub rule_count: usize,
 }
 
@@ -136,6 +137,7 @@ async fn get_gateway_status(
         running: state.gateway_service.is_running(),
         http_port: state.gateway_service.config().http_port,
         https_port: state.gateway_service.config().https_port,
+        https_ready: state.gateway_service.has_https_listener(),
         rule_count: rules.len(),
     };
     LandscapeApiResp::success(status)
@@ -153,10 +155,10 @@ async fn check_host_conflicts(
 
     match &config.match_rule {
         HttpUpstreamMatchRule::Host { domains } => {
-            check_domain_conflicts(domains, config, &existing_rules, true)?;
+            check_domain_conflicts(domains, config, &existing_rules)?;
         }
         HttpUpstreamMatchRule::SniProxy { domains } => {
-            check_domain_conflicts(domains, config, &existing_rules, false)?;
+            check_domain_conflicts(domains, config, &existing_rules)?;
         }
         HttpUpstreamMatchRule::PathPrefix { prefix } => {
             check_path_prefix_conflicts(prefix, config, &existing_rules)?;
@@ -166,13 +168,12 @@ async fn check_host_conflicts(
     Ok(())
 }
 
-/// Check domain conflicts for Host or SniProxy rules.
+/// Check domain conflicts for Host and SniProxy rules.
 /// Detects: exact duplicates, wildcard-covers-specific, specific-covers-wildcard.
 fn check_domain_conflicts(
     new_domains: &[String],
     config: &HttpUpstreamRuleConfig,
     existing_rules: &[HttpUpstreamRuleConfig],
-    is_host_type: bool,
 ) -> Result<(), GatewayError> {
     if new_domains.is_empty() {
         return Ok(());
@@ -184,8 +185,8 @@ fn check_domain_conflicts(
         }
 
         let existing_domains = match &existing.match_rule {
-            HttpUpstreamMatchRule::Host { domains } if is_host_type => domains,
-            HttpUpstreamMatchRule::SniProxy { domains } if !is_host_type => domains,
+            HttpUpstreamMatchRule::Host { domains }
+            | HttpUpstreamMatchRule::SniProxy { domains } => domains,
             _ => continue,
         };
 
@@ -281,5 +282,105 @@ fn normalize_prefix(prefix: &str) -> String {
         prefix.to_string()
     } else {
         format!("{prefix}/")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use landscape_common::config::gateway::{
+        HttpUpstreamConfig, HttpUpstreamTarget, LoadBalanceMethod,
+    };
+
+    fn upstream_target() -> HttpUpstreamTarget {
+        HttpUpstreamTarget {
+            address: "127.0.0.1".to_string(),
+            port: 8080,
+            weight: 1,
+            tls: false,
+        }
+    }
+
+    fn rule(name: &str, match_rule: HttpUpstreamMatchRule) -> HttpUpstreamRuleConfig {
+        HttpUpstreamRuleConfig {
+            id: uuid::Uuid::new_v4(),
+            enable: true,
+            name: name.to_string(),
+            match_rule,
+            upstream: HttpUpstreamConfig {
+                targets: vec![upstream_target()],
+                load_balance: LoadBalanceMethod::RoundRobin,
+                health_check: None,
+            },
+            update_at: 0.0,
+        }
+    }
+
+    #[test]
+    fn domain_conflicts_detect_cross_type_exact_match() {
+        let existing = rule(
+            "host-rule",
+            HttpUpstreamMatchRule::Host { domains: vec!["api.example.com".to_string()] },
+        );
+        let new_rule = rule(
+            "sni-rule",
+            HttpUpstreamMatchRule::SniProxy { domains: vec!["api.example.com".to_string()] },
+        );
+
+        let err = check_domain_conflicts(&["api.example.com".to_string()], &new_rule, &[existing])
+            .unwrap_err();
+
+        assert!(matches!(err, GatewayError::HostConflict { .. }));
+    }
+
+    #[test]
+    fn domain_conflicts_detect_existing_wildcard_covering_specific_domain() {
+        let existing = rule(
+            "wildcard-host",
+            HttpUpstreamMatchRule::Host { domains: vec!["*.example.com".to_string()] },
+        );
+        let new_rule = rule(
+            "sni-specific",
+            HttpUpstreamMatchRule::SniProxy { domains: vec!["api.example.com".to_string()] },
+        );
+
+        let err = check_domain_conflicts(&["api.example.com".to_string()], &new_rule, &[existing])
+            .unwrap_err();
+
+        assert!(matches!(err, GatewayError::WildcardCoversDomain { .. }));
+    }
+
+    #[test]
+    fn domain_conflicts_allow_distinct_domains() {
+        let existing = rule(
+            "host-rule",
+            HttpUpstreamMatchRule::Host { domains: vec!["api.example.com".to_string()] },
+        );
+        let new_rule = rule(
+            "sni-rule",
+            HttpUpstreamMatchRule::SniProxy { domains: vec!["static.example.com".to_string()] },
+        );
+
+        let result =
+            check_domain_conflicts(&["static.example.com".to_string()], &new_rule, &[existing]);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn path_prefix_conflicts_detect_overlap() {
+        let existing =
+            rule("api-root", HttpUpstreamMatchRule::PathPrefix { prefix: "/api".to_string() });
+        let new_rule =
+            rule("api-v1", HttpUpstreamMatchRule::PathPrefix { prefix: "/api/v1".to_string() });
+
+        let err = check_path_prefix_conflicts("/api/v1", &new_rule, &[existing]).unwrap_err();
+        assert!(matches!(err, GatewayError::PathPrefixOverlap { .. }));
+    }
+
+    #[test]
+    fn normalize_prefix_adds_trailing_slash() {
+        assert_eq!(normalize_prefix("/api"), "/api/");
+        assert_eq!(normalize_prefix("/api/"), "/api/");
     }
 }
