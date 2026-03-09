@@ -28,6 +28,7 @@ use tokio::runtime::Builder as RuntimeBuilder;
 use tokio::sync::watch;
 use tokio::task::JoinSet;
 use tokio_rustls::{server::TlsStream as TokioTlsStream, TlsAcceptor};
+use tokio_util::sync::CancellationToken;
 
 use crate::sni_proxy::{parse_sni_from_client_hello, proxy_tls_passthrough, SniProxyRouter};
 
@@ -41,9 +42,14 @@ pub struct GatewayTlsConfig {
 pub struct GatewayManager {
     rules: SharedRules,
     status: WatchService,
-    state: Mutex<Option<JoinHandle<()>>>,
+    state: Mutex<Option<GatewayRuntimeState>>,
     config: GatewayRuntimeConfig,
     tls_config: Option<GatewayTlsConfig>,
+}
+
+struct GatewayRuntimeState {
+    thread: JoinHandle<()>,
+    cancel: CancellationToken,
 }
 
 impl GatewayManager {
@@ -84,12 +90,22 @@ impl GatewayManager {
         let https_port = self.config.https_port;
         let tls_config = self.tls_config.clone();
         let status = self.status.clone();
+        let cancel = CancellationToken::new();
+        let thread_cancel = cancel.clone();
 
-        let handle = std::thread::spawn(move || {
-            run_pingora_server(rules, http_port, https_port, tls_config, status);
+        let thread = std::thread::spawn(move || {
+            run_pingora_server(
+                rules,
+                http_port,
+                https_port,
+                tls_config,
+                status.clone(),
+                thread_cancel,
+            );
+            status.just_change_status(ServiceStatus::Stop);
         });
 
-        *state = Some(handle);
+        *state = Some(GatewayRuntimeState { thread, cancel });
         self.status.just_change_status(ServiceStatus::Running);
         if self.tls_config.is_some() {
             tracing::info!(
@@ -113,17 +129,19 @@ impl GatewayManager {
         }
         tracing::info!("Signalling gateway to stop...");
         self.status.just_change_status(ServiceStatus::Stopping);
+        if let Some(state) = self.state.lock().unwrap().as_ref() {
+            state.cancel.cancel();
+        }
     }
 
     /// Block until the Pingora thread has exited. Call after shutdown().
     pub fn join(&self) {
         let mut state = self.state.lock().unwrap();
-        if let Some(handle) = state.take() {
+        if let Some(runtime_state) = state.take() {
             tracing::info!("Waiting for gateway thread to finish...");
-            if let Err(e) = handle.join() {
+            if let Err(e) = runtime_state.thread.join() {
                 tracing::error!("Gateway thread panicked: {:?}", e);
             }
-            self.status.just_change_status(ServiceStatus::Stop);
             tracing::info!("Gateway stopped");
         }
     }
@@ -152,7 +170,17 @@ impl GatewayManager {
 impl Drop for GatewayManager {
     fn drop(&mut self) {
         self.shutdown();
-        self.join();
+        if self.status.is_stop() {
+            self.join();
+            return;
+        }
+
+        if let Some(runtime_state) = self.state.lock().unwrap().take() {
+            runtime_state.cancel.cancel();
+            tracing::warn!(
+                "Dropping gateway manager before gateway thread fully stopped; detaching thread"
+            );
+        }
     }
 }
 
@@ -162,6 +190,7 @@ fn run_pingora_server(
     https_port: u16,
     tls_config: Option<GatewayTlsConfig>,
     status: WatchService,
+    cancel: CancellationToken,
 ) {
     use pingora::server::Server;
     use proxy_service::LandscapeReverseProxy;
@@ -178,8 +207,9 @@ fn run_pingora_server(
     let https_handle = tls_config.map(|tls_config| {
         let rules = rules.clone();
         let status = status.clone();
+        let cancel = cancel.child_token();
         std::thread::spawn(move || {
-            run_https_server(rules, https_port, tls_config, server_conf, status);
+            run_https_server(rules, https_port, tls_config, server_conf, status, cancel);
         })
     });
 
@@ -201,6 +231,7 @@ fn run_https_server(
     tls_config: GatewayTlsConfig,
     server_conf: Arc<pingora::server::configuration::ServerConf>,
     status: WatchService,
+    cancel: CancellationToken,
 ) {
     let runtime = RuntimeBuilder::new_multi_thread()
         .enable_all()
@@ -210,7 +241,7 @@ fn run_https_server(
 
     runtime.block_on(async move {
         if let Err(e) =
-            run_https_server_inner(rules, https_port, tls_config, server_conf, status).await
+            run_https_server_inner(rules, https_port, tls_config, server_conf, status, cancel).await
         {
             tracing::error!("Gateway HTTPS listener exited with error: {e}");
         }
@@ -223,6 +254,7 @@ async fn run_https_server_inner(
     tls_config: GatewayTlsConfig,
     server_conf: Arc<pingora::server::configuration::ServerConf>,
     status: WatchService,
+    cancel: CancellationToken,
 ) -> std::io::Result<()> {
     use proxy_service::LandscapeReverseProxy;
 
@@ -245,6 +277,10 @@ async fn run_https_server_inner(
                     break;
                 }
             }
+            _ = cancel.cancelled() => {
+                let _ = shutdown_tx.send(true);
+                break;
+            }
             accept_result = listener.accept() => {
                 let (stream, peer_addr) = match accept_result {
                     Ok(pair) => pair,
@@ -258,11 +294,15 @@ async fn run_https_server_inner(
                 let app = app.clone();
                 let sni_proxy_router = sni_proxy_router.clone();
                 let connection_shutdown = shutdown_rx.clone();
+                let connection_cancel = cancel.child_token();
 
                 tasks.spawn(async move {
                     if sni_proxy_router.has_sni_proxy_rules() {
                         let mut peek_buf = vec![0u8; 4096];
-                        match stream.peek(&mut peek_buf).await {
+                        match tokio::select! {
+                            _ = connection_cancel.cancelled() => return,
+                            result = stream.peek(&mut peek_buf) => result,
+                        } {
                             Ok(size) if size > 0 => {
                                 if let Some(sni) = parse_sni_from_client_hello(&peek_buf[..size]) {
                                     if let Some(target) = sni_proxy_router.match_target(&sni) {
@@ -273,7 +313,7 @@ async fn run_https_server_inner(
                                             target.target.address,
                                             target.target.port
                                         );
-                                        if let Err(e) = proxy_tls_passthrough(stream, &target).await {
+                                        if let Err(e) = proxy_tls_passthrough(stream, &target, connection_cancel.clone()).await {
                                             tracing::warn!(
                                                 "Gateway TLS passthrough failed for '{}' via rule '{}': {}",
                                                 target.sni,
@@ -293,7 +333,10 @@ async fn run_https_server_inner(
                         }
                     }
 
-                    let tls_result = tokio::time::timeout(Duration::from_secs(60), acceptor.accept(stream)).await;
+                    let tls_result = tokio::select! {
+                        _ = connection_cancel.cancelled() => return,
+                        result = tokio::time::timeout(Duration::from_secs(60), acceptor.accept(stream)) => result,
+                    };
                     let tls_stream = match tls_result {
                         Ok(Ok(stream)) => stream,
                         Ok(Err(e)) => {
@@ -307,7 +350,10 @@ async fn run_https_server_inner(
                     };
 
                     let stream: Stream = Box::new(GatewayTlsStream::new(tls_stream));
-                    let _ = app.process_new(stream, &connection_shutdown).await;
+                    tokio::select! {
+                        _ = connection_cancel.cancelled() => {}
+                        _ = app.process_new(stream, &connection_shutdown) => {}
+                    }
                 });
             }
         }

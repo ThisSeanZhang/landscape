@@ -3874,6 +3874,7 @@ dependencies = [
  "serde",
  "tokio",
  "tokio-rustls",
+ "tokio-util",
  "tracing",
  "uuid",
 ]

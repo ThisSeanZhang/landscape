@@ -3,8 +3,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use landscape_common::config::gateway::{
     HttpUpstreamMatchRule, HttpUpstreamRuleConfig, HttpUpstreamTarget, LoadBalanceMethod,
 };
-use tokio::io;
+use tokio::io::{self, AsyncWriteExt};
 use tokio::net::TcpStream;
+use tokio_util::sync::CancellationToken;
 
 use crate::SharedRules;
 
@@ -84,14 +85,53 @@ impl MatchedSniTarget {
 }
 
 pub async fn proxy_tls_passthrough(
-    mut downstream: TcpStream,
+    downstream: TcpStream,
     target: &MatchedSniTarget,
+    cancel: CancellationToken,
 ) -> io::Result<()> {
     let upstream_addr = format!("{}:{}", target.target.address, target.target.port);
-    let mut upstream = TcpStream::connect(&upstream_addr).await?;
+    let upstream = tokio::select! {
+        _ = cancel.cancelled() => return Ok(()),
+        result = TcpStream::connect(&upstream_addr) => result?,
+    };
 
-    let _ = io::copy_bidirectional(&mut downstream, &mut upstream).await?;
-    Ok(())
+    let (mut downstream_read, mut downstream_write) = downstream.into_split();
+    let (mut upstream_read, mut upstream_write) = upstream.into_split();
+
+    let client_to_upstream = tokio::spawn(async move {
+        let result = io::copy(&mut downstream_read, &mut upstream_write).await;
+        let _ = upstream_write.shutdown().await;
+        result
+    });
+
+    let upstream_to_client = tokio::spawn(async move {
+        let result = io::copy(&mut upstream_read, &mut downstream_write).await;
+        let _ = downstream_write.shutdown().await;
+        result
+    });
+
+    tokio::pin!(client_to_upstream);
+    tokio::pin!(upstream_to_client);
+
+    let result = tokio::select! {
+        _ = cancel.cancelled() => Ok(()),
+        result = &mut client_to_upstream => join_copy_task(result),
+        result = &mut upstream_to_client => join_copy_task(result),
+    };
+
+    client_to_upstream.abort();
+    upstream_to_client.abort();
+
+    result
+}
+
+fn join_copy_task(result: Result<io::Result<u64>, tokio::task::JoinError>) -> io::Result<()> {
+    match result {
+        Ok(Ok(_)) => Ok(()),
+        Ok(Err(e)) => Err(e),
+        Err(e) if e.is_cancelled() => Ok(()),
+        Err(e) => Err(io::Error::other(e)),
+    }
 }
 
 /// Parse the SNI (Server Name Indication) extension from a TLS ClientHello message.

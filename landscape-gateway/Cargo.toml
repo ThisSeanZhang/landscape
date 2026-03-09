@@ -8,6 +8,7 @@ landscape-common = { path = "../landscape-common" }
 landscape-database = { path = "../landscape-database" }
 pingora = { workspace = true }
 tokio = { workspace = true }
+tokio-util = { workspace = true }
 tokio-rustls = { workspace = true }
 rustls = { workspace = true }
 tracing = { workspace = true }
