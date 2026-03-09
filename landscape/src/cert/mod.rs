@@ -51,6 +51,52 @@ impl ResolvesServerCert for SharedSniResolver {
     }
 }
 
+/// Reload Gateway TLS SNI mappings from cert manager (`for_gateway=true`) into `shared_resolver`.
+/// Unlike API TLS, no fallback self-signed cert is generated — if no valid gateway cert exists,
+/// the resolver will simply have no entries.
+pub async fn reload_gateway_tls_resolver(
+    cert_service: &CertService,
+    shared_resolver: &SharedSniResolver,
+) -> Result<usize, String> {
+    let mut candidates: Vec<CertConfig> = cert_service
+        .list()
+        .await
+        .into_iter()
+        .filter(|c| {
+            c.for_gateway
+                && matches!(c.status, CertStatus::Valid)
+                && c.certificate.as_ref().is_some()
+                && c.private_key.as_ref().is_some()
+        })
+        .collect();
+
+    candidates.sort_by(|a, b| {
+        b.expires_at.partial_cmp(&a.expires_at).unwrap_or(std::cmp::Ordering::Equal).then_with(
+            || b.update_at.partial_cmp(&a.update_at).unwrap_or(std::cmp::Ordering::Equal),
+        )
+    });
+
+    let mut tls_entries: Vec<(String, Vec<String>, CertifiedKey)> = Vec::new();
+    for cert in candidates {
+        let cert_pem = cert.certificate.as_deref().unwrap_or_default();
+        let key_pem = cert.private_key.as_deref().unwrap_or_default();
+        let chain_pem = cert.certificate_chain.as_deref();
+        match build_certified_key_from_pem(cert_pem, chain_pem, key_pem) {
+            Ok(ck) => {
+                tls_entries.push((cert.name.clone(), cert.domains.clone(), ck));
+            }
+            Err(e) => {
+                tracing::warn!("Skip invalid for_gateway cert '{}' ({})", cert.name, e);
+            }
+        }
+    }
+
+    let (resolver, inserted_count) = build_sni_resolver_from_entries(tls_entries);
+    shared_resolver.swap(resolver);
+    tracing::info!("Loaded {inserted_count} SNI domain mappings for Gateway TLS");
+    Ok(inserted_count)
+}
+
 /// Reload API TLS SNI mappings from cert manager (`for_api=true`) into `shared_resolver`.
 /// Ensures an auto-generated Manual `for_api` cert exists and uses it as fallback.
 pub async fn reload_api_tls_resolver(

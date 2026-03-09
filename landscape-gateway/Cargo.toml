@@ -1,0 +1,14 @@
+[package]
+name = "landscape-gateway"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+landscape-common = { path = "../landscape-common" }
+landscape-database = { path = "../landscape-database" }
+pingora = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+async-trait = { workspace = true }
+serde = { workspace = true }
+arc-swap = { workspace = true }

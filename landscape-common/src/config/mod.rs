@@ -1,6 +1,7 @@
 pub mod dns;
 pub mod firewall;
 pub mod flow;
+pub mod gateway;
 pub mod geo;
 pub mod iface;
 pub mod iface_ip;
@@ -27,6 +28,8 @@ use crate::enrolled_device::EnrolledDevice;
 use dns::DNSRuleConfig;
 use firewall::FirewallServiceConfig;
 use flow::FlowWanServiceConfig;
+use gateway::config::{GatewayRuntimeConfig, LandscapeGatewayConfig};
+use gateway::HttpUpstreamRuleConfig;
 use iface::NetworkIfaceConfig;
 use iface_ip::IfaceIpServiceConfig;
 use lan_ipv6::LanIPv6ServiceConfig;
@@ -131,6 +134,9 @@ pub struct InitConfig {
     pub cert_accounts: Vec<CertAccountConfig>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub certs: Vec<CertConfig>,
+
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub gateway_rules: Vec<HttpUpstreamRuleConfig>,
 }
 
 /// auth realte config
@@ -333,6 +339,9 @@ pub struct LandscapeConfig {
     #[serde(default)]
     #[cfg_attr(feature = "openapi", schema(required = true))]
     pub ui: LandscapeUIConfig,
+    #[serde(default)]
+    #[cfg_attr(feature = "openapi", schema(required = true))]
+    pub gateway: LandscapeGatewayConfig,
 }
 
 ///
@@ -349,6 +358,7 @@ pub struct RuntimeConfig {
     pub metric: MetricRuntimeConfig,
     pub dns: DnsRuntimeConfig,
     pub ui: LandscapeUIConfig,
+    pub gateway: GatewayRuntimeConfig,
     pub auto: bool,
 }
 
@@ -504,6 +514,8 @@ impl RuntimeConfig {
                 .unwrap_or_else(|| "/dns-query".to_string()),
         };
 
+        let gateway = GatewayRuntimeConfig::from_file_config(&config.gateway);
+
         let runtime_config = RuntimeConfig {
             home_path,
             auth,
@@ -513,6 +525,7 @@ impl RuntimeConfig {
             metric,
             dns,
             ui: config.ui.clone(),
+            gateway,
             file_config: config,
             auto: args.auto,
         };

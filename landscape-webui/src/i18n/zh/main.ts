@@ -17,6 +17,7 @@ import dhcp_editor from "./dhcp_editor";
 import pppd_editor from "./pppd_editor";
 import dhcp_v6 from "./dhcp_v6";
 import cert from "./cert";
+import gateway from "./gateway";
 
 export default {
   metric: {
@@ -40,6 +41,7 @@ export default {
   pppd_editor,
   dhcp_v6,
   cert,
+  gateway,
   common: {
     private_mode: "隐私模式",
     create: "创建",
@@ -154,5 +156,6 @@ export default {
     cert: "证书管理",
     "cert-accounts": "ACME 账户",
     certs: "证书管理",
+    gateway: "网关代理",
   },
 };

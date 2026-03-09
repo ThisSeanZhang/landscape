@@ -52,6 +52,13 @@ export default {
   "cert.dns_challenge_failed": "DNS challenge setup failed: {0}",
   "cert.acme_account_change_requires_revocation":
     "Cannot change ACME account while certificate is valid; revoke it first",
+  "gateway.rule_not_found": "Gateway rule not found (ID: {0})",
+  "gateway.host_conflict":
+    "Domain '{domain}' is already used by rule '{rule_name}'",
+  "gateway.wildcard_covers_domain":
+    "Wildcard '{wildcard}' covers domain '{domain}' in rule '{rule_name}'",
+  "gateway.path_prefix_overlap":
+    "Path prefix '{new_prefix}' overlaps with '{existing_prefix}' in rule '{rule_name}'",
   "config.conflict":
     "Configuration has been modified. Please refresh and try again",
   "internal.error": "Internal server error",

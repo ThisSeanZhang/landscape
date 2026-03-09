@@ -125,6 +125,12 @@ watch(
         <n-descriptions-item :label="t('cert.cert_expires')">
           {{ mask_display(format_ts(cert.expires_at)) }}
         </n-descriptions-item>
+        <n-descriptions-item :label="t('cert.for_api')">
+          {{ cert.for_api ? t("common.enable") : t("common.disable") }}
+        </n-descriptions-item>
+        <n-descriptions-item :label="t('cert.for_gateway')">
+          {{ cert.for_gateway ? t("common.enable") : t("common.disable") }}
+        </n-descriptions-item>
       </n-descriptions>
 
       <n-card size="small">

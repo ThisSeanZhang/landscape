@@ -35,6 +35,7 @@ mod m20260222_171753_firewall_blacklist;
 mod m20260226_001739_pppd_plugin;
 mod m20260227_040525_lan_ipv6;
 mod m20260302_060012_cert_management;
+mod m20260308_101225_gateway_http_upstream;
 mod tables;
 
 pub struct Migrator;
@@ -78,6 +79,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260226_001739_pppd_plugin::Migration),
             Box::new(m20260227_040525_lan_ipv6::Migration),
             Box::new(m20260302_060012_cert_management::Migration),
+            Box::new(m20260308_101225_gateway_http_upstream::Migration),
         ]
     }
 }

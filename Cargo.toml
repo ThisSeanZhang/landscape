@@ -8,6 +8,7 @@ members = [
     "landscape",
     "landscape-common",
     "landscape-database",
+    "landscape-gateway",
     "landscape-macro",
     "landscape-database/migration",
     "landscape-dns",
@@ -184,3 +185,4 @@ jemalloc-ctl = "0.5"
 bollard = "0.19.4"
 portable-pty = { version = "0.9.0" }
 dashmap = "6.1.0"
+pingora = { version = "0.8.0", default-features = false, features = ["proxy", "lb"] }

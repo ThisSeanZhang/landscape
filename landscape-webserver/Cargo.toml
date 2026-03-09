@@ -9,6 +9,7 @@ landscape-dns = { path = "../landscape-dns" }
 landscape-common = { path = "../landscape-common", features = ["openapi"] }
 landscape-database = { path = "../landscape-database" }
 landscape-ebpf = { path = "../landscape-ebpf" }
+landscape-gateway = { path = "../landscape-gateway" }
 
 
 rustls = { workspace = true }

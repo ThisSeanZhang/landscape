@@ -348,6 +348,13 @@ async function save() {
         </n-switch>
       </n-form-item>
 
+      <n-form-item :label="t('cert.for_gateway')">
+        <n-switch v-model:value="rule.for_gateway">
+          <template #checked>{{ t("common.enable") }}</template>
+          <template #unchecked>{{ t("common.disable") }}</template>
+        </n-switch>
+      </n-form-item>
+
       <!-- ===== ACME mode ===== -->
       <template v-if="is_acme && rule.cert_type && rule.cert_type.t === 'acme'">
         <n-form-item :label="t('cert.acme_account')">

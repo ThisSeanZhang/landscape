@@ -2,7 +2,10 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::cert::{reload_api_tls_resolver, validate_certified_key_from_pem, SharedSniResolver};
+use crate::cert::{
+    reload_api_tls_resolver, reload_gateway_tls_resolver, validate_certified_key_from_pem,
+    SharedSniResolver,
+};
 use instant_acme::{
     Account, ChallengeType as AcmeChallengeType, Identifier, NewOrder, OrderStatus, RetryPolicy,
     RevocationRequest,
@@ -27,6 +30,7 @@ pub struct CertService {
     store: CertRepository,
     account_service: CertAccountService,
     api_tls_resolver: SharedSniResolver,
+    gateway_tls_resolver: SharedSniResolver,
     tasks: Arc<Mutex<HashMap<Uuid, CertIssueTask>>>,
 }
 
@@ -52,6 +56,7 @@ impl CertService {
             store,
             account_service,
             api_tls_resolver: SharedSniResolver::new(),
+            gateway_tls_resolver: SharedSniResolver::new(),
             tasks: Arc::new(Mutex::new(HashMap::new())),
         };
 
@@ -90,8 +95,18 @@ impl CertService {
         self.api_tls_resolver.clone()
     }
 
+    pub fn gateway_tls_resolver(&self) -> SharedSniResolver {
+        self.gateway_tls_resolver.clone()
+    }
+
     pub async fn reload_api_tls_mapping(&self) -> Result<usize, CertError> {
         reload_api_tls_resolver(self, &self.api_tls_resolver)
+            .await
+            .map_err(CertError::IssuanceFailed)
+    }
+
+    pub async fn reload_gateway_tls_mapping(&self) -> Result<usize, CertError> {
+        reload_gateway_tls_resolver(self, &self.gateway_tls_resolver)
             .await
             .map_err(CertError::IssuanceFailed)
     }
@@ -101,6 +116,9 @@ impl CertService {
         if let Err(e) = self.reload_api_tls_mapping().await {
             tracing::warn!("Failed to reload API TLS mapping after cert update: {e}");
         }
+        if let Err(e) = self.reload_gateway_tls_mapping().await {
+            tracing::warn!("Failed to reload Gateway TLS mapping after cert update: {e}");
+        }
         saved
     }
 
@@ -108,6 +126,9 @@ impl CertService {
         self.delete(id).await;
         if let Err(e) = self.reload_api_tls_mapping().await {
             tracing::warn!("Failed to reload API TLS mapping after cert delete: {e}");
+        }
+        if let Err(e) = self.reload_gateway_tls_mapping().await {
+            tracing::warn!("Failed to reload Gateway TLS mapping after cert delete: {e}");
         }
     }
 

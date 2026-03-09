@@ -50,6 +50,12 @@ export default {
   "cert.dns_challenge_failed": "DNS 验证配置失败: {0}",
   "cert.acme_account_change_requires_revocation":
     "证书处于有效状态时不能切换 ACME 账户，请先吊销证书",
+  "gateway.rule_not_found": "找不到网关规则 (ID: {0})",
+  "gateway.host_conflict": "域名 '{domain}' 已被规则 '{rule_name}' 使用",
+  "gateway.wildcard_covers_domain":
+    "泛域名 '{wildcard}' 覆盖了规则 '{rule_name}' 中的域名 '{domain}'",
+  "gateway.path_prefix_overlap":
+    "路径前缀 '{new_prefix}' 与规则 '{rule_name}' 的前缀 '{existing_prefix}' 重叠",
   "config.conflict": "配置已被他人修改，请刷新后重试",
   "internal.error": "服务器内部错误",
   "request.invalid_json": "请求数据格式错误",

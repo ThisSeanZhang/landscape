@@ -58,6 +58,7 @@ impl LandscapeConfigService {
             lan_ipv6s: self.store.lan_ipv6_service_store().list().await.unwrap(),
             cert_accounts: self.store.cert_account_store().list().await.unwrap(),
             certs: self.store.cert_store().list().await.unwrap(),
+            gateway_rules: self.store.gateway_http_upstream_store().list().await.unwrap(),
         }
     }
 

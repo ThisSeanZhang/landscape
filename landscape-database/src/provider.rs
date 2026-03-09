@@ -17,6 +17,7 @@ use crate::{
     firewall_blacklist::repository::FirewallBlacklistRepository,
     firewall_rule::repository::FirewallRuleRepository, flow_rule::repository::FlowConfigRepository,
     flow_wan::repository::FlowWanServiceRepository,
+    gateway::repository::GatewayHttpUpstreamRepository,
     geo_ip::repository::GeoIpSourceConfigRepository, geo_site::repository::GeoSiteConfigRepository,
     iface::repository::NetIfaceRepository, iface_ip::repository::IfaceIpServiceRepository,
     lan_ipv6::repository::LanIPv6ServiceRepository,
@@ -118,6 +119,7 @@ define_store!(
     lan_ipv6_service_store: (LanIPv6ServiceRepository, lan_ipv6s),
     cert_account_store: (CertAccountRepository, cert_accounts),
     cert_store: (CertRepository, certs),
+    gateway_http_upstream_store: (GatewayHttpUpstreamRepository, gateway_rules),
 );
 
 #[cfg(test)]

@@ -17,6 +17,7 @@ import {
   Devices,
   Dashboard,
   Certificate,
+  Gateway,
 } from "@vicons/carbon";
 import { ImportExportRound } from "@vicons/material";
 import { Wall } from "@vicons/tabler";
@@ -184,6 +185,11 @@ const menuOptions = computed<MenuOption[]>(() => [
         key: "certs",
       },
     ],
+  },
+  {
+    label: t("routes.gateway"),
+    key: "gateway",
+    icon: renderIcon(Gateway),
   },
   {
     label: t("routes.config"),

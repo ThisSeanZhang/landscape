@@ -19,6 +19,7 @@ import DnsRedirect from "@/views/dns/DnsRedirect.vue";
 import DnsUpstream from "@/views/dns/DnsUpstream.vue";
 import CertAccounts from "@/views/cert/CertAccounts.vue";
 import CertOrders from "@/views/cert/CertOrders.vue";
+import Gateway from "@/views/Gateway.vue";
 import NotFound from "@/views/error/NotFound.vue";
 
 import service_status_route from "./service_status";
@@ -96,6 +97,11 @@ const inner_zone: Array<RouteRecordRaw> = [
     path: "/certs",
     name: "routes.certs",
     component: CertOrders,
+  },
+  {
+    path: "/gateway",
+    name: "routes.gateway",
+    component: Gateway,
   },
   {
     path: "/:pathMatch(.*)*",

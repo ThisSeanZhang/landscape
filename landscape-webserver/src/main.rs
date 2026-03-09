@@ -67,6 +67,7 @@ mod dump;
 mod error;
 mod firewall;
 mod flow;
+mod gateway;
 mod geo;
 mod interfaces;
 mod metrics;
@@ -141,6 +142,9 @@ pub struct LandscapeApp {
 
     cert_account_service: CertAccountService,
     cert_service: CertService,
+
+    // Gateway
+    gateway_service: landscape_gateway::service::GatewayService,
 }
 
 impl LandscapeApp {
@@ -222,6 +226,9 @@ impl LandscapeApp {
 
     pub async fn shutdown(&self) {
         tracing::info!("Shutting down all services...");
+
+        self.gateway_service.shutdown_and_wait(std::time::Duration::from_secs(10)).await;
+        tracing::info!("Gateway service stopped");
 
         // if cfg!(debug_assertions) {
         //     tracing::info!("Debug mode: keeping WAN IP and DHCP v4 services alive");
@@ -317,6 +324,14 @@ async fn run(home_path: PathBuf, config: RuntimeConfig) -> LdResult<()> {
             "failed to load api tls certificates: {e}"
         )));
     }
+
+    // Gateway
+    let gateway_store = db_store_provider.gateway_http_upstream_store();
+    let gateway_service = landscape_gateway::service::GatewayService::init_service(
+        gateway_store,
+        config.gateway.clone(),
+    )
+    .await;
 
     let dns_service = LandscapeDnsService::new(
         dns_service_rx,
@@ -458,6 +473,8 @@ async fn run(home_path: PathBuf, config: RuntimeConfig) -> LdResult<()> {
         // cert
         cert_account_service,
         cert_service: cert_service.clone(),
+        // gateway
+        gateway_service: gateway_service.clone(),
     };
 
     // 初始化结束
@@ -487,6 +504,7 @@ async fn run(home_path: PathBuf, config: RuntimeConfig) -> LdResult<()> {
     let (cert_router, _) = openapi::build_cert_openapi_router().split_for_parts();
     let (docker_router, _) = openapi::build_docker_openapi_router().split_for_parts();
     let (metrics_router, _) = openapi::build_metrics_openapi_router().split_for_parts();
+    let (gateway_router, _) = openapi::build_gateway_openapi_router().split_for_parts();
     let openapi = openapi::build_full_openapi_spec();
 
     // /system combines two routers with different state types:
@@ -509,6 +527,7 @@ async fn run(home_path: PathBuf, config: RuntimeConfig) -> LdResult<()> {
         .nest("/cert", cert_router)
         .nest("/docker", docker_router)
         .nest("/metrics", metrics_router)
+        .nest("/gateway", gateway_router)
         .with_state(landscape_app_status.clone())
         .nest("/system", system_combined)
         .route_layer(axum::middleware::from_fn_with_state(auth_share.clone(), auth::auth_handler));

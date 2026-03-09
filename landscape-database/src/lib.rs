@@ -36,6 +36,7 @@ pub mod cert_account;
 pub mod dns_redirect;
 pub mod dns_rule;
 pub mod dns_upstream;
+pub mod gateway;
 
 /// 定义 ID 类型
 pub(crate) type DBId = Uuid;

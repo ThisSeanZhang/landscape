@@ -243,6 +243,18 @@ const columns = computed<DataTableColumns<CertConfig>>(() => [
     },
   },
   {
+    title: t("cert.for_gateway"),
+    key: "for_gateway",
+    width: 90,
+    render(row) {
+      return h(
+        NTag,
+        { size: "small", type: row.for_gateway ? "success" : "default" },
+        () => bool_label(row.for_gateway),
+      );
+    },
+  },
+  {
     title: t("cert.cert_status"),
     key: "status",
     width: 100,

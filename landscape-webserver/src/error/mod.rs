@@ -5,6 +5,7 @@ use axum::Json;
 use landscape_common::api_response::LandscapeApiResp as CommonLandscapeApiResp;
 use landscape_common::cert::CertError;
 use landscape_common::config::dns::DnsRuleError;
+use landscape_common::config::gateway::GatewayError;
 use landscape_common::config::geo::{GeoIpError, GeoSiteError};
 use landscape_common::config::nat::StaticNatError;
 use landscape_common::dhcp::DhcpError;
@@ -57,6 +58,8 @@ pub enum LandscapeApiError {
     Auth(#[from] AuthError),
     #[error(transparent)]
     Docker(#[from] DockerError),
+    #[error(transparent)]
+    Gateway(#[from] GatewayError),
 
     // Generic errors
     #[error("Internal error: {0}")]
@@ -86,6 +89,7 @@ impl LandscapeApiError {
             Self::ServiceConfig(e) => e.error_id(),
             Self::Auth(e) => e.error_id(),
             Self::Docker(e) => e.error_id(),
+            Self::Gateway(e) => e.error_id(),
             Self::Internal(e) => match e {
                 LdError::ConfigConflict => "config.conflict",
                 _ => "internal.error",
@@ -113,6 +117,7 @@ impl LandscapeApiError {
             Self::ServiceConfig(e) => StatusCode::from_u16(e.http_status_code()).unwrap(),
             Self::Auth(e) => StatusCode::from_u16(e.http_status_code()).unwrap(),
             Self::Docker(e) => StatusCode::from_u16(e.http_status_code()).unwrap(),
+            Self::Gateway(e) => StatusCode::from_u16(e.http_status_code()).unwrap(),
             Self::Internal(e) => match e {
                 LdError::ConfigConflict => StatusCode::CONFLICT,
                 _ => StatusCode::INTERNAL_SERVER_ERROR,
@@ -140,6 +145,7 @@ impl LandscapeApiError {
             Self::ServiceConfig(e) => e.error_args(),
             Self::Auth(e) => e.error_args(),
             Self::Docker(e) => e.error_args(),
+            Self::Gateway(e) => e.error_args(),
             Self::Internal(_) | Self::JsonError(_) | Self::JsonRejection(_) => {
                 serde_json::json!({})
             }

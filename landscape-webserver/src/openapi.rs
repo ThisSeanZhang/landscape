@@ -15,6 +15,7 @@ use crate::docker::get_docker_paths;
 use crate::firewall::blacklists::get_firewall_blacklist_config_paths;
 use crate::flow::dst_ip_rules::get_dst_ip_rule_config_paths;
 use crate::flow::rules::get_flow_rule_config_paths;
+use crate::gateway::get_gateway_paths;
 use crate::geo::ips::get_geo_ip_config_paths;
 use crate::geo::sites::get_geo_site_config_paths;
 use crate::interfaces::get_iface_paths;
@@ -96,6 +97,7 @@ impl Modify for SecurityAddon {
         (name = "Docker Images", description = "Docker image management"),
         (name = "Docker Networks", description = "Docker network management"),
         (name = "Metric", description = "Metric data and statistics"),
+        (name = "Gateway", description = "HTTP/HTTPS reverse proxy gateway"),
     ),
     components(schemas(
         landscape_common::config::geo::GeoFileCacheKey,
@@ -199,6 +201,11 @@ pub fn build_metrics_openapi_router() -> OpenApiRouter<LandscapeApp> {
     OpenApiRouter::new().merge(get_metric_paths())
 }
 
+/// /gateway — HTTP/HTTPS reverse proxy gateway
+pub fn build_gateway_openapi_router() -> OpenApiRouter<LandscapeApp> {
+    OpenApiRouter::new().merge(get_gateway_paths())
+}
+
 // ── OpenAPI spec assembly ────────────────────────────────────────────
 
 /// Prepend a prefix to all OpenAPI paths in the spec.
@@ -287,6 +294,11 @@ pub fn build_full_openapi_spec() -> utoipa::openapi::OpenApi {
     prefix_paths(&mut metrics_openapi, "/api/v1/metrics");
     spec.merge(metrics_openapi);
 
+    // /api/v1/gateway
+    let (_, mut gateway_openapi) = build_gateway_openapi_router().split_for_parts();
+    prefix_paths(&mut gateway_openapi, "/api/v1/gateway");
+    spec.merge(gateway_openapi);
+
     // Add x-tagGroups for Scalar UI sidebar grouping
     let tag_groups = serde_json::json!([
         {
@@ -373,6 +385,10 @@ pub fn build_full_openapi_spec() -> utoipa::openapi::OpenApi {
         {
             "name": "Metrics",
             "tags": ["Metric"]
+        },
+        {
+            "name": "Gateway",
+            "tags": ["Gateway"]
         }
     ]);
     spec.extensions
