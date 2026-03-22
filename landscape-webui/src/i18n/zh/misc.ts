@@ -131,9 +131,4 @@ export default {
   docker_pull: {
     download_history: "下载记录",
   },
-  topology_managed_node: {
-    device_details: "设备详情",
-    parent_device: "上层设备",
-    confirm_toggle: "确定{action}网卡吗",
-  },
 };

@@ -12,7 +12,6 @@ import { useLanIPv6Store } from "./status_lan_ipv6";
 import { useFirewallConfigStore } from "./status_firewall";
 import { useWifiConfigStore } from "./status_wifi";
 import { useDHCPv4ConfigStore } from "./status_dhcp_v4";
-import { useTopologyStore } from "./topology";
 import { useMetricStore } from "./status_metric";
 import { useMSSClampConfigStore } from "./status_mss_clamp";
 import { useRouteLanConfigStore } from "./status_route_lan";
@@ -33,7 +32,6 @@ export const useFetchIntervalStore = defineStore("fetch_interval", () => {
   const firewallConfigStore = useFirewallConfigStore();
   const wifiConfigStore = useWifiConfigStore();
   const dhcpv4ConfigStore = useDHCPv4ConfigStore();
-  const topologyStore = useTopologyStore();
   const metricStore = useMetricStore();
   const mssclampConfigStore = useMSSClampConfigStore();
   const routeLanConfigStore = useRouteLanConfigStore();
@@ -51,7 +49,6 @@ export const useFetchIntervalStore = defineStore("fetch_interval", () => {
       await sysinfo.UPDATE_INFO();
       await dockerStore.UPDATE_INFO();
       await dnsStore.UPDATE_INFO();
-      await topologyStore.UPDATE_INFO();
       await ifaceNodeStore.UPDATE_INFO();
       await ipConfigStore.UPDATE_INFO();
       await natConfigStore.UPDATE_INFO();

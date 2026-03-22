@@ -132,9 +132,4 @@ export default {
   docker_pull: {
     download_history: "Download History",
   },
-  topology_managed_node: {
-    device_details: "Device Details",
-    parent_device: "Parent Device",
-    confirm_toggle: "Confirm {action} this NIC?",
-  },
 };

@@ -1,11 +1,9 @@
 import { createRouter, createWebHistory, RouteRecordRaw } from "vue-router";
 
 import Landscape from "@/views/Landscape.vue";
-import LandscapeV2 from "@/views/LandscapeV2.vue";
 import MainLayout from "@/views/MainLayout.vue";
 import Flow from "@/views/Flow.vue";
 import Docker from "@/views/Docker.vue";
-import Topology from "@/views/Topology.vue";
 import Firewall from "@/views/Firewall.vue";
 import GeoDomain from "@/views/GeoDomain.vue";
 import GeoIp from "@/views/GeoIp.vue";
@@ -51,11 +49,6 @@ const inner_zone: Array<RouteRecordRaw> = [
     path: "/flow",
     name: "routes.flow",
     component: Flow,
-  },
-  {
-    path: "/topology",
-    name: "routes.topology",
-    component: Topology,
   },
   {
     path: "/docker",
@@ -121,11 +114,6 @@ const routes: Array<RouteRecordRaw> = [
     path: "/login",
     name: "Login",
     component: Login,
-  },
-  {
-    path: "/test",
-    name: "LandscapeV2",
-    component: LandscapeV2,
   },
 ];
 

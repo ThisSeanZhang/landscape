@@ -133,7 +133,6 @@ export default {
     "dns-upstream": "上游 DNS",
     nat: "静态 NAT",
     flow: "分流设置",
-    topology: "网络拓扑",
     docker: "Docker 管理",
     firewall: "防火墙",
     geo: "地理数据库管理",

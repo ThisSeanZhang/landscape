@@ -1,18 +1,11 @@
 <script setup lang="ts">
 import { useI18n } from "vue-i18n";
 
-import PacketDump from "@/components/PacketDump.vue";
 import CPUUsage from "@/components/sysinfo/CPUUsage.vue";
 import MemUsage from "@/components/sysinfo/MemUsage.vue";
 import DnsStatusCard from "@/components/dns/DnsStatusCard.vue";
 import SystemInfo from "@/components/sysinfo/SystemInfo.vue";
 import NetFlow from "@/components/topology/NetFlow.vue";
-
-import NetTopology from "@/components/topology_v2/LandscapeTopology.vue";
-
-import { ref } from "vue";
-
-const show_dump = ref(false);
 
 const { t } = useI18n({ useScope: "global" });
 </script>
@@ -36,11 +29,6 @@ const { t } = useI18n({ useScope: "global" });
     <n-divider style="margin: 0px 0" title-placement="left">
       {{ t("common.topology_divider") }}
     </n-divider>
-    <!-- <NetTopology
-      style="flex: 1; min-height: 550px; min-width: 100%"
-    ></NetTopology> -->
     <NetFlow style="flex: 1; min-height: 550px; min-width: 100%"></NetFlow>
-    <!-- <PacketDump v-model="show_dump"></PacketDump> -->
-    <!-- <n-button @click="show_dump = true">Show DUMP</n-button> -->
   </n-flex>
 </template>

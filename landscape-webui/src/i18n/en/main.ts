@@ -135,7 +135,6 @@ export default {
     "dns-upstream": "Upstream DNS",
     nat: "Static NAT",
     flow: "Traffic Flow",
-    topology: "Network Topology",
     docker: "Docker Management",
     firewall: "Firewall",
     geo: "Geo Database",
