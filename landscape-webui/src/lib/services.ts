@@ -69,7 +69,7 @@ export class ServiceExhibitSwitch {
         }
       }
     }
-    if (dev.controller_name != undefined || dev.controller_id != undefined) {
+    if (dev.controller_id != undefined) {
       this.zone_type = false;
       this.enable_in_boot = false;
       this.ip_config = false;

@@ -28,8 +28,17 @@ export class NetDev {
     this.dev_type = obj.dev_type;
     this.dev_kind = obj.dev_kind;
     this.dev_status = { ...obj.dev_status };
-    this.controller_name = obj.controller_name;
-    this.controller_id = obj.controller_id;
+
+    const controller_id =
+      obj.controller_id === null || obj.controller_id === undefined
+        ? undefined
+        : obj.controller_id;
+    this.controller_id = controller_id;
+    this.controller_name =
+      controller_id !== undefined
+        ? (obj.controller_name ?? undefined)
+        : undefined;
+
     this.carrier = obj.carrier;
     this.zone_type = obj.zone_type;
     this.enable_in_boot = obj.enable_in_boot;

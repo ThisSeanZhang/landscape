@@ -1,527 +1,491 @@
 <script setup lang="ts">
-import { Handle, Position, useNodesData } from "@vue-flow/core";
-import { useDialog, useMessage, useThemeVars } from "naive-ui";
-
-import IPConfigStatusBtn from "@/components/status_btn/IPConfigStatusBtn.vue";
-import IPv6PDStatusBtn from "../status_btn/IPv6PDStatusBtn.vue";
-import ICMPv6RAStatusBtn from "../status_btn/ICMPv6RAStatusBtn.vue";
-import WifiStatusBtn from "@/components/status_btn/WifiStatusBtn.vue";
-import NetAddrTransBtn from "@/components/status_btn/NetAddrTransBtn.vue";
-import DHCPv4StatusBtn from "../status_btn/DHCPv4StatusBtn.vue";
-
-import IpConfigModal from "@/components/ipconfig/IpConfigModal.vue";
-import NATEditModal from "@/components/nat/NATEditModal.vue";
-import FirewallServiceEditModal from "@/components/firewall/FirewallServiceEditModal.vue";
-import IPv6PDEditModal from "../ipv6pd/IPv6PDEditModal.vue";
-import WifiServiceEditModal from "@/components/wifi/WifiServiceEditModal.vue";
-import DHCPv4ServiceEditModal from "@/components/dhcp_v4/DHCPv4ServiceEditModal.vue";
-
-import IfaceChangeZone from "../iface/IfaceChangeZone.vue";
-import IfaceDisableGuardModal from "@/components/iface/IfaceDisableGuardModal.vue";
-import { AreaCustom, Power, Link, DotMark, Delete } from "@vicons/carbon";
-import { PlugDisconnected20Regular } from "@vicons/fluent";
-import { computed, ref, reactive } from "vue";
-
-import { DevStateType } from "@/lib/dev";
-import { useIfaceNodeStore } from "@/stores/iface_node";
-import {
-  add_controller,
-  change_iface_status,
-  delete_bridge,
-} from "@/api/network";
-import { ServiceExhibitSwitch } from "@/lib/services";
-import { useFrontEndStore } from "@/stores/front_end_config";
-import { mask_string } from "@/lib/common";
+import { Handle, Position } from "@vue-flow/core";
+import { useThemeVars } from "naive-ui";
+import { changeColor } from "seemly";
+import { computed } from "vue";
 import { useI18n } from "vue-i18n";
 
-const frontEndStore = useFrontEndStore();
+import { DevStateType, NetDev } from "@/lib/dev";
+import { ZoneType } from "@/lib/service_ipconfig";
+import {
+  ServiceExhibitSwitch,
+  ServiceStatus,
+  ServiceStatusType,
+} from "@/lib/services";
+import { useDHCPv4ConfigStore } from "@/stores/status_dhcp_v4";
+import { useFirewallConfigStore } from "@/stores/status_firewall";
+import { useIpConfigStore } from "@/stores/status_ipconfig";
+import { useIPv6PDStore } from "@/stores/status_ipv6pd";
+import { useLanIPv6Store } from "@/stores/status_lan_ipv6";
+import { useMSSClampConfigStore } from "@/stores/status_mss_clamp";
+import { useNATConfigStore } from "@/stores/status_nats";
+import { useRouteLanConfigStore } from "@/stores/status_route_lan";
+import { useRouteWanConfigStore } from "@/stores/status_route_wan";
+import { useWifiConfigStore } from "@/stores/status_wifi";
+
+const props = withDefaults(
+  defineProps<{
+    node: NetDev;
+    selected?: boolean;
+  }>(),
+  {
+    selected: false,
+  },
+);
+
 const { t } = useI18n();
-const props = defineProps(["node"]);
+const themeVars = useThemeVars();
+const show_switch = computed(() => new ServiceExhibitSwitch(props.node));
 
-const themeVars = ref(useThemeVars());
-const ifaceNodeStore = useIfaceNodeStore();
-// const connections = useHandleConnections({
-//   type: 'target',
-// })
+const ipConfigStore = useIpConfigStore();
+const dhcpv4ConfigStore = useDHCPv4ConfigStore();
+const natConfigStore = useNATConfigStore();
+const firewallConfigStore = useFirewallConfigStore();
+const ipv6PDStore = useIPv6PDStore();
+const lanIpv6Store = useLanIPv6Store();
+const wifiConfigStore = useWifiConfigStore();
+const routeLanConfigStore = useRouteLanConfigStore();
+const routeWanConfigStore = useRouteWanConfigStore();
+const mssClampConfigStore = useMSSClampConfigStore();
 
-// const nodesData = useNodesData(() => connections.value[0]?.source)
-const show_mss_clamp_edit = ref(false);
-const iface_dhcp_v4_service_edit_show = ref(false);
-const iface_wifi_edit_show = ref(false);
-const iface_firewall_edit_show = ref(false);
-const iface_lan_ipv6_edit_show = ref(false);
-const iface_ipv6pd_edit_show = ref(false);
-const iface_nat_edit_show = ref(false);
-const iface_service_edit_show = ref(false);
-const show_zone_change = ref(false);
-const show_pppd_drawer = ref(false);
-const show_route_lan_drawer = ref(false);
-const show_route_wan_drawer = ref(false);
-const disable_guard_modal = ref<InstanceType<
-  typeof IfaceDisableGuardModal
-> | null>(null);
+const ip_config_status = computed(
+  () => ipConfigStore.GET_STATUS_BY_IFACE_NAME(props.node.name).value,
+);
+const dhcp_v4_status = computed(
+  () => dhcpv4ConfigStore.GET_STATUS_BY_IFACE_NAME(props.node.name).value,
+);
+const nat_status = computed(
+  () => natConfigStore.GET_STATUS_BY_IFACE_NAME(props.node.name).value,
+);
+const firewall_status = computed(
+  () => firewallConfigStore.GET_STATUS_BY_IFACE_NAME(props.node.name).value,
+);
+const ipv6pd_status = computed(
+  () => ipv6PDStore.GET_STATUS_BY_IFACE_NAME(props.node.name).value,
+);
+const lan_ipv6_status = computed(
+  () => lanIpv6Store.GET_STATUS_BY_IFACE_NAME(props.node.name).value,
+);
+const wifi_status = computed(
+  () => wifiConfigStore.GET_STATUS_BY_IFACE_NAME(props.node.name).value,
+);
+const route_lan_status = computed(
+  () => routeLanConfigStore.GET_STATUS_BY_IFACE_NAME(props.node.name).value,
+);
+const route_wan_status = computed(
+  () => routeWanConfigStore.GET_STATUS_BY_IFACE_NAME(props.node.name).value,
+);
+const mss_clamp_status = computed(
+  () => mssClampConfigStore.GET_STATUS_BY_IFACE_NAME(props.node.name).value,
+);
 
-const show_cpu_balance_btn = ref(false);
-function handleUpdateShow(show: boolean) {
-  if (show) {
+const status_type = computed(() => {
+  if (props.node.dev_status.t === DevStateType.Up) {
+    return "success";
   }
-}
-
-async function refresh() {
-  await ifaceNodeStore.UPDATE_INFO();
-}
-
-async function change_dev_status() {
-  if (props.node === undefined) {
-    return;
+  if (props.node.dev_status.t === DevStateType.Down) {
+    return "error";
   }
-  if (props.node.dev_status.t == DevStateType.Up) {
-    if (disable_guard_modal.value) {
-      await disable_guard_modal.value.check_and_execute(async () => {
-        await change_iface_status(props.node.name, false);
-        await refresh();
-      });
-    } else {
-      await change_iface_status(props.node.name, false);
-      await refresh();
-    }
-  } else {
-    await change_iface_status(props.node.name, true);
-    await refresh();
-  }
-}
-
-async function remove_controller() {
-  await add_controller({
-    link_name: props.node.name as string,
-    link_ifindex: props.node.index as number,
-    master_name: null,
-    master_ifindex: null,
-  });
-  await refresh();
-}
-
-const message = useMessage();
-const dialog = useDialog();
-
-const delete_loading = ref(false);
-async function handleDeleteBridge() {
-  if (props.node === undefined) {
-    return;
-  }
-  try {
-    delete_loading.value = true;
-    await delete_bridge(props.node.name);
-    await refresh();
-    message.info(t("misc.topology_node.delete_success"));
-  } catch (error) {
-    window.$message.error(t("misc.topology_node.delete_failed"));
-  } finally {
-    delete_loading.value = false;
-  }
-}
-
-const show_switch = computed(() => {
-  return new ServiceExhibitSwitch(props.node);
+  return "warning";
 });
 
-// const card_style = computed(() => {
-//   if (props.node.zone_type == ZoneType.Wan) {
-//     return "min-width: 330px";
-//   } else if (props.node.zone_type == ZoneType.Lan) {
-//     return "min-width: 220px";
-//   } else {
-//     return "min-width: 200px";
-//   }
-// });
+const zone_type = computed(() => {
+  if (props.node.zone_type === ZoneType.Wan) {
+    return "warning";
+  }
+  if (props.node.zone_type === ZoneType.Lan) {
+    return "info";
+  }
+  return "default";
+});
+
+const role_tags = computed(() => {
+  const tags: string[] = [];
+
+  if (props.node.dev_kind === "bridge") {
+    tags.push("bridge");
+  }
+
+  if (props.node.wifi_info) {
+    tags.push(props.node.wifi_info.wifi_type.t);
+  } else if (props.node.dev_type) {
+    tags.push(props.node.dev_type);
+  }
+
+  return tags.slice(0, 2);
+});
+
+const is_wan_node = computed(() => props.node.zone_type === ZoneType.Wan);
+const node_width = computed(() => (is_wan_node.value ? 360 : 280));
+const title_max_width = computed(
+  () => `${Math.max(node_width.value - 126, 140)}px`,
+);
+
+const meta_text = computed(() => {
+  if (props.node.controller_id !== undefined && props.node.controller_name) {
+    return `${props.node.dev_kind || props.node.dev_type} <- ${props.node.controller_name}`;
+  }
+
+  return props.node.dev_kind || props.node.dev_type || props.node.name;
+});
+
+function serviceStatusText(status?: ServiceStatus) {
+  if (!status) {
+    return t("common.not_configured");
+  }
+
+  switch (status.t) {
+    case ServiceStatusType.Staring:
+      return t("common.starting");
+    case ServiceStatusType.Running:
+      return t("common.running");
+    case ServiceStatusType.Stopping:
+      return t("common.stopping");
+    case ServiceStatusType.Stop:
+      return t("common.stopped");
+  }
+}
+
+function serviceStatusColor(status?: ServiceStatus) {
+  if (!status) {
+    return themeVars.value.textColor3;
+  }
+
+  return status.t === ServiceStatusType.Stop
+    ? themeVars.value.errorColor
+    : themeVars.value.successColor;
+}
+
+const service_items = computed(() => {
+  const items: Array<{
+    key: string;
+    label: string;
+    short_label: string;
+    status?: ServiceStatus;
+  }> = [];
+
+  if (show_switch.value.mss_clamp) {
+    items.push({
+      key: "mss_clamp",
+      label: t("misc.topology_panel.open_mss_clamp"),
+      short_label: "MSS",
+      status: mss_clamp_status.value,
+    });
+  }
+  if (show_switch.value.ip_config) {
+    items.push({
+      key: "ip_config",
+      label: t("misc.topology_panel.open_ip_config"),
+      short_label: "IP",
+      status: ip_config_status.value,
+    });
+  }
+  if (show_switch.value.dhcp_v4) {
+    items.push({
+      key: "dhcp_v4",
+      label: t("misc.topology_panel.open_dhcp_v4"),
+      short_label: "D4",
+      status: dhcp_v4_status.value,
+    });
+  }
+  if (show_switch.value.nat_config) {
+    items.push({
+      key: "nat",
+      label: t("misc.topology_panel.open_nat"),
+      short_label: "NAT",
+      status: nat_status.value,
+    });
+  }
+  if (show_switch.value.firewall) {
+    items.push({
+      key: "firewall",
+      label: t("misc.topology_panel.open_firewall"),
+      short_label: "FW",
+      status: firewall_status.value,
+    });
+  }
+  if (show_switch.value.wifi) {
+    items.push({
+      key: "wifi",
+      label: t("misc.topology_panel.open_wifi"),
+      short_label: "WF",
+      status: wifi_status.value,
+    });
+  }
+  if (show_switch.value.ipv6pd) {
+    items.push({
+      key: "ipv6pd",
+      label: t("misc.topology_panel.open_ipv6pd"),
+      short_label: "PD",
+      status: ipv6pd_status.value,
+    });
+  }
+  if (show_switch.value.lan_ipv6) {
+    items.push({
+      key: "lan_ipv6",
+      label: t("misc.topology_panel.open_icmpv6_ra"),
+      short_label: "RA",
+      status: lan_ipv6_status.value,
+    });
+  }
+  if (show_switch.value.route_lan) {
+    items.push({
+      key: "route_lan",
+      label: t("misc.topology_panel.open_route_lan"),
+      short_label: "LR",
+      status: route_lan_status.value,
+    });
+  }
+  if (show_switch.value.route_wan) {
+    items.push({
+      key: "route_wan",
+      label: t("misc.topology_panel.open_route_wan"),
+      short_label: "WR",
+      status: route_wan_status.value,
+    });
+  }
+
+  return items;
+});
+
+const node_style = computed(() => ({
+  "--topology-node-width": `${node_width.value}px`,
+  "--topology-node-title-max": title_max_width.value,
+  "--topology-node-border": themeVars.value.borderColor,
+  "--topology-node-bg": changeColor(themeVars.value.cardColor, { alpha: 0.98 }),
+  "--topology-node-bg-soft": changeColor(themeVars.value.tableColor, {
+    alpha: 0.82,
+  }),
+  "--topology-node-shadow": "none",
+  "--topology-node-selected-border": changeColor(themeVars.value.primaryColor, {
+    alpha: 0.5,
+  }),
+  "--topology-node-selected-shadow": `0 18px 36px ${changeColor(themeVars.value.primaryColor, { alpha: 0.18 })}, 0 0 0 1px ${changeColor(themeVars.value.primaryColor, { alpha: 0.18 })}`,
+  "--topology-node-text": themeVars.value.textColor1,
+  "--topology-node-muted": themeVars.value.textColor3,
+  "--topology-node-carrier-ring": changeColor(themeVars.value.textColor3, {
+    alpha: 0.12,
+  }),
+  "--topology-node-service-bg": changeColor(themeVars.value.bodyColor, {
+    alpha: 0.68,
+  }),
+  "--topology-node-service-border": themeVars.value.borderColor,
+  "--topology-node-service-text": themeVars.value.textColor3,
+  "--topology-node-handle-bg": changeColor(themeVars.value.primaryColor, {
+    alpha: 0.9,
+  }),
+  "--topology-node-handle-ring": changeColor(themeVars.value.cardColor, {
+    alpha: 0.98,
+  }),
+  "--topology-node-handle-shadow": `0 0 0 4px ${changeColor(themeVars.value.primaryColor, { alpha: 0.12 })}`,
+}));
 </script>
 
 <template>
-  <!-- {{ show_switch }} -->
-  <!-- <NodeToolbar
-    style="display: flex; gap: 0.5rem; align-items: center"
-    :is-visible="undefined"
-    :position="Position.Top"
+  <div
+    class="topology-node"
+    :class="{ 'is-selected': selected }"
+    :style="node_style"
   >
-    <button>Action1</button>
-    <button>Action2</button>
-    <button>Action3</button>
-  </NodeToolbar> -->
-  <!-- {{ node }} -->
-  <n-flex vertical>
-    <n-popover
-      trigger="hover"
-      :show-arrow="false"
-      @update:show="handleUpdateShow"
-    >
-      <template #trigger>
-        <n-card size="small" style="min-width: 240px; max-width: 240px">
-          <template #header>
-            <n-flex style="gap: 3px" inline align="center">
-              <n-icon
-                v-if="show_switch.carrier"
-                :color="node.carrier ? themeVars.successColor : ''"
-                size="16"
+    <div class="topology-node__main">
+      <div class="topology-node__card-shell">
+        <Handle
+          v-if="node.has_target_hook()"
+          type="target"
+          :position="Position.Left"
+          class="topology-node__handle"
+        />
+
+        <div class="topology-node__card">
+          <div class="topology-node__title-row">
+            <div class="topology-node__title">
+              <span
+                class="topology-node__carrier"
+                :style="{
+                  backgroundColor: node.carrier
+                    ? themeVars.successColor
+                    : themeVars.borderColor,
+                }"
+              />
+              <n-performant-ellipsis
+                :tooltip="false"
+                style="max-width: var(--topology-node-title-max)"
               >
-                <DotMark />
-              </n-icon>
-              <n-performant-ellipsis :tooltip="false" style="max-width: 110px">
                 {{ node.name }}
               </n-performant-ellipsis>
-            </n-flex>
-          </template>
-          <template #header-extra>
-            <n-flex :size="[10, 0]">
-              <!-- <n-button
-                v-if="show_switch.carrier"
-                text
-                :type="node.carrier ? 'info' : 'default'"
-                :focusable="false"
-                style="font-size: 16px"
-              >
-                <n-icon>
-                  <Ethernet></Ethernet>
-                </n-icon>
-              </n-button> -->
-              <n-popconfirm
-                v-if="show_switch.enable_in_boot"
-                @positive-click="change_dev_status"
-              >
-                <template #trigger>
-                  <n-button
-                    text
-                    :type="
-                      node.dev_status.t === DevStateType.Up ? 'info' : 'default'
-                    "
-                    :focusable="false"
-                    style="font-size: 16px"
-                  >
-                    <n-icon>
-                      <Power></Power>
-                    </n-icon>
-                  </n-button>
-                </template>
-                {{
-                  t("misc.topology_node.confirm_toggle_iface", {
-                    action:
-                      node.dev_status.t === DevStateType.Up
-                        ? t("misc.topology_node.action_disable")
-                        : t("misc.topology_node.action_enable"),
-                  })
-                }}
-              </n-popconfirm>
-              <n-button
-                v-if="show_switch.zone_type"
-                :class="node.zone_type"
-                text
-                :focusable="false"
-                style="font-size: 16px"
-                @click="show_zone_change = true"
-              >
-                <n-icon>
-                  <AreaCustom></AreaCustom>
-                </n-icon>
-              </n-button>
+            </div>
+            <n-tag size="small" :type="status_type" round>
+              {{ node.dev_status.t }}
+            </n-tag>
+          </div>
 
-              <n-button
-                v-if="show_switch.pppd"
-                text
-                :focusable="false"
-                style="font-size: 16px"
-                @click="show_pppd_drawer = true"
-              >
-                <n-icon>
-                  <Link></Link>
-                </n-icon>
-              </n-button>
+          <div class="topology-node__tags">
+            <n-tag size="tiny" :type="zone_type" round>
+              {{ node.zone_type }}
+            </n-tag>
+            <n-tag v-for="tag in role_tags" :key="tag" size="tiny" tertiary>
+              {{ tag }}
+            </n-tag>
+          </div>
 
-              <WifiModeChange
-                :iface_name="node.name"
-                :show_switch="show_switch"
-                @refresh="refresh"
+          <div class="topology-node__meta">
+            {{ meta_text }}
+          </div>
+        </div>
+
+        <Handle
+          v-if="node.has_source_hook()"
+          type="source"
+          :position="Position.Right"
+          class="topology-node__handle"
+        />
+      </div>
+
+      <div v-if="service_items.length" class="topology-node__services">
+        <n-tooltip
+          v-for="item in service_items"
+          :key="item.key"
+          trigger="hover"
+        >
+          <template #trigger>
+            <span class="topology-node__service-pill">
+              <span
+                class="topology-node__service-dot"
+                :style="{ backgroundColor: serviceStatusColor(item.status) }"
               />
-
-              <n-popconfirm
-                v-if="
-                  node.dev_kind === 'bridge' &&
-                  node.name !== 'docker0' &&
-                  node.dev_status.t === 'down'
-                "
-                :show-icon="false"
-                :positive-button-props="{ type: 'error', ghost: true }"
-                :positive-text="t('misc.topology_node.delete_btn')"
-                @positive-click="handleDeleteBridge"
-                trigger="click"
-              >
-                <template #trigger>
-                  <n-button
-                    :loading="delete_loading"
-                    type="error"
-                    text
-                    style="font-size: 16px"
-                  >
-                    <n-icon>
-                      <Delete />
-                    </n-icon>
-                  </n-button>
-                </template>
-                <span>{{ t("misc.topology_node.delete_bridge") }}</span>
-              </n-popconfirm>
-            </n-flex>
+              <span>{{ item.short_label }}</span>
+            </span>
           </template>
-        </n-card>
-      </template>
-      <n-descriptions label-placement="left" :column="2" size="small">
-        <n-descriptions-item
-          :span="2"
-          :label="t('misc.topology_node.iface_name')"
-        >
-          {{ node.name }}
-        </n-descriptions-item>
-        <n-descriptions-item :label="t('misc.topology_node.mac_addr')">
-          {{ frontEndStore.MASK_INFO(node.mac ?? "N/A") }}
-        </n-descriptions-item>
-        <n-descriptions-item :label="t('misc.topology_node.perm_mac')">
-          {{ frontEndStore.MASK_INFO(node.perm_mac ?? "N/A") }}
-        </n-descriptions-item>
-        <n-descriptions-item :label="t('misc.topology_node.device_type')">
-          {{ node.dev_type ?? "N/A" }}/{{ node.dev_kind ?? "N/A" }}
-        </n-descriptions-item>
-        <n-descriptions-item :label="t('misc.topology_node.status')">
-          {{ node.dev_status ?? "N/A" }}
-        </n-descriptions-item>
-        <n-descriptions-item
-          :span="2"
-          :label="t('misc.topology_node.parent_ctrl')"
-        >
-          {{ node.controller_id == undefined ? "N/A" : node.controller_id }}
-          ({{
-            node.controller_name == undefined ? "N/A" : node.controller_name
-          }})
-          <n-button
-            v-if="node.controller_name || node.controller_id"
-            tertiary
-            size="tiny"
-            :focusable="false"
-            @click="remove_controller"
-            >{{ t("misc.topology_node.disconnect") }}
-            <template #icon>
-              <n-icon>
-                <PlugDisconnected20Regular></PlugDisconnected20Regular>
-              </n-icon>
-            </template>
-          </n-button>
-        </n-descriptions-item>
-
-        <n-descriptions-item
-          :label="t('misc.topology_node.cpu_balance')"
-          :span="2"
-        >
-          <n-button
-            tertiary
-            size="tiny"
-            :focusable="false"
-            @click="show_cpu_balance_btn = true"
-          >
-            {{ t("misc.topology_node.edit_balance") }}
-          </n-button>
-        </n-descriptions-item>
-      </n-descriptions>
-    </n-popover>
-
-    <n-flex style="min-width: 240px; max-width: 240px">
-      <!-- IP 配置 按钮 -->
-      <MSSClampStatusBtn
-        v-if="show_switch.mss_clamp"
-        @click="show_mss_clamp_edit = true"
-        :iface_name="node.name"
-        :zone="node.zone_type"
-      />
-      <!-- IP 配置 按钮 -->
-      <IPConfigStatusBtn
-        v-if="show_switch.ip_config"
-        @click="iface_service_edit_show = true"
-        :iface_name="node.name"
-        :zone="node.zone_type"
-      />
-      <!-- DHCPv4 按钮 -->
-      <DHCPv4StatusBtn
-        v-if="show_switch.dhcp_v4"
-        @click="iface_dhcp_v4_service_edit_show = true"
-        :iface_name="node.name"
-        :zone="node.zone_type"
-      />
-      <FirewallStatusBtn
-        v-if="show_switch.nat_config"
-        @click="iface_firewall_edit_show = true"
-        :iface_name="node.name"
-        :zone="node.zone_type"
-      />
-      <!-- NAT 配置 按钮 -->
-      <NetAddrTransBtn
-        v-if="show_switch.nat_config"
-        @click="iface_nat_edit_show = true"
-        :iface_name="node.name"
-        :zone="node.zone_type"
-      />
-      <!-- 标记服务配置按钮 -->
-      <!-- <PacketMarkStatusBtn
-        v-if="show_switch.mark_config"
-        @click="iface_mark_edit_show = true"
-        :iface_name="node.name"
-        :zone="node.zone_type"
-      /> -->
-      <!-- IPV6PD 配置按钮 -->
-      <IPv6PDStatusBtn
-        v-if="show_switch.ipv6pd"
-        @click="iface_ipv6pd_edit_show = true"
-        :iface_name="node.name"
-        :zone="node.zone_type"
-      />
-      <!-- ICMPv6 RA -->
-      <ICMPv6RAStatusBtn
-        v-if="show_switch.lan_ipv6"
-        @click="iface_lan_ipv6_edit_show = true"
-        :iface_name="node.name"
-        :zone="node.zone_type"
-      />
-
-      <!-- Wifi -->
-      <WifiStatusBtn
-        v-if="show_switch.wifi"
-        @click="iface_wifi_edit_show = true"
-        :iface_name="node.name"
-        :zone="node.zone_type"
-      />
-
-      <!-- RouteLan -->
-      <RouteLanStatusBtn
-        v-if="show_switch.route_lan"
-        @click="show_route_lan_drawer = true"
-        :iface_name="node.name"
-        :zone="node.zone_type"
-      />
-
-      <!-- RouteWan -->
-      <RouteWanStatusBtn
-        v-if="show_switch.route_wan"
-        @click="show_route_wan_drawer = true"
-        :iface_name="node.name"
-        :zone="node.zone_type"
-      />
-    </n-flex>
-  </n-flex>
-
-  <Handle
-    v-if="node.has_target_hook()"
-    type="target"
-    :position="Position.Left"
-  />
-  <Handle
-    v-if="node.has_source_hook()"
-    type="source"
-    :position="Position.Right"
-  />
-
-  <IpConfigModal
-    v-model:show="iface_service_edit_show"
-    :zone="node.zone_type"
-    :iface_name="node.name"
-    @refresh="refresh"
-  />
-  <DHCPv4ServiceEditModal
-    v-model:show="iface_dhcp_v4_service_edit_show"
-    :zone="node.zone_type"
-    :iface_name="node.name"
-    @refresh="refresh"
-  />
-  <NATEditModal
-    v-model:show="iface_nat_edit_show"
-    :zone="node.zone_type"
-    :iface_name="node.name"
-    @refresh="refresh"
-  />
-  <IfaceChangeZone
-    v-model:show="show_zone_change"
-    :zone="node.zone_type"
-    :iface_name="node.name"
-    @refresh="refresh"
-  />
-
-  <PPPDServiceListDrawer
-    v-model:show="show_pppd_drawer"
-    :attach_iface_name="node.name"
-    @refresh="refresh"
-  />
-  <IPv6PDEditModal
-    v-model:show="iface_ipv6pd_edit_show"
-    :zone="node.zone_type"
-    :iface_name="node.name"
-    :mac="node.mac"
-    @refresh="refresh"
-  />
-  <ICMPRaEditModal
-    v-model:show="iface_lan_ipv6_edit_show"
-    :zone="node.zone_type"
-    :iface_name="node.name"
-    :mac="node.mac"
-    @refresh="refresh"
-  />
-  <FirewallServiceEditModal
-    v-model:show="iface_firewall_edit_show"
-    :zone="node.zone_type"
-    :iface_name="node.name"
-    :mac="node.mac"
-    @refresh="refresh"
-  />
-  <WifiServiceEditModal
-    v-model:show="iface_wifi_edit_show"
-    :zone="node.zone_type"
-    :iface_name="node.name"
-    :mac="node.mac"
-    @refresh="refresh"
-  />
-
-  <IfaceCpuSoftBalance
-    v-model:show="show_cpu_balance_btn"
-    :iface_name="node.name"
-  >
-  </IfaceCpuSoftBalance>
-  <MSSClampServiceEditModal
-    v-model:show="show_mss_clamp_edit"
-    :iface_name="node.name"
-  >
-  </MSSClampServiceEditModal>
-
-  <RouteLanServiceEditModal
-    v-model:show="show_route_lan_drawer"
-    :iface_name="node.name"
-    @refresh="refresh"
-  />
-
-  <RouteWanServiceEditModal
-    v-model:show="show_route_wan_drawer"
-    :zone="node.zone_type"
-    :iface_name="node.name"
-    @refresh="refresh"
-  />
-  <IfaceDisableGuardModal
-    ref="disable_guard_modal"
-    :iface_name="node.name"
-    @refresh="refresh"
-  />
+          {{ item.label }} · {{ serviceStatusText(item.status) }}
+        </n-tooltip>
+      </div>
+    </div>
+  </div>
 </template>
 
 <style scoped>
-.undefined {
-  color: whitesmoke;
+.topology-node {
+  position: relative;
+  width: var(--topology-node-width);
 }
 
-.wan {
-  color: rgb(255, 99, 71);
+.topology-node__main {
+  display: flex;
+  width: var(--topology-node-width);
+  flex-direction: column;
+  gap: 8px;
 }
 
-.lan {
-  color: rgb(0, 102, 204);
+.topology-node__card-shell {
+  position: relative;
+  width: var(--topology-node-width);
+}
+
+.topology-node__card {
+  width: var(--topology-node-width);
+  min-height: 98px;
+  padding: 12px 14px;
+  border-radius: 16px;
+  border: 1px solid var(--topology-node-border);
+  background: linear-gradient(
+    180deg,
+    var(--topology-node-bg),
+    var(--topology-node-bg-soft)
+  );
+  box-shadow: var(--topology-node-shadow);
+  transition:
+    border-color 0.2s ease,
+    box-shadow 0.2s ease,
+    transform 0.2s ease;
+}
+
+.is-selected .topology-node__card {
+  border-color: var(--topology-node-selected-border);
+  box-shadow: var(--topology-node-selected-shadow);
+  transform: translateY(-1px);
+}
+
+.topology-node__title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.topology-node__title {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--topology-node-text);
+}
+
+.topology-node__carrier {
+  width: 9px;
+  height: 9px;
+  flex: none;
+  border-radius: 999px;
+  box-shadow: 0 0 0 4px var(--topology-node-carrier-ring);
+}
+
+.topology-node__tags {
+  display: flex;
+  margin-top: 10px;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.topology-node__meta {
+  margin-top: 10px;
+  font-size: 12px;
+  color: var(--topology-node-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.topology-node__services {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 0 4px;
+}
+
+.topology-node__service-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--topology-node-service-border);
+  background: var(--topology-node-service-bg);
+  color: var(--topology-node-service-text);
+  font-size: 11px;
+  line-height: 1;
+}
+
+.topology-node__service-pill--muted {
+  opacity: 0.78;
+}
+
+.topology-node__service-dot {
+  width: 6px;
+  height: 6px;
+  flex: none;
+  border-radius: 999px;
+}
+
+.topology-node__handle {
+  width: 12px;
+  height: 12px;
+  opacity: 1;
+  z-index: 2;
+  cursor: crosshair;
+  pointer-events: auto;
+  background: var(--topology-node-handle-bg);
+  border: 2px solid var(--topology-node-handle-ring);
+  box-shadow: var(--topology-node-handle-shadow);
 }
 </style>

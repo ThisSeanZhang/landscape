@@ -19,7 +19,7 @@ const currentDateLocale = computed(() => {
 });
 
 const currentTheme = computed(() => {
-  return darkTheme;
+  return prefStore.theme === "light" ? null : darkTheme;
 });
 </script>
 
