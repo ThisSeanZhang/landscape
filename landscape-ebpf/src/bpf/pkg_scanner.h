@@ -417,21 +417,33 @@ static __always_inline int scan_packet(struct __sk_buff *skb, u32 current_l3_off
             offset_info->icmp_error_l3_protocol = LANDSCAPE_IPV4_TYPE;
             offset_info->icmp_error_l4_protocol = ctx.l4_protocol;
 
+#if defined(LAND_ARCH_RISCV)
+            void *temp_addr;
+#else
             u32 *temp_addr;
+#endif
             u32 dst_ip_val, icmp_src_ip_val;
             if (VALIDATE_READ_DATA(skb, &temp_addr,
                                    offset_info->l3_offset_when_scan + offsetof(struct iphdr, daddr),
                                    sizeof(u32))) {
                 return TC_ACT_SHOT;
             }
+#if defined(LAND_ARCH_RISCV)
+            __builtin_memcpy(&dst_ip_val, temp_addr, sizeof(dst_ip_val));
+#else
             dst_ip_val = *temp_addr;
+#endif
             if (VALIDATE_READ_DATA(skb, &temp_addr,
                                    offset_info->icmp_error_l3_offset +
                                        offsetof(struct iphdr, saddr),
                                    sizeof(u32))) {
                 return TC_ACT_SHOT;
             }
+#if defined(LAND_ARCH_RISCV)
+            __builtin_memcpy(&icmp_src_ip_val, temp_addr, sizeof(icmp_src_ip_val));
+#else
             icmp_src_ip_val = *temp_addr;
+#endif
 
             if (dst_ip_val != icmp_src_ip_val) {
                 ld_bpf_log("IP destination address does not match source "
@@ -525,12 +537,25 @@ static __always_inline int read_packet_info(struct __sk_buff *skb,
     int ret;
     if (offset_info->l3_protocol == LANDSCAPE_IPV4_TYPE) {
         struct iphdr *iph;
+#if defined(LAND_ARCH_RISCV)
+        __be32 ipv4_addr;
+        void *addr_ptr;
+#endif
         if (VALIDATE_READ_DATA(skb, &iph, offset_info->l3_offset_when_scan, sizeof(struct iphdr))) {
             ld_bpf_log("ipv4 bpf_skb_load_bytes error");
             return TC_ACT_SHOT;
         }
+#if defined(LAND_ARCH_RISCV)
+        addr_ptr = (void *)iph + offsetof(struct iphdr, daddr);
+        __builtin_memcpy(&ipv4_addr, addr_ptr, sizeof(ipv4_addr));
+        ip_pair->dst_addr.ip = ipv4_addr;
+        addr_ptr = (void *)iph + offsetof(struct iphdr, saddr);
+        __builtin_memcpy(&ipv4_addr, addr_ptr, sizeof(ipv4_addr));
+        ip_pair->src_addr.ip = ipv4_addr;
+#else
         ip_pair->dst_addr.ip = iph->daddr;
         ip_pair->src_addr.ip = iph->saddr;
+#endif
 
         if (offset_info->icmp_error_l3_offset > 0) {
             if (VALIDATE_READ_DATA(skb, &iph, offset_info->icmp_error_l3_offset,
@@ -538,7 +563,13 @@ static __always_inline int read_packet_info(struct __sk_buff *skb,
                 ld_bpf_log("ipv4 bpf_skb_load_bytes error");
                 return TC_ACT_SHOT;
             }
+#if defined(LAND_ARCH_RISCV)
+            addr_ptr = (void *)iph + offsetof(struct iphdr, daddr);
+            __builtin_memcpy(&ipv4_addr, addr_ptr, sizeof(ipv4_addr));
+            ip_pair->src_addr.ip = ipv4_addr;
+#else
             ip_pair->src_addr.ip = iph->daddr;
+#endif
         }
     } else if (offset_info->l3_protocol == LANDSCAPE_IPV6_TYPE) {
         struct ipv6hdr *ip6h;
@@ -640,12 +671,25 @@ static __always_inline int read_packet_info4(struct __sk_buff *skb,
 
     int ret;
     struct iphdr *iph;
+#if defined(LAND_ARCH_RISCV)
+    __be32 ipv4_addr;
+    void *addr_ptr;
+#endif
     if (VALIDATE_READ_DATA(skb, &iph, offset_info->l3_offset_when_scan, sizeof(struct iphdr))) {
         ld_bpf_log("ipv4 bpf_skb_load_bytes error");
         return TC_ACT_SHOT;
     }
+#if defined(LAND_ARCH_RISCV)
+    addr_ptr = (void *)iph + offsetof(struct iphdr, daddr);
+    __builtin_memcpy(&ipv4_addr, addr_ptr, sizeof(ipv4_addr));
+    ip_pair->dst_addr.addr = ipv4_addr;
+    addr_ptr = (void *)iph + offsetof(struct iphdr, saddr);
+    __builtin_memcpy(&ipv4_addr, addr_ptr, sizeof(ipv4_addr));
+    ip_pair->src_addr.addr = ipv4_addr;
+#else
     ip_pair->dst_addr.addr = iph->daddr;
     ip_pair->src_addr.addr = iph->saddr;
+#endif
 
     if (offset_info->icmp_error_l3_offset > 0) {
         if (VALIDATE_READ_DATA(skb, &iph, offset_info->icmp_error_l3_offset,
@@ -653,7 +697,13 @@ static __always_inline int read_packet_info4(struct __sk_buff *skb,
             ld_bpf_log("ipv4 bpf_skb_load_bytes error");
             return TC_ACT_SHOT;
         }
+#if defined(LAND_ARCH_RISCV)
+        addr_ptr = (void *)iph + offsetof(struct iphdr, daddr);
+        __builtin_memcpy(&ipv4_addr, addr_ptr, sizeof(ipv4_addr));
+        ip_pair->src_addr.addr = ipv4_addr;
+#else
         ip_pair->src_addr.addr = iph->daddr;
+#endif
     }
 
     if (offset_info->fragment_type >= FRAG_MIDDLE) {
