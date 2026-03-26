@@ -72,6 +72,18 @@ static __always_inline int _validate_read(struct __sk_buff *skb, void **hdr_, u3
 
 #define VALIDATE_READ_DATA(skb, hdr, off, len) (_validate_read(skb, (void **)hdr, off, len))
 
+static __always_inline __be32 read_ipv4_addr_field(const struct iphdr *iph, u32 offset) {
+#if defined(LAND_ARCH_RISCV)
+    __be32 addr;
+    void *src = (void *)iph + offset;
+
+    __builtin_memcpy(&addr, src, sizeof(addr));
+    return addr;
+#else
+    return *(__be32 *)((void *)iph + offset);
+#endif
+}
+
 struct ipv4_lpm_key {
     __u32 prefixlen;
     __be32 addr;

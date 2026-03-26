@@ -71,8 +71,8 @@ static __always_inline int get_route_context(struct __sk_buff *skb, u32 current_
         }
         context->l3_protocol = LANDSCAPE_IPV4_TYPE;
         context->l4_protocol = iph->protocol;
-        context->daddr.ip = iph->daddr;
-        context->saddr.ip = iph->saddr;
+        context->daddr.ip = read_ipv4_addr_field(iph, offsetof(struct iphdr, daddr));
+        context->saddr.ip = read_ipv4_addr_field(iph, offsetof(struct iphdr, saddr));
     } else {
         struct ipv6hdr *ip6h;
         if (VALIDATE_READ_DATA(skb, &ip6h, current_l3_offset, sizeof(struct ipv6hdr))) {
@@ -106,8 +106,8 @@ get_route_context_from_scanner(struct __sk_buff *skb, u32 current_l3_offset,
         }
         context->l3_protocol = LANDSCAPE_IPV4_TYPE;
         context->l4_protocol = iph->protocol;
-        context->daddr.ip = iph->daddr;
-        context->saddr.ip = iph->saddr;
+        context->daddr.ip = read_ipv4_addr_field(iph, offsetof(struct iphdr, daddr));
+        context->saddr.ip = read_ipv4_addr_field(iph, offsetof(struct iphdr, saddr));
     } else {
         struct ipv6hdr *ip6h;
         if (VALIDATE_READ_DATA(skb, &ip6h, offset_info->l3_offset_when_scan,
@@ -140,8 +140,8 @@ get_route_context_from_scanner_v2(struct __sk_buff *skb, u32 current_l3_offset,
         }
         context->l3_protocol = LANDSCAPE_IPV4_TYPE;
         context->l4_protocol = iph->protocol;
-        context->daddr.ip = iph->daddr;
-        context->saddr.ip = iph->saddr;
+        context->daddr.ip = read_ipv4_addr_field(iph, offsetof(struct iphdr, daddr));
+        context->saddr.ip = read_ipv4_addr_field(iph, offsetof(struct iphdr, saddr));
     } else {
         struct ipv6hdr *ip6h;
         if (VALIDATE_READ_DATA(skb, &ip6h, offset_info->l3_offset_when_scan,
@@ -291,8 +291,8 @@ static __always_inline int set_pkg_info_with_offset_info(struct __sk_buff *skb,
             ld_bpf_log("ipv4 bpf_skb_load_bytes error");
             return TC_ACT_SHOT;
         }
-        ip_pair->dst_addr.ip = iph->daddr;
-        ip_pair->src_addr.ip = iph->saddr;
+        ip_pair->dst_addr.ip = read_ipv4_addr_field(iph, offsetof(struct iphdr, daddr));
+        ip_pair->src_addr.ip = read_ipv4_addr_field(iph, offsetof(struct iphdr, saddr));
     } else {
         struct ipv6hdr *ip6h;
         if (VALIDATE_READ_DATA(skb, &ip6h, offset_info->l3_offset_when_scan,

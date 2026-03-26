@@ -131,8 +131,8 @@ static __always_inline int extract_iphdr_info(struct __sk_buff *skb, u32 *l3_off
         return TC_ACT_SHOT;
     }
 
-    ip_cxt->pair_ip.src_addr.ip = iph->saddr;
-    ip_cxt->pair_ip.dst_addr.ip = iph->daddr;
+    ip_cxt->pair_ip.src_addr.ip = read_ipv4_addr_field(iph, offsetof(struct iphdr, saddr));
+    ip_cxt->pair_ip.dst_addr.ip = read_ipv4_addr_field(iph, offsetof(struct iphdr, daddr));
 
     ip_cxt->fragment_off = (bpf_ntohs(iph->frag_off) & LD_IP_OFFSET) << 3;
 

@@ -36,8 +36,8 @@ int rt4_wan_ingress(struct __sk_buff *skb) {
     }
 
     context.l4_protocol = iph->protocol;
-    context.daddr = iph->daddr;
-    context.saddr = iph->saddr;
+    context.daddr = read_ipv4_addr_field(iph, offsetof(struct iphdr, daddr));
+    context.saddr = read_ipv4_addr_field(iph, offsetof(struct iphdr, saddr));
 
     if (should_not_forward(context.daddr)) {
         return TC_ACT_UNSPEC;
@@ -83,8 +83,8 @@ int rt4_wan_egress(struct __sk_buff *skb) {
     }
 
     context.l4_protocol = iph->protocol;
-    context.daddr = iph->daddr;
-    context.saddr = iph->saddr;
+    context.daddr = read_ipv4_addr_field(iph, offsetof(struct iphdr, daddr));
+    context.saddr = read_ipv4_addr_field(iph, offsetof(struct iphdr, saddr));
 
     if (should_not_forward(context.daddr)) {
         return TC_ACT_UNSPEC;
