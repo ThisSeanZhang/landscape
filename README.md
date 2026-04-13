@@ -14,6 +14,8 @@ Landscape is an eBPF-based Linux router platform that provides network service m
 [简体中文](./README.zh.md) | [English](./README.md)
 
 > Documentation: <https://landscape.whileaway.dev/en/>
+>
+> Development build guide: [BUILD.md](./BUILD.md) | [BUILD.zh.md](./BUILD.zh.md)
 
 ## Screenshot
 ![](main.png)

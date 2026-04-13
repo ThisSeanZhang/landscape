@@ -14,6 +14,8 @@ Landscape 是一个以 eBPF 为基础的 Linux 路由平台，提供网络服务
 [简体中文](./README.zh.md) | [English](./README.md)
 
 > 详细文档: <https://landscape.whileaway.dev/>
+>
+> 本地开发文档: [BUILD.md](./BUILD.md) | [BUILD.zh.md](./BUILD.zh.md)
 
 ## 截图
 ![](main.zh.png)
