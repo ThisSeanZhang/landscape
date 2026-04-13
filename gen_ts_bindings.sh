@@ -1,9 +1,10 @@
-#!/bin/sh
-set -e
+#!/usr/bin/env bash
+set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TYPES_DIR="$SCRIPT_DIR/landscape-types"
 API_DIR="$TYPES_DIR/src/api"
+source "$SCRIPT_DIR/scripts/pnpm_cmd.sh"
 
 # 1. Generate OpenAPI spec → landscape-types/openapi.json
 echo "Exporting OpenAPI spec..."
@@ -15,6 +16,9 @@ rm -rf "$API_DIR"
 
 # 3. Regenerate via orval
 echo "Running orval..."
-cd "$SCRIPT_DIR" && pnpm --filter @landscape-router/types generate
+(
+    cd "$SCRIPT_DIR"
+    pnpm_cmd --filter @landscape-router/types generate
+)
 
 echo "Done."

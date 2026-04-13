@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 
-# 记录脚本所在的**绝对路径**，以免后续 cd 导致路径混乱
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+set -euo pipefail
+
+# 记录脚本所在的绝对路径，避免后续 cd 或 source 导致路径混乱
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # 自动获取当前主机架构
 DEFAULT_ARCH="$(uname -m)"
@@ -15,6 +17,8 @@ declare -A TARGETS=(
     ["aarch64"]="aarch64-unknown-linux-gnu"
     ["armv7"]="armv7-unknown-linux-gnueabihf"
 )
+
+TARGET_ORDER=("x86_64" "aarch64" "armv7")
 
 # 对应 Docker 平台的架构
 declare -A DOCKER_ARCHS=(
@@ -30,18 +34,31 @@ TARGET=""
 function print_supported_archs() {
     echo "Supported architectures:"
     local i=1
-    for key in "${!TARGETS[@]}"; do
+    local key
+
+    for key in "${TARGET_ORDER[@]}"; do
         echo "$i) $key"
         i=$((i + 1))
     done
+
     echo "$i) Use default architecture ($DEFAULT_ARCH)"
 }
 
 # 提示用户选择架构
 function prompt_user_selection() {
+    if [[ ! -t 0 ]]; then
+        TARGET="$DEFAULT_ARCH"
+        return
+    fi
+
     print_supported_archs
     echo -n "Please select a target architecture by entering the corresponding number [default = $DEFAULT_ARCH]: "
-    read -r choice
+
+    local choice=""
+    if ! read -r choice; then
+        TARGET="$DEFAULT_ARCH"
+        return
+    fi
 
     # 如果用户直接回车（输入为空），使用默认架构
     if [[ -z "$choice" ]]; then
@@ -49,8 +66,15 @@ function prompt_user_selection() {
         return
     fi
 
+    if ! [[ "$choice" =~ ^[0-9]+$ ]]; then
+        echo "Invalid selection. Please enter a number."
+        prompt_user_selection
+        return
+    fi
+
     local i=1
-    for key in "${!TARGETS[@]}"; do
+    local key
+    for key in "${TARGET_ORDER[@]}"; do
         if [[ "$choice" -eq "$i" ]]; then
             TARGET="$key"
             return
@@ -72,6 +96,10 @@ function prompt_user_selection() {
 while [[ "$#" -gt 0 ]]; do
     case "$1" in
         -t|--target)
+            if [[ "$#" -lt 2 ]]; then
+                echo "Missing value for $1"
+                exit 1
+            fi
             TARGET="$2"
             shift
             ;;
@@ -79,7 +107,7 @@ while [[ "$#" -gt 0 ]]; do
             print_supported_archs
             exit 0
             ;;
-        *) 
+        *)
             echo "Unknown option $1"
             exit 1
             ;;
@@ -94,7 +122,7 @@ if [[ -z "$TARGET" ]]; then
 fi
 
 # 检查用户输入的架构是否受支持
-if [[ -z "${TARGETS[$TARGET]}" ]]; then
+if [[ -z "${TARGETS[$TARGET]:-}" ]]; then
     echo "Unsupported architecture: $TARGET"
     echo "Use --list to see supported architectures."
     exit 1
@@ -104,8 +132,6 @@ fi
 TARGET_ARCH="${TARGETS[$TARGET]}"
 DOCKER_ARCH="${DOCKER_ARCHS[$TARGET]}"
 
-echo "Target platform set to: $TARGET"
-echo "Rust target: $TARGET_ARCH"
-echo "Docker architecture: $DOCKER_ARCH"
-
 export TARGET TARGET_ARCH DOCKER_ARCH
+
+source "$SCRIPT_DIR/scripts/pnpm_cmd.sh"

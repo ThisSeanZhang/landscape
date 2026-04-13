@@ -1,3 +1,8 @@
 #!/usr/bin/env bash
 
-pnpm --filter landscape-webui dev "$@"
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "$SCRIPT_DIR/scripts/pnpm_cmd.sh"
+
+pnpm_cmd --filter landscape-webui dev "$@"

@@ -1,13 +1,8 @@
 #!/usr/bin/env bash
 
-source ./build_env.sh
+set -euo pipefail
 
-# 更新依赖锁文件
-echo "更新 pnpm 依赖锁文件..."
-pnpm install || { echo "pnpm 依赖更新失败"; exit 1; }
-
-source ./scripts/build_webpage.sh
-
-source ./scripts/build_server.sh
-
-# source ./scripts/build_docker.sh
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/build_env.sh"
+source "$SCRIPT_DIR/scripts/build_webpage.sh"
+source "$SCRIPT_DIR/scripts/build_server.sh"
