@@ -1,5 +1,5 @@
 use landscape_common::dns::{
-    CacheRuntimeConfig, DohRuntimeConfig, FlowDnsDesiredState, RuntimeDnsRule, RuntimeRedirectRule,
+    CacheRuntimeConfig, FlowDnsDesiredState, RuntimeDnsRule, RuntimeRedirectRule,
 };
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -7,7 +7,6 @@ pub struct FlowDnsAppliedState {
     pub dns_rules: Vec<RuntimeDnsRule>,
     pub redirect_rules: Vec<RuntimeRedirectRule>,
     pub cache_runtime: CacheRuntimeConfig,
-    pub doh_runtime: Option<DohRuntimeConfig>,
 }
 
 impl FlowDnsAppliedState {
@@ -16,7 +15,6 @@ impl FlowDnsAppliedState {
             dns_rules: desired_state.dns_rules.clone(),
             redirect_rules: desired_state.redirect_rules.clone(),
             cache_runtime: desired_state.cache_runtime.clone(),
-            doh_runtime: desired_state.doh_runtime.clone(),
         }
     }
 
@@ -73,12 +71,11 @@ impl DnsRefreshPlanner {
             };
         };
 
-        let handler_plan = Self::build_handler_plan(previous, desired_state);
-        if previous.doh_runtime == desired_state.doh_runtime {
-            return handler_plan.map_or(DnsRefreshPlan::Noop, DnsRefreshPlan::ApplyHandler);
-        }
-
-        DnsRefreshPlan::RestartListener { handler_plan }
+        // DoH listen port/path are process-startup settings. Certificate/SNI
+        // domain changes hot-reload through the shared resolver, so per-flow
+        // refresh planning only reacts to rules, redirects, and cache runtime.
+        Self::build_handler_plan(previous, desired_state)
+            .map_or(DnsRefreshPlan::Noop, DnsRefreshPlan::ApplyHandler)
     }
 
     pub fn applied_after_failure(
@@ -205,22 +202,16 @@ mod tests {
     }
 
     #[test]
-    fn planner_keeps_precise_handler_plan_when_listener_restarts() {
+    fn planner_ignores_doh_runtime_changes() {
         let mut desired = desired_state();
         let previous = FlowDnsAppliedState::from_desired_state(&desired);
-        desired.redirect_rules[0].ttl_secs = 20;
         desired.doh_runtime.as_mut().unwrap().listen_port = 8443;
 
-        assert_eq!(
-            DnsRefreshPlanner::build(Some(&previous), &desired),
-            DnsRefreshPlan::RestartListener {
-                handler_plan: Some(HandlerRefreshPlan::ReplaceRedirects),
-            }
-        );
+        assert_eq!(DnsRefreshPlanner::build(Some(&previous), &desired), DnsRefreshPlan::Noop);
     }
 
     #[test]
-    fn planner_applies_only_completed_handler_changes_after_restart_failure() {
+    fn planner_keeps_handler_plan_when_doh_runtime_also_changes() {
         let previous_desired = desired_state();
         let previous = FlowDnsAppliedState::from_desired_state(&previous_desired);
 
@@ -228,15 +219,9 @@ mod tests {
         desired.redirect_rules[0].ttl_secs = 20;
         desired.doh_runtime.as_mut().unwrap().listen_port = 8443;
 
-        let plan = DnsRefreshPlanner::build(Some(&previous), &desired);
         assert_eq!(
-            DnsRefreshPlanner::applied_after_failure(Some(&previous), &desired, &plan),
-            Some(FlowDnsAppliedState {
-                dns_rules: previous.dns_rules.clone(),
-                redirect_rules: desired.redirect_rules.clone(),
-                cache_runtime: previous.cache_runtime.clone(),
-                doh_runtime: previous.doh_runtime.clone(),
-            })
+            DnsRefreshPlanner::build(Some(&previous), &desired),
+            DnsRefreshPlan::ApplyHandler(HandlerRefreshPlan::ReplaceRedirects)
         );
     }
 }

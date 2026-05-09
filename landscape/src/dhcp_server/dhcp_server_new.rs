@@ -10,9 +10,16 @@ use crate::dump::udp_packet::dhcp::{
     options::DhcpOptionMessageType, DhcpEthFrame, DhcpOptionFrame,
 };
 
+use arc_swap::ArcSwap;
 use cidr::Ipv4Inet;
-use landscape_common::dhcp::v4_server::config::{CustomDhcpOption, DHCPv4ServerConfig};
+use landscape_common::dhcp::v4_server::config::{
+    CustomDhcpOption, DHCPv4ServerConfig, DhcpV4DnrOptionConfig,
+};
 use landscape_common::dhcp::v4_server::status::{DHCPv4OfferInfo, DHCPv4OfferInfoItem};
+use landscape_common::dns::dnr::{
+    encode_dhcpv4_dnr_payload_truncated, is_valid_dnr_ipv4_addr, normalize_advertise_domains,
+    DHCPV4_DNR_OPTION_CODE,
+};
 use landscape_common::enrolled_device::EnrolledDevice;
 use landscape_common::net::MacAddr;
 use landscape_common::service::{ServiceStatus, WatchService};
@@ -34,6 +41,7 @@ pub async fn dhcp_v4_server(
     iface_ifindex: u32,
     iface_mac: Option<MacAddr>,
     config: DHCPv4ServerConfig,
+    dnr_context: Option<DhcpV4DnrRuntimeContext>,
     enrolled_devices: Vec<EnrolledDevice>,
     service_status: WatchService,
     assigned_ips: Arc<RwLock<DHCPv4OfferInfo>>,
@@ -112,7 +120,7 @@ pub async fn dhcp_v4_server(
     let mut dhcp_server_service_status = service_status.subscribe();
     let timeout_timer = tokio::time::sleep(tokio::time::Duration::from_secs(IP_EXPIRE_INTERVAL));
     tokio::pin!(timeout_timer);
-    let mut dhcp_server = DHCPv4Server::init_with_enrolled(config, enrolled_devices);
+    let mut dhcp_server = DHCPv4Server::init_with_enrolled(config, dnr_context, enrolled_devices);
 
     // Publish the freshly initialized lease/static-binding view immediately so
     // UI state reflects the new DHCP instance instead of any stale pre-restart cache.
@@ -281,6 +289,17 @@ struct PerMacDhcpOptions {
     filter_options: Vec<u8>,
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct DhcpV4DnrRuntimeContext {
+    /// Certificate/SNI domains are shared with the TLS resolver and hot-reload
+    /// into DHCP DNR responses without restarting the DHCP service.
+    pub local_domains: Arc<ArcSwap<Vec<String>>>,
+    /// DoH endpoint is a startup snapshot; changing port/path requires a
+    /// process restart so DHCP advertisements match the active DoH listener.
+    pub doh_port: u16,
+    pub doh_path: String,
+}
+
 impl DHCPv4ServerOfferedCache {
     fn get_expire_time(&self) -> u64 {
         self.relative_offer_time + self.valid_time as u64
@@ -313,8 +332,11 @@ pub struct DHCPv4Server {
 
     /// 全局自定义 DHCP option
     global_custom_options: Vec<(u8, Vec<u8>)>,
+    /// 依赖运行时上下文的全局 option，需要在每次发包前重新编码。
+    global_dynamic_options: Vec<CustomDhcpOption>,
     /// Enrolled device 中的 per-MAC option 设置，优先级高于公共 DHCP config
     enrolled_per_mac_options: HashMap<MacAddr, PerMacDhcpOptions>,
+    dnr_context: Option<DhcpV4DnrRuntimeContext>,
 
     pub address_lease_time: u32,
 }
@@ -323,11 +345,12 @@ impl DHCPv4Server {
     ///
     #[cfg(test)]
     fn init(config: DHCPv4ServerConfig) -> Self {
-        Self::init_with_enrolled(config, vec![])
+        Self::init_with_enrolled(config, None, vec![])
     }
 
     fn init_with_enrolled(
         config: DHCPv4ServerConfig,
+        dnr_context: Option<DhcpV4DnrRuntimeContext>,
         enrolled_devices: Vec<EnrolledDevice>,
     ) -> Self {
         if config.ip_range_end == Some(Ipv4Addr::UNSPECIFIED) {
@@ -419,19 +442,28 @@ impl DHCPv4Server {
             }
         }
 
-        // Parse global custom options
+        // Parse global custom options. DNR depends on live certificate domains,
+        // so keep it as config and encode it when building each response.
+        let mut global_dynamic_options = Vec::new();
         let global_custom_options: Vec<(u8, Vec<u8>)> = config
             .custom_options
             .iter()
-            .filter_map(|opt| match opt.to_raw() {
-                Ok(raw) => Some(raw),
-                Err(e) => {
-                    tracing::error!(
-                        "global custom option code {}: {} — option skipped",
-                        opt.code(),
-                        e
-                    );
-                    None
+            .filter_map(|opt| {
+                if matches!(opt, CustomDhcpOption::Dnr(_)) {
+                    global_dynamic_options.push(opt.clone());
+                    return None;
+                }
+                match encode_custom_option(opt, &config, dnr_context.as_ref()) {
+                    Ok(Some(raw)) => Some(raw),
+                    Ok(None) => None,
+                    Err(e) => {
+                        tracing::error!(
+                            "global custom option code {}: {} — option skipped",
+                            opt.code(),
+                            e
+                        );
+                        None
+                    }
                 }
             })
             .collect();
@@ -451,7 +483,9 @@ impl DHCPv4Server {
             static_binding_mac_by_ip,
             options_map,
             global_custom_options,
+            global_dynamic_options,
             enrolled_per_mac_options,
+            dnr_context,
             address_lease_time,
         }
     }
@@ -466,6 +500,7 @@ impl DHCPv4Server {
     /// Returns (custom_options, filter_set).
     ///
     /// - Starts with global_custom_options as baseline
+    /// - Dynamically encodes global options that depend on runtime context (DNR)
     /// - Enrolled device per-MAC custom_options override global by code
     /// - Filter options are applied after all custom option sources are merged
     pub fn resolve_options_for_mac(&self, mac: &MacAddr) -> (Vec<(u8, Vec<u8>)>, HashSet<u8>) {
@@ -473,11 +508,22 @@ impl DHCPv4Server {
             self.global_custom_options.iter().map(|(code, data)| (*code, data.clone())).collect();
         let mut filter_set = HashSet::new();
 
+        Self::merge_custom_options(
+            mac,
+            "dhcp_config",
+            &self.global_dynamic_options,
+            self.server_ip,
+            self.dnr_context.as_ref(),
+            &mut merged,
+        );
+
         if let Some(per_mac) = self.enrolled_per_mac_options.get(mac) {
             Self::merge_custom_options(
                 mac,
                 "enrolled_device",
                 &per_mac.custom_options,
+                self.server_ip,
+                self.dnr_context.as_ref(),
                 &mut merged,
             );
             filter_set.extend(per_mac.filter_options.iter().copied());
@@ -492,13 +538,16 @@ impl DHCPv4Server {
         mac: &MacAddr,
         source: &str,
         custom_options: &[CustomDhcpOption],
+        server_ip: Ipv4Addr,
+        dnr_context: Option<&DhcpV4DnrRuntimeContext>,
         merged: &mut HashMap<u8, Vec<u8>>,
     ) {
         for opt in custom_options {
-            match opt.to_raw() {
-                Ok((code, data)) => {
+            match encode_custom_option_with_defaults(opt, server_ip, dnr_context) {
+                Ok(Some((code, data))) => {
                     merged.insert(code, data);
                 }
+                Ok(None) => {}
                 Err(e) => {
                     tracing::error!(
                         "{source}[{:?}]: skipping custom option code {}: {}",
@@ -725,6 +774,63 @@ impl DHCPv4Server {
     }
 }
 
+fn encode_custom_option(
+    opt: &CustomDhcpOption,
+    config: &DHCPv4ServerConfig,
+    dnr_context: Option<&DhcpV4DnrRuntimeContext>,
+) -> Result<Option<(u8, Vec<u8>)>, String> {
+    encode_custom_option_with_defaults(opt, config.server_ip_addr, dnr_context)
+}
+
+fn encode_custom_option_with_defaults(
+    opt: &CustomDhcpOption,
+    server_ip: Ipv4Addr,
+    dnr_context: Option<&DhcpV4DnrRuntimeContext>,
+) -> Result<Option<(u8, Vec<u8>)>, String> {
+    let CustomDhcpOption::Dnr(config) = opt else {
+        return opt.to_raw().map(Some);
+    };
+
+    let Some(context) = dnr_context else {
+        return Ok(None);
+    };
+
+    let (domains, ips, port, doh_path) = match config {
+        DhcpV4DnrOptionConfig::Local => (
+            context.local_domains.load().as_ref().clone(),
+            vec![server_ip],
+            context.doh_port,
+            context.doh_path.clone(),
+        ),
+        DhcpV4DnrOptionConfig::Custom { domains, ips, port, doh_path } => {
+            let domains = if domains.is_empty() {
+                context.local_domains.load().as_ref().clone()
+            } else {
+                domains.clone()
+            };
+            let ips = if ips.is_empty() { vec![server_ip] } else { ips.clone() };
+            let port = port.unwrap_or(context.doh_port);
+            let doh_path = doh_path.clone().unwrap_or_else(|| context.doh_path.clone());
+            (domains, ips, port, doh_path)
+        }
+    };
+
+    let domains = normalize_advertise_domains(domains);
+    if domains.is_empty() {
+        return Ok(None);
+    }
+    let ips = ips.into_iter().filter(|ip| is_valid_dnr_ipv4_addr(*ip)).collect::<Vec<_>>();
+    if ips.is_empty() {
+        return Ok(None);
+    }
+    let payload =
+        encode_dhcpv4_dnr_payload_truncated(&domains, &ips, port, &doh_path, u8::MAX as usize);
+    if payload.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some((DHCPV4_DNR_OPTION_CODE, payload)))
+}
+
 async fn update_assign_info(assigned_ips: Arc<RwLock<DHCPv4OfferInfo>>, info: DHCPv4OfferInfo) {
     match tokio::time::timeout(tokio::time::Duration::from_secs(5), assigned_ips.write()).await {
         Ok(mut write_lock) => {
@@ -909,16 +1015,31 @@ fn gen_ack(
 
 #[cfg(test)]
 mod tests {
-    use std::{net::Ipv4Addr, thread::sleep, time::Duration};
+    use std::{net::Ipv4Addr, sync::Arc, thread::sleep, time::Duration};
 
+    use arc_swap::ArcSwap;
     use cidr::Ipv4Inet;
     use landscape_common::{
-        dhcp::v4_server::config::{CustomDhcpOption, DHCPv4ServerConfig},
+        dhcp::v4_server::config::{CustomDhcpOption, DHCPv4ServerConfig, DhcpV4DnrOptionConfig},
+        dns::dnr::{encode_dns_name, DHCPV4_DNR_OPTION_CODE},
         enrolled_device::EnrolledDevice,
         net::MacAddr,
     };
 
-    use crate::dhcp_server::dhcp_server_new::DHCPv4Server;
+    use crate::dhcp_server::dhcp_server_new::{DHCPv4Server, DhcpV4DnrRuntimeContext};
+
+    fn option_payload(server: &DHCPv4Server, mac: &MacAddr, code: u8) -> Vec<u8> {
+        server
+            .resolve_options_for_mac(mac)
+            .0
+            .into_iter()
+            .find_map(|(option_code, payload)| (option_code == code).then_some(payload))
+            .unwrap()
+    }
+
+    fn contains_bytes(payload: &[u8], needle: &[u8]) -> bool {
+        payload.windows(needle.len()).any(|window| window == needle)
+    }
 
     #[tokio::test]
     pub async fn test_ip_alloc() {
@@ -987,7 +1108,7 @@ mod tests {
             .unwrap()
         };
 
-        let mut dhcp_server = DHCPv4Server::init_with_enrolled(config, vec![enrolled]);
+        let mut dhcp_server = DHCPv4Server::init_with_enrolled(config, None, vec![enrolled]);
 
         assert!(!dhcp_server.ack_request_without_hostname(&mac, old_ip));
         assert!(dhcp_server.ack_request_without_hostname(&mac, static_ip));
@@ -1011,7 +1132,7 @@ mod tests {
             .unwrap()
         };
 
-        let mut dhcp_server = DHCPv4Server::init_with_enrolled(config, vec![enrolled]);
+        let mut dhcp_server = DHCPv4Server::init_with_enrolled(config, None, vec![enrolled]);
 
         assert!(!dhcp_server.ack_request_without_hostname(&other, static_ip));
     }
@@ -1036,6 +1157,31 @@ mod tests {
     }
 
     #[test]
+    fn resolve_options_hot_encodes_global_dnr_domains() {
+        let mut config = DHCPv4ServerConfig::default();
+        config.custom_options = vec![CustomDhcpOption::Dnr(DhcpV4DnrOptionConfig::Local)];
+        let local_domains = Arc::new(ArcSwap::from_pointee(vec!["old.example.com".to_string()]));
+        let dnr_context = DhcpV4DnrRuntimeContext {
+            local_domains: local_domains.clone(),
+            doh_port: 443,
+            doh_path: "/dns-query".to_string(),
+        };
+        let server = DHCPv4Server::init_with_enrolled(config, Some(dnr_context), vec![]);
+        let mac = MacAddr::from_str("00:00:00:00:00:01").unwrap();
+
+        let old_payload = option_payload(&server, &mac, DHCPV4_DNR_OPTION_CODE);
+        local_domains.store(Arc::new(vec!["new.example.com".to_string()]));
+        let new_payload = option_payload(&server, &mac, DHCPV4_DNR_OPTION_CODE);
+
+        let old_name = encode_dns_name("old.example.com").unwrap();
+        let new_name = encode_dns_name("new.example.com").unwrap();
+        assert!(contains_bytes(&old_payload, &old_name));
+        assert!(!contains_bytes(&old_payload, &new_name));
+        assert!(contains_bytes(&new_payload, &new_name));
+        assert!(!contains_bytes(&new_payload, &old_name));
+    }
+
+    #[test]
     fn resolve_options_enrolled_overrides_global_by_code() {
         let mut config = DHCPv4ServerConfig::default();
         config.custom_options = vec![
@@ -1055,7 +1201,7 @@ mod tests {
             .unwrap()
         };
 
-        let server = DHCPv4Server::init_with_enrolled(config, vec![enrolled]);
+        let server = DHCPv4Server::init_with_enrolled(config, None, vec![enrolled]);
 
         let (opts, _) = server.resolve_options_for_mac(&mac);
         let opts_map: std::collections::HashMap<u8, Vec<u8>> = opts.into_iter().collect();
@@ -1081,7 +1227,7 @@ mod tests {
         };
 
         let server =
-            DHCPv4Server::init_with_enrolled(DHCPv4ServerConfig::default(), vec![enrolled]);
+            DHCPv4Server::init_with_enrolled(DHCPv4ServerConfig::default(), None, vec![enrolled]);
 
         let (_, filter) = server.resolve_options_for_mac(&mac);
         assert!(filter.contains(&15));
@@ -1110,7 +1256,7 @@ mod tests {
             .unwrap()
         };
 
-        let server = DHCPv4Server::init_with_enrolled(config, vec![enrolled]);
+        let server = DHCPv4Server::init_with_enrolled(config, None, vec![enrolled]);
 
         let (opts, filter) = server.resolve_options_for_mac(&mac);
         let opts_map: std::collections::HashMap<u8, Vec<u8>> = opts.into_iter().collect();

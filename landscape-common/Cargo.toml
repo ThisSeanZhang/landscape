@@ -36,6 +36,7 @@ paste = { workspace = true }
 deku = { workspace = true }
 
 dhcproto = { workspace = true, features = ["serde"] }
+hickory-proto = { workspace = true }
 sea-orm = { workspace = true, features = ["with-uuid", "with-json"] }
 async-trait = { workspace = true }
 

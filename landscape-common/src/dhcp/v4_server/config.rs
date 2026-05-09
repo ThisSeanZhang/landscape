@@ -104,6 +104,27 @@ pub enum CustomDhcpOption {
     VendorExtensions(String),
     /// Option 82 — Relay Agent Information (structured sub-options)
     RelayAgentInformation(RelayAgentInfo),
+    /// Option 162 — Discovery of Network-designated Resolvers (RFC 9463)
+    Dnr(DhcpV4DnrOptionConfig),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "mode", rename_all = "snake_case")]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+pub enum DhcpV4DnrOptionConfig {
+    Local,
+    Custom {
+        #[serde(default)]
+        #[cfg_attr(feature = "openapi", schema(value_type = Vec<String>))]
+        domains: Vec<String>,
+        #[serde(default)]
+        #[cfg_attr(feature = "openapi", schema(value_type = Vec<String>))]
+        ips: Vec<Ipv4Addr>,
+        #[serde(default)]
+        port: Option<u16>,
+        #[serde(default)]
+        doh_path: Option<String>,
+    },
 }
 
 impl CustomDhcpOption {
@@ -114,6 +135,7 @@ impl CustomDhcpOption {
             CustomDhcpOption::BootfileName(_) => 67,
             CustomDhcpOption::VendorExtensions(_) => 43,
             CustomDhcpOption::RelayAgentInformation(RelayAgentInfo(_)) => 82,
+            CustomDhcpOption::Dnr(_) => 162,
         }
     }
 
@@ -130,6 +152,7 @@ impl CustomDhcpOption {
             CustomDhcpOption::RelayAgentInformation(RelayAgentInfo(info)) => {
                 DhcpV4Option::RelayAgentInformation(info.clone())
             }
+            CustomDhcpOption::Dnr(_) => unreachable!("DNR is encoded with runtime context"),
         }
     }
 
@@ -138,6 +161,9 @@ impl CustomDhcpOption {
     /// Returns an error if the underlying dhcproto encoding fails
     /// (e.g. malformed RelayAgentInformation sub-options).
     pub fn to_raw(&self) -> Result<(u8, Vec<u8>), String> {
+        if matches!(self, CustomDhcpOption::Dnr(_)) {
+            return Err("DNR option requires runtime DNS context".to_string());
+        }
         let opt = self.to_dhcp_option();
         let mut buf = Vec::new();
         let mut encoder = dhcproto::Encoder::new(&mut buf);
@@ -230,9 +256,34 @@ impl CustomDhcpOption {
                 // DHCP server startup time.
                 self.to_raw().map_err(|e| format!("RelayAgentInformation encode failed: {}", e))?;
             }
+            CustomDhcpOption::Dnr(config) => validate_dnr_config(config)?,
         }
         Ok(())
     }
+}
+
+fn validate_dnr_config(config: &DhcpV4DnrOptionConfig) -> Result<(), String> {
+    let DhcpV4DnrOptionConfig::Custom { domains, ips, port, doh_path } = config else {
+        return Ok(());
+    };
+
+    for domain in domains {
+        crate::dns::dnr::normalize_advertise_domain(domain)
+            .ok_or_else(|| format!("invalid DNR domain: {domain}"))?;
+    }
+    for ip in ips {
+        if !crate::dns::dnr::is_valid_dnr_ipv4_addr(*ip) {
+            return Err(format!("invalid DNR IPv4 address: {ip}"));
+        }
+    }
+    if matches!(port, Some(0)) {
+        return Err("port must be between 1 and 65535".to_string());
+    }
+    if let Some(path) = doh_path {
+        crate::dns::dnr::normalize_doh_path_template(path)
+            .ok_or_else(|| "doh_path must be an ASCII path starting with '/'".to_string())?;
+    }
+    Ok(())
 }
 
 // ─── hex helper (for VendorExtensions) ───────────────────────────────────────
@@ -629,6 +680,44 @@ mod tests {
     fn validate_custom_options_propagates_data_errors() {
         let opts = vec![CustomDhcpOption::TFTPServerName("中文".to_string())];
         assert!(validate_custom_options(&opts).is_err());
+    }
+
+    #[test]
+    fn validate_dnr_rejects_invalid_custom_values() {
+        let bad_port = CustomDhcpOption::Dnr(DhcpV4DnrOptionConfig::Custom {
+            domains: vec![],
+            ips: vec![],
+            port: Some(0),
+            doh_path: None,
+        });
+        assert!(bad_port.validate().is_err());
+
+        let bad_domain = CustomDhcpOption::Dnr(DhcpV4DnrOptionConfig::Custom {
+            domains: vec!["bad_domain.example".to_string()],
+            ips: vec![],
+            port: None,
+            doh_path: None,
+        });
+        assert!(bad_domain.validate().is_err());
+
+        let bad_path = CustomDhcpOption::Dnr(DhcpV4DnrOptionConfig::Custom {
+            domains: vec![],
+            ips: vec![],
+            port: None,
+            doh_path: Some("/dns-query?foo=bar".to_string()),
+        });
+        assert!(bad_path.validate().is_err());
+    }
+
+    #[test]
+    fn validate_dnr_accepts_valid_custom_values() {
+        let opt = CustomDhcpOption::Dnr(DhcpV4DnrOptionConfig::Custom {
+            domains: vec!["doh.example.com".to_string()],
+            ips: vec![Ipv4Addr::new(192, 168, 5, 1)],
+            port: Some(6053),
+            doh_path: Some("/dns-query".to_string()),
+        });
+        assert!(opt.validate().is_ok());
     }
 
     // ── filter validation ─────────────────────────────────────────

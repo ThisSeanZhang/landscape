@@ -1,4 +1,3 @@
-use arc_swap::ArcSwapOption;
 use std::net::SocketAddr;
 use std::os::fd::AsRawFd;
 use std::sync::Arc;
@@ -51,7 +50,10 @@ pub(crate) struct DohListenerStaticConfig {
 #[derive(Clone)]
 pub(crate) struct DohListenerState {
     pub(crate) static_config: DohListenerStaticConfig,
-    pub(crate) live_config: Arc<ArcSwapOption<DohRuntimeConfig>>,
+    /// DoH listen port/path are captured at process startup. Certificate/SNI
+    /// domains hot-reload through the shared resolver, but changing the DoH
+    /// endpoint itself requires restarting the process/listener.
+    pub(crate) startup_config: DohRuntimeConfig,
 }
 
 impl DohListenerStaticConfig {
@@ -75,25 +77,19 @@ impl DohListenerStaticConfig {
 
 impl DohListenerState {
     pub(crate) fn from_effective_config(value: EffectiveDohListenerConfig) -> Self {
-        let live_config = Some(Arc::new(DohRuntimeConfig::from(&value)));
+        let startup_config = DohRuntimeConfig::from(&value);
         Self {
             static_config: DohListenerStaticConfig::from(value),
-            live_config: Arc::new(ArcSwapOption::new(live_config)),
+            startup_config,
         }
     }
 
-    pub(crate) fn update_live_config(&self, doh_runtime: Option<DohRuntimeConfig>) {
-        self.live_config.store(doh_runtime.map(Arc::new));
+    pub(crate) fn runtime_config(&self) -> DohRuntimeConfig {
+        self.startup_config.clone()
     }
 
-    pub(crate) fn build_effective_config(
-        &self,
-        desired_live_config: Option<&DohRuntimeConfig>,
-    ) -> Option<EffectiveDohListenerConfig> {
-        let live_config = desired_live_config
-            .map(|runtime| Arc::new(runtime.clone()))
-            .or_else(|| self.live_config.load_full());
-        live_config.as_deref().map(|runtime| self.static_config.build_effective_config(runtime))
+    pub(crate) fn build_effective_config(&self) -> EffectiveDohListenerConfig {
+        self.static_config.build_effective_config(&self.startup_config)
     }
 }
 

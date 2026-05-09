@@ -26,6 +26,8 @@ use tokio::sync::broadcast;
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 
+use crate::cert::SharedSniResolver;
+use crate::dhcp_server::dhcp_server_new::DhcpV4DnrRuntimeContext;
 use crate::iface::get_iface_by_name;
 use crate::route::IpRouteService;
 use crate::LandscapeSingleIpInfo;
@@ -67,16 +69,22 @@ pub struct DHCPv4ServerStarter {
     iface_scan_map: Arc<RwLock<HashMap<String, Arc<RwLock<ArpScanStatus>>>>>,
     route_service: IpRouteService,
     db_provider: LandscapeDBServiceProvider,
+    api_tls_resolver: SharedSniResolver,
+    dns_runtime_config: landscape_common::config::DnsRuntimeConfig,
 }
 
 impl DHCPv4ServerStarter {
     pub fn new(
         route_service: IpRouteService,
         db_provider: LandscapeDBServiceProvider,
+        api_tls_resolver: SharedSniResolver,
+        dns_runtime_config: landscape_common::config::DnsRuntimeConfig,
     ) -> DHCPv4ServerStarter {
         DHCPv4ServerStarter {
             route_service,
             db_provider,
+            api_tls_resolver,
+            dns_runtime_config,
             iface_lease_map: Arc::new(RwLock::new(HashMap::new())),
             iface_scan_map: Arc::new(RwLock::new(HashMap::new())),
         }
@@ -133,12 +141,23 @@ impl ServiceStarterTrait for DHCPv4ServerStarter {
             let network_mask = config.config.network_mask;
             let iface_ifindex = iface.index;
             let iface_mac = iface.mac;
+            let dnr_context = Some(DhcpV4DnrRuntimeContext {
+                local_domains: self.api_tls_resolver.advertised_domains_state(),
+                // Intentionally fixed per DHCP server start: local DNR advertisements
+                // should keep using the configured DoH port/path rather than tracking
+                // later runtime DNS config updates.
+                // Product policy: users may choose DNR domains/IPs, but the local DoH
+                // port/path are controlled by system DNS config and are not user-overridable.
+                doh_port: self.dns_runtime_config.doh_listen_port,
+                doh_path: self.dns_runtime_config.doh_http_endpoint.clone(),
+            });
             tokio::spawn(async move {
                 crate::dhcp_server::dhcp_server_new::dhcp_v4_server(
                     config.iface_name,
                     iface_ifindex,
                     iface_mac,
                     config.config,
+                    dnr_context,
                     bindings,
                     status,
                     assigned_ips,
@@ -229,10 +248,17 @@ impl DHCPv4ServerManagerService {
     pub async fn new(
         route_service: IpRouteService,
         store_service: LandscapeDBServiceProvider,
+        api_tls_resolver: SharedSniResolver,
+        dns_runtime_config: landscape_common::config::DnsRuntimeConfig,
         mut dev_observer: broadcast::Receiver<IfaceObserverAction>,
     ) -> Self {
         let store = store_service.dhcp_v4_server_store();
-        let server_starter = DHCPv4ServerStarter::new(route_service, store_service.clone());
+        let server_starter = DHCPv4ServerStarter::new(
+            route_service,
+            store_service.clone(),
+            api_tls_resolver,
+            dns_runtime_config,
+        );
         let service =
             ServiceManager::init(store.list().await.unwrap(), server_starter.clone()).await;
 

@@ -8,7 +8,7 @@ async fn main() -> std::io::Result<()> {
 
     let listen_port = 54;
     let server =
-        LandscapeDnsServer::new(listen_port, None, CacheRuntimeConfig::default(), None, None);
+        LandscapeDnsServer::new(listen_port, None, CacheRuntimeConfig::default(), None, None, None);
 
     // handler
     let default_rule = vec![DNSRuntimeRule::default()];

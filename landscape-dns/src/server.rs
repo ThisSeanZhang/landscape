@@ -38,6 +38,10 @@ pub trait LocalDnsAnswerProvider: Send + Sync {
     ) -> Arc<Vec<IpAddr>>;
 }
 
+pub trait DohAdvertiseProvider: Send + Sync {
+    fn advertise_domains(&self) -> Vec<String>;
+}
+
 // 系统 DNS 服务
 #[derive(Clone)]
 pub struct LandscapeDnsServer {
@@ -47,6 +51,7 @@ pub struct LandscapeDnsServer {
     flow_dns_server: Arc<Mutex<HashMap<u32, Arc<FlowServerEntry>>>>,
     // 用于重定向的动态更新
     pub local_answer_provider: Option<Arc<dyn LocalDnsAnswerProvider>>,
+    pub doh_advertise_provider: Option<Arc<dyn DohAdvertiseProvider>>,
     // DNS 事件
     pub msg_tx: MetricSenderState,
     // 监听 UDP DNS 地址
@@ -83,6 +88,7 @@ impl LandscapeDnsServer {
         cache_runtime: CacheRuntimeConfig,
         doh: Option<EffectiveDohListenerConfig>,
         local_answer_provider: Option<Arc<dyn LocalDnsAnswerProvider>>,
+        doh_advertise_provider: Option<Arc<dyn DohAdvertiseProvider>>,
     ) -> Self {
         let status = WatchService::new();
         Self {
@@ -98,6 +104,7 @@ impl LandscapeDnsServer {
             cache_live_config: Arc::new(ArcSwap::from_pointee(cache_runtime)),
             doh_listener: doh.map(DohListenerState::from_effective_config),
             local_answer_provider,
+            doh_advertise_provider,
         }
     }
 
@@ -105,15 +112,8 @@ impl LandscapeDnsServer {
         &self.status
     }
 
-    pub fn update_runtime_config(
-        &self,
-        cache_runtime: CacheRuntimeConfig,
-        doh_runtime: Option<DohRuntimeConfig>,
-    ) {
+    pub fn update_runtime_config(&self, cache_runtime: CacheRuntimeConfig) {
         self.cache_live_config.store(Arc::new(cache_runtime));
-        if let Some(doh_listener) = self.doh_listener.as_ref() {
-            doh_listener.update_live_config(doh_runtime);
-        }
     }
 
     pub fn update_metric_sender(&self, msg_tx: Option<mpsc::Sender<DnsMetricMessage>>) {
@@ -122,11 +122,8 @@ impl LandscapeDnsServer {
 
     pub fn current_live_runtime_config(&self) -> (CacheRuntimeConfig, Option<DohRuntimeConfig>) {
         let cache_runtime = self.cache_live_config.load();
-        let doh_runtime = self
-            .doh_listener
-            .as_ref()
-            .and_then(|doh_listener| doh_listener.live_config.load_full())
-            .map(|runtime| (*runtime).clone());
+        let doh_runtime =
+            self.doh_listener.as_ref().map(|doh_listener| doh_listener.runtime_config());
 
         (cache_runtime.as_ref().clone(), doh_runtime)
     }
@@ -146,13 +143,7 @@ impl LandscapeDnsServer {
             self.apply_handler_plan(runtime.handler.clone(), &desired_state, &plan).await;
 
             if matches!(plan, DnsRefreshPlan::RestartListener { .. }) {
-                let token = self
-                    .start_runtime_listener(
-                        flow_id,
-                        desired_state.doh_runtime.as_ref(),
-                        runtime.handler.clone(),
-                    )
-                    .await;
+                let token = self.start_runtime_listener(flow_id, runtime.handler.clone()).await;
 
                 if token.is_cancelled() {
                     tracing::error!(
@@ -187,10 +178,10 @@ impl LandscapeDnsServer {
             flow_id,
             self.msg_tx.clone(),
             self.local_answer_provider.clone(),
+            self.doh_advertise_provider.clone(),
+            desired_state.doh_runtime.clone(),
         );
-        let Some(runtime) =
-            self.build_flow_runtime(flow_id, handler, desired_state.doh_runtime.as_ref()).await
-        else {
+        let Some(runtime) = self.build_flow_runtime(flow_id, handler).await else {
             tracing::error!("[flow: {flow_id}]: DNS server start failed, runtime not registered");
             return;
         };
@@ -264,10 +255,8 @@ impl LandscapeDnsServer {
         &self,
         flow_id: u32,
         handler: DnsRequestHandler,
-        desired_doh_runtime: Option<&DohRuntimeConfig>,
     ) -> Option<FlowServerRuntime> {
-        let token =
-            self.start_runtime_listener(flow_id, desired_doh_runtime, handler.clone()).await;
+        let token = self.start_runtime_listener(flow_id, handler.clone()).await;
         if token.is_cancelled() {
             return None;
         }
@@ -278,13 +267,12 @@ impl LandscapeDnsServer {
     async fn start_runtime_listener(
         &self,
         flow_id: u32,
-        desired_doh_runtime: Option<&DohRuntimeConfig>,
         handler: DnsRequestHandler,
     ) -> CancellationToken {
         start_flow_dns_listener(
             flow_id,
             self.udp_listener_addr,
-            self.build_effective_doh_listener_config(desired_doh_runtime),
+            self.build_effective_doh_listener_config(),
             handler,
         )
         .await
@@ -320,13 +308,8 @@ impl LandscapeDnsServer {
         }
     }
 
-    fn build_effective_doh_listener_config(
-        &self,
-        desired_runtime: Option<&DohRuntimeConfig>,
-    ) -> Option<EffectiveDohListenerConfig> {
-        self.doh_listener
-            .as_ref()
-            .and_then(|doh_listener| doh_listener.build_effective_config(desired_runtime))
+    fn build_effective_doh_listener_config(&self) -> Option<EffectiveDohListenerConfig> {
+        self.doh_listener.as_ref().map(|doh_listener| doh_listener.build_effective_config())
     }
 }
 
@@ -357,6 +340,8 @@ mod tests {
                 Arc::new(ArcSwap::from_pointee(test_cache_runtime_config())),
                 7,
                 Arc::new(ArcSwapOption::new(None)),
+                None,
+                None,
                 None,
             );
             entry.runtime.store(Some(Arc::new(FlowServerRuntime {

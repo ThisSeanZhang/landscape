@@ -13,6 +13,7 @@ use hickory_proto::rr::RecordType;
 use landscape_common::{
     config::FlowId,
     ddns::IpFamily,
+    dns::dnr::{is_valid_dnr_ipv4_addr, is_valid_dnr_ipv6_addr},
     event::route::RouteEvent,
     flow::{config::FlowConfig, FlowTarget},
     route::{LanIPv6RouteKey, LanRouteInfo, LanRouteMode, RouteTargetInfo},
@@ -655,11 +656,11 @@ fn collect_reachable_local_ipv6_addrs<'a>(
 }
 
 fn is_valid_dns_answer_ipv4(ip: Ipv4Addr) -> bool {
-    !(ip.is_unspecified() || ip.is_broadcast() || ip.is_multicast() || ip.is_loopback())
+    is_valid_dnr_ipv4_addr(ip)
 }
 
 fn is_valid_dns_answer_ipv6(ip: Ipv6Addr) -> bool {
-    !(ip.is_unspecified() || ip.is_multicast() || ip.is_loopback())
+    is_valid_dnr_ipv6_addr(ip)
 }
 
 pub fn refresh_ipv4_target_bpf_map(

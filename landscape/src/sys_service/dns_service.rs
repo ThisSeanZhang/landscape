@@ -59,6 +59,7 @@ impl LandscapeDnsService {
     ) -> Self {
         let (cache_runtime, doh_runtime) = split_dns_runtime_config(&dns_config);
         prepare_system_dns();
+        let api_tls_resolver = cert_service.api_tls_resolver();
         let doh = Some(EffectiveDohListenerConfig {
             addr: SocketAddr::V6(SocketAddrV6::new(
                 Ipv6Addr::UNSPECIFIED,
@@ -67,8 +68,7 @@ impl LandscapeDnsService {
                 0,
             )),
             timeouts: DohTimeouts::default(),
-            server_cert_resolver: Arc::new(cert_service.api_tls_resolver())
-                as Arc<dyn ResolvesServerCert>,
+            server_cert_resolver: Arc::new(api_tls_resolver.clone()) as Arc<dyn ResolvesServerCert>,
             dns_hostname: None,
             http_endpoint: doh_runtime.http_endpoint.clone(),
         });
@@ -78,6 +78,7 @@ impl LandscapeDnsService {
             cache_runtime.clone(),
             doh,
             Some(Arc::new(route_service) as Arc<dyn LocalDnsAnswerProvider>),
+            Some(Arc::new(api_tls_resolver) as Arc<dyn landscape_dns::server::DohAdvertiseProvider>),
         );
 
         // dns_service.restart(53).await;
@@ -197,7 +198,15 @@ impl LandscapeDnsService {
 
     pub async fn apply_runtime_config(&self, dns_config: DnsRuntimeConfig) {
         let (cache_runtime, doh_runtime) = split_dns_runtime_config(&dns_config);
-        self.dns_service.update_runtime_config(cache_runtime, Some(doh_runtime));
+        let (_, startup_doh_runtime) = self.dns_service.current_live_runtime_config();
+        if startup_doh_runtime.as_ref() != Some(&doh_runtime) {
+            // Product policy: cert/SNI domains hot-reload through the shared
+            // resolver, but DoH port/path are bound at process startup.
+            tracing::warn!(
+                "DoH listen_port/http_endpoint changes require process restart to take effect"
+            );
+        }
+        self.dns_service.update_runtime_config(cache_runtime);
         let tracked_flows = {
             let dependencies = self.flow_dependencies.read().await;
             dependencies.keys().copied().collect::<Vec<_>>()

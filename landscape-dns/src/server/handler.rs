@@ -1,6 +1,8 @@
 use std::{
     collections::{BTreeMap, HashSet},
     future::Future,
+    net::IpAddr,
+    str::FromStr,
     sync::Arc,
     time::{Duration, Instant},
     vec,
@@ -13,10 +15,10 @@ use hickory_proto::{
     op::{Header, ResponseCode},
     rr::{
         rdata::{
-            svcb::{SvcParamKey, SVCB},
-            HTTPS,
+            svcb::{Alpn, IpHint, SvcParamKey, SvcParamValue, SVCB},
+            A, AAAA, HTTPS,
         },
-        RData, Record, RecordType,
+        Name, RData, Record, RecordType,
     },
 };
 use hickory_server::{
@@ -28,13 +30,14 @@ use uuid::Uuid;
 
 use crate::{
     server::rule::{RedirectSolution, ResolutionRule},
-    server::{CacheRuntimeConfig, LocalDnsAnswerProvider, MetricSenderState},
+    server::{CacheRuntimeConfig, DohAdvertiseProvider, LocalDnsAnswerProvider, MetricSenderState},
     CacheDNSItem, CheckChainDnsResult, DNSCache,
 };
 use landscape_common::{
     dns::check::DnsCheckError,
+    dns::dnr::{normalize_advertise_domains, normalize_doh_path_template},
     dns::rule::FilterResult,
-    dns::{FlowDnsDesiredState, RuntimeDnsRule, RuntimeRedirectRule},
+    dns::{DohRuntimeConfig, FlowDnsDesiredState, RuntimeDnsRule, RuntimeRedirectRule},
     event::DnsMetricMessage,
     flow::{DnsRuntimeMarkInfo, FlowMarkInfo},
     metric::dns::{DnsMetric, DnsResultStatus},
@@ -42,6 +45,9 @@ use landscape_common::{
 
 const LOOKUP_TIMEOUT: Duration = Duration::from_secs(5);
 const RULE_REFRESH_TTL_CAP: u32 = 5;
+const DDR_DISCOVERY_NAME: &str = "_dns.resolver.arpa.";
+const DDR_ZONE_NAME: &str = "resolver.arpa.";
+const DDR_TTL_SECS: u32 = 60;
 
 #[derive(Clone)]
 pub struct DnsRequestHandler {
@@ -52,6 +58,11 @@ pub struct DnsRequestHandler {
     pub msg_tx: MetricSenderState,
     runtime_config: Arc<ArcSwap<CacheRuntimeConfig>>,
     pub local_answer_provider: Option<Arc<dyn LocalDnsAnswerProvider>>,
+    pub doh_advertise_provider: Option<Arc<dyn DohAdvertiseProvider>>,
+    // Startup DoH endpoint snapshot used for DDR advertisements. Advertised
+    // domains are loaded live from `doh_advertise_provider`; port/path changes
+    // require a process restart so advertisements stay consistent with listener.
+    doh_runtime: Option<DohRuntimeConfig>,
 }
 
 impl DnsRequestHandler {
@@ -61,6 +72,8 @@ impl DnsRequestHandler {
         flow_id: u32,
         msg_tx: MetricSenderState,
         local_answer_provider: Option<Arc<dyn LocalDnsAnswerProvider>>,
+        doh_advertise_provider: Option<Arc<dyn DohAdvertiseProvider>>,
+        doh_runtime: Option<DohRuntimeConfig>,
     ) -> DnsRequestHandler {
         let FlowDnsDesiredState { dns_rules, redirect_rules, .. } = desired_state;
         let resolves = Self::build_resolves(flow_id, dns_rules);
@@ -76,6 +89,8 @@ impl DnsRequestHandler {
             msg_tx,
             runtime_config,
             local_answer_provider,
+            doh_advertise_provider,
+            doh_runtime,
         }
     }
 
@@ -572,6 +587,65 @@ impl DnsRequestHandler {
             }
         }
     }
+
+    async fn try_handle_resolver_arpa_request<R: ResponseHandler>(
+        &self,
+        request: &Request,
+        response_handle: &mut R,
+    ) -> Option<ResponseInfo> {
+        let req = request.queries().first()?;
+        let query_name = req.name().to_string().to_ascii_lowercase();
+        if !is_resolver_arpa_name(&query_name) {
+            return None;
+        }
+
+        let records = if req.query_type() == RecordType::SVCB && query_name == DDR_DISCOVERY_NAME {
+            self.build_ddr_records()
+        } else {
+            Vec::new()
+        };
+
+        let mut header = Header::response_from_request(request.header());
+        header.set_response_code(ResponseCode::NoError);
+        header.set_authoritative(true);
+        header.set_recursion_available(true);
+
+        let response = MessageResponseBuilder::from_message_request(request).build(
+            header,
+            records.iter(),
+            vec![].into_iter(),
+            vec![].into_iter(),
+            vec![].into_iter(),
+        );
+
+        Some(match response_handle.send_response(response).await {
+            Ok(info) => info,
+            Err(e) => {
+                tracing::error!("DDR response failed: {}", e);
+                serve_failed(request.header())
+            }
+        })
+    }
+
+    fn build_ddr_records(&self) -> Vec<Record> {
+        let Some(doh_runtime) = self.doh_runtime.as_ref() else {
+            return Vec::new();
+        };
+        let Some(provider) = self.doh_advertise_provider.as_ref() else {
+            return Vec::new();
+        };
+        let domains = normalize_advertise_domains(provider.advertise_domains());
+        if domains.is_empty() {
+            return Vec::new();
+        }
+
+        build_ddr_records(
+            &domains,
+            doh_runtime.listen_port,
+            &doh_runtime.http_endpoint,
+            self.local_answer_provider.as_deref(),
+        )
+    }
 }
 
 #[async_trait::async_trait]
@@ -591,6 +665,12 @@ impl RequestHandler for DnsRequestHandler {
         let domain = req.name().to_string();
         let query_type = req.query_type();
         let src_ip = request.src().ip();
+
+        if let Some(info) =
+            self.try_handle_resolver_arpa_request(request, &mut response_handle).await
+        {
+            return info;
+        }
 
         let mut header = Header::response_from_request(request.header());
         header.set_response_code(ResponseCode::NoError);
@@ -738,6 +818,83 @@ fn serve_failed(req_header: &Header) -> ResponseInfo {
     header.into()
 }
 
+fn is_resolver_arpa_name(name: &str) -> bool {
+    name == DDR_ZONE_NAME || name.ends_with(".resolver.arpa.")
+}
+
+fn build_ddr_records(
+    domains: &[String],
+    port: u16,
+    doh_path: &str,
+    local_answer_provider: Option<&dyn LocalDnsAnswerProvider>,
+) -> Vec<Record> {
+    let Ok(owner) = Name::from_str(DDR_DISCOVERY_NAME) else {
+        return Vec::new();
+    };
+    let Some(doh_path) = normalize_doh_path_template(doh_path) else {
+        return Vec::new();
+    };
+    let ipv4_hints = load_ipv4_hints(local_answer_provider);
+    let ipv6_hints = load_ipv6_hints(local_answer_provider);
+
+    domains
+        .iter()
+        .filter_map(|domain| {
+            let target = Name::from_str(&format!("{}.", domain)).ok()?;
+            let mut params =
+                vec![(SvcParamKey::Alpn, SvcParamValue::Alpn(Alpn(vec!["h2".to_string()])))];
+            params.push((SvcParamKey::Port, SvcParamValue::Port(port)));
+            if !ipv4_hints.is_empty() {
+                params.push((
+                    SvcParamKey::Ipv4Hint,
+                    SvcParamValue::Ipv4Hint(IpHint(ipv4_hints.clone())),
+                ));
+            }
+            if !ipv6_hints.is_empty() {
+                params.push((
+                    SvcParamKey::Ipv6Hint,
+                    SvcParamValue::Ipv6Hint(IpHint(ipv6_hints.clone())),
+                ));
+            }
+            params.push((
+                SvcParamKey::Unknown(7),
+                SvcParamValue::Unknown(landscape_common::dns::dnr::encode_unknown_svc_param_value(
+                    doh_path.as_bytes(),
+                )),
+            ));
+            Some(Record::from_rdata(
+                owner.clone(),
+                DDR_TTL_SECS,
+                RData::SVCB(SVCB::new(1, target, params)),
+            ))
+        })
+        .collect()
+}
+
+fn load_ipv4_hints(provider: Option<&dyn LocalDnsAnswerProvider>) -> Vec<A> {
+    provider
+        .map(|provider| provider.load_local_answer_addrs(RecordType::A))
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|ip| match ip {
+            IpAddr::V4(ip) => Some(A(*ip)),
+            _ => None,
+        })
+        .collect()
+}
+
+fn load_ipv6_hints(provider: Option<&dyn LocalDnsAnswerProvider>) -> Vec<AAAA> {
+    provider
+        .map(|provider| provider.load_local_answer_addrs(RecordType::AAAA))
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|ip| match ip {
+            IpAddr::V6(ip) => Some(AAAA(*ip)),
+            _ => None,
+        })
+        .collect()
+}
+
 async fn with_lookup_timeout<F, T>(future: F, timeout: Duration) -> crate::error::DnsResult<T>
 where
     F: Future<Output = crate::error::DnsResult<T>>,
@@ -807,6 +964,7 @@ mod tests {
     use hickory_proto::op::{Header, ResponseCode};
     use hickory_proto::rr::rdata::{A, AAAA};
     use hickory_proto::rr::{RData, Record, RecordType};
+    use hickory_proto::serialize::binary::BinEncodable;
     use landscape_common::{
         dns::ChainDnsServerInitInfo,
         dns::{
@@ -920,6 +1078,38 @@ mod tests {
     }
 
     #[test]
+    fn build_ddr_records_encodes_svc_params_in_increasing_order() {
+        let provider = MockLocalAnswerProvider {
+            addrs: vec![IpAddr::V4(Ipv4Addr::new(192, 168, 5, 1)), IpAddr::V6(Ipv6Addr::LOCALHOST)],
+        };
+        let records =
+            build_ddr_records(&["api.example.com".to_string()], 443, "/dns-query", Some(&provider));
+
+        assert_eq!(records.len(), 1);
+        let svcb = match records[0].data() {
+            RData::SVCB(svcb) => svcb.clone(),
+            _ => panic!("expected SVCB record"),
+        };
+
+        let keys = svcb.svc_params().iter().map(|(key, _)| u16::from(*key)).collect::<Vec<_>>();
+        assert_eq!(keys, vec![1, 3, 4, 6, 7]);
+
+        let mut wire = Vec::new();
+        let mut encoder = hickory_proto::serialize::binary::BinEncoder::new(&mut wire);
+        svcb.emit(&mut encoder).expect("SVCB should encode successfully");
+        assert!(wire.windows(b"/dns-query{?dns}".len()).any(|w| w == b"/dns-query{?dns}"));
+    }
+
+    #[test]
+    fn resolver_arpa_name_matches_local_zone_only() {
+        assert!(is_resolver_arpa_name("resolver.arpa."));
+        assert!(is_resolver_arpa_name("_dns.resolver.arpa."));
+        assert!(is_resolver_arpa_name("foo.bar.resolver.arpa."));
+        assert!(!is_resolver_arpa_name("evilresolver.arpa."));
+        assert!(!is_resolver_arpa_name("resolver.arpa.example."));
+    }
+
+    #[test]
     fn test_with_lookup_timeout_returns_timeout_error() {
         run_async_test(async {
             let result = with_lookup_timeout(
@@ -968,6 +1158,8 @@ mod tests {
                 1,
                 Arc::new(ArcSwapOption::new(None)),
                 None,
+                None,
+                None,
             );
 
             let result = handler.check_domain("example.com.", RecordType::A, true).await;
@@ -987,6 +1179,8 @@ mod tests {
                 shared_cache_runtime_config(5),
                 1,
                 Arc::new(ArcSwapOption::new(None)),
+                None,
+                None,
                 None,
             );
 
@@ -1020,6 +1214,8 @@ mod tests {
                 1,
                 Arc::new(ArcSwapOption::new(None)),
                 None,
+                None,
+                None,
             );
 
             handler
@@ -1052,6 +1248,8 @@ mod tests {
                 runtime_config.clone(),
                 9,
                 Arc::new(ArcSwapOption::new(None)),
+                None,
+                None,
                 None,
             );
             let handler_clone = handler.clone();
@@ -1109,6 +1307,8 @@ mod tests {
                 1,
                 Arc::new(ArcSwapOption::new(None)),
                 None,
+                None,
+                None,
             );
 
             let old_resolves = handler.resolves.load_full();
@@ -1164,6 +1364,8 @@ mod tests {
                 runtime_config.clone(),
                 1,
                 Arc::new(ArcSwapOption::new(None)),
+                None,
+                None,
                 None,
             );
 
@@ -1232,6 +1434,8 @@ mod tests {
                         IpAddr::V6(Ipv6Addr::LOCALHOST),
                     ],
                 })),
+                None,
+                None,
             );
 
             let (records, status, redirect_id, _) =
@@ -1274,6 +1478,8 @@ mod tests {
                 Some(Arc::new(MockLocalAnswerProvider {
                     addrs: vec![IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1))],
                 })),
+                None,
+                None,
             );
 
             assert!(handler.lookup_redirects("example.com.", RecordType::AAAA).is_none());
@@ -1302,6 +1508,8 @@ mod tests {
                 shared_cache_runtime_config(5),
                 1,
                 Arc::new(ArcSwapOption::new(None)),
+                None,
+                None,
                 None,
             );
 

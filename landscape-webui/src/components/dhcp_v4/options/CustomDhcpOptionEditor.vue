@@ -4,7 +4,12 @@ import DHCPOptionTFTPServer from "./DHCPOptionTFTPServer.vue";
 import DHCPOptionBootfileName from "./DHCPOptionBootfileName.vue";
 import DHCPOptionVendorExtensions from "./DHCPOptionVendorExtensions.vue";
 import DHCPOptionRelayAgentInfo from "./DHCPOptionRelayAgentInfo.vue";
-import type { CustomDhcpOption, RelayAgentInfo } from "./types";
+import DHCPOptionDnr from "./DHCPOptionDnr.vue";
+import type {
+  CustomDhcpOption,
+  DhcpV4DnrOptionConfig,
+  RelayAgentInfo,
+} from "./types";
 
 const model = defineModel<CustomDhcpOption[]>({ required: true });
 
@@ -13,6 +18,7 @@ const typeOptions = [
   { label: "Bootfile Name (67)", value: "BootfileName" as const },
   { label: "Vendor Extensions (43)", value: "VendorExtensions" as const },
   { label: "Relay Agent Info (82)", value: "RelayAgentInformation" as const },
+  { label: "Encrypted DNS Discovery (162)", value: "Dnr" as const },
 ];
 
 const duplicateKeys = computed(() => {
@@ -67,6 +73,15 @@ const validationErrors = computed(() => {
       continue;
     }
 
+    if (key === "Dnr") {
+      if (value === null || typeof value !== "object" || Array.isArray(value)) {
+        errors.push("DNR must be a JSON object");
+      } else if (!isValidDnr(value as DhcpV4DnrOptionConfig)) {
+        errors.push("DNR custom values are invalid");
+      }
+      continue;
+    }
+
     errors.push("Unknown DHCP option type");
   }
   return errors;
@@ -108,6 +123,14 @@ function isInvalid(opt: CustomDhcpOption): boolean {
       Object.keys(value).length === 0
     );
   }
+  if (key === "Dnr") {
+    return (
+      value === null ||
+      typeof value !== "object" ||
+      Array.isArray(value) ||
+      !isValidDnr(value as DhcpV4DnrOptionConfig)
+    );
+  }
   return true;
 }
 
@@ -115,8 +138,12 @@ function onCreate(): CustomDhcpOption {
   return { TFTPServerName: "" };
 }
 
-function getDefaultValue(newType: string): string | RelayAgentInfo {
-  return newType === "RelayAgentInformation" ? {} : "";
+function getDefaultValue(
+  newType: string,
+): string | RelayAgentInfo | DhcpV4DnrOptionConfig {
+  if (newType === "RelayAgentInformation") return {};
+  if (newType === "Dnr") return { mode: "local" };
+  return "";
 }
 
 function getVariant(opt: CustomDhcpOption): string {
@@ -129,6 +156,80 @@ function onChangeType(opt: CustomDhcpOption, newType: string): void {
   delete (opt as Record<string, unknown>)[oldKey];
   (opt as Record<string, unknown>)[newType as string] =
     getDefaultValue(newType);
+}
+
+function isValidDnr(value: DhcpV4DnrOptionConfig): boolean {
+  if (value.mode === "local") return true;
+  if (value.mode !== "custom") return false;
+  if (
+    value.port !== undefined &&
+    value.port !== null &&
+    (value.port < 1 || value.port > 65535)
+  ) {
+    return false;
+  }
+  if (value.domains?.some((domain) => !isValidDomain(domain))) return false;
+  if (value.doh_path && !isValidDohPath(value.doh_path)) return false;
+  const ips = value.ips ?? [];
+  return ips.every(isValidDnrIpv4);
+}
+
+function isValidDomain(domain: string): boolean {
+  const normalized = domain.trim().replace(/\.+$/, "").toLowerCase();
+  if (
+    !normalized ||
+    normalized.length > 253 ||
+    normalized.includes("*") ||
+    !/^[\x00-\x7F]+$/.test(normalized)
+  ) {
+    return false;
+  }
+  return normalized
+    .split(".")
+    .every((label) => /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(label));
+}
+
+function isValidDohPath(path: string): boolean {
+  const value = path.trim();
+  if (
+    !value ||
+    !value.startsWith("/") ||
+    !/^[\x00-\x7F]+$/.test(value) ||
+    value.includes("#")
+  )
+    return false;
+  const tokens = ["{?dns}", "{&dns}", "{dns}"];
+  const present = tokens.filter((token) => value.includes(token));
+  if (present.length > 1) return false;
+  const token = present[0];
+  if (token) {
+    if (value.indexOf(token) !== value.lastIndexOf(token)) return false;
+    const withoutToken = value.replace(token, "");
+    if (withoutToken.includes("{") || withoutToken.includes("}")) return false;
+    const beforeTemplate = value.slice(0, value.indexOf(token));
+    if (token === "{?dns}" && beforeTemplate.includes("?")) return false;
+    if (token === "{&dns}" && !beforeTemplate.includes("?")) return false;
+    return true;
+  }
+  return !value.includes("?") && !value.includes("#");
+}
+
+function isValidDnrIpv4(ip: string): boolean {
+  const parts = ip.split(".");
+  if (parts.length !== 4) return false;
+  const octets = parts.map((part) => {
+    if (!/^\d{1,3}$/.test(part)) return Number.NaN;
+    return Number(part);
+  });
+  if (
+    octets.some((octet) => !Number.isInteger(octet) || octet < 0 || octet > 255)
+  )
+    return false;
+  const [first, second, third, fourth] = octets;
+  if (first === 0 || first === 127 || first >= 224) return false;
+  if (first === 255 && second === 255 && third === 255 && fourth === 255)
+    return false;
+  return true;
 }
 </script>
 
@@ -164,6 +265,10 @@ function onChangeType(opt: CustomDhcpOption, newType: string): void {
           <DHCPOptionRelayAgentInfo
             v-else-if="getVariant(value) === 'RelayAgentInformation'"
             v-model="value.RelayAgentInformation"
+          />
+          <DHCPOptionDnr
+            v-else-if="getVariant(value) === 'Dnr'"
+            v-model="value.Dnr"
           />
         </div>
       </n-flex>

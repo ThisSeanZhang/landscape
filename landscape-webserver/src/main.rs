@@ -545,6 +545,8 @@ async fn run_system(
     let dhcp_v4_server_service = DHCPv4ServerManagerService::new(
         route_service.clone(),
         db_store_provider.clone(),
+        cert_service.api_tls_resolver(),
+        config.dns.clone(),
         dev_obs.resubscribe(),
     )
     .await;

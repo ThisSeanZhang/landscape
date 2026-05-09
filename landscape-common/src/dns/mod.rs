@@ -6,6 +6,7 @@ use crate::utils::time::get_f64_timestamp;
 
 pub mod check;
 pub mod config;
+pub mod dnr;
 pub mod provider_profile;
 pub mod redirect;
 pub mod rule;

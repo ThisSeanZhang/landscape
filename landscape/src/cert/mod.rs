@@ -7,6 +7,7 @@ pub mod dns_provider;
 pub mod order_service;
 
 use crate::cert::order_service::CertService;
+use arc_swap::ArcSwap;
 use arc_swap::ArcSwapOption;
 use landscape_common::cert::order::{CertConfig, CertStatus, CertType};
 use landscape_common::service::controller::ConfigController;
@@ -84,6 +85,7 @@ struct TlsResolverEntry {
 #[derive(Clone, Default)]
 pub struct SharedSniResolver {
     inner: Arc<ArcSwapOption<ResolverSnapshot>>,
+    advertised_domains: Arc<ArcSwap<Vec<String>>>,
 }
 
 impl fmt::Debug for SharedSniResolver {
@@ -94,15 +96,36 @@ impl fmt::Debug for SharedSniResolver {
 
 impl SharedSniResolver {
     pub fn new() -> Self {
-        Self { inner: Arc::new(ArcSwapOption::new(None)) }
+        Self {
+            inner: Arc::new(ArcSwapOption::new(None)),
+            advertised_domains: Arc::new(ArcSwap::from_pointee(Vec::new())),
+        }
     }
 
     fn swap(&self, snapshot: ResolverSnapshot) {
+        let mut domains = snapshot.exact.keys().cloned().collect::<Vec<_>>();
+        domains.sort();
+        domains.dedup();
+        self.advertised_domains.store(Arc::new(domains));
         self.inner.store(Some(Arc::new(snapshot)));
     }
 
     fn resolve_name(&self, server_name: Option<&str>) -> Option<Arc<CertifiedKey>> {
         self.inner.load_full().and_then(|snapshot| snapshot.resolve_name(server_name))
+    }
+
+    pub fn advertised_domains(&self) -> Vec<String> {
+        self.advertised_domains.load().as_ref().clone()
+    }
+
+    pub fn advertised_domains_state(&self) -> Arc<ArcSwap<Vec<String>>> {
+        self.advertised_domains.clone()
+    }
+}
+
+impl landscape_dns::server::DohAdvertiseProvider for SharedSniResolver {
+    fn advertise_domains(&self) -> Vec<String> {
+        self.advertised_domains()
     }
 }
 
@@ -680,5 +703,21 @@ mod tests {
         assert_eq!(inserted, 0);
         assert!(snapshot.wildcards.is_empty());
         assert!(snapshot.resolve_name(Some("api.example.com")).is_none());
+    }
+
+    #[test]
+    fn advertised_domains_include_only_exact_domains() {
+        let resolver = SharedSniResolver::new();
+        let (snapshot, _) = build_resolver_snapshot_from_entries(
+            vec![
+                make_test_cert(&["*.example.com"], &["*.example.com"]),
+                make_test_cert(&["api.example.com"], &["api.example.com"]),
+            ],
+            None,
+        );
+
+        resolver.swap(snapshot);
+
+        assert_eq!(resolver.advertised_domains(), vec!["api.example.com".to_string()]);
     }
 }
