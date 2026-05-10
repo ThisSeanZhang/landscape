@@ -29,6 +29,7 @@ use moka::future::Cache;
 use uuid::Uuid;
 
 use crate::{
+    server::preflight::{self, PreflightDecision},
     server::rule::{RedirectSolution, ResolutionRule},
     server::{CacheRuntimeConfig, DohAdvertiseProvider, LocalDnsAnswerProvider, MetricSenderState},
     CacheDNSItem, CheckChainDnsResult, DNSCache,
@@ -275,12 +276,22 @@ impl DnsRequestHandler {
     ) -> CheckChainDnsResult {
         let mut result = CheckChainDnsResult::default();
 
+        if let Some(local_result) = Self::check_result_from_preflight(
+            preflight::classify_hard_local_zone(domain, query_type),
+        ) {
+            return local_result;
+        }
+
         if let Some((records, _status, id, dynamic_source)) =
             self.lookup_redirects(domain, query_type)
         {
             result.redirect_id = id;
             result.dynamic_redirect_source = dynamic_source;
             result.records = Some(crate::to_common_records(records));
+        } else if let Some(local_result) =
+            Self::check_result_from_preflight(preflight::classify_overrideable_local_zone(domain))
+        {
+            return local_result;
         } else {
             let resolves = self.resolves.load();
             for (_index, resolver) in resolves.iter() {
@@ -340,8 +351,22 @@ impl DnsRequestHandler {
         query_type: RecordType,
         apply_filter: bool,
     ) -> Result<CheckChainDnsResult, DnsCheckError> {
+        if let Some(local_result) = Self::check_result_from_preflight(
+            preflight::classify_hard_local_zone(domain, query_type),
+        ) {
+            self.clear_cache_entry_and_refresh_maps_if_present(domain, query_type).await;
+            return Ok(local_result);
+        }
+
         if self.lookup_redirects(domain, query_type).is_some() {
             return Err(DnsCheckError::RefreshRedirected(domain.to_string()));
+        }
+
+        if let Some(local_result) =
+            Self::check_result_from_preflight(preflight::classify_overrideable_local_zone(domain))
+        {
+            self.clear_cache_entry_and_refresh_maps_if_present(domain, query_type).await;
+            return Ok(local_result);
         }
 
         let resolves = self.resolves.load();
@@ -431,9 +456,40 @@ impl DnsRequestHandler {
         Err(DnsCheckError::RefreshRequiresRule(domain.to_string()))
     }
 
+    fn check_result_from_preflight(decision: PreflightDecision) -> Option<CheckChainDnsResult> {
+        match decision {
+            PreflightDecision::Respond { records, .. } => Some(CheckChainDnsResult {
+                records: Some(crate::to_common_records(records)),
+                ..Default::default()
+            }),
+            PreflightDecision::Continue => None,
+        }
+    }
+
     async fn clear_cache_entry(&self, domain: &str, query_type: RecordType) {
         let cache = self.cache.load();
         cache.invalidate(&(domain.to_string(), query_type)).await;
+    }
+
+    async fn clear_cache_entry_if_present(&self, domain: &str, query_type: RecordType) -> bool {
+        let cache = self.cache.load();
+        let key = (domain.to_string(), query_type);
+        if cache.get(&key).await.is_none() {
+            return false;
+        }
+
+        cache.invalidate(&key).await;
+        true
+    }
+
+    async fn clear_cache_entry_and_refresh_maps_if_present(
+        &self,
+        domain: &str,
+        query_type: RecordType,
+    ) {
+        if self.clear_cache_entry_if_present(domain, query_type).await {
+            self.refresh_runtime_maps_from_cache();
+        }
     }
 
     fn refresh_runtime_maps_from_cache(&self) {
@@ -588,6 +644,60 @@ impl DnsRequestHandler {
         }
     }
 
+    async fn send_records_response<R: ResponseHandler>(
+        &self,
+        request: &Request,
+        mut response_handle: R,
+        code: ResponseCode,
+        records: Vec<Record>,
+    ) -> ResponseInfo {
+        let mut header = Header::response_from_request(request.header());
+        header.set_response_code(code);
+        header.set_recursion_available(true);
+        header.set_authoritative(true);
+
+        let builder = MessageResponseBuilder::from_message_request(request);
+        let result = if records.is_empty() {
+            let response = builder.build_no_records(header);
+            response_handle.send_response(response).await
+        } else {
+            let response = builder.build(
+                header,
+                records.iter(),
+                vec![].into_iter(),
+                vec![].into_iter(),
+                vec![].into_iter(),
+            );
+            response_handle.send_response(response).await
+        };
+
+        match result {
+            Ok(info) => info,
+            Err(e) => {
+                tracing::error!("Response failed: {}", e);
+                serve_failed(request.header())
+            }
+        }
+    }
+
+    async fn send_preflight_response<R: ResponseHandler>(
+        &self,
+        request: &Request,
+        response_handle: R,
+        domain: String,
+        query_type: RecordType,
+        code: ResponseCode,
+        records: Vec<Record>,
+        status: DnsResultStatus,
+        start_time: Instant,
+        src_ip: std::net::IpAddr,
+    ) -> ResponseInfo {
+        let answers = records.iter().map(|r| r.to_string()).collect();
+        let response = self.send_records_response(request, response_handle, code, records).await;
+        self.send_metric(domain, query_type, code, status, start_time, src_ip, answers);
+        response
+    }
+
     async fn try_handle_resolver_arpa_request<R: ResponseHandler>(
         &self,
         request: &Request,
@@ -657,7 +767,7 @@ impl RequestHandler for DnsRequestHandler {
     ) -> ResponseInfo {
         let start_time = Instant::now();
         let queries = request.queries();
-        if queries.is_empty() {
+        if !matches!(preflight::classify_query_count(queries.len()), PreflightDecision::Continue) {
             return self.send_error_response(request, response_handle, ResponseCode::FormErr).await;
         }
 
@@ -666,10 +776,47 @@ impl RequestHandler for DnsRequestHandler {
         let query_type = req.query_type();
         let src_ip = request.src().ip();
 
+        if let PreflightDecision::Respond { code, records, status } =
+            preflight::classify_hard_query(request.op_code(), req)
+        {
+            return self
+                .send_preflight_response(
+                    request,
+                    response_handle,
+                    domain,
+                    query_type,
+                    code,
+                    records,
+                    status,
+                    start_time,
+                    src_ip,
+                )
+                .await;
+        }
+
         if let Some(info) =
             self.try_handle_resolver_arpa_request(request, &mut response_handle).await
         {
             return info;
+        }
+
+        if let PreflightDecision::Respond { code, records, status } =
+            preflight::classify_hard_local_zone(&domain, query_type)
+        {
+            self.clear_cache_entry_and_refresh_maps_if_present(&domain, query_type).await;
+            return self
+                .send_preflight_response(
+                    request,
+                    response_handle,
+                    domain,
+                    query_type,
+                    code,
+                    records,
+                    status,
+                    start_time,
+                    src_ip,
+                )
+                .await;
         }
 
         let mut header = Header::response_from_request(request.header());
@@ -687,7 +834,29 @@ impl RequestHandler for DnsRequestHandler {
             records = redirect_records;
             status = redirect_status;
         }
-        // 2. Cache
+        // 2. Built-in local zones that user redirects may override
+        else if let PreflightDecision::Respond {
+            code,
+            records: local_records,
+            status: local_status,
+        } = preflight::classify_overrideable_local_zone(&domain)
+        {
+            self.clear_cache_entry_and_refresh_maps_if_present(&domain, query_type).await;
+            return self
+                .send_preflight_response(
+                    request,
+                    response_handle,
+                    domain,
+                    query_type,
+                    code,
+                    local_records,
+                    local_status,
+                    start_time,
+                    src_ip,
+                )
+                .await;
+        }
+        // 3. Cache
         else if let Some((cached_records, filter, code)) =
             self.lookup_cache(&domain, query_type).await
         {
@@ -699,7 +868,7 @@ impl RequestHandler for DnsRequestHandler {
                 status = DnsResultStatus::Hit;
             }
         }
-        // 3. Resolution Rules (with Early Filter check)
+        // 4. Resolution Rules (with Early Filter check)
         else {
             let resolves = self.resolves.load();
             let mut resolved = false;
@@ -774,7 +943,7 @@ impl RequestHandler for DnsRequestHandler {
             }
         }
 
-        // 4. Send Response
+        // 5. Send Response
         let builder = MessageResponseBuilder::from_message_request(request);
         let result = if records.is_empty() {
             let response = builder.build_no_records(header);
@@ -1236,6 +1405,59 @@ mod tests {
             assert_eq!(result.rule_filter, Some(FilterResult::OnlyIPv6));
             assert!(result.query_filtered);
             assert_eq!(result.cache_records.as_ref().map(Vec::len), Some(1));
+        });
+    }
+
+    #[test]
+    fn check_domain_handles_overrideable_local_zones_before_upstream_rules() {
+        run_async_test(async {
+            let handler = DnsRequestHandler::new(
+                ChainDnsServerInitInfo {
+                    dns_rules: vec![test_runtime_rule()],
+                    redirect_rules: vec![],
+                }
+                .into(),
+                shared_cache_runtime_config(5),
+                1,
+                Arc::new(ArcSwapOption::new(None)),
+                None,
+                None,
+                None,
+            );
+
+            let result = handler.check_domain("printer.local.", RecordType::A, true).await;
+
+            assert!(result.rule_id.is_none());
+            assert!(result.records.as_ref().is_some_and(Vec::is_empty));
+            assert!(result.cache_records.is_none());
+        });
+    }
+
+    #[test]
+    fn refresh_cache_entry_handles_local_zones_without_upstream_rule_refresh() {
+        run_async_test(async {
+            let handler = DnsRequestHandler::new(
+                ChainDnsServerInitInfo {
+                    dns_rules: vec![test_runtime_rule()],
+                    redirect_rules: vec![],
+                }
+                .into(),
+                shared_cache_runtime_config(5),
+                1,
+                Arc::new(ArcSwapOption::new(None)),
+                None,
+                None,
+                None,
+            );
+
+            let result = handler
+                .refresh_cache_entry("foo.localhost.", RecordType::AAAA, true)
+                .await
+                .unwrap();
+
+            assert!(result.rule_id.is_none());
+            assert_eq!(result.records.as_ref().map(Vec::len), Some(1));
+            assert!(result.cache_records.is_none());
         });
     }
 

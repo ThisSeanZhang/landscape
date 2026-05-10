@@ -24,6 +24,7 @@ use crate::{
 pub(crate) mod handler;
 pub(crate) mod matcher;
 pub(crate) mod planner;
+pub(crate) mod preflight;
 pub(crate) mod rule;
 
 pub use crate::listener::{DohTimeouts, EffectiveDohListenerConfig};
