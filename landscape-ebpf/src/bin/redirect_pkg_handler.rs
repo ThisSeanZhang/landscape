@@ -226,7 +226,7 @@ pub fn get_container_id() -> Option<String> {
 
     // Step 3: 逐行查找包含 "containers" 的路径
     for line in reader.lines().flatten() {
-        if line.contains("containers") {
+        if line.contains("containers") && !line.contains("subvolumes") {
             // mountinfo 格式中第5列是 mount point，第4列是 root（路径）
             // 示例：38 29 0:31 /docker/abcdef1234567890 /sys/fs/cgroup/containers/docker/abcdef1234567890 ...
 
