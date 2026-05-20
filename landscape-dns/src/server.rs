@@ -14,6 +14,7 @@ use tokio_util::sync::CancellationToken;
 use crate::{
     convert_record_type,
     listener::{start_flow_dns_listener, DohListenerState},
+    mdns::MdnsService,
     server::{
         handler::DnsRequestHandler,
         planner::{DnsRefreshPlan, DnsRefreshPlanner, FlowDnsAppliedState, HandlerRefreshPlan},
@@ -37,6 +38,16 @@ pub trait LocalDnsAnswerProvider: Send + Sync {
         &self,
         query_type: hickory_proto::rr::RecordType,
     ) -> Arc<Vec<IpAddr>>;
+
+    fn load_local_answer_addrs_for_ifindex(
+        &self,
+        query_type: hickory_proto::rr::RecordType,
+        ifindex: u32,
+    ) -> Arc<Vec<IpAddr>> {
+        let _ = query_type;
+        let _ = ifindex;
+        Arc::new(Vec::new())
+    }
 }
 
 pub trait DohAdvertiseProvider: Send + Sync {
@@ -59,6 +70,7 @@ pub struct LandscapeDnsServer {
     pub udp_listener_addr: SocketAddr,
     cache_live_config: Arc<ArcSwap<CacheRuntimeConfig>>,
     doh_listener: Option<DohListenerState>,
+    _mdns_service: Option<Arc<MdnsService>>,
 }
 
 struct FlowServerRuntime {
@@ -92,6 +104,12 @@ impl LandscapeDnsServer {
         doh_advertise_provider: Option<Arc<dyn DohAdvertiseProvider>>,
     ) -> Self {
         let status = WatchService::new();
+        let mdns_service = if local_answer_provider.is_some() {
+            MdnsService::spawn(local_answer_provider.clone())
+        } else {
+            None
+        };
+
         Self {
             status,
             flow_dns_server: Arc::new(Mutex::new(HashMap::new())),
@@ -104,6 +122,7 @@ impl LandscapeDnsServer {
             msg_tx: Arc::new(ArcSwapOption::new(msg_tx.map(Arc::new))),
             cache_live_config: Arc::new(ArcSwap::from_pointee(cache_runtime)),
             doh_listener: doh.map(DohListenerState::from_effective_config),
+            _mdns_service: mdns_service,
             local_answer_provider,
             doh_advertise_provider,
         }

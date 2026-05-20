@@ -2769,6 +2769,7 @@ dependencies = [
  "rustls",
  "rustls-platform-verifier 0.5.3",
  "serde",
+ "socket2 0.5.10",
  "thiserror 2.0.18",
  "tinyvec",
  "tokio",

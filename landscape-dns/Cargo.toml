@@ -21,6 +21,7 @@ hickory-proto = { workspace = true, features = [
     "__https",
     "__tls",
     "quic-ring",
+    "mdns",
     "tls-ring",
 ] }
 
@@ -52,7 +53,7 @@ http = { workspace = true }
 h2 = { workspace = true }
 base64 = { workspace = true }
 
-nix = { workspace = true, features = ["socket", "uio"] }
+nix = { workspace = true, features = ["socket", "uio", "net"] }
 moka = { workspace = true }
 
 

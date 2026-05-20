@@ -43,7 +43,9 @@ pub struct IpRouteService {
     ipv4_lan_ifaces: ShareRwLock<Ipv4LanRoutesByOwner>,
     ipv6_lan_ifaces: ShareRwLock<Ipv6LanRoutesByKey>,
     reachable_local_ipv4_addrs: Arc<ArcSwap<Vec<IpAddr>>>,
+    reachable_local_ipv4_addrs_by_ifindex: Arc<ArcSwap<HashMap<u32, Arc<Vec<IpAddr>>>>>,
     reachable_local_ipv6_addrs: Arc<ArcSwap<Vec<IpAddr>>>,
+    reachable_local_ipv6_addrs_by_ifindex: Arc<ArcSwap<HashMap<u32, Arc<Vec<IpAddr>>>>>,
 }
 
 enum Ipv4LanBucketUpdate {
@@ -258,7 +260,9 @@ impl IpRouteService {
             ipv4_lan_ifaces: Arc::new(RwLock::new(HashMap::new())),
             ipv6_lan_ifaces: Arc::new(RwLock::new(HashMap::new())),
             reachable_local_ipv4_addrs: Arc::new(ArcSwap::from_pointee(Vec::new())),
+            reachable_local_ipv4_addrs_by_ifindex: Arc::new(ArcSwap::from_pointee(HashMap::new())),
             reachable_local_ipv6_addrs: Arc::new(ArcSwap::from_pointee(Vec::new())),
+            reachable_local_ipv6_addrs_by_ifindex: Arc::new(ArcSwap::from_pointee(HashMap::new())),
         };
         service.spawn_route_event_worker(route_event_sender);
         service
@@ -603,15 +607,45 @@ impl IpRouteService {
         self.reachable_local_ipv6_addrs.load_full()
     }
 
+    fn load_reachable_local_ipv4_addrs_for_ifindex(&self, ifindex: u32) -> Arc<Vec<IpAddr>> {
+        self.reachable_local_ipv4_addrs_by_ifindex
+            .load_full()
+            .get(&ifindex)
+            .cloned()
+            .unwrap_or_else(|| Arc::new(Vec::new()))
+    }
+
+    fn load_reachable_local_ipv6_addrs_for_ifindex(&self, ifindex: u32) -> Arc<Vec<IpAddr>> {
+        self.reachable_local_ipv6_addrs_by_ifindex
+            .load_full()
+            .get(&ifindex)
+            .cloned()
+            .unwrap_or_else(|| Arc::new(Vec::new()))
+    }
+
     fn refresh_reachable_local_ipv4_addrs(&self, routes: &Ipv4LanRoutesByOwner) {
         self.reachable_local_ipv4_addrs.store(Arc::new(collect_reachable_local_ipv4_addrs(
             routes.values().flat_map(|bucket| bucket.iter()),
         )));
+        self.reachable_local_ipv4_addrs_by_ifindex.store(Arc::new(
+            collect_reachable_local_ipv4_addrs_by_ifindex(
+                routes.values().flat_map(|bucket| bucket.iter()),
+            )
+            .into_iter()
+            .map(|(ifindex, addrs)| (ifindex, Arc::new(addrs)))
+            .collect(),
+        ));
     }
 
     fn refresh_reachable_local_ipv6_addrs(&self, routes: &Ipv6LanRoutesByKey) {
         self.reachable_local_ipv6_addrs
             .store(Arc::new(collect_reachable_local_ipv6_addrs(routes.values())));
+        self.reachable_local_ipv6_addrs_by_ifindex.store(Arc::new(
+            collect_reachable_local_ipv6_addrs_by_ifindex(routes.values())
+                .into_iter()
+                .map(|(ifindex, addrs)| (ifindex, Arc::new(addrs)))
+                .collect(),
+        ));
     }
 }
 
@@ -620,6 +654,22 @@ impl LocalDnsAnswerProvider for IpRouteService {
         match query_type {
             RecordType::A => self.load_reachable_local_ipv4_addrs(),
             RecordType::AAAA => self.load_reachable_local_ipv6_addrs(),
+            _ => Arc::new(Vec::new()),
+        }
+    }
+
+    fn load_local_answer_addrs_for_ifindex(
+        &self,
+        query_type: RecordType,
+        ifindex: u32,
+    ) -> Arc<Vec<IpAddr>> {
+        if ifindex == 0 {
+            return self.load_local_answer_addrs(query_type);
+        }
+
+        match query_type {
+            RecordType::A => self.load_reachable_local_ipv4_addrs_for_ifindex(ifindex),
+            RecordType::AAAA => self.load_reachable_local_ipv6_addrs_for_ifindex(ifindex),
             _ => Arc::new(Vec::new()),
         }
     }
@@ -640,6 +690,33 @@ fn collect_reachable_local_ipv4_addrs<'a>(
     finalize_local_answer_addrs(candidates, IpAddr::V4)
 }
 
+fn collect_reachable_local_ipv4_addrs_by_ifindex<'a>(
+    routes: impl Iterator<Item = &'a LanRouteInfo>,
+) -> HashMap<u32, Vec<IpAddr>> {
+    let mut candidates: Vec<_> = routes
+        .filter_map(|info| match (&info.mode, info.iface_ip) {
+            (LanRouteMode::Reachable, IpAddr::V4(ip)) if is_valid_dns_answer_ipv4(ip) => {
+                Some((info.ifindex, info.iface_name.clone(), ip))
+            }
+            _ => None,
+        })
+        .collect();
+
+    candidates
+        .sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)).then_with(|| a.2.cmp(&b.2)));
+
+    let mut seen = HashMap::<u32, HashSet<Ipv4Addr>>::new();
+    let mut result = HashMap::<u32, Vec<IpAddr>>::new();
+
+    for (ifindex, _, ip) in candidates {
+        if seen.entry(ifindex).or_default().insert(ip) {
+            result.entry(ifindex).or_default().push(IpAddr::V4(ip));
+        }
+    }
+
+    result
+}
+
 fn collect_reachable_local_ipv6_addrs<'a>(
     routes: impl Iterator<Item = &'a LanRouteInfo>,
 ) -> Vec<IpAddr> {
@@ -653,6 +730,33 @@ fn collect_reachable_local_ipv6_addrs<'a>(
         .collect();
 
     finalize_local_answer_addrs(candidates, IpAddr::V6)
+}
+
+fn collect_reachable_local_ipv6_addrs_by_ifindex<'a>(
+    routes: impl Iterator<Item = &'a LanRouteInfo>,
+) -> HashMap<u32, Vec<IpAddr>> {
+    let mut candidates: Vec<_> = routes
+        .filter_map(|info| match (&info.mode, info.iface_ip) {
+            (LanRouteMode::Reachable, IpAddr::V6(ip)) if is_valid_dns_answer_ipv6(ip) => {
+                Some((info.ifindex, info.iface_name.clone(), ip))
+            }
+            _ => None,
+        })
+        .collect();
+
+    candidates
+        .sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)).then_with(|| a.2.cmp(&b.2)));
+
+    let mut seen = HashMap::<u32, HashSet<Ipv6Addr>>::new();
+    let mut result = HashMap::<u32, Vec<IpAddr>>::new();
+
+    for (ifindex, _, ip) in candidates {
+        if seen.entry(ifindex).or_default().insert(ip) {
+            result.entry(ifindex).or_default().push(IpAddr::V6(ip));
+        }
+    }
+
+    result
 }
 
 fn is_valid_dns_answer_ipv4(ip: Ipv4Addr) -> bool {
@@ -1131,6 +1235,41 @@ mod tests {
                 service.load_local_answer_addrs(RecordType::A).as_ref(),
                 &vec![IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1))]
             );
+        });
+    }
+
+    #[test]
+    fn local_dns_answer_provider_loads_ifindex_specific_snapshot() {
+        run_async_test(async {
+            let (_tx, service) = test_used_ip_route().await;
+            let mut routes = service.ipv4_lan_ifaces.write().await;
+            routes.insert(
+                "lan0".to_string(),
+                vec![
+                    ipv4_lan_route(
+                        2,
+                        "lan0",
+                        Ipv4Addr::new(192, 168, 1, 1),
+                        24,
+                        LanRouteMode::Reachable,
+                    ),
+                    ipv4_lan_route(
+                        7,
+                        "lan1",
+                        Ipv4Addr::new(192, 168, 2, 1),
+                        24,
+                        LanRouteMode::Reachable,
+                    ),
+                ],
+            );
+            service.refresh_reachable_local_ipv4_addrs(&routes);
+            drop(routes);
+
+            assert_eq!(
+                service.load_local_answer_addrs_for_ifindex(RecordType::A, 7).as_ref(),
+                &vec![IpAddr::V4(Ipv4Addr::new(192, 168, 2, 1))]
+            );
+            assert!(service.load_local_answer_addrs_for_ifindex(RecordType::A, 99).is_empty());
         });
     }
 

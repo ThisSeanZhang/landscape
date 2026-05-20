@@ -33,6 +33,7 @@ pub(crate) mod connection;
 
 pub mod error;
 pub mod listener;
+pub mod mdns;
 pub mod server;
 
 static RESOLVER_CONF: &'static str = "/etc/resolv.conf";
