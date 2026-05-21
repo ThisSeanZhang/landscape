@@ -1,5 +1,5 @@
 use std::{
-    net::{Ipv4Addr, Ipv6Addr},
+    net::{IpAddr, Ipv4Addr, Ipv6Addr},
     str::FromStr,
 };
 
@@ -65,6 +65,10 @@ pub(crate) fn classify_overrideable_local_zone(domain: &str) -> PreflightDecisio
         return PreflightDecision::no_records(ResponseCode::NoError, DnsResultStatus::Local);
     }
 
+    if is_at_or_under(&domain, "ipv4only.arpa.") {
+        return PreflightDecision::no_records(ResponseCode::NoError, DnsResultStatus::Local);
+    }
+
     if is_at_or_under(&domain, "home.arpa.")
         || is_at_or_under(&domain, "invalid.")
         || is_at_or_under(&domain, "test.")
@@ -108,47 +112,38 @@ fn localhost_response(domain: &str, query_type: RecordType) -> PreflightDecision
 }
 
 fn is_private_reverse_zone(domain: &str) -> bool {
-    is_private_ipv4_reverse_zone(domain) || is_private_ipv6_reverse_zone(domain)
-}
-
-fn is_private_ipv4_reverse_zone(domain: &str) -> bool {
-    is_at_or_under(domain, "10.in-addr.arpa.")
-        || is_at_or_under(domain, "168.192.in-addr.arpa.")
-        || is_at_or_under(domain, "127.in-addr.arpa.")
-        || is_at_or_under(domain, "254.169.in-addr.arpa.")
-        || is_at_or_under(domain, "0.in-addr.arpa.")
-        || is_at_or_under(domain, "255.in-addr.arpa.")
-        || label_before_suffix(domain, "172.in-addr.arpa.")
-            .and_then(|label| label.parse::<u8>().ok())
-            .is_some_and(|octet| (16..=31).contains(&octet))
-        || label_before_suffix(domain, "100.in-addr.arpa.")
-            .and_then(|label| label.parse::<u8>().ok())
-            .is_some_and(|octet| (64..=127).contains(&octet))
-}
-
-fn is_private_ipv6_reverse_zone(domain: &str) -> bool {
-    is_at_or_under(domain, "c.f.ip6.arpa.")
-        || is_at_or_under(domain, "d.f.ip6.arpa.")
-        || (8..=11).any(|nibble| is_at_or_under(domain, &format!("{nibble:x}.e.f.ip6.arpa.")))
-        || is_unspecified_or_loopback_ipv6_reverse(domain)
-}
-
-fn is_unspecified_or_loopback_ipv6_reverse(domain: &str) -> bool {
-    let Some(prefix) = domain.strip_suffix(".ip6.arpa.") else {
-        return false;
-    };
-    let labels: Vec<_> = prefix.split('.').collect();
-    if labels.len() != 32 {
+    if !domain.ends_with(".arpa.") {
         return false;
     }
 
-    labels.iter().all(|label| *label == "0")
-        || (labels[0] == "1" && labels[1..].iter().all(|label| *label == "0"))
+    let Ok(name) = Name::from_str(domain) else {
+        return false;
+    };
+    let Ok(net) = name.parse_arpa_name() else {
+        return false;
+    };
+
+    match net.addr() {
+        IpAddr::V4(ip) => {
+            ip.is_private()
+                || ip.is_loopback()
+                || ip.is_link_local()
+                || is_shared_ipv4(ip)
+                || ip.octets()[0] == 0
+                || ip.octets()[0] == 255
+        }
+        IpAddr::V6(ip) => {
+            ip.is_unique_local()
+                || ip.is_loopback()
+                || ip.is_unicast_link_local()
+                || ip.is_unspecified()
+        }
+    }
 }
 
-fn label_before_suffix<'a>(domain: &'a str, suffix: &str) -> Option<&'a str> {
-    let prefix = domain.strip_suffix(suffix)?.strip_suffix('.')?;
-    prefix.rsplit('.').next()
+fn is_shared_ipv4(ip: Ipv4Addr) -> bool {
+    let octets = ip.octets();
+    octets[0] == 100 && (octets[1] & 0b1100_0000) == 0b0100_0000
 }
 
 fn is_at_or_under(domain: &str, zone: &str) -> bool {
@@ -265,6 +260,19 @@ mod tests {
     }
 
     #[test]
+    fn ipv4only_arpa_gets_empty_local_answer() {
+        let PreflightDecision::Respond { code, records, status } =
+            classify_overrideable_local_zone("ipv4only.arpa.")
+        else {
+            panic!("ipv4only.arpa must be handled locally");
+        };
+
+        assert_eq!(code, ResponseCode::NoError);
+        assert_eq!(status, DnsResultStatus::Local);
+        assert!(records.is_empty());
+    }
+
+    #[test]
     fn private_ipv4_reverse_zones_are_not_forwarded() {
         for domain in [
             "1.0.0.10.in-addr.arpa.",
@@ -275,10 +283,12 @@ mod tests {
             "1.2.31.172.in-addr.arpa.",
             "1.2.64.100.in-addr.arpa.",
             "1.2.127.100.in-addr.arpa.",
+            "1.255.255.0.in-addr.arpa.",
         ] {
             assert_eq!(
                 response_code(classify_overrideable_local_zone(domain)),
-                Some(ResponseCode::NXDomain)
+                Some(ResponseCode::NXDomain),
+                "domain = {domain}"
             );
         }
 
@@ -299,12 +309,14 @@ mod tests {
             "1.0.0.0.d.f.ip6.arpa.",
             "1.0.0.0.8.e.f.ip6.arpa.",
             "1.0.0.0.b.e.f.ip6.arpa.",
+            "2.5.0.3.c.c.e.f.f.f.4.4.4.b.8.a.0.0.4.4.3.3.3.3.2.2.2.2.2.2.d.f.ip6.arpa.",
             "0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.ip6.arpa.",
             "1.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.ip6.arpa.",
         ] {
             assert_eq!(
                 response_code(classify_overrideable_local_zone(domain)),
-                Some(ResponseCode::NXDomain)
+                Some(ResponseCode::NXDomain),
+                "domain = {domain}"
             );
         }
 

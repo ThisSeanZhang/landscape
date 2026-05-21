@@ -92,9 +92,40 @@ pub struct CheckDnsReq {
 
 impl CheckDnsReq {
     pub fn get_domain(&self) -> String {
-        match idna::domain_to_ascii(&self.domain) {
+        let domain = self.domain.trim().trim_end_matches('.');
+        match idna::domain_to_ascii(domain) {
             Ok(ascii) => format!("{}.", ascii),
-            Err(_) => format!("{}.", self.domain),
+            Err(_) => format!("{}.", domain),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::dns::rule::LandscapeDnsRecordType;
+
+    #[test]
+    fn check_dns_req_normalizes_trailing_dot_once() {
+        let req = CheckDnsReq {
+            flow_id: 1,
+            domain: "example.com.".to_string(),
+            record_type: LandscapeDnsRecordType::A,
+            apply_filter: false,
+        };
+
+        assert_eq!(req.get_domain(), "example.com.");
+    }
+
+    #[test]
+    fn check_dns_req_adds_missing_trailing_dot() {
+        let req = CheckDnsReq {
+            flow_id: 1,
+            domain: "example.com".to_string(),
+            record_type: LandscapeDnsRecordType::A,
+            apply_filter: false,
+        };
+
+        assert_eq!(req.get_domain(), "example.com.");
     }
 }
