@@ -58,8 +58,8 @@ struct dispatch_key {
 };
 
 struct dispatch_value {
-    // Prog array index of the matched next intro pipe
-    u32 next_pipe_intro_index;
+    // Prog array index of the matched chain root
+    u32 next_pipe_root_index;
 };
 
 struct {
@@ -69,15 +69,15 @@ struct {
     __uint(max_entries, PIPELINE_COUNT);
 } intro_dispatch_map SEC(".maps");
 
-static __always_inline int intro_dispatch_tailcall(struct xdp_md *ctx, struct dispatch_key *key) {
+static __always_inline int intro_tailcall_root(struct xdp_md *ctx, struct dispatch_key *key) {
     struct dispatch_value *value = bpf_map_lookup_elem(&intro_dispatch_map, key);
     if (!value) {
         return XDP_PASS;
     }
 
-    bpf_tail_call(ctx, &xdp_pipe_progs, value->next_pipe_intro_index);
-    ld_bpf_log("intro_dispatch tail call failed, dispatch_type=%u index=%u", key->dispatch_type,
-               value->next_pipe_intro_index);
+    bpf_tail_call(ctx, &xdp_pipe_root_progs, value->next_pipe_root_index);
+    ld_bpf_log("intro tail call failed, dispatch_type=%u root_index=%u", key->dispatch_type,
+               value->next_pipe_root_index);
     return XDP_PASS;
 }
 
@@ -93,10 +93,22 @@ int intro_dispatch(struct xdp_md *ctx) {
         return XDP_PASS;
     }
 
-    // 1. Dispatch PPPoE inner IPv4/IPv6 and direct IPv4/IPv6.
-    // 2. Pass packets not meant for interception.
-    // 3. Look up hash map with dispatch_type + address slot.
-    // 4. On hit, tail call to the matched pipe; otherwise pass.
+    //
+    // intro_dispatch (XDP entry)
+    //   │
+    //   ├─ classifies IPv4 / IPv6 / PPPoE
+    //   ├─ PPPoE → strips session header, rewrites ethhdr
+    //   ├─ looks up intro_dispatch_map
+    //   │     ├─ miss  → XDP_PASS
+    //   │     └─ hit   → bpf_tail_call(&xdp_pipe_root_progs,
+    //   │                        value->next_pipe_root_index)
+    //   │                    │
+    //   │                    ▼  chain root (linked-list head)
+    //   │                         │→ &next_stage[0] → ... → wan_route
+    //   │                                                    │
+    //   │                                              bpf_redirect()
+    //   └─ does not write meta (dispatch only classifies / dispatches)
+    //
 
     if (eth->h_proto == ETH_IPV4) {
         struct iphdr *iph = (struct iphdr *)(eth + 1);
@@ -106,7 +118,7 @@ int intro_dispatch(struct xdp_md *ctx) {
 
         key.dispatch_type = LANDSCAPE_IPV4_TYPE;
         key.v4.daddr = iph->daddr;
-        return intro_dispatch_tailcall(ctx, &key);
+        return intro_tailcall_root(ctx, &key);
     }
 
     if (eth->h_proto == ETH_IPV6) {
@@ -117,7 +129,7 @@ int intro_dispatch(struct xdp_md *ctx) {
 
         key.dispatch_type = LANDSCAPE_IPV6_TYPE;
         __builtin_memcpy(&key.v6.prefix64, &ip6h->daddr, sizeof(key.v6.prefix64));
-        return intro_dispatch_tailcall(ctx, &key);
+        return intro_tailcall_root(ctx, &key);
     }
 
     if (eth->h_proto != ETH_P_PPP_SES) {
@@ -173,7 +185,7 @@ int intro_dispatch(struct xdp_md *ctx) {
     __builtin_memcpy(eth->h_dest, mac_pair, sizeof(mac_pair));
     eth->h_proto = l2_proto;
 
-    return intro_dispatch_tailcall(ctx, &key);
+    return intro_tailcall_root(ctx, &key);
 
 #undef BPF_LOG_TOPIC
 }
