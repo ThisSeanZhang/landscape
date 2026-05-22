@@ -1,0 +1,281 @@
+#include <vmlinux.h>
+
+#include <bpf/bpf_endian.h>
+#include <bpf/bpf_helpers.h>
+#include <bpf/bpf_tracing.h>
+#include <bpf/bpf_core_read.h>
+
+#include "landscape.h"
+#include "land_wan_ip.h"
+
+#include "pipeline/pipeline.h"
+#include "pipeline/chain.h"
+
+#include "route/route_index.h"
+#include "route/route_maps_v4.h"
+#include "route/route_maps_v6.h"
+
+#include "flow_match.h"
+#include "neigh_ip.h"
+
+char LICENSE[] SEC("license") = "GPL";
+
+// ── XDP-native packet reading (replaces scan_route_packet + read_route_context) ──
+
+static __always_inline int xdp_read_ipv4(struct xdp_md *ctx, struct route_context_v4 *context) {
+    void *data = (void *)(long)ctx->data;
+    void *data_end = (void *)(long)ctx->data_end;
+    struct ethhdr *eth = data;
+    struct iphdr *iph;
+
+    if ((void *)(eth + 1) > data_end) return XDP_PASS;
+    if (eth->h_proto != ETH_IPV4) return XDP_PASS;
+
+    iph = (struct iphdr *)(eth + 1);
+    if ((void *)(iph + 1) > data_end) return XDP_PASS;
+
+    context->saddr = iph->saddr;
+    context->daddr = iph->daddr;
+    return 0;
+}
+
+static __always_inline int xdp_read_ipv6(struct xdp_md *ctx, struct route_context_v6 *context) {
+    void *data = (void *)(long)ctx->data;
+    void *data_end = (void *)(long)ctx->data_end;
+    struct ethhdr *eth = data;
+    struct ipv6hdr *ip6h;
+
+    if ((void *)(eth + 1) > data_end) return XDP_PASS;
+    if (eth->h_proto != ETH_IPV6) return XDP_PASS;
+
+    ip6h = (struct ipv6hdr *)(eth + 1);
+    if ((void *)(ip6h + 1) > data_end) return XDP_PASS;
+
+    COPY_ADDR_FROM(context->saddr.all, ip6h->saddr.in6_u.u6_addr32);
+    COPY_ADDR_FROM(context->daddr.all, ip6h->daddr.in6_u.u6_addr32);
+    return 0;
+}
+
+// ── Forwarding checks (unchanged logic) ──
+
+static __always_inline int xdp_should_forward_v4(const struct route_context_v4 *context) {
+    return should_not_forward(context->daddr) ? XDP_PASS : 0;
+}
+
+static __always_inline int xdp_should_forward_v6(const struct route_context_v6 *context) {
+    return is_broadcast_ip6(context->daddr.bytes) == TC_ACT_UNSPEC ? XDP_PASS : 0;
+}
+
+// ── is_current_wan_packet: skb->ingress_ifindex → ctx->ingress_ifindex ──
+
+static __always_inline int xdp_is_wan_packet_v4(struct xdp_md *ctx,
+                                                struct route_context_v4 *context) {
+    struct wan_ip_info_key key = {};
+    key.ifindex = ctx->ingress_ifindex;
+    key.l3_protocol = LANDSCAPE_IPV4_TYPE;
+
+    struct wan_ip_info_value *wan_info = bpf_map_lookup_elem(&wan_ip_binding, &key);
+    if (wan_info != NULL && wan_info->addr.ip == context->daddr) return XDP_PASS;
+    return 0;
+}
+
+static __always_inline int xdp_is_wan_packet_v6(struct xdp_md *ctx,
+                                                struct route_context_v6 *context) {
+    struct wan_ip_info_key key = {};
+    key.ifindex = ctx->ingress_ifindex;
+    key.l3_protocol = LANDSCAPE_IPV6_TYPE;
+
+    struct wan_ip_info_value *wan_info = bpf_map_lookup_elem(&wan_ip_binding, &key);
+    if (wan_info != NULL && ip_addr_equal_x(&wan_info->addr, &context->daddr)) return XDP_PASS;
+    return 0;
+}
+
+// ── lan_redirect: ① lan_map → ② ip_mac cache → ③ fib_lookup + write cache ──
+
+static __always_inline int xdp_lan_redirect_v4(struct xdp_md *ctx,
+                                               struct route_context_v4 *context) {
+    struct lan_route_key_v4 lan_key = {.prefixlen = 32, .addr = context->daddr};
+    struct mac_key_v4 mac_key = {.addr = context->daddr};
+    struct mac_value_v4 *mac_val;
+
+    // ① lan_map lookup (existing user-configured routes)
+    struct lan_route_info_v4 *lan_info = bpf_map_lookup_elem(&rt4_lan_map, &lan_key);
+    if (lan_info != NULL) {
+        if (lan_info->ifindex == ctx->ingress_ifindex) return XDP_PASS;
+        if (!lan_info->is_next_hop && lan_info->addr == context->daddr) return XDP_PASS;
+
+        if (lan_info->has_mac) {
+            mac_key.addr = lan_info->is_next_hop ? lan_info->addr : context->daddr;
+            mac_val = bpf_map_lookup_elem(&ip_mac_v4, &mac_key);
+            if (mac_val) {
+                void *data = (void *)(long)ctx->data;
+                void *data_end = (void *)(long)ctx->data_end;
+                struct ethhdr *eth = data;
+                if ((void *)(eth + 1) > data_end) return XDP_PASS;
+                __builtin_memcpy(eth->h_dest, mac_val->mac, 6);
+                __builtin_memcpy(eth->h_source, lan_info->mac_addr, 6);
+                return bpf_redirect(lan_info->ifindex, 0);
+            }
+        }
+        return bpf_redirect(lan_info->ifindex, 0);
+    }
+
+    // ② ip_mac cache lookup
+    mac_val = bpf_map_lookup_elem(&ip_mac_v4, &mac_key);
+    if (mac_val != NULL) {
+        if (mac_val->ifindex == ctx->ingress_ifindex) return XDP_PASS;
+
+        void *data = (void *)(long)ctx->data;
+        void *data_end = (void *)(long)ctx->data_end;
+        struct ethhdr *eth = data;
+        if ((void *)(eth + 1) > data_end) return XDP_PASS;
+        __builtin_memcpy(eth->h_dest, mac_val->mac, 6);
+        __builtin_memcpy(eth->h_source, mac_val->dev_mac, 6);
+        return bpf_redirect(mac_val->ifindex, 0);
+    }
+
+    // ③ fib_lookup + write back to cache
+    struct bpf_fib_lookup fib = {};
+    fib.family = AF_INET;
+    fib.tot_len = sizeof(struct iphdr);
+    fib.ipv4_src = context->saddr;
+    fib.ipv4_dst = context->daddr;
+    fib.ifindex = ctx->ingress_ifindex;
+
+    int rc = bpf_fib_lookup(ctx, &fib, sizeof(fib), 0);
+    if (rc == BPF_FIB_LKUP_RET_SUCCESS) {
+        if (fib.ifindex == ctx->ingress_ifindex) return XDP_PASS;
+
+        struct mac_value_v4 new_val = {};
+        new_val.ifindex = fib.ifindex;
+        new_val.proto = ETH_IPV4;
+        __builtin_memcpy(new_val.mac, fib.dmac, 6);
+        __builtin_memcpy(new_val.dev_mac, fib.smac, 6);
+        bpf_map_update_elem(&ip_mac_v4, &mac_key, &new_val, BPF_ANY);
+
+        void *data = (void *)(long)ctx->data;
+        void *data_end = (void *)(long)ctx->data_end;
+        struct ethhdr *eth = data;
+        if ((void *)(eth + 1) > data_end) return XDP_PASS;
+        __builtin_memcpy(eth->h_dest, fib.dmac, 6);
+        __builtin_memcpy(eth->h_source, fib.smac, 6);
+        return bpf_redirect(fib.ifindex, 0);
+    }
+
+    return 0;
+}
+
+static __always_inline int xdp_lan_redirect_v6(struct xdp_md *ctx,
+                                               struct route_context_v6 *context) {
+    struct lan_route_key_v6 lan_key = {.prefixlen = 128};
+    struct mac_key_v6 mac_key = {};
+    struct mac_value_v6 *mac_val;
+    COPY_ADDR_FROM(lan_key.addr.bytes, context->daddr.bytes);
+    COPY_ADDR_FROM(mac_key.addr.bytes, context->daddr.bytes);
+
+    // ① lan_map lookup
+    struct lan_route_info_v6 *lan_info = bpf_map_lookup_elem(&rt6_lan_map, &lan_key);
+    if (lan_info != NULL) {
+        if (lan_info->ifindex == ctx->ingress_ifindex) return XDP_PASS;
+        if (!lan_info->is_next_hop && ip_addr_equal_in6(&lan_info->addr, &context->daddr))
+            return XDP_PASS;
+
+        if (lan_info->has_mac) {
+            struct mac_key_v6 hop_key = {};
+            COPY_ADDR_FROM(hop_key.addr.all,
+                           lan_info->is_next_hop ? lan_info->addr.all : context->daddr.all);
+            mac_val = bpf_map_lookup_elem(&ip_mac_v6, &hop_key);
+            if (mac_val) {
+                void *data = (void *)(long)ctx->data;
+                void *data_end = (void *)(long)ctx->data_end;
+                struct ethhdr *eth = data;
+                if ((void *)(eth + 1) > data_end) return XDP_PASS;
+                __builtin_memcpy(eth->h_dest, mac_val->mac, 6);
+                __builtin_memcpy(eth->h_source, lan_info->mac_addr, 6);
+                return bpf_redirect(lan_info->ifindex, 0);
+            }
+        }
+        return bpf_redirect(lan_info->ifindex, 0);
+    }
+
+    // ② ip_mac cache lookup
+    mac_val = bpf_map_lookup_elem(&ip_mac_v6, &mac_key);
+    if (mac_val != NULL) {
+        if (mac_val->ifindex == ctx->ingress_ifindex) return XDP_PASS;
+
+        void *data = (void *)(long)ctx->data;
+        void *data_end = (void *)(long)ctx->data_end;
+        struct ethhdr *eth = data;
+        if ((void *)(eth + 1) > data_end) return XDP_PASS;
+        __builtin_memcpy(eth->h_dest, mac_val->mac, 6);
+        __builtin_memcpy(eth->h_source, mac_val->dev_mac, 6);
+        return bpf_redirect(mac_val->ifindex, 0);
+    }
+
+    // ③ fib_lookup + write back to cache
+    struct bpf_fib_lookup fib = {};
+    fib.family = AF_INET6;
+    COPY_ADDR_FROM(fib.ipv6_src, context->saddr.all);
+    COPY_ADDR_FROM(fib.ipv6_dst, context->daddr.all);
+    fib.ifindex = ctx->ingress_ifindex;
+
+    int rc = bpf_fib_lookup(ctx, &fib, sizeof(fib), 0);
+    if (rc == BPF_FIB_LKUP_RET_SUCCESS) {
+        if (fib.ifindex == ctx->ingress_ifindex) return XDP_PASS;
+
+        struct mac_value_v6 new_val = {};
+        new_val.ifindex = fib.ifindex;
+        new_val.proto = ETH_IPV6;
+        __builtin_memcpy(new_val.mac, fib.dmac, 6);
+        __builtin_memcpy(new_val.dev_mac, fib.smac, 6);
+        bpf_map_update_elem(&ip_mac_v6, &mac_key, &new_val, BPF_ANY);
+
+        void *data = (void *)(long)ctx->data;
+        void *data_end = (void *)(long)ctx->data_end;
+        struct ethhdr *eth = data;
+        if ((void *)(eth + 1) > data_end) return XDP_PASS;
+        __builtin_memcpy(eth->h_dest, fib.dmac, 6);
+        __builtin_memcpy(eth->h_source, fib.smac, 6);
+        return bpf_redirect(fib.ifindex, 0);
+    }
+
+    return 0;
+}
+
+// ── main XDP wan_route ingress ──
+
+SEC("xdp")
+int xdp_wan_route_ingress(struct xdp_md *ctx) {
+    void *data = (void *)(long)ctx->data;
+    void *data_end = (void *)(long)ctx->data_end;
+    struct ethhdr *eth = data;
+    int ret;
+
+    if ((void *)(eth + 1) > data_end) return XDP_PASS;
+
+    if (eth->h_proto == ETH_IPV4) {
+        struct route_context_v4 context = {};
+        ret = xdp_read_ipv4(ctx, &context);
+        if (ret) return ret;
+        ret = xdp_should_forward_v4(&context);
+        if (ret) return ret;
+        ret = xdp_is_wan_packet_v4(ctx, &context);
+        if (ret) return ret;
+        ret = xdp_lan_redirect_v4(ctx, &context);
+        return ret ? ret : XDP_PASS;
+    }
+
+    if (eth->h_proto == ETH_IPV6) {
+        struct route_context_v6 context = {};
+        ret = xdp_read_ipv6(ctx, &context);
+        if (ret) return ret;
+        ret = xdp_should_forward_v6(&context);
+        if (ret) return ret;
+        ret = xdp_is_wan_packet_v6(ctx, &context);
+        if (ret) return ret;
+        ret = xdp_lan_redirect_v6(ctx, &context);
+        return ret ? ret : XDP_PASS;
+    }
+
+    return XDP_PASS;
+}
