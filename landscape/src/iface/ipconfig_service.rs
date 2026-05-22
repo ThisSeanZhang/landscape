@@ -6,7 +6,10 @@ use landscape_common::LANDSCAPE_DEFAULE_DHCP_V4_CLIENT_PORT;
 use landscape_common::{
     args::LAND_HOSTNAME,
     global_const::default_router::{RouteInfo, RouteType, LD_ALL_ROUTERS},
-    iface::ip_config::{IfaceIpModelConfig, IfaceIpServiceConfig},
+    iface::{
+        config::IfaceZoneType,
+        ip_config::{IfaceIpModelConfig, IfaceIpServiceConfig},
+    },
     observer::IfaceObserverAction,
     service::{
         controller::ControllerService,
@@ -215,16 +218,34 @@ impl IfaceIpServiceManagerService {
         mut dev_observer: broadcast::Receiver<IfaceObserverAction>,
     ) -> Self {
         let store = store_service.iface_ip_service_store();
+        let iface_store = store_service.iface_store();
+        let mut init_configs = Vec::new();
+        for config in store.list().await.unwrap() {
+            let iface_config = iface_store.find_by_id(config.iface_name.clone()).await.unwrap();
+            if matches!(iface_config.map(|iface| iface.zone_type), Some(IfaceZoneType::Wan)) {
+                init_configs.push(config);
+            }
+        }
+
         let server_starter = IPConfigService::new(route_service);
-        let service =
-            ServiceManager::init(store.list().await.unwrap(), server_starter.clone()).await;
+        let service = ServiceManager::init(init_configs, server_starter.clone()).await;
 
         let service_clone = service.clone();
+        let iface_store = store_service.iface_store();
         tokio::spawn(async move {
             while let Ok(msg) = dev_observer.recv().await {
                 match msg {
                     IfaceObserverAction::Up(iface_name) => {
                         tracing::info!("restart {iface_name} IfaceIp service");
+                        let iface_config =
+                            iface_store.find_by_id(iface_name.clone()).await.unwrap();
+                        if !matches!(
+                            iface_config.map(|iface| iface.zone_type),
+                            Some(IfaceZoneType::Wan)
+                        ) {
+                            continue;
+                        }
+
                         let service_config = if let Some(service_config) =
                             store.find_by_id(iface_name.clone()).await.unwrap()
                         {

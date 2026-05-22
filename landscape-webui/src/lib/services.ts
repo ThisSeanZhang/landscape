@@ -101,7 +101,7 @@ export class ServiceExhibitSwitch {
     this.enable_in_boot = true;
     this.zone_type = true;
     this.pppd = false;
-    this.ip_config = true;
+    this.ip_config = false;
     this.nat_config = false;
     this.mark_config = false;
     this.ipv6pd = false;
