@@ -207,8 +207,8 @@ impl MdnsRuntime {
                 return;
             }
         };
-        if !has_valid_mdns_hop_limit(packet.hop_limit) {
-            tracing::debug!("discard mDNS packet with invalid hop limit: {:?}", packet.hop_limit);
+        if !has_valid_mdns_hop_limit(packet.family, packet.hop_limit) {
+            tracing::trace!("discard mDNS packet with invalid hop limit: {:?}", packet.hop_limit);
             return;
         }
 
@@ -738,8 +738,11 @@ fn parse_query_unicast_response(packet: &[u8]) -> bool {
     message.queries().iter().any(|query| query.mdns_unicast_response())
 }
 
-fn has_valid_mdns_hop_limit(hop_limit: Option<u32>) -> bool {
-    hop_limit == Some(MDNS_LINK_HOP_LIMIT)
+fn has_valid_mdns_hop_limit(family: MdnsFamily, hop_limit: Option<u32>) -> bool {
+    match family {
+        MdnsFamily::V4 => matches!(hop_limit, Some(MDNS_LINK_HOP_LIMIT) | Some(1)),
+        MdnsFamily::V6 => hop_limit == Some(MDNS_LINK_HOP_LIMIT),
+    }
 }
 
 fn normalize_name(name: &str) -> String {
@@ -1003,10 +1006,19 @@ mod tests {
     }
 
     #[test]
-    fn mdns_packets_require_link_local_hop_limit() {
-        assert!(has_valid_mdns_hop_limit(Some(255)));
-        assert!(!has_valid_mdns_hop_limit(Some(254)));
-        assert!(!has_valid_mdns_hop_limit(None));
+    fn ipv4_mdns_packets_accept_legacy_link_ttl() {
+        assert!(has_valid_mdns_hop_limit(MdnsFamily::V4, Some(255)));
+        assert!(has_valid_mdns_hop_limit(MdnsFamily::V4, Some(1)));
+        assert!(!has_valid_mdns_hop_limit(MdnsFamily::V4, Some(254)));
+        assert!(!has_valid_mdns_hop_limit(MdnsFamily::V4, None));
+    }
+
+    #[test]
+    fn ipv6_mdns_packets_require_link_local_hop_limit() {
+        assert!(has_valid_mdns_hop_limit(MdnsFamily::V6, Some(255)));
+        assert!(!has_valid_mdns_hop_limit(MdnsFamily::V6, Some(1)));
+        assert!(!has_valid_mdns_hop_limit(MdnsFamily::V6, Some(254)));
+        assert!(!has_valid_mdns_hop_limit(MdnsFamily::V6, None));
     }
 
     #[test]
