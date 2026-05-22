@@ -19,6 +19,7 @@ mod route;
 mod scanner;
 mod time;
 mod tproxy;
+mod xdp_chain;
 
 pub(crate) mod test_scanner {
     include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/test_scanner.skel.rs"));
@@ -34,6 +35,14 @@ pub(crate) mod test_route_packet {
 
 pub(crate) mod test_tproxy_packet {
     include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/test_tproxy_packet.skel.rs"));
+}
+
+pub(crate) mod test_xdp_root {
+    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/test_xdp_root.skel.rs"));
+}
+
+pub(crate) mod test_xdp_chain_stage {
+    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/test_xdp_chain_stage.skel.rs"));
 }
 
 unsafe impl plain::Plain for packet_info {}

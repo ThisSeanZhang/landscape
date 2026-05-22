@@ -6,12 +6,21 @@
 
 #define PIPELINE_COUNT 1024
 
+#define XDP_PIPE_EXIT_WAN_ROUTE 0
+
 struct {
     __uint(type, BPF_MAP_TYPE_PROG_ARRAY);
     __uint(max_entries, PIPELINE_COUNT);
     __uint(key_size, sizeof(u32));
     __uint(value_size, sizeof(u32));
 } xdp_pipe_root_progs SEC(".maps");
+
+struct {
+    __uint(type, BPF_MAP_TYPE_PROG_ARRAY);
+    __uint(max_entries, 4);
+    __uint(key_size, sizeof(u32));
+    __uint(value_size, sizeof(u32));
+} xdp_pipe_exits SEC(".maps");
 
 struct xdp_pipe_meta {
     u32 mark;
