@@ -6,18 +6,11 @@
 
 #include "landscape.h"
 #include "pipeline/pipeline.h"
-#include "pipeline/chain.h"
+#include "pipeline/stage.h"
 
 char LICENSE[] SEC("license") = "GPL";
 
 const volatile u16 mtu_size = 1492;
-
-struct {
-    __uint(type, BPF_MAP_TYPE_PROG_ARRAY);
-    __uint(max_entries, 2);
-    __uint(key_size, sizeof(u32));
-    __uint(value_size, sizeof(u32));
-} next_stage SEC(".maps");
 
 static __always_inline int mss_clamp_packet(struct xdp_md *ctx) {
     void *data = (void *)(long)ctx->data;
@@ -82,7 +75,7 @@ SEC("xdp")
 int xdp_mss_clamp_lan(struct xdp_md *ctx) {
     mss_clamp_packet(ctx);
 
-    bpf_tail_call(ctx, &next_stage, 0);
+    bpf_tail_call(ctx, &next_stage, XDP_STAGE_NEXT_LAN);
     bpf_tail_call(ctx, &xdp_pipe_exits_lan, 0);
     return XDP_PASS;
 }
@@ -91,7 +84,7 @@ SEC("xdp")
 int xdp_mss_clamp_wan(struct xdp_md *ctx) {
     mss_clamp_packet(ctx);
 
-    bpf_tail_call(ctx, &next_stage, 1);
+    bpf_tail_call(ctx, &next_stage, XDP_STAGE_NEXT_WAN);
     bpf_tail_call(ctx, &xdp_pipe_exits_wan, 0);
     return XDP_PASS;
 }
