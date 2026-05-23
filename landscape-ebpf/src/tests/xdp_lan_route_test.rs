@@ -15,8 +15,8 @@ use crate::map_setting::share_map::types::{
     rt_cache_key_v4, rt_cache_key_v6, rt_cache_value_v4, rt_cache_value_v6,
 };
 use crate::map_setting::share_map::ShareMapSkelBuilder;
-use crate::tests::intro_skel::IntroSkelBuilder;
 use crate::tests::test_xdp_dummy::TestXdpDummySkelBuilder;
+use crate::tests::wan_intro_skel::XdpWanIntroSkelBuilder;
 use crate::tests::xdp_lan_chain_skel::XdpLanChainSkelBuilder;
 use crate::tests::xdp_lan_route_skel::XdpLanRouteSkelBuilder;
 use crate::tests::xdp_mss_clamp_skel::XdpMssClampSkelBuilder;
@@ -403,7 +403,7 @@ fn xdp_lan_route_wan_pipeline() {
     let mut lr_obj = std::mem::MaybeUninit::uninit();
     let lr = lr_b.open(&mut lr_obj).unwrap().load().unwrap();
 
-    let mut intro_b = IntroSkelBuilder::default();
+    let mut intro_b = XdpWanIntroSkelBuilder::default();
     intro_b.object_builder_mut().pin_root_path(&share_pin).unwrap();
     let mut intro_obj = std::mem::MaybeUninit::uninit();
     let intro = intro_b.open(&mut intro_obj).unwrap().load().unwrap();
@@ -434,7 +434,7 @@ fn xdp_lan_route_wan_pipeline() {
     let mss = mss_b.open(&mut mss_obj).unwrap().load().unwrap();
 
     let _l0 = lr.progs.xdp_lan_route.attach_xdp(lan_h_i as i32).unwrap();
-    let _l1 = intro.progs.intro_dispatch.attach_xdp(wan_h_i as i32).unwrap();
+    let _l1 = intro.progs.wan_intro_dispatch.attach_xdp(wan_h_i as i32).unwrap();
     let _l2 = da.progs.xdp_test_dummy.attach_xdp(lan_p_i as i32).unwrap();
     let _l3 = dc.progs.xdp_test_dummy.attach_xdp(wan_p_i as i32).unwrap();
 
@@ -467,7 +467,7 @@ fn xdp_lan_route_wan_pipeline() {
         .update(&0u32.to_ne_bytes(), &exit_fd.to_ne_bytes(), MapFlags::ANY)
         .unwrap();
 
-    // ── WAN chain (C→A): intro → wan_root → mss → wan_route_ingress ──
+    // ── WAN chain (C→A): wan_intro → wan_root → mss → wan_route_ingress ──
     {
         // dispatch_key layout (16 bytes, 8-byte aligned due to __be64 in union):
         //   [0..4)  dispatch_type (u32 LE) = 0 (direct IPv4)
@@ -478,7 +478,11 @@ fn xdp_lan_route_wan_pipeline() {
         let mut dispatch_key = [0u8; 16];
         dispatch_key[12..16].copy_from_slice(&daddr_be.to_ne_bytes());
         let dispatch_val = wan_h_i.to_ne_bytes();
-        intro.maps.intro_dispatch_map.update(&dispatch_key, &dispatch_val, MapFlags::ANY).unwrap();
+        intro
+            .maps
+            .wan_intro_dispatch_map
+            .update(&dispatch_key, &dispatch_val, MapFlags::ANY)
+            .unwrap();
     }
     intro
         .maps
@@ -516,7 +520,7 @@ fn xdp_lan_route_wan_pipeline() {
         thread::sleep(Duration::from_millis(50));
     }
 
-    // C→A: TCP SYN → intro_dispatch → WAN chain → MSS clamp
+    // C→A: TCP SYN → wan_intro → WAN chain → MSS clamp
     let pkt_c2a = build_syn_pkt(
         [0x02, 0, 0, 0, 0, 3],
         [0x02, 0, 0, 0, 0, 4],

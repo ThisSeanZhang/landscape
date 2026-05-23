@@ -76,8 +76,8 @@ pub(crate) mod xdp_wan_chain_skel {
     include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/xdp_wan_chain.skel.rs"));
 }
 
-pub(crate) mod intro_skel {
-    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/intro.skel.rs"));
+pub(crate) mod wan_intro_skel {
+    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/xdp_wan_intro.skel.rs"));
 }
 
 unsafe impl plain::Plain for packet_info {}
