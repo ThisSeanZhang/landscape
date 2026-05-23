@@ -94,7 +94,11 @@ int intro_dispatch(struct xdp_md *ctx) {
     }
 
     //
-    // intro_dispatch (XDP entry)
+    // intro_dispatch — WAN XDP ingress entry point
+    //   Attached to WAN interfaces.  Classifies incoming packets and
+    //   dispatches them into the WAN→LAN chain via xdp_pipe_root_progs.
+    //   The LAN counterpart is xdp_lan_route, attached to LAN interfaces.
+    //
     //   │
     //   ├─ classifies IPv4 / IPv6 / PPPoE
     //   ├─ PPPoE → strips session header, rewrites ethhdr

@@ -15,18 +15,24 @@
  *   predecessor's `next_stage[0]` is updated to point to the
  *   successor, then the stopped service's skel is dropped.
  *
- *   Example:  root → fw → mss → wan_route
- *   Stop mss: root → fw → wan_route  (fw.next_stage[0] ← wan_route_fd)
+ *   LAN chain :  root → fw → mss → lan_chain_exit
+ *     (fallback: xdp_pipe_exits_lan)
+ *   WAN chain :  root → fw → mss → wan_route
+ *     (fallback: xdp_pipe_exits_wan)
+ *   Stop mss:  root → fw → exit  (fw.next_stage[0] ← exit_fd)
  *
  * Tailcall pattern (BPF side):
  *   bpf_tail_call(ctx, &next_stage, 0);
- *   bpf_tail_call(ctx, &xdp_pipe_exits, XDP_PIPE_EXIT_WAN_ROUTE);
+ *   bpf_tail_call(ctx, &xdp_pipe_exits_lan, 0);  // or &xdp_pipe_exits_wan
  *   return XDP_PASS;
  *
- * The global xdp_pipe_exits acts as built-in fallback — when any
- * node's next_stage is empty, the packet is forwarded to wan_route
- * automatically.  wan_route itself does NOT declare next_stage; it
- * ends the chain with bpf_redirect().
+ * Each chain direction has its own fallback PROG_ARRAY:
+ *   xdp_pipe_exits_lan  — simple forward (bpf_redirect to target_ifindex)
+ *   xdp_pipe_exits_wan  — full routing (bpf_redirect / bpf_redirect_neigh)
+ *
+ * Generic chain nodes (mss, nat, fw) provide two SEC("xdp")
+ * entry points (_lan / _wan) that tailcall into the appropriate exit
+ * map, so a single skel can serve both directions.
  *
  * Meta:
  *   root initializes meta.mark.  Each node may read and modify meta

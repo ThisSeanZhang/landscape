@@ -15,9 +15,12 @@ use crate::map_setting::share_map::types::{
     rt_cache_key_v4, rt_cache_key_v6, rt_cache_value_v4, rt_cache_value_v6,
 };
 use crate::map_setting::share_map::ShareMapSkelBuilder;
+use crate::tests::intro_skel::IntroSkelBuilder;
 use crate::tests::test_xdp_dummy::TestXdpDummySkelBuilder;
-use crate::tests::test_xdp_redirect::TestXdpRedirectSkelBuilder;
+use crate::tests::xdp_lan_chain_skel::XdpLanChainSkelBuilder;
 use crate::tests::xdp_lan_route_skel::XdpLanRouteSkelBuilder;
+use crate::tests::xdp_mss_clamp_skel::XdpMssClampSkelBuilder;
+use crate::tests::xdp_wan_chain_skel::XdpWanChainSkelBuilder;
 use crate::tests::xdp_wan_route_skel::XdpWanRouteSkelBuilder;
 
 fn test_pin_root(prefix: &str) -> PathBuf {
@@ -92,6 +95,83 @@ fn route_slot(daddr: u32) -> u32 {
     hash ^= hash >> 16;
     hash ^= hash >> 8;
     hash & 0xF
+}
+
+fn build_syn_pkt(
+    src_mac: [u8; 6],
+    dst_mac: [u8; 6],
+    src_ip: [u8; 4],
+    dst_ip: [u8; 4],
+    mss: u16,
+) -> Vec<u8> {
+    let mut pkt = vec![0u8; 14 + 20 + 24]; // eth + ip + tcp(syn+mss)
+    pkt[0..6].copy_from_slice(&dst_mac);
+    pkt[6..12].copy_from_slice(&src_mac);
+    pkt[12] = 0x08;
+    pkt[13] = 0x00;
+    // IP
+    pkt[14] = 0x45;
+    pkt[15] = 0x00;
+    let ip_len = 20u16 + 24;
+    pkt[16..18].copy_from_slice(&ip_len.to_be_bytes());
+    pkt[18..22].copy_from_slice(&0u32.to_be_bytes());
+    pkt[20..22].copy_from_slice(&0x4000u16.to_be_bytes());
+    pkt[22] = 64;
+    pkt[23] = 6;
+    pkt[26..30].copy_from_slice(&src_ip);
+    pkt[30..34].copy_from_slice(&dst_ip);
+    let ip_csum = csum(&pkt[14..34]);
+    pkt[24..26].copy_from_slice(&ip_csum.to_be_bytes());
+    // TCP
+    pkt[34..36].copy_from_slice(&12345u16.to_be_bytes());
+    pkt[36..38].copy_from_slice(&80u16.to_be_bytes());
+    pkt[38..42].copy_from_slice(&1000u32.to_be_bytes());
+    pkt[46] = 0x60;
+    pkt[47] = 0x02; // data_off=6, SYN
+    pkt[48..50].copy_from_slice(&0xffffu16.to_be_bytes());
+    pkt[54] = 2;
+    pkt[55] = 4; // MSS option
+    pkt[56..58].copy_from_slice(&mss.to_be_bytes());
+    let tcp_csum = tcp_csum(&pkt[26..30], &pkt[30..34], &pkt[34..58]);
+    pkt[50..52].copy_from_slice(&tcp_csum.to_be_bytes());
+    pkt
+}
+
+fn csum(data: &[u8]) -> u16 {
+    let mut s: u32 = 0;
+    for i in (0..data.len()).step_by(2) {
+        s += if i + 1 < data.len() {
+            u16::from_be_bytes([data[i], data[i + 1]]) as u32
+        } else {
+            (data[i] as u32) << 8
+        };
+    }
+    while s > 0xffff {
+        s = (s & 0xffff) + (s >> 16);
+    }
+    !(s as u16)
+}
+
+fn tcp_csum(src: &[u8], dst: &[u8], tcp: &[u8]) -> u16 {
+    let mut s: u32 = 0;
+    for i in (0..src.len()).step_by(2) {
+        s += u16::from_be_bytes([src[i], src[i + 1]]) as u32;
+    }
+    for i in (0..dst.len()).step_by(2) {
+        s += u16::from_be_bytes([dst[i], dst[i + 1]]) as u32;
+    }
+    s += 6 + tcp.len() as u32;
+    for i in (0..tcp.len()).step_by(2) {
+        s += if i + 1 < tcp.len() {
+            u16::from_be_bytes([tcp[i], tcp[i + 1]]) as u32
+        } else {
+            (tcp[i] as u32) << 8
+        };
+    }
+    while s > 0xffff {
+        s = (s & 0xffff) + (s >> 16);
+    }
+    !(s as u16)
 }
 
 fn as_bytes<T>(value: &T) -> &[u8] {
@@ -323,6 +403,11 @@ fn xdp_lan_route_wan_pipeline() {
     let mut lr_obj = std::mem::MaybeUninit::uninit();
     let lr = lr_b.open(&mut lr_obj).unwrap().load().unwrap();
 
+    let mut intro_b = IntroSkelBuilder::default();
+    intro_b.object_builder_mut().pin_root_path(&share_pin).unwrap();
+    let mut intro_obj = std::mem::MaybeUninit::uninit();
+    let intro = intro_b.open(&mut intro_obj).unwrap().load().unwrap();
+
     let mut wr_b = XdpWanRouteSkelBuilder::default();
     wr_b.object_builder_mut().pin_root_path(&share_pin).unwrap();
     let mut wr_obj = std::mem::MaybeUninit::uninit();
@@ -336,41 +421,108 @@ fn xdp_lan_route_wan_pipeline() {
     let mut d2_obj = std::mem::MaybeUninit::uninit();
     let dc = d2_b.open(&mut d2_obj).unwrap().load().unwrap();
 
-    let r_b = TestXdpRedirectSkelBuilder::default();
-    let mut r_obj = std::mem::MaybeUninit::uninit();
-    let rr = r_b.open(&mut r_obj).unwrap().load().unwrap();
+    let chain_b = XdpLanChainSkelBuilder::default();
+    let mut chain_obj = std::mem::MaybeUninit::uninit();
+    let chain = chain_b.open(&mut chain_obj).unwrap().load().unwrap();
+
+    let wan_root_b = XdpWanChainSkelBuilder::default();
+    let mut wan_root_obj = std::mem::MaybeUninit::uninit();
+    let wan_root = wan_root_b.open(&mut wan_root_obj).unwrap().load().unwrap();
+
+    let mss_b = XdpMssClampSkelBuilder::default();
+    let mut mss_obj = std::mem::MaybeUninit::uninit();
+    let mss = mss_b.open(&mut mss_obj).unwrap().load().unwrap();
 
     let _l0 = lr.progs.xdp_lan_route.attach_xdp(lan_h_i as i32).unwrap();
-    let _l1 = wr.progs.xdp_wan_route_ingress.attach_xdp(wan_h_i as i32).unwrap();
+    let _l1 = intro.progs.intro_dispatch.attach_xdp(wan_h_i as i32).unwrap();
     let _l2 = da.progs.xdp_test_dummy.attach_xdp(lan_p_i as i32).unwrap();
     let _l3 = dc.progs.xdp_test_dummy.attach_xdp(wan_p_i as i32).unwrap();
 
-    let rfd = rr.progs.xdp_test_redirect.as_fd().as_raw_fd();
+    let root_fd = chain.progs.xdp_lan_chain_root.as_fd().as_raw_fd();
+    let mss_lan_fd = mss.progs.xdp_mss_clamp_lan.as_fd().as_raw_fd();
+    let exit_fd = chain.progs.xdp_lan_chain_exit.as_fd().as_raw_fd();
+
+    let wan_root_fd = wan_root.progs.xdp_wan_chain_root.as_fd().as_raw_fd();
+    let mss_wan_fd = mss.progs.xdp_mss_clamp_wan.as_fd().as_raw_fd();
+    let wr_fd = wr.progs.xdp_wan_route_ingress.as_fd().as_raw_fd();
+
+    // ── LAN chain (A→C): lan_route → root → mss → exit ──
     lr.maps
         .xdp_lan_pipe_root_progs
-        .update(&wan_h_i.to_ne_bytes(), &rfd.to_ne_bytes(), MapFlags::ANY)
+        .update(&wan_h_i.to_ne_bytes(), &root_fd.to_ne_bytes(), MapFlags::ANY)
+        .unwrap();
+    chain
+        .maps
+        .root_next_stage
+        .update(&0u32.to_ne_bytes(), &mss_lan_fd.to_ne_bytes(), MapFlags::ANY)
+        .unwrap();
+    mss.maps.next_stage.update(&0u32.to_ne_bytes(), &exit_fd.to_ne_bytes(), MapFlags::ANY).unwrap();
+    chain
+        .maps
+        .xdp_pipe_exits_lan
+        .update(&0u32.to_ne_bytes(), &exit_fd.to_ne_bytes(), MapFlags::ANY)
+        .unwrap();
+    mss.maps
+        .xdp_pipe_exits_lan
+        .update(&0u32.to_ne_bytes(), &exit_fd.to_ne_bytes(), MapFlags::ANY)
+        .unwrap();
+
+    // ── WAN chain (C→A): intro → wan_root → mss → wan_route_ingress ──
+    {
+        // dispatch_key layout (16 bytes, 8-byte aligned due to __be64 in union):
+        //   [0..4)  dispatch_type (u32 LE) = 0 (direct IPv4)
+        //   [4..8)  padding
+        //   [8..12) v4._pad = 0
+        //   [12..16) v4.daddr (u32 BE) = 10.0.0.1
+        let daddr_be = u32::from_be(0x0A000001_u32);
+        let mut dispatch_key = [0u8; 16];
+        dispatch_key[12..16].copy_from_slice(&daddr_be.to_ne_bytes());
+        let dispatch_val = wan_h_i.to_ne_bytes();
+        intro.maps.intro_dispatch_map.update(&dispatch_key, &dispatch_val, MapFlags::ANY).unwrap();
+    }
+    intro
+        .maps
+        .xdp_pipe_root_progs
+        .update(&wan_h_i.to_ne_bytes(), &wan_root_fd.to_ne_bytes(), MapFlags::ANY)
+        .unwrap();
+    wan_root
+        .maps
+        .root_next_stage
+        .update(&0u32.to_ne_bytes(), &mss_wan_fd.to_ne_bytes(), MapFlags::ANY)
+        .unwrap();
+    mss.maps.next_stage.update(&1u32.to_ne_bytes(), &wr_fd.to_ne_bytes(), MapFlags::ANY).unwrap();
+    wan_root
+        .maps
+        .xdp_pipe_exits_wan
+        .update(&0u32.to_ne_bytes(), &wr_fd.to_ne_bytes(), MapFlags::ANY)
+        .unwrap();
+    mss.maps
+        .xdp_pipe_exits_wan
+        .update(&0u32.to_ne_bytes(), &wr_fd.to_ne_bytes(), MapFlags::ANY)
         .unwrap();
 
     clear_trace();
 
-    // A→C
-    let pkt_a2c = build_ipv4_tcp_pkt(
+    // A→C: TCP SYN → LAN chain → MSS clamp
+    let pkt_a2c = build_syn_pkt(
         [0x02, 0, 0, 0, 0, 1],
         [0x02, 0, 0, 0, 0, 2],
         [10, 0, 0, 1],
         [203, 0, 113, 1],
+        1460,
     );
     for _ in 0..2 {
         send_raw_packet(&lan_p, &pkt_a2c);
         thread::sleep(Duration::from_millis(50));
     }
 
-    // C→A
-    let pkt_c2a = build_ipv4_tcp_pkt(
+    // C→A: TCP SYN → intro_dispatch → WAN chain → MSS clamp
+    let pkt_c2a = build_syn_pkt(
         [0x02, 0, 0, 0, 0, 3],
         [0x02, 0, 0, 0, 0, 4],
         [203, 0, 113, 1],
         [10, 0, 0, 1],
+        1460,
     );
     for _ in 0..2 {
         send_raw_packet(&wan_p, &pkt_c2a);
@@ -405,10 +557,13 @@ fn xdp_lan_route_wan_pipeline() {
     let wan_keys: Vec<_> = wan_inner.keys().collect();
     println!("WAN_CACHE (v4) entries: {}", wan_keys.len());
 
-    drop(rr);
+    drop(mss);
+    drop(wan_root);
+    drop(chain);
     drop(dc);
     drop(da);
     drop(wr);
+    drop(intro);
     drop(lr);
     drop(share);
     let _ = Command::new("ip").args(["route", "del", "blackhole", "203.0.113.1"]).output();

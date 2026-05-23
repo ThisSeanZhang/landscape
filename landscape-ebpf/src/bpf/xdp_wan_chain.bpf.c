@@ -1,5 +1,6 @@
 #include <vmlinux.h>
 
+#include <bpf/bpf_endian.h>
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_tracing.h>
 
@@ -17,21 +18,8 @@ struct {
 } root_next_stage SEC(".maps");
 
 SEC("xdp")
-int xdp_test_root(struct xdp_md *ctx) {
-    struct xdp_pipe_meta meta = {.mark = 0xCAFE};
-    int ret;
-
-    ret = xdp_set_meta(ctx, &meta);
-    if (ret) {
-        bpf_printk("[root] xdp_set_meta failed: %d", ret);
-        return XDP_DROP;
-    }
-
-    bpf_printk("[root] mark=0x%x, tailcalling stage1", meta.mark);
-
+int xdp_wan_chain_root(struct xdp_md *ctx) {
     bpf_tail_call(ctx, &root_next_stage, 0);
-    bpf_tail_call(ctx, &xdp_pipe_exits_lan, 0);
-
-    bpf_printk("[root] all tailcalls failed");
+    bpf_tail_call(ctx, &xdp_pipe_exits_wan, 0);
     return XDP_PASS;
 }

@@ -39,7 +39,7 @@ int xdp_test_chain_stage(struct xdp_md *ctx) {
     bpf_printk("[stage] mark %u → %u, tailcalling next", prev_mark, meta.mark);
 
     bpf_tail_call(ctx, &next_stage, 0);
-    bpf_tail_call(ctx, &xdp_pipe_exits, XDP_PIPE_EXIT_WAN_ROUTE);
+    bpf_tail_call(ctx, &xdp_pipe_exits_lan, 0);
 
     bpf_printk("[stage] all tailcalls failed (mark=%u)", meta.mark);
     return XDP_PASS;
