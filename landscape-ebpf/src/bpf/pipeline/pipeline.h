@@ -22,8 +22,16 @@ struct {
     __uint(value_size, sizeof(u32));
 } xdp_pipe_exits SEC(".maps");
 
+struct {
+    __uint(type, BPF_MAP_TYPE_PROG_ARRAY);
+    __uint(max_entries, PIPELINE_COUNT);
+    __uint(key_size, sizeof(u32));
+    __uint(value_size, sizeof(u32));
+} xdp_lan_pipe_root_progs SEC(".maps");
+
 struct xdp_pipe_meta {
     u32 mark;
+    u32 target_ifindex;
 };
 
 static __always_inline int xdp_get_meta(struct xdp_md *ctx, struct xdp_pipe_meta *meta) {

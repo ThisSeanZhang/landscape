@@ -20,6 +20,7 @@ mod scanner;
 mod time;
 mod tproxy;
 mod xdp_chain;
+mod xdp_lan_route_test;
 mod xdp_wan_route_test;
 
 pub(crate) mod test_scanner {
@@ -48,6 +49,10 @@ pub(crate) mod test_xdp_chain_stage {
 
 pub(crate) mod xdp_wan_route_skel {
     include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/xdp_wan_route.skel.rs"));
+}
+
+pub(crate) mod xdp_lan_route_skel {
+    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/xdp_lan_route.skel.rs"));
 }
 
 unsafe impl plain::Plain for packet_info {}
