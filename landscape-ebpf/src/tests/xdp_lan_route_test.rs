@@ -1,16 +1,24 @@
-use std::os::fd::AsRawFd;
+use std::os::fd::{AsFd, AsRawFd};
 use std::path::PathBuf;
 use std::process::Command;
 use std::thread;
 use std::time::Duration;
 
 use libbpf_rs::{
+    libbpf_sys,
     skel::{OpenSkel, SkelBuilder as _},
-    MapCore, MapFlags,
+    MapCore, MapFlags, MapHandle, MapType,
 };
 use nix::net::if_::if_nametoindex;
 
+use crate::map_setting::share_map::types::{
+    rt_cache_key_v4, rt_cache_key_v6, rt_cache_value_v4, rt_cache_value_v6,
+};
+use crate::map_setting::share_map::ShareMapSkelBuilder;
+use crate::tests::test_xdp_dummy::TestXdpDummySkelBuilder;
+use crate::tests::test_xdp_redirect::TestXdpRedirectSkelBuilder;
 use crate::tests::xdp_lan_route_skel::XdpLanRouteSkelBuilder;
+use crate::tests::xdp_wan_route_skel::XdpWanRouteSkelBuilder;
 
 fn test_pin_root(prefix: &str) -> PathBuf {
     let path = PathBuf::from(format!(
@@ -24,7 +32,7 @@ fn test_pin_root(prefix: &str) -> PathBuf {
 
 fn clear_trace() {
     let _ = Command::new("sh")
-        .args(["-c", "echo 0 > /sys/kernel/debug/tracing/tracing_on; echo > /sys/kernel/debug/tracing/trace; echo 1 > /sys/kernel/debug/tracing/tracing_on"])
+        .args(["-c", "echo 0 > /sys/kernel/debug/tracing/tracing_on; echo 16384 > /sys/kernel/debug/tracing/buffer_size_kb; echo > /sys/kernel/debug/tracing/trace; echo 1 > /sys/kernel/debug/tracing/tracing_on"])
         .output();
 }
 
@@ -79,41 +87,61 @@ fn send_raw_packet(iface: &str, pkt: &[u8]) {
     }
 }
 
+fn route_slot(daddr: u32) -> u32 {
+    let mut hash = daddr;
+    hash ^= hash >> 16;
+    hash ^= hash >> 8;
+    hash & 0xF
+}
+
+fn as_bytes<T>(value: &T) -> &[u8] {
+    unsafe {
+        std::slice::from_raw_parts((value as *const T).cast::<u8>(), std::mem::size_of::<T>())
+    }
+}
+
+fn read_unaligned<T: Copy>(bytes: &[u8]) -> T {
+    unsafe { std::ptr::read_unaligned(bytes.as_ptr().cast::<T>()) }
+}
+
+fn lookup_inner_map(outer_map: &impl MapCore, cache_index: u32) -> MapHandle {
+    let val = outer_map
+        .lookup(as_bytes(&cache_index), MapFlags::ANY)
+        .unwrap()
+        .expect("inner map missing");
+    let id = read_unaligned::<i32>(&val);
+    MapHandle::from_map_id(id as u32).expect("open inner map")
+}
+
 // ── Test A: verifier smoke ──
 
 #[test]
 fn xdp_lan_route_verifier_smoke() {
     let mut builder = XdpLanRouteSkelBuilder::default();
-    {
-        let b = builder.object_builder_mut();
-        b.pin_root_path(&test_pin_root("v")).unwrap();
-    }
-
+    builder.object_builder_mut().pin_root_path(&test_pin_root("v")).unwrap();
     let mut obj = std::mem::MaybeUninit::uninit();
     let open = builder.open(&mut obj).expect("open skel");
     let _skel = open.load().expect("verifier rejected");
 }
 
-// ── Test A: trace flow ──
+// ── Test B: trace flow (empty maps, smoke test) ──
 
 #[test]
 fn xdp_lan_route_trace_flow() {
-    // create veth
-    let (host, peer) =
-        (format!("lxdh{}", std::process::id()), format!("lxdp{}", std::process::id()));
+    let pid = std::process::id();
+    let (host, peer) = (format!("lxdh{pid}"), format!("lxdp{pid}"));
     let _ = Command::new("ip").args(["link", "del", &host]).output();
     Command::new("ip")
         .args(["link", "add", &host, "type", "veth", "peer", "name", &peer])
         .output()
         .unwrap();
-    Command::new("ip").args(["link", "set", &host, "up"]).output().unwrap();
-    Command::new("ip").args(["link", "set", &peer, "up"]).output().unwrap();
+    Command::new("ip").args(["link", "set", host.as_str(), "up"]).output().unwrap();
+    Command::new("ip").args(["link", "set", peer.as_str(), "up"]).output().unwrap();
     thread::sleep(Duration::from_millis(100));
     let ifindex = if_nametoindex(host.as_str()).expect("ifindex") as i32;
 
     clear_trace();
 
-    // load & attach
     let mut builder = XdpLanRouteSkelBuilder::default();
     builder.object_builder_mut().pin_root_path(&test_pin_root("t")).unwrap();
     let mut obj = std::mem::MaybeUninit::uninit();
@@ -136,72 +164,48 @@ fn xdp_lan_route_trace_flow() {
     let trace = read_trace();
     println!("=== trace ===\n{trace}");
 
-    // Test: XDP program loads, attaches, and processes packets without crash.
-    // With empty maps → cache miss → lan_redirect → fib_lookup → REDIRECT
-    // We just verify the test doesn't panic (program loads and runs).
-
     drop(skel);
     let _ = Command::new("ip").args(["link", "del", &host]).output();
-    let _ = Command::new("ip").args(["link", "del", &peer]).output();
 }
 
-// ── Test B: populate lan_map → verify map-based redirect ──
-
-use crate::map_setting::share_map::ShareMapSkelBuilder;
+// ── Test C: lan_map redirect ──
 
 #[test]
 fn xdp_lan_route_map_redirect() {
-    // 1. Load share_map to create & pin all route maps
+    let pid = std::process::id();
     let share_pin = test_pin_root("share");
-    let mut share_builder = ShareMapSkelBuilder::default();
-    share_builder.object_builder_mut().pin_root_path(&share_pin).unwrap();
+    let mut sb = ShareMapSkelBuilder::default();
+    sb.object_builder_mut().pin_root_path(&share_pin).unwrap();
     let mut share_obj = std::mem::MaybeUninit::uninit();
-    let share_open = share_builder.open(&mut share_obj).expect("open share_map");
-    let share_skel = share_open.load().expect("load share_map");
+    let share = sb.open(&mut share_obj).unwrap().load().unwrap();
 
-    // 2. Create veth
-    let (host, peer) =
-        (format!("lrbh{}", std::process::id()), format!("lrbp{}", std::process::id()));
+    let (host, peer) = (format!("lrbh{pid}"), format!("lrbp{pid}"));
     let _ = Command::new("ip").args(["link", "del", &host]).output();
     Command::new("ip")
         .args(["link", "add", &host, "type", "veth", "peer", "name", &peer])
         .output()
         .unwrap();
-    Command::new("ip").args(["link", "set", &host, "up"]).output().unwrap();
-    Command::new("ip").args(["link", "set", &peer, "up"]).output().unwrap();
+    Command::new("ip").args(["link", "set", host.as_str(), "up"]).output().unwrap();
+    Command::new("ip").args(["link", "set", peer.as_str(), "up"]).output().unwrap();
     thread::sleep(Duration::from_millis(100));
-    let h_ifindex = if_nametoindex(host.as_str()).expect("h ifindex") as u32;
-    let p_ifindex = if_nametoindex(peer.as_str()).expect("p ifindex") as u32;
+    let h_i = if_nametoindex(host.as_str()).unwrap() as u32;
+    let p_i = if_nametoindex(peer.as_str()).unwrap() as u32;
 
-    // 3. Populate rt4_lan_map: key={prefixlen=32, addr=10.0.0.2}, value={ifindex=p_ifindex}
     let mut lan_key = [0u8; 8];
-    lan_key[0..4].copy_from_slice(&32u32.to_ne_bytes()); // prefixlen=32
-    lan_key[4..8].copy_from_slice(&0x0A000002u32.to_be_bytes()); // addr=10.0.0.2 (BE)
-
+    lan_key[0..4].copy_from_slice(&32u32.to_ne_bytes());
+    lan_key[4..8].copy_from_slice(&0x0A000002u32.to_be_bytes());
     let mut lan_val = [0u8; 16];
-    lan_val[0] = 0; // has_mac=false
-                    // mac_addr[6] stays 0
-    lan_val[7] = 0; // is_next_hop=false
-    lan_val[8..12].copy_from_slice(&p_ifindex.to_ne_bytes()); // ifindex
-    lan_val[12..16].copy_from_slice(&0u32.to_ne_bytes()); // addr=0
+    lan_val[8..12].copy_from_slice(&p_i.to_ne_bytes());
+    share.maps.rt4_lan_map.update(&lan_key, &lan_val, MapFlags::ANY).unwrap();
 
-    share_skel
-        .maps
-        .rt4_lan_map
-        .update(&lan_key, &lan_val, MapFlags::ANY)
-        .expect("populate rt4_lan_map");
-
-    // 4. Load xdp_lan_route with same pin root (reuse maps)
-    let mut builder = XdpLanRouteSkelBuilder::default();
-    builder.object_builder_mut().pin_root_path(&share_pin).unwrap();
+    let mut b = XdpLanRouteSkelBuilder::default();
+    b.object_builder_mut().pin_root_path(&share_pin).unwrap();
     let mut obj = std::mem::MaybeUninit::uninit();
-    let open = builder.open(&mut obj).expect("open lan_route");
-    let skel = open.load().expect("load lan_route");
-    let _link = skel.progs.xdp_lan_route.attach_xdp(h_ifindex as i32).expect("attach");
+    let skel = b.open(&mut obj).unwrap().load().unwrap();
+    let _link = skel.progs.xdp_lan_route.attach_xdp(h_i as i32).unwrap();
 
     clear_trace();
 
-    // 5. Send packet dst=10.0.0.2 from peer → enters host XDP
     let pkt = build_ipv4_tcp_pkt(
         [0x02, 0, 0, 0, 0, 1],
         [0x02, 0, 0, 0, 0, 2],
@@ -215,15 +219,199 @@ fn xdp_lan_route_map_redirect() {
     thread::sleep(Duration::from_millis(500));
 
     let trace = read_trace();
-    println!("=== trace B ===\n{trace}");
-
-    // With lan_map populated: should see "redirect lan_map" instead of "redirect fib"
-    assert!(
-        trace.contains("[xdp_lan] redirect lan_map"),
-        "expected lan_map redirect, got:\n{trace}"
-    );
+    println!("=== trace C ===\n{trace}");
+    assert!(trace.contains("[xdp_lan] redirect lan_map"), "no lan_map redirect:\n{trace}");
 
     drop(skel);
-    drop(share_skel);
+    drop(share);
     let _ = Command::new("ip").args(["link", "del", &host]).output();
+}
+
+// ── Test D: bidirectional A↔C (lan_route + wan_route) ──
+
+#[test]
+fn xdp_lan_route_wan_pipeline() {
+    let pid = std::process::id();
+    let (lan_h, lan_p) = (format!("lrhlh{pid}"), format!("lrhlp{pid}"));
+    let (wan_h, wan_p) = (format!("lrhwh{pid}"), format!("lrhwp{pid}"));
+
+    let _ = Command::new("ip").args(["link", "del", &lan_h]).output();
+    let _ = Command::new("ip").args(["link", "del", &wan_h]).output();
+    Command::new("ip")
+        .args(["link", "add", &lan_h, "type", "veth", "peer", "name", &lan_p])
+        .output()
+        .unwrap();
+    Command::new("ip")
+        .args(["link", "add", &wan_h, "type", "veth", "peer", "name", &wan_p])
+        .output()
+        .unwrap();
+    Command::new("ip").args(["link", "set", lan_h.as_str(), "up"]).output().unwrap();
+    Command::new("ip").args(["link", "set", lan_p.as_str(), "up"]).output().unwrap();
+    Command::new("ip").args(["link", "set", wan_h.as_str(), "up"]).output().unwrap();
+    Command::new("ip").args(["link", "set", wan_p.as_str(), "up"]).output().unwrap();
+    thread::sleep(Duration::from_millis(100));
+
+    let lan_h_i = if_nametoindex(lan_h.as_str()).unwrap() as u32;
+    let lan_p_i = if_nametoindex(lan_p.as_str()).unwrap() as u32;
+    let wan_h_i = if_nametoindex(wan_h.as_str()).unwrap() as u32;
+    let wan_p_i = if_nametoindex(wan_p.as_str()).unwrap() as u32;
+
+    Command::new("ip").args(["route", "add", "blackhole", "203.0.113.1"]).output().ok();
+
+    let share_pin = test_pin_root("pipe");
+    let mut sb = ShareMapSkelBuilder::default();
+    sb.object_builder_mut().pin_root_path(&share_pin).unwrap();
+    let mut share_obj = std::mem::MaybeUninit::uninit();
+    let share = sb.open(&mut share_obj).unwrap().load().unwrap();
+
+    // A→C: slot target → wan_h
+    {
+        let s = route_slot(0xCB007101);
+        let mut k = [0u8; 8];
+        let mut v = [0u8; 16];
+        k[0..4].copy_from_slice(&0u32.to_ne_bytes());
+        k[4..8].copy_from_slice(&s.to_ne_bytes());
+        v[0..4].copy_from_slice(&wan_h_i.to_ne_bytes());
+        share.maps.rt4_target_slot_map.update(&k, &v, MapFlags::ANY).unwrap();
+    }
+    // C→A: lan route → lan_p
+    {
+        let mut k = [0u8; 8];
+        let mut v = [0u8; 16];
+        k[0..4].copy_from_slice(&32u32.to_ne_bytes());
+        k[4..8].copy_from_slice(&0x0A000001u32.to_be_bytes());
+        v[8..12].copy_from_slice(&lan_h_i.to_ne_bytes());
+        share.maps.rt4_lan_map.update(&k, &v, MapFlags::ANY).unwrap();
+    }
+
+    // Create inner LRU_HASH maps for rt4_cache_map / rt6_cache_map
+    let opts = libbpf_sys::bpf_map_create_opts {
+        sz: std::mem::size_of::<libbpf_sys::bpf_map_create_opts>() as libbpf_sys::size_t,
+        ..Default::default()
+    };
+    for (cache_idx, name) in [(0u32, "wan"), (1u32, "lan")] {
+        for (outer, ksz, vsz, label) in [
+            (
+                &share.maps.rt4_cache_map,
+                std::mem::size_of::<rt_cache_key_v4>() as u32,
+                std::mem::size_of::<rt_cache_value_v4>() as u32,
+                "v4",
+            ),
+            (
+                &share.maps.rt6_cache_map,
+                std::mem::size_of::<rt_cache_key_v6>() as u32,
+                std::mem::size_of::<rt_cache_value_v6>() as u32,
+                "v6",
+            ),
+        ] {
+            let inner = MapHandle::create(
+                MapType::LruHash,
+                Some(format!("rt{label}_cache_{name}")),
+                ksz,
+                vsz,
+                65536,
+                &opts,
+            )
+            .expect("create inner LRU");
+            let fd = inner.as_fd().as_raw_fd().to_ne_bytes();
+            outer.update(&cache_idx.to_ne_bytes(), &fd, MapFlags::ANY).unwrap();
+        }
+    }
+
+    let mut lr_b = XdpLanRouteSkelBuilder::default();
+    lr_b.object_builder_mut().pin_root_path(&share_pin).unwrap();
+    let mut lr_obj = std::mem::MaybeUninit::uninit();
+    let lr = lr_b.open(&mut lr_obj).unwrap().load().unwrap();
+
+    let mut wr_b = XdpWanRouteSkelBuilder::default();
+    wr_b.object_builder_mut().pin_root_path(&share_pin).unwrap();
+    let mut wr_obj = std::mem::MaybeUninit::uninit();
+    let wr = wr_b.open(&mut wr_obj).unwrap().load().unwrap();
+
+    let d1_b = TestXdpDummySkelBuilder::default();
+    let mut d1_obj = std::mem::MaybeUninit::uninit();
+    let da = d1_b.open(&mut d1_obj).unwrap().load().unwrap();
+
+    let d2_b = TestXdpDummySkelBuilder::default();
+    let mut d2_obj = std::mem::MaybeUninit::uninit();
+    let dc = d2_b.open(&mut d2_obj).unwrap().load().unwrap();
+
+    let r_b = TestXdpRedirectSkelBuilder::default();
+    let mut r_obj = std::mem::MaybeUninit::uninit();
+    let rr = r_b.open(&mut r_obj).unwrap().load().unwrap();
+
+    let _l0 = lr.progs.xdp_lan_route.attach_xdp(lan_h_i as i32).unwrap();
+    let _l1 = wr.progs.xdp_wan_route_ingress.attach_xdp(wan_h_i as i32).unwrap();
+    let _l2 = da.progs.xdp_test_dummy.attach_xdp(lan_p_i as i32).unwrap();
+    let _l3 = dc.progs.xdp_test_dummy.attach_xdp(wan_p_i as i32).unwrap();
+
+    let rfd = rr.progs.xdp_test_redirect.as_fd().as_raw_fd();
+    lr.maps
+        .xdp_lan_pipe_root_progs
+        .update(&wan_h_i.to_ne_bytes(), &rfd.to_ne_bytes(), MapFlags::ANY)
+        .unwrap();
+
+    clear_trace();
+
+    // A→C
+    let pkt_a2c = build_ipv4_tcp_pkt(
+        [0x02, 0, 0, 0, 0, 1],
+        [0x02, 0, 0, 0, 0, 2],
+        [10, 0, 0, 1],
+        [203, 0, 113, 1],
+    );
+    for _ in 0..2 {
+        send_raw_packet(&lan_p, &pkt_a2c);
+        thread::sleep(Duration::from_millis(50));
+    }
+
+    // C→A
+    let pkt_c2a = build_ipv4_tcp_pkt(
+        [0x02, 0, 0, 0, 0, 3],
+        [0x02, 0, 0, 0, 0, 4],
+        [203, 0, 113, 1],
+        [10, 0, 0, 1],
+    );
+    for _ in 0..2 {
+        send_raw_packet(&wan_p, &pkt_c2a);
+        thread::sleep(Duration::from_millis(50));
+    }
+
+    thread::sleep(Duration::from_millis(3000));
+    let trace = read_trace();
+    println!("=== trace D ===\n{trace}");
+
+    assert!(trace.contains("[dump] recv pkt_len="), "no [dump] recv, trace:\n{trace}");
+
+    // Verify cache entries exist
+    let lan_inner = lookup_inner_map(&share.maps.rt4_cache_map, 1u32);
+    let keys: Vec<_> = lan_inner.keys().collect();
+    println!("LAN_CACHE (v4) entries: {}", keys.len());
+    for k in &keys {
+        let raw = lan_inner.lookup(k, MapFlags::ANY).unwrap().unwrap();
+        let val: rt_cache_value_v4 = read_unaligned(&raw);
+        let key: rt_cache_key_v4 = read_unaligned(k);
+        println!(
+            "  saddr={:08x} daddr={:08x} -> mark={} ifidx={}",
+            u32::from_be(key.local_addr),
+            u32::from_be(key.remote_addr),
+            val.mark_value,
+            val.ifindex
+        );
+    }
+    assert!(keys.len() >= 1, "no LAN_CACHE entries found");
+
+    let wan_inner = lookup_inner_map(&share.maps.rt4_cache_map, 0u32);
+    let wan_keys: Vec<_> = wan_inner.keys().collect();
+    println!("WAN_CACHE (v4) entries: {}", wan_keys.len());
+
+    drop(rr);
+    drop(dc);
+    drop(da);
+    drop(wr);
+    drop(lr);
+    drop(share);
+    let _ = Command::new("ip").args(["route", "del", "blackhole", "203.0.113.1"]).output();
+    let _ = Command::new("ip").args(["link", "del", &lan_h]).output();
+    let _ = Command::new("ip").args(["link", "del", &wan_h]).output();
 }

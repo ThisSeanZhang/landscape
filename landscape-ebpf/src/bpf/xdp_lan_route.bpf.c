@@ -537,6 +537,7 @@ static __always_inline int xdp_lan_redirect_v4(struct xdp_md *ctx,
         return bpf_redirect(fib.ifindex, 0);
     }
     bpf_printk("[xdp_lan] fib_lookup failed rc=%d", rc);
+    return 0;
 }
 
 static __always_inline int xdp_lan_redirect_v6(struct xdp_md *ctx,

@@ -47,6 +47,14 @@ pub(crate) mod test_xdp_chain_stage {
     include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/test_xdp_chain_stage.skel.rs"));
 }
 
+pub(crate) mod test_xdp_redirect {
+    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/test_xdp_redirect.skel.rs"));
+}
+
+pub(crate) mod test_xdp_dummy {
+    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/test_xdp_dummy.skel.rs"));
+}
+
 pub(crate) mod xdp_wan_route_skel {
     include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/xdp_wan_route.skel.rs"));
 }
