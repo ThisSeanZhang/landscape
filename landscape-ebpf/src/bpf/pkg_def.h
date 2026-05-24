@@ -6,8 +6,8 @@
 #include "landscape_log.h"
 #include "landscape.h"
 
-#define LD_IP_MF bpf_htons(0x2000)     /* Flag: "More Fragments"	*/
-#define LD_IP_OFFSET bpf_htons(0x1FFF) /* "Fragment Offset" part	*/
+#define LD_IP_MF 0x2000     /* Flag: "More Fragments"    */
+#define LD_IP_OFFSET 0x1FFF /* "Fragment Offset" part   */
 
 // RFC 8200 要求支持至少 6 个扩展头
 #define LD_MAX_IPV6_EXT_NUM 6

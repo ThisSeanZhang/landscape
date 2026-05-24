@@ -188,9 +188,10 @@ static __always_inline int scan_ipv4(struct __sk_buff *skb, struct ip_scanner_ct
         return LD_SCAN_ERR;
     }
 
-    scanner_ctx->fragment_off = (bpf_ntohs(iph->frag_off) & LD_IP_OFFSET) << 3;
+    u16 frag_off_host = bpf_ntohs(iph->frag_off);
+    scanner_ctx->fragment_off = (frag_off_host & LD_IP_OFFSET) << 3;
 
-    bool mf = iph->frag_off & LD_IP_MF;
+    bool mf = frag_off_host & LD_IP_MF;
     bool has_offset = scanner_ctx->fragment_off != 0;
 
     if (!has_offset && !mf) {

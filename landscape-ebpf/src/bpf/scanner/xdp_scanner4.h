@@ -26,9 +26,10 @@ static __always_inline enum xdp_scan_status xdp_scan_ipv4(struct xdp_md *ctx, u1
 
     if (iph->ihl < 5) return XDP_SCAN_ERR;
 
-    idx->fragment_off = (bpf_ntohs(iph->frag_off) & LD_IP_OFFSET) << 3;
+    u16 frag_off_host = bpf_ntohs(iph->frag_off);
+    idx->fragment_off = (frag_off_host & LD_IP_OFFSET) << 3;
 
-    bool mf = iph->frag_off & LD_IP_MF;
+    bool mf = frag_off_host & LD_IP_MF;
     bool has_offset = idx->fragment_off != 0;
 
     if (!has_offset && !mf) {
