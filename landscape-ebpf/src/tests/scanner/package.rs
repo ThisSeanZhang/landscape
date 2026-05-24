@@ -171,6 +171,49 @@ pub fn build_icmpv4_error_with_inner_ipv4_eth() -> Vec<u8> {
     packet
 }
 
+/// ICMPv6 error with inner IPv6 UDP packet
+pub fn build_icmpv6_error_with_inner_ipv6_eth() -> Vec<u8> {
+    let inner_src: [u8; 16] = [0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1];
+    let inner_dst: [u8; 16] = [0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 2];
+    let inner_builder = PacketBuilder::ipv6(inner_src, inner_dst, 64).udp(1234, 4321);
+    let inner_payload = default_payload();
+    let mut inner_bytes = Vec::with_capacity(inner_builder.size(inner_payload.len()));
+    inner_builder.write(&mut inner_bytes, &inner_payload).unwrap();
+
+    let inner_truncated = &inner_bytes[..inner_bytes.len().min(48)];
+
+    let outer_src: [u8; 16] = [0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff];
+    let icmp6_type = etherparse::Icmpv6Type::TimeExceeded(
+        etherparse::icmpv6::TimeExceededCode::HopLimitExceeded,
+    );
+    let builder = PacketBuilder::ethernet2(
+        [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF],
+        [0x11, 0x22, 0x33, 0x44, 0x55, 0x66],
+    )
+    .ipv6(outer_src, inner_src, 64)
+    .icmpv6(icmp6_type);
+
+    let mut packet = Vec::with_capacity(builder.size(inner_truncated.len()));
+    builder.write(&mut packet, &inner_truncated).unwrap();
+    packet
+}
+
+pub fn build_ipv6_udp_eth() -> Vec<u8> {
+    let src: [u8; 16] = [0x20, 0x01, 0x0d, 0xb8, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1];
+    let dst: [u8; 16] = [0x20, 0x01, 0x0d, 0xb8, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2];
+    let builder = PacketBuilder::ethernet2(
+        [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF],
+        [0x11, 0x22, 0x33, 0x44, 0x55, 0x66],
+    )
+    .ipv6(src, dst, 64)
+    .udp(5000, 6000);
+
+    let payload = default_payload();
+    let mut bytes = Vec::<u8>::with_capacity(builder.size(payload.len()));
+    builder.write(&mut bytes, &payload).unwrap();
+    bytes
+}
+
 /// 7) IPv6 Ethernet + TCP
 pub fn build_ipv6_tcp_eth() -> Vec<u8> {
     let src: [u8; 16] = [0x20, 0x01, 0x0d, 0xb8, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1];

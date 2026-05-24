@@ -16,6 +16,7 @@ use zerocopy::{byteorder::*, Immutable};
 
 pub(crate) mod package;
 mod performance;
+mod xdp_scanner;
 
 #[repr(C, packed)]
 #[derive(IntoBytes, FromBytes, Immutable, Clone, Debug, Copy, Default)]

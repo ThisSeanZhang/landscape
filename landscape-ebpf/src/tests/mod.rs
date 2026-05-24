@@ -80,6 +80,10 @@ pub(crate) mod wan_intro_skel {
     include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/xdp_wan_intro.skel.rs"));
 }
 
+pub(crate) mod test_xdp_scanner_skel {
+    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/test_xdp_scanner.skel.rs"));
+}
+
 unsafe impl plain::Plain for packet_info {}
 
 impl u_inet_addr {
