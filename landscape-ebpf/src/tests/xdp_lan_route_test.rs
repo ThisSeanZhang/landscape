@@ -7,7 +7,7 @@ use std::time::Duration;
 use libbpf_rs::{
     libbpf_sys,
     skel::{OpenSkel, SkelBuilder as _},
-    MapCore, MapFlags, MapHandle, MapType,
+    MapCore, MapFlags, MapHandle, MapType, ProgramInput,
 };
 use nix::net::if_::if_nametoindex;
 
@@ -573,4 +573,354 @@ fn xdp_lan_route_wan_pipeline() {
     let _ = Command::new("ip").args(["route", "del", "blackhole", "203.0.113.1"]).output();
     let _ = Command::new("ip").args(["link", "del", &lan_h]).output();
     let _ = Command::new("ip").args(["link", "del", &wan_h]).output();
+}
+
+// ── Test E: test_run verification of unknown IP not redirected ──
+
+#[test]
+fn xdp_lan_route_unknown_ip_no_redirect_test_run() {
+    let pin_root = test_pin_root("trunk");
+    let mut b = XdpLanRouteSkelBuilder::default();
+    b.object_builder_mut().pin_root_path(&pin_root).unwrap();
+    let mut obj = std::mem::MaybeUninit::uninit();
+    let open = b.open(&mut obj).unwrap();
+    let skel = open.load().unwrap();
+
+    // populate rt4_lan_map with 10.0.0.5 (known entry, to confirm map is functional)
+    {
+        let mut lan_key = [0u8; 8];
+        lan_key[0..4].copy_from_slice(&32u32.to_ne_bytes());
+        lan_key[4..8].copy_from_slice(&0x0A000005u32.to_be_bytes());
+        let mut lan_val = [0u8; 16];
+        lan_val[8..12].copy_from_slice(&99u32.to_ne_bytes()); // dummy ifindex
+        skel.maps.rt4_lan_map.update(&lan_key, &lan_val, MapFlags::ANY).unwrap();
+    }
+
+    // populate ip_mac_v4 for unknown IP 10.0.0.99 (was the bug: old code would redirect this)
+    let mut mac_key = [0u8; 4];
+    mac_key.copy_from_slice(&0x0A000063u32.to_be_bytes());
+    {
+        let mut mac_val = [0u8; 20];
+        mac_val[0..4].copy_from_slice(&99u32.to_ne_bytes());
+        mac_val[4..10].copy_from_slice(&[0x02, 0, 0, 0, 0, 0x99]);
+        mac_val[10..16].copy_from_slice(&[0x02, 0, 0, 0, 0, 0x01]);
+        mac_val[16..18].copy_from_slice(&0x0800u16.to_be_bytes());
+        skel.maps.ip_mac_v4.update(&mac_key, &mac_val, MapFlags::ANY).unwrap();
+    }
+
+    // send packet to unknown IP 10.0.0.99
+    let mut pkt = build_ipv4_tcp_pkt(
+        [0x02, 0, 0, 0, 0, 1],
+        [0x02, 0, 0, 0, 0, 2],
+        [10, 0, 0, 1],
+        [10, 0, 0, 99],
+    );
+
+    let run = skel
+        .progs
+        .xdp_lan_route
+        .test_run(ProgramInput { data_in: Some(&mut pkt), ..Default::default() })
+        .expect("test_run");
+
+    // XDP_PASS=2: unknown IP should continue to WAN, NOT be redirected via LAN
+    let ret = run.return_value as i32;
+    assert_eq!(ret, 2, "unknown IP should return XDP_PASS(2), got {}", ret);
+
+    // known IP 10.0.0.5: should redirect
+    let mut pkt2 = build_ipv4_tcp_pkt(
+        [0x02, 0, 0, 0, 0, 1],
+        [0x02, 0, 0, 0, 0, 2],
+        [10, 0, 0, 1],
+        [10, 0, 0, 5],
+    );
+
+    let run2 = skel
+        .progs
+        .xdp_lan_route
+        .test_run(ProgramInput { data_in: Some(&mut pkt2), ..Default::default() })
+        .expect("test_run");
+
+    let ret2 = run2.return_value as i32;
+    assert_eq!(ret2, 4, "known IP should be XDP_REDIRECT(4), got {}", ret2);
+
+    // verify ip_mac_v4 for unknown IP was NOT modified (no FIB cache added)
+    let mac_after = skel.maps.ip_mac_v4.lookup(&mac_key, MapFlags::ANY).unwrap();
+    assert!(mac_after.is_some(), "ip_mac_v4 entry for unknown IP should still exist");
+    let raw = mac_after.unwrap();
+    assert_eq!(&raw[0..4], &99u32.to_ne_bytes(), "ifindex should remain unchanged");
+    assert_eq!(&raw[4..10], &[0x02, 0, 0, 0, 0, 0x99], "mac should remain unchanged");
+    assert_eq!(&raw[10..16], &[0x02, 0, 0, 0, 0, 0x01], "dev_mac should remain unchanged");
+    assert_eq!(&raw[16..18], &0x0800u16.to_be_bytes(), "proto should remain unchanged");
+}
+
+// ── Test F: test_run verification of known LAN without MAC → FIB fallback ──
+
+#[test]
+fn xdp_lan_route_known_lan_fib_fallback_test_run() {
+    let pin_root = test_pin_root("trfib");
+    let mut b = XdpLanRouteSkelBuilder::default();
+    b.object_builder_mut().pin_root_path(&pin_root).unwrap();
+    let mut obj = std::mem::MaybeUninit::uninit();
+    let open = b.open(&mut obj).unwrap();
+    let skel = open.load().unwrap();
+
+    // populate rt4_lan_map with has_mac=1 for 10.0.0.5 (so MAC required, triggers FIB fallback)
+    {
+        let mut lan_key = [0u8; 8];
+        lan_key[0..4].copy_from_slice(&32u32.to_ne_bytes());
+        lan_key[4..8].copy_from_slice(&0x0A000005u32.to_be_bytes());
+        let mut lan_val = [0u8; 16];
+        lan_val[0] = 1; // has_mac = true
+        lan_val[8..12].copy_from_slice(&99u32.to_ne_bytes()); // dummy ifindex
+        skel.maps.rt4_lan_map.update(&lan_key, &lan_val, MapFlags::ANY).unwrap();
+    }
+
+    // do NOT populate ip_mac_v4 for 10.0.0.5 — forces FIB fallback
+
+    let mut pkt = build_ipv4_tcp_pkt(
+        [0x02, 0, 0, 0, 0, 1],
+        [0x02, 0, 0, 0, 0, 2],
+        [10, 0, 0, 1],
+        [10, 0, 0, 5],
+    );
+
+    let run = skel
+        .progs
+        .xdp_lan_route
+        .test_run(ProgramInput { data_in: Some(&mut pkt), ..Default::default() })
+        .expect("test_run");
+
+    let ret = run.return_value as i32;
+    // bpf_fib_lookup succeeds even in test_run (kernel FIB is still available).
+    // The has_mac=1 path with no ip_mac cache entry should trigger FIB fallback
+    // and redirect to lan_info->ifindex.
+    assert_eq!(ret, 4, "FIB fallback: expected XDP_REDIRECT=4 when FIB resolves MAC, got {ret}");
+
+    // After the run, verify ip_mac_v4 was populated by FIB fallback
+    let mut mac_key = [0u8; 4];
+    mac_key.copy_from_slice(&0x0A000005u32.to_be_bytes());
+    let mac_after = skel.maps.ip_mac_v4.lookup(&mac_key, MapFlags::ANY).unwrap();
+    assert!(
+        mac_after.is_some(),
+        "ip_mac_v4 should have been populated by FIB fallback for known LAN IP 10.0.0.5"
+    );
+    let raw = mac_after.unwrap();
+    assert_eq!(&raw[0..4], &99u32.to_ne_bytes(), "FIB cache ifindex = lan_info->ifindex");
+    assert_eq!(&raw[10..16], &[0u8; 6], "FIB cache dev_mac = lan_info->mac_addr");
+    assert_ne!(&raw[4..10], &[0u8; 6], "FIB should have resolved MAC (non-zero)");
+}
+
+fn build_ipv6_tcp_pkt(
+    src_mac: [u8; 6],
+    dst_mac: [u8; 6],
+    src_ip: [u8; 16],
+    dst_ip: [u8; 16],
+) -> Vec<u8> {
+    use etherparse::PacketBuilder;
+    let builder = PacketBuilder::ethernet2(src_mac, dst_mac)
+        .ipv6(src_ip, dst_ip, 64)
+        .tcp(12345, 80, 1000, 2000);
+    let payload = [0u8; 8];
+    let mut pkt = Vec::with_capacity(builder.size(payload.len()));
+    builder.write(&mut pkt, &payload).expect("build ipv6 packet");
+    pkt
+}
+
+// ── Test G: v4 FIB fallback with veth + map verification ──
+
+#[test]
+fn xdp_lan_route_fib_fallback_v4() {
+    let pid = std::process::id();
+    let (host, peer) = (format!("lrf4h{pid}"), format!("lrf4p{pid}"));
+
+    let _ = Command::new("ip").args(["link", "del", &host]).output();
+    Command::new("ip")
+        .args(["link", "add", &host, "type", "veth", "peer", "name", &peer])
+        .output()
+        .unwrap();
+    Command::new("ip").args(["link", "set", host.as_str(), "up"]).output().unwrap();
+    Command::new("ip").args(["link", "set", peer.as_str(), "up"]).output().unwrap();
+    // route + static ARP so bpf_fib_lookup can resolve the MAC
+    Command::new("ip")
+        .args(["route", "add", "10.0.0.200/32", "dev", peer.as_str()])
+        .output()
+        .unwrap();
+    Command::new("ip")
+        .args(["neigh", "add", "10.0.0.200", "lladdr", "02:00:00:00:00:c8", "dev", peer.as_str()])
+        .output()
+        .unwrap();
+    Command::new("ip")
+        .args(["neigh", "add", "10.0.0.200", "lladdr", "02:00:00:00:00:c8", "dev", host.as_str()])
+        .output()
+        .unwrap();
+    thread::sleep(Duration::from_millis(100));
+
+    let h_i = if_nametoindex(host.as_str()).unwrap() as u32;
+    let p_i = if_nametoindex(peer.as_str()).unwrap() as u32;
+
+    let pin_root = test_pin_root("fib4v");
+    let mut b = XdpLanRouteSkelBuilder::default();
+    b.object_builder_mut().pin_root_path(&pin_root).unwrap();
+    let mut obj = std::mem::MaybeUninit::uninit();
+    let skel = b.open(&mut obj).unwrap().load().unwrap();
+
+    let dst_ip_be = 0x0A0000C8u32.to_be_bytes(); // 10.0.0.200
+
+    // delete stale entries
+    let mut lan_key = [0u8; 8];
+    lan_key[0..4].copy_from_slice(&32u32.to_ne_bytes());
+    lan_key[4..8].copy_from_slice(&dst_ip_be);
+    skel.maps.rt4_lan_map.delete(&lan_key).ok();
+
+    let mut mac_key = [0u8; 4];
+    mac_key.copy_from_slice(&dst_ip_be);
+    skel.maps.ip_mac_v4.delete(&mac_key).ok();
+
+    // pre-fill rt4_lan_map with has_mac=1 (forces MAC lookup → FIB fallback)
+    let mut lan_val = [0u8; 16];
+    lan_val[0] = 1; // has_mac = true
+    lan_val[8..12].copy_from_slice(&p_i.to_ne_bytes());
+    skel.maps.rt4_lan_map.update(&lan_key, &lan_val, MapFlags::ANY).unwrap();
+
+    // do NOT pre-fill ip_mac_v4 for 10.0.0.200
+
+    let _link = skel.progs.xdp_lan_route.attach_xdp(h_i as i32).unwrap();
+
+    let pkt = build_ipv4_tcp_pkt(
+        [0x02, 0, 0, 0, 0, 1],
+        [0x02, 0, 0, 0, 0, 2],
+        [10, 0, 0, 1],
+        [10, 0, 0, 200],
+    );
+    for _ in 0..20 {
+        send_raw_packet(&peer, &pkt);
+        thread::sleep(Duration::from_millis(10));
+    }
+    thread::sleep(Duration::from_millis(500));
+
+    let mac_after = skel.maps.ip_mac_v4.lookup(&mac_key, MapFlags::ANY).unwrap();
+    assert!(mac_after.is_some(), "FIB should have populated ip_mac_v4 for known LAN IP 10.0.0.200");
+
+    drop(skel);
+    let _ = Command::new("ip").args(["neigh", "del", "10.0.0.200", "dev", peer.as_str()]).output();
+    let _ =
+        Command::new("ip").args(["route", "del", "10.0.0.200/32", "dev", peer.as_str()]).output();
+    let _ = Command::new("ip").args(["link", "del", &host]).output();
+}
+
+// ── Test H: v6 FIB fallback with veth + map verification ──
+
+#[test]
+fn xdp_lan_route_fib_fallback_v6() {
+    let pid = std::process::id();
+    let (host, peer) = (format!("lrf6h{pid}"), format!("lrf6p{pid}"));
+
+    let _ = Command::new("ip").args(["link", "del", &host]).output();
+    Command::new("ip")
+        .args(["link", "add", &host, "type", "veth", "peer", "name", &peer])
+        .output()
+        .unwrap();
+    Command::new("ip").args(["link", "set", host.as_str(), "up"]).output().unwrap();
+    Command::new("ip").args(["link", "set", peer.as_str(), "up"]).output().unwrap();
+    // bpf_fib_lookup for IPv6 requires forwarding=1 on the ingress device
+    let fwd_path = format!("net.ipv6.conf.{}.forwarding", host);
+    let fwd_was = Command::new("sysctl")
+        .args(["-n", &fwd_path])
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .unwrap_or_default();
+    Command::new("sysctl").args(["-w", &format!("{}=1", fwd_path)]).output().unwrap();
+    // route + static neighbour so bpf_fib_lookup can resolve the MAC
+    Command::new("ip")
+        .args(["-6", "route", "add", "fd00::200/128", "dev", peer.as_str()])
+        .output()
+        .unwrap();
+    Command::new("ip")
+        .args([
+            "-6",
+            "neigh",
+            "add",
+            "fd00::200",
+            "lladdr",
+            "02:00:00:00:00:c8",
+            "dev",
+            peer.as_str(),
+        ])
+        .output()
+        .unwrap();
+    Command::new("ip")
+        .args([
+            "-6",
+            "neigh",
+            "add",
+            "fd00::200",
+            "lladdr",
+            "02:00:00:00:00:c8",
+            "dev",
+            host.as_str(),
+        ])
+        .output()
+        .unwrap();
+    thread::sleep(Duration::from_millis(100));
+
+    let h_i = if_nametoindex(host.as_str()).unwrap() as u32;
+    let p_i = if_nametoindex(peer.as_str()).unwrap() as u32;
+
+    let pin_root = test_pin_root("fib6v");
+    let mut b = XdpLanRouteSkelBuilder::default();
+    b.object_builder_mut().pin_root_path(&pin_root).unwrap();
+    let mut obj = std::mem::MaybeUninit::uninit();
+    let skel = b.open(&mut obj).unwrap().load().unwrap();
+
+    // 20-byte v6 lan_route_key: prefixlen(4) + addr(16)
+    let mut lan_key = [0u8; 20];
+    lan_key[0..4].copy_from_slice(&128u32.to_ne_bytes());
+    // fd00::200 in network byte order
+    let dst_ip6: [u8; 16] = [0xfd, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x02, 0];
+    lan_key[4..20].copy_from_slice(&dst_ip6);
+
+    // 28-byte v6 lan_route_info: has_mac(1) + mac_addr(6) + is_next_hop(1) + ifindex(4) + addr(16)
+    let mut lan_val = [0u8; 28];
+    lan_val[0] = 1; // has_mac = true
+    lan_val[8..12].copy_from_slice(&p_i.to_ne_bytes());
+    // addr stays zero (not used when is_next_hop=false)
+
+    skel.maps.rt6_lan_map.delete(&lan_key).ok();
+    skel.maps.rt6_lan_map.update(&lan_key, &lan_val, MapFlags::ANY).unwrap();
+
+    // 16-byte v6 mac_key (addr only)
+    let mut mac_key = [0u8; 16];
+    mac_key.copy_from_slice(&dst_ip6);
+    skel.maps.ip_mac_v6.delete(&mac_key).ok();
+
+    let _link = skel.progs.xdp_lan_route.attach_xdp(h_i as i32).unwrap();
+
+    let pkt = build_ipv6_tcp_pkt(
+        [0x02, 0, 0, 0, 0, 1],
+        [0x02, 0, 0, 0, 0, 2],
+        [0xfd, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3], // fd00::3
+        dst_ip6,                                             // fd00::200
+    );
+    for _ in 0..20 {
+        send_raw_packet(&peer, &pkt);
+        thread::sleep(Duration::from_millis(10));
+    }
+    thread::sleep(Duration::from_millis(500));
+
+    let mac_after = skel.maps.ip_mac_v6.lookup(&mac_key, MapFlags::ANY).unwrap();
+    assert!(mac_after.is_some(), "FIB should have populated ip_mac_v6 for known LAN IP fd00::200");
+
+    drop(skel);
+    // restore forwarding
+    if !fwd_was.is_empty() {
+        let _ = Command::new("sysctl").args(["-w", &format!("{}={}", fwd_path, fwd_was)]).output();
+    }
+    let _ =
+        Command::new("ip").args(["-6", "neigh", "del", "fd00::200", "dev", peer.as_str()]).output();
+    let _ =
+        Command::new("ip").args(["-6", "neigh", "del", "fd00::200", "dev", host.as_str()]).output();
+    let _ = Command::new("ip")
+        .args(["-6", "route", "del", "fd00::200/128", "dev", peer.as_str()])
+        .output();
+    let _ = Command::new("ip").args(["link", "del", &host]).output();
 }
