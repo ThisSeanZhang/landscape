@@ -45,6 +45,19 @@ fn read_trace() -> String {
     String::from_utf8_lossy(&out.stdout).to_string()
 }
 
+fn dummy_recv_count(map: &libbpf_rs::MapMut, is_v6: bool) -> u64 {
+    let k = if is_v6 { 1u32 } else { 0u32 }.to_ne_bytes();
+    map.lookup(&k, MapFlags::ANY)
+        .unwrap()
+        .map_or(0, |v| u64::from_ne_bytes(v[0..8].try_into().unwrap()))
+}
+
+fn dummy_reset(map: &libbpf_rs::MapMut) {
+    let v = [0u8; 8];
+    map.update(&0u32.to_ne_bytes(), &v, MapFlags::ANY).unwrap();
+    map.update(&1u32.to_ne_bytes(), &v, MapFlags::ANY).unwrap();
+}
+
 fn build_ipv4_tcp_pkt(
     src_mac: [u8; 6],
     dst_mac: [u8; 6],
@@ -506,6 +519,8 @@ fn xdp_lan_route_wan_pipeline() {
         .unwrap();
 
     clear_trace();
+    dummy_reset(&da.maps.dummy_recv_map);
+    dummy_reset(&dc.maps.dummy_recv_map);
 
     // A→C: TCP SYN → LAN chain → MSS clamp
     let pkt_a2c = build_syn_pkt(
@@ -534,10 +549,9 @@ fn xdp_lan_route_wan_pipeline() {
     }
 
     thread::sleep(Duration::from_millis(3000));
-    let trace = read_trace();
-    println!("=== trace D ===\n{trace}");
-
-    assert!(trace.contains("[dump] recv pkt_len="), "no [dump] recv, trace:\n{trace}");
+    let v4_cnt = dummy_recv_count(&da.maps.dummy_recv_map, false)
+        + dummy_recv_count(&dc.maps.dummy_recv_map, false);
+    assert!(v4_cnt > 0, "no dummy recv");
 
     // Verify cache entries exist
     let lan_inner = lookup_inner_map(&share.maps.rt4_cache_map, 1u32);

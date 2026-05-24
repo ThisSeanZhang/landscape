@@ -42,6 +42,19 @@ fn read_trace() -> String {
     String::from_utf8_lossy(&out.stdout).to_string()
 }
 
+fn dummy_recv_count(map: &libbpf_rs::MapMut, is_v6: bool) -> u64 {
+    let k = if is_v6 { 1u32 } else { 0u32 }.to_ne_bytes();
+    map.lookup(&k, MapFlags::ANY)
+        .unwrap()
+        .map_or(0, |v| u64::from_ne_bytes(v[0..8].try_into().unwrap()))
+}
+
+fn dummy_reset(map: &libbpf_rs::MapMut) {
+    let v = [0u8; 8];
+    map.update(&0u32.to_ne_bytes(), &v, MapFlags::ANY).unwrap();
+    map.update(&1u32.to_ne_bytes(), &v, MapFlags::ANY).unwrap();
+}
+
 fn send_raw_packet(iface: &str, pkt: &[u8]) {
     let sock = socket2::Socket::new(
         socket2::Domain::PACKET,
@@ -394,6 +407,8 @@ fn xdp_firewall_pipeline() {
     // Scenario 1: no block → bidirectional flow
     // ════════════════════════════════════════
     clear_trace();
+    dummy_reset(&da.maps.dummy_recv_map);
+    dummy_reset(&dc.maps.dummy_recv_map);
 
     let a2c = build_tcp_pkt([10, 0, 0, 1], [203, 0, 113, 1]);
     let c2a = build_tcp_pkt([203, 0, 113, 1], [10, 0, 0, 1]);
@@ -404,10 +419,9 @@ fn xdp_firewall_pipeline() {
         thread::sleep(Duration::from_millis(30));
     }
     thread::sleep(Duration::from_millis(500));
-    let trace = read_trace();
-    println!("=== trace: no block ===\n{trace}");
-    // Our TCP test packets (pkt_len=62) should reach the dummy
-    assert!(trace.contains("[dump] recv pkt_len=62"), "no-block: expected dump recv pkt_len=62");
+    let v4_cnt = dummy_recv_count(&da.maps.dummy_recv_map, false)
+        + dummy_recv_count(&dc.maps.dummy_recv_map, false);
+    assert!(v4_cnt > 0, "no-block: expected v4 packet to reach dummy");
 
     // ════════════════════════════════════════
     // Scenario 2: block 203.0.113.1/32
@@ -417,19 +431,17 @@ fn xdp_firewall_pipeline() {
     add_block(&fw.maps.firewall_block_ip4_map, [203, 0, 113, 1], &block_action);
 
     clear_trace();
+    dummy_reset(&da.maps.dummy_recv_map);
+    dummy_reset(&dc.maps.dummy_recv_map);
     for _ in 0..2 {
         send_raw_packet(&lan_p, &a2c);
         send_raw_packet(&wan_p, &c2a);
         thread::sleep(Duration::from_millis(30));
     }
     thread::sleep(Duration::from_millis(500));
-    let trace = read_trace();
-    println!("=== trace: block 203.0.113.1 ===\n{trace}");
-    // Both directions blocked → our TCP test packets (pkt_len=62) NOT reaching dummy
-    assert!(
-        !trace.contains("[dump] recv pkt_len=62"),
-        "blocked: expected NO dump recv pkt_len=62 in trace"
-    );
+    let v4_cnt = dummy_recv_count(&da.maps.dummy_recv_map, false)
+        + dummy_recv_count(&dc.maps.dummy_recv_map, false);
+    assert_eq!(v4_cnt, 0, "blocked: expected NO v4 packet in dummy");
 
     // ════════════════════════════════════════
     // Scenario 3: direction validation — block 10.0.0.1
@@ -441,25 +453,29 @@ fn xdp_firewall_pipeline() {
 
     // 3a: LAN direction — A→C, LAN checks dst(203.0.113.1 not blocked) → PASS
     clear_trace();
+    dummy_reset(&da.maps.dummy_recv_map);
+    dummy_reset(&dc.maps.dummy_recv_map);
     for _ in 0..2 {
         send_raw_packet(&lan_p, &a2c);
         thread::sleep(Duration::from_millis(30));
     }
     thread::sleep(Duration::from_millis(500));
-    let trace = read_trace();
-    println!("=== trace: direction LAN ===\n{trace}");
-    assert!(trace.contains("[dump] recv pkt_len=62"), "3a LAN: should PASS (checks dst, not src)");
+    let v4_cnt = dummy_recv_count(&da.maps.dummy_recv_map, false)
+        + dummy_recv_count(&dc.maps.dummy_recv_map, false);
+    assert!(v4_cnt > 0, "3a LAN: should PASS (checks dst, not src)");
 
     // 3b: WAN direction — C→A, WAN checks src(203.0.113.1 not blocked) → PASS
     clear_trace();
+    dummy_reset(&da.maps.dummy_recv_map);
+    dummy_reset(&dc.maps.dummy_recv_map);
     for _ in 0..2 {
         send_raw_packet(&wan_p, &c2a);
         thread::sleep(Duration::from_millis(30));
     }
     thread::sleep(Duration::from_millis(500));
-    let trace = read_trace();
-    println!("=== trace: direction WAN ===\n{trace}");
-    assert!(trace.contains("[dump] recv pkt_len=62"), "3b WAN: should PASS (checks src, not dst)");
+    let v4_cnt = dummy_recv_count(&da.maps.dummy_recv_map, false)
+        + dummy_recv_count(&dc.maps.dummy_recv_map, false);
+    assert!(v4_cnt > 0, "3b WAN: should PASS (checks src, not dst)");
 
     // ════════════════════════════════════════
     // Scenario 4: block 203.0.113.1 only → 203.0.113.2 should still pass
@@ -468,18 +484,17 @@ fn xdp_firewall_pipeline() {
     add_block(&fw.maps.firewall_block_ip4_map, [203, 0, 113, 1], &block_action);
 
     clear_trace();
+    dummy_reset(&da.maps.dummy_recv_map);
+    dummy_reset(&dc.maps.dummy_recv_map);
     let a2c_unblocked = build_tcp_pkt([10, 0, 0, 1], [203, 0, 113, 2]);
     for _ in 0..2 {
         send_raw_packet(&lan_p, &a2c_unblocked);
         thread::sleep(Duration::from_millis(30));
     }
     thread::sleep(Duration::from_millis(500));
-    let trace = read_trace();
-    println!("=== trace: unblocked dest ===\n{trace}");
-    assert!(
-        trace.contains("[dump] recv pkt_len=62"),
-        "4 unblocked: 203.0.113.2 should pass firewall"
-    );
+    let v4_cnt = dummy_recv_count(&da.maps.dummy_recv_map, false)
+        + dummy_recv_count(&dc.maps.dummy_recv_map, false);
+    assert!(v4_cnt > 0, "4 unblocked: 203.0.113.2 should pass firewall");
 
     // ════════════════════════════════════════
     // Scenario 5: delete block → flow resumes
@@ -487,18 +502,17 @@ fn xdp_firewall_pipeline() {
     del_block(&fw.maps.firewall_block_ip4_map, [203, 0, 113, 1]);
 
     clear_trace();
+    dummy_reset(&da.maps.dummy_recv_map);
+    dummy_reset(&dc.maps.dummy_recv_map);
     for _ in 0..3 {
         send_raw_packet(&lan_p, &a2c);
         send_raw_packet(&wan_p, &c2a);
         thread::sleep(Duration::from_millis(30));
     }
     thread::sleep(Duration::from_millis(500));
-    let trace = read_trace();
-    println!("=== trace: block removed ===\n{trace}");
-    assert!(
-        trace.contains("[dump] recv pkt_len=62"),
-        "unblocked: expected dump recv pkt_len=62 after removing block"
-    );
+    let v4_cnt = dummy_recv_count(&da.maps.dummy_recv_map, false)
+        + dummy_recv_count(&dc.maps.dummy_recv_map, false);
+    assert!(v4_cnt > 0, "unblocked: expected v4 packet after removing block");
 
     // ════════════════════════════════════════
     // IPv6 scenarios
@@ -508,22 +522,20 @@ fn xdp_firewall_pipeline() {
     let v6_wan: [u8; 16] = [0xfd, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2];
     let a2c_v6 = build_tcp6_pkt(v6_lan, v6_wan);
     let c2a_v6 = build_tcp6_pkt(v6_wan, v6_lan);
-    let v6_pkt_len = a2c_v6.len();
 
     // Scenario 6: v6 no block → bidirectional flow
     clear_trace();
+    dummy_reset(&da.maps.dummy_recv_map);
+    dummy_reset(&dc.maps.dummy_recv_map);
     for _ in 0..2 {
         send_raw_packet(&lan_p, &a2c_v6);
         send_raw_packet(&wan_p, &c2a_v6);
         thread::sleep(Duration::from_millis(30));
     }
     thread::sleep(Duration::from_millis(500));
-    let trace = read_trace();
-    println!("=== trace: v6 no block ===\n{trace}");
-    assert!(
-        trace.contains(&format!("[dump] recv pkt_len={v6_pkt_len}")),
-        "v6 no-block: expected dump"
-    );
+    let v6_cnt = dummy_recv_count(&da.maps.dummy_recv_map, true)
+        + dummy_recv_count(&dc.maps.dummy_recv_map, true);
+    assert!(v6_cnt > 0, "v6 no-block: expected v6 dump");
 
     // Scenario 7: v6 block fd00::2/128
     //   LAN→WAN: firewall_lan blocks dst (fd00::2)
@@ -531,18 +543,17 @@ fn xdp_firewall_pipeline() {
     add_block_v6(&fw.maps.firewall_block_ip6_map, v6_wan, &block_action);
 
     clear_trace();
+    dummy_reset(&da.maps.dummy_recv_map);
+    dummy_reset(&dc.maps.dummy_recv_map);
     for _ in 0..2 {
         send_raw_packet(&lan_p, &a2c_v6);
         send_raw_packet(&wan_p, &c2a_v6);
         thread::sleep(Duration::from_millis(30));
     }
     thread::sleep(Duration::from_millis(500));
-    let trace = read_trace();
-    println!("=== trace: v6 block fd00::2 ===\n{trace}");
-    assert!(
-        !trace.contains(&format!("[dump] recv pkt_len={v6_pkt_len}")),
-        "v6 blocked: expected NO dump"
-    );
+    let v6_cnt = dummy_recv_count(&da.maps.dummy_recv_map, true)
+        + dummy_recv_count(&dc.maps.dummy_recv_map, true);
+    assert_eq!(v6_cnt, 0, "v6 blocked: expected NO v6 dump");
 
     // Scenario 8: v6 direction validation — block fd00::1, LAN should ignore src
     del_block_v6(&fw.maps.firewall_block_ip6_map, v6_wan);
@@ -550,48 +561,45 @@ fn xdp_firewall_pipeline() {
 
     // 8a: LAN direction — A→C, LAN checks dst(fd00::2 not blocked) → PASS
     clear_trace();
+    dummy_reset(&da.maps.dummy_recv_map);
+    dummy_reset(&dc.maps.dummy_recv_map);
     for _ in 0..2 {
         send_raw_packet(&lan_p, &a2c_v6);
         thread::sleep(Duration::from_millis(30));
     }
     thread::sleep(Duration::from_millis(500));
-    let trace = read_trace();
-    println!("=== trace: v6 direction LAN ===\n{trace}");
-    assert!(
-        trace.contains(&format!("[dump] recv pkt_len={v6_pkt_len}")),
-        "v6 8a LAN: should PASS (checks dst, not src)"
-    );
+    let v6_cnt = dummy_recv_count(&da.maps.dummy_recv_map, true)
+        + dummy_recv_count(&dc.maps.dummy_recv_map, true);
+    assert!(v6_cnt > 0, "v6 8a LAN: should PASS (checks dst, not src)");
 
     // 8b: WAN direction — C→A, WAN checks src(fd00::2 not blocked) → PASS
     clear_trace();
+    dummy_reset(&da.maps.dummy_recv_map);
+    dummy_reset(&dc.maps.dummy_recv_map);
     for _ in 0..2 {
         send_raw_packet(&wan_p, &c2a_v6);
         thread::sleep(Duration::from_millis(30));
     }
     thread::sleep(Duration::from_millis(500));
-    let trace = read_trace();
-    println!("=== trace: v6 direction WAN ===\n{trace}");
-    assert!(
-        trace.contains(&format!("[dump] recv pkt_len={v6_pkt_len}")),
-        "v6 8b WAN: should PASS (checks src, not dst)"
-    );
+    let v6_cnt = dummy_recv_count(&da.maps.dummy_recv_map, true)
+        + dummy_recv_count(&dc.maps.dummy_recv_map, true);
+    assert!(v6_cnt > 0, "v6 8b WAN: should PASS (checks src, not dst)");
 
     // Scenario 9: v6 delete block → flow resumes
     del_block_v6(&fw.maps.firewall_block_ip6_map, v6_lan);
 
     clear_trace();
+    dummy_reset(&da.maps.dummy_recv_map);
+    dummy_reset(&dc.maps.dummy_recv_map);
     for _ in 0..2 {
         send_raw_packet(&lan_p, &a2c_v6);
         send_raw_packet(&wan_p, &c2a_v6);
         thread::sleep(Duration::from_millis(30));
     }
     thread::sleep(Duration::from_millis(500));
-    let trace = read_trace();
-    println!("=== trace: v6 block removed ===\n{trace}");
-    assert!(
-        trace.contains(&format!("[dump] recv pkt_len={v6_pkt_len}")),
-        "v6 unblocked: expected dump"
-    );
+    let v6_cnt = dummy_recv_count(&da.maps.dummy_recv_map, true)
+        + dummy_recv_count(&dc.maps.dummy_recv_map, true);
+    assert!(v6_cnt > 0, "v6 unblocked: expected v6 dump");
 
     // ── cleanup ──
     drop(fw);

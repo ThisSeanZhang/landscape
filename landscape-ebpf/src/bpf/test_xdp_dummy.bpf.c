@@ -1,9 +1,24 @@
 #include <vmlinux.h>
 
+#include <bpf/bpf_endian.h>
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_tracing.h>
 
 #include "landscape.h"
+
+#define TEST_ETH_P_IP 0x0800
+#define TEST_ETH_P_IPV6 0x86DD
+
+struct dummy_recv_record {
+    u64 count;
+};
+
+struct {
+    __uint(type, BPF_MAP_TYPE_ARRAY);
+    __type(key, u32);
+    __type(value, struct dummy_recv_record);
+    __uint(max_entries, 2);
+} dummy_recv_map SEC(".maps");
 
 char LICENSE[] SEC("license") = "GPL";
 
@@ -13,11 +28,99 @@ int xdp_test_dummy(struct xdp_md *ctx) {
 
     void *data = (void *)(long)ctx->data;
     void *data_end = (void *)(long)ctx->data_end;
+
     struct ethhdr *eth = data;
-    if ((void *)(eth + 1) > data_end) {
-        bpf_printk("[dump] recv pkt_len=%u (short)", pkt_len);
-    } else {
-        bpf_printk("[dump] recv pkt_len=%u eth=%04x", pkt_len, bpf_ntohs(eth->h_proto));
+    if ((void *)(eth + 1) > data_end) goto log_len_only;
+
+    u16 eth_type = bpf_ntohs(eth->h_proto);
+
+    if (eth_type == TEST_ETH_P_IP) {
+        struct iphdr *iph = data + sizeof(struct ethhdr);
+        if ((void *)(iph + 1) > data_end) goto log_len_only;
+
+        u8 proto = iph->protocol;
+        __be16 sport = 0, dport = 0;
+
+        if (proto == IPPROTO_TCP && !(iph->frag_off & bpf_htons(0x1FFF))) {
+            struct tcphdr *tcph = data + sizeof(struct ethhdr) + (iph->ihl * 4);
+            if ((void *)(tcph + 1) <= data_end) {
+                sport = tcph->source;
+                dport = tcph->dest;
+            }
+        } else if (proto == IPPROTO_UDP && !(iph->frag_off & bpf_htons(0x1FFF))) {
+            struct udphdr *udph = data + sizeof(struct ethhdr) + (iph->ihl * 4);
+            if ((void *)(udph + 1) <= data_end) {
+                sport = udph->source;
+                dport = udph->dest;
+            }
+        }
+
+        bpf_printk("[dump] recv v4 pkt_len=%u %pI4:%u->%pI4:%u proto=%u", pkt_len, &iph->saddr,
+                   bpf_ntohs(sport), &iph->daddr, bpf_ntohs(dport), proto);
+        u32 k = 0;
+        struct dummy_recv_record *rec = bpf_map_lookup_elem(&dummy_recv_map, &k);
+        if (rec) __sync_fetch_and_add(&rec->count, 1);
+        return XDP_PASS;
     }
+
+    if (eth_type == TEST_ETH_P_IPV6) {
+        struct ipv6hdr *ip6h = data + sizeof(struct ethhdr);
+        if ((void *)(ip6h + 1) > data_end) goto log_len_only;
+
+        u8 proto = ip6h->nexthdr;
+        u16 l4_off = sizeof(struct ethhdr) + sizeof(struct ipv6hdr);
+
+#pragma unroll
+        for (int i = 0; i < 6; i++) {
+            struct ipv6_opt_hdr *oh;
+            switch (proto) {
+            case 0:
+            case 43:
+            case 60:
+                oh = data + l4_off;
+                if ((void *)(oh + 1) > data_end) goto log_len_only;
+                proto = oh->nexthdr;
+                l4_off += (oh->hdrlen + 1) * 8;
+                break;
+            case 44: {
+                struct frag_hdr *fh = data + l4_off;
+                if ((void *)(fh + 1) > data_end) goto log_len_only;
+                proto = fh->nexthdr;
+                l4_off += sizeof(struct frag_hdr);
+                break;
+            }
+            default:
+                goto v6_parse_l4;
+            }
+        }
+
+    v6_parse_l4: {
+        __be16 sport = 0, dport = 0;
+
+        if (proto == IPPROTO_TCP) {
+            struct tcphdr *tcph = data + l4_off;
+            if ((void *)(tcph + 1) <= data_end) {
+                sport = tcph->source;
+                dport = tcph->dest;
+            }
+        } else if (proto == IPPROTO_UDP) {
+            struct udphdr *udph = data + l4_off;
+            if ((void *)(udph + 1) <= data_end) {
+                sport = udph->source;
+                dport = udph->dest;
+            }
+        }
+
+        bpf_printk("[dump] recv v6 pkt_len=%u %pI6c:%u->%pI6c:%u nx=%u", pkt_len, &ip6h->saddr,
+                   bpf_ntohs(sport), &ip6h->daddr, bpf_ntohs(dport), proto);
+        u32 k = 1;
+        struct dummy_recv_record *rec = bpf_map_lookup_elem(&dummy_recv_map, &k);
+        if (rec) __sync_fetch_and_add(&rec->count, 1);
+        return XDP_PASS;
+    }
+    }
+
+log_len_only:
+    bpf_printk("[dump] recv pkt_len=%u", pkt_len);
     return XDP_PASS;
 }
