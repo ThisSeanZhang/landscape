@@ -5,6 +5,9 @@
 #include <bpf/bpf_tracing.h>
 
 #include "landscape.h"
+#include "scanner/xdp_common.h"
+#include "scanner/xdp_scanner4.h"
+#include "scanner/xdp_scanner6.h"
 #include "pipeline/pipeline.h"
 #include "pipeline/stage.h"
 
@@ -15,26 +18,40 @@ const volatile u16 mtu_size = 1492;
 static __always_inline int mss_clamp_packet(struct xdp_md *ctx) {
     void *data = (void *)(long)ctx->data;
     void *data_end = (void *)(long)ctx->data_end;
-    struct ethhdr *eth = data;
 
-    if ((void *)(eth + 1) > data_end) return XDP_PASS;
-    if (eth->h_proto != ETH_IPV4) return XDP_PASS;
+    enum xdp_l3_proto proto = xdp_classify_l3(ctx);
+    if (proto == XDP_L3_ERR || proto == XDP_L3_NONE) return XDP_PASS;
 
-    struct iphdr *iph = (struct iphdr *)(eth + 1);
-    if ((void *)(iph + 1) > data_end) return XDP_PASS;
-    if (iph->protocol != IPPROTO_TCP) return XDP_PASS;
+    u16 l4_offset;
+    u8 l4_protocol;
+    u8 pkt_type;
 
-    u32 ip_bytes = iph->ihl * 4;
-    struct tcphdr *tcph = (struct tcphdr *)((void *)iph + ip_bytes);
+    if (proto == XDP_L3_V4) {
+        struct xdp_ipv4_idx idx;
+        if (xdp_scan_ipv4_full(ctx, sizeof(struct ethhdr), &idx)) return XDP_PASS;
+        l4_offset = idx.l4_offset;
+        l4_protocol = idx.l4_protocol;
+        pkt_type = idx.pkt_type;
+    } else {
+        struct xdp_ipv6_idx idx;
+        if (xdp_scan_ipv6_full(ctx, sizeof(struct ethhdr), &idx)) return XDP_PASS;
+        l4_offset = idx.l4_offset;
+        l4_protocol = idx.l4_protocol;
+        pkt_type = idx.pkt_type;
+    }
+
+    if (l4_protocol != IPPROTO_TCP) return XDP_PASS;
+    if (pkt_type != PKT_TCP_SYN_V2) return XDP_PASS;
+
+    struct tcphdr *tcph = data + l4_offset;
     if ((void *)(tcph + 1) > data_end) return XDP_PASS;
-    if (!tcph->syn) return XDP_PASS;
-
     u8 tcp_bytes = tcph->doff * 4;
     if (tcp_bytes <= 20) return XDP_PASS;
     if ((void *)tcph + tcp_bytes > data_end) return XDP_PASS;
 
     u8 opts_len = tcp_bytes - 20;
-    u16 max_mss = mtu_size - (u16)ip_bytes - 20;
+    u16 ip_hdr_bytes = l4_offset - sizeof(struct ethhdr);
+    u16 max_mss = mtu_size - ip_hdr_bytes - 20;
 
     u8 pos = 0;
 #pragma unroll
