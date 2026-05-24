@@ -23,6 +23,7 @@ mod xdp_chain;
 mod xdp_firewall_test;
 mod xdp_lan_route_test;
 mod xdp_mss_clamp_test;
+mod xdp_nat_test;
 mod xdp_wan_route_test;
 
 pub(crate) mod test_scanner {
@@ -87,6 +88,10 @@ pub(crate) mod test_xdp_scanner_skel {
 
 pub(crate) mod xdp_firewall_skel {
     include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/xdp_firewall.skel.rs"));
+}
+
+pub(crate) mod xdp_nat_skel {
+    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/xdp_nat.skel.rs"));
 }
 
 unsafe impl plain::Plain for packet_info {}
