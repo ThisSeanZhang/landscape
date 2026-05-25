@@ -6,6 +6,8 @@
 
 #include "landscape.h"
 #include "pipeline/pipeline.h"
+#include "pipeline/xdp_wan_maps.h"
+#include "pipeline/xdp_lan_maps.h"
 
 char LICENSE[] SEC("license") = "GPL";
 
@@ -42,6 +44,13 @@ int xdp_lan_chain_root(struct xdp_md *ctx) {
 SEC("xdp")
 int xdp_lan_chain_exit(struct xdp_md *ctx) {
     struct xdp_pipe_meta meta = {};
+    void *data = (void *)(long)ctx->data;
+    void *data_end = (void *)(long)ctx->data_end;
+    struct ethhdr *eth;
+    struct iphdr *iph;
+    int ret;
+
+    bpf_printk("[lan_exit] ENTER");
 
     if (xdp_get_meta(ctx, &meta) != 0) {
         bpf_printk("[lan_exit] no meta");
@@ -53,5 +62,18 @@ int xdp_lan_chain_exit(struct xdp_md *ctx) {
         return XDP_PASS;
     }
 
-    return bpf_redirect(meta.target_ifindex, 0);
+    eth = data;
+    if ((void *)(eth + 1) > data_end) goto redirect;
+
+    if (eth->h_proto == ETH_IPV4) {
+        iph = (struct iphdr *)(eth + 1);
+        if ((void *)(iph + 1) > data_end) goto redirect;
+        bpf_printk("[lan_exit] IPv4 saddr=%pI4 daddr=%pI4 smac=%pM dmac=%pM", &iph->saddr,
+                   &iph->daddr, eth->h_source, eth->h_dest);
+    }
+
+redirect:
+    bpf_printk("[lan_exit] redirect to ifidx=%u", meta.target_ifindex);
+    ret = bpf_redirect(meta.target_ifindex, 0);
+    return ret;
 }

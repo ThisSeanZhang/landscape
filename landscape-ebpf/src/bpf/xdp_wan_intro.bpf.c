@@ -8,6 +8,8 @@
 #include "landscape.h"
 
 #include "pipeline/pipeline.h"
+#include "pipeline/xdp_wan_maps.h"
+#include "pipeline/xdp_lan_maps.h"
 
 #ifndef ETH_P_PPP_DISC
 #define ETH_P_PPP_DISC bpf_htons(0x8863)
@@ -69,7 +71,7 @@ struct {
     __uint(type, BPF_MAP_TYPE_HASH);
     __type(key, struct dispatch_key);
     __type(value, struct dispatch_value);
-    __uint(max_entries, PIPELINE_COUNT);
+    __uint(max_entries, XDP_PIPE_MAX_ENTRIES);
 } wan_intro_dispatch_map SEC(".maps");
 
 static __always_inline int wan_intro_tailcall_root(struct xdp_md *ctx, struct dispatch_key *key) {

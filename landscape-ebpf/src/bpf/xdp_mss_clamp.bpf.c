@@ -9,6 +9,8 @@
 #include "scanner/xdp_scanner4.h"
 #include "scanner/xdp_scanner6.h"
 #include "pipeline/pipeline.h"
+#include "pipeline/xdp_wan_maps.h"
+#include "pipeline/xdp_lan_maps.h"
 #include "pipeline/stage.h"
 
 char LICENSE[] SEC("license") = "GPL";
@@ -90,18 +92,22 @@ static __always_inline int mss_clamp_packet(struct xdp_md *ctx) {
 
 SEC("xdp")
 int xdp_mss_clamp_lan(struct xdp_md *ctx) {
+    bpf_printk("[mss_lan] enter");
     mss_clamp_packet(ctx);
 
     bpf_tail_call(ctx, &next_stage, XDP_STAGE_NEXT_LAN);
     bpf_tail_call(ctx, &xdp_pipe_exits_lan, 0);
+    bpf_printk("[mss_lan] all tailcalls failed");
     return XDP_PASS;
 }
 
 SEC("xdp")
 int xdp_mss_clamp_wan(struct xdp_md *ctx) {
+    bpf_printk("[mss_wan] enter");
     mss_clamp_packet(ctx);
 
     bpf_tail_call(ctx, &next_stage, XDP_STAGE_NEXT_WAN);
     bpf_tail_call(ctx, &xdp_pipe_exits_wan, 0);
+    bpf_printk("[mss_wan] all tailcalls failed");
     return XDP_PASS;
 }

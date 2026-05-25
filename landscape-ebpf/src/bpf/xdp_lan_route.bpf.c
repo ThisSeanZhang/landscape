@@ -9,6 +9,8 @@
 #include "land_wan_ip.h"
 
 #include "pipeline/pipeline.h"
+#include "pipeline/xdp_wan_maps.h"
+#include "pipeline/xdp_lan_maps.h"
 
 #include "route/route_index.h"
 #include "route/route_maps_v4.h"
@@ -273,7 +275,9 @@ xdp_pick_wan_v4(struct xdp_md *ctx, const struct route_context_v4 *context, cons
     xdp_set_meta(ctx, &meta);
 
     // key = target WAN ifindex, Rust side fills xdp_lan_pipe_root_progs[ifindex] = root_fd
+    bpf_printk("[lan_route] pick_wan_v4 tailcall to ifindex=%u", info->ifindex);
     bpf_tail_call(ctx, &xdp_lan_pipe_root_progs, info->ifindex);
+    bpf_printk("[lan_route] pick_wan_v4 tailcall FAILED for ifindex=%u", info->ifindex);
     return XDP_DROP;
 }
 
@@ -310,7 +314,9 @@ xdp_pick_wan_v6(struct xdp_md *ctx, const struct route_context_v6 *context, cons
     meta.target_ifindex = info->ifindex;
     xdp_set_meta(ctx, &meta);
 
+    bpf_printk("[lan_route] pick_wan_v6 tailcall to ifindex=%u", info->ifindex);
     bpf_tail_call(ctx, &xdp_lan_pipe_root_progs, info->ifindex);
+    bpf_printk("[lan_route] pick_wan_v6 tailcall FAILED for ifindex=%u", info->ifindex);
     return XDP_DROP;
 }
 
@@ -386,7 +392,9 @@ static __always_inline int xdp_cache_pick_wan_v4(struct xdp_md *ctx,
     meta.target_ifindex = info->ifindex;
     xdp_set_meta(ctx, &meta);
 
+    bpf_printk("[lan_route] cache_pick_wan_v4 tailcall to ifindex=%u", info->ifindex);
     bpf_tail_call(ctx, &xdp_lan_pipe_root_progs, info->ifindex);
+    bpf_printk("[lan_route] cache_pick_wan_v4 tailcall FAILED for ifindex=%u", info->ifindex);
     return XDP_DROP;
 }
 
@@ -461,7 +469,9 @@ static __always_inline int xdp_cache_pick_wan_v6(struct xdp_md *ctx,
     meta.target_ifindex = info->ifindex;
     xdp_set_meta(ctx, &meta);
 
+    bpf_printk("[lan_route] cache_pick_wan_v6 tailcall to ifindex=%u", info->ifindex);
     bpf_tail_call(ctx, &xdp_lan_pipe_root_progs, info->ifindex);
+    bpf_printk("[lan_route] cache_pick_wan_v6 tailcall FAILED for ifindex=%u", info->ifindex);
     return XDP_DROP;
 }
 
@@ -611,7 +621,16 @@ static __always_inline int xdp_search_route_in_lan_v4(struct xdp_md *ctx,
                         __builtin_memcpy(eth->h_source, mac_val->dev_mac, 6);
                     }
                 }
+                struct xdp_pipe_meta meta = {};
+                xdp_get_meta(ctx, &meta);
+                meta.target_ifindex = target->ifindex;
+                meta.mark = target->mark_value;
+                xdp_set_meta(ctx, &meta);
+                bpf_printk("[lan_route] search_lan_v4 WAN-hit tailcall to ifindex=%u",
+                           target->ifindex);
                 bpf_tail_call(ctx, &xdp_lan_pipe_root_progs, target->ifindex);
+                bpf_printk("[lan_route] search_lan_v4 WAN-hit tailcall FAILED ifindex=%u",
+                           target->ifindex);
                 return XDP_DROP;
             }
         }
@@ -624,7 +643,16 @@ static __always_inline int xdp_search_route_in_lan_v4(struct xdp_md *ctx,
         if (target) {
             *flow_mark = target->mark_value;
             if (target->ifindex != 0) {
+                struct xdp_pipe_meta meta = {};
+                xdp_get_meta(ctx, &meta);
+                meta.target_ifindex = target->ifindex;
+                meta.mark = target->mark_value;
+                xdp_set_meta(ctx, &meta);
+                bpf_printk("[lan_route] search_lan_v4 LAN-hit tailcall to ifindex=%u",
+                           target->ifindex);
                 bpf_tail_call(ctx, &xdp_lan_pipe_root_progs, target->ifindex);
+                bpf_printk("[lan_route] search_lan_v4 LAN-hit tailcall FAILED ifindex=%u",
+                           target->ifindex);
                 return XDP_DROP;
             }
             return xdp_cache_pick_wan_v4(ctx, context, target->mark_value);
@@ -666,7 +694,16 @@ static __always_inline int xdp_search_route_in_lan_v6(struct xdp_md *ctx,
                         __builtin_memcpy(eth->h_source, mac_val->dev_mac, 6);
                     }
                 }
+                struct xdp_pipe_meta meta = {};
+                xdp_get_meta(ctx, &meta);
+                meta.target_ifindex = target->ifindex;
+                meta.mark = target->mark_value;
+                xdp_set_meta(ctx, &meta);
+                bpf_printk("[lan_route] search_lan_v6 WAN-hit tailcall to ifindex=%u",
+                           target->ifindex);
                 bpf_tail_call(ctx, &xdp_lan_pipe_root_progs, target->ifindex);
+                bpf_printk("[lan_route] search_lan_v6 WAN-hit tailcall FAILED ifindex=%u",
+                           target->ifindex);
                 return XDP_DROP;
             }
         }
@@ -679,7 +716,16 @@ static __always_inline int xdp_search_route_in_lan_v6(struct xdp_md *ctx,
         if (target) {
             *flow_mark = target->mark_value;
             if (target->ifindex != 0) {
+                struct xdp_pipe_meta meta = {};
+                xdp_get_meta(ctx, &meta);
+                meta.target_ifindex = target->ifindex;
+                meta.mark = target->mark_value;
+                xdp_set_meta(ctx, &meta);
+                bpf_printk("[lan_route] search_lan_v6 LAN-hit tailcall to ifindex=%u",
+                           target->ifindex);
                 bpf_tail_call(ctx, &xdp_lan_pipe_root_progs, target->ifindex);
+                bpf_printk("[lan_route] search_lan_v6 LAN-hit tailcall FAILED ifindex=%u",
+                           target->ifindex);
                 return XDP_DROP;
             }
             return xdp_cache_pick_wan_v6(ctx, context, target->mark_value);
@@ -703,6 +749,7 @@ int xdp_lan_route(struct xdp_md *ctx) {
         struct route_context_v4 context = {};
         ret = xdp_read_ipv4(ctx, &context);
         if (ret) return ret;
+        bpf_printk("[lan_route] IPv4 saddr=%pI4 daddr=%pI4", &context.saddr, &context.daddr);
         ret = xdp_should_forward_v4(&context);
         if (ret) return ret;
 
@@ -727,6 +774,7 @@ int xdp_lan_route(struct xdp_md *ctx) {
         struct route_context_v6 context = {};
         ret = xdp_read_ipv6(ctx, &context);
         if (ret) return ret;
+        bpf_printk("[lan_route] IPv6");
         ret = xdp_should_forward_v6(&context);
         if (ret) return ret;
 
@@ -744,5 +792,6 @@ int xdp_lan_route(struct xdp_md *ctx) {
         return ret ? ret : XDP_PASS;
     }
 
+    bpf_printk("[lan_route] no match, XDP_PASS");
     return XDP_PASS;
 }

@@ -4,36 +4,6 @@
 #include <bpf/bpf_helpers.h>
 #include "../landscape.h"
 
-#define PIPELINE_COUNT 1024
-
-struct {
-    __uint(type, BPF_MAP_TYPE_PROG_ARRAY);
-    __uint(max_entries, PIPELINE_COUNT);
-    __uint(key_size, sizeof(u32));
-    __uint(value_size, sizeof(u32));
-} xdp_pipe_root_progs SEC(".maps");
-
-struct {
-    __uint(type, BPF_MAP_TYPE_PROG_ARRAY);
-    __uint(max_entries, 1);
-    __uint(key_size, sizeof(u32));
-    __uint(value_size, sizeof(u32));
-} xdp_pipe_exits_lan SEC(".maps");
-
-struct {
-    __uint(type, BPF_MAP_TYPE_PROG_ARRAY);
-    __uint(max_entries, 1);
-    __uint(key_size, sizeof(u32));
-    __uint(value_size, sizeof(u32));
-} xdp_pipe_exits_wan SEC(".maps");
-
-struct {
-    __uint(type, BPF_MAP_TYPE_PROG_ARRAY);
-    __uint(max_entries, PIPELINE_COUNT);
-    __uint(key_size, sizeof(u32));
-    __uint(value_size, sizeof(u32));
-} xdp_lan_pipe_root_progs SEC(".maps");
-
 struct xdp_pipe_meta {
     u32 mark;
     u32 target_ifindex;

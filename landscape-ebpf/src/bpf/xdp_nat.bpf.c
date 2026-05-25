@@ -11,6 +11,8 @@
 #include "nat/xdp_nat4.h"
 #include "nat/xdp_nat6.h"
 #include "pipeline/pipeline.h"
+#include "pipeline/xdp_wan_maps.h"
+#include "pipeline/xdp_lan_maps.h"
 #include "pipeline/stage.h"
 
 char LICENSE[] SEC("license") = "GPL";
@@ -291,6 +293,7 @@ static __always_inline void xdp_nat_tailcall(struct xdp_md *ctx, bool is_egress)
 
 SEC("xdp")
 int xdp_nat_lan(struct xdp_md *ctx) {
+    bpf_printk("[nat_lan] enter");
     void *data = (void *)(long)ctx->data;
     void *data_end = (void *)(long)ctx->data_end;
     struct ethhdr *eth = data;
@@ -307,6 +310,7 @@ int xdp_nat_lan(struct xdp_md *ctx) {
 
 SEC("xdp")
 int xdp_nat_wan(struct xdp_md *ctx) {
+    bpf_printk("[nat_wan] enter");
     void *data = (void *)(long)ctx->data;
     void *data_end = (void *)(long)ctx->data_end;
     struct ethhdr *eth = data;

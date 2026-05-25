@@ -8,6 +8,8 @@
 #include "scanner/xdp_common.h"
 #include "firewall/firewall_share.h"
 #include "pipeline/pipeline.h"
+#include "pipeline/xdp_wan_maps.h"
+#include "pipeline/xdp_lan_maps.h"
 #include "pipeline/stage.h"
 
 char LICENSE[] SEC("license") = "GPL";
@@ -44,20 +46,24 @@ static __always_inline int firewall_check(struct xdp_md *ctx, bool block_src) {
 
 SEC("xdp")
 int xdp_firewall_lan(struct xdp_md *ctx) {
+    bpf_printk("[fw_lan] enter");
     int verdict = firewall_check(ctx, false);
     if (verdict != XDP_PASS) return verdict;
 
     bpf_tail_call(ctx, &next_stage, XDP_STAGE_NEXT_LAN);
     bpf_tail_call(ctx, &xdp_pipe_exits_lan, 0);
+    bpf_printk("[fw_lan] all tailcalls failed");
     return XDP_PASS;
 }
 
 SEC("xdp")
 int xdp_firewall_wan(struct xdp_md *ctx) {
+    bpf_printk("[fw_wan] enter");
     int verdict = firewall_check(ctx, true);
     if (verdict != XDP_PASS) return verdict;
 
     bpf_tail_call(ctx, &next_stage, XDP_STAGE_NEXT_WAN);
     bpf_tail_call(ctx, &xdp_pipe_exits_wan, 0);
+    bpf_printk("[fw_wan] all tailcalls failed");
     return XDP_PASS;
 }

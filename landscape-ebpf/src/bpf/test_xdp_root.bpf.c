@@ -5,6 +5,7 @@
 
 #include "landscape.h"
 #include "pipeline/pipeline.h"
+#include "pipeline/xdp_lan_maps.h"
 
 char LICENSE[] SEC("license") = "GPL";
 

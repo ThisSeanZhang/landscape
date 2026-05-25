@@ -9,6 +9,8 @@
 #include "land_wan_ip.h"
 
 #include "pipeline/pipeline.h"
+#include "pipeline/xdp_wan_maps.h"
+#include "pipeline/xdp_lan_maps.h"
 
 #include "route/route_index.h"
 #include "route/route_maps_v4.h"
