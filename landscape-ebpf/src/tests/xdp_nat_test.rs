@@ -22,9 +22,10 @@ static XDP_NAT_LOCK: Mutex<()> = Mutex::new(());
 
 fn pin_root(prefix: &str) -> PathBuf {
     let path = PathBuf::from(format!(
-        "/sys/fs/bpf/landscape-test/xdp-nat-{}-{}",
+        "/sys/fs/bpf/landscape-test/xdp-nat-{}-{}-{}",
         prefix,
-        std::process::id()
+        std::process::id(),
+        crate::tests::test_id()
     ));
     let _ = std::fs::create_dir_all(&path);
     path
@@ -186,7 +187,7 @@ fn assert_wan_ip_binding(
 
 #[test]
 fn xdp_nat_static_egress() {
-    let pid = std::process::id();
+    let pid = crate::tests::test_id();
     let (nat_h, nat_p) = (format!("nath{pid}e"), format!("natp{pid}e"));
 
     let _ = Command::new("ip").args(["link", "del", &nat_h]).output();
@@ -199,7 +200,7 @@ fn xdp_nat_static_egress() {
     thread::sleep(Duration::from_millis(100));
 
     let nat_h_i = if_nametoindex(nat_h.as_str()).unwrap() as u32;
-    let nat_p_i = if_nametoindex(nat_p.as_str()).unwrap() as u32;
+    let _nat_p_i = if_nametoindex(nat_p.as_str()).unwrap() as u32;
 
     let share_pin = pin_root("nat4e");
     let mut sb = ShareMapSkelBuilder::default();
@@ -287,7 +288,7 @@ fn xdp_nat_static_egress() {
 
 #[test]
 fn xdp_nat_static_ingress() {
-    let pid = std::process::id();
+    let pid = crate::tests::test_id();
     let (nat_h, nat_p) = (format!("nath{pid}i"), format!("natp{pid}i"));
 
     let _ = Command::new("ip").args(["link", "del", &nat_h]).output();
@@ -356,7 +357,7 @@ fn xdp_nat_static_ingress() {
 
 #[test]
 fn xdp_nat_dynamic_egress() {
-    let pid = std::process::id();
+    let pid = crate::tests::test_id();
     let (nat_h, nat_p) = (format!("nath{pid}d"), format!("natp{pid}d"));
 
     let _ = Command::new("ip").args(["link", "del", &nat_h]).output();
@@ -458,7 +459,7 @@ fn build_tcp6_pkt(src: [u8; 16], dst: [u8; 16], src_port: u16, dst_port: u16) ->
 
 #[test]
 fn xdp_nat_v6_egress() {
-    let pid = std::process::id();
+    let pid = crate::tests::test_id();
     let (nat_h, nat_p) = (format!("nath{pid}v6"), format!("natp{pid}v6"));
 
     let _ = Command::new("ip").args(["link", "del", &nat_h]).output();
@@ -524,7 +525,7 @@ fn xdp_nat_v6_egress() {
 #[test]
 fn xdp_nat_firewall_pipeline() {
     let _lock = XDP_NAT_LOCK.lock().unwrap();
-    let pid = std::process::id();
+    let pid = crate::tests::test_id();
     let (nat_h, nat_p) = (format!("nfh{pid}"), format!("nfp{pid}"));
 
     let _ = Command::new("ip").args(["link", "del", &nat_h]).output();
@@ -564,7 +565,7 @@ fn xdp_nat_firewall_pipeline() {
     let _l0 = nat.progs.xdp_nat_lan.attach_xdp(nat_h_i as i32).unwrap();
     let _l1 = dummy.progs.xdp_test_dummy.attach_xdp(nat_p_i as i32).unwrap();
 
-    let nat_lan_fd = nat.progs.xdp_nat_lan.as_fd().as_raw_fd();
+    let _nat_lan_fd = nat.progs.xdp_nat_lan.as_fd().as_raw_fd();
     let fw_lan_fd = fw.progs.xdp_firewall_lan.as_fd().as_raw_fd();
 
     nat.maps
@@ -758,7 +759,7 @@ fn build_ipv4_tcp_syn_frag(
 
 #[test]
 fn xdp_nat_fragment_v4() {
-    let pid = std::process::id();
+    let pid = crate::tests::test_id();
     let (nat_h, nat_p) = (format!("nath{pid}f4"), format!("natp{pid}f4"));
 
     let _ = Command::new("ip").args(["link", "del", &nat_h]).output();
@@ -842,7 +843,7 @@ fn xdp_nat_fragment_v4() {
 
 #[test]
 fn xdp_nat_v6_ingress() {
-    let pid = std::process::id();
+    let pid = crate::tests::test_id();
     let (nat_h, nat_p) = (format!("nath{pid}v6i"), format!("natp{pid}v6i"));
 
     let _ = Command::new("ip").args(["link", "del", &nat_h]).output();
@@ -907,7 +908,7 @@ fn xdp_nat_v6_ingress() {
 
 #[test]
 fn xdp_nat_ct_dynamic_multi_pkt() {
-    let pid = std::process::id();
+    let pid = crate::tests::test_id();
     let (nat_h, nat_p) = (format!("nath{pid}ct"), format!("natp{pid}ct"));
 
     let _ = Command::new("ip").args(["link", "del", &nat_h]).output();
@@ -1034,7 +1035,7 @@ fn write_frag_cache_entry(
 
 #[test]
 fn xdp_nat_fragment_ingress() {
-    let pid = std::process::id();
+    let pid = crate::tests::test_id();
     let (nat_h, nat_p) = (format!("nath{pid}fi"), format!("natp{pid}fi"));
 
     let _ = Command::new("ip").args(["link", "del", &nat_h]).output();
@@ -1212,7 +1213,7 @@ fn build_icmp_error_pkt(
 
 #[test]
 fn xdp_nat_dynamic_ingress() {
-    let pid = std::process::id();
+    let pid = crate::tests::test_id();
     let (nat_h, nat_p) = (format!("nath{pid}di"), format!("natp{pid}di"));
     let _ = Command::new("ip").args(["link", "del", &nat_h]).output();
     Command::new("ip")
@@ -1302,7 +1303,7 @@ fn xdp_nat_dynamic_ingress() {
 
 #[test]
 fn xdp_nat_udp_egress() {
-    let pid = std::process::id();
+    let pid = crate::tests::test_id();
     let (nat_h, nat_p) = (format!("nath{pid}ue"), format!("natp{pid}ue"));
     let _ = Command::new("ip").args(["link", "del", &nat_h]).output();
     Command::new("ip")
@@ -1386,7 +1387,7 @@ fn xdp_nat_udp_egress() {
 
 #[test]
 fn xdp_nat_udp_ingress() {
-    let pid = std::process::id();
+    let pid = crate::tests::test_id();
     let (nat_h, nat_p) = (format!("nath{pid}ui"), format!("natp{pid}ui"));
     let _ = Command::new("ip").args(["link", "del", &nat_h]).output();
     Command::new("ip")
@@ -1476,7 +1477,7 @@ fn xdp_nat_udp_ingress() {
 
 #[test]
 fn xdp_nat_fragment_middle() {
-    let pid = std::process::id();
+    let pid = crate::tests::test_id();
     let (nat_h, nat_p) = (format!("nath{pid}fm"), format!("natp{pid}fm"));
     let _ = Command::new("ip").args(["link", "del", &nat_h]).output();
     Command::new("ip")
@@ -1540,7 +1541,7 @@ fn xdp_nat_fragment_middle() {
 
 #[test]
 fn xdp_nat_icmp_error_egress() {
-    let pid = std::process::id();
+    let pid = crate::tests::test_id();
     let (nat_h, nat_p) = (format!("nath{pid}ic"), format!("natp{pid}ic"));
     let _ = Command::new("ip").args(["link", "del", &nat_h]).output();
     Command::new("ip")
@@ -1634,7 +1635,7 @@ fn xdp_nat_icmp_error_egress() {
 
 #[test]
 fn xdp_nat_static_ingress_mark() {
-    let pid = std::process::id();
+    let pid = crate::tests::test_id();
     let (nat_h, nat_p) = (format!("nath{pid}sm"), format!("natp{pid}sm"));
     let _ = Command::new("ip").args(["link", "del", &nat_h]).output();
     Command::new("ip")
@@ -1695,7 +1696,7 @@ fn xdp_nat_static_ingress_mark() {
 #[test]
 fn xdp_nat_chain_pipeline() {
     let _lock = XDP_NAT_LOCK.lock().unwrap();
-    let pid = std::process::id();
+    let pid = crate::tests::test_id();
     let (nat_h, nat_p) = (format!("nch{pid}"), format!("ncp{pid}"));
 
     let _ = Command::new("ip").args(["link", "del", &nat_h]).output();
@@ -1716,7 +1717,7 @@ fn xdp_nat_chain_pipeline() {
     let mut share_obj = std::mem::MaybeUninit::uninit();
     let share = sb.open(&mut share_obj).unwrap().load().unwrap();
 
-    let mut chain_b = XdpLanChainSkelBuilder::default();
+    let chain_b = XdpLanChainSkelBuilder::default();
     let mut chain_obj = std::mem::MaybeUninit::uninit();
     let chain = chain_b.open(&mut chain_obj).unwrap().load().unwrap();
 

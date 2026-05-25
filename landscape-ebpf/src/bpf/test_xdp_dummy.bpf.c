@@ -5,11 +5,22 @@
 #include <bpf/bpf_tracing.h>
 
 #include "landscape.h"
+#include "pipeline/pipeline.h"
 
 #define TEST_ETH_P_IP 0x0800
 #define TEST_ETH_P_IPV6 0x86DD
 
 struct dummy_recv_record {
+    u64 count;
+};
+
+struct dummy_meta_record {
+    u32 mark;
+    u32 ifindex;
+};
+
+struct dummy_tcp_mss_record {
+    u16 mss;
     u64 count;
 };
 
@@ -20,6 +31,20 @@ struct {
     __uint(max_entries, 2);
 } dummy_recv_map SEC(".maps");
 
+struct {
+    __uint(type, BPF_MAP_TYPE_ARRAY);
+    __type(key, u32);
+    __type(value, struct dummy_meta_record);
+    __uint(max_entries, 2);
+} dummy_meta_map SEC(".maps");
+
+struct {
+    __uint(type, BPF_MAP_TYPE_ARRAY);
+    __type(key, u32);
+    __type(value, struct dummy_tcp_mss_record);
+    __uint(max_entries, 2);
+} dummy_tcp_mss_map SEC(".maps");
+
 char LICENSE[] SEC("license") = "GPL";
 
 SEC("xdp")
@@ -29,10 +54,21 @@ int xdp_test_dummy(struct xdp_md *ctx) {
     void *data = (void *)(long)ctx->data;
     void *data_end = (void *)(long)ctx->data_end;
 
+    struct xdp_pipe_meta meta = {};
+
     struct ethhdr *eth = data;
     if ((void *)(eth + 1) > data_end) goto log_len_only;
 
     u16 eth_type = bpf_ntohs(eth->h_proto);
+
+    if (xdp_get_meta(ctx, &meta) == 0) {
+        u32 mkey = (eth_type == TEST_ETH_P_IPV6) ? 1 : 0;
+        struct dummy_meta_record *mrec = bpf_map_lookup_elem(&dummy_meta_map, &mkey);
+        if (mrec) {
+            mrec->mark = meta.mark;
+            mrec->ifindex = meta.target_ifindex;
+        }
+    }
 
     if (eth_type == TEST_ETH_P_IP) {
         struct iphdr *iph = data + sizeof(struct ethhdr);
@@ -41,13 +77,22 @@ int xdp_test_dummy(struct xdp_md *ctx) {
         u8 proto = iph->protocol;
         __be16 sport = 0, dport = 0;
 
-        if (proto == IPPROTO_TCP && !(iph->frag_off & bpf_htons(0x1FFF))) {
-            struct tcphdr *tcph = data + sizeof(struct ethhdr) + (iph->ihl * 4);
+        if (proto == IPPROTO_TCP && !(iph->frag_off & bpf_htons(0x1FFF)) && iph->ihl == 5) {
+            struct tcphdr *tcph = data + sizeof(struct ethhdr) + sizeof(struct iphdr);
             if ((void *)(tcph + 1) <= data_end) {
                 sport = tcph->source;
                 dport = tcph->dest;
+                if (tcph->syn && !tcph->ack &&
+                    (void *)((u8 *)(tcph) + sizeof(*tcph) + 4) <= data_end) {
+                    __be16 mss = *(__be16 *)((u8 *)(tcph) + sizeof(*tcph) + 2);
+                    u32 mk = 0;
+                    struct dummy_tcp_mss_record *mr = bpf_map_lookup_elem(&dummy_tcp_mss_map, &mk);
+                    if (mr) {
+                        mr->mss = mss;
+                        __sync_fetch_and_add(&mr->count, 1);
+                    }
+                }
             }
-        } else if (proto == IPPROTO_UDP && !(iph->frag_off & bpf_htons(0x1FFF))) {
             struct udphdr *udph = data + sizeof(struct ethhdr) + (iph->ihl * 4);
             if ((void *)(udph + 1) <= data_end) {
                 sport = udph->source;
@@ -55,8 +100,6 @@ int xdp_test_dummy(struct xdp_md *ctx) {
             }
         }
 
-        bpf_printk("[dump] recv v4 pkt_len=%u %pI4:%u->%pI4:%u proto=%u", pkt_len, &iph->saddr,
-                   bpf_ntohs(sport), &iph->daddr, bpf_ntohs(dport), proto);
         u32 k = 0;
         struct dummy_recv_record *rec = bpf_map_lookup_elem(&dummy_recv_map, &k);
         if (rec) __sync_fetch_and_add(&rec->count, 1);
@@ -111,8 +154,6 @@ int xdp_test_dummy(struct xdp_md *ctx) {
             }
         }
 
-        bpf_printk("[dump] recv v6 pkt_len=%u %pI6c:%u->%pI6c:%u nx=%u", pkt_len, &ip6h->saddr,
-                   bpf_ntohs(sport), &ip6h->daddr, bpf_ntohs(dport), proto);
         u32 k = 1;
         struct dummy_recv_record *rec = bpf_map_lookup_elem(&dummy_recv_map, &k);
         if (rec) __sync_fetch_and_add(&rec->count, 1);
@@ -121,6 +162,5 @@ int xdp_test_dummy(struct xdp_md *ctx) {
     }
 
 log_len_only:
-    bpf_printk("[dump] recv pkt_len=%u", pkt_len);
     return XDP_PASS;
 }

@@ -22,15 +22,11 @@ int xdp_test_root(struct xdp_md *ctx) {
 
     ret = xdp_set_meta(ctx, &meta);
     if (ret) {
-        bpf_printk("[root] xdp_set_meta failed: %d", ret);
         return XDP_DROP;
     }
-
-    bpf_printk("[root] mark=0x%x, tailcalling stage1", meta.mark);
 
     bpf_tail_call(ctx, &root_next_stage, 0);
     bpf_tail_call(ctx, &xdp_pipe_exits_lan, 0);
 
-    bpf_printk("[root] all tailcalls failed");
     return XDP_PASS;
 }

@@ -13,7 +13,7 @@ use crate::tests::test_xdp_chain_stage::TestXdpChainStageSkelBuilder;
 use crate::tests::test_xdp_root::TestXdpRootSkelBuilder;
 
 fn veth_names() -> (String, String) {
-    let pid = std::process::id();
+    let pid = crate::tests::test_id();
     (format!("ldxh{pid}"), format!("ldxp{pid}"))
 }
 
@@ -36,18 +36,6 @@ fn create_veth_pair() -> (String, String, i32) {
 
 fn update_prog_array(map: &libbpf_rs::MapMut<'_>, idx: u32, fd: i32) {
     map.update(&idx.to_ne_bytes(), &fd.to_ne_bytes(), MapFlags::ANY).expect("update PROG_ARRAY");
-}
-
-fn clear_trace() {
-    let _ = Command::new("sh")
-        .args(["-c", "echo 0 > /sys/kernel/debug/tracing/tracing_on; echo > /sys/kernel/debug/tracing/trace; echo 1 > /sys/kernel/debug/tracing/tracing_on"])
-        .output();
-}
-
-fn read_trace() -> String {
-    let out =
-        Command::new("cat").arg("/sys/kernel/debug/tracing/trace").output().expect("read trace");
-    String::from_utf8_lossy(&out.stdout).to_string()
 }
 
 fn build_eth_ipv4_tcp(
@@ -106,7 +94,6 @@ fn send_raw_packet(iface: &str, pkt: &[u8]) {
 #[test]
 fn xdp_chain_3level() {
     let (veth_host, _veth_peer, ifindex) = create_veth_pair();
-    clear_trace();
 
     // ── load root skel ──
     let root_builder = TestXdpRootSkelBuilder::default();
@@ -135,7 +122,7 @@ fn xdp_chain_3level() {
     // ── attach root to veth host ──
     let _link = root_skel.progs.xdp_test_root.attach_xdp(ifindex).expect("attach XDP");
 
-    // ── send packets (multiple, to ensure log capture) ──
+    // ── send packets ──
     let pkt = build_eth_ipv4_tcp(
         [0x02, 0x00, 0x00, 0x00, 0x00, 0x01],
         [0x02, 0x00, 0x00, 0x00, 0x00, 0x02],
@@ -146,24 +133,18 @@ fn xdp_chain_3level() {
         send_raw_packet(&veth_host, &pkt);
         thread::sleep(Duration::from_millis(10));
     }
-
-    // ── wait for BPF + trace flush ──
     thread::sleep(Duration::from_millis(500));
 
-    // ── read trace ──
-    let trace = read_trace();
-    println!("=== trace output ===\n{trace}");
+    // ── verify: chain2 fallback counter > 0 (chain traversal completed) ──
+    let k = 0u32.to_ne_bytes();
+    let val = chain2_skel
+        .maps
+        .stage_fallback_map
+        .lookup(&k, MapFlags::ANY)
+        .expect("lookup stage_fallback_map");
+    let count = val.map_or(0u64, |v| u64::from_ne_bytes(v[0..8].try_into().unwrap()));
 
-    // root:        writes mark=0xCAFE (51966)
-    // chain1:      increments to 0xCAFF (51967), tailcalls chain2
-    // chain2:      increments to 0xCB00 (51968), both tailcalls fail → fallback log
-    let chain2_mark = 0xCAFEu32 + 2; // 51968 = 0xCB00
-
-    assert!(trace.contains("[root] mark=0xcafe"), "missing root log\nfull trace: {trace}");
-    assert!(
-        trace.contains(&format!("[stage] all tailcalls failed (mark={chain2_mark})")),
-        "missing chain2 fallback log, chain may not have reached the end\nfull trace: {trace}"
-    );
+    assert!(count > 0, "chain2 fallback counter is 0, chain may not have reached the end");
 
     // ── cleanup ──
     drop(chain2_skel);

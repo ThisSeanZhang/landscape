@@ -9,7 +9,11 @@ use libbpf_rs::{
 use crate::tests::xdp_wan_route_skel::XdpWanRouteSkelBuilder;
 
 fn test_pin_root() -> PathBuf {
-    let path = PathBuf::from(format!("/sys/fs/bpf/landscape-test/xdp-wr-{}", std::process::id()));
+    let path = PathBuf::from(format!(
+        "/sys/fs/bpf/landscape-test/xdp-wr-{}-{}",
+        std::process::id(),
+        crate::tests::test_id()
+    ));
     let _ = std::fs::create_dir_all(&path);
     path
 }

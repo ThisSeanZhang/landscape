@@ -1,6 +1,7 @@
 use std::fmt::Debug;
 use std::net::Ipv4Addr;
 use std::net::Ipv6Addr;
+use std::sync::atomic::{AtomicU32, Ordering};
 
 use etherparse::PacketBuilder;
 
@@ -9,6 +10,29 @@ use zerocopy::IntoBytes;
 
 use crate::tests::test_scanner::types::packet_info;
 use crate::tests::test_scanner::types::u_inet_addr;
+
+static TEST_ID: AtomicU32 = AtomicU32::new(0);
+
+pub(crate) fn test_id() -> u32 {
+    TEST_ID.fetch_add(1, Ordering::Relaxed)
+}
+
+pub(crate) fn check_ifindex(name: &str, ifindex: u32) {
+    const PIPELINE_COUNT: u32 = 1024;
+    if ifindex >= PIPELINE_COUNT {
+        eprintln!(
+            "WARNING: {} ifindex {} >= PIPELINE_COUNT ({}) — pipe_root_progs or dispatching map lookups may fail",
+            name, ifindex, PIPELINE_COUNT
+        );
+    }
+}
+
+#[allow(dead_code)]
+pub(crate) fn checked_if_nametoindex(name: &str) -> u32 {
+    let ifindex = nix::net::if_::if_nametoindex(name).expect(&format!("if_nametoindex({name})"));
+    check_ifindex(name, ifindex as u32);
+    ifindex as u32
+}
 
 mod check;
 mod firewall;
@@ -48,10 +72,6 @@ pub(crate) mod test_xdp_root {
 
 pub(crate) mod test_xdp_chain_stage {
     include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/test_xdp_chain_stage.skel.rs"));
-}
-
-pub(crate) mod test_xdp_redirect {
-    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/test_xdp_redirect.skel.rs"));
 }
 
 pub(crate) mod test_xdp_dummy {

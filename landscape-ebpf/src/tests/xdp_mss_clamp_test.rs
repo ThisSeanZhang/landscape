@@ -1,10 +1,15 @@
+use std::os::fd::{AsFd, AsRawFd};
 use std::process::Command;
 use std::thread;
 use std::time::Duration;
 
-use libbpf_rs::skel::{OpenSkel, SkelBuilder as _};
+use libbpf_rs::{
+    skel::{OpenSkel, SkelBuilder as _},
+    MapCore, MapFlags,
+};
 use nix::net::if_::if_nametoindex;
 
+use crate::tests::test_xdp_dummy::TestXdpDummySkelBuilder;
 use crate::tests::xdp_mss_clamp_skel::XdpMssClampSkelBuilder;
 
 fn build_syn_pkt(mss: u16) -> Vec<u8> {
@@ -17,55 +22,42 @@ fn build_syn_pkt(mss: u16) -> Vec<u8> {
 
     let _pkt_size = builder.size(0);
 
-    // Build packet manually with custom MSS option in SYN
-    // etherparse TCP builder defaults to no options. Write with custom MSS.
-    // (etherparse doesn't expose MSS option easily, write manually)
-    // Ethernet: 6+6+2 = 14
-    // IP: 20 bytes
-    // TCP SYN with MSS option: 20 + 4 (MSS) = 24 bytes
     pkt.resize(14 + 20 + 24, 0);
 
-    // Ethernet header
-    pkt[0..6].copy_from_slice(&[0x02, 0, 0, 0, 0, 1]); // dst mac
-    pkt[6..12].copy_from_slice(&[0x02, 0, 0, 0, 0, 2]); // src mac
+    pkt[0..6].copy_from_slice(&[0x02, 0, 0, 0, 0, 1]);
+    pkt[6..12].copy_from_slice(&[0x02, 0, 0, 0, 0, 2]);
     pkt[12] = 0x08;
-    pkt[13] = 0x00; // ethertype IPv4
+    pkt[13] = 0x00;
 
-    // IP header
-    pkt[14] = 0x45; // version=4, IHL=5
-    pkt[15] = 0x00; // DSCP
-    pkt[16] = ((20 + 24) >> 8) as u8; // total length high
-    pkt[17] = ((20 + 24) & 0xff) as u8; // total length low
-    pkt[18..20].copy_from_slice(&0x0000u16.to_be_bytes()); // ID = 0
-    pkt[20..22].copy_from_slice(&0x4000u16.to_be_bytes()); // flags + frag
-    pkt[22] = 64; // TTL
-    pkt[23] = 6; // protocol = TCP
-                 // checksum at 24..26, compute later
+    pkt[14] = 0x45;
+    pkt[15] = 0x00;
+    pkt[16] = ((20 + 24) >> 8) as u8;
+    pkt[17] = ((20 + 24) & 0xff) as u8;
+    pkt[18..20].copy_from_slice(&0x0000u16.to_be_bytes());
+    pkt[20..22].copy_from_slice(&0x4000u16.to_be_bytes());
+    pkt[22] = 64;
+    pkt[23] = 6;
     pkt[24..26].copy_from_slice(&0u16.to_be_bytes());
-    pkt[26..30].copy_from_slice(&[10, 0, 0, 1]); // src IP
-    pkt[30..34].copy_from_slice(&[10, 0, 0, 2]); // dst IP
+    pkt[26..30].copy_from_slice(&[10, 0, 0, 1]);
+    pkt[30..34].copy_from_slice(&[10, 0, 0, 2]);
 
-    // IP checksum
     let ip_csum = internet_checksum(&pkt[14..34]);
     pkt[24..26].copy_from_slice(&ip_csum.to_be_bytes());
 
-    // TCP header (offset 34)
-    pkt[34..36].copy_from_slice(&12345u16.to_be_bytes()); // src port
-    pkt[36..38].copy_from_slice(&80u16.to_be_bytes()); // dst port
-    pkt[38..42].copy_from_slice(&1000u32.to_be_bytes()); // seq
-    pkt[42..46].copy_from_slice(&0u32.to_be_bytes()); // ack
-    pkt[46] = 0x60; // data offset = 6 (24 bytes), reserved
-    pkt[47] = 0x02; // flags: SYN
-    pkt[48..50].copy_from_slice(&0xffffu16.to_be_bytes()); // window
-    pkt[50..52].copy_from_slice(&0u16.to_be_bytes()); // checksum (fill after)
-    pkt[52..54].copy_from_slice(&0u16.to_be_bytes()); // urgent
+    pkt[34..36].copy_from_slice(&12345u16.to_be_bytes());
+    pkt[36..38].copy_from_slice(&80u16.to_be_bytes());
+    pkt[38..42].copy_from_slice(&1000u32.to_be_bytes());
+    pkt[42..46].copy_from_slice(&0u32.to_be_bytes());
+    pkt[46] = 0x60;
+    pkt[47] = 0x02;
+    pkt[48..50].copy_from_slice(&0xffffu16.to_be_bytes());
+    pkt[50..52].copy_from_slice(&0u16.to_be_bytes());
+    pkt[52..54].copy_from_slice(&0u16.to_be_bytes());
 
-    // MSS option: kind=2, len=4, value=MSS
-    pkt[54] = 2; // kind = MSS
-    pkt[55] = 4; // len = 4
+    pkt[54] = 2;
+    pkt[55] = 4;
     pkt[56..58].copy_from_slice(&mss.to_be_bytes());
 
-    // TCP checksum
     let tcp_csum = tcp4_checksum(&pkt[26..30], &pkt[30..34], &pkt[34..58]);
     pkt[50..52].copy_from_slice(&tcp_csum.to_be_bytes());
 
@@ -90,12 +82,11 @@ fn internet_checksum(data: &[u8]) -> u16 {
 
 fn tcp4_checksum(src_ip: &[u8], dst_ip: &[u8], tcp: &[u8]) -> u16 {
     let mut sum: u32 = 0;
-    // pseudo header
     sum += u16::from_be_bytes([src_ip[0], src_ip[1]]) as u32;
     sum += u16::from_be_bytes([src_ip[2], src_ip[3]]) as u32;
     sum += u16::from_be_bytes([dst_ip[0], dst_ip[1]]) as u32;
     sum += u16::from_be_bytes([dst_ip[2], dst_ip[3]]) as u32;
-    sum += 6; // protocol = TCP
+    sum += 6;
     sum += tcp.len() as u32;
 
     for chunk in tcp.chunks(2) {
@@ -112,20 +103,36 @@ fn tcp4_checksum(src_ip: &[u8], dst_ip: &[u8], tcp: &[u8]) -> u16 {
     !(sum as u16)
 }
 
-fn clear_trace() {
-    let _ = Command::new("sh")
-        .args(["-c", "echo 0 > /sys/kernel/debug/tracing/tracing_on; echo 16384 > /sys/kernel/debug/tracing/buffer_size_kb; echo > /sys/kernel/debug/tracing/trace; echo 1 > /sys/kernel/debug/tracing/tracing_on"])
-        .output();
+fn dummy_tcp_mss_count(map: &libbpf_rs::MapMut) -> u64 {
+    let k = 0u32.to_ne_bytes();
+    map.lookup(&k, MapFlags::ANY)
+        .unwrap()
+        .map_or(0, |v| u64::from_ne_bytes(v[8..16].try_into().unwrap()))
 }
 
-fn read_trace() -> String {
-    let out =
-        Command::new("cat").arg("/sys/kernel/debug/tracing/trace").output().expect("read trace");
-    String::from_utf8_lossy(&out.stdout).to_string()
+fn dummy_tcp_mss_value(map: &libbpf_rs::MapMut) -> u16 {
+    let k = 0u32.to_ne_bytes();
+    map.lookup(&k, MapFlags::ANY).unwrap().map_or(0, |v| u16::from_be_bytes([v[0], v[1]]))
+}
+
+fn dummy_reset_tcp_mss(map: &libbpf_rs::MapMut) {
+    map.update(&0u32.to_ne_bytes(), &[0u8; 16], MapFlags::ANY).unwrap();
+}
+
+fn dummy_recv_count(map: &libbpf_rs::MapMut, is_v6: bool) -> u64 {
+    let k = if is_v6 { 1u32 } else { 0u32 }.to_ne_bytes();
+    map.lookup(&k, MapFlags::ANY)
+        .unwrap()
+        .map_or(0, |v| u64::from_ne_bytes(v[0..8].try_into().unwrap()))
+}
+
+fn dummy_reset_recv(map: &libbpf_rs::MapMut) {
+    let v = [0u8; 8];
+    map.update(&0u32.to_ne_bytes(), &v, MapFlags::ANY).unwrap();
+    map.update(&1u32.to_ne_bytes(), &v, MapFlags::ANY).unwrap();
 }
 
 fn send_raw_packet(iface: &str, pkt: &[u8]) {
-    use std::os::fd::AsRawFd;
     let sock = socket2::Socket::new(
         socket2::Domain::PACKET,
         socket2::Type::RAW,
@@ -164,8 +171,7 @@ fn xdp_mss_clamp_verifier() {
 
 #[test]
 fn xdp_mss_clamp_syn() {
-    // create veth
-    let pid = std::process::id();
+    let pid = crate::tests::test_id();
     let (host, peer) = (format!("xmh{pid}"), format!("xmp{pid}"));
     let _ = Command::new("ip").args(["link", "del", &host]).output();
     Command::new("ip")
@@ -183,25 +189,37 @@ fn xdp_mss_clamp_syn() {
     let skel = open.load().expect("load");
     let _link = skel.progs.xdp_mss_clamp_lan.attach_xdp(ifindex).expect("attach");
 
-    clear_trace();
+    let d_b = TestXdpDummySkelBuilder::default();
+    let mut d_obj = std::mem::MaybeUninit::uninit();
+    let dummy = d_b.open(&mut d_obj).expect("open").load().expect("load");
 
-    // Send SYN with MSS=1460 (will be clamped to 1452: 1492 - 20 - 20 = 1452)
+    let dummy_fd = dummy.progs.xdp_test_dummy.as_fd().as_raw_fd();
+    skel.maps
+        .xdp_pipe_exits_lan
+        .update(&0u32.to_ne_bytes(), &dummy_fd.to_ne_bytes(), MapFlags::ANY)
+        .unwrap();
+
+    dummy_reset_recv(&dummy.maps.dummy_recv_map);
+    dummy_reset_tcp_mss(&dummy.maps.dummy_tcp_mss_map);
+
     let pkt = build_syn_pkt(1460);
     send_raw_packet(&peer, &pkt);
     thread::sleep(Duration::from_millis(500));
 
-    let trace = read_trace();
-    println!("=== mss trace ===\n{trace}");
+    let cnt = dummy_recv_count(&dummy.maps.dummy_recv_map, false);
+    assert!(cnt > 0, "MSS clamp: no packet reached dummy");
+    let mss = dummy_tcp_mss_value(&dummy.maps.dummy_tcp_mss_map);
+    assert!(mss > 0, "MSS clamp: no MSS recorded by dummy");
+    assert!(mss < 1480, "MSS not clamped, got {}", mss);
 
-    assert!(trace.contains("[xdp_mss] clamped MSS"), "MSS not clamped, got:\n{trace}");
-
+    drop(dummy);
     drop(skel);
     let _ = Command::new("ip").args(["link", "del", &host]).output();
 }
 
 #[test]
 fn xdp_mss_clamp_bidirectional() {
-    let pid = std::process::id();
+    let pid = crate::tests::test_id();
     let (host, peer) = (format!("xmh{pid}"), format!("xmp{pid}"));
     let _ = Command::new("ip").args(["link", "del", &host]).output();
     Command::new("ip")
@@ -224,24 +242,54 @@ fn xdp_mss_clamp_bidirectional() {
     let skel_p = builder2.open(&mut obj2).expect("open").load().expect("load");
     let _link_p = skel_p.progs.xdp_mss_clamp_lan.attach_xdp(peer_ifindex).expect("attach peer");
 
-    clear_trace();
+    let d_b1 = TestXdpDummySkelBuilder::default();
+    let mut d1_obj = std::mem::MaybeUninit::uninit();
+    let dummy_h = d_b1.open(&mut d1_obj).expect("open").load().expect("load");
+    skel_h
+        .maps
+        .xdp_pipe_exits_lan
+        .update(
+            &0u32.to_ne_bytes(),
+            &dummy_h.progs.xdp_test_dummy.as_fd().as_raw_fd().to_ne_bytes(),
+            MapFlags::ANY,
+        )
+        .unwrap();
+
+    let d_b2 = TestXdpDummySkelBuilder::default();
+    let mut d2_obj = std::mem::MaybeUninit::uninit();
+    let dummy_p = d_b2.open(&mut d2_obj).expect("open").load().expect("load");
+    skel_p
+        .maps
+        .xdp_pipe_exits_lan
+        .update(
+            &0u32.to_ne_bytes(),
+            &dummy_p.progs.xdp_test_dummy.as_fd().as_raw_fd().to_ne_bytes(),
+            MapFlags::ANY,
+        )
+        .unwrap();
 
     let pkt = build_syn_pkt(1460);
 
+    dummy_reset_recv(&dummy_h.maps.dummy_recv_map);
+    dummy_reset_tcp_mss(&dummy_h.maps.dummy_tcp_mss_map);
     send_raw_packet(&peer, &pkt);
     thread::sleep(Duration::from_millis(300));
-    let trace_h = read_trace();
-    println!("=== host trace ===\n{trace_h}");
-    assert!(trace_h.contains("[xdp_mss] clamped MSS"), "host MSS not clamped:\n{trace_h}");
+    let cnt = dummy_recv_count(&dummy_h.maps.dummy_recv_map, false);
+    let mss = dummy_tcp_mss_value(&dummy_h.maps.dummy_tcp_mss_map);
+    assert!(cnt > 0, "host direction: no packet reached dummy");
+    assert!(mss > 0 && mss < 1480, "host MSS not clamped, got {}", mss);
 
-    clear_trace();
-
+    dummy_reset_recv(&dummy_p.maps.dummy_recv_map);
+    dummy_reset_tcp_mss(&dummy_p.maps.dummy_tcp_mss_map);
     send_raw_packet(&host, &pkt);
     thread::sleep(Duration::from_millis(300));
-    let trace_p = read_trace();
-    println!("=== peer trace ===\n{trace_p}");
-    assert!(trace_p.contains("[xdp_mss] clamped MSS"), "peer MSS not clamped:\n{trace_p}");
+    let cnt = dummy_recv_count(&dummy_p.maps.dummy_recv_map, false);
+    let mss = dummy_tcp_mss_value(&dummy_p.maps.dummy_tcp_mss_map);
+    assert!(cnt > 0, "peer direction: no packet reached dummy");
+    assert!(mss > 0 && mss < 1480, "peer MSS not clamped, got {}", mss);
 
+    drop(dummy_p);
+    drop(dummy_h);
     drop(skel_p);
     drop(skel_h);
     let _ = Command::new("ip").args(["link", "del", &host]).output();
@@ -260,7 +308,7 @@ fn build_non_syn_tcp_pkt() -> Vec<u8> {
 
 #[test]
 fn xdp_mss_clamp_non_syn_passthrough() {
-    let pid = std::process::id();
+    let pid = crate::tests::test_id();
     let (host, peer) = (format!("xmh{pid}"), format!("xmp{pid}"));
     let _ = Command::new("ip").args(["link", "del", &host]).output();
     Command::new("ip")
@@ -277,7 +325,20 @@ fn xdp_mss_clamp_non_syn_passthrough() {
     let skel = builder.open(&mut obj).expect("open").load().expect("load");
     let _link = skel.progs.xdp_mss_clamp_lan.attach_xdp(ifindex).expect("attach");
 
-    clear_trace();
+    let d_b = TestXdpDummySkelBuilder::default();
+    let mut d_obj = std::mem::MaybeUninit::uninit();
+    let dummy = d_b.open(&mut d_obj).expect("open").load().expect("load");
+    skel.maps
+        .xdp_pipe_exits_lan
+        .update(
+            &0u32.to_ne_bytes(),
+            &dummy.progs.xdp_test_dummy.as_fd().as_raw_fd().to_ne_bytes(),
+            MapFlags::ANY,
+        )
+        .unwrap();
+
+    dummy_reset_recv(&dummy.maps.dummy_recv_map);
+    dummy_reset_tcp_mss(&dummy.maps.dummy_tcp_mss_map);
 
     let pkt = build_non_syn_tcp_pkt();
     for _ in 0..3 {
@@ -286,11 +347,12 @@ fn xdp_mss_clamp_non_syn_passthrough() {
     }
     thread::sleep(Duration::from_millis(300));
 
-    let trace = read_trace();
-    println!("=== passthrough trace ===\n{trace}");
+    let cnt = dummy_recv_count(&dummy.maps.dummy_recv_map, false);
+    assert!(cnt > 0, "non-SYN: packet should pass through to dummy");
+    let mss_cnt = dummy_tcp_mss_count(&dummy.maps.dummy_tcp_mss_map);
+    assert_eq!(mss_cnt, 0, "non-SYN should not have MSS recorded");
 
-    assert!(!trace.contains("[xdp_mss] clamped MSS"), "non-SYN should not be clamped:\n{trace}");
-
+    drop(dummy);
     drop(skel);
     let _ = Command::new("ip").args(["link", "del", &host]).output();
 }

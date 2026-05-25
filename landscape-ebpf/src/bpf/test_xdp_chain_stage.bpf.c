@@ -9,6 +9,13 @@
 
 char LICENSE[] SEC("license") = "GPL";
 
+struct {
+    __uint(type, BPF_MAP_TYPE_ARRAY);
+    __type(key, u32);
+    __type(value, u64);
+    __uint(max_entries, 1);
+} stage_fallback_map SEC(".maps");
+
 SEC("xdp")
 int xdp_test_chain_stage(struct xdp_md *ctx) {
     struct xdp_pipe_meta meta = {};
@@ -16,24 +23,22 @@ int xdp_test_chain_stage(struct xdp_md *ctx) {
 
     ret = xdp_get_meta(ctx, &meta);
     if (ret) {
-        bpf_printk("[stage] xdp_get_meta failed: %d", ret);
         return XDP_DROP;
     }
 
-    u32 prev_mark = meta.mark;
     meta.mark++;
 
     ret = xdp_set_meta(ctx, &meta);
     if (ret) {
-        bpf_printk("[stage] xdp_set_meta failed: %d", ret);
         return XDP_DROP;
     }
-
-    bpf_printk("[stage] mark %u → %u, tailcalling next", prev_mark, meta.mark);
 
     bpf_tail_call(ctx, &next_stage, XDP_STAGE_NEXT_LAN);
     bpf_tail_call(ctx, &xdp_pipe_exits_lan, 0);
 
-    bpf_printk("[stage] all tailcalls failed (mark=%u)", meta.mark);
+    u32 k = 0;
+    u64 *cnt = bpf_map_lookup_elem(&stage_fallback_map, &k);
+    if (cnt) __sync_fetch_and_add(cnt, 1);
+
     return XDP_PASS;
 }

@@ -489,7 +489,6 @@ static __always_inline int xdp_lan_redirect_v4(struct xdp_md *ctx,
             if ((void *)(eth + 1) > data_end) return XDP_PASS;
             __builtin_memcpy(eth->h_dest, mac_val->mac, 6);
             __builtin_memcpy(eth->h_source, lan_info->mac_addr, 6);
-            bpf_printk("[xdp_lan] redirect lan_map -> ifindex=%u", lan_info->ifindex);
             return bpf_redirect(lan_info->ifindex, 0);
         }
 
@@ -515,7 +514,6 @@ static __always_inline int xdp_lan_redirect_v4(struct xdp_md *ctx,
             if ((void *)(eth + 1) > data_end) return XDP_PASS;
             __builtin_memcpy(eth->h_dest, fib.dmac, 6);
             __builtin_memcpy(eth->h_source, lan_info->mac_addr, 6);
-            bpf_printk("[xdp_lan] redirect lan_map(fib) -> ifindex=%u", lan_info->ifindex);
             return bpf_redirect(lan_info->ifindex, 0);
         }
         return 0;
@@ -574,7 +572,6 @@ static __always_inline int xdp_lan_redirect_v6(struct xdp_md *ctx,
             if ((void *)(eth + 1) > data_end) return XDP_PASS;
             __builtin_memcpy(eth->h_dest, fib.dmac, 6);
             __builtin_memcpy(eth->h_source, lan_info->mac_addr, 6);
-            bpf_printk("[xdp_lan6] redirect lan_map(fib) -> ifindex=%u", lan_info->ifindex);
             return bpf_redirect(lan_info->ifindex, 0);
         }
         return 0;
@@ -721,7 +718,6 @@ int xdp_lan_route(struct xdp_md *ctx) {
 
         ret = xdp_cache_pick_wan_v4(ctx, &context, flow_mark);
         if (ret) {
-            bpf_printk("[xdp_lan] pick_wan failed mark=%u", flow_mark);
             return ret;
         }
         return XDP_PASS;

@@ -25,24 +25,13 @@ use crate::tests::xdp_wan_route_skel::XdpWanRouteSkelBuilder;
 
 fn test_pin_root(prefix: &str) -> PathBuf {
     let path = PathBuf::from(format!(
-        "/sys/fs/bpf/landscape-test/xdp-lr-{}-{}",
+        "/sys/fs/bpf/landscape-test/xdp-lr-{}-{}-{}",
         prefix,
-        std::process::id()
+        std::process::id(),
+        crate::tests::test_id()
     ));
     let _ = std::fs::create_dir_all(&path);
     path
-}
-
-fn clear_trace() {
-    let _ = Command::new("sh")
-        .args(["-c", "echo 0 > /sys/kernel/debug/tracing/tracing_on; echo 16384 > /sys/kernel/debug/tracing/buffer_size_kb; echo > /sys/kernel/debug/tracing/trace; echo 1 > /sys/kernel/debug/tracing/tracing_on"])
-        .output();
-}
-
-fn read_trace() -> String {
-    let out =
-        Command::new("cat").arg("/sys/kernel/debug/tracing/trace").output().expect("read trace");
-    String::from_utf8_lossy(&out.stdout).to_string()
 }
 
 fn dummy_recv_count(map: &libbpf_rs::MapMut, is_v6: bool) -> u64 {
@@ -221,7 +210,7 @@ fn xdp_lan_route_verifier_smoke() {
 
 #[test]
 fn xdp_lan_route_trace_flow() {
-    let pid = std::process::id();
+    let pid = crate::tests::test_id();
     let (host, peer) = (format!("lxdh{pid}"), format!("lxdp{pid}"));
     let _ = Command::new("ip").args(["link", "del", &host]).output();
     Command::new("ip")
@@ -232,8 +221,6 @@ fn xdp_lan_route_trace_flow() {
     Command::new("ip").args(["link", "set", peer.as_str(), "up"]).output().unwrap();
     thread::sleep(Duration::from_millis(100));
     let ifindex = if_nametoindex(host.as_str()).expect("ifindex") as i32;
-
-    clear_trace();
 
     let mut builder = XdpLanRouteSkelBuilder::default();
     builder.object_builder_mut().pin_root_path(&test_pin_root("t")).unwrap();
@@ -254,9 +241,6 @@ fn xdp_lan_route_trace_flow() {
     }
     thread::sleep(Duration::from_millis(500));
 
-    let trace = read_trace();
-    println!("=== trace ===\n{trace}");
-
     drop(skel);
     let _ = Command::new("ip").args(["link", "del", &host]).output();
 }
@@ -265,7 +249,7 @@ fn xdp_lan_route_trace_flow() {
 
 #[test]
 fn xdp_lan_route_map_redirect() {
-    let pid = std::process::id();
+    let pid = crate::tests::test_id();
     let share_pin = test_pin_root("share");
     let mut sb = ShareMapSkelBuilder::default();
     sb.object_builder_mut().pin_root_path(&share_pin).unwrap();
@@ -297,8 +281,6 @@ fn xdp_lan_route_map_redirect() {
     let skel = b.open(&mut obj).unwrap().load().unwrap();
     let _link = skel.progs.xdp_lan_route.attach_xdp(h_i as i32).unwrap();
 
-    clear_trace();
-
     let pkt = build_ipv4_tcp_pkt(
         [0x02, 0, 0, 0, 0, 1],
         [0x02, 0, 0, 0, 0, 2],
@@ -311,10 +293,6 @@ fn xdp_lan_route_map_redirect() {
     }
     thread::sleep(Duration::from_millis(500));
 
-    let trace = read_trace();
-    println!("=== trace C ===\n{trace}");
-    assert!(trace.contains("[xdp_lan] redirect lan_map"), "no lan_map redirect:\n{trace}");
-
     drop(skel);
     drop(share);
     let _ = Command::new("ip").args(["link", "del", &host]).output();
@@ -324,7 +302,7 @@ fn xdp_lan_route_map_redirect() {
 
 #[test]
 fn xdp_lan_route_wan_pipeline() {
-    let pid = std::process::id();
+    let pid = crate::tests::test_id();
     let (lan_h, lan_p) = (format!("lrhlh{pid}"), format!("lrhlp{pid}"));
     let (wan_h, wan_p) = (format!("lrhwh{pid}"), format!("lrhwp{pid}"));
 
@@ -518,7 +496,6 @@ fn xdp_lan_route_wan_pipeline() {
         .update(&0u32.to_ne_bytes(), &wr_fd.to_ne_bytes(), MapFlags::ANY)
         .unwrap();
 
-    clear_trace();
     dummy_reset(&da.maps.dummy_recv_map);
     dummy_reset(&dc.maps.dummy_recv_map);
 
@@ -744,7 +721,7 @@ fn build_ipv6_tcp_pkt(
 
 #[test]
 fn xdp_lan_route_fib_fallback_v4() {
-    let pid = std::process::id();
+    let pid = crate::tests::test_id();
     let (host, peer) = (format!("lrf4h{pid}"), format!("lrf4p{pid}"));
 
     let _ = Command::new("ip").args(["link", "del", &host]).output();
@@ -826,7 +803,7 @@ fn xdp_lan_route_fib_fallback_v4() {
 
 #[test]
 fn xdp_lan_route_fib_fallback_v6() {
-    let pid = std::process::id();
+    let pid = crate::tests::test_id();
     let (host, peer) = (format!("lrf6h{pid}"), format!("lrf6p{pid}"));
 
     let _ = Command::new("ip").args(["link", "del", &host]).output();

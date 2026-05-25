@@ -22,24 +22,13 @@ use crate::tests::xdp_wan_route_skel::XdpWanRouteSkelBuilder;
 
 fn test_pin_root(prefix: &str) -> PathBuf {
     let path = PathBuf::from(format!(
-        "/sys/fs/bpf/landscape-test/xdp-fw-{}-{}",
+        "/sys/fs/bpf/landscape-test/xdp-fw-{}-{}-{}",
         prefix,
-        std::process::id()
+        std::process::id(),
+        crate::tests::test_id()
     ));
     let _ = std::fs::create_dir_all(&path);
     path
-}
-
-fn clear_trace() {
-    let _ = Command::new("sh")
-        .args(["-c", "echo 0 > /sys/kernel/debug/tracing/tracing_on; echo 16384 > /sys/kernel/debug/tracing/buffer_size_kb; echo > /sys/kernel/debug/tracing/trace; echo 1 > /sys/kernel/debug/tracing/tracing_on"])
-        .output();
-}
-
-fn read_trace() -> String {
-    let out =
-        Command::new("cat").arg("/sys/kernel/debug/tracing/trace").output().expect("read trace");
-    String::from_utf8_lossy(&out.stdout).to_string()
 }
 
 fn dummy_recv_count(map: &libbpf_rs::MapMut, is_v6: bool) -> u64 {
@@ -53,6 +42,10 @@ fn dummy_reset(map: &libbpf_rs::MapMut) {
     let v = [0u8; 8];
     map.update(&0u32.to_ne_bytes(), &v, MapFlags::ANY).unwrap();
     map.update(&1u32.to_ne_bytes(), &v, MapFlags::ANY).unwrap();
+}
+
+fn sync_barrier() {
+    thread::sleep(Duration::from_millis(200));
 }
 
 fn send_raw_packet(iface: &str, pkt: &[u8]) {
@@ -124,7 +117,7 @@ fn route_slot_v6(daddr: &[u8; 16]) -> u32 {
 
 #[test]
 fn xdp_firewall_pipeline() {
-    let pid = std::process::id();
+    let pid = crate::tests::test_id();
     let (lan_h, lan_p) = (format!("fwh{pid}"), format!("fwp{pid}"));
     let (wan_h, wan_p) = (format!("fwwwh{pid}"), format!("fwwwp{pid}"));
 
@@ -146,8 +139,10 @@ fn xdp_firewall_pipeline() {
     thread::sleep(Duration::from_millis(100));
 
     let lan_h_i = if_nametoindex(lan_h.as_str()).unwrap() as u32;
+    crate::tests::check_ifindex("lan_h", lan_h_i);
     let lan_p_i = if_nametoindex(lan_p.as_str()).unwrap() as u32;
     let wan_h_i = if_nametoindex(wan_h.as_str()).unwrap() as u32;
+    crate::tests::check_ifindex("wan_h", wan_h_i);
     let wan_p_i = if_nametoindex(wan_p.as_str()).unwrap() as u32;
 
     // Prevent kernel FIB from matching 203.0.113.1 so xdp_lan_route falls through to chain
@@ -406,7 +401,8 @@ fn xdp_firewall_pipeline() {
     // ════════════════════════════════════════
     // Scenario 1: no block → bidirectional flow
     // ════════════════════════════════════════
-    clear_trace();
+
+    sync_barrier();
     dummy_reset(&da.maps.dummy_recv_map);
     dummy_reset(&dc.maps.dummy_recv_map);
 
@@ -430,7 +426,7 @@ fn xdp_firewall_pipeline() {
     // ════════════════════════════════════════
     add_block(&fw.maps.firewall_block_ip4_map, [203, 0, 113, 1], &block_action);
 
-    clear_trace();
+    sync_barrier();
     dummy_reset(&da.maps.dummy_recv_map);
     dummy_reset(&dc.maps.dummy_recv_map);
     for _ in 0..2 {
@@ -452,7 +448,8 @@ fn xdp_firewall_pipeline() {
     add_block(&fw.maps.firewall_block_ip4_map, [10, 0, 0, 1], &block_action);
 
     // 3a: LAN direction — A→C, LAN checks dst(203.0.113.1 not blocked) → PASS
-    clear_trace();
+
+    sync_barrier();
     dummy_reset(&da.maps.dummy_recv_map);
     dummy_reset(&dc.maps.dummy_recv_map);
     for _ in 0..2 {
@@ -465,7 +462,8 @@ fn xdp_firewall_pipeline() {
     assert!(v4_cnt > 0, "3a LAN: should PASS (checks dst, not src)");
 
     // 3b: WAN direction — C→A, WAN checks src(203.0.113.1 not blocked) → PASS
-    clear_trace();
+
+    sync_barrier();
     dummy_reset(&da.maps.dummy_recv_map);
     dummy_reset(&dc.maps.dummy_recv_map);
     for _ in 0..2 {
@@ -483,7 +481,7 @@ fn xdp_firewall_pipeline() {
     del_block(&fw.maps.firewall_block_ip4_map, [10, 0, 0, 1]);
     add_block(&fw.maps.firewall_block_ip4_map, [203, 0, 113, 1], &block_action);
 
-    clear_trace();
+    sync_barrier();
     dummy_reset(&da.maps.dummy_recv_map);
     dummy_reset(&dc.maps.dummy_recv_map);
     let a2c_unblocked = build_tcp_pkt([10, 0, 0, 1], [203, 0, 113, 2]);
@@ -501,7 +499,7 @@ fn xdp_firewall_pipeline() {
     // ════════════════════════════════════════
     del_block(&fw.maps.firewall_block_ip4_map, [203, 0, 113, 1]);
 
-    clear_trace();
+    sync_barrier();
     dummy_reset(&da.maps.dummy_recv_map);
     dummy_reset(&dc.maps.dummy_recv_map);
     for _ in 0..3 {
@@ -524,7 +522,8 @@ fn xdp_firewall_pipeline() {
     let c2a_v6 = build_tcp6_pkt(v6_wan, v6_lan);
 
     // Scenario 6: v6 no block → bidirectional flow
-    clear_trace();
+
+    sync_barrier();
     dummy_reset(&da.maps.dummy_recv_map);
     dummy_reset(&dc.maps.dummy_recv_map);
     for _ in 0..2 {
@@ -542,7 +541,7 @@ fn xdp_firewall_pipeline() {
     //   WAN→LAN: firewall_wan blocks src (fd00::2)
     add_block_v6(&fw.maps.firewall_block_ip6_map, v6_wan, &block_action);
 
-    clear_trace();
+    sync_barrier();
     dummy_reset(&da.maps.dummy_recv_map);
     dummy_reset(&dc.maps.dummy_recv_map);
     for _ in 0..2 {
@@ -560,7 +559,8 @@ fn xdp_firewall_pipeline() {
     add_block_v6(&fw.maps.firewall_block_ip6_map, v6_lan, &block_action);
 
     // 8a: LAN direction — A→C, LAN checks dst(fd00::2 not blocked) → PASS
-    clear_trace();
+
+    sync_barrier();
     dummy_reset(&da.maps.dummy_recv_map);
     dummy_reset(&dc.maps.dummy_recv_map);
     for _ in 0..2 {
@@ -573,7 +573,8 @@ fn xdp_firewall_pipeline() {
     assert!(v6_cnt > 0, "v6 8a LAN: should PASS (checks dst, not src)");
 
     // 8b: WAN direction — C→A, WAN checks src(fd00::2 not blocked) → PASS
-    clear_trace();
+
+    sync_barrier();
     dummy_reset(&da.maps.dummy_recv_map);
     dummy_reset(&dc.maps.dummy_recv_map);
     for _ in 0..2 {
@@ -588,7 +589,7 @@ fn xdp_firewall_pipeline() {
     // Scenario 9: v6 delete block → flow resumes
     del_block_v6(&fw.maps.firewall_block_ip6_map, v6_lan);
 
-    clear_trace();
+    sync_barrier();
     dummy_reset(&da.maps.dummy_recv_map);
     dummy_reset(&dc.maps.dummy_recv_map);
     for _ in 0..2 {
