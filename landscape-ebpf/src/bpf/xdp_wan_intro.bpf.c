@@ -20,6 +20,8 @@
 #define ETH_P_PPP_IPV4 bpf_htons(0x0021)
 #define ETH_P_PPP_IPV6 bpf_htons(0x0057)
 
+#define WAN_INTRO_IFINDEX_TYPE 2
+
 struct __attribute__((packed)) pppoe_header {
     u8 version_and_type;
     u8 code;
@@ -48,12 +50,13 @@ struct dispatch_ppp {
 };
 
 struct dispatch_key {
-    // Dispatch type: PPPoE inner IPv4/IPv6, or direct IPv4/IPv6
+    // Dispatch type: PPPoE inner IPv4/IPv6, direct IPv4/IPv6, or ingress ifindex fallback
     u32 dispatch_type;
     union {
         struct dispatch_v4 v4;
         struct dispatch_v6 v6;
         struct dispatch_ppp ppp;
+        u32 ifindex;
     };
 };
 
@@ -122,6 +125,11 @@ int wan_intro_dispatch(struct xdp_md *ctx) {
 
         key.dispatch_type = LANDSCAPE_IPV4_TYPE;
         key.v4.daddr = iph->daddr;
+        wan_intro_tailcall_root(ctx, &key);
+
+        key.v6.prefix64 = 0;
+        key.dispatch_type = WAN_INTRO_IFINDEX_TYPE;
+        key.ifindex = ctx->ingress_ifindex;
         return wan_intro_tailcall_root(ctx, &key);
     }
 
@@ -133,6 +141,11 @@ int wan_intro_dispatch(struct xdp_md *ctx) {
 
         key.dispatch_type = LANDSCAPE_IPV6_TYPE;
         __builtin_memcpy(&key.v6.prefix64, &ip6h->daddr, sizeof(key.v6.prefix64));
+        wan_intro_tailcall_root(ctx, &key);
+
+        key.v6.prefix64 = 0;
+        key.dispatch_type = WAN_INTRO_IFINDEX_TYPE;
+        key.ifindex = ctx->ingress_ifindex;
         return wan_intro_tailcall_root(ctx, &key);
     }
 
@@ -189,6 +202,11 @@ int wan_intro_dispatch(struct xdp_md *ctx) {
     __builtin_memcpy(eth->h_dest, mac_pair, sizeof(mac_pair));
     eth->h_proto = l2_proto;
 
+    wan_intro_tailcall_root(ctx, &key);
+
+    key.v6.prefix64 = 0;
+    key.dispatch_type = WAN_INTRO_IFINDEX_TYPE;
+    key.ifindex = ctx->ingress_ifindex;
     return wan_intro_tailcall_root(ctx, &key);
 
 #undef BPF_LOG_TOPIC
