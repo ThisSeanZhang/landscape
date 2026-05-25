@@ -117,7 +117,6 @@ static __always_inline int xdp_nat_v4(struct xdp_md *ctx, bool is_egress) {
             meta.mark = replace_cache_mask(meta.mark, INGRESS_STATIC_MARK);
             void *dm = (void *)(long)ctx->data_meta;
             if (dm + sizeof(meta) <= data) __builtin_memcpy(dm, &meta, sizeof(meta));
-            bpf_printk("[xdp_nat] static ingress mark set");
         }
     }
 
@@ -229,10 +228,6 @@ static __always_inline int xdp_nat_v4(struct xdp_md *ctx, bool is_egress) {
                           is_icmpx_error, idx.icmp_error_l3_offset, idx.icmp_error_inner_l4_offset,
                           idx.icmp_error_l4_protocol);
 
-    bpf_printk("[xdp_nat] %s %pI4:%u -> %pI4:%u", is_egress ? "egress" : "ingress",
-               &action.from_addr.addr, bpf_ntohs(action.from_port), &action.to_addr.addr,
-               bpf_ntohs(action.to_port));
-
     return XDP_PASS;
 }
 
@@ -273,10 +268,11 @@ static __always_inline int xdp_nat_v6(struct xdp_md *ctx, bool is_egress) {
         __builtin_memcpy(&new_prefix, &ip6h->saddr, sizeof(new_prefix));
         xdp_nat6_update_l4_checksum(data, data_end, idx.l4_offset, l4_proto, old_prefix,
                                     new_prefix);
-        bpf_printk("[xdp_nat] v6 egress prefix replaced");
     } else {
         if (!xdp_nat6_ingress_prefix_replace(ctx, wan_if, ip6h, idx.l4_offset, l4_proto)) {
-            bpf_printk("[xdp_nat] v6 ingress prefix replaced");
+            meta.mark = replace_cache_mask(meta.mark, INGRESS_STATIC_MARK);
+            void *dm = (void *)(long)ctx->data_meta;
+            if (dm + sizeof(meta) <= data) __builtin_memcpy(dm, &meta, sizeof(meta));
         }
     }
 
