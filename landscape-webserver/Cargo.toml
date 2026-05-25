@@ -59,6 +59,7 @@ rand = { workspace = true }
 utoipa = { workspace = true }
 utoipa-axum = { workspace = true }
 utoipa-scalar = { workspace = true }
+rmcp = { workspace = true }
 
 # logs
 tracing = { workspace = true }

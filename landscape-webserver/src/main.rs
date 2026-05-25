@@ -87,6 +87,7 @@ mod gateway;
 mod gateway_runtime;
 mod geo;
 mod interfaces;
+mod mcp;
 mod metrics;
 mod nat;
 mod openapi;
@@ -759,7 +760,7 @@ async fn run_system(
     let api_route = Router::new()
         .nest("/v1", v1_route)
         .nest("/ws", ws_route)
-        .nest("/auth", auth::get_auth_route(auth_share))
+        .nest("/auth", auth::get_auth_route(auth_share.clone()))
         .merge(Scalar::with_url("/docs", openapi).custom_html(
             r#"<!doctype html>
 <html>
@@ -800,8 +801,14 @@ async fn run_system(
 </body>
 </html>"#,
         ));
+
+    let mcp_route = Router::new()
+        .nest_service("/mcp", mcp::streamable_http_service(landscape_app_status.clone()))
+        .route_layer(axum::middleware::from_fn_with_state(auth_share.clone(), auth::auth_handler));
+
     let app = Router::new()
         .nest("/api", api_route)
+        .merge(mcp_route)
         // .nest("/sock", sockets_route)
         .route("/foo", get(|| async { "Hi from /foo" }))
         .fallback_service(serve_dir)

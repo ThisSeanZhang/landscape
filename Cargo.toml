@@ -126,6 +126,7 @@ utoipa = { version = "5", features = ["uuid", "openapi_extensions"] }
 utoipa-axum = "0.2"
 utoipa-scalar = { version = "0.3", features = ["axum"] }
 jsonwebtoken = { version = "10.3.0", features = ["rust_crypto"] }
+rmcp = { version = "1.7.0", features = ["transport-streamable-http-server"] }
 
 # ============================================================================
 # Security & Cryptography
