@@ -630,7 +630,7 @@ async fn bind_ipv4(
         iface_ip: IpAddr::V4(new_yiaddr),
         mac: Some(mac_addr.clone()),
         prefix: mask as u8,
-        mode: LanRouteMode::Reachable,
+        mode: LanRouteMode::WanReachable,
     };
     route_service.insert_ipv4_lan_route(&iface_name, lan_info).await;
 

@@ -339,7 +339,7 @@ pub async fn create_pppd_thread(
                                         iface_ip: IpAddr::V4(ip.clone()),
                                         mac: None,
                                         prefix: 32,
-                                        mode: LanRouteMode::Reachable,
+                                        mode: LanRouteMode::WanReachable,
                                     },
                                 )
                                 .await;

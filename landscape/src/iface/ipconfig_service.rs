@@ -97,7 +97,7 @@ async fn init_service_from_config(
                     iface_ip: IpAddr::V4(ipv4),
                     mac: iface.mac,
                     prefix: ipv4_mask,
-                    mode: LanRouteMode::Reachable,
+                    mode: LanRouteMode::WanReachable,
                 };
                 route_service.insert_ipv4_lan_route(&iface_name, lan_info).await;
 

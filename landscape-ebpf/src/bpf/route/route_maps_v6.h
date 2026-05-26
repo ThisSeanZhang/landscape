@@ -9,13 +9,14 @@ struct lan_route_key_v6 {
     union u_inet6_addr addr;
 };
 
-// TODO: define as flag
+#define ROUTE_TYPE_LAN 0
+#define ROUTE_TYPE_NEXTHOP 1
+#define ROUTE_TYPE_WAN 2
+
 struct lan_route_info_v6 {
     bool has_mac;
     u8 mac_addr[6];
-    // 0: current 1: next hop
-    bool is_next_hop;
-    // u8 _pad[1];
+    u8 route_type;
     u32 ifindex;
     union u_inet6_addr addr;
 };

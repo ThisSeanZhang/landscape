@@ -62,6 +62,7 @@ pub enum LanRouteMode {
     NextHop {
         next_hop_ip: IpAddr,
     },
+    WanReachable,
 }
 
 #[derive(Eq, Hash, PartialEq, Debug, Clone)]

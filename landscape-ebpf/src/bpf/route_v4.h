@@ -44,7 +44,7 @@ static __always_inline int lan_redirect_check_v4(struct __sk_buff *skb, u32 curr
             return TC_ACT_UNSPEC;
         }
 
-        if (!lan_info->is_next_hop && lan_info->addr == context->daddr) {
+        if (lan_info->route_type == ROUTE_TYPE_LAN && lan_info->addr == context->daddr) {
             return TC_ACT_UNSPEC;
         }
 
@@ -59,7 +59,7 @@ static __always_inline int lan_redirect_check_v4(struct __sk_buff *skb, u32 curr
         }
 
         bool target_has_mac = lan_info->has_mac;
-        if (unlikely(lan_info->is_next_hop)) {
+        if (unlikely(lan_info->route_type == ROUTE_TYPE_NEXTHOP)) {
             mac_key_search.addr = lan_info->addr;
         } else {
             mac_key_search.addr = context->daddr;
@@ -83,7 +83,7 @@ static __always_inline int lan_redirect_check_v4(struct __sk_buff *skb, u32 curr
         struct bpf_redir_neigh param;
         param.nh_family = AF_INET;
 
-        if (unlikely(lan_info->is_next_hop)) {
+        if (unlikely(lan_info->route_type == ROUTE_TYPE_NEXTHOP)) {
             param.ipv6_nh[0] = lan_info->addr;
         } else {
             param.ipv6_nh[0] = lan_search_key.addr;

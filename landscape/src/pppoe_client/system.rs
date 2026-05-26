@@ -103,7 +103,7 @@ impl PPPoEClientManager {
                 iface_ip: IpAddr::V4(client_ip),
                 mac: Some(iface_mac),
                 prefix: 32,
-                mode: LanRouteMode::Reachable,
+                mode: LanRouteMode::WanReachable,
             };
             if let Some(route_service) = route_service.as_ref() {
                 route_service.insert_ipv4_lan_route(&iface_name, lan_info).await;

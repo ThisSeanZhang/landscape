@@ -486,11 +486,31 @@ static __always_inline int xdp_lan_redirect_v4(struct xdp_md *ctx,
     struct lan_route_info_v4 *lan_info = bpf_map_lookup_elem(&rt4_lan_map, &key);
     if (lan_info == NULL) return 0;
 
+    if (lan_info->route_type == ROUTE_TYPE_WAN) {
+        if (lan_info->has_mac) {
+            mac_val = bpf_map_lookup_elem(&ip_mac_v4, &mac_key);
+            if (mac_val) {
+                void *data = (void *)(long)ctx->data;
+                void *data_end = (void *)(long)ctx->data_end;
+                struct ethhdr *eth = data;
+                if ((void *)(eth + 1) > data_end) return XDP_PASS;
+                __builtin_memcpy(eth->h_dest, mac_val->mac, 6);
+                __builtin_memcpy(eth->h_source, lan_info->mac_addr, 6);
+            }
+        }
+        struct xdp_pipe_meta meta = {};
+        meta.target_ifindex = lan_info->ifindex;
+        meta.mark = 0;
+        xdp_set_meta(ctx, &meta);
+        bpf_tail_call(ctx, &xdp_lan_pipe_root_progs, lan_info->ifindex);
+        return XDP_DROP;
+    }
+
     if (lan_info->ifindex == ctx->ingress_ifindex) return XDP_PASS;
-    if (!lan_info->is_next_hop && lan_info->addr == context->daddr) return XDP_PASS;
+    if (lan_info->route_type == ROUTE_TYPE_LAN && lan_info->addr == context->daddr) return XDP_PASS;
 
     if (lan_info->has_mac) {
-        mac_key.addr = lan_info->is_next_hop ? lan_info->addr : context->daddr;
+        mac_key.addr = lan_info->route_type == ROUTE_TYPE_NEXTHOP ? lan_info->addr : context->daddr;
         mac_val = bpf_map_lookup_elem(&ip_mac_v4, &mac_key);
         if (mac_val) {
             void *data = (void *)(long)ctx->data;
@@ -541,14 +561,38 @@ static __always_inline int xdp_lan_redirect_v6(struct xdp_md *ctx,
     struct lan_route_info_v6 *lan_info = bpf_map_lookup_elem(&rt6_lan_map, &key);
     if (lan_info == NULL) return 0;
 
+    if (lan_info->route_type == ROUTE_TYPE_WAN) {
+        if (lan_info->has_mac) {
+            struct mac_key_v6 dst_key = {};
+            COPY_ADDR_FROM(dst_key.addr.all, context->daddr.all);
+            mac_val = bpf_map_lookup_elem(&ip_mac_v6, &dst_key);
+            if (mac_val) {
+                void *data = (void *)(long)ctx->data;
+                void *data_end = (void *)(long)ctx->data_end;
+                struct ethhdr *eth = data;
+                if ((void *)(eth + 1) > data_end) return XDP_PASS;
+                __builtin_memcpy(eth->h_dest, mac_val->mac, 6);
+                __builtin_memcpy(eth->h_source, lan_info->mac_addr, 6);
+            }
+        }
+        struct xdp_pipe_meta meta = {};
+        meta.target_ifindex = lan_info->ifindex;
+        meta.mark = 0;
+        xdp_set_meta(ctx, &meta);
+        bpf_tail_call(ctx, &xdp_lan_pipe_root_progs, lan_info->ifindex);
+        return XDP_DROP;
+    }
+
     if (lan_info->ifindex == ctx->ingress_ifindex) return XDP_PASS;
-    if (!lan_info->is_next_hop && ip_addr_equal_in6(&lan_info->addr, &context->daddr))
+    if (lan_info->route_type == ROUTE_TYPE_LAN &&
+        ip_addr_equal_in6(&lan_info->addr, &context->daddr))
         return XDP_PASS;
 
     if (lan_info->has_mac) {
         struct mac_key_v6 hop_key = {};
-        COPY_ADDR_FROM(hop_key.addr.all,
-                       lan_info->is_next_hop ? lan_info->addr.all : context->daddr.all);
+        COPY_ADDR_FROM(hop_key.addr.all, lan_info->route_type == ROUTE_TYPE_NEXTHOP
+                                             ? lan_info->addr.all
+                                             : context->daddr.all);
         mac_val = bpf_map_lookup_elem(&ip_mac_v6, &hop_key);
         if (mac_val) {
             void *data = (void *)(long)ctx->data;

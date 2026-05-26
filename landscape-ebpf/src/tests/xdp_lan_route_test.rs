@@ -870,11 +870,11 @@ fn xdp_lan_route_fib_fallback_v6() {
     let dst_ip6: [u8; 16] = [0xfd, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x02, 0];
     lan_key[4..20].copy_from_slice(&dst_ip6);
 
-    // 28-byte v6 lan_route_info: has_mac(1) + mac_addr(6) + is_next_hop(1) + ifindex(4) + addr(16)
+    // 28-byte v6 lan_route_info: has_mac(1) + mac_addr(6) + route_type(1) + ifindex(4) + addr(16)
     let mut lan_val = [0u8; 28];
     lan_val[0] = 1; // has_mac = true
     lan_val[8..12].copy_from_slice(&p_i.to_ne_bytes());
-    // addr stays zero (not used when is_next_hop=false)
+    // addr stays zero (not used when route_type=ROUTE_TYPE_LAN)
 
     skel.maps.rt6_lan_map.delete(&lan_key).ok();
     skel.maps.rt6_lan_map.update(&lan_key, &lan_val, MapFlags::ANY).unwrap();

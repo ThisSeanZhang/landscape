@@ -36,6 +36,10 @@ const FLOW_ACTION_MASK: u32 = 0x00007F00;
 const LAN_CACHE: u32 = 1;
 const FLOW_TARGET_SLOT_COUNT: usize = 16;
 
+const ROUTE_TYPE_LAN: u8 = 0;
+const ROUTE_TYPE_NEXTHOP: u8 = 1;
+const ROUTE_TYPE_WAN: u8 = 2;
+
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
 struct route_target_slot_key_v4 {
@@ -522,12 +526,12 @@ where
         value.has_mac = std::mem::MaybeUninit::new(false);
     }
 
-    match lan_info.mode {
+    match &lan_info.mode {
         landscape_common::route::LanRouteMode::Reachable => {
-            value.is_next_hop = std::mem::MaybeUninit::new(false);
+            value.route_type = ROUTE_TYPE_LAN;
         }
         landscape_common::route::LanRouteMode::NextHop { next_hop_ip } => {
-            value.is_next_hop = std::mem::MaybeUninit::new(true);
+            value.route_type = ROUTE_TYPE_NEXTHOP;
 
             match next_hop_ip {
                 std::net::IpAddr::V4(ipv4_addr) => {
@@ -537,6 +541,9 @@ where
                     return false;
                 }
             }
+        }
+        landscape_common::route::LanRouteMode::WanReachable => {
+            value.route_type = ROUTE_TYPE_WAN;
         }
     }
 
@@ -583,12 +590,12 @@ where
         value.has_mac = std::mem::MaybeUninit::new(false);
     }
 
-    match lan_info.mode {
+    match &lan_info.mode {
         landscape_common::route::LanRouteMode::Reachable => {
-            value.is_next_hop = std::mem::MaybeUninit::new(false);
+            value.route_type = ROUTE_TYPE_LAN;
         }
         landscape_common::route::LanRouteMode::NextHop { next_hop_ip } => {
-            value.is_next_hop = std::mem::MaybeUninit::new(true);
+            value.route_type = ROUTE_TYPE_NEXTHOP;
 
             match next_hop_ip {
                 std::net::IpAddr::V4(_) => {
@@ -598,6 +605,9 @@ where
                     value.addr.bytes = ipv6_addr.to_bits().to_be_bytes();
                 }
             }
+        }
+        landscape_common::route::LanRouteMode::WanReachable => {
+            value.route_type = ROUTE_TYPE_WAN;
         }
     }
 
