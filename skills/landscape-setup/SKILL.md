@@ -30,7 +30,7 @@ Run this skill when:
 
 ### Step 1: Check existing token and MCP server
 
-Read `~/.agents/skills/landscape-setup/.token` if it exists. Parse the JSON:
+Read `landscape-setup/.token` if it exists. Parse the JSON:
 - `host`: router base URL
 - `token`: JWT Bearer token
 - `exp`: expiry timestamp (unix seconds)
