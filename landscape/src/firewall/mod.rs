@@ -65,6 +65,11 @@ pub async fn create_firewall_service(
 ) {
     service_status.just_change_status(ServiceStatus::Staring);
 
+    let xdp_handle = landscape_ebpf::xdp::firewall::init_xdp_firewall(ifindex as u32);
+    if let Err(ref err) = xdp_handle {
+        tracing::error!("failed to start xdp firewall for {iface_name}: {err}");
+    }
+
     let firewall = match landscape_ebpf::firewall::new_firewall(ifindex, has_mac) {
         Ok(handle) => handle,
         Err(err) => {
@@ -79,6 +84,7 @@ pub async fn create_firewall_service(
     let _ = service_status.wait_to_stopping().await;
     tracing::info!("Received external stop signal");
 
+    drop(xdp_handle);
     drop(firewall);
 
     service_status.just_change_status(ServiceStatus::Stop);

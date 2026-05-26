@@ -59,7 +59,7 @@ pub async fn create_nat_service(
 ) {
     service_status.just_change_status(ServiceStatus::Staring);
 
-    let nat = match landscape_ebpf::nat::v3::init_nat(ifindex, has_mac, nat_config) {
+    let nat = match landscape_ebpf::nat::v4::init_nat_v4(ifindex as u32, has_mac, &nat_config) {
         Ok(handle) => handle,
         Err(err) => {
             tracing::error!("failed to start nat for {iface_name}: {err}");

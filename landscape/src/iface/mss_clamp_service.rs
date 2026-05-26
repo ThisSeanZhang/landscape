@@ -62,6 +62,11 @@ pub async fn run_mss_clamp(
 ) {
     service_status.just_change_status(ServiceStatus::Staring);
 
+    let xdp_handle = landscape_ebpf::xdp::mss_clamp::init_xdp_mss_clamp(ifindex as u32, mtu_size);
+    if let Err(ref err) = xdp_handle {
+        tracing::error!("failed to start xdp mss clamp for {iface_name}: {err}");
+    }
+
     let mss_clamp = match landscape_ebpf::mss_clamp::run_mss_clamp(ifindex, mtu_size, has_mac) {
         Ok(handle) => handle,
         Err(err) => {
@@ -76,6 +81,7 @@ pub async fn run_mss_clamp(
     let _ = service_status.wait_to_stopping().await;
     tracing::info!("Received external stop signal");
 
+    drop(xdp_handle);
     drop(mss_clamp);
 
     service_status.just_change_status(ServiceStatus::Stop);

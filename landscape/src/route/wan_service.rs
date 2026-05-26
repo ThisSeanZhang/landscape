@@ -65,7 +65,12 @@ pub async fn create_route_wan_service(
     service_status: WatchService,
 ) {
     service_status.just_change_status(ServiceStatus::Staring);
-    tracing::info!("start attach_match_flow at ifindex: {ifindex}");
+    tracing::info!("start route wan at ifindex: {ifindex}");
+
+    let xdp_handle = landscape_ebpf::xdp::wan_route::init_xdp_wan_route(ifindex);
+    if let Err(ref err) = xdp_handle {
+        tracing::error!("failed to start xdp wan route for {iface_name}: {err}");
+    }
 
     let route_wan = match landscape_ebpf::route::wan_v2::route_wan(ifindex, has_mac) {
         Ok(handle) => handle,
@@ -81,6 +86,7 @@ pub async fn create_route_wan_service(
     let _ = service_status.wait_to_stopping().await;
     tracing::info!("Receiving external stop signal");
 
+    drop(xdp_handle);
     drop(route_wan);
 
     service_status.just_change_status(ServiceStatus::Stop);

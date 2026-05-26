@@ -9,35 +9,61 @@
 #include "../land_nat_common.h"
 #include "../land_nat4_v3.h"
 #include "../land_wan_ip.h"
+#include "../scanner/xdp_scanner4.h"
 #include "../fragment/frag_common.h"
 #include "../fragment/xdp_frag4.h"
 #include "nat_maps.h"
 #include "nat_v3_maps.h"
 #include "xdp_csum_helpers.h"
 
-static __always_inline int xdp_read_nat_info4(void *data, void *data_end, u16 l4_offset,
-                                              u8 l4_protocol, struct inet4_pair *pair,
-                                              u8 fragment_type) {
+static __always_inline int xdp_read_nat_info4(void *data, void *data_end,
+                                              const struct xdp_ipv4_idx *idx,
+                                              struct inet4_pair *pair) {
     struct iphdr *iph = data + sizeof(struct ethhdr);
     if ((void *)(iph + 1) > data_end) return -1;
 
     pair->src_addr.addr = iph->saddr;
     pair->dst_addr.addr = iph->daddr;
 
-    if (fragment_type >= FRAG_MIDDLE) return 0;
+    if (idx->icmp_error_l3_offset > 0) {
+        struct iphdr *inner_ip = data + idx->icmp_error_l3_offset;
+        if ((void *)(inner_ip + 1) > data_end) return -1;
+        pair->src_addr.addr = inner_ip->daddr;
+    }
 
-    if (l4_protocol == IPPROTO_TCP) {
+    if (idx->fragment_type >= FRAG_MIDDLE) return 0;
+
+    u8 l4_protocol = idx->l4_protocol;
+    u16 l4_offset = idx->l4_offset;
+
+    if (idx->icmp_error_l4_protocol == IPPROTO_TCP) {
+        struct tcphdr *tcph = data + idx->icmp_error_inner_l4_offset;
+        if ((void *)(tcph + 1) > data_end) return -1;
+        pair->dst_port = tcph->source;
+        pair->src_port = tcph->dest;
+    } else if (l4_protocol == IPPROTO_TCP) {
         struct tcphdr *tcph = data + l4_offset;
         if ((void *)(tcph + 1) > data_end) return -1;
         pair->src_port = tcph->source;
         pair->dst_port = tcph->dest;
+    } else if (idx->icmp_error_l4_protocol == IPPROTO_UDP) {
+        struct udphdr *udph = data + idx->icmp_error_inner_l4_offset;
+        if ((void *)(udph + 1) > data_end) return -1;
+        pair->dst_port = udph->source;
+        pair->src_port = udph->dest;
     } else if (l4_protocol == IPPROTO_UDP) {
         struct udphdr *udph = data + l4_offset;
         if ((void *)(udph + 1) > data_end) return -1;
         pair->src_port = udph->source;
         pair->dst_port = udph->dest;
-    } else {
-        return 0;
+    } else if (l4_protocol == IPPROTO_ICMP || l4_protocol == IPPROTO_ICMPV6) {
+        u32 offset = l4_offset;
+        if (idx->icmp_error_inner_l4_offset > 0) {
+            offset = idx->icmp_error_inner_l4_offset;
+        }
+        struct icmphdr *icmph = data + offset;
+        if ((void *)(icmph + 1) > data_end) return -1;
+        pair->src_port = pair->dst_port = icmph->un.echo.id;
     }
 
     return 0;
@@ -53,12 +79,22 @@ static __always_inline int xdp_nat4_static_egress_lookup(u8 l4proto, const struc
         .from_addr = pair->src_addr.addr,
     };
 
+    bpf_printk("[nat_st_egr] lookup key from=%pI4:%u", &egress_key.from_addr,
+               bpf_ntohs(egress_key.from_port));
+
     struct nat4_mapping_value_v3 *static_egress = bpf_map_lookup_elem(&nat4_st_map, &egress_key);
     if (!static_egress && pair->src_addr.addr != 0) {
         egress_key.from_addr = 0;
+        bpf_printk("[nat_st_egr] wildcard retry from=0:%u", bpf_ntohs(egress_key.from_port));
         static_egress = bpf_map_lookup_elem(&nat4_st_map, &egress_key);
     }
-    if (!static_egress) return -1;
+    if (!static_egress) {
+        bpf_printk("[nat_st_egr] NOT FOUND");
+        return -1;
+    }
+
+    bpf_printk("[nat_st_egr] FOUND egr->port=%u egr->addr=%pI4", bpf_ntohs(static_egress->port),
+               &static_egress->addr);
 
     struct nat_mapping_key_v4 ingress_key = {
         .gress = NAT_MAPPING_INGRESS,
@@ -243,6 +279,7 @@ static __always_inline int xdp_modify_headers_v4(void *data, void *data_end, u16
             if ((void *)(icmph + 1) > data_end) return -1;
             /* ICMP echo: id → port mapping. Both fields are __be16, pad to __be32. */
             __be32 old_id32 = (__be32)icmph->un.echo.id;
+            icmph->un.echo.id = action->to_port;
             __be32 new_port32 = (__be32)action->to_port;
             __wsum echo_delta = bpf_csum_diff(&old_id32, 4, &new_port32, 4, 0);
             icmph->checksum = xdp_csum_apply(icmph->checksum, echo_delta);
@@ -434,6 +471,105 @@ static __always_inline int xdp_nat4_egress_ct_cleanup(u8 l4proto, __be32 nat_add
         (void)nat4_v3_queue_push(l4proto, alloc_item);
     }
     return -1;
+}
+
+static __always_inline int xdp_nat4_egress_lookup_or_new_mapping_v4(
+    u32 wan_ifindex, u32 mark, u8 ip_protocol, bool allow_create_mapping,
+    const struct inet4_pair *pkt_ip_pair, struct nat4_mapping_value_v3 **nat_egress_value_,
+    struct nat4_mapping_value_v3 **nat_ingress_value_, struct nat4_port_queue_value_v3 *alloc_item,
+    bool *created) {
+    struct nat_mapping_key_v4 egress_key = {
+        .gress = NAT_MAPPING_EGRESS,
+        .l4proto = ip_protocol,
+        .from_port = pkt_ip_pair->src_port,
+        .from_addr = pkt_ip_pair->src_addr.addr,
+    };
+
+    struct nat4_mapping_value_v3 *egress_value = bpf_map_lookup_elem(&nat4_dyn_map, &egress_key);
+    if (egress_value) {
+        struct nat_mapping_key_v4 ingress_key = {
+            .gress = NAT_MAPPING_INGRESS,
+            .l4proto = ip_protocol,
+            .from_addr = egress_value->addr,
+            .from_port = egress_value->port,
+        };
+        struct nat4_mapping_value_v3 *ingress_value =
+            bpf_map_lookup_elem(&nat4_dyn_map, &ingress_key);
+        if (!ingress_value || ingress_value->addr != pkt_ip_pair->src_addr.addr ||
+            ingress_value->port != pkt_ip_pair->src_port) {
+            bpf_map_delete_elem(&nat4_dyn_map, &egress_key);
+        } else {
+            *nat_egress_value_ = egress_value;
+            *nat_ingress_value_ = ingress_value;
+            return 0;
+        }
+    }
+
+    struct nat_mapping_key_v4 static_egress_key = {
+        .gress = NAT_MAPPING_EGRESS,
+        .l4proto = ip_protocol,
+        .from_port = pkt_ip_pair->src_port,
+        .from_addr = pkt_ip_pair->src_addr.addr,
+    };
+    struct nat4_mapping_value_v3 *static_egress =
+        bpf_map_lookup_elem(&nat4_st_map, &static_egress_key);
+    if (!static_egress && pkt_ip_pair->src_addr.addr != 0) {
+        static_egress_key.from_addr = 0;
+        static_egress = bpf_map_lookup_elem(&nat4_st_map, &static_egress_key);
+    }
+    if (static_egress) {
+        *nat_egress_value_ = static_egress;
+        struct nat_mapping_key_v4 ingress_key = {
+            .gress = NAT_MAPPING_INGRESS,
+            .l4proto = ip_protocol,
+            .from_port = static_egress->port,
+            .from_addr = static_egress->addr,
+        };
+        struct nat4_mapping_value_v3 *static_ingress =
+            bpf_map_lookup_elem(&nat4_st_map, &ingress_key);
+        if (!static_ingress) {
+            ingress_key.from_addr = 0;
+            static_ingress = bpf_map_lookup_elem(&nat4_st_map, &ingress_key);
+        }
+        *nat_ingress_value_ = static_ingress;
+        return static_ingress ? 0 : -1;
+    }
+
+    if (!allow_create_mapping) return -1;
+
+    struct wan_ip_info_key wan_search_key = {
+        .ifindex = wan_ifindex,
+        .l3_protocol = LANDSCAPE_IPV4_TYPE,
+    };
+    struct wan_ip_info_value *wan_ip_info = bpf_map_lookup_elem(&wan_ip_binding, &wan_search_key);
+    if (!wan_ip_info) return -1;
+
+    if (nat4_v3_alloc_port(ip_protocol, alloc_item) != 0) return -1;
+
+    u16 generation = alloc_item->last_generation + 1;
+    struct nat4_mapping_value_v3 new_value = {
+        .state_ref = 0,
+        .addr = wan_ip_info->addr.ip,
+        .trigger_addr = pkt_ip_pair->dst_addr.addr,
+        .port = alloc_item->port,
+        .trigger_port = pkt_ip_pair->dst_port,
+        .generation = 0,
+        .is_static = 0,
+        .is_allow_reuse = get_flow_allow_reuse_port(mark) ? 1 : 0,
+    };
+
+    struct nat4_mapping_value_v3 *ingress_value = NULL;
+    struct nat4_mapping_value_v3 *egress_out =
+        nat4_v3_insert_mappings_v4(&egress_key, &new_value, generation, &ingress_value);
+    if (!egress_out || !ingress_value) {
+        (void)nat4_v3_queue_push(ip_protocol, alloc_item);
+        return -1;
+    }
+
+    *nat_egress_value_ = egress_out;
+    *nat_ingress_value_ = ingress_value;
+    *created = true;
+    return 0;
 }
 
 static __always_inline int xdp_nat4_dyn_egress_lookup(u32 wan_ifindex, u32 mark, u8 l4proto,

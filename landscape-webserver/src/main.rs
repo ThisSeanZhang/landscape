@@ -372,6 +372,7 @@ async fn run_system(
     }
 
     // 初始化 App
+    landscape_ebpf::xdp::manager::XdpChainManager::instance();
 
     let dev_obs =
         startup_phase!("observer.dev_observer", landscape::observer::dev_observer().await);

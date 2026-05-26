@@ -225,7 +225,7 @@ fn xdp_nat_static_egress() {
         .update(&0u32.to_ne_bytes(), &dummy_fd.to_ne_bytes(), MapFlags::ANY)
         .unwrap();
 
-    let _l0 = nat.progs.xdp_nat_lan.attach_xdp(nat_h_i as i32).unwrap();
+    let _l0 = nat.progs.egress_nat.attach_xdp(nat_h_i as i32).unwrap();
 
     write_static_mapping_v4(
         &share.maps.nat4_st_map,
@@ -319,7 +319,7 @@ fn xdp_nat_static_ingress() {
     let mut d_obj = std::mem::MaybeUninit::uninit();
     let dummy = d_b.open(&mut d_obj).unwrap().load().unwrap();
 
-    let _l0 = nat.progs.xdp_nat_wan.attach_xdp(nat_h_i as i32).unwrap();
+    let _l0 = nat.progs.ingress_nat.attach_xdp(nat_h_i as i32).unwrap();
 
     write_static_mapping_v4(
         &share.maps.nat4_st_map,
@@ -389,7 +389,7 @@ fn xdp_nat_dynamic_egress() {
     let mut d_obj = std::mem::MaybeUninit::uninit();
     let dummy = d_b.open(&mut d_obj).unwrap().load().unwrap();
 
-    let _l0 = nat.progs.xdp_nat_lan.attach_xdp(nat_h_i as i32).unwrap();
+    let _l0 = nat.progs.egress_nat.attach_xdp(nat_h_i as i32).unwrap();
     let _l1 = dummy.progs.xdp_test_dummy.attach_xdp(nat_p_i as i32).unwrap();
 
     let port_be = 0x1000u16.to_be_bytes();
@@ -486,7 +486,7 @@ fn xdp_nat_v6_egress() {
     nat_open.maps.rodata_data.as_deref_mut().unwrap().current_ifindex = nat_h_i;
     let nat = nat_open.load().unwrap();
 
-    let _l0 = nat.progs.xdp_nat_lan.attach_xdp(nat_h_i as i32).unwrap();
+    let _l0 = nat.progs.egress_nat.attach_xdp(nat_h_i as i32).unwrap();
 
     let mut wan_key = [0u8; 8];
     wan_key[0..4].copy_from_slice(&nat_h_i.to_ne_bytes());
@@ -562,10 +562,10 @@ fn xdp_nat_firewall_pipeline() {
     let mut d_obj = std::mem::MaybeUninit::uninit();
     let dummy = d_b.open(&mut d_obj).unwrap().load().unwrap();
 
-    let _l0 = nat.progs.xdp_nat_lan.attach_xdp(nat_h_i as i32).unwrap();
+    let _l0 = nat.progs.egress_nat.attach_xdp(nat_h_i as i32).unwrap();
     let _l1 = dummy.progs.xdp_test_dummy.attach_xdp(nat_p_i as i32).unwrap();
 
-    let _nat_lan_fd = nat.progs.xdp_nat_lan.as_fd().as_raw_fd();
+    let _nat_lan_fd = nat.progs.egress_nat.as_fd().as_raw_fd();
     let fw_lan_fd = fw.progs.xdp_firewall_lan.as_fd().as_raw_fd();
 
     nat.maps
@@ -786,7 +786,7 @@ fn xdp_nat_fragment_v4() {
     nat_open.maps.rodata_data.as_deref_mut().unwrap().current_ifindex = nat_h_i;
     let nat = nat_open.load().unwrap();
 
-    let _l0 = nat.progs.xdp_nat_lan.attach_xdp(nat_h_i as i32).unwrap();
+    let _l0 = nat.progs.egress_nat.attach_xdp(nat_h_i as i32).unwrap();
 
     let mut wan_key = [0u8; 8];
     wan_key[0..4].copy_from_slice(&nat_h_i.to_ne_bytes());
@@ -870,7 +870,7 @@ fn xdp_nat_v6_ingress() {
     nat_open.maps.rodata_data.as_deref_mut().unwrap().current_ifindex = nat_h_i;
     let nat = nat_open.load().unwrap();
 
-    let _l0 = nat.progs.xdp_nat_wan.attach_xdp(nat_h_i as i32).unwrap();
+    let _l0 = nat.progs.ingress_nat.attach_xdp(nat_h_i as i32).unwrap();
 
     let mut wan_key = [0u8; 8];
     wan_key[0..4].copy_from_slice(&nat_h_i.to_ne_bytes());
@@ -935,7 +935,7 @@ fn xdp_nat_ct_dynamic_multi_pkt() {
     nat_open.maps.rodata_data.as_deref_mut().unwrap().current_ifindex = nat_h_i;
     let nat = nat_open.load().unwrap();
 
-    let _l0 = nat.progs.xdp_nat_lan.attach_xdp(nat_h_i as i32).unwrap();
+    let _l0 = nat.progs.egress_nat.attach_xdp(nat_h_i as i32).unwrap();
 
     let mut wan_key = [0u8; 8];
     wan_key[0..4].copy_from_slice(&nat_h_i.to_ne_bytes());
@@ -1067,7 +1067,7 @@ fn xdp_nat_fragment_ingress() {
     let mut d_obj = std::mem::MaybeUninit::uninit();
     let dummy = d_b.open(&mut d_obj).unwrap().load().unwrap();
 
-    let _l0 = nat.progs.xdp_nat_wan.attach_xdp(nat_h_i as i32).unwrap();
+    let _l0 = nat.progs.ingress_nat.attach_xdp(nat_h_i as i32).unwrap();
     let _l1 = dummy.progs.xdp_test_dummy.attach_xdp(nat_p_i as i32).unwrap();
 
     let mut wan_key = [0u8; 8];
@@ -1241,7 +1241,7 @@ fn xdp_nat_dynamic_ingress() {
     let mut d_obj = std::mem::MaybeUninit::uninit();
     let dummy = d_b.open(&mut d_obj).unwrap().load().unwrap();
 
-    let _l0 = nat.progs.xdp_nat_wan.attach_xdp(nat_h_i as i32).unwrap();
+    let _l0 = nat.progs.ingress_nat.attach_xdp(nat_h_i as i32).unwrap();
     let _l1 = dummy.progs.xdp_test_dummy.attach_xdp(nat_p_i as i32).unwrap();
 
     let mut wan_key = [0u8; 8];
@@ -1331,7 +1331,7 @@ fn xdp_nat_udp_egress() {
     let mut d_obj = std::mem::MaybeUninit::uninit();
     let dummy = d_b.open(&mut d_obj).unwrap().load().unwrap();
 
-    let _l0 = nat.progs.xdp_nat_lan.attach_xdp(nat_h_i as i32).unwrap();
+    let _l0 = nat.progs.egress_nat.attach_xdp(nat_h_i as i32).unwrap();
     let _l1 = dummy.progs.xdp_test_dummy.attach_xdp(nat_p_i as i32).unwrap();
 
     let mut wan_key = [0u8; 8];
@@ -1415,7 +1415,7 @@ fn xdp_nat_udp_ingress() {
     let mut d_obj = std::mem::MaybeUninit::uninit();
     let dummy = d_b.open(&mut d_obj).unwrap().load().unwrap();
 
-    let _l0 = nat.progs.xdp_nat_wan.attach_xdp(nat_h_i as i32).unwrap();
+    let _l0 = nat.progs.ingress_nat.attach_xdp(nat_h_i as i32).unwrap();
     let _l1 = dummy.progs.xdp_test_dummy.attach_xdp(nat_p_i as i32).unwrap();
 
     let mut wan_key = [0u8; 8];
@@ -1505,7 +1505,7 @@ fn xdp_nat_fragment_middle() {
     let mut d_obj = std::mem::MaybeUninit::uninit();
     let dummy = d_b.open(&mut d_obj).unwrap().load().unwrap();
 
-    let _l0 = nat.progs.xdp_nat_lan.attach_xdp(nat_h_i as i32).unwrap();
+    let _l0 = nat.progs.egress_nat.attach_xdp(nat_h_i as i32).unwrap();
     let _l1 = dummy.progs.xdp_test_dummy.attach_xdp(nat_p_i as i32).unwrap();
 
     let mut wan_key = [0u8; 8];
@@ -1564,7 +1564,7 @@ fn xdp_nat_icmp_error_egress() {
     let mut nat_open = nat_b.open(&mut nat_obj).unwrap();
     nat_open.maps.rodata_data.as_deref_mut().unwrap().current_ifindex = nat_h_i;
     let nat = nat_open.load().unwrap();
-    let _l0 = nat.progs.xdp_nat_lan.attach_xdp(nat_h_i as i32).unwrap();
+    let _l0 = nat.progs.egress_nat.attach_xdp(nat_h_i as i32).unwrap();
 
     write_static_mapping_v4(
         &share.maps.nat4_st_map,
@@ -1658,7 +1658,7 @@ fn xdp_nat_static_ingress_mark() {
     let mut nat_open = nat_b.open(&mut nat_obj).unwrap();
     nat_open.maps.rodata_data.as_deref_mut().unwrap().current_ifindex = nat_h_i;
     let nat = nat_open.load().unwrap();
-    let _l0 = nat.progs.xdp_nat_wan.attach_xdp(nat_h_i as i32).unwrap();
+    let _l0 = nat.progs.ingress_nat.attach_xdp(nat_h_i as i32).unwrap();
 
     write_static_mapping_v4(
         &share.maps.nat4_st_map,
@@ -1737,7 +1737,7 @@ fn xdp_nat_chain_pipeline() {
     let mut d_obj = std::mem::MaybeUninit::uninit();
     let dummy = d_b.open(&mut d_obj).unwrap().load().unwrap();
 
-    let _l0 = nat.progs.xdp_nat_lan.attach_xdp(nat_h_i as i32).unwrap();
+    let _l0 = nat.progs.egress_nat.attach_xdp(nat_h_i as i32).unwrap();
     let _l1 = dummy.progs.xdp_test_dummy.attach_xdp(nat_p_i as i32).unwrap();
 
     let dummy_fd = dummy.progs.xdp_test_dummy.as_fd().as_raw_fd();

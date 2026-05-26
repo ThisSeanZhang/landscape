@@ -7,32 +7,60 @@
 
 #include "../landscape.h"
 #include "../land_wan_ip.h"
+#include "../scanner/xdp_scanner6.h"
 #include "../fragment/frag_common.h"
 #include "../fragment/xdp_frag6.h"
 #include "nat_maps.h"
 #include "xdp_csum_helpers.h"
 
-static __always_inline int xdp_read_nat_info6(void *data, void *data_end, u16 l4_offset,
-                                              u8 l4_protocol, struct inet_pair *pair,
-                                              u8 fragment_type) {
+static __always_inline int xdp_read_nat_info6(void *data, void *data_end,
+                                              const struct xdp_ipv6_idx *idx,
+                                              struct inet_pair *pair) {
     struct ipv6hdr *ip6h = data + sizeof(struct ethhdr);
     if ((void *)(ip6h + 1) > data_end) return -1;
 
     __builtin_memcpy(&pair->src_addr, &ip6h->saddr, sizeof(pair->src_addr));
     __builtin_memcpy(&pair->dst_addr, &ip6h->daddr, sizeof(pair->dst_addr));
 
-    if (fragment_type >= FRAG_MIDDLE) return 0;
+    if (idx->icmp_error_l3_offset > 0) {
+        struct ipv6hdr *inner_ip6 = data + idx->icmp_error_l3_offset;
+        if ((void *)(inner_ip6 + 1) > data_end) return -1;
+        __builtin_memcpy(&pair->src_addr, &inner_ip6->daddr, sizeof(pair->src_addr));
+    }
 
-    if (l4_protocol == IPPROTO_TCP) {
+    if (idx->fragment_type >= FRAG_MIDDLE) return 0;
+
+    u8 l4_protocol = idx->l4_protocol;
+    u16 l4_offset = idx->l4_offset;
+
+    if (idx->icmp_error_l4_protocol == IPPROTO_TCP) {
+        struct tcphdr *tcph = data + idx->icmp_error_inner_l4_offset;
+        if ((void *)(tcph + 1) > data_end) return -1;
+        pair->dst_port = tcph->source;
+        pair->src_port = tcph->dest;
+    } else if (l4_protocol == IPPROTO_TCP) {
         struct tcphdr *tcph = data + l4_offset;
         if ((void *)(tcph + 1) > data_end) return -1;
         pair->src_port = tcph->source;
         pair->dst_port = tcph->dest;
+    } else if (idx->icmp_error_l4_protocol == IPPROTO_UDP) {
+        struct udphdr *udph = data + idx->icmp_error_inner_l4_offset;
+        if ((void *)(udph + 1) > data_end) return -1;
+        pair->dst_port = udph->source;
+        pair->src_port = udph->dest;
     } else if (l4_protocol == IPPROTO_UDP) {
         struct udphdr *udph = data + l4_offset;
         if ((void *)(udph + 1) > data_end) return -1;
         pair->src_port = udph->source;
         pair->dst_port = udph->dest;
+    } else if (l4_protocol == IPPROTO_ICMP || l4_protocol == IPPROTO_ICMPV6) {
+        u32 offset = l4_offset;
+        if (idx->icmp_error_inner_l4_offset > 0) {
+            offset = idx->icmp_error_inner_l4_offset;
+        }
+        struct icmp6hdr *icmp6h = data + offset;
+        if ((void *)(icmp6h + 1) > data_end) return -1;
+        pair->src_port = pair->dst_port = icmp6h->icmp6_dataun.u_echo.identifier;
     }
 
     return 0;

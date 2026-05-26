@@ -32,8 +32,6 @@ int xdp_lan_chain_root(struct xdp_md *ctx) {
         return XDP_PASS;
     }
 
-    bpf_printk("[lan_root] mark=0x%x ifidx=%u tailcalling", meta.mark, meta.target_ifindex);
-
     bpf_tail_call(ctx, &root_next_stage, 0);
     bpf_tail_call(ctx, &xdp_pipe_exits_lan, 0);
 
@@ -50,8 +48,6 @@ int xdp_lan_chain_exit(struct xdp_md *ctx) {
     struct iphdr *iph;
     int ret;
 
-    bpf_printk("[lan_exit] ENTER");
-
     if (xdp_get_meta(ctx, &meta) != 0) {
         bpf_printk("[lan_exit] no meta");
         return XDP_PASS;
@@ -62,18 +58,18 @@ int xdp_lan_chain_exit(struct xdp_md *ctx) {
         return XDP_PASS;
     }
 
-    eth = data;
-    if ((void *)(eth + 1) > data_end) goto redirect;
+    // eth = data;
+    // if ((void *)(eth + 1) > data_end) goto redirect;
 
-    if (eth->h_proto == ETH_IPV4) {
-        iph = (struct iphdr *)(eth + 1);
-        if ((void *)(iph + 1) > data_end) goto redirect;
-        bpf_printk("[lan_exit] IPv4 saddr=%pI4 daddr=%pI4 smac=%pM dmac=%pM", &iph->saddr,
-                   &iph->daddr, eth->h_source, eth->h_dest);
-    }
+    // if (eth->h_proto == ETH_IPV4) {
+    //     iph = (struct iphdr *)(eth + 1);
+    //     if ((void *)(iph + 1) > data_end) goto redirect;
+    //     bpf_printk("[lan_exit] IPv4 saddr=%pI4 daddr=%pI4 smac=%pM dmac=%pM", &iph->saddr,
+    //                &iph->daddr, eth->h_source, eth->h_dest);
+    // }
 
 redirect:
-    bpf_printk("[lan_exit] redirect to ifidx=%u", meta.target_ifindex);
+    // bpf_printk("[lan_exit] redirect to ifidx=%u", meta.target_ifindex);
     ret = bpf_redirect(meta.target_ifindex, 0);
     return ret;
 }

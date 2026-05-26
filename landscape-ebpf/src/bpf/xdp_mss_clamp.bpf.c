@@ -95,7 +95,6 @@ static __always_inline int mss_clamp_packet(struct xdp_md *ctx) {
 
 SEC("xdp")
 int xdp_mss_clamp_lan(struct xdp_md *ctx) {
-    bpf_printk("[mss_lan] enter");
     mss_clamp_packet(ctx);
 
     bpf_tail_call(ctx, &next_stage, XDP_STAGE_NEXT_LAN);
@@ -106,7 +105,6 @@ int xdp_mss_clamp_lan(struct xdp_md *ctx) {
 
 SEC("xdp")
 int xdp_mss_clamp_wan(struct xdp_md *ctx) {
-    bpf_printk("[mss_wan] enter");
     mss_clamp_packet(ctx);
 
     bpf_tail_call(ctx, &next_stage, XDP_STAGE_NEXT_WAN);

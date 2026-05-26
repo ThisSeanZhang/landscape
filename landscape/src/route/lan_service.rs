@@ -82,7 +82,12 @@ pub async fn create_route_lan_service(
     service_status: WatchService,
 ) {
     service_status.just_change_status(ServiceStatus::Staring);
-    tracing::info!("start attach_match_flow at ifindex: {ifindex}");
+    tracing::info!("start route lan at ifindex: {ifindex}");
+
+    let xdp_handle = landscape_ebpf::xdp::lan_route::init_xdp_lan_route(ifindex);
+    if let Err(ref err) = xdp_handle {
+        tracing::error!("failed to start xdp lan route for {iface_name}: {err}");
+    }
 
     let route_lan = match landscape_ebpf::route::lan_v2::route_lan(ifindex, has_mac) {
         Ok(handle) => handle,
@@ -98,6 +103,7 @@ pub async fn create_route_lan_service(
     let _ = service_status.wait_to_stopping().await;
     tracing::info!("Receiving external stop signal");
 
+    drop(xdp_handle);
     drop(route_lan);
 
     service_status.just_change_status(ServiceStatus::Stop);

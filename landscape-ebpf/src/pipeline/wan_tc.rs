@@ -127,8 +127,8 @@ impl WanTcPipelineHandle {
             self.inner.skel.maps.egress_stage_progs.delete(&EGRESS_STAGE_FIREWALL.to_ne_bytes());
     }
 
-    pub fn register_nat(&self, ingress_prog: &Program, egress_prog: &Program) -> LdEbpfResult<()> {
-        register_stage(&self.inner.skel.maps.ingress_stage_progs, INGRESS_STAGE_NAT, ingress_prog)?;
+    pub fn register_nat(&self, _ingress_prog: &Program, egress_prog: &Program) -> LdEbpfResult<()> {
+        // register_stage(&self.inner.skel.maps.ingress_stage_progs, INGRESS_STAGE_NAT, ingress_prog)?;
         register_stage(&self.inner.skel.maps.egress_stage_progs, EGRESS_STAGE_NAT, egress_prog)?;
         Ok(())
     }

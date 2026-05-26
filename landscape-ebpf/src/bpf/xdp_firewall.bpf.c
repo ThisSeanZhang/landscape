@@ -46,7 +46,6 @@ static __always_inline int firewall_check(struct xdp_md *ctx, bool block_src) {
 
 SEC("xdp")
 int xdp_firewall_lan(struct xdp_md *ctx) {
-    bpf_printk("[fw_lan] enter");
     int verdict = firewall_check(ctx, false);
     if (verdict != XDP_PASS) return verdict;
 
@@ -58,7 +57,6 @@ int xdp_firewall_lan(struct xdp_md *ctx) {
 
 SEC("xdp")
 int xdp_firewall_wan(struct xdp_md *ctx) {
-    bpf_printk("[fw_wan] enter");
     int verdict = firewall_check(ctx, true);
     if (verdict != XDP_PASS) return verdict;
 
