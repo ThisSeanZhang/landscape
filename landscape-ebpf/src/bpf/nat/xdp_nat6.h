@@ -10,6 +10,7 @@
 #include "../fragment/frag_common.h"
 #include "../fragment/xdp_frag6.h"
 #include "nat_maps.h"
+#include "xdp_csum_helpers.h"
 
 static __always_inline int xdp_read_nat_info6(void *data, void *data_end, u16 l4_offset,
                                               u8 l4_protocol, struct inet_pair *pair,
@@ -87,14 +88,14 @@ static __always_inline int xdp_nat6_ingress_prefix_replace(struct xdp_md *ctx, u
     if (l4_protocol == IPPROTO_TCP) {
         struct tcphdr *tcph = data + l4_offset;
         if ((void *)(tcph + 1) > data_end) return -1;
-        __s64 d = bpf_csum_diff(old32, sizeof(old_dst_prefix), new32, sizeof(replaced), 0);
-        tcph->check = bpf_csum_diff(0, 0, &tcph->check, sizeof(tcph->check), d);
+        __wsum d = bpf_csum_diff(old32, sizeof(old_dst_prefix), new32, sizeof(replaced), 0);
+        tcph->check = xdp_csum_apply(tcph->check, d);
     } else if (l4_protocol == IPPROTO_UDP) {
         struct udphdr *udph = data + l4_offset;
         if ((void *)(udph + 1) > data_end) return -1;
         if (udph->check != 0) {
-            __s64 d = bpf_csum_diff(old32, sizeof(old_dst_prefix), new32, sizeof(replaced), 0);
-            udph->check = bpf_csum_diff(0, 0, &udph->check, sizeof(udph->check), d);
+            __wsum d = bpf_csum_diff(old32, sizeof(old_dst_prefix), new32, sizeof(replaced), 0);
+            udph->check = xdp_csum_apply(udph->check, d);
         }
     }
 
@@ -110,14 +111,14 @@ static __always_inline void xdp_nat6_update_l4_checksum(void *data, void *data_e
     if (l4_protocol == IPPROTO_TCP) {
         struct tcphdr *tcph = data + l4_offset;
         if ((void *)(tcph + 1) > data_end) return;
-        __s64 d = bpf_csum_diff(old32, sizeof(old_prefix), new32, sizeof(new_prefix), 0);
-        tcph->check = bpf_csum_diff(0, 0, &tcph->check, sizeof(tcph->check), d);
+        __wsum d = bpf_csum_diff(old32, sizeof(old_prefix), new32, sizeof(new_prefix), 0);
+        tcph->check = xdp_csum_apply(tcph->check, d);
     } else if (l4_protocol == IPPROTO_UDP) {
         struct udphdr *udph = data + l4_offset;
         if ((void *)(udph + 1) > data_end) return;
         if (udph->check != 0) {
-            __s64 d = bpf_csum_diff(old32, sizeof(old_prefix), new32, sizeof(new_prefix), 0);
-            udph->check = bpf_csum_diff(0, 0, &udph->check, sizeof(udph->check), d);
+            __wsum d = bpf_csum_diff(old32, sizeof(old_prefix), new32, sizeof(new_prefix), 0);
+            udph->check = xdp_csum_apply(udph->check, d);
         }
     }
 }

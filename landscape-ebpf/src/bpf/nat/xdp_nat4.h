@@ -13,6 +13,7 @@
 #include "../fragment/xdp_frag4.h"
 #include "nat_maps.h"
 #include "nat_v3_maps.h"
+#include "xdp_csum_helpers.h"
 
 static __always_inline int xdp_read_nat_info4(void *data, void *data_end, u16 l4_offset,
                                               u8 l4_protocol, struct inet4_pair *pair,
@@ -101,21 +102,21 @@ static __always_inline int xdp_csum_update_l4(void *data, void *data_end, u16 l4
                                               u8 l4_protocol, __be16 old_port, __be16 new_port,
                                               __be32 old_addr, __be32 new_addr,
                                               bool is_icmpx_error) {
+    __be32 old_port32 = (__be32)old_port;
+    __be32 new_port32 = (__be32)new_port;
+    __wsum dp = bpf_csum_diff(&old_port32, 4, &new_port32, 4, 0);
+    __wsum da = bpf_csum_diff(&old_addr, 4, &new_addr, 4, 0);
+    __wsum combined = xdp_csum_add(dp, da);
+
     if (l4_protocol == IPPROTO_TCP) {
         struct tcphdr *tcph = data + l4_offset;
         if ((void *)(tcph + 1) > data_end) return -1;
-
-        __s64 d = bpf_csum_diff(&old_port, sizeof(old_port), &new_port, sizeof(new_port), 0);
-        d = bpf_csum_diff(&old_addr, sizeof(old_addr), &new_addr, sizeof(new_addr), d);
-        tcph->check = bpf_csum_diff(0, 0, &tcph->check, sizeof(tcph->check), d);
+        tcph->check = xdp_csum_apply(tcph->check, combined);
     } else if (l4_protocol == IPPROTO_UDP) {
         struct udphdr *udph = data + l4_offset;
         if ((void *)(udph + 1) > data_end) return -1;
-
         if (udph->check != 0 || is_icmpx_error) {
-            __s64 d = bpf_csum_diff(&old_port, sizeof(old_port), &new_port, sizeof(new_port), 0);
-            d = bpf_csum_diff(&old_addr, sizeof(old_addr), &new_addr, sizeof(new_addr), d);
-            udph->check = bpf_csum_diff(0, 0, &udph->check, sizeof(udph->check), d);
+            udph->check = xdp_csum_apply(udph->check, combined);
         }
     }
 
@@ -135,8 +136,10 @@ static __always_inline int xdp_modify_headers_v4(void *data, void *data_end, u16
         iph->saddr = action->to_addr.addr;
     else
         iph->daddr = action->to_addr.addr;
-    iph->check = bpf_csum_diff(&old_addr, sizeof(old_addr), &action->to_addr.addr,
-                               sizeof(action->to_addr.addr), iph->check);
+    {
+        __wsum da = bpf_csum_diff(&old_addr, 4, &action->to_addr.addr, 4, 0);
+        iph->check = xdp_csum_apply(iph->check, da);
+    }
 
     if (l4_protocol == IPPROTO_ICMP) {
         if (is_icmpx_error) {
@@ -148,28 +151,101 @@ static __always_inline int xdp_modify_headers_v4(void *data, void *data_end, u16
                 inner_ip->daddr = action->to_addr.addr;
             else
                 inner_ip->saddr = action->to_addr.addr;
-            inner_ip->check =
-                bpf_csum_diff(&inner_old_addr, sizeof(inner_old_addr), &action->to_addr.addr,
-                              sizeof(action->to_addr.addr), inner_ip->check);
+
+            __wsum inner_addr_delta =
+                bpf_csum_diff(&inner_old_addr, 4, &action->to_addr.addr, 4, 0);
+
+            __be16 prev_inner_ip_csum = inner_ip->check;
+            inner_ip->check = xdp_csum_apply(inner_ip->check, inner_addr_delta);
 
             struct icmphdr *icmph = data + l4_offset;
             if ((void *)(icmph + 1) > data_end) return -1;
-            icmph->checksum =
-                bpf_csum_diff(&inner_old_addr, sizeof(inner_old_addr), &action->to_addr.addr,
-                              sizeof(action->to_addr.addr), icmph->checksum);
+
+            /* ICMP checksum covers inner IP header: reflect both addr change
+             * and inner IP csum field change */
+            icmph->checksum = xdp_csum_apply(icmph->checksum, inner_addr_delta);
+            {
+                /* Inner IP csum changed from prev_inner_ip_csum to inner_ip->check.
+                 * Both are 2 bytes — pad to __be32. */
+                __be32 old_ics32 = (__be32)prev_inner_ip_csum;
+                __be32 new_ics32 = (__be32)inner_ip->check;
+                __wsum inner_csum_delta = bpf_csum_diff(&old_ics32, 4, &new_ics32, 4, 0);
+                icmph->checksum = xdp_csum_apply(icmph->checksum, inner_csum_delta);
+            }
 
             if (icmp_err_l4_offset != 0) {
-                xdp_csum_update_l4(data, data_end, icmp_err_l4_offset, icmp_err_l4_proto,
-                                   is_modify_source ? action->from_port : action->to_port,
-                                   is_modify_source ? action->to_port : action->from_port, old_addr,
-                                   action->to_addr.addr, true);
+                if (icmp_err_l4_proto == IPPROTO_TCP) {
+                    struct tcphdr *inner_tcp = data + icmp_err_l4_offset;
+                    if ((void *)(inner_tcp + 1) > data_end) return -1;
+
+                    __be16 inner_old_port = is_modify_source ? inner_tcp->dest : inner_tcp->source;
+                    if (is_modify_source)
+                        inner_tcp->dest = action->to_port;
+                    else
+                        inner_tcp->source = action->to_port;
+
+                    __be16 prev_inner_tcp_csum = inner_tcp->check;
+
+                    /* Inner TCP: port change (padded to __be32) */
+                    __be32 old_tport32 = (__be32)inner_old_port;
+                    __be32 new_tport32 = (__be32)action->to_port;
+                    __wsum tport_delta = bpf_csum_diff(&old_tport32, 4, &new_tport32, 4, 0);
+                    inner_tcp->check = xdp_csum_apply(inner_tcp->check, tport_delta);
+
+                    /* Inner TCP: pseudo-header address change */
+                    __wsum taddr_delta =
+                        bpf_csum_diff(&inner_old_addr, 4, &action->to_addr.addr, 4, 0);
+                    inner_tcp->check = xdp_csum_apply(inner_tcp->check, taddr_delta);
+
+                    /* ICMP reflects: inner TCP csum change + inner TCP port change */
+                    {
+                        __be32 old_tcs32 = (__be32)prev_inner_tcp_csum;
+                        __be32 new_tcs32 = (__be32)inner_tcp->check;
+                        __wsum tcp_csum_delta = bpf_csum_diff(&old_tcs32, 4, &new_tcs32, 4, 0);
+                        icmph->checksum = xdp_csum_apply(icmph->checksum, tcp_csum_delta);
+                    }
+                    icmph->checksum = xdp_csum_apply(icmph->checksum, tport_delta);
+                } else if (icmp_err_l4_proto == IPPROTO_UDP) {
+                    struct udphdr *inner_udp = data + icmp_err_l4_offset;
+                    if ((void *)(inner_udp + 1) > data_end) return -1;
+
+                    __be16 inner_old_port = is_modify_source ? inner_udp->dest : inner_udp->source;
+                    if (is_modify_source)
+                        inner_udp->dest = action->to_port;
+                    else
+                        inner_udp->source = action->to_port;
+
+                    __be16 prev_inner_udp_csum = inner_udp->check;
+                    __be32 old_uport32 = (__be32)inner_old_port;
+                    __be32 new_uport32 = (__be32)action->to_port;
+                    __wsum uport_delta = bpf_csum_diff(&old_uport32, 4, &new_uport32, 4, 0);
+
+                    if (inner_udp->check != 0) {
+                        inner_udp->check = xdp_csum_apply(inner_udp->check, uport_delta);
+
+                        __wsum uaddr_delta =
+                            bpf_csum_diff(&inner_old_addr, 4, &action->to_addr.addr, 4, 0);
+                        inner_udp->check = xdp_csum_apply(inner_udp->check, uaddr_delta);
+                    }
+
+                    /* ICMP reflects: inner UDP csum change + inner UDP port change */
+                    {
+                        __be32 old_ucs32 = (__be32)prev_inner_udp_csum;
+                        __be32 new_ucs32 = (__be32)inner_udp->check;
+                        __wsum udp_csum_delta = bpf_csum_diff(&old_ucs32, 4, &new_ucs32, 4, 0);
+                        icmph->checksum = xdp_csum_apply(icmph->checksum, udp_csum_delta);
+                    }
+                    icmph->checksum = xdp_csum_apply(icmph->checksum, uport_delta);
+                }
             }
         } else {
             struct icmphdr *icmph = data + l4_offset;
             if ((void *)(icmph + 1) > data_end) return -1;
-            icmph->checksum =
-                bpf_csum_diff(&icmph->un.echo.id, sizeof(icmph->un.echo.id), &action->to_port,
-                              sizeof(action->to_port), icmph->checksum);
+            /* ICMP echo: id → port mapping. Both fields are __be16, pad to __be32. */
+            __be32 old_id32 = (__be32)icmph->un.echo.id;
+            __be32 new_port32 = (__be32)action->to_port;
+            __wsum echo_delta = bpf_csum_diff(&old_id32, 4, &new_port32, 4, 0);
+            icmph->checksum = xdp_csum_apply(icmph->checksum, echo_delta);
         }
         return 0;
     }
@@ -185,11 +261,11 @@ static __always_inline int xdp_modify_headers_v4(void *data, void *data_end, u16
             udph->dest = action->to_port;
 
         if (udph->check != 0) {
-            __s64 d = bpf_csum_diff(&old_port, sizeof(old_port), &action->to_port,
-                                    sizeof(action->to_port), 0);
-            d = bpf_csum_diff(&old_addr, sizeof(old_addr), &action->to_addr.addr,
-                              sizeof(action->to_addr.addr), d);
-            udph->check = bpf_csum_diff(0, 0, &udph->check, sizeof(udph->check), d);
+            __be32 old_port32 = (__be32)old_port;
+            __be32 new_port32 = (__be32)action->to_port;
+            __wsum dp = bpf_csum_diff(&old_port32, 4, &new_port32, 4, 0);
+            __wsum da = bpf_csum_diff(&old_addr, 4, &action->to_addr.addr, 4, 0);
+            udph->check = xdp_csum_apply(udph->check, xdp_csum_add(dp, da));
         }
 
         if (is_icmpx_error && icmp_err_l4_offset != 0) {
@@ -210,11 +286,13 @@ static __always_inline int xdp_modify_headers_v4(void *data, void *data_end, u16
     else
         tcph->dest = action->to_port;
 
-    __s64 d =
-        bpf_csum_diff(&old_port, sizeof(old_port), &action->to_port, sizeof(action->to_port), 0);
-    d = bpf_csum_diff(&old_addr, sizeof(old_addr), &action->to_addr.addr,
-                      sizeof(action->to_addr.addr), d);
-    tcph->check = bpf_csum_diff(0, 0, &tcph->check, sizeof(tcph->check), d);
+    {
+        __be32 old_port32 = (__be32)old_port;
+        __be32 new_port32 = (__be32)action->to_port;
+        __wsum dp = bpf_csum_diff(&old_port32, 4, &new_port32, 4, 0);
+        __wsum da = bpf_csum_diff(&old_addr, 4, &action->to_addr.addr, 4, 0);
+        tcph->check = xdp_csum_apply(tcph->check, xdp_csum_add(dp, da));
+    }
 
     if (is_icmpx_error && icmp_err_l4_offset != 0) {
         xdp_csum_update_l4(data, data_end, icmp_err_l4_offset, icmp_err_l4_proto,

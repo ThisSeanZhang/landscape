@@ -10,6 +10,7 @@
 #include "scanner/xdp_scanner6.h"
 #include "pipeline/pipeline.h"
 #include "pipeline/xdp_wan_maps.h"
+#include "nat/xdp_csum_helpers.h"
 #include "pipeline/xdp_lan_maps.h"
 #include "pipeline/stage.h"
 
@@ -78,8 +79,10 @@ static __always_inline int mss_clamp_packet(struct xdp_md *ctx) {
             if (bpf_ntohs(old_mss) > max_mss) {
                 __be16 new_mss = bpf_htons(max_mss);
                 *(__be16 *)(opt + 2) = new_mss;
-                __s64 d = bpf_csum_diff(&old_mss, sizeof(old_mss), &new_mss, sizeof(new_mss), 0);
-                tcph->check = bpf_csum_diff(0, 0, &tcph->check, sizeof(tcph->check), d);
+                __be32 old_mss32 = (__be32)old_mss;
+                __be32 new_mss32 = (__be32)new_mss;
+                __wsum d = bpf_csum_diff(&old_mss32, 4, &new_mss32, 4, 0);
+                tcph->check = xdp_csum_apply(tcph->check, d);
                 bpf_printk("[xdp_mss] clamped MSS %u -> %u", bpf_ntohs(old_mss), max_mss);
             }
             break;

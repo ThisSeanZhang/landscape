@@ -44,6 +44,7 @@ mod scanner;
 mod time;
 mod tproxy;
 mod xdp_chain;
+mod xdp_csum_verify;
 mod xdp_firewall_test;
 mod xdp_lan_route_test;
 mod xdp_mss_clamp_test;
@@ -112,6 +113,10 @@ pub(crate) mod xdp_firewall_skel {
 
 pub(crate) mod xdp_nat_skel {
     include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/xdp_nat.skel.rs"));
+}
+
+pub(crate) mod test_csum_verify_skel {
+    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/test_csum_verify.skel.rs"));
 }
 
 unsafe impl plain::Plain for packet_info {}
