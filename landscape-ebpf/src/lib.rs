@@ -20,6 +20,7 @@ pub mod tproxy;
 mod tests;
 
 pub mod dns_dispatcher;
+pub mod tc_chain;
 pub mod xdp;
 
 static MAP_PATHS: Lazy<LandscapeMapPath> = Lazy::new(|| {

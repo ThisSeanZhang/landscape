@@ -36,6 +36,8 @@ fn main() {
         OsStr::new("-Wno-compare-distinct-pointer-types"),
         OsStr::new("-I"),
         vmlinux_path.as_os_str(),
+        OsStr::new("-I"),
+        OsStr::new("src/bpf"),
         OsStr::new("-mcpu=v2"),
     ];
 
@@ -76,6 +78,40 @@ fn main() {
 
         SkeletonBuilder::new()
             // .obj(output_bpf_obj_file)
+            .source(&path)
+            .clang_args(&clang_args)
+            .build_and_generate(&output_skel_file)
+            .expect("Failed to build, save object, and generate skeleton file");
+    }
+
+    for entry in
+        fs::read_dir("src/bpf/tc_chain/").expect("Failed to read directory: src/bpf/tc_chain/")
+    {
+        let path = match entry {
+            Ok(entry) => entry.path(),
+            Err(e) => {
+                eprintln!("Error reading directory entry: {}", e);
+                continue;
+            }
+        };
+
+        let file_name = path.file_name().and_then(|name| name.to_str());
+        let Some(file_name) = file_name else {
+            eprintln!("Invalid file name: {:?}", path);
+            continue;
+        };
+
+        if !file_name.ends_with(".bpf.c") {
+            continue;
+        }
+
+        let file_stem = file_name.trim_end_matches(".bpf.c");
+        let output_skel_file = project_root.join(format!("{}.skel.rs", file_stem));
+
+        println!("Processing input file: {:?}", path);
+        println!("Generating output skeleton file: {:?}", output_skel_file);
+
+        SkeletonBuilder::new()
             .source(&path)
             .clang_args(&clang_args)
             .build_and_generate(&output_skel_file)
