@@ -36,8 +36,7 @@ static __always_inline int nat_v4_egress(struct xdp_md *ctx) {
     if (ret != TC_ACT_OK) return XDP_PASS;
 
     struct inet4_pair ip_pair = {};
-    if (xdp_read_nat_info4(data, data_end, &idx, &ip_pair))
-        return XDP_DROP;
+    if (xdp_read_nat_info4(data, data_end, &idx, &ip_pair)) return XDP_DROP;
 
     ret = is_broadcast_ip4_pair(&ip_pair);
     if (ret != TC_ACT_OK) return XDP_PASS;
@@ -156,8 +155,7 @@ static __always_inline int nat_v4_ingress(struct xdp_md *ctx) {
     if (ret != TC_ACT_OK) return XDP_PASS;
 
     struct inet4_pair ip_pair = {};
-    if (xdp_read_nat_info4(data, data_end, &idx, &ip_pair))
-        return XDP_DROP;
+    if (xdp_read_nat_info4(data, data_end, &idx, &ip_pair)) return XDP_DROP;
 
     ret = is_broadcast_ip4_pair(&ip_pair);
     if (ret != TC_ACT_OK) return XDP_PASS;
@@ -291,8 +289,7 @@ static __always_inline int nat_v6_egress(struct xdp_md *ctx) {
     if ((void *)(ip6h + 1) > data_end) return XDP_PASS;
 
     struct inet_pair ip_pair = {};
-    if (xdp_read_nat_info6(data, data_end, &idx, &ip_pair))
-        return XDP_DROP;
+    if (xdp_read_nat_info6(data, data_end, &idx, &ip_pair)) return XDP_DROP;
 
     __be16 sport = ip_pair.src_port;
     __be16 dport = ip_pair.dst_port;
@@ -330,8 +327,7 @@ static __always_inline int nat_v6_ingress(struct xdp_md *ctx) {
     if ((void *)(ip6h + 1) > data_end) return XDP_PASS;
 
     struct inet_pair ip_pair = {};
-    if (xdp_read_nat_info6(data, data_end, &idx, &ip_pair))
-        return XDP_DROP;
+    if (xdp_read_nat_info6(data, data_end, &idx, &ip_pair)) return XDP_DROP;
 
     __be16 sport = ip_pair.src_port;
     __be16 dport = ip_pair.dst_port;

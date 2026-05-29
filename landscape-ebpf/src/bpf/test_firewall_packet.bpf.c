@@ -11,7 +11,6 @@ const volatile u32 current_l3_offset = 14;
 
 struct firewall_packet_test_result {
     struct packet_offset_info offset;
-    struct packet_context context;
     struct inet_pair ip_pair;
     int parse_ret;
     int frag_ret;
@@ -31,9 +30,9 @@ int test_firewall_packet(struct __sk_buff *skb) {
     u32 key = 0;
     struct firewall_packet_test_result result = {0};
 
-    result.parse_ret = extract_firewall_packet_info(skb, &result.context, &result.offset,
-                                                    &result.ip_pair, current_l3_offset);
-    if (result.parse_ret == TC_ACT_OK && !is_firewall_icmp_error_pkt(&result.context)) {
+    result.parse_ret =
+        extract_firewall_packet_info(skb, &result.offset, &result.ip_pair, current_l3_offset);
+    if (result.parse_ret == TC_ACT_OK && !is_icmp_error_pkt(&result.offset)) {
         result.did_frag_track = 1;
         result.frag_ret = frag_info_track(&result.offset, &result.ip_pair);
     } else {

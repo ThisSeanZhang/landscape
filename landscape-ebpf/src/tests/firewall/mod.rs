@@ -112,9 +112,9 @@ pub mod tests {
         assert_eq!(result.frag_ret, TC_ACT_OK);
         assert_eq!(result.did_frag_track, 1);
         assert_eq!(result.offset.l3_protocol, LANDSCAPE_IPV4_TYPE);
-        assert_eq!(result.context.ip_hdr.ip_protocol, IPPROTO_TCP);
-        assert_eq!(u16::from_be(result.context.ip_hdr.pair_ip.src_port), 21);
-        assert_eq!(u16::from_be(result.context.ip_hdr.pair_ip.dst_port), 1234);
+        assert_eq!(result.offset.l4_protocol, IPPROTO_TCP);
+        assert_eq!(u16::from_be(result.ip_pair.src_port), 21);
+        assert_eq!(u16::from_be(result.ip_pair.dst_port), 1234);
     }
 
     #[test]
@@ -124,9 +124,9 @@ pub mod tests {
         assert_eq!(result.frag_ret, TC_ACT_OK);
         assert_eq!(result.did_frag_track, 1);
         assert_eq!(result.offset.l3_protocol, LANDSCAPE_IPV4_TYPE);
-        assert_eq!(result.context.ip_hdr.ip_protocol, IPPROTO_UDP);
-        assert_eq!(u16::from_be(result.context.ip_hdr.pair_ip.src_port), 5000);
-        assert_eq!(u16::from_be(result.context.ip_hdr.pair_ip.dst_port), 6000);
+        assert_eq!(result.offset.l4_protocol, IPPROTO_UDP);
+        assert_eq!(u16::from_be(result.ip_pair.src_port), 5000);
+        assert_eq!(u16::from_be(result.ip_pair.dst_port), 6000);
     }
 
     #[test]
@@ -137,8 +137,8 @@ pub mod tests {
         assert_eq!(result.did_frag_track, 0);
         assert_eq!(result.offset.l3_protocol, LANDSCAPE_IPV4_TYPE);
         assert!(result.offset.icmp_error_inner_l4_offset > 0);
-        assert_eq!(u16::from_be(result.context.ip_hdr.pair_ip.src_port), 4321);
-        assert_eq!(u16::from_be(result.context.ip_hdr.pair_ip.dst_port), 1234);
+        assert_eq!(u16::from_be(result.ip_pair.src_port), 4321);
+        assert_eq!(u16::from_be(result.ip_pair.dst_port), 1234);
     }
 
     #[test]
@@ -152,8 +152,8 @@ pub mod tests {
         assert_eq!(result.offset.icmp_error_l3_protocol, LANDSCAPE_IPV6_TYPE);
         assert_eq!(result.offset.icmp_error_l4_protocol, IPPROTO_UDP);
         assert!(result.offset.icmp_error_inner_l4_offset > 0);
-        assert_eq!(u16::from_be(result.context.ip_hdr.pair_ip.src_port), 9);
-        assert_eq!(u16::from_be(result.context.ip_hdr.pair_ip.dst_port), 657);
+        assert_eq!(u16::from_be(result.ip_pair.src_port), 9);
+        assert_eq!(u16::from_be(result.ip_pair.dst_port), 657);
     }
 
     #[test]
@@ -169,9 +169,9 @@ pub mod tests {
         assert_eq!(result.parse_ret, TC_ACT_OK);
         assert_eq!(result.frag_ret, TC_ACT_OK);
         assert_eq!(result.offset.l3_protocol, LANDSCAPE_IPV6_TYPE);
-        assert_eq!(result.context.ip_hdr.ip_protocol, IPPROTO_TCP);
-        assert_eq!(u16::from_be(result.context.ip_hdr.pair_ip.src_port), 21);
-        assert_eq!(u16::from_be(result.context.ip_hdr.pair_ip.dst_port), 1234);
+        assert_eq!(result.offset.l4_protocol, IPPROTO_TCP);
+        assert_eq!(u16::from_be(result.ip_pair.src_port), 21);
+        assert_eq!(u16::from_be(result.ip_pair.dst_port), 1234);
     }
 
     #[test]

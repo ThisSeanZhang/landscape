@@ -5,16 +5,11 @@
 
 #include <bpf/bpf_endian.h>
 
-#include "firewall.h"
 #include "../landscape.h"
 #include "../landscape_log.h"
 #include "../pkg_scanner.h"
 
 #define FIREWALL_ICMP_ERR_PACKET_L4_LEN 8
-
-static __always_inline bool is_firewall_icmp_error_pkt(const struct packet_context *pkt) {
-    return pkt->l4_payload_offset >= 0 && pkt->icmp_error_payload_offset >= 0;
-}
 
 static __always_inline __be16 firewall_get_icmpx_query_id(struct icmphdr *icmph) {
     return icmph->un.echo.id;
@@ -25,8 +20,7 @@ static __always_inline __be16 firewall_get_icmp6_query_id(struct icmp6hdr *icmp6
 }
 
 static __always_inline int firewall_read_l4_info(struct __sk_buff *skb, u8 l4_protocol, u32 offset,
-                                                 bool icmp_error_inner,
-                                                 struct packet_context *pcxt) {
+                                                 bool icmp_error_inner, struct inet_pair *ip_pair) {
 #define BPF_LOG_TOPIC "firewall_read_l4_info"
     if (l4_protocol == IPPROTO_TCP) {
         struct tcphdr *tcph;
@@ -34,39 +28,25 @@ static __always_inline int firewall_read_l4_info(struct __sk_buff *skb, u8 l4_pr
         if (VALIDATE_READ_DATA(skb, &tcph, offset, read_len)) {
             return TC_ACT_SHOT;
         }
-        pcxt->ip_hdr.pair_ip.src_port = tcph->source;
-        pcxt->ip_hdr.pair_ip.dst_port = tcph->dest;
-
-        if (!icmp_error_inner) {
-            if (tcph->fin) {
-                pcxt->ip_hdr.pkt_type = PKT_TCP_FIN_V2;
-            } else if (tcph->rst) {
-                pcxt->ip_hdr.pkt_type = PKT_TCP_RST_V2;
-            } else if (tcph->syn) {
-                pcxt->ip_hdr.pkt_type = PKT_TCP_SYN_V2;
-            } else {
-                pcxt->ip_hdr.pkt_type = PKT_TCP_DATA_V2;
-            }
-        }
+        ip_pair->src_port = tcph->source;
+        ip_pair->dst_port = tcph->dest;
     } else if (l4_protocol == IPPROTO_UDP) {
         struct udphdr *udph;
         u32 read_len = icmp_error_inner ? FIREWALL_ICMP_ERR_PACKET_L4_LEN : sizeof(*udph);
         if (VALIDATE_READ_DATA(skb, &udph, offset, read_len)) {
             return TC_ACT_SHOT;
         }
-        pcxt->ip_hdr.pair_ip.src_port = udph->source;
-        pcxt->ip_hdr.pair_ip.dst_port = udph->dest;
+        ip_pair->src_port = udph->source;
+        ip_pair->dst_port = udph->dest;
     } else if (l4_protocol == IPPROTO_ICMP) {
         struct icmphdr *icmph;
         u32 read_len = icmp_error_inner ? FIREWALL_ICMP_ERR_PACKET_L4_LEN : sizeof(*icmph);
         if (VALIDATE_READ_DATA(skb, &icmph, offset, read_len)) {
             return TC_ACT_SHOT;
         }
-        pcxt->ip_hdr.icmp_type = icmph->type;
         switch (icmp_msg_type(icmph)) {
         case ICMP_QUERY_MSG:
-            pcxt->ip_hdr.pair_ip.src_port = pcxt->ip_hdr.pair_ip.dst_port =
-                firewall_get_icmpx_query_id(icmph);
+            ip_pair->src_port = ip_pair->dst_port = firewall_get_icmpx_query_id(icmph);
             break;
         case ICMP_ERROR_MSG:
         case ICMP_ACT_UNSPEC:
@@ -81,11 +61,9 @@ static __always_inline int firewall_read_l4_info(struct __sk_buff *skb, u8 l4_pr
         if (VALIDATE_READ_DATA(skb, &icmp6h, offset, sizeof(*icmp6h))) {
             return TC_ACT_SHOT;
         }
-        pcxt->ip_hdr.icmp_type = icmp6h->icmp6_type;
         switch (icmp6_msg_type(icmp6h)) {
         case ICMP_QUERY_MSG:
-            pcxt->ip_hdr.pair_ip.src_port = pcxt->ip_hdr.pair_ip.dst_port =
-                firewall_get_icmp6_query_id(icmp6h);
+            ip_pair->src_port = ip_pair->dst_port = firewall_get_icmp6_query_id(icmp6h);
             break;
         case ICMP_ERROR_MSG:
         case ICMP_ACT_UNSPEC:
@@ -102,23 +80,14 @@ static __always_inline int firewall_read_l4_info(struct __sk_buff *skb, u8 l4_pr
 }
 
 static __always_inline int extract_firewall_packet_info(struct __sk_buff *skb,
-                                                        struct packet_context *pcxt,
                                                         struct packet_offset_info *offset_info,
                                                         struct inet_pair *ip_pair,
                                                         u32 current_l3_offset) {
 #define BPF_LOG_TOPIC "extract_firewall_packet_info"
-    if (pcxt == NULL || offset_info == NULL || ip_pair == NULL) return TC_ACT_SHOT;
+    if (offset_info == NULL || ip_pair == NULL) return TC_ACT_SHOT;
 
     int ret = scan_packet_full(skb, current_l3_offset, offset_info);
     if (ret != LD_SCAN_OK) return ret;
-
-    pcxt->ip_hdr.ip_protocol = offset_info->l4_protocol;
-    pcxt->ip_hdr.pkt_type = PKT_CONNLESS_V2;
-    pcxt->ip_hdr.fragment_type = offset_info->fragment_type;
-    pcxt->ip_hdr.fragment_off = offset_info->fragment_off;
-    pcxt->ip_hdr.fragment_id = offset_info->fragment_id;
-    pcxt->l4_payload_offset = offset_info->l4_offset;
-    pcxt->icmp_error_payload_offset = -1;
 
     if (offset_info->l3_protocol == LANDSCAPE_IPV4_TYPE) {
         struct iphdr *iph;
@@ -138,21 +107,13 @@ static __always_inline int extract_firewall_packet_info(struct __sk_buff *skb,
         return TC_ACT_UNSPEC;
     }
 
-    COPY_ADDR_FROM(pcxt->ip_hdr.pair_ip.src_addr.all, ip_pair->src_addr.all);
-    COPY_ADDR_FROM(pcxt->ip_hdr.pair_ip.dst_addr.all, ip_pair->dst_addr.all);
-
     if (offset_info->fragment_type >= FRAG_MIDDLE) {
-        pcxt->l4_payload_offset = -1;
-        pcxt->ip_hdr.pair_ip.src_port = 0;
-        pcxt->ip_hdr.pair_ip.dst_port = 0;
         ip_pair->src_port = 0;
         ip_pair->dst_port = 0;
         return TC_ACT_OK;
     }
 
     if (is_icmp_error_pkt(offset_info)) {
-        pcxt->icmp_error_payload_offset = offset_info->icmp_error_inner_l4_offset;
-
         union u_inet_addr inner_dst = {0};
         if (offset_info->icmp_error_l3_protocol == LANDSCAPE_IPV4_TYPE) {
             struct iphdr *inner_iph;
@@ -172,48 +133,39 @@ static __always_inline int extract_firewall_packet_info(struct __sk_buff *skb,
             return TC_ACT_UNSPEC;
         }
 
-        struct packet_context inner_pcxt = {0};
-        inner_pcxt.ip_hdr.pkt_type = PKT_CONNLESS_V2;
+        struct inet_pair inner_pair = {0};
         ret = firewall_read_l4_info(skb, offset_info->icmp_error_l4_protocol,
-                                    offset_info->icmp_error_inner_l4_offset, true, &inner_pcxt);
+                                    offset_info->icmp_error_inner_l4_offset, true, &inner_pair);
         if (ret != TC_ACT_OK) return ret;
 
-        COPY_ADDR_FROM(pcxt->ip_hdr.pair_ip.src_addr.all, inner_dst.all);
-        pcxt->ip_hdr.pair_ip.src_port = inner_pcxt.ip_hdr.pair_ip.dst_port;
-        pcxt->ip_hdr.pair_ip.dst_port = inner_pcxt.ip_hdr.pair_ip.src_port;
-
-        COPY_ADDR_FROM(ip_pair->src_addr.all, pcxt->ip_hdr.pair_ip.src_addr.all);
-        COPY_ADDR_FROM(ip_pair->dst_addr.all, pcxt->ip_hdr.pair_ip.dst_addr.all);
-        ip_pair->src_port = pcxt->ip_hdr.pair_ip.src_port;
-        ip_pair->dst_port = pcxt->ip_hdr.pair_ip.dst_port;
+        COPY_ADDR_FROM(ip_pair->src_addr.all, inner_dst.all);
+        ip_pair->src_port = inner_pair.dst_port;
+        ip_pair->dst_port = inner_pair.src_port;
         return TC_ACT_OK;
     }
 
-    ret = firewall_read_l4_info(skb, offset_info->l4_protocol, offset_info->l4_offset, false, pcxt);
+    ret = firewall_read_l4_info(skb, offset_info->l4_protocol, offset_info->l4_offset, false,
+                                ip_pair);
     if (ret != TC_ACT_OK) return ret;
 
-    ip_pair->src_port = pcxt->ip_hdr.pair_ip.src_port;
-    ip_pair->dst_port = pcxt->ip_hdr.pair_ip.dst_port;
     return TC_ACT_OK;
 #undef BPF_LOG_TOPIC
 }
 
 static __always_inline int extract_firewall_v4_packet_info(struct __sk_buff *skb,
-                                                           struct packet_context *pcxt,
                                                            struct packet_offset_info *offset_info,
                                                            struct inet_pair *ip_pair,
                                                            u32 current_l3_offset) {
-    int ret = extract_firewall_packet_info(skb, pcxt, offset_info, ip_pair, current_l3_offset);
+    int ret = extract_firewall_packet_info(skb, offset_info, ip_pair, current_l3_offset);
     if (ret != TC_ACT_OK) return ret;
     return offset_info->l3_protocol == LANDSCAPE_IPV4_TYPE ? TC_ACT_OK : TC_ACT_UNSPEC;
 }
 
 static __always_inline int extract_firewall_v6_packet_info(struct __sk_buff *skb,
-                                                           struct packet_context *pcxt,
                                                            struct packet_offset_info *offset_info,
                                                            struct inet_pair *ip_pair,
                                                            u32 current_l3_offset) {
-    int ret = extract_firewall_packet_info(skb, pcxt, offset_info, ip_pair, current_l3_offset);
+    int ret = extract_firewall_packet_info(skb, offset_info, ip_pair, current_l3_offset);
     if (ret != TC_ACT_OK) return ret;
     return offset_info->l3_protocol == LANDSCAPE_IPV6_TYPE ? TC_ACT_OK : TC_ACT_UNSPEC;
 }

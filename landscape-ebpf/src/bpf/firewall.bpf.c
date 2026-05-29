@@ -57,12 +57,9 @@ int ipv4_egress_firewall(struct __sk_buff *skb) {
 
     // ld_bpf_log("bpf_tail_call ipv4_egress_firewall");
 
-    struct packet_context packet_info;
     struct packet_offset_info offset_info = {0};
     struct inet_pair ip_pair = {0};
-    __builtin_memset(&packet_info, 0, sizeof(packet_info));
-    int ret = extract_firewall_v4_packet_info(skb, &packet_info, &offset_info, &ip_pair,
-                                              current_l3_offset);
+    int ret = extract_firewall_v4_packet_info(skb, &offset_info, &ip_pair, current_l3_offset);
 
     if (unlikely(ret != TC_ACT_OK)) {
         if (ret == TC_ACT_SHOT) {
@@ -71,7 +68,7 @@ int ipv4_egress_firewall(struct __sk_buff *skb) {
         return TC_ACT_UNSPEC;
     }
 
-    bool is_icmpx_error = is_firewall_icmp_error_pkt(&packet_info);
+    bool is_icmpx_error = is_icmp_error_pkt(&offset_info);
     if (likely(!is_icmpx_error)) {
         ret = frag_info_track(&offset_info, &ip_pair);
         if (ret != TC_ACT_OK) {
@@ -79,22 +76,9 @@ int ipv4_egress_firewall(struct __sk_buff *skb) {
         }
     }
 
-    // if (bpf_ntohs(packet_info.ip_hdr.pair_ip.src_port) == 68) {
-    //     ld_bpf_log(
-    //         "packet ip_protocol: %u, ip:%pI4:%u->%pI4:%u", packet_info.ip_hdr.ip_protocol,
-    //         &packet_info.ip_hdr.pair_ip.src_addr, bpf_ntohs(packet_info.ip_hdr.pair_ip.src_port),
-    //         &packet_info.ip_hdr.pair_ip.dst_addr,
-    //         bpf_ntohs(packet_info.ip_hdr.pair_ip.dst_port));
-    // }
-
-    // ld_bpf_log(
-    //     "packet ip_protocol: %u, ip:%pI4:%u->%pI4:%u", packet_info.ip_hdr.ip_protocol,
-    //     &packet_info.ip_hdr.pair_ip.src_addr, bpf_ntohs(packet_info.ip_hdr.pair_ip.src_port),
-    //     &packet_info.ip_hdr.pair_ip.dst_addr, bpf_ntohs(packet_info.ip_hdr.pair_ip.dst_port));
-    // ld_bpf_log("packet ICMP type: %u ", packet_info.ip_hdr.icmp_type);
     struct ipv4_lpm_key block_search_key = {
         .prefixlen = 32,
-        .addr = packet_info.ip_hdr.pair_ip.dst_addr.ip,
+        .addr = ip_pair.dst_addr.ip,
     };
     struct ipv4_mark_action *mark_value =
         bpf_map_lookup_elem(&firewall_block_ip4_map, &block_search_key);
@@ -111,12 +95,9 @@ SEC("tc/ingress")
 int ipv4_ingress_firewall(struct __sk_buff *skb) {
 #define BPF_LOG_TOPIC "<<< ipv4_ingress_firewall <<<"
 
-    struct packet_context packet_info;
     struct packet_offset_info offset_info = {0};
     struct inet_pair ip_pair = {0};
-    __builtin_memset(&packet_info, 0, sizeof(packet_info));
-    int ret = extract_firewall_v4_packet_info(skb, &packet_info, &offset_info, &ip_pair,
-                                              current_l3_offset);
+    int ret = extract_firewall_v4_packet_info(skb, &offset_info, &ip_pair, current_l3_offset);
     if (unlikely(ret != TC_ACT_OK)) {
         if (ret == TC_ACT_SHOT) {
             ld_bpf_log("invalid packet");
@@ -124,7 +105,7 @@ int ipv4_ingress_firewall(struct __sk_buff *skb) {
         return wan_tc_pipeline_continue_ingress(skb, INGRESS_STAGE_FIREWALL, TC_ACT_UNSPEC);
     }
 
-    bool is_icmpx_error = is_firewall_icmp_error_pkt(&packet_info);
+    bool is_icmpx_error = is_icmp_error_pkt(&offset_info);
     if (likely(!is_icmpx_error)) {
         ret = frag_info_track(&offset_info, &ip_pair);
         if (ret != TC_ACT_OK) {
@@ -132,24 +113,9 @@ int ipv4_ingress_firewall(struct __sk_buff *skb) {
         }
     }
 
-    // if (packet_info.ip_hdr.ip_protocol == IPPROTO_ICMP) {
-    //     ld_bpf_log(
-    //         "packet ip_protocol: %u, ip:%pI4:%u->%pI4:%u", packet_info.ip_hdr.ip_protocol,
-    //         &packet_info.ip_hdr.pair_ip.src_addr, bpf_ntohs(packet_info.ip_hdr.pair_ip.src_port),
-    //         &packet_info.ip_hdr.pair_ip.dst_addr,
-    //         bpf_ntohs(packet_info.ip_hdr.pair_ip.dst_port));
-    // }
-
-    // ld_bpf_log("packet ip:%pI4->%pI4", &packet_info.ip_hdr.pair_ip.src_addr,
-    //              &packet_info.ip_hdr.pair_ip.dst_addr);
-
-    // ld_bpf_log("packet ip_protocol: %u ", packet_info.ip_hdr.ip_protocol);
-    // ld_bpf_log("packet src port: %u ", bpf_ntohs(packet_info.ip_hdr.pair_ip.src_port));
-    // ld_bpf_log("packet dst port: %u ", bpf_ntohs(packet_info.ip_hdr.pair_ip.dst_port));
-
     struct ipv4_lpm_key block_search_key = {
         .prefixlen = 32,
-        .addr = packet_info.ip_hdr.pair_ip.src_addr.ip,
+        .addr = ip_pair.src_addr.ip,
     };
     struct ipv4_mark_action *mark_value =
         bpf_map_lookup_elem(&firewall_block_ip4_map, &block_search_key);
@@ -166,12 +132,9 @@ SEC("tc/egress")
 int ipv6_egress_firewall(struct __sk_buff *skb) {
 #define BPF_LOG_TOPIC "<<< ipv6_egress_firewall <<<"
 
-    struct packet_context packet_info;
     struct packet_offset_info offset_info = {0};
     struct inet_pair ip_pair = {0};
-    __builtin_memset(&packet_info, 0, sizeof(packet_info));
-    int ret = extract_firewall_v6_packet_info(skb, &packet_info, &offset_info, &ip_pair,
-                                              current_l3_offset);
+    int ret = extract_firewall_v6_packet_info(skb, &offset_info, &ip_pair, current_l3_offset);
     if (unlikely(ret != TC_ACT_OK)) {
         if (ret == TC_ACT_SHOT) {
             ld_bpf_log("invalid packet");
@@ -179,7 +142,7 @@ int ipv6_egress_firewall(struct __sk_buff *skb) {
         return wan_tc_pipeline_continue_egress(skb, EGRESS_STAGE_FIREWALL, TC_ACT_UNSPEC);
     }
 
-    bool is_icmpx_error = is_firewall_icmp_error_pkt(&packet_info);
+    bool is_icmpx_error = is_icmp_error_pkt(&offset_info);
     if (likely(!is_icmpx_error)) {
         ret = frag_info_track(&offset_info, &ip_pair);
         if (unlikely(ret != TC_ACT_OK)) {
@@ -187,15 +150,9 @@ int ipv6_egress_firewall(struct __sk_buff *skb) {
         }
     }
 
-    // ld_bpf_log("packet ip: [%pI6c]->[%pI6c]", &packet_info.ip_hdr.pair_ip.src_addr,
-    //              &packet_info.ip_hdr.pair_ip.dst_addr);
-    // ld_bpf_log("packet ip_protocol: %u ", packet_info.ip_hdr.ip_protocol);
-    // ld_bpf_log("packet src port: %u ", bpf_ntohs(packet_info.ip_hdr.pair_ip.src_port));
-    // ld_bpf_log("packet dst port: %u ", bpf_ntohs(packet_info.ip_hdr.pair_ip.dst_port));
-
     struct ipv6_lpm_key block_search_key = {
         .prefixlen = 128,
-        .addr = packet_info.ip_hdr.pair_ip.dst_addr.ip,
+        .addr = ip_pair.dst_addr.ip,
     };
     struct firewall_action *mark_value =
         bpf_map_lookup_elem(&firewall_block_ip6_map, &block_search_key);
@@ -212,12 +169,9 @@ SEC("tc/ingress")
 int ipv6_ingress_firewall(struct __sk_buff *skb) {
 #define BPF_LOG_TOPIC "<<< ipv6_ingress_firewall <<<"
 
-    struct packet_context packet_info;
     struct packet_offset_info offset_info = {0};
     struct inet_pair ip_pair = {0};
-    __builtin_memset(&packet_info, 0, sizeof(packet_info));
-    int ret = extract_firewall_v6_packet_info(skb, &packet_info, &offset_info, &ip_pair,
-                                              current_l3_offset);
+    int ret = extract_firewall_v6_packet_info(skb, &offset_info, &ip_pair, current_l3_offset);
     if (unlikely(ret != TC_ACT_OK)) {
         if (ret == TC_ACT_SHOT) {
             ld_bpf_log("invalid packet");
@@ -225,7 +179,7 @@ int ipv6_ingress_firewall(struct __sk_buff *skb) {
         return wan_tc_pipeline_continue_ingress(skb, INGRESS_STAGE_FIREWALL, TC_ACT_UNSPEC);
     }
 
-    bool is_icmpx_error = is_firewall_icmp_error_pkt(&packet_info);
+    bool is_icmpx_error = is_icmp_error_pkt(&offset_info);
     if (likely(!is_icmpx_error)) {
         ret = frag_info_track(&offset_info, &ip_pair);
         if (unlikely(ret != TC_ACT_OK)) {
@@ -233,15 +187,9 @@ int ipv6_ingress_firewall(struct __sk_buff *skb) {
         }
     }
 
-    // ld_bpf_log("packet ip: [%pI6c]->[%pI6c]", &packet_info.ip_hdr.pair_ip.src_addr,
-    //              &packet_info.ip_hdr.pair_ip.dst_addr);
-    // ld_bpf_log("packet ip_protocol: %u ", packet_info.ip_hdr.ip_protocol);
-    // ld_bpf_log("packet src port: %u ", bpf_ntohs(packet_info.ip_hdr.pair_ip.src_port));
-    // ld_bpf_log("packet dst port: %u ", bpf_ntohs(packet_info.ip_hdr.pair_ip.dst_port));
-
     struct ipv6_lpm_key block_search_key = {
         .prefixlen = 128,
-        .addr = packet_info.ip_hdr.pair_ip.src_addr.ip,
+        .addr = ip_pair.src_addr.ip,
     };
     struct firewall_action *mark_value =
         bpf_map_lookup_elem(&firewall_block_ip6_map, &block_search_key);
