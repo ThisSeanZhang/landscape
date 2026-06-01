@@ -62,35 +62,35 @@ pub enum ChainDir {
     LanIngress,
 }
 
-fn tc_chain_base() -> PathBuf {
+pub(crate) fn tc_chain_base() -> PathBuf {
     PathBuf::from(format!("/sys/fs/bpf/landscape/{}/tc_chain", LAND_ARGS.ebpf_map_space))
 }
 
-fn tc_pipe_root_progs_path() -> PathBuf {
+pub(crate) fn tc_pipe_root_progs_path() -> PathBuf {
     tc_chain_base().join("tc_pipe_root_progs")
 }
 
-fn wan_intro_dispatch_path() -> PathBuf {
+pub(crate) fn wan_intro_dispatch_path() -> PathBuf {
     tc_chain_base().join("wan_intro_dispatch")
 }
 
-fn tc_pipe_exits_wan_ingress_path() -> PathBuf {
+pub(crate) fn tc_pipe_exits_wan_ingress_path() -> PathBuf {
     tc_chain_base().join("tc_pipe_exits_wan_ingress")
 }
 
-fn tc_pipe_exits_wan_egress_path() -> PathBuf {
+pub(crate) fn tc_pipe_exits_wan_egress_path() -> PathBuf {
     tc_chain_base().join("tc_pipe_exits_wan_egress")
 }
 
-fn tc_pipe_exits_lan_ingress_path() -> PathBuf {
+pub(crate) fn tc_pipe_exits_lan_ingress_path() -> PathBuf {
     tc_chain_base().join("tc_pipe_exits_lan_ingress")
 }
 
-fn tc_lan_ingress_roots_path() -> PathBuf {
+pub(crate) fn tc_lan_ingress_roots_path() -> PathBuf {
     tc_chain_base().join("tc_lan_ingress_roots")
 }
 
-fn tc_wan_egress_roots_path() -> PathBuf {
+pub(crate) fn tc_wan_egress_roots_path() -> PathBuf {
     tc_chain_base().join("tc_wan_egress_roots")
 }
 
@@ -475,11 +475,18 @@ impl TcChainManager {
                 ChainDir::WanEgress => entry.wan_egress_next_stage_fd,
                 ChainDir::LanIngress => entry.lan_ingress_next_stage_fd,
             };
-            delete_prog_array_fd(next_fd, 0);
+            if next_fd != 0 {
+                delete_prog_array_fd(next_fd, 0);
+            }
         }
         delete_prog_array_fd(root_next_stage_fd, 0);
 
-        let sorted: Vec<&StageEntry> = state.stages.values().collect();
+        let sorted: Vec<&StageEntry> = state
+            .stages
+            .iter()
+            .filter(|(k, _)| !matches!((k, chain), (StageType::Pppoe, ChainDir::WanIngress)))
+            .map(|(_, v)| v)
+            .collect();
         if sorted.is_empty() {
             return Ok(());
         }
