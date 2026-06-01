@@ -7,22 +7,6 @@ struct firewall_action {
     __u32 mark;
 };
 
-// ipv4 = 32 + 8 + 8 + 16 = 64
-// ipv6 = 128 + 8 + 8 + 16 = 160
-struct firewall_static_rule_key {
-    __u32 prefixlen;
-    // l3_proto
-    u8 ip_type;
-    // l4_proto
-    u8 ip_protocol;
-    __be16 local_port;
-    union u_inet_addr remote_address;
-};
-
-struct firewall_static_ct_action {
-    __u32 mark;
-};
-
 struct {
     __uint(type, BPF_MAP_TYPE_LPM_TRIE);
     __type(key, struct ipv4_lpm_key);
@@ -40,16 +24,6 @@ struct {
     __uint(map_flags, BPF_F_NO_PREALLOC);
     __uint(pinning, LIBBPF_PIN_BY_NAME);
 } firewall_block_ip6_map SEC(".maps");
-
-// local_port + TRIE remote ip
-struct {
-    __uint(type, BPF_MAP_TYPE_LPM_TRIE);
-    __type(key, struct firewall_static_rule_key);
-    __type(value, struct firewall_static_ct_action);
-    __uint(max_entries, 35565);
-    __uint(map_flags, BPF_F_NO_PREALLOC);
-    __uint(pinning, LIBBPF_PIN_BY_NAME);
-} firewall_allow_rules_map SEC(".maps");
 
 #define FIREWALL_CREATE_CONN 1
 #define FIREWALL_DELETE_CONN 2

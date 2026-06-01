@@ -78,13 +78,6 @@ pub fn new_firewall(ifindex: i32, has_mac: bool) -> LdEbpfResult<FirewallHandle>
         ),
         "firewall prepare firewall_conn_metric_events failed"
     )?;
-    crate::bpf_ctx!(
-        pin_and_reuse_map(
-            &mut open_skel.maps.firewall_allow_rules_map,
-            &MAP_PATHS.firewall_allow_rules_map
-        ),
-        "firewall prepare firewall_allow_rules_map failed"
-    )?;
     let ingress_pipeline_path = wan_tc_pipeline_ingress_path(ifindex as u32);
     let egress_pipeline_path = wan_tc_pipeline_egress_path(ifindex as u32);
     reuse_pinned_map_or_recreate(&mut open_skel.maps.ingress_stage_progs, &ingress_pipeline_path);

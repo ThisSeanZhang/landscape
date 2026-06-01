@@ -27,10 +27,7 @@ use landscape::{
     },
     docker::LandscapeDockerService,
     enrolled_device::service::EnrolledDeviceService,
-    firewall::{
-        blacklist_service::FirewallBlacklistService, rule_service::FirewallRuleService,
-        FirewallServiceManagerService,
-    },
+    firewall::{blacklist_service::FirewallBlacklistService, FirewallServiceManagerService},
     flow::{dst_ip_rule_service::DstIpRuleService, rule_service::FlowRuleService},
     geo::{ip_service::GeoIpService, site_service::GeoSiteService},
     iface::{
@@ -115,7 +112,6 @@ pub struct LandscapeApp {
     pub dns_rule_service: DNSRuleService,
     pub flow_rule_service: FlowRuleService,
     pub geo_site_service: GeoSiteService,
-    pub fire_wall_rule_service: FirewallRuleService,
     pub firewall_blacklist_service: FirewallBlacklistService,
     pub dst_ip_rule_service: DstIpRuleService,
     pub geo_ip_service: GeoIpService,
@@ -490,7 +486,6 @@ async fn run_system(
         )
         .await
     );
-    let fire_wall_rule_service = FirewallRuleService::new(db_store_provider.clone()).await;
     let dns_provider_profile_service =
         DnsProviderProfileService::new(db_store_provider.clone()).await;
     let ddns_service = DdnsService::new(db_store_provider.clone(), route_service.clone()).await;
@@ -649,7 +644,6 @@ async fn run_system(
         dns_rule_service,
         flow_rule_service,
         geo_site_service,
-        fire_wall_rule_service,
         firewall_blacklist_service,
         dst_ip_rule_service,
         geo_ip_service,

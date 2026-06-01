@@ -39,10 +39,6 @@ static MAP_PATHS: Lazy<LandscapeMapPath> = Lazy::new(|| {
 
         firewall_ipv4_block: PathBuf::from(format!("{}/firewall_block_ip4_map", ebpf_map_path)),
         firewall_ipv6_block: PathBuf::from(format!("{}/firewall_block_ip6_map", ebpf_map_path)),
-        firewall_allow_rules_map: PathBuf::from(format!(
-            "{}/firewall_allow_rules_map",
-            ebpf_map_path
-        )),
         // DNS
         dns_flow_socks: PathBuf::from(format!("{}/dns_flow_socks", ebpf_map_path)),
         // metric
@@ -104,8 +100,6 @@ pub(crate) struct LandscapeMapPath {
     // 防火墙黑名单
     pub firewall_ipv4_block: PathBuf,
     pub firewall_ipv6_block: PathBuf,
-    // 允许通过的协议
-    pub firewall_allow_rules_map: PathBuf,
 
     /// Flow
     pub flow_match_map: PathBuf,

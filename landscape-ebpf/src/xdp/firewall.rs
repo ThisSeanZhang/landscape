@@ -74,13 +74,6 @@ pub fn init_xdp_firewall(ifindex: u32) -> LdEbpfResult<XdpFirewallHandle> {
     )?;
     crate::bpf_ctx!(
         pin_and_reuse_map(
-            &mut open_skel.maps.firewall_allow_rules_map,
-            &MAP_PATHS.firewall_allow_rules_map,
-        ),
-        "xdp_firewall pin firewall_allow_rules_map"
-    )?;
-    crate::bpf_ctx!(
-        pin_and_reuse_map(
             &mut open_skel.maps.firewall_conn_metric_events,
             &MAP_PATHS.firewall_conn_metric_events,
         ),
