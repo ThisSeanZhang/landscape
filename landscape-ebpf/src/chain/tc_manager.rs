@@ -186,6 +186,18 @@ impl TcChainManager {
         MANAGER.get_or_init(|| Self::init().expect("TC chain manager init failed"))
     }
 
+    pub fn tc_wan_intro_prog(&self) -> &libbpf_rs::Program<'_> {
+        &self._seed.progs.tc_wan_intro
+    }
+
+    pub fn tc_wan_egress_intro_prog(&self) -> &libbpf_rs::Program<'_> {
+        &self._wan_egress_chain.progs.tc_wan_egress_intro
+    }
+
+    pub fn tc_lan_ingress_intro_prog(&self) -> &libbpf_rs::Program<'_> {
+        &self._lan_ingress_chain.progs.tc_lan_ingress_intro
+    }
+
     fn init() -> LdEbpfResult<Self> {
         std::fs::create_dir_all(tc_chain_base()).expect("create tc_chain dir failed");
 
@@ -441,6 +453,23 @@ impl TcChainManager {
         self.rebuild(ifindex, ChainDir::WanEgress)?;
         self.rebuild(ifindex, ChainDir::LanIngress)?;
         Ok(())
+    }
+
+    pub fn remove_roots(&self, ifindex: u32) {
+        let mut inner = self.inner.lock().unwrap();
+        if inner.interfaces.remove(&ifindex).is_none() {
+            return;
+        }
+
+        // Clean up dispatch / prog-array registrations created in create_roots
+        let _ = self._seed.maps.tc_pipe_root_progs.delete(&ifindex.to_ne_bytes());
+        let _ = self._wan_egress_chain.maps.tc_wan_egress_roots.delete(&ifindex.to_ne_bytes());
+        let _ = self._lan_ingress_chain.maps.tc_lan_ingress_roots.delete(&ifindex.to_ne_bytes());
+
+        let mut dispatch_key = [0u8; 16];
+        dispatch_key[0..4].copy_from_slice(&TC_INTRO_IFINDEX_TYPE.to_le_bytes());
+        dispatch_key[8..12].copy_from_slice(&ifindex.to_le_bytes());
+        let _ = self._seed.maps.wan_intro_dispatch_map.delete(&dispatch_key);
     }
 
     pub fn remove(&self, ifindex: u32, stage: StageType) -> LdEbpfResult<()> {

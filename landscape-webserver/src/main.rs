@@ -370,8 +370,8 @@ async fn run_system(
     // init App
 
     // init eBPF instance
-    landscape_ebpf::chain::xdp_manager::XdpChainManager::instance();
     landscape_ebpf::chain::tc_manager::TcChainManager::instance();
+    landscape_ebpf::chain::xdp_manager::XdpChainManager::instance();
 
     let dev_obs =
         startup_phase!("observer.dev_observer", landscape::observer::dev_observer().await);
