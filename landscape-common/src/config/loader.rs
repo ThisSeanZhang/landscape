@@ -262,6 +262,7 @@ impl RuntimeConfig {
             time,
             gateway,
             file_config: config,
+            route_mode: args.route_mode,
             auto: args.auto,
         }
     }
