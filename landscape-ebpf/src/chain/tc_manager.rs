@@ -186,18 +186,6 @@ impl TcChainManager {
         MANAGER.get_or_init(|| Self::init().expect("TC chain manager init failed"))
     }
 
-    pub fn tc_wan_intro_prog(&self) -> &libbpf_rs::Program<'_> {
-        &self._seed.progs.tc_wan_intro
-    }
-
-    pub fn tc_wan_egress_intro_prog(&self) -> &libbpf_rs::Program<'_> {
-        &self._wan_egress_chain.progs.tc_wan_egress_intro
-    }
-
-    pub fn tc_lan_ingress_intro_prog(&self) -> &libbpf_rs::Program<'_> {
-        &self._lan_ingress_chain.progs.tc_lan_ingress_intro
-    }
-
     fn init() -> LdEbpfResult<Self> {
         std::fs::create_dir_all(tc_chain_base()).expect("create tc_chain dir failed");
 
@@ -343,7 +331,6 @@ impl TcChainManager {
     }
 
     fn create_roots(&self, ifindex: u32) -> LdEbpfResult<TcRoots> {
-        // tc_wan_chain — per-interface WAN ingress + egress roots
         let (
             wan_chain_skel,
             wan_chain_backing,
@@ -372,14 +359,12 @@ impl TcChainManager {
             let ing_next_fd = skel.maps.wan_ingress_root_next_stage.as_fd().as_raw_fd();
             let eg_next_fd = skel.maps.wan_egress_root_next_stage.as_fd().as_raw_fd();
 
-            // Insert WAN ingress root into tc_pipe_root_progs[ifindex]
             self._seed.maps.tc_pipe_root_progs.update(
                 &ifindex.to_ne_bytes(),
                 &ingress_root_fd.to_ne_bytes(),
                 MapFlags::ANY,
             )?;
 
-            // Register ifindex-based dispatch in wan_intro_dispatch_map
             let mut dispatch_key = [0u8; 16];
             dispatch_key[0..4].copy_from_slice(&TC_INTRO_IFINDEX_TYPE.to_le_bytes());
             dispatch_key[8..12].copy_from_slice(&ifindex.to_le_bytes());
@@ -390,7 +375,6 @@ impl TcChainManager {
                 MapFlags::ANY,
             )?;
 
-            // Insert WAN egress root into tc_wan_egress_roots[ifindex]
             self._wan_egress_chain.maps.tc_wan_egress_roots.update(
                 &ifindex.to_ne_bytes(),
                 &egress_root_fd.to_ne_bytes(),
@@ -400,7 +384,6 @@ impl TcChainManager {
             (skel, back, ing_next_fd, eg_next_fd)
         };
 
-        // tc_lan_chain — per-interface LAN ingress root
         let (lan_chain_skel, lan_chain_backing, lan_ingress_root_next_stage_fd) = {
             let builder = TcLanChainSkelBuilder::default();
             let (back, obj) = OwnedOpenObject::new();
@@ -422,7 +405,6 @@ impl TcChainManager {
             let lan_root_fd = skel.progs.tc_lan_chain_ingress_root.as_fd().as_raw_fd();
             let lan_next_fd = skel.maps.lan_ingress_root_next_stage.as_fd().as_raw_fd();
 
-            // Insert LAN ingress root into tc_lan_ingress_roots[ifindex]
             self._lan_ingress_chain.maps.tc_lan_ingress_roots.update(
                 &ifindex.to_ne_bytes(),
                 &lan_root_fd.to_ne_bytes(),

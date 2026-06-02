@@ -1,6 +1,7 @@
 use landscape_common::database::LandscapeStore;
 use landscape_common::route::lan::RouteLanServiceConfig;
 use landscape_common::{
+    args::LAND_ARGS,
     concurrency::{spawn_task, spawn_task_with_resource, task_label},
     observer::IfaceObserverAction,
     service::{
@@ -84,27 +85,41 @@ pub async fn create_route_lan_service(
     service_status.just_change_status(ServiceStatus::Staring);
     tracing::info!("start route lan at ifindex: {ifindex}");
 
-    let xdp_handle = landscape_ebpf::chain::xdp_lan_route::init_xdp_lan_route(ifindex);
-    if let Err(ref err) = xdp_handle {
-        tracing::error!("failed to start xdp lan route for {iface_name}: {err}");
-    }
+    match LAND_ARGS.route_mode {
+        landscape_common::args::RouteMode::Xdp => {
+            let xdp_handle = landscape_ebpf::chain::xdp_lan_route::init_xdp_lan_route(ifindex);
+            if let Err(ref err) = xdp_handle {
+                tracing::error!("failed to start xdp lan route for {iface_name}: {err}");
+                service_status.just_change_status(ServiceStatus::Failed);
+                return;
+            }
 
-    let route_lan = match landscape_ebpf::route::lan_v2::route_lan(ifindex, has_mac) {
-        Ok(handle) => handle,
-        Err(err) => {
-            tracing::error!("failed to start route lan for {iface_name}: {err}");
-            service_status.just_change_status(ServiceStatus::Failed);
-            return;
+            service_status.just_change_status(ServiceStatus::Running);
+            tracing::info!("Waiting for external stop signal");
+            let _ = service_status.wait_to_stopping().await;
+            tracing::info!("Receiving external stop signal");
+
+            drop(xdp_handle);
         }
-    };
+        landscape_common::args::RouteMode::Tc => {
+            let tc_handle =
+                match landscape_ebpf::chain::tc_lan_route::init_tc_lan_route(ifindex, has_mac) {
+                    Ok(handle) => handle,
+                    Err(err) => {
+                        tracing::error!("failed to start tc lan route for {iface_name}: {err}");
+                        service_status.just_change_status(ServiceStatus::Failed);
+                        return;
+                    }
+                };
 
-    service_status.just_change_status(ServiceStatus::Running);
-    tracing::info!("Waiting for external stop signal");
-    let _ = service_status.wait_to_stopping().await;
-    tracing::info!("Receiving external stop signal");
+            service_status.just_change_status(ServiceStatus::Running);
+            tracing::info!("Waiting for external stop signal");
+            let _ = service_status.wait_to_stopping().await;
+            tracing::info!("Receiving external stop signal");
 
-    drop(xdp_handle);
-    drop(route_lan);
+            drop(tc_handle);
+        }
+    }
 
     service_status.just_change_status(ServiceStatus::Stop);
 }

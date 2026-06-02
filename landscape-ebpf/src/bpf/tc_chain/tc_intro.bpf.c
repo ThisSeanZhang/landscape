@@ -5,11 +5,7 @@
 
 #include "landscape.h"
 
-#ifndef ETH_P_PPP_SES
-#define ETH_P_PPP_SES bpf_htons(0x8864)
-#endif
-#define ETH_P_PPP_IPV4 bpf_htons(0x0021)
-#define ETH_P_PPP_IPV6 bpf_htons(0x0057)
+#include "pipeline/tc_cb.h"
 
 #define TC_INTRO_IFINDEX_TYPE 2
 
@@ -51,6 +47,8 @@ struct dispatch_value {
 
 char LICENSE[] SEC("license") = "GPL";
 
+const volatile u32 current_l3_offset = 14;
+
 struct {
     __uint(type, BPF_MAP_TYPE_PROG_ARRAY);
     __uint(max_entries, 1024);
@@ -73,62 +71,35 @@ static __always_inline void tc_intro_dispatch(struct __sk_buff *skb, struct disp
 
 SEC("tc/ingress")
 int tc_wan_intro(struct __sk_buff *skb) {
-    void *data = (void *)(long)skb->data;
-    void *data_end = (void *)(long)skb->data_end;
-    struct ethhdr *eth = data;
     struct dispatch_key key = {};
+    bool is_ipv4;
+    int ret;
 
-    if ((void *)(eth + 1) > data_end) return TC_ACT_OK;
+    skb->cb[TC_CHAIN_CB_L3_OFFSET] = current_l3_offset;
 
-    if (eth->h_proto == bpf_htons(0x0800)) {
-        struct iphdr *iph = (struct iphdr *)(eth + 1);
-        if ((void *)(iph + 1) > data_end) return TC_ACT_OK;
+    ret = current_pkg_type(skb, current_l3_offset, &is_ipv4);
+    if (ret != TC_ACT_OK) return TC_ACT_OK;
+
+    if (is_ipv4) {
+        struct iphdr *iph;
+        if (VALIDATE_READ_DATA(skb, &iph, current_l3_offset, sizeof(*iph))) return TC_ACT_OK;
 
         key.dispatch_type = LANDSCAPE_IPV4_TYPE;
         key.v4.daddr = iph->daddr;
-        tc_intro_dispatch(skb, &key);
-
-        key.v6.prefix64 = 0;
-        key.dispatch_type = TC_INTRO_IFINDEX_TYPE;
-        key.ifindex = skb->ingress_ifindex;
-        tc_intro_dispatch(skb, &key);
-        return TC_ACT_OK;
-    }
-
-    if (eth->h_proto == bpf_htons(0x86DD)) {
-        struct ipv6hdr *ip6h = (struct ipv6hdr *)(eth + 1);
-        if ((void *)(ip6h + 1) > data_end) return TC_ACT_OK;
+    } else {
+        struct ipv6hdr *ip6h;
+        if (VALIDATE_READ_DATA(skb, &ip6h, current_l3_offset, sizeof(*ip6h))) return TC_ACT_OK;
 
         key.dispatch_type = LANDSCAPE_IPV6_TYPE;
         __builtin_memcpy(&key.v6.prefix64, &ip6h->daddr, sizeof(key.v6.prefix64));
-        tc_intro_dispatch(skb, &key);
-
-        key.v6.prefix64 = 0;
-        key.dispatch_type = TC_INTRO_IFINDEX_TYPE;
-        key.ifindex = skb->ingress_ifindex;
-        tc_intro_dispatch(skb, &key);
-        return TC_ACT_OK;
     }
 
-    if (eth->h_proto == ETH_P_PPP_SES) {
-        struct pppoe_header *pppoe = (struct pppoe_header *)(eth + 1);
-        if ((void *)(pppoe + 1) > data_end) return TC_ACT_OK;
+    tc_intro_dispatch(skb, &key);
 
-        if (pppoe->protocol != ETH_P_PPP_IPV4 && pppoe->protocol != ETH_P_PPP_IPV6)
-            return TC_ACT_OK;
+    key.v6.prefix64 = 0;
+    key.dispatch_type = TC_INTRO_IFINDEX_TYPE;
+    key.ifindex = skb->ingress_ifindex;
+    tc_intro_dispatch(skb, &key);
 
-        bool is_v6 = pppoe->protocol == ETH_P_PPP_IPV6;
-
-        key.dispatch_type = is_v6 ? LANDSCAPE_IPV6_TYPE : LANDSCAPE_IPV4_TYPE;
-        key.ppp.session_id = bpf_htonl((__u32)bpf_ntohs(pppoe->session_id));
-        tc_intro_dispatch(skb, &key);
-
-        key.v6.prefix64 = 0;
-        key.dispatch_type = TC_INTRO_IFINDEX_TYPE;
-        key.ifindex = skb->ingress_ifindex;
-        tc_intro_dispatch(skb, &key);
-        return TC_ACT_OK;
-    }
-
-    return TC_ACT_OK;
+    return TC_ACT_SHOT;
 }

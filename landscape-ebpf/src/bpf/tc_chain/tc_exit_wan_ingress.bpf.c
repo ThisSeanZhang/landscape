@@ -15,7 +15,9 @@
 
 char LICENSE[] SEC("license") = "GPL";
 
-const volatile u32 current_l3_offset = 14;
+static __always_inline u8 get_wan_ingress_l3_offset(struct __sk_buff *skb) {
+    return skb->cb[TC_CHAIN_CB_L3_OFFSET];
+}
 
 #undef BPF_LOG_TOPIC
 
@@ -28,8 +30,9 @@ int tc_wan_ingress_route_v4(struct __sk_buff *skb) {
     int ret = 0;
     struct route_context_v4 context = {0};
     struct packet_offset_info offset_info = {0};
+    u8 l3 = get_wan_ingress_l3_offset(skb);
 
-    ret = scan_route_packet(skb, current_l3_offset, &offset_info);
+    ret = scan_route_packet(skb, l3, &offset_info);
     if (ret != TC_ACT_OK) {
         return TC_ACT_OK;
     }
@@ -44,16 +47,16 @@ int tc_wan_ingress_route_v4(struct __sk_buff *skb) {
         return ret;
     }
 
-    ret = is_current_wan_packet_v4(skb, current_l3_offset, &context);
+    ret = is_current_wan_packet_v4(skb, l3, &context);
     if (ret != TC_ACT_OK) {
         return ret;
     }
 
-    ret = lan_redirect_check_v4(skb, current_l3_offset, &context, false);
+    ret = lan_redirect_check_v4(skb, l3, &context, false);
     if (ret == TC_ACT_REDIRECT) {
         u8 mark = get_cache_mask(skb->mark);
         if (mark == INGRESS_STATIC_MARK) {
-            setting_cache_in_wan_v4(&context, current_l3_offset, skb->ifindex);
+            setting_cache_in_wan_v4(&context, l3, skb->ifindex);
         }
     }
 
@@ -67,8 +70,9 @@ int tc_wan_ingress_route_v6(struct __sk_buff *skb) {
     int ret = 0;
     struct route_context_v6 context = {0};
     struct packet_offset_info offset_info = {0};
+    u8 l3 = get_wan_ingress_l3_offset(skb);
 
-    ret = scan_route_packet(skb, current_l3_offset, &offset_info);
+    ret = scan_route_packet(skb, l3, &offset_info);
     if (ret != TC_ACT_OK) {
         return TC_ACT_OK;
     }
@@ -83,17 +87,17 @@ int tc_wan_ingress_route_v6(struct __sk_buff *skb) {
         return ret;
     }
 
-    ret = is_current_wan_packet_v6(skb, current_l3_offset, &context);
+    ret = is_current_wan_packet_v6(skb, l3, &context);
     if (ret != TC_ACT_OK) {
         ld_bpf_log("is_current_wan_packet_v6: %pI6", context.daddr.bytes);
         return ret;
     }
 
-    ret = lan_redirect_check_v6(skb, current_l3_offset, &context, false);
+    ret = lan_redirect_check_v6(skb, l3, &context, false);
     if (ret == TC_ACT_REDIRECT) {
         u8 mark = get_cache_mask(skb->mark);
         if (mark == INGRESS_STATIC_MARK) {
-            setting_cache_in_wan_v6(&context, current_l3_offset, skb->ifindex);
+            setting_cache_in_wan_v6(&context, l3, skb->ifindex);
         }
     }
 
@@ -121,15 +125,16 @@ int tc_exit_wan_ingress_redirect(struct __sk_buff *skb) {
 
     bool is_ipv4;
     int ret;
+    u8 l3 = get_wan_ingress_l3_offset(skb);
 
-    if (likely(current_l3_offset > 0)) {
+    if (likely(l3 > 0)) {
         ret = is_broadcast_mac(skb);
         if (unlikely(ret != TC_ACT_OK)) {
             return ret;
         }
     }
 
-    ret = current_pkg_type(skb, current_l3_offset, &is_ipv4);
+    ret = current_pkg_type(skb, l3, &is_ipv4);
     if (unlikely(ret != TC_ACT_OK)) {
         return TC_ACT_OK;
     }

@@ -48,8 +48,8 @@ impl TcHookProxy {
     pub fn new(prog: &Program, ifindex: i32, attach: TcAttachPoint, priority: u32) -> TcHookProxy {
         let mut tc_builder = TcHookBuilder::new(prog.as_fd());
         tc_builder.ifindex(ifindex).replace(true).handle(1).priority(priority);
-        let ingress = tc_builder.hook(attach);
-        Self { hook: Some(ingress) }
+        let hook = tc_builder.hook(attach);
+        Self { hook: Some(hook) }
     }
 
     pub fn attach(&mut self) {
