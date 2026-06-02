@@ -62,7 +62,7 @@ pub async fn run_mss_clamp(
 ) {
     service_status.just_change_status(ServiceStatus::Staring);
 
-    let xdp_handle = landscape_ebpf::xdp::mss_clamp::init_xdp_mss_clamp(ifindex as u32, mtu_size);
+    let xdp_handle = landscape_ebpf::stages::mss::init_xdp_mss(ifindex as u32, mtu_size);
     if let Err(ref err) = xdp_handle {
         tracing::error!("failed to start xdp mss clamp for {iface_name}: {err}");
     }

@@ -19,9 +19,9 @@ pub mod tproxy;
 #[cfg(test)]
 mod tests;
 
+pub mod chain;
 pub mod dns_dispatcher;
-pub mod tc_chain;
-pub mod xdp;
+pub mod stages;
 
 static MAP_PATHS: Lazy<LandscapeMapPath> = Lazy::new(|| {
     let ebpf_map_space = &LAND_ARGS.ebpf_map_space;

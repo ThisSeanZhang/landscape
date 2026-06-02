@@ -7,14 +7,14 @@ use libbpf_rs::{
 };
 
 use crate::bpf_error::LdEbpfResult;
+use crate::chain::xdp_manager::{
+    xdp_lan_pipe_root_progs_path, xdp_pipe_exits_lan_path, xdp_pipe_exits_wan_path,
+    xdp_pipe_root_progs_path, StageType, XdpChainManager,
+};
 use crate::landscape::{pin_and_reuse_map, OwnedOpenObject};
 use crate::map_setting::reuse_pinned_map_or_recreate;
 use crate::pipeline::wan_tc::{
     wan_tc_pipeline_egress_path, wan_tc_pipeline_ingress_path, WanTcPipelineHandle,
-};
-use crate::xdp::manager::{
-    xdp_lan_pipe_root_progs_path, xdp_pipe_exits_lan_path, xdp_pipe_exits_wan_path,
-    xdp_pipe_root_progs_path, StageType, XdpChainManager,
 };
 use crate::MAP_PATHS;
 

@@ -367,8 +367,11 @@ async fn run_system(
         }};
     }
 
-    // 初始化 App
-    landscape_ebpf::xdp::manager::XdpChainManager::instance();
+    // init App
+
+    // init eBPF instance
+    landscape_ebpf::chain::xdp_manager::XdpChainManager::instance();
+    landscape_ebpf::chain::tc_manager::TcChainManager::instance();
 
     let dev_obs =
         startup_phase!("observer.dev_observer", landscape::observer::dev_observer().await);

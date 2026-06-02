@@ -67,7 +67,7 @@ pub async fn create_route_wan_service(
     service_status.just_change_status(ServiceStatus::Staring);
     tracing::info!("start route wan at ifindex: {ifindex}");
 
-    let xdp_handle = landscape_ebpf::xdp::wan_route::init_xdp_wan_route(ifindex);
+    let xdp_handle = landscape_ebpf::chain::xdp_wan_route::init_xdp_wan_route(ifindex);
     if let Err(ref err) = xdp_handle {
         tracing::error!("failed to start xdp wan route for {iface_name}: {err}");
     }

@@ -5,29 +5,31 @@ use libbpf_rs::skel::{OpenSkel, SkelBuilder};
 use crate::bpf_ctx;
 use crate::bpf_error::LdEbpfResult;
 use crate::landscape::{pin_and_reuse_map, OwnedOpenObject};
-use crate::tc_chain::manager::{
-    tc_pipe_exits_lan_ingress_path, tc_pipe_exits_wan_egress_path, tc_pipe_exits_wan_ingress_path,
-    StageEntry, StageType, TcChainManager,
-};
 
 mod tc_pppoe_skel {
     include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/tc_pppoe.skel.rs"));
 }
 
-pub struct TcPppoeHandle {
+pub struct PppoeHandle {
     _skel: tc_pppoe_skel::TcPppoeSkel<'static>,
     _backing: OwnedOpenObject,
     ifindex: u32,
 }
 
-impl Drop for TcPppoeHandle {
+impl Drop for PppoeHandle {
     fn drop(&mut self) {
+        use crate::chain::tc_manager::{StageType, TcChainManager};
         let manager = TcChainManager::instance();
         let _ = manager.remove(self.ifindex, StageType::Pppoe);
     }
 }
 
-pub fn attach_tc_pppoe(ifindex: u32, session_id: u16) -> LdEbpfResult<TcPppoeHandle> {
+pub fn attach_tc_pppoe(ifindex: u32, session_id: u16) -> LdEbpfResult<PppoeHandle> {
+    use crate::chain::tc_manager::{
+        tc_pipe_exits_lan_ingress_path, tc_pipe_exits_wan_egress_path,
+        tc_pipe_exits_wan_ingress_path, StageEntry, StageType, TcChainManager,
+    };
+
     let manager = TcChainManager::instance();
     manager.ensure_roots(ifindex)?;
 
@@ -63,5 +65,5 @@ pub fn attach_tc_pppoe(ifindex: u32, session_id: u16) -> LdEbpfResult<TcPppoeHan
 
     manager.inject(ifindex, StageType::Pppoe, entry)?;
 
-    Ok(TcPppoeHandle { _skel: skel, _backing: backing, ifindex })
+    Ok(PppoeHandle { _skel: skel, _backing: backing, ifindex })
 }

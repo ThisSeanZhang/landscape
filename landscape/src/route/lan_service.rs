@@ -84,7 +84,7 @@ pub async fn create_route_lan_service(
     service_status.just_change_status(ServiceStatus::Staring);
     tracing::info!("start route lan at ifindex: {ifindex}");
 
-    let xdp_handle = landscape_ebpf::xdp::lan_route::init_xdp_lan_route(ifindex);
+    let xdp_handle = landscape_ebpf::chain::xdp_lan_route::init_xdp_lan_route(ifindex);
     if let Err(ref err) = xdp_handle {
         tracing::error!("failed to start xdp lan route for {iface_name}: {err}");
     }
