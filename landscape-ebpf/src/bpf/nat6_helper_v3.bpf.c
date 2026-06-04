@@ -33,7 +33,7 @@ int handle_ipv6_egress(struct __sk_buff *skb) {
         return ret;
     }
 
-    ret = ipv6_egress_prefix_check_and_replace(skb, &pkg_offset, &ip_pair);
+    ret = ipv6_egress_prefix_check_and_replace(skb, &pkg_offset, &ip_pair, skb->ifindex);
     if (ret) {
         return ret;
     }
@@ -69,7 +69,7 @@ int handle_ipv6_ingress(struct __sk_buff *skb) {
         return ret;
     }
 
-    ret = ipv6_ingress_prefix_check_and_replace(skb, &pkg_offset, &ip_pair);
+    ret = ipv6_ingress_prefix_check_and_replace(skb, &pkg_offset, &ip_pair, skb->ifindex);
     if (ret) {
         return ret;
     }

@@ -1,5 +1,6 @@
 use clap::Parser;
 use landscape::iface::get_iface_by_name;
+use landscape_common::args::RouteMode;
 
 #[derive(Parser, Debug, Clone)]
 pub struct Args {
@@ -18,7 +19,11 @@ pub async fn main() {
 
     let firewall = if let Some(iface) = get_iface_by_name(&args.iface_name).await {
         println!("Starting firewall on ifindex: {:?}", iface.index);
-        match landscape_ebpf::firewall::new_firewall(iface.index as i32, iface.mac.is_some()) {
+        match landscape_ebpf::stages::firewall::init_firewall(
+            RouteMode::Tc,
+            iface.index as u32,
+            iface.mac.is_some(),
+        ) {
             Ok(handle) => Some(handle),
             Err(err) => {
                 tracing::debug!("error: {err:?}");

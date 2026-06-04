@@ -6,6 +6,7 @@
 
 #include "landscape.h"
 #include "pipeline/tc_stage.h"
+#include "pipeline/tc_cb.h"
 #include "pipeline/tc_wan_exit_maps.h"
 #include "pipeline/tc_lan_exit_maps.h"
 #include "land_nat4_v3.h"
@@ -18,8 +19,9 @@ const volatile u32 current_l3_offset = 14;
 
 #undef BPF_LOG_TOPIC
 
-static __always_inline int tc_nat_v4_egress_do(struct __sk_buff *skb) {
+static __always_inline int tc_nat_v4_egress_do(struct __sk_buff *skb, u32 ifindex) {
 #define BPF_LOG_TOPIC "tc_nat_v4_egress <<<"
+
     struct packet_offset_info pkg_offset = {0};
     struct inet4_pair ip_pair = {0};
     struct nat4_mapping_value_v3 *nat_egress_value = NULL;
@@ -44,9 +46,9 @@ static __always_inline int tc_nat_v4_egress_do(struct __sk_buff *skb) {
         is_icmpx_error ? pkg_offset.icmp_error_l4_protocol : pkg_offset.l4_protocol;
     bool allow_create_mapping = !is_icmpx_error && pkt_allow_initiating_ct(pkg_offset.pkt_type);
 
-    ret = nat4_v3_egress_lookup_or_new_mapping_v4(skb, nat_l4_protocol, allow_create_mapping,
-                                                  &ip_pair, &nat_egress_value, &nat_ingress_value,
-                                                  &alloc_item, &created);
+    ret = nat4_v3_egress_lookup_or_new_mapping_v4(skb, ifindex, nat_l4_protocol,
+                                                  allow_create_mapping, &ip_pair, &nat_egress_value,
+                                                  &nat_ingress_value, &alloc_item, &created);
     if (ret != TC_ACT_OK || !nat_egress_value || !nat_ingress_value) {
         return TC_ACT_SHOT;
     }
@@ -73,7 +75,7 @@ static __always_inline int tc_nat_v4_egress_do(struct __sk_buff *skb) {
     __be16 nat_port = nat_egress_value->port;
     if (!is_dynamic) {
         struct wan_ip_info_key wan_search_key = {
-            .ifindex = skb->ifindex,
+            .ifindex = ifindex,
             .l3_protocol = LANDSCAPE_IPV4_TYPE,
         };
         struct wan_ip_info_value *wan_ip_info =
@@ -93,9 +95,9 @@ static __always_inline int tc_nat_v4_egress_do(struct __sk_buff *skb) {
     }
 
     struct nat4_timer_value_v3 *ct_value = NULL;
-    ret = nat4_v3_lookup_or_new_ct(skb, nat_l4_protocol, allow_create_mapping, &server_nat_pair,
-                                   &ip_pair.src_addr, ip_pair.src_port, NAT_MAPPING_EGRESS,
-                                   nat_ingress_value, &ct_value);
+    ret = nat4_v3_lookup_or_new_ct(skb, ifindex, nat_l4_protocol, allow_create_mapping,
+                                   &server_nat_pair, &ip_pair.src_addr, ip_pair.src_port,
+                                   NAT_MAPPING_EGRESS, nat_ingress_value, &ct_value);
     if (ret == TIMER_NOT_FOUND || ret == TIMER_ERROR) {
         if (created && is_dynamic &&
             nat_ingress_value->state_ref == nat4_v3_state_make(NAT4_V3_STATE_ACTIVE, 0)) {
@@ -121,11 +123,12 @@ static __always_inline int tc_nat_v4_egress_do(struct __sk_buff *skb) {
     ret = modify_headers_v4(skb, is_icmpx_error, nat_l4_protocol, current_l3_offset,
                             pkg_offset.l4_offset, pkg_offset.icmp_error_inner_l4_offset, true,
                             &action);
+
     return ret ? TC_ACT_SHOT : TC_ACT_OK;
 #undef BPF_LOG_TOPIC
 }
 
-static __always_inline int tc_nat_v4_ingress_do(struct __sk_buff *skb) {
+static __always_inline int tc_nat_v4_ingress_do(struct __sk_buff *skb, u32 ifindex) {
 #define BPF_LOG_TOPIC "tc_nat_v4_ingress >>>"
     struct packet_offset_info pkg_offset = {0};
     struct inet4_pair ip_pair = {0};
@@ -191,8 +194,9 @@ static __always_inline int tc_nat_v4_ingress_do(struct __sk_buff *skb) {
                                   pkt_allow_initiating_ct(pkg_offset.pkt_type));
 
     struct nat4_timer_value_v3 *ct_value = NULL;
-    ret = nat4_v3_lookup_or_new_ct(skb, nat_l4_protocol, do_new_ct, &server_nat_pair, &lan_ip,
-                                   lan_port, NAT_MAPPING_INGRESS, nat_ingress_value, &ct_value);
+    ret = nat4_v3_lookup_or_new_ct(skb, ifindex, nat_l4_protocol, do_new_ct, &server_nat_pair,
+                                   &lan_ip, lan_port, NAT_MAPPING_INGRESS, nat_ingress_value,
+                                   &ct_value);
     if (ret == TIMER_NOT_FOUND || ret == TIMER_ERROR) {
         return TC_ACT_SHOT;
     }
@@ -216,7 +220,7 @@ static __always_inline int tc_nat_v4_ingress_do(struct __sk_buff *skb) {
 #undef BPF_LOG_TOPIC
 }
 
-static __always_inline int tc_nat_v6_egress_do(struct __sk_buff *skb) {
+static __always_inline int tc_nat_v6_egress_do(struct __sk_buff *skb, u32 ifindex) {
 #define BPF_LOG_TOPIC "tc_nat_v6_egress <<<"
     struct packet_offset_info pkg_offset = {0};
     struct inet_pair ip_pair = {0};
@@ -230,12 +234,12 @@ static __always_inline int tc_nat_v6_egress_do(struct __sk_buff *skb) {
     if (ret) return TC_ACT_OK;
     ret = frag_info_track(&pkg_offset, &ip_pair);
     if (ret != TC_ACT_OK) return TC_ACT_SHOT;
-    ret = ipv6_egress_prefix_check_and_replace(skb, &pkg_offset, &ip_pair);
+    ret = ipv6_egress_prefix_check_and_replace(skb, &pkg_offset, &ip_pair, ifindex);
     return ret == TC_ACT_SHOT ? TC_ACT_SHOT : TC_ACT_OK;
 #undef BPF_LOG_TOPIC
 }
 
-static __always_inline int tc_nat_v6_ingress_do(struct __sk_buff *skb) {
+static __always_inline int tc_nat_v6_ingress_do(struct __sk_buff *skb, u32 ifindex) {
 #define BPF_LOG_TOPIC "tc_nat_v6_ingress >>>"
     struct packet_offset_info pkg_offset = {0};
     struct inet_pair ip_pair = {0};
@@ -251,13 +255,13 @@ static __always_inline int tc_nat_v6_ingress_do(struct __sk_buff *skb) {
     if (ret != TC_ACT_OK) return TC_ACT_OK;
     ret = frag_info_track(&pkg_offset, &ip_pair);
     if (ret != TC_ACT_OK) return TC_ACT_SHOT;
-    ret = ipv6_ingress_prefix_check_and_replace(skb, &pkg_offset, &ip_pair);
+    ret = ipv6_ingress_prefix_check_and_replace(skb, &pkg_offset, &ip_pair, ifindex);
     return ret == TC_ACT_SHOT ? TC_ACT_SHOT : TC_ACT_OK;
 #undef BPF_LOG_TOPIC
 }
 
-static __always_inline int tc_nat_dispatch(struct __sk_buff *skb, int (*v4_fn)(struct __sk_buff *),
-                                           int (*v6_fn)(struct __sk_buff *)) {
+static __always_inline int tc_nat_egress_dispatch(struct __sk_buff *skb) {
+#define BPF_LOG_TOPIC "<<< tc_nat_egress_dispatch <<<"
     bool is_ipv4;
     int ret;
 
@@ -269,10 +273,40 @@ static __always_inline int tc_nat_dispatch(struct __sk_buff *skb, int (*v4_fn)(s
     ret = current_pkg_type(skb, current_l3_offset, &is_ipv4);
     if (unlikely(ret != TC_ACT_OK)) return TC_ACT_OK;
 
+    u32 ifindex = skb->cb[TC_CHAIN_CB_TARGET_OFFSET];
+    if (!ifindex) {
+        ifindex = skb->ifindex;
+    }
+
     if (is_ipv4) {
-        return v4_fn(skb);
+        return tc_nat_v4_egress_do(skb, ifindex);
     } else {
-        return v6_fn(skb);
+        return tc_nat_v6_egress_do(skb, ifindex);
+    }
+#undef BPF_LOG_TOPIC
+}
+
+static __always_inline int tc_nat_ingress_dispatch(struct __sk_buff *skb) {
+    bool is_ipv4;
+    int ret;
+
+    if (likely(current_l3_offset > 0)) {
+        ret = is_broadcast_mac(skb);
+        if (unlikely(ret != TC_ACT_OK)) return TC_ACT_OK;
+    }
+
+    ret = current_pkg_type(skb, current_l3_offset, &is_ipv4);
+    if (unlikely(ret != TC_ACT_OK)) return TC_ACT_OK;
+
+    u32 ifindex = skb->cb[TC_CHAIN_CB_TARGET_OFFSET];
+    if (!ifindex) {
+        ifindex = skb->ifindex;
+    }
+
+    if (is_ipv4) {
+        return tc_nat_v4_ingress_do(skb, ifindex);
+    } else {
+        return tc_nat_v6_ingress_do(skb, ifindex);
     }
 }
 
@@ -280,8 +314,7 @@ SEC("tc/egress")
 int tc_nat_wan_egress(struct __sk_buff *skb) {
 #define BPF_LOG_TOPIC "<<< tc_nat_wan_egress <<<"
 
-    if (unlikely(tc_nat_dispatch(skb, tc_nat_v4_egress_do, tc_nat_v6_egress_do) == TC_ACT_SHOT))
-        return TC_ACT_SHOT;
+    if (unlikely(tc_nat_egress_dispatch(skb) == TC_ACT_SHOT)) return TC_ACT_SHOT;
 
     TC_CHAIN_WAN_EGRESS(skb);
     bpf_tail_call(skb, &tc_pipe_exits_wan_egress, TC_NEXT_SLOT);
@@ -293,8 +326,7 @@ SEC("tc/ingress")
 int tc_nat_wan_ingress(struct __sk_buff *skb) {
 #define BPF_LOG_TOPIC "<<< tc_nat_wan_ingress <<<"
 
-    if (unlikely(tc_nat_dispatch(skb, tc_nat_v4_ingress_do, tc_nat_v6_ingress_do) == TC_ACT_SHOT))
-        return TC_ACT_SHOT;
+    if (unlikely(tc_nat_ingress_dispatch(skb) == TC_ACT_SHOT)) return TC_ACT_SHOT;
 
     TC_CHAIN_WAN_INGRESS(skb);
     bpf_tail_call(skb, &tc_pipe_exits_wan_ingress, TC_NEXT_SLOT);
@@ -306,8 +338,7 @@ SEC("tc/ingress")
 int tc_nat_lan_ingress(struct __sk_buff *skb) {
 #define BPF_LOG_TOPIC "<<< tc_nat_lan_ingress <<<"
 
-    if (unlikely(tc_nat_dispatch(skb, tc_nat_v4_egress_do, tc_nat_v6_egress_do) == TC_ACT_SHOT))
-        return TC_ACT_SHOT;
+    if (unlikely(tc_nat_egress_dispatch(skb) == TC_ACT_SHOT)) return TC_ACT_SHOT;
 
     TC_CHAIN_LAN_INGRESS(skb);
     bpf_tail_call(skb, &tc_pipe_exits_lan_ingress, TC_NEXT_SLOT);

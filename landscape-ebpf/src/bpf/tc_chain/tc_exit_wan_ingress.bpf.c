@@ -141,10 +141,10 @@ int tc_exit_wan_ingress_redirect(struct __sk_buff *skb) {
 
     if (is_ipv4) {
         bpf_tail_call_static(skb, &ls_wan_in_tails, TC_INGRESS_V4_SLOT);
-        bpf_printk("bpf_tail_call_static error");
+        ld_bpf_log("bpf_tail_call_static error");
     } else {
         bpf_tail_call_static(skb, &ls_wan_in_tails, TC_INGRESS_V6_SLOT);
-        bpf_printk("bpf_tail_call_static error");
+        ld_bpf_log("bpf_tail_call_static error");
     }
 
     return TC_ACT_SHOT;

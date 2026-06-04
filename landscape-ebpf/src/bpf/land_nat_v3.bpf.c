@@ -82,9 +82,9 @@ int nat_v4_egress(struct __sk_buff *skb) {
         is_icmpx_error ? pkg_offset.icmp_error_l4_protocol : pkg_offset.l4_protocol;
     bool allow_create_mapping = !is_icmpx_error && pkt_allow_initiating_ct(pkg_offset.pkt_type);
 
-    ret = nat4_v3_egress_lookup_or_new_mapping_v4(skb, nat_l4_protocol, allow_create_mapping,
-                                                  &ip_pair, &nat_egress_value, &nat_ingress_value,
-                                                  &alloc_item, &created);
+    ret = nat4_v3_egress_lookup_or_new_mapping_v4(skb, skb->ifindex, nat_l4_protocol,
+                                                  allow_create_mapping, &ip_pair, &nat_egress_value,
+                                                  &nat_ingress_value, &alloc_item, &created);
     if (ret != TC_ACT_OK || !nat_egress_value || !nat_ingress_value) {
         return TC_ACT_SHOT;
     }
@@ -131,9 +131,9 @@ int nat_v4_egress(struct __sk_buff *skb) {
     }
 
     struct nat4_timer_value_v3 *ct_value = NULL;
-    ret = nat4_v3_lookup_or_new_ct(skb, nat_l4_protocol, allow_create_mapping, &server_nat_pair,
-                                   &ip_pair.src_addr, ip_pair.src_port, NAT_MAPPING_EGRESS,
-                                   nat_ingress_value, &ct_value);
+    ret = nat4_v3_lookup_or_new_ct(skb, skb->ifindex, nat_l4_protocol, allow_create_mapping,
+                                   &server_nat_pair, &ip_pair.src_addr, ip_pair.src_port,
+                                   NAT_MAPPING_EGRESS, nat_ingress_value, &ct_value);
     if (ret == TIMER_NOT_FOUND || ret == TIMER_ERROR) {
         if (created && is_dynamic &&
             nat_ingress_value->state_ref == nat4_v3_state_make(NAT4_V3_STATE_ACTIVE, 0)) {
@@ -231,8 +231,9 @@ int nat_v4_ingress(struct __sk_buff *skb) {
                                   pkt_allow_initiating_ct(pkg_offset.pkt_type));
 
     struct nat4_timer_value_v3 *ct_value = NULL;
-    ret = nat4_v3_lookup_or_new_ct(skb, nat_l4_protocol, do_new_ct, &server_nat_pair, &lan_ip,
-                                   lan_port, NAT_MAPPING_INGRESS, nat_ingress_value, &ct_value);
+    ret = nat4_v3_lookup_or_new_ct(skb, skb->ifindex, nat_l4_protocol, do_new_ct, &server_nat_pair,
+                                   &lan_ip, lan_port, NAT_MAPPING_INGRESS, nat_ingress_value,
+                                   &ct_value);
     if (ret == TIMER_NOT_FOUND || ret == TIMER_ERROR) {
         return TC_ACT_SHOT;
     }
@@ -275,7 +276,8 @@ int nat_v6_egress(struct __sk_buff *skb) {
     ret = frag_info_track(&pkg_offset, &ip_pair);
     if (ret != TC_ACT_OK) return TC_ACT_SHOT;
     return wan_tc_pipeline_continue_egress(
-        skb, EGRESS_STAGE_NAT, ipv6_egress_prefix_check_and_replace(skb, &pkg_offset, &ip_pair));
+        skb, EGRESS_STAGE_NAT,
+        ipv6_egress_prefix_check_and_replace(skb, &pkg_offset, &ip_pair, skb->ifindex));
 #undef BPF_LOG_TOPIC
 }
 
@@ -297,7 +299,8 @@ int nat_v6_ingress(struct __sk_buff *skb) {
     ret = frag_info_track(&pkg_offset, &ip_pair);
     if (ret != TC_ACT_OK) return TC_ACT_SHOT;
     return wan_tc_pipeline_continue_ingress(
-        skb, INGRESS_STAGE_NAT, ipv6_ingress_prefix_check_and_replace(skb, &pkg_offset, &ip_pair));
+        skb, INGRESS_STAGE_NAT,
+        ipv6_ingress_prefix_check_and_replace(skb, &pkg_offset, &ip_pair, skb->ifindex));
 #undef BPF_LOG_TOPIC
 }
 

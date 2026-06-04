@@ -729,7 +729,8 @@ err:
     return NULL;
 }
 
-static __always_inline int nat4_v3_lookup_or_new_ct(struct __sk_buff *skb, u8 l4proto, bool do_new,
+static __always_inline int nat4_v3_lookup_or_new_ct(struct __sk_buff *skb, u32 ifindex, u8 l4proto,
+                                                    bool do_new,
                                                     const struct inet4_pair *server_nat_pair,
                                                     const struct inet4_addr *client_addr,
                                                     __be16 client_port, u8 gress,
@@ -768,7 +769,7 @@ static __always_inline int nat4_v3_lookup_or_new_ct(struct __sk_buff *skb, u8 l4
     new_value.create_time = bpf_ktime_get_tai_ns();
     new_value.flow_id = get_flow_id(skb->mark);
     new_value.cpu_id = bpf_get_smp_processor_id();
-    new_value.ifindex = skb->ifindex;
+    new_value.ifindex = ifindex;
     new_value.generation_snapshot = generation_snapshot;
     new_value.status = track_dynamic_ref ? TIMER_PENDING_REF : TIMER_INIT;
 
@@ -790,7 +791,7 @@ static __always_inline int nat4_v3_lookup_or_new_ct(struct __sk_buff *skb, u8 l4
 }
 
 static __always_inline int nat4_v3_egress_lookup_or_new_mapping_v4(
-    struct __sk_buff *skb, u8 ip_protocol, bool allow_create_mapping,
+    struct __sk_buff *skb, u32 ifindex, u8 ip_protocol, bool allow_create_mapping,
     const struct inet4_pair *pkt_ip_pair, struct nat4_mapping_value_v3 **nat_egress_value_,
     struct nat4_mapping_value_v3 **nat_ingress_value_, struct nat4_port_queue_value_v3 *alloc_item,
     bool *created) {
@@ -845,7 +846,7 @@ static __always_inline int nat4_v3_egress_lookup_or_new_mapping_v4(
     }
 
     struct wan_ip_info_key wan_search_key = {
-        .ifindex = skb->ifindex,
+        .ifindex = ifindex,
         .l3_protocol = LANDSCAPE_IPV4_TYPE,
     };
     struct wan_ip_info_value *wan_ip_info = bpf_map_lookup_elem(&wan_ip_binding, &wan_search_key);

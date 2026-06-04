@@ -6,8 +6,14 @@ pub async fn main() {
     landscape_ebpf::setting_libbpf_log();
 
     let ifindex = 2;
-    println!("Starting run_mss_clamp on ifindex: {:?}", ifindex);
-    let mss_clamp = landscape_ebpf::mss_clamp::run_mss_clamp(ifindex, 1492, true).unwrap();
+    println!("Starting mss clamp on ifindex: {:?}", ifindex);
+    let mss_clamp = landscape_ebpf::stages::mss::init_mss(
+        landscape_common::args::RouteMode::Tc,
+        ifindex,
+        1492,
+        true,
+    )
+    .unwrap();
 
     let _ = tokio::signal::ctrl_c().await;
 

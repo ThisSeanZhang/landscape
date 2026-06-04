@@ -35,12 +35,17 @@ static __always_inline int tc_lan_redirect_v4(struct __sk_buff *skb, u32 current
 
     struct lan_route_info_v4 *lan_info = bpf_map_lookup_elem(&rt4_lan_map, &lan_search_key);
 
-    if (lan_info == NULL) return TC_ACT_OK;
-
-    if (unlikely(lan_info->ifindex == skb->ingress_ifindex)) return TC_ACT_OK;
-
-    if (lan_info->route_type == ROUTE_TYPE_LAN && lan_info->addr == context->daddr)
+    if (lan_info == NULL) {
         return TC_ACT_OK;
+    }
+
+    if (unlikely(lan_info->ifindex == skb->ingress_ifindex)) {
+        return TC_ACT_UNSPEC;
+    }
+
+    if (lan_info->route_type == ROUTE_TYPE_LAN && lan_info->addr == context->daddr) {
+        return TC_ACT_UNSPEC;
+    }
 
     if (current_l3_offset == 0 && lan_info->has_mac) {
         unsigned char ethhdr[14];
@@ -104,11 +109,11 @@ static __always_inline int tc_lan_redirect_v6(struct __sk_buff *skb, u32 current
 
     if (lan_info == NULL) return TC_ACT_OK;
 
-    if (unlikely(lan_info->ifindex == skb->ingress_ifindex)) return TC_ACT_OK;
+    if (unlikely(lan_info->ifindex == skb->ingress_ifindex)) return TC_ACT_UNSPEC;
 
     if (lan_info->route_type == ROUTE_TYPE_LAN &&
         ip_addr_equal_in6(&lan_info->addr, &context->daddr))
-        return TC_ACT_OK;
+        return TC_ACT_UNSPEC;
 
     if (current_l3_offset == 0 && lan_info->has_mac) {
         unsigned char ethhdr[14];
@@ -257,6 +262,7 @@ static __always_inline int tc_pick_wan_v6(struct __sk_buff *skb, u32 current_l3_
 
 SEC("tc/ingress")
 int tc_lan_ingress_route_v4(struct __sk_buff *skb) {
+#define BPF_LOG_TOPIC "tc_lan_ingress_route_v4"
     int ret = 0;
     u32 flow_mark = skb->mark;
     struct route_context_v4 context = {0};
@@ -296,6 +302,7 @@ int tc_lan_ingress_route_v4(struct __sk_buff *skb) {
     ret = tc_pick_wan_v4(skb, current_l3_offset, &context, flow_mark);
 
     return ret;
+#undef BPF_LOG_TOPIC
 }
 
 SEC("tc/ingress")
@@ -354,6 +361,7 @@ struct {
 
 SEC("tc/ingress")
 int tc_lan_ingress_intro(struct __sk_buff *skb) {
+#define BPF_LOG_TOPIC "tc_lan_ingress_intro"
     bool is_ipv4;
     int ret;
 
@@ -371,11 +379,12 @@ int tc_lan_ingress_intro(struct __sk_buff *skb) {
 
     if (is_ipv4) {
         bpf_tail_call_static(skb, &ls_lan_ingress_tails, TC_LAN_INGRESS_V4_SLOT);
-        bpf_printk("bpf_tail_call_static error");
+        ld_bpf_log("bpf_tail_call_static error");
     } else {
         bpf_tail_call_static(skb, &ls_lan_ingress_tails, TC_LAN_INGRESS_V6_SLOT);
-        bpf_printk("bpf_tail_call_static error");
+        ld_bpf_log("bpf_tail_call_static error");
     }
 
     return TC_ACT_SHOT;
+#undef BPF_LOG_TOPIC
 }

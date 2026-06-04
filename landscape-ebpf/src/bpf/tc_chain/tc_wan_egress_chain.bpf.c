@@ -28,7 +28,7 @@ struct {
     __uint(value_size, sizeof(u32));
 } tc_wan_egress_roots SEC(".maps");
 
-// ── tc_lan_redirect: adapted from lan_redirect_check (no is_lan, TC_ACT_UNSPEC → TC_ACT_OK) ──
+// ── tc_lan_redirect: adapted from lan_redirect_check (no is_lan) ──
 
 static __always_inline int tc_lan_redirect_v4(struct __sk_buff *skb, u32 current_l3_offset,
                                               struct route_context_v4 *context) {
@@ -45,10 +45,10 @@ static __always_inline int tc_lan_redirect_v4(struct __sk_buff *skb, u32 current
 
     if (lan_info == NULL) return TC_ACT_OK;
 
-    if (unlikely(lan_info->ifindex == skb->ifindex)) return TC_ACT_OK;
+    if (unlikely(lan_info->ifindex == skb->ifindex)) return TC_ACT_UNSPEC;
 
     if (lan_info->route_type == ROUTE_TYPE_LAN && lan_info->addr == context->daddr)
-        return TC_ACT_OK;
+        return TC_ACT_UNSPEC;
 
     if (current_l3_offset == 0 && lan_info->has_mac) {
         unsigned char ethhdr[14];
@@ -112,11 +112,11 @@ static __always_inline int tc_lan_redirect_v6(struct __sk_buff *skb, u32 current
 
     if (lan_info == NULL) return TC_ACT_OK;
 
-    if (unlikely(lan_info->ifindex == skb->ifindex)) return TC_ACT_OK;
+    if (unlikely(lan_info->ifindex == skb->ifindex)) return TC_ACT_UNSPEC;
 
     if (lan_info->route_type == ROUTE_TYPE_LAN &&
         ip_addr_equal_in6(&lan_info->addr, &context->daddr))
-        return TC_ACT_OK;
+        return TC_ACT_UNSPEC;
 
     if (current_l3_offset == 0 && lan_info->has_mac) {
         unsigned char ethhdr[14];
@@ -271,6 +271,7 @@ static __always_inline int tc_pick_wan_v6(struct __sk_buff *skb, u32 current_l3_
 
 SEC("tc/egress")
 int tc_wan_egress_route_v4(struct __sk_buff *skb) {
+#define BPF_LOG_TOPIC "tc_wan_egress_route_v4"
     int ret = 0;
     u32 flow_mark = skb->mark;
     struct route_context_v4 context = {0};
@@ -310,6 +311,7 @@ int tc_wan_egress_route_v4(struct __sk_buff *skb) {
     ret = tc_pick_wan_v4(skb, current_l3_offset, &context, flow_mark);
 
     return ret;
+#undef BPF_LOG_TOPIC
 }
 
 SEC("tc/egress")

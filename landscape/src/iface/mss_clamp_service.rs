@@ -1,3 +1,4 @@
+use landscape_common::args::LAND_ARGS;
 use landscape_common::database::LandscapeStore;
 use landscape_common::{
     concurrency::{spawn_task, spawn_task_with_resource, task_label},
@@ -62,12 +63,12 @@ pub async fn run_mss_clamp(
 ) {
     service_status.just_change_status(ServiceStatus::Staring);
 
-    let xdp_handle = landscape_ebpf::stages::mss::init_xdp_mss(ifindex as u32, mtu_size);
-    if let Err(ref err) = xdp_handle {
-        tracing::error!("failed to start xdp mss clamp for {iface_name}: {err}");
-    }
-
-    let mss_clamp = match landscape_ebpf::mss_clamp::run_mss_clamp(ifindex, mtu_size, has_mac) {
+    let mss_clamp = match landscape_ebpf::stages::mss::init_mss(
+        LAND_ARGS.route_mode.clone(),
+        ifindex as u32,
+        mtu_size,
+        has_mac,
+    ) {
         Ok(handle) => handle,
         Err(err) => {
             tracing::error!("failed to start mss clamp for {iface_name}: {err}");
@@ -81,7 +82,6 @@ pub async fn run_mss_clamp(
     let _ = service_status.wait_to_stopping().await;
     tracing::info!("Received external stop signal");
 
-    drop(xdp_handle);
     drop(mss_clamp);
 
     service_status.just_change_status(ServiceStatus::Stop);

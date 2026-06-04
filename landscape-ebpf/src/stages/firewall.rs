@@ -42,7 +42,7 @@ pub fn attach_tc_firewall(ifindex: u32, has_mac: bool) -> LdEbpfResult<TcFirewal
     use std::os::fd::{AsFd, AsRawFd};
 
     let manager = TcChainManager::instance();
-    manager.ensure_roots(ifindex)?;
+    manager.ensure_roots(ifindex, has_mac)?;
 
     let builder = tc_firewall_skel::TcFirewallSkelBuilder::default();
     let (backing, obj) = OwnedOpenObject::new();
@@ -197,7 +197,7 @@ pub fn attach_tc_firewall_egress(ifindex: u32, has_mac: bool) -> LdEbpfResult<Tc
     use std::os::fd::{AsFd, AsRawFd};
 
     let manager = TcChainManager::instance();
-    manager.ensure_roots(ifindex)?;
+    manager.ensure_roots(ifindex, has_mac)?;
 
     let builder = tc_firewall_skel::TcFirewallSkelBuilder::default();
     let (backing, obj) = OwnedOpenObject::new();

@@ -26,6 +26,14 @@ pub async fn create_pppoe_tc_ebpf_3(
         tokio::sync::oneshot::channel::<tokio::sync::oneshot::Sender<()>>();
 
     std::thread::spawn(move || {
+        let chain_handle = match crate::stages::pppoe::attach_tc_pppoe(ifindex, session_id, true) {
+            Ok(h) => Some(h),
+            Err(e) => {
+                tracing::error!("pppoe tc chain register failed for ifindex={}: {e}", ifindex);
+                None
+            }
+        };
+
         let pipeline = match WanTcPipelineHandle::acquire(ifindex) {
             Ok(p) => p,
             Err(e) => {
@@ -76,6 +84,8 @@ pub async fn create_pppoe_tc_ebpf_3(
 
         pipeline.unregister_pppoe();
         tracing::info!("pppoe tc pipeline unregistered for ifindex={}", ifindex);
+
+        drop(chain_handle);
 
         if let Some(call_back) = call_back {
             let _ = call_back.send(());

@@ -12,6 +12,7 @@ char LICENSE[] SEC("license") = "GPL";
 #define TC_NEXT_SLOT 0
 
 const volatile u32 current_ifindex = 0;
+const volatile u32 current_l3_offset = 0;
 
 struct {
     __uint(type, BPF_MAP_TYPE_PROG_ARRAY);
@@ -22,8 +23,11 @@ struct {
 
 SEC("tc/ingress")
 int tc_lan_chain_ingress_root(struct __sk_buff *skb) {
+#define BPF_LOG_TOPIC "tc_lan_chain_ingress_root"
     skb->cb[TC_CHAIN_CB_TARGET_OFFSET] = current_ifindex;
+    skb->cb[TC_CHAIN_CB_L3_OFFSET] = current_l3_offset;
     bpf_tail_call(skb, &lan_ingress_root_next_stage, TC_NEXT_SLOT);
     bpf_tail_call(skb, &tc_pipe_exits_lan_ingress, TC_NEXT_SLOT);
     return TC_ACT_OK;
+#undef BPF_LOG_TOPIC
 }

@@ -81,7 +81,7 @@ pub fn attach_tc_nat(ifindex: u32, has_mac: bool, config: &NatConfig) -> LdEbpfR
     use std::os::fd::{AsFd, AsRawFd};
 
     let manager = TcChainManager::instance();
-    manager.ensure_roots(ifindex)?;
+    manager.ensure_roots(ifindex, has_mac)?;
 
     let builder = tc_nat_skel::TcNatSkelBuilder::default();
     let (backing, obj) = OwnedOpenObject::new();
@@ -308,7 +308,7 @@ pub fn attach_tc_nat_egress(
     use std::os::fd::{AsFd, AsRawFd};
 
     let manager = TcChainManager::instance();
-    manager.ensure_roots(ifindex)?;
+    manager.ensure_roots(ifindex, has_mac)?;
 
     let builder = tc_nat_skel::TcNatSkelBuilder::default();
     let (backing, obj) = OwnedOpenObject::new();
