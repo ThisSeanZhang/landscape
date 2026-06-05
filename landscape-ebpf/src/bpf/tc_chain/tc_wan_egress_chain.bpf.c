@@ -211,7 +211,11 @@ static __always_inline int tc_pick_wan_v4(struct __sk_buff *skb, u32 current_l3_
         }
     }
 
-    skb->cb[TC_CHAIN_CB_TARGET_OFFSET] = target_info->ifindex;
+    if (target_info->ifindex != skb->ifindex) {
+        skb->cb[TC_CHAIN_CB_FORWARDED_OFFSET] = 1;
+        return bpf_redirect(target_info->ifindex, 0);
+    }
+
     bpf_tail_call(skb, &tc_wan_egress_roots, target_info->ifindex);
     return TC_ACT_SHOT;
 #undef BPF_LOG_TOPIC
@@ -261,7 +265,11 @@ static __always_inline int tc_pick_wan_v6(struct __sk_buff *skb, u32 current_l3_
         }
     }
 
-    skb->cb[TC_CHAIN_CB_TARGET_OFFSET] = target_info->ifindex;
+    if (target_info->ifindex != skb->ifindex) {
+        skb->cb[TC_CHAIN_CB_FORWARDED_OFFSET] = 1;
+        return bpf_redirect(target_info->ifindex, 0);
+    }
+
     bpf_tail_call(skb, &tc_wan_egress_roots, target_info->ifindex);
     return TC_ACT_SHOT;
 #undef BPF_LOG_TOPIC
@@ -370,7 +378,10 @@ struct {
 
 SEC("tc/egress")
 int tc_wan_egress_intro(struct __sk_buff *skb) {
-    if (skb->cb[TC_CHAIN_CB_ROUTE_DONE_OFFSET]) return TC_ACT_OK;
+    if (skb->cb[TC_CHAIN_CB_FORWARDED_OFFSET]) {
+        bpf_tail_call(skb, &tc_wan_egress_roots, skb->ifindex);
+        return TC_ACT_SHOT;
+    }
 
     if (likely(skb->ingress_ifindex != 0)) {
         return TC_ACT_OK;

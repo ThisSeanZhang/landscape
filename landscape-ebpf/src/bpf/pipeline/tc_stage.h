@@ -71,13 +71,15 @@ struct {
  *  WAN EGRESS CHAIN
  *  ─────────────────────────────────────────────────────────────────────────
  *
- *    tc_wan_egress_intro  (Route logic, selects WAN interface)
- *      ├─ route_wan_egress entry (ingress_ifindex shortcut → broadcast → v4/v6 dispatch)
- *      ├─ rt4_wan_egress / rt6_wan_egress logic
- *      │    (scan → context → forward check → redirect check → flow verdict → pick_wan)
- *      └─ pick_wan_and_send_by_flow_id_v4/v6 → bpf_redirect(target_wan_ifindex, 0)
- *
- *    ▸ packet arrives at the egress of the selected WAN interface
+ *    tc_wan_egress_intro  (Route logic, three entry paths)
+ *      ├─ CB_FORWARDED → bpf_tail_call(&tc_wan_egress_roots, skb->ifindex)  (forwarded)
+ *      ├─ ingress_ifindex != 0 → TC_ACT_OK  (compat bypass)
+ *      └─ ingress_ifindex == 0  (local outbound)
+ *           ├─ route_wan_egress entry (broadcast → v4/v6 dispatch)
+ *           ├─ rt4_wan_egress / rt6_wan_egress logic
+ *           └─ pick_wan:
+ *                ├─ same WAN → bpf_tail_call(&tc_wan_egress_roots, target)
+ *                └─ cross WAN → sets FORWARDED + bpf_redirect(target, 0)
  *
  *    tc_wan_chain_egress_root (per-WAN-interface)
  *      ├─ skb->cb[TC_CHAIN_CB_TARGET_OFFSET] = current_ifindex  (injected by manager)
@@ -89,9 +91,7 @@ struct {
  *      │                        └─ TC_CHAIN_WAN_EGRESS(skb) → (next stage)
  *      │
  *      └─ bpf_tail_call(skb, &tc_pipe_exits_wan_egress, 0)
- *           └─ tc_exit_wan_egress_redirect
- *                ├─ reads skb->cb[TC_CHAIN_CB_TARGET_OFFSET]
- *                └─ bpf_redirect(target, 0)
+ *           └─ tc_exit_wan_egress_redirect → TC_ACT_OK
  *
  *    Each stage (MSS / NAT / FW / PPPoE) shares the same exit map:
  *      tc_pipe_exits_wan_egress[0] = tc_exit_wan_egress_redirect
@@ -102,19 +102,17 @@ struct {
  *
  *    tc_lan_ingress_intro  (Route logic, selects WAN or LAN)
  *      ├─ tc_lan_redirect → LAN (direct LAN redirect)
- *      └─ tc_pick_wan → tc_lan_ingress_roots[target_wan]
+ *      └─ tc_pick_wan → sets FORWARDED + bpf_redirect(target_wan, 0)
  *
- *    tc_lan_chain_ingress_root (per-WAN-interface)
- *      ├─ skb->cb[TC_CHAIN_CB_TARGET_OFFSET] = current_ifindex  (injected by manager)
- *      ├─ bpf_tail_call(skb, &lan_ingress_root_next_stage, 0)
- *      │    └─ MSS → NAT → FW → PPPoE  (LAN→WAN egress chain, future)
- *      └─ bpf_tail_call(skb, &tc_pipe_exits_lan_ingress, 0)
- *           └─ tc_exit_lan_ingress_redirect
- *                ├─ reads skb->cb[TC_CHAIN_CB_TARGET_OFFSET]
- *                └─ bpf_redirect(target, 0)
+ *    ▸ packet arrives at the egress of the target WAN interface
  *
- *    Each stage shares the same exit map:
- *      tc_pipe_exits_lan_ingress[0] = tc_exit_lan_ingress_redirect
+ *    tc_wan_egress_intro sees CB_FORWARDED → bpf_tail_call(&tc_wan_egress_roots, skb->ifindex)
+ *      └─ tc_wan_chain_egress_root
+ *           ├─ MSS → NAT → FW → PPPoE  (WAN egress chain)
+ *           └─ tc_pipe_exits_wan_egress → tc_exit_wan_egress_redirect → TC_ACT_OK
+ *
+ *    LAN ingress chain no longer injects stages; all egress processing happens
+ *    on the WAN egress side after the redirect.
  *
  *  ============================================================================
  *  Chain node pattern & Rust wiring
@@ -153,11 +151,9 @@ struct {
  *      fw.    wan_egress_next_stage[0] = pppoe_egress_fd
  *      pppoe. wan_egress_next_stage[0] = (empty; fallback to exit)
  *
- *    Example — LAN ingress chain:  tc_lan_ingress_intro → tc_lan_chain_ingress_root → Exit
- *      intro → tc_lan_ingress_roots[ifindex] = tc_lan_chain_ingress_root fd
- *      root  → lan_ingress_root_next_stage[0] = mss_lan_ingress_fd
- *      mss   → lan_ingress_next_stage[0] = nat_lan_ingress_fd
- *      ...
+ *    Example — LAN ingress chain:  tc_lan_ingress_intro → bpf_redirect (bypass)
+ *      intro → route → pick_wan → FORWARDED + bpf_redirect(target_wan, 0)
+ *      (LAN ingress stages no longer injected; processing moved to WAN egress)
  *
  *  Tailcall pattern (BPF side):
  *

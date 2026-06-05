@@ -540,6 +540,9 @@ impl TcChainManager {
     }
 
     fn rebuild(&self, ifindex: u32, chain: ChainDir) -> LdEbpfResult<()> {
+        if chain == ChainDir::LanIngress {
+            return Ok(());
+        }
         let mut inner = self.inner.lock().unwrap();
         let has_mac = inner.interfaces.get(&ifindex).map(|s| s.has_mac).unwrap_or(false);
         self.ensure_roots_locked(&mut inner, ifindex, has_mac)?;

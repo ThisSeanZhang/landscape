@@ -205,9 +205,8 @@ static __always_inline int tc_pick_wan_v4(struct __sk_buff *skb, u32 current_l3_
         }
     }
 
-    skb->cb[TC_CHAIN_CB_TARGET_OFFSET] = target_info->ifindex;
-    bpf_tail_call(skb, &tc_lan_ingress_roots, target_info->ifindex);
-    return TC_ACT_SHOT;
+    skb->cb[TC_CHAIN_CB_FORWARDED_OFFSET] = 1;
+    return bpf_redirect(target_info->ifindex, 0);
 #undef BPF_LOG_TOPIC
 }
 
@@ -254,9 +253,8 @@ static __always_inline int tc_pick_wan_v6(struct __sk_buff *skb, u32 current_l3_
         }
     }
 
-    skb->cb[TC_CHAIN_CB_TARGET_OFFSET] = target_info->ifindex;
-    bpf_tail_call(skb, &tc_lan_ingress_roots, target_info->ifindex);
-    return TC_ACT_SHOT;
+    skb->cb[TC_CHAIN_CB_FORWARDED_OFFSET] = 1;
+    return bpf_redirect(target_info->ifindex, 0);
 #undef BPF_LOG_TOPIC
 }
 

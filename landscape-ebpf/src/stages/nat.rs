@@ -130,10 +130,10 @@ pub fn attach_tc_nat(ifindex: u32, has_mac: bool, config: &NatConfig) -> LdEbpfR
     let entry = StageEntry {
         wan_ingress_prog_fd: skel.progs.tc_nat_wan_ingress.as_fd().as_raw_fd(),
         wan_egress_prog_fd: skel.progs.tc_nat_wan_egress.as_fd().as_raw_fd(),
-        lan_ingress_prog_fd: skel.progs.tc_nat_lan_ingress.as_fd().as_raw_fd(),
+        lan_ingress_prog_fd: 0,
         wan_ingress_next_stage_fd: skel.maps.wan_ingress_next_stage.as_fd().as_raw_fd(),
         wan_egress_next_stage_fd: skel.maps.wan_egress_next_stage.as_fd().as_raw_fd(),
-        lan_ingress_next_stage_fd: skel.maps.lan_ingress_next_stage.as_fd().as_raw_fd(),
+        lan_ingress_next_stage_fd: 0,
     };
 
     manager.inject(ifindex, StageType::Nat, entry)?;
