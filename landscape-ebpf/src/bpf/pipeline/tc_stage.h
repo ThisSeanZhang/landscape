@@ -20,25 +20,19 @@ struct {
     __uint(value_size, sizeof(u32));
 } wan_egress_next_stage SEC(".maps");
 
-struct {
-    __uint(type, BPF_MAP_TYPE_PROG_ARRAY);
-    __uint(max_entries, 1);
-    __uint(key_size, sizeof(u32));
-    __uint(value_size, sizeof(u32));
-} lan_ingress_next_stage SEC(".maps");
-
 #define TC_NEXT_SLOT 0
 
 #define TC_CHAIN_WAN_INGRESS(skb) bpf_tail_call((skb), &wan_ingress_next_stage, TC_NEXT_SLOT)
 #define TC_CHAIN_WAN_EGRESS(skb) bpf_tail_call((skb), &wan_egress_next_stage, TC_NEXT_SLOT)
-#define TC_CHAIN_LAN_INGRESS(skb) bpf_tail_call((skb), &lan_ingress_next_stage, TC_NEXT_SLOT)
 
 /*
  *  ============================================================================
  *  Architecture Overview
  *  ============================================================================
  *
- *  There are three independent TC chains: WAN ingress, WAN egress, LAN ingress.
+ *  There are two independent TC chains: WAN ingress and WAN egress.
+ *  LAN ingress traffic is routed to WAN egress via bpf_redirect and
+ *  processed by the WAN egress chain.
  *  Each chain is composed of FDs linked via single-slot PROG_ARRAY maps.
  *  The Rust side (tc_chain/manager.rs) wires each service's FD into the
  *  predecessor's next-stage slot.
@@ -51,6 +45,7 @@ struct {
  *      └─ dispatch by daddr/prefix64/session_id
  *           └─ tc_pipe_root_progs[dispatch_idx]
  *                └─ tc_wan_chain_ingress_root
+ *                     ├─ skb->cb[TC_CHAIN_CB_L3_OFFSET] = current_l3_offset  (injected)
  *                     ├─ bpf_tail_call(skb, &wan_ingress_root_next_stage, 0)
  *                     │    └─ PPPoE
  *                     │         └─ TC_CHAIN_WAN_INGRESS(skb) → MSS
@@ -82,7 +77,6 @@ struct {
  *                └─ cross WAN → sets FORWARDED + bpf_redirect(target, 0)
  *
  *    tc_wan_chain_egress_root (per-WAN-interface)
- *      ├─ skb->cb[TC_CHAIN_CB_TARGET_OFFSET] = current_ifindex  (injected by manager)
  *      ├─ bpf_tail_call(skb, &wan_egress_root_next_stage, 0)
  *      │    └─ MSS
  *      │         └─ TC_CHAIN_WAN_EGRESS(skb) → NAT
@@ -111,7 +105,7 @@ struct {
  *           ├─ MSS → NAT → FW → PPPoE  (WAN egress chain)
  *           └─ tc_pipe_exits_wan_egress → tc_exit_wan_egress_redirect → TC_ACT_OK
  *
- *    LAN ingress chain no longer injects stages; all egress processing happens
+ *    LAN ingress no longer injects stages; all egress processing happens
  *    on the WAN egress side after the redirect.
  *
  *  ============================================================================
@@ -119,17 +113,12 @@ struct {
  *  ============================================================================
  *
  *  Chain roots are independent programs that declare their own
- *  `wan_ingress_root_next_stage` / `wan_egress_root_next_stage` /
- *  `lan_ingress_root_next_stage` maps (max_entries=1 each, no
- *  tc_stage.h dependency).
+ *  `wan_ingress_root_next_stage` / `wan_egress_root_next_stage`
+ *  maps (max_entries=1 each, no tc_stage.h dependency).
  *
  *  Intro → tc_wan_egress_roots[ifindex]    → tc_wan_chain_egress_root  (WAN egress)
- *  Intro → tc_lan_ingress_roots[ifindex]   → tc_lan_chain_ingress_root (LAN ingress)
- *  Root → ingress_root_next_stage[0]       → first stage
- *  Root → egress_root_next_stage[0]        → first stage
  *  Stage → wan_ingress_next_stage[0]       → next WAN ingress stage
  *  Stage → wan_egress_next_stage[0]        → next WAN egress stage
- *  Stage → lan_ingress_next_stage[0]       → next LAN ingress stage
  *
  *  Chain link operation (Rust side):
  *    When a service starts, its program fds are written into the
@@ -173,32 +162,12 @@ struct {
  *        return TC_ACT_OK;
  *    }
  *
- *    // LAN ingress intro (route/pick):
- *    SEC("tc/ingress")
- *    int tc_lan_ingress_intro(struct __sk_buff *skb) {
- *        // ... route + pick_wan ...
- *        bpf_tail_call(skb, &tc_lan_ingress_roots, target_ifindex);
- *        return TC_ACT_SHOT;
- *    }
- *
- *    // LAN ingress stage:
- *    SEC("tc/ingress")
- *    int tc_xxx_lan_ingress(struct __sk_buff *skb) {
- *        // ... stage-specific logic ...
- *        bpf_tail_call(skb, &lan_ingress_next_stage, TC_NEXT_SLOT);
- *        return TC_ACT_OK;
- *    }
- *
- *  Fallback exit maps (shared, declared in pipeline/tc_wan_exit_maps.h /
- *                         pipeline/tc_lan_exit_maps.h):
+ *  Fallback exit maps (declared in pipeline/tc_wan_exit_maps.h):
  *    tc_pipe_exits_wan_ingress — WAN ingress exit
  *    tc_pipe_exits_wan_egress  — WAN egress exit
- *    tc_pipe_exits_lan_ingress — LAN ingress exit
  *
- *  Multi-entry prog arrays (declared in pipeline/tc_lan_exit_maps.h /
- *  tc_wan_egress_chain.bpf.c):
- *    tc_wan_egress_roots  — per-WAN egress chain roots (SEC tc/egress)
- *    tc_lan_ingress_roots — per-WAN ingress chain roots (SEC tc/ingress)
+ *  Multi-entry prog arrays (declared in tc_wan_egress_chain.bpf.c):
+ *    tc_wan_egress_roots — per-WAN egress chain roots (SEC tc/egress)
  */
 
 #endif /* __LD_TC_STAGE_H_ */

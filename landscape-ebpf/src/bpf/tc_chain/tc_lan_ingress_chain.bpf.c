@@ -11,7 +11,6 @@
 #include "route/route_packet.h"
 
 #include "pipeline/tc_cb.h"
-#include "pipeline/tc_lan_exit_maps.h"
 
 char LICENSE[] SEC("license") = "GPL";
 

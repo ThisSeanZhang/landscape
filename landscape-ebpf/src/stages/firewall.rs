@@ -33,8 +33,8 @@ impl Drop for TcFirewallHandle {
 
 pub fn attach_tc_firewall(ifindex: u32, has_mac: bool) -> LdEbpfResult<TcFirewallHandle> {
     use crate::chain::tc_manager::{
-        tc_pipe_exits_lan_ingress_path, tc_pipe_exits_wan_egress_path,
-        tc_pipe_exits_wan_ingress_path, StageEntry, StageType, TcChainManager,
+        tc_pipe_exits_wan_egress_path, tc_pipe_exits_wan_ingress_path, StageEntry, StageType,
+        TcChainManager,
     };
     use crate::landscape::{pin_and_reuse_map, OwnedOpenObject};
     use crate::MAP_PATHS;
@@ -59,10 +59,6 @@ pub fn attach_tc_firewall(ifindex: u32, has_mac: bool) -> LdEbpfResult<TcFirewal
         &mut open_skel.maps.tc_pipe_exits_wan_egress,
         &tc_pipe_exits_wan_egress_path(),
     )?;
-    pin_and_reuse_map(
-        &mut open_skel.maps.tc_pipe_exits_lan_ingress,
-        &tc_pipe_exits_lan_ingress_path(),
-    )?;
 
     pin_and_reuse_map(&mut open_skel.maps.firewall_block_ip4_map, &MAP_PATHS.firewall_ipv4_block)?;
     pin_and_reuse_map(&mut open_skel.maps.firewall_block_ip6_map, &MAP_PATHS.firewall_ipv6_block)?;
@@ -76,10 +72,8 @@ pub fn attach_tc_firewall(ifindex: u32, has_mac: bool) -> LdEbpfResult<TcFirewal
     let entry = StageEntry {
         wan_ingress_prog_fd: skel.progs.tc_firewall_wan_ingress.as_fd().as_raw_fd(),
         wan_egress_prog_fd: skel.progs.tc_firewall_wan_egress.as_fd().as_raw_fd(),
-        lan_ingress_prog_fd: 0,
         wan_ingress_next_stage_fd: skel.maps.wan_ingress_next_stage.as_fd().as_raw_fd(),
         wan_egress_next_stage_fd: skel.maps.wan_egress_next_stage.as_fd().as_raw_fd(),
-        lan_ingress_next_stage_fd: 0,
     };
 
     manager.inject(ifindex, StageType::Firewall, entry)?;
@@ -188,8 +182,8 @@ pub fn init_xdp_firewall(ifindex: u32) -> LdEbpfResult<XdpFirewallHandle> {
 
 pub fn attach_tc_firewall_egress(ifindex: u32, has_mac: bool) -> LdEbpfResult<TcFirewallHandle> {
     use crate::chain::tc_manager::{
-        tc_pipe_exits_lan_ingress_path, tc_pipe_exits_wan_egress_path,
-        tc_pipe_exits_wan_ingress_path, StageEntry, StageType, TcChainManager,
+        tc_pipe_exits_wan_egress_path, tc_pipe_exits_wan_ingress_path, StageEntry, StageType,
+        TcChainManager,
     };
     use crate::landscape::{pin_and_reuse_map, OwnedOpenObject};
     use crate::MAP_PATHS;
@@ -214,10 +208,6 @@ pub fn attach_tc_firewall_egress(ifindex: u32, has_mac: bool) -> LdEbpfResult<Tc
         &mut open_skel.maps.tc_pipe_exits_wan_egress,
         &tc_pipe_exits_wan_egress_path(),
     )?;
-    pin_and_reuse_map(
-        &mut open_skel.maps.tc_pipe_exits_lan_ingress,
-        &tc_pipe_exits_lan_ingress_path(),
-    )?;
 
     pin_and_reuse_map(&mut open_skel.maps.firewall_block_ip4_map, &MAP_PATHS.firewall_ipv4_block)?;
     pin_and_reuse_map(&mut open_skel.maps.firewall_block_ip6_map, &MAP_PATHS.firewall_ipv6_block)?;
@@ -231,10 +221,8 @@ pub fn attach_tc_firewall_egress(ifindex: u32, has_mac: bool) -> LdEbpfResult<Tc
     let entry = StageEntry {
         wan_ingress_prog_fd: 0,
         wan_egress_prog_fd: skel.progs.tc_firewall_wan_egress.as_fd().as_raw_fd(),
-        lan_ingress_prog_fd: 0,
         wan_ingress_next_stage_fd: 0,
         wan_egress_next_stage_fd: skel.maps.wan_egress_next_stage.as_fd().as_raw_fd(),
-        lan_ingress_next_stage_fd: 0,
     };
 
     manager.inject(ifindex, StageType::Firewall, entry)?;

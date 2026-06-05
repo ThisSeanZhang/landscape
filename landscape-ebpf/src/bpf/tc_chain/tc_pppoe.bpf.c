@@ -6,7 +6,6 @@
 #include "landscape.h"
 #include "pipeline/tc_stage.h"
 #include "pipeline/tc_wan_exit_maps.h"
-#include "pipeline/tc_lan_exit_maps.h"
 
 char LICENSE[] SEC("license") = "GPL";
 
@@ -61,13 +60,5 @@ int tc_pppoe_wan_egress(struct __sk_buff *skb) {
     tc_pppoe_encap(skb);
     TC_CHAIN_WAN_EGRESS(skb);
     bpf_tail_call(skb, &tc_pipe_exits_wan_egress, TC_NEXT_SLOT);
-    return TC_ACT_OK;
-}
-
-SEC("tc/ingress")
-int tc_pppoe_lan_ingress(struct __sk_buff *skb) {
-    tc_pppoe_encap(skb);
-    TC_CHAIN_LAN_INGRESS(skb);
-    bpf_tail_call(skb, &tc_pipe_exits_lan_ingress, TC_NEXT_SLOT);
     return TC_ACT_OK;
 }

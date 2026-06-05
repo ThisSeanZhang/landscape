@@ -378,13 +378,15 @@ struct {
 
 SEC("tc/egress")
 int tc_wan_egress_intro(struct __sk_buff *skb) {
+#define BPF_LOG_TOPIC "tc_wan_egress_intro <<<"
     if (skb->cb[TC_CHAIN_CB_FORWARDED_OFFSET]) {
         bpf_tail_call(skb, &tc_wan_egress_roots, skb->ifindex);
         return TC_ACT_SHOT;
     }
 
     if (likely(skb->ingress_ifindex != 0)) {
-        return TC_ACT_OK;
+        bpf_tail_call(skb, &tc_wan_egress_roots, skb->ifindex);
+        return TC_ACT_SHOT;
     }
 
     bool is_ipv4;
@@ -411,4 +413,5 @@ int tc_wan_egress_intro(struct __sk_buff *skb) {
     }
 
     return TC_ACT_SHOT;
+#undef BPF_LOG_TOPIC
 }

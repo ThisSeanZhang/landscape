@@ -75,8 +75,6 @@ int tc_wan_intro(struct __sk_buff *skb) {
     bool is_ipv4;
     int ret;
 
-    skb->cb[TC_CHAIN_CB_L3_OFFSET] = current_l3_offset;
-
     ret = current_pkg_type(skb, current_l3_offset, &is_ipv4);
     if (ret != TC_ACT_OK) return TC_ACT_OK;
 

@@ -72,8 +72,8 @@ fn seed_runtime_queues_tc<M1, M2, M3>(
 
 pub fn attach_tc_nat(ifindex: u32, has_mac: bool, config: &NatConfig) -> LdEbpfResult<TcNatHandle> {
     use crate::chain::tc_manager::{
-        tc_pipe_exits_lan_ingress_path, tc_pipe_exits_wan_egress_path,
-        tc_pipe_exits_wan_ingress_path, StageEntry, StageType, TcChainManager,
+        tc_pipe_exits_wan_egress_path, tc_pipe_exits_wan_ingress_path, StageEntry, StageType,
+        TcChainManager,
     };
     use crate::landscape::{pin_and_reuse_map, OwnedOpenObject};
     use crate::MAP_PATHS;
@@ -105,10 +105,6 @@ pub fn attach_tc_nat(ifindex: u32, has_mac: bool, config: &NatConfig) -> LdEbpfR
         &mut open_skel.maps.tc_pipe_exits_wan_egress,
         &tc_pipe_exits_wan_egress_path(),
     )?;
-    pin_and_reuse_map(
-        &mut open_skel.maps.tc_pipe_exits_lan_ingress,
-        &tc_pipe_exits_lan_ingress_path(),
-    )?;
 
     pin_and_reuse_map(&mut open_skel.maps.wan_ip_binding, &MAP_PATHS.wan_ip)?;
     pin_and_reuse_map(&mut open_skel.maps.nat6_static_mappings, &MAP_PATHS.nat6_static_mappings)?;
@@ -130,10 +126,8 @@ pub fn attach_tc_nat(ifindex: u32, has_mac: bool, config: &NatConfig) -> LdEbpfR
     let entry = StageEntry {
         wan_ingress_prog_fd: skel.progs.tc_nat_wan_ingress.as_fd().as_raw_fd(),
         wan_egress_prog_fd: skel.progs.tc_nat_wan_egress.as_fd().as_raw_fd(),
-        lan_ingress_prog_fd: 0,
         wan_ingress_next_stage_fd: skel.maps.wan_ingress_next_stage.as_fd().as_raw_fd(),
         wan_egress_next_stage_fd: skel.maps.wan_egress_next_stage.as_fd().as_raw_fd(),
-        lan_ingress_next_stage_fd: 0,
     };
 
     manager.inject(ifindex, StageType::Nat, entry)?;
@@ -299,8 +293,8 @@ pub fn attach_tc_nat_egress(
     config: &NatConfig,
 ) -> LdEbpfResult<TcNatHandle> {
     use crate::chain::tc_manager::{
-        tc_pipe_exits_lan_ingress_path, tc_pipe_exits_wan_egress_path,
-        tc_pipe_exits_wan_ingress_path, StageEntry, StageType, TcChainManager,
+        tc_pipe_exits_wan_egress_path, tc_pipe_exits_wan_ingress_path, StageEntry, StageType,
+        TcChainManager,
     };
     use crate::landscape::{pin_and_reuse_map, OwnedOpenObject};
     use crate::MAP_PATHS;
@@ -332,10 +326,6 @@ pub fn attach_tc_nat_egress(
         &mut open_skel.maps.tc_pipe_exits_wan_egress,
         &tc_pipe_exits_wan_egress_path(),
     )?;
-    pin_and_reuse_map(
-        &mut open_skel.maps.tc_pipe_exits_lan_ingress,
-        &tc_pipe_exits_lan_ingress_path(),
-    )?;
 
     pin_and_reuse_map(&mut open_skel.maps.wan_ip_binding, &MAP_PATHS.wan_ip)?;
     pin_and_reuse_map(&mut open_skel.maps.nat6_static_mappings, &MAP_PATHS.nat6_static_mappings)?;
@@ -357,10 +347,8 @@ pub fn attach_tc_nat_egress(
     let entry = StageEntry {
         wan_ingress_prog_fd: 0,
         wan_egress_prog_fd: skel.progs.tc_nat_wan_egress.as_fd().as_raw_fd(),
-        lan_ingress_prog_fd: 0,
         wan_ingress_next_stage_fd: 0,
         wan_egress_next_stage_fd: skel.maps.wan_egress_next_stage.as_fd().as_raw_fd(),
-        lan_ingress_next_stage_fd: 0,
     };
 
     manager.inject(ifindex, StageType::Nat, entry)?;

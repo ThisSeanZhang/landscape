@@ -6,7 +6,6 @@
 #include "landscape.h"
 #include "pipeline/tc_stage.h"
 #include "pipeline/tc_wan_exit_maps.h"
-#include "pipeline/tc_lan_exit_maps.h"
 #include "firewall/firewall_packet.h"
 #include "firewall/firewall_share.h"
 #include "pkg_fragment.h"
@@ -131,18 +130,6 @@ int tc_firewall_wan_ingress(struct __sk_buff *skb) {
 
     TC_CHAIN_WAN_INGRESS(skb);
     bpf_tail_call(skb, &tc_pipe_exits_wan_ingress, TC_NEXT_SLOT);
-    return TC_ACT_OK;
-#undef BPF_LOG_TOPIC
-}
-
-SEC("tc/ingress")
-int tc_firewall_lan_ingress(struct __sk_buff *skb) {
-#define BPF_LOG_TOPIC "<<< tc_firewall_lan_ingress <<<"
-
-    if (unlikely(fw_do_egress(skb) == TC_ACT_SHOT)) return TC_ACT_SHOT;
-
-    TC_CHAIN_LAN_INGRESS(skb);
-    bpf_tail_call(skb, &tc_pipe_exits_lan_ingress, TC_NEXT_SLOT);
     return TC_ACT_OK;
 #undef BPF_LOG_TOPIC
 }

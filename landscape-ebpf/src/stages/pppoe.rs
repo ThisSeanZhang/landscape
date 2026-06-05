@@ -26,8 +26,8 @@ impl Drop for PppoeHandle {
 
 pub fn attach_tc_pppoe(ifindex: u32, session_id: u16, has_mac: bool) -> LdEbpfResult<PppoeHandle> {
     use crate::chain::tc_manager::{
-        tc_pipe_exits_lan_ingress_path, tc_pipe_exits_wan_egress_path,
-        tc_pipe_exits_wan_ingress_path, StageEntry, StageType, TcChainManager,
+        tc_pipe_exits_wan_egress_path, tc_pipe_exits_wan_ingress_path, StageEntry, StageType,
+        TcChainManager,
     };
 
     let manager = TcChainManager::instance();
@@ -47,20 +47,14 @@ pub fn attach_tc_pppoe(ifindex: u32, session_id: u16, has_mac: bool) -> LdEbpfRe
         &mut open_skel.maps.tc_pipe_exits_wan_egress,
         &tc_pipe_exits_wan_egress_path(),
     )?;
-    pin_and_reuse_map(
-        &mut open_skel.maps.tc_pipe_exits_lan_ingress,
-        &tc_pipe_exits_lan_ingress_path(),
-    )?;
 
     let skel = bpf_ctx!(open_skel.load(), "load tc_pppoe skeleton")?;
 
     let entry = StageEntry {
         wan_ingress_prog_fd: 0,
         wan_egress_prog_fd: skel.progs.tc_pppoe_wan_egress.as_fd().as_raw_fd(),
-        lan_ingress_prog_fd: 0,
         wan_ingress_next_stage_fd: 0,
         wan_egress_next_stage_fd: skel.maps.wan_egress_next_stage.as_fd().as_raw_fd(),
-        lan_ingress_next_stage_fd: 0,
     };
 
     manager.inject(ifindex, StageType::Pppoe, entry)?;

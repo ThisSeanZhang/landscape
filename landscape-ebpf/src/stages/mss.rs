@@ -32,8 +32,8 @@ impl Drop for TcMssHandle {
 
 pub fn attach_tc_mss(ifindex: u32, mtu: u16, has_mac: bool) -> LdEbpfResult<TcMssHandle> {
     use crate::chain::tc_manager::{
-        tc_pipe_exits_lan_ingress_path, tc_pipe_exits_wan_egress_path,
-        tc_pipe_exits_wan_ingress_path, StageEntry, StageType, TcChainManager,
+        tc_pipe_exits_wan_egress_path, tc_pipe_exits_wan_ingress_path, StageEntry, StageType,
+        TcChainManager,
     };
     use crate::landscape::{pin_and_reuse_map, OwnedOpenObject};
     use libbpf_rs::skel::{OpenSkel, SkelBuilder};
@@ -58,20 +58,14 @@ pub fn attach_tc_mss(ifindex: u32, mtu: u16, has_mac: bool) -> LdEbpfResult<TcMs
         &mut open_skel.maps.tc_pipe_exits_wan_egress,
         &tc_pipe_exits_wan_egress_path(),
     )?;
-    pin_and_reuse_map(
-        &mut open_skel.maps.tc_pipe_exits_lan_ingress,
-        &tc_pipe_exits_lan_ingress_path(),
-    )?;
 
     let skel = bpf_ctx!(open_skel.load(), "load tc_mss skeleton")?;
 
     let entry = StageEntry {
         wan_ingress_prog_fd: skel.progs.tc_mss_wan_ingress.as_fd().as_raw_fd(),
         wan_egress_prog_fd: skel.progs.tc_mss_wan_egress.as_fd().as_raw_fd(),
-        lan_ingress_prog_fd: 0,
         wan_ingress_next_stage_fd: skel.maps.wan_ingress_next_stage.as_fd().as_raw_fd(),
         wan_egress_next_stage_fd: skel.maps.wan_egress_next_stage.as_fd().as_raw_fd(),
-        lan_ingress_next_stage_fd: 0,
     };
 
     manager.inject(ifindex, StageType::Mss, entry)?;
@@ -166,8 +160,8 @@ pub fn init_xdp_mss(ifindex: u32, mtu_size: u16) -> LdEbpfResult<XdpMssHandle> {
 
 pub fn attach_tc_mss_egress(ifindex: u32, mtu: u16, has_mac: bool) -> LdEbpfResult<TcMssHandle> {
     use crate::chain::tc_manager::{
-        tc_pipe_exits_lan_ingress_path, tc_pipe_exits_wan_egress_path,
-        tc_pipe_exits_wan_ingress_path, StageEntry, StageType, TcChainManager,
+        tc_pipe_exits_wan_egress_path, tc_pipe_exits_wan_ingress_path, StageEntry, StageType,
+        TcChainManager,
     };
     use crate::landscape::{pin_and_reuse_map, OwnedOpenObject};
     use libbpf_rs::skel::{OpenSkel, SkelBuilder};
@@ -192,20 +186,14 @@ pub fn attach_tc_mss_egress(ifindex: u32, mtu: u16, has_mac: bool) -> LdEbpfResu
         &mut open_skel.maps.tc_pipe_exits_wan_egress,
         &tc_pipe_exits_wan_egress_path(),
     )?;
-    pin_and_reuse_map(
-        &mut open_skel.maps.tc_pipe_exits_lan_ingress,
-        &tc_pipe_exits_lan_ingress_path(),
-    )?;
 
     let skel = bpf_ctx!(open_skel.load(), "load tc_mss skeleton (egress)")?;
 
     let entry = StageEntry {
         wan_ingress_prog_fd: 0,
         wan_egress_prog_fd: skel.progs.tc_mss_wan_egress.as_fd().as_raw_fd(),
-        lan_ingress_prog_fd: 0,
         wan_ingress_next_stage_fd: 0,
         wan_egress_next_stage_fd: skel.maps.wan_egress_next_stage.as_fd().as_raw_fd(),
-        lan_ingress_next_stage_fd: 0,
     };
 
     manager.inject(ifindex, StageType::Mss, entry)?;

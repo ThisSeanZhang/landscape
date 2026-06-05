@@ -7,7 +7,6 @@
 #include "pkg_def.h"
 #include "pipeline/tc_stage.h"
 #include "pipeline/tc_wan_exit_maps.h"
-#include "pipeline/tc_lan_exit_maps.h"
 
 char LICENSE[] SEC("license") = "Dual BSD/GPL";
 
@@ -169,14 +168,5 @@ int tc_mss_wan_egress(struct __sk_buff *skb) {
 
     TC_CHAIN_WAN_EGRESS(skb);
     bpf_tail_call(skb, &tc_pipe_exits_wan_egress, TC_NEXT_SLOT);
-    return TC_ACT_OK;
-}
-
-SEC("tc/ingress")
-int tc_mss_lan_ingress(struct __sk_buff *skb) {
-    clamp_tcp_if_present(skb, current_l3_offset, mtu_size);
-
-    TC_CHAIN_LAN_INGRESS(skb);
-    bpf_tail_call(skb, &tc_pipe_exits_lan_ingress, TC_NEXT_SLOT);
     return TC_ACT_OK;
 }

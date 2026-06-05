@@ -8,7 +8,6 @@
 #include "pipeline/tc_stage.h"
 #include "pipeline/tc_cb.h"
 #include "pipeline/tc_wan_exit_maps.h"
-#include "pipeline/tc_lan_exit_maps.h"
 #include "land_nat4_v3.h"
 #include "land_nat6_v3.h"
 #include "nat/nat_packet.h"
@@ -273,10 +272,7 @@ static __always_inline int tc_nat_egress_dispatch(struct __sk_buff *skb) {
     ret = current_pkg_type(skb, current_l3_offset, &is_ipv4);
     if (unlikely(ret != TC_ACT_OK)) return TC_ACT_OK;
 
-    u32 ifindex = skb->cb[TC_CHAIN_CB_TARGET_OFFSET];
-    if (!ifindex) {
-        ifindex = skb->ifindex;
-    }
+    u32 ifindex = skb->ifindex;
 
     if (is_ipv4) {
         return tc_nat_v4_egress_do(skb, ifindex);
@@ -298,10 +294,7 @@ static __always_inline int tc_nat_ingress_dispatch(struct __sk_buff *skb) {
     ret = current_pkg_type(skb, current_l3_offset, &is_ipv4);
     if (unlikely(ret != TC_ACT_OK)) return TC_ACT_OK;
 
-    u32 ifindex = skb->cb[TC_CHAIN_CB_TARGET_OFFSET];
-    if (!ifindex) {
-        ifindex = skb->ifindex;
-    }
+    u32 ifindex = skb->ifindex;
 
     if (is_ipv4) {
         return tc_nat_v4_ingress_do(skb, ifindex);
@@ -330,18 +323,6 @@ int tc_nat_wan_ingress(struct __sk_buff *skb) {
 
     TC_CHAIN_WAN_INGRESS(skb);
     bpf_tail_call(skb, &tc_pipe_exits_wan_ingress, TC_NEXT_SLOT);
-    return TC_ACT_OK;
-#undef BPF_LOG_TOPIC
-}
-
-SEC("tc/ingress")
-int tc_nat_lan_ingress(struct __sk_buff *skb) {
-#define BPF_LOG_TOPIC "<<< tc_nat_lan_ingress <<<"
-
-    if (unlikely(tc_nat_egress_dispatch(skb) == TC_ACT_SHOT)) return TC_ACT_SHOT;
-
-    TC_CHAIN_LAN_INGRESS(skb);
-    bpf_tail_call(skb, &tc_pipe_exits_lan_ingress, TC_NEXT_SLOT);
     return TC_ACT_OK;
 #undef BPF_LOG_TOPIC
 }

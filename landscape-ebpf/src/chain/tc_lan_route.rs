@@ -2,9 +2,7 @@ use libbpf_rs::skel::{OpenSkel, SkelBuilder};
 
 use crate::bpf_ctx;
 use crate::bpf_error::LdEbpfResult;
-use crate::chain::tc_manager::{
-    tc_lan_ingress_roots_path, tc_pipe_exits_lan_ingress_path, TcChainManager,
-};
+use crate::chain::tc_manager::TcChainManager;
 use crate::landscape::{pin_and_reuse_map, OwnedOpenObject, TcHookProxy};
 use crate::MAP_PATHS;
 
@@ -40,14 +38,6 @@ pub fn init_tc_lan_route(ifindex: u32, has_mac: bool) -> LdEbpfResult<TcLanRoute
     let builder = TcLanIngressChainSkelBuilder::default();
     let mut open_skel = bpf_ctx!(builder.open(obj), "open per-if tc_lan_ingress_chain")?;
     open_skel.maps.rodata_data.as_deref_mut().unwrap().current_l3_offset = l3_offset;
-    crate::map_setting::reuse_pinned_map_or_recreate(
-        &mut open_skel.maps.tc_lan_ingress_roots,
-        &tc_lan_ingress_roots_path(),
-    );
-    crate::map_setting::reuse_pinned_map_or_recreate(
-        &mut open_skel.maps.tc_pipe_exits_lan_ingress,
-        &tc_pipe_exits_lan_ingress_path(),
-    );
     crate::bpf_ctx!(
         pin_and_reuse_map(&mut open_skel.maps.flow_match_map, &MAP_PATHS.flow_match_map),
         "tc_lan_route pin flow_match_map"
