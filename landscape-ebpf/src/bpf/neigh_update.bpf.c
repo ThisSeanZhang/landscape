@@ -15,6 +15,17 @@ char LICENSE[] SEC("license") = "GPL";
 #define NUD_VALID (0x02 | 0x04 | 0x40 | 0x80)
 #define NUD_FAILED 0x20
 
+static __always_inline int is_unrecord_ip6(const u8 *bytes) {
+    __u8 first_byte = bytes[0];
+
+    // IPv6 multicast ff00::/8
+    if (unlikely(first_byte == 0xff)) {
+        return TC_ACT_UNSPEC;
+    }
+
+    return TC_ACT_OK;
+}
+
 SEC("kprobe/neigh_update")
 int BPF_KPROBE(kprobe_neigh_update, struct neighbour *n, const u8 *new_lladdr, u8 new_state,
                u32 update_flags, u32 pid) {
@@ -69,7 +80,7 @@ int BPF_KPROBE(kprobe_neigh_update, struct neighbour *n, const u8 *new_lladdr, u
         struct mac_key_v6 key = {};
         bpf_probe_read_kernel(&key.addr, sizeof(key.addr), n->primary_key);
 
-        if (is_broadcast_ip6(key.addr.bytes)) {
+        if (is_unrecord_ip6(key.addr.bytes)) {
             return 0;
         }
 

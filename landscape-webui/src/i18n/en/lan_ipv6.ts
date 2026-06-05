@@ -229,9 +229,9 @@ export default {
   ia_na_valid_lifetime_desc:
     "Maximum time (in seconds) the address remains valid. After expiry the device must request a new address. Should be greater than the preferred lifetime.",
 
-  ia_pd_delegate_prefix_len: "Delegated Prefix Length",
+  ia_pd_delegate_prefix_len: "Min Network Size for Pool Blocks",
   ia_pd_delegate_prefix_len_desc:
-    "The prefix length assigned to each device. For example, with a /48 source prefix and /64 delegation length, up to 2^16 sub-prefixes can be delegated.",
+    "Lower bound on the network size of qualifying pool blocks. Only blocks at least as large as a /N network can be used. Example: setting this to /56 means blocks with prefix_len ≤ 56 qualify — /48 ✅ (larger network) and /56 ✅ qualify, but /60 ❌ (smaller network) is excluded. The actual delegated prefix length in the DHCPv6 response comes from the pool block's own config (e.g. PdStatic.pool_len).",
   ia_pd_preferred_lifetime: "Preferred Lifetime",
   ia_pd_preferred_lifetime_desc:
     "How long (in seconds) the device will prefer using this delegated prefix. After expiry the prefix is still valid but no longer preferred.",

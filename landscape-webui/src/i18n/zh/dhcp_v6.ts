@@ -28,7 +28,7 @@ export default {
   pool_end_placeholder: "默认: 起始 + 65535",
   preferred_lifetime: "首选生存期(秒)",
   valid_lifetime: "有效生存期(秒)",
-  delegate_prefix_length: "委派前缀长度",
+  delegate_prefix_length: "池块网络大小下限",
 
   // IPv6RA view
   dhcpv6_assigned_info: "DHCPv6 分配信息",

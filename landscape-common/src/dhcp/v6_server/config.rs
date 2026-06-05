@@ -52,11 +52,18 @@ pub struct DHCPv6IANAConfig {
 }
 
 /// IA_PD config — prefix delegation parameters.
+/// `delegate_prefix_len` sets the minimum network size for qualifying pool blocks:
+/// only blocks whose `prefix_len <= delegate_prefix_len` (i.e. at least as large as a /N network)
+/// enter the pool. The actual delegated prefix length in the DHCPv6 response is determined
+/// by the pool block's own config (e.g. `pool_len` in PdStatic).
 /// Sources come from LanIPv6Config.sources filtered by Pd* variants.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct DHCPv6IAPDConfig {
-    /// Prefix length to delegate to clients (e.g., 60, 64).
+    /// Minimum network size for qualifying PD pool blocks (upper bound on prefix_len).
+    /// Blocks with prefix_len > this value (i.e. smaller networks) are excluded.
+    /// Example: setting /56 means /48 and /56 blocks qualify, but /60 does not.
+    /// The actual delegated prefix length is taken from the block's own config.
     pub delegate_prefix_len: u8,
 
     /// Preferred lifetime (seconds), default: 3600 (1 hour)

@@ -217,9 +217,9 @@ export default {
   ia_na_valid_lifetime_desc:
     "地址的最长有效时间（秒）。到期后设备必须重新申请地址。应大于首选生存期。",
 
-  ia_pd_delegate_prefix_len: "委派前缀长度",
+  ia_pd_delegate_prefix_len: "池块网络大小下限",
   ia_pd_delegate_prefix_len_desc:
-    "分配给每台设备的子前缀长度。例如源前缀为 /48、委派长度为 /64，则可委派 2^16 个 /64 子前缀。",
+    "入池块网络大小的下限（对应前缀长度上限）。只有至少和 /N 一样大的块才能入池。举例：设为 /56 时，前缀长度 ≤ 56 的块才合格—— /48（更大网络）✅、/56 ✅ 可入池，/60（更小网络）❌ 被过滤。实际下发给设备的前缀长度由池块自身配置（如 PdStatic.pool_len）决定。",
   ia_pd_preferred_lifetime: "首选生存期",
   ia_pd_preferred_lifetime_desc:
     "设备优先使用该委派前缀的时长（秒）。到期后前缀仍可用但不再优先选择。",

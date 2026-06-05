@@ -179,37 +179,35 @@ impl DHCPv6Server {
         }
     }
 
-    /// Allocate or retrieve a sub-prefix index for IA_PD
-    pub fn offer_pd_index(&mut self, client_duid: &[u8]) -> Option<u32> {
+    /// Allocate one delegation block from the qualifying-prefix pool for IA_PD.
+    /// `qualifying_prefixes` is the result of `get_qualifying_pd_prefixes`.
+    /// Returns the pool index (0-based into `qualifying_prefixes`), stored in `DHCPv6PDCache.sub_index`.
+    /// Returns `None` when the pool is exhausted and no expired leases can be reclaimed.
+    pub fn offer_pd_index(
+        &mut self,
+        client_duid: &[u8],
+        qualifying_prefixes: &[(Ipv6Addr, u8)],
+    ) -> Option<u32> {
         let _pd_config = self.pd_config.as_ref()?;
+
+        if qualifying_prefixes.is_empty() {
+            return None;
+        }
 
         if let Some(cache) = self.pd_offered.get(client_duid) {
             return Some(cache.sub_index);
         }
 
-        if self.pd_range_capacity == 0 {
-            return None;
-        }
-
-        let mut seed = hash_duid(client_duid) as u32;
-        loop {
-            if self.pd_allocated_indices.len() as u32 >= self.pd_range_capacity {
-                if self.clean_expired_pd().is_empty() {
-                    tracing::error!("DHCPv6 PD pool is full");
-                    return None;
-                }
-            }
-            let index = seed % self.pd_range_capacity;
-            let sub_index = self.pd_pool_start + index;
-            if self.pd_allocated_indices.contains_key(&sub_index) {
-                seed = seed.wrapping_add(1);
-            } else {
+        // Find first free pool index
+        for (idx, _) in qualifying_prefixes.iter().enumerate() {
+            let idx = idx as u32;
+            if !self.pd_allocated_indices.contains_key(&idx) {
                 let pd_config = self.pd_config.as_ref().unwrap();
-                self.pd_allocated_indices.insert(sub_index, true);
+                self.pd_allocated_indices.insert(idx, true);
                 self.pd_offered.insert(
                     client_duid.to_vec(),
                     DHCPv6PDCache {
-                        sub_index,
+                        sub_index: idx,
                         duid_hex: duid_to_hex(client_duid),
                         relative_offer_time: self.relative_boot_time.elapsed().as_secs(),
                         valid_time: OFFER_VALID_TIME,
@@ -218,9 +216,17 @@ impl DHCPv6Server {
                         active_routes: Vec::new(),
                     },
                 );
-                return Some(sub_index);
+                return Some(idx);
             }
         }
+
+        // Pool full — try cleaning expired leases
+        if !self.clean_expired_pd().is_empty() {
+            return self.offer_pd_index(client_duid, qualifying_prefixes);
+        }
+
+        tracing::warn!("DHCPv6 PD pool exhausted ({} slots)", qualifying_prefixes.len());
+        None
     }
 
     /// Confirm PD assignment
@@ -331,23 +337,30 @@ impl DHCPv6Server {
 
     /// Get qualifying base prefixes for IA_PD from dedicated PD delegation sources.
     /// Uses independent PdDelegationParent data (not NA prefix info).
+    /// Filters out pool blocks whose network is smaller than the configured minimum
+    /// (a /60 block cannot satisfy a /56 minimum).
     pub fn get_qualifying_pd_prefixes(
         &self,
         pd_delegation_static: &[PdDelegationParent],
         pd_delegation_dynamic: &[Arc<ArcSwap<Option<PdDelegationParent>>>],
     ) -> Vec<(Ipv6Addr, u8)> {
-        let Some(_) = &self.pd_config else {
+        let Some(pd_config) = &self.pd_config else {
             return vec![];
         };
+        let dl = pd_config.delegate_prefix_len;
         let mut result = vec![];
 
         for p in pd_delegation_static {
-            result.push((p.prefix, p.prefix_len));
+            if p.prefix_len <= dl {
+                result.push((p.prefix, p.prefix_len));
+            }
         }
 
         for src in pd_delegation_dynamic {
             if let Some(p) = src.load().as_ref() {
-                result.push((p.prefix, p.prefix_len));
+                if p.prefix_len <= dl {
+                    result.push((p.prefix, p.prefix_len));
+                }
             }
         }
 
@@ -386,18 +399,20 @@ impl DHCPv6Server {
             self.get_qualifying_pd_prefixes(pd_delegation_static, pd_delegation_dynamic);
         let mut delegated_prefixes = Vec::new();
         for (_, cache) in &self.pd_offered {
-            if let Some(pd_config) = &self.pd_config {
-                if let Some((base_prefix, base_prefix_len)) = pd_prefixes.first() {
+            if let Some(_) = &self.pd_config {
+                if let Some((base_prefix, base_prefix_len)) =
+                    pd_prefixes.get(cache.sub_index as usize)
+                {
                     let delegated = compute_delegated_prefix(
                         *base_prefix,
                         *base_prefix_len,
-                        pd_config.delegate_prefix_len,
-                        cache.sub_index,
+                        *base_prefix_len,
+                        0,
                     );
                     delegated_prefixes.push(DHCPv6PrefixItem {
                         duid: Some(cache.duid_hex.clone()),
                         prefix: delegated,
-                        prefix_len: pd_config.delegate_prefix_len,
+                        prefix_len: *base_prefix_len,
                         relative_active_time: cache.relative_offer_time,
                         preferred_lifetime: cache.preferred_time,
                         valid_lifetime: cache.valid_time,

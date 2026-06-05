@@ -28,7 +28,7 @@ export default {
   pool_end_placeholder: "Default: start + 65535",
   preferred_lifetime: "Preferred Lifetime (s)",
   valid_lifetime: "Valid Lifetime (s)",
-  delegate_prefix_length: "Delegated Prefix Length",
+  delegate_prefix_length: "Min Network Size for Pool",
 
   // IPv6RA view
   dhcpv6_assigned_info: "DHCPv6 Assignment Info",

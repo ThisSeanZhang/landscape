@@ -320,11 +320,6 @@ async fn handle_dhcpv6_message(
                     server.offer_na_suffix(&client_duid, mac, None);
                 }
             }
-            if let Some(_) = &server.pd_config {
-                if iapd_id.is_some() {
-                    server.offer_pd_index(&client_duid);
-                }
-            }
 
             // Build ADVERTISE
             let mut reply = v6::Message::new(DhcpV6MessageType::Advertise);
@@ -358,6 +353,7 @@ async fn handle_dhcpv6_message(
                     let pd_prefixes = server
                         .get_qualifying_pd_prefixes(pd_delegation_static, pd_delegation_dynamic);
                     if !pd_prefixes.is_empty() {
+                        server.offer_pd_index(&client_duid, &pd_prefixes);
                         let iapd = build_iapd_options(server, &client_duid, iapd_id, &pd_prefixes);
                         reply.opts_mut().insert(v6::DhcpOption::IAPD(iapd));
                     } else {
@@ -401,12 +397,6 @@ async fn handle_dhcpv6_message(
                     // New client during REBIND or first REQUEST
                     server.offer_na_suffix(&client_duid, mac, None);
                     server.confirm_na(&client_duid);
-                }
-            }
-            if server.pd_config.is_some() && iapd_id.is_some() {
-                if !server.confirm_pd(&client_duid) {
-                    server.offer_pd_index(&client_duid);
-                    server.confirm_pd(&client_duid);
                 }
             }
 
@@ -513,14 +503,19 @@ async fn handle_dhcpv6_message(
                     let pd_prefixes = server
                         .get_qualifying_pd_prefixes(pd_delegation_static, pd_delegation_dynamic);
                     if !pd_prefixes.is_empty() {
-                        // For Renew: ensure we have a cached prefix, or re-allocate if needed
-                        if !server.pd_offered.contains_key(&client_duid) {
-                            // Client has no cached prefix - allocate new one
-                            tracing::debug!(
-                                "DHCPv6 Renew: no cached prefix for client, allocating new"
-                            );
-                            server.offer_pd_index(&client_duid);
+                        // Confirm existing allocation, or allocate new
+                        if !server.confirm_pd(&client_duid) {
+                            server.offer_pd_index(&client_duid, &pd_prefixes);
+                            server.confirm_pd(&client_duid);
                         }
+                        // For Renew/Rebind: re-allocate if cache lost
+                        if !server.pd_offered.contains_key(&client_duid) {
+                            tracing::debug!(
+                                "DHCPv6 Renew/Rebind: no cached prefix, allocating new"
+                            );
+                            server.offer_pd_index(&client_duid, &pd_prefixes);
+                        }
+
                         let mut iapd =
                             build_iapd_options(server, &client_duid, iapd_id, &pd_prefixes);
 
@@ -528,15 +523,16 @@ async fn handle_dhcpv6_message(
                         if msg.msg_type() == DhcpV6MessageType::Rebind
                             || msg.msg_type() == DhcpV6MessageType::Renew
                         {
-                            let pd_config = server.pd_config.as_ref().unwrap();
                             let mut server_prefixes: Vec<Ipv6Addr> = Vec::new();
                             if let Some(cache) = server.pd_offered.get(&client_duid) {
-                                for (base_prefix, base_prefix_len) in &pd_prefixes {
+                                if let Some((base_prefix, base_prefix_len)) =
+                                    pd_prefixes.get(cache.sub_index as usize)
+                                {
                                     server_prefixes.push(compute_delegated_prefix(
                                         *base_prefix,
                                         *base_prefix_len,
-                                        pd_config.delegate_prefix_len,
-                                        cache.sub_index,
+                                        *base_prefix_len,
+                                        0,
                                     ));
                                 }
                             }
@@ -572,66 +568,59 @@ async fn handle_dhcpv6_message(
 
                         reply.opts_mut().insert(v6::DhcpOption::IAPD(iapd));
 
-                        // Add routes for delegated prefixes (system + eBPF)
-                        let delegate_prefix_len =
-                            server.pd_config.as_ref().map(|c| c.delegate_prefix_len);
-                        if let Some(delegate_prefix_len) = delegate_prefix_len {
+                        // Add routes for delegated prefix (system + eBPF)
+                        if let Some(cache) = server.pd_offered.get_mut(&client_duid) {
                             let client_ll = match msg_addr {
                                 SocketAddr::V6(v6) => *v6.ip(),
                                 _ => Ipv6Addr::UNSPECIFIED,
                             };
-                            if let Some(cache) = server.pd_offered.get_mut(&client_duid) {
-                                // Remove old routes
-                                for (prefix, len) in cache.active_routes.drain(..) {
-                                    del_route(prefix, len, iface_name);
-                                    let key = LanIPv6RouteKey {
-                                        iface_name: iface_name.to_string(),
-                                        subnet_index: pd_route_key_index(cache.sub_index, &prefix),
-                                    };
-                                    route_service.remove_ipv6_lan_route_by_key(&key).await;
-                                }
-
-                                // Add new routes
-                                let mut new_routes = Vec::new();
-                                for (base_prefix, base_prefix_len) in &pd_prefixes {
-                                    let delegated = compute_delegated_prefix(
-                                        *base_prefix,
-                                        *base_prefix_len,
-                                        delegate_prefix_len,
-                                        cache.sub_index,
-                                    );
-                                    // System route: ip -6 route replace <prefix> via <client_ll> dev <iface>
-                                    add_route_via(
-                                        delegated,
-                                        delegate_prefix_len,
-                                        client_ll,
-                                        iface_name,
-                                        Some(cache.valid_time),
-                                    );
-                                    // eBPF route (mac = PD client's MAC from DUID)
-                                    let lan_info = LanRouteInfo {
-                                        ifindex: link_ifindex,
-                                        iface_name: iface_name.to_string(),
-                                        iface_ip: IpAddr::V6(delegated),
-                                        mac,
-                                        prefix: delegate_prefix_len,
-                                        mode: LanRouteMode::NextHop {
-                                            next_hop_ip: IpAddr::V6(client_ll),
-                                        },
-                                    };
-                                    let key = LanIPv6RouteKey {
-                                        iface_name: iface_name.to_string(),
-                                        subnet_index: pd_route_key_index(
-                                            cache.sub_index,
-                                            &delegated,
-                                        ),
-                                    };
-                                    route_service.insert_ipv6_lan_route(key, lan_info).await;
-                                    new_routes.push((delegated, delegate_prefix_len));
-                                }
-                                cache.client_addr = client_ll;
-                                cache.active_routes = new_routes;
+                            // Remove old routes
+                            for (prefix, len) in cache.active_routes.drain(..) {
+                                del_route(prefix, len, iface_name);
+                                let key = LanIPv6RouteKey {
+                                    iface_name: iface_name.to_string(),
+                                    subnet_index: pd_route_key_index(cache.sub_index, &prefix),
+                                };
+                                route_service.remove_ipv6_lan_route_by_key(&key).await;
                             }
+
+                            // Add new route for the allocated block
+                            let mut new_routes = Vec::new();
+                            if let Some((base_prefix, base_prefix_len)) =
+                                pd_prefixes.get(cache.sub_index as usize)
+                            {
+                                let delegated = compute_delegated_prefix(
+                                    *base_prefix,
+                                    *base_prefix_len,
+                                    *base_prefix_len,
+                                    0,
+                                );
+                                add_route_via(
+                                    delegated,
+                                    *base_prefix_len,
+                                    client_ll,
+                                    iface_name,
+                                    Some(cache.valid_time),
+                                );
+                                let lan_info = LanRouteInfo {
+                                    ifindex: link_ifindex,
+                                    iface_name: iface_name.to_string(),
+                                    iface_ip: IpAddr::V6(delegated),
+                                    mac: Some(dev_mac),
+                                    prefix: *base_prefix_len,
+                                    mode: LanRouteMode::NextHop {
+                                        next_hop_ip: IpAddr::V6(client_ll),
+                                    },
+                                };
+                                let key = LanIPv6RouteKey {
+                                    iface_name: iface_name.to_string(),
+                                    subnet_index: pd_route_key_index(cache.sub_index, &delegated),
+                                };
+                                route_service.insert_ipv6_lan_route(key, lan_info).await;
+                                new_routes.push((delegated, *base_prefix_len));
+                            }
+                            cache.client_addr = client_ll;
+                            cache.active_routes = new_routes;
                         }
                     } else {
                         // No qualifying prefixes available - return NOT_ON_LINK to signal client
@@ -794,7 +783,8 @@ fn build_iana_options(
     }
 }
 
-/// Build IA_PD options for a reply message
+/// Build IA_PD options for a reply message.
+/// Allocates ONE IAPrefix from the pool block indexed by `cache.sub_index`.
 fn build_iapd_options(
     server: &DHCPv6Server,
     client_duid: &[u8],
@@ -804,27 +794,27 @@ fn build_iapd_options(
     let pd_config = server.pd_config.as_ref().unwrap();
     let mut iapd_opts = v6::DhcpOptions::new();
 
+    let mut has_prefix = false;
     if let Some(cache) = server.pd_offered.get(client_duid) {
-        for (base_prefix, base_prefix_len) in qualifying_prefixes {
-            let delegated = compute_delegated_prefix(
-                *base_prefix,
-                *base_prefix_len,
-                pd_config.delegate_prefix_len,
-                cache.sub_index,
-            );
+        if let Some((base_prefix, base_prefix_len)) =
+            qualifying_prefixes.get(cache.sub_index as usize)
+        {
+            let delegated =
+                compute_delegated_prefix(*base_prefix, *base_prefix_len, *base_prefix_len, 0);
             iapd_opts.insert(v6::DhcpOption::IAPrefix(IAPrefix {
                 preferred_lifetime: cache.preferred_time,
                 valid_lifetime: cache.valid_time,
-                prefix_len: pd_config.delegate_prefix_len,
+                prefix_len: *base_prefix_len,
                 prefix_ip: delegated,
                 opts: v6::DhcpOptions::new(),
             }));
+            has_prefix = true;
         }
     }
 
     iapd_opts.insert(v6::DhcpOption::StatusCode(StatusCode {
-        status: Status::Success,
-        msg: String::new(),
+        status: if has_prefix { Status::Success } else { Status::NoPrefixAvail },
+        msg: if has_prefix { String::new() } else { "No PD prefixes available".to_string() },
     }));
 
     IAPD {
@@ -1079,13 +1069,156 @@ mod tests {
         let mut server = DHCPv6Server::init(&server_config, std::collections::HashMap::new());
         let client_duid = b"test-client-pd".to_vec();
 
-        // 为客户端分配前缀
-        server.offer_pd_index(&client_duid);
+        // 为客户端分配前缀（需要传入 qualifying_prefixes 池）
+        let qualifying = [(Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 0), 56)];
+        server.offer_pd_index(&client_duid, &qualifying);
 
         // 验证：客户端应该有 PD 缓存
         assert!(
             server.pd_offered.contains_key(&client_duid),
             "Client should be in pd_offered cache after PD allocation"
         );
+    }
+
+    #[test]
+    fn test_pd_one_block_per_client() {
+        let server_config = DHCPv6ServerConfig {
+            enable: true,
+            ia_na: None,
+            ia_pd: Some(DHCPv6IAPDConfig {
+                delegate_prefix_len: 60,
+                preferred_lifetime: 3600,
+                valid_lifetime: 7200,
+            }),
+        };
+        let mut server = DHCPv6Server::init(&server_config, std::collections::HashMap::new());
+        let client_duid = b"one-block-client".to_vec();
+
+        let qualifying = [
+            (Ipv6Addr::new(0xfd99, 0, 0, 0x39a0, 0, 0, 0, 0), 60),
+            (Ipv6Addr::new(0xfd99, 0, 0, 0x39b0, 0, 0, 0, 0), 60),
+            (Ipv6Addr::new(0xfd99, 0, 0, 0x39c0, 0, 0, 0, 0), 60),
+        ];
+        server.offer_pd_index(&client_duid, &qualifying);
+
+        let iapd = build_iapd_options(&server, &client_duid, 1, &qualifying);
+
+        let prefixes: Vec<_> = iapd
+            .opts
+            .into_iter()
+            .filter_map(|o| if let v6::DhcpOption::IAPrefix(p) = o { Some(p) } else { None })
+            .collect();
+
+        assert_eq!(
+            prefixes.len(),
+            1,
+            "one block per client: expected 1 IAPrefix, got {}",
+            prefixes.len()
+        );
+        assert_eq!(
+            prefixes[0].prefix_len, 60,
+            "prefix_len should come from block, not delegate_prefix_len"
+        );
+        assert_eq!(prefixes[0].prefix_ip, Ipv6Addr::new(0xfd99, 0, 0, 0x39a0, 0, 0, 0, 0));
+    }
+
+    #[test]
+    fn test_pd_pool_exhausted() {
+        let server_config = DHCPv6ServerConfig {
+            enable: true,
+            ia_na: None,
+            ia_pd: Some(DHCPv6IAPDConfig {
+                delegate_prefix_len: 60,
+                preferred_lifetime: 3600,
+                valid_lifetime: 7200,
+            }),
+        };
+        let mut server = DHCPv6Server::init(&server_config, std::collections::HashMap::new());
+
+        let qualifying = [
+            (Ipv6Addr::new(0xfd99, 0, 0, 0, 0, 0, 0, 0), 60),
+            (Ipv6Addr::new(0xfd99, 0, 0, 1, 0, 0, 0, 0), 60),
+        ];
+
+        let r1 = server.offer_pd_index(b"client-a", &qualifying);
+        let r2 = server.offer_pd_index(b"client-b", &qualifying);
+        assert!(r1.is_some(), "client-a should get a block");
+        assert!(r2.is_some(), "client-b should get a block");
+        assert_ne!(r1.unwrap(), r2.unwrap(), "different clients get different pool indices");
+
+        let r3 = server.offer_pd_index(b"client-c", &qualifying);
+        assert!(r3.is_none(), "pool exhausted: third client should get None");
+
+        // Pool exhausted: build_iapd_options should return NoPrefixAvail
+        // (no cache for client-c means no IAPrefix, status = NoPrefixAvail)
+    }
+
+    #[test]
+    fn test_pd_pool_exhausted_returns_no_prefix_avail() {
+        let server_config = DHCPv6ServerConfig {
+            enable: true,
+            ia_na: None,
+            ia_pd: Some(DHCPv6IAPDConfig {
+                delegate_prefix_len: 60,
+                preferred_lifetime: 3600,
+                valid_lifetime: 7200,
+            }),
+        };
+        let mut server = DHCPv6Server::init(&server_config, std::collections::HashMap::new());
+
+        let qualifying = [(Ipv6Addr::new(0xfd99, 0, 0, 0, 0, 0, 0, 0), 60)];
+        server.offer_pd_index(b"client-a", &qualifying);
+
+        // client-b has no cache entry → NoPrefixAvail
+        let iapd = build_iapd_options(&server, b"client-b", 1, &qualifying);
+
+        let status = iapd.opts.iter().find_map(|o| {
+            if let v6::DhcpOption::StatusCode(ref sc) = o {
+                Some(sc.status)
+            } else {
+                None
+            }
+        });
+        assert_eq!(status, Some(Status::NoPrefixAvail));
+    }
+
+    #[test]
+    fn test_pd_qualifying_filter_blocks_too_long_prefix() {
+        let server_config = DHCPv6ServerConfig {
+            enable: true,
+            ia_na: None,
+            ia_pd: Some(DHCPv6IAPDConfig {
+                delegate_prefix_len: 56, // only accepts prefix_len <= 56
+                preferred_lifetime: 3600,
+                valid_lifetime: 7200,
+            }),
+        };
+        let server = DHCPv6Server::init(&server_config, std::collections::HashMap::new());
+
+        let static_blocks = vec![
+            crate::ipv6::prefix::PdDelegationParent {
+                prefix: Ipv6Addr::new(0xfd99, 0, 0, 0x3900, 0, 0, 0, 0),
+                prefix_len: 48,
+            },
+            crate::ipv6::prefix::PdDelegationParent {
+                prefix: Ipv6Addr::new(0xfd99, 0, 0, 0x39a0, 0, 0, 0, 0),
+                prefix_len: 60, // 60 > 56 → filtered out
+            },
+            crate::ipv6::prefix::PdDelegationParent {
+                prefix: Ipv6Addr::new(0xfd99, 0, 0, 0x39b0, 0, 0, 0, 0),
+                prefix_len: 56,
+            },
+        ];
+        let dynamic_blocks: Vec<Arc<ArcSwap<Option<crate::ipv6::prefix::PdDelegationParent>>>> =
+            vec![];
+
+        let result = server.get_qualifying_pd_prefixes(&static_blocks, &dynamic_blocks);
+
+        assert_eq!(
+            result.len(),
+            2,
+            "/48 and /56 qualify under delegate_prefix_len=56, /60 should be filtered"
+        );
+        assert!(result.iter().all(|(_, len)| *len <= 56));
     }
 }

@@ -16,6 +16,8 @@ pub struct DHCPv6NACache {
 
 #[derive(Debug)]
 pub struct DHCPv6PDCache {
+    /// Index into `PdDelegationParent` pool (`get_qualifying_pd_prefixes` result).
+    /// Identifies which pre-computed delegation block this client received.
     pub sub_index: u32,
     pub duid_hex: String,
     pub relative_offer_time: u64,
