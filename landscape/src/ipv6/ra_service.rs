@@ -187,6 +187,10 @@ impl ServiceStarterTrait for IPV6RAService {
                             &runtime,
                             change_notify,
                             assigned_ips,
+                            true,
+                            None,
+                            None,
+                            link_ifindex,
                         )
                         .await;
 

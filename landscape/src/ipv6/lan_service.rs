@@ -148,6 +148,7 @@ impl ServiceStarterTrait for LanIPv6Service {
                                     ad_interval,
                                     ra_flag,
                                     mac,
+                                    lan_info.ifindex,
                                     status_clone,
                                     assigned_ips,
                                 )
@@ -215,6 +216,7 @@ async fn run_slaac(
     ad_interval: u32,
     ra_flag: RouterFlags,
     mac: MacAddr,
+    link_ifindex: u32,
     status: WatchService,
     assigned_ips: Arc<RwLock<IPv6NAInfo>>,
 ) {
@@ -250,6 +252,7 @@ async fn run_slaac(
         true, // autonomous: SLAAC clients auto-configure addresses from RA prefixes
         None,
         None,
+        link_ifindex,
     )
     .await;
 
@@ -352,6 +355,7 @@ async fn run_stateful(
         false, // autonomous=false: clients should NOT SLAAC, only use DHCPv6
         None,
         None,
+        link_ifindex,
     )
     .await;
 
@@ -472,6 +476,7 @@ async fn run_slaac_dhcpv6(
         true, // autonomous: SLAAC clients auto-configure from RA ULA prefixes
         Some(&dhcpv6_runtime),
         Some(dhcpv6_change_notify),
+        link_ifindex,
     )
     .await;
 

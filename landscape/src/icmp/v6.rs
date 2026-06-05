@@ -43,6 +43,7 @@ pub async fn icmp_ra_server(
     // Used in SlaacDhcpv6 mode so clients can detect DHCPv6 prefix changes via RA.
     onlink_runtime: Option<&IPv6PrefixRuntime>,
     mut onlink_change_notify: Option<watch::Receiver<()>>,
+    link_ifindex: u32,
 ) -> LdResult<()> {
     {
         let mut ips = assigned_ips.write().await;
@@ -226,7 +227,8 @@ pub async fn icmp_ra_server(
                             ra_flag,
                             autonomous,
                             onlink_runtime,
-                            assigned_ips.clone()
+                            assigned_ips.clone(),
+                            link_ifindex,
                         ).await;
                     }
                     None => break
@@ -294,6 +296,7 @@ async fn handle_rs_msg(
     autonomous: bool,
     onlink_runtime: Option<&IPv6PrefixRuntime>,
     assigned_ips: Arc<RwLock<IPv6NAInfo>>,
+    link_ifindex: u32,
 ) {
     let mut buf = BytesMut::from(msg.as_slice());
     let icmp_v6_msg = match Icmpv6Message::decode(&mut buf) {
@@ -342,6 +345,15 @@ async fn handle_rs_msg(
                 let mut write_lock = assigned_ips.write().await;
                 write_lock.offered_ips.insert(data.get_cache_key(), data);
                 drop(write_lock);
+
+                if let Err(e) = landscape_ebpf::base::ip_mac::upsert_ipv6_ip_mac(
+                    link_ifindex,
+                    target_ip,
+                    mac,
+                    *my_mac_addr,
+                ) {
+                    tracing::warn!("failed to prewarm ip_mac_v6 for ND {target_ip} -> {mac}: {e}");
+                }
             } else {
                 tracing::error!("read TargetLinkLayerAddress error: {neighbor_advertisement:?}");
             }
