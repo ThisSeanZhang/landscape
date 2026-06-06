@@ -190,6 +190,7 @@ static __always_inline int tc_pick_wan_v4(struct __sk_buff *skb, u32 current_l3_
         if (target_info->is_docker) {
             int ret = bpf_skb_vlan_push(skb, ETH_P_8021Q, get_flow_vlan_id(resolved_flow_id));
             if (ret) ld_bpf_log("bpf_skb_vlan_push error");
+            return bpf_redirect(target_info->ifindex, 0);
         }
 
         if (target_info->has_mac) {
@@ -238,6 +239,7 @@ static __always_inline int tc_pick_wan_v6(struct __sk_buff *skb, u32 current_l3_
         if (target_info->is_docker) {
             int ret = bpf_skb_vlan_push(skb, ETH_P_8021Q, get_flow_vlan_id(resolved_flow_id));
             if (ret) ld_bpf_log("bpf_skb_vlan_push error");
+            return bpf_redirect(target_info->ifindex, 0);
         }
 
         if (target_info->has_mac) {

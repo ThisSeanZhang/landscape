@@ -171,6 +171,7 @@ static __always_inline int tc_pick_wan_v4(struct __sk_buff *skb, u32 current_l3_
                                           const struct route_context_v4 *context,
                                           const u32 flow_id) {
 #define BPF_LOG_TOPIC "tc_pick_wan_v4"
+    int ret;
     const u32 resolved_flow_id = get_flow_id(flow_id);
 
     struct route_target_slot_key_v4 slot_key = {
@@ -185,7 +186,6 @@ static __always_inline int tc_pick_wan_v4(struct __sk_buff *skb, u32 current_l3_
         return TC_ACT_SHOT;
     }
 
-    // 跨 WAN 才需要 MAC 改写，同 WAN 跳过
     if (target_info->ifindex != skb->ifindex) {
         if (current_l3_offset == 0 && target_info->has_mac) {
             if (prepend_dummy_mac(skb) != 0) {
@@ -195,23 +195,22 @@ static __always_inline int tc_pick_wan_v4(struct __sk_buff *skb, u32 current_l3_
         }
 
         if (target_info->is_docker) {
-            int ret = bpf_skb_vlan_push(skb, ETH_P_8021Q, get_flow_vlan_id(resolved_flow_id));
+            ret = bpf_skb_vlan_push(skb, ETH_P_8021Q, get_flow_vlan_id(resolved_flow_id));
             if (ret) ld_bpf_log("bpf_skb_vlan_push error");
+            return bpf_redirect(target_info->ifindex, 0);
         }
 
         if (target_info->has_mac) {
             struct mac_value_v4 *mac_value =
                 bpf_map_lookup_elem(&ip_mac_v4, &target_info->gate_addr);
             if (mac_value) {
-                int ret = store_mac_v4(skb, mac_value->mac, target_info->mac);
+                ret = store_mac_v4(skb, mac_value->mac, target_info->mac);
                 if (ret) ld_bpf_log("store_mac_v4 err: %d", ret);
             } else {
                 ld_bpf_log("can't find mac by: %pI4", &target_info->gate_addr);
             }
         }
-    }
 
-    if (target_info->ifindex != skb->ifindex) {
         skb->cb[TC_CHAIN_CB_FORWARDED_OFFSET] = 1;
         return bpf_redirect(target_info->ifindex, 0);
     }
@@ -225,6 +224,7 @@ static __always_inline int tc_pick_wan_v6(struct __sk_buff *skb, u32 current_l3_
                                           const struct route_context_v6 *context,
                                           const u32 flow_id) {
 #define BPF_LOG_TOPIC "tc_pick_wan_v6"
+    int ret;
     const u32 resolved_flow_id = get_flow_id(flow_id);
 
     struct route_target_slot_key_v6 slot_key = {
@@ -239,7 +239,6 @@ static __always_inline int tc_pick_wan_v6(struct __sk_buff *skb, u32 current_l3_
         return TC_ACT_SHOT;
     }
 
-    // 跨 WAN 才需要 MAC 改写，同 WAN 跳过
     if (target_info->ifindex != skb->ifindex) {
         if (current_l3_offset == 0 && target_info->has_mac) {
             if (prepend_dummy_mac_v6(skb) != 0) {
@@ -249,23 +248,22 @@ static __always_inline int tc_pick_wan_v6(struct __sk_buff *skb, u32 current_l3_
         }
 
         if (target_info->is_docker) {
-            int ret = bpf_skb_vlan_push(skb, ETH_P_8021Q, get_flow_vlan_id(resolved_flow_id));
+            ret = bpf_skb_vlan_push(skb, ETH_P_8021Q, get_flow_vlan_id(resolved_flow_id));
             if (ret) ld_bpf_log("bpf_skb_vlan_push error");
+            return bpf_redirect(target_info->ifindex, 0);
         }
 
         if (target_info->has_mac) {
             struct mac_value_v6 *mac_value =
                 bpf_map_lookup_elem(&ip_mac_v6, &target_info->gate_addr);
             if (mac_value) {
-                int ret = store_mac_v6(skb, mac_value->mac, target_info->mac);
+                ret = store_mac_v6(skb, mac_value->mac, target_info->mac);
                 if (ret) ld_bpf_log("store_mac_v6 err: %d", ret);
             } else {
                 ld_bpf_log("can't find mac by: %pI6", &target_info->gate_addr);
             }
         }
-    }
 
-    if (target_info->ifindex != skb->ifindex) {
         skb->cb[TC_CHAIN_CB_FORWARDED_OFFSET] = 1;
         return bpf_redirect(target_info->ifindex, 0);
     }
