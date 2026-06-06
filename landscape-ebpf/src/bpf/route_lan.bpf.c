@@ -32,6 +32,9 @@ int rt4_lan_ingress(struct __sk_buff *skb) {
     struct packet_offset_info offset_info = {0};
 
     ret = scan_route_packet(skb, current_l3_offset, &offset_info);
+    if (ret == LD_SCAN_ERR) {
+        return TC_ACT_SHOT;
+    }
     if (ret != TC_ACT_OK) {
         return TC_ACT_UNSPEC;
     }

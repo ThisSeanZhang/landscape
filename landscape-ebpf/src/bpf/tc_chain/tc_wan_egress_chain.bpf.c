@@ -326,12 +326,16 @@ int tc_wan_egress_route_v4(struct __sk_buff *skb) {
 
 SEC("tc/egress")
 int tc_wan_egress_route_v6(struct __sk_buff *skb) {
+#define BPF_LOG_TOPIC "tc_wan_egress_route_v6"
     int ret = 0;
     u32 flow_mark = skb->mark;
     struct route_context_v6 context = {0};
     struct packet_offset_info offset_info = {0};
 
     ret = scan_route_packet(skb, current_l3_offset, &offset_info);
+    if (ret == LD_SCAN_ERR) {
+        return TC_ACT_SHOT;
+    }
     if (ret != TC_ACT_OK) {
         return TC_ACT_OK;
     }
@@ -362,6 +366,7 @@ int tc_wan_egress_route_v6(struct __sk_buff *skb) {
     ret = tc_pick_wan_v6(skb, current_l3_offset, &context, flow_mark);
 
     return ret;
+#undef BPF_LOG_TOPIC
 }
 
 struct {

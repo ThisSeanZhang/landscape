@@ -41,6 +41,15 @@ static __always_inline int tc_lan_redirect_v4(struct __sk_buff *skb, u32 current
     if (lan_info->route_type == ROUTE_TYPE_WAN) return TC_ACT_UNSPEC;
 
     if (unlikely(lan_info->ifindex == skb->ingress_ifindex)) {
+        if (lan_info->has_mac && lan_info->addr != 0 && lan_info->addr != context->daddr) {
+            mac_key_search.addr = context->daddr;
+            mac_value = bpf_map_lookup_elem(&ip_mac_v4, &mac_key_search);
+            if (mac_value) {
+                if (!bpf_skb_store_bytes(skb, 0, &mac_value->mac, 14, 0)) {
+                    return bpf_redirect(lan_info->ifindex, 0);
+                }
+            }
+        }
         return TC_ACT_UNSPEC;
     }
 
@@ -112,7 +121,19 @@ static __always_inline int tc_lan_redirect_v6(struct __sk_buff *skb, u32 current
 
     if (lan_info->route_type == ROUTE_TYPE_WAN) return TC_ACT_UNSPEC;
 
-    if (unlikely(lan_info->ifindex == skb->ingress_ifindex)) return TC_ACT_UNSPEC;
+    if (unlikely(lan_info->ifindex == skb->ingress_ifindex)) {
+        if (lan_info->has_mac && !ip_addr_is_zero_in6(&lan_info->addr) &&
+            !ip_addr_equal_in6(&lan_info->addr, &context->daddr)) {
+            COPY_ADDR_FROM(mac_key_search.addr.all, context->daddr.all);
+            mac_value = bpf_map_lookup_elem(&ip_mac_v6, &mac_key_search);
+            if (mac_value) {
+                if (!bpf_skb_store_bytes(skb, 0, &mac_value->mac, 14, 0)) {
+                    return bpf_redirect(lan_info->ifindex, 0);
+                }
+            }
+        }
+        return TC_ACT_UNSPEC;
+    }
 
     if (lan_info->route_type == ROUTE_TYPE_LAN &&
         ip_addr_equal_in6(&lan_info->addr, &context->daddr))
@@ -319,12 +340,16 @@ int tc_lan_ingress_route_v4(struct __sk_buff *skb) {
 
 SEC("tc/ingress")
 int tc_lan_ingress_route_v6(struct __sk_buff *skb) {
+#define BPF_LOG_TOPIC "tc_lan_ingress_route_v6"
     int ret = 0;
     u32 flow_mark = skb->mark;
     struct route_context_v6 context = {0};
     struct packet_offset_info offset_info = {0};
 
     ret = scan_route_packet(skb, current_l3_offset, &offset_info);
+    if (ret == LD_SCAN_ERR) {
+        return TC_ACT_SHOT;
+    }
     if (ret != TC_ACT_OK) {
         return TC_ACT_OK;
     }
@@ -364,6 +389,7 @@ int tc_lan_ingress_route_v6(struct __sk_buff *skb) {
         setting_cache_in_lan_v6(&context, flow_mark);
     }
     return ret;
+#undef BPF_LOG_TOPIC
 }
 
 struct {

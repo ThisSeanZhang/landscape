@@ -381,16 +381,16 @@ static __always_inline int search_route_in_lan_v4(struct __sk_buff *skb,
                 } else {
                     mac_value = bpf_map_lookup_elem(&ip_mac_v4, &search_key.remote_addr);
                     if (mac_value) {
-                        ld_bpf_log("find ip: %pI4 mac, send to ifindex: %d",
-                                   &search_key.remote_addr, target->ifindex);
+                        // ld_bpf_log("find ip: %pI4 mac, send to ifindex: %d",
+                        //            &search_key.remote_addr, target->ifindex);
                         if (!bpf_skb_store_bytes(skb, 0, &mac_value->mac, 14, 0)) {
                             return bpf_redirect(target->ifindex, 0);
                         }
                     } else {
                         mac_value = bpf_map_lookup_elem(&ip_mac_v4, &wan_ip_info->gateway.ip);
                         if (mac_value) {
-                            ld_bpf_log("find ip: %pI4 mac, send to ifindex: %d",
-                                       &wan_ip_info->gateway.ip, target->ifindex);
+                            // ld_bpf_log("find ip: %pI4 mac, send to ifindex: %d",
+                            //            &wan_ip_info->gateway.ip, target->ifindex);
                             if (!bpf_skb_store_bytes(skb, 0, &mac_value->mac, 14, 0)) {
                                 return bpf_redirect(target->ifindex, 0);
                             }
