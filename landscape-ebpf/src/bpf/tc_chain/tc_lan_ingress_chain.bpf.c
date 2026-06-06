@@ -289,6 +289,12 @@ int tc_lan_ingress_route_v4(struct __sk_buff *skb) {
         return ret;
     }
 
+    ret = search_route_in_lan_v4(skb, current_l3_offset, &context, &flow_mark);
+    if (ret != TC_ACT_OK) {
+        skb->mark = replace_flow_source(flow_mark, FLOW_FROM_LAN);
+        return ret;
+    }
+
     ret = tc_lan_redirect_v4(skb, current_l3_offset, &context);
     if (ret != TC_ACT_OK) {
         return ret;
@@ -300,10 +306,13 @@ int tc_lan_ingress_route_v4(struct __sk_buff *skb) {
     }
 
     barrier_var(flow_mark);
-    skb->mark = replace_flow_source(flow_mark, FLOW_FROM_WAN);
+    skb->mark = replace_flow_source(flow_mark, FLOW_FROM_LAN);
 
     ret = tc_pick_wan_v4(skb, current_l3_offset, &context, flow_mark);
 
+    if (ret == TC_ACT_REDIRECT) {
+        setting_cache_in_lan_v4(&context, flow_mark);
+    }
     return ret;
 #undef BPF_LOG_TOPIC
 }
@@ -330,6 +339,12 @@ int tc_lan_ingress_route_v6(struct __sk_buff *skb) {
         return ret;
     }
 
+    ret = search_route_in_lan_v6(skb, current_l3_offset, &context, &flow_mark);
+    if (ret != TC_ACT_OK) {
+        skb->mark = replace_flow_source(flow_mark, FLOW_FROM_LAN);
+        return ret;
+    }
+
     ret = tc_lan_redirect_v6(skb, current_l3_offset, &context);
     if (ret != TC_ACT_OK) {
         return ret;
@@ -341,10 +356,13 @@ int tc_lan_ingress_route_v6(struct __sk_buff *skb) {
     }
 
     barrier_var(flow_mark);
-    skb->mark = replace_flow_source(flow_mark, FLOW_FROM_WAN);
+    skb->mark = replace_flow_source(flow_mark, FLOW_FROM_LAN);
 
     ret = tc_pick_wan_v6(skb, current_l3_offset, &context, flow_mark);
 
+    if (ret == TC_ACT_REDIRECT) {
+        setting_cache_in_lan_v6(&context, flow_mark);
+    }
     return ret;
 }
 
