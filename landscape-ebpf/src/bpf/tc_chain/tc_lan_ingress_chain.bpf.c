@@ -38,6 +38,8 @@ static __always_inline int tc_lan_redirect_v4(struct __sk_buff *skb, u32 current
         return TC_ACT_OK;
     }
 
+    if (lan_info->route_type == ROUTE_TYPE_WAN) return TC_ACT_UNSPEC;
+
     if (unlikely(lan_info->ifindex == skb->ingress_ifindex)) {
         return TC_ACT_UNSPEC;
     }
@@ -107,6 +109,8 @@ static __always_inline int tc_lan_redirect_v6(struct __sk_buff *skb, u32 current
     struct lan_route_info_v6 *lan_info = bpf_map_lookup_elem(&rt6_lan_map, &lan_search_key);
 
     if (lan_info == NULL) return TC_ACT_OK;
+
+    if (lan_info->route_type == ROUTE_TYPE_WAN) return TC_ACT_UNSPEC;
 
     if (unlikely(lan_info->ifindex == skb->ingress_ifindex)) return TC_ACT_UNSPEC;
 

@@ -33,7 +33,7 @@ static __always_inline int lan_redirect_check_v6(struct __sk_buff *skb, u32 curr
         return TC_ACT_OK;
     }
 
-    if (lan_info->route_type == ROUTE_TYPE_WAN) return TC_ACT_OK;
+    if (lan_info->route_type == ROUTE_TYPE_WAN) return TC_ACT_UNSPEC;
 
     // is LAN Packet, redirect to lan
     if (unlikely(lan_info->ifindex == skb->ifindex)) {

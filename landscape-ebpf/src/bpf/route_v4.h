@@ -28,7 +28,7 @@ static __always_inline int lan_redirect_check_v4(struct __sk_buff *skb, u32 curr
     struct lan_route_info_v4 *lan_info = bpf_map_lookup_elem(&rt4_lan_map, &lan_search_key);
 
     if (likely(lan_info != NULL)) {
-        if (lan_info->route_type == ROUTE_TYPE_WAN) return TC_ACT_OK;
+        if (lan_info->route_type == ROUTE_TYPE_WAN) return TC_ACT_UNSPEC;
         // is LAN Packet, redirect to lan
         if (unlikely(lan_info->ifindex == skb->ifindex)) {
             if (is_lan && lan_info->has_mac && lan_info->addr != 0 &&
