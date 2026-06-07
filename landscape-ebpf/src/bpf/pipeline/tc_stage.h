@@ -41,7 +41,7 @@ struct {
  *  WAN INGRESS CHAIN
  *  ─────────────────────────────────────────────────────────────────────────
  *
- *    tc_intro (tc_wan_intro)
+ *    tc_wan_ingress_intro (tc_wan_intro)
  *      └─ dispatch by daddr/prefix64/session_id
  *           └─ tc_pipe_root_progs[dispatch_idx]
  *                └─ tc_wan_chain_ingress_root
@@ -166,7 +166,7 @@ struct {
  *    tc_pipe_exits_wan_ingress — WAN ingress exit
  *    tc_pipe_exits_wan_egress  — WAN egress exit
  *
- *  Multi-entry prog arrays (declared in tc_wan_egress_chain.bpf.c):
+ *  Multi-entry prog arrays (declared in tc_wan_egress_intro.bpf.c):
  *    tc_wan_egress_roots — per-WAN egress chain roots (SEC tc/egress)
  */
 

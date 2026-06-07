@@ -21,13 +21,17 @@ mod tc_exit_wan_ingress_skel {
 mod tc_exit_wan_egress_skel {
     include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/tc_exit_wan_egress.skel.rs"));
 }
-mod tc_wan_chain_skel {
-    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/tc_wan_chain.skel.rs"));
+mod tc_wan_egress_root_skel {
+    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/tc_wan_egress_root.skel.rs"));
+}
+mod tc_wan_ingress_root_skel {
+    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/tc_wan_ingress_root.skel.rs"));
 }
 
 use tc_exit_wan_egress_skel::TcExitWanEgressSkelBuilder;
 use tc_exit_wan_ingress_skel::TcExitWanIngressSkelBuilder;
-use tc_wan_chain_skel::TcWanChainSkelBuilder;
+use tc_wan_egress_root_skel::TcWanEgressRootSkelBuilder;
+use tc_wan_ingress_root_skel::TcWanIngressRootSkelBuilder;
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum StageType {
@@ -140,8 +144,10 @@ fn pinned_map(path: &Path) -> LdEbpfResult<MapHandle> {
 }
 
 struct TcRoots {
-    _wan_chain_skel: tc_wan_chain_skel::TcWanChainSkel<'static>,
-    _wan_chain_backing: OwnedOpenObject,
+    _wan_ingress_root_skel: tc_wan_ingress_root_skel::TcWanIngressRootSkel<'static>,
+    _wan_ingress_root_backing: OwnedOpenObject,
+    _wan_egress_root_skel: tc_wan_egress_root_skel::TcWanEgressRootSkel<'static>,
+    _wan_egress_root_backing: OwnedOpenObject,
     wan_ingress_root_next_stage_fd: i32,
     wan_egress_root_next_stage_fd: i32,
 }
@@ -344,27 +350,36 @@ impl TcChainManager {
     fn create_roots(&self, ifindex: u32, has_mac: bool) -> LdEbpfResult<TcRoots> {
         let l3_offset: u32 = if has_mac { 14 } else { 0 };
 
-        let builder = TcWanChainSkelBuilder::default();
-        let (back, obj) = OwnedOpenObject::new();
-        let mut open_skel = bpf_ctx!(builder.open(obj), "open tc_wan_chain")?;
+        let ingress_builder = TcWanIngressRootSkelBuilder::default();
+        let (ingress_back, ingress_obj) = OwnedOpenObject::new();
+        let mut ingress_open_skel =
+            bpf_ctx!(ingress_builder.open(ingress_obj), "open tc_wan_ingress_root")?;
 
-        open_skel.maps.rodata_data.as_deref_mut().unwrap().current_l3_offset = l3_offset;
+        ingress_open_skel.maps.rodata_data.as_deref_mut().unwrap().current_l3_offset = l3_offset;
 
         pin_and_reuse_map(
-            &mut open_skel.maps.tc_pipe_exits_wan_ingress,
+            &mut ingress_open_skel.maps.tc_pipe_exits_wan_ingress,
             &tc_pipe_exits_wan_ingress_path(),
         )?;
+
+        let ingress_skel = bpf_ctx!(ingress_open_skel.load(), "load tc_wan_ingress_root")?;
+
+        let egress_builder = TcWanEgressRootSkelBuilder::default();
+        let (egress_back, egress_obj) = OwnedOpenObject::new();
+        let mut egress_open_skel =
+            bpf_ctx!(egress_builder.open(egress_obj), "open tc_wan_egress_root")?;
+
         pin_and_reuse_map(
-            &mut open_skel.maps.tc_pipe_exits_wan_egress,
+            &mut egress_open_skel.maps.tc_pipe_exits_wan_egress,
             &tc_pipe_exits_wan_egress_path(),
         )?;
 
-        let skel = bpf_ctx!(open_skel.load(), "load tc_wan_chain")?;
+        let egress_skel = bpf_ctx!(egress_open_skel.load(), "load tc_wan_egress_root")?;
 
-        let ingress_root_fd = skel.progs.tc_wan_chain_ingress_root.as_fd().as_raw_fd();
-        let egress_root_fd = skel.progs.tc_wan_chain_egress_root.as_fd().as_raw_fd();
-        let ing_next_fd = skel.maps.wan_ingress_root_next_stage.as_fd().as_raw_fd();
-        let eg_next_fd = skel.maps.wan_egress_root_next_stage.as_fd().as_raw_fd();
+        let ingress_root_fd = ingress_skel.progs.tc_wan_chain_ingress_root.as_fd().as_raw_fd();
+        let egress_root_fd = egress_skel.progs.tc_wan_chain_egress_root.as_fd().as_raw_fd();
+        let ing_next_fd = ingress_skel.maps.wan_ingress_root_next_stage.as_fd().as_raw_fd();
+        let eg_next_fd = egress_skel.maps.wan_egress_root_next_stage.as_fd().as_raw_fd();
 
         pinned_map(&tc_pipe_root_progs_path())?.update(
             &ifindex.to_ne_bytes(),
@@ -389,8 +404,10 @@ impl TcChainManager {
         )?;
 
         Ok(TcRoots {
-            _wan_chain_skel: skel,
-            _wan_chain_backing: back,
+            _wan_ingress_root_skel: ingress_skel,
+            _wan_ingress_root_backing: ingress_back,
+            _wan_egress_root_skel: egress_skel,
+            _wan_egress_root_backing: egress_back,
             wan_ingress_root_next_stage_fd: ing_next_fd,
             wan_egress_root_next_stage_fd: eg_next_fd,
         })

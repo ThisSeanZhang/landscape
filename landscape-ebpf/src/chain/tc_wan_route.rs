@@ -9,20 +9,20 @@ use crate::chain::tc_manager::{
 use crate::landscape::{pin_and_reuse_map, OwnedOpenObject, TcHookProxy};
 use crate::MAP_PATHS;
 
-mod tc_intro_skel {
-    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/tc_intro.skel.rs"));
+mod tc_wan_ingress_intro_skel {
+    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/tc_wan_ingress_intro.skel.rs"));
 }
-use tc_intro_skel::{TcIntroSkel, TcIntroSkelBuilder};
+use tc_wan_ingress_intro_skel::{TcWanIngressIntroSkel, TcWanIngressIntroSkelBuilder};
 
-mod tc_wan_egress_chain_skel {
-    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/tc_wan_egress_chain.skel.rs"));
+mod tc_wan_egress_intro_skel {
+    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/tc_wan_egress_intro.skel.rs"));
 }
-use tc_wan_egress_chain_skel::{TcWanEgressChainSkel, TcWanEgressChainSkelBuilder};
+use tc_wan_egress_intro_skel::{TcWanEgressIntroSkel, TcWanEgressIntroSkelBuilder};
 
 pub struct TcWanRouteHandle {
-    _intro_skel: TcIntroSkel<'static>,
+    _intro_skel: TcWanIngressIntroSkel<'static>,
     _intro_backing: OwnedOpenObject,
-    _egress_intro_skel: TcWanEgressChainSkel<'static>,
+    _egress_intro_skel: TcWanEgressIntroSkel<'static>,
     _egress_intro_backing: OwnedOpenObject,
     ingress_hook: Option<TcHookProxy>,
     egress_hook: Option<TcHookProxy>,
@@ -47,8 +47,8 @@ pub fn init_tc_wan_route(ifindex: u32, has_mac: bool) -> LdEbpfResult<TcWanRoute
     let l3_offset: u32 = if has_mac { 14 } else { 0 };
 
     let (intro_backing, obj) = OwnedOpenObject::new();
-    let builder = TcIntroSkelBuilder::default();
-    let mut open_skel = bpf_ctx!(builder.open(obj), "open per-if tc_intro")?;
+    let builder = TcWanIngressIntroSkelBuilder::default();
+    let mut open_skel = bpf_ctx!(builder.open(obj), "open per-if tc_wan_ingress_intro")?;
     open_skel.maps.rodata_data.as_deref_mut().unwrap().current_l3_offset = l3_offset;
     crate::map_setting::reuse_pinned_map_or_recreate(
         &mut open_skel.maps.tc_pipe_root_progs,
@@ -58,14 +58,14 @@ pub fn init_tc_wan_route(ifindex: u32, has_mac: bool) -> LdEbpfResult<TcWanRoute
         &mut open_skel.maps.wan_intro_dispatch_map,
         &wan_intro_dispatch_path(),
     );
-    let intro_skel = bpf_ctx!(open_skel.load(), "load per-if tc_intro")?;
+    let intro_skel = bpf_ctx!(open_skel.load(), "load per-if tc_wan_ingress_intro")?;
     let mut ingress_hook =
         TcHookProxy::new(&intro_skel.progs.tc_wan_intro, ifindex as i32, libbpf_rs::TC_INGRESS, 1);
     ingress_hook.attach();
 
     let (egress_intro_backing, egress_obj) = OwnedOpenObject::new();
-    let builder = TcWanEgressChainSkelBuilder::default();
-    let mut open_skel = bpf_ctx!(builder.open(egress_obj), "open per-if tc_wan_egress_chain")?;
+    let builder = TcWanEgressIntroSkelBuilder::default();
+    let mut open_skel = bpf_ctx!(builder.open(egress_obj), "open per-if tc_wan_egress_intro")?;
     open_skel.maps.rodata_data.as_deref_mut().unwrap().current_l3_offset = l3_offset;
     crate::map_setting::reuse_pinned_map_or_recreate(
         &mut open_skel.maps.tc_wan_egress_roots,
@@ -127,7 +127,7 @@ pub fn init_tc_wan_route(ifindex: u32, has_mac: bool) -> LdEbpfResult<TcWanRoute
         pin_and_reuse_map(&mut open_skel.maps.ip_mac_v6, &MAP_PATHS.ip_mac_v6),
         "tc_wan_egress pin ip_mac_v6"
     )?;
-    let egress_intro_skel = bpf_ctx!(open_skel.load(), "load per-if tc_wan_egress_chain")?;
+    let egress_intro_skel = bpf_ctx!(open_skel.load(), "load per-if tc_wan_egress_intro")?;
     let mut egress_hook = TcHookProxy::new(
         &egress_intro_skel.progs.tc_wan_egress_intro,
         ifindex as i32,
