@@ -70,7 +70,8 @@ pub async fn create_route_wan_service(
 
     match LAND_ARGS.route_mode {
         landscape_common::args::RouteMode::Xdp => {
-            let xdp_handle = landscape_ebpf::chain::xdp_wan_route::init_xdp_wan_route(ifindex);
+            let xdp_handle =
+                landscape_ebpf::chain::xdp_wan_route::init_xdp_wan_route(ifindex, has_mac);
             if let Err(ref err) = xdp_handle {
                 tracing::error!("failed to start xdp wan route for {iface_name}: {err}");
                 service_status.just_change_status(ServiceStatus::Failed);

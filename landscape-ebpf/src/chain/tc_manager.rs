@@ -143,13 +143,16 @@ fn pinned_map(path: &Path) -> LdEbpfResult<MapHandle> {
     })
 }
 
-struct TcRoots {
-    _wan_ingress_root_skel: tc_wan_ingress_root_skel::TcWanIngressRootSkel<'static>,
-    _wan_ingress_root_backing: OwnedOpenObject,
-    _wan_egress_root_skel: tc_wan_egress_root_skel::TcWanEgressRootSkel<'static>,
-    _wan_egress_root_backing: OwnedOpenObject,
-    wan_ingress_root_next_stage_fd: i32,
-    wan_egress_root_next_stage_fd: i32,
+struct IngressRoot {
+    _skel: tc_wan_ingress_root_skel::TcWanIngressRootSkel<'static>,
+    _backing: OwnedOpenObject,
+    next_stage_fd: i32,
+}
+
+struct EgressRoot {
+    _skel: tc_wan_egress_root_skel::TcWanEgressRootSkel<'static>,
+    _backing: OwnedOpenObject,
+    next_stage_fd: i32,
 }
 
 pub struct StageEntry {
@@ -160,7 +163,8 @@ pub struct StageEntry {
 }
 
 struct IfState {
-    roots: Option<TcRoots>,
+    ingress_root: Option<IngressRoot>,
+    egress_root: Option<EgressRoot>,
     stages: BTreeMap<StageType, StageEntry>,
     has_mac: bool,
 }
@@ -168,7 +172,8 @@ struct IfState {
 impl Default for IfState {
     fn default() -> Self {
         Self {
-            roots: None,
+            ingress_root: None,
+            egress_root: None,
             stages: BTreeMap::new(),
             has_mac: false,
         }
@@ -340,16 +345,34 @@ impl TcChainManager {
     ) -> LdEbpfResult<()> {
         let state = inner.interfaces.entry(ifindex).or_default();
         state.has_mac = has_mac;
-        if state.roots.is_some() {
-            return Ok(());
+        let l3_offset: u32 = if has_mac { 14 } else { 0 };
+        if state.ingress_root.is_none() {
+            state.ingress_root = Some(self.create_ingress_root(ifindex, l3_offset)?);
         }
-        state.roots = Some(self.create_roots(ifindex, has_mac)?);
+        if state.egress_root.is_none() {
+            state.egress_root = Some(self.create_egress_roots(ifindex)?);
+        }
         Ok(())
     }
 
-    fn create_roots(&self, ifindex: u32, has_mac: bool) -> LdEbpfResult<TcRoots> {
-        let l3_offset: u32 = if has_mac { 14 } else { 0 };
+    pub fn ensure_egress_roots_only(&self, ifindex: u32) -> LdEbpfResult<()> {
+        let mut inner = self.inner.lock().unwrap();
+        self.ensure_egress_roots_only_locked(&mut inner, ifindex)
+    }
 
+    fn ensure_egress_roots_only_locked(
+        &self,
+        inner: &mut ManagerInner,
+        ifindex: u32,
+    ) -> LdEbpfResult<()> {
+        let state = inner.interfaces.entry(ifindex).or_default();
+        if state.egress_root.is_none() {
+            state.egress_root = Some(self.create_egress_roots(ifindex)?);
+        }
+        Ok(())
+    }
+
+    fn create_ingress_root(&self, ifindex: u32, l3_offset: u32) -> LdEbpfResult<IngressRoot> {
         let ingress_builder = TcWanIngressRootSkelBuilder::default();
         let (ingress_back, ingress_obj) = OwnedOpenObject::new();
         let mut ingress_open_skel =
@@ -364,22 +387,8 @@ impl TcChainManager {
 
         let ingress_skel = bpf_ctx!(ingress_open_skel.load(), "load tc_wan_ingress_root")?;
 
-        let egress_builder = TcWanEgressRootSkelBuilder::default();
-        let (egress_back, egress_obj) = OwnedOpenObject::new();
-        let mut egress_open_skel =
-            bpf_ctx!(egress_builder.open(egress_obj), "open tc_wan_egress_root")?;
-
-        pin_and_reuse_map(
-            &mut egress_open_skel.maps.tc_pipe_exits_wan_egress,
-            &tc_pipe_exits_wan_egress_path(),
-        )?;
-
-        let egress_skel = bpf_ctx!(egress_open_skel.load(), "load tc_wan_egress_root")?;
-
         let ingress_root_fd = ingress_skel.progs.tc_wan_chain_ingress_root.as_fd().as_raw_fd();
-        let egress_root_fd = egress_skel.progs.tc_wan_chain_egress_root.as_fd().as_raw_fd();
         let ing_next_fd = ingress_skel.maps.wan_ingress_root_next_stage.as_fd().as_raw_fd();
-        let eg_next_fd = egress_skel.maps.wan_egress_root_next_stage.as_fd().as_raw_fd();
 
         pinned_map(&tc_pipe_root_progs_path())?.update(
             &ifindex.to_ne_bytes(),
@@ -397,19 +406,39 @@ impl TcChainManager {
             MapFlags::ANY,
         )?;
 
+        Ok(IngressRoot {
+            _skel: ingress_skel,
+            _backing: ingress_back,
+            next_stage_fd: ing_next_fd,
+        })
+    }
+
+    fn create_egress_roots(&self, ifindex: u32) -> LdEbpfResult<EgressRoot> {
+        let egress_builder = TcWanEgressRootSkelBuilder::default();
+        let (egress_back, egress_obj) = OwnedOpenObject::new();
+        let mut egress_open_skel =
+            bpf_ctx!(egress_builder.open(egress_obj), "open tc_wan_egress_root")?;
+
+        pin_and_reuse_map(
+            &mut egress_open_skel.maps.tc_pipe_exits_wan_egress,
+            &tc_pipe_exits_wan_egress_path(),
+        )?;
+
+        let egress_skel = bpf_ctx!(egress_open_skel.load(), "load tc_wan_egress_root")?;
+
+        let egress_root_fd = egress_skel.progs.tc_wan_chain_egress_root.as_fd().as_raw_fd();
+        let eg_next_fd = egress_skel.maps.wan_egress_root_next_stage.as_fd().as_raw_fd();
+
         pinned_map(&tc_wan_egress_roots_path())?.update(
             &ifindex.to_ne_bytes(),
             &egress_root_fd.to_ne_bytes(),
             MapFlags::ANY,
         )?;
 
-        Ok(TcRoots {
-            _wan_ingress_root_skel: ingress_skel,
-            _wan_ingress_root_backing: ingress_back,
-            _wan_egress_root_skel: egress_skel,
-            _wan_egress_root_backing: egress_back,
-            wan_ingress_root_next_stage_fd: ing_next_fd,
-            wan_egress_root_next_stage_fd: eg_next_fd,
+        Ok(EgressRoot {
+            _skel: egress_skel,
+            _backing: egress_back,
+            next_stage_fd: eg_next_fd,
         })
     }
 
@@ -459,15 +488,40 @@ impl TcChainManager {
 
     fn rebuild(&self, ifindex: u32, chain: ChainDir) -> LdEbpfResult<()> {
         let mut inner = self.inner.lock().unwrap();
+
+        if matches!(chain, ChainDir::WanIngress)
+            && !inner.interfaces.get(&ifindex).and_then(|s| s.ingress_root.as_ref()).is_some()
+        {
+            return Ok(());
+        }
+
         let has_mac = inner.interfaces.get(&ifindex).map(|s| s.has_mac).unwrap_or(false);
-        self.ensure_roots_locked(&mut inner, ifindex, has_mac)?;
+
+        {
+            let state = inner.interfaces.entry(ifindex).or_default();
+            state.has_mac = has_mac;
+            match chain {
+                ChainDir::WanIngress => {
+                    if state.ingress_root.is_none() {
+                        let l3_offset: u32 = if has_mac { 14 } else { 0 };
+                        state.ingress_root = Some(self.create_ingress_root(ifindex, l3_offset)?);
+                    }
+                    if state.egress_root.is_none() {
+                        state.egress_root = Some(self.create_egress_roots(ifindex)?);
+                    }
+                }
+                ChainDir::WanEgress => {
+                    if state.egress_root.is_none() {
+                        state.egress_root = Some(self.create_egress_roots(ifindex)?);
+                    }
+                }
+            }
+        }
 
         let state = inner.interfaces.get_mut(&ifindex).unwrap();
-        let roots = state.roots.as_ref().unwrap();
-
         let root_next_stage_fd = match chain {
-            ChainDir::WanIngress => roots.wan_ingress_root_next_stage_fd,
-            ChainDir::WanEgress => roots.wan_egress_root_next_stage_fd,
+            ChainDir::WanIngress => state.ingress_root.as_ref().unwrap().next_stage_fd,
+            ChainDir::WanEgress => state.egress_root.as_ref().unwrap().next_stage_fd,
         };
 
         for (_, entry) in &state.stages {
@@ -486,6 +540,10 @@ impl TcChainManager {
             .iter()
             .filter(|(k, _)| !matches!((k, chain), (StageType::Pppoe, ChainDir::WanIngress)))
             .map(|(_, v)| v)
+            .filter(|v| match chain {
+                ChainDir::WanIngress => v.wan_ingress_prog_fd != 0,
+                ChainDir::WanEgress => v.wan_egress_prog_fd != 0,
+            })
             .collect();
         if sorted.is_empty() {
             return Ok(());

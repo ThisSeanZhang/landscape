@@ -168,7 +168,7 @@ pub fn attach_tc_mss_egress(ifindex: u32, mtu: u16, has_mac: bool) -> LdEbpfResu
     use std::os::fd::{AsFd, AsRawFd};
 
     let manager = TcChainManager::instance();
-    manager.ensure_roots(ifindex, has_mac)?;
+    manager.ensure_egress_roots_only(ifindex)?;
 
     let builder = tc_mss_skel::TcMssSkelBuilder::default();
     let (backing, obj) = OwnedOpenObject::new();

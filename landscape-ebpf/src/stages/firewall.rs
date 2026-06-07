@@ -191,7 +191,7 @@ pub fn attach_tc_firewall_egress(ifindex: u32, has_mac: bool) -> LdEbpfResult<Tc
     use std::os::fd::{AsFd, AsRawFd};
 
     let manager = TcChainManager::instance();
-    manager.ensure_roots(ifindex, has_mac)?;
+    manager.ensure_egress_roots_only(ifindex)?;
 
     let builder = tc_firewall_skel::TcFirewallSkelBuilder::default();
     let (backing, obj) = OwnedOpenObject::new();

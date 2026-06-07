@@ -24,14 +24,14 @@ impl Drop for PppoeHandle {
     }
 }
 
-pub fn attach_tc_pppoe(ifindex: u32, session_id: u16, has_mac: bool) -> LdEbpfResult<PppoeHandle> {
+pub fn attach_tc_pppoe(ifindex: u32, session_id: u16, _has_mac: bool) -> LdEbpfResult<PppoeHandle> {
     use crate::chain::tc_manager::{
         tc_pipe_exits_wan_egress_path, tc_pipe_exits_wan_ingress_path, StageEntry, StageType,
         TcChainManager,
     };
 
     let manager = TcChainManager::instance();
-    manager.ensure_roots(ifindex, has_mac)?;
+    manager.ensure_egress_roots_only(ifindex)?;
 
     let builder = tc_pppoe_skel::TcPppoeSkelBuilder::default();
     let (backing, obj) = OwnedOpenObject::new();

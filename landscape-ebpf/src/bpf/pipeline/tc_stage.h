@@ -37,6 +37,16 @@ struct {
  *  The Rust side (tc_chain/manager.rs) wires each service's FD into the
  *  predecessor's next-stage slot.
  *
+ *  BPF source files (src/bpf/tc_chain/):
+ *    tc_wan_ingress_intro.bpf.c — WAN ingress classifier (tc_wan_intro)
+ *    tc_wan_ingress_root.bpf.c  — per-WAN ingress chain root
+ *    tc_wan_egress_root.bpf.c   — per-WAN egress chain root
+ *    tc_wan_egress_intro.bpf.c  — WAN egress route + classifier
+ *
+ *  In XDP mode, only the egress root is instantiated (TcChainManager::
+ *  ensure_egress_roots_only), plus tc_wan_egress_intro is attached to
+ *  TC egress for local-outbound traffic. No TC ingress chain is created.
+ *
  *  ─────────────────────────────────────────────────────────────────────────
  *  WAN INGRESS CHAIN
  *  ─────────────────────────────────────────────────────────────────────────
@@ -76,7 +86,7 @@ struct {
  *                ├─ same WAN → bpf_tail_call(&tc_wan_egress_roots, target)
  *                └─ cross WAN → sets FORWARDED + bpf_redirect(target, 0)
  *
- *    tc_wan_chain_egress_root (per-WAN-interface)
+ *    tc_wan_chain_egress_root (per-WAN-interface, in tc_wan_egress_root.bpf.c)
  *      ├─ bpf_tail_call(skb, &wan_egress_root_next_stage, 0)
  *      │    └─ MSS
  *      │         └─ TC_CHAIN_WAN_EGRESS(skb) → NAT
@@ -113,7 +123,8 @@ struct {
  *  ============================================================================
  *
  *  Chain roots are independent programs that declare their own
- *  `wan_ingress_root_next_stage` / `wan_egress_root_next_stage`
+ *  `wan_ingress_root_next_stage` (in tc_wan_ingress_root.bpf.c)
+ *  and `wan_egress_root_next_stage` (in tc_wan_egress_root.bpf.c)
  *  maps (max_entries=1 each, no tc_stage.h dependency).
  *
  *  Intro → tc_wan_egress_roots[ifindex]    → tc_wan_chain_egress_root  (WAN egress)
