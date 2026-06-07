@@ -330,6 +330,7 @@ static __always_inline void xdp_setting_cache_in_wan_v6(struct xdp_md *ctx,
 
 SEC("xdp")
 int xdp_wan_route_ingress(struct xdp_md *ctx) {
+#define BPF_LOG_TOPIC "xdp_wan_route_ingress"
     void *data = (void *)(long)ctx->data;
     void *data_end = (void *)(long)ctx->data_end;
     struct ethhdr *eth = data;
@@ -376,4 +377,5 @@ int xdp_wan_route_ingress(struct xdp_md *ctx) {
     }
 
     return XDP_PASS;
+#undef BPF_LOG_TOPIC
 }

@@ -386,6 +386,16 @@ static __always_inline int xdp_cache_pick_wan_v4(struct xdp_md *ctx,
         }
     }
 
+    if (info->is_docker) {
+        struct xdp_docker_handoff ho = {
+            .magic = XDP_DOCKER_HANDOFF_MAGIC,
+            .mark = flow_id,
+            .target_ifindex = info->ifindex,
+        };
+        xdp_set_docker_meta(ctx, &ho);
+        return XDP_PASS;
+    }
+
     struct xdp_pipe_meta meta = {};
     xdp_get_meta(ctx, &meta);
     meta.mark = flow_id;
@@ -463,6 +473,16 @@ static __always_inline int xdp_cache_pick_wan_v6(struct xdp_md *ctx,
         }
     }
 
+    if (info->is_docker) {
+        struct xdp_docker_handoff ho = {
+            .magic = XDP_DOCKER_HANDOFF_MAGIC,
+            .mark = flow_id,
+            .target_ifindex = info->ifindex,
+        };
+        xdp_set_docker_meta(ctx, &ho);
+        return XDP_PASS;
+    }
+
     struct xdp_pipe_meta meta = {};
     xdp_get_meta(ctx, &meta);
     meta.mark = flow_id;
@@ -483,6 +503,7 @@ static __always_inline int xdp_lan_redirect_v4(struct xdp_md *ctx,
     struct lan_route_key_v4 key = {.prefixlen = 32, .addr = context->daddr};
     struct mac_key_v4 mac_key = {.addr = context->daddr};
     struct mac_value_v4 *mac_val;
+    int ret;
 
     struct lan_route_info_v4 *lan_info = bpf_map_lookup_elem(&rt4_lan_map, &key);
     if (lan_info == NULL) return 0;
@@ -521,8 +542,11 @@ static __always_inline int xdp_lan_redirect_v4(struct xdp_md *ctx,
             if ((void *)(eth + 1) > data_end) return XDP_PASS;
             __builtin_memcpy(eth->h_dest, mac_val->mac, 6);
             __builtin_memcpy(eth->h_source, lan_info->mac_addr, 6);
-            ld_bpf_log("bpf_redirect 1");
-            return bpf_redirect(lan_info->ifindex, 0);
+            PRINT_MAC_ADDR(lan_info->mac_addr);
+            ret = bpf_redirect(lan_info->ifindex, 0);
+            ld_bpf_log("bpf_redirect 1 %pI4 -> %pI4 idx: %d ret: %d", &context->saddr, &context->daddr, lan_info->ifindex, ret);
+            PRINT_MAC_ADDR(eth->h_dest);
+            return ret;
         }
 
         struct bpf_fib_lookup fib = {};
@@ -655,6 +679,15 @@ static __always_inline int xdp_search_route_in_lan_v4(struct xdp_md *ctx,
         if (target) {
             bpf_printk("[wan_cache_r] v4 HIT src=%pI4 dst=%pI4 ifindex=%u has_mac=%u",
                        &context->saddr, &context->daddr, target->ifindex, target->has_mac);
+            if (target->is_docker) {
+                struct xdp_docker_handoff ho = {
+                    .magic = XDP_DOCKER_HANDOFF_MAGIC,
+                    .mark = target->mark_value,
+                    .target_ifindex = target->ifindex,
+                };
+                xdp_set_docker_meta(ctx, &ho);
+                return XDP_PASS;
+            }
             struct wan_ip_info_key wan_key = {.ifindex = target->ifindex,
                                               .l3_protocol = LANDSCAPE_IPV4_TYPE};
             struct wan_ip_info_value *wan_info = bpf_map_lookup_elem(&wan_ip_binding, &wan_key);
@@ -698,6 +731,15 @@ static __always_inline int xdp_search_route_in_lan_v4(struct xdp_md *ctx,
         if (target) {
             *flow_mark = target->mark_value;
             if (target->ifindex != 0) {
+                if (target->is_docker) {
+                    struct xdp_docker_handoff ho = {
+                        .magic = XDP_DOCKER_HANDOFF_MAGIC,
+                        .mark = target->mark_value,
+                        .target_ifindex = target->ifindex,
+                    };
+                    xdp_set_docker_meta(ctx, &ho);
+                    return XDP_PASS;
+                }
                 if (target->has_mac) {
                     struct mac_value_v4 *mac_val =
                         bpf_map_lookup_elem(&ip_mac_v4, &target->gate_addr);
@@ -740,6 +782,15 @@ static __always_inline int xdp_search_route_in_lan_v6(struct xdp_md *ctx,
     if (wan_cache) {
         struct rt_cache_value_v6 *target = bpf_map_lookup_elem(wan_cache, &search_key);
         if (target) {
+            if (target->is_docker) {
+                struct xdp_docker_handoff ho = {
+                    .magic = XDP_DOCKER_HANDOFF_MAGIC,
+                    .mark = target->mark_value,
+                    .target_ifindex = target->ifindex,
+                };
+                xdp_set_docker_meta(ctx, &ho);
+                return XDP_PASS;
+            }
             bpf_printk("[wan_cache_r] v6 HIT src=%pI6c dst=%pI6c ifindex=%u has_mac=%u",
                        &context->saddr, &context->daddr, target->ifindex, target->has_mac);
             struct wan_ip_info_key wan_key = {.ifindex = target->ifindex,
@@ -787,6 +838,15 @@ static __always_inline int xdp_search_route_in_lan_v6(struct xdp_md *ctx,
         if (target) {
             *flow_mark = target->mark_value;
             if (target->ifindex != 0) {
+                if (target->is_docker) {
+                    struct xdp_docker_handoff ho = {
+                        .magic = XDP_DOCKER_HANDOFF_MAGIC,
+                        .mark = target->mark_value,
+                        .target_ifindex = target->ifindex,
+                    };
+                    xdp_set_docker_meta(ctx, &ho);
+                    return XDP_PASS;
+                }
                 if (target->has_mac) {
                     struct mac_key_v6 gw_key = {};
                     COPY_ADDR_FROM(gw_key.addr.bytes, target->gate_addr.bytes);

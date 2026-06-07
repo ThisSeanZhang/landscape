@@ -6,7 +6,7 @@ use crate::chain::xdp_manager::{
     xdp_lan_pipe_root_progs_path, xdp_pipe_exits_lan_path, xdp_pipe_exits_wan_path,
     xdp_pipe_root_progs_path, XdpChainManager,
 };
-use crate::landscape::{pin_and_reuse_map, OwnedOpenObject};
+use crate::landscape::{pin_and_reuse_map, OwnedOpenObject, TcHookProxy};
 use crate::MAP_PATHS;
 
 pub(crate) mod xdp_lan_route_skel {
@@ -15,10 +15,18 @@ pub(crate) mod xdp_lan_route_skel {
 
 use xdp_lan_route_skel::XdpLanRouteSkelBuilder;
 
+mod tc_docker_handoff_skel {
+    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/tc_docker_handoff.skel.rs"));
+}
+use tc_docker_handoff_skel::{TcDockerHandoffSkel, TcDockerHandoffSkelBuilder};
+
 pub struct XdpLanRouteHandle {
     _skel: xdp_lan_route_skel::XdpLanRouteSkel<'static>,
     _backing: OwnedOpenObject,
     _link: Option<libbpf_rs::Link>,
+    _docker_skel: TcDockerHandoffSkel<'static>,
+    _docker_backing: OwnedOpenObject,
+    _docker_hook: TcHookProxy,
 }
 
 unsafe impl Send for XdpLanRouteHandle {}
@@ -112,5 +120,24 @@ pub fn init_xdp_lan_route(ifindex: u32) -> LdEbpfResult<XdpLanRouteHandle> {
 
     XdpChainManager::instance().ensure_roots(ifindex)?;
 
-    Ok(XdpLanRouteHandle { _skel: skel, _backing: backing, _link: Some(link) })
+    let (dh_backing, dh_obj) = OwnedOpenObject::new();
+    let dh_builder = TcDockerHandoffSkelBuilder::default();
+    let dh_open = bpf_ctx!(dh_builder.open(dh_obj), "open tc_docker_handoff skeleton")?;
+    let dh_skel = bpf_ctx!(dh_open.load(), "load tc_docker_handoff skeleton")?;
+    let mut docker_hook = TcHookProxy::new(
+        &dh_skel.progs.tc_docker_handoff,
+        ifindex as i32,
+        libbpf_rs::TC_INGRESS,
+        1,
+    );
+    docker_hook.attach();
+
+    Ok(XdpLanRouteHandle {
+        _skel: skel,
+        _backing: backing,
+        _link: Some(link),
+        _docker_skel: dh_skel,
+        _docker_backing: dh_backing,
+        _docker_hook: docker_hook,
+    })
 }

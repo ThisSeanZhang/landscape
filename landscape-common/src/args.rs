@@ -80,8 +80,8 @@ pub struct WebCommArgs {
     pub ebpf_map_space: String,
 
     /// Route mode: tc or xdp
-    /// [default: xdp]
-    #[arg(long = "route-mode", env = "LANDSCAPE_ROUTE_MODE", default_value = "xdp")]
+    /// [default: tc]
+    #[arg(long = "route-mode", env = "LANDSCAPE_ROUTE_MODE", default_value = "tc")]
     pub route_mode: RouteMode,
 
     /// Manager user [default: root]
