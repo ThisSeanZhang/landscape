@@ -8,11 +8,11 @@
 #include "scanner/xdp_common.h"
 #include "scanner/xdp_scanner4.h"
 #include "scanner/xdp_scanner6.h"
-#include "pipeline/pipeline.h"
-#include "pipeline/xdp_wan_maps.h"
+#include "chain/xdp_meta.h"
+#include "chain/xdp_wan_maps.h"
 #include "nat/xdp_csum_helpers.h"
-#include "pipeline/xdp_lan_maps.h"
-#include "pipeline/stage.h"
+#include "chain/xdp_lan_maps.h"
+#include "chain/xdp_stage.h"
 
 char LICENSE[] SEC("license") = "GPL";
 

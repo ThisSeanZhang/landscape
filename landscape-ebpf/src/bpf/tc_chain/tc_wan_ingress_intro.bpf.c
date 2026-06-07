@@ -5,7 +5,7 @@
 
 #include "landscape.h"
 
-#include "pipeline/tc_cb.h"
+#include "chain/tc_cb.h"
 
 #define TC_INTRO_IFINDEX_TYPE 2
 

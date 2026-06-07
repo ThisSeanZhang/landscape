@@ -5,9 +5,9 @@
 #include <bpf/bpf_tracing.h>
 
 #include "landscape.h"
-#include "pipeline/tc_stage.h"
-#include "pipeline/tc_cb.h"
-#include "pipeline/tc_wan_exit_maps.h"
+#include "chain/tc_stage.h"
+#include "chain/tc_cb.h"
+#include "chain/tc_wan_exit_maps.h"
 #include "land_nat4_v3.h"
 #include "land_nat6_v3.h"
 #include "nat/nat_packet.h"

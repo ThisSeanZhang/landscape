@@ -5,7 +5,7 @@
 #include <bpf/bpf_tracing.h>
 
 #include "landscape.h"
-#include "pipeline/pipeline.h"
+#include "chain/xdp_meta.h"
 
 #define TEST_ETH_P_IP 0x0800
 #define TEST_ETH_P_IPV6 0x86DD

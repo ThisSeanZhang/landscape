@@ -4,7 +4,7 @@
 #include <bpf/bpf_helpers.h>
 
 #include "landscape.h"
-#include "pipeline/pipeline.h"
+#include "chain/xdp_meta.h"
 #include "route/route_index.h"
 
 char LICENSE[] SEC("license") = "GPL";

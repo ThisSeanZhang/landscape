@@ -5,9 +5,9 @@
 #include <bpf/bpf_tracing.h>
 
 #include "landscape.h"
-#include "pipeline/pipeline.h"
-#include "pipeline/xdp_wan_maps.h"
-#include "pipeline/xdp_lan_maps.h"
+#include "chain/xdp_meta.h"
+#include "chain/xdp_wan_maps.h"
+#include "chain/xdp_lan_maps.h"
 
 char LICENSE[] SEC("license") = "GPL";
 

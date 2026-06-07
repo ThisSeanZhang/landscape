@@ -5,8 +5,8 @@
 
 #include "landscape.h"
 #include "pkg_def.h"
-#include "pipeline/tc_stage.h"
-#include "pipeline/tc_wan_exit_maps.h"
+#include "chain/tc_stage.h"
+#include "chain/tc_wan_exit_maps.h"
 
 char LICENSE[] SEC("license") = "Dual BSD/GPL";
 

@@ -63,7 +63,7 @@ struct {
  * Meta:
  *   root initializes meta.mark.  Each node may read and modify meta
  *   before tailcalling the next.  Use xdp_get_meta() / xdp_set_meta()
- *   from pipeline/pipeline.h.
+ *   from chain/xdp_meta.h.
  */
 
 #endif /* __LD_STAGE_H_ */

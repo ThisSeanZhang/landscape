@@ -173,7 +173,7 @@ struct {
  *        return TC_ACT_OK;
  *    }
  *
- *  Fallback exit maps (declared in pipeline/tc_wan_exit_maps.h):
+ *  Fallback exit maps (declared in chain/tc_wan_exit_maps.h):
  *    tc_pipe_exits_wan_ingress — WAN ingress exit
  *    tc_pipe_exits_wan_egress  — WAN egress exit
  *

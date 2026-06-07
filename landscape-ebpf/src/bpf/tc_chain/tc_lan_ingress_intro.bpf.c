@@ -10,7 +10,7 @@
 #include "route_v6.h"
 #include "route/route_packet.h"
 
-#include "pipeline/tc_cb.h"
+#include "chain/tc_cb.h"
 
 char LICENSE[] SEC("license") = "GPL";
 
