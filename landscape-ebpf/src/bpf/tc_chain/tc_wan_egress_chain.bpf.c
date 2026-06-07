@@ -45,7 +45,9 @@ static __always_inline int tc_lan_redirect_v4(struct __sk_buff *skb, u32 current
 
     if (lan_info == NULL) return TC_ACT_OK;
 
-    if (lan_info->route_type == ROUTE_TYPE_WAN) return TC_ACT_UNSPEC;
+    if (lan_info->route_type == ROUTE_TYPE_WAN) {
+        if (lan_info->addr == context->daddr) return TC_ACT_UNSPEC;
+    }
 
     if (unlikely(lan_info->ifindex == skb->ifindex)) return TC_ACT_UNSPEC;
 
@@ -114,7 +116,9 @@ static __always_inline int tc_lan_redirect_v6(struct __sk_buff *skb, u32 current
 
     if (lan_info == NULL) return TC_ACT_OK;
 
-    if (lan_info->route_type == ROUTE_TYPE_WAN) return TC_ACT_UNSPEC;
+    if (lan_info->route_type == ROUTE_TYPE_WAN) {
+        if (ip_addr_equal_in6(&lan_info->addr, &context->daddr)) return TC_ACT_UNSPEC;
+    }
 
     if (unlikely(lan_info->ifindex == skb->ifindex)) return TC_ACT_UNSPEC;
 

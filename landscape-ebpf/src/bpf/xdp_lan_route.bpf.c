@@ -488,6 +488,7 @@ static __always_inline int xdp_lan_redirect_v4(struct xdp_md *ctx,
     if (lan_info == NULL) return 0;
 
     if (lan_info->route_type == ROUTE_TYPE_WAN) {
+        if (lan_info->addr == context->daddr) return XDP_PASS;
         if (lan_info->has_mac) {
             mac_val = bpf_map_lookup_elem(&ip_mac_v4, &mac_key);
             if (mac_val) {
@@ -567,6 +568,7 @@ static __always_inline int xdp_lan_redirect_v6(struct xdp_md *ctx,
     if (lan_info == NULL) return 0;
 
     if (lan_info->route_type == ROUTE_TYPE_WAN) {
+        if (ip_addr_equal_in6(&lan_info->addr, &context->daddr)) return XDP_PASS;
         if (lan_info->has_mac) {
             struct mac_key_v6 dst_key = {};
             COPY_ADDR_FROM(dst_key.addr.all, context->daddr.all);
