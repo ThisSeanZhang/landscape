@@ -6,13 +6,13 @@ use crate::chain::tc_manager::TcChainManager;
 use crate::landscape::{pin_and_reuse_map, OwnedOpenObject, TcHookProxy};
 use crate::MAP_PATHS;
 
-mod tc_lan_ingress_chain_skel {
-    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/tc_lan_ingress_chain.skel.rs"));
+mod tc_lan_ingress_intro_skel {
+    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/tc_lan_ingress_intro.skel.rs"));
 }
-use tc_lan_ingress_chain_skel::{TcLanIngressChainSkel, TcLanIngressChainSkelBuilder};
+use tc_lan_ingress_intro_skel::{TcLanIngressIntroSkel, TcLanIngressIntroSkelBuilder};
 
 pub struct TcLanRouteHandle {
-    _intro_skel: TcLanIngressChainSkel<'static>,
+    _intro_skel: TcLanIngressIntroSkel<'static>,
     _intro_backing: OwnedOpenObject,
     ingress_hook: Option<TcHookProxy>,
     ifindex: u32,
@@ -35,8 +35,8 @@ pub fn init_tc_lan_route(ifindex: u32, has_mac: bool) -> LdEbpfResult<TcLanRoute
     let l3_offset: u32 = if has_mac { 14 } else { 0 };
 
     let (intro_backing, obj) = OwnedOpenObject::new();
-    let builder = TcLanIngressChainSkelBuilder::default();
-    let mut open_skel = bpf_ctx!(builder.open(obj), "open per-if tc_lan_ingress_chain")?;
+    let builder = TcLanIngressIntroSkelBuilder::default();
+    let mut open_skel = bpf_ctx!(builder.open(obj), "open per-if tc_lan_ingress_intro")?;
     open_skel.maps.rodata_data.as_deref_mut().unwrap().current_l3_offset = l3_offset;
     crate::bpf_ctx!(
         pin_and_reuse_map(&mut open_skel.maps.flow_match_map, &MAP_PATHS.flow_match_map),
@@ -94,7 +94,7 @@ pub fn init_tc_lan_route(ifindex: u32, has_mac: bool) -> LdEbpfResult<TcLanRoute
         pin_and_reuse_map(&mut open_skel.maps.ip_mac_v6, &MAP_PATHS.ip_mac_v6),
         "tc_lan_route pin ip_mac_v6"
     )?;
-    let intro_skel = bpf_ctx!(open_skel.load(), "load per-if tc_lan_ingress_chain")?;
+    let intro_skel = bpf_ctx!(open_skel.load(), "load per-if tc_lan_ingress_intro")?;
     let mut ingress_hook = TcHookProxy::new(
         &intro_skel.progs.tc_lan_ingress_intro,
         ifindex as i32,

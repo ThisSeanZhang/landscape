@@ -544,7 +544,8 @@ static __always_inline int xdp_lan_redirect_v4(struct xdp_md *ctx,
             __builtin_memcpy(eth->h_source, lan_info->mac_addr, 6);
             PRINT_MAC_ADDR(lan_info->mac_addr);
             ret = bpf_redirect(lan_info->ifindex, 0);
-            ld_bpf_log("bpf_redirect 1 %pI4 -> %pI4 idx: %d ret: %d", &context->saddr, &context->daddr, lan_info->ifindex, ret);
+            ld_bpf_log("bpf_redirect 1 %pI4 -> %pI4 idx: %d ret: %d", &context->saddr,
+                       &context->daddr, lan_info->ifindex, ret);
             PRINT_MAC_ADDR(eth->h_dest);
             return ret;
         }
