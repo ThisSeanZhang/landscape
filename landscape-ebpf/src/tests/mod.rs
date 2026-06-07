@@ -1,5 +1,4 @@
 use std::fmt::Debug;
-use std::net::Ipv4Addr;
 use std::net::Ipv6Addr;
 use std::sync::atomic::{AtomicU32, Ordering};
 
@@ -7,9 +6,6 @@ use etherparse::PacketBuilder;
 
 use zerocopy::FromBytes;
 use zerocopy::IntoBytes;
-
-use crate::tests::test_scanner::types::packet_info;
-use crate::tests::test_scanner::types::u_inet_addr;
 
 static TEST_ID: AtomicU32 = AtomicU32::new(0);
 
@@ -50,10 +46,6 @@ mod xdp_lan_route_test;
 mod xdp_mss_clamp_test;
 mod xdp_nat_test;
 mod xdp_wan_route_test;
-
-pub(crate) mod test_scanner {
-    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/test_scanner.skel.rs"));
-}
 
 pub(crate) mod test_firewall_packet {
     include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/test_firewall_packet.skel.rs"));
@@ -119,66 +111,6 @@ pub(crate) mod test_csum_verify_skel {
     include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/test_csum_verify.skel.rs"));
 }
 
-unsafe impl plain::Plain for packet_info {}
-
-impl u_inet_addr {
-    pub fn to_string_with_proto(&self, l3_protocol: u8) -> String {
-        unsafe {
-            match l3_protocol {
-                0 => {
-                    let ip = Ipv4Addr::from(self.ip.to_be());
-                    ip.to_string()
-                }
-                1 => {
-                    let mut bytes = [0u8; 16];
-                    for i in 0..4 {
-                        bytes[i * 4..(i + 1) * 4].copy_from_slice(&self.ip6[i].to_be_bytes());
-                    }
-                    Ipv6Addr::from(bytes).to_string()
-                }
-                _ => "unknown".into(),
-            }
-        }
-    }
-}
-
-impl std::fmt::Display for packet_info {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let offset = &self.offset;
-        let proto = offset.l3_protocol;
-
-        writeln!(
-            f,
-            "Packet Info:\n\
-            Status: {}\n\
-            Packet Type: {}\n\
-            L3 Protocol: {} | L4 Protocol: {}\n\
-            Fragment Type: {} | Fragment ID: {} | Fragment Offset: {}\n\
-            L3 Offset When Scan: {} | L4 Offset: {}\n\
-            ICMP Error L3 Offset: {} | Inner L4 Offset: {}",
-            offset.status,
-            offset.pkt_type,
-            offset.l3_protocol,
-            offset.l4_protocol,
-            offset.fragment_type,
-            offset.fragment_id,
-            offset.fragment_off,
-            offset.l3_offset_when_scan,
-            offset.l4_offset,
-            offset.icmp_error_l3_offset,
-            offset.icmp_error_inner_l4_offset,
-        )?;
-
-        writeln!(
-            f,
-            "IP Pair:\n  src: {}:{} -> dst: {}:{}",
-            self.ip_pair.src_addr.to_string_with_proto(proto),
-            self.ip_pair.src_port,
-            self.ip_pair.dst_addr.to_string_with_proto(proto),
-            self.ip_pair.dst_port
-        )
-    }
-}
 #[repr(C, packed)]
 #[derive(IntoBytes, FromBytes, Debug, Clone, Copy, Default)]
 pub struct TestSkb {
@@ -243,6 +175,7 @@ fn dummpy_tcp_pkg() -> Vec<u8> {
     payload
 }
 
+#[allow(dead_code)]
 fn dummpy_ipv6_tcp_pkg() -> Vec<u8> {
     let builder = PacketBuilder::ethernet2(
         [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF], //source mac
