@@ -33,8 +33,8 @@ pub static LAND_HOME_PATH: Lazy<PathBuf> = Lazy::new(|| {
 #[derive(Clone, Debug, Default, ValueEnum)]
 pub enum RouteMode {
     #[default]
-    Tc,
     Xdp,
+    Tc,
 }
 
 #[derive(Parser, Debug, Clone, Default)]
@@ -80,8 +80,8 @@ pub struct WebCommArgs {
     pub ebpf_map_space: String,
 
     /// Route mode: tc or xdp
-    /// [default: tc]
-    #[arg(long = "route-mode", env = "LANDSCAPE_ROUTE_MODE", default_value = "tc")]
+    /// [default: xdp]
+    #[arg(long = "route-mode", env = "LANDSCAPE_ROUTE_MODE", default_value = "xdp")]
     pub route_mode: RouteMode,
 
     /// Manager user [default: root]

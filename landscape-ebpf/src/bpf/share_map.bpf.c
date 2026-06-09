@@ -12,6 +12,7 @@
 #include "route/route_maps_v6.h"
 
 #include "neigh_ip.h"
+#include "chain/redirect_able.h"
 
 char LICENSE[] SEC("license") = "Dual BSD/GPL";
 

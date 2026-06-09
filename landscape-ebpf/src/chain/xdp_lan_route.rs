@@ -4,7 +4,7 @@ use crate::bpf_ctx;
 use crate::bpf_error::LdEbpfResult;
 use crate::chain::xdp_manager::{
     xdp_lan_pipe_root_progs_path, xdp_pipe_exits_lan_path, xdp_pipe_exits_wan_path,
-    xdp_pipe_root_progs_path, XdpChainManager,
+    xdp_pipe_root_progs_path, NativeXdpLink, XdpChainManager,
 };
 use crate::landscape::{pin_and_reuse_map, OwnedOpenObject, TcHookProxy};
 use crate::MAP_PATHS;
@@ -21,9 +21,9 @@ mod tc_docker_handoff_skel {
 use tc_docker_handoff_skel::{TcDockerHandoffSkel, TcDockerHandoffSkelBuilder};
 
 pub struct XdpLanRouteHandle {
+    _link: NativeXdpLink,
     _skel: xdp_lan_route_skel::XdpLanRouteSkel<'static>,
     _backing: OwnedOpenObject,
-    _link: Option<libbpf_rs::Link>,
     _docker_skel: TcDockerHandoffSkel<'static>,
     _docker_backing: OwnedOpenObject,
     _docker_hook: TcHookProxy,
@@ -116,7 +116,7 @@ pub fn init_xdp_lan_route(ifindex: u32) -> LdEbpfResult<XdpLanRouteHandle> {
 
     let skel = bpf_ctx!(open_skel.load(), "load xdp_lan_route skeleton")?;
 
-    let link = skel.progs.xdp_lan_route.attach_xdp(ifindex as i32)?;
+    let link = NativeXdpLink::attach(&skel.progs.xdp_lan_route, ifindex)?;
 
     XdpChainManager::instance().ensure_roots(ifindex)?;
 
@@ -133,9 +133,9 @@ pub fn init_xdp_lan_route(ifindex: u32) -> LdEbpfResult<XdpLanRouteHandle> {
     docker_hook.attach();
 
     Ok(XdpLanRouteHandle {
+        _link: link,
         _skel: skel,
         _backing: backing,
-        _link: Some(link),
         _docker_skel: dh_skel,
         _docker_backing: dh_backing,
         _docker_hook: docker_hook,

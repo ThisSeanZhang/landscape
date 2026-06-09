@@ -194,6 +194,7 @@ pub mod nat;
 pub mod route;
 
 pub mod event;
+pub mod redirect_able;
 
 pub(crate) fn init_path(paths: &LandscapeMapPath) {
     let landscape_builder = ShareMapSkelBuilder::default();
@@ -262,6 +263,10 @@ pub(crate) fn init_path(paths: &LandscapeMapPath) {
 
     reuse_pinned_map_or_recreate(&mut landscape_open.maps.ip_mac_v4, &paths.ip_mac_v4);
     reuse_pinned_map_or_recreate(&mut landscape_open.maps.ip_mac_v6, &paths.ip_mac_v6);
+    reuse_pinned_map_or_recreate(
+        &mut landscape_open.maps.xdp_redirect_able,
+        &paths.xdp_redirect_able,
+    );
 
     let _landscape_skel =
         crate::bpf_ctx!(landscape_open.load(), "map_setting load shared maps skeleton failed")

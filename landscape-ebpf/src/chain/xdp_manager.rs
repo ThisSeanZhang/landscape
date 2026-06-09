@@ -1,11 +1,12 @@
 use std::collections::{BTreeMap, HashMap};
+use std::mem::size_of;
 use std::os::fd::{AsFd, AsRawFd};
 use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
 
 use libbpf_rs::libbpf_sys;
 use libbpf_rs::skel::{OpenSkel, SkelBuilder};
-use libbpf_rs::{MapCore, MapFlags};
+use libbpf_rs::{MapCore, MapFlags, Program, Xdp, XdpFlags};
 
 use crate::bpf_ctx;
 use crate::bpf_error::LdEbpfResult;
@@ -144,6 +145,62 @@ pub struct XdpChainManager {
     inner: Mutex<ManagerInner>,
 }
 
+// Landscape owns route interfaces, so native XDP attach intentionally replaces
+// stale programs left by crashes. Drop detaches during normal shutdown; future
+// crash-recovery cleanup can still scan and clear interfaces with disabled
+// route services.
+pub(crate) struct NativeXdpLink {
+    ifindex: i32,
+    prog_fd: i32,
+}
+
+impl NativeXdpLink {
+    pub(crate) fn attach(prog: &Program, ifindex: u32) -> LdEbpfResult<Self> {
+        let ifindex = ifindex as i32;
+        let xdp = Xdp::new(prog.as_fd());
+        let attach_flags = XdpFlags::DRV_MODE;
+
+        crate::bpf_ctx!(xdp.attach(ifindex, attach_flags), "attach native XDP ifindex={ifindex}")?;
+
+        let query = match crate::bpf_ctx!(
+            xdp.query(ifindex, XdpFlags::DRV_MODE),
+            "query native XDP ifindex={ifindex}"
+        ) {
+            Ok(query) => query,
+            Err(err) => {
+                Self::detach(ifindex, prog.as_fd().as_raw_fd());
+                return Err(err.into());
+            }
+        };
+        if query.drv_prog_id == 0 {
+            Self::detach(ifindex, prog.as_fd().as_raw_fd());
+            return Err(crate::bpf_error::LandscapeEbpfError::Context {
+                context: format!("native XDP attach missing drv prog id ifindex={ifindex}"),
+                source: libbpf_rs::Error::from_raw_os_error(libc::ENODEV),
+            });
+        }
+
+        Ok(Self { ifindex, prog_fd: prog.as_fd().as_raw_fd() })
+    }
+
+    fn detach(ifindex: i32, prog_fd: i32) {
+        let mut opts = libbpf_sys::bpf_xdp_attach_opts::default();
+        opts.sz = size_of::<libbpf_sys::bpf_xdp_attach_opts>() as libbpf_sys::size_t;
+        opts.old_prog_fd = prog_fd;
+
+        let ret = unsafe { libbpf_sys::bpf_xdp_detach(ifindex, XdpFlags::DRV_MODE.bits(), &opts) };
+        if ret != 0 {
+            tracing::debug!("detach native XDP ifindex={ifindex} failed: {}", -ret);
+        }
+    }
+}
+
+impl Drop for NativeXdpLink {
+    fn drop(&mut self) {
+        Self::detach(self.ifindex, self.prog_fd);
+    }
+}
+
 impl XdpChainManager {
     pub fn instance() -> &'static Self {
         MANAGER.get_or_init(|| Self::init().expect("XDP chain manager init failed"))
@@ -257,8 +314,8 @@ impl XdpChainManager {
         Ok(())
     }
 
-    pub fn create_wan_intro_link(&self, ifindex: u32) -> LdEbpfResult<libbpf_rs::Link> {
-        let link = self._seed.progs.wan_intro_dispatch.attach_xdp(ifindex as i32)?;
+    pub(crate) fn create_wan_intro_link(&self, ifindex: u32) -> LdEbpfResult<NativeXdpLink> {
+        let link = NativeXdpLink::attach(&self._seed.progs.wan_intro_dispatch, ifindex)?;
         Ok(link)
     }
 

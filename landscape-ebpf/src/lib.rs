@@ -83,6 +83,7 @@ static MAP_PATHS: Lazy<LandscapeMapPath> = Lazy::new(|| {
         ip_mac_v4: PathBuf::from(format!("{}/ip_mac_v4", ebpf_map_path)),
         ip_mac_v6: PathBuf::from(format!("{}/ip_mac_v6", ebpf_map_path)),
 
+        xdp_redirect_able: PathBuf::from(format!("{}/xdp_redirect_able", ebpf_map_path)),
         xdp_base: PathBuf::from(format!("{}/xdp", ebpf_map_path)),
     };
     tracing::info!("ebpf map paths is: {paths:#?}");
@@ -135,6 +136,7 @@ pub(crate) struct LandscapeMapPath {
     pub ip_mac_v4: PathBuf,
     pub ip_mac_v6: PathBuf,
 
+    pub xdp_redirect_able: PathBuf,
     pub xdp_base: PathBuf,
 }
 

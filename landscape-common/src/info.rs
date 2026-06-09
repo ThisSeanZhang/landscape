@@ -7,6 +7,13 @@ use crate::VERSION;
 
 pub static LAND_SYS_BASE_INFO: Lazy<LandscapeSystemInfo> = Lazy::new(LandscapeSystemInfo::new);
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+pub struct XdpRedirectAbleInfo {
+    pub ifname: String,
+    pub redirect_able: bool,
+}
+
 /// System Basic Information
 #[derive(Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]

@@ -67,6 +67,7 @@ pub async fn create_route_wan_service(
 ) {
     service_status.just_change_status(ServiceStatus::Staring);
     tracing::info!("start route wan at ifindex: {ifindex}");
+    landscape_ebpf::map_setting::redirect_able::del_xdp_redirect_able(ifindex);
 
     match LAND_ARGS.route_mode {
         landscape_common::args::RouteMode::Xdp => {
@@ -78,12 +79,14 @@ pub async fn create_route_wan_service(
                 return;
             }
 
+            landscape_ebpf::map_setting::redirect_able::set_xdp_redirect_able(ifindex, true);
             service_status.just_change_status(ServiceStatus::Running);
             tracing::info!("Waiting for external stop signal");
             let _ = service_status.wait_to_stopping().await;
             tracing::info!("Receiving external stop signal");
 
             drop(xdp_handle);
+            landscape_ebpf::map_setting::redirect_able::del_xdp_redirect_able(ifindex);
         }
         landscape_common::args::RouteMode::Tc => {
             let tc_handle =
@@ -102,6 +105,7 @@ pub async fn create_route_wan_service(
             tracing::info!("Receiving external stop signal");
 
             drop(tc_handle);
+            landscape_ebpf::map_setting::redirect_able::del_xdp_redirect_able(ifindex);
         }
     }
 

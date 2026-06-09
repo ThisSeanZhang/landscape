@@ -8,7 +8,7 @@ use crate::bpf_error::LdEbpfResult;
 use crate::chain::tc_manager::{tc_wan_egress_roots_path, TcChainManager};
 use crate::chain::xdp_manager::{
     xdp_lan_pipe_root_progs_path, xdp_pipe_exits_lan_path, xdp_pipe_exits_wan_path,
-    xdp_pipe_root_progs_path, XdpChainManager,
+    xdp_pipe_root_progs_path, NativeXdpLink, XdpChainManager,
 };
 use crate::landscape::{pin_and_reuse_map, OwnedOpenObject, TcHookProxy};
 use crate::MAP_PATHS;
@@ -25,9 +25,9 @@ use tc_wan_egress_intro_skel::TcWanEgressIntroSkelBuilder;
 use xdp_wan_route_skel::XdpWanRouteSkelBuilder;
 
 pub struct XdpWanRouteHandle {
+    _link: NativeXdpLink,
     _skel: xdp_wan_route_skel::XdpWanRouteSkel<'static>,
     _backing: OwnedOpenObject,
-    _link: Option<libbpf_rs::Link>,
     _egress_intro_skel: tc_wan_egress_intro_skel::TcWanEgressIntroSkel<'static>,
     _egress_intro_backing: OwnedOpenObject,
     egress_hook: Option<TcHookProxy>,
@@ -231,9 +231,9 @@ pub fn init_xdp_wan_route(ifindex: u32, has_mac: bool) -> LdEbpfResult<XdpWanRou
     egress_hook.attach();
 
     Ok(XdpWanRouteHandle {
+        _link: link,
         _skel: skel,
         _backing: backing,
-        _link: Some(link),
         _egress_intro_skel: egress_intro_skel,
         _egress_intro_backing: egress_intro_backing,
         egress_hook: Some(egress_hook),
