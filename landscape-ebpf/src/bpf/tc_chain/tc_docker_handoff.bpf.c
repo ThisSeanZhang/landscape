@@ -15,16 +15,21 @@ int tc_docker_handoff(struct __sk_buff *skb) {
     void *dm = (void *)(long)skb->data_meta;
     void *d = (void *)(long)skb->data;
 
-    if (dm + sizeof(struct xdp_docker_handoff) <= d) {
-        struct xdp_docker_handoff *ho = dm;
-        if (ho->magic == XDP_DOCKER_HANDOFF_MAGIC) {
-            u32 ho_mark = ho->mark;
-            u32 ho_ifindex = ho->target_ifindex;
+    if (dm + sizeof(struct xdp_handoff_meta) <= d) {
+        struct xdp_handoff_meta *ho = dm;
+        if (ho->magic == XDP_HANDOFF_DOCKER_MAGIC) {
+            u32 ho_mark = ho->payload.docker.mark;
+            u32 ho_ifindex = ho->payload.docker.target_ifindex;
             u16 vlan_id = route_flow_mark_vlan_id(ho_mark);
             int ret = bpf_skb_vlan_push(skb, ETH_P_8021Q, vlan_id);
             if (ret) return TC_ACT_SHOT;
             // ld_bpf_log("docker target ifindex: %d", ho_ifindex);
             return bpf_redirect(ho_ifindex, 0);
+        }
+
+        if (ho->magic == XDP_HANDOFF_TC_REDIRECT_MAGIC) {
+            skb->mark = ho->payload.tc_redirect.mark;
+            return bpf_redirect(ho->payload.tc_redirect.target_ifindex, 0);
         }
     }
 

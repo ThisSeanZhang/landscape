@@ -370,6 +370,7 @@ impl XdpChainManager {
             &mut open_skel.maps.xdp_lan_pipe_root_progs,
             &xdp_lan_pipe_root_progs_path(),
         )?;
+        pin_and_reuse_map(&mut open_skel.maps.xdp_redirect_able, &MAP_PATHS.xdp_redirect_able)?;
 
         let skel = bpf_ctx!(open_skel.load(), "load xdp_lan_chain")?;
 

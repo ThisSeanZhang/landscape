@@ -113,6 +113,10 @@ pub fn init_xdp_lan_route(ifindex: u32) -> LdEbpfResult<XdpLanRouteHandle> {
         pin_and_reuse_map(&mut open_skel.maps.ip_mac_v6, &MAP_PATHS.ip_mac_v6),
         "xdp_lan_route pin ip_mac_v6"
     )?;
+    crate::bpf_ctx!(
+        pin_and_reuse_map(&mut open_skel.maps.xdp_redirect_able, &MAP_PATHS.xdp_redirect_able),
+        "xdp_lan_route pin xdp_redirect_able"
+    )?;
 
     let skel = bpf_ctx!(open_skel.load(), "load xdp_lan_route skeleton")?;
 

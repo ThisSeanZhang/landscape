@@ -21,6 +21,11 @@ mod tc_wan_egress_intro_skel {
     include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/tc_wan_egress_intro.skel.rs"));
 }
 
+mod tc_docker_handoff_skel {
+    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/tc_docker_handoff.skel.rs"));
+}
+
+use tc_docker_handoff_skel::{TcDockerHandoffSkel, TcDockerHandoffSkelBuilder};
 use tc_wan_egress_intro_skel::TcWanEgressIntroSkelBuilder;
 use xdp_wan_route_skel::XdpWanRouteSkelBuilder;
 
@@ -28,6 +33,9 @@ pub struct XdpWanRouteHandle {
     _link: NativeXdpLink,
     _skel: xdp_wan_route_skel::XdpWanRouteSkel<'static>,
     _backing: OwnedOpenObject,
+    _handoff_skel: TcDockerHandoffSkel<'static>,
+    _handoff_backing: OwnedOpenObject,
+    _handoff_hook: TcHookProxy,
     _egress_intro_skel: tc_wan_egress_intro_skel::TcWanEgressIntroSkel<'static>,
     _egress_intro_backing: OwnedOpenObject,
     egress_hook: Option<TcHookProxy>,
@@ -128,6 +136,10 @@ pub fn init_xdp_wan_route(ifindex: u32, has_mac: bool) -> LdEbpfResult<XdpWanRou
         pin_and_reuse_map(&mut open_skel.maps.ip_mac_v6, &MAP_PATHS.ip_mac_v6),
         "xdp_wan_route pin ip_mac_v6"
     )?;
+    crate::bpf_ctx!(
+        pin_and_reuse_map(&mut open_skel.maps.xdp_redirect_able, &MAP_PATHS.xdp_redirect_able),
+        "xdp_wan_route pin xdp_redirect_able"
+    )?;
 
     let skel = bpf_ctx!(open_skel.load(), "load xdp_wan_route skeleton")?;
 
@@ -136,6 +148,18 @@ pub fn init_xdp_wan_route(ifindex: u32, has_mac: bool) -> LdEbpfResult<XdpWanRou
     let link = manager.create_wan_intro_link(ifindex)?;
     let exit_fd = skel.progs.xdp_wan_route_ingress.as_fd().as_raw_fd();
     manager.set_exit(ifindex, exit_fd)?;
+
+    let (handoff_backing, handoff_obj) = OwnedOpenObject::new();
+    let handoff_builder = TcDockerHandoffSkelBuilder::default();
+    let handoff_open = bpf_ctx!(handoff_builder.open(handoff_obj), "open tc_docker_handoff")?;
+    let handoff_skel = bpf_ctx!(handoff_open.load(), "load tc_docker_handoff")?;
+    let mut handoff_hook = TcHookProxy::new(
+        &handoff_skel.progs.tc_docker_handoff,
+        ifindex as i32,
+        libbpf_rs::TC_INGRESS,
+        1,
+    );
+    handoff_hook.attach();
 
     // ── TC egress intro (local outbound traffic) ──
 
@@ -234,6 +258,9 @@ pub fn init_xdp_wan_route(ifindex: u32, has_mac: bool) -> LdEbpfResult<XdpWanRou
         _link: link,
         _skel: skel,
         _backing: backing,
+        _handoff_skel: handoff_skel,
+        _handoff_backing: handoff_backing,
+        _handoff_hook: handoff_hook,
         _egress_intro_skel: egress_intro_skel,
         _egress_intro_backing: egress_intro_backing,
         egress_hook: Some(egress_hook),

@@ -9,6 +9,7 @@
 #include "land_wan_ip.h"
 
 #include "chain/xdp_meta.h"
+#include "chain/redirect_able.h"
 #include "chain/xdp_wan_maps.h"
 #include "chain/xdp_lan_maps.h"
 
@@ -98,6 +99,8 @@ static __always_inline int xdp_lan_redirect_v4(struct xdp_md *ctx,
     struct lan_route_key_v4 lan_key = {.prefixlen = 32, .addr = context->daddr};
     struct mac_key_v4 mac_key = {.addr = context->daddr};
     struct mac_value_v4 *mac_val;
+    struct xdp_pipe_meta meta = {};
+    xdp_get_meta(ctx, &meta);
 
     // ① lan_map lookup (existing user-configured routes)
     struct lan_route_info_v4 *lan_info = bpf_map_lookup_elem(&rt4_lan_map, &lan_key);
@@ -119,10 +122,10 @@ static __always_inline int xdp_lan_redirect_v4(struct xdp_md *ctx,
                 if ((void *)(eth + 1) > data_end) return XDP_PASS;
                 __builtin_memcpy(eth->h_dest, mac_val->mac, 6);
                 __builtin_memcpy(eth->h_source, lan_info->mac_addr, 6);
-                return bpf_redirect(lan_info->ifindex, 0);
+                return xdp_redirect_or_tc_handoff(ctx, lan_info->ifindex, meta.mark);
             }
         }
-        return bpf_redirect(lan_info->ifindex, 0);
+        return xdp_redirect_or_tc_handoff(ctx, lan_info->ifindex, meta.mark);
     }
 
     // ② ip_mac cache lookup
@@ -136,7 +139,7 @@ static __always_inline int xdp_lan_redirect_v4(struct xdp_md *ctx,
         if ((void *)(eth + 1) > data_end) return XDP_PASS;
         __builtin_memcpy(eth->h_dest, mac_val->mac, 6);
         __builtin_memcpy(eth->h_source, mac_val->dev_mac, 6);
-        return bpf_redirect(mac_val->ifindex, 0);
+        return xdp_redirect_or_tc_handoff(ctx, mac_val->ifindex, meta.mark);
     }
 
     // ③ fib_lookup + write back to cache
@@ -164,7 +167,7 @@ static __always_inline int xdp_lan_redirect_v4(struct xdp_md *ctx,
         if ((void *)(eth + 1) > data_end) return XDP_PASS;
         __builtin_memcpy(eth->h_dest, fib.dmac, 6);
         __builtin_memcpy(eth->h_source, fib.smac, 6);
-        return bpf_redirect(fib.ifindex, 0);
+        return xdp_redirect_or_tc_handoff(ctx, fib.ifindex, meta.mark);
     }
 
     return 0;
@@ -175,6 +178,8 @@ static __always_inline int xdp_lan_redirect_v6(struct xdp_md *ctx,
     struct lan_route_key_v6 lan_key = {.prefixlen = 128};
     struct mac_key_v6 mac_key = {};
     struct mac_value_v6 *mac_val;
+    struct xdp_pipe_meta meta = {};
+    xdp_get_meta(ctx, &meta);
     COPY_ADDR_FROM(lan_key.addr.bytes, context->daddr.bytes);
     COPY_ADDR_FROM(mac_key.addr.bytes, context->daddr.bytes);
 
@@ -201,10 +206,10 @@ static __always_inline int xdp_lan_redirect_v6(struct xdp_md *ctx,
                 if ((void *)(eth + 1) > data_end) return XDP_PASS;
                 __builtin_memcpy(eth->h_dest, mac_val->mac, 6);
                 __builtin_memcpy(eth->h_source, lan_info->mac_addr, 6);
-                return bpf_redirect(lan_info->ifindex, 0);
+                return xdp_redirect_or_tc_handoff(ctx, lan_info->ifindex, meta.mark);
             }
         }
-        return bpf_redirect(lan_info->ifindex, 0);
+        return xdp_redirect_or_tc_handoff(ctx, lan_info->ifindex, meta.mark);
     }
 
     // ② ip_mac cache lookup
@@ -218,7 +223,7 @@ static __always_inline int xdp_lan_redirect_v6(struct xdp_md *ctx,
         if ((void *)(eth + 1) > data_end) return XDP_PASS;
         __builtin_memcpy(eth->h_dest, mac_val->mac, 6);
         __builtin_memcpy(eth->h_source, mac_val->dev_mac, 6);
-        return bpf_redirect(mac_val->ifindex, 0);
+        return xdp_redirect_or_tc_handoff(ctx, mac_val->ifindex, meta.mark);
     }
 
     // ③ fib_lookup + write back to cache
@@ -245,7 +250,7 @@ static __always_inline int xdp_lan_redirect_v6(struct xdp_md *ctx,
         if ((void *)(eth + 1) > data_end) return XDP_PASS;
         __builtin_memcpy(eth->h_dest, fib.dmac, 6);
         __builtin_memcpy(eth->h_source, fib.smac, 6);
-        return bpf_redirect(fib.ifindex, 0);
+        return xdp_redirect_or_tc_handoff(ctx, fib.ifindex, meta.mark);
     }
 
     return 0;
@@ -349,7 +354,7 @@ int xdp_wan_route_ingress(struct xdp_md *ctx) {
         if (ret) return ret;
         xdp_get_meta(ctx, &meta);
         ret = xdp_lan_redirect_v4(ctx, &context);
-        if (ret && ret != XDP_PASS) {
+        if (ret && (ret != XDP_PASS || xdp_has_tc_redirect_meta(ctx))) {
             if (get_cache_mask(meta.mark) == INGRESS_STATIC_MARK) {
                 xdp_setting_cache_in_wan_v4(ctx, &context);
             }
@@ -367,7 +372,7 @@ int xdp_wan_route_ingress(struct xdp_md *ctx) {
         if (ret) return ret;
         xdp_get_meta(ctx, &meta);
         ret = xdp_lan_redirect_v6(ctx, &context);
-        if (ret && ret != XDP_PASS) {
+        if (ret && (ret != XDP_PASS || xdp_has_tc_redirect_meta(ctx))) {
             if (get_cache_mask(meta.mark) == INGRESS_STATIC_MARK) {
                 xdp_setting_cache_in_wan_v6(ctx, &context);
             }

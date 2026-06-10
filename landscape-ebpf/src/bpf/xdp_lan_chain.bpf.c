@@ -6,6 +6,7 @@
 
 #include "landscape.h"
 #include "chain/xdp_meta.h"
+#include "chain/redirect_able.h"
 #include "chain/xdp_wan_maps.h"
 #include "chain/xdp_lan_maps.h"
 
@@ -70,6 +71,6 @@ int xdp_lan_chain_exit(struct xdp_md *ctx) {
 
 redirect:
     // bpf_printk("[lan_exit] redirect to ifidx=%u", meta.target_ifindex);
-    ret = bpf_redirect(meta.target_ifindex, 0);
+    ret = xdp_redirect_or_tc_handoff(ctx, meta.target_ifindex, meta.mark);
     return ret;
 }
