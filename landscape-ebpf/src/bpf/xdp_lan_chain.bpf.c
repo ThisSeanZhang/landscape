@@ -43,11 +43,6 @@ int xdp_lan_chain_root(struct xdp_md *ctx) {
 SEC("xdp")
 int xdp_lan_chain_exit(struct xdp_md *ctx) {
     struct xdp_pipe_meta meta = {};
-    void *data = (void *)(long)ctx->data;
-    void *data_end = (void *)(long)ctx->data_end;
-    struct ethhdr *eth;
-    struct iphdr *iph;
-    int ret;
 
     if (xdp_get_meta(ctx, &meta) != 0) {
         bpf_printk("[lan_exit] no meta");
@@ -71,6 +66,5 @@ int xdp_lan_chain_exit(struct xdp_md *ctx) {
 
 redirect:
     // bpf_printk("[lan_exit] redirect to ifidx=%u", meta.target_ifindex);
-    ret = xdp_redirect_or_tc_handoff(ctx, meta.target_ifindex, meta.mark);
-    return ret;
+    return bpf_redirect(meta.target_ifindex, 0);
 }

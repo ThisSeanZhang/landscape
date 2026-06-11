@@ -10,6 +10,7 @@
 #include "route/route_index.h"
 #include "route/route_maps_v6.h"
 
+#include "chain/redirect_able.h"
 #include "flow_match.h"
 #include "neigh_ip.h"
 
@@ -473,10 +474,12 @@ static __always_inline int setting_cache_in_wan_v6(const struct route_context_v6
         if (target) {
             target->ifindex = ifindex;
             target->has_mac = current_l3_offset > 0;
+            target->xdp_redirect_able = xdp_redirect_target_able(ifindex) ? 1 : 0;
         } else {
             struct rt_cache_value_v6 new_target_cache = {0};
             new_target_cache.ifindex = ifindex;
             new_target_cache.has_mac = current_l3_offset > 0;
+            new_target_cache.xdp_redirect_able = xdp_redirect_target_able(ifindex) ? 1 : 0;
             bpf_map_update_elem(wan_cache, &search_key, &new_target_cache, BPF_ANY);
         }
 
@@ -538,6 +541,8 @@ static __always_inline int setting_cache_in_lan_v6(const struct route_context_v6
                                  16);
                 __builtin_memcpy(new_target_cache.mac, slot_target->mac, 6);
             }
+            new_target_cache.xdp_redirect_able =
+                xdp_redirect_target_able(new_target_cache.ifindex) ? 1 : 0;
             bpf_map_update_elem(lan_cache, &search_key, &new_target_cache, BPF_ANY);
         }
     }

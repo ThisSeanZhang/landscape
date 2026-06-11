@@ -118,7 +118,8 @@ struct rt_cache_value_v6 {
     __u32 mark_value;
     u8 has_mac;
     u8 is_docker;
-    u8 _pad[2];
+    u8 xdp_redirect_able;
+    u8 _pad;
     __u32 ifindex;
     union u_inet6_addr gate_addr;
     u8 mac[6];

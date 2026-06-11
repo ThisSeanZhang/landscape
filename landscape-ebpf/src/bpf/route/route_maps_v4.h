@@ -117,7 +117,8 @@ struct rt_cache_value_v4 {
     __u32 mark_value;
     u8 has_mac;
     u8 is_docker;
-    u8 _pad[2];
+    u8 xdp_redirect_able;
+    u8 _pad;
     __u32 ifindex;
     __be32 gate_addr;
     u8 mac[6];
