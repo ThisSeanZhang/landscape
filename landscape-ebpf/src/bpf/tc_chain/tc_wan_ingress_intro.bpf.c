@@ -6,6 +6,7 @@
 #include "landscape.h"
 
 #include "chain/tc_cb.h"
+#include "tc_chain/tc_handoff.h"
 
 #define TC_INTRO_IFINDEX_TYPE 2
 
@@ -71,6 +72,9 @@ static __always_inline void tc_intro_dispatch(struct __sk_buff *skb, struct disp
 
 SEC("tc/ingress")
 int tc_wan_intro(struct __sk_buff *skb) {
+    int handoff_ret = xdp_handoff_check(skb);
+    if (handoff_ret != TC_ACT_UNSPEC) return handoff_ret;
+
     struct dispatch_key key = {};
     bool is_ipv4;
     int ret;

@@ -1,20 +1,16 @@
-#include <vmlinux.h>
+#ifndef __LD_TC_HANDOFF_H_
+#define __LD_TC_HANDOFF_H_
 
-#include <bpf/bpf_endian.h>
-#include <bpf/bpf_helpers.h>
-
-#include "landscape.h"
 #include "chain/xdp_meta.h"
 #include "route/route_index.h"
 
-char LICENSE[] SEC("license") = "GPL";
+const volatile bool xdp_handoff_enabled = false;
 
-SEC("tc/ingress")
-int tc_docker_handoff(struct __sk_buff *skb) {
-#define BPF_LOG_TOPIC "tc_docker_handoff"
+static __always_inline int xdp_handoff_check(struct __sk_buff *skb) {
+    if (!xdp_handoff_enabled) return TC_ACT_UNSPEC;
+
     void *dm = (void *)(long)skb->data_meta;
     void *d = (void *)(long)skb->data;
-
     if (dm + sizeof(struct xdp_handoff_meta) <= d) {
         struct xdp_handoff_meta *ho = dm;
         if (ho->magic == XDP_HANDOFF_DOCKER_MAGIC) {
@@ -23,16 +19,14 @@ int tc_docker_handoff(struct __sk_buff *skb) {
             u16 vlan_id = route_flow_mark_vlan_id(ho_mark);
             int ret = bpf_skb_vlan_push(skb, ETH_P_8021Q, vlan_id);
             if (ret) return TC_ACT_SHOT;
-            // ld_bpf_log("docker target ifindex: %d", ho_ifindex);
             return bpf_redirect(ho_ifindex, 0);
         }
-
         if (ho->magic == XDP_HANDOFF_TC_REDIRECT_MAGIC) {
             skb->mark = ho->payload.tc_redirect.mark;
             return bpf_redirect(ho->payload.tc_redirect.target_ifindex, 0);
         }
     }
-
     return TC_ACT_UNSPEC;
-#undef BPF_LOG_TOPIC
 }
+
+#endif /* __LD_TC_HANDOFF_H_ */

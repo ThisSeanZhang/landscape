@@ -73,20 +73,40 @@ pub async fn create_route_wan_service(
         landscape_common::args::RouteMode::Xdp => {
             let xdp_handle =
                 landscape_ebpf::chain::xdp_wan_route::init_xdp_wan_route(ifindex, has_mac);
-            if let Err(ref err) = xdp_handle {
-                tracing::error!("failed to start xdp wan route for {iface_name}: {err}");
-                service_status.just_change_status(ServiceStatus::Failed);
-                return;
+            match xdp_handle {
+                Ok(handle) => {
+                    landscape_ebpf::map_setting::redirect_able::set_xdp_redirect_able(
+                        ifindex, true,
+                    );
+                    service_status.just_change_status(ServiceStatus::Running);
+                    tracing::info!("Waiting for external stop signal");
+                    let _ = service_status.wait_to_stopping().await;
+                    tracing::info!("Receiving external stop signal");
+                    drop(handle);
+                    landscape_ebpf::map_setting::redirect_able::del_xdp_redirect_able(ifindex);
+                }
+                Err(err) => {
+                    tracing::warn!(
+                        "failed to start xdp wan route for {iface_name}: {err}, falling back to TC"
+                    );
+                    let tc_handle = match landscape_ebpf::chain::tc_wan_route::init_tc_wan_route(
+                        ifindex, has_mac,
+                    ) {
+                        Ok(handle) => handle,
+                        Err(err) => {
+                            tracing::error!("failed to start tc wan route for {iface_name}: {err}");
+                            service_status.just_change_status(ServiceStatus::Failed);
+                            return;
+                        }
+                    };
+                    service_status.just_change_status(ServiceStatus::Running);
+                    tracing::info!("Waiting for external stop signal");
+                    let _ = service_status.wait_to_stopping().await;
+                    tracing::info!("Receiving external stop signal");
+                    drop(tc_handle);
+                    landscape_ebpf::map_setting::redirect_able::del_xdp_redirect_able(ifindex);
+                }
             }
-
-            landscape_ebpf::map_setting::redirect_able::set_xdp_redirect_able(ifindex, true);
-            service_status.just_change_status(ServiceStatus::Running);
-            tracing::info!("Waiting for external stop signal");
-            let _ = service_status.wait_to_stopping().await;
-            tracing::info!("Receiving external stop signal");
-
-            drop(xdp_handle);
-            landscape_ebpf::map_setting::redirect_able::del_xdp_redirect_able(ifindex);
         }
         landscape_common::args::RouteMode::Tc => {
             let tc_handle =

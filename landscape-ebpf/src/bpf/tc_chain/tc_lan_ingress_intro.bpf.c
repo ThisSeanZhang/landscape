@@ -11,6 +11,7 @@
 #include "route/route_packet.h"
 
 #include "chain/tc_cb.h"
+#include "tc_chain/tc_handoff.h"
 
 char LICENSE[] SEC("license") = "GPL";
 
@@ -415,6 +416,9 @@ int tc_lan_ingress_intro(struct __sk_buff *skb) {
 #define BPF_LOG_TOPIC "tc_lan_ingress_intro"
     bool is_ipv4;
     int ret;
+
+    int handoff_ret = xdp_handoff_check(skb);
+    if (handoff_ret != TC_ACT_UNSPEC) return handoff_ret;
 
     if (likely(current_l3_offset > 0)) {
         ret = is_broadcast_mac(skb);

@@ -1,11 +1,13 @@
 use std::os::fd::{AsFd, AsRawFd};
 
 use libbpf_rs::skel::{OpenSkel, SkelBuilder};
-use libbpf_rs::TC_EGRESS;
+use libbpf_rs::{TC_EGRESS, TC_INGRESS};
 
 use crate::bpf_ctx;
 use crate::bpf_error::LdEbpfResult;
-use crate::chain::tc_manager::{tc_wan_egress_roots_path, TcChainManager};
+use crate::chain::tc_manager::{
+    tc_pipe_root_progs_path, tc_wan_egress_roots_path, wan_intro_dispatch_path, TcChainManager,
+};
 use crate::chain::xdp_manager::{
     xdp_lan_pipe_root_progs_path, xdp_pipe_exits_lan_path, xdp_pipe_exits_wan_path,
     xdp_pipe_root_progs_path, NativeXdpLink, XdpChainManager,
@@ -17,25 +19,25 @@ pub(crate) mod xdp_wan_route_skel {
     include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/xdp_wan_route.skel.rs"));
 }
 
+mod tc_wan_ingress_intro_skel {
+    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/tc_wan_ingress_intro.skel.rs"));
+}
+
 mod tc_wan_egress_intro_skel {
     include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/tc_wan_egress_intro.skel.rs"));
 }
 
-mod tc_docker_handoff_skel {
-    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/tc_docker_handoff.skel.rs"));
-}
-
-use tc_docker_handoff_skel::{TcDockerHandoffSkel, TcDockerHandoffSkelBuilder};
 use tc_wan_egress_intro_skel::TcWanEgressIntroSkelBuilder;
+use tc_wan_ingress_intro_skel::TcWanIngressIntroSkelBuilder;
 use xdp_wan_route_skel::XdpWanRouteSkelBuilder;
 
 pub struct XdpWanRouteHandle {
     _link: NativeXdpLink,
     _skel: xdp_wan_route_skel::XdpWanRouteSkel<'static>,
     _backing: OwnedOpenObject,
-    _handoff_skel: TcDockerHandoffSkel<'static>,
-    _handoff_backing: OwnedOpenObject,
-    _handoff_hook: TcHookProxy,
+    _intro_skel: tc_wan_ingress_intro_skel::TcWanIngressIntroSkel<'static>,
+    _intro_backing: OwnedOpenObject,
+    ingress_hook: Option<TcHookProxy>,
     _egress_intro_skel: tc_wan_egress_intro_skel::TcWanEgressIntroSkel<'static>,
     _egress_intro_backing: OwnedOpenObject,
     egress_hook: Option<TcHookProxy>,
@@ -47,13 +49,17 @@ unsafe impl Sync for XdpWanRouteHandle {}
 
 impl Drop for XdpWanRouteHandle {
     fn drop(&mut self) {
+        self.ingress_hook.take();
         self.egress_hook.take();
         let manager = XdpChainManager::instance();
         let _ = manager.clear_exit(self.ifindex);
+        TcChainManager::instance().remove_roots(self.ifindex);
     }
 }
 
 pub fn init_xdp_wan_route(ifindex: u32, has_mac: bool) -> LdEbpfResult<XdpWanRouteHandle> {
+    let l3_offset: u32 = if has_mac { 14 } else { 0 };
+
     // ── XDP wan route ──
 
     let builder = XdpWanRouteSkelBuilder::default();
@@ -149,28 +155,39 @@ pub fn init_xdp_wan_route(ifindex: u32, has_mac: bool) -> LdEbpfResult<XdpWanRou
     let exit_fd = skel.progs.xdp_wan_route_ingress.as_fd().as_raw_fd();
     manager.set_exit(ifindex, exit_fd)?;
 
-    let (handoff_backing, handoff_obj) = OwnedOpenObject::new();
-    let handoff_builder = TcDockerHandoffSkelBuilder::default();
-    let handoff_open = bpf_ctx!(handoff_builder.open(handoff_obj), "open tc_docker_handoff")?;
-    let handoff_skel = bpf_ctx!(handoff_open.load(), "load tc_docker_handoff")?;
-    let mut handoff_hook = TcHookProxy::new(
-        &handoff_skel.progs.tc_docker_handoff,
-        ifindex as i32,
-        libbpf_rs::TC_INGRESS,
-        1,
+    // ── TC ingress intro (XDP handoff + normal TC processing) ──
+
+    TcChainManager::instance().ensure_roots(ifindex, has_mac)?;
+
+    let (intro_backing, intro_obj) = OwnedOpenObject::new();
+    let intro_builder = TcWanIngressIntroSkelBuilder::default();
+    let mut intro_open_skel = bpf_ctx!(intro_builder.open(intro_obj), "open tc_wan_ingress_intro")?;
+
+    intro_open_skel.maps.rodata_data.as_deref_mut().unwrap().current_l3_offset = l3_offset;
+    intro_open_skel.maps.rodata_data.as_deref_mut().unwrap().xdp_handoff_enabled = true;
+
+    crate::map_setting::reuse_pinned_map_or_recreate(
+        &mut intro_open_skel.maps.tc_pipe_root_progs,
+        &tc_pipe_root_progs_path(),
     );
-    handoff_hook.attach();
+    crate::map_setting::reuse_pinned_map_or_recreate(
+        &mut intro_open_skel.maps.wan_intro_dispatch_map,
+        &wan_intro_dispatch_path(),
+    );
+
+    let intro_skel = bpf_ctx!(intro_open_skel.load(), "load tc_wan_ingress_intro")?;
+
+    let mut ingress_hook =
+        TcHookProxy::new(&intro_skel.progs.tc_wan_intro, ifindex as i32, TC_INGRESS, 1);
+    ingress_hook.attach();
 
     // ── TC egress intro (local outbound traffic) ──
-
-    TcChainManager::instance().ensure_egress_roots_only(ifindex)?;
 
     let builder = TcWanEgressIntroSkelBuilder::default();
     let (egress_intro_backing, egress_intro_obj) = OwnedOpenObject::new();
     let mut egress_intro_open_skel =
         bpf_ctx!(builder.open(egress_intro_obj), "open tc_wan_egress_intro")?;
 
-    let l3_offset: u32 = if has_mac { 14 } else { 0 };
     egress_intro_open_skel.maps.rodata_data.as_deref_mut().unwrap().current_l3_offset = l3_offset;
 
     crate::map_setting::reuse_pinned_map_or_recreate(
@@ -258,9 +275,9 @@ pub fn init_xdp_wan_route(ifindex: u32, has_mac: bool) -> LdEbpfResult<XdpWanRou
         _link: link,
         _skel: skel,
         _backing: backing,
-        _handoff_skel: handoff_skel,
-        _handoff_backing: handoff_backing,
-        _handoff_hook: handoff_hook,
+        _intro_skel: intro_skel,
+        _intro_backing: intro_backing,
+        ingress_hook: Some(ingress_hook),
         _egress_intro_skel: egress_intro_skel,
         _egress_intro_backing: egress_intro_backing,
         egress_hook: Some(egress_hook),
