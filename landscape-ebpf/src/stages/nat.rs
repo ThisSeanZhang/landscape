@@ -91,7 +91,7 @@ fn seed_runtime_queues<M1, M2, M3>(
 }
 
 // ========================================================================
-// TC NAT — full (ingress + egress, used by TC mode)
+// TC NAT — full (ingress + egress)
 // ========================================================================
 
 pub fn attach_tc_nat(ifindex: u32, has_mac: bool, config: &NatConfig) -> LdEbpfResult<TcNatHandle> {
@@ -160,7 +160,7 @@ pub fn attach_tc_nat(ifindex: u32, has_mac: bool, config: &NatConfig) -> LdEbpfR
 }
 
 // ========================================================================
-// Unified XDP+TC NAT (XDP mode only, FD sharing for runtime maps)
+// Unified XDP+TC NAT (ingress+egress, FD sharing for runtime maps)
 // ========================================================================
 
 fn init_nat_xdp_unified(
@@ -329,7 +329,7 @@ fn init_nat_xdp_unified(
 }
 
 // ========================================================================
-// Mode-aware unified entry
+// Mode-aware unified entry (TC ingress+egress + XDP LAN+WAN)
 // ========================================================================
 
 pub fn init_nat(ifindex: u32, has_mac: bool, config: &NatConfig) -> LdEbpfResult<NatHandle> {

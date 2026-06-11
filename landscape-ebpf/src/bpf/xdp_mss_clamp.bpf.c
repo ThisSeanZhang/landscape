@@ -57,37 +57,39 @@ static __always_inline int mss_clamp_packet(struct xdp_md *ctx) {
     u16 max_mss = mtu_size - ip_hdr_bytes - 20;
 
     u8 pos = 0;
+    u8 *opt = (u8 *)tcph + 20;
+
 #pragma unroll
     for (int i = 0; i < 10; i++) {
         if (pos + 4 > opts_len) break;
-
-        u8 *opt = (u8 *)tcph + 20 + pos;
         if ((void *)(opt + 4) > data_end) break;
 
         u8 kind = opt[0];
         if (kind == 0) break;
+
         if (kind == 1) {
-            pos += 1;
-            continue;
-        }
+            opt++;
+            pos++;
+        } else {
+            u8 olen = opt[1];
+            if (olen < 2 || olen > 4) break;
 
-        u8 olen = opt[1];
-        if (olen < 2 || olen > 4) break;
-
-        if (kind == 2 && olen == 4) {
-            __be16 old_mss = *(__be16 *)(opt + 2);
-            if (bpf_ntohs(old_mss) > max_mss) {
-                __be16 new_mss = bpf_htons(max_mss);
-                *(__be16 *)(opt + 2) = new_mss;
-                __be32 old_mss32 = (__be32)old_mss;
-                __be32 new_mss32 = (__be32)new_mss;
-                __wsum d = bpf_csum_diff(&old_mss32, 4, &new_mss32, 4, 0);
-                tcph->check = xdp_csum_apply(tcph->check, d);
-                bpf_printk("[xdp_mss] clamped MSS %u -> %u", bpf_ntohs(old_mss), max_mss);
+            if (kind == 2 && olen == 4) {
+                __be16 old_mss = *(__be16 *)(opt + 2);
+                if (bpf_ntohs(old_mss) > max_mss) {
+                    __be16 new_mss = bpf_htons(max_mss);
+                    *(__be16 *)(opt + 2) = new_mss;
+                    __be32 old_mss32 = (__be32)old_mss;
+                    __be32 new_mss32 = (__be32)new_mss;
+                    __wsum d = bpf_csum_diff(&old_mss32, 4, &new_mss32, 4, 0);
+                    tcph->check = xdp_csum_apply(tcph->check, d);
+                    // bpf_printk("[xdp_mss] clamped MSS %u -> %u", bpf_ntohs(old_mss), max_mss);
+                }
+                break;
             }
-            break;
+            opt += olen;
+            pos += olen;
         }
-        pos += olen;
     }
 
     return XDP_PASS;
