@@ -43,9 +43,9 @@ struct {
  *    tc_wan_egress_root.bpf.c   — per-WAN egress chain root
  *    tc_wan_egress_intro.bpf.c  — WAN egress route + classifier
  *
- *  In XDP mode, only the egress root is instantiated (TcChainManager::
- *  ensure_egress_roots_only), plus tc_wan_egress_intro is attached to
- *  TC egress for local-outbound traffic. No TC ingress chain is created.
+ *  Both ingress and egress roots are always instantiated (TcChainManager::
+ *  ensure_roots), with tc_wan_egress_intro attached to TC egress for
+ *  local-outbound traffic and tc_wan_ingress_intro for WAN ingress.
  *
  *  ─────────────────────────────────────────────────────────────────────────
  *  WAN INGRESS CHAIN

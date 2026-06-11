@@ -32,7 +32,7 @@ struct {
 
 static __always_inline int tc_lan_redirect_v4(struct __sk_buff *skb, u32 current_l3_offset,
                                               struct route_context_v4 *context) {
-#define BPF_LOG_TOPIC "tc_lan_redirect_v4"
+#define BPF_LOG_TOPIC "tc_egress_redirect_v4"
     int ret;
     struct lan_route_key_v4 lan_search_key = {0};
     struct mac_key_v4 mac_key_search = {0};
@@ -77,7 +77,8 @@ static __always_inline int tc_lan_redirect_v4(struct __sk_buff *skb, u32 current
             if (!ret) return bpf_redirect(lan_info->ifindex, 0);
             ld_bpf_log("store_mac_v4 err: %d", ret);
         } else {
-            ld_bpf_log("can't find mac, IP: %pI4", &mac_key_search.addr);
+            ld_bpf_log("can't find mac, IP: %pI4, target ifindex: %d", &mac_key_search.addr,
+                       lan_info->ifindex);
         }
     } else {
         return bpf_redirect(lan_info->ifindex, 0);

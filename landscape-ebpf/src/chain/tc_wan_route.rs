@@ -40,7 +40,11 @@ impl Drop for TcWanRouteHandle {
     }
 }
 
-pub fn init_tc_wan_route(ifindex: u32, has_mac: bool) -> LdEbpfResult<TcWanRouteHandle> {
+pub fn init_tc_wan_route(
+    ifindex: u32,
+    has_mac: bool,
+    xdp_handoff_enabled: bool,
+) -> LdEbpfResult<TcWanRouteHandle> {
     let manager = TcChainManager::instance();
     manager.ensure_roots(ifindex, has_mac)?;
 
@@ -50,6 +54,7 @@ pub fn init_tc_wan_route(ifindex: u32, has_mac: bool) -> LdEbpfResult<TcWanRoute
     let builder = TcWanIngressIntroSkelBuilder::default();
     let mut open_skel = bpf_ctx!(builder.open(obj), "open per-if tc_wan_ingress_intro")?;
     open_skel.maps.rodata_data.as_deref_mut().unwrap().current_l3_offset = l3_offset;
+    open_skel.maps.rodata_data.as_deref_mut().unwrap().xdp_handoff_enabled = xdp_handoff_enabled;
     crate::map_setting::reuse_pinned_map_or_recreate(
         &mut open_skel.maps.tc_pipe_root_progs,
         &tc_pipe_root_progs_path(),

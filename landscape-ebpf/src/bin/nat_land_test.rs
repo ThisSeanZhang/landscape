@@ -1,4 +1,3 @@
-use landscape_common::args::RouteMode;
 use landscape_common::iface::nat::NatConfig;
 use landscape_ebpf::stages::nat::init_nat;
 use std::net::Ipv4Addr;
@@ -12,8 +11,7 @@ async fn main() {
     let addr = Ipv4Addr::new(10, 200, 1, 1);
     landscape_ebpf::map_setting::add_ipv4_wan_ip(ifindex, addr, None, 24, None);
 
-    let nat = init_nat(RouteMode::Tc, ifindex, true, &NatConfig::default())
-        .expect("failed to start nat test");
+    let nat = init_nat(ifindex, true, &NatConfig::default()).expect("failed to start nat test");
 
     let _ = tokio::signal::ctrl_c().await;
 

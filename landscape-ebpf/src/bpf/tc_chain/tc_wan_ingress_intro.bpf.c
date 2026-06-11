@@ -72,8 +72,8 @@ static __always_inline void tc_intro_dispatch(struct __sk_buff *skb, struct disp
 
 SEC("tc/ingress")
 int tc_wan_intro(struct __sk_buff *skb) {
-    int handoff_ret = xdp_handoff_check(skb);
-    if (handoff_ret != TC_ACT_UNSPEC) return handoff_ret;
+    int handoff_ret = xdp_handoff_check(skb, false);
+    if (handoff_ret != TC_ACT_OK) return handoff_ret;
 
     struct dispatch_key key = {};
     bool is_ipv4;

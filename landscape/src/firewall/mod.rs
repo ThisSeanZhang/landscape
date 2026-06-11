@@ -1,4 +1,3 @@
-use landscape_common::args::LAND_ARGS;
 use landscape_common::database::LandscapeStore;
 use landscape_common::service::manager::ServiceManager;
 use landscape_common::{
@@ -64,11 +63,7 @@ pub async fn create_firewall_service(
 ) {
     service_status.just_change_status(ServiceStatus::Staring);
 
-    let firewall = match landscape_ebpf::stages::firewall::init_firewall(
-        LAND_ARGS.route_mode.clone(),
-        ifindex as u32,
-        has_mac,
-    ) {
+    let firewall = match landscape_ebpf::stages::firewall::init_firewall(ifindex as u32, has_mac) {
         Ok(handle) => handle,
         Err(err) => {
             tracing::error!("failed to start firewall for {iface_name}: {err}");

@@ -83,7 +83,8 @@ static __always_inline int tc_lan_redirect_v4(struct __sk_buff *skb, u32 current
             if (!ret) return bpf_redirect(lan_info->ifindex, 0);
             ld_bpf_log("store_mac_v4 err: %d", ret);
         } else {
-            ld_bpf_log("can't find mac, IP: %pI4", &mac_key_search.addr);
+            ld_bpf_log("can't find mac, IP: %pI4, target ifindex: %d", &mac_key_search.addr,
+                       lan_info->ifindex);
         }
     } else {
         return bpf_redirect(lan_info->ifindex, 0);
@@ -417,8 +418,8 @@ int tc_lan_ingress_intro(struct __sk_buff *skb) {
     bool is_ipv4;
     int ret;
 
-    int handoff_ret = xdp_handoff_check(skb);
-    if (handoff_ret != TC_ACT_UNSPEC) return handoff_ret;
+    int handoff_ret = xdp_handoff_check(skb, true);
+    if (handoff_ret != TC_ACT_OK) return handoff_ret;
 
     if (likely(current_l3_offset > 0)) {
         ret = is_broadcast_mac(skb);

@@ -1,6 +1,5 @@
 use std::{net::IpAddr, path::PathBuf};
 
-use crate::args::RouteMode;
 use crate::config::settings::{
     LandscapeConfig, LandscapeDnsConfig, LandscapeMetricConfig, LandscapeTimeConfig,
     LandscapeUIConfig, MetricMode,
@@ -25,7 +24,6 @@ pub struct RuntimeConfig {
     pub ui: LandscapeUIConfig,
     pub time: TimeRuntimeConfig,
     pub gateway: GatewayRuntimeConfig,
-    pub route_mode: RouteMode,
     pub auto: bool,
 }
 
@@ -118,7 +116,6 @@ impl RuntimeConfig {
         format!(
             "\n\
          Landscape Home Path: {}\n\
-         Route Mode: {:?}\n\
          \n\
          [Auth]\n\
          Admin User: {}\n\
@@ -161,7 +158,6 @@ impl RuntimeConfig {
           Step Threshold: {}ms\n\
           Samples Per Server: {}\n",
             self.home_path.display(),
-            self.route_mode,
             self.auth.admin_user,
             self.auth.admin_pass,
             self.log.log_path.display(),

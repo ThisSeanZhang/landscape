@@ -1,5 +1,3 @@
-use landscape_common::args::RouteMode;
-
 use crate::bpf_ctx;
 use crate::bpf_error::LdEbpfResult;
 
@@ -168,7 +166,7 @@ pub fn attach_tc_mss_egress(ifindex: u32, mtu: u16, has_mac: bool) -> LdEbpfResu
     use std::os::fd::{AsFd, AsRawFd};
 
     let manager = TcChainManager::instance();
-    manager.ensure_egress_roots_only(ifindex)?;
+    manager.ensure_roots(ifindex, has_mac)?;
 
     let builder = tc_mss_skel::TcMssSkelBuilder::default();
     let (backing, obj) = OwnedOpenObject::new();
@@ -190,9 +188,9 @@ pub fn attach_tc_mss_egress(ifindex: u32, mtu: u16, has_mac: bool) -> LdEbpfResu
     let skel = bpf_ctx!(open_skel.load(), "load tc_mss skeleton (egress)")?;
 
     let entry = StageEntry {
-        wan_ingress_prog_fd: 0,
+        wan_ingress_prog_fd: skel.progs.tc_mss_wan_ingress.as_fd().as_raw_fd(),
         wan_egress_prog_fd: skel.progs.tc_mss_wan_egress.as_fd().as_raw_fd(),
-        wan_ingress_next_stage_fd: 0,
+        wan_ingress_next_stage_fd: skel.maps.wan_ingress_next_stage.as_fd().as_raw_fd(),
         wan_egress_next_stage_fd: skel.maps.wan_egress_next_stage.as_fd().as_raw_fd(),
     };
 
@@ -205,15 +203,9 @@ pub fn attach_tc_mss_egress(ifindex: u32, mtu: u16, has_mac: bool) -> LdEbpfResu
 // Mode-aware unified entry
 // ========================================================================
 
-pub fn init_mss(mode: RouteMode, ifindex: u32, mtu: u16, has_mac: bool) -> LdEbpfResult<MssHandle> {
-    match mode {
-        RouteMode::Tc => Ok(MssHandle {
-            tc: Some(attach_tc_mss(ifindex, mtu, has_mac)?),
-            xdp: None,
-        }),
-        RouteMode::Xdp => Ok(MssHandle {
-            tc: Some(attach_tc_mss_egress(ifindex, mtu, has_mac)?),
-            xdp: Some(init_xdp_mss(ifindex, mtu)?),
-        }),
-    }
+pub fn init_mss(ifindex: u32, mtu: u16, has_mac: bool) -> LdEbpfResult<MssHandle> {
+    Ok(MssHandle {
+        tc: Some(attach_tc_mss_egress(ifindex, mtu, has_mac)?),
+        xdp: Some(init_xdp_mss(ifindex, mtu)?),
+    })
 }

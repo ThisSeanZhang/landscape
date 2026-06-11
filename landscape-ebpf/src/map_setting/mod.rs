@@ -237,6 +237,11 @@ pub(crate) fn init_path(paths: &LandscapeMapPath) {
         &paths.firewall_conn_metric_events,
     );
 
+    let _ = std::fs::remove_file(&paths.rt4_lan_map);
+    let _ = std::fs::remove_file(&paths.rt6_lan_map);
+    let _ = std::fs::remove_file(&paths.rt4_target_slot_map);
+    let _ = std::fs::remove_file(&paths.rt6_target_slot_map);
+
     // flow verdict and forward
     reuse_pinned_map_or_recreate(&mut landscape_open.maps.rt4_lan_map, &paths.rt4_lan_map);
     reuse_pinned_map_or_recreate(

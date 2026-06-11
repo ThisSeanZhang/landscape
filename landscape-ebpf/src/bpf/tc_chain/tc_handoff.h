@@ -6,8 +6,8 @@
 
 const volatile bool xdp_handoff_enabled = false;
 
-static __always_inline int xdp_handoff_check(struct __sk_buff *skb) {
-    if (!xdp_handoff_enabled) return TC_ACT_UNSPEC;
+static __always_inline int xdp_handoff_check(struct __sk_buff *skb, bool from_lan) {
+    if (!xdp_handoff_enabled) return TC_ACT_OK;
 
     void *dm = (void *)(long)skb->data_meta;
     void *d = (void *)(long)skb->data;
@@ -26,7 +26,8 @@ static __always_inline int xdp_handoff_check(struct __sk_buff *skb) {
             return bpf_redirect(ho->payload.tc_redirect.target_ifindex, 0);
         }
     }
-    return TC_ACT_UNSPEC;
+
+    return from_lan ? TC_ACT_OK : TC_ACT_UNSPEC;
 }
 
 #endif /* __LD_TC_HANDOFF_H_ */

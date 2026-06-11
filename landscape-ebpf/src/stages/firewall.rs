@@ -1,5 +1,3 @@
-use landscape_common::args::RouteMode;
-
 use crate::bpf_ctx;
 use crate::bpf_error::LdEbpfResult;
 
@@ -191,7 +189,7 @@ pub fn attach_tc_firewall_egress(ifindex: u32, has_mac: bool) -> LdEbpfResult<Tc
     use std::os::fd::{AsFd, AsRawFd};
 
     let manager = TcChainManager::instance();
-    manager.ensure_egress_roots_only(ifindex)?;
+    manager.ensure_roots(ifindex, has_mac)?;
 
     let builder = tc_firewall_skel::TcFirewallSkelBuilder::default();
     let (backing, obj) = OwnedOpenObject::new();
@@ -219,9 +217,9 @@ pub fn attach_tc_firewall_egress(ifindex: u32, has_mac: bool) -> LdEbpfResult<Tc
     let skel = bpf_ctx!(open_skel.load(), "load tc_firewall skeleton (egress)")?;
 
     let entry = StageEntry {
-        wan_ingress_prog_fd: 0,
+        wan_ingress_prog_fd: skel.progs.tc_firewall_wan_ingress.as_fd().as_raw_fd(),
         wan_egress_prog_fd: skel.progs.tc_firewall_wan_egress.as_fd().as_raw_fd(),
-        wan_ingress_next_stage_fd: 0,
+        wan_ingress_next_stage_fd: skel.maps.wan_ingress_next_stage.as_fd().as_raw_fd(),
         wan_egress_next_stage_fd: skel.maps.wan_egress_next_stage.as_fd().as_raw_fd(),
     };
 
@@ -234,15 +232,9 @@ pub fn attach_tc_firewall_egress(ifindex: u32, has_mac: bool) -> LdEbpfResult<Tc
 // Mode-aware unified entry
 // ========================================================================
 
-pub fn init_firewall(mode: RouteMode, ifindex: u32, has_mac: bool) -> LdEbpfResult<FirewallHandle> {
-    match mode {
-        RouteMode::Tc => Ok(FirewallHandle {
-            tc: Some(attach_tc_firewall(ifindex, has_mac)?),
-            xdp: None,
-        }),
-        RouteMode::Xdp => Ok(FirewallHandle {
-            tc: Some(attach_tc_firewall_egress(ifindex, has_mac)?),
-            xdp: Some(init_xdp_firewall(ifindex)?),
-        }),
-    }
+pub fn init_firewall(ifindex: u32, has_mac: bool) -> LdEbpfResult<FirewallHandle> {
+    Ok(FirewallHandle {
+        tc: Some(attach_tc_firewall_egress(ifindex, has_mac)?),
+        xdp: Some(init_xdp_firewall(ifindex)?),
+    })
 }

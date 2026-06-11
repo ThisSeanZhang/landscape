@@ -28,7 +28,11 @@ impl Drop for TcLanRouteHandle {
     }
 }
 
-pub fn init_tc_lan_route(ifindex: u32, has_mac: bool) -> LdEbpfResult<TcLanRouteHandle> {
+pub fn init_tc_lan_route(
+    ifindex: u32,
+    has_mac: bool,
+    xdp_handoff_enabled: bool,
+) -> LdEbpfResult<TcLanRouteHandle> {
     let manager = TcChainManager::instance();
     manager.ensure_roots(ifindex, has_mac)?;
 
@@ -38,6 +42,7 @@ pub fn init_tc_lan_route(ifindex: u32, has_mac: bool) -> LdEbpfResult<TcLanRoute
     let builder = TcLanIngressIntroSkelBuilder::default();
     let mut open_skel = bpf_ctx!(builder.open(obj), "open per-if tc_lan_ingress_intro")?;
     open_skel.maps.rodata_data.as_deref_mut().unwrap().current_l3_offset = l3_offset;
+    open_skel.maps.rodata_data.as_deref_mut().unwrap().xdp_handoff_enabled = xdp_handoff_enabled;
     crate::bpf_ctx!(
         pin_and_reuse_map(&mut open_skel.maps.flow_match_map, &MAP_PATHS.flow_match_map),
         "tc_lan_route pin flow_match_map"

@@ -1,6 +1,6 @@
 use std::{net::IpAddr, path::PathBuf};
 
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{Parser, Subcommand};
 use once_cell::sync::Lazy;
 
 use crate::LANDSCAPE_CONFIG_DIR_NAME;
@@ -29,13 +29,6 @@ pub static LAND_HOME_PATH: Lazy<PathBuf> = Lazy::new(|| {
         path.join(LANDSCAPE_CONFIG_DIR_NAME)
     }
 });
-
-#[derive(Clone, Debug, Default, ValueEnum)]
-pub enum RouteMode {
-    #[default]
-    Xdp,
-    Tc,
-}
 
 #[derive(Parser, Debug, Clone, Default)]
 #[command(version, about, long_about = None)]
@@ -78,11 +71,6 @@ pub struct WebCommArgs {
     /// [default: default]
     #[clap(long, env = "LANDSCAPE_EBPF_MAP_SPACE", default_value = "default")]
     pub ebpf_map_space: String,
-
-    /// Route mode: tc or xdp
-    /// [default: xdp]
-    #[arg(long = "route-mode", env = "LANDSCAPE_ROUTE_MODE", default_value = "xdp")]
-    pub route_mode: RouteMode,
 
     /// Manager user [default: root]
     #[clap(long = "user", env = "LANDSCAPE_ADMIN_USER")]

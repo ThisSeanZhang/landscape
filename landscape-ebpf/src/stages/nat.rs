@@ -1,6 +1,5 @@
 use std::os::fd::AsRawFd;
 
-use landscape_common::args::RouteMode;
 use landscape_common::iface::nat::NatConfig;
 
 use crate::bpf_ctx;
@@ -182,14 +181,14 @@ fn init_nat_xdp_unified(
     use libbpf_rs::skel::{OpenSkel, SkelBuilder};
     use std::os::fd::{AsFd, AsRawFd};
 
-    // ── 1. Load TC egress nat first ──
+    // ── 1. Load TC nat first (ingress + egress, for runtime map sharing with XDP) ──
 
     let tc_manager = TcChainManager::instance();
-    tc_manager.ensure_egress_roots_only(ifindex)?;
+    tc_manager.ensure_roots(ifindex, has_mac)?;
 
     let tc_builder = tc_nat_skel::TcNatSkelBuilder::default();
     let (tc_backing, tc_obj) = OwnedOpenObject::new();
-    let mut tc_open = bpf_ctx!(tc_builder.open(tc_obj), "open tc_nat skeleton (egress)")?;
+    let mut tc_open = bpf_ctx!(tc_builder.open(tc_obj), "open tc_nat skeleton")?;
 
     let tc_rodata = tc_open.maps.rodata_data.as_deref_mut().expect("`rodata` is not memory mapped");
     tc_rodata.current_l3_offset = if has_mac { 14 } else { 0 };
@@ -213,7 +212,7 @@ fn init_nat_xdp_unified(
     pin_and_reuse_map(&mut tc_open.maps.nat4_st_map, &MAP_PATHS.nat4_st_map)?;
     pin_and_reuse_map(&mut tc_open.maps.nat_conn_metric_events, &MAP_PATHS.nat_conn_metric_events)?;
 
-    let tc_skel = bpf_ctx!(tc_open.load(), "load tc_nat skeleton (egress)")?;
+    let tc_skel = bpf_ctx!(tc_open.load(), "load tc_nat skeleton")?;
 
     seed_runtime_queues(
         &tc_skel.maps.nat4_tcp_free_ports_v3,
@@ -310,9 +309,9 @@ fn init_nat_xdp_unified(
     // ── 3. Inject into chain managers ──
 
     let tc_entry = StageEntry {
-        wan_ingress_prog_fd: 0,
+        wan_ingress_prog_fd: tc_skel.progs.tc_nat_wan_ingress.as_fd().as_raw_fd(),
         wan_egress_prog_fd: tc_skel.progs.tc_nat_wan_egress.as_fd().as_raw_fd(),
-        wan_ingress_next_stage_fd: 0,
+        wan_ingress_next_stage_fd: tc_skel.maps.wan_ingress_next_stage.as_fd().as_raw_fd(),
         wan_egress_next_stage_fd: tc_skel.maps.wan_egress_next_stage.as_fd().as_raw_fd(),
     };
     tc_manager.inject(ifindex, StageType::Nat, tc_entry)?;
@@ -333,20 +332,7 @@ fn init_nat_xdp_unified(
 // Mode-aware unified entry
 // ========================================================================
 
-pub fn init_nat(
-    mode: RouteMode,
-    ifindex: u32,
-    has_mac: bool,
-    config: &NatConfig,
-) -> LdEbpfResult<NatHandle> {
-    match mode {
-        RouteMode::Tc => Ok(NatHandle {
-            tc: Some(attach_tc_nat(ifindex, has_mac, config)?),
-            xdp: None,
-        }),
-        RouteMode::Xdp => {
-            let (tc, xdp) = init_nat_xdp_unified(ifindex, has_mac, config)?;
-            Ok(NatHandle { tc: Some(tc), xdp: Some(xdp) })
-        }
-    }
+pub fn init_nat(ifindex: u32, has_mac: bool, config: &NatConfig) -> LdEbpfResult<NatHandle> {
+    let (tc, xdp) = init_nat_xdp_unified(ifindex, has_mac, config)?;
+    Ok(NatHandle { tc: Some(tc), xdp: Some(xdp) })
 }

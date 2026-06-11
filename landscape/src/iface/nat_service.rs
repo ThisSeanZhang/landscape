@@ -1,4 +1,3 @@
-use landscape_common::args::LAND_ARGS;
 use landscape_common::database::LandscapeStore;
 use landscape_common::observer::IfaceObserverAction;
 use landscape_common::service::controller::ControllerService;
@@ -60,12 +59,7 @@ pub async fn create_nat_service(
 ) {
     service_status.just_change_status(ServiceStatus::Staring);
 
-    let nat = match landscape_ebpf::stages::nat::init_nat(
-        LAND_ARGS.route_mode.clone(),
-        ifindex as u32,
-        has_mac,
-        &nat_config,
-    ) {
+    let nat = match landscape_ebpf::stages::nat::init_nat(ifindex as u32, has_mac, &nat_config) {
         Ok(handle) => handle,
         Err(err) => {
             tracing::error!("failed to start nat for {iface_name}: {err}");

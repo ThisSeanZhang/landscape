@@ -355,23 +355,6 @@ impl TcChainManager {
         Ok(())
     }
 
-    pub fn ensure_egress_roots_only(&self, ifindex: u32) -> LdEbpfResult<()> {
-        let mut inner = self.inner.lock().unwrap();
-        self.ensure_egress_roots_only_locked(&mut inner, ifindex)
-    }
-
-    fn ensure_egress_roots_only_locked(
-        &self,
-        inner: &mut ManagerInner,
-        ifindex: u32,
-    ) -> LdEbpfResult<()> {
-        let state = inner.interfaces.entry(ifindex).or_default();
-        if state.egress_root.is_none() {
-            state.egress_root = Some(self.create_egress_roots(ifindex)?);
-        }
-        Ok(())
-    }
-
     fn create_ingress_root(&self, ifindex: u32, l3_offset: u32) -> LdEbpfResult<IngressRoot> {
         let ingress_builder = TcWanIngressRootSkelBuilder::default();
         let (ingress_back, ingress_obj) = OwnedOpenObject::new();
