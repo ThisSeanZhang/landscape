@@ -9,7 +9,7 @@
 #include "landscape.h"
 #include "nat/nat_packet.h"
 
-char LICENSE[] SEC("license") = "Dual BSD/GPL";
+char LICENSE[] SEC("license") = "GPL";
 
 #undef BPF_LOG_TOPIC
 

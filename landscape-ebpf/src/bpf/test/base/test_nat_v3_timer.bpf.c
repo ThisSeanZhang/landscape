@@ -4,7 +4,7 @@
 
 #include "land_nat4_v3.h"
 
-char LICENSE[] SEC("license") = "Dual BSD/GPL";
+char LICENSE[] SEC("license") = "GPL";
 
 struct nat4_timer_test_input_v3 {
     struct nat_timer_key_v4 key;

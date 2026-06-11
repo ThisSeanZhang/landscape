@@ -9,7 +9,7 @@
 #include "land_dns_dispatcher.h"
 #include "flow_match.h"
 
-char LICENSE[] SEC("license") = "Dual BSD/GPL";
+char LICENSE[] SEC("license") = "GPL";
 
 #undef BPF_LOG_TOPIC
 

@@ -11,7 +11,7 @@
 #include "route_v6.h"
 #include "route/route_packet.h"
 
-char LICENSE[] SEC("license") = "Dual BSD/GPL";
+char LICENSE[] SEC("license") = "GPL";
 
 const volatile u32 current_l3_offset = 14;
 

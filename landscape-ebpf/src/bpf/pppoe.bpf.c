@@ -10,7 +10,7 @@
 
 #undef BPF_LOG_TOPIC
 
-char LICENSE[] SEC("license") = "Dual BSD/GPL";
+char LICENSE[] SEC("license") = "GPL";
 
 struct __attribute__((__packed__)) pppoe_header {
     u8 version_and_type;

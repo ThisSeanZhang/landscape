@@ -5,7 +5,7 @@
 #include "firewall/firewall_packet.h"
 #include "pkg_fragment.h"
 
-char LICENSE[] SEC("license") = "Dual BSD/GPL";
+char LICENSE[] SEC("license") = "GPL";
 
 const volatile u32 current_l3_offset = 14;
 

@@ -9,7 +9,7 @@
 #include "pkg_def.h"
 #include "wan_tc_pipeline.h"
 
-char LICENSE[] SEC("license") = "Dual BSD/GPL";
+char LICENSE[] SEC("license") = "GPL";
 
 #undef BPF_LOG_TOPIC
 

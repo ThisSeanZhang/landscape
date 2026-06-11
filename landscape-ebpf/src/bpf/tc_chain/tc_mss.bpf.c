@@ -8,7 +8,7 @@
 #include "chain/tc_stage.h"
 #include "chain/tc_wan_exit_maps.h"
 
-char LICENSE[] SEC("license") = "Dual BSD/GPL";
+char LICENSE[] SEC("license") = "GPL";
 
 const volatile u16 mtu_size = 1492;
 

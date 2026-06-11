@@ -4,7 +4,7 @@
 
 #include "wan_tc_pipeline.h"
 
-char LICENSE[] SEC("license") = "Dual BSD/GPL";
+char LICENSE[] SEC("license") = "GPL";
 
 SEC("tc/ingress")
 int wan_tc_pipeline_ingress_root(struct __sk_buff *skb) {

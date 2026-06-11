@@ -2,7 +2,7 @@
 
 #include <bpf/bpf_helpers.h>
 
-char LICENSE[] SEC("license") = "Dual BSD/GPL";
+char LICENSE[] SEC("license") = "GPL";
 
 const volatile u32 KEY = 0;
 

@@ -9,7 +9,7 @@
 
 #undef BPF_LOG_TOPIC
 
-char LICENSE[] SEC("license") = "Dual BSD/GPL";
+char LICENSE[] SEC("license") = "GPL";
 
 #define ETH_HLEN 14
 
