@@ -84,6 +84,11 @@ pub struct WebCommArgs {
     #[arg(long, env = "LANDSCAPE_DEBUG")]
     pub debug: Option<bool>,
 
+    /// Force native XDP attach to always fail (debug only, for testing SKB fallback)
+    #[cfg(debug_assertions)]
+    #[arg(long, default_value_t = false)]
+    pub force_native_xdp_fail: bool,
+
     /// Log output location [default: false]
     #[arg(short = 'o', long, env = "LANDSCAPE_LOG_TERMINAL")]
     pub log_output_in_terminal: Option<bool>,

@@ -179,7 +179,7 @@ static __always_inline int tc_lan_redirect_v6(struct __sk_buff *skb, u32 current
 static __always_inline int tc_pick_wan_v4(struct __sk_buff *skb, u32 current_l3_offset,
                                           const struct route_context_v4 *context,
                                           const u32 flow_id) {
-#define BPF_LOG_TOPIC "tc_pick_wan_v4"
+#define BPF_LOG_TOPIC "tc_wan_pick_wan_v4"
     int ret;
     const u32 resolved_flow_id = get_flow_id(flow_id);
 
@@ -191,7 +191,8 @@ static __always_inline int tc_pick_wan_v4(struct __sk_buff *skb, u32 current_l3_
 
     if (target_info == NULL) {
         if (resolved_flow_id == 0) return TC_ACT_OK;
-        ld_bpf_log("DROP flow_id v4: %d, ip: %pI4", resolved_flow_id, &context->saddr);
+        ld_bpf_log("DROP flow_id v4: %d, ip: %pI4 -> %pI4", resolved_flow_id, &context->saddr,
+                   &context->daddr);
         return TC_ACT_SHOT;
     }
 

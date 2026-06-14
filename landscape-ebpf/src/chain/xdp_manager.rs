@@ -23,6 +23,8 @@ pub(crate) mod xdp_lan_chain_skel {
     include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/xdp_lan_chain.skel.rs"));
 }
 
+use crate::bpf_rs_shared::xdp_skb_pppoe_skel;
+
 use xdp_lan_chain_skel::XdpLanChainSkelBuilder;
 use xdp_wan_chain_skel::XdpWanChainSkelBuilder;
 use xdp_wan_intro_skel::XdpWanIntroSkelBuilder;
@@ -143,6 +145,7 @@ pub struct XdpChainManager {
     _seed: xdp_wan_intro_skel::XdpWanIntroSkel<'static>,
     _backing: OwnedOpenObject,
     inner: Mutex<ManagerInner>,
+    skb_bundles: Mutex<HashMap<u32, SkbXdpBundle>>,
 }
 
 // Landscape owns route interfaces, so native XDP attach intentionally replaces
@@ -156,7 +159,62 @@ pub(crate) struct NativeXdpLink {
 
 impl NativeXdpLink {
     pub(crate) fn attach(prog: &Program, ifindex: u32) -> LdEbpfResult<Self> {
-        let ifindex = ifindex as i32;
+        let ifindex_i32 = ifindex as i32;
+
+        // Native and generic (SKB) XDP cannot be active at the same time on
+        // the same interface (kernel returns -EEXIST).  Always detach any
+        // SKB-mode program unconditionally before attempting native attach,
+        // regardless of whether we know about the SKB program through our
+        // internal bookkeeping.
+        let mut skb_detach_opts = libbpf_sys::bpf_xdp_attach_opts::default();
+        skb_detach_opts.sz = size_of::<libbpf_sys::bpf_xdp_attach_opts>() as libbpf_sys::size_t;
+        let _ = unsafe {
+            libbpf_sys::bpf_xdp_detach(ifindex_i32, XdpFlags::SKB_MODE.bits(), &skb_detach_opts)
+        };
+
+        // Take the bundle from internal bookkeeping if it exists (the SKB
+        // program is already detached above, so the link inside the bundle
+        // is stale — we reconstruct it below when re-attaching on failure).
+        let skb_bundle = XdpChainManager::instance().take_skb_bundle(ifindex);
+        let skb_saved = skb_bundle.map(|b| {
+            let (backing, skel) = b.yield_link();
+            (backing, skel)
+        });
+
+        let result = Self::try_native(prog, ifindex_i32);
+
+        match result {
+            Ok(link) => {
+                drop(skb_saved);
+                Ok(link)
+            }
+            Err(e) => {
+                if let Some((backing, skel)) = skb_saved {
+                    match SkbXdpBundle::reattach(backing, skel, ifindex) {
+                        Ok(bundle) => {
+                            XdpChainManager::instance().set_skb_bundle(ifindex, bundle);
+                        }
+                        Err(attach_err) => {
+                            tracing::warn!(
+                                "failed to re-attach SKB XDP on ifindex={ifindex}: {attach_err}"
+                            );
+                        }
+                    }
+                }
+                Err(e)
+            }
+        }
+    }
+
+    fn try_native(prog: &Program, ifindex: i32) -> LdEbpfResult<Self> {
+        #[cfg(debug_assertions)]
+        if landscape_common::args::LAND_ARGS.force_native_xdp_fail {
+            return Err(crate::bpf_error::LandscapeEbpfError::Context {
+                context: format!("native XDP attach force-failed for testing (ifindex={ifindex})"),
+                source: libbpf_rs::Error::from_raw_os_error(libc::EOPNOTSUPP),
+            });
+        }
+
         let xdp = Xdp::new(prog.as_fd());
         let attach_flags = XdpFlags::DRV_MODE;
 
@@ -192,6 +250,96 @@ impl NativeXdpLink {
         if ret != 0 {
             tracing::debug!("detach native XDP ifindex={ifindex} failed: {}", -ret);
         }
+    }
+}
+
+/// Generic/SKB-mode XDP link for fallback scenarios (e.g., PPPoE decap when
+/// native XDP is unavailable).
+pub(crate) struct SkbXdpLink {
+    ifindex: i32,
+}
+
+impl SkbXdpLink {
+    pub(crate) fn attach(prog: &Program, ifindex: u32) -> LdEbpfResult<Self> {
+        let ifindex = ifindex as i32;
+        let xdp = Xdp::new(prog.as_fd());
+        let attach_flags = XdpFlags::SKB_MODE;
+
+        crate::bpf_ctx!(xdp.attach(ifindex, attach_flags), "attach SKB XDP ifindex={ifindex}")?;
+
+        let query = match crate::bpf_ctx!(
+            xdp.query(ifindex, XdpFlags::SKB_MODE),
+            "query SKB XDP ifindex={ifindex}"
+        ) {
+            Ok(query) => query,
+            Err(err) => {
+                Self::detach(ifindex);
+                return Err(err.into());
+            }
+        };
+        if query.skb_prog_id == 0 {
+            Self::detach(ifindex);
+            return Err(crate::bpf_error::LandscapeEbpfError::Context {
+                context: format!("SKB XDP attach missing skb prog id ifindex={ifindex}"),
+                source: libbpf_rs::Error::from_raw_os_error(libc::ENODEV),
+            });
+        }
+
+        Ok(Self { ifindex })
+    }
+
+    fn detach(ifindex: i32) {
+        let mut opts = libbpf_sys::bpf_xdp_attach_opts::default();
+        opts.sz = size_of::<libbpf_sys::bpf_xdp_attach_opts>() as libbpf_sys::size_t;
+        // old_prog_fd=0 (default) → detach whatever is in SKB mode.
+        let ret = unsafe { libbpf_sys::bpf_xdp_detach(ifindex, XdpFlags::SKB_MODE.bits(), &opts) };
+        if ret != 0 {
+            tracing::warn!("detach SKB XDP ifindex={ifindex} failed: {}", -ret);
+        }
+    }
+}
+
+impl Drop for SkbXdpLink {
+    fn drop(&mut self) {
+        Self::detach(self.ifindex);
+    }
+}
+
+/// Bundle holding all resources needed to keep an SKB-mode XDP program
+/// alive.  Rust drops fields in reverse declaration order, so *link*
+/// (declared last) is dropped first — detaching the XDP program via its
+/// real prog_fd.  Then the skeleton and finally the backing memory.
+pub(crate) struct SkbXdpBundle {
+    _backing: OwnedOpenObject,
+    _skel: xdp_skb_pppoe_skel::XdpSkbPppoeSkel<'static>,
+    link: SkbXdpLink,
+}
+
+impl SkbXdpBundle {
+    pub(crate) fn new(
+        backing: OwnedOpenObject,
+        skel: xdp_skb_pppoe_skel::XdpSkbPppoeSkel<'static>,
+        link: SkbXdpLink,
+    ) -> Self {
+        Self { _backing: backing, _skel: skel, link }
+    }
+
+    /// Temporarily detach the SKB XDP program (drop the link) and return
+    /// the backing + skeleton so the program can be re-attached later.
+    fn yield_link(self) -> (OwnedOpenObject, xdp_skb_pppoe_skel::XdpSkbPppoeSkel<'static>) {
+        let SkbXdpBundle { _backing, _skel, link } = self;
+        drop(link);
+        (_backing, _skel)
+    }
+
+    /// Re-attach the SKB XDP program from its backing and skeleton.
+    fn reattach(
+        backing: OwnedOpenObject,
+        skel: xdp_skb_pppoe_skel::XdpSkbPppoeSkel<'static>,
+        ifindex: u32,
+    ) -> LdEbpfResult<Self> {
+        let link = SkbXdpLink::attach(&skel.progs.xdp_skb_pppoe, ifindex)?;
+        Ok(Self { _backing: backing, _skel: skel, link })
     }
 }
 
@@ -240,6 +388,7 @@ impl XdpChainManager {
             _seed: skel,
             _backing: backing,
             inner: Mutex::new(ManagerInner::new()),
+            skb_bundles: Mutex::new(HashMap::new()),
         })
     }
 
@@ -317,6 +466,14 @@ impl XdpChainManager {
     pub(crate) fn create_wan_intro_link(&self, ifindex: u32) -> LdEbpfResult<NativeXdpLink> {
         let link = NativeXdpLink::attach(&self._seed.progs.wan_intro_dispatch, ifindex)?;
         Ok(link)
+    }
+
+    pub(crate) fn set_skb_bundle(&self, ifindex: u32, bundle: SkbXdpBundle) {
+        self.skb_bundles.lock().unwrap().insert(ifindex, bundle);
+    }
+
+    pub(crate) fn take_skb_bundle(&self, ifindex: u32) -> Option<SkbXdpBundle> {
+        self.skb_bundles.lock().unwrap().remove(&ifindex)
     }
 
     fn create_wan_root(&self, ifindex: u32) -> LdEbpfResult<ChainRoot> {

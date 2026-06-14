@@ -48,7 +48,7 @@ static __always_inline void tc_pppoe_encap(struct __sk_buff *skb) {
     struct pppoe_header hdr = {
         .version_and_type = 0x11,
         .code = 0x00,
-        .session_id = bpf_htons(session_id),
+        .session_id = session_id,
         .length = bpf_htons(pkt_sz + 2),
         .protocol = ppp_proto,
     };

@@ -195,7 +195,7 @@ static __always_inline int tc_lan_redirect_v6(struct __sk_buff *skb, u32 current
 static __always_inline int tc_pick_wan_v4(struct __sk_buff *skb, u32 current_l3_offset,
                                           const struct route_context_v4 *context,
                                           const u32 flow_id) {
-#define BPF_LOG_TOPIC "tc_pick_wan_v4"
+#define BPF_LOG_TOPIC "tc_lan_pick_wan_v4"
     const u32 resolved_flow_id = get_flow_id(flow_id);
 
     struct route_target_slot_key_v4 slot_key = {

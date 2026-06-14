@@ -24,7 +24,6 @@ pub(crate) mod wan_tc_pipeline {
 
 use wan_tc_pipeline::*;
 
-pub(crate) const INGRESS_STAGE_PPPOE: u32 = 0;
 pub(crate) const INGRESS_STAGE_MSS: u32 = 1;
 pub(crate) const INGRESS_STAGE_FIREWALL: u32 = 2;
 pub(crate) const INGRESS_STAGE_NAT: u32 = 3;
@@ -34,7 +33,6 @@ pub(crate) const EGRESS_STAGE_WAN_ROUTE: u32 = 0;
 pub(crate) const EGRESS_STAGE_MSS: u32 = 1;
 pub(crate) const EGRESS_STAGE_NAT: u32 = 2;
 pub(crate) const EGRESS_STAGE_FIREWALL: u32 = 3;
-pub(crate) const EGRESS_STAGE_PPPOE: u32 = 4;
 pub(crate) const EGRESS_STAGE_COUNT: u32 = 5;
 
 static PIPELINES: Lazy<Mutex<HashMap<u32, Weak<WanTcPipelineInner>>>> =
@@ -147,25 +145,6 @@ impl WanTcPipelineHandle {
     pub fn unregister_mss(&self) {
         let _ = self.inner.skel.maps.ingress_stage_progs.delete(&INGRESS_STAGE_MSS.to_ne_bytes());
         let _ = self.inner.skel.maps.egress_stage_progs.delete(&EGRESS_STAGE_MSS.to_ne_bytes());
-    }
-
-    pub fn register_pppoe(
-        &self,
-        ingress_prog: &Program,
-        egress_prog: &Program,
-    ) -> LdEbpfResult<()> {
-        register_stage(
-            &self.inner.skel.maps.ingress_stage_progs,
-            INGRESS_STAGE_PPPOE,
-            ingress_prog,
-        )?;
-        register_stage(&self.inner.skel.maps.egress_stage_progs, EGRESS_STAGE_PPPOE, egress_prog)?;
-        Ok(())
-    }
-
-    pub fn unregister_pppoe(&self) {
-        let _ = self.inner.skel.maps.ingress_stage_progs.delete(&INGRESS_STAGE_PPPOE.to_ne_bytes());
-        let _ = self.inner.skel.maps.egress_stage_progs.delete(&EGRESS_STAGE_PPPOE.to_ne_bytes());
     }
 }
 

@@ -5,6 +5,7 @@ use once_cell::sync::Lazy;
 
 pub mod base;
 pub mod bpf_error;
+pub(crate) mod bpf_rs_shared;
 pub mod firewall;
 pub mod landscape;
 pub mod map_setting;

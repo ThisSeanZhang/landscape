@@ -7,9 +7,10 @@ use libbpf_rs::{
 use tokio::sync::oneshot::error::TryRecvError;
 
 use crate::{
+    bpf_error::LdEbpfResult,
+    bpf_rs_shared::xdp_skb_pppoe_skel,
+    chain::xdp_manager::{SkbXdpBundle, SkbXdpLink, XdpChainManager},
     landscape::TcHookProxy,
-    map_setting::reuse_pinned_map_or_recreate,
-    pipeline::wan_tc::{self, WanTcPipelineHandle},
     PPPOE_EGRESS_PRIORITY,
 };
 
@@ -34,43 +35,17 @@ pub async fn create_pppoe_tc_ebpf_3(
             }
         };
 
-        let pipeline = match WanTcPipelineHandle::acquire(ifindex) {
-            Ok(p) => p,
+        let _skb_bundle_stored = match try_attach_pppoe_skb_xdp(ifindex, session_id) {
+            Ok(bundle) => {
+                tracing::info!("SKB-mode XDP attached for PPPoE decap on ifindex={ifindex}");
+                XdpChainManager::instance().set_skb_bundle(ifindex, bundle);
+                true
+            }
             Err(e) => {
-                tracing::error!("pppoe tc acquire pipeline failed for ifindex={}: {e}", ifindex);
-                return;
+                tracing::debug!("SKB-mode XDP for PPPoE decap skipped: {e}");
+                false
             }
         };
-
-        let builder = landscape_pppoe::PppoeSkelBuilder::default();
-        let mut open_object = MaybeUninit::uninit();
-        let mut pppoe_open =
-            crate::bpf_ctx!(builder.open(&mut open_object), "pppoe tc open skeleton failed")
-                .expect("pppoe tc open skeleton");
-        let ingress_path = wan_tc::wan_tc_pipeline_ingress_path(ifindex);
-        let egress_path = wan_tc::wan_tc_pipeline_egress_path(ifindex);
-        reuse_pinned_map_or_recreate(&mut pppoe_open.maps.ingress_stage_progs, &ingress_path);
-        reuse_pinned_map_or_recreate(&mut pppoe_open.maps.egress_stage_progs, &egress_path);
-
-        let rodata_data =
-            pppoe_open.maps.rodata_data.as_deref_mut().expect("rodata is not memory mapped");
-        rodata_data.session_id = session_id;
-
-        let pppoe_skel = crate::bpf_ctx!(pppoe_open.load(), "pppoe tc load skeleton failed")
-            .expect("pppoe tc load skeleton");
-
-        if let Err(e) =
-            pipeline.register_pppoe(&pppoe_skel.progs.pppoe_ingress, &pppoe_skel.progs.pppoe_egress)
-        {
-            tracing::error!("pppoe tc register in pipeline failed for ifindex={}: {e}", ifindex);
-            return;
-        }
-
-        tracing::info!(
-            "pppoe tc pipeline registered for ifindex={} session_id={}",
-            ifindex,
-            session_id
-        );
 
         let call_back = loop {
             match notice_rx.try_recv() {
@@ -82,15 +57,14 @@ pub async fn create_pppoe_tc_ebpf_3(
             }
         };
 
-        pipeline.unregister_pppoe();
-        tracing::info!("pppoe tc pipeline unregistered for ifindex={}", ifindex);
-
+        // If native XDP hasn't already taken the SKB bundle, we take it
+        // here as a fallback.  Dropping the bundle detaches the SKB XDP.
+        let _ = XdpChainManager::instance().take_skb_bundle(ifindex);
         drop(chain_handle);
 
         if let Some(call_back) = call_back {
             let _ = call_back.send(());
         }
-        drop(pppoe_skel);
     });
 
     notice_tx
@@ -108,7 +82,7 @@ pub async fn create_pppoe_tc_ebpf<'a>(
     let rodata_data =
         pppoe_open.maps.rodata_data.as_deref_mut().expect("rodata is not memory mapped");
 
-    rodata_data.session_id = session_id;
+    rodata_data.session_id = session_id.to_be();
     let pppoe_skel: landscape_pppoe::PppoeSkel<'a> =
         crate::bpf_ctx!(pppoe_open.load(), "pppoe_tc load skeleton failed").unwrap();
 
@@ -128,4 +102,24 @@ pub async fn create_pppoe_tc_ebpf<'a>(
         drop(pppoe_egress_builder);
     });
     (notice_tx, pppoe_skel)
+}
+
+fn try_attach_pppoe_skb_xdp(ifindex: u32, session_id: u16) -> LdEbpfResult<SkbXdpBundle> {
+    let builder = xdp_skb_pppoe_skel::XdpSkbPppoeSkelBuilder::default();
+    let (backing, obj) = crate::landscape::OwnedOpenObject::new();
+    let mut open_skel = crate::bpf_ctx!(builder.open(obj), "open xdp_skb_pppoe skeleton")?;
+    if let Some(rodata) = open_skel.maps.rodata_data.as_deref_mut() {
+        rodata.session_id = session_id.to_be();
+    }
+    let skel = crate::bpf_ctx!(open_skel.load(), "load xdp_skb_pppoe skeleton")?;
+
+    if crate::map_setting::redirect_able::is_xdp_redirect_able(ifindex) {
+        return Err(crate::bpf_error::LandscapeEbpfError::Context {
+            context: format!("native XDP already serving ifindex={ifindex} (redirect_able=true)"),
+            source: libbpf_rs::Error::from_raw_os_error(17),
+        });
+    }
+
+    let link = SkbXdpLink::attach(&skel.progs.xdp_skb_pppoe, ifindex)?;
+    Ok(SkbXdpBundle::new(backing, skel, link))
 }

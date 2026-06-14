@@ -1,3 +1,5 @@
+use std::net::Ipv4Addr;
+
 use landscape_common::service::{ServiceStatus, WatchService};
 use tokio::sync::oneshot;
 
@@ -13,6 +15,7 @@ pub async fn create_pppoe_client(
     service_status: WatchService,
     route_service: Option<IpRouteService>,
 ) {
+    let mut service_status_rx = service_status.subscribe();
     service_status.just_change_status(ServiceStatus::Staring);
     tracing::info!(
         "starting native PPPoE client on iface={} ifindex={} requested_mru={} default_router={}",
@@ -52,7 +55,6 @@ pub async fn create_pppoe_client(
         .as_mut()
         .reset(tokio::time::Instant::now() + tokio::time::Duration::from_secs(DEFAULT_TIME_OUT));
 
-    let mut service_status_rx = service_status.subscribe();
     loop {
         tokio::select! {
             receive_data = rx.recv() => {
@@ -150,10 +152,69 @@ pub async fn create_pppoe_client(
         }
     }
 
+    let cleanup_ips: Option<(Ipv4Addr, Ipv4Addr)> = pkt_manager
+        .lcp_status
+        .ipcp_client_ipaddr
+        .get_value()
+        .zip(pkt_manager.lcp_status.ipcp_server_ipaddr.get_value());
+    if let Some((client_ip, server_ip)) = cleanup_ips {
+        tracing::info!(
+            "PPPoE running fallback IP teardown on iface={} client_ip={} server_ip={}",
+            config.iface_name,
+            client_ip,
+            server_ip
+        );
+        let _ = std::process::Command::new("ip")
+            .args(&[
+                "addr",
+                "del",
+                &format!("{}", client_ip),
+                "peer",
+                &format!("{}/32", server_ip),
+                "dev",
+                &config.iface_name,
+            ])
+            .output();
+        let _ = std::process::Command::new("ip")
+            .args(&["neigh", "del", &format!("{}", server_ip), "dev", &config.iface_name])
+            .output();
+        let _ = std::process::Command::new("ip")
+            .args(&["link", "set", "dev", &config.iface_name, "mtu", "1500"])
+            .output();
+    }
+
     if let Some(bpf_thread_notice) = bpf_thread_notice {
         let (tx, rx) = oneshot::channel::<()>();
-        if let Ok(()) = bpf_thread_notice.send(tx) {
-            let _ = rx.await;
+        match bpf_thread_notice.send(tx) {
+            Ok(()) => {
+                match tokio::time::timeout(
+                    tokio::time::Duration::from_secs(DEFAULT_TIME_OUT * 5),
+                    rx,
+                )
+                .await
+                {
+                    Ok(Ok(())) => {}
+                    Ok(Err(_)) => {
+                        tracing::error!(
+                            "PPPoE eBPF cleanup task terminated without sending completion on iface={}",
+                            config.iface_name
+                        );
+                    }
+                    Err(_) => {
+                        tracing::error!(
+                            "PPPoE eBPF cleanup timed out after {}s on iface={}",
+                            DEFAULT_TIME_OUT * 5,
+                            config.iface_name
+                        );
+                    }
+                }
+            }
+            Err(_) => {
+                tracing::error!(
+                    "PPPoE eBPF cleanup task channel closed, cleanup may not have run on iface={}",
+                    config.iface_name
+                );
+            }
         }
     }
 

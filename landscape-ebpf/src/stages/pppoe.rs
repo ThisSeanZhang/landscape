@@ -37,7 +37,7 @@ pub fn attach_tc_pppoe(ifindex: u32, session_id: u16, has_mac: bool) -> LdEbpfRe
     let (backing, obj) = OwnedOpenObject::new();
     let mut open_skel = bpf_ctx!(builder.open(obj), "open tc_pppoe skeleton")?;
 
-    open_skel.maps.rodata_data.as_deref_mut().unwrap().session_id = session_id;
+    open_skel.maps.rodata_data.as_deref_mut().unwrap().session_id = session_id.to_be();
 
     pin_and_reuse_map(
         &mut open_skel.maps.tc_pipe_exits_wan_ingress,

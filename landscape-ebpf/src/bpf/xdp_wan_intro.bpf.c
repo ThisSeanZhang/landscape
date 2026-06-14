@@ -161,7 +161,6 @@ int wan_intro_dispatch(struct xdp_md *ctx) {
     }
 
     if (pppoe->protocol != ETH_P_PPP_IPV4 && pppoe->protocol != ETH_P_PPP_IPV6) {
-        ld_bpf_log("unknown ppp protocol: %x", bpf_ntohs(pppoe->protocol));
         return XDP_PASS;
     }
 
@@ -188,7 +187,7 @@ int wan_intro_dispatch(struct xdp_md *ctx) {
     u8 mac_pair[12];
     __builtin_memcpy(mac_pair, eth->h_dest, sizeof(mac_pair));
 
-    int result = bpf_xdp_adjust_head(ctx, -8);
+    int result = bpf_xdp_adjust_head(ctx, 8);
     if (result != 0) {
         ld_bpf_log("bpf_xdp_adjust_head failed: %d", result);
         return XDP_DROP;

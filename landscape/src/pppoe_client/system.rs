@@ -188,6 +188,17 @@ impl PPPoEClientManager {
                 );
             }
 
+            if let Err(e) = std::process::Command::new("ip")
+                .args(&["neigh", "del", &format!("{}", server_ip), "dev", &iface_name])
+                .output()
+            {
+                tracing::error!(
+                    "failed to remove PPPoE neighbor entry {} on iface {}: {e:?}",
+                    server_ip,
+                    iface_name
+                );
+            }
+
             if default_router {
                 LD_ALL_ROUTERS.del_route_by_iface(&iface_name).await;
             }

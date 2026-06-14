@@ -663,10 +663,12 @@ impl PPPoEClientManager {
                 self.lcp_status.echo_req_id,
                 config.magic_number,
             );
-            data_sender
-                .send(Box::new([l2_header, request.convert_to_payload()].concat()))
-                .await
-                .unwrap();
+            if let Err(e) =
+                data_sender.send(Box::new([l2_header, request.convert_to_payload()].concat())).await
+            {
+                tracing::error!("failed to send LCP echo request: {e:?}");
+                return Some((self.lcp_status.lcp_echo_times, LCP_ECHO_INTERVAL));
+            }
             tracing::debug!("sending LCP echo request id={}", self.lcp_status.echo_req_id);
             Some((self.lcp_status.lcp_echo_times, LCP_ECHO_INTERVAL))
         } else {
@@ -724,12 +726,15 @@ impl PPPoEClientManager {
                 tracing::info!("sending LCP termination request");
                 let termination_request = PPPoEFrame::get_termination_request(*sid, 1);
 
-                data_sender
+                if let Err(e) = data_sender
                     .send(Box::new(
                         [eth_head_data, termination_request.convert_to_payload()].concat(),
                     ))
                     .await
-                    .unwrap();
+                {
+                    tracing::error!("failed to send LCP termination request: {e:?}");
+                    return false;
+                }
                 return true;
             }
             return true;
@@ -821,8 +826,6 @@ impl PPPoEClientManager {
             && self.lcp_status.pap.0
             && self.lcp_status.ipcp_client_ipaddr.is_confirm()
             && self.lcp_status.ipcp_server_ipaddr.is_confirm()
-            && self.lcp_status.ip6cp_client_id.is_confirm()
-            && self.lcp_status.ip6cp_server_id.is_confirm()
     }
 }
 
@@ -852,7 +855,7 @@ mod tests {
     }
 
     #[test]
-    fn can_enable_ebpf_requires_all_negotiation_steps() {
+    fn can_enable_ebpf_prog_after_lcp_pap_ipcp() {
         let mut manager = PPPoEClientManager::new(
             MacAddr::new(0x02, 0x11, 0x22, 0x33, 0x44, 0x55),
             1492,
@@ -868,8 +871,6 @@ mod tests {
             super::TagValue::Ack(std::net::Ipv4Addr::new(10, 0, 0, 100));
         manager.lcp_status.ipcp_server_ipaddr =
             super::TagValue::Ack(std::net::Ipv4Addr::new(10, 0, 0, 1));
-        manager.lcp_status.ip6cp_client_id = super::TagValue::Ack(vec![1, 2, 3, 4, 5, 6, 7, 8]);
-        manager.lcp_status.ip6cp_server_id = super::TagValue::Ack(vec![8, 7, 6, 5, 4, 3, 2, 1]);
 
         assert!(manager.can_enable_ebpf_prog());
     }
