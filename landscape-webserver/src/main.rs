@@ -55,15 +55,11 @@ use landscape_common::{
     config::RuntimeConfig,
     database::LandscapeStore,
     error::LdResult,
-    iface::ip_config::IfaceIpModelConfig,
     ipv6_pd::IAPrefixMap,
     service::controller::ControllerService,
     VERSION,
 };
-use landscape_common::{
-    config::{AuthRuntimeConfig, InitConfig},
-    dhcp::v4_server::config::DHCPv4ServiceConfig,
-};
+use landscape_common::{config::InitConfig, dhcp::v4_server::config::DHCPv4ServiceConfig};
 use landscape_database::provider::LandscapeDBServiceProvider;
 use landscape_database::repository::Repository;
 use tokio::runtime::Builder as RuntimeBuilder;
@@ -72,6 +68,7 @@ use tower_http::{services::ServeDir, trace::TraceLayer};
 use utoipa_scalar::{Scalar, Servable};
 
 mod api;
+mod app;
 mod auth;
 mod cert;
 mod devices;
@@ -93,6 +90,8 @@ mod services;
 mod system;
 mod websocket;
 
+pub use app::LandscapeApp;
+
 use crate::gateway_runtime::{GatewayService, GatewayTlsConfig};
 use tracing::info;
 
@@ -101,248 +100,6 @@ const DST_IP_EVENT_CHANNEL_SIZE: usize = 128;
 const ROUTE_EVENT_CHANNEL_SIZE: usize = 128;
 
 const UPLOAD_GEO_FILE_SIZE_LIMIT: usize = 100 * 1024 * 1024;
-
-#[allow(dead_code)]
-#[derive(Clone)]
-pub struct LandscapeApp {
-    pub home_path: PathBuf,
-    pub auth: Arc<ArcSwap<AuthRuntimeConfig>>,
-    pub dns_service: LandscapeDnsService,
-    pub ddns_service: DdnsService,
-    pub dns_provider_profile_service: DnsProviderProfileService,
-    pub dns_rule_service: DNSRuleService,
-    pub flow_rule_service: FlowRuleService,
-    pub geo_site_service: GeoSiteService,
-    pub firewall_blacklist_service: FirewallBlacklistService,
-    pub dst_ip_rule_service: DstIpRuleService,
-    pub geo_ip_service: GeoIpService,
-    pub config_service: LandscapeConfigService,
-
-    pub dhcp_v4_server_service: DHCPv4ServerManagerService,
-
-    /// Metric
-    pub metric_service: MetricService,
-
-    /// Route
-    pub route_service: IpRouteService,
-    pub route_lan_service: RouteLanServiceManagerService,
-    pub route_wan_service: RouteWanServiceManagerService,
-
-    /// Iface Config
-    iface_config_service: IfaceManagerService,
-    /// Iface IP Service
-    wan_ip_service: IfaceIpServiceManagerService,
-    docker_service: LandscapeDockerService,
-
-    /// pppd service
-    pppd_service: PPPDServiceConfigManagerService,
-
-    /// ipv6
-    ipv6_pd_service: DHCPv6ClientManagerService,
-    lan_ipv6_service: LanIPv6ManagerService,
-
-    // Static NAT Mapping
-    static_nat_mapping_config_service: StaticNatMappingService,
-
-    /// DNS Redirect Service
-    dns_redirect_service: DNSRedirectService,
-
-    dns_upstream_service: DnsUpstreamService,
-
-    /// Mss Clamp Service
-    mss_clamp_service: MssClampServiceManagerService,
-    firewall_service: FirewallServiceManagerService,
-    wifi_service: WifiServiceManagerService,
-    nat_service: NatServiceManagerService,
-
-    ebpf_service: LandscapeEbpfService,
-    enrolled_device_service: EnrolledDeviceService,
-
-    cert_account_service: CertAccountService,
-    cert_service: CertService,
-
-    // Gateway
-    gateway_service: GatewayService,
-}
-
-impl LandscapeApp {
-    pub(crate) async fn validate_zone<C: landscape_common::iface::config::ZoneAwareConfig>(
-        &self,
-        config: &C,
-    ) -> Result<(), landscape_common::service::ServiceConfigError> {
-        use landscape_common::iface::config::{IfaceZoneType, ZoneRequirement};
-        use landscape_common::service::ServiceConfigError;
-
-        let iface_name = config.iface_name();
-        let requirement = C::zone_requirement();
-
-        // WanOrPpp: check if this is a PPP device first
-        if matches!(requirement, ZoneRequirement::WanOrPpp) {
-            if let Some(ppp_config) =
-                self.pppd_service.get_config_by_name(iface_name.to_string()).await
-            {
-                // PPP service exists for this interface, verify the attached interface exists
-                if self
-                    .iface_config_service
-                    .get_iface_config(ppp_config.attach_iface_name)
-                    .await
-                    .is_some()
-                {
-                    return Ok(()); // Valid PPP device, skip zone check
-                }
-            }
-        }
-
-        // docker0 special case: allow LanOnly services
-        if iface_name == "docker0" && matches!(requirement, ZoneRequirement::LanOnly) {
-            return Ok(());
-        }
-
-        // Regular zone check
-        let iface_config =
-            self.iface_config_service.get_iface_config(iface_name.to_string()).await.ok_or_else(
-                || ServiceConfigError::IfaceNotFound { iface_name: iface_name.to_string() },
-            )?;
-
-        let allowed = match requirement {
-            ZoneRequirement::WanOnly | ZoneRequirement::WanOrPpp => {
-                matches!(iface_config.zone_type, IfaceZoneType::Wan)
-            }
-            ZoneRequirement::LanOnly => {
-                matches!(iface_config.zone_type, IfaceZoneType::Lan)
-            }
-            ZoneRequirement::WanOrLan => {
-                matches!(iface_config.zone_type, IfaceZoneType::Wan | IfaceZoneType::Lan)
-            }
-            ZoneRequirement::LanOrUndefined => {
-                matches!(iface_config.zone_type, IfaceZoneType::Lan | IfaceZoneType::Undefined)
-            }
-        };
-
-        if allowed {
-            Ok(())
-        } else {
-            Err(ServiceConfigError::ZoneMismatch {
-                service_name: C::service_kind(),
-                iface_name: iface_name.to_string(),
-            })
-        }
-    }
-
-    pub(crate) async fn remove_direct_iface_service(&self, iface_name: &str) {
-        self.mss_clamp_service.delete_and_stop_iface_service(iface_name.to_string()).await;
-        self.wan_ip_service.delete_and_stop_iface_service(iface_name.to_string()).await;
-        self.firewall_service.delete_and_stop_iface_service(iface_name.to_string()).await;
-        self.nat_service.delete_and_stop_iface_service(iface_name.to_string()).await;
-        self.ipv6_pd_service.delete_and_stop_iface_service(iface_name.to_string()).await;
-        self.route_wan_service.delete_and_stop_iface_service(iface_name.to_string()).await;
-        self.dhcp_v4_server_service.delete_and_stop_iface_service(iface_name.to_string()).await;
-        self.lan_ipv6_service.delete_and_stop_iface_service(iface_name.to_string()).await;
-        self.route_lan_service.delete_and_stop_iface_service(iface_name.to_string()).await;
-    }
-
-    pub(crate) async fn remove_all_iface_service(&self, iface_name: &str) {
-        self.remove_direct_iface_service(iface_name).await;
-        crate::services::pppoe::delete_ppp_ifaces_by_attach_name(self, iface_name).await;
-    }
-
-    pub async fn shutdown(&self) {
-        tracing::info!("Shutting down all services...");
-
-        self.gateway_service.shutdown_and_wait(std::time::Duration::from_secs(10)).await;
-        tracing::info!("Gateway service stopped");
-
-        tokio::join!(
-            self.mss_clamp_service.get_service().stop_all(),
-            self.firewall_service.get_service().stop_all(),
-            self.nat_service.get_service().stop_all(),
-            self.route_wan_service.get_service().stop_all(),
-            self.route_lan_service.get_service().stop_all(),
-            self.dhcp_v4_server_service.get_service().stop_all(),
-            self.ipv6_pd_service.get_service().stop_all(),
-            self.lan_ipv6_service.get_service().stop_all(),
-            self.wan_ip_service.get_service().stop_all(),
-            self.pppd_service.get_service().stop_all(),
-            self.wifi_service.get_service().stop_all(),
-        );
-        tracing::info!("All service managers stopped");
-
-        landscape_ebpf::map_setting::cleanup_pinned_maps();
-
-        self.metric_service.stop_service().await;
-        tracing::info!("Metric service stopped");
-
-        self.ebpf_service.stop().await;
-        tracing::info!("eBPF system service stopped");
-
-        self.dns_service.stop().await;
-        tracing::info!("DNS resolver conf restored");
-
-        self.preserve_critical_ips().await;
-        tracing::info!("Critical IPs preserved");
-    }
-
-    async fn preserve_critical_ips(&self) {
-        // Query and re-apply DHCPv4 server IPs from database
-        let dhcp_configs = self
-            .dhcp_v4_server_service
-            .get_repository()
-            .list()
-            .await
-            .unwrap_or_default();
-
-        for config in &dhcp_configs {
-            if config.enable {
-                let ip = std::net::IpAddr::V4(config.config.server_ip_addr);
-                let prefix_len = config.config.network_mask;
-                tracing::info!(
-                    "Re-applying DHCPv4 server IP: {ip}/{prefix_len} on {}",
-                    config.iface_name
-                );
-                landscape::netlink::address::set_iface_ip(
-                    &config.iface_name,
-                    ip,
-                    prefix_len,
-                )
-                .await;
-            }
-        }
-
-        // Query and re-apply WAN static IPs from database
-        let ip_configs = self
-            .wan_ip_service
-            .get_repository()
-            .list()
-            .await
-            .unwrap_or_default();
-
-        for config in &ip_configs {
-            if config.enable {
-                if let IfaceIpModelConfig::Static {
-                    ipv4,
-                    ipv4_mask,
-                    ..
-                } = &config.ip_model
-                {
-                    if let Some(ipv4_addr) = ipv4 {
-                        let ip = std::net::IpAddr::V4(*ipv4_addr);
-                        let prefix_len = *ipv4_mask;
-                        tracing::info!(
-                            "Re-applying WAN static IP: {ip}/{prefix_len} on {}",
-                            config.iface_name
-                        );
-                        landscape::netlink::address::set_iface_ip(
-                            &config.iface_name,
-                            ip,
-                            prefix_len,
-                        )
-                        .await;
-                    }
-                }
-            }
-        }
-    }
-}
 
 fn log_startup_phase(phase: &str, phase_start: Instant, startup_start: Instant) {
     tracing::info!(
