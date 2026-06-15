@@ -17,8 +17,8 @@ use crate::{
 };
 
 pub struct FirewallHandle {
-    _backing: OwnedOpenObject,
     skel: Option<FirewallSkel<'static>>,
+    _backing: OwnedOpenObject,
     pipeline: Option<WanTcPipelineHandle>,
 }
 

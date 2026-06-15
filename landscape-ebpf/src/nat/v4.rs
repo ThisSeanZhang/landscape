@@ -30,10 +30,10 @@ use land_nat_v3::{LandNatV3Skel, LandNatV3SkelBuilder};
 use xdp_nat::{XdpNatSkel, XdpNatSkelBuilder};
 
 pub struct NatV4Handle {
-    _tc_backing: OwnedOpenObject,
-    _xdp_backing: OwnedOpenObject,
     tc_skel: Option<LandNatV3Skel<'static>>,
     xdp_skel: Option<XdpNatSkel<'static>>,
+    _tc_backing: OwnedOpenObject,
+    _xdp_backing: OwnedOpenObject,
     pipeline: Option<WanTcPipelineHandle>,
     ifindex: u32,
 }

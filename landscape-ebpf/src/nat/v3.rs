@@ -22,8 +22,8 @@ pub(crate) mod land_nat_v3 {
 }
 
 pub struct NatV3Handle {
-    _backing: OwnedOpenObject,
     skel: Option<LandNatV3Skel<'static>>,
+    _backing: OwnedOpenObject,
     pipeline: Option<WanTcPipelineHandle>,
 }
 

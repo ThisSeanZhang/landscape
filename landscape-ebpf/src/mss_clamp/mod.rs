@@ -13,8 +13,8 @@ use crate::{
 };
 
 pub struct MssClampHandle {
-    _backing: OwnedOpenObject,
     skel: Option<MssClampSkel<'static>>,
+    _backing: OwnedOpenObject,
     pipeline: Option<WanTcPipelineHandle>,
 }
 

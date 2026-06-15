@@ -306,13 +306,14 @@ impl Drop for SkbXdpLink {
 }
 
 /// Bundle holding all resources needed to keep an SKB-mode XDP program
-/// alive.  Rust drops fields in reverse declaration order, so *link*
-/// (declared last) is dropped first — detaching the XDP program via its
-/// real prog_fd.  Then the skeleton and finally the backing memory.
+/// alive.  Struct fields are dropped in declaration order, so *link* is
+/// dropped first — detaching the XDP program.  Then the skeleton is
+/// dropped (OwnedRef accesses the backing which is still alive) and
+/// finally the backing memory is freed.
 pub(crate) struct SkbXdpBundle {
-    _backing: OwnedOpenObject,
-    _skel: xdp_skb_pppoe_skel::XdpSkbPppoeSkel<'static>,
     link: SkbXdpLink,
+    _skel: xdp_skb_pppoe_skel::XdpSkbPppoeSkel<'static>,
+    _backing: OwnedOpenObject,
 }
 
 impl SkbXdpBundle {

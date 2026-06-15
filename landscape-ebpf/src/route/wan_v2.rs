@@ -16,8 +16,8 @@ use crate::{
 };
 
 pub struct RouteWanHandle {
-    _backing: OwnedOpenObject,
     skel: Option<RouteWanSkel<'static>>,
+    _backing: OwnedOpenObject,
     pipeline: Option<WanTcPipelineHandle>,
 }
 

@@ -16,8 +16,8 @@ use crate::{
 };
 
 pub struct RouteLanHandle {
-    _backing: OwnedOpenObject,
     skel: Option<RouteLanSkel<'static>>,
+    _backing: OwnedOpenObject,
     pipeline: Option<LanTcPipelineHandle>,
 }
 
