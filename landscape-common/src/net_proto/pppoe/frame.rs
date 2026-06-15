@@ -120,6 +120,17 @@ impl PPPoEFrame {
         }
     }
 
+    pub fn get_ppp_auth_response(sid: u16, payload: Vec<u8>) -> PPPoEFrame {
+        PPPoEFrame {
+            ver: 1,
+            t: 1,
+            code: 0,
+            sid,
+            length: payload.len() as u16,
+            payload,
+        }
+    }
+
     pub fn gen_echo_request_with_magic(sid: u16, req_id: u8, magic_number: u32) -> PPPoEFrame {
         let payload = PointToPoint::gen_echo_request_with_magic(req_id, magic_number);
         PPPoEFrame {

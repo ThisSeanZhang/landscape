@@ -14,6 +14,8 @@ pub(super) enum ScriptedServerMode {
     ProtocolRejectIpcp,
     Ipv6cpNak,
     AcCookieSuccess,
+    ChapAuthSuccess,
+    ChapAuthFailure,
 }
 
 pub(super) struct ScriptedServerHandle {
@@ -113,6 +115,7 @@ fn scripted_server_loop(
     let mut sent_ipcp_peer_request = false;
     let mut sent_ipv6cp_nak = false;
     let mut sent_ipv6cp_peer_request = false;
+    let mut sent_chap_challenge = false;
     let session_id = 0x1234;
     let ac_cookie = vec![0xac, 0xc0, 0x0e, 0x01];
     let deadline = Instant::now() + Duration::from_secs(20);
@@ -172,13 +175,15 @@ fn scripted_server_loop(
                     }
                 }
                 send_pppoe(fd, source_mac, server_mac, 0x8863, 0x65, session_id, payload)?;
-                send_session(
-                    fd,
-                    source_mac,
-                    server_mac,
-                    session_id,
-                    ppp_lcp_request(1, 1492, 0x1020_3040),
-                )?;
+                let lcp_request = if matches!(
+                    mode,
+                    ScriptedServerMode::ChapAuthSuccess | ScriptedServerMode::ChapAuthFailure
+                ) {
+                    ppp_lcp_request_chap(1, 1492, 0x1020_3040)
+                } else {
+                    ppp_lcp_request(1, 1492, 0x1020_3040)
+                };
+                send_session(fd, source_mac, server_mac, session_id, lcp_request)?;
             }
             0x00 => {
                 let Some(ppp) = PointToPoint::new(&frame.payload) else {
@@ -200,6 +205,19 @@ fn scripted_server_loop(
                                     ppp_lcp_protocol_reject(2, 0xc023),
                                 )?;
                                 return Ok(());
+                            }
+                            ScriptedServerMode::ChapAuthSuccess
+                            | ScriptedServerMode::ChapAuthFailure => {
+                                if !sent_chap_challenge {
+                                    sent_chap_challenge = true;
+                                    send_session(
+                                        fd,
+                                        source_mac,
+                                        server_mac,
+                                        session_id,
+                                        ppp_chap_challenge(1, &[0x01, 0x02, 0x03, 0x04]),
+                                    )?;
+                                }
                             }
                             _ => {}
                         }
@@ -244,6 +262,31 @@ fn scripted_server_loop(
                             ppp_lcp_protocol_reject(4, 0x8021),
                         )?;
                         return Ok(());
+                    }
+                } else if ppp.is_chap() {
+                    if ppp.code == 2 {
+                        match mode {
+                            ScriptedServerMode::ChapAuthSuccess => {
+                                send_session(
+                                    fd,
+                                    source_mac,
+                                    server_mac,
+                                    session_id,
+                                    ppp_chap_success(ppp.id),
+                                )?;
+                            }
+                            ScriptedServerMode::ChapAuthFailure => {
+                                send_session(
+                                    fd,
+                                    source_mac,
+                                    server_mac,
+                                    session_id,
+                                    ppp_chap_failure(ppp.id),
+                                )?;
+                                return Ok(());
+                            }
+                            _ => {}
+                        }
                     }
                 } else if ppp.is_ipcp() {
                     if ppp.is_request() {
@@ -431,12 +474,36 @@ fn ppp_lcp_request(id: u8, mru: u16, magic: u32) -> Vec<u8> {
     ppp_payload(0xc021, 1, id, payload)
 }
 
+fn ppp_lcp_request_chap(id: u8, mru: u16, magic: u32) -> Vec<u8> {
+    let mut payload = vec![1, 4];
+    payload.extend(mru.to_be_bytes());
+    payload.extend([3, 5, 0xc2, 0x23, 0x05]);
+    payload.extend([5, 6]);
+    payload.extend(magic.to_be_bytes());
+    ppp_payload(0xc021, 1, id, payload)
+}
+
 fn ppp_lcp_protocol_reject(id: u8, proto: u16) -> Vec<u8> {
     ppp_payload(0xc021, 8, id, proto.to_be_bytes().to_vec())
 }
 
 fn ppp_pap_ack(id: u8) -> Vec<u8> {
     ppp_payload(0xc023, 2, id, vec![2, b'O', b'K'])
+}
+
+fn ppp_chap_challenge(id: u8, challenge: &[u8]) -> Vec<u8> {
+    let mut payload = vec![challenge.len() as u8];
+    payload.extend(challenge);
+    payload.extend(b"test-server");
+    ppp_payload(0xc223, 1, id, payload)
+}
+
+fn ppp_chap_success(id: u8) -> Vec<u8> {
+    ppp_payload(0xc223, 3, id, vec![7, b'W', b'e', b'l', b'c', b'o', b'm', b'e'])
+}
+
+fn ppp_chap_failure(id: u8) -> Vec<u8> {
+    ppp_payload(0xc223, 4, id, vec![5, b'D', b'e', b'n', b'i', b'e', b'd'])
 }
 
 fn ppp_ipcp_nak(id: u8, ip: Ipv4Addr) -> Vec<u8> {

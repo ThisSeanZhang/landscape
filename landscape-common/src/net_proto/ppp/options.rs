@@ -70,4 +70,14 @@ mod tests {
         let data = PPPOption::from_bytes(&data);
         assert_eq!(data.len(), 3);
     }
+
+    #[test]
+    fn parse_chap_auth_option_with_algorithm() {
+        let data: Vec<u8> = [0x03, 0x05, 0xc2, 0x23, 0x05].to_vec();
+        let options = PPPOption::from_bytes(&data);
+        assert_eq!(options.len(), 1);
+        assert!(options[0].is_auth_type());
+        assert_eq!(options[0].length, 5);
+        assert_eq!(options[0].data, vec![0xc2, 0x23, 0x05]);
+    }
 }

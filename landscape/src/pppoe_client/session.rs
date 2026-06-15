@@ -5,6 +5,7 @@ use landscape_common::net_proto::ppp::{PPPOption, PointToPoint};
 use landscape_common::net_proto::pppoe::{PPPoEFrame, PPPoETag};
 use tokio::sync::mpsc;
 
+use super::auth::{ChapAuthenticator, PapAuthenticator};
 use super::state::{LCPStatus, LcpBaseConfig, PPPoEConnectState, TagValue};
 use super::{ETH_P_PPOED, ETH_P_PPOES, LCP_ECHO_INTERVAL};
 
@@ -181,8 +182,8 @@ impl PPPoEClientManager {
 
         if lcp.is_lcp_config() {
             self.handle_lcp_packet(&mut pppoe_data, lcp, session_id, l2_header, data_sender).await;
-        } else if lcp.is_pap_auth() {
-            self.handle_pap_packet(lcp);
+        } else if lcp.is_pap_auth() || lcp.is_chap() {
+            self.handle_auth_packet(lcp, l2_header, session_id, data_sender).await;
         } else if lcp.is_ipcp() {
             self.handle_ipcp_packet(&mut pppoe_data, lcp, session_id, l2_header, data_sender).await;
         } else if lcp.is_ipv6cp() {
@@ -253,7 +254,7 @@ impl PPPoEClientManager {
                 mru,
                 magic_number
             );
-            self.send_pap_if_ready(session_id, l2_header, data_sender).await;
+            self.send_auth_if_ready(session_id, l2_header, data_sender).await;
         } else {
             self.log_protocol_error("LCP Configure-Ack missing MRU or magic-number");
             self.error_count += 10;
@@ -313,6 +314,14 @@ impl PPPoEClientManager {
             }
             self.lcp_status.server_config = TagValue::Ack(LcpBaseConfig { mru, magic_number });
             self.lcp_status.auth_type = TagValue::Ack(auth_type);
+            self.lcp_status.authenticator = match auth_type {
+                0xc023 => Some(Box::new(PapAuthenticator::new(&self.peer_id, &self.password))),
+                0xc223 => Some(Box::new(ChapAuthenticator::new(&self.peer_id, &self.password))),
+                _ => {
+                    tracing::error!("peer requested unsupported auth type {:#x}", auth_type);
+                    None
+                }
+            };
             tracing::info!(
                 "accepted peer LCP config: peer_mru={} peer_magic={:#x} auth_type={:#x}",
                 mru,
@@ -359,7 +368,7 @@ impl PPPoEClientManager {
         } else if proto == 0xc023 {
             tracing::error!("peer rejected PAP authentication protocol");
             self.lcp_status.auth_type = TagValue::Reject;
-            self.lcp_status.pap = (false, None);
+            self.lcp_status.authenticator = None;
             self.error_count += 10;
         }
         self.error_count += 1;
@@ -393,13 +402,32 @@ impl PPPoEClientManager {
         self.lcp_status.termination = (true, TagValue::Ack(()));
     }
 
-    fn handle_pap_packet(&mut self, lcp: PointToPoint) {
-        if lcp.is_ack() {
-            self.lcp_status.pap = (true, Some(lcp.payload));
-            tracing::info!("PAP authentication succeeded");
-        } else if lcp.is_nak() || lcp.is_reject() {
-            tracing::error!("PAP authentication failed: code={}", lcp.code);
+    async fn handle_auth_packet(
+        &mut self,
+        lcp: PointToPoint,
+        l2_header: Vec<u8>,
+        session_id: u16,
+        data_sender: &mpsc::Sender<Box<Vec<u8>>>,
+    ) {
+        let Some(auth) = self.lcp_status.authenticator.as_mut() else {
+            self.log_protocol_error("received auth packet but no authenticator configured");
+            self.error_count += 1;
+            return;
+        };
+        let result = auth.handle_incoming(&lcp);
+        if let Some(payload) = result.response {
+            let frame = PPPoEFrame::get_ppp_auth_response(session_id, payload);
+            data_sender
+                .send(Box::new([l2_header, frame.convert_to_payload()].concat()))
+                .await
+                .unwrap();
+        }
+        if result.failed {
+            tracing::error!("authentication failed via {:?}", auth);
             self.error_count += 10;
+        }
+        if result.done && !result.failed {
+            tracing::info!("authentication succeeded via {:?}", auth);
         }
     }
 
@@ -547,24 +575,24 @@ impl PPPoEClientManager {
         }
     }
 
-    async fn send_pap_if_ready(
+    async fn send_auth_if_ready(
         &self,
         session_id: u16,
         l2_header: Vec<u8>,
         data_sender: &mpsc::Sender<Box<Vec<u8>>>,
     ) {
-        if !self.lcp_status.pap.0 {
-            if let TagValue::Ack(auth_type) = &self.lcp_status.auth_type {
-                if *auth_type == 0xc023 {
-                    tracing::info!("sending PAP authentication request");
-                    let pppoe_pap =
-                        PPPoEFrame::get_ppp_lcp_pap(session_id, &self.peer_id, &self.password);
-                    data_sender
-                        .send(Box::new([l2_header, pppoe_pap.convert_to_payload()].concat()))
-                        .await
-                        .unwrap();
-                }
-            }
+        let Some(auth) = self.lcp_status.authenticator.as_ref() else {
+            return;
+        };
+        if auth.is_done() {
+            return;
+        }
+        if let Some(payload) = auth.outgoing_packet() {
+            let frame = PPPoEFrame::get_ppp_auth_response(session_id, payload);
+            data_sender
+                .send(Box::new([l2_header, frame.convert_to_payload()].concat()))
+                .await
+                .unwrap();
         }
     }
 
@@ -765,28 +793,23 @@ impl PPPoEClientManager {
             return false;
         }
 
-        if !self.lcp_status.pap.0 {
-            if let TagValue::Ack(auth_type) = &self.lcp_status.auth_type {
-                if *auth_type == 0xc023 {
-                    let pppoe_pap =
-                        PPPoEFrame::get_ppp_lcp_pap(*sid, &self.peer_id, &self.password);
+        if let Some(auth) = self.lcp_status.authenticator.as_ref() {
+            if !auth.is_done() {
+                if let Some(payload) = auth.outgoing_packet() {
+                    let frame = PPPoEFrame::get_ppp_auth_response(*sid, payload);
                     data_sender
                         .send(Box::new(
-                            [eth_head_data.clone(), pppoe_pap.convert_to_payload()].concat(),
+                            [eth_head_data.clone(), frame.convert_to_payload()].concat(),
                         ))
                         .await
                         .unwrap();
                 } else {
-                    tracing::error!(
-                        "peer requested unsupported auth type {:#x}; only PAP is supported",
-                        auth_type
-                    );
                     return false;
                 }
-            } else {
-                tracing::debug!("waiting for peer auth-type before sending PAP");
-                return false;
             }
+        } else if !self.lcp_status.auth_type.is_confirm() {
+            tracing::debug!("waiting for peer auth-type");
+            return false;
         }
 
         if let TagValue::Nak(ipcp_addr) = &self.lcp_status.ipcp_client_ipaddr {
@@ -823,7 +846,7 @@ impl PPPoEClientManager {
     pub(crate) fn can_enable_ebpf_prog(&self) -> bool {
         self.lcp_status.client_config.is_confirm()
             && self.lcp_status.server_config.is_confirm()
-            && self.lcp_status.pap.0
+            && self.lcp_status.authenticator.as_ref().map_or(false, |a| a.is_done())
             && self.lcp_status.ipcp_client_ipaddr.is_confirm()
             && self.lcp_status.ipcp_server_ipaddr.is_confirm()
     }
@@ -831,6 +854,8 @@ impl PPPoEClientManager {
 
 #[cfg(test)]
 mod tests {
+    use super::super::auth::ChapAuthenticator;
+    use super::super::auth::PapAuthenticator;
     use super::PPPoEClientManager;
     use landscape_common::net::MacAddr;
 
@@ -866,7 +891,16 @@ mod tests {
 
         manager.lcp_status.client_config = super::TagValue::Reject;
         manager.lcp_status.server_config = super::TagValue::Reject;
-        manager.lcp_status.pap = (true, None);
+        manager.lcp_status.authenticator = Some(Box::new(PapAuthenticator::new("user", "pass")));
+        manager.lcp_status.authenticator.as_mut().unwrap().handle_incoming(
+            &landscape_common::net_proto::ppp::PointToPoint {
+                protocol: 0xc023,
+                code: 2,
+                id: 1,
+                length: 4,
+                payload: vec![],
+            },
+        );
         manager.lcp_status.ipcp_client_ipaddr =
             super::TagValue::Ack(std::net::Ipv4Addr::new(10, 0, 0, 100));
         manager.lcp_status.ipcp_server_ipaddr =
@@ -896,5 +930,55 @@ mod tests {
         assert_eq!(manager.error_count, 0);
         assert!(matches!(manager.lcp_status.ip6cp_client_id, super::TagValue::Reject));
         assert!(matches!(manager.lcp_status.ip6cp_server_id, super::TagValue::Reject));
+    }
+
+    #[test]
+    fn can_enable_ebpf_prog_with_chap() {
+        let mut manager = PPPoEClientManager::new(
+            MacAddr::new(0x02, 0x11, 0x22, 0x33, 0x44, 0x55),
+            1492,
+            "user".to_string(),
+            "pass".to_string(),
+        );
+        assert!(!manager.can_enable_ebpf_prog());
+
+        manager.lcp_status.client_config = super::TagValue::Reject;
+        manager.lcp_status.server_config = super::TagValue::Reject;
+        manager.lcp_status.authenticator = Some(Box::new(ChapAuthenticator::new("user", "pass")));
+        manager.lcp_status.authenticator.as_mut().unwrap().handle_incoming(
+            &landscape_common::net_proto::ppp::PointToPoint {
+                protocol: 0xc223,
+                code: 3,
+                id: 1,
+                length: 4,
+                payload: vec![],
+            },
+        );
+        manager.lcp_status.ipcp_client_ipaddr =
+            super::TagValue::Ack(std::net::Ipv4Addr::new(10, 0, 0, 100));
+        manager.lcp_status.ipcp_server_ipaddr =
+            super::TagValue::Ack(std::net::Ipv4Addr::new(10, 0, 0, 1));
+
+        assert!(manager.can_enable_ebpf_prog());
+    }
+
+    #[test]
+    fn can_enable_ebpf_prog_false_when_chap_not_done() {
+        let mut manager = PPPoEClientManager::new(
+            MacAddr::new(0x02, 0x11, 0x22, 0x33, 0x44, 0x55),
+            1492,
+            "user".to_string(),
+            "pass".to_string(),
+        );
+
+        manager.lcp_status.client_config = super::TagValue::Reject;
+        manager.lcp_status.server_config = super::TagValue::Reject;
+        manager.lcp_status.authenticator = Some(Box::new(ChapAuthenticator::new("user", "pass")));
+        manager.lcp_status.ipcp_client_ipaddr =
+            super::TagValue::Ack(std::net::Ipv4Addr::new(10, 0, 0, 100));
+        manager.lcp_status.ipcp_server_ipaddr =
+            super::TagValue::Ack(std::net::Ipv4Addr::new(10, 0, 0, 1));
+
+        assert!(!manager.can_enable_ebpf_prog(), "CHAP not done yet");
     }
 }

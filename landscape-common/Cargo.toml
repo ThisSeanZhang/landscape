@@ -44,6 +44,7 @@ async-trait = { workspace = true }
 toml = { workspace = true }
 
 sysctl = { workspace = true }
+md-5 = { workspace = true }
 
 utoipa = { workspace = true, optional = true }
 

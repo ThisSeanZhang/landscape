@@ -55,6 +55,10 @@ impl PointToPoint {
         self.protocol == 0x8057
     }
 
+    pub fn is_chap(&self) -> bool {
+        self.protocol == 0xc223
+    }
+
     pub fn is_request(&self) -> bool {
         self.code == 1
     }
@@ -89,6 +93,18 @@ impl PointToPoint {
 
     pub fn is_echo_reply(&self) -> bool {
         self.code == 10
+    }
+
+    pub fn is_challenge(&self) -> bool {
+        self.code == 1
+    }
+
+    pub fn is_chap_success(&self) -> bool {
+        self.code == 3
+    }
+
+    pub fn is_chap_failure(&self) -> bool {
+        self.code == 4
     }
 
     pub fn request_mru(request_id: u8, mru: u16, magic_number: u32) -> Vec<u8> {
@@ -167,6 +183,23 @@ impl PointToPoint {
         }
     }
 
+    pub fn gen_chap_response(id: u8, peer_id: &str, password: &str, challenge: &[u8]) -> Vec<u8> {
+        use md5::{Digest, Md5};
+        let mut hasher = Md5::new();
+        hasher.update(&[id]);
+        hasher.update(password.as_bytes());
+        hasher.update(challenge);
+        let hash = hasher.finalize();
+        let mut payload = vec![16u8];
+        payload.extend(hash.as_slice());
+        payload.extend(peer_id.as_bytes());
+        let length = (payload.len() + 4) as u16;
+        let mut result = vec![0xc2, 0x23, 2, id];
+        result.extend(length.to_be_bytes());
+        result.extend(payload);
+        result
+    }
+
     pub fn get_ipcp_request_only_client_ip(id: u8, ip: Ipv4Addr) -> PointToPoint {
         let ip = ip.octets();
         let options: Vec<u8> = [3, 6, ip[0], ip[1], ip[2], ip[3]].to_vec();
@@ -243,5 +276,69 @@ impl PointToPoint {
         result.extend(self.length.to_be_bytes());
         result.extend(self.payload.clone());
         result
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn gen_chap_response_packet_structure() {
+        let id = 0x02;
+        let peer_id = "client";
+        let password = "secret";
+        let challenge = [0x01u8, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08];
+
+        let pkt = PointToPoint::gen_chap_response(id, peer_id, password, &challenge);
+
+        assert_eq!(pkt[0], 0xc2, "protocol byte 0");
+        assert_eq!(pkt[1], 0x23, "protocol byte 1");
+        assert_eq!(pkt[2], 2, "code = Response");
+        assert_eq!(pkt[3], id, "id preserved");
+
+        let length = u16::from_be_bytes([pkt[4], pkt[5]]);
+        assert_eq!(pkt.len(), length as usize + 2, "length field consistent");
+
+        assert_eq!(pkt[6], 16, "value-size = 16 (MD5 digest)");
+
+        let hash_bytes = &pkt[7..23];
+        assert_eq!(hash_bytes.len(), 16, "hash is 16 bytes");
+
+        let name_bytes = &pkt[23..];
+        assert_eq!(name_bytes, peer_id.as_bytes(), "name follows hash");
+    }
+
+    #[test]
+    fn gen_chap_response_hash_is_correct() {
+        use md5::{Digest, Md5};
+
+        let id = 0x01;
+        let password = "clientPass";
+        let challenge = [0x5eu8, 0x47, 0xb9, 0xc2, 0x7e, 0x34, 0x55, 0xc2];
+
+        let pkt = PointToPoint::gen_chap_response(id, "peer", password, &challenge);
+
+        let mut hasher = Md5::new();
+        hasher.update(&[id]);
+        hasher.update(password.as_bytes());
+        hasher.update(&challenge);
+        let expected = hasher.finalize();
+
+        let hash_from_pkt = &pkt[7..23];
+        assert_eq!(hash_from_pkt, expected.as_slice(), "MD5 hash matches independent computation");
+    }
+
+    #[test]
+    fn gen_chap_response_different_inputs_different_outputs() {
+        let challenge1 = [1u8, 2, 3, 4];
+        let challenge2 = [5u8, 6, 7, 8];
+
+        let pkt1 = PointToPoint::gen_chap_response(1, "peer", "pass", &challenge1);
+        let pkt2 = PointToPoint::gen_chap_response(1, "peer", "pass", &challenge2);
+
+        let hash1 = &pkt1[7..23];
+        let hash2 = &pkt2[7..23];
+        assert_ne!(hash1, hash2, "different challenges produce different hashes");
     }
 }

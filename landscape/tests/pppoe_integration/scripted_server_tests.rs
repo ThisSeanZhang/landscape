@@ -156,3 +156,63 @@ async fn custom_server_ac_cookie_success() {
     assert!(server_result.is_ok(), "client should echo AC-Cookie: {server_result:?}");
     assert!(result.is_ok(), "client should connect with AC-Cookie server: {result:?}");
 }
+
+#[tokio::test]
+async fn chap_auth_success() {
+    require_root();
+    let mut env_cfg = EnvConfig::default();
+    env_cfg.no_server = true;
+
+    let env = PPPoETestEnv::up(&env_cfg).expect("test environment should start");
+    let scripted_server = start_scripted_server(
+        env.server_ns().to_string(),
+        env.server_iface().to_string(),
+        MacAddr::from_str(&env_cfg.server_mac).expect("server mac"),
+        ScriptedServerMode::ChapAuthSuccess,
+    );
+    let client_cfg = ClientConfig {
+        username: env_cfg.username.clone(),
+        password: env_cfg.password.clone(),
+        timeout_secs: 20,
+        ..Default::default()
+    };
+
+    let result =
+        run_client(env.client_ns(), env.client_info(), &client_cfg, ExpectOutcome::Running, None)
+            .await;
+    let server_result = scripted_server.wait();
+    drop(env);
+
+    assert!(server_result.is_ok(), "scripted server CHAP handshake: {server_result:?}");
+    assert!(result.is_ok(), "client should connect via CHAP: {result:?}");
+}
+
+#[tokio::test]
+async fn chap_auth_failure() {
+    require_root();
+    let mut env_cfg = EnvConfig::default();
+    env_cfg.no_server = true;
+
+    let env = PPPoETestEnv::up(&env_cfg).expect("test environment should start");
+    let scripted_server = start_scripted_server(
+        env.server_ns().to_string(),
+        env.server_iface().to_string(),
+        MacAddr::from_str(&env_cfg.server_mac).expect("server mac"),
+        ScriptedServerMode::ChapAuthFailure,
+    );
+    let client_cfg = ClientConfig {
+        username: env_cfg.username.clone(),
+        password: env_cfg.password.clone(),
+        timeout_secs: 30,
+        ..Default::default()
+    };
+
+    let result =
+        run_client(env.client_ns(), env.client_info(), &client_cfg, ExpectOutcome::Failure, None)
+            .await;
+    let server_result = scripted_server.wait();
+    drop(env);
+
+    assert!(server_result.is_ok(), "scripted server CHAP failure: {server_result:?}");
+    assert!(result.is_ok(), "client should fail on CHAP auth failure: {result:?}");
+}

@@ -2,6 +2,8 @@ use std::net::Ipv4Addr;
 
 use landscape_common::net::MacAddr;
 
+use super::auth::Authenticator;
+
 #[derive(Debug)]
 pub(crate) enum PPPoEConnectState {
     Discovering,
@@ -30,7 +32,7 @@ pub(crate) struct LCPStatus {
     pub(crate) server_config: TagValue<LcpBaseConfig>,
     pub(crate) cfg_req_id: u8,
     pub(crate) auth_type: TagValue<u16>,
-    pub(crate) pap: (bool, Option<Vec<u8>>),
+    pub(crate) authenticator: Option<Box<dyn Authenticator>>,
     pub(crate) ipcp_server_ipaddr: TagValue<Ipv4Addr>,
     pub(crate) ipcp_client_ipaddr: TagValue<Ipv4Addr>,
     pub(crate) ipcp_req_id: u8,
@@ -59,7 +61,7 @@ impl LCPStatus {
             server_config: TagValue::Nak(LcpBaseConfig::new_client(requested_mru)),
             cfg_req_id: 1,
             auth_type: TagValue::Nak(0),
-            pap: (false, None),
+            authenticator: None,
             ipcp_server_ipaddr: TagValue::Nak(Ipv4Addr::UNSPECIFIED),
             ipcp_client_ipaddr: TagValue::Nak(Ipv4Addr::UNSPECIFIED),
             ipcp_req_id: 1,
