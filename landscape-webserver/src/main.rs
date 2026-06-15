@@ -55,6 +55,7 @@ use landscape_common::{
     config::RuntimeConfig,
     database::LandscapeStore,
     error::LdResult,
+    iface::ip_config::IfaceIpModelConfig,
     ipv6_pd::IAPrefixMap,
     service::controller::ControllerService,
     VERSION,
@@ -251,34 +252,19 @@ impl LandscapeApp {
         self.gateway_service.shutdown_and_wait(std::time::Duration::from_secs(10)).await;
         tracing::info!("Gateway service stopped");
 
-        // if cfg!(debug_assertions) {
-        //     tracing::info!("Debug mode: keeping WAN IP and DHCP v4 services alive");
         tokio::join!(
             self.mss_clamp_service.get_service().stop_all(),
             self.firewall_service.get_service().stop_all(),
             self.nat_service.get_service().stop_all(),
             self.route_wan_service.get_service().stop_all(),
             self.route_lan_service.get_service().stop_all(),
+            self.dhcp_v4_server_service.get_service().stop_all(),
             self.ipv6_pd_service.get_service().stop_all(),
             self.lan_ipv6_service.get_service().stop_all(),
+            self.wan_ip_service.get_service().stop_all(),
             self.pppd_service.get_service().stop_all(),
             self.wifi_service.get_service().stop_all(),
         );
-        // } else {
-        //     tokio::join!(
-        //         self.mss_clamp_service.get_service().stop_all(),
-        //         self.firewall_service.get_service().stop_all(),
-        //         self.nat_service.get_service().stop_all(),
-        //         self.route_wan_service.get_service().stop_all(),
-        //         self.route_lan_service.get_service().stop_all(),
-        //         self.dhcp_v4_server_service.get_service().stop_all(),
-        //         self.ipv6_pd_service.get_service().stop_all(),
-        //         self.lan_ipv6_service.get_service().stop_all(),
-        //         self.wan_ip_service.get_service().stop_all(),
-        //         self.pppd_service.get_service().stop_all(),
-        //         self.wifi_service.get_service().stop_all(),
-        //     );
-        // }
         tracing::info!("All service managers stopped");
 
         landscape_ebpf::map_setting::cleanup_pinned_maps();
@@ -291,6 +277,70 @@ impl LandscapeApp {
 
         self.dns_service.stop().await;
         tracing::info!("DNS resolver conf restored");
+
+        self.preserve_critical_ips().await;
+        tracing::info!("Critical IPs preserved");
+    }
+
+    async fn preserve_critical_ips(&self) {
+        // Query and re-apply DHCPv4 server IPs from database
+        let dhcp_configs = self
+            .dhcp_v4_server_service
+            .get_repository()
+            .list()
+            .await
+            .unwrap_or_default();
+
+        for config in &dhcp_configs {
+            if config.enable {
+                let ip = std::net::IpAddr::V4(config.config.server_ip_addr);
+                let prefix_len = config.config.network_mask;
+                tracing::info!(
+                    "Re-applying DHCPv4 server IP: {ip}/{prefix_len} on {}",
+                    config.iface_name
+                );
+                landscape::netlink::address::set_iface_ip(
+                    &config.iface_name,
+                    ip,
+                    prefix_len,
+                )
+                .await;
+            }
+        }
+
+        // Query and re-apply WAN static IPs from database
+        let ip_configs = self
+            .wan_ip_service
+            .get_repository()
+            .list()
+            .await
+            .unwrap_or_default();
+
+        for config in &ip_configs {
+            if config.enable {
+                if let IfaceIpModelConfig::Static {
+                    ipv4,
+                    ipv4_mask,
+                    ..
+                } = &config.ip_model
+                {
+                    if let Some(ipv4_addr) = ipv4 {
+                        let ip = std::net::IpAddr::V4(*ipv4_addr);
+                        let prefix_len = *ipv4_mask;
+                        tracing::info!(
+                            "Re-applying WAN static IP: {ip}/{prefix_len} on {}",
+                            config.iface_name
+                        );
+                        landscape::netlink::address::set_iface_ip(
+                            &config.iface_name,
+                            ip,
+                            prefix_len,
+                        )
+                        .await;
+                    }
+                }
+            }
+        }
     }
 }
 
