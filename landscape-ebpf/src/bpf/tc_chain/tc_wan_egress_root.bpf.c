@@ -22,6 +22,6 @@ int tc_wan_chain_egress_root(struct __sk_buff *skb) {
 #define BPF_LOG_TOPIC "tc_wan_chain_egress_root <<<"
     bpf_tail_call(skb, &wan_egress_root_next_stage, TC_NEXT_SLOT);
     bpf_tail_call(skb, &tc_pipe_exits_wan_egress, TC_NEXT_SLOT);
-    return TC_ACT_OK;
+    return TC_ACT_UNSPEC;
 #undef BPF_LOG_TOPIC
 }

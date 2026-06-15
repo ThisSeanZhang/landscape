@@ -4,8 +4,6 @@
 #include <bpf/bpf_helpers.h>
 
 #include "landscape.h"
-#include "chain/tc_stage.h"
-#include "chain/tc_wan_exit_maps.h"
 
 char LICENSE[] SEC("license") = "GPL";
 
@@ -58,7 +56,5 @@ static __always_inline void tc_pppoe_encap(struct __sk_buff *skb) {
 SEC("tc/egress")
 int tc_pppoe_wan_egress(struct __sk_buff *skb) {
     tc_pppoe_encap(skb);
-    TC_CHAIN_WAN_EGRESS(skb);
-    bpf_tail_call(skb, &tc_pipe_exits_wan_egress, TC_NEXT_SLOT);
-    return TC_ACT_OK;
+    return TC_ACT_UNSPEC;
 }

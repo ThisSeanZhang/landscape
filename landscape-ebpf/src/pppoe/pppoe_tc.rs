@@ -1,9 +1,8 @@
-use std::mem::MaybeUninit;
-
 use libbpf_rs::{
     skel::{OpenSkel, SkelBuilder},
     TC_EGRESS,
 };
+use std::mem::MaybeUninit;
 use tokio::sync::oneshot::error::TryRecvError;
 
 use crate::{
@@ -18,6 +17,10 @@ mod landscape_pppoe {
     include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/pppoe.skel.rs"));
 }
 
+mod tc_pppoe_skel {
+    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/tc_pppoe.skel.rs"));
+}
+
 pub async fn create_pppoe_tc_ebpf_3(
     ifindex: u32,
     session_id: u16,
@@ -27,10 +30,10 @@ pub async fn create_pppoe_tc_ebpf_3(
         tokio::sync::oneshot::channel::<tokio::sync::oneshot::Sender<()>>();
 
     std::thread::spawn(move || {
-        let chain_handle = match crate::stages::pppoe::attach_tc_pppoe(ifindex, session_id, true) {
+        let pppoe_tc = match attach_standalone_pppoe(ifindex, session_id) {
             Ok(h) => Some(h),
             Err(e) => {
-                tracing::error!("pppoe tc chain register failed for ifindex={}: {e}", ifindex);
+                tracing::error!("pppoe tc standalone attach failed for ifindex={}: {e}", ifindex);
                 None
             }
         };
@@ -60,7 +63,7 @@ pub async fn create_pppoe_tc_ebpf_3(
         // If native XDP hasn't already taken the SKB bundle, we take it
         // here as a fallback.  Dropping the bundle detaches the SKB XDP.
         let _ = XdpChainManager::instance().take_skb_bundle(ifindex);
-        drop(chain_handle);
+        drop(pppoe_tc);
 
         if let Some(call_back) = call_back {
             let _ = call_back.send(());
@@ -68,6 +71,34 @@ pub async fn create_pppoe_tc_ebpf_3(
     });
 
     notice_tx
+}
+
+struct StandalonePppoe {
+    _skel: tc_pppoe_skel::TcPppoeSkel<'static>,
+    _backing: crate::landscape::OwnedOpenObject,
+    _hook: TcHookProxy,
+}
+
+fn attach_standalone_pppoe(ifindex: u32, session_id: u16) -> LdEbpfResult<StandalonePppoe> {
+    use crate::landscape::OwnedOpenObject;
+
+    let builder = tc_pppoe_skel::TcPppoeSkelBuilder::default();
+    let (backing, obj) = OwnedOpenObject::new();
+    let mut open_skel = crate::bpf_ctx!(builder.open(obj), "open tc_pppoe skeleton")?;
+
+    open_skel.maps.rodata_data.as_deref_mut().unwrap().session_id = session_id.to_be();
+
+    let skel = crate::bpf_ctx!(open_skel.load(), "load tc_pppoe skeleton")?;
+
+    let mut hook = TcHookProxy::new(
+        &skel.progs.tc_pppoe_wan_egress,
+        ifindex as i32,
+        TC_EGRESS,
+        PPPOE_EGRESS_PRIORITY,
+    );
+    hook.attach();
+
+    Ok(StandalonePppoe { _skel: skel, _backing: backing, _hook: hook })
 }
 
 pub async fn create_pppoe_tc_ebpf<'a>(

@@ -139,7 +139,7 @@ impl PPPoEClientManager {
             let neight_run_result = std::process::Command::new("ip")
                 .args(&[
                     "neigh",
-                    "add",
+                    "replace",
                     &format!("{}", server_ip),
                     "lladdr",
                     &format!(
@@ -157,8 +157,20 @@ impl PPPoEClientManager {
                     &iface_name,
                 ])
                 .output();
-            if let Err(e) = neight_run_result {
-                tracing::error!("add neigh error: {e:?}");
+            match neight_run_result {
+                Ok(output) if output.status.success() => {}
+                Ok(output) => {
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    tracing::error!(
+                        "add neigh failed for {} on {}: {}",
+                        server_ip,
+                        iface_name,
+                        stderr.trim()
+                    );
+                }
+                Err(e) => {
+                    tracing::error!("add neigh error: {e:?}");
+                }
             }
             let notise = pppoe::pppoe_tc::create_pppoe_tc_ebpf_3(index, session_id, mru).await;
             let outside_callback = outside_notice_rx.await;

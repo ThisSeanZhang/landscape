@@ -168,5 +168,5 @@ int tc_mss_wan_egress(struct __sk_buff *skb) {
 
     TC_CHAIN_WAN_EGRESS(skb);
     bpf_tail_call(skb, &tc_pipe_exits_wan_egress, TC_NEXT_SLOT);
-    return TC_ACT_OK;
+    return TC_ACT_UNSPEC;
 }
