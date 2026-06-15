@@ -1,5 +1,5 @@
 export default {
-  title: "Interface Service Config",
+  title: "Interface IPv4 Configuration Mode",
   mode_none: "None",
   mode_static: "Static IP",
   mode_pppoe_native: "PPPoE (Native)",
@@ -11,7 +11,7 @@ export default {
   route_ip: "Route IP",
   username: "Username",
   password: "Password",
-  mtu: "MTU",
+  mtu: "MTU (Negotiation only, requires additional MSS clamping)",
   dhcp_warn:
     "If firewall is enabled on this interface, configure rules to allow port 68",
   dhcp_hostname: "Hostname used in DHCP request",

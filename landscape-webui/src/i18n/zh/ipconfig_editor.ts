@@ -1,5 +1,5 @@
 export default {
-  title: "网卡运行服务配置",
+  title: "网卡 IPV4 获取方式配置",
   mode_none: "无",
   mode_static: "静态IP",
   mode_pppoe_native: "PPPoE 原生拨号",
@@ -11,7 +11,7 @@ export default {
   route_ip: "路由 IP",
   username: "用户名",
   password: "密码",
-  mtu: "MTU",
+  mtu: "MTU (仅为协商, 需要额外开启 MSS 服务)",
   dhcp_warn: "本端口如果有开启防火墙, 那么需要配置规则将 68 端口开放",
   dhcp_hostname: "DHCP 时填充的主机名称",
   update: "更新",
