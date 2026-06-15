@@ -1,4 +1,4 @@
-use std::net::Ipv4Addr;
+use std::net::{Ipv4Addr, Ipv6Addr};
 
 use landscape_common::service::{ServiceStatus, WatchService};
 use tokio::sync::oneshot;
@@ -178,6 +178,56 @@ pub async fn create_pppoe_client(
         let _ = std::process::Command::new("ip")
             .args(&["neigh", "del", &format!("{}", server_ip), "dev", &config.iface_name])
             .output();
+
+        // Delete IPv6 link-local neighbor (EUI-64 from server MAC + IPv6CP iface id)
+        if let super::state::PPPoEConnectState::SessionConfirm { server_mac_addr, .. } =
+            &pkt_manager.pppoe_status
+        {
+            if server_mac_addr.len() >= 6 {
+                let server_linklocal = Ipv6Addr::new(
+                    0xfe80,
+                    0,
+                    0,
+                    0,
+                    ((server_mac_addr[0] ^ 0x02) as u16) << 8 | (server_mac_addr[1] as u16),
+                    ((server_mac_addr[2] as u16) << 8) | 0x00ff,
+                    0xfe00 | (server_mac_addr[3] as u16),
+                    ((server_mac_addr[4] as u16) << 8) | (server_mac_addr[5] as u16),
+                );
+                let _ = std::process::Command::new("ip")
+                    .args(&[
+                        "neigh",
+                        "del",
+                        &format!("{}", server_linklocal),
+                        "dev",
+                        &config.iface_name,
+                    ])
+                    .output();
+            }
+            if let Some(ref iface_id) = pkt_manager.lcp_status.ip6cp_server_id.get_value() {
+                if iface_id.len() == 8 {
+                    let linklocal = Ipv6Addr::new(
+                        0xfe80,
+                        0,
+                        0,
+                        0,
+                        ((iface_id[0] as u16) << 8) | (iface_id[1] as u16),
+                        ((iface_id[2] as u16) << 8) | (iface_id[3] as u16),
+                        ((iface_id[4] as u16) << 8) | (iface_id[5] as u16),
+                        ((iface_id[6] as u16) << 8) | (iface_id[7] as u16),
+                    );
+                    let _ = std::process::Command::new("ip")
+                        .args(&[
+                            "neigh",
+                            "del",
+                            &format!("{}", linklocal),
+                            "dev",
+                            &config.iface_name,
+                        ])
+                        .output();
+                }
+            }
+        }
         let _ = std::process::Command::new("ip")
             .args(&["link", "set", "dev", &config.iface_name, "mtu", "1500"])
             .output();

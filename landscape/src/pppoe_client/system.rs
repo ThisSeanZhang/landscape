@@ -59,6 +59,19 @@ impl PPPoEClientManager {
         let default_router = config.default_router;
         let session_id = *session_id;
         let server_mac_addr = server_mac_addr.clone();
+        let server_iface_id = server_ifece_id;
+        let server_mac_for_ipv6 = server_mac_addr.clone();
+        let server_mac_str = format!(
+            "{}",
+            MacAddr::new(
+                server_mac_addr[0],
+                server_mac_addr[1],
+                server_mac_addr[2],
+                server_mac_addr[3],
+                server_mac_addr[4],
+                server_mac_addr[5],
+            )
+        );
         tokio::spawn(async move {
             tracing::info!(
                 "applying native PPPoE system state iface={} client_ip={} peer_ip={} mru={} session_id={}",
@@ -142,17 +155,7 @@ impl PPPoEClientManager {
                     "replace",
                     &format!("{}", server_ip),
                     "lladdr",
-                    &format!(
-                        "{}",
-                        MacAddr::new(
-                            server_mac_addr[0],
-                            server_mac_addr[1],
-                            server_mac_addr[2],
-                            server_mac_addr[3],
-                            server_mac_addr[4],
-                            server_mac_addr[5],
-                        )
-                    ),
+                    &server_mac_str,
                     "dev",
                     &iface_name,
                 ])
@@ -170,6 +173,96 @@ impl PPPoEClientManager {
                 }
                 Err(e) => {
                     tracing::error!("add neigh error: {e:?}");
+                }
+            }
+
+            // IPv6 link-local neighbor from server MAC (EUI-64)
+            let server_linklocal = {
+                let a = server_mac_for_ipv6[0] ^ 0x02;
+                let b = server_mac_for_ipv6[1];
+                let c = server_mac_for_ipv6[2];
+                let d = server_mac_for_ipv6[3];
+                let e = server_mac_for_ipv6[4];
+                let f = server_mac_for_ipv6[5];
+                std::net::Ipv6Addr::new(
+                    0xfe80,
+                    0,
+                    0,
+                    0,
+                    ((a as u16) << 8) | (b as u16),
+                    ((c as u16) << 8) | 0x00ff,
+                    0xfe00 | (d as u16),
+                    ((e as u16) << 8) | (f as u16),
+                )
+            };
+            {
+                let v6_result = std::process::Command::new("ip")
+                    .args(&[
+                        "neigh",
+                        "replace",
+                        &format!("{}", server_linklocal),
+                        "lladdr",
+                        &server_mac_str,
+                        "dev",
+                        &iface_name,
+                    ])
+                    .output();
+                match v6_result {
+                    Ok(output) if output.status.success() => {}
+                    Ok(output) => {
+                        let stderr = String::from_utf8_lossy(&output.stderr);
+                        tracing::error!(
+                            "add IPv6 neigh failed for {} on {}: {}",
+                            server_linklocal,
+                            iface_name,
+                            stderr.trim()
+                        );
+                    }
+                    Err(e) => {
+                        tracing::error!("add IPv6 neigh error: {e:?}");
+                    }
+                }
+            }
+
+            // IPv6 link-local from IPv6CP server interface id (if available)
+            if let Some(ref server_iface_id) = server_iface_id {
+                if server_iface_id.len() == 8 {
+                    let iface_linklocal = std::net::Ipv6Addr::new(
+                        0xfe80,
+                        0,
+                        0,
+                        0,
+                        ((server_iface_id[0] as u16) << 8) | (server_iface_id[1] as u16),
+                        ((server_iface_id[2] as u16) << 8) | (server_iface_id[3] as u16),
+                        ((server_iface_id[4] as u16) << 8) | (server_iface_id[5] as u16),
+                        ((server_iface_id[6] as u16) << 8) | (server_iface_id[7] as u16),
+                    );
+                    let v6_result = std::process::Command::new("ip")
+                        .args(&[
+                            "neigh",
+                            "replace",
+                            &format!("{}", iface_linklocal),
+                            "lladdr",
+                            &server_mac_str,
+                            "dev",
+                            &iface_name,
+                        ])
+                        .output();
+                    match v6_result {
+                        Ok(output) if output.status.success() => {}
+                        Ok(output) => {
+                            let stderr = String::from_utf8_lossy(&output.stderr);
+                            tracing::error!(
+                                "add IPv6 iface-id neigh failed for {} on {}: {}",
+                                iface_linklocal,
+                                iface_name,
+                                stderr.trim()
+                            );
+                        }
+                        Err(e) => {
+                            tracing::error!("add IPv6 iface-id neigh error: {e:?}");
+                        }
+                    }
                 }
             }
             let notise = pppoe::pppoe_tc::create_pppoe_tc_ebpf_3(index, session_id, mru).await;
@@ -209,6 +302,36 @@ impl PPPoEClientManager {
                     server_ip,
                     iface_name
                 );
+            }
+
+            // Delete IPv6 link-local neighbor (EUI-64 from server MAC)
+            let _ = std::process::Command::new("ip")
+                .args(&["neigh", "del", &format!("{}", server_linklocal), "dev", &iface_name])
+                .output();
+
+            // Delete IPv6 link-local neighbor (IPv6CP server interface id)
+            if let Some(ref server_iface_id) = server_iface_id {
+                if server_iface_id.len() == 8 {
+                    let iface_linklocal = std::net::Ipv6Addr::new(
+                        0xfe80,
+                        0,
+                        0,
+                        0,
+                        ((server_iface_id[0] as u16) << 8) | (server_iface_id[1] as u16),
+                        ((server_iface_id[2] as u16) << 8) | (server_iface_id[3] as u16),
+                        ((server_iface_id[4] as u16) << 8) | (server_iface_id[5] as u16),
+                        ((server_iface_id[6] as u16) << 8) | (server_iface_id[7] as u16),
+                    );
+                    let _ = std::process::Command::new("ip")
+                        .args(&[
+                            "neigh",
+                            "del",
+                            &format!("{}", iface_linklocal),
+                            "dev",
+                            &iface_name,
+                        ])
+                        .output();
+                }
             }
 
             if default_router {
