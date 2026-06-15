@@ -188,6 +188,10 @@ pub async fn init_devs(network_config: Vec<NetworkIfaceConfig>) {
                     .args(["link", "set", &ifconfig.name, "up"])
                     .output()
                     .unwrap();
+                let ifname = ifconfig.name.clone();
+                tokio::spawn(async move {
+                    netlink::ethtool::disable_gro(&ifname).await;
+                });
             }
 
             interface_map.remove(&ifconfig.name);

@@ -2496,6 +2496,7 @@ dependencies = [
  "netlink-packet-generic",
  "netlink-proto",
  "thiserror 1.0.69",
+ "tokio",
 ]
 
 [[package]]
@@ -3435,6 +3436,7 @@ dependencies = [
  "etherparse",
  "fs2",
  "futures",
+ "genetlink",
  "hickory-proto",
  "hmac",
  "instant-acme",
@@ -3446,6 +3448,7 @@ dependencies = [
  "landscape-protobuf",
  "libc",
  "netlink-packet-core",
+ "netlink-packet-generic",
  "netlink-packet-route",
  "netlink-sys",
  "paste",

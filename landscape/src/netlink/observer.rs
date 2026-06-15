@@ -39,6 +39,12 @@ pub async fn dev_observer() -> broadcast::Receiver<IfaceObserverAction> {
         while let Some((message, _)) = messages.next().await {
             // println!("Route change message - {message:?}");
             if let Some(msg) = filter_message_status(message) {
+                if let IfaceObserverAction::Up(ref ifname) = msg {
+                    let ifname = ifname.clone();
+                    tokio::spawn(async move {
+                        crate::netlink::ethtool::disable_gro(&ifname).await;
+                    });
+                }
                 if let Err(e) = tx.send(msg) {
                     println!("too many msg, drop this msg: {e:?}");
                 }

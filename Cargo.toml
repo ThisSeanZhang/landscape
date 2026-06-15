@@ -92,6 +92,8 @@ netlink-packet-route = { version = "0.28.0" }
 netlink-packet-core = { version = "0.8" }
 netlink-sys = { version = "0.8" }
 wl-nl80211 = { version = "0.4" }
+genetlink = { version = "0.2" }
+netlink-packet-generic = { version = "0.4" }
 pnet = { version = "0.35.0" }
 etherparse = "0.19.0"
 cidr = { version = "0.3.2" }
