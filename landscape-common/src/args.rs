@@ -84,10 +84,11 @@ pub struct WebCommArgs {
     #[arg(long, env = "LANDSCAPE_DEBUG")]
     pub debug: Option<bool>,
 
-    /// Force native XDP attach to always fail (debug only, for testing SKB fallback)
-    #[cfg(debug_assertions)]
-    #[arg(long, default_value_t = false)]
-    pub force_native_xdp_fail: bool,
+    /// Force native XDP attach to always fail (for testing SKB fallback)
+    /// If specified without values, affects all interfaces.
+    /// Specify comma-separated ifindex list to affect only those interfaces (e.g., 3,5).
+    #[arg(long = "force-tc", visible_alias = "ftc", value_delimiter = ',', num_args = 0..)]
+    pub force_native_xdp_fail: Option<Vec<i32>>,
 
     /// Log output location [default: false]
     #[arg(short = 'o', long, env = "LANDSCAPE_LOG_TERMINAL")]

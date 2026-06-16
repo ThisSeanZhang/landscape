@@ -215,12 +215,15 @@ impl NativeXdpLink {
     }
 
     fn try_native(prog: &Program, ifindex: i32) -> LdEbpfResult<Self> {
-        #[cfg(debug_assertions)]
-        if landscape_common::args::LAND_ARGS.force_native_xdp_fail {
-            return Err(crate::bpf_error::LandscapeEbpfError::Context {
-                context: format!("native XDP attach force-failed for testing (ifindex={ifindex})"),
-                source: libbpf_rs::Error::from_raw_os_error(libc::EOPNOTSUPP),
-            });
+        if let Some(ref ifindices) = landscape_common::args::LAND_ARGS.force_native_xdp_fail {
+            if ifindices.is_empty() || ifindices.contains(&ifindex) {
+                return Err(crate::bpf_error::LandscapeEbpfError::Context {
+                    context: format!(
+                        "native XDP attach force-failed for testing (ifindex={ifindex})"
+                    ),
+                    source: libbpf_rs::Error::from_raw_os_error(libc::EOPNOTSUPP),
+                });
+            }
         }
 
         let xdp = Xdp::new(prog.as_fd());
