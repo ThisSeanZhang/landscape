@@ -21,16 +21,19 @@ mod tc_pppoe_skel {
     include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/tc_pppoe.skel.rs"));
 }
 
+pub use tc_pppoe_skel::types::pppoe_egress_tmpl as PppoeEgressTmpl;
+
 pub async fn create_pppoe_tc_ebpf_3(
     ifindex: u32,
-    session_id: u16,
+    tmpl: PppoeEgressTmpl,
     _mtu: u16,
 ) -> tokio::sync::oneshot::Sender<tokio::sync::oneshot::Sender<()>> {
     let (notice_tx, mut notice_rx) =
         tokio::sync::oneshot::channel::<tokio::sync::oneshot::Sender<()>>();
 
     std::thread::spawn(move || {
-        let pppoe_tc = match attach_standalone_pppoe(ifindex, session_id) {
+        let session_id = u16::from_be(tmpl.session_id);
+        let pppoe_tc = match attach_standalone_pppoe(ifindex, tmpl) {
             Ok(h) => Some(h),
             Err(e) => {
                 tracing::error!("pppoe tc standalone attach failed for ifindex={}: {e}", ifindex);
@@ -88,14 +91,14 @@ struct StandalonePppoe {
     _hook: TcHookProxy,
 }
 
-fn attach_standalone_pppoe(ifindex: u32, session_id: u16) -> LdEbpfResult<StandalonePppoe> {
+fn attach_standalone_pppoe(ifindex: u32, tmpl: PppoeEgressTmpl) -> LdEbpfResult<StandalonePppoe> {
     use crate::landscape::OwnedOpenObject;
 
     let builder = tc_pppoe_skel::TcPppoeSkelBuilder::default();
     let (backing, obj) = OwnedOpenObject::new();
     let mut open_skel = crate::bpf_ctx!(builder.open(obj), "open tc_pppoe skeleton")?;
 
-    open_skel.maps.rodata_data.as_deref_mut().unwrap().session_id = session_id.to_be();
+    open_skel.maps.rodata_data.as_deref_mut().unwrap().pppoe_tmpl = tmpl;
 
     let skel = crate::bpf_ctx!(open_skel.load(), "load tc_pppoe skeleton")?;
 

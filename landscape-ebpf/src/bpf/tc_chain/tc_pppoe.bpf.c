@@ -7,21 +7,23 @@
 
 char LICENSE[] SEC("license") = "GPL";
 
-const volatile u16 session_id = 0x00;
-
-#define ETH_PPP bpf_htons(0x8864)
 #define ETH_PPP_IP bpf_htons(0x0021)
 #define ETH_PPP_IPV6 bpf_htons(0x0057)
 #define ETH_IPV4 bpf_htons(0x0800)
 #define ETH_IPV6 bpf_htons(0x86DD)
 
-struct pppoe_header {
-    u8 version_and_type;
-    u8 code;
-    u16 session_id;
-    u16 length;
-    u16 protocol;
+struct pppoe_egress_tmpl {
+    unsigned char dmac[6];
+    unsigned char smac[6];
+    __be16 eth_proto;
+    __u8 ver_type;
+    __u8 code;
+    __be16 session_id;
+    __be16 length;
+    __be16 protocol;
 } __attribute__((packed));
+
+const volatile struct pppoe_egress_tmpl pppoe_tmpl = {};
 
 static __always_inline void tc_pppoe_encap(struct __sk_buff *skb) {
     void *data_end = (void *)(long)skb->data_end;
@@ -33,24 +35,16 @@ static __always_inline void tc_pppoe_encap(struct __sk_buff *skb) {
     bool is_v6 = (eth->h_proto == ETH_IPV6);
     if (!is_v6 && eth->h_proto != ETH_IPV4) return;
 
-    u32 pkt_sz = skb->len - 14;
-    u16 ppp_proto = is_v6 ? ETH_PPP_IPV6 : ETH_PPP_IP;
     u64 adj_flag = is_v6 ? BPF_F_ADJ_ROOM_ENCAP_L3_IPV6 : BPF_F_ADJ_ROOM_ENCAP_L3_IPV4;
 
-    u16 l2_proto = ETH_PPP;
-    bpf_skb_store_bytes(skb, 12, &l2_proto, sizeof(u16), 0);
+    struct pppoe_egress_tmpl hdr = pppoe_tmpl;
+    hdr.length = bpf_htons(skb->len - 14 + 2);
+    hdr.protocol = is_v6 ? ETH_PPP_IPV6 : ETH_PPP_IP;
 
     int ret = bpf_skb_adjust_room(skb, 8, BPF_ADJ_ROOM_MAC, adj_flag);
     if (ret) return;
 
-    struct pppoe_header hdr = {
-        .version_and_type = 0x11,
-        .code = 0x00,
-        .session_id = session_id,
-        .length = bpf_htons(pkt_sz + 2),
-        .protocol = ppp_proto,
-    };
-    bpf_skb_store_bytes(skb, sizeof(struct ethhdr), &hdr, sizeof(hdr), 0);
+    bpf_skb_store_bytes(skb, 0, &hdr, sizeof(hdr), 0);
 }
 
 SEC("tc/egress")

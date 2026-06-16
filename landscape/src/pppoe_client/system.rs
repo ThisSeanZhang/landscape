@@ -72,6 +72,16 @@ impl PPPoEClientManager {
                 server_mac_addr[5],
             )
         );
+        let dmac: [u8; 6] = server_mac_addr.try_into().expect("server MAC must be 6 bytes");
+        let tmpl = pppoe::pppoe_tc::PppoeEgressTmpl {
+            dmac,
+            smac: iface_mac.octets(),
+            eth_proto: (0x8864u16).to_be(),
+            ver_type: 0x11,
+            code: 0x00,
+            session_id: session_id.to_be(),
+            ..Default::default()
+        };
         tokio::spawn(async move {
             tracing::info!(
                 "applying native PPPoE system state iface={} client_ip={} peer_ip={} mru={} session_id={}",
@@ -265,7 +275,7 @@ impl PPPoEClientManager {
                     }
                 }
             }
-            let notise = pppoe::pppoe_tc::create_pppoe_tc_ebpf_3(index, session_id, mru).await;
+            let notise = pppoe::pppoe_tc::create_pppoe_tc_ebpf_3(index, tmpl, mru).await;
             let outside_callback = outside_notice_rx.await;
 
             let (tx, rx) = tokio::sync::oneshot::channel();
