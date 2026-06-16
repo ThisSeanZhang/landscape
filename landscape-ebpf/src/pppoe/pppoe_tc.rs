@@ -38,6 +38,14 @@ pub async fn create_pppoe_tc_ebpf_3(
             }
         };
 
+        let xdp_pppoe = match crate::stages::pppoe::init_xdp_pppoe(ifindex, session_id) {
+            Ok(h) => Some(h),
+            Err(e) => {
+                tracing::error!("xdp pppoe stage init failed for ifindex={}: {e}", ifindex);
+                None
+            }
+        };
+
         let _skb_bundle_stored = match try_attach_pppoe_skb_xdp(ifindex, session_id) {
             Ok(bundle) => {
                 tracing::info!("SKB-mode XDP attached for PPPoE decap on ifindex={ifindex}");
@@ -63,6 +71,7 @@ pub async fn create_pppoe_tc_ebpf_3(
         // If native XDP hasn't already taken the SKB bundle, we take it
         // here as a fallback.  Dropping the bundle detaches the SKB XDP.
         let _ = XdpChainManager::instance().take_skb_bundle(ifindex);
+        drop(xdp_pppoe);
         drop(pppoe_tc);
 
         if let Some(call_back) = call_back {

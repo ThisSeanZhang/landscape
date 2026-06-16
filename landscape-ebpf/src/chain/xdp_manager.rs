@@ -49,6 +49,7 @@ pub enum StageType {
     Mss = 0,
     Firewall = 1,
     Nat = 2,
+    Pppoe = 3,
 }
 
 pub(crate) fn xdp_pipe_root_progs_path() -> PathBuf {
@@ -575,7 +576,12 @@ impl XdpChainManager {
         }
         delete_prog_array_fd(root.root_next_stage_fd(), 0);
 
-        let sorted: Vec<&StageEntry> = state.stages.values().collect();
+        let sorted: Vec<&StageEntry> = state
+            .stages
+            .iter()
+            .filter(|(k, _)| !matches!((*k, chain), (StageType::Pppoe, ChainDir::Wan)))
+            .map(|(_, v)| v)
+            .collect();
         if sorted.is_empty() {
             return Ok(());
         }
