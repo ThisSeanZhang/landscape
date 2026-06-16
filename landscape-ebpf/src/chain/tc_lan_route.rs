@@ -15,7 +15,7 @@ pub struct TcLanRouteHandle {
     _intro_skel: TcLanIngressIntroSkel<'static>,
     _intro_backing: OwnedOpenObject,
     ingress_hook: Option<TcHookProxy>,
-    ifindex: u32,
+    _ifindex: u32,
 }
 
 unsafe impl Send for TcLanRouteHandle {}
@@ -24,7 +24,6 @@ unsafe impl Sync for TcLanRouteHandle {}
 impl Drop for TcLanRouteHandle {
     fn drop(&mut self) {
         self.ingress_hook.take();
-        TcChainManager::instance().remove_roots(self.ifindex);
     }
 }
 
@@ -112,6 +111,6 @@ pub fn init_tc_lan_route(
         _intro_skel: intro_skel,
         _intro_backing: intro_backing,
         ingress_hook: Some(ingress_hook),
-        ifindex,
+        _ifindex: ifindex,
     })
 }

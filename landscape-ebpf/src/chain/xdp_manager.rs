@@ -147,6 +147,7 @@ pub struct XdpChainManager {
     _backing: OwnedOpenObject,
     inner: Mutex<ManagerInner>,
     skb_bundles: Mutex<HashMap<u32, SkbXdpBundle>>,
+    skb_pending: Mutex<HashMap<u32, SkbPending>>,
 }
 
 // Landscape owns route interfaces, so native XDP attach intentionally replaces
@@ -173,31 +174,37 @@ impl NativeXdpLink {
             libbpf_sys::bpf_xdp_detach(ifindex_i32, XdpFlags::SKB_MODE.bits(), &skb_detach_opts)
         };
 
-        // Take the bundle from internal bookkeeping if it exists (the SKB
-        // program is already detached above, so the link inside the bundle
-        // is stale — we reconstruct it below when re-attaching on failure).
-        let skb_bundle = XdpChainManager::instance().take_skb_bundle(ifindex);
-        let skb_saved = skb_bundle.map(|b| {
-            let (backing, skel) = b.yield_link();
-            (backing, skel)
-        });
+        // Recycle any previously-attached SKB bundle: detach the link
+        // (no-op if the unconditional detach above already handled it)
+        // and return the skeleton to the pending pool so it can be
+        // reused if native XDP fails now or in the future.
+        if let Some(old_bundle) = XdpChainManager::instance().take_skb_bundle(ifindex) {
+            let SkbXdpBundle { _link: _, _skel, _backing } = old_bundle;
+            XdpChainManager::instance().set_skb_pending(ifindex, SkbPending::new(_backing, _skel));
+        }
 
         let result = Self::try_native(prog, ifindex_i32);
 
         match result {
             Ok(link) => {
-                drop(skb_saved);
+                // Native XDP succeeded — the pending SKB skeleton remains
+                // in the manager untouched.
                 Ok(link)
             }
             Err(e) => {
-                if let Some((backing, skel)) = skb_saved {
-                    match SkbXdpBundle::reattach(backing, skel, ifindex) {
-                        Ok(bundle) => {
+                // Native XDP failed — consume the pending SKB skeleton
+                // (if any) and attach it as a fallback.
+                if let Some(pending) = XdpChainManager::instance().take_skb_pending(ifindex) {
+                    let SkbPending { _skel, _backing } = pending;
+                    match SkbXdpLink::attach(&_skel.progs.xdp_skb_pppoe, ifindex) {
+                        Ok(skb_link) => {
+                            let bundle = SkbXdpBundle::new(_backing, _skel, skb_link);
                             XdpChainManager::instance().set_skb_bundle(ifindex, bundle);
                         }
-                        Err(attach_err) => {
+                        Err(skb_err) => {
                             tracing::warn!(
-                                "failed to re-attach SKB XDP on ifindex={ifindex}: {attach_err}"
+                                "native XDP attach failed for ifindex={ifindex}, \
+                                 SKB fallback also failed: {skb_err}"
                             );
                         }
                     }
@@ -295,7 +302,7 @@ impl SkbXdpLink {
         // old_prog_fd=0 (default) → detach whatever is in SKB mode.
         let ret = unsafe { libbpf_sys::bpf_xdp_detach(ifindex, XdpFlags::SKB_MODE.bits(), &opts) };
         if ret != 0 {
-            tracing::warn!("detach SKB XDP ifindex={ifindex} failed: {}", -ret);
+            tracing::debug!("detach SKB XDP ifindex={ifindex} failed: {}", -ret);
         }
     }
 }
@@ -306,13 +313,31 @@ impl Drop for SkbXdpLink {
     }
 }
 
+/// An SKB XDP skeleton that has been loaded but NOT yet attached to any
+/// interface.  PPPoE prepares one of these and hands it to the manager.
+/// The manager decides whether to attach it (as SKB fallback) or keep it
+/// for later, depending on native XDP availability.
+pub(crate) struct SkbPending {
+    _skel: xdp_skb_pppoe_skel::XdpSkbPppoeSkel<'static>,
+    _backing: OwnedOpenObject,
+}
+
+impl SkbPending {
+    pub(crate) fn new(
+        backing: OwnedOpenObject,
+        skel: xdp_skb_pppoe_skel::XdpSkbPppoeSkel<'static>,
+    ) -> Self {
+        Self { _backing: backing, _skel: skel }
+    }
+}
+
 /// Bundle holding all resources needed to keep an SKB-mode XDP program
 /// alive.  Struct fields are dropped in declaration order, so *link* is
 /// dropped first — detaching the XDP program.  Then the skeleton is
 /// dropped (OwnedRef accesses the backing which is still alive) and
 /// finally the backing memory is freed.
 pub(crate) struct SkbXdpBundle {
-    link: SkbXdpLink,
+    _link: SkbXdpLink,
     _skel: xdp_skb_pppoe_skel::XdpSkbPppoeSkel<'static>,
     _backing: OwnedOpenObject,
 }
@@ -323,31 +348,20 @@ impl SkbXdpBundle {
         skel: xdp_skb_pppoe_skel::XdpSkbPppoeSkel<'static>,
         link: SkbXdpLink,
     ) -> Self {
-        Self { _backing: backing, _skel: skel, link }
-    }
-
-    /// Temporarily detach the SKB XDP program (drop the link) and return
-    /// the backing + skeleton so the program can be re-attached later.
-    fn yield_link(self) -> (OwnedOpenObject, xdp_skb_pppoe_skel::XdpSkbPppoeSkel<'static>) {
-        let SkbXdpBundle { _backing, _skel, link } = self;
-        drop(link);
-        (_backing, _skel)
-    }
-
-    /// Re-attach the SKB XDP program from its backing and skeleton.
-    fn reattach(
-        backing: OwnedOpenObject,
-        skel: xdp_skb_pppoe_skel::XdpSkbPppoeSkel<'static>,
-        ifindex: u32,
-    ) -> LdEbpfResult<Self> {
-        let link = SkbXdpLink::attach(&skel.progs.xdp_skb_pppoe, ifindex)?;
-        Ok(Self { _backing: backing, _skel: skel, link })
+        Self { _backing: backing, _skel: skel, _link: link }
     }
 }
 
 impl Drop for NativeXdpLink {
     fn drop(&mut self) {
         Self::detach(self.ifindex, self.prog_fd);
+        // If native XDP had failed and SKB was running as fallback,
+        // detach it and recycle the skeleton back as pending for reuse.
+        if let Some(old_bundle) = XdpChainManager::instance().take_skb_bundle(self.ifindex as u32) {
+            let SkbXdpBundle { _link: _, _skel, _backing } = old_bundle;
+            XdpChainManager::instance()
+                .set_skb_pending(self.ifindex as u32, SkbPending::new(_backing, _skel));
+        }
     }
 }
 
@@ -391,6 +405,7 @@ impl XdpChainManager {
             _backing: backing,
             inner: Mutex::new(ManagerInner::new()),
             skb_bundles: Mutex::new(HashMap::new()),
+            skb_pending: Mutex::new(HashMap::new()),
         })
     }
 
@@ -436,6 +451,7 @@ impl XdpChainManager {
     }
 
     pub fn remove(&self, ifindex: u32, stage: StageType) -> LdEbpfResult<()> {
+        let both_empty;
         {
             let mut inner = self.inner.lock().unwrap();
             if let Some(state) = inner.chains.get_mut(&(ifindex, ChainDir::Lan)) {
@@ -444,9 +460,25 @@ impl XdpChainManager {
             if let Some(state) = inner.chains.get_mut(&(ifindex, ChainDir::Wan)) {
                 state.stages.remove(&stage);
             }
+            both_empty = inner
+                .chains
+                .get(&(ifindex, ChainDir::Lan))
+                .map(|s| s.stages.is_empty())
+                .unwrap_or(true)
+                && inner
+                    .chains
+                    .get(&(ifindex, ChainDir::Wan))
+                    .map(|s| s.stages.is_empty())
+                    .unwrap_or(true);
         }
-        self.rebuild(ifindex, ChainDir::Lan)?;
-        self.rebuild(ifindex, ChainDir::Wan)?;
+        if both_empty {
+            let mut inner = self.inner.lock().unwrap();
+            inner.chains.remove(&(ifindex, ChainDir::Lan));
+            inner.chains.remove(&(ifindex, ChainDir::Wan));
+        } else {
+            self.rebuild(ifindex, ChainDir::Lan)?;
+            self.rebuild(ifindex, ChainDir::Wan)?;
+        }
         Ok(())
     }
 
@@ -476,6 +508,41 @@ impl XdpChainManager {
 
     pub(crate) fn take_skb_bundle(&self, ifindex: u32) -> Option<SkbXdpBundle> {
         self.skb_bundles.lock().unwrap().remove(&ifindex)
+    }
+
+    pub(crate) fn set_skb_pending(&self, ifindex: u32, pending: SkbPending) {
+        let _ = self.skb_bundles.lock().unwrap().remove(&ifindex);
+
+        match crate::map_setting::redirect_able::get_xdp_redirect_able(ifindex) {
+            Some(true) => {
+                // Native XDP is already serving this interface — store the
+                // skeleton as pending for potential future SKB fallback.
+                self.skb_pending.lock().unwrap().insert(ifindex, pending);
+            }
+            Some(false) => {
+                // WR is active but running in TC-only mode — no native XDP
+                // on the interface, safe to attach SKB immediately.
+                let SkbPending { _skel, _backing } = pending;
+                match SkbXdpLink::attach(&_skel.progs.xdp_skb_pppoe, ifindex) {
+                    Ok(link) => {
+                        let bundle = SkbXdpBundle::new(_backing, _skel, link);
+                        self.skb_bundles.lock().unwrap().insert(ifindex, bundle);
+                    }
+                    Err(e) => {
+                        tracing::warn!("SKB XDP attach for ifindex={ifindex} failed: {e}");
+                    }
+                }
+            }
+            None => {
+                // WR is not active — store the skeleton as pending without
+                // attaching, so it can be used if WR starts later.
+                self.skb_pending.lock().unwrap().insert(ifindex, pending);
+            }
+        }
+    }
+
+    pub(crate) fn take_skb_pending(&self, ifindex: u32) -> Option<SkbPending> {
+        self.skb_pending.lock().unwrap().remove(&ifindex)
     }
 
     fn create_wan_root(&self, ifindex: u32) -> LdEbpfResult<ChainRoot> {

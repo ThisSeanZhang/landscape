@@ -98,6 +98,7 @@ pub async fn create_route_lan_service(
             tracing::warn!(
                 "failed to start xdp lan route for {iface_name}: {err}, starting TC only"
             );
+            landscape_ebpf::map_setting::redirect_able::set_xdp_redirect_able(ifindex, false);
             false
         }
     };

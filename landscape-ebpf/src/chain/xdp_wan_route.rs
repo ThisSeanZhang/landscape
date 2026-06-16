@@ -41,7 +41,7 @@ pub struct XdpWanRouteHandle {
     _egress_intro_skel: tc_wan_egress_intro_skel::TcWanEgressIntroSkel<'static>,
     _egress_intro_backing: OwnedOpenObject,
     egress_hook: Option<TcHookProxy>,
-    ifindex: u32,
+    _ifindex: u32,
 }
 
 unsafe impl Send for XdpWanRouteHandle {}
@@ -51,9 +51,6 @@ impl Drop for XdpWanRouteHandle {
     fn drop(&mut self) {
         self.ingress_hook.take();
         self.egress_hook.take();
-        let manager = XdpChainManager::instance();
-        let _ = manager.clear_exit(self.ifindex);
-        TcChainManager::instance().remove_roots(self.ifindex);
     }
 }
 
@@ -281,6 +278,6 @@ pub fn init_xdp_wan_route(ifindex: u32, has_mac: bool) -> LdEbpfResult<XdpWanRou
         _egress_intro_skel: egress_intro_skel,
         _egress_intro_backing: egress_intro_backing,
         egress_hook: Some(egress_hook),
-        ifindex,
+        _ifindex: ifindex,
     })
 }

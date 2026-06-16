@@ -458,14 +458,22 @@ impl TcChainManager {
     }
 
     pub fn remove(&self, ifindex: u32, stage: StageType) -> LdEbpfResult<()> {
+        let empty;
         {
             let mut inner = self.inner.lock().unwrap();
             if let Some(state) = inner.interfaces.get_mut(&ifindex) {
                 state.stages.remove(&stage);
+                empty = state.stages.is_empty();
+            } else {
+                return Ok(());
             }
         }
-        self.rebuild(ifindex, ChainDir::WanIngress)?;
-        self.rebuild(ifindex, ChainDir::WanEgress)?;
+        if empty {
+            self.remove_roots(ifindex);
+        } else {
+            self.rebuild(ifindex, ChainDir::WanIngress)?;
+            self.rebuild(ifindex, ChainDir::WanEgress)?;
+        }
         Ok(())
     }
 

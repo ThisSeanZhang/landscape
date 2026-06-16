@@ -29,7 +29,7 @@ pub struct XdpLanRouteHandle {
     _intro_skel: tc_lan_ingress_intro_skel::TcLanIngressIntroSkel<'static>,
     _intro_backing: OwnedOpenObject,
     ingress_hook: Option<TcHookProxy>,
-    ifindex: u32,
+    _ifindex: u32,
 }
 
 unsafe impl Send for XdpLanRouteHandle {}
@@ -38,7 +38,6 @@ unsafe impl Sync for XdpLanRouteHandle {}
 impl Drop for XdpLanRouteHandle {
     fn drop(&mut self) {
         self.ingress_hook.take();
-        TcChainManager::instance().remove_roots(self.ifindex);
     }
 }
 
@@ -225,6 +224,6 @@ pub fn init_xdp_lan_route(ifindex: u32, has_mac: bool) -> LdEbpfResult<XdpLanRou
         _intro_skel: intro_skel,
         _intro_backing: intro_backing,
         ingress_hook: Some(ingress_hook),
-        ifindex,
+        _ifindex: ifindex,
     })
 }

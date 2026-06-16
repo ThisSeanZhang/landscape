@@ -8,7 +8,7 @@ use tokio::sync::oneshot::error::TryRecvError;
 use crate::{
     bpf_error::LdEbpfResult,
     bpf_rs_shared::xdp_skb_pppoe_skel,
-    chain::xdp_manager::{SkbXdpBundle, SkbXdpLink, XdpChainManager},
+    chain::xdp_manager::{SkbPending, XdpChainManager},
     landscape::TcHookProxy,
     PPPOE_EGRESS_PRIORITY,
 };
@@ -49,14 +49,14 @@ pub async fn create_pppoe_tc_ebpf_3(
             }
         };
 
-        let _skb_bundle_stored = match try_attach_pppoe_skb_xdp(ifindex, session_id) {
-            Ok(bundle) => {
-                tracing::info!("SKB-mode XDP attached for PPPoE decap on ifindex={ifindex}");
-                XdpChainManager::instance().set_skb_bundle(ifindex, bundle);
+        let _skb_pending_stored = match prepare_pppoe_skb_pending(ifindex, session_id) {
+            Ok(pending) => {
+                tracing::info!("SKB XDP skeleton prepared for PPPoE decap on ifindex={ifindex}");
+                XdpChainManager::instance().set_skb_pending(ifindex, pending);
                 true
             }
             Err(e) => {
-                tracing::debug!("SKB-mode XDP for PPPoE decap skipped: {e}");
+                tracing::debug!("SKB XDP skeleton preparation skipped: {e}");
                 false
             }
         };
@@ -71,8 +71,10 @@ pub async fn create_pppoe_tc_ebpf_3(
             }
         };
 
-        // If native XDP hasn't already taken the SKB bundle, we take it
-        // here as a fallback.  Dropping the bundle detaches the SKB XDP.
+        // Clean up any leftover SKB state: the pending skeleton if native XDP
+        // never consumed it, or the attached bundle if native failed and SKB
+        // was used as fallback.
+        let _ = XdpChainManager::instance().take_skb_pending(ifindex);
         let _ = XdpChainManager::instance().take_skb_bundle(ifindex);
         drop(xdp_pppoe);
         drop(pppoe_tc);
@@ -147,7 +149,7 @@ pub async fn create_pppoe_tc_ebpf<'a>(
     (notice_tx, pppoe_skel)
 }
 
-fn try_attach_pppoe_skb_xdp(ifindex: u32, session_id: u16) -> LdEbpfResult<SkbXdpBundle> {
+fn prepare_pppoe_skb_pending(_ifindex: u32, session_id: u16) -> LdEbpfResult<SkbPending> {
     let builder = xdp_skb_pppoe_skel::XdpSkbPppoeSkelBuilder::default();
     let (backing, obj) = crate::landscape::OwnedOpenObject::new();
     let mut open_skel = crate::bpf_ctx!(builder.open(obj), "open xdp_skb_pppoe skeleton")?;
@@ -156,13 +158,5 @@ fn try_attach_pppoe_skb_xdp(ifindex: u32, session_id: u16) -> LdEbpfResult<SkbXd
     }
     let skel = crate::bpf_ctx!(open_skel.load(), "load xdp_skb_pppoe skeleton")?;
 
-    if crate::map_setting::redirect_able::is_xdp_redirect_able(ifindex) {
-        return Err(crate::bpf_error::LandscapeEbpfError::Context {
-            context: format!("native XDP already serving ifindex={ifindex} (redirect_able=true)"),
-            source: libbpf_rs::Error::from_raw_os_error(17),
-        });
-    }
-
-    let link = SkbXdpLink::attach(&skel.progs.xdp_skb_pppoe, ifindex)?;
-    Ok(SkbXdpBundle::new(backing, skel, link))
+    Ok(SkbPending::new(backing, skel))
 }

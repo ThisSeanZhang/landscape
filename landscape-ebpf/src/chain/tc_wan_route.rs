@@ -26,7 +26,7 @@ pub struct TcWanRouteHandle {
     _egress_intro_backing: OwnedOpenObject,
     ingress_hook: Option<TcHookProxy>,
     egress_hook: Option<TcHookProxy>,
-    ifindex: u32,
+    _ifindex: u32,
 }
 
 unsafe impl Send for TcWanRouteHandle {}
@@ -36,7 +36,6 @@ impl Drop for TcWanRouteHandle {
     fn drop(&mut self) {
         self.ingress_hook.take();
         self.egress_hook.take();
-        TcChainManager::instance().remove_roots(self.ifindex);
     }
 }
 
@@ -148,6 +147,6 @@ pub fn init_tc_wan_route(
         _egress_intro_backing: egress_intro_backing,
         ingress_hook: Some(ingress_hook),
         egress_hook: Some(egress_hook),
-        ifindex,
+        _ifindex: ifindex,
     })
 }
