@@ -302,6 +302,10 @@ impl TcChainManager {
             pin_and_reuse_map(&mut open_skel.maps.ip_mac_v6, &MAP_PATHS.ip_mac_v6),
             "tc_exit_wan_ingress pin ip_mac_v6"
         )?;
+        crate::bpf_ctx!(
+            pin_and_reuse_map(&mut open_skel.maps.xdp_redirect_able, &MAP_PATHS.xdp_redirect_able),
+            "tc_exit_wan_ingress pin xdp_redirect_able"
+        )?;
         let skel = bpf_ctx!(open_skel.load(), "load tc_exit_wan_ingress skeleton")?;
         let exit_fd = skel.progs.tc_exit_wan_ingress_redirect.as_fd().as_raw_fd();
         skel.maps.tc_pipe_exits_wan_ingress.update(

@@ -131,6 +131,10 @@ pub fn init_tc_wan_route(
         pin_and_reuse_map(&mut open_skel.maps.ip_mac_v6, &MAP_PATHS.ip_mac_v6),
         "tc_wan_egress pin ip_mac_v6"
     )?;
+    crate::bpf_ctx!(
+        pin_and_reuse_map(&mut open_skel.maps.xdp_redirect_able, &MAP_PATHS.xdp_redirect_able),
+        "tc_wan_egress pin xdp_redirect_able"
+    )?;
     let egress_intro_skel = bpf_ctx!(open_skel.load(), "load per-if tc_wan_egress_intro")?;
     let mut egress_hook = TcHookProxy::new(
         &egress_intro_skel.progs.tc_wan_egress_intro,

@@ -210,6 +210,13 @@ pub fn init_xdp_lan_route(ifindex: u32, has_mac: bool) -> LdEbpfResult<XdpLanRou
         pin_and_reuse_map(&mut intro_open_skel.maps.ip_mac_v6, &MAP_PATHS.ip_mac_v6),
         "tc_lan_ingress_intro pin ip_mac_v6"
     )?;
+    crate::bpf_ctx!(
+        pin_and_reuse_map(
+            &mut intro_open_skel.maps.xdp_redirect_able,
+            &MAP_PATHS.xdp_redirect_able,
+        ),
+        "tc_lan_ingress_intro pin xdp_redirect_able"
+    )?;
 
     let intro_skel = bpf_ctx!(intro_open_skel.load(), "load tc_lan_ingress_intro")?;
 

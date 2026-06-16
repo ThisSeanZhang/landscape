@@ -98,6 +98,10 @@ pub fn init_tc_lan_route(
         pin_and_reuse_map(&mut open_skel.maps.ip_mac_v6, &MAP_PATHS.ip_mac_v6),
         "tc_lan_route pin ip_mac_v6"
     )?;
+    crate::bpf_ctx!(
+        pin_and_reuse_map(&mut open_skel.maps.xdp_redirect_able, &MAP_PATHS.xdp_redirect_able),
+        "tc_lan_route pin xdp_redirect_able"
+    )?;
     let intro_skel = bpf_ctx!(open_skel.load(), "load per-if tc_lan_ingress_intro")?;
     let mut ingress_hook = TcHookProxy::new(
         &intro_skel.progs.tc_lan_ingress_intro,

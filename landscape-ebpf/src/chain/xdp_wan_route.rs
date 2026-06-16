@@ -257,6 +257,13 @@ pub fn init_xdp_wan_route(ifindex: u32, has_mac: bool) -> LdEbpfResult<XdpWanRou
         pin_and_reuse_map(&mut egress_intro_open_skel.maps.ip_mac_v6, &MAP_PATHS.ip_mac_v6),
         "tc_wan_egress_intro pin ip_mac_v6"
     )?;
+    crate::bpf_ctx!(
+        pin_and_reuse_map(
+            &mut egress_intro_open_skel.maps.xdp_redirect_able,
+            &MAP_PATHS.xdp_redirect_able,
+        ),
+        "tc_wan_egress_intro pin xdp_redirect_able"
+    )?;
 
     let egress_intro_skel = bpf_ctx!(egress_intro_open_skel.load(), "load tc_wan_egress_intro")?;
 

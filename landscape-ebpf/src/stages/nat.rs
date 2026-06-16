@@ -291,6 +291,10 @@ fn init_nat_xdp_unified(
             .reuse_fd(tc_skel.maps.nat4_icmp_free_ports_v3.as_fd()),
         "xdp_nat reuse nat4_icmp_free_ports_v3 fd"
     )?;
+    crate::bpf_ctx!(
+        xdp_open.maps.nat6_conn_timer.reuse_fd(tc_skel.maps.nat6_conn_timer.as_fd()),
+        "xdp_nat reuse nat6_conn_timer fd"
+    )?;
 
     {
         let xdp_rodata =
