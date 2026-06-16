@@ -63,7 +63,6 @@ rand = { workspace = true }
 
 clap = { workspace = true }
 bollard = { workspace = true }
-regex = { workspace = true }
 
 # logs
 tracing = { workspace = true }

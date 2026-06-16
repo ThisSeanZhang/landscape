@@ -3504,7 +3504,6 @@ dependencies = [
  "r2d2",
  "rand 0.10.0",
  "rcgen",
- "regex",
  "reqwest 0.13.2",
  "rtnetlink",
  "rustls",

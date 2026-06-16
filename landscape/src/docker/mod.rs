@@ -1,8 +1,6 @@
 use bollard::{
-    query_parameters::{
-        EventsOptions, InspectContainerOptions, InspectNetworkOptions, ListContainersOptions,
-    },
-    secret::{ContainerSummary, EventMessageTypeEnum},
+    query_parameters::{EventsOptions, InspectContainerOptions, InspectNetworkOptions},
+    secret::EventMessageTypeEnum,
     Docker,
 };
 use landscape_common::docker::error::DockerError;
@@ -11,14 +9,13 @@ use landscape_common::{
     route::RouteTargetInfo,
     service::{ServiceStatus, WatchService},
 };
-use regex::Regex;
+use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
-use std::{fs::File, io::BufRead, path::PathBuf};
 use tokio::net::{UnixListener, UnixStream};
 use tokio::{io::AsyncReadExt, net::unix::SocketAddr};
 use tokio_stream::StreamExt;
 
-use crate::{docker::image::PullManager, get_all_devices, route::IpRouteService};
+use crate::{docker::image::PullManager, route::IpRouteService};
 
 pub mod image;
 pub mod network;
@@ -275,30 +272,6 @@ async fn run_docker_event_loop(
     }
 }
 
-pub async fn scan_and_set_all_docker(ip_route: &IpRouteService, docker: &Docker) {
-    let containers = get_docker_continer_summary(&docker).await;
-
-    tracing::debug!("containers: {containers:?}");
-    for container in containers {
-        if let Some(name) = container.names.and_then(|d| d.get(0).cloned()) {
-            if let Some(name) = name.strip_prefix("/") {
-                inspect_container_and_set_route(&name, ip_route, docker).await;
-            }
-        }
-    }
-    ip_route.print_wan_ifaces().await;
-}
-
-pub async fn get_docker_continer_summary(docker: &Docker) -> Vec<ContainerSummary> {
-    let mut container_summarys: Vec<ContainerSummary> = vec![];
-
-    let query: Option<ListContainersOptions> = None;
-    if let Ok(containers) = docker.list_containers(query).await {
-        container_summarys = containers;
-    }
-    container_summarys
-}
-
 pub async fn accept_docker_info(
     ip_route_service: &IpRouteService,
     (stream, _addr): (UnixStream, SocketAddr),
@@ -462,26 +435,6 @@ pub async fn handle_event(
     }
 }
 
-pub async fn create_docker_event_spawn(ip_route_service: IpRouteService) {
-    let docker = Docker::connect_with_unix_defaults();
-    let docker = docker.unwrap();
-
-    // ip_route_service.remove_all_wan_docker().await;
-    // scan_and_set_all_docker(&ip_route_service, &docker).await;
-
-    tokio::spawn(async move {
-        let query: Option<EventsOptions> = None;
-        let mut event_stream = docker.events(query);
-
-        while let Some(e) = event_stream.next().await {
-            if let Ok(msg) = e {
-                // println!("{:?}", msg);
-                handle_event(&ip_route_service, &docker, msg).await;
-            }
-        }
-    });
-}
-
 async fn scan_all_lan_net(
     ip_route_service: &IpRouteService,
     docker_client: &Arc<RwLock<Option<Docker>>>,
@@ -499,68 +452,4 @@ async fn scan_all_lan_net(
             ip_route_service.insert_ipv4_lan_route(&network_info.id, info).await;
         }
     }
-}
-
-async fn inspect_container_and_set_route(
-    name: &str,
-    ip_route_service: &IpRouteService,
-    docker: &Docker,
-) {
-    let query: Option<InspectContainerOptions> = None;
-    let Ok(container_info) = docker.inspect_container(name, query).await else {
-        tracing::error!("can not inspect container: {name}");
-        return;
-    };
-
-    if let Some(state) = container_info.state {
-        if let Some(pid) = state.pid {
-            let file_path = format!("/proc/{:?}/net/igmp", pid);
-            if let Ok(Some(if_id)) = read_igmp_index(&file_path) {
-                tracing::debug!("inner if id: {if_id:?}");
-
-                let devs = get_all_devices().await;
-                for dev in devs {
-                    if let Some(peer_id) = dev.peer_link_id {
-                        if if_id == peer_id {
-                            let (ipv4, ipv6) = RouteTargetInfo::docker_new(dev.index, name);
-                            ip_route_service.insert_ipv4_wan_route(name, ipv4).await;
-                            ip_route_service.insert_ipv6_wan_route(name, ipv6).await;
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-fn read_igmp_index(file_path: &str) -> std::io::Result<Option<u32>> {
-    let file = File::open(file_path)?;
-    let reader = std::io::BufReader::new(file);
-
-    let re = Regex::new(r"\d+").unwrap();
-    let mut result = None;
-    for line in reader.lines() {
-        let line = line?;
-
-        // 1. 去掉非数字起始的行
-        if !line.chars().next().unwrap_or(' ').is_digit(10) {
-            continue;
-        }
-
-        // 2. 去掉包含 "lo" 的行
-        if line.contains("lo") {
-            continue;
-        }
-
-        // 3. 提取第一个数字并转换为 u32
-        if let Some(capture) = re.find(&line) {
-            let number_str = capture.as_str();
-            if let Ok(number) = number_str.parse::<u32>() {
-                result = Some(number);
-                break;
-            }
-        }
-    }
-
-    Ok(result)
 }
