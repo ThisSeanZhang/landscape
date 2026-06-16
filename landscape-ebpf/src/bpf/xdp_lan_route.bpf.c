@@ -616,32 +616,30 @@ static __always_inline int xdp_search_route_in_lan_v4(struct xdp_md *ctx,
                 xdp_set_docker_meta(ctx, target->mark_value, target->ifindex);
                 return XDP_PASS;
             }
+            struct wan_ip_info_key wan_key = {.ifindex = target->ifindex,
+                                              .l3_protocol = LANDSCAPE_IPV4_TYPE};
+            struct wan_ip_info_value *wan_info = bpf_map_lookup_elem(&wan_ip_binding, &wan_key);
+            if (wan_info != NULL && target->has_mac) {
+                struct mac_value_v4 *mac_val =
+                    bpf_map_lookup_elem(&ip_mac_v4, &search_key.remote_addr);
+                if (!mac_val) {
+                    mac_val = bpf_map_lookup_elem(&ip_mac_v4, &wan_info->gateway.ip);
+                }
+                if (mac_val) {
+                    void *data = (void *)(long)ctx->data;
+                    void *data_end = (void *)(long)ctx->data_end;
+                    struct ethhdr *eth = data;
+                    if ((void *)(eth + 1) > data_end) return XDP_DROP;
+                    __builtin_memcpy(eth->h_dest, mac_val->mac, 6);
+                    __builtin_memcpy(eth->h_source, mac_val->dev_mac, 6);
+                }
+            }
             if (!target->xdp_redirect_able) {
                 int ret = xdp_set_tc_redirect_meta(ctx, target->mark_value, target->ifindex);
                 if (ret) return XDP_DROP;
                 return XDP_PASS;
             }
-            struct wan_ip_info_key wan_key = {.ifindex = target->ifindex,
-                                              .l3_protocol = LANDSCAPE_IPV4_TYPE};
-            struct wan_ip_info_value *wan_info = bpf_map_lookup_elem(&wan_ip_binding, &wan_key);
             if (wan_info != NULL) {
-                if (target->has_mac) {
-                    struct mac_value_v4 *mac_val =
-                        bpf_map_lookup_elem(&ip_mac_v4, &search_key.remote_addr);
-                    if (!mac_val) {
-                        mac_val = bpf_map_lookup_elem(&ip_mac_v4, &wan_info->gateway.ip);
-                    }
-                    if (mac_val) {
-                        // bpf_printk("[wan_cache_r] v4 MAC dst=%pM src=%pM", mac_val->mac,
-                        //            mac_val->dev_mac);
-                        void *data = (void *)(long)ctx->data;
-                        void *data_end = (void *)(long)ctx->data_end;
-                        struct ethhdr *eth = data;
-                        if ((void *)(eth + 1) > data_end) return XDP_DROP;
-                        __builtin_memcpy(eth->h_dest, mac_val->mac, 6);
-                        __builtin_memcpy(eth->h_source, mac_val->dev_mac, 6);
-                    }
-                }
                 struct xdp_pipe_meta meta = {};
                 xdp_get_meta(ctx, &meta);
                 meta.target_ifindex = target->ifindex;
@@ -668,11 +666,6 @@ static __always_inline int xdp_search_route_in_lan_v4(struct xdp_md *ctx,
                     xdp_set_docker_meta(ctx, target->mark_value, target->ifindex);
                     return XDP_PASS;
                 }
-                if (!target->xdp_redirect_able) {
-                    int ret = xdp_set_tc_redirect_meta(ctx, target->mark_value, target->ifindex);
-                    if (ret) return XDP_DROP;
-                    return XDP_PASS;
-                }
                 if (target->has_mac) {
                     struct mac_value_v4 *mac_val =
                         bpf_map_lookup_elem(&ip_mac_v4, &target->gate_addr);
@@ -684,6 +677,11 @@ static __always_inline int xdp_search_route_in_lan_v4(struct xdp_md *ctx,
                         __builtin_memcpy(eth->h_dest, mac_val->mac, 6);
                         __builtin_memcpy(eth->h_source, target->mac, 6);
                     }
+                }
+                if (!target->xdp_redirect_able) {
+                    int ret = xdp_set_tc_redirect_meta(ctx, target->mark_value, target->ifindex);
+                    if (ret) return XDP_DROP;
+                    return XDP_PASS;
                 }
                 struct xdp_pipe_meta meta = {};
                 xdp_get_meta(ctx, &meta);
@@ -719,43 +717,39 @@ static __always_inline int xdp_search_route_in_lan_v6(struct xdp_md *ctx,
                 xdp_set_docker_meta(ctx, target->mark_value, target->ifindex);
                 return XDP_PASS;
             }
-            if (!target->xdp_redirect_able) {
-                int ret = xdp_set_tc_redirect_meta(ctx, target->mark_value, target->ifindex);
-                if (ret) return XDP_DROP;
-                return XDP_PASS;
-            }
             bpf_printk("[wan_cache_r] v6 HIT src=%pI6c dst=%pI6c ifindex=%u has_mac=%u",
                        &context->saddr, &context->daddr, target->ifindex, target->has_mac);
             struct wan_ip_info_key wan_key = {.ifindex = target->ifindex,
                                               .l3_protocol = LANDSCAPE_IPV6_TYPE};
             struct wan_ip_info_value *wan_info = bpf_map_lookup_elem(&wan_ip_binding, &wan_key);
-            if (wan_info != NULL) {
-                if (target->has_mac) {
-                    struct mac_key_v6 mac_key = {};
-                    COPY_ADDR_FROM(mac_key.addr.bytes, search_key.remote_addr.bytes);
-                    struct mac_value_v6 *mac_val = bpf_map_lookup_elem(&ip_mac_v6, &mac_key);
-                    if (!mac_val) {
-                        COPY_ADDR_FROM(mac_key.addr.bytes, wan_info->gateway.bits);
-                        mac_val = bpf_map_lookup_elem(&ip_mac_v6, &mac_key);
-                    }
-                    if (mac_val) {
-                        // bpf_printk("[wan_cache_r] v6 MAC dst=%pM src=%pM", mac_val->mac,
-                        //            mac_val->dev_mac);
-                        void *data = (void *)(long)ctx->data;
-                        void *data_end = (void *)(long)ctx->data_end;
-                        struct ethhdr *eth = data;
-                        if ((void *)(eth + 1) > data_end) return XDP_DROP;
-                        __builtin_memcpy(eth->h_dest, mac_val->mac, 6);
-                        __builtin_memcpy(eth->h_source, mac_val->dev_mac, 6);
-                    }
+            if (wan_info != NULL && target->has_mac) {
+                struct mac_key_v6 mac_key = {};
+                COPY_ADDR_FROM(mac_key.addr.bytes, search_key.remote_addr.bytes);
+                struct mac_value_v6 *mac_val = bpf_map_lookup_elem(&ip_mac_v6, &mac_key);
+                if (!mac_val) {
+                    COPY_ADDR_FROM(mac_key.addr.bytes, wan_info->gateway.bits);
+                    mac_val = bpf_map_lookup_elem(&ip_mac_v6, &mac_key);
                 }
+                if (mac_val) {
+                    void *data = (void *)(long)ctx->data;
+                    void *data_end = (void *)(long)ctx->data_end;
+                    struct ethhdr *eth = data;
+                    if ((void *)(eth + 1) > data_end) return XDP_DROP;
+                    __builtin_memcpy(eth->h_dest, mac_val->mac, 6);
+                    __builtin_memcpy(eth->h_source, mac_val->dev_mac, 6);
+                }
+            }
+            if (!target->xdp_redirect_able) {
+                int ret = xdp_set_tc_redirect_meta(ctx, target->mark_value, target->ifindex);
+                if (ret) return XDP_DROP;
+                return XDP_PASS;
+            }
+            if (wan_info != NULL) {
                 struct xdp_pipe_meta meta = {};
                 xdp_get_meta(ctx, &meta);
                 meta.target_ifindex = target->ifindex;
                 meta.mark = target->mark_value;
                 xdp_set_meta(ctx, &meta);
-                // bpf_printk("[lan_route] search_lan_v6 WAN-hit tailcall to ifindex=%u",
-                //            target->ifindex);
                 bpf_tail_call(ctx, &xdp_lan_pipe_root_progs, target->ifindex);
                 bpf_printk("[lan_route] search_lan_v6 WAN-hit tailcall FAILED ifindex=%u",
                            target->ifindex);
@@ -775,11 +769,6 @@ static __always_inline int xdp_search_route_in_lan_v6(struct xdp_md *ctx,
                     xdp_set_docker_meta(ctx, target->mark_value, target->ifindex);
                     return XDP_PASS;
                 }
-                if (!target->xdp_redirect_able) {
-                    int ret = xdp_set_tc_redirect_meta(ctx, target->mark_value, target->ifindex);
-                    if (ret) return XDP_DROP;
-                    return XDP_PASS;
-                }
                 if (target->has_mac) {
                     struct mac_key_v6 gw_key = {};
                     COPY_ADDR_FROM(gw_key.addr.bytes, target->gate_addr.bytes);
@@ -792,6 +781,11 @@ static __always_inline int xdp_search_route_in_lan_v6(struct xdp_md *ctx,
                         __builtin_memcpy(eth->h_dest, mac_val->mac, 6);
                         __builtin_memcpy(eth->h_source, target->mac, 6);
                     }
+                }
+                if (!target->xdp_redirect_able) {
+                    int ret = xdp_set_tc_redirect_meta(ctx, target->mark_value, target->ifindex);
+                    if (ret) return XDP_DROP;
+                    return XDP_PASS;
                 }
                 struct xdp_pipe_meta meta = {};
                 xdp_get_meta(ctx, &meta);
