@@ -17,22 +17,11 @@ use landscape_common::{
     net::MacAddr,
 };
 
-pub async fn inspect_all_networks() -> Vec<LandscapeDockerNetwork> {
-    let docker = Docker::connect_with_socket_defaults();
-
-    let Ok(docker) = docker else {
-        tracing::warn!("Docker Connect Fail");
-        return vec![];
-    };
-
+pub async fn inspect_all_networks(
+    docker: &Docker,
+) -> Result<Vec<LandscapeDockerNetwork>, bollard::errors::Error> {
     let query: Option<ListNetworksOptions> = None;
-    let networks = match docker.list_networks(query).await {
-        Ok(networks) => networks,
-        Err(err) => {
-            tracing::warn!(error = %err, "Docker list_networks failed");
-            return vec![];
-        }
-    };
+    let networks = docker.list_networks(query).await?;
 
     let mut result = Vec::with_capacity(networks.len());
     for networks in networks {
@@ -41,7 +30,7 @@ pub async fn inspect_all_networks() -> Vec<LandscapeDockerNetwork> {
         }
     }
 
-    result
+    Ok(result)
 }
 
 pub fn convert_network(net: Network) -> Option<LandscapeDockerNetwork> {

@@ -5,13 +5,14 @@ use bollard::{
     secret::{ContainerSummary, EventMessageTypeEnum},
     Docker,
 };
+use landscape_common::docker::error::DockerError;
 use landscape_common::docker::DockerTargetEnroll;
 use landscape_common::{
     route::RouteTargetInfo,
     service::{ServiceStatus, WatchService},
 };
 use regex::Regex;
-use serde::Serialize;
+use std::sync::{Arc, RwLock};
 use std::{fs::File, io::BufRead, path::PathBuf};
 use tokio::net::{UnixListener, UnixStream};
 use tokio::{io::AsyncReadExt, net::unix::SocketAddr};
@@ -24,22 +25,35 @@ pub mod network;
 pub mod unix_sock;
 
 /// Docker Service
-#[derive(Serialize, Clone)]
+#[derive(Clone)]
 pub struct LandscapeDockerService {
     pub status: WatchService,
-    #[serde(skip)]
     route_service: IpRouteService,
-    #[serde(skip)]
     home_path: PathBuf,
-    #[serde(skip)]
     pub pull_manager: PullManager,
+    docker_client: Arc<RwLock<Option<Docker>>>,
 }
 
 impl LandscapeDockerService {
     pub fn new(home_path: PathBuf, route_service: IpRouteService) -> Self {
+        let docker_client = Arc::new(RwLock::new(
+            Docker::connect_with_unix_defaults()
+                .map_err(|e| tracing::warn!("Docker Connect Fail on init: {e:?}"))
+                .ok(),
+        ));
         let status = WatchService::new();
         let pull_manager = PullManager::new();
-        LandscapeDockerService { status, route_service, home_path, pull_manager }
+        LandscapeDockerService {
+            status,
+            route_service,
+            home_path,
+            pull_manager,
+            docker_client,
+        }
+    }
+
+    pub fn docker_client(&self) -> Result<Docker, DockerError> {
+        self.docker_client.read().unwrap().clone().ok_or(DockerError::DockerClientNotAvailable)
     }
 
     pub async fn start_to_listen_event(&self) {
@@ -48,26 +62,35 @@ impl LandscapeDockerService {
         let status = self.status.clone();
         let route_service = self.route_service.clone();
         let path = self.home_path.clone();
+        let docker_client = self.docker_client.clone();
 
-        scan_all_lan_net(&route_service).await;
+        scan_all_lan_net(&route_service, &docker_client).await;
         tokio::spawn(async move {
             status.just_change_status(ServiceStatus::Staring);
 
             let unix_socket = unix_sock::listen_unix_sock(path).await;
 
             route_service.remove_all_wan_docker().await;
-            // scan_and_set_all_docker(&route_service, &docker).await;
 
             let unix_status = status.clone();
             let unix_route_service = route_service.clone();
+            let event_docker_client = docker_client.clone();
+            let unix_docker_client = docker_client;
             let unix_listener = tokio::spawn(async move {
-                run_unix_registration_listener(unix_status, unix_route_service, unix_socket).await;
+                run_unix_registration_listener(
+                    unix_status,
+                    unix_route_service,
+                    unix_socket,
+                    unix_docker_client,
+                )
+                .await;
             });
 
             let docker_status = status.clone();
             let docker_route_service = route_service.clone();
             let docker_event_listener = tokio::spawn(async move {
-                run_docker_event_loop(docker_status, docker_route_service).await;
+                run_docker_event_loop(docker_status, docker_route_service, event_docker_client)
+                    .await;
             });
 
             let mut receiver = status.subscribe();
@@ -95,6 +118,7 @@ async fn run_unix_registration_listener(
     status: WatchService,
     route_service: IpRouteService,
     unix_socket: UnixListener,
+    docker_client: Arc<RwLock<Option<Docker>>>,
 ) {
     let mut receiver = status.subscribe();
 
@@ -107,7 +131,7 @@ async fn run_unix_registration_listener(
         tokio::select! {
             info = unix_socket.accept() => {
                 match info {
-                    Ok(conn) => accept_docker_info(&route_service, conn).await,
+                    Ok(conn) => accept_docker_info(&route_service, conn, &docker_client).await,
                     Err(e) => {
                         tracing::error!("failed to accept docker registration socket connection: {e:?}");
                         tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
@@ -128,7 +152,11 @@ async fn run_unix_registration_listener(
     }
 }
 
-async fn run_docker_event_loop(status: WatchService, route_service: IpRouteService) {
+async fn run_docker_event_loop(
+    status: WatchService,
+    route_service: IpRouteService,
+    docker_client: Arc<RwLock<Option<Docker>>>,
+) {
     let mut receiver = status.subscribe();
     let retry_interval = tokio::time::Duration::from_secs(300);
 
@@ -137,8 +165,11 @@ async fn run_docker_event_loop(status: WatchService, route_service: IpRouteServi
             break;
         }
 
-        let docker = match Docker::connect_with_socket_defaults() {
-            Ok(docker) => docker,
+        let docker = match Docker::connect_with_unix_defaults() {
+            Ok(docker) => {
+                *docker_client.write().unwrap() = Some(docker.clone());
+                docker
+            }
             Err(e) => {
                 tracing::warn!("Docker Connect Fail, retrying in {:?}: {e:?}", retry_interval);
                 tokio::select! {
@@ -169,7 +200,7 @@ async fn run_docker_event_loop(status: WatchService, route_service: IpRouteServi
             continue;
         }
 
-        scan_all_lan_net(&route_service).await;
+        scan_all_lan_net(&route_service, &docker_client).await;
 
         let query: Option<EventsOptions> = None;
         let mut event_stream = docker.events(query);
@@ -271,7 +302,15 @@ pub async fn get_docker_continer_summary(docker: &Docker) -> Vec<ContainerSummar
 pub async fn accept_docker_info(
     ip_route_service: &IpRouteService,
     (stream, _addr): (UnixStream, SocketAddr),
+    docker_client: &Arc<RwLock<Option<Docker>>>,
 ) {
+    let docker = match docker_client.read().unwrap().clone() {
+        Some(d) => d,
+        None => {
+            tracing::warn!("Docker client not available for registration");
+            return;
+        }
+    };
     let ip_route_service = ip_route_service.clone();
     tokio::spawn(async move {
         const MAX_REGISTRATION_BYTES: usize = 4096;
@@ -300,14 +339,6 @@ pub async fn accept_docker_info(
                 let Ok(DockerTargetEnroll { id, ifindex }) = result else {
                     tracing::error!("failed to parse docker registration info");
                     return;
-                };
-
-                let docker = match Docker::connect_with_socket_defaults() {
-                    Ok(docker) => docker,
-                    Err(e) => {
-                        tracing::warn!("Docker Connect Fail while handling registration: {e:?}");
-                        return;
-                    }
                 };
 
                 let query: Option<InspectContainerOptions> = None;
@@ -432,7 +463,7 @@ pub async fn handle_event(
 }
 
 pub async fn create_docker_event_spawn(ip_route_service: IpRouteService) {
-    let docker = Docker::connect_with_socket_defaults();
+    let docker = Docker::connect_with_unix_defaults();
     let docker = docker.unwrap();
 
     // ip_route_service.remove_all_wan_docker().await;
@@ -451,8 +482,19 @@ pub async fn create_docker_event_spawn(ip_route_service: IpRouteService) {
     });
 }
 
-async fn scan_all_lan_net(ip_route_service: &IpRouteService) {
-    for network_info in network::inspect_all_networks().await {
+async fn scan_all_lan_net(
+    ip_route_service: &IpRouteService,
+    docker_client: &Arc<RwLock<Option<Docker>>>,
+) {
+    let Some(docker) = docker_client.read().unwrap().clone() else {
+        tracing::warn!("Docker client not available for LAN network scan");
+        return;
+    };
+    let Ok(networks) = network::inspect_all_networks(&docker).await else {
+        tracing::warn!("Docker list_networks failed, skip LAN network scan");
+        return;
+    };
+    for network_info in networks {
         if let Some(info) = network_info.convert_to_lan_info() {
             ip_route_service.insert_ipv4_lan_route(&network_info.id, info).await;
         }

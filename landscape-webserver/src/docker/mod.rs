@@ -6,7 +6,6 @@ use bollard::{
         StartContainerOptions, StopContainerOptions,
     },
     secret::{ContainerCreateBody, ContainerSummary},
-    Docker,
 };
 
 use image::get_docker_images_paths;
@@ -84,16 +83,13 @@ async fn stop_docker_status(State(state): State<LandscapeApp>) -> LandscapeApiRe
     operation_id = "get_all_containers",
     responses((status = 200, body = inline(CommonApiResp<serde_json::Value>)))
 )]
-async fn get_all_containers() -> LandscapeApiResult<Vec<ContainerSummary>> {
-    let mut container_summarys: Vec<ContainerSummary> = vec![];
-    let docker = Docker::connect_with_socket_defaults();
-
-    if let Ok(docker) = docker {
-        let option = ListContainersOptions { all: true, ..Default::default() };
-        if let Ok(containers) = docker.list_containers(Some(option)).await {
-            container_summarys = containers;
-        }
-    }
+async fn get_all_containers(
+    State(state): State<LandscapeApp>,
+) -> LandscapeApiResult<Vec<ContainerSummary>> {
+    let docker = state.docker_service.docker_client()?;
+    let option = ListContainersOptions { all: true, ..Default::default() };
+    let container_summarys =
+        docker.list_containers(Some(option)).await.map_err(|_| DockerError::ListContainersError)?;
 
     LandscapeApiResp::success(container_summarys)
 }
@@ -108,10 +104,11 @@ async fn get_all_containers() -> LandscapeApiResult<Vec<ContainerSummary>> {
     responses((status = 200, description = "Success"))
 )]
 async fn run_container(
+    State(state): State<LandscapeApp>,
     Path(container_name): Path<String>,
     JsonBody(container_config): JsonBody<ContainerCreateBody>,
 ) -> LandscapeApiResult<()> {
-    let docker = Docker::connect_with_socket_defaults().unwrap();
+    let docker = state.docker_service.docker_client()?;
     if let Err(e) = &docker
         .create_container(
             Some(CreateContainerOptions {
@@ -160,9 +157,11 @@ async fn run_cmd_container(
     params(("container_name" = String, Path, description = "Container name")),
     responses((status = 200, description = "Success"))
 )]
-async fn start_container(Path(container_name): Path<String>) -> LandscapeApiResult<()> {
-    let docker = Docker::connect_with_socket_defaults().unwrap();
-
+async fn start_container(
+    State(state): State<LandscapeApp>,
+    Path(container_name): Path<String>,
+) -> LandscapeApiResult<()> {
+    let docker = state.docker_service.docker_client()?;
     if let Err(e) = &docker.start_container(&container_name, None::<StartContainerOptions>).await {
         tracing::error!("{:?}", e);
         return Err(DockerError::StartContainerError)?;
@@ -179,9 +178,11 @@ async fn start_container(Path(container_name): Path<String>) -> LandscapeApiResu
     params(("container_name" = String, Path, description = "Container name")),
     responses((status = 200, description = "Success"))
 )]
-async fn stop_container(Path(container_name): Path<String>) -> LandscapeApiResult<()> {
-    let docker = Docker::connect_with_socket_defaults().unwrap();
-
+async fn stop_container(
+    State(state): State<LandscapeApp>,
+    Path(container_name): Path<String>,
+) -> LandscapeApiResult<()> {
+    let docker = state.docker_service.docker_client()?;
     if let Err(e) = &docker.stop_container(&container_name, None::<StopContainerOptions>).await {
         tracing::error!("{:?}", e);
         return Err(DockerError::StopContainerError)?;
@@ -198,9 +199,11 @@ async fn stop_container(Path(container_name): Path<String>) -> LandscapeApiResul
     params(("container_name" = String, Path, description = "Container name")),
     responses((status = 200, description = "Success"))
 )]
-async fn remove_container(Path(container_name): Path<String>) -> LandscapeApiResult<()> {
-    let docker = Docker::connect_with_socket_defaults().unwrap();
-
+async fn remove_container(
+    State(state): State<LandscapeApp>,
+    Path(container_name): Path<String>,
+) -> LandscapeApiResult<()> {
+    let docker = state.docker_service.docker_client()?;
     let config = RemoveContainerOptions { force: true, v: false, link: false };
     if let Err(e) = &docker.remove_container(&container_name, Some(config)).await {
         tracing::error!("{:?}", e);

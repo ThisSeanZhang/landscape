@@ -76,7 +76,14 @@ impl PullManager {
         return true;
     }
 
-    pub async fn pull_img(&self, image_name: String) {
+    pub async fn pull_img(&self, image_name: String, docker_client: Option<Docker>) {
+        let docker = match docker_client {
+            Some(d) => d,
+            None => {
+                tracing::warn!("Docker client not available for image pull");
+                return;
+            }
+        };
         if !self.push_task().await {
             return;
         }
@@ -108,8 +115,6 @@ impl PullManager {
         }
         let sock_tx = self.sock_tx.clone();
         tokio::spawn(async move {
-            let docker = Docker::connect_with_local_defaults().unwrap();
-
             let mut stream = docker.create_image(Some(options), None, None);
 
             'download: while let Some(res) = stream.next().await {

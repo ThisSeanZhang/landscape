@@ -4,6 +4,7 @@ import sysinfo from "./sysinfo";
 import config from "./config";
 import not_found from "./not_found";
 import errors from "./api_errors";
+import dockerErrors from "./error/docker";
 import enrolled_device from "./enrolled_device";
 import lan_ipv6 from "./lan_ipv6";
 import flow from "./flow";
@@ -27,7 +28,10 @@ export default {
   sysinfo,
   config,
   not_found,
-  errors,
+  errors: {
+    ...errors,
+    ...dockerErrors,
+  },
   enrolled_device,
   lan_ipv6,
   flow,
