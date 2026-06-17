@@ -8,14 +8,26 @@ export const useDockerStore = defineStore("docker_status", () => {
 
   const container_summarys = ref<any[]>([]);
 
+  const page_active = ref(false);
+
   async function UPDATE_INFO() {
-    docker_status.value = await get_docker_status();
-    container_summarys.value = await get_docker_container_summarys();
+    if (!page_active.value) return;
+    try {
+      docker_status.value = await get_docker_status();
+      container_summarys.value = await get_docker_container_summarys();
+    } catch {
+      // Docker may be unavailable
+    }
+  }
+
+  function SET_ACTIVE(active: boolean) {
+    page_active.value = active;
   }
 
   return {
     docker_status,
     container_summarys,
     UPDATE_INFO,
+    SET_ACTIVE,
   };
 });

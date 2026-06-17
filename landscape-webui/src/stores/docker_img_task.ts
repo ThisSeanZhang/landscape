@@ -12,7 +12,10 @@ export const useDockerImgTask = defineStore("docker-img_task", () => {
 
   const tasks = ref<PullImgTask[]>([]);
 
+  const page_active = ref(false);
+
   function CONNECT() {
+    if (!page_active.value) return;
     if (socket.value && socket.value.readyState === WebSocket.OPEN) {
       socket.value.send(JSON.stringify({ type: "ping" }));
       return;
@@ -47,11 +50,16 @@ export const useDockerImgTask = defineStore("docker-img_task", () => {
     }
   }
 
+  function SET_ACTIVE(active: boolean) {
+    page_active.value = active;
+  }
+
   return {
     tasks,
     INIT,
     CONNECT,
     DISCONNECT,
+    SET_ACTIVE,
   };
 });
 
