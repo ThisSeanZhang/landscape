@@ -434,28 +434,7 @@ static __always_inline int xdp_lan_redirect_v4(struct xdp_md *ctx,
 
     if (lan_info->route_type == ROUTE_TYPE_WAN) {
         if (lan_info->addr == context->daddr) return XDP_PASS;
-        if (lan_info->has_mac) {
-            mac_val = bpf_map_lookup_elem(&ip_mac_v4, &mac_key);
-            if (mac_val) {
-                void *data = (void *)(long)ctx->data;
-                void *data_end = (void *)(long)ctx->data_end;
-                struct ethhdr *eth = data;
-                if ((void *)(eth + 1) > data_end) return XDP_PASS;
-                __builtin_memcpy(eth->h_dest, mac_val->mac, 6);
-                __builtin_memcpy(eth->h_source, lan_info->mac_addr, 6);
-            }
-        }
-        if (!xdp_redirect_target_able(lan_info->ifindex)) {
-            int ret = xdp_set_tc_redirect_meta(ctx, 0, lan_info->ifindex);
-            if (ret) return XDP_DROP;
-            return XDP_PASS;
-        }
-        struct xdp_pipe_meta meta = {};
-        meta.target_ifindex = lan_info->ifindex;
-        meta.mark = 0;
-        xdp_set_meta(ctx, &meta);
-        bpf_tail_call(ctx, &xdp_lan_pipe_root_progs, lan_info->ifindex);
-        return XDP_DROP;
+        return 0;
     }
 
     if (lan_info->ifindex == ctx->ingress_ifindex) return XDP_PASS;
@@ -521,30 +500,7 @@ static __always_inline int xdp_lan_redirect_v6(struct xdp_md *ctx,
 
     if (lan_info->route_type == ROUTE_TYPE_WAN) {
         if (ip_addr_equal_in6(&lan_info->addr, &context->daddr)) return XDP_PASS;
-        if (lan_info->has_mac) {
-            struct mac_key_v6 dst_key = {};
-            COPY_ADDR_FROM(dst_key.addr.all, context->daddr.all);
-            mac_val = bpf_map_lookup_elem(&ip_mac_v6, &dst_key);
-            if (mac_val) {
-                void *data = (void *)(long)ctx->data;
-                void *data_end = (void *)(long)ctx->data_end;
-                struct ethhdr *eth = data;
-                if ((void *)(eth + 1) > data_end) return XDP_PASS;
-                __builtin_memcpy(eth->h_dest, mac_val->mac, 6);
-                __builtin_memcpy(eth->h_source, lan_info->mac_addr, 6);
-            }
-        }
-        if (!xdp_redirect_target_able(lan_info->ifindex)) {
-            int ret = xdp_set_tc_redirect_meta(ctx, 0, lan_info->ifindex);
-            if (ret) return XDP_DROP;
-            return XDP_PASS;
-        }
-        struct xdp_pipe_meta meta = {};
-        meta.target_ifindex = lan_info->ifindex;
-        meta.mark = 0;
-        xdp_set_meta(ctx, &meta);
-        bpf_tail_call(ctx, &xdp_lan_pipe_root_progs, lan_info->ifindex);
-        return XDP_DROP;
+        return 0;
     }
 
     if (lan_info->ifindex == ctx->ingress_ifindex) return XDP_PASS;

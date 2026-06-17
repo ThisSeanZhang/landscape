@@ -30,8 +30,8 @@ struct {
 
 // ── tc_lan_redirect: adapted from lan_redirect_check (no is_lan) ──
 
-static __always_inline int tc_lan_redirect_v4(struct __sk_buff *skb, u32 current_l3_offset,
-                                              struct route_context_v4 *context) {
+static __always_inline int tc_egress_redirect_v4(struct __sk_buff *skb, u32 current_l3_offset,
+                                                 struct route_context_v4 *context) {
 #define BPF_LOG_TOPIC "tc_egress_redirect_v4"
     int ret;
     struct lan_route_key_v4 lan_search_key = {0};
@@ -45,9 +45,7 @@ static __always_inline int tc_lan_redirect_v4(struct __sk_buff *skb, u32 current
 
     if (lan_info == NULL) return TC_ACT_OK;
 
-    if (lan_info->route_type == ROUTE_TYPE_WAN) {
-        if (lan_info->addr == context->daddr) return TC_ACT_UNSPEC;
-    }
+    if (lan_info->route_type == ROUTE_TYPE_WAN) return TC_ACT_OK;
 
     if (unlikely(lan_info->ifindex == skb->ifindex)) return TC_ACT_UNSPEC;
 
@@ -102,9 +100,9 @@ static __always_inline int tc_lan_redirect_v4(struct __sk_buff *skb, u32 current
 #undef BPF_LOG_TOPIC
 }
 
-static __always_inline int tc_lan_redirect_v6(struct __sk_buff *skb, u32 current_l3_offset,
-                                              struct route_context_v6 *context) {
-#define BPF_LOG_TOPIC "tc_lan_redirect_v6"
+static __always_inline int tc_egress_redirect_v6(struct __sk_buff *skb, u32 current_l3_offset,
+                                                 struct route_context_v6 *context) {
+#define BPF_LOG_TOPIC "tc_egress_redirect_v6"
     int ret;
     struct lan_route_key_v6 lan_search_key = {0};
     struct mac_key_v6 mac_key_search = {0};
@@ -117,9 +115,7 @@ static __always_inline int tc_lan_redirect_v6(struct __sk_buff *skb, u32 current
 
     if (lan_info == NULL) return TC_ACT_OK;
 
-    if (lan_info->route_type == ROUTE_TYPE_WAN) {
-        if (ip_addr_equal_in6(&lan_info->addr, &context->daddr)) return TC_ACT_UNSPEC;
-    }
+    if (lan_info->route_type == ROUTE_TYPE_WAN) return TC_ACT_OK;
 
     if (unlikely(lan_info->ifindex == skb->ifindex)) return TC_ACT_UNSPEC;
 
@@ -311,7 +307,7 @@ int tc_wan_egress_route_v4(struct __sk_buff *skb) {
         return ret;
     }
 
-    ret = tc_lan_redirect_v4(skb, current_l3_offset, &context);
+    ret = tc_egress_redirect_v4(skb, current_l3_offset, &context);
     if (ret != TC_ACT_OK) {
         return ret;
     }
@@ -356,7 +352,7 @@ int tc_wan_egress_route_v6(struct __sk_buff *skb) {
         return ret;
     }
 
-    ret = tc_lan_redirect_v6(skb, current_l3_offset, &context);
+    ret = tc_egress_redirect_v6(skb, current_l3_offset, &context);
     if (ret != TC_ACT_OK) {
         return ret;
     }
