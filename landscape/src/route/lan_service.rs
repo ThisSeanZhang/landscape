@@ -85,9 +85,9 @@ pub async fn create_route_lan_service(
     tracing::info!("start route lan at ifindex: {ifindex}");
     landscape_ebpf::map_setting::redirect_able::del_xdp_redirect_able(ifindex);
 
-    let mut xdp_handle: Option<landscape_ebpf::chain::xdp_lan_route::XdpLanRouteHandle> = None;
+    let mut xdp_handle: Option<landscape_ebpf::chain::xdp_lan_intro::XdpLanIntroHandle> = None;
 
-    let xdp_ok = match landscape_ebpf::chain::xdp_lan_route::init_xdp_lan_route(ifindex, has_mac) {
+    let xdp_ok = match landscape_ebpf::chain::xdp_lan_intro::init_xdp_lan_intro(ifindex, has_mac) {
         Ok(handle) => {
             landscape_ebpf::map_setting::redirect_able::set_xdp_redirect_able(ifindex, true);
             tracing::info!("xdp handoff enabled for {iface_name}");

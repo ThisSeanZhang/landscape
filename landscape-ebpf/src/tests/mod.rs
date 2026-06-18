@@ -42,8 +42,8 @@ mod tproxy;
 mod xdp_chain;
 mod xdp_csum_verify;
 mod xdp_firewall_test;
-mod xdp_lan_route_test;
-mod xdp_mss_clamp_test;
+mod xdp_lan_intro_test;
+mod xdp_mss_test;
 mod xdp_nat_test;
 mod xdp_wan_route_test;
 
@@ -71,16 +71,16 @@ pub(crate) mod test_xdp_dummy {
     include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/test_xdp_dummy.skel.rs"));
 }
 
-pub(crate) mod xdp_mss_clamp_skel {
-    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/xdp_mss_clamp.skel.rs"));
+pub(crate) mod xdp_mss_skel {
+    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/xdp_mss.skel.rs"));
 }
 
 pub(crate) mod xdp_wan_route_skel {
     include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/xdp_wan_route.skel.rs"));
 }
 
-pub(crate) mod xdp_lan_route_skel {
-    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/xdp_lan_route.skel.rs"));
+pub(crate) mod xdp_lan_intro_skel {
+    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/xdp_lan_intro.skel.rs"));
 }
 
 pub(crate) mod xdp_lan_chain_skel {

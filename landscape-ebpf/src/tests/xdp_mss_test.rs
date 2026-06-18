@@ -10,7 +10,7 @@ use libbpf_rs::{
 use nix::net::if_::if_nametoindex;
 
 use crate::tests::test_xdp_dummy::TestXdpDummySkelBuilder;
-use crate::tests::xdp_mss_clamp_skel::XdpMssClampSkelBuilder;
+use crate::tests::xdp_mss_skel::XdpMssSkelBuilder;
 
 fn build_syn_pkt(mss: u16) -> Vec<u8> {
     use etherparse::PacketBuilder;
@@ -162,15 +162,15 @@ fn send_raw_packet(iface: &str, pkt: &[u8]) {
 }
 
 #[test]
-fn xdp_mss_clamp_verifier() {
-    let builder = XdpMssClampSkelBuilder::default();
+fn xdp_mss_verifier() {
+    let builder = XdpMssSkelBuilder::default();
     let mut obj = std::mem::MaybeUninit::uninit();
     let open = builder.open(&mut obj).expect("open");
     let _skel = open.load().expect("verifier rejected");
 }
 
 #[test]
-fn xdp_mss_clamp_syn() {
+fn xdp_mss_syn() {
     let pid = crate::tests::test_id();
     let (host, peer) = (format!("xmh{pid}"), format!("xmp{pid}"));
     let _ = Command::new("ip").args(["link", "del", &host]).output();
@@ -183,11 +183,11 @@ fn xdp_mss_clamp_syn() {
     thread::sleep(Duration::from_millis(100));
     let ifindex = if_nametoindex(host.as_str()).unwrap() as i32;
 
-    let builder = XdpMssClampSkelBuilder::default();
+    let builder = XdpMssSkelBuilder::default();
     let mut obj = std::mem::MaybeUninit::uninit();
     let open = builder.open(&mut obj).expect("open");
     let skel = open.load().expect("load");
-    let _link = skel.progs.xdp_mss_clamp_lan.attach_xdp(ifindex).expect("attach");
+    let _link = skel.progs.xdp_mss_lan.attach_xdp(ifindex).expect("attach");
 
     let d_b = TestXdpDummySkelBuilder::default();
     let mut d_obj = std::mem::MaybeUninit::uninit();
@@ -218,7 +218,7 @@ fn xdp_mss_clamp_syn() {
 }
 
 #[test]
-fn xdp_mss_clamp_bidirectional() {
+fn xdp_mss_bidirectional() {
     let pid = crate::tests::test_id();
     let (host, peer) = (format!("xmh{pid}"), format!("xmp{pid}"));
     let _ = Command::new("ip").args(["link", "del", &host]).output();
@@ -232,15 +232,15 @@ fn xdp_mss_clamp_bidirectional() {
     let host_ifindex = if_nametoindex(host.as_str()).unwrap() as i32;
     let peer_ifindex = if_nametoindex(peer.as_str()).unwrap() as i32;
 
-    let builder1 = XdpMssClampSkelBuilder::default();
+    let builder1 = XdpMssSkelBuilder::default();
     let mut obj1 = std::mem::MaybeUninit::uninit();
     let skel_h = builder1.open(&mut obj1).expect("open").load().expect("load");
-    let _link_h = skel_h.progs.xdp_mss_clamp_lan.attach_xdp(host_ifindex).expect("attach host");
+    let _link_h = skel_h.progs.xdp_mss_lan.attach_xdp(host_ifindex).expect("attach host");
 
-    let builder2 = XdpMssClampSkelBuilder::default();
+    let builder2 = XdpMssSkelBuilder::default();
     let mut obj2 = std::mem::MaybeUninit::uninit();
     let skel_p = builder2.open(&mut obj2).expect("open").load().expect("load");
-    let _link_p = skel_p.progs.xdp_mss_clamp_lan.attach_xdp(peer_ifindex).expect("attach peer");
+    let _link_p = skel_p.progs.xdp_mss_lan.attach_xdp(peer_ifindex).expect("attach peer");
 
     let d_b1 = TestXdpDummySkelBuilder::default();
     let mut d1_obj = std::mem::MaybeUninit::uninit();
@@ -307,7 +307,7 @@ fn build_non_syn_tcp_pkt() -> Vec<u8> {
 }
 
 #[test]
-fn xdp_mss_clamp_non_syn_passthrough() {
+fn xdp_mss_non_syn_passthrough() {
     let pid = crate::tests::test_id();
     let (host, peer) = (format!("xmh{pid}"), format!("xmp{pid}"));
     let _ = Command::new("ip").args(["link", "del", &host]).output();
@@ -320,10 +320,10 @@ fn xdp_mss_clamp_non_syn_passthrough() {
     thread::sleep(Duration::from_millis(100));
     let ifindex = if_nametoindex(host.as_str()).unwrap() as i32;
 
-    let builder = XdpMssClampSkelBuilder::default();
+    let builder = XdpMssSkelBuilder::default();
     let mut obj = std::mem::MaybeUninit::uninit();
     let skel = builder.open(&mut obj).expect("open").load().expect("load");
-    let _link = skel.progs.xdp_mss_clamp_lan.attach_xdp(ifindex).expect("attach");
+    let _link = skel.progs.xdp_mss_lan.attach_xdp(ifindex).expect("attach");
 
     let d_b = TestXdpDummySkelBuilder::default();
     let mut d_obj = std::mem::MaybeUninit::uninit();

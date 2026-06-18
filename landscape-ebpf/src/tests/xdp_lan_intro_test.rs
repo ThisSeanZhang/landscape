@@ -18,8 +18,8 @@ use crate::map_setting::share_map::ShareMapSkelBuilder;
 use crate::tests::test_xdp_dummy::TestXdpDummySkelBuilder;
 use crate::tests::wan_intro_skel::XdpWanIntroSkelBuilder;
 use crate::tests::xdp_lan_chain_skel::XdpLanChainSkelBuilder;
-use crate::tests::xdp_lan_route_skel::XdpLanRouteSkelBuilder;
-use crate::tests::xdp_mss_clamp_skel::XdpMssClampSkelBuilder;
+use crate::tests::xdp_lan_intro_skel::XdpLanIntroSkelBuilder;
+use crate::tests::xdp_mss_skel::XdpMssSkelBuilder;
 use crate::tests::xdp_wan_chain_skel::XdpWanChainSkelBuilder;
 use crate::tests::xdp_wan_route_skel::XdpWanRouteSkelBuilder;
 
@@ -198,8 +198,8 @@ fn lookup_inner_map(outer_map: &impl MapCore, cache_index: u32) -> MapHandle {
 // ── Test A: verifier smoke ──
 
 #[test]
-fn xdp_lan_route_verifier_smoke() {
-    let mut builder = XdpLanRouteSkelBuilder::default();
+fn xdp_lan_intro_verifier_smoke() {
+    let mut builder = XdpLanIntroSkelBuilder::default();
     builder.object_builder_mut().pin_root_path(&test_pin_root("v")).unwrap();
     let mut obj = std::mem::MaybeUninit::uninit();
     let open = builder.open(&mut obj).expect("open skel");
@@ -209,7 +209,7 @@ fn xdp_lan_route_verifier_smoke() {
 // ── Test B: trace flow (empty maps, smoke test) ──
 
 #[test]
-fn xdp_lan_route_trace_flow() {
+fn xdp_lan_intro_trace_flow() {
     let pid = crate::tests::test_id();
     let (host, peer) = (format!("lxdh{pid}"), format!("lxdp{pid}"));
     let _ = Command::new("ip").args(["link", "del", &host]).output();
@@ -222,12 +222,12 @@ fn xdp_lan_route_trace_flow() {
     thread::sleep(Duration::from_millis(100));
     let ifindex = if_nametoindex(host.as_str()).expect("ifindex") as i32;
 
-    let mut builder = XdpLanRouteSkelBuilder::default();
+    let mut builder = XdpLanIntroSkelBuilder::default();
     builder.object_builder_mut().pin_root_path(&test_pin_root("t")).unwrap();
     let mut obj = std::mem::MaybeUninit::uninit();
     let open = builder.open(&mut obj).expect("open");
     let skel = open.load().expect("load");
-    let _link = skel.progs.xdp_lan_route.attach_xdp(ifindex).expect("attach");
+    let _link = skel.progs.xdp_lan_intro.attach_xdp(ifindex).expect("attach");
 
     let pkt = build_ipv4_tcp_pkt(
         [0x02, 0, 0, 0, 0, 1],
@@ -248,7 +248,7 @@ fn xdp_lan_route_trace_flow() {
 // ── Test C: lan_map redirect ──
 
 #[test]
-fn xdp_lan_route_map_redirect() {
+fn xdp_lan_intro_map_redirect() {
     let pid = crate::tests::test_id();
     let share_pin = test_pin_root("share");
     let mut sb = ShareMapSkelBuilder::default();
@@ -275,11 +275,11 @@ fn xdp_lan_route_map_redirect() {
     lan_val[8..12].copy_from_slice(&p_i.to_ne_bytes());
     share.maps.rt4_lan_map.update(&lan_key, &lan_val, MapFlags::ANY).unwrap();
 
-    let mut b = XdpLanRouteSkelBuilder::default();
+    let mut b = XdpLanIntroSkelBuilder::default();
     b.object_builder_mut().pin_root_path(&share_pin).unwrap();
     let mut obj = std::mem::MaybeUninit::uninit();
     let skel = b.open(&mut obj).unwrap().load().unwrap();
-    let _link = skel.progs.xdp_lan_route.attach_xdp(h_i as i32).unwrap();
+    let _link = skel.progs.xdp_lan_intro.attach_xdp(h_i as i32).unwrap();
 
     let pkt = build_ipv4_tcp_pkt(
         [0x02, 0, 0, 0, 0, 1],
@@ -301,7 +301,7 @@ fn xdp_lan_route_map_redirect() {
 // ── Test D: bidirectional A↔C (lan_route + wan_route) ──
 
 #[test]
-fn xdp_lan_route_wan_pipeline() {
+fn xdp_lan_intro_wan_pipeline() {
     let pid = crate::tests::test_id();
     let (lan_h, lan_p) = (format!("lrhlh{pid}"), format!("lrhlp{pid}"));
     let (wan_h, wan_p) = (format!("lrhwh{pid}"), format!("lrhwp{pid}"));
@@ -389,7 +389,7 @@ fn xdp_lan_route_wan_pipeline() {
         }
     }
 
-    let mut lr_b = XdpLanRouteSkelBuilder::default();
+    let mut lr_b = XdpLanIntroSkelBuilder::default();
     lr_b.object_builder_mut().pin_root_path(&share_pin).unwrap();
     let mut lr_obj = std::mem::MaybeUninit::uninit();
     let lr = lr_b.open(&mut lr_obj).unwrap().load().unwrap();
@@ -420,21 +420,21 @@ fn xdp_lan_route_wan_pipeline() {
     let mut wan_root_obj = std::mem::MaybeUninit::uninit();
     let wan_root = wan_root_b.open(&mut wan_root_obj).unwrap().load().unwrap();
 
-    let mss_b = XdpMssClampSkelBuilder::default();
+    let mss_b = XdpMssSkelBuilder::default();
     let mut mss_obj = std::mem::MaybeUninit::uninit();
     let mss = mss_b.open(&mut mss_obj).unwrap().load().unwrap();
 
-    let _l0 = lr.progs.xdp_lan_route.attach_xdp(lan_h_i as i32).unwrap();
+    let _l0 = lr.progs.xdp_lan_intro.attach_xdp(lan_h_i as i32).unwrap();
     let _l1 = intro.progs.wan_intro_dispatch.attach_xdp(wan_h_i as i32).unwrap();
     let _l2 = da.progs.xdp_test_dummy.attach_xdp(lan_p_i as i32).unwrap();
     let _l3 = dc.progs.xdp_test_dummy.attach_xdp(wan_p_i as i32).unwrap();
 
     let root_fd = chain.progs.xdp_lan_chain_root.as_fd().as_raw_fd();
-    let mss_lan_fd = mss.progs.xdp_mss_clamp_lan.as_fd().as_raw_fd();
+    let mss_lan_fd = mss.progs.xdp_mss_lan.as_fd().as_raw_fd();
     let exit_fd = chain.progs.xdp_lan_chain_exit.as_fd().as_raw_fd();
 
     let wan_root_fd = wan_root.progs.xdp_wan_chain_root.as_fd().as_raw_fd();
-    let mss_wan_fd = mss.progs.xdp_mss_clamp_wan.as_fd().as_raw_fd();
+    let mss_wan_fd = mss.progs.xdp_mss_wan.as_fd().as_raw_fd();
     let wr_fd = wr.progs.xdp_wan_route_ingress.as_fd().as_raw_fd();
 
     // ── LAN chain (A→C): lan_route → root → mss → exit ──
@@ -569,9 +569,9 @@ fn xdp_lan_route_wan_pipeline() {
 // ── Test E: test_run verification of unknown IP not redirected ──
 
 #[test]
-fn xdp_lan_route_unknown_ip_no_redirect_test_run() {
+fn xdp_lan_intro_unknown_ip_no_redirect_test_run() {
     let pin_root = test_pin_root("trunk");
-    let mut b = XdpLanRouteSkelBuilder::default();
+    let mut b = XdpLanIntroSkelBuilder::default();
     b.object_builder_mut().pin_root_path(&pin_root).unwrap();
     let mut obj = std::mem::MaybeUninit::uninit();
     let open = b.open(&mut obj).unwrap();
@@ -609,7 +609,7 @@ fn xdp_lan_route_unknown_ip_no_redirect_test_run() {
 
     let run = skel
         .progs
-        .xdp_lan_route
+        .xdp_lan_intro
         .test_run(ProgramInput { data_in: Some(&mut pkt), ..Default::default() })
         .expect("test_run");
 
@@ -627,7 +627,7 @@ fn xdp_lan_route_unknown_ip_no_redirect_test_run() {
 
     let run2 = skel
         .progs
-        .xdp_lan_route
+        .xdp_lan_intro
         .test_run(ProgramInput { data_in: Some(&mut pkt2), ..Default::default() })
         .expect("test_run");
 
@@ -647,9 +647,9 @@ fn xdp_lan_route_unknown_ip_no_redirect_test_run() {
 // ── Test F: test_run verification of known LAN without MAC → FIB fallback ──
 
 #[test]
-fn xdp_lan_route_known_lan_fib_fallback_test_run() {
+fn xdp_lan_intro_known_lan_fib_fallback_test_run() {
     let pin_root = test_pin_root("trfib");
-    let mut b = XdpLanRouteSkelBuilder::default();
+    let mut b = XdpLanIntroSkelBuilder::default();
     b.object_builder_mut().pin_root_path(&pin_root).unwrap();
     let mut obj = std::mem::MaybeUninit::uninit();
     let open = b.open(&mut obj).unwrap();
@@ -677,7 +677,7 @@ fn xdp_lan_route_known_lan_fib_fallback_test_run() {
 
     let run = skel
         .progs
-        .xdp_lan_route
+        .xdp_lan_intro
         .test_run(ProgramInput { data_in: Some(&mut pkt), ..Default::default() })
         .expect("test_run");
 
@@ -720,7 +720,7 @@ fn build_ipv6_tcp_pkt(
 // ── Test G: v4 FIB fallback with veth + map verification ──
 
 #[test]
-fn xdp_lan_route_fib_fallback_v4() {
+fn xdp_lan_intro_fib_fallback_v4() {
     let pid = crate::tests::test_id();
     let (host, peer) = (format!("lrf4h{pid}"), format!("lrf4p{pid}"));
 
@@ -750,7 +750,7 @@ fn xdp_lan_route_fib_fallback_v4() {
     let p_i = if_nametoindex(peer.as_str()).unwrap() as u32;
 
     let pin_root = test_pin_root("fib4v");
-    let mut b = XdpLanRouteSkelBuilder::default();
+    let mut b = XdpLanIntroSkelBuilder::default();
     b.object_builder_mut().pin_root_path(&pin_root).unwrap();
     let mut obj = std::mem::MaybeUninit::uninit();
     let skel = b.open(&mut obj).unwrap().load().unwrap();
@@ -775,7 +775,7 @@ fn xdp_lan_route_fib_fallback_v4() {
 
     // do NOT pre-fill ip_mac_v4 for 10.0.0.200
 
-    let _link = skel.progs.xdp_lan_route.attach_xdp(h_i as i32).unwrap();
+    let _link = skel.progs.xdp_lan_intro.attach_xdp(h_i as i32).unwrap();
 
     let pkt = build_ipv4_tcp_pkt(
         [0x02, 0, 0, 0, 0, 1],
@@ -802,7 +802,7 @@ fn xdp_lan_route_fib_fallback_v4() {
 // ── Test H: v6 FIB fallback with veth + map verification ──
 
 #[test]
-fn xdp_lan_route_fib_fallback_v6() {
+fn xdp_lan_intro_fib_fallback_v6() {
     let pid = crate::tests::test_id();
     let (host, peer) = (format!("lrf6h{pid}"), format!("lrf6p{pid}"));
 
@@ -858,7 +858,7 @@ fn xdp_lan_route_fib_fallback_v6() {
     let p_i = if_nametoindex(peer.as_str()).unwrap() as u32;
 
     let pin_root = test_pin_root("fib6v");
-    let mut b = XdpLanRouteSkelBuilder::default();
+    let mut b = XdpLanIntroSkelBuilder::default();
     b.object_builder_mut().pin_root_path(&pin_root).unwrap();
     let mut obj = std::mem::MaybeUninit::uninit();
     let skel = b.open(&mut obj).unwrap().load().unwrap();
@@ -884,7 +884,7 @@ fn xdp_lan_route_fib_fallback_v6() {
     mac_key.copy_from_slice(&dst_ip6);
     skel.maps.ip_mac_v6.delete(&mac_key).ok();
 
-    let _link = skel.progs.xdp_lan_route.attach_xdp(h_i as i32).unwrap();
+    let _link = skel.progs.xdp_lan_intro.attach_xdp(h_i as i32).unwrap();
 
     let pkt = build_ipv6_tcp_pkt(
         [0x02, 0, 0, 0, 0, 1],

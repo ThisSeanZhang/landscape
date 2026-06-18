@@ -75,12 +75,12 @@ pub fn attach_tc_mss(ifindex: u32, mtu: u16, has_mac: bool) -> LdEbpfResult<TcMs
 // XDP MSS clamp
 // ========================================================================
 
-pub(crate) mod xdp_mss_clamp_skel {
-    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/xdp_mss_clamp.skel.rs"));
+pub(crate) mod xdp_mss_skel {
+    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/xdp_mss.skel.rs"));
 }
 
 pub struct XdpMssHandle {
-    _skel: xdp_mss_clamp_skel::XdpMssClampSkel<'static>,
+    _skel: xdp_mss_skel::XdpMssSkel<'static>,
     _backing: crate::landscape::OwnedOpenObject,
     ifindex: u32,
 }
@@ -105,45 +105,42 @@ pub fn init_xdp_mss(ifindex: u32, mtu_size: u16) -> LdEbpfResult<XdpMssHandle> {
     use libbpf_rs::skel::{OpenSkel, SkelBuilder};
     use std::os::fd::{AsFd, AsRawFd};
 
-    use xdp_mss_clamp_skel::XdpMssClampSkelBuilder;
+    use xdp_mss_skel::XdpMssSkelBuilder;
 
-    let builder = XdpMssClampSkelBuilder::default();
+    let builder = XdpMssSkelBuilder::default();
     let (backing, obj) = OwnedOpenObject::new();
-    let mut open_skel = bpf_ctx!(builder.open(obj), "open xdp_mss_clamp skeleton")?;
+    let mut open_skel = bpf_ctx!(builder.open(obj), "open xdp_mss skeleton")?;
 
     crate::bpf_ctx!(
         pin_and_reuse_map(&mut open_skel.maps.xdp_pipe_root_progs, &xdp_pipe_root_progs_path(),),
-        "xdp_mss_clamp pin xdp_pipe_root_progs"
+        "xdp_mss pin xdp_pipe_root_progs"
     )?;
     crate::bpf_ctx!(
         pin_and_reuse_map(&mut open_skel.maps.xdp_pipe_exits_lan, &xdp_pipe_exits_lan_path(),),
-        "xdp_mss_clamp pin xdp_pipe_exits_lan"
+        "xdp_mss pin xdp_pipe_exits_lan"
     )?;
     crate::bpf_ctx!(
         pin_and_reuse_map(&mut open_skel.maps.xdp_pipe_exits_wan, &xdp_pipe_exits_wan_path(),),
-        "xdp_mss_clamp pin xdp_pipe_exits_wan"
+        "xdp_mss pin xdp_pipe_exits_wan"
     )?;
     crate::bpf_ctx!(
         pin_and_reuse_map(
             &mut open_skel.maps.xdp_lan_pipe_root_progs,
             &xdp_lan_pipe_root_progs_path(),
         ),
-        "xdp_mss_clamp pin xdp_lan_pipe_root_progs"
+        "xdp_mss pin xdp_lan_pipe_root_progs"
     )?;
 
     {
-        let rodata = open_skel
-            .maps
-            .rodata_data
-            .as_deref_mut()
-            .expect("xdp_mss_clamp rodata not memory mapped");
+        let rodata =
+            open_skel.maps.rodata_data.as_deref_mut().expect("xdp_mss rodata not memory mapped");
         rodata.mtu_size = mtu_size;
     }
 
-    let skel = bpf_ctx!(open_skel.load(), "load xdp_mss_clamp skeleton")?;
+    let skel = bpf_ctx!(open_skel.load(), "load xdp_mss skeleton")?;
 
-    let lan_fd = skel.progs.xdp_mss_clamp_lan.as_fd().as_raw_fd();
-    let wan_fd = skel.progs.xdp_mss_clamp_wan.as_fd().as_raw_fd();
+    let lan_fd = skel.progs.xdp_mss_lan.as_fd().as_raw_fd();
+    let wan_fd = skel.progs.xdp_mss_wan.as_fd().as_raw_fd();
     let next_fd = skel.maps.next_stage.as_fd().as_raw_fd();
 
     let manager = XdpChainManager::instance();

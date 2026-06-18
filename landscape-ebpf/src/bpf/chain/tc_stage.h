@@ -64,13 +64,13 @@ struct {
  *                     │                        └─ TC_CHAIN_WAN_INGRESS(skb) → (next stage)
  *                     │
  *                     └─ bpf_tail_call(skb, &tc_pipe_exits_wan_ingress, 0)
- *                          └─ tc_exit_wan_ingress_redirect  (Route = Exit)
+ *                          └─ tc_wan_ingress_exit_redirect  (Route = Exit)
  *                               ├─ route_wan_ingress entry (broadcast → v4/v6 dispatch)
  *                               ├─ rt4_wan_ingress / rt6_wan_ingress logic
  *                               └─ lan_redirect_check_v4/v6 → bpf_redirect(LAN)
  *
  *    Each stage (PPPoE / MSS / FW / NAT) shares the same exit map:
- *      tc_pipe_exits_wan_ingress[0] = tc_exit_wan_ingress_redirect
+ *      tc_pipe_exits_wan_ingress[0] = tc_wan_ingress_exit_redirect
  *
  *  ─────────────────────────────────────────────────────────────────────────
  *  WAN EGRESS CHAIN
@@ -95,10 +95,10 @@ struct {
  *      │                        └─ TC_CHAIN_WAN_EGRESS(skb) → (next stage)
  *      │
  *      └─ bpf_tail_call(skb, &tc_pipe_exits_wan_egress, 0)
- *           └─ tc_exit_wan_egress_redirect → TC_ACT_OK
+ *           └─ tc_wan_egress_exit_redirect → TC_ACT_OK
  *
  *    Each stage (MSS / NAT / FW / PPPoE) shares the same exit map:
- *      tc_pipe_exits_wan_egress[0] = tc_exit_wan_egress_redirect
+ *      tc_pipe_exits_wan_egress[0] = tc_wan_egress_exit_redirect
  *
  *  ─────────────────────────────────────────────────────────────────────────
  *  LAN INGRESS CHAIN
@@ -113,7 +113,7 @@ struct {
  *    tc_wan_egress_intro sees CB_FORWARDED → bpf_tail_call(&tc_wan_egress_roots, skb->ifindex)
  *      └─ tc_wan_chain_egress_root
  *           ├─ MSS → NAT → FW → PPPoE  (WAN egress chain)
- *           └─ tc_pipe_exits_wan_egress → tc_exit_wan_egress_redirect → TC_ACT_OK
+ *           └─ tc_pipe_exits_wan_egress → tc_wan_egress_exit_redirect → TC_ACT_OK
  *
  *    LAN ingress no longer injects stages; all egress processing happens
  *    on the WAN egress side after the redirect.

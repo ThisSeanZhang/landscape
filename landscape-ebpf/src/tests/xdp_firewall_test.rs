@@ -15,8 +15,8 @@ use crate::tests::test_xdp_dummy::TestXdpDummySkelBuilder;
 use crate::tests::wan_intro_skel::XdpWanIntroSkelBuilder;
 use crate::tests::xdp_firewall_skel::XdpFirewallSkelBuilder;
 use crate::tests::xdp_lan_chain_skel::XdpLanChainSkelBuilder;
-use crate::tests::xdp_lan_route_skel::XdpLanRouteSkelBuilder;
-use crate::tests::xdp_mss_clamp_skel::XdpMssClampSkelBuilder;
+use crate::tests::xdp_lan_intro_skel::XdpLanIntroSkelBuilder;
+use crate::tests::xdp_mss_skel::XdpMssSkelBuilder;
 use crate::tests::xdp_wan_chain_skel::XdpWanChainSkelBuilder;
 use crate::tests::xdp_wan_route_skel::XdpWanRouteSkelBuilder;
 
@@ -145,7 +145,7 @@ fn xdp_firewall_pipeline() {
     crate::tests::check_ifindex("wan_h", wan_h_i);
     let wan_p_i = if_nametoindex(wan_p.as_str()).unwrap() as u32;
 
-    // Prevent kernel FIB from matching 203.0.113.1 so xdp_lan_route falls through to chain
+    // Prevent kernel FIB from matching 203.0.113.1 so xdp_lan_intro falls through to chain
     Command::new("ip").args(["route", "add", "blackhole", "203.0.113.1"]).output().ok();
 
     // ── load shared maps ──
@@ -156,7 +156,7 @@ fn xdp_firewall_pipeline() {
     let share = sb.open(&mut share_obj).unwrap().load().unwrap();
 
     // ── load skeletons ──
-    let mut lr_b = XdpLanRouteSkelBuilder::default();
+    let mut lr_b = XdpLanIntroSkelBuilder::default();
     lr_b.object_builder_mut().pin_root_path(&share_pin).unwrap();
     let mut lr_obj = std::mem::MaybeUninit::uninit();
     let lr = lr_b.open(&mut lr_obj).unwrap().load().unwrap();
@@ -182,7 +182,7 @@ fn xdp_firewall_pipeline() {
     let mut wan_root_obj = std::mem::MaybeUninit::uninit();
     let wan_root = wan_root_b.open(&mut wan_root_obj).unwrap().load().unwrap();
 
-    let mss_b = XdpMssClampSkelBuilder::default();
+    let mss_b = XdpMssSkelBuilder::default();
     let mut mss_obj = std::mem::MaybeUninit::uninit();
     let mss = mss_b.open(&mut mss_obj).unwrap().load().unwrap();
 
@@ -197,14 +197,14 @@ fn xdp_firewall_pipeline() {
     let intro = intro_b.open(&mut intro_obj).unwrap().load().unwrap();
 
     // ── attach XDP programs ──
-    let _l0 = lr.progs.xdp_lan_route.attach_xdp(lan_h_i as i32).unwrap();
+    let _l0 = lr.progs.xdp_lan_intro.attach_xdp(lan_h_i as i32).unwrap();
     let _l1 = intro.progs.wan_intro_dispatch.attach_xdp(wan_h_i as i32).unwrap();
     let _l2 = da.progs.xdp_test_dummy.attach_xdp(lan_p_i as i32).unwrap();
     let _l3 = dc.progs.xdp_test_dummy.attach_xdp(wan_p_i as i32).unwrap();
 
     let root_fd = chain.progs.xdp_lan_chain_root.as_fd().as_raw_fd();
-    let mss_lan_fd = mss.progs.xdp_mss_clamp_lan.as_fd().as_raw_fd();
-    let mss_wan_fd = mss.progs.xdp_mss_clamp_wan.as_fd().as_raw_fd();
+    let mss_lan_fd = mss.progs.xdp_mss_lan.as_fd().as_raw_fd();
+    let mss_wan_fd = mss.progs.xdp_mss_wan.as_fd().as_raw_fd();
     let fw_lan_fd = fw.progs.xdp_firewall_lan.as_fd().as_raw_fd();
     let fw_wan_fd = fw.progs.xdp_firewall_wan.as_fd().as_raw_fd();
     let exit_fd = chain.progs.xdp_lan_chain_exit.as_fd().as_raw_fd();

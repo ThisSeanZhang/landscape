@@ -120,8 +120,8 @@ struct {
 };
 
 SEC("tc/ingress")
-int tc_exit_wan_ingress_redirect(struct __sk_buff *skb) {
-#define BPF_LOG_TOPIC "<<< tc_exit_wan_ingress_redirect <<<"
+int tc_wan_ingress_exit_redirect(struct __sk_buff *skb) {
+#define BPF_LOG_TOPIC "<<< tc_wan_ingress_exit_redirect <<<"
 
     bool is_ipv4;
     int ret;

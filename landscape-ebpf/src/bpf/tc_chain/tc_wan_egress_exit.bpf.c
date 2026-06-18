@@ -10,4 +10,4 @@
 char LICENSE[] SEC("license") = "GPL";
 
 SEC("tc/egress")
-int tc_exit_wan_egress_redirect(struct __sk_buff *skb) { return TC_ACT_UNSPEC; }
+int tc_wan_egress_exit_redirect(struct __sk_buff *skb) { return TC_ACT_UNSPEC; }

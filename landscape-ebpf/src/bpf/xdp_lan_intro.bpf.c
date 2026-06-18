@@ -759,10 +759,10 @@ static __always_inline int xdp_search_route_in_lan_v6(struct xdp_md *ctx,
     return 0;
 }
 
-// ── main XDP lan_route ──
+// ── main XDP lan_intro ──
 
 SEC("xdp")
-int xdp_lan_route(struct xdp_md *ctx) {
+int xdp_lan_intro(struct xdp_md *ctx) {
     void *data = (void *)(long)ctx->data;
     void *data_end = (void *)(long)ctx->data_end;
     struct ethhdr *eth = data;
