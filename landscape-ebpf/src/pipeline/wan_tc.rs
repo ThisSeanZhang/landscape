@@ -24,13 +24,9 @@ pub(crate) mod wan_tc_pipeline {
 
 use wan_tc_pipeline::*;
 
-pub(crate) const INGRESS_STAGE_MSS: u32 = 1;
-pub(crate) const INGRESS_STAGE_FIREWALL: u32 = 2;
 pub(crate) const INGRESS_STAGE_WAN_ROUTE: u32 = 4;
 pub(crate) const INGRESS_STAGE_COUNT: u32 = 5;
 pub(crate) const EGRESS_STAGE_WAN_ROUTE: u32 = 0;
-pub(crate) const EGRESS_STAGE_MSS: u32 = 1;
-pub(crate) const EGRESS_STAGE_FIREWALL: u32 = 3;
 pub(crate) const EGRESS_STAGE_COUNT: u32 = 5;
 
 static PIPELINES: Lazy<Mutex<HashMap<u32, Weak<WanTcPipelineInner>>>> =
@@ -96,42 +92,6 @@ impl WanTcPipelineHandle {
             self.inner.skel.maps.ingress_stage_progs.delete(&INGRESS_STAGE_WAN_ROUTE.to_ne_bytes());
         let _ =
             self.inner.skel.maps.egress_stage_progs.delete(&EGRESS_STAGE_WAN_ROUTE.to_ne_bytes());
-    }
-
-    pub fn register_firewall(
-        &self,
-        ingress_prog: &Program,
-        egress_prog: &Program,
-    ) -> LdEbpfResult<()> {
-        register_stage(
-            &self.inner.skel.maps.ingress_stage_progs,
-            INGRESS_STAGE_FIREWALL,
-            ingress_prog,
-        )?;
-        register_stage(
-            &self.inner.skel.maps.egress_stage_progs,
-            EGRESS_STAGE_FIREWALL,
-            egress_prog,
-        )?;
-        Ok(())
-    }
-
-    pub fn unregister_firewall(&self) {
-        let _ =
-            self.inner.skel.maps.ingress_stage_progs.delete(&INGRESS_STAGE_FIREWALL.to_ne_bytes());
-        let _ =
-            self.inner.skel.maps.egress_stage_progs.delete(&EGRESS_STAGE_FIREWALL.to_ne_bytes());
-    }
-
-    pub fn register_mss(&self, ingress_prog: &Program, egress_prog: &Program) -> LdEbpfResult<()> {
-        register_stage(&self.inner.skel.maps.ingress_stage_progs, INGRESS_STAGE_MSS, ingress_prog)?;
-        register_stage(&self.inner.skel.maps.egress_stage_progs, EGRESS_STAGE_MSS, egress_prog)?;
-        Ok(())
-    }
-
-    pub fn unregister_mss(&self) {
-        let _ = self.inner.skel.maps.ingress_stage_progs.delete(&INGRESS_STAGE_MSS.to_ne_bytes());
-        let _ = self.inner.skel.maps.egress_stage_progs.delete(&EGRESS_STAGE_MSS.to_ne_bytes());
     }
 }
 

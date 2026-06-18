@@ -116,6 +116,7 @@ fn route_slot_v6(daddr: &[u8; 16]) -> u32 {
 }
 
 #[test]
+#[ignore = "requires veth pairs and root, run in dedicated environment"]
 fn xdp_firewall_pipeline() {
     let pid = crate::tests::test_id();
     let (lan_h, lan_p) = (format!("fwh{pid}"), format!("fwp{pid}"));
