@@ -14,7 +14,7 @@ use zerocopy::IntoBytes;
 
 use crate::{
     map_setting::add_wan_ip,
-    nat::v3::land_nat_v3::{types, LandNatV3SkelBuilder},
+    stages::nat::tc_nat_skel::{types, TcNatSkelBuilder},
     tests::TestSkb,
 };
 
@@ -106,22 +106,22 @@ fn lookup_ct6_entry<T: MapCore>(
 fn assert_dynamic_translation(src: Ipv6Addr, dst: Ipv6Addr, prefix_len: u8) {
     let key = timer_key_for(src, CLIENT_PORT, prefix_len);
 
-    let mut landscape_builder = LandNatV3SkelBuilder::default();
+    let mut builder = TcNatSkelBuilder::default();
     let pin_root = crate::tests::nat::isolated_pin_root("nat-v6-dynamic-v3");
-    landscape_builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
+    builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
     let mut open_object = MaybeUninit::uninit();
-    let landscape_open = landscape_builder.open(&mut open_object).unwrap();
-    let landscape_skel = landscape_open.load().unwrap();
+    let open_skel = builder.open(&mut open_object).unwrap();
+    let skel = open_skel.load().unwrap();
 
     add_wan_ip(
-        &landscape_skel.maps.wan_ip_binding,
+        &skel.maps.wan_ip_binding,
         IFINDEX,
         IpAddr::V6(wan_ip()),
         None,
         prefix_len,
         Some(MacAddr::broadcast()),
     );
-    add_ct6_entry(&landscape_skel.maps.nat6_conn_timer, &key, src, dst, 443);
+    add_ct6_entry(&skel.maps.nat6_conn_timer, &key, src, dst, 443);
 
     let mut pkt = build_ipv6_tcp(src, dst, CLIENT_PORT, 443);
     let mut ctx = TestSkb::default();
@@ -134,7 +134,7 @@ fn assert_dynamic_translation(src: Ipv6Addr, dst: Ipv6Addr, prefix_len: u8) {
         ..Default::default()
     };
 
-    let result = landscape_skel.progs.nat_v6_egress.test_run(input).expect("test_run failed");
+    let result = skel.progs.tc_nat_wan_egress.test_run(input).expect("test_run failed");
     assert_eq!(result.return_value as i32, -1, "egress should return TC_ACT_UNSPEC(-1)");
 
     let pkt_out = PacketHeaders::from_ethernet_slice(&packet_out).expect("parse output");
@@ -172,22 +172,22 @@ fn assert_prefix_refresh(old_src: Ipv6Addr, new_src: Ipv6Addr, prefix_len: u8) {
         "test setup must keep the same dynamic NAT key",
     );
 
-    let mut landscape_builder = LandNatV3SkelBuilder::default();
+    let mut builder = TcNatSkelBuilder::default();
     let pin_root = crate::tests::nat::isolated_pin_root("nat-v6-dynamic-v3");
-    landscape_builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
+    builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
     let mut open_object = MaybeUninit::uninit();
-    let landscape_open = landscape_builder.open(&mut open_object).unwrap();
-    let landscape_skel = landscape_open.load().unwrap();
+    let open_skel = builder.open(&mut open_object).unwrap();
+    let skel = open_skel.load().unwrap();
 
     add_wan_ip(
-        &landscape_skel.maps.wan_ip_binding,
+        &skel.maps.wan_ip_binding,
         IFINDEX,
         IpAddr::V6(wan_ip()),
         None,
         prefix_len,
         Some(MacAddr::broadcast()),
     );
-    add_ct6_entry(&landscape_skel.maps.nat6_conn_timer, &old_key, old_src, old_remote, 443);
+    add_ct6_entry(&skel.maps.nat6_conn_timer, &old_key, old_src, old_remote, 443);
 
     let mut pkt = build_ipv6_tcp(new_src, new_remote, CLIENT_PORT, 8443);
     let mut ctx = TestSkb::default();
@@ -200,10 +200,10 @@ fn assert_prefix_refresh(old_src: Ipv6Addr, new_src: Ipv6Addr, prefix_len: u8) {
         ..Default::default()
     };
 
-    let result = landscape_skel.progs.nat_v6_egress.test_run(input).expect("test_run failed");
+    let result = skel.progs.tc_nat_wan_egress.test_run(input).expect("test_run failed");
     assert_eq!(result.return_value as i32, -1, "egress should return TC_ACT_UNSPEC(-1)");
 
-    let value = lookup_ct6_entry(&landscape_skel.maps.nat6_conn_timer, &new_key);
+    let value = lookup_ct6_entry(&skel.maps.nat6_conn_timer, &new_key);
     assert_eq!(
         &value.client_prefix,
         &new_src.octets()[..8],

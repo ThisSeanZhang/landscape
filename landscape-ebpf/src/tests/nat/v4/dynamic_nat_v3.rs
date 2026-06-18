@@ -18,7 +18,7 @@ use crate::{
         nat::NatMappingKeyV4,
         nat::{add_static_nat4_mapping_v3, StaticNatMappingV4Item},
     },
-    nat::v3::land_nat_v3::{types, LandNatV3SkelBuilder},
+    stages::nat::tc_nat_skel::{types, TcNatSkelBuilder},
     tests::TestSkb,
     NAT_MAPPING_EGRESS, NAT_MAPPING_INGRESS,
 };
@@ -369,15 +369,15 @@ mod tests {
     #[test]
     fn tcp_egress_dynamic_v3_existing_state_and_ct() {
         let _guard = NAT_V3_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let mut landscape_builder = LandNatV3SkelBuilder::default();
+        let mut builder = TcNatSkelBuilder::default();
         let pin_root = crate::tests::nat::isolated_pin_root("nat-v4-dynamic-v3");
-        landscape_builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
+        builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
         let mut open_object = MaybeUninit::uninit();
-        let landscape_open = landscape_builder.open(&mut open_object).unwrap();
-        let landscape_skel = landscape_open.load().unwrap();
+        let open_skel = builder.open(&mut open_object).unwrap();
+        let skel = open_skel.load().unwrap();
 
         add_wan_ip(
-            &landscape_skel.maps.wan_ip_binding,
+            &skel.maps.wan_ip_binding,
             IFINDEX,
             IpAddr::V4(WAN_IP),
             None,
@@ -385,9 +385,9 @@ mod tests {
             Some(MacAddr::broadcast()),
         );
 
-        clear_v3_free_port_queue(&landscape_skel.maps.nat4_tcp_free_ports_v3);
+        clear_v3_free_port_queue(&skel.maps.nat4_tcp_free_ports_v3);
         delete_dynamic_mapping_pair(
-            &landscape_skel.maps.nat4_dyn_map,
+            &skel.maps.nat4_dyn_map,
             6,
             LAN_HOST,
             LAN_PORT,
@@ -395,34 +395,20 @@ mod tests {
             NAT_PORT,
         );
         delete_dynamic_mapping_pair(
-            &landscape_skel.maps.nat4_dyn_map,
+            &skel.maps.nat4_dyn_map,
             6,
             SECOND_LAN_HOST,
             SECOND_LAN_PORT,
             WAN_IP,
             ALT_NAT_PORT,
         );
-        delete_v3_state(&landscape_skel.maps.nat4_dyn_map, 6, WAN_IP, NAT_PORT);
-        delete_v3_state(&landscape_skel.maps.nat4_dyn_map, 6, WAN_IP, ALT_NAT_PORT);
-        delete_v3_ct(
-            &landscape_skel.maps.nat4_mapping_timer_v3,
-            6,
-            REMOTE_IP,
-            443,
-            WAN_IP,
-            NAT_PORT,
-        );
-        delete_v3_ct(
-            &landscape_skel.maps.nat4_mapping_timer_v3,
-            6,
-            REMOTE_IP,
-            443,
-            WAN_IP,
-            ALT_NAT_PORT,
-        );
+        delete_v3_state(&skel.maps.nat4_dyn_map, 6, WAN_IP, NAT_PORT);
+        delete_v3_state(&skel.maps.nat4_dyn_map, 6, WAN_IP, ALT_NAT_PORT);
+        delete_v3_ct(&skel.maps.nat4_mapping_timer_v3, 6, REMOTE_IP, 443, WAN_IP, NAT_PORT);
+        delete_v3_ct(&skel.maps.nat4_mapping_timer_v3, 6, REMOTE_IP, 443, WAN_IP, ALT_NAT_PORT);
 
         add_dynamic_mapping_pair(
-            &landscape_skel.maps.nat4_dyn_map,
+            &skel.maps.nat4_dyn_map,
             6,
             LAN_HOST,
             LAN_PORT,
@@ -431,9 +417,9 @@ mod tests {
             REMOTE_IP,
             443,
         );
-        add_v3_state(&landscape_skel.maps.nat4_dyn_map, 6, WAN_IP, NAT_PORT);
+        add_v3_state(&skel.maps.nat4_dyn_map, 6, WAN_IP, NAT_PORT);
         add_v3_ct(
-            &landscape_skel.maps.nat4_mapping_timer_v3,
+            &skel.maps.nat4_mapping_timer_v3,
             6,
             REMOTE_IP,
             443,
@@ -456,7 +442,7 @@ mod tests {
             ..Default::default()
         };
 
-        let result = landscape_skel.progs.nat_v4_egress.test_run(input).expect("test_run failed");
+        let result = skel.progs.tc_nat_wan_egress.test_run(input).expect("test_run failed");
 
         assert_eq!(result.return_value as i32, -1);
 
@@ -478,15 +464,15 @@ mod tests {
     #[test]
     fn tcp_egress_dynamic_v3_icmp_error_uses_inner_l4_protocol() {
         let _guard = NAT_V3_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let mut landscape_builder = LandNatV3SkelBuilder::default();
+        let mut builder = TcNatSkelBuilder::default();
         let pin_root = crate::tests::nat::isolated_pin_root("nat-v4-dynamic-v3");
-        landscape_builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
+        builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
         let mut open_object = MaybeUninit::uninit();
-        let landscape_open = landscape_builder.open(&mut open_object).unwrap();
-        let landscape_skel = landscape_open.load().unwrap();
+        let open_skel = builder.open(&mut open_object).unwrap();
+        let skel = open_skel.load().unwrap();
 
         add_wan_ip(
-            &landscape_skel.maps.wan_ip_binding,
+            &skel.maps.wan_ip_binding,
             IFINDEX,
             IpAddr::V4(WAN_IP),
             None,
@@ -495,7 +481,7 @@ mod tests {
         );
 
         add_dynamic_mapping_pair(
-            &landscape_skel.maps.nat4_dyn_map,
+            &skel.maps.nat4_dyn_map,
             6,
             LAN_HOST,
             LAN_PORT,
@@ -505,7 +491,7 @@ mod tests {
             443,
         );
         add_v3_ct(
-            &landscape_skel.maps.nat4_mapping_timer_v3,
+            &skel.maps.nat4_mapping_timer_v3,
             6,
             REMOTE_IP,
             443,
@@ -529,7 +515,7 @@ mod tests {
             ..Default::default()
         };
 
-        let result = landscape_skel.progs.nat_v4_egress.test_run(input).expect("test_run failed");
+        let result = skel.progs.tc_nat_wan_egress.test_run(input).expect("test_run failed");
 
         assert_eq!(result.return_value as i32, -1);
 
@@ -559,15 +545,15 @@ mod tests {
     #[test]
     fn tcp_egress_dynamic_v3_missing_ingress_cleans_stale_pair_for_non_initiating_packet() {
         let _guard = NAT_V3_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let mut landscape_builder = LandNatV3SkelBuilder::default();
+        let mut builder = TcNatSkelBuilder::default();
         let pin_root = crate::tests::nat::isolated_pin_root("nat-v4-dynamic-v3");
-        landscape_builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
+        builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
         let mut open_object = MaybeUninit::uninit();
-        let landscape_open = landscape_builder.open(&mut open_object).unwrap();
-        let landscape_skel = landscape_open.load().unwrap();
+        let open_skel = builder.open(&mut open_object).unwrap();
+        let skel = open_skel.load().unwrap();
 
         add_wan_ip(
-            &landscape_skel.maps.wan_ip_binding,
+            &skel.maps.wan_ip_binding,
             IFINDEX,
             IpAddr::V4(WAN_IP),
             None,
@@ -575,9 +561,9 @@ mod tests {
             Some(MacAddr::broadcast()),
         );
 
-        clear_v3_free_port_queue(&landscape_skel.maps.nat4_tcp_free_ports_v3);
+        clear_v3_free_port_queue(&skel.maps.nat4_tcp_free_ports_v3);
         delete_dynamic_mapping_pair(
-            &landscape_skel.maps.nat4_dyn_map,
+            &skel.maps.nat4_dyn_map,
             6,
             LAN_HOST,
             LAN_PORT,
@@ -585,34 +571,20 @@ mod tests {
             NAT_PORT,
         );
         delete_dynamic_mapping_pair(
-            &landscape_skel.maps.nat4_dyn_map,
+            &skel.maps.nat4_dyn_map,
             6,
             SECOND_LAN_HOST,
             SECOND_LAN_PORT,
             WAN_IP,
             ALT_NAT_PORT,
         );
-        delete_v3_state(&landscape_skel.maps.nat4_dyn_map, 6, WAN_IP, NAT_PORT);
-        delete_v3_state(&landscape_skel.maps.nat4_dyn_map, 6, WAN_IP, ALT_NAT_PORT);
-        delete_v3_ct(
-            &landscape_skel.maps.nat4_mapping_timer_v3,
-            6,
-            REMOTE_IP,
-            443,
-            WAN_IP,
-            NAT_PORT,
-        );
-        delete_v3_ct(
-            &landscape_skel.maps.nat4_mapping_timer_v3,
-            6,
-            REMOTE_IP,
-            443,
-            WAN_IP,
-            ALT_NAT_PORT,
-        );
+        delete_v3_state(&skel.maps.nat4_dyn_map, 6, WAN_IP, NAT_PORT);
+        delete_v3_state(&skel.maps.nat4_dyn_map, 6, WAN_IP, ALT_NAT_PORT);
+        delete_v3_ct(&skel.maps.nat4_mapping_timer_v3, 6, REMOTE_IP, 443, WAN_IP, NAT_PORT);
+        delete_v3_ct(&skel.maps.nat4_mapping_timer_v3, 6, REMOTE_IP, 443, WAN_IP, ALT_NAT_PORT);
 
         add_dynamic_mapping_pair(
-            &landscape_skel.maps.nat4_dyn_map,
+            &skel.maps.nat4_dyn_map,
             6,
             LAN_HOST,
             LAN_PORT,
@@ -621,7 +593,7 @@ mod tests {
             REMOTE_IP,
             443,
         );
-        delete_v3_state(&landscape_skel.maps.nat4_dyn_map, 6, WAN_IP, NAT_PORT);
+        delete_v3_state(&skel.maps.nat4_dyn_map, 6, WAN_IP, NAT_PORT);
 
         let mut pkt = build_ipv4_tcp(LAN_HOST, REMOTE_IP, LAN_PORT, 443);
         let mut ctx = TestSkb::default();
@@ -635,7 +607,7 @@ mod tests {
             ..Default::default()
         };
 
-        let result = landscape_skel.progs.nat_v4_egress.test_run(input).expect("test_run failed");
+        let result = skel.progs.tc_nat_wan_egress.test_run(input).expect("test_run failed");
 
         assert_eq!(
             result.return_value as i32, 2,
@@ -648,7 +620,7 @@ mod tests {
             from_port: LAN_PORT.to_be(),
             from_addr: LAN_HOST.to_bits().to_be(),
         };
-        let stale_mapping = landscape_skel
+        let stale_mapping = skel
             .maps
             .nat4_dyn_map
             .lookup(unsafe { plain::as_bytes(&egress_key) }, MapFlags::ANY)
@@ -659,15 +631,15 @@ mod tests {
     #[test]
     fn tcp_egress_dynamic_v3_missing_ingress_recreates_mapping_for_syn() {
         let _guard = NAT_V3_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let mut landscape_builder = LandNatV3SkelBuilder::default();
+        let mut builder = TcNatSkelBuilder::default();
         let pin_root = crate::tests::nat::isolated_pin_root("nat-v4-dynamic-v3");
-        landscape_builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
+        builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
         let mut open_object = MaybeUninit::uninit();
-        let landscape_open = landscape_builder.open(&mut open_object).unwrap();
-        let landscape_skel = landscape_open.load().unwrap();
+        let open_skel = builder.open(&mut open_object).unwrap();
+        let skel = open_skel.load().unwrap();
 
         add_wan_ip(
-            &landscape_skel.maps.wan_ip_binding,
+            &skel.maps.wan_ip_binding,
             IFINDEX,
             IpAddr::V4(WAN_IP),
             None,
@@ -675,11 +647,11 @@ mod tests {
             Some(MacAddr::broadcast()),
         );
 
-        clear_v3_free_port_queue(&landscape_skel.maps.nat4_tcp_free_ports_v3);
-        push_v3_free_port(&landscape_skel.maps.nat4_tcp_free_ports_v3, NAT_PORT, 0);
+        clear_v3_free_port_queue(&skel.maps.nat4_tcp_free_ports_v3);
+        push_v3_free_port(&skel.maps.nat4_tcp_free_ports_v3, NAT_PORT, 0);
 
         add_dynamic_mapping_pair(
-            &landscape_skel.maps.nat4_dyn_map,
+            &skel.maps.nat4_dyn_map,
             6,
             LAN_HOST,
             LAN_PORT,
@@ -688,7 +660,7 @@ mod tests {
             REMOTE_IP,
             443,
         );
-        delete_v3_state(&landscape_skel.maps.nat4_dyn_map, 6, WAN_IP, NAT_PORT);
+        delete_v3_state(&skel.maps.nat4_dyn_map, 6, WAN_IP, NAT_PORT);
 
         let mut pkt = build_ipv4_tcp_syn(LAN_HOST, REMOTE_IP, LAN_PORT, 443);
         let mut ctx = TestSkb::default();
@@ -702,7 +674,7 @@ mod tests {
             ..Default::default()
         };
 
-        let result = landscape_skel.progs.nat_v4_egress.test_run(input).expect("test_run failed");
+        let result = skel.progs.tc_nat_wan_egress.test_run(input).expect("test_run failed");
 
         assert_eq!(result.return_value as i32, -1);
 
@@ -714,8 +686,7 @@ mod tests {
             panic!("expected TCP transport header in output");
         }
 
-        let ingress =
-            read_v3_ingress_mapping(&landscape_skel.maps.nat4_dyn_map, 6, WAN_IP, NAT_PORT);
+        let ingress = read_v3_ingress_mapping(&skel.maps.nat4_dyn_map, 6, WAN_IP, NAT_PORT);
         assert_eq!(ingress.generation, 1);
         assert_eq!(ingress.state_ref, ((1u64) << 56) | 1);
     }
@@ -723,15 +694,15 @@ mod tests {
     #[test]
     fn tcp_egress_dynamic_v3_mismatched_ingress_owner_cleans_stale_pair() {
         let _guard = NAT_V3_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let mut landscape_builder = LandNatV3SkelBuilder::default();
+        let mut builder = TcNatSkelBuilder::default();
         let pin_root = crate::tests::nat::isolated_pin_root("nat-v4-dynamic-v3");
-        landscape_builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
+        builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
         let mut open_object = MaybeUninit::uninit();
-        let landscape_open = landscape_builder.open(&mut open_object).unwrap();
-        let landscape_skel = landscape_open.load().unwrap();
+        let open_skel = builder.open(&mut open_object).unwrap();
+        let skel = open_skel.load().unwrap();
 
         add_wan_ip(
-            &landscape_skel.maps.wan_ip_binding,
+            &skel.maps.wan_ip_binding,
             IFINDEX,
             IpAddr::V4(WAN_IP),
             None,
@@ -739,9 +710,9 @@ mod tests {
             Some(MacAddr::broadcast()),
         );
 
-        clear_v3_free_port_queue(&landscape_skel.maps.nat4_tcp_free_ports_v3);
+        clear_v3_free_port_queue(&skel.maps.nat4_tcp_free_ports_v3);
         delete_dynamic_mapping_pair(
-            &landscape_skel.maps.nat4_dyn_map,
+            &skel.maps.nat4_dyn_map,
             6,
             LAN_HOST,
             LAN_PORT,
@@ -749,7 +720,7 @@ mod tests {
             NAT_PORT,
         );
         delete_dynamic_mapping_pair(
-            &landscape_skel.maps.nat4_dyn_map,
+            &skel.maps.nat4_dyn_map,
             6,
             SECOND_LAN_HOST,
             SECOND_LAN_PORT,
@@ -758,7 +729,7 @@ mod tests {
         );
 
         add_dynamic_mapping_pair(
-            &landscape_skel.maps.nat4_dyn_map,
+            &skel.maps.nat4_dyn_map,
             6,
             LAN_HOST,
             LAN_PORT,
@@ -768,7 +739,7 @@ mod tests {
             443,
         );
         add_dynamic_mapping_pair(
-            &landscape_skel.maps.nat4_dyn_map,
+            &skel.maps.nat4_dyn_map,
             6,
             SECOND_LAN_HOST,
             SECOND_LAN_PORT,
@@ -790,7 +761,7 @@ mod tests {
             ..Default::default()
         };
 
-        let result = landscape_skel.progs.nat_v4_egress.test_run(input).expect("test_run failed");
+        let result = skel.progs.tc_nat_wan_egress.test_run(input).expect("test_run failed");
 
         assert_eq!(
             result.return_value as i32, 2,
@@ -803,7 +774,7 @@ mod tests {
             from_port: LAN_PORT.to_be(),
             from_addr: LAN_HOST.to_bits().to_be(),
         };
-        let first_mapping = landscape_skel
+        let first_mapping = skel
             .maps
             .nat4_dyn_map
             .lookup(unsafe { plain::as_bytes(&first_egress_key) }, MapFlags::ANY)
@@ -816,15 +787,14 @@ mod tests {
             from_port: SECOND_LAN_PORT.to_be(),
             from_addr: SECOND_LAN_HOST.to_bits().to_be(),
         };
-        let second_mapping = landscape_skel
+        let second_mapping = skel
             .maps
             .nat4_dyn_map
             .lookup(unsafe { plain::as_bytes(&second_egress_key) }, MapFlags::ANY)
             .expect("lookup second egress mapping");
         assert!(second_mapping.is_some(), "unrelated egress mapping should be preserved");
 
-        let ingress =
-            read_v3_ingress_mapping(&landscape_skel.maps.nat4_dyn_map, 6, WAN_IP, NAT_PORT);
+        let ingress = read_v3_ingress_mapping(&skel.maps.nat4_dyn_map, 6, WAN_IP, NAT_PORT);
         assert_eq!(Ipv4Addr::from(u32::from_be(ingress.addr)), SECOND_LAN_HOST);
         assert_eq!(u16::from_be(ingress.port), SECOND_LAN_PORT);
     }
@@ -832,15 +802,15 @@ mod tests {
     #[test]
     fn tcp_ingress_dynamic_v3_reuse_creates_ct() {
         let _guard = NAT_V3_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let mut landscape_builder = LandNatV3SkelBuilder::default();
+        let mut builder = TcNatSkelBuilder::default();
         let pin_root = crate::tests::nat::isolated_pin_root("nat-v4-dynamic-v3");
-        landscape_builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
+        builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
         let mut open_object = MaybeUninit::uninit();
-        let landscape_open = landscape_builder.open(&mut open_object).unwrap();
-        let landscape_skel = landscape_open.load().unwrap();
+        let open_skel = builder.open(&mut open_object).unwrap();
+        let skel = open_skel.load().unwrap();
 
         add_wan_ip(
-            &landscape_skel.maps.wan_ip_binding,
+            &skel.maps.wan_ip_binding,
             IFINDEX,
             IpAddr::V4(WAN_IP),
             None,
@@ -849,7 +819,7 @@ mod tests {
         );
 
         add_dynamic_mapping_pair(
-            &landscape_skel.maps.nat4_dyn_map,
+            &skel.maps.nat4_dyn_map,
             6,
             LAN_HOST,
             LAN_PORT,
@@ -858,15 +828,8 @@ mod tests {
             REMOTE_IP,
             443,
         );
-        add_v3_state(&landscape_skel.maps.nat4_dyn_map, 6, WAN_IP, NAT_PORT);
-        delete_v3_ct(
-            &landscape_skel.maps.nat4_mapping_timer_v3,
-            6,
-            REMOTE_IP,
-            443,
-            WAN_IP,
-            NAT_PORT,
-        );
+        add_v3_state(&skel.maps.nat4_dyn_map, 6, WAN_IP, NAT_PORT);
+        delete_v3_ct(&skel.maps.nat4_mapping_timer_v3, 6, REMOTE_IP, 443, WAN_IP, NAT_PORT);
 
         let mut pkt = build_ipv4_tcp_syn(REMOTE_IP, WAN_IP, 443, NAT_PORT);
         let mut ctx = TestSkb::default();
@@ -880,9 +843,9 @@ mod tests {
             ..Default::default()
         };
 
-        let result = landscape_skel.progs.nat_v4_ingress.test_run(input).expect("test_run failed");
+        let result = skel.progs.tc_nat_wan_ingress.test_run(input).expect("test_run failed");
 
-        assert_eq!(result.return_value as i32, -1);
+        assert_eq!(result.return_value as i32, 0);
 
         let pkt_out = etherparse::PacketHeaders::from_ethernet_slice(&packet_out)
             .expect("parse output packet");
@@ -898,8 +861,7 @@ mod tests {
             panic!("expected TCP transport header in output");
         }
 
-        let ingress =
-            read_v3_ingress_mapping(&landscape_skel.maps.nat4_dyn_map, 6, WAN_IP, NAT_PORT);
+        let ingress = read_v3_ingress_mapping(&skel.maps.nat4_dyn_map, 6, WAN_IP, NAT_PORT);
         assert_eq!(ingress.generation, GENERATION);
         assert_eq!(ingress.state_ref, ((1u64) << 56) | 2, "reuse ingress should incref state_ref");
 
@@ -913,7 +875,7 @@ mod tests {
                 dst_port: NAT_PORT.to_be(),
             },
         };
-        let timer_bytes = landscape_skel
+        let timer_bytes = skel
             .maps
             .nat4_mapping_timer_v3
             .lookup(unsafe { plain::as_bytes(&timer_key) }, MapFlags::ANY)
@@ -929,15 +891,15 @@ mod tests {
     #[test]
     fn tcp_ingress_dynamic_v3_icmp_error_uses_inner_l4_protocol() {
         let _guard = NAT_V3_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let mut landscape_builder = LandNatV3SkelBuilder::default();
+        let mut builder = TcNatSkelBuilder::default();
         let pin_root = crate::tests::nat::isolated_pin_root("nat-v4-dynamic-v3");
-        landscape_builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
+        builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
         let mut open_object = MaybeUninit::uninit();
-        let landscape_open = landscape_builder.open(&mut open_object).unwrap();
-        let landscape_skel = landscape_open.load().unwrap();
+        let open_skel = builder.open(&mut open_object).unwrap();
+        let skel = open_skel.load().unwrap();
 
         add_wan_ip(
-            &landscape_skel.maps.wan_ip_binding,
+            &skel.maps.wan_ip_binding,
             IFINDEX,
             IpAddr::V4(WAN_IP),
             None,
@@ -946,7 +908,7 @@ mod tests {
         );
 
         add_dynamic_mapping_pair(
-            &landscape_skel.maps.nat4_dyn_map,
+            &skel.maps.nat4_dyn_map,
             6,
             LAN_HOST,
             LAN_PORT,
@@ -956,7 +918,7 @@ mod tests {
             443,
         );
         add_v3_ct(
-            &landscape_skel.maps.nat4_mapping_timer_v3,
+            &skel.maps.nat4_mapping_timer_v3,
             6,
             REMOTE_IP,
             443,
@@ -980,9 +942,9 @@ mod tests {
             ..Default::default()
         };
 
-        let result = landscape_skel.progs.nat_v4_ingress.test_run(input).expect("test_run failed");
+        let result = skel.progs.tc_nat_wan_ingress.test_run(input).expect("test_run failed");
 
-        assert_eq!(result.return_value as i32, -1);
+        assert_eq!(result.return_value as i32, 0);
 
         let pkt_out = etherparse::PacketHeaders::from_ethernet_slice(&packet_out)
             .expect("parse output packet");
@@ -1010,15 +972,15 @@ mod tests {
     #[test]
     fn tcp_ingress_dynamic_v3_closed_blocks_new_ct() {
         let _guard = NAT_V3_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let mut landscape_builder = LandNatV3SkelBuilder::default();
+        let mut builder = TcNatSkelBuilder::default();
         let pin_root = crate::tests::nat::isolated_pin_root("nat-v4-dynamic-v3");
-        landscape_builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
+        builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
         let mut open_object = MaybeUninit::uninit();
-        let landscape_open = landscape_builder.open(&mut open_object).unwrap();
-        let landscape_skel = landscape_open.load().unwrap();
+        let open_skel = builder.open(&mut open_object).unwrap();
+        let skel = open_skel.load().unwrap();
 
         add_wan_ip(
-            &landscape_skel.maps.wan_ip_binding,
+            &skel.maps.wan_ip_binding,
             IFINDEX,
             IpAddr::V4(WAN_IP),
             None,
@@ -1027,7 +989,7 @@ mod tests {
         );
 
         add_dynamic_mapping_pair(
-            &landscape_skel.maps.nat4_dyn_map,
+            &skel.maps.nat4_dyn_map,
             6,
             LAN_HOST,
             LAN_PORT,
@@ -1036,15 +998,8 @@ mod tests {
             REMOTE_IP,
             443,
         );
-        put_v3_state(&landscape_skel.maps.nat4_dyn_map, 6, WAN_IP, NAT_PORT, ((2u64) << 56) | 1);
-        delete_v3_ct(
-            &landscape_skel.maps.nat4_mapping_timer_v3,
-            6,
-            REMOTE_IP,
-            443,
-            WAN_IP,
-            NAT_PORT,
-        );
+        put_v3_state(&skel.maps.nat4_dyn_map, 6, WAN_IP, NAT_PORT, ((2u64) << 56) | 1);
+        delete_v3_ct(&skel.maps.nat4_mapping_timer_v3, 6, REMOTE_IP, 443, WAN_IP, NAT_PORT);
 
         let mut pkt = build_ipv4_tcp_syn(REMOTE_IP, WAN_IP, 443, NAT_PORT);
         let mut ctx = TestSkb::default();
@@ -1058,27 +1013,26 @@ mod tests {
             ..Default::default()
         };
 
-        let result = landscape_skel.progs.nat_v4_ingress.test_run(input).expect("test_run failed");
+        let result = skel.progs.tc_nat_wan_ingress.test_run(input).expect("test_run failed");
 
         assert_eq!(result.return_value as i32, 2, "closed mapping should reject new ingress CT");
 
-        let ingress =
-            read_v3_ingress_mapping(&landscape_skel.maps.nat4_dyn_map, 6, WAN_IP, NAT_PORT);
+        let ingress = read_v3_ingress_mapping(&skel.maps.nat4_dyn_map, 6, WAN_IP, NAT_PORT);
         assert_eq!(ingress.state_ref, ((2u64) << 56) | 1);
     }
 
     #[test]
     fn tcp_ingress_dynamic_v3_active_zero_blocks_new_ct() {
         let _guard = NAT_V3_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let mut landscape_builder = LandNatV3SkelBuilder::default();
+        let mut builder = TcNatSkelBuilder::default();
         let pin_root = crate::tests::nat::isolated_pin_root("nat-v4-dynamic-v3");
-        landscape_builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
+        builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
         let mut open_object = MaybeUninit::uninit();
-        let landscape_open = landscape_builder.open(&mut open_object).unwrap();
-        let landscape_skel = landscape_open.load().unwrap();
+        let open_skel = builder.open(&mut open_object).unwrap();
+        let skel = open_skel.load().unwrap();
 
         add_wan_ip(
-            &landscape_skel.maps.wan_ip_binding,
+            &skel.maps.wan_ip_binding,
             IFINDEX,
             IpAddr::V4(WAN_IP),
             None,
@@ -1087,7 +1041,7 @@ mod tests {
         );
 
         add_dynamic_mapping_pair(
-            &landscape_skel.maps.nat4_dyn_map,
+            &skel.maps.nat4_dyn_map,
             6,
             LAN_HOST,
             LAN_PORT,
@@ -1096,15 +1050,8 @@ mod tests {
             REMOTE_IP,
             443,
         );
-        put_v3_state(&landscape_skel.maps.nat4_dyn_map, 6, WAN_IP, NAT_PORT, ((1u64) << 56) | 0);
-        delete_v3_ct(
-            &landscape_skel.maps.nat4_mapping_timer_v3,
-            6,
-            REMOTE_IP,
-            443,
-            WAN_IP,
-            NAT_PORT,
-        );
+        put_v3_state(&skel.maps.nat4_dyn_map, 6, WAN_IP, NAT_PORT, ((1u64) << 56) | 0);
+        delete_v3_ct(&skel.maps.nat4_mapping_timer_v3, 6, REMOTE_IP, 443, WAN_IP, NAT_PORT);
 
         let mut pkt = build_ipv4_tcp_syn(REMOTE_IP, WAN_IP, 443, NAT_PORT);
         let mut ctx = TestSkb::default();
@@ -1118,12 +1065,11 @@ mod tests {
             ..Default::default()
         };
 
-        let result = landscape_skel.progs.nat_v4_ingress.test_run(input).expect("test_run failed");
+        let result = skel.progs.tc_nat_wan_ingress.test_run(input).expect("test_run failed");
 
         assert_eq!(result.return_value as i32, 2, "active|0 mapping should reject new ingress CT");
 
-        let ingress =
-            read_v3_ingress_mapping(&landscape_skel.maps.nat4_dyn_map, 6, WAN_IP, NAT_PORT);
+        let ingress = read_v3_ingress_mapping(&skel.maps.nat4_dyn_map, 6, WAN_IP, NAT_PORT);
         assert_eq!(ingress.state_ref, ((1u64) << 56) | 0);
 
         let timer_key = types::nat_timer_key_v4 {
@@ -1136,7 +1082,7 @@ mod tests {
                 dst_port: NAT_PORT.to_be(),
             },
         };
-        let timer_bytes = landscape_skel
+        let timer_bytes = skel
             .maps
             .nat4_mapping_timer_v3
             .lookup(unsafe { plain::as_bytes(&timer_key) }, MapFlags::ANY)
@@ -1147,15 +1093,15 @@ mod tests {
     #[test]
     fn tcp_ingress_dynamic_v3_closed_allows_existing_ct() {
         let _guard = NAT_V3_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let mut landscape_builder = LandNatV3SkelBuilder::default();
+        let mut builder = TcNatSkelBuilder::default();
         let pin_root = crate::tests::nat::isolated_pin_root("nat-v4-dynamic-v3");
-        landscape_builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
+        builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
         let mut open_object = MaybeUninit::uninit();
-        let landscape_open = landscape_builder.open(&mut open_object).unwrap();
-        let landscape_skel = landscape_open.load().unwrap();
+        let open_skel = builder.open(&mut open_object).unwrap();
+        let skel = open_skel.load().unwrap();
 
         add_wan_ip(
-            &landscape_skel.maps.wan_ip_binding,
+            &skel.maps.wan_ip_binding,
             IFINDEX,
             IpAddr::V4(WAN_IP),
             None,
@@ -1164,7 +1110,7 @@ mod tests {
         );
 
         add_dynamic_mapping_pair(
-            &landscape_skel.maps.nat4_dyn_map,
+            &skel.maps.nat4_dyn_map,
             6,
             LAN_HOST,
             LAN_PORT,
@@ -1173,9 +1119,9 @@ mod tests {
             REMOTE_IP,
             443,
         );
-        put_v3_state(&landscape_skel.maps.nat4_dyn_map, 6, WAN_IP, NAT_PORT, ((2u64) << 56) | 1);
+        put_v3_state(&skel.maps.nat4_dyn_map, 6, WAN_IP, NAT_PORT, ((2u64) << 56) | 1);
         add_v3_ct(
-            &landscape_skel.maps.nat4_mapping_timer_v3,
+            &skel.maps.nat4_mapping_timer_v3,
             6,
             REMOTE_IP,
             443,
@@ -1198,9 +1144,9 @@ mod tests {
             ..Default::default()
         };
 
-        let result = landscape_skel.progs.nat_v4_ingress.test_run(input).expect("test_run failed");
+        let result = skel.progs.tc_nat_wan_ingress.test_run(input).expect("test_run failed");
 
-        assert_eq!(result.return_value as i32, -1);
+        assert_eq!(result.return_value as i32, 0);
 
         let pkt_out = etherparse::PacketHeaders::from_ethernet_slice(&packet_out)
             .expect("parse output packet");
@@ -1211,8 +1157,7 @@ mod tests {
             panic!("expected IPv4 header in output");
         }
 
-        let ingress =
-            read_v3_ingress_mapping(&landscape_skel.maps.nat4_dyn_map, 6, WAN_IP, NAT_PORT);
+        let ingress = read_v3_ingress_mapping(&skel.maps.nat4_dyn_map, 6, WAN_IP, NAT_PORT);
         assert_eq!(
             ingress.state_ref,
             ((2u64) << 56) | 1,
@@ -1223,15 +1168,15 @@ mod tests {
     #[test]
     fn tcp_egress_static_v3_creates_ct_without_dynamic_state() {
         let _guard = NAT_V3_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let mut landscape_builder = LandNatV3SkelBuilder::default();
+        let mut builder = TcNatSkelBuilder::default();
         let pin_root = crate::tests::nat::isolated_pin_root("nat-v4-dynamic-v3");
-        landscape_builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
+        builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
         let mut open_object = MaybeUninit::uninit();
-        let landscape_open = landscape_builder.open(&mut open_object).unwrap();
-        let landscape_skel = landscape_open.load().unwrap();
+        let open_skel = builder.open(&mut open_object).unwrap();
+        let skel = open_skel.load().unwrap();
 
         add_wan_ip(
-            &landscape_skel.maps.wan_ip_binding,
+            &skel.maps.wan_ip_binding,
             IFINDEX,
             IpAddr::V4(WAN_IP),
             None,
@@ -1239,7 +1184,7 @@ mod tests {
             Some(MacAddr::broadcast()),
         );
         add_static_nat4_mapping_v3(
-            &landscape_skel.maps.nat4_st_map,
+            &skel.maps.nat4_st_map,
             vec![StaticNatMappingV4Item {
                 wan_port: 8080,
                 lan_port: 80,
@@ -1260,7 +1205,7 @@ mod tests {
             ..Default::default()
         };
 
-        let result = landscape_skel.progs.nat_v4_egress.test_run(input).expect("test_run failed");
+        let result = skel.progs.tc_nat_wan_egress.test_run(input).expect("test_run failed");
 
         assert_eq!(result.return_value as i32, -1);
 
@@ -1288,7 +1233,7 @@ mod tests {
                 dst_port: 8080u16.to_be(),
             },
         };
-        let timer_bytes = landscape_skel
+        let timer_bytes = skel
             .maps
             .nat4_mapping_timer_v3
             .lookup(unsafe { plain::as_bytes(&timer_key) }, MapFlags::ANY)
@@ -1303,15 +1248,15 @@ mod tests {
     #[test]
     fn tcp_egress_dynamic_v3_restart_queue_conflict_drops_first_flow_then_uses_next_port() {
         let _guard = NAT_V3_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let mut landscape_builder = LandNatV3SkelBuilder::default();
+        let mut builder = TcNatSkelBuilder::default();
         let pin_root = crate::tests::nat::isolated_pin_root("nat-v4-dynamic-v3");
-        landscape_builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
+        builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
         let mut open_object = MaybeUninit::uninit();
-        let landscape_open = landscape_builder.open(&mut open_object).unwrap();
-        let landscape_skel = landscape_open.load().unwrap();
+        let open_skel = builder.open(&mut open_object).unwrap();
+        let skel = open_skel.load().unwrap();
 
         add_wan_ip(
-            &landscape_skel.maps.wan_ip_binding,
+            &skel.maps.wan_ip_binding,
             IFINDEX,
             IpAddr::V4(WAN_IP),
             None,
@@ -1319,9 +1264,9 @@ mod tests {
             Some(MacAddr::broadcast()),
         );
 
-        clear_v3_free_port_queue(&landscape_skel.maps.nat4_tcp_free_ports_v3);
+        clear_v3_free_port_queue(&skel.maps.nat4_tcp_free_ports_v3);
         delete_dynamic_mapping_pair(
-            &landscape_skel.maps.nat4_dyn_map,
+            &skel.maps.nat4_dyn_map,
             6,
             LAN_HOST,
             LAN_PORT,
@@ -1329,7 +1274,7 @@ mod tests {
             NAT_PORT,
         );
         delete_dynamic_mapping_pair(
-            &landscape_skel.maps.nat4_dyn_map,
+            &skel.maps.nat4_dyn_map,
             6,
             SECOND_LAN_HOST,
             SECOND_LAN_PORT,
@@ -1337,34 +1282,20 @@ mod tests {
             NAT_PORT,
         );
         delete_dynamic_mapping_pair(
-            &landscape_skel.maps.nat4_dyn_map,
+            &skel.maps.nat4_dyn_map,
             6,
             SECOND_LAN_HOST,
             SECOND_LAN_PORT,
             WAN_IP,
             ALT_NAT_PORT,
         );
-        delete_v3_state(&landscape_skel.maps.nat4_dyn_map, 6, WAN_IP, NAT_PORT);
-        delete_v3_state(&landscape_skel.maps.nat4_dyn_map, 6, WAN_IP, ALT_NAT_PORT);
-        delete_v3_ct(
-            &landscape_skel.maps.nat4_mapping_timer_v3,
-            6,
-            REMOTE_IP,
-            443,
-            WAN_IP,
-            NAT_PORT,
-        );
-        delete_v3_ct(
-            &landscape_skel.maps.nat4_mapping_timer_v3,
-            6,
-            REMOTE_IP,
-            443,
-            WAN_IP,
-            ALT_NAT_PORT,
-        );
+        delete_v3_state(&skel.maps.nat4_dyn_map, 6, WAN_IP, NAT_PORT);
+        delete_v3_state(&skel.maps.nat4_dyn_map, 6, WAN_IP, ALT_NAT_PORT);
+        delete_v3_ct(&skel.maps.nat4_mapping_timer_v3, 6, REMOTE_IP, 443, WAN_IP, NAT_PORT);
+        delete_v3_ct(&skel.maps.nat4_mapping_timer_v3, 6, REMOTE_IP, 443, WAN_IP, ALT_NAT_PORT);
 
         add_dynamic_mapping_pair(
-            &landscape_skel.maps.nat4_dyn_map,
+            &skel.maps.nat4_dyn_map,
             6,
             LAN_HOST,
             LAN_PORT,
@@ -1373,9 +1304,9 @@ mod tests {
             REMOTE_IP,
             443,
         );
-        add_v3_state(&landscape_skel.maps.nat4_dyn_map, 6, WAN_IP, NAT_PORT);
+        add_v3_state(&skel.maps.nat4_dyn_map, 6, WAN_IP, NAT_PORT);
         add_v3_ct(
-            &landscape_skel.maps.nat4_mapping_timer_v3,
+            &skel.maps.nat4_mapping_timer_v3,
             6,
             REMOTE_IP,
             443,
@@ -1386,8 +1317,8 @@ mod tests {
             NAT_MAPPING_EGRESS,
         );
 
-        push_v3_free_port(&landscape_skel.maps.nat4_tcp_free_ports_v3, NAT_PORT, 0);
-        push_v3_free_port(&landscape_skel.maps.nat4_tcp_free_ports_v3, ALT_NAT_PORT, 0);
+        push_v3_free_port(&skel.maps.nat4_tcp_free_ports_v3, NAT_PORT, 0);
+        push_v3_free_port(&skel.maps.nat4_tcp_free_ports_v3, ALT_NAT_PORT, 0);
 
         let mut first_pkt = build_ipv4_tcp_syn(SECOND_LAN_HOST, REMOTE_IP, SECOND_LAN_PORT, 443);
         let mut ctx = TestSkb::default();
@@ -1402,7 +1333,7 @@ mod tests {
         };
 
         let first_result =
-            landscape_skel.progs.nat_v4_egress.test_run(first_input).expect("test_run failed");
+            skel.progs.tc_nat_wan_egress.test_run(first_input).expect("test_run failed");
 
         assert_eq!(
             first_result.return_value as i32, 2,
@@ -1415,7 +1346,7 @@ mod tests {
             from_port: SECOND_LAN_PORT.to_be(),
             from_addr: SECOND_LAN_HOST.to_bits().to_be(),
         };
-        let second_mapping = landscape_skel
+        let second_mapping = skel
             .maps
             .nat4_dyn_map
             .lookup(unsafe { plain::as_bytes(&second_egress_key) }, MapFlags::ANY)
@@ -1425,7 +1356,7 @@ mod tests {
             "failed allocation should not leave a half-created egress mapping behind"
         );
         assert_eq!(
-            peek_v3_free_port(&landscape_skel.maps.nat4_tcp_free_ports_v3),
+            peek_v3_free_port(&skel.maps.nat4_tcp_free_ports_v3),
             Some(ALT_NAT_PORT),
             "after a failed allocation the queue advances to the next available port"
         );
@@ -1440,7 +1371,7 @@ mod tests {
         };
 
         let second_result =
-            landscape_skel.progs.nat_v4_egress.test_run(second_input).expect("test_run failed");
+            skel.progs.tc_nat_wan_egress.test_run(second_input).expect("test_run failed");
 
         assert_eq!(second_result.return_value as i32, -1);
 
@@ -1456,15 +1387,15 @@ mod tests {
     #[test]
     fn tcp_egress_dynamic_v3_restart_without_timer_drops_first_flow_then_uses_next_port() {
         let _guard = NAT_V3_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let mut landscape_builder = LandNatV3SkelBuilder::default();
+        let mut builder = TcNatSkelBuilder::default();
         let pin_root = crate::tests::nat::isolated_pin_root("nat-v4-dynamic-v3");
-        landscape_builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
+        builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
         let mut open_object = MaybeUninit::uninit();
-        let landscape_open = landscape_builder.open(&mut open_object).unwrap();
-        let landscape_skel = landscape_open.load().unwrap();
+        let open_skel = builder.open(&mut open_object).unwrap();
+        let skel = open_skel.load().unwrap();
 
         add_wan_ip(
-            &landscape_skel.maps.wan_ip_binding,
+            &skel.maps.wan_ip_binding,
             IFINDEX,
             IpAddr::V4(WAN_IP),
             None,
@@ -1472,9 +1403,9 @@ mod tests {
             Some(MacAddr::broadcast()),
         );
 
-        clear_v3_free_port_queue(&landscape_skel.maps.nat4_tcp_free_ports_v3);
+        clear_v3_free_port_queue(&skel.maps.nat4_tcp_free_ports_v3);
         delete_dynamic_mapping_pair(
-            &landscape_skel.maps.nat4_dyn_map,
+            &skel.maps.nat4_dyn_map,
             6,
             LAN_HOST,
             LAN_PORT,
@@ -1482,7 +1413,7 @@ mod tests {
             NAT_PORT,
         );
         delete_dynamic_mapping_pair(
-            &landscape_skel.maps.nat4_dyn_map,
+            &skel.maps.nat4_dyn_map,
             6,
             SECOND_LAN_HOST,
             SECOND_LAN_PORT,
@@ -1490,34 +1421,20 @@ mod tests {
             NAT_PORT,
         );
         delete_dynamic_mapping_pair(
-            &landscape_skel.maps.nat4_dyn_map,
+            &skel.maps.nat4_dyn_map,
             6,
             SECOND_LAN_HOST,
             SECOND_LAN_PORT,
             WAN_IP,
             ALT_NAT_PORT,
         );
-        delete_v3_state(&landscape_skel.maps.nat4_dyn_map, 6, WAN_IP, NAT_PORT);
-        delete_v3_state(&landscape_skel.maps.nat4_dyn_map, 6, WAN_IP, ALT_NAT_PORT);
-        delete_v3_ct(
-            &landscape_skel.maps.nat4_mapping_timer_v3,
-            6,
-            REMOTE_IP,
-            443,
-            WAN_IP,
-            NAT_PORT,
-        );
-        delete_v3_ct(
-            &landscape_skel.maps.nat4_mapping_timer_v3,
-            6,
-            REMOTE_IP,
-            443,
-            WAN_IP,
-            ALT_NAT_PORT,
-        );
+        delete_v3_state(&skel.maps.nat4_dyn_map, 6, WAN_IP, NAT_PORT);
+        delete_v3_state(&skel.maps.nat4_dyn_map, 6, WAN_IP, ALT_NAT_PORT);
+        delete_v3_ct(&skel.maps.nat4_mapping_timer_v3, 6, REMOTE_IP, 443, WAN_IP, NAT_PORT);
+        delete_v3_ct(&skel.maps.nat4_mapping_timer_v3, 6, REMOTE_IP, 443, WAN_IP, ALT_NAT_PORT);
 
         add_dynamic_mapping_pair(
-            &landscape_skel.maps.nat4_dyn_map,
+            &skel.maps.nat4_dyn_map,
             6,
             LAN_HOST,
             LAN_PORT,
@@ -1526,10 +1443,10 @@ mod tests {
             REMOTE_IP,
             443,
         );
-        add_v3_state(&landscape_skel.maps.nat4_dyn_map, 6, WAN_IP, NAT_PORT);
+        add_v3_state(&skel.maps.nat4_dyn_map, 6, WAN_IP, NAT_PORT);
 
-        push_v3_free_port(&landscape_skel.maps.nat4_tcp_free_ports_v3, NAT_PORT, 0);
-        push_v3_free_port(&landscape_skel.maps.nat4_tcp_free_ports_v3, ALT_NAT_PORT, 0);
+        push_v3_free_port(&skel.maps.nat4_tcp_free_ports_v3, NAT_PORT, 0);
+        push_v3_free_port(&skel.maps.nat4_tcp_free_ports_v3, ALT_NAT_PORT, 0);
 
         let stale_timer_key = types::nat_timer_key_v4 {
             l4proto: 6,
@@ -1541,7 +1458,7 @@ mod tests {
                 dst_port: NAT_PORT.to_be(),
             },
         };
-        let stale_timer = landscape_skel
+        let stale_timer = skel
             .maps
             .nat4_mapping_timer_v3
             .lookup(unsafe { plain::as_bytes(&stale_timer_key) }, MapFlags::ANY)
@@ -1561,14 +1478,14 @@ mod tests {
         };
 
         let first_result =
-            landscape_skel.progs.nat_v4_egress.test_run(first_input).expect("test_run failed");
+            skel.progs.tc_nat_wan_egress.test_run(first_input).expect("test_run failed");
 
         assert_eq!(
             first_result.return_value as i32, 2,
             "stale mapping without a timer should still block the first reissued NAT port"
         );
         assert_eq!(
-            peek_v3_free_port(&landscape_skel.maps.nat4_tcp_free_ports_v3),
+            peek_v3_free_port(&skel.maps.nat4_tcp_free_ports_v3),
             Some(ALT_NAT_PORT),
             "without a timer the failed stale port is removed and the next queued port becomes available"
         );
@@ -1583,7 +1500,7 @@ mod tests {
         };
 
         let second_result =
-            landscape_skel.progs.nat_v4_egress.test_run(second_input).expect("test_run failed");
+            skel.progs.tc_nat_wan_egress.test_run(second_input).expect("test_run failed");
 
         assert_eq!(second_result.return_value as i32, -1);
 
@@ -1599,15 +1516,15 @@ mod tests {
     #[test]
     fn reset_dynamic_nat_v3_runtime_clears_stale_state_and_restores_first_flow() {
         let _guard = NAT_V3_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let mut landscape_builder = LandNatV3SkelBuilder::default();
+        let mut builder = TcNatSkelBuilder::default();
         let pin_root = crate::tests::nat::isolated_pin_root("nat-v4-dynamic-v3");
-        landscape_builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
+        builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
         let mut open_object = MaybeUninit::uninit();
-        let landscape_open = landscape_builder.open(&mut open_object).unwrap();
-        let landscape_skel = landscape_open.load().unwrap();
+        let open_skel = builder.open(&mut open_object).unwrap();
+        let skel = open_skel.load().unwrap();
 
         add_wan_ip(
-            &landscape_skel.maps.wan_ip_binding,
+            &skel.maps.wan_ip_binding,
             IFINDEX,
             IpAddr::V4(WAN_IP),
             None,
@@ -1615,9 +1532,9 @@ mod tests {
             Some(MacAddr::broadcast()),
         );
 
-        clear_v3_free_port_queue(&landscape_skel.maps.nat4_tcp_free_ports_v3);
+        clear_v3_free_port_queue(&skel.maps.nat4_tcp_free_ports_v3);
         delete_dynamic_mapping_pair(
-            &landscape_skel.maps.nat4_dyn_map,
+            &skel.maps.nat4_dyn_map,
             6,
             LAN_HOST,
             LAN_PORT,
@@ -1625,7 +1542,7 @@ mod tests {
             NAT_PORT,
         );
         delete_dynamic_mapping_pair(
-            &landscape_skel.maps.nat4_dyn_map,
+            &skel.maps.nat4_dyn_map,
             6,
             SECOND_LAN_HOST,
             SECOND_LAN_PORT,
@@ -1633,34 +1550,20 @@ mod tests {
             NAT_PORT,
         );
         delete_dynamic_mapping_pair(
-            &landscape_skel.maps.nat4_dyn_map,
+            &skel.maps.nat4_dyn_map,
             6,
             SECOND_LAN_HOST,
             SECOND_LAN_PORT,
             WAN_IP,
             ALT_NAT_PORT,
         );
-        delete_v3_state(&landscape_skel.maps.nat4_dyn_map, 6, WAN_IP, NAT_PORT);
-        delete_v3_state(&landscape_skel.maps.nat4_dyn_map, 6, WAN_IP, ALT_NAT_PORT);
-        delete_v3_ct(
-            &landscape_skel.maps.nat4_mapping_timer_v3,
-            6,
-            REMOTE_IP,
-            443,
-            WAN_IP,
-            NAT_PORT,
-        );
-        delete_v3_ct(
-            &landscape_skel.maps.nat4_mapping_timer_v3,
-            6,
-            REMOTE_IP,
-            443,
-            WAN_IP,
-            ALT_NAT_PORT,
-        );
+        delete_v3_state(&skel.maps.nat4_dyn_map, 6, WAN_IP, NAT_PORT);
+        delete_v3_state(&skel.maps.nat4_dyn_map, 6, WAN_IP, ALT_NAT_PORT);
+        delete_v3_ct(&skel.maps.nat4_mapping_timer_v3, 6, REMOTE_IP, 443, WAN_IP, NAT_PORT);
+        delete_v3_ct(&skel.maps.nat4_mapping_timer_v3, 6, REMOTE_IP, 443, WAN_IP, ALT_NAT_PORT);
 
         add_dynamic_mapping_pair(
-            &landscape_skel.maps.nat4_dyn_map,
+            &skel.maps.nat4_dyn_map,
             6,
             LAN_HOST,
             LAN_PORT,
@@ -1669,9 +1572,9 @@ mod tests {
             REMOTE_IP,
             443,
         );
-        add_v3_state(&landscape_skel.maps.nat4_dyn_map, 6, WAN_IP, NAT_PORT);
+        add_v3_state(&skel.maps.nat4_dyn_map, 6, WAN_IP, NAT_PORT);
         add_v3_ct(
-            &landscape_skel.maps.nat4_mapping_timer_v3,
+            &skel.maps.nat4_mapping_timer_v3,
             6,
             REMOTE_IP,
             443,
@@ -1681,8 +1584,8 @@ mod tests {
             LAN_PORT,
             NAT_MAPPING_EGRESS,
         );
-        push_v3_free_port(&landscape_skel.maps.nat4_tcp_free_ports_v3, NAT_PORT, 0);
-        push_v3_free_port(&landscape_skel.maps.nat4_tcp_free_ports_v3, ALT_NAT_PORT, 0);
+        push_v3_free_port(&skel.maps.nat4_tcp_free_ports_v3, NAT_PORT, 0);
+        push_v3_free_port(&skel.maps.nat4_tcp_free_ports_v3, ALT_NAT_PORT, 0);
 
         let config = NatConfig {
             tcp_range: NAT_PORT..ALT_NAT_PORT,
@@ -1690,11 +1593,11 @@ mod tests {
             icmp_in_range: 46000..46001,
         };
         reset_dynamic_nat_v3_runtime_for_test(
-            &landscape_skel.maps.nat4_dyn_map,
-            &landscape_skel.maps.nat4_mapping_timer_v3,
-            &landscape_skel.maps.nat4_tcp_free_ports_v3,
-            &landscape_skel.maps.nat4_udp_free_ports_v3,
-            &landscape_skel.maps.nat4_icmp_free_ports_v3,
+            &skel.maps.nat4_dyn_map,
+            &skel.maps.nat4_mapping_timer_v3,
+            &skel.maps.nat4_tcp_free_ports_v3,
+            &skel.maps.nat4_udp_free_ports_v3,
+            &skel.maps.nat4_icmp_free_ports_v3,
             &config,
         );
 
@@ -1704,14 +1607,14 @@ mod tests {
             from_port: NAT_PORT.to_be(),
             from_addr: WAN_IP.to_bits().to_be(),
         };
-        let stale_mapping = landscape_skel
+        let stale_mapping = skel
             .maps
             .nat4_dyn_map
             .lookup(unsafe { plain::as_bytes(&stale_ingress_key) }, MapFlags::ANY)
             .expect("lookup stale mapping after cleanup");
         assert!(stale_mapping.is_none(), "cleanup should remove stale dynamic mappings");
         assert_eq!(
-            peek_v3_free_port(&landscape_skel.maps.nat4_tcp_free_ports_v3),
+            peek_v3_free_port(&skel.maps.nat4_tcp_free_ports_v3),
             Some(NAT_PORT),
             "cleanup should reseed the queue from the configured port range"
         );
@@ -1728,7 +1631,7 @@ mod tests {
             ..Default::default()
         };
 
-        let result = landscape_skel.progs.nat_v4_egress.test_run(input).expect("test_run failed");
+        let result = skel.progs.tc_nat_wan_egress.test_run(input).expect("test_run failed");
 
         assert_eq!(result.return_value as i32, -1);
 

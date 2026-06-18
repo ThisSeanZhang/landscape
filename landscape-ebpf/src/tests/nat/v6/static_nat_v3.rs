@@ -14,7 +14,7 @@ use zerocopy::IntoBytes;
 
 use crate::{
     map_setting::{add_wan_ip, nat::StaticNatMappingV6Item},
-    nat::v3::land_nat_v3::{types, LandNatV3SkelBuilder},
+    stages::nat::tc_nat_skel::{types, TcNatSkelBuilder},
     tests::TestSkb,
 };
 
@@ -111,15 +111,15 @@ mod tests {
 
     #[test]
     fn tcp_ingress_lan_host_v3() {
-        let mut landscape_builder = LandNatV3SkelBuilder::default();
+        let mut builder = TcNatSkelBuilder::default();
         let pin_root = crate::tests::nat::isolated_pin_root("nat-v6-static-v3-lan");
-        landscape_builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
+        builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
         let mut open_object = MaybeUninit::uninit();
-        let landscape_open = landscape_builder.open(&mut open_object).unwrap();
-        let landscape_skel = landscape_open.load().unwrap();
+        let open_skel = builder.open(&mut open_object).unwrap();
+        let skel = open_skel.load().unwrap();
 
         add_wan_ip(
-            &landscape_skel.maps.wan_ip_binding,
+            &skel.maps.wan_ip_binding,
             IFINDEX,
             IpAddr::V6(wan_ip()),
             None,
@@ -128,7 +128,7 @@ mod tests {
         );
 
         add_static_nat6_mapping(
-            &landscape_skel.maps.nat6_static_mappings,
+            &skel.maps.nat6_static_mappings,
             vec![StaticNatMappingV6Item {
                 wan_port: 80,
                 lan_port: 80,
@@ -138,7 +138,7 @@ mod tests {
         );
 
         add_ct6_entry(
-            &landscape_skel.maps.nat6_conn_timer,
+            &skel.maps.nat6_conn_timer,
             6,
             LAN_CLIENT_SUFFIX,
             80,
@@ -159,8 +159,8 @@ mod tests {
             ..Default::default()
         };
 
-        let result = landscape_skel.progs.nat_v6_ingress.test_run(input).expect("test_run failed");
-        assert_eq!(result.return_value as i32, -1, "ingress should return TC_ACT_UNSPEC(-1)");
+        let result = skel.progs.tc_nat_wan_ingress.test_run(input).expect("test_run failed");
+        assert_eq!(result.return_value as i32, 0, "ingress should return TC_ACT_OK(0)");
 
         let pkt_out = PacketHeaders::from_ethernet_slice(&packet_out).expect("parse output");
         if let Some(etherparse::NetHeaders::Ipv6(ipv6, _)) = pkt_out.net {
@@ -179,15 +179,15 @@ mod tests {
 
     #[test]
     fn tcp_egress_lan_host_v3() {
-        let mut landscape_builder = LandNatV3SkelBuilder::default();
+        let mut builder = TcNatSkelBuilder::default();
         let pin_root = crate::tests::nat::isolated_pin_root("nat-v6-static-v3-lan");
-        landscape_builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
+        builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
         let mut open_object = MaybeUninit::uninit();
-        let landscape_open = landscape_builder.open(&mut open_object).unwrap();
-        let landscape_skel = landscape_open.load().unwrap();
+        let open_skel = builder.open(&mut open_object).unwrap();
+        let skel = open_skel.load().unwrap();
 
         add_wan_ip(
-            &landscape_skel.maps.wan_ip_binding,
+            &skel.maps.wan_ip_binding,
             IFINDEX,
             IpAddr::V6(wan_ip()),
             None,
@@ -196,7 +196,7 @@ mod tests {
         );
 
         add_static_nat6_mapping(
-            &landscape_skel.maps.nat6_static_mappings,
+            &skel.maps.nat6_static_mappings,
             vec![StaticNatMappingV6Item {
                 wan_port: 80,
                 lan_port: 80,
@@ -206,7 +206,7 @@ mod tests {
         );
 
         add_ct6_entry(
-            &landscape_skel.maps.nat6_conn_timer,
+            &skel.maps.nat6_conn_timer,
             6,
             LAN_CLIENT_SUFFIX,
             80,
@@ -227,7 +227,7 @@ mod tests {
             ..Default::default()
         };
 
-        let result = landscape_skel.progs.nat_v6_egress.test_run(input).expect("test_run failed");
+        let result = skel.progs.tc_nat_wan_egress.test_run(input).expect("test_run failed");
         assert_eq!(result.return_value as i32, -1, "egress should return TC_ACT_UNSPEC(-1)");
 
         let pkt_out = PacketHeaders::from_ethernet_slice(&packet_out).expect("parse output");
@@ -247,15 +247,15 @@ mod tests {
 
     #[test]
     fn tcp_ingress_local_router_v3() {
-        let mut landscape_builder = LandNatV3SkelBuilder::default();
+        let mut builder = TcNatSkelBuilder::default();
         let pin_root = crate::tests::nat::isolated_pin_root("nat-v6-static-v3-local");
-        landscape_builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
+        builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
         let mut open_object = MaybeUninit::uninit();
-        let landscape_open = landscape_builder.open(&mut open_object).unwrap();
-        let landscape_skel = landscape_open.load().unwrap();
+        let open_skel = builder.open(&mut open_object).unwrap();
+        let skel = open_skel.load().unwrap();
 
         add_wan_ip(
-            &landscape_skel.maps.wan_ip_binding,
+            &skel.maps.wan_ip_binding,
             IFINDEX,
             IpAddr::V6(wan_ip()),
             None,
@@ -264,7 +264,7 @@ mod tests {
         );
 
         add_static_nat6_mapping(
-            &landscape_skel.maps.nat6_static_mappings,
+            &skel.maps.nat6_static_mappings,
             vec![StaticNatMappingV6Item {
                 wan_port: 80,
                 lan_port: 80,
@@ -274,7 +274,7 @@ mod tests {
         );
 
         add_ct6_entry(
-            &landscape_skel.maps.nat6_conn_timer,
+            &skel.maps.nat6_conn_timer,
             6,
             LOCAL_CLIENT_SUFFIX,
             80,
@@ -295,8 +295,8 @@ mod tests {
             ..Default::default()
         };
 
-        let result = landscape_skel.progs.nat_v6_ingress.test_run(input).expect("test_run failed");
-        assert_eq!(result.return_value as i32, -1, "ingress should return TC_ACT_UNSPEC(-1)");
+        let result = skel.progs.tc_nat_wan_ingress.test_run(input).expect("test_run failed");
+        assert_eq!(result.return_value as i32, 0, "ingress should return TC_ACT_OK(0)");
 
         let pkt_out = PacketHeaders::from_ethernet_slice(&packet_out).expect("parse output");
         if let Some(etherparse::NetHeaders::Ipv6(ipv6, _)) = pkt_out.net {
@@ -314,15 +314,15 @@ mod tests {
 
     #[test]
     fn tcp_egress_local_router_v3() {
-        let mut landscape_builder = LandNatV3SkelBuilder::default();
+        let mut builder = TcNatSkelBuilder::default();
         let pin_root = crate::tests::nat::isolated_pin_root("nat-v6-static-v3-local");
-        landscape_builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
+        builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
         let mut open_object = MaybeUninit::uninit();
-        let landscape_open = landscape_builder.open(&mut open_object).unwrap();
-        let landscape_skel = landscape_open.load().unwrap();
+        let open_skel = builder.open(&mut open_object).unwrap();
+        let skel = open_skel.load().unwrap();
 
         add_wan_ip(
-            &landscape_skel.maps.wan_ip_binding,
+            &skel.maps.wan_ip_binding,
             IFINDEX,
             IpAddr::V6(wan_ip()),
             None,
@@ -331,7 +331,7 @@ mod tests {
         );
 
         add_static_nat6_mapping(
-            &landscape_skel.maps.nat6_static_mappings,
+            &skel.maps.nat6_static_mappings,
             vec![StaticNatMappingV6Item {
                 wan_port: 80,
                 lan_port: 80,
@@ -341,7 +341,7 @@ mod tests {
         );
 
         add_ct6_entry(
-            &landscape_skel.maps.nat6_conn_timer,
+            &skel.maps.nat6_conn_timer,
             6,
             LOCAL_CLIENT_SUFFIX,
             80,
@@ -362,7 +362,7 @@ mod tests {
             ..Default::default()
         };
 
-        let result = landscape_skel.progs.nat_v6_egress.test_run(input).expect("test_run failed");
+        let result = skel.progs.tc_nat_wan_egress.test_run(input).expect("test_run failed");
         assert_eq!(result.return_value as i32, -1, "egress should return TC_ACT_UNSPEC(-1)");
 
         let pkt_out = PacketHeaders::from_ethernet_slice(&packet_out).expect("parse output");
@@ -381,15 +381,15 @@ mod tests {
 
     #[test]
     fn udp_ingress_local_router_v3() {
-        let mut landscape_builder = LandNatV3SkelBuilder::default();
+        let mut builder = TcNatSkelBuilder::default();
         let pin_root = crate::tests::nat::isolated_pin_root("nat-v6-static-v3-local");
-        landscape_builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
+        builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
         let mut open_object = MaybeUninit::uninit();
-        let landscape_open = landscape_builder.open(&mut open_object).unwrap();
-        let landscape_skel = landscape_open.load().unwrap();
+        let open_skel = builder.open(&mut open_object).unwrap();
+        let skel = open_skel.load().unwrap();
 
         add_wan_ip(
-            &landscape_skel.maps.wan_ip_binding,
+            &skel.maps.wan_ip_binding,
             IFINDEX,
             IpAddr::V6(wan_ip()),
             None,
@@ -398,7 +398,7 @@ mod tests {
         );
 
         add_static_nat6_mapping(
-            &landscape_skel.maps.nat6_static_mappings,
+            &skel.maps.nat6_static_mappings,
             vec![StaticNatMappingV6Item {
                 wan_port: 53,
                 lan_port: 53,
@@ -408,7 +408,7 @@ mod tests {
         );
 
         add_ct6_entry(
-            &landscape_skel.maps.nat6_conn_timer,
+            &skel.maps.nat6_conn_timer,
             17,
             LOCAL_CLIENT_SUFFIX,
             53,
@@ -429,8 +429,8 @@ mod tests {
             ..Default::default()
         };
 
-        let result = landscape_skel.progs.nat_v6_ingress.test_run(input).expect("test_run failed");
-        assert_eq!(result.return_value as i32, -1, "ingress should return TC_ACT_UNSPEC(-1)");
+        let result = skel.progs.tc_nat_wan_ingress.test_run(input).expect("test_run failed");
+        assert_eq!(result.return_value as i32, 0, "ingress should return TC_ACT_OK(0)");
 
         let pkt_out = PacketHeaders::from_ethernet_slice(&packet_out).expect("parse output");
         if let Some(etherparse::NetHeaders::Ipv6(ipv6, _)) = pkt_out.net {
@@ -448,15 +448,15 @@ mod tests {
 
     #[test]
     fn udp_egress_local_router_v3() {
-        let mut landscape_builder = LandNatV3SkelBuilder::default();
+        let mut builder = TcNatSkelBuilder::default();
         let pin_root = crate::tests::nat::isolated_pin_root("nat-v6-static-v3-local");
-        landscape_builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
+        builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
         let mut open_object = MaybeUninit::uninit();
-        let landscape_open = landscape_builder.open(&mut open_object).unwrap();
-        let landscape_skel = landscape_open.load().unwrap();
+        let open_skel = builder.open(&mut open_object).unwrap();
+        let skel = open_skel.load().unwrap();
 
         add_wan_ip(
-            &landscape_skel.maps.wan_ip_binding,
+            &skel.maps.wan_ip_binding,
             IFINDEX,
             IpAddr::V6(wan_ip()),
             None,
@@ -465,7 +465,7 @@ mod tests {
         );
 
         add_static_nat6_mapping(
-            &landscape_skel.maps.nat6_static_mappings,
+            &skel.maps.nat6_static_mappings,
             vec![StaticNatMappingV6Item {
                 wan_port: 53,
                 lan_port: 53,
@@ -475,7 +475,7 @@ mod tests {
         );
 
         add_ct6_entry(
-            &landscape_skel.maps.nat6_conn_timer,
+            &skel.maps.nat6_conn_timer,
             17,
             LOCAL_CLIENT_SUFFIX,
             53,
@@ -496,7 +496,7 @@ mod tests {
             ..Default::default()
         };
 
-        let result = landscape_skel.progs.nat_v6_egress.test_run(input).expect("test_run failed");
+        let result = skel.progs.tc_nat_wan_egress.test_run(input).expect("test_run failed");
         assert_eq!(result.return_value as i32, -1, "egress should return TC_ACT_UNSPEC(-1)");
 
         let pkt_out = PacketHeaders::from_ethernet_slice(&packet_out).expect("parse output");
@@ -515,15 +515,15 @@ mod tests {
 
     #[test]
     fn tcp_ingress_no_match_drop_v3() {
-        let mut landscape_builder = LandNatV3SkelBuilder::default();
+        let mut builder = TcNatSkelBuilder::default();
         let pin_root = crate::tests::nat::isolated_pin_root("nat-v6-static-v3-local");
-        landscape_builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
+        builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
         let mut open_object = MaybeUninit::uninit();
-        let landscape_open = landscape_builder.open(&mut open_object).unwrap();
-        let landscape_skel = landscape_open.load().unwrap();
+        let open_skel = builder.open(&mut open_object).unwrap();
+        let skel = open_skel.load().unwrap();
 
         add_wan_ip(
-            &landscape_skel.maps.wan_ip_binding,
+            &skel.maps.wan_ip_binding,
             IFINDEX,
             IpAddr::V6(wan_ip()),
             None,
@@ -532,7 +532,7 @@ mod tests {
         );
 
         add_static_nat6_mapping(
-            &landscape_skel.maps.nat6_static_mappings,
+            &skel.maps.nat6_static_mappings,
             vec![StaticNatMappingV6Item {
                 wan_port: 80,
                 lan_port: 80,
@@ -552,7 +552,7 @@ mod tests {
             ..Default::default()
         };
 
-        let result = landscape_skel.progs.nat_v6_ingress.test_run(input).expect("test_run failed");
+        let result = skel.progs.tc_nat_wan_ingress.test_run(input).expect("test_run failed");
         assert_eq!(
             result.return_value as i32, TC_ACT_SHOT,
             "ingress with no matching mapping should return TC_ACT_SHOT(2)",

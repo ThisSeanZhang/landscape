@@ -11,10 +11,10 @@ pub mod landscape;
 pub mod map_setting;
 pub mod metric;
 pub mod mss_clamp;
-pub mod nat;
 pub(crate) mod pipeline;
 pub mod pppoe;
 pub mod route;
+pub mod stages;
 pub mod tproxy;
 
 #[cfg(test)]
@@ -22,7 +22,6 @@ mod tests;
 
 pub mod chain;
 pub mod dns_dispatcher;
-pub mod stages;
 
 static MAP_PATHS: Lazy<LandscapeMapPath> = Lazy::new(|| {
     let ebpf_map_space = &LAND_ARGS.ebpf_map_space;

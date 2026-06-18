@@ -16,7 +16,7 @@ use crate::{
         add_wan_ip,
         nat::{add_static_nat4_mapping_v3, StaticNatMappingV4Item},
     },
-    nat::v3::land_nat_v3::{types, LandNatV3SkelBuilder},
+    stages::nat::tc_nat_skel::{types, TcNatSkelBuilder},
     tests::TestSkb,
     NAT_MAPPING_EGRESS, NAT_MAPPING_INGRESS,
 };
@@ -98,15 +98,15 @@ mod tests {
     #[test]
     fn tcp_ingress_lan_host_v3() {
         let _guard = NAT_V3_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let mut landscape_builder = LandNatV3SkelBuilder::default();
+        let mut builder = TcNatSkelBuilder::default();
         let pin_root = crate::tests::nat::isolated_pin_root("nat-v4-static-v3-lan");
-        landscape_builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
+        builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
         let mut open_object = MaybeUninit::uninit();
-        let landscape_open = landscape_builder.open(&mut open_object).unwrap();
-        let landscape_skel = landscape_open.load().unwrap();
+        let open_skel = builder.open(&mut open_object).unwrap();
+        let skel = open_skel.load().unwrap();
 
         add_wan_ip(
-            &landscape_skel.maps.wan_ip_binding,
+            &skel.maps.wan_ip_binding,
             IFINDEX,
             IpAddr::V4(WAN_IP),
             None,
@@ -115,7 +115,7 @@ mod tests {
         );
 
         add_static_nat4_mapping_v3(
-            &landscape_skel.maps.nat4_st_map,
+            &skel.maps.nat4_st_map,
             vec![StaticNatMappingV4Item {
                 wan_port: 8080,
                 lan_port: 80,
@@ -124,7 +124,7 @@ mod tests {
             }],
         );
         add_ct_entry(
-            &landscape_skel.maps.nat4_mapping_timer_v3,
+            &skel.maps.nat4_mapping_timer_v3,
             6,
             REMOTE_IP,
             9999,
@@ -147,8 +147,8 @@ mod tests {
             ..Default::default()
         };
 
-        let result = landscape_skel.progs.nat_v4_ingress.test_run(input).expect("test_run failed");
-        assert_eq!(result.return_value as i32, -1, "ingress should return TC_ACT_UNSPEC(-1)");
+        let result = skel.progs.tc_nat_wan_ingress.test_run(input).expect("test_run failed");
+        assert_eq!(result.return_value as i32, 0, "ingress should return TC_ACT_OK(0)");
 
         let pkt_out = etherparse::PacketHeaders::from_ethernet_slice(&packet_out)
             .expect("parse output packet");
@@ -168,15 +168,15 @@ mod tests {
     #[test]
     fn tcp_egress_lan_host_v3() {
         let _guard = NAT_V3_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let mut landscape_builder = LandNatV3SkelBuilder::default();
+        let mut builder = TcNatSkelBuilder::default();
         let pin_root = crate::tests::nat::isolated_pin_root("nat-v4-static-v3-lan");
-        landscape_builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
+        builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
         let mut open_object = MaybeUninit::uninit();
-        let landscape_open = landscape_builder.open(&mut open_object).unwrap();
-        let landscape_skel = landscape_open.load().unwrap();
+        let open_skel = builder.open(&mut open_object).unwrap();
+        let skel = open_skel.load().unwrap();
 
         add_wan_ip(
-            &landscape_skel.maps.wan_ip_binding,
+            &skel.maps.wan_ip_binding,
             IFINDEX,
             IpAddr::V4(WAN_IP),
             None,
@@ -185,7 +185,7 @@ mod tests {
         );
 
         add_static_nat4_mapping_v3(
-            &landscape_skel.maps.nat4_st_map,
+            &skel.maps.nat4_st_map,
             vec![StaticNatMappingV4Item {
                 wan_port: 8080,
                 lan_port: 80,
@@ -194,7 +194,7 @@ mod tests {
             }],
         );
         add_ct_entry(
-            &landscape_skel.maps.nat4_mapping_timer_v3,
+            &skel.maps.nat4_mapping_timer_v3,
             6,
             REMOTE_IP,
             9999,
@@ -217,7 +217,7 @@ mod tests {
             ..Default::default()
         };
 
-        let result = landscape_skel.progs.nat_v4_egress.test_run(input).expect("test_run failed");
+        let result = skel.progs.tc_nat_wan_egress.test_run(input).expect("test_run failed");
         assert_eq!(result.return_value as i32, -1, "egress should return TC_ACT_UNSPEC(-1)");
 
         let pkt_out = etherparse::PacketHeaders::from_ethernet_slice(&packet_out)
@@ -238,15 +238,15 @@ mod tests {
     #[test]
     fn tcp_ingress_local_router_v3() {
         let _guard = NAT_V3_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let mut landscape_builder = LandNatV3SkelBuilder::default();
+        let mut builder = TcNatSkelBuilder::default();
         let pin_root = crate::tests::nat::isolated_pin_root("nat-v4-static-v3-local");
-        landscape_builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
+        builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
         let mut open_object = MaybeUninit::uninit();
-        let landscape_open = landscape_builder.open(&mut open_object).unwrap();
-        let landscape_skel = landscape_open.load().unwrap();
+        let open_skel = builder.open(&mut open_object).unwrap();
+        let skel = open_skel.load().unwrap();
 
         add_wan_ip(
-            &landscape_skel.maps.wan_ip_binding,
+            &skel.maps.wan_ip_binding,
             IFINDEX,
             IpAddr::V4(WAN_IP),
             None,
@@ -255,7 +255,7 @@ mod tests {
         );
 
         add_static_nat4_mapping_v3(
-            &landscape_skel.maps.nat4_st_map,
+            &skel.maps.nat4_st_map,
             vec![StaticNatMappingV4Item {
                 wan_port: 8080,
                 lan_port: 80,
@@ -264,7 +264,7 @@ mod tests {
             }],
         );
         add_ct_entry(
-            &landscape_skel.maps.nat4_mapping_timer_v3,
+            &skel.maps.nat4_mapping_timer_v3,
             6,
             REMOTE_IP,
             9999,
@@ -287,8 +287,8 @@ mod tests {
             ..Default::default()
         };
 
-        let result = landscape_skel.progs.nat_v4_ingress.test_run(input).expect("test_run failed");
-        assert_eq!(result.return_value as i32, -1, "ingress should return TC_ACT_UNSPEC(-1)");
+        let result = skel.progs.tc_nat_wan_ingress.test_run(input).expect("test_run failed");
+        assert_eq!(result.return_value as i32, 0, "ingress should return TC_ACT_OK(0)");
 
         let pkt_out = etherparse::PacketHeaders::from_ethernet_slice(&packet_out)
             .expect("parse output packet");
@@ -302,15 +302,15 @@ mod tests {
     #[test]
     fn tcp_egress_local_router_v3() {
         let _guard = NAT_V3_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let mut landscape_builder = LandNatV3SkelBuilder::default();
+        let mut builder = TcNatSkelBuilder::default();
         let pin_root = crate::tests::nat::isolated_pin_root("nat-v4-static-v3-local");
-        landscape_builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
+        builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
         let mut open_object = MaybeUninit::uninit();
-        let landscape_open = landscape_builder.open(&mut open_object).unwrap();
-        let landscape_skel = landscape_open.load().unwrap();
+        let open_skel = builder.open(&mut open_object).unwrap();
+        let skel = open_skel.load().unwrap();
 
         add_wan_ip(
-            &landscape_skel.maps.wan_ip_binding,
+            &skel.maps.wan_ip_binding,
             IFINDEX,
             IpAddr::V4(WAN_IP),
             None,
@@ -319,7 +319,7 @@ mod tests {
         );
 
         add_static_nat4_mapping_v3(
-            &landscape_skel.maps.nat4_st_map,
+            &skel.maps.nat4_st_map,
             vec![StaticNatMappingV4Item {
                 wan_port: 8080,
                 lan_port: 80,
@@ -328,7 +328,7 @@ mod tests {
             }],
         );
         add_ct_entry(
-            &landscape_skel.maps.nat4_mapping_timer_v3,
+            &skel.maps.nat4_mapping_timer_v3,
             6,
             REMOTE_IP,
             9999,
@@ -351,7 +351,7 @@ mod tests {
             ..Default::default()
         };
 
-        let result = landscape_skel.progs.nat_v4_egress.test_run(input).expect("test_run failed");
+        let result = skel.progs.tc_nat_wan_egress.test_run(input).expect("test_run failed");
         assert_eq!(result.return_value as i32, -1, "egress should return TC_ACT_UNSPEC(-1)");
 
         let pkt_out = etherparse::PacketHeaders::from_ethernet_slice(&packet_out)
@@ -366,15 +366,15 @@ mod tests {
     #[test]
     fn udp_ingress_local_router_v3() {
         let _guard = NAT_V3_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let mut landscape_builder = LandNatV3SkelBuilder::default();
+        let mut builder = TcNatSkelBuilder::default();
         let pin_root = crate::tests::nat::isolated_pin_root("nat-v4-static-v3-local");
-        landscape_builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
+        builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
         let mut open_object = MaybeUninit::uninit();
-        let landscape_open = landscape_builder.open(&mut open_object).unwrap();
-        let landscape_skel = landscape_open.load().unwrap();
+        let open_skel = builder.open(&mut open_object).unwrap();
+        let skel = open_skel.load().unwrap();
 
         add_wan_ip(
-            &landscape_skel.maps.wan_ip_binding,
+            &skel.maps.wan_ip_binding,
             IFINDEX,
             IpAddr::V4(WAN_IP),
             None,
@@ -383,7 +383,7 @@ mod tests {
         );
 
         add_static_nat4_mapping_v3(
-            &landscape_skel.maps.nat4_st_map,
+            &skel.maps.nat4_st_map,
             vec![StaticNatMappingV4Item {
                 wan_port: 5353,
                 lan_port: 53,
@@ -392,7 +392,7 @@ mod tests {
             }],
         );
         add_ct_entry(
-            &landscape_skel.maps.nat4_mapping_timer_v3,
+            &skel.maps.nat4_mapping_timer_v3,
             17,
             REMOTE_IP,
             12345,
@@ -415,8 +415,8 @@ mod tests {
             ..Default::default()
         };
 
-        let result = landscape_skel.progs.nat_v4_ingress.test_run(input).expect("test_run failed");
-        assert_eq!(result.return_value as i32, -1, "ingress should return TC_ACT_UNSPEC(-1)");
+        let result = skel.progs.tc_nat_wan_ingress.test_run(input).expect("test_run failed");
+        assert_eq!(result.return_value as i32, 0, "ingress should return TC_ACT_OK(0)");
 
         let pkt_out = etherparse::PacketHeaders::from_ethernet_slice(&packet_out)
             .expect("parse output packet");
@@ -430,15 +430,15 @@ mod tests {
     #[test]
     fn udp_egress_local_router_v3() {
         let _guard = NAT_V3_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let mut landscape_builder = LandNatV3SkelBuilder::default();
+        let mut builder = TcNatSkelBuilder::default();
         let pin_root = crate::tests::nat::isolated_pin_root("nat-v4-static-v3-local");
-        landscape_builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
+        builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
         let mut open_object = MaybeUninit::uninit();
-        let landscape_open = landscape_builder.open(&mut open_object).unwrap();
-        let landscape_skel = landscape_open.load().unwrap();
+        let open_skel = builder.open(&mut open_object).unwrap();
+        let skel = open_skel.load().unwrap();
 
         add_wan_ip(
-            &landscape_skel.maps.wan_ip_binding,
+            &skel.maps.wan_ip_binding,
             IFINDEX,
             IpAddr::V4(WAN_IP),
             None,
@@ -447,7 +447,7 @@ mod tests {
         );
 
         add_static_nat4_mapping_v3(
-            &landscape_skel.maps.nat4_st_map,
+            &skel.maps.nat4_st_map,
             vec![StaticNatMappingV4Item {
                 wan_port: 5353,
                 lan_port: 53,
@@ -456,7 +456,7 @@ mod tests {
             }],
         );
         add_ct_entry(
-            &landscape_skel.maps.nat4_mapping_timer_v3,
+            &skel.maps.nat4_mapping_timer_v3,
             17,
             REMOTE_IP,
             12345,
@@ -479,7 +479,7 @@ mod tests {
             ..Default::default()
         };
 
-        let result = landscape_skel.progs.nat_v4_egress.test_run(input).expect("test_run failed");
+        let result = skel.progs.tc_nat_wan_egress.test_run(input).expect("test_run failed");
         assert_eq!(result.return_value as i32, -1, "egress should return TC_ACT_UNSPEC(-1)");
 
         let pkt_out = etherparse::PacketHeaders::from_ethernet_slice(&packet_out)
@@ -494,15 +494,15 @@ mod tests {
     #[test]
     fn tcp_ingress_no_match_drop_v3() {
         let _guard = NAT_V3_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let mut landscape_builder = LandNatV3SkelBuilder::default();
+        let mut builder = TcNatSkelBuilder::default();
         let pin_root = crate::tests::nat::isolated_pin_root("nat-v4-static-v3-local");
-        landscape_builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
+        builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
         let mut open_object = MaybeUninit::uninit();
-        let landscape_open = landscape_builder.open(&mut open_object).unwrap();
-        let landscape_skel = landscape_open.load().unwrap();
+        let open_skel = builder.open(&mut open_object).unwrap();
+        let skel = open_skel.load().unwrap();
 
         add_wan_ip(
-            &landscape_skel.maps.wan_ip_binding,
+            &skel.maps.wan_ip_binding,
             IFINDEX,
             IpAddr::V4(WAN_IP),
             None,
@@ -511,7 +511,7 @@ mod tests {
         );
 
         add_static_nat4_mapping_v3(
-            &landscape_skel.maps.nat4_st_map,
+            &skel.maps.nat4_st_map,
             vec![StaticNatMappingV4Item {
                 wan_port: 8080,
                 lan_port: 80,
@@ -532,7 +532,7 @@ mod tests {
             ..Default::default()
         };
 
-        let result = landscape_skel.progs.nat_v4_ingress.test_run(input).expect("test_run failed");
+        let result = skel.progs.tc_nat_wan_ingress.test_run(input).expect("test_run failed");
         assert_eq!(
             result.return_value as i32, TC_ACT_SHOT,
             "ingress with no matching mapping should return TC_ACT_SHOT(2)",

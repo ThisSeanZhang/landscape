@@ -9,7 +9,7 @@ use crate::bpf_error::LdEbpfResult;
 // TC NAT
 // ========================================================================
 
-mod tc_nat_skel {
+pub(crate) mod tc_nat_skel {
     include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/tc_nat.skel.rs"));
 }
 

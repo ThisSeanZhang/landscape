@@ -10,7 +10,7 @@ use libbpf_rs::{
 };
 use zerocopy::IntoBytes;
 
-use crate::{map_setting::add_wan_ip, nat::v3::land_nat_v3::LandNatV3SkelBuilder, tests::TestSkb};
+use crate::{map_setting::add_wan_ip, stages::nat::tc_nat_skel::TcNatSkelBuilder, tests::TestSkb};
 
 /// https://www.cloudshark.org/captures/456a264486bf?filter=tcp
 /// 192.168.101.201:56186 -> 50.18.88.205:443
@@ -26,25 +26,25 @@ fn build_ipv4_tcp_syn() -> Vec<u8> {
 }
 
 pub fn run_ipv4_egress_smoke(mut payload: Vec<u8>) {
-    let mut landscape_builder = LandNatV3SkelBuilder::default();
+    let mut builder = TcNatSkelBuilder::default();
     let pin_root = crate::tests::nat::isolated_pin_root("nat-v4-egress");
-    landscape_builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
+    builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
     let mut open_object = MaybeUninit::uninit();
-    let landscape_open = landscape_builder.open(&mut open_object).unwrap();
+    let open_skel = builder.open(&mut open_object).unwrap();
 
-    let landscape_skel = landscape_open.load().unwrap();
+    let skel = open_skel.load().unwrap();
 
     let ifindex = 6;
 
     add_wan_ip(
-        &landscape_skel.maps.wan_ip_binding,
+        &skel.maps.wan_ip_binding,
         ifindex,
         IpAddr::V4(Ipv4Addr::new(192, 168, 101, 201)),
         None,
         24,
         Some(MacAddr::broadcast()),
     );
-    let egress_nat = landscape_skel.progs.egress_nat;
+    let egress_nat = skel.progs.tc_nat_wan_egress;
 
     let mut ctx = TestSkb::default();
     ctx.ifindex = ifindex;
