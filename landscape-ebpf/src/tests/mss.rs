@@ -9,14 +9,14 @@ use libbpf_rs::{
     ProgramInput,
 };
 
-use crate::mss_clamp::mss_clamp::MssClampSkelBuilder;
+use crate::stages::mss::tc_mss_skel::TcMssSkelBuilder;
 
 const MTU: u16 = 1492;
 const IPV4_TARGET_MSS: u16 = MTU - 20 - 20;
 const IPV6_TARGET_MSS: u16 = MTU - 40 - 20;
 
 fn run_mss_clamp(mut payload: Vec<u8>) -> Vec<u8> {
-    let builder = MssClampSkelBuilder::default();
+    let builder = TcMssSkelBuilder::default();
     let mut open_object = MaybeUninit::uninit();
     let mut open = builder.open(&mut open_object).unwrap();
     open.maps.rodata_data.as_deref_mut().unwrap().mtu_size = MTU;
@@ -25,7 +25,7 @@ fn run_mss_clamp(mut payload: Vec<u8>) -> Vec<u8> {
 
     let mut packet_out = vec![0_u8; payload.len()];
     skel.progs
-        .clamp_ingress
+        .tc_mss_wan_ingress
         .test_run(ProgramInput {
             data_in: Some(&mut payload),
             data_out: Some(&mut packet_out),

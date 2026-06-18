@@ -5,7 +5,7 @@ use libbpf_rs::{
     MapCore, MapFlags, ProgramInput,
 };
 
-use crate::firewall::firewall_bpf::FirewallSkelBuilder;
+use crate::stages::firewall::tc_firewall_skel::TcFirewallSkelBuilder;
 use crate::tests::test_firewall_packet::{
     types::firewall_packet_test_result, TestFirewallPacketSkelBuilder,
 };
@@ -36,7 +36,7 @@ fn run_firewall_packet_test(mut payload: Vec<u8>) -> firewall_packet_test_result
 
 pub fn test_ingress_and_egress(mut egress_payload: Vec<u8>, mut ingress_payload: Vec<u8>) {
     let mut firewall_open_object = MaybeUninit::zeroed();
-    let firewall_builder = FirewallSkelBuilder::default();
+    let firewall_builder = TcFirewallSkelBuilder::default();
 
     let firewall_open_skel = firewall_builder.open(&mut firewall_open_object).unwrap();
 
@@ -44,8 +44,8 @@ pub fn test_ingress_and_egress(mut egress_payload: Vec<u8>, mut ingress_payload:
 
     let skel = firewall_open_skel.load().unwrap();
 
-    let egress_firewall = skel.progs.egress_firewall;
-    let ingress_firewall = skel.progs.ingress_firewall;
+    let egress_firewall = skel.progs.tc_firewall_wan_egress;
+    let ingress_firewall = skel.progs.tc_firewall_wan_ingress;
 
     let egress_input = ProgramInput {
         data_in: Some(&mut egress_payload),
@@ -70,7 +70,7 @@ pub fn test_ingress_and_egress(mut egress_payload: Vec<u8>, mut ingress_payload:
     };
     let result = ingress_firewall.test_run(ingress_input).expect("test_run failed");
 
-    assert_eq!(result.return_value as i32, -1);
+    assert_eq!(result.return_value as i32, 0);
     println!("time: {}", result.duration.as_nanos());
 }
 

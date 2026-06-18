@@ -5,7 +5,7 @@ use crate::bpf_error::LdEbpfResult;
 // TC MSS clamp
 // ========================================================================
 
-mod tc_mss_skel {
+pub(crate) mod tc_mss_skel {
     include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/tc_mss.skel.rs"));
 }
 

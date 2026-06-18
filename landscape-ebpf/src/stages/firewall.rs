@@ -5,7 +5,7 @@ use crate::bpf_error::LdEbpfResult;
 // TC firewall
 // ========================================================================
 
-mod tc_firewall_skel {
+pub(crate) mod tc_firewall_skel {
     include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/tc_firewall.skel.rs"));
 }
 

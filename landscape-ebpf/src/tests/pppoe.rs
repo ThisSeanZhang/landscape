@@ -6,11 +6,25 @@ use libbpf_rs::{
     ProgramInput,
 };
 
-mod pppoe_skel {
-    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/pppoe.skel.rs"));
+mod tc_pppoe_skel {
+    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/tc_pppoe.skel.rs"));
 }
 
+use tc_pppoe_skel::types::pppoe_egress_tmpl;
+
 const SESSION_ID: u16 = 0x2233;
+
+fn default_tmpl(session_id: u16) -> pppoe_egress_tmpl {
+    pppoe_egress_tmpl {
+        dmac: [0x02, 0x11, 0x22, 0x33, 0x44, 0x55],
+        smac: [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF],
+        eth_proto: 0x8864u16.to_be(),
+        ver_type: 0x11,
+        code: 0x00,
+        session_id: session_id.to_be(),
+        ..Default::default()
+    }
+}
 
 fn build_ipv4_packet() -> Vec<u8> {
     let builder = PacketBuilder::ethernet2(
@@ -44,71 +58,25 @@ fn build_ipv6_packet() -> Vec<u8> {
     packet
 }
 
-#[allow(dead_code)]
-fn pppoe_encap_header(session_id: u16, payload_len: u16, is_ipv6: bool) -> [u8; 22] {
-    let mut buf = [0u8; 22];
-    buf[0..6].copy_from_slice(&[0x02, 0x11, 0x22, 0x33, 0x44, 0x55]);
-    buf[6..12].copy_from_slice(&[0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF]);
-    buf[12] = 0x88;
-    buf[13] = 0x64;
-    buf[14] = 0x11;
-    buf[15] = 0x00;
-    buf[16] = (session_id >> 8) as u8;
-    buf[17] = session_id as u8;
-    let ppp_len = payload_len + 2;
-    buf[18] = (ppp_len >> 8) as u8;
-    buf[19] = ppp_len as u8;
-    if is_ipv6 {
-        buf[20] = 0x00;
-        buf[21] = 0x57;
-    } else {
-        buf[20] = 0x00;
-        buf[21] = 0x21;
-    }
-    buf
-}
-
-#[allow(dead_code)]
-fn build_pppoe_ipv4_packet() -> Vec<u8> {
-    let ip_pkt = build_ipv4_packet();
-    let ip_payload = &ip_pkt[14..];
-    let pppoe_header = pppoe_encap_header(SESSION_ID, ip_payload.len() as u16, false);
-    let mut full_pkt = Vec::with_capacity(22 + ip_payload.len());
-    full_pkt.extend_from_slice(&pppoe_header);
-    full_pkt.extend_from_slice(ip_payload);
-    full_pkt
-}
-
-#[allow(dead_code)]
-fn build_pppoe_ipv6_packet() -> Vec<u8> {
-    let ip_pkt = build_ipv6_packet();
-    let ip_payload = &ip_pkt[14..];
-    let pppoe_header = pppoe_encap_header(SESSION_ID, ip_payload.len() as u16, true);
-    let mut full_pkt = Vec::with_capacity(22 + ip_payload.len());
-    full_pkt.extend_from_slice(&pppoe_header);
-    full_pkt.extend_from_slice(ip_payload);
-    full_pkt
-}
-
 #[test]
 fn pppoe_egress_ipv4_adds_pppoe_header() {
-    let builder = pppoe_skel::PppoeSkelBuilder::default();
+    let builder = tc_pppoe_skel::TcPppoeSkelBuilder::default();
     let mut open_object = MaybeUninit::uninit();
-    let mut pppoe_open = builder.open(&mut open_object).unwrap();
-    pppoe_open.maps.rodata_data.as_deref_mut().unwrap().session_id = SESSION_ID;
-    let skel = pppoe_open.load().unwrap();
+    let mut open = builder.open(&mut open_object).unwrap();
+    open.maps.rodata_data.as_deref_mut().unwrap().pppoe_tmpl = default_tmpl(SESSION_ID);
+    let skel = open.load().unwrap();
 
     let mut plain_pkt = build_ipv4_packet();
     let mut output = vec![0u8; plain_pkt.len() + 8];
 
     skel.progs
-        .pppoe_egress
+        .tc_pppoe_wan_egress
         .test_run(ProgramInput {
             data_in: Some(&mut plain_pkt),
             data_out: Some(&mut output),
             ..Default::default()
         })
-        .expect("test_run pppoe_egress ipv4");
+        .expect("test_run tc_pppoe_wan_egress ipv4");
 
     assert_eq!(output[12], 0x88);
     assert_eq!(output[13], 0x64);
@@ -123,23 +91,23 @@ fn pppoe_egress_ipv4_adds_pppoe_header() {
 
 #[test]
 fn pppoe_egress_ipv6_adds_pppoe_header() {
-    let builder = pppoe_skel::PppoeSkelBuilder::default();
+    let builder = tc_pppoe_skel::TcPppoeSkelBuilder::default();
     let mut open_object = MaybeUninit::uninit();
-    let mut pppoe_open = builder.open(&mut open_object).unwrap();
-    pppoe_open.maps.rodata_data.as_deref_mut().unwrap().session_id = SESSION_ID;
-    let skel = pppoe_open.load().unwrap();
+    let mut open = builder.open(&mut open_object).unwrap();
+    open.maps.rodata_data.as_deref_mut().unwrap().pppoe_tmpl = default_tmpl(SESSION_ID);
+    let skel = open.load().unwrap();
 
     let mut plain_pkt = build_ipv6_packet();
     let mut output = vec![0u8; plain_pkt.len() + 8];
 
     skel.progs
-        .pppoe_egress
+        .tc_pppoe_wan_egress
         .test_run(ProgramInput {
             data_in: Some(&mut plain_pkt),
             data_out: Some(&mut output),
             ..Default::default()
         })
-        .expect("test_run pppoe_egress ipv6");
+        .expect("test_run tc_pppoe_wan_egress ipv6");
 
     assert_eq!(output[12], 0x88);
     assert_eq!(output[13], 0x64);
@@ -154,11 +122,11 @@ fn pppoe_egress_ipv6_adds_pppoe_header() {
 
 #[test]
 fn pppoe_egress_non_ip_passes_unchanged() {
-    let builder = pppoe_skel::PppoeSkelBuilder::default();
+    let builder = tc_pppoe_skel::TcPppoeSkelBuilder::default();
     let mut open_object = MaybeUninit::uninit();
-    let mut pppoe_open = builder.open(&mut open_object).unwrap();
-    pppoe_open.maps.rodata_data.as_deref_mut().unwrap().session_id = SESSION_ID;
-    let skel = pppoe_open.load().unwrap();
+    let mut open = builder.open(&mut open_object).unwrap();
+    open.maps.rodata_data.as_deref_mut().unwrap().pppoe_tmpl = default_tmpl(SESSION_ID);
+    let skel = open.load().unwrap();
 
     let mut arp_pkt = [
         0xFFu8, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x02, 0x11, 0x22, 0x33, 0x44, 0x55, 0x08, 0x06, 0x00,
@@ -170,72 +138,36 @@ fn pppoe_egress_non_ip_passes_unchanged() {
     let mut output = vec![0u8; arp_pkt.len() + 8];
 
     skel.progs
-        .pppoe_egress
+        .tc_pppoe_wan_egress
         .test_run(ProgramInput {
             data_in: Some(&mut arp_pkt),
             data_out: Some(&mut output),
             ..Default::default()
         })
-        .expect("test_run pppoe_egress non-ip");
+        .expect("test_run tc_pppoe_wan_egress non-ip");
 
     assert_eq!(&output[..original.len()], &original[..]);
 }
 
 #[test]
 fn pppoe_session_id_is_set_in_rodata() {
-    let builder = pppoe_skel::PppoeSkelBuilder::default();
+    let builder = tc_pppoe_skel::TcPppoeSkelBuilder::default();
     let mut open_object = MaybeUninit::uninit();
-    let mut pppoe_open = builder.open(&mut open_object).unwrap();
-    let rodata = pppoe_open.maps.rodata_data.as_deref_mut().unwrap();
-    rodata.session_id = SESSION_ID;
-    assert_eq!(rodata.session_id, SESSION_ID);
-    let skel = pppoe_open.load().unwrap();
+    let mut open = builder.open(&mut open_object).unwrap();
+    let rodata = open.maps.rodata_data.as_deref_mut().unwrap();
+    rodata.pppoe_tmpl = default_tmpl(SESSION_ID);
+    assert_eq!(rodata.pppoe_tmpl.session_id, SESSION_ID.to_be());
+    let skel = open.load().unwrap();
 
-    // Verify both programs loaded: simple test_run on empty data should work
+    // Verify program loaded: simple test_run on empty data should work
     let mut empty = vec![0u8; 64];
     let mut out = vec![0u8; 64];
     skel.progs
-        .pppoe_ingress
+        .tc_pppoe_wan_egress
         .test_run(ProgramInput {
             data_in: Some(&mut empty),
             data_out: Some(&mut out),
             ..Default::default()
         })
-        .expect("pppoe_ingress test_run");
-    skel.progs
-        .pppoe_egress
-        .test_run(ProgramInput {
-            data_in: Some(&mut empty),
-            data_out: Some(&mut out),
-            ..Default::default()
-        })
-        .expect("pppoe_egress test_run");
-}
-
-#[test]
-fn pppoe_ingress_non_ppp_passes_unchanged() {
-    let builder = pppoe_skel::PppoeSkelBuilder::default();
-    let mut open_object = MaybeUninit::uninit();
-    let mut pppoe_open = builder.open(&mut open_object).unwrap();
-    pppoe_open.maps.rodata_data.as_deref_mut().unwrap().session_id = SESSION_ID;
-    let skel = pppoe_open.load().unwrap();
-
-    let mut plain_pkt = build_ipv4_packet();
-    let original = plain_pkt.clone();
-    let mut output = vec![0u8; plain_pkt.len()];
-
-    let ret = skel
-        .progs
-        .pppoe_ingress
-        .test_run(ProgramInput {
-            data_in: Some(&mut plain_pkt),
-            data_out: Some(&mut output),
-            ..Default::default()
-        })
-        .expect("test_run pppoe_ingress non-ppp");
-
-    // Non-PPP packets should pass through (TC_ACT_UNSPEC = -1 = 0xFFFFFFFF)
-    let expected_unspec = u32::MAX; // -1 as u32
-    assert_eq!(ret.return_value, expected_unspec, "non-PPP packet should return TC_ACT_UNSPEC");
-    assert_eq!(&output[..original.len()], &original[..]);
+        .expect("tc_pppoe_wan_egress test_run");
 }

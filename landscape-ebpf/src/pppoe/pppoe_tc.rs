@@ -2,7 +2,6 @@ use libbpf_rs::{
     skel::{OpenSkel, SkelBuilder},
     TC_EGRESS,
 };
-use std::mem::MaybeUninit;
 use tokio::sync::oneshot::error::TryRecvError;
 
 use crate::{
@@ -12,10 +11,6 @@ use crate::{
     landscape::TcHookProxy,
     PPPOE_EGRESS_PRIORITY,
 };
-
-mod landscape_pppoe {
-    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/pppoe.skel.rs"));
-}
 
 mod tc_pppoe_skel {
     include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/tc_pppoe.skel.rs"));
@@ -113,40 +108,6 @@ fn attach_standalone_pppoe(ifindex: u32, tmpl: PppoeEgressTmpl) -> LdEbpfResult<
     hook.attach();
 
     Ok(StandalonePppoe { _skel: skel, _backing: backing, _hook: hook })
-}
-
-pub async fn create_pppoe_tc_ebpf<'a>(
-    ifindex: u32,
-    session_id: u16,
-    obj: &'a mut MaybeUninit<libbpf_rs::OpenObject>,
-) -> (tokio::sync::broadcast::Sender<()>, landscape_pppoe::PppoeSkel<'a>) {
-    let pppoe_builder = landscape_pppoe::PppoeSkelBuilder::default();
-
-    let mut pppoe_open: landscape_pppoe::OpenPppoeSkel<'a> =
-        crate::bpf_ctx!(pppoe_builder.open(obj), "pppoe_tc open skeleton failed").unwrap();
-    let rodata_data =
-        pppoe_open.maps.rodata_data.as_deref_mut().expect("rodata is not memory mapped");
-
-    rodata_data.session_id = session_id.to_be();
-    let pppoe_skel: landscape_pppoe::PppoeSkel<'a> =
-        crate::bpf_ctx!(pppoe_open.load(), "pppoe_tc load skeleton failed").unwrap();
-
-    let mut pppoe_egress_builder = TcHookProxy::new(
-        &pppoe_skel.progs.pppoe_egress,
-        ifindex as i32,
-        TC_EGRESS,
-        PPPOE_EGRESS_PRIORITY,
-    );
-
-    pppoe_egress_builder.attach();
-
-    let (notice_tx, mut notice_rx) = tokio::sync::broadcast::channel::<()>(1);
-
-    std::thread::spawn(move || {
-        let _ = notice_rx.blocking_recv();
-        drop(pppoe_egress_builder);
-    });
-    (notice_tx, pppoe_skel)
 }
 
 fn prepare_pppoe_skb_pending(_ifindex: u32, session_id: u16) -> LdEbpfResult<SkbPending> {
