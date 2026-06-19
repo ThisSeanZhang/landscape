@@ -207,10 +207,15 @@ static __always_inline int tc_pick_wan_v4(struct __sk_buff *skb, u32 current_l3_
     struct route_target_info_v4 *target_info = bpf_map_lookup_elem(&rt4_target_slot_map, &slot_key);
 
     if (target_info == NULL) {
-        if (resolved_flow_id == 0) return TC_ACT_OK;
+        if (resolved_flow_id == 0) {
+            ld_bpf_log("DROP default flow v4, no target for: %pI4", &context->saddr);
+            return TC_ACT_SHOT;
+        }
         ld_bpf_log("DROP flow_id v4: %d, ip: %pI4", resolved_flow_id, &context->saddr);
         return TC_ACT_SHOT;
     }
+
+    bool mac_stored = true;
 
     if (target_info->ifindex != skb->ingress_ifindex) {
         if (current_l3_offset == 0 && target_info->has_mac) {
@@ -231,15 +236,32 @@ static __always_inline int tc_pick_wan_v4(struct __sk_buff *skb, u32 current_l3_
                 bpf_map_lookup_elem(&ip_mac_v4, &target_info->gate_addr);
             if (mac_value) {
                 int ret = store_mac_v4(skb, mac_value->mac, target_info->mac);
-                if (ret) ld_bpf_log("store_mac_v4 err: %d", ret);
+                if (!ret) {
+                    mac_stored = true;
+                } else {
+                    mac_stored = false;
+                    ld_bpf_log("store_mac_v4 err: %d", ret);
+                }
             } else {
+                mac_stored = false;
                 ld_bpf_log("can't find mac by: %pI4", &target_info->gate_addr);
             }
         }
     }
 
     skb->cb[TC_CHAIN_CB_FORWARDED_OFFSET] = 1;
-    return bpf_redirect(target_info->ifindex, 0);
+
+    if (mac_stored) {
+        return bpf_redirect(target_info->ifindex, 0);
+    }
+
+    struct bpf_redir_neigh param;
+    param.nh_family = AF_INET;
+    param.ipv4_nh = target_info->gate_addr;
+    int neigh_ret = bpf_redirect_neigh(target_info->ifindex, &param, sizeof(param), 0);
+    if (unlikely(neigh_ret != TC_ACT_REDIRECT))
+        ld_bpf_log("bpf_redirect_neigh error: %d", neigh_ret);
+    return neigh_ret;
 #undef BPF_LOG_TOPIC
 }
 
@@ -256,10 +278,15 @@ static __always_inline int tc_pick_wan_v6(struct __sk_buff *skb, u32 current_l3_
     struct route_target_info_v6 *target_info = bpf_map_lookup_elem(&rt6_target_slot_map, &slot_key);
 
     if (target_info == NULL) {
-        if (resolved_flow_id == 0) return TC_ACT_OK;
+        if (resolved_flow_id == 0) {
+            ld_bpf_log("DROP default flow v6, no target");
+            return TC_ACT_SHOT;
+        }
         ld_bpf_log("DROP flow_id v6: %d", resolved_flow_id);
         return TC_ACT_SHOT;
     }
+
+    bool mac_stored = true;
 
     if (target_info->ifindex != skb->ingress_ifindex) {
         if (current_l3_offset == 0 && target_info->has_mac) {
@@ -280,15 +307,30 @@ static __always_inline int tc_pick_wan_v6(struct __sk_buff *skb, u32 current_l3_
                 bpf_map_lookup_elem(&ip_mac_v6, &target_info->gate_addr);
             if (mac_value) {
                 int ret = store_mac_v6(skb, mac_value->mac, target_info->mac);
-                if (ret) ld_bpf_log("store_mac_v6 err: %d", ret);
+                if (!ret) {
+                    mac_stored = true;
+                } else {
+                    mac_stored = false;
+                    ld_bpf_log("store_mac_v6 err: %d", ret);
+                }
             } else {
+                mac_stored = false;
                 ld_bpf_log("can't find mac by: %pI6", &target_info->gate_addr);
             }
         }
     }
 
     skb->cb[TC_CHAIN_CB_FORWARDED_OFFSET] = 1;
-    return bpf_redirect(target_info->ifindex, 0);
+
+    if (mac_stored) return bpf_redirect(target_info->ifindex, 0);
+
+    struct bpf_redir_neigh param;
+    param.nh_family = AF_INET6;
+    COPY_ADDR_FROM(param.ipv6_nh, target_info->gate_addr.all);
+    int neigh_ret = bpf_redirect_neigh(target_info->ifindex, &param, sizeof(param), 0);
+    if (unlikely(neigh_ret != TC_ACT_REDIRECT))
+        ld_bpf_log("bpf_redirect_neigh error: %d", neigh_ret);
+    return neigh_ret;
 #undef BPF_LOG_TOPIC
 }
 
