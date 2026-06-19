@@ -15,8 +15,8 @@ struct xdp_scan_test_result {
     u8 scan_ret;
     u8 l3_proto;
     u8 _pad[2];
-    struct xdp_ipv4_idx v4;
-    struct xdp_ipv6_idx v6;
+    struct scan_ipv4_idx v4;
+    struct scan_ipv6_idx v6;
 };
 
 struct {

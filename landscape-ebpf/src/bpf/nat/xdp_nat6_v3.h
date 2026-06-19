@@ -281,7 +281,7 @@ xdp_search_ipv6_hash_mapping_egress(void *data, void *data_end, u32 wan_if, u32 
 
 static __always_inline int xdp_ipv6_egress_prefix_check_and_replace(void *data, void *data_end,
                                                                     u32 wan_if, u32 mark,
-                                                                    struct xdp_ipv6_idx *idx,
+                                                                    struct scan_ipv6_idx *idx,
                                                                     struct inet_pair *ip_pair) {
     struct wan_ip_info_key wan_key = {0};
     wan_key.ifindex = wan_if;
@@ -383,7 +383,7 @@ static __always_inline int xdp_ipv6_egress_prefix_check_and_replace(void *data, 
 
 static __always_inline int xdp_ipv6_ingress_prefix_check_and_replace(void *data, void *data_end,
                                                                      u32 wan_if, u32 mark,
-                                                                     struct xdp_ipv6_idx *idx,
+                                                                     struct scan_ipv6_idx *idx,
                                                                      struct inet_pair *ip_pair,
                                                                      bool *out_is_static) {
     __be64 local_client_prefix = {0};

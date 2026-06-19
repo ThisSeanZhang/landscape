@@ -4,7 +4,7 @@
 #include "frag_common.h"
 #include "../scanner/xdp_scanner4.h"
 
-static __always_inline int xdp_frag4_track(const struct xdp_ipv4_idx *idx, __be32 saddr,
+static __always_inline int xdp_frag4_track(const struct scan_ipv4_idx *idx, __be32 saddr,
                                            __be32 daddr, __be16 *sport, __be16 *dport) {
     if (likely(idx->fragment_type == FRAG_SINGLE)) {
         return XDP_PASS;

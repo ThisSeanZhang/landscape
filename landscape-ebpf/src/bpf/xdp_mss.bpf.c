@@ -30,13 +30,13 @@ static __always_inline int mss_clamp_packet(struct xdp_md *ctx) {
     u8 pkt_type;
 
     if (proto == XDP_L3_V4) {
-        struct xdp_ipv4_idx idx;
+        struct scan_ipv4_idx idx;
         if (xdp_scan_ipv4_full(ctx, sizeof(struct ethhdr), &idx)) return XDP_PASS;
         l4_offset = idx.l4_offset;
         l4_protocol = idx.l4_protocol;
         pkt_type = idx.pkt_type;
     } else {
-        struct xdp_ipv6_idx idx;
+        struct scan_ipv6_idx idx;
         if (xdp_scan_ipv6_full(ctx, sizeof(struct ethhdr), &idx)) return XDP_PASS;
         l4_offset = idx.l4_offset;
         l4_protocol = idx.l4_protocol;

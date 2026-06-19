@@ -17,7 +17,7 @@
 #include "xdp_csum_helpers.h"
 
 static __always_inline int xdp_read_nat_info4(void *data, void *data_end,
-                                              const struct xdp_ipv4_idx *idx,
+                                              const struct scan_ipv4_idx *idx,
                                               struct inet4_pair *pair) {
     struct iphdr *iph = data + sizeof(struct ethhdr);
     if ((void *)(iph + 1) > data_end) return -1;

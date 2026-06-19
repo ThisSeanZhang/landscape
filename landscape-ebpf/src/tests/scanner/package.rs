@@ -374,3 +374,75 @@ pub fn build_ipv6_frag_nonfirst_eth() -> Vec<u8> {
     ];
     bytes.to_vec()
 }
+
+/// IPv4 Ethernet + TCP SYN
+pub fn build_ipv4_tcp_syn_eth() -> Vec<u8> {
+    let builder = PacketBuilder::ethernet2(
+        [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF],
+        [0x11, 0x22, 0x33, 0x44, 0x55, 0x66],
+    )
+    .ipv4([192, 168, 1, 1], [192, 168, 1, 2], 64)
+    .tcp(21, 1234, 12345, 4000)
+    .syn();
+
+    let payload = default_payload();
+    let mut bytes = Vec::<u8>::with_capacity(builder.size(payload.len()));
+    builder.write(&mut bytes, &payload).unwrap();
+    bytes
+}
+
+/// IPv4 Ethernet + TCP RST
+pub fn build_ipv4_tcp_rst_eth() -> Vec<u8> {
+    let builder = PacketBuilder::ethernet2(
+        [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF],
+        [0x11, 0x22, 0x33, 0x44, 0x55, 0x66],
+    )
+    .ipv4([192, 168, 1, 1], [192, 168, 1, 2], 64)
+    .tcp(21, 1234, 12345, 4000)
+    .rst();
+
+    let payload = default_payload();
+    let mut bytes = Vec::<u8>::with_capacity(builder.size(payload.len()));
+    builder.write(&mut bytes, &payload).unwrap();
+    bytes
+}
+
+/// IPv6 Ethernet + Hop-by-Hop ext header + UDP
+pub fn build_ipv6_hop_udp_eth() -> Vec<u8> {
+    let src: [u8; 16] = [0x20, 0x01, 0x0d, 0xb8, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1];
+    let dst: [u8; 16] = [0x20, 0x01, 0x0d, 0xb8, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2];
+    let payload = default_payload();
+
+    let udp_len = 8u16 + payload.len() as u16;
+    let hbh_len = 8u16;
+    let ip_payload_len = hbh_len + udp_len;
+
+    let mut pkt = Vec::<u8>::new();
+
+    // Ethernet
+    pkt.extend_from_slice(&[0x11, 0x22, 0x33, 0x44, 0x55, 0x66]);
+    pkt.extend_from_slice(&[0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF]);
+    pkt.extend_from_slice(&0x86DD_u16.to_be_bytes());
+
+    // IPv6 header
+    pkt.extend_from_slice(&((6u32 << 28) as u32).to_be_bytes()); // ver=6, tc=0, flow=0
+    pkt.extend_from_slice(&ip_payload_len.to_be_bytes());
+    pkt.push(0x00); // next_header = Hop-by-Hop
+    pkt.push(64u8);
+    pkt.extend_from_slice(&src);
+    pkt.extend_from_slice(&dst);
+
+    // Hop-by-Hop extension header
+    pkt.push(17u8); // next_header = UDP
+    pkt.push(0u8); // hdr_ext_len = 0 (total 8 bytes)
+    pkt.extend_from_slice(&[0u8; 6]); // padding
+
+    // UDP header
+    pkt.extend_from_slice(&5000u16.to_be_bytes());
+    pkt.extend_from_slice(&6000u16.to_be_bytes());
+    pkt.extend_from_slice(&udp_len.to_be_bytes());
+    pkt.extend_from_slice(&0u16.to_be_bytes()); // checksum=0
+
+    pkt.extend_from_slice(&payload);
+    pkt
+}

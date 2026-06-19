@@ -28,7 +28,7 @@ static __always_inline int nat_v4_egress(struct xdp_md *ctx) {
     struct xdp_pipe_meta meta = {};
     xdp_get_meta(ctx, &meta);
 
-    struct xdp_ipv4_idx idx = {};
+    struct scan_ipv4_idx idx = {};
     if (xdp_scan_ipv4_full(ctx, sizeof(struct ethhdr), &idx)) return XDP_DROP;
 
     int ret;
@@ -147,7 +147,7 @@ static __always_inline int nat_v4_ingress(struct xdp_md *ctx) {
     struct xdp_pipe_meta meta = {};
     xdp_get_meta(ctx, &meta);
 
-    struct xdp_ipv4_idx idx = {};
+    struct scan_ipv4_idx idx = {};
     if (xdp_scan_ipv4_full(ctx, sizeof(struct ethhdr), &idx)) return XDP_DROP;
 
     int ret;
@@ -278,7 +278,7 @@ static __always_inline int nat_v6_egress(struct xdp_md *ctx) {
     struct xdp_pipe_meta meta = {};
     xdp_get_meta(ctx, &meta);
 
-    struct xdp_ipv6_idx idx = {};
+    struct scan_ipv6_idx idx = {};
     if (xdp_scan_ipv6_full(ctx, sizeof(struct ethhdr), &idx)) return XDP_DROP;
 
     int ret;
@@ -316,7 +316,7 @@ static __always_inline int nat_v6_ingress(struct xdp_md *ctx) {
     struct xdp_pipe_meta meta = {};
     xdp_get_meta(ctx, &meta);
 
-    struct xdp_ipv6_idx idx = {};
+    struct scan_ipv6_idx idx = {};
     if (xdp_scan_ipv6_full(ctx, sizeof(struct ethhdr), &idx)) return XDP_DROP;
 
     int ret;

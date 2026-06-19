@@ -4,7 +4,7 @@
 #include "frag_common.h"
 #include "../scanner/xdp_scanner6.h"
 
-static __always_inline int xdp_frag6_track(const struct xdp_ipv6_idx *idx,
+static __always_inline int xdp_frag6_track(const struct scan_ipv6_idx *idx,
                                            const struct in6_addr *saddr,
                                            const struct in6_addr *daddr, __be16 *sport,
                                            __be16 *dport) {

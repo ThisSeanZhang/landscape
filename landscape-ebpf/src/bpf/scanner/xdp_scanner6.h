@@ -1,22 +1,11 @@
 #ifndef __LD_XDP_SCANNER6_H__
 #define __LD_XDP_SCANNER6_H__
 
+#include "scan_types.h"
 #include "xdp_common.h"
 
-struct xdp_ipv6_idx {
-    u16 l4_offset;
-    u16 fragment_off;
-    u32 fragment_id;
-    u8 l4_protocol;
-    u8 fragment_type;
-    u8 pkt_type;
-    u16 icmp_error_l3_offset;
-    u16 icmp_error_inner_l4_offset;
-    u8 icmp_error_l4_protocol;
-};
-
 static __always_inline enum xdp_scan_status xdp_scan_ipv6(struct xdp_md *ctx, u16 l3_offset,
-                                                          struct xdp_ipv6_idx *idx) {
+                                                          struct scan_ipv6_idx *idx) {
     void *data = (void *)(long)ctx->data;
     void *data_end = (void *)(long)ctx->data_end;
 
@@ -114,7 +103,7 @@ static int ipv6_icmp_msg_type(struct icmp6hdr *icmp6h) {
 }
 
 static __always_inline enum xdp_scan_status xdp_scan_ipv6_full(struct xdp_md *ctx, u16 l3_offset,
-                                                               struct xdp_ipv6_idx *idx) {
+                                                               struct scan_ipv6_idx *idx) {
     enum xdp_scan_status ret = xdp_scan_ipv6(ctx, l3_offset, idx);
     if (ret) return ret;
 
@@ -159,7 +148,7 @@ static __always_inline enum xdp_scan_status xdp_scan_ipv6_full(struct xdp_md *ct
             idx->icmp_error_l3_offset = idx->l4_offset + ICMP6_HDR_LEN;
             barrier_var(idx->icmp_error_l3_offset);
 
-            struct xdp_ipv6_idx inner = {};
+            struct scan_ipv6_idx inner = {};
             if (xdp_scan_ipv6(ctx, idx->icmp_error_l3_offset, &inner)) return XDP_SCAN_ERR;
 
             if (inner.fragment_off != 0) return XDP_SCAN_ERR;
