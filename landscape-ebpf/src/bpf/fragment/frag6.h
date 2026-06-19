@@ -2,34 +2,34 @@
 #define __LD_FRAG6_H__
 
 #include "frag_common.h"
-#include "../pkg_scanner.h"
+#include "../scanner/scan_types.h"
 
-static __always_inline int frag6_track(const struct packet_offset_info *offset,
-                                       struct inet_pair *ip_pair) {
-#define BPF_LOG_TOPIC "frag6_track"
-    if (likely(offset->fragment_type == FRAG_SINGLE)) {
+static __always_inline int frag6_track(const struct scan_ipv6_idx *idx,
+                                       const struct in6_addr *saddr, const struct in6_addr *daddr,
+                                       __be16 *sport, __be16 *dport) {
+    if (likely(idx->fragment_type == FRAG_SINGLE)) {
         return TC_ACT_OK;
     }
 
-    if (is_icmp_error_pkt(offset)) {
+    if (idx->icmp_error_l3_offset > 0 && idx->icmp_error_inner_l4_offset > 0) {
         return TC_ACT_SHOT;
     }
 
     int ret;
     struct frag_cache_key key = {0};
     key.l3proto = LANDSCAPE_IPV6_TYPE;
-    key.l4proto = offset->l4_protocol;
-    key.id = offset->fragment_id;
+    key.l4proto = idx->l4_protocol;
+    key.id = idx->fragment_id;
 
-    COPY_ADDR_FROM(key.saddr.all, ip_pair->src_addr.all);
-    COPY_ADDR_FROM(key.daddr.all, ip_pair->dst_addr.all);
+    COPY_ADDR_FROM(key.saddr.all, saddr->in6_u.u6_addr32);
+    COPY_ADDR_FROM(key.daddr.all, daddr->in6_u.u6_addr32);
 
     struct frag_cache_value *value;
-    if (unlikely(offset->fragment_type == FRAG_FIRST)) {
-        struct frag_cache_value value_new;
-        value_new.dport = ip_pair->dst_port;
-        value_new.sport = ip_pair->src_port;
-
+    if (unlikely(idx->fragment_type == FRAG_FIRST)) {
+        struct frag_cache_value value_new = {
+            .sport = *sport,
+            .dport = *dport,
+        };
         ret = bpf_map_update_elem(&frag_cache, &key, &value_new, BPF_ANY);
         if (ret) {
             return TC_ACT_SHOT;
@@ -41,15 +41,13 @@ static __always_inline int frag6_track(const struct packet_offset_info *offset,
     } else {
         value = (struct frag_cache_value *)bpf_map_lookup_elem(&frag_cache, &key);
         if (!value) {
-            ld_bpf_log("fragmentation session of this packet was not tracked");
             return TC_ACT_SHOT;
         }
-        ip_pair->src_port = value->sport;
-        ip_pair->dst_port = value->dport;
+        *sport = value->sport;
+        *dport = value->dport;
     }
 
     return TC_ACT_OK;
-#undef BPF_LOG_TOPIC
 }
 
 #endif /* __LD_FRAG6_H__ */

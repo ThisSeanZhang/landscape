@@ -103,6 +103,10 @@ pub(crate) mod test_skb_scanner_skel {
     include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/test_skb_scanner.skel.rs"));
 }
 
+pub(crate) mod test_skb_read_skel {
+    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/test_skb_read.skel.rs"));
+}
+
 pub(crate) mod xdp_firewall_skel {
     include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/xdp_firewall.skel.rs"));
 }
