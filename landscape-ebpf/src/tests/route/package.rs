@@ -139,6 +139,22 @@ pub fn lookup_rt6_cache_value<T: MapCore>(
         .map(|bytes| read_unaligned::<rt_cache_value_v6>(&bytes))
 }
 
+pub fn lookup_rt4_cache_value<T: MapCore>(
+    outer_map: &T,
+    cache_index: u32,
+    local: Ipv4Addr,
+    remote: Ipv4Addr,
+) -> Option<rt_cache_value_v4> {
+    let inner = lookup_inner_map(outer_map, cache_index);
+    let mut key = rt_cache_key_v4::default();
+    key.local_addr = local.to_bits().to_be();
+    key.remote_addr = remote.to_bits().to_be();
+    inner
+        .lookup(as_bytes(&key), MapFlags::ANY)
+        .expect("lookup route v4 cache value")
+        .map(|bytes| read_unaligned::<rt_cache_value_v4>(&bytes))
+}
+
 pub fn insert_ip_mac_v6<T: MapCore>(
     map: &T,
     addr: Ipv6Addr,

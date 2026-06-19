@@ -17,12 +17,9 @@ use crate::{
     map_setting::share_map::types::{
         flow_dns_match_key_v4, flow_dns_match_key_v6, flow_dns_match_value_v4,
         flow_dns_match_value_v6, flow_ip_trie_key_v4, flow_ip_trie_key_v6, flow_ip_trie_value_v4,
-        flow_ip_trie_value_v6, flow_match_key, route_target_info_v6, rt_cache_key_v4,
-        rt_cache_key_v6, rt_cache_value_v4, rt_cache_value_v6,
-    },
-    route::lan_v2::route_lan::types::{
-        lan_route_info_v4, lan_route_info_v6, lan_route_key_v4, lan_route_key_v6,
-        route_target_info_v4,
+        flow_ip_trie_value_v6, flow_match_key, lan_route_info_v4, lan_route_info_v6,
+        lan_route_key_v4, lan_route_key_v6, route_target_info_v4, route_target_info_v6,
+        rt_cache_key_v4, rt_cache_key_v6, rt_cache_value_v4, rt_cache_value_v6,
     },
     LANDSCAPE_IPV4_TYPE, LANDSCAPE_IPV6_TYPE, MAP_PATHS,
 };

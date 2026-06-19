@@ -9,9 +9,7 @@ pub(crate) mod bpf_rs_shared;
 pub mod landscape;
 pub mod map_setting;
 pub mod metric;
-pub(crate) mod pipeline;
 pub mod pppoe;
-pub mod route;
 pub mod stages;
 pub mod tproxy;
 
@@ -67,17 +65,6 @@ static MAP_PATHS: Lazy<LandscapeMapPath> = Lazy::new(|| {
         rt4_cache_map: PathBuf::from(format!("{}/rt4_cache_map", ebpf_map_path)),
         rt6_cache_map: PathBuf::from(format!("{}/rt6_cache_map", ebpf_map_path)),
 
-        wan_tc_pipeline_ingress: PathBuf::from(format!(
-            "{}/wan_tc_pipeline_ingress",
-            ebpf_map_path
-        )),
-        wan_tc_pipeline_egress: PathBuf::from(format!("{}/wan_tc_pipeline_egress", ebpf_map_path)),
-        lan_tc_pipeline_ingress: PathBuf::from(format!(
-            "{}/lan_tc_pipeline_ingress",
-            ebpf_map_path
-        )),
-        lan_tc_pipeline_egress: PathBuf::from(format!("{}/lan_tc_pipeline_egress", ebpf_map_path)),
-
         ip_mac_v4: PathBuf::from(format!("{}/ip_mac_v4", ebpf_map_path)),
         ip_mac_v6: PathBuf::from(format!("{}/ip_mac_v6", ebpf_map_path)),
 
@@ -125,11 +112,6 @@ pub(crate) struct LandscapeMapPath {
     pub rt4_cache_map: PathBuf,
     pub rt6_cache_map: PathBuf,
 
-    pub wan_tc_pipeline_ingress: PathBuf,
-    pub wan_tc_pipeline_egress: PathBuf,
-    pub lan_tc_pipeline_ingress: PathBuf,
-    pub lan_tc_pipeline_egress: PathBuf,
-
     // IP MAC
     pub ip_mac_v4: PathBuf,
     pub ip_mac_v6: PathBuf,
@@ -138,20 +120,11 @@ pub(crate) struct LandscapeMapPath {
     pub xdp_base: PathBuf,
 }
 
-const WAN_ROUTE_INGRESS_PRIORITY: u32 = 7;
-
 // Fire wall -> nat -> pppoe
 // const PPPOE_MTU_FILTER_EGRESS_PRIORITY: u32 = 1;
-const WAN_ROUTE_EGRESS_PRIORITY: u32 = 3;
-
-// const FLOW_EGRESS_PRIORITY: u32 = 4;
 const PPPOE_EGRESS_PRIORITY: u32 = 2;
 
-// lAN PRIORITY
-const LAN_ROUTE_INGRESS_PRIORITY: u32 = 2;
-
-const LAN_ROUTE_EGRESS_PRIORITY: u32 = 2;
-
+// const FLOW_EGRESS_PRIORITY: u32 = 4;
 const LANDSCAPE_IPV4_TYPE: u8 = 0;
 const LANDSCAPE_IPV6_TYPE: u8 = 1;
 

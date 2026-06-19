@@ -5,8 +5,9 @@ use libbpf_rs::{libbpf_sys, MapCore, MapFlags, MapHandle, MapType};
 
 use crate::{
     bpf_error::LdEbpfResult,
-    map_setting::share_map::types::{flow_ip_trie_key_v6, flow_ip_trie_value_v6},
-    route::lan_v2::route_lan::types::{flow_ip_trie_key_v4, flow_ip_trie_value_v4},
+    map_setting::share_map::types::{
+        flow_ip_trie_key_v4, flow_ip_trie_key_v6, flow_ip_trie_value_v4, flow_ip_trie_value_v6,
+    },
     MAP_PATHS,
 };
 

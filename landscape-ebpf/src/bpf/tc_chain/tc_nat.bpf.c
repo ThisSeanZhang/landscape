@@ -30,10 +30,12 @@ static __always_inline int tc_nat_v4_egress_do(struct __sk_buff *skb, u32 ifinde
     int ret = 0;
 
     ret = scan_nat_packet(skb, current_l3_offset, &pkg_offset);
+    if (ret == TC_ACT_SHOT) return TC_ACT_SHOT;
     if (ret) return TC_ACT_OK;
     ret = is_handle_protocol(pkg_offset.l4_protocol);
     if (ret != TC_ACT_OK) return TC_ACT_OK;
     ret = read_nat_packet_info4(skb, &pkg_offset, &ip_pair);
+    if (ret == TC_ACT_SHOT) return TC_ACT_SHOT;
     if (ret) return TC_ACT_OK;
     ret = is_broadcast_ip4_pair(&ip_pair);
     if (ret != TC_ACT_OK) return TC_ACT_OK;
@@ -135,10 +137,12 @@ static __always_inline int tc_nat_v4_ingress_do(struct __sk_buff *skb, u32 ifind
     int ret = 0;
 
     ret = scan_nat_packet(skb, current_l3_offset, &pkg_offset);
+    if (ret == TC_ACT_SHOT) return TC_ACT_SHOT;
     if (ret) return TC_ACT_OK;
     ret = is_handle_protocol(pkg_offset.l4_protocol);
     if (ret != TC_ACT_OK) return TC_ACT_OK;
     ret = read_nat_packet_info4(skb, &pkg_offset, &ip_pair);
+    if (ret == TC_ACT_SHOT) return TC_ACT_SHOT;
     if (ret) return TC_ACT_OK;
     ret = is_broadcast_ip4_pair(&ip_pair);
     if (ret != TC_ACT_OK) return TC_ACT_OK;
@@ -226,11 +230,15 @@ static __always_inline int tc_nat_v6_egress_do(struct __sk_buff *skb, u32 ifinde
     int ret = 0;
 
     ret = scan_nat_packet(skb, current_l3_offset, &pkg_offset);
+    if (ret == TC_ACT_SHOT) return TC_ACT_SHOT;
     if (ret) return TC_ACT_OK;
     ret = is_handle_protocol(pkg_offset.l4_protocol);
     if (ret != TC_ACT_OK) return TC_ACT_OK;
     ret = read_nat_packet_info(skb, &pkg_offset, &ip_pair);
+    if (ret == TC_ACT_SHOT) return TC_ACT_SHOT;
     if (ret) return TC_ACT_OK;
+    ret = is_broadcast_ip_pair(pkg_offset.l3_protocol, &ip_pair);
+    if (ret != TC_ACT_OK) return TC_ACT_OK;
     ret = frag_info_track(&pkg_offset, &ip_pair);
     if (ret != TC_ACT_OK) return TC_ACT_SHOT;
     ret = ipv6_egress_prefix_check_and_replace(skb, &pkg_offset, &ip_pair, ifindex);
@@ -245,10 +253,12 @@ static __always_inline int tc_nat_v6_ingress_do(struct __sk_buff *skb, u32 ifind
     int ret = 0;
 
     ret = scan_nat_packet(skb, current_l3_offset, &pkg_offset);
+    if (ret == TC_ACT_SHOT) return TC_ACT_SHOT;
     if (ret) return TC_ACT_OK;
     ret = is_handle_protocol(pkg_offset.l4_protocol);
     if (ret != TC_ACT_OK) return TC_ACT_OK;
     ret = read_nat_packet_info(skb, &pkg_offset, &ip_pair);
+    if (ret == TC_ACT_SHOT) return TC_ACT_SHOT;
     if (ret) return TC_ACT_OK;
     ret = is_broadcast_ip_pair(pkg_offset.l3_protocol, &ip_pair);
     if (ret != TC_ACT_OK) return TC_ACT_OK;
