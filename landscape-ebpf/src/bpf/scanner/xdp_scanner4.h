@@ -16,7 +16,7 @@ static __always_inline enum xdp_scan_status xdp_scan_ipv4(struct xdp_md *ctx, u1
     if (iph->ihl < 5) return XDP_SCAN_ERR;
 
     u16 frag_off_host = bpf_ntohs(iph->frag_off);
-    idx->fragment_off = (frag_off_host & LD_IP_OFFSET) << 3;
+    idx->fragment_off = (frag_off_host & LD_IP_OFFSET);
 
     bool mf = frag_off_host & LD_IP_MF;
     bool has_offset = idx->fragment_off != 0;
@@ -105,7 +105,7 @@ static __always_inline enum xdp_scan_status xdp_scan_ipv4_full(struct xdp_md *ct
             struct scan_ipv4_idx inner = {};
             if (xdp_scan_ipv4(ctx, idx->icmp_error_l3_offset, &inner)) return XDP_SCAN_ERR;
 
-            if (inner.fragment_off != 0) return XDP_SCAN_ERR;
+            if (inner.fragment_type >= FRAG_MIDDLE) return XDP_SCAN_ERR;
 
             idx->icmp_error_inner_l4_offset = inner.l4_offset;
             idx->icmp_error_l4_protocol = inner.l4_protocol;

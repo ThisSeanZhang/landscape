@@ -111,7 +111,7 @@ static __always_inline int scan_ipv4(struct __sk_buff *skb, struct ip_scanner_ct
     }
 
     u16 frag_off_host = bpf_ntohs(iph->frag_off);
-    scanner_ctx->fragment_off = (frag_off_host & LD_IP_OFFSET) << 3;
+    scanner_ctx->fragment_off = (frag_off_host & LD_IP_OFFSET);
 
     bool mf = frag_off_host & LD_IP_MF;
     bool has_offset = scanner_ctx->fragment_off != 0;
@@ -329,7 +329,7 @@ static __always_inline int scan_packet_full(struct __sk_buff *skb, u32 current_l
                 return LD_SCAN_ERR;
             }
 
-            if (ctx.fragment_off) {
+            if (ctx.fragment_type >= FRAG_MIDDLE) {
                 // icmp 不处理分片导致的 icmp 错误
                 ld_bpf_log("could not handle icmp with fragment");
                 return LD_SCAN_ERR;
@@ -386,7 +386,7 @@ static __always_inline int scan_packet_full(struct __sk_buff *skb, u32 current_l
                 return LD_SCAN_ERR;
             }
 
-            if (ctx.fragment_off) {
+            if (ctx.fragment_type >= FRAG_MIDDLE) {
                 // icmp 不处理分片导致的 icmp 错误
                 return LD_SCAN_ERR;
             }

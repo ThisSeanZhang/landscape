@@ -150,7 +150,7 @@ static __always_inline enum land_scan_result scan_ipv6_full(struct __sk_buff *sk
             inner_ctx.l4_offset = idx->icmp_error_l3_offset;
             if (scan_ipv6(skb, &inner_ctx)) return LD_SCAN_ERR;
 
-            if (inner_ctx.fragment_off) return LD_SCAN_ERR;
+            if (inner_ctx.fragment_type >= FRAG_MIDDLE) return LD_SCAN_ERR;
 
             idx->icmp_error_inner_l4_offset = inner_ctx.l4_offset;
             idx->icmp_error_l4_protocol = inner_ctx.l4_protocol;
@@ -184,6 +184,65 @@ static __always_inline enum land_scan_result scan_ipv6_full(struct __sk_buff *sk
     }
 
     return LD_SCAN_OK;
+}
+
+static __always_inline enum land_scan_result
+scan_ipv6_into_idx(struct __sk_buff *skb, u32 l3_offset, struct scan_ipv6_idx *idx) {
+    struct ip_scanner_ctx ctx = {.l4_offset = l3_offset};
+    if (scan_ipv6(skb, &ctx)) return LD_SCAN_ERR;
+
+    idx->fragment_off = ctx.fragment_off;
+    idx->fragment_id = ctx.fragment_id;
+    idx->fragment_type = ctx.fragment_type;
+    idx->l4_protocol = ctx.l4_protocol;
+    idx->l4_offset = ctx.l4_offset;
+    idx->pkt_type = PKT_CONNLESS_V2;
+
+    idx->icmp_error_l3_offset = 0;
+    idx->icmp_error_inner_l4_offset = 0;
+    idx->icmp_error_l4_protocol = 0;
+
+    if (idx->fragment_type >= FRAG_MIDDLE) idx->l4_offset = 0;
+
+    return LD_SCAN_OK;
+}
+
+static __always_inline bool scan_ipv6_upgrade_icmp(struct __sk_buff *skb, u32 l3_offset,
+                                                   struct scan_ipv6_idx *idx,
+                                                   struct in6_addr *saddr) {
+    struct icmp6hdr *icmp6h;
+    if (VALIDATE_READ_DATA(skb, &icmp6h, idx->l4_offset, sizeof(struct icmp6hdr))) return false;
+
+    if (icmp6_msg_type(icmp6h) != ICMP_ERROR_MSG) return false;
+
+    idx->icmp_error_l3_offset = idx->l4_offset + ICMP6_HDR_LEN;
+    barrier_var(idx->icmp_error_l3_offset);
+
+    struct ip_scanner_ctx inner_ctx = {.l4_offset = idx->icmp_error_l3_offset};
+    if (scan_ipv6(skb, &inner_ctx) || inner_ctx.fragment_type >= FRAG_MIDDLE) return false;
+
+    idx->icmp_error_inner_l4_offset = inner_ctx.l4_offset;
+    idx->icmp_error_l4_protocol = inner_ctx.l4_protocol;
+
+    union u_ld_ip *temp_addr;
+    union u_ld_ip dst_ip_val, icmp_src_ip_val;
+    if (VALIDATE_READ_DATA(skb, &temp_addr, l3_offset + offsetof(struct ipv6hdr, daddr),
+                           sizeof(union u_ld_ip)))
+        return false;
+    COPY_ADDR_FROM(dst_ip_val.all, temp_addr->all);
+    if (VALIDATE_READ_DATA(skb, &temp_addr,
+                           idx->icmp_error_l3_offset + offsetof(struct ipv6hdr, saddr),
+                           sizeof(union u_ld_ip)))
+        return false;
+    COPY_ADDR_FROM(icmp_src_ip_val.all, temp_addr->all);
+
+    if (!ld_ip_addr_equal(&dst_ip_val, &icmp_src_ip_val)) return false;
+
+    struct ipv6hdr *inner_ip6h;
+    if (VALIDATE_READ_DATA(skb, &inner_ip6h, idx->icmp_error_l3_offset, sizeof(*inner_ip6h)))
+        return false;
+    *saddr = inner_ip6h->daddr;
+    return true;
 }
 
 #endif /* __LD_SKB_SCANNER6_H__ */

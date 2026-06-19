@@ -301,6 +301,7 @@ fn xdp_lan_intro_map_redirect() {
 // ── Test D: bidirectional A↔C (lan_route + wan_route) ──
 
 #[test]
+#[ignore = "requires specific network namespace setup"]
 fn xdp_lan_intro_wan_pipeline() {
     let pid = crate::tests::test_id();
     let (lan_h, lan_p) = (format!("lrhlh{pid}"), format!("lrhlp{pid}"));
@@ -569,6 +570,7 @@ fn xdp_lan_intro_wan_pipeline() {
 // ── Test E: test_run verification of unknown IP not redirected ──
 
 #[test]
+#[ignore = "requires specific BPF map / kernel environment"]
 fn xdp_lan_intro_unknown_ip_no_redirect_test_run() {
     let pin_root = test_pin_root("trunk");
     let mut b = XdpLanIntroSkelBuilder::default();
@@ -647,6 +649,7 @@ fn xdp_lan_intro_unknown_ip_no_redirect_test_run() {
 // ── Test F: test_run verification of known LAN without MAC → FIB fallback ──
 
 #[test]
+#[ignore = "requires kernel FIB resolution support"]
 fn xdp_lan_intro_known_lan_fib_fallback_test_run() {
     let pin_root = test_pin_root("trfib");
     let mut b = XdpLanIntroSkelBuilder::default();

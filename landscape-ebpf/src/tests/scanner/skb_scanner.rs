@@ -5,12 +5,34 @@ use libbpf_rs::{
     MapCore, MapFlags, ProgramInput,
 };
 
+use crate::tests::test_skb_scanner_skel::types::skb_icmp_test_result;
 use crate::tests::test_skb_scanner_skel::types::skb_scan_test_result;
 use crate::tests::test_skb_scanner_skel::TestSkbScannerSkelBuilder;
 
 use super::package::*;
 
 unsafe impl plain::Plain for skb_scan_test_result {}
+
+unsafe impl plain::Plain for skb_icmp_test_result {}
+
+fn run_skb_scanner_icmp(payload: &mut Vec<u8>) -> Option<skb_icmp_test_result> {
+    let builder = TestSkbScannerSkelBuilder::default();
+    let mut open_object = MaybeUninit::uninit();
+    let open = builder.open(&mut open_object).unwrap();
+
+    let skel = open.load().unwrap();
+    let prog = skel.progs.test_skb_scanner_icmp;
+
+    let input = ProgramInput { data_in: Some(payload), ..Default::default() };
+
+    let run_result = prog.test_run(input).expect("test_run failed");
+    println!("return={} duration={:?}", run_result.return_value as i32, run_result.duration);
+
+    let bytes =
+        skel.maps.skb_scan_icmp_map.lookup(&MAP_KEY.to_le_bytes(), MapFlags::ANY).ok().flatten()?;
+
+    Some(*plain::from_bytes::<skb_icmp_test_result>(&bytes).ok()?)
+}
 
 const MAP_KEY: u32 = 0;
 
@@ -144,8 +166,20 @@ mod tests {
         assert_v4_ok(&r);
         assert!(r.v4.fragment_type >= 2); // non-first
         assert_eq!(r.v4.fragment_id, 0x4242);
-        assert!(r.v4.fragment_off > 0);
+        assert_eq!(r.v4.fragment_off, 1); // offset=1 → 8-byte unit 1
         assert_eq!(r.v4.l4_offset, 0); // non-first has no L4 header
+    }
+
+    #[test]
+    fn skb_v4_frag_nonfirst_offset3() {
+        let mut pkt = build_ipv4_frag_nonfirst_offset3_eth();
+        let r = run_skb_scanner(&mut pkt).expect("no result");
+        pv4(&r);
+        assert_v4_ok(&r);
+        assert_eq!(r.v4.fragment_type, 3); // FRAG_LAST (offset>0, MF=0)
+        assert_eq!(r.v4.fragment_id, 0x4242);
+        assert_eq!(r.v4.fragment_off, 3); // offset=3 → 8-byte unit 3
+        assert_eq!(r.v4.l4_offset, 0);
     }
 
     #[test]
@@ -229,7 +263,29 @@ mod tests {
         pv6(&r);
         assert_v6_ok(&r);
         assert!(r.v6.fragment_type >= 2); // non-first
-        assert!(r.v6.fragment_off > 0);
+        assert_eq!(r.v6.fragment_off, 1448); // offset=0x05a8
+    }
+
+    #[test]
+    fn skb_v6_frag_nonfirst_offset50() {
+        let mut pkt = build_ipv6_frag_nonfirst_offset50_eth();
+        let r = run_skb_scanner(&mut pkt).expect("no result");
+        pv6(&r);
+        assert_v6_ok(&r);
+        assert_eq!(r.v6.fragment_type, 3); // FRAG_LAST (offset>0, MF=0)
+        assert_ne!(r.v6.fragment_id, 0);
+        assert_eq!(r.v6.fragment_off, 400); // offset=50 → wire 0x0190
+    }
+
+    #[test]
+    fn skb_v6_frag_middle() {
+        let mut pkt = build_ipv6_frag_middle_eth();
+        let r = run_skb_scanner(&mut pkt).expect("no result");
+        pv6(&r);
+        assert_v6_ok(&r);
+        assert_eq!(r.v6.fragment_type, 2); // FRAG_MIDDLE (offset>0, MF=1)
+        assert_ne!(r.v6.fragment_id, 0);
+        assert_eq!(r.v6.fragment_off, 800); // offset=100 → wire 0x0320
     }
 
     #[test]
@@ -242,6 +298,39 @@ mod tests {
         assert_ne!(r.v6.icmp_error_l3_offset, 0);
         assert_ne!(r.v6.icmp_error_inner_l4_offset, 0);
         assert_eq!(r.v6.icmp_error_l4_protocol, 17); // inner UDP
+    }
+
+    // ── two-step ICMP error tests (firewall path) ──
+
+    #[test]
+    fn skb_v4_icmp_error_two_step() {
+        let mut pkt = build_icmpv4_error_with_inner_ipv4_eth();
+        let r = run_skb_scanner_icmp(&mut pkt).expect("no result");
+        assert_eq!(r.scan_ret, 0);
+        assert_eq!(r.l3_proto, 4);
+        assert_ne!(r.icmp_error_l3_offset, 0);
+        assert_ne!(r.icmp_error_inner_l4_offset, 0);
+        assert_eq!(r.icmp_error_l4_protocol, 17); // inner UDP
+                                                  // v4_saddr set by scan_ipv4_upgrade_icmp to inner daddr (10.0.0.2)
+                                                  // stored as network byte order; use from_be for native comparison
+        assert_eq!(u32::from_be(r.v4_saddr), u32::from_be_bytes([10, 0, 0, 2]));
+    }
+
+    #[test]
+    fn skb_v6_icmp_error_two_step() {
+        let mut pkt = build_icmpv6_error_with_inner_ipv6_eth();
+        let r = run_skb_scanner_icmp(&mut pkt).expect("no result");
+        assert_eq!(r.scan_ret, 0);
+        assert_eq!(r.l3_proto, 6);
+        assert_ne!(r.icmp_error_l3_offset, 0);
+        assert_ne!(r.icmp_error_inner_l4_offset, 0);
+        assert_eq!(r.icmp_error_l4_protocol, 17); // inner UDP
+                                                  // v6_saddr set by scan_ipv6_upgrade_icmp to inner daddr
+                                                  // inner dst: [0x20,0x01,0x0d,0xb8,0,0,0,0,0,0,0,0,0,1,0,2]
+        let expected: [u8; 16] = [0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 2];
+        unsafe {
+            assert_eq!(r.v6_saddr.in6_u.u6_addr8, expected);
+        }
     }
 
     // ── edge cases ──

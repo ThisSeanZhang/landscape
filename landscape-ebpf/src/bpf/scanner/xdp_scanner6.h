@@ -151,7 +151,7 @@ static __always_inline enum xdp_scan_status xdp_scan_ipv6_full(struct xdp_md *ct
             struct scan_ipv6_idx inner = {};
             if (xdp_scan_ipv6(ctx, idx->icmp_error_l3_offset, &inner)) return XDP_SCAN_ERR;
 
-            if (inner.fragment_off != 0) return XDP_SCAN_ERR;
+            if (inner.fragment_type >= FRAG_MIDDLE) return XDP_SCAN_ERR;
 
             idx->icmp_error_inner_l4_offset = inner.l4_offset;
             idx->icmp_error_l4_protocol = inner.l4_protocol;

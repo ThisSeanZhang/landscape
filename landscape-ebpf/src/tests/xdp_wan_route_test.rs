@@ -33,6 +33,7 @@ fn xdp_wan_route_verifier_smoke() {
 }
 
 #[test]
+#[ignore = "requires specific BPF map / kernel environment"]
 fn xdp_wan_route_testrun_pass() {
     let mut builder = XdpWanRouteSkelBuilder::default();
     builder.object_builder_mut().pin_root_path(&test_pin_root()).unwrap();

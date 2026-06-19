@@ -107,7 +107,7 @@ mod tests {
         assert_v4_ok(&r);
         assert_eq!(r.v4.fragment_type, 2); // FRAG_MIDDLE (MF=1, off!=0)
         assert_eq!(r.v4.fragment_id, 0x4242);
-        assert_eq!(r.v4.fragment_off, 8); // offset=1 word → 8 bytes
+        assert_eq!(r.v4.fragment_off, 1); // offset=1 → 8-byte unit 1
         assert_eq!(r.v4.pkt_type, 0); // not set for non-first frag
     }
 

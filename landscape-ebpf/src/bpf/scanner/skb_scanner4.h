@@ -15,7 +15,7 @@ static __always_inline enum land_scan_result scan_ipv4(struct __sk_buff *skb,
     }
 
     u16 frag_off_host = bpf_ntohs(iph->frag_off);
-    scanner_ctx->fragment_off = (frag_off_host & LD_IP_OFFSET) << 3;
+    scanner_ctx->fragment_off = (frag_off_host & LD_IP_OFFSET);
 
     bool mf = frag_off_host & LD_IP_MF;
     bool has_offset = scanner_ctx->fragment_off != 0;
@@ -99,7 +99,7 @@ static __always_inline enum land_scan_result scan_ipv4_full(struct __sk_buff *sk
             inner_ctx.l4_offset = idx->icmp_error_l3_offset;
             if (scan_ipv4(skb, &inner_ctx)) return LD_SCAN_ERR;
 
-            if (inner_ctx.fragment_off) return LD_SCAN_ERR;
+            if (inner_ctx.fragment_type >= FRAG_MIDDLE) return LD_SCAN_ERR;
 
             idx->icmp_error_inner_l4_offset = inner_ctx.l4_offset;
             idx->icmp_error_l4_protocol = inner_ctx.l4_protocol;
@@ -132,6 +132,62 @@ static __always_inline enum land_scan_result scan_ipv4_full(struct __sk_buff *sk
     }
 
     return LD_SCAN_OK;
+}
+
+static __always_inline enum land_scan_result
+scan_ipv4_into_idx(struct __sk_buff *skb, u32 l3_offset, struct scan_ipv4_idx *idx) {
+    struct ip_scanner_ctx ctx = {.l4_offset = l3_offset};
+    if (scan_ipv4(skb, &ctx)) return LD_SCAN_ERR;
+
+    idx->fragment_off = ctx.fragment_off;
+    idx->fragment_id = ctx.fragment_id;
+    idx->fragment_type = ctx.fragment_type;
+    idx->l4_protocol = ctx.l4_protocol;
+    idx->l4_offset = ctx.l4_offset;
+    idx->pkt_type = PKT_CONNLESS_V2;
+
+    idx->icmp_error_l3_offset = 0;
+    idx->icmp_error_inner_l4_offset = 0;
+    idx->icmp_error_l4_protocol = 0;
+
+    if (idx->fragment_type >= FRAG_MIDDLE) idx->l4_offset = 0;
+
+    return LD_SCAN_OK;
+}
+
+static __always_inline bool scan_ipv4_upgrade_icmp(struct __sk_buff *skb, u32 l3_offset,
+                                                   struct scan_ipv4_idx *idx, __be32 *saddr) {
+    struct icmphdr *icmph;
+    if (VALIDATE_READ_DATA(skb, &icmph, idx->l4_offset, sizeof(struct icmphdr))) return false;
+
+    if (icmp_msg_type(icmph) != ICMP_ERROR_MSG) return false;
+
+    idx->icmp_error_l3_offset = idx->l4_offset + ICMP_HDR_LEN;
+    barrier_var(idx->icmp_error_l3_offset);
+
+    struct ip_scanner_ctx inner_ctx = {.l4_offset = idx->icmp_error_l3_offset};
+    if (scan_ipv4(skb, &inner_ctx) || inner_ctx.fragment_type >= FRAG_MIDDLE) return false;
+
+    idx->icmp_error_inner_l4_offset = inner_ctx.l4_offset;
+    idx->icmp_error_l4_protocol = inner_ctx.l4_protocol;
+
+    u32 *temp_addr;
+    u32 dst_ip_val, icmp_src_ip_val;
+    if (VALIDATE_READ_DATA(skb, &temp_addr, l3_offset + offsetof(struct iphdr, daddr), sizeof(u32)))
+        return false;
+    dst_ip_val = *temp_addr;
+    if (VALIDATE_READ_DATA(skb, &temp_addr,
+                           idx->icmp_error_l3_offset + offsetof(struct iphdr, saddr), sizeof(u32)))
+        return false;
+    icmp_src_ip_val = *temp_addr;
+
+    if (dst_ip_val != icmp_src_ip_val) return false;
+
+    if (VALIDATE_READ_DATA(skb, &temp_addr,
+                           idx->icmp_error_l3_offset + offsetof(struct iphdr, daddr), sizeof(u32)))
+        return false;
+    *saddr = *temp_addr;
+    return true;
 }
 
 #endif /* __LD_SKB_SCANNER4_H__ */
