@@ -215,14 +215,24 @@ impl NativeXdpLink {
     }
 
     fn try_native(prog: &Program, ifindex: i32) -> LdEbpfResult<Self> {
-        if let Some(ref ifindices) = landscape_common::args::LAND_ARGS.force_native_xdp_fail {
-            if ifindices.is_empty() || ifindices.contains(&ifindex) {
+        match landscape_common::args::LAND_ARGS.try_native_xdp {
+            None => {
                 return Err(crate::bpf_error::LandscapeEbpfError::Context {
                     context: format!(
-                        "native XDP attach force-failed for testing (ifindex={ifindex})"
+                        "native XDP not enabled, use --try-xdp to enable (ifindex={ifindex})"
                     ),
                     source: libbpf_rs::Error::from_raw_os_error(libc::EOPNOTSUPP),
                 });
+            }
+            Some(ref ifindices) => {
+                if !ifindices.is_empty() && !ifindices.contains(&ifindex) {
+                    return Err(crate::bpf_error::LandscapeEbpfError::Context {
+                        context: format!(
+                            "native XDP not enabled for this interface (ifindex={ifindex})"
+                        ),
+                        source: libbpf_rs::Error::from_raw_os_error(libc::EOPNOTSUPP),
+                    });
+                }
             }
         }
 
