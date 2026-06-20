@@ -1,8 +1,7 @@
-use std::net::SocketAddr;
+use std::sync::Arc;
 
-use hickory_proto::xfer::Protocol;
 use hickory_resolver::{
-    config::{NameServerConfig, NameServerConfigGroup, ResolverConfig, ResolverOpts},
+    config::{ConnectionConfig, NameServerConfig, ProtocolConfig, ResolverConfig, ResolverOpts},
     Resolver,
 };
 
@@ -23,35 +22,51 @@ pub(crate) fn create_resolver(
     bind_config: DnsBindConfig,
     RuntimeUpstreamTarget { mode, ips, port, .. }: RuntimeUpstreamTarget,
 ) -> LandscapeMarkDNSResolver {
-    let name_server = match mode {
-        DnsUpstreamMode::Plaintext => {
-            NameServerConfigGroup::from_ips_clear(&ips, port.unwrap_or(53), true)
-        }
-        DnsUpstreamMode::Tls { domain } => {
-            NameServerConfigGroup::from_ips_tls(&ips, port.unwrap_or(853), domain.to_string(), true)
-        }
-        DnsUpstreamMode::Https { domain, http_endpoint } => {
-            let mut group = NameServerConfigGroup::with_capacity(ips.len());
-            let port = port.unwrap_or(443);
-            for ip in ips {
-                let config = NameServerConfig {
-                    socket_addr: SocketAddr::new(ip, port),
-                    protocol: Protocol::Https,
-                    tls_dns_name: Some(domain.clone()),
-                    http_endpoint: http_endpoint.clone(),
-                    trust_negative_responses: true,
-                    bind_addr: None,
-                };
-                group.push(config);
-            }
-            group
-        }
-        DnsUpstreamMode::Quic { domain } => NameServerConfigGroup::from_ips_quic(
-            &ips,
-            port.unwrap_or(853),
-            domain.to_string(),
-            true,
-        ),
+    let name_server: Vec<NameServerConfig> = match mode {
+        DnsUpstreamMode::Plaintext => ips
+            .iter()
+            .map(|ip| {
+                let mut conn = ConnectionConfig::new(ProtocolConfig::Udp);
+                conn.port = port.unwrap_or(53);
+                NameServerConfig::new(*ip, true, vec![conn])
+            })
+            .collect(),
+        DnsUpstreamMode::Tls { domain } => ips
+            .iter()
+            .map(|ip| {
+                let mut conn = ConnectionConfig::new(ProtocolConfig::Tls {
+                    server_name: domain.clone().into(),
+                });
+                conn.port = port.unwrap_or(853);
+                NameServerConfig::new(*ip, true, vec![conn])
+            })
+            .collect(),
+        DnsUpstreamMode::Https { domain, http_endpoint } => ips
+            .iter()
+            .map(|ip| {
+                let path: Arc<str> = http_endpoint
+                    .as_ref()
+                    .filter(|s| !s.is_empty())
+                    .map(|s| s.clone().into())
+                    .unwrap_or_else(|| Arc::from("/dns-query"));
+                let mut conn = ConnectionConfig::new(ProtocolConfig::Https {
+                    server_name: domain.clone().into(),
+                    path,
+                });
+                conn.port = port.unwrap_or(443);
+                NameServerConfig::new(*ip, true, vec![conn])
+            })
+            .collect(),
+        DnsUpstreamMode::Quic { domain } => ips
+            .iter()
+            .map(|ip| {
+                let mut conn = ConnectionConfig::new(ProtocolConfig::Quic {
+                    server_name: domain.clone().into(),
+                });
+                conn.port = port.unwrap_or(853);
+                NameServerConfig::new(*ip, true, vec![conn])
+            })
+            .collect(),
     };
 
     let resolve = ResolverConfig::from_parts(None, vec![], name_server);
@@ -63,12 +78,11 @@ pub(crate) fn create_resolver(
     options.num_concurrent_reqs = 4;
     options.preserve_intermediates = true;
     // options.use_hosts_file = ResolveHosts::Never;
-    let resolver = Resolver::builder_with_config(
-        resolve,
-        MarkConnectionProvider::new(MarkRuntimeProvider::new(mark_value, bind_config)),
-    )
-    .with_options(options)
-    .build();
+    let resolver =
+        Resolver::builder_with_config(resolve, MarkRuntimeProvider::new(mark_value, bind_config))
+            .with_options(options)
+            .build()
+            .expect("Failed to build DNS resolver");
 
     resolver
 }

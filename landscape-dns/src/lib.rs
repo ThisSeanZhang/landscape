@@ -18,11 +18,11 @@ pub fn to_common_records(records: Vec<Record>) -> Vec<CommonRecord> {
     records
         .into_iter()
         .map(|r| {
-            let data = format!("{}", r.data());
+            let data = format!("{}", r.data);
             CommonRecord {
-                name: r.name().to_string(),
+                name: r.name.to_string(),
                 rr_type: r.record_type().to_string(),
-                ttl: r.ttl(),
+                ttl: r.ttl,
                 data,
             }
         })
@@ -119,7 +119,7 @@ impl CacheDNSItem {
             return result;
         }
         for rdata in self.rdatas.iter() {
-            match rdata.data() {
+            match &rdata.data {
                 RData::A(a) => {
                     result.insert(FlowMarkInfo {
                         mark: info.mark.clone().into(),
@@ -137,7 +137,7 @@ impl CacheDNSItem {
                 // HTTPS 记录中的 ipv4hint / ipv6hint 包含客户端可能直接用来建连的
                 // IP 地址，同样需要写入 eBPF map，确保这些连接也受路由标记控制。
                 RData::HTTPS(https) => {
-                    for (_key, value) in https.svc_params().iter() {
+                    for (_key, value) in https.0.svc_params.iter() {
                         match value {
                             SvcParamValue::Ipv4Hint(hint) => {
                                 for a in hint.0.iter() {

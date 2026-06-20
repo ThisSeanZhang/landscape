@@ -312,33 +312,36 @@ fn build_response(
     let Ok(message) = Message::from_vec(packet) else {
         return None;
     };
-    if message.message_type() != MessageType::Query || message.op_code() != OpCode::Query {
+    if message.metadata.message_type != MessageType::Query
+        || message.metadata.op_code != OpCode::Query
+    {
         return None;
     }
 
     let ttl = mode.answer_ttl();
     let cache_flush = mode.uses_cache_flush();
     let answers = message
-        .queries()
+        .queries
         .iter()
         .flat_map(|query| {
             answer_records_for_query(query, ifindex, local_answer_provider, ttl, cache_flush)
         })
         .fold(Vec::new(), dedup_answer_record)
         .into_iter()
-        .filter(|answer| !is_suppressed_by_known_answers(answer, message.answers()))
+        .filter(|answer| !is_suppressed_by_known_answers(answer, &message.answers))
         .collect::<Vec<_>>();
     if answers.is_empty() {
         return None;
     }
 
-    let mut response = Message::new();
-    response.set_id(if mode == MdnsResponseMode::LegacyUnicast { message.id() } else { 0 });
-    response.set_message_type(MessageType::Response);
-    response.set_op_code(OpCode::Query);
-    response.set_authoritative(true);
+    let mut response = Message::new(0, MessageType::Query, OpCode::Query);
+    response.metadata.id =
+        if mode == MdnsResponseMode::LegacyUnicast { message.metadata.id } else { 0 };
+    response.metadata.message_type = MessageType::Response;
+    response.metadata.op_code = OpCode::Query;
+    response.metadata.authoritative = true;
     if mode == MdnsResponseMode::LegacyUnicast {
-        for query in message.queries() {
+        for query in &message.queries {
             response.add_query(query.clone());
         }
     }
@@ -373,7 +376,7 @@ fn answer_records_for_query(
         for ip in load_answer_addrs(local_answer_provider, RecordType::A, ifindex) {
             if let IpAddr::V4(ip) = ip {
                 let mut record = Record::from_rdata(name.clone(), ttl, RData::A(A(ip)));
-                record.set_mdns_cache_flush(cache_flush);
+                record.mdns_cache_flush = cache_flush;
                 answers.push(record);
             }
         }
@@ -383,7 +386,7 @@ fn answer_records_for_query(
         for ip in load_answer_addrs(local_answer_provider, RecordType::AAAA, ifindex) {
             if let IpAddr::V6(ip) = ip {
                 let mut record = Record::from_rdata(name.clone(), ttl, RData::AAAA(AAAA(ip)));
-                record.set_mdns_cache_flush(cache_flush);
+                record.mdns_cache_flush = cache_flush;
                 answers.push(record);
             }
         }
@@ -394,7 +397,7 @@ fn answer_records_for_query(
 
 fn dedup_answer_record(mut answers: Vec<Record>, answer: Record) -> Vec<Record> {
     if !answers.iter().any(|existing| {
-        existing.record_type() == answer.record_type() && existing.data() == answer.data()
+        existing.record_type() == answer.record_type() && existing.data == answer.data
     }) {
         answers.push(answer);
     }
@@ -404,11 +407,11 @@ fn dedup_answer_record(mut answers: Vec<Record>, answer: Record) -> Vec<Record> 
 
 fn is_suppressed_by_known_answers(answer: &Record, known_answers: &[Record]) -> bool {
     known_answers.iter().any(|known_answer| {
-        known_answer.name() == answer.name()
+        known_answer.name == answer.name
             && known_answer.record_type() == answer.record_type()
-            && known_answer.dns_class() == answer.dns_class()
-            && known_answer.data() == answer.data()
-            && known_answer.ttl() >= answer.ttl() / 2
+            && known_answer.dns_class == answer.dns_class
+            && known_answer.data == answer.data
+            && known_answer.ttl >= answer.ttl / 2
     })
 }
 
@@ -735,7 +738,7 @@ fn parse_query_unicast_response(packet: &[u8]) -> bool {
         return false;
     };
 
-    message.queries().iter().any(|query| query.mdns_unicast_response())
+    message.queries.iter().any(|query| query.mdns_unicast_response())
 }
 
 fn has_valid_mdns_hop_limit(family: MdnsFamily, hop_limit: Option<u32>) -> bool {
@@ -804,17 +807,13 @@ mod tests {
     }
 
     fn query_packet(name: &str, record_type: RecordType) -> Vec<u8> {
-        let mut message = Message::new();
-        message.set_id(0);
-        message.set_op_code(OpCode::Query);
+        let mut message = Message::new(0, MessageType::Query, OpCode::Query);
         message.add_query(Query::query(Name::from_str(name).unwrap(), record_type));
         message.to_vec().unwrap()
     }
 
     fn query_packet_with_id(name: &str, record_type: RecordType, id: u16) -> Vec<u8> {
-        let mut message = Message::new();
-        message.set_id(id);
-        message.set_op_code(OpCode::Query);
+        let mut message = Message::new(id, MessageType::Query, OpCode::Query);
         message.add_query(Query::query(Name::from_str(name).unwrap(), record_type));
         message.to_vec().unwrap()
     }
@@ -823,17 +822,13 @@ mod tests {
         let mut query = Query::query(Name::from_str(name).unwrap(), record_type);
         query.set_query_class(class);
 
-        let mut message = Message::new();
-        message.set_id(0);
-        message.set_op_code(OpCode::Query);
+        let mut message = Message::new(0, MessageType::Query, OpCode::Query);
         message.add_query(query);
         message.to_vec().unwrap()
     }
 
     fn query_packet_with_types(name: &str, record_types: &[RecordType]) -> Vec<u8> {
-        let mut message = Message::new();
-        message.set_id(0);
-        message.set_op_code(OpCode::Query);
+        let mut message = Message::new(0, MessageType::Query, OpCode::Query);
         for record_type in record_types {
             message.add_query(Query::query(Name::from_str(name).unwrap(), *record_type));
         }
@@ -842,9 +837,7 @@ mod tests {
 
     fn query_packet_with_known_answer(name: &str, known_answer_ttl: u32) -> Vec<u8> {
         let name = Name::from_str(name).unwrap();
-        let mut message = Message::new();
-        message.set_id(0);
-        message.set_op_code(OpCode::Query);
+        let mut message = Message::new(0, MessageType::Query, OpCode::Query);
         message.add_query(Query::query(name.clone(), RecordType::A));
         message.add_answer(Record::from_rdata(
             name,
@@ -858,9 +851,7 @@ mod tests {
         let mut query = Query::query(Name::from_str(name).unwrap(), record_type);
         query.set_mdns_unicast_response(true);
 
-        let mut message = Message::new();
-        message.set_id(0);
-        message.set_op_code(OpCode::Query);
+        let mut message = Message::new(0, MessageType::Query, OpCode::Query);
         message.add_query(query);
         message.to_vec().unwrap()
     }
@@ -886,12 +877,12 @@ mod tests {
         .expect("landscape.local A query must be answered");
         let response = Message::from_vec(&response).unwrap();
 
-        assert_eq!(response.message_type(), MessageType::Response);
-        assert_eq!(response.answers().len(), 1);
-        assert_eq!(response.answers()[0].name().to_string(), MDNS_HOSTNAME);
-        assert_eq!(response.answers()[0].record_type(), RecordType::A);
-        assert_eq!(response.answers()[0].ttl(), MDNS_HOST_TTL_SECS);
-        assert!(response.answers()[0].mdns_cache_flush());
+        assert_eq!(response.metadata.message_type, MessageType::Response);
+        assert_eq!(response.answers.len(), 1);
+        assert_eq!(response.answers[0].name.to_string(), MDNS_HOSTNAME);
+        assert_eq!(response.answers[0].record_type(), RecordType::A);
+        assert_eq!(response.answers[0].ttl, MDNS_HOST_TTL_SECS);
+        assert!(response.answers[0].mdns_cache_flush);
     }
 
     #[test]
@@ -958,8 +949,8 @@ mod tests {
         .expect("landscape.local A/ANY query must be answered");
         let response = Message::from_vec(&response).unwrap();
 
-        assert_eq!(response.answers().len(), 1);
-        assert_eq!(response.answers()[0].record_type(), RecordType::A);
+        assert_eq!(response.answers.len(), 1);
+        assert_eq!(response.answers[0].record_type(), RecordType::A);
     }
 
     #[test]
@@ -994,7 +985,7 @@ mod tests {
         .expect("low-TTL known answer should not suppress response");
         let response = Message::from_vec(&response).unwrap();
 
-        assert_eq!(response.answers().len(), 1);
+        assert_eq!(response.answers.len(), 1);
     }
 
     #[test]
@@ -1126,11 +1117,11 @@ mod tests {
         .expect("legacy landscape.local A query must be answered");
         let response = Message::from_vec(&response).unwrap();
 
-        assert_eq!(response.id(), 0x1234);
-        assert_eq!(response.queries().len(), 1);
-        assert_eq!(response.answers().len(), 1);
-        assert_eq!(response.answers()[0].ttl(), LEGACY_UNICAST_TTL_SECS);
-        assert!(!response.answers()[0].mdns_cache_flush());
+        assert_eq!(response.metadata.id, 0x1234);
+        assert_eq!(response.queries.len(), 1);
+        assert_eq!(response.answers.len(), 1);
+        assert_eq!(response.answers[0].ttl, LEGACY_UNICAST_TTL_SECS);
+        assert!(!response.answers[0].mdns_cache_flush);
     }
     #[test]
     fn response_uses_ifindex_specific_addresses_when_available() {
@@ -1151,7 +1142,7 @@ mod tests {
         .expect("landscape.local A query must be answered");
         let response = Message::from_vec(&response).unwrap();
 
-        assert_eq!(response.answers().len(), 1);
-        assert_eq!(response.answers()[0].data(), &RData::A(A(Ipv4Addr::new(192, 168, 2, 10))));
+        assert_eq!(response.answers.len(), 1);
+        assert_eq!(&response.answers[0].data, &RData::A(A(Ipv4Addr::new(192, 168, 2, 10))));
     }
 }

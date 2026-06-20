@@ -18,11 +18,7 @@ hickory-resolver = { workspace = true, features = [
     "rustls-platform-verifier",
 ] }
 hickory-proto = { workspace = true, features = [
-    "__https",
-    "__tls",
-    "quic-ring",
     "mdns",
-    "tls-ring",
 ] }
 
 uuid = { workspace = true }

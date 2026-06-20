@@ -164,7 +164,8 @@ impl LandscapeConfigService {
 
             let mut hasher = Sha256::new();
             hasher.update(content.as_bytes());
-            let current_hash = hasher.finalize().iter().map(|b| format!("{:02x}", b)).collect::<String>();
+            let current_hash =
+                hasher.finalize().iter().map(|b| format!("{:02x}", b)).collect::<String>();
 
             if current_hash != expected_hash {
                 return Err(LdError::ConfigConflict);
@@ -233,7 +234,8 @@ impl LandscapeConfigService {
 
             let mut hasher = Sha256::new();
             hasher.update(content.as_bytes());
-            let current_hash = hasher.finalize().iter().map(|b| format!("{:02x}", b)).collect::<String>();
+            let current_hash =
+                hasher.finalize().iter().map(|b| format!("{:02x}", b)).collect::<String>();
 
             if current_hash != expected_hash {
                 return Err(LdError::ConfigConflict);
@@ -304,7 +306,8 @@ impl LandscapeConfigService {
 
             let mut hasher = Sha256::new();
             hasher.update(content.as_bytes());
-            let current_hash = hasher.finalize().iter().map(|b| format!("{:02x}", b)).collect::<String>();
+            let current_hash =
+                hasher.finalize().iter().map(|b| format!("{:02x}", b)).collect::<String>();
 
             if current_hash != expected_hash {
                 return Err(LdError::ConfigConflict);
@@ -375,7 +378,8 @@ impl LandscapeConfigService {
 
             let mut hasher = Sha256::new();
             hasher.update(content.as_bytes());
-            let current_hash = hasher.finalize().iter().map(|b| format!("{:02x}", b)).collect::<String>();
+            let current_hash =
+                hasher.finalize().iter().map(|b| format!("{:02x}", b)).collect::<String>();
 
             if current_hash != expected_hash {
                 return Err(LdError::ConfigConflict);
@@ -447,7 +451,8 @@ impl LandscapeConfigService {
 
             let mut hasher = Sha256::new();
             hasher.update(content.as_bytes());
-            let current_hash = hasher.finalize().iter().map(|b| format!("{:02x}", b)).collect::<String>();
+            let current_hash =
+                hasher.finalize().iter().map(|b| format!("{:02x}", b)).collect::<String>();
 
             if current_hash != expected_hash {
                 return Err(LdError::ConfigConflict);

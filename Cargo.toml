@@ -97,10 +97,10 @@ dhcproto = "0.15.0"
 reqwest = { version = "0.13.4", default-features = false, features = [
     "rustls",
 ] }
-hickory-server = "0.25.2"
+hickory-server = "0.26.1"
 hickory-client = "0.25.2"
-hickory-resolver = "0.25.2"
-hickory-proto = "0.25.2"
+hickory-resolver = "0.26.1"
+hickory-proto = "0.26.1"
 quinn = { version = "0.11.2", features = ["runtime-tokio"] }
 trie-rs = "0.4.2"
 aho-corasick = "1.1.3"
@@ -164,9 +164,9 @@ tracing-appender = "0.2.5"
 # ============================================================================
 # eBPF & Kernel
 # ============================================================================
-libbpf-rs = { version = "0.26.1" }
-libbpf-cargo = { version = "0.26.1" }
-libbpf-sys = { version = "1.6.3" }
+libbpf-rs = { version = "0.26.2" }
+libbpf-cargo = { version = "0.26.2" }
+libbpf-sys = { version = "1.6.4" }
 
 # ============================================================================
 # Code Generation & Macros

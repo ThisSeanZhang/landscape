@@ -1,4 +1,4 @@
-use std::{net::IpAddr, str::FromStr as _};
+use std::{net::IpAddr, str::FromStr};
 
 use hickory_proto::rr::{
     rdata::{A, AAAA},
@@ -73,7 +73,7 @@ impl RedirectSolution {
 
             if let Some(rdata) = rdata_ip {
                 result.push(Record::from_rdata(
-                    hickory_resolver::Name::from_str(domain).unwrap(),
+                    hickory_proto::rr::Name::from_str(domain).unwrap(),
                     self.ttl_secs,
                     rdata,
                 ));
@@ -169,8 +169,9 @@ impl ResolutionRule {
             Ok(lookup) => {
                 let result = if self.enable_ip_validation {
                     lookup
-                        .record_iter()
-                        .filter(|ietm| match ietm.data() {
+                        .answers()
+                        .iter()
+                        .filter(|ietm| match &ietm.data {
                             RData::A(A(ipv4)) => is_global_ipv4(ipv4),
                             RData::AAAA(AAAA(ipv6)) => is_global_ipv6(ipv6),
                             _ => true,
@@ -178,22 +179,22 @@ impl ResolutionRule {
                         .cloned()
                         .collect()
                 } else {
-                    lookup.records().to_vec()
+                    lookup.answers().to_vec()
                 };
                 Ok(result)
             }
             Err(e) => {
                 use crate::error::DnsError;
-                if let Some(proto_err) = e.proto() {
-                    match proto_err.kind() {
-                        hickory_proto::ProtoErrorKind::NoRecordsFound { response_code, .. } => {
-                            return Err(DnsError::Protocol(*response_code));
-                        }
-                        hickory_proto::ProtoErrorKind::Timeout => {
-                            return Err(DnsError::Timeout);
-                        }
-                        _ => {}
+                match &e {
+                    hickory_resolver::net::NetError::Dns(
+                        hickory_resolver::net::DnsError::NoRecordsFound(no_records),
+                    ) => {
+                        return Err(DnsError::Protocol(no_records.response_code));
                     }
+                    hickory_resolver::net::NetError::Timeout => {
+                        return Err(DnsError::Timeout);
+                    }
+                    _ => {}
                 }
                 tracing::error!(
                     "[flow_id: {}, rule: {}] DNS resolution failed for {}: {}",
@@ -291,6 +292,6 @@ mod tests {
 
         let records = solution.lookup("example.com.", RecordType::A);
         assert_eq!(records.len(), 1);
-        assert_eq!(records[0].ttl(), 42);
+        assert_eq!(records[0].ttl, 42);
     }
 }

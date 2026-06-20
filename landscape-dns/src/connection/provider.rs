@@ -5,11 +5,8 @@ use std::os::unix::io::AsRawFd;
 use std::sync::Arc;
 use std::{future::Future, io, pin::Pin};
 
-use hickory_resolver::{
-    name_server::GenericConnector,
-    proto::runtime::{
-        iocompat::AsyncIoTokioAsStd, QuicSocketBinder, RuntimeProvider, TokioHandle, TokioTime,
-    },
+use hickory_resolver::net::runtime::{
+    iocompat::AsyncIoTokioAsStd, QuicSocketBinder, RuntimeProvider, TokioHandle, TokioTime,
 };
 
 use landscape_common::dns::config::DnsBindConfig;
@@ -18,7 +15,7 @@ use std::time::Duration;
 use tokio::net::UdpSocket as TokioUdpSocket;
 use tokio::net::{TcpSocket, TcpStream as TokioTcpStream};
 
-pub type MarkConnectionProvider = GenericConnector<MarkRuntimeProvider>;
+pub type MarkConnectionProvider = MarkRuntimeProvider;
 
 /// The Tokio Runtime for async execution
 #[derive(Clone)]

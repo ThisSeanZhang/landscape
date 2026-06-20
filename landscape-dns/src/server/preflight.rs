@@ -223,7 +223,7 @@ mod tests {
         assert_eq!(code, ResponseCode::NoError);
         assert_eq!(status, DnsResultStatus::Local);
         assert_eq!(records.len(), 1);
-        assert!(matches!(records[0].data(), RData::A(A(ip)) if *ip == Ipv4Addr::LOCALHOST));
+        assert!(matches!(&records[0].data, RData::A(A(ip)) if *ip == Ipv4Addr::LOCALHOST));
         assert_eq!(
             classify_hard_local_zone("badlocalhost.", RecordType::A),
             PreflightDecision::Continue

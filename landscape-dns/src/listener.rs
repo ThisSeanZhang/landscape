@@ -3,7 +3,7 @@ use std::os::fd::AsRawFd;
 use std::sync::Arc;
 use std::time::Duration;
 
-use hickory_server::ServerFuture;
+use hickory_server::Server;
 use rustls::server::ResolvesServerCert;
 use tokio::net::UdpSocket;
 use tokio_util::sync::CancellationToken;
@@ -152,7 +152,7 @@ pub async fn start_flow_dns_listener(
     attach_dns_socket(flow_id, sock_fd, false);
 
     let doh_handler = handler.clone();
-    let mut server = ServerFuture::new(handler);
+    let mut server = Server::new(handler);
     server.register_socket(udp);
 
     if let Some(doh) = doh {
@@ -177,7 +177,7 @@ pub async fn start_flow_dns_listener(
 }
 
 fn register_doh_listener(
-    server: &mut ServerFuture<DnsRequestHandler>,
+    server: &mut Server<DnsRequestHandler>,
     flow_id: u32,
     doh: EffectiveDohListenerConfig,
     handler: DnsRequestHandler,

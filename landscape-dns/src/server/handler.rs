@@ -12,7 +12,7 @@ use arc_swap::ArcSwap;
 #[cfg(test)]
 use arc_swap::ArcSwapOption;
 use hickory_proto::{
-    op::{Header, ResponseCode},
+    op::{Header, Metadata, ResponseCode},
     rr::{
         rdata::{
             svcb::{Alpn, IpHint, SvcParamKey, SvcParamValue, SVCB},
@@ -22,8 +22,9 @@ use hickory_proto::{
     },
 };
 use hickory_server::{
-    authority::MessageResponseBuilder,
+    net::runtime::Time,
     server::{Request, RequestHandler, ResponseHandler, ResponseInfo},
+    zone_handler::MessageResponseBuilder,
 };
 use moka::future::Cache;
 use uuid::Uuid;
@@ -535,7 +536,7 @@ impl DnsRequestHandler {
                 .iter()
                 .cloned()
                 .map(|mut d| {
-                    d.set_ttl(*min_ttl - insert_time_elapsed);
+                    d.ttl = *min_ttl - insert_time_elapsed;
                     d
                 })
                 .collect();
@@ -558,7 +559,7 @@ impl DnsRequestHandler {
     ) {
         let min_ttl = rdata_ttl_vec
             .iter()
-            .map(|r| r.ttl())
+            .map(|r| r.ttl)
             .min()
             .unwrap_or_else(|| self.runtime_config.load().negative_cache_ttl);
 
@@ -629,17 +630,17 @@ impl DnsRequestHandler {
         mut response_handle: R,
         code: ResponseCode,
     ) -> ResponseInfo {
-        let mut header = Header::response_from_request(request.header());
-        header.set_response_code(code);
-        header.set_recursion_available(true);
-        header.set_authoritative(true);
+        let mut metadata = Metadata::response_from_request(&request.metadata);
+        metadata.response_code = code;
+        metadata.recursion_available = true;
+        metadata.authoritative = true;
         let response =
-            MessageResponseBuilder::from_message_request(request).build_no_records(header);
+            MessageResponseBuilder::from_message_request(request).build_no_records(metadata);
         match response_handle.send_response(response).await {
             Ok(info) => info,
             Err(e) => {
                 tracing::error!("Error response failed: {}", e);
-                serve_failed(request.header())
+                serve_failed(&request.metadata)
             }
         }
     }
@@ -651,18 +652,18 @@ impl DnsRequestHandler {
         code: ResponseCode,
         records: Vec<Record>,
     ) -> ResponseInfo {
-        let mut header = Header::response_from_request(request.header());
-        header.set_response_code(code);
-        header.set_recursion_available(true);
-        header.set_authoritative(true);
+        let mut metadata = Metadata::response_from_request(&request.metadata);
+        metadata.response_code = code;
+        metadata.recursion_available = true;
+        metadata.authoritative = true;
 
         let builder = MessageResponseBuilder::from_message_request(request);
         let result = if records.is_empty() {
-            let response = builder.build_no_records(header);
+            let response = builder.build_no_records(metadata);
             response_handle.send_response(response).await
         } else {
             let response = builder.build(
-                header,
+                metadata,
                 records.iter(),
                 vec![].into_iter(),
                 vec![].into_iter(),
@@ -675,7 +676,7 @@ impl DnsRequestHandler {
             Ok(info) => info,
             Err(e) => {
                 tracing::error!("Response failed: {}", e);
-                serve_failed(request.header())
+                serve_failed(&request.metadata)
             }
         }
     }
@@ -703,7 +704,7 @@ impl DnsRequestHandler {
         request: &Request,
         response_handle: &mut R,
     ) -> Option<ResponseInfo> {
-        let req = request.queries().first()?;
+        let req = request.queries.queries().first()?;
         let query_name = req.name().to_string().to_ascii_lowercase();
         if !is_resolver_arpa_name(&query_name) {
             return None;
@@ -715,13 +716,13 @@ impl DnsRequestHandler {
             Vec::new()
         };
 
-        let mut header = Header::response_from_request(request.header());
-        header.set_response_code(ResponseCode::NoError);
-        header.set_authoritative(true);
-        header.set_recursion_available(true);
+        let mut metadata = Metadata::response_from_request(&request.metadata);
+        metadata.response_code = ResponseCode::NoError;
+        metadata.authoritative = true;
+        metadata.recursion_available = true;
 
         let response = MessageResponseBuilder::from_message_request(request).build(
-            header,
+            metadata,
             records.iter(),
             vec![].into_iter(),
             vec![].into_iter(),
@@ -732,7 +733,7 @@ impl DnsRequestHandler {
             Ok(info) => info,
             Err(e) => {
                 tracing::error!("DDR response failed: {}", e);
-                serve_failed(request.header())
+                serve_failed(&request.metadata)
             }
         })
     }
@@ -760,13 +761,13 @@ impl DnsRequestHandler {
 
 #[async_trait::async_trait]
 impl RequestHandler for DnsRequestHandler {
-    async fn handle_request<R: ResponseHandler>(
+    async fn handle_request<R: ResponseHandler, T: Time>(
         &self,
         request: &Request,
         mut response_handle: R,
     ) -> ResponseInfo {
         let start_time = Instant::now();
-        let queries = request.queries();
+        let queries = request.queries.queries();
         if !matches!(preflight::classify_query_count(queries.len()), PreflightDecision::Continue) {
             return self.send_error_response(request, response_handle, ResponseCode::FormErr).await;
         }
@@ -777,7 +778,7 @@ impl RequestHandler for DnsRequestHandler {
         let src_ip = request.src().ip();
 
         if let PreflightDecision::Respond { code, records, status } =
-            preflight::classify_hard_query(request.op_code(), req)
+            preflight::classify_hard_query(request.metadata.op_code, req)
         {
             return self
                 .send_preflight_response(
@@ -819,10 +820,10 @@ impl RequestHandler for DnsRequestHandler {
                 .await;
         }
 
-        let mut header = Header::response_from_request(request.header());
-        header.set_response_code(ResponseCode::NoError);
-        header.set_authoritative(true);
-        header.set_recursion_available(true);
+        let mut metadata = Metadata::response_from_request(&request.metadata);
+        metadata.response_code = ResponseCode::NoError;
+        metadata.authoritative = true;
+        metadata.recursion_available = true;
 
         let mut records = vec![];
         let mut status = DnsResultStatus::Normal;
@@ -860,7 +861,7 @@ impl RequestHandler for DnsRequestHandler {
         else if let Some((cached_records, filter, code)) =
             self.lookup_cache(&domain, query_type).await
         {
-            header.set_response_code(code);
+            metadata.response_code = code;
             if is_type_filtered(query_type, &filter) {
                 status = DnsResultStatus::Filter;
             } else {
@@ -946,11 +947,11 @@ impl RequestHandler for DnsRequestHandler {
         // 5. Send Response
         let builder = MessageResponseBuilder::from_message_request(request);
         let result = if records.is_empty() {
-            let response = builder.build_no_records(header);
+            let response = builder.build_no_records(metadata);
             response_handle.send_response(response).await
         } else {
             let response = builder.build(
-                header,
+                metadata,
                 records.iter(),
                 vec![].into_iter(),
                 vec![].into_iter(),
@@ -962,7 +963,7 @@ impl RequestHandler for DnsRequestHandler {
         self.send_metric(
             domain,
             query_type,
-            header.response_code(),
+            metadata.response_code,
             status,
             start_time,
             src_ip,
@@ -973,18 +974,18 @@ impl RequestHandler for DnsRequestHandler {
             Ok(info) => info,
             Err(e) => {
                 tracing::error!("Response failed: {}", e);
-                serve_failed(request.header())
+                serve_failed(&request.metadata)
             }
         }
     }
 }
 
-fn serve_failed(req_header: &Header) -> ResponseInfo {
-    let mut header = Header::response_from_request(req_header);
-    header.set_response_code(ResponseCode::ServFail);
-    header.set_recursion_available(true);
-    header.set_authoritative(true);
-    header.into()
+fn serve_failed(req_metadata: &Metadata) -> ResponseInfo {
+    let mut metadata = Metadata::response_from_request(req_metadata);
+    metadata.response_code = ResponseCode::ServFail;
+    metadata.recursion_available = true;
+    metadata.authoritative = true;
+    ResponseInfo::from(Header { metadata, counts: Default::default() })
 }
 
 fn is_resolver_arpa_name(name: &str) -> bool {
@@ -1092,7 +1093,7 @@ fn filter_result(un_filter_records: Vec<Record>, filter: &FilterResult) -> Vec<R
             // that contradict the IP-version filter, so clients won't
             // use a hint to bypass the filter.
             if r.record_type() == RecordType::HTTPS {
-                if let RData::HTTPS(https) = r.data().clone() {
+                if let RData::HTTPS(https) = r.data.clone() {
                     let key_to_remove = match filter {
                         FilterResult::OnlyIPv4 => Some(SvcParamKey::Ipv6Hint),
                         FilterResult::OnlyIPv6 => Some(SvcParamKey::Ipv4Hint),
@@ -1100,17 +1101,18 @@ fn filter_result(un_filter_records: Vec<Record>, filter: &FilterResult) -> Vec<R
                     };
                     if let Some(remove_key) = key_to_remove {
                         let filtered_params: Vec<_> = https
-                            .svc_params()
+                            .0
+                            .svc_params
                             .iter()
                             .filter(|(k, _)| *k != remove_key)
                             .cloned()
                             .collect();
                         let new_svcb = SVCB::new(
-                            https.svc_priority(),
-                            https.target_name().clone(),
+                            https.0.svc_priority,
+                            https.0.target_name.clone(),
                             filtered_params,
                         );
-                        r.set_data(RData::HTTPS(HTTPS(new_svcb)));
+                        r.data = RData::HTTPS(HTTPS(new_svcb));
                     }
                 }
             }
@@ -1130,7 +1132,7 @@ fn is_type_filtered(query_type: RecordType, filter: &FilterResult) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hickory_proto::op::{Header, ResponseCode};
+    use hickory_proto::op::ResponseCode;
     use hickory_proto::rr::rdata::{A, AAAA};
     use hickory_proto::rr::{RData, Record, RecordType};
     use hickory_proto::serialize::binary::BinEncodable;
@@ -1195,22 +1197,24 @@ mod tests {
     }
 
     fn sample_a_record(name: &str, ttl: u32, addr: Ipv4Addr) -> Record {
-        Record::from_rdata(hickory_resolver::Name::from_str(name).unwrap(), ttl, RData::A(A(addr)))
+        Record::from_rdata(hickory_proto::rr::Name::from_str(name).unwrap(), ttl, RData::A(A(addr)))
     }
 
     #[test]
     fn test_serve_failed_flags() {
-        let mut req_header = Header::new();
-        req_header.set_id(0x1234);
-        req_header.set_recursion_desired(true);
+        let req_metadata = Metadata::new(
+            0x1234,
+            hickory_proto::op::MessageType::Query,
+            hickory_proto::op::OpCode::Query,
+        );
 
-        let res_info = serve_failed(&req_header);
+        let res_info = serve_failed(&req_metadata);
 
         // ResponseInfo derefs to Header in the version of hickory-server used
-        assert_eq!(res_info.id(), 0x1234);
-        assert_eq!(res_info.response_code(), ResponseCode::ServFail);
-        assert!(res_info.recursion_available(), "RA flag must be true");
-        assert!(res_info.authoritative(), "AA flag must be true");
+        assert_eq!(res_info.id, 0x1234);
+        assert_eq!(res_info.response_code, ResponseCode::ServFail);
+        assert!(res_info.recursion_available, "RA flag must be true");
+        assert!(res_info.authoritative, "AA flag must be true");
     }
 
     #[test]
@@ -1224,7 +1228,7 @@ mod tests {
 
     #[test]
     fn test_filter_result() {
-        let name = hickory_resolver::Name::from_str("test.com.").unwrap();
+        let name = hickory_proto::rr::Name::from_str("test.com.").unwrap();
         let records = vec![
             Record::from_rdata(name.clone(), 60, RData::A(A(Ipv4Addr::new(1, 1, 1, 1)))),
             Record::from_rdata(
@@ -1255,12 +1259,12 @@ mod tests {
             build_ddr_records(&["api.example.com".to_string()], 443, "/dns-query", Some(&provider));
 
         assert_eq!(records.len(), 1);
-        let svcb = match records[0].data() {
+        let svcb = match &records[0].data {
             RData::SVCB(svcb) => svcb.clone(),
             _ => panic!("expected SVCB record"),
         };
 
-        let keys = svcb.svc_params().iter().map(|(key, _)| u16::from(*key)).collect::<Vec<_>>();
+        let keys = svcb.svc_params.iter().map(|(key, _)| u16::from(*key)).collect::<Vec<_>>();
         assert_eq!(keys, vec![1, 3, 4, 6, 7]);
 
         let mut wire = Vec::new();
@@ -1559,7 +1563,7 @@ mod tests {
 
             let (records, _, _, _) =
                 handler.lookup_redirects("new.example.com.", RecordType::A).unwrap();
-            assert_eq!(records[0].ttl(), 33);
+            assert_eq!(records[0].ttl, 33);
         });
     }
 
@@ -1667,9 +1671,9 @@ mod tests {
             assert_eq!(redirect_id, Some(Uuid::nil()));
             assert_eq!(records.len(), 1);
             assert_eq!(records[0].record_type(), RecordType::A);
-            assert_eq!(records[0].ttl(), 17);
+            assert_eq!(records[0].ttl, 17);
             assert!(matches!(
-                records[0].data(),
+                &records[0].data,
                 RData::A(A(ip)) if *ip == Ipv4Addr::new(192, 168, 1, 1)
             ));
         });

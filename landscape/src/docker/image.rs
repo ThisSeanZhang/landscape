@@ -2,8 +2,8 @@ use std::collections::HashMap;
 use std::collections::VecDeque;
 use std::sync::Arc;
 
-use bollard::query_parameters::CreateImageOptions;
 use bollard::models::CreateImageInfo;
+use bollard::query_parameters::CreateImageOptions;
 use bollard::Docker;
 use tokio::sync::broadcast;
 use tokio::sync::RwLock;

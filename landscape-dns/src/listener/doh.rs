@@ -2,12 +2,11 @@ use std::{io, net::SocketAddr, sync::Arc};
 
 use bytes::Bytes;
 use hickory_proto::{
-    op::{Header, ResponseCode},
+    op::{Header, Metadata, ResponseCode},
     serialize::binary::{BinDecodable, BinDecoder, BinEncodable, BinEncoder},
-    xfer::Protocol,
 };
 use hickory_server::{
-    authority::MessageRequest,
+    net::xfer::Protocol,
     server::{Request, RequestHandler},
 };
 use http::{Request as HttpRequest, StatusCode};
@@ -246,14 +245,17 @@ async fn handle_dns_message(
     handler: Arc<DnsRequestHandler>,
     response_handle: DohResponseHandle,
 ) {
-    let mut decoder = BinDecoder::new(message_bytes);
-    match MessageRequest::read(&mut decoder) {
-        Ok(message) => {
-            if message.message_type() == hickory_proto::op::MessageType::Response {
+    match Request::from_bytes(message_bytes.to_vec(), src_addr, Protocol::Https) {
+        Ok(request) => {
+            if request.metadata.message_type == hickory_proto::op::MessageType::Response {
                 return;
             }
-            let request = Request::new(message, src_addr, Protocol::Https);
-            handler.handle_request(&request, response_handle).await;
+            handler
+                .handle_request::<_, hickory_server::net::runtime::TokioTime>(
+                    &request,
+                    response_handle,
+                )
+                .await;
         }
         Err(e) => {
             tracing::debug!("failed to parse DoH DNS message from {src_addr}: {e}");
@@ -275,9 +277,13 @@ async fn respond_to_invalid_dns_message(message_bytes: &[u8], response_handle: D
 fn formerr_response(message_bytes: &[u8]) -> Option<Vec<u8>> {
     let mut decoder = BinDecoder::new(message_bytes);
     let header = Header::read(&mut decoder).ok()?;
-    let mut response_header = Header::response_from_request(&header);
-    response_header.set_response_code(ResponseCode::FormErr);
-    let mut buffer = Vec::with_capacity(Header::len());
+    let mut response_metadata = Metadata::response_from_request(&header.metadata);
+    response_metadata.response_code = ResponseCode::FormErr;
+    let response_header = Header {
+        metadata: response_metadata,
+        counts: Default::default(),
+    };
+    let mut buffer = Vec::with_capacity(12); // DNS header is always 12 bytes
     let mut encoder = BinEncoder::new(&mut buffer);
     response_header.emit(&mut encoder).ok()?;
     Some(buffer)
@@ -316,9 +322,9 @@ mod tests {
         let mut decoder = BinDecoder::new(&response);
         let header = Header::read(&mut decoder).unwrap();
 
-        assert_eq!(header.id(), 0x1234);
-        assert_eq!(header.message_type(), MessageType::Response);
-        assert_eq!(header.response_code(), ResponseCode::FormErr);
+        assert_eq!(header.id, 0x1234);
+        assert_eq!(header.message_type, MessageType::Response);
+        assert_eq!(header.response_code, ResponseCode::FormErr);
     }
 
     #[test]

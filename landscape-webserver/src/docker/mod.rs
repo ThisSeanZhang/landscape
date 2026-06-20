@@ -1,11 +1,11 @@
 use axum::extract::{Path, State};
 
 use bollard::{
+    models::{ContainerCreateBody, ContainerSummary},
     query_parameters::{
         CreateContainerOptions, ListContainersOptions, RemoveContainerOptions,
         StartContainerOptions, StopContainerOptions,
     },
-    models::{ContainerCreateBody, ContainerSummary},
 };
 
 use image::get_docker_images_paths;

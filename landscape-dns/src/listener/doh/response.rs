@@ -3,13 +3,14 @@ use std::{io, sync::Arc};
 use bytes::Bytes;
 use futures_util::lock::Mutex;
 use hickory_proto::{
-    op::{Header, MessageType, ResponseCode},
+    op::{Header, MessageType, Metadata, OpCode, ResponseCode},
     rr::Record,
     serialize::binary::{BinEncodable, BinEncoder},
 };
 use hickory_server::{
-    authority::MessageResponse,
+    net::NetError,
     server::{ResponseHandler, ResponseInfo},
+    zone_handler::MessageResponse,
 };
 use http::{header, Response as HttpResponse, StatusCode};
 
@@ -77,8 +78,8 @@ impl ResponseHandler for DohResponseHandle {
             impl Iterator<Item = &'a Record> + Send + 'a,
             impl Iterator<Item = &'a Record> + Send + 'a,
         >,
-    ) -> io::Result<ResponseInfo> {
-        let id = response.header().id();
+    ) -> Result<ResponseInfo, NetError> {
+        let id = response.metadata().id;
         let mut buffer = Vec::with_capacity(512);
         let info = {
             let mut encoder = BinEncoder::new(&mut buffer);
@@ -100,11 +101,9 @@ impl ResponseHandler for DohResponseHandle {
 }
 
 fn servfail_header(id: u16) -> Header {
-    let mut header = Header::new();
-    header.set_id(id);
-    header.set_message_type(MessageType::Response);
-    header.set_response_code(ResponseCode::ServFail);
-    header
+    let mut metadata = Metadata::new(id, MessageType::Response, OpCode::Query);
+    metadata.response_code = ResponseCode::ServFail;
+    Header { metadata, counts: Default::default() }
 }
 
 fn http_error_body(message: &str, endpoint: &str) -> String {
@@ -132,8 +131,8 @@ mod tests {
     fn servfail_header_is_dns_response_with_request_id() {
         let header = servfail_header(0x1234);
 
-        assert_eq!(header.id(), 0x1234);
-        assert_eq!(header.message_type(), MessageType::Response);
-        assert_eq!(header.response_code(), ResponseCode::ServFail);
+        assert_eq!(header.id, 0x1234);
+        assert_eq!(header.message_type, MessageType::Response);
+        assert_eq!(header.response_code, ResponseCode::ServFail);
     }
 }
