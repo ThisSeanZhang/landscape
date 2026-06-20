@@ -2,7 +2,7 @@ use crate::LandscapeApp;
 use axum::extract::{Path, State};
 use bollard::{
     query_parameters::{ListImagesOptions, RemoveImageOptions},
-    secret::ImageSummary,
+    models::ImageSummary,
 };
 use landscape_common::api_response::LandscapeApiResp as CommonApiResp;
 use landscape_common::docker::image::{PullImageReq, PullImgTask};

@@ -5,8 +5,8 @@ use std::{
 };
 
 use bollard::{
-    query_parameters::ListNetworksOptions,
-    secret::{Ipam, Network, NetworkContainer},
+    models::{EndpointResource, Ipam, NetworkInspect},
+    query_parameters::{InspectNetworkOptions, ListNetworksOptions},
     Docker,
 };
 use landscape_common::{
@@ -24,16 +24,20 @@ pub async fn inspect_all_networks(
     let networks = docker.list_networks(query).await?;
 
     let mut result = Vec::with_capacity(networks.len());
-    for networks in networks {
-        if let Some(net) = convert_network(networks) {
-            result.push(net);
+    for network in networks {
+        if let Some(id) = &network.id {
+            if let Ok(net) = docker.inspect_network(id, None::<InspectNetworkOptions>).await {
+                if let Some(net) = convert_network(net) {
+                    result.push(net);
+                }
+            }
         }
     }
 
     Ok(result)
 }
 
-pub fn convert_network(net: Network) -> Option<LandscapeDockerNetwork> {
+pub fn convert_network(net: NetworkInspect) -> Option<LandscapeDockerNetwork> {
     match (net.name, net.id) {
         (Some(name), Some(id)) => {
             //
@@ -71,7 +75,7 @@ pub fn convert_network(net: Network) -> Option<LandscapeDockerNetwork> {
     }
 }
 
-fn convert_container(container: NetworkContainer) -> Option<LandscapeDockerNetworkContainer> {
+fn convert_container(container: EndpointResource) -> Option<LandscapeDockerNetworkContainer> {
     if let Some(container_name) = container.name {
         let mac = container.mac_address.and_then(|mac_str| MacAddr::from_str(&mac_str));
         Some(LandscapeDockerNetworkContainer { name: container_name, mac })

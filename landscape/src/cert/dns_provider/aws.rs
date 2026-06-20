@@ -1,5 +1,5 @@
 use chrono::Utc;
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit, Mac};
 use landscape_common::cert::CertError;
 use quick_xml::de::from_str as from_xml_str;
 use reqwest::header::HOST;

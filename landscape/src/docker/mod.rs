@@ -1,6 +1,6 @@
 use bollard::{
+    models::EventMessageTypeEnum,
     query_parameters::{EventsOptions, InspectContainerOptions, InspectNetworkOptions},
-    secret::EventMessageTypeEnum,
     Docker,
 };
 use landscape_common::docker::error::DockerError;
@@ -353,7 +353,7 @@ pub async fn accept_docker_info(
 pub async fn handle_event(
     ip_route_service: &IpRouteService,
     docker: &Docker,
-    emsg: bollard::secret::EventMessage,
+    emsg: bollard::models::EventMessage,
 ) {
     match emsg.typ {
         Some(EventMessageTypeEnum::CONTAINER) => {

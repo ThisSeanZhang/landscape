@@ -88,7 +88,7 @@ impl LandscapeConfigService {
 
         let mut hasher = Sha256::new();
         hasher.update(toml::to_string(&config.file_config).unwrap().as_bytes());
-        let hash = format!("{:x}", hasher.finalize());
+        let hash = hasher.finalize().iter().map(|b| format!("{:02x}", b)).collect::<String>();
 
         (dns, hash)
     }
@@ -135,7 +135,7 @@ impl LandscapeConfigService {
 
         let mut hasher = Sha256::new();
         hasher.update(content.as_bytes());
-        let hash = format!("{:x}", hasher.finalize());
+        let hash = hasher.finalize().iter().map(|b| format!("{:02x}", b)).collect::<String>();
 
         let config: LandscapeConfig = if content.is_empty() {
             LandscapeConfig::default()
@@ -164,7 +164,7 @@ impl LandscapeConfigService {
 
             let mut hasher = Sha256::new();
             hasher.update(content.as_bytes());
-            let current_hash = format!("{:x}", hasher.finalize());
+            let current_hash = hasher.finalize().iter().map(|b| format!("{:02x}", b)).collect::<String>();
 
             if current_hash != expected_hash {
                 return Err(LdError::ConfigConflict);
@@ -233,7 +233,7 @@ impl LandscapeConfigService {
 
             let mut hasher = Sha256::new();
             hasher.update(content.as_bytes());
-            let current_hash = format!("{:x}", hasher.finalize());
+            let current_hash = hasher.finalize().iter().map(|b| format!("{:02x}", b)).collect::<String>();
 
             if current_hash != expected_hash {
                 return Err(LdError::ConfigConflict);
@@ -304,7 +304,7 @@ impl LandscapeConfigService {
 
             let mut hasher = Sha256::new();
             hasher.update(content.as_bytes());
-            let current_hash = format!("{:x}", hasher.finalize());
+            let current_hash = hasher.finalize().iter().map(|b| format!("{:02x}", b)).collect::<String>();
 
             if current_hash != expected_hash {
                 return Err(LdError::ConfigConflict);
@@ -375,7 +375,7 @@ impl LandscapeConfigService {
 
             let mut hasher = Sha256::new();
             hasher.update(content.as_bytes());
-            let current_hash = format!("{:x}", hasher.finalize());
+            let current_hash = hasher.finalize().iter().map(|b| format!("{:02x}", b)).collect::<String>();
 
             if current_hash != expected_hash {
                 return Err(LdError::ConfigConflict);
@@ -447,7 +447,7 @@ impl LandscapeConfigService {
 
             let mut hasher = Sha256::new();
             hasher.update(content.as_bytes());
-            let current_hash = format!("{:x}", hasher.finalize());
+            let current_hash = hasher.finalize().iter().map(|b| format!("{:02x}", b)).collect::<String>();
 
             if current_hash != expected_hash {
                 return Err(LdError::ConfigConflict);

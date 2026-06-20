@@ -5,7 +5,7 @@ use bollard::{
         CreateContainerOptions, ListContainersOptions, RemoveContainerOptions,
         StartContainerOptions, StopContainerOptions,
     },
-    secret::{ContainerCreateBody, ContainerSummary},
+    models::{ContainerCreateBody, ContainerSummary},
 };
 
 use image::get_docker_images_paths;
