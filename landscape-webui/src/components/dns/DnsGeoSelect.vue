@@ -63,7 +63,7 @@ const geo_name_options = computed(() => {
   return result;
 });
 
-let searchTimer: NodeJS.Timeout | null = null;
+let searchTimer: ReturnType<typeof setTimeout> | null = null;
 function handleSearch(query: string) {
   if (searchTimer) clearTimeout(searchTimer);
   searchTimer = setTimeout(() => {

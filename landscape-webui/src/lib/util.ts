@@ -67,7 +67,7 @@ class ReconnectingWebSocket {
 
   public send(data: string | ArrayBufferLike | Blob | ArrayBufferView) {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-      this.ws.send(data);
+      this.ws.send(data as any);
     } else {
       console.log("WebSocket is not open. Cannot send data.");
     }

@@ -4,7 +4,6 @@ import {
   get_dhcp_v4_assigned_ips,
 } from "@/api/service_dhcp_v4";
 import type { ArpScanInfo, DHCPv4OfferInfo } from "@/api/service_dhcp_v4";
-import { info } from "console";
 import { computed, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 const { t } = useI18n();

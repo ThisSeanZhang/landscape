@@ -42,7 +42,7 @@ const compositeValue = computed({
   },
 });
 
-let searchTimer: NodeJS.Timeout | null = null;
+let searchTimer: ReturnType<typeof setTimeout> | null = null;
 function handleSearch(query: string) {
   if (searchTimer) clearTimeout(searchTimer);
   searchTimer = setTimeout(() => {

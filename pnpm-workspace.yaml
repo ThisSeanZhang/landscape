@@ -1,3 +1,6 @@
 packages:
   - 'landscape-webui'
   - 'landscape-types'
+allowBuilds:
+  esbuild: true
+  vue-demi: true
