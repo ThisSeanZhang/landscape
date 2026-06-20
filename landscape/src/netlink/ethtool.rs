@@ -288,7 +288,7 @@ unsafe fn ethtool_ioctl(ifname: &str, cmd: u32, data: u32) -> Result<u32, io::Er
     let mut eval = EthtoolValue { cmd, data };
     ifr.ifr_ifru.ifru_data = &mut eval as *mut EthtoolValue as *mut libc::c_char;
 
-    let ret = libc::ioctl(sock, libc::SIOCETHTOOL, &ifr);
+    let ret = libc::ioctl(sock, libc::SIOCETHTOOL as libc::Ioctl, &ifr);
     libc::close(sock);
 
     if ret < 0 {
