@@ -2,8 +2,7 @@
 #define LD_NAT6_V3_H
 #include <vmlinux.h>
 #include "landscape_log.h"
-#include "pkg_scanner.h"
-#include "pkg_fragment.h"
+#include "scanner/scan_types.h"
 #include "land_nat_common.h"
 #include "nat/nat_maps.h"
 #include "land_wan_ip.h"
@@ -269,17 +268,16 @@ static __always_inline int ct6_state_transition(u8 pkt_type, u8 gress,
 }
 
 static __always_inline int search_ipv6_hash_mapping_egress(struct __sk_buff *skb,
-                                                           struct packet_offset_info *offset_info,
+                                                           struct scan_ipv6_idx *idx,
                                                            struct inet_pair *ip_pair,
                                                            u8 npt_id_mask, u32 ifindex) {
-    bool is_icmpx_error = is_icmp_error_pkt(offset_info);
-    bool allow_create_mapping = pkt_allow_initiating_ct(offset_info->pkt_type);
+    bool allow_create_mapping = pkt_allow_initiating_ct(idx->pkt_type);
 
     struct nat_timer_key_v6 key = {0};
     key.client_port = ip_pair->src_port;
     COPY_ADDR_FROM(key.client_suffix, ip_pair->src_addr.bits + 8);
     key.id_byte = ip_pair->src_addr.bits[7] & npt_id_mask;
-    key.l4_protocol = offset_info->l4_protocol;
+    key.l4_protocol = idx->l4_protocol;
 
     struct nat_timer_value_v6 *value;
     value = bpf_map_lookup_elem(&nat6_conn_timer, &key);
@@ -304,7 +302,7 @@ static __always_inline int search_ipv6_hash_mapping_egress(struct __sk_buff *skb
     }
 
     if (value) {
-        ct6_state_transition(offset_info->pkt_type, NAT_MAPPING_EGRESS, value);
+        ct6_state_transition(idx->pkt_type, NAT_MAPPING_EGRESS, value);
         nat6_metric_accumulate(skb, false, value);
         return TC_ACT_OK;
     }
@@ -351,9 +349,10 @@ static __always_inline int check_egress_static_mapping_exist(struct __sk_buff *s
 #undef BPF_LOG_TOPIC
 }
 
-static __always_inline int
-ipv6_egress_prefix_check_and_replace(struct __sk_buff *skb, struct packet_offset_info *offset_info,
-                                     struct inet_pair *ip_pair, u32 ifindex) {
+static __always_inline int ipv6_egress_prefix_check_and_replace(struct __sk_buff *skb,
+                                                                struct scan_ipv6_idx *idx,
+                                                                struct inet_pair *ip_pair,
+                                                                u32 l3_offset, u32 ifindex) {
 #define BPF_LOG_TOPIC "ipv6_egress_prefix_check_and_replace"
     int ret;
 
@@ -369,24 +368,22 @@ ipv6_egress_prefix_check_and_replace(struct __sk_buff *skb, struct packet_offset
     u8 npt_id_mask = (u8)(wan_ip_info->npt_mask >> 56);
 
     bool is_static =
-        (check_egress_static_mapping_exist(skb, offset_info->l4_protocol, ip_pair) == TC_ACT_OK);
+        (check_egress_static_mapping_exist(skb, idx->l4_protocol, ip_pair) == TC_ACT_OK);
 
-    int ct_ret = search_ipv6_hash_mapping_egress(skb, offset_info, ip_pair, npt_id_mask, ifindex);
+    int ct_ret = search_ipv6_hash_mapping_egress(skb, idx, ip_pair, npt_id_mask, ifindex);
     if (ct_ret != TC_ACT_OK && !is_static) {
         return TC_ACT_SHOT;
     }
 
-    if (is_icmp_error_pkt(offset_info)) {
+    if (idx->icmp_error_l3_offset > 0 && idx->icmp_error_inner_l4_offset > 0) {
         __be64 old_ip_prefix, new_ip_prefix;
         COPY_ADDR_FROM(&old_ip_prefix, ip_pair->src_addr.all);
         COPY_ADDR_FROM(&new_ip_prefix, wan_ip_info->addr.all);
         new_ip_prefix =
             (old_ip_prefix & wan_ip_info->npt_mask) | (new_ip_prefix & ~wan_ip_info->npt_mask);
 
-        u32 error_sender_offset =
-            offset_info->l3_offset_when_scan + offsetof(struct ipv6hdr, saddr);
-        u32 inner_l3_ip_dst_offset =
-            offset_info->icmp_error_l3_offset + offsetof(struct ipv6hdr, daddr);
+        u32 error_sender_offset = l3_offset + offsetof(struct ipv6hdr, saddr);
+        u32 inner_l3_ip_dst_offset = idx->icmp_error_l3_offset + offsetof(struct ipv6hdr, daddr);
 
         __be64 old_sender_ip_prefix, new_sender_ip_prefix;
 #if defined(LAND_ARCH_RISCV)
@@ -407,15 +404,13 @@ ipv6_egress_prefix_check_and_replace(struct __sk_buff *skb, struct packet_offset
                                (new_sender_ip_prefix & ~wan_ip_info->npt_mask);
 
         u32 inner_l4_checksum_offset = 0;
-        if (get_l4_checksum_offset(offset_info->icmp_error_inner_l4_offset,
-                                   offset_info->icmp_error_l4_protocol,
+        if (get_l4_checksum_offset(idx->icmp_error_inner_l4_offset, idx->icmp_error_l4_protocol,
                                    &inner_l4_checksum_offset)) {
             return TC_ACT_SHOT;
         }
 
         u32 l4_checksum_offset = 0;
-        if (get_l4_checksum_offset(offset_info->l4_offset, offset_info->l4_protocol,
-                                   &l4_checksum_offset)) {
+        if (get_l4_checksum_offset(idx->l4_offset, idx->l4_protocol, &l4_checksum_offset)) {
             return TC_ACT_SHOT;
         }
 
@@ -446,12 +441,11 @@ ipv6_egress_prefix_check_and_replace(struct __sk_buff *skb, struct packet_offset
 
     } else {
         u32 l4_checksum_offset = 0;
-        if (get_l4_checksum_offset(offset_info->l4_offset, offset_info->l4_protocol,
-                                   &l4_checksum_offset)) {
+        if (get_l4_checksum_offset(idx->l4_offset, idx->l4_protocol, &l4_checksum_offset)) {
             return TC_ACT_SHOT;
         }
 
-        u32 ip_src_offset = offset_info->l3_offset_when_scan + offsetof(struct ipv6hdr, saddr);
+        u32 ip_src_offset = l3_offset + offsetof(struct ipv6hdr, saddr);
 
         __be64 old_ip_prefix, new_ip_prefix;
         COPY_ADDR_FROM(&old_ip_prefix, ip_pair->src_addr.all);
@@ -506,7 +500,7 @@ static __always_inline int check_ingress_mapping_exist(struct __sk_buff *skb, u8
 }
 
 static __always_inline struct nat_timer_value_v6 *
-lookup_or_new_ct6_ingress(struct __sk_buff *skb, struct packet_offset_info *offset_info,
+lookup_or_new_ct6_ingress(struct __sk_buff *skb, struct scan_ipv6_idx *idx,
                           const struct inet_pair *ip_pair, bool is_static,
                           const __be64 *client_prefix_hint, u8 npt_id_mask, u32 ifindex) {
 #define BPF_LOG_TOPIC "lookup_or_new_ct6_ingress"
@@ -514,7 +508,7 @@ lookup_or_new_ct6_ingress(struct __sk_buff *skb, struct packet_offset_info *offs
     key.client_port = ip_pair->dst_port;
     COPY_ADDR_FROM(key.client_suffix, ip_pair->dst_addr.bits + 8);
     key.id_byte = ip_pair->dst_addr.bits[7] & npt_id_mask;
-    key.l4_protocol = offset_info->l4_protocol;
+    key.l4_protocol = idx->l4_protocol;
 
     struct nat_timer_value_v6 *value = bpf_map_lookup_elem(&nat6_conn_timer, &key);
     if (value) {
@@ -525,7 +519,7 @@ lookup_or_new_ct6_ingress(struct __sk_buff *skb, struct packet_offset_info *offs
         return NULL;
     }
 
-    if (!pkt_allow_initiating_ct(offset_info->pkt_type)) {
+    if (!pkt_allow_initiating_ct(idx->pkt_type)) {
         return NULL;
     }
 
@@ -545,9 +539,10 @@ lookup_or_new_ct6_ingress(struct __sk_buff *skb, struct packet_offset_info *offs
 #undef BPF_LOG_TOPIC
 }
 
-static __always_inline int
-ipv6_ingress_prefix_check_and_replace(struct __sk_buff *skb, struct packet_offset_info *offset_info,
-                                      struct inet_pair *ip_pair, u32 ifindex) {
+static __always_inline int ipv6_ingress_prefix_check_and_replace(struct __sk_buff *skb,
+                                                                 struct scan_ipv6_idx *idx,
+                                                                 struct inet_pair *ip_pair,
+                                                                 u32 l3_offset, u32 ifindex) {
 #define BPF_LOG_TOPIC "ipv6_ingress_prefix_check_and_replace"
     int ret;
     __be64 local_client_prefix = {0};
@@ -563,7 +558,7 @@ ipv6_ingress_prefix_check_and_replace(struct __sk_buff *skb, struct packet_offse
 
     u8 npt_id_mask = (u8)(wan_ip_info->npt_mask >> 56);
 
-    ret = check_ingress_mapping_exist(skb, offset_info->l4_protocol, ip_pair, &local_client_prefix);
+    ret = check_ingress_mapping_exist(skb, idx->l4_protocol, ip_pair, &local_client_prefix);
     bool is_static = (ret != TC_ACT_SHOT);
     bool need_prefix_replace = (ret == TC_ACT_OK);
 
@@ -574,14 +569,16 @@ ipv6_ingress_prefix_check_and_replace(struct __sk_buff *skb, struct packet_offse
         COPY_ADDR_FROM(&client_prefix_hint, ip_pair->dst_addr.bits);
     }
 
+    bool is_icmpx = idx->icmp_error_l3_offset > 0 && idx->icmp_error_inner_l4_offset > 0;
+
     struct nat_timer_value_v6 *ct_value = lookup_or_new_ct6_ingress(
-        skb, offset_info, ip_pair, is_static, &client_prefix_hint, npt_id_mask, ifindex);
+        skb, idx, ip_pair, is_static, &client_prefix_hint, npt_id_mask, ifindex);
 
     if (ct_value) {
         if (!is_static) {
             COPY_ADDR_FROM(&local_client_prefix, ct_value->client_prefix);
 
-            if (ct_value->is_allow_reuse == 0 && offset_info->l4_protocol != IPPROTO_ICMPV6) {
+            if (ct_value->is_allow_reuse == 0 && idx->l4_protocol != IPPROTO_ICMPV6) {
                 if (!ip_addr_equal_x(&ip_pair->src_addr, &ct_value->trigger_addr) ||
                     ip_pair->src_port != ct_value->trigger_port) {
                     bpf_printk("FLOW_ALLOW_REUSE MARK not set, DROP PACKET");
@@ -595,12 +592,12 @@ ipv6_ingress_prefix_check_and_replace(struct __sk_buff *skb, struct packet_offse
             need_prefix_replace = true;
         }
 
-        ct6_state_transition(offset_info->pkt_type, NAT_MAPPING_INGRESS, ct_value);
+        ct6_state_transition(idx->pkt_type, NAT_MAPPING_INGRESS, ct_value);
         nat6_metric_accumulate(skb, true, ct_value);
     } else {
         if (!is_static) {
-            bpf_printk("ingress dynamic no CT, l4_proto: %u, dst_port: %04x",
-                       offset_info->l4_protocol, ip_pair->dst_port);
+            bpf_printk("ingress dynamic no CT, l4_proto: %u, dst_port: %04x", idx->l4_protocol,
+                       ip_pair->dst_port);
             return TC_ACT_SHOT;
         }
     }
@@ -616,9 +613,8 @@ ipv6_ingress_prefix_check_and_replace(struct __sk_buff *skb, struct packet_offse
         return TC_ACT_UNSPEC;
     }
 
-    if (is_icmp_error_pkt(offset_info)) {
-        u32 inner_l3_ip_src_offset =
-            offset_info->icmp_error_l3_offset + offsetof(struct ipv6hdr, saddr);
+    if (is_icmpx) {
+        u32 inner_l3_ip_src_offset = idx->icmp_error_l3_offset + offsetof(struct ipv6hdr, saddr);
 
         __be64 old_inner_ip_prefix;
 #if defined(LAND_ARCH_RISCV)
@@ -636,13 +632,11 @@ ipv6_ingress_prefix_check_and_replace(struct __sk_buff *skb, struct packet_offse
 
         u32 inner_l4_checksum_offset = 0;
         u32 l4_checksum_offset = 0;
-        if (get_l4_checksum_offset(offset_info->icmp_error_inner_l4_offset,
-                                   offset_info->icmp_error_l4_protocol,
+        if (get_l4_checksum_offset(idx->icmp_error_inner_l4_offset, idx->icmp_error_l4_protocol,
                                    &inner_l4_checksum_offset)) {
             return TC_ACT_SHOT;
         }
-        if (get_l4_checksum_offset(offset_info->l4_offset, offset_info->l4_protocol,
-                                   &l4_checksum_offset)) {
+        if (get_l4_checksum_offset(idx->l4_offset, idx->l4_protocol, &l4_checksum_offset)) {
             return TC_ACT_SHOT;
         }
         u16 old_inner_l4_checksum, new_inner_l4_checksum;
@@ -666,18 +660,17 @@ ipv6_ingress_prefix_check_and_replace(struct __sk_buff *skb, struct packet_offse
             return TC_ACT_SHOT;
         }
 
-        u32 ipv6_dst_offset = offset_info->l3_offset_when_scan + offsetof(struct ipv6hdr, daddr);
+        u32 ipv6_dst_offset = l3_offset + offsetof(struct ipv6hdr, daddr);
         bpf_skb_store_bytes(skb, ipv6_dst_offset, &local_client_prefix, 8, 0);
         L4_CSUM_REPLACE_U64_OR_SHOT(skb, l4_checksum_offset, old_inner_ip_prefix,
                                     local_client_prefix, BPF_F_PSEUDO_HDR);
     } else {
         u32 l4_checksum_offset = 0;
-        if (get_l4_checksum_offset(offset_info->l4_offset, offset_info->l4_protocol,
-                                   &l4_checksum_offset)) {
+        if (get_l4_checksum_offset(idx->l4_offset, idx->l4_protocol, &l4_checksum_offset)) {
             return TC_ACT_SHOT;
         }
 
-        u32 dst_ip_offset = offset_info->l3_offset_when_scan + offsetof(struct ipv6hdr, daddr);
+        u32 dst_ip_offset = l3_offset + offsetof(struct ipv6hdr, daddr);
 
         __be64 old_ip_prefix;
         COPY_ADDR_FROM(&old_ip_prefix, ip_pair->dst_addr.all);

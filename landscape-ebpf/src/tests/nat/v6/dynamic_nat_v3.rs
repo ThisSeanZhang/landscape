@@ -4,7 +4,7 @@ use std::{
     str::FromStr,
 };
 
-use etherparse::{PacketBuilder, PacketHeaders};
+use etherparse::{icmpv6, Icmpv6Type, PacketBuilder, PacketHeaders};
 use landscape_common::net::MacAddr;
 use libbpf_rs::{
     skel::{OpenSkel, SkelBuilder as _},
@@ -221,6 +221,44 @@ fn assert_prefix_refresh(old_src: Ipv6Addr, new_src: Ipv6Addr, prefix_len: u8) {
     );
 }
 
+fn build_quoted_ipv6_tcp(src: Ipv6Addr, dst: Ipv6Addr, src_port: u16, dst_port: u16) -> Vec<u8> {
+    build_ipv6_tcp(src, dst, src_port, dst_port)[14..].to_vec()
+}
+
+fn build_ipv6_icmp_time_exceeded(
+    src: Ipv6Addr,
+    dst: Ipv6Addr,
+    quoted_ipv6_packet: &[u8],
+) -> Vec<u8> {
+    let icmp6_type = Icmpv6Type::TimeExceeded(icmpv6::TimeExceededCode::HopLimitExceeded);
+    let builder = PacketBuilder::ethernet2(
+        [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF],
+        [0x11, 0x22, 0x33, 0x44, 0x55, 0x66],
+    )
+    .ipv6(src.octets(), dst.octets(), 64)
+    .icmpv6(icmp6_type);
+
+    let mut buf = Vec::with_capacity(builder.size(quoted_ipv6_packet.len()));
+    builder.write(&mut buf, quoted_ipv6_packet).unwrap();
+    buf
+}
+
+fn parse_inner_ipv6_from_icmpv6(packet: &[u8]) -> PacketHeaders<'_> {
+    let outer = PacketHeaders::from_ethernet_slice(packet).expect("parse outer packet");
+    if let Some(etherparse::NetHeaders::Ipv6(..)) = outer.net {
+    } else {
+        panic!("expected outer IPv6 header");
+    }
+    let inner_offset = 14 + 40 + 8;
+    PacketHeaders::from_ip_slice(&packet[inner_offset..]).expect("parse quoted packet")
+}
+
+fn npt_wan_ip_for(lan_ip: Ipv6Addr) -> Ipv6Addr {
+    let mut octets = lan_ip.octets();
+    octets[..8].copy_from_slice(&PREFIX60_WAN_NPT_PREFIX);
+    Ipv6Addr::from(octets)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -231,16 +269,198 @@ mod tests {
     }
 
     #[test]
+    fn tcp_egress_dynamic_v3_refreshes_ct_when_prefix56_changes() {
+        let old_src = Ipv6Addr::from_str("fd00:1234:5678:abc5::200").unwrap();
+        let new_src = Ipv6Addr::from_str("fd00:1234:5678:acc5::200").unwrap();
+        assert_prefix_refresh(old_src, new_src, 56);
+    }
+
+    #[test]
     fn tcp_egress_dynamic_v3_refreshes_ct_when_prefix60_changes() {
         let old_src = Ipv6Addr::from_str("fd00:1234:5678:abc5::200").unwrap();
         let new_src = Ipv6Addr::from_str("fd00:1234:5678:abd5::200").unwrap();
         assert_prefix_refresh(old_src, new_src, 60);
     }
 
+    fn add_ct6_icmp_entry<T: MapCore>(
+        timer_map: &T,
+        key: &types::nat_timer_key_v6,
+        src: Ipv6Addr,
+        trigger_addr: Ipv6Addr,
+        trigger_port: u16,
+    ) {
+        let mut value = types::nat_timer_value_v6 {
+            server_status: 1,
+            client_status: 1,
+            is_allow_reuse: 1,
+            ..Default::default()
+        };
+        value.trigger_addr = types::u_inet6_addr { bytes: trigger_addr.octets() };
+        value.trigger_port = trigger_port.to_be();
+        value.client_prefix.copy_from_slice(&src.octets()[..8]);
+
+        timer_map
+            .update(
+                unsafe { plain::as_bytes(key) },
+                unsafe { plain::as_bytes(&value) },
+                MapFlags::ANY,
+            )
+            .expect("failed to insert v3 v6 ct entry");
+    }
+
     #[test]
-    fn tcp_egress_dynamic_v3_refreshes_ct_when_prefix56_changes() {
-        let old_src = Ipv6Addr::from_str("fd00:1234:5678:abc5::200").unwrap();
-        let new_src = Ipv6Addr::from_str("fd00:1234:5678:acc5::200").unwrap();
-        assert_prefix_refresh(old_src, new_src, 56);
+    fn tcp_egress_dynamic_v3_icmp_error_ipv6() {
+        let src = lan_host();
+        let dst = remote();
+        let prefix_len = 60;
+
+        let key = timer_key_for(src, CLIENT_PORT, prefix_len);
+        let mut key = key;
+        key.l4_protocol = 58;
+
+        let mut builder = TcNatSkelBuilder::default();
+        let pin_root = crate::tests::nat::isolated_pin_root("nat-v6-dynamic-v3");
+        builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
+        let mut open_object = MaybeUninit::uninit();
+        let open_skel = builder.open(&mut open_object).unwrap();
+        let skel = open_skel.load().unwrap();
+
+        add_wan_ip(
+            &skel.maps.wan_ip_binding,
+            IFINDEX,
+            IpAddr::V6(wan_ip()),
+            None,
+            prefix_len,
+            Some(MacAddr::broadcast()),
+        );
+        add_ct6_icmp_entry(&skel.maps.nat6_conn_timer, &key, src, dst, 443);
+
+        let quoted = build_quoted_ipv6_tcp(dst, src, 443, CLIENT_PORT);
+        let mut pkt = build_ipv6_icmp_time_exceeded(src, dst, &quoted);
+
+        let mut ctx = TestSkb::default();
+        ctx.ifindex = IFINDEX;
+        let mut packet_out = vec![0u8; pkt.len()];
+        let input = ProgramInput {
+            data_in: Some(&mut pkt),
+            context_in: Some(ctx.as_mut_bytes()),
+            data_out: Some(&mut packet_out),
+            ..Default::default()
+        };
+
+        let result = skel.progs.tc_nat_wan_egress.test_run(input).expect("test_run failed");
+        assert_eq!(
+            result.return_value as i32, -1,
+            "egress ICMP error should return TC_ACT_UNSPEC(-1)"
+        );
+
+        let pkt_out = PacketHeaders::from_ethernet_slice(&packet_out).expect("parse output");
+        if let Some(etherparse::NetHeaders::Ipv6(ipv6, _)) = pkt_out.net {
+            let translated_src: Ipv6Addr = ipv6.source.into();
+            assert_eq!(
+                &translated_src.octets()[..8],
+                &PREFIX60_WAN_NPT_PREFIX,
+                "outer src prefix should be NPT-translated to WAN prefix",
+            );
+            assert_eq!(
+                &translated_src.octets()[8..],
+                &src.octets()[8..],
+                "outer src suffix should be preserved",
+            );
+        } else {
+            panic!("expected IPv6 header in output");
+        }
+
+        let quoted_out = parse_inner_ipv6_from_icmpv6(&packet_out);
+        if let Some(etherparse::NetHeaders::Ipv6(ipv6, _)) = quoted_out.net {
+            let translated_dst: Ipv6Addr = ipv6.destination.into();
+            assert_eq!(
+                &translated_dst.octets()[..8],
+                &PREFIX60_WAN_NPT_PREFIX,
+                "inner dst prefix should be NPT-translated to WAN prefix",
+            );
+        } else {
+            panic!("expected quoted IPv6 header in output");
+        }
+        if let Some(etherparse::TransportHeader::Tcp(tcp)) = quoted_out.transport {
+            assert_eq!(tcp.destination_port, CLIENT_PORT, "inner dst port should be unchanged");
+        }
+    }
+
+    #[test]
+    fn tcp_ingress_dynamic_v3_icmp_error_ipv6() {
+        let src = lan_host();
+        let dst = remote();
+        let wan_src = npt_wan_ip_for(src);
+        let prefix_len = 60;
+
+        let key = timer_key_for(src, CLIENT_PORT, prefix_len);
+        let mut key = key;
+        key.l4_protocol = 58;
+
+        let mut builder = TcNatSkelBuilder::default();
+        let pin_root = crate::tests::nat::isolated_pin_root("nat-v6-dynamic-v3");
+        builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
+        let mut open_object = MaybeUninit::uninit();
+        let open_skel = builder.open(&mut open_object).unwrap();
+        let skel = open_skel.load().unwrap();
+
+        add_wan_ip(
+            &skel.maps.wan_ip_binding,
+            IFINDEX,
+            IpAddr::V6(wan_ip()),
+            None,
+            prefix_len,
+            Some(MacAddr::broadcast()),
+        );
+        add_ct6_icmp_entry(&skel.maps.nat6_conn_timer, &key, src, dst, 443);
+
+        let quoted = build_quoted_ipv6_tcp(wan_src, dst, CLIENT_PORT, 443);
+        let mut pkt = build_ipv6_icmp_time_exceeded(dst, wan_src, &quoted);
+
+        let mut ctx = TestSkb::default();
+        ctx.ifindex = IFINDEX;
+        let mut packet_out = vec![0u8; pkt.len()];
+        let input = ProgramInput {
+            data_in: Some(&mut pkt),
+            context_in: Some(ctx.as_mut_bytes()),
+            data_out: Some(&mut packet_out),
+            ..Default::default()
+        };
+
+        let result = skel.progs.tc_nat_wan_ingress.test_run(input).expect("test_run failed");
+        assert_eq!(result.return_value as i32, 0, "ingress ICMP error should return TC_ACT_OK(0)");
+
+        let pkt_out = PacketHeaders::from_ethernet_slice(&packet_out).expect("parse output");
+        if let Some(etherparse::NetHeaders::Ipv6(ipv6, _)) = pkt_out.net {
+            let translated_dst: Ipv6Addr = ipv6.destination.into();
+            assert_eq!(
+                &translated_dst.octets()[..8],
+                &src.octets()[..8],
+                "outer dst prefix should be reverse-translated to LAN prefix",
+            );
+            assert_eq!(
+                &translated_dst.octets()[8..],
+                &src.octets()[8..],
+                "outer dst suffix should be preserved",
+            );
+        } else {
+            panic!("expected IPv6 header in output");
+        }
+
+        let quoted_out = parse_inner_ipv6_from_icmpv6(&packet_out);
+        if let Some(etherparse::NetHeaders::Ipv6(ipv6, _)) = quoted_out.net {
+            let translated_src: Ipv6Addr = ipv6.source.into();
+            assert_eq!(
+                &translated_src.octets()[..8],
+                &src.octets()[..8],
+                "inner src prefix should be reverse-translated to LAN prefix",
+            );
+        } else {
+            panic!("expected quoted IPv6 header in output");
+        }
+        if let Some(etherparse::TransportHeader::Tcp(tcp)) = quoted_out.transport {
+            assert_eq!(tcp.source_port, CLIENT_PORT, "inner src port should be unchanged");
+        }
     }
 }

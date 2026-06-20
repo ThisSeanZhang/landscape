@@ -79,7 +79,7 @@ static __always_inline enum xdp_scan_status xdp_scan_ipv4_full(struct xdp_md *ct
         bool rst = tcph->rst;
         bool fin = tcph->fin;
 
-        if (syn && !ack)
+        if (syn)
             idx->pkt_type = PKT_TCP_SYN_V2;
         else if (rst)
             idx->pkt_type = PKT_TCP_RST_V2;

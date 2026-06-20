@@ -7,7 +7,8 @@
 
 #include "land_nat6_v3.h"
 #include "landscape.h"
-#include "nat/nat_packet.h"
+#include "scanner/skb_scanner6.h"
+#include "scanner/skb_read.h"
 
 char LICENSE[] SEC("license") = "GPL";
 
@@ -19,21 +20,21 @@ SEC("tc/egress")
 int handle_ipv6_egress(struct __sk_buff *skb) {
 #define BPF_LOG_TOPIC "<<< handle_ipv6_egress <<<"
 
-    struct packet_offset_info pkg_offset = {0};
+    struct scan_ipv6_idx idx = {};
     struct inet_pair ip_pair = {0};
     int ret = 0;
 
-    ret = scan_nat_packet(skb, current_l3_offset, &pkg_offset);
+    if (scan_ipv6_full(skb, current_l3_offset, &idx) != LD_SCAN_OK) {
+        return TC_ACT_SHOT;
+    }
+
+    ret = skb_read_ipv6_info(skb, current_l3_offset, &idx, &ip_pair);
     if (ret) {
         return ret;
     }
 
-    ret = read_nat_packet_info(skb, &pkg_offset, &ip_pair);
-    if (ret) {
-        return ret;
-    }
-
-    ret = ipv6_egress_prefix_check_and_replace(skb, &pkg_offset, &ip_pair, skb->ifindex);
+    ret =
+        ipv6_egress_prefix_check_and_replace(skb, &idx, &ip_pair, current_l3_offset, skb->ifindex);
     if (ret) {
         return ret;
     }
@@ -46,30 +47,26 @@ SEC("tc/ingress")
 int handle_ipv6_ingress(struct __sk_buff *skb) {
 #define BPF_LOG_TOPIC "<<< handle_ipv6_ingress <<<"
 
-    struct packet_offset_info pkg_offset = {0};
+    struct scan_ipv6_idx idx = {};
     struct inet_pair ip_pair = {0};
     int ret = 0;
 
-    ret = scan_nat_packet(skb, current_l3_offset, &pkg_offset);
-    if (ret) {
-        return ret;
+    if (scan_ipv6_full(skb, current_l3_offset, &idx) != LD_SCAN_OK) {
+        return TC_ACT_SHOT;
     }
 
-    ret = is_handle_protocol(pkg_offset.l4_protocol);
+    ret = is_handle_protocol(idx.l4_protocol);
     if (ret != TC_ACT_OK) {
         return ret;
     }
 
-    if (pkg_offset.l3_protocol != LANDSCAPE_IPV6_TYPE) {
-        return TC_ACT_OK;
-    }
-
-    ret = read_nat_packet_info(skb, &pkg_offset, &ip_pair);
+    ret = skb_read_ipv6_info(skb, current_l3_offset, &idx, &ip_pair);
     if (ret) {
         return ret;
     }
 
-    ret = ipv6_ingress_prefix_check_and_replace(skb, &pkg_offset, &ip_pair, skb->ifindex);
+    ret =
+        ipv6_ingress_prefix_check_and_replace(skb, &idx, &ip_pair, current_l3_offset, skb->ifindex);
     if (ret) {
         return ret;
     }

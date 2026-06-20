@@ -70,7 +70,7 @@ static __always_inline enum land_scan_result scan_ipv4_full(struct __sk_buff *sk
         bool rst = tcph->rst;
         bool fin = tcph->fin;
 
-        if (syn && !ack)
+        if (syn)
             idx->pkt_type = PKT_TCP_SYN_V2;
         else if (rst)
             idx->pkt_type = PKT_TCP_RST_V2;

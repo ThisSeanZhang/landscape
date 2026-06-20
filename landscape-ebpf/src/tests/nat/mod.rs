@@ -6,7 +6,7 @@ use std::{
 pub(crate) static NAT_V3_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 static NAT_TEST_PIN_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
-pub(crate) mod nat6_helper_v3;
+pub(crate) mod test_nat6_v3;
 mod v4;
 mod v6;
 

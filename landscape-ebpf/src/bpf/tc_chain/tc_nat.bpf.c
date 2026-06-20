@@ -10,7 +10,11 @@
 #include "chain/tc_wan_exit_maps.h"
 #include "land_nat4_v3.h"
 #include "land_nat6_v3.h"
-#include "nat/nat_packet.h"
+#include "scanner/skb_scanner4.h"
+#include "scanner/skb_scanner6.h"
+#include "scanner/skb_read.h"
+#include "fragment/frag4.h"
+#include "fragment/frag6.h"
 
 char LICENSE[] SEC("license") = "GPL";
 
@@ -21,7 +25,7 @@ const volatile u32 current_l3_offset = 14;
 static __always_inline int tc_nat_v4_egress_do(struct __sk_buff *skb, u32 ifindex) {
 #define BPF_LOG_TOPIC "tc_nat_v4_egress <<<"
 
-    struct packet_offset_info pkg_offset = {0};
+    struct scan_ipv4_idx idx = {};
     struct inet4_pair ip_pair = {0};
     struct nat4_mapping_value_v3 *nat_egress_value = NULL;
     struct nat4_mapping_value_v3 *nat_ingress_value = NULL;
@@ -29,23 +33,21 @@ static __always_inline int tc_nat_v4_egress_do(struct __sk_buff *skb, u32 ifinde
     bool created = false;
     int ret = 0;
 
-    ret = scan_nat_packet(skb, current_l3_offset, &pkg_offset);
-    if (ret == TC_ACT_SHOT) return TC_ACT_SHOT;
-    if (ret) return TC_ACT_OK;
-    ret = is_handle_protocol(pkg_offset.l4_protocol);
+    if (scan_ipv4_full(skb, current_l3_offset, &idx) != LD_SCAN_OK) return TC_ACT_OK;
+    ret = is_handle_protocol(idx.l4_protocol);
     if (ret != TC_ACT_OK) return TC_ACT_OK;
-    ret = read_nat_packet_info4(skb, &pkg_offset, &ip_pair);
+    ret = skb_read_ipv4_info(skb, current_l3_offset, &idx, &ip_pair);
     if (ret == TC_ACT_SHOT) return TC_ACT_SHOT;
     if (ret) return TC_ACT_OK;
     ret = is_broadcast_ip4_pair(&ip_pair);
     if (ret != TC_ACT_OK) return TC_ACT_OK;
-    ret = frag_info_track_v4(&pkg_offset, &ip_pair);
+    ret = frag4_track(&idx, ip_pair.src_addr.addr, ip_pair.dst_addr.addr, &ip_pair.src_port,
+                      &ip_pair.dst_port);
     if (ret != TC_ACT_OK) return TC_ACT_SHOT;
 
-    bool is_icmpx_error = is_icmp_error_pkt(&pkg_offset);
-    u8 nat_l4_protocol =
-        is_icmpx_error ? pkg_offset.icmp_error_l4_protocol : pkg_offset.l4_protocol;
-    bool allow_create_mapping = !is_icmpx_error && pkt_allow_initiating_ct(pkg_offset.pkt_type);
+    bool is_icmpx_error = idx.icmp_error_l3_offset > 0 && idx.icmp_error_inner_l4_offset > 0;
+    u8 nat_l4_protocol = is_icmpx_error ? idx.icmp_error_l4_protocol : idx.l4_protocol;
+    bool allow_create_mapping = !is_icmpx_error && pkt_allow_initiating_ct(idx.pkt_type);
 
     ret = nat4_v3_egress_lookup_or_new_mapping_v4(skb, ifindex, nat_l4_protocol,
                                                   allow_create_mapping, &ip_pair, &nat_egress_value,
@@ -110,7 +112,7 @@ static __always_inline int tc_nat_v4_egress_do(struct __sk_buff *skb, u32 ifinde
     }
 
     if (!is_icmpx_error) {
-        ct_state_transition(pkg_offset.pkt_type, NAT_MAPPING_EGRESS, nat4_v3_timer_base(ct_value));
+        ct_state_transition(idx.pkt_type, NAT_MAPPING_EGRESS, nat4_v3_timer_base(ct_value));
         nat_metric_accumulate(skb, false, nat4_v3_timer_base(ct_value));
     }
 
@@ -121,9 +123,8 @@ static __always_inline int tc_nat_v4_egress_do(struct __sk_buff *skb, u32 ifinde
         .to_port = nat_port,
     };
 
-    ret = modify_headers_v4(skb, is_icmpx_error, nat_l4_protocol, current_l3_offset,
-                            pkg_offset.l4_offset, pkg_offset.icmp_error_inner_l4_offset, true,
-                            &action);
+    ret = modify_headers_v4(skb, is_icmpx_error, nat_l4_protocol, current_l3_offset, idx.l4_offset,
+                            idx.icmp_error_inner_l4_offset, true, &action);
 
     return ret ? TC_ACT_SHOT : TC_ACT_OK;
 #undef BPF_LOG_TOPIC
@@ -131,27 +132,25 @@ static __always_inline int tc_nat_v4_egress_do(struct __sk_buff *skb, u32 ifinde
 
 static __always_inline int tc_nat_v4_ingress_do(struct __sk_buff *skb, u32 ifindex) {
 #define BPF_LOG_TOPIC "tc_nat_v4_ingress >>>"
-    struct packet_offset_info pkg_offset = {0};
+    struct scan_ipv4_idx idx = {};
     struct inet4_pair ip_pair = {0};
     struct nat4_mapping_value_v3 *nat_ingress_value = NULL;
     int ret = 0;
 
-    ret = scan_nat_packet(skb, current_l3_offset, &pkg_offset);
-    if (ret == TC_ACT_SHOT) return TC_ACT_SHOT;
-    if (ret) return TC_ACT_OK;
-    ret = is_handle_protocol(pkg_offset.l4_protocol);
+    if (scan_ipv4_full(skb, current_l3_offset, &idx) != LD_SCAN_OK) return TC_ACT_OK;
+    ret = is_handle_protocol(idx.l4_protocol);
     if (ret != TC_ACT_OK) return TC_ACT_OK;
-    ret = read_nat_packet_info4(skb, &pkg_offset, &ip_pair);
+    ret = skb_read_ipv4_info(skb, current_l3_offset, &idx, &ip_pair);
     if (ret == TC_ACT_SHOT) return TC_ACT_SHOT;
     if (ret) return TC_ACT_OK;
     ret = is_broadcast_ip4_pair(&ip_pair);
     if (ret != TC_ACT_OK) return TC_ACT_OK;
-    ret = frag_info_track_v4(&pkg_offset, &ip_pair);
+    ret = frag4_track(&idx, ip_pair.src_addr.addr, ip_pair.dst_addr.addr, &ip_pair.src_port,
+                      &ip_pair.dst_port);
     if (ret != TC_ACT_OK) return TC_ACT_SHOT;
 
-    bool is_icmpx_error = is_icmp_error_pkt(&pkg_offset);
-    u8 nat_l4_protocol =
-        is_icmpx_error ? pkg_offset.icmp_error_l4_protocol : pkg_offset.l4_protocol;
+    bool is_icmpx_error = idx.icmp_error_l3_offset > 0 && idx.icmp_error_inner_l4_offset > 0;
+    u8 nat_l4_protocol = is_icmpx_error ? idx.icmp_error_l4_protocol : idx.l4_protocol;
 
     ret = nat4_v3_ingress_lookup_or_new_mapping4(nat_l4_protocol, &ip_pair, &nat_ingress_value);
     if (ret != TC_ACT_OK || !nat_ingress_value) {
@@ -190,11 +189,11 @@ static __always_inline int tc_nat_v4_ingress_do(struct __sk_buff *skb, u32 ifind
     };
 
     u64 ingress_state_ref = nat_ingress_value->state_ref;
-    bool do_new_ct = is_static ? (!is_icmpx_error && pkt_allow_initiating_ct(pkg_offset.pkt_type))
+    bool do_new_ct = is_static ? (!is_icmpx_error && pkt_allow_initiating_ct(idx.pkt_type))
                                : (nat_ingress_value->is_allow_reuse &&
                                   nat4_v3_state_get(ingress_state_ref) == NAT4_V3_STATE_ACTIVE &&
                                   nat4_v3_ref_get(ingress_state_ref) > 0 && !is_icmpx_error &&
-                                  pkt_allow_initiating_ct(pkg_offset.pkt_type));
+                                  pkt_allow_initiating_ct(idx.pkt_type));
 
     struct nat4_timer_value_v3 *ct_value = NULL;
     ret = nat4_v3_lookup_or_new_ct(skb, ifindex, nat_l4_protocol, do_new_ct, &server_nat_pair,
@@ -205,7 +204,7 @@ static __always_inline int tc_nat_v4_ingress_do(struct __sk_buff *skb, u32 ifind
     }
 
     if (!is_icmpx_error) {
-        ct_state_transition(pkg_offset.pkt_type, NAT_MAPPING_INGRESS, nat4_v3_timer_base(ct_value));
+        ct_state_transition(idx.pkt_type, NAT_MAPPING_INGRESS, nat4_v3_timer_base(ct_value));
         nat_metric_accumulate(skb, true, nat4_v3_timer_base(ct_value));
     }
 
@@ -216,55 +215,54 @@ static __always_inline int tc_nat_v4_ingress_do(struct __sk_buff *skb, u32 ifind
         .to_port = lan_port,
     };
 
-    ret = modify_headers_v4(skb, is_icmpx_error, nat_l4_protocol, current_l3_offset,
-                            pkg_offset.l4_offset, pkg_offset.icmp_error_inner_l4_offset, false,
-                            &action);
+    ret = modify_headers_v4(skb, is_icmpx_error, nat_l4_protocol, current_l3_offset, idx.l4_offset,
+                            idx.icmp_error_inner_l4_offset, false, &action);
     return ret ? TC_ACT_SHOT : TC_ACT_OK;
 #undef BPF_LOG_TOPIC
 }
 
 static __always_inline int tc_nat_v6_egress_do(struct __sk_buff *skb, u32 ifindex) {
 #define BPF_LOG_TOPIC "tc_nat_v6_egress <<<"
-    struct packet_offset_info pkg_offset = {0};
+    struct scan_ipv6_idx idx = {};
     struct inet_pair ip_pair = {0};
     int ret = 0;
 
-    ret = scan_nat_packet(skb, current_l3_offset, &pkg_offset);
+    if (scan_ipv6_full(skb, current_l3_offset, &idx) != LD_SCAN_OK) return TC_ACT_OK;
+    ret = is_handle_protocol(idx.l4_protocol);
+    if (ret != TC_ACT_OK) return TC_ACT_OK;
+    ret = skb_read_ipv6_info(skb, current_l3_offset, &idx, &ip_pair);
     if (ret == TC_ACT_SHOT) return TC_ACT_SHOT;
     if (ret) return TC_ACT_OK;
-    ret = is_handle_protocol(pkg_offset.l4_protocol);
+    ret = is_broadcast_ip_pair(LANDSCAPE_IPV6_TYPE, &ip_pair);
     if (ret != TC_ACT_OK) return TC_ACT_OK;
-    ret = read_nat_packet_info(skb, &pkg_offset, &ip_pair);
-    if (ret == TC_ACT_SHOT) return TC_ACT_SHOT;
-    if (ret) return TC_ACT_OK;
-    ret = is_broadcast_ip_pair(pkg_offset.l3_protocol, &ip_pair);
-    if (ret != TC_ACT_OK) return TC_ACT_OK;
-    ret = frag_info_track(&pkg_offset, &ip_pair);
+    ret = frag6_track(&idx, (const struct in6_addr *)&ip_pair.src_addr,
+                      (const struct in6_addr *)&ip_pair.dst_addr, &ip_pair.src_port,
+                      &ip_pair.dst_port);
     if (ret != TC_ACT_OK) return TC_ACT_SHOT;
-    ret = ipv6_egress_prefix_check_and_replace(skb, &pkg_offset, &ip_pair, ifindex);
+    ret = ipv6_egress_prefix_check_and_replace(skb, &idx, &ip_pair, current_l3_offset, ifindex);
     return ret == TC_ACT_SHOT ? TC_ACT_SHOT : TC_ACT_OK;
 #undef BPF_LOG_TOPIC
 }
 
 static __always_inline int tc_nat_v6_ingress_do(struct __sk_buff *skb, u32 ifindex) {
 #define BPF_LOG_TOPIC "tc_nat_v6_ingress >>>"
-    struct packet_offset_info pkg_offset = {0};
+    struct scan_ipv6_idx idx = {};
     struct inet_pair ip_pair = {0};
     int ret = 0;
 
-    ret = scan_nat_packet(skb, current_l3_offset, &pkg_offset);
+    if (scan_ipv6_full(skb, current_l3_offset, &idx) != LD_SCAN_OK) return TC_ACT_OK;
+    ret = is_handle_protocol(idx.l4_protocol);
+    if (ret != TC_ACT_OK) return TC_ACT_OK;
+    ret = skb_read_ipv6_info(skb, current_l3_offset, &idx, &ip_pair);
     if (ret == TC_ACT_SHOT) return TC_ACT_SHOT;
     if (ret) return TC_ACT_OK;
-    ret = is_handle_protocol(pkg_offset.l4_protocol);
+    ret = is_broadcast_ip_pair(LANDSCAPE_IPV6_TYPE, &ip_pair);
     if (ret != TC_ACT_OK) return TC_ACT_OK;
-    ret = read_nat_packet_info(skb, &pkg_offset, &ip_pair);
-    if (ret == TC_ACT_SHOT) return TC_ACT_SHOT;
-    if (ret) return TC_ACT_OK;
-    ret = is_broadcast_ip_pair(pkg_offset.l3_protocol, &ip_pair);
-    if (ret != TC_ACT_OK) return TC_ACT_OK;
-    ret = frag_info_track(&pkg_offset, &ip_pair);
+    ret = frag6_track(&idx, (const struct in6_addr *)&ip_pair.src_addr,
+                      (const struct in6_addr *)&ip_pair.dst_addr, &ip_pair.src_port,
+                      &ip_pair.dst_port);
     if (ret != TC_ACT_OK) return TC_ACT_SHOT;
-    ret = ipv6_ingress_prefix_check_and_replace(skb, &pkg_offset, &ip_pair, ifindex);
+    ret = ipv6_ingress_prefix_check_and_replace(skb, &idx, &ip_pair, current_l3_offset, ifindex);
     return ret == TC_ACT_SHOT ? TC_ACT_SHOT : TC_ACT_OK;
 #undef BPF_LOG_TOPIC
 }

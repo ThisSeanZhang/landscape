@@ -13,7 +13,7 @@ use zerocopy::IntoBytes;
 
 use crate::{
     map_setting::add_wan_ip,
-    tests::{nat::nat6_helper_v3::Nat6HelperV3SkelBuilder, TestSkb},
+    tests::{nat::test_nat6_v3::TestNat6V3SkelBuilder, TestSkb},
 };
 
 // 2001:db8:12::2 => 2001:db8:1::1 inner 2001:db8:1::1 => 2001:db8:2::2 id 0x5edf
@@ -132,7 +132,7 @@ fn build_icmpv6_udp_error() -> Vec<u8> {
 }
 
 pub fn run_ipv6_egress_helper(mut payload: Vec<u8>) {
-    let landscape_builder = Nat6HelperV3SkelBuilder::default();
+    let landscape_builder = TestNat6V3SkelBuilder::default();
     let mut open_object = MaybeUninit::uninit();
     let landscape_open = landscape_builder.open(&mut open_object).unwrap();
 
