@@ -10,7 +10,7 @@
 #define NAT_MAPPING_CACHE_SIZE 1024 * 64 * 2
 #define NAT_MAPPING_TIMER_SIZE 1024 * 64 * 2
 
-struct static_nat_mapping_key_v6 {
+struct static_nat6_mapping_key {
     u32 prefixlen;
     // INGRESS: NAT Mapping Port
     // EGRESS: lan Clinet Port
@@ -24,26 +24,17 @@ struct static_nat_mapping_key_v6 {
     inet6_addr addr;
 };
 
-struct static_nat_mapping_value_v6 {
+struct static_nat6_mapping_value {
     // INGRESS: target LAN client prefix for NPTv6 dst replace, or suffix for self-ref match
     // EGRESS: unused
     inet6_addr addr;
-    // INGRESS: unused
-    // EGRESS: unused (CT uses pkt dst_addr as trigger)
-    inet6_addr trigger_addr;
     // INGRESS: mapped port
     // EGRESS: unused
     __be16 port;
-    // INGRESS: unused
-    // EGRESS: unused
-    __be16 trigger_port;
     u8 is_static;
     // EGRESS: used by create_ct6_egress when building static-backed CT
     // INGRESS: unused (ingress static CT always sets is_allow_reuse=1)
     u8 is_allow_reuse;
-    u8 _pad[2];
-    // unused in BPF
-    u64 active_time;
 };
 
 struct nat4_mapping_value_v3 {
@@ -59,8 +50,8 @@ struct nat4_mapping_value_v3 {
 
 struct {
     __uint(type, BPF_MAP_TYPE_LPM_TRIE);
-    __type(key, struct static_nat_mapping_key_v6);
-    __type(value, struct static_nat_mapping_value_v6);
+    __type(key, struct static_nat6_mapping_key);
+    __type(value, struct static_nat6_mapping_value);
     __uint(max_entries, STATIC_NAT_MAPPING_CACHE_SIZE);
     __uint(map_flags, BPF_F_NO_PREALLOC);
     __uint(pinning, LIBBPF_PIN_BY_NAME);

@@ -177,10 +177,10 @@ static __always_inline int xdp_update_ipv6_cache_value(u32 mark, struct inet_pai
     return 0;
 }
 
-static __always_inline struct static_nat_mapping_value_v6 *
+static __always_inline struct static_nat6_mapping_value *
 xdp_check_egress_static_mapping(u8 ip_protocol, const struct inet_pair *pkt_ip_pair) {
-    struct static_nat_mapping_key_v6 egress_key = {0};
-    struct static_nat_mapping_value_v6 *value;
+    struct static_nat6_mapping_key egress_key = {0};
+    struct static_nat6_mapping_value *value;
     egress_key.l3_protocol = LANDSCAPE_IPV6_TYPE;
     egress_key.l4_protocol = ip_protocol;
     egress_key.gress = NAT_MAPPING_EGRESS;
@@ -200,8 +200,8 @@ xdp_check_egress_static_mapping(u8 ip_protocol, const struct inet_pair *pkt_ip_p
 static __always_inline int xdp_check_ingress_mapping(u8 ip_protocol,
                                                      const struct inet_pair *pkt_ip_pair,
                                                      __be64 *local_client_prefix) {
-    struct static_nat_mapping_key_v6 ingress_key = {0};
-    struct static_nat_mapping_value_v6 *value = NULL;
+    struct static_nat6_mapping_key ingress_key = {0};
+    struct static_nat6_mapping_value *value = NULL;
     __be64 mapping_suffix, dst_suffix;
 
     ingress_key.l3_protocol = LANDSCAPE_IPV6_TYPE;
@@ -332,7 +332,7 @@ static __always_inline int xdp_ipv6_egress_prefix_check_and_replace(void *data, 
         goto do_xdp_nptv6;
     }
 
-    struct static_nat_mapping_value_v6 *static_val =
+    struct static_nat6_mapping_value *static_val =
         xdp_check_egress_static_mapping(idx->l4_protocol, ip_pair);
 
     bool is_icmpx_error = idx->icmp_error_l3_offset != 0 && idx->icmp_error_inner_l4_offset != 0;

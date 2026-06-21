@@ -334,10 +334,10 @@ create_ct6_egress(struct __sk_buff *skb, struct scan_ipv6_idx *idx, struct inet_
         }                                                                                          \
     } while (0)
 
-static __always_inline struct static_nat_mapping_value_v6 *
+static __always_inline struct static_nat6_mapping_value *
 check_egress_static_mapping_exist(u8 ip_protocol, const struct inet_pair *pkt_ip_pair) {
-    struct static_nat_mapping_key_v6 egress_key = {0};
-    struct static_nat_mapping_value_v6 *value;
+    struct static_nat6_mapping_key egress_key = {0};
+    struct static_nat6_mapping_value *value;
     egress_key.l3_protocol = LANDSCAPE_IPV6_TYPE;
     egress_key.l4_protocol = ip_protocol;
     egress_key.gress = NAT_MAPPING_EGRESS;
@@ -379,7 +379,7 @@ static __always_inline int ipv6_egress_prefix_check_and_replace(struct __sk_buff
         goto do_nptv6;
     }
 
-    struct static_nat_mapping_value_v6 *static_val =
+    struct static_nat6_mapping_value *static_val =
         check_egress_static_mapping_exist(idx->l4_protocol, ip_pair);
 
     bool is_icmpx_error = idx->icmp_error_l3_offset > 0 && idx->icmp_error_inner_l4_offset > 0;
@@ -493,8 +493,8 @@ static __always_inline int check_ingress_mapping_exist(struct __sk_buff *skb, u8
                                                        const struct inet_pair *pkt_ip_pair,
                                                        __be64 *local_client_prefix) {
 #define BPF_LOG_TOPIC "check_ingress_mapping_exist"
-    struct static_nat_mapping_key_v6 ingress_key = {0};
-    struct static_nat_mapping_value_v6 *value = NULL;
+    struct static_nat6_mapping_key ingress_key = {0};
+    struct static_nat6_mapping_value *value = NULL;
 
     __be64 dst_suffix, mapping_suffix;
 
