@@ -35,6 +35,16 @@ export default {
     range: "Range 1-65535",
     invalid_port_value: "Invalid port value found",
     duplicate_port_config: "Duplicate port mapping found",
+    port_config_label: "Port Configuration",
+    port_mode_specific: "Specific Ports",
+    port_mode_all: "All Ports",
+    port_mode_all_hint:
+      "Open all ports on this host (not supported for local target).",
+    port_placeholder: "Port number",
+    add_port: "+ Add port",
+    local_all_ports_disallowed:
+      "Local target does not support opening all ports",
+    port_list_required: "Please add at least one port",
   },
   service_edit: {
     title: "Interface NAT Config",

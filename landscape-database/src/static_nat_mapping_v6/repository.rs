@@ -53,8 +53,8 @@ impl StaticNatMappingV6Repository {
         Ok(configs
             .into_iter()
             .filter(|config| config.enable)
-            .filter_map(|config| {
-                resolve_static_nat_mapping_v6_config(config, &devices, &lan_ipv6_configs)
+            .flat_map(|config| {
+                resolve_static_nat_mapping_v6_configs(config, &devices, &lan_ipv6_configs)
             })
             .collect())
     }
@@ -65,8 +65,9 @@ impl StaticNatMappingV6Repository {
     ) -> Result<HashMap<DBId, EnrolledDevice>, LdError> {
         let mut device_ids = HashSet::new();
         for config in configs {
-            if let Some(StaticNatV6Target::Device { device_id }) = config.lan_target.as_ref() {
-                device_ids.insert(*device_id);
+            if let Some(StaticNatV6Target::Device { device_ids: ids }) = config.lan_target.as_ref()
+            {
+                device_ids.extend(ids);
             }
         }
 
@@ -93,9 +94,34 @@ impl StaticNatMappingV6Repository {
                 HashMap::new()
             };
 
-        let lan_ipv6 = resolve_static_nat_v6_target(config, &devices, &lan_ipv6_configs);
+        if let Some(StaticNatV6Target::Device { device_ids }) = config.lan_target.as_ref() {
+            if config.enable && !config.l4_protocols.is_empty() {
+                for device_id in device_ids {
+                    if !device_id.is_nil() {
+                        match devices.get(device_id) {
+                            None => {
+                                return Err(LdError::ConfigError(format!(
+                                    "device {} referenced in static NAT v6 config does not exist",
+                                    device_id
+                                )));
+                            }
+                            Some(device) => {
+                                if device.ipv6.is_none() {
+                                    return Err(LdError::ConfigError(format!(
+                                        "device {} does not have an IPv6 address",
+                                        device_id
+                                    )));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
 
-        if config.enable && !config.l4_protocols.is_empty() && lan_ipv6.is_none() {
+        let lan_ipv6s = resolve_static_nat_v6_targets(config, &devices, &lan_ipv6_configs);
+
+        if config.enable && !config.l4_protocols.is_empty() && lan_ipv6s.is_empty() {
             return Err(LdError::ConfigError(
                 "enabled IPv6 static NAT mapping must resolve to an IPv6 target".to_string(),
             ));
@@ -105,32 +131,47 @@ impl StaticNatMappingV6Repository {
     }
 }
 
-fn resolve_static_nat_mapping_v6_config(
+fn resolve_static_nat_mapping_v6_configs(
     config: StaticNatMappingV6Config,
     devices: &HashMap<DBId, EnrolledDevice>,
     lan_ipv6_configs: &HashMap<String, LanIPv6ServiceConfigV2>,
-) -> Option<RuntimeStaticNatMappingV6Config> {
-    let lan_ipv6 = resolve_static_nat_v6_target(&config, devices, lan_ipv6_configs)?;
-    Some(RuntimeStaticNatMappingV6Config {
-        mapping_pair_ports: config.mapping_pair_ports,
-        lan_ipv6,
-        l4_protocols: config.l4_protocols,
-    })
+) -> Vec<RuntimeStaticNatMappingV6Config> {
+    let lan_ipv6s = resolve_static_nat_v6_targets(&config, devices, lan_ipv6_configs);
+    lan_ipv6s
+        .into_iter()
+        .map(|lan_ipv6| RuntimeStaticNatMappingV6Config {
+            port_config: config.port_config.clone(),
+            lan_ipv6,
+            l4_protocols: config.l4_protocols.clone(),
+        })
+        .collect()
 }
 
-fn resolve_static_nat_v6_target(
+fn resolve_static_nat_v6_targets(
     config: &StaticNatMappingV6Config,
     devices: &HashMap<DBId, EnrolledDevice>,
     lan_ipv6_configs: &HashMap<String, LanIPv6ServiceConfigV2>,
-) -> Option<std::net::Ipv6Addr> {
+) -> Vec<std::net::Ipv6Addr> {
     match config.lan_target.as_ref() {
-        Some(StaticNatV6Target::Address { ipv6 }) => Some(*ipv6),
-        Some(StaticNatV6Target::Local) => Some(std::net::Ipv6Addr::UNSPECIFIED),
-        Some(StaticNatV6Target::Device { device_id }) => {
-            let device = devices.get(device_id)?;
-            resolve_device_ipv6(device, lan_ipv6_configs)
-        }
-        None => None,
+        Some(StaticNatV6Target::Address { ipv6 }) => vec![*ipv6],
+        Some(StaticNatV6Target::Local) => vec![std::net::Ipv6Addr::UNSPECIFIED],
+        Some(StaticNatV6Target::Device { device_ids }) => device_ids
+            .iter()
+            .filter_map(|device_id| {
+                let device = devices.get(device_id)?;
+                match resolve_device_ipv6(device, lan_ipv6_configs) {
+                    Some(ip) => Some(ip),
+                    None => {
+                        tracing::warn!(
+                            "static NAT v6 device target unresolved for device {}",
+                            device_id
+                        );
+                        None
+                    }
+                }
+            })
+            .collect(),
+        None => vec![],
     }
 }
 

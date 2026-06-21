@@ -1,6 +1,7 @@
 use core::ops::Range;
 use landscape_macro::LdApiError;
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use uuid::Uuid;
 
@@ -482,13 +483,31 @@ pub enum StaticNatV6Target {
     },
     Local,
     Device {
-        device_id: Uuid,
+        #[serde(default)]
+        #[cfg_attr(feature = "openapi", schema(required = false))]
+        device_ids: Vec<Uuid>,
     },
 }
 
 impl StaticNatV6Target {
     pub fn address(ipv6: Ipv6Addr) -> Self {
         Self::Address { ipv6 }
+    }
+}
+
+// --- StaticNatV6PortConfig ---
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[serde(tag = "mode", rename_all = "snake_case")]
+pub enum StaticNatV6PortConfig {
+    All,
+    Ports { ports: Vec<u16> },
+}
+
+impl Default for StaticNatV6PortConfig {
+    fn default() -> Self {
+        Self::Ports { ports: Vec::new() }
     }
 }
 
@@ -504,7 +523,7 @@ pub struct StaticNatMappingV6Config {
     pub remark: String,
     #[cfg_attr(feature = "openapi", schema(required = true, nullable = true))]
     pub wan_iface_name: Option<String>,
-    pub mapping_pair_ports: Vec<StaticMapPair>,
+    pub port_config: StaticNatV6PortConfig,
     #[serde(default)]
     #[cfg_attr(feature = "openapi", schema(required = false))]
     pub lan_target: Option<StaticNatV6Target>,
@@ -516,12 +535,6 @@ pub struct StaticNatMappingV6Config {
 
 impl StaticNatMappingV6Config {
     pub fn validate(&self) -> Result<(), ServiceConfigError> {
-        if self.enable && self.mapping_pair_ports.is_empty() {
-            return Err(ServiceConfigError::InvalidConfig {
-                reason: "mapping_pair_ports must not be empty when enabled".to_string(),
-            });
-        }
-
         if self.enable {
             match self.lan_target.as_ref() {
                 None => {
@@ -529,24 +542,63 @@ impl StaticNatMappingV6Config {
                         reason: "enabled static NAT mapping must define a LAN target".to_string(),
                     });
                 }
-                Some(StaticNatV6Target::Device { device_id }) if device_id.is_nil() => {
+                Some(StaticNatV6Target::Device { device_ids }) if device_ids.is_empty() => {
+                    return Err(ServiceConfigError::InvalidConfig {
+                        reason: "device target must select at least one valid enrolled device"
+                            .to_string(),
+                    });
+                }
+                Some(StaticNatV6Target::Device { device_ids })
+                    if device_ids.iter().any(|id| id.is_nil()) =>
+                {
                     return Err(ServiceConfigError::InvalidConfig {
                         reason: "device target must select a valid enrolled device".to_string(),
                     });
+                }
+                Some(StaticNatV6Target::Device { device_ids }) => {
+                    let mut seen = HashSet::new();
+                    for id in device_ids {
+                        if !seen.insert(id) {
+                            return Err(ServiceConfigError::InvalidConfig {
+                                reason: "device target must not contain duplicate devices"
+                                    .to_string(),
+                            });
+                        }
+                    }
                 }
                 _ => {}
             }
         }
 
-        for (i, pair) in self.mapping_pair_ports.iter().enumerate() {
-            if pair.wan_port == 0 {
-                return Err(ServiceConfigError::InvalidConfig {
-                    reason: format!("mapping_pair_ports[{i}].wan_port must not be 0"),
-                });
+        if self.enable {
+            if let StaticNatV6PortConfig::Ports { ports } = &self.port_config {
+                if ports.is_empty() {
+                    return Err(ServiceConfigError::InvalidConfig {
+                        reason: "port_config ports list must not be empty when enabled".to_string(),
+                    });
+                }
+                let mut seen = HashSet::new();
+                for (i, &port) in ports.iter().enumerate() {
+                    if port == 0 {
+                        return Err(ServiceConfigError::InvalidConfig {
+                            reason: format!("port_config ports[{i}] must not be 0"),
+                        });
+                    }
+                    if !seen.insert(port) {
+                        return Err(ServiceConfigError::InvalidConfig {
+                            reason: format!("port_config ports[{i}] ({port}) is duplicated"),
+                        });
+                    }
+                }
             }
-            if pair.lan_port == 0 {
+        }
+
+        if self.enable {
+            if let (StaticNatV6PortConfig::All, Some(StaticNatV6Target::Local)) =
+                (&self.port_config, self.lan_target.as_ref())
+            {
                 return Err(ServiceConfigError::InvalidConfig {
-                    reason: format!("mapping_pair_ports[{i}].lan_port must not be 0"),
+                    reason: "local target does not support opening all ports".to_string(),
                 });
             }
         }
@@ -579,7 +631,7 @@ impl LandscapeDBStore<Uuid> for StaticNatMappingV6Config {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuntimeStaticNatMappingV6Config {
-    pub mapping_pair_ports: Vec<StaticMapPair>,
+    pub port_config: StaticNatV6PortConfig,
     pub lan_ipv6: Ipv6Addr,
     pub l4_protocols: Vec<u8>,
 }

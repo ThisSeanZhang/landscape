@@ -1,7 +1,7 @@
 use std::net::{Ipv4Addr, Ipv6Addr};
 
 use landscape_common::iface::nat::{
-    RuntimeStaticNatMappingV4Config, RuntimeStaticNatMappingV6Config,
+    RuntimeStaticNatMappingV4Config, RuntimeStaticNatMappingV6Config, StaticNatV6PortConfig,
 };
 use libbpf_rs::{MapCore, MapFlags};
 
@@ -68,16 +68,31 @@ pub fn build_static_nat6_entries(configs: &[RuntimeStaticNatMappingV6Config]) ->
     for config in configs {
         let lan_ip = config.lan_ipv6;
         for l4_protocol in &config.l4_protocols {
-            for pair in &config.mapping_pair_ports {
-                insert_static_nat6_item_entries(
-                    &mut entries,
-                    StaticNatMappingV6Item {
-                        wan_port: pair.wan_port,
-                        lan_port: pair.lan_port,
-                        lan_ip,
-                        l4_protocol: *l4_protocol,
-                    },
-                );
+            match &config.port_config {
+                StaticNatV6PortConfig::All => {
+                    insert_static_nat6_item_entries(
+                        &mut entries,
+                        StaticNatMappingV6Item {
+                            wan_port: 0,
+                            lan_port: 0,
+                            lan_ip,
+                            l4_protocol: *l4_protocol,
+                        },
+                    );
+                }
+                StaticNatV6PortConfig::Ports { ports } => {
+                    for port in ports {
+                        insert_static_nat6_item_entries(
+                            &mut entries,
+                            StaticNatMappingV6Item {
+                                wan_port: *port,
+                                lan_port: *port,
+                                lan_ip,
+                                l4_protocol: *l4_protocol,
+                            },
+                        );
+                    }
+                }
             }
         }
     }

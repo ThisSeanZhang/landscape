@@ -46,7 +46,7 @@ impl MigrationTrait for Migration {
                     .col(ColumnDef::new(StaticNatMappingV6Configs::Id).uuid().primary_key())
                     .col(ColumnDef::new(StaticNatMappingV6Configs::Enable).boolean().default(false))
                     .col(string_null(StaticNatMappingV6Configs::Remark))
-                    .col(json(StaticNatMappingV6Configs::MappingPairPorts))
+                    .col(json(StaticNatMappingV6Configs::PortConfig))
                     .col(string_null(StaticNatMappingV6Configs::WanIfaceName))
                     .col(string_null(StaticNatMappingV6Configs::LanIpv6))
                     .col(json_null(StaticNatMappingV6Configs::LanTarget))
@@ -132,13 +132,14 @@ impl MigrationTrait for Migration {
 
             if has_v6 {
                 let v6_target = build_v6_target(lan_target.as_ref(), row.lan_ipv6.as_deref());
+                let v6_port_config = build_v6_port_config(&mapping_ports);
                 let insert = Query::insert()
                     .into_table(StaticNatMappingV6Configs::Table)
                     .columns([
                         StaticNatMappingV6Configs::Id,
                         StaticNatMappingV6Configs::Enable,
                         StaticNatMappingV6Configs::Remark,
-                        StaticNatMappingV6Configs::MappingPairPorts,
+                        StaticNatMappingV6Configs::PortConfig,
                         StaticNatMappingV6Configs::WanIfaceName,
                         StaticNatMappingV6Configs::LanIpv6,
                         StaticNatMappingV6Configs::LanTarget,
@@ -149,7 +150,7 @@ impl MigrationTrait for Migration {
                         Uuid::new_v4().into(),
                         row.enable.into(),
                         row.remark.clone().into(),
-                        mapping_ports.into(),
+                        v6_port_config.into(),
                         row.wan_iface_name.clone().into(),
                         row.lan_ipv6.clone().into(),
                         v6_target.into(),
@@ -249,8 +250,13 @@ fn build_v6_target(
             Some("local") => Some(serde_json::json!({"t": "local"})),
             Some("device") => {
                 let device_id = target.get("device_id").and_then(|v| v.as_str());
-                let obj = serde_json::json!({"t": "device", "device_id": device_id});
-                Some(obj)
+                match device_id {
+                    Some(id) => {
+                        let obj = serde_json::json!({"t": "device", "device_ids": [id]});
+                        Some(obj)
+                    }
+                    None => build_v6_target_from_ip(lan_ipv6),
+                }
             }
             _ => build_v6_target_from_ip(lan_ipv6),
         }
@@ -265,5 +271,26 @@ fn build_v6_target_from_ip(lan_ipv6: Option<&str>) -> Option<serde_json::Value> 
         Some(serde_json::json!({"t": "local"}))
     } else {
         Some(serde_json::json!({"t": "address", "ipv6": ipv6}))
+    }
+}
+
+fn build_v6_port_config(mapping_ports: &serde_json::Value) -> serde_json::Value {
+    // The new v6 static-NAT system no longer supports per-pair WAN/LAN port
+    // remapping — a single port list is shared for both sides.  We therefore
+    // intentionally extract only lan_port from the legacy mapping_pair_ports
+    // and use it for both wan_port and lan_port in the eBPF entries.
+    let ports: Vec<u16> = mapping_ports
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|pair| pair.get("lan_port").and_then(|v| v.as_u64()))
+        .filter_map(|p| <u16 as TryFrom<_>>::try_from(p).ok())
+        .filter(|&p| p != 0)
+        .collect();
+
+    if ports.is_empty() {
+        serde_json::json!({"mode": "all"})
+    } else {
+        serde_json::json!({"mode": "ports", "ports": ports})
     }
 }

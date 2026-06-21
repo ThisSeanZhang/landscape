@@ -4,7 +4,7 @@ use landscape_common::database::LandscapeStore;
 use landscape_common::error::LdError;
 use landscape_common::iface::nat::{
     StaticMapPair, StaticNatMappingV4Config, StaticNatMappingV6Config, StaticNatV4Target,
-    StaticNatV6Target,
+    StaticNatV6PortConfig, StaticNatV6Target,
 };
 use landscape_common::utils::time::get_f64_timestamp;
 use landscape_common::{
@@ -233,9 +233,8 @@ fn default_static_mapping_v6_rules() -> Vec<StaticNatMappingV6Config> {
         enable: true,
         remark: "Default DHCPv6 Client Port".to_string(),
         update_at: get_f64_timestamp(),
-        mapping_pair_ports: vec![StaticMapPair {
-            wan_port: LANDSCAPE_DEFAULE_DHCP_V6_CLIENT_PORT,
-            lan_port: LANDSCAPE_DEFAULE_DHCP_V6_CLIENT_PORT,
-        }],
+        port_config: StaticNatV6PortConfig::Ports {
+            ports: vec![LANDSCAPE_DEFAULE_DHCP_V6_CLIENT_PORT],
+        },
     }]
 }

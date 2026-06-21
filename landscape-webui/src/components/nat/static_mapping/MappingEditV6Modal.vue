@@ -16,7 +16,6 @@ import { useI18n } from "vue-i18n";
 
 type Props = {
   rule_id?: string;
-  initialFocusIndex?: number;
 };
 
 const props = defineProps<Props>();
@@ -31,17 +30,17 @@ const show = defineModel<boolean>("show", { required: true });
 const origin_rule_json = ref<string>("");
 
 const rule = ref<StaticNatMappingV6Config>();
-const portInputRefs = ref<any[]>([]);
 
 const enrolledDeviceStore = useEnrolledDeviceStore();
 type TargetMode = "address" | "local" | "device";
 const targetMode = ref<TargetMode>("device");
-const selectedDeviceId = ref<string | null>(null);
+const selectedDeviceIds = ref<string[]>([]);
 
 const deviceOptions = computed(() =>
   enrolledDeviceStore.bindings.map((d) => ({
-    label: `${d.name} (${d.mac})`,
+    label: d.name,
     value: d.id!,
+    disabled: !d.ipv6,
   })),
 );
 
@@ -61,11 +60,61 @@ const rule_enabled = computed({
   },
 });
 
+const savedPorts = ref<number[]>([]);
+
+const portMode = computed<"all" | "ports">({
+  get() {
+    return rule.value?.port_config?.mode ?? "ports";
+  },
+  set(mode) {
+    if (!rule.value) return;
+    if (mode === "all") {
+      if (targetMode.value === "local") {
+        targetMode.value = "device";
+        syncRuleTarget();
+      }
+      const pc = rule.value.port_config;
+      if (pc?.mode === "ports") {
+        savedPorts.value = pc.ports ?? [];
+      }
+      rule.value.port_config = { mode: "all" };
+    } else {
+      rule.value.port_config = { mode: "ports", ports: savedPorts.value };
+    }
+  },
+});
+
+const portTags = computed<string[]>({
+  get() {
+    const pc = rule.value?.port_config;
+    return pc?.mode === "ports" ? (pc.ports ?? []).map(String) : [];
+  },
+  set(vals) {
+    if (!rule.value) return;
+    const cleaned = vals.filter((v) => {
+      const n = parseInt(v, 10);
+      return n >= 1 && n <= 65535 && String(n) === v.trim();
+    });
+    const deduped = [...new Set(cleaned)];
+    if (cleaned.length < vals.length) {
+      message.warning(t("nat.mapping.invalid_port_value"));
+    }
+    if (deduped.length < cleaned.length) {
+      message.warning(t("nat.mapping.duplicate_port_config"));
+    }
+    rule.value.port_config = {
+      mode: "ports",
+      ports: deduped.map((v) => parseInt(v, 10)),
+    };
+  },
+});
+
 function syncTargetFormFromRule() {
   if (!rule.value) return;
   const target = rule.value.lan_target;
   targetMode.value = target?.t ?? "device";
-  selectedDeviceId.value = target?.t === "device" ? target.device_id : null;
+  selectedDeviceIds.value =
+    target?.t === "device" ? (target.device_ids ?? []) : [];
 }
 
 function syncRuleTarget() {
@@ -75,9 +124,10 @@ function syncRuleTarget() {
     return;
   }
   if (targetMode.value === "device") {
-    rule.value.lan_target = selectedDeviceId.value
-      ? { t: "device", device_id: selectedDeviceId.value }
-      : { t: "device", device_id: "" };
+    rule.value.lan_target = {
+      t: "device",
+      device_ids: selectedDeviceIds.value,
+    };
     return;
   }
   rule.value.lan_target = {
@@ -94,9 +144,9 @@ const addressTarget = computed<StaticNatV6Target & { t: "address" }>(() => {
   return rule.value.lan_target as StaticNatV6Target & { t: "address" };
 });
 
-const selectedDevice = computed(() =>
-  enrolledDeviceStore.bindings.find(
-    (device) => device.id === selectedDeviceId.value,
+const selectedDevices = computed(() =>
+  enrolledDeviceStore.bindings.filter((d) =>
+    selectedDeviceIds.value.includes(d.id!),
   ),
 );
 
@@ -106,51 +156,21 @@ const ipv6Pattern =
 const rules = {};
 
 async function enter() {
+  savedPorts.value = [];
   if (props.rule_id) {
     rule.value = await get_static_nat_mapping_v6(props.rule_id);
   } else {
     rule.value = {
       enable: true,
-      mapping_pair_ports: [{ wan_port: 0, lan_port: 0 }],
+      port_config: { mode: "ports", ports: [] },
       wan_iface_name: null,
-      lan_target: { t: "device", device_id: "" },
+      lan_target: { t: "device", device_ids: [] },
       remark: "",
       l4_protocols: [6],
     };
   }
   syncTargetFormFromRule();
   origin_rule_json.value = JSON.stringify(rule.value);
-
-  const focusIdx = props.initialFocusIndex;
-  if (focusIdx !== undefined && focusIdx >= 0) {
-    setTimeout(() => {
-      const targetInput = portInputRefs.value[focusIdx];
-      if (targetInput) {
-        targetInput.focus();
-        targetInput.$el?.scrollIntoView({
-          behavior: "smooth",
-          block: "center",
-        });
-      }
-    }, 100);
-  }
-}
-
-function addPortPair() {
-  if (rule.value) {
-    rule.value.mapping_pair_ports.push({ wan_port: 0, lan_port: 0 });
-    setTimeout(() => {
-      const index = rule.value!.mapping_pair_ports.length - 1;
-      const input = portInputRefs.value[index];
-      if (input) input.focus();
-    }, 100);
-  }
-}
-
-function removePortPair(index: number) {
-  if (rule.value && rule.value.mapping_pair_ports.length > 1) {
-    rule.value.mapping_pair_ports.splice(index, 1);
-  }
 }
 
 const formRef = ref();
@@ -176,13 +196,29 @@ async function saveRule() {
         return;
       }
 
-      if (targetMode.value === "device" && !selectedDeviceId.value) {
+      if (
+        targetMode.value === "device" &&
+        selectedDeviceIds.value.length === 0
+      ) {
         message.error(t("nat.mapping.select_device_required"));
         return;
       }
 
-      if (targetMode.value === "device" && !selectedDevice.value?.ipv6) {
+      if (
+        targetMode.value === "device" &&
+        selectedDevices.value.some((d) => !d.ipv6)
+      ) {
         message.error(t("nat.mapping.device_ipv6_required"));
+        return;
+      }
+
+      if (targetMode.value === "local" && portMode.value === "all") {
+        message.error(t("nat.mapping.local_all_ports_disallowed"));
+        return;
+      }
+
+      if (portMode.value === "ports" && portTags.value.length === 0) {
+        message.error(t("nat.mapping.port_list_required"));
         return;
       }
 
@@ -217,56 +253,6 @@ const isIndeterminate = computed(() => {
   const len = (rule.value.l4_protocols || []).length;
   return len > 0 && len < 2;
 });
-
-const wanPortRule = {
-  trigger: ["blur", "input"],
-  validator(_ruleItem: any, value: number) {
-    if (!value && value !== 0) return new Error(t("nat.mapping.required"));
-    if (value <= 0 || value > 65535) return new Error(t("nat.mapping.range"));
-    return true;
-  },
-};
-
-const lanPortRule = {
-  trigger: ["blur", "input"],
-  validator(_ruleItem: any, value: number) {
-    if (!value && value !== 0) return new Error(t("nat.mapping.required"));
-    if (value <= 0 || value > 65535) return new Error(t("nat.mapping.range"));
-    return true;
-  },
-};
-
-const mappingPortsRule = {
-  trigger: ["change"],
-  validator(_ruleItem: any, value: any[]) {
-    const ports = value || (rule.value ? rule.value.mapping_pair_ports : []);
-    if (!ports || ports.length === 0) return true;
-
-    const errors: string[] = [];
-    const hasInvalid = ports.some(
-      (p: any) =>
-        !p.wan_port ||
-        p.wan_port <= 0 ||
-        p.wan_port > 65535 ||
-        !p.lan_port ||
-        p.lan_port <= 0 ||
-        p.lan_port > 65535,
-    );
-    if (hasInvalid) errors.push(t("nat.mapping.invalid_port_value"));
-
-    const wanPorts = ports.map((p: any) => p.wan_port);
-    const hasDuplicateWan = wanPorts.length !== new Set(wanPorts).size;
-    const lanPorts = ports.map((p: any) => p.lan_port);
-    const hasDuplicateLan = lanPorts.length !== new Set(lanPorts).size;
-
-    if (hasDuplicateWan || hasDuplicateLan) {
-      errors.push(t("nat.mapping.duplicate_port_config"));
-    }
-
-    if (errors.length > 0) return new Error(errors.join(", "));
-    return true;
-  },
-};
 </script>
 
 <template>
@@ -309,68 +295,31 @@ const mappingPortsRule = {
             </n-flex>
           </n-form-item-gi>
 
-          <n-form-item-gi
-            :span="2"
-            :label="t('nat.mapping.port_mappings_label')"
-            path="mapping_pair_ports"
-            :rule="mappingPortsRule"
-          >
+          <n-form-item-gi :span="2" :label="t('nat.mapping.port_config_label')">
             <n-flex vertical style="width: 100%; gap: 8px">
-              <n-flex
-                v-for="(pair, index) in rule.mapping_pair_ports"
-                :key="index"
-                align="center"
-                style="gap: 8px"
+              <n-radio-group v-model:value="portMode">
+                <n-radio-button value="ports">
+                  {{ t("nat.mapping.port_mode_specific") }}
+                </n-radio-button>
+                <n-radio-button value="all" :disabled="targetMode === 'local'">
+                  {{ t("nat.mapping.port_mode_all") }}
+                </n-radio-button>
+              </n-radio-group>
+
+              <n-dynamic-tags
+                v-if="portMode === 'ports'"
+                v-model:value="portTags"
+                :input-style="{ width: '100px' }"
+              />
+
+              <n-alert
+                v-if="portMode === 'all'"
+                type="success"
+                :show-icon="false"
+                style="width: 100%"
               >
-                <n-form-item
-                  style="flex: 1; margin-bottom: 0"
-                  :show-label="false"
-                  :show-feedback="false"
-                  :path="`mapping_pair_ports[${index}].wan_port`"
-                  :rule="wanPortRule"
-                >
-                  <n-input-number
-                    :ref="
-                      (el: any) => {
-                        if (el) portInputRefs[index] = el;
-                      }
-                    "
-                    v-model:value="pair.wan_port"
-                    :min="1"
-                    :max="65535"
-                    :placeholder="t('nat.mapping.public_port_placeholder')"
-                    style="width: 100%"
-                  />
-                </n-form-item>
-                <span style="color: #999">&rarr;</span>
-                <n-form-item
-                  style="flex: 1; margin-bottom: 0"
-                  :show-label="false"
-                  :show-feedback="false"
-                  :path="`mapping_pair_ports[${index}].lan_port`"
-                  :rule="lanPortRule"
-                >
-                  <n-input-number
-                    v-model:value="pair.lan_port"
-                    :min="1"
-                    :max="65535"
-                    :placeholder="t('nat.mapping.private_port_placeholder')"
-                    style="width: 100%"
-                  />
-                </n-form-item>
-                <n-button
-                  v-if="rule.mapping_pair_ports.length > 1"
-                  size="small"
-                  @click="removePortPair(index)"
-                  secondary
-                  type="error"
-                >
-                  {{ t("nat.mapping.delete") }}
-                </n-button>
-              </n-flex>
-              <n-button @click="addPortPair" dashed block size="small">
-                {{ t("nat.mapping.add_port_pair") }}
-              </n-button>
+                {{ t("nat.mapping.port_mode_all_hint") }}
+              </n-alert>
             </n-flex>
           </n-form-item-gi>
 
@@ -382,7 +331,7 @@ const mappingPortsRule = {
               <n-radio-button value="device">
                 {{ t("nat.mapping.target_type_device") }}
               </n-radio-button>
-              <n-radio-button value="local">
+              <n-radio-button value="local" :disabled="portMode === 'all'">
                 {{ t("nat.mapping.target_type_local") }}
               </n-radio-button>
               <n-radio-button value="address">
@@ -430,18 +379,14 @@ const mappingPortsRule = {
           >
             <n-flex vertical style="width: 100%">
               <n-select
-                v-model:value="selectedDeviceId"
+                v-model:value="selectedDeviceIds"
                 :options="deviceOptions"
                 :placeholder="t('nat.mapping.select_device_placeholder')"
                 clearable
                 filterable
+                multiple
                 @update:value="syncRuleTarget"
               />
-              <n-text v-if="selectedDevice" depth="3">
-                {{ selectedDevice.iface_name || "-" }} /
-                {{ selectedDevice.ipv4 || "-" }} /
-                {{ selectedDevice.ipv6 || "-" }}
-              </n-text>
             </n-flex>
           </n-form-item-gi>
 

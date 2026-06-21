@@ -2,7 +2,7 @@
 import { delete_static_nat_mapping_v6 } from "@/api/static_nat_mapping";
 import type { StaticNatMappingV6Config } from "@landscape-router/types/api/schemas";
 import { computed, ref } from "vue";
-import { ArrowRight } from "@vicons/carbon";
+
 import { useFrontEndStore } from "@/stores/front_end_config";
 import { useEnrolledDeviceStore } from "@/stores/enrolled_device";
 import { usePreferenceStore } from "@/stores/preference";
@@ -19,10 +19,19 @@ const target = computed(
   () => rule.value.lan_target ?? { t: "address" as const, ipv6: "" },
 );
 
+const portConfigPorts = computed<number[]>(() => {
+  const pc = rule.value?.port_config;
+  return pc?.mode === "ports" ? (pc.ports ?? []) : [];
+});
+
 function formatTarget(): string {
   if (target.value.t === "local") return t("nat.mapping.target_type_local");
   if (target.value.t === "device") {
-    return enrolledDeviceStore.GET_DISPLAY_NAME_BY_ID(target.value.device_id);
+    const ids = target.value.device_ids ?? [];
+    if (ids.length === 0) return t("nat.mapping.target_type_device");
+    return ids
+      .map((id: string) => enrolledDeviceStore.GET_DISPLAY_NAME_BY_ID(id))
+      .join(", ");
   }
   return formatIPv6(target.value.ipv6 ?? null);
 }
@@ -41,14 +50,12 @@ function formatIPv6(ip: string | null): string {
 }
 
 const show_edit_modal = ref(false);
-const edit_focus_index = ref<number | undefined>(undefined);
 
 const emit = defineEmits(["refresh"]);
 
-function openEditModal(focusIndex?: number) {
+function openEditModal() {
   const selection = window.getSelection();
   if (selection && selection.toString().length > 0) return;
-  edit_focus_index.value = focusIndex;
   show_edit_modal.value = true;
 }
 
@@ -121,22 +128,33 @@ async function del() {
 
       <div class="ports-container">
         <div class="section-label">
-          {{ t("common.port_mapping") }} ({{ rule.mapping_pair_ports.length }})
+          <template v-if="rule.port_config?.mode === 'all'">
+            {{ t("common.port_mapping") }} ({{
+              t("nat.mapping.port_mode_all")
+            }})
+          </template>
+          <template v-else>
+            {{ t("common.port_mapping") }}
+            ({{ portConfigPorts.length }})
+          </template>
         </div>
         <n-scrollbar style="height: 100px; padding-right: 4px">
-          <div class="ports-grid">
+          <div v-if="rule.port_config?.mode === 'all'" class="ports-grid">
+            <div class="port-box port-box-all">
+              <span class="all-ports-label">{{
+                t("nat.mapping.port_mode_all")
+              }}</span>
+            </div>
+          </div>
+          <div v-else class="ports-grid">
             <div
-              v-for="(pair, index) in rule.mapping_pair_ports"
+              v-for="(port, index) in portConfigPorts"
               :key="index"
               class="port-box"
-              @click.stop="openEditModal(index)"
+              @click.stop="openEditModal()"
             >
-              <span class="wan-port">{{
-                frontEndStore.MASK_PORT(pair.wan_port.toString())
-              }}</span>
-              <n-icon :component="ArrowRight" class="arrow-icon" />
               <span class="lan-port">{{
-                frontEndStore.MASK_PORT(pair.lan_port.toString())
+                frontEndStore.MASK_PORT(port.toString())
               }}</span>
             </div>
           </div>
@@ -159,7 +177,6 @@ async function del() {
       @refresh="emit('refresh')"
       :rule_id="rule.id"
       v-model:show="show_edit_modal"
-      :initial-focus-index="edit_focus_index"
     >
     </MappingEditV6Modal>
   </div>
@@ -266,11 +283,21 @@ async function del() {
   z-index: 1;
 }
 
-.wan-port {
-  color: var(--n-warning-color);
+.port-box-all {
+  grid-column: 1 / -1;
+  background-color: rgba(0, 128, 0, 0.08);
+  border-color: rgba(0, 128, 0, 0.25);
+}
+
+.port-box-all:hover {
+  border-color: var(--n-success-color);
+}
+
+.all-ports-label {
+  color: var(--n-success-color);
   font-weight: 600;
-  font-family: v-mono, SFMono-Regular, Menlo, monospace;
-  user-select: text;
+  font-size: 14px;
+  user-select: none;
 }
 
 .lan-port {
@@ -278,12 +305,6 @@ async function del() {
   font-weight: 600;
   font-family: v-mono, SFMono-Regular, Menlo, monospace;
   user-select: text;
-}
-
-.arrow-icon {
-  color: var(--n-text-color-3);
-  font-size: 12px;
-  margin: 0 6px;
 }
 
 .card-footer {
