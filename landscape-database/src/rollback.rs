@@ -63,6 +63,14 @@ pub const RELEASE_BOUNDARIES: &[ReleaseBoundary] = &[
         version: "0.19.0",
         terminal_migration: "m20260502_080437_enrolled_device_dhcp_options",
     },
+    ReleaseBoundary {
+        version: "0.20.1",
+        terminal_migration: "m20260504_000000_flow_device_match",
+    },
+    ReleaseBoundary {
+        version: "0.21.0",
+        terminal_migration: "m20260620_000000_split_static_nat_v4_v6",
+    },
 ];
 
 pub async fn interactive_rollback(config: &StoreRuntimeConfig) -> LdResult<()> {
@@ -427,10 +435,10 @@ mod tests {
         let targets =
             build_rollback_targets(&current_state, &all_migrations, RELEASE_BOUNDARIES).unwrap();
 
-        assert_eq!(targets.first().unwrap().version, "0.19.0");
-        assert_eq!(targets.first().unwrap().display_label, "current release boundary 0.19.0");
-        assert_eq!(targets.get(1).unwrap().display_label, "previous release 0.18.3");
-        assert_eq!(targets.first().unwrap().steps, 2);
+        assert_eq!(targets.first().unwrap().version, "0.20.1");
+        assert_eq!(targets.first().unwrap().display_label, "previous release 0.20.1");
+        assert_eq!(targets.get(1).unwrap().display_label, "older release 0.19.0");
+        assert_eq!(targets.first().unwrap().steps, 1);
     }
 
     #[test]
@@ -446,10 +454,11 @@ mod tests {
             .unwrap();
 
         let plan = build_rollback_plan(&current_state, &target, &all_migrations).unwrap();
-        assert_eq!(plan.steps, 2);
+        assert_eq!(plan.steps, 3);
         assert_eq!(
             plan.rollback_migrations,
             vec![
+                "m20260620_000000_split_static_nat_v4_v6".to_string(),
                 "m20260504_000000_flow_device_match".to_string(),
                 "m20260503_213507_static_nat_lan_target".to_string(),
             ]
