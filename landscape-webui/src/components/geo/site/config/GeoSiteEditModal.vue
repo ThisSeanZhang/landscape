@@ -10,6 +10,7 @@ import { FormInst, FormRules } from "naive-ui";
 import { computed, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import ConfigModal from "@/components/common/ConfigModal.vue";
+import AdguardRuleInfo from "./AdguardRuleInfo.vue";
 
 const emit = defineEmits(["refresh"]);
 
@@ -168,9 +169,12 @@ const matchTypeOptions = [
             <n-radio value="direct">{{
               t("geo_editor.common.source_direct_mode")
             }}</n-radio>
-            <n-radio value="adguard_home">{{
-              t("geo_editor.common.source_adguard_home_mode")
-            }}</n-radio>
+            <n-radio value="adguard_home">
+              {{ t("geo_editor.common.source_adguard_home_mode") }}
+              <span style="display:inline-flex;vertical-align:middle;margin-left:4px">
+                <AdguardRuleInfo />
+              </span>
+            </n-radio>
           </n-radio-group>
         </n-form-item-gi>
 
@@ -266,11 +270,6 @@ const matchTypeOptions = [
               clearable
               placeholder="https://adguardteam.github.io/AdGuardSDNSFilter/Filters/filter.txt"
             />
-          </n-form-item-gi>
-          <n-form-item-gi :span="5">
-            <n-alert type="warning" show-icon>
-              {{ t("geo_editor.geo_site.adguard_limit_notice") }}
-            </n-alert>
           </n-form-item-gi>
           <n-form-item-gi
             :label="t('geo_editor.geo_site.adguard_key')"

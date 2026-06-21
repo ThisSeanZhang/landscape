@@ -270,6 +270,40 @@ fn parse_adguard_full_rule(line: &str) -> Option<&str> {
     None
 }
 
+fn is_valid_dns_domain(line: &str) -> bool {
+    if !line.contains('.') {
+        return false;
+    }
+
+    if line.parse::<Ipv4Addr>().is_ok() || line.parse::<Ipv6Addr>().is_ok() {
+        return false;
+    }
+
+    line.split('.').all(|label| {
+        if label.is_empty() || label.len() > 63 {
+            return false;
+        }
+
+        let bytes = label.as_bytes();
+        bytes[0].is_ascii_alphanumeric()
+            && bytes[bytes.len() - 1].is_ascii_alphanumeric()
+            && bytes.iter().all(|b| b.is_ascii_alphanumeric() || *b == b'-')
+    })
+}
+
+/// Check if a line is a bare domain (e.g. "example.com" with no prefix/suffix).
+/// Used as a fallback after all other parsers have been tried.
+fn is_bare_domain(line: &str) -> bool {
+    // Must not contain whitespace or AdGuard/URL control syntax.
+    if line.contains(|c: char| {
+        c.is_ascii_whitespace() || matches!(c, '/' | '?' | '#' | ':' | '@' | '$' | '^' | '|' | '*')
+    }) {
+        return false;
+    }
+
+    is_valid_dns_domain(line)
+}
+
 /// Parse AdGuard Home format rules into GeoSiteFileConfig domain list.
 ///
 /// Conversion rules:
@@ -278,6 +312,7 @@ fn parse_adguard_full_rule(line: &str) -> Option<&str> {
 /// - `||domain^$third-party|$domain=...|$to=...` → skipped (context-dependent)
 /// - `0.0.0.0 domain` / `127.0.0.1 domain` / `:: domain` → Full exact match
 /// - `|https://domain|` → Full exact match
+/// - Bare domain lines (e.g. "example.com") → Domain match
 /// - `@@...` (exception rules) → skipped
 /// - Rules with paths → skipped
 /// - Cosmetic/regex rules → skipped
@@ -360,6 +395,19 @@ pub fn parse_adguard_rules(contents: &[u8]) -> Vec<GeoSiteFileConfig> {
                 value: domain,
                 attributes: HashSet::new(),
             });
+            continue;
+        }
+
+        // Fallback: bare domain lines (e.g. "example.com", "ads.tracker.com")
+        if is_bare_domain(line) {
+            let domain = line.to_ascii_lowercase();
+            if seen.insert((DomainMatchType::Domain, domain.clone())) {
+                result.push(GeoSiteFileConfig {
+                    match_type: DomainMatchType::Domain,
+                    value: domain,
+                    attributes: HashSet::new(),
+                });
+            }
             continue;
         }
 
@@ -671,5 +719,105 @@ example.com##.ad-container
         assert!(!domains.contains(&"googleadservices.com")); // @@ exception
         assert!(!domains.contains(&"cdn.example.com")); // has path
         assert!(!domains.contains(&"safe-analytics.net")); // $domain=
+    }
+
+    #[test]
+    fn parse_adguard_bare_domain_lines() {
+        let input = b"example.com
+ads.tracker.com
+cdn.example.org
+xn--fiqs8s.example
+invalid
+example.com/path
+example.com$third-party
+0.0.0.0
+127.0.0.1
+192.168.1.1
+::1
+fe80::1
+user@domain.com
+.example.com
+";
+        let result = crate::parse_adguard_rules(input);
+        let domains: Vec<&str> = result.iter().map(|d| d.value.as_str()).collect();
+
+        // Should include bare domains
+        assert!(domains.contains(&"example.com"));
+        assert!(domains.contains(&"ads.tracker.com"));
+        assert!(domains.contains(&"cdn.example.org"));
+        assert!(domains.contains(&"xn--fiqs8s.example"));
+        assert_eq!(result.len(), 4);
+
+        // All should be Domain match type
+        for item in &result {
+            assert_eq!(item.match_type, DomainMatchType::Domain);
+        }
+
+        // Should NOT include:
+        assert!(!domains.contains(&"invalid")); // no dot
+        assert!(!domains.contains(&"example.com/path")); // has path
+        assert!(!domains.contains(&"example.com$third-party")); // has modifier
+        assert!(!domains.contains(&"0.0.0.0")); // bare IPv4
+        assert!(!domains.contains(&"127.0.0.1")); // bare IPv4
+        assert!(!domains.contains(&"192.168.1.1")); // bare IPv4
+        assert!(!domains.contains(&"::1")); // bare IPv6
+        assert!(!domains.contains(&"fe80::1")); // bare IPv6
+        assert!(!domains.contains(&"user@domain.com")); // email
+        assert!(!domains.contains(&".example.com")); // leading dot
+    }
+
+    #[test]
+    fn parse_adguard_rejects_invalid_bare_domain_syntax() {
+        let input = b"example.com^
+|example.com
+example..com
+-example.com
+example-.com
+exa_mple.com
+*.example.com
+example.com.
+example.com|$important
+valid-example.com
+sub.valid-example.com
+";
+        let result = crate::parse_adguard_rules(input);
+        let domains: Vec<&str> = result.iter().map(|d| d.value.as_str()).collect();
+
+        assert_eq!(domains, vec!["valid-example.com", "sub.valid-example.com"]);
+        assert!(!domains.contains(&"example.com^"));
+        assert!(!domains.contains(&"|example.com"));
+        assert!(!domains.contains(&"example..com"));
+        assert!(!domains.contains(&"-example.com"));
+        assert!(!domains.contains(&"example-.com"));
+        assert!(!domains.contains(&"exa_mple.com"));
+        assert!(!domains.contains(&"*.example.com"));
+        assert!(!domains.contains(&"example.com."));
+        assert!(!domains.contains(&"example.com|$important"));
+    }
+
+    #[test]
+    fn parse_adguard_bare_domain_dedup_with_other_formats() {
+        let input = b"||example.com^
+0.0.0.0 example.com
+example.com
+|https://full.example.com|
+full.example.com
+";
+        let result = crate::parse_adguard_rules(input);
+
+        // example.com appears as both Domain(||example.com^) and Full(0.0.0.0 example.com),
+        // bare "example.com" de-duplicates with the Domain one.
+        // Total: Domain("example.com"), Full("example.com"), Full("full.example.com"), Domain("full.example.com")
+        assert_eq!(result.len(), 4);
+
+        let domain_items: Vec<_> = result.iter().filter(|d| d.value == "example.com").collect();
+        assert_eq!(domain_items.len(), 2);
+        assert!(domain_items.iter().any(|d| d.match_type == DomainMatchType::Domain));
+        assert!(domain_items.iter().any(|d| d.match_type == DomainMatchType::Full));
+
+        let full_items: Vec<_> = result.iter().filter(|d| d.value == "full.example.com").collect();
+        assert_eq!(full_items.len(), 2);
+        assert!(full_items.iter().any(|d| d.match_type == DomainMatchType::Domain));
+        assert!(full_items.iter().any(|d| d.match_type == DomainMatchType::Full));
     }
 }
