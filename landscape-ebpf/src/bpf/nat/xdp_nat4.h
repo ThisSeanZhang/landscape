@@ -79,8 +79,8 @@ static __always_inline int xdp_nat4_static_egress_lookup(u8 l4proto, const struc
         .from_addr = pair->src_addr.addr,
     };
 
-    bpf_printk("[nat_st_egr] lookup key from=%pI4:%u", &egress_key.from_addr,
-               bpf_ntohs(egress_key.from_port));
+    // bpf_printk("[nat_st_egr] lookup key from=%pI4:%u", &egress_key.from_addr,
+    //            bpf_ntohs(egress_key.from_port));
 
     struct nat4_mapping_value_v3 *static_egress = bpf_map_lookup_elem(&nat4_st_map, &egress_key);
     if (!static_egress && pair->src_addr.addr != 0) {
@@ -93,8 +93,8 @@ static __always_inline int xdp_nat4_static_egress_lookup(u8 l4proto, const struc
         return -1;
     }
 
-    bpf_printk("[nat_st_egr] FOUND egr->port=%u egr->addr=%pI4", bpf_ntohs(static_egress->port),
-               &static_egress->addr);
+    // bpf_printk("[nat_st_egr] FOUND egr->port=%u egr->addr=%pI4", bpf_ntohs(static_egress->port),
+    //            &static_egress->addr);
 
     struct nat_mapping_key_v4 ingress_key = {
         .gress = NAT_MAPPING_INGRESS,

@@ -25,13 +25,24 @@ struct static_nat_mapping_key_v6 {
 };
 
 struct static_nat_mapping_value_v6 {
+    // INGRESS: target LAN client prefix for NPTv6 dst replace, or suffix for self-ref match
+    // EGRESS: unused
     inet6_addr addr;
+    // INGRESS: unused
+    // EGRESS: unused (CT uses pkt dst_addr as trigger)
     inet6_addr trigger_addr;
+    // INGRESS: mapped port
+    // EGRESS: unused
     __be16 port;
+    // INGRESS: unused
+    // EGRESS: unused
     __be16 trigger_port;
     u8 is_static;
+    // EGRESS: used by create_ct6_egress when building static-backed CT
+    // INGRESS: unused (ingress static CT always sets is_allow_reuse=1)
     u8 is_allow_reuse;
     u8 _pad[2];
+    // unused in BPF
     u64 active_time;
 };
 

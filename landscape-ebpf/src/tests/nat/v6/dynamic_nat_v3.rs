@@ -211,13 +211,13 @@ fn assert_prefix_refresh(old_src: Ipv6Addr, new_src: Ipv6Addr, prefix_len: u8) {
     );
     assert_eq!(
         unsafe { value.trigger_addr.bytes },
-        new_remote.octets(),
-        "existing CT should refresh trigger_addr on prefix refresh",
+        old_remote.octets(),
+        "trigger_addr should NOT be overwritten on cache update — set at CT creation only",
     );
     assert_eq!(
         value.trigger_port,
-        8443u16.to_be(),
-        "existing CT should refresh trigger_port on prefix refresh",
+        443u16.to_be(),
+        "trigger_port should NOT be overwritten on cache update — set at CT creation only",
     );
 }
 
@@ -462,5 +462,222 @@ mod tests {
         if let Some(etherparse::TransportHeader::Tcp(tcp)) = quoted_out.transport {
             assert_eq!(tcp.source_port, CLIENT_PORT, "inner src port should be unchanged");
         }
+    }
+
+    /// Dynamic CT: cache update with ancestor packet updates is_allow_reuse from skb->mark.
+    /// Ancestor = packet dst matches creation-time trigger_addr AND dst_port == trigger_port.
+    #[test]
+    fn egress_cache_update_ancestor_updates_allow_reuse() {
+        let old_src = Ipv6Addr::from_str("fd00:1234:5678:abc5::200").unwrap();
+        let new_src = Ipv6Addr::from_str("fd00:1234:5678:abd5::200").unwrap();
+        let remote = Ipv6Addr::from_str("2001:db8:2::1").unwrap();
+        let prefix_len: u8 = 60;
+
+        let key = timer_key_for(old_src, CLIENT_PORT, prefix_len);
+        let new_key = timer_key_for(new_src, CLIENT_PORT, prefix_len);
+        assert_eq!(
+            unsafe { plain::as_bytes(&key) },
+            unsafe { plain::as_bytes(&new_key) },
+            "test setup must keep the same dynamic NAT key",
+        );
+
+        let mut builder = TcNatSkelBuilder::default();
+        let pin_root = crate::tests::nat::isolated_pin_root("nat-v6-dynamic-v3");
+        builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
+        let mut open_object = MaybeUninit::uninit();
+        let open_skel = builder.open(&mut open_object).unwrap();
+        let skel = open_skel.load().unwrap();
+
+        add_wan_ip(
+            &skel.maps.wan_ip_binding,
+            IFINDEX,
+            IpAddr::V6(wan_ip()),
+            None,
+            prefix_len,
+            Some(MacAddr::broadcast()),
+        );
+
+        let mut value = types::nat_timer_value_v6 {
+            server_status: 1,
+            client_status: 1,
+            is_allow_reuse: 0,
+            ..Default::default()
+        };
+        value.trigger_addr = types::u_inet6_addr { bytes: remote.octets() };
+        value.trigger_port = 80u16.to_be();
+        value.client_prefix.copy_from_slice(&old_src.octets()[..8]);
+        skel.maps
+            .nat6_conn_timer
+            .update(
+                unsafe { plain::as_bytes(&key) },
+                unsafe { plain::as_bytes(&value) },
+                MapFlags::ANY,
+            )
+            .expect("failed to insert v3 v6 ct entry");
+
+        let mut pkt = build_ipv6_tcp(new_src, remote, CLIENT_PORT, 80);
+        let mut ctx = TestSkb::default();
+        ctx.ifindex = IFINDEX;
+        ctx.mark = 0x8000;
+        let mut packet_out = vec![0u8; pkt.len()];
+        let input = ProgramInput {
+            data_in: Some(&mut pkt),
+            context_in: Some(ctx.as_mut_bytes()),
+            data_out: Some(&mut packet_out),
+            ..Default::default()
+        };
+
+        let result = skel.progs.tc_nat_wan_egress.test_run(input).expect("test_run failed");
+        assert_eq!(result.return_value as i32, -1, "egress should return TC_ACT_UNSPEC(-1)");
+
+        let ct_value = lookup_ct6_entry(&skel.maps.nat6_conn_timer, &new_key);
+        assert_eq!(
+            ct_value.is_allow_reuse, 1,
+            "is_allow_reuse should update from skb->mark when ancestor matches"
+        );
+        assert_eq!(
+            unsafe { ct_value.trigger_addr.bytes },
+            remote.octets(),
+            "trigger_addr should NOT be overwritten on cache update"
+        );
+        assert_eq!(
+            ct_value.trigger_port,
+            80u16.to_be(),
+            "trigger_port should NOT be overwritten on cache update"
+        );
+    }
+
+    /// Dynamic CT: cache update with non-ancestor packet preserves is_allow_reuse unchanged.
+    #[test]
+    fn egress_cache_update_non_ancestor_preserves_allow_reuse() {
+        let old_src = Ipv6Addr::from_str("fd00:1234:5678:abc5::200").unwrap();
+        let new_src = Ipv6Addr::from_str("fd00:1234:5678:abd5::200").unwrap();
+        let old_remote = Ipv6Addr::from_str("2001:db8:2::1").unwrap();
+        let new_remote = Ipv6Addr::from_str("2001:db8:2::2").unwrap();
+        let prefix_len: u8 = 60;
+
+        let key = timer_key_for(old_src, CLIENT_PORT, prefix_len);
+        let new_key = timer_key_for(new_src, CLIENT_PORT, prefix_len);
+        assert_eq!(
+            unsafe { plain::as_bytes(&key) },
+            unsafe { plain::as_bytes(&new_key) },
+            "test setup must keep the same dynamic NAT key",
+        );
+
+        let mut builder = TcNatSkelBuilder::default();
+        let pin_root = crate::tests::nat::isolated_pin_root("nat-v6-dynamic-v3");
+        builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
+        let mut open_object = MaybeUninit::uninit();
+        let open_skel = builder.open(&mut open_object).unwrap();
+        let skel = open_skel.load().unwrap();
+
+        add_wan_ip(
+            &skel.maps.wan_ip_binding,
+            IFINDEX,
+            IpAddr::V6(wan_ip()),
+            None,
+            prefix_len,
+            Some(MacAddr::broadcast()),
+        );
+
+        add_ct6_entry(&skel.maps.nat6_conn_timer, &key, old_src, old_remote, 443);
+
+        let mut pkt = build_ipv6_tcp(new_src, new_remote, CLIENT_PORT, 8443);
+        let mut ctx = TestSkb::default();
+        ctx.ifindex = IFINDEX;
+        ctx.mark = 0;
+        let mut packet_out = vec![0u8; pkt.len()];
+        let input = ProgramInput {
+            data_in: Some(&mut pkt),
+            context_in: Some(ctx.as_mut_bytes()),
+            data_out: Some(&mut packet_out),
+            ..Default::default()
+        };
+
+        let result = skel.progs.tc_nat_wan_egress.test_run(input).expect("test_run failed");
+        assert_eq!(result.return_value as i32, -1, "egress should return TC_ACT_UNSPEC(-1)");
+
+        let ct_value = lookup_ct6_entry(&skel.maps.nat6_conn_timer, &new_key);
+        assert_eq!(
+            ct_value.is_allow_reuse, 1,
+            "is_allow_reuse should stay 1 when non-ancestor triggers cache update"
+        );
+        assert_eq!(
+            unsafe { ct_value.trigger_addr.bytes },
+            old_remote.octets(),
+            "trigger_addr should NOT be overwritten on cache update"
+        );
+        assert_eq!(
+            ct_value.trigger_port,
+            443u16.to_be(),
+            "trigger_port should NOT be overwritten on cache update"
+        );
+    }
+
+    /// Cache update never overwrites trigger_addr / trigger_port regardless of new packet dst.
+    #[test]
+    fn egress_cache_update_preserves_trigger_stability() {
+        let old_src = Ipv6Addr::from_str("fd00:1234:5678:abc5::200").unwrap();
+        let new_src = Ipv6Addr::from_str("fd00:1234:5678:abd5::200").unwrap();
+        let old_remote = Ipv6Addr::from_str("2001:db8:2::1").unwrap();
+        let new_remote = Ipv6Addr::from_str("2001:db8:2::2").unwrap();
+        let prefix_len: u8 = 60;
+
+        let key = timer_key_for(old_src, CLIENT_PORT, prefix_len);
+        let new_key = timer_key_for(new_src, CLIENT_PORT, prefix_len);
+        assert_eq!(
+            unsafe { plain::as_bytes(&key) },
+            unsafe { plain::as_bytes(&new_key) },
+            "test setup must keep the same dynamic NAT key",
+        );
+
+        let mut builder = TcNatSkelBuilder::default();
+        let pin_root = crate::tests::nat::isolated_pin_root("nat-v6-dynamic-v3");
+        builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
+        let mut open_object = MaybeUninit::uninit();
+        let open_skel = builder.open(&mut open_object).unwrap();
+        let skel = open_skel.load().unwrap();
+
+        add_wan_ip(
+            &skel.maps.wan_ip_binding,
+            IFINDEX,
+            IpAddr::V6(wan_ip()),
+            None,
+            prefix_len,
+            Some(MacAddr::broadcast()),
+        );
+
+        add_ct6_entry(&skel.maps.nat6_conn_timer, &key, old_src, old_remote, 443);
+
+        let mut pkt = build_ipv6_tcp(new_src, new_remote, CLIENT_PORT, 8443);
+        let mut ctx = TestSkb::default();
+        ctx.ifindex = IFINDEX;
+        let mut packet_out = vec![0u8; pkt.len()];
+        let input = ProgramInput {
+            data_in: Some(&mut pkt),
+            context_in: Some(ctx.as_mut_bytes()),
+            data_out: Some(&mut packet_out),
+            ..Default::default()
+        };
+
+        let result = skel.progs.tc_nat_wan_egress.test_run(input).expect("test_run failed");
+        assert_eq!(result.return_value as i32, -1, "egress should return TC_ACT_UNSPEC(-1)");
+
+        let ct_value = lookup_ct6_entry(&skel.maps.nat6_conn_timer, &new_key);
+        assert_eq!(
+            &ct_value.client_prefix,
+            &new_src.octets()[..8],
+            "client_prefix should still refresh"
+        );
+        assert_eq!(
+            unsafe { ct_value.trigger_addr.bytes },
+            old_remote.octets(),
+            "trigger_addr should NOT be overwritten — creation-time value preserved"
+        );
+        assert_eq!(
+            ct_value.trigger_port,
+            443u16.to_be(),
+            "trigger_port should NOT be overwritten — creation-time value preserved"
+        );
     }
 }
