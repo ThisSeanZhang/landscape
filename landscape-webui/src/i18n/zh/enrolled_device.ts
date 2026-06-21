@@ -19,13 +19,14 @@ export default {
   fake_name: "隐私名称",
   fake_name_placeholder: "可选: 隐私模式下显示的名称",
 
-  ipv4: "IPv4 映射",
+  ipv4: "IPv4",
   ipv4_placeholder: "可选: 192.168.x.x",
   ipv4_invalid: "请输入有效的 IP 地址",
   ipv4_out_of_range: "IP 地址不在网卡 {iface} 的 DHCP 网段范围内",
 
   ipv6: "IPv6 后缀",
   ipv6_placeholder: "可选: ::100",
+  ipv6_random: "随机生成",
 
   tag: "标签",
   remark: "备注",

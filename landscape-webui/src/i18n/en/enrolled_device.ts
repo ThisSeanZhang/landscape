@@ -26,6 +26,7 @@ export default {
 
   ipv6: "IPv6 Binding",
   ipv6_placeholder: "Optional: IPv6 address",
+  ipv6_random: "Random",
 
   tag: "Tag",
   remark: "Remark",

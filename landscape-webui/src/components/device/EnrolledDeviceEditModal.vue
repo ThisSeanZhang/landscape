@@ -60,6 +60,17 @@ function isValidIpv6Suffix(value?: string) {
   return /^::[\da-fA-F]{1,4}(::?[\da-fA-F]{1,4})*$/.test(value);
 }
 
+function generateRandomIpv6Suffix() {
+  let suffix = "::";
+  for (let g = 0; g < 4; g++) {
+    if (g > 0) suffix += ":";
+    for (let i = 0; i < 4; i++) {
+      suffix += Math.floor(Math.random() * 16).toString(16);
+    }
+  }
+  rule.value.ipv6 = suffix;
+}
+
 function normalizeOptionalString(value?: string) {
   const trimmed = value?.trim();
   return trimmed ? trimmed : undefined;
@@ -409,11 +420,21 @@ async function saveRule() {
           />
         </n-form-item-gi>
 
-        <n-form-item-gi :label="t('enrolled_device.ipv6')" path="ipv6">
-          <n-input
-            v-model:value="rule.ipv6"
-            :placeholder="t('enrolled_device.ipv6_placeholder')"
-          />
+        <n-form-item-gi
+          :span="2"
+          :label="t('enrolled_device.ipv6')"
+          path="ipv6"
+        >
+          <n-space align="center" :wrap="false" :size="4">
+            <n-input
+              v-model:value="rule.ipv6"
+              :placeholder="t('enrolled_device.ipv6_placeholder')"
+              style="flex: 1"
+            />
+            <n-button size="small" secondary @click="generateRandomIpv6Suffix">
+              {{ t("enrolled_device.ipv6_random") }}
+            </n-button>
+          </n-space>
         </n-form-item-gi>
 
         <n-form-item-gi :span="2" :label="t('enrolled_device.tag')" path="tag">
