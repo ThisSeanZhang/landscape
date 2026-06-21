@@ -337,13 +337,20 @@ create_ct6_egress(struct __sk_buff *skb, struct scan_ipv6_idx *idx, struct inet_
 static __always_inline struct static_nat_mapping_value_v6 *
 check_egress_static_mapping_exist(u8 ip_protocol, const struct inet_pair *pkt_ip_pair) {
     struct static_nat_mapping_key_v6 egress_key = {0};
+    struct static_nat_mapping_value_v6 *value;
     egress_key.l3_protocol = LANDSCAPE_IPV6_TYPE;
     egress_key.l4_protocol = ip_protocol;
     egress_key.gress = NAT_MAPPING_EGRESS;
     egress_key.prefixlen = 192;
-    egress_key.port = pkt_ip_pair->src_port;
     COPY_ADDR_FROM(egress_key.addr.all, pkt_ip_pair->src_addr.all);
 
+    egress_key.port = pkt_ip_pair->src_port;
+    value = bpf_map_lookup_elem(&nat6_static_mappings, &egress_key);
+    if (value) {
+        return value;
+    }
+
+    egress_key.port = 0;
     return bpf_map_lookup_elem(&nat6_static_mappings, &egress_key);
 }
 
@@ -495,25 +502,34 @@ static __always_inline int check_ingress_mapping_exist(struct __sk_buff *skb, u8
     ingress_key.l4_protocol = ip_protocol;
     ingress_key.gress = NAT_MAPPING_INGRESS;
     ingress_key.prefixlen = 96;
-    ingress_key.port = pkt_ip_pair->dst_port;
 
+    ingress_key.port = pkt_ip_pair->dst_port;
     value = bpf_map_lookup_elem(&nat6_static_mappings, &ingress_key);
     if (value) {
-        if (value->addr.all[3] == 0 && value->addr.all[2] == 0) {
-            return TC_ACT_UNSPEC;
-        }
+        goto process_mapping_value;
+    }
 
-        if (value->addr.ip != 0) {
-            COPY_ADDR_FROM(local_client_prefix, value->addr.bytes);
-            return TC_ACT_OK;
-        }
+    ingress_key.port = 0;
+    value = bpf_map_lookup_elem(&nat6_static_mappings, &ingress_key);
+    if (!value) {
+        return TC_ACT_SHOT;
+    }
 
-        COPY_ADDR_FROM(&mapping_suffix, value->addr.bytes + 8);
-        COPY_ADDR_FROM(&dst_suffix, pkt_ip_pair->dst_addr.bits + 8);
+process_mapping_value:
+    if (value->addr.all[3] == 0 && value->addr.all[2] == 0) {
+        return TC_ACT_UNSPEC;
+    }
 
-        if (mapping_suffix == dst_suffix) {
-            return TC_ACT_UNSPEC;
-        }
+    if (value->addr.ip != 0) {
+        COPY_ADDR_FROM(local_client_prefix, value->addr.bytes);
+        return TC_ACT_OK;
+    }
+
+    COPY_ADDR_FROM(&mapping_suffix, value->addr.bytes + 8);
+    COPY_ADDR_FROM(&dst_suffix, pkt_ip_pair->dst_addr.bits + 8);
+
+    if (mapping_suffix == dst_suffix) {
+        return TC_ACT_UNSPEC;
     }
 
     return TC_ACT_SHOT;

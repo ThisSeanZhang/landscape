@@ -558,4 +558,189 @@ mod tests {
             "ingress with no matching mapping should return TC_ACT_SHOT(2)",
         );
     }
+
+    #[test]
+    fn tcp_ingress_port_zero_wildcard() {
+        let mut builder = TcNatSkelBuilder::default();
+        let pin_root = crate::tests::nat::isolated_pin_root("nat-v6-port-zero-wildcard");
+        builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
+        let mut open_object = MaybeUninit::uninit();
+        let open_skel = builder.open(&mut open_object).unwrap();
+        let skel = open_skel.load().unwrap();
+
+        add_wan_ip(
+            &skel.maps.wan_ip_binding,
+            IFINDEX,
+            IpAddr::V6(wan_ip()),
+            None,
+            60,
+            Some(MacAddr::broadcast()),
+        );
+
+        add_static_nat6_mapping(
+            &skel.maps.nat6_static_mappings,
+            vec![StaticNatMappingV6Item {
+                wan_port: 0,
+                lan_port: 80,
+                lan_ip: lan_host(),
+                l4_protocol: 6,
+            }],
+        );
+
+        let mut pkt = build_ipv6_tcp(remote(), wan_npt_addr(), 9999, 443);
+        let mut ctx = TestSkb::default();
+        ctx.ifindex = IFINDEX;
+        let mut packet_out = vec![0u8; pkt.len()];
+        let input = ProgramInput {
+            data_in: Some(&mut pkt),
+            context_in: Some(ctx.as_mut_bytes()),
+            data_out: Some(&mut packet_out),
+            ..Default::default()
+        };
+
+        let result = skel.progs.tc_nat_wan_ingress.test_run(input).expect("test_run failed");
+        assert_eq!(result.return_value as i32, 0, "ingress should return TC_ACT_OK(0)");
+
+        let pkt_out = PacketHeaders::from_ethernet_slice(&packet_out).expect("parse output");
+        if let Some(etherparse::NetHeaders::Ipv6(ipv6, _)) = pkt_out.net {
+            let dst: Ipv6Addr = ipv6.destination.into();
+            assert_eq!(&dst.octets()[..8], &LAN_CLIENT_PREFIX, "dst prefix should be rewritten");
+            assert_eq!(&dst.octets()[8..], &LAN_CLIENT_SUFFIX, "dst suffix should be preserved");
+        } else {
+            panic!("expected IPv6 header in output");
+        }
+        if let Some(etherparse::TransportHeader::Tcp(tcp)) = pkt_out.transport {
+            assert_eq!(tcp.destination_port, 443, "dst_port should be unchanged");
+        } else {
+            panic!("expected TCP transport header in output");
+        }
+    }
+
+    #[test]
+    fn tcp_egress_port_zero_wildcard() {
+        let mut builder = TcNatSkelBuilder::default();
+        let pin_root = crate::tests::nat::isolated_pin_root("nat-v6-port-zero-wildcard");
+        builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
+        let mut open_object = MaybeUninit::uninit();
+        let open_skel = builder.open(&mut open_object).unwrap();
+        let skel = open_skel.load().unwrap();
+
+        add_wan_ip(
+            &skel.maps.wan_ip_binding,
+            IFINDEX,
+            IpAddr::V6(wan_ip()),
+            None,
+            60,
+            Some(MacAddr::broadcast()),
+        );
+
+        add_static_nat6_mapping(
+            &skel.maps.nat6_static_mappings,
+            vec![StaticNatMappingV6Item {
+                wan_port: 80,
+                lan_port: 0,
+                lan_ip: lan_host(),
+                l4_protocol: 6,
+            }],
+        );
+
+        let mut pkt = build_ipv6_tcp(lan_host(), remote(), 443, 9999);
+        let mut ctx = TestSkb::default();
+        ctx.ifindex = IFINDEX;
+        let mut packet_out = vec![0u8; pkt.len()];
+        let input = ProgramInput {
+            data_in: Some(&mut pkt),
+            context_in: Some(ctx.as_mut_bytes()),
+            data_out: Some(&mut packet_out),
+            ..Default::default()
+        };
+
+        let result = skel.progs.tc_nat_wan_egress.test_run(input).expect("test_run failed");
+        assert_eq!(result.return_value as i32, -1, "egress should return TC_ACT_UNSPEC(-1)");
+
+        let pkt_out = PacketHeaders::from_ethernet_slice(&packet_out).expect("parse output");
+        if let Some(etherparse::NetHeaders::Ipv6(ipv6, _)) = pkt_out.net {
+            let src: Ipv6Addr = ipv6.source.into();
+            assert_eq!(&src.octets()[..8], &WAN_NPT_PREFIX, "src prefix should be NPT-translated");
+            assert_eq!(&src.octets()[8..], &LAN_CLIENT_SUFFIX, "src suffix should be preserved");
+        } else {
+            panic!("expected IPv6 header in output");
+        }
+        if let Some(etherparse::TransportHeader::Tcp(tcp)) = pkt_out.transport {
+            assert_eq!(tcp.source_port, 443, "src_port should be unchanged");
+        } else {
+            panic!("expected TCP transport header in output");
+        }
+    }
+
+    #[test]
+    fn tcp_ingress_specific_port_priority() {
+        let mut builder = TcNatSkelBuilder::default();
+        let pin_root = crate::tests::nat::isolated_pin_root("nat-v6-port-zero-wildcard-priority");
+        builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
+        let mut open_object = MaybeUninit::uninit();
+        let open_skel = builder.open(&mut open_object).unwrap();
+        let skel = open_skel.load().unwrap();
+
+        add_wan_ip(
+            &skel.maps.wan_ip_binding,
+            IFINDEX,
+            IpAddr::V6(wan_ip()),
+            None,
+            60,
+            Some(MacAddr::broadcast()),
+        );
+
+        add_static_nat6_mapping(
+            &skel.maps.nat6_static_mappings,
+            vec![
+                StaticNatMappingV6Item {
+                    wan_port: 80,
+                    lan_port: 80,
+                    lan_ip: lan_host(),
+                    l4_protocol: 6,
+                },
+                StaticNatMappingV6Item {
+                    wan_port: 0,
+                    lan_port: 3333,
+                    lan_ip: lan_host(),
+                    l4_protocol: 6,
+                },
+            ],
+        );
+
+        // Send packet with dst_port=80 — should match the specific port=80 entry,
+        // so the NPTv6 dst rewrite uses lan_host prefix (not the port=0 entry's lan_port value).
+        let mut pkt = build_ipv6_tcp(remote(), wan_npt_addr(), 9999, 80);
+        let mut ctx = TestSkb::default();
+        ctx.ifindex = IFINDEX;
+        let mut packet_out = vec![0u8; pkt.len()];
+        let input = ProgramInput {
+            data_in: Some(&mut pkt),
+            context_in: Some(ctx.as_mut_bytes()),
+            data_out: Some(&mut packet_out),
+            ..Default::default()
+        };
+
+        let result = skel.progs.tc_nat_wan_ingress.test_run(input).expect("test_run failed");
+        assert_eq!(result.return_value as i32, 0, "ingress should return TC_ACT_OK(0)");
+
+        let pkt_out = PacketHeaders::from_ethernet_slice(&packet_out).expect("parse output");
+        if let Some(etherparse::NetHeaders::Ipv6(ipv6, _)) = pkt_out.net {
+            let dst: Ipv6Addr = ipv6.destination.into();
+            assert_eq!(
+                &dst.octets()[..8],
+                &LAN_CLIENT_PREFIX,
+                "dst should be rewritten to specific port entry's LAN prefix",
+            );
+            assert_eq!(&dst.octets()[8..], &LAN_CLIENT_SUFFIX, "dst suffix should be preserved");
+        } else {
+            panic!("expected IPv6 header in output");
+        }
+        if let Some(etherparse::TransportHeader::Tcp(tcp)) = pkt_out.transport {
+            assert_eq!(tcp.destination_port, 80, "dst_port should be unchanged");
+        } else {
+            panic!("expected TCP transport header in output");
+        }
+    }
 }
