@@ -1,6 +1,8 @@
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use std::net::{Ipv4Addr, Ipv6Addr};
 
-use landscape_common::iface::nat::{RuntimeStaticNatMappingConfig, StaticNatMappingItem};
+use landscape_common::iface::nat::{
+    RuntimeStaticNatMappingV4Config, RuntimeStaticNatMappingV6Config,
+};
 use libbpf_rs::{MapCore, MapFlags};
 
 use crate::bpf_error::LdEbpfResult;
@@ -40,13 +42,11 @@ pub struct StaticNatMappingV6Item {
     pub l4_protocol: u8,
 }
 
-pub fn build_static_nat4_entries(configs: &[RuntimeStaticNatMappingConfig]) -> RawEbpfMapEntries {
+pub fn build_static_nat4_entries(configs: &[RuntimeStaticNatMappingV4Config]) -> RawEbpfMapEntries {
     let mut entries = RawEbpfMapEntries::new();
     for config in configs {
-        let Some(lan_ip) = config.lan_ipv4 else {
-            continue;
-        };
-        for l4_protocol in &config.ipv4_l4_protocol {
+        let lan_ip = config.lan_ipv4;
+        for l4_protocol in &config.l4_protocols {
             for pair in &config.mapping_pair_ports {
                 insert_static_nat4_item_entries(
                     &mut entries,
@@ -63,13 +63,11 @@ pub fn build_static_nat4_entries(configs: &[RuntimeStaticNatMappingConfig]) -> R
     entries
 }
 
-pub fn build_static_nat6_entries(configs: &[RuntimeStaticNatMappingConfig]) -> RawEbpfMapEntries {
+pub fn build_static_nat6_entries(configs: &[RuntimeStaticNatMappingV6Config]) -> RawEbpfMapEntries {
     let mut entries = RawEbpfMapEntries::new();
     for config in configs {
-        let Some(lan_ip) = config.lan_ipv6 else {
-            continue;
-        };
-        for l4_protocol in &config.ipv6_l4_protocol {
+        let lan_ip = config.lan_ipv6;
+        for l4_protocol in &config.l4_protocols {
             for pair in &config.mapping_pair_ports {
                 insert_static_nat6_item_entries(
                     &mut entries,
@@ -97,11 +95,11 @@ pub fn reconcile_static_nat6_entries(desired: RawEbpfMapEntries) -> LdEbpfResult
     reconcile_raw_map(&static_nat_mappings, desired)
 }
 
-pub fn reconcile_static_nat4_map(configs: &[RuntimeStaticNatMappingConfig]) -> LdEbpfResult<()> {
+pub fn reconcile_static_nat4_map(configs: &[RuntimeStaticNatMappingV4Config]) -> LdEbpfResult<()> {
     reconcile_static_nat4_entries(build_static_nat4_entries(configs))
 }
 
-pub fn reconcile_static_nat6_map(configs: &[RuntimeStaticNatMappingConfig]) -> LdEbpfResult<()> {
+pub fn reconcile_static_nat6_map(configs: &[RuntimeStaticNatMappingV6Config]) -> LdEbpfResult<()> {
     reconcile_static_nat6_entries(build_static_nat6_entries(configs))
 }
 
@@ -232,95 +230,6 @@ where
     }
 }
 
-pub(crate) fn del_static_nat4_mapping<'obj, T, I>(nat4_st_map: &T, mappings: I)
-where
-    T: MapCore,
-    I: IntoIterator<Item = StaticNatMappingV4Item>,
-    I::IntoIter: ExactSizeIterator,
-{
-    let desired = raw_static_nat4_entries_from_items(mappings);
-    if desired.is_empty() {
-        return;
-    }
-    if let Err(e) = delete_raw_keys(nat4_st_map, desired.into_keys().collect()) {
-        tracing::error!("delete nat4_st_map error:{e:?}");
-    }
-}
-
-pub(crate) fn del_static_nat6_mapping<'obj, T, I>(static_nat_mappings: &T, mappings: I)
-where
-    T: MapCore,
-    I: IntoIterator<Item = StaticNatMappingV6Item>,
-    I::IntoIter: ExactSizeIterator,
-{
-    let desired = raw_static_nat6_entries_from_items(mappings);
-    if desired.is_empty() {
-        return;
-    }
-    if let Err(e) = delete_raw_keys(static_nat_mappings, desired.into_keys().collect()) {
-        tracing::error!("delete static_nat_mappings error:{e:?}");
-    }
-}
-
-pub fn add_static_nat_mapping<I>(mappings: I)
-where
-    I: IntoIterator<Item = StaticNatMappingItem>,
-    I::IntoIter: ExactSizeIterator,
-{
-    let (v4_rules, v6_rules) = split_static_nat_items(mappings);
-    let nat4_st_map = libbpf_rs::MapHandle::from_pinned_path(&MAP_PATHS.nat4_st_map).unwrap();
-    add_static_nat4_mapping_v3(&nat4_st_map, v4_rules);
-    let static_nat_mappings =
-        libbpf_rs::MapHandle::from_pinned_path(&MAP_PATHS.nat6_static_mappings).unwrap();
-    add_static_nat6_mapping(&static_nat_mappings, v6_rules);
-}
-
-pub fn del_static_nat_mapping<I>(mappings: I)
-where
-    I: IntoIterator<Item = StaticNatMappingItem>,
-    I::IntoIter: ExactSizeIterator,
-{
-    let (v4_rules, v6_rules) = split_static_nat_items(mappings);
-    let nat4_st_map = libbpf_rs::MapHandle::from_pinned_path(&MAP_PATHS.nat4_st_map).unwrap();
-    del_static_nat4_mapping(&nat4_st_map, v4_rules);
-    let static_nat_mappings =
-        libbpf_rs::MapHandle::from_pinned_path(&MAP_PATHS.nat6_static_mappings).unwrap();
-    del_static_nat6_mapping(&static_nat_mappings, v6_rules);
-}
-
-fn split_static_nat_items<I>(
-    mappings: I,
-) -> (Vec<StaticNatMappingV4Item>, Vec<StaticNatMappingV6Item>)
-where
-    I: IntoIterator<Item = StaticNatMappingItem>,
-{
-    let mut v4_rules = vec![];
-    let mut v6_rules = vec![];
-
-    for mapping in mappings {
-        match mapping.lan_ip {
-            IpAddr::V4(ipv4_addr) => {
-                v4_rules.push(StaticNatMappingV4Item {
-                    wan_port: mapping.wan_port,
-                    lan_port: mapping.lan_port,
-                    lan_ip: ipv4_addr,
-                    l4_protocol: mapping.l4_protocol,
-                });
-            }
-            IpAddr::V6(ipv6_addr) => {
-                v6_rules.push(StaticNatMappingV6Item {
-                    wan_port: mapping.wan_port,
-                    lan_port: mapping.lan_port,
-                    lan_ip: ipv6_addr,
-                    l4_protocol: mapping.l4_protocol,
-                });
-            }
-        }
-    }
-
-    (v4_rules, v6_rules)
-}
-
 fn raw_static_nat4_entries_from_items<I>(mappings: I) -> RawEbpfMapEntries
 where
     I: IntoIterator<Item = StaticNatMappingV4Item>,
@@ -354,16 +263,5 @@ fn update_raw_entries<M: MapCore>(map: &M, entries: RawEbpfMapEntries) -> LdEbpf
         values.extend_from_slice(&value);
     }
     map.update_batch(&keys, &values, entry_count, MapFlags::ANY, MapFlags::ANY)?;
-    Ok(())
-}
-
-fn delete_raw_keys<M: MapCore>(map: &M, raw_keys: Vec<Vec<u8>>) -> LdEbpfResult<()> {
-    let key_count = raw_keys.len() as u32;
-    let key_len: usize = raw_keys.iter().map(Vec::len).sum();
-    let mut keys = Vec::with_capacity(key_len);
-    for key in raw_keys {
-        keys.extend_from_slice(&key);
-    }
-    map.delete_batch(&keys, key_count, MapFlags::ANY, MapFlags::ANY)?;
     Ok(())
 }

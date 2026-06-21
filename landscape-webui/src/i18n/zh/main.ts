@@ -139,6 +139,8 @@ export default {
     "dns-redirect": "DNS 重定向",
     "dns-upstream": "上游 DNS",
     nat: "静态 NAT",
+    "nat-v4": "IPv4 静态映射",
+    "nat-v6": "IPv6 静态映射",
     flow: "分流设置",
     docker: "Docker 管理",
     firewall: "防火墙",

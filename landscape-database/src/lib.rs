@@ -34,6 +34,8 @@ pub mod route_wan;
 
 pub mod nat;
 pub mod static_nat_mapping;
+pub mod static_nat_mapping_v4;
+pub mod static_nat_mapping_v6;
 
 pub mod cert;
 pub mod cert_account;

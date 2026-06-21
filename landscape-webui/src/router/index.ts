@@ -10,7 +10,8 @@ import GeoIp from "@/views/GeoIp.vue";
 import Config from "@/views/Config.vue";
 
 import Login from "@/views/Login.vue";
-import StaticNatMapping from "@/views/StaticNatMapping.vue";
+import StaticNatMappingV4 from "@/views/StaticNatMappingV4.vue";
+import StaticNatMappingV6 from "@/views/StaticNatMappingV6.vue";
 import EnrolledDevice from "@/views/EnrolledDevice.vue";
 
 import DnsRedirect from "@/views/dns/DnsRedirect.vue";
@@ -43,9 +44,14 @@ const inner_zone: Array<RouteRecordRaw> = [
     component: DnsUpstream,
   },
   {
-    path: "/nat",
-    name: "routes.nat",
-    component: StaticNatMapping,
+    path: "/nat/v4",
+    name: "routes.nat-v4",
+    component: StaticNatMappingV4,
+  },
+  {
+    path: "/nat/v6",
+    name: "routes.nat-v6",
+    component: StaticNatMappingV6,
   },
   {
     path: "/flow",

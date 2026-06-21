@@ -18,16 +18,15 @@ export default {
     target_type_local: "Local",
     target_type_device: "Device",
     target_local: "Local Target",
-    target_local_hint:
-      "Map ports to this router. IPv4/IPv6 are controlled by the selected protocols above.",
+    target_local_hint: "Map ports to this router.",
     target_device: "Target Device",
-    target_ipv4_hint:
-      "If opening router's own port, set 0.0.0.0 or leave empty for no mapping",
-    target_ipv6_hint:
-      "If opening router's own port, set :: or leave empty for no mapping",
+    target_ipv4_hint: "Set 0.0.0.0 to open this router's own port",
+    target_ipv6_hint: "Set :: to open this router's own port",
     remark: "Remark",
     validation_ipv4: "Please enter a valid IPv4 address",
+    validation_ipv4_required: "IPv4 address is required",
     validation_ipv6: "Please enter a valid IPv6 address",
+    validation_ipv6_required: "IPv6 address is required",
     select_protocol_required: "Please select at least one protocol",
     select_device_required: "Please select an enrolled device",
     device_ipv6_required:

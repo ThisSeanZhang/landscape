@@ -141,6 +141,8 @@ export default {
     "dns-redirect": "DNS Redirect",
     "dns-upstream": "Upstream DNS",
     nat: "Static NAT",
+    "nat-v4": "IPv4 Static Mapping",
+    "nat-v6": "IPv6 Static Mapping",
     flow: "Traffic Flow",
     docker: "Docker Management",
     firewall: "Firewall",

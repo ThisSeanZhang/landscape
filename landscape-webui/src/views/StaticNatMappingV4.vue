@@ -1,14 +1,14 @@
 <script lang="ts" setup>
-import { get_static_nat_mappings } from "@/api/static_nat_mapping";
-import type { StaticNatMappingConfig } from "@landscape-router/types/api/schemas";
+import { get_static_nat_mappings_v4 } from "@/api/static_nat_mapping";
+import type { StaticNatMappingV4Config } from "@landscape-router/types/api/schemas";
 import { ref, onMounted } from "vue";
 import { useI18n } from "vue-i18n";
 
-const mapping_rules = ref<StaticNatMappingConfig[]>([]);
+const mapping_rules = ref<StaticNatMappingV4Config[]>([]);
 const { t } = useI18n();
 
 async function refresh_rules() {
-  mapping_rules.value = await get_static_nat_mappings();
+  mapping_rules.value = await get_static_nat_mappings_v4();
 }
 
 onMounted(async () => {
@@ -27,13 +27,13 @@ const show_edit_modal = ref(false);
     <n-flex>
       <n-grid x-gap="12" y-gap="10" cols="1 600:2 1200:3 1600:3">
         <n-grid-item v-for="rule in mapping_rules" :key="rule.id">
-          <StaticMappingCard @refresh="refresh_rules()" :rule="rule">
-          </StaticMappingCard>
+          <StaticMappingV4Card @refresh="refresh_rules()" :rule="rule">
+          </StaticMappingV4Card>
         </n-grid-item>
       </n-grid>
     </n-flex>
 
-    <MappingEditModal @refresh="refresh_rules" v-model:show="show_edit_modal">
-    </MappingEditModal>
+    <MappingEditV4Modal @refresh="refresh_rules" v-model:show="show_edit_modal">
+    </MappingEditV4Modal>
   </n-flex>
 </template>

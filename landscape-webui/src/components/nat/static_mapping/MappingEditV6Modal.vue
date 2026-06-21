@@ -1,15 +1,15 @@
 <script setup lang="ts">
 import { useMessage } from "naive-ui";
 import type {
-  StaticNatMappingConfig,
-  StaticNatTarget,
+  StaticNatMappingV6Config,
+  StaticNatV6Target,
 } from "@landscape-router/types/api/schemas";
 
 import { computed, ref } from "vue";
 import ConfigModal from "@/components/common/ConfigModal.vue";
 import {
-  get_static_nat_mapping,
-  push_static_nat_mapping,
+  get_static_nat_mapping_v6,
+  push_static_nat_mapping_v6,
 } from "@/api/static_nat_mapping";
 import { useEnrolledDeviceStore } from "@/stores/enrolled_device";
 import { useI18n } from "vue-i18n";
@@ -30,8 +30,8 @@ const show = defineModel<boolean>("show", { required: true });
 
 const origin_rule_json = ref<string>("");
 
-const rule = ref<StaticNatMappingConfig>();
-const portInputRefs = ref<any[]>([]); // Array to store input refs
+const rule = ref<StaticNatMappingV6Config>();
+const portInputRefs = ref<any[]>([]);
 
 const enrolledDeviceStore = useEnrolledDeviceStore();
 type TargetMode = "address" | "local" | "device";
@@ -61,15 +61,11 @@ const rule_enabled = computed({
   },
 });
 
-function legacyTargetFromRule(value: StaticNatMappingConfig): StaticNatTarget {
-  return value.lan_target ?? { t: "address" };
-}
-
 function syncTargetFormFromRule() {
   if (!rule.value) return;
-  const target = rule.value.lan_target ?? legacyTargetFromRule(rule.value);
-  targetMode.value = target.t;
-  selectedDeviceId.value = target.t === "device" ? target.device_id : null;
+  const target = rule.value.lan_target;
+  targetMode.value = target?.t ?? "device";
+  selectedDeviceId.value = target?.t === "device" ? target.device_id : null;
 }
 
 function syncRuleTarget() {
@@ -84,25 +80,18 @@ function syncRuleTarget() {
       : { t: "device", device_id: "" };
     return;
   }
-
   rule.value.lan_target = {
     t: "address",
-    ipv4:
-      rule.value.lan_target?.t === "address"
-        ? rule.value.lan_target.ipv4 || undefined
-        : undefined,
     ipv6:
-      rule.value.lan_target?.t === "address"
-        ? rule.value.lan_target.ipv6 || undefined
-        : undefined,
+      rule.value.lan_target?.t === "address" ? rule.value.lan_target.ipv6 : "",
   };
 }
 
-const addressTarget = computed<StaticNatTarget & { t: "address" }>(() => {
+const addressTarget = computed<StaticNatV6Target & { t: "address" }>(() => {
   if (!rule.value?.lan_target || rule.value.lan_target.t !== "address") {
-    return { t: "address" };
+    return { t: "address", ipv6: "" };
   }
-  return rule.value.lan_target;
+  return rule.value.lan_target as StaticNatV6Target & { t: "address" };
 });
 
 const selectedDevice = computed(() =>
@@ -111,8 +100,6 @@ const selectedDevice = computed(() =>
   ),
 );
 
-const ipv4Pattern =
-  /^(25[0-5]|2[0-4]\d|1\d{2}|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d{2}|[1-9]?\d)){3}$/;
 const ipv6Pattern =
   /^(([0-9a-fA-F]{1,4}:){7}([0-9a-fA-F]{1,4}|:)|(([0-9a-fA-F]{1,4}:){1,7}:)|(([0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4})|(([0-9a-fA-F]{1,4}:){1,5}(:[0-9a-fA-F]{1,4}){1,2})|(([0-9a-fA-F]{1,4}:){1,4}(:[0-9a-fA-F]{1,4}){1,3})|(([0-9a-fA-F]{1,4}:){1,3}(:[0-9a-fA-F]{1,4}){1,4})|(([0-9a-fA-F]{1,4}:){1,2}(:[0-9a-fA-F]{1,4}){1,5})|([0-9a-fA-F]{1,4}:)((:[0-9a-fA-F]{1,4}){1,6})|:((:[0-9a-fA-F]{1,4}){1,7}|:)|fe80:(:[0-9a-fA-F]{0,4}){0,4}%[0-9a-zA-Z]{1,}|::(ffff(:0{1,4}){0,1}:){0,1}((25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])\.){3,3}(25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])|([0-9a-fA-F]{1,4}:){1,4}:((25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])\.){3,3}(25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9]))$/;
 
@@ -120,7 +107,7 @@ const rules = {};
 
 async function enter() {
   if (props.rule_id) {
-    rule.value = await get_static_nat_mapping(props.rule_id);
+    rule.value = await get_static_nat_mapping_v6(props.rule_id);
   } else {
     rule.value = {
       enable: true,
@@ -128,25 +115,18 @@ async function enter() {
       wan_iface_name: null,
       lan_target: { t: "device", device_id: "" },
       remark: "",
-      ipv4_l4_protocol: [6],
-      ipv6_l4_protocol: [],
+      l4_protocols: [6],
     };
-  }
-  if (!rule.value.lan_target) {
-    rule.value.lan_target = legacyTargetFromRule(rule.value);
   }
   syncTargetFormFromRule();
   origin_rule_json.value = JSON.stringify(rule.value);
 
-  // Handle auto-focus on specific port index
   const focusIdx = props.initialFocusIndex;
   if (focusIdx !== undefined && focusIdx >= 0) {
-    // Small delay to ensure rendering is complete
     setTimeout(() => {
       const targetInput = portInputRefs.value[focusIdx];
       if (targetInput) {
         targetInput.focus();
-        // Optional: scroll into view if the list is long
         targetInput.$el?.scrollIntoView({
           behavior: "smooth",
           block: "center",
@@ -156,11 +136,9 @@ async function enter() {
   }
 }
 
-// Functions to manage port pairs
 function addPortPair() {
   if (rule.value) {
     rule.value.mapping_pair_ports.push({ wan_port: 0, lan_port: 0 });
-    // Focus the new input in next tick
     setTimeout(() => {
       const index = rule.value!.mapping_pair_ports.length - 1;
       const input = portInputRefs.value[index];
@@ -180,30 +158,20 @@ const formRef = ref();
 async function saveRule() {
   if (rule.value) {
     try {
-      // Validate form
       await formRef.value?.validate();
 
       if (rule.value.lan_target?.t === "address") {
-        if (
-          rule.value.lan_target.ipv4 &&
-          !ipv4Pattern.test(rule.value.lan_target.ipv4)
-        ) {
-          message.error(t("nat.mapping.validation_ipv4"));
+        if (!rule.value.lan_target.ipv6) {
+          message.error(t("nat.mapping.validation_ipv6_required"));
           return;
         }
-        if (
-          rule.value.lan_target.ipv6 &&
-          !ipv6Pattern.test(rule.value.lan_target.ipv6)
-        ) {
+        if (!ipv6Pattern.test(rule.value.lan_target.ipv6)) {
           message.error(t("nat.mapping.validation_ipv6"));
           return;
         }
       }
 
-      if (
-        rule.value.ipv4_l4_protocol.length === 0 &&
-        rule.value.ipv6_l4_protocol.length === 0
-      ) {
+      if (rule.value.l4_protocols.length === 0) {
         message.error(t("nat.mapping.select_protocol_required"));
         return;
       }
@@ -213,19 +181,14 @@ async function saveRule() {
         return;
       }
 
-      if (
-        targetMode.value === "device" &&
-        rule.value.ipv6_l4_protocol.length > 0 &&
-        !selectedDevice.value?.ipv6
-      ) {
+      if (targetMode.value === "device" && !selectedDevice.value?.ipv6) {
         message.error(t("nat.mapping.device_ipv6_required"));
         return;
       }
 
       commit_spin.value = true;
       syncRuleTarget();
-      await push_static_nat_mapping(rule.value);
-      console.log("submit success");
+      await push_static_nat_mapping_v6(rule.value);
       show.value = false;
       emit("refresh");
     } catch (e) {
@@ -236,55 +199,28 @@ async function saveRule() {
   }
 }
 
-// async function export_config() {
-//   let configs = rule.value.source;
-//   await copy_context_to_clipboard(message, JSON.stringify(configs, null, 2));
-// }
-
-// async function import_rules() {
-//   try {
-//     let rules = JSON.parse(await read_context_from_clipboard());
-//     rule.value.source = rules;
-//   } catch (e) {}
-// }
-
-const allProtocols = [6, 17]; // Supported protocols
-const totalSelectable = allProtocols.length * 2; // 4
+const allProtocols = [6, 17];
 
 const allSelected = computed({
   get() {
     if (!rule.value) return false;
-    const selected = [
-      ...(rule.value.ipv4_l4_protocol || []),
-      ...(rule.value.ipv6_l4_protocol || []),
-    ];
-    return selected.length === totalSelectable;
+    return (rule.value.l4_protocols || []).length === 2;
   },
   set(val: boolean) {
     if (!rule.value) return;
-    if (val) {
-      rule.value.ipv4_l4_protocol = [...allProtocols];
-      rule.value.ipv6_l4_protocol = [...allProtocols];
-    } else {
-      rule.value.ipv4_l4_protocol = [];
-      rule.value.ipv6_l4_protocol = [];
-    }
+    rule.value.l4_protocols = val ? [...allProtocols] : [];
   },
 });
 
 const isIndeterminate = computed(() => {
   if (!rule.value) return false;
-  const selected = [
-    ...(rule.value.ipv4_l4_protocol || []),
-    ...(rule.value.ipv6_l4_protocol || []),
-  ];
-  return selected.length > 0 && selected.length < totalSelectable;
+  const len = (rule.value.l4_protocols || []).length;
+  return len > 0 && len < 2;
 });
 
-// Port validation rules
 const wanPortRule = {
   trigger: ["blur", "input"],
-  validator(ruleItem: any, value: number) {
+  validator(_ruleItem: any, value: number) {
     if (!value && value !== 0) return new Error(t("nat.mapping.required"));
     if (value <= 0 || value > 65535) return new Error(t("nat.mapping.range"));
     return true;
@@ -293,28 +229,20 @@ const wanPortRule = {
 
 const lanPortRule = {
   trigger: ["blur", "input"],
-  validator(ruleItem: any, value: number) {
+  validator(_ruleItem: any, value: number) {
     if (!value && value !== 0) return new Error(t("nat.mapping.required"));
     if (value <= 0 || value > 65535) return new Error(t("nat.mapping.range"));
     return true;
   },
 };
 
-// Aggregate list validation rule (for summarized error output)
 const mappingPortsRule = {
-  trigger: ["change"], // Listen for list changes
-  validator(ruleItem: any, value: any[]) {
-    // Value can be empty if path binding fails or update is not triggered yet.
-    // n-form-item with path="mapping_pair_ports" should provide this array.
-
-    // Fallback to current model when validator value is empty.
+  trigger: ["change"],
+  validator(_ruleItem: any, value: any[]) {
     const ports = value || (rule.value ? rule.value.mapping_pair_ports : []);
     if (!ports || ports.length === 0) return true;
 
-    // Collect all validation issues.
     const errors: string[] = [];
-
-    // Check invalid ranges/empty values.
     const hasInvalid = ports.some(
       (p: any) =>
         !p.wan_port ||
@@ -326,10 +254,8 @@ const mappingPortsRule = {
     );
     if (hasInvalid) errors.push(t("nat.mapping.invalid_port_value"));
 
-    // Check duplicate mappings.
     const wanPorts = ports.map((p: any) => p.wan_port);
     const hasDuplicateWan = wanPorts.length !== new Set(wanPorts).size;
-
     const lanPorts = ports.map((p: any) => p.lan_port);
     const hasDuplicateLan = lanPorts.length !== new Set(lanPorts).size;
 
@@ -337,10 +263,7 @@ const mappingPortsRule = {
       errors.push(t("nat.mapping.duplicate_port_config"));
     }
 
-    if (errors.length > 0) {
-      return new Error(errors.join(", "));
-    }
-
+    if (errors.length > 0) return new Error(errors.join(", "));
     return true;
   },
 };
@@ -356,7 +279,6 @@ const mappingPortsRule = {
     @after-enter="enter"
   >
     <n-flex vertical>
-      <!-- {{ isModified }} -->
       <n-form
         v-if="rule"
         :rules="rules"
@@ -366,9 +288,6 @@ const mappingPortsRule = {
         :cols="5"
       >
         <n-grid :cols="2">
-          <!-- <n-form-item-gi label="Priority" :span="2">
-          <n-input-number v-model:value="rule.index" clearable />
-        </n-form-item-gi> -->
           <n-form-item-gi :label="t('nat.mapping.allowed_protocols')" :span="2">
             <n-flex justify="space-between" style="flex: 1">
               <n-flex>
@@ -380,36 +299,16 @@ const mappingPortsRule = {
                 </n-checkbox>
               </n-flex>
               <n-flex>
-                <n-checkbox-group v-model:value="rule.ipv4_l4_protocol">
+                <n-checkbox-group v-model:value="rule.l4_protocols">
                   <n-space item-style="display: flex;">
-                    <n-checkbox :value="6" label="TCP v4" />
-                    <n-checkbox :value="17" label="UDP v4" />
-                  </n-space>
-                </n-checkbox-group>
-              </n-flex>
-              <n-flex>
-                <n-checkbox-group v-model:value="rule.ipv6_l4_protocol">
-                  <n-space item-style="display: flex;">
-                    <n-checkbox :value="6" label="TCP v6" />
-                    <n-checkbox :value="17" label="UDP v6" />
+                    <n-checkbox :value="6" label="TCP" />
+                    <n-checkbox :value="17" label="UDP" />
                   </n-space>
                 </n-checkbox-group>
               </n-flex>
             </n-flex>
           </n-form-item-gi>
 
-          <!-- <n-form-item-gi :span="5" label="Ingress WAN">
-          <n-radio-group v-model:value="rule.wan_iface_name" name="filter">
-            <n-radio-button
-              v-for="opt in get_dns_filter_options()"
-              :key="opt.value"
-              :value="opt.value"
-              :label="opt.label"
-            />
-          </n-radio-group>
-        </n-form-item-gi> -->
-
-          <!-- Port mapping pair list -->
           <n-form-item-gi
             :span="2"
             :label="t('nat.mapping.port_mappings_label')"
@@ -443,7 +342,7 @@ const mappingPortsRule = {
                     style="width: 100%"
                   />
                 </n-form-item>
-                <span style="color: #999">→</span>
+                <span style="color: #999">&rarr;</span>
                 <n-form-item
                   style="flex: 1; margin-bottom: 0"
                   :show-label="false"
@@ -495,29 +394,6 @@ const mappingPortsRule = {
           <n-form-item-gi
             v-if="targetMode === 'address'"
             :span="2"
-            :label="t('nat.mapping.target_ipv4')"
-          >
-            <n-input
-              :placeholder="t('nat.mapping.target_ipv4_hint')"
-              :value="addressTarget.ipv4 || null"
-              @update:value="
-                (v: string | null) => {
-                  if (rule) {
-                    rule.lan_target = {
-                      t: 'address',
-                      ipv4: v || undefined,
-                      ipv6: addressTarget.ipv6 || undefined,
-                    };
-                    syncRuleTarget();
-                  }
-                }
-              "
-            />
-          </n-form-item-gi>
-
-          <n-form-item-gi
-            v-if="targetMode === 'address'"
-            :span="2"
             :label="t('nat.mapping.target_ipv6')"
           >
             <n-input
@@ -528,8 +404,7 @@ const mappingPortsRule = {
                   if (rule) {
                     rule.lan_target = {
                       t: 'address',
-                      ipv4: addressTarget.ipv4 || undefined,
-                      ipv6: v || undefined,
+                      ipv6: v || '',
                     };
                     syncRuleTarget();
                   }

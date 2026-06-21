@@ -21,7 +21,7 @@ use crate::geo::{GeoIpSourceConfig, GeoSiteSourceConfig};
 use crate::iface::config::NetworkIfaceConfig;
 use crate::iface::ip_config::IfaceIpServiceConfig;
 use crate::iface::mss_clamp::MSSClampServiceConfig;
-use crate::iface::nat::StaticNatMappingConfig;
+use crate::iface::nat::{StaticNatMappingV4Config, StaticNatMappingV6Config};
 use crate::iface::ppp::PPPDServiceConfig;
 use crate::iface::wifi::WifiServiceConfig;
 use crate::ip_mark::WanIpRuleConfig;
@@ -78,7 +78,9 @@ pub struct InitConfig {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub route_wans: Vec<RouteWanServiceConfig>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub static_nat_mappings: Vec<StaticNatMappingConfig>,
+    pub static_nat_mappings_v4: Vec<StaticNatMappingV4Config>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub static_nat_mappings_v6: Vec<StaticNatMappingV6Config>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub dns_redirects: Vec<DNSRedirectRule>,
     #[serde(skip_serializing_if = "Vec::is_empty")]

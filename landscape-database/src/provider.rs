@@ -31,7 +31,8 @@ use crate::{
     pppd::repository::PPPDServiceRepository, ra::repository::IPV6RAServiceRepository,
     route_lan::repository::RouteLanServiceRepository,
     route_wan::repository::RouteWanServiceRepository,
-    static_nat_mapping::repository::StaticNatMappingConfigRepository,
+    static_nat_mapping_v4::repository::StaticNatMappingV4Repository,
+    static_nat_mapping_v6::repository::StaticNatMappingV6Repository,
     wifi::repository::WifiServiceRepository,
 };
 
@@ -184,7 +185,8 @@ define_store!(
     geo_site_rule_store: (GeoSiteConfigRepository, geo_sites),
     route_lan_service_store: (RouteLanServiceRepository, route_lans),
     route_wan_service_store: (RouteWanServiceRepository, route_wans),
-    static_nat_mapping_store: (StaticNatMappingConfigRepository, static_nat_mappings),
+    static_nat_mapping_v4_store: (StaticNatMappingV4Repository, static_nat_mappings_v4),
+    static_nat_mapping_v6_store: (StaticNatMappingV6Repository, static_nat_mappings_v6),
     dns_redirect_rule_store: (DNSRedirectRuleRepository, dns_redirects),
     dns_upstream_config_store: (DnsUpstreamRepository, dns_upstream_configs),
     enrolled_device_store: (EnrolledDeviceRepository, enrolled_devices),

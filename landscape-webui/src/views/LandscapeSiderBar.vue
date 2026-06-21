@@ -87,6 +87,16 @@ const menuOptions = computed<MenuOption[]>(() => [
     key: "nat",
     icon: renderIcon(ImportExportRound),
     disabled: false,
+    children: [
+      {
+        label: t("routes.nat-v4"),
+        key: "nat/v4",
+      },
+      {
+        label: t("routes.nat-v6"),
+        key: "nat/v6",
+      },
+    ],
   },
   {
     label: t("routes.firewall"),

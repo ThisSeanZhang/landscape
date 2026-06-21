@@ -36,3 +36,37 @@ pub enum StaticNatMappingConfigs {
     Ipv6L4Protocol,
     UpdateAt,
 }
+
+#[derive(DeriveIden)]
+pub enum StaticNatMappingV4Configs {
+    #[sea_orm(iden = "static_nat_mapping_v4_configs")]
+    Table,
+    Id,
+    Enable,
+    Remark,
+    WanIfaceName,
+    MappingPairPorts,
+    LanTarget,
+    #[sea_orm(iden = "lan_ipv4")]
+    LanIpv4,
+    #[sea_orm(iden = "l4_protocols")]
+    L4Protocols,
+    UpdateAt,
+}
+
+#[derive(DeriveIden)]
+pub enum StaticNatMappingV6Configs {
+    #[sea_orm(iden = "static_nat_mapping_v6_configs")]
+    Table,
+    Id,
+    Enable,
+    Remark,
+    WanIfaceName,
+    MappingPairPorts,
+    LanTarget,
+    #[sea_orm(iden = "lan_ipv6")]
+    LanIpv6,
+    #[sea_orm(iden = "l4_protocols")]
+    L4Protocols,
+    UpdateAt,
+}

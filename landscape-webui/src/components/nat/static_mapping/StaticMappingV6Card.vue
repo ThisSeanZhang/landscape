@@ -1,53 +1,43 @@
 <script setup lang="ts">
-import { delete_static_nat_mapping } from "@/api/static_nat_mapping";
-import type { StaticNatMappingConfig } from "@landscape-router/types/api/schemas";
+import { delete_static_nat_mapping_v6 } from "@/api/static_nat_mapping";
+import type { StaticNatMappingV6Config } from "@landscape-router/types/api/schemas";
 import { computed, ref } from "vue";
-import { ArrowRight, Edit, TrashCan } from "@vicons/carbon";
+import { ArrowRight } from "@vicons/carbon";
 import { useFrontEndStore } from "@/stores/front_end_config";
 import { useEnrolledDeviceStore } from "@/stores/enrolled_device";
+import { usePreferenceStore } from "@/stores/preference";
 import { useI18n } from "vue-i18n";
 
 const enrolledDeviceStore = useEnrolledDeviceStore();
-import { usePreferenceStore } from "@/stores/preference";
 const prefStore = usePreferenceStore();
-
 const frontEndStore = useFrontEndStore();
 const { t } = useI18n();
-const rule = defineModel<StaticNatMappingConfig>("rule", { required: true });
+
+const rule = defineModel<StaticNatMappingV6Config>("rule", { required: true });
 
 const target = computed(
-  () =>
-    rule.value.lan_target ?? {
-      t: "address" as const,
-    },
+  () => rule.value.lan_target ?? { t: "address" as const, ipv6: "" },
 );
 
-const hasIpv4Target = computed(() => {
-  if (target.value.t === "address") return !!target.value.ipv4;
-  return true;
-});
-
-const hasIpv6Target = computed(() => {
-  if (target.value.t === "address") return !!target.value.ipv6;
-  return true;
-});
-
-function formatTargetIpv4(): string {
-  if (target.value.t === "local") return t("nat.mapping.target_type_local");
-  if (target.value.t === "device") {
-    return enrolledDeviceStore.GET_DISPLAY_NAME_BY_ID(target.value.device_id);
-  }
-  return target.value.ipv4
-    ? enrolledDeviceStore.GET_NAME_WITH_FALLBACK(target.value.ipv4)
-    : "";
-}
-
-function formatTargetIpv6(): string {
+function formatTarget(): string {
   if (target.value.t === "local") return t("nat.mapping.target_type_local");
   if (target.value.t === "device") {
     return enrolledDeviceStore.GET_DISPLAY_NAME_BY_ID(target.value.device_id);
   }
   return formatIPv6(target.value.ipv6 ?? null);
+}
+
+function formatIPv6(ip: string | null): string {
+  if (!ip) return "";
+  const masked = enrolledDeviceStore.GET_NAME_WITH_FALLBACK(ip);
+  if (!masked) return "";
+  if (masked.length < 15) return `[${masked}]`;
+  const parts = masked.split(":");
+  if (parts.length > 4) {
+    const suffix = parts.slice(-3).join(":");
+    return `[...:${suffix}]`;
+  }
+  return `[${masked}]`;
 }
 
 const show_edit_modal = ref(false);
@@ -56,40 +46,17 @@ const edit_focus_index = ref<number | undefined>(undefined);
 const emit = defineEmits(["refresh"]);
 
 function openEditModal(focusIndex?: number) {
-  // Prevent opening modal if user is selecting text
   const selection = window.getSelection();
-  if (selection && selection.toString().length > 0) {
-    return;
-  }
-
+  if (selection && selection.toString().length > 0) return;
   edit_focus_index.value = focusIndex;
   show_edit_modal.value = true;
 }
 
 async function del() {
   if (rule.value.id) {
-    await delete_static_nat_mapping(rule.value.id);
+    await delete_static_nat_mapping_v6(rule.value.id);
     emit("refresh");
   }
-}
-
-// Shorten IPv6 address by keeping only the last 3 segments (approx)
-// e.g. 2001:0db8:85a3:0000:0000:8a2e:0370:7334 -> ...:8a2e:0370:7334
-function formatIPv6(ip: string | null): string {
-  if (!ip) return "";
-  const masked = enrolledDeviceStore.GET_NAME_WITH_FALLBACK(ip);
-  if (!masked) return "";
-
-  // If it's a short address (e.g. ::1), just return it
-  if (masked.length < 15) return `[${masked}]`;
-
-  const parts = masked.split(":");
-  if (parts.length > 4) {
-    // Keep last 3 parts
-    const suffix = parts.slice(-3).join(":");
-    return `[...:${suffix}]`;
-  }
-  return `[${masked}]`;
 }
 </script>
 
@@ -119,7 +86,6 @@ function formatIPv6(ip: string | null): string {
           >
             {{ t("common.edit") }}
           </n-button>
-
           <n-popconfirm @positive-click="del()">
             <template #trigger>
               <n-button secondary size="small" type="error" @click.stop>
@@ -131,77 +97,32 @@ function formatIPv6(ip: string | null): string {
         </n-flex>
       </template>
 
-      <!-- Top Section: Targets (Simulating Statistics) -->
-      <n-grid :cols="2" :x-gap="12" style="margin-bottom: 4px">
-        <!-- IPv4 Stat -->
-        <n-gi>
-          <div class="stat-box" :class="{ 'is-inactive': !hasIpv4Target }">
-            <div class="stat-label">{{ t("common.ipv4_target") }}</div>
-            <div class="stat-value-row">
-              <template v-if="hasIpv4Target">
-                <div class="stat-value">
-                  {{ formatTargetIpv4() }}
-                </div>
-                <div class="stat-tags">
-                  <n-tag
-                    v-for="proto in rule.ipv4_l4_protocol"
-                    :key="proto"
-                    size="tiny"
-                    :bordered="false"
-                    :type="proto === 6 ? 'success' : 'info'"
-                  >
-                    {{ proto === 6 ? "TCP" : "UDP" }}
-                  </n-tag>
-                </div>
-              </template>
-              <template v-else>
-                <div class="stat-value placeholder">-</div>
-              </template>
-            </div>
+      <div class="target-section">
+        <div class="stat-label">{{ t("common.ipv6_target") }}</div>
+        <div class="stat-value-row">
+          <div class="stat-value text-ellipsis" :title="formatTarget()">
+            {{ formatTarget() }}
           </div>
-        </n-gi>
-
-        <!-- IPv6 Stat -->
-        <n-gi>
-          <div class="stat-box" :class="{ 'is-inactive': !hasIpv6Target }">
-            <div class="stat-label">{{ t("common.ipv6_target") }}</div>
-            <div class="stat-value-row">
-              <template v-if="hasIpv6Target">
-                <!-- Using shortened IPv6 display -->
-                <div
-                  class="stat-value text-ellipsis"
-                  :title="formatTargetIpv6()"
-                >
-                  {{ formatTargetIpv6() }}
-                </div>
-                <div class="stat-tags">
-                  <n-tag
-                    v-for="proto in rule.ipv6_l4_protocol"
-                    :key="proto"
-                    size="tiny"
-                    :bordered="false"
-                    :type="proto === 6 ? 'success' : 'info'"
-                  >
-                    {{ proto === 6 ? "TCP" : "UDP" }}
-                  </n-tag>
-                </div>
-              </template>
-              <template v-else>
-                <div class="stat-value placeholder">-</div>
-              </template>
-            </div>
+          <div class="stat-tags">
+            <n-tag
+              v-for="proto in rule.l4_protocols"
+              :key="proto"
+              size="tiny"
+              :bordered="false"
+              :type="proto === 6 ? 'success' : 'info'"
+            >
+              {{ proto === 6 ? "TCP" : "UDP" }}
+            </n-tag>
           </div>
-        </n-gi>
-      </n-grid>
+        </div>
+      </div>
 
       <n-divider style="margin: 8px 0 12px 0" />
 
-      <!-- Bottom Section: Port Mappings (Fixed Height Wrapper) -->
       <div class="ports-container">
         <div class="section-label">
           {{ t("common.port_mapping") }} ({{ rule.mapping_pair_ports.length }})
         </div>
-        <!-- Using a fixed height scrollbar to ensure consistent card height -->
         <n-scrollbar style="height: 100px; padding-right: 4px">
           <div class="ports-grid">
             <div
@@ -222,7 +143,6 @@ function formatIPv6(ip: string | null): string {
         </n-scrollbar>
       </div>
 
-      <!-- Footer -->
       <div class="card-footer">
         <n-text depth="3" style="font-size: 12px">
           {{ t("common.updated_at") }}
@@ -235,13 +155,13 @@ function formatIPv6(ip: string | null): string {
       </div>
     </n-card>
 
-    <MappingEditModal
+    <MappingEditV6Modal
       @refresh="emit('refresh')"
       :rule_id="rule.id"
       v-model:show="show_edit_modal"
       :initial-focus-index="edit_focus_index"
     >
-    </MappingEditModal>
+    </MappingEditV6Modal>
   </div>
 </template>
 
@@ -257,7 +177,7 @@ function formatIPv6(ip: string | null): string {
   border-radius: 4px;
   transition: all 0.2s ease-in-out;
   border: 1px solid transparent;
-  cursor: pointer; /* Clickable */
+  cursor: pointer;
 }
 
 .mapping-card.is-disabled {
@@ -265,8 +185,7 @@ function formatIPv6(ip: string | null): string {
   border-color: var(--n-error-color);
 }
 
-/* Stat Box Styling (Like CPU Usage Stats) */
-.stat-box {
+.target-section {
   display: flex;
   flex-direction: column;
 }
@@ -299,25 +218,12 @@ function formatIPv6(ip: string | null): string {
   max-width: 100%;
 }
 
-.stat-value.placeholder {
-  color: var(--n-text-color-disabled);
-}
-
 .stat-tags {
   display: flex;
   gap: 4px;
 }
 
-.stat-box.is-inactive .stat-label,
-.stat-box.is-inactive .stat-value {
-  color: var(--n-text-color-disabled);
-}
-
-/* Ports Grid (Like CPU Cores) */
 .ports-container {
-  /* Removed flex: 1 to respect fixed heights elsewhere if needed, 
-     but keeping it block-level is fine. 
-     The key is the scrollbar height. */
   display: flex;
   flex-direction: column;
 }
@@ -332,7 +238,7 @@ function formatIPv6(ip: string | null): string {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(115px, 1fr));
   gap: 8px;
-  padding: 4px 2px; /* Top/Bottom padding for hover float, Side padding for safety */
+  padding: 4px 2px;
 }
 
 .port-box {
@@ -348,7 +254,7 @@ function formatIPv6(ip: string | null): string {
     transform 0.15s ease,
     box-shadow 0.15s ease,
     border-color 0.15s ease;
-  user-select: none; /* Container not selectable */
+  user-select: none;
   cursor: pointer;
   white-space: nowrap;
 }
@@ -364,14 +270,14 @@ function formatIPv6(ip: string | null): string {
   color: var(--n-warning-color);
   font-weight: 600;
   font-family: v-mono, SFMono-Regular, Menlo, monospace;
-  user-select: text; /* Allow selection */
+  user-select: text;
 }
 
 .lan-port {
   color: var(--n-info-color);
   font-weight: 600;
   font-family: v-mono, SFMono-Regular, Menlo, monospace;
-  user-select: text; /* Allow selection */
+  user-select: text;
 }
 
 .arrow-icon {
@@ -380,14 +286,12 @@ function formatIPv6(ip: string | null): string {
   margin: 0 6px;
 }
 
-/* Footer */
 .card-footer {
-  margin-top: auto; /* Push to bottom */
+  margin-top: auto;
   padding-top: 12px;
   text-align: right;
 }
 
-/* Dark Mode Adjustments */
 :global(.n-config-provider--dark) .port-box {
   background-color: rgba(255, 255, 255, 0.04);
   border-color: rgba(255, 255, 255, 0.1);
