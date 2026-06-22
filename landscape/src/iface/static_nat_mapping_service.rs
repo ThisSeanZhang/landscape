@@ -170,6 +170,18 @@ impl StaticNatMappingService {
             tracing::error!("failed to reconcile static NAT v6 map: {error:?}");
         }
     }
+
+    pub fn listen_device_events(
+        &self,
+        mut rx: landscape_common::event::hub::EnrolledDeviceEventReader,
+    ) {
+        let this = self.clone();
+        tokio::spawn(async move {
+            while rx.recv().await.is_ok() {
+                this.refresh_runtime_rules().await;
+            }
+        });
+    }
 }
 
 fn default_static_mapping_v4_rules() -> Vec<StaticNatMappingV4Config> {

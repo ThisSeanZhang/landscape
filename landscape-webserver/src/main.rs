@@ -53,11 +53,9 @@ use landscape_common::{
     args::{DbAction, LandscapeAction, LAND_ARGS, LAND_HOME_PATH},
     concurrency::{runtime_thread_name_fn, spawn_task, task_label, thread_name},
     config::RuntimeConfig,
-    database::LandscapeStore,
     error::LdResult,
     event::hub::EventHub,
     ipv6_pd::IAPrefixMap,
-    service::controller::ControllerService,
     VERSION,
 };
 use landscape_common::{config::InitConfig, dhcp::v4_server::config::DHCPv4ServiceConfig};
@@ -183,6 +181,7 @@ async fn run_system(
 
     let event_hub = EventHub::new();
     startup_phase!("observer.dev_observer", landscape::observer::dev_observer(&event_hub).await);
+    let device_sender = event_hub.enrolled_device_sender();
     let event_handle = event_hub.spawn();
 
     startup_phase!(
@@ -330,8 +329,8 @@ async fn run_system(
     let static_nat_mapping_config_service =
         StaticNatMappingService::new(db_store_provider.clone()).await;
 
-    let enrolled_device_service = EnrolledDeviceService::new(db_store_provider.clone()).await;
-    let enrolled_device_events = enrolled_device_service.subscribe_events();
+    let enrolled_device_service =
+        EnrolledDeviceService::new(db_store_provider.clone(), device_sender).await;
 
     let route_lan_service = RouteLanServiceManagerService::new(
         db_store_provider.clone(),
@@ -398,62 +397,29 @@ async fn run_system(
     let lan_ipv6_service = LanIPv6ManagerService::new(
         db_store_provider.clone(),
         event_handle.subscribe_iface(),
+        landscape_common::event::hub::EnrolledDeviceEventReader::new(
+            event_handle.subscribe_device(),
+        ),
         route_service.clone(),
         prefix_map,
     )
     .await;
 
-    {
-        let mut enrolled_device_events = enrolled_device_events;
-        let flow_rule_service = flow_rule_service.clone();
-        let dhcp_v4_server_service = dhcp_v4_server_service.clone();
-        let lan_ipv6_service = lan_ipv6_service.clone();
-        let static_nat_mapping_config_service = static_nat_mapping_config_service.clone();
-        tokio::spawn(async move {
-            use landscape::enrolled_device::service::EnrolledDeviceEvent;
-            use std::collections::HashSet;
-
-            while let Ok(event) = enrolled_device_events.recv().await {
-                let mut affected_ifaces = HashSet::new();
-                match event {
-                    EnrolledDeviceEvent::Updated { old, new } => {
-                        if let Some(iface) = old.and_then(|device| device.iface_name) {
-                            affected_ifaces.insert(iface);
-                        }
-                        if let Some(iface) = new.iface_name {
-                            affected_ifaces.insert(iface);
-                        }
-                    }
-                    EnrolledDeviceEvent::Deleted { old } => {
-                        if let Some(iface) = old.iface_name {
-                            affected_ifaces.insert(iface);
-                        }
-                    }
-                }
-
-                flow_rule_service.refresh_flow_matches().await;
-                static_nat_mapping_config_service.refresh_runtime_rules().await;
-
-                if affected_ifaces.is_empty() {
-                    for config in
-                        dhcp_v4_server_service.get_repository().list().await.unwrap_or_default()
-                    {
-                        dhcp_v4_server_service.refresh_iface_service(config.iface_name).await;
-                    }
-                    for config in lan_ipv6_service.get_repository().list().await.unwrap_or_default()
-                    {
-                        lan_ipv6_service.refresh_iface_service(config.iface_name).await;
-                    }
-                    continue;
-                }
-
-                for iface_name in affected_ifaces {
-                    dhcp_v4_server_service.refresh_iface_service(iface_name.clone()).await;
-                    lan_ipv6_service.refresh_iface_service(iface_name).await;
-                }
-            }
-        });
-    }
+    dhcp_v4_server_service.listen_device_events(
+        landscape_common::event::hub::EnrolledDeviceEventReader::new(
+            event_handle.subscribe_device(),
+        ),
+    );
+    flow_rule_service.listen_device_events(
+        landscape_common::event::hub::EnrolledDeviceEventReader::new(
+            event_handle.subscribe_device(),
+        ),
+    );
+    static_nat_mapping_config_service.listen_device_events(
+        landscape_common::event::hub::EnrolledDeviceEventReader::new(
+            event_handle.subscribe_device(),
+        ),
+    );
 
     startup_phase!(
         "docker_service.start_to_listen_event",

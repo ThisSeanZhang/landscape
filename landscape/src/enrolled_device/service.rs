@@ -1,35 +1,25 @@
 use landscape_common::enrolled_device::EnrolledDevice;
+use landscape_common::event::hub::{EnrolledDeviceEvent, EnrolledDeviceEventSender};
 use landscape_database::enrolled_device::repository::EnrolledDeviceRepository;
 use landscape_database::provider::LandscapeDBServiceProvider;
 use landscape_database::repository::Repository;
-use tokio::sync::broadcast;
 use uuid::Uuid;
-
-const ENROLLED_DEVICE_EVENT_CHANNEL_SIZE: usize = 64;
-
-#[derive(Debug, Clone)]
-pub enum EnrolledDeviceEvent {
-    Updated { old: Option<EnrolledDevice>, new: EnrolledDevice },
-    Deleted { old: EnrolledDevice },
-}
 
 #[derive(Clone)]
 pub struct EnrolledDeviceService {
     store: EnrolledDeviceRepository,
     dhcp_repo: landscape_database::dhcp_v4_server::repository::DHCPv4ServerRepository,
-    event_tx: broadcast::Sender<EnrolledDeviceEvent>,
+    device_sender: EnrolledDeviceEventSender,
 }
 
 impl EnrolledDeviceService {
-    pub async fn new(store_provider: LandscapeDBServiceProvider) -> Self {
+    pub async fn new(
+        store_provider: LandscapeDBServiceProvider,
+        device_sender: EnrolledDeviceEventSender,
+    ) -> Self {
         let store = store_provider.enrolled_device_store();
         let dhcp_repo = store_provider.dhcp_v4_server_store();
-        let (event_tx, _) = broadcast::channel(ENROLLED_DEVICE_EVENT_CHANNEL_SIZE);
-        Self { store, dhcp_repo, event_tx }
-    }
-
-    pub fn subscribe_events(&self) -> broadcast::Receiver<EnrolledDeviceEvent> {
-        self.event_tx.subscribe()
+        Self { store, dhcp_repo, device_sender }
     }
 
     pub async fn list(&self) -> Vec<EnrolledDevice> {
@@ -127,7 +117,7 @@ impl EnrolledDeviceService {
         let id = data.id;
         let old = self.store.find_by_id(id).await.map_err(|e| e.to_string())?;
         self.store.set_or_update_model(id, data.clone()).await.map_err(|e| e.to_string())?;
-        let _ = self.event_tx.send(EnrolledDeviceEvent::Updated { old, new: data });
+        let _ = self.device_sender.send(EnrolledDeviceEvent::Updated { old, new: data }).await;
         Ok(())
     }
 
@@ -135,7 +125,7 @@ impl EnrolledDeviceService {
         let old = self.store.find_by_id(id).await.map_err(|e| e.to_string())?;
         self.store.delete_model(id).await.map_err(|e| e.to_string())?;
         if let Some(old) = old {
-            let _ = self.event_tx.send(EnrolledDeviceEvent::Deleted { old });
+            let _ = self.device_sender.send(EnrolledDeviceEvent::Deleted { old }).await;
         }
         Ok(())
     }

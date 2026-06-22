@@ -318,6 +318,17 @@ impl DHCPv4ServerManagerService {
         let _ = self.get_service().update_service(service_config).await;
     }
 
+    pub fn listen_device_events(
+        &self,
+        mut rx: landscape_common::event::hub::EnrolledDeviceEventReader,
+    ) {
+        tokio::spawn(async move {
+            while let Ok(_event) = rx.recv().await {
+                // TODO: reload static bindings from DB and notify DHCPv4 server to reconcile
+            }
+        });
+    }
+
     pub async fn cleanup_lingering_iface_addr_if_present(&self, config: &DHCPv4ServiceConfig) {
         let cleanup = IfaceIpv4Cleanup::from_dhcp_v4_config(config);
         let iface_name = &config.iface_name;

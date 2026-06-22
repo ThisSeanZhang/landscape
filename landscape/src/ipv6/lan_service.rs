@@ -6,7 +6,7 @@ use std::sync::Arc;
 use landscape_common::client::{CallerLookupMatch, CallerLookupSource};
 use landscape_common::database::LandscapeStore as LandscapeDBStore;
 use landscape_common::dhcp::v6_server::status::DHCPv6OfferInfo;
-use landscape_common::event::hub::IfaceEventReader;
+use landscape_common::event::hub::{EnrolledDeviceEventReader, IfaceEventReader};
 use landscape_common::ipv6::lan::{
     IPv6ServiceMode, LanIPv6ConfigV2, LanIPv6ServiceConfigV2, LanPrefixGroupConfig,
     PrefixGroupServiceKind,
@@ -513,6 +513,7 @@ impl LanIPv6ManagerService {
     pub async fn new(
         store_service: LandscapeDBServiceProvider,
         mut dev_observer: IfaceEventReader,
+        mut device_reader: EnrolledDeviceEventReader,
         route_service: IpRouteService,
         prefix_map: IAPrefixMap,
     ) -> Self {
@@ -540,6 +541,12 @@ impl LanIPv6ManagerService {
                     }
                     IfaceObserverAction::Down(_) => {}
                 }
+            }
+        });
+
+        tokio::spawn(async move {
+            while let Ok(_event) = device_reader.recv().await {
+                // TODO: reload static bindings from DB and notify DHCPv6 server to reconcile
             }
         });
 

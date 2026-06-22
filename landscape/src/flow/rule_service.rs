@@ -48,6 +48,18 @@ impl FlowRuleService {
 
         let _ = self.dns_events_tx.send(DnsEvent::FlowUpdated).await;
     }
+
+    pub fn listen_device_events(
+        &self,
+        mut rx: landscape_common::event::hub::EnrolledDeviceEventReader,
+    ) {
+        let this = self.clone();
+        tokio::spawn(async move {
+            while rx.recv().await.is_ok() {
+                this.refresh_flow_matches().await;
+            }
+        });
+    }
 }
 
 impl FlowRuleService {
