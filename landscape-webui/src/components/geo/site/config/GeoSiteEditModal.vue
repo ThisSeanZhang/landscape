@@ -171,7 +171,13 @@ const matchTypeOptions = [
             }}</n-radio>
             <n-radio value="adguard_home">
               {{ t("geo_editor.common.source_adguard_home_mode") }}
-              <span style="display:inline-flex;vertical-align:middle;margin-left:4px">
+              <span
+                style="
+                  display: inline-flex;
+                  vertical-align: middle;
+                  margin-left: 4px;
+                "
+              >
                 <AdguardRuleInfo />
               </span>
             </n-radio>
