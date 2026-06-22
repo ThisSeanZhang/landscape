@@ -1,10 +1,10 @@
 mod frontend_event;
 mod handle;
-mod iface_sender;
+mod iface;
 
 pub use frontend_event::FrontendEvent;
 pub use handle::EventHubHandle;
-pub use iface_sender::IfaceEventSender;
+pub use iface::{IfaceEventReader, IfaceEventSender};
 
 use tokio::sync::{broadcast, mpsc};
 
@@ -17,19 +17,24 @@ const FRONTEND_BROADCAST_CAPACITY: usize = 256;
 pub struct EventHub {
     rx: mpsc::Receiver<IfaceObserverAction>,
     broadcast_tx: broadcast::Sender<IfaceObserverAction>,
+    broadcast_rx: broadcast::Receiver<IfaceObserverAction>,
     frontend_broadcast_tx: broadcast::Sender<FrontendEvent>,
+    frontend_broadcast_rx: broadcast::Receiver<FrontendEvent>,
     mpsc_tx: mpsc::Sender<IfaceObserverAction>,
 }
 
 impl EventHub {
     pub fn new() -> Self {
         let (tx, rx) = mpsc::channel(IFACE_MPSC_CAPACITY);
-        let (broadcast_tx, _) = broadcast::channel(IFACE_BROADCAST_CAPACITY);
-        let (frontend_broadcast_tx, _) = broadcast::channel(FRONTEND_BROADCAST_CAPACITY);
+        let (broadcast_tx, broadcast_rx) = broadcast::channel(IFACE_BROADCAST_CAPACITY);
+        let (frontend_broadcast_tx, frontend_broadcast_rx) =
+            broadcast::channel(FRONTEND_BROADCAST_CAPACITY);
         Self {
             rx,
             broadcast_tx,
+            broadcast_rx,
             frontend_broadcast_tx,
+            frontend_broadcast_rx,
             mpsc_tx: tx,
         }
     }
@@ -39,18 +44,42 @@ impl EventHub {
     }
 
     pub fn spawn(self) -> EventHubHandle {
-        let handle =
-            EventHubHandle::new(self.broadcast_tx.clone(), self.frontend_broadcast_tx.clone());
-        tokio::spawn(async move { self.run_router().await });
+        let Self {
+            rx,
+            broadcast_tx,
+            broadcast_rx,
+            frontend_broadcast_tx,
+            frontend_broadcast_rx,
+            mpsc_tx: _,
+        } = self;
+
+        let handle = EventHubHandle::new(
+            broadcast_tx.clone(),
+            broadcast_rx,
+            frontend_broadcast_tx.clone(),
+            frontend_broadcast_rx,
+        );
+        crate::concurrency::spawn_task(
+            crate::concurrency::task_label::task::EVENT_HUB_DISPATCHER,
+            async move { Self::run_dispatcher(rx, broadcast_tx, frontend_broadcast_tx).await },
+        );
         handle
     }
 
-    async fn run_router(mut self) {
-        while let Some(event) = self.rx.recv().await {
+    async fn run_dispatcher(
+        mut rx: mpsc::Receiver<IfaceObserverAction>,
+        broadcast_tx: broadcast::Sender<IfaceObserverAction>,
+        frontend_broadcast_tx: broadcast::Sender<FrontendEvent>,
+    ) {
+        while let Some(event) = rx.recv().await {
             tracing::debug!(?event, "EventHub: dispatch Iface event");
-            let _ = self.broadcast_tx.send(event.clone());
-            let _ = self.frontend_broadcast_tx.send(FrontendEvent::from(event));
+            if let Err(e) = broadcast_tx.send(event.clone()) {
+                tracing::warn!("EventHub: iface broadcast channel full, dropping event: {e:?}");
+            }
+            if let Err(e) = frontend_broadcast_tx.send(FrontendEvent::from(event)) {
+                tracing::warn!("EventHub: frontend broadcast channel full, dropping event: {e:?}");
+            }
         }
-        tracing::info!("EventHub router task stopped");
+        tracing::info!("EventHub dispatcher task stopped");
     }
 }

@@ -1,9 +1,8 @@
-use landscape_common::observer::IfaceObserverAction;
+use landscape_common::{event::hub::EventHub, observer::IfaceObserverAction};
 use netlink_packet_core::{NetlinkMessage, NetlinkPayload};
 use netlink_packet_route::{address::AddressMessage, RouteNetlinkMessage};
 use netlink_sys::AsyncSocket;
 use rtnetlink::constants::{RTMGRP_IPV4_IFADDR, RTMGRP_LINK};
-use tokio::sync::broadcast;
 use tokio_stream::StreamExt;
 use tracing::instrument;
 
@@ -25,8 +24,8 @@ pub async fn ip_observer() {
     });
 }
 
-pub async fn dev_observer() -> broadcast::Receiver<IfaceObserverAction> {
-    let (tx, rx) = broadcast::channel(30);
+pub async fn dev_observer(hub: &EventHub) {
+    let sender = hub.iface_sender();
 
     tokio::spawn(async move {
         let (mut connection, _, mut messages) =
@@ -45,13 +44,12 @@ pub async fn dev_observer() -> broadcast::Receiver<IfaceObserverAction> {
                         crate::netlink::ethtool::disable_gro(&ifname).await;
                     });
                 }
-                if let Err(e) = tx.send(msg) {
-                    println!("too many msg, drop this msg: {e:?}");
+                if let Err(e) = sender.send(msg).await {
+                    tracing::warn!("EventHub mpsc send failed: {e:?}");
                 }
             }
         }
     });
-    rx
 }
 
 pub fn filter_message_status(
@@ -76,6 +74,21 @@ pub fn filter_message_status(
                                 }
                                 _ => {}
                             }
+                        }
+
+                        #[cfg(test)]
+                        mod tests {
+                            // TODO: integration test for dev_observer using a dummy interface
+                            //
+                            // Steps:
+                            //   1. ip link add test_obs_{pid} type dummy
+                            //   2. Create EventHub, call dev_observer(&hub), spawn hub
+                            //   3. Subscribe to iface events via handle.subscribe_iface()
+                            //   4. ip link set dummy up   → expect IfaceObserverAction::Up(ifname)
+                            //   5. ip link set dummy down → expect IfaceObserverAction::Down(ifname)
+                            //   6. Cleanup: ip link delete dummy
+                            //
+                            // Requires root; skip via require_root() if uid != 0.
                         }
 
                         let Some(ifacename) = ifacename else {

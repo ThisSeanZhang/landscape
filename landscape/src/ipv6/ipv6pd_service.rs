@@ -3,11 +3,11 @@ use std::net::IpAddr;
 use std::net::Ipv6Addr;
 use std::sync::Arc;
 
+use landscape_common::event::hub::IfaceEventReader;
 use landscape_common::ipv6_pd::IAPrefixMap;
 use landscape_common::ipv6_pd::LDIAPrefix;
 use landscape_common::route::RouteTargetInfo;
 use landscape_common::service::manager::ServiceStarterTrait;
-use tokio::sync::broadcast;
 
 use landscape_common::database::LandscapeStore;
 use landscape_common::{
@@ -112,7 +112,7 @@ impl ControllerService for DHCPv6ClientManagerService {
 impl DHCPv6ClientManagerService {
     pub async fn new(
         store_service: LandscapeDBServiceProvider,
-        mut dev_observer: broadcast::Receiver<IfaceObserverAction>,
+        mut dev_observer: IfaceEventReader,
         route_service: IpRouteService,
         prefix_map: IAPrefixMap,
     ) -> Self {

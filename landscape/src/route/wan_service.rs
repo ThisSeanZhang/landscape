@@ -1,4 +1,5 @@
 use landscape_common::database::LandscapeStore;
+use landscape_common::event::hub::IfaceEventReader;
 use landscape_common::route::wan::RouteWanServiceConfig;
 use landscape_common::{
     concurrency::{spawn_task, spawn_task_with_resource, task_label},
@@ -11,7 +12,6 @@ use landscape_common::{
 };
 use landscape_database::provider::LandscapeDBServiceProvider;
 use landscape_database::route_wan::repository::RouteWanServiceRepository;
-use tokio::sync::broadcast;
 
 use crate::iface::get_iface_by_name;
 
@@ -132,7 +132,7 @@ impl ControllerService for RouteWanServiceManagerService {
 impl RouteWanServiceManagerService {
     pub async fn new(
         store_service: LandscapeDBServiceProvider,
-        mut dev_observer: broadcast::Receiver<IfaceObserverAction>,
+        mut dev_observer: IfaceEventReader,
     ) -> Self {
         let store = store_service.route_wan_service_store();
         let server_starter = RouteWanService::new();

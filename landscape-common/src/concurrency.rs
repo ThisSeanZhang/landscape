@@ -130,6 +130,8 @@ pub mod task_label {
         pub const NAT_STOP: &str = "nat.service.stop";
         /// NAT observer task reacting to interface events.
         pub const NAT_OBSERVER: &str = "nat.service.observer";
+        /// EventHub dispatcher task that receives events and dispatches to domain broadcast channels.
+        pub const EVENT_HUB_DISPATCHER: &str = "event.hub.dispatcher";
     }
 
     pub mod op {

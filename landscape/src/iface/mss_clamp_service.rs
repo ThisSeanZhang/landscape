@@ -1,4 +1,5 @@
 use landscape_common::database::LandscapeStore;
+use landscape_common::event::hub::IfaceEventReader;
 use landscape_common::{
     concurrency::{spawn_task, spawn_task_with_resource, task_label},
     iface::mss_clamp::MSSClampServiceConfig,
@@ -12,7 +13,6 @@ use landscape_common::{
 use landscape_database::{
     mss_clamp::repository::MssClampServiceRepository, provider::LandscapeDBServiceProvider,
 };
-use tokio::sync::broadcast;
 
 use crate::iface::get_iface_by_name;
 
@@ -105,7 +105,7 @@ impl ControllerService for MssClampServiceManagerService {
 impl MssClampServiceManagerService {
     pub async fn new(
         store_service: LandscapeDBServiceProvider,
-        mut dev_observer: broadcast::Receiver<IfaceObserverAction>,
+        mut dev_observer: IfaceEventReader,
     ) -> Self {
         let store = store_service.mss_clamp_service_store();
         let service = ServiceManager::init(store.list().await.unwrap(), Default::default()).await;

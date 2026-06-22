@@ -1,6 +1,7 @@
 use std::net::IpAddr;
 
 use landscape_common::database::LandscapeStore;
+use landscape_common::event::hub::IfaceEventReader;
 use landscape_common::route::{LanRouteInfo, LanRouteMode, RouteTargetInfo};
 use landscape_common::LANDSCAPE_DEFAULE_DHCP_V4_CLIENT_PORT;
 use landscape_common::{
@@ -20,7 +21,6 @@ use landscape_common::{
 use landscape_database::{
     iface_ip::repository::IfaceIpServiceRepository, provider::LandscapeDBServiceProvider,
 };
-use tokio::sync::broadcast;
 
 use crate::iface::get_iface_by_name;
 use crate::pppoe_client::PPPoEClientConfig;
@@ -215,7 +215,7 @@ impl IfaceIpServiceManagerService {
     pub async fn new(
         route_service: IpRouteService,
         store_service: LandscapeDBServiceProvider,
-        mut dev_observer: broadcast::Receiver<IfaceObserverAction>,
+        mut dev_observer: IfaceEventReader,
     ) -> Self {
         let store = store_service.iface_ip_service_store();
         let iface_store = store_service.iface_store();

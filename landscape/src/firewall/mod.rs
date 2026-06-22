@@ -9,10 +9,10 @@ use landscape_common::{
     },
 };
 
+use landscape_common::event::hub::IfaceEventReader;
 use landscape_database::{
     firewall::repository::FirewallServiceRepository, provider::LandscapeDBServiceProvider,
 };
-use tokio::sync::broadcast;
 
 use crate::iface::get_iface_by_name;
 
@@ -106,7 +106,7 @@ impl ControllerService for FirewallServiceManagerService {
 impl FirewallServiceManagerService {
     pub async fn new(
         store_service: LandscapeDBServiceProvider,
-        mut dev_observer: broadcast::Receiver<IfaceObserverAction>,
+        mut dev_observer: IfaceEventReader,
     ) -> Self {
         let store = store_service.firewall_service_store();
         let service =

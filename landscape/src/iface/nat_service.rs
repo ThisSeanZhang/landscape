@@ -1,4 +1,5 @@
 use landscape_common::database::LandscapeStore;
+use landscape_common::event::hub::IfaceEventReader;
 use landscape_common::observer::IfaceObserverAction;
 use landscape_common::service::controller::ControllerService;
 use landscape_common::service::manager::ServiceManager;
@@ -9,7 +10,6 @@ use landscape_common::{
 };
 use landscape_database::nat::repository::NatServiceRepository;
 use landscape_database::provider::LandscapeDBServiceProvider;
-use tokio::sync::broadcast;
 
 use crate::iface::get_iface_by_name;
 
@@ -102,7 +102,7 @@ impl ControllerService for NatServiceManagerService {
 impl NatServiceManagerService {
     pub async fn new(
         store_service: LandscapeDBServiceProvider,
-        mut dev_observer: broadcast::Receiver<IfaceObserverAction>,
+        mut dev_observer: IfaceEventReader,
     ) -> Self {
         let store = store_service.nat_service_store();
         let service = ServiceManager::init(store.list().await.unwrap(), Default::default()).await;

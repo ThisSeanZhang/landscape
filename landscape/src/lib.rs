@@ -23,7 +23,7 @@ pub mod iface;
 pub mod ipv6;
 pub mod metric;
 pub mod netlink;
-pub mod observer;
+pub use crate::netlink::observer;
 pub mod pppoe_client;
 pub mod route;
 pub mod sys_service;

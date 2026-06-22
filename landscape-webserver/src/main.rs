@@ -55,6 +55,7 @@ use landscape_common::{
     config::RuntimeConfig,
     database::LandscapeStore,
     error::LdResult,
+    event::hub::EventHub,
     ipv6_pd::IAPrefixMap,
     service::controller::ControllerService,
     VERSION,
@@ -180,8 +181,9 @@ async fn run_system(
     landscape_ebpf::chain::tc_manager::TcChainManager::instance();
     landscape_ebpf::chain::xdp_manager::XdpChainManager::instance();
 
-    let dev_obs =
-        startup_phase!("observer.dev_observer", landscape::observer::dev_observer().await);
+    let event_hub = EventHub::new();
+    startup_phase!("observer.dev_observer", landscape::observer::dev_observer(&event_hub).await);
+    let event_handle = event_hub.spawn();
 
     startup_phase!(
         "xdp_redirect_able.clear",
@@ -334,20 +336,30 @@ async fn run_system(
     let route_lan_service = RouteLanServiceManagerService::new(
         db_store_provider.clone(),
         route_service.clone(),
-        dev_obs.resubscribe(),
+        event_handle.subscribe_iface(),
     )
     .await;
-    let route_wan_service =
-        RouteWanServiceManagerService::new(db_store_provider.clone(), dev_obs.resubscribe()).await;
+    let route_wan_service = RouteWanServiceManagerService::new(
+        db_store_provider.clone(),
+        event_handle.subscribe_iface(),
+    )
+    .await;
 
-    let mss_clamp_service =
-        MssClampServiceManagerService::new(db_store_provider.clone(), dev_obs.resubscribe()).await;
+    let mss_clamp_service = MssClampServiceManagerService::new(
+        db_store_provider.clone(),
+        event_handle.subscribe_iface(),
+    )
+    .await;
 
-    let firewall_service =
-        FirewallServiceManagerService::new(db_store_provider.clone(), dev_obs.resubscribe()).await;
+    let firewall_service = FirewallServiceManagerService::new(
+        db_store_provider.clone(),
+        event_handle.subscribe_iface(),
+    )
+    .await;
 
     let nat_service =
-        NatServiceManagerService::new(db_store_provider.clone(), dev_obs.resubscribe()).await;
+        NatServiceManagerService::new(db_store_provider.clone(), event_handle.subscribe_iface())
+            .await;
 
     let wifi_service = WifiServiceManagerService::new(db_store_provider.clone()).await;
 
@@ -358,14 +370,14 @@ async fn run_system(
         db_store_provider.clone(),
         cert_service.api_tls_resolver(),
         config.dns.clone(),
-        dev_obs.resubscribe(),
+        event_handle.subscribe_iface(),
     )
     .await;
 
     let wan_ip_service = IfaceIpServiceManagerService::new(
         route_service.clone(),
         db_store_provider.clone(),
-        dev_obs.resubscribe(),
+        event_handle.subscribe_iface(),
     )
     .await;
 
@@ -378,14 +390,14 @@ async fn run_system(
     let prefix_map = IAPrefixMap::new();
     let ipv6_pd_service = DHCPv6ClientManagerService::new(
         db_store_provider.clone(),
-        dev_obs.resubscribe(),
+        event_handle.subscribe_iface(),
         route_service.clone(),
         prefix_map.clone(),
     )
     .await;
     let lan_ipv6_service = LanIPv6ManagerService::new(
         db_store_provider.clone(),
-        dev_obs.resubscribe(),
+        event_handle.subscribe_iface(),
         route_service.clone(),
         prefix_map,
     )

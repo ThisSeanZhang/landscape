@@ -9,6 +9,7 @@ use landscape_common::database::LandscapeStore as LandscapeDBStore;
 use landscape_common::dhcp::v4_server::status::ArpScanInfo;
 use landscape_common::dhcp::v4_server::status::ArpScanStatus;
 use landscape_common::dhcp::v4_server::status::DHCPv4OfferInfo;
+use landscape_common::event::hub::IfaceEventReader;
 use landscape_common::route::LanRouteInfo;
 use landscape_common::route::LanRouteMode;
 use landscape_common::service::controller::ControllerService;
@@ -22,7 +23,6 @@ use landscape_common::{
 };
 use landscape_database::dhcp_v4_server::repository::DHCPv4ServerRepository;
 use landscape_database::provider::LandscapeDBServiceProvider;
-use tokio::sync::broadcast;
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 
@@ -250,7 +250,7 @@ impl DHCPv4ServerManagerService {
         store_service: LandscapeDBServiceProvider,
         api_tls_resolver: SharedSniResolver,
         dns_runtime_config: landscape_common::config::DnsRuntimeConfig,
-        mut dev_observer: broadcast::Receiver<IfaceObserverAction>,
+        mut dev_observer: IfaceEventReader,
     ) -> Self {
         let store = store_service.dhcp_v4_server_store();
         let server_starter = DHCPv4ServerStarter::new(

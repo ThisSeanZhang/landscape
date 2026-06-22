@@ -6,6 +6,7 @@ use std::sync::Arc;
 use landscape_common::client::{CallerLookupMatch, CallerLookupSource};
 use landscape_common::database::LandscapeStore as LandscapeDBStore;
 use landscape_common::dhcp::v6_server::status::DHCPv6OfferInfo;
+use landscape_common::event::hub::IfaceEventReader;
 use landscape_common::ipv6::lan::{
     IPv6ServiceMode, LanIPv6ConfigV2, LanIPv6ServiceConfigV2, LanPrefixGroupConfig,
     PrefixGroupServiceKind,
@@ -23,7 +24,6 @@ use landscape_common::store::storev2::LandscapeStore;
 use landscape_database::enrolled_device::repository::EnrolledDeviceRepository;
 use landscape_database::lan_ipv6_v2::repository::LanIPv6V2ServiceRepository;
 use landscape_database::provider::LandscapeDBServiceProvider;
-use tokio::sync::broadcast;
 use tokio::sync::RwLock;
 
 use crate::iface::get_iface_by_name;
@@ -512,7 +512,7 @@ impl ControllerService for LanIPv6ManagerService {
 impl LanIPv6ManagerService {
     pub async fn new(
         store_service: LandscapeDBServiceProvider,
-        mut dev_observer: broadcast::Receiver<IfaceObserverAction>,
+        mut dev_observer: IfaceEventReader,
         route_service: IpRouteService,
         prefix_map: IAPrefixMap,
     ) -> Self {
