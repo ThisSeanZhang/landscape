@@ -5,6 +5,7 @@ use crate::metric::connect::ConnectMetric;
 use crate::metric::dns::DnsMetric;
 
 pub mod dns;
+pub mod hub;
 pub mod nat;
 pub mod route;
 
