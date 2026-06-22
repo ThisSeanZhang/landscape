@@ -68,6 +68,9 @@ export default {
     key_count: "Key Count",
     txt_key: "TXT Key",
     update_with_file: "Update Using File",
+    force_refresh: "Force Refresh",
+    force_refresh_confirm:
+      "Force refresh will re-download and re-parse the rules from the source URL.",
   },
   detail_drawer: {
     rule_details: "Rule Details",

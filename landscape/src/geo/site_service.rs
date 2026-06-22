@@ -347,8 +347,163 @@ impl GeoSiteService {
             .await;
     }
 
+    async fn refresh_url_config(
+        &self,
+        client: &Client,
+        config: &mut GeoSiteSourceConfig,
+    ) -> HashSet<GeoFileCacheKey> {
+        let url = match &config.source {
+            GeoSiteSource::Url { url, .. } => url.clone(),
+            _ => return HashSet::new(),
+        };
+
+        let before_hashes = self.snapshot_key_hashes_for_name(&config.name).await;
+        tracing::debug!("download file: {}", url);
+        let time = Instant::now();
+
+        match client.get(&url).send().await {
+            Ok(resp) if resp.status().is_success() => match resp.bytes().await {
+                Ok(bytes) => {
+                    let result = landscape_protobuf::read_geo_sites_from_bytes(bytes).await;
+
+                    let mut file_cache_lock = self.file_cache.lock().await;
+                    let mut exist_keys = file_cache_lock
+                        .keys()
+                        .into_iter()
+                        .filter(|k| k.name == config.name)
+                        .collect::<HashSet<GeoFileCacheKey>>();
+
+                    for (key, values) in result {
+                        let info = GeoDomainConfig {
+                            name: config.name.clone(),
+                            key: key.to_ascii_uppercase(),
+                            values,
+                        };
+                        exist_keys.remove(&info.get_store_key());
+                        file_cache_lock.set(info);
+                    }
+
+                    for key in exist_keys {
+                        file_cache_lock.del(&key);
+                    }
+                    drop(file_cache_lock);
+
+                    if let GeoSiteSource::Url { next_update_at, .. } = &mut config.source {
+                        *next_update_at = get_f64_timestamp() + MILL_A_DAY as f64;
+                    }
+                    let _ = self.store.set(config.clone()).await;
+
+                    tracing::debug!(
+                        "handle file done: {}, time: {}s",
+                        url,
+                        time.elapsed().as_secs()
+                    );
+
+                    let after_hashes = self.snapshot_key_hashes_for_name(&config.name).await;
+                    Self::diff_key_hashes(&before_hashes, &after_hashes)
+                }
+                Err(e) => {
+                    tracing::error!("read {} response error: {}", url, e);
+                    HashSet::new()
+                }
+            },
+            Ok(resp) => {
+                tracing::error!("download {} error, HTTP status: {}", url, resp.status());
+                HashSet::new()
+            }
+            Err(e) => {
+                tracing::error!("request {} error: {}", url, e);
+                HashSet::new()
+            }
+        }
+    }
+
+    async fn refresh_adguard_config(
+        &self,
+        client: &Client,
+        config: &mut GeoSiteSourceConfig,
+    ) -> HashSet<GeoFileCacheKey> {
+        let (url, key) = match &config.source {
+            GeoSiteSource::AdguardHome { url, key, .. } => {
+                (url.clone(), normalize_adguard_key(key))
+            }
+            _ => return HashSet::new(),
+        };
+
+        tracing::debug!("download adguard rules: {}", url);
+        let time = Instant::now();
+        let before_hashes = self.snapshot_key_hashes_for_name(&config.name).await;
+
+        match client.get(&url).send().await {
+            Ok(resp) if resp.status().is_success() => match resp.bytes().await {
+                Ok(bytes) => {
+                    let domains = landscape_protobuf::parse_adguard_rules(&bytes);
+
+                    let cache_key = GeoFileCacheKey { name: config.name.clone(), key: key.clone() };
+
+                    let mut file_cache_lock = self.file_cache.lock().await;
+                    let exist_keys = file_cache_lock
+                        .keys()
+                        .into_iter()
+                        .filter(|k| k.name == config.name)
+                        .collect::<HashSet<GeoFileCacheKey>>();
+
+                    let info = GeoDomainConfig { name: config.name.clone(), key, values: domains };
+                    file_cache_lock.set(info);
+
+                    for old_key in exist_keys {
+                        if old_key != cache_key {
+                            file_cache_lock.del(&old_key);
+                        }
+                    }
+                    drop(file_cache_lock);
+
+                    if let GeoSiteSource::AdguardHome { next_update_at, key, .. } =
+                        &mut config.source
+                    {
+                        *next_update_at = get_f64_timestamp() + MILL_A_DAY as f64;
+                        *key = normalize_adguard_key(key);
+                    }
+                    let _ = self.store.set(config.clone()).await;
+
+                    tracing::debug!(
+                        "handle adguard rules done: {}, time: {}ms",
+                        url,
+                        time.elapsed().as_millis()
+                    );
+
+                    let after_hashes = self.snapshot_key_hashes_for_name(&config.name).await;
+                    Self::diff_key_hashes(&before_hashes, &after_hashes)
+                }
+                Err(e) => {
+                    tracing::error!("read {} response error: {}", url, e);
+                    HashSet::new()
+                }
+            },
+            Ok(resp) => {
+                tracing::error!("download {} error, HTTP status: {}", url, resp.status());
+                HashSet::new()
+            }
+            Err(e) => {
+                tracing::error!("request {} error: {}", url, e);
+                HashSet::new()
+            }
+        }
+    }
+
+    async fn refresh_direct_config(
+        &self,
+        config: &GeoSiteSourceConfig,
+    ) -> HashSet<GeoFileCacheKey> {
+        let before_hashes = self.snapshot_key_hashes_for_name(&config.name).await;
+        if let GeoSiteSource::Direct { data } = &config.source {
+            self.write_direct_to_cache(&config.name, data).await;
+        }
+        let after_hashes = self.snapshot_key_hashes_for_name(&config.name).await;
+        Self::diff_key_hashes(&before_hashes, &after_hashes)
+    }
+
     pub async fn refresh(&self, force: bool) {
-        // 读取当前规则
         let configs: Vec<GeoSiteSourceConfig> = self.store.list().await.unwrap();
 
         let client = Client::new();
@@ -358,163 +513,22 @@ impl GeoSiteService {
         for mut config in configs {
             config_names.insert(config.name.clone());
 
-            match &config.source {
-                GeoSiteSource::Url { url, next_update_at, .. } => {
+            let changed = match &config.source {
+                GeoSiteSource::Url { next_update_at, .. } => {
                     if !force && *next_update_at >= now {
                         continue;
                     }
-
-                    let url = url.clone();
-                    tracing::debug!("download file: {}", url);
-                    let time = Instant::now();
-                    let before_hashes = self.snapshot_key_hashes_for_name(&config.name).await;
-
-                    match client.get(&url).send().await {
-                        Ok(resp) if resp.status().is_success() => match resp.bytes().await {
-                            Ok(bytes) => {
-                                let result =
-                                    landscape_protobuf::read_geo_sites_from_bytes(bytes).await;
-
-                                let mut file_cache_lock = self.file_cache.lock().await;
-                                let mut exist_keys = file_cache_lock
-                                    .keys()
-                                    .into_iter()
-                                    .filter(|k| k.name == config.name)
-                                    .collect::<HashSet<GeoFileCacheKey>>();
-
-                                for (key, values) in result {
-                                    let info = GeoDomainConfig {
-                                        name: config.name.clone(),
-                                        key: key.to_ascii_uppercase(),
-                                        values,
-                                    };
-                                    exist_keys.remove(&info.get_store_key());
-                                    file_cache_lock.set(info);
-                                }
-
-                                for key in exist_keys {
-                                    file_cache_lock.del(&key);
-                                }
-
-                                drop(file_cache_lock);
-
-                                // Update next_update_at in the source
-                                if let GeoSiteSource::Url { next_update_at, .. } =
-                                    &mut config.source
-                                {
-                                    *next_update_at = get_f64_timestamp() + MILL_A_DAY as f64;
-                                }
-                                let _ = self.store.set(config.clone()).await;
-
-                                tracing::debug!(
-                                    "handle file done: {}, time: {}s",
-                                    url,
-                                    time.elapsed().as_secs()
-                                );
-
-                                let after_hashes =
-                                    self.snapshot_key_hashes_for_name(&config.name).await;
-                                let changed_keys =
-                                    Self::diff_key_hashes(&before_hashes, &after_hashes);
-                                self.notify_geo_changes(changed_keys).await;
-                            }
-                            Err(e) => tracing::error!("read {} response error: {}", url, e),
-                        },
-                        Ok(resp) => {
-                            tracing::error!(
-                                "download {} error, HTTP status: {}",
-                                url,
-                                resp.status()
-                            );
-                        }
-                        Err(e) => {
-                            tracing::error!("request {} error: {}", url, e);
-                        }
-                    }
+                    self.refresh_url_config(&client, &mut config).await
                 }
-                GeoSiteSource::Direct { data } => {
-                    let before_hashes = self.snapshot_key_hashes_for_name(&config.name).await;
-                    self.write_direct_to_cache(&config.name, data).await;
-                    let after_hashes = self.snapshot_key_hashes_for_name(&config.name).await;
-                    let changed_keys = Self::diff_key_hashes(&before_hashes, &after_hashes);
-                    self.notify_geo_changes(changed_keys).await;
-                }
-                GeoSiteSource::AdguardHome { url, next_update_at, key } => {
+                GeoSiteSource::Direct { .. } => self.refresh_direct_config(&config).await,
+                GeoSiteSource::AdguardHome { next_update_at, .. } => {
                     if !force && *next_update_at >= now {
                         continue;
                     }
-
-                    let url = url.clone();
-                    let key = normalize_adguard_key(key);
-                    tracing::debug!("download adguard rules: {}", url);
-                    let time = Instant::now();
-                    let before_hashes = self.snapshot_key_hashes_for_name(&config.name).await;
-
-                    match client.get(&url).send().await {
-                        Ok(resp) if resp.status().is_success() => match resp.bytes().await {
-                            Ok(bytes) => {
-                                let domains = landscape_protobuf::parse_adguard_rules(&bytes);
-
-                                let cache_key =
-                                    GeoFileCacheKey { name: config.name.clone(), key: key.clone() };
-
-                                let mut file_cache_lock = self.file_cache.lock().await;
-                                let exist_keys = file_cache_lock
-                                    .keys()
-                                    .into_iter()
-                                    .filter(|k| k.name == config.name)
-                                    .collect::<HashSet<GeoFileCacheKey>>();
-
-                                let info = GeoDomainConfig {
-                                    name: config.name.clone(),
-                                    key,
-                                    values: domains,
-                                };
-                                file_cache_lock.set(info);
-
-                                for old_key in exist_keys {
-                                    if old_key != cache_key {
-                                        file_cache_lock.del(&old_key);
-                                    }
-                                }
-                                drop(file_cache_lock);
-
-                                // Update next_update_at
-                                if let GeoSiteSource::AdguardHome { next_update_at, key, .. } =
-                                    &mut config.source
-                                {
-                                    *next_update_at = get_f64_timestamp() + MILL_A_DAY as f64;
-                                    *key = normalize_adguard_key(key);
-                                }
-                                let _ = self.store.set(config.clone()).await;
-
-                                tracing::debug!(
-                                    "handle adguard rules done: {}, time: {}ms",
-                                    url,
-                                    time.elapsed().as_millis()
-                                );
-
-                                let after_hashes =
-                                    self.snapshot_key_hashes_for_name(&config.name).await;
-                                let changed_keys =
-                                    Self::diff_key_hashes(&before_hashes, &after_hashes);
-                                self.notify_geo_changes(changed_keys).await;
-                            }
-                            Err(e) => tracing::error!("read {} response error: {}", url, e),
-                        },
-                        Ok(resp) => {
-                            tracing::error!(
-                                "download {} error, HTTP status: {}",
-                                url,
-                                resp.status()
-                            );
-                        }
-                        Err(e) => {
-                            tracing::error!("request {} error: {}", url, e);
-                        }
-                    }
+                    self.refresh_adguard_config(&client, &mut config).await
                 }
-            }
+            };
+            self.notify_geo_changes(changed).await;
         }
 
         if force {
@@ -530,6 +544,25 @@ impl GeoSiteService {
             drop(file_cache_lock);
             self.notify_geo_changes(need_to_remove).await;
         }
+    }
+
+    pub async fn refresh_one(&self, name: &str) {
+        let configs: Vec<GeoSiteSourceConfig> = self.store.list().await.unwrap();
+        let Some(mut config) = configs.into_iter().find(|c| c.name == name) else {
+            tracing::warn!("refresh_one: config '{}' not found", name);
+            return;
+        };
+
+        let client = Client::new();
+
+        let changed = match &config.source {
+            GeoSiteSource::Url { .. } => self.refresh_url_config(&client, &mut config).await,
+            GeoSiteSource::AdguardHome { .. } => {
+                self.refresh_adguard_config(&client, &mut config).await
+            }
+            GeoSiteSource::Direct { .. } => self.refresh_direct_config(&config).await,
+        };
+        self.notify_geo_changes(changed).await;
     }
 
     async fn write_direct_to_cache(

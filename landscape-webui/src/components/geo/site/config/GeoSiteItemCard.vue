@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import {
   delete_geo_site_config,
+  refresh_geo_site_by_name,
   update_geo_site_by_upload,
 } from "@/api/geo/site";
 import type { GeoSiteSourceConfig } from "@landscape-router/types/api/schemas";
@@ -38,6 +39,18 @@ const show_upload = ref(false);
 const onGeoUpload = async (formData: FormData) => {
   await update_geo_site_by_upload(props.geo_site.name, formData);
 };
+
+const refreshing = ref(false);
+async function force_refresh() {
+  refreshing.value = true;
+  try {
+    await refresh_geo_site_by_name(props.geo_site.name);
+    emit("refresh");
+    emit("refresh:keys");
+  } finally {
+    refreshing.value = false;
+  }
+}
 </script>
 <template>
   <n-flex>
@@ -108,6 +121,21 @@ const onGeoUpload = async (formData: FormData) => {
           >
             {{ t("geo_editor.item_card.update_with_file") }}
           </n-button>
+          <n-popconfirm
+            v-if="
+              geo_site.source.t === 'url' ||
+              geo_site.source.t === 'adguard_home'
+            "
+            :positive-button-props="{ loading: refreshing }"
+            @positive-click="force_refresh"
+          >
+            <template #trigger>
+              <n-button size="small" type="primary" secondary>
+                {{ t("geo_editor.item_card.force_refresh") }}
+              </n-button>
+            </template>
+            {{ t("geo_editor.item_card.force_refresh_confirm") }}
+          </n-popconfirm>
           <n-button
             size="small"
             type="warning"

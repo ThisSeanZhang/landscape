@@ -6,6 +6,7 @@ import {
   delGeoSite,
   getGeoSiteCache,
   refreshGeoSiteCache,
+  refreshGeoSiteConfigByName,
   searchGeoSiteCache,
   getGeoSiteCacheDetail,
   updateGeoSiteByUpload as _updateGeoSiteByUpload,
@@ -76,4 +77,8 @@ export async function update_geo_site_by_upload(
 ): Promise<void> {
   const file = form_data.get("file") as Blob;
   await _updateGeoSiteByUpload(name, { file });
+}
+
+export async function refresh_geo_site_by_name(name: string): Promise<void> {
+  await refreshGeoSiteConfigByName(name);
 }

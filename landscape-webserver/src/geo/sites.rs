@@ -23,6 +23,7 @@ pub fn get_geo_site_config_paths() -> OpenApiRouter<LandscapeApp> {
         .routes(routes!(add_many_geo_sites))
         .routes(routes!(get_geo_rule, del_geo_site))
         .routes(routes!(get_geo_site_cache, refresh_geo_site_cache))
+        .routes(routes!(refresh_geo_site_config_by_name))
         .routes(routes!(search_geo_site_cache))
         .routes(routes!(get_geo_site_cache_detail))
         .merge(upload_router)
@@ -223,5 +224,20 @@ async fn update_by_upload(
 
     state.geo_site_service.update_geo_config_by_bytes(name, bytes).await;
 
+    LandscapeApiResp::success(())
+}
+
+#[utoipa::path(
+    post,
+    path = "/sites/{name}/refresh",
+    tag = "Geo Sites",
+    params(("name" = String, Path, description = "Geo site config name")),
+    responses((status = 200, description = "Success"))
+)]
+async fn refresh_geo_site_config_by_name(
+    State(state): State<LandscapeApp>,
+    Path(name): Path<String>,
+) -> LandscapeApiResult<()> {
+    state.geo_site_service.refresh_one(&name).await;
     LandscapeApiResp::success(())
 }

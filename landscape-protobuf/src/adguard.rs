@@ -287,7 +287,6 @@ pub fn parse_adguard_rules(contents: &[u8]) -> Vec<GeoSiteFileConfig> {
     let text = String::from_utf8_lossy(contents);
     let mut candidates = Vec::<ParsedAdguardRule>::new();
     let mut negative_rules = Vec::<ParsedAdguardRule>::new();
-    let mut has_unscoped_negative_rule = false;
 
     for line in text.lines() {
         let line = line.trim();
@@ -303,8 +302,6 @@ pub fn parse_adguard_rules(contents: &[u8]) -> Vec<GeoSiteFileConfig> {
         if let Some(exception_rule) = line.strip_prefix("@@") {
             if let Some(rule) = parse_adguard_negative_overlap_rule(exception_rule) {
                 negative_rules.push(rule);
-            } else {
-                has_unscoped_negative_rule = true;
             }
             continue;
         }
@@ -312,8 +309,6 @@ pub fn parse_adguard_rules(contents: &[u8]) -> Vec<GeoSiteFileConfig> {
         if line_contains_badfilter(line) {
             if let Some(rule) = parse_adguard_negative_overlap_rule(line) {
                 negative_rules.push(rule);
-            } else {
-                has_unscoped_negative_rule = true;
             }
             continue;
         }
@@ -367,10 +362,6 @@ pub fn parse_adguard_rules(contents: &[u8]) -> Vec<GeoSiteFileConfig> {
                 value: domain.to_ascii_lowercase(),
             });
         }
-    }
-
-    if has_unscoped_negative_rule {
-        return Vec::new();
     }
 
     let mut result = Vec::new();
@@ -681,6 +672,20 @@ sub.valid-example.com
     }
 
     #[test]
+    fn parse_adguard_skips_wildcard_domain_rules() {
+        let input = b"||*serror*.wo.com.cn^
+||*.example.com^
+*serror*.wo.com.cn
+*.example.com
+||valid.wo.com.cn^
+";
+        let result = parse_adguard_rules(input);
+        let domains: Vec<&str> = result.iter().map(|d| d.value.as_str()).collect();
+
+        assert_eq!(domains, vec!["valid.wo.com.cn"]);
+    }
+
+    #[test]
     fn parse_adguard_applies_exceptions_conservatively() {
         let input = b"||example.com^
 @@||ads.example.com^
@@ -711,14 +716,17 @@ sub.valid-example.com
     }
 
     #[test]
-    fn parse_adguard_unscoped_exception_drops_all_candidates() {
+    fn parse_adguard_skips_unparseable_exception_rules() {
         let input = b"||example.com^
 @@/example\\.com/
 ||other.example.com^
 ";
         let result = parse_adguard_rules(input);
+        let domains: Vec<&str> = result.iter().map(|d| d.value.as_str()).collect();
 
-        assert!(result.is_empty());
+        // Unparseable exceptions (regex, etc.) are skipped silently;
+        // they no longer drop everything.
+        assert_eq!(domains, vec!["example.com", "other.example.com"]);
     }
 
     #[test]
