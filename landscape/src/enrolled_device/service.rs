@@ -102,6 +102,14 @@ impl EnrolledDeviceService {
                 );
             }
 
+            // Static IPv6 must be a /64 host suffix only — upper 64 bits must be zero
+            if u128::from(*ipv6) >> 64 != 0 {
+                return Err(
+                    "Static IPv6 must be a /64 host suffix (e.g. ::100) — prefix must be omitted"
+                        .to_string(),
+                );
+            }
+
             if let Some(existing) =
                 self.store.find_by_ipv6(*ipv6).await.map_err(|e| e.to_string())?
             {

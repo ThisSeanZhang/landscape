@@ -2,7 +2,7 @@ use std::net::Ipv6Addr;
 
 use landscape_common::net::MacAddr;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct DHCPv6NACache {
     pub suffix: u64,
     pub hostname: Option<String>,
@@ -14,7 +14,7 @@ pub struct DHCPv6NACache {
     pub is_static: bool,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct DHCPv6PDCache {
     /// Index into `PdDelegationParent` pool (`get_qualifying_pd_prefixes` result).
     /// Identifies which pre-computed delegation block this client received.

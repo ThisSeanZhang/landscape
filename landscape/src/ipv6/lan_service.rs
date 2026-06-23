@@ -1,12 +1,10 @@
-use std::collections::HashMap;
-use std::net::IpAddr;
-use std::net::Ipv6Addr;
-use std::sync::Arc;
-
 use landscape_common::client::{CallerLookupMatch, CallerLookupSource};
 use landscape_common::database::LandscapeStore as LandscapeDBStore;
+use landscape_common::dhcp::v6_server::config::DHCPv6ServerConfig;
 use landscape_common::dhcp::v6_server::status::DHCPv6OfferInfo;
-use landscape_common::event::hub::{EnrolledDeviceEventReader, IfaceEventReader};
+use landscape_common::event::hub::{
+    EnrolledDeviceEvent, EnrolledDeviceEventReader, IfaceEventReader,
+};
 use landscape_common::ipv6::lan::{
     IPv6ServiceMode, LanIPv6ConfigV2, LanIPv6ServiceConfigV2, LanPrefixGroupConfig,
     PrefixGroupServiceKind,
@@ -24,19 +22,25 @@ use landscape_common::store::storev2::LandscapeStore;
 use landscape_database::enrolled_device::repository::EnrolledDeviceRepository;
 use landscape_database::lan_ipv6_v2::repository::LanIPv6V2ServiceRepository;
 use landscape_database::provider::LandscapeDBServiceProvider;
-use tokio::sync::RwLock;
+use std::collections::{HashMap, HashSet};
+use std::net::IpAddr;
+use std::net::Ipv6Addr;
+use std::sync::Arc;
+use tokio::sync::{Mutex, RwLock};
 
+use crate::dhcp_server::v6::DhcpV6AssignStatus;
 use crate::iface::get_iface_by_name;
 use crate::ipv6::prefix::{cleanup_prefix_sources, setup_prefix_groups, PrefixSetupResult};
 use crate::route::IpRouteService;
 
 /// LAN IPv6 service: manages RA + DHCPv6 per interface with mode-aware orchestration
+
 #[derive(Clone)]
 pub struct LanIPv6Service {
     route_service: IpRouteService,
     prefix_map: IAPrefixMap,
     iface_lease_map: Arc<RwLock<HashMap<String, Arc<RwLock<IPv6NAInfo>>>>>,
-    iface_dhcpv6_map: Arc<RwLock<HashMap<String, Arc<RwLock<DHCPv6OfferInfo>>>>>,
+    iface_dhcpv6_status_map: Arc<RwLock<HashMap<String, Arc<Mutex<DhcpV6AssignStatus>>>>>,
     enrolled_device_store: EnrolledDeviceRepository,
 }
 
@@ -50,7 +54,7 @@ impl LanIPv6Service {
             route_service,
             prefix_map,
             iface_lease_map: Arc::new(RwLock::new(HashMap::new())),
-            iface_dhcpv6_map: Arc::new(RwLock::new(HashMap::new())),
+            iface_dhcpv6_status_map: Arc::new(RwLock::new(HashMap::new())),
             enrolled_device_store,
         }
     }
@@ -81,44 +85,24 @@ impl ServiceStarterTrait for LanIPv6Service {
                 // DHCPv6 setup
                 let dhcpv6_config = config.config.dhcpv6.clone();
                 let dhcpv6_enabled = dhcpv6_config.as_ref().map_or(false, |c| c.enable);
-                let dhcpv6_assigned = if dhcpv6_enabled {
-                    let assigned = {
-                        let mut write = self.iface_dhcpv6_map.write().await;
-                        let entry = write
-                            .entry(store_key.clone())
-                            .or_insert_with(|| Arc::new(RwLock::new(DHCPv6OfferInfo::default())));
-                        // Clear stale data from previous service run
-                        *entry.write().await = DHCPv6OfferInfo::default();
-                        entry.clone()
-                    };
-                    Some(assigned)
-                } else {
-                    None
-                };
 
-                // Load static IPv6 bindings from enrolled devices
-                let static_bindings = if dhcpv6_enabled {
-                    match self
+                let dhcpv6_assign_status: Option<Arc<Mutex<DhcpV6AssignStatus>>> = if dhcpv6_enabled
+                {
+                    let dhcpv6_cfg = dhcpv6_config.as_ref().unwrap();
+                    let devices = self
                         .enrolled_device_store
                         .find_dhcpv6_bindings(config.iface_name.clone())
                         .await
+                        .unwrap_or_default();
+                    let status = DhcpV6AssignStatus::from_config_and_devices(dhcpv6_cfg, devices);
+                    let status_arc = Arc::new(Mutex::new(status));
                     {
-                        Ok(devices) => {
-                            let mut bindings = HashMap::new();
-                            for dev in devices {
-                                if let Some(ipv6) = dev.ipv6 {
-                                    bindings.insert(dev.mac, ipv6);
-                                }
-                            }
-                            bindings
-                        }
-                        Err(e) => {
-                            tracing::error!("Failed to load DHCPv6 bindings: {e:?}");
-                            HashMap::new()
-                        }
+                        let mut write = self.iface_dhcpv6_status_map.write().await;
+                        write.insert(store_key.clone(), status_arc.clone());
                     }
+                    Some(status_arc)
                 } else {
-                    HashMap::new()
+                    None
                 };
 
                 if let Some(mac) = iface.mac {
@@ -168,8 +152,7 @@ impl ServiceStarterTrait for LanIPv6Service {
                                     link_ifindex,
                                     status_clone,
                                     assigned_ips,
-                                    dhcpv6_assigned,
-                                    static_bindings,
+                                    dhcpv6_assign_status,
                                 )
                                 .await;
                             }
@@ -187,8 +170,7 @@ impl ServiceStarterTrait for LanIPv6Service {
                                     link_ifindex,
                                     status_clone,
                                     assigned_ips,
-                                    dhcpv6_assigned,
-                                    static_bindings,
+                                    dhcpv6_assign_status,
                                 )
                                 .await;
                             }
@@ -202,7 +184,6 @@ impl ServiceStarterTrait for LanIPv6Service {
     }
 }
 
-use landscape_common::dhcp::v6_server::config::DHCPv6ServerConfig;
 use landscape_common::ipv6::ra::RouterFlags;
 use landscape_common::net::MacAddr;
 
@@ -274,8 +255,7 @@ async fn run_stateful(
     link_ifindex: u32,
     status: WatchService,
     assigned_ips: Arc<RwLock<IPv6NAInfo>>,
-    dhcpv6_assigned: Option<Arc<RwLock<DHCPv6OfferInfo>>>,
-    static_bindings: HashMap<MacAddr, Ipv6Addr>,
+    dhcpv6_assign_status: Option<Arc<Mutex<DhcpV6AssignStatus>>>,
 ) {
     let dhcpv6_config = match dhcpv6 {
         Some(c) if c.enable => c,
@@ -307,7 +287,7 @@ async fn run_stateful(
     dhcpv6_ra_token.cancel();
 
     // Spawn DHCPv6 server
-    if let Some(dhcpv6_assigned_info) = dhcpv6_assigned {
+    if let Some(ref assign_status) = dhcpv6_assign_status {
         let pd_sources = dhcpv6_runtime.pd_info.values().cloned().collect();
         let static_infos = dhcpv6_runtime.static_info.clone();
         let pd_delegation_static = dhcpv6_runtime.pd_delegation_static.clone();
@@ -318,6 +298,7 @@ async fn run_stateful(
         let dhcpv6_route_service = route_service.clone();
 
         let link_local = mac.to_ipv6_link_local();
+        let assign_status = assign_status.clone();
         tokio::spawn(async move {
             crate::dhcp_server::v6::dhcp_v6_server(
                 link_ifindex,
@@ -330,8 +311,7 @@ async fn run_stateful(
                 pd_delegation_static,
                 pd_delegation_dynamic,
                 dhcpv6_status,
-                dhcpv6_assigned_info,
-                static_bindings,
+                assign_status,
                 dhcpv6_route_service,
             )
             .await;
@@ -376,8 +356,7 @@ async fn run_slaac_dhcpv6(
     link_ifindex: u32,
     status: WatchService,
     assigned_ips: Arc<RwLock<IPv6NAInfo>>,
-    dhcpv6_assigned: Option<Arc<RwLock<DHCPv6OfferInfo>>>,
-    static_bindings: HashMap<MacAddr, Ipv6Addr>,
+    dhcpv6_assign_status: Option<Arc<Mutex<DhcpV6AssignStatus>>>,
 ) {
     let dhcpv6_config = match dhcpv6 {
         Some(c) if c.enable => c,
@@ -429,7 +408,7 @@ async fn run_slaac_dhcpv6(
     dhcpv6_ra_token.cancel();
 
     // Spawn DHCPv6 server
-    if let Some(dhcpv6_assigned_info) = dhcpv6_assigned {
+    if let Some(ref assign_status) = dhcpv6_assign_status {
         let pd_sources = dhcpv6_runtime.pd_info.values().cloned().collect();
         let static_infos = dhcpv6_runtime.static_info.clone();
         let pd_delegation_static = dhcpv6_runtime.pd_delegation_static.clone();
@@ -439,6 +418,7 @@ async fn run_slaac_dhcpv6(
         let dhcpv6_status = status.clone();
         let dhcpv6_route_service = route_service.clone();
         let link_local = mac.to_ipv6_link_local();
+        let assign_status = assign_status.clone();
 
         tokio::spawn(async move {
             crate::dhcp_server::v6::dhcp_v6_server(
@@ -452,8 +432,7 @@ async fn run_slaac_dhcpv6(
                 pd_delegation_static,
                 pd_delegation_dynamic,
                 dhcpv6_status,
-                dhcpv6_assigned_info,
-                static_bindings,
+                assign_status,
                 dhcpv6_route_service,
             )
             .await;
@@ -544,9 +523,40 @@ impl LanIPv6ManagerService {
             }
         });
 
+        let status_map = server_starter.iface_dhcpv6_status_map.clone();
         tokio::spawn(async move {
-            while let Ok(_event) = device_reader.recv().await {
-                // TODO: reload static bindings from DB and notify DHCPv6 server to reconcile
+            while let Ok(event) = device_reader.recv().await {
+                let affected = extract_binding_ifaces_v6(&event);
+                let targets: Vec<String> = {
+                    let guard = status_map.read().await;
+                    if affected.is_empty() {
+                        guard.keys().cloned().collect()
+                    } else {
+                        affected.into_iter().filter(|i| guard.contains_key(i)).collect()
+                    }
+                };
+                for iface in &targets {
+                    let s = {
+                        let guard = status_map.read().await;
+                        guard.get(iface).cloned()
+                    };
+                    if let Some(s) = s {
+                        let mut status = s.lock().await;
+                        match &event {
+                            EnrolledDeviceEvent::Updated { old, new } => {
+                                if let Some(d) = old.as_ref() {
+                                    status.remove_binding(&d.mac);
+                                }
+                                if let Some(ipv6) = new.ipv6 {
+                                    status.add_or_update_binding(new.mac, ipv6);
+                                }
+                            }
+                            EnrolledDeviceEvent::Deleted { old } => {
+                                status.remove_binding(&old.mac);
+                            }
+                        }
+                    }
+                }
             }
         });
 
@@ -594,33 +604,24 @@ impl LanIPv6ManagerService {
         &self,
         iface_name: String,
     ) -> Option<DHCPv6OfferInfo> {
-        let info = {
-            let read_lock = self.server_starter.iface_dhcpv6_map.read().await;
-            read_lock.get(&iface_name).map(Clone::clone)
-        };
-
-        let Some(offer_info) = info else {
-            return None;
-        };
-
-        let data = offer_info.read().await.clone();
-        Some(data)
+        let status_arc = {
+            let guard = self.server_starter.iface_dhcpv6_status_map.read().await;
+            guard.get(&iface_name).cloned()
+        }?;
+        let s = status_arc.lock().await;
+        Some(s.last_offer_info.clone())
     }
 
     pub async fn get_dhcpv6_assigned(&self) -> HashMap<String, DHCPv6OfferInfo> {
         let mut result = HashMap::new();
-
-        let map = {
-            let read_lock = self.server_starter.iface_dhcpv6_map.read().await;
-            read_lock.clone()
+        let statuses: Vec<(String, Arc<Mutex<DhcpV6AssignStatus>>)> = {
+            let guard = self.server_starter.iface_dhcpv6_status_map.read().await;
+            guard.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
         };
-
-        for (iface_name, assigned_info) in map {
-            if let Ok(read) = assigned_info.try_read() {
-                result.insert(iface_name, read.clone());
-            }
+        for (name, status_arc) in statuses {
+            let s = status_arc.lock().await;
+            result.insert(name, s.last_offer_info.clone());
         }
-
         result
     }
 
@@ -652,5 +653,116 @@ impl LanIPv6ManagerService {
         }
 
         None
+    }
+}
+
+fn extract_binding_ifaces_v6(event: &EnrolledDeviceEvent) -> HashSet<String> {
+    let mut set = HashSet::new();
+    match event {
+        EnrolledDeviceEvent::Updated { old, new } => {
+            if let Some(d) = old.as_ref() {
+                if let Some(ref iface) = d.iface_name {
+                    set.insert(iface.clone());
+                }
+            }
+            if let Some(ref iface) = new.iface_name {
+                set.insert(iface.clone());
+            }
+        }
+        EnrolledDeviceEvent::Deleted { old } => {
+            if let Some(ref iface) = old.iface_name {
+                set.insert(iface.clone());
+            }
+        }
+    }
+    set
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use landscape_common::enrolled_device::EnrolledDevice;
+    use landscape_common::event::hub::EnrolledDeviceEvent;
+    use landscape_common::net::MacAddr;
+
+    fn make_device(mac: &str, iface: Option<&str>, ipv6_addr: Option<u16>) -> EnrolledDevice {
+        let mac_bytes: Vec<u8> =
+            mac.split(':').map(|s| u8::from_str_radix(s, 16).unwrap()).collect();
+        let mac = MacAddr::from([
+            mac_bytes[0],
+            mac_bytes[1],
+            mac_bytes[2],
+            mac_bytes[3],
+            mac_bytes[4],
+            mac_bytes[5],
+        ]);
+        let ipv6 = ipv6_addr.map(|suffix| std::net::Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, suffix));
+
+        serde_json::from_value(serde_json::json!({
+            "id": "00000000-0000-0000-0000-000000000001",
+            "mac": mac.to_string(),
+            "name": "test-device",
+            "iface_name": iface,
+            "ipv4": null,
+            "ipv6": ipv6.map(|ip| ip.to_string()),
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn test_extract_deleted_has_iface() {
+        let old = make_device("00:11:22:33:44:55", Some("eth0"), None);
+        let event = EnrolledDeviceEvent::Deleted { old };
+        let result = extract_binding_ifaces_v6(&event);
+        assert_eq!(result.len(), 1);
+        assert!(result.contains("eth0"));
+    }
+
+    #[test]
+    fn test_extract_deleted_no_iface() {
+        let old = make_device("00:11:22:33:44:55", None, None);
+        let event = EnrolledDeviceEvent::Deleted { old };
+        let result = extract_binding_ifaces_v6(&event);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_extract_updated_iface_changed() {
+        let old = make_device("00:11:22:33:44:55", Some("eth0"), None);
+        let new = make_device("00:11:22:33:44:55", Some("eth1"), Some(0x100));
+        let event = EnrolledDeviceEvent::Updated { old: Some(old), new };
+        let result = extract_binding_ifaces_v6(&event);
+        assert_eq!(result.len(), 2);
+        assert!(result.contains("eth0"));
+        assert!(result.contains("eth1"));
+    }
+
+    #[test]
+    fn test_extract_updated_new_no_iface() {
+        let old = make_device("00:11:22:33:44:55", Some("eth0"), None);
+        let new = make_device("00:11:22:33:44:55", None, Some(0x100));
+        let event = EnrolledDeviceEvent::Updated { old: Some(old), new };
+        let result = extract_binding_ifaces_v6(&event);
+        assert_eq!(result.len(), 1);
+        assert!(result.contains("eth0"));
+    }
+
+    #[test]
+    fn test_extract_updated_no_old() {
+        let new = make_device("00:11:22:33:44:55", Some("eth0"), Some(0x100));
+        let event = EnrolledDeviceEvent::Updated { old: None, new };
+        let result = extract_binding_ifaces_v6(&event);
+        assert_eq!(result.len(), 1);
+        assert!(result.contains("eth0"));
+    }
+
+    #[test]
+    fn test_extract_updated_same_iface() {
+        let old = make_device("00:11:22:33:44:55", Some("eth0"), Some(0x100));
+        let new = make_device("00:11:22:33:44:55", Some("eth0"), Some(0x200));
+        let event = EnrolledDeviceEvent::Updated { old: Some(old), new };
+        let result = extract_binding_ifaces_v6(&event);
+        assert_eq!(result.len(), 1);
+        assert!(result.contains("eth0"));
     }
 }

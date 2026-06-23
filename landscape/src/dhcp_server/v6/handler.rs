@@ -1,10 +1,8 @@
-use std::collections::HashMap;
 use std::net::{IpAddr, Ipv6Addr, SocketAddr};
 use std::sync::Arc;
 
 use arc_swap::ArcSwap;
 use landscape_common::dhcp::v6_server::config::DHCPv6ServerConfig;
-use landscape_common::dhcp::v6_server::status::DHCPv6OfferInfo;
 use landscape_common::net::MacAddr;
 use landscape_common::net_proto::udp::dhcp::DhcpV6MessageType;
 use landscape_common::service::{ServiceStatus, WatchService};
@@ -15,10 +13,10 @@ use dhcproto::{Decodable, Decoder, Encodable, Encoder};
 
 use socket2::{Domain, Protocol, Type};
 use tokio::net::UdpSocket;
-use tokio::sync::RwLock;
 
 use landscape_common::route::{LanIPv6RouteKey, LanRouteInfo, LanRouteMode};
 
+use super::dhcp_v6_status::DhcpV6AssignStatus;
 use crate::ipv6::prefix::{add_route_via, del_route, ICMPv6ConfigInfo, PdDelegationParent};
 use crate::route::IpRouteService;
 
@@ -66,8 +64,7 @@ static DHCPV6_MULTICAST: Ipv6Addr = Ipv6Addr::new(0xff02, 0, 0, 0, 0, 0, 0x1, 0x
     pd_delegation_static,
     pd_delegation_dynamic,
     service_status,
-    assigned_info,
-    static_bindings,
+    status,
     route_service
 ))]
 pub async fn dhcp_v6_server(
@@ -81,14 +78,12 @@ pub async fn dhcp_v6_server(
     pd_delegation_static: Vec<PdDelegationParent>,
     pd_delegation_dynamic: Vec<Arc<ArcSwap<Option<PdDelegationParent>>>>,
     service_status: WatchService,
-    assigned_info: Arc<RwLock<DHCPv6OfferInfo>>,
-    static_bindings: HashMap<MacAddr, Ipv6Addr>,
+    status: Arc<tokio::sync::Mutex<DhcpV6AssignStatus>>,
     route_service: IpRouteService,
 ) {
     let server_duid = gen_server_duid(&mac);
 
-    let mut dhcp_server = DHCPv6Server::init(&dhcpv6_config, static_bindings);
-    dhcp_server.server_duid = server_duid.clone();
+    let dhcp_server = DHCPv6Server::init(&dhcpv6_config, server_duid.clone(), status);
 
     let socket_addr =
         SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), LANDSCAPE_DEFAULE_DHCP_V6_SERVER_PORT);
@@ -119,6 +114,13 @@ pub async fn dhcp_v6_server(
     // Receive loop
     tokio::spawn(async move {
         let mut buf = vec![0u8; 65535];
+        // TODO: Consider also listening on a prefix_change_notify channel here.
+        // When upstream PD prefixes change, the RA server picks it up immediately
+        // via the notify channel and re-advertises. But DHCPv6 only refreshes its
+        // last_offer_info snapshot on the next client message or timeout tick.
+        // Adding a 4th branch with a Receiver<()> would let us recompute the
+        // snapshot instantly on prefix changes, closing the brief stale window
+        // between the RA refresh and the next DHCPv6 client exchange.
         loop {
             tokio::select! {
                 result = recv_socket.recv_from(&mut buf) => {
@@ -155,7 +157,7 @@ pub async fn dhcp_v6_server(
                 match message {
                     Some((msg_bytes, msg_addr)) => {
                         let need_update = handle_dhcpv6_message(
-                            &mut dhcp_server,
+                            &dhcp_server,
                             &send_socket,
                             &server_duid,
                             mac,
@@ -170,9 +172,11 @@ pub async fn dhcp_v6_server(
                             &route_service,
                         ).await;
                         if need_update {
-                            update_assigned_info(
-                                assigned_info.clone(),
-                                dhcp_server.get_offered_info(&ra_pd_runtime_sources, &ra_static_infos, &pd_delegation_static, &pd_delegation_dynamic),
+                            dhcp_server.refresh_offer_info(
+                                &ra_pd_runtime_sources,
+                                &ra_static_infos,
+                                &pd_delegation_static,
+                                &pd_delegation_dynamic,
                             ).await;
                         }
                     },
@@ -183,17 +187,19 @@ pub async fn dhcp_v6_server(
                 }
             }
             _ = &mut timeout_timer => {
-                dhcp_server.clean_expired_na();
-                let expired_pd = dhcp_server.clean_expired_pd();
+                dhcp_server.clean_expired_na().await;
+                let expired_pd = dhcp_server.clean_expired_pd().await;
                 for cache in &expired_pd {
                     cleanup_pd_routes(cache, &iface_name, &route_service).await;
                 }
                 timeout_timer.as_mut().reset(
                     tokio::time::Instant::now() + tokio::time::Duration::from_secs(LEASE_EXPIRE_INTERVAL)
                 );
-                update_assigned_info(
-                    assigned_info.clone(),
-                    dhcp_server.get_offered_info(&ra_pd_runtime_sources, &ra_static_infos, &pd_delegation_static, &pd_delegation_dynamic),
+                dhcp_server.refresh_offer_info(
+                    &ra_pd_runtime_sources,
+                    &ra_static_infos,
+                    &pd_delegation_static,
+                    &pd_delegation_dynamic,
                 ).await;
             }
             change_result = service_status_subscribe.changed() => {
@@ -218,23 +224,12 @@ pub async fn dhcp_v6_server(
     }
 }
 
-async fn update_assigned_info(assigned_info: Arc<RwLock<DHCPv6OfferInfo>>, info: DHCPv6OfferInfo) {
-    match tokio::time::timeout(tokio::time::Duration::from_secs(5), assigned_info.write()).await {
-        Ok(mut write_lock) => {
-            *write_lock = info;
-        }
-        Err(_) => {
-            tracing::error!("DHCPv6 failed to acquire write lock");
-        }
-    }
-}
-
-fn assigned_client_na_ips(
+async fn assigned_client_na_ips(
     server: &DHCPv6Server,
     client_duid: &[u8],
     na_prefixes: &[(Ipv6Addr, u8)],
 ) -> Option<Vec<Ipv6Addr>> {
-    let cache = server.na_offered.get(client_duid)?;
+    let cache = server.get_na_offer(client_duid).await?;
     Some(
         na_prefixes
             .iter()
@@ -244,7 +239,7 @@ fn assigned_client_na_ips(
 }
 
 async fn handle_dhcpv6_message(
-    server: &mut DHCPv6Server,
+    server: &DHCPv6Server,
     send_socket: &Arc<UdpSocket>,
     server_duid: &[u8],
     dev_mac: MacAddr,
@@ -317,7 +312,7 @@ async fn handle_dhcpv6_message(
             // Allocate addresses/prefixes
             if let Some(_) = &server.na_config {
                 if iana_id.is_some() {
-                    server.offer_na_suffix(&client_duid, mac, None);
+                    server.offer_na_suffix(&client_duid, mac, None).await;
                 }
             }
 
@@ -331,7 +326,7 @@ async fn handle_dhcpv6_message(
             if let Some(iana_id) = iana_id {
                 if server.na_config.is_some() {
                     let na_prefixes =
-                        server.get_qualifying_na_prefixes(runtime_sources, static_infos);
+                        server.get_qualifying_na_prefixes(runtime_sources, static_infos).await;
                     tracing::info!(
                         "DHCPv6 IANA - qualifying prefixes count: {}",
                         na_prefixes.len()
@@ -340,7 +335,8 @@ async fn handle_dhcpv6_message(
                         tracing::info!("  - Prefix: {}/{}", prefix, len);
                     }
                     if !na_prefixes.is_empty() {
-                        let iana = build_iana_options(server, &client_duid, iana_id, &na_prefixes);
+                        let iana =
+                            build_iana_options(server, &client_duid, iana_id, &na_prefixes).await;
                         reply.opts_mut().insert(v6::DhcpOption::IANA(iana));
                     } else {
                         tracing::warn!("DHCPv6 IANA: No qualifying prefixes available!");
@@ -351,10 +347,12 @@ async fn handle_dhcpv6_message(
             if let Some(iapd_id) = iapd_id {
                 if server.pd_config.is_some() {
                     let pd_prefixes = server
-                        .get_qualifying_pd_prefixes(pd_delegation_static, pd_delegation_dynamic);
+                        .get_qualifying_pd_prefixes(pd_delegation_static, pd_delegation_dynamic)
+                        .await;
                     if !pd_prefixes.is_empty() {
-                        server.offer_pd_index(&client_duid, &pd_prefixes);
-                        let iapd = build_iapd_options(server, &client_duid, iapd_id, &pd_prefixes);
+                        server.offer_pd_index(&client_duid, &pd_prefixes).await;
+                        let iapd =
+                            build_iapd_options(server, &client_duid, iapd_id, &pd_prefixes).await;
                         reply.opts_mut().insert(v6::DhcpOption::IAPD(iapd));
                     } else {
                         // No qualifying prefixes available - return NOT_ON_LINK to signal client
@@ -393,10 +391,10 @@ async fn handle_dhcpv6_message(
 
             // Confirm/allocate
             if server.na_config.is_some() && iana_id.is_some() {
-                if !server.confirm_na(&client_duid) {
+                if !server.confirm_na(&client_duid).await {
                     // New client during REBIND or first REQUEST
-                    server.offer_na_suffix(&client_duid, mac, None);
-                    server.confirm_na(&client_duid);
+                    server.offer_na_suffix(&client_duid, mac, None).await;
+                    server.confirm_na(&client_duid).await;
                 }
             }
 
@@ -409,11 +407,11 @@ async fn handle_dhcpv6_message(
             if let Some(iana_id) = iana_id {
                 if server.na_config.is_some() {
                     let na_prefixes =
-                        server.get_qualifying_na_prefixes(runtime_sources, static_infos);
+                        server.get_qualifying_na_prefixes(runtime_sources, static_infos).await;
                     if !na_prefixes.is_empty() {
                         if let Some(client_mac) = mac {
                             if let Some(ips) =
-                                assigned_client_na_ips(server, &client_duid, &na_prefixes)
+                                assigned_client_na_ips(server, &client_duid, &na_prefixes).await
                             {
                                 for ip in ips {
                                     if let Err(e) = landscape_ebpf::base::ip_mac::upsert_ipv6_ip_mac(
@@ -431,15 +429,15 @@ async fn handle_dhcpv6_message(
                         }
 
                         // For Renew: ensure we have a cached address, or re-allocate if needed
-                        if !server.na_offered.contains_key(&client_duid) {
+                        if !server.has_na_offer(&client_duid).await {
                             // Client has no cached address - allocate new one
                             tracing::debug!(
                                 "DHCPv6 Renew: no cached address for client, allocating new"
                             );
-                            server.offer_na_suffix(&client_duid, mac, None);
+                            server.offer_na_suffix(&client_duid, mac, None).await;
                         }
                         let mut iana =
-                            build_iana_options(server, &client_duid, iana_id, &na_prefixes);
+                            build_iana_options(server, &client_duid, iana_id, &na_prefixes).await;
 
                         // RFC 8415 §18.4.3: For Rebind/Renew, if the prefix changed,
                         // return old addresses with lifetime=0 so the client deprecates them.
@@ -447,7 +445,7 @@ async fn handle_dhcpv6_message(
                             || msg.msg_type() == DhcpV6MessageType::Renew
                         {
                             let mut server_addrs: Vec<Ipv6Addr> = Vec::new();
-                            if let Some(cache) = server.na_offered.get(&client_duid) {
+                            if let Some(cache) = server.get_na_offer(&client_duid).await {
                                 for (prefix, prefix_len) in &na_prefixes {
                                     server_addrs.push(combine_prefix_suffix(
                                         *prefix,
@@ -501,30 +499,31 @@ async fn handle_dhcpv6_message(
             if let Some(iapd_id) = iapd_id {
                 if server.pd_config.is_some() {
                     let pd_prefixes = server
-                        .get_qualifying_pd_prefixes(pd_delegation_static, pd_delegation_dynamic);
+                        .get_qualifying_pd_prefixes(pd_delegation_static, pd_delegation_dynamic)
+                        .await;
                     if !pd_prefixes.is_empty() {
                         // Confirm existing allocation, or allocate new
-                        if !server.confirm_pd(&client_duid) {
-                            server.offer_pd_index(&client_duid, &pd_prefixes);
-                            server.confirm_pd(&client_duid);
+                        if !server.confirm_pd(&client_duid).await {
+                            server.offer_pd_index(&client_duid, &pd_prefixes).await;
+                            server.confirm_pd(&client_duid).await;
                         }
                         // For Renew/Rebind: re-allocate if cache lost
-                        if !server.pd_offered.contains_key(&client_duid) {
+                        if !server.has_pd_offer(&client_duid).await {
                             tracing::debug!(
                                 "DHCPv6 Renew/Rebind: no cached prefix, allocating new"
                             );
-                            server.offer_pd_index(&client_duid, &pd_prefixes);
+                            server.offer_pd_index(&client_duid, &pd_prefixes).await;
                         }
 
                         let mut iapd =
-                            build_iapd_options(server, &client_duid, iapd_id, &pd_prefixes);
+                            build_iapd_options(server, &client_duid, iapd_id, &pd_prefixes).await;
 
                         // RFC 8415 §18.4.3: deprecate old delegated prefixes no longer valid
                         if msg.msg_type() == DhcpV6MessageType::Rebind
                             || msg.msg_type() == DhcpV6MessageType::Renew
                         {
                             let mut server_prefixes: Vec<Ipv6Addr> = Vec::new();
-                            if let Some(cache) = server.pd_offered.get(&client_duid) {
+                            if let Some(cache) = server.get_pd_offer(&client_duid).await {
                                 if let Some((base_prefix, base_prefix_len)) =
                                     pd_prefixes.get(cache.sub_index as usize)
                                 {
@@ -569,25 +568,30 @@ async fn handle_dhcpv6_message(
                         reply.opts_mut().insert(v6::DhcpOption::IAPD(iapd));
 
                         // Add routes for delegated prefix (system + eBPF)
-                        if let Some(cache) = server.pd_offered.get_mut(&client_duid) {
+                        let route_info = {
+                            let guard = server.status.lock().await;
+                            guard.pd_offered.get(&client_duid).map(|cache| {
+                                (cache.active_routes.clone(), cache.sub_index, cache.valid_time)
+                            })
+                        };
+                        if let Some((old_routes, sub_index, valid_time)) = route_info {
+                            // Remove old routes
+                            for (prefix, len) in &old_routes {
+                                del_route(*prefix, *len, iface_name);
+                                let key = LanIPv6RouteKey {
+                                    iface_name: iface_name.to_string(),
+                                    subnet_index: pd_route_key_index(sub_index, prefix),
+                                };
+                                route_service.remove_ipv6_lan_route_by_key(&key).await;
+                            }
+                            // Add new route for the allocated block
                             let client_ll = match msg_addr {
                                 SocketAddr::V6(v6) => *v6.ip(),
                                 _ => Ipv6Addr::UNSPECIFIED,
                             };
-                            // Remove old routes
-                            for (prefix, len) in cache.active_routes.drain(..) {
-                                del_route(prefix, len, iface_name);
-                                let key = LanIPv6RouteKey {
-                                    iface_name: iface_name.to_string(),
-                                    subnet_index: pd_route_key_index(cache.sub_index, &prefix),
-                                };
-                                route_service.remove_ipv6_lan_route_by_key(&key).await;
-                            }
-
-                            // Add new route for the allocated block
                             let mut new_routes = Vec::new();
                             if let Some((base_prefix, base_prefix_len)) =
-                                pd_prefixes.get(cache.sub_index as usize)
+                                pd_prefixes.get(sub_index as usize)
                             {
                                 let delegated = compute_delegated_prefix(
                                     *base_prefix,
@@ -600,7 +604,7 @@ async fn handle_dhcpv6_message(
                                     *base_prefix_len,
                                     client_ll,
                                     iface_name,
-                                    Some(cache.valid_time),
+                                    Some(valid_time),
                                 );
                                 let lan_info = LanRouteInfo {
                                     ifindex: link_ifindex,
@@ -614,13 +618,33 @@ async fn handle_dhcpv6_message(
                                 };
                                 let key = LanIPv6RouteKey {
                                     iface_name: iface_name.to_string(),
-                                    subnet_index: pd_route_key_index(cache.sub_index, &delegated),
+                                    subnet_index: pd_route_key_index(sub_index, &delegated),
                                 };
                                 route_service.insert_ipv6_lan_route(key, lan_info).await;
                                 new_routes.push((delegated, *base_prefix_len));
                             }
-                            cache.client_addr = client_ll;
-                            cache.active_routes = new_routes;
+                            // Update cache with new routes
+                            {
+                                let mut guard = server.status.lock().await;
+                                if let Some(cache) = guard.pd_offered.get_mut(&client_duid) {
+                                    cache.client_addr = client_ll;
+                                    cache.active_routes = new_routes;
+                                } else {
+                                    drop(guard);
+                                    tracing::warn!(
+                                        "DHCPv6 PD cache entry removed before route update, rolling back {} new routes",
+                                        new_routes.len()
+                                    );
+                                    for (prefix, len) in &new_routes {
+                                        del_route(*prefix, *len, iface_name);
+                                        let key = LanIPv6RouteKey {
+                                            iface_name: iface_name.to_string(),
+                                            subnet_index: pd_route_key_index(sub_index, prefix),
+                                        };
+                                        route_service.remove_ipv6_lan_route_by_key(&key).await;
+                                    }
+                                }
+                            }
                         }
                     } else {
                         // No qualifying prefixes available - return NOT_ON_LINK to signal client
@@ -650,8 +674,8 @@ async fn handle_dhcpv6_message(
             }
 
             tracing::info!("DHCPv6 RELEASE from {:?}", mac);
-            server.release_na(&client_duid);
-            if let Some(released_pd) = server.release_pd(&client_duid) {
+            server.release_na(&client_duid).await;
+            if let Some(released_pd) = server.release_pd(&client_duid).await {
                 cleanup_pd_routes(&released_pd, iface_name, route_service).await;
             }
 
@@ -671,7 +695,7 @@ async fn handle_dhcpv6_message(
         DhcpV6MessageType::Decline => {
             tracing::info!("DHCPv6 DECLINE from {:?}", mac);
             // Mark declined, remove from offered
-            server.release_na(&client_duid);
+            server.release_na(&client_duid).await;
             return true;
         }
 
@@ -679,7 +703,8 @@ async fn handle_dhcpv6_message(
             // RFC 8415 §18.4.2: Check if client's addresses are still on-link.
             // If any address is not appropriate for the link, return NotOnLink
             // to force the client to restart with Solicit.
-            let na_prefixes = server.get_qualifying_na_prefixes(runtime_sources, static_infos);
+            let na_prefixes =
+                server.get_qualifying_na_prefixes(runtime_sources, static_infos).await;
 
             let mut all_on_link = true;
             if let Some(v6::DhcpOption::IANA(client_iana)) = msg.opts().get(v6::OptionCode::IANA) {
@@ -749,16 +774,27 @@ async fn handle_dhcpv6_message(
 }
 
 /// Build IA_NA options for a reply message
-fn build_iana_options(
+async fn build_iana_options(
     server: &DHCPv6Server,
     client_duid: &[u8],
     iana_id: u32,
     qualifying_prefixes: &[(Ipv6Addr, u8)],
 ) -> v6::IANA {
-    let na_config = server.na_config.as_ref().unwrap();
+    let na_config = match server.na_config.as_ref() {
+        Some(c) => c,
+        None => {
+            tracing::warn!("build_iana_options called with na_config=None");
+            let mut iana_opts = v6::DhcpOptions::new();
+            iana_opts.insert(v6::DhcpOption::StatusCode(StatusCode {
+                status: Status::NoAddrsAvail,
+                msg: "IA_NA not configured".to_string(),
+            }));
+            return IANA { id: iana_id, t1: 0, t2: 0, opts: iana_opts };
+        }
+    };
     let mut iana_opts = v6::DhcpOptions::new();
 
-    if let Some(cache) = server.na_offered.get(client_duid) {
+    if let Some(cache) = server.get_na_offer(client_duid).await {
         for (prefix, prefix_len) in qualifying_prefixes {
             let addr = combine_prefix_suffix(*prefix, *prefix_len, cache.suffix);
             iana_opts.insert(v6::DhcpOption::IAAddr(IAAddr {
@@ -785,17 +821,28 @@ fn build_iana_options(
 
 /// Build IA_PD options for a reply message.
 /// Allocates ONE IAPrefix from the pool block indexed by `cache.sub_index`.
-fn build_iapd_options(
+async fn build_iapd_options(
     server: &DHCPv6Server,
     client_duid: &[u8],
     iapd_id: u32,
     qualifying_prefixes: &[(Ipv6Addr, u8)],
 ) -> v6::IAPD {
-    let pd_config = server.pd_config.as_ref().unwrap();
+    let pd_config = match server.pd_config.as_ref() {
+        Some(c) => c,
+        None => {
+            tracing::warn!("build_iapd_options called with pd_config=None");
+            let mut iapd_opts = v6::DhcpOptions::new();
+            iapd_opts.insert(v6::DhcpOption::StatusCode(StatusCode {
+                status: Status::NoPrefixAvail,
+                msg: "IA_PD not configured".to_string(),
+            }));
+            return IAPD { id: iapd_id, t1: 0, t2: 0, opts: iapd_opts };
+        }
+    };
     let mut iapd_opts = v6::DhcpOptions::new();
 
     let mut has_prefix = false;
-    if let Some(cache) = server.pd_offered.get(client_duid) {
+    if let Some(cache) = server.get_pd_offer(client_duid).await {
         if let Some((base_prefix, base_prefix_len)) =
             qualifying_prefixes.get(cache.sub_index as usize)
         {
@@ -875,10 +922,17 @@ mod tests {
     };
     use landscape_common::net::MacAddr;
     use std::net::Ipv6Addr;
+    use std::sync::Arc;
+    use tokio::sync::Mutex;
 
-    #[test]
-    fn test_renew_with_new_prefix_and_cached_address() {
-        // 场景：客户端有缓存的地址信息，改变前缀后 Renew
+    fn make_server(config: &DHCPv6ServerConfig) -> DHCPv6Server {
+        let status =
+            Arc::new(Mutex::new(DhcpV6AssignStatus::from_config_and_devices(config, vec![])));
+        DHCPv6Server::init(config, Vec::new(), status)
+    }
+
+    #[tokio::test]
+    async fn test_renew_with_new_prefix_and_cached_address() {
         let server_config = DHCPv6ServerConfig {
             enable: true,
             ia_na: Some(DHCPv6IANAConfig {
@@ -891,25 +945,21 @@ mod tests {
             ia_pd: None,
         };
 
-        let mut server = DHCPv6Server::init(&server_config, std::collections::HashMap::new());
+        let mut server = make_server(&server_config);
         let server_duid = vec![1, 2, 3, 4, 5, 6];
         server.server_duid = server_duid;
 
         let client_duid = b"test-client-1".to_vec();
         let mac = MacAddr::from([0x00, 0x11, 0x22, 0x33, 0x44, 0x55]);
 
-        // 模拟客户端已有的缓存（原来从 A 前缀获得）
-        server.offer_na_suffix(&client_duid, Some(mac), None);
-        assert!(server.na_offered.contains_key(&client_duid), "Client should have cached address");
+        server.offer_na_suffix(&client_duid, Some(mac), None).await;
+        assert!(server.has_na_offer(&client_duid).await, "Client should have cached address");
 
-        // 获取新前缀（B 前缀）
         let new_prefix = Ipv6Addr::new(0xfd11, 0x2222, 0x3333, 0x3301, 0, 0, 0, 0);
         let qualifying_prefixes = vec![(new_prefix, 64)];
 
-        // 构建 IANA 选项
-        let iana = build_iana_options(&server, &client_duid, 1, &qualifying_prefixes);
+        let iana = build_iana_options(&server, &client_duid, 1, &qualifying_prefixes).await;
 
-        // 验证：IANA 应该有有效的 ID 和时间配置
         assert_eq!(iana.id, 1, "IANA ID should match");
         assert!(iana.t1 > 0, "IANA T1 should be greater than 0 for valid lease");
         assert!(iana.t2 > iana.t1, "IANA T2 should be greater than T1");
@@ -917,7 +967,6 @@ mod tests {
 
     #[test]
     fn test_iana_lifetime_calculation() {
-        // 场景：验证 T1 和 T2 的计算是否正确
         let config = DHCPv6IANAConfig {
             max_prefix_len: 64,
             pool_start: 256,
@@ -935,7 +984,6 @@ mod tests {
 
     #[test]
     fn test_server_initialization() {
-        // 场景：验证服务器正常初始化
         let server_config = DHCPv6ServerConfig {
             enable: true,
             ia_na: Some(DHCPv6IANAConfig {
@@ -952,7 +1000,7 @@ mod tests {
             }),
         };
 
-        let server = DHCPv6Server::init(&server_config, std::collections::HashMap::new());
+        let server = make_server(&server_config);
 
         assert!(server.na_config.is_some(), "NA config should be set");
         assert!(server.pd_config.is_some(), "PD config should be set");
@@ -963,9 +1011,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_address_allocation_for_client() {
-        // 场景：验证为新客户端分配地址
+    #[tokio::test]
+    async fn test_address_allocation_for_client() {
         let server_config = DHCPv6ServerConfig {
             enable: true,
             ia_na: Some(DHCPv6IANAConfig {
@@ -978,22 +1025,20 @@ mod tests {
             ia_pd: None,
         };
 
-        let mut server = DHCPv6Server::init(&server_config, std::collections::HashMap::new());
+        let server = make_server(&server_config);
         let client_duid = b"test-client-new".to_vec();
         let mac = MacAddr::from([0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff]);
 
-        // 为客户端分配地址
-        server.offer_na_suffix(&client_duid, Some(mac), None);
+        server.offer_na_suffix(&client_duid, Some(mac), None).await;
 
-        // 验证：客户端应该有缓存
         assert!(
-            server.na_offered.contains_key(&client_duid),
+            server.has_na_offer(&client_duid).await,
             "Client should be in na_offered cache after allocation"
         );
     }
 
-    #[test]
-    fn test_assigned_client_na_ips_use_cached_suffix() {
+    #[tokio::test]
+    async fn test_assigned_client_na_ips_use_cached_suffix() {
         let server_config = DHCPv6ServerConfig {
             enable: true,
             ia_na: Some(DHCPv6IANAConfig {
@@ -1006,23 +1051,23 @@ mod tests {
             ia_pd: None,
         };
 
-        let mut server = DHCPv6Server::init(&server_config, std::collections::HashMap::new());
+        let server = make_server(&server_config);
         let client_duid = b"test-client-current-ip".to_vec();
         let mac = MacAddr::from([0x10, 0x11, 0x12, 0x13, 0x14, 0x15]);
-        server.offer_na_suffix(&client_duid, Some(mac), None);
+        server.offer_na_suffix(&client_duid, Some(mac), None).await;
 
         let prefix = Ipv6Addr::new(0xfd11, 0x2222, 0x3333, 0x4444, 0, 0, 0, 0);
-        let cache = server.na_offered.get(&client_duid).expect("missing NA cache entry");
+        let cache = server.get_na_offer(&client_duid).await.expect("missing NA cache entry");
         let expected = combine_prefix_suffix(prefix, 64, cache.suffix);
 
         assert_eq!(
-            assigned_client_na_ips(&server, &client_duid, &[(prefix, 64)]),
+            assigned_client_na_ips(&server, &client_duid, &[(prefix, 64)]).await,
             Some(vec![expected])
         );
     }
 
-    #[test]
-    fn test_assigned_client_na_ips_include_all_prefixes() {
+    #[tokio::test]
+    async fn test_assigned_client_na_ips_include_all_prefixes() {
         let server_config = DHCPv6ServerConfig {
             enable: true,
             ia_na: Some(DHCPv6IANAConfig {
@@ -1035,27 +1080,26 @@ mod tests {
             ia_pd: None,
         };
 
-        let mut server = DHCPv6Server::init(&server_config, std::collections::HashMap::new());
+        let server = make_server(&server_config);
         let client_duid = b"test-client-multi-prefix-ip".to_vec();
         let mac = MacAddr::from([0x20, 0x21, 0x22, 0x23, 0x24, 0x25]);
-        server.offer_na_suffix(&client_duid, Some(mac), None);
+        server.offer_na_suffix(&client_duid, Some(mac), None).await;
 
         let prefixes = vec![
             (Ipv6Addr::new(0xfd11, 0x2222, 0x3333, 0x4444, 0, 0, 0, 0), 64),
             (Ipv6Addr::new(0xfd55, 0x6666, 0x7777, 0x8888, 0, 0, 0, 0), 64),
         ];
-        let cache = server.na_offered.get(&client_duid).expect("missing NA cache entry");
+        let cache = server.get_na_offer(&client_duid).await.expect("missing NA cache entry");
         let expected: Vec<Ipv6Addr> = prefixes
             .iter()
             .map(|(prefix, prefix_len)| combine_prefix_suffix(*prefix, *prefix_len, cache.suffix))
             .collect();
 
-        assert_eq!(assigned_client_na_ips(&server, &client_duid, &prefixes), Some(expected));
+        assert_eq!(assigned_client_na_ips(&server, &client_duid, &prefixes).await, Some(expected));
     }
 
-    #[test]
-    fn test_prefix_delegation_allocation() {
-        // 场景：验证前缀委托分配
+    #[tokio::test]
+    async fn test_prefix_delegation_allocation() {
         let server_config = DHCPv6ServerConfig {
             enable: true,
             ia_na: None,
@@ -1066,22 +1110,20 @@ mod tests {
             }),
         };
 
-        let mut server = DHCPv6Server::init(&server_config, std::collections::HashMap::new());
+        let server = make_server(&server_config);
         let client_duid = b"test-client-pd".to_vec();
 
-        // 为客户端分配前缀（需要传入 qualifying_prefixes 池）
         let qualifying = [(Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 0), 56)];
-        server.offer_pd_index(&client_duid, &qualifying);
+        server.offer_pd_index(&client_duid, &qualifying).await;
 
-        // 验证：客户端应该有 PD 缓存
         assert!(
-            server.pd_offered.contains_key(&client_duid),
+            server.has_pd_offer(&client_duid).await,
             "Client should be in pd_offered cache after PD allocation"
         );
     }
 
-    #[test]
-    fn test_pd_one_block_per_client() {
+    #[tokio::test]
+    async fn test_pd_one_block_per_client() {
         let server_config = DHCPv6ServerConfig {
             enable: true,
             ia_na: None,
@@ -1091,7 +1133,7 @@ mod tests {
                 valid_lifetime: 7200,
             }),
         };
-        let mut server = DHCPv6Server::init(&server_config, std::collections::HashMap::new());
+        let server = make_server(&server_config);
         let client_duid = b"one-block-client".to_vec();
 
         let qualifying = [
@@ -1099,9 +1141,9 @@ mod tests {
             (Ipv6Addr::new(0xfd99, 0, 0, 0x39b0, 0, 0, 0, 0), 60),
             (Ipv6Addr::new(0xfd99, 0, 0, 0x39c0, 0, 0, 0, 0), 60),
         ];
-        server.offer_pd_index(&client_duid, &qualifying);
+        server.offer_pd_index(&client_duid, &qualifying).await;
 
-        let iapd = build_iapd_options(&server, &client_duid, 1, &qualifying);
+        let iapd = build_iapd_options(&server, &client_duid, 1, &qualifying).await;
 
         let prefixes: Vec<_> = iapd
             .opts
@@ -1122,8 +1164,8 @@ mod tests {
         assert_eq!(prefixes[0].prefix_ip, Ipv6Addr::new(0xfd99, 0, 0, 0x39a0, 0, 0, 0, 0));
     }
 
-    #[test]
-    fn test_pd_pool_exhausted() {
+    #[tokio::test]
+    async fn test_pd_pool_exhausted() {
         let server_config = DHCPv6ServerConfig {
             enable: true,
             ia_na: None,
@@ -1133,28 +1175,25 @@ mod tests {
                 valid_lifetime: 7200,
             }),
         };
-        let mut server = DHCPv6Server::init(&server_config, std::collections::HashMap::new());
+        let server = make_server(&server_config);
 
         let qualifying = [
             (Ipv6Addr::new(0xfd99, 0, 0, 0, 0, 0, 0, 0), 60),
             (Ipv6Addr::new(0xfd99, 0, 0, 1, 0, 0, 0, 0), 60),
         ];
 
-        let r1 = server.offer_pd_index(b"client-a", &qualifying);
-        let r2 = server.offer_pd_index(b"client-b", &qualifying);
+        let r1 = server.offer_pd_index(b"client-a", &qualifying).await;
+        let r2 = server.offer_pd_index(b"client-b", &qualifying).await;
         assert!(r1.is_some(), "client-a should get a block");
         assert!(r2.is_some(), "client-b should get a block");
         assert_ne!(r1.unwrap(), r2.unwrap(), "different clients get different pool indices");
 
-        let r3 = server.offer_pd_index(b"client-c", &qualifying);
+        let r3 = server.offer_pd_index(b"client-c", &qualifying).await;
         assert!(r3.is_none(), "pool exhausted: third client should get None");
-
-        // Pool exhausted: build_iapd_options should return NoPrefixAvail
-        // (no cache for client-c means no IAPrefix, status = NoPrefixAvail)
     }
 
-    #[test]
-    fn test_pd_pool_exhausted_returns_no_prefix_avail() {
+    #[tokio::test]
+    async fn test_pd_pool_exhausted_returns_no_prefix_avail() {
         let server_config = DHCPv6ServerConfig {
             enable: true,
             ia_na: None,
@@ -1164,13 +1203,12 @@ mod tests {
                 valid_lifetime: 7200,
             }),
         };
-        let mut server = DHCPv6Server::init(&server_config, std::collections::HashMap::new());
+        let server = make_server(&server_config);
 
         let qualifying = [(Ipv6Addr::new(0xfd99, 0, 0, 0, 0, 0, 0, 0), 60)];
-        server.offer_pd_index(b"client-a", &qualifying);
+        server.offer_pd_index(b"client-a", &qualifying).await;
 
-        // client-b has no cache entry → NoPrefixAvail
-        let iapd = build_iapd_options(&server, b"client-b", 1, &qualifying);
+        let iapd = build_iapd_options(&server, b"client-b", 1, &qualifying).await;
 
         let status = iapd.opts.iter().find_map(|o| {
             if let v6::DhcpOption::StatusCode(ref sc) = o {
@@ -1182,18 +1220,18 @@ mod tests {
         assert_eq!(status, Some(Status::NoPrefixAvail));
     }
 
-    #[test]
-    fn test_pd_qualifying_filter_blocks_too_long_prefix() {
+    #[tokio::test]
+    async fn test_pd_qualifying_filter_blocks_too_long_prefix() {
         let server_config = DHCPv6ServerConfig {
             enable: true,
             ia_na: None,
             ia_pd: Some(DHCPv6IAPDConfig {
-                delegate_prefix_len: 56, // only accepts prefix_len <= 56
+                delegate_prefix_len: 56,
                 preferred_lifetime: 3600,
                 valid_lifetime: 7200,
             }),
         };
-        let server = DHCPv6Server::init(&server_config, std::collections::HashMap::new());
+        let server = make_server(&server_config);
 
         let static_blocks = vec![
             crate::ipv6::prefix::PdDelegationParent {
@@ -1202,7 +1240,7 @@ mod tests {
             },
             crate::ipv6::prefix::PdDelegationParent {
                 prefix: Ipv6Addr::new(0xfd99, 0, 0, 0x39a0, 0, 0, 0, 0),
-                prefix_len: 60, // 60 > 56 → filtered out
+                prefix_len: 60,
             },
             crate::ipv6::prefix::PdDelegationParent {
                 prefix: Ipv6Addr::new(0xfd99, 0, 0, 0x39b0, 0, 0, 0, 0),
@@ -1212,7 +1250,7 @@ mod tests {
         let dynamic_blocks: Vec<Arc<ArcSwap<Option<crate::ipv6::prefix::PdDelegationParent>>>> =
             vec![];
 
-        let result = server.get_qualifying_pd_prefixes(&static_blocks, &dynamic_blocks);
+        let result = server.get_qualifying_pd_prefixes(&static_blocks, &dynamic_blocks).await;
 
         assert_eq!(
             result.len(),
@@ -1220,5 +1258,140 @@ mod tests {
             "/48 and /56 qualify under delegate_prefix_len=56, /60 should be filtered"
         );
         assert!(result.iter().all(|(_, len)| *len <= 56));
+    }
+
+    #[test]
+    fn test_collect_dns_servers_link_local_first() {
+        let link_local = Ipv6Addr::new(0xfe80, 0, 0, 0, 0x00aa, 0xbbff, 0xfecc, 0xdd00);
+        let static_infos: Vec<ICMPv6ConfigInfo> = vec![];
+        let runtime: Vec<Arc<ArcSwap<Option<ICMPv6ConfigInfo>>>> = vec![];
+
+        let dns = collect_dns_servers(&runtime, &static_infos, link_local);
+        assert_eq!(dns.len(), 1);
+        assert_eq!(dns[0], link_local);
+    }
+
+    #[test]
+    fn test_collect_dns_servers_deduplicates() {
+        let link_local = Ipv6Addr::new(0xfe80, 0, 0, 0, 0x00aa, 0xbbff, 0xfecc, 0xdd00);
+        let sub_router = Ipv6Addr::new(0xfd00, 0, 0, 0, 0, 0, 0, 1);
+
+        let info = ICMPv6ConfigInfo {
+            rt_prefix: Ipv6Addr::new(0xfd00, 0, 0, 0, 0, 0, 0, 0),
+            rt_prefix_len: 48,
+            sub_router,
+            sub_prefix: Ipv6Addr::new(0xfd00, 0, 0, 0, 0, 0, 0, 0),
+            sub_prefix_len: 64,
+            ra_preferred_lifetime: 300,
+            ra_valid_lifetime: 600,
+        };
+
+        let static_infos = vec![info.clone()];
+        let runtime: Vec<Arc<ArcSwap<Option<ICMPv6ConfigInfo>>>> = vec![];
+
+        let dns = collect_dns_servers(&runtime, &static_infos, link_local);
+        assert_eq!(dns.len(), 2);
+        assert_eq!(dns[0], link_local);
+        assert_eq!(dns[1], sub_router);
+
+        // Duplicate sub_router from static + runtime should be deduped
+        let runtime_src: Arc<ArcSwap<Option<ICMPv6ConfigInfo>>> =
+            Arc::new(ArcSwap::new(Arc::new(Some(info.clone()))));
+        let dns2 = collect_dns_servers(&[runtime_src], &static_infos, link_local);
+        assert_eq!(dns2.len(), 2);
+    }
+
+    #[test]
+    fn test_collect_dns_servers_from_runtime() {
+        let link_local = Ipv6Addr::new(0xfe80, 0, 0, 0, 0x00aa, 0xbbff, 0xfecc, 0xdd00);
+        let sub_router = Ipv6Addr::new(0xfd00, 0, 0, 0, 0, 0, 0, 1);
+
+        let info = ICMPv6ConfigInfo {
+            rt_prefix: Ipv6Addr::new(0xfd00, 0, 0, 0, 0, 0, 0, 0),
+            rt_prefix_len: 48,
+            sub_router,
+            sub_prefix: Ipv6Addr::new(0xfd00, 0, 0, 0, 0, 0, 0, 0),
+            sub_prefix_len: 64,
+            ra_preferred_lifetime: 300,
+            ra_valid_lifetime: 600,
+        };
+        let runtime_src: Arc<ArcSwap<Option<ICMPv6ConfigInfo>>> =
+            Arc::new(ArcSwap::new(Arc::new(Some(info))));
+
+        let dns = collect_dns_servers(&[runtime_src], &[], link_local);
+        assert_eq!(dns.len(), 2);
+        assert_eq!(dns[0], link_local);
+        assert_eq!(dns[1], sub_router);
+    }
+
+    #[tokio::test]
+    async fn test_build_iana_options_no_config_returns_no_addrs_avail() {
+        let config = DHCPv6ServerConfig { enable: true, ia_na: None, ia_pd: None };
+        let server = make_server(&config);
+        let prefixes = [(Ipv6Addr::new(0xfd11, 0x2222, 0x3333, 0x4444, 0, 0, 0, 0), 64)];
+
+        let iana = build_iana_options(&server, b"client", 1, &prefixes).await;
+        assert_eq!(iana.id, 1);
+        assert_eq!(iana.t1, 0);
+        assert_eq!(iana.t2, 0);
+        let status = iana.opts.iter().find_map(|o| {
+            if let v6::DhcpOption::StatusCode(ref sc) = o {
+                Some(sc.status)
+            } else {
+                None
+            }
+        });
+        assert_eq!(status, Some(Status::NoAddrsAvail));
+    }
+
+    #[tokio::test]
+    async fn test_build_iapd_options_no_config_returns_no_prefix_avail() {
+        let config = DHCPv6ServerConfig { enable: true, ia_na: None, ia_pd: None };
+        let server = make_server(&config);
+        let prefixes = [(Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 0), 56)];
+
+        let iapd = build_iapd_options(&server, b"client", 1, &prefixes).await;
+        assert_eq!(iapd.id, 1);
+        assert_eq!(iapd.t1, 0);
+        assert_eq!(iapd.t2, 0);
+        let status = iapd.opts.iter().find_map(|o| {
+            if let v6::DhcpOption::StatusCode(ref sc) = o {
+                Some(sc.status)
+            } else {
+                None
+            }
+        });
+        assert_eq!(status, Some(Status::NoPrefixAvail));
+    }
+
+    #[tokio::test]
+    async fn test_assigned_client_na_ips_missing_cache_returns_none() {
+        let config = DHCPv6ServerConfig {
+            enable: true,
+            ia_na: Some(DHCPv6IANAConfig {
+                max_prefix_len: 64,
+                pool_start: 256,
+                pool_end: Some(512),
+                preferred_lifetime: 3600,
+                valid_lifetime: 7200,
+            }),
+            ia_pd: None,
+        };
+        let server = make_server(&config);
+        let prefixes = [(Ipv6Addr::new(0xfd11, 0x2222, 0x3333, 0x4444, 0, 0, 0, 0), 64)];
+        assert!(assigned_client_na_ips(&server, b"missing", &prefixes).await.is_none());
+    }
+
+    #[test]
+    fn test_pd_route_key_index() {
+        let prefix = Ipv6Addr::new(0xfd11, 0x2222, 0x3333, 0x4444, 0, 0, 0, 1);
+        let key = pd_route_key_index(5, &prefix);
+        assert_ne!(key, 0);
+        // Same sub_index + prefix should produce same key
+        let key2 = pd_route_key_index(5, &prefix);
+        assert_eq!(key, key2);
+        // Different sub_index should produce different key
+        let key3 = pd_route_key_index(6, &prefix);
+        assert_ne!(key, key3);
     }
 }
