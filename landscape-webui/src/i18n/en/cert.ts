@@ -161,6 +161,8 @@ export default {
   source_duplicate: "Duplicate sources are not allowed",
   source_kind_wan: "WAN Interface",
   source_kind_lan_device: "LAN Device",
+  select_device: "Select an enrolled device",
+  select_wan_pd: "Select PD prefix",
   source_iface: "Interface",
   ip_family: "IP Family",
   ttl: "TTL",
@@ -189,7 +191,7 @@ export default {
   ddns_reason_remote_rejected: "DNS provider rejected the update",
   ddns_reason_unknown_error: "DDNS update failed",
   wildcard_hint:
-    "Wildcard records such as *.example.com are supported. When creating jobs you can enter multiple domains and each line will create an independent DDNS job. The first DDNS version currently only supports local WAN address sources.",
+    "Wildcard records such as *.example.com are supported. When creating jobs you can enter multiple domains and each line will create an independent DDNS job.",
   zone_records_hint:
     "One DDNS job manages one zone such as example.com. Enter relative record names: root for the zone root, home for home.example.com, and * for the wildcard record. The UI will convert root to {'@'} when saving. Duplicate record names are not allowed.",
 };

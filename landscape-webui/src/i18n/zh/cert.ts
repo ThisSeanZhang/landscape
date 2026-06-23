@@ -160,6 +160,8 @@ export default {
   source_duplicate: "来源列表里有重复项",
   source_kind_wan: "WAN 网卡",
   source_kind_lan_device: "LAN 设备",
+  select_device: "选择已登记设备",
+  select_wan_pd: "选择 PD 前缀",
   source_iface: "网卡",
   ip_family: "IP 类型",
   ttl: "TTL",
@@ -186,7 +188,7 @@ export default {
   ddns_reason_remote_rejected: "DNS 服务商拒绝了本次更新",
   ddns_reason_unknown_error: "DDNS 更新失败",
   wildcard_hint:
-    "支持填写泛域名记录，例如 *.example.com。创建时可一次填写多个域名，每行会创建一个独立 DDNS 任务。当前第一阶段仅支持本机 WAN 地址来源。",
+    "支持填写泛域名记录，例如 *.example.com。创建时可一次填写多个域名，每行会创建一个独立 DDNS 任务。",
   zone_records_hint:
     "一个 DDNS 任务对应一个顶级域名，例如 example.com。子记录请填写相对名称：root 表示根域名，home 表示 home.example.com，* 表示泛域名。保存时会自动把 root 转成 {'@'}。相同子记录不能重复。",
 };

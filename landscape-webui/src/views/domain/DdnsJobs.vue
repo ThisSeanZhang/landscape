@@ -1,5 +1,6 @@
 <script lang="ts" setup>
 import { get_wan_candidates } from "@/api/iface";
+import { get_current_ip_prefix_info } from "@/api/service_ipv6pd";
 import {
   delete_ddns_job,
   get_ddns_job_status,
@@ -14,12 +15,14 @@ import type {
   DdnsJob,
   DdnsJobRuntime,
   DdnsRecordConfig,
+  DdnsSource,
   DnsProviderProfile,
   IpFamily,
 } from "@landscape-router/types/api/schemas";
 import { computed, h, onMounted, ref } from "vue";
 import {
   NButton,
+  NFlex,
   NPopconfirm,
   NTag,
   useMessage,
@@ -27,6 +30,7 @@ import {
 } from "naive-ui";
 import ConfigModal from "@/components/common/ConfigModal.vue";
 import { useFrontEndStore } from "@/stores/front_end_config";
+import { useEnrolledDeviceStore } from "@/stores/enrolled_device";
 import { useI18n } from "vue-i18n";
 
 const { t } = useI18n();
@@ -36,9 +40,17 @@ const items = ref<DdnsJob[]>([]);
 const runtimeMap = ref<Map<string, DdnsJobRuntime>>(new Map());
 const providerProfiles = ref<DnsProviderProfile[]>([]);
 const ifaceOptions = ref<{ label: string; value: string }[]>([]);
+const wanPdOptions = ref<
+  { label: string; value: string; disabled?: boolean }[]
+>([]);
 type SourceInputItem =
   | { kind: "wan"; target_id: string; family: IpFamily }
-  | { kind: "lan_device"; target_id: string; family: "ipv6" };
+  | {
+      kind: "lan_device";
+      target_id: string;
+      wan_pd_id: string;
+      family: "ipv6";
+    };
 const loading = ref(false);
 const showModal = ref(false);
 const showDetailDrawer = ref(false);
@@ -68,17 +80,20 @@ const formEnabled = computed({
   },
 });
 
+const enrolledDeviceStore = useEnrolledDeviceStore();
 const familyOptions = [
   { label: "IPv4", value: "ipv4" },
   { label: "IPv6", value: "ipv6" },
 ];
+const deviceOptions = computed(() =>
+  enrolledDeviceStore.bindings.map((d) => ({
+    label: d.name,
+    value: d.id!,
+  })),
+);
 const sourceKindOptions = computed(() => [
   { label: t("cert.source_kind_wan"), value: "wan" },
-  {
-    label: t("cert.source_kind_lan_device"),
-    value: "lan_device",
-    disabled: true,
-  },
+  { label: t("cert.source_kind_lan_device"), value: "lan_device" },
 ]);
 
 const rules = {
@@ -158,6 +173,7 @@ function resetForm(item?: DdnsJob) {
       : {
           kind: "lan_device" as const,
           target_id: source.device_id,
+          wan_pd_id: source.wan_pd_id ?? "",
           family: "ipv6" as const,
         },
   ) ?? [
@@ -173,12 +189,14 @@ function resetForm(item?: DdnsJob) {
 async function refresh() {
   loading.value = true;
   try {
-    const [jobs, runtimeStatuses, profiles, wanCandidates] = await Promise.all([
-      get_ddns_jobs(),
-      get_ddns_job_status(),
-      get_dns_provider_profiles(),
-      get_wan_candidates(),
-    ]);
+    const [jobs, runtimeStatuses, profiles, wanCandidates, prefixInfos] =
+      await Promise.all([
+        get_ddns_jobs(),
+        get_ddns_job_status(),
+        get_dns_provider_profiles(),
+        get_wan_candidates(),
+        get_current_ip_prefix_info(),
+      ]);
     items.value = jobs;
     runtimeMap.value = new Map(
       runtimeStatuses.map((item) => [item.job_id, item]),
@@ -188,6 +206,13 @@ async function refresh() {
       label: name,
       value: name,
     }));
+    wanPdOptions.value = Array.from(prefixInfos.entries()).map(
+      ([key, value]) => ({
+        label: key,
+        value: key,
+        disabled: value === null,
+      }),
+    );
   } finally {
     loading.value = false;
   }
@@ -197,14 +222,35 @@ function providerName(id: string) {
   return providerProfiles.value.find((item) => item.id === id)?.name ?? id;
 }
 
-function sourceLabel(job: DdnsJob) {
-  return job.sources
-    .map((source) =>
-      source.t === "local_wan"
-        ? `${frontEndStore.MASK_INFO(source.iface_name)} / ${source.family.toUpperCase()}`
-        : `${t("cert.source_kind_lan_device")} / ${frontEndStore.MASK_INFO(source.device_id)}`,
-    )
-    .join(", ");
+function deviceName(id: string): string {
+  return (
+    enrolledDeviceStore.bindings.find((d) => d.id === id)?.name ??
+    frontEndStore.MASK_INFO(id)
+  );
+}
+
+function sourceTags(job: DdnsJob | null) {
+  if (!job) return null;
+  const tags = job.sources.map((source) =>
+    source.t === "local_wan"
+      ? h(
+          NTag,
+          { size: "small", type: "info" },
+          {
+            default: () =>
+              `${frontEndStore.MASK_INFO(source.iface_name)} / ${source.family.toUpperCase()}`,
+          },
+        )
+      : h(
+          NTag,
+          { size: "small", type: "success" },
+          {
+            default: () =>
+              `${deviceName(source.device_id)}${source.wan_pd_id ? ` @${source.wan_pd_id}` : ""}`,
+          },
+        ),
+  );
+  return h(NFlex, { size: 4, wrap: true }, { default: () => tags });
 }
 
 function statusType(status?: string) {
@@ -347,15 +393,10 @@ function createSourceInputItem(): SourceInputItem {
   };
 }
 
-function ddnsSourceKey(item: {
-  t: "local_wan" | "enrolled_device";
-  iface_name?: string;
-  device_id?: string;
-  family: IpFamily;
-}) {
+function ddnsSourceKey(item: DdnsSource) {
   return item.t === "local_wan"
     ? `${item.t}:${item.iface_name}:${item.family}`
-    : `${item.t}:${item.device_id}:${item.family}`;
+    : `${item.t}:${item.device_id}:${item.wan_pd_id ?? "null"}:${item.family}`;
 }
 
 function updateSourceKind(index: number, value: "wan" | "lan_device") {
@@ -363,6 +404,7 @@ function updateSourceKind(index: number, value: "wan" | "lan_device") {
     sourceInputs.value[index] = {
       kind: "lan_device",
       target_id: "",
+      wan_pd_id: wanPdOptions.value[0]?.value ?? "",
       family: "ipv6",
     };
   } else {
@@ -376,6 +418,17 @@ function updateSourceKind(index: number, value: "wan" | "lan_device") {
 
 function updateSourceTarget(index: number, value: string) {
   sourceInputs.value[index].target_id = value;
+}
+
+function updateSourceWanPd(index: number, value: string) {
+  if (sourceInputs.value[index].kind === "lan_device") {
+    (
+      sourceInputs.value[index] as Extract<
+        SourceInputItem,
+        { kind: "lan_device" }
+      >
+    ).wan_pd_id = value;
+  }
 }
 
 function updateSourceFamily(index: number, value: IpFamily) {
@@ -399,8 +452,8 @@ async function save() {
       .map((item) => normalizeRecordInput(item))
       .filter(Boolean);
 
-    const sources = sourceInputs.value
-      .filter((item) => item.kind === "wan" && item.target_id)
+    const sources: DdnsSource[] = sourceInputs.value
+      .filter((item) => item.target_id)
       .map((item) => {
         if (item.kind === "wan") {
           return {
@@ -412,6 +465,7 @@ async function save() {
         return {
           t: "enrolled_device" as const,
           device_id: item.target_id,
+          wan_pd_id: item.wan_pd_id || undefined,
           family: "ipv6" as const,
         };
       });
@@ -487,7 +541,7 @@ const columns = computed<DataTableColumns<DdnsJob>>(() => [
     title: t("cert.source"),
     key: "source",
     minWidth: 140,
-    render: (row) => sourceLabel(row),
+    render: (row) => sourceTags(row),
   },
   {
     title: t("cert.provider_profile"),
@@ -585,7 +639,7 @@ const columns = computed<DataTableColumns<DdnsJob>>(() => [
 ]);
 
 onMounted(async () => {
-  await refresh();
+  await Promise.all([refresh(), enrolledDeviceStore.UPDATE_INFO()]);
   if (!form.value.provider_profile_id && providerProfiles.value.length > 0) {
     form.value.provider_profile_id = providerProfiles.value[0].id!;
   }
@@ -635,7 +689,7 @@ onMounted(async () => {
               <n-tag size="small">{{
                 frontEndStore.MASK_INFO(selectedDetailJob.zone_name)
               }}</n-tag>
-              <n-tag size="small">{{ sourceLabel(selectedDetailJob) }}</n-tag>
+              <component :is="() => sourceTags(selectedDetailJob)" />
               <n-tag
                 size="small"
                 :type="statusType(aggregateStatus(selectedDetailJob))"
@@ -743,19 +797,36 @@ onMounted(async () => {
             <template #default="{ value, index }">
               <n-flex style="width: 100%" :size="8" :wrap="false">
                 <n-select
-                  style="width: 140px"
+                  style="width: 110px"
                   :value="value.kind"
                   :options="sourceKindOptions"
                   @update:value="updateSourceKind(index, $event)"
                 />
                 <n-select
+                  v-if="value.kind === 'wan'"
                   style="flex: 1"
                   :value="value.target_id"
                   :options="ifaceOptions"
                   @update:value="updateSourceTarget(index, $event)"
                 />
+                <template v-else>
+                  <n-select
+                    style="width: 120px"
+                    :value="(value as any).wan_pd_id"
+                    :options="wanPdOptions"
+                    :placeholder="t('cert.select_wan_pd')"
+                    @update:value="updateSourceWanPd(index, $event)"
+                  />
+                  <n-select
+                    style="flex: 1"
+                    :value="value.target_id"
+                    :options="deviceOptions"
+                    :placeholder="t('cert.select_device')"
+                    @update:value="updateSourceTarget(index, $event)"
+                  />
+                </template>
                 <n-select
-                  style="width: 120px"
+                  style="width: 75px"
                   :value="value.family"
                   :options="
                     value.kind === 'wan'
