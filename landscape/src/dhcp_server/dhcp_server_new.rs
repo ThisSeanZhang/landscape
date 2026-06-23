@@ -1,8 +1,7 @@
-use std::time::Instant;
 use std::{
     collections::{HashMap, HashSet},
     net::{IpAddr, Ipv4Addr, SocketAddr},
-    sync::Arc,
+    sync::{Arc, Mutex},
 };
 
 use crate::dump::udp_packet::dhcp::options::DhcpOptions;
@@ -15,42 +14,39 @@ use cidr::Ipv4Inet;
 use landscape_common::dhcp::v4_server::config::{
     CustomDhcpOption, DHCPv4ServerConfig, DhcpV4DnrOptionConfig,
 };
-use landscape_common::dhcp::v4_server::status::{DHCPv4OfferInfo, DHCPv4OfferInfoItem};
+use landscape_common::dhcp::v4_server::status::DHCPv4OfferInfo;
 use landscape_common::dns::dnr::{
     encode_dhcpv4_dnr_payload_truncated, is_valid_dnr_ipv4_addr, normalize_advertise_domains,
     DHCPV4_DNR_OPTION_CODE,
 };
+#[cfg(test)]
 use landscape_common::enrolled_device::EnrolledDevice;
 use landscape_common::net::MacAddr;
+
+use crate::dhcp_server::dhcp_v4_status::DhcpV4AssignStatus;
 use landscape_common::service::{ServiceStatus, WatchService};
-use landscape_common::utils::time::get_f64_timestamp;
 use landscape_common::{
     LANDSCAPE_DEFAULE_DHCP_V4_SERVER_PORT, LANDSCAPE_DHCP_DEFAULT_ADDRESS_LEASE_TIME,
 };
 use socket2::{Domain, Protocol, Type};
 use tokio::net::UdpSocket;
-use tokio::sync::RwLock;
 use tracing::instrument;
 
-const OFFER_VALID_TIME: u32 = 20;
 const IP_EXPIRE_INTERVAL: u64 = 60 * 10;
 
-#[instrument(skip(config, service_status, assigned_ips))]
+#[instrument(skip(server_ip, dhcp_server, service_status))]
 pub async fn dhcp_v4_server(
     iface_name: String,
     iface_ifindex: u32,
     iface_mac: Option<MacAddr>,
-    config: DHCPv4ServerConfig,
-    dnr_context: Option<DhcpV4DnrRuntimeContext>,
-    enrolled_devices: Vec<EnrolledDevice>,
+    server_ip: Ipv4Addr,
+    prefix_length: u8,
+    dhcp_server: DHCPv4Server,
     service_status: WatchService,
-    assigned_ips: Arc<RwLock<DHCPv4OfferInfo>>,
 ) {
     service_status.just_change_status(ServiceStatus::Staring);
 
-    let ip = config.server_ip_addr;
-
-    let prefix_length = config.network_mask;
+    let ip = server_ip;
     let link_name = iface_name.clone();
     tokio::spawn(async move {
         let handle = match crate::netlink::handle::create_handle() {
@@ -120,11 +116,7 @@ pub async fn dhcp_v4_server(
     let mut dhcp_server_service_status = service_status.subscribe();
     let timeout_timer = tokio::time::sleep(tokio::time::Duration::from_secs(IP_EXPIRE_INTERVAL));
     tokio::pin!(timeout_timer);
-    let mut dhcp_server = DHCPv4Server::init_with_enrolled(config, dnr_context, enrolled_devices);
-
-    // Publish the freshly initialized lease/static-binding view immediately so
-    // UI state reflects the new DHCP instance instead of any stale pre-restart cache.
-    update_assign_info(assigned_ips.clone(), dhcp_server.get_offered_info()).await;
+    let mut dhcp_server = dhcp_server;
 
     loop {
         tokio::select! {
@@ -132,16 +124,13 @@ pub async fn dhcp_v4_server(
             message = message_rx.recv() => {
                 match message {
                     Some(message) => {
-                        let need_update_data = handle_dhcp_message(
-                            &mut dhcp_server,
-                            &send_socket,
-                            iface_ifindex,
-                            iface_mac,
-                            message,
-                        ).await;
-                        if need_update_data {
-                            update_assign_info(assigned_ips.clone(), dhcp_server.get_offered_info()).await;
-                        }
+                    let _need_update_data = handle_dhcp_message(
+                        &mut dhcp_server,
+                        &send_socket,
+                        iface_ifindex,
+                        iface_mac,
+                        message,
+                    ).await;
                     },
                     None => {
                         tracing::error!("dhcp server handle server fail, exit loop");
@@ -151,9 +140,7 @@ pub async fn dhcp_v4_server(
             }
             // 租期超时分支
             _ = &mut timeout_timer => {
-                // dhcp_status.expire_check();
                 timeout_timer.as_mut().reset(tokio::time::Instant::now() + tokio::time::Duration::from_secs(IP_EXPIRE_INTERVAL));
-                update_assign_info(assigned_ips.clone(), dhcp_server.get_offered_info()).await;
             }
             // 处理外部关闭服务通知
             change_result = dhcp_server_service_status.changed() => {
@@ -274,21 +261,6 @@ async fn handle_dhcp_message(
     false
 }
 
-#[derive(Debug)]
-struct DHCPv4ServerOfferedCache {
-    hostname: Option<String>,
-    ip: Ipv4Addr,
-    relative_offer_time: u64,
-    valid_time: u32,
-    is_static: bool,
-}
-
-#[derive(Debug, Clone, Default)]
-struct PerMacDhcpOptions {
-    custom_options: Vec<CustomDhcpOption>,
-    filter_options: Vec<u8>,
-}
-
 #[derive(Debug, Clone, Default)]
 pub struct DhcpV4DnrRuntimeContext {
     /// Certificate/SNI domains are shared with the TLS resolver and hot-reload
@@ -300,150 +272,39 @@ pub struct DhcpV4DnrRuntimeContext {
     pub doh_path: String,
 }
 
-impl DHCPv4ServerOfferedCache {
-    fn get_expire_time(&self) -> u64 {
-        self.relative_offer_time + self.valid_time as u64
-    }
-}
-
-#[derive(Debug)]
 pub struct DHCPv4Server {
-    /// DHCP 服务启动时间
-    boot_time: f64,
-    /// DHCP 服务启动 相对时间
-    relative_boot_time: Instant,
-    /// 服务器 IP
-    server_ip: Ipv4Addr,
-    /// 分配 IP 开始地址
-    ip_range_start: Ipv4Inet,
-    /// 总容量
-    range_capacity: u32,
-    /// 已分配的 IP 列表, True 表示是本次分配的
-    allocated_host: HashMap<Ipv4Addr, bool>,
-    /// 已分配的 IP
-    offered_ip: HashMap<MacAddr, DHCPv4ServerOfferedCache>,
-    /// Configured static binding IP for each MAC.
-    static_binding_ip_by_mac: HashMap<MacAddr, Ipv4Addr>,
-    /// Configured static binding owner for each IP.
-    static_binding_mac_by_ip: HashMap<Ipv4Addr, MacAddr>,
-
-    /// 持有的 OPTIONS
-    options_map: HashMap<u8, DhcpOptions>,
-
-    /// 全局自定义 DHCP option
-    global_custom_options: Vec<(u8, Vec<u8>)>,
-    /// 依赖运行时上下文的全局 option，需要在每次发包前重新编码。
-    global_dynamic_options: Vec<CustomDhcpOption>,
-    /// Enrolled device 中的 per-MAC option 设置，优先级高于公共 DHCP config
-    enrolled_per_mac_options: HashMap<MacAddr, PerMacDhcpOptions>,
-    dnr_context: Option<DhcpV4DnrRuntimeContext>,
-
+    pub server_ip: Ipv4Addr,
+    pub options_map: HashMap<u8, DhcpOptions>,
+    pub global_custom_options: Vec<(u8, Vec<u8>)>,
+    pub global_dynamic_options: Vec<CustomDhcpOption>,
+    pub dnr_context: Option<DhcpV4DnrRuntimeContext>,
     pub address_lease_time: u32,
+    status: Arc<Mutex<DhcpV4AssignStatus>>,
 }
 
 impl DHCPv4Server {
-    ///
-    #[cfg(test)]
-    fn init(config: DHCPv4ServerConfig) -> Self {
-        Self::init_with_enrolled(config, None, vec![])
-    }
-
-    fn init_with_enrolled(
+    pub fn new(
         config: DHCPv4ServerConfig,
         dnr_context: Option<DhcpV4DnrRuntimeContext>,
-        enrolled_devices: Vec<EnrolledDevice>,
+        status: Arc<Mutex<DhcpV4AssignStatus>>,
     ) -> Self {
-        if config.ip_range_end == Some(Ipv4Addr::UNSPECIFIED) {
-            tracing::warn!("ip_range_end is 0.0.0.0, treated as unset (using subnet last_address)");
-        }
-
-        let ip_range_start = Ipv4Inet::new(config.ip_range_start, config.network_mask).unwrap();
-        let ip_addr_end = match config.ip_range_end {
-            Some(addr) if addr != Ipv4Addr::UNSPECIFIED => addr,
-            _ => ip_range_start.last_address(),
-        };
-
-        tracing::debug!("using {:?} -> {:?} to init range", config.ip_range_start, ip_addr_end);
-
-        let range_capacity = u32::from(ip_addr_end) - u32::from(config.ip_range_start);
-
-        let ipv4 = Ipv4Inet::new(config.server_ip_addr.clone(), config.network_mask).unwrap();
-
+        let ipv4 = Ipv4Inet::new(config.server_ip_addr, config.network_mask).unwrap();
         let cidr = ipv4.network();
-        // tracing::debug!("{:?}", ipv4.network());
-        // tracing::debug!("{:?}", ipv4.first());
-        // tracing::debug!("{:?}", ipv4.last());
-        // tracing::debug!("{:?}", ipv4.is_host_address());
-        // tracing::debug!("first: {:?}", ipv4.first().overflowing_add_u32(3).0.address());
-        // tracing::debug!("size: {:?}", 1 << (32 - ipv4.network_length()));
-        // tracing::debug!("mask: {:?}", ipv4.mask());
-        // tracing::debug!("{:?}", cidr.network_length());
-        // tracing::debug!("{:?}", cidr.first_address());
-        // tracing::debug!("{:?}", cidr.is_host_address());
-        // tracing::debug!("{:?}", cidr.last_address());
-
         let broadcast_u32 = u32::from(config.server_ip_addr) | !u32::from(cidr.mask());
 
-        let mut options = vec![];
-        options.push(DhcpOptions::SubnetMask(cidr.mask()));
-        options.push(DhcpOptions::Router(config.server_ip_addr));
-        options.push(DhcpOptions::ServerIdentifier(config.server_ip_addr));
-        options.push(DhcpOptions::DomainNameServer(vec![config.server_ip_addr]));
-        options.push(DhcpOptions::BroadcastAddr(Ipv4Addr::from(broadcast_u32)));
-        // options_map.push(DhcpOptions::AddressLeaseTime(LANDSCAPE_DHCP_DEFAULT_ADDRESS_LEASE_TIME));
+        let options = vec![
+            DhcpOptions::SubnetMask(cidr.mask()),
+            DhcpOptions::Router(config.server_ip_addr),
+            DhcpOptions::ServerIdentifier(config.server_ip_addr),
+            DhcpOptions::DomainNameServer(vec![config.server_ip_addr]),
+            DhcpOptions::BroadcastAddr(Ipv4Addr::from(broadcast_u32)),
+        ];
 
-        tracing::debug!("dhcp v4 server options: {:#?}", options);
-        // TODO
         let mut options_map = HashMap::new();
         for each in options.iter() {
             options_map.insert(each.get_index(), each.clone());
         }
 
-        let mut allocated_host = HashMap::new();
-        let mut offered_ip = HashMap::new();
-        let mut static_binding_ip_by_mac = HashMap::new();
-        let mut static_binding_mac_by_ip = HashMap::new();
-
-        let mut enrolled_per_mac_options = HashMap::new();
-        for device in enrolled_devices {
-            if let Some(ipv4) = device.ipv4 {
-                if let Some(old_ip) = static_binding_ip_by_mac.insert(device.mac, ipv4) {
-                    allocated_host.remove(&old_ip);
-                    static_binding_mac_by_ip.remove(&old_ip);
-                }
-                if let Some(old_mac) = static_binding_mac_by_ip.insert(ipv4, device.mac) {
-                    if old_mac != device.mac {
-                        static_binding_ip_by_mac.remove(&old_mac);
-                        offered_ip.remove(&old_mac);
-                    }
-                }
-
-                allocated_host.insert(ipv4, true);
-                offered_ip.insert(
-                    device.mac,
-                    DHCPv4ServerOfferedCache {
-                        hostname: None,
-                        ip: ipv4,
-                        relative_offer_time: 0,
-                        valid_time: 86400,
-                        is_static: true,
-                    },
-                );
-            }
-
-            if !device.dhcp_custom_options.is_empty() || !device.dhcp_filter_options.is_empty() {
-                enrolled_per_mac_options.insert(
-                    device.mac,
-                    PerMacDhcpOptions {
-                        custom_options: device.dhcp_custom_options,
-                        filter_options: device.dhcp_filter_options,
-                    },
-                );
-            }
-        }
-
-        // Parse global custom options. DNR depends on live certificate domains,
-        // so keep it as config and encode it when building each response.
         let mut global_dynamic_options = Vec::new();
         let global_custom_options: Vec<(u8, Vec<u8>)> = config
             .custom_options
@@ -472,38 +333,42 @@ impl DHCPv4Server {
             config.address_lease_time.unwrap_or(LANDSCAPE_DHCP_DEFAULT_ADDRESS_LEASE_TIME);
 
         DHCPv4Server {
-            boot_time: get_f64_timestamp(),
-            relative_boot_time: Instant::now(),
             server_ip: config.server_ip_addr,
-            ip_range_start,
-            range_capacity,
-            allocated_host,
-            offered_ip,
-            static_binding_ip_by_mac,
-            static_binding_mac_by_ip,
             options_map,
             global_custom_options,
             global_dynamic_options,
-            enrolled_per_mac_options,
             dnr_context,
             address_lease_time,
+            status,
         }
     }
 
-    fn add_decline_ip(&mut self, ip: Ipv4Addr) {
-        if !self.allocated_host.contains_key(&ip) {
-            self.allocated_host.insert(ip, false);
-        }
+    #[cfg(test)]
+    fn init(config: DHCPv4ServerConfig) -> Self {
+        let status = Arc::new(Mutex::new(DhcpV4AssignStatus::init_for_test(config.clone())));
+        Self::new(config, None, status)
     }
 
-    /// Resolve the final set of custom options for a specific MAC address.
-    /// Returns (custom_options, filter_set).
-    ///
-    /// - Starts with global_custom_options as baseline
-    /// - Dynamically encodes global options that depend on runtime context (DNR)
-    /// - Enrolled device per-MAC custom_options override global by code
-    /// - Filter options are applied after all custom option sources are merged
+    #[cfg(test)]
+    fn init_with_enrolled(
+        config: DHCPv4ServerConfig,
+        dnr_context: Option<DhcpV4DnrRuntimeContext>,
+        enrolled_devices: Vec<EnrolledDevice>,
+    ) -> Self {
+        let status = Arc::new(Mutex::new(DhcpV4AssignStatus::from_config_and_devices(
+            &config,
+            enrolled_devices,
+        )));
+        Self::new(config, dnr_context, status)
+    }
+
+    pub fn add_decline_ip(&self, ip: Ipv4Addr) {
+        self.status.lock().unwrap().add_decline_ip(ip);
+    }
+
     pub fn resolve_options_for_mac(&self, mac: &MacAddr) -> (Vec<(u8, Vec<u8>)>, HashSet<u8>) {
+        let per_mac = { self.status.lock().unwrap().per_mac_options.get(mac).cloned() };
+
         let mut merged: HashMap<u8, Vec<u8>> =
             self.global_custom_options.iter().map(|(code, data)| (*code, data.clone())).collect();
         let mut filter_set = HashSet::new();
@@ -517,20 +382,19 @@ impl DHCPv4Server {
             &mut merged,
         );
 
-        if let Some(per_mac) = self.enrolled_per_mac_options.get(mac) {
+        if let Some(ref pm) = per_mac {
             Self::merge_custom_options(
                 mac,
                 "enrolled_device",
-                &per_mac.custom_options,
+                &pm.custom_options,
                 self.server_ip,
                 self.dnr_context.as_ref(),
                 &mut merged,
             );
-            filter_set.extend(per_mac.filter_options.iter().copied());
+            filter_set.extend(pm.filter_options.iter().copied());
         }
 
         let custom_options: Vec<(u8, Vec<u8>)> = merged.into_iter().collect();
-
         (custom_options, filter_set)
     }
 
@@ -560,217 +424,30 @@ impl DHCPv4Server {
         }
     }
 
-    #[cfg(test)]
-    fn offer_ip_without_hostname(&mut self, mac_addr: &MacAddr) -> Option<Ipv4Addr> {
-        self.offer_ip(mac_addr, None)
+    pub fn offer_ip(&self, mac_addr: &MacAddr, hostname: Option<String>) -> Option<Ipv4Addr> {
+        self.status.lock().unwrap().offer_ip(mac_addr, hostname)
     }
 
-    ///
-    fn offer_ip(&mut self, mac_addr: &MacAddr, hostname: Option<String>) -> Option<Ipv4Addr> {
-        if let Some(DHCPv4ServerOfferedCache { ip, .. }) = self.offered_ip.get(mac_addr) {
-            tracing::info!(
-                "allocated exist ip: {:?} for mac: {:?}, hostname: {hostname:?}",
-                ip,
-                mac_addr
-            );
-            return Some(ip.clone());
-        }
-
-        let mut seed = mac_addr.u32_ckecksum();
-        // tracing::debug!("using seed: {seed:?}");
-        loop {
-            if self.allocated_host.len() as u32 == self.range_capacity {
-                if !self.clean_expire_ip() {
-                    tracing::error!("DHCP Server is full");
-                    break;
-                }
-            }
-            let index = seed % self.range_capacity;
-            let (client_addr, _overflow) = self.ip_range_start.overflowing_add_u32(index);
-            let address = client_addr.address();
-            if self.allocated_host.contains_key(&address) {
-                seed += 1;
-            } else {
-                tracing::info!(
-                    "allocated new ip: {:?} for mac: {:?}, hostname: {hostname:?}",
-                    address,
-                    mac_addr
-                );
-
-                self.offered_ip.insert(
-                    mac_addr.clone(),
-                    DHCPv4ServerOfferedCache {
-                        hostname,
-                        ip: address,
-                        relative_offer_time: self.relative_boot_time.elapsed().as_secs(),
-                        valid_time: OFFER_VALID_TIME,
-                        is_static: false,
-                    },
-                );
-                self.allocated_host.insert(address, true);
-                return Some(address);
-            }
-        }
-        None
+    pub fn clean_expire_ip(&self) -> bool {
+        self.status.lock().unwrap().clean_expire_ip()
     }
 
-    /// 清理过期的 IP
-    /// true 表示有清理
-    /// false 表示无法清理
-    pub fn clean_expire_ip(&mut self) -> bool {
-        let current_time = self.relative_boot_time.elapsed().as_secs();
-
-        let mut remove_keys = vec![];
-        self.offered_ip.retain(|_key, value| {
-            // 静态设置的不清理
-            if value.is_static {
-                true
-            } else {
-                if current_time > value.get_expire_time() {
-                    remove_keys.push(value.ip.clone());
-                    false
-                } else {
-                    true
-                }
-            }
-        });
-
-        self.allocated_host.retain(|_key, is_allocated_this_round| *is_allocated_this_round);
-
-        for key in remove_keys.iter() {
-            self.allocated_host.remove(key);
-        }
-
-        tracing::info!("DHCPv4 server cleans up these IPs: {remove_keys:?}");
-        !remove_keys.is_empty()
-    }
-
-    fn is_ip_in_range(&self, ip: Ipv4Addr) -> bool {
-        let ip_u32 = u32::from(ip);
-        let start = u32::from(self.ip_range_start.address());
-        let end = start + self.range_capacity;
-        ip_u32 >= start && ip_u32 < end
-    }
-
-    fn conflicts_with_static_binding(&self, mac_addr: &MacAddr, ip_addr: Ipv4Addr) -> bool {
-        if let Some(static_ip) = self.static_binding_ip_by_mac.get(mac_addr) {
-            if *static_ip != ip_addr {
-                tracing::warn!(
-                    "client {:?} requested {:?}, but static binding requires {:?}",
-                    mac_addr,
-                    ip_addr,
-                    static_ip
-                );
-                return true;
-            }
-        }
-
-        if let Some(static_mac) = self.static_binding_mac_by_ip.get(&ip_addr) {
-            if static_mac != mac_addr {
-                tracing::warn!(
-                    "client {:?} requested static IP {:?} owned by {:?}",
-                    mac_addr,
-                    ip_addr,
-                    static_mac
-                );
-                return true;
-            }
-        }
-
-        false
-    }
-
-    #[cfg(test)]
-    fn ack_request_without_hostname(&mut self, mac_addr: &MacAddr, ip_addr: Ipv4Addr) -> bool {
-        self.ack_request(mac_addr, ip_addr, None)
-    }
-
-    /// 检查是否存在过, 存在过直接刷新时间
     pub fn ack_request(
-        &mut self,
+        &self,
         mac_addr: &MacAddr,
         ip_addr: Ipv4Addr,
         hostname: Option<String>,
     ) -> bool {
-        if self.conflicts_with_static_binding(mac_addr, ip_addr) {
-            return false;
-        }
-
-        if let Some(offered_cache) = self.offered_ip.get_mut(mac_addr) {
-            if offered_cache.ip == ip_addr {
-                offered_cache.hostname = hostname;
-                if !offered_cache.is_static {
-                    // 非静态刷新掉 offer 时间
-                    offered_cache.valid_time = self.address_lease_time;
-                }
-                // 静态和非静态都刷新相对分配时间
-                offered_cache.relative_offer_time = self.relative_boot_time.elapsed().as_secs();
-                return true;
-            } else {
-                tracing::error!(
-                    "client: {mac_addr:?} request ip: {ip_addr:?}, not same as offer: {:?}",
-                    offered_cache.ip
-                )
-            }
-        } else {
-            if self.allocated_host.contains_key(&ip_addr) {
-                tracing::error!(
-                    "Requested IP {ip_addr:?} is already allocated to another client, request by {mac_addr:?}"
-                );
-                return false;
-            }
-
-            if !self.is_ip_in_range(ip_addr) {
-                tracing::warn!("Requested IP out of range");
-                return false;
-            }
-
-            let lease_cache = DHCPv4ServerOfferedCache {
-                hostname,
-                ip: ip_addr,
-                is_static: false,
-                valid_time: self.address_lease_time,
-                relative_offer_time: self.relative_boot_time.elapsed().as_secs(),
-            };
-
-            self.offered_ip.insert(*mac_addr, lease_cache);
-            self.allocated_host.insert(ip_addr, true);
-
-            tracing::info!("Assigned unoffered IP {ip_addr:?} to client {mac_addr:?}");
-
-            return true;
-        }
-        false
+        self.status.lock().unwrap().ack_request(
+            mac_addr,
+            ip_addr,
+            hostname,
+            self.address_lease_time,
+        )
     }
 
     pub fn get_offered_info(&self) -> DHCPv4OfferInfo {
-        let mut offered_ips = Vec::with_capacity(self.offered_ip.len());
-        let relative_boot_time = self.relative_boot_time.elapsed().as_secs();
-        for (
-            mac,
-            DHCPv4ServerOfferedCache {
-                ip,
-                relative_offer_time,
-                valid_time,
-                is_static,
-                hostname,
-            },
-        ) in self.offered_ip.iter()
-        {
-            offered_ips.push(DHCPv4OfferInfoItem {
-                hostname: hostname.clone(),
-                mac: mac.clone(),
-                ip: ip.clone(),
-                relative_active_time: *relative_offer_time,
-                expire_time: *valid_time,
-                is_static: *is_static,
-            });
-        }
-        DHCPv4OfferInfo {
-            boot_time: self.boot_time,
-            relative_boot_time,
-            offered_ips,
-        }
+        self.status.lock().unwrap().get_offered_info()
     }
 }
 
@@ -829,17 +506,6 @@ fn encode_custom_option_with_defaults(
         return Ok(None);
     }
     Ok(Some((DHCPV4_DNR_OPTION_CODE, payload)))
-}
-
-async fn update_assign_info(assigned_ips: Arc<RwLock<DHCPv4OfferInfo>>, info: DHCPv4OfferInfo) {
-    match tokio::time::timeout(tokio::time::Duration::from_secs(5), assigned_ips.write()).await {
-        Ok(mut write_lock) => {
-            *write_lock = info;
-        }
-        Err(_) => {
-            eprintln!("Failed to acquire write lock within timeout");
-        }
-    }
 }
 
 /// get offer
@@ -1015,10 +681,9 @@ fn gen_ack(
 
 #[cfg(test)]
 mod tests {
-    use std::{net::Ipv4Addr, sync::Arc, thread::sleep, time::Duration};
+    use std::{net::Ipv4Addr, sync::Arc};
 
     use arc_swap::ArcSwap;
-    use cidr::Ipv4Inet;
     use landscape_common::{
         dhcp::v4_server::config::{CustomDhcpOption, DHCPv4ServerConfig, DhcpV4DnrOptionConfig},
         dns::dnr::{encode_dns_name, DHCPV4_DNR_OPTION_CODE},
@@ -1039,102 +704,6 @@ mod tests {
 
     fn contains_bytes(payload: &[u8], needle: &[u8]) -> bool {
         payload.windows(needle.len()).any(|window| window == needle)
-    }
-
-    #[tokio::test]
-    pub async fn test_ip_alloc() {
-        landscape_common::init_tracing!();
-
-        let config = DHCPv4ServerConfig::default();
-        let mut dhcp_server = DHCPv4Server::init(config);
-        tracing::debug!("dhcp_server: {:#?}", dhcp_server);
-        let ip = Ipv4Addr::new(192, 168, 5, 226);
-        let mac1 = MacAddr::from_str("00:00:00:00:00:01").unwrap();
-
-        let result = dhcp_server.ack_request_without_hostname(&mac1, ip);
-        tracing::debug!("result: {:?}", result);
-
-        let result = dhcp_server.offer_ip_without_hostname(&mac1);
-        tracing::debug!("result: {:?}", result);
-
-        let result = dhcp_server.ack_request_without_hostname(&mac1, ip);
-        tracing::debug!("result: {:?}", result);
-    }
-
-    #[test]
-    pub fn test_ip_alloc_same_seed_large_then_2_lap() {
-        landscape_common::init_tracing!();
-
-        let ipv4 = Ipv4Inet::new(Ipv4Addr::new(192, 168, 1, 1), 30).unwrap();
-
-        let mut config = DHCPv4ServerConfig::default();
-        config.ip_range_start = ipv4.overflowing_add(1).0.address();
-        config.network_mask = 30;
-        let mut dhcp_server = DHCPv4Server::init(config);
-        tracing::debug!("dhcp_server: {:#?}", dhcp_server);
-        let mac1 = MacAddr::from_str("00:00:00:00:00:01").unwrap();
-        let result = dhcp_server.offer_ip_without_hostname(&mac1);
-        tracing::debug!("result: {:?}", result);
-
-        let mac1 = MacAddr::from_str("00:00:00:00:00:02").unwrap();
-        let result = dhcp_server.offer_ip_without_hostname(&mac1);
-        tracing::debug!("result: {:?}", result);
-
-        sleep(Duration::from_secs(25));
-        let mac1 = MacAddr::from_str("00:00:00:00:00:03").unwrap();
-        let result = dhcp_server.offer_ip_without_hostname(&mac1);
-        tracing::debug!("result: {:?}", result);
-
-        let mac1 = MacAddr::from_str("00:00:00:00:00:04").unwrap();
-        let result = dhcp_server.offer_ip_without_hostname(&mac1);
-        tracing::debug!("result: {:?}", result);
-    }
-
-    #[test]
-    fn static_binding_rejects_old_ip_for_same_mac() {
-        let config = DHCPv4ServerConfig::default();
-        let mac = MacAddr::from_str("00:00:00:00:00:01").unwrap();
-        let static_ip = Ipv4Addr::new(192, 168, 5, 10);
-        let old_ip = Ipv4Addr::new(192, 168, 5, 20);
-
-        let enrolled = EnrolledDevice {
-            mac,
-            name: "test".to_string(),
-            ipv4: Some(static_ip),
-            ..serde_json::from_value(serde_json::json!({
-                "mac": "00:00:00:00:00:01",
-                "name": "test"
-            }))
-            .unwrap()
-        };
-
-        let mut dhcp_server = DHCPv4Server::init_with_enrolled(config, None, vec![enrolled]);
-
-        assert!(!dhcp_server.ack_request_without_hostname(&mac, old_ip));
-        assert!(dhcp_server.ack_request_without_hostname(&mac, static_ip));
-    }
-
-    #[test]
-    fn static_binding_rejects_other_mac_requesting_reserved_ip() {
-        let config = DHCPv4ServerConfig::default();
-        let owner = MacAddr::from_str("00:00:00:00:00:01").unwrap();
-        let other = MacAddr::from_str("00:00:00:00:00:02").unwrap();
-        let static_ip = Ipv4Addr::new(192, 168, 5, 10);
-
-        let enrolled = EnrolledDevice {
-            mac: owner,
-            name: "owner".to_string(),
-            ipv4: Some(static_ip),
-            ..serde_json::from_value(serde_json::json!({
-                "mac": "00:00:00:00:00:01",
-                "name": "owner"
-            }))
-            .unwrap()
-        };
-
-        let mut dhcp_server = DHCPv4Server::init_with_enrolled(config, None, vec![enrolled]);
-
-        assert!(!dhcp_server.ack_request_without_hostname(&other, static_ip));
     }
 
     #[test]
@@ -1263,9 +832,5 @@ mod tests {
         assert_eq!(opts_map.get(&66).unwrap(), b"global-tftp");
         assert_eq!(opts_map.get(&67).unwrap(), b"enrolled.kpxe");
         assert!(filter.contains(&28));
-        assert_eq!(
-            server.static_binding_ip_by_mac.get(&mac).copied(),
-            Some(Ipv4Addr::new(192, 168, 5, 51))
-        );
     }
 }

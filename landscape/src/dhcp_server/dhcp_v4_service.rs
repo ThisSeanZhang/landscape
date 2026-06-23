@@ -1,7 +1,7 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::net::{IpAddr, Ipv4Addr};
 use std::process::Command;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use landscape_common::client::{CallerLookupMatch, CallerLookupSource};
@@ -27,10 +27,12 @@ use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 
 use crate::cert::SharedSniResolver;
-use crate::dhcp_server::dhcp_server_new::DhcpV4DnrRuntimeContext;
+use crate::dhcp_server::dhcp_server_new::{DHCPv4Server, DhcpV4DnrRuntimeContext};
+use crate::dhcp_server::dhcp_v4_status::{DhcpV4AssignStatus, StaticBindingEntry};
 use crate::iface::get_iface_by_name;
 use crate::route::IpRouteService;
 use crate::LandscapeSingleIpInfo;
+use landscape_common::event::hub::{EnrolledDeviceEvent, EnrolledDeviceEventReader};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct IfaceIpv4Cleanup {
@@ -65,8 +67,8 @@ impl IfaceIpv4Cleanup {
 #[derive(Clone)]
 #[allow(dead_code)]
 pub struct DHCPv4ServerStarter {
-    iface_lease_map: Arc<RwLock<HashMap<String, Arc<RwLock<DHCPv4OfferInfo>>>>>,
     iface_scan_map: Arc<RwLock<HashMap<String, Arc<RwLock<ArpScanStatus>>>>>,
+    pub iface_status_map: Arc<RwLock<HashMap<String, Arc<Mutex<DhcpV4AssignStatus>>>>>,
     route_service: IpRouteService,
     db_provider: LandscapeDBServiceProvider,
     api_tls_resolver: SharedSniResolver,
@@ -85,8 +87,8 @@ impl DHCPv4ServerStarter {
             db_provider,
             api_tls_resolver,
             dns_runtime_config,
-            iface_lease_map: Arc::new(RwLock::new(HashMap::new())),
             iface_scan_map: Arc::new(RwLock::new(HashMap::new())),
+            iface_status_map: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 }
@@ -126,15 +128,14 @@ impl ServiceStarterTrait for DHCPv4ServerStarter {
                 .unwrap_or_default();
 
             let store_key = config.get_store_key();
-            let assigned_ips = {
-                let mut write = self.iface_lease_map.write().await;
-                write
-                    .entry(store_key.clone())
-                    .or_insert_with(|| Arc::new(RwLock::new(DHCPv4OfferInfo::default())))
-                    .clone()
-            };
 
-            let status = service_status.clone();
+            let status = DhcpV4AssignStatus::from_config_and_devices(&config.config, bindings);
+            let status_arc = Arc::new(Mutex::new(status));
+            {
+                self.iface_status_map.write().await.insert(store_key.clone(), status_arc.clone());
+            }
+
+            let svc_status = service_status.clone();
             let stop_dhcp_server = CancellationToken::new();
             let stop_dhcp_server_child = stop_dhcp_server.child_token();
             let server_addr = config.config.server_ip_addr;
@@ -143,24 +144,19 @@ impl ServiceStarterTrait for DHCPv4ServerStarter {
             let iface_mac = iface.mac;
             let dnr_context = Some(DhcpV4DnrRuntimeContext {
                 local_domains: self.api_tls_resolver.advertised_domains_state(),
-                // Intentionally fixed per DHCP server start: local DNR advertisements
-                // should keep using the configured DoH port/path rather than tracking
-                // later runtime DNS config updates.
-                // Product policy: users may choose DNR domains/IPs, but the local DoH
-                // port/path are controlled by system DNS config and are not user-overridable.
                 doh_port: self.dns_runtime_config.doh_listen_port,
                 doh_path: self.dns_runtime_config.doh_http_endpoint.clone(),
             });
+            let dhcp_server = DHCPv4Server::new(config.config.clone(), dnr_context, status_arc);
             tokio::spawn(async move {
                 crate::dhcp_server::dhcp_server_new::dhcp_v4_server(
                     config.iface_name,
                     iface_ifindex,
                     iface_mac,
-                    config.config,
-                    dnr_context,
-                    bindings,
-                    status,
-                    assigned_ips,
+                    server_addr,
+                    network_mask,
+                    dhcp_server,
+                    svc_status,
                 )
                 .await;
                 stop_dhcp_server.cancel();
@@ -318,13 +314,41 @@ impl DHCPv4ServerManagerService {
         let _ = self.get_service().update_service(service_config).await;
     }
 
-    pub fn listen_device_events(
-        &self,
-        mut rx: landscape_common::event::hub::EnrolledDeviceEventReader,
-    ) {
+    pub fn listen_device_events(&self, mut rx: EnrolledDeviceEventReader) {
+        let status_map = self.server_starter.iface_status_map.clone();
         tokio::spawn(async move {
-            while let Ok(_event) = rx.recv().await {
-                // TODO: reload static bindings from DB and notify DHCPv4 server to reconcile
+            while let Ok(event) = rx.recv().await {
+                let affected = extract_binding_ifaces(&event);
+                let targets: Vec<String> = {
+                    let guard = status_map.read().await;
+                    if affected.is_empty() {
+                        guard.keys().cloned().collect()
+                    } else {
+                        affected.into_iter().filter(|i| guard.contains_key(i)).collect()
+                    }
+                };
+                for iface in targets {
+                    let s = {
+                        let guard = status_map.read().await;
+                        guard.get(&iface).cloned()
+                    };
+                    if let Some(s) = s {
+                        let mut status = s.lock().unwrap();
+                        match &event {
+                            EnrolledDeviceEvent::Updated { old, new } => {
+                                if let Some(d) = old.as_ref() {
+                                    status.remove_binding(&d.mac);
+                                }
+                                if let Some(entry) = StaticBindingEntry::from_enrolled(new) {
+                                    status.add_or_update_binding(new.mac, entry);
+                                }
+                            }
+                            EnrolledDeviceEvent::Deleted { old } => {
+                                status.remove_binding(&old.mac);
+                            }
+                        }
+                    }
+                }
             }
         });
     }
@@ -373,18 +397,12 @@ impl DHCPv4ServerManagerService {
 
     pub async fn get_assigned_ips(&self) -> HashMap<String, DHCPv4OfferInfo> {
         let mut result = HashMap::new();
-
-        let map = {
-            let read_lock = self.server_starter.iface_lease_map.read().await;
-            read_lock.clone()
-        };
-
-        for (iface_name, assigned_ips) in map {
-            if let Ok(read) = assigned_ips.try_read() {
-                result.insert(iface_name, read.clone());
+        let guard = self.server_starter.iface_status_map.read().await;
+        for (iface_name, status_arc) in guard.iter() {
+            if let Ok(status) = status_arc.lock() {
+                result.insert(iface_name.clone(), status.get_offered_info());
             }
         }
-
         result
     }
 
@@ -392,15 +410,11 @@ impl DHCPv4ServerManagerService {
         &self,
         iface_name: String,
     ) -> Option<DHCPv4OfferInfo> {
-        let info = {
-            let read_lock = self.server_starter.iface_lease_map.read().await;
-            read_lock.get(&iface_name).map(Clone::clone)
-        };
-
-        let Some(offer_info) = info else { return None };
-
-        let data = offer_info.read().await.clone();
-        return Some(data);
+        let guard = self.server_starter.iface_status_map.read().await;
+        let status_arc = guard.get(&iface_name)?.clone();
+        drop(guard);
+        let status = status_arc.lock().ok()?;
+        Some(status.get_offered_info())
     }
 
     pub async fn get_arp_scan_info(&self) -> HashMap<String, Vec<ArpScanInfo>> {
@@ -466,6 +480,28 @@ impl DHCPv4ServerManagerService {
 
         None
     }
+}
+
+fn extract_binding_ifaces(event: &EnrolledDeviceEvent) -> HashSet<String> {
+    let mut set = HashSet::new();
+    match event {
+        EnrolledDeviceEvent::Updated { old, new } => {
+            if let Some(d) = old.as_ref() {
+                if let Some(ref iface) = d.iface_name {
+                    set.insert(iface.clone());
+                }
+            }
+            if let Some(ref iface) = new.iface_name {
+                set.insert(iface.clone());
+            }
+        }
+        EnrolledDeviceEvent::Deleted { old } => {
+            if let Some(ref iface) = old.iface_name {
+                set.insert(iface.clone());
+            }
+        }
+    }
+    set
 }
 
 #[cfg(test)]

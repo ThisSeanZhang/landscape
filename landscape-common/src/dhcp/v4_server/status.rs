@@ -23,6 +23,9 @@ pub struct DHCPv4OfferInfoItem {
     pub relative_active_time: u64,
     pub expire_time: u32,
     pub is_static: bool,
+    #[serde(default)]
+    #[cfg_attr(feature = "openapi", schema(required = false, nullable = false, value_type = String))]
+    pub prev_ip: Option<Ipv4Addr>,
 }
 
 pub struct ArpScanStatus {
