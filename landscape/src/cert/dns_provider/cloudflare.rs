@@ -1,3 +1,12 @@
+// API reference:
+//   List records: GET  /zones/{zone_id}/dns_records?type=&name=
+//     https://developers.cloudflare.com/api/operations/dns-records-for-a-zone-list-dns-records
+//   Create record: POST /zones/{zone_id}/dns_records
+//     https://developers.cloudflare.com/api/operations/dns-records-for-a-zone-create-dns-record
+//   Update record: PUT  /zones/{zone_id}/dns_records/{record_id}
+//     https://developers.cloudflare.com/api/operations/dns-records-for-a-zone-update-dns-record
+//   Delete record: DELETE /zones/{zone_id}/dns_records/{record_id}
+//     https://developers.cloudflare.com/api/operations/dns-records-for-a-zone-delete-dns-record
 use landscape_common::cert::CertError;
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
 use reqwest::Client;
@@ -35,6 +44,8 @@ struct CfZone {
 #[derive(Deserialize)]
 struct CfDnsRecord {
     id: String,
+    #[serde(default)]
+    content: Option<String>,
 }
 
 impl CloudflareSolver {
@@ -260,6 +271,135 @@ impl DnsRecordUpdater for CloudflareSolver {
         ttl: u32,
     ) -> Result<(), CertError> {
         self.upsert_dns_record(zone_name, record_name, value, record_type, ttl).await
+    }
+
+    async fn reconcile_records(
+        &self,
+        zone_name: &str,
+        record_name: &str,
+        record_type: &str,
+        desired_values: &[String],
+        ttl: u32,
+    ) -> Result<(), CertError> {
+        let zone_id = self.find_zone_id(zone_name).await?;
+        let fqdn = if record_name == "@" {
+            zone_name.to_string()
+        } else {
+            format!("{record_name}.{zone_name}")
+        };
+
+        let list_url =
+            self.api_url(&format!("/zones/{zone_id}/dns_records?type={record_type}&name={fqdn}"));
+        let list_resp = self
+            .client
+            .get(list_url)
+            .header(AUTHORIZATION, self.auth_header())
+            .send()
+            .await
+            .map_err(|e| {
+                CertError::DnsChallengeSetupFailed(format!("Cloudflare API request failed: {e}"))
+            })?;
+        let list_text = list_resp.text().await.map_err(|e| {
+            CertError::DnsChallengeSetupFailed(format!("Failed to read Cloudflare response: {e}"))
+        })?;
+        let list_body: CfResponse<Vec<CfDnsRecord>> =
+            serde_json::from_str(&list_text).map_err(|e| {
+                CertError::DnsChallengeSetupFailed(format!(
+                    "Failed to parse Cloudflare response: {e}"
+                ))
+            })?;
+        if !list_body.success {
+            return Err(CertError::DnsChallengeSetupFailed(format!(
+                "Cloudflare DNS record lookup failed: {}",
+                Self::cf_error(&list_body.errors)
+            )));
+        }
+
+        let existing = list_body.result.unwrap_or_default();
+        let desired_set: std::collections::HashSet<&str> =
+            desired_values.iter().map(|v| v.as_str()).collect();
+        let existing_set: std::collections::HashSet<&str> =
+            existing.iter().filter_map(|r| r.content.as_deref()).collect();
+
+        for record in &existing {
+            if let Some(ref content) = record.content {
+                if !desired_set.contains(content.as_str()) {
+                    let del_url =
+                        self.api_url(&format!("/zones/{zone_id}/dns_records/{}", record.id));
+                    let del_resp = self
+                        .client
+                        .delete(del_url)
+                        .header(AUTHORIZATION, self.auth_header())
+                        .send()
+                        .await
+                        .map_err(|e| {
+                            CertError::DnsChallengeSetupFailed(format!(
+                                "Cloudflare API request failed: {e}"
+                            ))
+                        })?;
+                    let del_text = del_resp.text().await.map_err(|e| {
+                        CertError::DnsChallengeSetupFailed(format!(
+                            "Failed to read Cloudflare response: {e}"
+                        ))
+                    })?;
+                    let del_body: CfResponse<serde_json::Value> = serde_json::from_str(&del_text)
+                        .map_err(|e| {
+                        CertError::DnsChallengeSetupFailed(format!(
+                            "Failed to parse Cloudflare response: {e}"
+                        ))
+                    })?;
+                    if !del_body.success {
+                        return Err(CertError::DnsChallengeSetupFailed(format!(
+                            "Cloudflare DNS record deletion failed: {}",
+                            Self::cf_error(&del_body.errors)
+                        )));
+                    }
+                }
+            }
+        }
+
+        for value in desired_values {
+            if !existing_set.contains(value.as_str()) {
+                let payload = serde_json::json!({
+                    "type": record_type,
+                    "name": fqdn,
+                    "content": value,
+                    "ttl": ttl,
+                    "proxied": false,
+                });
+                let create_url = self.api_url(&format!("/zones/{zone_id}/dns_records"));
+                let create_resp = self
+                    .client
+                    .post(create_url)
+                    .header(AUTHORIZATION, self.auth_header())
+                    .header(CONTENT_TYPE, "application/json")
+                    .body(payload.to_string())
+                    .send()
+                    .await
+                    .map_err(|e| {
+                        CertError::DnsChallengeSetupFailed(format!("Cloudflare create failed: {e}"))
+                    })?;
+                let create_text = create_resp.text().await.map_err(|e| {
+                    CertError::DnsChallengeSetupFailed(format!(
+                        "Failed to read Cloudflare response: {e}"
+                    ))
+                })?;
+                let create_body: CfResponse<serde_json::Value> = serde_json::from_str(&create_text)
+                    .map_err(|e| {
+                        CertError::DnsChallengeSetupFailed(format!(
+                            "Failed to parse Cloudflare response: {e}"
+                        ))
+                    })?;
+                if !create_body.success {
+                    return Err(CertError::DnsChallengeSetupFailed(format!(
+                        "Cloudflare DNS record creation failed: {}",
+                        Self::cf_error(&create_body.errors)
+                    )));
+                }
+            }
+        }
+
+        Ok(())
     }
 }
 

@@ -91,8 +91,8 @@ pub struct DdnsRecordConfig {
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct DdnsFamilyRuntime {
     #[serde(default)]
-    #[cfg_attr(feature = "openapi", schema(required = false, nullable = false, value_type = String))]
-    pub last_published_ip: Option<IpAddr>,
+    #[cfg_attr(feature = "openapi", schema(required = false, nullable = false, value_type = Vec<String>))]
+    pub last_published_ips: Vec<IpAddr>,
     #[serde(default)]
     #[cfg_attr(feature = "openapi", schema(required = false, nullable = false))]
     pub last_sync_at: Option<f64>,
@@ -301,7 +301,7 @@ impl DdnsFamilyRuntime {
         let reason = if enabled { DdnsRuntimeReason::Pending } else { DdnsRuntimeReason::Disabled };
         let reason = if enabled && !configured { DdnsRuntimeReason::NotConfigured } else { reason };
         Self {
-            last_published_ip: None,
+            last_published_ips: Vec::new(),
             last_sync_at: None,
             message: None,
             last_error: None,

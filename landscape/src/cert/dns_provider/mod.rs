@@ -26,6 +26,15 @@ pub trait DnsRecordUpdater: Send + Sync {
         record_type: &str,
         ttl: u32,
     ) -> Result<(), CertError>;
+
+    async fn reconcile_records(
+        &self,
+        zone_name: &str,
+        record_name: &str,
+        record_type: &str,
+        desired_values: &[String],
+        ttl: u32,
+    ) -> Result<(), CertError>;
 }
 
 /// Factory: build solver from reusable DNS provider profile config.

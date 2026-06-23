@@ -1,3 +1,14 @@
+// API reference:
+//   DescribeRecordList:
+//     https://cloud.tencent.com/document/product/302/9343
+//   CreateRecord:
+//     https://cloud.tencent.com/document/product/302/9345
+//   ModifyRecord:
+//     https://cloud.tencent.com/document/product/302/9344
+//   DeleteRecord:
+//     https://cloud.tencent.com/document/product/302/9347
+//   DescribeDomain:
+//     https://cloud.tencent.com/document/product/302/9501
 use chrono::Utc;
 use hmac::{Hmac, KeyInit, Mac};
 use landscape_common::cert::CertError;
@@ -87,6 +98,8 @@ struct TencentRecordItem {
     name: String,
     #[serde(rename = "Type")]
     record_type: String,
+    #[serde(rename = "Value")]
+    value: Option<String>,
 }
 
 impl TencentSolver {
@@ -343,6 +356,62 @@ impl DnsRecordUpdater for TencentSolver {
         ttl: u32,
     ) -> Result<(), CertError> {
         self.upsert_dns_record(zone_name, record_name, record_type, value, ttl).await
+    }
+
+    async fn reconcile_records(
+        &self,
+        zone_name: &str,
+        record_name: &str,
+        record_type: &str,
+        desired_values: &[String],
+        ttl: u32,
+    ) -> Result<(), CertError> {
+        let list: TencentDescribeRecordListBody = self
+            .request(
+                "DescribeRecordList",
+                json!({ "Domain": zone_name, "Subdomain": record_name, "RecordType": record_type }),
+            )
+            .await?;
+
+        let desired_set: std::collections::HashSet<&str> =
+            desired_values.iter().map(|v| v.as_str()).collect();
+        let existing_value_set: std::collections::HashSet<&str> =
+            list.record_list.iter().filter_map(|r| r.value.as_deref()).collect();
+
+        for item in &list.record_list {
+            if let Some(ref val) = item.value {
+                if !desired_set.contains(val.as_str()) {
+                    self.request::<TencentEmptyBody>(
+                        "DeleteRecord",
+                        json!({
+                            "Domain": zone_name,
+                            "RecordId": item.record_id
+                        }),
+                    )
+                    .await?;
+                }
+            }
+        }
+
+        for value in desired_values {
+            if !existing_value_set.contains(value.as_str()) {
+                self.request::<TencentCreateRecordBody>(
+                    "CreateRecord",
+                    json!({
+                        "Domain": zone_name,
+                        "SubDomain": record_name,
+                        "RecordType": record_type,
+                        "RecordLine": "默认",
+                        "RecordLineId": "0",
+                        "Value": value,
+                        "TTL": ttl
+                    }),
+                )
+                .await?;
+            }
+        }
+
+        Ok(())
     }
 }
 

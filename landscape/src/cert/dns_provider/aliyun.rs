@@ -1,3 +1,14 @@
+// API reference:
+//   DescribeSubDomainRecords:
+//     https://help.aliyun.com/document_detail/29779.html
+//   AddDomainRecord:
+//     https://help.aliyun.com/document_detail/29772.html
+//   UpdateDomainRecord:
+//     https://help.aliyun.com/document_detail/29774.html
+//   DeleteDomainRecord:
+//     https://help.aliyun.com/document_detail/29773.html
+//   DescribeDomainInfo:
+//     https://help.aliyun.com/document_detail/29780.html
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use base64::Engine;
 use chrono::Utc;
@@ -283,6 +294,88 @@ impl DnsRecordUpdater for AliyunSolver {
             format!("{record_name}.{zone_name}")
         };
         self.upsert_dns_record(zone_name, record_name, &fqdn, record_type, value, ttl).await
+    }
+
+    async fn reconcile_records(
+        &self,
+        zone_name: &str,
+        record_name: &str,
+        record_type: &str,
+        desired_values: &[String],
+        ttl: u32,
+    ) -> Result<(), CertError> {
+        let fqdn = if record_name == "@" {
+            zone_name.to_string()
+        } else {
+            format!("{record_name}.{zone_name}")
+        };
+
+        let query = self
+            .request(
+                "DescribeSubDomainRecords",
+                vec![
+                    ("SubDomain".to_string(), fqdn),
+                    ("Type".to_string(), record_type.to_string()),
+                ],
+            )
+            .await?;
+
+        let existing_records: Vec<(String, String)> = query
+            .get("DomainRecords")
+            .and_then(|v| v.get("Record"))
+            .and_then(Value::as_array)
+            .map(|records| {
+                records
+                    .iter()
+                    .filter_map(|record| {
+                        let id = record.get("RecordId").and_then(|id| match id {
+                            Value::String(s) => Some(s.clone()),
+                            Value::Number(n) => Some(n.to_string()),
+                            _ => None,
+                        });
+                        let value =
+                            record.get("Value").and_then(Value::as_str).map(|s| s.to_string());
+                        match (id, value) {
+                            (Some(id), Some(value)) => Some((id, value)),
+                            _ => None,
+                        }
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let desired_set: std::collections::HashSet<&str> =
+            desired_values.iter().map(|v| v.as_str()).collect();
+        let existing_value_set: std::collections::HashSet<&str> =
+            existing_records.iter().map(|(_, v)| v.as_str()).collect();
+
+        for (record_id, record_value) in &existing_records {
+            if !desired_set.contains(record_value.as_str()) {
+                self.request(
+                    "DeleteDomainRecord",
+                    vec![("RecordId".to_string(), record_id.clone())],
+                )
+                .await?;
+            }
+        }
+
+        for value in desired_values {
+            if !existing_value_set.contains(value.as_str()) {
+                self.request(
+                    "AddDomainRecord",
+                    vec![
+                        ("DomainName".to_string(), zone_name.to_string()),
+                        ("RR".to_string(), record_name.to_string()),
+                        ("Type".to_string(), record_type.to_string()),
+                        ("Value".to_string(), value.clone()),
+                        ("TTL".to_string(), ttl.to_string()),
+                    ],
+                )
+                .await?;
+            }
+        }
+
+        Ok(())
     }
 }
 

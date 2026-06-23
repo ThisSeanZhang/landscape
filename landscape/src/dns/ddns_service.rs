@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::net::{IpAddr, Ipv6Addr};
 use std::sync::Arc;
 use std::time::Duration;
@@ -20,9 +20,7 @@ use landscape_database::{
     dns_provider_profile::repository::DnsProviderProfileRepository,
     provider::LandscapeDBServiceProvider,
 };
-use reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
-use reqwest::Client;
-use serde::Deserialize;
+
 use tokio::sync::{Mutex, RwLock};
 use tokio::time::MissedTickBehavior;
 use uuid::Uuid;
@@ -37,8 +35,9 @@ const DEFAULT_DDNS_RECORD_TTL: u32 = 120;
 type DdnsRuntimeMap = Arc<RwLock<HashMap<Uuid, DdnsJobRuntime>>>;
 type DdnsSyncLock = Arc<Mutex<()>>;
 
+#[derive(Default)]
 struct EnrolledDeviceCache {
-    raw_ip: std::net::Ipv6Addr,
+    raw_ips: HashSet<Ipv6Addr>,
 }
 
 type EnrolledCache = Arc<DashMap<Uuid, EnrolledDeviceCache>>;
@@ -57,7 +56,6 @@ pub struct DdnsService {
     store: DdnsJobRepository,
     profile_store: DnsProviderProfileRepository,
     route_service: IpRouteService,
-    client: Client,
     runtime: DdnsRuntimeMap,
     sync_lock: DdnsSyncLock,
     prefix_map: IAPrefixMap,
@@ -77,14 +75,13 @@ impl DdnsService {
             store: store.ddns_job_store(),
             profile_store: store.dns_provider_profile_store(),
             route_service,
-            client: Client::new(),
             runtime: Arc::new(RwLock::new(HashMap::new())),
             sync_lock: Arc::new(Mutex::new(())),
             prefix_map,
             enrolled_cache: Arc::new(
                 enrolled_ipv6_cache
                     .into_iter()
-                    .map(|(id, ip)| (id, EnrolledDeviceCache { raw_ip: ip }))
+                    .map(|(id, ip)| (id, EnrolledDeviceCache { raw_ips: HashSet::from([ip]) }))
                     .collect(),
             ),
             pd_watchers: Arc::new(DashMap::new()),
@@ -189,7 +186,13 @@ impl DdnsService {
                     }
                     Ok(IPv6AssignEvent::Expired(info)) => {
                         if let Some(device_id) = info.device_id {
-                            service.enrolled_cache.remove(&device_id);
+                            if let Some(mut entry) = service.enrolled_cache.get_mut(&device_id) {
+                                entry.raw_ips.remove(&info.ip);
+                                if entry.raw_ips.is_empty() {
+                                    drop(entry);
+                                    service.enrolled_cache.remove(&device_id);
+                                }
+                            }
                         }
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
@@ -218,7 +221,7 @@ impl DdnsService {
             return Ok(());
         }
 
-        self.enrolled_cache.insert(device_id, EnrolledDeviceCache { raw_ip: ip });
+        self.enrolled_cache.entry(device_id).or_default().raw_ips.insert(ip);
         self.sync_jobs_now(matching).await;
         Ok(())
     }
@@ -483,13 +486,13 @@ impl DdnsService {
                     continue;
                 }
 
-                let current_ip = self.resolve_record_ip(&job.sources, family).await;
+                let current_ips = self.resolve_record_ip(&job.sources, family).await;
                 self.sync_one_record_family(
                     &profile.provider_config,
                     &job.zone_name,
                     record,
                     family,
-                    current_ip,
+                    current_ips,
                     effective_ddns_ttl(job, &profile),
                     effective_ttl_config_updated_at(job, &profile),
                 )
@@ -506,7 +509,7 @@ impl DdnsService {
         &self,
         sources: &[DdnsSource],
         wanted_family: IpFamily,
-    ) -> Result<IpAddr, ResolveRecordIpError> {
+    ) -> Result<Vec<IpAddr>, ResolveRecordIpError> {
         let ts = landscape_common::utils::time::get_f64_timestamp();
         let mut last_error = None;
         for source in sources {
@@ -517,7 +520,25 @@ impl DdnsService {
                         IpFamily::Ipv6 => self.route_service.get_ipv6_wan_route(iface_name).await,
                     };
                     if let Some(route) = route {
-                        return Ok(route.iface_ip);
+                        if wanted_family == IpFamily::Ipv6 {
+                            if let IpAddr::V6(addr) = route.iface_ip {
+                                if !((addr.segments()[0] & 0xe000) == 0x2000)
+                                    && !addr.is_unique_local()
+                                {
+                                    last_error = Some(ResolveRecordIpError {
+                                        status: DdnsJobStatus::Idle,
+                                        reason: DdnsRuntimeReason::WaitingWanIp,
+                                        detail: format!(
+                                            "WAN interface '{iface_name}' IPv6 address is link-local, waiting for a global/unique-local address"
+                                        ),
+                                        retryable: true,
+                                        next_retry_at: Some(ts + DDNS_RETRY_INTERVAL_SECS as f64),
+                                    });
+                                    continue;
+                                }
+                            }
+                        }
+                        return Ok(vec![route.iface_ip]);
                     }
                     last_error = Some(ResolveRecordIpError {
                         status: DdnsJobStatus::Idle,
@@ -547,7 +568,7 @@ impl DdnsService {
                                     continue;
                                 }
                             };
-                            let raw_ip = entry.raw_ip;
+                            let raw_ips: Vec<Ipv6Addr> = entry.raw_ips.iter().copied().collect();
                             drop(entry);
 
                             let pd_rx = self.prefix_map.get_ia_prefix(wan).await;
@@ -567,10 +588,39 @@ impl DdnsService {
                                 }
                             };
 
-                            let suffix = extract_ipv6_suffix(raw_ip, pd.prefix_len);
-                            let ip =
-                                combine_ipv6_prefix_suffix(pd.prefix_ip, pd.prefix_len, suffix);
-                            return Ok(IpAddr::V6(ip));
+                            let mut seen_suffixes = HashSet::new();
+                            let mut result = Vec::new();
+                            for raw_ip in &raw_ips {
+                                if !((raw_ip.segments()[0] & 0xe000) == 0x2000)
+                                    && !raw_ip.is_unique_local()
+                                {
+                                    continue;
+                                }
+                                let suffix = extract_ipv6_suffix(*raw_ip, pd.prefix_len);
+                                if seen_suffixes.insert(suffix) {
+                                    let ip = combine_ipv6_prefix_suffix(
+                                        pd.prefix_ip,
+                                        pd.prefix_len,
+                                        suffix,
+                                    );
+                                    result.push(IpAddr::V6(ip));
+                                }
+                            }
+
+                            if result.is_empty() {
+                                last_error = Some(ResolveRecordIpError {
+                                    status: DdnsJobStatus::Idle,
+                                    reason: DdnsRuntimeReason::WaitingLanDeviceIp,
+                                    detail: format!(
+                                        "device {device_id} has no usable (non-link-local) IPv6 address"
+                                    ),
+                                    retryable: true,
+                                    next_retry_at: Some(ts + DDNS_RETRY_INTERVAL_SECS as f64),
+                                });
+                                continue;
+                            }
+
+                            return Ok(result);
                         }
                         _ => {
                             last_error = Some(ResolveRecordIpError {
@@ -603,7 +653,7 @@ impl DdnsService {
         zone_name: &str,
         record: &mut DdnsRecordRuntime,
         family: IpFamily,
-        current_ip: Result<IpAddr, ResolveRecordIpError>,
+        current_ips: Result<Vec<IpAddr>, ResolveRecordIpError>,
         ttl: Option<u32>,
         config_updated_at: f64,
     ) {
@@ -614,11 +664,11 @@ impl DdnsService {
         };
         let last_sync_before = family_runtime.last_sync_at;
         let was_success = family_runtime.status == DdnsJobStatus::Success;
-        let is_initial_publish = family_runtime.last_published_ip.is_none();
+        let is_initial_publish = family_runtime.last_published_ips.is_empty();
         family_runtime.last_sync_at = Some(ts);
 
-        let current_ip = match current_ip {
-            Ok(current_ip) => current_ip,
+        let current_ips = match current_ips {
+            Ok(ips) => ips,
             Err(issue) => {
                 let last_error =
                     if issue.status == DdnsJobStatus::Error { Some(issue.detail) } else { None };
@@ -645,8 +695,12 @@ impl DdnsService {
             None,
         );
 
+        let current_set: HashSet<IpAddr> = current_ips.iter().cloned().collect();
+        let last_set: HashSet<IpAddr> = family_runtime.last_published_ips.iter().cloned().collect();
+
         if was_success
-            && family_runtime.last_published_ip == Some(current_ip)
+            && current_set == last_set
+            && !current_set.is_empty()
             && last_sync_before.is_some_and(|last_sync| last_sync >= config_updated_at)
         {
             apply_family_runtime_state(
@@ -661,11 +715,9 @@ impl DdnsService {
             return;
         }
 
-        match update_dns_record(&self.client, provider, zone_name, &record.name, current_ip, ttl)
-            .await
-        {
+        match reconcile_dns_records(provider, zone_name, &record.name, &current_ips, ttl).await {
             Ok(()) => {
-                family_runtime.last_published_ip = Some(current_ip);
+                family_runtime.last_published_ips = current_ips;
                 apply_family_runtime_state(
                     family_runtime,
                     DdnsJobStatus::Success,
@@ -805,7 +857,7 @@ fn family_needs_retry(
 ) -> bool {
     job_has_matching_source(job, family)
         && runtime.retryable
-        && runtime.last_published_ip.is_none()
+        && runtime.last_published_ips.is_empty()
         && runtime.next_retry_at.map(|ts| ts <= now_ts).unwrap_or(true)
 }
 
@@ -1038,136 +1090,29 @@ fn relative_record_name_for_ddns(zone_name: &str, record_name: &str) -> Result<S
     }
 }
 
-async fn update_dns_record(
-    client: &Client,
+async fn reconcile_dns_records(
     provider: &DnsProviderConfig,
     zone_name: &str,
     record_name: &str,
-    ip: IpAddr,
+    desired_ips: &[IpAddr],
     ttl: Option<u32>,
 ) -> Result<(), String> {
-    match provider {
-        DnsProviderConfig::Cloudflare { api_token } => {
-            update_cloudflare_record(client, api_token, zone_name, record_name, ip, ttl).await
-        }
-        DnsProviderConfig::Aliyun { .. } | DnsProviderConfig::Tencent { .. } => {
-            let record_type = match ip {
-                IpAddr::V4(_) => "A",
-                IpAddr::V6(_) => "AAAA",
-            };
-            let updater = build_record_updater(provider).map_err(|e| e.to_string())?;
-            updater
-                .upsert_record(
-                    zone_name,
-                    &relative_record_name_for_ddns(zone_name, record_name)?,
-                    &ip.to_string(),
-                    record_type,
-                    normalized_ddns_ttl(ttl),
-                )
-                .await
-                .map_err(|e| e.to_string())
-        }
-        DnsProviderConfig::Manual => {
-            Err("manual DNS provider does not support DDNS updates".to_string())
-        }
-        _ => Err("selected DNS provider does not support DDNS updates yet".to_string()),
-    }
-}
-async fn update_cloudflare_record(
-    client: &Client,
-    api_token: &str,
-    zone_name: &str,
-    record_name: &str,
-    ip: IpAddr,
-    ttl: Option<u32>,
-) -> Result<(), String> {
-    let zone_id = find_cloudflare_zone_id(client, api_token, zone_name).await?;
-    let fqdn = fqdn_for_zone_record(zone_name, record_name)?;
-    let record_type = match ip {
+    let Some(first) = desired_ips.first() else {
+        return Ok(());
+    };
+
+    let record_type = match first {
         IpAddr::V4(_) => "A",
         IpAddr::V6(_) => "AAAA",
     };
     let ttl = normalized_ddns_ttl(ttl);
-    let existing = find_cloudflare_record(client, api_token, &zone_id, &fqdn, record_type).await?;
-    let payload = serde_json::json!({
-        "type": record_type,
-        "name": fqdn,
-        "content": ip.to_string(),
-        "ttl": ttl,
-        "proxied": false,
-    });
-
-    let url = if let Some(ref record_id) = existing {
-        format!("https://api.cloudflare.com/client/v4/zones/{zone_id}/dns_records/{record_id}")
-    } else {
-        format!("https://api.cloudflare.com/client/v4/zones/{zone_id}/dns_records")
-    };
-    let request = if existing.is_some() { client.put(url) } else { client.post(url) };
-    let response = request
-        .header(AUTHORIZATION, format!("Bearer {api_token}"))
-        .header(CONTENT_TYPE, "application/json")
-        .body(payload.to_string())
-        .send()
+    let record_name = relative_record_name_for_ddns(zone_name, record_name)?;
+    let values: Vec<String> = desired_ips.iter().map(|ip| ip.to_string()).collect();
+    let updater = build_record_updater(provider).map_err(|e| e.to_string())?;
+    updater
+        .reconcile_records(zone_name, &record_name, record_type, &values, ttl)
         .await
-        .map_err(|e| format!("Cloudflare request failed: {e}"))?;
-    let text =
-        response.text().await.map_err(|e| format!("Cloudflare response read failed: {e}"))?;
-    let body: CfResponse<serde_json::Value> = serde_json::from_str(&text)
-        .map_err(|e| format!("Cloudflare response parse failed: {e}"))?;
-    if body.success {
-        Ok(())
-    } else {
-        Err(cf_error(&body.errors))
-    }
-}
-
-async fn find_cloudflare_zone_id(
-    client: &Client,
-    api_token: &str,
-    zone: &str,
-) -> Result<String, String> {
-    let response = client
-        .get(format!("https://api.cloudflare.com/client/v4/zones?name={zone}"))
-        .header(AUTHORIZATION, format!("Bearer {api_token}"))
-        .send()
-        .await
-        .map_err(|e| format!("Cloudflare zone lookup failed: {e}"))?;
-    let text = response.text().await.map_err(|e| format!("Cloudflare zone read failed: {e}"))?;
-    let body: CfResponse<Vec<CfZone>> =
-        serde_json::from_str(&text).map_err(|e| format!("Cloudflare zone parse failed: {e}"))?;
-    if body.success {
-        body.result
-            .and_then(|zones| zones.into_iter().next())
-            .map(|zone| zone.id)
-            .ok_or_else(|| format!("Cloudflare zone {zone} not found"))
-    } else {
-        Err(cf_error(&body.errors))
-    }
-}
-
-async fn find_cloudflare_record(
-    client: &Client,
-    api_token: &str,
-    zone_id: &str,
-    record_name: &str,
-    record_type: &str,
-) -> Result<Option<String>, String> {
-    let response = client
-        .get(format!(
-            "https://api.cloudflare.com/client/v4/zones/{zone_id}/dns_records?type={record_type}&name={record_name}"
-        ))
-        .header(AUTHORIZATION, format!("Bearer {api_token}"))
-        .send()
-        .await
-        .map_err(|e| format!("Cloudflare record lookup failed: {e}"))?;
-    let text = response.text().await.map_err(|e| format!("Cloudflare record read failed: {e}"))?;
-    let body: CfResponse<Vec<CfDnsRecord>> =
-        serde_json::from_str(&text).map_err(|e| format!("Cloudflare record parse failed: {e}"))?;
-    if body.success {
-        Ok(body.result.and_then(|records| records.into_iter().next()).map(|record| record.id))
-    } else {
-        Err(cf_error(&body.errors))
-    }
+        .map_err(|e| e.to_string())
 }
 
 #[async_trait::async_trait]
@@ -1188,35 +1133,6 @@ impl ConfigController for DdnsService {
         self.refresh_runtime_with_jobs(new_configs.clone()).await;
         self.reconcile_pd_watchers(&new_configs).await;
     }
-}
-
-#[derive(Deserialize)]
-struct CfResponse<T> {
-    success: bool,
-    result: Option<T>,
-    errors: Option<Vec<CfError>>,
-}
-
-#[derive(Deserialize)]
-struct CfError {
-    message: String,
-}
-
-#[derive(Deserialize)]
-struct CfZone {
-    id: String,
-}
-
-#[derive(Deserialize)]
-struct CfDnsRecord {
-    id: String,
-}
-
-fn cf_error(errors: &Option<Vec<CfError>>) -> String {
-    errors
-        .as_ref()
-        .and_then(|errs| errs.first().map(|err| err.message.clone()))
-        .unwrap_or_else(|| "unknown Cloudflare API error".to_string())
 }
 
 #[cfg(test)]
@@ -1298,8 +1214,8 @@ mod tests {
 
         assert!(job_needs_retry(&job, Some(&runtime)));
 
-        runtime.records[0].ipv4.last_published_ip =
-            Some(IpAddr::V4(std::net::Ipv4Addr::new(198, 51, 100, 10)));
+        runtime.records[0].ipv4.last_published_ips =
+            vec![IpAddr::V4(std::net::Ipv4Addr::new(198, 51, 100, 10))];
         runtime.records[0].ipv4.status = DdnsJobStatus::Error;
         assert!(!job_needs_retry(&job, Some(&runtime)));
     }
@@ -1397,5 +1313,103 @@ mod tests {
                 kind: WanRouteEventKind::Upserted,
             }
         ));
+    }
+
+    #[test]
+    fn ipv6_gua_and_ula_accepted_not_link_local() {
+        let gua = Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 1);
+        let ula = Ipv6Addr::new(0xfd00, 0, 0, 0, 0, 0, 0, 1);
+        let link_local = Ipv6Addr::new(0xfe80, 0, 0, 0, 0, 0, 0, 1);
+        let loopback = Ipv6Addr::LOCALHOST;
+        let multicast = Ipv6Addr::new(0xff02, 0, 0, 0, 0, 0, 0, 1);
+
+        let acceptable = |addr: Ipv6Addr| -> bool {
+            (addr.segments()[0] & 0xe000) == 0x2000 || addr.is_unique_local()
+        };
+
+        assert!(acceptable(gua));
+        assert!(acceptable(ula));
+        assert!(!acceptable(link_local));
+        assert!(!acceptable(loopback));
+        assert!(!acceptable(multicast));
+    }
+
+    #[test]
+    fn enrolled_device_suffix_dedup_produces_unique_ips() {
+        let pd_prefix = Ipv6Addr::new(0x2001, 0xdb8, 0x1, 0, 0, 0, 0, 0);
+        let pd_len = 64;
+
+        let device_ips = vec![
+            Ipv6Addr::new(0x2001, 0xdb8, 0x1, 0, 0xde0c, 0xd570, 0x6ff0, 0xad20),
+            Ipv6Addr::new(0x2001, 0xdb8, 0x2, 0, 0xde0c, 0xd570, 0x6ff0, 0xad20),
+        ];
+
+        let mut seen_suffixes = HashSet::new();
+        let mut result: Vec<IpAddr> = Vec::new();
+        for raw_ip in &device_ips {
+            if !((raw_ip.segments()[0] & 0xe000) == 0x2000) && !raw_ip.is_unique_local() {
+                continue;
+            }
+            let suffix = extract_ipv6_suffix(*raw_ip, pd_len);
+            if seen_suffixes.insert(suffix) {
+                let ip = combine_ipv6_prefix_suffix(pd_prefix, pd_len, suffix);
+                result.push(IpAddr::V6(ip));
+            }
+        }
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(
+            result[0],
+            IpAddr::V6(Ipv6Addr::new(0x2001, 0xdb8, 0x1, 0, 0xde0c, 0xd570, 0x6ff0, 0xad20))
+        );
+    }
+
+    #[test]
+    fn enrolled_device_different_suffixes_produce_multiple_ips() {
+        let pd_prefix = Ipv6Addr::new(0x2001, 0xdb8, 0x1, 0, 0, 0, 0, 0);
+        let pd_len = 64;
+
+        let device_ips = vec![
+            Ipv6Addr::new(0x2001, 0xdb8, 0x1, 0, 0xde0c, 0xd570, 0x6ff0, 0xad20),
+            Ipv6Addr::new(0xfd00, 0, 0, 0, 0x1234, 0x5678, 0x9abc, 0xdef0),
+        ];
+
+        let mut seen_suffixes = HashSet::new();
+        let mut result: Vec<IpAddr> = Vec::new();
+        for raw_ip in &device_ips {
+            if !((raw_ip.segments()[0] & 0xe000) == 0x2000) && !raw_ip.is_unique_local() {
+                continue;
+            }
+            let suffix = extract_ipv6_suffix(*raw_ip, pd_len);
+            if seen_suffixes.insert(suffix) {
+                let ip = combine_ipv6_prefix_suffix(pd_prefix, pd_len, suffix);
+                result.push(IpAddr::V6(ip));
+            }
+        }
+
+        assert_eq!(result.len(), 2);
+    }
+
+    #[test]
+    fn enrolled_device_fe80_is_filtered_out() {
+        let pd_prefix = Ipv6Addr::new(0x2001, 0xdb8, 0x1, 0, 0, 0, 0, 0);
+        let pd_len = 64;
+
+        let device_ips = vec![Ipv6Addr::new(0xfe80, 0, 0, 0, 0xde0c, 0xd570, 0x6ff0, 0xad20)];
+
+        let mut seen_suffixes = HashSet::new();
+        let mut result: Vec<IpAddr> = Vec::new();
+        for raw_ip in &device_ips {
+            if !((raw_ip.segments()[0] & 0xe000) == 0x2000) && !raw_ip.is_unique_local() {
+                continue;
+            }
+            let suffix = extract_ipv6_suffix(*raw_ip, pd_len);
+            if seen_suffixes.insert(suffix) {
+                let ip = combine_ipv6_prefix_suffix(pd_prefix, pd_len, suffix);
+                result.push(IpAddr::V6(ip));
+            }
+        }
+
+        assert!(result.is_empty());
     }
 }

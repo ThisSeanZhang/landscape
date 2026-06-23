@@ -288,8 +288,10 @@ function renderFamilyStatus(status?: string) {
   );
 }
 
-function formatIp(ip?: string | null) {
-  return ip ? frontEndStore.MASK_INFO(ip) : "-";
+function formatIp(ips?: string[] | null) {
+  return ips && ips.length > 0
+    ? ips.map((ip) => frontEndStore.MASK_INFO(ip)).join(", ")
+    : "-";
 }
 
 function formatError(err?: string | null) {
@@ -337,7 +339,7 @@ function fallbackFamilyRuntime(
   return {
     status: "idle",
     reason: enabled ? "pending" : "disabled",
-    last_published_ip: undefined,
+    last_published_ips: [],
     message: undefined,
     last_error: undefined,
     last_sync_at: undefined,
@@ -733,7 +735,7 @@ onMounted(async () => {
                         {{ record.ipv4.status ?? "idle" }}
                       </n-tag>
                     </td>
-                    <td>{{ formatIp(record.ipv4.last_published_ip) }}</td>
+                    <td>{{ formatIp(record.ipv4.last_published_ips) }}</td>
                     <td>{{ formatRuntimeSummary(record.ipv4) }}</td>
                     <td>{{ formatRetry(record.ipv4) }}</td>
                     <td>{{ formatError(record.ipv4.last_error) }}</td>
@@ -745,7 +747,7 @@ onMounted(async () => {
                         {{ record.ipv6.status ?? "idle" }}
                       </n-tag>
                     </td>
-                    <td>{{ formatIp(record.ipv6.last_published_ip) }}</td>
+                    <td>{{ formatIp(record.ipv6.last_published_ips) }}</td>
                     <td>{{ formatRuntimeSummary(record.ipv6) }}</td>
                     <td>{{ formatRetry(record.ipv6) }}</td>
                     <td>{{ formatError(record.ipv6.last_error) }}</td>
