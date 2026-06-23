@@ -19,14 +19,15 @@ use crate::{
     route::IpRouteService,
 };
 
+use landscape_common::{event::hub::IAPrefixEvent, net::MacAddr, route::RouteTargetInfo};
 use landscape_common::{
+    event::hub::IAPrefixEventSender,
     ipv6::checked_allocate_subnet,
-    ipv6_pd::IAPrefixMap,
+    ipv6_pd::{IAPrefixMap, LDIAPrefix},
     service::{ServiceStatus, WatchService},
     utils::time::get_f64_timestamp,
     LANDSCAPE_DEFAULE_DHCP_V6_SERVER_PORT,
 };
-use landscape_common::{net::MacAddr, route::RouteTargetInfo};
 
 pub const IPV6_TIMEOUT_DEFAULT_DURACTION: u64 = 10;
 pub const IPV6_TIMEOUT_RENEW_DURACTION: u64 = 10;
@@ -196,8 +197,8 @@ pub async fn dhcp_v6_pd_client(
     route_service: IpRouteService,
     prefix_map: IAPrefixMap,
     shared_wan_iid: Arc<u64>,
+    prefix_sender: IAPrefixEventSender,
 ) {
-    prefix_map.init(&iface_name).await;
     let client_id = gen_client_id(config_mac);
     service_status.just_change_status(ServiceStatus::Staring);
 
@@ -339,6 +340,7 @@ pub async fn dhcp_v6_pd_client(
                             &mac_addr,
                             shared_wan_iid.as_ref(),
                             &mut current_wan_addr,
+                            &prefix_sender,
                         )
                         .await;
                         if matches!(status, IpV6PdState::Bound { .. }) {
@@ -376,7 +378,8 @@ pub async fn dhcp_v6_pd_client(
     }
 
     route_service.remove_ipv6_wan_route(&iface_name).await;
-    prefix_map.clean(&iface_name).await;
+    prefix_map.remove(&iface_name);
+    let _ = prefix_sender.send(IAPrefixEvent::Expired { iface_name: iface_name.clone() }).await;
     if let Some(wan_addr) = current_wan_addr.take() {
         del_iface_ip(wan_addr, 128, &iface_name);
     }
@@ -591,6 +594,7 @@ async fn handle_packet(
     mac_addr: &Option<MacAddr>,
     shared_wan_iid: &u64,
     current_wan_addr: &mut Option<Ipv6Addr>,
+    prefix_sender: &IAPrefixEventSender,
 ) -> bool {
     let IpAddr::V6(ipv6addr) = msg_addr.ip() else {
         tracing::error!("unexpected IPV4 packet");
@@ -716,7 +720,7 @@ async fn handle_packet(
                                 bound_time: Instant::now(),
                             };
 
-                            let ia_prefix = landscape_common::ipv6_pd::LDIAPrefix {
+                            let ia_prefix = LDIAPrefix {
                                 preferred_lifetime: ia_prefix.preferred_lifetime,
                                 valid_lifetime: ia_prefix.valid_lifetime,
                                 prefix_len: ia_prefix.prefix_len,
@@ -745,7 +749,10 @@ async fn handle_packet(
                             info.gateway_ip = IpAddr::V6(ipv6addr);
                             route_service.insert_ipv6_wan_route(&iface_name, info).await;
                             replace_ip_route(&ia_prefix, ipv6addr, iface_name, ifindex, mac_addr);
-                            prefix_map.insert_or_replace(iface_name, ia_prefix).await;
+                            prefix_map.store(iface_name, ia_prefix);
+                            let _ = prefix_sender
+                                .send(IAPrefixEvent::Updated { iface_name: iface_name.to_string() })
+                                .await;
                             tracing::debug!("current status move to: {:#?}", current_status);
                             return true;
                         } else {

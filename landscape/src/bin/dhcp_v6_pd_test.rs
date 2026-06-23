@@ -10,14 +10,18 @@ use landscape::{
     dhcp_client::v6::dhcp_v6_pd_client, icmp::v6::icmp_ra_server, iface::get_iface_by_name,
 };
 use landscape_common::{
-    event::hub::IPv6AssignEventSender, ipv6::ra::RouterFlags, ipv6_pd::IAPrefixMap,
-    lan_services::ipv6_ra::IPv6NAInfo, net::MacAddr, route::RouteTargetInfo,
+    event::hub::{IAPrefixEventSender, IPv6AssignEventSender},
+    ipv6::ra::RouterFlags,
+    ipv6_pd::IAPrefixMap,
+    lan_services::ipv6_ra::IPv6NAInfo,
+    net::MacAddr,
+    route::RouteTargetInfo,
 };
 use landscape_common::{
     service::{ServiceStatus, WatchService},
     LANDSCAPE_DEFAULE_DHCP_V6_CLIENT_PORT,
 };
-use tokio::sync::{watch, RwLock};
+use tokio::sync::{mpsc, watch, RwLock};
 
 #[derive(Parser, Debug, Clone)]
 pub struct Args {
@@ -51,6 +55,9 @@ async fn main() {
 
     let prefix_map = IAPrefixMap::new();
     let prefix_map_clone = prefix_map.clone();
+    let (prefix_tx, _prefix_rx) = mpsc::channel(1);
+    let prefix_sender = IAPrefixEventSender::new(prefix_tx);
+    drop(_prefix_rx); // test binary: no event consumer, events are silently discarded
     tokio::spawn(async move {
         if let Some(iface) = get_iface_by_name(&args.dhcp_client_iface).await {
             let route_info = RouteTargetInfo {
@@ -74,6 +81,7 @@ async fn main() {
                 ip_route_service,
                 prefix_map_clone,
                 Arc::new(2),
+                prefix_sender,
             )
             .await;
         }

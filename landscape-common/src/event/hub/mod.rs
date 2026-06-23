@@ -8,7 +8,10 @@ pub use device::{EnrolledDeviceEvent, EnrolledDeviceEventReader, EnrolledDeviceE
 pub use frontend_event::FrontendEvent;
 pub use handle::EventHubHandle;
 pub use iface::{IfaceEventReader, IfaceEventSender};
-pub use ipv6::{IPv6AssignEvent, IPv6AssignEventReader, IPv6AssignEventSender, IPv6AssignInfo};
+pub use ipv6::{
+    IAPrefixEvent, IAPrefixEventReader, IAPrefixEventSender, IPv6AssignEvent,
+    IPv6AssignEventReader, IPv6AssignEventSender, IPv6AssignInfo,
+};
 
 use tokio::sync::{broadcast, mpsc};
 
@@ -21,6 +24,8 @@ const DEVICE_MPSC_CAPACITY: usize = 32;
 const DEVICE_BROADCAST_CAPACITY: usize = 64;
 const IPV6_MPSC_CAPACITY: usize = 32;
 const IPV6_BROADCAST_CAPACITY: usize = 64;
+const IAPREFIX_MPSC_CAPACITY: usize = 32;
+const IAPREFIX_BROADCAST_CAPACITY: usize = 64;
 
 pub struct EventHub {
     rx: mpsc::Receiver<IfaceObserverAction>,
@@ -39,6 +44,11 @@ pub struct EventHub {
     ipv6_broadcast_tx: broadcast::Sender<IPv6AssignEvent>,
     ipv6_broadcast_rx: broadcast::Receiver<IPv6AssignEvent>,
     ipv6_mpsc_tx: mpsc::Sender<IPv6AssignEvent>,
+
+    ia_prefix_rx: mpsc::Receiver<IAPrefixEvent>,
+    ia_prefix_broadcast_tx: broadcast::Sender<IAPrefixEvent>,
+    ia_prefix_broadcast_rx: broadcast::Receiver<IAPrefixEvent>,
+    ia_prefix_mpsc_tx: mpsc::Sender<IAPrefixEvent>,
 }
 
 impl EventHub {
@@ -54,6 +64,10 @@ impl EventHub {
 
         let (ipv6_tx, ipv6_rx) = mpsc::channel(IPV6_MPSC_CAPACITY);
         let (ipv6_broadcast_tx, ipv6_broadcast_rx) = broadcast::channel(IPV6_BROADCAST_CAPACITY);
+
+        let (ia_prefix_tx, ia_prefix_rx) = mpsc::channel(IAPREFIX_MPSC_CAPACITY);
+        let (ia_prefix_broadcast_tx, ia_prefix_broadcast_rx) =
+            broadcast::channel(IAPREFIX_BROADCAST_CAPACITY);
 
         Self {
             rx,
@@ -72,6 +86,11 @@ impl EventHub {
             ipv6_broadcast_tx,
             ipv6_broadcast_rx,
             ipv6_mpsc_tx: ipv6_tx,
+
+            ia_prefix_rx,
+            ia_prefix_broadcast_tx,
+            ia_prefix_broadcast_rx,
+            ia_prefix_mpsc_tx: ia_prefix_tx,
         }
     }
 
@@ -85,6 +104,10 @@ impl EventHub {
 
     pub fn ipv6_sender(&self) -> IPv6AssignEventSender {
         IPv6AssignEventSender::new(self.ipv6_mpsc_tx.clone())
+    }
+
+    pub fn ipv6_prefix_sender(&self) -> IAPrefixEventSender {
+        IAPrefixEventSender::new(self.ia_prefix_mpsc_tx.clone())
     }
 
     pub fn spawn(self) -> EventHubHandle {
@@ -105,6 +128,11 @@ impl EventHub {
             ipv6_broadcast_tx,
             ipv6_broadcast_rx,
             ipv6_mpsc_tx: _,
+
+            ia_prefix_rx,
+            ia_prefix_broadcast_tx,
+            ia_prefix_broadcast_rx,
+            ia_prefix_mpsc_tx: _,
         } = self;
 
         let handle = EventHubHandle::new(
@@ -116,6 +144,8 @@ impl EventHub {
             device_broadcast_rx,
             ipv6_broadcast_tx.clone(),
             ipv6_broadcast_rx,
+            ia_prefix_broadcast_tx.clone(),
+            ia_prefix_broadcast_rx,
         );
         crate::concurrency::spawn_task(
             crate::concurrency::task_label::task::EVENT_HUB_DISPATCHER,
@@ -128,6 +158,8 @@ impl EventHub {
                     device_broadcast_tx,
                     ipv6_rx,
                     ipv6_broadcast_tx,
+                    ia_prefix_rx,
+                    ia_prefix_broadcast_tx,
                 )
                 .await
             },
@@ -143,6 +175,8 @@ impl EventHub {
         device_broadcast_tx: broadcast::Sender<EnrolledDeviceEvent>,
         mut ipv6_rx: mpsc::Receiver<IPv6AssignEvent>,
         ipv6_broadcast_tx: broadcast::Sender<IPv6AssignEvent>,
+        mut ia_prefix_rx: mpsc::Receiver<IAPrefixEvent>,
+        ia_prefix_broadcast_tx: broadcast::Sender<IAPrefixEvent>,
     ) {
         loop {
             tokio::select! {
@@ -165,6 +199,12 @@ impl EventHub {
                     tracing::debug!(?event, "EventHub: dispatch IPv6 event");
                     if let Err(e) = ipv6_broadcast_tx.send(event) {
                         tracing::warn!("EventHub: ipv6 broadcast channel full, dropping event: {e:?}");
+                    }
+                }
+                Some(event) = ia_prefix_rx.recv() => {
+                    tracing::debug!(?event, "EventHub: dispatch IAPrefix event");
+                    if let Err(e) = ia_prefix_broadcast_tx.send(event) {
+                        tracing::warn!("EventHub: ia_prefix broadcast channel full, dropping event: {e:?}");
                     }
                 }
                 else => break,

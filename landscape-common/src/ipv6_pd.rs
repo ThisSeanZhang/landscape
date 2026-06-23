@@ -1,6 +1,6 @@
 use std::{collections::HashMap, net::Ipv6Addr, sync::Arc};
 
-use tokio::sync::{watch, RwLock};
+use dashmap::DashMap;
 
 #[derive(Debug, Clone, serde::Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
@@ -18,68 +18,27 @@ pub struct LDIAPrefix {
 
 #[derive(Clone)]
 pub struct IAPrefixMap {
-    infos: Arc<RwLock<HashMap<String, watch::Sender<Option<LDIAPrefix>>>>>,
+    inner: Arc<DashMap<String, LDIAPrefix>>,
 }
 
 impl IAPrefixMap {
-    pub async fn get_info(&self) -> HashMap<String, Option<LDIAPrefix>> {
-        let read = self.infos.read().await;
-        let mut infos = HashMap::new();
-        for (iface, value) in read.iter() {
-            infos.insert(iface.clone(), value.borrow().clone());
-        }
-        infos
-    }
-
     pub fn new() -> Self {
-        IAPrefixMap { infos: Arc::new(RwLock::new(HashMap::new())) }
+        IAPrefixMap { inner: Arc::new(DashMap::new()) }
     }
 
-    // 初始化一个 channel，如果不存在则创建
-    pub async fn init(&self, iface_name: &str) {
-        let mut infos = self.infos.write().await;
-        // 如果不存在则创建一个初始值为 None 的 channel
-        if !infos.contains_key(iface_name) {
-            let (tx, _rx) = watch::channel(None);
-            infos.insert(iface_name.to_string(), tx);
-        }
+    pub fn store(&self, iface_name: &str, prefix: LDIAPrefix) {
+        self.inner.insert(iface_name.to_string(), prefix);
     }
 
-    // 将指定接口名称对应的 LDIAPrefix 值更新为 None
-    pub async fn clean(&self, iface_name: &str) {
-        let infos = self.infos.read().await;
-        if let Some(sender) = infos.get(iface_name) {
-            let _ = sender.send_replace(None);
-        }
+    pub fn remove(&self, iface_name: &str) {
+        self.inner.remove(iface_name);
     }
 
-    // 插入或替换接口名称对应的 LDIAPrefix 值
-    pub async fn insert_or_replace(&self, iface_name: &str, ia_prefix: LDIAPrefix) {
-        let mut infos = self.infos.write().await;
-        if let Some(sender) = infos.get(iface_name) {
-            tracing::debug!("replace new ia_prefix: {:#?}", ia_prefix);
-            // 通过 send 更新 channel 中的值
-            let _ = sender.send_replace(Some(ia_prefix));
-        } else {
-            tracing::debug!("insert new ia_prefix: {:#?}", ia_prefix);
-            // 如果还没有为该接口创建 channel，则创建一个新的，并设置初始值
-            let (tx, _rx) = watch::channel(Some(ia_prefix));
-            infos.insert(iface_name.to_string(), tx);
-        }
+    pub fn load(&self, iface_name: &str) -> Option<LDIAPrefix> {
+        self.inner.get(iface_name).map(|v| v.value().clone())
     }
 
-    // 返回一个 watch receiver，用于监听指定接口名称对应的 LDIAPrefix 更新
-    pub async fn get_ia_prefix(&self, iface_name: &str) -> watch::Receiver<Option<LDIAPrefix>> {
-        let mut infos = self.infos.write().await;
-        if let Some(sender) = infos.get(iface_name) {
-            tracing::debug!("reuse a sender: {:?}", iface_name);
-            sender.subscribe()
-        } else {
-            tracing::debug!("create a new sender: {:?}", iface_name);
-            // 如果没有找到，则先创建一个 channel，然后返回其 receiver
-            let (tx, rx) = watch::channel(None);
-            infos.insert(iface_name.to_string(), tx);
-            rx
-        }
+    pub fn get_info(&self) -> HashMap<String, Option<LDIAPrefix>> {
+        self.inner.iter().map(|e| (e.key().clone(), Some(e.value().clone()))).collect()
     }
 }

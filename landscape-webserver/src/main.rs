@@ -183,6 +183,7 @@ async fn run_system(
     startup_phase!("observer.dev_observer", landscape::observer::dev_observer(&event_hub).await);
     let device_sender = event_hub.enrolled_device_sender();
     let ipv6_assign_sender = event_hub.ipv6_sender();
+    let ipv6_prefix_sender = event_hub.ipv6_prefix_sender();
     let event_handle = event_hub.spawn();
 
     startup_phase!(
@@ -315,6 +316,7 @@ async fn run_system(
         ),
         route_service.clone(),
         prefix_map.clone(),
+        event_handle.ipv6_prefix_broadcast_tx(),
         ipv6_assign_sender.clone(),
     )
     .await;
@@ -325,6 +327,7 @@ async fn run_system(
         route_service.clone(),
         prefix_map.clone(),
         event_handle.subscribe_ipv6_assign(),
+        event_handle.subscribe_ipv6_prefix(),
         enrolled_ipv6_cache,
     )
     .await;
@@ -414,6 +417,7 @@ async fn run_system(
         event_handle.subscribe_iface(),
         route_service.clone(),
         prefix_map.clone(),
+        ipv6_prefix_sender.clone(),
     )
     .await;
 

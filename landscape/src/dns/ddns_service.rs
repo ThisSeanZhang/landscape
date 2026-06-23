@@ -11,7 +11,9 @@ use landscape_common::ddns::{
     DdnsRecordRuntime, DdnsRuntimeReason, DdnsSource, IpFamily,
 };
 use landscape_common::dns::provider_profile::DnsProviderProfile;
-use landscape_common::event::hub::{IPv6AssignEvent, IPv6AssignEventReader};
+use landscape_common::event::hub::{
+    IAPrefixEvent, IAPrefixEventReader, IPv6AssignEvent, IPv6AssignEventReader,
+};
 use landscape_common::ipv6::{combine_ipv6_prefix_suffix, extract_ipv6_suffix};
 use landscape_common::ipv6_pd::IAPrefixMap;
 use landscape_common::{error::LdError, service::controller::ConfigController};
@@ -21,7 +23,7 @@ use landscape_database::{
     provider::LandscapeDBServiceProvider,
 };
 
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::{broadcast, Mutex, RwLock};
 use tokio::time::MissedTickBehavior;
 use uuid::Uuid;
 
@@ -41,7 +43,6 @@ struct EnrolledDeviceCache {
 }
 
 type EnrolledCache = Arc<DashMap<Uuid, EnrolledDeviceCache>>;
-type PdWatchHandles = Arc<DashMap<String, tokio::task::AbortHandle>>;
 
 struct ResolveRecordIpError {
     status: DdnsJobStatus,
@@ -60,7 +61,6 @@ pub struct DdnsService {
     sync_lock: DdnsSyncLock,
     prefix_map: IAPrefixMap,
     enrolled_cache: EnrolledCache,
-    pd_watchers: PdWatchHandles,
 }
 
 impl DdnsService {
@@ -69,6 +69,7 @@ impl DdnsService {
         route_service: IpRouteService,
         prefix_map: IAPrefixMap,
         ipv6_reader: IPv6AssignEventReader,
+        prefix_reader: IAPrefixEventReader,
         enrolled_ipv6_cache: HashMap<Uuid, Ipv6Addr>,
     ) -> Self {
         let service = Self {
@@ -84,14 +85,13 @@ impl DdnsService {
                     .map(|(id, ip)| (id, EnrolledDeviceCache { raw_ips: HashSet::from([ip]) }))
                     .collect(),
             ),
-            pd_watchers: Arc::new(DashMap::new()),
         };
         service.refresh_runtime_from_store().await;
         service.spawn_sync_loop();
         service.spawn_retry_loop();
         service.spawn_wan_update_loop();
         service.spawn_ipv6_assign_loop(ipv6_reader);
-        service.reconcile_pd_watchers_from_store().await;
+        service.spawn_pd_prefix_loop(prefix_reader);
         service
     }
 
@@ -226,91 +226,57 @@ impl DdnsService {
         Ok(())
     }
 
-    async fn on_pd_prefix_changed(&self, wan_pd_id: &str) -> Result<(), LdError> {
-        let jobs = self.store.find_enabled().await?;
-        let matching: Vec<_> = jobs
-            .into_iter()
-            .filter(|job| job_has_enrolled_device_ipv6_for_wan(job, wan_pd_id))
-            .collect();
+    fn spawn_pd_prefix_loop(&self, mut reader: IAPrefixEventReader) {
+        let svc = self.clone();
+        tokio::spawn(async move {
+            loop {
+                match reader.recv().await {
+                    Ok(IAPrefixEvent::Updated { iface_name })
+                    | Ok(IAPrefixEvent::Expired { iface_name }) => {
+                        let jobs = match svc.store.find_enabled().await {
+                            Ok(jobs) => jobs,
+                            Err(e) => {
+                                tracing::error!("ddns pd prefix loop: find_enabled error: {e:?}");
+                                continue;
+                            }
+                        };
+                        let matching: Vec<_> = jobs
+                            .into_iter()
+                            .filter(|job| job_has_enrolled_device_ipv6_for_wan(job, &iface_name))
+                            .collect();
+                        if !matching.is_empty() {
+                            svc.sync_jobs_now(matching).await;
+                        }
+                    }
+                    Err(broadcast::error::RecvError::Lagged(n)) => {
+                        tracing::warn!("ddns pd prefix loop: lagged by {n} messages");
+                    }
+                    Err(broadcast::error::RecvError::Closed) => break,
+                }
+            }
+            tracing::info!("ddns pd prefix loop stopped");
+        });
+    }
 
+    async fn on_config_changed_for_pd(&self, jobs: &[DdnsJob]) {
+        let matching: Vec<_> = jobs
+            .iter()
+            .filter(|j| j.enable)
+            .filter(|job| {
+                job.sources.iter().any(|s| match s {
+                    DdnsSource::EnrolledDevice {
+                        wan_pd_id: Some(_),
+                        family: IpFamily::Ipv6,
+                        ..
+                    } => true,
+                    _ => false,
+                })
+            })
+            .cloned()
+            .collect();
         if !matching.is_empty() {
             self.sync_jobs_now(matching).await;
         }
-        Ok(())
-    }
-
-    async fn start_pd_watcher(&self, wan_pd_id: &str) {
-        let mut rx = self.prefix_map.get_ia_prefix(wan_pd_id).await;
-        let iface = wan_pd_id.to_string();
-        let svc = self.clone();
-        let handle = tokio::spawn(async move {
-            loop {
-                if rx.changed().await.is_err() {
-                    break;
-                }
-                if let Err(e) = svc.on_pd_prefix_changed(&iface).await {
-                    tracing::warn!("ddns pd watcher error for {iface}: {e:?}");
-                }
-            }
-        });
-        // TODO: if pd_watchers already has an entry for wan_pd_id, the old
-        // AbortHandle is silently overwritten without aborting the old task,
-        // causing a task leak. The sole caller reconcile_pd_watchers guards
-        // with contains_key, but independent calls would leak.
-        self.pd_watchers.insert(wan_pd_id.to_string(), handle.abort_handle());
-    }
-
-    // TODO: the stale-removal & needed-startup phases are not atomic. A
-    // concurrent config change between the two phases could leave a watcher
-    // running for an interface that is no longer needed, or fail to start one
-    // that is newly needed. If the watcher strategy is revised (e.g. using
-    // a single background task with a shared subscription), this race goes
-    // away naturally.
-    async fn reconcile_pd_watchers(&self, jobs: &[DdnsJob]) {
-        use std::collections::HashSet;
-
-        let needed: HashSet<String> = jobs
-            .iter()
-            .filter(|j| j.enable)
-            .flat_map(|j| &j.sources)
-            .filter_map(|s| match s {
-                DdnsSource::EnrolledDevice {
-                    wan_pd_id: Some(iface),
-                    family: IpFamily::Ipv6,
-                    ..
-                } => Some(iface.clone()),
-                _ => None,
-            })
-            .collect();
-
-        let stale: Vec<String> = self
-            .pd_watchers
-            .iter()
-            .filter(|kv| !needed.contains(kv.key()))
-            .map(|kv| kv.key().clone())
-            .collect();
-        for iface in &stale {
-            if let Some((_, handle)) = self.pd_watchers.remove(iface) {
-                handle.abort();
-            }
-        }
-
-        for iface in &needed {
-            if !self.pd_watchers.contains_key(iface) {
-                self.start_pd_watcher(iface).await;
-                // TODO: initial sync failure is silently swallowed (only a
-                // warning log). Under the revised watcher design, consider
-                // surfacing this as a runtime error so the user has visibility.
-                if let Err(e) = self.on_pd_prefix_changed(iface).await {
-                    tracing::warn!("ddns initial pd sync for {iface} failed: {e:?}");
-                }
-            }
-        }
-    }
-
-    async fn reconcile_pd_watchers_from_store(&self) {
-        let jobs = self.store.list().await.unwrap_or_default();
-        self.reconcile_pd_watchers(&jobs).await;
     }
 
     pub async fn checked_set_job(&self, mut config: DdnsJob) -> Result<DdnsJob, LdError> {
@@ -571,8 +537,7 @@ impl DdnsService {
                             let raw_ips: Vec<Ipv6Addr> = entry.raw_ips.iter().copied().collect();
                             drop(entry);
 
-                            let pd_rx = self.prefix_map.get_ia_prefix(wan).await;
-                            let pd = match pd_rx.borrow().clone() {
+                            let pd = match self.prefix_map.load(wan) {
                                 Some(p) => p,
                                 None => {
                                     last_error = Some(ResolveRecordIpError {
@@ -1131,7 +1096,7 @@ impl ConfigController for DdnsService {
         _old_configs: Vec<Self::Config>,
     ) {
         self.refresh_runtime_with_jobs(new_configs.clone()).await;
-        self.reconcile_pd_watchers(&new_configs).await;
+        self.on_config_changed_for_pd(&new_configs).await;
     }
 }
 

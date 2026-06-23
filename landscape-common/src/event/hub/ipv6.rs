@@ -61,3 +61,50 @@ impl IPv6AssignEventReader {
         self.rx.recv().await
     }
 }
+
+// ── IAPrefix Event ─────────────────────────────────────────────
+
+#[derive(Debug, Clone)]
+pub enum IAPrefixEvent {
+    Updated { iface_name: String },
+    Expired { iface_name: String },
+}
+
+#[derive(Clone)]
+pub struct IAPrefixEventSender {
+    tx: mpsc::Sender<IAPrefixEvent>,
+}
+
+impl IAPrefixEventSender {
+    pub fn new(tx: mpsc::Sender<IAPrefixEvent>) -> Self {
+        Self { tx }
+    }
+
+    pub async fn send(
+        &self,
+        event: IAPrefixEvent,
+    ) -> Result<(), mpsc::error::SendError<IAPrefixEvent>> {
+        self.tx.send(event).await
+    }
+
+    pub fn try_send(
+        &self,
+        event: IAPrefixEvent,
+    ) -> Result<(), mpsc::error::TrySendError<IAPrefixEvent>> {
+        self.tx.try_send(event)
+    }
+}
+
+pub struct IAPrefixEventReader {
+    rx: broadcast::Receiver<IAPrefixEvent>,
+}
+
+impl IAPrefixEventReader {
+    pub fn new(rx: broadcast::Receiver<IAPrefixEvent>) -> Self {
+        Self { rx }
+    }
+
+    pub async fn recv(&mut self) -> Result<IAPrefixEvent, broadcast::error::RecvError> {
+        self.rx.recv().await
+    }
+}

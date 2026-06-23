@@ -3,7 +3,7 @@ use std::net::IpAddr;
 use std::net::Ipv6Addr;
 use std::sync::Arc;
 
-use landscape_common::event::hub::IfaceEventReader;
+use landscape_common::event::hub::{IAPrefixEventSender, IfaceEventReader};
 use landscape_common::ipv6_pd::IAPrefixMap;
 use landscape_common::ipv6_pd::LDIAPrefix;
 use landscape_common::route::RouteTargetInfo;
@@ -28,6 +28,7 @@ pub struct IPV6PDService {
     route_service: IpRouteService,
     prefix_map: IAPrefixMap,
     shared_wan_iid: Arc<u64>,
+    prefix_sender: IAPrefixEventSender,
 }
 
 impl IPV6PDService {
@@ -35,8 +36,14 @@ impl IPV6PDService {
         route_service: IpRouteService,
         prefix_map: IAPrefixMap,
         shared_wan_iid: Arc<u64>,
+        prefix_sender: IAPrefixEventSender,
     ) -> Self {
-        Self { route_service, prefix_map, shared_wan_iid }
+        Self {
+            route_service,
+            prefix_map,
+            shared_wan_iid,
+            prefix_sender,
+        }
     }
 }
 
@@ -50,6 +57,7 @@ impl ServiceStarterTrait for IPV6PDService {
             let route_service = self.route_service.clone();
             let prefix_map = self.prefix_map.clone();
             let shared_wan_iid = self.shared_wan_iid.clone();
+            let prefix_sender = self.prefix_sender.clone();
             if let Some(iface) = get_iface_by_name(&config.iface_name).await {
                 let route_info = RouteTargetInfo {
                     ifindex: iface.index,
@@ -74,6 +82,7 @@ impl ServiceStarterTrait for IPV6PDService {
                         route_service,
                         prefix_map,
                         shared_wan_iid,
+                        prefix_sender,
                     )
                     .await;
                 });
@@ -115,6 +124,7 @@ impl DHCPv6ClientManagerService {
         mut dev_observer: IfaceEventReader,
         route_service: IpRouteService,
         prefix_map: IAPrefixMap,
+        prefix_sender: IAPrefixEventSender,
     ) -> Self {
         let store = store_service.dhcp_v6_client_store();
         let shared_wan_iid = Arc::new({
@@ -125,7 +135,8 @@ impl DHCPv6ClientManagerService {
                 iid
             }
         });
-        let server_starter = IPV6PDService::new(route_service, prefix_map.clone(), shared_wan_iid);
+        let server_starter =
+            IPV6PDService::new(route_service, prefix_map.clone(), shared_wan_iid, prefix_sender);
         let service = ServiceManager::init(store.list().await.unwrap(), server_starter).await;
 
         let service_clone = service.clone();
@@ -153,7 +164,7 @@ impl DHCPv6ClientManagerService {
         Self { service, store, prefix_map }
     }
 
-    pub async fn get_ipv6_prefix_infos(&self) -> HashMap<String, Option<LDIAPrefix>> {
-        self.prefix_map.get_info().await
+    pub fn get_ipv6_prefix_infos(&self) -> HashMap<String, Option<LDIAPrefix>> {
+        self.prefix_map.get_info()
     }
 }

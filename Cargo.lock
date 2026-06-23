@@ -3479,6 +3479,7 @@ dependencies = [
  "bincode",
  "bytes",
  "clap 4.6.1",
+ "dashmap",
  "deku",
  "dhcproto",
  "dotenvy",

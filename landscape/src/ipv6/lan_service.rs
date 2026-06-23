@@ -3,7 +3,8 @@ use landscape_common::database::LandscapeStore as LandscapeDBStore;
 use landscape_common::dhcp::v6_server::config::DHCPv6ServerConfig;
 use landscape_common::dhcp::v6_server::status::DHCPv6OfferInfo;
 use landscape_common::event::hub::{
-    EnrolledDeviceEvent, EnrolledDeviceEventReader, IPv6AssignEventSender, IfaceEventReader,
+    EnrolledDeviceEvent, EnrolledDeviceEventReader, IAPrefixEvent, IPv6AssignEventSender,
+    IfaceEventReader,
 };
 use landscape_common::ipv6::lan::{
     IPv6ServiceMode, LanIPv6ConfigV2, LanIPv6ServiceConfigV2, LanPrefixGroupConfig,
@@ -26,6 +27,7 @@ use std::collections::{HashMap, HashSet};
 use std::net::IpAddr;
 use std::net::Ipv6Addr;
 use std::sync::Arc;
+use tokio::sync::broadcast;
 use tokio::sync::{Mutex, RwLock};
 use uuid::Uuid;
 
@@ -41,6 +43,7 @@ use dashmap::DashMap;
 pub struct LanIPv6Service {
     route_service: IpRouteService,
     prefix_map: IAPrefixMap,
+    prefix_broadcast_tx: broadcast::Sender<IAPrefixEvent>,
     iface_lease_map: Arc<RwLock<HashMap<String, Arc<RwLock<IPv6NAInfo>>>>>,
     iface_dhcpv6_status_map: Arc<RwLock<HashMap<String, Arc<Mutex<DhcpV6AssignStatus>>>>>,
     enrolled_device_store: EnrolledDeviceRepository,
@@ -52,12 +55,14 @@ impl LanIPv6Service {
     pub fn new(
         route_service: IpRouteService,
         prefix_map: IAPrefixMap,
+        prefix_broadcast_tx: broadcast::Sender<IAPrefixEvent>,
         enrolled_device_store: EnrolledDeviceRepository,
         ipv6_assign_sender: IPv6AssignEventSender,
     ) -> Self {
         Self {
             route_service,
             prefix_map,
+            prefix_broadcast_tx,
             iface_lease_map: Arc::new(RwLock::new(HashMap::new())),
             iface_dhcpv6_status_map: Arc::new(RwLock::new(HashMap::new())),
             enrolled_device_store,
@@ -76,6 +81,7 @@ impl ServiceStarterTrait for LanIPv6Service {
         if config.enable {
             let route_service = self.route_service.clone();
             let prefix_map = self.prefix_map.clone();
+            let prefix_broadcast_tx = self.prefix_broadcast_tx.clone();
             let status_clone = service_status.clone();
             if let Some(iface) = get_iface_by_name(&config.iface_name).await {
                 let store_key = config.get_store_key();
@@ -145,6 +151,7 @@ impl ServiceStarterTrait for LanIPv6Service {
                                     &lan_info,
                                     &route_service,
                                     &prefix_map,
+                                    &prefix_broadcast_tx,
                                     ad_interval,
                                     ra_flag,
                                     mac,
@@ -164,6 +171,7 @@ impl ServiceStarterTrait for LanIPv6Service {
                                     &lan_info,
                                     &route_service,
                                     &prefix_map,
+                                    &prefix_broadcast_tx,
                                     ad_interval,
                                     ra_flag,
                                     mac.clone(),
@@ -184,6 +192,7 @@ impl ServiceStarterTrait for LanIPv6Service {
                                     &lan_info,
                                     &route_service,
                                     &prefix_map,
+                                    &prefix_broadcast_tx,
                                     ad_interval,
                                     ra_flag,
                                     mac.clone(),
@@ -215,6 +224,7 @@ async fn run_slaac(
     lan_info: &LanRouteInfo,
     route_service: &IpRouteService,
     prefix_map: &IAPrefixMap,
+    prefix_broadcast_tx: &broadcast::Sender<IAPrefixEvent>,
     ad_interval: u32,
     ra_flag: RouterFlags,
     mac: MacAddr,
@@ -237,6 +247,7 @@ async fn run_slaac(
         lan_info,
         route_service,
         prefix_map,
+        prefix_broadcast_tx,
     )
     .await;
 
@@ -274,6 +285,7 @@ async fn run_stateful(
     lan_info: &LanRouteInfo,
     route_service: &IpRouteService,
     prefix_map: &IAPrefixMap,
+    prefix_broadcast_tx: &broadcast::Sender<IAPrefixEvent>,
     ad_interval: u32,
     ra_flag: RouterFlags,
     mac: MacAddr,
@@ -307,6 +319,7 @@ async fn run_stateful(
         lan_info,
         route_service,
         prefix_map,
+        prefix_broadcast_tx,
     )
     .await;
 
@@ -383,6 +396,7 @@ async fn run_slaac_dhcpv6(
     lan_info: &LanRouteInfo,
     route_service: &IpRouteService,
     prefix_map: &IAPrefixMap,
+    prefix_broadcast_tx: &broadcast::Sender<IAPrefixEvent>,
     ad_interval: u32,
     ra_flag: RouterFlags,
     mac: MacAddr,
@@ -416,6 +430,7 @@ async fn run_slaac_dhcpv6(
         lan_info,
         route_service,
         prefix_map,
+        prefix_broadcast_tx,
     )
     .await;
 
@@ -436,6 +451,7 @@ async fn run_slaac_dhcpv6(
         lan_info,
         route_service,
         prefix_map,
+        prefix_broadcast_tx,
     )
     .await;
 
@@ -536,6 +552,7 @@ impl LanIPv6ManagerService {
         mut device_reader: EnrolledDeviceEventReader,
         route_service: IpRouteService,
         prefix_map: IAPrefixMap,
+        prefix_broadcast_tx: broadcast::Sender<IAPrefixEvent>,
         ipv6_assign_sender: IPv6AssignEventSender,
     ) -> Self {
         let store = store_service.lan_ipv6_v2_service_store();
@@ -543,6 +560,7 @@ impl LanIPv6ManagerService {
         let server_starter = LanIPv6Service::new(
             route_service,
             prefix_map,
+            prefix_broadcast_tx,
             enrolled_device_store,
             ipv6_assign_sender,
         );

@@ -1,4 +1,5 @@
 use arc_swap::ArcSwap;
+use landscape_common::event::hub::{IAPrefixEvent, IAPrefixEventReader};
 pub use landscape_common::ipv6::allocate_subnet;
 use landscape_common::ipv6::checked_allocate_subnet;
 use landscape_common::ipv6::lan::{
@@ -12,7 +13,7 @@ use std::net::{IpAddr, Ipv6Addr};
 use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::watch;
+use tokio::sync::{broadcast, watch};
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 
@@ -128,6 +129,7 @@ async fn add_dynamic_runtime_info(
     lan_info: &LanRouteInfo,
     route_service: &IpRouteService,
     prefix_map: &IAPrefixMap,
+    prefix_broadcast_tx: &broadcast::Sender<IAPrefixEvent>,
     depend_iface: &str,
     planned_parent_prefix_len: u8,
     pool_index: u32,
@@ -144,7 +146,6 @@ async fn add_dynamic_runtime_info(
 
     let pd_prefix_info: Option<ICMPv6ConfigInfo> = None;
     let pd_prefix_info = Arc::new(ArcSwap::from_pointee(pd_prefix_info));
-    let mut ia_config_watch = prefix_map.get_ia_prefix(depend_iface).await;
     runtime.pd_info.insert(depend_iface.to_string(), pd_prefix_info.clone());
 
     let change_tx_clone = change_tx.clone();
@@ -154,34 +155,38 @@ async fn add_dynamic_runtime_info(
     let lan_info_clone = lan_info.clone();
     let route_service_clone = route_service.clone();
     let depend_iface_owned = depend_iface.to_string();
-    let mut expire_time = Box::pin(tokio::time::sleep(Duration::from_secs(0)));
-    let mut applied_state: Option<DynamicPrefixState> = None;
-    let ia_prefix = ia_config_watch.borrow().clone();
-    if let Some(ia_prefix) = ia_prefix {
-        if source_prefix_matches_max_len(ia_prefix.prefix_len, planned_parent_prefix_len)
-            && can_delegate_from_pd(ia_prefix.prefix_len, pd_config.sub_prefix_len)
-        {
-            let (new_info, new_state) = update_current_info(
-                &iface_name_owned,
-                ia_prefix,
-                &pd_config,
-                expire_time.as_mut(),
-                &lan_info_clone,
-                &route_service_clone,
-            )
-            .await;
-            applied_state = replace_dynamic_prefix_state(
-                &route_service_clone,
-                &iface_name_owned,
-                applied_state,
-                new_state,
-            )
-            .await;
-            pd_prefix_info.store(Arc::new(new_info));
-        }
-    }
-
+    let prefix_map_clone = prefix_map.clone();
+    let prefix_broadcast_tx_clone = prefix_broadcast_tx.clone();
     tokio::spawn(async move {
+        let mut prefix_reader = IAPrefixEventReader::new(prefix_broadcast_tx_clone.subscribe());
+        let mut expire_time = Box::pin(tokio::time::sleep(Duration::from_secs(0)));
+        let mut applied_state: Option<DynamicPrefixState> = None;
+
+        let ia_prefix = prefix_map_clone.load(&depend_iface_owned);
+        if let Some(ia_prefix) = ia_prefix {
+            if source_prefix_matches_max_len(ia_prefix.prefix_len, planned_parent_prefix_len)
+                && can_delegate_from_pd(ia_prefix.prefix_len, pd_config.sub_prefix_len)
+            {
+                let (new_info, new_state) = update_current_info(
+                    &iface_name_owned,
+                    ia_prefix,
+                    &pd_config,
+                    expire_time.as_mut(),
+                    &lan_info_clone,
+                    &route_service_clone,
+                )
+                .await;
+                applied_state = replace_dynamic_prefix_state(
+                    &route_service_clone,
+                    &iface_name_owned,
+                    applied_state,
+                    new_state,
+                )
+                .await;
+                pd_prefix_info.store(Arc::new(new_info));
+            }
+        }
+
         let both_done = async {
             tokio::join!(ra_token_clone.cancelled(), dhcpv6_token_clone.cancelled());
         };
@@ -189,11 +194,17 @@ async fn add_dynamic_runtime_info(
 
         loop {
             tokio::select! {
-            change_result = ia_config_watch.changed() => {
-                if change_result.is_err() {
-                    break;
+            change_result = prefix_reader.recv() => {
+                let matched = match &change_result {
+                    Ok(IAPrefixEvent::Updated { iface_name }) | Ok(IAPrefixEvent::Expired { iface_name })
+                        if *iface_name == depend_iface_owned => true,
+                    Ok(_) => false,
+                    Err(_) => break,
+                };
+                if !matched {
+                    continue;
                 }
-                    let ia_prefix = ia_config_watch.borrow().clone();
+                    let ia_prefix = prefix_map_clone.load(&depend_iface_owned);
                     if let Some(ia_prefix) = ia_prefix {
                         if source_prefix_matches_max_len(
                             ia_prefix.prefix_len,
@@ -292,6 +303,7 @@ async fn add_dynamic_pd_range(
     runtime: &mut IPv6PrefixRuntime,
     dhcpv6_token: &CancellationToken,
     prefix_map: &IAPrefixMap,
+    prefix_broadcast_tx: &broadcast::Sender<IAPrefixEvent>,
     depend_iface: &str,
     planned_parent_prefix_len: u8,
     pd: &PdPrefixRangeConfig,
@@ -299,52 +311,59 @@ async fn add_dynamic_pd_range(
     for pool_index in pd.start_index..=pd.end_index {
         let pd_prefix_info: Option<PdDelegationParent> = None;
         let pd_prefix_info = Arc::new(ArcSwap::from_pointee(pd_prefix_info));
-        let mut ia_config_watch = prefix_map.get_ia_prefix(depend_iface).await;
         runtime.pd_delegation_dynamic.push(pd_prefix_info.clone());
 
         let dhcpv6_token_clone = dhcpv6_token.clone();
         let pool_len = pd.pool_len;
         let depend_iface_owned = depend_iface.to_string();
-        let mut expire_time = Box::pin(tokio::time::sleep(Duration::from_secs(0)));
-
-        let ia_prefix = ia_config_watch.borrow().clone();
-        if let Some(ia_prefix) = ia_prefix {
-            if source_prefix_matches_max_len(ia_prefix.prefix_len, planned_parent_prefix_len)
-                && can_delegate_from_pd(ia_prefix.prefix_len, pool_len)
-            {
-                let Some((sub_block, _)) = checked_allocate_subnet(
-                    ia_prefix.prefix_ip,
-                    ia_prefix.prefix_len,
-                    pool_len,
-                    lan_slot_to_subnet_index(pool_index, pool_len),
-                ) else {
-                    tracing::error!(
-                        pool_index = pool_index,
-                        pool_len = pool_len,
-                        prefix = %ia_prefix.prefix_ip,
-                        prefix_len = ia_prefix.prefix_len,
-                        "add_dynamic_pd_range: invalid subnet allocation at init"
-                    );
-                    continue;
-                };
-                pd_prefix_info.store(Arc::new(Some(PdDelegationParent {
-                    prefix: sub_block,
-                    prefix_len: pool_len,
-                })));
-                expire_time
-                    .as_mut()
-                    .set(tokio::time::sleep(Duration::from_secs(ia_prefix.valid_lifetime as u64)));
-            }
-        }
-
+        let prefix_map_clone = prefix_map.clone();
+        let prefix_broadcast_tx_clone = prefix_broadcast_tx.clone();
         tokio::spawn(async move {
+            let mut prefix_reader = IAPrefixEventReader::new(prefix_broadcast_tx_clone.subscribe());
+            let mut expire_time = Box::pin(tokio::time::sleep(Duration::from_secs(0)));
+
+            let ia_prefix = prefix_map_clone.load(&depend_iface_owned);
+            if let Some(ia_prefix) = ia_prefix {
+                if source_prefix_matches_max_len(ia_prefix.prefix_len, planned_parent_prefix_len)
+                    && can_delegate_from_pd(ia_prefix.prefix_len, pool_len)
+                {
+                    let Some((sub_block, _)) = checked_allocate_subnet(
+                        ia_prefix.prefix_ip,
+                        ia_prefix.prefix_len,
+                        pool_len,
+                        lan_slot_to_subnet_index(pool_index, pool_len),
+                    ) else {
+                        tracing::error!(
+                            pool_index = pool_index,
+                            pool_len = pool_len,
+                            prefix = %ia_prefix.prefix_ip,
+                            prefix_len = ia_prefix.prefix_len,
+                            "add_dynamic_pd_range: invalid subnet allocation at init"
+                        );
+                        return;
+                    };
+                    pd_prefix_info.store(Arc::new(Some(PdDelegationParent {
+                        prefix: sub_block,
+                        prefix_len: pool_len,
+                    })));
+                    expire_time.as_mut().set(tokio::time::sleep(Duration::from_secs(
+                        ia_prefix.valid_lifetime as u64,
+                    )));
+                }
+            }
             loop {
                 tokio::select! {
-                    change_result = ia_config_watch.changed() => {
-                        if change_result.is_err() {
-                            break;
+                    change_result = prefix_reader.recv() => {
+                        let matched = match &change_result {
+                            Ok(IAPrefixEvent::Updated { iface_name }) | Ok(IAPrefixEvent::Expired { iface_name })
+                                if *iface_name == depend_iface_owned => true,
+                            Ok(_) => false,
+                            Err(_) => break,
+                        };
+                        if !matched {
+                            continue;
                         }
-                        let ia_prefix = ia_config_watch.borrow().clone();
+                        let ia_prefix = prefix_map_clone.load(&depend_iface_owned);
                         if let Some(ia_prefix) = ia_prefix {
                             if source_prefix_matches_max_len(
                                 ia_prefix.prefix_len,
@@ -398,6 +417,7 @@ pub async fn setup_prefix_groups(
     lan_info: &LanRouteInfo,
     route_service: &IpRouteService,
     prefix_map: &IAPrefixMap,
+    prefix_broadcast_tx: &broadcast::Sender<IAPrefixEvent>,
 ) -> PrefixSetupResult {
     let ra_token = CancellationToken::new();
     let dhcpv6_token = CancellationToken::new();
@@ -473,6 +493,7 @@ pub async fn setup_prefix_groups(
                             lan_info,
                             route_service,
                             prefix_map,
+                            prefix_broadcast_tx,
                             depend_iface,
                             *planned_parent_prefix_len,
                             *pool_index,
@@ -493,6 +514,7 @@ pub async fn setup_prefix_groups(
                             lan_info,
                             route_service,
                             prefix_map,
+                            prefix_broadcast_tx,
                             depend_iface,
                             *planned_parent_prefix_len,
                             *pool_index,
@@ -508,6 +530,7 @@ pub async fn setup_prefix_groups(
                             &mut runtime,
                             &dhcpv6_token,
                             prefix_map,
+                            prefix_broadcast_tx,
                             depend_iface,
                             *planned_parent_prefix_len,
                             pd,
@@ -582,6 +605,7 @@ pub async fn setup_prefix_sources(
     lan_info: &LanRouteInfo,
     route_service: &IpRouteService,
     prefix_map: &IAPrefixMap,
+    prefix_broadcast_tx: &broadcast::Sender<IAPrefixEvent>,
 ) -> PrefixSetupResult {
     let ra_token = CancellationToken::new();
     let dhcpv6_token = CancellationToken::new();
@@ -674,7 +698,6 @@ pub async fn setup_prefix_sources(
             } => {
                 let pd_prefix_info: Option<PdDelegationParent> = None;
                 let pd_prefix_info = Arc::new(ArcSwap::from_pointee(pd_prefix_info));
-                let mut ia_config_watch = prefix_map.get_ia_prefix(depend_iface).await;
                 runtime.pd_delegation_dynamic.push(pd_prefix_info.clone());
 
                 let dhcpv6_token_clone = dhcpv6_token.clone();
@@ -682,49 +705,62 @@ pub async fn setup_prefix_sources(
                 let pool_index = *pool_index;
                 let pool_len = *pool_len;
                 let depend_iface_owned = depend_iface.clone();
-
-                let mut expire_time = Box::pin(tokio::time::sleep(Duration::from_secs(0)));
-                // Check once immediately
-                let ia_prefix = ia_config_watch.borrow().clone();
-                if let Some(ia_prefix) = ia_prefix {
-                    if source_prefix_matches_max_len(ia_prefix.prefix_len, max_source_prefix_len)
-                        && can_delegate_from_pd(ia_prefix.prefix_len, pool_len)
-                    {
-                        let Some((sub_block, _)) = checked_allocate_subnet(
-                            ia_prefix.prefix_ip,
-                            ia_prefix.prefix_len,
-                            pool_len,
-                            lan_slot_to_subnet_index(pool_index, pool_len),
-                        ) else {
-                            tracing::error!(
-                                pool_index = pool_index,
-                                pool_len = pool_len,
-                                prefix = %ia_prefix.prefix_ip,
-                                prefix_len = ia_prefix.prefix_len,
-                                "setup_prefix_sources PdPd: invalid subnet allocation at init"
-                            );
-                            continue;
-                        };
-                        pd_prefix_info.store(Arc::new(Some(PdDelegationParent {
-                            prefix: sub_block,
-                            prefix_len: pool_len,
-                        })));
-                        expire_time.as_mut().set(tokio::time::sleep(Duration::from_secs(
-                            ia_prefix.valid_lifetime as u64,
-                        )));
-                    }
-                }
+                let prefix_map_clone = prefix_map.clone();
+                let prefix_broadcast_tx_clone = prefix_broadcast_tx.clone();
 
                 tokio::spawn(async move {
+                    let mut prefix_reader =
+                        IAPrefixEventReader::new(prefix_broadcast_tx_clone.subscribe());
+                    let mut expire_time = Box::pin(tokio::time::sleep(Duration::from_secs(0)));
+
+                    let ia_prefix = prefix_map_clone.load(&depend_iface_owned);
+                    if let Some(ia_prefix) = ia_prefix {
+                        if source_prefix_matches_max_len(
+                            ia_prefix.prefix_len,
+                            max_source_prefix_len,
+                        ) && can_delegate_from_pd(ia_prefix.prefix_len, pool_len)
+                        {
+                            let Some((sub_block, _)) = checked_allocate_subnet(
+                                ia_prefix.prefix_ip,
+                                ia_prefix.prefix_len,
+                                pool_len,
+                                lan_slot_to_subnet_index(pool_index, pool_len),
+                            ) else {
+                                tracing::error!(
+                                    pool_index = pool_index,
+                                    pool_len = pool_len,
+                                    prefix = %ia_prefix.prefix_ip,
+                                    prefix_len = ia_prefix.prefix_len,
+                                    "setup_prefix_sources PdPd: invalid subnet allocation at init"
+                                );
+                                return;
+                            };
+                            pd_prefix_info.store(Arc::new(Some(PdDelegationParent {
+                                prefix: sub_block,
+                                prefix_len: pool_len,
+                            })));
+                            expire_time.as_mut().set(tokio::time::sleep(Duration::from_secs(
+                                ia_prefix.valid_lifetime as u64,
+                            )));
+                        }
+                    }
                     loop {
                         tokio::select! {
-                            change_result = ia_config_watch.changed() => {
+                            change_result = prefix_reader.recv() => {
                                 tracing::info!("PdPd IA_PREFIX update for {}", depend_iface_owned);
-                                if change_result.is_err() {
-                                    tracing::error!("PdPd change result error. exit loop");
-                                    break;
+                                let matched = match &change_result {
+                                    Ok(IAPrefixEvent::Updated { iface_name }) | Ok(IAPrefixEvent::Expired { iface_name })
+                                        if *iface_name == depend_iface_owned => true,
+                                    Ok(_) => false,
+                                    Err(_) => {
+                                        tracing::error!("PdPd change result error. exit loop");
+                                        break;
+                                    }
+                                };
+                                if !matched {
+                                    continue;
                                 }
-                                let ia_prefix = ia_config_watch.borrow().clone();
+                                let ia_prefix = prefix_map_clone.load(&depend_iface_owned);
                                 if let Some(ia_prefix) = ia_prefix {
                                     if source_prefix_matches_max_len(
                                         ia_prefix.prefix_len,
@@ -818,7 +854,6 @@ pub async fn setup_prefix_sources(
 
             let pd_prefix_info: Option<ICMPv6ConfigInfo> = None;
             let pd_prefix_info = Arc::new(ArcSwap::from_pointee(pd_prefix_info));
-            let mut ia_config_watch = prefix_map.get_ia_prefix(&pd_config.depend_iface).await;
             runtime.pd_info.insert(pd_config.depend_iface.clone(), pd_prefix_info.clone());
 
             let change_tx_clone = change_tx.clone();
@@ -827,33 +862,38 @@ pub async fn setup_prefix_sources(
             let iface_name_owned = iface_name.to_string();
             let lan_info_clone = lan_info.clone();
             let route_service_clone = route_service.clone();
-            let mut expire_time = Box::pin(tokio::time::sleep(Duration::from_secs(0)));
-            let mut applied_state: Option<DynamicPrefixState> = None;
-            // Check once immediately
-            let ia_prefix = ia_config_watch.borrow().clone();
-            if let Some(ia_prefix) = ia_prefix {
-                if can_delegate_from_pd(ia_prefix.prefix_len, pd_config.sub_prefix_len) {
-                    let (new_info, new_state) = update_current_info(
-                        &iface_name_owned,
-                        ia_prefix,
-                        &pd_config,
-                        expire_time.as_mut(),
-                        &lan_info_clone,
-                        &route_service_clone,
-                    )
-                    .await;
-                    applied_state = replace_dynamic_prefix_state(
-                        &route_service_clone,
-                        &iface_name_owned,
-                        applied_state,
-                        new_state,
-                    )
-                    .await;
-                    pd_prefix_info.store(Arc::new(new_info));
-                }
-            }
-
+            let depend_iface_owned = pd_config.depend_iface.clone();
+            let prefix_map_clone = prefix_map.clone();
+            let prefix_broadcast_tx_clone = prefix_broadcast_tx.clone();
             tokio::spawn(async move {
+                let mut prefix_reader =
+                    IAPrefixEventReader::new(prefix_broadcast_tx_clone.subscribe());
+                let mut expire_time = Box::pin(tokio::time::sleep(Duration::from_secs(0)));
+                let mut applied_state: Option<DynamicPrefixState> = None;
+
+                let ia_prefix = prefix_map_clone.load(&depend_iface_owned);
+                if let Some(ia_prefix) = ia_prefix {
+                    if can_delegate_from_pd(ia_prefix.prefix_len, pd_config.sub_prefix_len) {
+                        let (new_info, new_state) = update_current_info(
+                            &iface_name_owned,
+                            ia_prefix,
+                            &pd_config,
+                            expire_time.as_mut(),
+                            &lan_info_clone,
+                            &route_service_clone,
+                        )
+                        .await;
+                        applied_state = replace_dynamic_prefix_state(
+                            &route_service_clone,
+                            &iface_name_owned,
+                            applied_state,
+                            new_state,
+                        )
+                        .await;
+                        pd_prefix_info.store(Arc::new(new_info));
+                    }
+                }
+
                 // Wait for both RA and DHCPv6 to finish before stopping
                 let both_done = async {
                     tokio::join!(ra_token_clone.cancelled(), dhcpv6_token_clone.cancelled());
@@ -862,13 +902,21 @@ pub async fn setup_prefix_sources(
 
                 loop {
                     tokio::select! {
-                        change_result = ia_config_watch.changed() => {
+                        change_result = prefix_reader.recv() => {
                             tracing::info!("IA_PREFIX update");
-                            if let Err(_) = change_result {
-                                tracing::error!("get change result error. exit loop");
-                                break;
+                            let matched = match &change_result {
+                                Ok(IAPrefixEvent::Updated { iface_name }) | Ok(IAPrefixEvent::Expired { iface_name })
+                                    if *iface_name == depend_iface_owned => true,
+                                Ok(_) => false,
+                                Err(_) => {
+                                    tracing::error!("get change result error. exit loop");
+                                    break;
+                                }
+                            };
+                            if !matched {
+                                continue;
                             }
-                            let ia_prefix = ia_config_watch.borrow().clone();
+                            let ia_prefix = prefix_map_clone.load(&depend_iface_owned);
                             if let Some(ia_prefix) = ia_prefix {
                                 if can_delegate_from_pd(ia_prefix.prefix_len, pd_config.sub_prefix_len) {
                                     let (new_info, new_state) = update_current_info(

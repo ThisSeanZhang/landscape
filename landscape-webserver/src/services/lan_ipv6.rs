@@ -122,7 +122,7 @@ async fn handle_lan_ipv6(
     JsonBody(config): JsonBody<LanIPv6ServiceConfigV2>,
 ) -> LandscapeApiResult<()> {
     state.validate_zone(&config).await?;
-    let prefix_infos = state.ipv6_pd_service.get_ipv6_prefix_infos().await;
+    let prefix_infos = state.ipv6_pd_service.get_ipv6_prefix_infos();
     config.config.validate_with_prefix_infos(Some(&prefix_infos))?;
 
     // Cross-interface conflict detection
