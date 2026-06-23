@@ -43,8 +43,8 @@ pub fn parse_link_message(msg: LinkMessage) -> Option<LandscapeInterface> {
             // }
             //     LinkAttribute::VfPorts(_) => todo!(),
             //     LinkAttribute::PortSelf(_) => todo!(),
-            LinkAttribute::PhysPortId(id) => {
-                println!("PhysPortId: {id:?}")
+            LinkAttribute::PhysPortId(_) => {
+                // println!("PhysPortId: {id:?}")
             }
             LinkAttribute::PhysSwitchId(_) => {
                 // PhysSwitchId 有物理交换机
