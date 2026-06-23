@@ -3,18 +3,21 @@ use tokio::sync::broadcast;
 use super::device::EnrolledDeviceEvent;
 use super::frontend_event::FrontendEvent;
 use super::iface::IfaceEventReader;
+use super::ipv6::{IPv6AssignEvent, IPv6AssignEventReader};
 use crate::observer::IfaceObserverAction;
 
 pub struct EventHubHandle {
     iface_broadcast_tx: broadcast::Sender<IfaceObserverAction>,
     frontend_broadcast_tx: broadcast::Sender<FrontendEvent>,
     device_broadcast_tx: broadcast::Sender<EnrolledDeviceEvent>,
+    ipv6_broadcast_tx: broadcast::Sender<IPv6AssignEvent>,
     // Keep the initial receivers alive so the broadcast channels always have at
     // least one active receiver. This prevents dispatcher events from being
     // dropped due to zero receivers before services subscribe.
     _broadcast_rx: broadcast::Receiver<IfaceObserverAction>,
     _frontend_broadcast_rx: broadcast::Receiver<FrontendEvent>,
     _device_broadcast_rx: broadcast::Receiver<EnrolledDeviceEvent>,
+    _ipv6_broadcast_rx: broadcast::Receiver<IPv6AssignEvent>,
 }
 
 impl EventHubHandle {
@@ -25,14 +28,18 @@ impl EventHubHandle {
         frontend_broadcast_rx: broadcast::Receiver<FrontendEvent>,
         device_broadcast_tx: broadcast::Sender<EnrolledDeviceEvent>,
         device_broadcast_rx: broadcast::Receiver<EnrolledDeviceEvent>,
+        ipv6_broadcast_tx: broadcast::Sender<IPv6AssignEvent>,
+        ipv6_broadcast_rx: broadcast::Receiver<IPv6AssignEvent>,
     ) -> Self {
         Self {
             iface_broadcast_tx,
             frontend_broadcast_tx,
             device_broadcast_tx,
+            ipv6_broadcast_tx,
             _broadcast_rx: iface_broadcast_rx,
             _frontend_broadcast_rx: frontend_broadcast_rx,
             _device_broadcast_rx: device_broadcast_rx,
+            _ipv6_broadcast_rx: ipv6_broadcast_rx,
         }
     }
 
@@ -46,5 +53,9 @@ impl EventHubHandle {
 
     pub fn subscribe_device(&self) -> broadcast::Receiver<EnrolledDeviceEvent> {
         self.device_broadcast_tx.subscribe()
+    }
+
+    pub fn subscribe_ipv6_assign(&self) -> IPv6AssignEventReader {
+        IPv6AssignEventReader::new(self.ipv6_broadcast_tx.subscribe())
     }
 }

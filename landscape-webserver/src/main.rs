@@ -182,6 +182,7 @@ async fn run_system(
     let event_hub = EventHub::new();
     startup_phase!("observer.dev_observer", landscape::observer::dev_observer(&event_hub).await);
     let device_sender = event_hub.enrolled_device_sender();
+    let ipv6_assign_sender = event_hub.ipv6_sender();
     let event_handle = event_hub.spawn();
 
     startup_phase!(
@@ -402,6 +403,7 @@ async fn run_system(
         ),
         route_service.clone(),
         prefix_map,
+        ipv6_assign_sender,
     )
     .await;
 

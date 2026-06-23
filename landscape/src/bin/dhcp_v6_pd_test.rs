@@ -9,8 +9,8 @@ use landscape::{
     dhcp_client::v6::dhcp_v6_pd_client, icmp::v6::icmp_ra_server, iface::get_iface_by_name,
 };
 use landscape_common::{
-    ipv6::ra::RouterFlags, ipv6_pd::IAPrefixMap, lan_services::ipv6_ra::IPv6NAInfo, net::MacAddr,
-    route::RouteTargetInfo,
+    event::hub::IPv6AssignEventSender, ipv6::ra::RouterFlags, ipv6_pd::IAPrefixMap,
+    lan_services::ipv6_ra::IPv6NAInfo, net::MacAddr, route::RouteTargetInfo,
 };
 use landscape_common::{
     service::{ServiceStatus, WatchService},
@@ -94,6 +94,8 @@ async fn main() {
     tokio::spawn(async move {
         if let Some(iface) = get_iface_by_name(&args.icmp_ra_iface).await {
             if let Some(mac) = iface.mac {
+                let (ipv6_tx, _) = tokio::sync::mpsc::channel(32);
+                let ipv6_assign_sender = IPv6AssignEventSender::new(ipv6_tx);
                 icmp_ra_server(
                     300,
                     ra_flag,
@@ -107,6 +109,7 @@ async fn main() {
                     None,
                     None,
                     iface.index,
+                    ipv6_assign_sender,
                 )
                 .await
                 .unwrap();

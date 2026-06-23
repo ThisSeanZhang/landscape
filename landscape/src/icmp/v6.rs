@@ -1,5 +1,6 @@
 use bytes::BytesMut;
 use landscape_common::error::LdResult;
+use landscape_common::event::hub::{IPv6AssignEvent, IPv6AssignEventSender, IPv6AssignInfo};
 use landscape_common::ipv6::ra::RouterFlags;
 use landscape_common::lan_services::ipv6_ra::{IPv6NAInfo, IPv6NAInfoItem};
 use landscape_common::net::MacAddr;
@@ -27,7 +28,8 @@ static ICMPV6_MULTICAST: Ipv6Addr = Ipv6Addr::new(0xff02, 0, 0, 0, 0, 0, 0, 0x1)
     change_notify,
     assigned_ips,
     onlink_runtime,
-    onlink_change_notify
+    onlink_change_notify,
+    ipv6_assign_sender
 ))]
 pub async fn icmp_ra_server(
     ad_interval: u32,
@@ -44,6 +46,7 @@ pub async fn icmp_ra_server(
     onlink_runtime: Option<&IPv6PrefixRuntime>,
     mut onlink_change_notify: Option<watch::Receiver<()>>,
     link_ifindex: u32,
+    ipv6_assign_sender: IPv6AssignEventSender,
 ) -> LdResult<()> {
     {
         let mut ips = assigned_ips.write().await;
@@ -178,7 +181,16 @@ pub async fn icmp_ra_server(
                     let relative_boot_time = runtime.relative_boot_time.elapsed().as_secs();
                     if relative_boot_time > ad_interval {
                         if let Ok(mut ips) = assigned_ips.try_write() {
-                            ips.clean_expired_entries(relative_boot_time - ad_interval);
+                            let expired = ips.clean_expired_entries(relative_boot_time - ad_interval);
+                            for item in expired {
+                                let _ = ipv6_assign_sender.try_send(
+                                    IPv6AssignEvent::Expired(IPv6AssignInfo {
+                                        iface_name: iface_name.clone(),
+                                        mac: item.mac,
+                                        ip: item.ip,
+                                    }),
+                                );
+                            }
                         }
                     }
                 };
@@ -229,6 +241,8 @@ pub async fn icmp_ra_server(
                             onlink_runtime,
                             assigned_ips.clone(),
                             link_ifindex,
+                            &iface_name,
+                            &ipv6_assign_sender,
                         ).await;
                     }
                     None => break
@@ -297,6 +311,8 @@ async fn handle_rs_msg(
     onlink_runtime: Option<&IPv6PrefixRuntime>,
     assigned_ips: Arc<RwLock<IPv6NAInfo>>,
     link_ifindex: u32,
+    iface_name: &str,
+    ipv6_assign_sender: &IPv6AssignEventSender,
 ) {
     let mut buf = BytesMut::from(msg.as_slice());
     let icmp_v6_msg = match Icmpv6Message::decode(&mut buf) {
@@ -345,6 +361,12 @@ async fn handle_rs_msg(
                 let mut write_lock = assigned_ips.write().await;
                 write_lock.offered_ips.insert(data.get_cache_key(), data);
                 drop(write_lock);
+
+                let _ = ipv6_assign_sender.try_send(IPv6AssignEvent::Allocated(IPv6AssignInfo {
+                    iface_name: iface_name.to_string(),
+                    mac,
+                    ip: target_ip,
+                }));
 
                 if let Err(e) = landscape_ebpf::base::ip_mac::upsert_ipv6_ip_mac(
                     link_ifindex,

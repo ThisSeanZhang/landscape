@@ -3,6 +3,8 @@ use std::sync::Arc;
 
 use arc_swap::ArcSwap;
 use landscape_common::dhcp::v6_server::config::DHCPv6ServerConfig;
+use landscape_common::event::hub::IPv6AssignEventSender;
+use landscape_common::event::hub::{IPv6AssignEvent, IPv6AssignInfo};
 use landscape_common::net::MacAddr;
 use landscape_common::net_proto::udp::dhcp::DhcpV6MessageType;
 use landscape_common::service::{ServiceStatus, WatchService};
@@ -65,7 +67,8 @@ static DHCPV6_MULTICAST: Ipv6Addr = Ipv6Addr::new(0xff02, 0, 0, 0, 0, 0, 0x1, 0x
     pd_delegation_dynamic,
     service_status,
     status,
-    route_service
+    route_service,
+    ipv6_assign_sender
 ))]
 pub async fn dhcp_v6_server(
     link_ifindex: u32,
@@ -80,6 +83,7 @@ pub async fn dhcp_v6_server(
     service_status: WatchService,
     status: Arc<tokio::sync::Mutex<DhcpV6AssignStatus>>,
     route_service: IpRouteService,
+    ipv6_assign_sender: IPv6AssignEventSender,
 ) {
     let server_duid = gen_server_duid(&mac);
 
@@ -170,6 +174,7 @@ pub async fn dhcp_v6_server(
                             &iface_name,
                             link_ifindex,
                             &route_service,
+                            &ipv6_assign_sender,
                         ).await;
                         if need_update {
                             dhcp_server.refresh_offer_info(
@@ -187,7 +192,24 @@ pub async fn dhcp_v6_server(
                 }
             }
             _ = &mut timeout_timer => {
-                dhcp_server.clean_expired_na().await;
+                let expired_na = dhcp_server.clean_expired_na().await;
+                if !expired_na.is_empty() {
+                    let na_prefixes = dhcp_server
+                        .get_qualifying_na_prefixes(&ra_pd_runtime_sources, &ra_static_infos)
+                        .await;
+                    for cache in &expired_na {
+                        if let Some(mac) = cache.mac {
+                            for (prefix, prefix_len) in &na_prefixes {
+                        let ip = combine_prefix_suffix(*prefix, *prefix_len, cache.suffix);
+                        let _ = ipv6_assign_sender.try_send(IPv6AssignEvent::Expired(IPv6AssignInfo {
+                            iface_name: iface_name.clone(),
+                            mac,
+                            ip,
+                        }));
+                            }
+                        }
+                    }
+                }
                 let expired_pd = dhcp_server.clean_expired_pd().await;
                 for cache in &expired_pd {
                     cleanup_pd_routes(cache, &iface_name, &route_service).await;
@@ -252,6 +274,7 @@ async fn handle_dhcpv6_message(
     iface_name: &str,
     link_ifindex: u32,
     route_service: &IpRouteService,
+    ipv6_assign_sender: &IPv6AssignEventSender,
 ) -> bool {
     let msg = match v6::Message::decode(&mut Decoder::new(&msg_bytes)) {
         Ok(m) => m,
@@ -413,10 +436,10 @@ async fn handle_dhcpv6_message(
                             if let Some(ips) =
                                 assigned_client_na_ips(server, &client_duid, &na_prefixes).await
                             {
-                                for ip in ips {
+                                for ip in &ips {
                                     if let Err(e) = landscape_ebpf::base::ip_mac::upsert_ipv6_ip_mac(
                                         link_ifindex,
-                                        ip,
+                                        *ip,
                                         client_mac,
                                         dev_mac,
                                     ) {
@@ -424,6 +447,15 @@ async fn handle_dhcpv6_message(
                                             "failed to prewarm ip_mac_v6 for DHCPv6 lease {ip} -> {client_mac}: {e}"
                                         );
                                     }
+                                }
+                                for &ip in &ips {
+                                    let _ = ipv6_assign_sender.try_send(
+                                        IPv6AssignEvent::Allocated(IPv6AssignInfo {
+                                            iface_name: iface_name.to_string(),
+                                            mac: client_mac,
+                                            ip,
+                                        }),
+                                    );
                                 }
                             }
                         }
@@ -674,7 +706,25 @@ async fn handle_dhcpv6_message(
             }
 
             tracing::info!("DHCPv6 RELEASE from {:?}", mac);
-            server.release_na(&client_duid).await;
+            let released_na = server.release_na(&client_duid).await;
+            if let Some(cache) = &released_na {
+                if let Some(client_mac) = cache.mac {
+                    let na_prefixes =
+                        server.get_qualifying_na_prefixes(runtime_sources, static_infos).await;
+                    for (prefix, prefix_len) in &na_prefixes {
+                        let ip = combine_prefix_suffix(*prefix, *prefix_len, cache.suffix);
+                        let _ = ipv6_assign_sender.try_send(
+                            landscape_common::event::hub::IPv6AssignEvent::Expired(
+                                landscape_common::event::hub::IPv6AssignInfo {
+                                    iface_name: iface_name.to_string(),
+                                    mac: client_mac,
+                                    ip,
+                                },
+                            ),
+                        );
+                    }
+                }
+            }
             if let Some(released_pd) = server.release_pd(&client_duid).await {
                 cleanup_pd_routes(&released_pd, iface_name, route_service).await;
             }
@@ -695,7 +745,25 @@ async fn handle_dhcpv6_message(
         DhcpV6MessageType::Decline => {
             tracing::info!("DHCPv6 DECLINE from {:?}", mac);
             // Mark declined, remove from offered
-            server.release_na(&client_duid).await;
+            let released_na = server.release_na(&client_duid).await;
+            if let Some(cache) = &released_na {
+                if let Some(client_mac) = cache.mac {
+                    let na_prefixes =
+                        server.get_qualifying_na_prefixes(runtime_sources, static_infos).await;
+                    for (prefix, prefix_len) in &na_prefixes {
+                        let ip = combine_prefix_suffix(*prefix, *prefix_len, cache.suffix);
+                        let _ = ipv6_assign_sender.try_send(
+                            landscape_common::event::hub::IPv6AssignEvent::Expired(
+                                landscape_common::event::hub::IPv6AssignInfo {
+                                    iface_name: iface_name.to_string(),
+                                    mac: client_mac,
+                                    ip,
+                                },
+                            ),
+                        );
+                    }
+                }
+            }
             return true;
         }
 

@@ -3,7 +3,7 @@ use landscape_common::database::LandscapeStore as LandscapeDBStore;
 use landscape_common::dhcp::v6_server::config::DHCPv6ServerConfig;
 use landscape_common::dhcp::v6_server::status::DHCPv6OfferInfo;
 use landscape_common::event::hub::{
-    EnrolledDeviceEvent, EnrolledDeviceEventReader, IfaceEventReader,
+    EnrolledDeviceEvent, EnrolledDeviceEventReader, IPv6AssignEventSender, IfaceEventReader,
 };
 use landscape_common::ipv6::lan::{
     IPv6ServiceMode, LanIPv6ConfigV2, LanIPv6ServiceConfigV2, LanPrefixGroupConfig,
@@ -42,6 +42,7 @@ pub struct LanIPv6Service {
     iface_lease_map: Arc<RwLock<HashMap<String, Arc<RwLock<IPv6NAInfo>>>>>,
     iface_dhcpv6_status_map: Arc<RwLock<HashMap<String, Arc<Mutex<DhcpV6AssignStatus>>>>>,
     enrolled_device_store: EnrolledDeviceRepository,
+    ipv6_assign_sender: IPv6AssignEventSender,
 }
 
 impl LanIPv6Service {
@@ -49,6 +50,7 @@ impl LanIPv6Service {
         route_service: IpRouteService,
         prefix_map: IAPrefixMap,
         enrolled_device_store: EnrolledDeviceRepository,
+        ipv6_assign_sender: IPv6AssignEventSender,
     ) -> Self {
         Self {
             route_service,
@@ -56,6 +58,7 @@ impl LanIPv6Service {
             iface_lease_map: Arc::new(RwLock::new(HashMap::new())),
             iface_dhcpv6_status_map: Arc::new(RwLock::new(HashMap::new())),
             enrolled_device_store,
+            ipv6_assign_sender,
         }
     }
 }
@@ -115,6 +118,7 @@ impl ServiceStarterTrait for LanIPv6Service {
                         prefix: 128,
                         mode: LanRouteMode::Reachable,
                     };
+                    let ipv6_assign_sender = self.ipv6_assign_sender.clone();
                     tokio::spawn(async move {
                         let mode = config.config.mode;
                         let LanIPv6ConfigV2 { ad_interval, ra_flag, prefix_groups, dhcpv6, .. } =
@@ -135,6 +139,7 @@ impl ServiceStarterTrait for LanIPv6Service {
                                     lan_info.ifindex,
                                     status_clone,
                                     assigned_ips,
+                                    ipv6_assign_sender,
                                 )
                                 .await;
                             }
@@ -153,6 +158,7 @@ impl ServiceStarterTrait for LanIPv6Service {
                                     status_clone,
                                     assigned_ips,
                                     dhcpv6_assign_status,
+                                    ipv6_assign_sender,
                                 )
                                 .await;
                             }
@@ -171,6 +177,7 @@ impl ServiceStarterTrait for LanIPv6Service {
                                     status_clone,
                                     assigned_ips,
                                     dhcpv6_assign_status,
+                                    ipv6_assign_sender,
                                 )
                                 .await;
                             }
@@ -187,7 +194,6 @@ impl ServiceStarterTrait for LanIPv6Service {
 use landscape_common::ipv6::ra::RouterFlags;
 use landscape_common::net::MacAddr;
 
-/// Mode 1 (Slaac): RA with prefix info, no DHCPv6
 async fn run_slaac(
     groups: &[LanPrefixGroupConfig],
     iface_name: &str,
@@ -200,6 +206,7 @@ async fn run_slaac(
     link_ifindex: u32,
     status: WatchService,
     assigned_ips: Arc<RwLock<IPv6NAInfo>>,
+    ipv6_assign_sender: IPv6AssignEventSender,
 ) {
     let PrefixSetupResult {
         runtime,
@@ -234,6 +241,7 @@ async fn run_slaac(
         None,
         None,
         link_ifindex,
+        ipv6_assign_sender,
     )
     .await;
 
@@ -256,6 +264,7 @@ async fn run_stateful(
     status: WatchService,
     assigned_ips: Arc<RwLock<IPv6NAInfo>>,
     dhcpv6_assign_status: Option<Arc<Mutex<DhcpV6AssignStatus>>>,
+    ipv6_assign_sender: IPv6AssignEventSender,
 ) {
     let dhcpv6_config = match dhcpv6 {
         Some(c) if c.enable => c,
@@ -299,6 +308,7 @@ async fn run_stateful(
 
         let link_local = mac.to_ipv6_link_local();
         let assign_status = assign_status.clone();
+        let dhcpv6_ipv6_sender = ipv6_assign_sender.clone();
         tokio::spawn(async move {
             crate::dhcp_server::v6::dhcp_v6_server(
                 link_ifindex,
@@ -313,6 +323,7 @@ async fn run_stateful(
                 dhcpv6_status,
                 assign_status,
                 dhcpv6_route_service,
+                dhcpv6_ipv6_sender,
             )
             .await;
             dhcpv6_token.cancel();
@@ -336,6 +347,7 @@ async fn run_stateful(
         None,
         None,
         link_ifindex,
+        ipv6_assign_sender,
     )
     .await;
 
@@ -357,6 +369,7 @@ async fn run_slaac_dhcpv6(
     status: WatchService,
     assigned_ips: Arc<RwLock<IPv6NAInfo>>,
     dhcpv6_assign_status: Option<Arc<Mutex<DhcpV6AssignStatus>>>,
+    ipv6_assign_sender: IPv6AssignEventSender,
 ) {
     let dhcpv6_config = match dhcpv6 {
         Some(c) if c.enable => c,
@@ -419,6 +432,7 @@ async fn run_slaac_dhcpv6(
         let dhcpv6_route_service = route_service.clone();
         let link_local = mac.to_ipv6_link_local();
         let assign_status = assign_status.clone();
+        let dhcpv6_ipv6_sender = ipv6_assign_sender.clone();
 
         tokio::spawn(async move {
             crate::dhcp_server::v6::dhcp_v6_server(
@@ -434,6 +448,7 @@ async fn run_slaac_dhcpv6(
                 dhcpv6_status,
                 assign_status,
                 dhcpv6_route_service,
+                dhcpv6_ipv6_sender,
             )
             .await;
             dhcpv6_token.cancel();
@@ -456,6 +471,7 @@ async fn run_slaac_dhcpv6(
         Some(&dhcpv6_runtime),
         Some(dhcpv6_change_notify),
         link_ifindex,
+        ipv6_assign_sender,
     )
     .await;
 
@@ -495,10 +511,16 @@ impl LanIPv6ManagerService {
         mut device_reader: EnrolledDeviceEventReader,
         route_service: IpRouteService,
         prefix_map: IAPrefixMap,
+        ipv6_assign_sender: IPv6AssignEventSender,
     ) -> Self {
         let store = store_service.lan_ipv6_v2_service_store();
         let enrolled_device_store = store_service.enrolled_device_store();
-        let server_starter = LanIPv6Service::new(route_service, prefix_map, enrolled_device_store);
+        let server_starter = LanIPv6Service::new(
+            route_service,
+            prefix_map,
+            enrolled_device_store,
+            ipv6_assign_sender,
+        );
         let service =
             ServiceManager::init(store.list().await.unwrap(), server_starter.clone()).await;
 

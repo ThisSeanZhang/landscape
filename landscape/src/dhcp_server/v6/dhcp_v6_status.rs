@@ -151,7 +151,7 @@ impl DhcpV6AssignStatus {
         let mut seed = hash_duid(client_duid);
         loop {
             if self.na_allocated_suffixes.len() as u64 >= self.na_range_capacity {
-                if !self.clean_expired_na() {
+                if self.clean_expired_na().is_empty() {
                     tracing::error!("DHCPv6 NA pool is full");
                     return None;
                 }
@@ -198,32 +198,35 @@ impl DhcpV6AssignStatus {
         }
     }
 
-    pub fn release_na(&mut self, client_duid: &[u8]) {
+    pub fn release_na(&mut self, client_duid: &[u8]) -> Option<DHCPv6NACache> {
         if let Some(cache) = self.na_offered.remove(client_duid) {
             if !cache.is_static {
                 self.na_allocated_suffixes.remove(&cache.suffix);
             }
+            Some(cache)
+        } else {
+            None
         }
     }
 
-    pub fn clean_expired_na(&mut self) -> bool {
+    pub fn clean_expired_na(&mut self) -> Vec<DHCPv6NACache> {
         let current_time = self.relative_boot_time.elapsed().as_secs();
-        let mut removed = vec![];
+        let mut expired: Vec<DHCPv6NACache> = Vec::new();
         self.na_offered.retain(|_, cache| {
             if cache.is_static {
                 return true;
             }
             if current_time > cache.relative_offer_time + cache.valid_time as u64 {
-                removed.push(cache.suffix);
+                expired.push(cache.clone());
                 false
             } else {
                 true
             }
         });
-        for suffix in &removed {
-            self.na_allocated_suffixes.remove(suffix);
+        for cache in &expired {
+            self.na_allocated_suffixes.remove(&cache.suffix);
         }
-        !removed.is_empty()
+        expired
     }
 
     pub fn offer_pd_index(
@@ -938,7 +941,7 @@ mod tests {
     #[test]
     fn t22_clean_expired_na_returns_false_when_nothing_expired() {
         let mut status = DhcpV6AssignStatus::init_for_test(na_config());
-        assert!(!status.clean_expired_na());
+        assert!(status.clean_expired_na().is_empty());
     }
 
     #[test]

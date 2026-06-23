@@ -20,8 +20,17 @@ impl IPv6NAInfo {
         }
     }
 
-    pub fn clean_expired_entries(&mut self, threshold: u64) {
-        self.offered_ips.retain(|_key, info_item| info_item.relative_active_time >= threshold);
+    pub fn clean_expired_entries(&mut self, threshold: u64) -> Vec<IPv6NAInfoItem> {
+        let mut expired = Vec::new();
+        self.offered_ips.retain(|_key, info_item| {
+            if info_item.relative_active_time >= threshold {
+                true
+            } else {
+                expired.push(info_item.clone());
+                false
+            }
+        });
+        expired
     }
 }
 

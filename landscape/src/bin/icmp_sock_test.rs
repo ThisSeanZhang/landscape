@@ -4,6 +4,7 @@ use clap::Parser;
 use landscape::ipv6::prefix::IPv6PrefixRuntime;
 use landscape::{icmp::v6::icmp_ra_server, iface::get_iface_by_name};
 use landscape_common::{
+    event::hub::IPv6AssignEventSender,
     ipv6::ra::RouterFlags,
     lan_services::ipv6_ra::IPv6NAInfo,
     service::{ServiceStatus, WatchService},
@@ -45,6 +46,8 @@ async fn main() {
     tokio::spawn(async move {
         if let Some(iface) = get_iface_by_name(&args.iface_name).await {
             if let Some(mac) = iface.mac {
+                let (ipv6_tx, _) = tokio::sync::mpsc::channel(32);
+                let ipv6_assign_sender = IPv6AssignEventSender::new(ipv6_tx);
                 icmp_ra_server(
                     300,
                     ra_flag,
@@ -58,6 +61,7 @@ async fn main() {
                     None,
                     None,
                     iface.index,
+                    ipv6_assign_sender,
                 )
                 .await
                 .unwrap();

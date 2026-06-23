@@ -48,11 +48,11 @@ impl DHCPv6Server {
         self.status.lock().await.confirm_na(client_duid)
     }
 
-    pub async fn release_na(&self, client_duid: &[u8]) {
+    pub async fn release_na(&self, client_duid: &[u8]) -> Option<DHCPv6NACache> {
         self.status.lock().await.release_na(client_duid)
     }
 
-    pub async fn clean_expired_na(&self) -> bool {
+    pub async fn clean_expired_na(&self) -> Vec<DHCPv6NACache> {
         self.status.lock().await.clean_expired_na()
     }
 
