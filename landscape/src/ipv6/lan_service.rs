@@ -718,6 +718,44 @@ impl LanIPv6ManagerService {
 
         None
     }
+
+    pub async fn get_device_ipv6_map(&self) -> HashMap<Uuid, Ipv6Addr> {
+        let mut result = HashMap::new();
+
+        // SLAAC / ND-learned addresses
+        for (_, assigned_ips) in self.get_assigned_ips().await {
+            for item in assigned_ips.offered_ips.into_values() {
+                if let Some(device_id) = self.server_starter.device_id_map.get(&item.mac) {
+                    result.insert(*device_id, item.ip);
+                }
+            }
+        }
+
+        // DHCPv6 active leases (clients that have already received an address)
+        for (_, offer) in self.get_dhcpv6_assigned().await {
+            for addr in offer.offered_addresses {
+                if let Some(mac) = addr.mac {
+                    if let Some(device_id) = self.server_starter.device_id_map.get(&mac) {
+                        result.entry(*device_id).or_insert(addr.ip);
+                    }
+                }
+            }
+        }
+
+        // DHCPv6 static bindings (enrolled devices with ipv6 configured, even if
+        // the client hasn't sent a DHCPv6 message yet this session)
+        let status_map = self.server_starter.iface_dhcpv6_status_map.read().await;
+        for status_arc in status_map.values() {
+            let status = status_arc.lock().await;
+            for (mac, ip) in &status.static_bindings {
+                if let Some(device_id) = self.server_starter.device_id_map.get(mac) {
+                    result.entry(*device_id).or_insert(*ip);
+                }
+            }
+        }
+
+        result
+    }
 }
 
 fn extract_binding_ifaces_v6(event: &EnrolledDeviceEvent) -> HashSet<String> {

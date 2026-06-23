@@ -72,9 +72,20 @@ fn ipv6_prefix_mask(prefix_len: u8) -> Option<u128> {
     }
 }
 
+pub fn checked_extract_ipv6_suffix(ip: Ipv6Addr, prefix_len: u8) -> Option<Ipv6Addr> {
+    let mask = ipv6_prefix_mask(prefix_len)?;
+    Some(Ipv6Addr::from(u128::from(ip) & !mask))
+}
+
+pub fn extract_ipv6_suffix(ip: Ipv6Addr, prefix_len: u8) -> Ipv6Addr {
+    checked_extract_ipv6_suffix(ip, prefix_len).expect("invalid IPv6 prefix_len")
+}
+
 #[cfg(test)]
 mod tests {
-    use super::checked_allocate_subnet;
+    use super::{
+        checked_allocate_subnet, checked_combine_ipv6_prefix_suffix, checked_extract_ipv6_suffix,
+    };
     use std::net::Ipv6Addr;
 
     #[test]
@@ -84,5 +95,29 @@ mod tests {
 
         assert_eq!(result.0, "2001:db8::1".parse::<Ipv6Addr>().unwrap());
         assert_eq!(result.1, "2001:db8::1".parse::<Ipv6Addr>().unwrap());
+    }
+
+    #[test]
+    fn extract_suffix_is_inverse_of_combine() {
+        let prefix: Ipv6Addr = "2001:db8:1234:5600::".parse().unwrap();
+        let prefix_len: u8 = 56;
+        let addr: Ipv6Addr = "2001:db8:1234:5601:abcd:efff:fe12:3456".parse().unwrap();
+
+        let suffix = checked_extract_ipv6_suffix(addr, prefix_len).unwrap();
+        let reconstructed = checked_combine_ipv6_prefix_suffix(prefix, prefix_len, suffix).unwrap();
+
+        assert_eq!(reconstructed, addr);
+    }
+
+    #[test]
+    fn combine_and_extract_roundtrip() {
+        let prefix: Ipv6Addr = "2001:4860:4860::".parse().unwrap();
+        let prefix_len: u8 = 48;
+        let suffix: Ipv6Addr = "::1".parse().unwrap();
+
+        let combined = checked_combine_ipv6_prefix_suffix(prefix, prefix_len, suffix).unwrap();
+        let extracted = checked_extract_ipv6_suffix(combined, prefix_len).unwrap();
+
+        assert_eq!(extracted, suffix);
     }
 }

@@ -305,7 +305,29 @@ async fn run_system(
     );
     let dns_provider_profile_service =
         DnsProviderProfileService::new(db_store_provider.clone()).await;
-    let ddns_service = DdnsService::new(db_store_provider.clone(), route_service.clone()).await;
+    let prefix_map = IAPrefixMap::new();
+
+    let lan_ipv6_service = LanIPv6ManagerService::new(
+        db_store_provider.clone(),
+        event_handle.subscribe_iface(),
+        landscape_common::event::hub::EnrolledDeviceEventReader::new(
+            event_handle.subscribe_device(),
+        ),
+        route_service.clone(),
+        prefix_map.clone(),
+        ipv6_assign_sender.clone(),
+    )
+    .await;
+    let enrolled_ipv6_cache = lan_ipv6_service.get_device_ipv6_map().await;
+
+    let ddns_service = DdnsService::new(
+        db_store_provider.clone(),
+        route_service.clone(),
+        prefix_map.clone(),
+        event_handle.subscribe_ipv6_assign(),
+        enrolled_ipv6_cache,
+    )
+    .await;
 
     let geo_ip_service =
         GeoIpService::new(db_store_provider.clone(), dst_ip_service_tx.clone()).await;
@@ -387,23 +409,11 @@ async fn run_system(
         PPPDServiceConfigManagerService::new(db_store_provider.clone(), route_service.clone())
             .await;
 
-    let prefix_map = IAPrefixMap::new();
     let ipv6_pd_service = DHCPv6ClientManagerService::new(
         db_store_provider.clone(),
         event_handle.subscribe_iface(),
         route_service.clone(),
         prefix_map.clone(),
-    )
-    .await;
-    let lan_ipv6_service = LanIPv6ManagerService::new(
-        db_store_provider.clone(),
-        event_handle.subscribe_iface(),
-        landscape_common::event::hub::EnrolledDeviceEventReader::new(
-            event_handle.subscribe_device(),
-        ),
-        route_service.clone(),
-        prefix_map,
-        ipv6_assign_sender,
     )
     .await;
 

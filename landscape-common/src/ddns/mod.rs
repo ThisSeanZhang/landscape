@@ -19,8 +19,17 @@ pub enum IpFamily {
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[serde(tag = "t", rename_all = "snake_case")]
 pub enum DdnsSource {
-    LocalWan { iface_name: String, family: IpFamily },
-    EnrolledDevice { device_id: Uuid, family: IpFamily },
+    LocalWan {
+        iface_name: String,
+        family: IpFamily,
+    },
+    EnrolledDevice {
+        device_id: Uuid,
+        #[serde(default)]
+        #[serde(skip_serializing_if = "Option::is_none")]
+        wan_pd_id: Option<String>,
+        family: IpFamily,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -52,6 +61,8 @@ pub enum DdnsRuntimeReason {
     WaitingWanIp,
     NoMatchingSource,
     SourceNotImplemented,
+    WaitingLanDeviceIp,
+    WaitingWanPdPrefix,
     ProviderProfileMissing,
     ProviderUnsupported,
     AuthFailed,
@@ -209,7 +220,12 @@ impl DdnsJob {
                         return Err("DDNS source iface_name must not be empty".to_string());
                     }
                 }
-                DdnsSource::EnrolledDevice { .. } => {}
+                DdnsSource::EnrolledDevice { wan_pd_id, .. } => {
+                    let iface = wan_pd_id.as_ref().ok_or("DDNS source wan_pd_id is required")?;
+                    if iface.trim().is_empty() {
+                        return Err("DDNS source wan_pd_id must not be empty".to_string());
+                    }
+                }
             }
         }
 
@@ -219,8 +235,8 @@ impl DdnsJob {
                 DdnsSource::LocalWan { iface_name, family } => {
                     format!("local_wan:{}:{family:?}", iface_name.trim())
                 }
-                DdnsSource::EnrolledDevice { device_id, family } => {
-                    format!("enrolled_device:{device_id}:{family:?}")
+                DdnsSource::EnrolledDevice { device_id, wan_pd_id, family } => {
+                    format!("enrolled_device:{device_id}:{:?}:{family:?}", wan_pd_id)
                 }
             };
             if !seen_sources.insert(source_key) {

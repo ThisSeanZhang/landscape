@@ -1,8 +1,9 @@
 use std::collections::HashMap;
-use std::net::IpAddr;
+use std::net::{IpAddr, Ipv6Addr};
 use std::sync::Arc;
 use std::time::Duration;
 
+use dashmap::DashMap;
 use landscape_common::cert::order::DnsProviderConfig;
 use landscape_common::database::LandscapeStore;
 use landscape_common::ddns::{
@@ -10,6 +11,9 @@ use landscape_common::ddns::{
     DdnsRecordRuntime, DdnsRuntimeReason, DdnsSource, IpFamily,
 };
 use landscape_common::dns::provider_profile::DnsProviderProfile;
+use landscape_common::event::hub::{IPv6AssignEvent, IPv6AssignEventReader};
+use landscape_common::ipv6::{combine_ipv6_prefix_suffix, extract_ipv6_suffix};
+use landscape_common::ipv6_pd::IAPrefixMap;
 use landscape_common::{error::LdError, service::controller::ConfigController};
 use landscape_database::{
     ddns::repository::DdnsJobRepository,
@@ -33,6 +37,13 @@ const DEFAULT_DDNS_RECORD_TTL: u32 = 120;
 type DdnsRuntimeMap = Arc<RwLock<HashMap<Uuid, DdnsJobRuntime>>>;
 type DdnsSyncLock = Arc<Mutex<()>>;
 
+struct EnrolledDeviceCache {
+    raw_ip: std::net::Ipv6Addr,
+}
+
+type EnrolledCache = Arc<DashMap<Uuid, EnrolledDeviceCache>>;
+type PdWatchHandles = Arc<DashMap<String, tokio::task::AbortHandle>>;
+
 struct ResolveRecordIpError {
     status: DdnsJobStatus,
     reason: DdnsRuntimeReason,
@@ -49,10 +60,19 @@ pub struct DdnsService {
     client: Client,
     runtime: DdnsRuntimeMap,
     sync_lock: DdnsSyncLock,
+    prefix_map: IAPrefixMap,
+    enrolled_cache: EnrolledCache,
+    pd_watchers: PdWatchHandles,
 }
 
 impl DdnsService {
-    pub async fn new(store: LandscapeDBServiceProvider, route_service: IpRouteService) -> Self {
+    pub async fn new(
+        store: LandscapeDBServiceProvider,
+        route_service: IpRouteService,
+        prefix_map: IAPrefixMap,
+        ipv6_reader: IPv6AssignEventReader,
+        enrolled_ipv6_cache: HashMap<Uuid, Ipv6Addr>,
+    ) -> Self {
         let service = Self {
             store: store.ddns_job_store(),
             profile_store: store.dns_provider_profile_store(),
@@ -60,11 +80,21 @@ impl DdnsService {
             client: Client::new(),
             runtime: Arc::new(RwLock::new(HashMap::new())),
             sync_lock: Arc::new(Mutex::new(())),
+            prefix_map,
+            enrolled_cache: Arc::new(
+                enrolled_ipv6_cache
+                    .into_iter()
+                    .map(|(id, ip)| (id, EnrolledDeviceCache { raw_ip: ip }))
+                    .collect(),
+            ),
+            pd_watchers: Arc::new(DashMap::new()),
         };
         service.refresh_runtime_from_store().await;
         service.spawn_sync_loop();
         service.spawn_retry_loop();
         service.spawn_wan_update_loop();
+        service.spawn_ipv6_assign_loop(ipv6_reader);
+        service.reconcile_pd_watchers_from_store().await;
         service
     }
 
@@ -141,6 +171,143 @@ impl DdnsService {
                 }
             }
         });
+    }
+
+    fn spawn_ipv6_assign_loop(&self, mut reader: IPv6AssignEventReader) {
+        let service = self.clone();
+        tokio::spawn(async move {
+            loop {
+                match reader.recv().await {
+                    Ok(IPv6AssignEvent::Allocated(info)) => {
+                        if let Some(device_id) = info.device_id {
+                            if let Err(e) =
+                                service.on_device_ipv6_allocated(device_id, info.ip).await
+                            {
+                                tracing::warn!("ddns lan ipv6 allocated handler failed: {e:?}");
+                            }
+                        }
+                    }
+                    Ok(IPv6AssignEvent::Expired(info)) => {
+                        if let Some(device_id) = info.device_id {
+                            service.enrolled_cache.remove(&device_id);
+                        }
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
+                        tracing::warn!(
+                            "ddns ipv6 assign listener lagged, skipped {skipped} events"
+                        );
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                }
+            }
+        });
+    }
+
+    async fn on_device_ipv6_allocated(
+        &self,
+        device_id: Uuid,
+        ip: std::net::Ipv6Addr,
+    ) -> Result<(), LdError> {
+        let jobs = self.store.find_enabled().await?;
+        let matching: Vec<_> = jobs
+            .into_iter()
+            .filter(|job| job_has_enrolled_device_ipv6_for_device(job, device_id))
+            .collect();
+
+        if matching.is_empty() {
+            return Ok(());
+        }
+
+        self.enrolled_cache.insert(device_id, EnrolledDeviceCache { raw_ip: ip });
+        self.sync_jobs_now(matching).await;
+        Ok(())
+    }
+
+    async fn on_pd_prefix_changed(&self, wan_pd_id: &str) -> Result<(), LdError> {
+        let jobs = self.store.find_enabled().await?;
+        let matching: Vec<_> = jobs
+            .into_iter()
+            .filter(|job| job_has_enrolled_device_ipv6_for_wan(job, wan_pd_id))
+            .collect();
+
+        if !matching.is_empty() {
+            self.sync_jobs_now(matching).await;
+        }
+        Ok(())
+    }
+
+    async fn start_pd_watcher(&self, wan_pd_id: &str) {
+        let mut rx = self.prefix_map.get_ia_prefix(wan_pd_id).await;
+        let iface = wan_pd_id.to_string();
+        let svc = self.clone();
+        let handle = tokio::spawn(async move {
+            loop {
+                if rx.changed().await.is_err() {
+                    break;
+                }
+                if let Err(e) = svc.on_pd_prefix_changed(&iface).await {
+                    tracing::warn!("ddns pd watcher error for {iface}: {e:?}");
+                }
+            }
+        });
+        // TODO: if pd_watchers already has an entry for wan_pd_id, the old
+        // AbortHandle is silently overwritten without aborting the old task,
+        // causing a task leak. The sole caller reconcile_pd_watchers guards
+        // with contains_key, but independent calls would leak.
+        self.pd_watchers.insert(wan_pd_id.to_string(), handle.abort_handle());
+    }
+
+    // TODO: the stale-removal & needed-startup phases are not atomic. A
+    // concurrent config change between the two phases could leave a watcher
+    // running for an interface that is no longer needed, or fail to start one
+    // that is newly needed. If the watcher strategy is revised (e.g. using
+    // a single background task with a shared subscription), this race goes
+    // away naturally.
+    async fn reconcile_pd_watchers(&self, jobs: &[DdnsJob]) {
+        use std::collections::HashSet;
+
+        let needed: HashSet<String> = jobs
+            .iter()
+            .filter(|j| j.enable)
+            .flat_map(|j| &j.sources)
+            .filter_map(|s| match s {
+                DdnsSource::EnrolledDevice {
+                    wan_pd_id: Some(iface),
+                    family: IpFamily::Ipv6,
+                    ..
+                } => Some(iface.clone()),
+                _ => None,
+            })
+            .collect();
+
+        let stale: Vec<String> = self
+            .pd_watchers
+            .iter()
+            .filter(|kv| !needed.contains(kv.key()))
+            .map(|kv| kv.key().clone())
+            .collect();
+        for iface in &stale {
+            if let Some((_, handle)) = self.pd_watchers.remove(iface) {
+                handle.abort();
+            }
+        }
+
+        for iface in &needed {
+            if !self.pd_watchers.contains_key(iface) {
+                self.start_pd_watcher(iface).await;
+                // TODO: initial sync failure is silently swallowed (only a
+                // warning log). Under the revised watcher design, consider
+                // surfacing this as a runtime error so the user has visibility.
+                if let Err(e) = self.on_pd_prefix_changed(iface).await {
+                    tracing::warn!("ddns initial pd sync for {iface} failed: {e:?}");
+                }
+            }
+        }
+    }
+
+    async fn reconcile_pd_watchers_from_store(&self) {
+        let jobs = self.store.list().await.unwrap_or_default();
+        self.reconcile_pd_watchers(&jobs).await;
     }
 
     pub async fn checked_set_job(&self, mut config: DdnsJob) -> Result<DdnsJob, LdError> {
@@ -360,14 +527,62 @@ impl DdnsService {
                         next_retry_at: Some(ts + DDNS_RETRY_INTERVAL_SECS as f64),
                     });
                 }
-                DdnsSource::EnrolledDevice { family, .. } if *family == wanted_family => {
-                    last_error = Some(ResolveRecordIpError {
-                        status: DdnsJobStatus::Error,
-                        reason: DdnsRuntimeReason::SourceNotImplemented,
-                        detail: "enrolled device DDNS source is not implemented yet".to_string(),
-                        retryable: false,
-                        next_retry_at: None,
-                    });
+                DdnsSource::EnrolledDevice { device_id, wan_pd_id, family }
+                    if *family == wanted_family =>
+                {
+                    match (wanted_family, wan_pd_id) {
+                        (IpFamily::Ipv6, Some(wan)) => {
+                            let entry = match self.enrolled_cache.get(device_id) {
+                                Some(e) => e,
+                                None => {
+                                    last_error = Some(ResolveRecordIpError {
+                                        status: DdnsJobStatus::Idle,
+                                        reason: DdnsRuntimeReason::WaitingLanDeviceIp,
+                                        detail: format!(
+                                            "waiting for device {device_id} IPv6 address assignment"
+                                        ),
+                                        retryable: true,
+                                        next_retry_at: Some(ts + DDNS_RETRY_INTERVAL_SECS as f64),
+                                    });
+                                    continue;
+                                }
+                            };
+                            let raw_ip = entry.raw_ip;
+                            drop(entry);
+
+                            let pd_rx = self.prefix_map.get_ia_prefix(wan).await;
+                            let pd = match pd_rx.borrow().clone() {
+                                Some(p) => p,
+                                None => {
+                                    last_error = Some(ResolveRecordIpError {
+                                        status: DdnsJobStatus::Idle,
+                                        reason: DdnsRuntimeReason::WaitingWanPdPrefix,
+                                        detail: format!(
+                                            "waiting for WAN {wan} PD prefix delegation"
+                                        ),
+                                        retryable: true,
+                                        next_retry_at: Some(ts + DDNS_RETRY_INTERVAL_SECS as f64),
+                                    });
+                                    continue;
+                                }
+                            };
+
+                            let suffix = extract_ipv6_suffix(raw_ip, pd.prefix_len);
+                            let ip =
+                                combine_ipv6_prefix_suffix(pd.prefix_ip, pd.prefix_len, suffix);
+                            return Ok(IpAddr::V6(ip));
+                        }
+                        _ => {
+                            last_error = Some(ResolveRecordIpError {
+                                status: DdnsJobStatus::Error,
+                                reason: DdnsRuntimeReason::SourceNotImplemented,
+                                detail: "enrolled device DDNS source is not implemented yet"
+                                    .to_string(),
+                                retryable: false,
+                                next_retry_at: None,
+                            });
+                        }
+                    }
                 }
                 _ => {}
             }
@@ -530,20 +745,54 @@ fn effective_ttl_config_updated_at(job: &DdnsJob, profile: &DnsProviderProfile) 
 }
 
 fn job_matches_wan_event(job: &DdnsJob, event: &WanRouteEvent) -> bool {
+    job.sources.iter().any(|source| match source {
+        DdnsSource::LocalWan { iface_name, family }
+            if iface_name == &event.owner && *family == event.family =>
+        {
+            true
+        }
+        DdnsSource::EnrolledDevice { wan_pd_id: Some(iface), family, .. }
+            if iface == &event.owner && *family == event.family =>
+        {
+            true
+        }
+        _ => false,
+    })
+}
+
+fn job_has_matching_source(job: &DdnsJob, wanted_family: IpFamily) -> bool {
+    job.sources.iter().any(|source| match source {
+        DdnsSource::LocalWan { family, .. } | DdnsSource::EnrolledDevice { family, .. }
+            if *family == wanted_family =>
+        {
+            true
+        }
+        _ => false,
+    })
+}
+
+fn job_has_enrolled_device_ipv6_for_device(job: &DdnsJob, device_id: Uuid) -> bool {
     job.sources.iter().any(|source| {
         matches!(
             source,
-            DdnsSource::LocalWan { iface_name, family }
-                if iface_name == &event.owner && *family == event.family
+            DdnsSource::EnrolledDevice {
+                device_id: id,
+                wan_pd_id: Some(_),
+                family: IpFamily::Ipv6,
+            } if *id == device_id
         )
     })
 }
 
-fn job_has_local_wan_source(job: &DdnsJob, wanted_family: IpFamily) -> bool {
+fn job_has_enrolled_device_ipv6_for_wan(job: &DdnsJob, wan_pd_id: &str) -> bool {
     job.sources.iter().any(|source| {
         matches!(
             source,
-            DdnsSource::LocalWan { family, .. } if *family == wanted_family
+            DdnsSource::EnrolledDevice {
+                wan_pd_id: Some(iface),
+                family: IpFamily::Ipv6,
+                ..
+            } if iface == wan_pd_id
         )
     })
 }
@@ -554,7 +803,7 @@ fn family_needs_retry(
     runtime: &DdnsFamilyRuntime,
     now_ts: f64,
 ) -> bool {
-    job_has_local_wan_source(job, family)
+    job_has_matching_source(job, family)
         && runtime.retryable
         && runtime.last_published_ip.is_none()
         && runtime.next_retry_at.map(|ts| ts <= now_ts).unwrap_or(true)
@@ -565,8 +814,8 @@ fn job_needs_retry(job: &DdnsJob, runtime: Option<&DdnsJobRuntime>) -> bool {
         return false;
     }
 
-    let should_retry = job_has_local_wan_source(job, IpFamily::Ipv4)
-        || job_has_local_wan_source(job, IpFamily::Ipv6);
+    let should_retry = job_has_matching_source(job, IpFamily::Ipv4)
+        || job_has_matching_source(job, IpFamily::Ipv6);
     if !should_retry {
         return false;
     }
@@ -765,6 +1014,8 @@ fn runtime_message_for_reason(reason: DdnsRuntimeReason) -> &'static str {
         DdnsRuntimeReason::WaitingWanIp => "Waiting for WAN IP",
         DdnsRuntimeReason::NoMatchingSource => "No DDNS source matches this IP family",
         DdnsRuntimeReason::SourceNotImplemented => "Selected DDNS source is not implemented yet",
+        DdnsRuntimeReason::WaitingLanDeviceIp => "Waiting for device IPv6 address assignment",
+        DdnsRuntimeReason::WaitingWanPdPrefix => "Waiting for WAN PD prefix delegation",
         DdnsRuntimeReason::ProviderProfileMissing => "DNS provider profile was not found",
         DdnsRuntimeReason::ProviderUnsupported => "Selected DNS provider does not support DDNS",
         DdnsRuntimeReason::AuthFailed => "DNS provider authentication failed",
@@ -934,7 +1185,8 @@ impl ConfigController for DdnsService {
         new_configs: Vec<Self::Config>,
         _old_configs: Vec<Self::Config>,
     ) {
-        self.refresh_runtime_with_jobs(new_configs).await;
+        self.refresh_runtime_with_jobs(new_configs.clone()).await;
+        self.reconcile_pd_watchers(&new_configs).await;
     }
 }
 
@@ -1093,5 +1345,57 @@ mod tests {
         assert_eq!(runtime.records[0].ipv4.reason, DdnsRuntimeReason::NotConfigured);
         assert_eq!(runtime.status, DdnsJobStatus::Success);
         assert_eq!(runtime.reason, DdnsRuntimeReason::UpToDate);
+    }
+
+    #[test]
+    fn wan_event_matches_enrolled_device_source() {
+        let job = test_job(vec![DdnsSource::EnrolledDevice {
+            device_id: Uuid::nil(),
+            wan_pd_id: Some("wan0".to_string()),
+            family: IpFamily::Ipv4,
+        }]);
+
+        assert!(job_matches_wan_event(
+            &job,
+            &WanRouteEvent {
+                owner: "wan0".to_string(),
+                family: IpFamily::Ipv4,
+                kind: WanRouteEventKind::Upserted,
+            }
+        ));
+        assert!(!job_matches_wan_event(
+            &job,
+            &WanRouteEvent {
+                owner: "wan0".to_string(),
+                family: IpFamily::Ipv6,
+                kind: WanRouteEventKind::Upserted,
+            }
+        ));
+        assert!(!job_matches_wan_event(
+            &job,
+            &WanRouteEvent {
+                owner: "wan1".to_string(),
+                family: IpFamily::Ipv4,
+                kind: WanRouteEventKind::Upserted,
+            }
+        ));
+    }
+
+    #[test]
+    fn wan_event_does_not_match_enrolled_device_without_wan_pd_id() {
+        let job = test_job(vec![DdnsSource::EnrolledDevice {
+            device_id: Uuid::nil(),
+            wan_pd_id: None,
+            family: IpFamily::Ipv4,
+        }]);
+
+        assert!(!job_matches_wan_event(
+            &job,
+            &WanRouteEvent {
+                owner: "any".to_string(),
+                family: IpFamily::Ipv4,
+                kind: WanRouteEventKind::Upserted,
+            }
+        ));
     }
 }
