@@ -550,6 +550,11 @@ impl LanIPv6ManagerService {
                                 if let Some(ipv6) = new.ipv6 {
                                     status.add_or_update_binding(new.mac, ipv6);
                                 }
+                                // TODO: After binding update, sending a unicast RA to the
+                                // affected client (via mac.to_ipv6_link_local()) would trigger
+                                // it to re-initiate DHCPv6 immediately, allowing the old IP
+                                // to be released faster instead of waiting for the next
+                                // periodic RA or client retry timeout.
                             }
                             EnrolledDeviceEvent::Deleted { old } => {
                                 status.remove_binding(&old.mac);

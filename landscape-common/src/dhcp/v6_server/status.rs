@@ -35,6 +35,10 @@ pub struct DHCPv6AddressItem {
     pub preferred_lifetime: u32,
     pub valid_lifetime: u32,
     pub is_static: bool,
+
+    #[serde(default)]
+    #[cfg_attr(feature = "openapi", schema(required = false, nullable = false))]
+    pub prev_suffix: Option<u64>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

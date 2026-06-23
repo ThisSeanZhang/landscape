@@ -12,6 +12,7 @@ pub struct DHCPv6NACache {
     pub valid_time: u32,
     pub preferred_time: u32,
     pub is_static: bool,
+    pub prev_suffix: Option<u64>,
 }
 
 #[derive(Debug, Clone)]

@@ -133,6 +133,7 @@ impl DhcpV6AssignStatus {
                         valid_time: valid_lifetime,
                         preferred_time: preferred_lifetime,
                         is_static: true,
+                        prev_suffix: None,
                     },
                 );
                 return Some(suffix);
@@ -172,6 +173,7 @@ impl DhcpV6AssignStatus {
                         valid_time: OFFER_VALID_TIME,
                         preferred_time: preferred_lifetime.min(OFFER_VALID_TIME),
                         is_static: false,
+                        prev_suffix: None,
                     },
                 );
                 return Some(suffix);
@@ -344,22 +346,18 @@ impl DhcpV6AssignStatus {
 
         if let Some((duid, hostname, kicked_mac)) = kicked {
             self.offer_na_suffix(&duid, kicked_mac, hostname);
+            if let Some(cache) = self.na_offered.get_mut(&duid) {
+                cache.prev_suffix = Some(suffix);
+            }
         }
     }
 
     pub fn remove_binding(&mut self, mac: &MacAddr) {
         self.static_bindings.remove(mac);
 
-        let to_remove: Vec<Vec<u8>> = self
-            .na_offered
-            .iter()
-            .filter(|(_, cache)| cache.is_static && cache.mac == Some(*mac))
-            .map(|(duid, _)| duid.clone())
-            .collect();
-
-        for duid in to_remove {
-            if let Some(cache) = self.na_offered.remove(&duid) {
-                self.na_allocated_suffixes.remove(&cache.suffix);
+        for (_, cache) in self.na_offered.iter_mut() {
+            if cache.is_static && cache.mac == Some(*mac) {
+                cache.is_static = false;
             }
         }
     }
@@ -384,6 +382,7 @@ impl DhcpV6AssignStatus {
                     preferred_lifetime: cache.preferred_time,
                     valid_lifetime: cache.valid_time,
                     is_static: cache.is_static,
+                    prev_suffix: cache.prev_suffix,
                 });
             }
         }
@@ -733,6 +732,7 @@ mod tests {
         assert!(reoffered.is_some(), "dynamic client should be re-offered");
         assert_ne!(reoffered.unwrap().suffix, dyn_suffix);
         assert!(!reoffered.unwrap().is_static);
+        assert_eq!(reoffered.unwrap().prev_suffix, Some(dyn_suffix));
     }
 
     #[test]
@@ -760,8 +760,14 @@ mod tests {
         status.remove_binding(&mac);
 
         assert!(!status.static_bindings.contains_key(&mac));
-        assert!(!status.na_offered.contains_key(&duid));
-        assert!(!status.na_allocated_suffixes.contains_key(&suffix));
+        // Old na_offered entry stays but is no longer static
+        let cache = status.na_offered.get(&duid);
+        assert!(cache.is_some(), "na_offered entry should be preserved as dynamic");
+        assert!(!cache.unwrap().is_static, "entry should no longer be static");
+        assert!(
+            status.na_allocated_suffixes.contains_key(&suffix),
+            "suffix should remain allocated"
+        );
     }
 
     #[test]
@@ -1151,5 +1157,59 @@ mod tests {
             Arc::new(ArcSwap::new(Arc::new(None)));
         let result = compute_qualifying_pd_prefixes(&Some(config), &[], &[none_src]);
         assert!(result.is_empty());
+    }
+
+    #[test]
+    fn t36_remove_binding_preserves_entry_as_dynamic_then_new_binding_succeeds() {
+        let config = na_config();
+        let mac = MacAddr::from([0x00, 0x11, 0x22, 0x33, 0x44, 0x55]);
+        let old_ip = Ipv6Addr::new(0xfd11, 0x2222, 0x3333, 0x4444, 0, 0, 0, 0x100);
+        let new_ip = Ipv6Addr::new(0xfd11, 0x2222, 0x3333, 0x4444, 0, 0, 0, 0x200);
+        let old_suffix = u128::from(old_ip) as u64;
+        let new_suffix = u128::from(new_ip) as u64;
+
+        let device = EnrolledDevice {
+            mac,
+            name: "test".to_string(),
+            ipv4: None,
+            ipv6: Some(old_ip),
+            ..serde_json::from_value(serde_json::json!({
+                "mac": "00:11:22:33:44:55",
+                "name": "test"
+            }))
+            .unwrap()
+        };
+
+        let mut status = DhcpV6AssignStatus::from_config_and_devices(&config, vec![device]);
+        let duid = b"update-ip".to_vec();
+        status.offer_na_suffix(&duid, Some(mac), None);
+
+        // Simulate EnrolledDeviceEvent::Updated: remove old, add new
+        status.remove_binding(&mac);
+        status.add_or_update_binding(mac, new_ip);
+
+        // New static binding should be in place
+        assert_eq!(status.static_bindings.get(&mac), Some(&new_ip));
+        assert!(status.na_allocated_suffixes.contains_key(&new_suffix));
+
+        // Old entry should remain as dynamic (not deleted)
+        let old_cache = status.na_offered.get(&duid);
+        assert!(old_cache.is_some(), "old na_offered entry should be preserved");
+        assert!(!old_cache.unwrap().is_static, "old entry should no longer be static");
+        assert!(
+            status.na_allocated_suffixes.contains_key(&old_suffix),
+            "old suffix should remain allocated until client re-requests"
+        );
+
+        // When client re-requests with same DUID, old entry cleaned up, new static assigned
+        let offered = status.offer_na_suffix(&duid, Some(mac), None);
+        assert_eq!(offered, Some(new_suffix), "client should get new static IP");
+        assert!(
+            !status.na_allocated_suffixes.contains_key(&old_suffix),
+            "old suffix should be freed after client re-requests"
+        );
+        let new_cache = status.na_offered.get(&duid).unwrap();
+        assert!(new_cache.is_static, "new entry should be static");
+        assert_eq!(new_cache.suffix, new_suffix);
     }
 }
