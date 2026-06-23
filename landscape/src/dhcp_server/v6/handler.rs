@@ -2,6 +2,7 @@ use std::net::{IpAddr, Ipv6Addr, SocketAddr};
 use std::sync::Arc;
 
 use arc_swap::ArcSwap;
+use dashmap::DashMap;
 use landscape_common::dhcp::v6_server::config::DHCPv6ServerConfig;
 use landscape_common::event::hub::IPv6AssignEventSender;
 use landscape_common::event::hub::{IPv6AssignEvent, IPv6AssignInfo};
@@ -9,6 +10,7 @@ use landscape_common::net::MacAddr;
 use landscape_common::net_proto::udp::dhcp::DhcpV6MessageType;
 use landscape_common::service::{ServiceStatus, WatchService};
 use landscape_common::LANDSCAPE_DEFAULE_DHCP_V6_SERVER_PORT;
+use uuid::Uuid;
 
 use dhcproto::v6::{self, IAAddr, IAPrefix, Status, StatusCode, IANA, IAPD};
 use dhcproto::{Decodable, Decoder, Encodable, Encoder};
@@ -68,7 +70,8 @@ static DHCPV6_MULTICAST: Ipv6Addr = Ipv6Addr::new(0xff02, 0, 0, 0, 0, 0, 0x1, 0x
     service_status,
     status,
     route_service,
-    ipv6_assign_sender
+    ipv6_assign_sender,
+    device_id_map
 ))]
 pub async fn dhcp_v6_server(
     link_ifindex: u32,
@@ -84,6 +87,7 @@ pub async fn dhcp_v6_server(
     status: Arc<tokio::sync::Mutex<DhcpV6AssignStatus>>,
     route_service: IpRouteService,
     ipv6_assign_sender: IPv6AssignEventSender,
+    device_id_map: Arc<DashMap<MacAddr, Uuid>>,
 ) {
     let server_duid = gen_server_duid(&mac);
 
@@ -175,6 +179,7 @@ pub async fn dhcp_v6_server(
                             link_ifindex,
                             &route_service,
                             &ipv6_assign_sender,
+                            &device_id_map,
                         ).await;
                         if need_update {
                             dhcp_server.refresh_offer_info(
@@ -199,13 +204,15 @@ pub async fn dhcp_v6_server(
                         .await;
                     for cache in &expired_na {
                         if let Some(mac) = cache.mac {
+                            let device_id = device_id_map.get(&mac).map(|r| *r.value());
                             for (prefix, prefix_len) in &na_prefixes {
-                        let ip = combine_prefix_suffix(*prefix, *prefix_len, cache.suffix);
-                        let _ = ipv6_assign_sender.try_send(IPv6AssignEvent::Expired(IPv6AssignInfo {
-                            iface_name: iface_name.clone(),
-                            mac,
-                            ip,
-                        }));
+                                let ip = combine_prefix_suffix(*prefix, *prefix_len, cache.suffix);
+                                let _ = ipv6_assign_sender.try_send(IPv6AssignEvent::Expired(IPv6AssignInfo {
+                                    iface_name: iface_name.clone(),
+                                    mac,
+                                    ip,
+                                    device_id,
+                                }));
                             }
                         }
                     }
@@ -275,6 +282,7 @@ async fn handle_dhcpv6_message(
     link_ifindex: u32,
     route_service: &IpRouteService,
     ipv6_assign_sender: &IPv6AssignEventSender,
+    device_id_map: &DashMap<MacAddr, Uuid>,
 ) -> bool {
     let msg = match v6::Message::decode(&mut Decoder::new(&msg_bytes)) {
         Ok(m) => m,
@@ -449,11 +457,14 @@ async fn handle_dhcpv6_message(
                                     }
                                 }
                                 for &ip in &ips {
+                                    let device_id =
+                                        device_id_map.get(&client_mac).map(|r| *r.value());
                                     let _ = ipv6_assign_sender.try_send(
                                         IPv6AssignEvent::Allocated(IPv6AssignInfo {
                                             iface_name: iface_name.to_string(),
                                             mac: client_mac,
                                             ip,
+                                            device_id,
                                         }),
                                     );
                                 }
@@ -709,19 +720,18 @@ async fn handle_dhcpv6_message(
             let released_na = server.release_na(&client_duid).await;
             if let Some(cache) = &released_na {
                 if let Some(client_mac) = cache.mac {
+                    let device_id = device_id_map.get(&client_mac).map(|r| *r.value());
                     let na_prefixes =
                         server.get_qualifying_na_prefixes(runtime_sources, static_infos).await;
                     for (prefix, prefix_len) in &na_prefixes {
                         let ip = combine_prefix_suffix(*prefix, *prefix_len, cache.suffix);
-                        let _ = ipv6_assign_sender.try_send(
-                            landscape_common::event::hub::IPv6AssignEvent::Expired(
-                                landscape_common::event::hub::IPv6AssignInfo {
-                                    iface_name: iface_name.to_string(),
-                                    mac: client_mac,
-                                    ip,
-                                },
-                            ),
-                        );
+                        let _ =
+                            ipv6_assign_sender.try_send(IPv6AssignEvent::Expired(IPv6AssignInfo {
+                                iface_name: iface_name.to_string(),
+                                mac: client_mac,
+                                ip,
+                                device_id,
+                            }));
                     }
                 }
             }
@@ -748,19 +758,18 @@ async fn handle_dhcpv6_message(
             let released_na = server.release_na(&client_duid).await;
             if let Some(cache) = &released_na {
                 if let Some(client_mac) = cache.mac {
+                    let device_id = device_id_map.get(&client_mac).map(|r| *r.value());
                     let na_prefixes =
                         server.get_qualifying_na_prefixes(runtime_sources, static_infos).await;
                     for (prefix, prefix_len) in &na_prefixes {
                         let ip = combine_prefix_suffix(*prefix, *prefix_len, cache.suffix);
-                        let _ = ipv6_assign_sender.try_send(
-                            landscape_common::event::hub::IPv6AssignEvent::Expired(
-                                landscape_common::event::hub::IPv6AssignInfo {
-                                    iface_name: iface_name.to_string(),
-                                    mac: client_mac,
-                                    ip,
-                                },
-                            ),
-                        );
+                        let _ =
+                            ipv6_assign_sender.try_send(IPv6AssignEvent::Expired(IPv6AssignInfo {
+                                iface_name: iface_name.to_string(),
+                                mac: client_mac,
+                                ip,
+                                device_id,
+                            }));
                     }
                 }
             }

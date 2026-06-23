@@ -1,6 +1,7 @@
 use std::net::Ipv6Addr;
 
 use tokio::sync::{broadcast, mpsc};
+use uuid::Uuid;
 
 use crate::net::MacAddr;
 
@@ -9,6 +10,7 @@ pub struct IPv6AssignInfo {
     pub iface_name: String,
     pub mac: MacAddr,
     pub ip: Ipv6Addr,
+    pub device_id: Option<Uuid>,
 }
 
 #[derive(Debug, Clone)]

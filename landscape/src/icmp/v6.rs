@@ -14,9 +14,11 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::UdpSocket;
 use tokio::sync::{watch, RwLock};
+use uuid::Uuid;
 
 use crate::ipv6::prefix::IPv6PrefixRuntime;
 use crate::netlink::address::addresses_by_iface_name;
+use dashmap::DashMap;
 
 static ICMPV6_MULTICAST_ROUTER: Ipv6Addr = Ipv6Addr::new(0xff02, 0, 0, 0, 0, 0, 0, 0x2);
 static ICMPV6_MULTICAST: Ipv6Addr = Ipv6Addr::new(0xff02, 0, 0, 0, 0, 0, 0, 0x1);
@@ -29,7 +31,8 @@ static ICMPV6_MULTICAST: Ipv6Addr = Ipv6Addr::new(0xff02, 0, 0, 0, 0, 0, 0, 0x1)
     assigned_ips,
     onlink_runtime,
     onlink_change_notify,
-    ipv6_assign_sender
+    ipv6_assign_sender,
+    device_id_map
 ))]
 pub async fn icmp_ra_server(
     ad_interval: u32,
@@ -47,6 +50,7 @@ pub async fn icmp_ra_server(
     mut onlink_change_notify: Option<watch::Receiver<()>>,
     link_ifindex: u32,
     ipv6_assign_sender: IPv6AssignEventSender,
+    device_id_map: Arc<DashMap<MacAddr, Uuid>>,
 ) -> LdResult<()> {
     {
         let mut ips = assigned_ips.write().await;
@@ -183,11 +187,13 @@ pub async fn icmp_ra_server(
                         if let Ok(mut ips) = assigned_ips.try_write() {
                             let expired = ips.clean_expired_entries(relative_boot_time - ad_interval);
                             for item in expired {
+                                let device_id = device_id_map.get(&item.mac).map(|r| *r.value());
                                 let _ = ipv6_assign_sender.try_send(
                                     IPv6AssignEvent::Expired(IPv6AssignInfo {
                                         iface_name: iface_name.clone(),
                                         mac: item.mac,
                                         ip: item.ip,
+                                        device_id,
                                     }),
                                 );
                             }
@@ -243,6 +249,7 @@ pub async fn icmp_ra_server(
                             link_ifindex,
                             &iface_name,
                             &ipv6_assign_sender,
+                            &device_id_map,
                         ).await;
                     }
                     None => break
@@ -313,6 +320,7 @@ async fn handle_rs_msg(
     link_ifindex: u32,
     iface_name: &str,
     ipv6_assign_sender: &IPv6AssignEventSender,
+    device_id_map: &DashMap<MacAddr, Uuid>,
 ) {
     let mut buf = BytesMut::from(msg.as_slice());
     let icmp_v6_msg = match Icmpv6Message::decode(&mut buf) {
@@ -362,10 +370,12 @@ async fn handle_rs_msg(
                 write_lock.offered_ips.insert(data.get_cache_key(), data);
                 drop(write_lock);
 
+                let device_id = device_id_map.get(&mac).map(|r| *r.value());
                 let _ = ipv6_assign_sender.try_send(IPv6AssignEvent::Allocated(IPv6AssignInfo {
                     iface_name: iface_name.to_string(),
                     mac,
                     ip: target_ip,
+                    device_id,
                 }));
 
                 if let Err(e) = landscape_ebpf::base::ip_mac::upsert_ipv6_ip_mac(

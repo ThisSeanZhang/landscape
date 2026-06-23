@@ -81,8 +81,8 @@ impl EnrolledDeviceRepository {
         Ok(models.into_iter().map(|m| m.into()).collect())
     }
 
-    /// Find devices with IPv6 bindings for a given interface (for DHCPv6 static assignment)
-    pub async fn find_dhcpv6_bindings(
+    /// Find devices with IPv6 bindings for a given interface (for SLAAC/DHCPv6)
+    pub async fn find_ipv6_bindings(
         &self,
         iface_name: String,
     ) -> Result<Vec<EnrolledDevice>, LdError> {

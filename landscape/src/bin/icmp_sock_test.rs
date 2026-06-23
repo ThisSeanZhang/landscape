@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use clap::Parser;
+use dashmap::DashMap;
 use landscape::ipv6::prefix::IPv6PrefixRuntime;
 use landscape::{icmp::v6::icmp_ra_server, iface::get_iface_by_name};
 use landscape_common::{
@@ -48,6 +49,7 @@ async fn main() {
             if let Some(mac) = iface.mac {
                 let (ipv6_tx, _) = tokio::sync::mpsc::channel(32);
                 let ipv6_assign_sender = IPv6AssignEventSender::new(ipv6_tx);
+                let device_id_map = Arc::new(DashMap::new());
                 icmp_ra_server(
                     300,
                     ra_flag,
@@ -62,6 +64,7 @@ async fn main() {
                     None,
                     iface.index,
                     ipv6_assign_sender,
+                    device_id_map,
                 )
                 .await
                 .unwrap();

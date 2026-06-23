@@ -27,11 +27,13 @@ use std::net::IpAddr;
 use std::net::Ipv6Addr;
 use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
+use uuid::Uuid;
 
 use crate::dhcp_server::v6::DhcpV6AssignStatus;
 use crate::iface::get_iface_by_name;
 use crate::ipv6::prefix::{cleanup_prefix_sources, setup_prefix_groups, PrefixSetupResult};
 use crate::route::IpRouteService;
+use dashmap::DashMap;
 
 /// LAN IPv6 service: manages RA + DHCPv6 per interface with mode-aware orchestration
 
@@ -43,6 +45,7 @@ pub struct LanIPv6Service {
     iface_dhcpv6_status_map: Arc<RwLock<HashMap<String, Arc<Mutex<DhcpV6AssignStatus>>>>>,
     enrolled_device_store: EnrolledDeviceRepository,
     ipv6_assign_sender: IPv6AssignEventSender,
+    device_id_map: Arc<DashMap<MacAddr, Uuid>>,
 }
 
 impl LanIPv6Service {
@@ -59,6 +62,7 @@ impl LanIPv6Service {
             iface_dhcpv6_status_map: Arc::new(RwLock::new(HashMap::new())),
             enrolled_device_store,
             ipv6_assign_sender,
+            device_id_map: Arc::new(DashMap::new()),
         }
     }
 }
@@ -89,14 +93,21 @@ impl ServiceStarterTrait for LanIPv6Service {
                 let dhcpv6_config = config.config.dhcpv6.clone();
                 let dhcpv6_enabled = dhcpv6_config.as_ref().map_or(false, |c| c.enable);
 
+                // Query enrolled devices for IPv6 bindings (used by both SLAAC and DHCPv6)
+                let devices = self
+                    .enrolled_device_store
+                    .find_ipv6_bindings(config.iface_name.clone())
+                    .await
+                    .unwrap_or_default();
+
+                // Initialize device_id_map for this interface
+                for d in &devices {
+                    self.device_id_map.insert(d.mac, d.id);
+                }
+
                 let dhcpv6_assign_status: Option<Arc<Mutex<DhcpV6AssignStatus>>> = if dhcpv6_enabled
                 {
                     let dhcpv6_cfg = dhcpv6_config.as_ref().unwrap();
-                    let devices = self
-                        .enrolled_device_store
-                        .find_dhcpv6_bindings(config.iface_name.clone())
-                        .await
-                        .unwrap_or_default();
                     let status = DhcpV6AssignStatus::from_config_and_devices(dhcpv6_cfg, devices);
                     let status_arc = Arc::new(Mutex::new(status));
                     {
@@ -119,6 +130,7 @@ impl ServiceStarterTrait for LanIPv6Service {
                         mode: LanRouteMode::Reachable,
                     };
                     let ipv6_assign_sender = self.ipv6_assign_sender.clone();
+                    let device_id_map = self.device_id_map.clone();
                     tokio::spawn(async move {
                         let mode = config.config.mode;
                         let LanIPv6ConfigV2 { ad_interval, ra_flag, prefix_groups, dhcpv6, .. } =
@@ -140,6 +152,7 @@ impl ServiceStarterTrait for LanIPv6Service {
                                     status_clone,
                                     assigned_ips,
                                     ipv6_assign_sender,
+                                    device_id_map,
                                 )
                                 .await;
                             }
@@ -159,6 +172,7 @@ impl ServiceStarterTrait for LanIPv6Service {
                                     assigned_ips,
                                     dhcpv6_assign_status,
                                     ipv6_assign_sender,
+                                    device_id_map,
                                 )
                                 .await;
                             }
@@ -178,6 +192,7 @@ impl ServiceStarterTrait for LanIPv6Service {
                                     assigned_ips,
                                     dhcpv6_assign_status,
                                     ipv6_assign_sender,
+                                    device_id_map,
                                 )
                                 .await;
                             }
@@ -207,6 +222,7 @@ async fn run_slaac(
     status: WatchService,
     assigned_ips: Arc<RwLock<IPv6NAInfo>>,
     ipv6_assign_sender: IPv6AssignEventSender,
+    device_id_map: Arc<DashMap<MacAddr, Uuid>>,
 ) {
     let PrefixSetupResult {
         runtime,
@@ -242,6 +258,7 @@ async fn run_slaac(
         None,
         link_ifindex,
         ipv6_assign_sender,
+        device_id_map,
     )
     .await;
 
@@ -265,6 +282,7 @@ async fn run_stateful(
     assigned_ips: Arc<RwLock<IPv6NAInfo>>,
     dhcpv6_assign_status: Option<Arc<Mutex<DhcpV6AssignStatus>>>,
     ipv6_assign_sender: IPv6AssignEventSender,
+    device_id_map: Arc<DashMap<MacAddr, Uuid>>,
 ) {
     let dhcpv6_config = match dhcpv6 {
         Some(c) if c.enable => c,
@@ -309,6 +327,7 @@ async fn run_stateful(
         let link_local = mac.to_ipv6_link_local();
         let assign_status = assign_status.clone();
         let dhcpv6_ipv6_sender = ipv6_assign_sender.clone();
+        let dhcpv6_device_id_map = device_id_map.clone();
         tokio::spawn(async move {
             crate::dhcp_server::v6::dhcp_v6_server(
                 link_ifindex,
@@ -324,6 +343,7 @@ async fn run_stateful(
                 assign_status,
                 dhcpv6_route_service,
                 dhcpv6_ipv6_sender,
+                dhcpv6_device_id_map,
             )
             .await;
             dhcpv6_token.cancel();
@@ -348,6 +368,7 @@ async fn run_stateful(
         None,
         link_ifindex,
         ipv6_assign_sender,
+        device_id_map,
     )
     .await;
 
@@ -370,6 +391,7 @@ async fn run_slaac_dhcpv6(
     assigned_ips: Arc<RwLock<IPv6NAInfo>>,
     dhcpv6_assign_status: Option<Arc<Mutex<DhcpV6AssignStatus>>>,
     ipv6_assign_sender: IPv6AssignEventSender,
+    device_id_map: Arc<DashMap<MacAddr, Uuid>>,
 ) {
     let dhcpv6_config = match dhcpv6 {
         Some(c) if c.enable => c,
@@ -433,6 +455,7 @@ async fn run_slaac_dhcpv6(
         let link_local = mac.to_ipv6_link_local();
         let assign_status = assign_status.clone();
         let dhcpv6_ipv6_sender = ipv6_assign_sender.clone();
+        let dhcpv6_device_id_map = device_id_map.clone();
 
         tokio::spawn(async move {
             crate::dhcp_server::v6::dhcp_v6_server(
@@ -449,6 +472,7 @@ async fn run_slaac_dhcpv6(
                 assign_status,
                 dhcpv6_route_service,
                 dhcpv6_ipv6_sender,
+                dhcpv6_device_id_map,
             )
             .await;
             dhcpv6_token.cancel();
@@ -472,6 +496,7 @@ async fn run_slaac_dhcpv6(
         Some(dhcpv6_change_notify),
         link_ifindex,
         ipv6_assign_sender,
+        device_id_map,
     )
     .await;
 
@@ -546,6 +571,7 @@ impl LanIPv6ManagerService {
         });
 
         let status_map = server_starter.iface_dhcpv6_status_map.clone();
+        let device_id_map = server_starter.device_id_map.clone();
         tokio::spawn(async move {
             while let Ok(event) = device_reader.recv().await {
                 let affected = extract_binding_ifaces_v6(&event);
@@ -572,16 +598,27 @@ impl LanIPv6ManagerService {
                                 if let Some(ipv6) = new.ipv6 {
                                     status.add_or_update_binding(new.mac, ipv6);
                                 }
-                                // TODO: After binding update, sending a unicast RA to the
-                                // affected client (via mac.to_ipv6_link_local()) would trigger
-                                // it to re-initiate DHCPv6 immediately, allowing the old IP
-                                // to be released faster instead of waiting for the next
-                                // periodic RA or client retry timeout.
                             }
                             EnrolledDeviceEvent::Deleted { old } => {
                                 status.remove_binding(&old.mac);
                             }
                         }
+                    }
+                }
+                // Update device_id_map
+                match &event {
+                    EnrolledDeviceEvent::Updated { old, new } => {
+                        if let Some(d) = old.as_ref() {
+                            if d.mac != new.mac || new.ipv6.is_none() {
+                                device_id_map.remove(&d.mac);
+                            }
+                        }
+                        if new.ipv6.is_some() {
+                            device_id_map.insert(new.mac, new.id);
+                        }
+                    }
+                    EnrolledDeviceEvent::Deleted { old } => {
+                        device_id_map.remove(&old.mac);
                     }
                 }
             }
