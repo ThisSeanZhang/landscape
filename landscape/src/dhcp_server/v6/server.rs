@@ -1,7 +1,6 @@
 use std::net::Ipv6Addr;
 use std::sync::Arc;
 
-use arc_swap::ArcSwap;
 use landscape_common::dhcp::v6_server::config::{
     DHCPv6IANAConfig, DHCPv6IAPDConfig, DHCPv6ServerConfig,
 };
@@ -10,7 +9,7 @@ use landscape_common::net::MacAddr;
 use tokio::sync::Mutex;
 
 use super::dhcp_v6_status::DhcpV6AssignStatus;
-use crate::ipv6::prefix::{ICMPv6ConfigInfo, PdDelegationParent};
+use crate::ipv6::prefix::{Assignment, ICMPv6ConfigInfo, PdDelegationParent};
 
 use super::types::{DHCPv6NACache, DHCPv6PDCache};
 
@@ -102,45 +101,25 @@ impl DHCPv6Server {
 
     pub async fn get_qualifying_na_prefixes(
         &self,
-        runtime_sources: &[Arc<ArcSwap<Option<ICMPv6ConfigInfo>>>],
-        static_infos: &[ICMPv6ConfigInfo],
+        assignment: &Assignment<ICMPv6ConfigInfo>,
     ) -> Vec<(Ipv6Addr, u8)> {
-        super::dhcp_v6_status::compute_qualifying_na_prefixes(
-            &self.na_config,
-            runtime_sources,
-            static_infos,
-        )
+        super::dhcp_v6_status::compute_qualifying_na_prefixes(&self.na_config, assignment)
     }
 
     pub async fn get_qualifying_pd_prefixes(
         &self,
-        pd_delegation_static: &[PdDelegationParent],
-        pd_delegation_dynamic: &[Arc<ArcSwap<Option<PdDelegationParent>>>],
+        assignment: &Assignment<PdDelegationParent>,
     ) -> Vec<(Ipv6Addr, u8)> {
-        super::dhcp_v6_status::compute_qualifying_pd_prefixes(
-            &self.pd_config,
-            pd_delegation_static,
-            pd_delegation_dynamic,
-        )
+        super::dhcp_v6_status::compute_qualifying_pd_prefixes(&self.pd_config, assignment)
     }
 
     pub async fn refresh_offer_info(
         &self,
-        ra_pd_runtime_sources: &[Arc<ArcSwap<Option<ICMPv6ConfigInfo>>>],
-        ra_static_infos: &[ICMPv6ConfigInfo],
-        pd_delegation_static: &[PdDelegationParent],
-        pd_delegation_dynamic: &[Arc<ArcSwap<Option<PdDelegationParent>>>],
+        na: &Assignment<ICMPv6ConfigInfo>,
+        pd: &Assignment<PdDelegationParent>,
     ) {
-        let na = super::dhcp_v6_status::compute_qualifying_na_prefixes(
-            &self.na_config,
-            ra_pd_runtime_sources,
-            ra_static_infos,
-        );
-        let pd = super::dhcp_v6_status::compute_qualifying_pd_prefixes(
-            &self.pd_config,
-            pd_delegation_static,
-            pd_delegation_dynamic,
-        );
+        let na = super::dhcp_v6_status::compute_qualifying_na_prefixes(&self.na_config, na);
+        let pd = super::dhcp_v6_status::compute_qualifying_pd_prefixes(&self.pd_config, pd);
         let mut status = self.status.lock().await;
         status.last_offer_info = status.get_offered_info(&na, &pd);
     }

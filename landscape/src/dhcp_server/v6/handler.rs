@@ -1,7 +1,6 @@
 use std::net::{IpAddr, Ipv6Addr, SocketAddr};
 use std::sync::Arc;
 
-use arc_swap::ArcSwap;
 use dashmap::DashMap;
 use landscape_common::dhcp::v6_server::config::DHCPv6ServerConfig;
 use landscape_common::event::hub::IPv6AssignEventSender;
@@ -21,7 +20,9 @@ use tokio::net::UdpSocket;
 use landscape_common::route::{LanIPv6RouteKey, LanRouteInfo, LanRouteMode};
 
 use super::dhcp_v6_status::DhcpV6AssignStatus;
-use crate::ipv6::prefix::{add_route_via, del_route, ICMPv6ConfigInfo, PdDelegationParent};
+use crate::ipv6::prefix::{
+    add_route_via, del_route, Assignment, ICMPv6ConfigInfo, PdDelegationParent,
+};
 use crate::route::IpRouteService;
 
 use super::server::DHCPv6Server;
@@ -32,22 +33,18 @@ use super::utils::{
 /// Collect DNS server addresses dynamically from prefix sources.
 /// Strategy: sub_router addresses first (preferred), link-local always appended as fallback.
 fn collect_dns_servers(
-    runtime_sources: &[Arc<ArcSwap<Option<ICMPv6ConfigInfo>>>],
-    static_infos: &[ICMPv6ConfigInfo],
+    assignment: &Assignment<ICMPv6ConfigInfo>,
     link_local: Ipv6Addr,
 ) -> Vec<Ipv6Addr> {
     let mut dns = Vec::new();
-    // Link-local always FIRST (highly recommended for stability and source-address-selection correctness)
     dns.push(link_local);
 
-    // Static prefix sub_routers
-    for info in static_infos {
+    for info in &assignment.statics {
         if !dns.contains(&info.sub_router) {
             dns.push(info.sub_router);
         }
     }
-    // Dynamic PD prefix sub_routers
-    for src in runtime_sources {
+    for src in &assignment.dynamics {
         if let Some(info) = src.load().as_ref() {
             if !dns.contains(&info.sub_router) {
                 dns.push(info.sub_router);
@@ -63,10 +60,8 @@ static DHCPV6_MULTICAST: Ipv6Addr = Ipv6Addr::new(0xff02, 0, 0, 0, 0, 0, 0x1, 0x
 /// Main DHCPv6 server function
 #[tracing::instrument(skip(
     dhcpv6_config,
-    ra_pd_runtime_sources,
-    ra_static_infos,
-    pd_delegation_static,
-    pd_delegation_dynamic,
+    na,
+    pd,
     service_status,
     status,
     route_service,
@@ -79,10 +74,8 @@ pub async fn dhcp_v6_server(
     mac: MacAddr,
     link_local: Ipv6Addr,
     dhcpv6_config: DHCPv6ServerConfig,
-    ra_pd_runtime_sources: Vec<Arc<ArcSwap<Option<ICMPv6ConfigInfo>>>>,
-    ra_static_infos: Vec<ICMPv6ConfigInfo>,
-    pd_delegation_static: Vec<PdDelegationParent>,
-    pd_delegation_dynamic: Vec<Arc<ArcSwap<Option<PdDelegationParent>>>>,
+    na: Assignment<ICMPv6ConfigInfo>,
+    pd: Assignment<PdDelegationParent>,
     service_status: WatchService,
     status: Arc<tokio::sync::Mutex<DhcpV6AssignStatus>>,
     route_service: IpRouteService,
@@ -170,10 +163,8 @@ pub async fn dhcp_v6_server(
                             &server_duid,
                             mac,
                             (msg_bytes, msg_addr),
-                            &ra_pd_runtime_sources,
-                            &ra_static_infos,
-                            &pd_delegation_static,
-                            &pd_delegation_dynamic,
+                            &na,
+                            &pd,
                             link_local,
                             &iface_name,
                             link_ifindex,
@@ -182,12 +173,7 @@ pub async fn dhcp_v6_server(
                             &device_id_map,
                         ).await;
                         if need_update {
-                            dhcp_server.refresh_offer_info(
-                                &ra_pd_runtime_sources,
-                                &ra_static_infos,
-                                &pd_delegation_static,
-                                &pd_delegation_dynamic,
-                            ).await;
+                            dhcp_server.refresh_offer_info(&na, &pd).await;
                         }
                     },
                     None => {
@@ -199,9 +185,7 @@ pub async fn dhcp_v6_server(
             _ = &mut timeout_timer => {
                 let expired_na = dhcp_server.clean_expired_na().await;
                 if !expired_na.is_empty() {
-                    let na_prefixes = dhcp_server
-                        .get_qualifying_na_prefixes(&ra_pd_runtime_sources, &ra_static_infos)
-                        .await;
+                    let na_prefixes = dhcp_server.get_qualifying_na_prefixes(&na).await;
                     for cache in &expired_na {
                         if let Some(mac) = cache.mac {
                             let device_id = device_id_map.get(&mac).map(|r| *r.value());
@@ -224,12 +208,7 @@ pub async fn dhcp_v6_server(
                 timeout_timer.as_mut().reset(
                     tokio::time::Instant::now() + tokio::time::Duration::from_secs(LEASE_EXPIRE_INTERVAL)
                 );
-                dhcp_server.refresh_offer_info(
-                    &ra_pd_runtime_sources,
-                    &ra_static_infos,
-                    &pd_delegation_static,
-                    &pd_delegation_dynamic,
-                ).await;
+                dhcp_server.refresh_offer_info(&na, &pd).await;
             }
             change_result = service_status_subscribe.changed() => {
                 if let Err(_) = change_result {
@@ -244,6 +223,8 @@ pub async fn dhcp_v6_server(
     }
 
     tracing::info!("DHCPv6 Server Stop on {iface_name}");
+    na.token.cancel();
+    pd.token.cancel();
     if !service_status.is_stop() {
         service_status.just_change_status(if service_status.is_exit() {
             ServiceStatus::Stop
@@ -273,10 +254,8 @@ async fn handle_dhcpv6_message(
     server_duid: &[u8],
     dev_mac: MacAddr,
     (msg_bytes, msg_addr): (Vec<u8>, SocketAddr),
-    runtime_sources: &[Arc<ArcSwap<Option<ICMPv6ConfigInfo>>>],
-    static_infos: &[ICMPv6ConfigInfo],
-    pd_delegation_static: &[PdDelegationParent],
-    pd_delegation_dynamic: &[Arc<ArcSwap<Option<PdDelegationParent>>>],
+    na: &Assignment<ICMPv6ConfigInfo>,
+    pd: &Assignment<PdDelegationParent>,
     link_local: Ipv6Addr,
     iface_name: &str,
     link_ifindex: u32,
@@ -335,9 +314,9 @@ async fn handle_dhcpv6_message(
                 server.pd_config.is_some()
             );
             tracing::info!(
-                "DHCPv6 static_infos count: {}, runtime_sources count: {}",
-                static_infos.len(),
-                runtime_sources.len()
+                "DHCPv6 statics count: {}, dynamics count: {}",
+                na.statics.len(),
+                na.dynamics.len()
             );
 
             // Allocate addresses/prefixes
@@ -356,8 +335,7 @@ async fn handle_dhcpv6_message(
 
             if let Some(iana_id) = iana_id {
                 if server.na_config.is_some() {
-                    let na_prefixes =
-                        server.get_qualifying_na_prefixes(runtime_sources, static_infos).await;
+                    let na_prefixes = server.get_qualifying_na_prefixes(na).await;
                     tracing::info!(
                         "DHCPv6 IANA - qualifying prefixes count: {}",
                         na_prefixes.len()
@@ -377,9 +355,7 @@ async fn handle_dhcpv6_message(
 
             if let Some(iapd_id) = iapd_id {
                 if server.pd_config.is_some() {
-                    let pd_prefixes = server
-                        .get_qualifying_pd_prefixes(pd_delegation_static, pd_delegation_dynamic)
-                        .await;
+                    let pd_prefixes = server.get_qualifying_pd_prefixes(pd).await;
                     if !pd_prefixes.is_empty() {
                         server.offer_pd_index(&client_duid, &pd_prefixes).await;
                         let iapd =
@@ -399,7 +375,7 @@ async fn handle_dhcpv6_message(
                 }
             }
 
-            let dns = collect_dns_servers(runtime_sources, static_infos, link_local);
+            let dns = collect_dns_servers(na, link_local);
             reply.opts_mut().insert(v6::DhcpOption::DomainNameServers(dns));
 
             send_dhcpv6_reply(&reply, send_socket, msg_addr).await;
@@ -437,8 +413,7 @@ async fn handle_dhcpv6_message(
 
             if let Some(iana_id) = iana_id {
                 if server.na_config.is_some() {
-                    let na_prefixes =
-                        server.get_qualifying_na_prefixes(runtime_sources, static_infos).await;
+                    let na_prefixes = server.get_qualifying_na_prefixes(na).await;
                     if !na_prefixes.is_empty() {
                         if let Some(client_mac) = mac {
                             if let Some(ips) =
@@ -541,9 +516,7 @@ async fn handle_dhcpv6_message(
 
             if let Some(iapd_id) = iapd_id {
                 if server.pd_config.is_some() {
-                    let pd_prefixes = server
-                        .get_qualifying_pd_prefixes(pd_delegation_static, pd_delegation_dynamic)
-                        .await;
+                    let pd_prefixes = server.get_qualifying_pd_prefixes(pd).await;
                     if !pd_prefixes.is_empty() {
                         // Confirm existing allocation, or allocate new
                         if !server.confirm_pd(&client_duid).await {
@@ -703,7 +676,7 @@ async fn handle_dhcpv6_message(
                 }
             }
 
-            let dns = collect_dns_servers(runtime_sources, static_infos, link_local);
+            let dns = collect_dns_servers(na, link_local);
             reply.opts_mut().insert(v6::DhcpOption::DomainNameServers(dns));
 
             send_dhcpv6_reply(&reply, send_socket, msg_addr).await;
@@ -721,8 +694,7 @@ async fn handle_dhcpv6_message(
             if let Some(cache) = &released_na {
                 if let Some(client_mac) = cache.mac {
                     let device_id = device_id_map.get(&client_mac).map(|r| *r.value());
-                    let na_prefixes =
-                        server.get_qualifying_na_prefixes(runtime_sources, static_infos).await;
+                    let na_prefixes = server.get_qualifying_na_prefixes(na).await;
                     for (prefix, prefix_len) in &na_prefixes {
                         let ip = combine_prefix_suffix(*prefix, *prefix_len, cache.suffix);
                         let _ =
@@ -759,8 +731,7 @@ async fn handle_dhcpv6_message(
             if let Some(cache) = &released_na {
                 if let Some(client_mac) = cache.mac {
                     let device_id = device_id_map.get(&client_mac).map(|r| *r.value());
-                    let na_prefixes =
-                        server.get_qualifying_na_prefixes(runtime_sources, static_infos).await;
+                    let na_prefixes = server.get_qualifying_na_prefixes(na).await;
                     for (prefix, prefix_len) in &na_prefixes {
                         let ip = combine_prefix_suffix(*prefix, *prefix_len, cache.suffix);
                         let _ =
@@ -780,8 +751,7 @@ async fn handle_dhcpv6_message(
             // RFC 8415 §18.4.2: Check if client's addresses are still on-link.
             // If any address is not appropriate for the link, return NotOnLink
             // to force the client to restart with Solicit.
-            let na_prefixes =
-                server.get_qualifying_na_prefixes(runtime_sources, static_infos).await;
+            let na_prefixes = server.get_qualifying_na_prefixes(na).await;
 
             let mut all_on_link = true;
             if let Some(v6::DhcpOption::IANA(client_iana)) = msg.opts().get(v6::OptionCode::IANA) {
@@ -836,7 +806,7 @@ async fn handle_dhcpv6_message(
             reply.opts_mut().insert(v6::DhcpOption::ClientId(client_duid));
             reply.opts_mut().insert(v6::DhcpOption::ServerId(server_duid.to_vec()));
 
-            let dns = collect_dns_servers(runtime_sources, static_infos, link_local);
+            let dns = collect_dns_servers(na, link_local);
             reply.opts_mut().insert(v6::DhcpOption::DomainNameServers(dns));
 
             send_dhcpv6_reply(&reply, send_socket, msg_addr).await;
@@ -994,6 +964,7 @@ async fn cleanup_pd_routes(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use arc_swap::ArcSwap;
     use landscape_common::dhcp::v6_server::config::{
         DHCPv6IANAConfig, DHCPv6IAPDConfig, DHCPv6ServerConfig,
     };
@@ -1310,24 +1281,29 @@ mod tests {
         };
         let server = make_server(&server_config);
 
-        let static_blocks = vec![
-            crate::ipv6::prefix::PdDelegationParent {
-                prefix: Ipv6Addr::new(0xfd99, 0, 0, 0x3900, 0, 0, 0, 0),
-                prefix_len: 48,
-            },
-            crate::ipv6::prefix::PdDelegationParent {
-                prefix: Ipv6Addr::new(0xfd99, 0, 0, 0x39a0, 0, 0, 0, 0),
-                prefix_len: 60,
-            },
-            crate::ipv6::prefix::PdDelegationParent {
-                prefix: Ipv6Addr::new(0xfd99, 0, 0, 0x39b0, 0, 0, 0, 0),
-                prefix_len: 56,
-            },
-        ];
-        let dynamic_blocks: Vec<Arc<ArcSwap<Option<crate::ipv6::prefix::PdDelegationParent>>>> =
-            vec![];
+        let (_, rx) = tokio::sync::watch::channel(());
+        let pd = crate::ipv6::prefix::Assignment {
+            statics: vec![
+                crate::ipv6::prefix::PdDelegationParent {
+                    prefix: Ipv6Addr::new(0xfd99, 0, 0, 0x3900, 0, 0, 0, 0),
+                    prefix_len: 48,
+                },
+                crate::ipv6::prefix::PdDelegationParent {
+                    prefix: Ipv6Addr::new(0xfd99, 0, 0, 0x39a0, 0, 0, 0, 0),
+                    prefix_len: 60,
+                },
+                crate::ipv6::prefix::PdDelegationParent {
+                    prefix: Ipv6Addr::new(0xfd99, 0, 0, 0x39b0, 0, 0, 0, 0),
+                    prefix_len: 56,
+                },
+            ],
+            dynamics: vec![],
+            token: tokio_util::sync::CancellationToken::new(),
+            notify: rx,
+            boot_time: tokio::time::Instant::now(),
+        };
 
-        let result = server.get_qualifying_pd_prefixes(&static_blocks, &dynamic_blocks).await;
+        let result = server.get_qualifying_pd_prefixes(&pd).await;
 
         assert_eq!(
             result.len(),
@@ -1340,10 +1316,15 @@ mod tests {
     #[test]
     fn test_collect_dns_servers_link_local_first() {
         let link_local = Ipv6Addr::new(0xfe80, 0, 0, 0, 0x00aa, 0xbbff, 0xfecc, 0xdd00);
-        let static_infos: Vec<ICMPv6ConfigInfo> = vec![];
-        let runtime: Vec<Arc<ArcSwap<Option<ICMPv6ConfigInfo>>>> = vec![];
-
-        let dns = collect_dns_servers(&runtime, &static_infos, link_local);
+        let (_, rx) = tokio::sync::watch::channel(());
+        let na = Assignment {
+            statics: vec![],
+            dynamics: vec![],
+            token: tokio_util::sync::CancellationToken::new(),
+            notify: rx,
+            boot_time: tokio::time::Instant::now(),
+        };
+        let dns = collect_dns_servers(&na, link_local);
         assert_eq!(dns.len(), 1);
         assert_eq!(dns[0], link_local);
     }
@@ -1363,10 +1344,15 @@ mod tests {
             ra_valid_lifetime: 600,
         };
 
-        let static_infos = vec![info.clone()];
-        let runtime: Vec<Arc<ArcSwap<Option<ICMPv6ConfigInfo>>>> = vec![];
-
-        let dns = collect_dns_servers(&runtime, &static_infos, link_local);
+        let (_, rx) = tokio::sync::watch::channel(());
+        let na = Assignment {
+            statics: vec![info.clone()],
+            dynamics: vec![],
+            token: tokio_util::sync::CancellationToken::new(),
+            notify: rx,
+            boot_time: tokio::time::Instant::now(),
+        };
+        let dns = collect_dns_servers(&na, link_local);
         assert_eq!(dns.len(), 2);
         assert_eq!(dns[0], link_local);
         assert_eq!(dns[1], sub_router);
@@ -1374,7 +1360,15 @@ mod tests {
         // Duplicate sub_router from static + runtime should be deduped
         let runtime_src: Arc<ArcSwap<Option<ICMPv6ConfigInfo>>> =
             Arc::new(ArcSwap::new(Arc::new(Some(info.clone()))));
-        let dns2 = collect_dns_servers(&[runtime_src], &static_infos, link_local);
+        let (_, rx2) = tokio::sync::watch::channel(());
+        let na2 = Assignment {
+            statics: vec![info.clone()],
+            dynamics: vec![runtime_src],
+            token: tokio_util::sync::CancellationToken::new(),
+            notify: rx2,
+            boot_time: tokio::time::Instant::now(),
+        };
+        let dns2 = collect_dns_servers(&na2, link_local);
         assert_eq!(dns2.len(), 2);
     }
 
@@ -1395,7 +1389,15 @@ mod tests {
         let runtime_src: Arc<ArcSwap<Option<ICMPv6ConfigInfo>>> =
             Arc::new(ArcSwap::new(Arc::new(Some(info))));
 
-        let dns = collect_dns_servers(&[runtime_src], &[], link_local);
+        let (_, rx) = tokio::sync::watch::channel(());
+        let na = Assignment {
+            statics: vec![],
+            dynamics: vec![runtime_src],
+            token: tokio_util::sync::CancellationToken::new(),
+            notify: rx,
+            boot_time: tokio::time::Instant::now(),
+        };
+        let dns = collect_dns_servers(&na, link_local);
         assert_eq!(dns.len(), 2);
         assert_eq!(dns[0], link_local);
         assert_eq!(dns[1], sub_router);

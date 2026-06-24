@@ -2,8 +2,9 @@ use std::sync::Arc;
 
 use clap::Parser;
 use dashmap::DashMap;
-use landscape::ipv6::prefix::IPv6PrefixRuntime;
-use landscape::{icmp::v6::icmp_ra_server, iface::get_iface_by_name};
+use landscape::icmp::v6::icmp_ra_server;
+use landscape::iface::get_iface_by_name;
+use landscape::ipv6::prefix::Assignment;
 use landscape_common::{
     event::hub::IPv6AssignEventSender,
     ipv6::ra::RouterFlags,
@@ -11,6 +12,7 @@ use landscape_common::{
     service::{ServiceStatus, WatchService},
 };
 use tokio::sync::{watch, RwLock};
+use tokio_util::sync::CancellationToken;
 use tracing::Level;
 
 #[derive(Parser, Debug, Clone)]
@@ -33,14 +35,19 @@ async fn main() {
     let service_status = WatchService::new();
     let status = service_status.clone();
 
-    let runtime = IPv6PrefixRuntime {
-        static_info: vec![],
-        pd_info: std::collections::HashMap::new(),
-        pd_delegation_static: vec![],
-        pd_delegation_dynamic: vec![],
-        relative_boot_time: tokio::time::Instant::now(),
+    let (change_tx, change_rx) = watch::channel(());
+    let ra_token = CancellationToken::new();
+    let ra_assignment = Assignment {
+        statics: vec![],
+        dynamics: vec![],
+        token: ra_token.clone(),
+        notify: change_rx,
+        boot_time: tokio::time::Instant::now(),
     };
-    let (_change_tx, change_rx) = watch::channel(());
+    tokio::spawn(async move {
+        let _keep = change_tx;
+        ra_token.cancelled().await;
+    });
 
     let assigned_ips = Arc::new(RwLock::new(IPv6NAInfo::init()));
     let ra_flag = RouterFlags::from(0u8);
@@ -56,11 +63,9 @@ async fn main() {
                     mac,
                     iface.name,
                     status,
-                    &runtime,
-                    change_rx,
+                    ra_assignment,
                     assigned_ips,
                     true,
-                    None,
                     None,
                     iface.index,
                     ipv6_assign_sender,
