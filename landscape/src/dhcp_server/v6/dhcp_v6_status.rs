@@ -20,6 +20,13 @@ use crate::ipv6::prefix::{Assignment, ICMPv6ConfigInfo, PdDelegationParent};
 
 const OFFER_VALID_TIME: u32 = 120;
 
+/// Tracks who owns a given NA suffix — static binding or dynamic DUID.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NaAllocSource {
+    Static(MacAddr),
+    Dynamic(Vec<u8>),
+}
+
 #[derive(Debug)]
 pub struct DhcpV6AssignStatus {
     pub boot_time: f64,
@@ -28,7 +35,7 @@ pub struct DhcpV6AssignStatus {
     pub na_config: Option<DHCPv6IANAConfig>,
     pub na_pool_start: u64,
     pub na_range_capacity: u64,
-    pub na_allocated_suffixes: HashMap<u64, bool>,
+    pub suffix_source: HashMap<u64, NaAllocSource>,
     pub na_offered: HashMap<Vec<u8>, DHCPv6NACache>,
 
     pub pd_config: Option<DHCPv6IAPDConfig>,
@@ -62,7 +69,7 @@ impl DhcpV6AssignStatus {
             na_config: config.ia_na.clone(),
             na_pool_start,
             na_range_capacity,
-            na_allocated_suffixes: HashMap::new(),
+            suffix_source: HashMap::new(),
             na_offered: HashMap::new(),
             pd_config: config.ia_pd.clone(),
             pd_pool_start,
@@ -104,22 +111,26 @@ impl DhcpV6AssignStatus {
             if let Some(suffix_addr) = self.static_bindings.get(mac) {
                 let suffix = u128::from(*suffix_addr) as u64;
                 // kick any dynamic client that currently holds this suffix
-                let conflicting_duid = self
-                    .na_offered
-                    .iter()
-                    .find(|(_, c)| c.suffix == suffix && !c.is_static)
-                    .map(|(duid, _)| duid.clone());
+                let conflicting_duid = match self.suffix_source.get(&suffix) {
+                    Some(NaAllocSource::Dynamic(duid)) => Some(duid.clone()),
+                    _ => None,
+                };
                 if let Some(ref duid) = conflicting_duid {
                     self.na_offered.remove(duid);
-                    self.na_allocated_suffixes.remove(&suffix);
+                    self.suffix_source.remove(&suffix);
                 }
                 // also clean up if this same client previously had a dynamic offer
-                if matches!(self.na_offered.get(client_duid), Some(c) if !c.is_static) {
-                    if let Some(old_cache) = self.na_offered.remove(client_duid) {
-                        self.na_allocated_suffixes.remove(&old_cache.suffix);
+                let prev = if let Some(old_cache) = self.na_offered.remove(client_duid) {
+                    if !old_cache.is_static {
+                        self.suffix_source.remove(&old_cache.suffix);
+                        old_cache.prev_suffix
+                    } else {
+                        None
                     }
-                }
-                self.na_allocated_suffixes.insert(suffix, true);
+                } else {
+                    None
+                };
+                self.suffix_source.insert(suffix, NaAllocSource::Static(*mac));
                 self.na_offered.insert(
                     client_duid.to_vec(),
                     DHCPv6NACache {
@@ -131,7 +142,7 @@ impl DhcpV6AssignStatus {
                         valid_time: valid_lifetime,
                         preferred_time: preferred_lifetime,
                         is_static: true,
-                        prev_suffix: None,
+                        prev_suffix: prev,
                     },
                 );
                 return Some(suffix);
@@ -148,7 +159,7 @@ impl DhcpV6AssignStatus {
 
         let mut seed = hash_duid(client_duid);
         loop {
-            if self.na_allocated_suffixes.len() as u64 >= self.na_range_capacity {
+            if self.suffix_source.len() as u64 >= self.na_range_capacity {
                 if self.clean_expired_na().is_empty() {
                     tracing::error!("DHCPv6 NA pool is full");
                     return None;
@@ -156,10 +167,10 @@ impl DhcpV6AssignStatus {
             }
             let index = seed % self.na_range_capacity;
             let suffix = self.na_pool_start + index;
-            if self.na_allocated_suffixes.contains_key(&suffix) {
+            if self.suffix_source.contains_key(&suffix) {
                 seed = seed.wrapping_add(1);
             } else {
-                self.na_allocated_suffixes.insert(suffix, true);
+                self.suffix_source.insert(suffix, NaAllocSource::Dynamic(client_duid.to_vec()));
                 self.na_offered.insert(
                     client_duid.to_vec(),
                     DHCPv6NACache {
@@ -196,10 +207,16 @@ impl DhcpV6AssignStatus {
         }
     }
 
+    pub fn consume_prev_suffix(&mut self, client_duid: &[u8]) {
+        if let Some(cache) = self.na_offered.get_mut(client_duid) {
+            cache.prev_suffix = None;
+        }
+    }
+
     pub fn release_na(&mut self, client_duid: &[u8]) -> Option<DHCPv6NACache> {
         if let Some(cache) = self.na_offered.remove(client_duid) {
             if !cache.is_static {
-                self.na_allocated_suffixes.remove(&cache.suffix);
+                self.suffix_source.remove(&cache.suffix);
             }
             Some(cache)
         } else {
@@ -222,7 +239,7 @@ impl DhcpV6AssignStatus {
             }
         });
         for cache in &expired {
-            self.na_allocated_suffixes.remove(&cache.suffix);
+            self.suffix_source.remove(&cache.suffix);
         }
         expired
     }
@@ -321,29 +338,23 @@ impl DhcpV6AssignStatus {
     pub fn add_or_update_binding(&mut self, mac: MacAddr, ipv6_addr: Ipv6Addr) {
         let suffix = u128::from(ipv6_addr) as u64;
 
-        let kicked = {
-            if self.na_allocated_suffixes.contains_key(&suffix) {
-                self.na_offered
-                    .iter()
-                    .find(|(_, cache)| cache.suffix == suffix && !cache.is_static)
-                    .map(|(duid, cache)| {
-                        let duid = duid.clone();
-                        let hostname = cache.hostname.clone();
-                        let kicked_mac = cache.mac;
-                        (duid, hostname, kicked_mac)
-                    })
-            } else {
-                None
-            }
+        let kicked = match self.suffix_source.get(&suffix) {
+            Some(NaAllocSource::Dynamic(duid)) => self.na_offered.get(duid).map(|cache| {
+                let duid = duid.clone();
+                let hostname = cache.hostname.clone();
+                let kicked_mac = cache.mac;
+                (duid, hostname, kicked_mac)
+            }),
+            _ => None,
         };
 
         if let Some((ref duid, _, _)) = kicked {
             self.na_offered.remove(duid);
-            self.na_allocated_suffixes.remove(&suffix);
+            self.suffix_source.remove(&suffix);
         }
 
         self.static_bindings.insert(mac, ipv6_addr);
-        self.na_allocated_suffixes.insert(suffix, true);
+        self.suffix_source.insert(suffix, NaAllocSource::Static(mac));
 
         if let Some((duid, hostname, kicked_mac)) = kicked {
             self.offer_na_suffix(&duid, kicked_mac, hostname);
@@ -356,11 +367,15 @@ impl DhcpV6AssignStatus {
     pub fn remove_binding(&mut self, mac: &MacAddr) {
         self.static_bindings.remove(mac);
 
-        for (_, cache) in self.na_offered.iter_mut() {
+        for (duid, cache) in self.na_offered.iter_mut() {
             if cache.is_static && cache.mac == Some(*mac) {
                 cache.is_static = false;
+                cache.prev_suffix = Some(cache.suffix);
+                self.suffix_source.insert(cache.suffix, NaAllocSource::Dynamic(duid.clone()));
             }
         }
+        self.suffix_source
+            .retain(|_suffix, source| !matches!(source, NaAllocSource::Static(m) if m == mac));
     }
 
     pub fn get_offered_info(
@@ -589,11 +604,11 @@ mod tests {
         let mac = MacAddr::from([0x00, 0x11, 0x22, 0x33, 0x44, 0x55]);
 
         let suffix = status.offer_na_suffix(&duid, Some(mac), None).unwrap();
-        assert!(status.na_allocated_suffixes.contains_key(&suffix));
+        assert!(status.suffix_source.contains_key(&suffix));
 
         status.release_na(&duid);
         assert!(!status.na_offered.contains_key(&duid));
-        assert!(!status.na_allocated_suffixes.contains_key(&suffix));
+        assert!(!status.suffix_source.contains_key(&suffix));
     }
 
     #[test]
@@ -620,7 +635,7 @@ mod tests {
 
         status.release_na(&duid);
         assert!(!status.na_offered.contains_key(&duid));
-        assert!(status.na_allocated_suffixes.contains_key(&suffix));
+        assert!(status.suffix_source.contains_key(&suffix));
     }
 
     #[test]
@@ -653,7 +668,7 @@ mod tests {
 
         assert!(status.na_offered.contains_key(&duid));
         assert!(status.na_offered.contains_key(&dyn_duid));
-        assert!(status.na_allocated_suffixes.contains_key(&dyn_suffix));
+        assert!(status.suffix_source.contains_key(&dyn_suffix));
     }
 
     #[test]
@@ -763,10 +778,7 @@ mod tests {
         let cache = status.na_offered.get(&duid);
         assert!(cache.is_some(), "na_offered entry should be preserved as dynamic");
         assert!(!cache.unwrap().is_static, "entry should no longer be static");
-        assert!(
-            status.na_allocated_suffixes.contains_key(&suffix),
-            "suffix should remain allocated"
-        );
+        assert!(status.suffix_source.contains_key(&suffix), "suffix should remain allocated");
     }
 
     #[test]
@@ -1026,7 +1038,7 @@ mod tests {
         let new_ip = Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 0x999);
         status.add_or_update_binding(new_mac, new_ip);
         assert!(status.static_bindings.contains_key(&new_mac));
-        assert!(status.na_allocated_suffixes.contains_key(&0x999));
+        assert!(status.suffix_source.contains_key(&0x999));
     }
 
     #[test]
@@ -1080,7 +1092,7 @@ mod tests {
         let cache = status.na_offered.get(&dyn_duid).unwrap();
         assert!(cache.is_static);
         assert_eq!(cache.suffix, 0x5678);
-        assert!(!status.na_allocated_suffixes.contains_key(&dyn_suffix.unwrap()));
+        assert!(!status.suffix_source.contains_key(&dyn_suffix.unwrap()));
     }
 
     #[test]
@@ -1236,14 +1248,14 @@ mod tests {
 
         // New static binding should be in place
         assert_eq!(status.static_bindings.get(&mac), Some(&new_ip));
-        assert!(status.na_allocated_suffixes.contains_key(&new_suffix));
+        assert!(status.suffix_source.contains_key(&new_suffix));
 
         // Old entry should remain as dynamic (not deleted)
         let old_cache = status.na_offered.get(&duid);
         assert!(old_cache.is_some(), "old na_offered entry should be preserved");
         assert!(!old_cache.unwrap().is_static, "old entry should no longer be static");
         assert!(
-            status.na_allocated_suffixes.contains_key(&old_suffix),
+            status.suffix_source.contains_key(&old_suffix),
             "old suffix should remain allocated until client re-requests"
         );
 
@@ -1251,11 +1263,249 @@ mod tests {
         let offered = status.offer_na_suffix(&duid, Some(mac), None);
         assert_eq!(offered, Some(new_suffix), "client should get new static IP");
         assert!(
-            !status.na_allocated_suffixes.contains_key(&old_suffix),
+            !status.suffix_source.contains_key(&old_suffix),
             "old suffix should be freed after client re-requests"
         );
         let new_cache = status.na_offered.get(&duid).unwrap();
         assert!(new_cache.is_static, "new entry should be static");
         assert_eq!(new_cache.suffix, new_suffix);
+    }
+
+    #[test]
+    fn t37_remove_binding_sets_prev_suffix() {
+        let config = na_config();
+        let mac = MacAddr::from([0x00, 0x11, 0x22, 0x33, 0x44, 0x55]);
+        let ip = Ipv6Addr::new(0xfd11, 0x2222, 0x3333, 0x4444, 0, 0, 0, 0x100);
+        let suffix = u128::from(ip) as u64;
+
+        let device = EnrolledDevice {
+            mac,
+            name: "test".to_string(),
+            ipv4: None,
+            ipv6: Some(ip),
+            ..serde_json::from_value(serde_json::json!({
+                "mac": "00:11:22:33:44:55",
+                "name": "test"
+            }))
+            .unwrap()
+        };
+
+        let mut status = DhcpV6AssignStatus::from_config_and_devices(&config, vec![device]);
+        let duid = b"client-a".to_vec();
+        status.offer_na_suffix(&duid, Some(mac), None);
+
+        // Before remove_binding: entry is static, no prev_suffix
+        let cache = status.na_offered.get(&duid).unwrap();
+        assert!(cache.is_static);
+        assert_eq!(cache.prev_suffix, None);
+
+        status.remove_binding(&mac);
+
+        // After remove_binding: entry is dynamic, prev_suffix = old suffix, source = Dynamic
+        let cache = status.na_offered.get(&duid).unwrap();
+        assert!(!cache.is_static, "entry should be marked dynamic after remove_binding");
+        assert_eq!(cache.prev_suffix, Some(suffix), "prev_suffix should be set to old suffix");
+        match status.suffix_source.get(&suffix) {
+            Some(NaAllocSource::Dynamic(d)) if d == &duid => {}
+            other => panic!("suffix_source should be Dynamic({duid:?}), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn t38_confirm_na_preserves_prev_suffix() {
+        let config = na_config();
+        let mac = MacAddr::from([0x00, 0x11, 0x22, 0x33, 0x44, 0x55]);
+        let ip = Ipv6Addr::new(0xfd11, 0x2222, 0x3333, 0x4444, 0, 0, 0, 0x100);
+
+        let device = EnrolledDevice {
+            mac,
+            name: "test".to_string(),
+            ipv4: None,
+            ipv6: Some(ip),
+            ..serde_json::from_value(serde_json::json!({
+                "mac": "00:11:22:33:44:55",
+                "name": "test"
+            }))
+            .unwrap()
+        };
+
+        let mut status = DhcpV6AssignStatus::from_config_and_devices(&config, vec![device]);
+        let duid = b"client-a".to_vec();
+        status.offer_na_suffix(&duid, Some(mac), None);
+        status.remove_binding(&mac);
+
+        let cache = status.na_offered.get(&duid).unwrap();
+        assert!(cache.prev_suffix.is_some());
+
+        status.confirm_na(&duid);
+        let cache = status.na_offered.get(&duid).unwrap();
+        assert!(cache.prev_suffix.is_some(), "prev_suffix should survive confirm_na");
+    }
+
+    #[test]
+    fn t38b_consume_prev_suffix_clears_it() {
+        let config = na_config();
+        let mac = MacAddr::from([0x00, 0x11, 0x22, 0x33, 0x44, 0x55]);
+        let ip = Ipv6Addr::new(0xfd11, 0x2222, 0x3333, 0x4444, 0, 0, 0, 0x100);
+
+        let device = EnrolledDevice {
+            mac,
+            name: "test".to_string(),
+            ipv4: None,
+            ipv6: Some(ip),
+            ..serde_json::from_value(serde_json::json!({
+                "mac": "00:11:22:33:44:55",
+                "name": "test"
+            }))
+            .unwrap()
+        };
+
+        let mut status = DhcpV6AssignStatus::from_config_and_devices(&config, vec![device]);
+        let duid = b"client-a".to_vec();
+        status.offer_na_suffix(&duid, Some(mac), None);
+        status.remove_binding(&mac);
+
+        assert!(status.na_offered.get(&duid).unwrap().prev_suffix.is_some());
+
+        status.consume_prev_suffix(&duid);
+        assert_eq!(
+            status.na_offered.get(&duid).unwrap().prev_suffix,
+            None,
+            "prev_suffix should be cleared by consume_prev_suffix"
+        );
+    }
+
+    #[test]
+    fn t39_full_conflict_flow_device_a_changes_ip_b_kicked() {
+        let config = na_config();
+        let mac_a = MacAddr::from([0x00, 0x11, 0x22, 0x33, 0x44, 0x55]);
+        let mac_b = MacAddr::from([0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF]);
+        let ip_a_old = Ipv6Addr::new(0xfd11, 0x2222, 0x3333, 0x4444, 0, 0, 0, 0x100);
+        let ip_a_new = Ipv6Addr::new(0xfd11, 0x2222, 0x3333, 0x4444, 0, 0, 0, 0x200);
+        let suffix_a_old = u128::from(ip_a_old) as u64;
+        let suffix_a_new = u128::from(ip_a_new) as u64;
+
+        let device_a = EnrolledDevice {
+            mac: mac_a,
+            name: "device-a".to_string(),
+            ipv4: None,
+            ipv6: Some(ip_a_old),
+            ..serde_json::from_value(serde_json::json!({
+                "mac": "00:11:22:33:44:55",
+                "name": "device-a"
+            }))
+            .unwrap()
+        };
+
+        let mut status = DhcpV6AssignStatus::from_config_and_devices(&config, vec![device_a]);
+
+        // Device A gets static binding
+        let duid_a = b"client-a".to_vec();
+        status.offer_na_suffix(&duid_a, Some(mac_a), None);
+        assert_eq!(status.suffix_source.get(&suffix_a_old), Some(&NaAllocSource::Static(mac_a)));
+
+        // Device B dynamic gets suffix 0x200 (will be the conflict target)
+        let duid_b = b"client-b".to_vec();
+        // Make B get suffix 0x200 by consuming pool until it wraps around
+        // 0x200 is pool_start (256) + 0x200 - 256 = 0x200 - 0x100 = 0x100 = 256...
+        // Actually pool_start=256, 0x200 as u64 = 512. So suffix=256+256=512=0x200.
+        // We can't easily force a specific suffix. Let's use a different approach:
+        // Just check that the conflict flow works by looking at how add_or_update_binding
+        // handles the case where B already has a dynamic entry.
+        //
+        // Instead, drive B through the normal alloc — it'll get some suffix via dynamic pool.
+        let b_suffix_offered = status.offer_na_suffix(&duid_b, Some(mac_b), None).unwrap();
+        // Now B holds b_suffix_offered dynamically
+
+        // Now simulate: A's IPv6 is changed to ip_a_new
+        // If ip_a_new's suffix happens to match B's, we hit the conflict path.
+        // We'll just test the relevant piece: check that add_or_update_binding handles it
+        // regardless by using a deliberately conflicting address.
+        //
+        // Actually, let's use A's NEW ip as the same suffix B currently holds
+        let b_ip = Ipv6Addr::new(0xfd11, 0x2222, 0x3333, 0x4444, 0, 0, 0, b_suffix_offered as u16);
+        status.remove_binding(&mac_a);
+        status.add_or_update_binding(mac_a, b_ip);
+
+        // A should now have static binding for B's old suffix
+        assert_eq!(status.static_bindings.get(&mac_a), Some(&b_ip));
+        assert_eq!(
+            status.suffix_source.get(&b_suffix_offered),
+            Some(&NaAllocSource::Static(mac_a))
+        );
+
+        // B should have prev_suffix set to old suffix
+        let cache_b = status.na_offered.get(&duid_b).unwrap();
+        assert_eq!(
+            cache_b.prev_suffix,
+            Some(b_suffix_offered),
+            "B should have prev_suffix set to its old suffix"
+        );
+
+        // A's old entry should have prev_suffix set (from remove_binding)
+        let cache_a = status.na_offered.get(&duid_a).unwrap();
+        assert_eq!(
+            cache_a.prev_suffix,
+            Some(suffix_a_old),
+            "A's entry should have prev_suffix set to A's old suffix"
+        );
+
+        // Confirm B → prev_suffix should survive confirm_na (cleared by consume_prev_suffix instead)
+        status.confirm_na(&duid_b);
+        let cache_b = status.na_offered.get(&duid_b).unwrap();
+        assert!(cache_b.prev_suffix.is_some(), "B's prev_suffix should survive confirm_na");
+
+        status.consume_prev_suffix(&duid_b);
+        assert_eq!(
+            status.na_offered.get(&duid_b).unwrap().prev_suffix,
+            None,
+            "B's prev_suffix should be cleared by consume_prev_suffix"
+        );
+    }
+
+    #[test]
+    fn t40_offer_na_suffix_inherits_prev_suffix_on_static_cleanup() {
+        let config = na_config();
+        let mac = MacAddr::from([0x00, 0x11, 0x22, 0x33, 0x44, 0x55]);
+        let old_ip = Ipv6Addr::new(0xfd11, 0x2222, 0x3333, 0x4444, 0, 0, 0, 0x100);
+        let new_ip = Ipv6Addr::new(0xfd11, 0x2222, 0x3333, 0x4444, 0, 0, 0, 0x200);
+        let suffix_old = u128::from(old_ip) as u64;
+
+        let device = EnrolledDevice {
+            mac,
+            name: "test".to_string(),
+            ipv4: None,
+            ipv6: Some(old_ip),
+            ..serde_json::from_value(serde_json::json!({
+                "mac": "00:11:22:33:44:55",
+                "name": "test"
+            }))
+            .unwrap()
+        };
+
+        let mut status = DhcpV6AssignStatus::from_config_and_devices(&config, vec![device]);
+        let duid = b"client-a".to_vec();
+        status.offer_na_suffix(&duid, Some(mac), None);
+
+        // Step 1: remove old binding → sets prev_suffix
+        status.remove_binding(&mac);
+        let cache = status.na_offered.get(&duid).unwrap();
+        assert_eq!(cache.prev_suffix, Some(suffix_old));
+
+        // Step 2: add new binding (non-conflicting ip)
+        status.add_or_update_binding(mac, new_ip);
+
+        // Step 3: re-request with same DUID → should inherit prev_suffix from old entry
+        let offered = status.offer_na_suffix(&duid, Some(mac), None);
+        assert_eq!(offered, Some(u128::from(new_ip) as u64));
+
+        let new_cache = status.na_offered.get(&duid).unwrap();
+        assert!(new_cache.is_static);
+        assert_eq!(new_cache.suffix, u128::from(new_ip) as u64);
+        assert_eq!(
+            new_cache.prev_suffix,
+            Some(suffix_old),
+            "new entry should inherit prev_suffix from old entry"
+        );
     }
 }

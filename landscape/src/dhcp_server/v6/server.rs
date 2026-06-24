@@ -47,6 +47,10 @@ impl DHCPv6Server {
         self.status.lock().await.confirm_na(client_duid)
     }
 
+    pub async fn consume_prev_suffix(&self, client_duid: &[u8]) {
+        self.status.lock().await.consume_prev_suffix(client_duid);
+    }
+
     pub async fn release_na(&self, client_duid: &[u8]) -> Option<DHCPv6NACache> {
         self.status.lock().await.release_na(client_duid)
     }

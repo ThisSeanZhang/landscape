@@ -679,6 +679,8 @@ async fn handle_dhcpv6_message(
             let dns = collect_dns_servers(na, link_local);
             reply.opts_mut().insert(v6::DhcpOption::DomainNameServers(dns));
 
+            server.consume_prev_suffix(&client_duid).await;
+
             send_dhcpv6_reply(&reply, send_socket, msg_addr).await;
             return true;
         }
