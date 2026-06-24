@@ -1381,9 +1381,7 @@ mod tests {
         let mac_a = MacAddr::from([0x00, 0x11, 0x22, 0x33, 0x44, 0x55]);
         let mac_b = MacAddr::from([0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF]);
         let ip_a_old = Ipv6Addr::new(0xfd11, 0x2222, 0x3333, 0x4444, 0, 0, 0, 0x100);
-        let ip_a_new = Ipv6Addr::new(0xfd11, 0x2222, 0x3333, 0x4444, 0, 0, 0, 0x200);
         let suffix_a_old = u128::from(ip_a_old) as u64;
-        let suffix_a_new = u128::from(ip_a_new) as u64;
 
         let device_a = EnrolledDevice {
             mac: mac_a,

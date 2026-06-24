@@ -19,7 +19,7 @@ use tokio::net::UdpSocket;
 
 use landscape_common::route::{LanIPv6RouteKey, LanRouteInfo, LanRouteMode};
 
-use super::dhcp_v6_status::DhcpV6AssignStatus;
+use super::dhcp_v6_status::{DhcpV6AssignStatus, NaAllocSource};
 use crate::ipv6::prefix::{
     add_route_via, del_route, Assignment, ICMPv6ConfigInfo, PdDelegationParent,
 };
@@ -396,13 +396,10 @@ async fn handle_dhcpv6_message(
 
             tracing::debug!("DHCPv6 {:?} from {:?}", msg.msg_type(), mac);
 
-            // Confirm/allocate
+            // Confirm/allocate - always call offer_na_suffix to pick up static binding updates
             if server.na_config.is_some() && iana_id.is_some() {
-                if !server.confirm_na(&client_duid).await {
-                    // New client during REBIND or first REQUEST
-                    server.offer_na_suffix(&client_duid, mac, None).await;
-                    server.confirm_na(&client_duid).await;
-                }
+                server.offer_na_suffix(&client_duid, mac, None).await;
+                server.confirm_na(&client_duid).await;
             }
 
             // Build REPLY
@@ -750,9 +747,10 @@ async fn handle_dhcpv6_message(
         }
 
         DhcpV6MessageType::Confirm => {
-            // RFC 8415 §18.4.2: Check if client's addresses are still on-link.
-            // If any address is not appropriate for the link, return NotOnLink
-            // to force the client to restart with Solicit.
+            // RFC 8415 §18.4.2: Check if client's addresses are still on-link
+            // and still owned by this client. For each address we verify:
+            //  1. It matches a qualifying NA prefix
+            //  2. The suffix owner (static MAC or dynamic DUID) matches this client
             let na_prefixes = server.get_qualifying_na_prefixes(na).await;
 
             let mut all_on_link = true;
@@ -760,7 +758,7 @@ async fn handle_dhcpv6_message(
                 if let Some(ia_addrs) = client_iana.opts.get_all(v6::OptionCode::IAAddr) {
                     for ia_opt in ia_addrs {
                         if let v6::DhcpOption::IAAddr(ia_addr) = ia_opt {
-                            let on_link = na_prefixes.iter().any(|(prefix, prefix_len)| {
+                            let matched = na_prefixes.iter().find(|(prefix, prefix_len)| {
                                 let mask = if *prefix_len >= 128 {
                                     !0u128
                                 } else {
@@ -768,13 +766,54 @@ async fn handle_dhcpv6_message(
                                 };
                                 (u128::from(ia_addr.addr) & mask) == (u128::from(*prefix) & mask)
                             });
-                            if !on_link {
-                                tracing::info!(
-                                    "DHCPv6 Confirm: address {} is NOT on-link, rejecting",
-                                    ia_addr.addr
-                                );
-                                all_on_link = false;
-                                break;
+                            let (_, matched_prefix_len) = match matched {
+                                Some(m) => m,
+                                None => {
+                                    tracing::info!(
+                                        "DHCPv6 Confirm: address {} is NOT on-link, rejecting",
+                                        ia_addr.addr
+                                    );
+                                    all_on_link = false;
+                                    break;
+                                }
+                            };
+
+                            let mask = if *matched_prefix_len >= 128 {
+                                !0u128
+                            } else {
+                                !0u128 << (128 - matched_prefix_len)
+                            };
+                            let suffix = (u128::from(ia_addr.addr) & !mask) as u64;
+
+                            match server.get_suffix_owner(suffix).await {
+                                Some(NaAllocSource::Static(owner_mac)) => {
+                                    if Some(owner_mac) != mac {
+                                        tracing::info!(
+                                            "DHCPv6 Confirm: address {} owned by MAC {:?}, rejecting MAC {:?}",
+                                            ia_addr.addr, owner_mac, mac
+                                        );
+                                        all_on_link = false;
+                                        break;
+                                    }
+                                }
+                                Some(NaAllocSource::Dynamic(ref owner_duid))
+                                    if owner_duid == &client_duid => {}
+                                Some(NaAllocSource::Dynamic(_)) => {
+                                    tracing::info!(
+                                        "DHCPv6 Confirm: address {} owned by another DUID, rejecting",
+                                        ia_addr.addr
+                                    );
+                                    all_on_link = false;
+                                    break;
+                                }
+                                None => {
+                                    tracing::info!(
+                                        "DHCPv6 Confirm: address {} has no active allocation, rejecting",
+                                        ia_addr.addr
+                                    );
+                                    all_on_link = false;
+                                    break;
+                                }
                             }
                         }
                     }
@@ -1474,5 +1513,213 @@ mod tests {
         // Different sub_index should produce different key
         let key3 = pd_route_key_index(6, &prefix);
         assert_ne!(key, key3);
+    }
+
+    // ── Confirm suffix ownership tests ─────────────────────────────────
+
+    #[tokio::test]
+    async fn test_confirm_suffix_owner_static_match() {
+        let config = DHCPv6ServerConfig {
+            enable: true,
+            ia_na: Some(DHCPv6IANAConfig {
+                max_prefix_len: 64,
+                pool_start: 256,
+                pool_end: Some(512),
+                preferred_lifetime: 3600,
+                valid_lifetime: 7200,
+            }),
+            ia_pd: None,
+        };
+        let server = make_server(&config);
+        let client_duid = b"static-owner-match".to_vec();
+        let mac = MacAddr::from([0x00, 0x11, 0x22, 0x33, 0x44, 0x55]);
+        let ip = Ipv6Addr::new(0xfd11, 0x2222, 0x3333, 0x4444, 0, 0, 0, 0x1234);
+
+        server.status.lock().await.add_or_update_binding(mac, ip);
+        let suffix = server
+            .offer_na_suffix(&client_duid, Some(mac), None)
+            .await
+            .expect("static binding should assign suffix");
+
+        let owner = server.get_suffix_owner(suffix).await;
+        assert_eq!(owner, Some(NaAllocSource::Static(mac)));
+    }
+
+    #[tokio::test]
+    async fn test_confirm_suffix_owner_static_mismatch() {
+        let config = DHCPv6ServerConfig {
+            enable: true,
+            ia_na: Some(DHCPv6IANAConfig {
+                max_prefix_len: 64,
+                pool_start: 256,
+                pool_end: Some(512),
+                preferred_lifetime: 3600,
+                valid_lifetime: 7200,
+            }),
+            ia_pd: None,
+        };
+        let server = make_server(&config);
+        let mac_a = MacAddr::from([0x00, 0x11, 0x22, 0x33, 0x44, 0x55]);
+        let mac_b = MacAddr::from([0x00, 0x11, 0x22, 0x33, 0x44, 0x66]);
+        let ip = Ipv6Addr::new(0xfd11, 0x2222, 0x3333, 0x4444, 0, 0, 0, 0x5678);
+
+        server.status.lock().await.add_or_update_binding(mac_a, ip);
+        let suffix = server.offer_na_suffix(b"client-a", Some(mac_a), None).await.unwrap();
+
+        let owner = server.get_suffix_owner(suffix).await;
+        assert_eq!(owner, Some(NaAllocSource::Static(mac_a)), "suffix should be owned by mac_a");
+        assert_ne!(Some(mac_a), Some(mac_b));
+    }
+
+    #[tokio::test]
+    async fn test_confirm_suffix_owner_dynamic_match() {
+        let config = DHCPv6ServerConfig {
+            enable: true,
+            ia_na: Some(DHCPv6IANAConfig {
+                max_prefix_len: 64,
+                pool_start: 256,
+                pool_end: Some(512),
+                preferred_lifetime: 3600,
+                valid_lifetime: 7200,
+            }),
+            ia_pd: None,
+        };
+        let server = make_server(&config);
+        let client_duid = b"dynamic-owner-match".to_vec();
+        let mac = MacAddr::from([0x00, 0x11, 0x22, 0x33, 0x44, 0x55]);
+
+        let suffix = server.offer_na_suffix(&client_duid, Some(mac), None).await.unwrap();
+
+        let owner = server.get_suffix_owner(suffix).await;
+        match owner {
+            Some(NaAllocSource::Dynamic(ref duid)) => {
+                assert_eq!(duid, &client_duid, "dynamic suffix should be owned by client DUID");
+            }
+            other => panic!("expected Dynamic owner, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_confirm_suffix_owner_dynamic_mismatch() {
+        let config = DHCPv6ServerConfig {
+            enable: true,
+            ia_na: Some(DHCPv6IANAConfig {
+                max_prefix_len: 64,
+                pool_start: 256,
+                pool_end: Some(512),
+                preferred_lifetime: 3600,
+                valid_lifetime: 7200,
+            }),
+            ia_pd: None,
+        };
+        let server = make_server(&config);
+        let client_a = b"dynamic-mismatch-a".to_vec();
+        let client_b = b"dynamic-mismatch-b".to_vec();
+        let mac_a = MacAddr::from([0x00, 0x11, 0x22, 0x33, 0x44, 0x55]);
+
+        let suffix = server.offer_na_suffix(&client_a, Some(mac_a), None).await.unwrap();
+
+        let owner = server.get_suffix_owner(suffix).await;
+        assert_eq!(
+            owner,
+            Some(NaAllocSource::Dynamic(client_a.clone())),
+            "suffix should be owned by client_a DUID"
+        );
+        assert_ne!(client_a, client_b);
+    }
+
+    #[tokio::test]
+    async fn test_confirm_suffix_owner_unallocated() {
+        let config = DHCPv6ServerConfig {
+            enable: true,
+            ia_na: Some(DHCPv6IANAConfig {
+                max_prefix_len: 64,
+                pool_start: 256,
+                pool_end: Some(512),
+                preferred_lifetime: 3600,
+                valid_lifetime: 7200,
+            }),
+            ia_pd: None,
+        };
+        let server = make_server(&config);
+
+        let owner = server.get_suffix_owner(0xFFFFu64).await;
+        assert_eq!(owner, None, "unallocated suffix should have no owner");
+    }
+
+    #[tokio::test]
+    async fn test_confirm_suffix_extraction_and_ownership() {
+        let config = DHCPv6ServerConfig {
+            enable: true,
+            ia_na: Some(DHCPv6IANAConfig {
+                max_prefix_len: 64,
+                pool_start: 256,
+                pool_end: Some(512),
+                preferred_lifetime: 3600,
+                valid_lifetime: 7200,
+            }),
+            ia_pd: None,
+        };
+        let server = make_server(&config);
+        let client_duid = b"extract-owner-test".to_vec();
+        let mac = MacAddr::from([0x10, 0x20, 0x30, 0x40, 0x50, 0x60]);
+
+        let suffix = server.offer_na_suffix(&client_duid, Some(mac), None).await.unwrap();
+
+        let prefix = Ipv6Addr::new(0xfd11, 0x2222, 0x3333, 0x4444, 0, 0, 0, 0);
+        let prefix_len = 64u8;
+        let full_addr = combine_prefix_suffix(prefix, prefix_len, suffix);
+
+        let mask: u128 = !0u128 << (128 - prefix_len);
+        let extracted = (u128::from(full_addr) & !mask) as u64;
+        assert_eq!(extracted, suffix, "extracted suffix should match original");
+
+        let owner = server.get_suffix_owner(extracted).await;
+        match owner {
+            Some(NaAllocSource::Dynamic(ref owner_duid)) => {
+                assert_eq!(
+                    owner_duid, &client_duid,
+                    "extracted suffix owner DUID should match requesting client"
+                );
+            }
+            other => panic!("expected Dynamic owner, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_confirm_static_binding_suffix_ownership() {
+        let config = DHCPv6ServerConfig {
+            enable: true,
+            ia_na: Some(DHCPv6IANAConfig {
+                max_prefix_len: 64,
+                pool_start: 256,
+                pool_end: Some(512),
+                preferred_lifetime: 3600,
+                valid_lifetime: 7200,
+            }),
+            ia_pd: None,
+        };
+        let server = make_server(&config);
+        let client_duid = b"static-suffix-ownr".to_vec();
+        let mac = MacAddr::from([0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff]);
+        let static_ip = Ipv6Addr::new(0xfd11, 0x2222, 0x3333, 0x4444, 0, 0, 0, 0x9999);
+
+        server.status.lock().await.add_or_update_binding(mac, static_ip);
+        let suffix = server.offer_na_suffix(&client_duid, Some(mac), None).await.unwrap();
+
+        let expected_suffix = u128::from(static_ip) as u64;
+        assert_eq!(suffix, expected_suffix);
+
+        let prefix = Ipv6Addr::new(0xfd11, 0x2222, 0x3333, 0x4444, 0, 0, 0, 0);
+        let prefix_len = 64u8;
+        let full_addr = combine_prefix_suffix(prefix, prefix_len, suffix);
+        assert_eq!(full_addr, static_ip);
+
+        let mask: u128 = !0u128 << (128 - prefix_len);
+        let extracted = (u128::from(full_addr) & !mask) as u64;
+        assert_eq!(extracted, suffix);
+
+        let owner = server.get_suffix_owner(suffix).await;
+        assert_eq!(owner, Some(NaAllocSource::Static(mac)));
     }
 }

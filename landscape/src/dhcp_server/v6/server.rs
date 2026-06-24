@@ -8,7 +8,7 @@ use landscape_common::dhcp::v6_server::status::DHCPv6OfferInfo;
 use landscape_common::net::MacAddr;
 use tokio::sync::Mutex;
 
-use super::dhcp_v6_status::DhcpV6AssignStatus;
+use super::dhcp_v6_status::{DhcpV6AssignStatus, NaAllocSource};
 use crate::ipv6::prefix::{Assignment, ICMPv6ConfigInfo, PdDelegationParent};
 
 use super::types::{DHCPv6NACache, DHCPv6PDCache};
@@ -85,6 +85,10 @@ impl DHCPv6Server {
 
     pub async fn has_na_offer(&self, client_duid: &[u8]) -> bool {
         self.status.lock().await.na_offered.contains_key(client_duid)
+    }
+
+    pub async fn get_suffix_owner(&self, suffix: u64) -> Option<NaAllocSource> {
+        self.status.lock().await.suffix_source.get(&suffix).cloned()
     }
 
     pub async fn get_pd_offer(&self, client_duid: &[u8]) -> Option<DHCPv6PDCache> {
