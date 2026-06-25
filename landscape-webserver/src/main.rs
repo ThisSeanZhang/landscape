@@ -182,6 +182,7 @@ async fn run_system(
     let event_hub = EventHub::new();
     startup_phase!("observer.dev_observer", landscape::observer::dev_observer(&event_hub).await);
     let device_sender = event_hub.enrolled_device_sender();
+    let ipv4_assign_sender = event_hub.ipv4_sender();
     let ipv6_assign_sender = event_hub.ipv6_sender();
     let ipv6_prefix_sender = event_hub.ipv6_prefix_sender();
     let event_handle = event_hub.spawn();
@@ -396,6 +397,7 @@ async fn run_system(
         cert_service.api_tls_resolver(),
         config.dns.clone(),
         event_handle.subscribe_iface(),
+        ipv4_assign_sender,
     )
     .await;
 

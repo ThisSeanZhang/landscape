@@ -32,7 +32,9 @@ use crate::dhcp_server::dhcp_v4_status::{DhcpV4AssignStatus, StaticBindingEntry}
 use crate::iface::get_iface_by_name;
 use crate::route::IpRouteService;
 use crate::LandscapeSingleIpInfo;
-use landscape_common::event::hub::{EnrolledDeviceEvent, EnrolledDeviceEventReader};
+use landscape_common::event::hub::{
+    EnrolledDeviceEvent, EnrolledDeviceEventReader, IPv4AssignEventSender,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct IfaceIpv4Cleanup {
@@ -73,6 +75,7 @@ pub struct DHCPv4ServerStarter {
     db_provider: LandscapeDBServiceProvider,
     api_tls_resolver: SharedSniResolver,
     dns_runtime_config: landscape_common::config::DnsRuntimeConfig,
+    ipv4_assign_sender: IPv4AssignEventSender,
 }
 
 impl DHCPv4ServerStarter {
@@ -81,6 +84,7 @@ impl DHCPv4ServerStarter {
         db_provider: LandscapeDBServiceProvider,
         api_tls_resolver: SharedSniResolver,
         dns_runtime_config: landscape_common::config::DnsRuntimeConfig,
+        ipv4_assign_sender: IPv4AssignEventSender,
     ) -> DHCPv4ServerStarter {
         DHCPv4ServerStarter {
             route_service,
@@ -89,6 +93,7 @@ impl DHCPv4ServerStarter {
             dns_runtime_config,
             iface_scan_map: Arc::new(RwLock::new(HashMap::new())),
             iface_status_map: Arc::new(RwLock::new(HashMap::new())),
+            ipv4_assign_sender,
         }
     }
 }
@@ -147,7 +152,13 @@ impl ServiceStarterTrait for DHCPv4ServerStarter {
                 doh_port: self.dns_runtime_config.doh_listen_port,
                 doh_path: self.dns_runtime_config.doh_http_endpoint.clone(),
             });
-            let dhcp_server = DHCPv4Server::new(config.config.clone(), dnr_context, status_arc);
+            let dhcp_server = DHCPv4Server::new(
+                config.config.clone(),
+                dnr_context,
+                status_arc,
+                config.iface_name.clone(),
+            );
+            let ipv4_sender = self.ipv4_assign_sender.clone();
             tokio::spawn(async move {
                 crate::dhcp_server::dhcp_server_new::dhcp_v4_server(
                     config.iface_name,
@@ -157,6 +168,7 @@ impl ServiceStarterTrait for DHCPv4ServerStarter {
                     network_mask,
                     dhcp_server,
                     svc_status,
+                    ipv4_sender,
                 )
                 .await;
                 stop_dhcp_server.cancel();
@@ -247,6 +259,7 @@ impl DHCPv4ServerManagerService {
         api_tls_resolver: SharedSniResolver,
         dns_runtime_config: landscape_common::config::DnsRuntimeConfig,
         mut dev_observer: IfaceEventReader,
+        ipv4_assign_sender: IPv4AssignEventSender,
     ) -> Self {
         let store = store_service.dhcp_v4_server_store();
         let server_starter = DHCPv4ServerStarter::new(
@@ -254,6 +267,7 @@ impl DHCPv4ServerManagerService {
             store_service.clone(),
             api_tls_resolver,
             dns_runtime_config,
+            ipv4_assign_sender,
         );
         let service =
             ServiceManager::init(store.list().await.unwrap(), server_starter.clone()).await;

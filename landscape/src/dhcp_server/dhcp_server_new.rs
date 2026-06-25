@@ -21,6 +21,7 @@ use landscape_common::dns::dnr::{
 };
 #[cfg(test)]
 use landscape_common::enrolled_device::EnrolledDevice;
+use landscape_common::event::hub::{IPv4AssignEvent, IPv4AssignEventSender, IPv4AssignInfo};
 use landscape_common::net::MacAddr;
 
 use crate::dhcp_server::dhcp_v4_status::DhcpV4AssignStatus;
@@ -34,7 +35,7 @@ use tracing::instrument;
 
 const IP_EXPIRE_INTERVAL: u64 = 60 * 10;
 
-#[instrument(skip(server_ip, dhcp_server, service_status))]
+#[instrument(skip(server_ip, dhcp_server, service_status, ipv4_assign_sender))]
 pub async fn dhcp_v4_server(
     iface_name: String,
     iface_ifindex: u32,
@@ -43,6 +44,7 @@ pub async fn dhcp_v4_server(
     prefix_length: u8,
     dhcp_server: DHCPv4Server,
     service_status: WatchService,
+    ipv4_assign_sender: IPv4AssignEventSender,
 ) {
     service_status.just_change_status(ServiceStatus::Staring);
 
@@ -130,6 +132,8 @@ pub async fn dhcp_v4_server(
                         iface_ifindex,
                         iface_mac,
                         message,
+                        &ipv4_assign_sender,
+                        &iface_name,
                     ).await;
                     },
                     None => {
@@ -140,6 +144,16 @@ pub async fn dhcp_v4_server(
             }
             // 租期超时分支
             _ = &mut timeout_timer => {
+                let expired = dhcp_server.clean_expire_ip();
+                for (mac, ip) in expired {
+                    let device_id = { let s = dhcp_server.status.lock().unwrap(); s.static_bindings.get(&mac).and_then(|b| b.device_id) };
+                    ipv4_assign_sender.try_send(IPv4AssignEvent::Expired(IPv4AssignInfo {
+                        iface_name: iface_name.clone(),
+                        mac,
+                        ip,
+                        device_id,
+                    })).ok();
+                }
                 timeout_timer.as_mut().reset(tokio::time::Instant::now() + tokio::time::Duration::from_secs(IP_EXPIRE_INTERVAL));
             }
             // 处理外部关闭服务通知
@@ -173,6 +187,8 @@ async fn handle_dhcp_message(
     iface_ifindex: u32,
     iface_mac: Option<MacAddr>,
     (message, msg_addr): (Vec<u8>, SocketAddr),
+    ipv4_assign_sender: &IPv4AssignEventSender,
+    iface_name: &str,
 ) -> bool {
     let dhcp = DhcpEthFrame::new(&message);
     // tracing::info!("dhcp: {dhcp:?}");
@@ -199,9 +215,25 @@ async fn handle_dhcp_message(
                     return true;
                 }
                 DhcpOptionMessageType::Request => {
+                    let mac = dhcp.chaddr;
                     let Some(payload) = gen_ack(dhcp_server, dhcp, iface_ifindex, iface_mac) else {
                         return false;
                     };
+
+                    if matches!(payload.options.message_type, DhcpOptionMessageType::Ack) {
+                        let device_id = {
+                            let s = dhcp_server.status.lock().unwrap();
+                            s.static_bindings.get(&mac).and_then(|b| b.device_id)
+                        };
+                        ipv4_assign_sender
+                            .try_send(IPv4AssignEvent::Allocated(IPv4AssignInfo {
+                                iface_name: iface_name.to_string(),
+                                mac,
+                                ip: payload.yiaddr,
+                                device_id,
+                            }))
+                            .ok();
+                    }
 
                     let addr = if payload.is_broaddcast() {
                         SocketAddr::new(IpAddr::V4(Ipv4Addr::new(255, 255, 255, 255)), 68)
@@ -228,15 +260,44 @@ async fn handle_dhcp_message(
                     return true;
                 }
                 DhcpOptionMessageType::Decline => {
+                    let mac = dhcp.chaddr;
                     let options = dhcp.options;
                     if let Some(DhcpOptions::RequestedIpAddress(ip)) = options.has_option(50) {
                         dhcp_server.add_decline_ip(ip);
+                        let device_id = {
+                            let s = dhcp_server.status.lock().unwrap();
+                            s.static_bindings.get(&mac).and_then(|b| b.device_id)
+                        };
+                        ipv4_assign_sender
+                            .try_send(IPv4AssignEvent::Expired(IPv4AssignInfo {
+                                iface_name: iface_name.to_string(),
+                                mac,
+                                ip,
+                                device_id,
+                            }))
+                            .ok();
                     }
                 }
                 // DhcpOptionMessageType::Ack => todo!(),
                 // DhcpOptionMessageType::Nak => todo!(),
                 DhcpOptionMessageType::Release => {
+                    let mac = dhcp.chaddr;
+                    let ip = dhcp.ciaddr;
                     tracing::info!("req: Release, {dhcp:?}");
+                    if dhcp_server.release_ip(&mac, ip) {
+                        let device_id = {
+                            let s = dhcp_server.status.lock().unwrap();
+                            s.static_bindings.get(&mac).and_then(|b| b.device_id)
+                        };
+                        ipv4_assign_sender
+                            .try_send(IPv4AssignEvent::Expired(IPv4AssignInfo {
+                                iface_name: iface_name.to_string(),
+                                mac,
+                                ip,
+                                device_id,
+                            }))
+                            .ok();
+                    }
                 }
                 DhcpOptionMessageType::Inform => {
                     tracing::info!("req: Inform, {dhcp:?}");
@@ -279,6 +340,7 @@ pub struct DHCPv4Server {
     pub global_dynamic_options: Vec<CustomDhcpOption>,
     pub dnr_context: Option<DhcpV4DnrRuntimeContext>,
     pub address_lease_time: u32,
+    pub iface_name: String,
     status: Arc<Mutex<DhcpV4AssignStatus>>,
 }
 
@@ -287,6 +349,7 @@ impl DHCPv4Server {
         config: DHCPv4ServerConfig,
         dnr_context: Option<DhcpV4DnrRuntimeContext>,
         status: Arc<Mutex<DhcpV4AssignStatus>>,
+        iface_name: String,
     ) -> Self {
         let ipv4 = Ipv4Inet::new(config.server_ip_addr, config.network_mask).unwrap();
         let cidr = ipv4.network();
@@ -339,6 +402,7 @@ impl DHCPv4Server {
             global_dynamic_options,
             dnr_context,
             address_lease_time,
+            iface_name,
             status,
         }
     }
@@ -346,7 +410,7 @@ impl DHCPv4Server {
     #[cfg(test)]
     fn init(config: DHCPv4ServerConfig) -> Self {
         let status = Arc::new(Mutex::new(DhcpV4AssignStatus::init_for_test(config.clone())));
-        Self::new(config, None, status)
+        Self::new(config, None, status, "test".to_string())
     }
 
     #[cfg(test)]
@@ -359,7 +423,7 @@ impl DHCPv4Server {
             &config,
             enrolled_devices,
         )));
-        Self::new(config, dnr_context, status)
+        Self::new(config, dnr_context, status, "test".to_string())
     }
 
     pub fn add_decline_ip(&self, ip: Ipv4Addr) {
@@ -428,8 +492,12 @@ impl DHCPv4Server {
         self.status.lock().unwrap().offer_ip(mac_addr, hostname)
     }
 
-    pub fn clean_expire_ip(&self) -> bool {
+    pub fn clean_expire_ip(&self) -> Vec<(MacAddr, Ipv4Addr)> {
         self.status.lock().unwrap().clean_expire_ip()
+    }
+
+    pub fn release_ip(&self, mac: &MacAddr, ip: Ipv4Addr) -> bool {
+        self.status.lock().unwrap().release_ip(mac, ip)
     }
 
     pub fn ack_request(

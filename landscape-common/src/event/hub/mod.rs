@@ -2,12 +2,14 @@ mod device;
 mod frontend_event;
 mod handle;
 mod iface;
+mod ipv4;
 mod ipv6;
 
 pub use device::{EnrolledDeviceEvent, EnrolledDeviceEventReader, EnrolledDeviceEventSender};
 pub use frontend_event::FrontendEvent;
 pub use handle::EventHubHandle;
 pub use iface::{IfaceEventReader, IfaceEventSender};
+pub use ipv4::{IPv4AssignEvent, IPv4AssignEventReader, IPv4AssignEventSender, IPv4AssignInfo};
 pub use ipv6::{
     IAPrefixEvent, IAPrefixEventReader, IAPrefixEventSender, IPv6AssignEvent,
     IPv6AssignEventReader, IPv6AssignEventSender, IPv6AssignInfo,
@@ -22,6 +24,8 @@ const IFACE_BROADCAST_CAPACITY: usize = 64;
 const FRONTEND_BROADCAST_CAPACITY: usize = 256;
 const DEVICE_MPSC_CAPACITY: usize = 32;
 const DEVICE_BROADCAST_CAPACITY: usize = 64;
+const IPV4_MPSC_CAPACITY: usize = 32;
+const IPV4_BROADCAST_CAPACITY: usize = 64;
 const IPV6_MPSC_CAPACITY: usize = 32;
 const IPV6_BROADCAST_CAPACITY: usize = 64;
 const IAPREFIX_MPSC_CAPACITY: usize = 32;
@@ -39,6 +43,11 @@ pub struct EventHub {
     device_broadcast_tx: broadcast::Sender<EnrolledDeviceEvent>,
     device_broadcast_rx: broadcast::Receiver<EnrolledDeviceEvent>,
     device_mpsc_tx: mpsc::Sender<EnrolledDeviceEvent>,
+
+    ipv4_rx: mpsc::Receiver<IPv4AssignEvent>,
+    ipv4_broadcast_tx: broadcast::Sender<IPv4AssignEvent>,
+    ipv4_broadcast_rx: broadcast::Receiver<IPv4AssignEvent>,
+    ipv4_mpsc_tx: mpsc::Sender<IPv4AssignEvent>,
 
     ipv6_rx: mpsc::Receiver<IPv6AssignEvent>,
     ipv6_broadcast_tx: broadcast::Sender<IPv6AssignEvent>,
@@ -62,6 +71,9 @@ impl EventHub {
         let (device_broadcast_tx, device_broadcast_rx) =
             broadcast::channel(DEVICE_BROADCAST_CAPACITY);
 
+        let (ipv4_tx, ipv4_rx) = mpsc::channel(IPV4_MPSC_CAPACITY);
+        let (ipv4_broadcast_tx, ipv4_broadcast_rx) = broadcast::channel(IPV4_BROADCAST_CAPACITY);
+
         let (ipv6_tx, ipv6_rx) = mpsc::channel(IPV6_MPSC_CAPACITY);
         let (ipv6_broadcast_tx, ipv6_broadcast_rx) = broadcast::channel(IPV6_BROADCAST_CAPACITY);
 
@@ -82,6 +94,11 @@ impl EventHub {
             device_broadcast_rx,
             device_mpsc_tx: device_tx,
 
+            ipv4_rx,
+            ipv4_broadcast_tx,
+            ipv4_broadcast_rx,
+            ipv4_mpsc_tx: ipv4_tx,
+
             ipv6_rx,
             ipv6_broadcast_tx,
             ipv6_broadcast_rx,
@@ -100,6 +117,10 @@ impl EventHub {
 
     pub fn enrolled_device_sender(&self) -> EnrolledDeviceEventSender {
         EnrolledDeviceEventSender::new(self.device_mpsc_tx.clone())
+    }
+
+    pub fn ipv4_sender(&self) -> IPv4AssignEventSender {
+        IPv4AssignEventSender::new(self.ipv4_mpsc_tx.clone())
     }
 
     pub fn ipv6_sender(&self) -> IPv6AssignEventSender {
@@ -124,6 +145,11 @@ impl EventHub {
             device_broadcast_rx,
             device_mpsc_tx: _,
 
+            ipv4_rx,
+            ipv4_broadcast_tx,
+            ipv4_broadcast_rx,
+            ipv4_mpsc_tx: _,
+
             ipv6_rx,
             ipv6_broadcast_tx,
             ipv6_broadcast_rx,
@@ -142,6 +168,8 @@ impl EventHub {
             frontend_broadcast_rx,
             device_broadcast_tx.clone(),
             device_broadcast_rx,
+            ipv4_broadcast_tx.clone(),
+            ipv4_broadcast_rx,
             ipv6_broadcast_tx.clone(),
             ipv6_broadcast_rx,
             ia_prefix_broadcast_tx.clone(),
@@ -156,6 +184,8 @@ impl EventHub {
                     frontend_broadcast_tx,
                     device_rx,
                     device_broadcast_tx,
+                    ipv4_rx,
+                    ipv4_broadcast_tx,
                     ipv6_rx,
                     ipv6_broadcast_tx,
                     ia_prefix_rx,
@@ -173,6 +203,8 @@ impl EventHub {
         frontend_broadcast_tx: broadcast::Sender<FrontendEvent>,
         mut device_rx: mpsc::Receiver<EnrolledDeviceEvent>,
         device_broadcast_tx: broadcast::Sender<EnrolledDeviceEvent>,
+        mut ipv4_rx: mpsc::Receiver<IPv4AssignEvent>,
+        ipv4_broadcast_tx: broadcast::Sender<IPv4AssignEvent>,
         mut ipv6_rx: mpsc::Receiver<IPv6AssignEvent>,
         ipv6_broadcast_tx: broadcast::Sender<IPv6AssignEvent>,
         mut ia_prefix_rx: mpsc::Receiver<IAPrefixEvent>,
@@ -193,6 +225,12 @@ impl EventHub {
                     tracing::debug!(?event, "EventHub: dispatch Device event");
                     if let Err(e) = device_broadcast_tx.send(event) {
                         tracing::warn!("EventHub: device broadcast channel full, dropping event: {e:?}");
+                    }
+                }
+                Some(event) = ipv4_rx.recv() => {
+                    tracing::debug!(?event, "EventHub: dispatch IPv4 event");
+                    if let Err(e) = ipv4_broadcast_tx.send(event) {
+                        tracing::warn!("EventHub: ipv4 broadcast channel full, dropping event: {e:?}");
                     }
                 }
                 Some(event) = ipv6_rx.recv() => {

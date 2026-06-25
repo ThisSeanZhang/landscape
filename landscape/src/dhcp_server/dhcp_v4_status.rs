@@ -10,6 +10,7 @@ use landscape_common::{
     net::MacAddr,
     utils::time::get_f64_timestamp,
 };
+use uuid::Uuid;
 
 const OFFER_VALID_TIME: u32 = 20;
 
@@ -47,6 +48,7 @@ pub struct StaticBindingEntry {
     pub ipv4: Ipv4Addr,
     pub custom_options: Vec<CustomDhcpOption>,
     pub filter_options: Vec<u8>,
+    pub device_id: Option<Uuid>,
 }
 
 impl StaticBindingEntry {
@@ -55,6 +57,7 @@ impl StaticBindingEntry {
             ipv4: device.ipv4?,
             custom_options: device.dhcp_custom_options.clone(),
             filter_options: device.dhcp_filter_options.clone(),
+            device_id: Some(device.id),
         })
     }
 }
@@ -106,6 +109,7 @@ impl DhcpV4AssignStatus {
                             ipv4,
                             custom_options: device.dhcp_custom_options.clone(),
                             filter_options: device.dhcp_filter_options.clone(),
+                            device_id: Some(device.id),
                         },
                     )
                     .map(|e| e.ipv4)
@@ -248,7 +252,7 @@ impl DhcpV4AssignStatus {
         let mut seed = mac_addr.u32_ckecksum();
         loop {
             if self.allocated_host.len() as u32 == self.range_capacity {
-                if !self.clean_expire_ip() {
+                if self.clean_expire_ip().is_empty() {
                     break;
                 }
             }
@@ -332,15 +336,15 @@ impl DhcpV4AssignStatus {
         false
     }
 
-    pub fn clean_expire_ip(&mut self) -> bool {
+    pub fn clean_expire_ip(&mut self) -> Vec<(MacAddr, Ipv4Addr)> {
         let current_time = self.relative_boot_time.elapsed().as_secs();
 
-        let mut remove_keys = vec![];
-        self.offered_ip.retain(|_key, value| {
+        let mut expired: Vec<(MacAddr, Ipv4Addr)> = Vec::new();
+        self.offered_ip.retain(|mac, value| {
             if value.is_static {
                 true
             } else if current_time > value.get_expire_time() {
-                remove_keys.push(value.ip);
+                expired.push((*mac, value.ip));
                 false
             } else {
                 true
@@ -349,12 +353,24 @@ impl DhcpV4AssignStatus {
 
         self.allocated_host.retain(|_key, source| !matches!(source, IpAllocSource::Declined));
 
-        for key in remove_keys.iter() {
-            self.allocated_host.remove(key);
+        for (_, ip) in &expired {
+            self.allocated_host.remove(ip);
         }
 
-        tracing::info!("DHCPv4 server cleans up these IPs: {remove_keys:?}");
-        !remove_keys.is_empty()
+        if !expired.is_empty() {
+            let ips: Vec<_> = expired.iter().map(|(_, ip)| ip).collect();
+            tracing::info!("DHCPv4 server cleans up these IPs: {ips:?}");
+        }
+        expired
+    }
+
+    pub fn release_ip(&mut self, mac: &MacAddr, ip: Ipv4Addr) -> bool {
+        if self.offered_ip.remove(mac).is_some() {
+            self.allocated_host.remove(&ip);
+            true
+        } else {
+            false
+        }
     }
 
     pub fn conflicts_with_static_binding(&self, mac_addr: &MacAddr, ip_addr: Ipv4Addr) -> bool {
@@ -596,6 +612,7 @@ mod tests {
                 ipv4: ip,
                 custom_options: vec![],
                 filter_options: vec![],
+                device_id: None,
             },
         );
 
@@ -620,6 +637,7 @@ mod tests {
                 ipv4: ip_y,
                 custom_options: vec![],
                 filter_options: vec![],
+                device_id: None,
             },
         );
 
@@ -647,6 +665,7 @@ mod tests {
                 ipv4: ip_y,
                 custom_options: vec![],
                 filter_options: vec![],
+                device_id: None,
             },
         );
 
@@ -668,6 +687,7 @@ mod tests {
                 ipv4: ip_y,
                 custom_options: vec![],
                 filter_options: vec![],
+                device_id: None,
             },
         );
 
@@ -689,6 +709,7 @@ mod tests {
                 ipv4: ip_y,
                 custom_options: vec![],
                 filter_options: vec![],
+                device_id: None,
             },
         );
 
@@ -801,6 +822,7 @@ mod tests {
                 ipv4: ip_new,
                 custom_options: vec![],
                 filter_options: vec![],
+                device_id: None,
             },
         );
 
@@ -834,6 +856,7 @@ mod tests {
                 ipv4: ip,
                 custom_options: vec![CustomDhcpOption::BootfileName("new.kpxe".to_string())],
                 filter_options: vec![15],
+                device_id: None,
             },
         );
 
@@ -858,7 +881,7 @@ mod tests {
         let mut status = DhcpV4AssignStatus::from_config_and_devices(&config, vec![d]);
 
         sleep(Duration::from_secs(1));
-        assert!(!status.clean_expire_ip(), "should report no cleanup needed");
+        assert!(status.clean_expire_ip().is_empty(), "should report no cleanup needed");
 
         assert!(status.offered_ip.contains_key(&mac));
         assert!(status.allocated_host.contains_key(&ip));
