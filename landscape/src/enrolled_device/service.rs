@@ -36,7 +36,7 @@ impl EnrolledDeviceService {
         self.store.find_by_id(id).await.ok().flatten()
     }
 
-    pub async fn push(&self, data: EnrolledDevice) -> Result<(), String> {
+    pub async fn push(&self, mut data: EnrolledDevice) -> Result<(), String> {
         // Validate custom DHCP options
         landscape_common::dhcp::v4_server::config::validate_custom_options(
             &data.dhcp_custom_options,
@@ -47,6 +47,34 @@ impl EnrolledDeviceService {
             &data.dhcp_filter_options,
         )
         .map_err(|e| e.to_string())?;
+
+        // Validate hostname (RFC 3490/3492 IDN, stores trimmed Unicode, DNS resolves Punycode)
+        if let Some(ref hostname) = data.hostname {
+            let trimmed = hostname.trim();
+            if trimmed.is_empty() {
+                return Err("Hostname cannot be empty".to_string());
+            }
+            let ascii = idna::domain_to_ascii(trimmed)
+                .map_err(|e| format!("Invalid hostname '{}': {}", hostname, e))?;
+            if ascii.len() > 253 {
+                return Err(format!(
+                    "Hostname too long (max 253 ASCII bytes, got {})",
+                    ascii.len()
+                ));
+            }
+            for label in ascii.split('.') {
+                if label.is_empty() {
+                    return Err("Hostname contains empty label".to_string());
+                }
+                if label.len() > 63 {
+                    return Err(format!("Label too long (max 63, got {})", label.len()));
+                }
+                if label.starts_with('-') || label.ends_with('-') {
+                    return Err(format!("Label '{}' starts or ends with hyphen", label));
+                }
+            }
+            data.hostname = Some(trimmed.to_string());
+        }
 
         // Validate IPv4 is within the specified interface's DHCP range
         if let (Some(iface), Some(ipv4)) = (&data.iface_name, &data.ipv4) {

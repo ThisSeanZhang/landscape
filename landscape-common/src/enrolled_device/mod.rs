@@ -44,6 +44,11 @@ pub struct EnrolledDevice {
     #[cfg_attr(feature = "openapi", schema(required = false, nullable = false))]
     pub remark: Option<String>,
 
+    /// Hostname for LAN DNS resolution (e.g., "my-phone")
+    #[serde(default)]
+    #[cfg_attr(feature = "openapi", schema(required = false, nullable = false))]
+    pub hostname: Option<String>,
+
     /// Unique MacAddr for this binding
     #[cfg_attr(feature = "openapi", schema(value_type = String))]
     pub mac: MacAddr,

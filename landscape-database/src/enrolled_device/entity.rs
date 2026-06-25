@@ -27,6 +27,7 @@ pub struct Model {
     pub tag: DBJson,
     pub dhcp_custom_options: DBJson,
     pub dhcp_filter_options: DBJson,
+    pub hostname: Option<String>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
@@ -52,6 +53,7 @@ impl From<Model> for EnrolledDevice {
                 .unwrap_or_default(),
             dhcp_filter_options: serde_json::from_value(entity.dhcp_filter_options)
                 .unwrap_or_default(),
+            hostname: entity.hostname,
         }
     }
 }
@@ -87,4 +89,5 @@ pub(crate) fn update(data: EnrolledDevice, active: &mut ActiveModel) {
     active.dhcp_filter_options =
         Set(serde_json::to_value(&data.dhcp_filter_options)
             .unwrap_or(serde_json::Value::Array(vec![])));
+    active.hostname = Set(data.hostname);
 }

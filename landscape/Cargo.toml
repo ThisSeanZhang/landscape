@@ -58,6 +58,8 @@ serde_json = { workspace = true }
 
 chrono = { workspace = true }
 
+idna = { workspace = true }
+
 tokio = { workspace = true, features = ["full", "net", "io-util"] }
 tokio-util = { workspace = true }
 rand = { workspace = true }

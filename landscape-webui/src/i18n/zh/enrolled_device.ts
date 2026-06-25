@@ -7,6 +7,10 @@ export default {
   name_placeholder: "例如: 我的手机",
   name_required: "请输入展示名称",
 
+  hostname: "主机名",
+  hostname_placeholder: "例如: my-device",
+  hostname_invalid: "主机名标签长度 1-63 字符，且不能以连字符开头或结尾",
+
   mac: "MAC 地址",
   mac_placeholder: "00:11:22:33:44:55",
   mac_required: "MAC 地址不能为空",

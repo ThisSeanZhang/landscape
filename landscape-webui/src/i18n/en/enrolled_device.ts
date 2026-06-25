@@ -7,6 +7,11 @@ export default {
   name_placeholder: "e.g. My phone",
   name_required: "Please enter a display name",
 
+  hostname: "Hostname",
+  hostname_placeholder: "e.g. my-device",
+  hostname_invalid:
+    "Hostname labels must be 1-63 characters and must not start or end with a hyphen",
+
   mac: "MAC Address",
   mac_placeholder: "00:11:22:33:44:55",
   mac_required: "MAC address is required",

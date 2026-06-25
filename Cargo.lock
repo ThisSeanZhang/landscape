@@ -3421,6 +3421,7 @@ dependencies = [
  "genetlink",
  "hickory-proto 0.26.1",
  "hmac 0.13.0",
+ "idna",
  "instant-acme",
  "jsonwebtoken",
  "landscape-common",

@@ -438,7 +438,7 @@ mod tests {
         assert_eq!(targets.first().unwrap().version, "0.20.1");
         assert_eq!(targets.first().unwrap().display_label, "previous release 0.20.1");
         assert_eq!(targets.get(1).unwrap().display_label, "older release 0.19.0");
-        assert_eq!(targets.first().unwrap().steps, 1);
+        assert_eq!(targets.first().unwrap().steps, 2);
     }
 
     #[test]
@@ -454,10 +454,11 @@ mod tests {
             .unwrap();
 
         let plan = build_rollback_plan(&current_state, &target, &all_migrations).unwrap();
-        assert_eq!(plan.steps, 3);
+        assert_eq!(plan.steps, 4);
         assert_eq!(
             plan.rollback_migrations,
             vec![
+                "m20260625_000000_enrolled_device_hostname".to_string(),
                 "m20260620_000000_split_static_nat_v4_v6".to_string(),
                 "m20260504_000000_flow_device_match".to_string(),
                 "m20260503_213507_static_nat_lan_target".to_string(),

@@ -17,4 +17,5 @@ pub enum EnrolledDevice {
     Tag,
     DhcpCustomOptions,
     DhcpFilterOptions,
+    Hostname,
 }

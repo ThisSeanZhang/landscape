@@ -397,6 +397,7 @@ mod tests {
                 name: "device".to_string(),
                 fake_name: None,
                 remark: None,
+                hostname: None,
                 mac: MacAddr::new(0x00, 0x11, 0x22, 0x33, 0x44, 0x55),
                 ipv4: None,
                 ipv6: None,

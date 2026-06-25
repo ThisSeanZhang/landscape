@@ -41,6 +41,7 @@ const rule = ref<EnrolledDevice>({
   tag: [],
   dhcp_custom_options: [],
   dhcp_filter_options: [],
+  hostname: undefined,
 });
 
 const commit_spin = ref(false);
@@ -76,9 +77,18 @@ function normalizeOptionalString(value?: string) {
   return trimmed ? trimmed : undefined;
 }
 
+function hostnameToAscii(hostname: string): string | null {
+  try {
+    return new URL("http://" + hostname).hostname;
+  } catch {
+    return null;
+  }
+}
+
 function normalizePayload(value: typeof rule.value): EnrolledDevice {
   const payload = {
     ...value,
+    hostname: normalizeOptionalString(value.hostname),
     iface_name: normalizeOptionalString(value.iface_name),
     fake_name: normalizeOptionalString(value.fake_name),
     remark: normalizeOptionalString(value.remark),
@@ -176,6 +186,7 @@ function exit() {
     tag: [],
     dhcp_custom_options: [],
     dhcp_filter_options: [],
+    hostname: undefined,
   };
   resetIpv4RangeValidation();
   formRef.value?.restoreValidation?.();
@@ -216,6 +227,7 @@ async function enter() {
         dhcp_filter_options: [],
         remark: "",
         fake_name: "",
+        hostname: undefined,
         ipv4: props.initialValues?.ipv4 ?? undefined,
         ipv6: undefined,
         iface_name: props.initialValues?.iface_name ?? undefined,
@@ -293,6 +305,26 @@ const rules = {
     trigger: "blur",
   },
   mac: macRule,
+  hostname: {
+    trigger: ["input", "blur"],
+    validator(_: unknown, value: string) {
+      if (!value) return true;
+      const trimmed = value.trim();
+      if (!trimmed) return new Error(t("enrolled_device.hostname_invalid"));
+      const ascii = hostnameToAscii(trimmed);
+      if (!ascii) return new Error(t("enrolled_device.hostname_invalid"));
+      if (ascii.length > 253)
+        return new Error(t("enrolled_device.hostname_invalid"));
+      const labels = ascii.split(".");
+      for (const label of labels) {
+        if (!label || label.length > 63)
+          return new Error(t("enrolled_device.hostname_invalid"));
+        if (label.startsWith("-") || label.endsWith("-"))
+          return new Error(t("enrolled_device.hostname_invalid"));
+      }
+      return true;
+    },
+  },
   ipv4: ipRule,
   ipv6: {
     trigger: ["input", "blur"],
@@ -374,6 +406,17 @@ async function saveRule() {
           <n-input
             v-model:value="rule.name"
             :placeholder="t('enrolled_device.name_placeholder')"
+          />
+        </n-form-item-gi>
+
+        <n-form-item-gi
+          :span="2"
+          :label="t('enrolled_device.hostname')"
+          path="hostname"
+        >
+          <n-input
+            v-model:value="rule.hostname"
+            :placeholder="t('enrolled_device.hostname_placeholder')"
           />
         </n-form-item-gi>
 
