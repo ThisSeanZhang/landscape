@@ -221,8 +221,10 @@ impl DdnsService {
             return Ok(());
         }
 
-        self.enrolled_cache.entry(device_id).or_default().raw_ips.insert(ip);
-        self.sync_jobs_now(matching).await;
+        let is_new = self.enrolled_cache.entry(device_id).or_default().raw_ips.insert(ip);
+        if is_new {
+            self.sync_jobs_now(matching).await;
+        }
         Ok(())
     }
 

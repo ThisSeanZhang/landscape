@@ -1,4 +1,3 @@
-pub mod dhcp_v6_status;
 pub mod handler;
 pub mod lease_allocator;
 pub mod server;

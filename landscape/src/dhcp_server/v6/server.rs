@@ -134,14 +134,14 @@ impl DHCPv6Server {
         &self,
         assignment: &Assignment<ICMPv6ConfigInfo>,
     ) -> Vec<(Ipv6Addr, u8)> {
-        super::dhcp_v6_status::compute_qualifying_na_prefixes(&self.na_config, assignment)
+        compute_qualifying_na_prefixes(&self.na_config, assignment)
     }
 
     pub async fn get_qualifying_pd_prefixes(
         &self,
         assignment: &Assignment<PdDelegationParent>,
     ) -> Vec<(Ipv6Addr, u8)> {
-        super::dhcp_v6_status::compute_qualifying_pd_prefixes(&self.pd_config, assignment)
+        compute_qualifying_pd_prefixes(&self.pd_config, assignment)
     }
 
     pub async fn current_offer_info(
@@ -149,8 +149,8 @@ impl DHCPv6Server {
         na: &Assignment<ICMPv6ConfigInfo>,
         pd: &Assignment<PdDelegationParent>,
     ) -> DHCPv6OfferInfo {
-        let na = super::dhcp_v6_status::compute_qualifying_na_prefixes(&self.na_config, na);
-        let pd = super::dhcp_v6_status::compute_qualifying_pd_prefixes(&self.pd_config, pd);
+        let na = compute_qualifying_na_prefixes(&self.na_config, na);
+        let pd = compute_qualifying_pd_prefixes(&self.pd_config, pd);
         self.get_offered_info(&na, &pd).await
     }
 
@@ -159,8 +159,156 @@ impl DHCPv6Server {
         na: &Assignment<ICMPv6ConfigInfo>,
         pd: &Assignment<PdDelegationParent>,
     ) {
-        let na = super::dhcp_v6_status::compute_qualifying_na_prefixes(&self.na_config, na);
-        let pd = super::dhcp_v6_status::compute_qualifying_pd_prefixes(&self.pd_config, pd);
+        let na = compute_qualifying_na_prefixes(&self.na_config, na);
+        let pd = compute_qualifying_pd_prefixes(&self.pd_config, pd);
         self.allocator.lock().await.set_prefixes(na, pd);
+    }
+}
+
+fn compute_qualifying_na_prefixes(
+    na_config: &Option<DHCPv6IANAConfig>,
+    assignment: &Assignment<ICMPv6ConfigInfo>,
+) -> Vec<(Ipv6Addr, u8)> {
+    let na_config = match na_config {
+        Some(c) => c,
+        None => return vec![],
+    };
+    let mut result = Vec::new();
+
+    for info in &assignment.statics {
+        if info.sub_prefix_len <= na_config.max_prefix_len {
+            result.push((info.sub_prefix, info.sub_prefix_len));
+        }
+    }
+
+    for source in &assignment.dynamics {
+        let loaded = source.load();
+        if let Some(info) = loaded.as_ref() {
+            if info.sub_prefix_len <= na_config.max_prefix_len {
+                result.push((info.sub_prefix, info.sub_prefix_len));
+            }
+        }
+    }
+
+    result
+}
+
+fn compute_qualifying_pd_prefixes(
+    pd_config: &Option<DHCPv6IAPDConfig>,
+    assignment: &Assignment<PdDelegationParent>,
+) -> Vec<(Ipv6Addr, u8)> {
+    let pd_config = match pd_config {
+        Some(c) => c,
+        None => return vec![],
+    };
+    let mut result = Vec::new();
+
+    for parent in &assignment.statics {
+        if parent.prefix_len <= pd_config.delegate_prefix_len {
+            result.push((parent.prefix, parent.prefix_len));
+        }
+    }
+
+    for source in &assignment.dynamics {
+        let loaded = source.load();
+        if let Some(parent) = loaded.as_ref() {
+            if parent.prefix_len <= pd_config.delegate_prefix_len {
+                result.push((parent.prefix, parent.prefix_len));
+            }
+        }
+    }
+
+    result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use arc_swap::ArcSwap;
+    use tokio_util::sync::CancellationToken;
+
+    fn assignment<T>(statics: Vec<T>, dynamics: Vec<Arc<ArcSwap<Option<T>>>>) -> Assignment<T> {
+        let (_, notify) = tokio::sync::watch::channel(());
+        Assignment {
+            statics,
+            dynamics,
+            token: CancellationToken::new(),
+            notify,
+            boot_time: tokio::time::Instant::now(),
+        }
+    }
+
+    fn na_config(max_prefix_len: u8) -> Option<DHCPv6IANAConfig> {
+        Some(DHCPv6IANAConfig {
+            max_prefix_len,
+            pool_start: 256,
+            pool_end: None,
+            preferred_lifetime: 3600,
+            valid_lifetime: 7200,
+        })
+    }
+
+    fn pd_config(delegate_prefix_len: u8) -> Option<DHCPv6IAPDConfig> {
+        Some(DHCPv6IAPDConfig {
+            delegate_prefix_len,
+            preferred_lifetime: 3600,
+            valid_lifetime: 7200,
+        })
+    }
+
+    fn na_info(sub_prefix: Ipv6Addr, sub_prefix_len: u8) -> ICMPv6ConfigInfo {
+        ICMPv6ConfigInfo {
+            rt_prefix: Ipv6Addr::new(0xfd00, 0, 0, 0, 0, 0, 0, 0),
+            rt_prefix_len: 48,
+            sub_router: Ipv6Addr::new(0xfd00, 0, 0, 0, 0, 0, 0, 1),
+            sub_prefix,
+            sub_prefix_len,
+            ra_preferred_lifetime: 300,
+            ra_valid_lifetime: 600,
+        }
+    }
+
+    #[test]
+    fn qualifying_na_prefixes_filter_static_and_dynamic_sources() {
+        let static_prefix = Ipv6Addr::new(0xfd00, 0, 0, 1, 0, 0, 0, 0);
+        let dynamic_prefix = Ipv6Addr::new(0xfd00, 0, 0, 2, 0, 0, 0, 0);
+        let too_long_prefix = Ipv6Addr::new(0xfd00, 0, 0, 3, 0, 0, 0, 0);
+        let dynamic = Arc::new(ArcSwap::from_pointee(Some(na_info(dynamic_prefix, 56))));
+        let none_dynamic: Arc<ArcSwap<Option<ICMPv6ConfigInfo>>> =
+            Arc::new(ArcSwap::from_pointee(None));
+        let assignment = assignment(
+            vec![na_info(static_prefix, 64), na_info(too_long_prefix, 72)],
+            vec![dynamic, none_dynamic],
+        );
+
+        let result = compute_qualifying_na_prefixes(&na_config(64), &assignment);
+
+        assert_eq!(result, vec![(static_prefix, 64), (dynamic_prefix, 56)]);
+        assert!(compute_qualifying_na_prefixes(&None, &assignment).is_empty());
+    }
+
+    #[test]
+    fn qualifying_pd_prefixes_filter_static_and_dynamic_sources() {
+        let static_prefix = Ipv6Addr::new(0xfd99, 0, 0, 0x3900, 0, 0, 0, 0);
+        let dynamic_prefix = Ipv6Addr::new(0xfd99, 0, 0, 0x39a0, 0, 0, 0, 0);
+        let too_long_prefix = Ipv6Addr::new(0xfd99, 0, 0, 0x39b0, 0, 0, 0, 0);
+        let dynamic = Arc::new(ArcSwap::from_pointee(Some(PdDelegationParent {
+            prefix: dynamic_prefix,
+            prefix_len: 56,
+        })));
+        let none_dynamic: Arc<ArcSwap<Option<PdDelegationParent>>> =
+            Arc::new(ArcSwap::from_pointee(None));
+        let assignment = assignment(
+            vec![
+                PdDelegationParent { prefix: static_prefix, prefix_len: 48 },
+                PdDelegationParent { prefix: too_long_prefix, prefix_len: 60 },
+            ],
+            vec![dynamic, none_dynamic],
+        );
+
+        let result = compute_qualifying_pd_prefixes(&pd_config(56), &assignment);
+
+        assert_eq!(result, vec![(static_prefix, 48), (dynamic_prefix, 56)]);
+        assert!(compute_qualifying_pd_prefixes(&None, &assignment).is_empty());
     }
 }
