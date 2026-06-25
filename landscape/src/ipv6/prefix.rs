@@ -38,8 +38,11 @@ pub struct ICMPv6ConfigInfo {
     pub ra_valid_lifetime: u32,
 }
 
-/// Prefix data for a single consumer (RA, DHCPv6 NA, or DHCPv6 PD),
-/// with static (always-present) and dynamic (PD-watched) entries.
+/// Prefix data for a single consumer (RA, DHCPv6 NA, or DHCPv6 PD).
+///
+/// `notify` is an assignment-level change signal. Watchers must send it after
+/// writing a dynamic `ArcSwap` entry, so consumers can read the updated view
+/// without subscribing to raw upstream IA prefix events.
 #[derive(Clone)]
 pub struct Assignment<T> {
     pub statics: Vec<T>,
@@ -261,6 +264,7 @@ fn spawn_pd_watcher(
     prefix_map: IAPrefixMap,
     prefix_broadcast_tx: broadcast::Sender<IAPrefixEvent>,
     target: Arc<ArcSwap<Option<PdDelegationParent>>>,
+    notify_tx: Arc<watch::Sender<()>>,
     token: CancellationToken,
     planned_parent_prefix_len: u8,
     pool_index: u32,
@@ -334,10 +338,12 @@ fn spawn_pd_watcher(
                     } else {
                         target.store(Arc::new(None));
                     }
+                    let _ = notify_tx.send(());
                 },
                 _ = token.cancelled() => break,
                 _ = expire_time.as_mut() => {
                     target.store(Arc::new(None));
+                    let _ = notify_tx.send(());
                     expire_time.as_mut().set(tokio::time::sleep(Duration::from_secs(u64::MAX)));
                 }
             }
@@ -479,6 +485,7 @@ pub async fn setup_lan_prefixes(
                             prefix_map.clone(),
                             prefix_broadcast_tx.clone(),
                             target,
+                            pd_notify_tx.clone(),
                             pd_token.clone(),
                             *planned_parent_prefix_len,
                             pool_index,
@@ -806,11 +813,16 @@ pub fn set_iface_ip(
 
 #[cfg(test)]
 mod tests {
-    use super::{allocate_subnet, source_prefix_matches_max_len};
-    use landscape_common::ipv6_pd::LDIAPrefix;
+    use super::{
+        allocate_subnet, source_prefix_matches_max_len, spawn_pd_watcher, PdDelegationParent,
+    };
+    use arc_swap::ArcSwap;
+    use landscape_common::event::hub::IAPrefixEvent;
+    use landscape_common::ipv6_pd::{IAPrefixMap, LDIAPrefix};
+    use std::net::Ipv6Addr;
     use std::sync::Arc;
     use std::time::Duration;
-    use tokio::sync::watch;
+    use tokio::sync::{broadcast, watch};
     use tokio_util::sync::CancellationToken;
 
     #[test]
@@ -891,5 +903,57 @@ mod tests {
         let result = tokio::time::timeout(Duration::from_millis(100), change_rx.changed()).await;
         assert!(result.is_ok());
         assert!(result.unwrap().is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_pd_watcher_notifies_after_assignment_update_and_expire() {
+        let prefix_map = IAPrefixMap::new();
+        let (prefix_tx, _) = broadcast::channel(8);
+        let target: Arc<ArcSwap<Option<PdDelegationParent>>> =
+            Arc::new(ArcSwap::from_pointee(None));
+        let token = CancellationToken::new();
+        let (notify_tx, mut notify_rx) = watch::channel(());
+
+        spawn_pd_watcher(
+            "wan0".to_string(),
+            prefix_map.clone(),
+            prefix_tx.clone(),
+            target.clone(),
+            Arc::new(notify_tx),
+            token.clone(),
+            56,
+            0,
+            60,
+        );
+
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        notify_rx.borrow_and_update();
+
+        prefix_map.store(
+            "wan0",
+            LDIAPrefix {
+                preferred_lifetime: 3600,
+                valid_lifetime: 7200,
+                prefix_len: 56,
+                prefix_ip: Ipv6Addr::new(0x2001, 0xdb8, 1, 0, 0, 0, 0, 0),
+                last_update_time: 0.0,
+            },
+        );
+        prefix_tx.send(IAPrefixEvent::Updated { iface_name: "wan0".to_string() }).unwrap();
+
+        let result = tokio::time::timeout(Duration::from_millis(200), notify_rx.changed()).await;
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_ok());
+        assert!(target.load_full().is_some());
+
+        prefix_map.remove("wan0");
+        prefix_tx.send(IAPrefixEvent::Expired { iface_name: "wan0".to_string() }).unwrap();
+
+        let result = tokio::time::timeout(Duration::from_millis(200), notify_rx.changed()).await;
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_ok());
+        assert!(target.load_full().is_none());
+
+        token.cancel();
     }
 }

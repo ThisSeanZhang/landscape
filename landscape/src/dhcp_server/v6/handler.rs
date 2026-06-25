@@ -19,7 +19,7 @@ use tokio::net::UdpSocket;
 
 use landscape_common::route::{LanIPv6RouteKey, LanRouteInfo, LanRouteMode};
 
-use super::dhcp_v6_status::{DhcpV6AssignStatus, NaAllocSource};
+use super::lease_allocator::{DhcpV6LeaseAllocator, NaAddressCheck};
 use crate::ipv6::prefix::{
     add_route_via, del_route, Assignment, ICMPv6ConfigInfo, PdDelegationParent,
 };
@@ -63,7 +63,7 @@ static DHCPV6_MULTICAST: Ipv6Addr = Ipv6Addr::new(0xff02, 0, 0, 0, 0, 0, 0x1, 0x
     na,
     pd,
     service_status,
-    status,
+    allocator,
     route_service,
     ipv6_assign_sender,
     device_id_map
@@ -77,14 +77,15 @@ pub async fn dhcp_v6_server(
     na: Assignment<ICMPv6ConfigInfo>,
     pd: Assignment<PdDelegationParent>,
     service_status: WatchService,
-    status: Arc<tokio::sync::Mutex<DhcpV6AssignStatus>>,
+    allocator: Arc<tokio::sync::Mutex<DhcpV6LeaseAllocator>>,
     route_service: IpRouteService,
     ipv6_assign_sender: IPv6AssignEventSender,
     device_id_map: Arc<DashMap<MacAddr, Uuid>>,
 ) {
     let server_duid = gen_server_duid(&mac);
 
-    let dhcp_server = DHCPv6Server::init(&dhcpv6_config, server_duid.clone(), status);
+    let dhcp_server = DHCPv6Server::init(&dhcpv6_config, server_duid.clone(), allocator);
+    dhcp_server.sync_prefixes(&na, &pd).await;
 
     let socket_addr =
         SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), LANDSCAPE_DEFAULE_DHCP_V6_SERVER_PORT);
@@ -115,13 +116,6 @@ pub async fn dhcp_v6_server(
     // Receive loop
     tokio::spawn(async move {
         let mut buf = vec![0u8; 65535];
-        // TODO: Consider also listening on a prefix_change_notify channel here.
-        // When upstream PD prefixes change, the RA server picks it up immediately
-        // via the notify channel and re-advertises. But DHCPv6 only refreshes its
-        // last_offer_info snapshot on the next client message or timeout tick.
-        // Adding a 4th branch with a Receiver<()> would let us recompute the
-        // snapshot instantly on prefix changes, closing the brief stale window
-        // between the RA refresh and the next DHCPv6 client exchange.
         loop {
             tokio::select! {
                 result = recv_socket.recv_from(&mut buf) => {
@@ -149,6 +143,8 @@ pub async fn dhcp_v6_server(
     tracing::info!("DHCPv6 Server Running on {iface_name}");
 
     let mut service_status_subscribe = service_status.subscribe();
+    let mut na_change_notify = Some(na.notify.clone());
+    let mut pd_change_notify = Some(pd.notify.clone());
     let timeout_timer = tokio::time::sleep(tokio::time::Duration::from_secs(LEASE_EXPIRE_INTERVAL));
     tokio::pin!(timeout_timer);
 
@@ -157,7 +153,7 @@ pub async fn dhcp_v6_server(
             message = message_rx.recv() => {
                 match message {
                     Some((msg_bytes, msg_addr)) => {
-                        let need_update = handle_dhcpv6_message(
+                        let _need_update = handle_dhcpv6_message(
                             &dhcp_server,
                             &send_socket,
                             &server_duid,
@@ -172,9 +168,7 @@ pub async fn dhcp_v6_server(
                             &ipv6_assign_sender,
                             &device_id_map,
                         ).await;
-                        if need_update {
-                            dhcp_server.refresh_offer_info(&na, &pd).await;
-                        }
+                        dhcp_server.sync_prefixes(&na, &pd).await;
                     },
                     None => {
                         tracing::error!("DHCPv6 message channel closed");
@@ -208,7 +202,39 @@ pub async fn dhcp_v6_server(
                 timeout_timer.as_mut().reset(
                     tokio::time::Instant::now() + tokio::time::Duration::from_secs(LEASE_EXPIRE_INTERVAL)
                 );
-                dhcp_server.refresh_offer_info(&na, &pd).await;
+                dhcp_server.sync_prefixes(&na, &pd).await;
+            }
+            result = async {
+                match na_change_notify.as_mut() {
+                    Some(rx) => rx.changed().await,
+                    None => std::future::pending().await,
+                }
+            } => {
+                if result.is_err() {
+                    tracing::warn!("DHCPv6 NA prefix change sender dropped");
+                    na_change_notify = None;
+                } else {
+                    dhcp_server.sync_prefixes(&na, &pd).await;
+                }
+            }
+            result = async {
+                match pd_change_notify.as_mut() {
+                    Some(rx) => rx.changed().await,
+                    None => std::future::pending().await,
+                }
+            } => {
+                if result.is_err() {
+                    tracing::warn!("DHCPv6 PD prefix change sender dropped");
+                    pd_change_notify = None;
+                } else {
+                    dhcp_server.sync_prefixes(&na, &pd).await;
+                    cleanup_stale_pd_routes(
+                        &dhcp_server,
+                        &pd,
+                        &iface_name,
+                        &route_service,
+                    ).await;
+                }
             }
             change_result = service_status_subscribe.changed() => {
                 if let Err(_) = change_result {
@@ -515,17 +541,12 @@ async fn handle_dhcpv6_message(
                 if server.pd_config.is_some() {
                     let pd_prefixes = server.get_qualifying_pd_prefixes(pd).await;
                     if !pd_prefixes.is_empty() {
-                        // Confirm existing allocation, or allocate new
-                        if !server.confirm_pd(&client_duid).await {
-                            server.offer_pd_index(&client_duid, &pd_prefixes).await;
+                        // Allocate or repair the slot before confirming lifetimes. This lets the
+                        // allocator replace stale sub_index values after PD prefix changes.
+                        if server.offer_pd_index(&client_duid, &pd_prefixes).await.is_some() {
                             server.confirm_pd(&client_duid).await;
-                        }
-                        // For Renew/Rebind: re-allocate if cache lost
-                        if !server.has_pd_offer(&client_duid).await {
-                            tracing::debug!(
-                                "DHCPv6 Renew/Rebind: no cached prefix, allocating new"
-                            );
-                            server.offer_pd_index(&client_duid, &pd_prefixes).await;
+                        } else {
+                            tracing::debug!("DHCPv6 PD: no prefix slot available for client");
                         }
 
                         let mut iapd =
@@ -581,12 +602,7 @@ async fn handle_dhcpv6_message(
                         reply.opts_mut().insert(v6::DhcpOption::IAPD(iapd));
 
                         // Add routes for delegated prefix (system + eBPF)
-                        let route_info = {
-                            let guard = server.status.lock().await;
-                            guard.pd_offered.get(&client_duid).map(|cache| {
-                                (cache.active_routes.clone(), cache.sub_index, cache.valid_time)
-                            })
-                        };
+                        let route_info = server.get_pd_route_info(&client_duid).await;
                         if let Some((old_routes, sub_index, valid_time)) = route_info {
                             // Remove old routes
                             for (prefix, len) in &old_routes {
@@ -636,26 +652,26 @@ async fn handle_dhcpv6_message(
                                 route_service.insert_ipv6_lan_route(key, lan_info).await;
                                 new_routes.push((delegated, *base_prefix_len));
                             }
-                            // Update cache with new routes
+                            if server
+                                .update_pd_active_routes(
+                                    &client_duid,
+                                    client_ll,
+                                    new_routes.clone(),
+                                )
+                                .await
+                                .is_none()
                             {
-                                let mut guard = server.status.lock().await;
-                                if let Some(cache) = guard.pd_offered.get_mut(&client_duid) {
-                                    cache.client_addr = client_ll;
-                                    cache.active_routes = new_routes;
-                                } else {
-                                    drop(guard);
-                                    tracing::warn!(
-                                        "DHCPv6 PD cache entry removed before route update, rolling back {} new routes",
-                                        new_routes.len()
-                                    );
-                                    for (prefix, len) in &new_routes {
-                                        del_route(*prefix, *len, iface_name);
-                                        let key = LanIPv6RouteKey {
-                                            iface_name: iface_name.to_string(),
-                                            subnet_index: pd_route_key_index(sub_index, prefix),
-                                        };
-                                        route_service.remove_ipv6_lan_route_by_key(&key).await;
-                                    }
+                                tracing::warn!(
+                                    "DHCPv6 PD cache entry removed before route update, rolling back {} new routes",
+                                    new_routes.len()
+                                );
+                                for (prefix, len) in &new_routes {
+                                    del_route(*prefix, *len, iface_name);
+                                    let key = LanIPv6RouteKey {
+                                        iface_name: iface_name.to_string(),
+                                        subnet_index: pd_route_key_index(sub_index, prefix),
+                                    };
+                                    route_service.remove_ipv6_lan_route_by_key(&key).await;
                                 }
                             }
                         }
@@ -758,17 +774,14 @@ async fn handle_dhcpv6_message(
                 if let Some(ia_addrs) = client_iana.opts.get_all(v6::OptionCode::IAAddr) {
                     for ia_opt in ia_addrs {
                         if let v6::DhcpOption::IAAddr(ia_addr) = ia_opt {
-                            let matched = na_prefixes.iter().find(|(prefix, prefix_len)| {
-                                let mask = if *prefix_len >= 128 {
-                                    !0u128
-                                } else {
-                                    !0u128 << (128 - prefix_len)
-                                };
-                                (u128::from(ia_addr.addr) & mask) == (u128::from(*prefix) & mask)
-                            });
-                            let (_, matched_prefix_len) = match matched {
-                                Some(m) => m,
-                                None => {
+                            match server.allocator.lock().await.check_na_address_owner(
+                                ia_addr.addr,
+                                &na_prefixes,
+                                &client_duid,
+                                mac,
+                            ) {
+                                NaAddressCheck::Owned => {}
+                                NaAddressCheck::NotOnLink => {
                                     tracing::info!(
                                         "DHCPv6 Confirm: address {} is NOT on-link, rejecting",
                                         ia_addr.addr
@@ -776,29 +789,15 @@ async fn handle_dhcpv6_message(
                                     all_on_link = false;
                                     break;
                                 }
-                            };
-
-                            let mask = if *matched_prefix_len >= 128 {
-                                !0u128
-                            } else {
-                                !0u128 << (128 - matched_prefix_len)
-                            };
-                            let suffix = (u128::from(ia_addr.addr) & !mask) as u64;
-
-                            match server.get_suffix_owner(suffix).await {
-                                Some(NaAllocSource::Static(owner_mac)) => {
-                                    if Some(owner_mac) != mac {
-                                        tracing::info!(
-                                            "DHCPv6 Confirm: address {} owned by MAC {:?}, rejecting MAC {:?}",
-                                            ia_addr.addr, owner_mac, mac
-                                        );
-                                        all_on_link = false;
-                                        break;
-                                    }
+                                NaAddressCheck::OwnedByOtherMac(owner_mac) => {
+                                    tracing::info!(
+                                        "DHCPv6 Confirm: address {} owned by MAC {:?}, rejecting MAC {:?}",
+                                        ia_addr.addr, owner_mac, mac
+                                    );
+                                    all_on_link = false;
+                                    break;
                                 }
-                                Some(NaAllocSource::Dynamic(ref owner_duid))
-                                    if owner_duid == &client_duid => {}
-                                Some(NaAllocSource::Dynamic(_)) => {
+                                NaAddressCheck::OwnedByOtherDuid(_) => {
                                     tracing::info!(
                                         "DHCPv6 Confirm: address {} owned by another DUID, rejecting",
                                         ia_addr.addr
@@ -806,7 +805,7 @@ async fn handle_dhcpv6_message(
                                     all_on_link = false;
                                     break;
                                 }
-                                None => {
+                                NaAddressCheck::Unallocated => {
                                     tracing::info!(
                                         "DHCPv6 Confirm: address {} has no active allocation, rejecting",
                                         ia_addr.addr
@@ -986,25 +985,50 @@ fn pd_route_key_index(sub_index: u32, delegated_prefix: &Ipv6Addr) -> u32 {
 
 use super::types::DHCPv6PDCache;
 
+async fn cleanup_stale_pd_routes(
+    server: &DHCPv6Server,
+    pd: &Assignment<PdDelegationParent>,
+    iface_name: &str,
+    route_service: &IpRouteService,
+) {
+    let pd_prefixes = server.get_qualifying_pd_prefixes(pd).await;
+    let cleanups = server.reconcile_pd_routes(&pd_prefixes).await;
+    for cleanup in &cleanups {
+        cleanup_pd_active_routes(cleanup.sub_index, &cleanup.routes, iface_name, route_service)
+            .await;
+    }
+}
+
+async fn cleanup_pd_active_routes(
+    sub_index: u32,
+    routes: &[(Ipv6Addr, u8)],
+    iface_name: &str,
+    route_service: &IpRouteService,
+) {
+    for (prefix, len) in routes {
+        del_route(*prefix, *len, iface_name);
+        let key = LanIPv6RouteKey {
+            iface_name: iface_name.to_string(),
+            subnet_index: pd_route_key_index(sub_index, prefix),
+        };
+        route_service.remove_ipv6_lan_route_by_key(&key).await;
+    }
+}
+
 /// Clean up system and eBPF routes for a released/expired PD cache entry.
 async fn cleanup_pd_routes(
     cache: &DHCPv6PDCache,
     iface_name: &str,
     route_service: &IpRouteService,
 ) {
-    for (prefix, len) in &cache.active_routes {
-        del_route(*prefix, *len, iface_name);
-        let key = LanIPv6RouteKey {
-            iface_name: iface_name.to_string(),
-            subnet_index: pd_route_key_index(cache.sub_index, prefix),
-        };
-        route_service.remove_ipv6_lan_route_by_key(&key).await;
-    }
+    cleanup_pd_active_routes(cache.sub_index, &cache.active_routes, iface_name, route_service)
+        .await;
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::dhcp_server::v6::NaAllocSource;
     use arc_swap::ArcSwap;
     use landscape_common::dhcp::v6_server::config::{
         DHCPv6IANAConfig, DHCPv6IAPDConfig, DHCPv6ServerConfig,
@@ -1015,9 +1039,9 @@ mod tests {
     use tokio::sync::Mutex;
 
     fn make_server(config: &DHCPv6ServerConfig) -> DHCPv6Server {
-        let status =
-            Arc::new(Mutex::new(DhcpV6AssignStatus::from_config_and_devices(config, vec![])));
-        DHCPv6Server::init(config, Vec::new(), status)
+        let allocator =
+            Arc::new(Mutex::new(DhcpV6LeaseAllocator::from_config_and_devices(config, vec![])));
+        DHCPv6Server::init(config, Vec::new(), allocator)
     }
 
     #[tokio::test]
@@ -1209,6 +1233,53 @@ mod tests {
             server.has_pd_offer(&client_duid).await,
             "Client should be in pd_offered cache after PD allocation"
         );
+    }
+
+    #[tokio::test]
+    async fn test_startup_sync_uses_existing_dynamic_pd_assignment() {
+        let server_config = DHCPv6ServerConfig {
+            enable: true,
+            ia_na: None,
+            ia_pd: Some(DHCPv6IAPDConfig {
+                delegate_prefix_len: 60,
+                preferred_lifetime: 3600,
+                valid_lifetime: 7200,
+            }),
+        };
+        let server = make_server(&server_config);
+        let client_duid = b"startup-dynamic-pd-client".to_vec();
+        let dynamic_prefix = Ipv6Addr::new(0xfd99, 0, 0, 0x39a0, 0, 0, 0, 0);
+
+        let (_, na_rx) = tokio::sync::watch::channel(());
+        let (_, pd_rx) = tokio::sync::watch::channel(());
+        let na = Assignment {
+            statics: vec![],
+            dynamics: vec![],
+            token: tokio_util::sync::CancellationToken::new(),
+            notify: na_rx,
+            boot_time: tokio::time::Instant::now(),
+        };
+        let pd = Assignment {
+            statics: vec![],
+            dynamics: vec![Arc::new(ArcSwap::from_pointee(Some(PdDelegationParent {
+                prefix: dynamic_prefix,
+                prefix_len: 60,
+            })))],
+            token: tokio_util::sync::CancellationToken::new(),
+            notify: pd_rx,
+            boot_time: tokio::time::Instant::now(),
+        };
+
+        let pd_prefixes = server.get_qualifying_pd_prefixes(&pd).await;
+        assert_eq!(pd_prefixes, vec![(dynamic_prefix, 60)]);
+        assert_eq!(server.offer_pd_index(&client_duid, &pd_prefixes).await, Some(0));
+
+        server.sync_prefixes(&na, &pd).await;
+
+        let view = server.allocator.lock().await.lease_view_with_last_prefixes();
+        assert_eq!(view.delegated_prefixes.len(), 1);
+        assert_eq!(view.delegated_prefixes[0].prefix, dynamic_prefix);
+        assert_eq!(view.delegated_prefixes[0].prefix_len, 60);
     }
 
     #[tokio::test]
@@ -1535,14 +1606,14 @@ mod tests {
         let mac = MacAddr::from([0x00, 0x11, 0x22, 0x33, 0x44, 0x55]);
         let ip = Ipv6Addr::new(0xfd11, 0x2222, 0x3333, 0x4444, 0, 0, 0, 0x1234);
 
-        server.status.lock().await.add_or_update_binding(mac, ip);
+        server.allocator.lock().await.add_or_update_binding(mac, ip);
         let suffix = server
             .offer_na_suffix(&client_duid, Some(mac), None)
             .await
             .expect("static binding should assign suffix");
 
         let owner = server.get_suffix_owner(suffix).await;
-        assert_eq!(owner, Some(NaAllocSource::Static(mac)));
+        assert_eq!(owner, Some(NaAllocSource::StaticMac(mac)));
     }
 
     #[tokio::test]
@@ -1563,11 +1634,11 @@ mod tests {
         let mac_b = MacAddr::from([0x00, 0x11, 0x22, 0x33, 0x44, 0x66]);
         let ip = Ipv6Addr::new(0xfd11, 0x2222, 0x3333, 0x4444, 0, 0, 0, 0x5678);
 
-        server.status.lock().await.add_or_update_binding(mac_a, ip);
+        server.allocator.lock().await.add_or_update_binding(mac_a, ip);
         let suffix = server.offer_na_suffix(b"client-a", Some(mac_a), None).await.unwrap();
 
         let owner = server.get_suffix_owner(suffix).await;
-        assert_eq!(owner, Some(NaAllocSource::Static(mac_a)), "suffix should be owned by mac_a");
+        assert_eq!(owner, Some(NaAllocSource::StaticMac(mac_a)), "suffix should be owned by mac_a");
         assert_ne!(Some(mac_a), Some(mac_b));
     }
 
@@ -1592,7 +1663,7 @@ mod tests {
 
         let owner = server.get_suffix_owner(suffix).await;
         match owner {
-            Some(NaAllocSource::Dynamic(ref duid)) => {
+            Some(NaAllocSource::DynamicDuid(ref duid)) => {
                 assert_eq!(duid, &client_duid, "dynamic suffix should be owned by client DUID");
             }
             other => panic!("expected Dynamic owner, got {:?}", other),
@@ -1622,7 +1693,7 @@ mod tests {
         let owner = server.get_suffix_owner(suffix).await;
         assert_eq!(
             owner,
-            Some(NaAllocSource::Dynamic(client_a.clone())),
+            Some(NaAllocSource::DynamicDuid(client_a.clone())),
             "suffix should be owned by client_a DUID"
         );
         assert_ne!(client_a, client_b);
@@ -1676,7 +1747,7 @@ mod tests {
 
         let owner = server.get_suffix_owner(extracted).await;
         match owner {
-            Some(NaAllocSource::Dynamic(ref owner_duid)) => {
+            Some(NaAllocSource::DynamicDuid(ref owner_duid)) => {
                 assert_eq!(
                     owner_duid, &client_duid,
                     "extracted suffix owner DUID should match requesting client"
@@ -1704,7 +1775,7 @@ mod tests {
         let mac = MacAddr::from([0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff]);
         let static_ip = Ipv6Addr::new(0xfd11, 0x2222, 0x3333, 0x4444, 0, 0, 0, 0x9999);
 
-        server.status.lock().await.add_or_update_binding(mac, static_ip);
+        server.allocator.lock().await.add_or_update_binding(mac, static_ip);
         let suffix = server.offer_na_suffix(&client_duid, Some(mac), None).await.unwrap();
 
         let expected_suffix = u128::from(static_ip) as u64;
@@ -1720,6 +1791,6 @@ mod tests {
         assert_eq!(extracted, suffix);
 
         let owner = server.get_suffix_owner(suffix).await;
-        assert_eq!(owner, Some(NaAllocSource::Static(mac)));
+        assert_eq!(owner, Some(NaAllocSource::StaticMac(mac)));
     }
 }

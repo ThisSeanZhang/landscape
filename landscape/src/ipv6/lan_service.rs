@@ -28,7 +28,7 @@ use tokio::sync::broadcast;
 use tokio::sync::{Mutex, RwLock};
 use uuid::Uuid;
 
-use crate::dhcp_server::v6::DhcpV6AssignStatus;
+use crate::dhcp_server::v6::DhcpV6LeaseAllocator;
 use crate::iface::get_iface_by_name;
 use crate::ipv6::prefix::{cleanup_prefix_sources, setup_lan_prefixes};
 use crate::route::IpRouteService;
@@ -42,7 +42,7 @@ pub struct LanIPv6Service {
     prefix_map: IAPrefixMap,
     prefix_broadcast_tx: broadcast::Sender<IAPrefixEvent>,
     iface_lease_map: Arc<RwLock<HashMap<String, Arc<RwLock<IPv6NAInfo>>>>>,
-    iface_dhcpv6_status_map: Arc<RwLock<HashMap<String, Arc<Mutex<DhcpV6AssignStatus>>>>>,
+    iface_dhcpv6_allocator_map: Arc<RwLock<HashMap<String, Arc<Mutex<DhcpV6LeaseAllocator>>>>>,
     enrolled_device_store: EnrolledDeviceRepository,
     ipv6_assign_sender: IPv6AssignEventSender,
     device_id_map: Arc<DashMap<MacAddr, Uuid>>,
@@ -61,7 +61,7 @@ impl LanIPv6Service {
             prefix_map,
             prefix_broadcast_tx,
             iface_lease_map: Arc::new(RwLock::new(HashMap::new())),
-            iface_dhcpv6_status_map: Arc::new(RwLock::new(HashMap::new())),
+            iface_dhcpv6_allocator_map: Arc::new(RwLock::new(HashMap::new())),
             enrolled_device_store,
             ipv6_assign_sender,
             device_id_map: Arc::new(DashMap::new()),
@@ -106,16 +106,16 @@ impl ServiceStarterTrait for LanIPv6Service {
                     self.device_id_map.insert(d.mac, d.id);
                 }
 
-                let dhcpv6_assign_status: Option<Arc<Mutex<DhcpV6AssignStatus>>> = if dhcpv6_enabled
-                {
+                let dhcpv6_allocator: Option<Arc<Mutex<DhcpV6LeaseAllocator>>> = if dhcpv6_enabled {
                     let dhcpv6_cfg = dhcpv6_config.as_ref().unwrap();
-                    let status = DhcpV6AssignStatus::from_config_and_devices(dhcpv6_cfg, devices);
-                    let status_arc = Arc::new(Mutex::new(status));
+                    let allocator =
+                        DhcpV6LeaseAllocator::from_config_and_devices(dhcpv6_cfg, devices);
+                    let allocator_arc = Arc::new(Mutex::new(allocator));
                     {
-                        let mut write = self.iface_dhcpv6_status_map.write().await;
-                        write.insert(store_key.clone(), status_arc.clone());
+                        let mut write = self.iface_dhcpv6_allocator_map.write().await;
+                        write.insert(store_key.clone(), allocator_arc.clone());
                     }
-                    Some(status_arc)
+                    Some(allocator_arc)
                 } else {
                     None
                 };
@@ -153,7 +153,7 @@ impl ServiceStarterTrait for LanIPv6Service {
                             link_ifindex,
                             status_clone,
                             assigned_ips,
-                            dhcpv6_assign_status,
+                            dhcpv6_allocator,
                             ipv6_assign_sender,
                             device_id_map,
                         )
@@ -189,7 +189,7 @@ async fn run_mode(
     link_ifindex: u32,
     status: WatchService,
     assigned_ips: Arc<RwLock<IPv6NAInfo>>,
-    dhcpv6_assign_status: Option<Arc<Mutex<DhcpV6AssignStatus>>>,
+    dhcpv6_allocator: Option<Arc<Mutex<DhcpV6LeaseAllocator>>>,
     ipv6_assign_sender: IPv6AssignEventSender,
     device_id_map: Arc<DashMap<MacAddr, Uuid>>,
 ) {
@@ -240,13 +240,13 @@ async fn run_mode(
             // RA doesn't need prefix data for itself in Stateful mode
             setup.ra.token.cancel();
 
-            if let Some(ref assign_status) = dhcpv6_assign_status {
+            if let Some(ref allocator) = dhcpv6_allocator {
                 let dhcpv6_iface = iface_name.to_string();
                 let dhcpv6_mac = mac.clone();
                 let dhcpv6_status = status.clone();
                 let dhcpv6_route = route_service.clone();
                 let link_local = mac.to_ipv6_link_local();
-                let s = assign_status.clone();
+                let s = allocator.clone();
                 let snd = ipv6_assign_sender.clone();
                 let dmap = device_id_map.clone();
                 let na_clone = setup.na.clone();
@@ -300,13 +300,13 @@ async fn run_mode(
                 }
             };
 
-            if let Some(ref assign_status) = dhcpv6_assign_status {
+            if let Some(ref allocator) = dhcpv6_allocator {
                 let dhcpv6_iface = iface_name.to_string();
                 let dhcpv6_mac = mac.clone();
                 let dhcpv6_status = status.clone();
                 let dhcpv6_route = route_service.clone();
                 let link_local = mac.to_ipv6_link_local();
-                let s = assign_status.clone();
+                let s = allocator.clone();
                 let snd = ipv6_assign_sender.clone();
                 let dmap = device_id_map.clone();
                 // Clone: one copy for DHCPv6 server, original used as RA onlink
@@ -420,13 +420,13 @@ impl LanIPv6ManagerService {
             }
         });
 
-        let status_map = server_starter.iface_dhcpv6_status_map.clone();
+        let allocator_map = server_starter.iface_dhcpv6_allocator_map.clone();
         let device_id_map = server_starter.device_id_map.clone();
         tokio::spawn(async move {
             while let Ok(event) = device_reader.recv().await {
                 let affected = extract_binding_ifaces_v6(&event);
                 let targets: Vec<String> = {
-                    let guard = status_map.read().await;
+                    let guard = allocator_map.read().await;
                     if affected.is_empty() {
                         guard.keys().cloned().collect()
                     } else {
@@ -434,23 +434,23 @@ impl LanIPv6ManagerService {
                     }
                 };
                 for iface in &targets {
-                    let s = {
-                        let guard = status_map.read().await;
+                    let allocator = {
+                        let guard = allocator_map.read().await;
                         guard.get(iface).cloned()
                     };
-                    if let Some(s) = s {
-                        let mut status = s.lock().await;
+                    if let Some(allocator) = allocator {
+                        let mut allocator = allocator.lock().await;
                         match &event {
                             EnrolledDeviceEvent::Updated { old, new } => {
                                 if let Some(d) = old.as_ref() {
-                                    status.remove_binding(&d.mac);
+                                    allocator.remove_binding(&d.mac);
                                 }
                                 if let Some(ipv6) = new.ipv6 {
-                                    status.add_or_update_binding(new.mac, ipv6);
+                                    allocator.add_or_update_binding(new.mac, ipv6);
                                 }
                             }
                             EnrolledDeviceEvent::Deleted { old } => {
-                                status.remove_binding(&old.mac);
+                                allocator.remove_binding(&old.mac);
                             }
                         }
                     }
@@ -518,22 +518,22 @@ impl LanIPv6ManagerService {
         iface_name: String,
     ) -> Option<DHCPv6OfferInfo> {
         let status_arc = {
-            let guard = self.server_starter.iface_dhcpv6_status_map.read().await;
+            let guard = self.server_starter.iface_dhcpv6_allocator_map.read().await;
             guard.get(&iface_name).cloned()
         }?;
-        let s = status_arc.lock().await;
-        Some(s.last_offer_info.clone())
+        let allocator = status_arc.lock().await;
+        Some(allocator.lease_view_with_last_prefixes())
     }
 
     pub async fn get_dhcpv6_assigned(&self) -> HashMap<String, DHCPv6OfferInfo> {
         let mut result = HashMap::new();
-        let statuses: Vec<(String, Arc<Mutex<DhcpV6AssignStatus>>)> = {
-            let guard = self.server_starter.iface_dhcpv6_status_map.read().await;
+        let allocators: Vec<(String, Arc<Mutex<DhcpV6LeaseAllocator>>)> = {
+            let guard = self.server_starter.iface_dhcpv6_allocator_map.read().await;
             guard.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
         };
-        for (name, status_arc) in statuses {
-            let s = status_arc.lock().await;
-            result.insert(name, s.last_offer_info.clone());
+        for (name, allocator_arc) in allocators {
+            let allocator = allocator_arc.lock().await;
+            result.insert(name, allocator.lease_view_with_last_prefixes());
         }
         result
     }
@@ -589,12 +589,12 @@ impl LanIPv6ManagerService {
             }
         }
 
-        let status_map = self.server_starter.iface_dhcpv6_status_map.read().await;
-        for status_arc in status_map.values() {
-            let status = status_arc.lock().await;
-            for (mac, ip) in &status.static_bindings {
-                if let Some(device_id) = self.server_starter.device_id_map.get(mac) {
-                    result.entry(*device_id).or_insert(*ip);
+        let allocator_map = self.server_starter.iface_dhcpv6_allocator_map.read().await;
+        for allocator_arc in allocator_map.values() {
+            let allocator = allocator_arc.lock().await;
+            for (mac, ip) in allocator.static_binding_view_with_last_prefixes() {
+                if let Some(device_id) = self.server_starter.device_id_map.get(&mac) {
+                    result.entry(*device_id).or_insert(ip);
                 }
             }
         }
