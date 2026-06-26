@@ -260,6 +260,7 @@ impl DHCPv4ServerManagerService {
         dns_runtime_config: landscape_common::config::DnsRuntimeConfig,
         mut dev_observer: IfaceEventReader,
         ipv4_assign_sender: IPv4AssignEventSender,
+        mut device_reader: EnrolledDeviceEventReader,
     ) -> Self {
         let store = store_service.dhcp_v4_server_store();
         let server_starter = DHCPv4ServerStarter::new(
@@ -289,6 +290,43 @@ impl DHCPv4ServerManagerService {
                         let _ = service_clone.update_service(service_config).await;
                     }
                     IfaceObserverAction::Down(_) => {}
+                }
+            }
+        });
+
+        let status_map = server_starter.iface_status_map.clone();
+        tokio::spawn(async move {
+            while let Ok(event) = device_reader.recv().await {
+                let affected = extract_binding_ifaces(&event);
+                let targets: Vec<String> = {
+                    let guard = status_map.read().await;
+                    if affected.is_empty() {
+                        guard.keys().cloned().collect()
+                    } else {
+                        affected.into_iter().filter(|i| guard.contains_key(i)).collect()
+                    }
+                };
+                for iface in targets {
+                    let s = {
+                        let guard = status_map.read().await;
+                        guard.get(&iface).cloned()
+                    };
+                    if let Some(s) = s {
+                        let mut status = s.lock().unwrap();
+                        match &event {
+                            EnrolledDeviceEvent::Updated { old, new } => {
+                                if let Some(d) = old.as_ref() {
+                                    status.remove_binding(&d.mac);
+                                }
+                                if let Some(entry) = StaticBindingEntry::from_enrolled(new) {
+                                    status.add_or_update_binding(new.mac, entry);
+                                }
+                            }
+                            EnrolledDeviceEvent::Deleted { old } => {
+                                status.remove_binding(&old.mac);
+                            }
+                        }
+                    }
                 }
             }
         });
@@ -326,45 +364,6 @@ impl DHCPv4ServerManagerService {
             return;
         };
         let _ = self.get_service().update_service(service_config).await;
-    }
-
-    pub fn listen_device_events(&self, mut rx: EnrolledDeviceEventReader) {
-        let status_map = self.server_starter.iface_status_map.clone();
-        tokio::spawn(async move {
-            while let Ok(event) = rx.recv().await {
-                let affected = extract_binding_ifaces(&event);
-                let targets: Vec<String> = {
-                    let guard = status_map.read().await;
-                    if affected.is_empty() {
-                        guard.keys().cloned().collect()
-                    } else {
-                        affected.into_iter().filter(|i| guard.contains_key(i)).collect()
-                    }
-                };
-                for iface in targets {
-                    let s = {
-                        let guard = status_map.read().await;
-                        guard.get(&iface).cloned()
-                    };
-                    if let Some(s) = s {
-                        let mut status = s.lock().unwrap();
-                        match &event {
-                            EnrolledDeviceEvent::Updated { old, new } => {
-                                if let Some(d) = old.as_ref() {
-                                    status.remove_binding(&d.mac);
-                                }
-                                if let Some(entry) = StaticBindingEntry::from_enrolled(new) {
-                                    status.add_or_update_binding(new.mac, entry);
-                                }
-                            }
-                            EnrolledDeviceEvent::Deleted { old } => {
-                                status.remove_binding(&old.mac);
-                            }
-                        }
-                    }
-                }
-            }
-        });
     }
 
     pub async fn cleanup_lingering_iface_addr_if_present(&self, config: &DHCPv4ServiceConfig) {

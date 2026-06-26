@@ -1,3 +1,5 @@
+use tokio::sync::broadcast;
+
 use crate::observer::IfaceObserverAction;
 
 #[derive(Clone, Debug)]
@@ -12,5 +14,19 @@ impl From<IfaceObserverAction> for FrontendEvent {
             IfaceObserverAction::Up(name) => FrontendEvent::IfaceUp(name),
             IfaceObserverAction::Down(name) => FrontendEvent::IfaceDown(name),
         }
+    }
+}
+
+pub struct FrontendEventReader {
+    rx: broadcast::Receiver<FrontendEvent>,
+}
+
+impl FrontendEventReader {
+    pub fn new(rx: broadcast::Receiver<FrontendEvent>) -> Self {
+        Self { rx }
+    }
+
+    pub async fn recv(&mut self) -> Result<FrontendEvent, broadcast::error::RecvError> {
+        self.rx.recv().await
     }
 }

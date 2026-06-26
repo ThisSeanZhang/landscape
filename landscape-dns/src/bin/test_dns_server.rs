@@ -7,9 +7,9 @@ async fn main() -> std::io::Result<()> {
     landscape_common::init_tracing!();
 
     let listen_port = 54;
-    let (_, ipv4_rx) =
-        tokio::sync::broadcast::channel::<landscape_common::event::hub::IPv4AssignEvent>(1);
-    let ipv4_reader = landscape_common::event::hub::IPv4AssignEventReader::new(ipv4_rx);
+    let (_, device_rx) =
+        tokio::sync::broadcast::channel::<landscape_common::event::hub::EnrolledDeviceEvent>(1);
+    let device_reader = landscape_common::event::hub::EnrolledDeviceEventReader::new(device_rx);
     let server = LandscapeDnsServer::new(
         listen_port,
         None,
@@ -17,7 +17,7 @@ async fn main() -> std::io::Result<()> {
         None,
         None,
         None,
-        ipv4_reader,
+        device_reader,
     );
 
     // handler

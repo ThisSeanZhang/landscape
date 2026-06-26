@@ -151,6 +151,8 @@ struct PdSourceConfig {
 }
 
 /// Spawn a PD watcher that updates a RA/NA prefix entry (ICMPv6ConfigInfo).
+// TODO: Accept IAPrefixEventReader instead of broadcast::Sender (see
+// EventHubHandle::ipv6_prefix_broadcast_tx).
 fn spawn_prefix_watcher(
     depend_iface: String,
     prefix_map: IAPrefixMap,
@@ -259,6 +261,8 @@ fn spawn_prefix_watcher(
 }
 
 /// Spawn a PD watcher that updates a PD delegation entry (PdDelegationParent).
+// TODO: Accept IAPrefixEventReader instead of broadcast::Sender (see
+// EventHubHandle::ipv6_prefix_broadcast_tx).
 fn spawn_pd_watcher(
     depend_iface: String,
     prefix_map: IAPrefixMap,
@@ -359,6 +363,8 @@ fn spawn_pd_watcher(
 /// Each group's `ra` field → `ra` assignment, `na` → `na` assignment, `pd` → `pd` assignment.
 /// Static sources are materialized immediately; Pd sources spawn watchers that
 /// update `ArcSwap` entries and notify via the assignment's `notify` channel.
+// TODO: Accept IAPrefixEventReader instead of broadcast::Sender (see
+// EventHubHandle::ipv6_prefix_broadcast_tx).
 pub async fn setup_lan_prefixes(
     groups: &[LanPrefixGroupConfig],
     iface_name: &str,

@@ -146,13 +146,12 @@ pub async fn dhcp_v4_server(
             _ = &mut timeout_timer => {
                 let expired = dhcp_server.clean_expire_ip();
                 for (mac, ip) in expired {
-                    let (device_id, hostname) = { let s = dhcp_server.status.lock().unwrap(); let b = s.static_bindings.get(&mac); (b.and_then(|b| b.device_id), b.and_then(|b| b.hostname.clone())) };
+                    let device_id = { let s = dhcp_server.status.lock().unwrap(); s.static_bindings.get(&mac).and_then(|b| b.device_id) };
                     ipv4_assign_sender.try_send(IPv4AssignEvent::Expired(IPv4AssignInfo {
                         iface_name: iface_name.clone(),
                         mac,
                         ip,
                         device_id,
-                        hostname,
                     })).ok();
                 }
                 timeout_timer.as_mut().reset(tokio::time::Instant::now() + tokio::time::Duration::from_secs(IP_EXPIRE_INTERVAL));
@@ -222,10 +221,9 @@ async fn handle_dhcp_message(
                     };
 
                     if matches!(payload.options.message_type, DhcpOptionMessageType::Ack) {
-                        let (device_id, hostname) = {
+                        let device_id = {
                             let s = dhcp_server.status.lock().unwrap();
-                            let b = s.static_bindings.get(&mac);
-                            (b.and_then(|b| b.device_id), b.and_then(|b| b.hostname.clone()))
+                            s.static_bindings.get(&mac).and_then(|b| b.device_id)
                         };
                         ipv4_assign_sender
                             .try_send(IPv4AssignEvent::Allocated(IPv4AssignInfo {
@@ -233,7 +231,6 @@ async fn handle_dhcp_message(
                                 mac,
                                 ip: payload.yiaddr,
                                 device_id,
-                                hostname,
                             }))
                             .ok();
                     }
@@ -267,10 +264,9 @@ async fn handle_dhcp_message(
                     let options = dhcp.options;
                     if let Some(DhcpOptions::RequestedIpAddress(ip)) = options.has_option(50) {
                         dhcp_server.add_decline_ip(ip);
-                        let (device_id, hostname) = {
+                        let device_id = {
                             let s = dhcp_server.status.lock().unwrap();
-                            let b = s.static_bindings.get(&mac);
-                            (b.and_then(|b| b.device_id), b.and_then(|b| b.hostname.clone()))
+                            s.static_bindings.get(&mac).and_then(|b| b.device_id)
                         };
                         ipv4_assign_sender
                             .try_send(IPv4AssignEvent::Expired(IPv4AssignInfo {
@@ -278,7 +274,6 @@ async fn handle_dhcp_message(
                                 mac,
                                 ip,
                                 device_id,
-                                hostname,
                             }))
                             .ok();
                     }
@@ -290,10 +285,9 @@ async fn handle_dhcp_message(
                     let ip = dhcp.ciaddr;
                     tracing::info!("req: Release, {dhcp:?}");
                     if dhcp_server.release_ip(&mac, ip) {
-                        let (device_id, hostname) = {
+                        let device_id = {
                             let s = dhcp_server.status.lock().unwrap();
-                            let b = s.static_bindings.get(&mac);
-                            (b.and_then(|b| b.device_id), b.and_then(|b| b.hostname.clone()))
+                            s.static_bindings.get(&mac).and_then(|b| b.device_id)
                         };
                         ipv4_assign_sender
                             .try_send(IPv4AssignEvent::Expired(IPv4AssignInfo {
@@ -301,7 +295,6 @@ async fn handle_dhcp_message(
                                 mac,
                                 ip,
                                 device_id,
-                                hostname,
                             }))
                             .ok();
                     }

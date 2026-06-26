@@ -1,7 +1,7 @@
 use tokio::sync::broadcast;
 
-use super::device::EnrolledDeviceEvent;
-use super::frontend_event::FrontendEvent;
+use super::device::{EnrolledDeviceEvent, EnrolledDeviceEventReader};
+use super::frontend_event::{FrontendEvent, FrontendEventReader};
 use super::iface::IfaceEventReader;
 use super::ipv4::{IPv4AssignEvent, IPv4AssignEventReader};
 use super::ipv6::{IAPrefixEvent, IAPrefixEventReader, IPv6AssignEvent, IPv6AssignEventReader};
@@ -60,12 +60,12 @@ impl EventHubHandle {
         IfaceEventReader::new(self.iface_broadcast_tx.subscribe())
     }
 
-    pub fn subscribe_frontend(&self) -> broadcast::Receiver<FrontendEvent> {
-        self.frontend_broadcast_tx.subscribe()
+    pub fn subscribe_frontend(&self) -> FrontendEventReader {
+        FrontendEventReader::new(self.frontend_broadcast_tx.subscribe())
     }
 
-    pub fn subscribe_device(&self) -> broadcast::Receiver<EnrolledDeviceEvent> {
-        self.device_broadcast_tx.subscribe()
+    pub fn subscribe_device(&self) -> EnrolledDeviceEventReader {
+        EnrolledDeviceEventReader::new(self.device_broadcast_tx.subscribe())
     }
 
     pub fn subscribe_ipv4_assign(&self) -> IPv4AssignEventReader {
@@ -80,6 +80,11 @@ impl EventHubHandle {
         IAPrefixEventReader::new(self.ia_prefix_broadcast_tx.subscribe())
     }
 
+    // TODO: Refactor LanIPv6Service to use subscribe_ipv6_prefix() instead of
+    // receiving the raw broadcast::Sender. The sender is currently threaded
+    // through multiple service layers (LanIPv6ManagerService -> LanIPv6Service
+    // -> spawn_prefix_watcher / spawn_pd_watcher) only so watchers can call
+    // .subscribe() on it. Once that is cleaned up this method can be removed.
     pub fn ipv6_prefix_broadcast_tx(&self) -> broadcast::Sender<IAPrefixEvent> {
         self.ia_prefix_broadcast_tx.clone()
     }

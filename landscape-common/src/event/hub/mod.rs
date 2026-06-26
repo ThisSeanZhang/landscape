@@ -6,7 +6,7 @@ mod ipv4;
 mod ipv6;
 
 pub use device::{EnrolledDeviceEvent, EnrolledDeviceEventReader, EnrolledDeviceEventSender};
-pub use frontend_event::FrontendEvent;
+pub use frontend_event::{FrontendEvent, FrontendEventReader};
 pub use handle::EventHubHandle;
 pub use iface::{IfaceEventReader, IfaceEventSender};
 pub use ipv4::{IPv4AssignEvent, IPv4AssignEventReader, IPv4AssignEventSender, IPv4AssignInfo};

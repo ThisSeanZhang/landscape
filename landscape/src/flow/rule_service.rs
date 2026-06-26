@@ -1,5 +1,6 @@
 use landscape_common::{
     error::LdError,
+    event::hub::EnrolledDeviceEventReader,
     event::{dns::DnsEvent, route::RouteEvent},
     flow::{config::FlowConfig, FlowEntryMatchMode},
     service::controller::{ConfigController, FlowConfigController},
@@ -23,10 +24,19 @@ impl FlowRuleService {
         store_provider: LandscapeDBServiceProvider,
         dns_events_tx: mpsc::Sender<DnsEvent>,
         route_events_tx: mpsc::Sender<RouteEvent>,
+        device_reader: EnrolledDeviceEventReader,
     ) -> Self {
         let store = store_provider.flow_rule_store();
         let result = Self { store, dns_events_tx, route_events_tx };
         result.refresh_flow_matches().await;
+
+        let this = result.clone();
+        tokio::spawn(async move {
+            let mut rx = device_reader;
+            while rx.recv().await.is_ok() {
+                this.refresh_flow_matches().await;
+            }
+        });
         result
     }
 
@@ -47,18 +57,6 @@ impl FlowRuleService {
         }
 
         let _ = self.dns_events_tx.send(DnsEvent::FlowUpdated).await;
-    }
-
-    pub fn listen_device_events(
-        &self,
-        mut rx: landscape_common::event::hub::EnrolledDeviceEventReader,
-    ) {
-        let this = self.clone();
-        tokio::spawn(async move {
-            while rx.recv().await.is_ok() {
-                this.refresh_flow_matches().await;
-            }
-        });
     }
 }
 

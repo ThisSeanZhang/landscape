@@ -222,6 +222,7 @@ async fn run_system(
             db_store_provider.clone(),
             dns_service_tx.clone(),
             route_service_tx.clone(),
+            event_handle.subscribe_device(),
         )
         .await
     );
@@ -302,7 +303,7 @@ async fn run_system(
             config.dns.clone(),
             cert_service.clone(),
             metric_service.get_dns_metric_channel(),
-            event_handle.subscribe_ipv4_assign(),
+            event_handle.subscribe_device(),
         )
         .await
     );
@@ -313,9 +314,7 @@ async fn run_system(
     let lan_ipv6_service = LanIPv6ManagerService::new(
         db_store_provider.clone(),
         event_handle.subscribe_iface(),
-        landscape_common::event::hub::EnrolledDeviceEventReader::new(
-            event_handle.subscribe_device(),
-        ),
+        event_handle.subscribe_device(),
         route_service.clone(),
         prefix_map.clone(),
         event_handle.ipv6_prefix_broadcast_tx(),
@@ -355,7 +354,8 @@ async fn run_system(
     let ebpf_service = LandscapeEbpfService::new();
 
     let static_nat_mapping_config_service =
-        StaticNatMappingService::new(db_store_provider.clone()).await;
+        StaticNatMappingService::new(db_store_provider.clone(), event_handle.subscribe_device())
+            .await;
 
     let enrolled_device_service =
         EnrolledDeviceService::new(db_store_provider.clone(), device_sender).await;
@@ -399,6 +399,7 @@ async fn run_system(
         config.dns.clone(),
         event_handle.subscribe_iface(),
         ipv4_assign_sender,
+        event_handle.subscribe_device(),
     )
     .await;
 
@@ -423,22 +424,6 @@ async fn run_system(
         ipv6_prefix_sender.clone(),
     )
     .await;
-
-    dhcp_v4_server_service.listen_device_events(
-        landscape_common::event::hub::EnrolledDeviceEventReader::new(
-            event_handle.subscribe_device(),
-        ),
-    );
-    flow_rule_service.listen_device_events(
-        landscape_common::event::hub::EnrolledDeviceEventReader::new(
-            event_handle.subscribe_device(),
-        ),
-    );
-    static_nat_mapping_config_service.listen_device_events(
-        landscape_common::event::hub::EnrolledDeviceEventReader::new(
-            event_handle.subscribe_device(),
-        ),
-    );
 
     startup_phase!(
         "docker_service.start_to_listen_event",

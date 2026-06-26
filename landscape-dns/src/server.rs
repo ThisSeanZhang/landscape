@@ -8,7 +8,7 @@ use std::{
 use arc_swap::{ArcSwap, ArcSwapOption};
 use dashmap::DashMap;
 use landscape_common::dns::check::DnsCheckError;
-use landscape_common::event::hub::IPv4AssignEventReader;
+use landscape_common::event::hub::EnrolledDeviceEventReader;
 use landscape_common::{dns::FlowDnsDesiredState, event::DnsMetricMessage, service::WatchService};
 use tokio::sync::{mpsc, Mutex};
 use tokio_util::sync::CancellationToken;
@@ -105,7 +105,7 @@ impl LandscapeDnsServer {
         doh: Option<EffectiveDohListenerConfig>,
         local_answer_provider: Option<Arc<dyn LocalDnsAnswerProvider>>,
         doh_advertise_provider: Option<Arc<dyn DohAdvertiseProvider>>,
-        mut ipv4_reader: IPv4AssignEventReader,
+        mut device_reader: EnrolledDeviceEventReader,
     ) -> Self {
         let status = WatchService::new();
         let mdns_service = if local_answer_provider.is_some() {
@@ -117,17 +117,30 @@ impl LandscapeDnsServer {
         let hostname_map: Arc<DashMap<String, Ipv4Addr>> = Arc::new(DashMap::new());
         let map = hostname_map.clone();
         tokio::spawn(async move {
-            use landscape_common::event::hub::IPv4AssignEvent;
+            use landscape_common::event::hub::EnrolledDeviceEvent;
             loop {
-                match ipv4_reader.recv().await {
-                    Ok(IPv4AssignEvent::Allocated(info)) => {
-                        if let Some(ref hostname) = info.hostname {
+                match device_reader.recv().await {
+                    Ok(EnrolledDeviceEvent::Updated { old, new }) => {
+                        if let Some(ref old_device) = old {
+                            if let Some(ref old_hostname) = old_device.hostname {
+                                if let Ok(punycode) = idna::domain_to_ascii(old_hostname) {
+                                    map.remove(&punycode);
+                                }
+                            }
+                        }
+                        if let (Some(ref hostname), Some(ipv4)) = (&new.hostname, new.ipv4) {
                             if let Ok(punycode) = idna::domain_to_ascii(hostname) {
-                                map.insert(punycode, info.ip);
+                                map.insert(punycode, ipv4);
                             }
                         }
                     }
-                    Ok(IPv4AssignEvent::Expired(_)) => {}
+                    Ok(EnrolledDeviceEvent::Deleted { old }) => {
+                        if let Some(ref hostname) = old.hostname {
+                            if let Ok(punycode) = idna::domain_to_ascii(hostname) {
+                                map.remove(&punycode);
+                            }
+                        }
+                    }
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
                         tracing::warn!("lan hostname service lagged by {n} messages");
                     }

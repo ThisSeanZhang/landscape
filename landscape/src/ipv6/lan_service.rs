@@ -40,6 +40,8 @@ use dashmap::DashMap;
 pub struct LanIPv6Service {
     route_service: IpRouteService,
     prefix_map: IAPrefixMap,
+    // TODO: Replace with IAPrefixEventReader-based subscription (see
+    // EventHubHandle::ipv6_prefix_broadcast_tx).
     prefix_broadcast_tx: broadcast::Sender<IAPrefixEvent>,
     iface_lease_map: Arc<RwLock<HashMap<String, Arc<RwLock<IPv6NAInfo>>>>>,
     iface_dhcpv6_allocator_map: Arc<RwLock<HashMap<String, Arc<Mutex<DhcpV6LeaseAllocator>>>>>,
@@ -384,6 +386,8 @@ impl LanIPv6ManagerService {
         mut device_reader: EnrolledDeviceEventReader,
         route_service: IpRouteService,
         prefix_map: IAPrefixMap,
+        // TODO: Replace with IAPrefixEventReader-based subscription (see
+        // EventHubHandle::ipv6_prefix_broadcast_tx).
         prefix_broadcast_tx: broadcast::Sender<IAPrefixEvent>,
         ipv6_assign_sender: IPv6AssignEventSender,
     ) -> Self {

@@ -2,6 +2,7 @@ use std::net::{Ipv4Addr, Ipv6Addr};
 
 use landscape_common::database::LandscapeStore;
 use landscape_common::error::LdError;
+use landscape_common::event::hub::EnrolledDeviceEventReader;
 use landscape_common::iface::nat::{
     StaticMapPair, StaticNatMappingV4Config, StaticNatMappingV6Config, StaticNatV4Target,
     StaticNatV6PortConfig, StaticNatV6Target,
@@ -22,7 +23,10 @@ pub struct StaticNatMappingService {
 }
 
 impl StaticNatMappingService {
-    pub async fn new(store: LandscapeDBServiceProvider) -> Self {
+    pub async fn new(
+        store: LandscapeDBServiceProvider,
+        device_reader: EnrolledDeviceEventReader,
+    ) -> Self {
         let service = Self {
             v4_store: store.static_nat_mapping_v4_store(),
             v6_store: store.static_nat_mapping_v6_store(),
@@ -35,6 +39,15 @@ impl StaticNatMappingService {
         }
 
         service.refresh_runtime_rules().await;
+
+        let this = service.clone();
+        tokio::spawn(async move {
+            let mut rx = device_reader;
+            while rx.recv().await.is_ok() {
+                this.refresh_runtime_rules().await;
+            }
+        });
+
         service
     }
 
@@ -169,18 +182,6 @@ impl StaticNatMappingService {
         {
             tracing::error!("failed to reconcile static NAT v6 map: {error:?}");
         }
-    }
-
-    pub fn listen_device_events(
-        &self,
-        mut rx: landscape_common::event::hub::EnrolledDeviceEventReader,
-    ) {
-        let this = self.clone();
-        tokio::spawn(async move {
-            while rx.recv().await.is_ok() {
-                this.refresh_runtime_rules().await;
-            }
-        });
     }
 }
 

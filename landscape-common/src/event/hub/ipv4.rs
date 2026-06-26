@@ -11,7 +11,6 @@ pub struct IPv4AssignInfo {
     pub mac: MacAddr,
     pub ip: Ipv4Addr,
     pub device_id: Option<Uuid>,
-    pub hostname: Option<String>,
 }
 
 #[derive(Debug, Clone)]
