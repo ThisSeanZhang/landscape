@@ -148,9 +148,9 @@ dependencies = [
 
 [[package]]
 name = "anyhow"
-version = "1.0.102"
+version = "1.0.103"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7f202df86484c868dbad7eaa557ef785d5c66295e41b460ef922eca0723b842c"
+checksum = "2a4385e2e34eb35d6b3efe798b9eb88096925d87726c0798709bf56d9ed84af3"
 
 [[package]]
 name = "arbitrary"
@@ -3401,7 +3401,7 @@ dependencies = [
 
 [[package]]
 name = "landscape"
-version = "0.21.0"
+version = "0.21.1"
 dependencies = [
  "arc-swap",
  "async-trait",
@@ -3472,7 +3472,7 @@ dependencies = [
 
 [[package]]
 name = "landscape-common"
-version = "0.21.0"
+version = "0.21.1"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -3510,7 +3510,7 @@ dependencies = [
 
 [[package]]
 name = "landscape-database"
-version = "0.21.0"
+version = "0.21.1"
 dependencies = [
  "async-trait",
  "landscape-common",
@@ -3527,7 +3527,7 @@ dependencies = [
 
 [[package]]
 name = "landscape-dns"
-version = "0.21.0"
+version = "0.21.1"
 dependencies = [
  "aho-corasick",
  "arc-swap",
@@ -3572,7 +3572,7 @@ dependencies = [
 
 [[package]]
 name = "landscape-ebpf"
-version = "0.21.0"
+version = "0.21.1"
 dependencies = [
  "clap 4.6.1",
  "etherparse",
@@ -3599,7 +3599,7 @@ dependencies = [
 
 [[package]]
 name = "landscape-gateway"
-version = "0.21.0"
+version = "0.21.1"
 dependencies = [
  "arc-swap",
  "async-trait",
@@ -3618,7 +3618,7 @@ dependencies = [
 
 [[package]]
 name = "landscape-macro"
-version = "0.21.0"
+version = "0.21.1"
 dependencies = [
  "quote",
  "syn 2.0.118",
@@ -3626,7 +3626,7 @@ dependencies = [
 
 [[package]]
 name = "landscape-protobuf"
-version = "0.21.0"
+version = "0.21.1"
 dependencies = [
  "homedir",
  "jemalloc-ctl",
@@ -3640,7 +3640,7 @@ dependencies = [
 
 [[package]]
 name = "landscape-webserver"
-version = "0.21.0"
+version = "0.21.1"
 dependencies = [
  "arc-swap",
  "axum",
@@ -4004,7 +4004,7 @@ dependencies = [
 
 [[package]]
 name = "migration"
-version = "0.21.0"
+version = "0.21.1"
 dependencies = [
  "async-std",
  "sea-orm-migration",
@@ -5294,9 +5294,9 @@ dependencies = [
 
 [[package]]
 name = "quinn"
-version = "0.11.9"
+version = "0.11.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b9e20a958963c291dc322d98411f541009df2ced7b5a4f2bd52337638cfccf20"
+checksum = "0c1a41e437b6bbd489372cd4971de128e85c855f56c57f283d20ff016cf7c0a8"
 dependencies = [
  "bytes",
  "cfg_aliases 0.2.1",
@@ -5314,9 +5314,9 @@ dependencies = [
 
 [[package]]
 name = "quinn-proto"
-version = "0.11.13"
+version = "0.11.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f1906b49b0c3bc04b5fe5d86a77925ae6524a19b816ae38ce1e426255f1d8a31"
+checksum = "4fcb935c5bec503c2f0e306bdd3e58bb9029dcb14fa8d9ac76e3a5256ac0763e"
 dependencies = [
  "aws-lc-rs",
  "bytes",
@@ -5352,9 +5352,9 @@ dependencies = [
 
 [[package]]
 name = "quote"
-version = "1.0.45"
+version = "1.0.46"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "41f2619966050689382d2b44f664f4bc593e129785a36d6ee376ddf37259b924"
+checksum = "dfbc457d0c7a0759a614551b11a6409e5951f6c7537be1f1b7682b9ae9230368"
 dependencies = [
  "proc-macro2",
 ]
@@ -5811,9 +5811,9 @@ dependencies = [
 
 [[package]]
 name = "rustls"
-version = "0.23.40"
+version = "0.23.41"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ef86cd5876211988985292b91c96a8f2d298df24e75989a43a3c73f2d4d8168b"
+checksum = "6b92b125634d9b795e7beca796cc790df15a7fb38323bf3196fda83292d06b1f"
 dependencies = [
  "aws-lc-rs",
  "log",
@@ -6872,9 +6872,9 @@ dependencies = [
 
 [[package]]
 name = "sysinfo"
-version = "0.39.3"
+version = "0.39.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "21d0d938c10fcda3e897e28aaddf4ab462375d411f4378cd63b1c945f69aba96"
+checksum = "2c8bd2130a9b60bee2581bf82cfe89ee836424d1f37dcfa4ce21509611684673"
 dependencies = [
  "libc",
  "memchr",
@@ -7608,9 +7608,9 @@ dependencies = [
 
 [[package]]
 name = "uuid"
-version = "1.23.3"
+version = "1.23.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "144d6b123cef80b301b8f72a9e2ca4370ddec21950d0a103dd22c437006d2db7"
+checksum = "bf80a72845275afea99e7f2b434723d3bc7e38470fcd1c7ed39a599c73319a53"
 dependencies = [
  "getrandom 0.4.1",
  "js-sys",
