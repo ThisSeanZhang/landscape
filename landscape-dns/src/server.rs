@@ -13,6 +13,8 @@ use landscape_common::{dns::FlowDnsDesiredState, event::DnsMetricMessage, servic
 use tokio::sync::{mpsc, Mutex};
 use tokio_util::sync::CancellationToken;
 
+use landscape_common::enrolled_device::EnrolledDevice;
+
 use crate::{
     convert_record_type,
     listener::{start_flow_dns_listener, DohListenerState},
@@ -106,6 +108,7 @@ impl LandscapeDnsServer {
         local_answer_provider: Option<Arc<dyn LocalDnsAnswerProvider>>,
         doh_advertise_provider: Option<Arc<dyn DohAdvertiseProvider>>,
         mut device_reader: EnrolledDeviceEventReader,
+        initial_devices: Vec<EnrolledDevice>,
     ) -> Self {
         let status = WatchService::new();
         let mdns_service = if local_answer_provider.is_some() {
@@ -115,6 +118,15 @@ impl LandscapeDnsServer {
         };
 
         let hostname_map: Arc<DashMap<String, Ipv4Addr>> = Arc::new(DashMap::new());
+
+        for device in &initial_devices {
+            if let (Some(ref hostname), Some(ipv4)) = (&device.hostname, device.ipv4) {
+                if let Ok(punycode) = idna::domain_to_ascii(hostname) {
+                    hostname_map.insert(punycode, ipv4);
+                }
+            }
+        }
+
         let map = hostname_map.clone();
         tokio::spawn(async move {
             use landscape_common::event::hub::EnrolledDeviceEvent;

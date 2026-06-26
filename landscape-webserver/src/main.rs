@@ -291,6 +291,12 @@ async fn run_system(
     );
 
     let route_service = IpRouteService::new(route_service_rx, db_store_provider.flow_rule_store());
+    let enrolled_devices =
+        db_store_provider.enrolled_device_store().list_all().await.map_err(|e| {
+            landscape_common::error::LdError::ConfigError(format!(
+                "failed to list enrolled devices: {e}"
+            ))
+        })?;
     let dns_service = startup_phase!(
         "dns_service.new",
         LandscapeDnsService::new(
@@ -304,6 +310,7 @@ async fn run_system(
             cert_service.clone(),
             metric_service.get_dns_metric_channel(),
             event_handle.subscribe_device(),
+            enrolled_devices,
         )
         .await
     );

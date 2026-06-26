@@ -6,6 +6,7 @@ use landscape_common::{
     config::DnsRuntimeConfig,
     dns::check::DnsCheckError,
     dns::{CacheRuntimeConfig, DohRuntimeConfig, FlowDnsDependencies},
+    enrolled_device::EnrolledDevice,
     event::{dns::DnsEvent, hub::EnrolledDeviceEventReader, DnsMetricMessage},
     service::{
         controller::{ConfigController, FlowConfigController},
@@ -55,6 +56,7 @@ impl LandscapeDnsService {
         cert_service: CertService,
         msg_tx: Option<mpsc::Sender<DnsMetricMessage>>,
         device_reader: EnrolledDeviceEventReader,
+        initial_devices: Vec<EnrolledDevice>,
     ) -> Self {
         let (cache_runtime, doh_runtime) = split_dns_runtime_config(&dns_config);
         prepare_system_dns();
@@ -79,6 +81,7 @@ impl LandscapeDnsService {
             Some(Arc::new(route_service) as Arc<dyn LocalDnsAnswerProvider>),
             Some(Arc::new(api_tls_resolver) as Arc<dyn landscape_dns::server::DohAdvertiseProvider>),
             device_reader,
+            initial_devices,
         );
 
         // dns_service.restart(53).await;
