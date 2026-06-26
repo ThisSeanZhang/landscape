@@ -248,6 +248,16 @@ async fn run_mode(
                 let dhcpv6_status = status.clone();
                 let dhcpv6_route = route_service.clone();
                 let link_local = mac.to_ipv6_link_local();
+                let setting_result =
+                    crate::set_iface_ip_no_limit(iface_name, std::net::IpAddr::V6(link_local), 64)
+                        .await;
+                if !setting_result {
+                    tracing::error!(
+                        "DHCPv6 server: setting link_local address failed for {iface_name}"
+                    );
+                    status.just_change_status(landscape_common::service::ServiceStatus::Failed);
+                    return;
+                }
                 let s = allocator.clone();
                 let snd = ipv6_assign_sender.clone();
                 let dmap = device_id_map.clone();
@@ -308,6 +318,16 @@ async fn run_mode(
                 let dhcpv6_status = status.clone();
                 let dhcpv6_route = route_service.clone();
                 let link_local = mac.to_ipv6_link_local();
+                let setting_result =
+                    crate::set_iface_ip_no_limit(iface_name, std::net::IpAddr::V6(link_local), 64)
+                        .await;
+                if !setting_result {
+                    tracing::error!(
+                        "DHCPv6 server: setting link_local address failed for {iface_name}"
+                    );
+                    status.just_change_status(landscape_common::service::ServiceStatus::Failed);
+                    return;
+                }
                 let s = allocator.clone();
                 let snd = ipv6_assign_sender.clone();
                 let dmap = device_id_map.clone();
