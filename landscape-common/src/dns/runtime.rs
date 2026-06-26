@@ -12,12 +12,24 @@ use crate::dns::upstream::DnsUpstreamMode;
 use crate::flow::mark::FlowMark;
 use crate::geo::GeoFileCacheKey;
 
-#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct CacheRuntimeConfig {
     pub cache_capacity: u32,
     pub cache_ttl: u32,
     pub negative_cache_ttl: u32,
+    pub lan_suffix: String,
+}
+
+impl Default for CacheRuntimeConfig {
+    fn default() -> Self {
+        Self {
+            cache_capacity: crate::DEFAULT_DNS_CACHE_CAPACITY,
+            cache_ttl: crate::DEFAULT_DNS_CACHE_TTL,
+            negative_cache_ttl: crate::DEFAULT_DNS_NEGATIVE_CACHE_TTL,
+            lan_suffix: crate::DEFAULT_DNS_LAN_SUFFIX.to_string(),
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
@@ -148,7 +160,7 @@ impl From<RuntimeRedirectRule> for DNSRedirectRuntimeRule {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct FlowDnsDesiredState {
     pub flow_id: u32,
@@ -157,6 +169,18 @@ pub struct FlowDnsDesiredState {
     pub cache_runtime: CacheRuntimeConfig,
     #[cfg_attr(feature = "openapi", schema(nullable = false))]
     pub doh_runtime: Option<DohRuntimeConfig>,
+}
+
+impl Default for FlowDnsDesiredState {
+    fn default() -> Self {
+        Self {
+            flow_id: 0,
+            dns_rules: vec![],
+            redirect_rules: vec![],
+            cache_runtime: CacheRuntimeConfig::default(),
+            doh_runtime: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]

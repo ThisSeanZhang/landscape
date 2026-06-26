@@ -118,6 +118,9 @@ pub struct LandscapeDnsConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "openapi", schema(required = false, nullable = false))]
     pub doh_http_endpoint: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "openapi", schema(required = false, nullable = false))]
+    pub lan_suffix: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]

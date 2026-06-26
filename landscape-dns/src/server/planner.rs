@@ -162,6 +162,7 @@ mod tests {
                 cache_capacity: 16,
                 cache_ttl: 30,
                 negative_cache_ttl: 5,
+                lan_suffix: "lan".to_string(),
             },
             doh_runtime: Some(DohRuntimeConfig {
                 listen_port: 443,

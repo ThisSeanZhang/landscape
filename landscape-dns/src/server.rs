@@ -1,12 +1,14 @@
 use std::{
     collections::HashMap,
-    net::IpAddr,
+    net::{IpAddr, Ipv4Addr},
     net::{Ipv6Addr, SocketAddr, SocketAddrV6},
     sync::Arc,
 };
 
 use arc_swap::{ArcSwap, ArcSwapOption};
+use dashmap::DashMap;
 use landscape_common::dns::check::DnsCheckError;
+use landscape_common::event::hub::IPv4AssignEventReader;
 use landscape_common::{dns::FlowDnsDesiredState, event::DnsMetricMessage, service::WatchService};
 use tokio::sync::{mpsc, Mutex};
 use tokio_util::sync::CancellationToken;
@@ -64,6 +66,7 @@ pub struct LandscapeDnsServer {
     // 用于重定向的动态更新
     pub local_answer_provider: Option<Arc<dyn LocalDnsAnswerProvider>>,
     pub doh_advertise_provider: Option<Arc<dyn DohAdvertiseProvider>>,
+    hostname_map: Arc<DashMap<String, Ipv4Addr>>,
     // DNS 事件
     pub msg_tx: MetricSenderState,
     // 监听 UDP DNS 地址
@@ -102,6 +105,7 @@ impl LandscapeDnsServer {
         doh: Option<EffectiveDohListenerConfig>,
         local_answer_provider: Option<Arc<dyn LocalDnsAnswerProvider>>,
         doh_advertise_provider: Option<Arc<dyn DohAdvertiseProvider>>,
+        mut ipv4_reader: IPv4AssignEventReader,
     ) -> Self {
         let status = WatchService::new();
         let mdns_service = if local_answer_provider.is_some() {
@@ -109,6 +113,28 @@ impl LandscapeDnsServer {
         } else {
             None
         };
+
+        let hostname_map: Arc<DashMap<String, Ipv4Addr>> = Arc::new(DashMap::new());
+        let map = hostname_map.clone();
+        tokio::spawn(async move {
+            use landscape_common::event::hub::IPv4AssignEvent;
+            loop {
+                match ipv4_reader.recv().await {
+                    Ok(IPv4AssignEvent::Allocated(info)) => {
+                        if let Some(ref hostname) = info.hostname {
+                            if let Ok(punycode) = idna::domain_to_ascii(hostname) {
+                                map.insert(punycode, info.ip);
+                            }
+                        }
+                    }
+                    Ok(IPv4AssignEvent::Expired(_)) => {}
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                        tracing::warn!("lan hostname service lagged by {n} messages");
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                }
+            }
+        });
 
         Self {
             status,
@@ -125,6 +151,7 @@ impl LandscapeDnsServer {
             _mdns_service: mdns_service,
             local_answer_provider,
             doh_advertise_provider,
+            hostname_map,
         }
     }
 
@@ -199,6 +226,7 @@ impl LandscapeDnsServer {
             self.msg_tx.clone(),
             self.local_answer_provider.clone(),
             self.doh_advertise_provider.clone(),
+            self.hostname_map.clone(),
             desired_state.doh_runtime.clone(),
         );
         let Some(runtime) = self.build_flow_runtime(flow_id, handler).await else {
@@ -348,6 +376,7 @@ mod tests {
             cache_capacity: 16,
             cache_ttl: 60,
             negative_cache_ttl: 10,
+            lan_suffix: "lan".to_string(),
         }
     }
 
@@ -362,6 +391,7 @@ mod tests {
                 Arc::new(ArcSwapOption::new(None)),
                 None,
                 None,
+                Arc::new(DashMap::new()),
                 None,
             );
             entry.runtime.store(Some(Arc::new(FlowServerRuntime {

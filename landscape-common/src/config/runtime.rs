@@ -71,13 +71,14 @@ pub struct MetricRuntimeConfig {
     pub cleanup_slice_window_secs: u64,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DnsRuntimeConfig {
     pub cache_capacity: u32,
     pub cache_ttl: u32,
     pub negative_cache_ttl: u32,
     pub doh_listen_port: u16,
     pub doh_http_endpoint: String,
+    pub lan_suffix: String,
 }
 
 #[derive(Clone, Debug)]
@@ -251,6 +252,9 @@ impl DnsRuntimeConfig {
         }
         if let Some(v) = &config.doh_http_endpoint {
             self.doh_http_endpoint = v.clone();
+        }
+        if let Some(v) = &config.lan_suffix {
+            self.lan_suffix = v.clone();
         }
     }
 }

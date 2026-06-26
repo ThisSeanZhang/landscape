@@ -49,6 +49,7 @@ pub struct StaticBindingEntry {
     pub custom_options: Vec<CustomDhcpOption>,
     pub filter_options: Vec<u8>,
     pub device_id: Option<Uuid>,
+    pub hostname: Option<String>,
 }
 
 impl StaticBindingEntry {
@@ -58,6 +59,7 @@ impl StaticBindingEntry {
             custom_options: device.dhcp_custom_options.clone(),
             filter_options: device.dhcp_filter_options.clone(),
             device_id: Some(device.id),
+            hostname: device.hostname.clone(),
         })
     }
 }
@@ -110,6 +112,7 @@ impl DhcpV4AssignStatus {
                             custom_options: device.dhcp_custom_options.clone(),
                             filter_options: device.dhcp_filter_options.clone(),
                             device_id: Some(device.id),
+                            hostname: device.hostname.clone(),
                         },
                     )
                     .map(|e| e.ipv4)
@@ -127,7 +130,7 @@ impl DhcpV4AssignStatus {
                 status.offered_ip.insert(
                     device.mac,
                     DHCPv4ServerOfferedCache {
-                        hostname: None,
+                        hostname: device.hostname.clone(),
                         ip: ipv4,
                         relative_offer_time: 0,
                         valid_time: 86400,
@@ -188,7 +191,7 @@ impl DhcpV4AssignStatus {
         self.offered_ip.insert(
             mac,
             DHCPv4ServerOfferedCache {
-                hostname: None,
+                hostname: entry.hostname.clone(),
                 ip,
                 relative_offer_time: self.relative_boot_time.elapsed().as_secs(),
                 valid_time: 86400,
@@ -613,6 +616,7 @@ mod tests {
                 custom_options: vec![],
                 filter_options: vec![],
                 device_id: None,
+                hostname: None,
             },
         );
 
@@ -638,6 +642,7 @@ mod tests {
                 custom_options: vec![],
                 filter_options: vec![],
                 device_id: None,
+                hostname: None,
             },
         );
 
@@ -666,6 +671,7 @@ mod tests {
                 custom_options: vec![],
                 filter_options: vec![],
                 device_id: None,
+                hostname: None,
             },
         );
 
@@ -688,6 +694,7 @@ mod tests {
                 custom_options: vec![],
                 filter_options: vec![],
                 device_id: None,
+                hostname: None,
             },
         );
 
@@ -710,6 +717,7 @@ mod tests {
                 custom_options: vec![],
                 filter_options: vec![],
                 device_id: None,
+                hostname: None,
             },
         );
 
@@ -823,6 +831,7 @@ mod tests {
                 custom_options: vec![],
                 filter_options: vec![],
                 device_id: None,
+                hostname: None,
             },
         );
 
@@ -857,6 +866,7 @@ mod tests {
                 custom_options: vec![CustomDhcpOption::BootfileName("new.kpxe".to_string())],
                 filter_options: vec![15],
                 device_id: None,
+                hostname: None,
             },
         );
 

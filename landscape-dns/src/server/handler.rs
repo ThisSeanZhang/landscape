@@ -1,7 +1,7 @@
 use std::{
     collections::{BTreeMap, HashSet},
     future::Future,
-    net::IpAddr,
+    net::{IpAddr, Ipv4Addr},
     str::FromStr,
     sync::Arc,
     time::{Duration, Instant},
@@ -11,6 +11,7 @@ use std::{
 use arc_swap::ArcSwap;
 #[cfg(test)]
 use arc_swap::ArcSwapOption;
+use dashmap::DashMap;
 use hickory_proto::{
     op::{Header, Metadata, ResponseCode},
     rr::{
@@ -61,6 +62,7 @@ pub struct DnsRequestHandler {
     runtime_config: Arc<ArcSwap<CacheRuntimeConfig>>,
     pub local_answer_provider: Option<Arc<dyn LocalDnsAnswerProvider>>,
     pub doh_advertise_provider: Option<Arc<dyn DohAdvertiseProvider>>,
+    hostname_map: Arc<DashMap<String, Ipv4Addr>>,
     // Startup DoH endpoint snapshot used for DDR advertisements. Advertised
     // domains are loaded live from `doh_advertise_provider`; port/path changes
     // require a process restart so advertisements stay consistent with listener.
@@ -75,6 +77,7 @@ impl DnsRequestHandler {
         msg_tx: MetricSenderState,
         local_answer_provider: Option<Arc<dyn LocalDnsAnswerProvider>>,
         doh_advertise_provider: Option<Arc<dyn DohAdvertiseProvider>>,
+        hostname_map: Arc<DashMap<String, Ipv4Addr>>,
         doh_runtime: Option<DohRuntimeConfig>,
     ) -> DnsRequestHandler {
         let FlowDnsDesiredState { dns_rules, redirect_rules, .. } = desired_state;
@@ -92,6 +95,7 @@ impl DnsRequestHandler {
             runtime_config,
             local_answer_provider,
             doh_advertise_provider,
+            hostname_map,
             doh_runtime,
         }
     }
@@ -267,6 +271,30 @@ impl DnsRequestHandler {
             }
         }
         None
+    }
+
+    pub fn lookup_lan_hostname(
+        &self,
+        domain: &str,
+        query_type: RecordType,
+        suffix: &str,
+    ) -> (Vec<Record>, ResponseCode) {
+        const HOSTNAME_TTL: u32 = 60;
+        let name = domain.strip_suffix('.').unwrap_or(domain);
+        if query_type != RecordType::A {
+            return (vec![], ResponseCode::NXDomain);
+        }
+        let Ok(hostname) = idna::domain_to_ascii(name.strip_suffix(suffix).unwrap()) else {
+            return (vec![], ResponseCode::NXDomain);
+        };
+        if let Some(ip) = self.hostname_map.get(&hostname) {
+            let rname = Name::from_utf8(name).unwrap();
+            let rdata = RData::A(A(*ip));
+            let record = Record::from_rdata(rname, HOSTNAME_TTL, rdata);
+            (vec![record], ResponseCode::NoError)
+        } else {
+            (vec![], ResponseCode::NXDomain)
+        }
     }
 
     pub async fn check_domain(
@@ -828,12 +856,36 @@ impl RequestHandler for DnsRequestHandler {
         let mut records = vec![];
         let mut status = DnsResultStatus::Normal;
 
+        let lan_dot_suffix = {
+            let cfg = self.runtime_config.load();
+            if cfg.lan_suffix.is_empty() {
+                String::new()
+            } else {
+                format!(".{}", cfg.lan_suffix)
+            }
+        };
+
         // 1. Redirects
         if let Some((redirect_records, redirect_status, _, _)) =
             self.lookup_redirects(&domain, query_type)
         {
             records = redirect_records;
             status = redirect_status;
+        }
+        // 1.5. LAN hostname
+        else if !lan_dot_suffix.is_empty() && {
+            let name = domain.strip_suffix('.').unwrap_or(&domain);
+            name.ends_with(&lan_dot_suffix) && name != lan_dot_suffix
+        } {
+            let (hostname_records, code) =
+                self.lookup_lan_hostname(&domain, query_type, &lan_dot_suffix);
+            metadata.response_code = code;
+            records = hostname_records;
+            status = if code == ResponseCode::NXDomain {
+                DnsResultStatus::NxDomain
+            } else {
+                DnsResultStatus::Local
+            };
         }
         // 2. Built-in local zones that user redirects may override
         else if let PreflightDecision::Respond {
@@ -1182,6 +1234,7 @@ mod tests {
             cache_capacity: 16,
             cache_ttl: 60,
             negative_cache_ttl,
+            lan_suffix: "lan".to_string(),
         }
     }
 
@@ -1332,6 +1385,7 @@ mod tests {
                 Arc::new(ArcSwapOption::new(None)),
                 None,
                 None,
+                Arc::new(DashMap::new()),
                 None,
             );
 
@@ -1354,6 +1408,7 @@ mod tests {
                 Arc::new(ArcSwapOption::new(None)),
                 None,
                 None,
+                Arc::new(DashMap::new()),
                 None,
             );
 
@@ -1388,6 +1443,7 @@ mod tests {
                 Arc::new(ArcSwapOption::new(None)),
                 None,
                 None,
+                Arc::new(DashMap::new()),
                 None,
             );
 
@@ -1426,6 +1482,7 @@ mod tests {
                 Arc::new(ArcSwapOption::new(None)),
                 None,
                 None,
+                Arc::new(DashMap::new()),
                 None,
             );
 
@@ -1451,6 +1508,7 @@ mod tests {
                 Arc::new(ArcSwapOption::new(None)),
                 None,
                 None,
+                Arc::new(DashMap::new()),
                 None,
             );
 
@@ -1476,6 +1534,7 @@ mod tests {
                 Arc::new(ArcSwapOption::new(None)),
                 None,
                 None,
+                Arc::new(DashMap::new()),
                 None,
             );
             let handler_clone = handler.clone();
@@ -1534,6 +1593,7 @@ mod tests {
                 Arc::new(ArcSwapOption::new(None)),
                 None,
                 None,
+                Arc::new(DashMap::new()),
                 None,
             );
 
@@ -1592,6 +1652,7 @@ mod tests {
                 Arc::new(ArcSwapOption::new(None)),
                 None,
                 None,
+                Arc::new(DashMap::new()),
                 None,
             );
 
@@ -1616,6 +1677,7 @@ mod tests {
                 cache_capacity: 16,
                 cache_ttl: 120,
                 negative_cache_ttl: 22,
+                lan_suffix: "lan".to_string(),
             }));
             handler.renew_runtime_config(true).await;
 
@@ -1661,6 +1723,7 @@ mod tests {
                     ],
                 })),
                 None,
+                Arc::new(DashMap::new()),
                 None,
             );
 
@@ -1705,6 +1768,7 @@ mod tests {
                     addrs: vec![IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1))],
                 })),
                 None,
+                Arc::new(DashMap::new()),
                 None,
             );
 
@@ -1736,6 +1800,7 @@ mod tests {
                 Arc::new(ArcSwapOption::new(None)),
                 None,
                 None,
+                Arc::new(DashMap::new()),
                 None,
             );
 

@@ -51,6 +51,8 @@ base64 = { workspace = true }
 
 nix = { workspace = true, features = ["socket", "uio", "net"] }
 moka = { workspace = true }
+dashmap = { workspace = true }
+idna = { workspace = true }
 
 
 [dev-dependencies]

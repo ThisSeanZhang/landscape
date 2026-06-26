@@ -32,6 +32,18 @@ impl EnrolledDeviceRepository {
         Ok(model.map(|m| m.into()))
     }
 
+    pub async fn find_by_hostname(
+        &self,
+        hostname: String,
+    ) -> Result<Option<EnrolledDevice>, LdError> {
+        use crate::repository::Repository;
+        let model = EnrolledDeviceEntity::find()
+            .filter(Column::Hostname.eq(hostname))
+            .one(self.db())
+            .await?;
+        Ok(model.map(|m| m.into()))
+    }
+
     pub async fn find_by_mac(&self, mac: String) -> Result<Option<EnrolledDevice>, String> {
         use crate::repository::Repository;
         let model = EnrolledDeviceEntity::find()

@@ -225,6 +225,11 @@ impl RuntimeConfig {
                 .doh_http_endpoint
                 .clone()
                 .unwrap_or_else(|| "/dns-query".to_string()),
+            lan_suffix: config
+                .dns
+                .lan_suffix
+                .clone()
+                .unwrap_or_else(|| crate::DEFAULT_DNS_LAN_SUFFIX.to_string()),
         };
 
         let time = TimeRuntimeConfig {

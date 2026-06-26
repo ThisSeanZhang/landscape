@@ -302,6 +302,7 @@ async fn run_system(
             config.dns.clone(),
             cert_service.clone(),
             metric_service.get_dns_metric_channel(),
+            event_handle.subscribe_ipv4_assign(),
         )
         .await
     );

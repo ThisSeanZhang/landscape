@@ -74,6 +74,21 @@ impl EnrolledDeviceService {
                 }
             }
             data.hostname = Some(trimmed.to_string());
+
+            // Validate hostname uniqueness
+            if let Some(existing) = self
+                .store
+                .find_by_hostname(data.hostname.clone().unwrap())
+                .await
+                .map_err(|e| e.to_string())?
+            {
+                if existing.id != data.id {
+                    return Err(format!(
+                        "Hostname '{}' is already used by another device",
+                        data.hostname.as_ref().unwrap()
+                    ));
+                }
+            }
         }
 
         // Validate IPv4 is within the specified interface's DHCP range

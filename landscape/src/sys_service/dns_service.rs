@@ -1,11 +1,12 @@
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 use std::time::Instant;
 
 use landscape_common::{
     config::DnsRuntimeConfig,
     dns::check::DnsCheckError,
     dns::{CacheRuntimeConfig, DohRuntimeConfig, FlowDnsDependencies},
-    event::{dns::DnsEvent, DnsMetricMessage},
+    event::{dns::DnsEvent, hub::IPv4AssignEventReader, DnsMetricMessage},
     service::{
         controller::{ConfigController, FlowConfigController},
         WatchService,
@@ -17,10 +18,7 @@ use landscape_dns::{
     CheckChainDnsResult, CheckDnsReq,
 };
 use rustls::server::ResolvesServerCert;
-use std::{
-    net::{Ipv6Addr, SocketAddr, SocketAddrV6},
-    sync::Arc,
-};
+use std::net::{Ipv6Addr, SocketAddr, SocketAddrV6};
 use tokio::sync::mpsc;
 
 use crate::dns::{
@@ -56,6 +54,7 @@ impl LandscapeDnsService {
         dns_config: DnsRuntimeConfig,
         cert_service: CertService,
         msg_tx: Option<mpsc::Sender<DnsMetricMessage>>,
+        ipv4_reader: IPv4AssignEventReader,
     ) -> Self {
         let (cache_runtime, doh_runtime) = split_dns_runtime_config(&dns_config);
         prepare_system_dns();
@@ -79,6 +78,7 @@ impl LandscapeDnsService {
             doh,
             Some(Arc::new(route_service) as Arc<dyn LocalDnsAnswerProvider>),
             Some(Arc::new(api_tls_resolver) as Arc<dyn landscape_dns::server::DohAdvertiseProvider>),
+            ipv4_reader,
         );
 
         // dns_service.restart(53).await;
@@ -315,6 +315,7 @@ fn split_dns_runtime_config(
             cache_capacity: dns_config.cache_capacity,
             cache_ttl: dns_config.cache_ttl,
             negative_cache_ttl: dns_config.negative_cache_ttl,
+            lan_suffix: dns_config.lan_suffix.clone(),
         },
         DohRuntimeConfig {
             listen_port: dns_config.doh_listen_port,
