@@ -274,14 +274,16 @@ impl StaticNatMappingConfig {
                 .expect("enabled static NAT mapping must define LAN target before protocol checks");
             if !self.ipv4_l4_protocol.is_empty() && !target.supports_ipv4_config() {
                 return Err(ServiceConfigError::InvalidConfig {
-                    reason: "enabled IPv4 static NAT mapping must resolve to an IPv4 target"
-                        .to_string(),
+                    reason:
+                        "enabled IPv4 static NAT mapping requires an IPv4-capable target (specify an IPv4 address or use Local/Device target)"
+                            .to_string(),
                 });
             }
             if !self.ipv6_l4_protocol.is_empty() && !target.supports_ipv6_config() {
                 return Err(ServiceConfigError::InvalidConfig {
-                    reason: "enabled IPv6 static NAT mapping must resolve to an IPv6 target"
-                        .to_string(),
+                    reason:
+                        "enabled IPv6 static NAT mapping requires an IPv6-capable target (specify an IPv6 address or use Local/Device target)"
+                            .to_string(),
                 });
             }
         }

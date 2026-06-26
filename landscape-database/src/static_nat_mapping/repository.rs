@@ -79,30 +79,27 @@ impl StaticNatMappingConfigRepository {
         config: &StaticNatMappingConfig,
     ) -> Result<(), LdError> {
         let devices = self.load_devices_for_configs(std::slice::from_ref(config)).await?;
-        let lan_ipv6_configs = if matches!(config.lan_target, Some(StaticNatTarget::Device { .. }))
-        {
-            LanIPv6V2ServiceRepository::new(self.db.clone())
-                .list_all()
-                .await?
-                .into_iter()
-                .map(|lan_config| (lan_config.iface_name.clone(), lan_config))
-                .collect()
-        } else {
-            HashMap::new()
-        };
-
-        let (lan_ipv4, lan_ipv6) = resolve_static_nat_target(config, &devices, &lan_ipv6_configs);
-
-        if config.enable && !config.ipv4_l4_protocol.is_empty() && lan_ipv4.is_none() {
-            return Err(LdError::ConfigError(
-                "enabled IPv4 static NAT mapping must resolve to an IPv4 target".to_string(),
-            ));
-        }
-
-        if config.enable && !config.ipv6_l4_protocol.is_empty() && lan_ipv6.is_none() {
-            return Err(LdError::ConfigError(
-                "enabled IPv6 static NAT mapping must resolve to an IPv6 target".to_string(),
-            ));
+        if let Some(StaticNatTarget::Device { device_id }) = config.lan_target.as_ref() {
+            if !device_id.is_nil() && config.enable {
+                let device = devices.get(device_id).ok_or_else(|| {
+                    LdError::ConfigError(format!(
+                        "device {} referenced in static NAT config does not exist",
+                        device_id
+                    ))
+                })?;
+                if !config.ipv4_l4_protocol.is_empty() && device.ipv4.is_none() {
+                    return Err(LdError::ConfigError(format!(
+                        "device {} does not have an IPv4 address",
+                        device_id
+                    )));
+                }
+                if !config.ipv6_l4_protocol.is_empty() && device.ipv6.is_none() {
+                    return Err(LdError::ConfigError(format!(
+                        "device {} does not have an IPv6 address",
+                        device_id
+                    )));
+                }
+            }
         }
 
         Ok(())
@@ -137,7 +134,13 @@ fn resolve_static_nat_target(
                 tracing::warn!("static NAT device target unresolved: device {device_id} not found");
                 return (None, None);
             };
-            let ipv6 = resolve_device_ipv6(device, lan_ipv6_configs);
+            let ipv6 = match resolve_device_ipv6(device, lan_ipv6_configs) {
+                Ok(ip) => Some(ip),
+                Err(e) => {
+                    tracing::warn!("static NAT device {} target unresolved: {}", device_id, e);
+                    None
+                }
+            };
             (device.ipv4, ipv6)
         }
         None => (None, None),
@@ -147,32 +150,37 @@ fn resolve_static_nat_target(
 fn resolve_device_ipv6(
     device: &EnrolledDevice,
     lan_ipv6_configs: &HashMap<String, LanIPv6ServiceConfigV2>,
-) -> Option<Ipv6Addr> {
-    let device_ipv6 = device.ipv6?;
-    let iface_name = device.iface_name.as_ref()?;
-    let config = lan_ipv6_configs.get(iface_name)?;
-    let group = select_device_ipv6_group(&config.config.prefix_groups)?;
-    // Static NA groups reuse the device host part under the current /64.
-    // PD-backed groups treat device.ipv6 as the final runtime address.
+) -> Result<Ipv6Addr, String> {
+    let device_ipv6 = device.ipv6.ok_or_else(|| "device has no IPv6 address".to_string())?;
+    let iface_name =
+        device.iface_name.as_ref().ok_or_else(|| "device has no interface name".to_string())?;
+    let config = lan_ipv6_configs
+        .get(iface_name)
+        .ok_or_else(|| format!("no LAN IPv6 service config for interface '{iface_name}'"))?;
+    let group = select_device_ipv6_group(&config.config.prefix_groups)
+        .ok_or_else(|| format!("no NA prefix group configured on interface '{iface_name}'"))?;
     match &group.parent {
         PrefixParentSource::Static { base_prefix, parent_prefix_len } => {
-            let pool_index = group.na.as_ref().map(|na| na.pool_index)?;
+            let pool_index = group.na.as_ref().map(|na| na.pool_index).ok_or_else(|| {
+                format!("NA prefix group missing pool_index on interface '{iface_name}'")
+            })?;
             let (prefix, _) =
-                checked_allocate_subnet(*base_prefix, *parent_prefix_len, 64, pool_index as u128)?;
-            checked_combine_ipv6_prefix_suffix(prefix, 64, device_ipv6)
+                checked_allocate_subnet(*base_prefix, *parent_prefix_len, 64, pool_index as u128)
+                    .ok_or_else(|| {
+                    format!("failed to allocate subnet for NA pool on interface '{iface_name}'")
+                })?;
+            checked_combine_ipv6_prefix_suffix(prefix, 64, device_ipv6).ok_or_else(|| {
+                format!(
+                    "failed to combine IPv6 prefix/suffix for device on interface '{iface_name}'"
+                )
+            })
         }
-        PrefixParentSource::Pd { .. } => Some(device_ipv6),
+        PrefixParentSource::Pd { .. } => Ok(device_ipv6),
     }
 }
 
 fn select_device_ipv6_group(groups: &[LanPrefixGroupConfig]) -> Option<&LanPrefixGroupConfig> {
-    let mut candidates = groups.iter().filter(|group| group.na.is_some());
-    let candidate = candidates.next()?;
-    if candidates.next().is_some() {
-        tracing::warn!("static NAT device target unresolved: multiple IPv6 NA pools found");
-        return None;
-    }
-    Some(candidate)
+    groups.iter().find(|group| group.na.is_some())
 }
 
 crate::impl_repository!(
