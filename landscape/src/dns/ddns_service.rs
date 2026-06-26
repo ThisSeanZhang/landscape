@@ -211,18 +211,15 @@ impl DdnsService {
         device_id: Uuid,
         ip: std::net::Ipv6Addr,
     ) -> Result<(), LdError> {
+        let is_new = self.enrolled_cache.entry(device_id).or_default().raw_ips.insert(ip);
+
         let jobs = self.store.find_enabled().await?;
         let matching: Vec<_> = jobs
             .into_iter()
             .filter(|job| job_has_enrolled_device_ipv6_for_device(job, device_id))
             .collect();
 
-        if matching.is_empty() {
-            return Ok(());
-        }
-
-        let is_new = self.enrolled_cache.entry(device_id).or_default().raw_ips.insert(ip);
-        if is_new {
+        if !matching.is_empty() && is_new {
             self.sync_jobs_now(matching).await;
         }
         Ok(())
