@@ -2,8 +2,8 @@ use landscape_common::client::CallerLookupMatch;
 use landscape_common::database::LandscapeStore as LandscapeDBStore;
 use landscape_common::dhcp::v6_server::status::DHCPv6OfferInfo;
 use landscape_common::event::hub::{
-    EnrolledDeviceEvent, EnrolledDeviceEventReader, IAPrefixEventReader, IPv6AssignEventSender,
-    IfaceEventReader,
+    EnrolledDeviceEvent, EnrolledDeviceEventReader, IAPrefixEvent, IAPrefixEventReader,
+    IPv6AssignEventSender, IfaceEventReader,
 };
 use landscape_common::ipv6::lan::LanIPv6ServiceConfigV2;
 use landscape_common::ipv6_pd::IAPrefixMap;
@@ -34,7 +34,7 @@ pub struct LanIPv6Service {
     enrolled_device_store: EnrolledDeviceRepository,
     ipv6_assign_sender: IPv6AssignEventSender,
     device_id_map: Arc<DashMap<MacAddr, Uuid>>,
-    status: Arc<Mutex<Ipv6ServerStatus>>,
+    status_map: Arc<DashMap<String, Arc<Mutex<Ipv6ServerStatus>>>>,
 }
 
 impl LanIPv6Service {
@@ -50,7 +50,7 @@ impl LanIPv6Service {
             enrolled_device_store,
             ipv6_assign_sender,
             device_id_map: Arc::new(DashMap::new()),
-            status: Arc::new(Mutex::new(Ipv6ServerStatus::new())),
+            status_map: Arc::new(DashMap::new()),
         }
     }
 }
@@ -61,7 +61,13 @@ impl ServiceStarterTrait for LanIPv6Service {
 
     async fn start(&self, config: LanIPv6ServiceConfigV2) -> WatchService {
         let service_status = WatchService::new();
-        if config.enable {}
+        if config.enable {
+            let status = Arc::new(Mutex::new(Ipv6ServerStatus::new()));
+            {
+                let mut s = status.lock().await;
+                s.upate_prefix(&config.config.prefix_groups, &self.prefix_map);
+            }
+        }
 
         service_status
     }
@@ -101,9 +107,10 @@ impl LanIPv6ManagerService {
     ) -> Self {
         let store = store_service.lan_ipv6_v2_service_store();
         let enrolled_device_store = store_service.enrolled_device_store();
+        let prefix_map_for_starter = prefix_map.clone();
         let server_starter = LanIPv6Service::new(
             route_service,
-            prefix_map,
+            prefix_map_for_starter,
             enrolled_device_store,
             ipv6_assign_sender,
         );
@@ -131,19 +138,37 @@ impl LanIPv6ManagerService {
             }
         });
 
-        let status = server_starter.status.clone();
+        let status_map = server_starter.status_map.clone();
+        let store_for_prefix = store_service.lan_ipv6_v2_service_store();
+        let prefix_map_for_loop = prefix_map.clone();
         tokio::spawn(async move {
             loop {
                 tokio::select! {
                     msg = prefix_update_tx.recv() => {
-                        // using msg
-                        // TODO get lock
-                        // status.upate_prefix();
+                        if let Ok(IAPrefixEvent::Updated { iface_name }) = msg {
+                            // TODO: build WAN iface → LAN iface dependency index
+                            // Currently refreshes prefix_state for all started LAN services
+                            for entry in status_map.iter() {
+                                let lan_iface = entry.key().clone();
+                                if let Ok(Some(cfg)) =
+                                    store_for_prefix.find_by_id(lan_iface).await
+                                {
+                                    let status = entry.value();
+                                    let mut s = status.lock().await;
+                                    s.upate_prefix(
+                                        &cfg.config.prefix_groups,
+                                        &prefix_map_for_loop,
+                                    );
+                                }
+                            }
+                            let _ = iface_name;
+                        }
                     },
                     msg = device_reader.recv() => {
                         // using msg
                         // TODO get lock
                         // status.upate_device();
+                        let _ = msg;
                     }
                 }
             }
