@@ -10,6 +10,8 @@ landscape-database = { path = "../landscape-database" }
 landscape-dns = { path = "../landscape-dns" }
 landscape-protobuf = { path = "../landscape-protobuf" }
 
+anyhow = { workspace = true }
+
 paste = { workspace = true }
 toml = { workspace = true }
 toml_edit = { workspace = true }
@@ -81,7 +83,10 @@ portable-pty = { workspace = true }
 
 duckdb = { workspace = true, optional = true }
 r2d2 = { workspace = true, optional = true }
-sqlx = { version = "0.8.6", default-features = false, features = ["sqlite", "runtime-tokio-rustls"], optional = true }
+sqlx = { version = "0.8.6", default-features = false, features = [
+    "sqlite",
+    "runtime-tokio-rustls",
+], optional = true }
 
 etherparse = { workspace = true }
 [dependencies.pnet]

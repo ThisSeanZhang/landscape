@@ -3403,6 +3403,7 @@ dependencies = [
 name = "landscape"
 version = "0.21.1"
 dependencies = [
+ "anyhow",
  "arc-swap",
  "async-trait",
  "axum",
