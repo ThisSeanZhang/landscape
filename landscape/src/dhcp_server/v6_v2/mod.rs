@@ -1,4 +1,8 @@
-use std::{collections::HashMap, net::Ipv6Addr, time::Instant};
+use std::{
+    collections::{HashMap, HashSet},
+    net::Ipv6Addr,
+    time::Instant,
+};
 
 use landscape_common::{
     dhcp::v6_server::{
@@ -111,6 +115,12 @@ pub enum DeviceBindingResult {
 pub struct PdRouteCleanup {
     pub sub_index: u32,
     pub routes: Vec<(Ipv6Addr, u8)>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SlaacResult {
+    Recorded,
+    Conflict,
 }
 
 // ── View / event types ─────────────────────────────────────────────────────
@@ -273,6 +283,7 @@ pub struct Ipv6LanReplyParams {
     pub pd_valid_lifetime: u32,
     pub ra_preferred_lifetime: u32,
     pub ra_valid_lifetime: u32,
+    pub ra_flags: u8,
 }
 
 // ── Ipv6ServerStatus ───────────────────────────────────────────────────────
@@ -371,6 +382,14 @@ impl Ipv6ServerStatus {
 
     pub(crate) fn pd_lease_sub_index(&self, duid: &[u8]) -> Option<u32> {
         self.pd_leases_by_duid.get(duid).map(|l| l.sub_index)
+    }
+
+    pub fn is_suffix_na_owned(&self, suffix: u64) -> bool {
+        self.na_owners_by_suffix.contains_key(&suffix)
+    }
+
+    fn is_suffix_used_by_slaac(&self, suffix: u64) -> bool {
+        self.slaac_entries.keys().any(|&ip| ipv6_suffix(ip) == suffix)
     }
 
     // ── helpers ────────────────────────────────────────────────────────────
@@ -875,16 +894,22 @@ impl Ipv6ServerStatus {
 
     // ── SLAAC address tracking ─────────────────────────────────────────────
 
-    pub fn record_slaac_addr(&mut self, mac: MacAddr, ip: Ipv6Addr) {
+    pub fn record_slaac_addr(&mut self, mac: MacAddr, ip: Ipv6Addr) -> SlaacResult {
+        let suffix = ipv6_suffix(ip);
+        if self.na_owners_by_suffix.contains_key(&suffix) {
+            return SlaacResult::Conflict;
+        }
         let now = self.boot_time.elapsed().as_secs();
         self.slaac_entries.insert(ip, SlaacEntry { mac, relative_active_time: now });
+        SlaacResult::Recorded
     }
 
-    pub fn clean_expired_slaac(&mut self, current_time: u64, threshold: u64) -> Vec<SlaacEntry> {
+    pub fn clean_expired_slaac(&mut self, threshold: u64) -> Vec<(Ipv6Addr, MacAddr)> {
+        let now = self.boot_time.elapsed().as_secs();
         let mut expired = Vec::new();
-        self.slaac_entries.retain(|_ip, entry| {
-            if current_time.saturating_sub(entry.relative_active_time) >= threshold {
-                expired.push(entry.clone());
+        self.slaac_entries.retain(|ip, entry| {
+            if now.saturating_sub(entry.relative_active_time) >= threshold {
+                expired.push((*ip, entry.mac));
                 false
             } else {
                 true
@@ -1148,6 +1173,7 @@ impl Ipv6ServerStatus {
             prev_suffix: previous_suffix.filter(|prev| *prev != suffix),
         };
         self.na_leases_by_duid.insert(duid.to_vec(), lease);
+        self.slaac_entries.retain(|&ip, _| ipv6_suffix(ip) != suffix);
     }
 
     fn remove_na_lease(&mut self, duid: &[u8]) -> Option<(NaLease, ExpiredNa)> {
@@ -1196,11 +1222,16 @@ impl Ipv6ServerStatus {
     }
 
     fn find_free_dynamic_suffix(&self, duid: &[u8], excluded_suffix: Option<u64>) -> Option<u64> {
+        let slaac_suffixes: HashSet<u64> =
+            self.slaac_entries.keys().map(|&ip| ipv6_suffix(ip)).collect();
         let mut seed = hash_duid(duid);
         for _ in 0..self.na_range_capacity {
             let index = seed % self.na_range_capacity;
             let suffix = self.na_pool_start + index;
-            if Some(suffix) != excluded_suffix && !self.na_owners_by_suffix.contains_key(&suffix) {
+            if Some(suffix) != excluded_suffix
+                && !self.na_owners_by_suffix.contains_key(&suffix)
+                && !slaac_suffixes.contains(&suffix)
+            {
                 return Some(suffix);
             }
             seed = seed.wrapping_add(1);
@@ -1231,6 +1262,7 @@ impl Ipv6ServerStatus {
             prev_suffix,
         };
         self.na_leases_by_duid.insert(duid.to_vec(), lease);
+        self.slaac_entries.retain(|&ip, _| ipv6_suffix(ip) != suffix);
     }
 
     fn remove_dynamic_owner_if_matches(&mut self, suffix: u64, duid: &[u8]) {

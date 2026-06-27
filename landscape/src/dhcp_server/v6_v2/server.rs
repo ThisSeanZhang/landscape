@@ -4,6 +4,7 @@ use landscape_common::{
     error::LdResult,
     event::hub::{IPv6AssignEvent, IPv6AssignEventSender, IPv6AssignInfo},
     net::MacAddr,
+    net_proto::icmpv6::messages::Icmpv6Message,
     service::{ServiceStatus, WatchService},
 };
 use tokio::sync::Mutex;
@@ -12,7 +13,7 @@ use crate::{
     addresses_by_iface_name,
     dhcp_server::v6_v2::{
         connection::{get_dhcpv6_connect, get_icmp_connect},
-        dhcpv6, Ipv6LanReplyParams, Ipv6ServerStatus,
+        dhcpv6, icmpv6, Ipv6LanReplyParams, Ipv6ServerStatus,
     },
 };
 
@@ -72,7 +73,7 @@ pub async fn start_ipv6_lan_server(
         return Ok(());
     };
 
-    let Ok((mut icmp_recv, _icmp_sender)) = get_icmp_connect(ifindex, &iface_name).await else {
+    let Ok((mut icmp_recv, icmp_sender)) = get_icmp_connect(ifindex, &iface_name).await else {
         tracing::error!("create icmpv6 link error");
         service_status.just_change_status(ServiceStatus::Failed);
         return Ok(());
@@ -80,9 +81,8 @@ pub async fn start_ipv6_lan_server(
 
     service_status.just_change_status(ServiceStatus::Running);
 
-    let icmp_ad_interval = icmp_ad_interval as u64;
     let mut icmp_ra_interval =
-        Box::pin(tokio::time::interval(Duration::from_secs(icmp_ad_interval)));
+        Box::pin(tokio::time::interval(Duration::from_secs(icmp_ad_interval as u64)));
     let mut dhcp_expire_timer =
         Box::pin(tokio::time::interval(Duration::from_secs(LEASE_EXPIRE_INTERVAL)));
 
@@ -91,12 +91,43 @@ pub async fn start_ipv6_lan_server(
     loop {
         tokio::select! {
             _ = icmp_ra_interval.tick() => {
-                // TODO: SEND ICMP RA PACKET (icmpv6 module)
+                let status = share_status.lock().await;
+                let ra = icmpv6::build_ra(&status, &params, &mac_addr, icmp_ad_interval * 1000);
+                drop(status);
+                let dst = std::net::SocketAddr::new(std::net::IpAddr::V6(icmpv6::ICMPV6_MULTICAST), 0);
+                let _ = icmpv6::send_msg(&icmp_sender, &ra, dst).await;
             },
             icmp_recv_result = icmp_recv.recv() => {
                 match icmp_recv_result {
-                    Some(_data) => {
-                        // TODO: handle_rs_msg (icmpv6 module)
+                    Some((data, src_addr)) => {
+                        match icmpv6::parse(&data) {
+                            Some(Icmpv6Message::RouterSolicitation(_)) => {
+                                let status = share_status.lock().await;
+                                let ra = icmpv6::build_ra(&status, &params, &mac_addr, icmp_ad_interval * 1000);
+                                drop(status);
+                                let _ = icmpv6::send_msg(&icmp_sender, &ra, src_addr).await;
+                            }
+                            Some(Icmpv6Message::NeighborAdvertisement(_)) => {
+                                let mut status = share_status.lock().await;
+                                match icmpv6::handle_na(&data, &mut status) {
+                                    icmpv6::SlaacActionResult::Allocated { mac, ip } => {
+                                        // TODO: eBPF upsert_ipv6_ip_mac(link_ifindex, ip, mac, mac_addr)
+                                        let _ = ipv6_assign_sender.try_send(
+                                            IPv6AssignEvent::Allocated(IPv6AssignInfo {
+                                                iface_name: iface_name.clone(),
+                                                mac,
+                                                ip,
+                                                device_id: None,
+                                            }),
+                                        );
+                                    }
+                                    icmpv6::SlaacActionResult::None => {}
+                                }
+                            }
+                            // TODO(Plan B): Some(Icmpv6Message::NeighborSolicitation) =>
+                            //     icmpv6::handle_ns(&data, &mut status, &icmp_sender, src_addr)
+                            _ => {}
+                        }
                     }
                     None => break
                 }
@@ -172,6 +203,18 @@ pub async fn start_ipv6_lan_server(
                 for pd in &expired_pd {
                     // TODO: cleanup PD routes
                     let _ = (pd.prefix, pd.prefix_len, &pd.active_routes);
+                }
+
+                let expired_slaac = status.clean_expired_slaac(params.ra_valid_lifetime as u64);
+                for (ip, mac) in &expired_slaac {
+                    let _ = ipv6_assign_sender.try_send(
+                        IPv6AssignEvent::Expired(IPv6AssignInfo {
+                            iface_name: iface_name.clone(),
+                            mac: *mac,
+                            ip: *ip,
+                            device_id: None,
+                        }),
+                    );
                 }
             },
             change_result = service_status_subscribe.changed() => {
