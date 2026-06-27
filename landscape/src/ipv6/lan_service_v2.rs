@@ -24,8 +24,7 @@ use tokio::sync::{watch, Mutex};
 use uuid::Uuid;
 
 use crate::dhcp_server::v6_v2::{
-    compute_subnets, server::start_ipv6_lan_server, AddrSource, Ipv6LanReplyParams,
-    Ipv6ServerStatus,
+    server::start_ipv6_lan_server, AddrSource, Ipv6LanReplyParams, Ipv6ServerStatus,
 };
 use crate::iface::get_iface_by_name;
 use crate::route::IpRouteService;
@@ -117,9 +116,6 @@ impl ServiceStarterTrait for LanIPv6Service {
                 }
             }
 
-            // ── Compute initial subnets ──
-            let initial_subnets = compute_subnets(&config.config.prefix_groups, &self.prefix_map);
-
             // ── Create status ──
             let status = Arc::new(Mutex::new(Ipv6ServerStatus::new(
                 na_config.clone(),
@@ -163,14 +159,6 @@ impl ServiceStarterTrait for LanIPv6Service {
                 ra_autonomous,
             };
 
-            // ── DNS servers: link-local + sub_routers ──
-            let mut dns_servers: Vec<Ipv6Addr> = vec![mac_addr.to_ipv6_link_local()];
-            for sn in &initial_subnets {
-                if sn.has_router() && !dns_servers.contains(&sn.sub_router) {
-                    dns_servers.push(sn.sub_router);
-                }
-            }
-
             // ── Prefix change notification channel ──
             let (prefix_tx, prefix_rx) = watch::channel(());
             self.per_iface_txs.insert(config.iface_name.clone(), prefix_tx);
@@ -199,7 +187,6 @@ impl ServiceStarterTrait for LanIPv6Service {
                     prefix_map,
                     prefix_rx,
                     params,
-                    dns_servers,
                     route_service,
                     device_id_map,
                 )

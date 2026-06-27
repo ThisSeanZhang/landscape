@@ -316,6 +316,27 @@ pub struct Ipv6LanReplyParams {
     pub ra_autonomous: bool,
 }
 
+// ── DNS servers ────────────────────────────────────────────────────────────
+
+pub struct DnsServers {
+    pub static_dns: Option<Ipv6Addr>,
+    pub dynamic_dns: Option<Ipv6Addr>,
+}
+
+impl DnsServers {
+    pub fn new() -> Self {
+        Self { static_dns: None, dynamic_dns: None }
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = Ipv6Addr> + '_ {
+        self.static_dns.iter().chain(self.dynamic_dns.iter()).copied()
+    }
+
+    pub fn to_vec(&self, link_local: Ipv6Addr) -> Vec<Ipv6Addr> {
+        std::iter::once(link_local).chain(self.static_dns).chain(self.dynamic_dns).collect()
+    }
+}
+
 // ── Ipv6ServerStatus ───────────────────────────────────────────────────────
 
 pub struct Ipv6ServerStatus {
@@ -344,6 +365,9 @@ pub struct Ipv6ServerStatus {
 
     // ── SLAAC tracking ──
     slaac_entries: HashMap<Ipv6Addr, SlaacEntry>,
+
+    // ── DNS servers (cached, refreshed on prefix change) ──
+    dns_servers: DnsServers,
 
     // ── Timing ──
     boot_time: Instant,
@@ -381,6 +405,7 @@ impl Ipv6ServerStatus {
             pd_leases_by_duid: HashMap::new(),
             pd_owners_by_slot: HashMap::new(),
             slaac_entries: HashMap::new(),
+            dns_servers: DnsServers::new(),
             boot_time: Instant::now(),
             boot_time_f64: get_f64_timestamp(),
         };
@@ -409,6 +434,7 @@ impl Ipv6ServerStatus {
         let diff = diff_subnets(&self.cached_subnets, &new_subnets);
         self.cached_subnets = new_subnets;
         self.prefix_state.refresh(&self.cached_subnets);
+        self.refresh_dns_servers();
         let _ = self.prefix_notify_tx.send(());
         diff
     }
@@ -416,6 +442,7 @@ impl Ipv6ServerStatus {
     pub fn update_prefix(&mut self, subnets: &[SubnetState]) {
         self.cached_subnets = subnets.to_vec();
         self.prefix_state.refresh(subnets);
+        self.refresh_dns_servers();
         let _ = self.prefix_notify_tx.send(());
     }
 
@@ -435,6 +462,10 @@ impl Ipv6ServerStatus {
         &self.prefix_state.pd_ranges
     }
 
+    pub fn dns_servers(&self) -> &DnsServers {
+        &self.dns_servers
+    }
+
     pub fn resolve_pd_prefix(&self, key: &PdSlotKey) -> Option<(Ipv6Addr, u8)> {
         pd::resolve_pd_prefix(&self.prefix_state.pd_ranges, key)
     }
@@ -445,6 +476,20 @@ impl Ipv6ServerStatus {
 
     pub fn is_suffix_na_owned(&self, suffix: u64) -> bool {
         self.na_owners_by_suffix.contains_key(&suffix)
+    }
+
+    fn refresh_dns_servers(&mut self) {
+        fn pick_one(
+            subnets: &[SubnetState],
+            pred: impl Fn(&SubnetSource) -> bool,
+        ) -> Option<Ipv6Addr> {
+            subnets.iter().find(|s| s.has_router() && pred(&s.source)).map(|s| s.sub_router)
+        }
+
+        self.dns_servers.static_dns =
+            pick_one(&self.cached_subnets, |s| matches!(s, SubnetSource::Static));
+        self.dns_servers.dynamic_dns =
+            pick_one(&self.cached_subnets, |s| matches!(s, SubnetSource::Pd { .. }));
     }
 
     /// Prefixes eligible for NA address allocation (filtered by max_prefix_len).

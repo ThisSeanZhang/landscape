@@ -62,10 +62,10 @@ pub fn build_ra(
         opts.insert(IcmpV6Option::route_information(prefix_len, prefix));
     }
 
-    // DNS servers: link-local + per-subnet routers
+    // DNS servers: link-local + static + dynamic
     opts.insert(IcmpV6Option::recursive_dns_server(600, mac_addr.to_ipv6_link_local()));
-    for entry in status.ra_entries() {
-        opts.insert(IcmpV6Option::recursive_dns_server(600, entry.router));
+    for ip in status.dns_servers().iter() {
+        opts.insert(IcmpV6Option::recursive_dns_server(600, ip));
     }
 
     opts.insert(IcmpV6Option::mtu(1500));

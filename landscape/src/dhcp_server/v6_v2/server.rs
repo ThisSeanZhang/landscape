@@ -112,7 +112,6 @@ async fn handle_dhcp_msg(
     share_status: &Arc<Mutex<Ipv6ServerStatus>>,
     server_duid: &[u8],
     params: &Ipv6LanReplyParams,
-    dns_servers: &[Ipv6Addr],
     dhcp_sender: &Arc<UdpSocket>,
     ipv6_assign_sender: &IPv6AssignEventSender,
     route_service: &IpRouteService,
@@ -131,13 +130,14 @@ async fn handle_dhcp_msg(
 
     let pd_route_changes = {
         let mut status = share_status.lock().await;
+        let dns_servers = status.dns_servers().to_vec(mac_addr.to_ipv6_link_local());
         let result = dhcpv6::process_dhcpv6_msg(
             &mut status,
             &msg_bytes,
             msg_addr,
             server_duid,
             params,
-            dns_servers,
+            &dns_servers,
         );
 
         // Send reply
@@ -271,7 +271,6 @@ pub async fn start_ipv6_lan_server(
     prefix_map: IAPrefixMap,
     mut prefix_change_rx: watch::Receiver<()>,
     params: Ipv6LanReplyParams,
-    dns_servers: Vec<Ipv6Addr>,
     route_service: IpRouteService,
     device_id_map: Arc<DashMap<MacAddr, Uuid>>,
 ) -> LdResult<()> {
@@ -401,7 +400,7 @@ pub async fn start_ipv6_lan_server(
                     if !handle_dhcp_msg(
                         result, &iface_name, mac_addr, link_ifindex,
                         &service_status, &share_status, &server_duid,
-                        &params, &dns_servers, dhcp_sender, ipv6_assign_sender, &route_service,
+                        &params, dhcp_sender, ipv6_assign_sender, &route_service,
                         &device_id_map,
                     ).await {
                         break;
