@@ -36,15 +36,17 @@ pub fn build_ra(
     let mut opts = IcmpV6Options::new();
     opts.insert(IcmpV6Option::source_link_layer_address(&mac_addr.octets()));
 
-    // A=1: SLAAC-eligible prefixes from ra_entries
+    // RA-eligible prefixes with autonomous flag from params
+    let autonomous = params.ra_autonomous;
     for entry in status.ra_entries() {
         opts.insert(IcmpV6Option::prefix_information(
             entry.prefix_len,
             entry.valid_lifetime,
             entry.preferred_lifetime,
             entry.prefix,
-            true,
+            autonomous,
         ));
+        opts.insert(IcmpV6Option::route_information(entry.prefix_len, entry.prefix));
     }
 
     // A=0: on-link only prefixes (na_entries not in ra_entries)
@@ -57,9 +59,15 @@ pub fn build_ra(
             prefix,
             false,
         ));
+        opts.insert(IcmpV6Option::route_information(prefix_len, prefix));
     }
 
+    // DNS servers: link-local + per-subnet routers
     opts.insert(IcmpV6Option::recursive_dns_server(600, mac_addr.to_ipv6_link_local()));
+    for entry in status.ra_entries() {
+        opts.insert(IcmpV6Option::recursive_dns_server(600, entry.router));
+    }
+
     opts.insert(IcmpV6Option::mtu(1500));
     opts.insert(IcmpV6Option::advertisement_interval(icmp_ad_interval_ms));
 
@@ -109,6 +117,37 @@ pub fn handle_na(data: &[u8], status: &mut Ipv6ServerStatus) -> SlaacActionResul
             SlaacActionResult::None
         }
     }
+}
+
+/// Build a deprecation RA with all prefix lifetimes set to zero.
+pub fn build_deprecation_ra(
+    status: &Ipv6ServerStatus,
+    mac_addr: &MacAddr,
+    ra_flags: u8,
+) -> Icmpv6Message {
+    let mut opts = IcmpV6Options::new();
+    opts.insert(IcmpV6Option::source_link_layer_address(&mac_addr.octets()));
+
+    let mut has_prefix = false;
+
+    for entry in status.ra_entries() {
+        opts.insert(IcmpV6Option::prefix_information(entry.prefix_len, 0, 0, entry.prefix, false));
+        has_prefix = true;
+    }
+
+    for (prefix, prefix_len) in onlink_only_prefixes(status) {
+        opts.insert(IcmpV6Option::prefix_information(prefix_len, 0, 0, prefix, false));
+        has_prefix = true;
+    }
+
+    if !has_prefix {
+        return Icmpv6Message::RouterAdvertisement(RouterAdvertisement::new(ra_flags, opts));
+    }
+
+    opts.insert(IcmpV6Option::recursive_dns_server(600, mac_addr.to_ipv6_link_local()));
+    opts.insert(IcmpV6Option::mtu(1500));
+
+    Icmpv6Message::RouterAdvertisement(RouterAdvertisement::new(ra_flags, opts))
 }
 
 pub async fn send_msg(sender: &Arc<UdpSocket>, msg: &Icmpv6Message, dst: SocketAddr) -> bool {

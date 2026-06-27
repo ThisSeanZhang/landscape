@@ -28,7 +28,8 @@ fn make_pd_status() -> Ipv6ServerStatus {
         pd: Some(PdPrefixRangeConfig { pool_len: 56, start_index: 0, end_index: 3 }),
     }];
 
-    status.update_prefix(&groups, &IAPrefixMap::new());
+    let subnets = compute_subnets(&groups, &IAPrefixMap::new());
+    status.update_prefix(&subnets);
     status
 }
 

@@ -35,7 +35,8 @@ fn make_slaac_status() -> Ipv6ServerStatus {
         pd: None,
     }];
 
-    status.update_prefix(&groups, &IAPrefixMap::new());
+    let subnets = compute_subnets(&groups, &IAPrefixMap::new());
+    status.update_prefix(&subnets);
     status
 }
 

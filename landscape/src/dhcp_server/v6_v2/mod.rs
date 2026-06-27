@@ -10,17 +10,22 @@ use landscape_common::{
         status::{DHCPv6AddressItem, DHCPv6OfferInfo, DHCPv6PrefixItem},
     },
     enrolled_device::EnrolledDevice,
-    ipv6::lan::{LanPrefixGroupConfig, PrefixParentSource},
+    ipv6::{
+        checked_allocate_subnet,
+        lan::{LanPrefixGroupConfig, PrefixParentSource},
+    },
     ipv6_pd::IAPrefixMap,
     lan_services::ipv6_ra::{IPv6NAInfo, IPv6NAInfoItem},
     net::MacAddr,
     utils::time::get_f64_timestamp,
 };
+use tokio::sync::watch;
 
 pub mod connection;
 pub mod dhcpv6;
 pub mod icmpv6;
 pub mod pd;
+pub mod ra;
 pub mod server;
 
 use self::pd::{PdRange, PdSlotKey};
@@ -177,11 +182,59 @@ pub struct DelegatedPrefix {
     pub valid_lifetime: u32,
 }
 
+// ── Subnet computation types ───────────────────────────────────────────────
+
+/// A LAN subnet derived from a prefix group entry (static or PD-based).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SubnetState {
+    pub group_id: String,
+    pub sub_prefix: Ipv6Addr,
+    pub sub_prefix_len: u8,
+    pub sub_router: Ipv6Addr,
+    pub ra_preferred_lifetime: u32,
+    pub ra_valid_lifetime: u32,
+    pub is_na: bool,
+    pub has_ra: bool,
+    pub source: SubnetSource,
+    pub pd_config: Option<PdSubnetConfig>,
+}
+
+/// PD delegation config associated with a subnet's parent group.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PdSubnetConfig {
+    pub group_id: String,
+    pub parent: Ipv6Addr,
+    pub parent_len: u8,
+    pub pool_len: u8,
+    pub start_idx: u32,
+    pub end_idx: u32,
+}
+
+impl SubnetState {
+    /// 是否有实际网关地址（false 表示 PD-only 占位条目，无对应 RA/NA）
+    pub fn has_router(&self) -> bool {
+        self.sub_router != Ipv6Addr::UNSPECIFIED
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SubnetSource {
+    Static,
+    Pd { depend_iface: String },
+}
+
+#[derive(Debug, Clone)]
+pub struct SubnetDiff {
+    pub added: Vec<SubnetState>,
+    pub removed: Vec<SubnetState>,
+}
+
 // ── Prefix resolution result types ─────────────────────────────────────────
 
 pub struct RaEntry {
     pub prefix: Ipv6Addr,
     pub prefix_len: u8,
+    pub router: Ipv6Addr,
     pub preferred_lifetime: u32,
     pub valid_lifetime: u32,
 }
@@ -189,6 +242,7 @@ pub struct RaEntry {
 pub struct NaEntry {
     pub prefix: Ipv6Addr,
     pub prefix_len: u8,
+    pub router: Ipv6Addr,
 }
 
 pub struct PrefixState {
@@ -206,68 +260,43 @@ impl PrefixState {
         }
     }
 
-    pub fn refresh(&mut self, groups: &[LanPrefixGroupConfig], prefix_map: &IAPrefixMap) {
+    pub fn refresh(&mut self, subnets: &[SubnetState]) {
         self.ra_entries.clear();
         self.na_entries.clear();
         self.pd_ranges.clear();
 
-        for group in groups {
-            let (parent_ip, parent_len, pd_lifetimes) = match &group.parent {
-                PrefixParentSource::Static { base_prefix, parent_prefix_len } => (
-                    pd::normalize_prefix(*base_prefix, *parent_prefix_len),
-                    *parent_prefix_len,
-                    (0u32, 0u32),
-                ),
-                PrefixParentSource::Pd { depend_iface, planned_parent_prefix_len: _ } => {
-                    match prefix_map.load(depend_iface) {
-                        Some(prefix) => (
-                            pd::normalize_prefix(prefix.prefix_ip, prefix.prefix_len),
-                            prefix.prefix_len,
-                            (prefix.preferred_lifetime, prefix.valid_lifetime),
-                        ),
-                        None => continue,
-                    }
-                }
-            };
+        let mut seen_pd_groups: HashSet<String> = HashSet::new();
 
-            if let Some(ra) = &group.ra {
-                let (pref_lt, valid_lt) = match &group.parent {
-                    PrefixParentSource::Static { .. } => (ra.preferred_lifetime, ra.valid_lifetime),
-                    PrefixParentSource::Pd { .. } => pd_lifetimes,
-                };
+        for sn in subnets {
+            if sn.has_ra {
                 self.ra_entries.push(RaEntry {
-                    prefix: parent_ip,
-                    prefix_len: parent_len,
-                    preferred_lifetime: pref_lt,
-                    valid_lifetime: valid_lt,
+                    prefix: sn.sub_prefix,
+                    prefix_len: sn.sub_prefix_len,
+                    router: sn.sub_router,
+                    preferred_lifetime: sn.ra_preferred_lifetime,
+                    valid_lifetime: sn.ra_valid_lifetime,
                 });
             }
 
-            if group.na.is_some() {
-                self.na_entries.push(NaEntry { prefix: parent_ip, prefix_len: parent_len });
+            if sn.is_na {
+                self.na_entries.push(NaEntry {
+                    prefix: sn.sub_prefix,
+                    prefix_len: sn.sub_prefix_len,
+                    router: sn.sub_router,
+                });
             }
 
-            if let Some(pd) = &group.pd {
-                let (pref_lt, valid_lt) = match &group.parent {
-                    PrefixParentSource::Static { .. } => {
-                        if let Some(ra) = &group.ra {
-                            (ra.preferred_lifetime, ra.valid_lifetime)
-                        } else {
-                            (0u32, 0u32)
-                        }
-                    }
-                    PrefixParentSource::Pd { .. } => pd_lifetimes,
-                };
-                self.pd_ranges.push(PdRange {
-                    group_id: group.group_id.clone(),
-                    parent: parent_ip,
-                    parent_len,
-                    pool_len: pd.pool_len,
-                    start_idx: pd.start_index,
-                    end_idx: pd.end_index,
-                    preferred_lifetime: pref_lt,
-                    valid_lifetime: valid_lt,
-                });
+            if let Some(ref pd) = sn.pd_config {
+                if seen_pd_groups.insert(pd.group_id.clone()) {
+                    self.pd_ranges.push(PdRange {
+                        group_id: pd.group_id.clone(),
+                        parent: pd.parent,
+                        parent_len: pd.parent_len,
+                        pool_len: pd.pool_len,
+                        start_idx: pd.start_idx,
+                        end_idx: pd.end_idx,
+                    });
+                }
             }
         }
     }
@@ -284,6 +313,7 @@ pub struct Ipv6LanReplyParams {
     pub ra_preferred_lifetime: u32,
     pub ra_valid_lifetime: u32,
     pub ra_flags: u8,
+    pub ra_autonomous: bool,
 }
 
 // ── Ipv6ServerStatus ───────────────────────────────────────────────────────
@@ -295,6 +325,10 @@ pub struct Ipv6ServerStatus {
 
     // ── Prefix state ──
     prefix_state: PrefixState,
+    cached_subnets: Vec<SubnetState>,
+
+    // ── Prefix change notification ──
+    prefix_notify_tx: watch::Sender<()>,
 
     // ── NA allocator state ──
     na_pool_start: u64,
@@ -331,10 +365,14 @@ impl Ipv6ServerStatus {
             .unwrap_or(na_pool_start.saturating_add(0xFFFF));
         let na_range_capacity = na_pool_end.saturating_sub(na_pool_start);
 
+        let (prefix_notify_tx, _) = watch::channel(());
+
         let mut status = Ipv6ServerStatus {
             na_config,
             pd_config,
             prefix_state: PrefixState::new(),
+            cached_subnets: Vec::new(),
+            prefix_notify_tx,
             na_pool_start,
             na_range_capacity,
             na_leases_by_duid: HashMap::new(),
@@ -360,8 +398,29 @@ impl Ipv6ServerStatus {
 
     // ── prefix management ──────────────────────────────────────────────────
 
-    pub fn update_prefix(&mut self, groups: &[LanPrefixGroupConfig], prefix_map: &IAPrefixMap) {
-        self.prefix_state.refresh(groups, prefix_map);
+    /// Recompute subnets from groups+prefix_map, diff against cached, update PrefixState.
+    /// Returns diff for caller to perform system I/O.
+    pub fn recompute_and_diff(
+        &mut self,
+        groups: &[LanPrefixGroupConfig],
+        prefix_map: &IAPrefixMap,
+    ) -> SubnetDiff {
+        let new_subnets = compute_subnets(groups, prefix_map);
+        let diff = diff_subnets(&self.cached_subnets, &new_subnets);
+        self.cached_subnets = new_subnets;
+        self.prefix_state.refresh(&self.cached_subnets);
+        let _ = self.prefix_notify_tx.send(());
+        diff
+    }
+
+    pub fn update_prefix(&mut self, subnets: &[SubnetState]) {
+        self.cached_subnets = subnets.to_vec();
+        self.prefix_state.refresh(subnets);
+        let _ = self.prefix_notify_tx.send(());
+    }
+
+    pub fn prefix_change_subscribe(&self) -> watch::Receiver<()> {
+        self.prefix_notify_tx.subscribe()
     }
 
     pub fn ra_entries(&self) -> &[RaEntry] {
@@ -1302,6 +1361,180 @@ impl Ipv6ServerStatus {
             &PdSlotKey { group_id: key.0.clone(), sub_index: key.1 },
         )
     }
+}
+
+// ── Subnet computation helpers ─────────────────────────────────────────────
+
+/// Compute LAN subnets from prefix groups and prefix map.
+/// Each group with RA or NA config yields one or two /64 subnets.
+pub fn compute_subnets(
+    groups: &[LanPrefixGroupConfig],
+    prefix_map: &IAPrefixMap,
+) -> Vec<SubnetState> {
+    let mut result = Vec::new();
+    let sub_prefix_len: u8 = 64;
+
+    for group in groups {
+        let (parent_ip, parent_len, pd_lifetimes) = match &group.parent {
+            PrefixParentSource::Static { base_prefix, parent_prefix_len } => {
+                (pd::normalize_prefix(*base_prefix, *parent_prefix_len), *parent_prefix_len, None)
+            }
+            PrefixParentSource::Pd { depend_iface, planned_parent_prefix_len: _ } => {
+                match prefix_map.load(depend_iface) {
+                    Some(prefix) => (
+                        pd::normalize_prefix(prefix.prefix_ip, prefix.prefix_len),
+                        prefix.prefix_len,
+                        Some((prefix.preferred_lifetime, prefix.valid_lifetime)),
+                    ),
+                    None => continue,
+                }
+            }
+        };
+
+        let source = match &group.parent {
+            PrefixParentSource::Static { .. } => SubnetSource::Static,
+            PrefixParentSource::Pd { depend_iface, .. } => {
+                SubnetSource::Pd { depend_iface: depend_iface.clone() }
+            }
+        };
+
+        // RA subnet
+        if let Some(ref ra) = group.ra {
+            match checked_allocate_subnet(
+                parent_ip,
+                parent_len,
+                sub_prefix_len,
+                ra.pool_index as u128,
+            ) {
+                Some((sub_prefix, sub_router)) => {
+                    let (pref_lt, valid_lt) = match pd_lifetimes {
+                        Some((p, v)) => (p, v),
+                        None => (ra.preferred_lifetime, ra.valid_lifetime),
+                    };
+                    let pd_cfg = group.pd.as_ref().map(|pd| PdSubnetConfig {
+                        group_id: group.group_id.clone(),
+                        parent: parent_ip,
+                        parent_len,
+                        pool_len: pd.pool_len,
+                        start_idx: pd.start_index,
+                        end_idx: pd.end_index,
+                    });
+                    result.push(SubnetState {
+                        group_id: group.group_id.clone(),
+                        sub_prefix,
+                        sub_prefix_len,
+                        sub_router,
+                        ra_preferred_lifetime: pref_lt,
+                        ra_valid_lifetime: valid_lt,
+                        has_ra: true,
+                        is_na: false,
+                        source: source.clone(),
+                        pd_config: pd_cfg,
+                    });
+                }
+                None => {
+                    tracing::error!(
+                        pool_index = ra.pool_index,
+                        parent = %parent_ip,
+                        parent_len = parent_len,
+                        "compute_subnets: invalid RA subnet allocation"
+                    );
+                }
+            }
+        }
+
+        // NA subnet (may share the same subnet as RA if same pool_index)
+        if let Some(ref na) = group.na {
+            let shares_ra_slot =
+                group.ra.as_ref().map_or(false, |ra| ra.pool_index == na.pool_index);
+            if shares_ra_slot {
+                if let Some(existing) =
+                    result.iter_mut().rev().find(|s| s.group_id == group.group_id)
+                {
+                    existing.is_na = true;
+                }
+            } else {
+                match checked_allocate_subnet(
+                    parent_ip,
+                    parent_len,
+                    sub_prefix_len,
+                    na.pool_index as u128,
+                ) {
+                    Some((sub_prefix, sub_router)) => {
+                        let pd_cfg = group.pd.as_ref().map(|pd| PdSubnetConfig {
+                            group_id: group.group_id.clone(),
+                            parent: parent_ip,
+                            parent_len,
+                            pool_len: pd.pool_len,
+                            start_idx: pd.start_index,
+                            end_idx: pd.end_index,
+                        });
+                        result.push(SubnetState {
+                            group_id: group.group_id.clone(),
+                            sub_prefix,
+                            sub_prefix_len,
+                            sub_router,
+                            ra_preferred_lifetime: 0,
+                            ra_valid_lifetime: 0,
+                            has_ra: false,
+                            is_na: true,
+                            source: source.clone(),
+                            pd_config: pd_cfg,
+                        });
+                    }
+                    None => {
+                        tracing::error!(
+                            pool_index = na.pool_index,
+                            "compute_subnets: invalid NA subnet allocation"
+                        );
+                    }
+                }
+            }
+        }
+
+        // PD-only group: no RA, no NA, just PD delegation
+        if group.ra.is_none() && group.na.is_none() {
+            if let Some(ref pd) = group.pd {
+                result.push(SubnetState {
+                    group_id: group.group_id.clone(),
+                    sub_prefix: parent_ip,
+                    sub_prefix_len: parent_len,
+                    sub_router: Ipv6Addr::UNSPECIFIED,
+                    ra_preferred_lifetime: 0,
+                    ra_valid_lifetime: 0,
+                    has_ra: false,
+                    is_na: false,
+                    source: source.clone(),
+                    pd_config: Some(PdSubnetConfig {
+                        group_id: group.group_id.clone(),
+                        parent: parent_ip,
+                        parent_len,
+                        pool_len: pd.pool_len,
+                        start_idx: pd.start_index,
+                        end_idx: pd.end_index,
+                    }),
+                });
+            }
+        }
+    }
+
+    result
+}
+
+fn diff_subnets(old: &[SubnetState], new: &[SubnetState]) -> SubnetDiff {
+    let mut added = Vec::new();
+    let mut removed = Vec::new();
+    for s in new {
+        if !old.contains(s) {
+            added.push(s.clone());
+        }
+    }
+    for s in old {
+        if !new.contains(s) {
+            removed.push(s.clone());
+        }
+    }
+    SubnetDiff { added, removed }
 }
 
 const OFFER_VALID_TIME: u32 = 120;

@@ -5,7 +5,7 @@ use landscape_common::event::hub::{
     EnrolledDeviceEvent, EnrolledDeviceEventReader, IAPrefixEvent, IAPrefixEventReader,
     IPv6AssignEventSender, IfaceEventReader,
 };
-use landscape_common::ipv6::lan::LanIPv6ServiceConfigV2;
+use landscape_common::ipv6::lan::{IPv6ServiceMode, LanIPv6ServiceConfigV2};
 use landscape_common::ipv6_pd::IAPrefixMap;
 use landscape_common::lan_services::ipv6_ra::IPv6NAInfo;
 use landscape_common::net::MacAddr;
@@ -20,11 +20,12 @@ use landscape_database::provider::LandscapeDBServiceProvider;
 use std::collections::HashMap;
 use std::net::Ipv6Addr;
 use std::sync::Arc;
-use tokio::sync::Mutex;
+use tokio::sync::{watch, Mutex};
 use uuid::Uuid;
 
 use crate::dhcp_server::v6_v2::{
-    server::start_ipv6_lan_server, AddrSource, Ipv6LanReplyParams, Ipv6ServerStatus,
+    compute_subnets, server::start_ipv6_lan_server, AddrSource, Ipv6LanReplyParams,
+    Ipv6ServerStatus,
 };
 use crate::iface::get_iface_by_name;
 use crate::route::IpRouteService;
@@ -38,6 +39,7 @@ pub struct LanIPv6Service {
     ipv6_assign_sender: IPv6AssignEventSender,
     device_id_map: Arc<DashMap<MacAddr, Uuid>>,
     status_map: Arc<DashMap<String, Arc<Mutex<Ipv6ServerStatus>>>>,
+    per_iface_txs: Arc<DashMap<String, watch::Sender<()>>>,
 }
 
 impl LanIPv6Service {
@@ -54,6 +56,7 @@ impl LanIPv6Service {
             ipv6_assign_sender,
             device_id_map: Arc::new(DashMap::new()),
             status_map: Arc::new(DashMap::new()),
+            per_iface_txs: Arc::new(DashMap::new()),
         }
     }
 }
@@ -91,16 +94,39 @@ impl ServiceStarterTrait for LanIPv6Service {
                 .await
                 .unwrap_or_default();
 
+            for d in &devices {
+                self.device_id_map.insert(d.mac, d.id);
+            }
+
+            // ── Mode handling ──
+            let mode = config.config.mode;
+            let dhcpv6_enabled = config.config.dhcpv6.as_ref().map_or(false, |c| c.enable);
+
+            match mode {
+                IPv6ServiceMode::Slaac => {
+                    if dhcpv6_enabled {
+                        tracing::warn!("Slaac mode selected but DHCPv6 enabled; disabling DHCPv6");
+                    }
+                }
+                IPv6ServiceMode::Stateful | IPv6ServiceMode::SlaacDhcpv6 => {
+                    if !dhcpv6_enabled {
+                        tracing::error!("{:?} mode but DHCPv6 not enabled", mode);
+                        service_status.just_change_status(ServiceStatus::Failed);
+                        return service_status;
+                    }
+                }
+            }
+
+            // ── Compute initial subnets ──
+            let initial_subnets = compute_subnets(&config.config.prefix_groups, &self.prefix_map);
+
+            // ── Create status ──
             let status = Arc::new(Mutex::new(Ipv6ServerStatus::new(
                 na_config.clone(),
                 pd_config.clone(),
                 devices,
             )));
-            {
-                let mut s = status.lock().await;
-                s.update_prefix(&config.config.prefix_groups, &self.prefix_map);
-            }
-
+            // ── Reply params ──
             let na_lifetimes = na_config
                 .as_ref()
                 .map(|c| (c.preferred_lifetime, c.valid_lifetime))
@@ -116,7 +142,15 @@ impl ServiceStarterTrait for LanIPv6Service {
                 .find_map(|g| g.ra.as_ref())
                 .map(|ra| (ra.preferred_lifetime, ra.valid_lifetime))
                 .unwrap_or((300, 600));
-            let ra_flags: u8 = config.config.ra_flag.into();
+
+            let mut ra_flags_raw: u8 = config.config.ra_flag.into();
+            let ra_autonomous = mode != IPv6ServiceMode::Stateful;
+            // M flag: managed address configuration
+            if mode == IPv6ServiceMode::Slaac {
+                ra_flags_raw &= !0x80; // clear M flag
+            } else {
+                ra_flags_raw |= 0x80; // set M flag
+            }
 
             let params = Ipv6LanReplyParams {
                 na_preferred_lifetime: na_lifetimes.0,
@@ -125,17 +159,32 @@ impl ServiceStarterTrait for LanIPv6Service {
                 pd_valid_lifetime: pd_lifetimes.1,
                 ra_preferred_lifetime: ra_lifetimes.0,
                 ra_valid_lifetime: ra_lifetimes.1,
-                ra_flags,
+                ra_flags: ra_flags_raw,
+                ra_autonomous,
             };
 
-            let dns_servers: Vec<std::net::Ipv6Addr> = Vec::new();
+            // ── DNS servers: link-local + sub_routers ──
+            let mut dns_servers: Vec<Ipv6Addr> = vec![mac_addr.to_ipv6_link_local()];
+            for sn in &initial_subnets {
+                if sn.has_router() && !dns_servers.contains(&sn.sub_router) {
+                    dns_servers.push(sn.sub_router);
+                }
+            }
 
+            // ── Prefix change notification channel ──
+            let (prefix_tx, prefix_rx) = watch::channel(());
+            self.per_iface_txs.insert(config.iface_name.clone(), prefix_tx);
+
+            // ── Store status ──
             let store_key = config.iface_name.clone();
             self.status_map.insert(store_key, status.clone());
 
+            // ── Spawn server ──
             let svc_status = service_status.clone();
             let ipv6_assign_sender = self.ipv6_assign_sender.clone();
             let route_service = self.route_service.clone();
+            let prefix_groups = config.config.prefix_groups.clone();
+            let prefix_map = self.prefix_map.clone();
             tokio::spawn(async move {
                 let _ = start_ipv6_lan_server(
                     iface.index,
@@ -145,6 +194,9 @@ impl ServiceStarterTrait for LanIPv6Service {
                     config.config.ad_interval,
                     &ipv6_assign_sender,
                     status,
+                    prefix_groups,
+                    prefix_map,
+                    prefix_rx,
                     params,
                     dns_servers,
                     route_service,
@@ -224,31 +276,17 @@ impl LanIPv6ManagerService {
 
         let status_map = server_starter.status_map.clone();
         let device_id_map = server_starter.device_id_map.clone();
-        let store_for_prefix = store_service.lan_ipv6_v2_service_store();
-        let prefix_map_for_loop = prefix_map.clone();
+        let per_iface_txs = server_starter.per_iface_txs.clone();
         tokio::spawn(async move {
             loop {
                 tokio::select! {
                     msg = prefix_update_tx.recv() => {
-                        if let Ok(IAPrefixEvent::Updated { iface_name }) = msg {
-                            // TODO: build WAN iface → LAN iface dependency index
-                            // Currently refreshes prefix_state for all started LAN services
-                            let entries: Vec<_> = status_map
-                                .iter()
-                                .map(|e| (e.key().clone(), e.value().clone()))
-                                .collect();
-                            for (lan_iface, status) in entries {
-                                if let Ok(Some(cfg)) =
-                                    store_for_prefix.find_by_id(lan_iface).await
-                                {
-                                    let mut s = status.lock().await;
-                                    s.update_prefix(
-                                        &cfg.config.prefix_groups,
-                                        &prefix_map_for_loop,
-                                    );
-                                }
+                        if let Ok(IAPrefixEvent::Updated { iface_name: _wan_iface }) = msg {
+                            // Notify all LAN services that prefix map changed.
+                            // Each server will recompute subnets and apply diff.
+                            for entry in per_iface_txs.iter() {
+                                let _ = entry.value().send(());
                             }
-                            let _ = iface_name;
                         }
                     },
                     msg = device_reader.recv() => {

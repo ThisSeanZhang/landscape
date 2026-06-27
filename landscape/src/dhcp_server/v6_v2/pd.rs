@@ -9,8 +9,6 @@ pub struct PdRange {
     pub pool_len: u8,
     pub start_idx: u32,
     pub end_idx: u32,
-    pub preferred_lifetime: u32,
-    pub valid_lifetime: u32,
 }
 
 /// PD lease index — stores group + sub-range offset, not the full prefix.
@@ -139,8 +137,6 @@ mod tests {
             pool_len,
             start_idx: start,
             end_idx: end,
-            preferred_lifetime: 3600,
-            valid_lifetime: 7200,
         }
     }
 

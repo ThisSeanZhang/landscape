@@ -47,7 +47,8 @@ fn make_status_with_prefixes() -> Ipv6ServerStatus {
         pd: None,
     }];
 
-    status.update_prefix(&groups, &IAPrefixMap::new());
+    let subnets = compute_subnets(&groups, &IAPrefixMap::new());
+    status.update_prefix(&subnets);
     status
 }
 
@@ -146,7 +147,8 @@ fn offer_na_exhausts_pool() {
         na: Some(NaPrefixConfig { pool_index: 0 }),
         pd: None,
     }];
-    status.update_prefix(&groups, &IAPrefixMap::new());
+    let subnets2 = compute_subnets(&groups, &IAPrefixMap::new());
+    status.update_prefix(&subnets2);
 
     assert!(status.offer_na(b"client-01", None, None).is_some());
     assert!(status.offer_na(b"client-02", None, None).is_some());

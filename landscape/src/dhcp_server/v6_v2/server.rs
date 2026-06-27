@@ -7,20 +7,24 @@ use std::{
 use landscape_common::{
     error::LdResult,
     event::hub::{IPv6AssignEvent, IPv6AssignEventSender, IPv6AssignInfo},
+    ipv6::lan::LanPrefixGroupConfig,
+    ipv6_pd::IAPrefixMap,
     net::MacAddr,
     net_proto::icmpv6::messages::Icmpv6Message,
     route::{LanIPv6RouteKey, LanRouteInfo, LanRouteMode},
     service::{ServiceStatus, WatchService},
 };
+use tokio::sync::watch;
 use tokio::{net::UdpSocket, sync::Mutex};
 
 use crate::{
     addresses_by_iface_name,
     dhcp_server::v6_v2::{
+        compute_subnets,
         connection::{get_dhcpv6_connect, get_icmp_connect},
-        dhcpv6, icmpv6, Ipv6LanReplyParams, Ipv6ServerStatus,
+        dhcpv6, icmpv6, ra, Ipv6LanReplyParams, Ipv6ServerStatus,
     },
-    ipv6::prefix::{add_route_via, del_route},
+    ipv6::prefix::{add_route, add_route_via, del_iface_ip, del_route, set_iface_ip},
     route::IpRouteService,
 };
 
@@ -51,6 +55,7 @@ async fn handle_icmp_msg(
     icmp_ad_interval: u32,
     icmp_sender: &Arc<UdpSocket>,
     ipv6_assign_sender: &IPv6AssignEventSender,
+    link_ifindex: u32,
 ) -> bool {
     let Some((data, src_addr)) = result else {
         tracing::error!("ICMPv6 recv channel closed on {iface_name}");
@@ -70,7 +75,14 @@ async fn handle_icmp_msg(
             if let icmpv6::SlaacActionResult::Allocated { mac, ip } =
                 icmpv6::handle_na(&data, &mut status)
             {
-                // TODO: eBPF upsert_ipv6_ip_mac(link_ifindex, ip, mac, mac_addr)
+                if let Err(e) = landscape_ebpf::base::ip_mac::upsert_ipv6_ip_mac(
+                    link_ifindex,
+                    ip,
+                    mac,
+                    *mac_addr,
+                ) {
+                    tracing::warn!("failed to prewarm ip_mac_v6 for ND {ip} -> {mac}: {e}");
+                }
                 let _ = ipv6_assign_sender.try_send(IPv6AssignEvent::Allocated(IPv6AssignInfo {
                     iface_name: iface_name.to_string(),
                     mac,
@@ -130,7 +142,11 @@ async fn handle_dhcp_msg(
 
         // Emit allocation events
         for (mac, ip) in &result.allocated_ips {
-            // TODO: eBPF upsert_ipv6_ip_mac(link_ifindex, *ip, *mac, mac_addr)
+            if let Err(e) =
+                landscape_ebpf::base::ip_mac::upsert_ipv6_ip_mac(link_ifindex, *ip, *mac, mac_addr)
+            {
+                tracing::warn!("failed to prewarm ip_mac_v6 for DHCPv6 {ip} -> {mac}: {e}");
+            }
             let _ = ipv6_assign_sender.try_send(IPv6AssignEvent::Allocated(IPv6AssignInfo {
                 iface_name: iface_name.to_string(),
                 mac: *mac,
@@ -241,12 +257,20 @@ pub async fn start_ipv6_lan_server(
     icmp_ad_interval: u32,
     ipv6_assign_sender: &IPv6AssignEventSender,
     share_status: Arc<Mutex<Ipv6ServerStatus>>,
+    prefix_groups: Vec<LanPrefixGroupConfig>,
+    prefix_map: IAPrefixMap,
+    mut prefix_change_rx: watch::Receiver<()>,
     params: Ipv6LanReplyParams,
-    dns_servers: Vec<std::net::Ipv6Addr>,
+    dns_servers: Vec<Ipv6Addr>,
     route_service: IpRouteService,
 ) -> LdResult<()> {
     let server_duid = gen_server_duid(&mac_addr);
 
+    // ── IPv6 forwarding ──
+    let ipv6_forwarding_path = format!("/proc/sys/net/ipv6/conf/{}/forwarding", iface_name);
+    let _ = std::fs::write(&ipv6_forwarding_path, "1");
+
+    // ── Link-local address ──
     let setting_result = crate::set_iface_ip_no_limit(
         &iface_name,
         std::net::IpAddr::V6(mac_addr.to_ipv6_link_local()),
@@ -274,19 +298,60 @@ pub async fn start_ipv6_lan_server(
     if link_ifindex == 0 {
         tracing::error!("can not find unicast_link_local");
         service_status.just_change_status(ServiceStatus::Failed);
+        let _ = std::fs::write(&ipv6_forwarding_path, "0");
         return Ok(());
     }
     tracing::info!("link_ifindex {:?}", link_ifindex);
 
-    let Ok((mut dhcp_recv, dhcp_sender)) = get_dhcpv6_connect(ifindex, &iface_name).await else {
-        tracing::error!("create dhcpv6 link error");
-        service_status.just_change_status(ServiceStatus::Failed);
-        return Ok(());
+    // ── Initial subnets: set interface IPs + routes ──
+    let initial_subnets = compute_subnets(&prefix_groups, &prefix_map);
+    {
+        let mut status = share_status.lock().await;
+        status.update_prefix(&initial_subnets);
+    }
+
+    // System I/O for subnets (outside lock)
+    for sn in &initial_subnets {
+        if !sn.has_router() {
+            continue;
+        }
+        set_iface_ip(sn.sub_router, sn.sub_prefix_len, &iface_name, None, None);
+        add_route(sn.sub_prefix, sn.sub_prefix_len, &iface_name, None);
+        let lan_info = LanRouteInfo {
+            ifindex: link_ifindex as u32,
+            iface_name: iface_name.clone(),
+            iface_ip: IpAddr::V6(sn.sub_router),
+            mac: Some(mac_addr),
+            prefix: sn.sub_prefix_len,
+            mode: LanRouteMode::Reachable,
+        };
+        let key = LanIPv6RouteKey {
+            iface_name: iface_name.clone(),
+            subnet_index: sn.sub_prefix.segments()[4] as u32,
+        };
+        route_service.insert_ipv6_lan_route(key, lan_info).await;
+    }
+
+    // ── DHCP connection (skipped for Slaac-only mode) ──
+    let has_dhcp = params.ra_flags & 0x80 != 0; // M flag
+    let (mut dhcp_recv, dhcp_sender) = if has_dhcp {
+        match get_dhcpv6_connect(ifindex, &iface_name).await {
+            Ok(v) => (Some(v.0), Some(v.1)),
+            Err(_) => {
+                tracing::error!("create dhcpv6 link error");
+                service_status.just_change_status(ServiceStatus::Failed);
+                let _ = std::fs::write(&ipv6_forwarding_path, "0");
+                return Ok(());
+            }
+        }
+    } else {
+        (None, None)
     };
 
     let Ok((mut icmp_recv, icmp_sender)) = get_icmp_connect(ifindex, &iface_name).await else {
         tracing::error!("create icmpv6 link error");
         service_status.just_change_status(ServiceStatus::Failed);
+        let _ = std::fs::write(&ipv6_forwarding_path, "0");
         return Ok(());
     };
 
@@ -310,23 +375,100 @@ pub async fn start_ipv6_lan_server(
                 if !handle_icmp_msg(
                     result, &iface_name, &service_status, &share_status,
                     &params, &mac_addr, icmp_ad_interval, &icmp_sender, ipv6_assign_sender,
+                    link_ifindex,
                 ).await {
                     break;
                 }
             },
-            result = dhcp_recv.recv() => {
-                if !handle_dhcp_msg(
-                    result, &iface_name, mac_addr, link_ifindex,
-                    &service_status, &share_status, &server_duid,
-                    &params, &dns_servers, &dhcp_sender, ipv6_assign_sender, &route_service,
-                ).await {
-                    break;
+            result = async {
+                match dhcp_recv.as_mut() {
+                    Some(rx) => rx.recv().await,
+                    None => std::future::pending().await,
+                }
+            } => {
+                if let Some(ref dhcp_sender) = dhcp_sender {
+                    if !handle_dhcp_msg(
+                        result, &iface_name, mac_addr, link_ifindex,
+                        &service_status, &share_status, &server_duid,
+                        &params, &dns_servers, dhcp_sender, ipv6_assign_sender, &route_service,
+                    ).await {
+                        break;
+                    }
                 }
             },
             _ = dhcp_expire_timer.tick() => {
                 handle_expire_tick(
                     &iface_name, &share_status, ipv6_assign_sender, &route_service,
                     params.ra_valid_lifetime as u64,
+                ).await;
+            },
+            result = prefix_change_rx.changed() => {
+                if result.is_err() {
+                    tracing::warn!("prefix_change sender dropped");
+                    continue;
+                }
+                let diff = {
+                    let mut status = share_status.lock().await;
+                    status.recompute_and_diff(&prefix_groups, &prefix_map)
+                };
+                // Send deprecation RA for removed prefixes before tearing down routes
+                if !diff.removed.is_empty() {
+                    let deprecation_ra = ra::build_deprecation_ra_from_subnets(
+                        &diff.removed,
+                        &mac_addr,
+                        params.ra_flags,
+                        params.ra_autonomous,
+                    );
+                    let dst = SocketAddr::new(IpAddr::V6(icmpv6::ICMPV6_MULTICAST), 0);
+                    let _ = icmpv6::send_msg(&icmp_sender, &deprecation_ra, dst).await;
+                }
+                // System I/O for removed subnets
+                for sn in &diff.removed {
+                    if !sn.has_router() {
+                        continue;
+                    }
+                    del_iface_ip(sn.sub_router, sn.sub_prefix_len, &iface_name);
+                    del_route(sn.sub_prefix, sn.sub_prefix_len, &iface_name);
+                    let key = LanIPv6RouteKey {
+                        iface_name: iface_name.clone(),
+                        subnet_index: sn.sub_prefix.segments()[4] as u32,
+                    };
+                    route_service.remove_ipv6_lan_route_by_key(&key).await;
+                }
+                // System I/O for added subnets
+                for sn in &diff.added {
+                    if !sn.has_router() {
+                        continue;
+                    }
+                    set_iface_ip(sn.sub_router, sn.sub_prefix_len, &iface_name, None, None);
+                    add_route(sn.sub_prefix, sn.sub_prefix_len, &iface_name, None);
+                    let lan_info = LanRouteInfo {
+                        ifindex: link_ifindex as u32,
+                        iface_name: iface_name.clone(),
+                        iface_ip: IpAddr::V6(sn.sub_router),
+                        mac: Some(mac_addr),
+                        prefix: sn.sub_prefix_len,
+                        mode: LanRouteMode::Reachable,
+                    };
+                    let key = LanIPv6RouteKey {
+                        iface_name: iface_name.clone(),
+                        subnet_index: sn.sub_prefix.segments()[4] as u32,
+                    };
+                    route_service.insert_ipv6_lan_route(key, lan_info).await;
+                }
+                // Reconcile PD routes after prefix change
+                let cleanups = {
+                    let mut status = share_status.lock().await;
+                    status.reconcile_pd_routes()
+                };
+                for cleanup in &cleanups {
+                    for (prefix, len) in &cleanup.routes {
+                        del_route(*prefix, *len, &iface_name);
+                    }
+                }
+                // Immediate RA after prefix change
+                handle_ra_tick(
+                    &share_status, &params, &mac_addr, icmp_ad_interval, &icmp_sender,
                 ).await;
             },
             result = service_status_subscribe.changed() => {
@@ -345,7 +487,30 @@ pub async fn start_ipv6_lan_server(
         }
     }
 
-    // Clean up all remaining PD routes on exit
+    // ── Deprecation RA ──
+    {
+        let status = share_status.lock().await;
+        let deprecation_ra = icmpv6::build_deprecation_ra(&status, &mac_addr, params.ra_flags);
+        let dst = SocketAddr::new(IpAddr::V6(icmpv6::ICMPV6_MULTICAST), 0);
+        let _ = icmpv6::send_msg(&icmp_sender, &deprecation_ra, dst).await;
+    }
+
+    // ── Clean up ──
+    let _ = std::fs::write(&ipv6_forwarding_path, "0");
+
+    // Clean all subnet IPs and routes
+    let current_subnets = {
+        let status = share_status.lock().await;
+        status.cached_subnets.clone()
+    };
+    for sn in &current_subnets {
+        if sn.has_router() {
+            del_iface_ip(sn.sub_router, sn.sub_prefix_len, &iface_name);
+            del_route(sn.sub_prefix, sn.sub_prefix_len, &iface_name);
+        }
+    }
+
+    // Clean PD delegate routes
     let all_routes = {
         let mut status = share_status.lock().await;
         status.drain_all_pd_routes()
