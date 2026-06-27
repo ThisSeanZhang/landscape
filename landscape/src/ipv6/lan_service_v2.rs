@@ -67,6 +67,8 @@ impl ServiceStarterTrait for LanIPv6Service {
     async fn start(&self, config: LanIPv6ServiceConfigV2) -> WatchService {
         let service_status = WatchService::new();
         if config.enable {
+            service_status.just_change_status(ServiceStatus::Staring);
+
             let iface = match get_iface_by_name(&config.iface_name).await {
                 Some(i) => i,
                 None => {

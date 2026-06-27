@@ -415,8 +415,8 @@ pub async fn start_ipv6_lan_server(
             },
             result = prefix_change_rx.changed() => {
                 if result.is_err() {
-                    tracing::warn!("prefix_change sender dropped");
-                    continue;
+                    tracing::warn!("prefix_change sender dropped, exiting loop");
+                    break;
                 }
                 let diff = {
                     let mut status = share_status.lock().await;

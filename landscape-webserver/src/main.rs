@@ -36,7 +36,7 @@ use landscape::{
         pppd_service::PPPDServiceConfigManagerService,
         static_nat_mapping_service::StaticNatMappingService, IfaceManagerService,
     },
-    ipv6::{ipv6pd_service::DHCPv6ClientManagerService, lan_service::LanIPv6ManagerService},
+    ipv6::{ipv6pd_service::DHCPv6ClientManagerService, lan_service_v2::LanIPv6ManagerService},
     metric::MetricService,
     route::{
         lan_service::RouteLanServiceManagerService, wan_service::RouteWanServiceManagerService,
@@ -322,9 +322,9 @@ async fn run_system(
         db_store_provider.clone(),
         event_handle.subscribe_iface(),
         event_handle.subscribe_device(),
+        event_handle.subscribe_ipv6_prefix(),
         route_service.clone(),
         prefix_map.clone(),
-        event_handle.ipv6_prefix_broadcast_tx(),
         ipv6_assign_sender.clone(),
     )
     .await;
