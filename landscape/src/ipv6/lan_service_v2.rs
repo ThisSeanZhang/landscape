@@ -1,4 +1,4 @@
-use landscape_common::client::CallerLookupMatch;
+use landscape_common::client::{CallerLookupMatch, CallerLookupSource};
 use landscape_common::database::LandscapeStore as LandscapeDBStore;
 use landscape_common::dhcp::v6_server::status::DHCPv6OfferInfo;
 use landscape_common::event::hub::{
@@ -13,17 +13,20 @@ use landscape_common::observer::IfaceObserverAction;
 use landscape_common::service::controller::ControllerService;
 use landscape_common::service::manager::ServiceManager;
 use landscape_common::service::manager::ServiceStarterTrait;
-use landscape_common::service::WatchService;
+use landscape_common::service::{ServiceStatus, WatchService};
 use landscape_database::enrolled_device::repository::EnrolledDeviceRepository;
 use landscape_database::lan_ipv6_v2::repository::LanIPv6V2ServiceRepository;
 use landscape_database::provider::LandscapeDBServiceProvider;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::net::Ipv6Addr;
 use std::sync::Arc;
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::Mutex;
 use uuid::Uuid;
 
-use crate::dhcp_server::v6_v2::Ipv6ServerStatus;
+use crate::dhcp_server::v6_v2::{
+    server::start_ipv6_lan_server, AddrSource, Ipv6LanReplyParams, Ipv6ServerStatus,
+};
+use crate::iface::get_iface_by_name;
 use crate::route::IpRouteService;
 use dashmap::DashMap;
 
@@ -62,6 +65,24 @@ impl ServiceStarterTrait for LanIPv6Service {
     async fn start(&self, config: LanIPv6ServiceConfigV2) -> WatchService {
         let service_status = WatchService::new();
         if config.enable {
+            let iface = match get_iface_by_name(&config.iface_name).await {
+                Some(i) => i,
+                None => {
+                    tracing::error!("interface {} not found", config.iface_name);
+                    service_status.just_change_status(ServiceStatus::Failed);
+                    return service_status;
+                }
+            };
+
+            let mac_addr = match iface.mac {
+                Some(m) => m,
+                None => {
+                    tracing::error!("no MAC address for interface {}", config.iface_name);
+                    service_status.just_change_status(ServiceStatus::Failed);
+                    return service_status;
+                }
+            };
+
             let na_config = config.config.dhcpv6.as_ref().and_then(|d| d.ia_na.clone());
             let pd_config = config.config.dhcpv6.as_ref().and_then(|d| d.ia_pd.clone());
             let devices = self
@@ -70,11 +91,64 @@ impl ServiceStarterTrait for LanIPv6Service {
                 .await
                 .unwrap_or_default();
 
-            let status = Arc::new(Mutex::new(Ipv6ServerStatus::new(na_config, pd_config, devices)));
+            let status = Arc::new(Mutex::new(Ipv6ServerStatus::new(
+                na_config.clone(),
+                pd_config.clone(),
+                devices,
+            )));
             {
                 let mut s = status.lock().await;
                 s.update_prefix(&config.config.prefix_groups, &self.prefix_map);
             }
+
+            let na_lifetimes = na_config
+                .as_ref()
+                .map(|c| (c.preferred_lifetime, c.valid_lifetime))
+                .unwrap_or((300, 600));
+            let pd_lifetimes = pd_config
+                .as_ref()
+                .map(|c| (c.preferred_lifetime, c.valid_lifetime))
+                .unwrap_or((300, 600));
+            let ra_lifetimes = config
+                .config
+                .prefix_groups
+                .iter()
+                .find_map(|g| g.ra.as_ref())
+                .map(|ra| (ra.preferred_lifetime, ra.valid_lifetime))
+                .unwrap_or((300, 600));
+            let ra_flags: u8 = config.config.ra_flag.into();
+
+            let params = Ipv6LanReplyParams {
+                na_preferred_lifetime: na_lifetimes.0,
+                na_valid_lifetime: na_lifetimes.1,
+                pd_preferred_lifetime: pd_lifetimes.0,
+                pd_valid_lifetime: pd_lifetimes.1,
+                ra_preferred_lifetime: ra_lifetimes.0,
+                ra_valid_lifetime: ra_lifetimes.1,
+                ra_flags,
+            };
+
+            let dns_servers: Vec<std::net::Ipv6Addr> = Vec::new();
+
+            let store_key = config.iface_name.clone();
+            self.status_map.insert(store_key, status.clone());
+
+            let svc_status = service_status.clone();
+            let ipv6_assign_sender = self.ipv6_assign_sender.clone();
+            tokio::spawn(async move {
+                let _ = start_ipv6_lan_server(
+                    iface.index,
+                    config.iface_name.clone(),
+                    mac_addr,
+                    svc_status,
+                    config.config.ad_interval,
+                    &ipv6_assign_sender,
+                    status,
+                    params,
+                    dns_servers,
+                )
+                .await;
+            });
         }
 
         service_status
@@ -147,6 +221,7 @@ impl LanIPv6ManagerService {
         });
 
         let status_map = server_starter.status_map.clone();
+        let device_id_map = server_starter.device_id_map.clone();
         let store_for_prefix = store_service.lan_ipv6_v2_service_store();
         let prefix_map_for_loop = prefix_map.clone();
         tokio::spawn(async move {
@@ -156,12 +231,14 @@ impl LanIPv6ManagerService {
                         if let Ok(IAPrefixEvent::Updated { iface_name }) = msg {
                             // TODO: build WAN iface → LAN iface dependency index
                             // Currently refreshes prefix_state for all started LAN services
-                            for entry in status_map.iter() {
-                                let lan_iface = entry.key().clone();
+                            let entries: Vec<_> = status_map
+                                .iter()
+                                .map(|e| (e.key().clone(), e.value().clone()))
+                                .collect();
+                            for (lan_iface, status) in entries {
                                 if let Ok(Some(cfg)) =
                                     store_for_prefix.find_by_id(lan_iface).await
                                 {
-                                    let status = entry.value();
                                     let mut s = status.lock().await;
                                     s.update_prefix(
                                         &cfg.config.prefix_groups,
@@ -173,10 +250,54 @@ impl LanIPv6ManagerService {
                         }
                     },
                     msg = device_reader.recv() => {
-                        // using msg
-                        // TODO get lock
-                        // status.upate_device();
-                        let _ = msg;
+                        let event = match msg {
+                            Ok(e) => e,
+                            Err(_) => break,
+                        };
+                        match &event {
+                            EnrolledDeviceEvent::Updated { old, new } => {
+                                if let Some(d) = old.as_ref() {
+                                    if d.mac != new.mac || new.ipv6.is_none() {
+                                        device_id_map.remove(&d.mac);
+                                    }
+                                }
+                                if new.ipv6.is_some() {
+                                    device_id_map.insert(new.mac, new.id);
+                                }
+                                let new_iface = new.iface_name.as_deref();
+                                let old_iface = old.as_ref().and_then(|d| d.iface_name.as_deref());
+                                let global = new_iface.is_none() && old_iface.is_none();
+                                let entries: Vec<_> = status_map
+                                    .iter()
+                                    .map(|e| (e.key().clone(), e.value().clone()))
+                                    .collect();
+                                for (name, status) in entries {
+                                    if !global && Some(name.as_str()) != new_iface && Some(name.as_str()) != old_iface {
+                                        continue;
+                                    }
+                                    let mut s = status.lock().await;
+                                    if let Some(d) = old.as_ref() {
+                                        s.update_device_binding(d.mac, None);
+                                    }
+                                    s.update_device_binding(new.mac, new.ipv6);
+                                }
+                            }
+                            EnrolledDeviceEvent::Deleted { old } => {
+                                device_id_map.remove(&old.mac);
+                                let global = old.iface_name.is_none();
+                                let entries: Vec<_> = status_map
+                                    .iter()
+                                    .map(|e| (e.key().clone(), e.value().clone()))
+                                    .collect();
+                                for (name, status) in entries {
+                                    if !global && old.iface_name.as_deref() != Some(name.as_str()) {
+                                        continue;
+                                    }
+                                    let mut s = status.lock().await;
+                                    s.update_device_binding(old.mac, None);
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -194,15 +315,23 @@ impl LanIPv6ManagerService {
     }
 
     pub async fn get_assigned_ips_by_iface_name(&self, iface_name: String) -> Option<IPv6NAInfo> {
-        // TODO
-        None
+        let status = self.server_starter.status_map.get(&iface_name)?.value().clone();
+        let lock = status.lock().await;
+        Some(lock.to_ipv6_na_info())
     }
 
     pub async fn get_assigned_ips(&self) -> HashMap<String, IPv6NAInfo> {
-        let result = HashMap::new();
-
-        // TODO
-
+        let statuses: Vec<(String, _)> = self
+            .server_starter
+            .status_map
+            .iter()
+            .map(|e| (e.key().clone(), e.value().clone()))
+            .collect();
+        let mut result = HashMap::new();
+        for (iface, status) in statuses {
+            let lock = status.lock().await;
+            result.insert(iface, lock.to_ipv6_na_info());
+        }
         result
     }
 
@@ -210,33 +339,65 @@ impl LanIPv6ManagerService {
         &self,
         iface_name: String,
     ) -> Option<DHCPv6OfferInfo> {
-        // TODO
-        None
+        let status = self.server_starter.status_map.get(&iface_name)?.value().clone();
+        let lock = status.lock().await;
+        Some(lock.to_dhcpv6_offer_info())
     }
 
     pub async fn get_dhcpv6_assigned(&self) -> HashMap<String, DHCPv6OfferInfo> {
-        let result = HashMap::new();
-        // TODO
+        let statuses: Vec<(String, _)> = self
+            .server_starter
+            .status_map
+            .iter()
+            .map(|e| (e.key().clone(), e.value().clone()))
+            .collect();
+        let mut result = HashMap::new();
+        for (iface, status) in statuses {
+            let lock = status.lock().await;
+            result.insert(iface, lock.to_dhcpv6_offer_info());
+        }
         result
     }
 
     pub async fn resolve_client_match_by_ipv6(&self, ip: Ipv6Addr) -> Option<CallerLookupMatch> {
-        // TODO
-
+        let statuses: Vec<(String, _)> = self
+            .server_starter
+            .status_map
+            .iter()
+            .map(|e| (e.key().clone(), e.value().clone()))
+            .collect();
+        for (iface_name, status) in statuses {
+            let lock = status.lock().await;
+            if let Some(addr) = lock.lookup_by_ip(ip) {
+                return Some(CallerLookupMatch {
+                    iface_name,
+                    mac: addr.mac,
+                    hostname: addr.hostname,
+                    source: match addr.source {
+                        AddrSource::Slaac => CallerLookupSource::Ipv6Ra,
+                        AddrSource::Dhcpv6Na => CallerLookupSource::DhcpV6,
+                    },
+                });
+            }
+        }
         None
     }
 
     pub async fn get_device_ipv6_map(&self) -> HashMap<Uuid, Ipv6Addr> {
-        let result = HashMap::new();
-
-        // TODO
-
+        let device_ids: Vec<(MacAddr, Uuid)> =
+            self.server_starter.device_id_map.iter().map(|e| (*e.key(), *e.value())).collect();
+        let statuses: Vec<_> =
+            self.server_starter.status_map.iter().map(|e| e.value().clone()).collect();
+        let mut result = HashMap::new();
+        for (mac, dev_id) in &device_ids {
+            for status_arc in &statuses {
+                let lock = status_arc.lock().await;
+                if let Some(ip) = lock.lookup_ip_by_mac(mac) {
+                    result.insert(*dev_id, ip);
+                    break;
+                }
+            }
+        }
         result
     }
-}
-
-fn extract_binding_ifaces_v6(_event: &EnrolledDeviceEvent) -> HashSet<String> {
-    let set = HashSet::new();
-    // TODO
-    set
 }
