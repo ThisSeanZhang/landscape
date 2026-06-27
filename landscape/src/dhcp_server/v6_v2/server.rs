@@ -2,7 +2,7 @@ use std::{sync::Arc, time::Duration};
 
 use landscape_common::{
     error::LdResult,
-    event::hub::IPv6AssignEventSender,
+    event::hub::{IPv6AssignEvent, IPv6AssignEventSender, IPv6AssignInfo},
     net::MacAddr,
     service::{ServiceStatus, WatchService},
 };
@@ -12,7 +12,7 @@ use crate::{
     addresses_by_iface_name,
     dhcp_server::v6_v2::{
         connection::{get_dhcpv6_connect, get_icmp_connect},
-        Ipv6ServerStatus,
+        dhcpv6, Ipv6LanReplyParams, Ipv6ServerStatus,
     },
 };
 
@@ -26,7 +26,11 @@ pub async fn start_ipv6_lan_server(
     icmp_ad_interval: u32,
     ipv6_assign_sender: &IPv6AssignEventSender,
     share_status: Arc<Mutex<Ipv6ServerStatus>>,
+    params: Ipv6LanReplyParams,
+    dns_servers: Vec<std::net::Ipv6Addr>,
 ) -> LdResult<()> {
+    let server_duid = gen_server_duid(&mac_addr);
+
     let setting_result = crate::set_iface_ip_no_limit(
         &iface_name,
         std::net::IpAddr::V6(mac_addr.to_ipv6_link_local()),
@@ -68,7 +72,7 @@ pub async fn start_ipv6_lan_server(
         return Ok(());
     };
 
-    let Ok((mut icmp_recv, icmp_sender)) = get_icmp_connect(ifindex, &iface_name).await else {
+    let Ok((mut icmp_recv, _icmp_sender)) = get_icmp_connect(ifindex, &iface_name).await else {
         tracing::error!("create icmpv6 link error");
         service_status.just_change_status(ServiceStatus::Failed);
         return Ok(());
@@ -87,26 +91,88 @@ pub async fn start_ipv6_lan_server(
     loop {
         tokio::select! {
             _ = icmp_ra_interval.tick() => {
-                // SEND ICMP RA PACKET
+                // TODO: SEND ICMP RA PACKET (icmpv6 module)
             },
             icmp_recv_result = icmp_recv.recv() => {
                 match icmp_recv_result {
                     Some(_data) => {
-                        // handle_rs_msg
+                        // TODO: handle_rs_msg (icmpv6 module)
                     }
                     None => break
                 }
             },
             dhcp_recv_result = dhcp_recv.recv() => {
                 match dhcp_recv_result {
-                    Some(_data) => {
-                        // handle dhcp msg
+                    Some((msg_bytes, msg_addr)) => {
+                        let mut status = share_status.lock().await;
+                        let result = dhcpv6::process_dhcpv6_msg(
+                            &mut status,
+                            &msg_bytes,
+                            msg_addr,
+                            &server_duid,
+                            &params,
+                            &dns_servers,
+                        );
+
+                        // Send reply
+                        if let Some(reply) = result.reply_bytes {
+                            let _ = dhcp_sender.send_to(&reply, result.reply_dst).await;
+                        }
+
+                        // Emit allocation events
+                        for (mac, ip) in &result.allocated_ips {
+                            // TODO: eBPF upsert_ipv6_ip_mac(link_ifindex, *ip, *mac, mac_addr)
+                            let _ = ipv6_assign_sender.try_send(
+                                IPv6AssignEvent::Allocated(IPv6AssignInfo {
+                                    iface_name: iface_name.clone(),
+                                    mac: *mac,
+                                    ip: *ip,
+                                    device_id: None,
+                                }),
+                            );
+                        }
+
+                        // Emit expiry events
+                        for (mac, ip) in &result.expired_ips {
+                            let _ = ipv6_assign_sender.try_send(
+                                IPv6AssignEvent::Expired(IPv6AssignInfo {
+                                    iface_name: iface_name.clone(),
+                                    mac: *mac,
+                                    ip: *ip,
+                                    device_id: None,
+                                }),
+                            );
+                        }
+
+                        // TODO: PD route management
+                        for _change in &result.pd_route_changes {
+                            // add_route_via / del_route / route_service
+                        }
                     }
                     None => break
                 }
             },
             _ = dhcp_expire_timer.tick() => {
-                // check expire
+                let mut status = share_status.lock().await;
+                let expired_na = status.clean_expired_na();
+                for na in &expired_na {
+                    if let Some(mac) = na.mac {
+                        let _ = ipv6_assign_sender.try_send(
+                            IPv6AssignEvent::Expired(IPv6AssignInfo {
+                                iface_name: iface_name.clone(),
+                                mac,
+                                ip: na.ip,
+                                device_id: None,
+                            }),
+                        );
+                    }
+                }
+
+                let expired_pd = status.clean_expired_pd();
+                for pd in &expired_pd {
+                    // TODO: cleanup PD routes
+                    let _ = (pd.prefix, pd.prefix_len, &pd.active_routes);
+                }
             },
             change_result = service_status_subscribe.changed() => {
                 tracing::debug!("LAN v6 Service change");
@@ -124,4 +190,12 @@ pub async fn start_ipv6_lan_server(
         }
     }
     return Ok(());
+}
+
+fn gen_server_duid(mac: &MacAddr) -> Vec<u8> {
+    let mut duid = Vec::with_capacity(10);
+    duid.extend_from_slice(&[0x00, 0x03]);
+    duid.extend_from_slice(&[0x00, 0x01]);
+    duid.extend_from_slice(&mac.octets());
+    duid
 }

@@ -118,6 +118,7 @@ pub struct PdRouteCleanup {
 #[derive(Debug, Clone)]
 pub struct ExpiredNa {
     pub ip: Ipv6Addr,
+    pub suffix: u64,
     pub mac: Option<MacAddr>,
     pub duid_hex: String,
 }
@@ -126,6 +127,7 @@ pub struct ExpiredNa {
 pub struct ExpiredPd {
     pub prefix: Ipv6Addr,
     pub prefix_len: u8,
+    pub sub_index: u32,
     pub duid_hex: String,
     pub active_routes: Vec<(Ipv6Addr, u8)>,
 }
@@ -261,6 +263,18 @@ impl PrefixState {
     }
 }
 
+// ── Reply params (pre-computed once per server start) ──────────────────────
+
+#[derive(Debug, Clone)]
+pub struct Ipv6LanReplyParams {
+    pub na_preferred_lifetime: u32,
+    pub na_valid_lifetime: u32,
+    pub pd_preferred_lifetime: u32,
+    pub pd_valid_lifetime: u32,
+    pub ra_preferred_lifetime: u32,
+    pub ra_valid_lifetime: u32,
+}
+
 // ── Ipv6ServerStatus ───────────────────────────────────────────────────────
 
 pub struct Ipv6ServerStatus {
@@ -353,6 +367,10 @@ impl Ipv6ServerStatus {
 
     pub fn resolve_pd_prefix(&self, key: &PdSlotKey) -> Option<(Ipv6Addr, u8)> {
         pd::resolve_pd_prefix(&self.prefix_state.pd_ranges, key)
+    }
+
+    pub(crate) fn pd_lease_sub_index(&self, duid: &[u8]) -> Option<u32> {
+        self.pd_leases_by_duid.get(duid).map(|l| l.sub_index)
     }
 
     // ── helpers ────────────────────────────────────────────────────────────
@@ -776,6 +794,7 @@ impl Ipv6ServerStatus {
         Some(ExpiredPd {
             prefix,
             prefix_len,
+            sub_index: lease.sub_index,
             duid_hex: lease.duid_hex,
             active_routes: lease.active_routes,
         })
@@ -1090,7 +1109,7 @@ impl Ipv6ServerStatus {
     // ── private helpers ────────────────────────────────────────────────────
 
     /// Convert suffix → list of full addresses (one per qualifying prefix).
-    fn suffix_to_addrs(&self, suffix: u64) -> Vec<Ipv6Addr> {
+    pub(crate) fn suffix_to_addrs(&self, suffix: u64) -> Vec<Ipv6Addr> {
         self.qualifying_na_prefixes()
             .iter()
             .map(|(prefix, prefix_len)| combine_prefix_suffix(*prefix, *prefix_len, suffix))
@@ -1142,6 +1161,7 @@ impl Ipv6ServerStatus {
             lease.clone(),
             ExpiredNa {
                 ip: first_ip,
+                suffix: lease.suffix,
                 mac: lease.mac,
                 duid_hex: lease.duid_hex,
             },
