@@ -62,10 +62,18 @@ impl ServiceStarterTrait for LanIPv6Service {
     async fn start(&self, config: LanIPv6ServiceConfigV2) -> WatchService {
         let service_status = WatchService::new();
         if config.enable {
-            let status = Arc::new(Mutex::new(Ipv6ServerStatus::new()));
+            let na_config = config.config.dhcpv6.as_ref().and_then(|d| d.ia_na.clone());
+            let pd_config = config.config.dhcpv6.as_ref().and_then(|d| d.ia_pd.clone());
+            let devices = self
+                .enrolled_device_store
+                .find_ipv6_bindings(config.iface_name.clone())
+                .await
+                .unwrap_or_default();
+
+            let status = Arc::new(Mutex::new(Ipv6ServerStatus::new(na_config, pd_config, devices)));
             {
                 let mut s = status.lock().await;
-                s.upate_prefix(&config.config.prefix_groups, &self.prefix_map);
+                s.update_prefix(&config.config.prefix_groups, &self.prefix_map);
             }
         }
 
@@ -155,7 +163,7 @@ impl LanIPv6ManagerService {
                                 {
                                     let status = entry.value();
                                     let mut s = status.lock().await;
-                                    s.upate_prefix(
+                                    s.update_prefix(
                                         &cfg.config.prefix_groups,
                                         &prefix_map_for_loop,
                                     );
