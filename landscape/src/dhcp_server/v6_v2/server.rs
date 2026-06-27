@@ -337,7 +337,7 @@ pub async fn start_ipv6_lan_server(
         };
         let key = LanIPv6RouteKey {
             iface_name: iface_name.clone(),
-            subnet_index: sn.sub_prefix.segments()[4] as u32,
+            subnet_index: sn.pool_index,
         };
         route_service.insert_ipv6_lan_route(key, lan_info).await;
     }
@@ -442,7 +442,7 @@ pub async fn start_ipv6_lan_server(
                     del_route(sn.sub_prefix, sn.sub_prefix_len, &iface_name);
                     let key = LanIPv6RouteKey {
                         iface_name: iface_name.clone(),
-                        subnet_index: sn.sub_prefix.segments()[4] as u32,
+                        subnet_index: sn.pool_index,
                     };
                     route_service.remove_ipv6_lan_route_by_key(&key).await;
                 }
@@ -463,7 +463,7 @@ pub async fn start_ipv6_lan_server(
                     };
                     let key = LanIPv6RouteKey {
                         iface_name: iface_name.clone(),
-                        subnet_index: sn.sub_prefix.segments()[4] as u32,
+                        subnet_index: sn.pool_index,
                     };
                     route_service.insert_ipv6_lan_route(key, lan_info).await;
                 }
@@ -475,6 +475,11 @@ pub async fn start_ipv6_lan_server(
                 for cleanup in &cleanups {
                     for (prefix, len) in &cleanup.routes {
                         del_route(*prefix, *len, &iface_name);
+                        let key = LanIPv6RouteKey {
+                            iface_name: iface_name.clone(),
+                            subnet_index: pd_route_key_index(cleanup.sub_index, prefix),
+                        };
+                        route_service.remove_ipv6_lan_route_by_key(&key).await;
                     }
                 }
                 // Immediate RA after prefix change
