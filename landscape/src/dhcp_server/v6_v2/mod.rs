@@ -392,8 +392,6 @@ impl Ipv6ServerStatus {
         self.slaac_entries.keys().any(|&ip| ipv6_suffix(ip) == suffix)
     }
 
-    // ── helpers ────────────────────────────────────────────────────────────
-
     /// Prefixes eligible for NA address allocation (filtered by max_prefix_len).
     fn qualifying_na_prefixes(&self) -> Vec<(Ipv6Addr, u8)> {
         match &self.na_config {
@@ -892,7 +890,16 @@ impl Ipv6ServerStatus {
         cleanups
     }
 
-    // ── SLAAC address tracking ─────────────────────────────────────────────
+    pub fn drain_all_pd_routes(&mut self) -> Vec<(Ipv6Addr, u8)> {
+        let duids: Vec<Vec<u8>> = self.pd_leases_by_duid.keys().cloned().collect();
+        let mut routes = Vec::new();
+        for duid in duids {
+            if let Some(expired) = self.release_pd(&duid) {
+                routes.extend(expired.active_routes);
+            }
+        }
+        routes
+    }
 
     pub fn record_slaac_addr(&mut self, mac: MacAddr, ip: Ipv6Addr) -> SlaacResult {
         let suffix = ipv6_suffix(ip);
@@ -917,8 +924,6 @@ impl Ipv6ServerStatus {
         });
         expired
     }
-
-    // ── queries & views ────────────────────────────────────────────────────
 
     /// Unified view of all assigned addresses (SLAAC + DHCPv6 NA).
     pub fn all_addresses(&self) -> Vec<AssignedAddr> {
@@ -1063,8 +1068,6 @@ impl Ipv6ServerStatus {
         None
     }
 
-    // ── backward-compatible views ──────────────────────────────────────────
-
     pub fn to_ipv6_na_info(&self) -> IPv6NAInfo {
         IPv6NAInfo {
             boot_time: self.boot_time_f64,
@@ -1130,8 +1133,6 @@ impl Ipv6ServerStatus {
             delegated_prefixes,
         }
     }
-
-    // ── private helpers ────────────────────────────────────────────────────
 
     /// Convert suffix → list of full addresses (one per qualifying prefix).
     pub(crate) fn suffix_to_addrs(&self, suffix: u64) -> Vec<Ipv6Addr> {
@@ -1306,8 +1307,6 @@ impl Ipv6ServerStatus {
         )
     }
 }
-
-// ── Utility functions ──────────────────────────────────────────────────────
 
 const OFFER_VALID_TIME: u32 = 120;
 

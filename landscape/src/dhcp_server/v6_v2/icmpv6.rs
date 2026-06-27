@@ -15,8 +15,6 @@ pub static ICMPV6_MULTICAST: Ipv6Addr = Ipv6Addr::new(0xff02, 0, 0, 0, 0, 0, 0, 
 // reply with solicited NA for DAD defense. NeighborSolicitation is currently
 // Unassigned in Icmpv6Message; needs a variant in landscape-common.
 
-// ── Message parsing ──────────────────────────────────────────────────────────
-
 pub fn parse(bytes: &[u8]) -> Option<Icmpv6Message> {
     let mut buf = BytesMut::from(bytes);
     match Icmpv6Message::decode(&mut buf) {
@@ -28,8 +26,6 @@ pub fn parse(bytes: &[u8]) -> Option<Icmpv6Message> {
         }
     }
 }
-
-// ── RA construction ──────────────────────────────────────────────────────────
 
 pub fn build_ra(
     status: &Ipv6ServerStatus,
@@ -84,8 +80,6 @@ fn onlink_only_prefixes(status: &Ipv6ServerStatus) -> Vec<(Ipv6Addr, u8)> {
         .collect()
 }
 
-// ── NA handling ──────────────────────────────────────────────────────────────
-
 pub enum SlaacActionResult {
     None,
     Allocated { mac: MacAddr, ip: Ipv6Addr },
@@ -116,8 +110,6 @@ pub fn handle_na(data: &[u8], status: &mut Ipv6ServerStatus) -> SlaacActionResul
         }
     }
 }
-
-// ── Send ─────────────────────────────────────────────────────────────────────
 
 pub async fn send_msg(sender: &Arc<UdpSocket>, msg: &Icmpv6Message, dst: SocketAddr) -> bool {
     let mut buf = BytesMut::new();

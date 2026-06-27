@@ -135,6 +135,7 @@ impl ServiceStarterTrait for LanIPv6Service {
 
             let svc_status = service_status.clone();
             let ipv6_assign_sender = self.ipv6_assign_sender.clone();
+            let route_service = self.route_service.clone();
             tokio::spawn(async move {
                 let _ = start_ipv6_lan_server(
                     iface.index,
@@ -146,6 +147,7 @@ impl ServiceStarterTrait for LanIPv6Service {
                     status,
                     params,
                     dns_servers,
+                    route_service,
                 )
                 .await;
             });
