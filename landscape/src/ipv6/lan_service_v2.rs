@@ -185,6 +185,7 @@ impl ServiceStarterTrait for LanIPv6Service {
             let route_service = self.route_service.clone();
             let prefix_groups = config.config.prefix_groups.clone();
             let prefix_map = self.prefix_map.clone();
+            let device_id_map = self.device_id_map.clone();
             tokio::spawn(async move {
                 let _ = start_ipv6_lan_server(
                     iface.index,
@@ -200,6 +201,7 @@ impl ServiceStarterTrait for LanIPv6Service {
                     params,
                     dns_servers,
                     route_service,
+                    device_id_map,
                 )
                 .await;
             });

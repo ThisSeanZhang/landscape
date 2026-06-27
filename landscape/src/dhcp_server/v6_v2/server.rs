@@ -27,6 +27,8 @@ use crate::{
     ipv6::prefix::{add_route, add_route_via, del_iface_ip, del_route, set_iface_ip},
     route::IpRouteService,
 };
+use dashmap::DashMap;
+use uuid::Uuid;
 
 const LEASE_EXPIRE_INTERVAL: u64 = 60 * 10;
 
@@ -56,6 +58,7 @@ async fn handle_icmp_msg(
     icmp_sender: &Arc<UdpSocket>,
     ipv6_assign_sender: &IPv6AssignEventSender,
     link_ifindex: u32,
+    device_id_map: &DashMap<MacAddr, Uuid>,
 ) -> bool {
     let Some((data, src_addr)) = result else {
         tracing::error!("ICMPv6 recv channel closed on {iface_name}");
@@ -83,11 +86,12 @@ async fn handle_icmp_msg(
                 ) {
                     tracing::warn!("failed to prewarm ip_mac_v6 for ND {ip} -> {mac}: {e}");
                 }
+                let device_id = device_id_map.get(&mac).map(|r| *r.value());
                 let _ = ipv6_assign_sender.try_send(IPv6AssignEvent::Allocated(IPv6AssignInfo {
                     iface_name: iface_name.to_string(),
                     mac,
                     ip,
-                    device_id: None,
+                    device_id,
                 }));
             }
         }
@@ -112,6 +116,7 @@ async fn handle_dhcp_msg(
     dhcp_sender: &Arc<UdpSocket>,
     ipv6_assign_sender: &IPv6AssignEventSender,
     route_service: &IpRouteService,
+    device_id_map: &DashMap<MacAddr, Uuid>,
 ) -> bool {
     let Some((msg_bytes, msg_addr)) = result else {
         tracing::error!("DHCPv6 recv channel closed on {iface_name}");
@@ -147,21 +152,23 @@ async fn handle_dhcp_msg(
             {
                 tracing::warn!("failed to prewarm ip_mac_v6 for DHCPv6 {ip} -> {mac}: {e}");
             }
+            let device_id = device_id_map.get(mac).map(|r| *r.value());
             let _ = ipv6_assign_sender.try_send(IPv6AssignEvent::Allocated(IPv6AssignInfo {
                 iface_name: iface_name.to_string(),
                 mac: *mac,
                 ip: *ip,
-                device_id: None,
+                device_id,
             }));
         }
 
         // Emit expiry events
         for (mac, ip) in &result.expired_ips {
+            let device_id = device_id_map.get(mac).map(|r| *r.value());
             let _ = ipv6_assign_sender.try_send(IPv6AssignEvent::Expired(IPv6AssignInfo {
                 iface_name: iface_name.to_string(),
                 mac: *mac,
                 ip: *ip,
-                device_id: None,
+                device_id,
             }));
         }
 
@@ -205,6 +212,7 @@ async fn handle_expire_tick(
     ipv6_assign_sender: &IPv6AssignEventSender,
     route_service: &IpRouteService,
     slaac_threshold_secs: u64,
+    device_id_map: &DashMap<MacAddr, Uuid>,
 ) {
     let pd_cleanups = {
         let mut status = share_status.lock().await;
@@ -212,11 +220,12 @@ async fn handle_expire_tick(
         let expired_na = status.clean_expired_na();
         for na in &expired_na {
             if let Some(mac) = na.mac {
+                let device_id = device_id_map.get(&mac).map(|r| *r.value());
                 let _ = ipv6_assign_sender.try_send(IPv6AssignEvent::Expired(IPv6AssignInfo {
                     iface_name: iface_name.to_string(),
                     mac,
                     ip: na.ip,
-                    device_id: None,
+                    device_id,
                 }));
             }
         }
@@ -225,11 +234,12 @@ async fn handle_expire_tick(
 
         let expired_slaac = status.clean_expired_slaac(slaac_threshold_secs);
         for (ip, mac) in &expired_slaac {
+            let device_id = device_id_map.get(mac).map(|r| *r.value());
             let _ = ipv6_assign_sender.try_send(IPv6AssignEvent::Expired(IPv6AssignInfo {
                 iface_name: iface_name.to_string(),
                 mac: *mac,
                 ip: *ip,
-                device_id: None,
+                device_id,
             }));
         }
 
@@ -263,6 +273,7 @@ pub async fn start_ipv6_lan_server(
     params: Ipv6LanReplyParams,
     dns_servers: Vec<Ipv6Addr>,
     route_service: IpRouteService,
+    device_id_map: Arc<DashMap<MacAddr, Uuid>>,
 ) -> LdResult<()> {
     let server_duid = gen_server_duid(&mac_addr);
 
@@ -375,7 +386,7 @@ pub async fn start_ipv6_lan_server(
                 if !handle_icmp_msg(
                     result, &iface_name, &service_status, &share_status,
                     &params, &mac_addr, icmp_ad_interval, &icmp_sender, ipv6_assign_sender,
-                    link_ifindex,
+                    link_ifindex, &device_id_map,
                 ).await {
                     break;
                 }
@@ -391,6 +402,7 @@ pub async fn start_ipv6_lan_server(
                         result, &iface_name, mac_addr, link_ifindex,
                         &service_status, &share_status, &server_duid,
                         &params, &dns_servers, dhcp_sender, ipv6_assign_sender, &route_service,
+                        &device_id_map,
                     ).await {
                         break;
                     }
@@ -399,7 +411,7 @@ pub async fn start_ipv6_lan_server(
             _ = dhcp_expire_timer.tick() => {
                 handle_expire_tick(
                     &iface_name, &share_status, ipv6_assign_sender, &route_service,
-                    params.ra_valid_lifetime as u64,
+                    params.ra_valid_lifetime as u64, &device_id_map,
                 ).await;
             },
             result = prefix_change_rx.changed() => {
