@@ -388,10 +388,6 @@ impl Ipv6ServerStatus {
         self.na_owners_by_suffix.contains_key(&suffix)
     }
 
-    fn is_suffix_used_by_slaac(&self, suffix: u64) -> bool {
-        self.slaac_entries.keys().any(|&ip| ipv6_suffix(ip) == suffix)
-    }
-
     /// Prefixes eligible for NA address allocation (filtered by max_prefix_len).
     fn qualifying_na_prefixes(&self) -> Vec<(Ipv6Addr, u8)> {
         match &self.na_config {
@@ -1331,3 +1327,12 @@ fn hash_duid(duid: &[u8]) -> u64 {
     }
     hash
 }
+
+#[cfg(test)]
+mod test_lookup;
+#[cfg(test)]
+mod test_na;
+#[cfg(test)]
+mod test_pd;
+#[cfg(test)]
+mod test_slaac;
