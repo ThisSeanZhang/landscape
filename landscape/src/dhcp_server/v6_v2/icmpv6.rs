@@ -91,6 +91,7 @@ fn onlink_only_prefixes(status: &Ipv6ServerStatus) -> Vec<(Ipv6Addr, u8)> {
 pub enum SlaacActionResult {
     None,
     Allocated { mac: MacAddr, ip: Ipv6Addr },
+    Conflict { mac: MacAddr, ip: Ipv6Addr },
 }
 
 pub fn handle_na(data: &[u8], status: &mut Ipv6ServerStatus) -> SlaacActionResult {
@@ -113,8 +114,8 @@ pub fn handle_na(data: &[u8], status: &mut Ipv6ServerStatus) -> SlaacActionResul
     match status.record_slaac_addr(mac, ip) {
         SlaacResult::Recorded => SlaacActionResult::Allocated { mac, ip },
         SlaacResult::Conflict => {
-            tracing::warn!("SLAAC conflict: {ip} suffix already NA-owned, ignoring NA from {mac}");
-            SlaacActionResult::None
+            tracing::warn!("SLAAC conflict: ip={ip} mac={mac} suffix already NA-owned",);
+            SlaacActionResult::Conflict { mac, ip }
         }
     }
 }

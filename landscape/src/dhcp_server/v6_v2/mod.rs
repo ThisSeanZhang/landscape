@@ -572,9 +572,7 @@ impl Ipv6ServerStatus {
         };
         let now = self.boot_time.elapsed().as_secs();
         if let Some(lease) = self.na_leases_by_duid.get_mut(duid) {
-            if !lease.is_static {
-                lease.valid_time = na_config.valid_lifetime;
-            }
+            lease.valid_time = na_config.valid_lifetime;
             lease.preferred_time = na_config.preferred_lifetime;
             lease.relative_offer_time = now;
             true
@@ -616,6 +614,13 @@ impl Ipv6ServerStatus {
 
     pub fn has_na_offer(&self, duid: &[u8]) -> bool {
         self.na_leases_by_duid.contains_key(duid)
+    }
+
+    pub fn is_na_in_offer_state(&self, duid: &[u8]) -> bool {
+        self.na_leases_by_duid
+            .get(duid)
+            .map(|lease| lease.valid_time == OFFER_VALID_TIME)
+            .unwrap_or(false)
     }
 
     pub fn consume_prev_suffix(&mut self, duid: &[u8]) {
@@ -800,9 +805,13 @@ impl Ipv6ServerStatus {
                 lease.is_static = true;
                 lease.prev_suffix = (previous != suffix).then_some(previous);
                 lease.relative_offer_time = now;
-                lease.valid_time = self.na_config.as_ref().map(|c| c.valid_lifetime).unwrap_or(0);
-                lease.preferred_time =
-                    self.na_config.as_ref().map(|c| c.preferred_lifetime).unwrap_or(0);
+                lease.valid_time = OFFER_VALID_TIME;
+                lease.preferred_time = self
+                    .na_config
+                    .as_ref()
+                    .map(|c| c.preferred_lifetime)
+                    .unwrap_or(0)
+                    .min(OFFER_VALID_TIME);
                 changes.push_allocated(lease.clone(), (previous != suffix).then_some(previous));
             }
         }
@@ -835,9 +844,13 @@ impl Ipv6ServerStatus {
             lease.is_static = false;
             lease.prev_suffix = Some(old_suffix);
             lease.relative_offer_time = now;
-            lease.valid_time = self.na_config.as_ref().map(|c| c.valid_lifetime).unwrap_or(0);
-            lease.preferred_time =
-                self.na_config.as_ref().map(|c| c.preferred_lifetime).unwrap_or(0);
+            lease.valid_time = OFFER_VALID_TIME;
+            lease.preferred_time = self
+                .na_config
+                .as_ref()
+                .map(|c| c.preferred_lifetime)
+                .unwrap_or(0)
+                .min(OFFER_VALID_TIME);
             self.na_owners_by_suffix.insert(old_suffix, SuffixOwner::DynamicDuid(duid.clone()));
             self.set_reconfigure_key(&duid, lease.mac);
             self.na_leases_by_duid.insert(duid, lease.clone());
@@ -1289,8 +1302,12 @@ impl Ipv6ServerStatus {
             mac: Some(mac),
             duid_hex: duid_to_hex(duid),
             relative_offer_time: now,
-            valid_time: na_config.as_ref().map(|c| c.valid_lifetime).unwrap_or(0),
-            preferred_time: na_config.as_ref().map(|c| c.preferred_lifetime).unwrap_or(0),
+            valid_time: OFFER_VALID_TIME,
+            preferred_time: na_config
+                .as_ref()
+                .map(|c| c.preferred_lifetime)
+                .unwrap_or(0)
+                .min(OFFER_VALID_TIME),
             is_static: true,
             prev_suffix: previous_suffix.filter(|prev| *prev != suffix),
         };
@@ -1430,6 +1447,24 @@ impl Ipv6ServerStatus {
     /// Look up MAC by client link-local (populated from NA messages).
     pub fn lookup_mac_by_link_local(&self, ll: Ipv6Addr) -> Option<MacAddr> {
         self.link_local_to_mac.get(&ll).copied()
+    }
+
+    /// When MAC was unknown during DHCP NA allocation, fill it in from SLAAC NA conflict.
+    /// Returns `true` if the MAC was previously missing → event should be emitted.
+    pub fn update_na_lease_mac_from_slaac(&mut self, ip: Ipv6Addr, mac: MacAddr) -> bool {
+        let suffix = ipv6_suffix(ip);
+        let duid = match self.na_owners_by_suffix.get(&suffix) {
+            Some(SuffixOwner::DynamicDuid(duid)) => duid.clone(),
+            _ => return false,
+        };
+        let Some(lease) = self.na_leases_by_duid.get_mut(&duid) else {
+            return false;
+        };
+        if lease.mac.is_some() {
+            return false;
+        }
+        lease.mac = Some(mac);
+        true
     }
 
     /// After `update_device_binding`, notify affected clients to renew.

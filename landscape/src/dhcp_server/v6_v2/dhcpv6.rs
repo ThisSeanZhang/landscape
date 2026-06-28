@@ -227,12 +227,19 @@ fn handle_request_or_renew(
 
         // Always call to pick up potential static binding changes
         status.offer_na(client_duid, mac, None);
+        let is_first_allocation = status.is_na_in_offer_state(client_duid);
         status.confirm_na(client_duid);
 
         if let Some(client_mac) = mac {
-            for ip in &status.get_na_addresses(client_duid) {
-                if !prev_ips.contains(ip) {
+            if is_first_allocation {
+                for ip in &status.get_na_addresses(client_duid) {
                     allocated_ips.push((client_mac, *ip));
+                }
+            } else {
+                for ip in &status.get_na_addresses(client_duid) {
+                    if !prev_ips.contains(ip) {
+                        allocated_ips.push((client_mac, *ip));
+                    }
                 }
             }
         }

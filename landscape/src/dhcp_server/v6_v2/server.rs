@@ -78,30 +78,70 @@ async fn handle_icmp_msg(
         }
         Some(Icmpv6Message::NeighborAdvertisement(_)) => {
             let mut status = share_status.lock().await;
-            if let icmpv6::SlaacActionResult::Allocated { mac, ip } =
-                icmpv6::handle_na(&data, &mut status)
-            {
-                if let SocketAddr::V6(ref v6) = src_addr {
-                    let ll = *v6.ip();
-                    if ll.is_unicast_link_local() {
-                        status.record_mac_link_local(mac, ll);
+            let action = icmpv6::handle_na(&data, &mut status);
+            match &action {
+                icmpv6::SlaacActionResult::Allocated { mac, .. }
+                | icmpv6::SlaacActionResult::Conflict { mac, .. } => {
+                    if let SocketAddr::V6(ref v6) = src_addr {
+                        let ll = *v6.ip();
+                        if ll.is_unicast_link_local() {
+                            status.record_mac_link_local(*mac, ll);
+                        }
                     }
                 }
-                if let Err(e) = landscape_ebpf::base::ip_mac::upsert_ipv6_ip_mac(
-                    link_ifindex,
-                    ip,
-                    mac,
-                    *mac_addr,
-                ) {
-                    tracing::warn!("failed to prewarm ip_mac_v6 for ND {ip} -> {mac}: {e}");
+                _ => {}
+            }
+            match action {
+                icmpv6::SlaacActionResult::Allocated { mac, ip } => {
+                    if let Err(e) = landscape_ebpf::base::ip_mac::upsert_ipv6_ip_mac(
+                        link_ifindex,
+                        ip,
+                        mac,
+                        *mac_addr,
+                    ) {
+                        tracing::warn!("failed to prewarm ip_mac_v6 for ND {ip} -> {mac}: {e}");
+                    }
+                    let device_id = device_id_map.get(&mac).map(|r| *r.value());
+                    if let Err(e) =
+                        ipv6_assign_sender.try_send(IPv6AssignEvent::Allocated(IPv6AssignInfo {
+                            iface_name: iface_name.to_string(),
+                            mac,
+                            ip,
+                            device_id,
+                        }))
+                    {
+                        tracing::error!("ND Allocated event FAILED for {mac} -> {ip}: {e:?}");
+                    }
                 }
-                let device_id = device_id_map.get(&mac).map(|r| *r.value());
-                let _ = ipv6_assign_sender.try_send(IPv6AssignEvent::Allocated(IPv6AssignInfo {
-                    iface_name: iface_name.to_string(),
-                    mac,
-                    ip,
-                    device_id,
-                }));
+                icmpv6::SlaacActionResult::Conflict { mac, ip } => {
+                    let mac_was_none = status.update_na_lease_mac_from_slaac(ip, mac);
+                    if mac_was_none {
+                        if let Err(e) = landscape_ebpf::base::ip_mac::upsert_ipv6_ip_mac(
+                            link_ifindex,
+                            ip,
+                            mac,
+                            *mac_addr,
+                        ) {
+                            tracing::warn!(
+                                "failed to prewarm ip_mac_v6 for DHCPv6-confirm {ip} -> {mac}: {e}"
+                            );
+                        }
+                        let device_id = device_id_map.get(&mac).map(|r| *r.value());
+                        if let Err(e) = ipv6_assign_sender.try_send(IPv6AssignEvent::Allocated(
+                            IPv6AssignInfo {
+                                iface_name: iface_name.to_string(),
+                                mac,
+                                ip,
+                                device_id,
+                            },
+                        )) {
+                            tracing::error!(
+                                "NA-conflict Allocated event FAILED for {mac} -> {ip}: {e:?}"
+                            );
+                        }
+                    }
+                }
+                _ => {}
             }
         }
         _ => {}
@@ -162,12 +202,16 @@ async fn handle_dhcp_msg(
                 tracing::warn!("failed to prewarm ip_mac_v6 for DHCPv6 {ip} -> {mac}: {e}");
             }
             let device_id = device_id_map.get(mac).map(|r| *r.value());
-            let _ = ipv6_assign_sender.try_send(IPv6AssignEvent::Allocated(IPv6AssignInfo {
-                iface_name: iface_name.to_string(),
-                mac: *mac,
-                ip: *ip,
-                device_id,
-            }));
+            if let Err(e) =
+                ipv6_assign_sender.try_send(IPv6AssignEvent::Allocated(IPv6AssignInfo {
+                    iface_name: iface_name.to_string(),
+                    mac: *mac,
+                    ip: *ip,
+                    device_id,
+                }))
+            {
+                tracing::error!("IPv6 assign event FAILED for {mac} -> {ip}: {e:?}");
+            }
         }
 
         // Emit expiry events
