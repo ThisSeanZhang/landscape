@@ -380,6 +380,9 @@ pub struct Ipv6ServerStatus {
     // ── MAC → link-local (populated from NA messages) ──
     mac_link_locals: HashMap<MacAddr, Ipv6Addr>,
 
+    // ── link-local → MAC (reverse index for DUID-UUID clients) ──
+    link_local_to_mac: HashMap<Ipv6Addr, MacAddr>,
+
     // ── Timing ──
     boot_time: Instant,
     boot_time_f64: f64,
@@ -421,6 +424,7 @@ impl Ipv6ServerStatus {
             reconfigure_keys: HashMap::new(),
             reconf_tx,
             mac_link_locals: HashMap::new(),
+            link_local_to_mac: HashMap::new(),
             boot_time: Instant::now(),
             boot_time_f64: get_f64_timestamp(),
         };
@@ -1415,11 +1419,17 @@ impl Ipv6ServerStatus {
     /// Record client link-local from Neighbor Advertisement source address.
     pub fn record_mac_link_local(&mut self, mac: MacAddr, ll: Ipv6Addr) {
         self.mac_link_locals.insert(mac, ll);
+        self.link_local_to_mac.insert(ll, mac);
     }
 
     /// Look up client link-local by MAC (populated from NA messages).
     pub fn lookup_link_local_by_mac(&self, mac: &MacAddr) -> Option<Ipv6Addr> {
         self.mac_link_locals.get(mac).copied()
+    }
+
+    /// Look up MAC by client link-local (populated from NA messages).
+    pub fn lookup_mac_by_link_local(&self, ll: Ipv6Addr) -> Option<MacAddr> {
+        self.link_local_to_mac.get(&ll).copied()
     }
 
     /// After `update_device_binding`, notify affected clients to renew.

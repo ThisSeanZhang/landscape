@@ -59,7 +59,10 @@ pub fn process_dhcpv6_msg(
         }
     };
 
-    let mac = extract_mac_from_duid(&client_duid);
+    let mac = extract_mac_from_duid(&client_duid).or_else(|| match client_addr {
+        SocketAddr::V6(ref v6) => status.lookup_mac_by_link_local(*v6.ip()),
+        _ => None,
+    });
     let iana_id = extract_iana_id(&msg);
     let iapd_id = extract_iapd_id(&msg);
 
