@@ -705,7 +705,7 @@ impl PPPoEClientManager {
     }
 
     pub(crate) async fn send_packet(&self, data_sender: &mpsc::Sender<Box<Vec<u8>>>) -> bool {
-        tracing::info!("send_packet, cueernt_status: {:?}", self.pppoe_status);
+        // tracing::info!("send_packet, cueernt_status: {:?}", self.pppoe_status);
         let (eth_head_data, sid) = match &self.pppoe_status {
             PPPoEConnectState::Discovering => {
                 tracing::info!("sending PADI host_uniq={}", self.my_host_id);
