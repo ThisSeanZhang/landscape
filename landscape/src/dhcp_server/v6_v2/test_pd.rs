@@ -15,7 +15,8 @@ fn make_pd_status() -> Ipv6ServerStatus {
         valid_lifetime: 7200,
     };
 
-    let mut status = Ipv6ServerStatus::new(None, Some(pd_config), vec![]);
+    let mut status =
+        Ipv6ServerStatus::new(None, Some(pd_config), vec![], mpsc::unbounded_channel().0);
 
     let groups = vec![LanPrefixGroupConfig {
         group_id: "pd-group-1".into(),

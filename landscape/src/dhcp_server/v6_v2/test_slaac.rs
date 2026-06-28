@@ -18,7 +18,8 @@ fn make_slaac_status() -> Ipv6ServerStatus {
         valid_lifetime: 7200,
     };
 
-    let mut status = Ipv6ServerStatus::new(Some(na_config), None, vec![]);
+    let mut status =
+        Ipv6ServerStatus::new(Some(na_config), None, vec![], mpsc::unbounded_channel().0);
 
     let groups = vec![LanPrefixGroupConfig {
         group_id: "default".into(),

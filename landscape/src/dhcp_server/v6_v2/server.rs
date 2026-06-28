@@ -14,8 +14,11 @@ use landscape_common::{
     route::{LanIPv6RouteKey, LanRouteInfo, LanRouteMode},
     service::{ServiceStatus, WatchService},
 };
-use tokio::sync::watch;
+use tokio::sync::{mpsc, watch};
 use tokio::{net::UdpSocket, sync::Mutex};
+
+use dhcproto::v6::{Authentication, DhcpOption, Message, MessageType, OptionCode};
+use dhcproto::{Encodable, Encoder};
 
 use crate::{
     addresses_by_iface_name,
@@ -78,6 +81,12 @@ async fn handle_icmp_msg(
             if let icmpv6::SlaacActionResult::Allocated { mac, ip } =
                 icmpv6::handle_na(&data, &mut status)
             {
+                if let SocketAddr::V6(ref v6) = src_addr {
+                    let ll = *v6.ip();
+                    if ll.is_unicast_link_local() {
+                        status.record_mac_link_local(mac, ll);
+                    }
+                }
                 if let Err(e) = landscape_ebpf::base::ip_mac::upsert_ipv6_ip_mac(
                     link_ifindex,
                     ip,
@@ -273,6 +282,7 @@ pub async fn start_ipv6_lan_server(
     params: Ipv6LanReplyParams,
     route_service: IpRouteService,
     device_id_map: Arc<DashMap<MacAddr, Uuid>>,
+    mut reconf_rx: mpsc::UnboundedReceiver<MacAddr>,
 ) -> LdResult<()> {
     let server_duid = gen_server_duid(&mac_addr);
 
@@ -413,6 +423,49 @@ pub async fn start_ipv6_lan_server(
                     params.ra_valid_lifetime as u64, &device_id_map,
                 ).await;
             },
+            mac = reconf_rx.recv() => {
+                let Some(mac) = mac else {
+                    tracing::warn!("reconf channel closed on {iface_name}");
+                    break;
+                };
+                if let Some(ref dhcp_sender) = dhcp_sender {
+                    let (duid, client_ip, reconf_key) = {
+                        let status = share_status.lock().await;
+                        let duid = status.lookup_na_duid_by_mac(&mac);
+                        let ip = status.lookup_link_local_by_mac(&mac);
+                        let key = status.lookup_reconfigure_key_by_mac(&mac);
+                        (duid, ip, key)
+                    };
+                    // RFC 8415 §20.4: Reconfigure MUST be authenticated
+                    match (duid, client_ip, reconf_key) {
+                        (Some(duid), Some(ip), Some(key)) => {
+                            let msg = build_reconfigure_msg(&server_duid, &duid, &key);
+                            let dst = SocketAddr::new(IpAddr::V6(ip), 546);
+                            if let Err(e) = dhcp_sender.send_to(&msg, dst).await {
+                                tracing::warn!(
+                                    "failed to send Reconfigure to {mac} at {ip}: {e}"
+                                );
+                            }
+                        }
+                        (None, _, _) => {
+                            tracing::debug!(
+                                "no DUID for {mac}; skipping Reconfigure"
+                            );
+                        }
+                        (_, None, _) => {
+                            tracing::debug!(
+                                "no link-local for {mac}; skipping Reconfigure"
+                            );
+                        }
+                        (_, _, None) => {
+                            tracing::warn!(
+                                "no reconfigure key for {mac}; skipping Reconfigure \
+                                 (client may not support or hasn't completed DHCP exchange)"
+                            );
+                        }
+                    }
+                }
+            },
             result = prefix_change_rx.changed() => {
                 if result.is_err() {
                     tracing::warn!("prefix_change sender dropped, exiting loop");
@@ -542,6 +595,57 @@ pub async fn start_ipv6_lan_server(
 fn pd_route_key_index(sub_index: u32, delegated_prefix: &Ipv6Addr) -> u32 {
     let prefix_hash = (u128::from(*delegated_prefix) >> 64) as u32;
     0x8000_0000u32 | (sub_index.wrapping_mul(31).wrapping_add(prefix_hash))
+}
+
+/// Build an RFC 8415 §18.3.11 / §20.4 compliant Reconfigure message.
+///
+/// Requirements:
+///  - XID set to 0 (§18.3.11)
+///  - Authentication option with HMAC-MD5 computed over the entire message (§20.4.2)
+fn build_reconfigure_msg(server_duid: &[u8], client_duid: &[u8], reconf_key: &[u8; 16]) -> Vec<u8> {
+    use hmac::{Hmac, KeyInit, Mac};
+    use md5::Md5;
+
+    // First pass: build message with zero HMAC to compute the digest
+    let mut zero_info = vec![2u8]; // Type=2: HMAC
+    zero_info.extend_from_slice(&[0u8; 16]);
+    let mut msg = Message::new_with_id(MessageType::Reconfigure, [0u8; 3]);
+    msg.opts_mut().insert(DhcpOption::ClientId(client_duid.to_vec()));
+    msg.opts_mut().insert(DhcpOption::ServerId(server_duid.to_vec()));
+    msg.opts_mut().insert(DhcpOption::Authentication(Authentication {
+        proto: 3,
+        algo: 0,
+        rdm: 0,
+        replay_detection: 0,
+        info: zero_info,
+    }));
+    msg.opts_mut().insert(DhcpOption::ReconfMsg(MessageType::Renew));
+
+    let mut buf = Vec::new();
+    let mut e = Encoder::new(&mut buf);
+    msg.encode(&mut e).unwrap();
+
+    // Compute HMAC-MD5 over the entire message (with zero HMAC field)
+    let mut mac = Hmac::<Md5>::new_from_slice(reconf_key).expect("HMAC-MD5: 128-bit key");
+    mac.update(&buf);
+    let digest = mac.finalize().into_bytes();
+
+    // Second pass: rebuild with real HMAC
+    let mut real_info = vec![2u8];
+    real_info.extend_from_slice(&digest);
+    msg.opts_mut().remove(OptionCode::Authentication);
+    msg.opts_mut().insert(DhcpOption::Authentication(Authentication {
+        proto: 3,
+        algo: 0,
+        rdm: 0,
+        replay_detection: 0,
+        info: real_info,
+    }));
+
+    let mut buf = Vec::new();
+    let mut e = Encoder::new(&mut buf);
+    msg.encode(&mut e).unwrap();
+    buf
 }
 
 fn gen_server_duid(mac: &MacAddr) -> Vec<u8> {

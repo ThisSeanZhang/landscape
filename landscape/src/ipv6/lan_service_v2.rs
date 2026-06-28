@@ -20,7 +20,7 @@ use landscape_database::provider::LandscapeDBServiceProvider;
 use std::collections::HashMap;
 use std::net::Ipv6Addr;
 use std::sync::Arc;
-use tokio::sync::{watch, Mutex};
+use tokio::sync::{mpsc, watch, Mutex};
 use uuid::Uuid;
 
 use crate::dhcp_server::v6_v2::{
@@ -118,11 +118,15 @@ impl ServiceStarterTrait for LanIPv6Service {
                 }
             }
 
+            // ── Reconfigure channel ──
+            let (reconf_tx, reconf_rx) = mpsc::unbounded_channel();
+
             // ── Create status ──
             let status = Arc::new(Mutex::new(Ipv6ServerStatus::new(
                 na_config.clone(),
                 pd_config.clone(),
                 devices,
+                reconf_tx,
             )));
             // ── Reply params ──
             let na_lifetimes = na_config
@@ -191,6 +195,7 @@ impl ServiceStarterTrait for LanIPv6Service {
                     params,
                     route_service,
                     device_id_map,
+                    reconf_rx,
                 )
                 .await;
             });
@@ -308,9 +313,11 @@ impl LanIPv6ManagerService {
                                     }
                                     let mut s = status.lock().await;
                                     if let Some(d) = old.as_ref() {
-                                        s.update_device_binding(d.mac, None);
+                                        let r = s.update_device_binding(d.mac, None);
+                                        s.trigger_reconfigure_for_changes(&r);
                                     }
-                                    s.update_device_binding(new.mac, new.ipv6);
+                                    let r = s.update_device_binding(new.mac, new.ipv6);
+                                    s.trigger_reconfigure_for_changes(&r);
                                 }
                             }
                             EnrolledDeviceEvent::Deleted { old } => {
@@ -325,7 +332,8 @@ impl LanIPv6ManagerService {
                                         continue;
                                     }
                                     let mut s = status.lock().await;
-                                    s.update_device_binding(old.mac, None);
+                                    let r = s.update_device_binding(old.mac, None);
+                                    s.trigger_reconfigure_for_changes(&r);
                                 }
                             }
                         }

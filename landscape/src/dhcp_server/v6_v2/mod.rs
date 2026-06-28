@@ -19,7 +19,7 @@ use landscape_common::{
     net::MacAddr,
     utils::time::get_f64_timestamp,
 };
-use tokio::sync::watch;
+use tokio::sync::{mpsc, watch};
 
 pub mod connection;
 pub mod dhcpv6;
@@ -370,6 +370,16 @@ pub struct Ipv6ServerStatus {
     // ── DNS servers (cached, refreshed on prefix change) ──
     dns_servers: DnsServers,
 
+    // ── Reconfigure Key (RFC 8415 §20.4 RKAP) ──
+    /// DUID → 128-bit reconfigure key
+    reconfigure_keys: HashMap<Vec<u8>, [u8; 16]>,
+
+    // ── Reconfigure trigger ──
+    reconf_tx: mpsc::UnboundedSender<MacAddr>,
+
+    // ── MAC → link-local (populated from NA messages) ──
+    mac_link_locals: HashMap<MacAddr, Ipv6Addr>,
+
     // ── Timing ──
     boot_time: Instant,
     boot_time_f64: f64,
@@ -382,6 +392,7 @@ impl Ipv6ServerStatus {
         na_config: Option<DHCPv6IANAConfig>,
         pd_config: Option<DHCPv6IAPDConfig>,
         devices: Vec<EnrolledDevice>,
+        reconf_tx: mpsc::UnboundedSender<MacAddr>,
     ) -> Self {
         let na_pool_start = na_config.as_ref().map(|c| c.pool_start).unwrap_or(0);
         let na_pool_end = na_config
@@ -407,6 +418,9 @@ impl Ipv6ServerStatus {
             pd_owners_by_slot: HashMap::new(),
             slaac_entries: HashMap::new(),
             dns_servers: DnsServers::new(),
+            reconfigure_keys: HashMap::new(),
+            reconf_tx,
+            mac_link_locals: HashMap::new(),
             boot_time: Instant::now(),
             boot_time_f64: get_f64_timestamp(),
         };
@@ -739,6 +753,7 @@ impl Ipv6ServerStatus {
                                     .unwrap_or(OFFER_VALID_TIME);
                                 self.na_owners_by_suffix
                                     .insert(old, SuffixOwner::DynamicDuid(evicted_duid.clone()));
+                                self.set_reconfigure_key(&evicted_duid, evicted.mac);
                                 self.na_leases_by_duid.insert(evicted_duid, evicted.clone());
                                 changes.push_allocated(evicted, Some(suffix));
                             }
@@ -820,6 +835,7 @@ impl Ipv6ServerStatus {
             lease.preferred_time =
                 self.na_config.as_ref().map(|c| c.preferred_lifetime).unwrap_or(0);
             self.na_owners_by_suffix.insert(old_suffix, SuffixOwner::DynamicDuid(duid.clone()));
+            self.set_reconfigure_key(&duid, lease.mac);
             self.na_leases_by_duid.insert(duid, lease.clone());
             changes.push_allocated(lease, Some(old_suffix));
         } else if let Some(na_config) = self.na_config.clone() {
@@ -1275,6 +1291,7 @@ impl Ipv6ServerStatus {
             prev_suffix: previous_suffix.filter(|prev| *prev != suffix),
         };
         self.na_leases_by_duid.insert(duid.to_vec(), lease);
+        self.set_reconfigure_key(duid, Some(mac));
         self.slaac_entries.retain(|&ip, _| ipv6_suffix(ip) != suffix);
     }
 
@@ -1364,6 +1381,7 @@ impl Ipv6ServerStatus {
             prev_suffix,
         };
         self.na_leases_by_duid.insert(duid.to_vec(), lease);
+        self.set_reconfigure_key(duid, mac);
         self.slaac_entries.retain(|&ip, _| ipv6_suffix(ip) != suffix);
     }
 
@@ -1387,6 +1405,75 @@ impl Ipv6ServerStatus {
             .iter()
             .find(|(_, lease)| lease.mac == Some(mac) && lease.is_static)
             .map(|(duid, _)| duid.clone())
+    }
+
+    /// Public lookup: find DUID by MAC for Reconfigure message.
+    pub fn lookup_na_duid_by_mac(&self, mac: &MacAddr) -> Option<Vec<u8>> {
+        self.lease_duid_for_mac(*mac)
+    }
+
+    /// Record client link-local from Neighbor Advertisement source address.
+    pub fn record_mac_link_local(&mut self, mac: MacAddr, ll: Ipv6Addr) {
+        self.mac_link_locals.insert(mac, ll);
+    }
+
+    /// Look up client link-local by MAC (populated from NA messages).
+    pub fn lookup_link_local_by_mac(&self, mac: &MacAddr) -> Option<Ipv6Addr> {
+        self.mac_link_locals.get(mac).copied()
+    }
+
+    /// After `update_device_binding`, notify affected clients to renew.
+    pub fn trigger_reconfigure_for_changes(&self, result: &DeviceBindingResult) {
+        let leases = match result {
+            DeviceBindingResult::Bound(changes) | DeviceBindingResult::Removed(changes) => changes
+                .allocated
+                .iter()
+                .map(|c| &c.lease)
+                .chain(changes.expired.iter().map(|c| &c.lease))
+                .chain(changes.released.iter()),
+            DeviceBindingResult::AlreadyBound | DeviceBindingResult::StaticConflict { .. } => {
+                return
+            }
+            DeviceBindingResult::InvariantViolation { .. } => return,
+        };
+
+        let mut seen = HashSet::new();
+        for lease in leases {
+            if let Some(ref mac) = lease.mac {
+                if seen.insert(*mac) {
+                    let _ = self.reconf_tx.send(*mac);
+                }
+            }
+        }
+    }
+
+    // ── Reconfigure Key management (RFC 8415 §20.4 RKAP) ─────────────────
+
+    fn generate_reconfigure_key() -> [u8; 16] {
+        use rand::RngExt;
+        rand::rng().random()
+    }
+
+    pub fn set_reconfigure_key(&mut self, duid: &[u8], mac: Option<MacAddr>) {
+        if let Some(mac) = mac {
+            if let Some(old_duid) = self.lease_duid_for_mac(mac) {
+                if old_duid.as_slice() != duid {
+                    self.reconfigure_keys.remove(&old_duid);
+                }
+            }
+        }
+        if !self.reconfigure_keys.contains_key(duid) {
+            self.reconfigure_keys.insert(duid.to_vec(), Self::generate_reconfigure_key());
+        }
+    }
+
+    pub fn get_reconfigure_key(&self, duid: &[u8]) -> Option<[u8; 16]> {
+        self.reconfigure_keys.get(duid).copied()
+    }
+
+    pub fn lookup_reconfigure_key_by_mac(&self, mac: &MacAddr) -> Option<[u8; 16]> {
+        let duid = self.lease_duid_for_mac(*mac)?;
+        self.reconfigure_keys.get(&duid).copied()
     }
 
     fn find_free_pd_slot(&self) -> Option<(String, u32)> {

@@ -18,7 +18,7 @@ fn make_na_status() -> Ipv6ServerStatus {
         valid_lifetime: 7200,
     };
 
-    Ipv6ServerStatus::new(Some(na_config), None, vec![])
+    Ipv6ServerStatus::new(Some(na_config), None, vec![], mpsc::unbounded_channel().0)
 }
 
 fn make_status_with_prefixes() -> Ipv6ServerStatus {
@@ -30,7 +30,8 @@ fn make_status_with_prefixes() -> Ipv6ServerStatus {
         valid_lifetime: 7200,
     };
 
-    let mut status = Ipv6ServerStatus::new(Some(na_config), None, vec![]);
+    let mut status =
+        Ipv6ServerStatus::new(Some(na_config), None, vec![], mpsc::unbounded_channel().0);
 
     let groups = vec![LanPrefixGroupConfig {
         group_id: "default".into(),
@@ -132,7 +133,8 @@ fn offer_na_exhausts_pool() {
         preferred_lifetime: 3600,
         valid_lifetime: 7200,
     };
-    let mut status = Ipv6ServerStatus::new(Some(na_config), None, vec![]);
+    let mut status =
+        Ipv6ServerStatus::new(Some(na_config), None, vec![], mpsc::unbounded_channel().0);
     let groups = vec![LanPrefixGroupConfig {
         group_id: "default".into(),
         parent: PrefixParentSource::Static {
