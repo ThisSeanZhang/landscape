@@ -16,9 +16,6 @@ use landscape_database::{
 
 use crate::iface::get_iface_by_name;
 
-pub mod blacklist;
-pub mod blacklist_service;
-
 #[derive(Clone, Default)]
 pub struct FirewallService {}
 

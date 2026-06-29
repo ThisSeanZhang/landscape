@@ -17,7 +17,6 @@ pub mod ipconfig_service;
 pub mod mss_clamp_service;
 pub mod nat_service;
 pub mod pppd_service;
-pub mod static_nat_mapping_service;
 
 // Re-export from netlink::link
 pub use crate::netlink::link::get_iface_by_name;
