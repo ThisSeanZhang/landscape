@@ -686,12 +686,17 @@ fn gen_ack(
         return None;
     };
 
-    let (message_type, client_addr, ciaddr) =
-        if server.ack_request(&frame.chaddr, client_ip, frame.options.get_hostname()) {
-            (DhcpOptionMessageType::Ack, client_ip, frame.ciaddr)
-        } else {
-            (DhcpOptionMessageType::Nak, Ipv4Addr::UNSPECIFIED, Ipv4Addr::UNSPECIFIED)
+    let ack_result = server.ack_request(&frame.chaddr, client_ip, frame.options.get_hostname());
+
+    let (message_type, client_addr, ciaddr) = if ack_result {
+        (DhcpOptionMessageType::Ack, client_ip, frame.ciaddr)
+    } else {
+        let nak_ip = {
+            let s = server.status.lock().unwrap();
+            s.static_bindings.get(&frame.chaddr).map(|b| b.ipv4).unwrap_or(client_ip)
         };
+        (DhcpOptionMessageType::Nak, nak_ip, Ipv4Addr::UNSPECIFIED)
+    };
 
     let is_nak = matches!(message_type, DhcpOptionMessageType::Nak);
 

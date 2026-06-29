@@ -248,6 +248,29 @@ impl DhcpV4AssignStatus {
     }
 
     pub fn offer_ip(&mut self, mac_addr: &MacAddr, hostname: Option<String>) -> Option<Ipv4Addr> {
+        if let Some(entry) = self.static_bindings.get(mac_addr) {
+            let ip = entry.ipv4;
+            let hostname = hostname.or_else(|| entry.hostname.clone());
+            if let Some(old) = self.offered_ip.get(mac_addr) {
+                if old.ip != ip {
+                    self.allocated_host.remove(&old.ip);
+                }
+            }
+            self.offered_ip.insert(
+                *mac_addr,
+                DHCPv4ServerOfferedCache {
+                    hostname,
+                    ip,
+                    relative_offer_time: self.relative_boot_time.elapsed().as_secs(),
+                    valid_time: OFFER_VALID_TIME,
+                    is_static: true,
+                    prev_ip: None,
+                },
+            );
+            self.allocated_host.insert(ip, IpAllocSource::Static(*mac_addr));
+            return Some(ip);
+        }
+
         if let Some(DHCPv4ServerOfferedCache { ip, .. }) = self.offered_ip.get(mac_addr) {
             return Some(*ip);
         }
