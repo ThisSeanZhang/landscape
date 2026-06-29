@@ -20,8 +20,8 @@ use landscape_database::{
     dhcp_v6_client::repository::DHCPv6ClientRepository, provider::LandscapeDBServiceProvider,
 };
 
-use crate::iface::get_iface_by_name;
-use crate::route::IpRouteService;
+use crate::get_iface_by_name;
+use crate::sys_service::route::IpRouteService;
 
 #[derive(Clone)]
 pub struct IPV6PDService {

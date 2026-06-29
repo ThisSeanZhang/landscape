@@ -22,7 +22,7 @@ use std::{
 };
 use tokio::sync::oneshot;
 
-use crate::iface::get_iface_by_name;
+use crate::get_iface_by_name;
 
 #[derive(Clone, Default)]
 pub struct WifiService;

@@ -1,5 +1,5 @@
 use clap::Parser;
-use landscape::iface::get_iface_by_name;
+use landscape::get_iface_by_name;
 
 #[derive(Parser, Debug, Clone)]
 pub struct Args {

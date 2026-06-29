@@ -13,7 +13,7 @@ use landscape_common::{
 use landscape_database::provider::LandscapeDBServiceProvider;
 use landscape_database::route_wan::repository::RouteWanServiceRepository;
 
-use crate::iface::get_iface_by_name;
+use crate::get_iface_by_name;
 
 #[derive(Clone)]
 #[allow(dead_code)]

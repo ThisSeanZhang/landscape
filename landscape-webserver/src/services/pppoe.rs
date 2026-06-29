@@ -40,7 +40,7 @@ async fn validate_pppd_config(
     let existing_pppd = state.pppd_service.get_config_by_name(config.iface_name.clone()).await;
     let managed_iface_exists =
         state.iface_config_service.get_iface_config(config.iface_name.clone()).await.is_some();
-    let live_iface_exists = landscape::iface::get_iface_by_name(&config.iface_name).await.is_some();
+    let live_iface_exists = landscape::get_iface_by_name(&config.iface_name).await.is_some();
     if existing_pppd.is_none() && (managed_iface_exists || live_iface_exists) {
         return Err(ServiceConfigError::InvalidConfig {
             reason: format!(

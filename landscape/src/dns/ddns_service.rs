@@ -28,7 +28,7 @@ use tokio::time::MissedTickBehavior;
 use uuid::Uuid;
 
 use crate::cert::dns_provider::{build_record_updater, validate_provider_zone_access};
-use crate::route::{IpRouteService, WanRouteEvent};
+use crate::sys_service::route::{IpRouteService, WanRouteEvent};
 
 const DDNS_SYNC_INTERVAL_SECS: u64 = 60;
 const DDNS_RETRY_INTERVAL_SECS: u64 = 5;
@@ -1102,7 +1102,7 @@ impl ConfigController for DdnsService {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::route::WanRouteEventKind;
+    use crate::sys_service::route::WanRouteEventKind;
 
     fn test_job(sources: Vec<DdnsSource>) -> DdnsJob {
         DdnsJob {

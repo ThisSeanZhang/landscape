@@ -5,8 +5,6 @@ use std::{
     sync::Arc,
 };
 
-pub mod wan_service;
-
 use arc_swap::ArcSwap;
 use hickory_proto::rr::RecordType;
 use landscape_common::{

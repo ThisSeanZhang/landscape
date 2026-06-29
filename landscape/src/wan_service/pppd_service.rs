@@ -28,8 +28,8 @@ use landscape_common::{
 use landscape_database::pppd::repository::PPPDServiceRepository;
 use landscape_database::provider::LandscapeDBServiceProvider;
 
-use crate::iface::get_iface_by_name;
-use crate::route::IpRouteService;
+use crate::get_iface_by_name;
+use crate::sys_service::route::IpRouteService;
 
 const PPPD_RETRY_BASE_SECS: u64 = 4;
 const PPPD_RETRY_MAX_SECS: u64 = 10 * 60;

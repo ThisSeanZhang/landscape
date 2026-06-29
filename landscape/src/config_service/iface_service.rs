@@ -1,10 +1,8 @@
-use std::{collections::HashMap, path::PathBuf};
+use std::collections::HashMap;
 
-use config::from_phy_dev;
 pub use landscape_common::iface::{IfaceInfo, IfaceTopology, IfacesInfo, RawIfaceInfo};
 use landscape_common::service::controller::ConfigController;
 use landscape_common::{
-    error::LdResult,
     iface::config::{IfaceCpuSoftBalance, IfaceZoneType, NetworkIfaceConfig, WifiMode},
     iface::{AddController, BridgeCreate, ChangeZone},
 };
@@ -12,14 +10,9 @@ use landscape_database::iface::repository::NetIfaceRepository;
 use landscape_database::provider::LandscapeDBServiceProvider;
 use landscape_database::repository::Repository;
 
-pub mod config;
-pub mod ipconfig_service;
-pub mod mss_clamp_service;
-pub mod nat_service;
-pub mod pppd_service;
-
-// Re-export from netlink::link
-pub use crate::netlink::link::get_iface_by_name;
+use super::iface_config::from_phy_dev;
+use crate::get_iface_by_name;
+use crate::wan_service::setting_iface_balance;
 
 /// interface manager
 #[derive(Clone)]
@@ -230,7 +223,11 @@ impl IfaceManagerService {
                 }
                 (Some(_), None) => {
                     link_config.xps_rps = None;
-                    reset_iface_balance(&link_config.name).unwrap();
+                    crate::wan_service::setting_iface_balance(
+                        &link_config.name,
+                        IfaceCpuSoftBalance { xps: "0".into(), rps: "0".into() },
+                    )
+                    .unwrap();
                 }
                 (None, None) => {
                     // nothing to do
@@ -266,80 +263,5 @@ impl ConfigController for IfaceManagerService {
 
     fn get_repository(&self) -> &Self::DatabseAction {
         &self.store
-    }
-}
-fn reset_iface_balance(iface_name: &str) -> LdResult<()> {
-    setting_iface_balance(iface_name, IfaceCpuSoftBalance { xps: "0".into(), rps: "0".into() })
-}
-
-pub(crate) fn setting_iface_balance(
-    iface_name: &str,
-    balance: IfaceCpuSoftBalance,
-) -> LdResult<()> {
-    let queues_path = PathBuf::from(format!("/sys/class/net/{}/queues", iface_name));
-    if !queues_path.exists() {
-        return Ok(());
-    }
-
-    if let Ok(entries) = std::fs::read_dir(queues_path) {
-        for entry in entries.flatten() {
-            let file_name = entry.file_name();
-            let name = file_name.to_string_lossy();
-
-            // 处理发送队列 (XPS)
-            if name.starts_with("tx-") {
-                let xps_path = entry.path().join("xps_cpus");
-                if xps_path.exists() {
-                    if let Err(e) = std::fs::write(&xps_path, &balance.xps) {
-                        tracing::error!(
-                            "setting xps_cpus for {} at {:?} error: {:?}",
-                            name,
-                            xps_path,
-                            e
-                        );
-                    }
-                }
-            }
-
-            // 处理接收队列 (RPS)
-            if name.starts_with("rx-") {
-                let rps_path = entry.path().join("rps_cpus");
-                if rps_path.exists() {
-                    if let Err(e) = std::fs::write(&rps_path, &balance.rps) {
-                        tracing::error!(
-                            "setting rps_cpus for {} at {:?} error: {:?}",
-                            name,
-                            rps_path,
-                            e
-                        );
-                    }
-                }
-            }
-        }
-    }
-
-    Ok(())
-}
-
-pub fn cpu_nums() -> usize {
-    std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1)
-}
-
-#[cfg(test)]
-mod tests {
-
-    use landscape_common::iface::config::IfaceCpuSoftBalance;
-
-    use super::setting_iface_balance;
-
-    #[test]
-    fn test_setting_balance() {
-        setting_iface_balance("ens6", IfaceCpuSoftBalance { xps: "6".into(), rps: "6".into() })
-            .unwrap();
-    }
-
-    #[test]
-    fn test_reset_balance() {
-        super::reset_iface_balance("ens6").unwrap();
     }
 }

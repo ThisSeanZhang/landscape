@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 
 use futures::stream::TryStreamExt;
-use iface::get_iface_by_name;
 use landscape_common::dev::{DevState, LandscapeInterface};
 use landscape_common::iface::config::{CreateDevType, NetworkIfaceConfig, WifiMode};
 
@@ -14,22 +13,21 @@ pub mod dhcp_client;
 pub mod dns;
 pub mod docker;
 pub mod dump;
-pub mod firewall;
 pub mod flow;
 pub mod geo;
-pub mod iface;
 pub mod ipv6;
 pub mod metric;
 pub mod netlink;
 pub use crate::netlink::observer;
 pub mod pppoe_client;
-pub mod route;
+pub mod wan_service;
 pub mod wifi;
 
 pub mod lan_service;
 pub mod sys_service;
 
 // Backward-compatible re-exports from netlink module
+pub use crate::netlink::link::get_iface_by_name;
 pub use netlink::address::set_iface_ip as set_iface_ip_no_limit;
 pub use netlink::address::{
     addresses_by_iface_id, addresses_by_iface_name, get_ppp_address, LandscapeSingleIpInfo,
@@ -70,7 +68,7 @@ pub fn gen_default_config(
             );
             continue;
         }
-        let mut dev = iface::config::from_phy_dev(eth);
+        let mut dev = config_service::iface_config::from_phy_dev(eth);
         dev.controller_name = Some(br.name.clone());
         dev.enable_in_boot = true;
         added_ifaces.push(eth.name.clone());
@@ -111,7 +109,7 @@ pub async fn init_devs(network_config: Vec<NetworkIfaceConfig>) {
 
             // Setting Iface Balance
             if let Some(balance) = &config.xps_rps {
-                if let Err(e) = iface::setting_iface_balance(&config.name, balance.clone()) {
+                if let Err(e) = wan_service::setting_iface_balance(&config.name, balance.clone()) {
                     tracing::error!("setting iface balance error: {e:?}");
                 }
             }

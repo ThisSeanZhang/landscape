@@ -1,4 +1,4 @@
-use landscape::{arp::build_gratuitous_arp_packet, iface::get_iface_by_name};
+use landscape::{arp::build_gratuitous_arp_packet, get_iface_by_name};
 use std::net::Ipv4Addr;
 use std::time::Duration;
 

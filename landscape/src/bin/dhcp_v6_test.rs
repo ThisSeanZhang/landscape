@@ -1,7 +1,7 @@
 use std::net::{IpAddr, Ipv6Addr};
 
 use clap::Parser;
-use landscape::{dhcp_client::v6::dhcp_v6_pd_client, iface::get_iface_by_name};
+use landscape::{dhcp_client::v6::dhcp_v6_pd_client, get_iface_by_name};
 use landscape_common::{
     event::hub::IAPrefixEventSender, ipv6_pd::IAPrefixMap, route::RouteTargetInfo,
 };
@@ -37,7 +37,7 @@ async fn main() {
     };
 
     let service_status = WatchService::new();
-    let (_, ip_route) = landscape::route::test_used_ip_route().await;
+    let (_, ip_route) = landscape::sys_service::route::test_used_ip_route().await;
     let status = service_status.clone();
     let prefix_map = IAPrefixMap::new();
     let (prefix_tx, _prefix_rx) = mpsc::channel(1);
