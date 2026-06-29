@@ -81,6 +81,9 @@ impl PPPoEClientManager {
                 self.handle_session_confirm(pppoe_data, server_mac_addr.clone());
             }
             PPPoEConnectState::SessionConfirm { .. } => {
+                self.log_protocol_error(
+                    "received unexpected discovery packet in SessionConfirm state",
+                );
                 self.error_count += 10;
             }
         }
@@ -223,6 +226,7 @@ impl PPPoEClientManager {
         } else if lcp.is_request() {
             self.handle_lcp_request(pppoe_data, session_id, l2_header, &lcp, data_sender).await;
         } else if lcp.is_reject() {
+            tracing::error!("peer sent LCP Configure-Reject, our LCP configuration was rejected");
             self.error_count += 10;
         } else if lcp.is_proto_reject() {
             self.handle_lcp_proto_reject(&lcp);
@@ -234,6 +238,7 @@ impl PPPoEClientManager {
         } else if lcp.is_termination() {
             self.handle_lcp_termination(pppoe_data, l2_header, &lcp, data_sender).await;
         } else if lcp.is_termination_ack() {
+            tracing::warn!("received LCP Termination-Ack from peer");
             self.error_count += 10;
             self.lcp_status.termination = (true, TagValue::Ack(()));
         }
@@ -395,6 +400,7 @@ impl PPPoEClientManager {
         lcp: &PointToPoint,
         data_sender: &mpsc::Sender<Box<Vec<u8>>>,
     ) {
+        tracing::error!("peer sent LCP Termination-Request, peer initiated teardown");
         self.error_count += 10;
         pppoe_data.payload = lcp.get_termination_ack();
         let reply = pppoe_data.clone().convert_to_payload();
@@ -695,9 +701,11 @@ impl PPPoEClientManager {
                 data_sender.send(Box::new([l2_header, request.convert_to_payload()].concat())).await
             {
                 tracing::error!("failed to send LCP echo request: {e:?}");
+                self.lcp_status.lcp_echo_times = self.lcp_status.lcp_echo_times.saturating_add(1);
                 return Some((self.lcp_status.lcp_echo_times, LCP_ECHO_INTERVAL));
             }
             tracing::debug!("sending LCP echo request id={}", self.lcp_status.echo_req_id);
+            self.lcp_status.lcp_echo_times = self.lcp_status.lcp_echo_times.saturating_add(1);
             Some((self.lcp_status.lcp_echo_times, LCP_ECHO_INTERVAL))
         } else {
             None
