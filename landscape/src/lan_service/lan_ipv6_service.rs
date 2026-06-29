@@ -23,7 +23,7 @@ use std::sync::Arc;
 use tokio::sync::{mpsc, watch, Mutex};
 use uuid::Uuid;
 
-use crate::dhcp_server::v6_v2::{
+use super::lan_ipv6_server::{
     server::start_ipv6_lan_server, AddrSource, Ipv6LanReplyParams, Ipv6ServerStatus,
 };
 use crate::iface::get_iface_by_name;

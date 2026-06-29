@@ -18,7 +18,6 @@ pub mod enrolled_device;
 pub mod firewall;
 pub mod flow;
 pub mod geo;
-pub mod icmp;
 pub mod iface;
 pub mod ipv6;
 pub mod metric;
@@ -26,8 +25,10 @@ pub mod netlink;
 pub use crate::netlink::observer;
 pub mod pppoe_client;
 pub mod route;
-pub mod sys_service;
 pub mod wifi;
+
+pub mod lan_service;
+pub mod sys_service;
 
 // Backward-compatible re-exports from netlink module
 pub use netlink::address::set_iface_ip as set_iface_ip_no_limit;

@@ -20,13 +20,13 @@ use tokio::{net::UdpSocket, sync::Mutex};
 use dhcproto::v6::{Authentication, DhcpOption, Message, MessageType, OptionCode};
 use dhcproto::{Encodable, Encoder};
 
+use super::{
+    compute_subnets,
+    connection::{get_dhcpv6_connect, get_icmp_connect},
+    dhcpv6, icmpv6, ra, Ipv6LanReplyParams, Ipv6ServerStatus,
+};
 use crate::{
     addresses_by_iface_name,
-    dhcp_server::v6_v2::{
-        compute_subnets,
-        connection::{get_dhcpv6_connect, get_icmp_connect},
-        dhcpv6, icmpv6, ra, Ipv6LanReplyParams, Ipv6ServerStatus,
-    },
     ipv6::prefix::{add_route, add_route_via, del_iface_ip, del_route, set_iface_ip},
     route::IpRouteService,
 };

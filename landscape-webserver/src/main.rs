@@ -36,7 +36,8 @@ use landscape::{
         pppd_service::PPPDServiceConfigManagerService,
         static_nat_mapping_service::StaticNatMappingService, IfaceManagerService,
     },
-    ipv6::{ipv6pd_service::DHCPv6ClientManagerService, lan_service_v2::LanIPv6ManagerService},
+    ipv6::ipv6pd_service::DHCPv6ClientManagerService,
+    lan_service::lan_ipv6_service::LanIPv6ManagerService,
     metric::MetricService,
     route::{
         lan_service::RouteLanServiceManagerService, wan_service::RouteWanServiceManagerService,
