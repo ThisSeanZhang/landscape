@@ -14,7 +14,11 @@ libc = { workspace = true }
 once_cell = { workspace = true }
 # self_cell = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
+tokio-util = { workspace = true }
 nix = { workspace = true, features = ["net", "user", "sched"] }
+rtnetlink = { workspace = true }
+netlink-packet-route = { workspace = true }
+futures = { workspace = true }
 
 socket2 = { workspace = true }
 serde = { workspace = true }

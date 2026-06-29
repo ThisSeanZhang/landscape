@@ -132,6 +132,8 @@ pub mod task_label {
         pub const NAT_OBSERVER: &str = "nat.service.observer";
         /// EventHub dispatcher task that receives events and dispatches to domain broadcast channels.
         pub const EVENT_HUB_DISPATCHER: &str = "event.hub.dispatcher";
+        /// eBPF neighbor update async task that periodically syncs ARP/NDP tables.
+        pub const EBPF_NEIGH_UPDATE: &str = "ebpf.neigh_update";
     }
 
     pub mod op {

@@ -1,20 +1,21 @@
-use tokio::sync::oneshot;
+use tokio_util::sync::CancellationToken;
 
 // cargo run --package landscape-ebpf --bin ip_mac_test
 #[tokio::main]
 pub async fn main() {
     landscape_common::init_tracing!();
 
-    let (tx, rx) = oneshot::channel::<()>();
-    let (other_tx, other_rx) = oneshot::channel::<()>();
+    let cancel = CancellationToken::new();
+    let cancel_clone = cancel.clone();
 
-    std::thread::spawn(move || {
-        landscape_ebpf::base::ip_mac::neigh_update(rx).unwrap();
-        let _ = other_tx.send(());
+    let done = tokio::spawn(async move {
+        if let Err(e) = landscape_ebpf::base::ip_mac::neigh_update(cancel_clone).await {
+            tracing::warn!("neigh_update test exited with error: {e}");
+        }
     });
 
     let _ = tokio::signal::ctrl_c().await;
 
-    let _ = tx.send(());
-    let _ = other_rx.await;
+    cancel.cancel();
+    let _ = done.await;
 }

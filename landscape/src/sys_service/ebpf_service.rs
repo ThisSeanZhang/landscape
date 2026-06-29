@@ -1,31 +1,27 @@
-use std::sync::Arc;
-
-use landscape_common::concurrency::{spawn_named_thread, thread_name};
-use tokio::sync::{oneshot, Mutex};
+use landscape_common::concurrency::{spawn_task, task_label};
+use tokio_util::sync::CancellationToken;
 
 #[derive(Clone)]
 #[allow(dead_code)]
 pub struct LandscapeEbpfService {
-    tx: Arc<Mutex<Option<oneshot::Sender<()>>>>,
+    cancel: CancellationToken,
 }
 
 impl LandscapeEbpfService {
     pub fn new() -> Self {
-        let (tx, rx) = oneshot::channel::<()>();
-        spawn_named_thread(thread_name::fixed::EBPF_NEIGH_UPDATE, move || {
-            if let Err(e) = landscape_ebpf::base::ip_mac::neigh_update(rx) {
+        let cancel = CancellationToken::new();
+        let cancel_clone = cancel.clone();
+        spawn_task(task_label::task::EBPF_NEIGH_UPDATE, async move {
+            if let Err(e) = landscape_ebpf::base::ip_mac::neigh_update(cancel_clone).await {
                 tracing::warn!("eBPF neigh_update service exited with error: {e}");
             }
-        })
-        .expect("failed to spawn ebpf neigh_update thread");
+        });
 
-        LandscapeEbpfService { tx: Arc::new(Mutex::new(Some(tx))) }
+        LandscapeEbpfService { cancel }
     }
 
     pub async fn stop(&self) {
-        if let Some(tx) = self.tx.lock().await.take() {
-            let _ = tx.send(());
-            tracing::info!("eBPF neigh_update service stop signal sent");
-        }
+        self.cancel.cancel();
+        tracing::info!("eBPF neigh_update service stop signal sent");
     }
 }

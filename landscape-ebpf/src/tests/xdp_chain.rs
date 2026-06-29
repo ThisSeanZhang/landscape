@@ -92,6 +92,7 @@ fn send_raw_packet(iface: &str, pkt: &[u8]) {
 }
 
 #[test]
+#[ignore = "requires creating veth pair, not suitable for parallel unit tests"]
 fn xdp_chain_3level() {
     let (veth_host, _veth_peer, ifindex) = create_veth_pair();
 
