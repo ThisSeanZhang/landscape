@@ -27,6 +27,7 @@ use super::{
 };
 use crate::{
     addresses_by_iface_name,
+    lan_service::lan_ipv6_service::MacLinkMapCache,
     netlink::ipv6::{add_route, add_route_via, del_iface_ip, del_route, set_iface_ip},
     sys_service::route::IpRouteService,
 };
@@ -55,6 +56,7 @@ async fn handle_icmp_msg(
     iface_name: &str,
     service_status: &WatchService,
     share_status: &Arc<Mutex<Ipv6ServerStatus>>,
+    mac_link_cache: &Arc<MacLinkMapCache>,
     params: &Ipv6LanReplyParams,
     mac_addr: &MacAddr,
     icmp_ad_interval: u32,
@@ -71,6 +73,14 @@ async fn handle_icmp_msg(
 
     match icmpv6::parse(&data) {
         Some(Icmpv6Message::RouterSolicitation(_)) => {
+            if let Some(mac) = icmpv6::extract_mac_from_rs(&data) {
+                if let SocketAddr::V6(ref v6) = src_addr {
+                    let ll = *v6.ip();
+                    if ll.is_unicast_link_local() {
+                        mac_link_cache.record(link_ifindex, mac, ll);
+                    }
+                }
+            }
             let status = share_status.lock().await;
             let ra = icmpv6::build_ra(&status, params, mac_addr, icmp_ad_interval * 1000);
             drop(status);
@@ -85,6 +95,7 @@ async fn handle_icmp_msg(
                     if let SocketAddr::V6(ref v6) = src_addr {
                         let ll = *v6.ip();
                         if ll.is_unicast_link_local() {
+                            mac_link_cache.record(link_ifindex, *mac, ll);
                             status.record_mac_link_local(*mac, ll);
                         }
                     }
@@ -320,6 +331,7 @@ pub async fn start_ipv6_lan_server(
     icmp_ad_interval: u32,
     ipv6_assign_sender: &IPv6AssignEventSender,
     share_status: Arc<Mutex<Ipv6ServerStatus>>,
+    mac_link_cache: Arc<MacLinkMapCache>,
     prefix_groups: Vec<LanPrefixGroupConfig>,
     prefix_map: IAPrefixMap,
     mut prefix_change_rx: watch::Receiver<()>,
@@ -438,8 +450,8 @@ pub async fn start_ipv6_lan_server(
             result = icmp_recv.recv() => {
                 if !handle_icmp_msg(
                     result, &iface_name, &service_status, &share_status,
-                    &params, &mac_addr, icmp_ad_interval, &icmp_sender, ipv6_assign_sender,
-                    link_ifindex, &device_id_map,
+                    &mac_link_cache, &params, &mac_addr, icmp_ad_interval, &icmp_sender,
+                    ipv6_assign_sender, link_ifindex, &device_id_map,
                 ).await {
                     break;
                 }

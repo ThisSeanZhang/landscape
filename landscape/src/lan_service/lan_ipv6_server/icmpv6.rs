@@ -15,6 +15,17 @@ pub static ICMPV6_MULTICAST: Ipv6Addr = Ipv6Addr::new(0xff02, 0, 0, 0, 0, 0, 0, 
 // reply with solicited NA for DAD defense. NeighborSolicitation is currently
 // Unassigned in Icmpv6Message; needs a variant in landscape-common.
 
+pub fn extract_mac_from_rs(data: &[u8]) -> Option<MacAddr> {
+    let msg = parse(data)?;
+    match msg {
+        Icmpv6Message::RouterSolicitation(rs) => match rs.opts.get(1)? {
+            IcmpV6Option::SourceLinkLayerAddress { addr, .. } => Some(MacAddr::from(*addr)),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
 pub fn parse(bytes: &[u8]) -> Option<Icmpv6Message> {
     let mut buf = BytesMut::from(bytes);
     match Icmpv6Message::decode(&mut buf) {

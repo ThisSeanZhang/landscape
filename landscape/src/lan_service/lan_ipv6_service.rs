@@ -30,6 +30,9 @@ use crate::get_iface_by_name;
 use crate::sys_service::route::IpRouteService;
 use dashmap::DashMap;
 
+mod mac_link_map;
+pub use self::mac_link_map::{start_periodic_scan, MacLinkMapCache};
+
 #[derive(Clone)]
 pub struct LanIPv6Service {
     route_service: IpRouteService,
@@ -39,6 +42,7 @@ pub struct LanIPv6Service {
     device_id_map: Arc<DashMap<MacAddr, Uuid>>,
     status_map: Arc<DashMap<String, Arc<Mutex<Ipv6ServerStatus>>>>,
     per_iface_txs: Arc<DashMap<String, watch::Sender<()>>>,
+    mac_link_map_cache: Arc<MacLinkMapCache>,
 }
 
 impl LanIPv6Service {
@@ -47,6 +51,7 @@ impl LanIPv6Service {
         prefix_map: IAPrefixMap,
         enrolled_device_store: EnrolledDeviceRepository,
         ipv6_assign_sender: IPv6AssignEventSender,
+        mac_link_map_cache: Arc<MacLinkMapCache>,
     ) -> Self {
         Self {
             route_service,
@@ -56,6 +61,7 @@ impl LanIPv6Service {
             device_id_map: Arc::new(DashMap::new()),
             status_map: Arc::new(DashMap::new()),
             per_iface_txs: Arc::new(DashMap::new()),
+            mac_link_map_cache,
         }
     }
 }
@@ -180,6 +186,7 @@ impl ServiceStarterTrait for LanIPv6Service {
             let prefix_groups = config.config.prefix_groups.clone();
             let prefix_map = self.prefix_map.clone();
             let device_id_map = self.device_id_map.clone();
+            let mac_link_cache = self.mac_link_map_cache.clone();
             tokio::spawn(async move {
                 let _ = start_ipv6_lan_server(
                     iface.index,
@@ -189,6 +196,7 @@ impl ServiceStarterTrait for LanIPv6Service {
                     config.config.ad_interval,
                     &ipv6_assign_sender,
                     status,
+                    mac_link_cache,
                     prefix_groups,
                     prefix_map,
                     prefix_rx,
@@ -210,6 +218,8 @@ pub struct LanIPv6ManagerService {
     store: LanIPv6V2ServiceRepository,
     service: ServiceManager<LanIPv6Service>,
     server_starter: LanIPv6Service,
+    #[allow(dead_code)]
+    mac_link_map_cache: Arc<MacLinkMapCache>,
 }
 
 impl ControllerService for LanIPv6ManagerService {
@@ -240,11 +250,16 @@ impl LanIPv6ManagerService {
         let store = store_service.lan_ipv6_v2_service_store();
         let enrolled_device_store = store_service.enrolled_device_store();
         let prefix_map_for_starter = prefix_map.clone();
+
+        let mac_link_map_cache = Arc::new(MacLinkMapCache::new());
+        start_periodic_scan(&mac_link_map_cache, 60);
+
         let server_starter = LanIPv6Service::new(
             route_service,
             prefix_map_for_starter,
             enrolled_device_store,
             ipv6_assign_sender,
+            mac_link_map_cache.clone(),
         );
         let service =
             ServiceManager::init(store.list().await.unwrap(), server_starter.clone()).await;
@@ -343,7 +358,8 @@ impl LanIPv6ManagerService {
         });
 
         let store = store_service.lan_ipv6_v2_service_store();
-        Self { service, store, server_starter }
+
+        Self { service, store, server_starter, mac_link_map_cache }
     }
 
     pub async fn refresh_iface_service(&self, iface_name: String) {
