@@ -1,5 +1,6 @@
 use landscape::{
-    dhcp_client::v4::dhcp_v4_client, get_iface_by_name, sys_service::route::IpRouteService,
+    get_iface_by_name, sys_service::route::IpRouteService,
+    wan_service::dhcpv4_client::v4::dhcp_v4_client,
 };
 use landscape_common::{
     service::{ServiceStatus, WatchService},

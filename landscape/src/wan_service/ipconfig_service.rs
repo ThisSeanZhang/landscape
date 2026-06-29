@@ -172,7 +172,7 @@ async fn init_service_from_config(
             if let Some(mac_addr) = iface.mac {
                 let hostname =
                     hostname.filter(|h| !h.is_empty()).unwrap_or_else(|| LAND_HOSTNAME.clone());
-                crate::dhcp_client::v4::dhcp_v4_client(
+                crate::wan_service::dhcpv4_client::v4::dhcp_v4_client(
                     iface.index,
                     iface.name,
                     mac_addr,

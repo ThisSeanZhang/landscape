@@ -2,8 +2,10 @@ use std::path::PathBuf;
 
 use landscape_common::{error::LdResult, iface::config::IfaceCpuSoftBalance};
 
+pub mod dhcpv4_client;
 pub mod firewall;
 pub mod ipconfig_service;
+pub mod ipv6pd_client;
 pub mod ipv6pd_service;
 pub mod mss_clamp_service;
 pub mod nat_service;

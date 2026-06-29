@@ -27,7 +27,7 @@ use super::{
 };
 use crate::{
     addresses_by_iface_name,
-    ipv6::prefix::{add_route, add_route_via, del_iface_ip, del_route, set_iface_ip},
+    netlink::ipv6::{add_route, add_route_via, del_iface_ip, del_route, set_iface_ip},
     sys_service::route::IpRouteService,
 };
 use dashmap::DashMap;

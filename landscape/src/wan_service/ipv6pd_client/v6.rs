@@ -15,7 +15,7 @@ use tokio::{net::UdpSocket, time::Instant};
 
 use crate::{
     dump::udp_packet::dhcp_v6::get_solicit_options,
-    ipv6::prefix::{del_iface_ip, set_iface_ip},
+    netlink::ipv6::{del_iface_ip, set_iface_ip},
     set_iface_ip_no_limit,
     sys_service::route::IpRouteService,
 };

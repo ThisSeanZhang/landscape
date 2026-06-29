@@ -71,7 +71,7 @@ impl ServiceStarterTrait for IPV6PDService {
                 };
                 let status_clone = service_status.clone();
                 tokio::spawn(async move {
-                    crate::dhcp_client::v6::dhcp_v6_pd_client(
+                    crate::wan_service::ipv6pd_client::v6::dhcp_v6_pd_client(
                         config.iface_name,
                         iface.index,
                         iface.mac,
