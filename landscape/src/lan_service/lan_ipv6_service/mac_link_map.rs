@@ -31,12 +31,10 @@ impl MacLinkMap {
         }
     }
 
-    #[allow(dead_code)]
     fn lookup_ll_by_mac(&self, ifindex: u32, mac: &MacAddr) -> Option<Ipv6Addr> {
         self.mac_to_ll.get(&(ifindex, *mac)).copied()
     }
 
-    #[allow(dead_code)]
     fn lookup_mac_by_ll(&self, ifindex: u32, ll: &Ipv6Addr) -> Option<MacAddr> {
         self.ll_to_mac.get(&(ifindex, *ll)).copied()
     }

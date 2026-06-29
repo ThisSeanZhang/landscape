@@ -57,7 +57,7 @@ fn record_slaac_addr_conflict_with_existing_na() {
     let mac = MacAddr::from([0x00, 0x11, 0x22, 0x33, 0x44, 0x55]);
 
     // Allocate via NA first, which claims the suffix
-    let addrs = status.offer_na(duid, Some(mac), None).unwrap();
+    let addrs = status.offer_na(duid, mac, None).unwrap();
     let na_ip = addrs[0];
 
     // Recording the same IP via SLAAC should conflict

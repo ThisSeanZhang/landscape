@@ -1,4 +1,5 @@
 use std::net::{Ipv6Addr, SocketAddr};
+use std::sync::Arc;
 
 use dhcproto::v6::{self, Authentication, IAAddr, IAPrefix, Status, StatusCode, IANA, IAPD};
 use dhcproto::{Decodable, Decoder, Encodable, Encoder};
@@ -6,6 +7,7 @@ use landscape_common::net::MacAddr;
 use landscape_common::net_proto::udp::dhcp::DhcpV6MessageType;
 
 use super::{Ipv6LanReplyParams, Ipv6ServerStatus};
+use crate::lan_service::lan_ipv6_service::MacLinkMapCache;
 
 // ── Result types ───────────────────────────────────────────────────────────
 
@@ -34,7 +36,14 @@ pub fn process_dhcpv6_msg(
     server_duid: &[u8],
     params: &Ipv6LanReplyParams,
     dns_servers: &[Ipv6Addr],
+    mac_link_cache: &Arc<MacLinkMapCache>,
+    link_ifindex: u32,
 ) -> Dhcpv6Result {
+    let client_ll = match client_addr {
+        SocketAddr::V6(v6) => *v6.ip(),
+        _ => Ipv6Addr::UNSPECIFIED,
+    };
+
     let empty = || Dhcpv6Result {
         reply_bytes: None,
         reply_dst: client_addr,
@@ -59,10 +68,17 @@ pub fn process_dhcpv6_msg(
         }
     };
 
-    let mac = extract_mac_from_duid(&client_duid).or_else(|| match client_addr {
-        SocketAddr::V6(ref v6) => status.lookup_mac_by_link_local(*v6.ip()),
-        _ => None,
-    });
+    let Some(mac) =
+        resolve_mac(&client_duid, msg.msg_type(), status, mac_link_cache, link_ifindex, &client_ll)
+    else {
+        tracing::warn!(
+            "DHCPv6 {:?}: cannot resolve MAC for DUID {:02x?}, deferring",
+            msg.msg_type(),
+            client_duid,
+        );
+        return empty();
+    };
+
     let iana_id = extract_iana_id(&msg);
     let iapd_id = extract_iapd_id(&msg);
 
@@ -116,6 +132,30 @@ pub fn process_dhcpv6_msg(
     }
 }
 
+fn resolve_mac(
+    duid: &[u8],
+    msg_type: DhcpV6MessageType,
+    status: &Ipv6ServerStatus,
+    mac_link_cache: &Arc<MacLinkMapCache>,
+    ifindex: u32,
+    client_ll: &Ipv6Addr,
+) -> Option<MacAddr> {
+    // 1. DUID-LLT/LL carries MAC directly – best path
+    if let Some(mac) = extract_mac_from_duid(duid) {
+        return Some(mac);
+    }
+    // 2. DUID already has a lease → use lease.mac
+    if let Some(mac) = status.lookup_na_mac_by_duid(duid) {
+        return Some(mac);
+    }
+    // 3. Solicit/Request: try MacLinkMapCache before giving up
+    if matches!(msg_type, DhcpV6MessageType::Solicit | DhcpV6MessageType::Request) {
+        return mac_link_cache.lookup_mac_by_ll(ifindex, client_ll);
+    }
+    // 4. Renew/Rebind/Release/Decline/Confirm: lease should exist, but if not, skip
+    None
+}
+
 // ── Solicit → Advertise ─────────────────────────────────────────────────────
 
 fn handle_solicit(
@@ -124,7 +164,7 @@ fn handle_solicit(
     client_duid: &[u8],
     iana_id: Option<u32>,
     iapd_id: Option<u32>,
-    mac: Option<MacAddr>,
+    mac: MacAddr,
     server_duid: &[u8],
     params: &Ipv6LanReplyParams,
     dns_servers: &[Ipv6Addr],
@@ -199,7 +239,7 @@ fn handle_request_or_renew(
     client_duid: &[u8],
     iana_id: Option<u32>,
     iapd_id: Option<u32>,
-    mac: Option<MacAddr>,
+    mac: MacAddr,
     server_duid: &[u8],
     client_addr: SocketAddr,
     params: &Ipv6LanReplyParams,
@@ -230,16 +270,14 @@ fn handle_request_or_renew(
         let is_first_allocation = status.is_na_in_offer_state(client_duid);
         status.confirm_na(client_duid);
 
-        if let Some(client_mac) = mac {
-            if is_first_allocation {
-                for ip in &status.get_na_addresses(client_duid) {
-                    allocated_ips.push((client_mac, *ip));
-                }
-            } else {
-                for ip in &status.get_na_addresses(client_duid) {
-                    if !prev_ips.contains(ip) {
-                        allocated_ips.push((client_mac, *ip));
-                    }
+        if is_first_allocation {
+            for ip in &status.get_na_addresses(client_duid) {
+                allocated_ips.push((mac, *ip));
+            }
+        } else {
+            for ip in &status.get_na_addresses(client_duid) {
+                if !prev_ips.contains(ip) {
+                    allocated_ips.push((mac, *ip));
                 }
             }
         }
@@ -379,7 +417,7 @@ fn handle_release(
     status: &mut Ipv6ServerStatus,
     msg: &v6::Message,
     client_duid: &[u8],
-    mac: Option<MacAddr>,
+    mac: MacAddr,
     server_duid: &[u8],
     client_addr: SocketAddr,
 ) -> Dhcpv6Result {
@@ -391,10 +429,8 @@ fn handle_release(
     let mut pd_route_changes: Vec<PdRouteChange> = Vec::new();
 
     if let Some(expired_na) = status.release_na(client_duid) {
-        if let Some(m) = mac.or(expired_na.mac) {
-            for ip in status.suffix_to_addrs(expired_na.suffix) {
-                expired_ips.push((m, ip));
-            }
+        for ip in status.suffix_to_addrs(expired_na.suffix) {
+            expired_ips.push((mac, ip));
         }
     }
 
@@ -444,16 +480,14 @@ fn handle_release(
 fn handle_decline(
     status: &mut Ipv6ServerStatus,
     client_duid: &[u8],
-    mac: Option<MacAddr>,
+    mac: MacAddr,
     client_addr: SocketAddr,
 ) -> Dhcpv6Result {
     let mut expired_ips: Vec<(MacAddr, Ipv6Addr)> = Vec::new();
 
     if let Some(expired_na) = status.release_na(client_duid) {
-        if let Some(m) = mac.or(expired_na.mac) {
-            for ip in status.suffix_to_addrs(expired_na.suffix) {
-                expired_ips.push((m, ip));
-            }
+        for ip in status.suffix_to_addrs(expired_na.suffix) {
+            expired_ips.push((mac, ip));
         }
     }
 
@@ -472,7 +506,7 @@ fn handle_confirm(
     status: &Ipv6ServerStatus,
     msg: &v6::Message,
     client_duid: &[u8],
-    mac: Option<MacAddr>,
+    mac: MacAddr,
     server_duid: &[u8],
     client_addr: SocketAddr,
 ) -> Dhcpv6Result {

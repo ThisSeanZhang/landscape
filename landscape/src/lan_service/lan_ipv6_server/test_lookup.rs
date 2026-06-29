@@ -59,7 +59,7 @@ fn all_addresses_includes_na_leases() {
     let mut status = make_full_status();
     let duid = b"lookup-na-01";
     let mac = MacAddr::from([0x00, 0x11, 0x22, 0x33, 0x44, 0x55]);
-    status.offer_na(duid, Some(mac), Some("host1".into()));
+    status.offer_na(duid, mac, Some("host1".into()));
     let all = status.all_addresses();
     assert!(!all.is_empty(), "should include NA lease addresses");
     assert!(all.iter().any(|a| a.source == AddrSource::Dhcpv6Na));
@@ -106,7 +106,7 @@ fn lookup_by_ip_for_na_address() {
     let mut status = make_full_status();
     let duid = b"lookup-na-02";
     let mac = MacAddr::from([0x00, 0x11, 0x22, 0x33, 0x44, 0x55]);
-    let addrs = status.offer_na(duid, Some(mac), Some("host2".into())).unwrap();
+    let addrs = status.offer_na(duid, mac, Some("host2".into())).unwrap();
     let na_ip = addrs[0];
 
     let addr = status.lookup_by_ip(na_ip);
@@ -130,7 +130,7 @@ fn lookup_ip_by_mac_for_na_lease() {
     let mut status = make_full_status();
     let duid = b"lookup-na-03";
     let mac = MacAddr::from([0x00, 0x11, 0x22, 0x33, 0x44, 0x55]);
-    let addrs = status.offer_na(duid, Some(mac), None).unwrap();
+    let addrs = status.offer_na(duid, mac, None).unwrap();
     let expected_ip = addrs[0];
 
     let ip = status.lookup_ip_by_mac(&mac);
@@ -178,7 +178,11 @@ fn to_ipv6_na_info_empty_without_slaac() {
 #[test]
 fn to_dhcpv6_offer_info_includes_na_and_pd() {
     let mut status = make_full_status();
-    status.offer_na(b"info-na-01", None, Some("host-info".into()));
+    status.offer_na(
+        b"info-na-01",
+        MacAddr::from([0x00, 0x11, 0x22, 0x33, 0x44, 0x55]),
+        Some("host-info".into()),
+    );
     status.offer_pd(b"info-pd-01");
 
     let info = status.to_dhcpv6_offer_info();

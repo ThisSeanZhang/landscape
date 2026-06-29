@@ -36,7 +36,7 @@ use self::pd::{PdRange, PdSlotKey};
 pub struct NaLease {
     pub suffix: u64,
     pub duid_hex: String,
-    pub mac: Option<MacAddr>,
+    pub mac: MacAddr,
     pub hostname: Option<String>,
     pub relative_offer_time: u64,
     pub valid_time: u32,
@@ -134,7 +134,7 @@ pub enum SlaacResult {
 pub struct ExpiredNa {
     pub ip: Ipv6Addr,
     pub suffix: u64,
-    pub mac: Option<MacAddr>,
+    pub mac: MacAddr,
     pub duid_hex: String,
 }
 
@@ -377,12 +377,6 @@ pub struct Ipv6ServerStatus {
     // ── Reconfigure trigger ──
     reconf_tx: mpsc::UnboundedSender<MacAddr>,
 
-    // ── MAC → link-local (populated from NA messages) ──
-    mac_link_locals: HashMap<MacAddr, Ipv6Addr>,
-
-    // ── link-local → MAC (reverse index for DUID-UUID clients) ──
-    link_local_to_mac: HashMap<Ipv6Addr, MacAddr>,
-
     // ── Timing ──
     boot_time: Instant,
     boot_time_f64: f64,
@@ -423,8 +417,6 @@ impl Ipv6ServerStatus {
             dns_servers: DnsServers::new(),
             reconfigure_keys: HashMap::new(),
             reconf_tx,
-            mac_link_locals: HashMap::new(),
-            link_local_to_mac: HashMap::new(),
             boot_time: Instant::now(),
             boot_time_f64: get_f64_timestamp(),
         };
@@ -540,17 +532,15 @@ impl Ipv6ServerStatus {
     pub fn offer_na(
         &mut self,
         duid: &[u8],
-        mac: Option<MacAddr>,
+        mac: MacAddr,
         hostname: Option<String>,
     ) -> Option<Vec<Ipv6Addr>> {
         let now = self.boot_time.elapsed().as_secs();
 
         // 1. static binding: if MAC has a pre-configured suffix, assign it
-        if let Some(mac) = mac {
-            if let Some(&suffix) = self.na_static_by_mac.get(&mac) {
-                self.insert_static_na_lease(duid, mac, suffix, hostname, now);
-                return Some(self.suffix_to_addrs(suffix));
-            }
+        if let Some(&suffix) = self.na_static_by_mac.get(&mac) {
+            self.insert_static_na_lease(duid, mac, suffix, hostname, now);
+            return Some(self.suffix_to_addrs(suffix));
         }
 
         // 2. existing DUID lease: return current addresses
@@ -629,19 +619,14 @@ impl Ipv6ServerStatus {
         }
     }
 
-    pub fn check_address_owner(
-        &self,
-        ip: Ipv6Addr,
-        duid: &[u8],
-        mac: Option<MacAddr>,
-    ) -> NaAddressCheck {
+    pub fn check_address_owner(&self, ip: Ipv6Addr, duid: &[u8], mac: MacAddr) -> NaAddressCheck {
         if !self.is_na_on_link(ip) {
             return NaAddressCheck::NotOnLink;
         }
         let suffix = ipv6_suffix(ip);
         match self.na_owners_by_suffix.get(&suffix) {
             Some(SuffixOwner::StaticMac(owner)) => {
-                if Some(*owner) == mac {
+                if *owner == mac {
                     NaAddressCheck::Owned
                 } else {
                     NaAddressCheck::OwnedByOtherMac(*owner)
@@ -1068,7 +1053,7 @@ impl Ipv6ServerStatus {
             for (prefix, prefix_len) in &na_prefixes {
                 result.push(AssignedAddr {
                     ip: combine_prefix_suffix(*prefix, *prefix_len, lease.suffix),
-                    mac: lease.mac,
+                    mac: Some(lease.mac),
                     duid: Some(lease.duid_hex.clone()),
                     hostname: lease.hostname.clone(),
                     source: AddrSource::Dhcpv6Na,
@@ -1135,18 +1120,15 @@ impl Ipv6ServerStatus {
         // Check DHCPv6 NA: resolve IP → suffix → lease
         let suffix = ipv6_suffix(ip);
         if let Some(owner) = self.na_owners_by_suffix.get(&suffix) {
-            let (duid_vec, mac_opt) = match owner {
-                SuffixOwner::StaticMac(mac) => {
-                    let duid = self.static_lease_duid_for_mac(*mac);
-                    (duid, Some(*mac))
-                }
-                SuffixOwner::DynamicDuid(duid) => (Some(duid.clone()), None),
+            let duid_vec = match owner {
+                SuffixOwner::StaticMac(mac) => self.static_lease_duid_for_mac(*mac),
+                SuffixOwner::DynamicDuid(duid) => Some(duid.clone()),
             };
             if let Some(duid) = duid_vec {
                 if let Some(lease) = self.na_leases_by_duid.get(&duid) {
                     return Some(AssignedAddr {
                         ip,
-                        mac: lease.mac.or(mac_opt),
+                        mac: Some(lease.mac),
                         duid: Some(lease.duid_hex.clone()),
                         hostname: lease.hostname.clone(),
                         source: AddrSource::Dhcpv6Na,
@@ -1187,7 +1169,7 @@ impl Ipv6ServerStatus {
         }
         // Dynamic lease
         for lease in self.na_leases_by_duid.values() {
-            if lease.mac == Some(*mac) {
+            if lease.mac == *mac {
                 return self.qualifying_na_prefixes().first().map(|(prefix, prefix_len)| {
                     combine_prefix_suffix(*prefix, *prefix_len, lease.suffix)
                 });
@@ -1232,7 +1214,7 @@ impl Ipv6ServerStatus {
             .flat_map(|lease| {
                 na_prefixes.iter().map(|(prefix, prefix_len)| DHCPv6AddressItem {
                     duid: Some(lease.duid_hex.clone()),
-                    mac: lease.mac,
+                    mac: Some(lease.mac),
                     ip: combine_prefix_suffix(*prefix, *prefix_len, lease.suffix),
                     hostname: lease.hostname.clone(),
                     relative_active_time: lease.relative_offer_time,
@@ -1299,7 +1281,7 @@ impl Ipv6ServerStatus {
         let lease = NaLease {
             suffix,
             hostname,
-            mac: Some(mac),
+            mac,
             duid_hex: duid_to_hex(duid),
             relative_offer_time: now,
             valid_time: OFFER_VALID_TIME,
@@ -1312,7 +1294,7 @@ impl Ipv6ServerStatus {
             prev_suffix: previous_suffix.filter(|prev| *prev != suffix),
         };
         self.na_leases_by_duid.insert(duid.to_vec(), lease);
-        self.set_reconfigure_key(duid, Some(mac));
+        self.set_reconfigure_key(duid, mac);
         self.slaac_entries.retain(|&ip, _| ipv6_suffix(ip) != suffix);
     }
 
@@ -1337,7 +1319,7 @@ impl Ipv6ServerStatus {
     fn allocate_dynamic_na_suffix(
         &mut self,
         duid: &[u8],
-        mac: Option<MacAddr>,
+        mac: MacAddr,
         hostname: Option<String>,
         now: u64,
         prev_suffix: Option<u64>,
@@ -1382,7 +1364,7 @@ impl Ipv6ServerStatus {
     fn insert_dynamic_na_lease(
         &mut self,
         duid: &[u8],
-        mac: Option<MacAddr>,
+        mac: MacAddr,
         hostname: Option<String>,
         now: u64,
         prev_suffix: Option<u64>,
@@ -1416,7 +1398,7 @@ impl Ipv6ServerStatus {
         self.static_lease_duid_for_mac(mac).or_else(|| {
             self.na_leases_by_duid
                 .iter()
-                .find(|(_, lease)| lease.mac == Some(mac))
+                .find(|(_, lease)| lease.mac == mac)
                 .map(|(duid, _)| duid.clone())
         })
     }
@@ -1424,7 +1406,7 @@ impl Ipv6ServerStatus {
     fn static_lease_duid_for_mac(&self, mac: MacAddr) -> Option<Vec<u8>> {
         self.na_leases_by_duid
             .iter()
-            .find(|(_, lease)| lease.mac == Some(mac) && lease.is_static)
+            .find(|(_, lease)| lease.mac == mac && lease.is_static)
             .map(|(duid, _)| duid.clone())
     }
 
@@ -1433,38 +1415,8 @@ impl Ipv6ServerStatus {
         self.lease_duid_for_mac(*mac)
     }
 
-    /// Record client link-local from Neighbor Advertisement source address.
-    pub fn record_mac_link_local(&mut self, mac: MacAddr, ll: Ipv6Addr) {
-        self.mac_link_locals.insert(mac, ll);
-        self.link_local_to_mac.insert(ll, mac);
-    }
-
-    /// Look up client link-local by MAC (populated from NA messages).
-    pub fn lookup_link_local_by_mac(&self, mac: &MacAddr) -> Option<Ipv6Addr> {
-        self.mac_link_locals.get(mac).copied()
-    }
-
-    /// Look up MAC by client link-local (populated from NA messages).
-    pub fn lookup_mac_by_link_local(&self, ll: Ipv6Addr) -> Option<MacAddr> {
-        self.link_local_to_mac.get(&ll).copied()
-    }
-
-    /// When MAC was unknown during DHCP NA allocation, fill it in from SLAAC NA conflict.
-    /// Returns `true` if the MAC was previously missing → event should be emitted.
-    pub fn update_na_lease_mac_from_slaac(&mut self, ip: Ipv6Addr, mac: MacAddr) -> bool {
-        let suffix = ipv6_suffix(ip);
-        let duid = match self.na_owners_by_suffix.get(&suffix) {
-            Some(SuffixOwner::DynamicDuid(duid)) => duid.clone(),
-            _ => return false,
-        };
-        let Some(lease) = self.na_leases_by_duid.get_mut(&duid) else {
-            return false;
-        };
-        if lease.mac.is_some() {
-            return false;
-        }
-        lease.mac = Some(mac);
-        true
+    pub fn lookup_na_mac_by_duid(&self, duid: &[u8]) -> Option<MacAddr> {
+        self.na_leases_by_duid.get(duid).map(|lease| lease.mac)
     }
 
     /// After `update_device_binding`, notify affected clients to renew.
@@ -1484,10 +1436,8 @@ impl Ipv6ServerStatus {
 
         let mut seen = HashSet::new();
         for lease in leases {
-            if let Some(ref mac) = lease.mac {
-                if seen.insert(*mac) {
-                    let _ = self.reconf_tx.send(*mac);
-                }
+            if seen.insert(lease.mac) {
+                let _ = self.reconf_tx.send(lease.mac);
             }
         }
     }
@@ -1499,12 +1449,10 @@ impl Ipv6ServerStatus {
         rand::rng().random()
     }
 
-    pub fn set_reconfigure_key(&mut self, duid: &[u8], mac: Option<MacAddr>) {
-        if let Some(mac) = mac {
-            if let Some(old_duid) = self.lease_duid_for_mac(mac) {
-                if old_duid.as_slice() != duid {
-                    self.reconfigure_keys.remove(&old_duid);
-                }
+    pub fn set_reconfigure_key(&mut self, duid: &[u8], mac: MacAddr) {
+        if let Some(old_duid) = self.lease_duid_for_mac(mac) {
+            if old_duid.as_slice() != duid {
+                self.reconfigure_keys.remove(&old_duid);
             }
         }
         if !self.reconfigure_keys.contains_key(duid) {

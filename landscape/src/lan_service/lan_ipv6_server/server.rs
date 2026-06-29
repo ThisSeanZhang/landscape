@@ -96,7 +96,6 @@ async fn handle_icmp_msg(
                         let ll = *v6.ip();
                         if ll.is_unicast_link_local() {
                             mac_link_cache.record(link_ifindex, *mac, ll);
-                            status.record_mac_link_local(*mac, ll);
                         }
                     }
                 }
@@ -124,33 +123,11 @@ async fn handle_icmp_msg(
                         tracing::error!("ND Allocated event FAILED for {mac} -> {ip}: {e:?}");
                     }
                 }
-                icmpv6::SlaacActionResult::Conflict { mac, ip } => {
-                    let mac_was_none = status.update_na_lease_mac_from_slaac(ip, mac);
-                    if mac_was_none {
-                        if let Err(e) = landscape_ebpf::base::ip_mac::upsert_ipv6_ip_mac(
-                            link_ifindex,
-                            ip,
-                            mac,
-                            *mac_addr,
-                        ) {
-                            tracing::warn!(
-                                "failed to prewarm ip_mac_v6 for DHCPv6-confirm {ip} -> {mac}: {e}"
-                            );
-                        }
-                        let device_id = device_id_map.get(&mac).map(|r| *r.value());
-                        if let Err(e) = ipv6_assign_sender.try_send(IPv6AssignEvent::Allocated(
-                            IPv6AssignInfo {
-                                iface_name: iface_name.to_string(),
-                                mac,
-                                ip,
-                                device_id,
-                            },
-                        )) {
-                            tracing::error!(
-                                "NA-conflict Allocated event FAILED for {mac} -> {ip}: {e:?}"
-                            );
-                        }
-                    }
+                icmpv6::SlaacActionResult::Conflict { .. } => {
+                    // MAC is now always known at DHCPv6 allocation time,
+                    // so Conflict only implies the NA refreshed reachability.
+                    // No event needed – the lease's activity time is handled
+                    // by icmpv6::handle_na internally.
                 }
                 _ => {}
             }
@@ -168,6 +145,7 @@ async fn handle_dhcp_msg(
     iface_name: &str,
     mac_addr: MacAddr,
     link_ifindex: u32,
+    mac_link_cache: &Arc<MacLinkMapCache>,
     service_status: &WatchService,
     share_status: &Arc<Mutex<Ipv6ServerStatus>>,
     server_duid: &[u8],
@@ -198,6 +176,8 @@ async fn handle_dhcp_msg(
             server_duid,
             params,
             &dns_servers,
+            mac_link_cache,
+            link_ifindex,
         );
 
         // Send reply
@@ -283,15 +263,13 @@ async fn handle_expire_tick(
 
         let expired_na = status.clean_expired_na();
         for na in &expired_na {
-            if let Some(mac) = na.mac {
-                let device_id = device_id_map.get(&mac).map(|r| *r.value());
-                let _ = ipv6_assign_sender.try_send(IPv6AssignEvent::Expired(IPv6AssignInfo {
-                    iface_name: iface_name.to_string(),
-                    mac,
-                    ip: na.ip,
-                    device_id,
-                }));
-            }
+            let device_id = device_id_map.get(&na.mac).map(|r| *r.value());
+            let _ = ipv6_assign_sender.try_send(IPv6AssignEvent::Expired(IPv6AssignInfo {
+                iface_name: iface_name.to_string(),
+                mac: na.mac,
+                ip: na.ip,
+                device_id,
+            }));
         }
 
         let expired_pd = status.clean_expired_pd();
@@ -465,9 +443,9 @@ pub async fn start_ipv6_lan_server(
                 if let Some(ref dhcp_sender) = dhcp_sender {
                     if !handle_dhcp_msg(
                         result, &iface_name, mac_addr, link_ifindex,
-                        &service_status, &share_status, &server_duid,
-                        &params, dhcp_sender, ipv6_assign_sender, &route_service,
-                        &device_id_map,
+                        &mac_link_cache, &service_status, &share_status,
+                        &server_duid, &params, dhcp_sender,
+                        ipv6_assign_sender, &route_service, &device_id_map,
                     ).await {
                         break;
                     }
@@ -488,7 +466,7 @@ pub async fn start_ipv6_lan_server(
                     let (duid, client_ip, reconf_key) = {
                         let status = share_status.lock().await;
                         let duid = status.lookup_na_duid_by_mac(&mac);
-                        let ip = status.lookup_link_local_by_mac(&mac);
+                        let ip = mac_link_cache.lookup_ll_by_mac(link_ifindex, &mac);
                         let key = status.lookup_reconfigure_key_by_mac(&mac);
                         (duid, ip, key)
                     };
