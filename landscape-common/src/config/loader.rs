@@ -135,6 +135,7 @@ impl RuntimeConfig {
                 default_debug_mode(),
             ),
             max_log_files: read_value(&args.max_log_files, &config.log.max_log_files, 7),
+            log_filter: args.log_filter.clone(),
         };
 
         let default_web_path = home_path.join(LANDSCAPE_WEBROOT_DIR_NAME);

@@ -99,6 +99,12 @@ pub struct WebCommArgs {
     #[arg(long, env = "LANDSCAPE_LOG_FILE_LIMIT")]
     pub max_log_files: Option<usize>,
 
+    /// Log keyword filter: comma-separated list of keywords
+    /// When specified, only ERROR/WARN logs and logs containing any keyword are shown
+    /// [example: --log-filter dhcp,dns,firewall]
+    #[arg(long, value_delimiter = ',', env = "LANDSCAPE_LOG_FILTER")]
+    pub log_filter: Vec<String>,
+
     /// Auto init Default Net [default: false]
     #[arg(long, env = "LANDSCAPE_AUTO")]
     pub auto: bool,
