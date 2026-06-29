@@ -5,7 +5,6 @@ use std::{
     sync::Arc,
 };
 
-pub mod lan_service;
 pub mod wan_service;
 
 use arc_swap::ArcSwap;

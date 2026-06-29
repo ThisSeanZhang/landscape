@@ -27,9 +27,9 @@ use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 
 use crate::cert::SharedSniResolver;
-use crate::dhcp_server::dhcp_server_new::{DHCPv4Server, DhcpV4DnrRuntimeContext};
-use crate::dhcp_server::dhcp_v4_status::{DhcpV4AssignStatus, StaticBindingEntry};
 use crate::iface::get_iface_by_name;
+use crate::lan_service::lan_dhcp4_server::server::{DHCPv4Server, DhcpV4DnrRuntimeContext};
+use crate::lan_service::lan_dhcp4_server::status::{DhcpV4AssignStatus, StaticBindingEntry};
 use crate::route::IpRouteService;
 use crate::LandscapeSingleIpInfo;
 use landscape_common::event::hub::{
@@ -160,7 +160,7 @@ impl ServiceStarterTrait for DHCPv4ServerStarter {
             );
             let ipv4_sender = self.ipv4_assign_sender.clone();
             tokio::spawn(async move {
-                crate::dhcp_server::dhcp_server_new::dhcp_v4_server(
+                crate::lan_service::lan_dhcp4_server::server::dhcp_v4_server(
                     config.iface_name,
                     iface_ifindex,
                     iface_mac,

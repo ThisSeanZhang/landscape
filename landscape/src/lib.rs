@@ -10,7 +10,6 @@ pub mod boot;
 pub mod arp;
 pub mod cert;
 pub mod dhcp_client;
-pub mod dhcp_server;
 pub mod dns;
 pub mod docker;
 pub mod dump;

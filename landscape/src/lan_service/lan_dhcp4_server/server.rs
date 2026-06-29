@@ -24,7 +24,7 @@ use landscape_common::enrolled_device::EnrolledDevice;
 use landscape_common::event::hub::{IPv4AssignEvent, IPv4AssignEventSender, IPv4AssignInfo};
 use landscape_common::net::MacAddr;
 
-use crate::dhcp_server::dhcp_v4_status::DhcpV4AssignStatus;
+use crate::lan_service::lan_dhcp4_server::status::DhcpV4AssignStatus;
 use landscape_common::service::{ServiceStatus, WatchService};
 use landscape_common::{
     LANDSCAPE_DEFAULE_DHCP_V4_SERVER_PORT, LANDSCAPE_DHCP_DEFAULT_ADDRESS_LEASE_TIME,
@@ -764,7 +764,7 @@ mod tests {
         net::MacAddr,
     };
 
-    use crate::dhcp_server::dhcp_server_new::{DHCPv4Server, DhcpV4DnrRuntimeContext};
+    use super::{DHCPv4Server, DhcpV4DnrRuntimeContext};
 
     fn option_payload(server: &DHCPv4Server, mac: &MacAddr, code: u8) -> Vec<u8> {
         server
