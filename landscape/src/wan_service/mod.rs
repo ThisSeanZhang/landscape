@@ -10,6 +10,7 @@ pub mod ipv6pd_service;
 pub mod mss_clamp_service;
 pub mod nat_service;
 pub mod pppd_service;
+pub mod pppoe_client;
 pub mod wan_route_service;
 
 pub(crate) fn setting_iface_balance(

@@ -100,3 +100,4 @@ duckdb-bundled = ["metric-duckdb", "duckdb/bundled"]
 [dev-dependencies]
 axum = { workspace = true }
 tempfile = { workspace = true }
+tokio = { workspace = true, features = ["test-util"] }
