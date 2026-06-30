@@ -5,13 +5,25 @@ use landscape_common::net_proto::pppoe::PPPoEFrame;
 use landscape_common::service::{ServiceStatus, WatchService};
 
 use crate::pppoe_client::PPPoEClientConfig;
+use crate::sys_service::route::IpRouteService;
 
 use super::error::PppoeError;
+use super::system::EbpfHandle;
 use super::{send_pppoe_session_frame, PppoeResult, ETH_P_PPOES, LCP_ECHO_INTERVAL};
+
+async fn shutdown_ebpf_handle(
+    ebpf_handle: &mut Option<EbpfHandle>,
+    route_service: &IpRouteService,
+) {
+    if let Some(handle) = ebpf_handle.take() {
+        handle.shutdown(route_service).await;
+    }
+}
 
 pub async fn run(
     config: PPPoEClientConfig,
     status_rx: WatchService,
+    route_service: IpRouteService,
 ) {
     status_rx.just_change_status(ServiceStatus::Staring);
 
@@ -32,6 +44,7 @@ pub async fn run(
     status_rx.just_change_status(ServiceStatus::Running);
 
     let mut retry_count: u64 = 0;
+    let mut ebpf_handle: Option<EbpfHandle> = None;
 
     loop {
         if retry_count > 0 {
@@ -39,6 +52,7 @@ pub async fn run(
             tokio::select! {
                 _ = sleep(delay) => {},
                 _ = status_rx.wait_to_stopping() => {
+                    shutdown_ebpf_handle(&mut ebpf_handle, &route_service).await;
                     status_rx.just_change_status(ServiceStatus::Stop);
                     break;
                 }
@@ -73,10 +87,12 @@ pub async fn run(
                     error = %e,
                     "LCP phase fatal error, exiting"
                 );
+                shutdown_ebpf_handle(&mut ebpf_handle, &route_service).await;
                 status_rx.just_change_status(ServiceStatus::Failed);
                 break;
             }
             Err(PppoeError::ServiceStopped) => {
+                shutdown_ebpf_handle(&mut ebpf_handle, &route_service).await;
                 status_rx.just_change_status(ServiceStatus::Stop);
                 break;
             }
@@ -86,6 +102,7 @@ pub async fn run(
                     error = %e,
                     "LCP phase error, retrying"
                 );
+                shutdown_ebpf_handle(&mut ebpf_handle, &route_service).await;
                 retry_count += 1;
                 continue;
             }
@@ -101,10 +118,12 @@ pub async fn run(
                     error = %e,
                     "Negotiation phase fatal error, exiting"
                 );
+                shutdown_ebpf_handle(&mut ebpf_handle, &route_service).await;
                 status_rx.just_change_status(ServiceStatus::Failed);
                 break;
             }
             Err(PppoeError::ServiceStopped) => {
+                shutdown_ebpf_handle(&mut ebpf_handle, &route_service).await;
                 status_rx.just_change_status(ServiceStatus::Stop);
                 break;
             }
@@ -114,6 +133,7 @@ pub async fn run(
                     error = %e,
                     "Negotiation phase error, retrying"
                 );
+                shutdown_ebpf_handle(&mut ebpf_handle, &route_service).await;
                 retry_count += 1;
                 continue;
             }
@@ -128,6 +148,28 @@ pub async fn run(
             "PPPoE session established"
         );
 
+        shutdown_ebpf_handle(&mut ebpf_handle, &route_service).await;
+
+        match super::system::setup_ebpf(&config, &lcp_result, &nego_result, &route_service).await {
+            Ok(handle) => {
+                ebpf_handle = Some(handle);
+                tracing::info!(
+                    iface_name = %config.iface_name,
+                    "PPPoE eBPF and system state applied, session is fully established"
+                );
+            }
+            Err(e) => {
+                tracing::error!(
+                    iface_name = %config.iface_name,
+                    error = %e,
+                    "Failed to apply eBPF/system state, session cannot proceed"
+                );
+                // Session negotiated but system setup failed — still need cleanup
+                status_rx.just_change_status(ServiceStatus::Failed);
+                break;
+            }
+        }
+
         retry_count = 0;
 
         match keepalive(
@@ -135,10 +177,12 @@ pub async fn run(
             &mut tx, &mut rx, &status_rx,
         ).await {
             Ok(()) => {
+                shutdown_ebpf_handle(&mut ebpf_handle, &route_service).await;
                 status_rx.just_change_status(ServiceStatus::Stop);
                 break;
             }
             Err(PppoeError::ServiceStopped) => {
+                shutdown_ebpf_handle(&mut ebpf_handle, &route_service).await;
                 status_rx.just_change_status(ServiceStatus::Stop);
                 break;
             }
@@ -148,6 +192,7 @@ pub async fn run(
                     error = %e,
                     "Keepalive lost, reconnecting"
                 );
+                shutdown_ebpf_handle(&mut ebpf_handle, &route_service).await;
                 retry_count += 1;
                 continue;
             }
