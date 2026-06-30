@@ -132,7 +132,6 @@ pub enum SlaacResult {
 
 #[derive(Debug, Clone)]
 pub struct ExpiredNa {
-    pub ip: Ipv6Addr,
     pub suffix: u64,
     pub mac: MacAddr,
     pub duid_hex: String,
@@ -1082,6 +1081,24 @@ impl Ipv6ServerStatus {
         result
     }
 
+    pub fn all_ips_for_mac(&self, mac: &MacAddr) -> Vec<Ipv6Addr> {
+        let mut ips = Vec::new();
+
+        for lease in self.na_leases_by_duid.values() {
+            if lease.mac == *mac {
+                ips.extend(self.suffix_to_addrs(lease.suffix));
+            }
+        }
+
+        for (ip, entry) in &self.slaac_entries {
+            if entry.mac == *mac {
+                ips.push(*ip);
+            }
+        }
+
+        ips
+    }
+
     /// All delegated prefixes.
     pub fn all_delegated_prefixes(&self) -> Vec<DelegatedPrefix> {
         self.pd_leases_by_duid
@@ -1303,12 +1320,9 @@ impl Ipv6ServerStatus {
         if !lease.is_static {
             self.remove_dynamic_owner_if_matches(lease.suffix, duid);
         }
-        let ips = self.suffix_to_addrs(lease.suffix);
-        let first_ip = *ips.first()?;
         Some((
             lease.clone(),
             ExpiredNa {
-                ip: first_ip,
                 suffix: lease.suffix,
                 mac: lease.mac,
                 duid_hex: lease.duid_hex,

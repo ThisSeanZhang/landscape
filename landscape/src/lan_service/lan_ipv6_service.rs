@@ -3,7 +3,7 @@ use landscape_common::database::LandscapeStore as LandscapeDBStore;
 use landscape_common::dhcp::v6_server::status::DHCPv6OfferInfo;
 use landscape_common::event::hub::{
     EnrolledDeviceEvent, EnrolledDeviceEventReader, IAPrefixEvent, IAPrefixEventReader,
-    IPv6AssignEventSender, IfaceEventReader,
+    IPv6AssignEvent, IPv6AssignEventSender, IPv6AssignInfo, IfaceEventReader,
 };
 use landscape_common::ipv6::lan::{IPv6ServiceMode, LanIPv6ServiceConfigV2};
 use landscape_common::ipv6_pd::IAPrefixMap;
@@ -288,6 +288,7 @@ impl LanIPv6ManagerService {
         let status_map = server_starter.status_map.clone();
         let device_id_map = server_starter.device_id_map.clone();
         let per_iface_txs = server_starter.per_iface_txs.clone();
+        let ipv6_assign_sender = server_starter.ipv6_assign_sender.clone();
         tokio::spawn(async move {
             loop {
                 tokio::select! {
@@ -330,9 +331,31 @@ impl LanIPv6ManagerService {
                                     if let Some(d) = old.as_ref() {
                                         let r = s.update_device_binding(d.mac, None);
                                         s.trigger_reconfigure_for_changes(&r);
+                                        if !global {
+                                            let ips = s.all_ips_for_mac(&d.mac);
+                                            let _ = ipv6_assign_sender.try_send(
+                                                IPv6AssignEvent::Flush(IPv6AssignInfo {
+                                                    iface_name: name.clone(),
+                                                    mac: d.mac,
+                                                    ips,
+                                                    device_id: Some(d.id),
+                                                }),
+                                            );
+                                        }
                                     }
                                     let r = s.update_device_binding(new.mac, new.ipv6);
                                     s.trigger_reconfigure_for_changes(&r);
+                                    if !global {
+                                        let ips = s.all_ips_for_mac(&new.mac);
+                                        let _ = ipv6_assign_sender.try_send(
+                                            IPv6AssignEvent::Flush(IPv6AssignInfo {
+                                                iface_name: name.clone(),
+                                                mac: new.mac,
+                                                ips,
+                                                device_id: Some(new.id),
+                                            }),
+                                        );
+                                    }
                                 }
                             }
                             EnrolledDeviceEvent::Deleted { old } => {
@@ -349,6 +372,18 @@ impl LanIPv6ManagerService {
                                     let mut s = status.lock().await;
                                     let r = s.update_device_binding(old.mac, None);
                                     s.trigger_reconfigure_for_changes(&r);
+                                    if !global {
+                                        let ips = s.all_ips_for_mac(&old.mac);
+                                        let _ =
+                                            ipv6_assign_sender.try_send(IPv6AssignEvent::Flush(
+                                                IPv6AssignInfo {
+                                                    iface_name: name.clone(),
+                                                    mac: old.mac,
+                                                    ips,
+                                                    device_id: Some(old.id),
+                                                },
+                                            ));
+                                    }
                                 }
                             }
                         }

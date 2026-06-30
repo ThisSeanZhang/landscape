@@ -9,7 +9,7 @@ use crate::net::MacAddr;
 pub struct IPv6AssignInfo {
     pub iface_name: String,
     pub mac: MacAddr,
-    pub ip: Ipv6Addr,
+    pub ips: Vec<Ipv6Addr>,
     pub device_id: Option<Uuid>,
 }
 
@@ -17,6 +17,7 @@ pub struct IPv6AssignInfo {
 pub enum IPv6AssignEvent {
     Allocated(IPv6AssignInfo),
     Expired(IPv6AssignInfo),
+    Flush(IPv6AssignInfo),
 }
 
 // ── Sender ────────────────────────────────────────────────────

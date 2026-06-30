@@ -1,4 +1,5 @@
 use std::{
+    collections::HashSet,
     net::{IpAddr, Ipv6Addr, SocketAddr},
     sync::Arc,
     time::Duration,
@@ -116,7 +117,7 @@ async fn handle_icmp_msg(
                         ipv6_assign_sender.try_send(IPv6AssignEvent::Allocated(IPv6AssignInfo {
                             iface_name: iface_name.to_string(),
                             mac,
-                            ip,
+                            ips: vec![ip],
                             device_id,
                         }))
                     {
@@ -185,35 +186,52 @@ async fn handle_dhcp_msg(
             let _ = dhcp_sender.send_to(&reply, result.reply_dst).await;
         }
 
-        // Emit allocation events
-        for (mac, ip) in &result.allocated_ips {
-            if let Err(e) =
-                landscape_ebpf::base::ip_mac::upsert_ipv6_ip_mac(link_ifindex, *ip, *mac, mac_addr)
-            {
-                tracing::warn!("failed to prewarm ip_mac_v6 for DHCPv6 {ip} -> {mac}: {e}");
+        // Emit allocation events — grouped by MAC
+        if !result.allocated_ips.is_empty() {
+            let mut alloc_by_mac: std::collections::HashMap<MacAddr, Vec<Ipv6Addr>> =
+                std::collections::HashMap::new();
+            for (mac, ip) in &result.allocated_ips {
+                if let Err(e) = landscape_ebpf::base::ip_mac::upsert_ipv6_ip_mac(
+                    link_ifindex,
+                    *ip,
+                    *mac,
+                    mac_addr,
+                ) {
+                    tracing::warn!("failed to prewarm ip_mac_v6 for DHCPv6 {ip} -> {mac}: {e}");
+                }
+                alloc_by_mac.entry(*mac).or_default().push(*ip);
             }
-            let device_id = device_id_map.get(mac).map(|r| *r.value());
-            if let Err(e) =
-                ipv6_assign_sender.try_send(IPv6AssignEvent::Allocated(IPv6AssignInfo {
-                    iface_name: iface_name.to_string(),
-                    mac: *mac,
-                    ip: *ip,
-                    device_id,
-                }))
-            {
-                tracing::error!("IPv6 assign event FAILED for {mac} -> {ip}: {e:?}");
+            for (mac, grouped_ips) in alloc_by_mac {
+                let device_id = device_id_map.get(&mac).map(|r| *r.value());
+                if let Err(e) =
+                    ipv6_assign_sender.try_send(IPv6AssignEvent::Allocated(IPv6AssignInfo {
+                        iface_name: iface_name.to_string(),
+                        mac,
+                        ips: grouped_ips,
+                        device_id,
+                    }))
+                {
+                    tracing::error!("IPv6 assign event FAILED for {mac}: {e:?}");
+                }
             }
         }
 
-        // Emit expiry events
-        for (mac, ip) in &result.expired_ips {
-            let device_id = device_id_map.get(mac).map(|r| *r.value());
-            let _ = ipv6_assign_sender.try_send(IPv6AssignEvent::Expired(IPv6AssignInfo {
-                iface_name: iface_name.to_string(),
-                mac: *mac,
-                ip: *ip,
-                device_id,
-            }));
+        // Emit expiry events — grouped by MAC
+        if !result.expired_ips.is_empty() {
+            let mut exp_by_mac: std::collections::HashMap<MacAddr, Vec<Ipv6Addr>> =
+                std::collections::HashMap::new();
+            for (mac, ip) in &result.expired_ips {
+                exp_by_mac.entry(*mac).or_default().push(*ip);
+            }
+            for (mac, grouped_ips) in exp_by_mac {
+                let device_id = device_id_map.get(&mac).map(|r| *r.value());
+                let _ = ipv6_assign_sender.try_send(IPv6AssignEvent::Expired(IPv6AssignInfo {
+                    iface_name: iface_name.to_string(),
+                    mac,
+                    ips: grouped_ips,
+                    device_id,
+                }));
+            }
         }
 
         result.pd_route_changes
@@ -264,10 +282,11 @@ async fn handle_expire_tick(
         let expired_na = status.clean_expired_na();
         for na in &expired_na {
             let device_id = device_id_map.get(&na.mac).map(|r| *r.value());
+            let ips = status.suffix_to_addrs(na.suffix);
             let _ = ipv6_assign_sender.try_send(IPv6AssignEvent::Expired(IPv6AssignInfo {
                 iface_name: iface_name.to_string(),
                 mac: na.mac,
-                ip: na.ip,
+                ips,
                 device_id,
             }));
         }
@@ -280,7 +299,7 @@ async fn handle_expire_tick(
             let _ = ipv6_assign_sender.try_send(IPv6AssignEvent::Expired(IPv6AssignInfo {
                 iface_name: iface_name.to_string(),
                 mac: *mac,
-                ip: *ip,
+                ips: vec![*ip],
                 device_id,
             }));
         }
@@ -507,7 +526,28 @@ pub async fn start_ipv6_lan_server(
                 }
                 let diff = {
                     let mut status = share_status.lock().await;
-                    status.recompute_and_diff(&prefix_groups, &prefix_map)
+                    let diff = status.recompute_and_diff(&prefix_groups, &prefix_map);
+
+                    // Flush all MACs after prefix change — new prefix means new IPs
+                    let macs: HashSet<MacAddr> = status
+                        .na_leases_by_duid
+                        .values()
+                        .map(|l| l.mac)
+                        .chain(status.slaac_entries.values().map(|e| e.mac))
+                        .collect();
+                    for mac in &macs {
+                        let ips = status.all_ips_for_mac(mac);
+                        let device_id = device_id_map.get(mac).map(|r| *r.value());
+                        let _ =
+                            ipv6_assign_sender.try_send(IPv6AssignEvent::Flush(IPv6AssignInfo {
+                                iface_name: iface_name.clone(),
+                                mac: *mac,
+                                ips,
+                                device_id,
+                            }));
+                    }
+
+                    diff
                 };
                 // Send deprecation RA for removed prefixes before tearing down routes
                 if !diff.removed.is_empty() {
