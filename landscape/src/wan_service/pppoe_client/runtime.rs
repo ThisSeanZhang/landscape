@@ -230,17 +230,13 @@ async fn keepalive(
 }
 
 fn parse_ppp_packet(raw: &[u8], session_id: u16) -> Option<PointToPoint> {
-    if raw.len() < 14 {
+    if raw.len() < 16 {
         return None;
     }
-    let eth_payload = &raw[14..];
-    if eth_payload.len() < 4 {
+    if u16::from_be_bytes([raw[12], raw[13]]) != ETH_P_PPOES {
         return None;
     }
-    if u16::from_be_bytes([eth_payload[0], eth_payload[1]]) != ETH_P_PPOES {
-        return None;
-    }
-    let frame = PPPoEFrame::new(&eth_payload[2..])?;
+    let frame = PPPoEFrame::new(&raw[14..])?;
     if frame.sid != session_id {
         return None;
     }

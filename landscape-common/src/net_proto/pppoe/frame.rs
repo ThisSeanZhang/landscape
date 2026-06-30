@@ -75,6 +75,13 @@ impl PPPoEFrame {
         result
     }
 
+    pub fn get_offer_with_host_uniq(host_uniq: u32) -> PPPoEFrame {
+        let mut result = PPPoEFrame::new(&[17, 7, 0, 0, 0, 0]).unwrap();
+        result.payload.extend(PPPoETag::HostUniq(host_uniq).decode_options());
+        result.length = result.payload.len() as u16;
+        result
+    }
+
     pub fn get_request(host_uniq_id: u32, ac_cookie: Option<Vec<u8>>) -> PPPoEFrame {
         let mut result = PPPoEFrame::new(&[17, 25, 0, 0, 0, 12, 1, 1, 0, 0]).unwrap();
         if host_uniq_id != 0 {
@@ -231,5 +238,23 @@ mod tests {
         let data2 = [17, 9, 0, 0, 0, 12, 1, 1, 0, 0, 1, 3, 0, 4, 34, 30, 2, 0];
         let p2 = PPPoEFrame::new(&data2).unwrap();
         assert_eq!(p2.convert_to_payload(), data2);
+    }
+
+    #[test]
+    fn offer_includes_host_uniq_tag() {
+        let f = PPPoEFrame::get_offer_with_host_uniq(0x1234_5678);
+        assert_eq!(f.ver, 1);
+        assert_eq!(f.t, 1);
+        assert_eq!(f.code, 0x07, "PADO");
+        assert_eq!(f.sid, 0);
+
+        use super::super::tags::PPPoETag;
+        let tags = PPPoETag::from_bytes(&f.payload);
+        assert_eq!(tags.len(), 1);
+        if let PPPoETag::HostUniq(id) = &tags[0] {
+            assert_eq!(*id, 0x1234_5678);
+        } else {
+            panic!("expected HostUniq tag");
+        }
     }
 }

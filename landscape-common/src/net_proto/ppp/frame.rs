@@ -120,6 +120,52 @@ impl PointToPoint {
         .concat()
     }
 
+    pub fn request_mru_with_auth(
+        request_id: u8,
+        mru: u16,
+        magic_number: u32,
+        auth_type: u16,
+    ) -> Vec<u8> {
+        let len = 18_u16;
+        [
+            [0xc0, 0x21, 1, request_id].to_vec(),
+            len.to_be_bytes().to_vec(),
+            [1, 4].to_vec(),
+            mru.to_be_bytes().to_vec(),
+            [3, 4].to_vec(),
+            auth_type.to_be_bytes().to_vec(),
+            [5, 6].to_vec(),
+            magic_number.to_be_bytes().to_vec(),
+        ]
+        .concat()
+    }
+
+    pub fn ack_mru(request_id: u8, mru: u16, magic_number: u32) -> Vec<u8> {
+        let len = 14_u16;
+        [
+            [0xc0, 0x21, 2, request_id].to_vec(),
+            len.to_be_bytes().to_vec(),
+            [1, 4].to_vec(),
+            mru.to_be_bytes().to_vec(),
+            [5, 6].to_vec(),
+            magic_number.to_be_bytes().to_vec(),
+        ]
+        .concat()
+    }
+
+    pub fn nak_mru(request_id: u8, mru: u16, magic_number: u32) -> Vec<u8> {
+        let len = 14_u16;
+        [
+            [0xc0, 0x21, 3, request_id].to_vec(),
+            len.to_be_bytes().to_vec(),
+            [1, 4].to_vec(),
+            mru.to_be_bytes().to_vec(),
+            [5, 6].to_vec(),
+            magic_number.to_be_bytes().to_vec(),
+        ]
+        .concat()
+    }
+
     pub fn gen_reject(&self, reject_option: Vec<u8>) -> Vec<u8> {
         let mut result = vec![];
         result.extend(self.protocol.to_be_bytes());
@@ -340,5 +386,56 @@ mod tests {
         let hash1 = &pkt1[7..23];
         let hash2 = &pkt2[7..23];
         assert_ne!(hash1, hash2, "different challenges produce different hashes");
+    }
+
+    // ── encoding cross-checks ────────────────────────────────────────
+
+    fn ppp_u16_at(d: &[u8], o: usize) -> u16 { u16::from_be_bytes([d[o], d[o + 1]]) }
+    fn ppp_u32_at(d: &[u8], o: usize) -> u32 {
+        u32::from_be_bytes([d[o], d[o + 1], d[o + 2], d[o + 3]])
+    }
+
+    #[test]
+    fn request_mru_encodes_mru_and_magic() {
+        let pkt = PointToPoint::request_mru(0x42, 1400, 0xCAFE_BEEF);
+        assert_eq!(ppp_u16_at(&pkt, 0), 0xc021, "protocol LCP");
+        assert_eq!(pkt[2], 1, "code Request");
+        assert_eq!(pkt[3], 0x42, "id");
+        // option MRU
+        assert_eq!(pkt[6], 1);
+        assert_eq!(pkt[7], 4);
+        assert_eq!(ppp_u16_at(&pkt, 8), 1400);
+        // option magic
+        assert_eq!(pkt[10], 5);
+        assert_eq!(pkt[11], 6);
+        assert_eq!(ppp_u32_at(&pkt, 12), 0xCAFE_BEEF);
+    }
+
+    #[test]
+    fn request_mru_with_auth_includes_3_options() {
+        let pkt = PointToPoint::request_mru_with_auth(1, 1492, 0xDEAD, 0xc023);
+        assert_eq!(pkt[2], 1, "code Request");
+        // PPP total length = 4 + (4 + 4 + 6) = 18
+        assert_eq!(ppp_u16_at(&pkt, 4), 18);
+        // option 1: MRU=1492
+        assert_eq!(pkt[6], 1); assert_eq!(pkt[7], 4); assert_eq!(ppp_u16_at(&pkt, 8), 1492);
+        // option 2: auth=PAP
+        assert_eq!(pkt[10], 3); assert_eq!(pkt[11], 4); assert_eq!(ppp_u16_at(&pkt, 12), 0xc023);
+        // option 3: magic
+        assert_eq!(pkt[14], 5); assert_eq!(pkt[15], 6); assert_eq!(ppp_u32_at(&pkt, 16), 0xDEAD);
+    }
+
+    #[test]
+    fn ack_mru_has_code_2() {
+        let pkt = PointToPoint::ack_mru(7, 1492, 0xBEEF);
+        assert_eq!(pkt[2], 2, "code Ack");
+        assert_eq!(pkt[3], 7, "id");
+    }
+
+    #[test]
+    fn nak_mru_has_code_3() {
+        let pkt = PointToPoint::nak_mru(5, 1400, 0xCAFE);
+        assert_eq!(pkt[2], 3, "code Nak");
+        assert_eq!(pkt[3], 5, "id");
     }
 }

@@ -5,6 +5,9 @@ mod lcp;
 mod negotiation;
 mod runtime;
 
+#[cfg(test)]
+mod test_lcp;
+
 pub use crate::pppoe_client::PPPoEClientConfig;
 pub use error::PppoeError;
 pub use runtime::run;
@@ -16,6 +19,9 @@ pub const LCP_ECHO_INTERVAL: u64 = 20;
 pub const DEFAULT_CLIENT_MRU: u16 = 1492;
 pub const ETH_P_PPOED: u16 = 0x8863;
 pub const ETH_P_PPOES: u16 = 0x8864;
+
+pub(crate) const MAX_DISCOVERY_RETRIES: u8 = 5;
+pub(crate) const MAX_LCP_RETRIES: u8 = 5;
 
 pub(crate) fn build_l2_header(dst: &[u8], src_mac: MacAddr, ethertype: u16) -> [u8; 14] {
     let mut header = [0u8; 14];

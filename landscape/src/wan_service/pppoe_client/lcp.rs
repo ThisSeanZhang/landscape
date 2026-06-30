@@ -11,7 +11,7 @@ use landscape_common::service::WatchService;
 use crate::pppoe_client::PPPoEClientConfig;
 
 use super::error::PppoeError;
-use super::{PppoeResult, DEFAULT_TIMEOUT, ETH_P_PPOED, ETH_P_PPOES};
+use super::{PppoeResult, DEFAULT_TIMEOUT, ETH_P_PPOED, ETH_P_PPOES, MAX_DISCOVERY_RETRIES, MAX_LCP_RETRIES};
 
 pub(crate) struct LcpPhaseResult {
     pub session_id: u16,
@@ -20,9 +20,6 @@ pub(crate) struct LcpPhaseResult {
     pub magic_number: u32,
     pub auth_type: u16,
 }
-
-const MAX_DISCOVERY_RETRIES: u8 = 5;
-const MAX_LCP_RETRIES: u8 = 5;
 
 enum Phase1State {
     Discovering,
@@ -81,6 +78,10 @@ pub(crate) async fn run(
                         if let Some(next) = handle_discovery(&raw, config, host_uniq)? {
                             state = next;
                             discovery_retries = 0;
+                            // Send PADR immediately on transition
+                            if let Phase1State::ReuqestSession { ref server_mac, ref ac_cookie } = &state {
+                                send_padr(config, host_uniq, server_mac, ac_cookie.clone(), tx).await?;
+                            }
                             timeout_sleep.as_mut().reset(Instant::now() + Duration::from_secs(DEFAULT_TIMEOUT));
                         }
                     }
@@ -88,6 +89,7 @@ pub(crate) async fn run(
                         if let Some(next) = handle_session_confirm(&raw, config, host_uniq, server_mac.clone())? {
                             state = next;
                             discovery_retries = 0;
+                            timeout_sleep.as_mut().reset(Instant::now() + Duration::from_secs(DEFAULT_TIMEOUT));
                         }
                     }
                     Phase1State::LcpNegotiating { .. } => {
@@ -137,9 +139,9 @@ pub(crate) async fn run(
     }
 }
 
-fn extract_l2(data: &[u8]) -> Option<(&[u8], &[u8])> {
+pub(crate) fn extract_l2(data: &[u8]) -> Option<(&[u8], &[u8])> {
     if data.len() < 14 { return None; }
-    Some((&data[..6], &data[6..]))
+    Some((&data[6..12], &data[12..]))
 }
 
 fn handle_discovery(
@@ -304,7 +306,7 @@ async fn handle_lcp_packet(
             send_lcp_config_request(config, *session_id, *cfg_req_id, *our_mru, *our_magic, server_mac, tx).await?;
         }
     } else if lcp.is_ack() {
-        let (mru, magic) = parse_lcp_ack_options(&lcp.payload);
+        let (mru, magic) = parse_lcp_mru_magic_options(&lcp.payload);
         if let (Some(mru), Some(magic)) = (mru, magic) {
             *our_config_acked = true;
             tracing::info!(
@@ -314,7 +316,7 @@ async fn handle_lcp_packet(
             );
         }
     } else if lcp.is_nak() {
-        let (mru, magic) = parse_lcp_ack_options(&lcp.payload);
+        let (mru, magic) = parse_lcp_mru_magic_options(&lcp.payload);
         if let (Some(mru), Some(magic)) = (mru, magic) {
             *our_config_acked = false;
             *cfg_req_id = cfg_req_id.wrapping_add(1);
@@ -346,7 +348,7 @@ async fn handle_lcp_packet(
     Ok(None)
 }
 
-fn parse_lcp_request_options(payload: &[u8]) -> (Option<u16>, Option<u32>, Option<u16>, usize) {
+pub(crate) fn parse_lcp_request_options(payload: &[u8]) -> (Option<u16>, Option<u32>, Option<u16>, usize) {
     let mut mru = None;
     let mut magic_number = None;
     let mut auth_type = None;
@@ -364,7 +366,7 @@ fn parse_lcp_request_options(payload: &[u8]) -> (Option<u16>, Option<u32>, Optio
     (mru, magic_number, auth_type, count)
 }
 
-fn parse_lcp_ack_options(payload: &[u8]) -> (Option<u16>, Option<u32>) {
+pub(crate) fn parse_lcp_mru_magic_options(payload: &[u8]) -> (Option<u16>, Option<u32>) {
     let mut mru = None;
     let mut magic_number = None;
     for op in PPPOption::from_bytes(payload) {

@@ -260,12 +260,9 @@ pub(crate) async fn run(
 }
 
 fn parse_ppp_packet<'a>(raw: &'a [u8], lcp: &LcpPhaseResult) -> Option<PointToPoint> {
-    if raw.len() < 14 { return None; }
-    let eth_payload = &raw[14..];
-    if eth_payload.len() < 4 { return None; }
-    let ethertype = u16::from_be_bytes([eth_payload[0], eth_payload[1]]);
-    if ethertype != ETH_P_PPOES { return None; }
-    let frame = PPPoEFrame::new(&eth_payload[2..])?;
+    if raw.len() < 16 { return None; }
+    if u16::from_be_bytes([raw[12], raw[13]]) != ETH_P_PPOES { return None; }
+    let frame = PPPoEFrame::new(&raw[14..])?;
     if frame.sid != lcp.session_id { return None; }
     if frame.is_terminate() { return None; }
     PointToPoint::new(&frame.payload)
