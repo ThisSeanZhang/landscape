@@ -15,6 +15,7 @@ use super::error::PppoeError;
 use super::lcp::LcpPhaseResult;
 use super::{PppoeResult, DEFAULT_TIMEOUT, ETH_P_PPOES, LCP_ECHO_INTERVAL};
 
+#[derive(Debug)]
 pub(crate) struct NegotiationResult {
     pub client_ip: Ipv4Addr,
     pub server_ip: Ipv4Addr,
@@ -23,9 +24,9 @@ pub(crate) struct NegotiationResult {
     pub echo_req_id: u8,
 }
 
-const MAX_AUTH_RETRIES: u8 = 3;
-const MAX_NCP_RETRIES: u8 = 5;
-const MAX_ECHO_FAILURES: u8 = 5;
+pub(crate) const MAX_AUTH_RETRIES: u8 = 3;
+pub(crate) const MAX_NCP_RETRIES: u8 = 5;
+pub(crate) const MAX_ECHO_FAILURES: u8 = 5;
 
 struct IpcpState {
     req_id: u8,
@@ -118,6 +119,10 @@ pub(crate) async fn run(
             ).await?;
         }
     }
+
+    send_echo_request(config, lcp, echo_req_id, lcp.magic_number, tx).await?;
+    echo_failures += 1;
+    echo_req_id = echo_req_id.wrapping_add(1);
 
     let timeout_sleep = sleep(Duration::from_secs(0));
     tokio::pin!(timeout_sleep);

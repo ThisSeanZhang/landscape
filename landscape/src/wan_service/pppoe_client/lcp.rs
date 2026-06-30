@@ -13,6 +13,7 @@ use crate::pppoe_client::PPPoEClientConfig;
 use super::error::PppoeError;
 use super::{PppoeResult, DEFAULT_TIMEOUT, ETH_P_PPOED, ETH_P_PPOES, MAX_DISCOVERY_RETRIES, MAX_LCP_RETRIES};
 
+#[derive(Clone)]
 pub(crate) struct LcpPhaseResult {
     pub session_id: u16,
     pub server_mac: Vec<u8>,

@@ -167,6 +167,11 @@ async fn keepalive(
     let mut echo_failures: u8 = 0;
     const MAX_ECHO_FAILURES: u8 = 5;
 
+    let payload = PointToPoint::gen_echo_request_with_magic(echo_req_id, lcp.magic_number);
+    send_pppoe_session_frame(&lcp.server_mac, config.iface_mac, lcp.session_id, payload, tx).await?;
+    echo_failures += 1;
+    echo_req_id = echo_req_id.wrapping_add(1);
+
     let echo_sleep = sleep(Duration::from_secs(0));
     tokio::pin!(echo_sleep);
     echo_sleep.as_mut().reset(Instant::now() + Duration::from_secs(LCP_ECHO_INTERVAL));

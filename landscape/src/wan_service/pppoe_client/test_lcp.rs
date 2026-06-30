@@ -575,4 +575,48 @@ mod integration {
         drop(to_client);
         drop(handle);
     }
+
+    #[tokio::test]
+    async fn test_pads_wrong_host_uniq_ignored() {
+        ensure_test_env();
+
+        let (mut client_tx, mut from_client) = mpsc::channel::<Box<Vec<u8>>>(16);
+        let (to_client, mut client_rx) = mpsc::channel::<Box<Vec<u8>>>(16);
+        let config = test_config();
+        let status = WatchService::new();
+        status.just_change_status(ServiceStatus::Staring);
+        status.just_change_status(ServiceStatus::Running);
+
+        let handle = tokio::spawn(async move {
+            let _ = run(&config, &mut client_tx, &mut client_rx, &status).await;
+        });
+
+        // Discovery: read PADI, send PADO, read PADR
+        let padi = from_client.recv().await.unwrap();
+        let host_uniq = extract_host_uniq(&padi).unwrap();
+        to_client.send(build_pado(host_uniq)).await.unwrap();
+        let _padr = from_client.recv().await.unwrap();
+
+        // Send PADS with WRONG HostUniq — should be ignored
+        to_client.send(build_pads(host_uniq.wrapping_add(1), 0x0042)).await.unwrap();
+
+        // No state change expected. Wait briefly and verify no LCP request arrives.
+        let response = tokio::time::timeout(Duration::from_millis(200), from_client.recv()).await;
+        assert!(response.is_err(), "no LCP activity expected for wrong PADS HostUniq");
+
+        // Send correct PADS — should enter LCP phase
+        to_client.send(build_pads(host_uniq, 0x0042)).await.unwrap();
+
+        // LCP phase would begin — verify by sending peer Config-Request and reading Ack
+        let lcp_req = build_lcp_config_request(1, 1492, 0xDEAD_BEEF, 0xc023);
+        to_client.send(build_pppoe_session(0x0042, lcp_req)).await.unwrap();
+
+        let ack = tokio::time::timeout(Duration::from_secs(2), from_client.recv())
+            .await.unwrap().expect("expected LCP Ack after correct PADS");
+        let ppp = extract_lcp_packet(&ack, 0x0042).unwrap();
+        assert!(ppp.is_lcp_config() && ppp.is_ack());
+
+        drop(to_client);
+        drop(handle);
+    }
 }

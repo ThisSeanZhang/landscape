@@ -8,6 +8,8 @@ mod runtime;
 #[cfg(test)]
 mod test_lcp;
 
+#[cfg(test)]
+mod test_negotiation;
 pub use crate::pppoe_client::PPPoEClientConfig;
 pub use error::PppoeError;
 pub use runtime::run;
