@@ -1,6 +1,6 @@
 {
   "name": "@landscape-router/types",
-  "version": "0.21.2",
+  "version": "0.21.3",
   "description": "TypeScript API client and type definitions for Landscape Router, auto-generated from OpenAPI spec.",
   "type": "module",
   "license": "MIT",
