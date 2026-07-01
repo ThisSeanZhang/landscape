@@ -64,16 +64,7 @@ struct Ipv6cpState {
 impl Ipv6cpState {
     fn new(mac: MacAddr) -> Self {
         let octets = mac.octets();
-        let id = vec![
-            octets[0],
-            octets[1],
-            octets[2],
-            0xff,
-            0xfe,
-            octets[3],
-            octets[4],
-            octets[5],
-        ];
+        let id = vec![octets[0], octets[1], octets[2], 0xff, 0xfe, octets[3], octets[4], octets[5]];
         Self {
             req_id: 0,
             our_id: id,
@@ -115,8 +106,13 @@ pub(crate) async fn run(
     if auth_is_pap {
         if let Some(payload) = auth.as_ref().unwrap().outgoing_packet() {
             super::send_pppoe_session_frame(
-                &lcp.server_mac, config.iface_mac, lcp.session_id, payload, tx,
-            ).await?;
+                &lcp.server_mac,
+                config.iface_mac,
+                lcp.session_id,
+                payload,
+                tx,
+            )
+            .await?;
         }
     }
 
@@ -207,6 +203,10 @@ pub(crate) async fn run(
                                 if ipcp.done() && ipv6cp.done() {
                                     return Ok(build_result(&ipcp, &ipv6cp, echo_req_id));
                                 }
+                            } else if proto == 0xc023 {
+                                return Err(PppoeError::AuthFailed(
+                                    "peer rejected PAP via protocol-reject".into(),
+                                ));
                             }
                         }
                     }
@@ -265,11 +265,19 @@ pub(crate) async fn run(
 }
 
 fn parse_ppp_packet<'a>(raw: &'a [u8], lcp: &LcpPhaseResult) -> Option<PointToPoint> {
-    if raw.len() < 16 { return None; }
-    if u16::from_be_bytes([raw[12], raw[13]]) != ETH_P_PPOES { return None; }
+    if raw.len() < 16 {
+        return None;
+    }
+    if u16::from_be_bytes([raw[12], raw[13]]) != ETH_P_PPOES {
+        return None;
+    }
     let frame = PPPoEFrame::new(&raw[14..])?;
-    if frame.sid != lcp.session_id { return None; }
-    if frame.is_terminate() { return None; }
+    if frame.sid != lcp.session_id {
+        return None;
+    }
+    if frame.is_terminate() {
+        return None;
+    }
     PointToPoint::new(&frame.payload)
 }
 
@@ -322,13 +330,23 @@ async fn handle_ipcp_packet(
         if !reject_options.is_empty() {
             let reject = ppp.gen_reject(reject_options);
             super::send_pppoe_session_frame(
-                &lcp.server_mac, config.iface_mac, lcp.session_id, reject, tx,
-            ).await?;
+                &lcp.server_mac,
+                config.iface_mac,
+                lcp.session_id,
+                reject,
+                tx,
+            )
+            .await?;
         } else if ipcp.peer_ip.is_some() {
             let ack = ppp.gen_ack();
             super::send_pppoe_session_frame(
-                &lcp.server_mac, config.iface_mac, lcp.session_id, ack, tx,
-            ).await?;
+                &lcp.server_mac,
+                config.iface_mac,
+                lcp.session_id,
+                ack,
+                tx,
+            )
+            .await?;
         }
     } else if ppp.is_reject() {
         tracing::error!(iface = %config.iface_name, "IPCP: our request was rejected");
@@ -373,13 +391,23 @@ async fn handle_ipv6cp_packet(
         if !reject_options.is_empty() {
             let reject = ppp.gen_reject(reject_options);
             super::send_pppoe_session_frame(
-                &lcp.server_mac, config.iface_mac, lcp.session_id, reject, tx,
-            ).await?;
+                &lcp.server_mac,
+                config.iface_mac,
+                lcp.session_id,
+                reject,
+                tx,
+            )
+            .await?;
         } else if ipv6cp.peer_id.is_some() {
             let ack = ppp.gen_ack();
             super::send_pppoe_session_frame(
-                &lcp.server_mac, config.iface_mac, lcp.session_id, ack, tx,
-            ).await?;
+                &lcp.server_mac,
+                config.iface_mac,
+                lcp.session_id,
+                ack,
+                tx,
+            )
+            .await?;
         }
     } else if ppp.is_reject() {
         ipv6cp.rejected = true;
@@ -405,11 +433,9 @@ async fn send_ipcp_request_raw(
     ip: Ipv4Addr,
     tx: &mut mpsc::Sender<Box<Vec<u8>>>,
 ) -> Result<(), PppoeError> {
-    let payload = PointToPoint::get_ipcp_request_only_client_ip(req_id, ip)
-        .convert_to_payload();
-    super::send_pppoe_session_frame(
-        &lcp.server_mac, config.iface_mac, lcp.session_id, payload, tx,
-    ).await?;
+    let payload = PointToPoint::get_ipcp_request_only_client_ip(req_id, ip).convert_to_payload();
+    super::send_pppoe_session_frame(&lcp.server_mac, config.iface_mac, lcp.session_id, payload, tx)
+        .await?;
     Ok(())
 }
 
@@ -430,11 +456,9 @@ async fn send_ipv6cp_request_raw(
     iface_id: &[u8],
     tx: &mut mpsc::Sender<Box<Vec<u8>>>,
 ) -> Result<(), PppoeError> {
-    let payload = PointToPoint::get_ipv6cp_request(iface_id.to_vec(), req_id)
-        .convert_to_payload();
-    super::send_pppoe_session_frame(
-        &lcp.server_mac, config.iface_mac, lcp.session_id, payload, tx,
-    ).await?;
+    let payload = PointToPoint::get_ipv6cp_request(iface_id.to_vec(), req_id).convert_to_payload();
+    super::send_pppoe_session_frame(&lcp.server_mac, config.iface_mac, lcp.session_id, payload, tx)
+        .await?;
     Ok(())
 }
 
@@ -446,9 +470,8 @@ async fn send_echo_request(
     tx: &mut mpsc::Sender<Box<Vec<u8>>>,
 ) -> Result<(), PppoeError> {
     let payload = PointToPoint::gen_echo_request_with_magic(echo_id, magic);
-    super::send_pppoe_session_frame(
-        &lcp.server_mac, config.iface_mac, lcp.session_id, payload, tx,
-    ).await
+    super::send_pppoe_session_frame(&lcp.server_mac, config.iface_mac, lcp.session_id, payload, tx)
+        .await
 }
 
 async fn send_echo_reply(
@@ -458,7 +481,6 @@ async fn send_echo_reply(
     tx: &mut mpsc::Sender<Box<Vec<u8>>>,
 ) -> Result<(), PppoeError> {
     let reply = ppp.gen_reply_with_magic(lcp.magic_number);
-    super::send_pppoe_session_frame(
-        &lcp.server_mac, config.iface_mac, lcp.session_id, reply, tx,
-    ).await
+    super::send_pppoe_session_frame(&lcp.server_mac, config.iface_mac, lcp.session_id, reply, tx)
+        .await
 }

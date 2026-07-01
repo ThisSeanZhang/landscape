@@ -1,17 +1,15 @@
-use std::net::Ipv4Addr;
-
 use tokio::sync::mpsc;
-use tokio::time::{Duration, Instant};
+use tokio::time::Duration;
 
 use landscape_common::net::MacAddr;
-use landscape_common::net_proto::ppp::{PPPOption, PointToPoint};
+use landscape_common::net_proto::ppp::PointToPoint;
 use landscape_common::net_proto::pppoe::{PPPoEFrame, PPPoETag};
 use landscape_common::service::{ServiceStatus, WatchService};
 
 use crate::pppoe_client::PPPoEClientConfig;
 
-use super::{PppoeResult, DEFAULT_TIMEOUT, ETH_P_PPOED, ETH_P_PPOES, MAX_DISCOVERY_RETRIES, MAX_LCP_RETRIES};
-use super::lcp::{LcpPhaseResult, run};
+use super::lcp::run;
+use super::{DEFAULT_TIMEOUT, ETH_P_PPOED, ETH_P_PPOES, MAX_DISCOVERY_RETRIES, MAX_LCP_RETRIES};
 
 fn ensure_test_env() {
     std::env::set_var("LANDSCAPE_IGNORE_CLI_ARGS", "1");
@@ -30,8 +28,6 @@ fn test_config() -> PPPoEClientConfig {
 }
 
 const SERVER_MAC: [u8; 6] = [0x00, 0x11, 0x22, 0x33, 0x44, 0x55];
-const TEST_HOST_UNIQ: u32 = 0x12345678;
-
 fn wrap_eth(dst: &[u8], src: &[u8], ethertype: u16, payload: Vec<u8>) -> Box<Vec<u8>> {
     let mut packet = dst.to_vec();
     packet.extend(src);
@@ -47,7 +43,12 @@ fn build_pado(host_uniq: u32) -> Box<Vec<u8>> {
 
 fn build_pads(host_uniq: u32, session_id: u16) -> Box<Vec<u8>> {
     let mut frame = PPPoEFrame {
-        ver: 1, t: 1, code: 0x65, sid: session_id, length: 0, payload: vec![],
+        ver: 1,
+        t: 1,
+        code: 0x65,
+        sid: session_id,
+        length: 0,
+        payload: vec![],
     };
     frame.payload.extend(PPPoETag::HostUniq(host_uniq).decode_options());
     frame.length = frame.payload.len() as u16;
@@ -56,7 +57,12 @@ fn build_pads(host_uniq: u32, session_id: u16) -> Box<Vec<u8>> {
 
 fn build_pppoe_session(sid: u16, ppp_payload: Vec<u8>) -> Box<Vec<u8>> {
     let frame = PPPoEFrame {
-        ver: 1, t: 1, code: 0, sid, length: ppp_payload.len() as u16, payload: ppp_payload,
+        ver: 1,
+        t: 1,
+        code: 0,
+        sid,
+        length: ppp_payload.len() as u16,
+        payload: ppp_payload,
     };
     wrap_eth(&SERVER_MAC, &SERVER_MAC, ETH_P_PPOES, frame.convert_to_payload())
 }
@@ -74,32 +80,37 @@ fn build_lcp_config_nak(id: u8, mru: u16, magic: u32) -> Vec<u8> {
 }
 
 fn extract_host_uniq(packet: &[u8]) -> Option<u32> {
-    if packet.len() < 20 { return None; }
+    if packet.len() < 20 {
+        return None;
+    }
     let frame = PPPoEFrame::new(&packet[14..])?;
     for tag in PPPoETag::from_bytes(&frame.payload) {
-        if let PPPoETag::HostUniq(id) = tag { return Some(id); }
+        if let PPPoETag::HostUniq(id) = tag {
+            return Some(id);
+        }
     }
     None
 }
 
 fn extract_pppoe_code(packet: &[u8]) -> Option<u8> {
-    if packet.len() < 15 { return None; }
+    if packet.len() < 15 {
+        return None;
+    }
     Some(packet[14 + 1])
 }
 
 fn extract_lcp_packet(packet: &[u8], expect_sid: u16) -> Option<PointToPoint> {
-    if packet.len() < 16 { return None; }
-    if u16::from_be_bytes([packet[12], packet[13]]) != ETH_P_PPOES { return None; }
+    if packet.len() < 16 {
+        return None;
+    }
+    if u16::from_be_bytes([packet[12], packet[13]]) != ETH_P_PPOES {
+        return None;
+    }
     let frame = PPPoEFrame::new(&packet[14..])?;
-    if frame.sid != expect_sid { return None; }
+    if frame.sid != expect_sid {
+        return None;
+    }
     PointToPoint::new(&frame.payload)
-}
-
-fn extract_sid_from_pads(packet: &[u8]) -> Option<u16> {
-    if packet.len() < 14 { return None; }
-    let frame = PPPoEFrame::new(&packet[14..])?;
-    if frame.code != 0x65 { return None; }
-    Some(frame.sid)
 }
 
 // ── unit tests ──────────────────────────────────────────────────────────
@@ -159,10 +170,11 @@ mod unit {
     fn extract_l2_valid() {
         ensure_test_env();
         // dst(6) + src(6) + ethertype(2) + payload(2) = 16 bytes
-        let data: Vec<u8> = [0xFFu8; 6].into_iter()     // dst
+        let data: Vec<u8> = [0xFFu8; 6]
+            .into_iter() // dst
             .chain([0x11, 0x22, 0x33, 0x44, 0x55, 0x66]) // src
-            .chain([0x88, 0x63])                          // ethertype
-            .chain([0xaa, 0xbb])                          // payload
+            .chain([0x88, 0x63]) // ethertype
+            .chain([0xaa, 0xbb]) // payload
             .collect();
         let (src, payload) = super::super::lcp::extract_l2(&data).unwrap();
         assert_eq!(src, &[0x11, 0x22, 0x33, 0x44, 0x55, 0x66]);
@@ -192,13 +204,16 @@ mod integration {
         status.just_change_status(ServiceStatus::Staring);
         status.just_change_status(ServiceStatus::Running);
 
-        let handle = tokio::spawn(async move {
-            run(&config, &mut client_tx, &mut client_rx, &status).await
-        });
+        let handle =
+            tokio::spawn(
+                async move { run(&config, &mut client_tx, &mut client_rx, &status).await },
+            );
 
         // 1. Read PADI
         let padi = tokio::time::timeout(Duration::from_secs(2), from_client.recv())
-            .await.unwrap().expect("expected PADI");
+            .await
+            .unwrap()
+            .expect("expected PADI");
         assert_eq!(extract_pppoe_code(&padi), Some(0x09), "should be PADI");
         let host_uniq = extract_host_uniq(&padi).expect("PADI must have HostUniq");
 
@@ -207,7 +222,9 @@ mod integration {
 
         // 3. Read PADR
         let padr = tokio::time::timeout(Duration::from_secs(2), from_client.recv())
-            .await.unwrap().expect("expected PADR");
+            .await
+            .unwrap()
+            .expect("expected PADR");
         assert_eq!(extract_pppoe_code(&padr), Some(0x19), "should be PADR");
 
         // 4. Send PADS
@@ -231,13 +248,16 @@ mod integration {
         status.just_change_status(ServiceStatus::Staring);
         status.just_change_status(ServiceStatus::Running);
 
-        let handle = tokio::spawn(async move {
-            run(&config, &mut client_tx, &mut client_rx, &status).await
-        });
+        let handle =
+            tokio::spawn(
+                async move { run(&config, &mut client_tx, &mut client_rx, &status).await },
+            );
 
         // Read PADI to get host_uniq
         let padi = tokio::time::timeout(Duration::from_secs(2), from_client.recv())
-            .await.unwrap().expect("expected PADI");
+            .await
+            .unwrap()
+            .expect("expected PADI");
         let real_uniq = extract_host_uniq(&padi).unwrap();
 
         // Send PADO with WRONG HostUniq — should be ignored
@@ -245,8 +265,10 @@ mod integration {
 
         // There should be NO PADR in response (verify with a short timeout)
         let result = tokio::time::timeout(Duration::from_millis(200), from_client.recv()).await;
-        assert!(result.is_err() || result.unwrap().is_none(),
-            "PADR should NOT be sent for wrong HostUniq");
+        assert!(
+            result.is_err() || result.unwrap().is_none(),
+            "PADR should NOT be sent for wrong HostUniq"
+        );
 
         drop(to_client);
         drop(handle);
@@ -257,23 +279,23 @@ mod integration {
         ensure_test_env();
         tokio::time::pause();
 
-        let (mut client_tx, mut from_client) = mpsc::channel::<Box<Vec<u8>>>(16);
-        let (to_client, mut client_rx) = mpsc::channel::<Box<Vec<u8>>>(16);
+        let (mut client_tx, _from_client) = mpsc::channel::<Box<Vec<u8>>>(16);
+        let (_to_client, mut client_rx) = mpsc::channel::<Box<Vec<u8>>>(16);
         let config = test_config();
         let status = WatchService::new();
         status.just_change_status(ServiceStatus::Staring);
         status.just_change_status(ServiceStatus::Running);
 
-        let handle = tokio::spawn(async move {
-            run(&config, &mut client_tx, &mut client_rx, &status).await
-        });
+        let handle =
+            tokio::spawn(
+                async move { run(&config, &mut client_tx, &mut client_rx, &status).await },
+            );
 
         // Each timeout is DEFAULT_TIMEOUT seconds. After (MAX_DISCOVERY_RETRIES + 1)
         // send attempts without PADO, it should fail with DiscoveryTimeout.
         // Total advance: (MAX_DISCOVERY_RETRIES + 1) * DEFAULT_TIMEOUT + some margin.
-        let total_timeout = Duration::from_secs(
-            (MAX_DISCOVERY_RETRIES as u64 + 2) * DEFAULT_TIMEOUT
-        );
+        let _total_timeout =
+            Duration::from_secs((MAX_DISCOVERY_RETRIES as u64 + 2) * DEFAULT_TIMEOUT);
 
         // Advance time in chunks to let intermediate timeout fires process
         for _ in 0..(MAX_DISCOVERY_RETRIES + 2) {
@@ -296,18 +318,23 @@ mod integration {
         status.just_change_status(ServiceStatus::Staring);
         status.just_change_status(ServiceStatus::Running);
 
-        let handle = tokio::spawn(async move {
-            run(&config, &mut client_tx, &mut client_rx, &status).await
-        });
+        let handle =
+            tokio::spawn(
+                async move { run(&config, &mut client_tx, &mut client_rx, &status).await },
+            );
 
         // Discovery
         let padi = tokio::time::timeout(Duration::from_secs(2), from_client.recv())
-            .await.unwrap().expect("expected PADI");
+            .await
+            .unwrap()
+            .expect("expected PADI");
         let host_uniq = extract_host_uniq(&padi).unwrap();
         to_client.send(build_pado(host_uniq)).await.unwrap();
 
         let padr = tokio::time::timeout(Duration::from_secs(2), from_client.recv())
-            .await.unwrap().expect("expected PADR");
+            .await
+            .unwrap()
+            .expect("expected PADR");
         assert_eq!(extract_pppoe_code(&padr), Some(0x19));
 
         let session_id = 0x0042u16;
@@ -322,14 +349,18 @@ mod integration {
 
         // Read our LCP Ack to peer's Request
         let our_ack = tokio::time::timeout(Duration::from_secs(2), from_client.recv())
-            .await.unwrap().expect("expected our LCP Ack");
+            .await
+            .unwrap()
+            .expect("expected our LCP Ack");
         let ack_ppp = extract_lcp_packet(&our_ack, session_id).expect("valid LCP Ack packet");
         assert!(ack_ppp.is_lcp_config());
         assert!(ack_ppp.is_ack());
 
         // Read our LCP Config-Request
         let our_req = tokio::time::timeout(Duration::from_secs(2), from_client.recv())
-            .await.unwrap().expect("expected our LCP Config-Request");
+            .await
+            .unwrap()
+            .expect("expected our LCP Config-Request");
         let req_ppp = extract_lcp_packet(&our_req, session_id).expect("valid LCP Request packet");
         assert!(req_ppp.is_request());
         let our_req_id = req_ppp.id;
@@ -362,13 +393,16 @@ mod integration {
         status.just_change_status(ServiceStatus::Staring);
         status.just_change_status(ServiceStatus::Running);
 
-        let handle = tokio::spawn(async move {
-            run(&config, &mut client_tx, &mut client_rx, &status).await
-        });
+        let handle =
+            tokio::spawn(
+                async move { run(&config, &mut client_tx, &mut client_rx, &status).await },
+            );
 
         // Discovery
         let padi = tokio::time::timeout(Duration::from_secs(2), from_client.recv())
-            .await.unwrap().expect("expected PADI");
+            .await
+            .unwrap()
+            .expect("expected PADI");
         let host_uniq = extract_host_uniq(&padi).unwrap();
         to_client.send(build_pado(host_uniq)).await.unwrap();
         let _padr = from_client.recv().await.unwrap();
@@ -387,13 +421,61 @@ mod integration {
         let our_req_id = req_ppp.id;
 
         // Send LCP Config-Reject
-        let reject = [
-            0xc0u8, 0x21, 4, our_req_id, 0, 4,
-        ];
+        let reject = [0xc0u8, 0x21, 4, our_req_id, 0, 4];
         to_client.send(build_pppoe_session(session_id, reject.to_vec())).await.unwrap();
 
         let result = tokio::time::timeout(Duration::from_secs(2), handle)
-            .await.expect("task should complete").expect("task should not panic");
+            .await
+            .expect("task should complete")
+            .expect("task should not panic");
+
+        assert!(matches!(result, Err(super::super::error::PppoeError::LcpConfigRejected)));
+    }
+
+    #[tokio::test]
+    async fn test_lcp_request_missing_auth_type_rejected() {
+        ensure_test_env();
+
+        let (mut client_tx, mut from_client) = mpsc::channel::<Box<Vec<u8>>>(16);
+        let (to_client, mut client_rx) = mpsc::channel::<Box<Vec<u8>>>(16);
+        let config = test_config();
+        let status = WatchService::new();
+        status.just_change_status(ServiceStatus::Staring);
+        status.just_change_status(ServiceStatus::Running);
+
+        let handle =
+            tokio::spawn(
+                async move { run(&config, &mut client_tx, &mut client_rx, &status).await },
+            );
+
+        // Discovery
+        let padi = tokio::time::timeout(Duration::from_secs(2), from_client.recv())
+            .await
+            .unwrap()
+            .expect("expected PADI");
+        let host_uniq = extract_host_uniq(&padi).unwrap();
+        to_client.send(build_pado(host_uniq)).await.unwrap();
+        let _padr = from_client.recv().await.unwrap();
+
+        let session_id = 0x0042u16;
+        to_client.send(build_pads(host_uniq, session_id)).await.unwrap();
+
+        // Build a peer LCP Config-Request with only MRU + magic (no auth-type option)
+        // Header: 0xc0 0x21 code=1 id=1 length=14
+        // Options: MRU(1,4,0x05d4) + magic-number(5,6,0xDEADBEEF)
+        let partial_request: Vec<u8> = [
+            0xc0u8, 0x21, 1, 1, // protocol + code + id
+            0x00, 14, // length = 4(header) + 4(MRU) + 6(magic) = 14
+            1, 4, 0x05, 0xd4, // MRU = 1492
+            5, 6, 0xDE, 0xAD, 0xBE, 0xEF, // magic number
+        ]
+        .to_vec();
+        to_client.send(build_pppoe_session(session_id, partial_request)).await.unwrap();
+
+        let result = tokio::time::timeout(Duration::from_secs(2), handle)
+            .await
+            .expect("task should complete")
+            .expect("task should not panic");
 
         assert!(matches!(result, Err(super::super::error::PppoeError::LcpConfigRejected)));
     }
@@ -409,13 +491,16 @@ mod integration {
         status.just_change_status(ServiceStatus::Staring);
         status.just_change_status(ServiceStatus::Running);
 
-        let handle = tokio::spawn(async move {
-            run(&config, &mut client_tx, &mut client_rx, &status).await
-        });
+        let handle =
+            tokio::spawn(
+                async move { run(&config, &mut client_tx, &mut client_rx, &status).await },
+            );
 
         // Discovery
         let padi = tokio::time::timeout(Duration::from_secs(2), from_client.recv())
-            .await.unwrap().expect("expected PADI");
+            .await
+            .unwrap()
+            .expect("expected PADI");
         let host_uniq = extract_host_uniq(&padi).unwrap();
         to_client.send(build_pado(host_uniq)).await.unwrap();
         let _padr = from_client.recv().await.unwrap();
@@ -439,7 +524,9 @@ mod integration {
 
         // Read our adjusted Config-Request (should use min(1492, 1400) = 1400)
         let our_adj_req = tokio::time::timeout(Duration::from_secs(2), from_client.recv())
-            .await.unwrap().expect("expected adjusted Config-Request");
+            .await
+            .unwrap()
+            .expect("expected adjusted Config-Request");
         let adj_ppp = extract_lcp_packet(&our_adj_req, session_id).unwrap();
         assert!(adj_ppp.is_request());
 
@@ -451,7 +538,9 @@ mod integration {
         to_client.send(build_pppoe_session(session_id, ack)).await.unwrap();
 
         let result = tokio::time::timeout(Duration::from_secs(2), handle)
-            .await.expect("task should complete").expect("task should not panic");
+            .await
+            .expect("task should complete")
+            .expect("task should not panic");
 
         let lcp_result = result.expect("LCP phase should succeed after Nak");
         assert_eq!(lcp_result.mru, 1400);
@@ -471,9 +560,12 @@ mod integration {
         // Drop the sender — rx.recv() will return None
         drop(to_client);
 
-        let result = tokio::time::timeout(Duration::from_secs(2),
-            run(&config, &mut client_tx, &mut client_rx, &status)
-        ).await.expect("should complete quickly");
+        let result = tokio::time::timeout(
+            Duration::from_secs(2),
+            run(&config, &mut client_tx, &mut client_rx, &status),
+        )
+        .await
+        .expect("should complete quickly");
 
         assert!(matches!(result, Err(super::super::error::PppoeError::ChannelClosed)));
     }
@@ -483,7 +575,7 @@ mod integration {
         ensure_test_env();
 
         let (mut client_tx, mut from_client) = mpsc::channel::<Box<Vec<u8>>>(16);
-        let (to_client, mut client_rx) = mpsc::channel::<Box<Vec<u8>>>(16);
+        let (_to_client, mut client_rx) = mpsc::channel::<Box<Vec<u8>>>(16);
         let config = test_config();
         let status = WatchService::new();
         status.just_change_status(ServiceStatus::Staring);
@@ -496,13 +588,17 @@ mod integration {
 
         // Wait for PADI
         let _padi = tokio::time::timeout(Duration::from_secs(2), from_client.recv())
-            .await.unwrap().expect("expected PADI");
+            .await
+            .unwrap()
+            .expect("expected PADI");
 
         // Simulate service stop
         status.just_change_status(ServiceStatus::Stopping);
 
         let result = tokio::time::timeout(Duration::from_secs(2), handle)
-            .await.expect("task should complete").expect("task should not panic");
+            .await
+            .expect("task should complete")
+            .expect("task should not panic");
 
         assert!(matches!(result, Err(super::super::error::PppoeError::ServiceStopped)));
     }
@@ -519,9 +615,10 @@ mod integration {
         status.just_change_status(ServiceStatus::Staring);
         status.just_change_status(ServiceStatus::Running);
 
-        let handle = tokio::spawn(async move {
-            run(&config, &mut client_tx, &mut client_rx, &status).await
-        });
+        let handle =
+            tokio::spawn(
+                async move { run(&config, &mut client_tx, &mut client_rx, &status).await },
+            );
 
         // Complete discovery quickly
         let padi = from_client.recv().await.unwrap();
@@ -552,9 +649,10 @@ mod integration {
         status.just_change_status(ServiceStatus::Staring);
         status.just_change_status(ServiceStatus::Running);
 
-        let handle = tokio::spawn(async move {
-            run(&config, &mut client_tx, &mut client_rx, &status).await
-        });
+        let handle =
+            tokio::spawn(
+                async move { run(&config, &mut client_tx, &mut client_rx, &status).await },
+            );
 
         // First PADI (will timeout)
         let padi1 = from_client.recv().await.unwrap();
@@ -612,7 +710,9 @@ mod integration {
         to_client.send(build_pppoe_session(0x0042, lcp_req)).await.unwrap();
 
         let ack = tokio::time::timeout(Duration::from_secs(2), from_client.recv())
-            .await.unwrap().expect("expected LCP Ack after correct PADS");
+            .await
+            .unwrap()
+            .expect("expected LCP Ack after correct PADS");
         let ppp = extract_lcp_packet(&ack, 0x0042).unwrap();
         assert!(ppp.is_lcp_config() && ppp.is_ack());
 

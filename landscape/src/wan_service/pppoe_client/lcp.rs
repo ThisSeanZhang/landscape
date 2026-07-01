@@ -11,7 +11,9 @@ use landscape_common::service::WatchService;
 use crate::pppoe_client::PPPoEClientConfig;
 
 use super::error::PppoeError;
-use super::{PppoeResult, DEFAULT_TIMEOUT, ETH_P_PPOED, ETH_P_PPOES, MAX_DISCOVERY_RETRIES, MAX_LCP_RETRIES};
+use super::{
+    PppoeResult, DEFAULT_TIMEOUT, ETH_P_PPOED, ETH_P_PPOES, MAX_DISCOVERY_RETRIES, MAX_LCP_RETRIES,
+};
 
 #[derive(Clone)]
 pub(crate) struct LcpPhaseResult {
@@ -20,6 +22,8 @@ pub(crate) struct LcpPhaseResult {
     pub mru: u16,
     pub magic_number: u32,
     pub auth_type: u16,
+    pub peer_mru: u16,
+    pub peer_magic: u32,
 }
 
 enum Phase1State {
@@ -141,7 +145,9 @@ pub(crate) async fn run(
 }
 
 pub(crate) fn extract_l2(data: &[u8]) -> Option<(&[u8], &[u8])> {
-    if data.len() < 14 { return None; }
+    if data.len() < 14 {
+        return None;
+    }
     Some((&data[6..12], &data[12..]))
 }
 
@@ -153,7 +159,8 @@ fn handle_discovery(
     let Some((src_mac, eth_payload)) = extract_l2(raw) else {
         return Ok(None);
     };
-    if eth_payload.len() < 4 || u16::from_be_bytes([eth_payload[0], eth_payload[1]]) != ETH_P_PPOED {
+    if eth_payload.len() < 4 || u16::from_be_bytes([eth_payload[0], eth_payload[1]]) != ETH_P_PPOED
+    {
         return Ok(None);
     }
     let Some(frame) = PPPoEFrame::new(&eth_payload[2..]) else {
@@ -186,10 +193,7 @@ fn handle_discovery(
         "received matching PADO"
     );
 
-    Ok(Some(Phase1State::ReuqestSession {
-        server_mac: src_mac.to_vec(),
-        ac_cookie,
-    }))
+    Ok(Some(Phase1State::ReuqestSession { server_mac: src_mac.to_vec(), ac_cookie }))
 }
 
 fn handle_session_confirm(
@@ -201,7 +205,8 @@ fn handle_session_confirm(
     let Some((_src, eth_payload)) = extract_l2(raw) else {
         return Ok(None);
     };
-    if eth_payload.len() < 4 || u16::from_be_bytes([eth_payload[0], eth_payload[1]]) != ETH_P_PPOED {
+    if eth_payload.len() < 4 || u16::from_be_bytes([eth_payload[0], eth_payload[1]]) != ETH_P_PPOED
+    {
         return Ok(None);
     }
     let Some(frame) = PPPoEFrame::new(&eth_payload[2..]) else {
@@ -254,18 +259,26 @@ async fn handle_lcp_packet(
     tx: &mut mpsc::Sender<Box<Vec<u8>>>,
 ) -> Result<Option<LcpPhaseResult>, PppoeError> {
     let Phase1State::LcpNegotiating {
-        ref server_mac, session_id, our_mru, ref mut our_magic,
-        ref mut cfg_req_id, ref mut our_config_acked,
-        peer_mru: _, peer_magic: _, ref mut auth_type,
+        ref server_mac,
+        session_id,
+        our_mru,
+        ref mut our_magic,
+        ref mut cfg_req_id,
+        ref mut our_config_acked,
+        ref mut peer_mru,
+        ref mut peer_magic,
+        ref mut auth_type,
         ref mut peer_config_received,
-    } = state else {
+    } = state
+    else {
         return Ok(None);
     };
 
     let Some((_src_mac, eth_payload)) = extract_l2(raw) else {
         return Ok(None);
     };
-    if eth_payload.len() < 4 || u16::from_be_bytes([eth_payload[0], eth_payload[1]]) != ETH_P_PPOES {
+    if eth_payload.len() < 4 || u16::from_be_bytes([eth_payload[0], eth_payload[1]]) != ETH_P_PPOES
+    {
         return Ok(None);
     }
     let Some(mut frame) = PPPoEFrame::new(&eth_payload[2..]) else {
@@ -285,14 +298,23 @@ async fn handle_lcp_packet(
         let (mru, magic, at, _count) = parse_lcp_request_options(&lcp.payload);
         let (Some(mru), Some(magic), Some(at)) = (mru, magic, at) else {
             tracing::warn!(iface = %config.iface_name, "peer LCP Config-Request missing required options");
-            return Ok(None);
+            return Err(PppoeError::LcpConfigRejected);
         };
 
         *peer_config_received = true;
         *auth_type = at;
+        *peer_mru = mru;
+        *peer_magic = magic;
 
         frame.payload = lcp.gen_ack();
-        super::send_pppoe_session_frame(server_mac, config.iface_mac, *session_id, frame.payload.clone(), tx).await?;
+        super::send_pppoe_session_frame(
+            server_mac,
+            config.iface_mac,
+            *session_id,
+            frame.payload.clone(),
+            tx,
+        )
+        .await?;
 
         tracing::info!(
             iface = %config.iface_name,
@@ -304,7 +326,16 @@ async fn handle_lcp_packet(
         if !*our_config_acked {
             *our_magic = generated_magic;
             *cfg_req_id = cfg_req_id.wrapping_add(1);
-            send_lcp_config_request(config, *session_id, *cfg_req_id, *our_mru, *our_magic, server_mac, tx).await?;
+            send_lcp_config_request(
+                config,
+                *session_id,
+                *cfg_req_id,
+                *our_mru,
+                *our_magic,
+                server_mac,
+                tx,
+            )
+            .await?;
         }
     } else if lcp.is_ack() {
         let (mru, magic) = parse_lcp_mru_magic_options(&lcp.payload);
@@ -323,7 +354,16 @@ async fn handle_lcp_packet(
             *cfg_req_id = cfg_req_id.wrapping_add(1);
             *our_magic = magic;
             *our_mru = mru.min(*our_mru);
-            send_lcp_config_request(config, *session_id, *cfg_req_id, *our_mru, *our_magic, server_mac, tx).await?;
+            send_lcp_config_request(
+                config,
+                *session_id,
+                *cfg_req_id,
+                *our_mru,
+                *our_magic,
+                server_mac,
+                tx,
+            )
+            .await?;
             tracing::warn!(
                 iface = %config.iface_name,
                 suggested_mru = mru,
@@ -343,13 +383,17 @@ async fn handle_lcp_packet(
             mru: *our_mru,
             magic_number: *our_magic,
             auth_type: *auth_type,
+            peer_mru: *peer_mru,
+            peer_magic: *peer_magic,
         }));
     }
 
     Ok(None)
 }
 
-pub(crate) fn parse_lcp_request_options(payload: &[u8]) -> (Option<u16>, Option<u32>, Option<u16>, usize) {
+pub(crate) fn parse_lcp_request_options(
+    payload: &[u8],
+) -> (Option<u16>, Option<u32>, Option<u16>, usize) {
     let mut mru = None;
     let mut magic_number = None;
     let mut auth_type = None;
@@ -359,7 +403,8 @@ pub(crate) fn parse_lcp_request_options(payload: &[u8]) -> (Option<u16>, Option<
         if op.is_mru() && op.data.len() >= 2 {
             mru = Some(u16::from_be_bytes([op.data[0], op.data[1]]));
         } else if op.is_magic_number() && op.data.len() >= 4 {
-            magic_number = Some(u32::from_be_bytes([op.data[0], op.data[1], op.data[2], op.data[3]]));
+            magic_number =
+                Some(u32::from_be_bytes([op.data[0], op.data[1], op.data[2], op.data[3]]));
         } else if op.is_auth_type() && op.data.len() >= 2 {
             auth_type = Some(u16::from_be_bytes([op.data[0], op.data[1]]));
         }
@@ -374,7 +419,8 @@ pub(crate) fn parse_lcp_mru_magic_options(payload: &[u8]) -> (Option<u16>, Optio
         if op.is_mru() && op.data.len() >= 2 {
             mru = Some(u16::from_be_bytes([op.data[0], op.data[1]]));
         } else if op.is_magic_number() && op.data.len() >= 4 {
-            magic_number = Some(u32::from_be_bytes([op.data[0], op.data[1], op.data[2], op.data[3]]));
+            magic_number =
+                Some(u32::from_be_bytes([op.data[0], op.data[1], op.data[2], op.data[3]]));
         }
     }
     (mru, magic_number)

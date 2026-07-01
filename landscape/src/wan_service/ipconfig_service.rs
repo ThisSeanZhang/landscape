@@ -150,7 +150,7 @@ async fn init_service_from_config(
         }
         IfaceIpModelConfig::PPPoE { default_router, username, password, mtu } => {
             if let Some(mac_addr) = iface.mac {
-                crate::pppoe_client::create_pppoe_client(
+                crate::wan_service::pppoe_client::run(
                     PPPoEClientConfig::new(
                         iface.index,
                         iface.name,
@@ -161,7 +161,7 @@ async fn init_service_from_config(
                         u16::try_from(mtu).unwrap_or(u16::MAX),
                     ),
                     service_status,
-                    Some(route_service),
+                    route_service,
                 )
                 .await;
             } else {

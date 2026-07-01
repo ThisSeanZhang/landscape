@@ -108,44 +108,57 @@ pub async fn run(
             }
         };
 
-        let nego_result = match super::negotiation::run(
-            &config, &lcp_result, &mut tx, &mut rx, &status_rx,
-        ).await {
-            Ok(r) => r,
-            Err(e) if e.is_fatal() => {
-                tracing::error!(
-                    iface_name = %config.iface_name,
-                    error = %e,
-                    "Negotiation phase fatal error, exiting"
-                );
-                shutdown_ebpf_handle(&mut ebpf_handle, &route_service).await;
-                status_rx.just_change_status(ServiceStatus::Failed);
-                break;
-            }
-            Err(PppoeError::ServiceStopped) => {
-                shutdown_ebpf_handle(&mut ebpf_handle, &route_service).await;
-                status_rx.just_change_status(ServiceStatus::Stop);
-                break;
-            }
-            Err(e) => {
-                tracing::warn!(
-                    iface_name = %config.iface_name,
-                    error = %e,
-                    "Negotiation phase error, retrying"
-                );
-                shutdown_ebpf_handle(&mut ebpf_handle, &route_service).await;
-                retry_count += 1;
-                continue;
-            }
-        };
+        tracing::info!(
+            iface_name = %config.iface_name,
+            session_id = lcp_result.session_id,
+            server_mac = ?lcp_result.server_mac,
+            our_mru = lcp_result.mru,
+            our_magic = format_args!("0x{:08x}", lcp_result.magic_number),
+            peer_mru = lcp_result.peer_mru,
+            peer_magic = format_args!("0x{:08x}", lcp_result.peer_magic),
+            auth_type = format_args!("0x{:04x}", lcp_result.auth_type),
+            "LCP phase completed"
+        );
+
+        let nego_result =
+            match super::negotiation::run(&config, &lcp_result, &mut tx, &mut rx, &status_rx).await
+            {
+                Ok(r) => r,
+                Err(e) if e.is_fatal() => {
+                    tracing::error!(
+                        iface_name = %config.iface_name,
+                        error = %e,
+                        "Negotiation phase fatal error, exiting"
+                    );
+                    shutdown_ebpf_handle(&mut ebpf_handle, &route_service).await;
+                    status_rx.just_change_status(ServiceStatus::Failed);
+                    break;
+                }
+                Err(PppoeError::ServiceStopped) => {
+                    shutdown_ebpf_handle(&mut ebpf_handle, &route_service).await;
+                    status_rx.just_change_status(ServiceStatus::Stop);
+                    break;
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        iface_name = %config.iface_name,
+                        error = %e,
+                        "Negotiation phase error, retrying"
+                    );
+                    shutdown_ebpf_handle(&mut ebpf_handle, &route_service).await;
+                    retry_count += 1;
+                    continue;
+                }
+            };
 
         tracing::info!(
             iface_name = %config.iface_name,
             client_ip = %nego_result.client_ip,
             server_ip = %nego_result.server_ip,
+            ipv6cp_client_id = ?nego_result.ipv6cp_client_id,
+            ipv6cp_server_id = ?nego_result.ipv6cp_server_id,
             session_id = lcp_result.session_id,
-            has_ipv6 = nego_result.ipv6cp_server_id.is_some(),
-            "PPPoE session established"
+            "PPPoE session established, negotiation phase completed"
         );
 
         shutdown_ebpf_handle(&mut ebpf_handle, &route_service).await;
@@ -172,10 +185,9 @@ pub async fn run(
 
         retry_count = 0;
 
-        match keepalive(
-            &config, &lcp_result, nego_result.echo_req_id,
-            &mut tx, &mut rx, &status_rx,
-        ).await {
+        match keepalive(&config, &lcp_result, nego_result.echo_req_id, &mut tx, &mut rx, &status_rx)
+            .await
+        {
             Ok(()) => {
                 shutdown_ebpf_handle(&mut ebpf_handle, &route_service).await;
                 status_rx.just_change_status(ServiceStatus::Stop);
@@ -213,7 +225,8 @@ async fn keepalive(
     const MAX_ECHO_FAILURES: u8 = 5;
 
     let payload = PointToPoint::gen_echo_request_with_magic(echo_req_id, lcp.magic_number);
-    send_pppoe_session_frame(&lcp.server_mac, config.iface_mac, lcp.session_id, payload, tx).await?;
+    send_pppoe_session_frame(&lcp.server_mac, config.iface_mac, lcp.session_id, payload, tx)
+        .await?;
     echo_failures += 1;
     echo_req_id = echo_req_id.wrapping_add(1);
 

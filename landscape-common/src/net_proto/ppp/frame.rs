@@ -390,7 +390,9 @@ mod tests {
 
     // ── encoding cross-checks ────────────────────────────────────────
 
-    fn ppp_u16_at(d: &[u8], o: usize) -> u16 { u16::from_be_bytes([d[o], d[o + 1]]) }
+    fn ppp_u16_at(d: &[u8], o: usize) -> u16 {
+        u16::from_be_bytes([d[o], d[o + 1]])
+    }
     fn ppp_u32_at(d: &[u8], o: usize) -> u32 {
         u32::from_be_bytes([d[o], d[o + 1], d[o + 2], d[o + 3]])
     }
@@ -418,11 +420,17 @@ mod tests {
         // PPP total length = 4 + (4 + 4 + 6) = 18
         assert_eq!(ppp_u16_at(&pkt, 4), 18);
         // option 1: MRU=1492
-        assert_eq!(pkt[6], 1); assert_eq!(pkt[7], 4); assert_eq!(ppp_u16_at(&pkt, 8), 1492);
+        assert_eq!(pkt[6], 1);
+        assert_eq!(pkt[7], 4);
+        assert_eq!(ppp_u16_at(&pkt, 8), 1492);
         // option 2: auth=PAP
-        assert_eq!(pkt[10], 3); assert_eq!(pkt[11], 4); assert_eq!(ppp_u16_at(&pkt, 12), 0xc023);
+        assert_eq!(pkt[10], 3);
+        assert_eq!(pkt[11], 4);
+        assert_eq!(ppp_u16_at(&pkt, 12), 0xc023);
         // option 3: magic
-        assert_eq!(pkt[14], 5); assert_eq!(pkt[15], 6); assert_eq!(ppp_u32_at(&pkt, 16), 0xDEAD);
+        assert_eq!(pkt[14], 5);
+        assert_eq!(pkt[15], 6);
+        assert_eq!(ppp_u32_at(&pkt, 16), 0xDEAD);
     }
 
     #[test]

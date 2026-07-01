@@ -1,19 +1,19 @@
 use std::net::Ipv4Addr;
 
 use tokio::sync::mpsc;
-use tokio::time::{Duration, Instant};
+use tokio::time::Duration;
 
 use landscape_common::net::MacAddr;
 use landscape_common::net_proto::ppp::{PPPOption, PointToPoint};
-use landscape_common::net_proto::pppoe::{PPPoEFrame, PPPoETag};
+use landscape_common::net_proto::pppoe::PPPoEFrame;
 use landscape_common::service::{ServiceStatus, WatchService};
 
 use crate::pppoe_client::PPPoEClientConfig;
 
-use super::lcp::LcpPhaseResult;
-use super::negotiation::NegotiationResult;
-use super::negotiation::run;
 use super::error::PppoeError;
+use super::lcp::LcpPhaseResult;
+use super::negotiation::run;
+use super::negotiation::NegotiationResult;
 use super::{DEFAULT_TIMEOUT, ETH_P_PPOES, LCP_ECHO_INTERVAL};
 
 fn ensure_test_env() {
@@ -41,6 +41,8 @@ fn mock_lcp(auth_type: u16) -> LcpPhaseResult {
         mru: 1492,
         magic_number: 0xDEAD_BEEF,
         auth_type,
+        peer_mru: 1492,
+        peer_magic: 0xFEED_FACE,
     }
 }
 
@@ -52,32 +54,44 @@ fn wrap_eth(dst: &[u8], src: &[u8], ethertype: u16, payload: Vec<u8>) -> Box<Vec
     Box::new(packet)
 }
 
-fn send_session(
-    to_client: &mpsc::Sender<Box<Vec<u8>>>,
-    sid: u16,
-    ppp_payload: Vec<u8>,
-) {
+fn send_session(to_client: &mpsc::Sender<Box<Vec<u8>>>, sid: u16, ppp_payload: Vec<u8>) {
     let frame = PPPoEFrame {
-        ver: 1, t: 1, code: 0, sid,
-        length: ppp_payload.len() as u16, payload: ppp_payload,
+        ver: 1,
+        t: 1,
+        code: 0,
+        sid,
+        length: ppp_payload.len() as u16,
+        payload: ppp_payload,
     };
     let raw = wrap_eth(&SERVER_MAC, &SERVER_MAC, ETH_P_PPOES, frame.convert_to_payload());
     to_client.try_send(raw).expect("send session packet");
 }
 
 fn extract_ppp(raw: &[u8], session_id: u16) -> Option<PointToPoint> {
-    if raw.len() < 16 { return None; }
-    if u16::from_be_bytes([raw[12], raw[13]]) != ETH_P_PPOES { return None; }
+    if raw.len() < 16 {
+        return None;
+    }
+    if u16::from_be_bytes([raw[12], raw[13]]) != ETH_P_PPOES {
+        return None;
+    }
     let frame = PPPoEFrame::new(&raw[14..])?;
-    if frame.sid != session_id { return None; }
+    if frame.sid != session_id {
+        return None;
+    }
     PointToPoint::new(&frame.payload)
 }
 
 // ── packet builders (using PointToPoint struct + convert_to_payload) ──
 
 fn pap_pkt(code: u8, id: u8) -> Vec<u8> {
-    PointToPoint { protocol: 0xc023, code, id, length: 4, payload: vec![] }
-        .convert_to_payload()
+    PointToPoint {
+        protocol: 0xc023,
+        code,
+        id,
+        length: 4,
+        payload: vec![],
+    }
+    .convert_to_payload()
 }
 
 fn chap_challenge(id: u8, challenge: &[u8]) -> Vec<u8> {
@@ -85,77 +99,143 @@ fn chap_challenge(id: u8, challenge: &[u8]) -> Vec<u8> {
     payload.extend(challenge);
     payload.extend(b"test-server");
     let len = (payload.len() + 4) as u16;
-    PointToPoint { protocol: 0xc223, code: 1, id, length: len, payload }
-        .convert_to_payload()
+    PointToPoint {
+        protocol: 0xc223,
+        code: 1,
+        id,
+        length: len,
+        payload,
+    }
+    .convert_to_payload()
 }
 
 fn chap_status(code: u8, id: u8) -> Vec<u8> {
-    PointToPoint { protocol: 0xc223, code, id, length: 4, payload: vec![] }
-        .convert_to_payload()
+    PointToPoint {
+        protocol: 0xc223,
+        code,
+        id,
+        length: 4,
+        payload: vec![],
+    }
+    .convert_to_payload()
 }
 
 fn ipcp_ack(id: u8, ip: Ipv4Addr) -> Vec<u8> {
     let octets = ip.octets();
     let payload = [3, 6, octets[0], octets[1], octets[2], octets[3]];
     let len = (payload.len() + 4) as u16;
-    PointToPoint { protocol: 0x8021, code: 2, id, length: len, payload: payload.to_vec() }
-        .convert_to_payload()
+    PointToPoint {
+        protocol: 0x8021,
+        code: 2,
+        id,
+        length: len,
+        payload: payload.to_vec(),
+    }
+    .convert_to_payload()
 }
 
 fn ipcp_nak(id: u8, suggested_ip: Ipv4Addr) -> Vec<u8> {
     let octets = suggested_ip.octets();
     let payload = [3, 6, octets[0], octets[1], octets[2], octets[3]];
     let len = (payload.len() + 4) as u16;
-    PointToPoint { protocol: 0x8021, code: 3, id, length: len, payload: payload.to_vec() }
-        .convert_to_payload()
+    PointToPoint {
+        protocol: 0x8021,
+        code: 3,
+        id,
+        length: len,
+        payload: payload.to_vec(),
+    }
+    .convert_to_payload()
 }
 
 fn ipcp_request(id: u8, ip: Ipv4Addr) -> Vec<u8> {
     let octets = ip.octets();
     let payload = [3, 6, octets[0], octets[1], octets[2], octets[3]];
     let len = (payload.len() + 4) as u16;
-    PointToPoint { protocol: 0x8021, code: 1, id, length: len, payload: payload.to_vec() }
-        .convert_to_payload()
+    PointToPoint {
+        protocol: 0x8021,
+        code: 1,
+        id,
+        length: len,
+        payload: payload.to_vec(),
+    }
+    .convert_to_payload()
 }
 
 fn ipcp_reject(id: u8) -> Vec<u8> {
-    PointToPoint { protocol: 0x8021, code: 4, id, length: 4, payload: vec![] }
-        .convert_to_payload()
+    PointToPoint {
+        protocol: 0x8021,
+        code: 4,
+        id,
+        length: 4,
+        payload: vec![],
+    }
+    .convert_to_payload()
 }
 
 fn ipv6cp_ack(id: u8, iface_id: &[u8]) -> Vec<u8> {
     let mut payload = vec![1u8, 0x0a];
     payload.extend(iface_id);
     let len = (payload.len() + 4) as u16;
-    PointToPoint { protocol: 0x8057, code: 2, id, length: len, payload }
-        .convert_to_payload()
+    PointToPoint {
+        protocol: 0x8057,
+        code: 2,
+        id,
+        length: len,
+        payload,
+    }
+    .convert_to_payload()
 }
 
 fn ipv6cp_request(id: u8, iface_id: &[u8]) -> Vec<u8> {
     let mut payload = vec![1u8, 0x0a];
     payload.extend(iface_id);
     let len = (payload.len() + 4) as u16;
-    PointToPoint { protocol: 0x8057, code: 1, id, length: len, payload }
-        .convert_to_payload()
+    PointToPoint {
+        protocol: 0x8057,
+        code: 1,
+        id,
+        length: len,
+        payload,
+    }
+    .convert_to_payload()
 }
 
 fn ipv6cp_reject(id: u8) -> Vec<u8> {
-    PointToPoint { protocol: 0x8057, code: 4, id, length: 4, payload: vec![] }
-        .convert_to_payload()
+    PointToPoint {
+        protocol: 0x8057,
+        code: 4,
+        id,
+        length: 4,
+        payload: vec![],
+    }
+    .convert_to_payload()
 }
 
 fn lcp_proto_reject(id: u8, proto: u16) -> Vec<u8> {
     let payload = proto.to_be_bytes().to_vec();
     let len = (payload.len() + 4) as u16;
-    PointToPoint { protocol: 0xc021, code: 8, id, length: len, payload }
-        .convert_to_payload()
+    PointToPoint {
+        protocol: 0xc021,
+        code: 8,
+        id,
+        length: len,
+        payload,
+    }
+    .convert_to_payload()
 }
 
 fn lcp_terminate_request(id: u8) -> Vec<u8> {
     let payload = b"User request".to_vec();
     let len = (payload.len() + 4) as u16;
-    PointToPoint { protocol: 0xc021, code: 5, id, length: len, payload }
-        .convert_to_payload()
+    PointToPoint {
+        protocol: 0xc021,
+        code: 5,
+        id,
+        length: len,
+        payload,
+    }
+    .convert_to_payload()
 }
 
 // ── test helpers ──────────────────────────────────────────────────────
@@ -168,9 +248,7 @@ fn spawn_nego(
     status: &WatchService,
 ) -> tokio::task::JoinHandle<Result<NegotiationResult, PppoeError>> {
     let status_c = status.clone();
-    tokio::spawn(async move {
-        run(&config, &lcp, &mut client_tx, &mut client_rx, &status_c).await
-    })
+    tokio::spawn(async move { run(&config, &lcp, &mut client_tx, &mut client_rx, &status_c).await })
 }
 
 /// Complete PAP auth: read PAP Request, send Ack.
@@ -181,7 +259,9 @@ async fn do_pap_auth(
     sid: u16,
 ) {
     let pap_req = tokio::time::timeout(Duration::from_secs(2), from_client.recv())
-        .await.unwrap().expect("expected PAP Request");
+        .await
+        .unwrap()
+        .expect("expected PAP Request");
     let ppp = extract_ppp(&pap_req, sid).expect("valid PAP packet");
     assert!(ppp.is_pap_auth());
     let req_id = ppp.id;
@@ -190,7 +270,9 @@ async fn do_pap_auth(
 
     // Drain the immediate Echo-Request sent at entry of negotiation::run()
     let _echo = tokio::time::timeout(Duration::from_secs(2), from_client.recv())
-        .await.unwrap().expect("expected immediate Echo-Request after PAP auth");
+        .await
+        .unwrap()
+        .expect("expected immediate Echo-Request after PAP auth");
 }
 
 /// Complete PAP auth, drain both NCP requests.
@@ -202,12 +284,20 @@ async fn do_pap_and_read_ncp_requests(
 ) -> (PointToPoint, PointToPoint) {
     do_pap_auth(from, to, sid).await;
     let a = tokio::time::timeout(Duration::from_secs(2), from.recv())
-        .await.unwrap().expect("expected NCP request 1");
+        .await
+        .unwrap()
+        .expect("expected NCP request 1");
     let b = tokio::time::timeout(Duration::from_secs(2), from.recv())
-        .await.unwrap().expect("expected NCP request 2");
+        .await
+        .unwrap()
+        .expect("expected NCP request 2");
     let pa = extract_ppp(&a, sid).unwrap();
     let pb = extract_ppp(&b, sid).unwrap();
-    if pa.is_ipcp() { (pa, pb) } else { (pb, pa) }
+    if pa.is_ipcp() {
+        (pa, pb)
+    } else {
+        (pb, pa)
+    }
 }
 
 mod auth_tests {
@@ -217,7 +307,7 @@ mod auth_tests {
     async fn test_pap_success_triggers_ipcp() {
         ensure_test_env();
 
-        let (mut client_tx, mut from_client) = mpsc::channel(16);
+        let (client_tx, mut from_client) = mpsc::channel(16);
         let (to_client, client_rx) = mpsc::channel(16);
         let config = test_config();
         let lcp = mock_lcp(0xc023);
@@ -232,7 +322,9 @@ mod auth_tests {
 
         // After auth, should see IPCP Request (0.0.0.0)
         let ipcp_req = tokio::time::timeout(Duration::from_secs(2), from_client.recv())
-            .await.unwrap().expect("expected IPCP Request after auth");
+            .await
+            .unwrap()
+            .expect("expected IPCP Request after auth");
         let ppp = extract_ppp(&ipcp_req, lcp.session_id).unwrap();
         assert!(ppp.is_ipcp());
         assert!(ppp.is_request(), "should be IPCP Config-Request");
@@ -245,7 +337,7 @@ mod auth_tests {
     async fn test_pap_failed() {
         ensure_test_env();
 
-        let (mut client_tx, mut from_client) = mpsc::channel(16);
+        let (client_tx, mut from_client) = mpsc::channel(16);
         let (to_client, client_rx) = mpsc::channel(16);
         let config = test_config();
         let lcp = mock_lcp(0xc023);
@@ -263,8 +355,7 @@ mod auth_tests {
         // Send PAP Nak → should fail
         send_session(&to_client, lcp.session_id, pap_pkt(3, req_id));
 
-        let result = tokio::time::timeout(Duration::from_secs(2), handle)
-            .await.unwrap().unwrap();
+        let result = tokio::time::timeout(Duration::from_secs(2), handle).await.unwrap().unwrap();
         assert!(matches!(result, Err(PppoeError::AuthFailed(_))));
     }
 
@@ -272,7 +363,7 @@ mod auth_tests {
     async fn test_chap_success_triggers_ipcp() {
         ensure_test_env();
 
-        let (mut client_tx, mut from_client) = mpsc::channel(16);
+        let (client_tx, mut from_client) = mpsc::channel(16);
         let (to_client, client_rx) = mpsc::channel(16);
         let config = test_config();
         let lcp = mock_lcp(0xc223);
@@ -291,7 +382,9 @@ mod auth_tests {
 
         // Read CHAP Response
         let chap_resp = tokio::time::timeout(Duration::from_secs(2), from_client.recv())
-            .await.unwrap().expect("expected CHAP Response");
+            .await
+            .unwrap()
+            .expect("expected CHAP Response");
         let ppp = extract_ppp(&chap_resp, lcp.session_id).unwrap();
         assert!(ppp.is_chap());
         let resp_id = ppp.id;
@@ -302,7 +395,9 @@ mod auth_tests {
 
         // Should see IPCP Request after auth
         let ipcp_req = tokio::time::timeout(Duration::from_secs(2), from_client.recv())
-            .await.unwrap().expect("expected IPCP after CHAP auth");
+            .await
+            .unwrap()
+            .expect("expected IPCP after CHAP auth");
         assert!(extract_ppp(&ipcp_req, lcp.session_id).unwrap().is_ipcp());
 
         drop(to_client);
@@ -313,7 +408,7 @@ mod auth_tests {
     async fn test_chap_failed() {
         ensure_test_env();
 
-        let (mut client_tx, mut from_client) = mpsc::channel(16);
+        let (client_tx, mut from_client) = mpsc::channel(16);
         let (to_client, client_rx) = mpsc::channel(16);
         let config = test_config();
         let lcp = mock_lcp(0xc223);
@@ -331,8 +426,7 @@ mod auth_tests {
         // Send CHAP Failure
         send_session(&to_client, lcp.session_id, chap_status(4, ppp.id));
 
-        let result = tokio::time::timeout(Duration::from_secs(2), handle)
-            .await.unwrap().unwrap();
+        let result = tokio::time::timeout(Duration::from_secs(2), handle).await.unwrap().unwrap();
         assert!(matches!(result, Err(PppoeError::AuthFailed(_))));
     }
 
@@ -356,28 +450,11 @@ mod auth_tests {
 mod ipcp_tests {
     use super::*;
 
-    async fn complete_ipv6cp_quick(
-        from: &mut mpsc::Receiver<Box<Vec<u8>>>,
-        to: &mpsc::Sender<Box<Vec<u8>>>,
-        sid: u16,
-    ) {
-        let raw = tokio::time::timeout(Duration::from_secs(2), from.recv())
-            .await.unwrap().expect("expected IPv6CP Request");
-        let ppp = extract_ppp(&raw, sid).unwrap();
-        assert!(ppp.is_ipv6cp() && ppp.is_request());
-        let server_id = [0x01u8, 2, 3, 4, 5, 6, 7, 8];
-        send_session(to, sid, ipv6cp_ack(ppp.id, &ppp.payload[2..]));
-        send_session(to, sid, ipv6cp_request(0x01, &server_id));
-        let ack = tokio::time::timeout(Duration::from_secs(2), from.recv())
-            .await.unwrap().expect("expected IPv6CP Ack to server request");
-        assert!(extract_ppp(&ack, sid).unwrap().is_ack());
-    }
-
     #[tokio::test]
     async fn test_ipcp_nak_then_ack_returns_correct_ip() {
         ensure_test_env();
 
-        let (mut client_tx, mut from_client) = mpsc::channel(16);
+        let (client_tx, mut from_client) = mpsc::channel(16);
         let (to_client, client_rx) = mpsc::channel(16);
         let config = test_config();
         let lcp = mock_lcp(0xc023);
@@ -389,7 +466,8 @@ mod ipcp_tests {
 
         let sid = lcp.session_id;
         // do_pap_and_read_ncp_requests internally drains the immediate Echo-Request
-        let (ipcp_ppp, _v6_ppp) = do_pap_and_read_ncp_requests(&mut from_client, &to_client, sid).await;
+        let (ipcp_ppp, _v6_ppp) =
+            do_pap_and_read_ncp_requests(&mut from_client, &to_client, sid).await;
 
         let ipcp_id = ipcp_ppp.id;
         let mut req_ip = Ipv4Addr::UNSPECIFIED;
@@ -406,7 +484,9 @@ mod ipcp_tests {
 
         // Read adjusted IPCP Request
         let adj = tokio::time::timeout(Duration::from_secs(2), from_client.recv())
-            .await.unwrap().expect("expected adjusted IPCP Request");
+            .await
+            .unwrap()
+            .expect("expected adjusted IPCP Request");
         let adj_ppp = extract_ppp(&adj, sid).unwrap();
         assert!(adj_ppp.is_request());
         let mut adj_ip = Ipv4Addr::UNSPECIFIED;
@@ -426,7 +506,9 @@ mod ipcp_tests {
 
         // Read client's Ack to server
         let ack_raw = tokio::time::timeout(Duration::from_secs(2), from_client.recv())
-            .await.unwrap().expect("expected IPCP Ack to server");
+            .await
+            .unwrap()
+            .expect("expected IPCP Ack to server");
         let ack_ppp = extract_ppp(&ack_raw, sid).unwrap();
         assert!(ack_ppp.is_ipcp() && ack_ppp.is_ack());
 
@@ -437,7 +519,10 @@ mod ipcp_tests {
         let _v6_ack = from_client.recv().await.unwrap();
 
         let result = tokio::time::timeout(Duration::from_secs(2), handle)
-            .await.unwrap().unwrap().expect("negotiation should succeed");
+            .await
+            .unwrap()
+            .unwrap()
+            .expect("negotiation should succeed");
         assert_eq!(result.client_ip, suggested);
         assert_eq!(result.server_ip, server_ip);
     }
@@ -446,7 +531,7 @@ mod ipcp_tests {
     async fn test_ipcp_rejected() {
         ensure_test_env();
 
-        let (mut client_tx, mut from_client) = mpsc::channel(16);
+        let (client_tx, mut from_client) = mpsc::channel(16);
         let (to_client, client_rx) = mpsc::channel(16);
         let config = test_config();
         let lcp = mock_lcp(0xc023);
@@ -462,8 +547,7 @@ mod ipcp_tests {
         // Send IPCP Reject
         send_session(&to_client, sid, ipcp_reject(ipcp_ppp.id));
 
-        let result = tokio::time::timeout(Duration::from_secs(2), handle)
-            .await.unwrap().unwrap();
+        let result = tokio::time::timeout(Duration::from_secs(2), handle).await.unwrap().unwrap();
         assert!(matches!(result, Err(PppoeError::IpRequiredButRejected)));
     }
 }
@@ -475,7 +559,7 @@ mod ipv6cp_tests {
     async fn test_proto_reject_ipv6cp_non_fatal_should_complete() {
         ensure_test_env();
 
-        let (mut client_tx, mut from_client) = mpsc::channel(16);
+        let (client_tx, mut from_client) = mpsc::channel(16);
         let (to_client, client_rx) = mpsc::channel(16);
         let config = test_config();
         let lcp = mock_lcp(0xc023);
@@ -510,8 +594,7 @@ mod ipv6cp_tests {
         send_session(&to_client, sid, lcp_proto_reject(v6_ppp.id, 0x8057));
 
         // Negotiation should complete
-        let result = tokio::time::timeout(Duration::from_secs(2), handle)
-            .await.unwrap().unwrap();
+        let result = tokio::time::timeout(Duration::from_secs(2), handle).await.unwrap().unwrap();
         assert!(result.is_ok(), "proto-reject IPv6CP should not be fatal: {:?}", result.err());
         assert!(result.unwrap().ipv6cp_server_id.is_none());
     }
@@ -524,7 +607,7 @@ mod integration {
     async fn test_full_pap_ipcp_ipv6cp() {
         ensure_test_env();
 
-        let (mut client_tx, mut from_client) = mpsc::channel(16);
+        let (client_tx, mut from_client) = mpsc::channel(16);
         let (to_client, client_rx) = mpsc::channel(16);
         let config = test_config();
         let lcp = mock_lcp(0xc023);
@@ -547,7 +630,11 @@ mod integration {
         let (ipcp_ppp, v6_ppp) = {
             let a = extract_ppp(&ipcp_raw, sid).unwrap();
             let b = extract_ppp(&v6_raw, sid).unwrap();
-            if a.is_ipcp() { (a, b) } else { (b, a) }
+            if a.is_ipcp() {
+                (a, b)
+            } else {
+                (b, a)
+            }
         };
         assert!(ipcp_ppp.is_request(), "IPCP is a request");
         assert!(v6_ppp.is_ipv6cp() && v6_ppp.is_request(), "IPv6CP is a request");
@@ -565,7 +652,10 @@ mod integration {
         let _v6_ack = from_client.recv().await.unwrap();
 
         let result = tokio::time::timeout(Duration::from_secs(2), handle)
-            .await.unwrap().unwrap().expect("full negotiation should succeed");
+            .await
+            .unwrap()
+            .unwrap()
+            .expect("full negotiation should succeed");
 
         assert_eq!(result.client_ip, Ipv4Addr::new(10, 0, 0, 100));
         assert_eq!(result.server_ip, Ipv4Addr::new(10, 0, 0, 254));
@@ -576,7 +666,7 @@ mod integration {
     async fn test_peer_terminated_during_auth() {
         ensure_test_env();
 
-        let (mut client_tx, mut from_client) = mpsc::channel(16);
+        let (client_tx, mut from_client) = mpsc::channel(16);
         let (to_client, client_rx) = mpsc::channel(16);
         let config = test_config();
         let lcp = mock_lcp(0xc023);
@@ -598,14 +688,15 @@ mod integration {
 
         // Read Terminate-Ack
         let ack_raw = tokio::time::timeout(Duration::from_secs(2), from_client.recv())
-            .await.unwrap().expect("expected Terminate-Ack");
+            .await
+            .unwrap()
+            .expect("expected Terminate-Ack");
         let ack_ppp = extract_ppp(&ack_raw, sid).unwrap();
         assert!(ack_ppp.is_lcp_config());
         assert!(ack_ppp.is_termination_ack());
 
         // Task should return PeerTerminated
-        let result = tokio::time::timeout(Duration::from_secs(2), handle)
-            .await.unwrap().unwrap();
+        let result = tokio::time::timeout(Duration::from_secs(2), handle).await.unwrap().unwrap();
         assert!(matches!(result, Err(PppoeError::PeerTerminated)));
     }
 
@@ -613,7 +704,7 @@ mod integration {
     async fn test_proto_reject_ipv6cp_non_fatal() {
         ensure_test_env();
 
-        let (mut client_tx, mut from_client) = mpsc::channel(16);
+        let (client_tx, mut from_client) = mpsc::channel(16);
         let (to_client, client_rx) = mpsc::channel(16);
         let config = test_config();
         let lcp = mock_lcp(0xc023);
@@ -638,8 +729,7 @@ mod integration {
         send_session(&to_client, sid, lcp_proto_reject(v6_ppp.id, 0x8057));
 
         // Negotiation should complete (IPCP already done, IPv6CP rejected)
-        let result = tokio::time::timeout(Duration::from_secs(2), handle)
-            .await.unwrap().unwrap();
+        let result = tokio::time::timeout(Duration::from_secs(2), handle).await.unwrap().unwrap();
         assert!(result.is_ok(), "proto-reject IPv6CP should not be fatal");
         assert!(result.unwrap().ipv6cp_server_id.is_none());
     }
@@ -648,7 +738,7 @@ mod integration {
     async fn test_proto_reject_ipcp_fatal() {
         ensure_test_env();
 
-        let (mut client_tx, mut from_client) = mpsc::channel(16);
+        let (client_tx, mut from_client) = mpsc::channel(16);
         let (to_client, client_rx) = mpsc::channel(16);
         let config = test_config();
         let lcp = mock_lcp(0xc023);
@@ -677,9 +767,33 @@ mod integration {
             send_session(&to_client, sid, lcp_proto_reject(ipcp_ppp.id, 0x8021));
         }
 
-        let result = tokio::time::timeout(Duration::from_secs(2), handle)
-            .await.unwrap().unwrap();
+        let result = tokio::time::timeout(Duration::from_secs(2), handle).await.unwrap().unwrap();
         assert!(matches!(result, Err(PppoeError::IpRequiredButRejected)));
+    }
+
+    #[tokio::test]
+    async fn test_proto_reject_pap_fatal() {
+        ensure_test_env();
+
+        let (client_tx, mut from_client) = mpsc::channel(16);
+        let (to_client, client_rx) = mpsc::channel(16);
+        let config = test_config();
+        let lcp = mock_lcp(0xc023);
+        let status = WatchService::new();
+        status.just_change_status(ServiceStatus::Staring);
+        status.just_change_status(ServiceStatus::Running);
+
+        let handle = spawn_nego(config.clone(), lcp.clone(), client_tx, client_rx, &status);
+        let sid = lcp.session_id;
+
+        // Complete PAP auth (also drains the immediate echo request)
+        do_pap_auth(&mut from_client, &to_client, sid).await;
+
+        // Send LCP Protocol-Reject for PAP
+        send_session(&to_client, sid, lcp_proto_reject(0x01, 0xc023));
+
+        let result = tokio::time::timeout(Duration::from_secs(2), handle).await.unwrap().unwrap();
+        assert!(matches!(result, Err(PppoeError::AuthFailed(_))));
     }
 
     #[tokio::test]
@@ -705,8 +819,7 @@ mod integration {
             true
         });
 
-        let result = tokio::time::timeout(Duration::from_secs(2), handle)
-            .await.unwrap().unwrap();
+        let result = tokio::time::timeout(Duration::from_secs(2), handle).await.unwrap().unwrap();
         assert!(matches!(result, Err(PppoeError::ServiceStopped)));
     }
 
@@ -731,7 +844,7 @@ mod integration {
     async fn test_echo_request_from_peer_triggers_echo_reply() {
         ensure_test_env();
 
-        let (mut client_tx, mut from_client) = mpsc::channel(16);
+        let (client_tx, mut from_client) = mpsc::channel(16);
         let (to_client, client_rx) = mpsc::channel(16);
         let config = test_config();
         let lcp = mock_lcp(0xc023);
@@ -754,7 +867,9 @@ mod integration {
 
         // Read Echo-Reply from client
         let reply_raw = tokio::time::timeout(Duration::from_secs(2), from_client.recv())
-            .await.unwrap().expect("expected Echo-Reply");
+            .await
+            .unwrap()
+            .expect("expected Echo-Reply");
         let ppp = extract_ppp(&reply_raw, sid).expect("valid LCP packet");
         assert!(ppp.is_lcp_config());
         assert!(ppp.is_echo_reply(), "should be Echo-Reply");
@@ -768,7 +883,7 @@ mod integration {
     async fn test_echo_reply_received_resets_counter() {
         ensure_test_env();
 
-        let (mut client_tx, mut from_client) = mpsc::channel(16);
+        let (client_tx, mut from_client) = mpsc::channel(16);
         let (to_client, client_rx) = mpsc::channel(16);
         let config = test_config();
         let lcp = mock_lcp(0xc023);
@@ -790,8 +905,8 @@ mod integration {
         let _echo = from_client.recv().await.unwrap();
 
         // Drain NCP requests triggered by auth success
-        let raw1 = from_client.recv().await.unwrap();
-        let raw2 = from_client.recv().await.unwrap();
+        let _raw1 = from_client.recv().await.unwrap();
+        let _raw2 = from_client.recv().await.unwrap();
 
         // Send LCP Echo-Request from peer → should trigger Echo-Reply
         let echo_req = PointToPoint::gen_echo_request_with_magic(0x01, lcp.magic_number);
@@ -799,7 +914,9 @@ mod integration {
 
         // Read Echo-Reply
         let reply = tokio::time::timeout(Duration::from_secs(2), from_client.recv())
-            .await.unwrap().expect("expected Echo-Reply");
+            .await
+            .unwrap()
+            .expect("expected Echo-Reply");
         let ppp = extract_ppp(&reply, sid).unwrap();
         assert!(ppp.is_lcp_config());
         assert!(ppp.is_echo_reply(), "should be Echo-Reply");
@@ -811,7 +928,9 @@ mod integration {
 
         // Read Echo-Reply with id 0x02
         let reply2 = tokio::time::timeout(Duration::from_secs(2), from_client.recv())
-            .await.unwrap().expect("expected second Echo-Reply");
+            .await
+            .unwrap()
+            .expect("expected second Echo-Reply");
         let ppp2 = extract_ppp(&reply2, sid).unwrap();
         assert!(ppp2.is_echo_reply());
         assert_eq!(ppp2.id, 0x02);
@@ -825,7 +944,7 @@ mod integration {
         ensure_test_env();
         tokio::time::pause();
 
-        let (mut client_tx, mut from_client) = mpsc::channel(16);
+        let (client_tx, mut from_client) = mpsc::channel(16);
         let (to_client, client_rx) = mpsc::channel(16);
         let config = test_config();
         let lcp = mock_lcp(0xc023);
@@ -885,7 +1004,7 @@ mod integration {
     async fn test_packet_with_wrong_session_id_ignored() {
         ensure_test_env();
 
-        let (mut client_tx, mut from_client) = mpsc::channel(16);
+        let (client_tx, mut from_client) = mpsc::channel(16);
         let (to_client, client_rx) = mpsc::channel(16);
         let config = test_config();
         let lcp = mock_lcp(0xc023);
@@ -904,7 +1023,9 @@ mod integration {
 
         // Send PAP Ack with WRONG session ID — should be silently ignored
         let frame = PPPoEFrame {
-            ver: 1, t: 1, code: 0,
+            ver: 1,
+            t: 1,
+            code: 0,
             sid: 0xDEAD, // wrong!
             length: pap_pkt(2, 1).len() as u16,
             payload: pap_pkt(2, 1),
@@ -921,7 +1042,9 @@ mod integration {
 
         // After correct Ack, NCP requests should arrive normally
         let ncp = tokio::time::timeout(Duration::from_secs(2), from_client.recv())
-            .await.unwrap().expect("NCP request after correct PAP Ack");
+            .await
+            .unwrap()
+            .expect("NCP request after correct PAP Ack");
         assert!(extract_ppp(&ncp, sid).is_some());
 
         drop(to_client);
@@ -933,7 +1056,7 @@ mod integration {
         ensure_test_env();
         tokio::time::pause();
 
-        let (mut client_tx, mut from_client) = mpsc::channel(16);
+        let (client_tx, mut from_client) = mpsc::channel(16);
         let (to_client, client_rx) = mpsc::channel(16);
         let config = test_config();
         let lcp = mock_lcp(0xc023);
@@ -958,7 +1081,8 @@ mod integration {
         // Advance past MAX_ECHO_FAILURES × LCP_ECHO_INTERVAL
         // (first echo already sent, echo_failures=1, need 5 more timer fires)
         // Keep IPCP alive with Nak responses to prevent NCP timeout.
-        let total = super::super::negotiation::MAX_ECHO_FAILURES as u64 * super::LCP_ECHO_INTERVAL + 1;
+        let total =
+            super::super::negotiation::MAX_ECHO_FAILURES as u64 * super::LCP_ECHO_INTERVAL + 1;
         let mut elapsed = 0u64;
 
         while elapsed < total {
@@ -970,8 +1094,14 @@ mod integration {
                     Ok(raw) => {
                         if let Some(ppp) = extract_ppp(&raw, sid) {
                             if ppp.is_ipcp() && ppp.is_request() {
-                                send_session(&to_client, sid, ipcp_nak(ppp.id,
-                                    Ipv4Addr::new(10, 0, 0, (elapsed as u8 % 100) + 1)));
+                                send_session(
+                                    &to_client,
+                                    sid,
+                                    ipcp_nak(
+                                        ppp.id,
+                                        Ipv4Addr::new(10, 0, 0, (elapsed as u8 % 100) + 1),
+                                    ),
+                                );
                             }
                         }
                     }
@@ -1015,7 +1145,7 @@ mod integration {
     async fn test_unknown_protocol_ignored() {
         ensure_test_env();
 
-        let (mut client_tx, mut from_client) = mpsc::channel(16);
+        let (client_tx, mut from_client) = mpsc::channel(16);
         let (to_client, client_rx) = mpsc::channel(16);
         let config = test_config();
         let lcp = mock_lcp(0xc023);
@@ -1034,7 +1164,11 @@ mod integration {
 
         // Send an unknown PPP protocol packet (e.g., CCP = 0x80FD)
         let unknown = PointToPoint {
-            protocol: 0x80FD, code: 1, id: 0, length: 4, payload: vec![],
+            protocol: 0x80FD,
+            code: 1,
+            id: 0,
+            length: 4,
+            payload: vec![],
         };
         send_session(&to_client, sid, unknown.convert_to_payload());
 
@@ -1045,7 +1179,9 @@ mod integration {
         // Client should still be functioning normally
         send_session(&to_client, sid, pap_pkt(2, 1));
         let ncp = tokio::time::timeout(Duration::from_secs(2), from_client.recv())
-            .await.unwrap().expect("NCP request after correct PAP Ack");
+            .await
+            .unwrap()
+            .expect("NCP request after correct PAP Ack");
         assert!(extract_ppp(&ncp, sid).is_some());
 
         drop(to_client);

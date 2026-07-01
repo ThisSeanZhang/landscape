@@ -169,10 +169,17 @@ pub(crate) async fn setup_ebpf(
         LD_ALL_ROUTERS.del_route_by_iface(iface_name).await;
     }
 
-    let server_mac_str = format!("{}", MacAddr::new(
-        lcp.server_mac[0], lcp.server_mac[1], lcp.server_mac[2],
-        lcp.server_mac[3], lcp.server_mac[4], lcp.server_mac[5],
-    ));
+    let server_mac_str = format!(
+        "{}",
+        MacAddr::new(
+            lcp.server_mac[0],
+            lcp.server_mac[1],
+            lcp.server_mac[2],
+            lcp.server_mac[3],
+            lcp.server_mac[4],
+            lcp.server_mac[5],
+        )
+    );
     let neigh_result = std::process::Command::new("ip")
         .args(&[
             "neigh",
@@ -188,7 +195,12 @@ pub(crate) async fn setup_ebpf(
         Ok(output) if output.status.success() => {}
         Ok(output) => {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            tracing::error!("add neigh failed for {} on {}: {}", server_ip, iface_name, stderr.trim());
+            tracing::error!(
+                "add neigh failed for {} on {}: {}",
+                server_ip,
+                iface_name,
+                stderr.trim()
+            );
         }
         Err(e) => {
             tracing::error!("add neigh error: {e:?}");
@@ -211,7 +223,12 @@ pub(crate) async fn setup_ebpf(
         Ok(output) if output.status.success() => {}
         Ok(output) => {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            tracing::error!("add IPv6 neigh failed for {} on {}: {}", server_linklocal, iface_name, stderr.trim());
+            tracing::error!(
+                "add IPv6 neigh failed for {} on {}: {}",
+                server_linklocal,
+                iface_name,
+                stderr.trim()
+            );
         }
         Err(e) => {
             tracing::error!("add IPv6 neigh error: {e:?}");
@@ -238,7 +255,9 @@ pub(crate) async fn setup_ebpf(
                     let stderr = String::from_utf8_lossy(&output.stderr);
                     tracing::error!(
                         "add IPv6 iface-id neigh failed for {} on {}: {}",
-                        iface_linklocal, iface_name, stderr.trim()
+                        iface_linklocal,
+                        iface_name,
+                        stderr.trim()
                     );
                 }
                 Err(e) => {
@@ -287,7 +306,10 @@ fn eui64_linklocal_from_mac(mac: &[u8]) -> std::net::Ipv6Addr {
     let e = mac[4];
     let f = mac[5];
     std::net::Ipv6Addr::new(
-        0xfe80, 0, 0, 0,
+        0xfe80,
+        0,
+        0,
+        0,
         ((a as u16) << 8) | (b as u16),
         ((c as u16) << 8) | 0x00ff,
         0xfe00 | (d as u16),
@@ -297,7 +319,10 @@ fn eui64_linklocal_from_mac(mac: &[u8]) -> std::net::Ipv6Addr {
 
 fn iface_id_linklocal(id: &[u8]) -> std::net::Ipv6Addr {
     std::net::Ipv6Addr::new(
-        0xfe80, 0, 0, 0,
+        0xfe80,
+        0,
+        0,
+        0,
         ((id[0] as u16) << 8) | (id[1] as u16),
         ((id[2] as u16) << 8) | (id[3] as u16),
         ((id[4] as u16) << 8) | (id[5] as u16),
