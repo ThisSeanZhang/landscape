@@ -1,42 +1,41 @@
-# Landscape - eBPF Linux Router with DNS-driven Traffic Steering
+<div align="center">
 
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-green.svg)](https://www.gnu.org/licenses/gpl-3.0)  
-Landscape makes it easier to run your preferred Linux distribution as a router.
 
-Turn Linux into a domain-aware router using DNS signals and eBPF in the kernel datapath.
+**Landscape routes traffic by domain—not just IP. Each flow gets its own DNS server.**
 
-> Built with Rust / eBPF / AF_PACKET.
+**DNS answers populate kernel eBPF maps. Packets are steered at XDP/TC wire speed.**
 
-[简体中文](./README.zh.md) | [English](./README.md)
+**No userspace datapath. No iptables.**
 
-Documentation: <https://landscape.whileaway.dev/en/>
+> Built with Rust / eBPF.
+
+</div>
+
+[简体中文](./README.zh.md) | [English](./README.md) | [Documentation](https://landscape.whileaway.dev/en/)
 
 ## Screenshot
 ![Landscape Web UI](main.png)
-
----
 
 ## Architecture
 
 Landscape separates traffic steering into two planes:
 
-**DNS plane (userspace).** Each device gets its own isolated DNS server (Hickory) — independent cache, upstream (UDP/DoH/DoT/DoQ), and rules. Resolved IPs are written into per-flow eBPF maps in the kernel.
+**DNS plane (userspace).** A flow is a policy group that devices join by IP or MAC. Each flow gets its own isolated Hickory DNS server with independent cache, upstream (UDP/DoH/DoT/DoQ), and rules. DNS answers populate per-flow eBPF maps in the kernel.
 
-**Data plane (kernel).** XDP and TC hooks read these maps to steer packets at wire speed. Matched flows get redirected. Everything else passes through directly — no userspace context switch, zero overhead.
+**Data plane (kernel).** XDP and TC hooks read these maps to steer packets at wire speed. Packets matching a flow are steered according to its policy. Everything else passes through directly — no userspace context switch, zero overhead.
 
 DNS results → eBPF flow maps → TC/XDP in-kernel steering → interface routing
 
 DNS plane decides. Kernel enforces.
 
 ## Core Features
-* DNS-driven traffic steering in-kernel via eBPF — resolved IPs injected directly into kernel maps
+* DNS-driven traffic steering via eBPF — DNS answers populate per-flow kernel maps
 * Fine-grained NAT — strict NAT4 by default, per-domain/IP NAT1 exceptions ([details](https://landscape.whileaway.dev/en/features/nat.html))
-* Per-flow DNS isolation — independent cache and upstream per device, no cross-flow leaks
-* Redirect matched flows into Docker containers — extend with any TProxy-compatible program
+* Per-flow DNS isolation — independent cache and upstream per flow, no cross-flow leaks
+* Redirect packets matching a flow into Docker containers — extend with any TProxy-compatible program
 * Geo database management — DAT and TXT format support
 * Full REST API — everything in the UI is scriptable
-
----
 
 ## Why Landscape
 
@@ -46,7 +45,7 @@ DNS plane decides. Kernel enforces.
 
 **NAT that fits your LAN.** BT/PT on one device, everything else locked down — domain-level control, no blanket rules.
 
-**One failure, one victim.** Per-device DNS and traffic policies. A container goes down? Only the traffic routed through it is affected.
+**One failure, one victim.** Per-flow DNS and traffic policies. A container goes down? Only the traffic routed through it is affected.
 
 ## Quick Start
 
@@ -108,23 +107,13 @@ WantedBy=multi-user.target
 
 Replace `ExecStart` with the actual path to your binary.
 
+## Development
+
+Build guide: [BUILD.md](./BUILD.md) | [BUILD.zh.md](./BUILD.zh.md)
+
 ## License
 
 - `landscape-ebpf`: [GNU General Public License v2.0](https://www.gnu.org/licenses/old-licenses/gpl-2.0.html)
 - Other parts: [GNU General Public License v3.0](https://www.gnu.org/licenses/gpl-3.0.html)
 
-If you have suggestions or run into a problem, please open an issue here: <https://github.com/ThisSeanZhang/landscape/issues>
-
-## Development
-
-Build guide: [BUILD.md](./BUILD.md) | [BUILD.zh.md](./BUILD.zh.md)
-
-## Star History
-
-<a href="https://www.star-history.com/#ThisSeanZhang/landscape&Date">
- <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=ThisSeanZhang/landscape&type=Date&theme=dark" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=ThisSeanZhang/landscape&type=Date" />
-   <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=ThisSeanZhang/landscape&type=Date" />
- </picture>
-</a>
+If you have suggestions or run into a problem, please open an [issue](https://github.com/ThisSeanZhang/landscape/issues).

@@ -1,42 +1,41 @@
-# Landscape - eBPF Linux 路由器，DNS 驱动分流
+<div align="center">
 
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-green.svg)](https://www.gnu.org/licenses/gpl-3.0)  
-Landscape 的目标是让你在自己熟悉的 Linux 发行版上轻松运行路由功能
 
-将 Linux 变成域名感知的路由器 — DNS 信号 + eBPF 内核数据面
+**Landscape 按域名路由流量——不止 IP. 每个 flow 拥有独立 DNS 服务器.**
 
-> 基于 Rust / eBPF / AF_PACKET 开发。
+**DNS 应答填充内核 eBPF map. 数据包在线速下通过 XDP/TC 导向.**
 
-[简体中文](./README.zh.md) | [English](./README.md)
+**无用户态数据路径. 无 iptables。**
 
-文档: <https://landscape.whileaway.dev/>
+> 基于 Rust / eBPF 开发。
+
+</div>
+
+[简体中文](./README.zh.md) | [English](./README.md) | [文档](https://landscape.whileaway.dev/)
 
 ## 截图
 ![Landscape Web UI](main.zh.png)
-
----
 
 ## 架构
 
 Landscape 将流量导向分为两层：
 
-**DNS 平面（用户态）。** 每个设备拥有独立的 DNS 服务器（Hickory）— 独立缓存、上游（UDP/DoH/DoT/DoQ）和规则。解析结果写入内核中对应流的 eBPF map。
+**DNS 平面（用户态）。** flow 即策略组，设备通过 IP/MAC 加入。每个 flow 拥有独立的 Hickory DNS 服务器，独立缓存、上游（UDP/DoH/DoT/DoQ）和规则。DNS 应答填充对应流的 eBPF map。
 
-**数据平面（内核态）。** XDP 与 TC 钩子读取 eBPF map，在线速下导向数据包。命中规则的流量被重定向，其余直连通过 — 无用户态切换，零开销。
+**数据平面（内核态）。** XDP 与 TC 钩子读取 eBPF map，在线速下导向数据包。命中 flow 的数据包按策略导向，其余直连通过 — 无用户态切换，零开销。
 
 DNS 解析 → eBPF 流 map → TC/XDP 内核导向 → 接口路由
 
 DNS 平面决策。内核强制执行。
 
 ## 核心特性
-* DNS 驱动内核级 eBPF 分流 — 解析 IP 直接注入内核 map
+* DNS 驱动 eBPF 分流 — DNS 应答填充对应流的 kernel map
 * 细粒度 NAT — 默认严格 NAT4，按域名/IP 放通 NAT1（[详情](https://landscape.whileaway.dev/features/nat.html)）
 * 每流独立 DNS 隔离 — 独立缓存与上游配置，无跨流泄漏
-* 域名匹配流量导入 Docker 容器 — 可运行任意 TProxy 兼容程序
+* 命中 flow 的数据包导入 Docker 容器 — 可运行任意 TProxy 兼容程序
 * 地理数据库管理 — 支持 DAT/TXT 格式
 * 完整 REST API — UI 所有功能均可脚本化
-
----
 
 ## 为什么编写 Landscape
 
@@ -46,7 +45,7 @@ DNS 平面决策。内核强制执行。
 
 **NAT，按需开放。** BT/PT 放开 NAT1，其余默认 NAT4 — 域名/IP 级控制，不搞一刀切。
 
-**故障不扩散。** 每设备独立 DNS 和分流策略。容器挂了？只有经过它的流量受影响。
+**故障不扩散。** 每流独立 DNS 和分流策略。容器挂了？只有经过它的流量受影响。
 
 ## 快速开始
 
@@ -108,23 +107,13 @@ WantedBy=multi-user.target
 
 请把 `ExecStart` 改成你实际的二进制路径。
 
+## 开发
+
+构建指南: [BUILD.md](./BUILD.md) | [BUILD.zh.md](./BUILD.zh.md)
+
 ## License
 
 - `landscape-ebpf`: [GNU General Public License v2.0](https://www.gnu.org/licenses/old-licenses/gpl-2.0.html)
 - 其他部分: [GNU General Public License v3.0](https://www.gnu.org/licenses/gpl-3.0.html)
 
 如果你有建议或遇到问题，请在这里提交 issue: <https://github.com/ThisSeanZhang/landscape/issues>
-
-## 开发
-
-构建指南: [BUILD.md](./BUILD.md) | [BUILD.zh.md](./BUILD.zh.md)
-
-## Star History
-
-<a href="https://www.star-history.com/#ThisSeanZhang/landscape&Date">
- <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=ThisSeanZhang/landscape&type=Date&theme=dark" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=ThisSeanZhang/landscape&type=Date" />
-   <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=ThisSeanZhang/landscape&type=Date" />
- </picture>
-</a>
