@@ -57,11 +57,11 @@ use landscape_common::{
     config::RuntimeConfig,
     error::LdResult,
     event::hub::EventHub,
-    sys_service::hostname_registry::HostnameRegistry,
     wan_service::ipv6_pd::IAPrefixMap,
     VERSION,
 };
 use landscape_common::{config::InitConfig, lan_service::lan_dhcpv4::config::DHCPv4ServiceConfig};
+use landscape_core::{lan_hostname::HostnameRegistry, time::start_time_sync_service};
 use landscape_database::provider::LandscapeDBServiceProvider;
 use landscape_database::repository::Repository;
 use tokio::runtime::Builder as RuntimeBuilder;
@@ -687,7 +687,7 @@ async fn async_main() -> LdResult<()> {
         panic!("init log error: {e:?}");
     }
 
-    landscape_common::sys_service::time_sync::start_time_sync_service(config.time.clone());
+    start_time_sync_service(config.time.clone());
 
     let mut init_config_to_import = init_config_to_import;
     if config.auto {

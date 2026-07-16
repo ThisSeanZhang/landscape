@@ -7,6 +7,7 @@ edition.workspace = true
 landscape = { path = "../landscape" }
 landscape-dns = { path = "../landscape-dns" }
 landscape-common = { path = "../landscape-common", features = ["openapi"] }
+landscape-core = { path = "../landscape-core" }
 landscape-database = { path = "../landscape-database" }
 landscape-ebpf = { path = "../landscape-ebpf" }
 landscape-gateway = { path = "../landscape-gateway", optional = true }

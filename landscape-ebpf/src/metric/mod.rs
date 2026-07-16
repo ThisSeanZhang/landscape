@@ -20,7 +20,7 @@ pub fn new_metric(
 
     // let firewall_metric_tx = connect_msg_tx.clone();
     // let firewall_metric_callback = move |data: &[u8]| -> i32 {
-    //     // let time = landscape_common::utils::time::get_boot_time_ns().unwrap_or_default();
+    //     // let time = landscape_core::time::get_boot_time_ns().unwrap_or_default();
     //     let firewall_conn_event_value = plain::from_bytes::<firewall_conn_metric_event>(data);
     //     if let Ok(data) = firewall_conn_event_value {
     //         let mut event = ConnectMetric::from(data);
@@ -34,7 +34,7 @@ pub fn new_metric(
 
     let nat_metric_tx = connect_msg_tx.clone();
     let nat_metric_callback = move |data: &[u8]| -> i32 {
-        // let time = landscape_common::utils::time::get_boot_time_ns().unwrap_or_default();
+        // let time = landscape_core::time::get_boot_time_ns().unwrap_or_default();
         let conn_event_value = plain::from_bytes::<nat_conn_metric_event>(data);
         if let Ok(data) = conn_event_value {
             let mut event = ConnectMetric::from(data);

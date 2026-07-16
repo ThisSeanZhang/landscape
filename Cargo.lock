@@ -3426,6 +3426,7 @@ dependencies = [
  "instant-acme",
  "jsonwebtoken",
  "landscape-common",
+ "landscape-core",
  "landscape-database",
  "landscape-dns",
  "landscape-ebpf",
@@ -3476,7 +3477,6 @@ name = "landscape-common"
 version = "0.21.5"
 dependencies = [
  "anyhow",
- "arc-swap",
  "async-trait",
  "bincode",
  "bytes",
@@ -3507,6 +3507,20 @@ dependencies = [
  "tracing",
  "utoipa",
  "uuid",
+]
+
+[[package]]
+name = "landscape-core"
+version = "0.21.5"
+dependencies = [
+ "arc-swap",
+ "dashmap",
+ "idna",
+ "landscape-common",
+ "libc",
+ "once_cell",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -3549,6 +3563,7 @@ dependencies = [
  "jemalloc-ctl",
  "jemallocator",
  "landscape-common",
+ "landscape-core",
  "landscape-ebpf",
  "landscape-protobuf",
  "libc",
@@ -3579,6 +3594,7 @@ dependencies = [
  "etherparse",
  "futures",
  "landscape-common",
+ "landscape-core",
  "libbpf-cargo",
  "libbpf-rs",
  "libbpf-sys",
@@ -3662,6 +3678,7 @@ dependencies = [
  "jsonwebtoken",
  "landscape",
  "landscape-common",
+ "landscape-core",
  "landscape-database",
  "landscape-dns",
  "landscape-ebpf",

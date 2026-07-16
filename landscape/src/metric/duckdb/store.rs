@@ -10,6 +10,7 @@ use landscape_common::metric::dns::{
     DnsHistoryQueryParams, DnsHistoryResponse, DnsLightweightSummaryResponse, DnsMetric,
     DnsSummaryQueryParams, DnsSummaryResponse,
 };
+use landscape_core::time::get_current_time_ms;
 use sqlx::SqlitePool;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -366,7 +367,7 @@ async fn run_hot_thread(
                 pending_batch.extend_iface_buckets(drain_iface_buckets(&iface_buckets, &iface_realtime));
                 flush_pending_hot_batch(&hot_pool, &cold_tx, &cold_pool_cell, &mut pending_batch).await;
 
-                let now_ms = landscape_common::utils::time::get_current_time_ms().unwrap_or_default();
+                let now_ms = get_current_time_ms().unwrap_or_default();
                 let (flow_stats, batch) = cleanup_flow_cache(&flow_cache, &iface_realtime, now_ms, second_window);
                 pending_batch.extend(batch);
                 pending_batch.extend_iface_buckets(drain_iface_buckets(&iface_buckets, &iface_realtime));
@@ -392,7 +393,7 @@ async fn run_hot_thread(
                 flush_pending_hot_batch(&hot_pool, &cold_tx, &cold_pool_cell, &mut pending_batch).await;
             }
             _ = snapshot_interval.tick() => {
-                let now_ms = landscape_common::utils::time::get_current_time_ms().unwrap_or_default();
+                let now_ms = get_current_time_ms().unwrap_or_default();
                 publish_connect_realtime_snapshot(&flow_cache, &connect_snapshot, now_ms);
                 publish_iface_realtime_snapshot(&flow_cache, &iface_snapshot, now_ms);
             }
@@ -443,7 +444,7 @@ async fn run_hot_thread(
     pending_batch.extend(final_batch);
     pending_batch.extend_iface_buckets(drain_iface_buckets(&iface_buckets, &iface_realtime));
     flush_pending_hot_batch(&hot_pool, &cold_tx, &cold_pool_cell, &mut pending_batch).await;
-    let now_ms = landscape_common::utils::time::get_current_time_ms().unwrap_or_default();
+    let now_ms = get_current_time_ms().unwrap_or_default();
     publish_connect_realtime_snapshot(&flow_cache, &connect_snapshot, now_ms);
     publish_iface_realtime_snapshot(&flow_cache, &iface_snapshot, now_ms);
     hot_pool.close().await;
@@ -546,7 +547,7 @@ fn cleanup_cold_store(
     let conn = cold_pool
         .get()
         .map_err(|error| format!("failed to get cold duckdb connection for cleanup: {}", error))?;
-    let now_ms = landscape_common::utils::time::get_current_time_ms().unwrap_or_default();
+    let now_ms = get_current_time_ms().unwrap_or_default();
     let cutoff_1m = now_ms.saturating_sub(metric_config.connect_1m_retention_days * MS_PER_DAY);
     let cutoff_1h = now_ms.saturating_sub(metric_config.connect_1h_retention_days * MS_PER_DAY);
     let cutoff_1d = now_ms.saturating_sub(metric_config.connect_1d_retention_days * MS_PER_DAY);
@@ -796,7 +797,7 @@ impl DuckMetricStore {
     }
 
     pub async fn get_realtime_ip_stats(&self, is_src: bool) -> Vec<IpRealtimeStat> {
-        let now_ms = landscape_common::utils::time::get_current_time_ms().unwrap_or_default();
+        let now_ms = get_current_time_ms().unwrap_or_default();
         collect_realtime_ip_stats(&self.flow_cache, now_ms, is_src)
     }
 
@@ -806,7 +807,7 @@ impl DuckMetricStore {
         resolution: MetricResolution,
     ) -> Vec<ConnectMetricPoint> {
         if resolution == MetricResolution::Second {
-            let cutoff = landscape_common::utils::time::get_current_time_ms()
+            let cutoff = get_current_time_ms()
                 .unwrap_or_default()
                 .saturating_sub(second_window_ms(&self.config));
             return second_points_by_key(&self.flow_cache, &key, cutoff);

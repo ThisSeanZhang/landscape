@@ -6,6 +6,7 @@ edition.workspace = true
 [dependencies]
 landscape-ebpf = { path = "../landscape-ebpf" }
 landscape-common = { path = "../landscape-common" }
+landscape-core = { path = "../landscape-core" }
 landscape-protobuf = { path = "../landscape-protobuf" }
 
 hickory-server = { workspace = true, features = ["https-ring"] }

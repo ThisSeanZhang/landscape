@@ -5,6 +5,7 @@ edition.workspace = true
 
 [dependencies]
 landscape-common = { path = "../landscape-common" }
+landscape-core = { path = "../landscape-core" }
 
 thiserror = { workspace = true }
 libbpf-rs = { workspace = true }

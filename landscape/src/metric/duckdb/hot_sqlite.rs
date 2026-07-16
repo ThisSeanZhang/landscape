@@ -4,6 +4,7 @@ use landscape_common::metric::connect::{
     ConnectGlobalStats, ConnectHistoryQueryParams, ConnectHistoryStatus, ConnectKey,
     ConnectSortKey, IpHistoryStat, SortOrder,
 };
+use landscape_core::time::get_current_time_ms;
 use sqlx::sqlite::SqlitePoolOptions;
 use sqlx::{QueryBuilder, Row, Sqlite, SqlitePool, Transaction};
 
@@ -85,7 +86,7 @@ impl GlobalStatsDelta {
 }
 
 fn current_time_ms() -> u64 {
-    landscape_common::utils::time::get_current_time_ms().unwrap_or_default()
+    get_current_time_ms().unwrap_or_default()
 }
 
 fn sqlite_url(path: &Path) -> String {

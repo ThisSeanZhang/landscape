@@ -1,7 +1,8 @@
 use landscape_common::dns::rule::DNSRuntimeRule;
 use landscape_common::dns::ChainDnsServerInitInfo;
 use landscape_common::event::hub::{EnrolledDeviceEventReader, IPv4AssignEventReader};
-use landscape_common::sys_service::hostname_registry::{HostnameRegistry, HostnameRegistryConfig};
+use landscape_common::sys_service::hostname_registry::HostnameRegistryConfig;
+use landscape_core::lan_hostname::HostnameRegistry;
 use landscape_dns::server::{CacheRuntimeConfig, LandscapeDnsServer};
 
 /// cargo run --package landscape-dns --bin test_dns_server

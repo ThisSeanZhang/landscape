@@ -9,6 +9,7 @@ use landscape_common::error::{LdError, LdResult};
 use landscape_common::sys_service::gateway::settings::{
     GatewayRuntimeConfig, LandscapeGatewayConfig,
 };
+use landscape_core::time::update_time_sync_config;
 use landscape_database::provider::LandscapeDBServiceProvider;
 use sha2::{Digest, Sha256};
 use std::fs::OpenOptions;
@@ -431,9 +432,7 @@ impl LandscapeConfigService {
             new_config.file_config.time = new_time.clone();
             new_config
         });
-        landscape_common::sys_service::time_sync::update_time_sync_config(
-            self.config.load().time.clone(),
-        );
+        update_time_sync_config(self.config.load().time.clone());
 
         Ok(())
     }

@@ -15,6 +15,7 @@ use landscape_common::metric::dns::{
     DnsHistoryQueryParams, DnsHistoryResponse, DnsLightweightSummaryResponse,
     DnsSummaryQueryParams, DnsSummaryResponse,
 };
+use landscape_core::time::get_current_time_ms;
 use tokio::sync::mpsc;
 
 const CHANNEL_CAPACITY: usize = 1024;
@@ -402,7 +403,7 @@ impl MemoryMetricStore {
             loop {
                 tokio::select! {
                     _ = cleanup_tick.tick() => {
-                        let now_ms = landscape_common::utils::time::get_current_time_ms().unwrap_or_default();
+                        let now_ms = get_current_time_ms().unwrap_or_default();
                         cleanup_flow_cache(
                             &cleanup_flow_cache_ref,
                             &cleanup_iface_realtime_ref,
@@ -452,7 +453,7 @@ impl MemoryMetricStore {
     pub fn shutdown(&self) {}
 
     pub async fn connect_infos(&self) -> Vec<ConnectRealtimeStatus> {
-        let now_ms = landscape_common::utils::time::get_current_time_ms().unwrap_or_default();
+        let now_ms = get_current_time_ms().unwrap_or_default();
         let cache = self.flow_cache.read().expect("memory metric flow cache poisoned");
         let mut infos: Vec<_> = cache
             .values()
@@ -464,7 +465,7 @@ impl MemoryMetricStore {
     }
 
     pub async fn get_realtime_ip_stats(&self, is_src: bool) -> Vec<IpRealtimeStat> {
-        let now_ms = landscape_common::utils::time::get_current_time_ms().unwrap_or_default();
+        let now_ms = get_current_time_ms().unwrap_or_default();
         let cache = self.flow_cache.read().expect("memory metric flow cache poisoned");
         let mut stats_map: HashMap<IpAddr, IpAggregatedStats> = HashMap::new();
 
@@ -482,7 +483,7 @@ impl MemoryMetricStore {
     }
 
     pub async fn get_realtime_iface_stats(&self) -> Vec<IfaceRealtimeStat> {
-        let now_ms = landscape_common::utils::time::get_current_time_ms().unwrap_or_default();
+        let now_ms = get_current_time_ms().unwrap_or_default();
         let cache = self.flow_cache.read().expect("memory metric flow cache poisoned");
         let mut stats_map: HashMap<u32, IfaceRealtimeAcc> = HashMap::new();
 
@@ -523,9 +524,8 @@ impl MemoryMetricStore {
             return Vec::new();
         }
 
-        let cutoff = landscape_common::utils::time::get_current_time_ms()
-            .unwrap_or_default()
-            .saturating_sub(self.second_window_ms);
+        let cutoff =
+            get_current_time_ms().unwrap_or_default().saturating_sub(self.second_window_ms);
         let cache = self.flow_cache.read().expect("memory metric flow cache poisoned");
         cache.get(&key).map(|state| state.second_points_since(cutoff)).unwrap_or_default()
     }

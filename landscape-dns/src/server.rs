@@ -7,8 +7,8 @@ use std::{
 
 use arc_swap::{ArcSwap, ArcSwapOption};
 use landscape_common::dns::error::DnsError;
-use landscape_common::sys_service::hostname_registry::HostnameRegistry;
 use landscape_common::{dns::FlowDnsDesiredState, event::DnsMetricMessage, service::WatchService};
+use landscape_core::lan_hostname::HostnameRegistry;
 use tokio::sync::{mpsc, Mutex};
 use tokio_util::sync::CancellationToken;
 
@@ -343,9 +343,8 @@ mod tests {
     use super::*;
     use arc_swap::ArcSwap;
     use landscape_common::dns::{CacheRuntimeConfig, FlowDnsDesiredState};
-    use landscape_common::sys_service::hostname_registry::{
-        HostnameRegistry, HostnameRegistryConfig,
-    };
+    use landscape_common::sys_service::hostname_registry::HostnameRegistryConfig;
+    use landscape_core::lan_hostname::HostnameRegistry;
 
     fn run_async_test(test: impl std::future::Future<Output = ()>) {
         tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(test);

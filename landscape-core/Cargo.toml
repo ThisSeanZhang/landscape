@@ -1,0 +1,15 @@
+[package]
+name = "landscape-core"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+landscape-common = { path = "../landscape-common" }
+
+arc-swap = { workspace = true }
+dashmap = { workspace = true }
+idna = { workspace = true }
+libc = { workspace = true }
+once_cell = { workspace = true }
+tokio = { workspace = true, features = ["rt", "sync", "macros"] }
+tracing = { workspace = true }

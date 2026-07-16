@@ -11,8 +11,8 @@ use landscape_common::{
         controller::{ConfigController, FlowConfigController},
         WatchService,
     },
-    sys_service::hostname_registry::HostnameRegistry,
 };
+use landscape_core::lan_hostname::HostnameRegistry;
 use landscape_dns::{
     prepare_system_dns,
     server::{DohTimeouts, EffectiveDohListenerConfig, LandscapeDnsServer, LocalDnsAnswerProvider},

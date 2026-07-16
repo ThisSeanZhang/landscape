@@ -4,6 +4,7 @@ use landscape_common::config::{InitConfig, InitConfigError};
 use landscape_common::error::LdError;
 use landscape_common::sys_service::time_sync::TimeSyncStatus;
 use landscape_common::{INIT_FILE_NAME, INIT_LOCK_FILE_NAME};
+use landscape_core::time::get_time_sync_status as read_time_sync_status;
 use serde::{Deserialize, Serialize};
 use std::io::{ErrorKind, Write};
 use tempfile::NamedTempFile;
@@ -209,7 +210,7 @@ async fn import_init_config(
     responses((status = 200, body = CommonApiResp<TimeSyncStatus>))
 )]
 async fn get_time_sync_status() -> LandscapeApiResult<TimeSyncStatus> {
-    LandscapeApiResp::success(landscape_common::sys_service::time_sync::get_time_sync_status())
+    LandscapeApiResp::success(read_time_sync_status())
 }
 
 #[cfg(test)]
