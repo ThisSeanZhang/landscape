@@ -12,12 +12,10 @@ pub mod firewall;
 pub mod flow_wan;
 pub mod iface;
 pub mod iface_ip;
-pub mod lan_ipv6;
 pub mod lan_ipv6_v2;
 pub mod mss_clamp;
 pub mod pppd;
 pub mod provider;
-pub mod ra;
 pub mod rollback;
 pub mod wifi;
 

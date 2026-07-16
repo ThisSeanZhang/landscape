@@ -45,7 +45,6 @@ impl LandscapeConfigService {
             dns_rules: self.store.dns_rule_store().list().await.unwrap(),
             dst_ip_mark: self.store.dst_ip_rule_store().list().await.unwrap(),
             dhcpv6pds: self.store.dhcp_v6_client_store().list().await.unwrap(),
-            icmpras: self.store.ra_service_store().list().await.unwrap(),
             firewalls: self.store.firewall_service_store().list().await.unwrap(),
             firewall_rules: self.store.firewall_rule_store().list().await.unwrap(),
             firewall_blacklists: self.store.firewall_blacklist_store().list().await.unwrap(),

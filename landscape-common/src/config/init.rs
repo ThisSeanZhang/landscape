@@ -18,7 +18,6 @@ use crate::flow::ip_mark::WanIpRuleConfig;
 use crate::flow::service::FlowWanServiceConfig;
 use crate::lan_service::ap::WifiServiceConfig;
 use crate::lan_service::lan_dhcpv4::config::DHCPv4ServiceConfig;
-use crate::lan_service::lan_ipv6::IPV6RAServiceConfig;
 use crate::lan_service::lan_ipv6::LanIPv6ServiceConfigV2;
 use crate::lan_service::lan_route::RouteLanServiceConfig;
 use crate::sys_service::gateway::HttpUpstreamRuleConfig;
@@ -55,8 +54,6 @@ pub struct InitConfig {
     pub dst_ip_mark: Vec<WanIpRuleConfig>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub dhcpv6pds: Vec<IPV6PDServiceConfig>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub icmpras: Vec<IPV6RAServiceConfig>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub lan_ipv6s: Vec<LanIPv6ServiceConfigV2>,
     #[serde(skip_serializing_if = "Vec::is_empty")]

@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use crate::service::ServiceConfigError;
 
 /// DHCPv6 server config — parameters only.
-/// Prefix sources are defined in LanIPv6Config.sources (filtered by service_kind).
+/// Prefix pools are defined in LanIPv6ConfigV2.prefix_groups.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct DHCPv6ServerConfig {
@@ -27,7 +27,7 @@ impl Default for DHCPv6ServerConfig {
 }
 
 /// IA_NA config — address assignment parameters.
-/// Sources come from LanIPv6Config.sources filtered by Na* variants.
+/// Prefixes come from prefix groups with an NA configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct DHCPv6IANAConfig {
@@ -55,8 +55,8 @@ pub struct DHCPv6IANAConfig {
 /// `delegate_prefix_len` sets the minimum network size for qualifying pool blocks:
 /// only blocks whose `prefix_len <= delegate_prefix_len` (i.e. at least as large as a /N network)
 /// enter the pool. The actual delegated prefix length in the DHCPv6 response is determined
-/// by the pool block's own config (e.g. `pool_len` in PdStatic).
-/// Sources come from LanIPv6Config.sources filtered by Pd* variants.
+/// by the pool block's own `PdPrefixRangeConfig.pool_len`.
+/// Prefixes come from prefix groups with a PD configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct DHCPv6IAPDConfig {

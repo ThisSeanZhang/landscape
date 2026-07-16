@@ -59,12 +59,6 @@ pub struct LanPrefixGroupConfig {
     pub pd: Option<PdPrefixRangeConfig>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub enum PrefixGroupParentKey {
-    Static(Ipv6Addr, u8),
-    Pd(String, u8),
-}
-
 type PrefixInfoMap = HashMap<String, Option<LDIAPrefix>>;
 
 fn normalize_ipv6_prefix(addr: Ipv6Addr, prefix_len: u8) -> Ipv6Addr {
@@ -88,24 +82,6 @@ pub enum ExpandedParentKey {
 }
 
 impl PrefixParentSource {
-    pub fn parent_key(&self) -> PrefixGroupParentKey {
-        match self {
-            PrefixParentSource::Static { base_prefix, parent_prefix_len } => {
-                PrefixGroupParentKey::Static(*base_prefix, *parent_prefix_len)
-            }
-            PrefixParentSource::Pd { depend_iface, planned_parent_prefix_len } => {
-                PrefixGroupParentKey::Pd(depend_iface.clone(), *planned_parent_prefix_len)
-            }
-        }
-    }
-
-    pub fn parent_prefix_len(&self) -> u8 {
-        match self {
-            PrefixParentSource::Static { parent_prefix_len, .. } => *parent_prefix_len,
-            PrefixParentSource::Pd { planned_parent_prefix_len, .. } => *planned_parent_prefix_len,
-        }
-    }
-
     pub fn resolved_parent_prefix_len(&self, prefix_infos: Option<&PrefixInfoMap>) -> u8 {
         match self {
             PrefixParentSource::Static { parent_prefix_len, .. } => *parent_prefix_len,
@@ -668,9 +644,10 @@ pub fn validate_cross_interface_v2_with_prefix_infos(
 
 #[cfg(test)]
 mod tests {
-    use super::super::config::{ra_flag_default, LanIPv6ConfigV2, LanIPv6ServiceConfigV2};
+    use super::super::config::{
+        ra_flag_default, LanIPv6ConfigV2, LanIPv6ServiceConfigV2, RouterFlags,
+    };
     use super::super::dhcpv6_config::DHCPv6ServerConfig;
-    use super::super::ipv6_ra::RouterFlags;
     use super::*;
 
     #[test]
