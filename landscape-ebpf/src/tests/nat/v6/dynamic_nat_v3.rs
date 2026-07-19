@@ -81,6 +81,7 @@ fn add_ct6_entry<T: MapCore>(
         server_status: 1,
         client_status: 1,
         is_allow_reuse: 1,
+        need_prefix_replace: 1,
         ..Default::default()
     };
     value.trigger_addr = types::u_inet6_addr { bytes: trigger_addr.octets() };
@@ -293,6 +294,7 @@ mod tests {
             server_status: 1,
             client_status: 1,
             is_allow_reuse: 1,
+            need_prefix_replace: 1,
             ..Default::default()
         };
         value.trigger_addr = types::u_inet6_addr { bytes: trigger_addr.octets() };
@@ -501,6 +503,7 @@ mod tests {
             server_status: 1,
             client_status: 1,
             is_allow_reuse: 0,
+            need_prefix_replace: 1,
             ..Default::default()
         };
         value.trigger_addr = types::u_inet6_addr { bytes: remote.octets() };

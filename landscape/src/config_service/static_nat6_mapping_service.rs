@@ -1,4 +1,4 @@
-use std::net::Ipv6Addr;
+use std::sync::Arc;
 
 use landscape_common::config_service::static_nat::config6::{
     StaticNatMappingV6Config, StaticNatV6PortConfig, StaticNatV6Target,
@@ -16,15 +16,18 @@ use uuid::Uuid;
 #[derive(Clone)]
 pub struct StaticNat6MappingService {
     store: StaticNatMappingV6Repository,
+    wan_iid: Arc<u64>,
 }
 
 impl StaticNat6MappingService {
     pub async fn new(
         store_provider: LandscapeDBServiceProvider,
         device_reader: EnrolledDeviceEventReader,
+        wan_iid: Arc<u64>,
     ) -> Self {
         let service = Self {
             store: store_provider.static_nat_mapping_v6_store(),
+            wan_iid,
         };
 
         let is_empty = service.store.list().await.is_ok_and(|l| l.is_empty());
@@ -101,7 +104,7 @@ impl StaticNat6MappingService {
     // --- Runtime ---
 
     pub async fn refresh_runtime_rules(&self) {
-        let configs = match self.store.list_runtime_configs_v6().await {
+        let configs = match self.store.list_runtime_configs_v6(*self.wan_iid).await {
             Ok(configs) => configs,
             Err(error) => {
                 tracing::error!("failed to load static NAT v6 runtime configs: {error:?}");
@@ -118,7 +121,7 @@ impl StaticNat6MappingService {
 fn default_static_mapping_v6_rules() -> Vec<StaticNatMappingV6Config> {
     vec![StaticNatMappingV6Config {
         wan_iface_name: None,
-        lan_target: Some(StaticNatV6Target::address(Ipv6Addr::UNSPECIFIED)),
+        lan_target: Some(StaticNatV6Target::Local),
         l4_protocols: vec![17],
         id: Uuid::new_v4(),
         enable: true,
@@ -128,4 +131,16 @@ fn default_static_mapping_v6_rules() -> Vec<StaticNatMappingV6Config> {
             ports: vec![LANDSCAPE_DEFAULE_DHCP_V6_CLIENT_PORT],
         },
     }]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_dhcpv6_rule_targets_local_wan_iid() {
+        let rules = default_static_mapping_v6_rules();
+        assert_eq!(rules.len(), 1);
+        assert!(matches!(rules[0].lan_target, Some(StaticNatV6Target::Local)));
+    }
 }

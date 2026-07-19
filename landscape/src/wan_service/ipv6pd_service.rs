@@ -23,6 +23,10 @@ use landscape_database::{
 use crate::get_iface_by_name;
 use crate::sys_service::route::IpRouteService;
 
+pub fn generate_wan_iid() -> u64 {
+    rand::random::<u64>().max(2)
+}
+
 #[derive(Clone)]
 pub struct IPV6PDService {
     route_service: IpRouteService,
@@ -125,16 +129,9 @@ impl DHCPv6ClientManagerService {
         route_service: IpRouteService,
         prefix_map: IAPrefixMap,
         prefix_sender: IAPrefixEventSender,
+        shared_wan_iid: Arc<u64>,
     ) -> Self {
         let store = store_service.dhcp_v6_client_store();
-        let shared_wan_iid = Arc::new({
-            let iid = rand::random::<u64>();
-            if iid <= 1 {
-                2
-            } else {
-                iid
-            }
-        });
         let server_starter =
             IPV6PDService::new(route_service, prefix_map.clone(), shared_wan_iid, prefix_sender);
         let service = ServiceManager::init(store.list().await.unwrap(), server_starter).await;

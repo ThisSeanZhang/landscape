@@ -59,7 +59,8 @@ static __always_inline struct nat6_timer_value *lookup_ct6_egress(struct __sk_bu
 
 static __always_inline struct nat6_timer_value *
 create_ct6_egress(struct __sk_buff *skb, struct scan_ipv6_idx *idx, struct inet_pair *ip_pair,
-                  u8 npt_id_mask, u32 ifindex, u8 is_allow_reuse, bool is_static) {
+                  u8 npt_id_mask, u32 ifindex, u8 is_allow_reuse, bool is_static,
+                  bool need_prefix_replace) {
     struct nat6_timer_key key = {0};
     key.client_port = ip_pair->src_port;
     COPY_ADDR_FROM(key.client_suffix, ip_pair->src_addr.bits + 8);
@@ -76,6 +77,7 @@ create_ct6_egress(struct __sk_buff *skb, struct scan_ipv6_idx *idx, struct inet_
     COPY_ADDR_FROM(new_value.client_prefix, ip_pair->src_addr.bits);
     new_value.is_allow_reuse = is_allow_reuse;
     new_value.is_static = is_static ? 1 : 0;
+    new_value.need_prefix_replace = need_prefix_replace ? 1 : 0;
     COPY_ADDR_FROM(new_value.trigger_addr.all, ip_pair->dst_addr.all);
     new_value.trigger_port = ip_pair->dst_port;
 
@@ -121,6 +123,9 @@ static __always_inline int ipv6_egress_prefix_check_and_replace(struct __sk_buff
     if (ct_value) {
         nat6_ct_advance(idx->pkt_type, NAT_MAPPING_EGRESS, ct_value);
         nat6_metric_accumulate(skb, false, ct_value);
+        if (!ct_value->need_prefix_replace) {
+            return TC_ACT_UNSPEC;
+        }
         goto do_nptv6;
     }
 
@@ -134,18 +139,24 @@ static __always_inline int ipv6_egress_prefix_check_and_replace(struct __sk_buff
         if (!static_val) {
             return TC_ACT_SHOT;
         }
+        if (!nat6_static_needs_prefix_replace(static_val)) {
+            return TC_ACT_UNSPEC;
+        }
         goto do_nptv6;
     }
 
-    u8 reuse =
-        static_val ? static_val->is_allow_reuse : (get_flow_allow_reuse_port(skb->mark) ? 1 : 0);
-    ct_value =
-        create_ct6_egress(skb, idx, ip_pair, npt_id_mask, ifindex, reuse, static_val != NULL);
+    bool need_prefix_replace = static_val ? nat6_static_needs_prefix_replace(static_val) : true;
+    u8 reuse = static_val ? 1 : (get_flow_allow_reuse_port(skb->mark) ? 1 : 0);
+    ct_value = create_ct6_egress(skb, idx, ip_pair, npt_id_mask, ifindex, reuse, static_val != NULL,
+                                 need_prefix_replace);
     if (!ct_value) {
         return TC_ACT_SHOT;
     }
     nat6_ct_advance(idx->pkt_type, NAT_MAPPING_EGRESS, ct_value);
     nat6_metric_accumulate(skb, false, ct_value);
+    if (!need_prefix_replace) {
+        return TC_ACT_UNSPEC;
+    }
 
 do_nptv6:
     if (idx->icmp_error_l3_offset > 0 && idx->icmp_error_inner_l4_offset > 0) {
@@ -247,7 +258,8 @@ lookup_ct6_ingress(struct scan_ipv6_idx *idx, struct inet_pair *ip_pair, u8 npt_
 
 static __always_inline struct nat6_timer_value *
 create_ct6_ingress(struct __sk_buff *skb, struct scan_ipv6_idx *idx, struct inet_pair *ip_pair,
-                   u8 npt_id_mask, u32 ifindex, const __be64 *client_prefix_hint) {
+                   u8 npt_id_mask, u32 ifindex, const __be64 *client_prefix_hint,
+                   bool need_prefix_replace) {
     struct nat6_timer_key key = {0};
     key.client_port = ip_pair->dst_port;
     COPY_ADDR_FROM(key.client_suffix, ip_pair->dst_addr.bits + 8);
@@ -266,6 +278,7 @@ create_ct6_ingress(struct __sk_buff *skb, struct scan_ipv6_idx *idx, struct inet
     COPY_ADDR_FROM(new_value.client_prefix, client_prefix_hint);
     new_value.is_allow_reuse = 1;
     new_value.is_static = 1;
+    new_value.need_prefix_replace = need_prefix_replace ? 1 : 0;
 
     return nat6_insert_timer(&key, &new_value);
 }
@@ -317,7 +330,7 @@ static __always_inline int ipv6_ingress_prefix_check_and_replace(struct __sk_buf
 
         __be64 dst_prefix;
         COPY_ADDR_FROM(&dst_prefix, ip_pair->dst_addr.bits);
-        if (local_client_prefix == dst_prefix) {
+        if (!ct_value->need_prefix_replace || local_client_prefix == dst_prefix) {
             if (ct_is_static) {
                 u32 mark = skb->mark;
                 barrier_var(mark);
@@ -351,7 +364,8 @@ static __always_inline int ipv6_ingress_prefix_check_and_replace(struct __sk_buf
         return TC_ACT_SHOT;
     }
 
-    ct_value = create_ct6_ingress(skb, idx, ip_pair, npt_id_mask, ifindex, &client_prefix_hint);
+    ct_value = create_ct6_ingress(skb, idx, ip_pair, npt_id_mask, ifindex, &client_prefix_hint,
+                                  need_prefix_replace);
     if (ct_value) {
         nat6_ct_advance(idx->pkt_type, NAT_MAPPING_INGRESS, ct_value);
         nat6_metric_accumulate(skb, true, ct_value);

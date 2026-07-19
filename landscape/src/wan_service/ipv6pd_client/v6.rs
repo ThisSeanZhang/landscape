@@ -826,3 +826,29 @@ fn derive_wan_pd_addr(
     let iid = if shared_wan_iid <= 1 { 2 } else { shared_wan_iid } as u128;
     Some(Ipv6Addr::from(prefix_bits | iid))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn prefix(address: &str, prefix_len: u8) -> LDIAPrefix {
+        LDIAPrefix {
+            preferred_lifetime: 3600,
+            valid_lifetime: 7200,
+            prefix_len,
+            prefix_ip: address.parse().unwrap(),
+            last_update_time: 0.0,
+        }
+    }
+
+    #[test]
+    fn wan_pd_addresses_share_the_startup_iid() {
+        let iid = 0x1234_5678_9abc_def0;
+        let first = derive_wan_pd_addr(&prefix("2001:db8:1000::", 56), iid).unwrap();
+        let second = derive_wan_pd_addr(&prefix("2001:db8:2000::", 60), iid).unwrap();
+
+        assert_ne!(&first.octets()[..8], &second.octets()[..8]);
+        assert_eq!(&first.octets()[8..], &iid.to_be_bytes());
+        assert_eq!(&second.octets()[8..], &iid.to_be_bytes());
+    }
+}

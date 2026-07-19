@@ -82,7 +82,8 @@ struct nat6_timer_value {
     u8 flow_id;
     u8 gress;
     u8 is_static;
-    u8 _pad[2];
+    u8 need_prefix_replace;
+    u8 _pad;
 
     u64 create_time;
     u64 ingress_bytes;

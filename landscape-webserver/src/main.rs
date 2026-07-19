@@ -43,8 +43,10 @@ use landscape::{
     },
     wan_service::firewall::FirewallServiceManagerService,
     wan_service::{
-        ipconfig_service::IfaceIpServiceManagerService, ipv6pd_service::DHCPv6ClientManagerService,
-        mss_clamp_service::MssClampServiceManagerService, nat_service::NatServiceManagerService,
+        ipconfig_service::IfaceIpServiceManagerService,
+        ipv6pd_service::{generate_wan_iid, DHCPv6ClientManagerService},
+        mss_clamp_service::MssClampServiceManagerService,
+        nat_service::NatServiceManagerService,
         pppd_service::PPPDServiceConfigManagerService,
         wan_route_service::RouteWanServiceManagerService,
     },
@@ -380,9 +382,13 @@ async fn run_system(
         StaticNat4MappingService::new(db_store_provider.clone(), event_handle.subscribe_device())
             .await;
 
-    let static_nat6_mapping_service =
-        StaticNat6MappingService::new(db_store_provider.clone(), event_handle.subscribe_device())
-            .await;
+    let shared_wan_iid = Arc::new(generate_wan_iid());
+    let static_nat6_mapping_service = StaticNat6MappingService::new(
+        db_store_provider.clone(),
+        event_handle.subscribe_device(),
+        shared_wan_iid.clone(),
+    )
+    .await;
 
     let enrolled_device_service =
         EnrolledDeviceService::new(db_store_provider.clone(), device_sender).await;
@@ -449,6 +455,7 @@ async fn run_system(
         route_service.clone(),
         prefix_map.clone(),
         ipv6_prefix_sender.clone(),
+        shared_wan_iid,
     )
     .await;
 

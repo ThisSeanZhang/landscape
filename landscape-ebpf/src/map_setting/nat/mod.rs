@@ -37,8 +37,7 @@ pub struct StaticNatMappingV4Item {
 
 #[derive(Debug)]
 pub struct StaticNatMappingV6Item {
-    pub wan_port: u16,
-    pub lan_port: u16,
+    pub port: u16,
     pub lan_ip: Ipv6Addr,
     pub l4_protocol: u8,
 }

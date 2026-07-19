@@ -28,8 +28,20 @@ fn lan_host() -> Ipv6Addr {
     Ipv6Addr::from_str("fd00:1234:5678:abc5::100").unwrap()
 }
 
+fn local_target() -> Ipv6Addr {
+    Ipv6Addr::from_str("::cafe").unwrap()
+}
+
+fn local_wan_ip() -> Ipv6Addr {
+    Ipv6Addr::from_str("2409:8888:6666:4f21::cafe").unwrap()
+}
+
 fn remote() -> Ipv6Addr {
     Ipv6Addr::from_str("2001:db8:2::1").unwrap()
+}
+
+fn remote2() -> Ipv6Addr {
+    Ipv6Addr::from_str("2001:db8:3::1").unwrap()
 }
 
 fn wan_npt_addr() -> Ipv6Addr {
@@ -73,6 +85,7 @@ fn add_ct6_entry<T: MapCore>(
     client_prefix: [u8; 8],
     trigger_addr: Ipv6Addr,
     trigger_port: u16,
+    need_prefix_replace: bool,
 ) {
     let key = types::nat6_timer_key {
         client_suffix,
@@ -84,6 +97,8 @@ fn add_ct6_entry<T: MapCore>(
         server_status: 1,
         client_status: 1,
         is_allow_reuse: 1,
+        is_static: 1,
+        need_prefix_replace: need_prefix_replace as u8,
         ..Default::default()
     };
     value.trigger_addr = types::u_inet6_addr { bytes: trigger_addr.octets() };
@@ -105,7 +120,7 @@ mod tests {
     const LAN_CLIENT_PREFIX: [u8; 8] = [0xfd, 0x00, 0x12, 0x34, 0x56, 0x78, 0xab, 0xc5];
     const LAN_ID_BYTE: u8 = 0x05;
     const WAN_NPT_PREFIX: [u8; 8] = [0x24, 0x09, 0x88, 0x88, 0x66, 0x66, 0x4f, 0x25];
-    const LOCAL_CLIENT_SUFFIX: [u8; 8] = [0x00; 8];
+    const LOCAL_CLIENT_SUFFIX: [u8; 8] = [0, 0, 0, 0, 0, 0, 0xca, 0xfe];
     const LOCAL_CLIENT_PREFIX: [u8; 8] = [0x24, 0x09, 0x88, 0x88, 0x66, 0x66, 0x4f, 0x21];
     const LOCAL_ID_BYTE: u8 = 0x01;
 
@@ -129,12 +144,7 @@ mod tests {
 
         add_static_nat6_mapping(
             &skel.maps.nat6_static_map,
-            vec![StaticNatMappingV6Item {
-                wan_port: 80,
-                lan_port: 80,
-                lan_ip: lan_host(),
-                l4_protocol: 6,
-            }],
+            vec![StaticNatMappingV6Item { port: 80, lan_ip: lan_host(), l4_protocol: 6 }],
         );
 
         add_ct6_entry(
@@ -146,6 +156,7 @@ mod tests {
             LAN_CLIENT_PREFIX,
             remote(),
             9999,
+            true,
         );
 
         let mut pkt = build_ipv6_tcp(remote(), wan_npt_addr(), 9999, 80);
@@ -197,12 +208,7 @@ mod tests {
 
         add_static_nat6_mapping(
             &skel.maps.nat6_static_map,
-            vec![StaticNatMappingV6Item {
-                wan_port: 80,
-                lan_port: 80,
-                lan_ip: lan_host(),
-                l4_protocol: 6,
-            }],
+            vec![StaticNatMappingV6Item { port: 80, lan_ip: lan_host(), l4_protocol: 6 }],
         );
 
         add_ct6_entry(
@@ -214,6 +220,7 @@ mod tests {
             LAN_CLIENT_PREFIX,
             remote(),
             9999,
+            true,
         );
 
         let mut pkt = build_ipv6_tcp(lan_host(), remote(), 80, 9999);
@@ -265,12 +272,7 @@ mod tests {
 
         add_static_nat6_mapping(
             &skel.maps.nat6_static_map,
-            vec![StaticNatMappingV6Item {
-                wan_port: 80,
-                lan_port: 80,
-                lan_ip: Ipv6Addr::UNSPECIFIED,
-                l4_protocol: 6,
-            }],
+            vec![StaticNatMappingV6Item { port: 80, lan_ip: local_target(), l4_protocol: 6 }],
         );
 
         add_ct6_entry(
@@ -282,9 +284,10 @@ mod tests {
             LOCAL_CLIENT_PREFIX,
             remote(),
             9999,
+            false,
         );
 
-        let mut pkt = build_ipv6_tcp(remote(), wan_ip(), 9999, 80);
+        let mut pkt = build_ipv6_tcp(remote(), local_wan_ip(), 9999, 80);
         let mut ctx = TestSkb::default();
         ctx.ifindex = IFINDEX;
         let mut packet_out = vec![0u8; pkt.len()];
@@ -301,7 +304,7 @@ mod tests {
         let pkt_out = PacketHeaders::from_ethernet_slice(&packet_out).expect("parse output");
         if let Some(etherparse::NetHeaders::Ipv6(ipv6, _)) = pkt_out.net {
             let dst: Ipv6Addr = ipv6.destination.into();
-            assert_eq!(dst, wan_ip(), "dst should stay on local router address");
+            assert_eq!(dst, local_wan_ip(), "dst should stay on local router address");
         } else {
             panic!("expected IPv6 header in output");
         }
@@ -332,12 +335,7 @@ mod tests {
 
         add_static_nat6_mapping(
             &skel.maps.nat6_static_map,
-            vec![StaticNatMappingV6Item {
-                wan_port: 80,
-                lan_port: 80,
-                lan_ip: Ipv6Addr::UNSPECIFIED,
-                l4_protocol: 6,
-            }],
+            vec![StaticNatMappingV6Item { port: 80, lan_ip: local_target(), l4_protocol: 6 }],
         );
 
         add_ct6_entry(
@@ -349,9 +347,10 @@ mod tests {
             LOCAL_CLIENT_PREFIX,
             remote(),
             9999,
+            false,
         );
 
-        let mut pkt = build_ipv6_tcp(wan_ip(), remote(), 80, 9999);
+        let mut pkt = build_ipv6_tcp(local_wan_ip(), remote(), 80, 9999);
         let mut ctx = TestSkb::default();
         ctx.ifindex = IFINDEX;
         let mut packet_out = vec![0u8; pkt.len()];
@@ -368,7 +367,7 @@ mod tests {
         let pkt_out = PacketHeaders::from_ethernet_slice(&packet_out).expect("parse output");
         if let Some(etherparse::NetHeaders::Ipv6(ipv6, _)) = pkt_out.net {
             let src: Ipv6Addr = ipv6.source.into();
-            assert_eq!(src, wan_ip(), "src should stay on local router address");
+            assert_eq!(src, local_wan_ip(), "src should stay on local router address");
         } else {
             panic!("expected IPv6 header in output");
         }
@@ -399,12 +398,7 @@ mod tests {
 
         add_static_nat6_mapping(
             &skel.maps.nat6_static_map,
-            vec![StaticNatMappingV6Item {
-                wan_port: 53,
-                lan_port: 53,
-                lan_ip: Ipv6Addr::UNSPECIFIED,
-                l4_protocol: 17,
-            }],
+            vec![StaticNatMappingV6Item { port: 53, lan_ip: local_target(), l4_protocol: 17 }],
         );
 
         add_ct6_entry(
@@ -416,9 +410,10 @@ mod tests {
             LOCAL_CLIENT_PREFIX,
             remote(),
             12345,
+            false,
         );
 
-        let mut pkt = build_ipv6_udp(remote(), wan_ip(), 12345, 53);
+        let mut pkt = build_ipv6_udp(remote(), local_wan_ip(), 12345, 53);
         let mut ctx = TestSkb::default();
         ctx.ifindex = IFINDEX;
         let mut packet_out = vec![0u8; pkt.len()];
@@ -435,7 +430,7 @@ mod tests {
         let pkt_out = PacketHeaders::from_ethernet_slice(&packet_out).expect("parse output");
         if let Some(etherparse::NetHeaders::Ipv6(ipv6, _)) = pkt_out.net {
             let dst: Ipv6Addr = ipv6.destination.into();
-            assert_eq!(dst, wan_ip(), "dst should stay on local router address");
+            assert_eq!(dst, local_wan_ip(), "dst should stay on local router address");
         } else {
             panic!("expected IPv6 header in output");
         }
@@ -466,12 +461,7 @@ mod tests {
 
         add_static_nat6_mapping(
             &skel.maps.nat6_static_map,
-            vec![StaticNatMappingV6Item {
-                wan_port: 53,
-                lan_port: 53,
-                lan_ip: Ipv6Addr::UNSPECIFIED,
-                l4_protocol: 17,
-            }],
+            vec![StaticNatMappingV6Item { port: 53, lan_ip: local_target(), l4_protocol: 17 }],
         );
 
         add_ct6_entry(
@@ -483,9 +473,10 @@ mod tests {
             LOCAL_CLIENT_PREFIX,
             remote(),
             12345,
+            false,
         );
 
-        let mut pkt = build_ipv6_udp(wan_ip(), remote(), 53, 12345);
+        let mut pkt = build_ipv6_udp(local_wan_ip(), remote(), 53, 12345);
         let mut ctx = TestSkb::default();
         ctx.ifindex = IFINDEX;
         let mut packet_out = vec![0u8; pkt.len()];
@@ -502,7 +493,7 @@ mod tests {
         let pkt_out = PacketHeaders::from_ethernet_slice(&packet_out).expect("parse output");
         if let Some(etherparse::NetHeaders::Ipv6(ipv6, _)) = pkt_out.net {
             let src: Ipv6Addr = ipv6.source.into();
-            assert_eq!(src, wan_ip(), "src should stay on local router address");
+            assert_eq!(src, local_wan_ip(), "src should stay on local router address");
         } else {
             panic!("expected IPv6 header in output");
         }
@@ -514,7 +505,7 @@ mod tests {
     }
 
     #[test]
-    fn tcp_ingress_no_match_drop_v3() {
+    fn tcp_ingress_does_not_fallback_to_zero_suffix() {
         let mut builder = TcNatSkelBuilder::default();
         let pin_root = crate::tests::nat::isolated_pin_root("nat-v6-static-v3-local");
         builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
@@ -534,14 +525,13 @@ mod tests {
         add_static_nat6_mapping(
             &skel.maps.nat6_static_map,
             vec![StaticNatMappingV6Item {
-                wan_port: 80,
-                lan_port: 80,
+                port: 80,
                 lan_ip: Ipv6Addr::UNSPECIFIED,
                 l4_protocol: 6,
             }],
         );
 
-        let mut pkt = build_ipv6_tcp(remote(), wan_ip(), 9999, 9090);
+        let mut pkt = build_ipv6_tcp(remote(), wan_npt_addr(), 9999, 80);
         let mut ctx = TestSkb::default();
         ctx.ifindex = IFINDEX;
         let mut packet_out = vec![0u8; pkt.len()];
@@ -579,12 +569,7 @@ mod tests {
 
         add_static_nat6_mapping(
             &skel.maps.nat6_static_map,
-            vec![StaticNatMappingV6Item {
-                wan_port: 0,
-                lan_port: 80,
-                lan_ip: lan_host(),
-                l4_protocol: 6,
-            }],
+            vec![StaticNatMappingV6Item { port: 0, lan_ip: lan_host(), l4_protocol: 6 }],
         );
 
         let mut pkt = build_ipv6_tcp(remote(), wan_npt_addr(), 9999, 443);
@@ -636,12 +621,7 @@ mod tests {
 
         add_static_nat6_mapping(
             &skel.maps.nat6_static_map,
-            vec![StaticNatMappingV6Item {
-                wan_port: 80,
-                lan_port: 0,
-                lan_ip: lan_host(),
-                l4_protocol: 6,
-            }],
+            vec![StaticNatMappingV6Item { port: 0, lan_ip: lan_host(), l4_protocol: 6 }],
         );
 
         let mut pkt = build_ipv6_tcp(lan_host(), remote(), 443, 9999);
@@ -694,18 +674,8 @@ mod tests {
         add_static_nat6_mapping(
             &skel.maps.nat6_static_map,
             vec![
-                StaticNatMappingV6Item {
-                    wan_port: 80,
-                    lan_port: 80,
-                    lan_ip: lan_host(),
-                    l4_protocol: 6,
-                },
-                StaticNatMappingV6Item {
-                    wan_port: 0,
-                    lan_port: 3333,
-                    lan_ip: lan_host(),
-                    l4_protocol: 6,
-                },
+                StaticNatMappingV6Item { port: 80, lan_ip: lan_host(), l4_protocol: 6 },
+                StaticNatMappingV6Item { port: 0, lan_ip: lan_host(), l4_protocol: 6 },
             ],
         );
 
@@ -741,6 +711,70 @@ mod tests {
             assert_eq!(tcp.destination_port, 80, "dst_port should be unchanged");
         } else {
             panic!("expected TCP transport header in output");
+        }
+    }
+
+    #[test]
+    fn tcp_ingress_static_ct_reuse() {
+        let mut builder = TcNatSkelBuilder::default();
+        let pin_root = crate::tests::nat::isolated_pin_root("nat-v6-static-reuse");
+        builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
+        let mut open_object = MaybeUninit::uninit();
+        let open_skel = builder.open(&mut open_object).unwrap();
+        let skel = open_skel.load().unwrap();
+
+        add_wan_ip(
+            &skel.maps.wan_ip_binding,
+            IFINDEX,
+            IpAddr::V6(wan_ip()),
+            None,
+            60,
+            Some(MacAddr::broadcast()),
+        );
+
+        add_static_nat6_mapping(
+            &skel.maps.nat6_static_map,
+            vec![StaticNatMappingV6Item { port: 80, lan_ip: lan_host(), l4_protocol: 6 }],
+        );
+
+        let mut outgoing = build_ipv6_tcp(lan_host(), remote(), 80, 9999);
+        outgoing[67] |= 0x02;
+        let mut outgoing_ctx = TestSkb::default();
+        outgoing_ctx.ifindex = IFINDEX;
+        let mut outgoing_out = vec![0u8; outgoing.len()];
+        let outgoing_result = skel
+            .progs
+            .tc_nat_wan_egress
+            .test_run(ProgramInput {
+                data_in: Some(&mut outgoing),
+                context_in: Some(outgoing_ctx.as_mut_bytes()),
+                data_out: Some(&mut outgoing_out),
+                ..Default::default()
+            })
+            .expect("egress test_run failed");
+        assert_eq!(outgoing_result.return_value as i32, -1);
+
+        let mut pkt = build_ipv6_tcp(remote2(), wan_npt_addr(), 7777, 80);
+        let mut ctx = TestSkb::default();
+        ctx.ifindex = IFINDEX;
+        let mut packet_out = vec![0u8; pkt.len()];
+        let input = ProgramInput {
+            data_in: Some(&mut pkt),
+            context_in: Some(ctx.as_mut_bytes()),
+            data_out: Some(&mut packet_out),
+            ..Default::default()
+        };
+
+        let result = skel.progs.tc_nat_wan_ingress.test_run(input).expect("test_run failed");
+        assert_eq!(result.return_value as i32, 0, "ingress should return TC_ACT_OK(0)");
+
+        let pkt_out = PacketHeaders::from_ethernet_slice(&packet_out).expect("parse output");
+        if let Some(etherparse::NetHeaders::Ipv6(ipv6, _)) = pkt_out.net {
+            let dst: Ipv6Addr = ipv6.destination.into();
+            assert_eq!(&dst.octets()[..8], &LAN_CLIENT_PREFIX, "dst prefix should be rewritten");
+            assert_eq!(&dst.octets()[8..], &LAN_CLIENT_SUFFIX, "dst suffix should be preserved");
+        } else {
+            panic!("expected IPv6 header in output");
         }
     }
 }

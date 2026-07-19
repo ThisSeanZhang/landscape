@@ -126,9 +126,13 @@ impl StaticNatMappingV6Config {
         }
 
         if self.enable {
-            if let (StaticNatV6PortConfig::All, Some(StaticNatV6Target::Local)) =
-                (&self.port_config, self.lan_target.as_ref())
-            {
+            let is_local_target =
+                matches!(self.lan_target.as_ref(), Some(StaticNatV6Target::Local))
+                    || matches!(
+                        self.lan_target.as_ref(),
+                        Some(StaticNatV6Target::Address { ipv6 }) if ipv6.is_unspecified()
+                    );
+            if matches!(self.port_config, StaticNatV6PortConfig::All) && is_local_target {
                 return Err(ServiceConfigError::InvalidConfig {
                     reason: "local target does not support opening all ports".to_string(),
                 });
@@ -164,4 +168,25 @@ pub struct RuntimeStaticNatMappingV6Config {
     pub port_config: StaticNatV6PortConfig,
     pub lan_ipv6: Ipv6Addr,
     pub l4_protocols: Vec<u8>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn legacy_unspecified_address_uses_local_port_validation() {
+        let config = StaticNatMappingV6Config {
+            id: Uuid::nil(),
+            enable: true,
+            remark: String::new(),
+            wan_iface_name: None,
+            port_config: StaticNatV6PortConfig::All,
+            lan_target: Some(StaticNatV6Target::address(Ipv6Addr::UNSPECIFIED)),
+            l4_protocols: vec![17],
+            update_at: 0.0,
+        };
+
+        assert!(config.validate().is_err());
+    }
 }

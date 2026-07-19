@@ -27,17 +27,22 @@ static __always_inline bool nat6_is_same_prefix(const u8 prefix[8], const union 
            ((prefix[7] & prefix_mask) == (b[7] & prefix_mask));
 }
 
+static __always_inline bool
+nat6_static_needs_prefix_replace(const struct static_nat6_mapping_value *value) {
+    return value->lan_prefix[0] != 0 || value->lan_prefix[1] != 0 || value->lan_prefix[2] != 0 ||
+           value->lan_prefix[3] != 0 || value->lan_prefix[4] != 0 || value->lan_prefix[5] != 0 ||
+           value->lan_prefix[6] != 0 || value->lan_prefix[7] != 0;
+}
+
 static __always_inline struct static_nat6_mapping_value *
 nat6_check_egress_static(u8 ip_protocol, const struct inet_pair *pkt_ip_pair) {
     struct static_nat6_mapping_key egress_key = {0};
     struct static_nat6_mapping_value *value;
-    egress_key.l3_protocol = LANDSCAPE_IPV6_TYPE;
+
     egress_key.l4_protocol = ip_protocol;
-    egress_key.gress = NAT_MAPPING_EGRESS;
-    egress_key.prefixlen = 192;
-    COPY_ADDR_FROM(egress_key.addr.all, pkt_ip_pair->src_addr.all);
 
     egress_key.port = pkt_ip_pair->src_port;
+    __builtin_memcpy(egress_key.ip_suffix, pkt_ip_pair->src_addr.bits + 8, 8);
     value = bpf_map_lookup_elem(&nat6_static_map, &egress_key);
     if (value) {
         return value;
@@ -53,14 +58,10 @@ static __always_inline int nat6_check_ingress_static(u8 ip_protocol,
     struct static_nat6_mapping_key ingress_key = {0};
     struct static_nat6_mapping_value *value = NULL;
 
-    __be64 dst_suffix, mapping_suffix;
-
-    ingress_key.l3_protocol = LANDSCAPE_IPV6_TYPE;
     ingress_key.l4_protocol = ip_protocol;
-    ingress_key.gress = NAT_MAPPING_INGRESS;
-    ingress_key.prefixlen = 96;
-
     ingress_key.port = pkt_ip_pair->dst_port;
+    __builtin_memcpy(ingress_key.ip_suffix, pkt_ip_pair->dst_addr.bits + 8, 8);
+
     value = bpf_map_lookup_elem(&nat6_static_map, &ingress_key);
     if (value) {
         goto process_mapping_value;
@@ -73,23 +74,12 @@ static __always_inline int nat6_check_ingress_static(u8 ip_protocol,
     }
 
 process_mapping_value:
-    if (value->addr.all[3] == 0 && value->addr.all[2] == 0) {
+    if (!nat6_static_needs_prefix_replace(value)) {
         return NAT6_STATIC_PASS;
     }
 
-    if (value->addr.ip != 0) {
-        COPY_ADDR_FROM(local_client_prefix, value->addr.bytes);
-        return NAT6_STATIC_REPLACE;
-    }
-
-    COPY_ADDR_FROM(&mapping_suffix, value->addr.bytes + 8);
-    COPY_ADDR_FROM(&dst_suffix, pkt_ip_pair->dst_addr.bits + 8);
-
-    if (mapping_suffix == dst_suffix) {
-        return NAT6_STATIC_PASS;
-    }
-
-    return NAT6_STATIC_MISS;
+    COPY_ADDR_FROM(local_client_prefix, value->lan_prefix);
+    return NAT6_STATIC_REPLACE;
 }
 
 #endif /* __LD_NAT6_MAP_OPS_H__ */

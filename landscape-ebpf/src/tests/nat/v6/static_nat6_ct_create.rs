@@ -29,6 +29,14 @@ fn lan_host() -> Ipv6Addr {
     Ipv6Addr::from_str("fd00:1234:5678:abc5::100").unwrap()
 }
 
+fn local_target() -> Ipv6Addr {
+    Ipv6Addr::from_str("::cafe").unwrap()
+}
+
+fn local_wan_ip() -> Ipv6Addr {
+    Ipv6Addr::from_str("2409:8888:6666:4f21::cafe").unwrap()
+}
+
 fn remote() -> Ipv6Addr {
     Ipv6Addr::from_str("2001:db8:2::1").unwrap()
 }
@@ -122,12 +130,7 @@ mod tests {
 
         add_static_nat6_mapping(
             &skel.maps.nat6_static_map,
-            vec![StaticNatMappingV6Item {
-                wan_port: 80,
-                lan_port: 80,
-                lan_ip: lan_host(),
-                l4_protocol: 17, // UDP
-            }],
+            vec![StaticNatMappingV6Item { port: 80, lan_ip: lan_host(), l4_protocol: 17 }],
         );
 
         // No pre-populated CT entry — create path should be exercised.
@@ -170,6 +173,7 @@ mod tests {
         let ct_value = lookup_ct6(&skel.maps.nat6_timer_map, &ct_key)
             .expect("CT entry should have been created for egress");
         assert_eq!(ct_value.is_static, 1, "is_static should be 1 for static-backed CT");
+        assert_eq!(ct_value.need_prefix_replace, 1);
         assert_eq!(ct_value.gress, crate::NAT_MAPPING_EGRESS, "gress should be EGRESS");
     }
 
@@ -193,12 +197,7 @@ mod tests {
 
         add_static_nat6_mapping(
             &skel.maps.nat6_static_map,
-            vec![StaticNatMappingV6Item {
-                wan_port: 80,
-                lan_port: 80,
-                lan_ip: lan_host(),
-                l4_protocol: 17, // UDP
-            }],
+            vec![StaticNatMappingV6Item { port: 80, lan_ip: lan_host(), l4_protocol: 17 }],
         );
 
         // No pre-populated CT.
@@ -242,6 +241,7 @@ mod tests {
         let ct_value = lookup_ct6(&skel.maps.nat6_timer_map, &ct_key)
             .expect("CT entry should have been created for ingress");
         assert_eq!(ct_value.is_static, 1, "is_static should be 1 for static-backed ingress CT");
+        assert_eq!(ct_value.need_prefix_replace, 1);
         assert_eq!(ct_value.gress, crate::NAT_MAPPING_INGRESS, "gress should be INGRESS",);
     }
 
@@ -265,12 +265,7 @@ mod tests {
 
         add_static_nat6_mapping(
             &skel.maps.nat6_static_map,
-            vec![StaticNatMappingV6Item {
-                wan_port: 0,
-                lan_port: 0,
-                lan_ip: lan_host(),
-                l4_protocol: 17,
-            }],
+            vec![StaticNatMappingV6Item { port: 0, lan_ip: lan_host(), l4_protocol: 17 }],
         );
 
         let mut pkt = build_ipv6_udp(lan_host(), remote(), 443, 9999);
@@ -304,6 +299,7 @@ mod tests {
         let ct_value = lookup_ct6(&skel.maps.nat6_timer_map, &ct_key)
             .expect("CT entry should have been created for egress with port=0 static");
         assert_eq!(ct_value.is_static, 1, "is_static should be 1 for port=0 static-backed CT");
+        assert_eq!(ct_value.need_prefix_replace, 1);
         assert_eq!(ct_value.gress, crate::NAT_MAPPING_EGRESS, "gress should be EGRESS");
     }
 
@@ -327,12 +323,7 @@ mod tests {
 
         add_static_nat6_mapping(
             &skel.maps.nat6_static_map,
-            vec![StaticNatMappingV6Item {
-                wan_port: 0,
-                lan_port: 80,
-                lan_ip: lan_host(),
-                l4_protocol: 17,
-            }],
+            vec![StaticNatMappingV6Item { port: 0, lan_ip: lan_host(), l4_protocol: 17 }],
         );
 
         let wan_npt_ip = Ipv6Addr::from_str("2409:8888:6666:4f25::100").unwrap();
@@ -370,6 +361,113 @@ mod tests {
             ct_value.is_static, 1,
             "is_static should be 1 for port=0 static-backed ingress CT"
         );
+        assert_eq!(ct_value.need_prefix_replace, 1);
         assert_eq!(ct_value.gress, crate::NAT_MAPPING_INGRESS, "gress should be INGRESS");
+    }
+
+    #[test]
+    fn udp_egress_zero_prefix_static_creates_pass_ct() {
+        let mut builder = TcNatSkelBuilder::default();
+        let pin_root = crate::tests::nat::isolated_pin_root("nat-v6-zero-prefix-egress");
+        builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
+        let mut open_object = MaybeUninit::uninit();
+        let open_skel = builder.open(&mut open_object).unwrap();
+        let skel = open_skel.load().unwrap();
+
+        add_wan_ip(
+            &skel.maps.wan_ip_binding,
+            IFINDEX,
+            IpAddr::V6(wan_ip()),
+            None,
+            60,
+            Some(MacAddr::broadcast()),
+        );
+        add_static_nat6_mapping(
+            &skel.maps.nat6_static_map,
+            vec![StaticNatMappingV6Item { port: 53, lan_ip: local_target(), l4_protocol: 17 }],
+        );
+
+        for _ in 0..2 {
+            let mut pkt = build_ipv6_udp(local_wan_ip(), remote(), 53, 9999);
+            let mut ctx = TestSkb::default();
+            ctx.ifindex = IFINDEX;
+            let mut packet_out = vec![0u8; pkt.len()];
+            let result = skel
+                .progs
+                .tc_nat_wan_egress
+                .test_run(ProgramInput {
+                    data_in: Some(&mut pkt),
+                    context_in: Some(ctx.as_mut_bytes()),
+                    data_out: Some(&mut packet_out),
+                    ..Default::default()
+                })
+                .expect("test_run failed");
+            assert_eq!(result.return_value as i32, -1);
+
+            let pkt_out = PacketHeaders::from_ethernet_slice(&packet_out).expect("parse output");
+            let Some(etherparse::NetHeaders::Ipv6(ipv6, _)) = pkt_out.net else {
+                panic!("expected IPv6 header in output");
+            };
+            assert_eq!(Ipv6Addr::from(ipv6.source), local_wan_ip());
+        }
+
+        let ct_key = egress_ct6_key(local_wan_ip(), 53, 17, 60);
+        let ct_value = lookup_ct6(&skel.maps.nat6_timer_map, &ct_key).expect("missing egress CT");
+        assert_eq!(ct_value.is_static, 1);
+        assert_eq!(ct_value.need_prefix_replace, 0);
+        assert_eq!(&ct_value.client_prefix, &local_wan_ip().octets()[..8]);
+    }
+
+    #[test]
+    fn udp_ingress_zero_prefix_static_creates_pass_ct() {
+        let mut builder = TcNatSkelBuilder::default();
+        let pin_root = crate::tests::nat::isolated_pin_root("nat-v6-zero-prefix-ingress");
+        builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
+        let mut open_object = MaybeUninit::uninit();
+        let open_skel = builder.open(&mut open_object).unwrap();
+        let skel = open_skel.load().unwrap();
+
+        add_wan_ip(
+            &skel.maps.wan_ip_binding,
+            IFINDEX,
+            IpAddr::V6(wan_ip()),
+            None,
+            60,
+            Some(MacAddr::broadcast()),
+        );
+        add_static_nat6_mapping(
+            &skel.maps.nat6_static_map,
+            vec![StaticNatMappingV6Item { port: 53, lan_ip: local_target(), l4_protocol: 17 }],
+        );
+
+        for _ in 0..2 {
+            let mut pkt = build_ipv6_udp(remote(), local_wan_ip(), 9999, 53);
+            let mut ctx = TestSkb::default();
+            ctx.ifindex = IFINDEX;
+            let mut packet_out = vec![0u8; pkt.len()];
+            let result = skel
+                .progs
+                .tc_nat_wan_ingress
+                .test_run(ProgramInput {
+                    data_in: Some(&mut pkt),
+                    context_in: Some(ctx.as_mut_bytes()),
+                    data_out: Some(&mut packet_out),
+                    ..Default::default()
+                })
+                .expect("test_run failed");
+            assert_eq!(result.return_value as i32, 0);
+
+            let pkt_out = PacketHeaders::from_ethernet_slice(&packet_out).expect("parse output");
+            let Some(etherparse::NetHeaders::Ipv6(ipv6, _)) = pkt_out.net else {
+                panic!("expected IPv6 header in output");
+            };
+            assert_eq!(Ipv6Addr::from(ipv6.destination), local_wan_ip());
+        }
+
+        let ct_key = ingress_ct6_key(local_wan_ip(), 53, 17, 60);
+        let ct_value = lookup_ct6(&skel.maps.nat6_timer_map, &ct_key).expect("missing ingress CT");
+        assert_eq!(ct_value.is_static, 1);
+        assert_eq!(ct_value.need_prefix_replace, 0);
+        assert_eq!(&ct_value.client_prefix, &local_wan_ip().octets()[..8]);
     }
 }

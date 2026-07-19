@@ -54,7 +54,7 @@ xdp_lookup_ct6_ingress(u8 l4_protocol, struct inet_pair *ip_pair, u8 npt_id_mask
 
 static __always_inline struct nat6_timer_value *
 xdp_create_ct6_ingress(u32 wan_if, u32 mark, u8 l4_protocol, struct inet_pair *ip_pair,
-                       u8 npt_id_mask, const __be64 *client_prefix_hint) {
+                       u8 npt_id_mask, const __be64 *client_prefix_hint, bool need_prefix_replace) {
     struct nat6_timer_key key = {0};
     key.client_port = ip_pair->dst_port;
     COPY_ADDR_FROM(key.client_suffix, ip_pair->dst_addr.bits + 8);
@@ -73,6 +73,7 @@ xdp_create_ct6_ingress(u32 wan_if, u32 mark, u8 l4_protocol, struct inet_pair *i
     COPY_ADDR_FROM(new_value.client_prefix, client_prefix_hint);
     new_value.is_allow_reuse = 1;
     new_value.is_static = 1;
+    new_value.need_prefix_replace = need_prefix_replace ? 1 : 0;
 
     return nat6_insert_timer(&key, &new_value);
 }
@@ -97,7 +98,7 @@ xdp_lookup_ct6_egress(u32 mark, u8 l4_protocol, struct inet_pair *ip_pair, u8 np
 
 static __always_inline struct nat6_timer_value *
 xdp_create_ct6_egress(u32 wan_if, u32 mark, u8 l4_protocol, struct inet_pair *ip_pair,
-                      u8 npt_id_mask, u8 is_allow_reuse, bool is_static) {
+                      u8 npt_id_mask, u8 is_allow_reuse, bool is_static, bool need_prefix_replace) {
     struct nat6_timer_key key = {0};
     key.client_port = ip_pair->src_port;
     COPY_ADDR_FROM(key.client_suffix, ip_pair->src_addr.bits + 8);
@@ -114,6 +115,7 @@ xdp_create_ct6_egress(u32 wan_if, u32 mark, u8 l4_protocol, struct inet_pair *ip
     COPY_ADDR_FROM(new_value.client_prefix, ip_pair->src_addr.bits);
     new_value.is_allow_reuse = is_allow_reuse;
     new_value.is_static = is_static ? 1 : 0;
+    new_value.need_prefix_replace = need_prefix_replace ? 1 : 0;
     COPY_ADDR_FROM(new_value.trigger_addr.all, ip_pair->dst_addr.all);
     new_value.trigger_port = ip_pair->dst_port;
 
@@ -192,6 +194,7 @@ static __always_inline int xdp_ipv6_egress_prefix_check_and_replace(void *data, 
     if (ct_value) {
         nat6_ct_advance(idx->pkt_type, NAT_MAPPING_EGRESS, ct_value);
         xdp_nat6_metric_accumulate(data, data_end, false, ct_value);
+        if (!ct_value->need_prefix_replace) return 0;
         goto do_xdp_nptv6;
     }
 
@@ -202,15 +205,18 @@ static __always_inline int xdp_ipv6_egress_prefix_check_and_replace(void *data, 
 
     if (!allow_create) {
         if (!static_val) return -1;
+        if (!nat6_static_needs_prefix_replace(static_val)) return 0;
         goto do_xdp_nptv6;
     }
 
-    u8 reuse = static_val ? static_val->is_allow_reuse : (get_flow_allow_reuse_port(mark) ? 1 : 0);
+    bool need_prefix_replace = static_val ? nat6_static_needs_prefix_replace(static_val) : true;
+    u8 reuse = static_val ? 1 : (get_flow_allow_reuse_port(mark) ? 1 : 0);
     ct_value = xdp_create_ct6_egress(wan_if, mark, idx->l4_protocol, ip_pair, npt_id_mask, reuse,
-                                     static_val != NULL);
+                                     static_val != NULL, need_prefix_replace);
     if (!ct_value) return -1;
     nat6_ct_advance(idx->pkt_type, NAT_MAPPING_EGRESS, ct_value);
     xdp_nat6_metric_accumulate(data, data_end, false, ct_value);
+    if (!need_prefix_replace) return 0;
 
 do_xdp_nptv6:
     if (is_icmpx_error) {
@@ -334,7 +340,7 @@ static __always_inline int xdp_ipv6_ingress_prefix_check_and_replace(void *data,
 
         __be64 dst_prefix;
         __builtin_memcpy(&dst_prefix, ip_pair->dst_addr.all, 8);
-        if (local_client_prefix == dst_prefix) {
+        if (!ct_value->need_prefix_replace || local_client_prefix == dst_prefix) {
             return ct_is_static ? 1 : 0;
         }
         need_prefix_replace = true;
@@ -361,7 +367,7 @@ static __always_inline int xdp_ipv6_ingress_prefix_check_and_replace(void *data,
     if (!is_static) return -1;
 
     ct_value = xdp_create_ct6_ingress(wan_if, mark, idx->l4_protocol, ip_pair, npt_id_mask,
-                                      &client_prefix_hint);
+                                      &client_prefix_hint, need_prefix_replace);
     if (ct_value) {
         nat6_ct_advance(idx->pkt_type, NAT_MAPPING_INGRESS, ct_value);
         xdp_nat6_metric_accumulate(data, data_end, true, ct_value);

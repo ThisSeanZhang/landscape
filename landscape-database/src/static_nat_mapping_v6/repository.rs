@@ -35,6 +35,7 @@ impl StaticNatMappingV6Repository {
 
     pub async fn list_runtime_configs_v6(
         &self,
+        wan_iid: u64,
     ) -> Result<Vec<RuntimeStaticNatMappingV6Config>, LdError> {
         let configs: Vec<StaticNatMappingV6Config> = self.list_all().await?;
         let devices = self.load_devices_for_configs(&configs).await?;
@@ -57,7 +58,7 @@ impl StaticNatMappingV6Repository {
             .into_iter()
             .filter(|config| config.enable)
             .flat_map(|config| {
-                resolve_static_nat_mapping_v6_configs(config, &devices, &lan_ipv6_configs)
+                resolve_static_nat_mapping_v6_configs(config, &devices, &lan_ipv6_configs, wan_iid)
             })
             .collect())
     }
@@ -113,8 +114,9 @@ fn resolve_static_nat_mapping_v6_configs(
     config: StaticNatMappingV6Config,
     devices: &HashMap<DBId, EnrolledDevice>,
     lan_ipv6_configs: &HashMap<String, LanIPv6ServiceConfigV2>,
+    wan_iid: u64,
 ) -> Vec<RuntimeStaticNatMappingV6Config> {
-    let lan_ipv6s = resolve_static_nat_v6_targets(&config, devices, lan_ipv6_configs);
+    let lan_ipv6s = resolve_static_nat_v6_targets(&config, devices, lan_ipv6_configs, wan_iid);
     lan_ipv6s
         .into_iter()
         .map(|lan_ipv6| RuntimeStaticNatMappingV6Config {
@@ -129,10 +131,13 @@ fn resolve_static_nat_v6_targets(
     config: &StaticNatMappingV6Config,
     devices: &HashMap<DBId, EnrolledDevice>,
     lan_ipv6_configs: &HashMap<String, LanIPv6ServiceConfigV2>,
+    wan_iid: u64,
 ) -> Vec<std::net::Ipv6Addr> {
+    let local_address = std::net::Ipv6Addr::from(wan_iid as u128);
     match config.lan_target.as_ref() {
+        Some(StaticNatV6Target::Address { ipv6 }) if ipv6.is_unspecified() => vec![local_address],
         Some(StaticNatV6Target::Address { ipv6 }) => vec![*ipv6],
-        Some(StaticNatV6Target::Local) => vec![std::net::Ipv6Addr::UNSPECIFIED],
+        Some(StaticNatV6Target::Local) => vec![local_address],
         Some(StaticNatV6Target::Device { device_ids }) => device_ids
             .iter()
             .filter_map(|device_id| {
@@ -198,3 +203,54 @@ crate::impl_repository!(
     StaticNatMappingV6Config,
     DBId
 );
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use landscape_common::config_service::static_nat::config6::StaticNatV6PortConfig;
+    use sea_orm::prelude::Uuid;
+
+    fn config(target: StaticNatV6Target) -> StaticNatMappingV6Config {
+        StaticNatMappingV6Config {
+            id: Uuid::new_v4(),
+            enable: true,
+            remark: String::new(),
+            wan_iface_name: None,
+            port_config: StaticNatV6PortConfig::Ports { ports: vec![53] },
+            lan_target: Some(target),
+            l4_protocols: vec![17],
+            update_at: 0.0,
+        }
+    }
+
+    #[test]
+    fn local_and_legacy_unspecified_address_resolve_to_wan_iid() {
+        let wan_iid = 0x1234_5678_9abc_def0;
+        let expected = std::net::Ipv6Addr::from(wan_iid as u128);
+        let devices = HashMap::new();
+        let lan_configs = HashMap::new();
+
+        for target in
+            [StaticNatV6Target::Local, StaticNatV6Target::address(std::net::Ipv6Addr::UNSPECIFIED)]
+        {
+            assert_eq!(
+                resolve_static_nat_v6_targets(&config(target), &devices, &lan_configs, wan_iid,),
+                vec![expected]
+            );
+        }
+    }
+
+    #[test]
+    fn suffix_only_address_is_not_replaced_by_wan_iid() {
+        let target = "::1234".parse().unwrap();
+        assert_eq!(
+            resolve_static_nat_v6_targets(
+                &config(StaticNatV6Target::address(target)),
+                &HashMap::new(),
+                &HashMap::new(),
+                0x5678,
+            ),
+            vec![target]
+        );
+    }
+}
