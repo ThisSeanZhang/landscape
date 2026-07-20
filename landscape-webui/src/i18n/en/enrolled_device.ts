@@ -32,6 +32,9 @@ export default {
   ipv6: "IPv6 Binding",
   ipv6_placeholder: "Optional: IPv6 address",
   ipv6_random: "Random",
+  ipv6_invalid: "Enter a valid /64 IPv6 host suffix, such as ::100",
+  ipv6_wan_iid_reserved:
+    "The highest IID bit is reserved for WAN addresses; use a suffix below ::8000:0:0:0",
 
   tag: "Tag",
   remark: "Remark",

@@ -9,7 +9,7 @@ use landscape_common::{
     lan_service::lan_ipv6::{
         checked_allocate_subnet, DHCPv6AddressItem, DHCPv6IANAConfig, DHCPv6IAPDConfig,
         DHCPv6OfferInfo, DHCPv6PrefixItem, IPv6NAInfo, IPv6NAInfoItem, LanPrefixGroupConfig,
-        PrefixParentSource,
+        PrefixParentSource, DEFAULT_IA_NA_POOL_SPAN,
     },
     net::MacAddr,
     utils::time::get_f64_timestamp,
@@ -390,7 +390,7 @@ impl Ipv6ServerStatus {
         let na_pool_end = na_config
             .as_ref()
             .and_then(|c| c.pool_end)
-            .unwrap_or(na_pool_start.saturating_add(0xFFFF));
+            .unwrap_or(na_pool_start.saturating_add(DEFAULT_IA_NA_POOL_SPAN));
         let na_range_capacity = na_pool_end.saturating_sub(na_pool_start);
 
         let (prefix_notify_tx, _) = watch::channel(());

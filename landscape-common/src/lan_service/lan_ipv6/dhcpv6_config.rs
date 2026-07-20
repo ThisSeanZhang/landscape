@@ -2,6 +2,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::service::ServiceConfigError;
 
+use super::WAN_IID_MARKER;
+
+pub const DEFAULT_IA_NA_POOL_SPAN: u64 = 0xFFFF;
+
 /// DHCPv6 server config — parameters only.
 /// Prefix pools are defined in LanIPv6ConfigV2.prefix_groups.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -37,7 +41,7 @@ pub struct DHCPv6IANAConfig {
     /// Host part range start (suffix value, e.g., 0x100 = 256)
     pub pool_start: u64,
 
-    /// Host part range end (optional, defaults to subnet max)
+    /// Host part range end (exclusive; defaults to pool_start + 65535)
     #[serde(default)]
     #[cfg_attr(feature = "openapi", schema(required = false, nullable = false))]
     pub pool_end: Option<u64>,
@@ -99,17 +103,34 @@ impl DHCPv6ServerConfig {
                 });
             }
 
-            if let Some(pool_end) = ia_na.pool_end {
-                if pool_end <= ia_na.pool_start {
-                    return Err(ServiceConfigError::InvalidConfig {
-                        reason: format!(
-                            "IA_NA pool_end ({}) must be > pool_start ({})",
-                            pool_end, ia_na.pool_start
-                        ),
-                    });
-                }
+            if ia_na.pool_start >= WAN_IID_MARKER {
+                return Err(ServiceConfigError::InvalidConfig {
+                    reason: format!(
+                        "IA_NA pool_start ({}) must keep IID bit 63 clear",
+                        ia_na.pool_start
+                    ),
+                });
             }
 
+            let pool_end = ia_na
+                .pool_end
+                .unwrap_or_else(|| ia_na.pool_start.saturating_add(DEFAULT_IA_NA_POOL_SPAN));
+            if pool_end <= ia_na.pool_start {
+                return Err(ServiceConfigError::InvalidConfig {
+                    reason: format!(
+                        "IA_NA pool_end ({}) must be > pool_start ({})",
+                        pool_end, ia_na.pool_start
+                    ),
+                });
+            }
+            if pool_end > WAN_IID_MARKER {
+                return Err(ServiceConfigError::InvalidConfig {
+                    reason: format!(
+                        "IA_NA pool_end ({}) must not exceed the LAN IID exclusive upper bound ({})",
+                        pool_end, WAN_IID_MARKER
+                    ),
+                });
+            }
             if ia_na.valid_lifetime == 0 {
                 return Err(ServiceConfigError::InvalidConfig {
                     reason: "IA_NA valid_lifetime must be > 0".to_string(),
@@ -154,10 +175,48 @@ impl DHCPv6ServerConfig {
 mod tests {
     use super::*;
 
+    fn enabled_ia_na(pool_start: u64, pool_end: Option<u64>) -> DHCPv6ServerConfig {
+        DHCPv6ServerConfig {
+            enable: true,
+            ia_na: Some(DHCPv6IANAConfig {
+                max_prefix_len: 64,
+                pool_start,
+                pool_end,
+                preferred_lifetime: 300,
+                valid_lifetime: 600,
+            }),
+            ia_pd: None,
+        }
+    }
+
     #[test]
     fn validate_allows_temporarily_disabling_ia_na_and_ia_pd() {
         let config = DHCPv6ServerConfig { enable: true, ia_na: None, ia_pd: None };
 
         assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn validate_accepts_lan_pool_ending_at_namespace_boundary() {
+        let config = enabled_ia_na(WAN_IID_MARKER - 2, Some(WAN_IID_MARKER));
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn validate_rejects_pool_start_in_wan_namespace() {
+        let config = enabled_ia_na(WAN_IID_MARKER, Some(WAN_IID_MARKER + 1));
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn validate_rejects_explicit_pool_end_past_namespace_boundary() {
+        let config = enabled_ia_na(WAN_IID_MARKER - 2, Some(WAN_IID_MARKER + 1));
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn validate_rejects_default_pool_crossing_namespace_boundary() {
+        let config = enabled_ia_na(WAN_IID_MARKER - DEFAULT_IA_NA_POOL_SPAN + 1, None);
+        assert!(config.validate().is_err());
     }
 }

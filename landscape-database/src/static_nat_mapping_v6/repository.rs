@@ -208,6 +208,10 @@ crate::impl_repository!(
 mod tests {
     use super::*;
     use landscape_common::config_service::static_nat::config6::StaticNatV6PortConfig;
+    use landscape_common::lan_service::lan_ipv6::{
+        IPv6ServiceMode, LanIPv6ConfigV2, NaPrefixConfig, RouterFlags,
+    };
+    use landscape_common::net::MacAddr;
     use sea_orm::prelude::Uuid;
 
     fn config(target: StaticNatV6Target) -> StaticNatMappingV6Config {
@@ -249,6 +253,72 @@ mod tests {
                 &HashMap::new(),
                 &HashMap::new(),
                 0x5678,
+            ),
+            vec![target]
+        );
+    }
+
+    #[test]
+    fn explicit_wan_namespace_address_remains_a_valid_target() {
+        let target = "::8000:0:0:1234".parse().unwrap();
+        assert_eq!(
+            resolve_static_nat_v6_targets(
+                &config(StaticNatV6Target::address(target)),
+                &HashMap::new(),
+                &HashMap::new(),
+                0x8000_0000_0000_5678,
+            ),
+            vec![target]
+        );
+    }
+
+    #[test]
+    fn legacy_device_in_wan_namespace_remains_a_valid_target() {
+        let device_id = Uuid::new_v4();
+        let target = "::8000:0:0:1234".parse().unwrap();
+        let device = EnrolledDevice {
+            id: device_id,
+            update_at: 0.0,
+            iface_name: Some("lan0".to_string()),
+            name: "legacy".to_string(),
+            fake_name: None,
+            remark: None,
+            hostname: None,
+            mac: MacAddr::from([0, 1, 2, 3, 4, 5]),
+            ipv4: None,
+            ipv6: Some(target),
+            tag: Vec::new(),
+            dhcp_custom_options: Vec::new(),
+            dhcp_filter_options: Vec::new(),
+        };
+        let lan_config = LanIPv6ServiceConfigV2 {
+            iface_name: "lan0".to_string(),
+            enable: true,
+            config: LanIPv6ConfigV2 {
+                mode: IPv6ServiceMode::Stateful,
+                ad_interval: 600,
+                ra_flag: RouterFlags::from(0xc0),
+                prefix_groups: vec![LanPrefixGroupConfig {
+                    group_id: "na".to_string(),
+                    parent: PrefixParentSource::Pd {
+                        depend_iface: "wan0".to_string(),
+                        planned_parent_prefix_len: 56,
+                    },
+                    ra: None,
+                    na: Some(NaPrefixConfig { pool_index: 1 }),
+                    pd: None,
+                }],
+                dhcpv6: None,
+            },
+            update_at: 0.0,
+        };
+
+        assert_eq!(
+            resolve_static_nat_v6_targets(
+                &config(StaticNatV6Target::Device { device_ids: vec![device_id] }),
+                &HashMap::from([(device_id, device)]),
+                &HashMap::from([("lan0".to_string(), lan_config)]),
+                0x8000_0000_0000_5678,
             ),
             vec![target]
         );

@@ -8,7 +8,9 @@ pub use config::{
     IPv6ServiceMode, LanIPv6ConfigV2, LanIPv6ServiceConfigV2, PrefixGroupServiceKind, RouterFlags,
 };
 
-pub use dhcpv6_config::{DHCPv6IANAConfig, DHCPv6IAPDConfig, DHCPv6ServerConfig};
+pub use dhcpv6_config::{
+    DHCPv6IANAConfig, DHCPv6IAPDConfig, DHCPv6ServerConfig, DEFAULT_IA_NA_POOL_SPAN,
+};
 
 pub use dhcpv6_status::{DHCPv6AddressItem, DHCPv6OfferInfo, DHCPv6PrefixItem};
 
@@ -21,6 +23,26 @@ pub use prefix_group::{
 pub use ipv6_na::{IPv6NAInfo, IPv6NAInfoItem};
 
 use std::net::Ipv6Addr;
+
+/// Separates Landscape-managed WAN IIDs from Landscape-managed LAN IIDs.
+/// WAN IIDs set this bit; LAN IIDs keep it clear.
+pub const WAN_IID_MARKER: u64 = 1 << 63;
+
+pub fn mark_wan_iid(iid: u64) -> u64 {
+    iid | WAN_IID_MARKER
+}
+
+pub fn is_wan_iid(iid: u64) -> bool {
+    iid & WAN_IID_MARKER != 0
+}
+
+pub fn is_lan_iid(iid: u64) -> bool {
+    !is_wan_iid(iid)
+}
+
+pub fn ipv6_iid(ip: Ipv6Addr) -> u64 {
+    u128::from(ip) as u64
+}
 
 pub fn allocate_subnet(
     pd_ip: Ipv6Addr,
@@ -104,8 +126,26 @@ pub fn extract_ipv6_suffix(ip: Ipv6Addr, prefix_len: u8) -> Ipv6Addr {
 mod tests {
     use super::{
         checked_allocate_subnet, checked_combine_ipv6_prefix_suffix, checked_extract_ipv6_suffix,
+        ipv6_iid, is_lan_iid, is_wan_iid, mark_wan_iid, WAN_IID_MARKER,
     };
     use std::net::Ipv6Addr;
+
+    #[test]
+    fn iid_namespace_marker_separates_wan_and_lan_ranges() {
+        assert!(is_lan_iid(WAN_IID_MARKER - 1));
+        assert!(!is_wan_iid(WAN_IID_MARKER - 1));
+
+        let marked = mark_wan_iid(0x0123_4567_89ab_cdef);
+        assert!(is_wan_iid(marked));
+        assert_eq!(marked & !WAN_IID_MARKER, 0x0123_4567_89ab_cdef);
+        assert_eq!(mark_wan_iid(0), WAN_IID_MARKER);
+    }
+
+    #[test]
+    fn ipv6_iid_returns_the_lower_64_bits() {
+        let ip: Ipv6Addr = "2001:db8::8123:4567:89ab:cdef".parse().unwrap();
+        assert_eq!(ipv6_iid(ip), 0x8123_4567_89ab_cdef);
+    }
 
     #[test]
     fn allocate_subnet_supports_128_prefixes() {

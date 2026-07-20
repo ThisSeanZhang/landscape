@@ -823,8 +823,7 @@ fn derive_wan_pd_addr(
     };
 
     let prefix_bits = u128::from(wan_prefix) & (!0u128 << 64);
-    let iid = if shared_wan_iid <= 1 { 2 } else { shared_wan_iid } as u128;
-    Some(Ipv6Addr::from(prefix_bits | iid))
+    Some(Ipv6Addr::from(prefix_bits | shared_wan_iid as u128))
 }
 
 #[cfg(test)]
@@ -843,7 +842,7 @@ mod tests {
 
     #[test]
     fn wan_pd_addresses_share_the_startup_iid() {
-        let iid = 0x1234_5678_9abc_def0;
+        let iid = 0x9234_5678_9abc_def0;
         let first = derive_wan_pd_addr(&prefix("2001:db8:1000::", 56), iid).unwrap();
         let second = derive_wan_pd_addr(&prefix("2001:db8:2000::", 60), iid).unwrap();
 

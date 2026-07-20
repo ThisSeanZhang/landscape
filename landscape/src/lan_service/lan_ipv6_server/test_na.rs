@@ -162,6 +162,15 @@ fn offer_na_exhausts_pool() {
 }
 
 #[test]
+fn enrolled_device_binding_preserves_legacy_wan_namespace_suffix() {
+    let mut status = make_na_status();
+    let result = status.update_device_binding(NA_TEST_MAC, Some("::8000:0:0:1".parse().unwrap()));
+
+    assert!(matches!(result, DeviceBindingResult::Bound(_)));
+    assert_eq!(status.na_static_by_mac.get(&NA_TEST_MAC), Some(&0x8000_0000_0000_0001));
+}
+
+#[test]
 fn offer_na_uses_static_binding() {
     let mut status = make_status_with_prefixes();
     let mac = MacAddr::from([0x00, 0x11, 0x22, 0x33, 0x44, 0x55]);

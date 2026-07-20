@@ -14,6 +14,7 @@ import { useI18n } from "vue-i18n";
 import { useEnrolledDeviceStore } from "@/stores/enrolled_device";
 import CustomDhcpOptionEditor from "@/components/dhcp_v4/options/CustomDhcpOptionEditor.vue";
 import DHCPFilterOptionsEditor from "@/components/dhcp_v4/options/DHCPFilterOptionsEditor.vue";
+import { expand_ipv6, ipv6_iid_has_wan_marker } from "@/lib/common";
 
 const enrolledDeviceStore = useEnrolledDeviceStore();
 
@@ -51,14 +52,32 @@ const ipv4RangeStatus = ref<"success" | "error" | undefined>(undefined);
 const ipv4RangeFeedback = ref("");
 const ipv4ValidationToken = ref(0);
 const enterToken = ref(0);
+const originalIpv6 = ref<string | undefined>(undefined);
 
 function isValidMac(value: string) {
   return /^([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})$/.test(value);
 }
 
-function isValidIpv6Suffix(value?: string) {
+function isIpv6HostSuffix(value?: string) {
   if (!value) return true;
-  return /^::[\da-fA-F]{1,4}(::?[\da-fA-F]{1,4})*$/.test(value);
+  const trimmed = value.trim();
+  if (!trimmed.startsWith("::") || trimmed.includes("%")) return false;
+  const expanded = expand_ipv6(trimmed);
+  if (!expanded) return false;
+  const parts = expanded.split(":");
+  return (
+    parts.slice(0, 4).every((part) => part === "0000") &&
+    parts.slice(4).some((part) => part !== "0000")
+  );
+}
+
+function isValidIpv6Suffix(value?: string) {
+  return !value || (isIpv6HostSuffix(value) && !ipv6_iid_has_wan_marker(value));
+}
+
+function isOriginalIpv6(value?: string) {
+  if (!value || !originalIpv6.value) return false;
+  return expand_ipv6(value) === expand_ipv6(originalIpv6.value);
 }
 
 function generateRandomIpv6Suffix() {
@@ -66,7 +85,8 @@ function generateRandomIpv6Suffix() {
   for (let g = 0; g < 4; g++) {
     if (g > 0) suffix += ":";
     for (let i = 0; i < 4; i++) {
-      suffix += Math.floor(Math.random() * 16).toString(16);
+      const radixLimit = g === 0 && i === 0 ? 8 : 16;
+      suffix += Math.floor(Math.random() * radixLimit).toString(16);
     }
   }
   rule.value.ipv6 = suffix;
@@ -116,7 +136,7 @@ const hasBasicValidity = computed(() => {
     !!rule.value.mac &&
     isValidMac(rule.value.mac) &&
     (!rule.value.ipv4 || isIP(rule.value.ipv4)) &&
-    isValidIpv6Suffix(rule.value.ipv6)
+    (isValidIpv6Suffix(rule.value.ipv6) || isOriginalIpv6(rule.value.ipv6))
   );
 });
 
@@ -179,6 +199,7 @@ function exit() {
   ipv4ValidationToken.value += 1;
   commit_spin.value = false;
   origin_rule_json.value = "";
+  originalIpv6.value = undefined;
   ifaceOptions.value = [];
   rule.value = {
     name: "",
@@ -212,6 +233,7 @@ async function enter() {
 
     if (fetched) {
       rule.value = fetched;
+      originalIpv6.value = fetched.ipv6;
     } else {
       if (props.rule_id) {
         message.error(t("enrolled_device.load_failed"));
@@ -232,6 +254,7 @@ async function enter() {
         ipv6: undefined,
         iface_name: props.initialValues?.iface_name ?? undefined,
       };
+      originalIpv6.value = undefined;
     }
   } catch (e) {
     if (token !== enterToken.value || !show.value) return;
@@ -330,8 +353,10 @@ const rules = {
     trigger: ["input", "blur"],
     validator(_: unknown, value: string) {
       if (!value) return true;
-      if (!isValidIpv6Suffix(value))
-        return new Error("请输入有效的 IPv6 后缀 (如 ::100)");
+      if (!isIpv6HostSuffix(value))
+        return new Error(t("enrolled_device.ipv6_invalid"));
+      if (ipv6_iid_has_wan_marker(value) && !isOriginalIpv6(value))
+        return new Error(t("enrolled_device.ipv6_wan_iid_reserved"));
       return true;
     },
   },

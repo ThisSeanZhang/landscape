@@ -31,6 +31,9 @@ export default {
   ipv6: "IPv6 后缀",
   ipv6_placeholder: "可选: ::100",
   ipv6_random: "随机生成",
+  ipv6_invalid: "请输入有效的 /64 IPv6 主机后缀，例如 ::100",
+  ipv6_wan_iid_reserved:
+    "IID 最高位保留给 WAN 地址，请使用小于 ::8000:0:0:0 的后缀",
 
   tag: "标签",
   remark: "备注",

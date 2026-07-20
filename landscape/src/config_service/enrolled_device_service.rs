@@ -1,5 +1,6 @@
 use landscape_common::config_service::enrolled_device::EnrolledDevice;
 use landscape_common::event::hub::{EnrolledDeviceEvent, EnrolledDeviceEventSender};
+use landscape_common::lan_service::lan_ipv6::{ipv6_iid, is_lan_iid};
 use landscape_database::enrolled_device::repository::EnrolledDeviceRepository;
 use landscape_database::provider::LandscapeDBServiceProvider;
 use landscape_database::repository::Repository;
@@ -136,21 +137,15 @@ impl EnrolledDeviceService {
             }
         }
 
+        let old = self.store.find_by_id(data.id).await.map_err(|e| e.to_string())?;
+
         // Validate IPv6 is not already assigned to another MAC
         if let Some(ipv6) = &data.ipv6 {
-            // Check if IPv6 is the reserved unspecified address (::)
-            if ipv6.is_unspecified() {
-                return Err(
-                    "IPv6 address :: is reserved and cannot be used for static binding".to_string()
-                );
-            }
-
-            // Static IPv6 must be a /64 host suffix only — upper 64 bits must be zero
-            if u128::from(*ipv6) >> 64 != 0 {
-                return Err(
-                    "Static IPv6 must be a /64 host suffix (e.g. ::100) — prefix must be omitted"
-                        .to_string(),
-                );
+            if should_validate_static_ipv6_suffix(
+                old.as_ref().and_then(|device| device.ipv6),
+                *ipv6,
+            ) {
+                validate_static_ipv6_suffix(*ipv6)?;
             }
 
             if let Some(existing) =
@@ -166,7 +161,6 @@ impl EnrolledDeviceService {
         }
 
         let id = data.id;
-        let old = self.store.find_by_id(id).await.map_err(|e| e.to_string())?;
         self.store.set_or_update_model(id, data.clone()).await.map_err(|e| e.to_string())?;
         let _ = self.device_sender.send(EnrolledDeviceEvent::Updated { old, new: data }).await;
         Ok(())
@@ -204,5 +198,68 @@ impl EnrolledDeviceService {
             .find_out_of_range_bindings(iface_name, server_ip, mask)
             .await
             .map_err(|e| e.to_string())
+    }
+}
+
+fn should_validate_static_ipv6_suffix(
+    old_ipv6: Option<std::net::Ipv6Addr>,
+    new_ipv6: std::net::Ipv6Addr,
+) -> bool {
+    old_ipv6 != Some(new_ipv6)
+}
+
+fn validate_static_ipv6_suffix(ipv6: std::net::Ipv6Addr) -> Result<(), String> {
+    if ipv6.is_unspecified() {
+        return Err("IPv6 address :: is reserved and cannot be used for static binding".to_string());
+    }
+
+    if u128::from(ipv6) >> 64 != 0 {
+        return Err("Static IPv6 must be a /64 host suffix (e.g. ::100) — prefix must be omitted"
+            .to_string());
+    }
+
+    if !is_lan_iid(ipv6_iid(ipv6)) {
+        return Err(
+            "Static IPv6 host suffix must keep IID bit 63 clear (e.g. ::7fff:ffff:ffff:ffff)"
+                .to_string(),
+        );
+    }
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{should_validate_static_ipv6_suffix, validate_static_ipv6_suffix};
+
+    #[test]
+    fn static_ipv6_suffix_accepts_the_top_of_the_lan_namespace() {
+        let suffix = "::7fff:ffff:ffff:ffff".parse().unwrap();
+        assert!(validate_static_ipv6_suffix(suffix).is_ok());
+    }
+
+    #[test]
+    fn static_ipv6_suffix_rejects_the_wan_namespace() {
+        let suffix = "::8000:0:0:0".parse().unwrap();
+        assert!(validate_static_ipv6_suffix(suffix).is_err());
+    }
+
+    #[test]
+    fn static_ipv6_suffix_still_rejects_a_full_address() {
+        let address = "2001:db8::100".parse().unwrap();
+        assert!(validate_static_ipv6_suffix(address).is_err());
+    }
+
+    #[test]
+    fn unchanged_legacy_suffix_does_not_require_new_value_validation() {
+        let suffix = "::8000:0:0:1".parse().unwrap();
+        assert!(!should_validate_static_ipv6_suffix(Some(suffix), suffix));
+    }
+
+    #[test]
+    fn newly_added_or_changed_suffix_requires_validation() {
+        let suffix = "::8000:0:0:1".parse().unwrap();
+        assert!(should_validate_static_ipv6_suffix(None, suffix));
+        assert!(should_validate_static_ipv6_suffix(Some("::100".parse().unwrap()), suffix));
     }
 }

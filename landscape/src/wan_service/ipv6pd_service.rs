@@ -4,6 +4,7 @@ use std::net::Ipv6Addr;
 use std::sync::Arc;
 
 use landscape_common::event::hub::{IAPrefixEventSender, IfaceEventReader};
+use landscape_common::lan_service::lan_ipv6::mark_wan_iid;
 use landscape_common::service::manager::ServiceStarterTrait;
 use landscape_common::sys_service::route_service::RouteTargetInfo;
 use landscape_common::wan_service::ipv6_pd::IAPrefixMap;
@@ -24,7 +25,7 @@ use crate::get_iface_by_name;
 use crate::sys_service::route::IpRouteService;
 
 pub fn generate_wan_iid() -> u64 {
-    rand::random::<u64>().max(2)
+    mark_wan_iid(rand::random::<u64>())
 }
 
 #[derive(Clone)]
@@ -163,5 +164,16 @@ impl DHCPv6ClientManagerService {
 
     pub fn get_ipv6_prefix_infos(&self) -> HashMap<String, Option<LDIAPrefix>> {
         self.prefix_map.get_info()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::generate_wan_iid;
+    use landscape_common::lan_service::lan_ipv6::is_wan_iid;
+
+    #[test]
+    fn generated_wan_iid_uses_the_wan_namespace() {
+        assert!(is_wan_iid(generate_wan_iid()));
     }
 }

@@ -54,6 +54,41 @@ export function is_ipv6(value: string): boolean {
   return /^(?:[a-fA-F0-9]{1,4}:){2,7}[a-fA-F0-9]{1,4}$|::/.test(value);
 }
 
+export function expand_ipv6(value: string): string | null {
+  const normalized = value.trim().toLowerCase().split("%")[0];
+  if (!normalized || !normalized.includes(":")) return null;
+  if (!/^[0-9a-f:]+$/.test(normalized)) return null;
+
+  const segments = normalized.split("::");
+  if (segments.length > 2) return null;
+
+  const hasCompression = segments.length === 2;
+  const head = segments[0] ? segments[0].split(":") : [];
+  const tail = hasCompression && segments[1] ? segments[1].split(":") : [];
+  const isValidHextet = (part: string) => /^[0-9a-f]{1,4}$/.test(part);
+  if (!head.every(isValidHextet) || !tail.every(isValidHextet)) return null;
+
+  const missingCount = 8 - head.length - tail.length;
+  if (hasCompression) {
+    if (missingCount < 1) return null;
+  } else if (missingCount !== 0) {
+    return null;
+  }
+
+  const full = hasCompression
+    ? [...head, ...Array.from({ length: missingCount }, () => "0"), ...tail]
+    : head;
+  if (full.length !== 8) return null;
+  return full.map((part) => part.padStart(4, "0")).join(":");
+}
+
+export function ipv6_iid_has_wan_marker(value: string): boolean {
+  const expanded = expand_ipv6(value);
+  if (!expanded) return false;
+  const firstIidHextet = Number.parseInt(expanded.split(":")[4], 16);
+  return (firstIidHextet & 0x8000) !== 0;
+}
+
 /**
  * 检测是否为 MAC 地址
  */
