@@ -13,8 +13,9 @@ struct static_nat6_mapping_key {
 };
 
 struct static_nat6_mapping_value {
+    // LAN client prefix (upper 64 bits)
+    // or [0;8] for router-local targets
     u8 lan_prefix[8];
-    u8 _pad[8];
 };
 
 struct {
