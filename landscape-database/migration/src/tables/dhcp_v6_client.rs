@@ -7,5 +7,6 @@ pub enum DHCPv6ClientConfigs {
     IfaceName,
     Enable,
     Mac,
+    ExpectedPdLen,
     UpdateAt,
 }

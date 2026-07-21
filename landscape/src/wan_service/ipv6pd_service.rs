@@ -8,6 +8,7 @@ use landscape_common::lan_service::lan_ipv6::mark_wan_iid;
 use landscape_common::service::manager::ServiceStarterTrait;
 use landscape_common::sys_service::route_service::RouteTargetInfo;
 use landscape_common::wan_service::ipv6_pd::IAPrefixMap;
+use landscape_common::wan_service::ipv6_pd::IPV6PDPrefixStatus;
 use landscape_common::wan_service::ipv6_pd::LDIAPrefix;
 
 use landscape_common::database::LandscapeStore;
@@ -63,6 +64,7 @@ impl ServiceStarterTrait for IPV6PDService {
             let prefix_map = self.prefix_map.clone();
             let shared_wan_iid = self.shared_wan_iid.clone();
             let prefix_sender = self.prefix_sender.clone();
+            let expected_pd_len = config.config.expected_pd_len;
             if let Some(iface) = get_iface_by_name(&config.iface_name).await {
                 let route_info = RouteTargetInfo {
                     ifindex: iface.index,
@@ -81,6 +83,7 @@ impl ServiceStarterTrait for IPV6PDService {
                         iface.index,
                         iface.mac,
                         config.config.mac,
+                        expected_pd_len,
                         LANDSCAPE_DEFAULE_DHCP_V6_CLIENT_PORT,
                         status_clone,
                         route_info,
@@ -164,6 +167,10 @@ impl DHCPv6ClientManagerService {
 
     pub fn get_ipv6_prefix_infos(&self) -> HashMap<String, Option<LDIAPrefix>> {
         self.prefix_map.get_info()
+    }
+
+    pub fn get_ipv6_prefix_statuses(&self) -> HashMap<String, IPV6PDPrefixStatus> {
+        self.prefix_map.get_prefix_statuses()
     }
 }
 

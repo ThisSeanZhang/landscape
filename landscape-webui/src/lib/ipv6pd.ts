@@ -7,7 +7,7 @@ export class IPV6PDServiceConfig {
   constructor(obj: {
     iface_name: string;
     enable?: boolean;
-    config?: IPV6PDConfig;
+    config?: { mac?: string; expected_pd_len?: number };
     update_at?: number;
   }) {
     this.iface_name = obj?.iface_name ?? "";
@@ -19,8 +19,10 @@ export class IPV6PDServiceConfig {
 
 export class IPV6PDConfig {
   mac: string;
+  expected_pd_len: number;
 
-  constructor(obj?: { mac?: string }) {
+  constructor(obj?: { mac?: string; expected_pd_len?: number }) {
     this.mac = obj?.mac ?? "";
+    this.expected_pd_len = obj?.expected_pd_len ?? 60;
   }
 }

@@ -4,6 +4,7 @@ use axum::extract::{Path, State};
 use landscape_common::api_response::LandscapeApiResp as CommonApiResp;
 use landscape_common::service::controller::ControllerService;
 use landscape_common::service::{ServiceStatus, WatchService};
+use landscape_common::wan_service::ipv6_pd::IPV6PDPrefixStatus;
 use landscape_common::wan_service::ipv6_pd::IPV6PDServiceConfig;
 use landscape_common::wan_service::ipv6_pd::LDIAPrefix;
 use utoipa_axum::router::OpenApiRouter;
@@ -19,8 +20,22 @@ pub fn get_iface_pdclient_paths() -> OpenApiRouter<LandscapeApp> {
     OpenApiRouter::new()
         .routes(routes!(get_all_status))
         .routes(routes!(get_current_ip_prefix_info))
+        .routes(routes!(get_all_prefix_status))
         .routes(routes!(handle_iface_pd))
         .routes(routes!(get_iface_pd_config, delete_and_stop_iface_service))
+}
+
+#[utoipa::path(
+    get,
+    path = "/ipv6pd/prefix-status",
+    tag = "IPv6 PD",
+    operation_id = "get_all_ipv6pd_prefix_status",
+    responses((status = 200, body = CommonApiResp<HashMap<String, IPV6PDPrefixStatus>>))
+)]
+async fn get_all_prefix_status(
+    State(state): State<LandscapeApp>,
+) -> LandscapeApiResult<HashMap<String, IPV6PDPrefixStatus>> {
+    LandscapeApiResp::success(state.ipv6_pd_service.get_ipv6_prefix_statuses())
 }
 
 #[utoipa::path(
@@ -81,6 +96,7 @@ async fn handle_iface_pd(
     JsonBody(config): JsonBody<IPV6PDServiceConfig>,
 ) -> LandscapeApiResult<()> {
     state.validate_zone(&config).await?;
+    config.config.validate()?;
     state.ipv6_pd_service.handle_service_config(config).await?;
     LandscapeApiResp::success(())
 }

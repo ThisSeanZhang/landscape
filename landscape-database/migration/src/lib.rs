@@ -47,6 +47,7 @@ mod m20260503_213507_static_nat_lan_target;
 mod m20260504_000000_flow_device_match;
 mod m20260620_000000_split_static_nat_v4_v6;
 mod m20260625_000000_enrolled_device_hostname;
+mod m20260721_000000_wan_pd_expected_len;
 mod tables;
 
 pub struct Migrator;
@@ -102,6 +103,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260504_000000_flow_device_match::Migration),
             Box::new(m20260620_000000_split_static_nat_v4_v6::Migration),
             Box::new(m20260625_000000_enrolled_device_hostname::Migration),
+            Box::new(m20260721_000000_wan_pd_expected_len::Migration),
         ]
     }
 }

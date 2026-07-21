@@ -60,6 +60,7 @@ async fn main() {
             iface.index,
             iface.mac,
             mac_addr,
+            60,
             LANDSCAPE_DEFAULE_DHCP_V6_CLIENT_PORT,
             status,
             route_info,

@@ -1,7 +1,7 @@
 <script lang="ts" setup>
-import { get_current_ip_prefix_info } from "@/api/service_ipv6pd";
-import type { LDIAPrefix } from "@/api/service_ipv6pd";
-import { computed, onMounted, ref } from "vue";
+import { get_all_ipv6pd_prefix_status } from "@/api/service_ipv6pd";
+import type { IPV6PDPrefixStatus } from "@/api/service_ipv6pd";
+import { onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 const { t } = useI18n();
 
@@ -10,11 +10,11 @@ onMounted(async () => {
 });
 
 const loading = ref(false);
-const infos = ref<{ label: string; value: LDIAPrefix | null }[]>([]);
+const infos = ref<{ label: string; value: IPV6PDPrefixStatus }[]>([]);
 async function get_info() {
   try {
     loading.value = true;
-    let req_data = await get_current_ip_prefix_info();
+    let req_data = await get_all_ipv6pd_prefix_status();
     const result = [];
     for (const [label, value] of req_data) {
       result.push({
@@ -40,7 +40,10 @@ async function get_info() {
     <n-flex v-if="infos.length > 0">
       <n-grid x-gap="12" y-gap="10" cols="1 600:2 1200:3 1600:3">
         <n-grid-item v-for="(data, index) in infos" :key="index">
-          <IAPrefixInfoCard :config="data.value" :iface_name="data.label" />
+          <IAPrefixInfoCard
+            :prefix_status="data.value"
+            :iface_name="data.label"
+          />
         </n-grid-item>
       </n-grid>
     </n-flex>

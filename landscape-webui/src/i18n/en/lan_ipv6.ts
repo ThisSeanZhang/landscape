@@ -248,6 +248,11 @@ export default {
     ip_valid_time_desc:
       "Time from obtaining to discarding this IP, including preferred time",
     prefix: "Prefix",
+    expected_prefix_len: "Expected Prefix Length",
+    prefix_len_status: "Prefix Length Status",
+    prefix_len_matches: "Meets Expectation",
+    prefix_len_mismatch: "Does Not Meet Expectation",
+    prefix_len_waiting: "Waiting for Upstream Prefix",
     last_update: "Last Update",
     dhcpv6_client_prefix_time: "Time when DHCPv6 Client obtained the prefix",
     no_prefix_yet: "IPv6 PD has not obtained a prefix yet",
@@ -257,6 +262,9 @@ export default {
   ipv6_pd_config: "IPv6-PD Client Config",
   mac_required: "MAC address cannot be empty",
   mac_hint: "MAC address used for request (virtual on PPP interfaces)",
+  expected_pd_len: "Expected Upstream PD Prefix Length",
+  expected_pd_len_invalid:
+    "Expected upstream PD prefix length must be an integer from 56 to 64",
 
   // ICMPRaShowItem
   neighbor_count_unknown: "IPv6 neighbor count unknown",

@@ -56,6 +56,12 @@ async function save_config() {
     service_config.value.config.mac === undefined
   ) {
     message.warning(t("lan_ipv6.mac_required"));
+  } else if (
+    !Number.isInteger(service_config.value.config.expected_pd_len) ||
+    service_config.value.config.expected_pd_len < 56 ||
+    service_config.value.config.expected_pd_len > 64
+  ) {
+    message.warning(t("lan_ipv6.expected_pd_len_invalid"));
   } else {
     let config = await update_ipv6pd_config(service_config.value);
     await ipv6PDStore.UPDATE_INFO();
@@ -81,6 +87,16 @@ async function save_config() {
             (v: string) => (service_config.config.mac = formatMacAddress(v))
           "
         ></n-input>
+      </n-form-item>
+      <n-form-item :label="t('lan_ipv6.expected_pd_len')">
+        <n-input-number
+          v-model:value="service_config.config.expected_pd_len"
+          style="flex: 1"
+          :min="56"
+          :max="64"
+          :step="1"
+          :precision="0"
+        />
       </n-form-item>
     </n-form>
 

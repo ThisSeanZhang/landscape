@@ -234,6 +234,11 @@ export default {
     ip_valid_time: "IP 有效时间",
     ip_valid_time_desc: "从获得到丢弃该 IP 的时间, 包含首选时间",
     prefix: "前缀",
+    expected_prefix_len: "预期前缀长度",
+    prefix_len_status: "前缀长度状态",
+    prefix_len_matches: "符合预期",
+    prefix_len_mismatch: "不符合预期",
+    prefix_len_waiting: "等待上游前缀",
     last_update: "最近更新时间",
     dhcpv6_client_prefix_time: "DHCPv6 Client 得到前缀的时间",
     no_prefix_yet: "IPv6 PD 还未获得前缀",
@@ -243,6 +248,8 @@ export default {
   ipv6_pd_config: "IPv6-PD 客户端配置",
   mac_required: "MAC 地址不能为空",
   mac_hint: "申请使用的 mac 地址 (PPP网卡上是生成虚拟的)",
+  expected_pd_len: "预期上游 PD 前缀长度",
+  expected_pd_len_invalid: "预期上游 PD 前缀长度必须是 56 到 64 的整数",
 
   // ICMPRaShowItem
   neighbor_count_unknown: "IPv6 邻居数量未知",

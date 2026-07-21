@@ -3,7 +3,7 @@ import { computed } from "vue";
 import { useI18n } from "vue-i18n";
 
 import { HelpFilled } from "@vicons/carbon";
-import type { LDIAPrefix } from "@/api/service_ipv6pd";
+import type { IPV6PDPrefixStatus } from "@/api/service_ipv6pd";
 import { useFrontEndStore } from "@/stores/front_end_config";
 import { usePreferenceStore } from "@/stores/preference";
 const prefStore = usePreferenceStore();
@@ -12,7 +12,7 @@ const { t } = useI18n();
 const frontEndStore = useFrontEndStore();
 
 interface Props {
-  config: LDIAPrefix | null;
+  prefix_status: IPV6PDPrefixStatus;
   iface_name: string;
   show_action?: boolean;
 }
@@ -26,10 +26,12 @@ const emit = defineEmits(["refresh"]);
 async function refresh() {
   emit("refresh");
 }
+const actualPrefix = computed(() => props.prefix_status.actual_prefix);
 const status = computed(() => {
-  if (props.config) {
+  if (actualPrefix.value) {
     if (
-      props.config.last_update_time + props.config.valid_lifetime * 1000 >
+      actualPrefix.value.last_update_time +
+        actualPrefix.value.valid_lifetime * 1000 >
       new Date().getTime()
     ) {
       return true;
@@ -50,15 +52,42 @@ const status = computed(() => {
     <template #header>
       <StatusTitle :enable="status" :remark="props.iface_name"></StatusTitle>
     </template>
-    <!-- {{ config }} -->
-    <n-descriptions
-      v-if="config"
-      style="flex: 1"
-      bordered
-      label-placement="top"
-      :column="3"
-    >
-      <n-descriptions-item>
+    <n-descriptions style="flex: 1" bordered label-placement="top" :column="3">
+      <n-descriptions-item
+        :label="t('lan_ipv6.prefix_info.expected_prefix_len')"
+      >
+        /{{ prefix_status.expected_pd_len }}
+      </n-descriptions-item>
+      <n-descriptions-item :label="t('lan_ipv6.prefix_info.prefix')">
+        <template v-if="actualPrefix">
+          {{ frontEndStore.MASK_INFO(actualPrefix.prefix_ip) }}/{{
+            actualPrefix.prefix_len
+          }}
+        </template>
+        <n-text v-else depth="3">
+          {{ t("lan_ipv6.prefix_info.no_prefix_yet") }}
+        </n-text>
+      </n-descriptions-item>
+      <n-descriptions-item :label="t('lan_ipv6.prefix_info.prefix_len_status')">
+        <n-tag
+          v-if="prefix_status.meets_expected_pd_len === true"
+          :bordered="false"
+          type="success"
+        >
+          {{ t("lan_ipv6.prefix_info.prefix_len_matches") }}
+        </n-tag>
+        <n-tag
+          v-else-if="prefix_status.meets_expected_pd_len === false"
+          :bordered="false"
+          type="warning"
+        >
+          {{ t("lan_ipv6.prefix_info.prefix_len_mismatch") }}
+        </n-tag>
+        <n-tag v-else :bordered="false">
+          {{ t("lan_ipv6.prefix_info.prefix_len_waiting") }}
+        </n-tag>
+      </n-descriptions-item>
+      <n-descriptions-item v-if="actualPrefix">
         <template #label>
           <n-flex align="center">
             <span> {{ t("lan_ipv6.prefix_info.ip_preferred_time") }} </span>
@@ -76,9 +105,9 @@ const status = computed(() => {
             </n-popover>
           </n-flex>
         </template>
-        {{ config.preferred_lifetime }}s
+        {{ actualPrefix.preferred_lifetime }}s
       </n-descriptions-item>
-      <n-descriptions-item>
+      <n-descriptions-item v-if="actualPrefix">
         <template #label>
           <n-flex align="center">
             <span> {{ t("lan_ipv6.prefix_info.ip_valid_time") }} </span>
@@ -94,12 +123,9 @@ const status = computed(() => {
             </n-popover>
           </n-flex>
         </template>
-        {{ config.valid_lifetime }}s
+        {{ actualPrefix.valid_lifetime }}s
       </n-descriptions-item>
-      <n-descriptions-item :label="t('lan_ipv6.prefix_info.prefix')">
-        {{ frontEndStore.MASK_INFO(config.prefix_ip) }}/{{ config.prefix_len }}
-      </n-descriptions-item>
-      <n-descriptions-item :span="3">
+      <n-descriptions-item v-if="actualPrefix">
         <template #label>
           <n-flex align="center">
             <span>{{ t("lan_ipv6.prefix_info.last_update") }}</span>
@@ -118,20 +144,11 @@ const status = computed(() => {
           </n-flex>
         </template>
         <n-time
-          :time="config.last_update_time"
+          :time="actualPrefix.last_update_time"
           format="yyyy-MM-dd hh:mm:ss"
           :time-zone="prefStore.timezone"
         />
       </n-descriptions-item>
     </n-descriptions>
-    <n-flex
-      align="center"
-      justify="center"
-      style="height: 190px; flex: 1"
-      v-else
-    >
-      <n-empty :description="t('lan_ipv6.prefix_info.no_prefix_yet')">
-      </n-empty>
-    </n-flex>
   </n-card>
 </template>

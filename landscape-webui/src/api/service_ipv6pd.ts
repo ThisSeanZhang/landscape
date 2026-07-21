@@ -6,8 +6,12 @@ import {
   handleIfacePd,
   deleteAndStopIpv6pdService,
   getCurrentIpPrefixInfo,
+  getAllIpv6pdPrefixStatus,
 } from "@landscape-router/types/api/ipv6-pd/ipv6-pd";
-import type { LDIAPrefix } from "@landscape-router/types/api/schemas";
+import type {
+  IPV6PDPrefixStatus,
+  LDIAPrefix,
+} from "@landscape-router/types/api/schemas";
 
 // LDIAPrefix is now directly imported from generated types
 
@@ -40,6 +44,17 @@ export async function get_current_ip_prefix_info(): Promise<
   return map;
 }
 
+export async function get_all_ipv6pd_prefix_status(): Promise<
+  Map<string, IPV6PDPrefixStatus>
+> {
+  const data = await getAllIpv6pdPrefixStatus();
+  const map = new Map<string, IPV6PDPrefixStatus>();
+  for (const [key, value] of Object.entries(data)) {
+    map.set(key, value as IPV6PDPrefixStatus);
+  }
+  return map;
+}
+
 export async function update_ipv6pd_config(
   ipv6pd_config: IPV6PDServiceConfig,
 ): Promise<void> {
@@ -50,4 +65,4 @@ export async function stop_and_del_iface_ipv6pd(name: string): Promise<void> {
   await deleteAndStopIpv6pdService(name);
 }
 
-export type { LDIAPrefix };
+export type { IPV6PDPrefixStatus, LDIAPrefix };

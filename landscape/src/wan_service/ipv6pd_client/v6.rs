@@ -193,6 +193,7 @@ pub async fn dhcp_v6_pd_client(
     mac_addr: Option<MacAddr>,
     // for pd request
     config_mac: MacAddr,
+    expected_pd_len: u8,
     client_port: u16,
     service_status: WatchService,
     wan_route_info: RouteTargetInfo,
@@ -344,6 +345,7 @@ pub async fn dhcp_v6_pd_client(
                             shared_wan_iid.as_ref(),
                             &mut current_wan_addr,
                             &prefix_sender,
+                            expected_pd_len,
                         )
                         .await;
                         if matches!(status, IpV6PdState::Bound { .. }) {
@@ -598,6 +600,7 @@ async fn handle_packet(
     shared_wan_iid: &u64,
     current_wan_addr: &mut Option<Ipv6Addr>,
     prefix_sender: &IAPrefixEventSender,
+    expected_pd_len: u8,
 ) -> bool {
     let IpAddr::V6(ipv6addr) = msg_addr.ip() else {
         tracing::error!("unexpected IPV4 packet");
@@ -752,7 +755,7 @@ async fn handle_packet(
                             info.gateway_ip = IpAddr::V6(ipv6addr);
                             route_service.insert_ipv6_wan_route(&iface_name, info).await;
                             replace_ip_route(&ia_prefix, ipv6addr, iface_name, ifindex, mac_addr);
-                            prefix_map.store(iface_name, ia_prefix);
+                            prefix_map.store(iface_name, ia_prefix, expected_pd_len);
                             let _ = prefix_sender
                                 .send(IAPrefixEvent::Updated { iface_name: iface_name.to_string() })
                                 .await;
