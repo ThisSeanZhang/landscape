@@ -156,13 +156,26 @@ export default {
   planner_actual_prefix: "Live parent prefix:",
   planner_static_prefix: "Static parent prefix:",
   planner_preview_prefix_len: "Assumed parent prefix length:",
+  planner_snapshot_prefix_len: "WAN expectation snapshot:",
+  planner_warning_wan_prefix_mismatch:
+    "The prefix acquired by this WAN PD interface does not meet its expected prefix length. LAN IPv6 sources based on it will remain inactive until the WAN PD issue is resolved.",
+  snapshot_status_insufficient: "Needs attention",
+  snapshot_status_unavailable: "Unavailable",
+  snapshot_status_detail_missing:
+    "The upstream PD configuration is no longer available.",
+  snapshot_status_detail_insufficient:
+    "The upstream PD settings changed. Open this prefix group to refresh it.",
   planner_target_prefix: "Current target block:",
   planner_reason_no_parent_iface:
     "Select an interface with DHCPv6-PD enabled first.",
+  planner_reason_missing_pd_config:
+    "The referenced WAN PD configuration no longer exists. Select another upstream interface before saving.",
   planner_reason_no_static_prefix:
     "Enter the static parent prefix first, then choose a block from the canvas below.",
   planner_reason_target_shorter_than_parent:
     "The current target block /{target} is larger than the parent prefix /{parent}, so it cannot be carved from this parent.",
+  planner_reason_selection_out_of_range:
+    "The saved selection is outside the capacity of the current parent snapshot. Select a new block before saving.",
   planner_reason_filtered_parent:
     "The live upstream prefix length /{actual} is filtered out by Max Source Prefix Length, so this source would not actually delegate.",
   planner_reason_more_specific_than_64:
@@ -197,6 +210,8 @@ export default {
   planner_summary_only:
     "The current settings only support summary mode, so the interactive canvas is hidden.",
   planner_save_error_no_parent_iface: "Select an upstream PD interface first.",
+  planner_save_error_missing_pd_config:
+    "The referenced WAN PD configuration no longer exists.",
   planner_save_error_no_static_prefix: "Enter the static parent prefix first.",
   planner_save_error_wan_reserved:
     "The current selection hits the WAN-reserved block and cannot be saved.",
@@ -206,6 +221,8 @@ export default {
     "The live upstream prefix is filtered out by Max Source Prefix Length, so this source cannot be saved.",
   planner_save_error_target_shorter_than_parent:
     "The target block is larger than the parent prefix, so the current configuration is invalid.",
+  planner_save_error_selection_out_of_range:
+    "The current selection is outside the capacity of the parent snapshot.",
   planner_save_error_target_more_specific_than_64:
     "The current target block is more specific than /64 and cannot be selected from the canvas yet.",
 

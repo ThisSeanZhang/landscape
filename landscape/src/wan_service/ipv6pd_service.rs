@@ -4,7 +4,7 @@ use std::net::Ipv6Addr;
 use std::sync::Arc;
 
 use landscape_common::event::hub::{IAPrefixEventSender, IfaceEventReader};
-use landscape_common::lan_service::lan_ipv6::mark_wan_iid;
+use landscape_common::lan_service::lan_ipv6::{mark_wan_iid, PdPrefixContext, PdPrefixContextMap};
 use landscape_common::service::manager::ServiceStarterTrait;
 use landscape_common::sys_service::route_service::RouteTargetInfo;
 use landscape_common::wan_service::ipv6_pd::IAPrefixMap;
@@ -169,18 +169,118 @@ impl DHCPv6ClientManagerService {
         self.prefix_map.get_info()
     }
 
-    pub fn get_ipv6_prefix_statuses(&self) -> HashMap<String, IPV6PDPrefixStatus> {
-        self.prefix_map.get_prefix_statuses()
+    pub async fn get_ipv6_prefix_statuses(&self) -> HashMap<String, IPV6PDPrefixStatus> {
+        let runtime_statuses = self.prefix_map.get_prefix_statuses();
+        let configs = match self.store.list().await {
+            Ok(configs) => configs,
+            Err(err) => {
+                tracing::error!(?err, "failed to load IPv6 PD configs for prefix status");
+                return runtime_statuses;
+            }
+        };
+
+        merge_ipv6_prefix_statuses(configs, runtime_statuses)
     }
+
+    pub async fn get_pd_prefix_contexts(&self) -> PdPrefixContextMap {
+        self.store
+            .list()
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .map(|config| {
+                let iface_name = config.iface_name;
+                let actual_prefix = self.prefix_map.load_actual(&iface_name);
+                (
+                    iface_name,
+                    PdPrefixContext {
+                        expected_pd_len: config.config.expected_pd_len,
+                        actual_prefix,
+                    },
+                )
+            })
+            .collect()
+    }
+}
+
+fn merge_ipv6_prefix_statuses(
+    configs: Vec<IPV6PDServiceConfig>,
+    mut runtime_statuses: HashMap<String, IPV6PDPrefixStatus>,
+) -> HashMap<String, IPV6PDPrefixStatus> {
+    configs
+        .into_iter()
+        .filter(|config| config.enable)
+        .map(|config| {
+            let iface_name = config.iface_name;
+            let actual_prefix =
+                runtime_statuses.remove(&iface_name).and_then(|status| status.actual_prefix);
+            (iface_name, IPV6PDPrefixStatus::new(config.config.expected_pd_len, actual_prefix))
+        })
+        .collect()
 }
 
 #[cfg(test)]
 mod tests {
-    use super::generate_wan_iid;
+    use std::{collections::HashMap, net::Ipv6Addr};
+
+    use super::{generate_wan_iid, merge_ipv6_prefix_statuses};
     use landscape_common::lan_service::lan_ipv6::is_wan_iid;
+    use landscape_common::net::MacAddr;
+    use landscape_common::wan_service::ipv6_pd::{
+        IPV6PDConfig, IPV6PDPrefixStatus, IPV6PDServiceConfig, LDIAPrefix,
+    };
+
+    fn config(iface_name: &str, enable: bool, expected_pd_len: u8) -> IPV6PDServiceConfig {
+        IPV6PDServiceConfig {
+            iface_name: iface_name.to_string(),
+            enable,
+            config: IPV6PDConfig {
+                mac: MacAddr::from([0x02, 0, 0, 0, 0, 1]),
+                expected_pd_len,
+            },
+            update_at: 0.0,
+        }
+    }
+
+    fn prefix(prefix_len: u8) -> LDIAPrefix {
+        LDIAPrefix {
+            preferred_lifetime: 300,
+            valid_lifetime: 600,
+            prefix_len,
+            prefix_ip: Ipv6Addr::LOCALHOST,
+            last_update_time: 0.0,
+        }
+    }
 
     #[test]
     fn generated_wan_iid_uses_the_wan_namespace() {
         assert!(is_wan_iid(generate_wan_iid()));
+    }
+
+    #[test]
+    fn prefix_statuses_include_enabled_waiting_configs_and_exclude_disabled_configs() {
+        let statuses = merge_ipv6_prefix_statuses(
+            vec![config("wan0", true, 60), config("wan1", false, 56)],
+            HashMap::new(),
+        );
+
+        let waiting = statuses.get("wan0").unwrap();
+        assert_eq!(waiting.expected_pd_len, 60);
+        assert!(waiting.actual_prefix.is_none());
+        assert_eq!(waiting.meets_expected_pd_len, None);
+        assert!(!statuses.contains_key("wan1"));
+    }
+
+    #[test]
+    fn prefix_statuses_use_current_config_expectation_with_runtime_prefix() {
+        let runtime =
+            HashMap::from([("wan0".to_string(), IPV6PDPrefixStatus::new(64, Some(prefix(62))))]);
+
+        let statuses = merge_ipv6_prefix_statuses(vec![config("wan0", true, 60)], runtime);
+
+        let status = statuses.get("wan0").unwrap();
+        assert_eq!(status.expected_pd_len, 60);
+        assert_eq!(status.actual_prefix.as_ref().unwrap().prefix_len, 62);
+        assert_eq!(status.meets_expected_pd_len, Some(false));
     }
 }

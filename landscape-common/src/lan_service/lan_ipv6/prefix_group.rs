@@ -20,7 +20,8 @@ pub enum PrefixParentSource {
     },
     Pd {
         depend_iface: String,
-        planned_parent_prefix_len: u8,
+        #[serde(alias = "planned_parent_prefix_len")]
+        expected_pd_len_snapshot: u8,
     },
 }
 
@@ -59,7 +60,13 @@ pub struct LanPrefixGroupConfig {
     pub pd: Option<PdPrefixRangeConfig>,
 }
 
-type PrefixInfoMap = HashMap<String, Option<LDIAPrefix>>;
+#[derive(Debug, Clone)]
+pub struct PdPrefixContext {
+    pub expected_pd_len: u8,
+    pub actual_prefix: Option<LDIAPrefix>,
+}
+
+pub type PdPrefixContextMap = HashMap<String, PdPrefixContext>;
 
 fn normalize_ipv6_prefix(addr: Ipv6Addr, prefix_len: u8) -> Ipv6Addr {
     let value = u128::from_be_bytes(addr.octets());
@@ -76,39 +83,38 @@ fn normalize_ipv6_prefix(addr: Ipv6Addr, prefix_len: u8) -> Ipv6Addr {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ExpandedParentKey {
-    Static(Ipv6Addr, u8),
-    PdActual(Ipv6Addr, u8),
-    PdFallback(String, u8),
+    Resolved(Ipv6Addr),
+    PdFallback(String),
 }
 
 impl PrefixParentSource {
-    pub fn resolved_parent_prefix_len(&self, prefix_infos: Option<&PrefixInfoMap>) -> u8 {
+    pub fn resolved_parent_prefix_len(&self) -> u8 {
         match self {
             PrefixParentSource::Static { parent_prefix_len, .. } => *parent_prefix_len,
-            PrefixParentSource::Pd { depend_iface, planned_parent_prefix_len } => prefix_infos
-                .and_then(|infos| infos.get(depend_iface))
-                .and_then(|prefix| prefix.as_ref())
-                .map(|prefix| prefix.prefix_len)
-                .unwrap_or(*planned_parent_prefix_len),
+            PrefixParentSource::Pd { expected_pd_len_snapshot, .. } => *expected_pd_len_snapshot,
         }
     }
 
-    pub fn expanded_parent_key(&self, prefix_infos: Option<&PrefixInfoMap>) -> ExpandedParentKey {
+    pub fn expanded_parent_key(
+        &self,
+        pd_contexts: Option<&PdPrefixContextMap>,
+    ) -> ExpandedParentKey {
         match self {
             PrefixParentSource::Static { base_prefix, parent_prefix_len } => {
-                ExpandedParentKey::Static(*base_prefix, *parent_prefix_len)
+                ExpandedParentKey::Resolved(normalize_ipv6_prefix(*base_prefix, *parent_prefix_len))
             }
-            PrefixParentSource::Pd { depend_iface, planned_parent_prefix_len } => {
-                if let Some(prefix) = prefix_infos
-                    .and_then(|infos| infos.get(depend_iface))
-                    .and_then(|prefix| prefix.as_ref())
+            PrefixParentSource::Pd { depend_iface, expected_pd_len_snapshot } => {
+                if let Some(prefix) = pd_contexts
+                    .and_then(|contexts| contexts.get(depend_iface))
+                    .and_then(|context| context.actual_prefix.as_ref())
                 {
-                    ExpandedParentKey::PdActual(
-                        normalize_ipv6_prefix(prefix.prefix_ip, prefix.prefix_len),
-                        prefix.prefix_len,
-                    )
+                    let actual_network = normalize_ipv6_prefix(prefix.prefix_ip, prefix.prefix_len);
+                    ExpandedParentKey::Resolved(normalize_ipv6_prefix(
+                        actual_network,
+                        *expected_pd_len_snapshot,
+                    ))
                 } else {
-                    ExpandedParentKey::PdFallback(depend_iface.clone(), *planned_parent_prefix_len)
+                    ExpandedParentKey::PdFallback(depend_iface.clone())
                 }
             }
         }
@@ -137,10 +143,6 @@ pub fn blocks_overlap(
     start_a < end_b && start_b < end_a
 }
 
-fn range_blocks_overlap(start_a: u64, end_a: u64, start_b: u64, end_b: u64) -> bool {
-    start_a <= end_b && start_b <= end_a
-}
-
 #[derive(Debug, Clone)]
 pub struct ExpandedPrefixEntry {
     pub parent: ExpandedParentKey,
@@ -152,25 +154,42 @@ pub struct ExpandedPrefixEntry {
 }
 
 impl ExpandedPrefixEntry {
-    pub fn is_dynamic(&self) -> bool {
-        matches!(self.parent, ExpandedParentKey::PdActual(..) | ExpandedParentKey::PdFallback(..))
+    fn parents_are_comparable(&self, other: &Self) -> bool {
+        match (&self.parent, &other.parent) {
+            (ExpandedParentKey::Resolved(_), ExpandedParentKey::Resolved(_)) => true,
+            (ExpandedParentKey::PdFallback(left), ExpandedParentKey::PdFallback(right)) => {
+                left == right
+            }
+            _ => false,
+        }
     }
 
-    pub fn effective_index_range(&self, _is_dynamic: bool) -> (u64, u64) {
-        let start = self.start_index as u64;
-        let end = self.end_index as u64;
-        (start, end)
+    fn address_interval(&self) -> Option<(u128, u128)> {
+        if self.pool_len == 0 || self.pool_len > 128 || self.pool_len < self.parent_prefix_len {
+            return None;
+        }
+
+        let parent = match self.parent {
+            ExpandedParentKey::Resolved(network) => u128::from(network),
+            ExpandedParentKey::PdFallback(_) => 0,
+        };
+        let shift = 128 - self.pool_len as u32;
+        let block_size = 1u128.checked_shl(shift)?;
+        let start = parent.checked_add((self.start_index as u128).checked_mul(block_size)?)?;
+        let last_start = parent.checked_add((self.end_index as u128).checked_mul(block_size)?)?;
+        let host_mask = block_size - 1;
+        Some((start, last_start | host_mask))
     }
 }
 
 impl LanPrefixGroupConfig {
     pub fn validate(&self) -> Result<(), ServiceConfigError> {
-        self.validate_with_prefix_infos(None)
+        self.validate_with_pd_context(None)
     }
 
-    pub fn validate_with_prefix_infos(
+    pub fn validate_with_pd_context(
         &self,
-        prefix_infos: Option<&PrefixInfoMap>,
+        pd_contexts: Option<&PdPrefixContextMap>,
     ) -> Result<(), ServiceConfigError> {
         if self.group_id.trim().is_empty() {
             return Err(ServiceConfigError::InvalidConfig {
@@ -189,12 +208,28 @@ impl LanPrefixGroupConfig {
                     });
                 }
             }
-            PrefixParentSource::Pd { planned_parent_prefix_len, .. } => {
-                if *planned_parent_prefix_len == 0 || *planned_parent_prefix_len > 127 {
+            PrefixParentSource::Pd { depend_iface, expected_pd_len_snapshot } => {
+                if depend_iface.trim().is_empty() {
+                    return Err(ServiceConfigError::InvalidConfig {
+                        reason: "PD parent interface must not be empty".to_string(),
+                    });
+                }
+                if *expected_pd_len_snapshot == 0 || *expected_pd_len_snapshot > 127 {
                     return Err(ServiceConfigError::InvalidConfig {
                         reason: format!(
-                            "PD planned_parent_prefix_len ({}) must be between 1 and 127",
-                            planned_parent_prefix_len
+                            "PD expected_pd_len_snapshot ({}) must be between 1 and 127",
+                            expected_pd_len_snapshot
+                        ),
+                    });
+                }
+                // A WAN-expectation/snapshot mismatch is an availability state, not an
+                // invalid LAN configuration. Keep the configuration saveable so either
+                // side can be changed later; runtime subnet activation applies that gate.
+                if pd_contexts.is_some_and(|contexts| !contexts.contains_key(depend_iface)) {
+                    return Err(ServiceConfigError::InvalidConfig {
+                        reason: format!(
+                            "PD parent interface '{}' has no IPv6 PD configuration",
+                            depend_iface
                         ),
                     });
                 }
@@ -217,7 +252,7 @@ impl LanPrefixGroupConfig {
             }
         }
 
-        let parent_len = self.parent.resolved_parent_prefix_len(prefix_infos);
+        let parent_len = self.parent.resolved_parent_prefix_len();
         let is_pd_parent = matches!(self.parent, PrefixParentSource::Pd { .. });
         if let Some(ra) = &self.ra {
             if is_pd_parent && ra.pool_index == 0 {
@@ -313,17 +348,17 @@ impl LanPrefixGroupConfig {
     }
 
     pub fn active_entries(&self, mode: IPv6ServiceMode) -> Vec<ExpandedPrefixEntry> {
-        self.active_entries_with_prefix_infos(mode, None)
+        self.active_entries_with_pd_context(mode, None)
     }
 
-    pub fn active_entries_with_prefix_infos(
+    pub fn active_entries_with_pd_context(
         &self,
         mode: IPv6ServiceMode,
-        prefix_infos: Option<&PrefixInfoMap>,
+        pd_contexts: Option<&PdPrefixContextMap>,
     ) -> Vec<ExpandedPrefixEntry> {
         let mut result = Vec::new();
-        let parent = self.parent.expanded_parent_key(prefix_infos);
-        let parent_prefix_len = self.parent.resolved_parent_prefix_len(prefix_infos);
+        let parent = self.parent.expanded_parent_key(pd_contexts);
+        let parent_prefix_len = self.parent.resolved_parent_prefix_len();
         let include_ra = matches!(mode, IPv6ServiceMode::Slaac | IPv6ServiceMode::SlaacDhcpv6);
         let include_na = matches!(mode, IPv6ServiceMode::Stateful | IPv6ServiceMode::SlaacDhcpv6);
         let include_pd = matches!(mode, IPv6ServiceMode::Stateful | IPv6ServiceMode::SlaacDhcpv6);
@@ -369,28 +404,23 @@ impl LanPrefixGroupConfig {
 }
 
 pub fn validate_prefix_groups(groups: &[LanPrefixGroupConfig]) -> Result<(), ServiceConfigError> {
-    validate_prefix_groups_with_prefix_infos(groups, None)
+    validate_prefix_groups_with_pd_context(groups, None)
 }
 
-pub fn validate_prefix_groups_with_prefix_infos(
+pub fn validate_prefix_groups_with_pd_context(
     groups: &[LanPrefixGroupConfig],
-    prefix_infos: Option<&PrefixInfoMap>,
+    pd_contexts: Option<&PdPrefixContextMap>,
 ) -> Result<(), ServiceConfigError> {
     let expanded_groups: Vec<Vec<ExpandedPrefixEntry>> = groups
         .iter()
         .map(|group| {
-            group.validate_with_prefix_infos(prefix_infos)?;
+            group.validate_with_pd_context(pd_contexts)?;
 
             let entries =
-                group.active_entries_with_prefix_infos(IPv6ServiceMode::SlaacDhcpv6, prefix_infos);
+                group.active_entries_with_pd_context(IPv6ServiceMode::SlaacDhcpv6, pd_contexts);
             for i in 0..entries.len() {
                 for j in (i + 1)..entries.len() {
-                    validate_expanded_pair(
-                        &entries[i],
-                        &entries[j],
-                        entries[i].parent_prefix_len,
-                        true,
-                    )?;
+                    validate_expanded_pair(&entries[i], &entries[j], true)?;
                 }
             }
 
@@ -405,10 +435,10 @@ pub fn validate_prefix_groups_with_prefix_infos(
 
             for left in left_entries {
                 for right in right_entries {
-                    if left.parent != right.parent {
+                    if !left.parents_are_comparable(right) {
                         continue;
                     }
-                    validate_expanded_pair(left, right, left.parent_prefix_len, false)?;
+                    validate_expanded_pair(left, right, false)?;
                 }
             }
         }
@@ -420,7 +450,6 @@ pub fn validate_prefix_groups_with_prefix_infos(
 fn validate_expanded_pair(
     a: &ExpandedPrefixEntry,
     b: &ExpandedPrefixEntry,
-    parent_len: u8,
     allow_ra_na_share: bool,
 ) -> Result<(), ServiceConfigError> {
     if allow_ra_na_share
@@ -433,46 +462,13 @@ fn validate_expanded_pair(
         return Ok(());
     }
 
-    let dynamic = a.is_dynamic();
-    let (start_a, end_a) = a.effective_index_range(dynamic);
-    let (start_b, end_b) = b.effective_index_range(dynamic);
-
-    if a.service_kind == PrefixGroupServiceKind::IaPd
-        && b.service_kind == PrefixGroupServiceKind::IaPd
-    {
-        if range_blocks_overlap(start_a, end_a, start_b, end_b) {
-            return Err(ServiceConfigError::InvalidConfig {
-                reason: "IA_PD ranges conflict under the same parent prefix".to_string(),
-            });
-        }
+    let Some((start_a, end_a)) = a.address_interval() else {
         return Ok(());
-    }
-
-    if a.service_kind == PrefixGroupServiceKind::IaPd {
-        for idx in start_a..=end_a {
-            if blocks_overlap(parent_len, idx, a.pool_len, start_b, b.pool_len) {
-                return Err(ServiceConfigError::InvalidConfig {
-                    reason: "Prefix group results conflict under the same parent prefix"
-                        .to_string(),
-                });
-            }
-        }
+    };
+    let Some((start_b, end_b)) = b.address_interval() else {
         return Ok(());
-    }
-
-    if b.service_kind == PrefixGroupServiceKind::IaPd {
-        for idx in start_b..=end_b {
-            if blocks_overlap(parent_len, start_a, a.pool_len, idx, b.pool_len) {
-                return Err(ServiceConfigError::InvalidConfig {
-                    reason: "Prefix group results conflict under the same parent prefix"
-                        .to_string(),
-                });
-            }
-        }
-        return Ok(());
-    }
-
-    if blocks_overlap(parent_len, start_a, a.pool_len, start_b, b.pool_len) {
+    };
+    if start_a <= end_b && start_b <= end_a {
         return Err(ServiceConfigError::InvalidConfig {
             reason: "Prefix group results conflict under the same parent prefix".to_string(),
         });
@@ -483,14 +479,14 @@ fn validate_expanded_pair(
 
 impl LanIPv6ConfigV2 {
     pub fn validate(&self) -> Result<(), ServiceConfigError> {
-        self.validate_with_prefix_infos(None)
+        self.validate_with_pd_context(None)
     }
 
-    pub fn validate_with_prefix_infos(
+    pub fn validate_with_pd_context(
         &self,
-        prefix_infos: Option<&PrefixInfoMap>,
+        pd_contexts: Option<&PdPrefixContextMap>,
     ) -> Result<(), ServiceConfigError> {
-        validate_prefix_groups_with_prefix_infos(&self.prefix_groups, prefix_infos)?;
+        validate_prefix_groups_with_pd_context(&self.prefix_groups, pd_contexts)?;
 
         match self.mode {
             IPv6ServiceMode::Slaac => {
@@ -596,16 +592,16 @@ impl LanIPv6ConfigV2 {
     }
 
     pub fn active_entries(&self) -> Vec<ExpandedPrefixEntry> {
-        self.active_entries_with_prefix_infos(None)
+        self.active_entries_with_pd_context(None)
     }
 
-    pub fn active_entries_with_prefix_infos(
+    pub fn active_entries_with_pd_context(
         &self,
-        prefix_infos: Option<&PrefixInfoMap>,
+        pd_contexts: Option<&PdPrefixContextMap>,
     ) -> Vec<ExpandedPrefixEntry> {
         self.prefix_groups
             .iter()
-            .flat_map(|group| group.active_entries_with_prefix_infos(self.mode, prefix_infos))
+            .flat_map(|group| group.active_entries_with_pd_context(self.mode, pd_contexts))
             .collect()
     }
 }
@@ -614,15 +610,15 @@ pub fn validate_cross_interface_v2(
     new_config: &LanIPv6ServiceConfigV2,
     other_configs: &[LanIPv6ServiceConfigV2],
 ) -> Result<(), ServiceConfigError> {
-    validate_cross_interface_v2_with_prefix_infos(new_config, other_configs, None)
+    validate_cross_interface_v2_with_pd_context(new_config, other_configs, None)
 }
 
-pub fn validate_cross_interface_v2_with_prefix_infos(
+pub fn validate_cross_interface_v2_with_pd_context(
     new_config: &LanIPv6ServiceConfigV2,
     other_configs: &[LanIPv6ServiceConfigV2],
-    prefix_infos: Option<&PrefixInfoMap>,
+    pd_contexts: Option<&PdPrefixContextMap>,
 ) -> Result<(), ServiceConfigError> {
-    let new_entries = new_config.config.active_entries_with_prefix_infos(prefix_infos);
+    let new_entries = new_config.config.active_entries_with_pd_context(pd_contexts);
 
     for other in other_configs {
         if other.iface_name == new_config.iface_name || !other.enable {
@@ -630,11 +626,11 @@ pub fn validate_cross_interface_v2_with_prefix_infos(
         }
 
         for left in &new_entries {
-            for right in other.config.active_entries_with_prefix_infos(prefix_infos) {
-                if left.parent != right.parent {
+            for right in other.config.active_entries_with_pd_context(pd_contexts) {
+                if !left.parents_are_comparable(&right) {
                     continue;
                 }
-                validate_expanded_pair(left, &right, left.parent_prefix_len, false)?;
+                validate_expanded_pair(left, &right, false)?;
             }
         }
     }
@@ -649,6 +645,26 @@ mod tests {
     };
     use super::super::dhcpv6_config::DHCPv6ServerConfig;
     use super::*;
+
+    fn pd_context(
+        iface_name: &str,
+        expected_pd_len: u8,
+        actual_prefix_len: Option<u8>,
+    ) -> PdPrefixContextMap {
+        HashMap::from([(
+            iface_name.to_string(),
+            PdPrefixContext {
+                expected_pd_len,
+                actual_prefix: actual_prefix_len.map(|prefix_len| LDIAPrefix {
+                    preferred_lifetime: 300,
+                    valid_lifetime: 600,
+                    prefix_len,
+                    prefix_ip: "2001:db8::".parse().unwrap(),
+                    last_update_time: 0.0,
+                }),
+            },
+        )])
+    }
 
     #[test]
     fn test_blocks_overlap_same_index_same_len() {
@@ -733,7 +749,7 @@ mod tests {
                     group_id: "ra-pd".to_string(),
                     parent: PrefixParentSource::Pd {
                         depend_iface: "eth0".to_string(),
-                        planned_parent_prefix_len: 60,
+                        expected_pd_len_snapshot: 60,
                     },
                     ra: Some(RaPrefixConfig {
                         pool_index: 1,
@@ -776,7 +792,7 @@ mod tests {
             group_id: "same-parent".to_string(),
             parent: PrefixParentSource::Pd {
                 depend_iface: "eth0".to_string(),
-                planned_parent_prefix_len: 60,
+                expected_pd_len_snapshot: 60,
             },
             ra: Some(RaPrefixConfig {
                 pool_index: 1,
@@ -796,7 +812,7 @@ mod tests {
             group_id: "same-parent".to_string(),
             parent: PrefixParentSource::Pd {
                 depend_iface: "eth0".to_string(),
-                planned_parent_prefix_len: 60,
+                expected_pd_len_snapshot: 60,
             },
             ra: Some(RaPrefixConfig {
                 pool_index: 1,
@@ -811,12 +827,12 @@ mod tests {
     }
 
     #[test]
-    fn v2_pd_parent_capacity_falls_back_to_planned_prefix_len_without_runtime_prefix() {
+    fn v2_pd_parent_capacity_uses_snapshot_without_runtime_prefix() {
         let config = LanPrefixGroupConfig {
             group_id: "capacity-ok".to_string(),
             parent: PrefixParentSource::Pd {
                 depend_iface: "eth0".to_string(),
-                planned_parent_prefix_len: 60,
+                expected_pd_len_snapshot: 60,
             },
             ra: None,
             na: Some(NaPrefixConfig { pool_index: 15 }),
@@ -827,12 +843,12 @@ mod tests {
     }
 
     #[test]
-    fn v2_pd_parent_capacity_rejects_indices_beyond_planned_prefix_len_without_runtime_prefix() {
+    fn v2_pd_parent_capacity_rejects_indices_beyond_snapshot_without_runtime_prefix() {
         let config = LanPrefixGroupConfig {
             group_id: "capacity-bad".to_string(),
             parent: PrefixParentSource::Pd {
                 depend_iface: "eth0".to_string(),
-                planned_parent_prefix_len: 60,
+                expected_pd_len_snapshot: 60,
             },
             ra: None,
             na: Some(NaPrefixConfig { pool_index: 16 }),
@@ -843,31 +859,20 @@ mod tests {
     }
 
     #[test]
-    fn v2_pd_parent_capacity_prefers_runtime_prefix_len_when_available() {
+    fn v2_pd_parent_capacity_does_not_expand_to_runtime_prefix_len() {
         let config = LanPrefixGroupConfig {
             group_id: "capacity-runtime".to_string(),
             parent: PrefixParentSource::Pd {
                 depend_iface: "eth0".to_string(),
-                planned_parent_prefix_len: 60,
+                expected_pd_len_snapshot: 60,
             },
             ra: None,
             na: Some(NaPrefixConfig { pool_index: 38 }),
             pd: None,
         };
 
-        let mut prefix_infos = HashMap::new();
-        prefix_infos.insert(
-            "eth0".to_string(),
-            Some(LDIAPrefix {
-                preferred_lifetime: 300,
-                valid_lifetime: 600,
-                prefix_len: 56,
-                prefix_ip: "2001:db8::".parse().unwrap(),
-                last_update_time: 0.0,
-            }),
-        );
-
-        assert!(config.validate_with_prefix_infos(Some(&prefix_infos)).is_ok());
+        let contexts = pd_context("eth0", 60, Some(56));
+        assert!(config.validate_with_pd_context(Some(&contexts)).is_err());
     }
 
     #[test]
@@ -877,7 +882,7 @@ mod tests {
                 group_id: "group-a".to_string(),
                 parent: PrefixParentSource::Pd {
                     depend_iface: "eth0".to_string(),
-                    planned_parent_prefix_len: 60,
+                    expected_pd_len_snapshot: 60,
                 },
                 ra: Some(RaPrefixConfig {
                     pool_index: 1,
@@ -891,7 +896,7 @@ mod tests {
                 group_id: "group-b".to_string(),
                 parent: PrefixParentSource::Pd {
                     depend_iface: "eth0".to_string(),
-                    planned_parent_prefix_len: 56,
+                    expected_pd_len_snapshot: 56,
                 },
                 ra: None,
                 na: None,
@@ -899,19 +904,10 @@ mod tests {
             },
         ];
 
-        let mut prefix_infos = HashMap::new();
-        prefix_infos.insert(
-            "eth0".to_string(),
-            Some(LDIAPrefix {
-                preferred_lifetime: 300,
-                valid_lifetime: 600,
-                prefix_len: 56,
-                prefix_ip: "2001:db8::".parse().unwrap(),
-                last_update_time: 0.0,
-            }),
-        );
+        assert!(validate_prefix_groups(&groups).is_err());
 
-        assert!(validate_prefix_groups_with_prefix_infos(&groups, Some(&prefix_infos)).is_err());
+        let contexts = pd_context("eth0", 60, Some(56));
+        assert!(validate_prefix_groups_with_pd_context(&groups, Some(&contexts)).is_err());
     }
 
     #[test]
@@ -927,7 +923,7 @@ mod tests {
                     group_id: "group-a".to_string(),
                     parent: PrefixParentSource::Pd {
                         depend_iface: "wan0".to_string(),
-                        planned_parent_prefix_len: 60,
+                        expected_pd_len_snapshot: 60,
                     },
                     ra: Some(RaPrefixConfig {
                         pool_index: 0,
@@ -953,7 +949,7 @@ mod tests {
                     group_id: "group-b".to_string(),
                     parent: PrefixParentSource::Pd {
                         depend_iface: "wan1".to_string(),
-                        planned_parent_prefix_len: 56,
+                        expected_pd_len_snapshot: 56,
                     },
                     ra: None,
                     na: None,
@@ -974,34 +970,54 @@ mod tests {
             update_at: 0.0,
         }];
 
-        let mut prefix_infos = HashMap::new();
-        prefix_infos.insert(
-            "wan0".to_string(),
-            Some(LDIAPrefix {
-                preferred_lifetime: 300,
-                valid_lifetime: 600,
-                prefix_len: 56,
-                prefix_ip: "2001:db8::".parse().unwrap(),
-                last_update_time: 0.0,
-            }),
-        );
-        prefix_infos.insert(
-            "wan1".to_string(),
-            Some(LDIAPrefix {
-                preferred_lifetime: 300,
-                valid_lifetime: 600,
-                prefix_len: 56,
-                prefix_ip: "2001:db8::".parse().unwrap(),
-                last_update_time: 0.0,
-            }),
-        );
+        let prefix = LDIAPrefix {
+            preferred_lifetime: 300,
+            valid_lifetime: 600,
+            prefix_len: 56,
+            prefix_ip: "2001:db8::".parse().unwrap(),
+            last_update_time: 0.0,
+        };
+        let contexts = HashMap::from([
+            (
+                "wan0".to_string(),
+                PdPrefixContext {
+                    expected_pd_len: 60,
+                    actual_prefix: Some(prefix.clone()),
+                },
+            ),
+            (
+                "wan1".to_string(),
+                PdPrefixContext { expected_pd_len: 56, actual_prefix: Some(prefix) },
+            ),
+        ]);
 
-        assert!(validate_cross_interface_v2_with_prefix_infos(
+        assert!(validate_cross_interface_v2_with_pd_context(
             &new_config,
             &other_configs,
-            Some(&prefix_infos),
+            Some(&contexts),
         )
         .is_err());
+    }
+
+    #[test]
+    fn legacy_planned_parent_prefix_len_deserializes_as_snapshot() {
+        let parent: PrefixParentSource = serde_json::from_value(serde_json::json!({
+            "t": "pd",
+            "depend_iface": "wan0",
+            "planned_parent_prefix_len": 60,
+        }))
+        .unwrap();
+
+        assert_eq!(
+            parent,
+            PrefixParentSource::Pd {
+                depend_iface: "wan0".to_string(),
+                expected_pd_len_snapshot: 60,
+            }
+        );
+        let serialized = serde_json::to_value(parent).unwrap();
+        assert_eq!(serialized["expected_pd_len_snapshot"], 60);
+        assert!(serialized.get("planned_parent_prefix_len").is_none());
     }
 
     #[test]

@@ -320,8 +320,19 @@ pub async fn dhcp_v6_pd_client(
                     }
                 }
 
-                let need_reset_timeout = send_current_status_packet(&client_id, &send_socket, &mut status).await;
-                if need_reset_timeout {
+                let send_outcome = send_current_status_packet(&client_id, &send_socket, &mut status).await;
+                if send_outcome.prefix_expired {
+                    clear_active_pd_prefix(
+                        &iface_name,
+                        ifindex,
+                        &route_service,
+                        &prefix_map,
+                        &prefix_sender,
+                        &mut current_wan_addr,
+                    )
+                    .await;
+                }
+                if send_outcome.reset_timeout {
                     timeout_times = 0;
                 }
                 timeout_times = get_status_timeout_config(&status, timeout_times, active_send.as_mut());
@@ -382,12 +393,15 @@ pub async fn dhcp_v6_pd_client(
         }
     }
 
-    route_service.remove_ipv6_wan_route(&iface_name).await;
-    prefix_map.remove(&iface_name);
-    let _ = prefix_sender.send(IAPrefixEvent::Expired { iface_name: iface_name.clone() }).await;
-    if let Some(wan_addr) = current_wan_addr.take() {
-        del_iface_ip(wan_addr, 128, &iface_name);
-    }
+    clear_active_pd_prefix(
+        &iface_name,
+        ifindex,
+        &route_service,
+        &prefix_map,
+        &prefix_sender,
+        &mut current_wan_addr,
+    )
+    .await;
     tracing::info!("DHCP V6 Client Stop: {:#?}", service_status);
 
     if !service_status.is_stop() {
@@ -399,13 +413,74 @@ pub async fn dhcp_v6_pd_client(
     }
 }
 
-/// 处理当前状态应该发送什么数据包
-/// 当需要重置 timeout 就返回 true
+async fn clear_active_pd_prefix(
+    iface_name: &str,
+    ifindex: u32,
+    route_service: &IpRouteService,
+    prefix_map: &IAPrefixMap,
+    prefix_sender: &IAPrefixEventSender,
+    current_wan_addr: &mut Option<Ipv6Addr>,
+) {
+    let removed = prefix_map.remove(iface_name);
+    if let Some(prefix) = removed.as_ref().and_then(|status| status.actual_prefix.as_ref()) {
+        remove_ip_route(prefix, iface_name);
+    }
+
+    route_service.remove_ipv6_wan_route(iface_name).await;
+    landscape_ebpf::map_setting::del_ipv6_wan_ip(ifindex);
+    if let Some(wan_addr) = current_wan_addr.take() {
+        del_iface_ip(wan_addr, 128, iface_name);
+    }
+
+    if removed.is_some() {
+        let _ =
+            prefix_sender.send(IAPrefixEvent::Expired { iface_name: iface_name.to_string() }).await;
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SendStatusOutcome {
+    reset_timeout: bool,
+    prefix_expired: bool,
+}
+
+impl SendStatusOutcome {
+    const NO_CHANGE: Self = Self { reset_timeout: false, prefix_expired: false };
+    const RESET_TIMEOUT: Self = Self { reset_timeout: true, prefix_expired: false };
+    const PREFIX_EXPIRED: Self = Self { reset_timeout: true, prefix_expired: true };
+}
+
+fn active_prefix_lease(status: &IpV6PdState) -> Option<(&v6::IAPD, &Instant)> {
+    match status {
+        IpV6PdState::Bound { iapd, bound_time, .. }
+        | IpV6PdState::Renew { iapd, bound_time, .. }
+        | IpV6PdState::WaitToRebind { iapd, bound_time, .. }
+        | IpV6PdState::Rebind { iapd, bound_time, .. } => Some((iapd, bound_time)),
+        _ => None,
+    }
+}
+
+fn active_prefix_remaining(status: &IpV6PdState) -> Option<Duration> {
+    let (iapd, bound_time) = active_prefix_lease(status)?;
+    let valid_lifetime = match iapd.opts.get(OptionCode::IAPrefix) {
+        Some(DhcpOption::IAPrefix(prefix)) => Duration::from_secs(prefix.valid_lifetime as u64),
+        _ => Duration::ZERO,
+    };
+    Some(valid_lifetime.saturating_sub(bound_time.elapsed()))
+}
+
+/// Send the packet for the current state and report state-machine side effects.
 async fn send_current_status_packet(
     my_client_id: &[u8],
     send_socket: &UdpSocket,
     current_status: &mut IpV6PdState,
-) -> bool {
+) -> SendStatusOutcome {
+    if active_prefix_remaining(current_status).is_some_and(|remaining| remaining.is_zero()) {
+        tracing::warn!("DHCPv6 PD prefix valid lifetime expired; restarting solicitation");
+        *current_status = IpV6PdState::Solicit { xid: get_new_ipv6_xid() };
+        return SendStatusOutcome::PREFIX_EXPIRED;
+    }
+
     match current_status {
         IpV6PdState::Solicit { xid } => {
             let mut msg = v6::Message::new(v6::MessageType::Solicit);
@@ -440,7 +515,7 @@ async fn send_current_status_packet(
                 tracing::warn!("Request send times: {send_times} timeout turn to Solicit");
                 // 切换状态为 Solicit 重新开始
                 *current_status = IpV6PdState::Solicit { xid: get_new_ipv6_xid() };
-                return true;
+                return SendStatusOutcome::RESET_TIMEOUT;
             }
             *send_times += 1;
         }
@@ -453,7 +528,7 @@ async fn send_current_status_packet(
                 bound_time: bound_time.clone(),
                 iapd: iapd.clone(),
             };
-            return true;
+            return SendStatusOutcome::RESET_TIMEOUT;
         }
         IpV6PdState::Confirm => todo!(),
         IpV6PdState::Renew { xid, service_id, iapd, renew_time, bound_time } => {
@@ -491,7 +566,7 @@ async fn send_current_status_packet(
                     bound_time: bound_time.clone(),
                     iapd: iapd.clone(),
                 };
-                return true;
+                return SendStatusOutcome::RESET_TIMEOUT;
             }
         }
         IpV6PdState::WaitToRebind { xid: _, service_id, iapd, bound_time } => {
@@ -504,19 +579,9 @@ async fn send_current_status_packet(
                 bound_time: bound_time.clone(),
                 iapd: iapd.clone(),
             };
-            return true;
+            return SendStatusOutcome::RESET_TIMEOUT;
         }
-        IpV6PdState::Rebind { xid, service_id: _, iapd, rebind_time, bound_time } => {
-            let bind_end = if iapd.t2 == 0 { IPV6_T2_DEFAULT } else { iapd.t2 as u64 };
-            let bind_end = bind_end / 8 * 10;
-            // Reach 125% to Solicit
-            if bound_time.elapsed().as_secs() >= bind_end {
-                tracing::warn!("Rebind turn to Solicit");
-                // 切换状态为 Solicit 重新开始
-                *current_status = IpV6PdState::Solicit { xid: get_new_ipv6_xid() };
-                return true;
-            }
-
+        IpV6PdState::Rebind { xid, service_id: _, iapd, rebind_time, .. } => {
             let mut send_msg = v6::Message::new(V6MessageType::Rebind);
             send_msg.set_xid_num(xid.clone());
             let mut options = DhcpOptions::new();
@@ -542,7 +607,7 @@ async fn send_current_status_packet(
         IpV6PdState::Decline => todo!(),
         IpV6PdState::Stop => todo!(),
     }
-    false
+    SendStatusOutcome::NO_CHANGE
 }
 
 async fn send_data(msg: &v6::Message, send_socket: &UdpSocket, target_sock: Option<SocketAddr>) {
@@ -571,19 +636,27 @@ fn get_status_timeout_config(
     prev_timeout_times: u64,
     mut timeout: Pin<&mut tokio::time::Sleep>,
 ) -> u64 {
-    let current_timeout_time = match current_status {
+    let current_timeout = status_timeout_duration(current_status, prev_timeout_times);
+
+    timeout.set(tokio::time::sleep(current_timeout));
+    prev_timeout_times + 1
+}
+
+fn status_timeout_duration(current_status: &IpV6PdState, prev_timeout_times: u64) -> Duration {
+    let protocol_timeout = match current_status {
         // 绑定后的超时时间是 由 iapd 的 t1 决定
-        IpV6PdState::Bound { iapd, .. } => iapd.t1 as u64,
+        IpV6PdState::Bound { iapd, .. } => Duration::from_secs(iapd.t1 as u64),
         // 等待的时间是 t2 - bound_time
         IpV6PdState::WaitToRebind { iapd, bound_time, .. } => {
             let t2 = if iapd.t2 == 0 { IPV6_T2_DEFAULT } else { iapd.t2 as u64 };
-            t2 - bound_time.elapsed().as_secs()
+            Duration::from_secs(t2).saturating_sub(bound_time.elapsed())
         }
-        _ => IPV6_TIMEOUT_DEFAULT_DURACTION * prev_timeout_times,
+        _ => Duration::from_secs(IPV6_TIMEOUT_DEFAULT_DURACTION.saturating_mul(prev_timeout_times)),
     };
 
-    timeout.set(tokio::time::sleep(Duration::from_secs(current_timeout_time)));
-    prev_timeout_times + 1
+    active_prefix_remaining(current_status)
+        .map(|remaining| protocol_timeout.min(remaining))
+        .unwrap_or(protocol_timeout)
 }
 /// 处理接收到的报文，根据当前状态决定如何处理
 /// 返回值为是否要进行检查刷新超时时间
@@ -815,6 +888,25 @@ fn replace_ip_route(
     }
 }
 
+fn remove_ip_route(iapd: &LDIAPrefix, iface_name: &str) {
+    let result = std::process::Command::new("ip")
+        .args([
+            "-6",
+            "route",
+            "del",
+            "default",
+            "from",
+            &format!("{}/{}", iapd.prefix_ip, iapd.prefix_len),
+            "dev",
+            iface_name,
+        ])
+        .output();
+
+    if let Err(err) = result {
+        tracing::error!(?err, "failed to remove expired IPv6 PD source route");
+    }
+}
+
 fn derive_wan_pd_addr(
     ia_prefix: &landscape_common::wan_service::ipv6_pd::LDIAPrefix,
     shared_wan_iid: u64,
@@ -841,6 +933,99 @@ mod tests {
             prefix_ip: address.parse().unwrap(),
             last_update_time: 0.0,
         }
+    }
+
+    fn iapd(t1: u32, t2: u32, valid_lifetime: u32) -> v6::IAPD {
+        let mut opts = DhcpOptions::new();
+        opts.insert(DhcpOption::IAPrefix(v6::IAPrefix {
+            preferred_lifetime: valid_lifetime,
+            valid_lifetime,
+            prefix_len: 56,
+            prefix_ip: "2001:db8:1200::".parse().unwrap(),
+            opts: DhcpOptions::new(),
+        }));
+        v6::IAPD { id: 1, t1, t2, opts }
+    }
+
+    #[tokio::test]
+    async fn expired_rebind_reports_prefix_expiration() {
+        let socket = UdpSocket::bind("[::1]:0").await.unwrap();
+        let mut status = IpV6PdState::Rebind {
+            xid: get_new_ipv6_xid(),
+            service_id: Vec::new(),
+            iapd: iapd(4, 8, 10),
+            rebind_time: Instant::now(),
+            bound_time: Instant::now() - Duration::from_secs(11),
+        };
+
+        let outcome = send_current_status_packet(&[], &socket, &mut status).await;
+
+        assert_eq!(outcome, SendStatusOutcome::PREFIX_EXPIRED);
+        assert!(matches!(status, IpV6PdState::Solicit { .. }));
+    }
+
+    #[tokio::test]
+    async fn rebind_keeps_prefix_until_valid_lifetime_expires() {
+        let socket = UdpSocket::bind("[::1]:0").await.unwrap();
+        let mut status = IpV6PdState::Rebind {
+            xid: get_new_ipv6_xid(),
+            service_id: Vec::new(),
+            iapd: iapd(4, 8, 30),
+            rebind_time: Instant::now(),
+            bound_time: Instant::now() - Duration::from_secs(11),
+        };
+
+        let outcome = send_current_status_packet(&[], &socket, &mut status).await;
+
+        assert_eq!(outcome, SendStatusOutcome::NO_CHANGE);
+        assert!(matches!(status, IpV6PdState::Rebind { .. }));
+    }
+
+    #[test]
+    fn active_timeout_is_capped_by_prefix_valid_lifetime() {
+        let status = IpV6PdState::Bound {
+            xid: get_new_ipv6_xid(),
+            service_id: Vec::new(),
+            iapd: iapd(120, 180, 20),
+            bound_time: Instant::now() - Duration::from_secs(5),
+        };
+
+        let timeout = status_timeout_duration(&status, 1);
+
+        assert!(timeout > Duration::from_secs(14));
+        assert!(timeout <= Duration::from_secs(15));
+    }
+
+    #[tokio::test]
+    async fn active_state_without_prefix_option_expires_immediately() {
+        let socket = UdpSocket::bind("[::1]:0").await.unwrap();
+        let mut status = IpV6PdState::Bound {
+            xid: get_new_ipv6_xid(),
+            service_id: Vec::new(),
+            iapd: v6::IAPD { id: 1, t1: 4, t2: 8, opts: DhcpOptions::new() },
+            bound_time: Instant::now(),
+        };
+
+        let outcome = send_current_status_packet(&[], &socket, &mut status).await;
+
+        assert_eq!(outcome, SendStatusOutcome::PREFIX_EXPIRED);
+        assert!(matches!(status, IpV6PdState::Solicit { .. }));
+    }
+
+    #[tokio::test]
+    async fn zero_valid_lifetime_expires_immediately() {
+        let socket = UdpSocket::bind("[::1]:0").await.unwrap();
+        let mut status = IpV6PdState::Bound {
+            xid: get_new_ipv6_xid(),
+            service_id: Vec::new(),
+            iapd: iapd(4, 8, 0),
+            bound_time: Instant::now(),
+        };
+
+        let outcome = send_current_status_packet(&[], &socket, &mut status).await;
+
+        assert_eq!(outcome, SendStatusOutcome::PREFIX_EXPIRED);
+        assert!(matches!(status, IpV6PdState::Solicit { .. }));
     }
 
     #[test]

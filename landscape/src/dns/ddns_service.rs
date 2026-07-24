@@ -573,7 +573,7 @@ impl DdnsService {
                             let raw_ips: Vec<Ipv6Addr> = entry.raw_ips.iter().copied().collect();
                             drop(entry);
 
-                            let pd = match self.prefix_map.load(wan) {
+                            let pd = match self.prefix_map.load_actual(wan) {
                                 Some(p) => p,
                                 None => {
                                     last_error = Some(ResolveRecordIpError {

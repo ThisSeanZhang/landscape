@@ -149,11 +149,23 @@ export default {
   planner_actual_prefix: "真实父前缀:",
   planner_static_prefix: "静态父前缀:",
   planner_preview_prefix_len: "假设父前缀长度:",
+  planner_snapshot_prefix_len: "WAN 预期快照:",
+  planner_warning_wan_prefix_mismatch:
+    "该 WAN PD 接口获取到的前缀长度不符合预期。基于此前缀的 LAN IPv6 来源会保持不生效，请先处理 WAN PD 配置或上游委派问题。",
+  snapshot_status_insufficient: "需要处理",
+  snapshot_status_unavailable: "不可用",
+  snapshot_status_detail_missing: "对应的上游 PD 配置已不可用。",
+  snapshot_status_detail_insufficient:
+    "上游 PD 设置已发生变化，请打开此前缀组完成刷新。",
   planner_target_prefix: "当前目标块长度:",
   planner_reason_no_parent_iface: "先选择一个开启 DHCPv6-PD 的上游接口。",
+  planner_reason_missing_pd_config:
+    "引用的 WAN PD 配置已不存在，请重新选择上游接口后再保存。",
   planner_reason_no_static_prefix: "先填写静态父前缀，再在下方画布中选择块。",
   planner_reason_target_shorter_than_parent:
     "当前目标块 /{target} 比父前缀 /{parent} 更大，无法从该父前缀中切分。",
+  planner_reason_selection_out_of_range:
+    "已保存的选择超出当前父前缀快照容量，请重新选择后再保存。",
   planner_reason_filtered_parent:
     "当前上游前缀长度 /{actual} 被“最大源前缀长度”过滤掉，这个源不会实际参与委派。",
   planner_reason_more_specific_than_64:
@@ -187,6 +199,7 @@ export default {
   planner_status_shared: "与 RA/NA 共享，可保存",
   planner_summary_only: "当前条件下仅展示摘要，不展开可点击画布。",
   planner_save_error_no_parent_iface: "请先选择上游 PD 接口。",
+  planner_save_error_missing_pd_config: "引用的 WAN PD 配置已不存在。",
   planner_save_error_no_static_prefix: "请先填写静态父前缀。",
   planner_save_error_wan_reserved: "当前选择命中了 WAN 保留块，不能保存。",
   planner_save_error_conflict: "当前选择与已有来源冲突，不能保存。",
@@ -194,6 +207,7 @@ export default {
     "当前真实上游前缀被最大源前缀长度过滤，不能保存。",
   planner_save_error_target_shorter_than_parent:
     "目标块长度比父前缀更大，当前配置无效。",
+  planner_save_error_selection_out_of_range: "当前选择超出父前缀快照容量。",
   planner_save_error_target_more_specific_than_64:
     "当前目标块比 /64 更细，暂不支持通过画布选择。",
 

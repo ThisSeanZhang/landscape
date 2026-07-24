@@ -6,7 +6,7 @@ use landscape_common::{
         LanPrefixGroupConfig, NaPrefixConfig, PrefixParentSource, RaPrefixConfig,
     },
     net::MacAddr,
-    wan_service::ipv6_pd::IAPrefixMap,
+    wan_service::ipv6_pd::{IAPrefixMap, LDIAPrefix},
 };
 
 use super::*;
@@ -90,4 +90,57 @@ fn clean_expired_slaac_with_zero_threshold_removes_all() {
     let expired = status.clean_expired_slaac(0);
     assert_eq!(expired.len(), 1);
     assert_eq!(expired[0], (ip, mac));
+}
+
+fn pd_prefix(prefix: &str, prefix_len: u8) -> LDIAPrefix {
+    LDIAPrefix {
+        preferred_lifetime: 1800,
+        valid_lifetime: 3600,
+        prefix_len,
+        prefix_ip: prefix.parse().unwrap(),
+        last_update_time: 0.0,
+    }
+}
+
+fn dynamic_ra_group(snapshot: u8, pool_index: u32) -> LanPrefixGroupConfig {
+    LanPrefixGroupConfig {
+        group_id: "dynamic".into(),
+        parent: PrefixParentSource::Pd {
+            depend_iface: "wan0".into(),
+            expected_pd_len_snapshot: snapshot,
+        },
+        ra: Some(RaPrefixConfig {
+            pool_index,
+            preferred_lifetime: 300,
+            valid_lifetime: 600,
+        }),
+        na: None,
+        pd: None,
+    }
+}
+
+#[test]
+fn dynamic_subnets_use_snapshot_instead_of_actual_prefix_len() {
+    let prefix_map = IAPrefixMap::new();
+    prefix_map.store("wan0", pd_prefix("2001:db8:1200::", 56), 60);
+
+    let subnets = compute_subnets(&[dynamic_ra_group(60, 15)], &prefix_map);
+    assert_eq!(subnets.len(), 1);
+    assert_eq!(subnets[0].sub_prefix, "2001:db8:1200:f::".parse::<Ipv6Addr>().unwrap());
+    assert_eq!(prefix_map.load_actual("wan0").unwrap().prefix_len, 56);
+}
+
+#[test]
+fn dynamic_subnets_require_both_wan_and_snapshot_compatibility() {
+    let prefix_map = IAPrefixMap::new();
+    prefix_map.store("wan0", pd_prefix("2001:db8:1200::", 64), 60);
+    assert!(compute_subnets(&[dynamic_ra_group(60, 1)], &prefix_map).is_empty());
+    assert!(prefix_map.load_actual("wan0").is_some());
+
+    prefix_map.store("wan0", pd_prefix("2001:db8:1200::", 56), 64);
+    assert!(compute_subnets(&[dynamic_ra_group(60, 1)], &prefix_map).is_empty());
+    assert!(prefix_map.load_for_lan("wan0").is_some());
+
+    let _ = prefix_map.remove("wan0");
+    assert!(compute_subnets(&[dynamic_ra_group(60, 1)], &prefix_map).is_empty());
 }

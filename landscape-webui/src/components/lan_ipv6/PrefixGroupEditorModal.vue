@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import {
+  get_all_ipv6pd_configs,
   get_all_ipv6pd_status,
   get_current_ip_prefix_info,
   type LDIAPrefix,
@@ -12,6 +13,7 @@ import {
   poolIndexFromPlannerUnitStart,
 } from "@/lib/ipv6_planner";
 import { ServiceStatus } from "@/lib/services";
+import type { IPV6PDServiceConfig } from "@/lib/ipv6pd";
 import type {
   IPv6ServiceMode,
   LanIPv6ServiceConfigV2,
@@ -76,13 +78,15 @@ const selectedKind = ref<ServiceKind>("ra");
 const staticBasePrefix = ref(generateDefaultStaticBasePrefix());
 const staticPrefixLen = ref(56);
 const dependIface = ref("");
-const assumedPrefixLen = ref(60);
+const snapshotPrefixLen = ref(60);
 const pdPoolLenDraft = ref(64);
 const draftGroupId = ref("");
 
 const otherLanConfigsV2 = ref<LanIPv6ServiceConfigV2[]>([]);
 const prefixInfos = ref<Map<string, LDIAPrefix | null>>(new Map());
 const ipv6PdIfaces = ref<Map<string, ServiceStatus>>(new Map());
+const ipv6PdConfigs = ref<IPV6PDServiceConfig[]>([]);
+const expectedPdLens = ref<Map<string, number>>(new Map());
 const draftGroupState = ref<LanPrefixGroupConfig>();
 
 const draftGroup = computed(() => draftGroupState.value);
@@ -95,11 +99,14 @@ const availableServiceKinds = computed(() => {
 });
 
 const ipv6PdOptions = computed(() => {
-  const result = [];
-  for (const [key, value] of ipv6PdIfaces.value) {
-    result.push({ value: key, label: `${key} - ${value.t}` });
-  }
-  return result;
+  return ipv6PdConfigs.value.map((config) => {
+    const status = ipv6PdIfaces.value.get(config.iface_name);
+    const statusLabel = status ? ` - ${status.t}` : "";
+    return {
+      value: config.iface_name,
+      label: `${config.iface_name} /${config.config.expected_pd_len}${statusLabel}`,
+    };
+  });
 });
 
 const currentPlannerGroups = computed(() => {
@@ -110,22 +117,11 @@ const currentPlannerGroups = computed(() => {
   return draftGroup.value ? [draftGroup.value, ...remaining] : remaining;
 });
 
-const actualPdParentPrefixLen = computed(() => {
-  if (props.sourceType !== "pd" || !dependIface.value) {
-    return undefined;
-  }
-  return prefixInfos.value.get(dependIface.value)?.prefix_len;
-});
-
-const effectivePdParentPrefixLen = computed(
-  () => actualPdParentPrefixLen.value ?? assumedPrefixLen.value,
-);
-
 const minPdPoolLen = computed(() => {
   if (props.sourceType === "static") {
     return Math.min(staticPrefixLen.value + 1, 128);
   }
-  return Math.min(effectivePdParentPrefixLen.value + 1, 128);
+  return Math.min(snapshotPrefixLen.value + 1, 128);
 });
 
 const currentPdPoolLen = computed(
@@ -165,7 +161,7 @@ const commitSaveState = computed(() => {
       editGroup: draftGroup.value,
       selectedKind: kind,
       prefixInfos: prefixInfos.value,
-      assumedPrefixLen: assumedPrefixLen.value,
+      expectedPdLens: expectedPdLens.value,
       draftPdPoolLen: currentPdPoolLen.value,
     });
     if (!view.canSave) {
@@ -207,7 +203,7 @@ function createEmptyDraftGroup(): LanPrefixGroupConfig {
     parent: {
       t: "pd",
       depend_iface: dependIface.value,
-      planned_parent_prefix_len: assumedPrefixLen.value,
+      expected_pd_len_snapshot: snapshotPrefixLen.value,
     },
     ra: null,
     na: null,
@@ -235,7 +231,7 @@ function syncParentIntoDraftGroup() {
   group.parent = {
     t: "pd",
     depend_iface: dependIface.value,
-    planned_parent_prefix_len: assumedPrefixLen.value,
+    expected_pd_len_snapshot: snapshotPrefixLen.value,
   };
 }
 
@@ -423,7 +419,7 @@ function validatePdInterval(
       editGroup: draftGroup.value,
       selectedKind: "pd",
       prefixInfos: prefixInfos.value,
-      assumedPrefixLen: assumedPrefixLen.value,
+      expectedPdLens: expectedPdLens.value,
       draftPdPoolLen: poolLen,
     },
     nextRange.unitStart,
@@ -458,12 +454,8 @@ function setPdInterval(startIndex: number, endIndex: number, poolLen: number) {
   };
 }
 
-function updateAssumedPrefixLen(value: number) {
-  assumedPrefixLen.value = value;
-  syncParentIntoDraftGroup();
-}
-
 function onDependIfaceChange() {
+  snapshotPrefixLen.value = expectedPdLens.value.get(dependIface.value) ?? 60;
   syncParentIntoDraftGroup();
 }
 
@@ -567,7 +559,7 @@ function onPlannerInteract(payload: PlannerInteractionPayload) {
       editGroup: draftGroup.value,
       selectedKind: "pd",
       prefixInfos: prefixInfos.value,
-      assumedPrefixLen: assumedPrefixLen.value,
+      expectedPdLens: expectedPdLens.value,
       draftPdPoolLen: poolLen,
     },
     unitStart,
@@ -637,7 +629,15 @@ function updatePdPoolLen(value: number | null) {
 }
 
 async function searchIpv6Pd() {
-  ipv6PdIfaces.value = await get_all_ipv6pd_status();
+  const [statuses, configs] = await Promise.all([
+    get_all_ipv6pd_status(),
+    get_all_ipv6pd_configs(),
+  ]);
+  ipv6PdIfaces.value = statuses;
+  ipv6PdConfigs.value = configs;
+  expectedPdLens.value = new Map(
+    configs.map((config) => [config.iface_name, config.config.expected_pd_len]),
+  );
 }
 
 async function loadPlannerContext() {
@@ -671,7 +671,9 @@ function initDraftGroup() {
       staticPrefixLen.value = props.group.parent.parent_prefix_len;
     } else {
       dependIface.value = props.group.parent.depend_iface;
-      assumedPrefixLen.value = props.group.parent.planned_parent_prefix_len;
+      snapshotPrefixLen.value =
+        expectedPdLens.value.get(dependIface.value) ??
+        props.group.parent.expected_pd_len_snapshot;
     }
     pdPoolLenDraft.value = props.group.pd?.pool_len ?? 64;
     return;
@@ -682,7 +684,7 @@ function initDraftGroup() {
     staticPrefixLen.value = 56;
   } else {
     dependIface.value = "";
-    assumedPrefixLen.value = 60;
+    snapshotPrefixLen.value = 60;
   }
   pdPoolLenDraft.value = 64;
   draftGroupState.value = createEmptyDraftGroup();
@@ -725,7 +727,7 @@ async function commit() {
     const parentPrefixLen =
       groupToCommit.parent.t === "static"
         ? groupToCommit.parent.parent_prefix_len
-        : groupToCommit.parent.planned_parent_prefix_len;
+        : groupToCommit.parent.expected_pd_len_snapshot;
     if (groupToCommit.pd.pool_len <= parentPrefixLen) {
       window.$message.error(
         `IA_PD /${groupToCommit.pd.pool_len} must be longer than parent /${parentPrefixLen}`,
@@ -857,9 +859,8 @@ function deleteCurrentGroup() {
                 :other-configs-v2="otherLanConfigsV2"
                 :selected-kind="selectedKind"
                 :prefix-infos="prefixInfos"
-                :assumed-prefix-len="assumedPrefixLen"
+                :expected-pd-lens="expectedPdLens"
                 :draft-pd-pool-len="currentPdPoolLen"
-                @update:assumed-prefix-len="updateAssumedPrefixLen"
                 @interact-pool-index="onPlannerInteract"
               />
             </n-gi>

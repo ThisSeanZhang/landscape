@@ -38,7 +38,7 @@ fn make_full_status() -> Ipv6ServerStatus {
         group_id: "default".into(),
         parent: PrefixParentSource::Static {
             base_prefix: Ipv6Addr::new(0xfd00, 0, 0, 0, 0, 0, 0, 0),
-            parent_prefix_len: 64,
+            parent_prefix_len: 48,
         },
         ra: Some(RaPrefixConfig {
             pool_index: 0,

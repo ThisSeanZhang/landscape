@@ -293,7 +293,10 @@ impl LanIPv6ManagerService {
             loop {
                 tokio::select! {
                     msg = prefix_update_tx.recv() => {
-                        if let Ok(IAPrefixEvent::Updated { iface_name: _wan_iface }) = msg {
+                        if matches!(
+                            msg,
+                            Ok(IAPrefixEvent::Updated { .. } | IAPrefixEvent::Expired { .. })
+                        ) {
                             // Notify all LAN services that prefix map changed.
                             // Each server will recompute subnets and apply diff.
                             for entry in per_iface_txs.iter() {

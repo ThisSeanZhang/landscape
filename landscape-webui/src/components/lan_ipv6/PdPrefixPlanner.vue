@@ -34,12 +34,11 @@ const props = defineProps<{
   otherConfigsV2: LanIPv6ServiceConfigV2[];
   selectedKind: SourceKind;
   prefixInfos: Map<string, LDIAPrefix | null>;
-  assumedPrefixLen: number;
+  expectedPdLens: Map<string, number>;
   draftPdPoolLen?: number;
 }>();
 
 const emit = defineEmits<{
-  (e: "update:assumedPrefixLen", value: number): void;
   (e: "selectPoolIndex", value: number): void;
   (
     e: "interactPoolIndex",
@@ -67,7 +66,7 @@ const planner = computed(() =>
     editGroup: props.editGroup,
     selectedKind: props.selectedKind,
     prefixInfos: props.prefixInfos,
-    assumedPrefixLen: props.assumedPrefixLen,
+    expectedPdLens: props.expectedPdLens,
     draftPdPoolLen: props.draftPdPoolLen,
   }),
 );
@@ -102,6 +101,8 @@ const reasonText = computed(() => {
   switch (planner.value.stateReason) {
     case "no_parent_iface":
       return t("lan_ipv6.planner_reason_no_parent_iface");
+    case "missing_pd_config":
+      return t("lan_ipv6.planner_reason_missing_pd_config");
     case "no_static_prefix":
       return t("lan_ipv6.planner_reason_no_static_prefix");
     case "target_shorter_than_parent":
@@ -109,10 +110,8 @@ const reasonText = computed(() => {
         target: planner.value.targetPrefixLen,
         parent: planner.value.parentPrefixLen,
       });
-    case "filtered_by_max_source_prefix_len":
-      return t("lan_ipv6.planner_reason_filtered_parent", {
-        actual: planner.value.actualPrefixLen,
-      });
+    case "selection_out_of_range":
+      return t("lan_ipv6.planner_reason_selection_out_of_range");
     case "target_more_specific_than_64":
       return t("lan_ipv6.planner_reason_more_specific_than_64");
     case "too_many_units":
@@ -138,6 +137,11 @@ const hoveredRange = computed(() => {
 });
 
 const displayError = computed(() => clickError.value);
+const wanPrefixWarning = computed(() =>
+  planner.value.wanCompatible === false
+    ? t("lan_ipv6.planner_warning_wan_prefix_mismatch")
+    : undefined,
+);
 
 function themeValue(name: string, fallback: string) {
   const element = canvasRef.value;
@@ -193,12 +197,6 @@ const legendItems = computed(() => {
     },
   ];
 });
-
-function updateAssumedPrefixLen(value: number | null) {
-  if (typeof value === "number") {
-    emit("update:assumedPrefixLen", value);
-  }
-}
 
 function colorForUnit(unit: PlannerUnit) {
   const palette = plannerPalette();
@@ -434,7 +432,7 @@ function onCanvasClick(event: MouseEvent) {
       editGroup: props.editGroup,
       selectedKind: props.selectedKind,
       prefixInfos: props.prefixInfos,
-      assumedPrefixLen: props.assumedPrefixLen,
+      expectedPdLens: props.expectedPdLens,
       draftPdPoolLen: props.draftPdPoolLen,
     },
     nextPoolIndex,
@@ -497,15 +495,9 @@ onBeforeUnmount(() => {
         :size="8"
       >
         <n-text depth="3" style="font-size: 12px">
-          {{ t("lan_ipv6.planner_preview_prefix_len") }}
+          {{ t("lan_ipv6.planner_snapshot_prefix_len") }}
         </n-text>
-        <n-input-number
-          size="small"
-          :value="props.assumedPrefixLen"
-          :min="1"
-          :max="128"
-          @update:value="updateAssumedPrefixLen"
-        />
+        <n-text strong>/{{ planner.parentPrefixLen ?? "-" }}</n-text>
         <n-text
           v-if="planner.actualPrefixLen !== undefined"
           depth="3"
@@ -516,6 +508,10 @@ onBeforeUnmount(() => {
           }}
         </n-text>
       </n-flex>
+
+      <n-alert v-if="wanPrefixWarning" type="warning" :bordered="false">
+        {{ wanPrefixWarning }}
+      </n-alert>
 
       <div v-if="planner.renderMode === 'full'" class="planner-canvas-wrap">
         <canvas

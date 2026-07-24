@@ -2,6 +2,7 @@ import { IPV6PDServiceConfig } from "@/lib/ipv6pd";
 import { ServiceStatus } from "@/lib/services";
 import {
   getAllIpv6pdStatus,
+  getAllIpv6pdConfigs,
   getIfacePdConfig,
   handleIfacePd,
   deleteAndStopIpv6pdService,
@@ -24,6 +25,11 @@ export async function get_all_ipv6pd_status(): Promise<
     map.set(key, value as ServiceStatus);
   }
   return map;
+}
+
+export async function get_all_ipv6pd_configs(): Promise<IPV6PDServiceConfig[]> {
+  const data = await getAllIpv6pdConfigs();
+  return data.map((config) => new IPV6PDServiceConfig(config));
 }
 
 export async function get_iface_ipv6pd_config(

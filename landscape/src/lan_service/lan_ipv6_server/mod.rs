@@ -13,7 +13,7 @@ use landscape_common::{
     },
     net::MacAddr,
     utils::time::get_f64_timestamp,
-    wan_service::ipv6_pd::IAPrefixMap,
+    wan_service::ipv6_pd::{pd_expectation_fits_snapshot, IAPrefixMap},
 };
 use tokio::sync::{mpsc, watch};
 
@@ -473,7 +473,8 @@ impl Ipv6ServerStatus {
     }
 
     pub fn resolve_pd_prefix(&self, key: &PdSlotKey) -> Option<(Ipv6Addr, u8)> {
-        pd::resolve_pd_prefix(&self.prefix_state.pd_ranges, key)
+        let key = (key.group_id.clone(), key.sub_index);
+        self.resolve_pd_key(&key)
     }
 
     pub(crate) fn pd_lease_sub_index(&self, duid: &[u8]) -> Option<u32> {
@@ -1484,7 +1485,11 @@ impl Ipv6ServerStatus {
     }
 
     fn find_free_pd_slot(&self) -> Option<(String, u32)> {
+        let max_prefix_len = self.pd_config.as_ref()?.delegate_prefix_len;
         for range in &self.prefix_state.pd_ranges {
+            if range.pool_len > max_prefix_len {
+                continue;
+            }
             for idx in range.start_idx..=range.end_idx {
                 let key = (range.group_id.clone(), idx);
                 if !self.pd_owners_by_slot.contains_key(&key) {
@@ -1496,8 +1501,14 @@ impl Ipv6ServerStatus {
     }
 
     fn resolve_pd_key(&self, key: &(String, u32)) -> Option<(Ipv6Addr, u8)> {
+        let max_prefix_len = self.pd_config.as_ref()?.delegate_prefix_len;
+        let range = self
+            .prefix_state
+            .pd_ranges
+            .iter()
+            .find(|range| range.group_id == key.0 && range.pool_len <= max_prefix_len)?;
         pd::resolve_pd_prefix(
-            &self.prefix_state.pd_ranges,
+            std::slice::from_ref(range),
             &PdSlotKey { group_id: key.0.clone(), sub_index: key.1 },
         )
     }
@@ -1519,14 +1530,29 @@ pub fn compute_subnets(
             PrefixParentSource::Static { base_prefix, parent_prefix_len } => {
                 (pd::normalize_prefix(*base_prefix, *parent_prefix_len), *parent_prefix_len, None)
             }
-            PrefixParentSource::Pd { depend_iface, planned_parent_prefix_len: _ } => {
-                match prefix_map.load(depend_iface) {
-                    Some(prefix) => (
-                        pd::normalize_prefix(prefix.prefix_ip, prefix.prefix_len),
-                        prefix.prefix_len,
-                        Some((prefix.preferred_lifetime, prefix.valid_lifetime)),
-                    ),
+            PrefixParentSource::Pd { depend_iface, expected_pd_len_snapshot } => {
+                // PD-derived LAN subnets pass two independent policy gates:
+                // 1. load_for_lan verifies acquired prefix <= current WAN expectation.
+                // 2. This guard verifies WAN expectation <= the saved LAN snapshot.
+                // A mismatch keeps the persisted configuration intact but suppresses its
+                // runtime subnets until the three prefix lengths become compatible.
+                match prefix_map.load_for_lan(depend_iface) {
+                    Some((prefix, expected_pd_len))
+                        if pd_expectation_fits_snapshot(
+                            expected_pd_len,
+                            *expected_pd_len_snapshot,
+                        ) =>
+                    {
+                        let actual_network =
+                            pd::normalize_prefix(prefix.prefix_ip, prefix.prefix_len);
+                        (
+                            pd::normalize_prefix(actual_network, *expected_pd_len_snapshot),
+                            *expected_pd_len_snapshot,
+                            Some((prefix.preferred_lifetime, prefix.valid_lifetime)),
+                        )
+                    }
                     None => continue,
+                    Some(_) => continue,
                 }
             }
         };
@@ -1536,6 +1562,23 @@ pub fn compute_subnets(
             PrefixParentSource::Pd { depend_iface, .. } => {
                 SubnetSource::Pd { depend_iface: depend_iface.clone() }
             }
+        };
+
+        let valid_pd = group.pd.as_ref().filter(|pd| {
+            pd.pool_len > parent_len
+                && pd.start_index <= pd.end_index
+                && (pd.end_index as u64)
+                    < 1u64.checked_shl((pd.pool_len - parent_len) as u32).unwrap_or(u64::MAX)
+        });
+        let pd_subnet_config = || {
+            valid_pd.map(|pd| PdSubnetConfig {
+                group_id: group.group_id.clone(),
+                parent: parent_ip,
+                parent_len,
+                pool_len: pd.pool_len,
+                start_idx: pd.start_index,
+                end_idx: pd.end_index,
+            })
         };
 
         // RA subnet
@@ -1551,14 +1594,6 @@ pub fn compute_subnets(
                         Some((p, v)) => (p, v),
                         None => (ra.preferred_lifetime, ra.valid_lifetime),
                     };
-                    let pd_cfg = group.pd.as_ref().map(|pd| PdSubnetConfig {
-                        group_id: group.group_id.clone(),
-                        parent: parent_ip,
-                        parent_len,
-                        pool_len: pd.pool_len,
-                        start_idx: pd.start_index,
-                        end_idx: pd.end_index,
-                    });
                     result.push(SubnetState {
                         group_id: group.group_id.clone(),
                         sub_prefix,
@@ -1570,7 +1605,7 @@ pub fn compute_subnets(
                         has_ra: true,
                         is_na: false,
                         source: source.clone(),
-                        pd_config: pd_cfg,
+                        pd_config: pd_subnet_config(),
                     });
                 }
                 None => {
@@ -1602,14 +1637,6 @@ pub fn compute_subnets(
                     na.pool_index as u128,
                 ) {
                     Some((sub_prefix, sub_router)) => {
-                        let pd_cfg = group.pd.as_ref().map(|pd| PdSubnetConfig {
-                            group_id: group.group_id.clone(),
-                            parent: parent_ip,
-                            parent_len,
-                            pool_len: pd.pool_len,
-                            start_idx: pd.start_index,
-                            end_idx: pd.end_index,
-                        });
                         result.push(SubnetState {
                             group_id: group.group_id.clone(),
                             sub_prefix,
@@ -1621,7 +1648,7 @@ pub fn compute_subnets(
                             has_ra: false,
                             is_na: true,
                             source: source.clone(),
-                            pd_config: pd_cfg,
+                            pd_config: pd_subnet_config(),
                         });
                     }
                     None => {
@@ -1636,7 +1663,7 @@ pub fn compute_subnets(
 
         // PD-only group: no RA, no NA, just PD delegation
         if group.ra.is_none() && group.na.is_none() {
-            if let Some(ref pd) = group.pd {
+            if let Some(pd) = valid_pd {
                 result.push(SubnetState {
                     group_id: group.group_id.clone(),
                     sub_prefix: parent_ip,

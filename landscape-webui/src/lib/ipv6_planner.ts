@@ -4,9 +4,15 @@ import type {
   LanPrefixGroupConfig,
 } from "@landscape-router/types/api/schemas";
 import type { LDIAPrefix } from "@/api/service_ipv6pd";
-import type { SourceKind } from "@/lib/lan_ipv6_v2_helpers";
+import {
+  lanSnapshotCompatibility,
+  pdRuntimeReady,
+  wanPrefixMeetsExpectation,
+  type LanSnapshotCompatibility,
+  type SourceKind,
+} from "@/lib/lan_ipv6_v2_helpers";
 
-export type PlannerState = "idle" | "preview" | "active" | "degraded";
+export type PlannerState = "idle" | "preview" | "resolved";
 export type PlannerRenderMode = "full" | "summary_only";
 export type PlannerSelectionStatus =
   | "idle"
@@ -54,9 +60,10 @@ export interface PlannerView {
   state: PlannerState;
   stateReason?:
     | "no_parent_iface"
+    | "missing_pd_config"
     | "no_static_prefix"
     | "target_shorter_than_parent"
-    | "filtered_by_max_source_prefix_len"
+    | "selection_out_of_range"
     | "target_more_specific_than_64"
     | "too_many_units";
   dependIface?: string;
@@ -64,7 +71,9 @@ export interface PlannerView {
   parentPrefixLen?: number;
   actualPrefix?: string;
   actualPrefixLen?: number;
-  assumedPrefixLen?: number;
+  wanCompatible?: boolean;
+  lanCompatibility?: LanSnapshotCompatibility;
+  runtimeReady: boolean;
   reservedSlots: number;
   renderMode: PlannerRenderMode;
   totalUnits: number;
@@ -88,7 +97,7 @@ export interface BuildGroupPlannerOptions {
   editGroup?: LanPrefixGroupConfig;
   selectedKind: SourceKind;
   prefixInfos: Map<string, LDIAPrefix | null>;
-  assumedPrefixLen: number;
+  expectedPdLens?: Map<string, number>;
   draftPdPoolLen?: number;
   maxRenderableUnits?: number;
 }
@@ -115,7 +124,7 @@ type GroupPlannerParent =
       t: "pd";
       key: string;
       dependIface: string;
-      plannedParentPrefixLen: number;
+      snapshotPrefixLen: number;
     };
 
 interface GroupPlannerEntry {
@@ -142,6 +151,9 @@ interface GroupPlannerBaseResult {
   reservedUnitCount: number;
   actualPrefix?: string;
   actualPrefixLen?: number;
+  wanCompatible?: boolean;
+  lanCompatibility?: LanSnapshotCompatibility;
+  runtimeReady: boolean;
   parentBasePrefix?: string;
   state: PlannerState;
   stateReason?: PlannerView["stateReason"];
@@ -428,6 +440,7 @@ function idleView(
   return {
     state: "idle",
     stateReason,
+    runtimeReady: false,
     reservedSlots: 0,
     renderMode: "summary_only",
     totalUnits: 0,
@@ -436,6 +449,35 @@ function idleView(
     selectedStatus: "idle",
     canSave: false,
     saveError,
+  };
+}
+
+function entryFitsParent(
+  entry: GroupPlannerEntry,
+  parentPrefixLen: number,
+): boolean {
+  if (!entry.hasSelection || entry.poolLen <= parentPrefixLen) {
+    return !entry.hasSelection;
+  }
+  if (
+    !Number.isInteger(entry.startIndex) ||
+    !Number.isInteger(entry.endIndex) ||
+    entry.startIndex < 0 ||
+    entry.endIndex < entry.startIndex
+  ) {
+    return false;
+  }
+  const maxBlocks = 1n << BigInt(entry.poolLen - parentPrefixLen);
+  return BigInt(entry.endIndex) < maxBlocks;
+}
+
+function runtimeFields(
+  base: GroupPlannerBaseResult,
+): Pick<PlannerView, "wanCompatible" | "lanCompatibility" | "runtimeReady"> {
+  return {
+    wanCompatible: base.wanCompatible,
+    lanCompatibility: base.lanCompatibility,
+    runtimeReady: base.runtimeReady,
   };
 }
 
@@ -469,9 +511,9 @@ function plannerParentFromGroup(
 
   return {
     t: "pd",
-    key: `pd:${group.parent.depend_iface}/${group.parent.planned_parent_prefix_len}`,
+    key: `pd:${group.parent.depend_iface}/${group.parent.expected_pd_len_snapshot}`,
     dependIface: group.parent.depend_iface,
-    plannedParentPrefixLen: group.parent.planned_parent_prefix_len,
+    snapshotPrefixLen: group.parent.expected_pd_len_snapshot,
   };
 }
 
@@ -485,7 +527,11 @@ function occupancyParentKeyForParent(
 
   const actualPrefix = prefixInfos.get(parent.dependIface) ?? null;
   if (actualPrefix) {
-    return `pd-actual:${normalizePrefix(actualPrefix.prefix_ip, actualPrefix.prefix_len)}/${actualPrefix.prefix_len}`;
+    const actualNetwork = normalizePrefix(
+      actualPrefix.prefix_ip,
+      actualPrefix.prefix_len,
+    );
+    return `pd-actual:${normalizePrefix(actualNetwork, parent.snapshotPrefixLen)}/${parent.snapshotPrefixLen}`;
   }
 
   return parent.key;
@@ -651,24 +697,95 @@ function entryEffectiveIndexRange(entry: GroupPlannerEntry) {
   };
 }
 
-function entryUnitRange(entry: GroupPlannerEntry) {
-  const unitPerBlock = unitSpanForPrefix(entry.poolLen);
-  if (unitPerBlock === undefined) {
+type ResolvedPlannerParent =
+  | { t: "resolved"; base: bigint }
+  | { t: "fallback"; dependIface: string; base: bigint };
+
+function resolvePlannerParent(
+  parent: GroupPlannerParent,
+  prefixInfos: Map<string, LDIAPrefix | null>,
+): ResolvedPlannerParent {
+  if (parent.t === "static") {
+    return {
+      t: "resolved",
+      base:
+        ipv6ToBigInt(parent.basePrefix) & maskForPrefix(parent.parentPrefixLen),
+    };
+  }
+
+  const actualPrefix = prefixInfos.get(parent.dependIface) ?? null;
+  if (!actualPrefix) {
+    return { t: "fallback", dependIface: parent.dependIface, base: 0n };
+  }
+  const actualNetwork =
+    ipv6ToBigInt(actualPrefix.prefix_ip) &
+    maskForPrefix(actualPrefix.prefix_len);
+  return {
+    t: "resolved",
+    base: actualNetwork & maskForPrefix(parent.snapshotPrefixLen),
+  };
+}
+
+function plannerParentsComparable(
+  left: GroupPlannerParent,
+  right: GroupPlannerParent,
+  prefixInfos: Map<string, LDIAPrefix | null>,
+) {
+  const resolvedLeft = resolvePlannerParent(left, prefixInfos);
+  const resolvedRight = resolvePlannerParent(right, prefixInfos);
+  if (resolvedLeft.t === "resolved" && resolvedRight.t === "resolved") {
+    return true;
+  }
+  return (
+    resolvedLeft.t === "fallback" &&
+    resolvedRight.t === "fallback" &&
+    resolvedLeft.dependIface === resolvedRight.dependIface
+  );
+}
+
+function entryUnitRangeRelativeToParent(
+  entry: GroupPlannerEntry,
+  selectedParent: GroupPlannerParent,
+  prefixInfos: Map<string, LDIAPrefix | null>,
+) {
+  if (
+    entry.poolLen <= 0 ||
+    entry.poolLen > 64 ||
+    !plannerParentsComparable(entry.parent, selectedParent, prefixInfos)
+  ) {
     return { unitStart: undefined, unitSpan: undefined };
   }
-  const { startIndex, endIndex } = entryEffectiveIndexRange(entry);
-  return {
-    unitStart: startIndex * unitPerBlock,
-    unitSpan: (endIndex - startIndex + 1) * unitPerBlock,
-  };
+
+  const entryParent = resolvePlannerParent(entry.parent, prefixInfos);
+  const selected = resolvePlannerParent(selectedParent, prefixInfos);
+  const blockSpan = 1n << BigInt(64 - entry.poolLen);
+  const entryBaseUnit = entryParent.base >> 64n;
+  const selectedBaseUnit = selected.base >> 64n;
+  const unitStart =
+    entryBaseUnit + BigInt(entry.startIndex) * blockSpan - selectedBaseUnit;
+  const unitSpan = BigInt(entry.endIndex - entry.startIndex + 1) * blockSpan;
+  if (
+    unitStart < BigInt(Number.MIN_SAFE_INTEGER) ||
+    unitStart > BigInt(Number.MAX_SAFE_INTEGER) ||
+    unitSpan > BigInt(Number.MAX_SAFE_INTEGER)
+  ) {
+    return { unitStart: undefined, unitSpan: undefined };
+  }
+  return { unitStart: Number(unitStart), unitSpan: Number(unitSpan) };
 }
 
 function buildGroupOccupancyRecord(
   ifaceName: string,
   scope: "current" | "other",
   entry: GroupPlannerEntry,
+  selectedParent: GroupPlannerParent,
+  prefixInfos: Map<string, LDIAPrefix | null>,
 ): OccupancyRecord {
-  const { unitStart, unitSpan } = entryUnitRange(entry);
+  const { unitStart, unitSpan } = entryUnitRangeRelativeToParent(
+    entry,
+    selectedParent,
+    prefixInfos,
+  );
   const { startIndex } = entryEffectiveIndexRange(entry);
   return {
     ifaceName,
@@ -684,16 +801,18 @@ function buildGroupOccupancyRecord(
 
 function buildGroupOccupancyRecords(
   options: BuildGroupPlannerOptions,
-  parentKey: string,
+  selectedParent: GroupPlannerParent,
 ): OccupancyRecord[] {
   const currentRecords = options.currentGroups.flatMap((group) =>
     // Show all configured results for the current interface on the shared canvas,
     // even if the current service mode would not activate them right now.
     buildEntriesForGroup(group, undefined)
-      .filter(
-        (entry) =>
-          occupancyParentKeyForParent(entry.parent, options.prefixInfos) ===
-          parentKey,
+      .filter((entry) =>
+        plannerParentsComparable(
+          entry.parent,
+          selectedParent,
+          options.prefixInfos,
+        ),
       )
       .filter(
         (entry) =>
@@ -703,7 +822,13 @@ function buildGroupOccupancyRecords(
           ),
       )
       .map((entry) =>
-        buildGroupOccupancyRecord(options.currentIfaceName, "current", entry),
+        buildGroupOccupancyRecord(
+          options.currentIfaceName,
+          "current",
+          entry,
+          selectedParent,
+          options.prefixInfos,
+        ),
       ),
   );
 
@@ -713,13 +838,21 @@ function buildGroupOccupancyRecords(
       // for other LANs as well, so users can see occupied positions even when a mode
       // would not currently activate that kind.
       .flatMap((group) => buildEntriesForGroup(group, undefined))
-      .filter(
-        (entry) =>
-          occupancyParentKeyForParent(entry.parent, options.prefixInfos) ===
-          parentKey,
+      .filter((entry) =>
+        plannerParentsComparable(
+          entry.parent,
+          selectedParent,
+          options.prefixInfos,
+        ),
       )
       .map((entry) =>
-        buildGroupOccupancyRecord(config.iface_name, "other", entry),
+        buildGroupOccupancyRecord(
+          config.iface_name,
+          "other",
+          entry,
+          selectedParent,
+          options.prefixInfos,
+        ),
       ),
   );
 
@@ -739,7 +872,11 @@ function buildGroupPlannerViewBase(
   const parentPrefixLen =
     selectedEntry.parent.t === "static"
       ? selectedEntry.parent.parentPrefixLen
-      : selectedEntry.parent.plannedParentPrefixLen;
+      : selectedEntry.parent.snapshotPrefixLen;
+  const selectionOutOfRange =
+    selectedEntry.hasSelection &&
+    targetPrefixLen > parentPrefixLen &&
+    !entryFitsParent(selectedEntry, parentPrefixLen);
 
   if (selectedUnitBlock === undefined) {
     return {
@@ -758,6 +895,7 @@ function buildGroupPlannerViewBase(
       selectedUnitStart: 0,
       selectedUnitSpan: 0,
       reservedUnitCount: 0,
+      runtimeReady: false,
       state: "preview",
       stateReason: "target_more_specific_than_64",
       saveError: "lan_ipv6.planner_save_error_target_more_specific_than_64",
@@ -790,10 +928,15 @@ function buildGroupPlannerViewBase(
       selectedUnitStart,
       selectedUnitSpan,
       reservedUnitCount: 0,
+      runtimeReady: true,
       actualPrefix: `${selectedEntry.parent.basePrefix}/${selectedEntry.parent.parentPrefixLen}`,
       actualPrefixLen: selectedEntry.parent.parentPrefixLen,
       parentBasePrefix: selectedEntry.parent.basePrefix,
-      state: "active",
+      state: "resolved",
+      stateReason: selectionOutOfRange ? "selection_out_of_range" : undefined,
+      saveError: selectionOutOfRange
+        ? "lan_ipv6.planner_save_error_selection_out_of_range"
+        : undefined,
     };
   }
 
@@ -814,6 +957,7 @@ function buildGroupPlannerViewBase(
       selectedUnitStart: 0,
       selectedUnitSpan,
       reservedUnitCount: 0,
+      runtimeReady: false,
       state: "idle",
       stateReason: "no_parent_iface",
       saveError: "lan_ipv6.planner_save_error_no_parent_iface",
@@ -822,47 +966,31 @@ function buildGroupPlannerViewBase(
 
   const actualPrefix =
     options.prefixInfos.get(selectedEntry.parent.dependIface) ?? null;
-  const plannedParentPrefixLen = selectedEntry.parent.plannedParentPrefixLen;
-  const effectiveParentPrefixLen =
-    actualPrefix?.prefix_len ?? plannedParentPrefixLen;
+  const snapshotPrefixLen = selectedEntry.parent.snapshotPrefixLen;
+  const expectedPrefixLen = options.expectedPdLens?.get(
+    selectedEntry.parent.dependIface,
+  );
+  const wanCompatible = wanPrefixMeetsExpectation(
+    actualPrefix?.prefix_len,
+    expectedPrefixLen,
+  );
+  const snapshotCompatibility = lanSnapshotCompatibility(
+    expectedPrefixLen,
+    snapshotPrefixLen,
+  );
   const occupancyParentKey = occupancyParentKeyForParent(
     selectedEntry.parent,
     options.prefixInfos,
   );
-
-  if (actualPrefix && actualPrefix.prefix_len > plannedParentPrefixLen) {
-    return {
-      entry: selectedEntry,
-      hasSelection: selectedEntry.hasSelection,
-      selectedKind: selectedEntry.serviceKind,
-      parentKey: occupancyParentKey,
-      parentPrefixLen: effectiveParentPrefixLen,
-      targetPrefixLen,
-      selectedPoolIndex: selectedEntry.hasSelection
-        ? selectedEntry.startIndex
-        : undefined,
-      selectedEffectiveIndex: selectedEntry.hasSelection
-        ? effectiveRange.startIndex
-        : undefined,
-      selectedUnitStart,
-      selectedUnitSpan,
-      reservedUnitCount: entryReservedUnitCount(selectedEntry),
-      actualPrefix: `${actualPrefix.prefix_ip}/${actualPrefix.prefix_len}`,
-      actualPrefixLen: actualPrefix.prefix_len,
-      parentBasePrefix: actualPrefix.prefix_ip,
-      state: "degraded",
-      stateReason: "filtered_by_max_source_prefix_len",
-      dependIface: selectedEntry.parent.dependIface,
-      saveError: "lan_ipv6.planner_save_error_filtered_parent",
-    };
-  }
+  const missingPdConfig =
+    options.expectedPdLens !== undefined && expectedPrefixLen === undefined;
 
   return {
     entry: selectedEntry,
     hasSelection: selectedEntry.hasSelection,
     selectedKind: selectedEntry.serviceKind,
     parentKey: occupancyParentKey,
-    parentPrefixLen: effectiveParentPrefixLen,
+    parentPrefixLen: snapshotPrefixLen,
     targetPrefixLen,
     selectedPoolIndex: selectedEntry.hasSelection
       ? selectedEntry.startIndex
@@ -877,8 +1005,30 @@ function buildGroupPlannerViewBase(
       ? `${actualPrefix.prefix_ip}/${actualPrefix.prefix_len}`
       : undefined,
     actualPrefixLen: actualPrefix?.prefix_len,
-    parentBasePrefix: actualPrefix?.prefix_ip,
-    state: actualPrefix ? "active" : "preview",
+    wanCompatible,
+    lanCompatibility: snapshotCompatibility,
+    runtimeReady: pdRuntimeReady(
+      actualPrefix?.prefix_len,
+      expectedPrefixLen,
+      snapshotPrefixLen,
+    ),
+    parentBasePrefix: actualPrefix
+      ? normalizePrefix(
+          normalizePrefix(actualPrefix.prefix_ip, actualPrefix.prefix_len),
+          snapshotPrefixLen,
+        )
+      : undefined,
+    state: actualPrefix ? "resolved" : "preview",
+    stateReason: missingPdConfig
+      ? "missing_pd_config"
+      : selectionOutOfRange
+        ? "selection_out_of_range"
+        : undefined,
+    saveError: missingPdConfig
+      ? "lan_ipv6.planner_save_error_missing_pd_config"
+      : selectionOutOfRange
+        ? "lan_ipv6.planner_save_error_selection_out_of_range"
+        : undefined,
     dependIface: selectedEntry.parent.dependIface,
   };
 }
@@ -908,10 +1058,11 @@ function buildGroupPlannerView(
         )
       : undefined;
 
-  const allRecords = buildGroupOccupancyRecords(options, base.parentKey);
+  const allRecords = buildGroupOccupancyRecords(options, base.entry.parent);
 
   if (base.saveError) {
     return {
+      ...runtimeFields(base),
       state: base.state,
       stateReason: base.stateReason,
       dependIface: base.dependIface,
@@ -919,7 +1070,6 @@ function buildGroupPlannerView(
       parentPrefixLen: base.parentPrefixLen,
       actualPrefix: base.actualPrefix,
       actualPrefixLen: base.actualPrefixLen,
-      assumedPrefixLen: options.assumedPrefixLen,
       reservedSlots: entryReservedBlockOffset(base.entry),
       renderMode: "summary_only",
       totalUnits: 0,
@@ -938,6 +1088,7 @@ function buildGroupPlannerView(
 
   if (base.targetPrefixLen < base.parentPrefixLen) {
     return {
+      ...runtimeFields(base),
       state: base.actualPrefix ? base.state : "preview",
       stateReason: "target_shorter_than_parent",
       dependIface: base.dependIface,
@@ -945,7 +1096,6 @@ function buildGroupPlannerView(
       parentPrefixLen: base.parentPrefixLen,
       actualPrefix: base.actualPrefix,
       actualPrefixLen: base.actualPrefixLen,
-      assumedPrefixLen: options.assumedPrefixLen,
       reservedSlots: entryReservedBlockOffset(base.entry),
       renderMode: "summary_only",
       totalUnits: 0,
@@ -980,6 +1130,7 @@ function buildGroupPlannerView(
 
   if (base.targetPrefixLen > 64 || base.parentPrefixLen > 64) {
     return {
+      ...runtimeFields(base),
       state: base.state,
       stateReason: "target_more_specific_than_64",
       dependIface: base.dependIface,
@@ -987,7 +1138,6 @@ function buildGroupPlannerView(
       parentPrefixLen: base.parentPrefixLen,
       actualPrefix: base.actualPrefix,
       actualPrefixLen: base.actualPrefixLen,
-      assumedPrefixLen: options.assumedPrefixLen,
       reservedSlots: entryReservedBlockOffset(base.entry),
       renderMode: "summary_only",
       totalUnits: 0,
@@ -1010,6 +1160,7 @@ function buildGroupPlannerView(
   const maxRenderableUnits = BigInt(options.maxRenderableUnits ?? 4096);
   if (totalUnitsBig > maxRenderableUnits) {
     return {
+      ...runtimeFields(base),
       state: base.state,
       stateReason: "too_many_units",
       dependIface: base.dependIface,
@@ -1017,7 +1168,6 @@ function buildGroupPlannerView(
       parentPrefixLen: base.parentPrefixLen,
       actualPrefix: base.actualPrefix,
       actualPrefixLen: base.actualPrefixLen,
-      assumedPrefixLen: options.assumedPrefixLen,
       reservedSlots: entryReservedBlockOffset(base.entry),
       renderMode: "summary_only",
       totalUnits: Number(maxRenderableUnits),
@@ -1137,6 +1287,7 @@ function buildGroupPlannerView(
   }
 
   return {
+    ...runtimeFields(base),
     state: base.state,
     stateReason: base.stateReason,
     dependIface: base.dependIface,
@@ -1144,7 +1295,6 @@ function buildGroupPlannerView(
     parentPrefixLen: base.parentPrefixLen,
     actualPrefix: base.actualPrefix,
     actualPrefixLen: base.actualPrefixLen,
-    assumedPrefixLen: options.assumedPrefixLen,
     reservedSlots: entryReservedBlockOffset(base.entry),
     renderMode: "full",
     totalUnits,
@@ -1236,7 +1386,7 @@ export function inspectPlannerUnitRangeCandidateFromGroups(
   const selection = selectionStatus(
     base.selectedKind,
     base.entry.groupId,
-    buildGroupOccupancyRecords(options, base.parentKey),
+    buildGroupOccupancyRecords(options, base.entry.parent),
     unitStart,
     unitSpan,
     base.reservedUnitCount,

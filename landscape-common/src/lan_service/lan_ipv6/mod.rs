@@ -15,9 +15,10 @@ pub use dhcpv6_config::{
 pub use dhcpv6_status::{DHCPv6AddressItem, DHCPv6OfferInfo, DHCPv6PrefixItem};
 
 pub use prefix_group::{
-    validate_cross_interface_v2, validate_cross_interface_v2_with_prefix_infos,
-    validate_prefix_groups, validate_prefix_groups_with_prefix_infos, ExpandedPrefixEntry,
-    LanPrefixGroupConfig, NaPrefixConfig, PdPrefixRangeConfig, PrefixParentSource, RaPrefixConfig,
+    validate_cross_interface_v2, validate_cross_interface_v2_with_pd_context,
+    validate_prefix_groups, validate_prefix_groups_with_pd_context, ExpandedPrefixEntry,
+    LanPrefixGroupConfig, NaPrefixConfig, PdPrefixContext, PdPrefixContextMap, PdPrefixRangeConfig,
+    PrefixParentSource, RaPrefixConfig,
 };
 
 pub use ipv6_na::{IPv6NAInfo, IPv6NAInfoItem};

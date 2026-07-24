@@ -27,8 +27,13 @@ async function refresh() {
   emit("refresh");
 }
 const actualPrefix = computed(() => props.prefix_status.actual_prefix);
+// WAN PD owns the acquired-prefix vs WAN-expectation verdict. LAN snapshot
+// compatibility is intentionally reported by the LAN prefix-group UI instead.
 const status = computed(() => {
-  if (actualPrefix.value) {
+  if (
+    actualPrefix.value &&
+    props.prefix_status.meets_expected_pd_len === true
+  ) {
     if (
       actualPrefix.value.last_update_time +
         actualPrefix.value.valid_lifetime * 1000 >

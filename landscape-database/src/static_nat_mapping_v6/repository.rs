@@ -302,7 +302,7 @@ mod tests {
                     group_id: "na".to_string(),
                     parent: PrefixParentSource::Pd {
                         depend_iface: "wan0".to_string(),
-                        planned_parent_prefix_len: 56,
+                        expected_pd_len_snapshot: 56,
                     },
                     ra: None,
                     na: Some(NaPrefixConfig { pool_index: 1 }),

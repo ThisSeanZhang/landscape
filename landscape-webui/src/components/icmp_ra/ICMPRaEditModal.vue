@@ -9,6 +9,7 @@ import {
   get_lan_ipv6_config,
   update_lan_ipv6_config,
 } from "@/api/service_lan_ipv6";
+import { get_all_ipv6pd_configs } from "@/api/service_ipv6pd";
 import {
   type SourceKind,
   type SourceType,
@@ -38,6 +39,7 @@ const iface_info = defineProps<{
 }>();
 
 const service_config = ref<LanIPv6ServiceConfigV2>();
+const expectedPdLens = ref<Map<string, number>>(new Map());
 
 const service_enabled = computed({
   get() {
@@ -94,6 +96,13 @@ function allowed_service_kinds_for_type(
 }
 
 async function on_modal_enter() {
+  const pdConfigs = await get_all_ipv6pd_configs().catch(() => []);
+  expectedPdLens.value = new Map(
+    pdConfigs.map((config) => [
+      config.iface_name,
+      config.config.expected_pd_len,
+    ]),
+  );
   try {
     let config = await get_lan_ipv6_config(iface_info.iface_name);
     if (config) {
@@ -351,6 +360,7 @@ function replace_group_sources(
             :iface-name="service_config.iface_name"
             :current-groups="all_groups"
             :current-mode="service_config.config.mode"
+            :expected-pd-lens="expectedPdLens"
             @commit-group="replace_group_sources"
           />
         </n-flex>

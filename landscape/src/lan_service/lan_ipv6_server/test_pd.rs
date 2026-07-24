@@ -9,8 +9,12 @@ use landscape_common::{
 use super::*;
 
 fn make_pd_status() -> Ipv6ServerStatus {
+    make_pd_status_with_filter(56)
+}
+
+fn make_pd_status_with_filter(delegate_prefix_len: u8) -> Ipv6ServerStatus {
     let pd_config = DHCPv6IAPDConfig {
-        delegate_prefix_len: 56,
+        delegate_prefix_len,
         preferred_lifetime: 3600,
         valid_lifetime: 7200,
     };
@@ -32,6 +36,15 @@ fn make_pd_status() -> Ipv6ServerStatus {
     let subnets = compute_subnets(&groups, &IAPrefixMap::new());
     status.update_prefix(&subnets);
     status
+}
+
+#[test]
+fn delegate_prefix_len_filters_snapshot_pool_blocks() {
+    let mut excluded = make_pd_status_with_filter(55);
+    assert!(excluded.offer_pd(b"pd-filtered").is_none());
+
+    let mut included = make_pd_status_with_filter(56);
+    assert!(included.offer_pd(b"pd-allowed").is_some());
 }
 
 #[test]

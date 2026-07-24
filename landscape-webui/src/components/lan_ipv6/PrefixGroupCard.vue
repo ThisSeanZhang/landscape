@@ -9,6 +9,7 @@ import { useI18n } from "vue-i18n";
 import PrefixGroupEditorModal from "@/components/lan_ipv6/PrefixGroupEditorModal.vue";
 import {
   groupParentLabel,
+  lanSnapshotCompatibility,
   sourceTypeFromParent,
 } from "@/lib/lan_ipv6_v2_helpers";
 
@@ -23,6 +24,7 @@ const props = defineProps<{
   ifaceName: string;
   currentGroups: LanPrefixGroupConfig[];
   currentMode?: IPv6ServiceMode;
+  expectedPdLens: Map<string, number>;
 }>();
 
 const emit = defineEmits<{
@@ -39,6 +41,32 @@ const kinds: ServiceKind[] = ["ra", "na", "pd"];
 
 const sourceType = computed(() => sourceTypeFromParent(props.group.parent));
 const parentLabel = computed(() => groupParentLabel(props.group.parent));
+// This badge is deliberately LAN-scoped: compare the current WAN expectation with
+// the saved LAN snapshot only. The WAN PD status UI separately reports whether the
+// acquired prefix satisfies the WAN expectation.
+const snapshotStatus = computed(() => {
+  if (props.group.parent.t !== "pd") {
+    return undefined;
+  }
+  const expected = props.expectedPdLens.get(props.group.parent.depend_iface);
+  const snapshot = props.group.parent.expected_pd_len_snapshot;
+  const compatibility = lanSnapshotCompatibility(expected, snapshot);
+  if (compatibility === "unavailable") {
+    return {
+      type: "warning" as const,
+      label: t("lan_ipv6.snapshot_status_unavailable"),
+      detail: t("lan_ipv6.snapshot_status_detail_missing"),
+    };
+  }
+  if (compatibility !== "insufficient") {
+    return undefined;
+  }
+  return {
+    type: "warning" as const,
+    label: t("lan_ipv6.snapshot_status_insufficient"),
+    detail: t("lan_ipv6.snapshot_status_detail_insufficient"),
+  };
+});
 const editorKinds = computed<ServiceKind[]>(() => {
   const set = new Set<ServiceKind>(props.allowedServiceKinds);
   if (props.group.ra) {
@@ -177,6 +205,14 @@ function openEditor(kind: ServiceKind) {
           <n-tag size="small" :bordered="false" type="info">
             {{ parentLabel }}
           </n-tag>
+          <n-tooltip v-if="snapshotStatus">
+            <template #trigger>
+              <n-tag size="small" :bordered="false" :type="snapshotStatus.type">
+                {{ snapshotStatus.label }}
+              </n-tag>
+            </template>
+            {{ snapshotStatus.detail }}
+          </n-tooltip>
         </div>
       </div>
 
