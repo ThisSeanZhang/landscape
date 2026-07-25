@@ -7,6 +7,7 @@ WORKDIR /app
 # 安装必要的工具
 RUN apt-get update && apt-get install -y \
     iproute2 \
+    iptables \
     # tcpdump  \
     # curl  \
     && apt-get clean \
