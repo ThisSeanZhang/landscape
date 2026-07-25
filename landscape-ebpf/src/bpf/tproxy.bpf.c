@@ -24,6 +24,15 @@ volatile const u8 proxy_ipv6_addr[16] = {0};
 volatile const __be32 proxy_addr = 0;
 volatile const __be16 proxy_port = 0;
 
+/* Mark applied to ICMP / ICMPv6 packets so they are released to the container
+ * routing stack instead of being sk_assign'd to the TProxy listener (which only
+ * has TCP/UDP sockets). Must avoid bit 0: start.sh installs
+ * `ip rule add fwmark 0x1/0x1 lookup 100` which locally delivers any mark whose
+ * bit 0 is set to the TProxy listener. 0x2 keeps ICMP out of that table so it
+ * follows the main route table; users match this mark with nft/iptables to
+ * forward it out the WAN. See issue #206. */
+#define LAND_TPROXY_ICMP_MARK 0x2
+
 static __always_inline int handle_pkg(struct __sk_buff *skb, struct packet_offset_info *offset,
                                       struct inet_pair *ip_pair, __be16 flow_port) {
 #define BPF_LOG_TOPIC "handle_pkg"
@@ -120,6 +129,11 @@ static __always_inline int is_tproxy_handle_protocol(const u8 protocol) {
     }
 }
 
+static __always_inline bool is_icmp_protocol(const u8 protocol) {
+    // IPPROTO_ICMP (1) for IPv4, NEXTHDR_ICMP (58 == IPPROTO_ICMPV6) for IPv6.
+    return protocol == IPPROTO_ICMP || protocol == NEXTHDR_ICMP;
+}
+
 SEC("tc/ingress")
 int tproxy_ingress(struct __sk_buff *skb) {
 #define BPF_LOG_TOPIC "tproxy_ingress"
@@ -149,6 +163,18 @@ int tproxy_ingress(struct __sk_buff *skb) {
     if (ret != TC_ACT_OK) {
         ld_bpf_log("is_tproxy_handle_protocol ret %d protocol: %u", ret, pkg_offset.l4_protocol);
         return ret;
+    }
+
+    /* TProxy binds only TCP/UDP sockets, so ICMP can never be sk_assign'd and
+     * would otherwise fall into the `!sk` branch of handle_pkg() and be dropped
+     * (TC_ACT_SHOT). Instead mark it and release it to the container routing
+     * stack (same as route_mode_ingress), letting the user's nft/iptables rules
+     * forward it out the WAN. This is what makes ping/traceroute work for
+     * devices steered into a TProxy container. See issue #206. */
+    if (is_icmp_protocol(pkg_offset.l4_protocol)) {
+        skb->mark = LAND_TPROXY_ICMP_MARK;
+        bpf_skb_change_type(skb, PACKET_HOST);
+        return TC_ACT_OK;
     }
 
     ret = read_tproxy_packet_info(skb, &pkg_offset, &ip_pair);
