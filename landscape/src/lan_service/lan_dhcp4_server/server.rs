@@ -23,6 +23,7 @@ use landscape_common::lan_service::lan_dhcpv4::config::{
 };
 use landscape_common::lan_service::lan_dhcpv4::status::DHCPv4OfferInfo;
 use landscape_common::net::MacAddr;
+use landscape_common::sys_service::lan_hostname::LanHostnameConfig;
 
 use crate::lan_service::lan_dhcp4_server::status::DhcpV4AssignStatus;
 use landscape_common::service::{ServiceStatus, WatchService};
@@ -34,6 +35,11 @@ use tokio::net::UdpSocket;
 use tracing::instrument;
 
 const IP_EXPIRE_INTERVAL: u64 = 60 * 10;
+
+/// Option 15 — Domain Name (RFC 2132).
+const DHCPV4_DOMAIN_NAME_OPTION_CODE: u8 = 15;
+/// Option 119 — Domain Search (RFC 3397).
+const DHCPV4_DOMAIN_SEARCH_OPTION_CODE: u8 = 119;
 
 #[instrument(skip(server_ip, dhcp_server, service_status, ipv4_assign_sender))]
 pub async fn dhcp_v4_server(
@@ -351,6 +357,10 @@ pub struct DHCPv4Server {
     pub global_custom_options: Vec<(u8, Vec<u8>)>,
     pub global_dynamic_options: Vec<CustomDhcpOption>,
     pub dnr_context: Option<DhcpV4DnrRuntimeContext>,
+    /// Live hostname-registry config; the LAN suffix it holds is advertised as
+    /// option 15/119 and is re-read per response so a config edit applies
+    /// without restarting the DHCP service.
+    pub lan_domain_state: Option<Arc<ArcSwap<LanHostnameConfig>>>,
     pub address_lease_time: u32,
     pub iface_name: String,
     status: Arc<Mutex<DhcpV4AssignStatus>>,
@@ -360,6 +370,7 @@ impl DHCPv4Server {
     pub fn new(
         config: DHCPv4ServerConfig,
         dnr_context: Option<DhcpV4DnrRuntimeContext>,
+        lan_domain_state: Option<Arc<ArcSwap<LanHostnameConfig>>>,
         status: Arc<Mutex<DhcpV4AssignStatus>>,
         iface_name: String,
     ) -> Self {
@@ -413,16 +424,62 @@ impl DHCPv4Server {
             global_custom_options,
             global_dynamic_options,
             dnr_context,
+            lan_domain_state,
             address_lease_time,
             iface_name,
             status,
         }
     }
 
+    /// Builds option 15 (Domain Name) / 119 (Domain Search) from the LAN suffix
+    /// so clients can reach `nas` as well as `nas.lan`.
+    ///
+    /// Returns `None` when local naming is disabled, the suffix is empty, or the
+    /// suffix is not a valid DNS name, and is read on every response so a
+    /// config edit takes effect without a service restart.
+    fn lan_domain_option(&self, code: u8) -> Option<DhcpOptions> {
+        let config = self.lan_domain_state.as_ref()?.load();
+        if !config.enable || config.lan_suffix.is_empty() {
+            return None;
+        }
+        let suffix = config.lan_suffix.clone();
+        match code {
+            DHCPV4_DOMAIN_NAME_OPTION_CODE => Some(DhcpOptions::DomainName(suffix)),
+            DHCPV4_DOMAIN_SEARCH_OPTION_CODE => {
+                // Option 119 carries wire-format DNS names, so the suffix has
+                // to parse as one; a bad suffix is skipped rather than
+                // poisoning the whole response.
+                match hickory_proto::rr::Name::from_utf8(format!("{suffix}.")) {
+                    Ok(name) => Some(DhcpOptions::DomainSearch(vec![name])),
+                    Err(e) => {
+                        tracing::warn!(
+                            "lan_suffix {:?} is not a valid DNS name ({e}) — option {} skipped",
+                            suffix,
+                            DHCPV4_DOMAIN_SEARCH_OPTION_CODE
+                        );
+                        None
+                    }
+                }
+            }
+            _ => None,
+        }
+    }
+
+    /// Option the client asked for in its parameter request list (option 55)
+    /// that is derived at response time instead of being pinned at startup.
+    fn dynamic_requested_option(&self, code: u8) -> Option<DhcpOptions> {
+        match code {
+            DHCPV4_DOMAIN_NAME_OPTION_CODE | DHCPV4_DOMAIN_SEARCH_OPTION_CODE => {
+                self.lan_domain_option(code)
+            }
+            _ => None,
+        }
+    }
+
     #[cfg(test)]
     fn init(config: DHCPv4ServerConfig) -> Self {
         let status = Arc::new(Mutex::new(DhcpV4AssignStatus::init_for_test(config.clone())));
-        Self::new(config, None, status, "test".to_string())
+        Self::new(config, None, None, status, "test".to_string())
     }
 
     #[cfg(test)]
@@ -435,7 +492,17 @@ impl DHCPv4Server {
             &config,
             enrolled_devices,
         )));
-        Self::new(config, dnr_context, status, "test".to_string())
+        Self::new(config, dnr_context, None, status, "test".to_string())
+    }
+
+    #[cfg(test)]
+    fn init_with_lan_suffix(config: DHCPv4ServerConfig, lan_suffix: &str) -> Self {
+        let status = Arc::new(Mutex::new(DhcpV4AssignStatus::init_for_test(config.clone())));
+        let lan_domain_state = Arc::new(ArcSwap::from_pointee(LanHostnameConfig {
+            enable: true,
+            lan_suffix: lan_suffix.to_string(),
+        }));
+        Self::new(config, None, Some(lan_domain_state), status, "test".to_string())
     }
 
     pub fn add_decline_ip(&self, ip: Ipv4Addr) {
@@ -608,6 +675,8 @@ pub fn gen_offer(server: &mut DHCPv4Server, frame: DhcpEthFrame) -> Option<DhcpE
             }
             if let Some(opt) = server.options_map.get(&each_index) {
                 options.push(opt.clone());
+            } else if let Some(opt) = server.dynamic_requested_option(each_index) {
+                options.push(opt);
             } else {
                 tracing::warn!(
                     "Note: Ignoring unsupported option request {each_index:?} from DHCP client"
@@ -678,6 +747,8 @@ fn gen_ack(
             }
             if let Some(opt) = server.options_map.get(&each_index) {
                 options.push(opt.clone());
+            } else if let Some(opt) = server.dynamic_requested_option(each_index) {
+                options.push(opt);
             }
         }
     }
@@ -711,6 +782,16 @@ fn gen_ack(
     };
 
     let is_nak = matches!(message_type, DhcpOptionMessageType::Nak);
+
+    if is_nak {
+        // RFC 2131 table 3: a NAK carries no configuration parameters.
+        options.retain(|opt| {
+            !matches!(
+                opt.get_index(),
+                DHCPV4_DOMAIN_NAME_OPTION_CODE | DHCPV4_DOMAIN_SEARCH_OPTION_CODE
+            )
+        });
+    }
 
     let mut options = DhcpOptionFrame {
         message_type,
@@ -778,7 +859,10 @@ mod tests {
         net::MacAddr,
     };
 
-    use super::{DHCPv4Server, DhcpV4DnrRuntimeContext};
+    use super::{
+        DHCPv4Server, DhcpOptions, DhcpV4DnrRuntimeContext, LanHostnameConfig,
+        DHCPV4_DOMAIN_NAME_OPTION_CODE, DHCPV4_DOMAIN_SEARCH_OPTION_CODE,
+    };
 
     fn option_payload(server: &DHCPv4Server, mac: &MacAddr, code: u8) -> Vec<u8> {
         server
@@ -889,6 +973,85 @@ mod tests {
         assert!(filter.contains(&15));
         assert!(filter.contains(&28));
         assert!(!filter.contains(&1)); // SubnetMask not filtered
+    }
+
+    // --- option 15 / 119 from the LAN suffix ---
+
+    #[test]
+    fn lan_domain_options_derive_from_lan_suffix() {
+        let server = DHCPv4Server::init_with_lan_suffix(DHCPv4ServerConfig::default(), "lan");
+
+        let name = server.lan_domain_option(DHCPV4_DOMAIN_NAME_OPTION_CODE).unwrap();
+        assert!(matches!(name, DhcpOptions::DomainName(ref d) if d == "lan"));
+
+        let search = server.lan_domain_option(DHCPV4_DOMAIN_SEARCH_OPTION_CODE).unwrap();
+        // Wire format: one length-prefixed label plus the root terminator.
+        assert_eq!(search.decode_option(), vec![119, 5, 3, b'l', b'a', b'n', 0]);
+    }
+
+    #[test]
+    fn lan_domain_options_encode_multi_label_suffix() {
+        let server = DHCPv4Server::init_with_lan_suffix(DHCPv4ServerConfig::default(), "home.arpa");
+
+        let search = server.lan_domain_option(DHCPV4_DOMAIN_SEARCH_OPTION_CODE).unwrap();
+        assert_eq!(
+            search.decode_option(),
+            vec![119, 11, 4, b'h', b'o', b'm', b'e', 4, b'a', b'r', b'p', b'a', 0]
+        );
+    }
+
+    #[test]
+    fn lan_domain_options_absent_when_suffix_empty() {
+        let server = DHCPv4Server::init_with_lan_suffix(DHCPv4ServerConfig::default(), "");
+        assert!(server.lan_domain_option(DHCPV4_DOMAIN_NAME_OPTION_CODE).is_none());
+        assert!(server.lan_domain_option(DHCPV4_DOMAIN_SEARCH_OPTION_CODE).is_none());
+    }
+
+    #[test]
+    fn lan_domain_options_absent_without_registry() {
+        let server = DHCPv4Server::init(DHCPv4ServerConfig::default());
+        assert!(server.dynamic_requested_option(DHCPV4_DOMAIN_NAME_OPTION_CODE).is_none());
+        assert!(server.dynamic_requested_option(DHCPV4_DOMAIN_SEARCH_OPTION_CODE).is_none());
+    }
+
+    #[test]
+    fn lan_domain_options_follow_a_live_config_edit() {
+        let config = DHCPv4ServerConfig::default();
+        let status = Arc::new(std::sync::Mutex::new(
+            crate::lan_service::lan_dhcp4_server::status::DhcpV4AssignStatus::init_for_test(
+                config.clone(),
+            ),
+        ));
+        let state = Arc::new(ArcSwap::from_pointee(LanHostnameConfig {
+            enable: true,
+            lan_suffix: "lan".to_string(),
+        }));
+        let server =
+            DHCPv4Server::new(config, None, Some(state.clone()), status, "test".to_string());
+
+        assert!(matches!(server.lan_domain_option(DHCPV4_DOMAIN_NAME_OPTION_CODE).unwrap(),
+                DhcpOptions::DomainName(ref d) if d == "lan"));
+
+        state.store(Arc::new(LanHostnameConfig {
+            enable: true,
+            lan_suffix: "home.arpa".to_string(),
+        }));
+        assert!(matches!(server.lan_domain_option(DHCPV4_DOMAIN_NAME_OPTION_CODE).unwrap(),
+                DhcpOptions::DomainName(ref d) if d == "home.arpa"));
+
+        state.store(Arc::new(LanHostnameConfig {
+            enable: false,
+            lan_suffix: "home.arpa".to_string(),
+        }));
+        assert!(server.lan_domain_option(DHCPV4_DOMAIN_NAME_OPTION_CODE).is_none());
+        assert!(server.lan_domain_option(DHCPV4_DOMAIN_SEARCH_OPTION_CODE).is_none());
+    }
+
+    #[test]
+    fn dynamic_requested_option_ignores_unrelated_codes() {
+        let server = DHCPv4Server::init_with_lan_suffix(DHCPv4ServerConfig::default(), "lan");
+        assert!(server.dynamic_requested_option(66).is_none());
+        assert!(server.dynamic_requested_option(6).is_none());
     }
 
     #[test]
