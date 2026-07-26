@@ -88,10 +88,10 @@ export default {
     "Configuration has been modified. Please refresh and try again",
   "lan_hostname.invalid_suffix.invalid_idna":
     "LAN hostname suffix '{suffix}' is not a valid IDNA label",
-  "lan_hostname.invalid_suffix.multiple_labels":
-    "LAN hostname suffix '{suffix}' must contain exactly one DNS label",
+  "lan_hostname.invalid_suffix.empty_label":
+    "LAN hostname suffix '{suffix}' contains an empty DNS label",
   "lan_hostname.invalid_suffix.too_long":
-    "LAN hostname suffix '{suffix}' exceeds 63 ASCII bytes",
+    "LAN hostname suffix '{suffix}' exceeds DNS name or label length limits",
   "lan_hostname.invalid_suffix.invalid_hyphen":
     "LAN hostname suffix '{suffix}' cannot start or end with a hyphen",
   "lan_hostname.invalid_suffix.invalid_character":

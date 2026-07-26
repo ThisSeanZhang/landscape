@@ -7,11 +7,11 @@ pub enum LanHostnameError {
     #[api_error(id = "lan_hostname.invalid_suffix.invalid_idna", status = 400)]
     InvalidIdna { suffix: String },
 
-    #[error("LAN hostname suffix '{suffix}' must contain exactly one DNS label")]
-    #[api_error(id = "lan_hostname.invalid_suffix.multiple_labels", status = 400)]
-    MultipleLabels { suffix: String },
+    #[error("LAN hostname suffix '{suffix}' contains an empty DNS label")]
+    #[api_error(id = "lan_hostname.invalid_suffix.empty_label", status = 400)]
+    EmptyLabel { suffix: String },
 
-    #[error("LAN hostname suffix '{suffix}' exceeds 63 ASCII bytes")]
+    #[error("LAN hostname suffix '{suffix}' exceeds DNS name or label length limits")]
     #[api_error(id = "lan_hostname.invalid_suffix.too_long", status = 400)]
     TooLong { suffix: String },
 

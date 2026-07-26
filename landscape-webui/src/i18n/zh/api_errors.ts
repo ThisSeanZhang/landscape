@@ -83,10 +83,10 @@ export default {
   "config.conflict": "配置已被他人修改，请刷新后重试",
   "lan_hostname.invalid_suffix.invalid_idna":
     "局域网主机名后缀 '{suffix}' 不是有效的 IDNA 标签",
-  "lan_hostname.invalid_suffix.multiple_labels":
-    "局域网主机名后缀 '{suffix}' 只能包含一个 DNS 标签",
+  "lan_hostname.invalid_suffix.empty_label":
+    "局域网主机名后缀 '{suffix}' 包含空的 DNS 标签",
   "lan_hostname.invalid_suffix.too_long":
-    "局域网主机名后缀 '{suffix}' 超过 63 个 ASCII 字节",
+    "局域网主机名后缀 '{suffix}' 超出 DNS 域名或标签长度限制",
   "lan_hostname.invalid_suffix.invalid_hyphen":
     "局域网主机名后缀 '{suffix}' 不能以连字符开头或结尾",
   "lan_hostname.invalid_suffix.invalid_character":

@@ -11,11 +11,48 @@ use landscape_common::event::hub::{
 };
 use landscape_common::sys_service::lan_hostname::LanHostnameConfig;
 
+/// mDNS zone, always answered locally regardless of the configured LAN suffix.
+const MDNS_LOCAL_ZONE: &str = "local";
+
 #[derive(Clone)]
 struct HostnameRecord {
     ipv4: Ipv4Addr,
     ipv6: Option<Ipv6Addr>,
     from_enrolled_device: bool,
+}
+
+/// Which local zone a query landed in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LocalZone {
+    /// The operator-configured LAN suffix (`lan`, `home.arpa`, ...).
+    LanSuffix,
+    /// `local.`, reserved for mDNS.
+    MdnsLocal,
+}
+
+/// A query that falls inside one of the local zones.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LocalZoneMatch<'a> {
+    pub zone: LocalZone,
+    /// Labels left of the zone suffix, `None` for the zone apex itself.
+    pub hostname: Option<&'a str>,
+}
+
+/// Splits `name` at `suffix`, ASCII-case-insensitively. Returns `None` when
+/// `name` is outside the zone, `Some(None)` for the zone apex itself and
+/// `Some(Some(host))` for a name below it.
+fn strip_zone_suffix<'a>(name: &'a str, suffix: &str) -> Option<Option<&'a str>> {
+    if suffix.is_empty() || name.len() < suffix.len() {
+        return None;
+    }
+    let (rest, tail) = name.split_at(name.len() - suffix.len());
+    if !tail.eq_ignore_ascii_case(suffix) {
+        return None;
+    }
+    match rest {
+        "" => Some(None),
+        _ => rest.strip_suffix('.').filter(|host| !host.is_empty()).map(Some),
+    }
 }
 
 pub struct LanHostnameRegistry {
@@ -104,13 +141,29 @@ impl LanHostnameRegistry {
         self.config.load().enable
     }
 
-    pub fn is_local_tld(&self, tld: &str) -> bool {
-        let tld = tld.to_ascii_lowercase();
-        if tld == "local" {
-            return true;
-        }
+    /// Shared handle on the live config, so consumers outside DNS (the DHCPv4
+    /// server advertising the LAN suffix) follow a config edit without being
+    /// restarted.
+    pub fn config_state(&self) -> Arc<ArcSwap<LanHostnameConfig>> {
+        self.config.clone()
+    }
+
+    /// Configured LAN suffix.
+    pub fn lan_suffix(&self) -> String {
+        self.config.load().lan_suffix.clone()
+    }
+
+    /// Matches `name` against the local zones this registry is authoritative
+    /// for. A configured suffix may contain multiple labels.
+    pub fn match_local_zone<'a>(&self, name: &'a str) -> Option<LocalZoneMatch<'a>> {
         let config = self.config.load();
-        config.enable && !config.lan_suffix.is_empty() && tld == config.lan_suffix
+        if config.enable && !config.lan_suffix.is_empty() {
+            if let Some(hostname) = strip_zone_suffix(name, &config.lan_suffix) {
+                return Some(LocalZoneMatch { zone: LocalZone::LanSuffix, hostname });
+            }
+        }
+        strip_zone_suffix(name, MDNS_LOCAL_ZONE)
+            .map(|hostname| LocalZoneMatch { zone: LocalZone::MdnsLocal, hostname })
     }
 
     pub fn resolve_a_by_hostname(&self, hostname: &str) -> Option<Ipv4Addr> {
@@ -570,35 +623,68 @@ mod tests {
         );
     }
 
-    // --- is_local_tld ---
+    // --- match_local_zone ---
 
     #[test]
-    fn is_local_tld_matches_configured_suffix() {
+    fn match_local_zone_matches_configured_suffix() {
         let reg = registry_with(&[]);
-        assert!(reg.is_local_tld("lan"));
+        let m = reg.match_local_zone("nas.lan").unwrap();
+        assert_eq!(m.zone, LocalZone::LanSuffix);
+        assert_eq!(m.hostname, Some("nas"));
     }
 
     #[test]
-    fn is_local_tld_always_matches_local() {
+    fn match_local_zone_matches_multi_label_suffix() {
+        let reg = registry_with_config(&[], "home.arpa");
+        let m = reg.match_local_zone("nas.home.arpa").unwrap();
+        assert_eq!(m.zone, LocalZone::LanSuffix);
+        assert_eq!(m.hostname, Some("nas"));
+    }
+
+    #[test]
+    fn match_local_zone_keeps_sub_labels_in_hostname() {
+        let reg = registry_with(&[]);
+        assert_eq!(reg.match_local_zone("a.b.lan").unwrap().hostname, Some("a.b"));
+    }
+
+    #[test]
+    fn match_local_zone_reports_apex_without_hostname() {
+        let reg = registry_with(&[]);
+        let m = reg.match_local_zone("lan").unwrap();
+        assert_eq!(m.zone, LocalZone::LanSuffix);
+        assert_eq!(m.hostname, None);
+    }
+
+    #[test]
+    fn match_local_zone_always_matches_mdns_local() {
         let reg = registry_with_config(&[], "");
-        assert!(reg.is_local_tld("local"));
+        let m = reg.match_local_zone("printer.local").unwrap();
+        assert_eq!(m.zone, LocalZone::MdnsLocal);
+        assert_eq!(m.hostname, Some("printer"));
 
         let reg2 = registry_with_config(&[], "home.arpa");
-        assert!(reg2.is_local_tld("local"));
+        assert_eq!(reg2.match_local_zone("printer.local").unwrap().zone, LocalZone::MdnsLocal);
     }
 
     #[test]
-    fn is_local_tld_rejects_unknown_suffix() {
+    fn match_local_zone_is_case_insensitive() {
         let reg = registry_with(&[]);
-        assert!(!reg.is_local_tld("com"));
-        assert!(!reg.is_local_tld("example"));
+        assert_eq!(reg.match_local_zone("NAS.LAN").unwrap().hostname, Some("NAS"));
     }
 
     #[test]
-    fn is_local_tld_rejects_empty_suffix_when_config_empty() {
+    fn match_local_zone_rejects_unrelated_names() {
+        let reg = registry_with(&[]);
+        assert!(reg.match_local_zone("example.com").is_none());
+        assert!(reg.match_local_zone("notlan").is_none());
+        assert!(reg.match_local_zone("host.mylan").is_none());
+    }
+
+    #[test]
+    fn match_local_zone_ignores_empty_suffix() {
         let reg = registry_with_config(&[], "");
-        assert!(!reg.is_local_tld(""));
-        assert!(!reg.is_local_tld("lan"));
+        assert!(reg.match_local_zone("").is_none());
+        assert!(reg.match_local_zone("nas.lan").is_none());
     }
 
     #[test]
@@ -608,8 +694,8 @@ mod tests {
 
         reg.update_config(LanHostnameConfig { enable: true, lan_suffix: "home".to_string() });
 
-        assert!(!reg.is_local_tld("lan"));
-        assert!(reg.is_local_tld("home"));
+        assert!(reg.match_local_zone("nas.lan").is_none());
+        assert!(reg.match_local_zone("nas.home").is_some());
         assert_eq!(reg.resolve_a_by_hostname("nas"), Some(ip));
         assert_eq!(reg.resolve_ptr_by_addr(&IpAddr::V4(ip)), Some("nas.home.".to_string()));
     }
@@ -622,8 +708,8 @@ mod tests {
         reg.update_config(LanHostnameConfig { enable: false, lan_suffix: "lan".to_string() });
 
         assert!(!reg.is_enabled());
-        assert!(!reg.is_local_tld("lan"));
-        assert!(reg.is_local_tld("local"));
+        assert!(reg.match_local_zone("nas.lan").is_none());
+        assert!(reg.match_local_zone("nas.local").is_some());
         assert_eq!(reg.resolve_a_by_hostname("nas"), None);
         assert_eq!(reg.resolve_aaaa_by_hostname("nas"), None);
         assert_eq!(reg.resolve_ptr_by_addr(&IpAddr::V4(ip)), None);

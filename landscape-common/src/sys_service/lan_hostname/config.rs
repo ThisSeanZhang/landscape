@@ -73,24 +73,25 @@ pub fn normalize_lan_suffix(suffix: &str) -> Result<String, LanHostnameError> {
         return Ok(String::new());
     }
 
-    // Permit one optional root dot, but reject multi-label input before the
-    // shared domain normalizer removes trailing dots.
-    if trimmed.strip_suffix('.').unwrap_or(trimmed).contains('.') {
-        return Err(LanHostnameError::MultipleLabels { suffix: suffix.to_string() });
+    // Accept the surrounding dots operators commonly use when entering a DNS
+    // suffix, but reject empty labels inside the suffix.
+    let trimmed = trimmed.trim_matches('.');
+    if trimmed.is_empty() || trimmed.split('.').any(str::is_empty) {
+        return Err(LanHostnameError::EmptyLabel { suffix: suffix.to_string() });
     }
 
     let normalized = normalize_domain_name(trimmed)
         .map_err(|_| LanHostnameError::InvalidIdna { suffix: suffix.to_string() })?;
-    if normalized.contains('.') {
-        return Err(LanHostnameError::MultipleLabels { suffix: suffix.to_string() });
-    }
-    if normalized.len() > 63 {
+    if normalized.len() > 253 || normalized.split('.').any(|label| label.len() > 63) {
         return Err(LanHostnameError::TooLong { suffix: suffix.to_string() });
     }
-    if normalized.starts_with('-') || normalized.ends_with('-') {
+    if normalized.split('.').any(|label| label.starts_with('-') || label.ends_with('-')) {
         return Err(LanHostnameError::InvalidHyphen { suffix: suffix.to_string() });
     }
-    if !normalized.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'-') {
+    if !normalized
+        .split('.')
+        .all(|label| label.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'-'))
+    {
         return Err(LanHostnameError::InvalidCharacter { suffix: suffix.to_string() });
     }
     if matches!(normalized.as_str(), "invalid" | "test" | "onion" | "localhost" | "arpa") {
@@ -201,9 +202,10 @@ mod tests {
     }
 
     #[test]
-    fn normalizes_lan_suffix_to_ascii_lowercase_label() {
+    fn normalizes_lan_suffix_to_ascii_lowercase_domain() {
         assert_eq!(normalize_lan_suffix(" BÜCHER. ").unwrap(), "xn--bcher-kva");
         assert_eq!(normalize_lan_suffix("LAN").unwrap(), "lan");
+        assert_eq!(normalize_lan_suffix(".Home.ARPA.").unwrap(), "home.arpa");
     }
 
     #[test]
@@ -212,19 +214,16 @@ mod tests {
     }
 
     #[test]
-    fn rejects_multi_label_lan_suffix() {
-        let error = normalize_lan_suffix("home.arpa").unwrap_err();
-
-        assert!(matches!(error, LanHostnameError::MultipleLabels { .. }));
-        assert_eq!(error.error_id(), "lan_hostname.invalid_suffix.multiple_labels");
+    fn accepts_multi_label_lan_suffix() {
+        assert_eq!(normalize_lan_suffix("home.arpa").unwrap(), "home.arpa");
     }
 
     #[test]
-    fn rejects_multiple_trailing_dots() {
-        let error = normalize_lan_suffix("lan..").unwrap_err();
+    fn rejects_empty_labels() {
+        let error = normalize_lan_suffix("home..arpa").unwrap_err();
 
-        assert!(matches!(error, LanHostnameError::MultipleLabels { .. }));
-        assert_eq!(error.error_id(), "lan_hostname.invalid_suffix.multiple_labels");
+        assert!(matches!(error, LanHostnameError::EmptyLabel { .. }));
+        assert_eq!(error.error_id(), "lan_hostname.invalid_suffix.empty_label");
     }
 
     #[test]
@@ -236,6 +235,10 @@ mod tests {
         let too_long = normalize_lan_suffix(&"a".repeat(64)).unwrap_err();
         assert!(matches!(too_long, LanHostnameError::TooLong { .. }));
         assert_eq!(too_long.error_id(), "lan_hostname.invalid_suffix.too_long");
+
+        let long_domain = (0..4).map(|_| "a".repeat(63)).collect::<Vec<_>>().join(".");
+        let too_long = normalize_lan_suffix(&long_domain).unwrap_err();
+        assert!(matches!(too_long, LanHostnameError::TooLong { .. }));
 
         let invalid_hyphen = normalize_lan_suffix("-lan").unwrap_err();
         assert!(matches!(invalid_hyphen, LanHostnameError::InvalidHyphen { .. }));

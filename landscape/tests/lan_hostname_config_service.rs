@@ -36,7 +36,7 @@ cache_ttl = 321
         .update_lan_hostname_config(
             LandscapeLanHostnameConfig {
                 enable: Some(false),
-                lan_suffix: Some("BÜCHER.".to_string()),
+                lan_suffix: Some("BÜCHER.Home.".to_string()),
             },
             hash,
         )
@@ -45,17 +45,17 @@ cache_ttl = 321
 
     let content = std::fs::read_to_string(&config_path).unwrap();
     assert!(content.contains("[lan_hostname]"));
-    assert!(content.contains("lan_suffix = \"xn--bcher-kva\""));
+    assert!(content.contains("lan_suffix = \"xn--bcher-kva.home\""));
     assert!(!content.contains("[hostname_registry]"));
     assert!(content.contains("[dns]"));
     assert!(content.contains("cache_ttl = 321"));
     assert_eq!(
         service.get_lan_hostname_config_from_memory().lan_suffix.as_deref(),
-        Some("xn--bcher-kva")
+        Some("xn--bcher-kva.home")
     );
     assert_eq!(service.get_lan_hostname_config_from_memory().enable, Some(false));
     assert!(!service.get_lan_hostname_runtime_config().enable);
-    assert_eq!(service.get_lan_hostname_runtime_config().lan_suffix, "xn--bcher-kva");
+    assert_eq!(service.get_lan_hostname_runtime_config().lan_suffix, "xn--bcher-kva.home");
 
     let (_, hash) = service.get_lan_hostname_config_from_file().await;
     service.update_lan_hostname_config(LandscapeLanHostnameConfig::default(), hash).await.unwrap();
