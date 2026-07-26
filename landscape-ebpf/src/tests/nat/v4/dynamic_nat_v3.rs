@@ -1186,7 +1186,7 @@ mod tests {
     }
 
     #[test]
-    fn tcp_ingress_dynamic_v3_ct_teardown_rejects_ingress() {
+    fn tcp_ingress_dynamic_v3_release_reactivates_but_cleanup_rejects_ingress() {
         let _guard = NAT_V3_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let mut builder = TcNatSkelBuilder::default();
         let pin_root = crate::tests::nat::isolated_pin_root("nat-v4-dynamic-v3");
@@ -1271,9 +1271,57 @@ mod tests {
 
         let result = skel.progs.tc_nat_wan_ingress.test_run(input).expect("test_run failed");
 
+        assert_eq!(result.return_value as i32, 0, "TIMER_RELEASE CT should be reactivated");
+
+        let pkt_out = etherparse::PacketHeaders::from_ethernet_slice(&packet_out)
+            .expect("parse output packet");
+        if let Some(etherparse::NetHeaders::Ipv4(ipv4, _)) = pkt_out.net {
+            assert_eq!(Ipv4Addr::from(ipv4.destination), LAN_HOST);
+        } else {
+            panic!("expected IPv4 header in output");
+        }
+        if let Some(etherparse::TransportHeader::Tcp(tcp)) = pkt_out.transport {
+            assert_eq!(tcp.destination_port, LAN_PORT);
+        } else {
+            panic!("expected TCP transport header in output");
+        }
+
+        let ct_bytes = skel
+            .maps
+            .nat4_timer_map
+            .lookup(unsafe { plain::as_bytes(&ct_key) }, MapFlags::ANY)
+            .unwrap()
+            .expect("reactivated ct should exist");
+        let mut ct_value = unsafe {
+            std::ptr::read_unaligned(ct_bytes.as_ptr().cast::<types::nat4_timer_value_v3>())
+        };
+        assert_eq!(ct_value.status, 20, "TIMER_RELEASE CT should become TIMER_ACTIVE");
+
+        ct_value.status = 50;
+        skel.maps
+            .nat4_timer_map
+            .update(
+                unsafe { plain::as_bytes(&ct_key) },
+                unsafe { plain::as_bytes(&ct_value) },
+                MapFlags::ANY,
+            )
+            .unwrap();
+
+        let mut cleanup_pkt = build_ipv4_tcp_syn(REMOTE_IP, WAN_IP, 443, NAT_PORT);
+        let mut cleanup_ctx = TestSkb::default();
+        cleanup_ctx.ifindex = IFINDEX;
+        let mut cleanup_packet_out = vec![0u8; cleanup_pkt.len()];
+        let cleanup_input = ProgramInput {
+            data_in: Some(&mut cleanup_pkt),
+            context_in: Some(cleanup_ctx.as_mut_bytes()),
+            data_out: Some(&mut cleanup_packet_out),
+            ..Default::default()
+        };
+        let cleanup_result =
+            skel.progs.tc_nat_wan_ingress.test_run(cleanup_input).expect("test_run failed");
         assert_eq!(
-            result.return_value as i32, 2,
-            "CT with status >= TIMER_RELEASE should be rejected"
+            cleanup_result.return_value as i32, 2,
+            "CT cleanup states after TIMER_RELEASE should still be rejected"
         );
     }
 

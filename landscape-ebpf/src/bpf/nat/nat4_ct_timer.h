@@ -307,7 +307,7 @@ nat4_ct_ingress_resolve(const struct nat4_timer_key *ct_key,
     if (!tv) {
         return CT_RESOLVE_MISS;
     }
-    if (tv->status == TIMER_PENDING_REF || tv->status >= TIMER_RELEASE) {
+    if (tv->status == TIMER_PENDING_REF || tv->status > TIMER_RELEASE) {
         return CT_RESOLVE_UNUSABLE;
     }
     *timer_value_ = tv;
