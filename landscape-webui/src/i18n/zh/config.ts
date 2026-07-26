@@ -13,9 +13,9 @@ export default {
 
   lan_hostname_enable: "启用局域网主机名解析",
   lan_suffix: "局域网域名后缀",
-  lan_suffix_placeholder: "例如 lan",
+  lan_suffix_placeholder: "例如 lan 或 home.arpa",
   lan_suffix_desc:
-    "用于局域网设备主机名解析和 PTR 记录；仅支持单个 DNS 标签，国际化字符会转换为 Punycode；留空将使用默认后缀：lan。",
+    "用于局域网设备主机名解析和 PTR 记录；支持多标签域名，国际化字符会转换为 Punycode；留空将使用默认后缀：lan。",
 
   metric_mode: "指标模式",
   metric_mode_desc: "关闭、仅内存实时、或启用 DuckDB 历史持久化",

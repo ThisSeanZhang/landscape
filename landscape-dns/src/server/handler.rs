@@ -44,7 +44,10 @@ use landscape_common::{
     flow::{DnsRuntimeMarkInfo, FlowMarkInfo},
     metric::dns::{DnsMetric, DnsOutcome},
 };
-use landscape_core::{lan_hostname::LanHostnameRegistry, time::get_current_time_ms};
+use landscape_core::{
+    lan_hostname::{LanHostnameRegistry, LocalZone, LocalZoneMatch},
+    time::get_current_time_ms,
+};
 
 const LOOKUP_TIMEOUT: Duration = Duration::from_secs(5);
 const RULE_REFRESH_TTL_CAP: u32 = 5;
@@ -410,8 +413,13 @@ impl DnsRequestHandler {
             }
             // (5) ipv4only.arpa. → NODATA (special-use domain, RFC 8880)
             "ipv4only" if arpa_suffix == "ipv4only" => (vec![], DnsOutcome::Local),
-            // (6) Other .arpa. → NXDOMAIN
-            _ => (vec![], DnsOutcome::NxDomain),
+            // (6) Other .arpa. → hostname registry when the LAN suffix lives
+            // under .arpa (any suffix other than the `home` case above), else
+            // NXDOMAIN.
+            _ => match self.lan_hostname_registry.match_local_zone(domain.name()) {
+                Some(zone) => self.resolve_local_domain(domain, zone, query_type),
+                None => (vec![], DnsOutcome::NxDomain),
+            },
         }
     }
 
@@ -454,9 +462,9 @@ impl DnsRequestHandler {
             let records = Self::lookup_localhost(domain, query_type);
             return (records, DnsOutcome::Local);
         }
-        // (2c) Local TLD (LAN suffix or local.) → hostname registry
-        if self.lan_hostname_registry.is_local_tld(tld) {
-            return self.resolve_local_domain(domain, query_type);
+        // (2c) Local zone (LAN suffix or local.) → hostname registry
+        if let Some(zone) = self.lan_hostname_registry.match_local_zone(domain.name()) {
+            return self.resolve_local_domain(domain, zone, query_type);
         }
 
         // (3) Cache → (4) Upstream
@@ -466,19 +474,21 @@ impl DnsRequestHandler {
     fn resolve_local_domain(
         &self,
         domain: &PreprocessedDomain,
+        zone: LocalZoneMatch<'_>,
         query_type: RecordType,
     ) -> (Vec<Record>, DnsOutcome) {
-        let tld = domain.tld();
-        let hostname = match domain.hostname_for_tld(tld) {
-            Some(h) => h,
-            None => return (vec![], DnsOutcome::NxDomain),
+        // The zone apex carries no hostname, and neither does an unknown host:
+        // both are answered locally so a local zone never leaks upstream.
+        let records = match zone.hostname {
+            Some(hostname) => self.lookup_lan_hostname(domain, hostname, query_type),
+            None => vec![],
         };
-        let records = self.lookup_lan_hostname(domain, hostname, query_type);
         let outcome = if records.is_empty() {
-            if tld == "local" {
-                DnsOutcome::Local
-            } else {
-                DnsOutcome::NxDomain
+            match zone.zone {
+                // `local.` is mDNS territory: staying NOERROR/empty lets a
+                // client fall back to multicast instead of caching a failure.
+                LocalZone::MdnsLocal => DnsOutcome::Local,
+                LocalZone::LanSuffix => DnsOutcome::NxDomain,
             }
         } else {
             DnsOutcome::Local
@@ -583,8 +593,8 @@ impl DnsRequestHandler {
             let (records, _) = self.resolve_arpa(domain, query_type).await;
             result.records = Some(crate::to_common_records(records));
             return result;
-        } else if self.lan_hostname_registry.is_local_tld(tld) {
-            if let Some(hostname) = domain.hostname_for_tld(tld) {
+        } else if let Some(zone) = self.lan_hostname_registry.match_local_zone(domain.name()) {
+            if let Some(hostname) = zone.hostname {
                 let records = self.lookup_lan_hostname(domain, hostname, query_type);
                 result.records = Some(crate::to_common_records(records));
             }
@@ -677,9 +687,9 @@ impl DnsRequestHandler {
             });
         }
 
-        if self.lan_hostname_registry.is_local_tld(tld) {
+        if let Some(zone) = self.lan_hostname_registry.match_local_zone(domain.name()) {
             self.clear_cache_entry_and_refresh_maps_if_present(domain.raw(), query_type).await;
-            if let Some(hostname) = domain.hostname_for_tld(tld) {
+            if let Some(hostname) = zone.hostname {
                 let records = self.lookup_lan_hostname(domain, hostname, query_type);
                 return Ok(CheckChainDnsResult {
                     records: Some(crate::to_common_records(records)),
@@ -1301,6 +1311,37 @@ mod tests {
         )
     }
 
+    fn handler_with_lan_suffix(
+        lan_suffix: &str,
+        devices: Vec<(String, Ipv4Addr)>,
+    ) -> DnsRequestHandler {
+        let registry = landscape_core::lan_hostname::LanHostnameRegistry::new(
+            landscape_common::sys_service::lan_hostname::LanHostnameConfig {
+                enable: true,
+                lan_suffix: lan_suffix.to_string(),
+            },
+            devices,
+            {
+                let (_tx, rx) = tokio::sync::broadcast::channel(8);
+                landscape_common::event::hub::IPv4AssignEventReader::new(rx)
+            },
+            {
+                let (_tx, rx) = tokio::sync::broadcast::channel(8);
+                landscape_common::event::hub::EnrolledDeviceEventReader::new(rx)
+            },
+        );
+        DnsRequestHandler::new(
+            ChainDnsServerInitInfo::default().into(),
+            shared_cache_runtime_config(5),
+            1,
+            Arc::new(ArcSwapOption::new(None)),
+            None,
+            None,
+            registry,
+            None,
+        )
+    }
+
     fn arpa_name_from_ipv6(addr: Ipv6Addr) -> String {
         let octets = addr.octets();
         let nibbles: Vec<String> = octets
@@ -1668,6 +1709,74 @@ mod tests {
 
             let (records, outcome) = handler
                 .resolve_forward(&PreprocessedDomain::new("dev.lan.").unwrap(), RecordType::AAAA)
+                .await;
+            assert_eq!(outcome, DnsOutcome::NxDomain);
+            assert!(records.is_empty());
+        });
+    }
+
+    // --- multi-label LAN suffix ---
+
+    #[test]
+    fn resolve_forward_multi_label_lan_suffix_resolves_host() {
+        run_async_test(async {
+            let ip = Ipv4Addr::new(192, 168, 1, 60);
+            let handler = handler_with_lan_suffix("home.lan", vec![("nas".to_string(), ip)]);
+
+            let (records, outcome) = handler
+                .resolve_forward(&PreprocessedDomain::new("nas.home.lan.").unwrap(), RecordType::A)
+                .await;
+            assert_eq!(outcome, DnsOutcome::Local);
+            assert_eq!(records.len(), 1);
+            match &records[0].data {
+                RData::A(a) => assert_eq!(a.0, ip),
+                other => panic!("expected A record, got {:?}", other),
+            }
+        });
+    }
+
+    #[test]
+    fn resolve_forward_multi_label_suffix_does_not_match_last_label_only() {
+        run_async_test(async {
+            let ip = Ipv4Addr::new(192, 168, 1, 61);
+            let handler = handler_with_lan_suffix("home.lan", vec![("nas".to_string(), ip)]);
+
+            // `nas.lan` is outside the `home.lan` zone, so it must not be
+            // answered from the registry.
+            let (records, _) = handler
+                .resolve_forward(&PreprocessedDomain::new("nas.lan.").unwrap(), RecordType::A)
+                .await;
+            assert!(records.is_empty());
+        });
+    }
+
+    #[test]
+    fn resolve_arpa_multi_label_suffix_under_arpa_resolves_host() {
+        run_async_test(async {
+            let ip = Ipv4Addr::new(192, 168, 1, 62);
+            let handler = handler_with_lan_suffix("mylan.arpa", vec![("nas".to_string(), ip)]);
+
+            // `.arpa` names are dispatched to resolve_arpa, which used to
+            // answer NXDOMAIN for every suffix except the hardcoded `home`.
+            let (records, outcome) = handler
+                .resolve_arpa(&PreprocessedDomain::new("nas.mylan.arpa.").unwrap(), RecordType::A)
+                .await;
+            assert_eq!(outcome, DnsOutcome::Local);
+            assert_eq!(records.len(), 1);
+            match &records[0].data {
+                RData::A(a) => assert_eq!(a.0, ip),
+                other => panic!("expected A record, got {:?}", other),
+            }
+        });
+    }
+
+    #[test]
+    fn resolve_forward_lan_zone_apex_stays_local() {
+        run_async_test(async {
+            let handler = handler_with_lan_suffix("lan", vec![]);
+
+            let (records, outcome) = handler
+                .resolve_forward(&PreprocessedDomain::new("lan.").unwrap(), RecordType::A)
                 .await;
             assert_eq!(outcome, DnsOutcome::NxDomain);
             assert!(records.is_empty());
