@@ -316,6 +316,7 @@ async fn run_system(
             event_handle.subscribe_device(),
         )
     });
+    let lan_domain_state = lan_hostname_registry.config_state();
     let dns_service = startup_phase!(
         "dns_service.new",
         LandscapeDnsService::new(
@@ -431,6 +432,7 @@ async fn run_system(
         db_store_provider.clone(),
         cert_service.api_tls_resolver(),
         config.dns.clone(),
+        lan_domain_state,
         event_handle.subscribe_iface(),
         ipv4_assign_sender,
         event_handle.subscribe_device(),

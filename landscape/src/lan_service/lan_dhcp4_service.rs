@@ -27,6 +27,9 @@ use landscape_database::provider::LandscapeDBServiceProvider;
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 
+use arc_swap::ArcSwap;
+use landscape_common::sys_service::lan_hostname::LanHostnameConfig;
+
 use crate::cert::SharedSniResolver;
 use crate::get_iface_by_name;
 use crate::lan_service::lan_dhcp4_server::server::{DHCPv4Server, DhcpV4DnrRuntimeContext};
@@ -76,6 +79,8 @@ pub struct DHCPv4ServerStarter {
     db_provider: LandscapeDBServiceProvider,
     api_tls_resolver: SharedSniResolver,
     dns_runtime_config: landscape_common::config::DnsRuntimeConfig,
+    /// Live LAN suffix, advertised as DHCP option 15/119.
+    lan_domain_state: Arc<ArcSwap<LanHostnameConfig>>,
     ipv4_assign_sender: IPv4AssignEventSender,
 }
 
@@ -85,6 +90,7 @@ impl DHCPv4ServerStarter {
         db_provider: LandscapeDBServiceProvider,
         api_tls_resolver: SharedSniResolver,
         dns_runtime_config: landscape_common::config::DnsRuntimeConfig,
+        lan_domain_state: Arc<ArcSwap<LanHostnameConfig>>,
         ipv4_assign_sender: IPv4AssignEventSender,
     ) -> DHCPv4ServerStarter {
         DHCPv4ServerStarter {
@@ -92,6 +98,7 @@ impl DHCPv4ServerStarter {
             db_provider,
             api_tls_resolver,
             dns_runtime_config,
+            lan_domain_state,
             iface_scan_map: Arc::new(RwLock::new(HashMap::new())),
             iface_status_map: Arc::new(RwLock::new(HashMap::new())),
             ipv4_assign_sender,
@@ -156,6 +163,7 @@ impl ServiceStarterTrait for DHCPv4ServerStarter {
             let dhcp_server = DHCPv4Server::new(
                 config.config.clone(),
                 dnr_context,
+                Some(self.lan_domain_state.clone()),
                 status_arc,
                 config.iface_name.clone(),
             );
@@ -259,6 +267,7 @@ impl DHCPv4ServerManagerService {
         store_service: LandscapeDBServiceProvider,
         api_tls_resolver: SharedSniResolver,
         dns_runtime_config: landscape_common::config::DnsRuntimeConfig,
+        lan_domain_state: Arc<ArcSwap<LanHostnameConfig>>,
         mut dev_observer: IfaceEventReader,
         ipv4_assign_sender: IPv4AssignEventSender,
         mut device_reader: EnrolledDeviceEventReader,
@@ -269,6 +278,7 @@ impl DHCPv4ServerManagerService {
             store_service.clone(),
             api_tls_resolver,
             dns_runtime_config,
+            lan_domain_state,
             ipv4_assign_sender,
         );
         let service =
