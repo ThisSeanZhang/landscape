@@ -334,8 +334,7 @@ static __always_inline int nat4_ct_resolve(const struct nat4_timer_key *ct_key,
 
     struct nat4_timer_value_v3 *timer_value = bpf_map_lookup_elem(&nat4_timer_map, ct_key);
     if (timer_value) {
-        if (track_dynamic_ref && generation_snapshot != 0 &&
-            timer_value->generation_snapshot != generation_snapshot) {
+        if (track_dynamic_ref && timer_value->generation_snapshot != generation_snapshot) {
             bpf_map_delete_elem(&nat4_timer_map, ct_key);
         } else if (!nat4_ct_status_usable(timer_value->status)) {
             return -1;

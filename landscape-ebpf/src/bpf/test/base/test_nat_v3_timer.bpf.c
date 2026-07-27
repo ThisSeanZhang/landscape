@@ -9,7 +9,8 @@ char LICENSE[] SEC("license") = "GPL";
 struct nat4_timer_test_input_v3 {
     struct nat4_timer_key key;
     u8 force_queue_push_fail;
-    u8 _pad[3];
+    u8 track_dynamic_ref;
+    u8 _pad[2];
 };
 
 struct nat4_timer_test_result_v3 {
@@ -123,5 +124,35 @@ int nat_v4_timer_advance_test(struct __sk_buff *skb) {
     result->action = nat4_ct_advance(PKT_TCP_SYN_V2, NAT_MAPPING_EGRESS, value);
     result->status = value->status;
     result->timer_exists = 1;
+    return TC_ACT_OK;
+}
+
+SEC("tc")
+int nat_v4_timer_resolve_test(struct __sk_buff *skb) {
+    u32 index = 0;
+    struct nat4_timer_test_input_v3 *input = bpf_map_lookup_elem(&nat4_timer_test_input_v3, &index);
+    struct nat4_timer_test_result_v3 *result =
+        bpf_map_lookup_elem(&nat4_timer_test_result_v3, &index);
+    if (!input || !result) {
+        return TC_ACT_SHOT;
+    }
+
+    __builtin_memset(result, 0, sizeof(*result));
+
+    struct nat4_mapping_value_v3 *dyn_ingress = NULL;
+    if (input->track_dynamic_ref) {
+        dyn_ingress = nat4_lookup_ingress_dynamic(
+            input->key.l4proto, input->key.pair_ip.dst_addr.addr, input->key.pair_ip.dst_port);
+        if (!dyn_ingress) {
+            return TC_ACT_SHOT;
+        }
+    }
+
+    struct nat4_timer_value_v3 *value = NULL;
+    result->action = nat4_ct_resolve(&input->key, dyn_ingress, &value);
+    result->timer_exists = bpf_map_lookup_elem(&nat4_timer_map, &input->key) ? 1 : 0;
+    if (value) {
+        result->status = value->status;
+    }
     return TC_ACT_OK;
 }

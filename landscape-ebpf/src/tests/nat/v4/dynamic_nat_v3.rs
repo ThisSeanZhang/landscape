@@ -639,7 +639,7 @@ mod tests {
     }
 
     #[test]
-    fn tcp_egress_dynamic_v3_missing_ingress_recreates_mapping_for_syn() {
+    fn tcp_egress_dynamic_v3_recreates_mapping_after_generation_wrap() {
         let _guard = NAT_V3_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let mut builder = TcNatSkelBuilder::default();
         let pin_root = crate::tests::nat::isolated_pin_root("nat-v4-dynamic-v3");
@@ -658,7 +658,7 @@ mod tests {
         );
 
         clear_v3_free_port_queue(&skel.maps.nat4_tcp_port_queue);
-        push_v3_free_port(&skel.maps.nat4_tcp_port_queue, NAT_PORT, 0);
+        push_v3_free_port(&skel.maps.nat4_tcp_port_queue, NAT_PORT, u16::MAX);
 
         add_dynamic_mapping_pair(
             &skel.maps.nat4_egress_dyn_map,
@@ -698,8 +698,29 @@ mod tests {
         }
 
         let ingress = read_v3_ingress_mapping(&skel.maps.nat4_ingress_dyn_map, 6, WAN_IP, NAT_PORT);
-        assert_eq!(ingress.generation, 1);
+        assert_eq!(ingress.generation, 0);
         assert_eq!(ingress.state_ref, ((1u64) << 56) | 1);
+
+        let timer_key = types::nat4_timer_key {
+            l4proto: 6,
+            _pad: [0; 3],
+            pair_ip: types::inet4_pair {
+                src_addr: types::inet4_addr { addr: REMOTE_IP.to_bits().to_be() },
+                dst_addr: types::inet4_addr { addr: WAN_IP.to_bits().to_be() },
+                src_port: 443u16.to_be(),
+                dst_port: NAT_PORT.to_be(),
+            },
+        };
+        let timer_bytes = skel
+            .maps
+            .nat4_timer_map
+            .lookup(unsafe { plain::as_bytes(&timer_key) }, MapFlags::ANY)
+            .expect("lookup wrapped-generation CT")
+            .expect("wrapped-generation CT should exist");
+        let timer = unsafe {
+            std::ptr::read_unaligned(timer_bytes.as_ptr().cast::<types::nat4_timer_value_v3>())
+        };
+        assert_eq!(timer.generation_snapshot, 0);
     }
 
     #[test]

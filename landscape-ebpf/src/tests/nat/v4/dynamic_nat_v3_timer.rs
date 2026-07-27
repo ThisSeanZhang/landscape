@@ -190,11 +190,13 @@ fn put_test_input_with_key<T: MapCore>(
     map: &T,
     key: &types::nat4_timer_key,
     force_queue_push_fail: bool,
+    track_dynamic_ref: bool,
 ) {
     let value = types::nat4_timer_test_input_v3 {
         key: *key,
         force_queue_push_fail: force_queue_push_fail as u8,
-        _pad: [0; 3],
+        track_dynamic_ref: track_dynamic_ref as u8,
+        _pad: [0; 2],
     };
     let key = 0u32;
     map.update(as_bytes(&key), as_bytes(&value), MapFlags::ANY).unwrap();
@@ -218,7 +220,7 @@ fn run_step_with_key(
     key: &types::nat4_timer_key,
     force_queue_push_fail: bool,
 ) -> types::nat4_timer_test_result_v3 {
-    put_test_input_with_key(&skel.maps.nat4_timer_test_input_v3, key, force_queue_push_fail);
+    put_test_input_with_key(&skel.maps.nat4_timer_test_input_v3, key, force_queue_push_fail, false);
     let mut data = vec![0u8; 64];
     let input = ProgramInput { data_in: Some(&mut data), ..Default::default() };
     let result = skel.progs.nat_v4_timer_step_test.test_run(input).expect("test_run failed");
@@ -229,10 +231,27 @@ fn run_step_with_key(
 fn run_advance(
     skel: &test_nat_v3_timer::TestNatV3TimerSkel<'_>,
 ) -> types::nat4_timer_test_result_v3 {
-    put_test_input_with_key(&skel.maps.nat4_timer_test_input_v3, &timer_key(), false);
+    put_test_input_with_key(&skel.maps.nat4_timer_test_input_v3, &timer_key(), false, false);
     let mut data = vec![0u8; 64];
     let input = ProgramInput { data_in: Some(&mut data), ..Default::default() };
     let result = skel.progs.nat_v4_timer_advance_test.test_run(input).expect("test_run failed");
+    assert_eq!(result.return_value as i32, 0);
+    get_test_result(&skel.maps.nat4_timer_test_result_v3)
+}
+
+fn run_resolve(
+    skel: &test_nat_v3_timer::TestNatV3TimerSkel<'_>,
+    track_dynamic_ref: bool,
+) -> types::nat4_timer_test_result_v3 {
+    put_test_input_with_key(
+        &skel.maps.nat4_timer_test_input_v3,
+        &timer_key(),
+        false,
+        track_dynamic_ref,
+    );
+    let mut data = vec![0u8; 64];
+    let input = ProgramInput { data_in: Some(&mut data), ..Default::default() };
+    let result = skel.progs.nat_v4_timer_resolve_test.test_run(input).expect("test_run failed");
     assert_eq!(result.return_value as i32, 0);
     get_test_result(&skel.maps.nat4_timer_test_result_v3)
 }
@@ -241,6 +260,63 @@ fn run_advance(
 mod tests {
     use super::*;
     use crate::tests::nat::NAT_V3_TEST_LOCK;
+
+    #[test]
+    fn resolve_rejects_previous_generation_after_wrap_to_zero() {
+        let _guard = NAT_V3_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let mut builder = TestNatV3TimerSkelBuilder::default();
+        let pin_root = crate::tests::nat::isolated_pin_root("nat-v4-dynamic-v3-timer");
+        builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
+        let mut open_object = MaybeUninit::uninit();
+        let open = builder.open(&mut open_object).unwrap();
+        let skel = open.load().unwrap();
+        put_mapping_pair(&skel.maps.nat4_ingress_dyn_map, &skel.maps.nat4_egress_dyn_map);
+        put_state(&skel.maps.nat4_ingress_dyn_map, 0, state_ref(STATE_ACTIVE, 1));
+        put_timer(&skel.maps.nat4_timer_map, TIMER_ACTIVE, u16::MAX);
+
+        let result = run_resolve(&skel, true);
+
+        assert_eq!(result.action as i32, -1);
+        assert_eq!(result.timer_exists, 0, "previous-generation CT should be deleted");
+    }
+
+    #[test]
+    fn resolve_accepts_matching_zero_generation() {
+        let _guard = NAT_V3_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let mut builder = TestNatV3TimerSkelBuilder::default();
+        let pin_root = crate::tests::nat::isolated_pin_root("nat-v4-dynamic-v3-timer");
+        builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
+        let mut open_object = MaybeUninit::uninit();
+        let open = builder.open(&mut open_object).unwrap();
+        let skel = open.load().unwrap();
+        put_mapping_pair(&skel.maps.nat4_ingress_dyn_map, &skel.maps.nat4_egress_dyn_map);
+        put_state(&skel.maps.nat4_ingress_dyn_map, 0, state_ref(STATE_ACTIVE, 1));
+        put_timer(&skel.maps.nat4_timer_map, TIMER_ACTIVE, 0);
+
+        let result = run_resolve(&skel, true);
+
+        assert_eq!(result.action as i32, 0);
+        assert_eq!(result.timer_exists, 1);
+        assert_eq!(u64::from(result.status), TIMER_ACTIVE);
+    }
+
+    #[test]
+    fn resolve_static_ct_does_not_require_generation_match() {
+        let _guard = NAT_V3_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let mut builder = TestNatV3TimerSkelBuilder::default();
+        let pin_root = crate::tests::nat::isolated_pin_root("nat-v4-dynamic-v3-timer");
+        builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
+        let mut open_object = MaybeUninit::uninit();
+        let open = builder.open(&mut open_object).unwrap();
+        let skel = open.load().unwrap();
+        put_timer(&skel.maps.nat4_timer_map, TIMER_ACTIVE, 0);
+
+        let result = run_resolve(&skel, false);
+
+        assert_eq!(result.action as i32, 0);
+        assert_eq!(result.timer_exists, 1);
+        assert_eq!(u64::from(result.status), TIMER_ACTIVE);
+    }
 
     #[test]
     fn advance_reactivates_release_with_single_cas() {

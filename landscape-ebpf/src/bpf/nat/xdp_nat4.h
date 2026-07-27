@@ -297,21 +297,7 @@ xdp_nat4_ct_ingress_resolve(const struct nat4_timer_key *ct_key,
 static __always_inline int xdp_nat4_ct_resolve(const struct nat4_timer_key *ct_key,
                                                struct nat4_mapping_value_v3 *dyn_ingress,
                                                struct nat4_timer_value_v3 **ct_out) {
-    bool track_ref = dyn_ingress != NULL;
-    u16 gen_snap = track_ref ? dyn_ingress->generation : 0;
-
-    struct nat4_timer_value_v3 *tv = bpf_map_lookup_elem(&nat4_timer_map, ct_key);
-    if (tv) {
-        if (track_ref && gen_snap != 0 && tv->generation_snapshot != gen_snap) {
-            bpf_map_delete_elem(&nat4_timer_map, ct_key);
-        } else if (!nat4_ct_status_usable(tv->status)) {
-            return -1;
-        } else {
-            *ct_out = tv;
-            return 0;
-        }
-    }
-    return -1;
+    return nat4_ct_resolve(ct_key, dyn_ingress, ct_out);
 }
 
 static __always_inline int
