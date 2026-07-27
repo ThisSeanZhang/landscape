@@ -226,10 +226,55 @@ fn run_step_with_key(
     get_test_result(&skel.maps.nat4_timer_test_result_v3)
 }
 
+fn run_advance(
+    skel: &test_nat_v3_timer::TestNatV3TimerSkel<'_>,
+) -> types::nat4_timer_test_result_v3 {
+    put_test_input_with_key(&skel.maps.nat4_timer_test_input_v3, &timer_key(), false);
+    let mut data = vec![0u8; 64];
+    let input = ProgramInput { data_in: Some(&mut data), ..Default::default() };
+    let result = skel.progs.nat_v4_timer_advance_test.test_run(input).expect("test_run failed");
+    assert_eq!(result.return_value as i32, 0);
+    get_test_result(&skel.maps.nat4_timer_test_result_v3)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::tests::nat::NAT_V3_TEST_LOCK;
+
+    #[test]
+    fn advance_reactivates_release_with_single_cas() {
+        let _guard = NAT_V3_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let mut builder = TestNatV3TimerSkelBuilder::default();
+        let pin_root = crate::tests::nat::isolated_pin_root("nat-v4-dynamic-v3-timer");
+        builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
+        let mut open_object = MaybeUninit::uninit();
+        let open = builder.open(&mut open_object).unwrap();
+        let skel = open.load().unwrap();
+        put_timer(&skel.maps.nat4_timer_map, TIMER_RELEASE, GENERATION);
+
+        let result = run_advance(&skel);
+
+        assert_eq!(result.action as i32, 0);
+        assert_eq!(u64::from(result.status), TIMER_ACTIVE);
+    }
+
+    #[test]
+    fn advance_does_not_reactivate_cleanup_state() {
+        let _guard = NAT_V3_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let mut builder = TestNatV3TimerSkelBuilder::default();
+        let pin_root = crate::tests::nat::isolated_pin_root("nat-v4-dynamic-v3-timer");
+        builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
+        let mut open_object = MaybeUninit::uninit();
+        let open = builder.open(&mut open_object).unwrap();
+        let skel = open.load().unwrap();
+        put_timer(&skel.maps.nat4_timer_map, TIMER_DELETE_EGRESS, GENERATION);
+
+        let result = run_advance(&skel);
+
+        assert_eq!(result.action as i32, 0, "cleanup state must not fail the current packet");
+        assert_eq!(u64::from(result.status), TIMER_DELETE_EGRESS);
+    }
 
     #[test]
     fn release_generation_mismatch_deletes_only_ct() {

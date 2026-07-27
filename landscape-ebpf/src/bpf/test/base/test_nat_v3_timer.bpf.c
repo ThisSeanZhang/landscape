@@ -103,3 +103,25 @@ int nat_v4_timer_step_test(struct __sk_buff *skb) {
 
     return TC_ACT_OK;
 }
+
+SEC("tc")
+int nat_v4_timer_advance_test(struct __sk_buff *skb) {
+    u32 index = 0;
+    struct nat4_timer_test_input_v3 *input = bpf_map_lookup_elem(&nat4_timer_test_input_v3, &index);
+    struct nat4_timer_test_result_v3 *result =
+        bpf_map_lookup_elem(&nat4_timer_test_result_v3, &index);
+    if (!input || !result) {
+        return TC_ACT_SHOT;
+    }
+
+    __builtin_memset(result, 0, sizeof(*result));
+    struct nat4_timer_value_v3 *value = bpf_map_lookup_elem(&nat4_timer_map, &input->key);
+    if (!value) {
+        return TC_ACT_SHOT;
+    }
+
+    result->action = nat4_ct_advance(PKT_TCP_SYN_V2, NAT_MAPPING_EGRESS, value);
+    result->status = value->status;
+    result->timer_exists = 1;
+    return TC_ACT_OK;
+}

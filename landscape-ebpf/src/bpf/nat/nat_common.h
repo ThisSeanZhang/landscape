@@ -131,6 +131,10 @@ static __always_inline bool ct_try_set_status(u64 *status_in_value, u64 curr_sta
     return __sync_bool_compare_and_swap(status_in_value, curr_state, next_state);
 }
 
+static __always_inline bool ct_status_can_activate(u64 status) {
+    return status != TIMER_ACTIVE && status != TIMER_PENDING_REF && status < TIMER_CLEAN_START;
+}
+
 struct nat4_action {
     struct inet4_addr from_addr;
     __be16 from_port;

@@ -97,12 +97,16 @@ static __always_inline int nat4_ct_advance(u8 pkt_type, u8 gress,
         return TC_ACT_SHOT;
     }
 
-    u64 prev_state = __sync_lock_test_and_set(&ct_timer_value->status, TIMER_ACTIVE);
-    if (prev_state != TIMER_ACTIVE) {
-        if (ct_timer_value->client_port == TEST_PORT) {
-            ld_bpf_log("flush status to TIMER_ACTIVE: 20");
+    u64 current_status = ct_timer_value->status;
+    if (ct_status_can_activate(current_status)) {
+        u64 prev_status =
+            __sync_val_compare_and_swap(&ct_timer_value->status, current_status, TIMER_ACTIVE);
+        if (prev_status == current_status) {
+            if (ct_timer_value->client_port == TEST_PORT) {
+                ld_bpf_log("flush status to TIMER_ACTIVE: 20");
+            }
+            bpf_timer_start(&ct_timer_value->timer, REPORT_INTERVAL, 0);
         }
-        bpf_timer_start(&ct_timer_value->timer, REPORT_INTERVAL, 0);
     }
 
     return TC_ACT_OK;
@@ -125,6 +129,10 @@ static __always_inline u32 nat4_handle_timer_step(struct nat4_timer_key *key,
     }
 
     if (current_status == TIMER_RELEASE) {
+        if (!ct_try_set_status(&value->status, TIMER_RELEASE, TIMER_CLEAN_START)) {
+            return NAT4_TIMER_STEP_RESTART;
+        }
+
         ret = nat4_metric_try_report(key, value, NAT_CONN_DELETE);
 
         if (value->is_static) {
@@ -138,8 +146,8 @@ static __always_inline u32 nat4_handle_timer_step(struct nat4_timer_key *key,
         }
 
         if (nat4_state_try_close_last(ingress_value) == 0) {
-            return nat4_timer_restart(value, current_status, TIMER_DELETE_EGRESS,
-                                      DELETE_RETRY_INTERVAL, next_timeout);
+            *next_timeout = DELETE_RETRY_INTERVAL;
+            return NAT4_TIMER_STEP_RESTART;
         }
 
         if (nat4_state_try_dec(ingress_value) == 0) {

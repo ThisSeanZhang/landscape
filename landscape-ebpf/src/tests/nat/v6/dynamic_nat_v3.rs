@@ -21,6 +21,9 @@ use crate::{
 const IFINDEX: u32 = 6;
 const L4PROTO_TCP: u8 = 6;
 const CLIENT_PORT: u16 = 12345;
+const TIMER_ACTIVE: u64 = 20;
+const TIMER_RELEASE: u64 = 40;
+const TIMER_CLEAN_START: u64 = 50;
 const PREFIX60_WAN_NPT_PREFIX: [u8; 8] = [0x24, 0x09, 0x88, 0x88, 0x66, 0x66, 0x4f, 0x25];
 
 fn wan_ip() -> Ipv6Addr {
@@ -102,6 +105,57 @@ fn lookup_ct6_entry<T: MapCore>(
         .expect("lookup ct entry")
         .expect("missing ct entry");
     unsafe { std::ptr::read_unaligned(bytes.as_ptr().cast::<types::nat6_timer_value>()) }
+}
+
+fn set_ct6_status<T: MapCore>(timer_map: &T, key: &types::nat6_timer_key, status: u64) {
+    let mut value = lookup_ct6_entry(timer_map, key);
+    value.status = status;
+    timer_map
+        .update(unsafe { plain::as_bytes(key) }, unsafe { plain::as_bytes(&value) }, MapFlags::ANY)
+        .expect("failed to update v6 ct status");
+}
+
+fn assert_egress_ct_status_transition(initial_status: u64, expected_status: u64) {
+    let src = lan_host();
+    let dst = remote();
+    let prefix_len = 60;
+    let key = timer_key_for(src, CLIENT_PORT, prefix_len);
+
+    let mut builder = TcNatSkelBuilder::default();
+    let pin_root = crate::tests::nat::isolated_pin_root("nat-v6-dynamic-v3");
+    builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
+    let mut open_object = MaybeUninit::uninit();
+    let open_skel = builder.open(&mut open_object).unwrap();
+    let skel = open_skel.load().unwrap();
+
+    add_wan_ip(
+        &skel.maps.wan_ip_binding,
+        IFINDEX,
+        IpAddr::V6(wan_ip()),
+        None,
+        prefix_len,
+        Some(MacAddr::broadcast()),
+    );
+    add_ct6_entry(&skel.maps.nat6_timer_map, &key, src, dst, 443);
+    set_ct6_status(&skel.maps.nat6_timer_map, &key, initial_status);
+
+    let mut pkt = build_ipv6_tcp(src, dst, CLIENT_PORT, 443);
+    let mut ctx = TestSkb::default();
+    ctx.ifindex = IFINDEX;
+    let mut packet_out = vec![0u8; pkt.len()];
+    let input = ProgramInput {
+        data_in: Some(&mut pkt),
+        context_in: Some(ctx.as_mut_bytes()),
+        data_out: Some(&mut packet_out),
+        ..Default::default()
+    };
+
+    let result = skel.progs.tc_nat_wan_egress.test_run(input).expect("test_run failed");
+    assert_eq!(
+        result.return_value as i32, -1,
+        "timer status contention must not fail the current packet"
+    );
+    assert_eq!(lookup_ct6_entry(&skel.maps.nat6_timer_map, &key).status, expected_status);
 }
 
 fn assert_dynamic_translation(src: Ipv6Addr, dst: Ipv6Addr, prefix_len: u8) {
@@ -267,6 +321,16 @@ mod tests {
     #[test]
     fn tcp_egress_dynamic_v3_rewrites_src_prefix() {
         assert_dynamic_translation(lan_host(), remote(), 60);
+    }
+
+    #[test]
+    fn tcp_egress_reactivates_release_with_single_cas() {
+        assert_egress_ct_status_transition(TIMER_RELEASE, TIMER_ACTIVE);
+    }
+
+    #[test]
+    fn tcp_egress_does_not_reactivate_cleanup_state() {
+        assert_egress_ct_status_transition(TIMER_CLEAN_START, TIMER_CLEAN_START);
     }
 
     #[test]
