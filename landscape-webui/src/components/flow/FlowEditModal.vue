@@ -156,6 +156,13 @@ function normalizeFlowTargets(
             clearable
           />
         </n-form-item-gi>
+        <n-form-item-gi :span="3" :label="t('flow.edit.name')">
+          <n-input
+            :type="frontEndStore.presentation_mode ? 'password' : 'text'"
+            v-model:value="rule.name"
+            :placeholder="t('flow.edit.name_placeholder')"
+          />
+        </n-form-item-gi>
         <n-form-item-gi :span="5" :label="t('flow.edit.remark')">
           <n-input
             :type="frontEndStore.presentation_mode ? 'password' : 'text'"

@@ -6,6 +6,7 @@ export function flow_config_default(): FlowConfig {
     flow_id: -1,
     flow_match_rules: [],
     flow_targets: [],
+    name: "",
     remark: "",
   };
 }

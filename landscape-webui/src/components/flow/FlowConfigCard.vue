@@ -38,10 +38,21 @@ async function del() {
     await refresh();
   }
 }
-const title_name = computed(() =>
-  props.config.remark == null || props.config.remark === ""
-    ? t("common.no_remark")
-    : frontEndStore.MASK_INFO(props.config.remark),
+const title_name = computed(() => {
+  if (props.config.name != null && props.config.name !== "") {
+    return frontEndStore.MASK_INFO(props.config.name);
+  }
+  if (props.config.remark != null && props.config.remark !== "") {
+    return frontEndStore.MASK_INFO(props.config.remark);
+  }
+  return t("common.no_remark");
+});
+const show_remark = computed(
+  () =>
+    props.config.name != null &&
+    props.config.name !== "" &&
+    props.config.remark != null &&
+    props.config.remark !== "",
 );
 </script>
 
@@ -141,11 +152,16 @@ const title_name = computed(() =>
       >
       </n-empty>
     </n-flex>
-    <n-flex v-else>
-      <FlowEntryRuleExhibit
-        v-for="item in config.flow_match_rules"
-        :rule="item"
-      ></FlowEntryRuleExhibit>
+    <n-flex v-else vertical>
+      <n-text v-if="show_remark" depth="3" style="font-size: 12px">
+        {{ frontEndStore.MASK_INFO(config.remark) }}
+      </n-text>
+      <n-flex>
+        <FlowEntryRuleExhibit
+          v-for="item in config.flow_match_rules"
+          :rule="item"
+        ></FlowEntryRuleExhibit>
+      </n-flex>
     </n-flex>
     <template #action>
       <n-tag v-for="each in config.flow_targets" :bordered="false">
