@@ -1086,7 +1086,7 @@ function buildGroupPlannerView(
     };
   }
 
-  if (base.targetPrefixLen < base.parentPrefixLen) {
+  if (base.targetPrefixLen <= base.parentPrefixLen) {
     return {
       ...runtimeFields(base),
       state: base.actualPrefix ? base.state : "preview",

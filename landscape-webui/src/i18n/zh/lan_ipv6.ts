@@ -163,7 +163,7 @@ export default {
     "引用的 WAN PD 配置已不存在，请重新选择上游接口后再保存。",
   planner_reason_no_static_prefix: "先填写静态父前缀，再在下方画布中选择块。",
   planner_reason_target_shorter_than_parent:
-    "当前目标块 /{target} 比父前缀 /{parent} 更大，无法从该父前缀中切分。",
+    "当前目标前缀 /{target} 必须比父前缀 /{parent} 更具体。",
   planner_reason_selection_out_of_range:
     "已保存的选择超出当前父前缀快照容量，请重新选择后再保存。",
   planner_reason_filtered_parent:
@@ -205,9 +205,16 @@ export default {
   planner_save_error_conflict: "当前选择与已有来源冲突，不能保存。",
   planner_save_error_filtered_parent:
     "当前真实上游前缀被最大源前缀长度过滤，不能保存。",
-  planner_save_error_target_shorter_than_parent:
-    "目标块长度比父前缀更大，当前配置无效。",
+  planner_save_error_target_shorter_than_parent: "目标前缀必须比父前缀更具体。",
   planner_save_error_selection_out_of_range: "当前选择超出父前缀快照容量。",
+  stale_selection_empty_title: "已清空原有前缀选择",
+  stale_selection_empty_description:
+    "当前编辑草稿中没有可保存的前缀选择，请重新编辑、删除此条配置或取消编辑。",
+  stale_selection_reset_notice:
+    "原前缀组已不符合当前父前缀容量，所有选择均已清空，请重新配置。",
+  stale_selection_return_edit: "返回编辑",
+  stale_selection_delete: "删除此条",
+  stale_selection_cancel_edit: "取消编辑",
   planner_save_error_target_more_specific_than_64:
     "当前目标块比 /64 更细，暂不支持通过画布选择。",
 
@@ -248,14 +255,11 @@ export default {
     ip_valid_time: "IP 有效时间",
     ip_valid_time_desc: "从获得到丢弃该 IP 的时间, 包含首选时间",
     prefix: "前缀",
-    expected_prefix_len: "预期前缀长度",
     prefix_len_status: "前缀长度状态",
     prefix_len_matches: "符合预期",
     prefix_len_mismatch: "不符合预期",
-    prefix_len_waiting: "等待上游前缀",
     last_update: "最近更新时间",
     dhcpv6_client_prefix_time: "DHCPv6 Client 得到前缀的时间",
-    no_prefix_yet: "IPv6 PD 还未获得前缀",
   },
 
   // IPv6PDEditModal

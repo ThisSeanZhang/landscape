@@ -30,10 +30,7 @@ const actualPrefix = computed(() => props.prefix_status.actual_prefix);
 // WAN PD owns the acquired-prefix vs WAN-expectation verdict. LAN snapshot
 // compatibility is intentionally reported by the LAN prefix-group UI instead.
 const status = computed(() => {
-  if (
-    actualPrefix.value &&
-    props.prefix_status.meets_expected_pd_len === true
-  ) {
+  if (props.prefix_status.meets_expected_pd_len === true) {
     if (
       actualPrefix.value.last_update_time +
         actualPrefix.value.valid_lifetime * 1000 >
@@ -58,20 +55,10 @@ const status = computed(() => {
       <StatusTitle :enable="status" :remark="props.iface_name"></StatusTitle>
     </template>
     <n-descriptions style="flex: 1" bordered label-placement="top" :column="3">
-      <n-descriptions-item
-        :label="t('lan_ipv6.prefix_info.expected_prefix_len')"
-      >
-        /{{ prefix_status.expected_pd_len }}
-      </n-descriptions-item>
       <n-descriptions-item :label="t('lan_ipv6.prefix_info.prefix')">
-        <template v-if="actualPrefix">
-          {{ frontEndStore.MASK_INFO(actualPrefix.prefix_ip) }}/{{
-            actualPrefix.prefix_len
-          }}
-        </template>
-        <n-text v-else depth="3">
-          {{ t("lan_ipv6.prefix_info.no_prefix_yet") }}
-        </n-text>
+        {{ frontEndStore.MASK_INFO(actualPrefix.prefix_ip) }}/{{
+          actualPrefix.prefix_len
+        }}
       </n-descriptions-item>
       <n-descriptions-item :label="t('lan_ipv6.prefix_info.prefix_len_status')">
         <n-tag
@@ -88,11 +75,8 @@ const status = computed(() => {
         >
           {{ t("lan_ipv6.prefix_info.prefix_len_mismatch") }}
         </n-tag>
-        <n-tag v-else :bordered="false">
-          {{ t("lan_ipv6.prefix_info.prefix_len_waiting") }}
-        </n-tag>
       </n-descriptions-item>
-      <n-descriptions-item v-if="actualPrefix">
+      <n-descriptions-item>
         <template #label>
           <n-flex align="center">
             <span> {{ t("lan_ipv6.prefix_info.ip_preferred_time") }} </span>
@@ -112,7 +96,7 @@ const status = computed(() => {
         </template>
         {{ actualPrefix.preferred_lifetime }}s
       </n-descriptions-item>
-      <n-descriptions-item v-if="actualPrefix">
+      <n-descriptions-item>
         <template #label>
           <n-flex align="center">
             <span> {{ t("lan_ipv6.prefix_info.ip_valid_time") }} </span>
@@ -130,7 +114,7 @@ const status = computed(() => {
         </template>
         {{ actualPrefix.valid_lifetime }}s
       </n-descriptions-item>
-      <n-descriptions-item v-if="actualPrefix">
+      <n-descriptions-item>
         <template #label>
           <n-flex align="center">
             <span>{{ t("lan_ipv6.prefix_info.last_update") }}</span>

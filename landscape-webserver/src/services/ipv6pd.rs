@@ -52,7 +52,7 @@ async fn get_all_ipv6pd_configs(
 async fn get_all_prefix_status(
     State(state): State<LandscapeApp>,
 ) -> LandscapeApiResult<HashMap<String, IPV6PDPrefixStatus>> {
-    LandscapeApiResp::success(state.ipv6_pd_service.get_ipv6_prefix_statuses().await)
+    LandscapeApiResp::success(state.ipv6_pd_service.get_ipv6_prefix_statuses())
 }
 
 #[utoipa::path(

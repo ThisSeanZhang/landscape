@@ -173,7 +173,7 @@ export default {
   planner_reason_no_static_prefix:
     "Enter the static parent prefix first, then choose a block from the canvas below.",
   planner_reason_target_shorter_than_parent:
-    "The current target block /{target} is larger than the parent prefix /{parent}, so it cannot be carved from this parent.",
+    "The current target /{target} must be more specific than the parent prefix /{parent}.",
   planner_reason_selection_out_of_range:
     "The saved selection is outside the capacity of the current parent snapshot. Select a new block before saving.",
   planner_reason_filtered_parent:
@@ -220,9 +220,17 @@ export default {
   planner_save_error_filtered_parent:
     "The live upstream prefix is filtered out by Max Source Prefix Length, so this source cannot be saved.",
   planner_save_error_target_shorter_than_parent:
-    "The target block is larger than the parent prefix, so the current configuration is invalid.",
+    "The target prefix must be more specific than the parent prefix.",
   planner_save_error_selection_out_of_range:
     "The current selection is outside the capacity of the parent snapshot.",
+  stale_selection_empty_title: "Previous selections were cleared",
+  stale_selection_empty_description:
+    "There are no prefix selections to save in this draft. Return to editing, delete this entry, or cancel editing.",
+  stale_selection_reset_notice:
+    "The previous prefix group no longer fits the current parent capacity. All selections were cleared; configure the group again.",
+  stale_selection_return_edit: "Return to editing",
+  stale_selection_delete: "Delete this entry",
+  stale_selection_cancel_edit: "Cancel editing",
   planner_save_error_target_more_specific_than_64:
     "The current target block is more specific than /64 and cannot be selected from the canvas yet.",
 
@@ -265,14 +273,11 @@ export default {
     ip_valid_time_desc:
       "Time from obtaining to discarding this IP, including preferred time",
     prefix: "Prefix",
-    expected_prefix_len: "Expected Prefix Length",
     prefix_len_status: "Prefix Length Status",
     prefix_len_matches: "Meets Expectation",
     prefix_len_mismatch: "Does Not Meet Expectation",
-    prefix_len_waiting: "Waiting for Upstream Prefix",
     last_update: "Last Update",
     dhcpv6_client_prefix_time: "Time when DHCPv6 Client obtained the prefix",
-    no_prefix_yet: "IPv6 PD has not obtained a prefix yet",
   },
 
   // IPv6PDEditModal

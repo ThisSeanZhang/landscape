@@ -40,6 +40,7 @@ const iface_info = defineProps<{
 
 const service_config = ref<LanIPv6ServiceConfigV2>();
 const expectedPdLens = ref<Map<string, number>>(new Map());
+const origin_config_json = ref("");
 
 const service_enabled = computed({
   get() {
@@ -51,6 +52,12 @@ const service_enabled = computed({
     }
   },
 });
+
+const config_dirty = computed(
+  () =>
+    !!service_config.value &&
+    origin_config_json.value !== JSON.stringify(service_config.value),
+);
 
 function default_config(): LanIPv6ServiceConfigV2 {
   return {
@@ -126,6 +133,10 @@ async function on_modal_enter() {
   } catch (e) {
     service_config.value = default_config();
   }
+
+  origin_config_json.value = service_config.value
+    ? JSON.stringify(service_config.value)
+    : "";
 }
 
 function on_mode_change(mode: IPv6ServiceMode) {
@@ -240,6 +251,7 @@ function replace_group_sources(
   <ConfigModal
     v-model:show="show_model"
     v-model:enabled="service_enabled"
+    :mask-closable="!config_dirty"
     :title="t('lan_ipv6.title')"
     :switch-disabled="!service_config"
     width="1200px"

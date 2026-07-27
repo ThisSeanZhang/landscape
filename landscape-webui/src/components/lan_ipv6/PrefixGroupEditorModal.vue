@@ -88,6 +88,8 @@ const ipv6PdIfaces = ref<Map<string, ServiceStatus>>(new Map());
 const ipv6PdConfigs = ref<IPV6PDServiceConfig[]>([]);
 const expectedPdLens = ref<Map<string, number>>(new Map());
 const draftGroupState = ref<LanPrefixGroupConfig>();
+const staleSelectionsCleared = ref(false);
+const emptyDraftActionVisible = ref(false);
 
 const draftGroup = computed(() => draftGroupState.value);
 
@@ -663,6 +665,8 @@ function firstConfiguredKind() {
 
 function initDraftGroup() {
   draftGroupId.value = props.group?.group_id ?? generateDraftGroupId();
+  staleSelectionsCleared.value = false;
+  emptyDraftActionVisible.value = false;
 
   if (props.group) {
     draftGroupState.value = cloneValue(props.group);
@@ -690,10 +694,51 @@ function initDraftGroup() {
   draftGroupState.value = createEmptyDraftGroup();
 }
 
+function clearStaleSelectionsOnOpen() {
+  if (!props.group || !draftGroup.value) {
+    return;
+  }
+
+  const hasStaleSelection = switchKinds.some((kind) => {
+    if (!kindConfigured(kind)) {
+      return false;
+    }
+
+    const view = buildPrefixPlannerViewFromGroups({
+      currentIfaceName: props.currentIfaceName,
+      currentGroups: currentPlannerGroups.value,
+      currentMode: props.currentMode,
+      otherConfigsV2: otherLanConfigsV2.value,
+      editGroup: draftGroup.value,
+      selectedKind: kind,
+      prefixInfos: prefixInfos.value,
+      expectedPdLens: expectedPdLens.value,
+      draftPdPoolLen: currentPdPoolLen.value,
+    });
+    return (
+      view.stateReason === "selection_out_of_range" ||
+      view.stateReason === "target_shorter_than_parent"
+    );
+  });
+
+  if (!hasStaleSelection) {
+    return;
+  }
+
+  for (const kind of switchKinds) {
+    clearKind(kind);
+  }
+  pdPoolLenDraft.value = Math.max(pdPoolLenDraft.value, minPdPoolLen.value);
+  staleSelectionsCleared.value = true;
+}
+
 async function enter() {
+  staleSelectionsCleared.value = false;
+  emptyDraftActionVisible.value = false;
   await Promise.all([searchIpv6Pd(), loadPlannerContext()]);
   initDraftGroup();
   syncParentIntoDraftGroup();
+  clearStaleSelectionsOnOpen();
   const firstKind =
     props.initialKind ??
     firstConfiguredKind() ??
@@ -710,6 +755,15 @@ async function commit() {
           "lan_ipv6.planner_save_error_conflict",
       ),
     );
+    return;
+  }
+
+  if (
+    props.group &&
+    staleSelectionsCleared.value &&
+    !draftGroupHasResults.value
+  ) {
+    emptyDraftActionVisible.value = true;
     return;
   }
 
@@ -741,7 +795,13 @@ async function commit() {
 }
 
 function deleteCurrentGroup() {
+  emptyDraftActionVisible.value = false;
   emit("commit", undefined);
+  show.value = false;
+}
+
+function cancelEmptyDraftAction() {
+  emptyDraftActionVisible.value = false;
   show.value = false;
 }
 </script>
@@ -760,6 +820,10 @@ function deleteCurrentGroup() {
     @after-enter="enter"
   >
     <n-flex vertical :size="12">
+      <n-alert v-if="staleSelectionsCleared" type="warning" :bordered="false">
+        {{ t("lan_ipv6.stale_selection_reset_notice") }}
+      </n-alert>
+
       <n-card size="small" :bordered="false">
         <n-flex vertical :size="10">
           <n-flex align="center" justify="space-between">
@@ -902,6 +966,31 @@ function deleteCurrentGroup() {
           @click="commit"
         >
           {{ t("lan_ipv6.confirm") }}
+        </n-button>
+      </n-flex>
+    </template>
+  </n-modal>
+
+  <n-modal
+    v-model:show="emptyDraftActionVisible"
+    preset="card"
+    style="width: 460px"
+    :closable="false"
+    :mask-closable="false"
+    :auto-focus="false"
+    :title="t('lan_ipv6.stale_selection_empty_title')"
+  >
+    <n-text>{{ t("lan_ipv6.stale_selection_empty_description") }}</n-text>
+    <template #footer>
+      <n-flex justify="end" :size="8">
+        <n-button @click="emptyDraftActionVisible = false">
+          {{ t("lan_ipv6.stale_selection_return_edit") }}
+        </n-button>
+        <n-button type="error" secondary @click="deleteCurrentGroup">
+          {{ t("lan_ipv6.stale_selection_delete") }}
+        </n-button>
+        <n-button @click="cancelEmptyDraftAction">
+          {{ t("lan_ipv6.stale_selection_cancel_edit") }}
         </n-button>
       </n-flex>
     </template>

@@ -422,8 +422,8 @@ async fn clear_active_pd_prefix(
     current_wan_addr: &mut Option<Ipv6Addr>,
 ) {
     let removed = prefix_map.remove(iface_name);
-    if let Some(prefix) = removed.as_ref().and_then(|status| status.actual_prefix.as_ref()) {
-        remove_ip_route(prefix, iface_name);
+    if let Some(status) = removed.as_ref() {
+        remove_ip_route(&status.actual_prefix, iface_name);
     }
 
     route_service.remove_ipv6_wan_route(iface_name).await;

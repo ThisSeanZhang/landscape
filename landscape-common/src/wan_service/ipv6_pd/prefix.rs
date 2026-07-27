@@ -28,15 +28,14 @@ pub struct LDIAPrefix {
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct IPV6PDPrefixStatus {
     pub expected_pd_len: u8,
-    pub actual_prefix: Option<LDIAPrefix>,
-    pub meets_expected_pd_len: Option<bool>,
+    pub actual_prefix: LDIAPrefix,
+    pub meets_expected_pd_len: bool,
 }
 
 impl IPV6PDPrefixStatus {
-    pub fn new(expected_pd_len: u8, actual_prefix: Option<LDIAPrefix>) -> Self {
-        let meets_expected_pd_len = actual_prefix
-            .as_ref()
-            .map(|prefix| prefix_len_meets_expectation(prefix.prefix_len, expected_pd_len));
+    pub fn new(expected_pd_len: u8, actual_prefix: LDIAPrefix) -> Self {
+        let meets_expected_pd_len =
+            prefix_len_meets_expectation(actual_prefix.prefix_len, expected_pd_len);
         Self {
             expected_pd_len,
             actual_prefix,
@@ -56,8 +55,7 @@ impl IAPrefixMap {
     }
 
     pub fn store(&self, iface_name: &str, prefix: LDIAPrefix, expected_pd_len: u8) {
-        self.inner
-            .insert(iface_name.to_string(), IPV6PDPrefixStatus::new(expected_pd_len, Some(prefix)));
+        self.inner.insert(iface_name.to_string(), IPV6PDPrefixStatus::new(expected_pd_len, prefix));
     }
 
     pub fn remove(&self, iface_name: &str) -> Option<IPV6PDPrefixStatus> {
@@ -66,7 +64,7 @@ impl IAPrefixMap {
 
     /// Return the acquired prefix without applying LAN capacity policy.
     pub fn load_actual(&self, iface_name: &str) -> Option<LDIAPrefix> {
-        self.inner.get(iface_name).and_then(|v| v.actual_prefix.clone())
+        self.inner.get(iface_name).map(|v| v.actual_prefix.clone())
     }
 
     /// Return the acquired prefix only when it satisfies the WAN PD expectation.
@@ -76,8 +74,8 @@ impl IAPrefixMap {
     /// the LAN IPv6 service.
     pub fn load_for_lan(&self, iface_name: &str) -> Option<(LDIAPrefix, u8)> {
         self.inner.get(iface_name).and_then(|status| {
-            if status.meets_expected_pd_len == Some(true) {
-                status.actual_prefix.clone().map(|prefix| (prefix, status.expected_pd_len))
+            if status.meets_expected_pd_len {
+                Some((status.actual_prefix.clone(), status.expected_pd_len))
             } else {
                 None
             }
@@ -85,7 +83,10 @@ impl IAPrefixMap {
     }
 
     pub fn get_info(&self) -> HashMap<String, Option<LDIAPrefix>> {
-        self.inner.iter().map(|e| (e.key().clone(), e.value().actual_prefix.clone())).collect()
+        self.inner
+            .iter()
+            .map(|e| (e.key().clone(), Some(e.value().actual_prefix.clone())))
+            .collect()
     }
 
     pub fn get_prefix_statuses(&self) -> HashMap<String, IPV6PDPrefixStatus> {
@@ -114,8 +115,8 @@ mod tests {
 
     #[test]
     fn larger_or_equal_network_meets_expected_pd_len() {
-        assert_eq!(IPV6PDPrefixStatus::new(60, Some(prefix(56))).meets_expected_pd_len, Some(true));
-        assert_eq!(IPV6PDPrefixStatus::new(60, Some(prefix(60))).meets_expected_pd_len, Some(true));
+        assert!(IPV6PDPrefixStatus::new(60, prefix(56)).meets_expected_pd_len);
+        assert!(IPV6PDPrefixStatus::new(60, prefix(60)).meets_expected_pd_len);
     }
 
     #[test]
@@ -131,15 +132,7 @@ mod tests {
 
     #[test]
     fn smaller_network_does_not_meet_expected_pd_len() {
-        assert_eq!(
-            IPV6PDPrefixStatus::new(60, Some(prefix(64))).meets_expected_pd_len,
-            Some(false)
-        );
-    }
-
-    #[test]
-    fn missing_prefix_has_no_expected_len_verdict() {
-        assert_eq!(IPV6PDPrefixStatus::new(60, None).meets_expected_pd_len, None);
+        assert!(!IPV6PDPrefixStatus::new(60, prefix(64)).meets_expected_pd_len);
     }
 
     #[test]
@@ -149,8 +142,8 @@ mod tests {
 
         let status = map.get_prefix_statuses().remove("wan0").unwrap();
         assert_eq!(status.expected_pd_len, 64);
-        assert_eq!(status.meets_expected_pd_len, Some(true));
-        assert!(status.actual_prefix.is_some());
+        assert!(status.meets_expected_pd_len);
+        assert_eq!(status.actual_prefix.prefix_len, 56);
     }
 
     #[test]
@@ -167,7 +160,7 @@ mod tests {
 
         let status = map.get_prefix_statuses().remove("wan0").unwrap();
         assert_eq!(status.expected_pd_len, 58);
-        assert_eq!(status.meets_expected_pd_len, Some(true));
+        assert!(status.meets_expected_pd_len);
     }
 
     #[test]
@@ -192,7 +185,7 @@ mod tests {
         let removed = map.remove("wan0").unwrap();
 
         assert_eq!(removed.expected_pd_len, 60);
-        assert_eq!(removed.actual_prefix.unwrap().prefix_len, 56);
+        assert_eq!(removed.actual_prefix.prefix_len, 56);
         assert!(map.load_actual("wan0").is_none());
         assert!(map.remove("wan0").is_none());
     }
