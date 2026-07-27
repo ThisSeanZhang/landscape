@@ -22,6 +22,7 @@ pub struct Model {
     pub flow_match_rules: DBJson,
     #[sea_orm(column_type = "Json")]
     pub packet_handle_iface_name: DBJson,
+    pub name: String,
     pub remark: String,
     pub update_at: DBTimestamp,
 }
@@ -50,6 +51,7 @@ impl From<Model> for FlowConfig {
             flow_id: entity.flow_id,
             flow_match_rules: serde_json::from_value(entity.flow_match_rules).unwrap(),
             flow_targets: serde_json::from_value(entity.packet_handle_iface_name).unwrap(),
+            name: entity.name,
             remark: entity.remark,
             update_at: entity.update_at,
         }
@@ -71,6 +73,7 @@ impl UpdateActiveModel<ActiveModel> for FlowConfig {
         active.flow_match_rules = Set(serde_json::to_value(self.flow_match_rules).unwrap().into());
         active.packet_handle_iface_name =
             Set(serde_json::to_value(self.flow_targets).unwrap().into());
+        active.name = Set(self.name);
         active.remark = Set(self.remark);
         active.update_at = Set(self.update_at);
     }

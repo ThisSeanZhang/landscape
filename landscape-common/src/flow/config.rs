@@ -23,6 +23,10 @@ pub struct FlowConfig {
     /// 处理流量目标网卡, 目前只取第一个
     /// 暂定, 可能会移动到具体的网卡上进行设置
     pub flow_targets: Vec<WeightedFlowTarget>,
+    /// 名称 (用于展示的简短标识, 为空时回退到 remark)
+    #[serde(default)]
+    #[cfg_attr(feature = "openapi", schema(required = false))]
+    pub name: String,
     /// 备注
     pub remark: String,
 
