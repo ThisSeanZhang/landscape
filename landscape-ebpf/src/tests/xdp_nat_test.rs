@@ -13,7 +13,7 @@ use crate::map_setting::share_map::ShareMapSkelBuilder;
 use crate::tests::test_xdp_dummy::TestXdpDummySkelBuilder;
 use crate::tests::xdp_firewall_skel::XdpFirewallSkelBuilder;
 use crate::tests::xdp_lan_chain_skel::XdpLanChainSkelBuilder;
-use crate::tests::xdp_nat_skel::XdpNatSkelBuilder;
+use crate::tests::xdp_nat_skel::{types, XdpNatSkelBuilder};
 
 use std::os::fd::{AsFd, AsRawFd};
 use std::sync::Mutex;
@@ -461,6 +461,49 @@ fn xdp_nat_dynamic_egress() {
         [10, 0, 0, 1],
         12345,
     );
+
+    let ct_key = types::nat4_timer_key {
+        l4proto: 6,
+        _pad: [0; 3],
+        pair_ip: types::inet4_pair {
+            src_addr: types::inet4_addr {
+                addr: u32::from_be_bytes([93, 184, 216, 34]).to_be(),
+            },
+            dst_addr: types::inet4_addr { addr: u32::from_be_bytes([203, 0, 113, 1]).to_be() },
+            src_port: 80u16.to_be(),
+            dst_port: 4096u16.to_be(),
+        },
+    };
+    let ct_bytes = nat
+        .maps
+        .nat4_timer_map
+        .lookup(unsafe { plain::as_bytes(&ct_key) }, MapFlags::ANY)
+        .unwrap()
+        .expect("dynamic CT should exist");
+    let mut ct_value =
+        unsafe { std::ptr::read_unaligned(ct_bytes.as_ptr().cast::<types::nat4_timer_value_v3>()) };
+    ct_value.status = 50;
+    nat.maps
+        .nat4_timer_map
+        .update(
+            unsafe { plain::as_bytes(&ct_key) },
+            unsafe { plain::as_bytes(&ct_value) },
+            MapFlags::ANY,
+        )
+        .unwrap();
+
+    send_raw_packet(&nat_p, &pkt);
+    thread::sleep(Duration::from_millis(30));
+
+    let ct_bytes = nat
+        .maps
+        .nat4_timer_map
+        .lookup(unsafe { plain::as_bytes(&ct_key) }, MapFlags::ANY)
+        .unwrap()
+        .expect("cleanup CT should exist");
+    let ct_value =
+        unsafe { std::ptr::read_unaligned(ct_bytes.as_ptr().cast::<types::nat4_timer_value_v3>()) };
+    assert_eq!(ct_value.status, 50, "XDP egress must not reactivate cleanup CT");
 
     drop(nat);
     drop(dummy);

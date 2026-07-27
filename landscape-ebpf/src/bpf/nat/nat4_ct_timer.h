@@ -300,6 +300,10 @@ enum ct_ingress_resolve {
     CT_RESOLVE_UNUSABLE = 2,
 };
 
+static __always_inline bool nat4_ct_status_usable(u64 status) {
+    return status != TIMER_PENDING_REF && status < TIMER_CLEAN_START;
+}
+
 static __always_inline enum ct_ingress_resolve
 nat4_ct_ingress_resolve(const struct nat4_timer_key *ct_key,
                         struct nat4_timer_value_v3 **timer_value_) {
@@ -307,7 +311,7 @@ nat4_ct_ingress_resolve(const struct nat4_timer_key *ct_key,
     if (!tv) {
         return CT_RESOLVE_MISS;
     }
-    if (tv->status == TIMER_PENDING_REF || tv->status > TIMER_RELEASE) {
+    if (!nat4_ct_status_usable(tv->status)) {
         return CT_RESOLVE_UNUSABLE;
     }
     *timer_value_ = tv;
@@ -325,7 +329,7 @@ static __always_inline int nat4_ct_resolve(const struct nat4_timer_key *ct_key,
         if (track_dynamic_ref && generation_snapshot != 0 &&
             timer_value->generation_snapshot != generation_snapshot) {
             bpf_map_delete_elem(&nat4_timer_map, ct_key);
-        } else if (timer_value->status == TIMER_PENDING_REF) {
+        } else if (!nat4_ct_status_usable(timer_value->status)) {
             return -1;
         } else {
             *timer_value_ = timer_value;

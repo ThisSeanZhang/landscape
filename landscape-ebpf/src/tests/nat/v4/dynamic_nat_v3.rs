@@ -1186,7 +1186,7 @@ mod tests {
     }
 
     #[test]
-    fn tcp_ingress_dynamic_v3_release_reactivates_but_cleanup_rejects_ingress() {
+    fn tcp_dynamic_v3_release_reactivates_but_cleanup_rejects_both_directions() {
         let _guard = NAT_V3_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let mut builder = TcNatSkelBuilder::default();
         let pin_root = crate::tests::nat::isolated_pin_root("nat-v4-dynamic-v3");
@@ -1323,6 +1323,34 @@ mod tests {
             cleanup_result.return_value as i32, 2,
             "CT cleanup states after TIMER_RELEASE should still be rejected"
         );
+
+        let mut cleanup_egress_pkt = build_ipv4_tcp_syn(LAN_HOST, REMOTE_IP, LAN_PORT, 443);
+        let mut cleanup_egress_ctx = TestSkb::default();
+        cleanup_egress_ctx.ifindex = IFINDEX;
+        let mut cleanup_egress_packet_out = vec![0u8; cleanup_egress_pkt.len()];
+        let cleanup_egress_input = ProgramInput {
+            data_in: Some(&mut cleanup_egress_pkt),
+            context_in: Some(cleanup_egress_ctx.as_mut_bytes()),
+            data_out: Some(&mut cleanup_egress_packet_out),
+            ..Default::default()
+        };
+        let cleanup_egress_result =
+            skel.progs.tc_nat_wan_egress.test_run(cleanup_egress_input).expect("test_run failed");
+        assert_eq!(
+            cleanup_egress_result.return_value as i32, 2,
+            "CT cleanup states after TIMER_RELEASE should be rejected on egress"
+        );
+
+        let ct_bytes = skel
+            .maps
+            .nat4_timer_map
+            .lookup(unsafe { plain::as_bytes(&ct_key) }, MapFlags::ANY)
+            .unwrap()
+            .expect("cleanup ct should exist");
+        let ct_value = unsafe {
+            std::ptr::read_unaligned(ct_bytes.as_ptr().cast::<types::nat4_timer_value_v3>())
+        };
+        assert_eq!(ct_value.status, 50, "cleanup CT must not be reactivated");
     }
 
     #[test]

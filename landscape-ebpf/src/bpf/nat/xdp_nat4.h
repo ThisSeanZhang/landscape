@@ -304,7 +304,7 @@ static __always_inline int xdp_nat4_ct_resolve(const struct nat4_timer_key *ct_k
     if (tv) {
         if (track_ref && gen_snap != 0 && tv->generation_snapshot != gen_snap) {
             bpf_map_delete_elem(&nat4_timer_map, ct_key);
-        } else if (tv->status == TIMER_PENDING_REF) {
+        } else if (!nat4_ct_status_usable(tv->status)) {
             return -1;
         } else {
             *ct_out = tv;
