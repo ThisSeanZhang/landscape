@@ -243,7 +243,8 @@ async fn handle_dhcp_msg(
             del_route(*prefix, *len, iface_name);
             let key = LanIPv6RouteKey {
                 iface_name: iface_name.to_string(),
-                subnet_index: pd_route_key_index(change.sub_index, prefix),
+                subnet: *prefix,
+                prefix_len: *len,
             };
             route_service.remove_ipv6_lan_route_by_key(&key).await;
         }
@@ -259,7 +260,8 @@ async fn handle_dhcp_msg(
             };
             let key = LanIPv6RouteKey {
                 iface_name: iface_name.to_string(),
-                subnet_index: pd_route_key_index(change.sub_index, prefix),
+                subnet: *prefix,
+                prefix_len: *len,
             };
             route_service.insert_ipv6_lan_route(key, lan_info).await;
         }
@@ -308,12 +310,13 @@ async fn handle_expire_tick(
     };
 
     // PD route cleanup outside status lock (needs .await)
-    for (sub_index, routes) in &pd_cleanups {
+    for (_sub_index, routes) in &pd_cleanups {
         for (prefix, len) in routes {
             del_route(*prefix, *len, iface_name);
             let key = LanIPv6RouteKey {
                 iface_name: iface_name.to_string(),
-                subnet_index: pd_route_key_index(*sub_index, prefix),
+                subnet: *prefix,
+                prefix_len: *len,
             };
             route_service.remove_ipv6_lan_route_by_key(&key).await;
         }
@@ -412,7 +415,8 @@ pub async fn start_ipv6_lan_server(
         };
         let key = LanIPv6RouteKey {
             iface_name: iface_name.clone(),
-            subnet_index: sn.pool_index,
+            subnet: sn.sub_prefix,
+            prefix_len: sn.sub_prefix_len,
         };
         route_service.insert_ipv6_lan_route(key, lan_info).await;
     }
@@ -582,7 +586,8 @@ pub async fn start_ipv6_lan_server(
                     del_route(sn.sub_prefix, sn.sub_prefix_len, &iface_name);
                     let key = LanIPv6RouteKey {
                         iface_name: iface_name.clone(),
-                        subnet_index: sn.pool_index,
+                        subnet: sn.sub_prefix,
+                        prefix_len: sn.sub_prefix_len,
                     };
                     route_service.remove_ipv6_lan_route_by_key(&key).await;
                 }
@@ -603,7 +608,8 @@ pub async fn start_ipv6_lan_server(
                     };
                     let key = LanIPv6RouteKey {
                         iface_name: iface_name.clone(),
-                        subnet_index: sn.pool_index,
+                        subnet: sn.sub_prefix,
+                        prefix_len: sn.sub_prefix_len,
                     };
                     route_service.insert_ipv6_lan_route(key, lan_info).await;
                 }
@@ -617,7 +623,8 @@ pub async fn start_ipv6_lan_server(
                         del_route(*prefix, *len, &iface_name);
                         let key = LanIPv6RouteKey {
                             iface_name: iface_name.clone(),
-                            subnet_index: pd_route_key_index(cleanup.sub_index, prefix),
+                            subnet: *prefix,
+                            prefix_len: *len,
                         };
                         route_service.remove_ipv6_lan_route_by_key(&key).await;
                     }
@@ -675,11 +682,6 @@ pub async fn start_ipv6_lan_server(
     route_service.remove_ipv6_lan_route(&iface_name).await;
 
     return Ok(());
-}
-
-fn pd_route_key_index(sub_index: u32, delegated_prefix: &Ipv6Addr) -> u32 {
-    let prefix_hash = (u128::from(*delegated_prefix) >> 64) as u32;
-    0x8000_0000u32 | (sub_index.wrapping_mul(31).wrapping_add(prefix_hash))
 }
 
 /// Build an RFC 8415 §18.3.11 / §20.4 compliant Reconfigure message.

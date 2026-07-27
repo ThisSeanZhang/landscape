@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::net::Ipv6Addr;
 
 use serde::{Deserialize, Serialize};
@@ -180,6 +180,19 @@ impl ExpandedPrefixEntry {
         let host_mask = block_size - 1;
         Some((start, last_start | host_mask))
     }
+
+    /// Return the occupied global /64 slots, independent of the parent prefix.
+    fn global_slot_interval(&self) -> Option<(u128, u128)> {
+        if self.pool_len == 0 || self.pool_len > 64 || self.start_index > self.end_index {
+            return None;
+        }
+
+        let block_size = 1u128.checked_shl((64 - self.pool_len) as u32)?;
+        let start = (self.start_index as u128).checked_mul(block_size)?;
+        let end =
+            ((self.end_index as u128).checked_add(1)?).checked_mul(block_size)?.checked_sub(1)?;
+        Some((start, end))
+    }
 }
 
 impl LanPrefixGroupConfig {
@@ -237,9 +250,9 @@ impl LanPrefixGroupConfig {
         }
 
         if let Some(pd) = &self.pd {
-            if pd.pool_len == 0 || pd.pool_len > 128 {
+            if pd.pool_len == 0 || pd.pool_len > 64 {
                 return Err(ServiceConfigError::InvalidConfig {
-                    reason: format!("PD pool_len ({}) must be between 1 and 128", pd.pool_len),
+                    reason: format!("PD pool_len ({}) must be between 1 and 64", pd.pool_len),
                 });
             }
             if pd.end_index < pd.start_index {
@@ -411,6 +424,15 @@ pub fn validate_prefix_groups_with_pd_context(
     groups: &[LanPrefixGroupConfig],
     pd_contexts: Option<&PdPrefixContextMap>,
 ) -> Result<(), ServiceConfigError> {
+    let mut group_ids = HashSet::with_capacity(groups.len());
+    for group in groups {
+        if !group_ids.insert(group.group_id.as_str()) {
+            return Err(ServiceConfigError::InvalidConfig {
+                reason: format!("Duplicate prefix group id: {}", group.group_id),
+            });
+        }
+    }
+
     let expanded_groups: Vec<Vec<ExpandedPrefixEntry>> = groups
         .iter()
         .map(|group| {
@@ -638,6 +660,117 @@ pub fn validate_cross_interface_v2_with_pd_context(
     Ok(())
 }
 
+fn build_merged_configs(
+    pending: &LanIPv6ServiceConfigV2,
+    existing: &[LanIPv6ServiceConfigV2],
+) -> Vec<LanIPv6ServiceConfigV2> {
+    let mut merged: Vec<LanIPv6ServiceConfigV2> =
+        existing.iter().filter(|c| c.iface_name != pending.iface_name).cloned().collect();
+    merged.push(pending.clone());
+    merged
+}
+
+#[derive(Debug, Clone)]
+struct SourcedEntry {
+    group_instance: usize,
+    iface_name: String,
+    group_id: String,
+    entry: ExpandedPrefixEntry,
+}
+
+/// Validate all LAN IPv6 prefix configurations for global /64 slot conflicts.
+///
+/// This replaces the pending config for any interface with the same name, then expands
+/// ALL entries from ALL configs (regardless of enable/disable or current service mode)
+/// and detects any overlapping normalized /64 slots. Parent addresses are intentionally
+/// ignored here: the slot index is shared by every LAN interface.
+///
+/// Within the same prefix group, RA + IA_NA sharing on the same subnet is still permitted.
+pub fn validate_global_prefix_conflicts(
+    pending: &LanIPv6ServiceConfigV2,
+    existing: &[LanIPv6ServiceConfigV2],
+    pd_contexts: Option<&PdPrefixContextMap>,
+) -> Result<(), ServiceConfigError> {
+    let merged = build_merged_configs(pending, existing);
+
+    let mut sourced_entries: Vec<SourcedEntry> = Vec::new();
+    let mut next_group_instance = 0;
+    for config in &merged {
+        for group in &config.config.prefix_groups {
+            let group_instance = next_group_instance;
+            next_group_instance += 1;
+            let entries =
+                group.active_entries_with_pd_context(IPv6ServiceMode::SlaacDhcpv6, pd_contexts);
+            for entry in entries {
+                sourced_entries.push(SourcedEntry {
+                    group_instance,
+                    iface_name: config.iface_name.clone(),
+                    group_id: group.group_id.clone(),
+                    entry,
+                });
+            }
+        }
+    }
+
+    for i in 0..sourced_entries.len() {
+        for j in (i + 1)..sourced_entries.len() {
+            let left = &sourced_entries[i];
+            let right = &sourced_entries[j];
+
+            let same_group = left.group_instance == right.group_instance;
+            let is_ra_na_pair = matches!(
+                (left.entry.service_kind, right.entry.service_kind),
+                (PrefixGroupServiceKind::Ra, PrefixGroupServiceKind::Na)
+                    | (PrefixGroupServiceKind::Na, PrefixGroupServiceKind::Ra)
+            );
+            if same_group && is_ra_na_pair {
+                continue;
+            }
+
+            let Some((start_l, end_l)) = left.entry.global_slot_interval() else {
+                continue;
+            };
+            let Some((start_r, end_r)) = right.entry.global_slot_interval() else {
+                continue;
+            };
+            if start_l > end_r || start_r > end_l {
+                continue;
+            }
+
+            let overlap_start = start_l.max(start_r);
+            let overlap_end = end_l.min(end_r);
+            let slot_range = if overlap_start == overlap_end {
+                format!("/64 slot {}", overlap_start)
+            } else {
+                format!("/64 slots {}-{}", overlap_start, overlap_end)
+            };
+
+            let desc = |s: &SourcedEntry| {
+                let index_range = if s.entry.start_index == s.entry.end_index {
+                    format!("{}", s.entry.start_index)
+                } else {
+                    format!("{}-{}", s.entry.start_index, s.entry.end_index)
+                };
+                format!(
+                    "iface={}, group={}, {:?} index={} pool_len=/{}",
+                    s.iface_name, s.group_id, s.entry.service_kind, index_range, s.entry.pool_len,
+                )
+            };
+
+            return Err(ServiceConfigError::InvalidConfig {
+                reason: format!(
+                    "Prefix conflict at {}: ({}) overlaps ({})",
+                    slot_range,
+                    desc(left),
+                    desc(right),
+                ),
+            });
+        }
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::config::{
@@ -706,6 +839,44 @@ mod tests {
         };
 
         assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn pd_pool_len_above_64_is_rejected() {
+        let group = LanPrefixGroupConfig {
+            group_id: "pd-too-specific".to_string(),
+            parent: PrefixParentSource::Static {
+                base_prefix: "fd00::".parse().unwrap(),
+                parent_prefix_len: 56,
+            },
+            ra: None,
+            na: None,
+            pd: Some(PdPrefixRangeConfig { pool_len: 65, start_index: 0, end_index: 0 }),
+        };
+
+        let error = group.validate().unwrap_err().to_string();
+        assert!(error.contains("between 1 and 64"), "unexpected validation error: {error}");
+    }
+
+    #[test]
+    fn duplicate_group_ids_are_rejected() {
+        let group = LanPrefixGroupConfig {
+            group_id: "duplicate".to_string(),
+            parent: PrefixParentSource::Static {
+                base_prefix: "fd00::".parse().unwrap(),
+                parent_prefix_len: 56,
+            },
+            ra: Some(RaPrefixConfig {
+                pool_index: 1,
+                preferred_lifetime: 300,
+                valid_lifetime: 600,
+            }),
+            na: None,
+            pd: None,
+        };
+
+        let error = validate_prefix_groups(&[group.clone(), group]).unwrap_err().to_string();
+        assert!(error.contains("Duplicate prefix group id: duplicate"));
     }
 
     #[test]
@@ -1081,5 +1252,501 @@ mod tests {
         }];
 
         assert!(validate_cross_interface_v2(&new_config, &other_configs).is_err());
+    }
+
+    // ── Global /64 slot conflict validation tests ──
+
+    fn config_slaac_ra(
+        iface_name: &str,
+        base_prefix: &str,
+        parent_len: u8,
+        pool_index: u32,
+    ) -> LanIPv6ServiceConfigV2 {
+        LanIPv6ServiceConfigV2 {
+            iface_name: iface_name.to_string(),
+            enable: true,
+            config: LanIPv6ConfigV2 {
+                mode: IPv6ServiceMode::Slaac,
+                ad_interval: 300,
+                ra_flag: ra_flag_default(),
+                prefix_groups: vec![LanPrefixGroupConfig {
+                    group_id: "ra-group".to_string(),
+                    parent: PrefixParentSource::Static {
+                        base_prefix: base_prefix.parse().unwrap(),
+                        parent_prefix_len: parent_len,
+                    },
+                    ra: Some(RaPrefixConfig {
+                        pool_index,
+                        preferred_lifetime: 300,
+                        valid_lifetime: 600,
+                    }),
+                    na: None,
+                    pd: None,
+                }],
+                dhcpv6: None,
+            },
+            update_at: 0.0,
+        }
+    }
+
+    fn config_pd_range(
+        iface_name: &str,
+        depend_iface: &str,
+        snapshot_len: u8,
+        pool_len: u8,
+        start: u32,
+        end: u32,
+    ) -> LanIPv6ServiceConfigV2 {
+        LanIPv6ServiceConfigV2 {
+            iface_name: iface_name.to_string(),
+            enable: true,
+            config: LanIPv6ConfigV2 {
+                mode: IPv6ServiceMode::Stateful,
+                ad_interval: 300,
+                ra_flag: RouterFlags::from(0xc0u8),
+                prefix_groups: vec![LanPrefixGroupConfig {
+                    group_id: "pd-group".to_string(),
+                    parent: PrefixParentSource::Pd {
+                        depend_iface: depend_iface.to_string(),
+                        expected_pd_len_snapshot: snapshot_len,
+                    },
+                    ra: None,
+                    na: None,
+                    pd: Some(PdPrefixRangeConfig { pool_len, start_index: start, end_index: end }),
+                }],
+                dhcpv6: Some(DHCPv6ServerConfig {
+                    enable: true,
+                    ia_na: Some(super::super::dhcpv6_config::DHCPv6IANAConfig {
+                        max_prefix_len: 64,
+                        pool_start: 0x100,
+                        pool_end: None,
+                        preferred_lifetime: 300,
+                        valid_lifetime: 600,
+                    }),
+                    ia_pd: None,
+                }),
+            },
+            update_at: 0.0,
+        }
+    }
+
+    fn make_pd_context(iface_name: &str, expected_len: u8, actual_len: u8) -> PdPrefixContextMap {
+        HashMap::from([(
+            iface_name.to_string(),
+            PdPrefixContext {
+                expected_pd_len: expected_len,
+                actual_prefix: Some(LDIAPrefix {
+                    preferred_lifetime: 300,
+                    valid_lifetime: 600,
+                    prefix_len: actual_len,
+                    prefix_ip: "2001:db8::".parse().unwrap(),
+                    last_update_time: 0.0,
+                }),
+            },
+        )])
+    }
+
+    #[test]
+    fn global_same_group_ra_na_share_allowed() {
+        let config = LanIPv6ServiceConfigV2 {
+            iface_name: "lan0".to_string(),
+            enable: true,
+            config: LanIPv6ConfigV2 {
+                mode: IPv6ServiceMode::SlaacDhcpv6,
+                ad_interval: 300,
+                ra_flag: RouterFlags::from(0xc0u8),
+                prefix_groups: vec![LanPrefixGroupConfig {
+                    group_id: "shared".to_string(),
+                    parent: PrefixParentSource::Static {
+                        base_prefix: "fd00::".parse().unwrap(),
+                        parent_prefix_len: 56,
+                    },
+                    ra: Some(RaPrefixConfig {
+                        pool_index: 1,
+                        preferred_lifetime: 300,
+                        valid_lifetime: 600,
+                    }),
+                    na: Some(NaPrefixConfig { pool_index: 1 }),
+                    pd: None,
+                }],
+                dhcpv6: Some(DHCPv6ServerConfig {
+                    enable: true,
+                    ia_na: Some(super::super::dhcpv6_config::DHCPv6IANAConfig {
+                        max_prefix_len: 64,
+                        pool_start: 0x100,
+                        pool_end: None,
+                        preferred_lifetime: 300,
+                        valid_lifetime: 600,
+                    }),
+                    ia_pd: None,
+                }),
+            },
+            update_at: 0.0,
+        };
+
+        assert!(validate_global_prefix_conflicts(&config, &[], None).is_ok());
+    }
+
+    #[test]
+    fn global_same_parent_same_slot_conflicts() {
+        let pending = config_slaac_ra("lan-a", "fd00::", 56, 0);
+        let existing = vec![config_slaac_ra("lan-b", "fd00::", 56, 0)];
+
+        assert!(validate_global_prefix_conflicts(&pending, &existing, None).is_err());
+    }
+
+    #[test]
+    fn global_different_parent_prefix_len_same_64_slot_conflicts() {
+        let pending = LanIPv6ServiceConfigV2 {
+            iface_name: "lan-a".to_string(),
+            enable: true,
+            config: LanIPv6ConfigV2 {
+                mode: IPv6ServiceMode::Slaac,
+                ad_interval: 300,
+                ra_flag: ra_flag_default(),
+                prefix_groups: vec![LanPrefixGroupConfig {
+                    group_id: "ra-group".to_string(),
+                    parent: PrefixParentSource::Static {
+                        base_prefix: "2001:db8::".parse().unwrap(),
+                        parent_prefix_len: 48,
+                    },
+                    ra: Some(RaPrefixConfig {
+                        pool_index: 0,
+                        preferred_lifetime: 300,
+                        valid_lifetime: 600,
+                    }),
+                    na: None,
+                    pd: None,
+                }],
+                dhcpv6: None,
+            },
+            update_at: 0.0,
+        };
+
+        let existing = vec![LanIPv6ServiceConfigV2 {
+            iface_name: "lan-b".to_string(),
+            enable: true,
+            config: LanIPv6ConfigV2 {
+                mode: IPv6ServiceMode::Slaac,
+                ad_interval: 300,
+                ra_flag: ra_flag_default(),
+                prefix_groups: vec![LanPrefixGroupConfig {
+                    group_id: "ra-group2".to_string(),
+                    parent: PrefixParentSource::Static {
+                        base_prefix: "2001:db8::".parse().unwrap(),
+                        parent_prefix_len: 64,
+                    },
+                    ra: Some(RaPrefixConfig {
+                        pool_index: 0,
+                        preferred_lifetime: 300,
+                        valid_lifetime: 600,
+                    }),
+                    na: None,
+                    pd: None,
+                }],
+                dhcpv6: None,
+            },
+            update_at: 0.0,
+        }];
+
+        assert!(validate_global_prefix_conflicts(&pending, &existing, None).is_err());
+    }
+
+    #[test]
+    fn global_different_parents_no_conflict() {
+        let pending = config_slaac_ra("lan-a", "fd00::", 56, 0);
+        let existing = vec![config_slaac_ra("lan-b", "fd00:0:0:1::", 56, 1)];
+
+        assert!(validate_global_prefix_conflicts(&pending, &existing, None).is_ok());
+    }
+
+    #[test]
+    fn global_different_parent_addresses_same_slot_conflict() {
+        let pending = config_slaac_ra("lan-a", "fd00::", 56, 0);
+        let existing = vec![config_slaac_ra("lan-b", "2001:db8::", 56, 0)];
+
+        assert!(validate_global_prefix_conflicts(&pending, &existing, None).is_err());
+    }
+
+    #[test]
+    fn global_pd_range_at_60_overlaps_ra_at_64_same_parent_prefix() {
+        let pending = LanIPv6ServiceConfigV2 {
+            iface_name: "lan-a".to_string(),
+            enable: true,
+            config: LanIPv6ConfigV2 {
+                mode: IPv6ServiceMode::Slaac,
+                ad_interval: 300,
+                ra_flag: ra_flag_default(),
+                prefix_groups: vec![LanPrefixGroupConfig {
+                    group_id: "ra-group".to_string(),
+                    parent: PrefixParentSource::Static {
+                        base_prefix: "fd00::".parse().unwrap(),
+                        parent_prefix_len: 48,
+                    },
+                    ra: Some(RaPrefixConfig {
+                        pool_index: 1,
+                        preferred_lifetime: 300,
+                        valid_lifetime: 600,
+                    }),
+                    na: None,
+                    pd: None,
+                }],
+                dhcpv6: None,
+            },
+            update_at: 0.0,
+        };
+
+        let existing = vec![LanIPv6ServiceConfigV2 {
+            iface_name: "lan-b".to_string(),
+            enable: true,
+            config: LanIPv6ConfigV2 {
+                mode: IPv6ServiceMode::Stateful,
+                ad_interval: 300,
+                ra_flag: RouterFlags::from(0xc0u8),
+                prefix_groups: vec![LanPrefixGroupConfig {
+                    group_id: "pd-group".to_string(),
+                    parent: PrefixParentSource::Static {
+                        base_prefix: "fd00::".parse().unwrap(),
+                        parent_prefix_len: 56,
+                    },
+                    ra: None,
+                    na: None,
+                    pd: Some(PdPrefixRangeConfig { pool_len: 60, start_index: 0, end_index: 1 }),
+                }],
+                dhcpv6: Some(DHCPv6ServerConfig {
+                    enable: true,
+                    ia_na: Some(super::super::dhcpv6_config::DHCPv6IANAConfig {
+                        max_prefix_len: 64,
+                        pool_start: 0x100,
+                        pool_end: None,
+                        preferred_lifetime: 300,
+                        valid_lifetime: 600,
+                    }),
+                    ia_pd: None,
+                }),
+            },
+            update_at: 0.0,
+        }];
+
+        let result = validate_global_prefix_conflicts(&pending, &existing, None);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("/64 slot"), "Error should mention /64 slot: {}", err);
+        assert!(err.contains("lan-a"), "Error should mention lan-a: {}", err);
+        assert!(err.contains("lan-b"), "Error should mention lan-b: {}", err);
+    }
+
+    #[test]
+    fn global_disabled_interface_still_checked() {
+        let pending = config_slaac_ra("lan-a", "fd00::", 56, 0);
+        let existing = vec![LanIPv6ServiceConfigV2 {
+            iface_name: "lan-b".to_string(),
+            enable: false,
+            config: LanIPv6ConfigV2 {
+                mode: IPv6ServiceMode::Slaac,
+                ad_interval: 300,
+                ra_flag: ra_flag_default(),
+                prefix_groups: vec![LanPrefixGroupConfig {
+                    group_id: "ra-disabled".to_string(),
+                    parent: PrefixParentSource::Static {
+                        base_prefix: "fd00::".parse().unwrap(),
+                        parent_prefix_len: 56,
+                    },
+                    ra: Some(RaPrefixConfig {
+                        pool_index: 0,
+                        preferred_lifetime: 300,
+                        valid_lifetime: 600,
+                    }),
+                    na: None,
+                    pd: None,
+                }],
+                dhcpv6: None,
+            },
+            update_at: 0.0,
+        }];
+
+        assert!(validate_global_prefix_conflicts(&pending, &existing, None).is_err());
+    }
+
+    #[test]
+    fn global_merge_replaces_same_iface_old_config() {
+        let existing = vec![
+            config_slaac_ra("lan-a", "fd00::", 48, 2),
+            config_slaac_ra("lan-b", "fd00::", 48, 1),
+        ];
+
+        let pending = config_slaac_ra("lan-a", "fd00::", 48, 0);
+
+        assert!(validate_global_prefix_conflicts(&pending, &existing, None).is_ok());
+    }
+
+    #[test]
+    fn global_merge_keeps_conflict_when_replaced_iface_conflicts() {
+        let existing = vec![
+            config_slaac_ra("lan-a", "fd00::", 48, 1),
+            config_slaac_ra("lan-b", "fd00::", 48, 0),
+        ];
+        let pending = config_slaac_ra("lan-a", "fd00::", 48, 0);
+
+        assert!(validate_global_prefix_conflicts(&pending, &existing, None).is_err());
+    }
+
+    #[test]
+    fn global_pd_runtime_context_uses_resolved_prefixes() {
+        let pending = config_pd_range("lan-a", "wan0", 60, 64, 0, 0);
+        let existing = config_pd_range("lan-b", "wan0", 60, 64, 0, 0);
+        let contexts = make_pd_context("wan0", 60, 56);
+
+        assert!(validate_global_prefix_conflicts(&pending, &[existing.clone()], Some(&contexts))
+            .is_err());
+    }
+
+    #[test]
+    fn global_unresolved_pd_parents_still_conflict_by_slot() {
+        let pending = config_pd_range("lan-a", "wan-a", 60, 64, 0, 0);
+        let existing = config_pd_range("lan-b", "wan-b", 60, 64, 0, 0);
+
+        assert!(validate_global_prefix_conflicts(&pending, &[existing], None).is_err());
+    }
+
+    #[test]
+    fn global_pd_range_covers_every_expanded_slot() {
+        let pending = config_slaac_ra("lan-a", "fd00::", 56, 20);
+        let existing = vec![config_pd_range("lan-b", "wan0", 56, 60, 0, 1)];
+
+        assert!(validate_global_prefix_conflicts(&pending, &existing, None).is_err());
+    }
+
+    #[test]
+    fn global_same_group_ra_na_share_only_on_same_interface() {
+        let pending = config_slaac_ra("lan-a", "fd00::", 56, 0);
+        let mut existing = config_slaac_ra("lan-b", "2001:db8::", 56, 0);
+        let group = &mut existing.config.prefix_groups[0];
+        group.group_id = "ra-group".to_string();
+        group.ra = None;
+        group.na = Some(NaPrefixConfig { pool_index: 0 });
+
+        assert!(validate_global_prefix_conflicts(&pending, &[existing], None).is_err());
+    }
+
+    #[test]
+    fn global_ra_na_different_groups_same_slot_conflicts() {
+        let config = LanIPv6ServiceConfigV2 {
+            iface_name: "lan0".to_string(),
+            enable: true,
+            config: LanIPv6ConfigV2 {
+                mode: IPv6ServiceMode::SlaacDhcpv6,
+                ad_interval: 300,
+                ra_flag: RouterFlags::from(0xc0u8),
+                prefix_groups: vec![
+                    LanPrefixGroupConfig {
+                        group_id: "ra-only".to_string(),
+                        parent: PrefixParentSource::Static {
+                            base_prefix: "fd00::".parse().unwrap(),
+                            parent_prefix_len: 56,
+                        },
+                        ra: Some(RaPrefixConfig {
+                            pool_index: 1,
+                            preferred_lifetime: 300,
+                            valid_lifetime: 600,
+                        }),
+                        na: None,
+                        pd: None,
+                    },
+                    LanPrefixGroupConfig {
+                        group_id: "na-only".to_string(),
+                        parent: PrefixParentSource::Static {
+                            base_prefix: "fd00::".parse().unwrap(),
+                            parent_prefix_len: 56,
+                        },
+                        ra: None,
+                        na: Some(NaPrefixConfig { pool_index: 1 }),
+                        pd: None,
+                    },
+                ],
+                dhcpv6: Some(DHCPv6ServerConfig {
+                    enable: true,
+                    ia_na: Some(super::super::dhcpv6_config::DHCPv6IANAConfig {
+                        max_prefix_len: 64,
+                        pool_start: 0x100,
+                        pool_end: None,
+                        preferred_lifetime: 300,
+                        valid_lifetime: 600,
+                    }),
+                    ia_pd: None,
+                }),
+            },
+            update_at: 0.0,
+        };
+
+        assert!(validate_global_prefix_conflicts(&config, &[], None).is_err());
+    }
+
+    #[test]
+    fn global_duplicate_group_ids_do_not_enable_ra_na_sharing() {
+        let config = LanIPv6ServiceConfigV2 {
+            iface_name: "lan0".to_string(),
+            enable: true,
+            config: LanIPv6ConfigV2 {
+                mode: IPv6ServiceMode::SlaacDhcpv6,
+                ad_interval: 300,
+                ra_flag: RouterFlags::from(0xc0u8),
+                prefix_groups: vec![
+                    LanPrefixGroupConfig {
+                        group_id: "duplicate".to_string(),
+                        parent: PrefixParentSource::Static {
+                            base_prefix: "fd00::".parse().unwrap(),
+                            parent_prefix_len: 56,
+                        },
+                        ra: Some(RaPrefixConfig {
+                            pool_index: 1,
+                            preferred_lifetime: 300,
+                            valid_lifetime: 600,
+                        }),
+                        na: None,
+                        pd: None,
+                    },
+                    LanPrefixGroupConfig {
+                        group_id: "duplicate".to_string(),
+                        parent: PrefixParentSource::Static {
+                            base_prefix: "2001:db8::".parse().unwrap(),
+                            parent_prefix_len: 56,
+                        },
+                        ra: None,
+                        na: Some(NaPrefixConfig { pool_index: 1 }),
+                        pd: None,
+                    },
+                ],
+                dhcpv6: Some(DHCPv6ServerConfig {
+                    enable: true,
+                    ia_na: Some(super::super::dhcpv6_config::DHCPv6IANAConfig {
+                        max_prefix_len: 64,
+                        pool_start: 0x100,
+                        pool_end: None,
+                        preferred_lifetime: 300,
+                        valid_lifetime: 600,
+                    }),
+                    ia_pd: None,
+                }),
+            },
+            update_at: 0.0,
+        };
+
+        assert!(validate_global_prefix_conflicts(&config, &[], None).is_err());
+    }
+
+    #[test]
+    fn global_error_message_includes_slot_range_and_sources() {
+        let pending = config_slaac_ra("lan-alpha", "fc00::", 7, 0);
+        let existing = vec![config_slaac_ra("lan-beta", "fc00::", 7, 0)];
+
+        let result = validate_global_prefix_conflicts(&pending, &existing, None);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+
+        assert!(err.contains("/64 slot"), "Error should mention /64 slot, got: {}", err);
+        assert!(err.contains("lan-alpha"), "Error should contain pending iface, got: {}", err);
+        assert!(err.contains("lan-beta"), "Error should contain existing iface, got: {}", err);
+        assert!(err.contains("Ra"), "Error should mention service kind, got: {}", err);
     }
 }

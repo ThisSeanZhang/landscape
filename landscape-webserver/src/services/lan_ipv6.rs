@@ -5,7 +5,7 @@ use landscape_common::api_response::LandscapeApiResp as CommonApiResp;
 use landscape_common::lan_service::lan_ipv6::DHCPv6OfferInfo;
 use landscape_common::lan_service::lan_ipv6::IPv6NAInfo;
 use landscape_common::lan_service::lan_ipv6::{
-    validate_cross_interface_v2_with_pd_context, LanIPv6ServiceConfigV2,
+    validate_global_prefix_conflicts, LanIPv6Error, LanIPv6ServiceConfigV2,
 };
 use landscape_common::service::controller::ControllerService;
 use landscape_common::service::{ServiceStatus, WatchService};
@@ -125,12 +125,12 @@ async fn handle_lan_ipv6(
     let pd_contexts = state.ipv6_pd_service.get_pd_prefix_contexts().await;
     config.config.validate_with_pd_context(Some(&pd_contexts))?;
 
-    // Cross-interface conflict detection
-    let other_configs: Vec<LanIPv6ServiceConfigV2> =
+    let existing_configs: Vec<LanIPv6ServiceConfigV2> =
         state.lan_ipv6_service.get_repository().list().await.unwrap_or_default();
-    validate_cross_interface_v2_with_pd_context(&config, &other_configs, Some(&pd_contexts))?;
+    validate_global_prefix_conflicts(&config, &existing_configs, Some(&pd_contexts))
+        .map_err(|error| LanIPv6Error::PrefixConflict { reason: error.to_string() })?;
 
-    state.lan_ipv6_service.handle_service_config(config).await?;
+    state.lan_ipv6_service.save_config(config).await?;
     state.static_nat6_mapping_service.refresh_runtime_rules().await;
     LandscapeApiResp::success(())
 }

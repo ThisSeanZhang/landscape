@@ -39,6 +39,7 @@ export interface PlannerOccupant {
   groupId: string;
   serviceKind: ServiceKind;
   effectiveIndex: number;
+  effectiveEndIndex: number;
   poolLen: number;
   conflictsWithSelection: boolean;
 }
@@ -108,6 +109,7 @@ interface OccupancyRecord {
   groupId: string;
   serviceKind: ServiceKind;
   effectiveIndex: number;
+  effectiveEndIndex: number;
   poolLen: number;
   unitStart?: number;
   unitSpan?: number;
@@ -332,6 +334,7 @@ function selectionStatus(
       groupId: record.groupId,
       serviceKind: record.serviceKind,
       effectiveIndex: record.effectiveIndex,
+      effectiveEndIndex: record.effectiveEndIndex,
       poolLen: record.poolLen,
       conflictsWithSelection: conflictBetweenSelection(
         selectedKind,
@@ -697,77 +700,26 @@ function entryEffectiveIndexRange(entry: GroupPlannerEntry) {
   };
 }
 
-type ResolvedPlannerParent =
-  | { t: "resolved"; base: bigint }
-  | { t: "fallback"; dependIface: string; base: bigint };
-
-function resolvePlannerParent(
-  parent: GroupPlannerParent,
-  prefixInfos: Map<string, LDIAPrefix | null>,
-): ResolvedPlannerParent {
-  if (parent.t === "static") {
-    return {
-      t: "resolved",
-      base:
-        ipv6ToBigInt(parent.basePrefix) & maskForPrefix(parent.parentPrefixLen),
-    };
-  }
-
-  const actualPrefix = prefixInfos.get(parent.dependIface) ?? null;
-  if (!actualPrefix) {
-    return { t: "fallback", dependIface: parent.dependIface, base: 0n };
-  }
-  const actualNetwork =
-    ipv6ToBigInt(actualPrefix.prefix_ip) &
-    maskForPrefix(actualPrefix.prefix_len);
-  return {
-    t: "resolved",
-    base: actualNetwork & maskForPrefix(parent.snapshotPrefixLen),
-  };
-}
-
-function plannerParentsComparable(
-  left: GroupPlannerParent,
-  right: GroupPlannerParent,
-  prefixInfos: Map<string, LDIAPrefix | null>,
-) {
-  const resolvedLeft = resolvePlannerParent(left, prefixInfos);
-  const resolvedRight = resolvePlannerParent(right, prefixInfos);
-  if (resolvedLeft.t === "resolved" && resolvedRight.t === "resolved") {
-    return true;
-  }
-  return (
-    resolvedLeft.t === "fallback" &&
-    resolvedRight.t === "fallback" &&
-    resolvedLeft.dependIface === resolvedRight.dependIface
-  );
-}
-
-function entryUnitRangeRelativeToParent(
-  entry: GroupPlannerEntry,
-  selectedParent: GroupPlannerParent,
-  prefixInfos: Map<string, LDIAPrefix | null>,
-) {
+function entryUnitRange(entry: GroupPlannerEntry) {
   if (
     entry.poolLen <= 0 ||
     entry.poolLen > 64 ||
-    !plannerParentsComparable(entry.parent, selectedParent, prefixInfos)
+    !Number.isInteger(entry.startIndex) ||
+    !Number.isInteger(entry.endIndex) ||
+    entry.startIndex < 0 ||
+    entry.endIndex < entry.startIndex
   ) {
     return { unitStart: undefined, unitSpan: undefined };
   }
 
-  const entryParent = resolvePlannerParent(entry.parent, prefixInfos);
-  const selected = resolvePlannerParent(selectedParent, prefixInfos);
   const blockSpan = 1n << BigInt(64 - entry.poolLen);
-  const entryBaseUnit = entryParent.base >> 64n;
-  const selectedBaseUnit = selected.base >> 64n;
-  const unitStart =
-    entryBaseUnit + BigInt(entry.startIndex) * blockSpan - selectedBaseUnit;
+  const unitStart = BigInt(entry.startIndex) * blockSpan;
   const unitSpan = BigInt(entry.endIndex - entry.startIndex + 1) * blockSpan;
+  const maxSafe = BigInt(Number.MAX_SAFE_INTEGER);
   if (
-    unitStart < BigInt(Number.MIN_SAFE_INTEGER) ||
-    unitStart > BigInt(Number.MAX_SAFE_INTEGER) ||
-    unitSpan > BigInt(Number.MAX_SAFE_INTEGER)
+    unitStart > maxSafe ||
+    unitSpan > maxSafe ||
+    unitStart + unitSpan > maxSafe
   ) {
     return { unitStart: undefined, unitSpan: undefined };
   }
@@ -778,14 +730,8 @@ function buildGroupOccupancyRecord(
   ifaceName: string,
   scope: "current" | "other",
   entry: GroupPlannerEntry,
-  selectedParent: GroupPlannerParent,
-  prefixInfos: Map<string, LDIAPrefix | null>,
 ): OccupancyRecord {
-  const { unitStart, unitSpan } = entryUnitRangeRelativeToParent(
-    entry,
-    selectedParent,
-    prefixInfos,
-  );
+  const { unitStart, unitSpan } = entryUnitRange(entry);
   const { startIndex } = entryEffectiveIndexRange(entry);
   return {
     ifaceName,
@@ -793,6 +739,7 @@ function buildGroupOccupancyRecord(
     groupId: entry.groupId,
     serviceKind: entry.serviceKind,
     effectiveIndex: startIndex,
+    effectiveEndIndex: entry.endIndex,
     poolLen: entry.poolLen,
     unitStart,
     unitSpan,
@@ -801,19 +748,11 @@ function buildGroupOccupancyRecord(
 
 function buildGroupOccupancyRecords(
   options: BuildGroupPlannerOptions,
-  selectedParent: GroupPlannerParent,
 ): OccupancyRecord[] {
   const currentRecords = options.currentGroups.flatMap((group) =>
     // Show all configured results for the current interface on the shared canvas,
     // even if the current service mode would not activate them right now.
     buildEntriesForGroup(group, undefined)
-      .filter((entry) =>
-        plannerParentsComparable(
-          entry.parent,
-          selectedParent,
-          options.prefixInfos,
-        ),
-      )
       .filter(
         (entry) =>
           !(
@@ -822,13 +761,7 @@ function buildGroupOccupancyRecords(
           ),
       )
       .map((entry) =>
-        buildGroupOccupancyRecord(
-          options.currentIfaceName,
-          "current",
-          entry,
-          selectedParent,
-          options.prefixInfos,
-        ),
+        buildGroupOccupancyRecord(options.currentIfaceName, "current", entry),
       ),
   );
 
@@ -838,21 +771,8 @@ function buildGroupOccupancyRecords(
       // for other LANs as well, so users can see occupied positions even when a mode
       // would not currently activate that kind.
       .flatMap((group) => buildEntriesForGroup(group, undefined))
-      .filter((entry) =>
-        plannerParentsComparable(
-          entry.parent,
-          selectedParent,
-          options.prefixInfos,
-        ),
-      )
       .map((entry) =>
-        buildGroupOccupancyRecord(
-          config.iface_name,
-          "other",
-          entry,
-          selectedParent,
-          options.prefixInfos,
-        ),
+        buildGroupOccupancyRecord(config.iface_name, "other", entry),
       ),
   );
 
@@ -1058,7 +978,7 @@ function buildGroupPlannerView(
         )
       : undefined;
 
-  const allRecords = buildGroupOccupancyRecords(options, base.entry.parent);
+  const allRecords = buildGroupOccupancyRecords(options);
 
   if (base.saveError) {
     return {
@@ -1386,7 +1306,7 @@ export function inspectPlannerUnitRangeCandidateFromGroups(
   const selection = selectionStatus(
     base.selectedKind,
     base.entry.groupId,
-    buildGroupOccupancyRecords(options, base.entry.parent),
+    buildGroupOccupancyRecords(options),
     unitStart,
     unitSpan,
     base.reservedUnitCount,

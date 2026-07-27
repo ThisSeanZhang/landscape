@@ -1565,7 +1565,8 @@ pub fn compute_subnets(
         };
 
         let valid_pd = group.pd.as_ref().filter(|pd| {
-            pd.pool_len > parent_len
+            pd.pool_len <= 64
+                && pd.pool_len > parent_len
                 && pd.start_index <= pd.end_index
                 && (pd.end_index as u64)
                     < 1u64.checked_shl((pd.pool_len - parent_len) as u32).unwrap_or(u64::MAX)

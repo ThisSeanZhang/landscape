@@ -238,6 +238,15 @@ impl ControllerService for LanIPv6ManagerService {
 }
 
 impl LanIPv6ManagerService {
+    pub async fn save_config(
+        &self,
+        config: LanIPv6ServiceConfigV2,
+    ) -> Result<LanIPv6ServiceConfigV2, landscape_common::lan_service::lan_ipv6::LanIPv6Error> {
+        let saved = self.store.checked_set_with_global_validation(config).await?;
+        self.service.update_service_wait(saved.clone()).await;
+        Ok(saved)
+    }
+
     pub async fn new(
         store_service: LandscapeDBServiceProvider,
         mut dev_observer: IfaceEventReader,

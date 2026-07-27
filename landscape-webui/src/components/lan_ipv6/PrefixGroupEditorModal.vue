@@ -37,6 +37,11 @@ interface PlannerInteractionPayload {
     scope: "current" | "other";
     serviceKind: ServiceKind;
     ifaceName: string;
+    groupId: string;
+    effectiveIndex: number;
+    effectiveEndIndex: number;
+    poolLen: number;
+    conflictsWithSelection: boolean;
   }[];
 }
 
@@ -121,9 +126,9 @@ const currentPlannerGroups = computed(() => {
 
 const minPdPoolLen = computed(() => {
   if (props.sourceType === "static") {
-    return Math.min(staticPrefixLen.value + 1, 128);
+    return Math.min(staticPrefixLen.value + 1, 64);
   }
-  return Math.min(snapshotPrefixLen.value + 1, 128);
+  return Math.min(snapshotPrefixLen.value + 1, 64);
 });
 
 const currentPdPoolLen = computed(
@@ -182,7 +187,7 @@ function cloneValue<T>(value: T): T {
 }
 
 function generateDraftGroupId() {
-  return `prefix-group:${Date.now().toString(36)}:${Math.random().toString(36).slice(2, 8)}`;
+  return `prefix-group:${globalThis.crypto.randomUUID()}`;
 }
 
 function createEmptyDraftGroup(): LanPrefixGroupConfig {
@@ -586,7 +591,7 @@ function updatePdPoolLen(value: number | null) {
     return;
   }
 
-  const nextPoolLen = Math.max(minPdPoolLen.value, Math.min(value, 128));
+  const nextPoolLen = Math.max(minPdPoolLen.value, Math.min(value, 64));
   const group = ensureDraftGroup();
   if (!group.pd) {
     pdPoolLenDraft.value = nextPoolLen;
@@ -902,7 +907,7 @@ function cancelEmptyDraftAction() {
                         <n-input-number
                           :value="currentPdPoolLen"
                           :min="minPdPoolLen"
-                          :max="128"
+                          :max="64"
                           size="small"
                           @update:value="updatePdPoolLen"
                         />

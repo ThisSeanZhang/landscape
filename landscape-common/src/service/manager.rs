@@ -107,6 +107,23 @@ impl<H: ServiceStarterTrait> ServiceManager<H> {
         }
     }
 
+    pub async fn update_service_wait(&self, config: H::Config) {
+        let key = config.get_store_key();
+        let sender = {
+            let read_lock = self.services.read().await;
+            read_lock.get(&key).map(|(_, sender)| sender.clone())
+        };
+
+        if let Some(sender) = sender {
+            if let Err(error) = sender.send(config).await {
+                tracing::warn!(key, "service task exited; recreating it for the saved config");
+                self.spawn_service(error.0).await;
+            }
+        } else {
+            self.spawn_service(config).await;
+        }
+    }
+
     pub async fn get_all_status(&self) -> HashMap<String, WatchService> {
         let read_lock = self.services.read().await;
         let mut result = HashMap::new();

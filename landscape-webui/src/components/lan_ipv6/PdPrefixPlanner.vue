@@ -52,6 +52,11 @@ const emit = defineEmits<{
         scope: "current" | "other";
         serviceKind: "ra" | "na" | "pd";
         ifaceName: string;
+        groupId: string;
+        effectiveIndex: number;
+        effectiveEndIndex: number;
+        poolLen: number;
+        conflictsWithSelection: boolean;
       }[];
     },
   ): void;
@@ -142,6 +147,18 @@ const wanPrefixWarning = computed(() =>
     ? t("lan_ipv6.planner_warning_wan_prefix_mismatch")
     : undefined,
 );
+
+function occupantRangeLabel(occupant: {
+  effectiveIndex: number;
+  effectiveEndIndex: number;
+  poolLen: number;
+}) {
+  const range =
+    occupant.effectiveIndex === occupant.effectiveEndIndex
+      ? `${occupant.effectiveIndex}`
+      : `${occupant.effectiveIndex}-${occupant.effectiveEndIndex}`;
+  return `${range} /${occupant.poolLen}`;
+}
 
 function themeValue(name: string, fallback: string) {
   const element = canvasRef.value;
@@ -447,6 +464,11 @@ function onCanvasClick(event: MouseEvent) {
       scope: occupant.scope,
       serviceKind: occupant.serviceKind,
       ifaceName: occupant.ifaceName,
+      groupId: occupant.groupId,
+      effectiveIndex: occupant.effectiveIndex,
+      effectiveEndIndex: occupant.effectiveEndIndex,
+      poolLen: occupant.poolLen,
+      conflictsWithSelection: occupant.conflictsWithSelection,
     })),
   });
   if (!candidate.canSave) {
@@ -530,6 +552,24 @@ onBeforeUnmount(() => {
         {{ t(displayError) }}
       </n-alert>
 
+      <n-flex
+        v-if="planner.selectedOccupants.length > 0"
+        class="planner-occupants"
+        :size="6"
+        wrap
+      >
+        <n-tag
+          v-for="occupant in planner.selectedOccupants"
+          :key="`${occupant.scope}:${occupant.ifaceName}:${occupant.groupId}:${occupant.serviceKind}:${occupant.effectiveIndex}`"
+          size="small"
+          :type="occupant.conflictsWithSelection ? 'error' : 'default'"
+          :bordered="false"
+        >
+          {{ occupant.ifaceName }} · {{ occupant.serviceKind.toUpperCase() }} ·
+          {{ occupantRangeLabel(occupant) }}
+        </n-tag>
+      </n-flex>
+
       <div class="planner-legend">
         <span
           v-for="item in legendItems"
@@ -573,6 +613,10 @@ onBeforeUnmount(() => {
   flex-wrap: wrap;
   gap: 12px;
   font-size: 12px;
+}
+
+.planner-occupants {
+  align-items: center;
 }
 
 .planner-legend-item {

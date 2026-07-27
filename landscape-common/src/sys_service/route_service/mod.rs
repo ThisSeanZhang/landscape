@@ -118,7 +118,8 @@ impl LanRouteInfo {
 #[derive(Eq, Hash, PartialEq, Debug, Clone)]
 pub struct LanIPv6RouteKey {
     pub iface_name: String,
-    pub subnet_index: u32,
+    pub subnet: Ipv6Addr,
+    pub prefix_len: u8,
 }
 
 #[cfg(test)]

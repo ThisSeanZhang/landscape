@@ -48,6 +48,9 @@ pub fn compute_delegated_prefix(
 /// Resolve a PdSlotKey to a full delegated prefix `(prefix, prefix_len)`.
 pub fn resolve_pd_prefix(ranges: &[PdRange], key: &PdSlotKey) -> Option<(Ipv6Addr, u8)> {
     let range = ranges.iter().find(|r| r.group_id == key.group_id)?;
+    if range.pool_len == 0 || range.pool_len > 64 {
+        return None;
+    }
     if key.sub_index < range.start_idx || key.sub_index > range.end_idx {
         return None;
     }

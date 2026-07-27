@@ -951,7 +951,11 @@ mod tests {
             let (_tx, service) = test_used_ip_route().await;
             let mut routes = service.ipv6_lan_ifaces.write().await;
             routes.insert(
-                LanIPv6RouteKey { iface_name: "lan0".to_string(), subnet_index: 0 },
+                LanIPv6RouteKey {
+                    iface_name: "lan0".to_string(),
+                    subnet: Ipv6Addr::new(0xfe80, 0, 0, 0, 0, 0, 0, 1),
+                    prefix_len: 64,
+                },
                 LanRouteInfo {
                     ifindex: 1,
                     iface_name: "lan0".to_string(),
@@ -962,7 +966,11 @@ mod tests {
                 },
             );
             routes.insert(
-                LanIPv6RouteKey { iface_name: "lan1".to_string(), subnet_index: 0 },
+                LanIPv6RouteKey {
+                    iface_name: "lan1".to_string(),
+                    subnet: Ipv6Addr::new(0xfe80, 0, 0, 0, 0, 0, 0, 1),
+                    prefix_len: 64,
+                },
                 LanRouteInfo {
                     ifindex: 2,
                     iface_name: "lan1".to_string(),
@@ -973,7 +981,11 @@ mod tests {
                 },
             );
             routes.insert(
-                LanIPv6RouteKey { iface_name: "lan2".to_string(), subnet_index: 0 },
+                LanIPv6RouteKey {
+                    iface_name: "lan2".to_string(),
+                    subnet: Ipv6Addr::UNSPECIFIED,
+                    prefix_len: 64,
+                },
                 LanRouteInfo {
                     ifindex: 3,
                     iface_name: "lan2".to_string(),
@@ -984,7 +996,11 @@ mod tests {
                 },
             );
             routes.insert(
-                LanIPv6RouteKey { iface_name: "lan3".to_string(), subnet_index: 0 },
+                LanIPv6RouteKey {
+                    iface_name: "lan3".to_string(),
+                    subnet: Ipv6Addr::LOCALHOST,
+                    prefix_len: 128,
+                },
                 LanRouteInfo {
                     ifindex: 4,
                     iface_name: "lan3".to_string(),
@@ -995,7 +1011,11 @@ mod tests {
                 },
             );
             routes.insert(
-                LanIPv6RouteKey { iface_name: "lan4".to_string(), subnet_index: 0 },
+                LanIPv6RouteKey {
+                    iface_name: "lan4".to_string(),
+                    subnet: Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 1),
+                    prefix_len: 64,
+                },
                 LanRouteInfo {
                     ifindex: 5,
                     iface_name: "lan4".to_string(),
@@ -1021,8 +1041,16 @@ mod tests {
     fn remove_ipv6_lan_route_by_key_state_update_keeps_other_routes_for_same_iface() {
         run_async_test(async {
             let (_tx, service) = test_used_ip_route().await;
-            let key_a = LanIPv6RouteKey { iface_name: "lan0".to_string(), subnet_index: 0 };
-            let key_b = LanIPv6RouteKey { iface_name: "lan0".to_string(), subnet_index: 1 };
+            let key_a = LanIPv6RouteKey {
+                iface_name: "lan0".to_string(),
+                subnet: Ipv6Addr::new(0x2001, 0xdb8, 0, 1, 0, 0, 0, 0),
+                prefix_len: 64,
+            };
+            let key_b = LanIPv6RouteKey {
+                iface_name: "lan0".to_string(),
+                subnet: Ipv6Addr::new(0x2001, 0xdb8, 0, 2, 0, 0, 0, 0),
+                prefix_len: 64,
+            };
             let route_a = ipv6_lan_route(
                 1,
                 "lan0",

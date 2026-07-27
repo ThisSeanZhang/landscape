@@ -48,6 +48,22 @@ fn delegate_prefix_len_filters_snapshot_pool_blocks() {
 }
 
 #[test]
+fn pool_len_above_64_is_not_installed_at_runtime() {
+    let groups = vec![LanPrefixGroupConfig {
+        group_id: "pd-too-specific".into(),
+        parent: PrefixParentSource::Static {
+            base_prefix: Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 0),
+            parent_prefix_len: 56,
+        },
+        ra: None,
+        na: None,
+        pd: Some(PdPrefixRangeConfig { pool_len: 65, start_index: 0, end_index: 0 }),
+    }];
+
+    assert!(compute_subnets(&groups, &IAPrefixMap::new()).is_empty());
+}
+
+#[test]
 fn new_pd_status_has_no_offers() {
     let status = make_pd_status();
     let duid = b"pd-client-01";

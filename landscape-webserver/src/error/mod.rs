@@ -18,6 +18,7 @@ use landscape_common::error::{LdApiErrorInfo, LdError};
 use landscape_common::flow::ip_mark::DstIpRuleError;
 use landscape_common::flow::FlowRuleError;
 use landscape_common::lan_service::lan_dhcpv4::DhcpError;
+use landscape_common::lan_service::lan_ipv6::LanIPv6Error;
 use landscape_common::service::ServiceConfigError;
 use landscape_common::sys_service::gateway::GatewayError;
 use landscape_common::wan_service::firewall::blacklist::FirewallBlacklistError;
@@ -53,6 +54,8 @@ pub enum LandscapeApiError {
     FirewallBlacklist(#[from] FirewallBlacklistError),
     #[error(transparent)]
     Dhcp(#[from] DhcpError),
+    #[error(transparent)]
+    LanIPv6(#[from] LanIPv6Error),
     #[error(transparent)]
     GeoSite(#[from] GeoSiteError),
     #[error(transparent)]
@@ -101,6 +104,7 @@ impl LandscapeApiError {
             Self::FirewallRule(e) => e.error_id(),
             Self::FirewallBlacklist(e) => e.error_id(),
             Self::Dhcp(e) => e.error_id(),
+            Self::LanIPv6(e) => e.error_id(),
             Self::GeoSite(e) => e.error_id(),
             Self::GeoIp(e) => e.error_id(),
             Self::StaticNat(e) => e.error_id(),
@@ -135,6 +139,7 @@ impl LandscapeApiError {
             Self::FirewallRule(e) => StatusCode::from_u16(e.http_status_code()).unwrap(),
             Self::FirewallBlacklist(e) => StatusCode::from_u16(e.http_status_code()).unwrap(),
             Self::Dhcp(e) => StatusCode::from_u16(e.http_status_code()).unwrap(),
+            Self::LanIPv6(e) => StatusCode::from_u16(e.http_status_code()).unwrap(),
             Self::GeoSite(e) => StatusCode::from_u16(e.http_status_code()).unwrap(),
             Self::GeoIp(e) => StatusCode::from_u16(e.http_status_code()).unwrap(),
             Self::StaticNat(e) => StatusCode::from_u16(e.http_status_code()).unwrap(),
@@ -169,6 +174,7 @@ impl LandscapeApiError {
             Self::FirewallRule(e) => e.error_args(),
             Self::FirewallBlacklist(e) => e.error_args(),
             Self::Dhcp(e) => e.error_args(),
+            Self::LanIPv6(e) => e.error_args(),
             Self::GeoSite(e) => e.error_args(),
             Self::GeoIp(e) => e.error_args(),
             Self::StaticNat(e) => e.error_args(),
