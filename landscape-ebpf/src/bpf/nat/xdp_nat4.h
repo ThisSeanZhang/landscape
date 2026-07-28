@@ -206,6 +206,23 @@ static __always_inline int xdp_modify_headers_v4(void *data, void *data_end, u16
                         icmph->checksum = xdp_csum_apply(icmph->checksum, udp_csum_delta);
                     }
                     icmph->checksum = xdp_csum_apply(icmph->checksum, uport_delta);
+                } else if (icmp_err_l4_proto == IPPROTO_ICMP) {
+                    struct icmphdr *inner_icmp = data + icmp_err_l4_offset;
+                    if ((void *)(inner_icmp + 1) > data_end) return -1;
+
+                    __be16 prev_inner_icmp_csum = inner_icmp->checksum;
+                    __be32 old_id32 = (__be32)inner_icmp->un.echo.id;
+                    __be32 new_id32 = (__be32)action->to_port;
+                    __wsum id_delta = bpf_csum_diff(&old_id32, 4, &new_id32, 4, 0);
+
+                    inner_icmp->un.echo.id = action->to_port;
+                    inner_icmp->checksum = xdp_csum_apply(inner_icmp->checksum, id_delta);
+
+                    __be32 old_ics32 = (__be32)prev_inner_icmp_csum;
+                    __be32 new_ics32 = (__be32)inner_icmp->checksum;
+                    __wsum icmp_csum_delta = bpf_csum_diff(&old_ics32, 4, &new_ics32, 4, 0);
+                    icmph->checksum = xdp_csum_apply(icmph->checksum, icmp_csum_delta);
+                    icmph->checksum = xdp_csum_apply(icmph->checksum, id_delta);
                 }
             }
         } else {
