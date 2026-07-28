@@ -375,6 +375,10 @@ pub struct Ipv6ServerStatus {
     // ── Timing ──
     boot_time: Instant,
     boot_time_f64: f64,
+
+    // ── RA lifetimes (derived from ad_interval) ──
+    ra_preferred_lifetime: u32,
+    ra_valid_lifetime: u32,
 }
 
 impl Ipv6ServerStatus {
@@ -414,6 +418,8 @@ impl Ipv6ServerStatus {
             reconf_tx,
             boot_time: Instant::now(),
             boot_time_f64: get_f64_timestamp(),
+            ra_preferred_lifetime: 300,
+            ra_valid_lifetime: 600,
         };
 
         for device in devices {
@@ -436,7 +442,8 @@ impl Ipv6ServerStatus {
         groups: &[LanPrefixGroupConfig],
         prefix_map: &IAPrefixMap,
     ) -> SubnetDiff {
-        let new_subnets = compute_subnets(groups, prefix_map);
+        let new_subnets =
+            compute_subnets(groups, prefix_map, self.ra_preferred_lifetime, self.ra_valid_lifetime);
         let diff = diff_subnets(&self.cached_subnets, &new_subnets);
         self.cached_subnets = new_subnets;
         self.prefix_state.refresh(&self.cached_subnets);
@@ -1521,21 +1528,18 @@ impl Ipv6ServerStatus {
 pub fn compute_subnets(
     groups: &[LanPrefixGroupConfig],
     prefix_map: &IAPrefixMap,
+    ra_preferred_lifetime: u32,
+    ra_valid_lifetime: u32,
 ) -> Vec<SubnetState> {
     let mut result = Vec::new();
     let sub_prefix_len: u8 = 64;
 
     for group in groups {
-        let (parent_ip, parent_len, pd_lifetimes) = match &group.parent {
+        let (parent_ip, parent_len) = match &group.parent {
             PrefixParentSource::Static { base_prefix, parent_prefix_len } => {
-                (pd::normalize_prefix(*base_prefix, *parent_prefix_len), *parent_prefix_len, None)
+                (pd::normalize_prefix(*base_prefix, *parent_prefix_len), *parent_prefix_len)
             }
             PrefixParentSource::Pd { depend_iface, expected_pd_len_snapshot } => {
-                // PD-derived LAN subnets pass two independent policy gates:
-                // 1. load_for_lan verifies acquired prefix <= current WAN expectation.
-                // 2. This guard verifies WAN expectation <= the saved LAN snapshot.
-                // A mismatch keeps the persisted configuration intact but suppresses its
-                // runtime subnets until the three prefix lengths become compatible.
                 match prefix_map.load_for_lan(depend_iface) {
                     Some((prefix, expected_pd_len))
                         if pd_expectation_fits_snapshot(
@@ -1548,7 +1552,6 @@ pub fn compute_subnets(
                         (
                             pd::normalize_prefix(actual_network, *expected_pd_len_snapshot),
                             *expected_pd_len_snapshot,
-                            Some((prefix.preferred_lifetime, prefix.valid_lifetime)),
                         )
                     }
                     None => continue,
@@ -1591,10 +1594,8 @@ pub fn compute_subnets(
                 ra.pool_index as u128,
             ) {
                 Some((sub_prefix, sub_router)) => {
-                    let (pref_lt, valid_lt) = match pd_lifetimes {
-                        Some((p, v)) => (p, v),
-                        None => (ra.preferred_lifetime, ra.valid_lifetime),
-                    };
+                    let pref_lt = ra_preferred_lifetime;
+                    let valid_lt = ra_valid_lifetime;
                     result.push(SubnetState {
                         group_id: group.group_id.clone(),
                         sub_prefix,

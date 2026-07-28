@@ -380,9 +380,14 @@ pub async fn start_ipv6_lan_server(
     tracing::info!("link_ifindex {:?}", link_ifindex);
 
     // ── Initial subnets: set interface IPs + routes ──
-    let initial_subnets = compute_subnets(&prefix_groups, &prefix_map);
+    let ra_preferred_lifetime = params.ra_preferred_lifetime;
+    let ra_valid_lifetime = params.ra_valid_lifetime;
+    let initial_subnets =
+        compute_subnets(&prefix_groups, &prefix_map, ra_preferred_lifetime, ra_valid_lifetime);
     {
         let mut status = share_status.lock().await;
+        status.ra_preferred_lifetime = ra_preferred_lifetime;
+        status.ra_valid_lifetime = ra_valid_lifetime;
         status.update_prefix(&initial_subnets);
 
         let static_macs: Vec<MacAddr> = status.na_static_by_mac.keys().cloned().collect();

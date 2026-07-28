@@ -173,10 +173,8 @@ function kindInactiveHint(kind: ServiceKind) {
   }
 }
 
-function kindDetail(kind: ServiceKind) {
-  if (kind === "ra" && props.group.ra) {
-    return `PL ${props.group.ra.preferred_lifetime}s · VL ${props.group.ra.valid_lifetime}s`;
-  }
+function kindDetail(_kind: ServiceKind) {
+  // RA lifetimes are now global (derived from ad_interval), no longer per-group.
   return undefined;
 }
 

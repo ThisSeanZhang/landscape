@@ -33,7 +33,7 @@ fn make_pd_status_with_filter(delegate_prefix_len: u8) -> Ipv6ServerStatus {
         pd: Some(PdPrefixRangeConfig { pool_len: 56, start_index: 0, end_index: 3 }),
     }];
 
-    let subnets = compute_subnets(&groups, &IAPrefixMap::new());
+    let subnets = compute_subnets(&groups, &IAPrefixMap::new(), 300, 600);
     status.update_prefix(&subnets);
     status
 }
@@ -60,7 +60,7 @@ fn pool_len_above_64_is_not_installed_at_runtime() {
         pd: Some(PdPrefixRangeConfig { pool_len: 65, start_index: 0, end_index: 0 }),
     }];
 
-    assert!(compute_subnets(&groups, &IAPrefixMap::new()).is_empty());
+    assert!(compute_subnets(&groups, &IAPrefixMap::new(), 300, 600).is_empty());
 }
 
 #[test]

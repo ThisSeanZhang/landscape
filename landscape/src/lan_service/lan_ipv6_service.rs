@@ -143,13 +143,8 @@ impl ServiceStarterTrait for LanIPv6Service {
                 .as_ref()
                 .map(|c| (c.preferred_lifetime, c.valid_lifetime))
                 .unwrap_or((300, 600));
-            let ra_lifetimes = config
-                .config
-                .prefix_groups
-                .iter()
-                .find_map(|g| g.ra.as_ref())
-                .map(|ra| (ra.preferred_lifetime, ra.valid_lifetime))
-                .unwrap_or((300, 600));
+            let ra_preferred_lifetime = config.config.ad_interval;
+            let ra_valid_lifetime = config.config.ad_interval * 2;
 
             let mut ra_flags_raw: u8 = config.config.ra_flag.into();
             let ra_autonomous = mode != IPv6ServiceMode::Stateful;
@@ -165,8 +160,8 @@ impl ServiceStarterTrait for LanIPv6Service {
                 na_valid_lifetime: na_lifetimes.1,
                 pd_preferred_lifetime: pd_lifetimes.0,
                 pd_valid_lifetime: pd_lifetimes.1,
-                ra_preferred_lifetime: ra_lifetimes.0,
-                ra_valid_lifetime: ra_lifetimes.1,
+                ra_preferred_lifetime,
+                ra_valid_lifetime,
                 ra_flags: ra_flags_raw,
                 ra_autonomous,
             };

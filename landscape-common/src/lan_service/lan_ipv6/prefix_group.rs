@@ -29,8 +29,23 @@ pub enum PrefixParentSource {
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct RaPrefixConfig {
     pub pool_index: u32,
+    // Deprecated: kept only for backward-compatible deserialization.
+    // RA lifetimes are now derived globally from ad_interval.
+    // Will be removed in a future version.
+    #[serde(default = "default_ra_preferred_lifetime")]
+    #[cfg_attr(feature = "openapi", schema(required = false))]
     pub preferred_lifetime: u32,
+    #[serde(default = "default_ra_valid_lifetime")]
+    #[cfg_attr(feature = "openapi", schema(required = false))]
     pub valid_lifetime: u32,
+}
+
+fn default_ra_preferred_lifetime() -> u32 {
+    300
+}
+
+fn default_ra_valid_lifetime() -> u32 {
+    600
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -509,6 +524,16 @@ impl LanIPv6ConfigV2 {
         pd_contexts: Option<&PdPrefixContextMap>,
     ) -> Result<(), ServiceConfigError> {
         validate_prefix_groups_with_pd_context(&self.prefix_groups, pd_contexts)?;
+
+        if self.ad_interval == 0 || self.ad_interval > u16::MAX as u32 {
+            return Err(ServiceConfigError::InvalidConfig {
+                reason: format!(
+                    "ad_interval ({}) must be between 1 and {} seconds",
+                    self.ad_interval,
+                    u16::MAX,
+                ),
+            });
+        }
 
         match self.mode {
             IPv6ServiceMode::Slaac => {

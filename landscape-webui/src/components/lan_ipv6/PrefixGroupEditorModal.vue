@@ -436,11 +436,8 @@ function validatePdInterval(
 
 function setRaPoolIndex(poolIndex: number) {
   const group = ensureDraftGroup();
-  group.ra = {
-    pool_index: poolIndex,
-    preferred_lifetime: group.ra?.preferred_lifetime ?? 300,
-    valid_lifetime: group.ra?.valid_lifetime ?? 600,
-  };
+  // RA lifetimes are global (ad_interval-based), no longer stored per-group.
+  group.ra = { pool_index: poolIndex };
 }
 
 function setNaPoolIndex(poolIndex: number) {
