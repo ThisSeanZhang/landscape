@@ -65,7 +65,7 @@ pub fn build_ra(
     for (prefix, prefix_len) in onlink_only_prefixes(status) {
         opts.insert(IcmpV6Option::prefix_information(
             prefix_len,
-            params.ra_valid_lifetime,
+            params.valid_lifetime,
             0,
             prefix,
             false,

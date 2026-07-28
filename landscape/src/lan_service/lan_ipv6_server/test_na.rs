@@ -52,7 +52,7 @@ fn make_status_with_prefixes() -> Ipv6ServerStatus {
         pd: None,
     }];
 
-    let subnets = compute_subnets(&groups, &IAPrefixMap::new(), 300, 600);
+    let subnets = compute_subnets(&groups, &IAPrefixMap::new(), 300);
     status.update_prefix(&subnets);
     status
 }
@@ -71,6 +71,15 @@ fn offer_na_allocates_addresses() {
     let addrs = status.offer_na(duid, NA_TEST_MAC, None);
     assert!(addrs.is_some(), "should allocate addresses");
     assert!(!addrs.unwrap().is_empty(), "should have at least one address");
+}
+
+#[test]
+fn offer_na_without_config_does_not_create_dynamic_lease() {
+    let mut status = Ipv6ServerStatus::new(None, None, vec![], mpsc::unbounded_channel().0);
+    let duid = b"unconfigured-client";
+
+    assert!(status.offer_na(duid, NA_TEST_MAC, None).is_none());
+    assert!(!status.has_na_offer(duid));
 }
 
 #[test]
@@ -153,7 +162,7 @@ fn offer_na_exhausts_pool() {
         na: Some(NaPrefixConfig { pool_index: 0 }),
         pd: None,
     }];
-    let subnets2 = compute_subnets(&groups, &IAPrefixMap::new(), 300, 600);
+    let subnets2 = compute_subnets(&groups, &IAPrefixMap::new(), 300);
     status.update_prefix(&subnets2);
 
     assert!(status.offer_na(b"client-01", NA_TEST_MAC, None).is_some());
@@ -192,7 +201,7 @@ fn confirm_na_updates_lifetime() {
     assert!(status.confirm_na(duid));
 
     let addr = status.lookup_by_ip(status.get_na_addresses(duid)[0]).unwrap();
-    assert_eq!(addr.valid_lifetime, 7200);
+    assert_eq!(addr.valid_lifetime, 600);
 }
 
 #[test]
@@ -272,4 +281,40 @@ fn remove_mac_binding_returns_changes() {
     status.update_device_binding(mac, Some(ip));
     let changes = status.remove_mac_binding(&mac);
     assert!(!changes.expired.is_empty());
+}
+
+#[test]
+fn remove_mac_binding_without_na_config_releases_lease() {
+    let mut status = Ipv6ServerStatus::new(None, None, vec![], mpsc::unbounded_channel().0);
+    let mac = MacAddr::from([0x11, 0x22, 0x33, 0x44, 0x55, 0x77]);
+    let duid = b"static-client-without-na";
+    let suffix = 0x1_0000;
+
+    status.bind_mac_suffix(mac, suffix);
+    status.offer_na(duid, mac, None);
+    let changes = status.remove_mac_binding(&mac);
+
+    assert!(changes.allocated.is_empty());
+    assert_eq!(changes.released.len(), 1);
+    assert!(!status.has_na_offer(duid));
+}
+
+#[test]
+fn evicted_lease_without_na_config_is_not_dynamically_reassigned() {
+    let mut status = Ipv6ServerStatus::new(None, None, vec![], mpsc::unbounded_channel().0);
+    let old_mac = MacAddr::from([0x11, 0x22, 0x33, 0x44, 0x55, 0x88]);
+    let new_mac = MacAddr::from([0x11, 0x22, 0x33, 0x44, 0x55, 0x99]);
+    let duid = b"evicted-client-without-na";
+    let suffix = 0x100;
+
+    status.bind_mac_suffix(old_mac, suffix);
+    status.offer_na(duid, old_mac, None);
+    status.remove_mac_binding(&old_mac);
+
+    let MacSuffixBindResult::Bound(changes) = status.bind_mac_suffix(new_mac, suffix) else {
+        panic!("new static binding should succeed");
+    };
+    assert!(changes.allocated.is_empty());
+    assert_eq!(changes.released.len(), 1);
+    assert!(!status.has_na_offer(duid));
 }

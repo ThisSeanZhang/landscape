@@ -6,7 +6,7 @@ use dhcproto::{Decodable, Decoder, Encodable, Encoder};
 use landscape_common::net::MacAddr;
 use landscape_common::net_proto::udp::dhcp::DhcpV6MessageType;
 
-use super::{Ipv6LanReplyParams, Ipv6ServerStatus};
+use super::{offer_lifetime, Ipv6LanReplyParams, Ipv6ServerStatus};
 use crate::lan_service::lan_ipv6_service::MacLinkMapCache;
 
 // ── Result types ───────────────────────────────────────────────────────────
@@ -318,7 +318,7 @@ fn handle_request_or_renew(
                 old_routes,
                 new_routes: new_routes.clone(),
                 sub_index: status.pd_lease_sub_index(client_duid).unwrap_or(0),
-                valid_time: params.pd_valid_lifetime,
+                valid_time: params.valid_lifetime,
             });
 
             // Update lease's active_routes and client_addr
@@ -628,6 +628,12 @@ fn build_iana_options(
 ) -> IANA {
     let mut iana_opts = v6::DhcpOptions::new();
     let addrs = status.get_na_addresses(client_duid);
+    let preferred_lifetime = if is_offer {
+        offer_lifetime(params.preferred_lifetime)
+    } else {
+        params.preferred_lifetime
+    };
+    let valid_lifetime = if is_offer { preferred_lifetime } else { params.valid_lifetime };
 
     if addrs.is_empty() {
         iana_opts.insert(v6::DhcpOption::StatusCode(StatusCode {
@@ -635,17 +641,11 @@ fn build_iana_options(
             msg: "IA_NA not configured or allocation failed".to_string(),
         }));
     } else {
-        let (pref, valid) = if is_offer {
-            (params.na_preferred_lifetime.min(120), 120)
-        } else {
-            (params.na_preferred_lifetime, params.na_valid_lifetime)
-        };
-
         for ip in &addrs {
             iana_opts.insert(v6::DhcpOption::IAAddr(IAAddr {
                 addr: *ip,
-                preferred_life: pref,
-                valid_life: valid,
+                preferred_life: preferred_lifetime,
+                valid_life: valid_lifetime,
                 opts: v6::DhcpOptions::new(),
             }));
         }
@@ -657,8 +657,8 @@ fn build_iana_options(
 
     IANA {
         id: iana_id,
-        t1: params.na_preferred_lifetime / 2,
-        t2: (params.na_preferred_lifetime * 4) / 5,
+        t1: preferred_lifetime / 2,
+        t2: (preferred_lifetime * 4) / 5,
         opts: iana_opts,
     }
 }
@@ -671,17 +671,17 @@ fn build_iapd_options(
     is_offer: bool,
 ) -> IAPD {
     let mut iapd_opts = v6::DhcpOptions::new();
+    let preferred_lifetime = if is_offer {
+        offer_lifetime(params.preferred_lifetime)
+    } else {
+        params.preferred_lifetime
+    };
+    let valid_lifetime = if is_offer { preferred_lifetime } else { params.valid_lifetime };
 
     if let Some((prefix, prefix_len)) = status.get_pd_prefix(client_duid) {
-        let (pref, valid) = if is_offer {
-            (params.pd_preferred_lifetime.min(120), 120)
-        } else {
-            (params.pd_preferred_lifetime, params.pd_valid_lifetime)
-        };
-
         iapd_opts.insert(v6::DhcpOption::IAPrefix(IAPrefix {
-            preferred_lifetime: pref,
-            valid_lifetime: valid,
+            preferred_lifetime,
+            valid_lifetime,
             prefix_len,
             prefix_ip: prefix,
             opts: v6::DhcpOptions::new(),
@@ -699,8 +699,8 @@ fn build_iapd_options(
 
     IAPD {
         id: iapd_id,
-        t1: params.pd_preferred_lifetime / 2,
-        t2: (params.pd_preferred_lifetime * 4) / 5,
+        t1: preferred_lifetime / 2,
+        t2: (preferred_lifetime * 4) / 5,
         opts: iapd_opts,
     }
 }

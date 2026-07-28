@@ -67,7 +67,14 @@ pub struct LanIPv6ConfigV2 {
     #[serde(default)]
     #[cfg_attr(feature = "openapi", schema(required = true))]
     pub mode: IPv6ServiceMode,
+    // Deprecated: the RA interval is derived from `lifetime` at runtime.
+    // Removal is rollback-safe to this version because the serde default restores 300.
+    #[serde(default = "default_lifetime")]
+    #[cfg_attr(feature = "openapi", schema(required = false))]
     pub ad_interval: u32,
+    #[serde(default = "default_lifetime")]
+    #[cfg_attr(feature = "openapi", schema(minimum = 60, maximum = 65535))]
+    pub lifetime: u32,
     #[serde(default = "ra_flag_default")]
     #[cfg_attr(feature = "openapi", schema(required = true))]
     pub ra_flag: RouterFlags,
@@ -76,6 +83,24 @@ pub struct LanIPv6ConfigV2 {
     #[serde(default)]
     #[cfg_attr(feature = "openapi", schema(required = false, nullable = false))]
     pub dhcpv6: Option<DHCPv6ServerConfig>,
+}
+
+fn default_lifetime() -> u32 {
+    300
+}
+
+impl LanIPv6ConfigV2 {
+    pub fn preferred_lifetime(&self) -> u32 {
+        self.lifetime
+    }
+
+    pub fn valid_lifetime(&self) -> u32 {
+        self.preferred_lifetime() * 2
+    }
+
+    pub fn icmp_ad_interval(&self) -> u32 {
+        self.preferred_lifetime().clamp(60, 600)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -38,7 +38,7 @@ fn make_slaac_status() -> Ipv6ServerStatus {
         pd: None,
     }];
 
-    let subnets = compute_subnets(&groups, &IAPrefixMap::new(), 300, 600);
+    let subnets = compute_subnets(&groups, &IAPrefixMap::new(), 300);
     status.update_prefix(&subnets);
     status
 }
@@ -124,7 +124,7 @@ fn dynamic_subnets_use_snapshot_instead_of_actual_prefix_len() {
     let prefix_map = IAPrefixMap::new();
     prefix_map.store("wan0", pd_prefix("2001:db8:1200::", 56), 60);
 
-    let subnets = compute_subnets(&[dynamic_ra_group(60, 15)], &prefix_map, 300, 600);
+    let subnets = compute_subnets(&[dynamic_ra_group(60, 15)], &prefix_map, 300);
     assert_eq!(subnets.len(), 1);
     assert_eq!(subnets[0].sub_prefix, "2001:db8:1200:f::".parse::<Ipv6Addr>().unwrap());
     assert_eq!(prefix_map.load_actual("wan0").unwrap().prefix_len, 56);
@@ -134,13 +134,13 @@ fn dynamic_subnets_use_snapshot_instead_of_actual_prefix_len() {
 fn dynamic_subnets_require_both_wan_and_snapshot_compatibility() {
     let prefix_map = IAPrefixMap::new();
     prefix_map.store("wan0", pd_prefix("2001:db8:1200::", 64), 60);
-    assert!(compute_subnets(&[dynamic_ra_group(60, 1)], &prefix_map, 300, 600).is_empty());
+    assert!(compute_subnets(&[dynamic_ra_group(60, 1)], &prefix_map, 300).is_empty());
     assert!(prefix_map.load_actual("wan0").is_some());
 
     prefix_map.store("wan0", pd_prefix("2001:db8:1200::", 56), 64);
-    assert!(compute_subnets(&[dynamic_ra_group(60, 1)], &prefix_map, 300, 600).is_empty());
+    assert!(compute_subnets(&[dynamic_ra_group(60, 1)], &prefix_map, 300).is_empty());
     assert!(prefix_map.load_for_lan("wan0").is_some());
 
     let _ = prefix_map.remove("wan0");
-    assert!(compute_subnets(&[dynamic_ra_group(60, 1)], &prefix_map, 300, 600).is_empty());
+    assert!(compute_subnets(&[dynamic_ra_group(60, 1)], &prefix_map, 300).is_empty());
 }

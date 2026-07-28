@@ -40,6 +40,13 @@ export default {
   ad_interval: "路由通告间隔",
   ad_interval_desc: "路由器定期发送通告的时间间隔（秒），默认 300 秒。",
 
+  lifetime: "首选时长",
+  lifetime_desc:
+    "所有地址 (RA/NA/PD) 的首选有效时长（秒）。最大有效时长为此值的两倍。默认 300 秒。",
+  lifetime_hint: "路由通告间隔将自动由此值推导（限定在 60~600 秒之间）。",
+
+  seconds: "秒",
+
   m_flag: "通过 DHCPv6 获取地址 (M)",
   m_flag_desc: "开启后，设备将通过 DHCPv6 服务器获取地址，而非自动生成。",
   o_flag: "通过 DHCPv6 获取配置 (O)",

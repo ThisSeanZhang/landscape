@@ -360,6 +360,7 @@ mod tests {
             config: LanIPv6ConfigV2 {
                 mode: IPv6ServiceMode::Stateful,
                 ad_interval: 600,
+                lifetime: 300,
                 ra_flag: RouterFlags::from(0xc0),
                 prefix_groups: vec![LanPrefixGroupConfig {
                     group_id: "na".to_string(),
@@ -455,6 +456,7 @@ mod tests {
             config: LanIPv6ConfigV2 {
                 mode: IPv6ServiceMode::Stateful,
                 ad_interval: 600,
+                lifetime: 300,
                 ra_flag: RouterFlags::from(0xc0),
                 prefix_groups: vec![LanPrefixGroupConfig {
                     group_id: "na".to_string(),

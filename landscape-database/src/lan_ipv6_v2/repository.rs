@@ -98,6 +98,7 @@ mod tests {
             config: LanIPv6ConfigV2 {
                 mode: IPv6ServiceMode::Slaac,
                 ad_interval: 300,
+                lifetime: 300,
                 ra_flag: RouterFlags::from(0),
                 prefix_groups: vec![LanPrefixGroupConfig {
                     group_id: format!("group-{iface_name}"),

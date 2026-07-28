@@ -302,12 +302,8 @@ impl PrefixState {
 
 #[derive(Debug, Clone)]
 pub struct Ipv6LanReplyParams {
-    pub na_preferred_lifetime: u32,
-    pub na_valid_lifetime: u32,
-    pub pd_preferred_lifetime: u32,
-    pub pd_valid_lifetime: u32,
-    pub ra_preferred_lifetime: u32,
-    pub ra_valid_lifetime: u32,
+    pub preferred_lifetime: u32,
+    pub valid_lifetime: u32,
     pub ra_flags: u8,
     pub ra_autonomous: bool,
 }
@@ -376,9 +372,9 @@ pub struct Ipv6ServerStatus {
     boot_time: Instant,
     boot_time_f64: f64,
 
-    // ── RA lifetimes (derived from ad_interval) ──
-    ra_preferred_lifetime: u32,
-    ra_valid_lifetime: u32,
+    // ── Lifetime (shared across RA / NA / PD) ──
+    pub preferred_lifetime: u32,
+    pub valid_lifetime: u32,
 }
 
 impl Ipv6ServerStatus {
@@ -418,8 +414,8 @@ impl Ipv6ServerStatus {
             reconf_tx,
             boot_time: Instant::now(),
             boot_time_f64: get_f64_timestamp(),
-            ra_preferred_lifetime: 300,
-            ra_valid_lifetime: 600,
+            preferred_lifetime: 300,
+            valid_lifetime: 600,
         };
 
         for device in devices {
@@ -442,8 +438,7 @@ impl Ipv6ServerStatus {
         groups: &[LanPrefixGroupConfig],
         prefix_map: &IAPrefixMap,
     ) -> SubnetDiff {
-        let new_subnets =
-            compute_subnets(groups, prefix_map, self.ra_preferred_lifetime, self.ra_valid_lifetime);
+        let new_subnets = compute_subnets(groups, prefix_map, self.preferred_lifetime);
         let diff = diff_subnets(&self.cached_subnets, &new_subnets);
         self.cached_subnets = new_subnets;
         self.prefix_state.refresh(&self.cached_subnets);
@@ -552,21 +547,19 @@ impl Ipv6ServerStatus {
         }
 
         // 3. allocate new dynamic suffix
-        let na_config = self.na_config.as_ref()?.clone();
-        let suffix =
-            self.allocate_dynamic_na_suffix(duid, mac, hostname, now, None, None, &na_config)?;
+        self.na_config.as_ref()?;
+        let suffix = self.allocate_dynamic_na_suffix(duid, mac, hostname, now, None, None)?;
         Some(self.suffix_to_addrs(suffix))
     }
 
     pub fn confirm_na(&mut self, duid: &[u8]) -> bool {
-        let na_config = match &self.na_config {
-            Some(c) => c,
-            None => return false,
-        };
+        if self.na_config.is_none() {
+            return false;
+        }
         let now = self.boot_time.elapsed().as_secs();
         if let Some(lease) = self.na_leases_by_duid.get_mut(duid) {
-            lease.valid_time = na_config.valid_lifetime;
-            lease.preferred_time = na_config.preferred_lifetime;
+            lease.valid_time = self.valid_lifetime;
+            lease.preferred_time = self.preferred_lifetime;
             lease.relative_offer_time = now;
             true
         } else {
@@ -610,9 +603,10 @@ impl Ipv6ServerStatus {
     }
 
     pub fn is_na_in_offer_state(&self, duid: &[u8]) -> bool {
+        let offer_lifetime = offer_lifetime(self.preferred_lifetime);
         self.na_leases_by_duid
             .get(duid)
-            .map(|lease| lease.valid_time == OFFER_VALID_TIME)
+            .map(|lease| lease.valid_time == offer_lifetime)
             .unwrap_or(false)
     }
 
@@ -742,19 +736,16 @@ impl Ipv6ServerStatus {
                                 evicted.suffix = old;
                                 evicted.is_static = false;
                                 evicted.relative_offer_time = now;
-                                evicted.valid_time = OFFER_VALID_TIME;
-                                evicted.preferred_time = self
-                                    .na_config
-                                    .as_ref()
-                                    .map(|c| c.preferred_lifetime.min(OFFER_VALID_TIME))
-                                    .unwrap_or(OFFER_VALID_TIME);
+                                let offer_lifetime = offer_lifetime(self.preferred_lifetime);
+                                evicted.valid_time = offer_lifetime;
+                                evicted.preferred_time = offer_lifetime;
                                 self.na_owners_by_suffix
                                     .insert(old, SuffixOwner::DynamicDuid(evicted_duid.clone()));
                                 self.set_reconfigure_key(&evicted_duid, evicted.mac);
                                 self.na_leases_by_duid.insert(evicted_duid, evicted.clone());
                                 changes.push_allocated(evicted, Some(suffix));
                             }
-                        } else if let Some(na_config) = self.na_config.clone() {
+                        } else if self.na_config.is_some() {
                             if self
                                 .allocate_dynamic_na_suffix(
                                     &evicted_duid,
@@ -763,7 +754,6 @@ impl Ipv6ServerStatus {
                                     now,
                                     Some(suffix),
                                     Some(suffix),
-                                    &na_config,
                                 )
                                 .is_some()
                             {
@@ -793,13 +783,9 @@ impl Ipv6ServerStatus {
                 lease.is_static = true;
                 lease.prev_suffix = (previous != suffix).then_some(previous);
                 lease.relative_offer_time = now;
-                lease.valid_time = OFFER_VALID_TIME;
-                lease.preferred_time = self
-                    .na_config
-                    .as_ref()
-                    .map(|c| c.preferred_lifetime)
-                    .unwrap_or(0)
-                    .min(OFFER_VALID_TIME);
+                let offer_lifetime = offer_lifetime(self.preferred_lifetime);
+                lease.valid_time = offer_lifetime;
+                lease.preferred_time = offer_lifetime;
                 changes.push_allocated(lease.clone(), (previous != suffix).then_some(previous));
             }
         }
@@ -832,18 +818,14 @@ impl Ipv6ServerStatus {
             lease.is_static = false;
             lease.prev_suffix = Some(old_suffix);
             lease.relative_offer_time = now;
-            lease.valid_time = OFFER_VALID_TIME;
-            lease.preferred_time = self
-                .na_config
-                .as_ref()
-                .map(|c| c.preferred_lifetime)
-                .unwrap_or(0)
-                .min(OFFER_VALID_TIME);
+            let offer_lifetime = offer_lifetime(self.preferred_lifetime);
+            lease.valid_time = offer_lifetime;
+            lease.preferred_time = offer_lifetime;
             self.na_owners_by_suffix.insert(old_suffix, SuffixOwner::DynamicDuid(duid.clone()));
             self.set_reconfigure_key(&duid, lease.mac);
             self.na_leases_by_duid.insert(duid, lease.clone());
             changes.push_allocated(lease, Some(old_suffix));
-        } else if let Some(na_config) = self.na_config.clone() {
+        } else if self.na_config.is_some() {
             if self
                 .allocate_dynamic_na_suffix(
                     &duid,
@@ -852,7 +834,6 @@ impl Ipv6ServerStatus {
                     now,
                     Some(old_suffix),
                     None,
-                    &na_config,
                 )
                 .is_some()
             {
@@ -870,7 +851,7 @@ impl Ipv6ServerStatus {
     // ── PD: DHCPv6 prefix delegation ───────────────────────────────────────
 
     pub fn offer_pd(&mut self, duid: &[u8]) -> Option<(Ipv6Addr, u8)> {
-        let pd_config = self.pd_config.as_ref()?;
+        self.pd_config.as_ref()?;
         let now = self.boot_time.elapsed().as_secs();
 
         // Re-use existing lease if the slot is still valid
@@ -892,13 +873,14 @@ impl Ipv6ServerStatus {
 
         let (prefix, prefix_len) = self.resolve_pd_key(&key)?;
 
+        let offer_lifetime = offer_lifetime(self.preferred_lifetime);
         let lease = PdLease {
             group_id,
             sub_index,
             duid_hex: duid_to_hex(duid),
             relative_offer_time: now,
-            valid_time: OFFER_VALID_TIME,
-            preferred_time: pd_config.preferred_lifetime.min(OFFER_VALID_TIME),
+            valid_time: offer_lifetime,
+            preferred_time: offer_lifetime,
             client_addr: Ipv6Addr::UNSPECIFIED,
             active_routes: Vec::new(),
         };
@@ -909,14 +891,13 @@ impl Ipv6ServerStatus {
     }
 
     pub fn confirm_pd(&mut self, duid: &[u8]) -> bool {
-        let pd_config = match &self.pd_config {
-            Some(c) => c,
-            None => return false,
-        };
+        if self.pd_config.is_none() {
+            return false;
+        }
         let now = self.boot_time.elapsed().as_secs();
         if let Some(lease) = self.pd_leases_by_duid.get_mut(duid) {
-            lease.valid_time = pd_config.valid_lifetime;
-            lease.preferred_time = pd_config.preferred_lifetime;
+            lease.valid_time = self.valid_lifetime;
+            lease.preferred_time = self.preferred_lifetime;
             lease.relative_offer_time = now;
             true
         } else {
@@ -1291,7 +1272,6 @@ impl Ipv6ServerStatus {
         hostname: Option<String>,
         now: u64,
     ) {
-        let na_config = self.na_config.clone();
         let previous_suffix = self.na_leases_by_duid.get(duid).map(|l| l.suffix);
 
         if let Some(old) = previous_suffix {
@@ -1303,18 +1283,15 @@ impl Ipv6ServerStatus {
             }
         }
         self.na_owners_by_suffix.insert(suffix, SuffixOwner::StaticMac(mac));
+        let offer_lifetime = offer_lifetime(self.preferred_lifetime);
         let lease = NaLease {
             suffix,
             hostname,
             mac,
             duid_hex: duid_to_hex(duid),
             relative_offer_time: now,
-            valid_time: OFFER_VALID_TIME,
-            preferred_time: na_config
-                .as_ref()
-                .map(|c| c.preferred_lifetime)
-                .unwrap_or(0)
-                .min(OFFER_VALID_TIME),
+            valid_time: offer_lifetime,
+            preferred_time: offer_lifetime,
             is_static: true,
             prev_suffix: previous_suffix.filter(|prev| *prev != suffix),
         };
@@ -1346,7 +1323,6 @@ impl Ipv6ServerStatus {
         now: u64,
         prev_suffix: Option<u64>,
         excluded_suffix: Option<u64>,
-        na_config: &DHCPv6IANAConfig,
     ) -> Option<u64> {
         if self.na_range_capacity == 0 {
             return None;
@@ -1361,7 +1337,7 @@ impl Ipv6ServerStatus {
                 self.find_free_dynamic_suffix(duid, excluded_suffix)?
             }
         };
-        self.insert_dynamic_na_lease(duid, mac, hostname, now, prev_suffix, suffix, na_config);
+        self.insert_dynamic_na_lease(duid, mac, hostname, now, prev_suffix, suffix);
         Some(suffix)
     }
 
@@ -1391,17 +1367,17 @@ impl Ipv6ServerStatus {
         now: u64,
         prev_suffix: Option<u64>,
         suffix: u64,
-        na_config: &DHCPv6IANAConfig,
     ) {
         self.na_owners_by_suffix.insert(suffix, SuffixOwner::DynamicDuid(duid.to_vec()));
+        let offer_lifetime = offer_lifetime(self.preferred_lifetime);
         let lease = NaLease {
             suffix,
             hostname,
             mac,
             duid_hex: duid_to_hex(duid),
             relative_offer_time: now,
-            valid_time: OFFER_VALID_TIME,
-            preferred_time: na_config.preferred_lifetime.min(OFFER_VALID_TIME),
+            valid_time: offer_lifetime,
+            preferred_time: offer_lifetime,
             is_static: false,
             prev_suffix,
         };
@@ -1528,8 +1504,7 @@ impl Ipv6ServerStatus {
 pub fn compute_subnets(
     groups: &[LanPrefixGroupConfig],
     prefix_map: &IAPrefixMap,
-    ra_preferred_lifetime: u32,
-    ra_valid_lifetime: u32,
+    lifetime: u32,
 ) -> Vec<SubnetState> {
     let mut result = Vec::new();
     let sub_prefix_len: u8 = 64;
@@ -1594,8 +1569,8 @@ pub fn compute_subnets(
                 ra.pool_index as u128,
             ) {
                 Some((sub_prefix, sub_router)) => {
-                    let pref_lt = ra_preferred_lifetime;
-                    let valid_lt = ra_valid_lifetime;
+                    let pref_lt = lifetime;
+                    let valid_lt = lifetime * 2;
                     result.push(SubnetState {
                         group_id: group.group_id.clone(),
                         sub_prefix,
@@ -1709,7 +1684,11 @@ fn diff_subnets(old: &[SubnetState], new: &[SubnetState]) -> SubnetDiff {
     SubnetDiff { added, removed }
 }
 
-const OFFER_VALID_TIME: u32 = 120;
+const MAX_OFFER_LIFETIME: u32 = 120;
+
+pub(super) fn offer_lifetime(lifetime: u32) -> u32 {
+    (lifetime / 2).min(MAX_OFFER_LIFETIME)
+}
 
 fn ipv6_suffix(ip: Ipv6Addr) -> u64 {
     u128::from(ip) as u64

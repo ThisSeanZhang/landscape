@@ -66,6 +66,7 @@ function default_config(): LanIPv6ServiceConfigV2 {
     config: {
       mode: "slaac" as IPv6ServiceMode,
       ad_interval: 300,
+      lifetime: 300,
       ra_flag: {
         managed_address_config: false,
         other_config: false,
@@ -129,6 +130,9 @@ async function on_modal_enter() {
     // Default mode to slaac if not set
     if (!service_config.value.config.mode) {
       service_config.value.config.mode = "slaac" as IPv6ServiceMode;
+    }
+    if (service_config.value.config.lifetime == null) {
+      service_config.value.config.lifetime = 300;
     }
   } catch (e) {
     service_config.value = default_config();
@@ -269,11 +273,8 @@ function replace_group_sources(
         size="small"
         :bordered="false"
       >
-        <n-flex align="center" :gap="16">
-          <n-form-item
-            :label="t('lan_ipv6.mode')"
-            style="margin-bottom: 0; flex: 1"
-          >
+        <div class="mode-settings-grid">
+          <n-form-item :label="t('lan_ipv6.mode')" class="mode-setting">
             <n-radio-group
               :value="service_config.config.mode"
               @update:value="on_mode_change"
@@ -290,7 +291,30 @@ function replace_group_sources(
               />
             </n-radio-group>
           </n-form-item>
-        </n-flex>
+
+          <n-form-item class="lifetime-setting">
+            <template #label>
+              <Notice>
+                {{ t("lan_ipv6.lifetime") }}
+                <template #msg>
+                  <div>{{ t("lan_ipv6.lifetime_desc") }}</div>
+                  <div style="margin-top: 4px">
+                    {{ t("lan_ipv6.lifetime_hint") }}
+                  </div>
+                </template>
+              </Notice>
+            </template>
+            <n-input-number
+              v-model:value="service_config.config.lifetime"
+              class="lifetime-input"
+              :min="60"
+              :max="65535"
+              :step="60"
+            >
+              <template #suffix>{{ t("lan_ipv6.seconds") }}</template>
+            </n-input-number>
+          </n-form-item>
+        </div>
 
         <n-alert
           v-if="service_config.config.mode === 'slaac'"
@@ -390,22 +414,6 @@ function replace_group_sources(
           :bordered="false"
         >
           <n-grid :x-gap="12" :y-gap="8" cols="2" item-responsive>
-            <n-form-item-gi span="2">
-              <template #label>
-                <Notice>
-                  {{ t("lan_ipv6.ad_interval") }}
-                  <template #msg>
-                    {{ t("lan_ipv6.ad_interval_desc") }}
-                  </template>
-                </Notice>
-              </template>
-              <n-input-number
-                style="flex: 1"
-                v-model:value="service_config.config.ad_interval"
-                clearable
-              />
-            </n-form-item-gi>
-
             <!-- M/O flags: show read-only for stateful/slaac_dhcpv6, editable for slaac -->
             <template v-if="service_config.config.mode === 'slaac'">
               <n-form-item-gi span="2">
@@ -492,3 +500,29 @@ function replace_group_sources(
     </template>
   </ConfigModal>
 </template>
+
+<style scoped>
+.mode-settings-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 360px);
+  gap: 16px 24px;
+  align-items: start;
+}
+
+.mode-setting,
+.lifetime-setting {
+  min-width: 0;
+  margin-bottom: 0;
+}
+
+.lifetime-input {
+  width: 100%;
+}
+
+@media (max-width: 900px) {
+  .mode-settings-grid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
+  }
+}
+</style>

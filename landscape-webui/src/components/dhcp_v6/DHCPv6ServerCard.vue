@@ -178,44 +178,6 @@ function update_ia_pd_field(field: string, value: number | null) {
                 :min="1"
               />
             </n-form-item-gi>
-            <n-form-item-gi span="1">
-              <template #label>
-                <Notice>
-                  {{ t("lan_ipv6.ia_na_preferred_lifetime") }}
-                  <template #msg>
-                    {{ t("lan_ipv6.ia_na_preferred_lifetime_desc") }}
-                  </template>
-                </Notice>
-              </template>
-              <n-input-number
-                style="flex: 1"
-                :value="config?.config.dhcpv6?.ia_na?.preferred_lifetime ?? 300"
-                @update:value="
-                  (val: number | null) =>
-                    update_ia_na_field('preferred_lifetime', val)
-                "
-                :min="1"
-              />
-            </n-form-item-gi>
-            <n-form-item-gi span="1">
-              <template #label>
-                <Notice>
-                  {{ t("lan_ipv6.ia_na_valid_lifetime") }}
-                  <template #msg>
-                    {{ t("lan_ipv6.ia_na_valid_lifetime_desc") }}
-                  </template>
-                </Notice>
-              </template>
-              <n-input-number
-                style="flex: 1"
-                :value="config?.config.dhcpv6?.ia_na?.valid_lifetime ?? 600"
-                @update:value="
-                  (val: number | null) =>
-                    update_ia_na_field('valid_lifetime', val)
-                "
-                :min="1"
-              />
-            </n-form-item-gi>
           </template>
         </n-grid>
       </div>
@@ -251,44 +213,6 @@ function update_ia_pd_field(field: string, value: number | null) {
                 "
                 :min="1"
                 :max="128"
-              />
-            </n-form-item-gi>
-            <n-form-item-gi span="1">
-              <template #label>
-                <Notice>
-                  {{ t("lan_ipv6.ia_pd_preferred_lifetime") }}
-                  <template #msg>
-                    {{ t("lan_ipv6.ia_pd_preferred_lifetime_desc") }}
-                  </template>
-                </Notice>
-              </template>
-              <n-input-number
-                style="flex: 1"
-                :value="config?.config.dhcpv6?.ia_pd?.preferred_lifetime ?? 300"
-                @update:value="
-                  (val: number | null) =>
-                    update_ia_pd_field('preferred_lifetime', val)
-                "
-                :min="1"
-              />
-            </n-form-item-gi>
-            <n-form-item-gi span="1">
-              <template #label>
-                <Notice>
-                  {{ t("lan_ipv6.ia_pd_valid_lifetime") }}
-                  <template #msg>
-                    {{ t("lan_ipv6.ia_pd_valid_lifetime_desc") }}
-                  </template>
-                </Notice>
-              </template>
-              <n-input-number
-                style="flex: 1"
-                :value="config?.config.dhcpv6?.ia_pd?.valid_lifetime ?? 600"
-                @update:value="
-                  (val: number | null) =>
-                    update_ia_pd_field('valid_lifetime', val)
-                "
-                :min="1"
               />
             </n-form-item-gi>
           </template>

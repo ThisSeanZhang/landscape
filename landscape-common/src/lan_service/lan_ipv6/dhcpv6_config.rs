@@ -46,12 +46,17 @@ pub struct DHCPv6IANAConfig {
     #[cfg_attr(feature = "openapi", schema(required = false, nullable = false))]
     pub pool_end: Option<u64>,
 
-    /// Preferred lifetime (seconds), default: 3600 (1 hour)
+    // Deprecated: IA_NA lifetimes now come from LanIPv6ConfigV2::lifetime.
+    // Remove both fields and their validation together. Configs saved without them
+    // can roll back to this version through the 300/600 serde defaults below.
+    /// Legacy preferred lifetime (seconds), default: 300.
     #[serde(default = "default_preferred_lifetime")]
+    #[cfg_attr(feature = "openapi", schema(required = false))]
     pub preferred_lifetime: u32,
 
-    /// Valid lifetime (seconds), default: 7200 (2 hours)
+    /// Legacy valid lifetime (seconds), default: 600.
     #[serde(default = "default_valid_lifetime")]
+    #[cfg_attr(feature = "openapi", schema(required = false))]
     pub valid_lifetime: u32,
 }
 
@@ -70,12 +75,17 @@ pub struct DHCPv6IAPDConfig {
     /// The actual delegated prefix length is taken from the block's own config.
     pub delegate_prefix_len: u8,
 
-    /// Preferred lifetime (seconds), default: 3600 (1 hour)
+    // Deprecated: IA_PD lifetimes now come from LanIPv6ConfigV2::lifetime.
+    // Remove both fields and their validation together. Configs saved without them
+    // can roll back to this version through the 300/600 serde defaults below.
+    /// Legacy preferred lifetime (seconds), default: 300.
     #[serde(default = "default_preferred_lifetime")]
+    #[cfg_attr(feature = "openapi", schema(required = false))]
     pub preferred_lifetime: u32,
 
-    /// Valid lifetime (seconds), default: 7200 (2 hours)
+    /// Legacy valid lifetime (seconds), default: 600.
     #[serde(default = "default_valid_lifetime")]
+    #[cfg_attr(feature = "openapi", schema(required = false))]
     pub valid_lifetime: u32,
 }
 

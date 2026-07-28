@@ -380,14 +380,11 @@ pub async fn start_ipv6_lan_server(
     tracing::info!("link_ifindex {:?}", link_ifindex);
 
     // ── Initial subnets: set interface IPs + routes ──
-    let ra_preferred_lifetime = params.ra_preferred_lifetime;
-    let ra_valid_lifetime = params.ra_valid_lifetime;
-    let initial_subnets =
-        compute_subnets(&prefix_groups, &prefix_map, ra_preferred_lifetime, ra_valid_lifetime);
+    let initial_subnets = compute_subnets(&prefix_groups, &prefix_map, params.preferred_lifetime);
     {
         let mut status = share_status.lock().await;
-        status.ra_preferred_lifetime = ra_preferred_lifetime;
-        status.ra_valid_lifetime = ra_valid_lifetime;
+        status.preferred_lifetime = params.preferred_lifetime;
+        status.valid_lifetime = params.valid_lifetime;
         status.update_prefix(&initial_subnets);
 
         let static_macs: Vec<MacAddr> = status.na_static_by_mac.keys().cloned().collect();
@@ -495,7 +492,7 @@ pub async fn start_ipv6_lan_server(
             _ = dhcp_expire_timer.tick() => {
                 handle_expire_tick(
                     &iface_name, &share_status, ipv6_assign_sender, &route_service,
-                    params.ra_valid_lifetime as u64, &device_id_map,
+                    params.valid_lifetime as u64, &device_id_map,
                 ).await;
             },
             mac = reconf_rx.recv() => {

@@ -49,7 +49,7 @@ fn make_full_status() -> Ipv6ServerStatus {
         pd: Some(PdPrefixRangeConfig { pool_len: 56, start_index: 0, end_index: 3 }),
     }];
 
-    let subnets = compute_subnets(&groups, &IAPrefixMap::new(), 300, 600);
+    let subnets = compute_subnets(&groups, &IAPrefixMap::new(), 300);
     status.update_prefix(&subnets);
     status
 }

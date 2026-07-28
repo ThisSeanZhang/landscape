@@ -135,16 +135,9 @@ impl ServiceStarterTrait for LanIPv6Service {
                 reconf_tx,
             )));
             // ── Reply params ──
-            let na_lifetimes = na_config
-                .as_ref()
-                .map(|c| (c.preferred_lifetime, c.valid_lifetime))
-                .unwrap_or((300, 600));
-            let pd_lifetimes = pd_config
-                .as_ref()
-                .map(|c| (c.preferred_lifetime, c.valid_lifetime))
-                .unwrap_or((300, 600));
-            let ra_preferred_lifetime = config.config.ad_interval;
-            let ra_valid_lifetime = config.config.ad_interval * 2;
+            let preferred_lifetime = config.config.preferred_lifetime();
+            let valid_lifetime = config.config.valid_lifetime();
+            let icmp_ad_interval = config.config.icmp_ad_interval();
 
             let mut ra_flags_raw: u8 = config.config.ra_flag.into();
             let ra_autonomous = mode != IPv6ServiceMode::Stateful;
@@ -156,12 +149,8 @@ impl ServiceStarterTrait for LanIPv6Service {
             }
 
             let params = Ipv6LanReplyParams {
-                na_preferred_lifetime: na_lifetimes.0,
-                na_valid_lifetime: na_lifetimes.1,
-                pd_preferred_lifetime: pd_lifetimes.0,
-                pd_valid_lifetime: pd_lifetimes.1,
-                ra_preferred_lifetime,
-                ra_valid_lifetime,
+                preferred_lifetime,
+                valid_lifetime,
                 ra_flags: ra_flags_raw,
                 ra_autonomous,
             };
@@ -188,7 +177,7 @@ impl ServiceStarterTrait for LanIPv6Service {
                     config.iface_name.clone(),
                     mac_addr,
                     svc_status,
-                    config.config.ad_interval,
+                    icmp_ad_interval,
                     &ipv6_assign_sender,
                     status,
                     mac_link_cache,

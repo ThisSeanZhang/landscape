@@ -41,6 +41,14 @@ export default {
   ad_interval_desc:
     "How often the router sends periodic advertisements (in seconds). Default is 300 seconds.",
 
+  lifetime: "Preferred Lifetime",
+  lifetime_desc:
+    "Preferred lifetime for all addresses (RA/NA/PD) in seconds. Valid lifetime is double this value. Default is 300s.",
+  lifetime_hint:
+    "The advertisement interval is auto-derived from this value (clamped between 60s and 600s).",
+
+  seconds: "s",
+
   m_flag: "Obtain Address via DHCPv6 (M)",
   m_flag_desc:
     "When enabled, devices will obtain addresses from the DHCPv6 server instead of generating them automatically.",

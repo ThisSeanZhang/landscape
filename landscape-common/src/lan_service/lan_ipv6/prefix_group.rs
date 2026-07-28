@@ -30,8 +30,9 @@ pub enum PrefixParentSource {
 pub struct RaPrefixConfig {
     pub pool_index: u32,
     // Deprecated: kept only for backward-compatible deserialization.
-    // RA lifetimes are now derived globally from ad_interval.
-    // Will be removed in a future version.
+    // RA lifetimes are now derived globally from lifetime.
+    // Remove both fields and their default helpers together. Configs saved without them
+    // can roll back to this version through the 300/600 serde defaults below.
     #[serde(default = "default_ra_preferred_lifetime")]
     #[cfg_attr(feature = "openapi", schema(required = false))]
     pub preferred_lifetime: u32,
@@ -525,11 +526,11 @@ impl LanIPv6ConfigV2 {
     ) -> Result<(), ServiceConfigError> {
         validate_prefix_groups_with_pd_context(&self.prefix_groups, pd_contexts)?;
 
-        if self.ad_interval == 0 || self.ad_interval > u16::MAX as u32 {
+        if self.lifetime < 60 || self.lifetime > u16::MAX as u32 {
             return Err(ServiceConfigError::InvalidConfig {
                 reason: format!(
-                    "ad_interval ({}) must be between 1 and {} seconds",
-                    self.ad_interval,
+                    "lifetime ({}) must be between 60 and {} seconds",
+                    self.lifetime,
                     u16::MAX,
                 ),
             });
@@ -849,6 +850,7 @@ mod tests {
         let config = LanIPv6ConfigV2 {
             mode: IPv6ServiceMode::Stateful,
             ad_interval: 300,
+            lifetime: 300,
             ra_flag: ra_flag_default(),
             prefix_groups: vec![LanPrefixGroupConfig {
                 group_id: "stateful-na".to_string(),
@@ -909,6 +911,7 @@ mod tests {
         let config = LanIPv6ConfigV2 {
             mode: IPv6ServiceMode::Slaac,
             ad_interval: 300,
+            lifetime: 300,
             ra_flag: RouterFlags {
                 managed_address_config: false,
                 other_config: false,
@@ -939,6 +942,7 @@ mod tests {
         let config = LanIPv6ConfigV2 {
             mode: IPv6ServiceMode::SlaacDhcpv6,
             ad_interval: 300,
+            lifetime: 300,
             ra_flag: ra_flag_default(),
             prefix_groups: vec![
                 LanPrefixGroupConfig {
@@ -1114,6 +1118,7 @@ mod tests {
             config: LanIPv6ConfigV2 {
                 mode: IPv6ServiceMode::Slaac,
                 ad_interval: 300,
+                lifetime: 300,
                 ra_flag: ra_flag_default(),
                 prefix_groups: vec![LanPrefixGroupConfig {
                     group_id: "group-a".to_string(),
@@ -1140,6 +1145,7 @@ mod tests {
             config: LanIPv6ConfigV2 {
                 mode: IPv6ServiceMode::Stateful,
                 ad_interval: 300,
+                lifetime: 300,
                 ra_flag: RouterFlags::from(0xc0u8),
                 prefix_groups: vec![LanPrefixGroupConfig {
                     group_id: "group-b".to_string(),
@@ -1224,6 +1230,7 @@ mod tests {
             config: LanIPv6ConfigV2 {
                 mode: IPv6ServiceMode::Slaac,
                 ad_interval: 300,
+                lifetime: 300,
                 ra_flag: ra_flag_default(),
                 prefix_groups: vec![LanPrefixGroupConfig {
                     group_id: "group-a".to_string(),
@@ -1250,6 +1257,7 @@ mod tests {
             config: LanIPv6ConfigV2 {
                 mode: IPv6ServiceMode::Stateful,
                 ad_interval: 300,
+                lifetime: 300,
                 ra_flag: RouterFlags::from(0xc0u8),
                 prefix_groups: vec![LanPrefixGroupConfig {
                     group_id: "group-b".to_string(),
@@ -1293,6 +1301,7 @@ mod tests {
             config: LanIPv6ConfigV2 {
                 mode: IPv6ServiceMode::Slaac,
                 ad_interval: 300,
+                lifetime: 300,
                 ra_flag: ra_flag_default(),
                 prefix_groups: vec![LanPrefixGroupConfig {
                     group_id: "ra-group".to_string(),
@@ -1328,6 +1337,7 @@ mod tests {
             config: LanIPv6ConfigV2 {
                 mode: IPv6ServiceMode::Stateful,
                 ad_interval: 300,
+                lifetime: 300,
                 ra_flag: RouterFlags::from(0xc0u8),
                 prefix_groups: vec![LanPrefixGroupConfig {
                     group_id: "pd-group".to_string(),
@@ -1379,6 +1389,7 @@ mod tests {
             config: LanIPv6ConfigV2 {
                 mode: IPv6ServiceMode::SlaacDhcpv6,
                 ad_interval: 300,
+                lifetime: 300,
                 ra_flag: RouterFlags::from(0xc0u8),
                 prefix_groups: vec![LanPrefixGroupConfig {
                     group_id: "shared".to_string(),
@@ -1428,6 +1439,7 @@ mod tests {
             config: LanIPv6ConfigV2 {
                 mode: IPv6ServiceMode::Slaac,
                 ad_interval: 300,
+                lifetime: 300,
                 ra_flag: ra_flag_default(),
                 prefix_groups: vec![LanPrefixGroupConfig {
                     group_id: "ra-group".to_string(),
@@ -1454,6 +1466,7 @@ mod tests {
             config: LanIPv6ConfigV2 {
                 mode: IPv6ServiceMode::Slaac,
                 ad_interval: 300,
+                lifetime: 300,
                 ra_flag: ra_flag_default(),
                 prefix_groups: vec![LanPrefixGroupConfig {
                     group_id: "ra-group2".to_string(),
@@ -1501,6 +1514,7 @@ mod tests {
             config: LanIPv6ConfigV2 {
                 mode: IPv6ServiceMode::Slaac,
                 ad_interval: 300,
+                lifetime: 300,
                 ra_flag: ra_flag_default(),
                 prefix_groups: vec![LanPrefixGroupConfig {
                     group_id: "ra-group".to_string(),
@@ -1527,6 +1541,7 @@ mod tests {
             config: LanIPv6ConfigV2 {
                 mode: IPv6ServiceMode::Stateful,
                 ad_interval: 300,
+                lifetime: 300,
                 ra_flag: RouterFlags::from(0xc0u8),
                 prefix_groups: vec![LanPrefixGroupConfig {
                     group_id: "pd-group".to_string(),
@@ -1570,6 +1585,7 @@ mod tests {
             config: LanIPv6ConfigV2 {
                 mode: IPv6ServiceMode::Slaac,
                 ad_interval: 300,
+                lifetime: 300,
                 ra_flag: ra_flag_default(),
                 prefix_groups: vec![LanPrefixGroupConfig {
                     group_id: "ra-disabled".to_string(),
@@ -1662,6 +1678,7 @@ mod tests {
             config: LanIPv6ConfigV2 {
                 mode: IPv6ServiceMode::SlaacDhcpv6,
                 ad_interval: 300,
+                lifetime: 300,
                 ra_flag: RouterFlags::from(0xc0u8),
                 prefix_groups: vec![
                     LanPrefixGroupConfig {
@@ -1715,6 +1732,7 @@ mod tests {
             config: LanIPv6ConfigV2 {
                 mode: IPv6ServiceMode::SlaacDhcpv6,
                 ad_interval: 300,
+                lifetime: 300,
                 ra_flag: RouterFlags::from(0xc0u8),
                 prefix_groups: vec![
                     LanPrefixGroupConfig {
