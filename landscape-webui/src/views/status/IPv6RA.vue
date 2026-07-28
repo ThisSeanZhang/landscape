@@ -63,7 +63,7 @@ async function get_info() {
       }}</n-button>
     </n-flex>
     <n-flex v-if="infos.length > 0">
-      <ICMPRaShowItem
+      <LanIPv6ShowItem
         v-for="(data, index) in infos"
         :key="index"
         :config="data.value"

@@ -276,6 +276,6 @@ export default {
   expected_pd_len: "预期上游 PD 前缀长度",
   expected_pd_len_invalid: "预期上游 PD 前缀长度必须是 56 到 64 的整数",
 
-  // ICMPRaShowItem
+  // LanIPv6ShowItem
   neighbor_count_unknown: "IPv6 邻居数量未知",
 };

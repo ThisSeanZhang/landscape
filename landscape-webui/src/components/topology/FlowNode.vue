@@ -2,7 +2,7 @@
 import { Handle, Position } from "@vue-flow/core";
 import DHCPv4ServiceEditModal from "@/components/dhcp_v4/DHCPv4ServiceEditModal.vue";
 import FirewallServiceEditModal from "@/components/firewall/FirewallServiceEditModal.vue";
-import ICMPRaEditModal from "@/components/icmp_ra/ICMPRaEditModal.vue";
+import LanIPv6EditModal from "@/components/lan_ipv6/LanIPv6EditModal.vue";
 import IpConfigModal from "@/components/ipconfig/IpConfigModal.vue";
 import IPv6PDEditModal from "@/components/ipv6pd/IPv6PDEditModal.vue";
 import MSSClampServiceEditModal from "@/components/mss_clamp/MSSClampServiceEditModal.vue";
@@ -504,7 +504,7 @@ const node_style = computed(() => ({
       :mac="node.mac ?? null"
       @refresh="refreshGraph"
     />
-    <ICMPRaEditModal
+    <LanIPv6EditModal
       v-model:show="iface_lan_ipv6_edit_show"
       :zone="node.zone_type"
       :iface_name="node.name"
