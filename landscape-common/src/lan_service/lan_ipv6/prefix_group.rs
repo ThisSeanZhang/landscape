@@ -282,12 +282,11 @@ impl LanPrefixGroupConfig {
         }
 
         let parent_len = self.parent.resolved_parent_prefix_len();
-        let is_pd_parent = matches!(self.parent, PrefixParentSource::Pd { .. });
         if let Some(ra) = &self.ra {
-            if is_pd_parent && ra.pool_index == 0 {
+            if ra.pool_index == 0 {
                 return Err(ServiceConfigError::InvalidConfig {
                     reason: format!(
-                        "RA pool_index ({}) must be >= 1 when parent is PD-derived (subnet 0 is reserved for WAN)",
+                        "RA pool_index ({}) must be >= 1 (subnet 0 is reserved for WAN)",
                         ra.pool_index
                     ),
                 });
@@ -307,10 +306,10 @@ impl LanPrefixGroupConfig {
             }
         }
         if let Some(na) = &self.na {
-            if is_pd_parent && na.pool_index == 0 {
+            if na.pool_index == 0 {
                 return Err(ServiceConfigError::InvalidConfig {
                     reason: format!(
-                        "IA_NA pool_index ({}) must be >= 1 when parent is PD-derived (subnet 0 is reserved for WAN)",
+                        "IA_NA pool_index ({}) must be >= 1 (subnet 0 is reserved for WAN)",
                         na.pool_index
                     ),
                 });
@@ -333,10 +332,10 @@ impl LanPrefixGroupConfig {
             }
         }
         if let Some(pd) = &self.pd {
-            if is_pd_parent && pd.start_index == 0 {
+            if pd.start_index == 0 {
                 return Err(ServiceConfigError::InvalidConfig {
                     reason: format!(
-                        "IA_PD start_index ({}) must be >= 1 when parent is PD-derived (subnet 0 is reserved for WAN)",
+                        "IA_PD start_index ({}) must be >= 1 (subnet 0 is reserved for WAN)",
                         pd.start_index
                     ),
                 });
@@ -843,6 +842,56 @@ mod tests {
     #[test]
     fn test_blocks_no_overlap_different_sizes() {
         assert!(!blocks_overlap(48, 0, 62, 4, 64));
+    }
+
+    #[test]
+    fn static_parent_rejects_wan_reserved_indices() {
+        let base_group = LanPrefixGroupConfig {
+            group_id: "static-reserved".to_string(),
+            parent: PrefixParentSource::Static {
+                base_prefix: "fd00::".parse().unwrap(),
+                parent_prefix_len: 56,
+            },
+            ra: None,
+            na: None,
+            pd: None,
+        };
+
+        let mut ra_group = base_group.clone();
+        ra_group.ra = Some(RaPrefixConfig {
+            pool_index: 0,
+            preferred_lifetime: 300,
+            valid_lifetime: 600,
+        });
+        assert!(ra_group.validate().unwrap_err().to_string().contains("reserved for WAN"));
+
+        let mut na_group = base_group.clone();
+        na_group.na = Some(NaPrefixConfig { pool_index: 0 });
+        assert!(na_group.validate().unwrap_err().to_string().contains("reserved for WAN"));
+
+        let mut pd_group = base_group;
+        pd_group.pd = Some(PdPrefixRangeConfig { pool_len: 64, start_index: 0, end_index: 1 });
+        assert!(pd_group.validate().unwrap_err().to_string().contains("reserved for WAN"));
+    }
+
+    #[test]
+    fn static_parent_accepts_indices_after_wan_reserved_subnet() {
+        let group = LanPrefixGroupConfig {
+            group_id: "static-available".to_string(),
+            parent: PrefixParentSource::Static {
+                base_prefix: "fd00::".parse().unwrap(),
+                parent_prefix_len: 56,
+            },
+            ra: Some(RaPrefixConfig {
+                pool_index: 1,
+                preferred_lifetime: 300,
+                valid_lifetime: 600,
+            }),
+            na: Some(NaPrefixConfig { pool_index: 1 }),
+            pd: Some(PdPrefixRangeConfig { pool_len: 64, start_index: 2, end_index: 3 }),
+        };
+
+        assert!(validate_prefix_groups(&[group]).is_ok());
     }
 
     #[test]

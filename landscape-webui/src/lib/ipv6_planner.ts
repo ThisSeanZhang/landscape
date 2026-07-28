@@ -681,15 +681,10 @@ function withPoolIndex(
 }
 
 function entryReservedBlockOffset(entry: GroupPlannerEntry): number {
-  return entry.parent.t === "pd"
-    ? reservedBlockOffsetForPrefix(entry.poolLen)
-    : 0;
+  return reservedBlockOffsetForPrefix(entry.poolLen);
 }
 
 function entryReservedUnitCount(entry: GroupPlannerEntry): number {
-  if (entry.parent.t !== "pd") {
-    return 0;
-  }
   return unitSpanForPrefix(entry.poolLen) ?? 1;
 }
 
@@ -847,7 +842,7 @@ function buildGroupPlannerViewBase(
         : undefined,
       selectedUnitStart,
       selectedUnitSpan,
-      reservedUnitCount: 0,
+      reservedUnitCount: entryReservedUnitCount(selectedEntry),
       runtimeReady: true,
       actualPrefix: `${selectedEntry.parent.basePrefix}/${selectedEntry.parent.parentPrefixLen}`,
       actualPrefixLen: selectedEntry.parent.parentPrefixLen,
@@ -1106,7 +1101,7 @@ function buildGroupPlannerView(
 
   const totalUnits = Number(totalUnitsBig);
   const units: PlannerUnit[] = [];
-  const wanUnitCount = base.entry.parent.t === "pd" ? 1 : 0;
+  const wanUnitCount = base.reservedUnitCount > 0 ? 1 : 0;
   const candidateUnitSpan = unitSpanForPrefix(base.targetPrefixLen) ?? 1;
   const blockedBlockStarts = new Set<number>();
 

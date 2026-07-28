@@ -41,14 +41,14 @@ fn make_status_with_prefixes() -> Ipv6ServerStatus {
         group_id: "default".into(),
         parent: PrefixParentSource::Static {
             base_prefix: Ipv6Addr::new(0xfd00, 0, 0, 0, 0, 0, 0, 0),
-            parent_prefix_len: 64,
+            parent_prefix_len: 60,
         },
         ra: Some(RaPrefixConfig {
-            pool_index: 0,
+            pool_index: 1,
             preferred_lifetime: 1800,
             valid_lifetime: 3600,
         }),
-        na: Some(NaPrefixConfig { pool_index: 0 }),
+        na: Some(NaPrefixConfig { pool_index: 1 }),
         pd: None,
     }];
 
@@ -152,14 +152,14 @@ fn offer_na_exhausts_pool() {
         group_id: "default".into(),
         parent: PrefixParentSource::Static {
             base_prefix: Ipv6Addr::new(0xfd00, 0, 0, 0, 0, 0, 0, 0),
-            parent_prefix_len: 64,
+            parent_prefix_len: 60,
         },
         ra: Some(RaPrefixConfig {
-            pool_index: 0,
+            pool_index: 1,
             preferred_lifetime: 1800,
             valid_lifetime: 3600,
         }),
-        na: Some(NaPrefixConfig { pool_index: 0 }),
+        na: Some(NaPrefixConfig { pool_index: 1 }),
         pd: None,
     }];
     let subnets2 = compute_subnets(&groups, &IAPrefixMap::new(), 300);
@@ -185,7 +185,7 @@ fn offer_na_uses_static_binding() {
     let mac = MacAddr::from([0x00, 0x11, 0x22, 0x33, 0x44, 0x55]);
     status.bind_mac_suffix(mac, 0x0200);
     let addrs = status.offer_na(b"static-duid", mac, None).unwrap();
-    let expected = Ipv6Addr::new(0xfd00, 0, 0, 0, 0, 0, 0, 0x0200);
+    let expected = Ipv6Addr::new(0xfd00, 0, 0, 1, 0, 0, 0, 0x0200);
     assert_eq!(addrs[0], expected);
 }
 
@@ -208,7 +208,7 @@ fn confirm_na_updates_lifetime() {
 fn check_address_owner_for_unallocated_ip() {
     let status = make_status_with_prefixes();
     // IP within the /64 prefix but not allocated → Unallocated
-    let ip = Ipv6Addr::new(0xfd00, 0, 0, 0, 0, 0, 0x1234, 0x5678);
+    let ip = Ipv6Addr::new(0xfd00, 0, 0, 1, 0, 0, 0x1234, 0x5678);
     let result = status.check_address_owner(ip, b"some-duid", NA_TEST_MAC);
     assert_eq!(result, NaAddressCheck::Unallocated);
 }

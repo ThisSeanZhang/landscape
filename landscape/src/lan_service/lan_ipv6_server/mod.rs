@@ -1510,6 +1510,17 @@ pub fn compute_subnets(
     let sub_prefix_len: u8 = 64;
 
     for group in groups {
+        let uses_wan_reserved_subnet = group.ra.as_ref().is_some_and(|ra| ra.pool_index == 0)
+            || group.na.as_ref().is_some_and(|na| na.pool_index == 0)
+            || group.pd.as_ref().is_some_and(|pd| pd.start_index == 0);
+        if uses_wan_reserved_subnet {
+            tracing::warn!(
+                group_id = %group.group_id,
+                "compute_subnets: skipped prefix group using WAN-reserved subnet 0"
+            );
+            continue;
+        }
+
         let (parent_ip, parent_len) = match &group.parent {
             PrefixParentSource::Static { base_prefix, parent_prefix_len } => {
                 (pd::normalize_prefix(*base_prefix, *parent_prefix_len), *parent_prefix_len)

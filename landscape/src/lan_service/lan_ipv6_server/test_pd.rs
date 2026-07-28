@@ -30,7 +30,7 @@ fn make_pd_status_with_filter(delegate_prefix_len: u8) -> Ipv6ServerStatus {
         },
         ra: None,
         na: None,
-        pd: Some(PdPrefixRangeConfig { pool_len: 56, start_index: 0, end_index: 3 }),
+        pd: Some(PdPrefixRangeConfig { pool_len: 56, start_index: 1, end_index: 4 }),
     }];
 
     let subnets = compute_subnets(&groups, &IAPrefixMap::new(), 300);
@@ -57,7 +57,7 @@ fn pool_len_above_64_is_not_installed_at_runtime() {
         },
         ra: None,
         na: None,
-        pd: Some(PdPrefixRangeConfig { pool_len: 65, start_index: 0, end_index: 0 }),
+        pd: Some(PdPrefixRangeConfig { pool_len: 65, start_index: 1, end_index: 1 }),
     }];
 
     assert!(compute_subnets(&groups, &IAPrefixMap::new(), 300).is_empty());
@@ -90,7 +90,7 @@ fn offer_pd_returns_same_prefix_on_second_call() {
 #[test]
 fn offer_pd_exhausts_pool() {
     let mut status = make_pd_status();
-    // 4 slots (0..=3)
+    // 4 slots (1..=4; slot 0 is reserved for WAN)
     let duids: Vec<_> = (0..4).map(|i| format!("pd-client-{:02}", i).into_bytes()).collect();
     for duid in &duids {
         assert!(status.offer_pd(duid).is_some());
@@ -175,7 +175,7 @@ fn reconcile_pd_routes_cleans_up_stale() {
     let duid = b"pd-reconcile";
     status.offer_pd(duid);
 
-    let stale = vec![(Ipv6Addr::new(0x2001, 0xdb8, 0, 0x100, 0, 0, 0, 0), 56)];
+    let stale = vec![(Ipv6Addr::new(0x2001, 0xdb8, 0, 0x500, 0, 0, 0, 0), 56)];
     status.update_pd_routes(duid, Ipv6Addr::LOCALHOST, stale);
 
     let cleanups = status.reconcile_pd_routes();

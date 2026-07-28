@@ -242,14 +242,7 @@ function syncParentIntoDraftGroup() {
   };
 }
 
-function isDynamicParent() {
-  return draftGroup.value?.parent.t === "pd" || props.sourceType === "pd";
-}
-
 function reservedBlockOffsetForPrefix(targetPrefixLen: number) {
-  if (!isDynamicParent()) {
-    return 0;
-  }
   if (targetPrefixLen <= 64) {
     return 1;
   }
@@ -719,7 +712,8 @@ function clearStaleSelectionsOnOpen() {
     });
     return (
       view.stateReason === "selection_out_of_range" ||
-      view.stateReason === "target_shorter_than_parent"
+      view.stateReason === "target_shorter_than_parent" ||
+      view.selectedStatus === "wan_reserved"
     );
   });
 

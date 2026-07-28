@@ -433,7 +433,7 @@ function onCanvasClick(event: MouseEvent) {
   const unitStart = Math.floor(unitIndex / unitSpan) * unitSpan;
   const nextPoolIndex = poolIndexFromPlannerUnitStart(
     planner.value.targetPrefixLen,
-    props.editGroup?.parent.t === "pd" ? planner.value.reservedSlots : 0,
+    planner.value.reservedSlots,
     unitStart,
   );
   if (nextPoolIndex === undefined) {

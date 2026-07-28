@@ -27,14 +27,14 @@ fn make_slaac_status() -> Ipv6ServerStatus {
         group_id: "default".into(),
         parent: PrefixParentSource::Static {
             base_prefix: Ipv6Addr::new(0xfd00, 0, 0, 0, 0, 0, 0, 0),
-            parent_prefix_len: 64,
+            parent_prefix_len: 60,
         },
         ra: Some(RaPrefixConfig {
-            pool_index: 0,
+            pool_index: 1,
             preferred_lifetime: 1800,
             valid_lifetime: 3600,
         }),
-        na: Some(NaPrefixConfig { pool_index: 0 }),
+        na: Some(NaPrefixConfig { pool_index: 1 }),
         pd: None,
     }];
 
@@ -44,10 +44,30 @@ fn make_slaac_status() -> Ipv6ServerStatus {
 }
 
 #[test]
+fn static_group_using_wan_reserved_subnet_is_not_installed() {
+    let group = LanPrefixGroupConfig {
+        group_id: "static-reserved".into(),
+        parent: PrefixParentSource::Static {
+            base_prefix: Ipv6Addr::new(0xfd00, 0, 0, 0, 0, 0, 0, 0),
+            parent_prefix_len: 60,
+        },
+        ra: Some(RaPrefixConfig {
+            pool_index: 0,
+            preferred_lifetime: 1800,
+            valid_lifetime: 3600,
+        }),
+        na: Some(NaPrefixConfig { pool_index: 1 }),
+        pd: None,
+    };
+
+    assert!(compute_subnets(&[group], &IAPrefixMap::new(), 300).is_empty());
+}
+
+#[test]
 fn record_slaac_addr_succeeds_for_valid_ip() {
     let mut status = make_slaac_status();
     let mac = MacAddr::from([0x00, 0x11, 0x22, 0x33, 0x44, 0x55]);
-    let ip = Ipv6Addr::new(0xfd00, 0, 0, 0, 0, 0, 0xAA, 0xBB);
+    let ip = Ipv6Addr::new(0xfd00, 0, 0, 1, 0, 0, 0xAA, 0xBB);
     let result = status.record_slaac_addr(mac, ip);
     assert_eq!(result, SlaacResult::Recorded);
 }
@@ -72,7 +92,7 @@ fn record_slaac_addr_conflict_with_existing_na() {
 fn clean_expired_slaac_removes_expired_entries() {
     let mut status = make_slaac_status();
     let mac = MacAddr::from([0x00, 0x11, 0x22, 0x33, 0x44, 0x55]);
-    let ip = Ipv6Addr::new(0xfd00, 0, 0, 0, 0, 0, 0xCC, 0xDD);
+    let ip = Ipv6Addr::new(0xfd00, 0, 0, 1, 0, 0, 0xCC, 0xDD);
     status.record_slaac_addr(mac, ip);
 
     // Fresh entry with high threshold should not be cleaned
@@ -84,7 +104,7 @@ fn clean_expired_slaac_removes_expired_entries() {
 fn clean_expired_slaac_with_zero_threshold_removes_all() {
     let mut status = make_slaac_status();
     let mac = MacAddr::from([0x00, 0x11, 0x22, 0x33, 0x44, 0x55]);
-    let ip = Ipv6Addr::new(0xfd00, 0, 0, 0, 0, 0, 0xEE, 0xFF);
+    let ip = Ipv6Addr::new(0xfd00, 0, 0, 1, 0, 0, 0xEE, 0xFF);
     status.record_slaac_addr(mac, ip);
 
     let expired = status.clean_expired_slaac(0);

@@ -218,7 +218,7 @@ export default {
   stale_selection_empty_description:
     "当前编辑草稿中没有可保存的前缀选择，请重新编辑、删除此条配置或取消编辑。",
   stale_selection_reset_notice:
-    "原前缀组已不符合当前父前缀容量，所有选择均已清空，请重新配置。",
+    "原前缀组已命中 WAN 保留块或不符合当前父前缀容量，所有选择均已清空，请重新配置。",
   stale_selection_return_edit: "返回编辑",
   stale_selection_delete: "删除此条",
   stale_selection_cancel_edit: "取消编辑",
