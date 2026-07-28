@@ -386,6 +386,7 @@ async fn run_system(
     let static_nat6_mapping_service = StaticNat6MappingService::new(
         db_store_provider.clone(),
         event_handle.subscribe_device(),
+        event_handle.subscribe_ipv6_assign(),
         shared_wan_iid.clone(),
     )
     .await;
