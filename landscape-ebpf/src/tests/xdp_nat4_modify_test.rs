@@ -13,6 +13,7 @@ const OUTER_ICMP_OFFSET: usize = OUTER_IP_OFFSET + 20;
 const INNER_IP_OFFSET: usize = OUTER_ICMP_OFFSET + 8;
 const INNER_ICMP_OFFSET: usize = INNER_IP_OFFSET + 20;
 const INNER_TCP_OFFSET: usize = INNER_IP_OFFSET + 20;
+const INNER_UDP_OFFSET: usize = INNER_IP_OFFSET + 20;
 
 const LAN_IP: [u8; 4] = [192, 168, 1, 100];
 const WAN_IP: [u8; 4] = [203, 0, 113, 1];
@@ -110,6 +111,109 @@ fn tcp_checksum_ipv4(src: [u8; 4], dst: [u8; 4], tcp: &[u8]) -> u16 {
     input.extend_from_slice(&(tcp.len() as u16).to_be_bytes());
     input.extend_from_slice(tcp);
     internet_checksum(&input)
+}
+
+fn udp_checksum_ipv4(src: [u8; 4], dst: [u8; 4], udp: &[u8]) -> u16 {
+    let mut input = Vec::with_capacity(12 + udp.len());
+    input.extend_from_slice(&src);
+    input.extend_from_slice(&dst);
+    input.extend_from_slice(&[0, 17]);
+    input.extend_from_slice(&(udp.len() as u16).to_be_bytes());
+    input.extend_from_slice(udp);
+    internet_checksum(&input)
+}
+
+fn udp_payload_for_zero_checksum(
+    src: [u8; 4],
+    dst: [u8; 4],
+    source_port: u16,
+    dest_port: u16,
+) -> [u8; 2] {
+    let mut udp = [0u8; 10];
+    let udp_len = udp.len() as u16;
+    udp[0..2].copy_from_slice(&source_port.to_be_bytes());
+    udp[2..4].copy_from_slice(&dest_port.to_be_bytes());
+    udp[4..6].copy_from_slice(&udp_len.to_be_bytes());
+
+    for word in 0..=u16::MAX {
+        udp[8..10].copy_from_slice(&word.to_be_bytes());
+        if udp_checksum_ipv4(src, dst, &udp) == 0 {
+            return word.to_be_bytes();
+        }
+    }
+
+    unreachable!("every IPv4 UDP pseudo-header has a zero-checksum payload word")
+}
+
+fn write_udp_segment(
+    udp: &mut [u8],
+    src: [u8; 4],
+    dst: [u8; 4],
+    source_port: u16,
+    dest_port: u16,
+    payload: [u8; 2],
+    checksum_enabled: bool,
+) {
+    let udp_len = udp.len() as u16;
+    udp[0..2].copy_from_slice(&source_port.to_be_bytes());
+    udp[2..4].copy_from_slice(&dest_port.to_be_bytes());
+    udp[4..6].copy_from_slice(&udp_len.to_be_bytes());
+    udp[8..10].copy_from_slice(&payload);
+
+    if checksum_enabled {
+        let checksum = udp_checksum_ipv4(src, dst, udp);
+        assert_ne!(checksum, 0, "input checksum must be enabled and non-zero");
+        udp[6..8].copy_from_slice(&checksum.to_be_bytes());
+    }
+}
+
+fn build_udp_packet(checksum_enabled: bool) -> Vec<u8> {
+    let payload = udp_payload_for_zero_checksum(WAN_IP, REMOTE_IP, NAT_ID, REMOTE_PORT);
+    let mut packet = vec![0u8; OUTER_ICMP_OFFSET + 10];
+    packet[0..6].copy_from_slice(&[0x02, 0, 0, 0, 0, 1]);
+    packet[6..12].copy_from_slice(&[0x02, 0, 0, 0, 0, 2]);
+    packet[12..14].copy_from_slice(&0x0800u16.to_be_bytes());
+
+    write_ipv4_header(&mut packet, OUTER_IP_OFFSET, LAN_IP, REMOTE_IP, 30, 17);
+    write_udp_segment(
+        &mut packet[OUTER_ICMP_OFFSET..],
+        LAN_IP,
+        REMOTE_IP,
+        ORIGINAL_ID,
+        REMOTE_PORT,
+        payload,
+        checksum_enabled,
+    );
+    packet
+}
+
+fn build_udp_icmp_error() -> Vec<u8> {
+    let payload = udp_payload_for_zero_checksum(REMOTE_IP, WAN_IP, REMOTE_PORT, NAT_ID);
+    let mut packet = vec![0u8; INNER_UDP_OFFSET + 10];
+    packet[0..6].copy_from_slice(&[0x02, 0, 0, 0, 0, 1]);
+    packet[6..12].copy_from_slice(&[0x02, 0, 0, 0, 0, 2]);
+    packet[12..14].copy_from_slice(&0x0800u16.to_be_bytes());
+
+    write_ipv4_header(&mut packet, INNER_IP_OFFSET, REMOTE_IP, LAN_IP, 30, 17);
+    write_udp_segment(
+        &mut packet[INNER_UDP_OFFSET..],
+        REMOTE_IP,
+        LAN_IP,
+        REMOTE_PORT,
+        ORIGINAL_ID,
+        payload,
+        true,
+    );
+
+    let outer_icmp = &mut packet[OUTER_ICMP_OFFSET..];
+    outer_icmp[0] = 3;
+    outer_icmp[1] = 1;
+    let outer_icmp_checksum = internet_checksum(outer_icmp);
+    outer_icmp[2..4].copy_from_slice(&outer_icmp_checksum.to_be_bytes());
+
+    let outer_len = (packet.len() - OUTER_IP_OFFSET) as u16;
+    write_ipv4_header(&mut packet, OUTER_IP_OFFSET, LAN_IP, REMOTE_IP, outer_len, 1);
+    packet
 }
 
 fn build_tcp_icmp_error(
@@ -258,6 +362,109 @@ fn xdp_modify_icmp_error_ingress_restores_inner_echo_id() {
 
     assert_eq!(result.return_value, 2);
     assert_valid_modified_packet(&output, ROUTER_IP, LAN_IP, LAN_IP, REMOTE_IP, ORIGINAL_ID);
+}
+
+#[test]
+fn xdp_modify_udp_mangles_computed_zero_checksum() {
+    let mut builder = TestXdpNat4ModifySkelBuilder::default();
+    builder.object_builder_mut().pin_root_path(&pin_root()).unwrap();
+    let mut open_object = MaybeUninit::uninit();
+    let open = builder.open(&mut open_object).unwrap();
+    let skel = open.load().unwrap();
+
+    let mut packet = build_udp_packet(true);
+    let mut output = vec![0u8; packet.len()];
+    let result = skel
+        .progs
+        .test_xdp_nat4_modify_udp_egress
+        .test_run(ProgramInput {
+            data_in: Some(&mut packet),
+            data_out: Some(&mut output),
+            ..Default::default()
+        })
+        .expect("test_run failed");
+
+    assert_eq!(result.return_value, 2);
+    assert_eq!(&output[26..30], &WAN_IP);
+    assert_eq!(
+        u16::from_be_bytes(output[OUTER_ICMP_OFFSET..OUTER_ICMP_OFFSET + 2].try_into().unwrap()),
+        NAT_ID
+    );
+    assert_eq!(
+        u16::from_be_bytes(
+            output[OUTER_ICMP_OFFSET + 6..OUTER_ICMP_OFFSET + 8].try_into().unwrap()
+        ),
+        0xffff
+    );
+    assert_eq!(internet_checksum(&output[OUTER_IP_OFFSET..OUTER_ICMP_OFFSET]), 0);
+    assert_eq!(udp_checksum_ipv4(WAN_IP, REMOTE_IP, &output[OUTER_ICMP_OFFSET..]), 0);
+}
+
+#[test]
+fn xdp_modify_udp_preserves_disabled_checksum() {
+    let mut builder = TestXdpNat4ModifySkelBuilder::default();
+    builder.object_builder_mut().pin_root_path(&pin_root()).unwrap();
+    let mut open_object = MaybeUninit::uninit();
+    let open = builder.open(&mut open_object).unwrap();
+    let skel = open.load().unwrap();
+
+    let mut packet = build_udp_packet(false);
+    let mut output = vec![0u8; packet.len()];
+    let result = skel
+        .progs
+        .test_xdp_nat4_modify_udp_egress
+        .test_run(ProgramInput {
+            data_in: Some(&mut packet),
+            data_out: Some(&mut output),
+            ..Default::default()
+        })
+        .expect("test_run failed");
+
+    assert_eq!(result.return_value, 2);
+    assert_eq!(
+        u16::from_be_bytes(
+            output[OUTER_ICMP_OFFSET + 6..OUTER_ICMP_OFFSET + 8].try_into().unwrap()
+        ),
+        0
+    );
+}
+
+#[test]
+fn xdp_modify_icmp_error_udp_mangles_computed_zero_checksum() {
+    let mut builder = TestXdpNat4ModifySkelBuilder::default();
+    builder.object_builder_mut().pin_root_path(&pin_root()).unwrap();
+    let mut open_object = MaybeUninit::uninit();
+    let open = builder.open(&mut open_object).unwrap();
+    let skel = open.load().unwrap();
+
+    let mut packet = build_udp_icmp_error();
+    let mut output = vec![0u8; packet.len()];
+    let result = skel
+        .progs
+        .test_xdp_nat4_modify_icmp_error_udp_egress
+        .test_run(ProgramInput {
+            data_in: Some(&mut packet),
+            data_out: Some(&mut output),
+            ..Default::default()
+        })
+        .expect("test_run failed");
+
+    assert_eq!(result.return_value, 2);
+    assert_eq!(&output[26..30], &WAN_IP);
+    assert_eq!(&output[54..58], &REMOTE_IP);
+    assert_eq!(&output[58..62], &WAN_IP);
+    assert_eq!(
+        u16::from_be_bytes(output[INNER_UDP_OFFSET + 2..INNER_UDP_OFFSET + 4].try_into().unwrap()),
+        NAT_ID
+    );
+    assert_eq!(
+        u16::from_be_bytes(output[INNER_UDP_OFFSET + 6..INNER_UDP_OFFSET + 8].try_into().unwrap()),
+        0xffff
+    );
+    assert_eq!(internet_checksum(&output[OUTER_IP_OFFSET..OUTER_ICMP_OFFSET]), 0);
+    assert_eq!(internet_checksum(&output[INNER_IP_OFFSET..INNER_UDP_OFFSET]), 0);
+    assert_eq!(internet_checksum(&output[OUTER_ICMP_OFFSET..]), 0);
+    assert_eq!(udp_checksum_ipv4(REMOTE_IP, WAN_IP, &output[INNER_UDP_OFFSET..]), 0);
 }
 
 #[test]

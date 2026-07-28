@@ -39,6 +39,16 @@ static __always_inline __sum16 xdp_csum_apply(__sum16 old, __wsum delta) {
     return xdp_csum_fold(xdp_csum_add(delta, ~xdp_csum_unfold(old)));
 }
 
+/* IPv4 UDP uses zero to mean "checksum disabled". Preserve an existing zero,
+ * but encode a computed zero as CSUM_MANGLED_0 on the wire.
+ */
+static __always_inline __sum16 xdp_csum_apply_udp4(__sum16 old, __wsum delta) {
+    if (old == 0) return 0;
+
+    __sum16 csum = xdp_csum_apply(old, delta);
+    return csum == 0 ? (__sum16)0xffff : csum;
+}
+
 /* Compute addr delta (2 x __be32) and apply to checksum field in one step. */
 static __always_inline __sum16 xdp_csum_update_addr(__be32 *old_addr, __be32 *new_addr,
                                                     __sum16 csum) {

@@ -86,7 +86,7 @@ static __always_inline int xdp_csum_update_l4(void *data, void *data_end, u16 l4
         struct udphdr *udph = data + l4_offset;
         if ((void *)(udph + 1) > data_end) return -1;
         if (udph->check != 0 || is_icmp_error) {
-            udph->check = xdp_csum_apply(udph->check, combined);
+            udph->check = xdp_csum_apply_udp4(udph->check, combined);
         }
     }
 
@@ -194,11 +194,10 @@ static __always_inline int xdp_modify_headers_v4(void *data, void *data_end, u16
                     __wsum uport_delta = bpf_csum_diff(&old_uport32, 4, &new_uport32, 4, 0);
 
                     if (inner_udp->check != 0) {
-                        inner_udp->check = xdp_csum_apply(inner_udp->check, uport_delta);
-
                         __wsum uaddr_delta =
                             bpf_csum_diff(&inner_old_addr, 4, &action->to_addr.addr, 4, 0);
-                        inner_udp->check = xdp_csum_apply(inner_udp->check, uaddr_delta);
+                        inner_udp->check = xdp_csum_apply_udp4(
+                            inner_udp->check, xdp_csum_add(uport_delta, uaddr_delta));
                     }
 
                     /* ICMP reflects: inner UDP csum change + inner UDP port change */
@@ -256,7 +255,7 @@ static __always_inline int xdp_modify_headers_v4(void *data, void *data_end, u16
             __be32 new_port32 = (__be32)action->to_port;
             __wsum dp = bpf_csum_diff(&old_port32, 4, &new_port32, 4, 0);
             __wsum da = bpf_csum_diff(&old_addr, 4, &action->to_addr.addr, 4, 0);
-            udph->check = xdp_csum_apply(udph->check, xdp_csum_add(dp, da));
+            udph->check = xdp_csum_apply_udp4(udph->check, xdp_csum_add(dp, da));
         }
 
         if (is_icmp_error && icmp_err_l4_offset != 0) {

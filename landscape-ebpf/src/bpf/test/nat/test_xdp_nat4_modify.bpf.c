@@ -10,6 +10,13 @@ char LICENSE[] SEC("license") = "GPL";
 #define INNER_IP_OFFSET (OUTER_ICMP_OFFSET + sizeof(struct icmphdr))
 #define INNER_L4_OFFSET (INNER_IP_OFFSET + sizeof(struct iphdr))
 
+static const struct nat4_action udp_egress_action = {
+    .from_addr.addr = bpf_htonl(0xC0A80164),
+    .from_port = bpf_htons(0x1234),
+    .to_addr.addr = bpf_htonl(0xCB007101),
+    .to_port = bpf_htons(0x5678),
+};
+
 static __always_inline int run_modify(struct xdp_md *ctx, bool is_modify_source,
                                       const struct nat4_action *action, u8 inner_l4_protocol) {
     void *data = (void *)(long)ctx->data;
@@ -41,6 +48,22 @@ int test_xdp_nat4_modify_icmp_error_ingress(struct xdp_md *ctx) {
         .to_port = bpf_htons(0x1234),
     };
     return run_modify(ctx, false, &action, IPPROTO_ICMP);
+}
+
+SEC("xdp")
+int test_xdp_nat4_modify_udp_egress(struct xdp_md *ctx) {
+    void *data = (void *)(long)ctx->data;
+    void *data_end = (void *)(long)ctx->data_end;
+
+    if (xdp_modify_headers_v4(data, data_end, OUTER_ICMP_OFFSET, IPPROTO_UDP, true,
+                              &udp_egress_action, false, 0, 0, 0))
+        return XDP_DROP;
+    return XDP_PASS;
+}
+
+SEC("xdp")
+int test_xdp_nat4_modify_icmp_error_udp_egress(struct xdp_md *ctx) {
+    return run_modify(ctx, true, &udp_egress_action, IPPROTO_UDP);
 }
 
 SEC("xdp")
