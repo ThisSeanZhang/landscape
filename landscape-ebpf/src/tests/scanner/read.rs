@@ -41,6 +41,8 @@ mod tests {
 
     const TC_ACT_UNSPEC: i32 = -1;
 
+    const TC_ACT_SHOT: i32 = 2;
+
     fn assert_v4_ok(r: &skb_read_test_result) {
         assert_eq!(r.l3_proto, 4);
         assert_eq!(r.scan_ret, 0, "scan_ret={}", r.scan_ret);
@@ -200,6 +202,28 @@ mod tests {
         // inner UDP ports (flipped: dst_port=source, src_port=dest)
         assert_eq!(u16::from_be(r.v4_info.dst_port), 1234);
         assert_eq!(u16::from_be(r.v4_info.src_port), 4321);
+    }
+
+    #[test]
+    fn skb_read_v4_icmp_error_with_min_tcp_quote() {
+        let mut pkt = build_icmpv4_error_with_inner_tcp_min_quote_eth();
+        let r = run_skb_read(&mut pkt).expect("no result");
+        assert_v4_ok(&r);
+
+        assert_eq!(r.v4_info.src_addr.addr.to_ne_bytes(), [10, 0, 0, 2]);
+        assert_eq!(r.v4_info.dst_addr.addr.to_ne_bytes(), [10, 0, 0, 1]);
+        assert_eq!(u16::from_be(r.v4_info.dst_port), 1234);
+        assert_eq!(u16::from_be(r.v4_info.src_port), 4321);
+    }
+
+    #[test]
+    fn skb_read_v4_icmp_error_rejects_incomplete_tcp_ports() {
+        let mut pkt = build_icmpv4_error_with_inner_tcp_min_quote_eth();
+        pkt.truncate(pkt.len() - 5);
+        let r = run_skb_read(&mut pkt).expect("no result");
+
+        assert_eq!(r.scan_ret, TC_ACT_OK);
+        assert_eq!(r.read_info_ret, TC_ACT_SHOT);
     }
 
     // ── v6 tests ──

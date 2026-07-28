@@ -134,6 +134,17 @@ mod tests {
         assert_eq!(r.v4.icmp_error_l4_protocol, 17); // inner UDP
     }
 
+    #[test]
+    fn xdp_v4_icmp_error_with_min_tcp_quote() {
+        let mut pkt = build_icmpv4_error_with_inner_tcp_min_quote_eth();
+        let r = run_xdp_scanner(&mut pkt).expect("no result");
+
+        assert_eq!(r.scan_ret, 0);
+        assert_ne!(r.v4.icmp_error_l3_offset, 0);
+        assert_ne!(r.v4.icmp_error_inner_l4_offset, 0);
+        assert_eq!(r.v4.icmp_error_l4_protocol, 6);
+    }
+
     // ── v6 tests ──
 
     #[test]

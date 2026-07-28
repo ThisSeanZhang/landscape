@@ -171,6 +171,27 @@ pub fn build_icmpv4_error_with_inner_ipv4_eth() -> Vec<u8> {
     packet
 }
 
+/// ICMPv4 error containing an inner IPv4 header and the first 8 TCP bytes.
+pub fn build_icmpv4_error_with_inner_tcp_min_quote_eth() -> Vec<u8> {
+    let inner_builder =
+        PacketBuilder::ipv4([10, 0, 0, 1], [10, 0, 0, 2], 64).tcp(1234, 4321, 0x12345678, 4096);
+    let mut inner_bytes = Vec::with_capacity(inner_builder.size(0));
+    inner_builder.write(&mut inner_bytes, &[]).unwrap();
+
+    let inner_truncated = &inner_bytes[..20 + 8];
+    let icmp_type = Icmpv4Type::DestinationUnreachable(DestUnreachableHeader::Host);
+    let outer_builder = PacketBuilder::ethernet2(
+        [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF],
+        [0x11, 0x22, 0x33, 0x44, 0x55, 0x66],
+    )
+    .ipv4([8, 8, 8, 8], [10, 0, 0, 1], 64)
+    .icmpv4(icmp_type);
+
+    let mut packet = Vec::with_capacity(outer_builder.size(inner_truncated.len()));
+    outer_builder.write(&mut packet, inner_truncated).unwrap();
+    packet
+}
+
 /// ICMPv6 error with inner IPv6 UDP packet
 pub fn build_icmpv6_error_with_inner_ipv6_eth() -> Vec<u8> {
     let inner_src: [u8; 16] = [0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1];

@@ -33,6 +33,26 @@ const SECOND_LAN_PORT: u16 = 56187;
 const NAT_PORT: u16 = 40000;
 const ALT_NAT_PORT: u16 = 40001;
 const GENERATION: u16 = 7;
+const OUTER_IP_OFFSET: usize = 14;
+const OUTER_ICMP_OFFSET: usize = OUTER_IP_OFFSET + 20;
+const INNER_IP_OFFSET: usize = OUTER_ICMP_OFFSET + 8;
+const INNER_TCP_OFFSET: usize = INNER_IP_OFFSET + 20;
+
+fn internet_checksum(data: &[u8]) -> u16 {
+    let mut sum = 0u32;
+    for chunk in data.chunks(2) {
+        let word = if chunk.len() == 2 {
+            u16::from_be_bytes([chunk[0], chunk[1]]) as u32
+        } else {
+            (chunk[0] as u32) << 8
+        };
+        sum += word;
+    }
+    while sum > u16::MAX as u32 {
+        sum = (sum & u16::MAX as u32) + (sum >> 16);
+    }
+    !(sum as u16)
+}
 
 fn build_ipv4_tcp(src: Ipv4Addr, dst: Ipv4Addr, src_port: u16, dst_port: u16) -> Vec<u8> {
     let builder = PacketBuilder::ethernet2(
@@ -80,18 +100,35 @@ fn build_ipv4_icmp_time_exceeded(
     buf
 }
 
-fn build_quoted_ipv4_tcp(src: Ipv4Addr, dst: Ipv4Addr, src_port: u16, dst_port: u16) -> Vec<u8> {
-    build_ipv4_tcp(src, dst, src_port, dst_port)[14..].to_vec()
+fn build_min_quoted_ipv4_tcp(
+    src: Ipv4Addr,
+    dst: Ipv4Addr,
+    src_port: u16,
+    dst_port: u16,
+) -> Vec<u8> {
+    build_ipv4_tcp(src, dst, src_port, dst_port)[14..14 + 20 + 8].to_vec()
 }
 
-fn parse_inner_ipv4_from_icmp(packet: &[u8]) -> etherparse::PacketHeaders<'_> {
-    let outer = etherparse::PacketHeaders::from_ethernet_slice(packet).expect("parse outer packet");
-    let ipv4 = match outer.net {
-        Some(etherparse::NetHeaders::Ipv4(ipv4, _)) => ipv4,
-        _ => panic!("expected outer IPv4 header"),
-    };
-    let inner_offset = 14 + ipv4.header_len() + 8;
-    etherparse::PacketHeaders::from_ip_slice(&packet[inner_offset..]).expect("parse quoted packet")
+fn assert_min_tcp_quote(
+    packet: &[u8],
+    inner_src: Ipv4Addr,
+    inner_dst: Ipv4Addr,
+    inner_source_port: u16,
+    inner_dest_port: u16,
+) {
+    assert_eq!(&packet[INNER_IP_OFFSET + 12..INNER_IP_OFFSET + 16], &inner_src.octets());
+    assert_eq!(&packet[INNER_IP_OFFSET + 16..INNER_IP_OFFSET + 20], &inner_dst.octets());
+    assert_eq!(
+        u16::from_be_bytes(packet[INNER_TCP_OFFSET..INNER_TCP_OFFSET + 2].try_into().unwrap()),
+        inner_source_port
+    );
+    assert_eq!(
+        u16::from_be_bytes(packet[INNER_TCP_OFFSET + 2..INNER_TCP_OFFSET + 4].try_into().unwrap()),
+        inner_dest_port
+    );
+    assert_eq!(internet_checksum(&packet[OUTER_IP_OFFSET..OUTER_ICMP_OFFSET]), 0);
+    assert_eq!(internet_checksum(&packet[INNER_IP_OFFSET..INNER_TCP_OFFSET]), 0);
+    assert_eq!(internet_checksum(&packet[OUTER_ICMP_OFFSET..]), 0);
 }
 
 fn put_v3_state<T: MapCore>(
@@ -468,7 +505,7 @@ mod tests {
     }
 
     #[test]
-    fn tcp_egress_dynamic_v3_icmp_error_uses_inner_l4_protocol() {
+    fn tcp_egress_dynamic_v3_icmp_error_accepts_min_quote() {
         let _guard = NAT_V3_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let mut builder = TcNatSkelBuilder::default();
         let pin_root = crate::tests::nat::isolated_pin_root("nat-v4-dynamic-v3");
@@ -509,7 +546,7 @@ mod tests {
             NAT_MAPPING_EGRESS,
         );
 
-        let quoted = build_quoted_ipv4_tcp(REMOTE_IP, LAN_HOST, 443, LAN_PORT);
+        let quoted = build_min_quoted_ipv4_tcp(REMOTE_IP, LAN_HOST, 443, LAN_PORT);
         let mut pkt = build_ipv4_icmp_time_exceeded(LAN_HOST, REMOTE_IP, &quoted);
         let mut ctx = TestSkb::default();
         ctx.ifindex = IFINDEX;
@@ -535,18 +572,7 @@ mod tests {
             panic!("expected IPv4 header in output");
         }
 
-        let quoted_out = parse_inner_ipv4_from_icmp(&packet_out);
-        if let Some(etherparse::NetHeaders::Ipv4(ipv4, _)) = quoted_out.net {
-            let dst: Ipv4Addr = ipv4.destination.into();
-            assert_eq!(dst, WAN_IP);
-        } else {
-            panic!("expected quoted IPv4 header in output");
-        }
-        if let Some(etherparse::TransportHeader::Tcp(tcp)) = quoted_out.transport {
-            assert_eq!(tcp.destination_port, NAT_PORT);
-        } else {
-            panic!("expected quoted TCP header in output");
-        }
+        assert_min_tcp_quote(&packet_out, REMOTE_IP, WAN_IP, 443, NAT_PORT);
     }
 
     #[test]
@@ -926,7 +952,7 @@ mod tests {
     }
 
     #[test]
-    fn tcp_ingress_dynamic_v3_icmp_error_uses_inner_l4_protocol() {
+    fn tcp_ingress_dynamic_v3_icmp_error_accepts_min_quote() {
         let _guard = NAT_V3_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let mut builder = TcNatSkelBuilder::default();
         let pin_root = crate::tests::nat::isolated_pin_root("nat-v4-dynamic-v3");
@@ -967,7 +993,7 @@ mod tests {
             NAT_MAPPING_INGRESS,
         );
 
-        let quoted = build_quoted_ipv4_tcp(WAN_IP, REMOTE_IP, NAT_PORT, 443);
+        let quoted = build_min_quoted_ipv4_tcp(WAN_IP, REMOTE_IP, NAT_PORT, 443);
         let mut pkt = build_ipv4_icmp_time_exceeded(REMOTE_IP, WAN_IP, &quoted);
         let mut ctx = TestSkb::default();
         ctx.ifindex = IFINDEX;
@@ -993,18 +1019,7 @@ mod tests {
             panic!("expected IPv4 header in output");
         }
 
-        let quoted_out = parse_inner_ipv4_from_icmp(&packet_out);
-        if let Some(etherparse::NetHeaders::Ipv4(ipv4, _)) = quoted_out.net {
-            let src: Ipv4Addr = ipv4.source.into();
-            assert_eq!(src, LAN_HOST);
-        } else {
-            panic!("expected quoted IPv4 header in output");
-        }
-        if let Some(etherparse::TransportHeader::Tcp(tcp)) = quoted_out.transport {
-            assert_eq!(tcp.source_port, LAN_PORT);
-        } else {
-            panic!("expected quoted TCP header in output");
-        }
+        assert_min_tcp_quote(&packet_out, LAN_HOST, REMOTE_IP, LAN_PORT, 443);
     }
 
     #[test]

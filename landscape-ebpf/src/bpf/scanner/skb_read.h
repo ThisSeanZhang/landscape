@@ -56,12 +56,12 @@ static __always_inline int skb_read_ipv4_info(struct __sk_buff *skb, u32 l3_offs
     u16 l4_offset = idx->l4_offset;
 
     if (idx->icmp_error_l4_protocol == IPPROTO_TCP) {
-        struct tcphdr *tcph;
-        if (VALIDATE_READ_DATA(skb, &tcph, idx->icmp_error_inner_l4_offset, sizeof(*tcph))) {
+        __be16 *ports;
+        if (VALIDATE_READ_DATA(skb, &ports, idx->icmp_error_inner_l4_offset, sizeof(__be16) * 2)) {
             return TC_ACT_SHOT;
         }
-        pair->dst_port = tcph->source;
-        pair->src_port = tcph->dest;
+        pair->dst_port = ports[0];
+        pair->src_port = ports[1];
     } else if (l4_protocol == IPPROTO_TCP) {
         struct tcphdr *tcph;
         if (VALIDATE_READ_DATA(skb, &tcph, l4_offset, sizeof(*tcph))) {
