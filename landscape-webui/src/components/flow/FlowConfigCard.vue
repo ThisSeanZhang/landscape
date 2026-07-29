@@ -45,7 +45,7 @@ const title_name = computed(() => {
   if (props.config.remark != null && props.config.remark !== "") {
     return frontEndStore.MASK_INFO(props.config.remark);
   }
-  return t("common.no_remark");
+  return t("common.unnamed");
 });
 const show_remark = computed(
   () =>

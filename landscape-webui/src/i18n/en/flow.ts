@@ -12,8 +12,8 @@ export default {
     title: "Flow Rule Editor",
     flow_id_label: "Flow ID",
     enabled: "Enabled",
-    name: "Name",
-    name_placeholder: "Short name shown as the card title",
+    name: "Display Name",
+    name_placeholder: "Optional; the remark is shown when left empty",
     remark: "Remark",
     duplicate_id_warning:
       "**ID** cannot be -1 and must be unique, or it may overwrite existing rules",

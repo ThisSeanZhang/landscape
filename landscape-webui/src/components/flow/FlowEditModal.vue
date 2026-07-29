@@ -147,7 +147,7 @@ function normalizeFlowTargets(
   >
     <!-- {{ rule }} -->
     <n-form v-if="rule" style="flex: 1" ref="formRef" :model="rule" :cols="5">
-      <n-grid :cols="5">
+      <n-grid :cols="5" :x-gap="10">
         <n-form-item-gi :label="t('flow.edit.flow_id_label')" :span="2">
           <n-input-number
             :min="1"
