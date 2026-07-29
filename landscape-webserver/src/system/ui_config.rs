@@ -16,8 +16,8 @@ use crate::LandscapeApp;
 pub async fn get_ui_config(
     State(state): State<LandscapeApp>,
 ) -> LandscapeApiResult<GetUIConfigResponse> {
-    let (config, hash) = state.config_service.get_config_with_hash().await?;
-    LandscapeApiResp::success(GetUIConfigResponse { ui: config.ui, hash })
+    let (ui, hash) = state.config_service.get_ui_config_from_file().await?;
+    LandscapeApiResp::success(GetUIConfigResponse { ui, hash })
 }
 
 #[utoipa::path(

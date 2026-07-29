@@ -1,5 +1,4 @@
 use arc_swap::ArcSwap;
-use fs2::FileExt;
 use landscape_common::config::{
     InitConfig, LandscapeConfig, LandscapeDnsConfig, LandscapeLanHostnameConfig,
     LandscapeMetricConfig, LandscapeTimeConfig, LandscapeUIConfig, RuntimeConfig,
@@ -12,16 +11,21 @@ use landscape_common::sys_service::gateway::settings::{
 use landscape_common::sys_service::lan_hostname::LanHostnameConfig;
 use landscape_core::time::update_time_sync_config;
 use landscape_database::provider::LandscapeDBServiceProvider;
+use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::fs::OpenOptions;
-use std::io::{Read, Write};
+use std::io::Write;
+use std::path::Path;
 use std::sync::Arc;
+use tokio::sync::Mutex;
 use toml_edit::DocumentMut;
+use uuid::Uuid;
 
 #[derive(Clone)]
 pub struct LandscapeConfigService {
     config: Arc<ArcSwap<RuntimeConfig>>,
     store: LandscapeDBServiceProvider,
+    write_lock: Arc<Mutex<()>>,
 }
 
 impl LandscapeConfigService {
@@ -29,7 +33,122 @@ impl LandscapeConfigService {
         LandscapeConfigService {
             config: Arc::new(ArcSwap::from_pointee(config)),
             store,
+            write_lock: Arc::new(Mutex::new(())),
         }
+    }
+
+    fn section_hash<T: Serialize>(config: &T) -> LdResult<String> {
+        let content =
+            toml::to_string(config).map_err(|error| LdError::ConfigError(error.to_string()))?;
+        let mut hasher = Sha256::new();
+        hasher.update(content.as_bytes());
+        Ok(hasher.finalize().iter().map(|byte| format!("{byte:02x}")).collect())
+    }
+
+    fn read_config_file(path: &Path) -> LdResult<(String, LandscapeConfig)> {
+        let content = if path.exists() { std::fs::read_to_string(path)? } else { String::new() };
+        let config = if content.is_empty() {
+            LandscapeConfig::default()
+        } else {
+            toml::from_str(&content).map_err(|error| LdError::ConfigError(error.to_string()))?
+        };
+        Ok((content, config))
+    }
+
+    fn parse_document(content: &str) -> LdResult<DocumentMut> {
+        content
+            .parse()
+            .map_err(|error: toml_edit::TomlError| LdError::ConfigError(error.to_string()))
+    }
+
+    fn set_section<T: Serialize>(
+        document: &mut DocumentMut,
+        name: &str,
+        config: &T,
+    ) -> LdResult<()> {
+        let content =
+            toml::to_string(config).map_err(|error| LdError::ConfigError(error.to_string()))?;
+        let section = Self::parse_document(&content)?;
+        document[name] = section.as_item().clone();
+        Ok(())
+    }
+
+    fn write_config_file(path: &Path, content: &str) -> LdResult<()> {
+        let file_name = path.file_name().and_then(|name| name.to_str()).unwrap_or("landscape.toml");
+        let tmp_path = path.with_file_name(format!(
+            ".{file_name}.tmp.{}.{}",
+            std::process::id(),
+            Uuid::new_v4()
+        ));
+
+        let result = (|| -> LdResult<()> {
+            let mut options = OpenOptions::new();
+            options.write(true).create_new(true);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt;
+                options.mode(0o600);
+            }
+
+            let mut tmp_file = options.open(&tmp_path)?;
+            tmp_file.write_all(content.as_bytes())?;
+            tmp_file.sync_all()?;
+            std::fs::rename(&tmp_path, path)?;
+            Ok(())
+        })();
+
+        if result.is_err() {
+            let _ = std::fs::remove_file(&tmp_path);
+        }
+        result
+    }
+
+    fn ensure_expected_hash<T: Serialize>(config: &T, expected_hash: &str) -> LdResult<()> {
+        if Self::section_hash(config)? != expected_hash {
+            return Err(LdError::ConfigConflict);
+        }
+        Ok(())
+    }
+
+    fn read_section_from_file<T, Select>(&self, select: Select) -> LdResult<(T, String)>
+    where
+        T: Serialize,
+        Select: FnOnce(LandscapeConfig) -> T,
+    {
+        let (_, config) = Self::read_config_file(&self.get_config_path())?;
+        let section = select(config);
+        let hash = Self::section_hash(&section)?;
+        Ok((section, hash))
+    }
+
+    async fn update_section<T, Select, Commit>(
+        &self,
+        section_name: &str,
+        aliases: &[&str],
+        new_config: T,
+        expected_hash: String,
+        select: Select,
+        commit: Commit,
+    ) -> LdResult<()>
+    where
+        T: Serialize,
+        Select: for<'a> Fn(&'a LandscapeConfig) -> &'a T,
+        Commit: FnOnce(&T),
+    {
+        let _guard = self.write_lock.lock().await;
+        let path = self.get_config_path();
+        let (content, current_config) = Self::read_config_file(&path)?;
+        Self::ensure_expected_hash(select(&current_config), &expected_hash)?;
+
+        let mut document = Self::parse_document(&content)?;
+        for alias in aliases {
+            document.remove(alias);
+        }
+        Self::set_section(&mut document, section_name, &new_config)?;
+        Self::write_config_file(&path, &document.to_string())?;
+        commit(&new_config);
+
+        Ok(())
     }
 
     pub async fn export_init_config(&self) -> InitConfig {
@@ -89,11 +208,7 @@ impl LandscapeConfigService {
     pub fn get_dns_config(&self) -> (LandscapeDnsConfig, String) {
         let config = self.config.load();
         let dns = config.file_config.dns.clone();
-
-        let mut hasher = Sha256::new();
-        hasher.update(toml::to_string(&config.file_config).unwrap().as_bytes());
-        let hash = hasher.finalize().iter().map(|b| format!("{:02x}", b)).collect::<String>();
-
+        let hash = Self::section_hash(&dns).unwrap_or_default();
         (dns, hash)
     }
 
@@ -122,45 +237,31 @@ impl LandscapeConfigService {
     }
 
     pub async fn get_time_config_from_file(&self) -> (LandscapeTimeConfig, String) {
-        let (config, hash) = self.get_config_with_hash().await.unwrap_or_default();
-        (config.time, hash)
+        self.read_section_from_file(|config| config.time).unwrap_or_default()
     }
 
     pub async fn get_dns_config_from_file(&self) -> (LandscapeDnsConfig, String) {
-        let (config, hash) = self.get_config_with_hash().await.unwrap_or_default();
-        (config.dns, hash)
+        self.read_section_from_file(|config| config.dns).unwrap_or_default()
     }
 
     pub async fn get_lan_hostname_config_from_file(&self) -> (LandscapeLanHostnameConfig, String) {
-        let (config, hash) = self.get_config_with_hash().await.unwrap_or_default();
-        (config.lan_hostname, hash)
+        self.read_section_from_file(|config| config.lan_hostname).unwrap_or_default()
     }
 
     pub async fn get_gateway_config_from_file(&self) -> (LandscapeGatewayConfig, String) {
-        let (config, hash) = self.get_config_with_hash().await.unwrap_or_default();
-        (config.gateway, hash)
+        self.read_section_from_file(|config| config.gateway).unwrap_or_default()
+    }
+
+    pub async fn get_ui_config_from_file(&self) -> LdResult<(LandscapeUIConfig, String)> {
+        self.read_section_from_file(|config| config.ui)
+    }
+
+    pub async fn get_metric_config_from_file(&self) -> LdResult<(LandscapeMetricConfig, String)> {
+        self.read_section_from_file(|config| config.metric)
     }
 
     pub fn get_config_path(&self) -> std::path::PathBuf {
         self.config.load().home_path.join(landscape_common::LAND_CONFIG)
-    }
-
-    pub async fn get_config_with_hash(&self) -> LdResult<(LandscapeConfig, String)> {
-        let path = self.get_config_path();
-
-        let content = if path.exists() { std::fs::read_to_string(&path)? } else { String::new() };
-
-        let mut hasher = Sha256::new();
-        hasher.update(content.as_bytes());
-        let hash = hasher.finalize().iter().map(|b| format!("{:02x}", b)).collect::<String>();
-
-        let config: LandscapeConfig = if content.is_empty() {
-            LandscapeConfig::default()
-        } else {
-            toml::from_str(&content).map_err(|e| LdError::ConfigError(e.to_string()))?
-        };
-
-        Ok((config, hash))
     }
 
     pub async fn update_ui_config(
@@ -168,141 +269,44 @@ impl LandscapeConfigService {
         new_ui: LandscapeUIConfig,
         expected_hash: String,
     ) -> LdResult<()> {
-        let path = self.get_config_path();
-
-        let file = OpenOptions::new().read(true).write(true).create(true).open(&path)?;
-
-        file.lock_exclusive()?;
-
-        let result = {
-            let mut content = String::new();
-            let mut file_obj = &file;
-            file_obj.read_to_string(&mut content)?;
-
-            let mut hasher = Sha256::new();
-            hasher.update(content.as_bytes());
-            let current_hash =
-                hasher.finalize().iter().map(|b| format!("{:02x}", b)).collect::<String>();
-
-            if current_hash != expected_hash {
-                return Err(LdError::ConfigConflict);
-            }
-
-            let mut doc =
-                content.parse::<DocumentMut>().map_err(|e| LdError::ConfigError(e.to_string()))?;
-
-            let ui_value =
-                toml::to_string(&new_ui).map_err(|e| LdError::ConfigError(e.to_string()))?;
-            let ui_doc =
-                ui_value.parse::<DocumentMut>().map_err(|e| LdError::ConfigError(e.to_string()))?;
-
-            doc["ui"] = ui_doc.as_item().clone();
-
-            let new_content = doc.to_string();
-
-            let tmp_path = path.with_extension("toml.tmp");
-            let mut opts = OpenOptions::new();
-            opts.write(true).create(true).truncate(true);
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::OpenOptionsExt;
-                opts.mode(0o600);
-            }
-            let mut tmp_file = opts.open(&tmp_path)?;
-
-            tmp_file.write_all(new_content.as_bytes())?;
-            tmp_file.sync_all()?;
-
-            std::fs::rename(&tmp_path, &path)?;
-
-            Ok::<(), LdError>(())
-        };
-
-        file.unlock()?;
-
-        if let Err(e) = result {
-            return Err(e);
-        }
-
-        self.config.rcu(|old| {
-            let mut new_config = (**old).clone();
-            new_config.ui = new_ui.clone();
-            new_config.file_config.ui = new_ui.clone();
-            new_config
-        });
-
-        Ok(())
+        self.update_section(
+            "ui",
+            &[],
+            new_ui,
+            expected_hash,
+            |config| &config.ui,
+            |new_ui| {
+                self.config.rcu(|old| {
+                    let mut new_config = (**old).clone();
+                    new_config.ui = new_ui.clone();
+                    new_config.file_config.ui = new_ui.clone();
+                    new_config
+                });
+            },
+        )
+        .await
     }
     pub async fn update_metric_config(
         &self,
         new_metric: LandscapeMetricConfig,
         expected_hash: String,
     ) -> LdResult<()> {
-        let path = self.get_config_path();
-
-        let file = OpenOptions::new().read(true).write(true).create(true).open(&path)?;
-
-        file.lock_exclusive()?;
-
-        let result = {
-            let mut content = String::new();
-            let mut file_obj = &file;
-            file_obj.read_to_string(&mut content)?;
-
-            let mut hasher = Sha256::new();
-            hasher.update(content.as_bytes());
-            let current_hash =
-                hasher.finalize().iter().map(|b| format!("{:02x}", b)).collect::<String>();
-
-            if current_hash != expected_hash {
-                return Err(LdError::ConfigConflict);
-            }
-
-            let mut doc =
-                content.parse::<DocumentMut>().map_err(|e| LdError::ConfigError(e.to_string()))?;
-
-            let metric_value =
-                toml::to_string(&new_metric).map_err(|e| LdError::ConfigError(e.to_string()))?;
-            let metric_doc = metric_value
-                .parse::<DocumentMut>()
-                .map_err(|e| LdError::ConfigError(e.to_string()))?;
-
-            doc["metric"] = metric_doc.as_item().clone();
-
-            let new_content = doc.to_string();
-
-            let tmp_path = path.with_extension("toml.tmp");
-            let mut opts = OpenOptions::new();
-            opts.write(true).create(true).truncate(true);
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::OpenOptionsExt;
-                opts.mode(0o600);
-            }
-            let mut tmp_file = opts.open(&tmp_path)?;
-
-            tmp_file.write_all(new_content.as_bytes())?;
-            tmp_file.sync_all()?;
-
-            std::fs::rename(&tmp_path, &path)?;
-
-            Ok::<(), LdError>(())
-        };
-
-        file.unlock()?;
-
-        if let Err(e) = result {
-            return Err(e);
-        }
-
-        self.config.rcu(|old| {
-            let mut new_config = (**old).clone();
-            new_config.metric.update_from_file_config(&new_metric);
-            new_config.file_config.metric = new_metric.clone();
-            new_config
-        });
-
-        Ok(())
+        self.update_section(
+            "metric",
+            &[],
+            new_metric,
+            expected_hash,
+            |config| &config.metric,
+            |new_metric| {
+                self.config.rcu(|old| {
+                    let mut new_config = (**old).clone();
+                    new_config.metric.update_from_file_config(new_metric);
+                    new_config.file_config.metric = new_metric.clone();
+                    new_config
+                });
+            },
+        )
+        .await
     }
 
     pub async fn update_dns_config(
@@ -310,71 +314,22 @@ impl LandscapeConfigService {
         new_dns: LandscapeDnsConfig,
         expected_hash: String,
     ) -> LdResult<()> {
-        let path = self.get_config_path();
-
-        let file = OpenOptions::new().read(true).write(true).create(true).open(&path)?;
-
-        file.lock_exclusive()?;
-
-        let result = {
-            let mut content = String::new();
-            let mut file_obj = &file;
-            file_obj.read_to_string(&mut content)?;
-
-            let mut hasher = Sha256::new();
-            hasher.update(content.as_bytes());
-            let current_hash =
-                hasher.finalize().iter().map(|b| format!("{:02x}", b)).collect::<String>();
-
-            if current_hash != expected_hash {
-                return Err(LdError::ConfigConflict);
-            }
-
-            let mut doc =
-                content.parse::<DocumentMut>().map_err(|e| LdError::ConfigError(e.to_string()))?;
-
-            let dns_value =
-                toml::to_string(&new_dns).map_err(|e| LdError::ConfigError(e.to_string()))?;
-            let dns_doc = dns_value
-                .parse::<DocumentMut>()
-                .map_err(|e| LdError::ConfigError(e.to_string()))?;
-
-            doc["dns"] = dns_doc.as_item().clone();
-
-            let new_content = doc.to_string();
-
-            let tmp_path = path.with_extension("toml.tmp");
-            let mut opts = OpenOptions::new();
-            opts.write(true).create(true).truncate(true);
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::OpenOptionsExt;
-                opts.mode(0o600);
-            }
-            let mut tmp_file = opts.open(&tmp_path)?;
-
-            tmp_file.write_all(new_content.as_bytes())?;
-            tmp_file.sync_all()?;
-
-            std::fs::rename(&tmp_path, &path)?;
-
-            Ok::<(), LdError>(())
-        };
-
-        file.unlock()?;
-
-        if let Err(e) = result {
-            return Err(e);
-        }
-
-        self.config.rcu(|old| {
-            let mut new_config = (**old).clone();
-            new_config.dns.update_from_file_config(&new_dns);
-            new_config.file_config.dns = new_dns.clone();
-            new_config
-        });
-
-        Ok(())
+        self.update_section(
+            "dns",
+            &[],
+            new_dns,
+            expected_hash,
+            |config| &config.dns,
+            |new_dns| {
+                self.config.rcu(|old| {
+                    let mut new_config = (**old).clone();
+                    new_config.dns.update_from_file_config(new_dns);
+                    new_config.file_config.dns = new_dns.clone();
+                    new_config
+                });
+            },
+        )
+        .await
     }
 
     pub async fn update_lan_hostname_config(
@@ -385,70 +340,24 @@ impl LandscapeConfigService {
         let new_lan_hostname = new_lan_hostname
             .normalized()
             .map_err(|error| LdError::ConfigError(error.to_string()))?;
-        let path = self.get_config_path();
-        let file = OpenOptions::new().read(true).write(true).create(true).open(&path)?;
-
-        file.lock_exclusive()?;
-
-        let result = (|| {
-            let mut content = String::new();
-            (&file).read_to_string(&mut content)?;
-
-            let mut hasher = Sha256::new();
-            hasher.update(content.as_bytes());
-            let current_hash =
-                hasher.finalize().iter().map(|b| format!("{:02x}", b)).collect::<String>();
-
-            if current_hash != expected_hash {
-                return Err(LdError::ConfigConflict);
-            }
-
-            let mut doc =
-                content.parse::<DocumentMut>().map_err(|e| LdError::ConfigError(e.to_string()))?;
-            let lan_hostname_value = toml::to_string(&new_lan_hostname)
-                .map_err(|e| LdError::ConfigError(e.to_string()))?;
-            let lan_hostname_doc = lan_hostname_value
-                .parse::<DocumentMut>()
-                .map_err(|e| LdError::ConfigError(e.to_string()))?;
-
-            doc.remove("hostname_registry");
-            doc["lan_hostname"] = lan_hostname_doc.as_item().clone();
-
-            let tmp_path = path.with_extension("toml.tmp");
-            let mut opts = OpenOptions::new();
-            opts.write(true).create(true).truncate(true);
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::OpenOptionsExt;
-                opts.mode(0o600);
-            }
-            let mut tmp_file = opts.open(&tmp_path)?;
-            tmp_file.write_all(doc.to_string().as_bytes())?;
-            tmp_file.sync_all()?;
-            std::fs::rename(&tmp_path, &path)?;
-
-            Ok::<(), LdError>(())
-        })();
-
-        if let Err(error) = file.unlock() {
-            tracing::warn!(
-                path = %path.display(),
-                error = %error,
-                "failed to release config file lock after LAN hostname update"
-            );
-        }
-        result?;
-
-        let runtime = LanHostnameConfig::from_file_config(&new_lan_hostname)
-            .expect("normalized LAN hostname config must be valid");
-        self.config.rcu(|old| {
-            let mut new_config = (**old).clone();
-            new_config.lan_hostname = runtime.clone();
-            new_config.file_config.lan_hostname = new_lan_hostname.clone();
-            new_config
-        });
-
-        Ok(())
+        self.update_section(
+            "lan_hostname",
+            &["hostname_registry"],
+            new_lan_hostname,
+            expected_hash,
+            |config| &config.lan_hostname,
+            |new_lan_hostname| {
+                let runtime = LanHostnameConfig::from_file_config(new_lan_hostname)
+                    .expect("normalized LAN hostname config must be valid");
+                self.config.rcu(|old| {
+                    let mut new_config = (**old).clone();
+                    new_config.lan_hostname = runtime.clone();
+                    new_config.file_config.lan_hostname = new_lan_hostname.clone();
+                    new_config
+                });
+            },
+        )
+        .await
     }
 
     pub async fn update_time_config(
@@ -456,72 +365,23 @@ impl LandscapeConfigService {
         new_time: LandscapeTimeConfig,
         expected_hash: String,
     ) -> LdResult<()> {
-        let path = self.get_config_path();
-
-        let file = OpenOptions::new().read(true).write(true).create(true).open(&path)?;
-
-        file.lock_exclusive()?;
-
-        let result = {
-            let mut content = String::new();
-            let mut file_obj = &file;
-            file_obj.read_to_string(&mut content)?;
-
-            let mut hasher = Sha256::new();
-            hasher.update(content.as_bytes());
-            let current_hash =
-                hasher.finalize().iter().map(|b| format!("{:02x}", b)).collect::<String>();
-
-            if current_hash != expected_hash {
-                return Err(LdError::ConfigConflict);
-            }
-
-            let mut doc =
-                content.parse::<DocumentMut>().map_err(|e| LdError::ConfigError(e.to_string()))?;
-
-            let time_value =
-                toml::to_string(&new_time).map_err(|e| LdError::ConfigError(e.to_string()))?;
-            let time_doc = time_value
-                .parse::<DocumentMut>()
-                .map_err(|e| LdError::ConfigError(e.to_string()))?;
-
-            doc["time"] = time_doc.as_item().clone();
-
-            let new_content = doc.to_string();
-
-            let tmp_path = path.with_extension("toml.tmp");
-            let mut opts = OpenOptions::new();
-            opts.write(true).create(true).truncate(true);
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::OpenOptionsExt;
-                opts.mode(0o600);
-            }
-            let mut tmp_file = opts.open(&tmp_path)?;
-
-            tmp_file.write_all(new_content.as_bytes())?;
-            tmp_file.sync_all()?;
-
-            std::fs::rename(&tmp_path, &path)?;
-
-            Ok::<(), LdError>(())
-        };
-
-        file.unlock()?;
-
-        if let Err(e) = result {
-            return Err(e);
-        }
-
-        self.config.rcu(|old| {
-            let mut new_config = (**old).clone();
-            new_config.time.update_from_file_config(&new_time);
-            new_config.file_config.time = new_time.clone();
-            new_config
-        });
-        update_time_sync_config(self.config.load().time.clone());
-
-        Ok(())
+        self.update_section(
+            "time",
+            &[],
+            new_time,
+            expected_hash,
+            |config| &config.time,
+            |new_time| {
+                self.config.rcu(|old| {
+                    let mut new_config = (**old).clone();
+                    new_config.time.update_from_file_config(new_time);
+                    new_config.file_config.time = new_time.clone();
+                    new_config
+                });
+                update_time_sync_config(self.config.load().time.clone());
+            },
+        )
+        .await
     }
 
     pub async fn update_gateway_config(
@@ -529,114 +389,31 @@ impl LandscapeConfigService {
         new_gateway: LandscapeGatewayConfig,
         expected_hash: String,
     ) -> LdResult<()> {
-        let path = self.get_config_path();
-
-        let file = OpenOptions::new().read(true).write(true).create(true).open(&path)?;
-
-        file.lock_exclusive()?;
-
-        let result = {
-            let mut content = String::new();
-            let mut file_obj = &file;
-            file_obj.read_to_string(&mut content)?;
-
-            let mut hasher = Sha256::new();
-            hasher.update(content.as_bytes());
-            let current_hash =
-                hasher.finalize().iter().map(|b| format!("{:02x}", b)).collect::<String>();
-
-            if current_hash != expected_hash {
-                return Err(LdError::ConfigConflict);
-            }
-
-            let mut doc =
-                content.parse::<DocumentMut>().map_err(|e| LdError::ConfigError(e.to_string()))?;
-
-            let gateway_value =
-                toml::to_string(&new_gateway).map_err(|e| LdError::ConfigError(e.to_string()))?;
-            let gateway_doc = gateway_value
-                .parse::<DocumentMut>()
-                .map_err(|e| LdError::ConfigError(e.to_string()))?;
-
-            doc["gateway"] = gateway_doc.as_item().clone();
-
-            let new_content = doc.to_string();
-
-            let tmp_path = path.with_extension("toml.tmp");
-            let mut opts = OpenOptions::new();
-            opts.write(true).create(true).truncate(true);
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::OpenOptionsExt;
-                opts.mode(0o600);
-            }
-            let mut tmp_file = opts.open(&tmp_path)?;
-
-            tmp_file.write_all(new_content.as_bytes())?;
-            tmp_file.sync_all()?;
-
-            std::fs::rename(&tmp_path, &path)?;
-
-            Ok::<(), LdError>(())
-        };
-
-        file.unlock()?;
-
-        if let Err(e) = result {
-            return Err(e);
-        }
-
-        self.config.rcu(|old| {
-            let mut new_config = (**old).clone();
-            new_config.gateway = GatewayRuntimeConfig::from_file_config(&new_gateway);
-            new_config.file_config.gateway = new_gateway.clone();
-            new_config
-        });
-
-        Ok(())
+        self.update_section(
+            "gateway",
+            &[],
+            new_gateway,
+            expected_hash,
+            |config| &config.gateway,
+            |new_gateway| {
+                self.config.rcu(|old| {
+                    let mut new_config = (**old).clone();
+                    new_config.gateway = GatewayRuntimeConfig::from_file_config(new_gateway);
+                    new_config.file_config.gateway = new_gateway.clone();
+                    new_config
+                });
+            },
+        )
+        .await
     }
 
-    pub fn update_auth_password(&self, new_password: String) -> LdResult<()> {
+    pub async fn update_auth_password(&self, new_password: String) -> LdResult<()> {
+        let _guard = self.write_lock.lock().await;
         let path = self.get_config_path();
-
-        let file = OpenOptions::new().read(true).write(true).create(true).open(&path)?;
-
-        file.lock_exclusive()?;
-
-        let result = (|| {
-            let mut content = String::new();
-            (&file).read_to_string(&mut content)?;
-
-            let mut doc =
-                content.parse::<DocumentMut>().map_err(|e| LdError::ConfigError(e.to_string()))?;
-
-            doc["auth"]["admin_pass"] = toml_edit::value(&new_password);
-
-            let new_content = doc.to_string();
-
-            let tmp_path = path.with_extension("toml.tmp");
-            let mut opts = OpenOptions::new();
-            opts.write(true).create(true).truncate(true);
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::OpenOptionsExt;
-                opts.mode(0o600);
-            }
-            let mut tmp_file = opts.open(&tmp_path)?;
-
-            tmp_file.write_all(new_content.as_bytes())?;
-            tmp_file.sync_all()?;
-
-            std::fs::rename(&tmp_path, &path)?;
-
-            Ok::<(), LdError>(())
-        })();
-
-        if file.unlock().is_err() {
-            tracing::warn!("Failed to release file lock on {}", path.display());
-        }
-
-        result?;
+        let (content, _) = Self::read_config_file(&path)?;
+        let mut document = Self::parse_document(&content)?;
+        document["auth"]["admin_pass"] = toml_edit::value(&new_password);
+        Self::write_config_file(&path, &document.to_string())?;
 
         self.config.rcu(|old| {
             let mut new_config = (**old).clone();

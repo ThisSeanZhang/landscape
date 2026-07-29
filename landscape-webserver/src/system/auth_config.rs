@@ -54,7 +54,7 @@ pub async fn update_auth_config(
     }
 
     // 5. Persist
-    state.config_service.update_auth_password(req.new_password.clone())?;
+    state.config_service.update_auth_password(req.new_password.clone()).await?;
 
     // 6. Update the shared auth config so middleware/login see the new password immediately
     state.auth.rcu(|old| {

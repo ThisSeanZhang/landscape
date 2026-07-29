@@ -18,8 +18,8 @@ use crate::LandscapeApp;
 pub async fn get_metric_config(
     State(state): State<LandscapeApp>,
 ) -> LandscapeApiResult<GetMetricConfigResponse> {
-    let (config, hash) = state.config_service.get_config_with_hash().await?;
-    LandscapeApiResp::success(GetMetricConfigResponse { metric: config.metric, hash })
+    let (metric, hash) = state.config_service.get_metric_config_from_file().await?;
+    LandscapeApiResp::success(GetMetricConfigResponse { metric, hash })
 }
 
 #[utoipa::path(
