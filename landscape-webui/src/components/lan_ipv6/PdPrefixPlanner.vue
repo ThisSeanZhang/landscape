@@ -21,6 +21,7 @@ import {
   watch,
   watchEffect,
 } from "vue";
+import { scaleColor } from "seemly";
 import { useI18n } from "vue-i18n";
 
 const { t } = useI18n({ useScope: "global" });
@@ -180,10 +181,33 @@ function plannerPalette() {
     info: themeVars.value.infoColor,
     warning: themeVars.value.warningColor,
     primary: themeVars.value.primaryColor,
+    pd: "#8b5cf6",
     defaultFill: themeVars.value.cardColor,
     embedded: themeVars.value.actionColor,
     blocked: themeValue("--n-action-color", themeVars.value.actionColor),
   };
+}
+
+function serviceColorForKind(kind: SourceKind, palette = plannerPalette()) {
+  switch (kind) {
+    case "ra":
+      return palette.info;
+    case "na":
+      return palette.success;
+    case "pd":
+      return palette.pd;
+  }
+}
+
+function groupColor(color: string, groupId: string | undefined) {
+  const currentGroupId = props.editGroup?.group_id;
+  if (!groupId || !currentGroupId) {
+    return color;
+  }
+
+  return scaleColor(color, {
+    lightness: groupId === currentGroupId ? 0.72 : 0.45,
+  });
 }
 
 const legendItems = computed(() => {
@@ -191,7 +215,7 @@ const legendItems = computed(() => {
   return [
     { label: "RA", color: palette.info, kind: "solid" },
     { label: "IA_NA", color: palette.success, kind: "solid" },
-    { label: "PD", color: palette.primary, kind: "solid" },
+    { label: "PD", color: palette.pd, kind: "solid" },
     {
       label: t("lan_ipv6.planner_legend_other_lan"),
       color: palette.embedded,
@@ -223,11 +247,20 @@ function colorForUnit(unit: PlannerUnit) {
     case "blocked":
       return palette.blocked;
     case "ra":
-      return palette.info;
+      return groupColor(
+        serviceColorForKind("ra", palette),
+        unit.currentGroupId,
+      );
     case "na":
-      return palette.success;
+      return groupColor(
+        serviceColorForKind("na", palette),
+        unit.currentGroupId,
+      );
     case "pd":
-      return palette.primary;
+      return groupColor(
+        serviceColorForKind("pd", palette),
+        unit.currentGroupId,
+      );
     case "other_lan":
       return palette.embedded;
     case "conflict":
@@ -253,14 +286,10 @@ function selectedFillColor(unit: PlannerUnit) {
     return palette.embedded;
   }
 
-  switch (props.selectedKind) {
-    case "ra":
-      return palette.info;
-    case "na":
-      return palette.success;
-    case "pd":
-      return palette.primary;
-  }
+  return groupColor(
+    serviceColorForKind(props.selectedKind, palette),
+    props.editGroup?.group_id,
+  );
 }
 
 function labelsForUnit(unit: PlannerUnit) {
@@ -347,7 +376,8 @@ function drawUnits() {
     if (cellSize.value >= 12) {
       const labels = labelsForUnit(unit);
       if (labels) {
-        ctx.fillStyle = unit.selected ? "#fff" : palette.text;
+        ctx.fillStyle =
+          unit.selected || unit.currentGroupId ? "#fff" : palette.text;
         ctx.fillText(labels, x + cellSize.value / 2, y + cellSize.value / 2);
       } else if (unit.kind === "blocked" && cellSize.value >= 14) {
         ctx.fillStyle = palette.mutedText;

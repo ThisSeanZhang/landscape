@@ -48,6 +48,8 @@ export interface PlannerUnit {
   index: number;
   kind: PlannerCellKind;
   selected: boolean;
+  /** Group occupying this unit on the current LAN, when unambiguous. */
+  currentGroupId?: string;
   occupiedByRa: boolean;
   occupiedByNa: boolean;
   occupiedByPd: boolean;
@@ -1165,6 +1167,15 @@ function buildGroupPlannerView(
     const occupiedByOtherLan = recordsForUnit.some(
       (record) => record.scope === "other",
     );
+    const currentGroupIds = new Set(
+      recordsForUnit
+        .filter((record) => record.scope === "current")
+        .map((record) => record.groupId),
+    );
+    const currentGroupId =
+      currentGroupIds.size === 1
+        ? currentGroupIds.values().next().value
+        : undefined;
     const isWanReserved = index < wanUnitCount;
     const blockStart =
       Math.floor(index / candidateUnitSpan) * candidateUnitSpan;
@@ -1189,6 +1200,7 @@ function buildGroupPlannerView(
         isAlignmentBlocked,
       ),
       selected,
+      currentGroupId,
       occupiedByRa,
       occupiedByNa,
       occupiedByPd,
