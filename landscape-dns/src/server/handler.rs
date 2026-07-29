@@ -391,11 +391,7 @@ impl DnsRequestHandler {
                 }
                 (vec![], DnsOutcome::Local)
             }
-            // (3) home.arpa. → hostname registry
-            "home" => {
-                return self.resolve_home_arpa(domain, query_type);
-            }
-            // (4) in-addr.arpa. / ip6.arpa. → PTR
+            // (3) in-addr.arpa. / ip6.arpa. → PTR
             "in-addr" | "ip6" => {
                 // `parse_arpa_name` requires an FQDN, so parse `domain.raw()` (with trailing dot).
                 let Ok(dns_name) = Name::from_str(domain.raw()) else {
@@ -411,34 +407,15 @@ impl DnsRequestHandler {
                 }
                 return self.resolve_from_cache_or_upstream(domain.raw(), query_type).await;
             }
-            // (5) ipv4only.arpa. → NODATA (special-use domain, RFC 8880)
+            // (4) ipv4only.arpa. → NODATA (special-use domain, RFC 8880)
             "ipv4only" if arpa_suffix == "ipv4only" => (vec![], DnsOutcome::Local),
-            // (6) Other .arpa. → hostname registry when the LAN suffix lives
-            // under .arpa (any suffix other than the `home` case above), else
-            // NXDOMAIN.
-            _ => match self.lan_hostname_registry.match_local_zone(domain.name()) {
+            // (5) Remaining .arpa names belong to the configured LAN zone only
+            // when the complete suffix matches (for example, `home.arpa`).
+            _ => match self.matching_local_zone(domain) {
                 Some(zone) => self.resolve_local_domain(domain, zone, query_type),
                 None => (vec![], DnsOutcome::NxDomain),
             },
         }
-    }
-
-    fn resolve_home_arpa(
-        &self,
-        domain: &PreprocessedDomain,
-        query_type: RecordType,
-    ) -> (Vec<Record>, DnsOutcome) {
-        let arpa_suffix = match domain.arpa_prefix() {
-            Some(s) => s,
-            None => return (vec![], DnsOutcome::NxDomain),
-        };
-        let hostname = match arpa_suffix.strip_suffix(".home") {
-            Some(h) if !h.is_empty() => h,
-            _ => return (vec![], DnsOutcome::NxDomain),
-        };
-        let records = self.lookup_lan_hostname(domain, hostname, query_type);
-        let outcome = if records.is_empty() { DnsOutcome::NxDomain } else { DnsOutcome::Local };
-        (records, outcome)
     }
 
     pub async fn resolve_forward(
@@ -462,13 +439,32 @@ impl DnsRequestHandler {
             let records = Self::lookup_localhost(domain, query_type);
             return (records, DnsOutcome::Local);
         }
-        // (2c) Local zone (LAN suffix or local.) → hostname registry
-        if let Some(zone) = self.lan_hostname_registry.match_local_zone(domain.name()) {
+        // (2c) Local zone (configured LAN suffix or local.) → hostname registry
+        if let Some(zone) = self.matching_local_zone(domain) {
             return self.resolve_local_domain(domain, zone, query_type);
         }
 
         // (3) Cache → (4) Upstream
         self.resolve_from_cache_or_upstream(domain.raw(), query_type).await
+    }
+
+    /// Matches a name against the live LAN-hostname config or the mDNS `.local`
+    /// zone. Keeping this decision in one place makes normal
+    /// queries, `.arpa` queries, config checks, and cache refreshes agree after
+    /// a runtime config change.
+    fn matching_local_zone<'a>(
+        &self,
+        domain: &'a PreprocessedDomain,
+    ) -> Option<LocalZoneMatch<'a>> {
+        let mut zone = self.lan_hostname_registry.match_local_zone(domain.name())?;
+
+        // `.local` remains mDNS territory even if a legacy or hand-edited
+        // config incorrectly chooses `local` as the LAN suffix.
+        if domain.tld() == "local" {
+            zone.zone = LocalZone::MdnsLocal;
+        }
+
+        Some(zone)
     }
 
     fn resolve_local_domain(
@@ -593,7 +589,7 @@ impl DnsRequestHandler {
             let (records, _) = self.resolve_arpa(domain, query_type).await;
             result.records = Some(crate::to_common_records(records));
             return result;
-        } else if let Some(zone) = self.lan_hostname_registry.match_local_zone(domain.name()) {
+        } else if let Some(zone) = self.matching_local_zone(domain) {
             if let Some(hostname) = zone.hostname {
                 let records = self.lookup_lan_hostname(domain, hostname, query_type);
                 result.records = Some(crate::to_common_records(records));
@@ -687,7 +683,7 @@ impl DnsRequestHandler {
             });
         }
 
-        if let Some(zone) = self.lan_hostname_registry.match_local_zone(domain.name()) {
+        if let Some(zone) = self.matching_local_zone(domain) {
             self.clear_cache_entry_and_refresh_maps_if_present(domain.raw(), query_type).await;
             if let Some(hostname) = zone.hostname {
                 let records = self.lookup_lan_hostname(domain, hostname, query_type);
@@ -1311,13 +1307,14 @@ mod tests {
         )
     }
 
-    fn handler_with_lan_suffix(
+    fn handler_with_lan_config(
+        enable: bool,
         lan_suffix: &str,
         devices: Vec<(String, Ipv4Addr)>,
     ) -> DnsRequestHandler {
         let registry = landscape_core::lan_hostname::LanHostnameRegistry::new(
             landscape_common::sys_service::lan_hostname::LanHostnameConfig {
-                enable: true,
+                enable,
                 lan_suffix: lan_suffix.to_string(),
             },
             devices,
@@ -1340,6 +1337,13 @@ mod tests {
             registry,
             None,
         )
+    }
+
+    fn handler_with_lan_suffix(
+        lan_suffix: &str,
+        devices: Vec<(String, Ipv4Addr)>,
+    ) -> DnsRequestHandler {
+        handler_with_lan_config(true, lan_suffix, devices)
     }
 
     fn arpa_name_from_ipv6(addr: Ipv6Addr) -> String {
@@ -1448,7 +1452,7 @@ mod tests {
             assert!(records.is_empty());
             assert_eq!(outcome, DnsOutcome::Local);
 
-            // home.arpa. → home branch
+            // home.arpa. is not the default `lan` zone.
             let (records, outcome) = handler
                 .resolve_arpa(&PreprocessedDomain::new("home.arpa.").unwrap(), RecordType::A)
                 .await;
@@ -1508,15 +1512,13 @@ mod tests {
     }
 
     #[test]
-    fn resolve_arpa_home_returns_nxdomain_for_unknown_hostname() {
+    fn resolve_arpa_home_requires_matching_lan_suffix() {
         run_async_test(async {
-            let handler = make_test_handler();
+            let ip = Ipv4Addr::new(192, 168, 1, 49);
+            let handler = handler_with_lan_suffix("lan", vec![("nas".to_string(), ip)]);
 
             let (records, outcome) = handler
-                .resolve_arpa(
-                    &PreprocessedDomain::new("nonexistent.home.arpa.").unwrap(),
-                    RecordType::A,
-                )
+                .resolve_arpa(&PreprocessedDomain::new("nas.home.arpa.").unwrap(), RecordType::A)
                 .await;
             assert!(records.is_empty());
             assert_eq!(outcome, DnsOutcome::NxDomain);
@@ -1767,6 +1769,39 @@ mod tests {
                 RData::A(a) => assert_eq!(a.0, ip),
                 other => panic!("expected A record, got {:?}", other),
             }
+        });
+    }
+
+    #[test]
+    fn resolve_arpa_home_suffix_resolves_only_when_enabled() {
+        run_async_test(async {
+            let ip = Ipv4Addr::new(192, 168, 1, 63);
+            let domain = PreprocessedDomain::new("nas.home.arpa.").unwrap();
+            let enabled = handler_with_lan_config(true, "home.arpa", vec![("nas".to_string(), ip)]);
+
+            let (records, outcome) = enabled.resolve_arpa(&domain, RecordType::A).await;
+            assert_eq!(outcome, DnsOutcome::Local);
+            assert_eq!(records.len(), 1);
+            assert!(matches!(&records[0].data, RData::A(a) if a.0 == ip));
+
+            let disabled =
+                handler_with_lan_config(false, "home.arpa", vec![("nas".to_string(), ip)]);
+            let (records, outcome) = disabled.resolve_arpa(&domain, RecordType::A).await;
+            assert_eq!(outcome, DnsOutcome::NxDomain);
+            assert!(records.is_empty());
+        });
+    }
+
+    #[test]
+    fn configured_local_suffix_keeps_mdns_nodata_semantics() {
+        run_async_test(async {
+            let handler = handler_with_lan_suffix("local", vec![]);
+
+            let (records, outcome) = handler
+                .resolve_forward(&PreprocessedDomain::new("unknown.local.").unwrap(), RecordType::A)
+                .await;
+            assert_eq!(outcome, DnsOutcome::Local);
+            assert!(records.is_empty());
         });
     }
 
