@@ -44,7 +44,7 @@ use landscape_common::{
     flow::{DnsRuntimeMarkInfo, FlowMarkInfo},
     metric::dns::{DnsMetric, DnsOutcome},
 };
-use landscape_core::{lan_hostname::HostnameRegistry, time::get_current_time_ms};
+use landscape_core::{lan_hostname::LanHostnameRegistry, time::get_current_time_ms};
 
 const LOOKUP_TIMEOUT: Duration = Duration::from_secs(5);
 const RULE_REFRESH_TTL_CAP: u32 = 5;
@@ -61,7 +61,7 @@ pub struct DnsRequestHandler {
     runtime_config: Arc<ArcSwap<CacheRuntimeConfig>>,
     pub local_answer_provider: Option<Arc<dyn LocalDnsAnswerProvider>>,
     pub doh_advertise_provider: Option<Arc<dyn DohAdvertiseProvider>>,
-    hostname_registry: Arc<HostnameRegistry>,
+    lan_hostname_registry: Arc<LanHostnameRegistry>,
     // Startup DoH endpoint snapshot used for DDR advertisements. Advertised
     // domains are loaded live from `doh_advertise_provider`; port/path changes
     // require a process restart so advertisements stay consistent with listener.
@@ -76,7 +76,7 @@ impl DnsRequestHandler {
         msg_tx: MetricSenderState,
         local_answer_provider: Option<Arc<dyn LocalDnsAnswerProvider>>,
         doh_advertise_provider: Option<Arc<dyn DohAdvertiseProvider>>,
-        hostname_registry: Arc<HostnameRegistry>,
+        lan_hostname_registry: Arc<LanHostnameRegistry>,
         doh_runtime: Option<DohRuntimeConfig>,
     ) -> DnsRequestHandler {
         let FlowDnsDesiredState { dns_rules, redirect_rules, .. } = desired_state;
@@ -94,7 +94,7 @@ impl DnsRequestHandler {
             runtime_config,
             local_answer_provider,
             doh_advertise_provider,
-            hostname_registry,
+            lan_hostname_registry,
             doh_runtime,
         }
     }
@@ -301,7 +301,7 @@ impl DnsRequestHandler {
 
         match query_type {
             RecordType::A => {
-                if let Some(ip) = self.hostname_registry.resolve_a_by_hostname(hostname) {
+                if let Some(ip) = self.lan_hostname_registry.resolve_a_by_hostname(hostname) {
                     let rdata = RData::A(A(ip));
                     let record = Record::from_rdata(rname, HOSTNAME_TTL, rdata);
                     vec![record]
@@ -310,7 +310,7 @@ impl DnsRequestHandler {
                 }
             }
             RecordType::AAAA => {
-                if let Some(ip) = self.hostname_registry.resolve_aaaa_by_hostname(hostname) {
+                if let Some(ip) = self.lan_hostname_registry.resolve_aaaa_by_hostname(hostname) {
                     let rdata = RData::AAAA(AAAA(ip));
                     let record = Record::from_rdata(rname, HOSTNAME_TTL, rdata);
                     vec![record]
@@ -329,7 +329,7 @@ impl DnsRequestHandler {
     ) -> Option<(Vec<Record>, DnsOutcome)> {
         const PTR_TTL: u32 = 60;
 
-        if !HostnameRegistry::is_managed_ptr_addr(addr) {
+        if !LanHostnameRegistry::is_managed_ptr_addr(addr) {
             return None;
         }
 
@@ -343,7 +343,7 @@ impl DnsRequestHandler {
             return Some((vec![record], DnsOutcome::Local));
         }
 
-        match self.hostname_registry.resolve_ptr_by_addr(addr) {
+        match self.lan_hostname_registry.resolve_ptr_by_addr(addr) {
             Some(fqdn) => {
                 let Ok(target) = Name::from_utf8(&fqdn) else {
                     return Some((vec![], DnsOutcome::Error));
@@ -451,7 +451,7 @@ impl DnsRequestHandler {
             return (records, DnsOutcome::Local);
         }
         // (2c) Local TLD (LAN suffix or local.) → hostname registry
-        if self.hostname_registry.is_local_tld(tld) {
+        if self.lan_hostname_registry.is_local_tld(tld) {
             return self.resolve_local_domain(domain, query_type);
         }
 
@@ -579,7 +579,7 @@ impl DnsRequestHandler {
             let (records, _) = self.resolve_arpa(domain, query_type).await;
             result.records = Some(crate::to_common_records(records));
             return result;
-        } else if self.hostname_registry.is_local_tld(tld) {
+        } else if self.lan_hostname_registry.is_local_tld(tld) {
             if let Some(hostname) = domain.hostname_for_tld(tld) {
                 let records = self.lookup_lan_hostname(domain, hostname, query_type);
                 result.records = Some(crate::to_common_records(records));
@@ -673,7 +673,7 @@ impl DnsRequestHandler {
             });
         }
 
-        if self.hostname_registry.is_local_tld(tld) {
+        if self.lan_hostname_registry.is_local_tld(tld) {
             self.clear_cache_entry_and_refresh_maps_if_present(domain.raw(), query_type).await;
             if let Some(hostname) = domain.hostname_for_tld(tld) {
                 let records = self.lookup_lan_hostname(domain, hostname, query_type);
@@ -1286,14 +1286,14 @@ mod tests {
             Arc::new(ArcSwapOption::new(None)),
             None,
             None,
-            test_hostname_registry(),
+            test_lan_hostname_registry(),
             None,
         )
     }
 
-    fn test_hostname_registry() -> Arc<HostnameRegistry> {
-        HostnameRegistry::new_for_test(
-            landscape_common::sys_service::hostname_registry::HostnameRegistryConfig::default(),
+    fn test_lan_hostname_registry() -> Arc<LanHostnameRegistry> {
+        LanHostnameRegistry::new_for_test(
+            landscape_common::sys_service::lan_hostname::LanHostnameConfig::default(),
         )
     }
 
@@ -1481,8 +1481,8 @@ mod tests {
     #[test]
     fn resolve_arpa_reverse_returns_registered_lan_hostname() {
         run_async_test(async {
-            let registry = HostnameRegistry::new(
-                landscape_common::sys_service::hostname_registry::HostnameRegistryConfig::default(),
+            let registry = LanHostnameRegistry::new(
+                landscape_common::sys_service::lan_hostname::LanHostnameConfig::default(),
                 vec![("nas".to_string(), Ipv4Addr::new(192, 168, 1, 50))],
                 {
                     let (_tx, rx) = tokio::sync::broadcast::channel(8);
@@ -1524,8 +1524,8 @@ mod tests {
     fn resolve_arpa_reverse_ipv6_returns_registered_lan_hostname() {
         run_async_test(async {
             let ipv6 = Ipv6Addr::new(0xfd01, 0, 0, 0, 0, 0, 0, 99);
-            let registry = HostnameRegistry::new(
-                landscape_common::sys_service::hostname_registry::HostnameRegistryConfig::default(),
+            let registry = LanHostnameRegistry::new(
+                landscape_common::sys_service::lan_hostname::LanHostnameConfig::default(),
                 vec![("srv".to_string(), Ipv4Addr::new(192, 168, 1, 1))],
                 {
                     let (_tx, rx) = tokio::sync::broadcast::channel(8);
@@ -1566,8 +1566,8 @@ mod tests {
     fn resolve_forward_local_domain_aaaa_returns_registered_ipv6() {
         run_async_test(async {
             let ipv6 = Ipv6Addr::new(0xfd00, 0, 0, 0, 0, 0, 0, 2);
-            let registry = HostnameRegistry::new(
-                landscape_common::sys_service::hostname_registry::HostnameRegistryConfig::default(),
+            let registry = LanHostnameRegistry::new(
+                landscape_common::sys_service::lan_hostname::LanHostnameConfig::default(),
                 vec![("dev".to_string(), Ipv4Addr::new(192, 168, 1, 100))],
                 {
                     let (_tx, rx) = tokio::sync::broadcast::channel(8);
@@ -1605,8 +1605,8 @@ mod tests {
     #[test]
     fn resolve_forward_local_domain_aaaa_returns_nxdomain_when_no_ipv6() {
         run_async_test(async {
-            let registry = HostnameRegistry::new(
-                landscape_common::sys_service::hostname_registry::HostnameRegistryConfig::default(),
+            let registry = LanHostnameRegistry::new(
+                landscape_common::sys_service::lan_hostname::LanHostnameConfig::default(),
                 vec![("dev".to_string(), Ipv4Addr::new(192, 168, 1, 100))],
                 {
                     let (_tx, rx) = tokio::sync::broadcast::channel(8);
@@ -1732,7 +1732,7 @@ mod tests {
                 Arc::new(ArcSwapOption::new(None)),
                 None,
                 None,
-                test_hostname_registry(),
+                test_lan_hostname_registry(),
                 None,
             );
 
@@ -1761,7 +1761,7 @@ mod tests {
                 Arc::new(ArcSwapOption::new(None)),
                 None,
                 None,
-                test_hostname_registry(),
+                test_lan_hostname_registry(),
                 None,
             );
 
@@ -1802,7 +1802,7 @@ mod tests {
                 Arc::new(ArcSwapOption::new(None)),
                 None,
                 None,
-                test_hostname_registry(),
+                test_lan_hostname_registry(),
                 None,
             );
 
@@ -1847,7 +1847,7 @@ mod tests {
                 Arc::new(ArcSwapOption::new(None)),
                 None,
                 None,
-                test_hostname_registry(),
+                test_lan_hostname_registry(),
                 None,
             );
 
@@ -1879,7 +1879,7 @@ mod tests {
                 Arc::new(ArcSwapOption::new(None)),
                 None,
                 None,
-                test_hostname_registry(),
+                test_lan_hostname_registry(),
                 None,
             );
 
@@ -1909,7 +1909,7 @@ mod tests {
                 Arc::new(ArcSwapOption::new(None)),
                 None,
                 None,
-                test_hostname_registry(),
+                test_lan_hostname_registry(),
                 None,
             );
             let handler_clone = handler.clone();
@@ -1968,7 +1968,7 @@ mod tests {
                 Arc::new(ArcSwapOption::new(None)),
                 None,
                 None,
-                test_hostname_registry(),
+                test_lan_hostname_registry(),
                 None,
             );
 
@@ -2027,7 +2027,7 @@ mod tests {
                 Arc::new(ArcSwapOption::new(None)),
                 None,
                 None,
-                test_hostname_registry(),
+                test_lan_hostname_registry(),
                 None,
             );
 
@@ -2097,7 +2097,7 @@ mod tests {
                     ],
                 })),
                 None,
-                test_hostname_registry(),
+                test_lan_hostname_registry(),
                 None,
             );
 
@@ -2142,7 +2142,7 @@ mod tests {
                     addrs: vec![IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1))],
                 })),
                 None,
-                test_hostname_registry(),
+                test_lan_hostname_registry(),
                 None,
             );
 
@@ -2174,7 +2174,7 @@ mod tests {
                 Arc::new(ArcSwapOption::new(None)),
                 None,
                 None,
-                test_hostname_registry(),
+                test_lan_hostname_registry(),
                 None,
             );
 

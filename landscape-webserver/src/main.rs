@@ -63,7 +63,7 @@ use landscape_common::{
     VERSION,
 };
 use landscape_common::{config::InitConfig, lan_service::lan_dhcpv4::config::DHCPv4ServiceConfig};
-use landscape_core::{lan_hostname::HostnameRegistry, time::start_time_sync_service};
+use landscape_core::{lan_hostname::LanHostnameRegistry, time::start_time_sync_service};
 use landscape_database::provider::LandscapeDBServiceProvider;
 use landscape_database::repository::Repository;
 use tokio::runtime::Builder as RuntimeBuilder;
@@ -302,15 +302,15 @@ async fn run_system(
                 "failed to list enrolled devices: {e}"
             ))
         })?;
-    let hostname_registry = startup_phase!("hostname_registry.new", {
+    let lan_hostname_registry = startup_phase!("lan_hostname.new", {
         let initial_devices: Vec<(String, std::net::Ipv4Addr)> = enrolled_devices
             .iter()
             .filter_map(|d| {
                 d.hostname.as_ref().zip(d.ipv4.as_ref()).map(|(h, ip)| (h.clone(), *ip))
             })
             .collect();
-        HostnameRegistry::new(
-            config.hostname_registry.clone(),
+        LanHostnameRegistry::new(
+            config.lan_hostname.clone(),
             initial_devices,
             event_handle.subscribe_ipv4_assign(),
             event_handle.subscribe_device(),
@@ -328,7 +328,7 @@ async fn run_system(
             config.dns.clone(),
             cert_service.clone(),
             metric_service.get_dns_metric_channel(),
-            hostname_registry,
+            lan_hostname_registry,
         )
         .await
     );

@@ -12,7 +12,7 @@ use landscape_common::{
         WatchService,
     },
 };
-use landscape_core::lan_hostname::HostnameRegistry;
+use landscape_core::lan_hostname::LanHostnameRegistry;
 use landscape_dns::{
     prepare_system_dns,
     server::{DohTimeouts, EffectiveDohListenerConfig, LandscapeDnsServer, LocalDnsAnswerProvider},
@@ -56,7 +56,7 @@ impl LandscapeDnsService {
         dns_config: DnsRuntimeConfig,
         cert_service: CertService,
         msg_tx: Option<mpsc::Sender<DnsMetricMessage>>,
-        hostname_registry: Arc<HostnameRegistry>,
+        lan_hostname_registry: Arc<LanHostnameRegistry>,
     ) -> Self {
         let (cache_runtime, doh_runtime) = split_dns_runtime_config(&dns_config);
         prepare_system_dns();
@@ -80,7 +80,7 @@ impl LandscapeDnsService {
             doh,
             Some(Arc::new(route_service) as Arc<dyn LocalDnsAnswerProvider>),
             Some(Arc::new(api_tls_resolver) as Arc<dyn landscape_dns::server::DohAdvertiseProvider>),
-            hostname_registry,
+            lan_hostname_registry,
         );
 
         // dns_service.restart(53).await;

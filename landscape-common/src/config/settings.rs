@@ -2,7 +2,9 @@ use std::{net::IpAddr, path::PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::sys_service::gateway::settings::LandscapeGatewayConfig;
+use crate::sys_service::{
+    gateway::settings::LandscapeGatewayConfig, lan_hostname::LandscapeLanHostnameConfig,
+};
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
@@ -122,14 +124,6 @@ pub struct LandscapeDnsConfig {
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
-pub struct LandscapeHostnameRegistryConfig {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[cfg_attr(feature = "openapi", schema(required = false, nullable = false))]
-    pub lan_suffix: Option<String>,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone, Default)]
-#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct LandscapeUIConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "openapi", schema(required = false, nullable = false))]
@@ -186,9 +180,9 @@ pub struct LandscapeConfig {
     #[serde(default)]
     #[cfg_attr(feature = "openapi", schema(required = true))]
     pub dns: LandscapeDnsConfig,
-    #[serde(default)]
+    #[serde(default, alias = "hostname_registry")]
     #[cfg_attr(feature = "openapi", schema(required = true))]
-    pub hostname_registry: LandscapeHostnameRegistryConfig,
+    pub lan_hostname: LandscapeLanHostnameConfig,
     #[serde(default)]
     #[cfg_attr(feature = "openapi", schema(required = true))]
     pub ui: LandscapeUIConfig,

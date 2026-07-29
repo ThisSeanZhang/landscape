@@ -9,7 +9,7 @@ use dashmap::DashMap;
 use landscape_common::event::hub::{
     EnrolledDeviceEvent, EnrolledDeviceEventReader, IPv4AssignEvent, IPv4AssignEventReader,
 };
-use landscape_common::sys_service::hostname_registry::HostnameRegistryConfig;
+use landscape_common::sys_service::lan_hostname::LanHostnameConfig;
 
 #[derive(Clone)]
 struct HostnameRecord {
@@ -18,14 +18,14 @@ struct HostnameRecord {
     from_enrolled_device: bool,
 }
 
-pub struct HostnameRegistry {
+pub struct LanHostnameRegistry {
     hostname_map: Arc<DashMap<String, HostnameRecord>>,
-    config: Arc<ArcSwap<HostnameRegistryConfig>>,
+    config: Arc<ArcSwap<LanHostnameConfig>>,
 }
 
-impl HostnameRegistry {
+impl LanHostnameRegistry {
     pub fn new(
-        config: HostnameRegistryConfig,
+        config: LanHostnameConfig,
         initial_devices: Vec<(String, Ipv4Addr)>,
         ipv4_reader: IPv4AssignEventReader,
         device_reader: EnrolledDeviceEventReader,
@@ -65,10 +65,10 @@ impl HostnameRegistry {
                             match result {
                                 Ok(event) => handle_device_event(&map, event),
                                 Err(RecvError::Lagged(n)) => {
-                                    tracing::warn!("hostname_registry: device event lagged by {n}");
+                                    tracing::warn!("lan_hostname: device event lagged by {n}");
                                 }
                                 Err(RecvError::Closed) => {
-                                    tracing::info!("hostname_registry: device event channel closed");
+                                    tracing::info!("lan_hostname: device event channel closed");
                                     device_alive = false;
                                 }
                             }
@@ -77,10 +77,10 @@ impl HostnameRegistry {
                             match result {
                                 Ok(event) => handle_ipv4_event(&map, event),
                                 Err(RecvError::Lagged(n)) => {
-                                    tracing::warn!("hostname_registry: ipv4 event lagged by {n}");
+                                    tracing::warn!("lan_hostname: ipv4 event lagged by {n}");
                                 }
                                 Err(RecvError::Closed) => {
-                                    tracing::info!("hostname_registry: ipv4 event channel closed");
+                                    tracing::info!("lan_hostname: ipv4 event channel closed");
                                     ipv4_alive = false;
                                 }
                             }
@@ -96,7 +96,7 @@ impl HostnameRegistry {
         registry
     }
 
-    pub fn update_config(&self, config: HostnameRegistryConfig) {
+    pub fn update_config(&self, config: LanHostnameConfig) {
         self.config.store(Arc::new(config));
     }
 
@@ -225,7 +225,7 @@ fn handle_ipv4_event(map: &DashMap<String, HostnameRecord>, event: IPv4AssignEve
                         .and_modify(|rec| {
                             if rec.from_enrolled_device {
                                 tracing::debug!(
-                                    "hostname_registry: ignoring DHCP hostname '{}' -> {} (enrolled device wins)",
+                                    "lan_hostname: ignoring DHCP hostname '{}' -> {} (enrolled device wins)",
                                     hostname, info.ip
                                 );
                                 return;
@@ -250,10 +250,10 @@ fn handle_ipv4_event(map: &DashMap<String, HostnameRecord>, event: IPv4AssignEve
     }
 }
 
-impl HostnameRegistry {
+impl LanHostnameRegistry {
     /// Creates a registry with ephemeral event channels for use in tests.
     /// Not intended for production use.
-    pub fn new_for_test(config: HostnameRegistryConfig) -> Arc<Self> {
+    pub fn new_for_test(config: LanHostnameConfig) -> Arc<Self> {
         let (_tx, rx) = tokio::sync::broadcast::channel(64);
         let (_tx2, rx2) = tokio::sync::broadcast::channel(64);
         Self::new(
@@ -271,14 +271,14 @@ mod tests {
     use landscape_common::event::hub::IPv4AssignInfo;
     use landscape_common::net::MacAddr;
 
-    fn registry_with(records: &[(&str, HostnameRecord)]) -> HostnameRegistry {
+    fn registry_with(records: &[(&str, HostnameRecord)]) -> LanHostnameRegistry {
         let map = DashMap::new();
         for (hostname, record) in records {
             map.insert((*hostname).to_string(), record.clone());
         }
-        HostnameRegistry {
+        LanHostnameRegistry {
             hostname_map: Arc::new(map),
-            config: Arc::new(ArcSwap::from_pointee(HostnameRegistryConfig {
+            config: Arc::new(ArcSwap::from_pointee(LanHostnameConfig {
                 lan_suffix: "lan".to_string(),
             })),
         }
@@ -367,14 +367,14 @@ mod tests {
     fn registry_with_config(
         records: &[(&str, HostnameRecord)],
         lan_suffix: &str,
-    ) -> HostnameRegistry {
+    ) -> LanHostnameRegistry {
         let map = DashMap::new();
         for (hostname, record) in records {
             map.insert((*hostname).to_string(), record.clone());
         }
-        HostnameRegistry {
+        LanHostnameRegistry {
             hostname_map: Arc::new(map),
-            config: Arc::new(ArcSwap::from_pointee(HostnameRegistryConfig {
+            config: Arc::new(ArcSwap::from_pointee(LanHostnameConfig {
                 lan_suffix: lan_suffix.to_string(),
             })),
         }
@@ -384,59 +384,69 @@ mod tests {
 
     #[test]
     fn managed_ptr_addr_accepts_private_ipv4() {
-        assert!(HostnameRegistry::is_managed_ptr_addr(&IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1))));
-        assert!(HostnameRegistry::is_managed_ptr_addr(&IpAddr::V4(Ipv4Addr::new(172, 16, 0, 1))));
-        assert!(HostnameRegistry::is_managed_ptr_addr(&IpAddr::V4(Ipv4Addr::new(192, 168, 0, 1))));
+        assert!(LanHostnameRegistry::is_managed_ptr_addr(&IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1))));
+        assert!(LanHostnameRegistry::is_managed_ptr_addr(&IpAddr::V4(Ipv4Addr::new(
+            172, 16, 0, 1
+        ))));
+        assert!(LanHostnameRegistry::is_managed_ptr_addr(&IpAddr::V4(Ipv4Addr::new(
+            192, 168, 0, 1
+        ))));
     }
 
     #[test]
     fn managed_ptr_addr_accepts_loopback_and_link_local() {
-        assert!(HostnameRegistry::is_managed_ptr_addr(&IpAddr::V4(Ipv4Addr::LOCALHOST)));
-        assert!(HostnameRegistry::is_managed_ptr_addr(&IpAddr::V6(Ipv6Addr::LOCALHOST)));
-        assert!(HostnameRegistry::is_managed_ptr_addr(&IpAddr::V4(Ipv4Addr::new(169, 254, 1, 1))));
-        assert!(HostnameRegistry::is_managed_ptr_addr(&IpAddr::V6(Ipv6Addr::new(
+        assert!(LanHostnameRegistry::is_managed_ptr_addr(&IpAddr::V4(Ipv4Addr::LOCALHOST)));
+        assert!(LanHostnameRegistry::is_managed_ptr_addr(&IpAddr::V6(Ipv6Addr::LOCALHOST)));
+        assert!(LanHostnameRegistry::is_managed_ptr_addr(&IpAddr::V4(Ipv4Addr::new(
+            169, 254, 1, 1
+        ))));
+        assert!(LanHostnameRegistry::is_managed_ptr_addr(&IpAddr::V6(Ipv6Addr::new(
             0xfe80, 0, 0, 0, 0, 0, 0, 1
         ))));
     }
 
     #[test]
     fn managed_ptr_addr_accepts_unique_local_ipv6() {
-        assert!(HostnameRegistry::is_managed_ptr_addr(&IpAddr::V6(Ipv6Addr::new(
+        assert!(LanHostnameRegistry::is_managed_ptr_addr(&IpAddr::V6(Ipv6Addr::new(
             0xfd00, 0, 0, 0, 0, 0, 0, 1
         ))));
-        assert!(HostnameRegistry::is_managed_ptr_addr(&IpAddr::V6(Ipv6Addr::new(
+        assert!(LanHostnameRegistry::is_managed_ptr_addr(&IpAddr::V6(Ipv6Addr::new(
             0xfc00, 0, 0, 0, 0, 0, 0, 1
         ))));
     }
 
     #[test]
     fn managed_ptr_addr_accepts_shared_cgn_ipv4() {
-        assert!(HostnameRegistry::is_managed_ptr_addr(&IpAddr::V4(Ipv4Addr::new(100, 64, 0, 1))));
-        assert!(HostnameRegistry::is_managed_ptr_addr(&IpAddr::V4(Ipv4Addr::new(
+        assert!(LanHostnameRegistry::is_managed_ptr_addr(&IpAddr::V4(Ipv4Addr::new(
+            100, 64, 0, 1
+        ))));
+        assert!(LanHostnameRegistry::is_managed_ptr_addr(&IpAddr::V4(Ipv4Addr::new(
             100, 127, 255, 254
         ))));
     }
 
     #[test]
     fn managed_ptr_addr_accepts_unspecified_and_broadcast() {
-        assert!(HostnameRegistry::is_managed_ptr_addr(&IpAddr::V4(Ipv4Addr::UNSPECIFIED)));
-        assert!(HostnameRegistry::is_managed_ptr_addr(&IpAddr::V4(Ipv4Addr::BROADCAST)));
-        assert!(HostnameRegistry::is_managed_ptr_addr(&IpAddr::V6(Ipv6Addr::UNSPECIFIED)));
+        assert!(LanHostnameRegistry::is_managed_ptr_addr(&IpAddr::V4(Ipv4Addr::UNSPECIFIED)));
+        assert!(LanHostnameRegistry::is_managed_ptr_addr(&IpAddr::V4(Ipv4Addr::BROADCAST)));
+        assert!(LanHostnameRegistry::is_managed_ptr_addr(&IpAddr::V6(Ipv6Addr::UNSPECIFIED)));
     }
 
     #[test]
     fn managed_ptr_addr_rejects_public_ipv4() {
-        assert!(!HostnameRegistry::is_managed_ptr_addr(&IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8))));
-        assert!(!HostnameRegistry::is_managed_ptr_addr(&IpAddr::V4(Ipv4Addr::new(1, 1, 1, 1))));
-        assert!(!HostnameRegistry::is_managed_ptr_addr(&IpAddr::V4(Ipv4Addr::new(203, 0, 113, 1))));
+        assert!(!LanHostnameRegistry::is_managed_ptr_addr(&IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8))));
+        assert!(!LanHostnameRegistry::is_managed_ptr_addr(&IpAddr::V4(Ipv4Addr::new(1, 1, 1, 1))));
+        assert!(!LanHostnameRegistry::is_managed_ptr_addr(&IpAddr::V4(Ipv4Addr::new(
+            203, 0, 113, 1
+        ))));
     }
 
     #[test]
     fn managed_ptr_addr_rejects_global_unicast_ipv6() {
-        assert!(!HostnameRegistry::is_managed_ptr_addr(&IpAddr::V6(Ipv6Addr::new(
+        assert!(!LanHostnameRegistry::is_managed_ptr_addr(&IpAddr::V6(Ipv6Addr::new(
             0x2001, 0xdb8, 0, 0, 0, 0, 0, 1
         ))));
-        assert!(!HostnameRegistry::is_managed_ptr_addr(&IpAddr::V6(Ipv6Addr::new(
+        assert!(!LanHostnameRegistry::is_managed_ptr_addr(&IpAddr::V6(Ipv6Addr::new(
             0x2606, 0x4700, 0, 0, 0, 0, 0, 1
         ))));
     }

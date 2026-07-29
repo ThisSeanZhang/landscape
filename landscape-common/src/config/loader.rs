@@ -10,7 +10,7 @@ use crate::config::runtime::{
 };
 use crate::config::settings::LandscapeConfig;
 use crate::sys_service::gateway::settings::GatewayRuntimeConfig;
-use crate::sys_service::hostname_registry::HostnameRegistryConfig;
+use crate::sys_service::lan_hostname::LanHostnameConfig;
 use crate::{
     DEFAULT_TIME_ENABLE, DEFAULT_TIME_SAMPLES_PER_SERVER, DEFAULT_TIME_SERVERS,
     DEFAULT_TIME_STEP_THRESHOLD_MS, DEFAULT_TIME_SYNC_INTERVAL_SECS, DEFAULT_TIME_TIMEOUT_SECS,
@@ -229,13 +229,8 @@ impl RuntimeConfig {
                 .unwrap_or_else(|| "/dns-query".to_string()),
         };
 
-        let hostname_registry = HostnameRegistryConfig {
-            lan_suffix: config
-                .hostname_registry
-                .lan_suffix
-                .clone()
-                .unwrap_or_else(|| crate::DEFAULT_DNS_LAN_SUFFIX.to_string()),
-        };
+        let mut lan_hostname = LanHostnameConfig::default();
+        lan_hostname.update_from_file_config(&config.lan_hostname);
 
         let time = TimeRuntimeConfig {
             enabled: config.time.enabled.unwrap_or(DEFAULT_TIME_ENABLE),
@@ -268,7 +263,7 @@ impl RuntimeConfig {
             store,
             metric,
             dns,
-            hostname_registry,
+            lan_hostname,
             ui: config.ui.clone(),
             time,
             gateway,

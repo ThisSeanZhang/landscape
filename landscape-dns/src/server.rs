@@ -8,7 +8,7 @@ use std::{
 use arc_swap::{ArcSwap, ArcSwapOption};
 use landscape_common::dns::error::DnsError;
 use landscape_common::{dns::FlowDnsDesiredState, event::DnsMetricMessage, service::WatchService};
-use landscape_core::lan_hostname::HostnameRegistry;
+use landscape_core::lan_hostname::LanHostnameRegistry;
 use tokio::sync::{mpsc, Mutex};
 use tokio_util::sync::CancellationToken;
 
@@ -65,7 +65,7 @@ pub struct LandscapeDnsServer {
     // 用于重定向的动态更新
     pub local_answer_provider: Option<Arc<dyn LocalDnsAnswerProvider>>,
     pub doh_advertise_provider: Option<Arc<dyn DohAdvertiseProvider>>,
-    pub hostname_registry: Arc<HostnameRegistry>,
+    pub lan_hostname_registry: Arc<LanHostnameRegistry>,
     // DNS 事件
     pub msg_tx: MetricSenderState,
     // 监听 UDP DNS 地址
@@ -104,7 +104,7 @@ impl LandscapeDnsServer {
         doh: Option<EffectiveDohListenerConfig>,
         local_answer_provider: Option<Arc<dyn LocalDnsAnswerProvider>>,
         doh_advertise_provider: Option<Arc<dyn DohAdvertiseProvider>>,
-        hostname_registry: Arc<HostnameRegistry>,
+        lan_hostname_registry: Arc<LanHostnameRegistry>,
     ) -> Self {
         let status = WatchService::new();
         let mdns_service = if local_answer_provider.is_some() {
@@ -128,7 +128,7 @@ impl LandscapeDnsServer {
             _mdns_service: mdns_service,
             local_answer_provider,
             doh_advertise_provider,
-            hostname_registry,
+            lan_hostname_registry,
         }
     }
 
@@ -203,7 +203,7 @@ impl LandscapeDnsServer {
             self.msg_tx.clone(),
             self.local_answer_provider.clone(),
             self.doh_advertise_provider.clone(),
-            self.hostname_registry.clone(),
+            self.lan_hostname_registry.clone(),
             desired_state.doh_runtime.clone(),
         );
         let Some(runtime) = self.build_flow_runtime(flow_id, handler).await else {
@@ -343,8 +343,8 @@ mod tests {
     use super::*;
     use arc_swap::ArcSwap;
     use landscape_common::dns::{CacheRuntimeConfig, FlowDnsDesiredState};
-    use landscape_common::sys_service::hostname_registry::HostnameRegistryConfig;
-    use landscape_core::lan_hostname::HostnameRegistry;
+    use landscape_common::sys_service::lan_hostname::LanHostnameConfig;
+    use landscape_core::lan_hostname::LanHostnameRegistry;
 
     fn run_async_test(test: impl std::future::Future<Output = ()>) {
         tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(test);
@@ -358,8 +358,8 @@ mod tests {
         }
     }
 
-    fn test_hostname_registry() -> Arc<HostnameRegistry> {
-        HostnameRegistry::new_for_test(HostnameRegistryConfig::default())
+    fn test_lan_hostname_registry() -> Arc<LanHostnameRegistry> {
+        LanHostnameRegistry::new_for_test(LanHostnameConfig::default())
     }
 
     #[test]
@@ -373,7 +373,7 @@ mod tests {
                 Arc::new(ArcSwapOption::new(None)),
                 None,
                 None,
-                test_hostname_registry(),
+                test_lan_hostname_registry(),
                 None,
             );
             entry.runtime.store(Some(Arc::new(FlowServerRuntime {

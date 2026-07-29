@@ -5,7 +5,7 @@ use crate::config::settings::{
     LandscapeUIConfig, MetricMode,
 };
 use crate::sys_service::gateway::settings::GatewayRuntimeConfig;
-use crate::sys_service::hostname_registry::HostnameRegistryConfig;
+use crate::sys_service::lan_hostname::LanHostnameConfig;
 use crate::{
     DEFAULT_TIME_ENABLE, DEFAULT_TIME_SAMPLES_PER_SERVER, DEFAULT_TIME_SERVERS,
     DEFAULT_TIME_STEP_THRESHOLD_MS, DEFAULT_TIME_SYNC_INTERVAL_SECS, DEFAULT_TIME_TIMEOUT_SECS,
@@ -22,7 +22,7 @@ pub struct RuntimeConfig {
     pub store: StoreRuntimeConfig,
     pub metric: MetricRuntimeConfig,
     pub dns: DnsRuntimeConfig,
-    pub hostname_registry: HostnameRegistryConfig,
+    pub lan_hostname: LanHostnameConfig,
     pub ui: LandscapeUIConfig,
     pub time: TimeRuntimeConfig,
     pub gateway: GatewayRuntimeConfig,
