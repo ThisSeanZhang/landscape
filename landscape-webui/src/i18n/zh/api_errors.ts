@@ -81,6 +81,18 @@ export default {
   "init_config.version_mismatch":
     "Init 文件版本不匹配，文件版本: {file_version}，当前版本: {current_version}",
   "config.conflict": "配置已被他人修改，请刷新后重试",
+  "lan_hostname.invalid_suffix.invalid_idna":
+    "局域网主机名后缀 '{suffix}' 不是有效的 IDNA 标签",
+  "lan_hostname.invalid_suffix.multiple_labels":
+    "局域网主机名后缀 '{suffix}' 只能包含一个 DNS 标签",
+  "lan_hostname.invalid_suffix.too_long":
+    "局域网主机名后缀 '{suffix}' 超过 63 个 ASCII 字节",
+  "lan_hostname.invalid_suffix.invalid_hyphen":
+    "局域网主机名后缀 '{suffix}' 不能以连字符开头或结尾",
+  "lan_hostname.invalid_suffix.invalid_character":
+    "局域网主机名后缀 '{suffix}' 只能包含字母、数字和连字符",
+  "lan_hostname.invalid_suffix.reserved":
+    "局域网主机名后缀 '{suffix}' 已被 DNS 解析器保留",
   "lan_ipv6.config_conflict": "LAN IPv6 配置已被他人修改，请刷新后重试",
   "lan_ipv6.prefix_conflict": "LAN IPv6 前缀槽位冲突：{reason}",
   "lan_ipv6.internal": "LAN IPv6 配置更新失败",

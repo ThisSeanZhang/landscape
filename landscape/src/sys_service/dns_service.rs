@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Instant;
 
+use landscape_common::sys_service::lan_hostname::LanHostnameConfig;
 use landscape_common::{
     config::DnsRuntimeConfig,
     dns::error::DnsError,
@@ -178,6 +179,10 @@ impl LandscapeDnsService {
 
     pub fn update_metric_sender(&self, msg_tx: Option<mpsc::Sender<DnsMetricMessage>>) {
         self.dns_service.update_metric_sender(msg_tx);
+    }
+
+    pub fn update_lan_hostname_config(&self, config: LanHostnameConfig) {
+        self.dns_service.update_lan_hostname_config(config);
     }
 
     pub async fn check_domain(&self, req: CheckDnsReq) -> CheckChainDnsResult {

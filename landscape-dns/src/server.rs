@@ -7,6 +7,7 @@ use std::{
 
 use arc_swap::{ArcSwap, ArcSwapOption};
 use landscape_common::dns::error::DnsError;
+use landscape_common::sys_service::lan_hostname::LanHostnameConfig;
 use landscape_common::{dns::FlowDnsDesiredState, event::DnsMetricMessage, service::WatchService};
 use landscape_core::lan_hostname::LanHostnameRegistry;
 use tokio::sync::{mpsc, Mutex};
@@ -142,6 +143,10 @@ impl LandscapeDnsServer {
 
     pub fn update_metric_sender(&self, msg_tx: Option<mpsc::Sender<DnsMetricMessage>>) {
         self.msg_tx.store(msg_tx.map(Arc::new));
+    }
+
+    pub fn update_lan_hostname_config(&self, config: LanHostnameConfig) {
+        self.lan_hostname_registry.update_config(config);
     }
 
     pub fn current_live_runtime_config(&self) -> (CacheRuntimeConfig, Option<DohRuntimeConfig>) {

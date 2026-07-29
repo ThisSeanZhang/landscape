@@ -1,14 +1,15 @@
 use arc_swap::ArcSwap;
 use fs2::FileExt;
 use landscape_common::config::{
-    InitConfig, LandscapeConfig, LandscapeDnsConfig, LandscapeMetricConfig, LandscapeTimeConfig,
-    LandscapeUIConfig, RuntimeConfig,
+    InitConfig, LandscapeConfig, LandscapeDnsConfig, LandscapeLanHostnameConfig,
+    LandscapeMetricConfig, LandscapeTimeConfig, LandscapeUIConfig, RuntimeConfig,
 };
 use landscape_common::database::LandscapeStore;
 use landscape_common::error::{LdError, LdResult};
 use landscape_common::sys_service::gateway::settings::{
     GatewayRuntimeConfig, LandscapeGatewayConfig,
 };
+use landscape_common::sys_service::lan_hostname::LanHostnameConfig;
 use landscape_core::time::update_time_sync_config;
 use landscape_database::provider::LandscapeDBServiceProvider;
 use sha2::{Digest, Sha256};
@@ -100,6 +101,14 @@ impl LandscapeConfigService {
         self.config.load().dns.clone()
     }
 
+    pub fn get_lan_hostname_config_from_memory(&self) -> LandscapeLanHostnameConfig {
+        self.config.load().file_config.lan_hostname.clone()
+    }
+
+    pub fn get_lan_hostname_runtime_config(&self) -> LanHostnameConfig {
+        self.config.load().lan_hostname.clone()
+    }
+
     pub fn get_time_config_from_memory(&self) -> LandscapeTimeConfig {
         self.config.load().file_config.time.clone()
     }
@@ -120,6 +129,11 @@ impl LandscapeConfigService {
     pub async fn get_dns_config_from_file(&self) -> (LandscapeDnsConfig, String) {
         let (config, hash) = self.get_config_with_hash().await.unwrap_or_default();
         (config.dns, hash)
+    }
+
+    pub async fn get_lan_hostname_config_from_file(&self) -> (LandscapeLanHostnameConfig, String) {
+        let (config, hash) = self.get_config_with_hash().await.unwrap_or_default();
+        (config.lan_hostname, hash)
     }
 
     pub async fn get_gateway_config_from_file(&self) -> (LandscapeGatewayConfig, String) {
@@ -357,6 +371,80 @@ impl LandscapeConfigService {
             let mut new_config = (**old).clone();
             new_config.dns.update_from_file_config(&new_dns);
             new_config.file_config.dns = new_dns.clone();
+            new_config
+        });
+
+        Ok(())
+    }
+
+    pub async fn update_lan_hostname_config(
+        &self,
+        new_lan_hostname: LandscapeLanHostnameConfig,
+        expected_hash: String,
+    ) -> LdResult<()> {
+        let new_lan_hostname = new_lan_hostname
+            .normalized()
+            .map_err(|error| LdError::ConfigError(error.to_string()))?;
+        let path = self.get_config_path();
+        let file = OpenOptions::new().read(true).write(true).create(true).open(&path)?;
+
+        file.lock_exclusive()?;
+
+        let result = (|| {
+            let mut content = String::new();
+            (&file).read_to_string(&mut content)?;
+
+            let mut hasher = Sha256::new();
+            hasher.update(content.as_bytes());
+            let current_hash =
+                hasher.finalize().iter().map(|b| format!("{:02x}", b)).collect::<String>();
+
+            if current_hash != expected_hash {
+                return Err(LdError::ConfigConflict);
+            }
+
+            let mut doc =
+                content.parse::<DocumentMut>().map_err(|e| LdError::ConfigError(e.to_string()))?;
+            let lan_hostname_value = toml::to_string(&new_lan_hostname)
+                .map_err(|e| LdError::ConfigError(e.to_string()))?;
+            let lan_hostname_doc = lan_hostname_value
+                .parse::<DocumentMut>()
+                .map_err(|e| LdError::ConfigError(e.to_string()))?;
+
+            doc.remove("hostname_registry");
+            doc["lan_hostname"] = lan_hostname_doc.as_item().clone();
+
+            let tmp_path = path.with_extension("toml.tmp");
+            let mut opts = OpenOptions::new();
+            opts.write(true).create(true).truncate(true);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt;
+                opts.mode(0o600);
+            }
+            let mut tmp_file = opts.open(&tmp_path)?;
+            tmp_file.write_all(doc.to_string().as_bytes())?;
+            tmp_file.sync_all()?;
+            std::fs::rename(&tmp_path, &path)?;
+
+            Ok::<(), LdError>(())
+        })();
+
+        if let Err(error) = file.unlock() {
+            tracing::warn!(
+                path = %path.display(),
+                error = %error,
+                "failed to release config file lock after LAN hostname update"
+            );
+        }
+        result?;
+
+        let runtime = LanHostnameConfig::from_file_config(&new_lan_hostname)
+            .expect("normalized LAN hostname config must be valid");
+        self.config.rcu(|old| {
+            let mut new_config = (**old).clone();
+            new_config.lan_hostname = runtime.clone();
+            new_config.file_config.lan_hostname = new_lan_hostname.clone();
             new_config
         });
 

@@ -100,6 +100,11 @@ pub fn get_sys_config_paths() -> OpenApiRouter<LandscapeApp> {
         ))
         .routes(routes!(super::dns_config::get_dns_config_fast))
         .routes(routes!(super::dns_config::get_dns_config, super::dns_config::update_dns_config))
+        .routes(routes!(super::lan_hostname_config::get_lan_hostname_config_fast))
+        .routes(routes!(
+            super::lan_hostname_config::get_lan_hostname_config,
+            super::lan_hostname_config::update_lan_hostname_config
+        ))
         .routes(routes!(super::gateway_config::get_gateway_config_fast))
         .routes(routes!(
             super::gateway_config::get_gateway_config,

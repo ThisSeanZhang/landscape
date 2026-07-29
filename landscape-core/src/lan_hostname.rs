@@ -100,14 +100,21 @@ impl LanHostnameRegistry {
         self.config.store(Arc::new(config));
     }
 
+    pub fn is_enabled(&self) -> bool {
+        self.config.load().enable
+    }
+
     pub fn is_local_tld(&self, tld: &str) -> bool {
         let tld = tld.to_ascii_lowercase();
-        let suffix = self.config.load().lan_suffix.to_ascii_lowercase();
-        (!suffix.is_empty() && tld == suffix) || tld == "local"
+        if tld == "local" {
+            return true;
+        }
+        let config = self.config.load();
+        config.enable && !config.lan_suffix.is_empty() && tld == config.lan_suffix
     }
 
     pub fn resolve_a_by_hostname(&self, hostname: &str) -> Option<Ipv4Addr> {
-        if hostname.is_empty() {
+        if !self.config.load().enable || hostname.is_empty() {
             return None;
         }
         let punycode = idna::domain_to_ascii(hostname).ok()?;
@@ -115,7 +122,7 @@ impl LanHostnameRegistry {
     }
 
     pub fn resolve_aaaa_by_hostname(&self, hostname: &str) -> Option<Ipv6Addr> {
-        if hostname.is_empty() {
+        if !self.config.load().enable || hostname.is_empty() {
             return None;
         }
         let punycode = idna::domain_to_ascii(hostname).ok()?;
@@ -123,7 +130,7 @@ impl LanHostnameRegistry {
     }
 
     pub fn resolve_ptr_by_addr(&self, addr: &IpAddr) -> Option<String> {
-        if !Self::is_managed_ptr_addr(addr) {
+        if !self.config.load().enable || !Self::is_managed_ptr_addr(addr) {
             return None;
         }
         let mut enrolled: Vec<String> = Vec::new();
@@ -279,6 +286,7 @@ mod tests {
         LanHostnameRegistry {
             hostname_map: Arc::new(map),
             config: Arc::new(ArcSwap::from_pointee(LanHostnameConfig {
+                enable: true,
                 lan_suffix: "lan".to_string(),
             })),
         }
@@ -375,6 +383,7 @@ mod tests {
         LanHostnameRegistry {
             hostname_map: Arc::new(map),
             config: Arc::new(ArcSwap::from_pointee(LanHostnameConfig {
+                enable: true,
                 lan_suffix: lan_suffix.to_string(),
             })),
         }
@@ -590,5 +599,37 @@ mod tests {
         let reg = registry_with_config(&[], "");
         assert!(!reg.is_local_tld(""));
         assert!(!reg.is_local_tld("lan"));
+    }
+
+    #[test]
+    fn update_config_applies_suffix_without_clearing_hostname_records() {
+        let ip = Ipv4Addr::new(192, 168, 1, 10);
+        let reg = registry_with(&[("nas", v4_record(ip, true))]);
+
+        reg.update_config(LanHostnameConfig { enable: true, lan_suffix: "home".to_string() });
+
+        assert!(!reg.is_local_tld("lan"));
+        assert!(reg.is_local_tld("home"));
+        assert_eq!(reg.resolve_a_by_hostname("nas"), Some(ip));
+        assert_eq!(reg.resolve_ptr_by_addr(&IpAddr::V4(ip)), Some("nas.home.".to_string()));
+    }
+
+    #[test]
+    fn disabled_config_stops_resolution_without_clearing_hostname_records() {
+        let ip = Ipv4Addr::new(192, 168, 1, 10);
+        let reg = registry_with(&[("nas", v4_record(ip, true))]);
+
+        reg.update_config(LanHostnameConfig { enable: false, lan_suffix: "lan".to_string() });
+
+        assert!(!reg.is_enabled());
+        assert!(!reg.is_local_tld("lan"));
+        assert!(reg.is_local_tld("local"));
+        assert_eq!(reg.resolve_a_by_hostname("nas"), None);
+        assert_eq!(reg.resolve_aaaa_by_hostname("nas"), None);
+        assert_eq!(reg.resolve_ptr_by_addr(&IpAddr::V4(ip)), None);
+
+        reg.update_config(LanHostnameConfig { enable: true, lan_suffix: "lan".to_string() });
+        assert!(reg.is_enabled());
+        assert_eq!(reg.resolve_a_by_hostname("nas"), Some(ip));
     }
 }

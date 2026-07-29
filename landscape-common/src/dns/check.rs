@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::config::FlowId;
+use crate::dns::domain::normalize_domain_name;
 use crate::dns::error::DnsError;
 use crate::dns::rule::{DNSRuntimeRule, FilterResult, LandscapeDnsRecordType};
 
@@ -72,10 +73,7 @@ pub struct CheckDnsReq {
 
 impl CheckDnsReq {
     pub fn get_domain(&self) -> Result<String, DnsError> {
-        let no_dot = self.domain.trim().trim_end_matches('.');
-        let ascii = idna::domain_to_ascii(no_dot)
-            .map_err(|_| DnsError::Invalid { domain: self.domain.clone() })?;
-        Ok(format!("{}.", ascii.to_ascii_lowercase()))
+        Ok(format!("{}.", normalize_domain_name(&self.domain)?))
     }
 }
 

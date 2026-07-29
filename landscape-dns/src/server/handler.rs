@@ -343,6 +343,10 @@ impl DnsRequestHandler {
             return Some((vec![record], DnsOutcome::Local));
         }
 
+        if !self.lan_hostname_registry.is_enabled() {
+            return None;
+        }
+
         match self.lan_hostname_registry.resolve_ptr_by_addr(addr) {
             Some(fqdn) => {
                 let Ok(target) = Name::from_utf8(&fqdn) else {
@@ -1517,6 +1521,40 @@ mod tests {
                 RData::PTR(ptr) => assert_eq!(ptr.0.to_string(), "nas.lan."),
                 other => panic!("expected PTR record, got {:?}", other),
             }
+        });
+    }
+
+    #[test]
+    fn disabled_lan_hostname_registry_does_not_own_private_ptr_queries() {
+        run_async_test(async {
+            let registry = LanHostnameRegistry::new_for_test(
+                landscape_common::sys_service::lan_hostname::LanHostnameConfig {
+                    enable: false,
+                    lan_suffix: "lan".to_string(),
+                },
+            );
+            let handler = DnsRequestHandler::new(
+                ChainDnsServerInitInfo::default().into(),
+                shared_cache_runtime_config(5),
+                1,
+                Arc::new(ArcSwapOption::new(None)),
+                None,
+                None,
+                registry,
+                None,
+            );
+            let domain = PreprocessedDomain::new("50.1.168.192.in-addr.arpa.").unwrap();
+
+            assert!(handler
+                .resolve_lan_ptr_by_addr(&IpAddr::V4(Ipv4Addr::new(192, 168, 1, 50)), &domain)
+                .is_none());
+
+            let loopback_domain = PreprocessedDomain::new("1.0.0.127.in-addr.arpa.").unwrap();
+            let (records, outcome) = handler
+                .resolve_lan_ptr_by_addr(&IpAddr::V4(Ipv4Addr::LOCALHOST), &loopback_domain)
+                .expect("localhost PTR remains resolver-owned when LAN hostnames are disabled");
+            assert_eq!(outcome, DnsOutcome::Local);
+            assert_eq!(records.len(), 1);
         });
     }
 
