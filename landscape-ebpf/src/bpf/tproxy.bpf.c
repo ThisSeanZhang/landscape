@@ -23,21 +23,14 @@ char LICENSE[] SEC("license") = "GPL";
 volatile const u8 proxy_ipv6_addr[16] = {0};
 volatile const __be32 proxy_addr = 0;
 volatile const __be16 proxy_port = 0;
-
-/* Mark applied to ICMP / ICMPv6 packets so they are released to the container
- * routing stack instead of being sk_assign'd to the TProxy listener (which only
- * has TCP/UDP sockets). Must avoid bit 0: start.sh installs
- * `ip rule add fwmark 0x1/0x1 lookup 100` which locally delivers any mark whose
- * bit 0 is set to the TProxy listener. 0x2 keeps ICMP out of that table so it
- * follows the main route table; users match this mark with nft/iptables to
- * forward it out the WAN. See issue #206. */
-#define LAND_TPROXY_ICMP_MARK 0x2
+volatile const bool enable_icmp_passthrough = false;
+volatile const u32 icmp_mark_value = 2;
 
 static __always_inline int handle_pkg(struct __sk_buff *skb, struct packet_offset_info *offset,
                                       struct inet_pair *ip_pair, __be16 flow_port) {
 #define BPF_LOG_TOPIC "handle_pkg"
     struct bpf_sock_tuple server = {0};
-    struct bpf_sock *sk;
+    struct bpf_sock *sk = NULL;
     size_t tuple_len;
     int ret;
     int change_type_err;
@@ -165,16 +158,12 @@ int tproxy_ingress(struct __sk_buff *skb) {
         return ret;
     }
 
-    /* TProxy binds only TCP/UDP sockets, so ICMP can never be sk_assign'd and
-     * would otherwise fall into the `!sk` branch of handle_pkg() and be dropped
-     * (TC_ACT_SHOT). Instead mark it and release it to the container routing
-     * stack (same as route_mode_ingress), letting the user's nft/iptables rules
-     * forward it out the WAN. This is what makes ping/traceroute work for
-     * devices steered into a TProxy container. See issue #206. */
-    if (is_icmp_protocol(pkg_offset.l4_protocol)) {
-        skb->mark = LAND_TPROXY_ICMP_MARK;
-        bpf_skb_change_type(skb, PACKET_HOST);
-        return TC_ACT_OK;
+    if (enable_icmp_passthrough) {
+        if (is_icmp_protocol(pkg_offset.l4_protocol)) {
+            skb->mark = icmp_mark_value;
+            bpf_skb_change_type(skb, PACKET_HOST);
+            return TC_ACT_OK;
+        }
     }
 
     ret = read_tproxy_packet_info(skb, &pkg_offset, &ip_pair);

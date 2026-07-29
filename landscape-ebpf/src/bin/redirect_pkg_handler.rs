@@ -41,6 +41,16 @@ pub struct CmdParams {
     #[arg(short = 'm', long = "mode", value_enum, default_value_t = HandleMode::Tproxy, env = "LAND_PROXY_HANDLE_MODE")]
     handle_mode: HandleMode,
 
+    #[arg(
+        long = "enable-icmp-passthrough",
+        default_value_t = false,
+        env = "LAND_PROXY_ENABLE_ICMP_PASSTHROUGH"
+    )]
+    enable_icmp_passthrough: bool,
+
+    #[arg(long = "icmp-mark-value", default_value_t = 2, env = "LAND_PROXY_ICMP_MARK_VALUE")]
+    icmp_mark_value: u32,
+
     #[arg(long = "sock_path", env = "LAND_SOCK_PATH")]
     sock_path: Option<PathBuf>,
 
@@ -96,6 +106,8 @@ async fn main() {
     // Set constants
     rodata_data.proxy_addr = proxy_addr.to_be();
     rodata_data.proxy_ipv6_addr = proxy_ipv6_addr.to_be_bytes();
+    rodata_data.enable_icmp_passthrough = params.enable_icmp_passthrough;
+    rodata_data.icmp_mark_value = params.icmp_mark_value;
     if HandleMode::MultipleTproxy == params.handle_mode {
         // Using Flow id to find server port
         rodata_data.proxy_port = 0;
