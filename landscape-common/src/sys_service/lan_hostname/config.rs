@@ -94,11 +94,26 @@ pub fn normalize_lan_suffix(suffix: &str) -> Result<String, LanHostnameError> {
     {
         return Err(LanHostnameError::InvalidCharacter { suffix: suffix.to_string() });
     }
-    if matches!(normalized.as_str(), "invalid" | "test" | "onion" | "localhost" | "arpa") {
+    if conflicts_with_resolver_namespace(&normalized) {
         return Err(LanHostnameError::Reserved { suffix: suffix.to_string() });
     }
 
     Ok(normalized)
+}
+
+fn conflicts_with_resolver_namespace(suffix: &str) -> bool {
+    const RESERVED_TLDS: &[&str] = &["invalid", "test", "onion", "localhost", "local"];
+    const RESERVED_ARPA_ZONES: &[&str] =
+        &["in-addr.arpa", "ip6.arpa", "resolver.arpa", "ipv4only.arpa"];
+
+    let tld = suffix.rsplit('.').next().unwrap_or_default();
+    RESERVED_TLDS.contains(&tld)
+        || suffix == "arpa"
+        || RESERVED_ARPA_ZONES.iter().any(|zone| is_same_or_subdomain(suffix, zone))
+}
+
+fn is_same_or_subdomain(name: &str, zone: &str) -> bool {
+    name == zone || name.strip_suffix(zone).is_some_and(|prefix| prefix.ends_with('.'))
 }
 
 #[cfg(test)]
@@ -251,11 +266,35 @@ mod tests {
 
     #[test]
     fn rejects_suffixes_reserved_by_the_dns_resolver() {
-        for suffix in ["invalid", "test", "onion", "localhost", "arpa"] {
+        for suffix in [
+            "invalid",
+            "corp.test",
+            "service.onion",
+            "localhost",
+            "corp.localhost",
+            "local",
+            "office.local",
+            "arpa",
+            "in-addr.arpa",
+            "corp.in-addr.arpa",
+            "ip6.arpa",
+            "corp.ip6.arpa",
+            "resolver.arpa",
+            "corp.resolver.arpa",
+            "ipv4only.arpa",
+            "corp.ipv4only.arpa",
+        ] {
             let error = normalize_lan_suffix(suffix).unwrap_err();
 
             assert!(matches!(error, LanHostnameError::Reserved { .. }));
             assert_eq!(error.error_id(), "lan_hostname.invalid_suffix.reserved");
+        }
+    }
+
+    #[test]
+    fn accepts_non_reserved_arpa_suffixes() {
+        for suffix in ["home.arpa", "mylan.arpa", "in-addr.home.arpa"] {
+            assert_eq!(normalize_lan_suffix(suffix).unwrap(), suffix);
         }
     }
 }

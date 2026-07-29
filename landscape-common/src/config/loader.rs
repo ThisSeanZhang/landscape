@@ -79,6 +79,29 @@ mod tests {
         assert_eq!(config.web.port, 7001);
         assert_eq!(config.web.address, IpAddr::V6(Ipv6Addr::LOCALHOST));
     }
+
+    #[test]
+    fn new_with_file_config_disables_invalid_legacy_lan_suffix_without_panicking() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let config = RuntimeConfig::new_with_file_config(
+            WebCommArgs {
+                config_dir: Some(temp_dir.path().to_path_buf()),
+                ..Default::default()
+            },
+            Some(LandscapeConfig {
+                lan_hostname: crate::config::LandscapeLanHostnameConfig {
+                    enable: Some(true),
+                    lan_suffix: Some("corp.test".to_string()),
+                },
+                ..Default::default()
+            }),
+        );
+
+        assert!(!config.lan_hostname.enable);
+        assert_eq!(config.lan_hostname.lan_suffix, crate::DEFAULT_DNS_LAN_SUFFIX);
+        assert_eq!(config.file_config.lan_hostname.enable, Some(true));
+        assert_eq!(config.file_config.lan_hostname.lan_suffix.as_deref(), Some("corp.test"));
+    }
 }
 
 const fn default_debug_mode() -> bool {
@@ -120,10 +143,6 @@ impl RuntimeConfig {
         }
 
         let mut config = file_config.unwrap_or_else(|| read_home_config_file(home_path.clone()));
-        config.lan_hostname = config
-            .lan_hostname
-            .normalized()
-            .unwrap_or_else(|error| panic!("invalid LAN hostname config: {error}"));
 
         let auth = AuthRuntimeConfig {
             admin_user: read_value(&args.admin_user, &config.auth.admin_user, "root".to_string()),
@@ -233,8 +252,23 @@ impl RuntimeConfig {
                 .unwrap_or_else(|| "/dns-query".to_string()),
         };
 
-        let lan_hostname = LanHostnameConfig::from_file_config(&config.lan_hostname)
-            .expect("normalized LAN hostname config must be valid");
+        let lan_hostname = match config.lan_hostname.clone().normalized() {
+            Ok(normalized) => {
+                config.lan_hostname = normalized;
+                LanHostnameConfig::from_file_config(&config.lan_hostname)
+                    .expect("normalized LAN hostname config must be valid")
+            }
+            Err(error) => {
+                tracing::warn!(
+                    error = %error,
+                    "invalid legacy LAN hostname config; LAN hostname resolution is disabled until the config is corrected"
+                );
+                LanHostnameConfig {
+                    enable: false,
+                    lan_suffix: crate::DEFAULT_DNS_LAN_SUFFIX.to_string(),
+                }
+            }
+        };
 
         let time = TimeRuntimeConfig {
             enabled: config.time.enabled.unwrap_or(DEFAULT_TIME_ENABLE),
