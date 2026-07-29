@@ -2,13 +2,16 @@ import type {
   GetDnsConfigResponse,
   GetDnsConfigResponse as GetDnsConfigFastResponse,
   GetGatewayConfigResponse,
+  GetLanHostnameConfigResponse,
   GetMetricConfigResponse,
   LandscapeGatewayConfig,
+  LandscapeLanHostnameConfig,
   GetUIConfigResponse,
   LandscapeDnsConfig,
   LandscapeMetricConfig,
   LandscapeUIConfig,
   UpdateGatewayConfigRequest,
+  UpdateLanHostnameConfigRequest,
   UpdateMetricConfigRequest,
   UpdateUIConfigRequest,
 } from "@landscape-router/types/api/schemas";
@@ -24,6 +27,9 @@ import {
   getDnsConfigFast,
   getDnsConfig,
   updateDnsConfig,
+  getLanHostnameConfigFast,
+  getLanHostnameConfig,
+  updateLanHostnameConfig,
   getGatewayConfigFast,
   getGatewayConfig,
   updateGatewayConfig,
@@ -100,6 +106,20 @@ export async function update_dns_config(
   payload: UpdateDnsConfigRequest,
 ): Promise<void> {
   await updateDnsConfig(payload);
+}
+
+export async function get_lan_hostname_config(): Promise<LandscapeLanHostnameConfig> {
+  return await getLanHostnameConfigFast();
+}
+
+export async function get_lan_hostname_config_edit(): Promise<GetLanHostnameConfigResponse> {
+  return await getLanHostnameConfig();
+}
+
+export async function update_lan_hostname_config(
+  payload: UpdateLanHostnameConfigRequest,
+): Promise<void> {
+  await updateLanHostnameConfig(payload);
 }
 
 export async function get_gateway_config(): Promise<LandscapeGatewayConfig> {

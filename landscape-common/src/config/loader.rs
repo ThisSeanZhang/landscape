@@ -119,7 +119,11 @@ impl RuntimeConfig {
             home_path = home_path.components().collect();
         }
 
-        let config = file_config.unwrap_or_else(|| read_home_config_file(home_path.clone()));
+        let mut config = file_config.unwrap_or_else(|| read_home_config_file(home_path.clone()));
+        config.lan_hostname = config
+            .lan_hostname
+            .normalized()
+            .unwrap_or_else(|error| panic!("invalid LAN hostname config: {error}"));
 
         let auth = AuthRuntimeConfig {
             admin_user: read_value(&args.admin_user, &config.auth.admin_user, "root".to_string()),
@@ -229,8 +233,8 @@ impl RuntimeConfig {
                 .unwrap_or_else(|| "/dns-query".to_string()),
         };
 
-        let mut lan_hostname = LanHostnameConfig::default();
-        lan_hostname.update_from_file_config(&config.lan_hostname);
+        let lan_hostname = LanHostnameConfig::from_file_config(&config.lan_hostname)
+            .expect("normalized LAN hostname config must be valid");
 
         let time = TimeRuntimeConfig {
             enabled: config.time.enabled.unwrap_or(DEFAULT_TIME_ENABLE),

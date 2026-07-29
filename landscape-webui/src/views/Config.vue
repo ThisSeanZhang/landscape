@@ -3,11 +3,13 @@ import { onMounted, ref } from "vue";
 import { usePreferenceStore } from "@/stores/preference";
 import { useMetricConfigStore } from "@/stores/metric_config";
 import { useDnsConfigStore } from "@/stores/dns_config";
+import { useLanHostnameConfigStore } from "@/stores/lan_hostname_config";
 import { useMessage } from "naive-ui";
 import { useI18n } from "vue-i18n";
 
 import UIConfigCard from "@/views/config_parts/UIConfigCard.vue";
 import DNSConfigCard from "@/views/config_parts/DNSConfigCard.vue";
+import LanHostnameConfigCard from "@/views/config_parts/LanHostnameConfigCard.vue";
 import MetricConfigCard from "@/views/config_parts/MetricConfigCard.vue";
 import BackupConfigCard from "@/views/config_parts/BackupConfigCard.vue";
 import PasswordConfigCard from "@/views/config_parts/PasswordConfigCard.vue";
@@ -16,6 +18,7 @@ const { t } = useI18n();
 const prefStore = usePreferenceStore();
 const metricStore = useMetricConfigStore();
 const dnsStore = useDnsConfigStore();
+const lanHostnameStore = useLanHostnameConfigStore();
 const message = useMessage();
 const loading = ref(false);
 
@@ -28,6 +31,7 @@ onMounted(async () => {
       prefStore.loadPreferenceForEdit(),
       metricStore.loadMetricConfig(),
       dnsStore.loadDnsConfig(),
+      lanHostnameStore.loadLanHostnameConfig(),
     ]);
   } catch (e) {
     message.error(t("config.load_failed"));
@@ -44,6 +48,7 @@ onMounted(async () => {
       <n-space vertical size="large">
         <UIConfigCard />
         <DNSConfigCard />
+        <LanHostnameConfigCard />
         <MetricConfigCard />
         <PasswordConfigCard />
         <BackupConfigCard />
@@ -70,6 +75,10 @@ onMounted(async () => {
         >
           <n-anchor-link :title="t('config.ui_title')" href="#ui-config" />
           <n-anchor-link :title="t('config.dns_title')" href="#dns-config" />
+          <n-anchor-link
+            :title="t('config.lan_hostname_title')"
+            href="#lan-hostname-config"
+          />
           <n-anchor-link
             :title="t('config.metric_title')"
             href="#metric-config"
