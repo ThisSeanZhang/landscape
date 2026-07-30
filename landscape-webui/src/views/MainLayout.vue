@@ -9,6 +9,7 @@ import { Logout, Pin, PinFilled, Terminal } from "@vicons/carbon";
 import { LANDSCAPE_TOKEN_KEY } from "@/lib/common";
 import { useFrontEndStore } from "@/stores/front_end_config";
 import { usePtyStore } from "@/stores/pty";
+import { useEnrolledDeviceStore } from "@/stores/enrolled_device";
 import IntervalFetch from "@/components/head/IntervalFetch.vue";
 import LanguageSetting from "@/components/head/LanguageSetting.vue";
 import GlobalTerminal from "@/components/GlobalTerminal.vue";
@@ -48,6 +49,15 @@ function handleTagClose(path: string) {
 
 const frontEndStore = useFrontEndStore();
 const ptyStore = usePtyStore();
+const enrolledDeviceStore = useEnrolledDeviceStore();
+
+watch(
+  () => route.path,
+  () => {
+    void enrolledDeviceStore.UPDATE_INFO();
+  },
+  { immediate: true },
+);
 
 function logout() {
   localStorage.removeItem(LANDSCAPE_TOKEN_KEY);

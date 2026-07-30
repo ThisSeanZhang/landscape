@@ -88,6 +88,7 @@ export const useEnrolledDeviceStore = defineStore("enrolled_device", () => {
   const frontEndStore = useFrontEndStore();
   const bindings = ref<EnrolledDevice[]>([]);
   const loading = ref(false);
+  let updatePromise: Promise<void> | null = null;
 
   // 建立 MAC 地址索引 Map
   const macMap = computed(() => {
@@ -134,16 +135,23 @@ export const useEnrolledDeviceStore = defineStore("enrolled_device", () => {
     return macMap.value.get(normalizedKey) || ipMap.value.get(normalizedKey);
   }
 
-  async function UPDATE_INFO() {
+  function UPDATE_INFO(): Promise<void> {
+    if (updatePromise) return updatePromise;
+
     loading.value = true;
-    try {
-      const data = await get_enrolled_devices();
-      bindings.value = data;
-    } catch (error) {
-      console.error("Failed to fetch enrolled devices:", error);
-    } finally {
-      loading.value = false;
-    }
+    updatePromise = (async () => {
+      try {
+        const data = await get_enrolled_devices();
+        bindings.value = data;
+      } catch (error) {
+        console.error("Failed to fetch enrolled devices:", error);
+      } finally {
+        loading.value = false;
+        updatePromise = null;
+      }
+    })();
+
+    return updatePromise;
   }
 
   /**
