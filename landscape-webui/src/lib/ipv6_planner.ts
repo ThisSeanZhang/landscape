@@ -15,11 +15,7 @@ import {
 export type PlannerState = "idle" | "preview" | "resolved";
 export type PlannerRenderMode = "full" | "summary_only";
 export type PlannerSelectionStatus =
-  | "idle"
-  | "available"
-  | "shared"
-  | "wan_reserved"
-  | "conflict";
+  "idle" | "available" | "shared" | "wan_reserved" | "conflict";
 
 export type PlannerCellKind =
   | "available"

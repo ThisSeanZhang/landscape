@@ -40,7 +40,7 @@
     "axios": ">=1.0.0"
   },
   "devDependencies": {
-    "axios": "^1.18.0",
+    "axios": "^1.18.1",
     "orval": "^8.18.0"
   }
 }

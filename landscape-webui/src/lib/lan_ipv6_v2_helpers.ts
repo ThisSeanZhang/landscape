@@ -3,10 +3,7 @@ import type { PrefixParentSource } from "@landscape-router/types/api/schemas";
 export type SourceType = "static" | "pd";
 export type SourceKind = "ra" | "na" | "pd";
 export type LanSnapshotCompatibility =
-  | "unavailable"
-  | "matched"
-  | "compatible"
-  | "insufficient";
+  "unavailable" | "matched" | "compatible" | "insufficient";
 
 export function wanPrefixMeetsExpectation(
   actualPrefixLen: number | null | undefined,

@@ -63,8 +63,7 @@ export function applyInterceptors(instance: AxiosInstance): AxiosInstance {
           unknown
         >;
         const errorsMap = localeMessages.errors as
-          | Record<string, string>
-          | undefined;
+          Record<string, string> | undefined;
         const flatTemplate =
           error_id && errorsMap ? errorsMap[error_id] : undefined;
 

@@ -67,8 +67,7 @@ const searchParams = reactive({
   max_duration_ms: null as number | null,
   flow_id: null as number | null,
   timeRange: [Date.now() - DEFAULT_TIME_WINDOW, Date.now()] as
-    | [number, number]
-    | null,
+    [number, number] | null,
   sort_key: "time",
   sort_order: "desc" as "asc" | "desc",
 });

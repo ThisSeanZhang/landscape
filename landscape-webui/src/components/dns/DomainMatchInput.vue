@@ -6,7 +6,7 @@ import { ChangeCatalog } from "@vicons/carbon";
 import { useI18n } from "vue-i18n";
 
 const source = defineModel<RuleSource[]>("source", {
-  default: [],
+  default: () => [],
 });
 const { t } = useI18n();
 
