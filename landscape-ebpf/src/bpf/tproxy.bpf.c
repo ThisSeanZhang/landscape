@@ -113,20 +113,6 @@ assign:
 #undef BPF_LOG_TOPIC
 }
 
-static __always_inline int is_tproxy_handle_protocol(const u8 protocol) {
-    if (protocol == IPPROTO_TCP || protocol == IPPROTO_UDP || protocol == IPPROTO_ICMP ||
-        protocol == NEXTHDR_ICMP) {
-        return TC_ACT_OK;
-    } else {
-        return TC_ACT_UNSPEC;
-    }
-}
-
-static __always_inline bool is_icmp_protocol(const u8 protocol) {
-    // IPPROTO_ICMP (1) for IPv4, NEXTHDR_ICMP (58 == IPPROTO_ICMPV6) for IPv6.
-    return protocol == IPPROTO_ICMP || protocol == NEXTHDR_ICMP;
-}
-
 SEC("tc/ingress")
 int tproxy_ingress(struct __sk_buff *skb) {
 #define BPF_LOG_TOPIC "tproxy_ingress"
@@ -152,28 +138,26 @@ int tproxy_ingress(struct __sk_buff *skb) {
         return ret;
     }
 
-    ret = is_tproxy_handle_protocol(pkg_offset.l4_protocol);
-    if (ret != TC_ACT_OK) {
-        ld_bpf_log("is_tproxy_handle_protocol ret %d protocol: %u", ret, pkg_offset.l4_protocol);
-        return ret;
-    }
+    u8 l4_protocol = pkg_offset.l4_protocol;
+    if (l4_protocol == IPPROTO_ICMP || l4_protocol == NEXTHDR_ICMP) {
+        if (!enable_icmp_passthrough) return TC_ACT_SHOT;
 
-    if (enable_icmp_passthrough) {
-        if (is_icmp_protocol(pkg_offset.l4_protocol)) {
-            skb->mark = icmp_mark_value;
-            bpf_skb_change_type(skb, PACKET_HOST);
-            return TC_ACT_OK;
+        skb->mark = icmp_mark_value;
+        bpf_skb_change_type(skb, PACKET_HOST);
+        return TC_ACT_OK;
+    } else if (l4_protocol == IPPROTO_TCP || l4_protocol == IPPROTO_UDP) {
+        ret = read_tproxy_packet_info(skb, &pkg_offset, &ip_pair);
+        if (ret) {
+            ld_bpf_log("read_tproxy_packet_info ret %d", ret);
+            return ret;
         }
-    }
+        ret = handle_pkg(skb, &pkg_offset, &ip_pair, be_flow_port);
 
-    ret = read_tproxy_packet_info(skb, &pkg_offset, &ip_pair);
-    if (ret) {
-        ld_bpf_log("read_tproxy_packet_info ret %d", ret);
-        return ret;
+        return ret == 0 ? TC_ACT_OK : TC_ACT_SHOT;
+    } else {
+        ld_bpf_log("unsupported tproxy protocol: %u", l4_protocol);
+        return TC_ACT_UNSPEC;
     }
-    ret = handle_pkg(skb, &pkg_offset, &ip_pair, be_flow_port);
-
-    return ret == 0 ? TC_ACT_OK : TC_ACT_SHOT;
 #undef BPF_LOG_TOPIC
 }
 
