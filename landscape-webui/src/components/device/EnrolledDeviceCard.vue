@@ -184,7 +184,7 @@ async function del() {
 
 <style scoped>
 code {
-  font-family: monospace;
+  font-family: var(--font-mono);
   background: rgba(0, 0, 0, 0.05);
   padding: 2px 4px;
   border-radius: 4px;

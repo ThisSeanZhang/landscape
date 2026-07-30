@@ -209,7 +209,7 @@ function mountTerminal() {
     rows: 24,
     cursorBlink: true,
     fontFamily:
-      '"JetBrains Mono", "Fira Code", "Source Code Pro", Menlo, Monaco, "Courier New", monospace',
+      '"v-mono", SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace',
     allowProposedApi: true,
   });
 

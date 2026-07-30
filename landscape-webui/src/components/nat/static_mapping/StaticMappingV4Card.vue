@@ -195,7 +195,7 @@ async function del() {
   font-size: 18px;
   font-weight: 500;
   line-height: 1.2;
-  font-family: v-mono, SFMono-Regular, Menlo, monospace;
+  font-family: var(--font-mono);
 }
 
 .stat-tags {
@@ -249,14 +249,14 @@ async function del() {
 .wan-port {
   color: var(--n-warning-color);
   font-weight: 600;
-  font-family: v-mono, SFMono-Regular, Menlo, monospace;
+  font-family: var(--font-mono);
   user-select: text;
 }
 
 .lan-port {
   color: var(--n-info-color);
   font-weight: 600;
-  font-family: v-mono, SFMono-Regular, Menlo, monospace;
+  font-family: var(--font-mono);
   user-select: text;
 }
 

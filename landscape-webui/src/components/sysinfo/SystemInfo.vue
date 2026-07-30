@@ -192,7 +192,7 @@ const uptime = computed(() => {
 }
 
 .info-value.uptime {
-  font-family: monospace;
+  font-family: var(--font-mono);
   font-size: 14px;
 }
 </style>

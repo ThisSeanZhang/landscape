@@ -286,7 +286,7 @@ function pathGroups(): HttpPathGroup[] {
 }
 
 .stat-value.mono {
-  font-family: v-mono, SFMono-Regular, Menlo, monospace;
+  font-family: var(--font-mono);
 }
 
 .match-container {

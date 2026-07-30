@@ -150,7 +150,7 @@ const emit = defineEmits([
             style="
               width: 300px;
               font-variant-numeric: tabular-nums;
-              font-family: monospace;
+              font-family: var(--font-mono);
             "
           >
             <n-tag type="success" :bordered="false" size="small">

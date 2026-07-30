@@ -542,7 +542,7 @@ defineExpose({ refresh: loadSummary });
 
 .count-text {
   font-size: 12px;
-  font-family: monospace;
+  font-family: var(--font-mono);
   background: rgba(128, 128, 128, 0.1);
   padding: 1px 6px;
   border-radius: 4px;
