@@ -27,26 +27,26 @@ default-members = ["landscape-webserver"]
 # ============================================================================
 # Core & System Utilities
 # ============================================================================
-sysinfo = "0.39.5"
-anyhow = "1.0.103"
-thiserror = "2.0.18"
+sysinfo = "0.39.6"
+anyhow = "1.0.104"
+thiserror = "2.0.19"
 once_cell = "1.21.4"
 chrono = "0.4.45"
-arc-swap = "1.9.1"
+arc-swap = "1.9.2"
 dashmap = "6.2.1"
-regex = "1.12.4"
-libc = "0.2.186"
+regex = "1.13.1"
+libc = "0.2.189"
 nix = { version = "0.31.3" }
 sysctl = "0.7.1"
 homedir = "0.3.6"
 hostname = "0.4.2"
-socket2 = "0.6.4"
+socket2 = "0.6.5"
 paste = "1.0.15"
-rand = "0.10.1"
-colored = "3.0.0"
+rand = "0.10.2"
+colored = "3.1.1"
 dotenvy = "0.15.7"
-uuid = { version = "1.23.4", features = ["v4", "serde"] }
-clap = { version = "4.6.1", default-features = false, features = [
+uuid = { version = "1.24.0", features = ["v4", "serde"] }
+clap = { version = "4.6.4", default-features = false, features = [
     "std",
     "derive",
     "help",
@@ -57,44 +57,46 @@ clap = { version = "4.6.1", default-features = false, features = [
 # ============================================================================
 # Async & Concurrency
 # ============================================================================
-tokio = { version = "1.52.3" }
-tokio-stream = "0.1.14"
-tokio-util = { version = "0.7.17", features = ["codec", "net"] }
+tokio = { version = "1.53.1" }
+tokio-stream = "0.1.19"
+tokio-util = { version = "0.7.19", features = ["codec", "net"] }
 tokio-rustls = "0.26.4"
-async-trait = "0.1.89"
-async-std = { version = "1", features = ["attributes", "tokio1"] }
-futures = "0.3.11"
-futures-util = { version = "0.3", default-features = false }
+async-trait = "0.1.91"
+async-std = { version = "1.13.2", features = ["attributes", "tokio1"] }
+futures = "0.3.33"
+futures-util = { version = "0.3.33", default-features = false }
 
 # ============================================================================
 # Serialization & Data Formats
 # ============================================================================
-serde = { version = "1.0.228", features = ["derive"] }
-serde_json = { version = "1.0.150" }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = { version = "1.0.151" }
+# Only used by geo's file cache — keep version pinned, do not upgrade
 bincode = { version = "2.0.1", features = ["std", "serde"] }
-toml = "1.1.2"
-toml_edit = "0.25.12"
-bytes = "1.12.0"
-http = "1.4.2"
+toml = "1.1.4"
+toml_edit = "0.25.13"
+bytes = "1.12.1"
+http = "1.5.0"
 h2 = "0.4.15"
 deku = "0.20.3"
-zerocopy = "0.8.52"
-plain = "0.2"
+zerocopy = "0.8.55"
+plain = "0.2.3"
 
 # ============================================================================
 # Network & Protocols
 # ============================================================================
 rtnetlink = { version = "0.21.0" }
+# Depends on rtnetlink; do not change unless rtnetlink is also updated
 netlink-packet-route = { version = "0.30.0" }
-netlink-packet-core = { version = "0.8" }
-netlink-sys = { version = "0.8" }
-wl-nl80211 = { version = "0.4" }
-genetlink = { version = "0.2" }
-netlink-packet-generic = { version = "0.4" }
+netlink-packet-core = { version = "0.8.1" }
+netlink-sys = { version = "0.8.8" }
+wl-nl80211 = { version = "0.4.0" }
+genetlink = { version = "0.2.6" }
+netlink-packet-generic = { version = "0.4.0" }
 pnet = { version = "0.35.0" }
-etherparse = "0.20.2"
+etherparse = "0.21.0"
 cidr = { version = "0.3.2" }
-idna = "1.0.3"
+idna = "1.1.0"
 dhcproto = "0.15.0"
 reqwest = { version = "0.13.4", default-features = false, features = [
     "rustls",
@@ -105,9 +107,9 @@ hickory-resolver = "0.26.1"
 hickory-proto = "0.26.1"
 quinn = { version = "0.11.11", features = ["runtime-tokio"] }
 trie-rs = "0.4.2"
-aho-corasick = "1.1.3"
+aho-corasick = "1.1.4"
 moka = { version = "0.12.15", features = ["future"] }
-zbus = "5.16.0"
+zbus = "5.18.0"
 
 # ============================================================================
 # Web & HTTP
@@ -118,40 +120,46 @@ axum-extra = { version = "0.12.6", features = [
     "with-rejection",
 ] }
 axum-server = "0.8.0"
-headers = "0.4"
-tower = { version = "0.5", features = ["util"] }
+headers = "0.4.1"
+tower = { version = "0.5.3", features = ["util"] }
 tower-http = { version = "0.7.0", features = ["fs", "trace"] }
 utoipa = { version = "5.5.0", features = ["uuid", "openapi_extensions"] }
 utoipa-axum = "0.2"
 utoipa-scalar = { version = "0.3", features = ["axum"] }
-jsonwebtoken = { version = "10.4.0", features = ["rust_crypto"] }
+jsonwebtoken = { version = "11.0.0", features = ["rust_crypto"] }
 
 # ============================================================================
 # Security & Cryptography
 # ============================================================================
-rustls = { version = "0.23.41", default-features = false, features = [
+rustls = { version = "0.23.43", default-features = false, features = [
     "ring",
     "logging",
     "std",
     "tls12",
 ] }
-rustls-pki-types = "1.14.1"
-pem = "3.0"
+rustls-pki-types = "1.15.1"
+pem = "4.0.0"
 rcgen = "0.14.8"
 instant-acme = "0.8.5"
-base64 = "0.22"
+base64 = "0.23.0"
 x509-parser = "0.18.1"
 sha2 = "0.11.0"
 hmac = "0.13.0"
 md-5 = "0.11.0"
 sha1 = "0.11.0"
-quick-xml = { version = "0.40.1", features = ["serialize"] }
+quick-xml = { version = "0.41.0", features = ["serialize"] }
 
 # ============================================================================
 # Database & Storage
 # ============================================================================
 sea-orm = { version = "1.1.20" }
 sea-orm-migration = { version = "1.1.20" }
+# Pinned to 0.8.x for compatibility with sea-orm 1.x; do not bump to sqlx
+# 0.10+/sea-orm 2.x until the sea-orm migration is planned
+sqlx = { version = "0.8.6", default-features = false, features = [
+    "sqlite",
+    "runtime-tokio-rustls",
+] }
 duckdb = { version = "1.4.4", features = ["r2d2", "chrono"] }
 r2d2 = "0.8.10"
 fs2 = "0.4.3"
@@ -168,23 +176,23 @@ tracing-appender = "0.2.5"
 # ============================================================================
 libbpf-rs = { version = "0.26.2" }
 libbpf-cargo = { version = "0.26.2" }
-libbpf-sys = { version = "1.6.4" }
+libbpf-sys = { version = "1.7.0" }
 
 # ============================================================================
 # Code Generation & Macros
 # ============================================================================
-quote = "1.0.46"
-syn = "2.0.118"
+quote = "1.0.47"
+syn = "3.0.3"
 quick-protobuf = "0.8.1"
 
 # ============================================================================
 # Development & Build Tools
 # ============================================================================
 pb-rs = "0.10.0"
-walkdir = "2"
+walkdir = "2.5.0"
 tempfile = "3.27.0"
-jemallocator = "0.5"
-jemalloc-ctl = "0.5"
+jemallocator = "0.5.4"
+jemalloc-ctl = "0.5.4"
 bollard = "0.21.0"
 portable-pty = { version = "0.9.0" }
 pingora = { version = "0.8.1", default-features = false, features = [

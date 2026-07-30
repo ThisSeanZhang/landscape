@@ -396,7 +396,11 @@ fn iface_id_linklocal(id: &[u8]) -> std::net::Ipv6Addr {
 mod tests {
     use super::*;
 
-    const TEST_IFACE: &str = "dum_test_ll";
+    const REPLACE_IFACE: &str = "dum_ll_replace";
+    const NO_OLD_IFACE: &str = "dum_ll_no_old";
+    const NO_NEW_IFACE: &str = "dum_ll_no_new";
+    const INVALID_ID_IFACE: &str = "dum_ll_bad_id";
+    const RESTORE_IFACE: &str = "dum_ll_restore";
     const OLD_ID: [u8; 8] = [0xaa, 0x00, 0x00, 0xff, 0xfe, 0x00, 0x00, 0x01];
     const NEW_ID: [u8; 8] = [0xbb, 0x00, 0x00, 0xff, 0xfe, 0x00, 0x00, 0x02];
 
@@ -408,10 +412,10 @@ mod tests {
         iface_id_linklocal(&NEW_ID)
     }
 
-    fn can_create_dummy() -> bool {
-        teardown();
+    fn can_create_dummy(iface: &str) -> bool {
+        teardown(iface);
         let created = std::process::Command::new("ip")
-            .args(&["link", "add", TEST_IFACE, "type", "dummy"])
+            .args(&["link", "add", iface, "type", "dummy"])
             .status()
             .map(|s| s.success())
             .unwrap_or(false);
@@ -420,75 +424,77 @@ mod tests {
             return false;
         }
         let up = std::process::Command::new("ip")
-            .args(&["link", "set", TEST_IFACE, "up"])
+            .args(&["link", "set", iface, "up"])
             .status()
             .map(|s| s.success())
             .unwrap_or(false);
         if !up {
             eprintln!("[SKIP] cannot set dummy interface up");
-            teardown();
+            teardown(iface);
             return false;
         }
         let _ = std::process::Command::new("ip")
-            .args(&["link", "set", TEST_IFACE, "addrgenmode", "none"])
+            .args(&["link", "set", iface, "addrgenmode", "none"])
             .status();
         true
     }
 
-    fn setup_with_addr(addr: std::net::Ipv6Addr) -> bool {
+    fn setup_with_addr(iface: &str, addr: std::net::Ipv6Addr) -> bool {
         std::process::Command::new("ip")
-            .args(&["-6", "addr", "add", &format!("{}/64", addr), "dev", TEST_IFACE])
+            .args(&["-6", "addr", "add", &format!("{}/64", addr), "dev", iface])
             .status()
             .map(|s| s.success())
             .unwrap_or(false)
     }
 
-    fn remove_addr(addr: std::net::Ipv6Addr) -> bool {
+    fn remove_addr(iface: &str, addr: std::net::Ipv6Addr) -> bool {
         std::process::Command::new("ip")
-            .args(&["-6", "addr", "del", &format!("{}/64", addr), "dev", TEST_IFACE])
+            .args(&["-6", "addr", "del", &format!("{}/64", addr), "dev", iface])
             .status()
             .map(|s| s.success())
             .unwrap_or(false)
     }
 
-    fn teardown() {
-        let _ = std::process::Command::new("ip").args(&["link", "del", TEST_IFACE]).output();
+    fn teardown(iface: &str) {
+        let _ = std::process::Command::new("ip").args(&["link", "del", iface]).output();
     }
 
     #[test]
     fn test_setup_linklocal_replace() {
-        if !can_create_dummy() {
+        let iface = REPLACE_IFACE;
+        if !can_create_dummy(iface) {
             return;
         }
-        assert!(setup_with_addr(old_addr()), "should set old link-local");
+        assert!(setup_with_addr(iface, old_addr()), "should set old link-local");
         assert_eq!(
-            get_existing_linklocal(TEST_IFACE),
+            get_existing_linklocal(iface),
             Some(old_addr()),
             "old address should be present"
         );
 
-        let (prev, new) = setup_linklocal(TEST_IFACE, Some(&NEW_ID));
+        let (prev, new) = setup_linklocal(iface, Some(&NEW_ID));
         assert_eq!(prev, Some(old_addr()), "should return old as prev");
         assert_eq!(new, Some(new_addr()), "should return new addr");
         assert_eq!(
-            get_existing_linklocal(TEST_IFACE),
+            get_existing_linklocal(iface),
             Some(new_addr()),
             "only new link-local should remain"
         );
 
-        teardown();
+        teardown(iface);
     }
 
     #[test]
     fn test_setup_linklocal_no_old() {
-        if !can_create_dummy() {
+        let iface = NO_OLD_IFACE;
+        if !can_create_dummy(iface) {
             return;
         }
 
-        let (prev, new) = setup_linklocal(TEST_IFACE, Some(&NEW_ID));
+        let (prev, new) = setup_linklocal(iface, Some(&NEW_ID));
         assert_eq!(new, Some(new_addr()), "should set new addr");
         assert_eq!(
-            get_existing_linklocal(TEST_IFACE),
+            get_existing_linklocal(iface),
             Some(new_addr()),
             "new link-local should be on interface"
         );
@@ -496,73 +502,76 @@ mod tests {
             assert_ne!(prev, new_addr(), "prev should differ from new");
         }
 
-        teardown();
+        teardown(iface);
     }
 
     #[test]
     fn test_setup_linklocal_no_new() {
-        if !can_create_dummy() {
+        let iface = NO_NEW_IFACE;
+        if !can_create_dummy(iface) {
             return;
         }
-        assert!(setup_with_addr(old_addr()), "should set old link-local");
+        assert!(setup_with_addr(iface, old_addr()), "should set old link-local");
 
-        let (prev, new) = setup_linklocal(TEST_IFACE, None);
+        let (prev, new) = setup_linklocal(iface, None);
         assert_eq!(prev, Some(old_addr()), "should capture old as prev");
         assert_eq!(new, None, "new should be None");
         assert_eq!(
-            get_existing_linklocal(TEST_IFACE),
+            get_existing_linklocal(iface),
             Some(old_addr()),
             "old address should still be present"
         );
 
-        teardown();
+        teardown(iface);
     }
 
     #[test]
     fn test_setup_linklocal_invalid_id() {
-        if !can_create_dummy() {
+        let iface = INVALID_ID_IFACE;
+        if !can_create_dummy(iface) {
             return;
         }
 
-        let before = get_existing_linklocal(TEST_IFACE);
+        let before = get_existing_linklocal(iface);
 
         let short_id: &[u8] = &[0xaa, 0xbb];
-        let (_prev, new) = setup_linklocal(TEST_IFACE, Some(short_id));
+        let (_prev, new) = setup_linklocal(iface, Some(short_id));
         assert_eq!(new, None, "new should be None for invalid id length");
         assert_eq!(
-            get_existing_linklocal(TEST_IFACE),
+            get_existing_linklocal(iface),
             before,
             "interface should be unchanged for invalid id"
         );
 
-        teardown();
+        teardown(iface);
     }
 
     #[test]
     fn test_linklocal_restore() {
-        if !can_create_dummy() {
+        let iface = RESTORE_IFACE;
+        if !can_create_dummy(iface) {
             return;
         }
-        assert!(setup_with_addr(old_addr()), "should set old link-local");
+        assert!(setup_with_addr(iface, old_addr()), "should set old link-local");
 
-        let (prev, _new) = setup_linklocal(TEST_IFACE, Some(&NEW_ID));
+        let (prev, _new) = setup_linklocal(iface, Some(&NEW_ID));
         assert_eq!(prev, Some(old_addr()));
         assert_eq!(
-            get_existing_linklocal(TEST_IFACE),
+            get_existing_linklocal(iface),
             Some(new_addr()),
             "new link-local should be on interface"
         );
 
-        assert!(remove_addr(new_addr()), "should remove new addr");
+        assert!(remove_addr(iface, new_addr()), "should remove new addr");
         if let Some(prev) = prev {
-            assert!(setup_with_addr(prev), "should restore old addr");
+            assert!(setup_with_addr(iface, prev), "should restore old addr");
         }
         assert_eq!(
-            get_existing_linklocal(TEST_IFACE),
+            get_existing_linklocal(iface),
             Some(old_addr()),
             "old link-local should be restored"
         );
 
-        teardown();
+        teardown(iface);
     }
 }
