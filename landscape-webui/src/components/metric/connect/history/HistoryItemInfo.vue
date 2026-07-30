@@ -72,7 +72,7 @@ function formatDuration(start: number, end: number): string {
 
 const goToLive = (history: ConnectHistoryStatus) => {
   router.push({
-    path: "/metric/conn/live",
+    path: "/metrics/conn/live",
     query: {
       src_ip: history.src_ip,
       dst_ip: history.dst_ip,

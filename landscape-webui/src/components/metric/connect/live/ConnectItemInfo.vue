@@ -76,7 +76,7 @@ const lastActiveTime = (conn: ConnectRealtimeStatus) => {
 
 const goToHistory = (conn: ConnectRealtimeStatus) => {
   router.push({
-    path: "/metric/conn/history",
+    path: "/metrics/conn/history",
     query: {
       src_ip: conn.src_ip,
       dst_ip: conn.dst_ip,

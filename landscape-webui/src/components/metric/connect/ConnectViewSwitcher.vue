@@ -11,7 +11,7 @@ const viewMode = computed({
     return lastPart || "live";
   },
   set: (val) => {
-    router.push({ path: `/metric/conn/${val}`, query: { ...route.query } });
+    router.push({ path: `/metrics/conn/${val}`, query: { ...route.query } });
   },
 });
 </script>

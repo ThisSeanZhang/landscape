@@ -3,42 +3,42 @@ import type { MenuOption } from "naive-ui";
 import type { Component } from "vue";
 import { computed, h, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
-import { RouterLink, useRoute, useRouter } from "vue-router";
+import { useRoute, useRouter } from "vue-router";
 import { NIcon } from "naive-ui";
 
 import {
-  Network4,
   Settings,
   CicsSystemGroup,
   ModelBuilder,
   ChartCombo,
   ServerDns,
-  NetworkPublic,
   Devices,
   Dashboard,
   Certificate,
   Gateway,
 } from "@vicons/carbon";
-import { ImportExportRound } from "@vicons/material";
 import { Wall } from "@vicons/tabler";
 import { Docker } from "@vicons/fa";
 import { BookGlobe20Regular } from "@vicons/fluent";
 
 import CopyRight from "@/components/CopyRight.vue";
-import { usePtyStore } from "@/stores/pty";
 
 const route = useRoute();
 const router = useRouter();
-const ptyStore = usePtyStore();
 const { t } = useI18n();
 
 const menu_active_key = ref<string>("");
 
+const activeMenuByPath: Record<string, string> = {
+  "/metrics/conn/history-src": "metrics/conn/history",
+  "/metrics/conn/history-dst": "metrics/conn/history",
+};
+
 watch(
   () => route.path,
   (path) => {
-    // Remove the leading slash to match menu keys
-    const key = path.startsWith("/") ? path.substring(1) : path;
+    const menuPath = activeMenuByPath[path] ?? path;
+    const key = menuPath.startsWith("/") ? menuPath.substring(1) : menuPath;
     menu_active_key.value = key;
   },
   { immediate: true },
@@ -62,46 +62,54 @@ const menuOptions = computed<MenuOption[]>(() => [
     icon: renderIcon(CicsSystemGroup),
   },
   {
-    label: t("routes.status"),
-    key: "status",
+    label: t("routes.flow"),
+    key: "flow",
+    icon: renderIcon(ModelBuilder),
+  },
+  {
+    label: t("routes.mac-binding"),
+    key: "mac-binding",
+    icon: renderIcon(Devices),
+  },
+  {
+    label: t("routes.network-status"),
+    key: "network-status",
     icon: renderIcon(Dashboard),
     children: [
       {
         label: t("routes.dhcp-v4"),
-        key: "dhcp-v4",
+        key: "network/dhcp-v4",
         disabled: false,
       },
       {
         label: t("routes.ipv6-pd"),
-        key: "ipv6-pd",
+        key: "network/ipv6-pd",
       },
       {
         label: t("routes.ipv6-ra"),
-        key: "ipv6-ra",
+        key: "network/ipv6-ra",
         disabled: false,
       },
     ],
   },
   {
-    label: t("routes.nat"),
-    key: "nat",
-    icon: renderIcon(ImportExportRound),
-    disabled: false,
+    label: t("routes.firewall-nat"),
+    key: "firewall-nat",
+    icon: renderIcon(Wall),
     children: [
       {
+        label: t("routes.firewall"),
+        key: "firewall-nat/firewall",
+      },
+      {
         label: t("routes.nat-v4"),
-        key: "nat/v4",
+        key: "firewall-nat/nat/v4",
       },
       {
         label: t("routes.nat-v6"),
-        key: "nat/v6",
+        key: "firewall-nat/nat/v6",
       },
     ],
-  },
-  {
-    label: t("routes.firewall"),
-    key: "firewall",
-    icon: renderIcon(Wall),
   },
   {
     label: t("routes.dns"),
@@ -109,19 +117,57 @@ const menuOptions = computed<MenuOption[]>(() => [
     icon: renderIcon(ServerDns),
     children: [
       {
-        label: t("routes.dns-redirect"),
-        key: "dns-redirect",
+        label: t("routes.dns-upstream"),
+        key: "dns/upstream",
       },
       {
-        label: t("routes.dns-upstream"),
-        key: "dns-upstream",
+        label: t("routes.dns-redirect"),
+        key: "dns/redirect",
       },
     ],
   },
   {
-    label: t("routes.flow"),
-    key: "flow",
-    icon: renderIcon(ModelBuilder),
+    label: t("routes.geo"),
+    key: "geo",
+    icon: renderIcon(BookGlobe20Regular),
+    children: [
+      {
+        label: t("routes.geo-domain"),
+        key: "geo/domain",
+      },
+      {
+        label: t("routes.geo-ip"),
+        key: "geo/ip",
+      },
+    ],
+  },
+  {
+    label: t("routes.domains"),
+    key: "domains",
+    icon: renderIcon(Certificate),
+    children: [
+      {
+        label: t("routes.dns-provider-profiles"),
+        key: "domains/dns-providers",
+      },
+      {
+        label: t("routes.ddns"),
+        key: "domains/ddns",
+      },
+      {
+        label: t("routes.cert-accounts"),
+        key: "domains/cert-accounts",
+      },
+      {
+        label: t("routes.certs"),
+        key: "domains/certs",
+      },
+    ],
+  },
+  {
+    label: t("routes.gateway"),
+    key: "gateway",
+    icon: renderIcon(Gateway),
   },
   {
     label: t("routes.docker"),
@@ -134,80 +180,30 @@ const menuOptions = computed<MenuOption[]>(() => [
     icon: renderIcon(ChartCombo),
     children: [
       {
-        label: t("routes.connect-info"),
-        key: "connect-info",
-        children: [
-          {
-            label: t("routes.connect-live"),
-            key: "metric/conn/live",
-          },
-          {
-            label: t("routes.connect-src"),
-            key: "metric/conn/src",
-          },
-          {
-            label: t("routes.connect-dst"),
-            key: "metric/conn/dst",
-          },
-          {
-            label: t("routes.connect-history"),
-            key: "metric/conn/history",
-          },
-        ],
-      },
-      {
         label: t("routes.dns-metric"),
-        key: "metric/dns",
+        key: "metrics/dns",
+      },
+      {
+        label: t("routes.connect-live"),
+        key: "metrics/conn/live",
+      },
+      {
+        label: t("routes.connect-iface"),
+        key: "metrics/conn/iface",
+      },
+      {
+        label: t("routes.connect-src"),
+        key: "metrics/conn/src",
+      },
+      {
+        label: t("routes.connect-dst"),
+        key: "metrics/conn/dst",
+      },
+      {
+        label: t("routes.connect-history"),
+        key: "metrics/conn/history",
       },
     ],
-  },
-  {
-    label: t("routes.geo"),
-    key: "geo",
-    icon: renderIcon(BookGlobe20Regular),
-    children: [
-      {
-        label: t("routes.geo-domain"),
-        key: "geo-domain",
-      },
-      {
-        label: t("routes.geo-ip"),
-        key: "geo-ip",
-      },
-    ],
-  },
-  {
-    label: t("routes.mac-binding"),
-    key: "mac-binding",
-    icon: renderIcon(Devices),
-  },
-  {
-    label: t("routes.domains"),
-    key: "domains",
-    icon: renderIcon(Certificate),
-    children: [
-      {
-        label: t("routes.dns-provider-profiles"),
-        key: "dns-provider-profiles",
-      },
-      {
-        label: t("routes.ddns"),
-        key: "ddns",
-      },
-      {
-        label: t("routes.cert-accounts"),
-        key: "cert-accounts",
-      },
-      {
-        label: t("routes.certs"),
-        key: "certs",
-      },
-    ],
-  },
-  {
-    label: t("routes.gateway"),
-    key: "gateway",
-    icon: renderIcon(Gateway),
   },
   {
     label: t("routes.config"),

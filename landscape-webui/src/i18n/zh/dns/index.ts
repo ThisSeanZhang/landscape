@@ -138,7 +138,7 @@ export default {
     answer_mode_all_local_ips: "全部本机 IP",
     response_info: "回应信息",
     response_all_local_ips: "运行时返回当前全部本机 IP",
-    response_block: "空结果，按阻断处理",
+    response_block: "空结果，配置的域名将被拦截",
   },
   select_upstream: {
     redirect_flow_id: "重定向的流 ID",
