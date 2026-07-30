@@ -26,16 +26,19 @@ const emit = defineEmits(["refresh"]);
 async function refresh() {
   emit("refresh");
 }
+
 const actualPrefix = computed(() => props.prefix_status.actual_prefix);
+const validExpiry = computed(
+  () =>
+    actualPrefix.value.last_update_time +
+    actualPrefix.value.valid_lifetime * 1000,
+);
+
 // WAN PD owns the acquired-prefix vs WAN-expectation verdict. LAN snapshot
 // compatibility is intentionally reported by the LAN prefix-group UI instead.
 const status = computed(() => {
   if (props.prefix_status.meets_expected_pd_len === true) {
-    if (
-      actualPrefix.value.last_update_time +
-        actualPrefix.value.valid_lifetime * 1000 >
-      new Date().getTime()
-    ) {
+    if (validExpiry.value > new Date().getTime()) {
       return true;
     }
   }
@@ -94,7 +97,10 @@ const status = computed(() => {
             </n-popover>
           </n-flex>
         </template>
-        {{ actualPrefix.preferred_lifetime }}s
+        <DurationTime
+          :seconds="actualPrefix.preferred_lifetime"
+          mode="detailed"
+        />
       </n-descriptions-item>
       <n-descriptions-item>
         <template #label>
@@ -112,7 +118,7 @@ const status = computed(() => {
             </n-popover>
           </n-flex>
         </template>
-        {{ actualPrefix.valid_lifetime }}s
+        <DurationTime :seconds="actualPrefix.valid_lifetime" mode="detailed" />
       </n-descriptions-item>
       <n-descriptions-item>
         <template #label>

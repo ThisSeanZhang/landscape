@@ -48,28 +48,6 @@ function l4_proto(value: number): string {
   return "Unknow";
 }
 
-function formatDuration(start: number, end: number): string {
-  const diff = Math.max(0, end - start);
-  const seconds = Math.floor(diff / 1000);
-
-  if (seconds < 60) {
-    return `${seconds}${t("common.second")}`;
-  }
-
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) {
-    return `${minutes}${t("common.minute")} ${seconds % 60}${t("common.second")}`;
-  }
-
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) {
-    return `${hours}${t("common.hour")} ${minutes % 60}${t("common.minute")}`;
-  }
-
-  const days = Math.floor(hours / 24);
-  return `${days}${t("common.day")} ${hours % 24}${t("common.hour")}`;
-}
-
 const goToLive = (history: ConnectHistoryStatus) => {
   router.push({
     path: "/metrics/conn/live",
@@ -120,12 +98,14 @@ const emit = defineEmits([
                   <template #trigger>
                     <span style="cursor: help; border-bottom: 1px dashed #888">
                       {{ $t("metric.connect.filter.duration") }}
-                      {{
-                        formatDuration(
-                          history.create_time_ms,
-                          history.last_report_time,
-                        )
-                      }}
+                      <DurationTime
+                        :seconds="
+                          Math.max(
+                            0,
+                            history.last_report_time - history.create_time_ms,
+                          ) / 1000
+                        "
+                      />
                     </span>
                   </template>
                   {{ $t("metric.connect.filter.create_time") }}:
