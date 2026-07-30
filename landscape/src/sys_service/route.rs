@@ -1307,6 +1307,7 @@ mod tests {
             flow_id,
             flow_match_rules: vec![],
             flow_targets: targets,
+            name: String::new(),
             remark: String::new(),
             update_at: 0.0,
         }
