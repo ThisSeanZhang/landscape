@@ -6,13 +6,10 @@ import type {
   ConnectMetricPoint,
   MetricResolution,
 } from "@landscape-router/types/api/schemas";
-import { ApexOptions } from "apexcharts";
-import VueApexCharts from "vue3-apexcharts";
-import { useThemeVars } from "naive-ui";
+import MetricLineChart from "../MetricLineChart.vue";
 import { useI18n } from "vue-i18n";
 
-const themeVars = useThemeVars();
-const { t, locale } = useI18n();
+const { t } = useI18n();
 
 interface Props {
   conn: ConnectKey;
@@ -73,99 +70,63 @@ const sampledIndices = computed(
   () => downsampleData(chartData.value.map((m) => m.ingress_bytes)).indices,
 );
 
-const categories = computed(() =>
-  sampledIndices.value.map((idx) => {
-    const m = chartData.value[idx];
-    const d = new Date(m.report_time);
-    const span =
-      (chartData.value[chartData.value.length - 1]?.report_time || 0) -
-      (chartData.value[0]?.report_time || 0);
-    if (span > 2 * 24 * 3600 * 1000) {
-      return (
-        d.toLocaleDateString(locale.value || "zh-CN", {
-          month: "2-digit",
-          day: "2-digit",
-        }) +
-        " " +
-        d.toLocaleTimeString(locale.value || "zh-CN", {
-          hour: "2-digit",
-          minute: "2-digit",
-          hour12: false,
-        })
-      );
-    }
-    return d.toLocaleTimeString(locale.value || "zh-CN", {
-      hour: "2-digit",
-      minute: "2-digit",
-      second: "2-digit",
-      hour12: false,
-    });
-  }),
-);
-
 const bytesSeries = computed(() => [
   {
     name: t("metric.connect.chart.ingress_total"),
-    data: sampledIndices.value.map((i) => chartData.value[i].ingress_bytes),
+    data: sampledIndices.value.map(
+      (i) =>
+        [chartData.value[i].report_time, chartData.value[i].ingress_bytes] as [
+          number,
+          number,
+        ],
+    ),
   },
   {
     name: t("metric.connect.chart.egress_total"),
-    data: sampledIndices.value.map((i) => chartData.value[i].egress_bytes),
+    data: sampledIndices.value.map(
+      (i) =>
+        [chartData.value[i].report_time, chartData.value[i].egress_bytes] as [
+          number,
+          number,
+        ],
+    ),
   },
 ]);
 
 const packetsSeries = computed(() => [
   {
     name: t("metric.connect.chart.ingress_packets_total"),
-    data: sampledIndices.value.map((i) => chartData.value[i].ingress_packets),
+    data: sampledIndices.value.map(
+      (i) =>
+        [
+          chartData.value[i].report_time,
+          chartData.value[i].ingress_packets,
+        ] as [number, number],
+    ),
   },
   {
     name: t("metric.connect.chart.egress_packets_total"),
-    data: sampledIndices.value.map((i) => chartData.value[i].egress_packets),
+    data: sampledIndices.value.map(
+      (i) =>
+        [chartData.value[i].report_time, chartData.value[i].egress_packets] as [
+          number,
+          number,
+        ],
+    ),
   },
 ]);
 
-const baseOptions = computed<ApexOptions>(() => ({
-  chart: {
-    id: "history-network-traffic",
-    background: "transparent",
-    toolbar: { show: true },
-    animate: false,
-    zoom: { enabled: true, type: "x" },
-  },
-  theme: { mode: "dark" },
-  colors: [themeVars.value.successColor, themeVars.value.infoColor],
-  stroke: { curve: "smooth", width: 2 },
-  xaxis: {
-    categories: categories.value,
-    tickAmount: 10,
-    title: { text: t("metric.connect.filter.time") },
-  },
-  legend: { position: "top" },
-}));
-
 function formatVolume(val: number): string {
-  if (val === 0) return "0 B";
-  const units = ["B", "KB", "MB", "GB", "TB"];
-  const i = Math.floor(Math.log(val) / Math.log(1024));
+  const units = ["B", "KB", "MB", "GB", "TB", "PB"];
+  if (!Number.isFinite(val) || val <= 0) return `0 ${units[0]}`;
+  const i = Math.min(
+    Math.max(Math.floor(Math.log(val) / Math.log(1024)), 0),
+    units.length - 1,
+  );
   return `${(val / Math.pow(1024, i)).toFixed(1)} ${units[i]}`;
 }
 
-const bytesOptions = computed<ApexOptions>(() => ({
-  ...baseOptions.value,
-  yaxis: {
-    title: { text: t("metric.connect.chart.bytes_axis_total") },
-    labels: { formatter: formatVolume },
-  },
-}));
-
-const packetsOptions = computed<ApexOptions>(() => ({
-  ...baseOptions.value,
-  yaxis: {
-    title: { text: t("metric.connect.chart.packets_axis_total") },
-    labels: { formatter: (v: number) => `${Math.round(v)} pkt` },
-  },
-}));
+const formatPackets = (value: number) => `${Math.round(value)} pkt`;
 
 watch(resolution, fetchData);
 onMounted(fetchData);
@@ -185,17 +146,17 @@ onMounted(fetchData);
       </n-radio-group>
     </n-flex>
     <n-spin :show="loading">
-      <VueApexCharts
-        type="line"
-        height="300"
-        :options="bytesOptions"
+      <MetricLineChart
         :series="bytesSeries"
+        :x-axis-title="t('metric.connect.filter.time')"
+        :y-axis-title="t('metric.connect.chart.bytes_axis_total')"
+        :value-formatter="formatVolume"
       />
-      <VueApexCharts
-        type="line"
-        height="300"
-        :options="packetsOptions"
+      <MetricLineChart
         :series="packetsSeries"
+        :x-axis-title="t('metric.connect.filter.time')"
+        :y-axis-title="t('metric.connect.chart.packets_axis_total')"
+        :value-formatter="formatPackets"
       />
     </n-spin>
   </n-flex>

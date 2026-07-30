@@ -116,6 +116,9 @@ export default {
     minute_level: "分钟级 (1天保留)",
     hour_level: "小时级 (7天保留)",
     day_level: "天级 (30天保留)",
+    zoom: "框选缩放",
+    zoom_back: "撤销缩放",
+    reset_zoom: "重置缩放",
   },
   ip_stats: {
     query_ip_ownership: "查询目标 IP 归属",

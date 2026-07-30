@@ -18,16 +18,16 @@
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/addon-serialize": "^0.14.0",
     "@xterm/xterm": "^6.0.0",
-    "apexcharts": "^5.16.0",
     "axios": "^1.18.1",
+    "echarts": "^6.1.0",
     "ip-num": "^1.6.1",
     "is-ip": "^5.0.1",
     "pinia": "^4.0.2",
     "pinia-plugin-persistedstate": "^4.7.1",
     "vue": "^3.5.40",
     "vue-i18n": "11.4.8",
-    "vue-router": "^5.2.0",
-    "vue3-apexcharts": "^1.11.1"
+    "vue-echarts": "^8.0.1",
+    "vue-router": "^5.2.0"
   },
   "devDependencies": {
     "@scalar/api-reference": "^1.63.0",

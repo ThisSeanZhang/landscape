@@ -5,13 +5,10 @@ import type {
   ConnectKey,
   ConnectMetricPoint,
 } from "@landscape-router/types/api/schemas";
-import { ApexOptions } from "apexcharts";
-import VueApexCharts from "vue3-apexcharts";
-import { useThemeVars } from "naive-ui";
+import MetricLineChart from "../MetricLineChart.vue";
 import { useI18n } from "vue-i18n";
 
-const themeVars = useThemeVars();
-const { t, locale } = useI18n();
+const { t } = useI18n();
 
 interface Props {
   conn: ConnectKey;
@@ -52,19 +49,6 @@ const sampledIndices = computed(() => {
   return downsampleData(ingressData).indices;
 });
 
-const categories = computed(() =>
-  sampledIndices.value.map((idx) => {
-    const m = chartData.value[idx];
-    const d = new Date(m.report_time);
-    return d.toLocaleTimeString(locale.value || "zh-CN", {
-      hour: "2-digit",
-      minute: "2-digit",
-      second: "2-digit",
-      hour12: false,
-    });
-  }),
-);
-
 // 计算速率 (Speed/Rate)
 function calculateRates(values: number[], timestamps: number[]): number[] {
   if (values.length === 0) return [];
@@ -85,11 +69,15 @@ const bytesSeries = computed(() => {
   return [
     {
       name: t("metric.connect.chart.ingress_rate"),
-      data: sampledIndices.value.map((i) => rI[i]),
+      data: sampledIndices.value.map(
+        (i) => [chartData.value[i].report_time, rI[i]] as [number, number],
+      ),
     },
     {
       name: t("metric.connect.chart.egress_rate"),
-      data: sampledIndices.value.map((i) => rE[i]),
+      data: sampledIndices.value.map(
+        (i) => [chartData.value[i].report_time, rE[i]] as [number, number],
+      ),
     },
   ];
 });
@@ -103,56 +91,30 @@ const packetsSeries = computed(() => {
   return [
     {
       name: t("metric.connect.chart.ingress_packets_rate"),
-      data: sampledIndices.value.map((i) => rI[i]),
+      data: sampledIndices.value.map(
+        (i) => [chartData.value[i].report_time, rI[i]] as [number, number],
+      ),
     },
     {
       name: t("metric.connect.chart.egress_packets_rate"),
-      data: sampledIndices.value.map((i) => rE[i]),
+      data: sampledIndices.value.map(
+        (i) => [chartData.value[i].report_time, rE[i]] as [number, number],
+      ),
     },
   ];
 });
 
-const baseOptions = computed<ApexOptions>(() => ({
-  chart: {
-    id: "live-network-traffic",
-    background: "transparent",
-    toolbar: { show: true },
-    animate: false,
-    zoom: { enabled: true, type: "x" },
-  },
-  theme: { mode: "dark" },
-  colors: [themeVars.value.successColor, themeVars.value.infoColor],
-  stroke: { curve: "smooth", width: 2 },
-  xaxis: {
-    categories: categories.value,
-    tickAmount: 10,
-    title: { text: t("metric.connect.filter.time") },
-  },
-  legend: { position: "top" },
-}));
-
 function formatVolumeRate(value: number): string {
-  if (value === 0) return "0 B/s";
-  const units = ["B/s", "KB/s", "MB/s", "GB/s"];
-  const i = Math.floor(Math.log(value) / Math.log(1024));
+  const units = ["B/s", "KB/s", "MB/s", "GB/s", "TB/s", "PB/s"];
+  if (!Number.isFinite(value) || value <= 0) return `0 ${units[0]}`;
+  const i = Math.min(
+    Math.max(Math.floor(Math.log(value) / Math.log(1024)), 0),
+    units.length - 1,
+  );
   return `${(value / Math.pow(1024, i)).toFixed(1)} ${units[i]}`;
 }
 
-const bytesOptions = computed<ApexOptions>(() => ({
-  ...baseOptions.value,
-  yaxis: {
-    title: { text: t("metric.connect.chart.bytes_axis_rate") },
-    labels: { formatter: formatVolumeRate },
-  },
-}));
-
-const packetsOptions = computed<ApexOptions>(() => ({
-  ...baseOptions.value,
-  yaxis: {
-    title: { text: t("metric.connect.chart.packets_axis_rate") },
-    labels: { formatter: (v: number) => `${Math.round(v)} pps` },
-  },
-}));
+const formatPacketRate = (value: number) => `${Math.round(value)} pps`;
 
 onMounted(() => {
   fetchData();
@@ -166,17 +128,17 @@ onUnmounted(() => {
 
 <template>
   <n-flex vertical>
-    <VueApexCharts
-      type="line"
-      height="300"
-      :options="bytesOptions"
+    <MetricLineChart
       :series="bytesSeries"
+      :x-axis-title="t('metric.connect.filter.time')"
+      :y-axis-title="t('metric.connect.chart.bytes_axis_rate')"
+      :value-formatter="formatVolumeRate"
     />
-    <VueApexCharts
-      type="line"
-      height="300"
-      :options="packetsOptions"
+    <MetricLineChart
       :series="packetsSeries"
+      :x-axis-title="t('metric.connect.filter.time')"
+      :y-axis-title="t('metric.connect.chart.packets_axis_rate')"
+      :value-formatter="formatPacketRate"
     />
   </n-flex>
 </template>

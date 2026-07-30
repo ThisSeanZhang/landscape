@@ -116,6 +116,9 @@ export default {
     minute_level: "Minute Level (1-day retention)",
     hour_level: "Hour Level (7-day retention)",
     day_level: "Day Level (30-day retention)",
+    zoom: "Zoom",
+    zoom_back: "Undo Zoom",
+    reset_zoom: "Reset Zoom",
   },
   ip_stats: {
     query_ip_ownership: "Query IP ownership",
