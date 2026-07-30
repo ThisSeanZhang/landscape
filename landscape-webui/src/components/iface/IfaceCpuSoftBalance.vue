@@ -57,7 +57,7 @@ function bitmaskToCores(bitmask_str: string): Set<number> {
       }
     }
   } catch (e) {
-    console.error("解析位掩码失败:", e);
+    console.error(t("interface.console_parse_bitmask_failed"), e);
   }
   return cores;
 }
@@ -88,7 +88,7 @@ async function get_current_config() {
       rps_selected_cores.value = bitmaskToCores(data.rps);
     }
   } catch (error) {
-    console.error("获取配置失败:", error);
+    console.error(t("interface.console_get_config_failed"), error);
   }
 }
 
@@ -107,7 +107,7 @@ async function save_config() {
     };
     await set_iface_cpu_balance(props.iface_name, new_config);
   } catch (error) {
-    console.error("保存配置失败:", error);
+    console.error(t("interface.console_save_config_failed"), error);
   } finally {
     loading.value = false;
   }

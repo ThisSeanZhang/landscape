@@ -105,7 +105,9 @@ export default {
   conflict: "配置冲突，请刷新后重试",
 
   chinese_simplified: "简体中文",
-  dark_mode: "深色",
-  light_mode: "浅色",
+  english: "English",
+  dark_mode: "深色模式",
+  light_mode: "浅色模式",
   welcome: "欢迎, {username}",
+  console_download_failed: "下载配置失败",
 };

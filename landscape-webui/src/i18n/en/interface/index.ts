@@ -20,4 +20,13 @@ export default {
     "If firewall is enabled on this interface, configure rules to allow port 68",
   dhcp_hostname: "Hostname used in DHCP request",
   update: "Update",
+  change_zone_title: "Change Interface Zone",
+  change_zone_warning_1:
+    "Changing zone will reset all services running on this interface",
+  change_zone_warning_2:
+    "It is recommended to set the IP configuration method in `/etc/network/interfaces` to manual",
+  zone_undefined: "Undefined",
+  console_parse_bitmask_failed: "Failed to parse bitmask:",
+  console_get_config_failed: "Failed to get config:",
+  console_save_config_failed: "Failed to save config:",
 };

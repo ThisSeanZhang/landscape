@@ -2,9 +2,11 @@
 import { useThemeVars } from "naive-ui";
 import { HelpFilled } from "@vicons/carbon";
 import { computed, ref } from "vue";
+import { useI18n } from "vue-i18n";
 import { useFrontEndStore } from "@/stores/front_end_config";
 
 const frontEndStore = useFrontEndStore();
+const { t } = useI18n();
 interface Props {
   mac?: string;
   macs?: Set<string>;
@@ -21,7 +23,7 @@ const show_mac = computed(() => {
     return first;
   }
 
-  return "未知";
+  return t("common.unknown");
 });
 
 const show_other_macs = computed(() => {

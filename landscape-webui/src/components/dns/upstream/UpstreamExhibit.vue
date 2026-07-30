@@ -2,6 +2,9 @@
 import { get_dns_upstream } from "@/api/dns_rule/upstream";
 import type { DnsUpstreamConfig } from "@landscape-router/types/api/schemas";
 import { onMounted, watch, ref } from "vue";
+import { useI18n } from "vue-i18n";
+
+const { t } = useI18n();
 
 type Props = {
   rule_id: string;
@@ -33,5 +36,7 @@ async function refresh() {
     <DnsUpstreamCard :show_action="false" :rule="rule"></DnsUpstreamCard>
     <!-- <span>{{ rule }}</span> -->
   </n-popover>
-  <n-flex v-else> 无 DNS 上游 {{ rule_id }}</n-flex>
+  <n-flex v-else>
+    {{ t("dns.upstream_card.no_upstream", { rule_id: rule_id }) }}</n-flex
+  >
 </template>

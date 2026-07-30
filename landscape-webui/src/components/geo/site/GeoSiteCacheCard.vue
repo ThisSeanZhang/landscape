@@ -1,8 +1,11 @@
 <script setup lang="ts">
 import type { GeoDomainConfig } from "@landscape-router/types/api/schemas";
 import { ref } from "vue";
+import { useI18n } from "vue-i18n";
 import { useFrontEndStore } from "@/stores/front_end_config";
 import { mask_string } from "@/lib/common";
+
+const { t } = useI18n();
 
 const frontEndStore = useFrontEndStore();
 const emit = defineEmits(["refresh"]);
@@ -42,7 +45,7 @@ const show_detail_modal = ref(false);
           secondary
           @click="show_detail_modal = true"
         >
-          详情
+          {{ t("common.details") }}
         </n-button>
         <GeoSiteDetailDrawer
           :geo_key="geo_site"

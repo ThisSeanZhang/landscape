@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { useThemeVars } from "naive-ui";
 import { ref } from "vue";
+import { useI18n } from "vue-i18n";
 import { DotMark } from "@vicons/carbon";
 
+const { t } = useI18n();
 const themeVars = ref(useThemeVars());
 
 type Props = {
@@ -18,7 +20,7 @@ const props = defineProps<Props>();
       <DotMark />
     </n-icon>
     <n-ellipsis>
-      {{ remark !== "" ? remark : "无备注" }}
+      {{ remark !== "" ? remark : t("common.no_remark") }}
     </n-ellipsis>
   </n-flex>
 </template>

@@ -30,4 +30,18 @@ export default {
     static_assigned: "静态分配",
     unknown: "未知",
   },
+  option_dnr: {
+    use_local: "使用本机 DoH",
+    use_custom: "自定义 DoH",
+    local_alert:
+      "自动使用本机 API/DoH 证书域名、当前 DHCP 服务地址、DoH 端口和 DoH 路径生成 DHCP Option 162。",
+    custom_alert:
+      "未填写的字段会回退到本机 DoH 配置；域名必须填写证书实际覆盖的精确主机名，不会自动把通配符域名转换为裸域名。",
+    domain_label: "DoH 域名",
+    ipv4_label: "IPv4 地址",
+    port_label: "端口",
+    port_placeholder: "默认使用本机 DoH 端口",
+    path_label: "DoH 路径",
+    path_placeholder: "默认使用本机 DoH 路径，例如 /dns-query",
+  },
 };

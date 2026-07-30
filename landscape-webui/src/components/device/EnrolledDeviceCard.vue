@@ -83,7 +83,7 @@ async function del() {
           type="info"
           round
         >
-          {{ t("common.private_mode") || "隐私模式" }}
+          {{ t("common.private_mode") }}
         </n-tag>
         <n-tooltip v-if="isValid === false" trigger="hover">
           <template #trigger>

@@ -27,6 +27,9 @@ export default {
     filter_unfilter: "No filter",
     filter_ipv4: "IPv4 only",
     filter_ipv6: "IPv6 only",
+    resolve_redirect: "Redirect",
+    resolve_upstream: "Custom Upstream",
+    resolve_cloudflare: "Cloudflare",
   },
   redirect_edit: {
     title: "DNS Redirect Config",
@@ -66,6 +69,7 @@ export default {
     ip_validation_off: "Do not filter",
     preset_fill: "Click buttons to apply presets",
     request_mode: "Upstream request mode",
+    type_plaintext: "Plaintext",
     port: "Port",
     port_placeholder: "Used in DNS rule selection",
     domain: "Domain",
@@ -87,6 +91,7 @@ export default {
   upstream_card: {
     no_config: "No config",
     no_remark: "No remark",
+    no_upstream: "No DNS upstream {rule_id}",
     request_mode: "Request Mode",
     request_port: "Request Port",
     domain_addr: "Domain Address",
@@ -143,5 +148,6 @@ export default {
   },
   select_upstream: {
     redirect_flow_id: "Redirect Flow ID",
+    default_ali: "Aliyun",
   },
 };

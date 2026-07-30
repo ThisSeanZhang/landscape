@@ -51,7 +51,7 @@ async function stop() {
           {{ t("common.image") }}
         </n-button>
         <n-button :focusable="false" size="small" @click="start" v-if="is_down">
-          开启
+          {{ t("common.open") }}
         </n-button>
         <n-popconfirm v-else @positive-click="stop">
           <template #trigger>

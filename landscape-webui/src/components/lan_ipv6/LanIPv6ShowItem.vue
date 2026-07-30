@@ -72,8 +72,8 @@ const info = computed(() => {
         <tr>
           <th>IPv6</th>
           <th>Mac</th>
-          <th>时间</th>
-          <th>状态</th>
+          <th>{{ t("common.time") }}</th>
+          <th>{{ t("common.status") }}</th>
         </tr>
       </thead>
 

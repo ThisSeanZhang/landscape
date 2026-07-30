@@ -76,4 +76,9 @@ export default {
   geo_ip_name_select: {
     select_geo_ip_name: "选择 geo ip 名称",
   },
+  upload: {
+    success: "更新成功",
+    drag_prompt: "点击或者拖动文件到该区域来上传",
+    max_size: "文件最大限制为 100MB",
+  },
 };

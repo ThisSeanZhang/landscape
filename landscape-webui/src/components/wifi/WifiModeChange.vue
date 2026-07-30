@@ -6,6 +6,9 @@ import { change_wifi_mode } from "@/api/network";
 import { SpatialAudioOutlined } from "@vicons/material";
 import { Wifi } from "@vicons/carbon";
 import { stop_and_del_iface_wifi } from "@/api/service_wifi";
+import { useI18n } from "vue-i18n";
+
+const { t } = useI18n();
 
 // const showModal = defineModel<boolean>("show", { required: true });
 const emit = defineEmits(["refresh"]);
@@ -43,6 +46,6 @@ async function change_mode() {
         </n-icon>
       </n-button>
     </template>
-    确定切换模式吗
+    {{ t("wifi.change_mode_confirm") }}
   </n-popconfirm>
 </template>

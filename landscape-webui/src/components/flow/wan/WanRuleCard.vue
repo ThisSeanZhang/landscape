@@ -36,7 +36,7 @@ const title_name = computed(() =>
       </template>
       <!-- {{ rule }} -->
       <n-descriptions bordered label-placement="top" :column="1">
-        <n-descriptions-item label="选择流量出口">
+        <n-descriptions-item :label="t('flow.wan_rule_edit.egress_select')">
           <FlowMarkExhibit
             :mark="rule.mark"
             :flow_id="rule.flow_id"

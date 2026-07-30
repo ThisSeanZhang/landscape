@@ -2,6 +2,9 @@
 import { ArchiveOutline as ArchiveIcon } from "@vicons/ionicons5";
 import { UploadCustomRequestOptions, UploadInst } from "naive-ui";
 import { ref } from "vue";
+import { useI18n } from "vue-i18n";
+
+const { t } = useI18n();
 
 const show = defineModel("show", { required: true });
 
@@ -24,7 +27,7 @@ async function handle_upload(options: UploadCustomRequestOptions) {
   try {
     await props.upload(formData);
     onFinish();
-    window.$message.success("更新成功! ( •̀ ω •́ )y");
+    window.$message.success(t("geo.upload.success"));
     show.value = false;
     emit("refresh");
   } catch (err) {
@@ -54,10 +57,10 @@ async function handle_upload(options: UploadCustomRequestOptions) {
               </n-icon>
             </div>
             <n-text style="font-size: 16px">
-              点击或者拖动文件到该区域来上传
+              {{ t("geo.upload.drag_prompt") }}
             </n-text>
             <n-p depth="3" style="margin: 8px 0 0 0">
-              文件最大限制为 100MB
+              {{ t("geo.upload.max_size") }}
             </n-p>
           </n-upload-dragger>
         </n-upload>

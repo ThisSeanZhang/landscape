@@ -22,6 +22,10 @@ export default {
     restart_on_failure_max: "Restart on failure (max retries)",
     restart_always: "Always restart",
     restart_unless_stopped: "Restart unless manually stopped",
+    labels: "Labels",
+    edge_label_added: "Edge label added",
+    edge_label_not_added: "Edge label not added",
+    entrypoint_params_placeholder: "Enter entrypoint params (optional)",
   },
   docker_container: {
     no_other_tags: "No other tags",

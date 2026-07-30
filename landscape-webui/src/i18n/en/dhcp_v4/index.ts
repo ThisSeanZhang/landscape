@@ -34,4 +34,18 @@ export default {
     static_assigned: "Static Assignment",
     unknown: "Unknown",
   },
+  option_dnr: {
+    use_local: "Use Local DoH",
+    use_custom: "Custom DoH",
+    local_alert:
+      "Automatically generate DHCP Option 162 using the local API/DoH certificate domain, current DHCP service address, DoH port and DoH path.",
+    custom_alert:
+      "Empty fields fall back to local DoH settings; domain must be the exact hostname covered by the certificate. Wildcard domains are not automatically converted to bare domains.",
+    domain_label: "DoH Domain",
+    ipv4_label: "IPv4 Address",
+    port_label: "Port",
+    port_placeholder: "Defaults to local DoH port",
+    path_label: "DoH Path",
+    path_placeholder: "Defaults to local DoH path, e.g. /dns-query",
+  },
 };

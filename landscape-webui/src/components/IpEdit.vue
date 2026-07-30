@@ -1,6 +1,10 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import { isIP, isIPv4, isIPv6 } from "is-ip";
+import { useI18n } from "vue-i18n";
+
+const { t } = useI18n();
+
 const ip = defineModel<string | null | undefined>("ip", { required: true });
 const mask = defineModel<number | undefined>("mask");
 
@@ -12,9 +16,9 @@ interface Props {
 const props = defineProps<Props>();
 
 const placeholder = computed(() => {
-  if (props.ip_version === 4) return "请输入 IPv4";
-  if (props.ip_version === 6) return "请输入 IPv6";
-  return "请输入 IPv4 或者 IPv6";
+  if (props.ip_version === 4) return "IPv4";
+  if (props.ip_version === 6) return "IPv6";
+  return t("common.ip_input_placeholder");
 });
 
 function is_valid_ip(value: string) {
@@ -27,7 +31,7 @@ const rule = {
   trigger: ["input", "blur"],
   validator() {
     if (ip.value && !is_valid_ip(ip.value)) {
-      return new Error("IP 格式不正确");
+      return new Error(t("common.ip_format_invalid"));
     }
   },
 };

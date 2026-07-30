@@ -242,7 +242,7 @@ const has_edge_label = computed({
               :wrap="false"
               @click.stop
             >
-              <n-flex> 标签 </n-flex>
+              <n-flex> {{ t("docker.docker_run.labels") }} </n-flex>
               <n-flex>
                 <button
                   style="
@@ -254,8 +254,8 @@ const has_edge_label = computed({
                   "
                 ></button>
                 <n-switch v-model:value="has_edge_label">
-                  <template #checked> 已添加 edge 标签 </template>
-                  <template #unchecked> 未添加 edge 标签 </template>
+                  <template #checked> {{ t("docker.docker_run.edge_label_added") }} </template>
+                  <template #unchecked> {{ t("docker.docker_run.edge_label_not_added") }} </template>
                 </n-switch>
               </n-flex>
             </n-flex>

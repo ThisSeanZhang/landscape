@@ -1,4 +1,5 @@
 import type { FlowConfig } from "@landscape-router/types/api/schemas";
+import i18n from "@/i18n";
 
 export function flow_config_default(): FlowConfig {
   return {
@@ -17,13 +18,14 @@ export enum FlowTargetTypes {
 }
 
 export function flow_target_options(): { label: string; value: string }[] {
+  const { t } = i18n.global;
   return [
     {
-      label: "网卡",
+      label: t("flow.target_rule.type_interface"),
       value: FlowTargetTypes.INTERFACE,
     },
     {
-      label: "Docker 容器名称",
+      label: t("flow.target_rule.type_netns"),
       value: FlowTargetTypes.NETNS,
     },
   ];

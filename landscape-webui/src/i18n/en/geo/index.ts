@@ -78,4 +78,9 @@ export default {
   geo_ip_name_select: {
     select_geo_ip_name: "Select Geo IP Name",
   },
+  upload: {
+    success: "Updated successfully",
+    drag_prompt: "Click or drag files to this area to upload",
+    max_size: "Maximum file size is 100MB",
+  },
 };

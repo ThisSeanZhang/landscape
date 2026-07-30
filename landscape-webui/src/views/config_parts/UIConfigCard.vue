@@ -7,14 +7,15 @@ const prefStore = usePreferenceStore();
 const message = useMessage();
 const { t } = useI18n();
 
+// Language labels are always shown in their native form, not translated
 const languageOptions = [
   { label: "简体中文", value: "zh" },
   { label: "English", value: "en" },
 ];
 
 const themeOptions = [
-  { label: "深色模式", value: "dark" },
-  { label: "浅色模式", value: "light" },
+  { label: t("config.dark_mode"), value: "dark" },
+  { label: t("config.light_mode"), value: "light" },
 ];
 
 const timezoneOptions = (Intl as any)

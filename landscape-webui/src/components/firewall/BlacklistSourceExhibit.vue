@@ -1,9 +1,11 @@
 <script lang="ts" setup>
 import { computed } from "vue";
+import { useI18n } from "vue-i18n";
 import type { FirewallBlacklistSource } from "@landscape-router/types/api/schemas";
 import { useFrontEndStore } from "@/stores/front_end_config";
 
 const frontEndStore = useFrontEndStore();
+const { t } = useI18n();
 
 type Props = {
   source: FirewallBlacklistSource;
@@ -27,7 +29,7 @@ const isBlockAll = computed(() => {
         {{ frontEndStore.MASK_INFO(source.ip) }}/{{ source.prefix }}
       </n-tag>
     </template>
-    将会阻止所有 IP 的访问
+    {{ t("firewall.blacklist_edit.block_all_tip") }}
   </n-tooltip>
   <n-tag v-else-if="source.t === 'config'">
     {{ frontEndStore.MASK_INFO(source.ip) }}/{{ source.prefix }}

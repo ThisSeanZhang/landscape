@@ -26,6 +26,9 @@ export default {
     filter_unfilter: "不过滤",
     filter_ipv4: "仅 IPv4",
     filter_ipv6: "仅 IPv6",
+    resolve_redirect: "重定向",
+    resolve_upstream: "自定义上游",
+    resolve_cloudflare: "Cloudflare",
   },
   redirect_edit: {
     title: "DNS 重定向配置",
@@ -65,6 +68,7 @@ export default {
     ip_validation_off: "不过滤",
     preset_fill: "点击按钮可以使用预设填充",
     request_mode: "上游请求模式",
+    type_plaintext: "无加密",
     port: "端口",
     port_placeholder: "DNS 规则中进行选择时用到",
     domain: "域名",
@@ -85,6 +89,7 @@ export default {
   upstream_card: {
     no_config: "无配置",
     no_remark: "无备注",
+    no_upstream: "无 DNS 上游 {rule_id}",
     request_mode: "请求方式",
     request_port: "请求端口",
     domain_addr: "域名地址",
@@ -137,5 +142,6 @@ export default {
   },
   select_upstream: {
     redirect_flow_id: "重定向的流 ID",
+    default_ali: "阿里",
   },
 };

@@ -115,7 +115,9 @@ export default {
   conflict: "Configuration conflict, please refresh and try again",
 
   chinese_simplified: "Simplified Chinese",
-  dark_mode: "Dark",
-  light_mode: "Light",
+  english: "English",
+  dark_mode: "Dark Mode",
+  light_mode: "Light Mode",
   welcome: "Welcome, {username}",
+  console_download_failed: "Failed to download config",
 };

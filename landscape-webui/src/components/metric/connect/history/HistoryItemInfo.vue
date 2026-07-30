@@ -18,6 +18,9 @@ import { mask_string } from "@/lib/common";
 import { formatSize, formatCount } from "@/lib/util";
 import { useThemeVars } from "naive-ui";
 import { useEnrolledDeviceStore } from "@/stores/enrolled_device";
+import { useI18n } from "vue-i18n";
+
+const { t } = useI18n();
 
 const enrolledDeviceStore = useEnrolledDeviceStore();
 
@@ -50,21 +53,21 @@ function formatDuration(start: number, end: number): string {
   const seconds = Math.floor(diff / 1000);
 
   if (seconds < 60) {
-    return `${seconds}秒`;
+    return `${seconds}${t("common.second")}`;
   }
 
   const minutes = Math.floor(seconds / 60);
   if (minutes < 60) {
-    return `${minutes}分 ${seconds % 60}秒`;
+    return `${minutes}${t("common.minute")} ${seconds % 60}${t("common.second")}`;
   }
 
   const hours = Math.floor(minutes / 60);
   if (hours < 24) {
-    return `${hours}小时 ${minutes % 60}分`;
+    return `${hours}${t("common.hour")} ${minutes % 60}${t("common.minute")}`;
   }
 
   const days = Math.floor(hours / 24);
-  return `${days}天 ${hours % 24}小时`;
+  return `${days}${t("common.day")} ${hours % 24}${t("common.hour")}`;
 }
 
 const goToLive = (history: ConnectHistoryStatus) => {
@@ -199,7 +202,7 @@ const emit = defineEmits([
                   <n-icon><GlobeSearch24Regular /></n-icon>
                 </n-button>
               </template>
-              查询目标 IP 归属
+              {{ t("metric.connect.ip_stats.query_ip_ownership") }}
             </n-tooltip>
             <n-tooltip trigger="hover">
               <template #trigger>

@@ -126,6 +126,8 @@ export default {
     add_target_rule: "Add egress rule",
     type_wan: "WAN Interface",
     type_docker: "Docker",
+    type_interface: "Interface",
+    type_netns: "Docker Container",
     iface_placeholder: "Interface name",
     container_placeholder: "Container name",
     weight_placeholder: "Weight",

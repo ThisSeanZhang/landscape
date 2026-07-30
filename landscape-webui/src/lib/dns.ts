@@ -6,6 +6,7 @@ import type {
   RuleSource,
 } from "@landscape-router/types/api/schemas";
 import { FlowMarkType } from "./default_value";
+import i18n from "@/i18n";
 
 export enum DnsUpstreamModeTsEnum {
   Plaintext = "plaintext",
@@ -123,10 +124,14 @@ export function get_dns_filter_options(): {
   label: string;
   value: string;
 }[] {
+  const { t } = i18n.global;
   return [
-    { label: "不过滤", value: FilterResultEnum.Unfilter },
-    { label: "仅 IPv4", value: FilterResultEnum.OnlyIPv4 },
-    { label: "仅 IPv6", value: FilterResultEnum.OnlyIPv6 },
+    {
+      label: t("dns.rule_edit.filter_unfilter"),
+      value: FilterResultEnum.Unfilter,
+    },
+    { label: t("dns.rule_edit.filter_ipv4"), value: FilterResultEnum.OnlyIPv4 },
+    { label: t("dns.rule_edit.filter_ipv6"), value: FilterResultEnum.OnlyIPv6 },
   ];
 }
 
@@ -134,10 +139,20 @@ export function get_dns_resolve_mode_options(): {
   label: string;
   value: string;
 }[] {
+  const { t } = i18n.global;
   return [
-    { label: "重定向", value: DNSResolveModeEnum.Redirect },
-    { label: "自定义上游", value: DNSResolveModeEnum.Upstream },
-    { label: "Cloudflare", value: DNSResolveModeEnum.Cloudflare },
+    {
+      label: t("dns.rule_edit.resolve_redirect"),
+      value: DNSResolveModeEnum.Redirect,
+    },
+    {
+      label: t("dns.rule_edit.resolve_upstream"),
+      value: DNSResolveModeEnum.Upstream,
+    },
+    {
+      label: t("dns.rule_edit.resolve_cloudflare"),
+      value: DNSResolveModeEnum.Cloudflare,
+    },
   ];
 }
 
@@ -145,8 +160,12 @@ export function get_dns_upstream_type_options(): {
   label: string;
   value: string;
 }[] {
+  const { t } = i18n.global;
   return [
-    { label: "无加密", value: DnsUpstreamTypeEnum.Plaintext },
+    {
+      label: t("dns.upstream_edit.type_plaintext"),
+      value: DnsUpstreamTypeEnum.Plaintext,
+    },
     { label: "TLS", value: DnsUpstreamTypeEnum.Tls },
     { label: "HTTPS", value: DnsUpstreamTypeEnum.Https },
   ];

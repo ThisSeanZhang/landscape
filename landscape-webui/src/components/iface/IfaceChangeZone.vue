@@ -12,6 +12,9 @@ import { delete_and_stop_iface_pppd_by_attach_iface_name } from "@/api/service_p
 import { IfaceZoneType } from "@landscape-router/types/api/schemas";
 import IfaceDisableGuardModal from "@/components/iface/IfaceDisableGuardModal.vue";
 import { ref } from "vue";
+import { useI18n } from "vue-i18n";
+
+const { t } = useI18n();
 
 const showModal = defineModel<boolean>("show", { required: true });
 const emit = defineEmits(["refresh"]);
@@ -65,30 +68,36 @@ function reflush_zone() {
     <n-spin :show="spin">
       <n-card
         style="width: 600px; display: flex"
-        title="切换网卡区域"
+        :title="t('interface.change_zone_title')"
         :bordered="false"
         role="dialog"
         aria-modal="true"
       >
         <n-flex style="flex: 1" vertical>
           <n-alert style="flex: 1" type="warning">
-            切换区域会导致在该网卡上运行的服务全部重置 <br />
-            且建议将当前网卡在 `/etc/network/interfaces` 中的 IP 配置方式设置为
-            manual
+            {{ t("interface.change_zone_warning_1") }} <br />
+            {{ t("interface.change_zone_warning_2") }}
           </n-alert>
           <n-flex justify="center">
             <n-radio-group v-model:value="temp_zone" name="iface_service_type">
               <n-radio-button :value="IfaceZoneType.wan" label="WAN" />
               <n-radio-button :value="IfaceZoneType.lan" label="LAN" />
-              <n-radio-button :value="IfaceZoneType.undefined" label="未定义" />
+              <n-radio-button
+                :value="IfaceZoneType.undefined"
+                :label="t('interface.zone_undefined')"
+              />
             </n-radio-group>
           </n-flex>
         </n-flex>
 
         <template #action>
           <n-flex justify="space-between">
-            <n-button @click="showModal = false">取消</n-button>
-            <n-button @click="chageIfaceZone" type="primary">确定</n-button>
+            <n-button @click="showModal = false">{{
+              t("common.cancel")
+            }}</n-button>
+            <n-button @click="chageIfaceZone" type="primary">{{
+              t("common.confirm")
+            }}</n-button>
           </n-flex>
         </template>
       </n-card>

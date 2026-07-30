@@ -34,6 +34,7 @@ import {
   getGatewayConfig,
   updateGatewayConfig,
 } from "@landscape-router/types/api/system-config/system-config";
+import i18n from "@/i18n";
 
 /** Local type -- backend accepts serde_json::Value, so no ORVAL-generated request type exists. */
 interface UpdateDnsConfigRequest {
@@ -58,7 +59,7 @@ export async function get_init_config(): Promise<void> {
 
     window.URL.revokeObjectURL(url);
   } catch (error) {
-    console.error("下载配置失败", error);
+    console.error(i18n.global.t("config.console_download_failed"), error);
   }
 }
 

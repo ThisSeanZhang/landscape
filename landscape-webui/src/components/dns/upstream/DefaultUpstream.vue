@@ -1,6 +1,9 @@
 <script setup lang="ts">
 import type { DnsUpstreamConfig } from "@landscape-router/types/api/schemas";
 import { DnsUpstreamModeTsEnum } from "@/lib/dns";
+import { useI18n } from "vue-i18n";
+
+const { t } = useI18n();
 
 const rule = defineModel<DnsUpstreamConfig>("rule", { required: true });
 
@@ -153,7 +156,7 @@ const btn_size = "small";
     <n-flex vertical :size="8">
       <n-input-group>
         <n-input-group-label :size="btn_size" class="label-len">
-          阿里
+          {{ t("dns.select_upstream.default_ali") }}
         </n-input-group-label>
         <n-button
           @click="replace_default(DefaultDnsConfig.ALI_UDP)"
