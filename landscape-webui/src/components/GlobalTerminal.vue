@@ -365,8 +365,8 @@ function onAfterLeave() {
             >
               {{
                 isConnected
-                  ? t("misc.terminal.connected")
-                  : t("misc.terminal.disconnected")
+                  ? t("terminal.connected")
+                  : t("terminal.disconnected")
               }}
             </n-tag>
           </n-flex>
@@ -390,7 +390,7 @@ function onAfterLeave() {
                 style="padding: 4px; min-width: 200px"
               >
                 <n-flex justify="space-between" align="center">
-                  <span>{{ t("misc.terminal.shell") }}:</span>
+                  <span>{{ t("terminal.shell") }}:</span>
                   <n-input
                     v-model:value="config.shell"
                     placeholder="bash"
@@ -399,7 +399,7 @@ function onAfterLeave() {
                   />
                 </n-flex>
                 <n-flex justify="space-between" align="center">
-                  <span>{{ t("misc.terminal.keep_alive") }}:</span>
+                  <span>{{ t("terminal.keep_alive") }}:</span>
                   <n-switch v-model:value="keepAlive" size="small" />
                 </n-flex>
                 <n-divider style="margin: 4px 0" />
@@ -413,13 +413,13 @@ function onAfterLeave() {
                         type="error"
                         size="small"
                         :disabled="!isConnected"
-                        >{{ t("misc.terminal.disconnect") }}</n-button
+                        >{{ t("terminal.disconnect") }}</n-button
                       >
                     </template>
-                    {{ t("misc.terminal.disconnect_confirm") }}
+                    {{ t("terminal.disconnect_confirm") }}
                   </n-popconfirm>
                   <n-button type="primary" size="small" @click="reconnect">{{
-                    t("misc.terminal.reconnect")
+                    t("terminal.reconnect")
                   }}</n-button>
                 </n-flex>
               </n-flex>
@@ -443,8 +443,8 @@ function onAfterLeave() {
               </template>
               {{
                 ptyStore.dockPosition === "bottom"
-                  ? t("misc.terminal.switch_to_right")
-                  : t("misc.terminal.switch_to_bottom")
+                  ? t("terminal.switch_to_right")
+                  : t("terminal.switch_to_bottom")
               }}
             </n-tooltip>
 
@@ -460,7 +460,7 @@ function onAfterLeave() {
                   <template #icon><n-icon :component="PushOutline" /></template>
                 </n-button>
               </template>
-              {{ t("misc.terminal.dock_mode") }}
+              {{ t("terminal.dock_mode") }}
             </n-tooltip>
 
             <n-divider vertical style="margin: 0 4px" />
@@ -502,9 +502,7 @@ function onAfterLeave() {
             style="height: 18px; padding: 0 4px"
           >
             {{
-              isConnected
-                ? t("misc.terminal.connected")
-                : t("misc.terminal.disconnected")
+              isConnected ? t("terminal.connected") : t("terminal.disconnected")
             }}
           </n-tag>
         </n-flex>
@@ -528,7 +526,7 @@ function onAfterLeave() {
               style="padding: 4px; min-width: 200px"
             >
               <n-flex justify="space-between" align="center">
-                <span>{{ t("misc.terminal.shell") }}:</span>
+                <span>{{ t("terminal.shell") }}:</span>
                 <n-input
                   v-model:value="config.shell"
                   placeholder="bash"
@@ -537,7 +535,7 @@ function onAfterLeave() {
                 />
               </n-flex>
               <n-flex justify="space-between" align="center">
-                <span>{{ t("misc.terminal.keep_alive") }}:</span>
+                <span>{{ t("terminal.keep_alive") }}:</span>
                 <n-switch v-model:value="keepAlive" size="small" />
               </n-flex>
               <n-divider style="margin: 4px 0" />
@@ -551,13 +549,13 @@ function onAfterLeave() {
                       type="error"
                       size="small"
                       :disabled="!isConnected"
-                      >{{ t("misc.terminal.disconnect") }}</n-button
+                      >{{ t("terminal.disconnect") }}</n-button
                     >
                   </template>
-                  {{ t("misc.terminal.disconnect_confirm") }}
+                  {{ t("terminal.disconnect_confirm") }}
                 </n-popconfirm>
                 <n-button type="primary" size="small" @click="reconnect">{{
-                  t("misc.terminal.reconnect")
+                  t("terminal.reconnect")
                 }}</n-button>
               </n-flex>
             </n-flex>
@@ -581,8 +579,8 @@ function onAfterLeave() {
             </template>
             {{
               ptyStore.dockPosition === "bottom"
-                ? t("misc.terminal.switch_to_right")
-                : t("misc.terminal.switch_to_bottom")
+                ? t("terminal.switch_to_right")
+                : t("terminal.switch_to_bottom")
             }}
           </n-tooltip>
 
@@ -602,7 +600,7 @@ function onAfterLeave() {
                 /></template>
               </n-button>
             </template>
-            {{ t("misc.terminal.float_mode") }}
+            {{ t("terminal.float_mode") }}
           </n-tooltip>
 
           <n-divider vertical style="margin: 0 4px" />

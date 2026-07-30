@@ -38,8 +38,8 @@ function toggle_down_devices() {
     </n-float-button>
     <n-float-button
       data-testid="topology-fit-view"
-      :aria-label="t('misc.topology.fit_view')"
-      :title="t('misc.topology.fit_view')"
+      :aria-label="t('topology.fit_view')"
+      :title="t('topology.fit_view')"
       @click="emit('fit-view')"
     >
       <n-icon><FitToScreen /></n-icon>

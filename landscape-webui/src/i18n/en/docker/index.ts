@@ -1,0 +1,36 @@
+export default {
+  docker_run: {
+    title: "Run Image: {image}",
+    container_name: "Container Name",
+    container_name_placeholder: "Enter container name (optional)",
+    flow_egress: "Use as Flow Egress",
+    restart_policy: "Restart Policy",
+    entrypoint: "Entrypoint",
+    entrypoint_placeholder: "Enter entrypoint (optional)",
+    port_mapping: "Port Mapping",
+    env_vars: "Environment Variables",
+    volume_mapping: "Volume Mapping",
+    host_port: "Host Port",
+    container_port: "Container Port",
+    env_name: "Variable Name",
+    env_value: "Variable Value",
+    host_dir: "Host Directory",
+    container_dir: "Container Directory",
+    create: "Create Container",
+    restart_no: "No auto restart",
+    restart_on_failure: "Restart on failure",
+    restart_on_failure_max: "Restart on failure (max retries)",
+    restart_always: "Always restart",
+    restart_unless_stopped: "Restart unless manually stopped",
+  },
+  docker_container: {
+    no_other_tags: "No other tags",
+    other_tags: "Other tags",
+  },
+  docker_image: {
+    history_tasks: "History Tasks",
+  },
+  docker_pull: {
+    download_history: "Download History",
+  },
+};

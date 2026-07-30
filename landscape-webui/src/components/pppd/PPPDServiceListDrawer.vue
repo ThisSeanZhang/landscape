@@ -25,7 +25,7 @@ const show_create_pppd_modal = ref(false);
   <n-drawer v-model:show="show" width="500px" @after-enter="inti_drawer">
     <n-drawer-content
       :title="
-        t('misc.pppd_drawer.configure_pppd', {
+        t('pppoe.pppd_drawer.configure_pppd', {
           iface_name: props.attach_iface_name,
         })
       "
@@ -33,7 +33,7 @@ const show_create_pppd_modal = ref(false);
     >
       <n-flex style="height: 100%" vertical>
         <n-button @click="show_create_pppd_modal = true">
-          {{ t("misc.pppd_drawer.add_pppd") }}
+          {{ t("pppoe.pppd_drawer.add_pppd") }}
         </n-button>
 
         <n-scrollbar>

@@ -43,7 +43,7 @@ const geo_name_options = computed(() => {
   <n-select
     v-model:value="name"
     filterable
-    :placeholder="t('geo_editor.geo_ip_name_select.select_geo_ip_name')"
+    :placeholder="t('geo.geo_ip_name_select.select_geo_ip_name')"
     :options="geo_name_options"
     :loading="loading"
     clearable

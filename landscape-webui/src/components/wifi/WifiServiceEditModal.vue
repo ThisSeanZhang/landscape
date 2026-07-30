@@ -47,17 +47,17 @@ async function save_config() {
   <ConfigModal
     v-model:show="show_model"
     v-model:enabled="service_config.enable"
-    :title="t('misc.wifi.title')"
+    :title="t('wifi.title')"
     width="600px"
     @after-enter="on_modal_enter"
   >
     <n-form :model="service_config">
-      <n-form-item :label="t('misc.wifi.config')">
+      <n-form-item :label="t('wifi.config')">
         <n-input
           v-model:value="service_config.config"
           type="textarea"
           rows="10"
-          :placeholder="t('misc.wifi.hostapd_config')"
+          :placeholder="t('wifi.hostapd_config')"
         />
       </n-form-item>
     </n-form>

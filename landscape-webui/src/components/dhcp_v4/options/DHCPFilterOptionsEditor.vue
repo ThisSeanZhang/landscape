@@ -15,6 +15,6 @@ const options = DHCP_FILTER_OPTIONS.map((code: number) => ({
     :options="options"
     multiple
     clearable
-    :placeholder="$t('enrolled_device.filter_options_placeholder')"
+    :placeholder="$t('device.filter_options_placeholder')"
   />
 </template>

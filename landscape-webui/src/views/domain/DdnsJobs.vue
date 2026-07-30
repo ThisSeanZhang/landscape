@@ -92,24 +92,24 @@ const deviceOptions = computed(() =>
   })),
 );
 const sourceKindOptions = computed(() => [
-  { label: t("cert.source_kind_wan"), value: "wan" },
-  { label: t("cert.source_kind_lan_device"), value: "lan_device" },
+  { label: t("ddns.source_kind_wan"), value: "wan" },
+  { label: t("ddns.source_kind_lan_device"), value: "lan_device" },
 ]);
 
 const rules = {
   name: {
     required: true,
-    message: () => t("cert.job_name_required"),
+    message: () => t("ddns.job_name_required"),
     trigger: ["input", "blur"],
   },
   zone_name: {
     required: true,
-    message: () => t("cert.zone_name_required"),
+    message: () => t("ddns.zone_name_required"),
     trigger: ["input", "blur"],
   },
   provider_profile_id: {
     required: true,
-    message: () => t("cert.provider_profile_required"),
+    message: () => t("dns_provider.provider_profile_required"),
     trigger: ["change", "blur"],
   },
 };
@@ -147,7 +147,7 @@ const detailDrawerWidth = computed(() => {
 });
 
 const detailDrawerTitle = computed(() => {
-  if (!selectedDetailJob.value) return t("cert.ddns_job_details");
+  if (!selectedDetailJob.value) return t("ddns.ddns_job_details");
   return `${frontEndStore.MASK_INFO(selectedDetailJob.value.name)} · ${frontEndStore.MASK_INFO(selectedDetailJob.value.zone_name)}`;
 });
 
@@ -304,7 +304,7 @@ function formatTimestamp(ts?: number | null) {
 }
 
 function runtimeReasonLabel(reason?: string | null) {
-  return reason ? t(`cert.ddns_reason_${reason}`) : "-";
+  return reason ? t(`ddns.ddns_reason_${reason}`) : "-";
 }
 
 function formatRetry(runtime?: {
@@ -314,7 +314,7 @@ function formatRetry(runtime?: {
   if (!runtime?.retryable) return "-";
   return runtime.next_retry_at
     ? formatTimestamp(runtime.next_retry_at)
-    : t("cert.retry_scheduled");
+    : t("ddns.retry_scheduled");
 }
 
 function formatRuntimeSummary(runtime?: {
@@ -326,7 +326,7 @@ function formatRuntimeSummary(runtime?: {
   const reason = runtimeReasonLabel(runtime.reason);
   const retry = formatRetry(runtime);
   const summary =
-    retry === "-" ? reason : `${reason} · ${t("cert.next_retry_at")}: ${retry}`;
+    retry === "-" ? reason : `${reason} · ${t("ddns.next_retry_at")}: ${retry}`;
   if (summary === "-") return summary;
   return summary ? frontEndStore.MASK_INFO(summary) : summary;
 }
@@ -473,13 +473,13 @@ async function save() {
       });
 
     if (recordNames.length === 0) {
-      throw new Error(t("cert.record_name_required"));
+      throw new Error(t("ddns.record_name_required"));
     }
     if (sources.length === 0) {
-      throw new Error(t("cert.source_required"));
+      throw new Error(t("ddns.source_required"));
     }
     if (new Set(sources.map(ddnsSourceKey)).size !== sources.length) {
-      throw new Error(t("cert.source_duplicate"));
+      throw new Error(t("ddns.source_duplicate"));
     }
 
     await push_ddns_job({
@@ -522,31 +522,31 @@ function openDetailDrawer(job: DdnsJob) {
 
 const columns = computed<DataTableColumns<DdnsJob>>(() => [
   {
-    title: t("cert.job_name"),
+    title: t("ddns.job_name"),
     key: "name",
     minWidth: 120,
     render: (row) => frontEndStore.MASK_INFO(row.name),
   },
   {
-    title: t("cert.zone_name"),
+    title: t("ddns.zone_name"),
     key: "zone_name",
     minWidth: 160,
     render: (row) => frontEndStore.MASK_INFO(row.zone_name),
   },
   {
-    title: t("cert.records"),
+    title: t("ddns.records"),
     key: "records",
     minWidth: 220,
     render: (row) => recordsSummary(row) || "-",
   },
   {
-    title: t("cert.source"),
+    title: t("ddns.source"),
     key: "source",
     minWidth: 140,
     render: (row) => sourceTags(row),
   },
   {
-    title: t("cert.provider_profile"),
+    title: t("dns_provider.provider_profile"),
     key: "provider_profile_id",
     minWidth: 140,
     render: (row) =>
@@ -603,7 +603,7 @@ const columns = computed<DataTableColumns<DdnsJob>>(() => [
           disabled: !row.enable,
           onClick: () => row.id && syncNow(row.id),
         },
-        () => t("cert.sync_now"),
+        () => t("ddns.sync_now"),
       ),
       h(
         NButton,
@@ -708,16 +708,16 @@ onMounted(async () => {
               <table class="ddns-detail-table">
                 <thead>
                   <tr>
-                    <th>{{ t("cert.record_name") }}</th>
+                    <th>{{ t("ddns.record_name") }}</th>
                     <th>IPv4</th>
                     <th>IPv4 IP</th>
                     <th>{{ t("cert.cert_status_message") }}</th>
-                    <th>{{ t("cert.next_retry_at") }}</th>
+                    <th>{{ t("ddns.next_retry_at") }}</th>
                     <th>IPv4 Error</th>
                     <th>IPv6</th>
                     <th>IPv6 IP</th>
                     <th>{{ t("cert.cert_status_message") }}</th>
-                    <th>{{ t("cert.next_retry_at") }}</th>
+                    <th>{{ t("ddns.next_retry_at") }}</th>
                     <th>IPv6 Error</th>
                   </tr>
                 </thead>
@@ -763,7 +763,7 @@ onMounted(async () => {
     <ConfigModal
       v-model:show="showModal"
       v-model:enabled="formEnabled"
-      :title="t('cert.ddns_jobs')"
+      :title="t('ddns.ddns_jobs')"
       width="680px"
     >
       <n-form
@@ -773,24 +773,24 @@ onMounted(async () => {
         label-placement="left"
         label-width="auto"
       >
-        <n-form-item :label="t('cert.job_name')" path="name"
+        <n-form-item :label="t('ddns.job_name')" path="name"
           ><n-input v-model:value="form.name"
         /></n-form-item>
-        <n-form-item :label="t('cert.zone_name')" path="zone_name">
+        <n-form-item :label="t('ddns.zone_name')" path="zone_name">
           <n-input v-model:value="form.zone_name" placeholder="example.com" />
         </n-form-item>
-        <n-form-item :label="t('cert.records')">
+        <n-form-item :label="t('ddns.records')">
           <n-dynamic-input v-model:value="recordInputs" :min="1">
             <template #default="{ value, index }">
               <n-input
                 :value="value"
-                :placeholder="t('cert.record_names_placeholder')"
+                :placeholder="t('ddns.record_names_placeholder')"
                 @update:value="updateRecordInput(index, $event)"
               />
             </template>
           </n-dynamic-input>
         </n-form-item>
-        <n-form-item :label="t('cert.sources')">
+        <n-form-item :label="t('ddns.sources')">
           <n-dynamic-input
             v-model:value="sourceInputs"
             :min="1"
@@ -816,14 +816,14 @@ onMounted(async () => {
                     style="width: 120px"
                     :value="(value as any).wan_pd_id"
                     :options="wanPdOptions"
-                    :placeholder="t('cert.select_wan_pd')"
+                    :placeholder="t('ddns.select_wan_pd')"
                     @update:value="updateSourceWanPd(index, $event)"
                   />
                   <n-select
                     style="flex: 1"
                     :value="value.target_id"
                     :options="deviceOptions"
-                    :placeholder="t('cert.select_device')"
+                    :placeholder="t('ddns.select_device')"
                     @update:value="updateSourceTarget(index, $event)"
                   />
                 </template>
@@ -842,7 +842,7 @@ onMounted(async () => {
           </n-dynamic-input>
         </n-form-item>
         <n-form-item
-          :label="t('cert.provider_profile')"
+          :label="t('dns_provider.provider_profile')"
           path="provider_profile_id"
         >
           <n-select
@@ -851,12 +851,12 @@ onMounted(async () => {
             @update:value="updateProviderProfile"
           />
         </n-form-item>
-        <n-form-item :label="t('cert.ttl')">
+        <n-form-item :label="t('ddns.ttl')">
           <n-flex vertical style="width: 100%" :size="8">
             <n-flex :wrap="false" align="center" style="width: 100%" :size="8">
               <n-switch v-model:value="useProfileDefaultTtl">
-                <template #checked>{{ t("cert.follow_profile_ttl") }}</template>
-                <template #unchecked>{{ t("cert.custom_ttl") }}</template>
+                <template #checked>{{ t("ddns.follow_profile_ttl") }}</template>
+                <template #unchecked>{{ t("ddns.custom_ttl") }}</template>
               </n-switch>
               <n-input-number
                 :value="
@@ -872,8 +872,8 @@ onMounted(async () => {
             <div class="ddns-form-hint">
               {{
                 useProfileDefaultTtl
-                  ? `${t("cert.follow_profile_ttl_hint")} ${selectedProviderDefaultTtl}`
-                  : t("cert.custom_ttl_hint")
+                  ? `${t("ddns.follow_profile_ttl_hint")} ${selectedProviderDefaultTtl}`
+                  : t("ddns.custom_ttl_hint")
               }}
             </div>
           </n-flex>
@@ -881,7 +881,7 @@ onMounted(async () => {
       </n-form>
 
       <n-alert type="info" :show-icon="false" style="margin-top: 8px">
-        {{ t("cert.zone_records_hint") }}
+        {{ t("ddns.zone_records_hint") }}
       </n-alert>
 
       <template #footer>

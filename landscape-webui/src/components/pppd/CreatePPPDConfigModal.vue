@@ -56,7 +56,7 @@ async function init_conf_value() {
 async function confirm_config() {
   if (isModified.value) {
     if (!value.value.iface_name || value.value.iface_name.trim() === "") {
-      window.$message.error(t("pppd_editor.iface_required"));
+      window.$message.error(t("pppoe.editor.iface_required"));
       return;
     }
 
@@ -64,12 +64,12 @@ async function confirm_config() {
       value.value.iface_name !== value.value.iface_name.trim() ||
       !PPP_IFACE_NAME_PATTERN.test(value.value.iface_name)
     ) {
-      window.$message.error(t("pppd_editor.iface_invalid_format"));
+      window.$message.error(t("pppoe.editor.iface_invalid_format"));
       return;
     }
 
     if (value.value.iface_name === value.value.attach_iface_name) {
-      window.$message.error(t("pppd_editor.iface_same_as_attach"));
+      window.$message.error(t("pppoe.editor.iface_same_as_attach"));
       return;
     }
 
@@ -80,7 +80,7 @@ async function confirm_config() {
       hasIfaceConflict &&
       value.value.iface_name !== props.origin_value?.iface_name
     ) {
-      window.$message.error(t("pppd_editor.iface_conflict_existing"));
+      window.$message.error(t("pppoe.editor.iface_conflict_existing"));
       return;
     }
 
@@ -94,7 +94,7 @@ async function confirm_config() {
   <ConfigModal
     v-model:show="show"
     v-model:enabled="value.enable"
-    :title="t('pppd_editor.title')"
+    :title="t('pppoe.editor.title')"
     width="600px"
     @after-enter="init_conf_value"
   >
@@ -103,14 +103,14 @@ async function confirm_config() {
 
     <n-form style="flex: 1" ref="formRef" :model="value" :cols="4">
       <n-grid :cols="5">
-        <n-form-item-gi :span="2" :label="t('pppd_editor.default_route')">
+        <n-form-item-gi :span="2" :label="t('pppoe.editor.default_route')">
           <n-switch v-model:value="value.pppd_config.default_route">
             <template #checked> {{ t("common.enable") }} </template>
             <template #unchecked> {{ t("common.disable") }} </template>
           </n-switch>
         </n-form-item-gi>
 
-        <n-form-item-gi :label="t('pppd_editor.ppp_iface_name')" :span="2">
+        <n-form-item-gi :label="t('pppoe.editor.ppp_iface_name')" :span="2">
           <n-input
             v-model:value="value.iface_name"
             clearable
@@ -119,7 +119,7 @@ async function confirm_config() {
         </n-form-item-gi>
       </n-grid>
 
-      <n-form-item :label="t('pppd_editor.username')">
+      <n-form-item :label="t('pppoe.editor.username')">
         <n-input
           :type="frontEndStore.presentation_mode ? 'password' : 'text'"
           show-password-on="click"
@@ -127,7 +127,7 @@ async function confirm_config() {
         />
       </n-form-item>
 
-      <n-form-item :label="t('pppd_editor.password')">
+      <n-form-item :label="t('pppoe.editor.password')">
         <n-input
           :type="frontEndStore.presentation_mode ? 'password' : 'text'"
           show-password-on="click"
@@ -138,8 +138,8 @@ async function confirm_config() {
       <n-form-item>
         <template #label>
           <Notice>
-            {{ t("pppd_editor.ac_name") }}
-            <template #msg> {{ t("pppd_editor.ac_name_tip") }} </template>
+            {{ t("pppoe.editor.ac_name") }}
+            <template #msg> {{ t("pppoe.editor.ac_name_tip") }} </template>
           </Notice>
         </template>
         <n-input
@@ -149,7 +149,7 @@ async function confirm_config() {
         />
       </n-form-item>
 
-      <n-form-item :label="t('pppd_editor.plugin')">
+      <n-form-item :label="t('pppoe.editor.plugin')">
         <n-select
           v-model:value="value.pppd_config.plugin"
           :options="pluginOptions"

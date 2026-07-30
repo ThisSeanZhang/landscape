@@ -48,35 +48,35 @@ function handleConfirm() {
     :show="show"
     preset="card"
     style="width: min(92vw, 560px)"
-    :title="t('misc.iface_disable_guard.title')"
+    :title="t('network.iface_risk_guard.title')"
     :mask-closable="!loading"
     :closable="!loading"
     @update:show="emit('update:show', $event)"
   >
     <n-flex vertical :size="14">
       <n-alert type="warning" :show-icon="true">
-        {{ t("misc.iface_disable_guard.warning") }}
+        {{ t("network.iface_risk_guard.warning") }}
       </n-alert>
 
       <n-flex vertical :size="6">
         <n-text>
           {{
-            t("misc.iface_disable_guard.current_iface", { iface: ifaceName })
+            t("network.iface_risk_guard.current_iface", { iface: ifaceName })
           }}
         </n-text>
         <n-text v-if="callerInfo?.ip" depth="3">
-          {{ t("misc.iface_disable_guard.current_ip", { ip: callerInfo.ip }) }}
+          {{ t("network.iface_risk_guard.current_ip", { ip: callerInfo.ip }) }}
         </n-text>
         <n-text v-if="callerInfo?.source" depth="3">
           {{
-            t("misc.iface_disable_guard.current_source", {
+            t("network.iface_risk_guard.current_source", {
               source: callerInfo.source,
             })
           }}
         </n-text>
         <n-text v-if="callerInfo?.hostname" depth="3">
           {{
-            t("misc.iface_disable_guard.current_hostname", {
+            t("network.iface_risk_guard.current_hostname", {
               hostname: callerInfo.hostname,
             })
           }}
@@ -84,17 +84,17 @@ function handleConfirm() {
       </n-flex>
 
       <n-text>
-        {{ t("misc.iface_disable_guard.input_label", { iface: ifaceName }) }}
+        {{ t("network.iface_risk_guard.input_label", { iface: ifaceName }) }}
       </n-text>
       <n-input
         v-model:value="confirmText"
         :placeholder="
-          t('misc.iface_disable_guard.input_placeholder', { iface: ifaceName })
+          t('network.iface_risk_guard.input_placeholder', { iface: ifaceName })
         "
         :disabled="loading"
       />
       <n-text depth="3">
-        {{ t("misc.iface_disable_guard.input_hint") }}
+        {{ t("network.iface_risk_guard.input_hint") }}
       </n-text>
     </n-flex>
 
@@ -109,7 +109,7 @@ function handleConfirm() {
           :disabled="!inputMatched"
           @click="handleConfirm"
         >
-          {{ t("misc.iface_disable_guard.confirm_button") }}
+          {{ t("network.iface_risk_guard.confirm_button") }}
         </n-button>
       </n-flex>
     </template>

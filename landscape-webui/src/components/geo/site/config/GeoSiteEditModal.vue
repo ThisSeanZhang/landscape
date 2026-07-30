@@ -120,11 +120,11 @@ const rules: FormRules = {
       required: true,
       validator: (rule, value: string) => {
         if (!value) {
-          return new Error(t("geo_editor.common.name_required"));
+          return new Error(t("geo.common.name_required"));
         }
         const nameRegex = /^[a-zA-Z0-9._-]+$/;
         if (!nameRegex.test(value)) {
-          return new Error(t("geo_editor.common.name_invalid"));
+          return new Error(t("geo.common.name_invalid"));
         }
         return true;
       },
@@ -144,7 +144,7 @@ const matchTypeOptions = [
   <ConfigModal
     v-model:show="show"
     v-model:enabled="rule_enabled"
-    :title="t('geo_editor.geo_site.title')"
+    :title="t('geo.geo_site.title')"
     :switch-disabled="!rule"
     width="600px"
     @after-enter="enter"
@@ -158,19 +158,17 @@ const matchTypeOptions = [
       :cols="5"
     >
       <n-grid :cols="5">
-        <n-form-item-gi :label="t('geo_editor.common.source_type')" :span="5">
+        <n-form-item-gi :label="t('geo.common.source_type')" :span="5">
           <n-radio-group
             v-model:value="sourceType"
             @update:value="switchSourceType"
           >
-            <n-radio value="url">{{
-              t("geo_editor.common.source_url_mode")
-            }}</n-radio>
+            <n-radio value="url">{{ t("geo.common.source_url_mode") }}</n-radio>
             <n-radio value="direct">{{
-              t("geo_editor.common.source_direct_mode")
+              t("geo.common.source_direct_mode")
             }}</n-radio>
             <n-radio value="adguard_home">
-              {{ t("geo_editor.common.source_adguard_home_mode") }}
+              {{ t("geo.common.source_adguard_home_mode") }}
               <span
                 style="
                   display: inline-flex;
@@ -185,7 +183,7 @@ const matchTypeOptions = [
         </n-form-item-gi>
 
         <n-form-item-gi
-          :label="t('geo_editor.common.name_unique')"
+          :label="t('geo.common.name_unique')"
           path="name"
           :span="5"
         >
@@ -194,17 +192,14 @@ const matchTypeOptions = [
 
         <!-- URL mode -->
         <template v-if="rule.source.t === 'url'">
-          <n-form-item-gi :label="t('geo_editor.common.source_url')" :span="5">
+          <n-form-item-gi :label="t('geo.common.source_url')" :span="5">
             <n-input v-model:value="rule.source.url" clearable />
           </n-form-item-gi>
         </template>
 
         <!-- Direct mode -->
         <template v-if="rule.source.t === 'direct'">
-          <n-form-item-gi
-            :label="t('geo_editor.geo_site.domain_list')"
-            :span="5"
-          >
+          <n-form-item-gi :label="t('geo.geo_site.domain_list')" :span="5">
             <n-flex vertical style="width: 100%">
               <n-card
                 v-for="(item, idx) in rule.source.data"
@@ -214,7 +209,7 @@ const matchTypeOptions = [
                 <template #header>
                   <n-input
                     v-model:value="item.key"
-                    :placeholder="t('geo_editor.common.key')"
+                    :placeholder="t('geo.common.key')"
                     size="small"
                   />
                 </template>
@@ -225,7 +220,7 @@ const matchTypeOptions = [
                     secondary
                     @click="removeDirectItem(idx)"
                   >
-                    {{ t("geo_editor.common.remove") }}
+                    {{ t("geo.common.remove") }}
                   </n-button>
                 </template>
                 <n-flex vertical>
@@ -243,7 +238,7 @@ const matchTypeOptions = [
                     />
                     <n-input
                       v-model:value="domain.value"
-                      :placeholder="t('geo_editor.geo_site.domain_placeholder')"
+                      :placeholder="t('geo.geo_site.domain_placeholder')"
                       size="small"
                       style="flex: 1"
                     />
@@ -257,12 +252,12 @@ const matchTypeOptions = [
                     </n-button>
                   </n-flex>
                   <n-button size="small" dashed @click="addDomainToItem(item)">
-                    {{ t("geo_editor.geo_site.add_domain") }}
+                    {{ t("geo.geo_site.add_domain") }}
                   </n-button>
                 </n-flex>
               </n-card>
               <n-button dashed @click="addDirectItem">
-                {{ t("geo_editor.common.add_key_group") }}
+                {{ t("geo.common.add_key_group") }}
               </n-button>
             </n-flex>
           </n-form-item-gi>
@@ -270,17 +265,14 @@ const matchTypeOptions = [
 
         <!-- AdGuard Home mode -->
         <template v-if="rule.source.t === 'adguard_home'">
-          <n-form-item-gi :label="t('geo_editor.common.source_url')" :span="5">
+          <n-form-item-gi :label="t('geo.common.source_url')" :span="5">
             <n-input
               v-model:value="rule.source.url"
               clearable
               placeholder="https://adguardteam.github.io/AdGuardSDNSFilter/Filters/filter.txt"
             />
           </n-form-item-gi>
-          <n-form-item-gi
-            :label="t('geo_editor.geo_site.adguard_key')"
-            :span="5"
-          >
+          <n-form-item-gi :label="t('geo.geo_site.adguard_key')" :span="5">
             <n-input
               v-model:value="rule.source.key"
               clearable

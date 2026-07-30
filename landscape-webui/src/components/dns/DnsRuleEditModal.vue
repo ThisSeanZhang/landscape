@@ -92,7 +92,7 @@ function changeCurrentRuleType(value: RuleSource, index: number) {
 
 async function saveRule() {
   if (rule.value.index == -1) {
-    message.warning(t("dns_editor.rule_edit.duplicate_priority_warning"));
+    message.warning(t("dns.rule_edit.duplicate_priority_warning"));
     return;
   }
 
@@ -124,34 +124,34 @@ async function saveRule() {
 
 const source_style = [
   {
-    label: t("dns_editor.rule_edit.source_style_full"),
+    label: t("dns.rule_edit.source_style_full"),
     value: DomainMatchTypeEnum.Full,
   },
   {
-    label: t("dns_editor.rule_edit.source_style_domain"),
+    label: t("dns.rule_edit.source_style_domain"),
     value: DomainMatchTypeEnum.Domain,
   },
   {
-    label: t("dns_editor.rule_edit.source_style_regex"),
+    label: t("dns.rule_edit.source_style_regex"),
     value: DomainMatchTypeEnum.Regex,
   },
   {
-    label: t("dns_editor.rule_edit.source_style_plain"),
+    label: t("dns.rule_edit.source_style_plain"),
     value: DomainMatchTypeEnum.Plain,
   },
 ];
 
 const filter_options = [
   {
-    label: t("dns_editor.rule_edit.filter_unfilter"),
+    label: t("dns.rule_edit.filter_unfilter"),
     value: FilterResultEnum.Unfilter,
   },
   {
-    label: t("dns_editor.rule_edit.filter_ipv4"),
+    label: t("dns.rule_edit.filter_ipv4"),
     value: FilterResultEnum.OnlyIPv4,
   },
   {
-    label: t("dns_editor.rule_edit.filter_ipv6"),
+    label: t("dns.rule_edit.filter_ipv6"),
     value: FilterResultEnum.OnlyIPv6,
   },
 ];
@@ -192,21 +192,21 @@ function add_by_quick_btn(match_type: DomainMatchTypeEnum | undefined) {
   <ConfigModal
     v-model:show="show"
     v-model:enabled="rule_enabled"
-    :title="t('dns_editor.rule_edit.title')"
+    :title="t('dns.rule_edit.title')"
     width="600px"
     @after-enter="enter"
   >
     <!-- {{ isModified }} -->
     <n-form style="flex: 1" ref="formRef" :model="rule" :cols="5">
       <n-grid x-gap="10" :cols="5">
-        <n-form-item-gi :label="t('dns_editor.rule_edit.priority')" :span="2">
+        <n-form-item-gi :label="t('dns.rule_edit.priority')" :span="2">
           <n-input-number v-model:value="rule.index" clearable />
         </n-form-item-gi>
 
         <n-form-item-gi
           :offset="1"
           :span="2"
-          :label="t('dns_editor.rule_edit.filter_result')"
+          :label="t('dns.rule_edit.filter_result')"
         >
           <!-- {{ rule }} -->
           <n-radio-group v-model:value="rule.filter" name="filter">
@@ -218,21 +218,15 @@ function add_by_quick_btn(match_type: DomainMatchTypeEnum | undefined) {
             />
           </n-radio-group>
         </n-form-item-gi>
-        <n-form-item-gi :span="5" :label="t('dns_editor.rule_edit.remark')">
+        <n-form-item-gi :span="5" :label="t('dns.rule_edit.remark')">
           <n-input v-model:value="rule.name" type="text" />
         </n-form-item-gi>
 
-        <n-form-item-gi
-          :span="5"
-          :label="t('dns_editor.rule_edit.flow_action')"
-        >
+        <n-form-item-gi :span="5" :label="t('dns.rule_edit.flow_action')">
           <FlowMarkEdit v-model:mark="rule.mark"></FlowMarkEdit>
         </n-form-item-gi>
 
-        <n-form-item-gi
-          :span="2"
-          :label="t('dns_editor.rule_edit.upstream_select')"
-        >
+        <n-form-item-gi :span="2" :label="t('dns.rule_edit.upstream_select')">
           <SelectUpstream v-model:upstream_id="rule.upstream_id">
           </SelectUpstream>
         </n-form-item-gi>
@@ -258,7 +252,7 @@ function add_by_quick_btn(match_type: DomainMatchTypeEnum | undefined) {
             @click.stop
           >
             <n-flex>
-              {{ t("dns_editor.rule_edit.source_rules_title") }}
+              {{ t("dns.rule_edit.source_rules_title") }}
             </n-flex>
             <n-flex>
               <!-- 不确定为什么点击 label 会触发第一个按钮, 所以放置一个不可见的按钮 -->
@@ -273,17 +267,17 @@ function add_by_quick_btn(match_type: DomainMatchTypeEnum | undefined) {
               ></button>
 
               <n-button :focusable="false" size="tiny" @click="export_config">
-                {{ t("dns_editor.rule_edit.copy") }}
+                {{ t("dns.rule_edit.copy") }}
               </n-button>
               <n-button :focusable="false" size="tiny" @click="import_rules">
-                {{ t("dns_editor.rule_edit.paste_replace") }}
+                {{ t("dns.rule_edit.paste_replace") }}
               </n-button>
               <n-button
                 :focusable="false"
                 size="tiny"
                 @click="append_import_rules"
               >
-                {{ t("dns_editor.rule_edit.paste_append") }}
+                {{ t("dns.rule_edit.paste_append") }}
               </n-button>
             </n-flex>
           </n-flex>
@@ -295,35 +289,35 @@ function add_by_quick_btn(match_type: DomainMatchTypeEnum | undefined) {
               size="small"
               @click="add_by_quick_btn(undefined)"
             >
-              {{ t("dns_editor.rule_edit.add_geo") }}
+              {{ t("dns.rule_edit.add_geo") }}
             </n-button>
             <n-button
               style="flex: 1"
               size="small"
               @click="add_by_quick_btn(DomainMatchTypeEnum.Full)"
             >
-              {{ t("dns_editor.rule_edit.add_full") }}
+              {{ t("dns.rule_edit.add_full") }}
             </n-button>
             <n-button
               style="flex: 1"
               size="small"
               @click="add_by_quick_btn(DomainMatchTypeEnum.Domain)"
             >
-              {{ t("dns_editor.rule_edit.add_domain") }}
+              {{ t("dns.rule_edit.add_domain") }}
             </n-button>
             <n-button
               style="flex: 1"
               size="small"
               @click="add_by_quick_btn(DomainMatchTypeEnum.Plain)"
             >
-              {{ t("dns_editor.rule_edit.add_plain") }}
+              {{ t("dns.rule_edit.add_plain") }}
             </n-button>
             <n-button
               style="flex: 1"
               size="small"
               @click="add_by_quick_btn(DomainMatchTypeEnum.Regex)"
             >
-              {{ t("dns_editor.rule_edit.add_regex") }}
+              {{ t("dns.rule_edit.add_regex") }}
             </n-button>
           </n-flex>
           <n-scrollbar style="max-height: 280px">
@@ -333,7 +327,7 @@ function add_by_quick_btn(match_type: DomainMatchTypeEnum | undefined) {
               :on-create="onCreate"
             >
               <template #create-button-default>
-                {{ t("dns_editor.rule_edit.add_source_rule") }}
+                {{ t("dns.rule_edit.add_source_rule") }}
               </template>
               <template #default="{ value, index }">
                 <n-flex :size="[10, 0]" style="flex: 1" :wrap="false">
@@ -361,9 +355,7 @@ function add_by_quick_btn(match_type: DomainMatchTypeEnum | undefined) {
                         style="width: 38%"
                         v-model:value="value.match_type"
                         :options="source_style"
-                        :placeholder="
-                          t('dns_editor.rule_edit.select_match_type')
-                        "
+                        :placeholder="t('dns.rule_edit.select_match_type')"
                       />
                       <n-input
                         placeholder=""

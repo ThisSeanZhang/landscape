@@ -184,7 +184,7 @@ async function syncIpv4RangeValidation() {
     }
 
     ipv4RangeStatus.value = "error";
-    ipv4RangeFeedback.value = t("enrolled_device.ipv4_out_of_range", {
+    ipv4RangeFeedback.value = t("device.ipv4_out_of_range", {
       iface: ifaceName,
     });
   } catch (e) {
@@ -236,7 +236,7 @@ async function enter() {
       originalIpv6.value = fetched.ipv6;
     } else {
       if (props.rule_id) {
-        message.error(t("enrolled_device.load_failed"));
+        message.error(t("device.load_failed"));
         show.value = false;
         return;
       }
@@ -264,7 +264,7 @@ async function enter() {
       (e as { response?: { data?: string }; message?: string })?.response
         ?.data ||
         (e as { message?: string })?.message ||
-        t("enrolled_device.load_failed"),
+        t("device.load_failed"),
     );
     show.value = false;
     return;
@@ -281,8 +281,8 @@ const formRef = ref();
 const macRule = {
   trigger: ["input", "blur"],
   validator(_: unknown, value: string) {
-    if (!value) return new Error(t("enrolled_device.mac_required"));
-    if (!isValidMac(value)) return new Error(t("enrolled_device.mac_invalid"));
+    if (!value) return new Error(t("device.mac_required"));
+    if (!isValidMac(value)) return new Error(t("device.mac_invalid"));
     return true;
   },
 };
@@ -297,8 +297,7 @@ watch(
 const ipRule = {
   trigger: ["input", "blur"],
   async validator(_: unknown, value: string) {
-    if (value && !isIP(value))
-      return new Error(t("enrolled_device.ipv4_invalid"));
+    if (value && !isIP(value)) return new Error(t("device.ipv4_invalid"));
 
     if (value && rule.value.iface_name && isIPv4(value)) {
       try {
@@ -308,7 +307,7 @@ const ipRule = {
         );
         if (!isValid) {
           return new Error(
-            t("enrolled_device.ipv4_out_of_range", {
+            t("device.ipv4_out_of_range", {
               iface: rule.value.iface_name,
             }),
           );
@@ -324,7 +323,7 @@ const ipRule = {
 const rules = {
   name: {
     required: true,
-    message: t("enrolled_device.name_required"),
+    message: t("device.name_required"),
     trigger: "blur",
   },
   mac: macRule,
@@ -333,17 +332,16 @@ const rules = {
     validator(_: unknown, value: string) {
       if (!value) return true;
       const trimmed = value.trim();
-      if (!trimmed) return new Error(t("enrolled_device.hostname_invalid"));
+      if (!trimmed) return new Error(t("device.hostname_invalid"));
       const ascii = hostnameToAscii(trimmed);
-      if (!ascii) return new Error(t("enrolled_device.hostname_invalid"));
-      if (ascii.length > 253)
-        return new Error(t("enrolled_device.hostname_invalid"));
+      if (!ascii) return new Error(t("device.hostname_invalid"));
+      if (ascii.length > 253) return new Error(t("device.hostname_invalid"));
       const labels = ascii.split(".");
       for (const label of labels) {
         if (!label || label.length > 63)
-          return new Error(t("enrolled_device.hostname_invalid"));
+          return new Error(t("device.hostname_invalid"));
         if (label.startsWith("-") || label.endsWith("-"))
-          return new Error(t("enrolled_device.hostname_invalid"));
+          return new Error(t("device.hostname_invalid"));
       }
       return true;
     },
@@ -353,10 +351,9 @@ const rules = {
     trigger: ["input", "blur"],
     validator(_: unknown, value: string) {
       if (!value) return true;
-      if (!isIpv6HostSuffix(value))
-        return new Error(t("enrolled_device.ipv6_invalid"));
+      if (!isIpv6HostSuffix(value)) return new Error(t("device.ipv6_invalid"));
       if (ipv6_iid_has_wan_marker(value) && !isOriginalIpv6(value))
-        return new Error(t("enrolled_device.ipv6_wan_iid_reserved"));
+        return new Error(t("device.ipv6_wan_iid_reserved"));
       return true;
     },
   },
@@ -364,11 +361,11 @@ const rules = {
 
 async function saveRule() {
   if (optionEditorRef.value?.hasDuplicate) {
-    message.error(t("dhcp_editor.duplicate_option_check"));
+    message.error(t("dhcp_v4.duplicate_option_check"));
     return;
   }
   if (optionEditorRef.value?.hasInvalid) {
-    message.error(t("dhcp_editor.invalid_option_check"));
+    message.error(t("dhcp_v4.invalid_option_check"));
     return;
   }
   await formRef.value?.validate();
@@ -382,7 +379,7 @@ async function saveRule() {
     } else {
       await create_enrolled_device(payload);
     }
-    message.success(t("enrolled_device.save_success"));
+    message.success(t("device.save_success"));
     show.value = false;
     await enrolledDeviceStore.UPDATE_INFO();
     emit("refresh");
@@ -392,7 +389,7 @@ async function saveRule() {
       (e as { response?: { data?: string }; message?: string })?.response
         ?.data ||
         (e as { message?: string })?.message ||
-        t("enrolled_device.save_failed"),
+        t("device.save_failed"),
     );
   } finally {
     commit_spin.value = false;
@@ -406,11 +403,7 @@ async function saveRule() {
     v-model:show="show"
     style="width: 600px"
     preset="card"
-    :title="
-      props.rule_id
-        ? t('enrolled_device.edit_title')
-        : t('enrolled_device.add_title')
-    "
+    :title="props.rule_id ? t('device.edit_title') : t('device.add_title')"
     @after-enter="enter"
     @after-leave="exit"
   >
@@ -423,118 +416,98 @@ async function saveRule() {
       label-width="100"
     >
       <n-grid :cols="2" x-gap="12">
-        <n-form-item-gi
-          :span="2"
-          :label="t('enrolled_device.name')"
-          path="name"
-        >
+        <n-form-item-gi :span="2" :label="t('device.name')" path="name">
           <n-input
             v-model:value="rule.name"
-            :placeholder="t('enrolled_device.name_placeholder')"
+            :placeholder="t('device.name_placeholder')"
           />
         </n-form-item-gi>
 
-        <n-form-item-gi
-          :span="2"
-          :label="t('enrolled_device.hostname')"
-          path="hostname"
-        >
+        <n-form-item-gi :span="2" :label="t('device.hostname')" path="hostname">
           <n-input
             v-model:value="rule.hostname"
-            :placeholder="t('enrolled_device.hostname_placeholder')"
+            :placeholder="t('device.hostname_placeholder')"
           />
         </n-form-item-gi>
 
-        <n-form-item-gi :span="2" :label="t('enrolled_device.mac')" path="mac">
+        <n-form-item-gi :span="2" :label="t('device.mac')" path="mac">
           <n-input
             v-model:value="rule.mac"
-            :placeholder="t('enrolled_device.mac_placeholder')"
+            :placeholder="t('device.mac_placeholder')"
           />
         </n-form-item-gi>
 
-        <n-form-item-gi
-          :span="2"
-          :label="t('enrolled_device.iface')"
-          path="iface_name"
-        >
+        <n-form-item-gi :span="2" :label="t('device.iface')" path="iface_name">
           <n-select
             v-model:value="rule.iface_name"
             :options="ifaceOptions"
-            :placeholder="t('enrolled_device.iface_placeholder')"
+            :placeholder="t('device.iface_placeholder')"
             clearable
           />
         </n-form-item-gi>
 
         <n-form-item-gi
           :span="2"
-          :label="t('enrolled_device.fake_name')"
+          :label="t('device.fake_name')"
           path="fake_name"
         >
           <n-input
             v-model:value="rule.fake_name"
-            :placeholder="t('enrolled_device.fake_name_placeholder')"
+            :placeholder="t('device.fake_name_placeholder')"
           />
         </n-form-item-gi>
 
         <n-form-item-gi
-          :label="t('enrolled_device.ipv4')"
+          :label="t('device.ipv4')"
           path="ipv4"
           :validation-status="ipv4RangeStatus"
           :feedback="ipv4RangeFeedback"
         >
           <n-input
             v-model:value="rule.ipv4"
-            :placeholder="t('enrolled_device.ipv4_placeholder')"
+            :placeholder="t('device.ipv4_placeholder')"
           />
         </n-form-item-gi>
 
-        <n-form-item-gi
-          :span="2"
-          :label="t('enrolled_device.ipv6')"
-          path="ipv6"
-        >
+        <n-form-item-gi :span="2" :label="t('device.ipv6')" path="ipv6">
           <n-space align="center" :wrap="false" :size="4">
             <n-input
               v-model:value="rule.ipv6"
-              :placeholder="t('enrolled_device.ipv6_placeholder')"
+              :placeholder="t('device.ipv6_placeholder')"
               style="flex: 1"
             />
             <n-button size="small" secondary @click="generateRandomIpv6Suffix">
-              {{ t("enrolled_device.ipv6_random") }}
+              {{ t("device.ipv6_random") }}
             </n-button>
           </n-space>
         </n-form-item-gi>
 
-        <n-form-item-gi :span="2" :label="t('enrolled_device.tag')" path="tag">
+        <n-form-item-gi :span="2" :label="t('device.tag')" path="tag">
           <n-dynamic-tags v-model:value="rule.tag" />
         </n-form-item-gi>
 
-        <n-form-item-gi
-          :span="2"
-          :label="t('enrolled_device.remark')"
-          path="remark"
-        >
+        <n-form-item-gi :span="2" :label="t('device.remark')" path="remark">
           <n-input
             v-model:value="rule.remark"
             type="textarea"
-            :placeholder="t('enrolled_device.remark_placeholder')"
+            :placeholder="t('device.remark_placeholder')"
           />
         </n-form-item-gi>
 
         <n-form-item-gi :span="2" :show-label="false">
           <n-collapse>
             <n-collapse-item
-              :title="t('enrolled_device.advanced_settings')"
+              :title="t('device.advanced_settings')"
               name="advanced-settings"
             >
-              <n-form-item :label="t('enrolled_device.dhcp_custom_options')">
+              <n-form-item :label="t('device.dhcp_custom_options')">
                 <CustomDhcpOptionEditor
                   ref="optionEditorRef"
                   v-model="rule.dhcp_custom_options!"
                 />
               </n-form-item>
 
-              <n-form-item :label="t('enrolled_device.dhcp_filter_options')">
+              <n-form-item :label="t('device.dhcp_filter_options')">
                 <DHCPFilterOptionsEditor v-model="rule.dhcp_filter_options!" />
               </n-form-item>
             </n-collapse-item>
@@ -546,16 +519,14 @@ async function saveRule() {
     <template #footer>
       <n-flex justify="end">
         <n-space>
-          <n-button @click="show = false">{{
-            t("enrolled_device.cancel")
-          }}</n-button>
+          <n-button @click="show = false">{{ t("device.cancel") }}</n-button>
           <n-button
             type="primary"
             :loading="commit_spin"
             @click="saveRule"
             :disabled="!canSave"
           >
-            {{ t("enrolled_device.save") }}
+            {{ t("device.save") }}
           </n-button>
         </n-space>
       </n-flex>

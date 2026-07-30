@@ -1,0 +1,36 @@
+export default {
+  docker_run: {
+    title: "运行镜像: {image}",
+    container_name: "容器名称",
+    container_name_placeholder: "请输入容器名称 (可选)",
+    flow_egress: "用作 Flow 出口",
+    restart_policy: "重启策略",
+    entrypoint: "entrypoint",
+    entrypoint_placeholder: "请输入 entrypoint (可选)",
+    port_mapping: "端口映射",
+    env_vars: "环境变量",
+    volume_mapping: "卷映射",
+    host_port: "主机端口",
+    container_port: "容器端口",
+    env_name: "变量名",
+    env_value: "变量值",
+    host_dir: "主机目录",
+    container_dir: "容器目录",
+    create: "创建容器",
+    restart_no: "不自动重启",
+    restart_on_failure: "失败时自动重启",
+    restart_on_failure_max: "失败时自动重启（带最大重试次数）",
+    restart_always: "总是自动重启",
+    restart_unless_stopped: "除非手动停止，否则自动重启",
+  },
+  docker_container: {
+    no_other_tags: "无其他标签",
+    other_tags: "其他标签",
+  },
+  docker_image: {
+    history_tasks: "历史任务",
+  },
+  docker_pull: {
+    download_history: "下载记录",
+  },
+};

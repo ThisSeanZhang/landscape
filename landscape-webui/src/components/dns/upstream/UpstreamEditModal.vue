@@ -54,9 +54,8 @@ const formRef = ref();
 const ipRule = {
   trigger: ["input", "blur"],
   validator(_: unknown, value: string) {
-    if (!value) return new Error(t("dns_editor.upstream_edit.err_ip_required"));
-    if (!isIP(value))
-      return new Error(t("dns_editor.upstream_edit.err_ip_invalid"));
+    if (!value) return new Error(t("dns.upstream_edit.err_ip_required"));
+    if (!isIP(value)) return new Error(t("dns.upstream_edit.err_ip_invalid"));
     return true;
   },
 };
@@ -66,7 +65,7 @@ const rules = {
     trigger: ["blur", "change"],
     validator(_: unknown, value: string[]) {
       if (!value || value.length === 0) {
-        return new Error(t("dns_editor.upstream_edit.err_ips_required"));
+        return new Error(t("dns.upstream_edit.err_ips_required"));
       }
       return true;
     },
@@ -79,12 +78,12 @@ const rules = {
         return true; // Plaintext 不校验 domain
       }
       if (!value || value.trim() === "") {
-        return new Error(t("dns_editor.upstream_edit.err_domain_required"));
+        return new Error(t("dns.upstream_edit.err_domain_required"));
       }
       // 可选：简单域名正则
       const domainRegex = /^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
       if (!domainRegex.test(value)) {
-        return new Error(t("dns_editor.upstream_edit.err_domain_invalid"));
+        return new Error(t("dns.upstream_edit.err_domain_invalid"));
       }
       return true;
     },
@@ -95,7 +94,7 @@ const rules = {
     level: "warning",
     validator(_: unknown, value: string) {
       if (!value || value.trim() === "") {
-        return new Error(t("dns_editor.upstream_edit.warn_default_endpoint"));
+        return new Error(t("dns.upstream_edit.warn_default_endpoint"));
       }
       return true;
     },
@@ -112,7 +111,7 @@ async function saveRule() {
         (!rule.value.mode.http_endpoint ||
           rule.value.mode.http_endpoint.trim() === "")
       ) {
-        message.warning(t("dns_editor.upstream_edit.warn_empty_endpoint_fill"));
+        message.warning(t("dns.upstream_edit.warn_empty_endpoint_fill"));
         rule.value.mode.http_endpoint = null as any;
       }
 
@@ -151,17 +150,17 @@ async function import_rules() {
     style="width: 600px"
     class="custom-card"
     preset="card"
-    :title="t('dns_editor.upstream_edit.title')"
+    :title="t('dns.upstream_edit.title')"
     @after-enter="enter"
     :bordered="false"
   >
     <template #header-extra>
       <n-flex>
         <n-button :focusable="false" @click="export_config" size="tiny" strong>
-          {{ t("dns_editor.upstream_edit.copy") }}
+          {{ t("dns.upstream_edit.copy") }}
         </n-button>
         <n-button :focusable="false" @click="import_rules" size="tiny" strong>
-          {{ t("dns_editor.upstream_edit.paste") }}
+          {{ t("dns.upstream_edit.paste") }}
         </n-button>
       </n-flex>
     </template>
@@ -175,9 +174,9 @@ async function import_rules() {
       :cols="8"
     >
       <n-grid :cols="8">
-        <n-form-item-gi :span="4" :label="t('dns_editor.upstream_edit.remark')">
+        <n-form-item-gi :span="4" :label="t('dns.upstream_edit.remark')">
           <n-input
-            :placeholder="t('dns_editor.upstream_edit.remark_placeholder')"
+            :placeholder="t('dns.upstream_edit.remark_placeholder')"
             v-model:value="rule.remark"
           />
         </n-form-item-gi>
@@ -185,34 +184,31 @@ async function import_rules() {
         <n-form-item-gi :offset="1" :span="2">
           <template #label>
             <Notice>
-              {{ t("dns_editor.upstream_edit.ip_validation") }}
+              {{ t("dns.upstream_edit.ip_validation") }}
               <template #msg>
-                {{ t("dns_editor.upstream_edit.ip_validation_desc_1") }} <br />
-                {{ t("dns_editor.upstream_edit.ip_validation_desc_2") }}
+                {{ t("dns.upstream_edit.ip_validation_desc_1") }} <br />
+                {{ t("dns.upstream_edit.ip_validation_desc_2") }}
               </template>
             </Notice>
           </template>
 
           <n-switch v-model:value="rule.enable_ip_validation">
             <template #checked>
-              {{ t("dns_editor.upstream_edit.ip_validation_on") }}
+              {{ t("dns.upstream_edit.ip_validation_on") }}
             </template>
             <template #unchecked>
-              {{ t("dns_editor.upstream_edit.ip_validation_off") }}
+              {{ t("dns.upstream_edit.ip_validation_off") }}
             </template>
           </n-switch>
         </n-form-item-gi>
 
-        <n-form-item-gi
-          :span="8"
-          :label="t('dns_editor.upstream_edit.preset_fill')"
-        >
+        <n-form-item-gi :span="8" :label="t('dns.upstream_edit.preset_fill')">
           <DefaultUpstream v-model:rule="rule"></DefaultUpstream>
         </n-form-item-gi>
 
         <n-form-item-gi
           :span="4"
-          :label="t('dns_editor.upstream_edit.request_mode')"
+          :label="t('dns.upstream_edit.request_mode')"
           path="mode.domain"
         >
           <n-radio-group
@@ -236,12 +232,12 @@ async function import_rules() {
           /> -->
         </n-form-item-gi>
 
-        <n-form-item-gi :span="4" :label="t('dns_editor.upstream_edit.port')">
+        <n-form-item-gi :span="4" :label="t('dns.upstream_edit.port')">
           <n-input-number
             style="flex: 1"
             :min="1"
             :max="65535"
-            :placeholder="t('dns_editor.upstream_edit.port_placeholder')"
+            :placeholder="t('dns.upstream_edit.port_placeholder')"
             v-model:value="rule.port"
           />
         </n-form-item-gi>
@@ -249,11 +245,11 @@ async function import_rules() {
         <n-form-item-gi
           :span="4"
           v-if="rule.mode.t !== DnsUpstreamModeTsEnum.Plaintext"
-          :label="t('dns_editor.upstream_edit.domain')"
+          :label="t('dns.upstream_edit.domain')"
         >
           <n-input
             style="width: 230px"
-            :placeholder="t('dns_editor.upstream_edit.domain_placeholder')"
+            :placeholder="t('dns.upstream_edit.domain_placeholder')"
             v-model:value="rule.mode.domain"
           >
           </n-input>
@@ -263,10 +259,10 @@ async function import_rules() {
           :span="4"
           path="mode.http_endpoint"
           v-if="rule.mode.t === DnsUpstreamModeTsEnum.Https"
-          :label="t('dns_editor.upstream_edit.url')"
+          :label="t('dns.upstream_edit.url')"
         >
           <n-input
-            :placeholder="t('dns_editor.upstream_edit.url_placeholder')"
+            :placeholder="t('dns.upstream_edit.url_placeholder')"
             v-model:value="rule.mode.http_endpoint"
           >
           </n-input>
@@ -274,12 +270,12 @@ async function import_rules() {
 
         <n-form-item-gi
           :span="8"
-          :label="t('dns_editor.upstream_edit.server_ips')"
+          :label="t('dns.upstream_edit.server_ips')"
           path="ips"
         >
           <n-dynamic-input
             v-model:value="rule.ips"
-            :placeholder="t('dns_editor.upstream_edit.enter_ip')"
+            :placeholder="t('dns.upstream_edit.enter_ip')"
             #="{ index }"
           >
             <n-form-item
@@ -292,7 +288,7 @@ async function import_rules() {
             >
               <n-input
                 v-model:value="rule.ips[index]"
-                :placeholder="t('dns_editor.upstream_edit.enter_ip_v46')"
+                :placeholder="t('dns.upstream_edit.enter_ip_v46')"
                 @keydown.enter.prevent
               />
             </n-form-item>

@@ -36,13 +36,14 @@ const is_match = computed(() => {
 });
 
 const display_title = computed(
-  () => props.title || t("misc.iface_risk_guard.title"),
+  () => props.title || t("network.iface_risk_guard.title"),
 );
 const display_warning = computed(
-  () => props.warning || t("misc.iface_risk_guard.warning"),
+  () => props.warning || t("network.iface_risk_guard.warning"),
 );
 const display_confirm_button_text = computed(
-  () => props.confirm_button_text || t("misc.iface_risk_guard.confirm_button"),
+  () =>
+    props.confirm_button_text || t("network.iface_risk_guard.confirm_button"),
 );
 
 async function check_and_execute(action: () => Promise<void>) {
@@ -94,35 +95,39 @@ defineExpose({
           {{ display_warning }}
         </n-alert>
         <n-text>{{
-          t("misc.iface_risk_guard.current_iface", {
+          t("network.iface_risk_guard.current_iface", {
             iface: caller?.iface_name,
           })
         }}</n-text>
         <n-text>{{
-          t("misc.iface_risk_guard.current_ip", { ip: caller?.ip })
+          t("network.iface_risk_guard.current_ip", { ip: caller?.ip })
         }}</n-text>
         <n-text>{{
-          t("misc.iface_risk_guard.current_source", { source: caller?.source })
+          t("network.iface_risk_guard.current_source", {
+            source: caller?.source,
+          })
         }}</n-text>
         <n-text v-if="caller?.hostname">{{
-          t("misc.iface_risk_guard.current_hostname", {
+          t("network.iface_risk_guard.current_hostname", {
             hostname: caller?.hostname,
           })
         }}</n-text>
 
         <n-text style="margin-top: 8px">{{
-          t("misc.iface_risk_guard.input_label", { iface: caller?.iface_name })
+          t("network.iface_risk_guard.input_label", {
+            iface: caller?.iface_name,
+          })
         }}</n-text>
         <n-input
           v-model:value="input_value"
           :placeholder="
-            t('misc.iface_risk_guard.input_placeholder', {
+            t('network.iface_risk_guard.input_placeholder', {
               iface: caller?.iface_name,
             })
           "
         />
         <n-text depth="3" style="font-size: 12px">{{
-          t("misc.iface_risk_guard.input_hint")
+          t("network.iface_risk_guard.input_hint")
         }}</n-text>
       </n-flex>
     </template>

@@ -43,7 +43,7 @@ const show_pull_history = ref(false);
           <n-input v-model:value="pull_docker_image_name" />
           <n-button @click="pull_image">{{ t("common.pull_image") }}</n-button>
           <n-button @click="show_pull_history = true">{{
-            t("misc.docker_image.history_tasks")
+            t("docker.docker_image.history_tasks")
           }}</n-button>
         </n-input-group>
         <!-- <n-input-group>

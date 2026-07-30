@@ -24,13 +24,13 @@ async function del() {
   <n-flex>
     <n-card
       :title="
-        t('misc.pppd_card.interface_label', { iface_name: config.iface_name })
+        t('pppoe.pppd_card.interface_label', { iface_name: config.iface_name })
       "
       size="small"
     >
       <!-- {{ rule }} -->
       <n-descriptions bordered label-placement="top" :column="3">
-        <n-descriptions-item :label="t('misc.pppd_card.attach_interface')">
+        <n-descriptions-item :label="t('pppoe.pppd_card.attach_interface')">
           {{ config.attach_iface_name }}
         </n-descriptions-item>
         <n-descriptions-item :label="t('common.enable')">
@@ -38,7 +38,7 @@ async function del() {
             {{ config.enable }}
           </n-tag>
         </n-descriptions-item>
-        <n-descriptions-item :label="t('pppd_editor.default_route')">
+        <n-descriptions-item :label="t('pppoe.editor.default_route')">
           {{ config.pppd_config.default_route }}
         </n-descriptions-item>
         <n-descriptions-item :label="t('common.username')">

@@ -114,7 +114,7 @@ const canRefreshCache = computed(
 function getNormalizedReq(): CheckDomainParams | undefined {
   const domain = extractDomain(req.value.domain);
   if (domain === "") {
-    message.info(t("dns_editor.check_domain.enter_domain"));
+    message.info(t("dns.check_domain.enter_domain"));
     return;
   }
 
@@ -166,7 +166,7 @@ async function deleteCache() {
   deleteCacheLoading.value = true;
   try {
     await applyResult(await invalidate_domain_cache(nextReq));
-    message.success(t("dns_editor.check_domain.delete_cache_success"));
+    message.success(t("dns.check_domain.delete_cache_success"));
   } finally {
     deleteCacheLoading.value = false;
   }
@@ -181,7 +181,7 @@ async function refreshCache() {
   refreshCacheLoading.value = true;
   try {
     await applyResult(await refresh_domain_cache(nextReq));
-    message.success(t("dns_editor.check_domain.refresh_cache_success"));
+    message.success(t("dns.check_domain.refresh_cache_success"));
   } finally {
     refreshCacheLoading.value = false;
   }
@@ -204,7 +204,7 @@ async function quick_btn(record_type: LandscapeDnsRecordType, domain: string) {
     :mask-closable="false"
   >
     <n-drawer-content
-      :title="t('dns_editor.check_domain.test_flow_query', { flow_id })"
+      :title="t('dns.check_domain.test_flow_query', { flow_id })"
       closable
     >
       <n-flex style="height: 100%" vertical>
@@ -263,7 +263,7 @@ async function quick_btn(record_type: LandscapeDnsRecordType, domain: string) {
               :options="options"
             />
             <n-input
-              :placeholder="t('dns_editor.check_domain.query_instruction')"
+              :placeholder="t('dns.check_domain.query_instruction')"
               @keyup.enter="query"
               v-model:value="req.domain"
             />
@@ -282,7 +282,7 @@ async function quick_btn(record_type: LandscapeDnsRecordType, domain: string) {
             style="margin-top: 10px"
           >
             <n-text depth="3">
-              {{ t("dns_editor.check_domain.diagnostic_hint") }}
+              {{ t("dns.check_domain.diagnostic_hint") }}
             </n-text>
             <n-flex>
               <n-popconfirm
@@ -291,10 +291,10 @@ async function quick_btn(record_type: LandscapeDnsRecordType, domain: string) {
               >
                 <template #trigger>
                   <n-button size="small" :disabled="!canDeleteCache">
-                    {{ t("dns_editor.check_domain.delete_cache") }}
+                    {{ t("dns.check_domain.delete_cache") }}
                   </n-button>
                 </template>
-                {{ t("dns_editor.check_domain.confirm_delete_cache") }}
+                {{ t("dns.check_domain.confirm_delete_cache") }}
               </n-popconfirm>
               <n-popconfirm
                 :positive-button-props="{ loading: refreshCacheLoading }"
@@ -306,10 +306,10 @@ async function quick_btn(record_type: LandscapeDnsRecordType, domain: string) {
                     type="warning"
                     :disabled="!canRefreshCache"
                   >
-                    {{ t("dns_editor.check_domain.refresh_cache") }}
+                    {{ t("dns.check_domain.refresh_cache") }}
                   </n-button>
                 </template>
-                {{ t("dns_editor.check_domain.confirm_refresh_cache") }}
+                {{ t("dns.check_domain.confirm_refresh_cache") }}
               </n-popconfirm>
             </n-flex>
           </n-flex>
@@ -319,7 +319,7 @@ async function quick_btn(record_type: LandscapeDnsRecordType, domain: string) {
             :show-icon="false"
             style="margin-top: 10px"
           >
-            {{ t("dns_editor.check_domain.query_filtered_hint") }}
+            {{ t("dns.check_domain.query_filtered_hint") }}
           </n-alert>
         </n-spin>
 
@@ -328,7 +328,7 @@ async function quick_btn(record_type: LandscapeDnsRecordType, domain: string) {
             <DnsRuleCard :rule="config_rule"> </DnsRuleCard>
 
             <n-divider title-placement="left">
-              {{ t("dns_editor.check_domain.upstream_result") }}
+              {{ t("dns.check_domain.upstream_result") }}
             </n-divider>
             <n-flex v-if="result.records">
               <n-flex v-for="each in result.records">
@@ -336,7 +336,7 @@ async function quick_btn(record_type: LandscapeDnsRecordType, domain: string) {
               </n-flex>
             </n-flex>
             <n-divider title-placement="left">
-              {{ t("dns_editor.check_domain.cache_result") }}
+              {{ t("dns.check_domain.cache_result") }}
             </n-divider>
             <n-flex v-if="result.cache_records">
               <n-flex v-for="each in result.cache_records">
@@ -348,7 +348,7 @@ async function quick_btn(record_type: LandscapeDnsRecordType, domain: string) {
           <n-flex v-if="redirect_rule" vertical>
             <DnsRedirectCard :rule="redirect_rule"></DnsRedirectCard>
             <n-divider title-placement="left">
-              {{ t("dns_editor.check_domain.redirect_result") }}
+              {{ t("dns.check_domain.redirect_result") }}
             </n-divider>
             <n-flex v-if="result.records">
               <n-flex v-for="each in result.records">

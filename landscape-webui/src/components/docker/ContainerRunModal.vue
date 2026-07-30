@@ -62,23 +62,23 @@ enum DockerRestartPolicy {
 
 const restrt_options = [
   {
-    label: t("misc.docker_run.restart_no"),
+    label: t("docker.docker_run.restart_no"),
     value: DockerRestartPolicy.NO,
   },
   {
-    label: t("misc.docker_run.restart_on_failure"),
+    label: t("docker.docker_run.restart_on_failure"),
     value: DockerRestartPolicy.ON_FAILURE,
   },
   {
-    label: t("misc.docker_run.restart_on_failure_max"),
+    label: t("docker.docker_run.restart_on_failure_max"),
     value: DockerRestartPolicy.ON_FAILURE_WITH_MAX_RETRIES,
   },
   {
-    label: t("misc.docker_run.restart_always"),
+    label: t("docker.docker_run.restart_always"),
     value: DockerRestartPolicy.ALWAYS,
   },
   {
-    label: t("misc.docker_run.restart_unless_stopped"),
+    label: t("docker.docker_run.restart_unless_stopped"),
     value: DockerRestartPolicy.UNLESS_STOPPED,
   },
 ];
@@ -131,7 +131,7 @@ const has_edge_label = computed({
   >
     <n-card
       style="width: 600px"
-      :title="t('misc.docker_run.title', { image: props.image_name })"
+      :title="t('docker.docker_run.title', { image: props.image_name })"
       :bordered="false"
       size="small"
       role="dialog"
@@ -141,26 +141,26 @@ const has_edge_label = computed({
         <n-grid :cols="6" :x-gap="12">
           <n-form-item-gi
             :span="3"
-            :label="t('misc.docker_run.container_name')"
+            :label="t('docker.docker_run.container_name')"
             path="containerName"
           >
             <n-input
               v-model:value="formModel.container_name"
-              :placeholder="t('misc.docker_run.container_name_placeholder')"
+              :placeholder="t('docker.docker_run.container_name_placeholder')"
             />
           </n-form-item-gi>
 
           <n-form-item-gi
             :offset="1"
             :span="2"
-            :label="t('misc.docker_run.flow_egress')"
+            :label="t('docker.docker_run.flow_egress')"
             path="imageName"
           >
             <n-switch v-model:value="has_edge_label"> </n-switch>
           </n-form-item-gi>
           <n-form-item-gi
             :span="6"
-            :label="t('misc.docker_run.restart_policy')"
+            :label="t('docker.docker_run.restart_policy')"
             path="containerName"
           >
             <n-input-group>
@@ -181,12 +181,12 @@ const has_edge_label = computed({
 
           <n-form-item-gi
             :span="6"
-            :label="t('misc.docker_run.entrypoint')"
+            :label="t('docker.docker_run.entrypoint')"
             path="containerName"
           >
             <n-input
               v-model:value="formModel.entrypoint"
-              :placeholder="t('misc.docker_run.entrypoint_placeholder')"
+              :placeholder="t('docker.docker_run.entrypoint_placeholder')"
             />
           </n-form-item-gi>
           <!-- <n-form-item-gi label="entrypoint params" path="containerName">
@@ -197,41 +197,41 @@ const has_edge_label = computed({
         </n-form-item-gi> -->
           <n-form-item-gi
             :span="6"
-            :label="t('misc.docker_run.port_mapping')"
+            :label="t('docker.docker_run.port_mapping')"
             path="ports"
           >
             <n-dynamic-input
               v-model:value="formModel.ports"
               preset="pair"
               separator=":"
-              :key-placeholder="t('misc.docker_run.host_port')"
-              :value-placeholder="t('misc.docker_run.container_port')"
+              :key-placeholder="t('docker.docker_run.host_port')"
+              :value-placeholder="t('docker.docker_run.container_port')"
             />
           </n-form-item-gi>
           <n-form-item-gi
             :span="6"
-            :label="t('misc.docker_run.env_vars')"
+            :label="t('docker.docker_run.env_vars')"
             path="environment"
           >
             <n-dynamic-input
               v-model:value="formModel.environment"
               preset="pair"
               separator=":"
-              :key-placeholder="t('misc.docker_run.env_name')"
-              :value-placeholder="t('misc.docker_run.env_value')"
+              :key-placeholder="t('docker.docker_run.env_name')"
+              :value-placeholder="t('docker.docker_run.env_value')"
             />
           </n-form-item-gi>
           <n-form-item-gi
             :span="6"
-            :label="t('misc.docker_run.volume_mapping')"
+            :label="t('docker.docker_run.volume_mapping')"
             path="volumes"
           >
             <n-dynamic-input
               v-model:value="formModel.volumes"
               preset="pair"
               separator=":"
-              :key-placeholder="t('misc.docker_run.host_dir')"
-              :value-placeholder="t('misc.docker_run.container_dir')"
+              :key-placeholder="t('docker.docker_run.host_dir')"
+              :value-placeholder="t('docker.docker_run.container_dir')"
             />
           </n-form-item-gi>
           <!-- <n-form-item-gi label-style="width: 100%;" content-style="width: 100%;">
@@ -280,7 +280,7 @@ const has_edge_label = computed({
             type="primary"
             @click="save_config"
           >
-            {{ t("misc.docker_run.create") }}
+            {{ t("docker.docker_run.create") }}
           </n-button>
         </n-flex>
       </template>

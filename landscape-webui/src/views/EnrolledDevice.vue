@@ -40,7 +40,7 @@ async function manualRefresh() {
         <template #icon>
           <n-icon><Add /></n-icon>
         </template>
-        {{ t("enrolled_device.add_btn") }}
+        {{ t("device.add_btn") }}
       </n-button>
       <n-button :loading="refresh_loading" secondary @click="manualRefresh">
         <template #icon>
@@ -67,12 +67,12 @@ async function manualRefresh() {
           enrolledDeviceStore.bindings?.length === 0 &&
           !enrolledDeviceStore.loading
         "
-        :description="t('enrolled_device.empty_desc')"
+        :description="t('device.empty_desc')"
         style="margin-top: 100px"
       >
         <template #extra>
           <n-button @click="show_edit_modal = true">{{
-            t("enrolled_device.add_now")
+            t("device.add_now")
           }}</n-button>
         </template>
       </n-empty>

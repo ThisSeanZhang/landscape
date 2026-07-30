@@ -126,11 +126,11 @@ const rules: FormRules = {
       required: true,
       validator: (rule, value: string) => {
         if (!value) {
-          return new Error(t("geo_editor.common.name_required"));
+          return new Error(t("geo.common.name_required"));
         }
         const nameRegex = /^[a-zA-Z0-9._-]+$/;
         if (!nameRegex.test(value)) {
-          return new Error(t("geo_editor.common.name_invalid"));
+          return new Error(t("geo.common.name_invalid"));
         }
         return true;
       },
@@ -143,7 +143,7 @@ const rules: FormRules = {
   <ConfigModal
     v-model:show="show"
     v-model:enabled="rule_enabled"
-    :title="t('geo_editor.geo_ip.title')"
+    :title="t('geo.geo_ip.title')"
     :switch-disabled="!rule"
     width="600px"
     @after-enter="enter"
@@ -157,22 +157,20 @@ const rules: FormRules = {
       :cols="5"
     >
       <n-grid :cols="5">
-        <n-form-item-gi :label="t('geo_editor.common.source_type')" :span="5">
+        <n-form-item-gi :label="t('geo.common.source_type')" :span="5">
           <n-radio-group
             v-model:value="sourceType"
             @update:value="switchSourceType"
           >
-            <n-radio value="url">{{
-              t("geo_editor.common.source_url_mode")
-            }}</n-radio>
+            <n-radio value="url">{{ t("geo.common.source_url_mode") }}</n-radio>
             <n-radio value="direct">{{
-              t("geo_editor.common.source_direct_mode")
+              t("geo.common.source_direct_mode")
             }}</n-radio>
           </n-radio-group>
         </n-form-item-gi>
 
         <n-form-item-gi
-          :label="t('geo_editor.common.name_unique')"
+          :label="t('geo.common.name_unique')"
           path="name"
           :span="5"
         >
@@ -181,13 +179,10 @@ const rules: FormRules = {
 
         <!-- URL mode -->
         <template v-if="rule.source.t === 'url'">
-          <n-form-item-gi :label="t('geo_editor.common.source_url')" :span="5">
+          <n-form-item-gi :label="t('geo.common.source_url')" :span="5">
             <n-input v-model:value="rule.source.url" clearable />
           </n-form-item-gi>
-          <n-form-item-gi
-            :label="t('geo_editor.common.source_format')"
-            :span="5"
-          >
+          <n-form-item-gi :label="t('geo.common.source_format')" :span="5">
             <n-radio-group v-model:value="rule.source.format">
               <n-radio value="dat">DAT</n-radio>
               <n-radio value="txt">TXT</n-radio>
@@ -195,20 +190,20 @@ const rules: FormRules = {
           </n-form-item-gi>
           <n-form-item-gi
             v-if="rule.source.format === 'txt'"
-            :label="t('geo_editor.common.txt_key')"
+            :label="t('geo.common.txt_key')"
             :span="5"
           >
             <n-input
               v-model:value="rule.source.txt_key"
               clearable
-              :placeholder="t('geo_editor.common.txt_key_placeholder')"
+              :placeholder="t('geo.common.txt_key_placeholder')"
             />
           </n-form-item-gi>
         </template>
 
         <!-- Direct mode -->
         <template v-if="rule.source.t === 'direct'">
-          <n-form-item-gi :label="t('geo_editor.geo_ip.ip_list')" :span="5">
+          <n-form-item-gi :label="t('geo.geo_ip.ip_list')" :span="5">
             <n-flex vertical style="width: 100%">
               <n-card
                 v-for="(item, idx) in rule.source.data"
@@ -218,7 +213,7 @@ const rules: FormRules = {
                 <template #header>
                   <n-input
                     v-model:value="item.key"
-                    :placeholder="t('geo_editor.common.key')"
+                    :placeholder="t('geo.common.key')"
                     size="small"
                   />
                 </template>
@@ -229,7 +224,7 @@ const rules: FormRules = {
                     secondary
                     @click="removeDirectItem(idx)"
                   >
-                    {{ t("geo_editor.common.remove") }}
+                    {{ t("geo.common.remove") }}
                   </n-button>
                 </template>
                 <n-flex vertical>
@@ -241,7 +236,7 @@ const rules: FormRules = {
                   >
                     <n-input
                       v-model:value="ipItem.ip"
-                      :placeholder="t('geo_editor.geo_ip.ip_placeholder')"
+                      :placeholder="t('geo.geo_ip.ip_placeholder')"
                       size="small"
                       style="flex: 1"
                     />
@@ -251,7 +246,7 @@ const rules: FormRules = {
                       :max="128"
                       size="small"
                       style="width: 100px"
-                      :placeholder="t('geo_editor.geo_ip.prefix_placeholder')"
+                      :placeholder="t('geo.geo_ip.prefix_placeholder')"
                     />
                     <n-button
                       size="small"
@@ -263,12 +258,12 @@ const rules: FormRules = {
                     </n-button>
                   </n-flex>
                   <n-button size="small" dashed @click="addIpToItem(item)">
-                    {{ t("geo_editor.geo_ip.add_ip") }}
+                    {{ t("geo.geo_ip.add_ip") }}
                   </n-button>
                 </n-flex>
               </n-card>
               <n-button dashed @click="addDirectItem">
-                {{ t("geo_editor.common.add_key_group") }}
+                {{ t("geo.common.add_key_group") }}
               </n-button>
             </n-flex>
           </n-form-item-gi>

@@ -47,12 +47,12 @@ async function save_config() {
   <ConfigModal
     v-model:show="show_model"
     v-model:enabled="service_config.enable"
-    :title="t('misc.mss_clamp.title')"
+    :title="t('network.mss_clamp.title')"
     width="600px"
     @after-enter="on_modal_enter"
   >
     <n-form :model="service_config">
-      <n-form-item :label="t('misc.mss_clamp.clamp_value')">
+      <n-form-item :label="t('network.mss_clamp.clamp_value')">
         <n-input-number
           v-model:value="service_config.clamp_size"
           :show-button="false"

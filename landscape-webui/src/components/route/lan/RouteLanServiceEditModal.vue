@@ -72,13 +72,13 @@ function onCreate(): StaticRouteConfig {
   <ConfigModal
     v-model:show="show_model"
     v-model:enabled="service_enabled"
-    :title="t('misc.route_lan.title')"
+    :title="t('network.route_lan.title')"
     :switch-disabled="service_config === null"
     width="600px"
     @after-enter="on_modal_enter"
   >
     <n-form v-if="service_config !== null" :model="service_config">
-      <n-form-item :label="t('misc.route_lan.static_route_limit')">
+      <n-form-item :label="t('network.route_lan.static_route_limit')">
         <n-dynamic-input
           item-style="padding-right: 15px"
           :max="1"
@@ -86,17 +86,17 @@ function onCreate(): StaticRouteConfig {
           :on-create="onCreate"
         >
           <template #create-button-default>
-            {{ t("misc.route_lan.add_subnet") }}
+            {{ t("network.route_lan.add_subnet") }}
           </template>
           <template #default="{ value, index }">
             <n-input-group>
               <n-input
-                :placeholder="t('misc.route_lan.next_hop')"
+                :placeholder="t('network.route_lan.next_hop')"
                 v-model:value="value.next_hop"
                 type="text"
               />
               <n-input
-                :placeholder="t('misc.route_lan.subnet_range')"
+                :placeholder="t('network.route_lan.subnet_range')"
                 v-model:value="value.subnet"
                 type="text"
               />

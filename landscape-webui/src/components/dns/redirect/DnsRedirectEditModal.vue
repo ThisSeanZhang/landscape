@@ -49,11 +49,11 @@ const rule_enabled = computed({
 
 const answerModeOptions = computed(() => [
   {
-    label: t("dns_editor.redirect_edit.answer_mode_static_ips"),
+    label: t("dns.redirect_edit.answer_mode_static_ips"),
     value: "static_ips",
   },
   {
-    label: t("dns_editor.redirect_edit.answer_mode_all_local_ips"),
+    label: t("dns.redirect_edit.answer_mode_all_local_ips"),
     value: "all_local_ips",
   },
 ]);
@@ -87,9 +87,8 @@ const formRef = ref();
 const ipRule = {
   trigger: ["input", "blur"],
   validator(_: unknown, value: string) {
-    if (!value) return new Error(t("dns_editor.redirect_edit.err_ip_required"));
-    if (!isIP(value))
-      return new Error(t("dns_editor.redirect_edit.err_ip_invalid"));
+    if (!value) return new Error(t("dns.redirect_edit.err_ip_required"));
+    if (!isIP(value)) return new Error(t("dns.redirect_edit.err_ip_invalid"));
     return true;
   },
 };
@@ -99,9 +98,7 @@ const rules = {
     trigger: ["blur", "change"],
     validator(_: unknown, value: any[]) {
       if (!value || value.length === 0) {
-        return new Error(
-          t("dns_editor.redirect_edit.err_match_rules_required"),
-        );
+        return new Error(t("dns.redirect_edit.err_match_rules_required"));
       }
       return true;
     },
@@ -130,7 +127,7 @@ const flow_options = computed(() => {
     label: e.remark ? `${e.flow_id} - ${e.remark}` : e.flow_id,
   }));
   result.unshift({
-    label: t("dns_editor.redirect_edit.default_flow"),
+    label: t("dns.redirect_edit.default_flow"),
     value: 0,
   });
   return result;
@@ -170,7 +167,7 @@ async function append_import_rules() {
   <ConfigModal
     v-model:show="show"
     v-model:enabled="rule_enabled"
-    :title="t('dns_editor.redirect_edit.title')"
+    :title="t('dns.redirect_edit.title')"
     :switch-disabled="!rule"
     width="600px"
     @after-enter="enter"
@@ -188,19 +185,16 @@ async function append_import_rules() {
         <!-- <n-form-item-gi label="优先级" :span="2">
           <n-input-number v-model:value="rule.index" clearable />
         </n-form-item-gi> -->
-        <n-form-item-gi :span="2" :label="t('dns_editor.redirect_edit.remark')">
+        <n-form-item-gi :span="2" :label="t('dns.redirect_edit.remark')">
           <n-input v-model:value="rule.remark" />
         </n-form-item-gi>
 
-        <n-form-item-gi
-          :span="2"
-          :label="t('dns_editor.redirect_edit.apply_flows')"
-        >
+        <n-form-item-gi :span="2" :label="t('dns.redirect_edit.apply_flows')">
           <n-select
             multiple
             v-model:value="rule.apply_flows"
             filterable
-            :placeholder="t('dns_editor.redirect_edit.apply_flows_placeholder')"
+            :placeholder="t('dns.redirect_edit.apply_flows_placeholder')"
             :options="flow_options"
             :loading="flow_search_loading"
             clearable
@@ -209,10 +203,7 @@ async function append_import_rules() {
           />
         </n-form-item-gi>
 
-        <n-form-item-gi
-          :span="2"
-          :label="t('dns_editor.redirect_edit.answer_mode')"
-        >
+        <n-form-item-gi :span="2" :label="t('dns.redirect_edit.answer_mode')">
           <n-select
             v-model:value="rule.answer_mode"
             :options="answerModeOptions"
@@ -221,17 +212,17 @@ async function append_import_rules() {
 
         <n-form-item-gi
           :span="2"
-          :label="t('dns_editor.redirect_edit.redirect_result')"
+          :label="t('dns.redirect_edit.redirect_result')"
           path="result_info"
         >
           <n-flex vertical style="width: 100%">
             <n-text v-if="isAllLocalIpsMode" depth="3">
-              {{ t("dns_editor.redirect_edit.all_local_ips_desc") }}
+              {{ t("dns.redirect_edit.all_local_ips_desc") }}
             </n-text>
             <n-dynamic-input
               v-else
               v-model:value="rule.result_info"
-              :placeholder="t('dns_editor.redirect_edit.enter_ip')"
+              :placeholder="t('dns.redirect_edit.enter_ip')"
               #="{ index }"
             >
               <n-form-item
@@ -244,7 +235,7 @@ async function append_import_rules() {
               >
                 <n-input
                   v-model:value="rule.result_info[index]"
-                  :placeholder="t('dns_editor.redirect_edit.enter_ip_v46')"
+                  :placeholder="t('dns.redirect_edit.enter_ip_v46')"
                   @keydown.enter.prevent
                 />
               </n-form-item>
@@ -254,7 +245,7 @@ async function append_import_rules() {
 
         <n-form-item-gi
           :span="2"
-          :label="t('dns_editor.redirect_edit.match_rules')"
+          :label="t('dns.redirect_edit.match_rules')"
           path="match_rules"
         >
           <template #label>
@@ -265,7 +256,7 @@ async function append_import_rules() {
               @click.stop
             >
               <n-flex>
-                {{ t("dns_editor.redirect_edit.match_rules_header") }}
+                {{ t("dns.redirect_edit.match_rules_header") }}
               </n-flex>
               <n-flex>
                 <!-- 不确定为什么点击 label 会触发第一个按钮, 所以放置一个不可见的按钮 -->
@@ -280,17 +271,17 @@ async function append_import_rules() {
                 ></button>
 
                 <n-button :focusable="false" size="tiny" @click="export_config">
-                  {{ t("dns_editor.redirect_edit.copy") }}
+                  {{ t("dns.redirect_edit.copy") }}
                 </n-button>
                 <n-button :focusable="false" size="tiny" @click="import_rules">
-                  {{ t("dns_editor.redirect_edit.paste_replace") }}
+                  {{ t("dns.redirect_edit.paste_replace") }}
                 </n-button>
                 <n-button
                   :focusable="false"
                   size="tiny"
                   @click="append_import_rules"
                 >
-                  {{ t("dns_editor.redirect_edit.paste_append") }}
+                  {{ t("dns.redirect_edit.paste_append") }}
                 </n-button>
               </n-flex>
             </n-flex>

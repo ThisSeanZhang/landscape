@@ -17,8 +17,8 @@ const emit = defineEmits(["refresh"]);
 const show_edit_modal = ref(false);
 const answerModeText = computed(() =>
   props.rule.answer_mode === "all_local_ips"
-    ? t("dns_editor.redirect_card.answer_mode_all_local_ips")
-    : t("dns_editor.redirect_card.answer_mode_static_ips"),
+    ? t("dns.redirect_card.answer_mode_all_local_ips")
+    : t("dns.redirect_card.answer_mode_static_ips"),
 );
 
 async function del() {
@@ -42,29 +42,27 @@ async function del() {
       :column="1"
       size="small"
     >
-      <n-descriptions-item :label="t('dns_editor.redirect_card.apply_to')">
+      <n-descriptions-item :label="t('dns.redirect_card.apply_to')">
         <n-flex v-if="rule.apply_flows.length > 0">
           <n-tag v-for="value in rule.apply_flows" :bordered="false">
-            {{
-              value === 0 ? t("dns_editor.redirect_card.default_flow") : value
-            }}
+            {{ value === 0 ? t("dns.redirect_card.default_flow") : value }}
           </n-tag>
         </n-flex>
         <n-flex v-else>
           <span style="min-height: 28px">{{
-            t("dns_editor.redirect_card.all_flows")
+            t("dns.redirect_card.all_flows")
           }}</span>
         </n-flex>
       </n-descriptions-item>
 
-      <n-descriptions-item :label="t('dns_editor.redirect_card.answer_mode')">
+      <n-descriptions-item :label="t('dns.redirect_card.answer_mode')">
         {{ answerModeText }}
       </n-descriptions-item>
 
-      <n-descriptions-item :label="t('dns_editor.redirect_card.response_info')">
+      <n-descriptions-item :label="t('dns.redirect_card.response_info')">
         <n-flex v-if="rule.answer_mode === 'all_local_ips'">
           <span style="min-height: 28px">{{
-            t("dns_editor.redirect_card.response_all_local_ips")
+            t("dns.redirect_card.response_all_local_ips")
           }}</span>
         </n-flex>
         <n-flex v-else-if="rule.result_info.length > 0">
@@ -74,12 +72,12 @@ async function del() {
         </n-flex>
         <n-flex v-else>
           <span style="min-height: 28px">{{
-            t("dns_editor.redirect_card.response_block")
+            t("dns.redirect_card.response_block")
           }}</span>
         </n-flex>
       </n-descriptions-item>
 
-      <n-descriptions-item :label="t('dns_editor.rule_card.match_rules')">
+      <n-descriptions-item :label="t('dns.rule_card.match_rules')">
         <n-scrollbar style="height: 90px">
           <n-flex>
             <RuleSourceExhibit v-for="item in rule.match_rules" :source="item">

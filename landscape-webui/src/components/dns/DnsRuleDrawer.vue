@@ -71,9 +71,9 @@ async function import_rules() {
 
 const title = computed(() => {
   if (props.flow_id === 0) {
-    return t("dns_editor.rule_drawer.title_default");
+    return t("dns.rule_drawer.title_default");
   } else {
-    return t("dns_editor.rule_drawer.title_flow", { flow_id: props.flow_id });
+    return t("dns.rule_drawer.title_flow", { flow_id: props.flow_id });
   }
 });
 const rule_loading_spin = ref(false);
@@ -100,18 +100,18 @@ const rule_loading_spin = ref(false);
         <n-flex style="height: 100%" vertical>
           <n-flex>
             <n-button style="flex: 1" @click="show_create_modal = true">
-              {{ t("dns_editor.rule_drawer.add_rule") }}
+              {{ t("dns.rule_drawer.add_rule") }}
             </n-button>
             <n-button style="flex: 1" @click="export_config">
-              {{ t("dns_editor.rule_drawer.export_clipboard") }}
+              {{ t("dns.rule_drawer.export_clipboard") }}
             </n-button>
             <n-popconfirm @positive-click="import_rules">
               <template #trigger>
                 <n-button style="flex: 1" @click="">
-                  {{ t("dns_editor.rule_drawer.import_clipboard") }}
+                  {{ t("dns.rule_drawer.import_clipboard") }}
                 </n-button>
               </template>
-              {{ t("dns_editor.rule_drawer.confirm_import") }}
+              {{ t("dns.rule_drawer.confirm_import") }}
             </n-popconfirm>
             <n-button @click="show_query_modal = true">
               <template #icon>

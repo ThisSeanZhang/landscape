@@ -28,7 +28,7 @@ async function del() {
 
 const domain = computed(() => {
   if (props.rule.mode.t === DnsUpstreamModeTsEnum.Plaintext) {
-    return t("dns_editor.upstream_card.no_config");
+    return t("dns.upstream_card.no_config");
   } else if (props.rule.mode.t === DnsUpstreamModeTsEnum.Https) {
     let url = props.rule.mode.http_endpoint ?? "/dns-query";
     return frontEndStore.MASK_INFO(`${props.rule.mode.domain}${url}`);
@@ -43,9 +43,7 @@ const domain = computed(() => {
     <template #header>
       <n-ellipsis>
         {{
-          rule.remark !== ""
-            ? rule.remark
-            : t("dns_editor.upstream_card.no_remark")
+          rule.remark !== "" ? rule.remark : t("dns.upstream_card.no_remark")
         }}
       </n-ellipsis>
     </template>
@@ -56,25 +54,19 @@ const domain = computed(() => {
       :column="2"
       size="small"
     >
-      <n-descriptions-item :label="t('dns_editor.upstream_card.request_mode')">
+      <n-descriptions-item :label="t('dns.upstream_card.request_mode')">
         {{ upstream_mode_exhibit_name(rule.mode.t) }}
       </n-descriptions-item>
 
-      <n-descriptions-item :label="t('dns_editor.upstream_card.request_port')">
+      <n-descriptions-item :label="t('dns.upstream_card.request_port')">
         {{ frontEndStore.MASK_INFO(rule.port?.toString()) }}
       </n-descriptions-item>
 
-      <n-descriptions-item
-        span="2"
-        :label="t('dns_editor.upstream_card.domain_addr')"
-      >
+      <n-descriptions-item span="2" :label="t('dns.upstream_card.domain_addr')">
         {{ domain }}
       </n-descriptions-item>
 
-      <n-descriptions-item
-        span="2"
-        :label="t('dns_editor.upstream_card.upstream_ip')"
-      >
+      <n-descriptions-item span="2" :label="t('dns.upstream_card.upstream_ip')">
         <n-scrollbar style="height: 90px">
           <n-flex>
             <n-flex v-for="ip in rule.ips">
@@ -93,16 +85,16 @@ const domain = computed(() => {
           secondary
           @click="show_edit_modal = true"
         >
-          {{ t("dns_editor.upstream_card.edit") }}
+          {{ t("dns.upstream_card.edit") }}
         </n-button>
 
         <n-popconfirm @positive-click="del()">
           <template #trigger>
             <n-button size="small" type="error" secondary @click="">
-              {{ t("dns_editor.upstream_card.delete") }}
+              {{ t("dns.upstream_card.delete") }}
             </n-button>
           </template>
-          {{ t("dns_editor.upstream_card.confirm_delete") }}
+          {{ t("dns.upstream_card.confirm_delete") }}
         </n-popconfirm>
       </n-flex>
     </template>

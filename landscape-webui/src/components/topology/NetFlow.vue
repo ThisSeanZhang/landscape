@@ -243,15 +243,15 @@ function getConnectionWarning(
 
   switch (issue) {
     case "device_not_found":
-      return t("misc.topology.device_not_found");
+      return t("topology.device_not_found");
     case "bridge_connection_rule":
-      return t("misc.topology.bridge_connection_rule");
+      return t("topology.bridge_connection_rule");
     case "device_has_parent":
-      return t("misc.topology.device_has_parent");
+      return t("topology.device_has_parent");
     case "connect_unavailable":
-      return t("misc.topology_panel.connect_unavailable");
+      return t("topology.panel.connect_unavailable");
     case "wifi_client_mode_warning":
-      return t("misc.topology.wifi_client_mode_warning");
+      return t("topology.wifi_client_mode_warning");
   }
 }
 
@@ -361,7 +361,7 @@ onPaneClick(() => {
         v-if="!isDrawerMode"
         class="topology-minimap"
         position="bottom-left"
-        :aria-label="t('misc.topology.minimap')"
+        :aria-label="t('topology.minimap')"
         :height="MINIMAP_HEIGHT"
         :mask-border-radius="10"
         :mask-color="miniMapMaskColor"

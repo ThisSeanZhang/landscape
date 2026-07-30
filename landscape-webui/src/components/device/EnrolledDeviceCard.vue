@@ -88,12 +88,10 @@ async function del() {
         <n-tooltip v-if="isValid === false" trigger="hover">
           <template #trigger>
             <n-tag size="small" type="error" round>
-              {{ t("enrolled_device.invalid_status") }}
+              {{ t("device.invalid_status") }}
             </n-tag>
           </template>
-          {{
-            t("enrolled_device.ipv4_out_of_range", { iface: rule.iface_name })
-          }}
+          {{ t("device.ipv4_out_of_range", { iface: rule.iface_name }) }}
         </n-tooltip>
       </n-space>
     </template>
@@ -105,24 +103,21 @@ async function del() {
       :column="1"
       size="small"
     >
-      <n-descriptions-item :label="t('enrolled_device.mac')">
+      <n-descriptions-item :label="t('device.mac')">
         <code>{{ frontEndStore.MASK_INFO(rule.mac) }}</code>
       </n-descriptions-item>
 
-      <n-descriptions-item
-        v-if="rule.iface_name"
-        :label="t('enrolled_device.iface')"
-      >
+      <n-descriptions-item v-if="rule.iface_name" :label="t('device.iface')">
         <n-tag size="small" type="primary" :bordered="false">{{
           rule.iface_name
         }}</n-tag>
       </n-descriptions-item>
 
-      <n-descriptions-item v-if="rule.ipv4" :label="t('enrolled_device.ipv4')">
+      <n-descriptions-item v-if="rule.ipv4" :label="t('device.ipv4')">
         {{ frontEndStore.MASK_INFO(rule.ipv4) }}
       </n-descriptions-item>
 
-      <n-descriptions-item v-if="rule.ipv6" :label="t('enrolled_device.ipv6')">
+      <n-descriptions-item v-if="rule.ipv6" :label="t('device.ipv6')">
         <n-ellipsis style="max-width: 200px">
           {{ frontEndStore.MASK_INFO(rule.ipv6) }}
         </n-ellipsis>
@@ -130,7 +125,7 @@ async function del() {
 
       <n-descriptions-item
         v-if="rule.tag && rule.tag.length > 0"
-        :label="t('enrolled_device.tag')"
+        :label="t('device.tag')"
       >
         <n-space size="small">
           <n-tag
@@ -146,10 +141,7 @@ async function del() {
         </n-space>
       </n-descriptions-item>
 
-      <n-descriptions-item
-        v-if="rule.remark"
-        :label="t('enrolled_device.remark')"
-      >
+      <n-descriptions-item v-if="rule.remark" :label="t('device.remark')">
         <n-ellipsis :line-clamp="1">
           {{ rule.remark }}
         </n-ellipsis>
@@ -178,7 +170,7 @@ async function del() {
               </template>
             </n-button>
           </template>
-          {{ t("enrolled_device.delete_confirm") }}
+          {{ t("device.delete_confirm") }}
         </n-popconfirm>
       </n-flex>
     </template>

@@ -59,22 +59,22 @@ async function import_rules() {
     width="500px"
     placement="right"
   >
-    <n-drawer-content :title="t('geo_editor.drawer.config_source')" closable>
+    <n-drawer-content :title="t('geo.drawer.config_source')" closable>
       <n-flex style="height: 100%" vertical>
         <n-flex>
           <n-button style="flex: 1" @click="show_create_modal = true">
-            {{ t("geo_editor.drawer.add_rule") }}
+            {{ t("geo.drawer.add_rule") }}
           </n-button>
           <n-button style="flex: 1" @click="export_config">
-            {{ t("geo_editor.drawer.export_clipboard") }}
+            {{ t("geo.drawer.export_clipboard") }}
           </n-button>
           <n-popconfirm @positive-click="import_rules">
             <template #trigger>
               <n-button style="flex: 1" @click="">
-                {{ t("geo_editor.drawer.import_clipboard") }}
+                {{ t("geo.drawer.import_clipboard") }}
               </n-button>
             </template>
-            {{ t("geo_editor.drawer.confirm_import") }}
+            {{ t("geo.drawer.confirm_import") }}
           </n-popconfirm>
         </n-flex>
 

@@ -62,7 +62,7 @@ function defaultDdnsTtlForProvider(type: string): number {
 const rules = {
   name: {
     required: true,
-    message: () => t("cert.profile_name_required"),
+    message: () => t("dns_provider.profile_name_required"),
     trigger: ["input", "blur"],
   },
 };
@@ -211,7 +211,9 @@ async function validateCredentials() {
         buildProviderConfig(providerType.value, form.value.provider_config),
     );
   } catch (error: any) {
-    message.error(error?.message || t("cert.provider_validation_failed"));
+    message.error(
+      error?.message || t("dns_provider.provider_validation_failed"),
+    );
   } finally {
     validating.value = false;
   }
@@ -236,7 +238,9 @@ async function validateRowCredentials(row: DnsProviderProfile) {
         ),
     );
   } catch (error: any) {
-    message.error(error?.message || t("cert.provider_validation_failed"));
+    message.error(
+      error?.message || t("dns_provider.provider_validation_failed"),
+    );
   } finally {
     validatingIds.value.delete(row.id);
   }
@@ -244,13 +248,13 @@ async function validateRowCredentials(row: DnsProviderProfile) {
 
 const columns = computed<DataTableColumns<DnsProviderProfile>>(() => [
   {
-    title: t("cert.profile_name"),
+    title: t("dns_provider.profile_name"),
     key: "name",
     minWidth: 140,
     render: (row) => frontEndStore.MASK_INFO(row.name),
   },
   {
-    title: t("cert.provider"),
+    title: t("dns_provider.provider"),
     key: "provider_config",
     width: 140,
     render: (row) =>
@@ -264,7 +268,7 @@ const columns = computed<DataTableColumns<DnsProviderProfile>>(() => [
       ),
   },
   {
-    title: t("cert.ddns_default_ttl"),
+    title: t("dns_provider.ddns_default_ttl"),
     key: "ddns_default_ttl",
     width: 120,
     render: (row) => row.ddns_default_ttl ?? 120,
@@ -349,7 +353,7 @@ onMounted(refresh);
       v-model:show="showModal"
       preset="card"
       style="width: 640px"
-      :title="t('cert.provider_profiles')"
+      :title="t('dns_provider.provider_profiles')"
     >
       <n-form
         ref="formRef"
@@ -358,10 +362,10 @@ onMounted(refresh);
         label-placement="left"
         label-width="auto"
       >
-        <n-form-item :label="t('cert.profile_name')" path="name">
+        <n-form-item :label="t('dns_provider.profile_name')" path="name">
           <n-input v-model:value="form.name" />
         </n-form-item>
-        <n-form-item :label="t('cert.provider')">
+        <n-form-item :label="t('dns_provider.provider')">
           <n-select
             :value="providerType"
             :options="providerOptions"
@@ -452,7 +456,7 @@ onMounted(refresh);
           /></n-form-item>
         </template>
 
-        <n-form-item :label="t('cert.ddns_default_ttl')">
+        <n-form-item :label="t('dns_provider.ddns_default_ttl')">
           <n-input-number
             v-model:value="form.ddns_default_ttl"
             :min="1"
@@ -462,7 +466,7 @@ onMounted(refresh);
         </n-form-item>
 
         <n-alert type="info" :show-icon="false" style="margin-bottom: 12px">
-          {{ t("cert.ddns_default_ttl_hint") }}
+          {{ t("dns_provider.ddns_default_ttl_hint") }}
         </n-alert>
 
         <n-form-item :label="t('common.remark')">

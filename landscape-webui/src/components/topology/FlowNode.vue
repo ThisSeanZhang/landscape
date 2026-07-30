@@ -231,7 +231,7 @@ const service_items = computed(() => {
   if (show_switch.value.mss_clamp) {
     items.push({
       key: "mss_clamp",
-      label: t("misc.topology_panel.open_mss_clamp"),
+      label: t("topology.panel.open_mss_clamp"),
       short_label: "MSS",
       status: mss_clamp_status.value,
     });
@@ -239,7 +239,7 @@ const service_items = computed(() => {
   if (show_switch.value.ip_config) {
     items.push({
       key: "ip_config",
-      label: t("misc.topology_panel.open_ip_config"),
+      label: t("topology.panel.open_ip_config"),
       short_label: "IP",
       status: ip_config_status.value,
     });
@@ -247,7 +247,7 @@ const service_items = computed(() => {
   if (show_switch.value.dhcp_v4) {
     items.push({
       key: "dhcp_v4",
-      label: t("misc.topology_panel.open_dhcp_v4"),
+      label: t("topology.panel.open_dhcp_v4"),
       short_label: "DHCPv4",
       status: dhcp_v4_status.value,
     });
@@ -255,7 +255,7 @@ const service_items = computed(() => {
   if (show_switch.value.nat_config) {
     items.push({
       key: "nat",
-      label: t("misc.topology_panel.open_nat"),
+      label: t("topology.panel.open_nat"),
       short_label: "NAT",
       status: nat_status.value,
     });
@@ -263,7 +263,7 @@ const service_items = computed(() => {
   if (show_switch.value.firewall) {
     items.push({
       key: "firewall",
-      label: t("misc.topology_panel.open_firewall"),
+      label: t("topology.panel.open_firewall"),
       short_label: "FW",
       status: firewall_status.value,
     });
@@ -271,7 +271,7 @@ const service_items = computed(() => {
   if (show_switch.value.wifi) {
     items.push({
       key: "wifi",
-      label: t("misc.topology_panel.open_wifi"),
+      label: t("topology.panel.open_wifi"),
       short_label: "WF",
       status: wifi_status.value,
     });
@@ -279,7 +279,7 @@ const service_items = computed(() => {
   if (show_switch.value.ipv6pd) {
     items.push({
       key: "ipv6pd",
-      label: t("misc.topology_panel.open_ipv6pd"),
+      label: t("topology.panel.open_ipv6pd"),
       short_label: "PD",
       status: ipv6pd_status.value,
     });
@@ -287,7 +287,7 @@ const service_items = computed(() => {
   if (show_switch.value.lan_ipv6) {
     items.push({
       key: "lan_ipv6",
-      label: t("misc.topology_panel.open_lanv6"),
+      label: t("topology.panel.open_lanv6"),
       short_label: "LANv6",
       status: lan_ipv6_status.value,
     });
@@ -295,7 +295,7 @@ const service_items = computed(() => {
   if (show_switch.value.route_lan) {
     items.push({
       key: "route_lan",
-      label: t("misc.topology_panel.open_route_lan"),
+      label: t("topology.panel.open_route_lan"),
       short_label: "LR",
       status: route_lan_status.value,
     });
@@ -303,7 +303,7 @@ const service_items = computed(() => {
   if (show_switch.value.route_wan) {
     items.push({
       key: "route_wan",
-      label: t("misc.topology_panel.open_route_wan"),
+      label: t("topology.panel.open_route_wan"),
       short_label: "WR",
       status: route_wan_status.value,
     });

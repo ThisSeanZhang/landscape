@@ -40,19 +40,19 @@ function changeCurrentRuleType(value: RuleSource, index: number) {
 
 const source_style = [
   {
-    label: t("dns_editor.rule_edit.source_style_full"),
+    label: t("dns.rule_edit.source_style_full"),
     value: DomainMatchTypeEnum.Full,
   },
   {
-    label: t("dns_editor.rule_edit.source_style_domain"),
+    label: t("dns.rule_edit.source_style_domain"),
     value: DomainMatchTypeEnum.Domain,
   },
   {
-    label: t("dns_editor.rule_edit.source_style_regex"),
+    label: t("dns.rule_edit.source_style_regex"),
     value: DomainMatchTypeEnum.Regex,
   },
   {
-    label: t("dns_editor.rule_edit.source_style_plain"),
+    label: t("dns.rule_edit.source_style_plain"),
     value: DomainMatchTypeEnum.Plain,
   },
 ];
@@ -83,35 +83,35 @@ function add_by_quick_btn(match_type: DomainMatchTypeEnum | undefined) {
         size="small"
         @click="add_by_quick_btn(undefined)"
       >
-        {{ t("dns_editor.rule_edit.add_geo") }}
+        {{ t("dns.rule_edit.add_geo") }}
       </n-button>
       <n-button
         style="flex: 1"
         size="small"
         @click="add_by_quick_btn(DomainMatchTypeEnum.Full)"
       >
-        {{ t("dns_editor.rule_edit.add_full") }}
+        {{ t("dns.rule_edit.add_full") }}
       </n-button>
       <n-button
         style="flex: 1"
         size="small"
         @click="add_by_quick_btn(DomainMatchTypeEnum.Domain)"
       >
-        {{ t("dns_editor.rule_edit.add_domain") }}
+        {{ t("dns.rule_edit.add_domain") }}
       </n-button>
       <n-button
         style="flex: 1"
         size="small"
         @click="add_by_quick_btn(DomainMatchTypeEnum.Plain)"
       >
-        {{ t("dns_editor.rule_edit.add_plain") }}
+        {{ t("dns.rule_edit.add_plain") }}
       </n-button>
       <n-button
         style="flex: 1"
         size="small"
         @click="add_by_quick_btn(DomainMatchTypeEnum.Regex)"
       >
-        {{ t("dns_editor.rule_edit.add_regex") }}
+        {{ t("dns.rule_edit.add_regex") }}
       </n-button>
     </n-flex>
     <n-scrollbar style="max-height: 280px">
@@ -121,7 +121,7 @@ function add_by_quick_btn(match_type: DomainMatchTypeEnum | undefined) {
         :on-create="onCreate"
       >
         <template #create-button-default>
-          {{ t("dns_editor.rule_edit.add_source_rule") }}
+          {{ t("dns.rule_edit.add_source_rule") }}
         </template>
         <template #default="{ value, index }">
           <n-flex :size="[10, 0]" style="flex: 1" :wrap="false">
@@ -150,7 +150,7 @@ function add_by_quick_btn(match_type: DomainMatchTypeEnum | undefined) {
                   style="width: 38%"
                   v-model:value="value.match_type"
                   :options="source_style"
-                  :placeholder="t('dns_editor.rule_edit.select_match_type')"
+                  :placeholder="t('dns.rule_edit.select_match_type')"
                 />
                 <n-input
                   placeholder=""

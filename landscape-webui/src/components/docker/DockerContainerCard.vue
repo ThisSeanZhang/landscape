@@ -192,12 +192,12 @@ const tags = computed(() => {
 
         <n-flex>
           <n-button text v-if="tags[1].length == 0">
-            {{ t("misc.docker_container.no_other_tags") }}
+            {{ t("docker.docker_container.no_other_tags") }}
           </n-button>
           <n-tooltip v-else trigger="hover">
             <template #trigger>
               <n-button text>
-                {{ t("misc.docker_container.other_tags") }}
+                {{ t("docker.docker_container.other_tags") }}
               </n-button>
             </template>
             <n-flex>

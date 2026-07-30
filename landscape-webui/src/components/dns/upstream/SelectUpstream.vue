@@ -32,7 +32,7 @@ async function search_upstreams() {
   <n-select
     v-model:value="upstream_id"
     filterable
-    :placeholder="t('dns_editor.select_upstream.redirect_flow_id')"
+    :placeholder="t('dns.select_upstream.redirect_flow_id')"
     :options="upstream_options"
     :loading="flow_search_loading"
     remote

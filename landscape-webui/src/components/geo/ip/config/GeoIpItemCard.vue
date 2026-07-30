@@ -46,7 +46,7 @@ const onGeoUpload = async (formData: FormData) => {
         ></StatusTitle>
       </template>
       <n-descriptions bordered label-placement="top" :column="2">
-        <n-descriptions-item :label="t('geo_editor.item_card.source_type')">
+        <n-descriptions-item :label="t('geo.item_card.source_type')">
           <n-tag
             :bordered="false"
             :type="geo_ip_source.source.t === 'url' ? 'info' : 'success'"
@@ -56,7 +56,7 @@ const onGeoUpload = async (formData: FormData) => {
           </n-tag>
         </n-descriptions-item>
         <template v-if="geo_ip_source.source.t === 'url'">
-          <n-descriptions-item :label="t('geo_editor.item_card.source_format')">
+          <n-descriptions-item :label="t('geo.item_card.source_format')">
             <n-tag
               :bordered="false"
               :type="
@@ -78,9 +78,7 @@ const onGeoUpload = async (formData: FormData) => {
               }}
             </n-ellipsis>
           </n-descriptions-item>
-          <n-descriptions-item
-            :label="t('geo_editor.item_card.next_update_time')"
-          >
+          <n-descriptions-item :label="t('geo.item_card.next_update_time')">
             <n-time
               :time="geo_ip_source.source.next_update_at"
               format="yyyy-MM-dd hh:mm:ss"
@@ -89,13 +87,13 @@ const onGeoUpload = async (formData: FormData) => {
           </n-descriptions-item>
           <n-descriptions-item
             v-if="(geo_ip_source.source.format || 'dat') === 'txt'"
-            :label="t('geo_editor.item_card.txt_key')"
+            :label="t('geo.item_card.txt_key')"
           >
             {{ (geo_ip_source.source.txt_key || "DEFAULT").toUpperCase() }}
           </n-descriptions-item>
         </template>
         <template v-if="geo_ip_source.source.t === 'direct'">
-          <n-descriptions-item :label="t('geo_editor.item_card.key_count')">
+          <n-descriptions-item :label="t('geo.item_card.key_count')">
             {{ geo_ip_source.source.data.length }}
           </n-descriptions-item>
         </template>
@@ -109,7 +107,7 @@ const onGeoUpload = async (formData: FormData) => {
             secondary
             @click="show_upload = true"
           >
-            {{ t("geo_editor.item_card.update_with_file") }}
+            {{ t("geo.item_card.update_with_file") }}
           </n-button>
 
           <n-button

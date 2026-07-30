@@ -209,41 +209,39 @@ function quickBind(ip: string, mac?: string, hostname?: string | null) {
       <thead>
         <tr>
           <th class="assign-head" style="width: 20%">
-            {{ t("dhcp_editor.assigned.hostname") }}
+            {{ t("dhcp_v4.assigned.hostname") }}
           </th>
           <th class="assign-head">
             <Notice>
-              {{ t("dhcp_editor.assigned.mac_addr") }}
+              {{ t("dhcp_v4.assigned.mac_addr") }}
               <template #msg>
-                {{ t("dhcp_editor.assigned.mac_tip_1") }}
+                {{ t("dhcp_v4.assigned.mac_tip_1") }}
               </template>
             </Notice>
           </th>
           <th class="assign-head">
-            {{ t("dhcp_editor.assigned.assigned_ip") }}
+            {{ t("dhcp_v4.assigned.assigned_ip") }}
           </th>
           <th class="assign-head">
-            {{ t("dhcp_editor.assigned.latest_request") }}
+            {{ t("dhcp_v4.assigned.latest_request") }}
           </th>
           <th class="assign-head">
             <Notice>
-              {{ t("dhcp_editor.assigned.lease_left") }}
-              <template #msg>{{
-                t("dhcp_editor.assigned.expire_time")
-              }}</template>
+              {{ t("dhcp_v4.assigned.lease_left") }}
+              <template #msg>{{ t("dhcp_v4.assigned.expire_time") }}</template>
             </Notice>
           </th>
           <th class="assign-head" style="width: 168px">
             <Notice>
-              {{ t("dhcp_editor.assigned.online_24h") }}
+              {{ t("dhcp_v4.assigned.online_24h") }}
               <template #msg>
-                {{ t("dhcp_editor.assigned.online_24h_tip_1") }} <br />
-                {{ t("dhcp_editor.assigned.online_24h_tip_2") }}
+                {{ t("dhcp_v4.assigned.online_24h_tip_1") }} <br />
+                {{ t("dhcp_v4.assigned.online_24h_tip_2") }}
               </template>
             </Notice>
           </th>
           <th class="assign-head" style="width: 80px">
-            {{ t("dhcp_editor.assigned.actions") }}
+            {{ t("dhcp_v4.assigned.actions") }}
           </th>
         </tr>
       </thead>
@@ -276,13 +274,13 @@ function quickBind(ip: string, mac?: string, hostname?: string | null) {
                     IP
                   </n-tag>
                 </template>
-                <div>{{ t("enrolled_device.lease_ip_mismatch") }}</div>
+                <div>{{ t("device.lease_ip_mismatch") }}</div>
                 <div>
-                  {{ t("enrolled_device.observed_ip") }}:
+                  {{ t("device.observed_ip") }}:
                   {{ frontEndStore.MASK_INFO(item.ip) }}
                 </div>
                 <div>
-                  {{ t("enrolled_device.configured_ip") }}:
+                  {{ t("device.configured_ip") }}:
                   {{
                     frontEndStore.MASK_INFO(getConfiguredIpv4(item.mac) || "")
                   }}
@@ -300,7 +298,7 @@ function quickBind(ip: string, mac?: string, hostname?: string | null) {
           <td class="assign-item">
             <!-- {{ item.real_expire_time }} -->
             <n-flex justify="center" v-if="item.is_static">
-              {{ t("dhcp_editor.assigned.static_assigned") }}
+              {{ t("dhcp_v4.assigned.static_assigned") }}
             </n-flex>
             <n-countdown
               v-else
@@ -338,7 +336,7 @@ function quickBind(ip: string, mac?: string, hostname?: string | null) {
             {{
               enrolledDeviceStore.GET_NAME_WITH_FALLBACK(
                 Array.from(arp_ip_map.get(item.ip)?.macs || [])[0],
-                t("dhcp_editor.assigned.unknown"),
+                t("dhcp_v4.assigned.unknown"),
               )
             }}
           </td>
@@ -363,13 +361,13 @@ function quickBind(ip: string, mac?: string, hostname?: string | null) {
                     IP
                   </n-tag>
                 </template>
-                <div>{{ t("enrolled_device.lease_ip_mismatch") }}</div>
+                <div>{{ t("device.lease_ip_mismatch") }}</div>
                 <div>
-                  {{ t("enrolled_device.observed_ip") }}:
+                  {{ t("device.observed_ip") }}:
                   {{ frontEndStore.MASK_INFO(item.ip) }}
                 </div>
                 <div>
-                  {{ t("enrolled_device.configured_ip") }}:
+                  {{ t("device.configured_ip") }}:
                   {{
                     frontEndStore.MASK_INFO(
                       getConfiguredIpv4(
@@ -382,10 +380,10 @@ function quickBind(ip: string, mac?: string, hostname?: string | null) {
             </n-flex>
           </td>
           <td class="not-assign-item">
-            {{ t("dhcp_editor.assigned.unknown") }}
+            {{ t("dhcp_v4.assigned.unknown") }}
           </td>
           <td class="not-assign-item">
-            {{ t("dhcp_editor.assigned.unknown") }}
+            {{ t("dhcp_v4.assigned.unknown") }}
           </td>
           <td class="not-assign-item">
             <OnlineStatus

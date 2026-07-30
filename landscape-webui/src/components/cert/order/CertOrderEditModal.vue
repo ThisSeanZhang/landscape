@@ -269,7 +269,7 @@ const rules = {
     validator() {
       if (!is_acme.value || !is_dns.value) return true;
       if (!dnsProviderProfileId.value) {
-        return new Error(t("cert.provider_profile_required"));
+        return new Error(t("dns_provider.provider_profile_required"));
       }
       return true;
     },
@@ -397,13 +397,13 @@ async function save() {
 
         <template v-if="is_dns">
           <n-form-item
-            :label="t('cert.provider_profile')"
+            :label="t('dns_provider.provider_profile')"
             path="cert_type.challenge_type"
           >
             <n-select
               :value="dnsProviderProfileId"
               :options="provider_profile_options"
-              :placeholder="t('cert.provider_profile_required')"
+              :placeholder="t('dns_provider.provider_profile_required')"
               @update:value="setDnsProviderProfileId"
             />
           </n-form-item>

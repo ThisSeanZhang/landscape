@@ -6,11 +6,9 @@ import { computed, ref } from "vue";
 const { t } = useI18n();
 const show = ref(false);
 
-const sup = (k: string) => t("geo_editor.geo_site.adguard_rule_info." + k);
+const sup = (k: string) => t("geo.geo_site.adguard_rule_info." + k);
 const desc = (k: string) => sup(k + "_desc");
-const noticeText = computed(() =>
-  t("geo_editor.geo_site.adguard_limit_notice"),
-);
+const noticeText = computed(() => t("geo.geo_site.adguard_limit_notice"));
 
 interface RuleRow {
   rule: string;

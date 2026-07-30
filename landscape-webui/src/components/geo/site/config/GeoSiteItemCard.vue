@@ -59,7 +59,7 @@ async function force_refresh() {
         <StatusTitle :enable="geo_site.enable" :remark="title"></StatusTitle>
       </template>
       <n-descriptions bordered label-placement="top" :column="2">
-        <n-descriptions-item :label="t('geo_editor.item_card.source_type')">
+        <n-descriptions-item :label="t('geo.item_card.source_type')">
           <n-tag
             :bordered="false"
             :type="
@@ -94,9 +94,7 @@ async function force_refresh() {
               }}
             </n-ellipsis>
           </n-descriptions-item>
-          <n-descriptions-item
-            :label="t('geo_editor.item_card.next_update_time')"
-          >
+          <n-descriptions-item :label="t('geo.item_card.next_update_time')">
             <n-time
               :time="geo_site.source.next_update_at"
               format="yyyy-MM-dd hh:mm:ss"
@@ -105,7 +103,7 @@ async function force_refresh() {
           </n-descriptions-item>
         </template>
         <template v-if="geo_site.source.t === 'direct'">
-          <n-descriptions-item :label="t('geo_editor.item_card.key_count')">
+          <n-descriptions-item :label="t('geo.item_card.key_count')">
             {{ geo_site.source.data.length }}
           </n-descriptions-item>
         </template>
@@ -119,7 +117,7 @@ async function force_refresh() {
             secondary
             @click="show_upload = true"
           >
-            {{ t("geo_editor.item_card.update_with_file") }}
+            {{ t("geo.item_card.update_with_file") }}
           </n-button>
           <n-popconfirm
             v-if="
@@ -131,10 +129,10 @@ async function force_refresh() {
           >
             <template #trigger>
               <n-button size="small" type="primary" secondary>
-                {{ t("geo_editor.item_card.force_refresh") }}
+                {{ t("geo.item_card.force_refresh") }}
               </n-button>
             </template>
-            {{ t("geo_editor.item_card.force_refresh_confirm") }}
+            {{ t("geo.item_card.force_refresh_confirm") }}
           </n-popconfirm>
           <n-button
             size="small"

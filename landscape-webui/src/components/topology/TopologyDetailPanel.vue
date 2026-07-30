@@ -81,7 +81,7 @@ const can_attach_bridge = computed(
 const can_manage_device_state = computed(() => props.node.dev_type !== "ppp");
 const controller_hint = computed(() => {
   if (!can_attach_bridge.value) {
-    return t("misc.topology_panel.connect_unavailable");
+    return t("topology.panel.connect_unavailable");
   }
   if (has_controller.value) {
     return "";
@@ -90,12 +90,12 @@ const controller_hint = computed(() => {
     props.node.wifi_info &&
     props.node.wifi_info.wifi_type.t !== WLANTypeTag.Ap
   ) {
-    return t("misc.topology_panel.wifi_client_hint");
+    return t("topology.panel.wifi_client_hint");
   }
   if (available_bridge_options.value.length === 0) {
-    return t("misc.topology_panel.no_bridges");
+    return t("topology.panel.no_bridges");
   }
-  return t("misc.topology_panel.connect_hint");
+  return t("topology.panel.connect_hint");
 });
 const action_sections = computed(() => {
   const sections: Array<{
@@ -110,16 +110,16 @@ const action_sections = computed(() => {
       short_label: props.node.dev_status.t === DevStateType.Up ? "OFF" : "ON",
       label:
         props.node.dev_status.t === DevStateType.Up
-          ? t("misc.topology_node.action_disable")
-          : t("misc.topology_node.action_enable"),
+          ? t("topology.node.action_disable")
+          : t("topology.node.action_enable"),
     });
 
     sections.push({
       key: "boot",
       short_label: "BOOT",
       label: props.node.enable_in_boot
-        ? t("misc.topology_panel.disable_boot")
-        : t("misc.topology_panel.enable_boot"),
+        ? t("topology.panel.disable_boot")
+        : t("topology.panel.enable_boot"),
     });
   }
 
@@ -127,20 +127,20 @@ const action_sections = computed(() => {
     sections.push({
       key: "change_zone",
       short_label: "ZONE",
-      label: t("misc.topology_panel.change_zone"),
+      label: t("topology.panel.change_zone"),
     });
   }
   sections.push({
     key: "cpu_balance",
     short_label: "CPU",
-    label: t("misc.topology_panel.edit_cpu_balance"),
+    label: t("topology.panel.edit_cpu_balance"),
   });
 
   if (props.node.dev_kind === "bridge" && props.node.name !== "docker0") {
     sections.push({
       key: "delete_bridge",
       short_label: "DEL",
-      label: t("misc.topology_panel.delete_bridge"),
+      label: t("topology.panel.delete_bridge"),
     });
   }
 
@@ -246,7 +246,7 @@ function displayValue(value?: string | number | null) {
 }
 
 function boolLabel(value: boolean) {
-  return value ? t("misc.topology_panel.yes") : t("misc.topology_panel.no");
+  return value ? t("topology.panel.yes") : t("topology.panel.no");
 }
 
 function statusTagType(state: string) {
@@ -277,15 +277,15 @@ function bridgeAttachWarning(
 
   switch (issue) {
     case "device_not_found":
-      return t("misc.topology.device_not_found");
+      return t("topology.device_not_found");
     case "bridge_connection_rule":
-      return t("misc.topology.bridge_connection_rule");
+      return t("topology.bridge_connection_rule");
     case "device_has_parent":
-      return t("misc.topology.device_has_parent");
+      return t("topology.device_has_parent");
     case "connect_unavailable":
-      return t("misc.topology_panel.connect_unavailable");
+      return t("topology.panel.connect_unavailable");
     case "wifi_client_mode_warning":
-      return t("misc.topology.wifi_client_mode_warning");
+      return t("topology.wifi_client_mode_warning");
   }
 }
 
@@ -297,15 +297,15 @@ function openQuickAction(action_key: string) {
   switch (action_key) {
     case "toggle_device":
       dialog.warning({
-        title: t("misc.topology_panel.actions"),
-        content: t("misc.topology_node.confirm_toggle_iface", {
+        title: t("topology.panel.actions"),
+        content: t("topology.node.confirm_toggle_iface", {
           action:
             props.node.dev_status.t === DevStateType.Up
-              ? t("misc.topology_node.action_disable")
-              : t("misc.topology_node.action_enable"),
+              ? t("topology.node.action_disable")
+              : t("topology.node.action_enable"),
         }),
-        positiveText: t("misc.topology_panel.yes"),
-        negativeText: t("misc.topology_panel.close"),
+        positiveText: t("topology.panel.yes"),
+        negativeText: t("topology.panel.close"),
         onPositiveClick: () => changeDeviceStatus(),
       });
       break;
@@ -314,12 +314,12 @@ function openQuickAction(action_key: string) {
       break;
     case "boot":
       dialog.warning({
-        title: t("misc.topology_panel.actions"),
+        title: t("topology.panel.actions"),
         content: props.node.enable_in_boot
-          ? t("misc.topology_panel.confirm_disable_boot")
-          : t("misc.topology_panel.confirm_enable_boot"),
-        positiveText: t("misc.topology_panel.yes"),
-        negativeText: t("misc.topology_panel.close"),
+          ? t("topology.panel.confirm_disable_boot")
+          : t("topology.panel.confirm_enable_boot"),
+        positiveText: t("topology.panel.yes"),
+        negativeText: t("topology.panel.close"),
         onPositiveClick: async () => {
           await change_iface_boot_status(
             props.node.name,
@@ -334,10 +334,10 @@ function openQuickAction(action_key: string) {
       break;
     case "delete_bridge":
       dialog.error({
-        title: t("misc.topology_panel.delete_bridge"),
-        content: t("misc.topology_node.delete_bridge"),
-        positiveText: t("misc.topology_node.delete_btn"),
-        negativeText: t("misc.topology_panel.close"),
+        title: t("topology.panel.delete_bridge"),
+        content: t("topology.node.delete_bridge"),
+        positiveText: t("topology.node.delete_btn"),
+        negativeText: t("topology.panel.close"),
         onPositiveClick: () => handleDeleteBridge(),
       });
       break;
@@ -408,10 +408,10 @@ async function handleDeleteBridge() {
     delete_loading.value = true;
     await delete_bridge(props.node.name);
     await refreshGraph();
-    message.info(t("misc.topology_node.delete_success"));
+    message.info(t("topology.node.delete_success"));
     closePanel();
   } catch (_error) {
-    message.error(t("misc.topology_node.delete_failed"));
+    message.error(t("topology.node.delete_failed"));
   } finally {
     delete_loading.value = false;
   }
@@ -483,54 +483,46 @@ async function handleDeleteBridge() {
           <n-flex vertical size="large">
             <n-card size="small" embedded class="topology-detail__card--plain">
               <template #header>
-                {{ t("misc.topology_panel.basic_info") }}
+                {{ t("topology.panel.basic_info") }}
               </template>
               <n-descriptions label-placement="left" :column="1" size="small">
-                <n-descriptions-item
-                  :label="t('misc.topology_node.iface_name')"
-                >
+                <n-descriptions-item :label="t('topology.node.iface_name')">
                   {{ node.name }}
                 </n-descriptions-item>
-                <n-descriptions-item :label="t('misc.topology_panel.ifindex')">
+                <n-descriptions-item :label="t('topology.panel.ifindex')">
                   {{ node.index }}
                 </n-descriptions-item>
-                <n-descriptions-item
-                  :label="t('misc.topology_node.device_type')"
-                >
+                <n-descriptions-item :label="t('topology.node.device_type')">
                   {{ displayValue(node.dev_type) }}/{{
                     displayValue(node.dev_kind)
                   }}
                 </n-descriptions-item>
-                <n-descriptions-item :label="t('misc.topology_node.status')">
+                <n-descriptions-item :label="t('topology.node.status')">
                   {{ node.dev_status.t }}
                 </n-descriptions-item>
-                <n-descriptions-item :label="t('misc.topology_panel.carrier')">
+                <n-descriptions-item :label="t('topology.panel.carrier')">
                   {{ boolLabel(node.carrier) }}
                 </n-descriptions-item>
-                <n-descriptions-item :label="t('misc.topology_panel.boot')">
+                <n-descriptions-item :label="t('topology.panel.boot')">
                   {{ boolLabel(node.enable_in_boot) }}
                 </n-descriptions-item>
-                <n-descriptions-item :label="t('misc.topology_panel.zone')">
+                <n-descriptions-item :label="t('topology.panel.zone')">
                   {{ node.zone_type }}
                 </n-descriptions-item>
-                <n-descriptions-item :label="t('misc.topology_node.mac_addr')">
+                <n-descriptions-item :label="t('topology.node.mac_addr')">
                   {{ maskValue(node.mac) }}
                 </n-descriptions-item>
-                <n-descriptions-item :label="t('misc.topology_node.perm_mac')">
+                <n-descriptions-item :label="t('topology.node.perm_mac')">
                   {{ maskValue(node.perm_mac) }}
                 </n-descriptions-item>
-                <n-descriptions-item
-                  :label="t('misc.topology_panel.wifi_type')"
-                >
+                <n-descriptions-item :label="t('topology.panel.wifi_type')">
                   {{
                     node.wifi_info
                       ? node.wifi_info.wifi_type.t
                       : displayValue(undefined)
                   }}
                 </n-descriptions-item>
-                <n-descriptions-item
-                  :label="t('misc.topology_panel.peer_link')"
-                >
+                <n-descriptions-item :label="t('topology.panel.peer_link')">
                   {{ displayValue(node.peer_link_id) }}
                 </n-descriptions-item>
               </n-descriptions>
@@ -538,17 +530,17 @@ async function handleDeleteBridge() {
 
             <n-card size="small" embedded class="topology-detail__card--plain">
               <template #header>
-                {{ t("misc.topology_panel.relationship") }}
+                {{ t("topology.panel.relationship") }}
               </template>
               <n-flex vertical size="small">
                 <n-descriptions label-placement="left" :column="1" size="small">
-                  <n-descriptions-item :label="t('misc.topology_panel.parent')">
+                  <n-descriptions-item :label="t('topology.panel.parent')">
                     <n-flex align="center" justify="space-between" wrap>
                       <span>
                         {{
                           controller_dev?.name ??
                           (has_controller ? node.controller_name : undefined) ??
-                          t("misc.topology_panel.no_parent")
+                          t("topology.panel.no_parent")
                         }}
                       </span>
                       <n-button
@@ -558,13 +550,11 @@ async function handleDeleteBridge() {
                         size="tiny"
                         @click="removeController"
                       >
-                        {{ t("misc.topology_node.disconnect") }}
+                        {{ t("topology.node.disconnect") }}
                       </n-button>
                     </n-flex>
                   </n-descriptions-item>
-                  <n-descriptions-item
-                    :label="t('misc.topology_panel.children')"
-                  >
+                  <n-descriptions-item :label="t('topology.panel.children')">
                     <n-flex v-if="child_devices.length" wrap size="small">
                       <n-tag
                         v-for="child in child_devices"
@@ -575,9 +565,7 @@ async function handleDeleteBridge() {
                         {{ child.name }}
                       </n-tag>
                     </n-flex>
-                    <span v-else>{{
-                      t("misc.topology_panel.no_children")
-                    }}</span>
+                    <span v-else>{{ t("topology.panel.no_children") }}</span>
                   </n-descriptions-item>
                 </n-descriptions>
 
@@ -600,7 +588,7 @@ async function handleDeleteBridge() {
                     <n-select
                       v-model:value="selected_bridge_ifindex"
                       :options="available_bridge_options"
-                      :placeholder="t('misc.topology_panel.select_bridge')"
+                      :placeholder="t('topology.panel.select_bridge')"
                       clearable
                     />
                     <n-button
@@ -610,7 +598,7 @@ async function handleDeleteBridge() {
                       :disabled="selected_bridge_ifindex === null"
                       @click="attachController"
                     >
-                      {{ t("misc.topology_panel.attach_bridge") }}
+                      {{ t("topology.panel.attach_bridge") }}
                     </n-button>
                   </n-input-group>
                 </div>

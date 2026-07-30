@@ -26,10 +26,7 @@ async function refresh() {
     width="500px"
     placement="right"
   >
-    <n-drawer-content
-      :title="t('geo_editor.detail_drawer.rule_details')"
-      closable
-    >
+    <n-drawer-content :title="t('geo.detail_drawer.rule_details')" closable>
       <n-virtual-list v-if="config" :item-size="110" :items="config.values">
         <template #default="{ item }">
           <n-card style="margin: 5px 0px" :title="item.value" size="small">

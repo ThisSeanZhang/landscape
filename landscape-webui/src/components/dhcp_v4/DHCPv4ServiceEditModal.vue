@@ -61,16 +61,16 @@ async function on_modal_enter() {
 
 async function save_config() {
   if (!is_valid_dhcp_ipv4_config()) {
-    message.error(t("dhcp_editor.invalid_ipv4_check"));
+    message.error(t("dhcp_v4.invalid_ipv4_check"));
     return;
   }
 
   if (optionEditorRef.value?.hasDuplicate) {
-    message.error(t("dhcp_editor.duplicate_option_check"));
+    message.error(t("dhcp_v4.duplicate_option_check"));
     return;
   }
   if (optionEditorRef.value?.hasInvalid) {
-    message.error(t("dhcp_editor.invalid_option_check"));
+    message.error(t("dhcp_v4.invalid_option_check"));
     return;
   }
 
@@ -97,8 +97,8 @@ async function persist_config() {
     );
     if (invalidBindings.length > 0) {
       notification.warning({
-        title: t("enrolled_device.invalid_bindings_title"),
-        content: t("enrolled_device.invalid_bindings_warning", {
+        title: t("device.invalid_bindings_title"),
+        content: t("device.invalid_bindings_warning", {
           iface: iface_info.iface_name,
           count: invalidBindings.length,
         }),
@@ -114,18 +114,16 @@ async function persist_config() {
               },
             },
             {
-              default: () => t("enrolled_device.go_to_manage"),
+              default: () => t("device.go_to_manage"),
             },
           ),
       });
     } else {
-      message.success(t("dhcp_editor.service.save_success"));
+      message.success(t("dhcp_v4.service.save_success"));
     }
   } catch (e: any) {
     console.log(e);
-    message.error(
-      e.response?.data?.msg || t("dhcp_editor.service.save_failed"),
-    );
+    message.error(e.response?.data?.msg || t("dhcp_v4.service.save_failed"));
   } finally {
     commit_loading.value = false;
   }
@@ -190,7 +188,7 @@ const network_mask = computed({
   <ConfigModal
     v-model:show="show_model"
     v-model:enabled="service_config.enable"
-    :title="t('dhcp_editor.service.title')"
+    :title="t('dhcp_v4.service.title')"
     width="800px"
     max-height="80vh"
     @after-enter="on_modal_enter"
@@ -199,12 +197,12 @@ const network_mask = computed({
       <n-flex class="dhcp-service-form-wrap">
         <n-form class="dhcp-service-form" :model="service_config">
           <n-alert style="flex: 1" type="warning">
-            {{ t("dhcp_editor.service.warning") }}
+            {{ t("dhcp_v4.service.warning") }}
           </n-alert>
 
           <n-flex :size="16" align="flex-start" class="dhcp-service-columns">
             <div style="flex: 1; min-width: 0">
-              <n-form-item :label="t('dhcp_editor.service.server_ip')">
+              <n-form-item :label="t('dhcp_v4.service.server_ip')">
                 <IpEdit
                   v-model:ip="server_ip_addr"
                   v-model:mask="network_mask"
@@ -212,19 +210,19 @@ const network_mask = computed({
                   :ip_version="4"
                 ></IpEdit>
               </n-form-item>
-              <n-form-item :label="t('dhcp_editor.service.range_start')">
+              <n-form-item :label="t('dhcp_v4.service.range_start')">
                 <IpEdit
                   v-model:ip="service_config.config.ip_range_start"
                   :ip_version="4"
                 ></IpEdit>
               </n-form-item>
-              <n-form-item :label="t('dhcp_editor.service.range_end')">
+              <n-form-item :label="t('dhcp_v4.service.range_end')">
                 <IpEdit
                   v-model:ip="service_config.config.ip_range_end"
                   :ip_version="4"
                 ></IpEdit>
               </n-form-item>
-              <n-form-item :label="t('dhcp_editor.lease_time')">
+              <n-form-item :label="t('dhcp_v4.lease_time')">
                 <n-input-number
                   v-model:value="service_config.config.address_lease_time"
                   :min="60"
@@ -232,13 +230,13 @@ const network_mask = computed({
                   style="width: 100%"
                 />
                 <template #feedback>
-                  {{ t("dhcp_editor.lease_time_tip") }}
+                  {{ t("dhcp_v4.lease_time_tip") }}
                 </template>
               </n-form-item>
             </div>
 
             <div style="flex: 1; min-width: 0">
-              <n-form-item :label="t('dhcp_editor.custom_options')">
+              <n-form-item :label="t('dhcp_v4.custom_options')">
                 <div class="custom-options-scroll">
                   <CustomDhcpOptionEditor
                     ref="optionEditorRef"

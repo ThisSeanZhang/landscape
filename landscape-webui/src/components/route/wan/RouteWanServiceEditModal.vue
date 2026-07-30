@@ -62,7 +62,7 @@ async function save_config() {
   <ConfigModal
     v-model:show="show_model"
     v-model:enabled="service_enabled"
-    :title="t('misc.route_wan.title')"
+    :title="t('network.route_wan.title')"
     :switch-disabled="service_config === null"
     width="600px"
     @after-enter="on_modal_enter"

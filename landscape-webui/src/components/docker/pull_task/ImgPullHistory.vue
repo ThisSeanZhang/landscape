@@ -28,7 +28,10 @@ function leave() {
     placement="right"
     responsive
   >
-    <n-drawer-content :title="t('misc.docker_pull.download_history')" closable>
+    <n-drawer-content
+      :title="t('docker.docker_pull.download_history')"
+      closable
+    >
       <n-flex style="height: 100%" vertical>
         <n-scrollbar>
           <n-flex>
