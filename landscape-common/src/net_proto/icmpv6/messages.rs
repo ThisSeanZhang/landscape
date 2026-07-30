@@ -242,6 +242,38 @@ impl RouterAdvertisement {
 
 #[derive(Debug, Clone, DekuRead, DekuWrite)]
 #[deku(endian = "big")]
+pub struct NeighborSolicitation {
+    pub msg_type: u8,
+    pub msg_code: u8,
+    pub checksum: u16,
+    pub reserved: u32,
+    pub target_address: [u8; 16],
+    #[deku(
+        reader = "read_icmpv6_options(deku::reader)",
+        writer = "write_icmpv6_options(deku::writer, &self.opts)"
+    )]
+    pub opts: IcmpV6Options,
+}
+
+impl NeighborSolicitation {
+    pub fn new(target_address: Ipv6Addr, opts: IcmpV6Options) -> Self {
+        Self {
+            msg_type: 135, // NeighborSolicitation
+            msg_code: 0,
+            checksum: 0,
+            reserved: 0,
+            target_address: target_address.octets(),
+            opts,
+        }
+    }
+
+    pub fn target_addr(&self) -> Ipv6Addr {
+        Ipv6Addr::from(self.target_address)
+    }
+}
+
+#[derive(Debug, Clone, DekuRead, DekuWrite)]
+#[deku(endian = "big")]
 pub struct NeighborAdvertisement {
     pub msg_type: u8,
     pub msg_code: u8,
@@ -287,6 +319,8 @@ impl NeighborAdvertisement {
 pub enum Icmpv6Message {
     RouterSolicitation(RouterSolicitation),
     RouterAdvertisement(RouterAdvertisement),
+    /// 135
+    NeighborSolicitation(NeighborSolicitation),
     /// 136
     NeighborAdvertisement(NeighborAdvertisement),
     Unassigned(u8, Vec<u8>),
@@ -305,6 +339,11 @@ impl NetProtoCodec for Icmpv6Message {
                     .map_err(|e| NetProtoError::Deku(e.to_string()))?;
                 Icmpv6Message::RouterSolicitation(rs)
             }
+            Icmpv6Type::NeighborSolicitation => {
+                let (_, ns) = NeighborSolicitation::from_bytes((data, 0))
+                    .map_err(|e| NetProtoError::Deku(e.to_string()))?;
+                Icmpv6Message::NeighborSolicitation(ns)
+            }
             Icmpv6Type::NeighborAdvertisement => {
                 let (_, na) = NeighborAdvertisement::from_bytes((data, 0))
                     .map_err(|e| NetProtoError::Deku(e.to_string()))?;
@@ -320,6 +359,10 @@ impl NetProtoCodec for Icmpv6Message {
         match self {
             Icmpv6Message::RouterAdvertisement(ra) => {
                 let bytes = ra.to_bytes().map_err(|e| NetProtoError::Deku(e.to_string()))?;
+                dst.extend_from_slice(&bytes);
+            }
+            Icmpv6Message::NeighborSolicitation(ns) => {
+                let bytes = ns.to_bytes().map_err(|e| NetProtoError::Deku(e.to_string()))?;
                 dst.extend_from_slice(&bytes);
             }
             Icmpv6Message::NeighborAdvertisement(na) => {
@@ -384,5 +427,30 @@ mod tests {
         assert!(!dst.is_empty());
         // First byte should be 134 (RouterAdvertisement type)
         assert_eq!(dst[0], 134);
+    }
+
+    #[test]
+    fn test_neighbor_solicitation_roundtrip_with_source_link_layer_address() {
+        let target = "fe80::1".parse().unwrap();
+        let mac = [0x02, 0x00, 0x00, 0x12, 0x34, 0x56];
+        let mut opts = IcmpV6Options::new();
+        opts.insert(IcmpV6Option::source_link_layer_address(&mac));
+
+        let ns = NeighborSolicitation::new(target, opts);
+        let msg = Icmpv6Message::NeighborSolicitation(ns);
+
+        let mut encoded = BytesMut::new();
+        NetProtoCodec::encode(&msg, &mut encoded).unwrap();
+
+        let decoded = NetProtoCodec::decode(&mut encoded).unwrap().unwrap();
+        match decoded {
+            Icmpv6Message::NeighborSolicitation(ns) => {
+                assert_eq!(ns.target_addr(), target);
+                assert!(
+                    matches!(ns.opts.get(1), Some(IcmpV6Option::SourceLinkLayerAddress { addr, .. }) if addr == &mac)
+                );
+            }
+            other => panic!("expected NeighborSolicitation, got {other:?}"),
+        }
     }
 }

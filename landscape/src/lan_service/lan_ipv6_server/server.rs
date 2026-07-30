@@ -75,17 +75,23 @@ async fn handle_icmp_msg(
     match icmpv6::parse(&data) {
         Some(Icmpv6Message::RouterSolicitation(_)) => {
             if let Some(mac) = icmpv6::extract_mac_from_rs(&data) {
-                if let SocketAddr::V6(ref v6) = src_addr {
-                    let ll = *v6.ip();
-                    if ll.is_unicast_link_local() {
-                        mac_link_cache.record(link_ifindex, mac, ll);
-                    }
-                }
+                record_link_local_mac(&src_addr, mac, mac_link_cache, link_ifindex);
             }
             let status = share_status.lock().await;
             let ra = icmpv6::build_ra(&status, params, mac_addr, icmp_ad_interval * 1000);
             drop(status);
             let _ = icmpv6::send_msg(icmp_sender, &ra, src_addr).await;
+        }
+        Some(Icmpv6Message::NeighborSolicitation(_)) => {
+            if let Some(mac) = icmpv6::extract_mac_from_ns(&data) {
+                if let Some(ll) =
+                    record_link_local_mac(&src_addr, mac, mac_link_cache, link_ifindex)
+                {
+                    tracing::debug!(
+                        "recorded IPv6 client link-local mapping from NS: {ll} -> {mac}"
+                    );
+                }
+            }
         }
         Some(Icmpv6Message::NeighborAdvertisement(_)) => {
             let mut status = share_status.lock().await;
@@ -93,12 +99,7 @@ async fn handle_icmp_msg(
             match &action {
                 icmpv6::SlaacActionResult::Allocated { mac, .. }
                 | icmpv6::SlaacActionResult::Conflict { mac, .. } => {
-                    if let SocketAddr::V6(ref v6) = src_addr {
-                        let ll = *v6.ip();
-                        if ll.is_unicast_link_local() {
-                            mac_link_cache.record(link_ifindex, *mac, ll);
-                        }
-                    }
+                    record_link_local_mac(&src_addr, *mac, mac_link_cache, link_ifindex);
                 }
                 _ => {}
             }
@@ -137,6 +138,54 @@ async fn handle_icmp_msg(
     }
 
     true
+}
+
+fn record_link_local_mac(
+    src_addr: &SocketAddr,
+    mac: MacAddr,
+    mac_link_cache: &Arc<MacLinkMapCache>,
+    link_ifindex: u32,
+) -> Option<Ipv6Addr> {
+    let SocketAddr::V6(v6) = src_addr else {
+        return None;
+    };
+
+    let ll = *v6.ip();
+    if !ll.is_unicast_link_local() {
+        return None;
+    }
+
+    mac_link_cache.record(link_ifindex, mac, ll);
+    Some(ll)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn record_link_local_mac_updates_cache_for_link_local_source() {
+        let cache = Arc::new(MacLinkMapCache::new());
+        let ifindex = 7;
+        let ll = "fe80::1234:5678:9abc:def0".parse().unwrap();
+        let mac = MacAddr::from([0x02, 0x00, 0x00, 0x12, 0x34, 0x56]);
+        let src = SocketAddr::new(IpAddr::V6(ll), 0);
+
+        assert_eq!(record_link_local_mac(&src, mac, &cache, ifindex), Some(ll));
+        assert_eq!(cache.lookup_mac_by_ll(ifindex, &ll), Some(mac));
+    }
+
+    #[test]
+    fn record_link_local_mac_ignores_non_link_local_source() {
+        let cache = Arc::new(MacLinkMapCache::new());
+        let ifindex = 7;
+        let global = "2001:db8::1".parse().unwrap();
+        let mac = MacAddr::from([0x02, 0x00, 0x00, 0x12, 0x34, 0x56]);
+        let src = SocketAddr::new(IpAddr::V6(global), 0);
+
+        assert_eq!(record_link_local_mac(&src, mac, &cache, ifindex), None);
+        assert_eq!(cache.lookup_mac_by_ll(ifindex, &global), None);
+    }
 }
 
 /// Returns `false` when the DHCP recv channel is closed and the loop should break.

@@ -11,14 +11,24 @@ use super::{Ipv6LanReplyParams, Ipv6ServerStatus, SlaacResult};
 
 pub static ICMPV6_MULTICAST: Ipv6Addr = Ipv6Addr::new(0xff02, 0, 0, 0, 0, 0, 0, 0x1);
 
-// TODO(Plan B): handle_ns_msg() — parse NeighborSolicitation, check na_owners_by_suffix,
-// reply with solicited NA for DAD defense. NeighborSolicitation is currently
-// Unassigned in Icmpv6Message; needs a variant in landscape-common.
-
 pub fn extract_mac_from_rs(data: &[u8]) -> Option<MacAddr> {
     let msg = parse(data)?;
     match msg {
         Icmpv6Message::RouterSolicitation(rs) => match rs.opts.get(1)? {
+            IcmpV6Option::SourceLinkLayerAddress { addr, .. } => Some(MacAddr::from(*addr)),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+// TODO(Plan B): handle_ns_msg() — check na_owners_by_suffix and reply with
+// solicited NA for DAD defense.
+
+pub fn extract_mac_from_ns(data: &[u8]) -> Option<MacAddr> {
+    let msg = parse(data)?;
+    match msg {
+        Icmpv6Message::NeighborSolicitation(ns) => match ns.opts.get(1)? {
             IcmpV6Option::SourceLinkLayerAddress { addr, .. } => Some(MacAddr::from(*addr)),
             _ => None,
         },
@@ -177,5 +187,41 @@ pub async fn send_msg(sender: &Arc<UdpSocket>, msg: &Icmpv6Message, dst: SocketA
             tracing::error!("ICMPv6 send error: {e:?}");
             false
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use landscape_common::net_proto::icmpv6::messages::NeighborSolicitation;
+    use landscape_common::net_proto::NetProtoCodec;
+
+    #[test]
+    fn extract_mac_from_neighbor_solicitation() {
+        let mut opts = IcmpV6Options::new();
+        let mac = [0x02, 0x00, 0x00, 0x12, 0x34, 0x56];
+        opts.insert(IcmpV6Option::source_link_layer_address(&mac));
+        let msg = Icmpv6Message::NeighborSolicitation(NeighborSolicitation::new(
+            "fe80::1".parse().unwrap(),
+            opts,
+        ));
+
+        let mut bytes = BytesMut::new();
+        NetProtoCodec::encode(&msg, &mut bytes).unwrap();
+
+        assert_eq!(extract_mac_from_ns(&bytes), Some(MacAddr::from(mac)));
+    }
+
+    #[test]
+    fn extract_mac_from_neighbor_solicitation_requires_source_link_layer_address() {
+        let msg = Icmpv6Message::NeighborSolicitation(NeighborSolicitation::new(
+            "fe80::1".parse().unwrap(),
+            IcmpV6Options::new(),
+        ));
+
+        let mut bytes = BytesMut::new();
+        NetProtoCodec::encode(&msg, &mut bytes).unwrap();
+
+        assert_eq!(extract_mac_from_ns(&bytes), None);
     }
 }
