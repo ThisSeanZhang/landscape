@@ -156,6 +156,12 @@ fn resolve_mac(
     None
 }
 
+// ── Helpers ─────────────────────────────────────────────────────────────
+
+fn client_supports_reconfigure(msg: &v6::Message) -> bool {
+    msg.opts().get(v6::OptionCode::ReconfAccept).is_some()
+}
+
 // ── Solicit → Advertise ─────────────────────────────────────────────────────
 
 fn handle_solicit(
@@ -208,16 +214,18 @@ fn handle_solicit(
     }
 
     // RFC 8415 §20.4.2: include reconfigure key in Reply/Advertise
-    if let Some(key) = status.get_reconfigure_key(client_duid) {
-        let mut info = vec![1u8];
-        info.extend_from_slice(&key);
-        reply.opts_mut().insert(v6::DhcpOption::Authentication(Authentication {
-            proto: 3,
-            algo: 0,
-            rdm: 0,
-            replay_detection: 0,
-            info,
-        }));
+    if client_supports_reconfigure(&msg) {
+        if let Some(key) = status.get_reconfigure_key(client_duid) {
+            let mut info = vec![1u8];
+            info.extend_from_slice(&key);
+            reply.opts_mut().insert(v6::DhcpOption::Authentication(Authentication {
+                proto: 3,
+                algo: 0,
+                rdm: 0,
+                replay_detection: 0,
+                info,
+            }));
+        }
     }
 
     let reply_bytes = encode_reply(&reply);
@@ -399,16 +407,18 @@ fn handle_request_or_renew(
     status.consume_prev_suffix(client_duid);
 
     // RFC 8415 §20.4.2: include reconfigure key in Reply
-    if let Some(key) = status.get_reconfigure_key(client_duid) {
-        let mut info = vec![1u8];
-        info.extend_from_slice(&key);
-        reply.opts_mut().insert(v6::DhcpOption::Authentication(Authentication {
-            proto: 3,
-            algo: 0,
-            rdm: 0,
-            replay_detection: 0,
-            info,
-        }));
+    if client_supports_reconfigure(&msg) {
+        if let Some(key) = status.get_reconfigure_key(client_duid) {
+            let mut info = vec![1u8];
+            info.extend_from_slice(&key);
+            reply.opts_mut().insert(v6::DhcpOption::Authentication(Authentication {
+                proto: 3,
+                algo: 0,
+                rdm: 0,
+                replay_detection: 0,
+                info,
+            }));
+        }
     }
 
     let reply_bytes = encode_reply(&reply);
@@ -465,16 +475,18 @@ fn handle_release(
     }));
 
     // RFC 8415 §20.4.2: include reconfigure key in Reply
-    if let Some(key) = status.get_reconfigure_key(client_duid) {
-        let mut info = vec![1u8];
-        info.extend_from_slice(&key);
-        reply.opts_mut().insert(v6::DhcpOption::Authentication(Authentication {
-            proto: 3,
-            algo: 0,
-            rdm: 0,
-            replay_detection: 0,
-            info,
-        }));
+    if client_supports_reconfigure(&msg) {
+        if let Some(key) = status.get_reconfigure_key(client_duid) {
+            let mut info = vec![1u8];
+            info.extend_from_slice(&key);
+            reply.opts_mut().insert(v6::DhcpOption::Authentication(Authentication {
+                proto: 3,
+                algo: 0,
+                rdm: 0,
+                replay_detection: 0,
+                info,
+            }));
+        }
     }
 
     Dhcpv6Result {
@@ -555,16 +567,18 @@ fn handle_confirm(
     reply.opts_mut().insert(v6::DhcpOption::StatusCode(status_code));
 
     // RFC 8415 §20.4.2: include reconfigure key in Reply
-    if let Some(key) = status.get_reconfigure_key(client_duid) {
-        let mut info = vec![1u8];
-        info.extend_from_slice(&key);
-        reply.opts_mut().insert(v6::DhcpOption::Authentication(Authentication {
-            proto: 3,
-            algo: 0,
-            rdm: 0,
-            replay_detection: 0,
-            info,
-        }));
+    if client_supports_reconfigure(&msg) {
+        if let Some(key) = status.get_reconfigure_key(client_duid) {
+            let mut info = vec![1u8];
+            info.extend_from_slice(&key);
+            reply.opts_mut().insert(v6::DhcpOption::Authentication(Authentication {
+                proto: 3,
+                algo: 0,
+                rdm: 0,
+                replay_detection: 0,
+                info,
+            }));
+        }
     }
 
     Dhcpv6Result {
@@ -596,16 +610,18 @@ fn handle_info_request(
     }
 
     // RFC 8415 §20.4.2: include reconfigure key in Reply
-    if let Some(key) = status.get_reconfigure_key(client_duid) {
-        let mut info = vec![1u8];
-        info.extend_from_slice(&key);
-        reply.opts_mut().insert(v6::DhcpOption::Authentication(Authentication {
-            proto: 3,
-            algo: 0,
-            rdm: 0,
-            replay_detection: 0,
-            info,
-        }));
+    if client_supports_reconfigure(&msg) {
+        if let Some(key) = status.get_reconfigure_key(client_duid) {
+            let mut info = vec![1u8];
+            info.extend_from_slice(&key);
+            reply.opts_mut().insert(v6::DhcpOption::Authentication(Authentication {
+                proto: 3,
+                algo: 0,
+                rdm: 0,
+                replay_detection: 0,
+                info,
+            }));
+        }
     }
 
     Dhcpv6Result {
