@@ -6,6 +6,7 @@ use std::{
 };
 
 use landscape_common::net_proto::udp::dhcp::{
+    get_solicit_options,
     v6::{self, DhcpOption, DhcpOptions, Message, OptionCode},
     Decodable, Decoder, Encodable, Encoder,
 };
@@ -14,7 +15,6 @@ use socket2::{Domain, Protocol, Type};
 use tokio::{net::UdpSocket, time::Instant};
 
 use crate::{
-    dump::udp_packet::dhcp_v6::get_solicit_options,
     netlink::ipv6::{del_iface_ip, set_iface_ip},
     sys_service::route::IpRouteService,
 };
@@ -47,7 +47,7 @@ fn calc_connect_retry_backoff_secs(failure_count: u32) -> u64 {
     secs.min(MAX_CONNECT_RETRY_BACKOFF_SECS)
 }
 
-type V6MessageType = dhcproto::v6::MessageType;
+type V6MessageType = landscape_common::net_proto::udp::dhcp::v6::MessageType;
 #[derive(Clone, Debug)]
 pub enum IpV6PdState {
     /// 初始状态

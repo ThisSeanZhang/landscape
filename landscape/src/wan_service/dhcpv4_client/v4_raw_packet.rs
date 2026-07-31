@@ -1,5 +1,5 @@
 use bytes::{Buf, BufMut, BytesMut};
-use landscape_common::net_proto::dhcp::DhcpV4Message;
+use landscape_common::net_proto::udp::dhcp::{try_decode_dhcpv4, DhcpV4Message};
 use landscape_common::net_proto::NetProtoCodec;
 use libc::{sock_filter, sock_fprog, AF_PACKET, ETH_P_IP, SOL_SOCKET, SO_ATTACH_FILTER};
 use socket2::{Domain, Protocol, Socket, Type};
@@ -452,8 +452,7 @@ impl AdaptiveDhcpV4Socket {
                     }
                 } => {
                     let (len, addr) = res?;
-                    let mut bytes = BytesMut::from(&udp_buf[..len]);
-                    if let Ok(Some(msg)) = DhcpV4Message::decode(&mut bytes) {
+                    if let Some(msg) = try_decode_dhcpv4(&udp_buf[..len]) {
                         return Ok((msg, addr));
                     }
                 }

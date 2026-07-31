@@ -3372,7 +3372,6 @@ dependencies = [
  "cidr",
  "clap 4.6.4",
  "dashmap",
- "dhcproto",
  "duckdb",
  "etherparse",
  "futures",

@@ -1,3 +1,10 @@
+//! Raw packet capture and L2/L3 header parsing, used by the webserver
+//! `/dump/{iface}` debug endpoint and the `tap` debug binary.
+//!
+//! Protocol payloads (e.g. DHCP) are decoded via `landscape_common::net_proto`
+//! (a re-export seam over `dhcproto`) instead of hand-rolled parsers. Keep it
+//! that way: this module must not grow protocol logic of its own.
+
 use eth::EthFram;
 use pnet::datalink::{self, NetworkInterface};
 

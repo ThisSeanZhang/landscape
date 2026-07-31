@@ -4,9 +4,11 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use crate::dump::udp_packet::dhcp::options::DhcpOptions;
-use crate::dump::udp_packet::dhcp::{
-    options::DhcpOptionMessageType, DhcpEthFrame, DhcpOptionFrame,
+use landscape_common::net_proto::udp::dhcp::v4::{Flags, Opcode, OptionCode};
+use landscape_common::net_proto::udp::dhcp::{
+    try_decode_dhcpv4, v4_helpers::apply_custom_and_filter, v4_helpers::get_default_request_list,
+    v4_helpers::get_hostname, v4_helpers::has_option, DhcpV4Message, DhcpV4MessageType,
+    DhcpV4Option, Encodable, Encoder,
 };
 
 use arc_swap::ArcSwap;
@@ -35,6 +37,39 @@ use tokio::net::UdpSocket;
 use tracing::instrument;
 
 const IP_EXPIRE_INTERVAL: u64 = 60 * 10;
+
+const DHCP_MAGIC_COOKIE: u32 = 0x63825363;
+
+/// Encode a DHCPv4 message to its wire format.
+///
+/// ⚠ Known behavioral change vs. the legacy hand-rolled encoder: dhcproto's
+/// `DhcpOptions` stores options in a `BTreeMap`, so replies are emitted in
+/// ascending option-code order (typically starting with option 1/3/6/51),
+/// whereas the legacy encoder always placed the message type option (53)
+/// first. If a DHCP client misbehaves with this server's OFFER/ACK, check
+/// this ordering first — option 53 is only *required* to be present, not to
+/// be first, but some clients expect it there.
+fn encode_dhcpv4(msg: &DhcpV4Message) -> Vec<u8> {
+    let mut buf = Vec::new();
+    let mut e = Encoder::new(&mut buf);
+    msg.encode(&mut e).expect("encode dhcp v4 message");
+    buf
+}
+
+/// Extract the client MAC from a decoded DHCPv4 message.
+///
+/// dhcproto's `Message::chaddr()` is `&chaddr[..hlen]` and panics when the
+/// wire-supplied `hlen` exceeds 16, so validate before touching it. Ethernet
+/// clients always send `hlen == 6`; a larger `hlen` (up to 16) keeps the
+/// leading 6 bytes, matching the legacy fixed-offset parser. Anything else is
+/// not a client this server can serve.
+fn client_chaddr(msg: &DhcpV4Message) -> Option<MacAddr> {
+    let hlen = msg.hlen();
+    if !(6..=16).contains(&hlen) {
+        return None;
+    }
+    MacAddr::from_arry(&msg.chaddr()[..6])
+}
 
 /// Option 15 — Domain Name (RFC 2132).
 const DHCPV4_DOMAIN_NAME_OPTION_CODE: u8 = 15;
@@ -200,142 +235,148 @@ async fn handle_dhcp_message(
     ipv4_assign_sender: &IPv4AssignEventSender,
     iface_name: &str,
 ) -> bool {
-    let dhcp = DhcpEthFrame::new(&message);
-    // tracing::info!("dhcp: {dhcp:?}");
+    if message.len() < 240
+        || u32::from_be_bytes([message[236], message[237], message[238], message[239]])
+            != DHCP_MAGIC_COOKIE
+    {
+        return false;
+    }
 
-    if let Some(dhcp) = dhcp {
-        // tracing::info!("dhcp xid: {:04x}", dhcp.xid);
-        match dhcp.op {
-            1 => match dhcp.options.message_type {
-                DhcpOptionMessageType::Discover => {
-                    let Some(payload) = gen_offer(dhcp_server, dhcp) else { return false };
-                    let payload = crate::dump::udp_packet::EthUdpType::Dhcp(Box::new(payload));
+    let Some(dhcp) = try_decode_dhcpv4(&message) else {
+        return false;
+    };
+    let Some(chaddr) = client_chaddr(&dhcp) else {
+        tracing::debug!("ignoring DHCP message with unsupported hlen {}", dhcp.hlen());
+        return false;
+    };
 
-                    let addr: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::BROADCAST), 68);
+    match dhcp.opcode() {
+        Opcode::BootRequest => match dhcp.opts().msg_type() {
+            Some(DhcpV4MessageType::Discover) => {
+                let Some(payload) = gen_offer(dhcp_server, &dhcp) else { return false };
+                let payload = encode_dhcpv4(&payload);
 
-                    // tracing::debug!("payload: {payload:?}");
-                    match send_socket.send_to(&payload.convert_to_payload(), &addr).await {
-                        Ok(_len) => {
-                            // tracing::debug!("send len: {:?}", len);
-                        }
-                        Err(e) => {
-                            tracing::error!("error: {:?}", e);
-                        }
+                let addr: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::BROADCAST), 68);
+
+                // tracing::debug!("payload: {payload:?}");
+                match send_socket.send_to(&payload, &addr).await {
+                    Ok(_len) => {
+                        // tracing::debug!("send len: {:?}", len);
                     }
-                    return true;
+                    Err(e) => {
+                        tracing::error!("error: {:?}", e);
+                    }
                 }
-                DhcpOptionMessageType::Request => {
-                    let mac = dhcp.chaddr;
-                    let hostname = dhcp.options.get_hostname();
-                    let Some(payload) = gen_ack(dhcp_server, dhcp, iface_ifindex, iface_mac) else {
-                        return false;
+                return true;
+            }
+            Some(DhcpV4MessageType::Request) => {
+                let mac = chaddr;
+                let hostname = get_hostname(&dhcp);
+                let Some(payload) = gen_ack(dhcp_server, &dhcp, iface_ifindex, iface_mac) else {
+                    return false;
+                };
+
+                if matches!(payload.opts().msg_type(), Some(DhcpV4MessageType::Ack)) {
+                    let device_id = {
+                        let s = dhcp_server.status.lock().unwrap();
+                        s.static_bindings.get(&mac).and_then(|b| b.device_id)
                     };
+                    ipv4_assign_sender
+                        .try_send(IPv4AssignEvent::Allocated(IPv4AssignInfo {
+                            iface_name: iface_name.to_string(),
+                            mac,
+                            ip: payload.yiaddr(),
+                            hostname,
+                            device_id,
+                        }))
+                        .ok();
+                }
 
-                    if matches!(payload.options.message_type, DhcpOptionMessageType::Ack) {
-                        let device_id = {
-                            let s = dhcp_server.status.lock().unwrap();
-                            s.static_bindings.get(&mac).and_then(|b| b.device_id)
-                        };
-                        ipv4_assign_sender
-                            .try_send(IPv4AssignEvent::Allocated(IPv4AssignInfo {
-                                iface_name: iface_name.to_string(),
-                                mac,
-                                ip: payload.yiaddr,
-                                hostname,
-                                device_id,
-                            }))
-                            .ok();
-                    }
-
-                    let addr = if payload.is_broaddcast() {
-                        SocketAddr::new(IpAddr::V4(Ipv4Addr::new(255, 255, 255, 255)), 68)
+                let addr = if payload.flags().broadcast() {
+                    SocketAddr::new(IpAddr::V4(Ipv4Addr::new(255, 255, 255, 255)), 68)
+                } else {
+                    let ip = if payload.ciaddr().is_unspecified() {
+                        IpAddr::V4(Ipv4Addr::new(255, 255, 255, 255))
                     } else {
-                        let ip = if payload.ciaddr.is_unspecified() {
-                            IpAddr::V4(Ipv4Addr::new(255, 255, 255, 255))
-                        } else {
-                            IpAddr::V4(payload.ciaddr.clone())
-                        };
-                        SocketAddr::new(ip, msg_addr.port())
+                        IpAddr::V4(payload.ciaddr())
                     };
+                    SocketAddr::new(ip, msg_addr.port())
+                };
 
-                    let payload = crate::dump::udp_packet::EthUdpType::Dhcp(Box::new(payload));
+                let payload = encode_dhcpv4(&payload);
 
-                    // tracing::debug!("payload ack: {:?}", payload.convert_to_payload());
-                    match send_socket.send_to(&payload.convert_to_payload(), &addr).await {
-                        Ok(_len) => {
-                            // tracing::debug!("send len: {:?}", len);
-                        }
-                        Err(e) => {
-                            tracing::error!("error: {:?}", e);
-                        }
+                // tracing::debug!("payload ack: {:?}", payload);
+                match send_socket.send_to(&payload, &addr).await {
+                    Ok(_len) => {
+                        // tracing::debug!("send len: {:?}", len);
                     }
-                    return true;
-                }
-                DhcpOptionMessageType::Decline => {
-                    let mac = dhcp.chaddr;
-                    let options = dhcp.options;
-                    if let Some(DhcpOptions::RequestedIpAddress(ip)) = options.has_option(50) {
-                        let (device_id, hostname) = {
-                            let s = dhcp_server.status.lock().unwrap();
-                            let id = s.static_bindings.get(&mac).and_then(|b| b.device_id);
-                            let h = s.offered_ip.get(&mac).and_then(|o| o.hostname.clone());
-                            (id, h)
-                        };
-                        dhcp_server.add_decline_ip(ip);
-                        ipv4_assign_sender
-                            .try_send(IPv4AssignEvent::Expired(IPv4AssignInfo {
-                                iface_name: iface_name.to_string(),
-                                mac,
-                                ip,
-                                hostname,
-                                device_id,
-                            }))
-                            .ok();
+                    Err(e) => {
+                        tracing::error!("error: {:?}", e);
                     }
                 }
-                // DhcpOptionMessageType::Ack => todo!(),
-                // DhcpOptionMessageType::Nak => todo!(),
-                DhcpOptionMessageType::Release => {
-                    let mac = dhcp.chaddr;
-                    let ip = dhcp.ciaddr;
-                    tracing::info!("req: Release, {dhcp:?}");
+                return true;
+            }
+            Some(DhcpV4MessageType::Decline) => {
+                let mac = chaddr;
+                if let Some(DhcpV4Option::RequestedIpAddress(ip)) = has_option(&dhcp, 50) {
                     let (device_id, hostname) = {
                         let s = dhcp_server.status.lock().unwrap();
                         let id = s.static_bindings.get(&mac).and_then(|b| b.device_id);
                         let h = s.offered_ip.get(&mac).and_then(|o| o.hostname.clone());
                         (id, h)
                     };
-                    if dhcp_server.release_ip(&mac, ip) {
-                        ipv4_assign_sender
-                            .try_send(IPv4AssignEvent::Expired(IPv4AssignInfo {
-                                iface_name: iface_name.to_string(),
-                                mac,
-                                ip,
-                                hostname,
-                                device_id,
-                            }))
-                            .ok();
-                    }
+                    dhcp_server.add_decline_ip(ip);
+                    ipv4_assign_sender
+                        .try_send(IPv4AssignEvent::Expired(IPv4AssignInfo {
+                            iface_name: iface_name.to_string(),
+                            mac,
+                            ip,
+                            hostname,
+                            device_id,
+                        }))
+                        .ok();
                 }
-                DhcpOptionMessageType::Inform => {
-                    tracing::info!("req: Inform, {dhcp:?}");
+            }
+            // DhcpV4MessageType::Ack => todo!(),
+            // DhcpV4MessageType::Nak => todo!(),
+            Some(DhcpV4MessageType::Release) => {
+                let mac = chaddr;
+                let ip = dhcp.ciaddr();
+                tracing::info!("req: Release, {dhcp:?}");
+                let (device_id, hostname) = {
+                    let s = dhcp_server.status.lock().unwrap();
+                    let id = s.static_bindings.get(&mac).and_then(|b| b.device_id);
+                    let h = s.offered_ip.get(&mac).and_then(|o| o.hostname.clone());
+                    (id, h)
+                };
+                if dhcp_server.release_ip(&mac, ip) {
+                    ipv4_assign_sender
+                        .try_send(IPv4AssignEvent::Expired(IPv4AssignInfo {
+                            iface_name: iface_name.to_string(),
+                            mac,
+                            ip,
+                            hostname,
+                            device_id,
+                        }))
+                        .ok();
                 }
-                // DhcpOptionMessageType::ForceRenew => todo!(),
-                // DhcpOptionMessageType::LeaseQuery => todo!(),
-                // DhcpOptionMessageType::LeaseUnassigned => todo!(),
-                // DhcpOptionMessageType::LeaseUnknown => todo!(),
-                // DhcpOptionMessageType::LeaseActive => todo!(),
-                // DhcpOptionMessageType::BulkLeaseQuery => todo!(),
-                // DhcpOptionMessageType::LeaseQueryDone => todo!(),
-                // DhcpOptionMessageType::ActiveLeaseQuery => todo!(),
-                // DhcpOptionMessageType::LeaseQueryStatus => todo!(),
-                // DhcpOptionMessageType::Tls => todo!(),
-                _ => {}
-            },
-            2 => {}
-            3 => {}
+            }
+            Some(DhcpV4MessageType::Inform) => {
+                tracing::info!("req: Inform, {dhcp:?}");
+            }
+            // DhcpV4MessageType::ForceRenew => todo!(),
+            // DhcpV4MessageType::LeaseQuery => todo!(),
+            // DhcpV4MessageType::LeaseUnassigned => todo!(),
+            // DhcpV4MessageType::LeaseUnknown => todo!(),
+            // DhcpV4MessageType::LeaseActive => todo!(),
+            // DhcpV4MessageType::BulkLeaseQuery => todo!(),
+            // DhcpV4MessageType::LeaseQueryDone => todo!(),
+            // DhcpV4MessageType::ActiveLeaseQuery => todo!(),
+            // DhcpV4MessageType::LeaseQueryStatus => todo!(),
+            // DhcpV4MessageType::Tls => todo!(),
             _ => {}
-        }
+        },
+        _ => {}
     }
     false
 }
@@ -353,7 +394,7 @@ pub struct DhcpV4DnrRuntimeContext {
 
 pub struct DHCPv4Server {
     pub server_ip: Ipv4Addr,
-    pub options_map: HashMap<u8, DhcpOptions>,
+    pub options_map: HashMap<u8, DhcpV4Option>,
     pub global_custom_options: Vec<(u8, Vec<u8>)>,
     pub global_dynamic_options: Vec<CustomDhcpOption>,
     pub dnr_context: Option<DhcpV4DnrRuntimeContext>,
@@ -379,16 +420,17 @@ impl DHCPv4Server {
         let broadcast_u32 = u32::from(config.server_ip_addr) | !u32::from(cidr.mask());
 
         let options = vec![
-            DhcpOptions::SubnetMask(cidr.mask()),
-            DhcpOptions::Router(config.server_ip_addr),
-            DhcpOptions::ServerIdentifier(config.server_ip_addr),
-            DhcpOptions::DomainNameServer(vec![config.server_ip_addr]),
-            DhcpOptions::BroadcastAddr(Ipv4Addr::from(broadcast_u32)),
+            DhcpV4Option::SubnetMask(cidr.mask()),
+            DhcpV4Option::Router(vec![config.server_ip_addr]),
+            DhcpV4Option::ServerIdentifier(config.server_ip_addr),
+            DhcpV4Option::DomainNameServer(vec![config.server_ip_addr]),
+            DhcpV4Option::BroadcastAddr(Ipv4Addr::from(broadcast_u32)),
         ];
 
         let mut options_map = HashMap::new();
         for each in options.iter() {
-            options_map.insert(each.get_index(), each.clone());
+            let code: u8 = OptionCode::from(each).into();
+            options_map.insert(code, each.clone());
         }
 
         let mut global_dynamic_options = Vec::new();
@@ -437,20 +479,20 @@ impl DHCPv4Server {
     /// Returns `None` when local naming is disabled, the suffix is empty, or the
     /// suffix is not a valid DNS name, and is read on every response so a
     /// config edit takes effect without a service restart.
-    fn lan_domain_option(&self, code: u8) -> Option<DhcpOptions> {
+    fn lan_domain_option(&self, code: u8) -> Option<DhcpV4Option> {
         let config = self.lan_domain_state.as_ref()?.load();
         if !config.enable || config.lan_suffix.is_empty() {
             return None;
         }
         let suffix = config.lan_suffix.clone();
         match code {
-            DHCPV4_DOMAIN_NAME_OPTION_CODE => Some(DhcpOptions::DomainName(suffix)),
+            DHCPV4_DOMAIN_NAME_OPTION_CODE => Some(DhcpV4Option::DomainName(suffix)),
             DHCPV4_DOMAIN_SEARCH_OPTION_CODE => {
                 // Option 119 carries wire-format DNS names, so the suffix has
                 // to parse as one; a bad suffix is skipped rather than
                 // poisoning the whole response.
                 match hickory_proto::rr::Name::from_utf8(format!("{suffix}.")) {
-                    Ok(name) => Some(DhcpOptions::DomainSearch(vec![name])),
+                    Ok(name) => Some(DhcpV4Option::DomainSearch(vec![name])),
                     Err(e) => {
                         tracing::warn!(
                             "lan_suffix {:?} is not a valid DNS name ({e}) — option {} skipped",
@@ -467,7 +509,7 @@ impl DHCPv4Server {
 
     /// Option the client asked for in its parameter request list (option 55)
     /// that is derived at response time instead of being pinned at startup.
-    fn dynamic_requested_option(&self, code: u8) -> Option<DhcpOptions> {
+    fn dynamic_requested_option(&self, code: u8) -> Option<DhcpV4Option> {
         match code {
             DHCPV4_DOMAIN_NAME_OPTION_CODE | DHCPV4_DOMAIN_SEARCH_OPTION_CODE => {
                 self.lan_domain_option(code)
@@ -656,27 +698,39 @@ fn encode_custom_option_with_defaults(
 }
 
 /// get offer
-pub fn gen_offer(server: &mut DHCPv4Server, frame: DhcpEthFrame) -> Option<DhcpEthFrame> {
-    let mut options = vec![];
-    let request_params = if let Some(request_params) = frame.options.has_option(55) {
+pub fn gen_offer(server: &mut DHCPv4Server, frame: &DhcpV4Message) -> Option<DhcpV4Message> {
+    let Some(chaddr) = client_chaddr(frame) else {
+        return None;
+    };
+    let request_params = if let Some(request_params) = has_option(frame, 55) {
         request_params
     } else {
-        crate::dump::udp_packet::dhcp::get_default_request_list()
+        get_default_request_list()
     };
 
     // Resolve custom options and filter set for this client
-    let (custom_opts, filter_set) = server.resolve_options_for_mac(&frame.chaddr);
+    let (custom_opts, filter_set) = server.resolve_options_for_mac(&chaddr);
 
-    if let DhcpOptions::ParameterRequestList(info_list) = request_params {
-        for each_index in info_list {
+    let mut reply = DhcpV4Message::default();
+    reply
+        .set_opcode(Opcode::BootReply)
+        .set_xid(frame.xid())
+        .set_secs(frame.secs())
+        .set_flags(Flags::from(u16::from(frame.flags())))
+        .set_chaddr(&chaddr.octets())
+        .set_siaddr(server.server_ip);
+
+    if let DhcpV4Option::ParameterRequestList(info_list) = request_params {
+        for option_code in info_list {
+            let each_index = u8::from(option_code);
             // Skip if this option code is filtered out for this client
             if filter_set.contains(&each_index) {
                 continue;
             }
             if let Some(opt) = server.options_map.get(&each_index) {
-                options.push(opt.clone());
+                reply.opts_mut().insert(opt.clone());
             } else if let Some(opt) = server.dynamic_requested_option(each_index) {
-                options.push(opt);
+                reply.opts_mut().insert(opt);
             } else {
                 tracing::warn!(
                     "Note: Ignoring unsupported option request {each_index:?} from DHCP client"
@@ -685,38 +739,16 @@ pub fn gen_offer(server: &mut DHCPv4Server, frame: DhcpEthFrame) -> Option<DhcpE
         }
     }
 
-    let mut options = DhcpOptionFrame {
-        message_type: DhcpOptionMessageType::Offer,
-        options,
-        custom_raw_options: vec![],
-        end: vec![255],
-    };
+    reply.opts_mut().insert(DhcpV4Option::MessageType(DhcpV4MessageType::Offer));
+    reply.opts_mut().insert(DhcpV4Option::AddressLeaseTime(server.address_lease_time));
+    reply.opts_mut().insert(DhcpV4Option::ServerIdentifier(server.server_ip));
 
-    options.update_or_create_option(DhcpOptions::AddressLeaseTime(server.address_lease_time));
-    options.update_or_create_option(DhcpOptions::ServerIdentifier(server.server_ip));
+    apply_custom_and_filter(&mut reply, custom_opts, &filter_set);
 
-    options.apply_custom_and_filter(custom_opts, &filter_set);
-
-    let hostname = frame.options.get_hostname();
-    if let Some(client_addr) = server.offer_ip(&frame.chaddr, hostname) {
-        Some(DhcpEthFrame {
-            op: 2,
-            htype: 1,
-            hlen: 6,
-            hops: 0,
-            xid: frame.xid,
-            secs: frame.secs,
-            flags: frame.flags,
-            ciaddr: Ipv4Addr::new(0, 0, 0, 0),
-            yiaddr: client_addr,
-            siaddr: server.server_ip,
-            giaddr: Ipv4Addr::new(0, 0, 0, 0),
-            chaddr: frame.chaddr,
-            sname: [0; 64].to_vec(),
-            file: [0; 128].to_vec(),
-            magic_cookie: frame.magic_cookie,
-            options,
-        })
+    let hostname = get_hostname(frame);
+    if let Some(client_addr) = server.offer_ip(&chaddr, hostname) {
+        reply.set_yiaddr(client_addr);
+        Some(reply)
     } else {
         tracing::error!("dhcp v4 server is full");
         None
@@ -725,41 +757,53 @@ pub fn gen_offer(server: &mut DHCPv4Server, frame: DhcpEthFrame) -> Option<DhcpE
 
 fn gen_ack(
     server: &mut DHCPv4Server,
-    frame: DhcpEthFrame,
+    frame: &DhcpV4Message,
     iface_ifindex: u32,
     iface_mac: Option<MacAddr>,
-) -> Option<DhcpEthFrame> {
-    let mut options = vec![];
-    let request_params = if let Some(request_params) = frame.options.has_option(55) {
+) -> Option<DhcpV4Message> {
+    let Some(chaddr) = client_chaddr(frame) else {
+        return None;
+    };
+    let request_params = if let Some(request_params) = has_option(frame, 55) {
         request_params
     } else {
-        crate::dump::udp_packet::dhcp::get_default_request_list()
+        get_default_request_list()
     };
 
     // Resolve custom options and filter set for this client
-    let (custom_opts, filter_set) = server.resolve_options_for_mac(&frame.chaddr);
+    let (custom_opts, filter_set) = server.resolve_options_for_mac(&chaddr);
 
-    if let DhcpOptions::ParameterRequestList(info_list) = request_params {
-        for each_index in info_list {
+    let mut reply = DhcpV4Message::default();
+    reply
+        .set_opcode(Opcode::BootReply)
+        .set_xid(frame.xid())
+        .set_secs(frame.secs())
+        .set_flags(Flags::from(u16::from(frame.flags())))
+        .set_chaddr(&chaddr.octets())
+        .set_siaddr(server.server_ip);
+
+    if let DhcpV4Option::ParameterRequestList(info_list) = request_params {
+        for option_code in info_list {
+            let each_index = u8::from(option_code);
             // Skip if this option code is filtered out for this client
             if filter_set.contains(&each_index) {
                 continue;
             }
             if let Some(opt) = server.options_map.get(&each_index) {
-                options.push(opt.clone());
+                reply.opts_mut().insert(opt.clone());
             } else if let Some(opt) = server.dynamic_requested_option(each_index) {
-                options.push(opt);
+                reply.opts_mut().insert(opt);
             }
         }
     }
 
     let mut client_ip = None;
-    if frame.ciaddr != Ipv4Addr::UNSPECIFIED {
+    if !frame.ciaddr().is_unspecified() {
         tracing::debug!("client ip in ciaddr");
-        client_ip = Some(frame.ciaddr);
+        client_ip = Some(frame.ciaddr());
     }
 
-    if let Some(DhcpOptions::RequestedIpAddress(ciaddr)) = frame.options.has_option(50) {
+    if let Some(DhcpV4Option::RequestedIpAddress(ciaddr)) = has_option(frame, 50) {
         tracing::debug!("client ip in option");
         client_ip = Some(ciaddr);
     }
@@ -769,99 +813,81 @@ fn gen_ack(
         return None;
     };
 
-    let ack_result = server.ack_request(&frame.chaddr, client_ip, frame.options.get_hostname());
+    let ack_result = server.ack_request(&chaddr, client_ip, get_hostname(frame));
 
     let (message_type, client_addr, ciaddr) = if ack_result {
-        (DhcpOptionMessageType::Ack, client_ip, frame.ciaddr)
+        (DhcpV4MessageType::Ack, client_ip, frame.ciaddr())
     } else {
-        let nak_ip = {
-            let s = server.status.lock().unwrap();
-            s.static_bindings.get(&frame.chaddr).map(|b| b.ipv4).unwrap_or(client_ip)
-        };
-        (DhcpOptionMessageType::Nak, nak_ip, Ipv4Addr::UNSPECIFIED)
+        // RFC 2131 4.3.2: the NAK reports "your notion of the network is
+        // wrong" and carries no address — both ciaddr and yiaddr stay 0.0.0.0.
+        (DhcpV4MessageType::Nak, Ipv4Addr::UNSPECIFIED, Ipv4Addr::UNSPECIFIED)
     };
 
-    let is_nak = matches!(message_type, DhcpOptionMessageType::Nak);
+    let is_nak = matches!(message_type, DhcpV4MessageType::Nak);
 
     if is_nak {
-        // RFC 2131 table 3: a NAK carries no configuration parameters.
-        options.retain(|opt| {
-            !matches!(
-                opt.get_index(),
-                DHCPV4_DOMAIN_NAME_OPTION_CODE | DHCPV4_DOMAIN_SEARCH_OPTION_CODE
-            )
-        });
+        // RFC 2131 table 3: a NAK carries no configuration parameters; only
+        // the message type and the server identifier are sent below.
+        reply.opts_mut().clear();
     }
 
-    let mut options = DhcpOptionFrame {
-        message_type,
-        options,
-        custom_raw_options: vec![],
-        end: vec![255],
-    };
-
-    options.update_or_create_option(DhcpOptions::AddressLeaseTime(server.address_lease_time));
-    options.update_or_create_option(DhcpOptions::ServerIdentifier(server.server_ip));
+    reply.set_ciaddr(ciaddr).set_yiaddr(client_addr);
+    reply.opts_mut().insert(DhcpV4Option::MessageType(message_type));
+    if !is_nak {
+        reply.opts_mut().insert(DhcpV4Option::AddressLeaseTime(server.address_lease_time));
+    }
+    reply.opts_mut().insert(DhcpV4Option::ServerIdentifier(server.server_ip));
 
     if !is_nak {
-        options.apply_custom_and_filter(custom_opts, &filter_set);
+        apply_custom_and_filter(&mut reply, custom_opts, &filter_set);
     }
-
-    let offer = DhcpEthFrame {
-        op: 2,
-        htype: 1,
-        hlen: 6,
-        hops: 0,
-        xid: frame.xid,
-        secs: frame.secs,
-        flags: frame.flags,
-        ciaddr,
-        yiaddr: client_addr,
-        siaddr: server.server_ip,
-        giaddr: Ipv4Addr::new(0, 0, 0, 0),
-        chaddr: frame.chaddr,
-        sname: [0; 64].to_vec(),
-        file: [0; 128].to_vec(),
-        magic_cookie: frame.magic_cookie,
-        options,
-    };
 
     if !is_nak {
         if let Some(dev_mac) = iface_mac {
             if let Err(e) = landscape_ebpf::base::ip_mac::upsert_ipv4_ip_mac(
                 iface_ifindex,
                 client_addr,
-                frame.chaddr,
+                chaddr,
                 dev_mac,
             ) {
                 tracing::warn!(
                     "failed to prewarm ip_mac_v4 for DHCP lease {client_addr} -> {}: {e}",
-                    frame.chaddr
+                    chaddr
                 );
             }
         }
     }
 
-    Some(offer)
+    Some(reply)
 }
 
 #[cfg(test)]
 mod tests {
-    use std::{net::Ipv4Addr, sync::Arc};
+    use std::{
+        net::{IpAddr, Ipv4Addr, SocketAddr},
+        sync::Arc,
+    };
 
     use arc_swap::ArcSwap;
+    use landscape_common::net_proto::udp::dhcp::v4::{Opcode, OptionCode};
+    use landscape_common::net_proto::udp::dhcp::{
+        Decodable, Decoder, DhcpV4Message, DhcpV4MessageType, DhcpV4Option, Encodable, Encoder,
+    };
     use landscape_common::{
         config_service::enrolled_device::EnrolledDevice,
         dns::dnr::{encode_dns_name, DHCPV4_DNR_OPTION_CODE},
+        event::hub::IPv4AssignEventSender,
         lan_service::lan_dhcpv4::config::{
             CustomDhcpOption, DHCPv4ServerConfig, DhcpV4DnrOptionConfig,
         },
         net::MacAddr,
     };
+    use tokio::net::UdpSocket;
 
     use super::{
-        DHCPv4Server, DhcpOptions, DhcpV4DnrRuntimeContext, LanHostnameConfig,
-        DHCPV4_DOMAIN_NAME_OPTION_CODE, DHCPV4_DOMAIN_SEARCH_OPTION_CODE,
+        client_chaddr, gen_ack, gen_offer, handle_dhcp_message, DHCPv4Server,
+        DhcpV4DnrRuntimeContext, LanHostnameConfig, DHCPV4_DOMAIN_NAME_OPTION_CODE,
+        DHCPV4_DOMAIN_SEARCH_OPTION_CODE,
     };
 
     fn option_payload(server: &DHCPv4Server, mac: &MacAddr, code: u8) -> Vec<u8> {
@@ -982,11 +1008,14 @@ mod tests {
         let server = DHCPv4Server::init_with_lan_suffix(DHCPv4ServerConfig::default(), "lan");
 
         let name = server.lan_domain_option(DHCPV4_DOMAIN_NAME_OPTION_CODE).unwrap();
-        assert!(matches!(name, DhcpOptions::DomainName(ref d) if d == "lan"));
+        assert!(matches!(name, DhcpV4Option::DomainName(ref d) if d == "lan"));
 
         let search = server.lan_domain_option(DHCPV4_DOMAIN_SEARCH_OPTION_CODE).unwrap();
         // Wire format: one length-prefixed label plus the root terminator.
-        assert_eq!(search.decode_option(), vec![119, 5, 3, b'l', b'a', b'n', 0]);
+        let mut buf = Vec::new();
+        let mut e = Encoder::new(&mut buf);
+        search.encode(&mut e).unwrap();
+        assert_eq!(buf, vec![119, 5, 3, b'l', b'a', b'n', 0]);
     }
 
     #[test]
@@ -994,10 +1023,10 @@ mod tests {
         let server = DHCPv4Server::init_with_lan_suffix(DHCPv4ServerConfig::default(), "home.arpa");
 
         let search = server.lan_domain_option(DHCPV4_DOMAIN_SEARCH_OPTION_CODE).unwrap();
-        assert_eq!(
-            search.decode_option(),
-            vec![119, 11, 4, b'h', b'o', b'm', b'e', 4, b'a', b'r', b'p', b'a', 0]
-        );
+        let mut buf = Vec::new();
+        let mut e = Encoder::new(&mut buf);
+        search.encode(&mut e).unwrap();
+        assert_eq!(buf, vec![119, 11, 4, b'h', b'o', b'm', b'e', 4, b'a', b'r', b'p', b'a', 0]);
     }
 
     #[test]
@@ -1030,14 +1059,14 @@ mod tests {
             DHCPv4Server::new(config, None, Some(state.clone()), status, "test".to_string());
 
         assert!(matches!(server.lan_domain_option(DHCPV4_DOMAIN_NAME_OPTION_CODE).unwrap(),
-                DhcpOptions::DomainName(ref d) if d == "lan"));
+                DhcpV4Option::DomainName(ref d) if d == "lan"));
 
         state.store(Arc::new(LanHostnameConfig {
             enable: true,
             lan_suffix: "home.arpa".to_string(),
         }));
         assert!(matches!(server.lan_domain_option(DHCPV4_DOMAIN_NAME_OPTION_CODE).unwrap(),
-                DhcpOptions::DomainName(ref d) if d == "home.arpa"));
+                DhcpV4Option::DomainName(ref d) if d == "home.arpa"));
 
         state.store(Arc::new(LanHostnameConfig {
             enable: false,
@@ -1082,5 +1111,129 @@ mod tests {
         assert_eq!(opts_map.get(&66).unwrap(), b"global-tftp");
         assert_eq!(opts_map.get(&67).unwrap(), b"enrolled.kpxe");
         assert!(filter.contains(&28));
+    }
+
+    // --- client_chaddr / malformed hlen handling ---
+
+    /// Encode a message and then patch the wire `hlen` byte (offset 2) before
+    /// decoding. dhcproto's `set_chaddr` sanitizes `hlen`, so this is the only
+    /// way to obtain a `DhcpV4Message` carrying a malformed `hlen` (e.g. > 16,
+    /// which makes `Message::chaddr()` panic).
+    fn message_with_hlen(hlen: u8, chaddr: &[u8; 6]) -> DhcpV4Message {
+        let mut msg = DhcpV4Message::default();
+        msg.set_opcode(Opcode::BootRequest).set_chaddr(chaddr);
+        msg.opts_mut().insert(DhcpV4Option::MessageType(DhcpV4MessageType::Discover));
+        let mut buf = Vec::new();
+        let mut e = Encoder::new(&mut buf);
+        msg.encode(&mut e).expect("encode message");
+        buf[2] = hlen;
+        DhcpV4Message::decode(&mut Decoder::new(&buf)).expect("decode patched message")
+    }
+
+    #[test]
+    fn client_chaddr_rejects_hlen_over_16() {
+        let msg = message_with_hlen(255, &[0xaa; 6]);
+        assert!(client_chaddr(&msg).is_none());
+    }
+
+    #[test]
+    fn client_chaddr_rejects_hlen_below_6() {
+        let msg = message_with_hlen(4, &[0xaa; 6]);
+        assert!(client_chaddr(&msg).is_none());
+    }
+
+    #[test]
+    fn client_chaddr_takes_leading_6_bytes_when_hlen_is_large() {
+        let mac = [0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff];
+        let msg = message_with_hlen(16, &mac);
+        assert_eq!(client_chaddr(&msg), Some(MacAddr::from_arry(&mac).unwrap()));
+    }
+
+    #[test]
+    fn gen_offer_rejects_hlen_over_16_without_panicking() {
+        let mut server = DHCPv4Server::init(DHCPv4ServerConfig::default());
+        let msg = message_with_hlen(255, &[0xaa; 6]);
+        assert!(gen_offer(&mut server, &msg).is_none());
+    }
+
+    #[test]
+    fn gen_ack_rejects_hlen_over_16_without_panicking() {
+        let mut server = DHCPv4Server::init(DHCPv4ServerConfig::default());
+        let mut msg = message_with_hlen(255, &[0xaa; 6]);
+        msg.opts_mut().insert(DhcpV4Option::MessageType(DhcpV4MessageType::Request));
+        msg.opts_mut().insert(DhcpV4Option::RequestedIpAddress(Ipv4Addr::new(192, 168, 1, 100)));
+        assert!(gen_ack(&mut server, &msg, 1, None).is_none());
+    }
+
+    #[tokio::test]
+    async fn handle_dhcp_message_drops_hlen_over_16_packet() {
+        let mut server = DHCPv4Server::init(DHCPv4ServerConfig::default());
+        let socket = Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap());
+        let (tx, _rx) = tokio::sync::mpsc::channel(16);
+        let sender = IPv4AssignEventSender::new(tx);
+
+        // Re-encoding preserves the patched hlen, so the wire bytes stay malicious.
+        let mut buf = Vec::new();
+        let mut e = Encoder::new(&mut buf);
+        message_with_hlen(255, &[0xaa; 6]).encode(&mut e).expect("encode message");
+
+        let handled = handle_dhcp_message(
+            &mut server,
+            &socket,
+            1,
+            None,
+            (buf, SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 68)),
+            &sender,
+            "test",
+        )
+        .await;
+        assert!(!handled);
+    }
+
+    #[test]
+    fn gen_ack_serves_ethernet_client() {
+        let mut server = DHCPv4Server::init(DHCPv4ServerConfig::default());
+        let mac = [0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff];
+        let mut msg = DhcpV4Message::default();
+        msg.set_opcode(Opcode::BootRequest).set_chaddr(&mac);
+        msg.opts_mut().insert(DhcpV4Option::MessageType(DhcpV4MessageType::Request));
+        // Offer the client an address first, then have it request that address.
+        let offered = server.offer_ip(&MacAddr::from_arry(&mac).unwrap(), None).unwrap();
+        msg.opts_mut().insert(DhcpV4Option::RequestedIpAddress(offered));
+
+        let ack = gen_ack(&mut server, &msg, 1, None).expect("ack");
+        assert_eq!(ack.opts().msg_type(), Some(DhcpV4MessageType::Ack));
+        assert_eq!(ack.yiaddr(), offered);
+        assert_eq!(ack.ciaddr(), Ipv4Addr::UNSPECIFIED);
+        assert!(ack.opts().get(OptionCode::ServerIdentifier).is_some());
+        assert!(ack.opts().get(OptionCode::AddressLeaseTime).is_some());
+    }
+
+    #[test]
+    fn gen_ack_nak_carries_only_message_type_and_server_identifier() {
+        let mut server = DHCPv4Server::init(DHCPv4ServerConfig::default());
+        let mac = [0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff];
+        let mut msg = DhcpV4Message::default();
+        msg.set_opcode(Opcode::BootRequest).set_chaddr(&mac);
+        msg.opts_mut().insert(DhcpV4Option::MessageType(DhcpV4MessageType::Request));
+        msg.opts_mut().insert(DhcpV4Option::ParameterRequestList(vec![
+            OptionCode::SubnetMask,
+            OptionCode::Router,
+            OptionCode::DomainNameServer,
+        ]));
+        // Out-of-range address: ack_request() refuses it, so the server NAKs.
+        msg.opts_mut().insert(DhcpV4Option::RequestedIpAddress(Ipv4Addr::new(10, 99, 99, 99)));
+
+        let nak = gen_ack(&mut server, &msg, 1, None).expect("nak");
+        assert_eq!(nak.opts().msg_type(), Some(DhcpV4MessageType::Nak));
+        // RFC 2131 4.3.2: the NAK carries no address...
+        assert_eq!(nak.yiaddr(), Ipv4Addr::UNSPECIFIED);
+        assert_eq!(nak.ciaddr(), Ipv4Addr::UNSPECIFIED);
+        // ...and only the message type plus the server identifier.
+        assert_eq!(nak.opts().len(), 2);
+        assert!(nak.opts().get(OptionCode::ServerIdentifier).is_some());
+        assert!(nak.opts().get(OptionCode::AddressLeaseTime).is_none());
+        assert!(nak.opts().get(OptionCode::SubnetMask).is_none());
+        assert!(nak.opts().get(OptionCode::Router).is_none());
     }
 }

@@ -1,9 +1,10 @@
-use dhcp::DhcpEthFrame;
+use landscape_common::net_proto::udp::dhcp::{
+    try_decode_dhcpv4, DhcpV4Message, Encodable, Encoder,
+};
 use pnet::util::Octets;
 use serde::{Deserialize, Serialize};
 
-pub mod dhcp;
-pub mod dhcp_v6;
+const DHCP_MAGIC_COOKIE: u32 = 0x63825363;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct UdpEthFrame {
@@ -92,22 +93,31 @@ impl UdpEthFrame {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub enum EthUdpType {
-    Dhcp(Box<DhcpEthFrame>),
+    Dhcp(Box<DhcpV4Message>),
     Raw(Vec<u8>),
 }
 
 impl EthUdpType {
     pub fn convert_to_payload(&self) -> Vec<u8> {
         match self {
-            EthUdpType::Dhcp(dhcp) => dhcp.convert_to_payload(),
+            EthUdpType::Dhcp(dhcp) => {
+                let mut buf = Vec::new();
+                let mut e = Encoder::new(&mut buf);
+                dhcp.encode(&mut e).expect("encode dhcp v4 message");
+                buf
+            }
             EthUdpType::Raw(data) => data.clone(),
         }
     }
 }
 
 fn identifier_type(data: &[u8]) -> EthUdpType {
-    if let Some(dhcp) = DhcpEthFrame::new(data) {
-        return EthUdpType::Dhcp(Box::new(dhcp));
+    if data.len() >= 240
+        && u32::from_be_bytes([data[236], data[237], data[238], data[239]]) == DHCP_MAGIC_COOKIE
+    {
+        if let Some(dhcp) = try_decode_dhcpv4(data) {
+            return EthUdpType::Dhcp(Box::new(dhcp));
+        }
     }
 
     EthUdpType::Raw(data.to_vec())
