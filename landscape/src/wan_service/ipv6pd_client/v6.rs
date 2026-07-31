@@ -5,7 +5,7 @@ use std::{
     time::Duration,
 };
 
-use dhcproto::{
+use landscape_common::net_proto::udp::dhcp::{
     v6::{self, DhcpOption, DhcpOptions, Message, OptionCode},
     Decodable, Decoder, Encodable, Encoder,
 };

@@ -18,8 +18,10 @@ use landscape_common::{
 use tokio::sync::{mpsc, watch};
 use tokio::{net::UdpSocket, sync::Mutex};
 
-use dhcproto::v6::{Authentication, DhcpOption, Message, MessageType, OptionCode};
-use dhcproto::{Encodable, Encoder};
+use landscape_common::net_proto::udp::dhcp::v6::{
+    Authentication, DhcpOption, Message, MessageType, OptionCode,
+};
+use landscape_common::net_proto::udp::dhcp::{Encodable, Encoder};
 
 use super::{
     compute_subnets,

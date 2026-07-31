@@ -1,10 +1,12 @@
 use std::net::{Ipv6Addr, SocketAddr};
 use std::sync::Arc;
 
-use dhcproto::v6::{self, Authentication, IAAddr, IAPrefix, Status, StatusCode, IANA, IAPD};
-use dhcproto::{Decodable, Decoder, Encodable, Encoder};
 use landscape_common::net::MacAddr;
+use landscape_common::net_proto::udp::dhcp::v6::{
+    self, Authentication, IAAddr, IAPrefix, Status, StatusCode, IANA, IAPD,
+};
 use landscape_common::net_proto::udp::dhcp::DhcpV6MessageType;
+use landscape_common::net_proto::udp::dhcp::{Decodable, Decoder, Encodable, Encoder};
 
 use super::{offer_lifetime, Ipv6LanReplyParams, Ipv6ServerStatus};
 use crate::lan_service::lan_ipv6_service::MacLinkMapCache;

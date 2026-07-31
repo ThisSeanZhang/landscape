@@ -2,6 +2,8 @@ use crate::net_proto::error::NetProtoError;
 use crate::net_proto::NetProtoCodec;
 use bytes::{Buf, BytesMut};
 
+pub mod v4_helpers;
+
 pub use dhcproto::v4;
 pub use dhcproto::v6;
 pub use dhcproto::{Decodable, Decoder, Encodable, Encoder};

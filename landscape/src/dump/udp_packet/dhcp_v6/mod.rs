@@ -1,4 +1,4 @@
-use dhcproto::v6::{DhcpOption, DhcpOptions, OptionCode, IAPD, ORO};
+use landscape_common::net_proto::udp::dhcp::v6::{DhcpOption, DhcpOptions, OptionCode, IAPD, ORO};
 
 pub fn get_solicit_options() -> DhcpOptions {
     let mut options = DhcpOptions::new();
