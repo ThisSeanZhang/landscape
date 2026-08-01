@@ -842,8 +842,8 @@ function cancelEmptyDraftAction() {
               <n-input-number
                 style="width: 120px"
                 v-model:value="staticPrefixLen"
-                :min="1"
-                :max="127"
+                :min="56"
+                :max="63"
                 @update:value="syncParentIntoDraftGroup"
               />
             </n-flex>

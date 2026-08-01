@@ -228,10 +228,10 @@ impl LanPrefixGroupConfig {
 
         match &self.parent {
             PrefixParentSource::Static { parent_prefix_len, .. } => {
-                if *parent_prefix_len == 0 || *parent_prefix_len > 127 {
+                if *parent_prefix_len < 56 || *parent_prefix_len > 63 {
                     return Err(ServiceConfigError::InvalidConfig {
                         reason: format!(
-                            "Static parent_prefix_len ({}) must be between 1 and 127",
+                            "Static parent_prefix_len ({}) must be between 56 and 63",
                             parent_prefix_len
                         ),
                     });
