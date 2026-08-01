@@ -89,6 +89,42 @@ fn record_slaac_addr_conflict_with_existing_na() {
 }
 
 #[test]
+fn touch_slaac_addr_refreshes_matching_existing_entry() {
+    let mut status = make_slaac_status();
+    let mac = MacAddr::from([0x00, 0x11, 0x22, 0x33, 0x44, 0x55]);
+    let ip = Ipv6Addr::new(0xfd00, 0, 0, 1, 0, 0, 0xAA, 0xBB);
+    status.record_slaac_addr(mac, ip);
+    status.boot_time -= std::time::Duration::from_secs(10);
+    status.slaac_entries.get_mut(&ip).unwrap().relative_active_time = 0;
+
+    assert!(status.touch_slaac_addr(mac, ip));
+    assert!(status.slaac_entries.get(&ip).unwrap().relative_active_time >= 10);
+}
+
+#[test]
+fn touch_slaac_addr_does_not_create_unknown_entry() {
+    let mut status = make_slaac_status();
+    let mac = MacAddr::from([0x00, 0x11, 0x22, 0x33, 0x44, 0x55]);
+    let ip = Ipv6Addr::new(0xfd00, 0, 0, 1, 0, 0, 0xCC, 0xDD);
+
+    assert!(!status.touch_slaac_addr(mac, ip));
+    assert!(!status.slaac_entries.contains_key(&ip));
+}
+
+#[test]
+fn touch_slaac_addr_rejects_mismatched_mac() {
+    let mut status = make_slaac_status();
+    let owner = MacAddr::from([0x00, 0x11, 0x22, 0x33, 0x44, 0x55]);
+    let other = MacAddr::from([0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF]);
+    let ip = Ipv6Addr::new(0xfd00, 0, 0, 1, 0, 0, 0xEE, 0xFF);
+    status.record_slaac_addr(owner, ip);
+    status.slaac_entries.get_mut(&ip).unwrap().relative_active_time = 0;
+
+    assert!(!status.touch_slaac_addr(other, ip));
+    assert_eq!(status.slaac_entries.get(&ip).unwrap().relative_active_time, 0);
+}
+
+#[test]
 fn clean_expired_slaac_removes_expired_entries() {
     let mut status = make_slaac_status();
     let mac = MacAddr::from([0x00, 0x11, 0x22, 0x33, 0x44, 0x55]);

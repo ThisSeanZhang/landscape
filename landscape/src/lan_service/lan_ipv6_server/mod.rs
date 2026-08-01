@@ -1014,6 +1014,21 @@ impl Ipv6ServerStatus {
         SlaacResult::Recorded
     }
 
+    /// Refresh an already learned SLAAC address after observing activity from
+    /// the same IP and MAC. Unknown or mismatched observations never create or
+    /// replace an entry.
+    pub fn touch_slaac_addr(&mut self, mac: MacAddr, ip: Ipv6Addr) -> bool {
+        let Some(entry) = self.slaac_entries.get_mut(&ip) else {
+            return false;
+        };
+        if entry.mac != mac {
+            return false;
+        }
+
+        entry.relative_active_time = self.boot_time.elapsed().as_secs();
+        true
+    }
+
     pub fn clean_expired_slaac(&mut self, threshold: u64) -> Vec<(Ipv6Addr, MacAddr)> {
         let now = self.boot_time.elapsed().as_secs();
         let mut expired = Vec::new();

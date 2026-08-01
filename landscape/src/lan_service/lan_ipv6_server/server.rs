@@ -93,6 +93,16 @@ async fn handle_icmp_msg(
                         "recorded IPv6 client link-local mapping from NS: {ll} -> {mac}"
                     );
                 }
+
+                if let SocketAddr::V6(src_v6) = src_addr {
+                    let ip = *src_v6.ip();
+                    if is_usable_slaac_source(ip) {
+                        let mut status = share_status.lock().await;
+                        if status.touch_slaac_addr(mac, ip) {
+                            tracing::debug!("refreshed SLAAC activity from NS: {ip} -> {mac}");
+                        }
+                    }
+                }
             }
         }
         Some(Icmpv6Message::NeighborAdvertisement(_)) => {
@@ -161,6 +171,10 @@ fn record_link_local_mac(
     Some(ll)
 }
 
+fn is_usable_slaac_source(ip: Ipv6Addr) -> bool {
+    !(ip.is_unspecified() || ip.is_loopback() || ip.is_multicast() || ip.is_unicast_link_local())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -187,6 +201,18 @@ mod tests {
 
         assert_eq!(record_link_local_mac(&src, mac, &cache, ifindex), None);
         assert_eq!(cache.lookup_mac_by_ll(ifindex, &global), None);
+    }
+
+    #[test]
+    fn slaac_touch_rejects_dad_and_link_local_sources() {
+        assert!(!is_usable_slaac_source(Ipv6Addr::UNSPECIFIED));
+        assert!(!is_usable_slaac_source("fe80::1".parse().unwrap()));
+    }
+
+    #[test]
+    fn slaac_touch_accepts_ula_and_global_sources() {
+        assert!(is_usable_slaac_source("fd00::1".parse().unwrap()));
+        assert!(is_usable_slaac_source("2001:db8::1".parse().unwrap()));
     }
 }
 
