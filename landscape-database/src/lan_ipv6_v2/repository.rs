@@ -41,8 +41,7 @@ impl LanIPv6V2ServiceRepository {
             }
 
             let configs = models.iter().cloned().map(Into::into).collect::<Vec<_>>();
-            validate_global_prefix_conflicts(&pending, &configs, None)
-                .map_err(|error| LanIPv6Error::PrefixConflict { reason: error.to_string() })?;
+            validate_global_prefix_conflicts(&pending, &configs, None)?;
 
             pending.set_update_at(landscape_common::utils::time::get_f64_timestamp());
             let saved = if let Some(existing) = existing {
@@ -133,7 +132,7 @@ mod tests {
 
         assert_eq!(usize::from(left.is_ok()) + usize::from(right.is_ok()), 1);
         let error = left.err().or_else(|| right.err()).unwrap();
-        assert!(matches!(error, LanIPv6Error::PrefixConflict { .. }));
+        assert!(matches!(error, LanIPv6Error::PrefixSlotOverlap { .. }));
 
         use landscape_common::database::LandscapeStore;
         let persisted = left_store.list().await.unwrap();

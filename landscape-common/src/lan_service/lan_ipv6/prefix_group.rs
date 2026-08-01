@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use super::config::{
     IPv6ServiceMode, LanIPv6ConfigV2, LanIPv6ServiceConfigV2, PrefixGroupServiceKind,
 };
+use super::error::LanIPv6Error;
 use crate::service::ServiceConfigError;
 use crate::wan_service::ipv6_pd::LDIAPrefix;
 
@@ -695,6 +696,24 @@ struct SourcedEntry {
     entry: ExpandedPrefixEntry,
 }
 
+impl SourcedEntry {
+    fn service_kind_label(&self) -> &'static str {
+        match self.entry.service_kind {
+            PrefixGroupServiceKind::Ra => "RA",
+            PrefixGroupServiceKind::Na => "IA_NA",
+            PrefixGroupServiceKind::IaPd => "IA_PD",
+        }
+    }
+
+    fn index_range(&self) -> String {
+        if self.entry.start_index == self.entry.end_index {
+            self.entry.start_index.to_string()
+        } else {
+            format!("{}-{}", self.entry.start_index, self.entry.end_index)
+        }
+    }
+}
+
 /// Validate all LAN IPv6 prefix configurations for global /64 slot conflicts.
 ///
 /// This replaces the pending config for any interface with the same name, then expands
@@ -708,7 +727,7 @@ pub fn validate_global_prefix_conflicts(
     pending: &LanIPv6ServiceConfigV2,
     existing: &[LanIPv6ServiceConfigV2],
     pd_contexts: Option<&PdPrefixContextMap>,
-) -> Result<(), ServiceConfigError> {
+) -> Result<(), LanIPv6Error> {
     let merged = build_merged_configs(pending, existing);
 
     let mut sourced_entries: Vec<SourcedEntry> = Vec::new();
@@ -730,28 +749,17 @@ pub fn validate_global_prefix_conflicts(
         }
     }
 
-    let desc = |s: &SourcedEntry| {
-        let index_range = if s.entry.start_index == s.entry.end_index {
-            format!("{}", s.entry.start_index)
-        } else {
-            format!("{}-{}", s.entry.start_index, s.entry.end_index)
-        };
-        format!(
-            "iface={}, group={}, {:?} index={} pool_len=/{}",
-            s.iface_name, s.group_id, s.entry.service_kind, index_range, s.entry.pool_len,
-        )
-    };
-
     for sourced in &sourced_entries {
         let Some((start, _)) = sourced.entry.global_slot_interval() else {
             continue;
         };
         if start == 0 {
-            return Err(ServiceConfigError::InvalidConfig {
-                reason: format!(
-                    "Prefix conflict at /64 slot 0: ({}) overlaps WAN-reserved /64 slot 0",
-                    desc(sourced),
-                ),
+            return Err(LanIPv6Error::WanReservedPrefixConflict {
+                iface_name: sourced.iface_name.clone(),
+                group_id: sourced.group_id.clone(),
+                service_kind: sourced.service_kind_label().to_string(),
+                index_range: sourced.index_range(),
+                pool_len: sourced.entry.pool_len,
             });
         }
     }
@@ -784,18 +792,23 @@ pub fn validate_global_prefix_conflicts(
             let overlap_start = start_l.max(start_r);
             let overlap_end = end_l.min(end_r);
             let slot_range = if overlap_start == overlap_end {
-                format!("/64 slot {}", overlap_start)
+                overlap_start.to_string()
             } else {
-                format!("/64 slots {}-{}", overlap_start, overlap_end)
+                format!("{}-{}", overlap_start, overlap_end)
             };
 
-            return Err(ServiceConfigError::InvalidConfig {
-                reason: format!(
-                    "Prefix conflict at {}: ({}) overlaps ({})",
-                    slot_range,
-                    desc(left),
-                    desc(right),
-                ),
+            return Err(LanIPv6Error::PrefixSlotOverlap {
+                slot_range,
+                left_iface_name: left.iface_name.clone(),
+                left_group_id: left.group_id.clone(),
+                left_service_kind: left.service_kind_label().to_string(),
+                left_index_range: left.index_range(),
+                left_pool_len: left.entry.pool_len,
+                right_iface_name: right.iface_name.clone(),
+                right_group_id: right.group_id.clone(),
+                right_service_kind: right.service_kind_label().to_string(),
+                right_index_range: right.index_range(),
+                right_pool_len: right.entry.pool_len,
             });
         }
     }
@@ -810,6 +823,7 @@ mod tests {
     };
     use super::super::dhcpv6_config::DHCPv6ServerConfig;
     use super::*;
+    use crate::error::LdApiErrorInfo;
 
     fn pd_context(
         iface_name: &str,
@@ -1839,14 +1853,20 @@ mod tests {
         let pending = config_slaac_ra("lan-alpha", "fc00::", 7, 1);
         let existing = vec![config_slaac_ra("lan-beta", "fc00::", 7, 1)];
 
-        let result = validate_global_prefix_conflicts(&pending, &existing, None);
-        assert!(result.is_err());
-        let err = result.unwrap_err().to_string();
+        let error = validate_global_prefix_conflicts(&pending, &existing, None).unwrap_err();
+        let args = error.error_args();
+        let message = error.to_string();
 
-        assert!(err.contains("/64 slot"), "Error should mention /64 slot, got: {}", err);
-        assert!(err.contains("lan-alpha"), "Error should contain pending iface, got: {}", err);
-        assert!(err.contains("lan-beta"), "Error should contain existing iface, got: {}", err);
-        assert!(err.contains("Ra"), "Error should mention service kind, got: {}", err);
+        assert_eq!(error.error_id(), "lan_ipv6.prefix_conflict.overlap");
+        assert_eq!(error.http_status_code(), 409);
+        assert_eq!(args["slot_range"], "1");
+        assert_eq!(args["left_iface_name"], "lan-beta");
+        assert_eq!(args["left_service_kind"], "RA");
+        assert_eq!(args["right_iface_name"], "lan-alpha");
+        assert_eq!(args["right_service_kind"], "RA");
+        assert!(message.contains("/64 slot"));
+        assert!(message.contains("lan-alpha"));
+        assert!(message.contains("lan-beta"));
     }
 
     #[test]
@@ -1854,11 +1874,33 @@ mod tests {
         let pending = config_slaac_ra("lan-current", "fd00::", 56, 2);
         let existing = vec![config_slaac_ra("lan-legacy", "2001:db8::", 56, 0)];
 
-        let result = validate_global_prefix_conflicts(&pending, &existing, None);
-        assert!(result.is_err());
-        let err = result.unwrap_err().to_string();
+        let error = validate_global_prefix_conflicts(&pending, &existing, None).unwrap_err();
+        let args = error.error_args();
+        let message = error.to_string();
 
-        assert!(err.contains("WAN-reserved /64 slot 0"), "Unexpected error: {}", err);
-        assert!(err.contains("lan-legacy"), "Error should identify the source: {}", err);
+        assert_eq!(error.error_id(), "lan_ipv6.prefix_conflict.wan_reserved");
+        assert_eq!(error.http_status_code(), 409);
+        assert_eq!(args["iface_name"], "lan-legacy");
+        assert_eq!(args["group_id"], "ra-group");
+        assert_eq!(args["service_kind"], "RA");
+        assert_eq!(args["index_range"], "0");
+        assert_eq!(args["pool_len"], 64);
+        assert!(message.contains("WAN-reserved /64 slot 0"));
+    }
+
+    #[test]
+    fn global_returns_domain_error_for_pending_wan_reserved_slot() {
+        let pending = config_slaac_ra("lan-current", "fd00::", 56, 0);
+
+        let error = validate_global_prefix_conflicts(&pending, &[], None).unwrap_err();
+        let args = error.error_args();
+
+        assert_eq!(error.error_id(), "lan_ipv6.prefix_conflict.wan_reserved");
+        assert_eq!(error.http_status_code(), 409);
+        assert_eq!(args["iface_name"], "lan-current");
+        assert_eq!(args["group_id"], "ra-group");
+        assert_eq!(args["service_kind"], "RA");
+        assert_eq!(args["index_range"], "0");
+        assert_eq!(args["pool_len"], 64);
     }
 }
