@@ -587,21 +587,13 @@ impl LanIPv6ConfigV2 {
                     });
                 }
                 for group in &ra_groups {
-                    match &group.parent {
-                        PrefixParentSource::Static { base_prefix, .. } => {
-                            if !is_ula(*base_prefix) {
-                                return Err(ServiceConfigError::InvalidConfig {
-                                    reason: format!(
-                                        "SlaacDhcpv6 mode requires RA prefix groups to be ULA (fc00::/7), got: {}",
-                                        base_prefix
-                                    ),
-                                });
-                            }
-                        }
-                        PrefixParentSource::Pd { .. } => {
+                    if let PrefixParentSource::Static { base_prefix, .. } = &group.parent {
+                        if !is_ula(*base_prefix) {
                             return Err(ServiceConfigError::InvalidConfig {
-                                reason: "SlaacDhcpv6 mode only allows Static RA prefix groups"
-                                    .to_string(),
+                                reason: format!(
+                                    "SlaacDhcpv6 mode requires RA prefix groups to be ULA (fc00::/7), got: {}",
+                                    base_prefix
+                                ),
                             });
                         }
                     }
@@ -987,7 +979,7 @@ mod tests {
     }
 
     #[test]
-    fn v2_slaac_dhcpv6_rejects_pd_ra_groups() {
+    fn v2_slaac_dhcpv6_accepts_pd_ra_groups() {
         let config = LanIPv6ConfigV2 {
             mode: IPv6ServiceMode::SlaacDhcpv6,
             ad_interval: 300,
@@ -1032,7 +1024,7 @@ mod tests {
             }),
         };
 
-        assert!(config.validate().is_err());
+        assert!(config.validate().is_ok());
     }
 
     #[test]

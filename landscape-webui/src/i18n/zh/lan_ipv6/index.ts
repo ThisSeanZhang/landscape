@@ -112,8 +112,6 @@ export default {
   prefix_state_inactive_hint_slaac: "SLAAC 模式下仅使用 RA 前缀结果。",
   prefix_state_inactive_hint_stateful_ra:
     "Stateful 模式会发送 RA 标志，但不会使用 RA 前缀结果。",
-  prefix_state_inactive_hint_slaac_dhcpv6_ra_dynamic:
-    "SLAAC + DHCPv6 模式下，RA 仅允许使用静态前缀。",
   prefix_parent: "父前缀:",
   prefix_block: "结果块:",
 

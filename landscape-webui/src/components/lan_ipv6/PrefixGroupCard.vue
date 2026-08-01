@@ -117,10 +117,7 @@ function kindEffectiveInMode(kind: ServiceKind) {
     case "stateful":
       return kind === "na" || kind === "pd";
     case "slaac_dhcpv6":
-      if (kind === "ra") {
-        return sourceType.value === "static";
-      }
-      return kind === "na" || kind === "pd";
+      return kind === "ra" || kind === "na" || kind === "pd";
     case undefined:
       return true;
     default:
@@ -165,9 +162,7 @@ function kindInactiveHint(kind: ServiceKind) {
         ? t("lan_ipv6.prefix_state_inactive_hint_stateful_ra")
         : t("lan_ipv6.prefix_state_inactive");
     case "slaac_dhcpv6":
-      return kind === "ra" && sourceType.value === "pd"
-        ? t("lan_ipv6.prefix_state_inactive_hint_slaac_dhcpv6_ra_dynamic")
-        : t("lan_ipv6.prefix_state_inactive");
+      return t("lan_ipv6.prefix_state_inactive");
     default:
       return t("lan_ipv6.prefix_state_inactive");
   }

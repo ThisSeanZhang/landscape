@@ -120,8 +120,6 @@ export default {
   prefix_state_inactive_hint_slaac: "SLAAC mode only uses RA prefix results.",
   prefix_state_inactive_hint_stateful_ra:
     "Stateful mode still sends RA flags, but it does not use RA prefix results.",
-  prefix_state_inactive_hint_slaac_dhcpv6_ra_dynamic:
-    "In SLAAC + DHCPv6 mode, RA is only allowed on static prefixes.",
   prefix_parent: "Parent:",
   prefix_block: "Block:",
 

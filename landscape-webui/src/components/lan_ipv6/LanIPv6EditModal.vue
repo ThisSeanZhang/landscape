@@ -10,11 +10,6 @@ import {
   update_lan_ipv6_config,
 } from "@/api/service_lan_ipv6";
 import { get_all_ipv6pd_configs } from "@/api/service_ipv6pd";
-import {
-  type SourceKind,
-  type SourceType,
-  sourceTypeFromParent,
-} from "@/lib/lan_ipv6_v2_helpers";
 import type {
   LanIPv6ServiceConfigV2,
   LanPrefixGroupConfig,
@@ -87,9 +82,7 @@ const all_groups = computed(
   () => service_config.value?.config.prefix_groups ?? [],
 );
 
-function allowed_service_kinds_for_type(
-  type: SourceType,
-): ("ra" | "na" | "pd")[] {
+function allowed_service_kinds_for_type(): ("ra" | "na" | "pd")[] {
   const mode = service_config.value?.config.mode ?? "slaac";
   if (mode === "slaac") {
     return ["ra"];
@@ -97,10 +90,7 @@ function allowed_service_kinds_for_type(
   if (mode === "stateful") {
     return ["na", "pd"];
   }
-  if (type === "static") {
-    return ["ra", "na", "pd"];
-  }
-  return ["na", "pd"];
+  return ["ra", "na", "pd"];
 }
 
 async function on_modal_enter() {
@@ -364,7 +354,7 @@ function replace_group_sources(
           <PrefixGroupEditorModal
             @commit="add_group_sources"
             v-model:show="show_static_source_add"
-            :allowed-service-kinds="allowed_service_kinds_for_type('static')"
+            :allowed-service-kinds="allowed_service_kinds_for_type()"
             source-type="static"
             :parent-label="t('lan_ipv6.add_static_prefix')"
             :group="undefined"
@@ -375,7 +365,7 @@ function replace_group_sources(
           <PrefixGroupEditorModal
             @commit="add_group_sources"
             v-model:show="show_pd_source_add"
-            :allowed-service-kinds="allowed_service_kinds_for_type('pd')"
+            :allowed-service-kinds="allowed_service_kinds_for_type()"
             source-type="pd"
             :parent-label="t('lan_ipv6.add_pd_prefix')"
             :group="undefined"
@@ -390,9 +380,7 @@ function replace_group_sources(
             v-for="group in all_groups"
             :key="group.group_id"
             :group="group"
-            :allowed-service-kinds="
-              allowed_service_kinds_for_type(sourceTypeFromParent(group.parent))
-            "
+            :allowed-service-kinds="allowed_service_kinds_for_type()"
             :iface-name="service_config.iface_name"
             :current-groups="all_groups"
             :current-mode="service_config.config.mode"
