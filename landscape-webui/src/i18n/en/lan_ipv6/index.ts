@@ -233,7 +233,7 @@ export default {
   stale_selection_empty_description:
     "There are no prefix selections to save in this draft. Return to editing, delete this entry, or cancel editing.",
   stale_selection_reset_notice:
-    "The previous prefix group uses the WAN-reserved block or no longer fits the current parent capacity. All selections were cleared; configure the group again.",
+    "The previous prefix group no longer fits the current parent capacity. All selections were cleared; configure the group again.",
   stale_selection_return_edit: "Return to editing",
   stale_selection_delete: "Delete this entry",
   stale_selection_cancel_edit: "Cancel editing",

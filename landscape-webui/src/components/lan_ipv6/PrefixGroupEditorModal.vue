@@ -8,9 +8,12 @@ import {
 import { get_all_lan_ipv6_configs } from "@/api/service_lan_ipv6";
 import PdPrefixPlanner from "@/components/lan_ipv6/PdPrefixPlanner.vue";
 import {
+  alignPlannerUnitRangeToPrefix,
   buildPrefixPlannerViewFromGroups,
   inspectPlannerUnitRangeCandidateFromGroups,
+  plannerUnitSpanForPrefix,
   poolIndexFromPlannerUnitStart,
+  shouldResetStalePlannerSelection,
 } from "@/lib/ipv6_planner";
 import { ServiceStatus } from "@/lib/services";
 import type { IPV6PDServiceConfig } from "@/lib/ipv6pd";
@@ -242,24 +245,6 @@ function syncParentIntoDraftGroup() {
   };
 }
 
-function reservedBlockOffsetForPrefix(targetPrefixLen: number) {
-  if (targetPrefixLen <= 64) {
-    return 1;
-  }
-  const shift = targetPrefixLen - 64;
-  if (shift >= 31) {
-    return Number.MAX_SAFE_INTEGER;
-  }
-  return 1 << shift;
-}
-
-function unitSpanForPrefix(prefixLen: number) {
-  if (prefixLen <= 0 || prefixLen > 64) {
-    return undefined;
-  }
-  return Number(1n << BigInt(64 - prefixLen));
-}
-
 function kindConfigured(kind: ServiceKind) {
   if (!draftGroup.value) {
     return false;
@@ -313,11 +298,7 @@ function poolIndexFromSelectionUnitStart(
   unitStart: number,
   targetPrefixLen: number,
 ) {
-  return poolIndexFromPlannerUnitStart(
-    targetPrefixLen,
-    reservedBlockOffsetForPrefix(targetPrefixLen),
-    unitStart,
-  );
+  return poolIndexFromPlannerUnitStart(targetPrefixLen, unitStart);
 }
 
 function rangeForSelection(
@@ -325,7 +306,7 @@ function rangeForSelection(
   endIndex: number,
   poolLen: number,
 ) {
-  const unitSpan = unitSpanForPrefix(poolLen);
+  const unitSpan = plannerUnitSpanForPrefix(poolLen);
   if (!unitSpan) {
     return undefined;
   }
@@ -354,7 +335,7 @@ function intervalFromUnitRange(
   unitEnd: number,
   poolLen: number,
 ) {
-  const unitSpan = unitSpanForPrefix(poolLen);
+  const unitSpan = plannerUnitSpanForPrefix(poolLen);
   if (!unitSpan) {
     return undefined;
   }
@@ -368,9 +349,6 @@ function intervalFromUnitRange(
   }
   const startIndex = poolIndexFromSelectionUnitStart(unitStart, poolLen);
   const endIndex = poolIndexFromSelectionUnitStart(unitEnd - unitSpan, poolLen);
-  if (startIndex === undefined || endIndex === undefined) {
-    return undefined;
-  }
   return { startIndex, endIndex };
 }
 
@@ -379,22 +357,19 @@ function intervalFromCoveredUnits(
   coveredUnitEnd: number,
   poolLen: number,
 ) {
-  const unitSpan = unitSpanForPrefix(poolLen);
-  if (!unitSpan) {
+  const alignedRange = alignPlannerUnitRangeToPrefix(
+    coveredUnitStart,
+    coveredUnitEnd,
+    poolLen,
+  );
+  if (!alignedRange) {
     return undefined;
   }
-  const baseStart = reservedBlockOffsetForPrefix(poolLen) * unitSpan;
-  const alignedStart =
-    baseStart +
-    Math.max(0, Math.floor((coveredUnitStart - baseStart) / unitSpan)) *
-      unitSpan;
-  const alignedEnd =
-    baseStart +
-    Math.max(1, Math.ceil((coveredUnitEnd - baseStart) / unitSpan)) * unitSpan;
-  if (alignedEnd <= alignedStart) {
-    return undefined;
-  }
-  return intervalFromUnitRange(alignedStart, alignedEnd, poolLen);
+  return intervalFromUnitRange(
+    alignedRange.unitStart,
+    alignedRange.unitEnd,
+    poolLen,
+  );
 }
 
 function validatePdInterval(
@@ -710,11 +685,7 @@ function clearStaleSelectionsOnOpen() {
       expectedPdLens: expectedPdLens.value,
       draftPdPoolLen: currentPdPoolLen.value,
     });
-    return (
-      view.stateReason === "selection_out_of_range" ||
-      view.stateReason === "target_shorter_than_parent" ||
-      view.selectedStatus === "wan_reserved"
-    );
+    return shouldResetStalePlannerSelection(view);
   });
 
   if (!hasStaleSelection) {

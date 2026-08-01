@@ -8,6 +8,8 @@ import type { LDIAPrefix } from "@/api/service_ipv6pd";
 import {
   buildPrefixPlannerViewFromGroups,
   inspectPlannerCandidateFromGroups,
+  plannerSelectionIsConflict,
+  plannerUnitLabels,
   poolIndexFromPlannerUnitStart,
   type PlannerUnit,
 } from "@/lib/ipv6_planner";
@@ -143,6 +145,9 @@ const hoveredRange = computed(() => {
 });
 
 const displayError = computed(() => clickError.value);
+const selectedRangeConflicts = computed(() =>
+  plannerSelectionIsConflict(planner.value.selectedStatus),
+);
 const wanPrefixWarning = computed(() =>
   planner.value.wanCompatible === false
     ? t("lan_ipv6.planner_warning_wan_prefix_mismatch")
@@ -273,6 +278,9 @@ function colorForUnit(unit: PlannerUnit) {
 function selectedFillColor(unit: PlannerUnit) {
   const palette = plannerPalette();
 
+  if (selectedRangeConflicts.value) {
+    return palette.error;
+  }
   if (unit.kind === "wan") {
     return palette.warning;
   }
@@ -290,34 +298,6 @@ function selectedFillColor(unit: PlannerUnit) {
     serviceColorForKind(props.selectedKind, palette),
     props.editGroup?.group_id,
   );
-}
-
-function labelsForUnit(unit: PlannerUnit) {
-  if (unit.isWanReserved) {
-    return "";
-  }
-  const labels = new Set<string>();
-  if (unit.occupiedByRa) {
-    labels.add("R");
-  }
-  if (unit.occupiedByNa) {
-    labels.add("N");
-  }
-  if (unit.occupiedByPd) {
-    labels.add("P");
-  }
-  if (unit.selected) {
-    if (props.selectedKind === "ra") {
-      labels.add("R");
-    }
-    if (props.selectedKind === "na") {
-      labels.add("N");
-    }
-    if (props.selectedKind === "pd") {
-      labels.add("P");
-    }
-  }
-  return Array.from(labels).join("");
 }
 
 function drawUnits() {
@@ -353,7 +333,10 @@ function drawUnits() {
     ctx.strokeStyle = palette.border;
     ctx.strokeRect(x + 0.5, y + 0.5, cellSize.value - 1, cellSize.value - 1);
 
-    if (unit.kind === "conflict" || unit.kind === "blocked") {
+    if (
+      (unit.kind === "conflict" || unit.kind === "blocked") &&
+      !(unit.selected && selectedRangeConflicts.value)
+    ) {
       ctx.save();
       ctx.beginPath();
       ctx.rect(x + 1, y + 1, cellSize.value - 2, cellSize.value - 2);
@@ -374,7 +357,7 @@ function drawUnits() {
     }
 
     if (cellSize.value >= 12) {
-      const labels = labelsForUnit(unit);
+      const labels = plannerUnitLabels(unit, props.selectedKind);
       if (labels) {
         ctx.fillStyle =
           unit.selected || unit.currentGroupId ? "#fff" : palette.text;
@@ -386,7 +369,9 @@ function drawUnits() {
     }
 
     if (unit.selected) {
-      ctx.strokeStyle = palette.success;
+      ctx.strokeStyle = selectedRangeConflicts.value
+        ? palette.error
+        : palette.success;
       ctx.lineWidth = 2;
       ctx.strokeRect(x + 1, y + 1, cellSize.value - 2, cellSize.value - 2);
       ctx.lineWidth = 1;
@@ -456,20 +441,18 @@ function onCanvasClick(event: MouseEvent) {
   if (unitIndex === undefined || planner.value.targetPrefixLen === undefined) {
     return;
   }
-  if (planner.value.targetPrefixLen > 64) {
+  if (
+    planner.value.targetPrefixLen <= 0 ||
+    planner.value.targetPrefixLen > 64
+  ) {
     return;
   }
   const unitSpan = 1 << (64 - planner.value.targetPrefixLen);
   const unitStart = Math.floor(unitIndex / unitSpan) * unitSpan;
   const nextPoolIndex = poolIndexFromPlannerUnitStart(
     planner.value.targetPrefixLen,
-    planner.value.reservedSlots,
     unitStart,
   );
-  if (nextPoolIndex === undefined) {
-    clickError.value = "lan_ipv6.planner_save_error_wan_reserved";
-    return;
-  }
   const candidate = inspectPlannerCandidateFromGroups(
     {
       currentIfaceName: props.currentIfaceName,

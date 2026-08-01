@@ -699,8 +699,9 @@ struct SourcedEntry {
 ///
 /// This replaces the pending config for any interface with the same name, then expands
 /// ALL entries from ALL configs (regardless of enable/disable or current service mode)
-/// and detects any overlapping normalized /64 slots. Parent addresses are intentionally
-/// ignored here: the slot index is shared by every LAN interface.
+/// and detects any overlapping normalized /64 slots, including WAN-reserved slot 0.
+/// Parent addresses are intentionally ignored here: the slot index is shared by every
+/// LAN interface.
 ///
 /// Within the same prefix group, RA + IA_NA sharing on the same subnet is still permitted.
 pub fn validate_global_prefix_conflicts(
@@ -726,6 +727,32 @@ pub fn validate_global_prefix_conflicts(
                     entry,
                 });
             }
+        }
+    }
+
+    let desc = |s: &SourcedEntry| {
+        let index_range = if s.entry.start_index == s.entry.end_index {
+            format!("{}", s.entry.start_index)
+        } else {
+            format!("{}-{}", s.entry.start_index, s.entry.end_index)
+        };
+        format!(
+            "iface={}, group={}, {:?} index={} pool_len=/{}",
+            s.iface_name, s.group_id, s.entry.service_kind, index_range, s.entry.pool_len,
+        )
+    };
+
+    for sourced in &sourced_entries {
+        let Some((start, _)) = sourced.entry.global_slot_interval() else {
+            continue;
+        };
+        if start == 0 {
+            return Err(ServiceConfigError::InvalidConfig {
+                reason: format!(
+                    "Prefix conflict at /64 slot 0: ({}) overlaps WAN-reserved /64 slot 0",
+                    desc(sourced),
+                ),
+            });
         }
     }
 
@@ -760,18 +787,6 @@ pub fn validate_global_prefix_conflicts(
                 format!("/64 slot {}", overlap_start)
             } else {
                 format!("/64 slots {}-{}", overlap_start, overlap_end)
-            };
-
-            let desc = |s: &SourcedEntry| {
-                let index_range = if s.entry.start_index == s.entry.end_index {
-                    format!("{}", s.entry.start_index)
-                } else {
-                    format!("{}-{}", s.entry.start_index, s.entry.end_index)
-                };
-                format!(
-                    "iface={}, group={}, {:?} index={} pool_len=/{}",
-                    s.iface_name, s.group_id, s.entry.service_kind, index_range, s.entry.pool_len,
-                )
             };
 
             return Err(ServiceConfigError::InvalidConfig {
@@ -1466,8 +1481,8 @@ mod tests {
 
     #[test]
     fn global_same_parent_same_slot_conflicts() {
-        let pending = config_slaac_ra("lan-a", "fd00::", 56, 0);
-        let existing = vec![config_slaac_ra("lan-b", "fd00::", 56, 0)];
+        let pending = config_slaac_ra("lan-a", "fd00::", 56, 1);
+        let existing = vec![config_slaac_ra("lan-b", "fd00::", 56, 1)];
 
         assert!(validate_global_prefix_conflicts(&pending, &existing, None).is_err());
     }
@@ -1489,7 +1504,7 @@ mod tests {
                         parent_prefix_len: 48,
                     },
                     ra: Some(RaPrefixConfig {
-                        pool_index: 0,
+                        pool_index: 1,
                         preferred_lifetime: 300,
                         valid_lifetime: 600,
                     }),
@@ -1516,7 +1531,7 @@ mod tests {
                         parent_prefix_len: 64,
                     },
                     ra: Some(RaPrefixConfig {
-                        pool_index: 0,
+                        pool_index: 1,
                         preferred_lifetime: 300,
                         valid_lifetime: 600,
                     }),
@@ -1533,7 +1548,7 @@ mod tests {
 
     #[test]
     fn global_different_parents_no_conflict() {
-        let pending = config_slaac_ra("lan-a", "fd00::", 56, 0);
+        let pending = config_slaac_ra("lan-a", "fd00::", 56, 2);
         let existing = vec![config_slaac_ra("lan-b", "fd00:0:0:1::", 56, 1)];
 
         assert!(validate_global_prefix_conflicts(&pending, &existing, None).is_ok());
@@ -1541,8 +1556,8 @@ mod tests {
 
     #[test]
     fn global_different_parent_addresses_same_slot_conflict() {
-        let pending = config_slaac_ra("lan-a", "fd00::", 56, 0);
-        let existing = vec![config_slaac_ra("lan-b", "2001:db8::", 56, 0)];
+        let pending = config_slaac_ra("lan-a", "fd00::", 56, 1);
+        let existing = vec![config_slaac_ra("lan-b", "2001:db8::", 56, 1)];
 
         assert!(validate_global_prefix_conflicts(&pending, &existing, None).is_err());
     }
@@ -1564,7 +1579,7 @@ mod tests {
                         parent_prefix_len: 48,
                     },
                     ra: Some(RaPrefixConfig {
-                        pool_index: 1,
+                        pool_index: 20,
                         preferred_lifetime: 300,
                         valid_lifetime: 600,
                     }),
@@ -1592,7 +1607,7 @@ mod tests {
                     },
                     ra: None,
                     na: None,
-                    pd: Some(PdPrefixRangeConfig { pool_len: 60, start_index: 0, end_index: 1 }),
+                    pd: Some(PdPrefixRangeConfig { pool_len: 60, start_index: 1, end_index: 1 }),
                 }],
                 dhcpv6: Some(DHCPv6ServerConfig {
                     enable: true,
@@ -1619,7 +1634,7 @@ mod tests {
 
     #[test]
     fn global_disabled_interface_still_checked() {
-        let pending = config_slaac_ra("lan-a", "fd00::", 56, 0);
+        let pending = config_slaac_ra("lan-a", "fd00::", 56, 1);
         let existing = vec![LanIPv6ServiceConfigV2 {
             iface_name: "lan-b".to_string(),
             enable: false,
@@ -1635,7 +1650,7 @@ mod tests {
                         parent_prefix_len: 56,
                     },
                     ra: Some(RaPrefixConfig {
-                        pool_index: 0,
+                        pool_index: 1,
                         preferred_lifetime: 300,
                         valid_lifetime: 600,
                     }),
@@ -1657,7 +1672,7 @@ mod tests {
             config_slaac_ra("lan-b", "fd00::", 48, 1),
         ];
 
-        let pending = config_slaac_ra("lan-a", "fd00::", 48, 0);
+        let pending = config_slaac_ra("lan-a", "fd00::", 48, 2);
 
         assert!(validate_global_prefix_conflicts(&pending, &existing, None).is_ok());
     }
@@ -1666,17 +1681,17 @@ mod tests {
     fn global_merge_keeps_conflict_when_replaced_iface_conflicts() {
         let existing = vec![
             config_slaac_ra("lan-a", "fd00::", 48, 1),
-            config_slaac_ra("lan-b", "fd00::", 48, 0),
+            config_slaac_ra("lan-b", "fd00::", 48, 2),
         ];
-        let pending = config_slaac_ra("lan-a", "fd00::", 48, 0);
+        let pending = config_slaac_ra("lan-a", "fd00::", 48, 2);
 
         assert!(validate_global_prefix_conflicts(&pending, &existing, None).is_err());
     }
 
     #[test]
     fn global_pd_runtime_context_uses_resolved_prefixes() {
-        let pending = config_pd_range("lan-a", "wan0", 60, 64, 0, 0);
-        let existing = config_pd_range("lan-b", "wan0", 60, 64, 0, 0);
+        let pending = config_pd_range("lan-a", "wan0", 60, 64, 1, 1);
+        let existing = config_pd_range("lan-b", "wan0", 60, 64, 1, 1);
         let contexts = make_pd_context("wan0", 60, 56);
 
         assert!(validate_global_prefix_conflicts(&pending, &[existing.clone()], Some(&contexts))
@@ -1685,8 +1700,8 @@ mod tests {
 
     #[test]
     fn global_unresolved_pd_parents_still_conflict_by_slot() {
-        let pending = config_pd_range("lan-a", "wan-a", 60, 64, 0, 0);
-        let existing = config_pd_range("lan-b", "wan-b", 60, 64, 0, 0);
+        let pending = config_pd_range("lan-a", "wan-a", 60, 64, 1, 1);
+        let existing = config_pd_range("lan-b", "wan-b", 60, 64, 1, 1);
 
         assert!(validate_global_prefix_conflicts(&pending, &[existing], None).is_err());
     }
@@ -1694,19 +1709,19 @@ mod tests {
     #[test]
     fn global_pd_range_covers_every_expanded_slot() {
         let pending = config_slaac_ra("lan-a", "fd00::", 56, 20);
-        let existing = vec![config_pd_range("lan-b", "wan0", 56, 60, 0, 1)];
+        let existing = vec![config_pd_range("lan-b", "wan0", 56, 60, 1, 1)];
 
         assert!(validate_global_prefix_conflicts(&pending, &existing, None).is_err());
     }
 
     #[test]
     fn global_same_group_ra_na_share_only_on_same_interface() {
-        let pending = config_slaac_ra("lan-a", "fd00::", 56, 0);
-        let mut existing = config_slaac_ra("lan-b", "2001:db8::", 56, 0);
+        let pending = config_slaac_ra("lan-a", "fd00::", 56, 1);
+        let mut existing = config_slaac_ra("lan-b", "2001:db8::", 56, 1);
         let group = &mut existing.config.prefix_groups[0];
         group.group_id = "ra-group".to_string();
         group.ra = None;
-        group.na = Some(NaPrefixConfig { pool_index: 0 });
+        group.na = Some(NaPrefixConfig { pool_index: 1 });
 
         assert!(validate_global_prefix_conflicts(&pending, &[existing], None).is_err());
     }
@@ -1821,8 +1836,8 @@ mod tests {
 
     #[test]
     fn global_error_message_includes_slot_range_and_sources() {
-        let pending = config_slaac_ra("lan-alpha", "fc00::", 7, 0);
-        let existing = vec![config_slaac_ra("lan-beta", "fc00::", 7, 0)];
+        let pending = config_slaac_ra("lan-alpha", "fc00::", 7, 1);
+        let existing = vec![config_slaac_ra("lan-beta", "fc00::", 7, 1)];
 
         let result = validate_global_prefix_conflicts(&pending, &existing, None);
         assert!(result.is_err());
@@ -1832,5 +1847,18 @@ mod tests {
         assert!(err.contains("lan-alpha"), "Error should contain pending iface, got: {}", err);
         assert!(err.contains("lan-beta"), "Error should contain existing iface, got: {}", err);
         assert!(err.contains("Ra"), "Error should mention service kind, got: {}", err);
+    }
+
+    #[test]
+    fn global_rejects_wan_reserved_slot_from_existing_config() {
+        let pending = config_slaac_ra("lan-current", "fd00::", 56, 2);
+        let existing = vec![config_slaac_ra("lan-legacy", "2001:db8::", 56, 0)];
+
+        let result = validate_global_prefix_conflicts(&pending, &existing, None);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+
+        assert!(err.contains("WAN-reserved /64 slot 0"), "Unexpected error: {}", err);
+        assert!(err.contains("lan-legacy"), "Error should identify the source: {}", err);
     }
 }
