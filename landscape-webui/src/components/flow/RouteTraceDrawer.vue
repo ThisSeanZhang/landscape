@@ -1,9 +1,16 @@
 <script setup lang="ts">
-import { ref, computed } from "vue";
+import { ref, computed, watch } from "vue";
 import { ChangeCatalog } from "@vicons/carbon";
 import { trace_flow_match, trace_verdict } from "@/api/route/trace";
 import { check_domain } from "@/api/dns_service";
 import { reset_cache } from "@/api/route/cache";
+import {
+  buildVerdictPlan,
+  flowIdForFamily,
+  mergeVerdictBatchResults,
+  type TraceSourceAddresses,
+  type VerdictPlan,
+} from "@/lib/route_trace";
 import { useEnrolledDeviceStore } from "@/stores/enrolled_device";
 import { useFrontEndStore } from "@/stores/front_end_config";
 import FlowExhibit from "@/components/flow/FlowExhibit.vue";
@@ -36,8 +43,9 @@ const verdictResult = ref<FlowVerdictResult | null>(null);
 const resolvedDomain = ref("");
 const resetCacheLoading = ref(false);
 
-// Whether current source has MAC (enables IPv6 queries)
-const hasMac = computed(() => !!srcMac.value);
+let sourceRevision = 0;
+let matchRequestId = 0;
+let verdictRequestId = 0;
 
 const deviceOptions = computed(() =>
   enrolledDeviceStore.bindings
@@ -53,29 +61,79 @@ const canMatch = computed(() => {
   return !!srcIpv4.value || !!srcIpv6.value || !!srcMac.value;
 });
 
-function onDeviceSelect(mac: string) {
+function clearVerdictState() {
+  verdictRequestId += 1;
+  verdictLoading.value = false;
+  verdictResult.value = null;
+  resolvedDomain.value = "";
+}
+
+function invalidateSourceTrace() {
+  sourceRevision += 1;
+  matchRequestId += 1;
+  matchLoading.value = false;
+  matchResult.value = null;
+  clearVerdictState();
+}
+
+watch([srcIpv4, srcIpv6, srcMac], invalidateSourceTrace, { flush: "sync" });
+watch([domainInput, ipInput, queryMode], clearVerdictState, { flush: "sync" });
+
+function onDeviceSelect(mac: string | null) {
   selectedDevice.value = mac;
-  const device = enrolledDeviceStore.bindings.find((d) => d.mac === mac);
-  if (device) {
-    srcIpv4.value = device.ipv4 || "";
-    srcIpv6.value = device.ipv6 || "";
-    srcMac.value = device.mac || "";
+  if (!mac) {
+    srcIpv4.value = "";
+    srcIpv6.value = "";
+    srcMac.value = "";
+    return;
   }
+
+  const device = enrolledDeviceStore.bindings.find((d) => d.mac === mac);
+  if (!device) {
+    selectedDevice.value = null;
+    srcIpv4.value = "";
+    srcIpv6.value = "";
+    srcMac.value = "";
+    return;
+  }
+
+  srcIpv4.value = device.ipv4 || "";
+  srcIpv6.value = device.ipv6 || "";
+  srcMac.value = device.mac || "";
+}
+
+function getSourceAddresses(): TraceSourceAddresses {
+  return {
+    ipv4: srcIpv4.value.trim() || undefined,
+    ipv6: srcIpv6.value.trim() || undefined,
+  };
 }
 
 async function doFlowMatch() {
   if (!canMatch.value) return;
+
+  const requestId = ++matchRequestId;
+  const requestSourceRevision = sourceRevision;
+  const request = {
+    src_ipv4: srcIpv4.value.trim() || undefined,
+    src_ipv6: srcIpv6.value.trim() || undefined,
+    src_mac: srcMac.value.trim() || null,
+  };
   matchLoading.value = true;
   matchResult.value = null;
-  verdictResult.value = null;
+  clearVerdictState();
   try {
-    matchResult.value = await trace_flow_match({
-      src_ipv4: srcIpv4.value || undefined,
-      src_ipv6: srcIpv6.value || undefined,
-      src_mac: srcMac.value || null,
-    });
+    const result = await trace_flow_match(request);
+    if (
+      requestId === matchRequestId &&
+      requestSourceRevision === sourceRevision
+    ) {
+      matchResult.value = result;
+    }
   } finally {
-    matchLoading.value = false;
+    if (requestId === matchRequestId) {
+      matchLoading.value = false;
+    }
   }
 }
 
@@ -94,24 +152,80 @@ function extractDomain(input: string): string {
   }
 }
 
-async function doVerdictByDomain() {
-  if (!domainInput.value || !matchResult.value) return;
-  const domain = extractDomain(domainInput.value);
-  if (!domain) return;
+interface VerdictRequestContext {
+  requestId: number;
+  sourceRevision: number;
+  matchResult: FlowMatchResult;
+  source: TraceSourceAddresses;
+  hasMac: boolean;
+}
+
+function beginVerdictRequest(
+  currentMatchResult: FlowMatchResult,
+): VerdictRequestContext {
+  const context = {
+    requestId: ++verdictRequestId,
+    sourceRevision,
+    matchResult: currentMatchResult,
+    source: getSourceAddresses(),
+    hasMac: !!srcMac.value,
+  };
   verdictLoading.value = true;
   verdictResult.value = null;
-  resolvedDomain.value = domainInput.value.trim();
+  resolvedDomain.value = "";
+  return context;
+}
+
+function isVerdictRequestCurrent(context: VerdictRequestContext): boolean {
+  return (
+    context.requestId === verdictRequestId &&
+    context.sourceRevision === sourceRevision &&
+    context.matchResult === matchResult.value
+  );
+}
+
+async function executeVerdictPlan(
+  plan: VerdictPlan,
+  totalCount: number,
+): Promise<FlowVerdictResult> {
+  const batchResults = await Promise.all(
+    plan.batches.map(async (batch) => ({
+      batch,
+      result: await trace_verdict(batch.request),
+    })),
+  );
+  return {
+    verdicts: mergeVerdictBatchResults(totalCount, batchResults),
+  };
+}
+
+function showInvalidIps(invalidIps: string[]): boolean {
+  if (invalidIps.length === 0) return false;
+  window.$message?.error(
+    t("flow.trace.invalid_ip", { ip: invalidIps.join(", ") }),
+  );
+  return true;
+}
+
+async function doVerdictByDomain() {
+  const currentMatchResult = matchResult.value;
+  if (!domainInput.value || !currentMatchResult) return;
+  const domain = extractDomain(domainInput.value);
+  if (!domain) return;
+  const displayDomain = domainInput.value.trim();
+  const context = beginVerdictRequest(currentMatchResult);
   try {
     const ips: string[] = [];
     let dnsFiltered = false;
 
     // Query A records
     const dnsResultA = await check_domain({
-      flow_id: matchResult.value.effective_flow_id,
+      flow_id: flowIdForFamily(currentMatchResult, "ipv4"),
       domain,
       record_type: "A",
       apply_filter: true,
     });
+    if (!isVerdictRequestCurrent(context)) return;
     dnsFiltered ||= dnsResultA.query_filtered === true;
     if (dnsResultA.records) {
       for (const r of dnsResultA.records) {
@@ -121,15 +235,16 @@ async function doVerdictByDomain() {
       }
     }
 
-    // Query AAAA records when MAC is present (IPv6 capable)
-    if (hasMac.value) {
+    // MAC-only matching can still determine the IPv6 flow even without a known source IPv6.
+    if (context.source.ipv6 || context.hasMac) {
       try {
         const dnsResultAAAA = await check_domain({
-          flow_id: matchResult.value.effective_flow_id,
+          flow_id: flowIdForFamily(currentMatchResult, "ipv6"),
           domain,
           record_type: "AAAA",
           apply_filter: true,
         });
+        if (!isVerdictRequestCurrent(context)) return;
         dnsFiltered ||= dnsResultAAAA.query_filtered === true;
         if (dnsResultAAAA.records) {
           for (const r of dnsResultAAAA.records) {
@@ -143,6 +258,7 @@ async function doVerdictByDomain() {
       }
     }
 
+    if (!isVerdictRequestCurrent(context)) return;
     if (ips.length === 0) {
       window.$message?.warning(
         dnsFiltered
@@ -152,14 +268,17 @@ async function doVerdictByDomain() {
       return;
     }
 
-    verdictResult.value = await trace_verdict({
-      flow_id: matchResult.value.effective_flow_id,
-      src_ipv4: srcIpv4.value || undefined,
-      src_ipv6: srcIpv6.value || undefined,
-      dst_ips: ips,
-    });
+    const plan = buildVerdictPlan(currentMatchResult, context.source, ips);
+    if (showInvalidIps(plan.invalidIps)) return;
+    const result = await executeVerdictPlan(plan, ips.length);
+    if (isVerdictRequestCurrent(context)) {
+      verdictResult.value = result;
+      resolvedDomain.value = displayDomain;
+    }
   } finally {
-    verdictLoading.value = false;
+    if (context.requestId === verdictRequestId) {
+      verdictLoading.value = false;
+    }
   }
 }
 
@@ -170,44 +289,25 @@ function parseIpList(input: string): string[] {
     .filter((s) => s.length > 0);
 }
 
-function isValidIp(ip: string): boolean {
-  // IPv4
-  if (/^(\d{1,3}\.){3}\d{1,3}$/.test(ip)) {
-    return ip.split(".").every((n) => {
-      const num = Number(n);
-      return num >= 0 && num <= 255;
-    });
-  }
-  // IPv6 (simplified: colons with hex digits, allows ::)
-  if (/^[0-9a-fA-F:]+$/.test(ip) && ip.includes(":")) {
-    return true;
-  }
-  return false;
-}
-
 async function doVerdictByIp() {
-  if (!ipInput.value || !matchResult.value) return;
+  const currentMatchResult = matchResult.value;
+  if (!ipInput.value || !currentMatchResult) return;
   const ips = parseIpList(ipInput.value);
   if (ips.length === 0) return;
-  const invalid = ips.filter((ip) => !isValidIp(ip));
-  if (invalid.length > 0) {
-    window.$message?.error(
-      t("flow.trace.invalid_ip", { ip: invalid.join(", ") }),
-    );
-    return;
-  }
-  verdictLoading.value = true;
-  verdictResult.value = null;
-  resolvedDomain.value = "";
+  const source = getSourceAddresses();
+  const plan = buildVerdictPlan(currentMatchResult, source, ips);
+  if (showInvalidIps(plan.invalidIps)) return;
+
+  const context = beginVerdictRequest(currentMatchResult);
   try {
-    verdictResult.value = await trace_verdict({
-      flow_id: matchResult.value.effective_flow_id,
-      src_ipv4: srcIpv4.value || undefined,
-      src_ipv6: srcIpv6.value || undefined,
-      dst_ips: ips,
-    });
+    const result = await executeVerdictPlan(plan, ips.length);
+    if (isVerdictRequestCurrent(context)) {
+      verdictResult.value = result;
+    }
   } finally {
-    verdictLoading.value = false;
+    if (context.requestId === verdictRequestId) {
+      verdictLoading.value = false;
+    }
   }
 }
 
@@ -221,8 +321,11 @@ async function doResetCache() {
   }
 }
 
-function onOpen() {
-  enrolledDeviceStore.UPDATE_INFO();
+async function onOpen() {
+  await enrolledDeviceStore.UPDATE_INFO();
+  if (selectedDevice.value) {
+    onDeviceSelect(selectedDevice.value);
+  }
 }
 
 function isCacheConsistent(v: SingleVerdictResult): boolean {
@@ -369,23 +472,41 @@ function actionTagType(
                 t("flow.trace.no_match")
               }}</n-tag>
             </n-descriptions-item>
-            <n-descriptions-item :label="t('flow.trace.ip_match')">
+            <n-descriptions-item :label="t('flow.trace.ipv4_match')">
               <FlowExhibit
-                v-if="matchResult.flow_id_by_ip != null"
-                :flow_id="matchResult.flow_id_by_ip"
+                v-if="matchResult.flow_id_by_ipv4 != null"
+                :flow_id="matchResult.flow_id_by_ipv4"
               />
               <n-tag v-else type="default" size="small">{{
                 t("flow.trace.no_match")
               }}</n-tag>
             </n-descriptions-item>
-            <n-descriptions-item :label="t('flow.trace.effective_flow')">
+            <n-descriptions-item :label="t('flow.trace.ipv6_match')">
+              <FlowExhibit
+                v-if="matchResult.flow_id_by_ipv6 != null"
+                :flow_id="matchResult.flow_id_by_ipv6"
+              />
+              <n-tag v-else type="default" size="small">{{
+                t("flow.trace.no_match")
+              }}</n-tag>
+            </n-descriptions-item>
+            <n-descriptions-item :label="t('flow.trace.effective_flow_v4')">
               <n-tag
-                v-if="matchResult.effective_flow_id === 0"
+                v-if="matchResult.effective_flow_id_v4 === 0"
                 type="info"
                 size="small"
                 >{{ t("flow.trace.default_flow") }}</n-tag
               >
-              <FlowExhibit v-else :flow_id="matchResult.effective_flow_id" />
+              <FlowExhibit v-else :flow_id="matchResult.effective_flow_id_v4" />
+            </n-descriptions-item>
+            <n-descriptions-item :label="t('flow.trace.effective_flow_v6')">
+              <n-tag
+                v-if="matchResult.effective_flow_id_v6 === 0"
+                type="info"
+                size="small"
+                >{{ t("flow.trace.default_flow") }}</n-tag
+              >
+              <FlowExhibit v-else :flow_id="matchResult.effective_flow_id_v6" />
             </n-descriptions-item>
           </n-descriptions>
         </n-card>
