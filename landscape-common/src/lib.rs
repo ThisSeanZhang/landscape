@@ -77,6 +77,10 @@ pub const DEFAULT_METRIC_CONNECT_1M_RETENTION_DAYS: u64 = 1;
 pub const DEFAULT_METRIC_CONNECT_1H_RETENTION_DAYS: u64 = 7;
 pub const DEFAULT_METRIC_CONNECT_1D_RETENTION_DAYS: u64 = 30;
 pub const DEFAULT_DNS_METRIC_RETENTION_DAYS: u64 = 7;
+/// The aggregate tier is keyed by (bucket, src_ip, proto, dst_port) rather than by
+/// connection, so its row count does not grow with connection volume. That makes a
+/// long horizon cheap, which is what lets connection detail be kept briefly.
+pub const DEFAULT_METRIC_CONNECT_AGGREGATE_RETENTION_DAYS: u64 = 90;
 pub const DEFAULT_METRIC_CONNECT_SECOND_WINDOW_MINUTES: u64 = 5;
 
 // Metric Performance & Storage Defaults

@@ -200,6 +200,10 @@ impl RuntimeConfig {
                 .metric
                 .connect_1d_retention_days
                 .unwrap_or(crate::DEFAULT_METRIC_CONNECT_1D_RETENTION_DAYS),
+            connect_aggregate_retention_days: config
+                .metric
+                .connect_aggregate_retention_days
+                .unwrap_or(crate::DEFAULT_METRIC_CONNECT_AGGREGATE_RETENTION_DAYS),
             dns_retention_days: config
                 .metric
                 .dns_retention_days

@@ -1,10 +1,11 @@
+use super::connect::schema::AggregateBucketWrite;
 use arc_swap::ArcSwap;
 use landscape_common::config::MetricRuntimeConfig;
 use landscape_common::metric::connect::{
     ConnectKey, ConnectMetric, ConnectMetricPoint, ConnectRealtimeStatus, ConnectStatusType,
     IfaceRealtimeStat, IpAggregatedStats, IpRealtimeStat,
 };
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::net::IpAddr;
 use std::sync::{Arc, RwLock};
 
@@ -257,6 +258,29 @@ fn scale_u64(value: u64, numerator: u64, denominator: u64) -> u64 {
 }
 
 pub(crate) type IfaceRealtimeCache = Arc<RwLock<HashMap<u32, IfaceRealtimeAcc>>>;
+/// Key of the bounded-cardinality aggregate tier: no connection identity,
+/// no dst_ip, no src_port. One device hitting 1000 hosts on 443 is one key.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub(crate) struct AggregateBucketKey {
+    pub(crate) bucket_start: u64,
+    pub(crate) src_ip: String,
+    pub(crate) l4_proto: u8,
+    pub(crate) dst_port: u16,
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct AggregateBucketAcc {
+    pub(crate) ingress_bytes: u64,
+    pub(crate) ingress_packets: u64,
+    pub(crate) egress_bytes: u64,
+    pub(crate) egress_packets: u64,
+    /// Connections already counted in this bucket. A connection contributes many
+    /// deltas, so conn_count must only rise on its first touch of the bucket.
+    pub(crate) seen_conns: HashSet<ConnectKey>,
+}
+
+pub(crate) type AggregateBucketCache = Arc<RwLock<HashMap<AggregateBucketKey, AggregateBucketAcc>>>;
+
 pub(crate) type IfaceBucketCache = Arc<RwLock<HashMap<IfaceBucketKey, IfaceBucketAcc>>>;
 pub(crate) type IfaceRealtimeSnapshot = Arc<ArcSwap<Vec<IfaceRealtimeStat>>>;
 pub(crate) type ConnectRealtimeSnapshot = Arc<ArcSwap<Vec<ConnectRealtimeStatus>>>;
@@ -302,6 +326,7 @@ pub(crate) struct PersistenceBatch {
     pub summary_metrics: Vec<ConnectMetric>,
     pub bucket_writes: Vec<BucketWrite>,
     pub iface_bucket_writes: Vec<IfaceBucketWrite>,
+    pub aggregate_writes: Vec<AggregateBucketWrite>,
 }
 
 impl PersistenceBatch {
@@ -309,16 +334,21 @@ impl PersistenceBatch {
         self.summary_metrics.is_empty()
             && self.bucket_writes.is_empty()
             && self.iface_bucket_writes.is_empty()
+            && self.aggregate_writes.is_empty()
     }
 
     pub(crate) fn op_count(&self) -> usize {
-        self.summary_metrics.len() + self.bucket_writes.len() + self.iface_bucket_writes.len()
+        self.summary_metrics.len()
+            + self.bucket_writes.len()
+            + self.iface_bucket_writes.len()
+            + self.aggregate_writes.len()
     }
 
     pub(crate) fn extend(&mut self, other: Self) {
         self.summary_metrics.extend(other.summary_metrics);
         self.bucket_writes.extend(other.bucket_writes);
         self.iface_bucket_writes.extend(other.iface_bucket_writes);
+        self.aggregate_writes.extend(other.aggregate_writes);
     }
 
     fn push_summary(&mut self, metric: ConnectMetric) {
@@ -331,6 +361,10 @@ impl PersistenceBatch {
 
     pub(crate) fn extend_iface_buckets(&mut self, writes: Vec<IfaceBucketWrite>) {
         self.iface_bucket_writes.extend(writes);
+    }
+
+    pub(crate) fn extend_aggregates(&mut self, writes: Vec<AggregateBucketWrite>) {
+        self.aggregate_writes.extend(writes);
     }
 }
 
@@ -643,6 +677,7 @@ pub(crate) fn process_connect_metric(
     flow_cache: &FlowCache,
     iface_realtime: &IfaceRealtimeCache,
     iface_buckets: &IfaceBucketCache,
+    aggregate_buckets: &AggregateBucketCache,
     metric: ConnectMetric,
     second_window_ms: u64,
     second_ring_cap: usize,
@@ -661,6 +696,13 @@ pub(crate) fn process_connect_metric(
             }
 
             record_metric_iface_delta(iface_buckets, Some(&state.last_metric), &metric);
+            record_aggregate_delta(
+                aggregate_buckets,
+                &metric,
+                state.last_metric.report_time,
+                metric.report_time,
+                MetricDelta::from_metrics(&state.last_metric, &metric),
+            );
             remove_state_iface_realtime(iface_realtime, state);
 
             let previous_minute_bucket = minute_slot(state.last_metric.report_time);
@@ -691,6 +733,16 @@ pub(crate) fn process_connect_metric(
         }
         std::collections::hash_map::Entry::Vacant(entry) => {
             record_metric_iface_delta(iface_buckets, None, &metric);
+            // The iface gauge deliberately drops a first report (it measures rate),
+            // but this tier is accounting: a connection that reports once and ends
+            // would otherwise never appear, and never raise conn_count.
+            record_aggregate_delta(
+                aggregate_buckets,
+                &metric,
+                metric.create_time_ms,
+                metric.report_time,
+                MetricDelta::from_initial(&metric),
+            );
             let should_finalize = metric.status == ConnectStatusType::Disabled;
             let mut state = FlowState::new(metric, second_window_ms, second_ring_cap);
             if should_finalize {
@@ -866,5 +918,154 @@ mod bucket_prune_tests {
     #[test]
     fn missing_create_time_is_treated_as_crossing() {
         assert!(crosses_bucket(0, 10 * MS_PER_HOUR, MS_PER_HOUR));
+    }
+}
+
+pub(crate) const AGGREGATE_BUCKET_MS: u64 = MS_PER_HOUR;
+
+/// Fold one reporting delta into the aggregate tier, splitting across bucket
+/// boundaries in proportion to elapsed time.
+///
+/// Mirrors record_iface_delta: the final bucket absorbs the rounding remainder so
+/// the per-bucket sums equal the delta exactly. Writing only at finalize would
+/// dump a long connection s whole lifetime into the hour it happened to end in.
+fn record_aggregate_delta(
+    cache: &AggregateBucketCache,
+    metric: &ConnectMetric,
+    start_time: u64,
+    end_time: u64,
+    delta: MetricDelta,
+) {
+    if delta.is_zero() {
+        return;
+    }
+    let src_ip = clean_ip_string(&metric.src_ip);
+    let mut cache = cache.write().expect("metric aggregate bucket cache poisoned");
+    let mut apply = |bucket_start: u64, d: MetricDelta| {
+        let key = AggregateBucketKey {
+            bucket_start,
+            src_ip: src_ip.clone(),
+            l4_proto: metric.l4_proto,
+            dst_port: metric.dst_port,
+        };
+        let acc = cache.entry(key).or_default();
+        acc.ingress_bytes = acc.ingress_bytes.saturating_add(d.ingress_bytes);
+        acc.ingress_packets = acc.ingress_packets.saturating_add(d.ingress_packets);
+        acc.egress_bytes = acc.egress_bytes.saturating_add(d.egress_bytes);
+        acc.egress_packets = acc.egress_packets.saturating_add(d.egress_packets);
+        acc.seen_conns.insert(metric.key.clone());
+    };
+
+    if end_time <= start_time {
+        apply(bucket_start(end_time, AGGREGATE_BUCKET_MS), delta);
+        return;
+    }
+
+    let total_duration = end_time - start_time;
+    let mut cursor = start_time;
+    let mut assigned = MetricDelta::default();
+    while cursor < end_time {
+        let bucket = bucket_start(cursor, AGGREGATE_BUCKET_MS);
+        let bucket_end = bucket.saturating_add(AGGREGATE_BUCKET_MS).min(end_time);
+        let mut segment_delta = delta.scale(bucket_end.saturating_sub(cursor), total_duration);
+        if bucket_end >= end_time {
+            segment_delta = delta.saturating_sub(assigned);
+        } else {
+            assigned = assigned.saturating_add(segment_delta);
+        }
+        apply(bucket, segment_delta);
+        cursor = bucket_end;
+    }
+}
+
+pub(crate) fn drain_aggregate_buckets(cache: &AggregateBucketCache) -> Vec<AggregateBucketWrite> {
+    let mut buckets = cache.write().expect("metric aggregate bucket cache poisoned");
+    buckets
+        .drain()
+        .map(|(key, acc)| AggregateBucketWrite {
+            report_time: key.bucket_start,
+            src_ip: key.src_ip,
+            l4_proto: key.l4_proto,
+            dst_port: key.dst_port,
+            ingress_bytes: acc.ingress_bytes,
+            ingress_packets: acc.ingress_packets,
+            egress_bytes: acc.egress_bytes,
+            egress_packets: acc.egress_packets,
+            conn_count: acc.seen_conns.len() as u64,
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod aggregate_delta_tests {
+    use super::*;
+    use std::net::Ipv4Addr;
+
+    fn test_metric(create_time_ms: u64, report_time: u64) -> ConnectMetric {
+        ConnectMetric {
+            key: ConnectKey { create_time: create_time_ms * 1_000_000, cpu_id: 0 },
+            src_ip: IpAddr::V4(Ipv4Addr::new(192, 168, 100, 20)),
+            dst_ip: IpAddr::V4(Ipv4Addr::new(1, 1, 1, 1)),
+            src_port: 51234,
+            dst_port: 443,
+            l4_proto: 6,
+            l3_proto: 4,
+            flow_id: 1,
+            trace_id: 0,
+            gress: 0,
+            ifindex: 2,
+            report_time,
+            create_time_ms,
+            ingress_bytes: 0,
+            ingress_packets: 0,
+            egress_bytes: 0,
+            egress_packets: 0,
+            status: ConnectStatusType::Active,
+        }
+    }
+
+    fn new_cache() -> AggregateBucketCache {
+        Arc::new(RwLock::new(HashMap::new()))
+    }
+
+    #[test]
+    fn cross_bucket_split_conserves_total() {
+        let cache = new_cache();
+        let start = 10 * MS_PER_HOUR + 1_800_000;
+        let end = 12 * MS_PER_HOUR + 1_800_000;
+        let metric = test_metric(start, end);
+        let delta = MetricDelta {
+            ingress_bytes: 1000,
+            ingress_packets: 10,
+            egress_bytes: 2000,
+            egress_packets: 20,
+        };
+        record_aggregate_delta(&cache, &metric, start, end, delta);
+        let writes = drain_aggregate_buckets(&cache);
+        assert_eq!(writes.len(), 3, "should land in 3 hour buckets");
+        let total_in: u64 = writes.iter().map(|w| w.ingress_bytes).sum();
+        let total_out: u64 = writes.iter().map(|w| w.egress_bytes).sum();
+        assert_eq!(total_in, 1000, "per-bucket sums must equal the delta exactly");
+        assert_eq!(total_out, 2000);
+    }
+
+    #[test]
+    fn conn_count_counts_each_connection_once_per_bucket() {
+        let cache = new_cache();
+        let base = 10 * MS_PER_HOUR;
+        let metric = test_metric(base, base + 1000);
+        let d = MetricDelta {
+            ingress_bytes: 1,
+            ingress_packets: 1,
+            egress_bytes: 1,
+            egress_packets: 1,
+        };
+        for _ in 0..3 {
+            record_aggregate_delta(&cache, &metric, base, base + 1000, d);
+        }
+        let writes = drain_aggregate_buckets(&cache);
+        assert_eq!(writes.len(), 1);
+        assert_eq!(writes[0].conn_count, 1, "same connection must count once");
+        assert_eq!(writes[0].ingress_bytes, 3, "but its bytes still accumulate");
     }
 }

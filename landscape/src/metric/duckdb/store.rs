@@ -18,17 +18,18 @@ use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, watch};
 
+use super::connect::schema::AggregateBucketWrite;
 use super::connect::{cleanup, query as connect_query, schema as connect_schema};
 use super::dns::{history as dns_history, schema as dns_schema, summary as dns_summary};
 use super::hot_sqlite;
 use super::ingest::{
     cleanup_flow_cache, collect_connect_realtime_snapshot, collect_iface_realtime_snapshot,
-    collect_realtime_ip_stats, drain_iface_buckets, finalize_all_flows,
+    collect_realtime_ip_stats, drain_aggregate_buckets, drain_iface_buckets, finalize_all_flows,
     new_connect_realtime_snapshot, new_iface_realtime_snapshot, process_connect_metric,
     publish_connect_realtime_snapshot, publish_iface_realtime_snapshot, second_points_by_key,
-    second_ring_capacity, second_window_ms, BucketWrite, ConnectRealtimeSnapshot, FlowCache,
-    IfaceBucketCache, IfaceBucketWrite, IfaceRealtimeCache, IfaceRealtimeSnapshot,
-    PersistenceBatch, CHANNEL_CAPACITY, MS_PER_DAY,
+    second_ring_capacity, second_window_ms, AggregateBucketCache, BucketWrite,
+    ConnectRealtimeSnapshot, FlowCache, IfaceBucketCache, IfaceBucketWrite, IfaceRealtimeCache,
+    IfaceRealtimeSnapshot, PersistenceBatch, CHANNEL_CAPACITY, MS_PER_DAY,
 };
 
 #[derive(Clone)]
@@ -52,7 +53,7 @@ const COLD_RETRY_DELAY_SECS: u64 = 5;
 
 #[derive(Debug)]
 enum ColdEvent {
-    Buckets(Vec<BucketWrite>, Vec<IfaceBucketWrite>),
+    Buckets(Vec<BucketWrite>, Vec<IfaceBucketWrite>, Vec<AggregateBucketWrite>),
     Dns(DnsMetric),
 }
 
@@ -288,8 +289,15 @@ async fn flush_pending_hot_batch(
     let batch = std::mem::take(pending_batch);
     let bucket_writes = batch.bucket_writes.clone();
     let iface_bucket_writes = batch.iface_bucket_writes.clone();
+    let aggregate_writes = batch.aggregate_writes.clone();
     apply_hot_batch(hot_pool, &batch).await;
-    try_enqueue_cold_buckets(cold_tx, cold_pool_cell, bucket_writes, iface_bucket_writes);
+    try_enqueue_cold_buckets(
+        cold_tx,
+        cold_pool_cell,
+        bucket_writes,
+        iface_bucket_writes,
+        aggregate_writes,
+    );
 }
 
 fn cold_store_ready(
@@ -303,14 +311,17 @@ fn try_enqueue_cold_buckets(
     cold_pool_cell: &Arc<RwLock<Option<r2d2::Pool<DuckdbConnectionManager>>>>,
     bucket_writes: Vec<BucketWrite>,
     iface_bucket_writes: Vec<IfaceBucketWrite>,
+    aggregate_writes: Vec<AggregateBucketWrite>,
 ) {
-    if (bucket_writes.is_empty() && iface_bucket_writes.is_empty())
+    if (bucket_writes.is_empty() && iface_bucket_writes.is_empty() && aggregate_writes.is_empty())
         || !cold_store_ready(cold_pool_cell)
     {
         return;
     }
 
-    if let Err(error) = cold_tx.try_send(ColdEvent::Buckets(bucket_writes, iface_bucket_writes)) {
+    if let Err(error) =
+        cold_tx.try_send(ColdEvent::Buckets(bucket_writes, iface_bucket_writes, aggregate_writes))
+    {
         tracing::debug!("dropping cold metric bucket batch: {:?}", error);
     }
 }
@@ -339,6 +350,7 @@ async fn run_hot_thread(
     flow_cache: FlowCache,
     iface_realtime: IfaceRealtimeCache,
     iface_buckets: IfaceBucketCache,
+    aggregate_buckets: AggregateBucketCache,
     connect_snapshot: ConnectRealtimeSnapshot,
     iface_snapshot: IfaceRealtimeSnapshot,
     mut shutdown_rx: watch::Receiver<bool>,
@@ -365,12 +377,14 @@ async fn run_hot_thread(
         tokio::select! {
             _ = cleanup_interval.tick() => {
                 pending_batch.extend_iface_buckets(drain_iface_buckets(&iface_buckets, &iface_realtime));
+                pending_batch.extend_aggregates(drain_aggregate_buckets(&aggregate_buckets));
                 flush_pending_hot_batch(&hot_pool, &cold_tx, &cold_pool_cell, &mut pending_batch).await;
 
                 let now_ms = get_current_time_ms().unwrap_or_default();
                 let (flow_stats, batch) = cleanup_flow_cache(&flow_cache, &iface_realtime, now_ms, second_window);
                 pending_batch.extend(batch);
                 pending_batch.extend_iface_buckets(drain_iface_buckets(&iface_buckets, &iface_realtime));
+                pending_batch.extend_aggregates(drain_aggregate_buckets(&aggregate_buckets));
                 flush_pending_hot_batch(&hot_pool, &cold_tx, &cold_pool_cell, &mut pending_batch).await;
                 publish_connect_realtime_snapshot(&flow_cache, &connect_snapshot, now_ms);
                 publish_iface_realtime_snapshot(&flow_cache, &iface_snapshot, now_ms);
@@ -390,6 +404,7 @@ async fn run_hot_thread(
             }
             _ = flush_interval.tick() => {
                 pending_batch.extend_iface_buckets(drain_iface_buckets(&iface_buckets, &iface_realtime));
+                pending_batch.extend_aggregates(drain_aggregate_buckets(&aggregate_buckets));
                 flush_pending_hot_batch(&hot_pool, &cold_tx, &cold_pool_cell, &mut pending_batch).await;
             }
             _ = snapshot_interval.tick() => {
@@ -409,6 +424,7 @@ async fn run_hot_thread(
                             &flow_cache,
                             &iface_realtime,
                             &iface_buckets,
+                            &aggregate_buckets,
                             metric,
                             second_window,
                             second_ring_cap,
@@ -416,6 +432,7 @@ async fn run_hot_thread(
                         pending_batch.extend(batch);
                         if pending_batch.op_count() >= write_batch_size {
                             pending_batch.extend_iface_buckets(drain_iface_buckets(&iface_buckets, &iface_realtime));
+                pending_batch.extend_aggregates(drain_aggregate_buckets(&aggregate_buckets));
                             flush_pending_hot_batch(&hot_pool, &cold_tx, &cold_pool_cell, &mut pending_batch).await;
                         }
                     }
@@ -438,11 +455,13 @@ async fn run_hot_thread(
     }
 
     pending_batch.extend_iface_buckets(drain_iface_buckets(&iface_buckets, &iface_realtime));
+    pending_batch.extend_aggregates(drain_aggregate_buckets(&aggregate_buckets));
     flush_pending_hot_batch(&hot_pool, &cold_tx, &cold_pool_cell, &mut pending_batch).await;
 
     let final_batch = finalize_all_flows(&flow_cache, &iface_realtime);
     pending_batch.extend(final_batch);
     pending_batch.extend_iface_buckets(drain_iface_buckets(&iface_buckets, &iface_realtime));
+    pending_batch.extend_aggregates(drain_aggregate_buckets(&aggregate_buckets));
     flush_pending_hot_batch(&hot_pool, &cold_tx, &cold_pool_cell, &mut pending_batch).await;
     let now_ms = get_current_time_ms().unwrap_or_default();
     publish_connect_realtime_snapshot(&flow_cache, &connect_snapshot, now_ms);
@@ -454,8 +473,9 @@ fn persist_cold_bucket_writes(
     cold_pool: &r2d2::Pool<DuckdbConnectionManager>,
     bucket_writes: &[BucketWrite],
     iface_bucket_writes: &[IfaceBucketWrite],
+    aggregate_writes: &[AggregateBucketWrite],
 ) -> StoreInitResult<()> {
-    if bucket_writes.is_empty() && iface_bucket_writes.is_empty() {
+    if bucket_writes.is_empty() && iface_bucket_writes.is_empty() && aggregate_writes.is_empty() {
         return Ok(());
     }
 
@@ -498,6 +518,11 @@ fn persist_cold_bucket_writes(
         .map_err(|error| format!("failed to write cold iface bucket row: {}", error))?;
     }
 
+    for aggregate in aggregate_writes {
+        connect_schema::upsert_aggregate_bucket_values(&conn, aggregate)
+            .map_err(|error| format!("failed to write cold aggregate row: {}", error))?;
+    }
+
     Ok(())
 }
 
@@ -533,8 +558,13 @@ fn persist_cold_event(
     event: ColdEvent,
 ) -> StoreInitResult<()> {
     match event {
-        ColdEvent::Buckets(bucket_writes, iface_bucket_writes) => {
-            persist_cold_bucket_writes(cold_pool, &bucket_writes, &iface_bucket_writes)
+        ColdEvent::Buckets(bucket_writes, iface_bucket_writes, aggregate_writes) => {
+            persist_cold_bucket_writes(
+                cold_pool,
+                &bucket_writes,
+                &iface_bucket_writes,
+                &aggregate_writes,
+            )
         }
         ColdEvent::Dns(metric) => persist_cold_dns_metric(cold_pool, &metric),
     }
@@ -551,6 +581,8 @@ fn cleanup_cold_store(
     let cutoff_1m = now_ms.saturating_sub(metric_config.connect_1m_retention_days * MS_PER_DAY);
     let cutoff_1h = now_ms.saturating_sub(metric_config.connect_1h_retention_days * MS_PER_DAY);
     let cutoff_1d = now_ms.saturating_sub(metric_config.connect_1d_retention_days * MS_PER_DAY);
+    let cutoff_aggregate =
+        now_ms.saturating_sub(metric_config.connect_aggregate_retention_days * MS_PER_DAY);
     let cutoff_dns = now_ms.saturating_sub(metric_config.dns_retention_days * MS_PER_DAY);
 
     dns_schema::cleanup_old_dns_metrics(&conn, cutoff_dns);
@@ -559,17 +591,19 @@ fn cleanup_cold_store(
         cutoff_1m,
         cutoff_1h,
         cutoff_1d,
+        cutoff_aggregate,
         metric_config.cleanup_time_budget_ms,
         metric_config.cleanup_slice_window_secs,
     );
     tracing::info!(
-        "phase=cold_duckdb.cleanup elapsed_ms={} budget_hit={} deleted_iface_5s={} deleted_1m={} deleted_1h={} deleted_1d={} deleted_dns_before={}",
+        "phase=cold_duckdb.cleanup elapsed_ms={} budget_hit={} deleted_iface_5s={} deleted_1m={} deleted_1h={} deleted_1d={} deleted_aggregate={} deleted_dns_before={}",
         stats.elapsed_ms,
         stats.budget_hit,
         stats.deleted_iface_5s,
         stats.deleted_1m,
         stats.deleted_1h,
         stats.deleted_1d,
+        stats.deleted_aggregate,
         cutoff_dns,
     );
     if let Err(error) = conn.execute("CHECKPOINT", []) {
@@ -696,6 +730,7 @@ impl DuckMetricStore {
         let flow_cache: FlowCache = Arc::new(RwLock::new(HashMap::new()));
         let iface_realtime: IfaceRealtimeCache = Arc::new(RwLock::new(HashMap::new()));
         let iface_buckets: IfaceBucketCache = Arc::new(RwLock::new(HashMap::new()));
+        let aggregate_buckets: AggregateBucketCache = Arc::new(RwLock::new(HashMap::new()));
         let connect_snapshot = new_connect_realtime_snapshot();
         let iface_snapshot = new_iface_realtime_snapshot();
         let cold_pool = Arc::new(RwLock::new(None));
@@ -704,6 +739,7 @@ impl DuckMetricStore {
         let hot_thread_cache = flow_cache.clone();
         let hot_thread_iface_realtime = iface_realtime.clone();
         let hot_thread_iface_buckets = iface_buckets.clone();
+        let hot_thread_aggregate_buckets = aggregate_buckets.clone();
         let hot_thread_connect_snapshot = connect_snapshot.clone();
         let hot_thread_iface_snapshot = iface_snapshot.clone();
         let hot_thread_cold_pool = cold_pool.clone();
@@ -723,6 +759,7 @@ impl DuckMetricStore {
                 hot_thread_cache,
                 hot_thread_iface_realtime,
                 hot_thread_iface_buckets,
+                hot_thread_aggregate_buckets,
                 hot_thread_connect_snapshot,
                 hot_thread_iface_snapshot,
                 hot_thread_shutdown,
@@ -919,6 +956,7 @@ mod tests {
             connect_1m_retention_days: 7,
             connect_1h_retention_days: 30,
             connect_1d_retention_days: 90,
+            connect_aggregate_retention_days: 180,
             dns_retention_days: 7,
             write_batch_size: 16,
             write_flush_interval_secs: 1,
@@ -1043,6 +1081,7 @@ mod tests {
             summary_metrics: vec![metric_a_initial, metric_a_latest, metric_b],
             bucket_writes: Vec::new(),
             iface_bucket_writes: Vec::new(),
+            aggregate_writes: Vec::new(),
         };
         hot_sqlite::apply_persistence_batch(&hot_pool, &batch).await.unwrap();
         sqlx::query(
