@@ -21,6 +21,16 @@ pub(crate) fn bucket_start(report_time: u64, bucket_ms: u64) -> u64 {
     report_time / bucket_ms * bucket_ms
 }
 
+/// Whether a connection actually spans two or more buckets at this resolution.
+///
+/// A connection living inside a single bucket produces a row that is a copy of its
+/// summary rather than an aggregate, and the chart never asks for that resolution
+/// (it picks one from connection age). Returns true when create_time_ms is 0
+/// (missing) so we over-write rather than lose a row.
+pub(crate) fn crosses_bucket(create_time_ms: u64, report_time: u64, bucket_ms: u64) -> bool {
+    bucket_start(create_time_ms, bucket_ms) != bucket_start(report_time, bucket_ms)
+}
+
 pub(crate) fn minute_slot(report_time: u64) -> u64 {
     bucket_start(report_time, MS_PER_MINUTE)
 }
@@ -530,16 +540,20 @@ fn finalize_state_batch(
     }
 
     batch.push_bucket(BucketKind::Minute, metric.clone(), minute_slot(metric.report_time));
-    batch.push_bucket(
-        BucketKind::Hour,
-        metric.clone(),
-        bucket_start(metric.report_time, MS_PER_HOUR),
-    );
-    batch.push_bucket(
-        BucketKind::Day,
-        metric.clone(),
-        bucket_start(metric.report_time, MS_PER_DAY),
-    );
+    if crosses_bucket(metric.create_time_ms, metric.report_time, MS_PER_HOUR) {
+        batch.push_bucket(
+            BucketKind::Hour,
+            metric.clone(),
+            bucket_start(metric.report_time, MS_PER_HOUR),
+        );
+    }
+    if crosses_bucket(metric.create_time_ms, metric.report_time, MS_PER_DAY) {
+        batch.push_bucket(
+            BucketKind::Day,
+            metric.clone(),
+            bucket_start(metric.report_time, MS_PER_DAY),
+        );
+    }
     batch.push_summary(metric);
     state.finalized = true;
 }
@@ -829,4 +843,28 @@ pub(crate) fn second_points_by_key(
 ) -> Vec<ConnectMetricPoint> {
     let cache = flow_cache.read().expect("metric flow cache poisoned");
     cache.get(key).map(|state| state.second_points_since(cutoff)).unwrap_or_default()
+}
+
+#[cfg(test)]
+mod bucket_prune_tests {
+    use super::*;
+
+    #[test]
+    fn same_hour_does_not_cross() {
+        let create = 10 * MS_PER_HOUR + 5_000;
+        let report = 10 * MS_PER_HOUR + 10_000;
+        assert!(!crosses_bucket(create, report, MS_PER_HOUR));
+    }
+
+    #[test]
+    fn spanning_hour_boundary_crosses() {
+        let create = 10 * MS_PER_HOUR + 3_595_000;
+        let report = 11 * MS_PER_HOUR + 5_000;
+        assert!(crosses_bucket(create, report, MS_PER_HOUR));
+    }
+
+    #[test]
+    fn missing_create_time_is_treated_as_crossing() {
+        assert!(crosses_bucket(0, 10 * MS_PER_HOUR, MS_PER_HOUR));
+    }
 }

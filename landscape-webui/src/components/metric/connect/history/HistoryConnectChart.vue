@@ -36,11 +36,28 @@ const resolution = ref<MetricResolution>(
   })(),
 );
 
+// A connection that never spanned a coarser bucket has no rows at that
+// resolution, so offering it would only ever render an empty chart.
+const spanMs = computed(() => {
+  const start =
+    props.createTimeMs || Number(props.conn.create_time) / 1_000_000;
+  const end = props.lastReportTime || Date.now();
+  return Math.max(0, end - start);
+});
+
 const resolutionOptions = computed(() => [
   { label: t("metric.connect.chart.second_level"), value: "second" },
   { label: t("metric.connect.chart.minute_level"), value: "minute" },
-  { label: t("metric.connect.chart.hour_level"), value: "hour" },
-  { label: t("metric.connect.chart.day_level"), value: "day" },
+  {
+    label: t("metric.connect.chart.hour_level"),
+    value: "hour",
+    disabled: spanMs.value < 3600 * 1000,
+  },
+  {
+    label: t("metric.connect.chart.day_level"),
+    value: "day",
+    disabled: spanMs.value < 24 * 3600 * 1000,
+  },
 ]);
 
 async function fetchData() {
