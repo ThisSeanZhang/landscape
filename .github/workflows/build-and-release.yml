@@ -362,6 +362,12 @@ jobs:
           path: output
           merge-multiple: true
 
+      - name: Download OpenAPI spec
+        uses: actions/download-artifact@v8
+        with:
+          name: openapi-spec
+          path: output
+
       - name: Generate SHASUM
         run: |
           cd output
