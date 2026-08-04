@@ -157,6 +157,7 @@ onMounted(fetchData);
           v-for="opt in resolutionOptions"
           :key="opt.value"
           :value="opt.value"
+          :disabled="opt.disabled"
         >
           {{ opt.label }}
         </n-radio-button>

@@ -3,8 +3,9 @@ use landscape_common::concurrency::{spawn_named_thread, task_label, thread_name}
 use landscape_common::config::MetricRuntimeConfig;
 use landscape_common::event::{ConnectMessage, DnsMetricMessage};
 use landscape_common::metric::connect::{
-    ConnectHistoryQueryParams, ConnectHistoryStatus, ConnectKey, ConnectMetricPoint,
-    ConnectRealtimeStatus, IfaceRealtimeStat, IpHistoryStat, IpRealtimeStat, MetricResolution,
+    ConnectAggregatePoint, ConnectAggregateQueryParams, ConnectHistoryQueryParams,
+    ConnectHistoryStatus, ConnectKey, ConnectMetricPoint, ConnectRealtimeStatus, IfaceRealtimeStat,
+    IpHistoryStat, IpRealtimeStat, MetricResolution,
 };
 use landscape_common::metric::dns::{
     DnsHistoryQueryParams, DnsHistoryResponse, DnsLightweightSummaryResponse, DnsMetric,
@@ -389,9 +390,13 @@ async fn run_hot_thread(
                 publish_connect_realtime_snapshot(&flow_cache, &connect_snapshot, now_ms);
                 publish_iface_realtime_snapshot(&flow_cache, &iface_snapshot, now_ms);
 
-                let summary_cutoff = now_ms.saturating_sub(metric_config.connect_1d_retention_days * MS_PER_DAY);
+                let summary_cutoff = now_ms.saturating_sub(metric_config.connect_summary_retention_days * MS_PER_DAY);
                 if let Err(error) = hot_sqlite::cleanup_old_summaries(&hot_pool, summary_cutoff).await {
                     tracing::error!("failed to cleanup hot conn_summaries: {}", error);
+                }
+
+                if let Err(error) = hot_sqlite::enforce_summary_max_rows(&hot_pool, metric_config.connect_summary_max_rows).await {
+                    tracing::error!("failed to enforce conn_summaries max rows: {}", error);
                 }
 
                 tracing::info!(
@@ -930,6 +935,19 @@ impl DuckMetricStore {
         })
         .await
     }
+
+    pub async fn query_connection_aggregates(
+        &self,
+        params: ConnectAggregateQueryParams,
+    ) -> Vec<ConnectAggregatePoint> {
+        self.run_cold_query_default(task_label::op::METRIC_CONNECT_AGGREGATES, move |pool| {
+            let Ok(conn) = pool.get() else {
+                return Vec::new();
+            };
+            connect_query::query_connection_aggregates(&conn, params)
+        })
+        .await
+    }
 }
 
 #[cfg(test)]
@@ -957,6 +975,8 @@ mod tests {
             connect_1h_retention_days: 30,
             connect_1d_retention_days: 90,
             connect_aggregate_retention_days: 180,
+            connect_summary_retention_days: 90,
+            connect_summary_max_rows: 0,
             dns_retention_days: 7,
             write_batch_size: 16,
             write_flush_interval_secs: 1,

@@ -82,6 +82,7 @@ pub const DEFAULT_DNS_METRIC_RETENTION_DAYS: u64 = 7;
 /// long horizon cheap, which is what lets connection detail be kept briefly.
 pub const DEFAULT_METRIC_CONNECT_AGGREGATE_RETENTION_DAYS: u64 = 90;
 pub const DEFAULT_METRIC_CONNECT_SECOND_WINDOW_MINUTES: u64 = 5;
+pub const DEFAULT_METRIC_CONNECT_SUMMARY_MAX_ROWS: u64 = 0;
 
 // Metric Performance & Storage Defaults
 pub const DEFAULT_METRIC_WRITE_BATCH_SIZE: usize = 20_000;

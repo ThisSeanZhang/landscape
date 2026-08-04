@@ -1,9 +1,10 @@
 use axum::extract::{Query, State};
 use landscape_common::api_response::LandscapeApiResp as CommonApiResp;
 use landscape_common::metric::connect::{
-    ConnectGlobalStats, ConnectHistoryQueryParams, ConnectHistoryStatus, ConnectMetricPoint,
-    ConnectRealtimeStatus, GetConnectGlobalStatsParams, IfaceRealtimeStat, IpHistoryStat,
-    IpRealtimeStat, MetricChartRequest,
+    ConnectAggregatePoint, ConnectAggregateQueryParams, ConnectGlobalStats,
+    ConnectHistoryQueryParams, ConnectHistoryStatus, ConnectMetricPoint, ConnectRealtimeStatus,
+    GetConnectGlobalStatsParams, IfaceRealtimeStat, IpHistoryStat, IpRealtimeStat,
+    MetricChartRequest,
 };
 use landscape_common::metric::dns::{
     DnsHistoryQueryParams, DnsHistoryResponse, DnsLightweightSummaryResponse,
@@ -25,6 +26,7 @@ pub fn get_metric_paths() -> OpenApiRouter<LandscapeApp> {
         .routes(routes!(get_connect_metric_info))
         .routes(routes!(get_connect_history))
         .routes(routes!(get_connect_global_stats))
+        .routes(routes!(get_connect_aggregates))
         .routes(routes!(get_iface_stats))
         .routes(routes!(get_src_ip_stats))
         .routes(routes!(get_dst_ip_stats))
@@ -121,6 +123,22 @@ async fn get_connect_global_stats(
     Query(params): Query<GetConnectGlobalStatsParams>,
 ) -> LandscapeApiResult<ConnectGlobalStats> {
     let data = state.metric_service.get_global_stats(params.force_refresh.unwrap_or(false)).await?;
+    LandscapeApiResp::success(data)
+}
+
+#[utoipa::path(
+    get,
+    path = "/connections/aggregates",
+    tag = "Metric",
+    operation_id = "get_connect_aggregates",
+    params(ConnectAggregateQueryParams),
+    responses((status = 200, body = CommonApiResp<Vec<ConnectAggregatePoint>>))
+)]
+async fn get_connect_aggregates(
+    State(state): State<LandscapeApp>,
+    Query(params): Query<ConnectAggregateQueryParams>,
+) -> LandscapeApiResult<Vec<ConnectAggregatePoint>> {
+    let data = state.metric_service.query_connection_aggregates(params).await;
     LandscapeApiResp::success(data)
 }
 

@@ -11,6 +11,8 @@ export const useMetricConfigStore = defineStore("metric_config", () => {
   const connect1mRetentionDays = ref<number | undefined>(undefined);
   const connect1hRetentionDays = ref<number | undefined>(undefined);
   const connect1dRetentionDays = ref<number | undefined>(undefined);
+  const connectSummaryRetentionDays = ref<number | undefined>(undefined);
+  const connectSummaryMaxRows = ref<number | undefined>(undefined);
   const dnsRetentionDays = ref<number | undefined>(undefined);
   const writeBatchSize = ref<number | undefined>(undefined);
   const writeFlushIntervalSecs = ref<number | undefined>(undefined);
@@ -32,6 +34,9 @@ export const useMetricConfigStore = defineStore("metric_config", () => {
       metric.connect_1h_retention_days ?? undefined;
     connect1dRetentionDays.value =
       metric.connect_1d_retention_days ?? undefined;
+    connectSummaryRetentionDays.value =
+      metric.connect_summary_retention_days ?? undefined;
+    connectSummaryMaxRows.value = metric.connect_summary_max_rows ?? undefined;
     dnsRetentionDays.value = metric.dns_retention_days ?? undefined;
     writeBatchSize.value = metric.write_batch_size ?? undefined;
     writeFlushIntervalSecs.value =
@@ -52,6 +57,8 @@ export const useMetricConfigStore = defineStore("metric_config", () => {
       connect_1m_retention_days: connect1mRetentionDays.value,
       connect_1h_retention_days: connect1hRetentionDays.value,
       connect_1d_retention_days: connect1dRetentionDays.value,
+      connect_summary_retention_days: connectSummaryRetentionDays.value,
+      connect_summary_max_rows: connectSummaryMaxRows.value,
       dns_retention_days: dnsRetentionDays.value,
       write_batch_size: writeBatchSize.value,
       write_flush_interval_secs: writeFlushIntervalSecs.value,
@@ -77,6 +84,8 @@ export const useMetricConfigStore = defineStore("metric_config", () => {
     connect1mRetentionDays,
     connect1hRetentionDays,
     connect1dRetentionDays,
+    connectSummaryRetentionDays,
+    connectSummaryMaxRows,
     dnsRetentionDays,
     writeBatchSize,
     writeFlushIntervalSecs,

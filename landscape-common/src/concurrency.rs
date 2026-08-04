@@ -153,6 +153,8 @@ pub mod task_label {
         pub const METRIC_DNS_SUMMARY: &str = "metric.dns_summary";
         /// Query lightweight DNS summary statistics.
         pub const METRIC_DNS_LIGHTWEIGHT_SUMMARY: &str = "metric.dns_lightweight_summary";
+        /// Query bounded-cardinality connection aggregates.
+        pub const METRIC_CONNECT_AGGREGATES: &str = "metric.connect_aggregates";
     }
 }
 
