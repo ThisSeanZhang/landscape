@@ -310,7 +310,98 @@ pub fn add_ipv4_wan_ip(
     mac: Option<MacAddr>,
 ) {
     let wan_ip_binding = libbpf_rs::MapHandle::from_pinned_path(&MAP_PATHS.wan_ip).unwrap();
+
+    // Read the previous WAN IP before overwriting. If it differs from the new
+    // one, flush stale dynamic NAT egress mappings that still reference it.
+    let mut key = wan_ip_info_key::default();
+    key.ifindex = ifindex;
+    key.l3_protocol = LANDSCAPE_IPV4_TYPE;
+    let key_bytes = unsafe { plain::as_bytes(&key) };
+    if let Ok(Some(old_value_bytes)) = wan_ip_binding.lookup(key_bytes, MapFlags::ANY) {
+        if old_value_bytes.len() >= std::mem::size_of::<wan_ip_info_value>() {
+            let old_value: &wan_ip_info_value =
+                unsafe { &*(old_value_bytes.as_ptr() as *const wan_ip_info_value) };
+            let old_ip = Ipv4Addr::from(u32::from_be(unsafe { old_value.addr.ip }));
+            if old_ip != addr {
+                flush_stale_nat4_egress_mappings(old_ip);
+            }
+        }
+    }
+
     add_wan_ip(&wan_ip_binding, ifindex, IpAddr::V4(addr), gateway.map(IpAddr::V4), mask, mac);
+}
+
+/// Remove dynamic NAT egress mappings whose mapped source address equals
+/// `old_wan_ip`. Called when the WAN IP changes (e.g. PPPoE redial) so that
+/// long-lived UDP flows (WireGuard, Tailscale) are forced to recreate mappings
+/// with the new address instead of silently sending packets from the stale one.
+fn flush_stale_nat4_egress_mappings(old_wan_ip: Ipv4Addr) {
+    let egress_map = match libbpf_rs::MapHandle::from_pinned_path(&MAP_PATHS.nat4_egress_dyn_map) {
+        Ok(map) => map,
+        Err(e) => {
+            tracing::warn!("cannot open nat4_egress_dyn_map for flush: {e}");
+            return;
+        }
+    };
+    let ingress_map = match libbpf_rs::MapHandle::from_pinned_path(&MAP_PATHS.nat4_ingress_dyn_map)
+    {
+        Ok(map) => map,
+        Err(e) => {
+            tracing::warn!("cannot open nat4_ingress_dyn_map for flush: {e}");
+            return;
+        }
+    };
+
+    flush_nat4_dyn_maps_by_old_ip(&egress_map, &ingress_map, old_wan_ip);
+}
+
+/// Core flush logic: iterate `egress_map`, delete entries whose mapped source
+/// address (value bytes 0..4) equals `old_wan_ip`, and delete the corresponding
+/// entries from `ingress_map`.
+pub(crate) fn flush_nat4_dyn_maps_by_old_ip(
+    egress_map: &impl MapCore,
+    ingress_map: &impl MapCore,
+    old_wan_ip: Ipv4Addr,
+) -> usize {
+    let old_ip_bytes = old_wan_ip.octets();
+
+    // Collect keys to delete (cannot delete while iterating).
+    let mut stale_egress_keys: Vec<Vec<u8>> = Vec::new();
+    let mut stale_ingress_keys: Vec<Vec<u8>> = Vec::new();
+
+    for key in egress_map.keys() {
+        if let Ok(Some(value)) = egress_map.lookup(&key, MapFlags::ANY) {
+            // nat4_egress_mapping_value_v3.addr is at offset 0, 4 bytes (big-endian).
+            if value.len() >= 4 && value[..4] == old_ip_bytes {
+                stale_egress_keys.push(key.clone());
+                // Build the corresponding ingress key: flip gress and use the
+                // mapped (WAN-side) addr/port as from_addr/from_port.
+                // Key layout: gress(1) + l4proto(1) + from_port(2) + from_addr(4) = 8 bytes
+                if key.len() >= 8 && value.len() >= 6 {
+                    let mut ingress_key = key.clone();
+                    ingress_key[0] = crate::NAT_MAPPING_INGRESS;
+                    // from_port = mapped port (value offset 4, 2 bytes)
+                    ingress_key[2..4].copy_from_slice(&value[4..6]);
+                    // from_addr = mapped addr (value offset 0, 4 bytes)
+                    ingress_key[4..8].copy_from_slice(&value[..4]);
+                    stale_ingress_keys.push(ingress_key);
+                }
+            }
+        }
+    }
+
+    let flushed = stale_egress_keys.len();
+    for key in &stale_egress_keys {
+        let _ = egress_map.delete(key);
+    }
+    for key in &stale_ingress_keys {
+        let _ = ingress_map.delete(key);
+    }
+
+    if flushed > 0 {
+        tracing::info!("flushed {flushed} stale NAT4 egress mappings for old WAN IP {old_wan_ip}");
+    }
+    flushed
 }
 
 /// Compute the NPT (Network Prefix Translation) mask for IPv6 prefix translation.

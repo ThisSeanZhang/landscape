@@ -135,7 +135,7 @@ pub fn attach_tc_nat(ifindex: u32, has_mac: bool, config: &NatConfig) -> LdEbpfR
     pin_and_reuse_map(&mut open_skel.maps.nat4_static_map, &MAP_PATHS.nat4_static_map)?;
     pin_and_reuse_map(&mut open_skel.maps.nat_metric_events, &MAP_PATHS.nat_metric_events)?;
 
-    let skel = bpf_ctx!(open_skel.load(), "load tc_nat skeleton")?;
+    let mut skel = bpf_ctx!(open_skel.load(), "load tc_nat skeleton")?;
 
     seed_runtime_queues(
         &skel.maps.nat4_tcp_port_queue,
@@ -143,6 +143,23 @@ pub fn attach_tc_nat(ifindex: u32, has_mac: bool, config: &NatConfig) -> LdEbpfR
         &skel.maps.nat4_icmp_port_queue,
         config,
     );
+
+    let _ = std::fs::remove_file(&MAP_PATHS.nat4_egress_dyn_map);
+    let _ = std::fs::remove_file(&MAP_PATHS.nat4_ingress_dyn_map);
+    skel.maps
+        .nat4_egress_dyn_map
+        .pin(MAP_PATHS.nat4_egress_dyn_map.to_str().unwrap_or_default())
+        .map_err(|e| crate::bpf_error::LandscapeEbpfError::Context {
+        context: "pin nat4_egress_dyn_map".to_string(),
+        source: e,
+    })?;
+    skel.maps
+        .nat4_ingress_dyn_map
+        .pin(MAP_PATHS.nat4_ingress_dyn_map.to_str().unwrap_or_default())
+        .map_err(|e| crate::bpf_error::LandscapeEbpfError::Context {
+            context: "pin nat4_ingress_dyn_map".to_string(),
+            source: e,
+        })?;
 
     let entry = StageEntry {
         wan_ingress_prog_fd: skel.progs.tc_nat_wan_ingress.as_fd().as_raw_fd(),
@@ -209,7 +226,7 @@ fn init_nat_xdp_unified(
     pin_and_reuse_map(&mut tc_open.maps.nat4_static_map, &MAP_PATHS.nat4_static_map)?;
     pin_and_reuse_map(&mut tc_open.maps.nat_metric_events, &MAP_PATHS.nat_metric_events)?;
 
-    let tc_skel = bpf_ctx!(tc_open.load(), "load tc_nat skeleton")?;
+    let mut tc_skel = bpf_ctx!(tc_open.load(), "load tc_nat skeleton")?;
 
     seed_runtime_queues(
         &tc_skel.maps.nat4_tcp_port_queue,
@@ -217,6 +234,26 @@ fn init_nat_xdp_unified(
         &tc_skel.maps.nat4_icmp_port_queue,
         config,
     );
+
+    // Pin dynamic NAT maps so userspace can flush stale entries on WAN IP change.
+    let _ = std::fs::remove_file(&MAP_PATHS.nat4_egress_dyn_map);
+    let _ = std::fs::remove_file(&MAP_PATHS.nat4_ingress_dyn_map);
+    tc_skel
+        .maps
+        .nat4_egress_dyn_map
+        .pin(MAP_PATHS.nat4_egress_dyn_map.to_str().unwrap_or_default())
+        .map_err(|e| crate::bpf_error::LandscapeEbpfError::Context {
+            context: "pin nat4_egress_dyn_map".to_string(),
+            source: e,
+        })?;
+    tc_skel
+        .maps
+        .nat4_ingress_dyn_map
+        .pin(MAP_PATHS.nat4_ingress_dyn_map.to_str().unwrap_or_default())
+        .map_err(|e| crate::bpf_error::LandscapeEbpfError::Context {
+            context: "pin nat4_ingress_dyn_map".to_string(),
+            source: e,
+        })?;
 
     // ── 2. Open XDP nat, reuse TC's runtime map FDs ──
 
