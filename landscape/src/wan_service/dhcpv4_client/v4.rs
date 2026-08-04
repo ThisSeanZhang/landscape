@@ -256,7 +256,8 @@ pub async fn dhcp_v4_client(
                 match packet_res {
                     Ok(packet) => {
                         let need_reset_time = handle_packet(&mut status, packet,
-                            &mut ip_arg, default_router, &iface_name, ifindex, &route_service, &mac_addr).await;
+                            &mut ip_arg, default_router, &iface_name, ifindex, &route_service,
+                            &mac_addr).await;
 
                         if matches!(status, DhcpState::Bound { .. }) {
                             connect_failure_count = 0;
@@ -634,38 +635,10 @@ async fn bind_ipv4(
     };
     route_service.insert_ipv4_lan_route(&iface_name, lan_info).await;
 
-    let mut gateway_ip = None;
-    if let Some(DhcpOption::Router(router_ips)) = options.get(OptionCode::Router) {
-        if let Some(router_ip) = router_ips.get(0) {
-            gateway_ip = Some(router_ip.clone());
-            route_service
-                .insert_ipv4_wan_route(
-                    &iface_name,
-                    RouteTargetInfo {
-                        ifindex: ifindex,
-                        weight: 1,
-                        mac: Some(mac_addr.clone()),
-                        is_docker: false,
-                        default_route: default_router,
-                        iface_name: iface_name.to_string(),
-                        iface_ip: IpAddr::V4(new_yiaddr),
-                        gateway_ip: IpAddr::V4(router_ip.clone()),
-                    },
-                )
-                .await;
-            if default_router {
-                LD_ALL_ROUTERS
-                    .add_route(RouteInfo {
-                        iface_name: iface_name.to_string(),
-                        weight: 1,
-                        route: RouteType::Ipv4(router_ip.clone()),
-                    })
-                    .await;
-            } else {
-                LD_ALL_ROUTERS.del_route_by_iface(iface_name).await;
-            }
-        }
-    }
+    let gateway_ip = match options.get(OptionCode::Router) {
+        Some(DhcpOption::Router(router_ips)) => router_ips.first().copied(),
+        _ => None,
+    };
     landscape_ebpf::map_setting::add_ipv4_wan_ip(
         ifindex,
         new_yiaddr.clone(),
@@ -673,6 +646,35 @@ async fn bind_ipv4(
         mask as u8,
         Some(mac_addr.clone()),
     );
+
+    if let Some(router_ip) = gateway_ip {
+        route_service
+            .insert_ipv4_wan_route(
+                &iface_name,
+                RouteTargetInfo {
+                    ifindex: ifindex,
+                    weight: 1,
+                    mac: Some(mac_addr.clone()),
+                    is_docker: false,
+                    default_route: default_router,
+                    iface_name: iface_name.to_string(),
+                    iface_ip: IpAddr::V4(new_yiaddr),
+                    gateway_ip: IpAddr::V4(router_ip),
+                },
+            )
+            .await;
+        if default_router {
+            LD_ALL_ROUTERS
+                .add_route(RouteInfo {
+                    iface_name: iface_name.to_string(),
+                    weight: 1,
+                    route: RouteType::Ipv4(router_ip),
+                })
+                .await;
+        } else {
+            LD_ALL_ROUTERS.del_route_by_iface(iface_name).await;
+        }
+    }
 
     let renew_time = tokio::time::Instant::now() + Duration::from_secs(renew_time);
     let rebinding_time = Instant::now() + Duration::from_secs(rebinding_time);

@@ -130,6 +130,8 @@ pub mod task_label {
         pub const NAT_STOP: &str = "nat.service.stop";
         /// NAT observer task reacting to interface events.
         pub const NAT_OBSERVER: &str = "nat.service.observer";
+        /// NAT observer task reacting to WAN route events.
+        pub const NAT_WAN_ROUTE_OBSERVER: &str = "nat.service.wan_route_observer";
         /// EventHub dispatcher task that receives events and dispatches to domain broadcast channels.
         pub const EVENT_HUB_DISPATCHER: &str = "event.hub.dispatcher";
         /// eBPF neighbor update async task that periodically syncs ARP/NDP tables.

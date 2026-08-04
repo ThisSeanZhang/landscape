@@ -419,9 +419,12 @@ async fn run_system(
     )
     .await;
 
-    let nat_service =
-        NatServiceManagerService::new(db_store_provider.clone(), event_handle.subscribe_iface())
-            .await;
+    let nat_service = NatServiceManagerService::new(
+        db_store_provider.clone(),
+        event_handle.subscribe_iface(),
+        route_service.clone(),
+    )
+    .await;
 
     let wifi_service = WifiServiceManagerService::new(db_store_provider.clone()).await;
 
