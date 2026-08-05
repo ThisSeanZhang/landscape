@@ -1,7 +1,6 @@
 output
 .vscode/
 /target
-/assets
 /static
 vmlinux.h
 landscape-ebpf/src/bpf/vmlinux.h

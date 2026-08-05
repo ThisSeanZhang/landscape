@@ -1,0 +1,354 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="900" viewBox="0 0 1920 900" role="img" aria-labelledby="title desc">
+  <title id="title">Landscape Router architecture</title>
+  <desc id="desc">A grid-aligned overview of Landscape Router, showing the Rust control plane, per-flow DNS decision plane, pinned eBPF maps, and XDP and TC packet paths to WAN or container targets.</desc>
+
+  <defs>
+    <pattern id="grid" width="24" height="24" patternUnits="userSpaceOnUse">
+      <circle cx="1" cy="1" r="1" fill="#D8DDE5" opacity="0.28"/>
+    </pattern>
+    <filter id="shadow" x="-12%" y="-12%" width="124%" height="132%">
+      <feDropShadow dx="0" dy="3" stdDeviation="6" flood-color="#1F2329" flood-opacity="0.10"/>
+    </filter>
+    <marker id="blue-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0 0 L10 5 L0 10 Z" fill="#2080F0"/>
+    </marker>
+    <marker id="green-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0 0 L10 5 L0 10 Z" fill="#18A058"/>
+    </marker>
+    <marker id="gray-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0 0 L10 5 L0 10 Z" fill="#8791A0"/>
+    </marker>
+    <marker id="purple-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0 0 L10 5 L0 10 Z" fill="#8A5FC0"/>
+    </marker>
+    <style>
+      text { font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; letter-spacing: 0; }
+      .ink { fill: #1F2329; }
+      .muted { fill: #667085; }
+      .section { font-size: 13px; font-weight: 760; letter-spacing: 1.4px; }
+      .node-title { font-size: 16px; font-weight: 730; }
+      .copy { font-size: 12px; font-weight: 500; }
+      .chip { font-size: 10.5px; font-weight: 690; }
+      .line-label { font-size: 10px; font-weight: 740; }
+      .packet { fill: none; stroke: #2080F0; stroke-width: 3; stroke-linecap: square; stroke-linejoin: miter; marker-end: url(#blue-arrow); }
+      .packet-halo { fill: none; stroke: #2080F0; stroke-width: 9; stroke-opacity: 0.11; stroke-linecap: round; stroke-linejoin: round; }
+      .dns { fill: none; stroke: #18A058; stroke-width: 2.6; stroke-linecap: square; stroke-linejoin: miter; marker-end: url(#green-arrow); }
+      .dns-halo { fill: none; stroke: #18A058; stroke-width: 8; stroke-opacity: 0.11; stroke-linecap: round; stroke-linejoin: round; }
+      .control { fill: none; stroke: #8791A0; stroke-width: 1.8; stroke-dasharray: 5 6; stroke-linecap: square; stroke-linejoin: miter; marker-end: url(#gray-arrow); }
+      .proxy { fill: none; stroke: #8A5FC0; stroke-width: 2.8; stroke-linecap: square; stroke-linejoin: miter; marker-end: url(#purple-arrow); }
+      .proxy-halo { fill: none; stroke: #8A5FC0; stroke-width: 8; stroke-opacity: 0.11; stroke-linecap: round; stroke-linejoin: round; }
+      .reentry { fill: none; stroke: #2080F0; stroke-width: 2; stroke-dasharray: 7 6; stroke-linecap: square; stroke-linejoin: miter; marker-end: url(#blue-arrow); }
+      .title-halo { fill: none; stroke: #18A058; stroke-width: 7; stroke-opacity: 0.12; stroke-linejoin: round; }
+      .card-halo-primary { fill: none; stroke: #18A058; stroke-width: 8; stroke-opacity: 0.10; }
+      .card-halo-info { fill: none; stroke: #2080F0; stroke-width: 8; stroke-opacity: 0.10; }
+      .card-halo-warning { fill: none; stroke: #F0A020; stroke-width: 8; stroke-opacity: 0.10; }
+      .card-halo-proxy { fill: none; stroke: #8A5FC0; stroke-width: 8; stroke-opacity: 0.10; }
+      .panel-halo-primary { fill: none; stroke: #18A058; stroke-width: 12; stroke-opacity: 0.055; }
+      .panel-halo-info { fill: none; stroke: #2080F0; stroke-width: 12; stroke-opacity: 0.055; }
+      .panel-halo-warning { fill: none; stroke: #F0A020; stroke-width: 12; stroke-opacity: 0.055; }
+      .panel-halo-proxy { fill: none; stroke: #8A5FC0; stroke-width: 12; stroke-opacity: 0.055; }
+    </style>
+  </defs>
+
+  <rect width="1920" height="900" fill="#F6F7F9"/>
+  <rect width="1920" height="900" fill="url(#grid)"/>
+
+  <!-- Header -->
+  <g transform="translate(48 18)">
+    <text x="0" y="38" class="title-halo" font-size="33" font-weight="790">Landscape</text>
+    <text x="0" y="38" font-size="33" font-weight="790"><tspan fill="#18A058">Landscape</tspan><tspan class="ink" dx="8">· DNS-driven traffic steering</tspan></text>
+    <text x="0" y="65" class="muted" font-size="15" font-weight="500">Userspace decides. The Linux kernel routes.</text>
+  </g>
+
+  <!-- Control plane -->
+  <g>
+    <rect x="270" y="120" width="1340" height="185" rx="7" class="panel-halo-info"/>
+    <rect x="270" y="120" width="1340" height="185" rx="7" fill="#FFFFFF" stroke="#89B7CC" stroke-width="1.5" filter="url(#shadow)"/>
+    <rect x="270" y="120" width="1340" height="38" rx="7" fill="#EDF6FC"/>
+    <path d="M270 151 H1610" stroke="#C5D9E5"/>
+    <circle cx="295" cy="139" r="5" fill="#2080F0"/>
+    <text x="309" y="144" class="section" fill="#1769AA">RUST CONTROL &amp; SERVICE PLANE</text>
+
+    <g>
+      <rect x="300" y="174" width="280" height="82" rx="6" class="card-halo-info"/>
+      <rect x="300" y="174" width="280" height="82" rx="6" fill="#FFFFFF" stroke="#CDD2DA" stroke-width="1.3"/>
+      <rect x="319" y="192" width="30" height="23" rx="3" fill="none" stroke="#2080F0" stroke-width="1.6"/>
+      <path d="M319 199 H349 M327 220 H341 M334 215 V220" fill="none" stroke="#2080F0" stroke-width="1.5" stroke-linecap="round"/>
+      <text x="365" y="204" class="node-title ink">Management</text>
+      <text x="319" y="239" class="copy muted">Web UI / REST API / OpenAPI</text>
+    </g>
+
+    <g>
+      <rect x="610" y="174" width="280" height="82" rx="6" class="card-halo-info"/>
+      <rect x="610" y="174" width="280" height="82" rx="6" fill="#FFFFFF" stroke="#CDD2DA" stroke-width="1.3"/>
+      <circle cx="633" cy="202" r="9" fill="#EDF6FC" stroke="#2080F0" stroke-width="1.4"/>
+      <path d="M633 196 V208 M627 202 H639" stroke="#2080F0" stroke-width="1.5" stroke-linecap="round"/>
+      <text x="653" y="207" class="node-title ink">Runtime core</text>
+      <text x="630" y="239" class="copy muted">Services / EventHub / Netlink</text>
+    </g>
+
+    <g>
+      <rect x="920" y="174" width="280" height="82" rx="6" class="card-halo-primary"/>
+      <rect x="920" y="174" width="280" height="82" rx="6" fill="#F1FAF6" stroke="#0C7A55" stroke-width="1.4"/>
+      <path d="M944 193 L953 202 L944 211 L935 202 Z" fill="#D8F4E8" stroke="#18A058" stroke-width="1.4"/>
+      <text x="968" y="207" class="node-title ink">Policy services</text>
+      <text x="940" y="239" class="copy muted">Flow / DNS / GeoSite / GeoIP</text>
+    </g>
+
+    <g>
+      <rect x="1230" y="174" width="350" height="82" rx="6" class="card-halo-warning"/>
+      <rect x="1230" y="174" width="350" height="82" rx="6" fill="#FFF8EB" stroke="#D49313" stroke-width="1.4"/>
+      <path d="M1254 190 V213 M1246 198 H1262 M1246 213 H1262" fill="none" stroke="#F0A020" stroke-width="1.6" stroke-linecap="round"/>
+      <text x="1277" y="207" class="node-title ink">Network services</text>
+      <text x="1250" y="239" class="copy muted">LAN / WAN / IPv6 / Wi-Fi / Docker</text>
+    </g>
+
+    <path d="M580 215 H600" class="control"/>
+    <path d="M890 215 H910" class="control"/>
+    <path d="M1200 215 H1220" class="control"/>
+
+    <rect x="300" y="270" width="1280" height="22" rx="4" fill="#EFF1F4"/>
+    <text x="940" y="285" class="chip muted" text-anchor="middle">SQLite configuration  /  Geo data  /  DuckDB telemetry  /  ACME certificates  /  Gateway</text>
+  </g>
+
+  <!-- LAN side rail -->
+  <g>
+    <rect x="50" y="335" width="140" height="495" rx="7" fill="#FFFFFF" stroke="#CDD2DA" stroke-width="1.5" filter="url(#shadow)"/>
+    <rect x="50" y="335" width="140" height="38" rx="7" fill="#EFF1F4"/>
+    <circle cx="74" cy="354" r="5" fill="#667085"/>
+    <text x="88" y="359" class="section muted">CLIENTS</text>
+
+    <g transform="translate(65 402) scale(0.8)" fill="none" stroke="#667085" stroke-width="2">
+      <rect width="72" height="44" rx="4"/>
+      <path d="M-7 52 H79 L70 44 H2 Z" fill="#EFF1F4"/>
+      <path d="M28 48 H43" stroke-linecap="round"/>
+    </g>
+    <g transform="translate(148 398) scale(0.8)" fill="none" stroke="#667085" stroke-width="2">
+      <rect width="28" height="54" rx="6"/>
+      <path d="M9 46 H19" stroke-linecap="round"/>
+    </g>
+
+    <g transform="translate(67 492) scale(0.78)">
+      <rect width="136" height="26" rx="5" fill="#EFF1F4" stroke="#667085" stroke-width="1.7"/>
+      <rect y="34" width="136" height="26" rx="5" fill="#EFF1F4" stroke="#667085" stroke-width="1.7"/>
+      <rect y="68" width="136" height="26" rx="5" fill="#EFF1F4" stroke="#667085" stroke-width="1.7"/>
+      <circle cx="14" cy="13" r="3" fill="#18A058"/>
+      <circle cx="14" cy="47" r="3" fill="#18A058"/>
+      <circle cx="14" cy="81" r="3" fill="#18A058"/>
+      <path d="M28 13 H117 M28 47 H117 M28 81 H117" stroke="#7B8492" stroke-width="1.4" stroke-linecap="round"/>
+    </g>
+
+    <text x="120" y="620" class="node-title ink" text-anchor="middle">Client devices</text>
+    <text x="120" y="644" class="copy muted" text-anchor="middle">Device / MAC / IP</text>
+    <text x="120" y="664" class="copy muted" text-anchor="middle">bind DNS and packets</text>
+    <text x="120" y="684" class="copy muted" text-anchor="middle">to the same Flow</text>
+
+    <rect x="64" y="730" width="112" height="60" rx="5" fill="#EFF1F4"/>
+    <text x="120" y="751" class="chip muted" text-anchor="middle">LAN SERVICES</text>
+    <text x="120" y="769" class="chip muted" text-anchor="middle">DHCPv4 / RA</text>
+    <text x="120" y="784" class="chip muted" text-anchor="middle">DHCPv6</text>
+  </g>
+
+  <!-- DNS plane -->
+  <g>
+    <rect x="270" y="335" width="1340" height="180" rx="7" class="panel-halo-primary"/>
+    <rect x="270" y="335" width="1340" height="180" rx="7" fill="#FFFFFF" stroke="#36A77A" stroke-width="1.5" filter="url(#shadow)"/>
+    <rect x="270" y="335" width="1340" height="38" rx="7" fill="#ECF8F3"/>
+    <path d="M270 366 H1610" stroke="#B9E0D0"/>
+    <circle cx="295" cy="354" r="5" fill="#18A058"/>
+    <text x="309" y="359" class="section" fill="#0C7A55">PER-FLOW DNS DECISION PLANE</text>
+
+    <g>
+      <rect x="300" y="400" width="260" height="82" rx="6" class="card-halo-primary"/>
+      <rect x="300" y="400" width="260" height="82" rx="6" fill="#FAFDFC" stroke="#91CDB4" stroke-width="1.3"/>
+      <path d="M320 425 H345 M320 433 H351 M320 441 H340" stroke="#18A058" stroke-width="1.7" stroke-linecap="round"/>
+      <text x="364" y="428" class="node-title ink">DNS dispatcher</text>
+      <text x="320" y="463" class="copy muted">reuseport eBPF: source to Flow</text>
+    </g>
+
+    <g>
+      <rect x="680" y="392" width="420" height="98" rx="6" class="card-halo-primary"/>
+      <rect x="680" y="392" width="420" height="98" rx="6" fill="#F1FAF6" stroke="#36A77A" stroke-width="1.5"/>
+      <text x="700" y="420" class="node-title ink">Isolated DNS runtime per Flow</text>
+      <text x="700" y="441" class="copy muted">Rules / redirects / cache / marked upstream</text>
+      <g transform="translate(700 454)">
+        <rect width="65" height="25" rx="4" fill="#FFFFFF" stroke="#91CDB4"/>
+        <rect x="75" width="65" height="25" rx="4" fill="#FFFFFF" stroke="#91CDB4"/>
+        <rect x="150" width="77" height="25" rx="4" fill="#FFFFFF" stroke="#91CDB4"/>
+        <circle cx="11" cy="12.5" r="3.5" fill="#18A058"/>
+        <circle cx="86" cy="12.5" r="3.5" fill="#18A058"/>
+        <circle cx="161" cy="12.5" r="3.5" fill="#18A058"/>
+        <text x="21" y="17" class="chip ink">Flow 0</text>
+        <text x="96" y="17" class="chip ink">Flow 1</text>
+        <text x="171" y="17" class="chip ink">Flow N</text>
+      </g>
+    </g>
+
+    <g>
+      <rect x="1220" y="400" width="360" height="82" rx="6" class="card-halo-primary"/>
+      <rect x="1220" y="400" width="360" height="82" rx="6" fill="#FAFDFC" stroke="#91CDB4" stroke-width="1.3"/>
+      <path d="M1242 430 C1242 419 1258 416 1264 424 C1271 413 1290 418 1290 431 C1300 431 1304 443 1296 449 H1239 C1229 442 1234 431 1242 430 Z" fill="#D8F4E8" stroke="#18A058" stroke-width="1.4"/>
+      <text x="1312" y="428" class="node-title ink">DNS upstreams</text>
+      <text x="1312" y="451" class="copy muted">UDP/TCP / DoT</text>
+      <text x="1312" y="469" class="copy muted">DoH / DoQ</text>
+    </g>
+
+    <text x="230" y="428" class="line-label" fill="#0C7A55" text-anchor="middle">DNS</text>
+    <path d="M190 441 H290" class="dns-halo"/>
+    <path d="M560 441 H670" class="dns-halo"/>
+    <path d="M1100 441 H1210" class="dns-halo"/>
+    <path d="M190 441 H290" class="dns"/>
+    <path d="M560 441 H670" class="dns"/>
+    <path d="M1100 441 H1210" class="dns"/>
+  </g>
+
+  <!-- Kernel data plane -->
+  <g>
+    <rect x="270" y="580" width="1340" height="250" rx="7" class="panel-halo-warning"/>
+    <rect x="270" y="580" width="1340" height="250" rx="7" fill="#FFFFFF" stroke="#D49313" stroke-width="1.5" filter="url(#shadow)"/>
+    <rect x="270" y="580" width="1340" height="38" rx="7" fill="#FFF3DA"/>
+    <path d="M270 611 H1610" stroke="#E9C774"/>
+    <circle cx="295" cy="599" r="5" fill="#F0A020"/>
+    <text x="309" y="604" class="section" fill="#A86A00">LINUX KERNEL DATA PLANE / eBPF XDP + TC</text>
+
+    <!-- Aligned map row -->
+    <text x="300" y="651" class="line-label" fill="#0C7A55">PINNED MAPS</text>
+    <rect x="570" y="631" width="160" height="35" rx="5" fill="#EAF8F2" stroke="#A9D8C4"/>
+    <rect x="850" y="631" width="170" height="35" rx="5" fill="#EAF8F2" stroke="#A9D8C4"/>
+    <rect x="1140" y="631" width="150" height="35" rx="5" fill="#EAF8F2" stroke="#A9D8C4"/>
+    <text x="650" y="654" class="chip ink" text-anchor="middle">source to Flow</text>
+    <text x="935" y="654" class="chip ink" text-anchor="middle">DNS / IP verdicts</text>
+    <text x="1215" y="654" class="chip ink" text-anchor="middle">weighted targets</text>
+
+    <!-- Packet row -->
+    <g>
+      <rect x="300" y="710" width="150" height="100" rx="6" class="card-halo-warning"/>
+      <rect x="300" y="710" width="150" height="100" rx="6" fill="#FFF8EB" stroke="#D49313" stroke-width="1.4"/>
+      <rect x="319" y="728" width="32" height="26" rx="4" fill="#FFE3AD"/>
+      <path d="M326 736 H344 M326 743 H340 M326 750 H336" stroke="#A86A00" stroke-width="1.6" stroke-linecap="round"/>
+      <text x="364" y="741" class="node-title ink">Ingress</text>
+      <text x="319" y="774" class="copy muted">Parse IPv4 / IPv6</text>
+      <text x="319" y="794" class="copy muted">XDP fast path + TC</text>
+    </g>
+
+    <g>
+      <rect x="570" y="710" width="160" height="100" rx="6" class="card-halo-warning"/>
+      <rect x="570" y="710" width="160" height="100" rx="6" fill="#FFF8EB" stroke="#D49313" stroke-width="1.4"/>
+      <text x="590" y="741" class="node-title ink">Classify Flow</text>
+      <text x="590" y="774" class="copy muted">Device / MAC / IP</text>
+      <text x="590" y="794" class="copy muted">default: Flow 0</text>
+    </g>
+
+    <g>
+      <rect x="850" y="698" width="170" height="122" rx="6" class="card-halo-primary"/>
+      <rect x="850" y="698" width="170" height="122" rx="6" fill="#F1FAF6" stroke="#36A77A" stroke-width="1.5"/>
+      <text x="870" y="727" class="node-title ink">Policy verdict</text>
+      <text x="870" y="748" class="copy muted">priority match</text>
+      <g transform="translate(870 761)">
+        <rect width="57" height="22" rx="4" fill="#FFFFFF" stroke="#91CDB4"/>
+        <rect x="64" width="63" height="22" rx="4" fill="#FFFFFF" stroke="#91CDB4"/>
+        <rect y="29" width="76" height="22" rx="4" fill="#FFFFFF" stroke="#91CDB4"/>
+        <rect x="83" y="29" width="44" height="22" rx="4" fill="#FFF0F1" stroke="#D03050"/>
+        <text x="28.5" y="15" class="chip ink" text-anchor="middle">keep</text>
+        <text x="95.5" y="15" class="chip ink" text-anchor="middle">direct</text>
+        <text x="38" y="44" class="chip ink" text-anchor="middle">redirect</text>
+        <text x="105" y="44" class="chip" fill="#D03050" text-anchor="middle">drop</text>
+      </g>
+    </g>
+
+    <g>
+      <rect x="1140" y="710" width="150" height="100" rx="6" fill="#FFFFFF" stroke="#B8C0CC" stroke-width="1.4"/>
+      <text x="1160" y="741" class="node-title ink">Pick target</text>
+      <text x="1160" y="774" class="copy muted">Weighted slots</text>
+      <text x="1160" y="794" class="copy muted">Interface / netns</text>
+    </g>
+
+    <g>
+      <rect x="1410" y="685" width="170" height="72" rx="6" class="card-halo-info"/>
+      <rect x="1410" y="685" width="170" height="72" rx="6" fill="#FFFFFF" stroke="#B8C0CC" stroke-width="1.4"/>
+      <text x="1430" y="711" class="node-title ink">WAN chain</text>
+      <text x="1430" y="731" class="copy muted">MSS / Firewall / NAT</text>
+      <text x="1430" y="749" class="copy muted">PPPoE when enabled</text>
+    </g>
+
+    <g>
+      <rect x="1410" y="780" width="170" height="40" rx="6" class="card-halo-proxy"/>
+      <rect x="1410" y="780" width="170" height="40" rx="6" fill="#F7F3FC" stroke="#7D55B3" stroke-width="1.4"/>
+      <text x="1495" y="805" class="node-title ink" text-anchor="middle">veth / TProxy</text>
+    </g>
+
+    <!-- Map lookups: vertical and aligned -->
+    <path d="M650 666 V700" class="control"/>
+    <path d="M935 666 V688" class="control"/>
+    <path d="M1215 666 V700" class="control"/>
+
+    <!-- Packet path: horizontal and orthogonal -->
+    <text x="235" y="747" class="line-label" fill="#1769AA" text-anchor="middle">PACKETS</text>
+    <path d="M190 760 H290" class="packet-halo"/>
+    <path d="M450 760 H560" class="packet-halo"/>
+    <path d="M730 760 H840" class="packet-halo"/>
+    <path d="M1020 760 H1130" class="packet-halo"/>
+    <path d="M1290 760 H1350 V721 H1400" class="packet-halo"/>
+    <path d="M1290 760 H1350 V800 H1400" class="proxy-halo"/>
+    <path d="M190 760 H290" class="packet"/>
+    <path d="M450 760 H560" class="packet"/>
+    <path d="M730 760 H840" class="packet"/>
+    <path d="M1020 760 H1130" class="packet"/>
+    <path d="M1290 760 H1350 V721 H1400" class="packet"/>
+    <path d="M1290 760 H1350 V800 H1400" class="proxy"/>
+    <circle cx="1350" cy="760" r="4" fill="#8791A0"/>
+  </g>
+
+  <!-- DNS answers update the aligned verdict map -->
+  <path d="M935 490 V621" class="dns-halo"/>
+  <path d="M935 490 V621" class="dns"/>
+  <rect x="948" y="535" width="124" height="22" rx="4" fill="#DDF5EA"/>
+  <text x="1010" y="550" class="line-label" fill="#0C7A55" text-anchor="middle">answers update map</text>
+
+  <!-- Target rail -->
+  <g>
+    <rect x="1650" y="580" width="220" height="250" rx="7" class="panel-halo-proxy"/>
+    <rect x="1650" y="580" width="220" height="250" rx="7" fill="#FFFFFF" stroke="#CDD2DA" stroke-width="1.5" filter="url(#shadow)"/>
+    <rect x="1650" y="580" width="220" height="38" rx="7" fill="#EFF1F4"/>
+    <circle cx="1674" cy="599" r="5" fill="#667085"/>
+    <text x="1688" y="604" class="section muted">TARGETS</text>
+
+    <g>
+      <rect x="1670" y="685" width="180" height="72" rx="6" class="card-halo-info"/>
+      <rect x="1670" y="685" width="180" height="72" rx="6" fill="#F2F8FC" stroke="#2080F0" stroke-width="1.4"/>
+      <path d="M1699 708 C1699 699 1712 695 1718 702 C1724 693 1741 697 1741 708 C1750 708 1754 718 1747 724 H1696 C1687 718 1691 709 1699 708 Z" fill="#DDF1FB" stroke="#2080F0" stroke-width="1.3"/>
+      <text x="1762" y="719" class="node-title ink">WAN</text>
+      <text x="1760" y="744" class="copy muted" text-anchor="middle">Internet</text>
+    </g>
+
+    <g>
+      <rect x="1670" y="780" width="180" height="40" rx="6" class="card-halo-proxy"/>
+      <rect x="1670" y="780" width="180" height="40" rx="6" fill="#F7F3FC" stroke="#7D55B3" stroke-width="1.4"/>
+      <rect x="1690" y="790" width="27" height="20" rx="3" fill="#FFFFFF" stroke="#8A5FC0" stroke-width="1.2"/>
+      <path d="M1696 797 H1711 M1696 803 H1707" stroke="#7D55B3" stroke-width="1.2" stroke-linecap="round"/>
+      <text x="1733" y="805" class="node-title ink">Container</text>
+    </g>
+
+    <path d="M1580 721 H1660" class="packet-halo"/>
+    <path d="M1580 800 H1660" class="proxy-halo"/>
+    <path d="M1580 721 H1660" class="packet"/>
+    <path d="M1580 800 H1660" class="proxy"/>
+  </g>
+
+  <!-- Container-originated traffic can re-enter as a new client flow -->
+  <path d="M1760 820 V842 H375 V816" class="packet-halo" stroke-dasharray="7 6"/>
+  <path d="M1760 820 V842 H375 V816" class="reentry"/>
+  <rect x="1195" y="832" width="150" height="20" rx="4" fill="#EDF6FC"/>
+  <text x="1270" y="846" class="line-label" fill="#1769AA" text-anchor="middle">CONTAINER AS CLIENT</text>
+
+  <!-- Legend -->
+  <g transform="translate(48 864)">
+    <path d="M0 0 H44" class="packet"/>
+    <text x="58" y="4" class="copy muted">packet path</text>
+    <path d="M165 0 H209" class="dns"/>
+    <text x="223" y="4" class="copy muted">DNS / map update</text>
+    <path d="M382 0 H426" class="control"/>
+    <text x="440" y="4" class="copy muted">control / lookup</text>
+  </g>
+  <text x="1872" y="868" class="chip muted" text-anchor="end">DIRECT PATH STAYS IN THE KERNEL</text>
+</svg>

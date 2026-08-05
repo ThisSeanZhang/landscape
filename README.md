@@ -4,7 +4,7 @@
 
 **Landscape routes traffic by domain—not just IP. Each flow gets its own DNS server.**
 
-**DNS answers populate kernel eBPF maps. Packets are steered at XDP/TC wire speed.**
+**DNS answers populate kernel eBPF maps. Packets are steered at XDP/TC.**
 
 **No userspace datapath. No iptables.**
 
@@ -12,18 +12,24 @@
 
 </div>
 
-[简体中文](./README.zh.md) | [English](./README.md) | [Documentation](https://landscape.whileaway.dev/en/)
+[简体中文](./README.zh.md) | [English](./README.md) | [Documentation](https://landscape.whileaway.dev/)
 
 ## Screenshot
-![Landscape Web UI](main.png)
+![Landscape Web UI](./assets/main.png)
 
 ## Architecture
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="./assets/arch-dark.svg">
+  <source media="(prefers-color-scheme: light)" srcset="./assets/arch-light.svg">
+  <img alt="Landscape architecture diagram" src="./assets/arch-light.svg">
+</picture>
 
 Landscape separates traffic steering into two planes:
 
 **DNS plane (userspace).** A flow is a policy group that devices join by IP or MAC. Each flow gets its own isolated Hickory DNS server with independent cache, upstream (UDP/DoH/DoT/DoQ), and rules. DNS answers populate per-flow eBPF maps in the kernel.
 
-**Data plane (kernel).** XDP and TC hooks read these maps to steer packets at wire speed. Packets matching a flow are steered according to its policy. Everything else passes through directly — no userspace context switch, zero overhead.
+**Data plane (kernel).** XDP and TC hooks read these maps to steer packets at wire speed. Packets matching a flow are steered according to its policy. Everything else passes through directly — no userspace context switch.
 
 DNS results → eBPF flow maps → TC/XDP in-kernel steering → interface routing
 
@@ -31,7 +37,7 @@ DNS plane decides. Kernel enforces.
 
 ## Core Features
 * DNS-driven traffic steering via eBPF — DNS answers populate per-flow kernel maps
-* Fine-grained NAT — strict NAT4 by default, per-domain/IP NAT1 exceptions ([details](https://landscape.whileaway.dev/en/features/nat.html))
+* Fine-grained NAT — a stricter-than-symmetric NAT policy by default, with per-domain/IP full-cone NAT exceptions ([details](https://landscape.whileaway.dev/features/nat.html))
 * Per-flow DNS isolation — independent cache and upstream per flow, no cross-flow leaks
 * Redirect packets matching a flow into Docker containers — extend with any TProxy-compatible program
 * Geo database management — DAT and TXT format support
@@ -43,7 +49,7 @@ DNS plane decides. Kernel enforces.
 
 **Upgrade without fear.** Single directory. Drop in a new binary, config auto-migrates. Downgrade works too.
 
-**NAT that fits your LAN.** BT/PT on one device, everything else locked down — domain-level control, no blanket rules.
+**NAT that fits your LAN.** Full-cone NAT for BT/PT where needed, strict NAT everywhere else — domain/IP-level control, no blanket rules.
 
 **One failure, one victim.** Per-flow DNS and traffic policies. A container goes down? Only the traffic routed through it is affected.
 
