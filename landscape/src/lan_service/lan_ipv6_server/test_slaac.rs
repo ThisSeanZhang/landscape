@@ -20,8 +20,8 @@ fn make_slaac_status() -> Ipv6ServerStatus {
         valid_lifetime: 7200,
     };
 
-    let mut status =
-        Ipv6ServerStatus::new(Some(na_config), None, vec![], mpsc::unbounded_channel().0);
+    let (tx, _rx) = mpsc::unbounded_channel();
+    let mut status = Ipv6ServerStatus::new(Some(na_config), None, vec![], tx);
 
     let groups = vec![LanPrefixGroupConfig {
         group_id: "default".into(),
@@ -131,9 +131,10 @@ fn clean_expired_slaac_removes_expired_entries() {
     let ip = Ipv6Addr::new(0xfd00, 0, 0, 1, 0, 0, 0xCC, 0xDD);
     status.record_slaac_addr(mac, ip);
 
-    // Fresh entry with high threshold should not be cleaned
-    let expired = status.clean_expired_slaac(u64::MAX);
-    assert!(expired.is_empty());
+    // Fresh entry with huge thresholds should neither be probed nor cleaned
+    let sweep = status.slaac_expire_sweep(u64::MAX, u64::MAX);
+    assert!(sweep.to_probe.is_empty());
+    assert!(sweep.expired.is_empty());
 }
 
 #[test]
@@ -143,9 +144,74 @@ fn clean_expired_slaac_with_zero_threshold_removes_all() {
     let ip = Ipv6Addr::new(0xfd00, 0, 0, 1, 0, 0, 0xEE, 0xFF);
     status.record_slaac_addr(mac, ip);
 
-    let expired = status.clean_expired_slaac(0);
-    assert_eq!(expired.len(), 1);
-    assert_eq!(expired[0], (ip, mac));
+    let sweep = status.slaac_expire_sweep(0, 0);
+    assert!(sweep.to_probe.is_empty());
+    assert_eq!(sweep.expired.len(), 1);
+    assert_eq!(sweep.expired[0], (ip, mac));
+    assert!(!status.slaac_entries.contains_key(&ip));
+}
+
+#[test]
+fn slaac_expire_sweep_marks_idle_entries_for_probe_within_first_stage() {
+    let mut status = make_slaac_status();
+    let mac = MacAddr::from([0x00, 0x11, 0x22, 0x33, 0x44, 0x55]);
+    let ip = Ipv6Addr::new(0xfd00, 0, 0, 1, 0, 0, 0xAA, 0xBB);
+    status.record_slaac_addr(mac, ip);
+    status.boot_time -= std::time::Duration::from_secs(100);
+    status.slaac_entries.get_mut(&ip).unwrap().relative_active_time = 0;
+
+    let sweep = status.slaac_expire_sweep(60, 200);
+    assert_eq!(sweep.to_probe, vec![ip]);
+    assert!(sweep.expired.is_empty());
+    assert!(status.slaac_entries.get(&ip).unwrap().probe_pending);
+}
+
+#[test]
+fn slaac_expire_sweep_does_not_probe_already_pending_entries() {
+    let mut status = make_slaac_status();
+    let mac = MacAddr::from([0x00, 0x11, 0x22, 0x33, 0x44, 0x55]);
+    let ip = Ipv6Addr::new(0xfd00, 0, 0, 1, 0, 0, 0xAA, 0xBB);
+    status.record_slaac_addr(mac, ip);
+    status.boot_time -= std::time::Duration::from_secs(100);
+    status.slaac_entries.get_mut(&ip).unwrap().relative_active_time = 0;
+    status.slaac_entries.get_mut(&ip).unwrap().probe_pending = true;
+
+    let sweep = status.slaac_expire_sweep(60, 200);
+    assert!(sweep.to_probe.is_empty());
+    assert!(sweep.expired.is_empty());
+    assert!(status.slaac_entries.contains_key(&ip));
+}
+
+#[test]
+fn slaac_expire_sweep_removes_pending_entries_past_second_stage() {
+    let mut status = make_slaac_status();
+    let mac = MacAddr::from([0x00, 0x11, 0x22, 0x33, 0x44, 0x55]);
+    let ip = Ipv6Addr::new(0xfd00, 0, 0, 1, 0, 0, 0xEE, 0xFF);
+    status.record_slaac_addr(mac, ip);
+    status.boot_time -= std::time::Duration::from_secs(300);
+    status.slaac_entries.get_mut(&ip).unwrap().relative_active_time = 0;
+    status.slaac_entries.get_mut(&ip).unwrap().probe_pending = true;
+
+    let sweep = status.slaac_expire_sweep(60, 200);
+    assert!(sweep.to_probe.is_empty());
+    assert_eq!(sweep.expired, vec![(ip, mac)]);
+    assert!(!status.slaac_entries.contains_key(&ip));
+}
+
+#[test]
+fn slaac_observation_clears_probe_pending() {
+    let mut status = make_slaac_status();
+    let mac = MacAddr::from([0x00, 0x11, 0x22, 0x33, 0x44, 0x55]);
+    let ip = Ipv6Addr::new(0xfd00, 0, 0, 1, 0, 0, 0xAA, 0xBB);
+    status.record_slaac_addr(mac, ip);
+    status.slaac_entries.get_mut(&ip).unwrap().probe_pending = true;
+
+    assert!(status.touch_slaac_addr(mac, ip));
+    assert!(!status.slaac_entries.get(&ip).unwrap().probe_pending);
+
+    status.slaac_entries.get_mut(&ip).unwrap().probe_pending = true;
+    status.record_slaac_addr(mac, ip);
+    assert!(!status.slaac_entries.get(&ip).unwrap().probe_pending);
 }
 
 fn pd_prefix(prefix: &str, prefix_len: u8) -> LDIAPrefix {

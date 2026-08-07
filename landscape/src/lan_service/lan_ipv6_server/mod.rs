@@ -146,6 +146,18 @@ pub struct ExpiredPd {
 pub struct SlaacEntry {
     pub mac: MacAddr,
     pub relative_active_time: u64,
+    /// Set when a liveness probe (unicast NS) is scheduled for this entry;
+    /// cleared by any fresh ND observation. This prevents duplicate probes
+    /// while the entry waits for the second-stage threshold (t2).
+    pub probe_pending: bool,
+}
+
+#[derive(Debug, Default)]
+pub struct SlaacSweep {
+    /// Entries that reached the first-stage threshold and need a liveness NS.
+    pub to_probe: Vec<Ipv6Addr>,
+    /// Entries that outlived the second-stage threshold and must be removed.
+    pub expired: Vec<(Ipv6Addr, MacAddr)>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1010,13 +1022,21 @@ impl Ipv6ServerStatus {
             return SlaacResult::Conflict;
         }
         let now = self.boot_time.elapsed().as_secs();
-        self.slaac_entries.insert(ip, SlaacEntry { mac, relative_active_time: now });
+        self.slaac_entries.insert(
+            ip,
+            SlaacEntry {
+                mac,
+                relative_active_time: now,
+                probe_pending: false,
+            },
+        );
         SlaacResult::Recorded
     }
 
     /// Refresh an already learned SLAAC address after observing activity from
-    /// the same IP and MAC. Unknown or mismatched observations never create or
-    /// replace an entry.
+    /// the same IP and MAC. This only updates activity time and probe state;
+    /// callers must not treat it as a new allocation or prewarm caches.
+    /// Unknown or mismatched observations never create or replace an entry.
     pub fn touch_slaac_addr(&mut self, mac: MacAddr, ip: Ipv6Addr) -> bool {
         let Some(entry) = self.slaac_entries.get_mut(&ip) else {
             return false;
@@ -1026,21 +1046,47 @@ impl Ipv6ServerStatus {
         }
 
         entry.relative_active_time = self.boot_time.elapsed().as_secs();
+        entry.probe_pending = false;
         true
     }
 
-    pub fn clean_expired_slaac(&mut self, threshold: u64) -> Vec<(Ipv6Addr, MacAddr)> {
+    /// Two-stage best-effort SLAAC expiry: entries idle for at least `t1` are
+    /// returned once in `to_probe` for a liveness probe, while entries that
+    /// stay idle past `t2` are removed (returned in `expired`). A delayed sweep
+    /// may therefore remove an entry without a completed probe. Any fresh ND
+    /// observation resets the entry via [`Self::record_slaac_addr`] /
+    /// [`Self::touch_slaac_addr`].
+    pub fn slaac_expire_sweep(&mut self, t1: u64, t2: u64) -> SlaacSweep {
         let now = self.boot_time.elapsed().as_secs();
+        let mut to_probe = Vec::new();
         let mut expired = Vec::new();
         self.slaac_entries.retain(|ip, entry| {
-            if now.saturating_sub(entry.relative_active_time) >= threshold {
+            let age = now.saturating_sub(entry.relative_active_time);
+            if age >= t2 {
                 expired.push((*ip, entry.mac));
-                false
-            } else {
-                true
+                return false;
             }
+            if age >= t1 && !entry.probe_pending {
+                entry.probe_pending = true;
+                to_probe.push(*ip);
+            }
+            true
         });
-        expired
+        SlaacSweep { to_probe, expired }
+    }
+
+    /// Refresh a pending probe using a solicited NA that omitted TLLA. This
+    /// only updates activity time and probe state; the existing MAC is
+    /// retained because this path cannot learn a new one.
+    pub fn touch_slaac_probe(&mut self, ip: Ipv6Addr) -> Option<MacAddr> {
+        let entry = self.slaac_entries.get_mut(&ip)?;
+        if !entry.probe_pending {
+            return None;
+        }
+
+        entry.relative_active_time = self.boot_time.elapsed().as_secs();
+        entry.probe_pending = false;
+        Some(entry.mac)
     }
 
     /// Unified view of all assigned addresses (SLAAC + DHCPv6 NA).

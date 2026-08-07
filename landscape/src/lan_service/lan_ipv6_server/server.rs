@@ -107,7 +107,7 @@ async fn handle_icmp_msg(
         }
         Some(Icmpv6Message::NeighborAdvertisement(_)) => {
             let mut status = share_status.lock().await;
-            let action = icmpv6::handle_na(&data, &mut status);
+            let action = icmpv6::handle_na(&data, src_addr, &mut status);
             match &action {
                 icmpv6::SlaacActionResult::Allocated { mac, .. }
                 | icmpv6::SlaacActionResult::Conflict { mac, .. } => {
@@ -115,16 +115,19 @@ async fn handle_icmp_msg(
                 }
                 _ => {}
             }
+            if let icmpv6::SlaacActionResult::Allocated { mac, ip } = &action {
+                if let Err(e) = landscape_ebpf::base::ip_mac::upsert_ipv6_ip_mac(
+                    link_ifindex,
+                    *ip,
+                    *mac,
+                    *mac_addr,
+                ) {
+                    tracing::warn!("failed to prewarm ip_mac_v6 for ND {ip} -> {mac}: {e}");
+                }
+            }
+
             match action {
                 icmpv6::SlaacActionResult::Allocated { mac, ip } => {
-                    if let Err(e) = landscape_ebpf::base::ip_mac::upsert_ipv6_ip_mac(
-                        link_ifindex,
-                        ip,
-                        mac,
-                        *mac_addr,
-                    ) {
-                        tracing::warn!("failed to prewarm ip_mac_v6 for ND {ip} -> {mac}: {e}");
-                    }
                     let device_id = device_id_map.get(&mac).map(|r| *r.value());
                     if let Err(e) =
                         ipv6_assign_sender.try_send(IPv6AssignEvent::Allocated(IPv6AssignInfo {
@@ -142,6 +145,10 @@ async fn handle_icmp_msg(
                     // so Conflict only implies the NA refreshed reachability.
                     // No event needed – the lease's activity time is handled
                     // by icmpv6::handle_na internally.
+                }
+                icmpv6::SlaacActionResult::Refreshed { .. } => {
+                    // Refreshed only updates SLAAC activity time and probe
+                    // state; it intentionally has no event or prewarm side effect.
                 }
                 _ => {}
             }
@@ -352,10 +359,13 @@ async fn handle_expire_tick(
     share_status: &Arc<Mutex<Ipv6ServerStatus>>,
     ipv6_assign_sender: &IPv6AssignEventSender,
     route_service: &IpRouteService,
-    slaac_threshold_secs: u64,
+    slaac_probe_t1: u64,
+    slaac_probe_t2: u64,
+    icmp_sender: &Arc<UdpSocket>,
+    mac_addr: &MacAddr,
     device_id_map: &DashMap<MacAddr, Uuid>,
 ) {
-    let pd_cleanups = {
+    let (pd_cleanups, slaac_probes) = {
         let mut status = share_status.lock().await;
 
         let expired_na = status.clean_expired_na();
@@ -371,9 +381,13 @@ async fn handle_expire_tick(
         }
 
         let expired_pd = status.clean_expired_pd();
+        let pd_cleanups = expired_pd
+            .iter()
+            .map(|pd| (pd.sub_index, pd.active_routes.clone()))
+            .collect::<Vec<_>>();
 
-        let expired_slaac = status.clean_expired_slaac(slaac_threshold_secs);
-        for (ip, mac) in &expired_slaac {
+        let sweep = status.slaac_expire_sweep(slaac_probe_t1, slaac_probe_t2);
+        for (ip, mac) in &sweep.expired {
             let device_id = device_id_map.get(mac).map(|r| *r.value());
             let _ = ipv6_assign_sender.try_send(IPv6AssignEvent::Expired(IPv6AssignInfo {
                 iface_name: iface_name.to_string(),
@@ -383,8 +397,17 @@ async fn handle_expire_tick(
             }));
         }
 
-        expired_pd.iter().map(|pd| (pd.sub_index, pd.active_routes.clone())).collect::<Vec<_>>()
+        (pd_cleanups, sweep.to_probe)
     };
+
+    // Send liveness probes (unicast NS) outside the status lock (needs .await).
+    // A live device replies with NA, which refreshes its entry via handle_na.
+    for ip in slaac_probes {
+        let dst = SocketAddr::new(IpAddr::V6(ip), 0);
+        if !icmpv6::send_msg(icmp_sender, &icmpv6::build_ns(ip, mac_addr), dst).await {
+            tracing::warn!("best-effort SLAAC liveness probe failed for {ip}");
+        }
+    }
 
     // PD route cleanup outside status lock (needs .await)
     for (_sub_index, routes) in &pd_cleanups {
@@ -569,7 +592,9 @@ pub async fn start_ipv6_lan_server(
             _ = dhcp_expire_timer.tick() => {
                 handle_expire_tick(
                     &iface_name, &share_status, ipv6_assign_sender, &route_service,
-                    params.valid_lifetime as u64, &device_id_map,
+                    params.valid_lifetime as u64,
+                    params.valid_lifetime as u64 + LEASE_EXPIRE_INTERVAL,
+                    &icmp_sender, &mac_addr, &device_id_map,
                 ).await;
             },
             mac = reconf_rx.recv() => {

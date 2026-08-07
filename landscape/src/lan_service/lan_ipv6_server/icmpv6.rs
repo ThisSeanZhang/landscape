@@ -1,6 +1,8 @@
 use bytes::BytesMut;
 use landscape_common::net::MacAddr;
-use landscape_common::net_proto::icmpv6::messages::{Icmpv6Message, RouterAdvertisement};
+use landscape_common::net_proto::icmpv6::messages::{
+    Icmpv6Message, NeighborSolicitation, RouterAdvertisement,
+};
 use landscape_common::net_proto::icmpv6::options::{IcmpV6Option, IcmpV6Options};
 use landscape_common::net_proto::NetProtoCodec;
 use std::net::{Ipv6Addr, SocketAddr};
@@ -34,6 +36,14 @@ pub fn extract_mac_from_ns(data: &[u8]) -> Option<MacAddr> {
         },
         _ => None,
     }
+}
+
+/// Build a unicast Neighbor Solicitation used as a SLAAC liveness probe.
+/// The target's NA reply refreshes the entry via `handle_na`.
+pub fn build_ns(target: Ipv6Addr, mac_addr: &MacAddr) -> Icmpv6Message {
+    let mut opts = IcmpV6Options::new();
+    opts.insert(IcmpV6Option::source_link_layer_address(&mac_addr.octets()));
+    Icmpv6Message::NeighborSolicitation(NeighborSolicitation::new(target, opts))
 }
 
 pub fn parse(bytes: &[u8]) -> Option<Icmpv6Message> {
@@ -111,26 +121,59 @@ fn onlink_only_prefixes(status: &Ipv6ServerStatus) -> Vec<(Ipv6Addr, u8)> {
 
 pub enum SlaacActionResult {
     None,
-    Allocated { mac: MacAddr, ip: Ipv6Addr },
-    Conflict { mac: MacAddr, ip: Ipv6Addr },
+    Allocated {
+        mac: MacAddr,
+        ip: Ipv6Addr,
+    },
+    /// Existing SLAAC entry observed again; only activity time is refreshed.
+    /// This result must not trigger allocation events or cache prewarming.
+    Refreshed {
+        mac: MacAddr,
+        ip: Ipv6Addr,
+    },
+    Conflict {
+        mac: MacAddr,
+        ip: Ipv6Addr,
+    },
 }
 
-pub fn handle_na(data: &[u8], status: &mut Ipv6ServerStatus) -> SlaacActionResult {
+const NA_SOLICITED_FLAG: u32 = 1 << 30;
+
+pub fn handle_na(
+    data: &[u8],
+    src_addr: SocketAddr,
+    status: &mut Ipv6ServerStatus,
+) -> SlaacActionResult {
     // TODO(Plan B): active DAD defense — send solicited NA upon NA address conflict
     let msg = match parse(data) {
         Some(Icmpv6Message::NeighborAdvertisement(na)) => na,
         _ => return SlaacActionResult::None,
     };
 
+    let ip = msg.target_addr();
+
     let mac = match msg.opts.get(2) {
         Some(IcmpV6Option::TargetLinkLayerAddress { addr, .. }) => MacAddr::from(*addr),
         _ => {
-            tracing::warn!("NeighborAdvertisement without TargetLinkLayerAddress");
+            // RFC 4861 permits omitting TLLA in a response to a unicast NS.
+            // Only use this as a refresh when it is clearly the response to
+            // our pending probe; no new MAC can be learned on this path.
+            let source_matches_target = matches!(src_addr, SocketAddr::V6(src) if *src.ip() == ip);
+            if msg.flags & NA_SOLICITED_FLAG != 0 && source_matches_target {
+                if let Some(mac) = status.touch_slaac_probe(ip) {
+                    return SlaacActionResult::Refreshed { mac, ip };
+                }
+            }
+            tracing::debug!(
+                "ignoring NeighborAdvertisement without TargetLinkLayerAddress for {ip}"
+            );
             return SlaacActionResult::None;
         }
     };
 
-    let ip = msg.target_addr();
+    if status.touch_slaac_addr(mac, ip) {
+        return SlaacActionResult::Refreshed { mac, ip };
+    }
 
     match status.record_slaac_addr(mac, ip) {
         SlaacResult::Recorded => SlaacActionResult::Allocated { mac, ip },
@@ -193,8 +236,11 @@ pub async fn send_msg(sender: &Arc<UdpSocket>, msg: &Icmpv6Message, dst: SocketA
 #[cfg(test)]
 mod tests {
     use super::*;
-    use landscape_common::net_proto::icmpv6::messages::NeighborSolicitation;
+    use landscape_common::net_proto::icmpv6::messages::{
+        NeighborAdvertisement, NeighborSolicitation,
+    };
     use landscape_common::net_proto::NetProtoCodec;
+    use tokio::sync::mpsc;
 
     #[test]
     fn extract_mac_from_neighbor_solicitation() {
@@ -223,5 +269,78 @@ mod tests {
         NetProtoCodec::encode(&msg, &mut bytes).unwrap();
 
         assert_eq!(extract_mac_from_ns(&bytes), None);
+    }
+
+    #[test]
+    fn handle_na_refreshes_existing_entry_without_reallocating() {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let mut status = Ipv6ServerStatus::new(None, None, vec![], tx);
+        let mac = MacAddr::from([0x02, 0x00, 0x00, 0x12, 0x34, 0x56]);
+        let ip: Ipv6Addr = "fd00::1234".parse().unwrap();
+        status.record_slaac_addr(mac, ip);
+
+        let mut opts = IcmpV6Options::new();
+        opts.insert(IcmpV6Option::TargetLinkLayerAddress { length: 1, addr: mac.octets() });
+        let msg =
+            Icmpv6Message::NeighborAdvertisement(NeighborAdvertisement::solicited(ip, true, opts));
+        let mut bytes = BytesMut::new();
+        NetProtoCodec::encode(&msg, &mut bytes).unwrap();
+
+        assert!(matches!(
+            handle_na(&bytes, SocketAddr::new(ip.into(), 0), &mut status),
+            SlaacActionResult::Refreshed { mac: refreshed, ip: refreshed_ip }
+                if refreshed == mac && refreshed_ip == ip
+        ));
+    }
+
+    #[test]
+    fn handle_na_accepts_solicited_unicast_response_without_tlla() {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let mut status = Ipv6ServerStatus::new(None, None, vec![], tx);
+        let mac = MacAddr::from([0x02, 0x00, 0x00, 0xab, 0xcd, 0xef]);
+        let ip: Ipv6Addr = "fd00::5678".parse().unwrap();
+        status.record_slaac_addr(mac, ip);
+        status.slaac_entries.get_mut(&ip).unwrap().probe_pending = true;
+
+        let msg = Icmpv6Message::NeighborAdvertisement(NeighborAdvertisement::solicited(
+            ip,
+            true,
+            IcmpV6Options::new(),
+        ));
+        let mut bytes = BytesMut::new();
+        NetProtoCodec::encode(&msg, &mut bytes).unwrap();
+
+        assert!(matches!(
+            handle_na(&bytes, SocketAddr::new(ip.into(), 0), &mut status),
+            SlaacActionResult::Refreshed { mac: refreshed, ip: refreshed_ip }
+                if refreshed == mac && refreshed_ip == ip
+        ));
+        assert!(!status.slaac_entries.get(&ip).unwrap().probe_pending);
+    }
+
+    #[test]
+    fn handle_na_ignores_unmatched_unicast_response_without_tlla() {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let mut status = Ipv6ServerStatus::new(None, None, vec![], tx);
+        let mac = MacAddr::from([0x02, 0x00, 0x00, 0xab, 0xcd, 0xef]);
+        let ip: Ipv6Addr = "fd00::9abc".parse().unwrap();
+        status.record_slaac_addr(mac, ip);
+
+        let msg = Icmpv6Message::NeighborAdvertisement(NeighborAdvertisement::solicited(
+            ip,
+            true,
+            IcmpV6Options::new(),
+        ));
+        let mut bytes = BytesMut::new();
+        NetProtoCodec::encode(&msg, &mut bytes).unwrap();
+
+        assert!(matches!(
+            handle_na(
+                &bytes,
+                SocketAddr::new("fd00::abcd".parse::<Ipv6Addr>().unwrap().into(), 0),
+                &mut status,
+            ),
+            SlaacActionResult::None
+        ));
     }
 }
