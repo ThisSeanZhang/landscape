@@ -1,7 +1,7 @@
 use aho_corasick::AhoCorasick;
 use landscape_common::dns::rule::{DomainConfig, DomainMatchType};
 use regex::Regex;
-use std::{collections::HashSet, time::Instant};
+use std::{borrow::Cow, collections::HashSet, time::Instant};
 use tracing::debug;
 use trie_rs::TrieBuilder;
 
@@ -31,7 +31,7 @@ impl DomainMatcher {
             match each_config.match_type {
                 DomainMatchType::Plain => {
                     // 将关键字添加到列表
-                    keywords.push(normalize_domain_text(&each_config.value));
+                    keywords.push(normalize_domain_text(&each_config.value).into_owned());
                 }
                 DomainMatchType::Regex => {
                     // 将正则表达式添加到 Vec 中
@@ -48,7 +48,7 @@ impl DomainMatcher {
                 }
                 DomainMatchType::Full => {
                     // 完全匹配（存储在 HashSet 中）
-                    full_domains.insert(normalize_domain_text(&each_config.value));
+                    full_domains.insert(normalize_domain_text(&each_config.value).into_owned());
                 }
             }
         }
@@ -78,7 +78,7 @@ impl DomainMatcher {
         let normalized_domain = normalize_domain_text(domain);
 
         // 完全匹配
-        if self.full_domains.contains(&normalized_domain) {
+        if self.full_domains.contains(&*normalized_domain) {
             return true;
         }
 
@@ -96,7 +96,7 @@ impl DomainMatcher {
         }
 
         // 关键字匹配
-        if self.keyword_ac.is_match(&normalized_domain) {
+        if self.keyword_ac.is_match(&*normalized_domain) {
             return true;
         }
 
@@ -111,8 +111,13 @@ impl DomainMatcher {
     }
 }
 
-fn normalize_domain_text(domain: &str) -> String {
-    domain.trim_end_matches('.').to_ascii_lowercase()
+fn normalize_domain_text(domain: &str) -> Cow<'_, str> {
+    let trimmed = domain.trim_end_matches('.');
+    if trimmed.as_bytes().iter().any(u8::is_ascii_uppercase) {
+        Cow::Owned(trimmed.to_ascii_lowercase())
+    } else {
+        Cow::Borrowed(trimmed)
+    }
 }
 
 #[cfg(test)]
