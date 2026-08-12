@@ -167,6 +167,7 @@ impl DnsRequestHandler {
             .into_iter()
             .map(|rule| {
                 let order = rule.index;
+                let match_all = rule.source.is_empty();
                 let runtime = DNSResolveRuntime::new(
                     rule.id,
                     rule.index,
@@ -174,7 +175,7 @@ impl DnsRequestHandler {
                     rule.bind_config,
                     rule.mark,
                     rule.resolve_mode,
-                    RuntimeRuleMatcher::new(rule.source, vec![], vec![], true),
+                    RuntimeRuleMatcher::new(rule.source, vec![], vec![], match_all),
                     rule.flow_id,
                 );
                 (order, runtime)
