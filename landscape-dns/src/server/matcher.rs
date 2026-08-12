@@ -49,7 +49,12 @@ impl RuntimeRuleMatcher {
             // matches at runtime by "not in the excluded key", i.e. it matches every
             // domain except those in the excluded key. Note: under this semantics an
             // inverse rule behaves like a near match-all and may shadow later rules;
-            // this is expected.
+            // this is expected. Also note: the builder never produces a matcher whose
+            // only source is an empty or missing inverse key — such a rule is skipped
+            // entirely (see `MatcherBuilder::build_rule_matcher`), so the "empty
+            // negative matches everything" behavior below only exists when this
+            // struct is constructed directly (e.g. in tests) and must not be
+            // reintroduced through the builder.
             || (!self.negative_geo.is_empty()
                 && !self.negative_geo.iter().any(|matcher| matcher.is_match(domain)))
     }
