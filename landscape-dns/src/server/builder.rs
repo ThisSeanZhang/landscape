@@ -255,6 +255,7 @@ mod tests {
     use std::net::IpAddr;
 
     use super::MatcherBuilder;
+    use hickory_proto::rr::RecordType;
 
     struct TestGeoSource {
         values: HashMap<GeoFileCacheKey, Vec<GeoSiteFileConfig>>,
@@ -470,7 +471,7 @@ mod tests {
             .await;
 
         assert_eq!(resolve_engine.iter().count(), 0);
-        assert!(!redirect_engine.is_match("all.example"));
+        assert!(redirect_engine.lookup("all.example", RecordType::A, None).is_none());
         assert!(dependencies.geo_keys.contains(&geo_key(None).get_file_cache_key()));
     }
 
@@ -550,7 +551,7 @@ mod tests {
             )
             .await;
 
-        assert!(!redirect_engine.is_match("anything.example"));
+        assert!(redirect_engine.lookup("anything.example", RecordType::A, None).is_none());
     }
 
     #[tokio::test]

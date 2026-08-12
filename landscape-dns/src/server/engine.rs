@@ -20,10 +20,6 @@ impl RedirectEngine {
         Self { rules }
     }
 
-    pub fn is_match(&self, domain: &str) -> bool {
-        self.rules.iter().any(|rule| rule.is_match(domain))
-    }
-
     pub fn lookup(
         &self,
         domain: &str,
