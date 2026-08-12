@@ -429,42 +429,71 @@ impl DnsRecordUpdater for TencentSolver {
     ) -> Result<(), CertError> {
         let list = self.describe_record_list(zone_name, record_name, record_type).await?;
 
-        let desired_set: std::collections::HashSet<&str> =
-            desired_values.iter().map(|v| v.as_str()).collect();
-        let existing_value_set: std::collections::HashSet<&str> =
-            list.record_list.iter().filter_map(|r| r.value.as_deref()).collect();
+        let existing_with_value: Vec<(u64, &str)> = list
+            .record_list
+            .iter()
+            .filter_map(|r| Some((r.record_id, r.value.as_deref()?)))
+            .collect();
 
-        for item in &list.record_list {
-            if let Some(ref val) = item.value {
-                if !desired_set.contains(val.as_str()) {
-                    self.request::<TencentEmptyBody>(
-                        "DeleteRecord",
-                        json!({
-                            "Domain": zone_name,
-                            "RecordId": item.record_id
-                        }),
-                    )
-                    .await?;
-                }
+        let existing_set: std::collections::HashSet<&str> =
+            existing_with_value.iter().map(|(_, v)| *v).collect();
+
+        // Cap at 2 records (Tencent free-tier subdomain load-balance limit)
+        let desired_vec: Vec<&str> = desired_values.iter().map(|s| s.as_str()).take(2).collect();
+        let desired_set: std::collections::HashSet<&str> = desired_vec.iter().copied().collect();
+
+        let mut unmatched: Vec<&str> = desired_vec
+            .iter()
+            .filter(|v| !existing_set.contains(**v))
+            .copied()
+            .collect();
+
+        for (record_id, existing_value) in &existing_with_value {
+            if desired_set.contains(existing_value) {
+                continue;
             }
-        }
-
-        for value in desired_values {
-            if !existing_value_set.contains(value.as_str()) {
-                self.request::<TencentCreateRecordBody>(
-                    "CreateRecord",
+            if let Some(new_value) = unmatched.first().copied() {
+                self.request::<TencentEmptyBody>(
+                    "ModifyRecord",
                     json!({
                         "Domain": zone_name,
+                        "RecordId": record_id,
                         "SubDomain": record_name,
                         "RecordType": record_type,
                         "RecordLine": "默认",
                         "RecordLineId": "0",
-                        "Value": value,
+                        "Value": new_value,
                         "TTL": ttl
                     }),
                 )
                 .await?;
+                unmatched.remove(0);
+            } else {
+                self.request::<TencentEmptyBody>(
+                    "DeleteRecord",
+                    json!({
+                        "Domain": zone_name,
+                        "RecordId": record_id
+                    }),
+                )
+                .await?;
             }
+        }
+
+        for value in unmatched {
+            self.request::<TencentCreateRecordBody>(
+                "CreateRecord",
+                json!({
+                    "Domain": zone_name,
+                    "SubDomain": record_name,
+                    "RecordType": record_type,
+                    "RecordLine": "默认",
+                    "RecordLineId": "0",
+                    "Value": value,
+                    "TTL": ttl
+                }),
+            )
+            .await?;
         }
 
         Ok(())
