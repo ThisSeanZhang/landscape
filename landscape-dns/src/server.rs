@@ -8,7 +8,7 @@ use std::{
 use arc_swap::{ArcSwap, ArcSwapOption};
 use landscape_common::dns::error::DnsError;
 use landscape_common::sys_service::lan_hostname::LanHostnameConfig;
-use landscape_common::{dns::FlowDnsDesiredState, event::DnsMetricMessage, service::WatchService};
+use landscape_common::{event::DnsMetricMessage, service::WatchService};
 use landscape_core::lan_hostname::LanHostnameRegistry;
 use tokio::sync::{mpsc, Mutex};
 use tokio_util::sync::CancellationToken;
@@ -19,16 +19,19 @@ use crate::{
     listener::{start_flow_dns_listener, DohListenerState},
     mdns::MdnsService,
     server::{
+        engine::{RedirectEngine, ResolveEngine},
         handler::DnsRequestHandler,
-        planner::{DnsRefreshPlan, DnsRefreshPlanner, FlowDnsAppliedState, HandlerRefreshPlan},
     },
     CheckChainDnsResult, CheckDnsReq,
 };
 
+pub mod builder;
+pub mod engine;
 pub(crate) mod handler;
 pub(crate) mod matcher;
-pub(crate) mod planner;
 pub(crate) mod rule;
+
+pub use builder::MatcherBuilder;
 
 pub use crate::listener::{DohTimeouts, EffectiveDohListenerConfig};
 pub use landscape_common::dns::{CacheRuntimeConfig, DohRuntimeConfig};
@@ -78,13 +81,12 @@ pub struct LandscapeDnsServer {
 
 struct FlowServerRuntime {
     handler: DnsRequestHandler,
-    token: CancellationToken,
+    _token: CancellationToken,
 }
 
 struct FlowServerEntry {
     refresh_lock: Mutex<()>,
     runtime: Arc<ArcSwapOption<FlowServerRuntime>>,
-    applied_state: Arc<ArcSwapOption<FlowDnsAppliedState>>,
 }
 
 impl FlowServerEntry {
@@ -92,7 +94,6 @@ impl FlowServerEntry {
         Self {
             refresh_lock: Mutex::new(()),
             runtime: Arc::new(ArcSwapOption::new(None)),
-            applied_state: Arc::new(ArcSwapOption::new(None)),
         }
     }
 }
@@ -157,59 +158,31 @@ impl LandscapeDnsServer {
         (cache_runtime.as_ref().clone(), doh_runtime)
     }
 
-    pub async fn refresh_flow_server(&self, desired_state: FlowDnsDesiredState) {
-        let flow_id = desired_state.flow_id;
+    pub async fn refresh_flow_runtime(
+        &self,
+        flow_id: u32,
+        redirect_engine: RedirectEngine,
+        resolve_engine: ResolveEngine,
+        doh_runtime: Option<DohRuntimeConfig>,
+    ) {
         let entry = self.get_or_create_entry(flow_id).await;
 
         let _refresh_guard = entry.refresh_lock.lock().await;
         if let Some(runtime) = entry.runtime.load_full() {
-            let previous_state = entry.applied_state.load_full();
-            let plan = DnsRefreshPlanner::build(previous_state.as_deref(), &desired_state);
-            if matches!(plan, DnsRefreshPlan::Noop) {
-                return;
-            }
-
-            self.apply_handler_plan(runtime.handler.clone(), &desired_state, &plan).await;
-
-            if matches!(plan, DnsRefreshPlan::RestartListener { .. }) {
-                let token = self.start_runtime_listener(flow_id, runtime.handler.clone()).await;
-
-                if token.is_cancelled() {
-                    tracing::error!(
-                        "[flow: {flow_id}]: DNS server restart failed, keep current listener"
-                    );
-                    if let Some(applied_state) = DnsRefreshPlanner::applied_after_failure(
-                        previous_state.as_deref(),
-                        &desired_state,
-                        &plan,
-                    ) {
-                        entry.applied_state.store(Some(Arc::new(applied_state)));
-                    }
-                    return;
-                }
-
-                runtime.token.cancel();
-                entry.runtime.store(Some(Arc::new(FlowServerRuntime {
-                    handler: runtime.handler.clone(),
-                    token,
-                })));
-            }
-
-            entry
-                .applied_state
-                .store(Some(Arc::new(FlowDnsAppliedState::from_desired_state(&desired_state))));
+            runtime.handler.renew_engines(redirect_engine, resolve_engine).await;
             return;
         }
 
-        let handler = DnsRequestHandler::new(
-            desired_state.clone(),
+        let handler = DnsRequestHandler::from_engines(
+            redirect_engine,
+            resolve_engine,
             self.cache_live_config.clone(),
             flow_id,
             self.msg_tx.clone(),
             self.local_answer_provider.clone(),
             self.doh_advertise_provider.clone(),
             self.lan_hostname_registry.clone(),
-            desired_state.doh_runtime.clone(),
+            doh_runtime,
         );
         let Some(runtime) = self.build_flow_runtime(flow_id, handler).await else {
             tracing::error!("[flow: {flow_id}]: DNS server start failed, runtime not registered");
@@ -217,9 +190,6 @@ impl LandscapeDnsServer {
         };
 
         entry.runtime.store(Some(Arc::new(runtime)));
-        entry
-            .applied_state
-            .store(Some(Arc::new(FlowDnsAppliedState::from_desired_state(&desired_state))));
     }
 
     pub async fn check_domain(&self, req: CheckDnsReq) -> CheckChainDnsResult {
@@ -291,7 +261,7 @@ impl LandscapeDnsServer {
             return None;
         }
 
-        Some(FlowServerRuntime { handler, token })
+        Some(FlowServerRuntime { handler, _token: token })
     }
 
     async fn start_runtime_listener(
@@ -308,36 +278,6 @@ impl LandscapeDnsServer {
         .await
     }
 
-    async fn apply_handler_plan(
-        &self,
-        handler: DnsRequestHandler,
-        desired_state: &FlowDnsDesiredState,
-        plan: &DnsRefreshPlan,
-    ) {
-        let Some(handler_plan) = (match plan {
-            DnsRefreshPlan::ApplyHandler(handler_plan) => Some(handler_plan),
-            DnsRefreshPlan::RestartListener { handler_plan } => handler_plan.as_ref(),
-            DnsRefreshPlan::Noop => None,
-        }) else {
-            return;
-        };
-
-        match handler_plan {
-            HandlerRefreshPlan::ReplaceRules { include_redirects } => {
-                handler.renew_dns_rules(desired_state.dns_rules.clone()).await;
-                if *include_redirects {
-                    handler.renew_redirect_rules(desired_state.redirect_rules.clone()).await;
-                }
-            }
-            HandlerRefreshPlan::ReplaceRedirects => {
-                handler.renew_redirect_rules(desired_state.redirect_rules.clone()).await;
-            }
-            HandlerRefreshPlan::ApplyCacheRuntime { rebuild_cache } => {
-                handler.renew_runtime_config(*rebuild_cache).await;
-            }
-        }
-    }
-
     fn build_effective_doh_listener_config(&self) -> Option<EffectiveDohListenerConfig> {
         self.doh_listener.as_ref().map(|doh_listener| doh_listener.build_effective_config())
     }
@@ -347,7 +287,7 @@ impl LandscapeDnsServer {
 mod tests {
     use super::*;
     use arc_swap::ArcSwap;
-    use landscape_common::dns::{CacheRuntimeConfig, FlowDnsDesiredState};
+    use landscape_common::dns::CacheRuntimeConfig;
     use landscape_common::sys_service::lan_hostname::LanHostnameConfig;
     use landscape_core::lan_hostname::LanHostnameRegistry;
 
@@ -371,8 +311,9 @@ mod tests {
     fn flow_server_entry_runtime_reads_do_not_wait_on_refresh_lock() {
         run_async_test(async {
             let entry = FlowServerEntry::new();
-            let handler = DnsRequestHandler::new(
-                FlowDnsDesiredState::default(),
+            let handler = DnsRequestHandler::from_engines(
+                RedirectEngine::default(),
+                ResolveEngine::default(),
                 Arc::new(ArcSwap::from_pointee(test_cache_runtime_config())),
                 7,
                 Arc::new(ArcSwapOption::new(None)),
@@ -383,7 +324,7 @@ mod tests {
             );
             entry.runtime.store(Some(Arc::new(FlowServerRuntime {
                 handler,
-                token: CancellationToken::new(),
+                _token: CancellationToken::new(),
             })));
 
             let _guard = entry.refresh_lock.lock().await;
@@ -401,7 +342,6 @@ mod tests {
             let _guard = entry.refresh_lock.lock().await;
 
             assert!(entry.runtime.load_full().is_none());
-            assert!(entry.applied_state.load_full().is_none());
         });
     }
 }

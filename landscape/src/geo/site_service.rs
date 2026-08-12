@@ -1,15 +1,10 @@
 use landscape_common::{
-    config_service::geo::{GeoDomainConfig, GeoFileCacheKey, GeoSiteFileConfig, GeoSiteSource},
-    database::LandscapeStore,
-    dns::{
-        config::DnsUpstreamConfig,
-        redirect::{
-            DNSRedirectRule, DNSRedirectRuntimeRule, DynamicDnsRedirectBatch,
-            DEFAULT_STATIC_DNS_REDIRECT_TTL_SECS,
-        },
-        rule::{DNSRuleConfig, DNSRuntimeRule, DomainConfig, DomainMatchType, RuleSource},
-        ChainDnsServerInitInfo,
+    config_service::geo::{
+        GeoDomainConfig, GeoFileCacheKey, GeoMatcherSource, GeoMatcherSourceError,
+        GeoSiteFileConfig, GeoSiteSource,
     },
+    database::LandscapeStore,
+    dns::rule::DomainMatchType,
     service::controller::ConfigController,
     utils::time::{get_f64_timestamp, MILL_A_DAY},
 };
@@ -78,12 +73,6 @@ fn domain_match_type_tag(match_type: &DomainMatchType) -> u8 {
 }
 
 #[derive(Debug, Default)]
-pub struct ExpandedRuleSources {
-    pub domains: Vec<DomainConfig>,
-    pub used_geo_keys: HashSet<GeoFileCacheKey>,
-}
-
-#[derive(Debug, Default)]
 struct GeoCacheApplyResult {
     changed_keys: HashSet<GeoFileCacheKey>,
     unchanged_keys: usize,
@@ -121,240 +110,6 @@ impl GeoSiteService {
             }
         });
         service
-    }
-
-    pub async fn convert_to_chain_init_config(
-        &self,
-        mut rules: Vec<DNSRuleConfig>,
-        redirects: Vec<DNSRedirectRule>,
-        dynamic_redirects: Vec<DynamicDnsRedirectBatch>,
-        upstream_configs: Vec<DnsUpstreamConfig>,
-    ) -> ChainDnsServerInitInfo {
-        let upstream_dict: HashMap<Uuid, DnsUpstreamConfig> =
-            upstream_configs.into_iter().map(|e| (e.id, e)).collect();
-
-        let time = Instant::now();
-        let mut applied_config = HashSet::new();
-
-        let mut redirect_rules = Vec::with_capacity(redirects.len());
-        // redirect
-        for redirect in redirects.into_iter() {
-            if !redirect.enable {
-                continue;
-            }
-
-            if redirect.match_rules.len() > 0 {
-                let source =
-                    self.expand_rule_sources(redirect.match_rules, &mut applied_config).await;
-
-                redirect_rules.push(DNSRedirectRuntimeRule {
-                    redirect_id: Some(redirect.id),
-                    dynamic_redirect_source: None,
-                    answer_mode: redirect.answer_mode,
-                    match_rules: source.domains,
-                    result_info: redirect.result_info,
-                    ttl_secs: DEFAULT_STATIC_DNS_REDIRECT_TTL_SECS,
-                });
-            }
-        }
-
-        for dynamic_batch in dynamic_redirects {
-            let source_id = dynamic_batch.source_id;
-            for record in dynamic_batch.records {
-                redirect_rules.push(DNSRedirectRuntimeRule {
-                    redirect_id: None,
-                    dynamic_redirect_source: Some(source_id.clone()),
-                    answer_mode: record.answer_mode,
-                    match_rules: vec![record.match_rule.into()],
-                    result_info: record.result_info,
-                    ttl_secs: record.ttl_secs,
-                });
-            }
-        }
-
-        let mut dns_rules = Vec::with_capacity(rules.len());
-
-        rules.sort_by(|a, b| a.index.cmp(&b.index));
-
-        for config in rules.into_iter() {
-            if !config.enable {
-                continue;
-            }
-
-            let insert_source = if config.source.len() > 0 {
-                let source = self.expand_rule_sources(config.source, &mut applied_config).await;
-                if source.domains.is_empty() {
-                    // 去重后匹配的规则为空 不设置
-                    tracing::info!("[{}:{}] final DNS match rule is: 0", config.index, config.name);
-                    None
-                } else {
-                    tracing::info!(
-                        "[{}:{}] match rule size is: {}",
-                        config.index,
-                        config.name,
-                        source.domains.len()
-                    );
-                    Some(source.domains)
-                }
-            } else {
-                Some(vec![])
-            };
-
-            tracing::debug!(
-                "[{}:{}] covert config current time: {:?}ms",
-                config.index,
-                config.name,
-                time.elapsed().as_millis()
-            );
-
-            if let Some(source) = insert_source {
-                if let Some(upstream_config) = upstream_dict.get(&config.upstream_id) {
-                    dns_rules.push(DNSRuntimeRule {
-                        source,
-                        id: config.id,
-                        name: config.name,
-                        index: config.index,
-                        enable: config.enable,
-                        filter: config.filter,
-                        resolve_mode: upstream_config.clone(),
-                        bind_config: config.bind_config,
-                        mark: config.mark,
-                        flow_id: config.flow_id,
-                    });
-                }
-            }
-        }
-        ChainDnsServerInitInfo { dns_rules, redirect_rules }
-    }
-
-    // pub async fn convert_config_to_runtime_rule(
-    //     &self,
-    //     mut configs: Vec<DNSRuleConfig>,
-    // ) -> Vec<DNSRuntimeRule> {
-    //     let time = Instant::now();
-    //     let mut result = Vec::with_capacity(configs.len());
-
-    //     let mut applied_config = HashSet::new();
-    //     configs.sort_by(|a, b| a.index.cmp(&b.index));
-
-    //     for config in configs.into_iter() {
-    //         if !config.enable {
-    //             continue;
-    //         }
-
-    //         let insert_source = if config.source.len() > 0 {
-    //             let source = self.get_geo_key_rules_v2(config.source, &mut applied_config).await;
-    //             if source.len() == 0 {
-    //                 // 去重后匹配的规则为空 不设置
-    //                 tracing::info!("[{}:{}] final DNS match rule is: 0", config.index, config.name);
-    //                 None
-    //             } else {
-    //                 tracing::info!(
-    //                     "[{}:{}] match rule size is: {}",
-    //                     config.index,
-    //                     config.name,
-    //                     source.len()
-    //                 );
-    //                 Some(source)
-    //             }
-    //         } else {
-    //             // 本就是空的 那就直接设置
-    //             Some(vec![])
-    //         };
-
-    //         tracing::debug!(
-    //             "[{}:{}] covert config current time: {:?}ms",
-    //             config.index,
-    //             config.name,
-    //             time.elapsed().as_millis()
-    //         );
-
-    //         if let Some(source) = insert_source {
-    //             result.push(DNSRuntimeRule {
-    //                 source,
-    //                 id: config.id,
-    //                 name: config.name,
-    //                 index: config.index,
-    //                 enable: config.enable,
-    //                 filter: config.filter,
-    //                 resolve_mode: config.resolve_mode,
-    //                 mark: config.mark,
-    //                 flow_id: config.flow_id,
-    //             });
-    //         }
-    //     }
-    //     result
-    // }
-
-    pub async fn expand_rule_sources(
-        &self,
-        rule_source: Vec<RuleSource>,
-        applied_config: &mut HashSet<GeoFileCacheKey>,
-    ) -> ExpandedRuleSources {
-        let mut lock = self.file_cache.lock().await;
-
-        let mut source = Vec::with_capacity(rule_source.len());
-        let mut used_geo_keys = HashSet::with_capacity(rule_source.len());
-
-        let mut inverse_keys: HashMap<String, HashSet<String>> = HashMap::new();
-        for each in rule_source.into_iter() {
-            match each {
-                RuleSource::GeoKey(k) if k.inverse => {
-                    inverse_keys.entry(k.name).or_default().insert(k.key);
-                }
-                RuleSource::GeoKey(k) => {
-                    let attr_key = k.attribute_key.clone();
-                    let file_cache_key = k.get_file_cache_key();
-                    if applied_config.contains(&file_cache_key) {
-                        continue;
-                    }
-                    if let Some(domains) = lock.get(&file_cache_key) {
-                        source.reserve(domains.values.len());
-                        match attr_key {
-                            Some(attr) => source.extend(
-                                domains
-                                    .values
-                                    .into_iter()
-                                    .filter(|config| config.attributes.contains(&attr))
-                                    .map(Into::into),
-                            ),
-                            None => source.extend(domains.values.into_iter().map(Into::into)),
-                        }
-                    }
-                    applied_config.insert(file_cache_key);
-                    used_geo_keys.insert(k.get_file_cache_key());
-                }
-                RuleSource::Config(c) => {
-                    source.push(c);
-                }
-            }
-        }
-
-        if inverse_keys.len() > 0 {
-            let time = Instant::now();
-            tracing::debug!("{:?}", inverse_keys);
-            for (inverse_key, excluded_names) in inverse_keys {
-                let all_keys: Vec<_> =
-                    lock.filter_keys(|k| k.name == inverse_key).cloned().collect();
-                for key in all_keys.iter() {
-                    if !excluded_names.contains(&key.key) {
-                        if !applied_config.contains(key) {
-                            if let Some(domains) = lock.get(key) {
-                                source.reserve(domains.values.len());
-                                applied_config.insert(key.clone());
-                                used_geo_keys.insert(key.clone());
-                                source.extend(domains.values.into_iter().map(Into::into));
-                            }
-                        }
-                        // } else {
-                        //     tracing::debug!("excluded_names: {:#?}", key);
-                    }
-                }
-            }
-            tracing::debug!("inverse insert time: {}ms", time.elapsed().as_millis());
-        }
-
-        ExpandedRuleSources { domains: source, used_geo_keys }
     }
 
     async fn snapshot_key_hashes_for_name(
@@ -641,6 +396,25 @@ impl GeoSiteService {
             data.iter().map(|item| (item.key.clone(), item.values.clone())),
             before,
         )
+    }
+}
+
+#[async_trait::async_trait]
+impl GeoMatcherSource for GeoSiteService {
+    async fn load_geo_domains(
+        &self,
+        key: &GeoFileCacheKey,
+    ) -> Result<Option<Vec<GeoSiteFileConfig>>, GeoMatcherSourceError> {
+        let mut lock = self.file_cache.lock().await;
+        let key_exists = lock.keys_ref().into_iter().any(|candidate| candidate == key);
+        match lock.get(key) {
+            Some(config) => Ok(Some(config.values)),
+            None if !key_exists => Ok(None),
+            None => Err(GeoMatcherSourceError::ReadFailed {
+                name: key.name.clone(),
+                key: key.key.clone(),
+            }),
+        }
     }
 }
 

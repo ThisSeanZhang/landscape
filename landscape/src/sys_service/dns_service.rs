@@ -6,6 +6,7 @@ use landscape_common::sys_service::lan_hostname::LanHostnameConfig;
 use landscape_common::{
     config::DnsRuntimeConfig,
     dns::error::DnsError,
+    dns::redirect::DynamicDnsRedirectScope,
     dns::{CacheRuntimeConfig, DohRuntimeConfig, FlowDnsDependencies},
     event::{dns::DnsEvent, DnsMetricMessage},
     service::{
@@ -16,7 +17,10 @@ use landscape_common::{
 use landscape_core::lan_hostname::LanHostnameRegistry;
 use landscape_dns::{
     prepare_system_dns,
-    server::{DohTimeouts, EffectiveDohListenerConfig, LandscapeDnsServer, LocalDnsAnswerProvider},
+    server::{
+        DohTimeouts, EffectiveDohListenerConfig, LandscapeDnsServer, LocalDnsAnswerProvider,
+        MatcherBuilder,
+    },
     CheckChainDnsResult, CheckDnsReq,
 };
 use rustls::server::ResolvesServerCert;
@@ -24,9 +28,7 @@ use std::net::{Ipv6Addr, SocketAddr, SocketAddrV6};
 use tokio::sync::mpsc;
 
 use crate::dns::{
-    compiler::{CompiledFlowDnsState, FlowDnsCompiler},
-    redirect_service::DNSRedirectService,
-    rule_service::DNSRuleService,
+    redirect_service::DNSRedirectService, rule_service::DNSRuleService,
     upstream_service::DnsUpstreamService,
 };
 use crate::{
@@ -40,9 +42,8 @@ pub struct LandscapeDnsService {
     dns_service: LandscapeDnsServer,
     dns_rule_service: DNSRuleService,
     dns_redirect_rule_service: DNSRedirectService,
-    geo_site_service: GeoSiteService,
     dns_upstream_service: DnsUpstreamService,
-    compiler: FlowDnsCompiler,
+    matcher_builder: MatcherBuilder,
     flow_dependencies: Arc<tokio::sync::RwLock<HashMap<u32, FlowDnsDependencies>>>,
 }
 
@@ -86,15 +87,14 @@ impl LandscapeDnsService {
 
         // dns_service.restart(53).await;
         // dns_service.update_flow_map(&flow_rule_service.list().await).await;
-        let compiler = FlowDnsCompiler::new(geo_site_service.clone());
+        let matcher_builder = MatcherBuilder::new(Arc::new(geo_site_service));
 
         let dns_service = Self {
             dns_service,
             dns_rule_service,
             dns_redirect_rule_service,
-            geo_site_service,
             dns_upstream_service,
-            compiler,
+            matcher_builder,
             flow_dependencies: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
         };
         dns_service.refresh_all_flows().await;
@@ -104,8 +104,11 @@ impl LandscapeDnsService {
                 match event {
                     DnsEvent::RulesChanged { flow_id: None }
                     | DnsEvent::RedirectsChanged { flow_id: None }
-                    | DnsEvent::GeoSitesChanged { changed_keys: None }
                     | DnsEvent::RuntimeConfigChanged => {
+                        dns_service_clone.refresh_all_flows().await;
+                    }
+                    DnsEvent::GeoSitesChanged { changed_keys: None } => {
+                        dns_service_clone.matcher_builder.invalidate_geo_matchers(None).await;
                         dns_service_clone.refresh_all_flows().await;
                     }
                     DnsEvent::RulesChanged { flow_id: Some(flow_id) }
@@ -140,6 +143,10 @@ impl LandscapeDnsService {
                         dns_service_clone.refresh_flow_ids(flow_ids).await;
                     }
                     DnsEvent::GeoSitesChanged { changed_keys: Some(changed_keys) } => {
+                        dns_service_clone
+                            .matcher_builder
+                            .invalidate_geo_matchers(Some(&changed_keys))
+                            .await;
                         let flow_ids = dns_service_clone
                             .collect_dependent_flows(|deps| {
                                 deps.geo_keys.iter().any(|key| changed_keys.contains(key))
@@ -228,12 +235,31 @@ impl LandscapeDnsService {
     async fn refresh_all_flows(&self) {
         let time = Instant::now();
         let mut flow_rules = self.dns_rule_service.get_flow_hashmap().await;
+        let redirect_flow_ids = self
+            .dns_redirect_rule_service
+            .list()
+            .await
+            .into_iter()
+            .flat_map(|rule| rule.apply_flows)
+            .collect::<HashSet<_>>();
+        let dynamic_redirect_flow_ids = self
+            .dns_redirect_rule_service
+            .list_dynamic_batches()
+            .await
+            .into_iter()
+            .filter_map(|batch| match batch.scope {
+                DynamicDnsRedirectScope::Flow(flow_id) => Some(flow_id),
+                DynamicDnsRedirectScope::Global => None,
+            })
+            .collect::<HashSet<_>>();
         let tracked_flow_ids = {
             let dependencies = self.flow_dependencies.read().await;
             dependencies.keys().copied().collect::<HashSet<_>>()
         };
         let mut flow_ids = flow_rules.keys().copied().collect::<HashSet<_>>();
         flow_ids.extend(tracked_flow_ids);
+        flow_ids.extend(redirect_flow_ids);
+        flow_ids.extend(dynamic_redirect_flow_ids);
 
         for flow_id in flow_ids {
             let rules = flow_rules.remove(&flow_id).unwrap_or_default();
@@ -260,41 +286,31 @@ impl LandscapeDnsService {
     ) {
         tracing::info!("refresh dns rule: flow_id: {flow_id}");
         let time = Instant::now();
-        if let Some(compiled) = self.compile_flow_state(flow_id, flow_dns_rules).await {
-            self.store_flow_dependencies(flow_id, compiled.dependencies).await;
-            self.dns_service.refresh_flow_server(compiled.desired_state).await;
-        }
-        tracing::info!(
-            "[flow_id: {flow_id}] compile and refresh DNS rule: {:?}ms",
-            time.elapsed().as_millis()
-        );
-    }
-
-    async fn compile_flow_state(
-        &self,
-        flow_id: u32,
-        flow_dns_rules: Vec<landscape_common::dns::rule::DNSRuleConfig>,
-    ) -> Option<CompiledFlowDnsState> {
         let upstream_ids = flow_dns_rules.iter().map(|rule| rule.upstream_id).collect();
         let upstream_configs = self.dns_upstream_service.find_by_ids(upstream_ids).await;
         let dns_redirect_rules = self.dns_redirect_rule_service.list_flow_configs(flow_id).await;
         let dynamic_dns_redirects =
             self.dns_redirect_rule_service.list_flow_dynamic_batches(flow_id).await;
-        let (cache_runtime, doh_runtime) = self.dns_service.current_live_runtime_config();
+        let (_, doh_runtime) = self.dns_service.current_live_runtime_config();
+        let (redirect_engine, resolve_engine, dependencies) = self
+            .matcher_builder
+            .build_flow(
+                flow_id,
+                flow_dns_rules,
+                dns_redirect_rules,
+                dynamic_dns_redirects,
+                upstream_configs,
+            )
+            .await;
 
-        Some(
-            self.compiler
-                .compile_flow(
-                    flow_id,
-                    flow_dns_rules,
-                    dns_redirect_rules,
-                    dynamic_dns_redirects,
-                    upstream_configs,
-                    cache_runtime,
-                    doh_runtime,
-                )
-                .await,
-        )
+        self.store_flow_dependencies(flow_id, dependencies).await;
+        self.dns_service
+            .refresh_flow_runtime(flow_id, redirect_engine, resolve_engine, doh_runtime)
+            .await;
+        tracing::info!(
+            "[flow_id: {flow_id}] build and refresh DNS runtime: {:?}ms",
+            time.elapsed().as_millis()
+        );
     }
 
     async fn store_flow_dependencies(&self, flow_id: u32, dependencies: FlowDnsDependencies) {

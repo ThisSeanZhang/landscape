@@ -1,7 +1,7 @@
 use aho_corasick::AhoCorasick;
 use landscape_common::dns::rule::{DomainConfig, DomainMatchType};
 use regex::Regex;
-use std::{borrow::Cow, collections::HashSet, time::Instant};
+use std::{borrow::Cow, collections::HashSet, sync::Arc, time::Instant};
 use tracing::debug;
 use trie_rs::TrieBuilder;
 
@@ -11,6 +11,48 @@ pub struct DomainMatcher {
     full_domains: HashSet<String>,     // 用于存储完全匹配的域名
     keyword_ac: AhoCorasick,           // Aho-Corasick 自动机，用于关键字匹配
     subdomain_trie: trie_rs::Trie<u8>, // Trie，用于子域名匹配
+}
+
+#[derive(Debug)]
+pub struct RuntimeRuleMatcher {
+    manual: Option<DomainMatcher>,
+    positive_geo: Vec<Arc<DomainMatcher>>,
+    negative_geo: Vec<Arc<DomainMatcher>>,
+    match_all: bool,
+}
+
+impl RuntimeRuleMatcher {
+    pub fn new(
+        manual: Vec<DomainConfig>,
+        positive_geo: Vec<Arc<DomainMatcher>>,
+        negative_geo: Vec<Arc<DomainMatcher>>,
+        match_all: bool,
+    ) -> Self {
+        Self {
+            manual: (!manual.is_empty()).then(|| DomainMatcher::new(manual)),
+            positive_geo,
+            negative_geo,
+            match_all,
+        }
+    }
+
+    pub fn is_match(&self, domain: &str) -> bool {
+        if self.match_all {
+            return true;
+        }
+
+        self.manual.as_ref().is_some_and(|matcher| matcher.is_match(domain))
+            || self.positive_geo.iter().any(|matcher| matcher.is_match(domain))
+            // Intended new semantics (a fix over the previous behavior): an inverse
+            // (negative) geo key is no longer expanded at compile time into "the union
+            // of domains from all same-name keys except the excluded one". Instead it
+            // matches at runtime by "not in the excluded key", i.e. it matches every
+            // domain except those in the excluded key. Note: under this semantics an
+            // inverse rule behaves like a near match-all and may shadow later rules;
+            // this is expected.
+            || (!self.negative_geo.is_empty()
+                && !self.negative_geo.iter().any(|matcher| matcher.is_match(domain)))
+    }
 }
 
 impl DomainMatcher {
@@ -126,7 +168,7 @@ static GLOBAL: jemallocator::Jemalloc = jemallocator::Jemalloc;
 
 #[cfg(test)]
 mod tests {
-    use std::{path::PathBuf, time::Instant};
+    use std::{path::PathBuf, sync::Arc, time::Instant};
 
     use jemalloc_ctl::{epoch, stats};
 
@@ -137,7 +179,60 @@ mod tests {
         LANDSCAPE_GEO_CACHE_TMP_DIR,
     };
 
-    use super::DomainMatcher;
+    use super::{DomainMatcher, RuntimeRuleMatcher};
+
+    fn full(value: &str) -> DomainConfig {
+        DomainConfig {
+            match_type: DomainMatchType::Full,
+            value: value.to_string(),
+        }
+    }
+
+    #[test]
+    fn runtime_rule_matcher_combines_manual_positive_and_negative_sources() {
+        let matcher = RuntimeRuleMatcher::new(
+            vec![full("manual.example")],
+            vec![Arc::new(DomainMatcher::new(vec![full("positive.example")]))],
+            vec![Arc::new(DomainMatcher::new(vec![full("excluded.example")]))],
+            false,
+        );
+
+        assert!(matcher.is_match("manual.example"));
+        assert!(matcher.is_match("positive.example"));
+        assert!(matcher.is_match("other.example"));
+        assert!(!matcher.is_match("excluded.example"));
+    }
+
+    #[test]
+    fn positive_match_overrides_a_negative_geo_match() {
+        let matcher = RuntimeRuleMatcher::new(
+            vec![],
+            vec![Arc::new(DomainMatcher::new(vec![full("shared.example")]))],
+            vec![Arc::new(DomainMatcher::new(vec![full("shared.example")]))],
+            false,
+        );
+
+        assert!(matcher.is_match("shared.example"));
+    }
+
+    #[test]
+    fn empty_positive_and_negative_geo_matchers_keep_defined_semantics() {
+        let positive_empty = RuntimeRuleMatcher::new(
+            vec![],
+            vec![Arc::new(DomainMatcher::new(vec![]))],
+            vec![],
+            false,
+        );
+        let negative_empty = RuntimeRuleMatcher::new(
+            vec![],
+            vec![],
+            vec![Arc::new(DomainMatcher::new(vec![]))],
+            false,
+        );
+
+        assert!(!positive_empty.is_match("example.com"));
+        assert!(negative_empty.is_match("example.com"));
+    }
 
     #[test]
     fn domain_matcher() {

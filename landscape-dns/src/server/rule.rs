@@ -7,43 +7,43 @@ use hickory_proto::rr::{
 use uuid::Uuid;
 
 use landscape_common::dns::redirect::DnsRedirectAnswerMode;
+use landscape_common::flow::mark::FlowMark;
 use landscape_common::{
-    dns::rule::FilterResult,
-    dns::{RuntimeDnsRule, RuntimeRedirectRule},
+    dns::{
+        config::{DnsBindConfig, DnsUpstreamConfig},
+        rule::FilterResult,
+    },
     flow::DnsRuntimeMarkInfo,
 };
 
 use crate::connection::LandscapeMarkDNSResolver;
-use crate::server::matcher::DomainMatcher;
+use crate::server::matcher::RuntimeRuleMatcher;
 
 #[derive(Debug)]
-pub struct RedirectSolution {
+pub struct DNSRedirectRuntime {
     pub redirect_id: Option<Uuid>,
     pub dynamic_redirect_source: Option<String>,
     pub answer_mode: DnsRedirectAnswerMode,
-    matcher: DomainMatcher,
+    matcher: RuntimeRuleMatcher,
     result_info: Vec<IpAddr>,
     ttl_secs: u32,
 }
 
-impl RedirectSolution {
-    pub fn new(rule: RuntimeRedirectRule) -> Self {
-        let RuntimeRedirectRule {
-            redirect_id,
-            dynamic_source_id,
-            order: _,
-            answer_mode,
-            match_rules,
-            result_ips,
-            ttl_secs,
-        } = rule;
-        let matcher = DomainMatcher::new(match_rules);
+impl DNSRedirectRuntime {
+    pub fn new(
+        redirect_id: Option<Uuid>,
+        dynamic_redirect_source: Option<String>,
+        answer_mode: DnsRedirectAnswerMode,
+        matcher: RuntimeRuleMatcher,
+        result_info: Vec<IpAddr>,
+        ttl_secs: u32,
+    ) -> Self {
         Self {
             matcher,
             redirect_id,
-            dynamic_redirect_source: dynamic_source_id,
+            dynamic_redirect_source,
             answer_mode,
-            result_info: result_ips,
+            result_info,
             ttl_secs,
         }
     }
@@ -93,9 +93,11 @@ impl RedirectSolution {
 }
 
 #[derive(Debug)]
-pub struct ResolutionRule {
-    matcher: DomainMatcher,
-    config: RuntimeDnsRule,
+pub struct DNSResolveRuntime {
+    matcher: RuntimeRuleMatcher,
+    rule_id: Uuid,
+    order: u32,
+    filter: FilterResult,
     flow_id: u32,
     mark: DnsRuntimeMarkInfo,
     resolver: LandscapeMarkDNSResolver,
@@ -103,28 +105,30 @@ pub struct ResolutionRule {
     enable_ip_validation: bool,
 }
 
-impl ResolutionRule {
-    pub fn new(config: RuntimeDnsRule, flow_id: u32) -> Self {
+impl DNSResolveRuntime {
+    pub fn new(
+        rule_id: Uuid,
+        order: u32,
+        filter: FilterResult,
+        bind_config: DnsBindConfig,
+        mark_config: FlowMark,
+        upstream: DnsUpstreamConfig,
+        matcher: RuntimeRuleMatcher,
+        flow_id: u32,
+    ) -> Self {
         let span = tracing::info_span!("dns_rule", flow_id = flow_id);
         let _ = span.enter();
 
-        let matcher = DomainMatcher::new(config.sources.clone());
+        let enable_ip_validation = upstream.enable_ip_validation.unwrap_or(false);
+        let resolver =
+            crate::connection::create_resolver(flow_id, mark_config.clone(), bind_config, upstream);
 
-        let enable_ip_validation = config.upstream.enable_ip_validation;
-        let resolver = crate::connection::create_resolver(
-            flow_id,
-            config.mark,
-            config.bind_config.clone(),
-            config.upstream.clone(),
-        );
-
-        let mark = DnsRuntimeMarkInfo {
-            mark: config.mark.clone(),
-            priority: config.order as u16,
-        };
-        ResolutionRule {
+        let mark = DnsRuntimeMarkInfo { mark: mark_config, priority: order as u16 };
+        DNSResolveRuntime {
             matcher,
-            config,
+            rule_id,
+            order,
+            filter,
             flow_id,
             resolver,
             mark,
@@ -137,27 +141,21 @@ impl ResolutionRule {
     }
 
     pub fn filter_mode(&self) -> FilterResult {
-        self.config.filter.clone()
+        self.filter.clone()
     }
 
     pub fn get_config_id(&self) -> Uuid {
-        self.config.rule_id
+        self.rule_id
     }
 
     pub fn order(&self) -> u32 {
-        self.config.order
+        self.order
     }
 
     /// 确定是不是当前规则进行处理
     pub fn is_match(&self, domain: &str) -> bool {
-        let match_result = if self.config.sources.is_empty() {
-            true
-        } else {
-            let domain =
-                if let Some(stripped) = domain.strip_suffix('.') { stripped } else { domain };
-            self.matcher.is_match(domain)
-        };
-        match_result
+        let domain = if let Some(stripped) = domain.strip_suffix('.') { stripped } else { domain };
+        self.matcher.is_match(domain)
     }
 
     pub async fn lookup(
@@ -199,7 +197,7 @@ impl ResolutionRule {
                 tracing::error!(
                     "[flow_id: {}, rule: {}] DNS resolution failed for {}: {}",
                     self.flow_id,
-                    self.config.rule_id,
+                    self.rule_id,
                     domain,
                     e
                 );
@@ -263,7 +261,7 @@ mod tests {
     use std::net::{IpAddr, Ipv4Addr};
 
     use landscape_common::dns::{
-        redirect::{DNSRedirectRuntimeRule, DnsRedirectAnswerMode},
+        redirect::DnsRedirectAnswerMode,
         rule::{DomainConfig, DomainMatchType},
     };
 
@@ -271,19 +269,21 @@ mod tests {
 
     #[test]
     fn dynamic_redirect_solution_preserves_source_and_ttl() {
-        let solution = RedirectSolution::new(
-            DNSRedirectRuntimeRule {
-                redirect_id: None,
-                dynamic_redirect_source: Some("docker:test".to_string()),
-                answer_mode: DnsRedirectAnswerMode::StaticIps,
-                match_rules: vec![DomainConfig {
+        let solution = DNSRedirectRuntime::new(
+            None,
+            Some("docker:test".to_string()),
+            DnsRedirectAnswerMode::StaticIps,
+            RuntimeRuleMatcher::new(
+                vec![DomainConfig {
                     match_type: DomainMatchType::Full,
                     value: "example.com".to_string(),
                 }],
-                result_info: vec![IpAddr::V4(Ipv4Addr::new(10, 0, 0, 2))],
-                ttl_secs: 42,
-            }
-            .into(),
+                vec![],
+                vec![],
+                false,
+            ),
+            vec![IpAddr::V4(Ipv4Addr::new(10, 0, 0, 2))],
+            42,
         );
 
         assert!(solution.is_match("example.com."));

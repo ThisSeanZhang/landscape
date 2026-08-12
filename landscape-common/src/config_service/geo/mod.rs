@@ -174,6 +174,21 @@ pub struct GeoFileCacheKey {
     pub key: String,
 }
 
+#[derive(thiserror::Error, Debug)]
+pub enum GeoMatcherSourceError {
+    #[error("failed to read geo site cache '{name}:{key}'")]
+    ReadFailed { name: String, key: String },
+}
+
+#[async_trait::async_trait]
+pub trait GeoMatcherSource: Send + Sync {
+    /// `None` means the key does not exist; an empty vector is a valid empty key.
+    async fn load_geo_domains(
+        &self,
+        key: &GeoFileCacheKey,
+    ) -> Result<Option<Vec<GeoSiteFileConfig>>, GeoMatcherSourceError>;
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct GeoConfigKey {
