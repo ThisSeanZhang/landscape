@@ -190,15 +190,49 @@ impl DnsRequestHandler {
         redirect_engine: RedirectEngine,
         resolve_engine: ResolveEngine,
     ) {
-        let (new_cache, update_dns_mark_list) = self
-            .rebuild_cache(&redirect_engine, &resolve_engine, Some(RULE_REFRESH_TTL_CAP), true)
-            .await;
+        self.renew_engines_with_cache(
+            Arc::new(redirect_engine),
+            Arc::new(resolve_engine),
+            Some(RULE_REFRESH_TTL_CAP),
+        )
+        .await;
+    }
+
+    pub async fn renew_dns_rules(&self, resolve_engine: ResolveEngine) {
+        let runtime = self.runtime.load_full();
+        self.renew_engines_with_cache(
+            runtime.redirect_engine.clone(),
+            Arc::new(resolve_engine),
+            Some(RULE_REFRESH_TTL_CAP),
+        )
+        .await;
+    }
+
+    pub async fn renew_redirect_rules(&self, redirect_engine: RedirectEngine) {
+        let runtime = self.runtime.load_full();
+        let new_cache = self.remove_redirected_cache(&runtime.cache, &redirect_engine).await;
+        self.refresh_runtime_maps_from_cache(&new_cache);
+        self.runtime.store(Arc::new(HandlerRuntime {
+            redirect_engine: Arc::new(redirect_engine),
+            resolve_engine: runtime.resolve_engine.clone(),
+            cache: new_cache,
+        }));
+    }
+
+    async fn renew_engines_with_cache(
+        &self,
+        redirect_engine: Arc<RedirectEngine>,
+        resolve_engine: Arc<ResolveEngine>,
+        ttl_cap: Option<u32>,
+    ) {
+        let (new_cache, update_dns_mark_list) =
+            self.rebuild_cache(&redirect_engine, &resolve_engine, ttl_cap).await;
 
         tracing::info!("add_dns_marks: {:?}", update_dns_mark_list);
         self.refresh_flow_dns_map(update_dns_mark_list);
         self.runtime.store(Arc::new(HandlerRuntime {
-            redirect_engine: Arc::new(redirect_engine),
-            resolve_engine: Arc::new(resolve_engine),
+            redirect_engine,
+            resolve_engine,
             cache: new_cache,
         }));
         Self::recreate_route_cache();
@@ -207,14 +241,15 @@ impl DnsRequestHandler {
     pub async fn renew_runtime_config(&self, rebuild_cache: bool) {
         if rebuild_cache {
             let runtime = self.runtime.load_full();
-            let (new_cache, _) = self
-                .rebuild_cache(&runtime.redirect_engine, &runtime.resolve_engine, None, false)
-                .await;
+            let (new_cache, update_dns_mark_list) =
+                self.rebuild_cache(&runtime.redirect_engine, &runtime.resolve_engine, None).await;
+            self.refresh_flow_dns_map(update_dns_mark_list);
             self.runtime.store(Arc::new(HandlerRuntime {
                 redirect_engine: runtime.redirect_engine.clone(),
                 resolve_engine: runtime.resolve_engine.clone(),
                 cache: new_cache,
             }));
+            Self::recreate_route_cache();
         }
     }
 
@@ -223,12 +258,28 @@ impl DnsRequestHandler {
         redirects: &RedirectEngine,
         resolves: &ResolveEngine,
         ttl_cap: Option<u32>,
-        collect_updates: bool,
     ) -> (DNSCache, HashSet<FlowMarkInfo>) {
         let new_cache = self.build_runtime_cache();
-        let update_dns_mark_list =
-            self.migrate_cache(&new_cache, redirects, resolves, ttl_cap, collect_updates).await;
+        self.migrate_cache(&new_cache, redirects, resolves, ttl_cap).await;
+        new_cache.run_pending_tasks().await;
+        let update_dns_mark_list = Self::cache_dns_mark_list(&new_cache);
         (new_cache, update_dns_mark_list)
+    }
+
+    async fn remove_redirected_cache(
+        &self,
+        current_cache: &DNSCache,
+        redirects: &RedirectEngine,
+    ) -> DNSCache {
+        let new_cache = self.build_runtime_cache();
+        for (key, value) in current_cache.iter() {
+            let (domain, req_type) = &*key;
+            if redirects.lookup(domain, *req_type, self.local_answer_provider.as_ref()).is_none() {
+                new_cache.insert((domain.clone(), req_type.clone()), value).await;
+            }
+        }
+        new_cache.run_pending_tasks().await;
+        new_cache
     }
 
     async fn migrate_cache(
@@ -237,9 +288,7 @@ impl DnsRequestHandler {
         redirects: &RedirectEngine,
         resolves: &ResolveEngine,
         ttl_cap: Option<u32>,
-        collect_updates: bool,
-    ) -> HashSet<FlowMarkInfo> {
-        let mut update_dns_mark_list = HashSet::new();
+    ) {
         let current_runtime = self.runtime.load();
         let current_cache = &current_runtime.cache;
 
@@ -251,11 +300,6 @@ impl DnsRequestHandler {
             }
             if let Some(resolver) = Self::find_cache_rule(resolves, domain, &cache_item) {
                 let new_mark = resolver.mark().clone();
-                let will_map = collect_updates && new_mark.mark.need_insert_in_ebpf_map();
-
-                if will_map {
-                    update_dns_mark_list.extend(cache_item.get_update_rules_with_mark(&new_mark));
-                }
 
                 let new_item = CacheDNSItem {
                     rdatas: cache_item.rdatas.clone(),
@@ -271,7 +315,6 @@ impl DnsRequestHandler {
                 new_cache.insert((domain.clone(), req_type.clone()), Arc::new(new_item)).await;
             }
         }
-        update_dns_mark_list
     }
 
     fn find_cache_rule<'a>(
@@ -919,13 +962,16 @@ impl DnsRequestHandler {
     }
 
     fn refresh_runtime_maps_from_cache(&self, cache: &DNSCache) {
+        self.refresh_flow_dns_map(Self::cache_dns_mark_list(cache));
+        Self::recreate_route_cache();
+    }
+
+    fn cache_dns_mark_list(cache: &DNSCache) -> HashSet<FlowMarkInfo> {
         let mut update_dns_mark_list = HashSet::new();
         for (_key, value) in cache.iter() {
             update_dns_mark_list.extend(value.get_update_rules());
         }
-
-        self.refresh_flow_dns_map(update_dns_mark_list);
-        Self::recreate_route_cache();
+        update_dns_mark_list
     }
 
     // 检查缓存并根据 TTL 判断是否过期
@@ -2381,6 +2427,158 @@ mod tests {
                 .get(&("redirected.example.".to_string(), RecordType::A))
                 .await
                 .is_none());
+        });
+    }
+
+    #[test]
+    fn renew_dns_rules_preserves_redirects_and_caps_migrated_cache_ttl() {
+        run_async_test(async {
+            let handler = DnsRequestHandler::new(
+                ChainDnsServerInitInfo {
+                    dns_rules: vec![test_runtime_rule()],
+                    redirect_rules: vec![DNSRedirectRuntimeRule {
+                        redirect_id: Some(Uuid::nil()),
+                        dynamic_redirect_source: None,
+                        answer_mode: DnsRedirectAnswerMode::StaticIps,
+                        match_rules: vec![DomainConfig {
+                            match_type: DomainMatchType::Full,
+                            value: "redirect.example".to_string(),
+                        }],
+                        result_info: vec![IpAddr::V4(Ipv4Addr::LOCALHOST)],
+                        ttl_secs: 30,
+                    }],
+                }
+                .into(),
+                shared_cache_runtime_config(5),
+                1,
+                Arc::new(ArcSwapOption::new(None)),
+                None,
+                None,
+                test_lan_hostname_registry(),
+                None,
+            );
+            let rule = test_runtime_rule();
+            handler
+                .insert(
+                    "cached.example.",
+                    RecordType::A,
+                    vec![sample_a_record("cached.example.", 60, Ipv4Addr::new(1, 1, 1, 1))],
+                    ResponseCode::NoError,
+                    &DnsRuntimeMarkInfo { mark: FlowMark::default(), priority: 0 },
+                    FilterResult::Unfilter,
+                    Some(rule.id),
+                    Some(rule.index),
+                )
+                .await;
+            handler
+                .insert(
+                    "short.example.",
+                    RecordType::A,
+                    vec![sample_a_record("short.example.", 3, Ipv4Addr::new(1, 0, 0, 1))],
+                    ResponseCode::NoError,
+                    &DnsRuntimeMarkInfo { mark: FlowMark::default(), priority: 0 },
+                    FilterResult::Unfilter,
+                    Some(rule.id),
+                    Some(rule.index),
+                )
+                .await;
+
+            let old_runtime = handler.runtime.load_full();
+            let (_, resolve_engine) =
+                DnsRequestHandler::test_engines_from_legacy(ChainDnsServerInitInfo {
+                    dns_rules: vec![rule],
+                    redirect_rules: vec![],
+                });
+            handler.renew_dns_rules(resolve_engine).await;
+
+            let new_runtime = handler.runtime.load_full();
+            assert!(Arc::ptr_eq(&old_runtime.redirect_engine, &new_runtime.redirect_engine));
+            assert!(!Arc::ptr_eq(&old_runtime.resolve_engine, &new_runtime.resolve_engine));
+            assert_eq!(
+                new_runtime
+                    .cache
+                    .get(&("cached.example.".to_string(), RecordType::A))
+                    .await
+                    .unwrap()
+                    .min_ttl,
+                RULE_REFRESH_TTL_CAP
+            );
+            assert_eq!(
+                new_runtime
+                    .cache
+                    .get(&("short.example.".to_string(), RecordType::A))
+                    .await
+                    .unwrap()
+                    .min_ttl,
+                3
+            );
+        });
+    }
+
+    #[test]
+    fn renew_redirect_rules_preserves_resolves_and_unclaimed_cache() {
+        run_async_test(async {
+            let handler = DnsRequestHandler::new(
+                ChainDnsServerInitInfo {
+                    dns_rules: vec![test_runtime_rule()],
+                    redirect_rules: vec![],
+                }
+                .into(),
+                shared_cache_runtime_config(5),
+                1,
+                Arc::new(ArcSwapOption::new(None)),
+                None,
+                None,
+                test_lan_hostname_registry(),
+                None,
+            );
+            let rule = test_runtime_rule();
+            for domain in ["redirected.example.", "kept.example."] {
+                handler
+                    .insert(
+                        domain,
+                        RecordType::A,
+                        vec![sample_a_record(domain, 60, Ipv4Addr::new(1, 1, 1, 1))],
+                        ResponseCode::NoError,
+                        &DnsRuntimeMarkInfo { mark: FlowMark::default(), priority: 0 },
+                        FilterResult::Unfilter,
+                        Some(rule.id),
+                        Some(rule.index),
+                    )
+                    .await;
+            }
+
+            let old_runtime = handler.runtime.load_full();
+            let old_kept =
+                old_runtime.cache.get(&("kept.example.".to_string(), RecordType::A)).await.unwrap();
+            let (redirect_engine, _) =
+                DnsRequestHandler::test_engines_from_legacy(ChainDnsServerInitInfo {
+                    dns_rules: vec![],
+                    redirect_rules: vec![DNSRedirectRuntimeRule {
+                        redirect_id: Some(Uuid::nil()),
+                        dynamic_redirect_source: None,
+                        answer_mode: DnsRedirectAnswerMode::StaticIps,
+                        match_rules: vec![DomainConfig {
+                            match_type: DomainMatchType::Full,
+                            value: "redirected.example".to_string(),
+                        }],
+                        result_info: vec![IpAddr::V4(Ipv4Addr::LOCALHOST)],
+                        ttl_secs: 30,
+                    }],
+                });
+            handler.renew_redirect_rules(redirect_engine).await;
+
+            let new_runtime = handler.runtime.load_full();
+            assert!(Arc::ptr_eq(&old_runtime.resolve_engine, &new_runtime.resolve_engine));
+            assert!(new_runtime
+                .cache
+                .get(&("redirected.example.".to_string(), RecordType::A))
+                .await
+                .is_none());
+            let new_kept =
+                new_runtime.cache.get(&("kept.example.".to_string(), RecordType::A)).await.unwrap();
+            assert!(Arc::ptr_eq(&old_kept, &new_kept));
+            assert_eq!(new_kept.min_ttl, 60);
         });
     }
 

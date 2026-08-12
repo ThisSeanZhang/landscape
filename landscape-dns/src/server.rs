@@ -89,6 +89,13 @@ struct FlowServerEntry {
     runtime: Arc<ArcSwapOption<FlowServerRuntime>>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FlowRuntimeRefreshKind {
+    Full,
+    ResolveOnly,
+    RedirectOnly,
+}
+
 impl FlowServerEntry {
     fn new() -> Self {
         Self {
@@ -142,6 +149,20 @@ impl LandscapeDnsServer {
         self.cache_live_config.store(Arc::new(cache_runtime));
     }
 
+    pub async fn renew_runtime_config(&self, rebuild_cache: bool) {
+        let entries = {
+            let flow_server = self.flow_dns_server.lock().await;
+            flow_server.values().cloned().collect::<Vec<_>>()
+        };
+
+        for entry in entries {
+            let _refresh_guard = entry.refresh_lock.lock().await;
+            if let Some(runtime) = entry.runtime.load_full() {
+                runtime.handler.renew_runtime_config(rebuild_cache).await;
+            }
+        }
+    }
+
     pub fn update_metric_sender(&self, msg_tx: Option<mpsc::Sender<DnsMetricMessage>>) {
         self.msg_tx.store(msg_tx.map(Arc::new));
     }
@@ -165,11 +186,39 @@ impl LandscapeDnsServer {
         resolve_engine: ResolveEngine,
         doh_runtime: Option<DohRuntimeConfig>,
     ) {
+        self.refresh_flow_runtime_kind(
+            flow_id,
+            redirect_engine,
+            resolve_engine,
+            doh_runtime,
+            FlowRuntimeRefreshKind::Full,
+        )
+        .await;
+    }
+
+    pub async fn refresh_flow_runtime_kind(
+        &self,
+        flow_id: u32,
+        redirect_engine: RedirectEngine,
+        resolve_engine: ResolveEngine,
+        doh_runtime: Option<DohRuntimeConfig>,
+        kind: FlowRuntimeRefreshKind,
+    ) {
         let entry = self.get_or_create_entry(flow_id).await;
 
         let _refresh_guard = entry.refresh_lock.lock().await;
         if let Some(runtime) = entry.runtime.load_full() {
-            runtime.handler.renew_engines(redirect_engine, resolve_engine).await;
+            match kind {
+                FlowRuntimeRefreshKind::Full => {
+                    runtime.handler.renew_engines(redirect_engine, resolve_engine).await;
+                }
+                FlowRuntimeRefreshKind::ResolveOnly => {
+                    runtime.handler.renew_dns_rules(resolve_engine).await;
+                }
+                FlowRuntimeRefreshKind::RedirectOnly => {
+                    runtime.handler.renew_redirect_rules(redirect_engine).await;
+                }
+            }
             return;
         }
 
