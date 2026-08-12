@@ -210,7 +210,9 @@ fn attach_dns_socket(flow_id: u32, sock_fd: i32, is_tcp: bool) {
     } else {
         landscape_ebpf::map_setting::dns::setting_dns_sock_map(sock_fd, flow_id);
     }
-    landscape_ebpf::dns_dispatcher::attach_reuseport_ebpf(sock_fd).unwrap();
+    if let Err(e) = landscape_ebpf::dns_dispatcher::attach_reuseport_ebpf(sock_fd) {
+        tracing::error!("[flow: {flow_id}]: attach reuseport eBPF error: {e:?}");
+    }
 }
 
 fn cancelled_token() -> CancellationToken {

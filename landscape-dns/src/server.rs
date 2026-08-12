@@ -59,20 +59,20 @@ pub trait DohAdvertiseProvider: Send + Sync {
     fn advertise_domains(&self) -> Vec<String>;
 }
 
-// 系统 DNS 服务
+// system DNS service
 #[derive(Clone)]
 pub struct LandscapeDnsServer {
-    // 服务状态
+    // service status
     pub status: WatchService,
-    // 内部处理
+    // internal handlers
     flow_dns_server: Arc<Mutex<HashMap<u32, Arc<FlowServerEntry>>>>,
-    // 用于重定向的动态更新
+    // dynamic updates used for redirection
     pub local_answer_provider: Option<Arc<dyn LocalDnsAnswerProvider>>,
     pub doh_advertise_provider: Option<Arc<dyn DohAdvertiseProvider>>,
     pub lan_hostname_registry: Arc<LanHostnameRegistry>,
-    // DNS 事件
+    // DNS events
     pub msg_tx: MetricSenderState,
-    // 监听 UDP DNS 地址
+    // bound UDP DNS listen address
     pub udp_listener_addr: SocketAddr,
     cache_live_config: Arc<ArcSwap<CacheRuntimeConfig>>,
     doh_listener: Option<DohListenerState>,
@@ -143,6 +143,16 @@ impl LandscapeDnsServer {
 
     pub fn get_status(&self) -> &WatchService {
         &self.status
+    }
+
+    /// Returns whether at least one flow listener runtime is still serving.
+    /// On socket bind failure `build_flow_runtime` does not store a runtime;
+    /// the cancel token is cancelled when the listener exits.
+    pub async fn has_live_flow_runtime(&self) -> bool {
+        let flow_server = self.flow_dns_server.lock().await;
+        flow_server.values().any(|entry| {
+            entry.runtime.load_full().is_some_and(|runtime| !runtime._token.is_cancelled())
+        })
     }
 
     pub fn update_runtime_config(&self, cache_runtime: CacheRuntimeConfig) {

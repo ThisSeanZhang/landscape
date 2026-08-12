@@ -107,19 +107,19 @@ impl MatcherBuilder {
             else {
                 continue;
             };
-            resolve_runtimes.insert(
+            let Some(resolve_runtime) = DNSResolveRuntime::new(
+                rule.id,
                 rule.index,
-                DNSResolveRuntime::new(
-                    rule.id,
-                    rule.index,
-                    rule.filter,
-                    rule.bind_config,
-                    rule.mark,
-                    upstream.clone(),
-                    matcher,
-                    flow_id,
-                ),
-            );
+                rule.filter,
+                rule.bind_config,
+                rule.mark,
+                upstream.clone(),
+                matcher,
+                flow_id,
+            ) else {
+                continue;
+            };
+            resolve_runtimes.insert(rule.index, resolve_runtime);
         }
 
         (RedirectEngine::new(redirect_runtimes), ResolveEngine::new(resolve_runtimes), dependencies)

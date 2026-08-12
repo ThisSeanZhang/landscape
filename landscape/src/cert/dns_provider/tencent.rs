@@ -442,11 +442,8 @@ impl DnsRecordUpdater for TencentSolver {
         let desired_vec: Vec<&str> = desired_values.iter().map(|s| s.as_str()).take(2).collect();
         let desired_set: std::collections::HashSet<&str> = desired_vec.iter().copied().collect();
 
-        let mut unmatched: Vec<&str> = desired_vec
-            .iter()
-            .filter(|v| !existing_set.contains(**v))
-            .copied()
-            .collect();
+        let mut unmatched: Vec<&str> =
+            desired_vec.iter().filter(|v| !existing_set.contains(**v)).copied().collect();
 
         for (record_id, existing_value) in &existing_with_value {
             if desired_set.contains(existing_value) {

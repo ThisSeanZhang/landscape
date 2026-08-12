@@ -115,16 +115,20 @@ impl DNSResolveRuntime {
         upstream: DnsUpstreamConfig,
         matcher: RuntimeRuleMatcher,
         flow_id: u32,
-    ) -> Self {
+    ) -> Option<Self> {
         let span = tracing::info_span!("dns_rule", flow_id = flow_id);
         let _ = span.enter();
 
         let enable_ip_validation = upstream.enable_ip_validation.unwrap_or(false);
-        let resolver =
-            crate::connection::create_resolver(flow_id, mark_config.clone(), bind_config, upstream);
+        let Some(resolver) =
+            crate::connection::create_resolver(flow_id, mark_config.clone(), bind_config, upstream)
+        else {
+            tracing::warn!(rule_id = %rule_id, flow_id = flow_id, "skip DNS rule: failed to build resolver");
+            return None;
+        };
 
         let mark = DnsRuntimeMarkInfo { mark: mark_config, priority: order as u16 };
-        DNSResolveRuntime {
+        Some(DNSResolveRuntime {
             matcher,
             rule_id,
             order,
@@ -133,7 +137,7 @@ impl DNSResolveRuntime {
             resolver,
             mark,
             enable_ip_validation,
-        }
+        })
     }
 
     pub fn mark(&self) -> &DnsRuntimeMarkInfo {
@@ -152,7 +156,7 @@ impl DNSResolveRuntime {
         self.order
     }
 
-    /// 确定是不是当前规则进行处理
+    /// checks whether this rule should handle the query
     pub fn is_match(&self, domain: &str) -> bool {
         let domain = if let Some(stripped) = domain.strip_suffix('.') { stripped } else { domain };
         self.matcher.is_match(domain)

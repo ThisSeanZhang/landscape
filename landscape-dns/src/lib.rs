@@ -40,39 +40,50 @@ pub mod server;
 static RESOLVER_CONF: &'static str = "/etc/resolv.conf";
 static RESOLVER_CONF_LD_BACK: &'static str = "/etc/resolv.conf.ld_back";
 
-fn check_resolver_conf() {
+fn check_resolver_conf() -> bool {
     let resolver_file = PathBuf::from(RESOLVER_CONF);
     let resolver_file_back = PathBuf::from(RESOLVER_CONF_LD_BACK);
     let new_content = "nameserver 127.0.0.1\n";
 
     if resolver_file.is_symlink() {
-        // 如果是符号链接，直接删除
-        std::fs::remove_file(&resolver_file).unwrap();
+        // symlink: remove it directly
+        if let Err(e) = std::fs::remove_file(&resolver_file) {
+            tracing::error!("remove {resolver_file:?} symlink error: {e}");
+            return false;
+        }
     } else if resolver_file.exists() {
         if resolver_file.is_file() {
-            // 如果是普通文件，检查备份文件
+            // regular file: check the backup file
             if resolver_file_back.exists() {
-                std::fs::remove_file(&resolver_file).unwrap();
+                if let Err(e) = std::fs::remove_file(&resolver_file) {
+                    tracing::error!("remove {resolver_file:?} error: {e}");
+                    return false;
+                }
             } else {
                 let Ok(()) = std::fs::rename(&resolver_file, &resolver_file_back) else {
                     tracing::error!("move {resolver_file:?} error, Skip it");
-                    return;
+                    return false;
                 };
             }
         } else {
-            panic!("other kind file");
+            tracing::error!("{resolver_file:?} is neither a symlink nor a regular file, Skip it");
+            return false;
         }
     }
 
-    // 写入新内容到 /etc/resolv.conf
-    std::fs::write(&resolver_file, new_content).unwrap();
+    // write new content to /etc/resolv.conf
+    if let Err(e) = std::fs::write(&resolver_file, new_content) {
+        tracing::error!("write {resolver_file:?} error: {e}");
+        return false;
+    }
+    true
 }
 
-pub fn prepare_system_dns() {
-    check_resolver_conf();
+pub fn prepare_system_dns() -> bool {
+    check_resolver_conf()
 }
 
-/// 停止时恢复 /etc/resolv.conf
+/// restore /etc/resolv.conf on stop
 pub fn restore_resolver_conf() {
     let resolver_file = PathBuf::from(RESOLVER_CONF);
     let resolver_file_back = PathBuf::from(RESOLVER_CONF_LD_BACK);
@@ -135,8 +146,9 @@ impl CacheDNSItem {
                         priority: info.priority,
                     });
                 }
-                // HTTPS 记录中的 ipv4hint / ipv6hint 包含客户端可能直接用来建连的
-                // IP 地址，同样需要写入 eBPF map，确保这些连接也受路由标记控制。
+                // the ipv4hint / ipv6hint in HTTPS records may be used by the
+                // client to connect directly, so write them into the eBPF map
+                // as well to keep those connections under route mark control.
                 RData::HTTPS(https) => {
                     for (_key, value) in https.0.svc_params.iter() {
                         match value {

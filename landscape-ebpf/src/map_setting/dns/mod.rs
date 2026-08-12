@@ -12,7 +12,14 @@ fn dns_flow_key(flow_id: u32, proto: u8) -> u32 {
 }
 
 fn setting_dns_sock_map_inner(sock_fd: i32, flow_id: u32, proto: u8) {
-    let dns_flow_socks = libbpf_rs::MapHandle::from_pinned_path(&MAP_PATHS.dns_flow_socks).unwrap();
+    let Ok(dns_flow_socks) = libbpf_rs::MapHandle::from_pinned_path(&MAP_PATHS.dns_flow_socks)
+    else {
+        tracing::warn!(
+            "dns_flow_socks map not found at {:?}, skip dns sock map update",
+            MAP_PATHS.dns_flow_socks
+        );
+        return;
+    };
 
     let key = dns_flow_key(flow_id, proto).to_le_bytes();
     let value = (sock_fd as u64).to_le_bytes();
@@ -30,7 +37,14 @@ pub fn setting_dns_sock_map_tcp(sock_fd: i32, flow_id: u32) {
 }
 
 fn del_dns_sock_map_inner(flow_id: u32, proto: u8) {
-    let dns_flow_socks = libbpf_rs::MapHandle::from_pinned_path(&MAP_PATHS.dns_flow_socks).unwrap();
+    let Ok(dns_flow_socks) = libbpf_rs::MapHandle::from_pinned_path(&MAP_PATHS.dns_flow_socks)
+    else {
+        tracing::warn!(
+            "dns_flow_socks map not found at {:?}, skip dns sock map delete",
+            MAP_PATHS.dns_flow_socks
+        );
+        return;
+    };
 
     let key = dns_flow_key(flow_id, proto).to_le_bytes();
 

@@ -165,7 +165,7 @@ impl DnsRequestHandler {
         let resolves = init
             .dns_rules
             .into_iter()
-            .map(|rule| {
+            .filter_map(|rule| {
                 let order = rule.index;
                 let match_all = rule.source.is_empty();
                 let runtime = DNSResolveRuntime::new(
@@ -177,8 +177,8 @@ impl DnsRequestHandler {
                     rule.resolve_mode,
                     RuntimeRuleMatcher::new(rule.source, vec![], vec![], match_all),
                     rule.flow_id,
-                );
-                (order, runtime)
+                )?;
+                Some((order, runtime))
             })
             .collect::<BTreeMap<_, _>>();
 
@@ -974,8 +974,8 @@ impl DnsRequestHandler {
         update_dns_mark_list
     }
 
-    // 检查缓存并根据 TTL 判断是否过期
-    // 不同的记录可能的过期时间不同
+    // check the cache and whether it has expired based on TTL
+    // different record types may have different expiry times
     pub async fn lookup_cache(
         &self,
         domain: &str,
@@ -1000,16 +1000,16 @@ impl DnsRequestHandler {
                 ..
             } = &*cache_item;
 
-            // 1. 检查过期
+            // 1. check expiry
             let insert_time_elapsed = insert_time.elapsed().as_secs() as u32;
             if insert_time_elapsed > *min_ttl {
-                // 如果发现过期，主动移除缓存（Lazy expiration）
+                // expired: proactively evict the entry (lazy expiration)
                 cache.invalidate(&(domain.to_string(), query_type)).await;
                 return None;
             }
 
-            // 2. 构造有效记录 (TTL 递减)
-            // 如果 rdatas 为空（否定缓存），这里 valid_records 也会保持为空
+            // 2. build valid records (TTL decremented)
+            // if rdatas is empty (negative cache), valid_records stays empty too
             let valid_records = rdatas
                 .iter()
                 .cloned()
@@ -1085,7 +1085,7 @@ impl DnsRequestHandler {
 
         cache.insert((domain.to_string(), query_type), Arc::new(cache_item)).await;
 
-        // 将 mark 写入 mark ebpf map
+        // write the mark into the mark eBPF map
         if mark.mark.need_insert_in_ebpf_map() {
             // tracing::info!(
             //     "[flow_id: {}]setting ips: {:?}, Mark: {:?}",
@@ -1093,7 +1093,7 @@ impl DnsRequestHandler {
             //     update_dns_mark_list,
             //     mark
             // );
-            // TODO: 如果写入错误 返回错误后 向客户端返回查询错误
+            // TODO: if the write fails, return an error and respond to the client with a query error
             #[cfg(not(test))]
             landscape_ebpf::map_setting::flow_dns::update_flow_dns_rule(
                 self.flow_id,

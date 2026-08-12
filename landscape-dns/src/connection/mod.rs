@@ -24,7 +24,7 @@ pub(crate) fn create_resolver(
     mark: FlowMark,
     bind_config: DnsBindConfig,
     DnsUpstreamConfig { mode, ips, port, .. }: DnsUpstreamConfig,
-) -> LandscapeMarkDNSResolver {
+) -> Option<LandscapeMarkDNSResolver> {
     let name_server: Vec<NameServerConfig> = match mode {
         DnsUpstreamMode::Plaintext => ips
             .iter()
@@ -81,11 +81,19 @@ pub(crate) fn create_resolver(
     options.num_concurrent_reqs = 4;
     options.preserve_intermediates = true;
     // options.use_hosts_file = ResolveHosts::Never;
-    let resolver =
-        Resolver::builder_with_config(resolve, MarkRuntimeProvider::new(mark_value, bind_config))
-            .with_options(options)
-            .build()
-            .expect("Failed to build DNS resolver");
+    let resolver = match Resolver::builder_with_config(
+        resolve,
+        MarkRuntimeProvider::new(mark_value, bind_config),
+    )
+    .with_options(options)
+    .build()
+    {
+        Ok(resolver) => resolver,
+        Err(e) => {
+            tracing::error!("[flow: {flow_id}]: failed to build DNS resolver: {e}");
+            return None;
+        }
+    };
 
-    resolver
+    Some(resolver)
 }

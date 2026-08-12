@@ -11,7 +11,7 @@ use landscape_common::{
     event::{dns::DnsEvent, DnsMetricMessage},
     service::{
         controller::{ConfigController, FlowConfigController},
-        WatchService,
+        ServiceStatus, WatchService,
     },
 };
 use landscape_core::lan_hostname::LanHostnameRegistry;
@@ -61,7 +61,11 @@ impl LandscapeDnsService {
         lan_hostname_registry: Arc<LanHostnameRegistry>,
     ) -> Self {
         let (cache_runtime, doh_runtime) = split_dns_runtime_config(&dns_config);
-        prepare_system_dns();
+        if prepare_system_dns() {
+            tracing::info!("system DNS redirected to local DNS service");
+        } else {
+            tracing::error!("failed to redirect system DNS to local DNS service");
+        }
         let api_tls_resolver = cert_service.api_tls_resolver();
         let doh = Some(EffectiveDohListenerConfig {
             addr: SocketAddr::V6(SocketAddrV6::new(
@@ -97,7 +101,15 @@ impl LandscapeDnsService {
             matcher_builder,
             flow_dependencies: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
         };
-        dns_service.refresh_all_flows().await;
+        dns_service.dns_service.status.just_change_status(ServiceStatus::Staring);
+        let flow_count = dns_service.refresh_all_flows().await;
+        let live = dns_service.dns_service.has_live_flow_runtime().await;
+        let status =
+            if flow_count > 0 && !live { ServiceStatus::Failed } else { ServiceStatus::Running };
+        tracing::info!(
+            "DNS service started: flow_count: {flow_count}, live_runtime: {live}, status: {status:?}"
+        );
+        dns_service.dns_service.status.just_change_status(status);
         let dns_service_clone = dns_service.clone();
         tokio::spawn(async move {
             while let Some(event) = receiver.recv().await {
@@ -198,17 +210,18 @@ impl LandscapeDnsService {
     }
 
     pub async fn start_dns_service(&self) {
-        // let dns_rules = self.dns_rule_service.list().await;
-        // let flow_rules = self.flow_rule_service.list().await;
-        // let dns_rules = self.geo_site_service.convert_config_to_runtime_rule(dns_rules).await;
-        // // TODO 重置 Flow 相关 map 信息
-        // self.dns_service.init_handle(dns_rules).await;
-        // self.dns_service.update_flow_map(&flow_rules).await;
-        // self.dns_service.restart(53).await;
+        tracing::info!("starting DNS service");
+        self.dns_service.status.just_change_status(ServiceStatus::Staring);
+        self.dns_service.status.just_change_status(ServiceStatus::Running);
+        tracing::info!("DNS service status set to running");
     }
 
     pub async fn stop(&self) {
+        tracing::info!("stopping DNS service");
+        self.dns_service.status.just_change_status(ServiceStatus::Stopping);
         landscape_dns::restore_resolver_conf();
+        self.dns_service.status.just_change_status(ServiceStatus::Stop);
+        tracing::info!("DNS service stopped");
     }
 
     pub fn update_metric_sender(&self, msg_tx: Option<mpsc::Sender<DnsMetricMessage>>) {
@@ -254,11 +267,11 @@ impl LandscapeDnsService {
         self.dns_service.renew_runtime_config(rebuild_cache).await;
     }
 
-    async fn refresh_all_flows(&self) {
-        self.refresh_all_flows_kind(FlowRuntimeRefreshKind::Full).await;
+    async fn refresh_all_flows(&self) -> usize {
+        self.refresh_all_flows_kind(FlowRuntimeRefreshKind::Full).await
     }
 
-    async fn refresh_all_flows_kind(&self, kind: FlowRuntimeRefreshKind) {
+    async fn refresh_all_flows_kind(&self, kind: FlowRuntimeRefreshKind) -> usize {
         let time = Instant::now();
         let mut flow_rules = self.dns_rule_service.get_flow_hashmap().await;
         let redirect_flow_ids = self
@@ -287,11 +300,16 @@ impl LandscapeDnsService {
         flow_ids.extend(redirect_flow_ids);
         flow_ids.extend(dynamic_redirect_flow_ids);
 
-        for flow_id in flow_ids {
-            let rules = flow_rules.remove(&flow_id).unwrap_or_default();
-            self.refresh_flow_with_rules_kind(flow_id, rules, kind).await;
+        for flow_id in &flow_ids {
+            let rules = flow_rules.remove(flow_id).unwrap_or_default();
+            self.refresh_flow_with_rules_kind(*flow_id, rules, kind).await;
         }
-        tracing::info!("refresh all dns flows: {:?}ms", time.elapsed().as_millis());
+        tracing::info!(
+            "refresh all dns flows: flow_count: {}, {:?}ms",
+            flow_ids.len(),
+            time.elapsed().as_millis()
+        );
+        flow_ids.len()
     }
 
     async fn refresh_flow_ids_kind(&self, flow_ids: Vec<u32>, kind: FlowRuntimeRefreshKind) {
