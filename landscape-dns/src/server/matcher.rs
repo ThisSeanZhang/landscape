@@ -1,19 +1,157 @@
+use ahash::AHashSet;
 use aho_corasick::AhoCorasick;
 use landscape_common::dns::rule::{DomainConfig, DomainMatchType};
-use regex::Regex;
-use std::{borrow::Cow, collections::HashSet, sync::Arc, time::Instant};
-use tracing::debug;
-use trie_rs::TrieBuilder;
+use regex::{Regex, RegexSet};
+use std::{collections::BTreeMap, sync::Arc, time::Instant};
+use zerotrie::ZeroTrieSimpleAscii;
 
-use crate::domain::ParsedDomain;
+use crate::domain::{normalize_domain_text, ParsedDomain};
 
 #[derive(Debug)]
 pub struct DomainMatcher {
-    regex_domains: Vec<Regex>,         // 用于存储正则表达式规则
-    full_domains: HashSet<String>,     // 用于存储完全匹配的域名
-    keyword_ac: AhoCorasick,           // Aho-Corasick 自动机，用于关键字匹配
-    subdomain_trie: trie_rs::Trie<u8>, // Trie，用于子域名匹配
-    has_subdomain_rules: bool,         // 是否有子域名规则（避免每次都查空 Trie）
+    regex_set: RegexSet, // 正则匹配（RegexSet 单自动机，一次扫描全部 pattern）
+    full_domains: AHashSet<String>, // full: 规则 + domain: 规则自身（精确命中免走 trie）
+    keyword_ac: AhoCorasick, // Aho-Corasick 自动机，用于关键字匹配
+    subdomain_trie: Option<ZeroTrieSimpleAscii<Vec<u8>>>, // 双数组 trie，用于子域名匹配
+}
+
+impl DomainMatcher {
+    pub fn new(domains_config: Vec<DomainConfig>) -> Self {
+        let timer = Instant::now();
+
+        let mut full_domains = AHashSet::new();
+        let mut regex_patterns = Vec::new();
+        let mut keywords = Vec::new();
+        let mut subdomain_map = BTreeMap::new();
+        let mut skipped_non_ascii = Vec::new();
+
+        let mut sum_count = 0;
+        for each_config in domains_config {
+            sum_count += 1;
+            match each_config.match_type {
+                DomainMatchType::Plain => {
+                    // 将关键字添加到列表
+                    keywords.push(normalize_domain_text(&each_config.value).into_owned());
+                }
+                DomainMatchType::Regex => {
+                    // 先校验语法，非法规则跳过（与原有行为一致），最后统一编译
+                    if Regex::new(&each_config.value).is_ok() {
+                        regex_patterns.push(each_config.value);
+                    }
+                }
+                DomainMatchType::Domain => {
+                    // 子域名匹配（反转字节作为 key 构建双数组 trie）
+                    let normalized = normalize_domain_text(&each_config.value);
+                    if normalized.is_ascii() {
+                        // BTreeMap 键去重，value 统一为 0（bool 语义）
+                        let reversed: Vec<u8> =
+                            normalized.as_bytes().iter().rev().copied().collect();
+                        subdomain_map.insert(reversed, 0usize);
+                        // 规则自身并入 full_domains：精确命中免走 trie
+                        full_domains.insert(normalized.into_owned());
+                    } else {
+                        skipped_non_ascii.push(normalized.into_owned());
+                    }
+                }
+                DomainMatchType::Full => {
+                    // 完全匹配（存储在 HashSet 中）
+                    full_domains.insert(normalize_domain_text(&each_config.value).into_owned());
+                }
+            }
+        }
+
+        // 构建子域名双数组 trie 和 Aho-Corasick 自动机
+        let subdomain_trie = if subdomain_map.is_empty() {
+            None
+        } else {
+            match ZeroTrieSimpleAscii::try_from(&subdomain_map) {
+                Ok(trie) => Some(trie),
+                Err(error) => {
+                    tracing::error!(%error, "failed to build subdomain trie");
+                    None
+                }
+            }
+        };
+        let keyword_ac = AhoCorasick::new(&keywords).unwrap();
+        let regex_set = match RegexSet::new(&regex_patterns) {
+            Ok(set) => set,
+            Err(error) => {
+                tracing::error!(%error, "failed to build regex set");
+                RegexSet::empty()
+            }
+        };
+
+        if !skipped_non_ascii.is_empty() {
+            const MAX_SAMPLE: usize = 10;
+            let sample = if skipped_non_ascii.len() > MAX_SAMPLE {
+                let mut shown: Vec<String> = skipped_non_ascii[..MAX_SAMPLE].to_vec();
+                shown.push(format!("... and {} more", skipped_non_ascii.len() - MAX_SAMPLE));
+                shown.join(", ")
+            } else {
+                skipped_non_ascii.join(", ")
+            };
+            tracing::warn!(
+                count = skipped_non_ascii.len(),
+                rules = %sample,
+                "skipped non-ascii domain rules"
+            );
+        }
+
+        tracing::debug!("total {:?}", sum_count);
+        tracing::debug!("full_domains {:?}", full_domains.len());
+        tracing::debug!("regex_set {:?}", regex_set.len());
+        tracing::debug!("subdomain_trie {:?}", subdomain_map.len());
+
+        tracing::info!("dns match rule load time: {:?}s", timer.elapsed().as_secs());
+
+        DomainMatcher {
+            regex_set,
+            full_domains,
+            keyword_ac,
+            subdomain_trie,
+        }
+    }
+
+    /// Allocation-free match against a domain that is already normalized
+    /// (lowercase, no trailing dot). This is the per-query hot path: no
+    /// normalization, no reversed-string allocation.
+    pub fn is_match_normalized(&self, normalized: &str) -> bool {
+        // 完全匹配（含 domain: 规则自身，精确命中免走 trie）
+        if self.full_domains.contains(normalized) {
+            return true;
+        }
+
+        // 子域名匹配：倒序逐字节走查双数组 trie，命中规则时检查标签边界
+        if let Some(trie) = &self.subdomain_trie {
+            let bytes = normalized.as_bytes();
+            let mut cursor = trie.cursor();
+            for i in (0..bytes.len()).rev() {
+                cursor.step(bytes[i]);
+                if cursor.is_empty() {
+                    // 死路，不可能有更长的规则命中
+                    return false;
+                }
+                if cursor.take_value().is_some() {
+                    let consumed = bytes.len() - i;
+                    if consumed == bytes.len() || bytes[bytes.len() - consumed - 1] == b'.' {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        // 关键字匹配
+        if self.keyword_ac.is_match(normalized) {
+            return true;
+        }
+
+        // 正则表达式匹配（RegexSet 一次扫描全部 pattern）
+        if self.regex_set.is_match(normalized) {
+            return true;
+        }
+
+        false
+    }
 }
 
 #[derive(Debug)]
@@ -39,168 +177,33 @@ impl RuntimeRuleMatcher {
         }
     }
 
-    pub fn is_match(&self, domain: &str) -> bool {
+    /// Per-query hot path: no re-normalization, matching against the
+    /// precomputed forms of [`ParsedDomain`].
+    ///
+    /// Intended semantics for inverse (negative) geo keys: an inverse key is
+    /// no longer expanded at compile time into "the union of domains from all
+    /// same-name keys except the excluded one". Instead it matches at runtime
+    /// by "not in the excluded key", i.e. it matches every domain except those
+    /// in the excluded key. Note: under this semantics an inverse rule behaves
+    /// like a near match-all and may shadow later rules; this is expected.
+    /// Also note: the builder never produces a matcher whose only source is an
+    /// empty or missing inverse key — such a rule is skipped entirely (see
+    /// `MatcherBuilder::build_rule_matcher`), so the "empty negative matches
+    /// everything" behavior below only exists when this struct is constructed
+    /// directly (e.g. in tests) and must not be reintroduced through the
+    /// builder.
+    pub fn is_match(&self, domain: &ParsedDomain) -> bool {
         if self.match_all {
             return true;
         }
 
-        self.manual.as_ref().is_some_and(|matcher| matcher.is_match(domain))
-            || self.positive_geo.iter().any(|matcher| matcher.is_match(domain))
-            // Intended new semantics (a fix over the previous behavior): an inverse
-            // (negative) geo key is no longer expanded at compile time into "the union
-            // of domains from all same-name keys except the excluded one". Instead it
-            // matches at runtime by "not in the excluded key", i.e. it matches every
-            // domain except those in the excluded key. Note: under this semantics an
-            // inverse rule behaves like a near match-all and may shadow later rules;
-            // this is expected. Also note: the builder never produces a matcher whose
-            // only source is an empty or missing inverse key — such a rule is skipped
-            // entirely (see `MatcherBuilder::build_rule_matcher`), so the "empty
-            // negative matches everything" behavior below only exists when this
-            // struct is constructed directly (e.g. in tests) and must not be
-            // reintroduced through the builder.
-            || (!self.negative_geo.is_empty()
-                && !self.negative_geo.iter().any(|matcher| matcher.is_match(domain)))
-    }
-
-    /// Variant of [`Self::is_match`] for the per-query hot path, using the
-    /// precomputed forms of [`ParsedDomain`]: no re-normalization, and the
-    /// reversed form is computed at most once per domain (via
-    /// [`ParsedDomain::reversed`]).
-    pub fn is_match_pd(&self, domain: &ParsedDomain) -> bool {
-        if self.match_all {
-            return true;
-        }
-
-        self.manual
-            .as_ref()
-            .is_some_and(|matcher| matcher.is_match_normalized(domain.name(), domain.reversed()))
-            || self
-                .positive_geo
-                .iter()
-                .any(|matcher| matcher.is_match_normalized(domain.name(), domain.reversed()))
+        self.manual.as_ref().is_some_and(|matcher| matcher.is_match_normalized(domain.name()))
+            || self.positive_geo.iter().any(|matcher| matcher.is_match_normalized(domain.name()))
             || (!self.negative_geo.is_empty()
                 && !self
                     .negative_geo
                     .iter()
-                    .any(|matcher| matcher.is_match_normalized(domain.name(), domain.reversed())))
-    }
-}
-
-impl DomainMatcher {
-    pub fn new(domains_config: Vec<DomainConfig>) -> Self {
-        let timer = Instant::now();
-
-        let mut full_domains = HashSet::new();
-        let mut regex_domains = Vec::new();
-        let mut keywords = Vec::new();
-        let mut trie_builder = TrieBuilder::new();
-
-        let mut subdomain_trie_size = 0;
-
-        let mut sum_count = 0;
-        // 解析每个 GeoSite 的域名
-        for each_config in domains_config {
-            sum_count += 1;
-            match each_config.match_type {
-                DomainMatchType::Plain => {
-                    // 将关键字添加到列表
-                    keywords.push(normalize_domain_text(&each_config.value).into_owned());
-                }
-                DomainMatchType::Regex => {
-                    // 将正则表达式添加到 Vec 中
-                    if let Ok(regex) = Regex::new(&each_config.value) {
-                        regex_domains.push(regex);
-                    }
-                }
-                DomainMatchType::Domain => {
-                    // 子域名匹配（倒序存储以便构建 Trie）
-                    subdomain_trie_size += 1;
-                    let reversed_domain =
-                        normalize_domain_text(&each_config.value).chars().rev().collect::<String>();
-                    trie_builder.push(reversed_domain);
-                }
-                DomainMatchType::Full => {
-                    // 完全匹配（存储在 HashSet 中）
-                    full_domains.insert(normalize_domain_text(&each_config.value).into_owned());
-                }
-            }
-        }
-
-        // 构建 Trie 和 Aho-Corasick 自动机
-        let subdomain_trie = trie_builder.build();
-        let keyword_ac = AhoCorasick::new(&keywords).unwrap();
-
-        debug!("total {:?}", sum_count);
-        debug!("full_domains {:?}", full_domains.len());
-        debug!("regex_domains {:?}", regex_domains.len());
-        debug!("subdomain_trie {:?}", subdomain_trie_size);
-
-        tracing::info!("dns match rule load time: {:?}s", timer.elapsed().as_secs());
-
-        // 返回构建好的 DomainMatcher 实例
-        DomainMatcher {
-            regex_domains,
-            full_domains,
-            keyword_ac,
-            subdomain_trie,
-            has_subdomain_rules: subdomain_trie_size > 0,
-        }
-    }
-
-    // 执行匹配的主方法
-    pub fn is_match(&self, domain: &str) -> bool {
-        let normalized = normalize_domain_text(domain);
-        let reversed =
-            self.has_subdomain_rules.then(|| normalized.chars().rev().collect::<String>());
-        self.is_match_normalized(&normalized, reversed.as_deref().unwrap_or_default())
-    }
-
-    /// Allocation-free match against a domain that is already normalized
-    /// (lowercase, no trailing dot) with its reversed form precomputed by
-    /// [`ParsedDomain`]. This is the per-query hot path: no normalization,
-    /// no reversed-string allocation.
-    pub fn is_match_normalized(&self, normalized: &str, reversed: &str) -> bool {
-        // 完全匹配
-        if self.full_domains.contains(normalized) {
-            return true;
-        }
-
-        // 子域名匹配
-        if self.has_subdomain_rules {
-            let reversed_bytes = reversed.as_bytes();
-
-            for result in self.subdomain_trie.common_prefix_search::<Vec<u8>, _>(reversed) {
-                let prefix_len = result.len();
-                if reversed_bytes.len() == prefix_len
-                    || reversed_bytes.get(prefix_len) == Some(&b'.')
-                {
-                    return true;
-                }
-            }
-        }
-
-        // 关键字匹配
-        if self.keyword_ac.is_match(normalized) {
-            return true;
-        }
-
-        // 正则表达式匹配
-        for regex in &self.regex_domains {
-            if regex.is_match(normalized) {
-                return true;
-            }
-        }
-
-        false
-    }
-}
-
-fn normalize_domain_text(domain: &str) -> Cow<'_, str> {
-    let trimmed = domain.trim_end_matches('.');
-    if trimmed.as_bytes().iter().any(u8::is_ascii_uppercase) {
-        Cow::Owned(trimmed.to_ascii_lowercase())
-    } else {
-        Cow::Borrowed(trimmed)
+                    .any(|matcher| matcher.is_match_normalized(domain.name())))
     }
 }
 
@@ -222,6 +225,11 @@ mod tests {
     };
 
     use super::{DomainMatcher, RuntimeRuleMatcher};
+    use crate::domain::ParsedDomain;
+
+    fn pd(name: &str) -> ParsedDomain {
+        ParsedDomain::new(name).unwrap()
+    }
 
     fn full(value: &str) -> DomainConfig {
         DomainConfig {
@@ -239,10 +247,10 @@ mod tests {
             false,
         );
 
-        assert!(matcher.is_match("manual.example"));
-        assert!(matcher.is_match("positive.example"));
-        assert!(matcher.is_match("other.example"));
-        assert!(!matcher.is_match("excluded.example"));
+        assert!(matcher.is_match(&pd("manual.example")));
+        assert!(matcher.is_match(&pd("positive.example")));
+        assert!(matcher.is_match(&pd("other.example")));
+        assert!(!matcher.is_match(&pd("excluded.example")));
     }
 
     #[test]
@@ -254,7 +262,7 @@ mod tests {
             false,
         );
 
-        assert!(matcher.is_match("shared.example"));
+        assert!(matcher.is_match(&pd("shared.example")));
     }
 
     #[test]
@@ -272,8 +280,8 @@ mod tests {
             false,
         );
 
-        assert!(!positive_empty.is_match("example.com"));
-        assert!(negative_empty.is_match("example.com"));
+        assert!(!positive_empty.is_match(&pd("example.com")));
+        assert!(negative_empty.is_match(&pd("example.com")));
     }
 
     #[test]
@@ -285,8 +293,8 @@ mod tests {
         });
 
         let matcher = DomainMatcher::new(configs);
-        assert!(matcher.is_match("baidu.com"));
-        assert!(!matcher.is_match("abaidu.com"));
+        assert!(matcher.is_match_normalized(pd("baidu.com").name()));
+        assert!(!matcher.is_match_normalized(pd("abaidu.com").name()));
     }
 
     fn test_memory_usage() {
@@ -338,7 +346,7 @@ mod tests {
         test_memory_usage();
 
         let time = Instant::now();
-        if matcher.is_match("google.com") {
+        if matcher.is_match_normalized(pd("google.com").name()) {
             println!("got it");
         }
         println!("elpase: {}", time.elapsed().as_micros());
@@ -357,10 +365,16 @@ mod tests {
         let matcher = DomainMatcher::new(configs);
 
         // ❌ 错误匹配：zab.com 不是 ab.com 的子域
-        assert!(!matcher.is_match("zab.com"), "Should not match zab.com as a subdomain of ab.com");
+        assert!(
+            !matcher.is_match_normalized(pd("zab.com").name()),
+            "Should not match zab.com as a subdomain of ab.com"
+        );
 
         // ✅ 正确匹配：x.ab.com 是 ab.com 的子域
-        assert!(matcher.is_match("x.ab.com"), "Should match x.ab.com as subdomain of ab.com");
+        assert!(
+            matcher.is_match_normalized(pd("x.ab.com").name()),
+            "Should match x.ab.com as subdomain of ab.com"
+        );
     }
 
     #[test]
@@ -373,14 +387,20 @@ mod tests {
         let matcher = DomainMatcher::new(configs);
 
         // ✅ 和规则完全一致的域名，也应匹配
-        assert!(matcher.is_match("example.com"), "Should match exact domain same as rule");
+        assert!(
+            matcher.is_match_normalized(pd("example.com").name()),
+            "Should match exact domain same as rule"
+        );
 
         // ✅ 子域名应匹配
-        assert!(matcher.is_match("www.example.com"), "Should match subdomain of example.com");
+        assert!(
+            matcher.is_match_normalized(pd("www.example.com").name()),
+            "Should match subdomain of example.com"
+        );
 
         // ❌ 错误匹配（子串但非子域）
         assert!(
-            !matcher.is_match("badexample.com"),
+            !matcher.is_match_normalized(pd("badexample.com").name()),
             "Should not match partial string like badexample.com"
         );
     }
@@ -401,13 +421,19 @@ mod tests {
         let matcher = DomainMatcher::new(configs);
 
         // 正例：应匹配 aaa.bbb.com，因为 test.aaa.bbb.com 是其子域
-        assert!(matcher.is_match("test.aaa.bbb.com"), "Should match subdomain of aaa.bbb.com");
+        assert!(
+            matcher.is_match_normalized(pd("test.aaa.bbb.com").name()),
+            "Should match subdomain of aaa.bbb.com"
+        );
 
         // 反例：确保 example.bbb.com 只匹配 bbb.com，不误匹配 aaa.bbb.com
-        assert!(matcher.is_match("example.bbb.com"), "Should match bbb.com");
+        assert!(matcher.is_match_normalized(pd("example.bbb.com").name()), "Should match bbb.com");
 
         // 反例：example.ccc.com 不应匹配任何
-        assert!(!matcher.is_match("example.ccc.com"), "Should not match ccc.com");
+        assert!(
+            !matcher.is_match_normalized(pd("example.ccc.com").name()),
+            "Should not match ccc.com"
+        );
     }
 
     #[test]
@@ -423,10 +449,16 @@ mod tests {
         let matcher = DomainMatcher::new(configs);
 
         // ✅ 正向用例：应该匹配成功
-        assert!(matcher.is_match("news.google.com"), "Should match subdomain of google.com");
+        assert!(
+            matcher.is_match_normalized(pd("news.google.com").name()),
+            "Should match subdomain of google.com"
+        );
 
         // ❌ 反向用例：不应该匹配
-        assert!(!matcher.is_match("example.com"), "Should not match unrelated domain");
+        assert!(
+            !matcher.is_match_normalized(pd("example.com").name()),
+            "Should not match unrelated domain"
+        );
     }
 
     #[test]
@@ -438,9 +470,9 @@ mod tests {
 
         let matcher = DomainMatcher::new(configs);
 
-        assert!(matcher.is_match("example.com"));
-        assert!(matcher.is_match("EXAMPLE.COM"));
-        assert!(matcher.is_match("example.com."));
+        assert!(matcher.is_match_normalized(pd("example.com").name()));
+        assert!(matcher.is_match_normalized(pd("EXAMPLE.COM").name()));
+        assert!(matcher.is_match_normalized(pd("example.com.").name()));
     }
 
     #[test]
@@ -452,7 +484,7 @@ mod tests {
 
         let matcher = DomainMatcher::new(configs);
 
-        assert!(matcher.is_match("example.com"));
-        assert!(matcher.is_match("WWW.EXAMPLE.COM"));
+        assert!(matcher.is_match_normalized(pd("example.com").name()));
+        assert!(matcher.is_match_normalized(pd("WWW.EXAMPLE.COM").name()));
     }
 }

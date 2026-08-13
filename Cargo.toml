@@ -106,8 +106,9 @@ hickory-client = "0.25.2"
 hickory-resolver = "0.26.1"
 hickory-proto = "0.26.1"
 quinn = { version = "0.11.11", features = ["runtime-tokio"] }
-trie-rs = "0.4.2"
+zerotrie = { version = "0.2", features = ["alloc"] }
 aho-corasick = "1.1.4"
+ahash = "0.8.12"
 moka = { version = "0.12.15", features = ["future"] }
 zbus = "5.18.0"
 

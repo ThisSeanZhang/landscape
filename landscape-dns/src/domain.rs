@@ -1,7 +1,19 @@
-use std::sync::{Arc, OnceLock};
+use std::{borrow::Cow, sync::Arc};
 
 use hickory_proto::rr::Name;
 use landscape_common::dns::error::DnsError;
+
+/// Normalize user-provided domain text without forcing an allocation in the
+/// common case: trim trailing dots and lowercase only when uppercase bytes are
+/// present. `Cow` is used so already-normalized input can be borrowed directly.
+pub(crate) fn normalize_domain_text(domain: &str) -> Cow<'_, str> {
+    let trimmed = domain.trim_end_matches('.');
+    if trimmed.as_bytes().iter().any(u8::is_ascii_uppercase) {
+        Cow::Owned(trimmed.to_ascii_lowercase())
+    } else {
+        Cow::Borrowed(trimmed)
+    }
+}
 
 /// Canonical per-request representation of a DNS name. Parsed once per query
 /// and shared unchanged across the whole resolution chain (local resolver,
@@ -14,25 +26,16 @@ pub struct ParsedDomain {
     name: String,
     labels: Vec<String>,
     dns_name: Name,
-    /// `name` reversed, for allocation-free trie matching. Computed lazily:
-    /// only matchers with subdomain rules ever need it.
-    reversed: OnceLock<String>,
 }
 
 impl ParsedDomain {
     pub fn new(fqdn: &str) -> Result<Self, DnsError> {
-        let name = fqdn.strip_suffix('.').unwrap_or(fqdn).to_ascii_lowercase();
+        let name = normalize_domain_text(fqdn).into_owned();
         let labels: Vec<String> = name.split('.').map(String::from).collect();
         let dns_name =
             Name::from_utf8(&name).map_err(|_| DnsError::Invalid { domain: fqdn.to_string() })?;
         let raw = Arc::from(format!("{}.", name).as_str());
-        Ok(Self {
-            raw,
-            name,
-            labels,
-            dns_name,
-            reversed: OnceLock::new(),
-        })
+        Ok(Self { raw, name, labels, dns_name })
     }
 
     pub fn as_dns_name(&self) -> &Name {
@@ -51,10 +54,6 @@ impl ParsedDomain {
 
     pub fn name(&self) -> &str {
         &self.name
-    }
-
-    pub fn reversed(&self) -> &str {
-        self.reversed.get_or_init(|| self.name.chars().rev().collect())
     }
 
     pub fn tld(&self) -> &str {

@@ -50,7 +50,7 @@ impl DNSRedirectRuntime {
     }
 
     pub fn is_match(&self, domain: &ParsedDomain) -> bool {
-        self.matcher.is_match_pd(domain)
+        self.matcher.is_match(domain)
     }
 
     pub fn lookup(&self, domain: &ParsedDomain, query_type: RecordType) -> Vec<Record> {
@@ -155,7 +155,7 @@ impl DNSResolveRuntime {
 
     /// checks whether this rule should handle the query
     pub fn is_match(&self, domain: &ParsedDomain) -> bool {
-        self.matcher.is_match_pd(domain)
+        self.matcher.is_match(domain)
     }
 
     pub async fn lookup(

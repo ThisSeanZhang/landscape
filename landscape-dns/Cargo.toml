@@ -34,7 +34,8 @@ clap = { workspace = true }
 thiserror = { workspace = true }
 libc = { workspace = true }
 async-trait = { workspace = true }
-trie-rs = { workspace = true }
+zerotrie = { workspace = true }
+ahash = { workspace = true }
 aho-corasick = { workspace = true }
 regex = { workspace = true }
 

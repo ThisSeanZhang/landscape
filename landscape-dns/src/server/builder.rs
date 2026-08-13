@@ -325,9 +325,9 @@ mod tests {
         assert!(Arc::ptr_eq(&first, &same));
         assert!(!Arc::ptr_eq(&first, &tagged));
         assert_eq!(source.reads.load(Ordering::Relaxed), 2);
-        assert!(first.is_match("all.example"));
-        assert!(!tagged.is_match("all.example"));
-        assert!(tagged.is_match("tagged.example"));
+        assert!(first.is_match_normalized(pd("all.example").name()));
+        assert!(!tagged.is_match_normalized(pd("all.example").name()));
+        assert!(tagged.is_match_normalized(pd("tagged.example").name()));
     }
 
     #[tokio::test]
