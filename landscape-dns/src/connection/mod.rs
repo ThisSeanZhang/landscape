@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 use hickory_resolver::{
     config::{ConnectionConfig, NameServerConfig, ProtocolConfig, ResolverConfig, ResolverOpts},
@@ -29,9 +29,12 @@ pub(crate) fn create_resolver(
         DnsUpstreamMode::Plaintext => ips
             .iter()
             .map(|ip| {
-                let mut conn = ConnectionConfig::new(ProtocolConfig::Udp);
-                conn.port = port.unwrap_or(53);
-                NameServerConfig::new(*ip, true, vec![conn])
+                let port = port.unwrap_or(53);
+                let mut udp = ConnectionConfig::new(ProtocolConfig::Udp);
+                udp.port = port;
+                let mut tcp = ConnectionConfig::new(ProtocolConfig::Tcp);
+                tcp.port = port;
+                NameServerConfig::new(*ip, true, vec![udp, tcp])
             })
             .collect(),
         DnsUpstreamMode::Tls { domain } => ips
@@ -81,6 +84,13 @@ pub(crate) fn create_resolver(
     options.num_concurrent_reqs = 4;
     options.preserve_intermediates = true;
     // options.use_hosts_file = ResolveHosts::Never;
+    // Keep each attempt short (1s) so the resolver's built-in retry
+    // (attempts = 3) can recover from transient first-packet loss well within
+    // the 5s outer lookup timeout; with the 5s default the second attempt
+    // never gets to run and the client sees a 5s ServFail on the first query.
+    // Normal lookups complete in milliseconds and never hit this timeout.
+    options.timeout = Duration::from_secs(1);
+    options.attempts = 3;
     let resolver = match Resolver::builder_with_config(
         resolve,
         MarkRuntimeProvider::new(mark_value, bind_config),
