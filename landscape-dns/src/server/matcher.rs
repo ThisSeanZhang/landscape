@@ -128,8 +128,9 @@ impl DomainMatcher {
             for i in (0..bytes.len()).rev() {
                 cursor.step(bytes[i]);
                 if cursor.is_empty() {
-                    // 死路，不可能有更长的规则命中
-                    return false;
+                    // 死路，不可能有更长的 domain: 规则命中；继续检查
+                    // keyword: 和 regexp: 规则。
+                    break;
                 }
                 if cursor.take_value().is_some() {
                     let consumed = bytes.len() - i;
@@ -238,6 +239,10 @@ mod tests {
         }
     }
 
+    fn rule(match_type: DomainMatchType, value: &str) -> DomainConfig {
+        DomainConfig { match_type, value: value.to_string() }
+    }
+
     #[test]
     fn runtime_rule_matcher_combines_manual_positive_and_negative_sources() {
         let matcher = RuntimeRuleMatcher::new(
@@ -295,6 +300,72 @@ mod tests {
         let matcher = DomainMatcher::new(configs);
         assert!(matcher.is_match_normalized(pd("baidu.com").name()));
         assert!(!matcher.is_match_normalized(pd("abaidu.com").name()));
+    }
+
+    #[test]
+    fn trie_misses_fall_through_to_keyword_and_regex() {
+        let matcher = DomainMatcher::new(vec![
+            rule(DomainMatchType::Domain, "example.com"),
+            rule(DomainMatchType::Plain, "keyword"),
+            rule(DomainMatchType::Plain, "notexample"),
+            rule(DomainMatchType::Regex, r"^api\d+\.other\.net$"),
+        ]);
+
+        // The reversed trie cannot consume the first byte, but keyword and
+        // regex rules must still be evaluated.
+        assert!(matcher.is_match_normalized(pd("keyword.other.net").name()));
+        assert!(matcher.is_match_normalized(pd("api42.other.net").name()));
+
+        // The trie reaches example.com but the preceding byte is not a label
+        // boundary, so a later keyword rule must still be allowed to match.
+        assert!(matcher.is_match_normalized(pd("notexample.com").name()));
+        assert!(!matcher.is_match_normalized(pd("unrelated.other.net").name()));
+    }
+
+    #[test]
+    fn plain_keyword_rules_match_substrings_case_insensitively() {
+        let matcher = DomainMatcher::new(vec![
+            rule(DomainMatchType::Plain, "Example"),
+            rule(DomainMatchType::Plain, "cdn"),
+        ]);
+
+        assert!(matcher.is_match_normalized(pd("example.com").name()));
+        assert!(matcher.is_match_normalized(pd("EXAMPLE.COM").name()));
+        assert!(matcher.is_match_normalized(pd("cdn.example.net").name()));
+        assert!(matcher.is_match_normalized(pd("unrelated.example.org").name()));
+        assert!(!matcher.is_match_normalized(pd("other.org").name()));
+    }
+
+    #[test]
+    fn regex_rules_match_on_normalized_input() {
+        let matcher =
+            DomainMatcher::new(vec![rule(DomainMatchType::Regex, r"^node\d+\.example\.org$")]);
+
+        assert!(matcher.is_match_normalized(pd("node42.example.org").name()));
+        assert!(!matcher.is_match_normalized(pd("node42.example.com").name()));
+        assert!(matcher.is_match_normalized(pd("NODE42.Example.Org").name()));
+    }
+
+    #[test]
+    fn non_ascii_domain_rules_are_skipped_without_breaking_ascii_ones() {
+        let matcher = DomainMatcher::new(vec![
+            rule(DomainMatchType::Domain, "例子.com"),
+            rule(DomainMatchType::Domain, "example.org"),
+        ]);
+
+        assert!(!matcher.is_match_normalized(pd("xn--fsqu00a.com").name()));
+        assert!(matcher.is_match_normalized(pd("example.org").name()));
+        assert!(matcher.is_match_normalized(pd("www.example.org").name()));
+        assert!(!matcher.is_match_normalized(pd("example.com").name()));
+    }
+
+    #[test]
+    fn empty_and_single_label_domains_do_not_panic() {
+        let matcher = DomainMatcher::new(vec![rule(DomainMatchType::Domain, "example.org")]);
+
+        assert!(!matcher.is_match_normalized(""));
+        assert!(!matcher.is_match_normalized(pd("localhost").name()));
+        assert!(matcher.is_match_normalized(pd("www.example.org").name()));
     }
 
     fn test_memory_usage() {
