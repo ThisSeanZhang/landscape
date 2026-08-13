@@ -5,6 +5,7 @@ use uuid::Uuid;
 
 use landscape_common::metric::dns::DnsOutcome;
 
+use crate::domain::ParsedDomain;
 use crate::server::{
     rule::{DNSRedirectRuntime, DNSResolveRuntime},
     LocalDnsAnswerProvider,
@@ -22,7 +23,7 @@ impl RedirectEngine {
 
     pub fn lookup(
         &self,
-        domain: &str,
+        domain: &ParsedDomain,
         query_type: RecordType,
         local_answer_provider: Option<&Arc<dyn LocalDnsAnswerProvider>>,
     ) -> Option<(Vec<Record>, DnsOutcome, Option<Uuid>, Option<String>)> {
@@ -31,7 +32,8 @@ impl RedirectEngine {
                 continue;
             }
 
-            let records = if rule.uses_local_answer_provider() {
+            let uses_provider = rule.uses_local_answer_provider();
+            let records = if uses_provider {
                 let Some(provider) = local_answer_provider else {
                     continue;
                 };
@@ -41,7 +43,7 @@ impl RedirectEngine {
                 rule.lookup(domain, query_type)
             };
 
-            if rule.uses_local_answer_provider() && records.is_empty() {
+            if uses_provider && records.is_empty() {
                 continue;
             }
 
@@ -67,7 +69,7 @@ impl ResolveEngine {
         Self { rules }
     }
 
-    pub fn find_match(&self, domain: &str) -> Option<&DNSResolveRuntime> {
+    pub fn find_match(&self, domain: &ParsedDomain) -> Option<&DNSResolveRuntime> {
         self.rules.values().find(|rule| rule.is_match(domain))
     }
 

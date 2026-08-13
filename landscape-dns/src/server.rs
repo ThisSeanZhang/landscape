@@ -15,7 +15,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::{
     convert_record_type,
-    domain::PreprocessedDomain,
+    domain::ParsedDomain,
     listener::{start_flow_dns_listener, DohListenerState},
     mdns::MdnsService,
     server::{
@@ -262,7 +262,7 @@ impl LandscapeDnsServer {
             let Ok(domain) = req.get_domain() else {
                 return CheckChainDnsResult::default();
             };
-            let Ok(pd) = PreprocessedDomain::new(&domain) else {
+            let Ok(pd) = ParsedDomain::new(&domain) else {
                 return CheckChainDnsResult::default();
             };
             handler.check_domain(&pd, convert_record_type(req.record_type), req.apply_filter).await
@@ -282,8 +282,8 @@ impl LandscapeDnsServer {
         let _refresh_guard = entry.refresh_lock.lock().await;
         let runtime = entry.runtime.load_full().ok_or(DnsError::FlowNotFound(req.flow_id))?;
 
-        let pd = PreprocessedDomain::new(&domain)?;
-        runtime.handler.invalidate_cache_entry(pd.raw(), query_type).await;
+        let pd = ParsedDomain::new(&domain)?;
+        runtime.handler.invalidate_cache_entry(&pd, query_type).await;
         Ok(runtime.handler.check_domain(&pd, query_type, req.apply_filter).await)
     }
 
@@ -298,7 +298,7 @@ impl LandscapeDnsServer {
         let _refresh_guard = entry.refresh_lock.lock().await;
         let runtime = entry.runtime.load_full().ok_or(DnsError::FlowNotFound(req.flow_id))?;
 
-        let pd = PreprocessedDomain::new(&domain)?;
+        let pd = ParsedDomain::new(&domain)?;
         runtime.handler.refresh_cache_entry(&pd, query_type, req.apply_filter).await
     }
 

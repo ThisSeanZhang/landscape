@@ -24,7 +24,7 @@ use landscape_common::{
 use landscape_core::lan_hostname::{LanHostnameRegistry, LocalZone, LocalZoneMatch};
 
 use crate::{
-    domain::PreprocessedDomain,
+    domain::ParsedDomain,
     server::{DohAdvertiseProvider, LocalDnsAnswerProvider},
 };
 
@@ -82,7 +82,7 @@ impl LocalResolver {
     /// continue to the cache/upstream stage.
     pub fn resolve_local(
         &self,
-        domain: &PreprocessedDomain,
+        domain: &ParsedDomain,
         query_type: RecordType,
     ) -> Option<LocalAnswer> {
         if domain.name().ends_with(".arpa") {
@@ -95,7 +95,7 @@ impl LocalResolver {
     /// Local stage of the forward path.
     fn resolve_forward_local(
         &self,
-        domain: &PreprocessedDomain,
+        domain: &ParsedDomain,
         query_type: RecordType,
     ) -> Option<LocalAnswer> {
         let tld = domain.tld();
@@ -118,11 +118,7 @@ impl LocalResolver {
 
     /// Local stage of the `.arpa` path. Returns `None` only when a reverse
     /// query owns no local answer and must fall through to cache/upstream.
-    fn resolve_arpa(
-        &self,
-        domain: &PreprocessedDomain,
-        query_type: RecordType,
-    ) -> Option<LocalAnswer> {
+    fn resolve_arpa(&self, domain: &ParsedDomain, query_type: RecordType) -> Option<LocalAnswer> {
         let arpa_suffix = match domain.arpa_prefix() {
             Some(s) => s,
             None => {
@@ -200,10 +196,7 @@ impl LocalResolver {
     /// zone. Keeping this decision in one place makes normal
     /// queries, `.arpa` queries, config checks, and cache refreshes agree after
     /// a runtime config change.
-    fn matching_local_zone<'a>(
-        &self,
-        domain: &'a PreprocessedDomain,
-    ) -> Option<LocalZoneMatch<'a>> {
+    fn matching_local_zone<'a>(&self, domain: &'a ParsedDomain) -> Option<LocalZoneMatch<'a>> {
         let mut zone = self.lan_hostname_registry.match_local_zone(domain.name())?;
 
         // `.local` remains mDNS territory even if a legacy or hand-edited
@@ -215,7 +208,7 @@ impl LocalResolver {
         Some(zone)
     }
 
-    fn lookup_localhost(domain: &PreprocessedDomain, query_type: RecordType) -> Vec<Record> {
+    fn lookup_localhost(domain: &ParsedDomain, query_type: RecordType) -> Vec<Record> {
         let rname = domain.as_dns_name().clone();
 
         match query_type {
@@ -235,7 +228,7 @@ impl LocalResolver {
 
     fn lookup_lan_hostname(
         &self,
-        domain: &PreprocessedDomain,
+        domain: &ParsedDomain,
         hostname: &str,
         query_type: RecordType,
     ) -> Vec<Record> {
@@ -267,11 +260,7 @@ impl LocalResolver {
     /// Reverse PTR answer for managed addresses. `None` means the address is
     /// not owned locally and the query must continue to the cache/upstream
     /// stage.
-    fn resolve_ptr_by_addr(
-        &self,
-        addr: &IpAddr,
-        domain: &PreprocessedDomain,
-    ) -> Option<LocalAnswer> {
+    fn resolve_ptr_by_addr(&self, addr: &IpAddr, domain: &ParsedDomain) -> Option<LocalAnswer> {
         const PTR_TTL: u32 = 60;
 
         if !LanHostnameRegistry::is_managed_ptr_addr(addr) {
@@ -313,7 +302,7 @@ impl LocalResolver {
 
     fn resolve_local_domain(
         &self,
-        domain: &PreprocessedDomain,
+        domain: &ParsedDomain,
         zone: LocalZoneMatch<'_>,
         query_type: RecordType,
     ) -> LocalAnswer {
@@ -496,8 +485,8 @@ mod tests {
         LocalResolver::new(reg, None, None, None)
     }
 
-    fn pd(name: &str) -> PreprocessedDomain {
-        PreprocessedDomain::new(name).unwrap()
+    fn pd(name: &str) -> ParsedDomain {
+        ParsedDomain::new(name).unwrap()
     }
 
     #[tokio::test]

@@ -1,4 +1,4 @@
-use std::{net::IpAddr, str::FromStr};
+use std::net::IpAddr;
 
 use hickory_proto::rr::{
     rdata::{A, AAAA},
@@ -17,6 +17,7 @@ use landscape_common::{
 };
 
 use crate::connection::LandscapeMarkDNSResolver;
+use crate::domain::ParsedDomain;
 use crate::server::matcher::RuntimeRuleMatcher;
 
 #[derive(Debug)]
@@ -48,21 +49,21 @@ impl DNSRedirectRuntime {
         }
     }
 
-    pub fn is_match(&self, domain: &str) -> bool {
-        let domain = if let Some(stripped) = domain.strip_suffix('.') { stripped } else { domain };
-        self.matcher.is_match(domain)
+    pub fn is_match(&self, domain: &ParsedDomain) -> bool {
+        self.matcher.is_match_pd(domain)
     }
 
-    pub fn lookup(&self, domain: &str, query_type: RecordType) -> Vec<Record> {
+    pub fn lookup(&self, domain: &ParsedDomain, query_type: RecordType) -> Vec<Record> {
         self.lookup_with_addrs(domain, query_type, &self.result_info)
     }
 
     pub fn lookup_with_addrs(
         &self,
-        domain: &str,
+        domain: &ParsedDomain,
         query_type: RecordType,
         addrs: &[IpAddr],
     ) -> Vec<Record> {
+        let owner = domain.as_dns_name().clone();
         let mut result = vec![];
         for ip in addrs {
             let rdata_ip = match (ip, &query_type) {
@@ -72,11 +73,7 @@ impl DNSRedirectRuntime {
             };
 
             if let Some(rdata) = rdata_ip {
-                result.push(Record::from_rdata(
-                    hickory_proto::rr::Name::from_str(domain).unwrap(),
-                    self.ttl_secs,
-                    rdata,
-                ));
+                result.push(Record::from_rdata(owner.clone(), self.ttl_secs, rdata));
             }
         }
 
@@ -157,9 +154,8 @@ impl DNSResolveRuntime {
     }
 
     /// checks whether this rule should handle the query
-    pub fn is_match(&self, domain: &str) -> bool {
-        let domain = if let Some(stripped) = domain.strip_suffix('.') { stripped } else { domain };
-        self.matcher.is_match(domain)
+    pub fn is_match(&self, domain: &ParsedDomain) -> bool {
+        self.matcher.is_match_pd(domain)
     }
 
     pub async fn lookup(
@@ -290,11 +286,11 @@ mod tests {
             42,
         );
 
-        assert!(solution.is_match("example.com."));
+        assert!(solution.is_match(&ParsedDomain::new("example.com.").unwrap()));
         assert!(solution.redirect_id.is_none());
         assert_eq!(solution.dynamic_redirect_source.as_deref(), Some("docker:test"));
 
-        let records = solution.lookup("example.com.", RecordType::A);
+        let records = solution.lookup(&ParsedDomain::new("example.com.").unwrap(), RecordType::A);
         assert_eq!(records.len(), 1);
         assert_eq!(records[0].ttl, 42);
     }

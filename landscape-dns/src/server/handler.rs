@@ -29,7 +29,7 @@ use uuid::Uuid;
 #[cfg(test)]
 use crate::server::LocalDnsAnswerProvider;
 use crate::{
-    domain::PreprocessedDomain,
+    domain::ParsedDomain,
     server::{
         engine::{RedirectEngine, ResolveEngine},
         local::{LocalAnswer, LocalResolver},
@@ -265,11 +265,12 @@ impl DnsRequestHandler {
         let new_cache = self.build_runtime_cache();
         for (key, value) in current_cache.iter() {
             let (domain, req_type) = &*key;
+            let Ok(pd) = ParsedDomain::new(domain) else { continue };
             if redirects
-                .lookup(domain, *req_type, self.local_resolver.local_answer_provider())
+                .lookup(&pd, *req_type, self.local_resolver.local_answer_provider())
                 .is_none()
             {
-                new_cache.insert((domain.clone(), req_type.clone()), value).await;
+                new_cache.insert((domain.clone(), *req_type), value).await;
             }
         }
         new_cache.run_pending_tasks().await;
@@ -288,14 +289,15 @@ impl DnsRequestHandler {
 
         for (key, value) in current_cache.iter() {
             let (domain, req_type) = &*key;
+            let Ok(pd) = ParsedDomain::new(domain) else { continue };
             let cache_item = value;
             if redirects
-                .lookup(domain, *req_type, self.local_resolver.local_answer_provider())
+                .lookup(&pd, *req_type, self.local_resolver.local_answer_provider())
                 .is_some()
             {
                 continue;
             }
-            if let Some(resolver) = Self::find_cache_rule(resolves, domain, &cache_item) {
+            if let Some(resolver) = Self::find_cache_rule(resolves, &pd, &cache_item) {
                 let new_mark = resolver.mark().clone();
 
                 let new_item = CacheDNSItem {
@@ -309,14 +311,14 @@ impl DnsRequestHandler {
                     matched_rule_order: Some(resolver.order()),
                 };
 
-                new_cache.insert((domain.clone(), req_type.clone()), Arc::new(new_item)).await;
+                new_cache.insert((domain.clone(), *req_type), Arc::new(new_item)).await;
             }
         }
     }
 
     fn find_cache_rule<'a>(
         resolves: &'a ResolveEngine,
-        domain: &str,
+        domain: &ParsedDomain,
         cache_item: &CacheDNSItem,
     ) -> Option<&'a crate::server::rule::DNSResolveRuntime> {
         if let Some(rule_order) = cache_item.matched_rule_order {
@@ -365,7 +367,7 @@ impl DnsRequestHandler {
 
     pub fn lookup_redirects(
         &self,
-        domain: &str,
+        domain: &ParsedDomain,
         query_type: RecordType,
     ) -> Option<(Vec<Record>, DnsOutcome, Option<Uuid>, Option<String>)> {
         let runtime = self.runtime.load();
@@ -375,7 +377,7 @@ impl DnsRequestHandler {
     fn lookup_redirects_with_runtime(
         &self,
         runtime: &HandlerRuntime,
-        domain: &str,
+        domain: &ParsedDomain,
         query_type: RecordType,
     ) -> Option<(Vec<Record>, DnsOutcome, Option<Uuid>, Option<String>)> {
         runtime.redirect_engine.lookup(
@@ -390,14 +392,14 @@ impl DnsRequestHandler {
     /// the exact composition the server uses.
     async fn resolve_query(
         &self,
-        domain: &PreprocessedDomain,
+        domain: &ParsedDomain,
         query_type: RecordType,
     ) -> (Vec<Record>, DnsOutcome) {
         let runtime = self.runtime.load_full();
 
         // (1) Redirect (global check first)
         if let Some((records, status, _, _)) =
-            self.lookup_redirects_with_runtime(&runtime, domain.raw(), query_type)
+            self.lookup_redirects_with_runtime(&runtime, domain, query_type)
         {
             return (records, status);
         }
@@ -408,14 +410,14 @@ impl DnsRequestHandler {
         match self.local_resolver.resolve_local(domain, query_type) {
             Some(LocalAnswer::Answered { records, outcome }) => (records, outcome),
             Some(LocalAnswer::Empty { outcome }) => (vec![], outcome),
-            None => self.resolve_from_cache_or_upstream(&runtime, domain.raw(), query_type).await,
+            None => self.resolve_from_cache_or_upstream(&runtime, domain, query_type).await,
         }
     }
 
     async fn resolve_from_cache_or_upstream(
         &self,
         runtime: &HandlerRuntime,
-        domain: &str,
+        domain: &ParsedDomain,
         query_type: RecordType,
     ) -> (Vec<Record>, DnsOutcome) {
         if let Some((cached_records, filter, code)) =
@@ -434,33 +436,24 @@ impl DnsRequestHandler {
             return (filter_result(cached_records, &filter), outcome);
         }
 
-        for (_index, resolver) in runtime.resolve_engine.iter() {
-            if resolver.is_match(domain) {
-                let filter = resolver.filter_mode();
-                if is_type_filtered(query_type, &filter) {
-                    return (vec![], DnsOutcome::Filter);
-                }
+        if let Some(resolver) = runtime.resolve_engine.find_match(domain) {
+            let filter = resolver.filter_mode();
+            if is_type_filtered(query_type, &filter) {
+                return (vec![], DnsOutcome::Filter);
+            }
 
-                match self
-                    .lookup_rule_and_cache(
-                        &runtime.cache,
-                        resolver,
-                        domain,
-                        query_type,
-                        false,
-                        true,
-                    )
-                    .await
-                {
-                    RuleLookupOutcome::NoError { records } => {
-                        return (filter_result(records, &filter), DnsOutcome::Normal);
-                    }
-                    RuleLookupOutcome::NxDomain => {
-                        return (vec![], DnsOutcome::NxDomain);
-                    }
-                    RuleLookupOutcome::Failed => {
-                        return (vec![], DnsOutcome::Error);
-                    }
+            match self
+                .lookup_rule_and_cache(&runtime.cache, resolver, domain, query_type, false, true)
+                .await
+            {
+                RuleLookupOutcome::NoError { records } => {
+                    return (filter_result(records, &filter), DnsOutcome::Normal);
+                }
+                RuleLookupOutcome::NxDomain => {
+                    return (vec![], DnsOutcome::NxDomain);
+                }
+                RuleLookupOutcome::Failed => {
+                    return (vec![], DnsOutcome::Error);
                 }
             }
         }
@@ -477,13 +470,13 @@ impl DnsRequestHandler {
         &self,
         cache: &DNSCache,
         resolver: &DNSResolveRuntime,
-        domain: &str,
+        domain: &ParsedDomain,
         query_type: RecordType,
         query_filtered: bool,
         write_cache: bool,
     ) -> RuleLookupOutcome {
         let filter = resolver.filter_mode();
-        match with_lookup_timeout(resolver.lookup(domain, query_type), LOOKUP_TIMEOUT).await {
+        match with_lookup_timeout(resolver.lookup(domain.raw(), query_type), LOOKUP_TIMEOUT).await {
             Ok(rdata_vec) => {
                 if write_cache {
                     if query_filtered {
@@ -491,7 +484,7 @@ impl DnsRequestHandler {
                     } else {
                         self.insert_into_cache(
                             cache,
-                            domain,
+                            domain.raw_arc(),
                             query_type,
                             rdata_vec.clone(),
                             ResponseCode::NoError,
@@ -518,7 +511,7 @@ impl DnsRequestHandler {
                     } else if matches!(outcome, RuleLookupOutcome::NxDomain) {
                         self.insert_into_cache(
                             cache,
-                            domain,
+                            domain.raw_arc(),
                             query_type,
                             vec![],
                             code,
@@ -531,7 +524,7 @@ impl DnsRequestHandler {
                     } else if let RuleLookupOutcome::NoError { records } = &outcome {
                         self.insert_into_cache(
                             cache,
-                            domain,
+                            domain.raw_arc(),
                             query_type,
                             records.clone(),
                             code,
@@ -550,7 +543,7 @@ impl DnsRequestHandler {
 
     pub async fn check_domain(
         &self,
-        domain: &PreprocessedDomain,
+        domain: &ParsedDomain,
         query_type: RecordType,
         apply_filter: bool,
     ) -> CheckChainDnsResult {
@@ -559,7 +552,7 @@ impl DnsRequestHandler {
 
         // (1) Redirect
         if let Some((records, _status, id, dynamic_source)) =
-            self.lookup_redirects_with_runtime(&runtime, domain.raw(), query_type)
+            self.lookup_redirects_with_runtime(&runtime, domain, query_type)
         {
             result.redirect_id = id;
             result.dynamic_redirect_source = dynamic_source;
@@ -570,59 +563,47 @@ impl DnsRequestHandler {
                 result.records = Some(crate::to_common_records(records));
             }
             return result;
-        } else {
+        } else if let Some(resolver) = runtime.resolve_engine.find_match(domain) {
             // (3) Rules (read-only; the cache report below shows what a client
             // would currently see)
-            for (_index, resolver) in runtime.resolve_engine.iter() {
-                if resolver.is_match(domain.raw()) {
-                    result.rule_id = Some(resolver.get_config_id());
-                    let filter = resolver.filter_mode();
-                    result.rule_filter = Some(filter.clone());
+            result.rule_id = Some(resolver.get_config_id());
+            let filter = resolver.filter_mode();
+            result.rule_filter = Some(filter.clone());
 
-                    result.query_filtered = is_type_filtered(query_type, &filter);
-                    if result.query_filtered && apply_filter {
-                        result.records = Some(vec![]);
-                        break;
-                    }
-
-                    // Read-only: no cache writes here, the cache report below
-                    // shows what a client would currently see.
-                    if let RuleLookupOutcome::NoError { records } = self
-                        .lookup_rule_and_cache(
-                            &runtime.cache,
-                            resolver,
-                            domain.raw(),
-                            query_type,
-                            result.query_filtered,
-                            false,
-                        )
-                        .await
-                    {
-                        result.records = Some(crate::to_common_records(if apply_filter {
-                            filter_result(records, &filter)
-                        } else {
-                            records
-                        }));
-                    }
-                    break;
+            result.query_filtered = is_type_filtered(query_type, &filter);
+            if result.query_filtered && apply_filter {
+                result.records = Some(vec![]);
+            } else {
+                // Read-only: no cache writes here, the cache report below
+                // shows what a client would currently see.
+                if let RuleLookupOutcome::NoError { records } = self
+                    .lookup_rule_and_cache(
+                        &runtime.cache,
+                        resolver,
+                        domain,
+                        query_type,
+                        result.query_filtered,
+                        false,
+                    )
+                    .await
+                {
+                    result.records = Some(crate::to_common_records(if apply_filter {
+                        filter_result(records, &filter)
+                    } else {
+                        records
+                    }));
                 }
             }
         }
 
         // (4) Cache report
-        Self::fill_cache_records(
-            &mut result,
-            &runtime.cache,
-            domain.raw(),
-            query_type,
-            apply_filter,
-        )
-        .await;
+        Self::fill_cache_records(&mut result, &runtime.cache, domain, query_type, apply_filter)
+            .await;
 
         result
     }
 
-    pub async fn invalidate_cache_entry(&self, domain: &str, query_type: RecordType) {
+    pub async fn invalidate_cache_entry(&self, domain: &ParsedDomain, query_type: RecordType) {
         let runtime = self.runtime.load_full();
         Self::clear_cache_entry_in(&runtime.cache, domain, query_type).await;
         self.refresh_runtime_maps_from_cache(&runtime.cache);
@@ -630,14 +611,14 @@ impl DnsRequestHandler {
 
     pub async fn refresh_cache_entry(
         &self,
-        domain: &PreprocessedDomain,
+        domain: &ParsedDomain,
         query_type: RecordType,
         apply_filter: bool,
     ) -> Result<CheckChainDnsResult, DnsError> {
         let runtime = self.runtime.load_full();
 
         // (1) Redirect
-        if self.lookup_redirects_with_runtime(&runtime, domain.raw(), query_type).is_some() {
+        if self.lookup_redirects_with_runtime(&runtime, domain, query_type).is_some() {
             return Err(DnsError::RefreshRedirected(domain.raw().to_string()));
         }
 
@@ -645,12 +626,8 @@ impl DnsRequestHandler {
         // any stale entry is cleared first (an entry can only exist if an
         // earlier config let this name reach the cache/upstream stage).
         if let Some(answer) = self.local_resolver.resolve_local(domain, query_type) {
-            self.clear_cache_entry_and_refresh_maps_if_present(
-                &runtime.cache,
-                domain.raw(),
-                query_type,
-            )
-            .await;
+            self.clear_cache_entry_and_refresh_maps_if_present(&runtime.cache, domain, query_type)
+                .await;
             return Ok(match answer {
                 LocalAnswer::Answered { records, .. } => CheckChainDnsResult {
                     records: Some(crate::to_common_records(records)),
@@ -668,81 +645,67 @@ impl DnsRequestHandler {
         // answers NOERROR/empty, so refresh must return Ok as well, not
         // `RefreshRequiresRule`.
         if domain.name().ends_with(".arpa") {
-            self.clear_cache_entry_and_refresh_maps_if_present(
-                &runtime.cache,
-                domain.raw(),
-                query_type,
-            )
-            .await;
+            self.clear_cache_entry_and_refresh_maps_if_present(&runtime.cache, domain, query_type)
+                .await;
             let (records, _) =
-                self.resolve_from_cache_or_upstream(&runtime, domain.raw(), query_type).await;
+                self.resolve_from_cache_or_upstream(&runtime, domain, query_type).await;
             return Ok(CheckChainDnsResult {
                 records: Some(crate::to_common_records(records)),
                 ..Default::default()
             });
         }
 
-        for (_index, resolver) in runtime.resolve_engine.iter() {
-            if !resolver.is_match(domain.raw()) {
-                continue;
-            }
+        let Some(resolver) = runtime.resolve_engine.find_match(domain) else {
+            return Err(DnsError::RefreshRequiresRule(domain.raw().to_string()));
+        };
 
-            let filter = resolver.filter_mode();
-            let query_filtered = is_type_filtered(query_type, &filter);
-            let mut result = CheckChainDnsResult {
-                rule_id: Some(resolver.get_config_id()),
-                rule_filter: Some(filter.clone()),
-                query_filtered,
-                ..Default::default()
-            };
+        let filter = resolver.filter_mode();
+        let query_filtered = is_type_filtered(query_type, &filter);
+        let mut result = CheckChainDnsResult {
+            rule_id: Some(resolver.get_config_id()),
+            rule_filter: Some(filter.clone()),
+            query_filtered,
+            ..Default::default()
+        };
 
-            match self
-                .lookup_rule_and_cache(
-                    &runtime.cache,
-                    resolver,
-                    domain.raw(),
-                    query_type,
-                    query_filtered,
-                    true,
-                )
-                .await
-            {
-                RuleLookupOutcome::NoError { records } => {
-                    result.records = Some(if apply_filter {
-                        crate::to_common_records(filter_result(records, &filter))
-                    } else {
-                        crate::to_common_records(records)
-                    });
-                }
-                RuleLookupOutcome::NxDomain => {
-                    result.records = Some(vec![]);
-                }
-                RuleLookupOutcome::Failed => {
-                    // Filtered queries are served an empty answer, so a
-                    // failure is not an error here; anything else cannot be
-                    // resolved at all.
-                    result.records = Some(vec![]);
-                    if !query_filtered {
-                        return Err(DnsError::RefreshFailed(domain.raw().to_string()));
-                    }
-                }
-            }
-
-            self.refresh_runtime_maps_from_cache(&runtime.cache);
-
-            Self::fill_cache_records(
-                &mut result,
+        match self
+            .lookup_rule_and_cache(
                 &runtime.cache,
-                domain.raw(),
+                resolver,
+                domain,
                 query_type,
-                apply_filter,
+                query_filtered,
+                true,
             )
-            .await;
-
-            return Ok(result);
+            .await
+        {
+            RuleLookupOutcome::NoError { records } => {
+                result.records = Some(if apply_filter {
+                    crate::to_common_records(filter_result(records, &filter))
+                } else {
+                    crate::to_common_records(records)
+                });
+            }
+            RuleLookupOutcome::NxDomain => {
+                result.records = Some(vec![]);
+            }
+            RuleLookupOutcome::Failed => {
+                // Filtered queries are served an empty answer, so a
+                // failure is not an error here; anything else cannot be
+                // resolved at all.
+                result.records = Some(vec![]);
+                if !query_filtered {
+                    return Err(DnsError::RefreshFailed(domain.raw().to_string()));
+                }
+            }
         }
 
-        Err(DnsError::RefreshRequiresRule(domain.raw().to_string()))
+        self.refresh_runtime_maps_from_cache(&runtime.cache);
+
+        Self::fill_cache_records(&mut result, &runtime.cache, domain, query_type, apply_filter)
+            .await;
+
+        Ok(result)
     }
 
     /// Shared cache report for check/refresh: projects the current cache entry
@@ -750,7 +713,7 @@ impl DnsRequestHandler {
     async fn fill_cache_records(
         result: &mut CheckChainDnsResult,
         cache: &DNSCache,
-        domain: &str,
+        domain: &ParsedDomain,
         query_type: RecordType,
         apply_filter: bool,
     ) {
@@ -770,16 +733,16 @@ impl DnsRequestHandler {
         }
     }
 
-    async fn clear_cache_entry_in(cache: &DNSCache, domain: &str, query_type: RecordType) {
-        cache.invalidate(&(domain.to_string(), query_type)).await;
+    async fn clear_cache_entry_in(cache: &DNSCache, domain: &ParsedDomain, query_type: RecordType) {
+        cache.invalidate(&(domain.raw_arc().clone(), query_type)).await;
     }
 
     async fn clear_cache_entry_if_present(
         cache: &DNSCache,
-        domain: &str,
+        domain: &ParsedDomain,
         query_type: RecordType,
     ) -> bool {
-        let key = (domain.to_string(), query_type);
+        let key = (domain.raw_arc().clone(), query_type);
         if cache.get(&key).await.is_none() {
             return false;
         }
@@ -791,7 +754,7 @@ impl DnsRequestHandler {
     async fn clear_cache_entry_and_refresh_maps_if_present(
         &self,
         cache: &DNSCache,
-        domain: &str,
+        domain: &ParsedDomain,
         query_type: RecordType,
     ) {
         if Self::clear_cache_entry_if_present(cache, domain, query_type).await {
@@ -816,10 +779,11 @@ impl DnsRequestHandler {
     // different record types may have different expiry times
     async fn lookup_cache_in(
         cache: &DNSCache,
-        domain: &str,
+        domain: &ParsedDomain,
         query_type: RecordType,
     ) -> Option<(Vec<Record>, FilterResult, ResponseCode)> {
-        if let Some(cache_item) = cache.get(&(domain.to_string(), query_type)).await {
+        let key = (domain.raw_arc().clone(), query_type);
+        if let Some(cache_item) = cache.get(&key).await {
             let CacheDNSItem {
                 rdatas,
                 response_code,
@@ -833,7 +797,7 @@ impl DnsRequestHandler {
             let insert_time_elapsed = insert_time.elapsed().as_secs() as u32;
             if insert_time_elapsed > *min_ttl {
                 // expired: proactively evict the entry (lazy expiration)
-                cache.invalidate(&(domain.to_string(), query_type)).await;
+                cache.invalidate(&key).await;
                 return None;
             }
 
@@ -866,9 +830,10 @@ impl DnsRequestHandler {
         matched_rule_order: Option<u32>,
     ) {
         let runtime = self.runtime.load_full();
+        let domain_key = Arc::<str>::from(domain);
         self.insert_into_cache(
             &runtime.cache,
-            domain,
+            &domain_key,
             query_type,
             rdata_ttl_vec,
             response_code,
@@ -883,7 +848,7 @@ impl DnsRequestHandler {
     async fn insert_into_cache(
         &self,
         cache: &DNSCache,
-        domain: &str,
+        domain_key: &Arc<str>,
         query_type: RecordType,
         rdata_ttl_vec: Vec<Record>,
         response_code: ResponseCode,
@@ -913,7 +878,7 @@ impl DnsRequestHandler {
         };
         let update_dns_mark_list = cache_item.get_update_rules();
 
-        cache.insert((domain.to_string(), query_type), Arc::new(cache_item)).await;
+        cache.insert((domain_key.clone(), query_type), Arc::new(cache_item)).await;
 
         // write the mark into the mark eBPF map
         if mark.mark.need_insert_in_ebpf_map() {
@@ -936,7 +901,7 @@ impl DnsRequestHandler {
 
     fn send_metric(
         &self,
-        domain: String,
+        domain: &str,
         query_type: RecordType,
         outcome: DnsOutcome,
         start_time: Instant,
@@ -947,7 +912,7 @@ impl DnsRequestHandler {
             let response_code = outcome_to_response_code(outcome);
             let dns_metric = DnsMetric {
                 flow_id: self.flow_id,
-                domain,
+                domain: domain.to_string(),
                 query_type: query_type.to_string(),
                 response_code: response_code.to_string(),
                 status: outcome,
@@ -1026,7 +991,7 @@ impl RequestHandler for DnsRequestHandler {
         }
 
         // Dispatch
-        let pd = match PreprocessedDomain::new(&req.name().to_string()) {
+        let pd = match ParsedDomain::new(&req.name().to_string()) {
             Ok(pd) => pd,
             Err(_) => {
                 return self
@@ -1056,8 +1021,12 @@ impl RequestHandler for DnsRequestHandler {
             );
             response_handle.send_response(response).await
         };
-        let answers = records.iter().map(|r| r.to_string()).collect();
-        self.send_metric(pd.raw().to_string(), query_type, outcome, start_time, src_ip, answers);
+        let answers = if self.msg_tx.load_full().is_some() {
+            records.iter().map(|r| r.to_string()).collect()
+        } else {
+            vec![]
+        };
+        self.send_metric(pd.raw(), query_type, outcome, start_time, src_ip, answers);
 
         match result {
             Ok(info) => info,
@@ -1350,14 +1319,14 @@ mod tests {
 
             // resolver.arpa. → resolver branch
             let (records, outcome) = handler
-                .resolve_query(&PreprocessedDomain::new("resolver.arpa.").unwrap(), RecordType::A)
+                .resolve_query(&ParsedDomain::new("resolver.arpa.").unwrap(), RecordType::A)
                 .await;
             assert!(records.is_empty());
             assert_eq!(outcome, DnsOutcome::Local);
 
             // home.arpa. is not the default `lan` zone.
             let (records, outcome) = handler
-                .resolve_query(&PreprocessedDomain::new("home.arpa.").unwrap(), RecordType::A)
+                .resolve_query(&ParsedDomain::new("home.arpa.").unwrap(), RecordType::A)
                 .await;
             assert!(records.is_empty());
             assert_eq!(outcome, DnsOutcome::NxDomain);
@@ -1365,7 +1334,7 @@ mod tests {
             // in-addr.arpa. → reverse branch
             let (records, _outcome) = handler
                 .resolve_query(
-                    &PreprocessedDomain::new("1.0.0.10.in-addr.arpa.").unwrap(),
+                    &ParsedDomain::new("1.0.0.10.in-addr.arpa.").unwrap(),
                     RecordType::PTR,
                 )
                 .await;
@@ -1374,7 +1343,7 @@ mod tests {
             // ip6.arpa. → reverse branch
             let (records, _outcome) = handler
                 .resolve_query(
-                    &PreprocessedDomain::new(
+                    &ParsedDomain::new(
                         "0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.ip6.arpa.",
                     )
                     .unwrap(),
@@ -1385,10 +1354,7 @@ mod tests {
 
             // evilresolver.arpa. is not resolver → NXDOMAIN
             let (records, outcome) = handler
-                .resolve_query(
-                    &PreprocessedDomain::new("evilresolver.arpa.").unwrap(),
-                    RecordType::A,
-                )
+                .resolve_query(&ParsedDomain::new("evilresolver.arpa.").unwrap(), RecordType::A)
                 .await;
             assert!(records.is_empty());
             assert_eq!(outcome, DnsOutcome::NxDomain);
@@ -1405,7 +1371,7 @@ mod tests {
                 },
             );
             let handler = test_handler_with_local(registry, None, vec![], vec![]);
-            let domain = PreprocessedDomain::new("50.1.168.192.in-addr.arpa.").unwrap();
+            let domain = ParsedDomain::new("50.1.168.192.in-addr.arpa.").unwrap();
 
             // A disabled registry does not own private PTR queries: they fall
             // through to the cache/upstream stage (no rules → NOERROR/empty).
@@ -1413,7 +1379,7 @@ mod tests {
             assert!(records.is_empty());
             assert_eq!(outcome, DnsOutcome::Normal);
 
-            let loopback_domain = PreprocessedDomain::new("1.0.0.127.in-addr.arpa.").unwrap();
+            let loopback_domain = ParsedDomain::new("1.0.0.127.in-addr.arpa.").unwrap();
             let (records, outcome) = handler.resolve_query(&loopback_domain, RecordType::PTR).await;
             assert_eq!(outcome, DnsOutcome::Local);
             assert_eq!(records.len(), 1);
@@ -1451,11 +1417,7 @@ mod tests {
             );
 
             let result = handler
-                .check_domain(
-                    &PreprocessedDomain::new("example.com.").unwrap(),
-                    RecordType::A,
-                    true,
-                )
+                .check_domain(&ParsedDomain::new("example.com.").unwrap(), RecordType::A, true)
                 .await;
 
             assert_eq!(result.rule_filter, Some(FilterResult::OnlyIPv6));
@@ -1485,7 +1447,7 @@ mod tests {
 
             let result = handler
                 .check_domain(
-                    &PreprocessedDomain::new("cached-filter.example.").unwrap(),
+                    &ParsedDomain::new("cached-filter.example.").unwrap(),
                     RecordType::A,
                     true,
                 )
@@ -1517,7 +1479,7 @@ mod tests {
 
             let result = handler
                 .check_domain(
-                    &PreprocessedDomain::new("cached-full.example.").unwrap(),
+                    &ParsedDomain::new("cached-full.example.").unwrap(),
                     RecordType::A,
                     false,
                 )
@@ -1535,11 +1497,7 @@ mod tests {
             let handler = make_test_handler(vec![test_runtime_rule()], vec![]);
 
             let result = handler
-                .check_domain(
-                    &PreprocessedDomain::new("printer.local.").unwrap(),
-                    RecordType::A,
-                    true,
-                )
+                .check_domain(&ParsedDomain::new("printer.local.").unwrap(), RecordType::A, true)
                 .await;
 
             assert!(result.rule_id.is_none());
@@ -1555,7 +1513,7 @@ mod tests {
 
             let result = handler
                 .refresh_cache_entry(
-                    &PreprocessedDomain::new("foo.localhost.").unwrap(),
+                    &ParsedDomain::new("foo.localhost.").unwrap(),
                     RecordType::AAAA,
                     true,
                 )
@@ -1591,11 +1549,7 @@ mod tests {
             // live path answers NOERROR/empty, so refresh must return Ok and
             // drop the stale entry instead of failing with RefreshRequiresRule.
             let result = handler
-                .refresh_cache_entry(
-                    &PreprocessedDomain::new(domain).unwrap(),
-                    RecordType::PTR,
-                    true,
-                )
+                .refresh_cache_entry(&ParsedDomain::new(domain).unwrap(), RecordType::PTR, true)
                 .await
                 .unwrap();
 
@@ -1603,9 +1557,13 @@ mod tests {
 
             let runtime = handler.runtime.load_full();
             assert!(
-                DnsRequestHandler::lookup_cache_in(&runtime.cache, domain, RecordType::PTR)
-                    .await
-                    .is_none(),
+                DnsRequestHandler::lookup_cache_in(
+                    &runtime.cache,
+                    &ParsedDomain::new(domain).unwrap(),
+                    RecordType::PTR,
+                )
+                .await
+                .is_none(),
                 "stale reverse entry must be cleared"
             );
         });
@@ -1634,7 +1592,7 @@ mod tests {
                 .await;
 
             let result = handler
-                .refresh_cache_entry(&PreprocessedDomain::new(domain).unwrap(), RecordType::A, true)
+                .refresh_cache_entry(&ParsedDomain::new(domain).unwrap(), RecordType::A, true)
                 .await
                 .unwrap();
 
@@ -1645,9 +1603,13 @@ mod tests {
 
             let runtime = handler.runtime.load_full();
             assert!(
-                DnsRequestHandler::lookup_cache_in(&runtime.cache, domain, RecordType::A)
-                    .await
-                    .is_none(),
+                DnsRequestHandler::lookup_cache_in(
+                    &runtime.cache,
+                    &ParsedDomain::new(domain).unwrap(),
+                    RecordType::A,
+                )
+                .await
+                .is_none(),
                 "stale reverse entry must be cleared"
             );
         });
@@ -1673,7 +1635,7 @@ mod tests {
                 .await;
 
             let result = handler
-                .check_domain(&PreprocessedDomain::new(domain).unwrap(), RecordType::PTR, true)
+                .check_domain(&ParsedDomain::new(domain).unwrap(), RecordType::PTR, true)
                 .await;
 
             // Check is read-only: unowned reverse names are not resolved
@@ -1709,7 +1671,7 @@ mod tests {
             let runtime = handler_clone.runtime.load_full();
             let cache_item = runtime
                 .cache
-                .get(&("negative-cache.example.".to_string(), RecordType::A))
+                .get(&(Arc::from("negative-cache.example."), RecordType::A))
                 .await
                 .expect("cache item must exist");
 
@@ -1749,10 +1711,13 @@ mod tests {
             assert!(!Arc::ptr_eq(&old_runtime, &new_runtime));
             assert!(!Arc::ptr_eq(&old_runtime.resolve_engine, &new_runtime.resolve_engine));
             assert!(!Arc::ptr_eq(&old_runtime.redirect_engine, &new_runtime.redirect_engine));
-            assert!(handler.lookup_redirects("old.example.com.", RecordType::A).is_none());
+            assert!(handler
+                .lookup_redirects(&ParsedDomain::new("old.example.com.").unwrap(), RecordType::A)
+                .is_none());
 
-            let (records, _, _, _) =
-                handler.lookup_redirects("new.example.com.", RecordType::A).unwrap();
+            let (records, _, _, _) = handler
+                .lookup_redirects(&ParsedDomain::new("new.example.com.").unwrap(), RecordType::A)
+                .unwrap();
             assert_eq!(records[0].ttl, 33);
         });
     }
@@ -1790,7 +1755,7 @@ mod tests {
                 .runtime
                 .load_full()
                 .cache
-                .get(&("redirected.example.".to_string(), RecordType::A))
+                .get(&(Arc::from("redirected.example."), RecordType::A))
                 .await
                 .is_none());
         });
@@ -1847,7 +1812,7 @@ mod tests {
             assert_eq!(
                 new_runtime
                     .cache
-                    .get(&("cached.example.".to_string(), RecordType::A))
+                    .get(&(Arc::from("cached.example."), RecordType::A))
                     .await
                     .unwrap()
                     .min_ttl,
@@ -1856,7 +1821,7 @@ mod tests {
             assert_eq!(
                 new_runtime
                     .cache
-                    .get(&("short.example.".to_string(), RecordType::A))
+                    .get(&(Arc::from("short.example."), RecordType::A))
                     .await
                     .unwrap()
                     .min_ttl,
@@ -1887,7 +1852,7 @@ mod tests {
 
             let old_runtime = handler.runtime.load_full();
             let old_kept =
-                old_runtime.cache.get(&("kept.example.".to_string(), RecordType::A)).await.unwrap();
+                old_runtime.cache.get(&(Arc::from("kept.example."), RecordType::A)).await.unwrap();
             let (redirect_engine, _) =
                 DnsRequestHandler::test_engines_from_legacy(ChainDnsServerInitInfo {
                     dns_rules: vec![],
@@ -1903,11 +1868,11 @@ mod tests {
             assert!(Arc::ptr_eq(&old_runtime.resolve_engine, &new_runtime.resolve_engine));
             assert!(new_runtime
                 .cache
-                .get(&("redirected.example.".to_string(), RecordType::A))
+                .get(&(Arc::from("redirected.example."), RecordType::A))
                 .await
                 .is_none());
             let new_kept =
-                new_runtime.cache.get(&("kept.example.".to_string(), RecordType::A)).await.unwrap();
+                new_runtime.cache.get(&(Arc::from("kept.example."), RecordType::A)).await.unwrap();
             assert!(Arc::ptr_eq(&old_kept, &new_kept));
             assert_eq!(new_kept.min_ttl, 60);
         });
@@ -1957,7 +1922,7 @@ mod tests {
             assert_eq!(handler.runtime_config.load().negative_cache_ttl, 22);
             assert!(new_runtime
                 .cache
-                .get(&("cached.example.com.".to_string(), RecordType::A))
+                .get(&(Arc::from("cached.example.com."), RecordType::A))
                 .await
                 .is_some());
         });
@@ -1978,8 +1943,9 @@ mod tests {
                 vec![test_all_local_ips_redirect_rule("example.com", 17)],
             );
 
-            let (records, outcome, redirect_id, _) =
-                handler.lookup_redirects("example.com.", RecordType::A).unwrap();
+            let (records, outcome, redirect_id, _) = handler
+                .lookup_redirects(&ParsedDomain::new("example.com.").unwrap(), RecordType::A)
+                .unwrap();
 
             assert_eq!(outcome, DnsOutcome::Local);
             assert_eq!(redirect_id, Some(Uuid::nil()));
@@ -2005,7 +1971,9 @@ mod tests {
                 vec![test_all_local_ips_redirect_rule("example.com", 17)],
             );
 
-            assert!(handler.lookup_redirects("example.com.", RecordType::AAAA).is_none());
+            assert!(handler
+                .lookup_redirects(&ParsedDomain::new("example.com.").unwrap(), RecordType::AAAA)
+                .is_none());
         });
     }
 
@@ -2021,8 +1989,9 @@ mod tests {
                 )],
             );
 
-            let (records, outcome, redirect_id, _) =
-                handler.lookup_redirects("example.com.", RecordType::AAAA).unwrap();
+            let (records, outcome, redirect_id, _) = handler
+                .lookup_redirects(&ParsedDomain::new("example.com.").unwrap(), RecordType::AAAA)
+                .unwrap();
 
             assert!(records.is_empty());
             assert_eq!(outcome, DnsOutcome::Local);

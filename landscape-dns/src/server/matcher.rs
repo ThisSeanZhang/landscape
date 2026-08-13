@@ -5,12 +5,15 @@ use std::{borrow::Cow, collections::HashSet, sync::Arc, time::Instant};
 use tracing::debug;
 use trie_rs::TrieBuilder;
 
+use crate::domain::ParsedDomain;
+
 #[derive(Debug)]
 pub struct DomainMatcher {
     regex_domains: Vec<Regex>,         // 用于存储正则表达式规则
     full_domains: HashSet<String>,     // 用于存储完全匹配的域名
     keyword_ac: AhoCorasick,           // Aho-Corasick 自动机，用于关键字匹配
     subdomain_trie: trie_rs::Trie<u8>, // Trie，用于子域名匹配
+    has_subdomain_rules: bool,         // 是否有子域名规则（避免每次都查空 Trie）
 }
 
 #[derive(Debug)]
@@ -57,6 +60,29 @@ impl RuntimeRuleMatcher {
             // reintroduced through the builder.
             || (!self.negative_geo.is_empty()
                 && !self.negative_geo.iter().any(|matcher| matcher.is_match(domain)))
+    }
+
+    /// Variant of [`Self::is_match`] for the per-query hot path, using the
+    /// precomputed forms of [`ParsedDomain`]: no re-normalization, and the
+    /// reversed form is computed at most once per domain (via
+    /// [`ParsedDomain::reversed`]).
+    pub fn is_match_pd(&self, domain: &ParsedDomain) -> bool {
+        if self.match_all {
+            return true;
+        }
+
+        self.manual
+            .as_ref()
+            .is_some_and(|matcher| matcher.is_match_normalized(domain.name(), domain.reversed()))
+            || self
+                .positive_geo
+                .iter()
+                .any(|matcher| matcher.is_match_normalized(domain.name(), domain.reversed()))
+            || (!self.negative_geo.is_empty()
+                && !self
+                    .negative_geo
+                    .iter()
+                    .any(|matcher| matcher.is_match_normalized(domain.name(), domain.reversed())))
     }
 }
 
@@ -117,39 +143,50 @@ impl DomainMatcher {
             full_domains,
             keyword_ac,
             subdomain_trie,
+            has_subdomain_rules: subdomain_trie_size > 0,
         }
     }
 
     // 执行匹配的主方法
     pub fn is_match(&self, domain: &str) -> bool {
-        let normalized_domain = normalize_domain_text(domain);
+        let normalized = normalize_domain_text(domain);
+        let reversed =
+            self.has_subdomain_rules.then(|| normalized.chars().rev().collect::<String>());
+        self.is_match_normalized(&normalized, reversed.as_deref().unwrap_or_default())
+    }
 
+    /// Allocation-free match against a domain that is already normalized
+    /// (lowercase, no trailing dot) with its reversed form precomputed by
+    /// [`ParsedDomain`]. This is the per-query hot path: no normalization,
+    /// no reversed-string allocation.
+    pub fn is_match_normalized(&self, normalized: &str, reversed: &str) -> bool {
         // 完全匹配
-        if self.full_domains.contains(&*normalized_domain) {
+        if self.full_domains.contains(normalized) {
             return true;
         }
 
         // 子域名匹配
-        let reversed_domain = normalized_domain.chars().rev().collect::<String>();
-        let reversed_bytes = reversed_domain.as_bytes();
+        if self.has_subdomain_rules {
+            let reversed_bytes = reversed.as_bytes();
 
-        for result in
-            self.subdomain_trie.common_prefix_search::<Vec<u8>, _>(reversed_domain.clone())
-        {
-            let prefix_len = result.len();
-            if reversed_bytes.len() == prefix_len || reversed_bytes.get(prefix_len) == Some(&b'.') {
-                return true;
+            for result in self.subdomain_trie.common_prefix_search::<Vec<u8>, _>(reversed) {
+                let prefix_len = result.len();
+                if reversed_bytes.len() == prefix_len
+                    || reversed_bytes.get(prefix_len) == Some(&b'.')
+                {
+                    return true;
+                }
             }
         }
 
         // 关键字匹配
-        if self.keyword_ac.is_match(&*normalized_domain) {
+        if self.keyword_ac.is_match(normalized) {
             return true;
         }
 
         // 正则表达式匹配
         for regex in &self.regex_domains {
-            if regex.is_match(domain) {
+            if regex.is_match(normalized) {
                 return true;
             }
         }

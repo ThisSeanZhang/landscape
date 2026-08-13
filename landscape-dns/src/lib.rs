@@ -12,7 +12,7 @@ pub use landscape_common::dns::check::{
     CheckChainDnsResult, CheckDnsReq, CheckDnsResult, LandscapeRecord as CommonRecord,
 };
 use moka::future::Cache;
-use std::{collections::HashSet, path::PathBuf, time::Instant};
+use std::{collections::HashSet, path::PathBuf, sync::Arc, time::Instant};
 
 pub fn to_common_records(records: Vec<Record>) -> Vec<CommonRecord> {
     records
@@ -181,4 +181,4 @@ impl CacheDNSItem {
     }
 }
 
-pub type DNSCache = Cache<(String, RecordType), std::sync::Arc<CacheDNSItem>>;
+pub type DNSCache = Cache<(Arc<str>, RecordType), Arc<CacheDNSItem>>;

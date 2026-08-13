@@ -255,7 +255,12 @@ mod tests {
     use std::net::IpAddr;
 
     use super::MatcherBuilder;
+    use crate::domain::ParsedDomain;
     use hickory_proto::rr::RecordType;
+
+    fn pd(name: &str) -> ParsedDomain {
+        ParsedDomain::new(name).unwrap()
+    }
 
     struct TestGeoSource {
         values: HashMap<GeoFileCacheKey, Vec<GeoSiteFileConfig>>,
@@ -444,8 +449,8 @@ mod tests {
             builder.build_flow(7, vec![rule], vec![], vec![], vec![upstream]).await;
 
         assert_eq!(resolve_engine.iter().count(), 1);
-        assert!(resolve_engine.find_match("manual.example").is_some());
-        assert!(resolve_engine.find_match("all.example").is_none());
+        assert!(resolve_engine.find_match(&pd("manual.example")).is_some());
+        assert!(resolve_engine.find_match(&pd("all.example")).is_none());
         assert!(dependencies.geo_keys.contains(&missing.get_file_cache_key()));
     }
 
@@ -471,7 +476,7 @@ mod tests {
             .await;
 
         assert_eq!(resolve_engine.iter().count(), 0);
-        assert!(redirect_engine.lookup("all.example", RecordType::A, None).is_none());
+        assert!(redirect_engine.lookup(&pd("all.example"), RecordType::A, None).is_none());
         assert!(dependencies.geo_keys.contains(&geo_key(None).get_file_cache_key()));
     }
 
@@ -490,9 +495,9 @@ mod tests {
             builder.build_flow(7, vec![rule], vec![], vec![], vec![upstream]).await;
 
         assert_eq!(resolve_engine.iter().count(), 1);
-        assert!(resolve_engine.find_match("manual.example").is_some());
-        assert!(resolve_engine.find_match("all.example").is_none());
-        assert!(resolve_engine.find_match("tagged.example").is_none());
+        assert!(resolve_engine.find_match(&pd("manual.example")).is_some());
+        assert!(resolve_engine.find_match(&pd("all.example")).is_none());
+        assert!(resolve_engine.find_match(&pd("tagged.example")).is_none());
     }
 
     #[tokio::test]
@@ -514,7 +519,7 @@ mod tests {
 
         assert_eq!(resolve_engine.iter().count(), 1);
         assert!(resolve_engine
-            .find_match("fallback.example")
+            .find_match(&pd("fallback.example"))
             .is_some_and(|rule| rule.order() == 20));
         assert!(dependencies.geo_keys.contains(&inverse.get_file_cache_key()));
     }
@@ -529,7 +534,7 @@ mod tests {
             builder.build_flow(7, vec![rule], vec![], vec![], vec![upstream]).await;
 
         assert_eq!(resolve_engine.iter().count(), 1);
-        assert!(resolve_engine.find_match("anything.example").is_some());
+        assert!(resolve_engine.find_match(&pd("anything.example")).is_some());
     }
 
     #[tokio::test]
@@ -551,7 +556,7 @@ mod tests {
             )
             .await;
 
-        assert!(redirect_engine.lookup("anything.example", RecordType::A, None).is_none());
+        assert!(redirect_engine.lookup(&pd("anything.example"), RecordType::A, None).is_none());
     }
 
     #[tokio::test]
@@ -570,9 +575,9 @@ mod tests {
             builder.build_flow(7, vec![rule], vec![], vec![], vec![upstream]).await;
 
         assert_eq!(resolve_engine.iter().count(), 1);
-        assert!(resolve_engine.find_match("all.example").is_some());
-        assert!(resolve_engine.find_match("tagged.example").is_some());
-        assert!(resolve_engine.find_match("other.example").is_none());
+        assert!(resolve_engine.find_match(&pd("all.example")).is_some());
+        assert!(resolve_engine.find_match(&pd("tagged.example")).is_some());
+        assert!(resolve_engine.find_match(&pd("other.example")).is_none());
         assert!(dependencies.geo_keys.contains(&valid.get_file_cache_key()));
         assert!(dependencies.geo_keys.contains(&missing.get_file_cache_key()));
     }
@@ -596,8 +601,8 @@ mod tests {
             builder.build_flow(7, vec![rule], vec![], vec![], vec![upstream]).await;
 
         assert_eq!(resolve_engine.iter().count(), 1);
-        assert!(resolve_engine.find_match("manual.example").is_some());
-        assert!(resolve_engine.find_match("all.example").is_none());
+        assert!(resolve_engine.find_match(&pd("manual.example")).is_some());
+        assert!(resolve_engine.find_match(&pd("all.example")).is_none());
         assert!(dependencies.geo_keys.contains(&geo_key(None).get_file_cache_key()));
     }
 }
