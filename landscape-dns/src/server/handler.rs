@@ -3,7 +3,6 @@ use std::{
     future::Future,
     sync::Arc,
     time::{Duration, Instant},
-    vec,
 };
 
 use arc_swap::ArcSwap;
@@ -34,6 +33,7 @@ use crate::{
     server::{
         engine::{RedirectEngine, ResolveEngine},
         local::{LocalAnswer, LocalResolver},
+        rule::DNSResolveRuntime,
         CacheRuntimeConfig, MetricSenderState,
     },
     CacheDNSItem, CheckChainDnsResult, DNSCache,
@@ -64,6 +64,18 @@ pub(crate) struct HandlerRuntime {
     pub redirect_engine: Arc<RedirectEngine>,
     pub resolve_engine: Arc<ResolveEngine>,
     pub cache: DNSCache,
+}
+
+/// Outcome of a matched rule's upstream lookup; the cache has already been
+/// updated according to the write policy passed to
+/// [`DnsRequestHandler::lookup_rule_and_cache`].
+enum RuleLookupOutcome {
+    /// Upstream answered (possibly an empty NOERROR answer).
+    NoError { records: Vec<Record> },
+    /// Upstream answered NXDOMAIN.
+    NxDomain,
+    /// Unrecoverable upstream failure (timeout, ServFail, ...).
+    Failed,
 }
 
 #[derive(Clone)]
@@ -170,7 +182,7 @@ impl DnsRequestHandler {
         redirect_engine: RedirectEngine,
         resolve_engine: ResolveEngine,
     ) {
-        self.renew_engines_with_cache(
+        self.swap_runtime(
             Arc::new(redirect_engine),
             Arc::new(resolve_engine),
             Some(RULE_REFRESH_TTL_CAP),
@@ -180,7 +192,7 @@ impl DnsRequestHandler {
 
     pub async fn renew_dns_rules(&self, resolve_engine: ResolveEngine) {
         let runtime = self.runtime.load_full();
-        self.renew_engines_with_cache(
+        self.swap_runtime(
             runtime.redirect_engine.clone(),
             Arc::new(resolve_engine),
             Some(RULE_REFRESH_TTL_CAP),
@@ -199,7 +211,9 @@ impl DnsRequestHandler {
         }));
     }
 
-    async fn renew_engines_with_cache(
+    /// Rebuilds the cache, migrates surviving entries, publishes the new
+    /// runtime snapshot and refreshes the eBPF mark/route maps.
+    async fn swap_runtime(
         &self,
         redirect_engine: Arc<RedirectEngine>,
         resolve_engine: Arc<ResolveEngine>,
@@ -208,7 +222,7 @@ impl DnsRequestHandler {
         let (new_cache, update_dns_mark_list) =
             self.rebuild_cache(&redirect_engine, &resolve_engine, ttl_cap).await;
 
-        tracing::info!("add_dns_marks: {:?}", update_dns_mark_list);
+        tracing::debug!("add_dns_marks: {:?}", update_dns_mark_list);
         self.refresh_flow_dns_map(update_dns_mark_list);
         self.runtime.store(Arc::new(HandlerRuntime {
             redirect_engine,
@@ -221,15 +235,12 @@ impl DnsRequestHandler {
     pub async fn renew_runtime_config(&self, rebuild_cache: bool) {
         if rebuild_cache {
             let runtime = self.runtime.load_full();
-            let (new_cache, update_dns_mark_list) =
-                self.rebuild_cache(&runtime.redirect_engine, &runtime.resolve_engine, None).await;
-            self.refresh_flow_dns_map(update_dns_mark_list);
-            self.runtime.store(Arc::new(HandlerRuntime {
-                redirect_engine: runtime.redirect_engine.clone(),
-                resolve_engine: runtime.resolve_engine.clone(),
-                cache: new_cache,
-            }));
-            Self::recreate_route_cache();
+            self.swap_runtime(
+                runtime.redirect_engine.clone(),
+                runtime.resolve_engine.clone(),
+                None,
+            )
+            .await;
         }
     }
 
@@ -430,50 +441,111 @@ impl DnsRequestHandler {
                     return (vec![], DnsOutcome::Filter);
                 }
 
-                match with_lookup_timeout(resolver.lookup(domain, query_type), LOOKUP_TIMEOUT).await
+                match self
+                    .lookup_rule_and_cache(
+                        &runtime.cache,
+                        resolver,
+                        domain,
+                        query_type,
+                        false,
+                        true,
+                    )
+                    .await
                 {
-                    Ok(rdata_vec) => {
-                        self.insert_into_cache(
-                            &runtime.cache,
-                            domain,
-                            query_type,
-                            rdata_vec.clone(),
-                            ResponseCode::NoError,
-                            resolver.mark(),
-                            filter.clone(),
-                            Some(resolver.get_config_id()),
-                            Some(resolver.order()),
-                        )
-                        .await;
-                        return (filter_result(rdata_vec, &filter), DnsOutcome::Normal);
+                    RuleLookupOutcome::NoError { records } => {
+                        return (filter_result(records, &filter), DnsOutcome::Normal);
                     }
-                    Err(err) => {
-                        let code = err.to_response_code();
-                        let outcome = match code {
-                            ResponseCode::NXDomain => DnsOutcome::NxDomain,
-                            ResponseCode::NoError => DnsOutcome::Normal,
-                            _ => DnsOutcome::Error,
-                        };
-                        if code == ResponseCode::NXDomain || code == ResponseCode::NoError {
-                            self.insert_into_cache(
-                                &runtime.cache,
-                                domain,
-                                query_type,
-                                vec![],
-                                code,
-                                resolver.mark(),
-                                filter.clone(),
-                                Some(resolver.get_config_id()),
-                                Some(resolver.order()),
-                            )
-                            .await;
-                        }
-                        return (vec![], outcome);
+                    RuleLookupOutcome::NxDomain => {
+                        return (vec![], DnsOutcome::NxDomain);
+                    }
+                    RuleLookupOutcome::Failed => {
+                        return (vec![], DnsOutcome::Error);
                     }
                 }
             }
         }
         (vec![], DnsOutcome::Normal)
+    }
+
+    /// Runs a matched rule's upstream lookup under the shared timeout and
+    /// persists the result to the cache when `write_cache` is set: filtered
+    /// queries clear any stale entry, positive answers are cached with
+    /// `NoError`, and negative answers (`NXDomain`/empty `NoError`) are
+    /// cached as such. Non-representable failures (timeout, `ServFail`, ...)
+    /// leave the cache untouched and are returned as `Failed`.
+    async fn lookup_rule_and_cache(
+        &self,
+        cache: &DNSCache,
+        resolver: &DNSResolveRuntime,
+        domain: &str,
+        query_type: RecordType,
+        query_filtered: bool,
+        write_cache: bool,
+    ) -> RuleLookupOutcome {
+        let filter = resolver.filter_mode();
+        match with_lookup_timeout(resolver.lookup(domain, query_type), LOOKUP_TIMEOUT).await {
+            Ok(rdata_vec) => {
+                if write_cache {
+                    if query_filtered {
+                        Self::clear_cache_entry_in(cache, domain, query_type).await;
+                    } else {
+                        self.insert_into_cache(
+                            cache,
+                            domain,
+                            query_type,
+                            rdata_vec.clone(),
+                            ResponseCode::NoError,
+                            resolver.mark(),
+                            filter,
+                            Some(resolver.get_config_id()),
+                            Some(resolver.order()),
+                        )
+                        .await;
+                    }
+                }
+                RuleLookupOutcome::NoError { records: rdata_vec }
+            }
+            Err(err) => {
+                let code = err.to_response_code();
+                let outcome = match code {
+                    ResponseCode::NXDomain => RuleLookupOutcome::NxDomain,
+                    ResponseCode::NoError => RuleLookupOutcome::NoError { records: vec![] },
+                    _ => RuleLookupOutcome::Failed,
+                };
+                if write_cache {
+                    if query_filtered {
+                        Self::clear_cache_entry_in(cache, domain, query_type).await;
+                    } else if matches!(outcome, RuleLookupOutcome::NxDomain) {
+                        self.insert_into_cache(
+                            cache,
+                            domain,
+                            query_type,
+                            vec![],
+                            code,
+                            resolver.mark(),
+                            filter,
+                            Some(resolver.get_config_id()),
+                            Some(resolver.order()),
+                        )
+                        .await;
+                    } else if let RuleLookupOutcome::NoError { records } = &outcome {
+                        self.insert_into_cache(
+                            cache,
+                            domain,
+                            query_type,
+                            records.clone(),
+                            code,
+                            resolver.mark(),
+                            filter,
+                            Some(resolver.get_config_id()),
+                            Some(resolver.order()),
+                        )
+                        .await;
+                    }
+                }
+                outcome
+            }
+        }
     }
 
     pub async fn check_domain(
@@ -513,18 +585,24 @@ impl DnsRequestHandler {
                         break;
                     }
 
-                    if let Ok(rdata_vec) = with_lookup_timeout(
-                        resolver.lookup(domain.raw(), query_type),
-                        LOOKUP_TIMEOUT,
-                    )
-                    .await
+                    // Read-only: no cache writes here, the cache report below
+                    // shows what a client would currently see.
+                    if let RuleLookupOutcome::NoError { records } = self
+                        .lookup_rule_and_cache(
+                            &runtime.cache,
+                            resolver,
+                            domain.raw(),
+                            query_type,
+                            result.query_filtered,
+                            false,
+                        )
+                        .await
                     {
-                        let records = if apply_filter {
-                            filter_result(rdata_vec, &filter)
+                        result.records = Some(crate::to_common_records(if apply_filter {
+                            filter_result(records, &filter)
                         } else {
-                            rdata_vec
-                        };
-                        result.records = Some(crate::to_common_records(records));
+                            records
+                        }));
                     }
                     break;
                 }
@@ -618,54 +696,33 @@ impl DnsRequestHandler {
                 ..Default::default()
             };
 
-            match with_lookup_timeout(resolver.lookup(domain.raw(), query_type), LOOKUP_TIMEOUT)
+            match self
+                .lookup_rule_and_cache(
+                    &runtime.cache,
+                    resolver,
+                    domain.raw(),
+                    query_type,
+                    query_filtered,
+                    true,
+                )
                 .await
             {
-                Ok(rdata_vec) => {
-                    let records = if apply_filter {
-                        filter_result(rdata_vec.clone(), &filter)
+                RuleLookupOutcome::NoError { records } => {
+                    result.records = Some(if apply_filter {
+                        crate::to_common_records(filter_result(records, &filter))
                     } else {
-                        rdata_vec.clone()
-                    };
-                    result.records = Some(crate::to_common_records(records));
-
-                    if query_filtered {
-                        Self::clear_cache_entry_in(&runtime.cache, domain.raw(), query_type).await;
-                    } else {
-                        self.insert_into_cache(
-                            &runtime.cache,
-                            domain.raw(),
-                            query_type,
-                            rdata_vec,
-                            ResponseCode::NoError,
-                            resolver.mark(),
-                            filter.clone(),
-                            Some(resolver.get_config_id()),
-                            Some(resolver.order()),
-                        )
-                        .await;
-                    }
+                        crate::to_common_records(records)
+                    });
                 }
-                Err(err) => {
-                    let code = err.to_response_code();
+                RuleLookupOutcome::NxDomain => {
                     result.records = Some(vec![]);
-
-                    if query_filtered {
-                        Self::clear_cache_entry_in(&runtime.cache, domain.raw(), query_type).await;
-                    } else if code == ResponseCode::NXDomain || code == ResponseCode::NoError {
-                        self.insert_into_cache(
-                            &runtime.cache,
-                            domain.raw(),
-                            query_type,
-                            vec![],
-                            code,
-                            resolver.mark(),
-                            filter.clone(),
-                            Some(resolver.get_config_id()),
-                            Some(resolver.order()),
-                        )
-                        .await;
-                    } else {
+                }
+                RuleLookupOutcome::Failed => {
+                    // Filtered queries are served an empty answer, so a
+                    // failure is not an error here; anything else cannot be
+                    // resolved at all.
+                    result.records = Some(vec![]);
+                    if !query_filtered {
                         return Err(DnsError::RefreshFailed(domain.raw().to_string()));
                     }
                 }
@@ -757,15 +814,6 @@ impl DnsRequestHandler {
 
     // check the cache and whether it has expired based on TTL
     // different record types may have different expiry times
-    pub async fn lookup_cache(
-        &self,
-        domain: &str,
-        query_type: RecordType,
-    ) -> Option<(Vec<Record>, FilterResult, ResponseCode)> {
-        let runtime = self.runtime.load_full();
-        Self::lookup_cache_in(&runtime.cache, domain, query_type).await
-    }
-
     async fn lookup_cache_in(
         cache: &DNSCache,
         domain: &str,
@@ -805,7 +853,8 @@ impl DnsRequestHandler {
         None
     }
 
-    pub async fn insert(
+    #[cfg(test)]
+    async fn insert(
         &self,
         domain: &str,
         query_type: RecordType,
@@ -1158,9 +1207,12 @@ mod tests {
         Arc::new(ArcSwap::from_pointee(test_cache_runtime_config(negative_cache_ttl)))
     }
 
-    fn make_test_handler() -> DnsRequestHandler {
+    fn make_test_handler(
+        dns_rules: Vec<DNSRuntimeRule>,
+        redirect_rules: Vec<DNSRedirectRuntimeRule>,
+    ) -> DnsRequestHandler {
         DnsRequestHandler::new(
-            ChainDnsServerInitInfo { dns_rules: vec![], redirect_rules: vec![] }.into(),
+            ChainDnsServerInitInfo { dns_rules, redirect_rules }.into(),
             shared_cache_runtime_config(5),
             1,
             Arc::new(ArcSwapOption::new(None)),
@@ -1168,15 +1220,38 @@ mod tests {
         )
     }
 
-    fn test_local_resolver(registry: Arc<LanHostnameRegistry>) -> Arc<LocalResolver> {
-        Arc::new(LocalResolver::new(registry, None, None, None))
-    }
-
-    fn test_local_resolver_with_provider(
+    fn test_handler_with_local(
         registry: Arc<LanHostnameRegistry>,
         provider: Option<Arc<dyn LocalDnsAnswerProvider>>,
-    ) -> Arc<LocalResolver> {
-        Arc::new(LocalResolver::new(registry, provider, None, None))
+        dns_rules: Vec<DNSRuntimeRule>,
+        redirect_rules: Vec<DNSRedirectRuntimeRule>,
+    ) -> DnsRequestHandler {
+        DnsRequestHandler::new(
+            ChainDnsServerInitInfo { dns_rules, redirect_rules }.into(),
+            shared_cache_runtime_config(5),
+            1,
+            Arc::new(ArcSwapOption::new(None)),
+            Arc::new(LocalResolver::new(registry, provider, None, None)),
+        )
+    }
+
+    fn test_handler_with_config(
+        runtime_config: Arc<ArcSwap<CacheRuntimeConfig>>,
+        flow_id: u32,
+        dns_rules: Vec<DNSRuntimeRule>,
+        redirect_rules: Vec<DNSRedirectRuntimeRule>,
+    ) -> DnsRequestHandler {
+        DnsRequestHandler::new(
+            ChainDnsServerInitInfo { dns_rules, redirect_rules }.into(),
+            runtime_config,
+            flow_id,
+            Arc::new(ArcSwapOption::new(None)),
+            test_local_resolver(test_lan_hostname_registry()),
+        )
+    }
+
+    fn test_local_resolver(registry: Arc<LanHostnameRegistry>) -> Arc<LocalResolver> {
+        Arc::new(LocalResolver::new(registry, None, None, None))
     }
 
     fn test_lan_hostname_registry() -> Arc<LanHostnameRegistry> {
@@ -1192,25 +1267,47 @@ mod tests {
         }
     }
 
-    fn sample_a_record(name: &str, ttl: u32, addr: Ipv4Addr) -> Record {
-        Record::from_rdata(hickory_proto::rr::Name::from_str(name).unwrap(), ttl, RData::A(A(addr)))
+    fn test_dns_rule(filter: FilterResult, sources: &[&str]) -> DNSRuntimeRule {
+        DNSRuntimeRule {
+            filter,
+            source: sources
+                .iter()
+                .map(|value| DomainConfig {
+                    match_type: DomainMatchType::Full,
+                    value: value.to_string(),
+                })
+                .collect(),
+            ..test_runtime_rule()
+        }
     }
 
-    #[test]
-    fn test_serve_failed_flags() {
-        let req_metadata = Metadata::new(
-            0x1234,
-            hickory_proto::op::MessageType::Query,
-            hickory_proto::op::OpCode::Query,
-        );
+    fn test_static_redirect_rule(
+        domain: &str,
+        ips: Vec<IpAddr>,
+        ttl_secs: u32,
+    ) -> DNSRedirectRuntimeRule {
+        DNSRedirectRuntimeRule {
+            redirect_id: Some(Uuid::nil()),
+            dynamic_redirect_source: None,
+            answer_mode: DnsRedirectAnswerMode::StaticIps,
+            match_rules: vec![DomainConfig {
+                match_type: DomainMatchType::Full,
+                value: domain.to_string(),
+            }],
+            result_info: ips,
+            ttl_secs,
+        }
+    }
 
-        let res_info = serve_failed(&req_metadata);
+    fn test_all_local_ips_redirect_rule(domain: &str, ttl_secs: u32) -> DNSRedirectRuntimeRule {
+        DNSRedirectRuntimeRule {
+            answer_mode: DnsRedirectAnswerMode::AllLocalIps,
+            ..test_static_redirect_rule(domain, vec![], ttl_secs)
+        }
+    }
 
-        // ResponseInfo derefs to Header in the version of hickory-server used
-        assert_eq!(res_info.id, 0x1234);
-        assert_eq!(res_info.response_code, ResponseCode::ServFail);
-        assert!(res_info.recursion_available, "RA flag must be true");
-        assert!(res_info.authoritative, "AA flag must be true");
+    fn sample_a_record(name: &str, ttl: u32, addr: Ipv4Addr) -> Record {
+        Record::from_rdata(hickory_proto::rr::Name::from_str(name).unwrap(), ttl, RData::A(A(addr)))
     }
 
     #[test]
@@ -1249,7 +1346,7 @@ mod tests {
     #[test]
     fn resolve_arpa_dispatches_by_second_level_label() {
         run_async_test(async {
-            let handler = make_test_handler();
+            let handler = make_test_handler(vec![], vec![]);
 
             // resolver.arpa. → resolver branch
             let (records, outcome) = handler
@@ -1307,13 +1404,7 @@ mod tests {
                     lan_suffix: "lan".to_string(),
                 },
             );
-            let handler = DnsRequestHandler::new(
-                ChainDnsServerInitInfo::default().into(),
-                shared_cache_runtime_config(5),
-                1,
-                Arc::new(ArcSwapOption::new(None)),
-                test_local_resolver(registry),
-            );
+            let handler = test_handler_with_local(registry, None, vec![], vec![]);
             let domain = PreprocessedDomain::new("50.1.168.192.in-addr.arpa.").unwrap();
 
             // A disabled registry does not own private PTR queries: they fall
@@ -1330,9 +1421,9 @@ mod tests {
     }
 
     #[test]
-    fn test_with_lookup_timeout_returns_timeout_error() {
+    fn test_with_lookup_timeout_maps_timeout_and_passes_through_inner_result() {
         run_async_test(async {
-            let result = with_lookup_timeout(
+            let timeout = with_lookup_timeout(
                 async {
                     tokio::time::sleep(Duration::from_millis(30)).await;
                     Ok::<_, crate::error::DnsError>(vec![1_u8])
@@ -1340,44 +1431,23 @@ mod tests {
                 Duration::from_millis(5),
             )
             .await;
+            assert!(matches!(timeout, Err(crate::error::DnsError::Timeout)));
 
-            assert!(matches!(result, Err(crate::error::DnsError::Timeout)));
-        });
-    }
-
-    #[test]
-    fn test_with_lookup_timeout_returns_inner_result() {
-        run_async_test(async {
-            let result = with_lookup_timeout(
+            let inner = with_lookup_timeout(
                 async { Ok::<_, crate::error::DnsError>(vec![1_u8, 2_u8]) },
                 Duration::from_millis(50),
             )
             .await;
-
-            assert_eq!(result.unwrap(), vec![1_u8, 2_u8]);
+            assert_eq!(inner.unwrap(), vec![1_u8, 2_u8]);
         });
     }
 
     #[test]
     fn check_domain_applies_filter_when_requested() {
         run_async_test(async {
-            let handler = DnsRequestHandler::new(
-                ChainDnsServerInitInfo {
-                    dns_rules: vec![DNSRuntimeRule {
-                        filter: FilterResult::OnlyIPv6,
-                        source: vec![DomainConfig {
-                            match_type: DomainMatchType::Full,
-                            value: "example.com".to_string(),
-                        }],
-                        ..test_runtime_rule()
-                    }],
-                    redirect_rules: vec![],
-                }
-                .into(),
-                shared_cache_runtime_config(5),
-                1,
-                Arc::new(ArcSwapOption::new(None)),
-                test_local_resolver(test_lan_hostname_registry()),
+            let handler = make_test_handler(
+                vec![test_dns_rule(FilterResult::OnlyIPv6, &["example.com"])],
+                vec![],
             );
 
             let result = handler
@@ -1398,13 +1468,7 @@ mod tests {
     #[test]
     fn check_domain_filters_cached_records_when_requested() {
         run_async_test(async {
-            let handler = DnsRequestHandler::new(
-                ChainDnsServerInitInfo::default().into(),
-                shared_cache_runtime_config(5),
-                1,
-                Arc::new(ArcSwapOption::new(None)),
-                test_local_resolver(test_lan_hostname_registry()),
-            );
+            let handler = make_test_handler(vec![], vec![]);
 
             handler
                 .insert(
@@ -1436,13 +1500,7 @@ mod tests {
     #[test]
     fn check_domain_keeps_full_cached_records_without_filter_flag() {
         run_async_test(async {
-            let handler = DnsRequestHandler::new(
-                ChainDnsServerInitInfo::default().into(),
-                shared_cache_runtime_config(5),
-                1,
-                Arc::new(ArcSwapOption::new(None)),
-                test_local_resolver(test_lan_hostname_registry()),
-            );
+            let handler = make_test_handler(vec![], vec![]);
 
             handler
                 .insert(
@@ -1474,17 +1532,7 @@ mod tests {
     #[test]
     fn check_domain_handles_local_tld_before_upstream_rules() {
         run_async_test(async {
-            let handler = DnsRequestHandler::new(
-                ChainDnsServerInitInfo {
-                    dns_rules: vec![test_runtime_rule()],
-                    redirect_rules: vec![],
-                }
-                .into(),
-                shared_cache_runtime_config(5),
-                1,
-                Arc::new(ArcSwapOption::new(None)),
-                test_local_resolver(test_lan_hostname_registry()),
-            );
+            let handler = make_test_handler(vec![test_runtime_rule()], vec![]);
 
             let result = handler
                 .check_domain(
@@ -1503,17 +1551,7 @@ mod tests {
     #[test]
     fn refresh_cache_entry_handles_local_zones_without_upstream_rule_refresh() {
         run_async_test(async {
-            let handler = DnsRequestHandler::new(
-                ChainDnsServerInitInfo {
-                    dns_rules: vec![test_runtime_rule()],
-                    redirect_rules: vec![],
-                }
-                .into(),
-                shared_cache_runtime_config(5),
-                1,
-                Arc::new(ArcSwapOption::new(None)),
-                test_local_resolver(test_lan_hostname_registry()),
-            );
+            let handler = make_test_handler(vec![test_runtime_rule()], vec![]);
 
             let result = handler
                 .refresh_cache_entry(
@@ -1533,13 +1571,7 @@ mod tests {
     #[test]
     fn refresh_cache_entry_clears_stale_unowned_arpa_entry() {
         run_async_test(async {
-            let handler = DnsRequestHandler::new(
-                ChainDnsServerInitInfo::default().into(),
-                shared_cache_runtime_config(5),
-                1,
-                Arc::new(ArcSwapOption::new(None)),
-                test_local_resolver(test_lan_hostname_registry()),
-            );
+            let handler = make_test_handler(vec![], vec![]);
 
             let domain = "8.8.8.8.in-addr.arpa.";
             handler
@@ -1582,23 +1614,9 @@ mod tests {
     #[test]
     fn refresh_cache_entry_arpa_with_matching_rule_clears_cache() {
         run_async_test(async {
-            let handler = DnsRequestHandler::new(
-                ChainDnsServerInitInfo {
-                    dns_rules: vec![DNSRuntimeRule {
-                        filter: FilterResult::OnlyIPv6,
-                        source: vec![DomainConfig {
-                            match_type: DomainMatchType::Full,
-                            value: "8.8.8.8.in-addr.arpa".to_string(),
-                        }],
-                        ..test_runtime_rule()
-                    }],
-                    redirect_rules: vec![],
-                }
-                .into(),
-                shared_cache_runtime_config(5),
-                1,
-                Arc::new(ArcSwapOption::new(None)),
-                test_local_resolver(test_lan_hostname_registry()),
+            let handler = make_test_handler(
+                vec![test_dns_rule(FilterResult::OnlyIPv6, &["8.8.8.8.in-addr.arpa"])],
+                vec![],
             );
 
             let domain = "8.8.8.8.in-addr.arpa.";
@@ -1638,13 +1656,7 @@ mod tests {
     #[test]
     fn check_domain_reports_only_cache_for_unowned_arpa() {
         run_async_test(async {
-            let handler = DnsRequestHandler::new(
-                ChainDnsServerInitInfo::default().into(),
-                shared_cache_runtime_config(5),
-                1,
-                Arc::new(ArcSwapOption::new(None)),
-                test_local_resolver(test_lan_hostname_registry()),
-            );
+            let handler = make_test_handler(vec![], vec![]);
 
             let domain = "8.8.8.8.in-addr.arpa.";
             handler
@@ -1675,13 +1687,7 @@ mod tests {
     fn test_negative_cache_ttl_updates_are_shared_across_clones() {
         run_async_test(async {
             let runtime_config = shared_cache_runtime_config(7);
-            let handler = DnsRequestHandler::new(
-                ChainDnsServerInitInfo::default().into(),
-                runtime_config.clone(),
-                9,
-                Arc::new(ArcSwapOption::new(None)),
-                test_local_resolver(test_lan_hostname_registry()),
-            );
+            let handler = test_handler_with_config(runtime_config.clone(), 9, vec![], vec![]);
             let handler_clone = handler.clone();
 
             runtime_config.store(Arc::new(test_cache_runtime_config(33)));
@@ -1717,26 +1723,13 @@ mod tests {
     #[test]
     fn renew_engines_publishes_one_new_runtime_snapshot() {
         run_async_test(async {
-            let handler = DnsRequestHandler::new(
-                ChainDnsServerInitInfo {
-                    dns_rules: vec![test_runtime_rule()],
-                    redirect_rules: vec![DNSRedirectRuntimeRule {
-                        redirect_id: Some(Uuid::nil()),
-                        dynamic_redirect_source: None,
-                        answer_mode: DnsRedirectAnswerMode::StaticIps,
-                        match_rules: vec![DomainConfig {
-                            match_type: DomainMatchType::Full,
-                            value: "old.example.com".to_string(),
-                        }],
-                        result_info: vec![IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1))],
-                        ttl_secs: 17,
-                    }],
-                }
-                .into(),
-                shared_cache_runtime_config(5),
-                1,
-                Arc::new(ArcSwapOption::new(None)),
-                test_local_resolver(test_lan_hostname_registry()),
+            let handler = make_test_handler(
+                vec![test_runtime_rule()],
+                vec![test_static_redirect_rule(
+                    "old.example.com",
+                    vec![IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1))],
+                    17,
+                )],
             );
 
             let old_runtime = handler.runtime.load_full();
@@ -1744,17 +1737,11 @@ mod tests {
             let (redirect_engine, resolve_engine) =
                 DnsRequestHandler::test_engines_from_legacy(ChainDnsServerInitInfo {
                     dns_rules: vec![test_runtime_rule()],
-                    redirect_rules: vec![DNSRedirectRuntimeRule {
-                        redirect_id: Some(Uuid::nil()),
-                        dynamic_redirect_source: None,
-                        answer_mode: DnsRedirectAnswerMode::StaticIps,
-                        match_rules: vec![DomainConfig {
-                            match_type: DomainMatchType::Full,
-                            value: "new.example.com".to_string(),
-                        }],
-                        result_info: vec![IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1))],
-                        ttl_secs: 33,
-                    }],
+                    redirect_rules: vec![test_static_redirect_rule(
+                        "new.example.com",
+                        vec![IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1))],
+                        33,
+                    )],
                 });
             handler.renew_engines(redirect_engine, resolve_engine).await;
 
@@ -1773,17 +1760,7 @@ mod tests {
     #[test]
     fn renew_engines_drops_cache_entries_taken_over_by_redirects() {
         run_async_test(async {
-            let handler = DnsRequestHandler::new(
-                ChainDnsServerInitInfo {
-                    dns_rules: vec![test_runtime_rule()],
-                    redirect_rules: vec![],
-                }
-                .into(),
-                shared_cache_runtime_config(5),
-                1,
-                Arc::new(ArcSwapOption::new(None)),
-                test_local_resolver(test_lan_hostname_registry()),
-            );
+            let handler = make_test_handler(vec![test_runtime_rule()], vec![]);
             handler
                 .insert(
                     "redirected.example.",
@@ -1800,17 +1777,11 @@ mod tests {
             let (redirect_engine, resolve_engine) =
                 DnsRequestHandler::test_engines_from_legacy(ChainDnsServerInitInfo {
                     dns_rules: vec![test_runtime_rule()],
-                    redirect_rules: vec![DNSRedirectRuntimeRule {
-                        redirect_id: Some(Uuid::nil()),
-                        dynamic_redirect_source: None,
-                        answer_mode: DnsRedirectAnswerMode::StaticIps,
-                        match_rules: vec![DomainConfig {
-                            match_type: DomainMatchType::Full,
-                            value: "redirected.example".to_string(),
-                        }],
-                        result_info: vec![IpAddr::V4(Ipv4Addr::LOCALHOST)],
-                        ttl_secs: 30,
-                    }],
+                    redirect_rules: vec![test_static_redirect_rule(
+                        "redirected.example",
+                        vec![IpAddr::V4(Ipv4Addr::LOCALHOST)],
+                        30,
+                    )],
                 });
 
             handler.renew_engines(redirect_engine, resolve_engine).await;
@@ -1828,26 +1799,13 @@ mod tests {
     #[test]
     fn renew_dns_rules_preserves_redirects_and_caps_migrated_cache_ttl() {
         run_async_test(async {
-            let handler = DnsRequestHandler::new(
-                ChainDnsServerInitInfo {
-                    dns_rules: vec![test_runtime_rule()],
-                    redirect_rules: vec![DNSRedirectRuntimeRule {
-                        redirect_id: Some(Uuid::nil()),
-                        dynamic_redirect_source: None,
-                        answer_mode: DnsRedirectAnswerMode::StaticIps,
-                        match_rules: vec![DomainConfig {
-                            match_type: DomainMatchType::Full,
-                            value: "redirect.example".to_string(),
-                        }],
-                        result_info: vec![IpAddr::V4(Ipv4Addr::LOCALHOST)],
-                        ttl_secs: 30,
-                    }],
-                }
-                .into(),
-                shared_cache_runtime_config(5),
-                1,
-                Arc::new(ArcSwapOption::new(None)),
-                test_local_resolver(test_lan_hostname_registry()),
+            let handler = make_test_handler(
+                vec![test_runtime_rule()],
+                vec![test_static_redirect_rule(
+                    "redirect.example",
+                    vec![IpAddr::V4(Ipv4Addr::LOCALHOST)],
+                    30,
+                )],
             );
             let rule = test_runtime_rule();
             handler
@@ -1910,17 +1868,7 @@ mod tests {
     #[test]
     fn renew_redirect_rules_preserves_resolves_and_unclaimed_cache() {
         run_async_test(async {
-            let handler = DnsRequestHandler::new(
-                ChainDnsServerInitInfo {
-                    dns_rules: vec![test_runtime_rule()],
-                    redirect_rules: vec![],
-                }
-                .into(),
-                shared_cache_runtime_config(5),
-                1,
-                Arc::new(ArcSwapOption::new(None)),
-                test_local_resolver(test_lan_hostname_registry()),
-            );
+            let handler = make_test_handler(vec![test_runtime_rule()], vec![]);
             let rule = test_runtime_rule();
             for domain in ["redirected.example.", "kept.example."] {
                 handler
@@ -1943,17 +1891,11 @@ mod tests {
             let (redirect_engine, _) =
                 DnsRequestHandler::test_engines_from_legacy(ChainDnsServerInitInfo {
                     dns_rules: vec![],
-                    redirect_rules: vec![DNSRedirectRuntimeRule {
-                        redirect_id: Some(Uuid::nil()),
-                        dynamic_redirect_source: None,
-                        answer_mode: DnsRedirectAnswerMode::StaticIps,
-                        match_rules: vec![DomainConfig {
-                            match_type: DomainMatchType::Full,
-                            value: "redirected.example".to_string(),
-                        }],
-                        result_info: vec![IpAddr::V4(Ipv4Addr::LOCALHOST)],
-                        ttl_secs: 30,
-                    }],
+                    redirect_rules: vec![test_static_redirect_rule(
+                        "redirected.example",
+                        vec![IpAddr::V4(Ipv4Addr::LOCALHOST)],
+                        30,
+                    )],
                 });
             handler.renew_redirect_rules(redirect_engine).await;
 
@@ -1975,26 +1917,15 @@ mod tests {
     fn renew_runtime_config_rebuilds_cache_without_reloading_rules_or_redirects() {
         run_async_test(async {
             let runtime_config = shared_cache_runtime_config(5);
-            let handler = DnsRequestHandler::new(
-                ChainDnsServerInitInfo {
-                    dns_rules: vec![test_runtime_rule()],
-                    redirect_rules: vec![DNSRedirectRuntimeRule {
-                        redirect_id: Some(Uuid::nil()),
-                        dynamic_redirect_source: None,
-                        answer_mode: DnsRedirectAnswerMode::StaticIps,
-                        match_rules: vec![DomainConfig {
-                            match_type: DomainMatchType::Full,
-                            value: "example.com".to_string(),
-                        }],
-                        result_info: vec![IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1))],
-                        ttl_secs: 17,
-                    }],
-                }
-                .into(),
+            let handler = test_handler_with_config(
                 runtime_config.clone(),
                 1,
-                Arc::new(ArcSwapOption::new(None)),
-                test_local_resolver(test_lan_hostname_registry()),
+                vec![test_runtime_rule()],
+                vec![test_static_redirect_rule(
+                    "example.com",
+                    vec![IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1))],
+                    17,
+                )],
             );
 
             handler
@@ -2035,34 +1966,16 @@ mod tests {
     #[test]
     fn all_local_ips_redirect_uses_provider_records() {
         run_async_test(async {
-            let handler = DnsRequestHandler::new(
-                ChainDnsServerInitInfo {
-                    dns_rules: vec![],
-                    redirect_rules: vec![DNSRedirectRuntimeRule {
-                        redirect_id: Some(Uuid::nil()),
-                        dynamic_redirect_source: None,
-                        answer_mode: DnsRedirectAnswerMode::AllLocalIps,
-                        match_rules: vec![DomainConfig {
-                            match_type: DomainMatchType::Full,
-                            value: "example.com".to_string(),
-                        }],
-                        result_info: vec![],
-                        ttl_secs: 17,
-                    }],
-                }
-                .into(),
-                shared_cache_runtime_config(5),
-                1,
-                Arc::new(ArcSwapOption::new(None)),
-                test_local_resolver_with_provider(
-                    test_lan_hostname_registry(),
-                    Some(Arc::new(MockLocalAnswerProvider {
-                        addrs: vec![
-                            IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)),
-                            IpAddr::V6(Ipv6Addr::LOCALHOST),
-                        ],
-                    })),
-                ),
+            let handler = test_handler_with_local(
+                test_lan_hostname_registry(),
+                Some(Arc::new(MockLocalAnswerProvider {
+                    addrs: vec![
+                        IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)),
+                        IpAddr::V6(Ipv6Addr::LOCALHOST),
+                    ],
+                })),
+                vec![],
+                vec![test_all_local_ips_redirect_rule("example.com", 17)],
             );
 
             let (records, outcome, redirect_id, _) =
@@ -2083,31 +1996,13 @@ mod tests {
     #[test]
     fn all_local_ips_redirect_without_family_candidates_falls_through() {
         run_async_test(async {
-            let handler = DnsRequestHandler::new(
-                ChainDnsServerInitInfo {
-                    dns_rules: vec![],
-                    redirect_rules: vec![DNSRedirectRuntimeRule {
-                        redirect_id: Some(Uuid::nil()),
-                        dynamic_redirect_source: None,
-                        answer_mode: DnsRedirectAnswerMode::AllLocalIps,
-                        match_rules: vec![DomainConfig {
-                            match_type: DomainMatchType::Full,
-                            value: "example.com".to_string(),
-                        }],
-                        result_info: vec![],
-                        ttl_secs: 17,
-                    }],
-                }
-                .into(),
-                shared_cache_runtime_config(5),
-                1,
-                Arc::new(ArcSwapOption::new(None)),
-                test_local_resolver_with_provider(
-                    test_lan_hostname_registry(),
-                    Some(Arc::new(MockLocalAnswerProvider {
-                        addrs: vec![IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1))],
-                    })),
-                ),
+            let handler = test_handler_with_local(
+                test_lan_hostname_registry(),
+                Some(Arc::new(MockLocalAnswerProvider {
+                    addrs: vec![IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1))],
+                })),
+                vec![],
+                vec![test_all_local_ips_redirect_rule("example.com", 17)],
             );
 
             assert!(handler.lookup_redirects("example.com.", RecordType::AAAA).is_none());
@@ -2117,26 +2012,13 @@ mod tests {
     #[test]
     fn static_redirect_without_matching_family_keeps_existing_no_record_behavior() {
         run_async_test(async {
-            let handler = DnsRequestHandler::new(
-                ChainDnsServerInitInfo {
-                    dns_rules: vec![],
-                    redirect_rules: vec![DNSRedirectRuntimeRule {
-                        redirect_id: Some(Uuid::nil()),
-                        dynamic_redirect_source: None,
-                        answer_mode: DnsRedirectAnswerMode::StaticIps,
-                        match_rules: vec![DomainConfig {
-                            match_type: DomainMatchType::Full,
-                            value: "example.com".to_string(),
-                        }],
-                        result_info: vec![IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1))],
-                        ttl_secs: 17,
-                    }],
-                }
-                .into(),
-                shared_cache_runtime_config(5),
-                1,
-                Arc::new(ArcSwapOption::new(None)),
-                test_local_resolver(test_lan_hostname_registry()),
+            let handler = make_test_handler(
+                vec![],
+                vec![test_static_redirect_rule(
+                    "example.com",
+                    vec![IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1))],
+                    17,
+                )],
             );
 
             let (records, outcome, redirect_id, _) =
