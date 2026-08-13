@@ -1,8 +1,6 @@
 use std::{
     collections::HashSet,
     future::Future,
-    net::{IpAddr, Ipv4Addr, Ipv6Addr},
-    str::FromStr,
     sync::Arc,
     time::{Duration, Instant},
     vec,
@@ -15,10 +13,10 @@ use hickory_proto::{
     op::{Header, Metadata, OpCode, ResponseCode},
     rr::{
         rdata::{
-            svcb::{Alpn, IpHint, SvcParamKey, SvcParamValue, SVCB},
-            A, AAAA, HTTPS, PTR,
+            svcb::{SvcParamKey, SVCB},
+            HTTPS,
         },
-        DNSClass, Name, RData, Record, RecordType,
+        DNSClass, RData, Record, RecordType,
     },
 };
 use hickory_server::{
@@ -31,12 +29,14 @@ use uuid::Uuid;
 
 use crate::{
     domain::PreprocessedDomain,
-    server::engine::{RedirectEngine, ResolveEngine},
-    server::{CacheRuntimeConfig, DohAdvertiseProvider, LocalDnsAnswerProvider, MetricSenderState},
+    server::{
+        engine::{RedirectEngine, ResolveEngine},
+        local::{is_blocked_tld, LocalResolver},
+        CacheRuntimeConfig, DohAdvertiseProvider, LocalDnsAnswerProvider, MetricSenderState,
+    },
     CacheDNSItem, CheckChainDnsResult, DNSCache,
 };
 use landscape_common::{
-    dns::dnr::{normalize_advertise_domains, normalize_doh_path_template},
     dns::error::DnsError,
     dns::rule::FilterResult,
     dns::DohRuntimeConfig,
@@ -45,14 +45,12 @@ use landscape_common::{
     metric::dns::{DnsMetric, DnsOutcome},
 };
 use landscape_core::{
-    lan_hostname::{LanHostnameRegistry, LocalZone, LocalZoneMatch},
+    lan_hostname::LanHostnameRegistry,
     time::get_current_time_ms,
 };
 
 const LOOKUP_TIMEOUT: Duration = Duration::from_secs(5);
 const RULE_REFRESH_TTL_CAP: u32 = 5;
-const DDR_DISCOVERY_NAME: &str = "_dns.resolver.arpa.";
-const DDR_TTL_SECS: u32 = 60;
 
 #[cfg(test)]
 #[derive(Default, Debug)]
@@ -75,12 +73,7 @@ pub struct DnsRequestHandler {
     pub msg_tx: MetricSenderState,
     runtime_config: Arc<ArcSwap<CacheRuntimeConfig>>,
     pub local_answer_provider: Option<Arc<dyn LocalDnsAnswerProvider>>,
-    pub doh_advertise_provider: Option<Arc<dyn DohAdvertiseProvider>>,
-    lan_hostname_registry: Arc<LanHostnameRegistry>,
-    // Startup DoH endpoint snapshot used for DDR advertisements. Advertised
-    // domains are loaded live from `doh_advertise_provider`; port/path changes
-    // require a process restart so advertisements stay consistent with listener.
-    doh_runtime: Option<DohRuntimeConfig>,
+    local_resolver: LocalResolver,
 }
 
 impl DnsRequestHandler {
@@ -97,6 +90,12 @@ impl DnsRequestHandler {
     ) -> DnsRequestHandler {
         let cache_config = runtime_config.load();
         let cache = Self::build_cache(cache_config.as_ref());
+        let local_resolver = LocalResolver::new(
+            lan_hostname_registry,
+            local_answer_provider.clone(),
+            doh_advertise_provider,
+            doh_runtime,
+        );
 
         DnsRequestHandler {
             runtime: Arc::new(ArcSwap::from_pointee(HandlerRuntime {
@@ -108,9 +107,7 @@ impl DnsRequestHandler {
             msg_tx,
             runtime_config,
             local_answer_provider,
-            doh_advertise_provider,
-            lan_hostname_registry,
-            doh_runtime,
+            local_resolver,
         }
     }
 
@@ -384,95 +381,6 @@ impl DnsRequestHandler {
         runtime.redirect_engine.lookup(domain, query_type, self.local_answer_provider.as_ref())
     }
 
-    fn lookup_localhost(domain: &PreprocessedDomain, query_type: RecordType) -> Vec<Record> {
-        const HOSTNAME_TTL: u32 = 60;
-        let rname = domain.as_dns_name().clone();
-
-        match query_type {
-            RecordType::A => {
-                let record =
-                    Record::from_rdata(rname, HOSTNAME_TTL, RData::A(A(Ipv4Addr::LOCALHOST)));
-                vec![record]
-            }
-            RecordType::AAAA => {
-                let record =
-                    Record::from_rdata(rname, HOSTNAME_TTL, RData::AAAA(AAAA(Ipv6Addr::LOCALHOST)));
-                vec![record]
-            }
-            _ => vec![],
-        }
-    }
-
-    pub fn lookup_lan_hostname(
-        &self,
-        domain: &PreprocessedDomain,
-        hostname: &str,
-        query_type: RecordType,
-    ) -> Vec<Record> {
-        const HOSTNAME_TTL: u32 = 60;
-        let rname = domain.as_dns_name().clone();
-
-        match query_type {
-            RecordType::A => {
-                if let Some(ip) = self.lan_hostname_registry.resolve_a_by_hostname(hostname) {
-                    let rdata = RData::A(A(ip));
-                    let record = Record::from_rdata(rname, HOSTNAME_TTL, rdata);
-                    vec![record]
-                } else {
-                    vec![]
-                }
-            }
-            RecordType::AAAA => {
-                if let Some(ip) = self.lan_hostname_registry.resolve_aaaa_by_hostname(hostname) {
-                    let rdata = RData::AAAA(AAAA(ip));
-                    let record = Record::from_rdata(rname, HOSTNAME_TTL, rdata);
-                    vec![record]
-                } else {
-                    vec![]
-                }
-            }
-            _ => vec![],
-        }
-    }
-
-    pub fn resolve_lan_ptr_by_addr(
-        &self,
-        addr: &IpAddr,
-        domain: &PreprocessedDomain,
-    ) -> Option<(Vec<Record>, DnsOutcome)> {
-        const PTR_TTL: u32 = 60;
-
-        if !LanHostnameRegistry::is_managed_ptr_addr(addr) {
-            return None;
-        }
-
-        // localhost PTR is owned by the resolver, not the device registry.
-        if addr.is_loopback() {
-            let Ok(target) = Name::from_utf8("localhost.") else {
-                return Some((vec![], DnsOutcome::Error));
-            };
-            let record =
-                Record::from_rdata(domain.as_dns_name().clone(), PTR_TTL, RData::PTR(PTR(target)));
-            return Some((vec![record], DnsOutcome::Local));
-        }
-
-        if !self.lan_hostname_registry.is_enabled() {
-            return None;
-        }
-
-        match self.lan_hostname_registry.resolve_ptr_by_addr(addr) {
-            Some(fqdn) => {
-                let Ok(target) = Name::from_utf8(&fqdn) else {
-                    return Some((vec![], DnsOutcome::Error));
-                };
-                let rdata = RData::PTR(PTR(target));
-                let record = Record::from_rdata(domain.as_dns_name().clone(), PTR_TTL, rdata);
-                Some((vec![record], DnsOutcome::Local))
-            }
-            None => Some((vec![], DnsOutcome::NxDomain)),
-        }
-    }
-
     pub async fn resolve_arpa(
         &self,
         domain: &PreprocessedDomain,
@@ -495,50 +403,12 @@ impl DnsRequestHandler {
             return (records, status);
         }
 
-        let arpa_suffix = match domain.arpa_prefix() {
-            Some(s) => s,
-            None => return (vec![], DnsOutcome::NxDomain),
-        };
-        let label = match domain.arpa_sld() {
-            Some(sld) => sld,
-            None => return (vec![], DnsOutcome::NxDomain),
-        };
-
-        match label {
-            // (2) resolver.arpa. → DDR
-            "resolver" if arpa_suffix == "resolver" || arpa_suffix == "_dns.resolver" => {
-                if query_type == RecordType::SVCB && arpa_suffix == "_dns.resolver" {
-                    let records = self.build_ddr_records();
-                    return (records, DnsOutcome::Local);
-                }
-                (vec![], DnsOutcome::Local)
-            }
-            // (3) in-addr.arpa. / ip6.arpa. → PTR
-            "in-addr" | "ip6" => {
-                // `parse_arpa_name` requires an FQDN, so parse `domain.raw()` (with trailing dot).
-                let Ok(dns_name) = Name::from_str(domain.raw()) else {
-                    return (vec![], DnsOutcome::NxDomain);
-                };
-                let Ok(net) = dns_name.parse_arpa_name() else {
-                    return (vec![], DnsOutcome::NxDomain);
-                };
-                let addr = net.addr();
-
-                if let Some((records, status)) = self.resolve_lan_ptr_by_addr(&addr, domain) {
-                    return (records, status);
-                }
-                return self
-                    .resolve_from_cache_or_upstream(runtime, domain.raw(), query_type)
-                    .await;
-            }
-            // (4) ipv4only.arpa. → NODATA (special-use domain, RFC 8880)
-            "ipv4only" if arpa_suffix == "ipv4only" => (vec![], DnsOutcome::Local),
-            // (5) Remaining .arpa names belong to the configured LAN zone only
-            // when the complete suffix matches (for example, `home.arpa`).
-            _ => match self.matching_local_zone(domain) {
-                Some(zone) => self.resolve_local_domain(domain, zone, query_type),
-                None => (vec![], DnsOutcome::NxDomain),
-            },
+        // (2) Local `.arpa` answers (DDR / PTR / special-use / LAN zone).
+        // `None` means the resolver does not own the reverse query and it must
+        // continue to (3) Cache → (4) Upstream.
+        match self.local_resolver.resolve_arpa(domain, query_type) {
+            Some((records, outcome)) => (records, outcome),
+            None => self.resolve_from_cache_or_upstream(runtime, domain.raw(), query_type).await,
         }
     }
 
@@ -555,68 +425,15 @@ impl DnsRequestHandler {
             return (records, status);
         }
 
-        let tld = domain.tld();
-
-        // (2a) Blocked TLDs → NXDOMAIN
-        if matches!(tld, "invalid" | "test" | "onion") {
-            return (vec![], DnsOutcome::NxDomain);
-        }
-        // (2b) Localhost → loopback
-        if tld == "localhost" {
-            let records = Self::lookup_localhost(domain, query_type);
-            return (records, DnsOutcome::Local);
-        }
-        // (2c) Local zone (configured LAN suffix or local.) → hostname registry
-        if let Some(zone) = self.matching_local_zone(domain) {
-            return self.resolve_local_domain(domain, zone, query_type);
+        // (2) Local answers (blocked TLDs, localhost, local zone)
+        if let Some((records, outcome)) =
+            self.local_resolver.resolve_forward_local(domain, query_type)
+        {
+            return (records, outcome);
         }
 
         // (3) Cache → (4) Upstream
         self.resolve_from_cache_or_upstream(&runtime, domain.raw(), query_type).await
-    }
-
-    /// Matches a name against the live LAN-hostname config or the mDNS `.local`
-    /// zone. Keeping this decision in one place makes normal
-    /// queries, `.arpa` queries, config checks, and cache refreshes agree after
-    /// a runtime config change.
-    fn matching_local_zone<'a>(
-        &self,
-        domain: &'a PreprocessedDomain,
-    ) -> Option<LocalZoneMatch<'a>> {
-        let mut zone = self.lan_hostname_registry.match_local_zone(domain.name())?;
-
-        // `.local` remains mDNS territory even if a legacy or hand-edited
-        // config incorrectly chooses `local` as the LAN suffix.
-        if domain.tld() == "local" {
-            zone.zone = LocalZone::MdnsLocal;
-        }
-
-        Some(zone)
-    }
-
-    fn resolve_local_domain(
-        &self,
-        domain: &PreprocessedDomain,
-        zone: LocalZoneMatch<'_>,
-        query_type: RecordType,
-    ) -> (Vec<Record>, DnsOutcome) {
-        // The zone apex carries no hostname, and neither does an unknown host:
-        // both are answered locally so a local zone never leaks upstream.
-        let records = match zone.hostname {
-            Some(hostname) => self.lookup_lan_hostname(domain, hostname, query_type),
-            None => vec![],
-        };
-        let outcome = if records.is_empty() {
-            match zone.zone {
-                // `local.` is mDNS territory: staying NOERROR/empty lets a
-                // client fall back to multicast instead of caching a failure.
-                LocalZone::MdnsLocal => DnsOutcome::Local,
-                LocalZone::LanSuffix => DnsOutcome::NxDomain,
-            }
-        } else {
-            DnsOutcome::Local
-        };
-        (records, outcome)
     }
 
     async fn resolve_from_cache_or_upstream(
@@ -711,19 +528,19 @@ impl DnsRequestHandler {
             result.redirect_id = id;
             result.dynamic_redirect_source = dynamic_source;
             result.records = Some(crate::to_common_records(records));
-        } else if matches!(tld, "invalid" | "test" | "onion") {
+        } else if is_blocked_tld(tld) {
             return result;
         } else if tld == "localhost" {
-            let records = Self::lookup_localhost(domain, query_type);
+            let records = LocalResolver::lookup_localhost(domain, query_type);
             result.records = Some(crate::to_common_records(records));
             return result;
         } else if domain.name().ends_with(".arpa") {
             let (records, _) = self.resolve_arpa_with_runtime(&runtime, domain, query_type).await;
             result.records = Some(crate::to_common_records(records));
             return result;
-        } else if let Some(zone) = self.matching_local_zone(domain) {
+        } else if let Some(zone) = self.local_resolver.matching_local_zone(domain) {
             if let Some(hostname) = zone.hostname {
-                let records = self.lookup_lan_hostname(domain, hostname, query_type);
+                let records = self.local_resolver.lookup_lan_hostname(domain, hostname, query_type);
                 result.records = Some(crate::to_common_records(records));
             }
             return result;
@@ -797,12 +614,12 @@ impl DnsRequestHandler {
             return Err(DnsError::RefreshRedirected(domain.raw().to_string()));
         }
 
-        if matches!(tld, "invalid" | "test" | "onion") {
+        if is_blocked_tld(tld) {
             return Ok(CheckChainDnsResult::default());
         }
 
         if tld == "localhost" {
-            let records = Self::lookup_localhost(domain, query_type);
+            let records = LocalResolver::lookup_localhost(domain, query_type);
             return Ok(CheckChainDnsResult {
                 records: Some(crate::to_common_records(records)),
                 ..Default::default()
@@ -823,7 +640,7 @@ impl DnsRequestHandler {
             });
         }
 
-        if let Some(zone) = self.matching_local_zone(domain) {
+        if let Some(zone) = self.local_resolver.matching_local_zone(domain) {
             self.clear_cache_entry_and_refresh_maps_if_present(
                 &runtime.cache,
                 domain.raw(),
@@ -831,7 +648,7 @@ impl DnsRequestHandler {
             )
             .await;
             if let Some(hostname) = zone.hostname {
-                let records = self.lookup_lan_hostname(domain, hostname, query_type);
+                let records = self.local_resolver.lookup_lan_hostname(domain, hostname, query_type);
                 return Ok(CheckChainDnsResult {
                     records: Some(crate::to_common_records(records)),
                     ..Default::default()
@@ -1150,26 +967,6 @@ impl DnsRequestHandler {
             }
         }
     }
-
-    fn build_ddr_records(&self) -> Vec<Record> {
-        let Some(doh_runtime) = self.doh_runtime.as_ref() else {
-            return Vec::new();
-        };
-        let Some(provider) = self.doh_advertise_provider.as_ref() else {
-            return Vec::new();
-        };
-        let domains = normalize_advertise_domains(provider.advertise_domains());
-        if domains.is_empty() {
-            return Vec::new();
-        }
-
-        build_ddr_records(
-            &domains,
-            doh_runtime.listen_port,
-            &doh_runtime.http_endpoint,
-            self.local_answer_provider.as_deref(),
-        )
-    }
 }
 
 #[async_trait::async_trait]
@@ -1271,79 +1068,6 @@ fn serve_failed(req_metadata: &Metadata) -> ResponseInfo {
     ResponseInfo::from(Header { metadata, counts: Default::default() })
 }
 
-fn build_ddr_records(
-    domains: &[String],
-    port: u16,
-    doh_path: &str,
-    local_answer_provider: Option<&dyn LocalDnsAnswerProvider>,
-) -> Vec<Record> {
-    let Ok(owner) = Name::from_str(DDR_DISCOVERY_NAME) else {
-        return Vec::new();
-    };
-    let Some(doh_path) = normalize_doh_path_template(doh_path) else {
-        return Vec::new();
-    };
-    let ipv4_hints = load_ipv4_hints(local_answer_provider);
-    let ipv6_hints = load_ipv6_hints(local_answer_provider);
-
-    domains
-        .iter()
-        .filter_map(|domain| {
-            let target = Name::from_str(&format!("{}.", domain)).ok()?;
-            let mut params =
-                vec![(SvcParamKey::Alpn, SvcParamValue::Alpn(Alpn(vec!["h2".to_string()])))];
-            params.push((SvcParamKey::Port, SvcParamValue::Port(port)));
-            if !ipv4_hints.is_empty() {
-                params.push((
-                    SvcParamKey::Ipv4Hint,
-                    SvcParamValue::Ipv4Hint(IpHint(ipv4_hints.clone())),
-                ));
-            }
-            if !ipv6_hints.is_empty() {
-                params.push((
-                    SvcParamKey::Ipv6Hint,
-                    SvcParamValue::Ipv6Hint(IpHint(ipv6_hints.clone())),
-                ));
-            }
-            params.push((
-                SvcParamKey::Unknown(7),
-                SvcParamValue::Unknown(landscape_common::dns::dnr::encode_unknown_svc_param_value(
-                    doh_path.as_bytes(),
-                )),
-            ));
-            Some(Record::from_rdata(
-                owner.clone(),
-                DDR_TTL_SECS,
-                RData::SVCB(SVCB::new(1, target, params)),
-            ))
-        })
-        .collect()
-}
-
-fn load_ipv4_hints(provider: Option<&dyn LocalDnsAnswerProvider>) -> Vec<A> {
-    provider
-        .map(|provider| provider.load_local_answer_addrs(RecordType::A))
-        .unwrap_or_default()
-        .iter()
-        .filter_map(|ip| match ip {
-            IpAddr::V4(ip) => Some(A(*ip)),
-            _ => None,
-        })
-        .collect()
-}
-
-fn load_ipv6_hints(provider: Option<&dyn LocalDnsAnswerProvider>) -> Vec<AAAA> {
-    provider
-        .map(|provider| provider.load_local_answer_addrs(RecordType::AAAA))
-        .unwrap_or_default()
-        .iter()
-        .filter_map(|ip| match ip {
-            IpAddr::V6(ip) => Some(AAAA(*ip)),
-            _ => None,
-        })
-        .collect()
-}
-
 async fn with_lookup_timeout<F, T>(future: F, timeout: Duration) -> crate::error::DnsResult<T>
 where
     F: Future<Output = crate::error::DnsResult<T>>,
@@ -1422,7 +1146,6 @@ mod tests {
     use hickory_proto::op::ResponseCode;
     use hickory_proto::rr::rdata::{A, AAAA};
     use hickory_proto::rr::{RData, Record, RecordType};
-    use hickory_proto::serialize::binary::BinEncodable;
     use landscape_common::{
         dns::{
             config::DnsUpstreamConfig,
@@ -1605,29 +1328,6 @@ mod tests {
     }
 
     #[test]
-    fn build_ddr_records_encodes_svc_params_in_increasing_order() {
-        let provider = MockLocalAnswerProvider {
-            addrs: vec![IpAddr::V4(Ipv4Addr::new(192, 168, 5, 1)), IpAddr::V6(Ipv6Addr::LOCALHOST)],
-        };
-        let records =
-            build_ddr_records(&["api.example.com".to_string()], 443, "/dns-query", Some(&provider));
-
-        assert_eq!(records.len(), 1);
-        let svcb = match &records[0].data {
-            RData::SVCB(svcb) => svcb.clone(),
-            _ => panic!("expected SVCB record"),
-        };
-
-        let keys = svcb.svc_params.iter().map(|(key, _)| u16::from(*key)).collect::<Vec<_>>();
-        assert_eq!(keys, vec![1, 3, 4, 6, 7]);
-
-        let mut wire = Vec::new();
-        let mut encoder = hickory_proto::serialize::binary::BinEncoder::new(&mut wire);
-        svcb.emit(&mut encoder).expect("SVCB should encode successfully");
-        assert!(wire.windows(b"/dns-query{?dns}".len()).any(|w| w == b"/dns-query{?dns}"));
-    }
-
-    #[test]
     fn resolve_arpa_dispatches_by_second_level_label() {
         run_async_test(async {
             let handler = make_test_handler();
@@ -1775,14 +1475,14 @@ mod tests {
             );
             let domain = PreprocessedDomain::new("50.1.168.192.in-addr.arpa.").unwrap();
 
-            assert!(handler
-                .resolve_lan_ptr_by_addr(&IpAddr::V4(Ipv4Addr::new(192, 168, 1, 50)), &domain)
-                .is_none());
+            // A disabled registry does not own private PTR queries: they fall
+            // through to the cache/upstream stage (no rules → NOERROR/empty).
+            let (records, outcome) = handler.resolve_arpa(&domain, RecordType::PTR).await;
+            assert!(records.is_empty());
+            assert_eq!(outcome, DnsOutcome::Normal);
 
             let loopback_domain = PreprocessedDomain::new("1.0.0.127.in-addr.arpa.").unwrap();
-            let (records, outcome) = handler
-                .resolve_lan_ptr_by_addr(&IpAddr::V4(Ipv4Addr::LOCALHOST), &loopback_domain)
-                .expect("localhost PTR remains resolver-owned when LAN hostnames are disabled");
+            let (records, outcome) = handler.resolve_arpa(&loopback_domain, RecordType::PTR).await;
             assert_eq!(outcome, DnsOutcome::Local);
             assert_eq!(records.len(), 1);
         });

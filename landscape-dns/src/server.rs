@@ -28,6 +28,7 @@ use crate::{
 pub mod builder;
 pub mod engine;
 pub(crate) mod handler;
+pub(crate) mod local;
 pub(crate) mod matcher;
 pub(crate) mod rule;
 
