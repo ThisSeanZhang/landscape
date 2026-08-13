@@ -13,7 +13,10 @@ use hickory_proto::rr::{
 };
 use landscape_common::{
     dns::{
-        dnr::{encode_unknown_svc_param_value, normalize_advertise_domains, normalize_doh_path_template},
+        dnr::{
+            encode_unknown_svc_param_value, normalize_advertise_domains,
+            normalize_doh_path_template,
+        },
         DohRuntimeConfig,
     },
     metric::dns::DnsOutcome,
@@ -28,6 +31,16 @@ use crate::{
 const DDR_DISCOVERY_NAME: &str = "_dns.resolver.arpa.";
 const DDR_TTL_SECS: u32 = 60;
 const HOSTNAME_TTL: u32 = 60;
+
+/// Result of the local classification stage. `Answered` carries a records
+/// field (possibly empty); `Empty` carries none. Which variant a name lands
+/// in is part of the check/refresh API contract, so the mapping must stay
+/// stable: every `.arpa` branch answers with records present, while blocked
+/// TLDs and local-zone apexes answer with records absent.
+pub enum LocalAnswer {
+    Answered { records: Vec<Record>, outcome: DnsOutcome },
+    Empty { outcome: DnsOutcome },
+}
 
 /// Local answers that never leave the resolver: blocked TLDs, localhost, the
 /// configured LAN hostname zone, `local.` (mDNS), reverse PTR for managed
@@ -62,23 +75,39 @@ impl LocalResolver {
         self.local_answer_provider.as_ref()
     }
 
-    /// Local stage of the forward resolution chain. Returns `None` when the
-    /// name is not local and must continue to the cache/upstream stage.
-    pub fn resolve_forward_local(
+    /// Unified local stage of the resolution chain. Dispatches `.arpa` names
+    /// to the reverse path and everything else to the forward path, so live
+    /// queries, config checks and cache refreshes agree on one
+    /// classification. Returns `None` when the name is not local and must
+    /// continue to the cache/upstream stage.
+    pub fn resolve_local(
         &self,
         domain: &PreprocessedDomain,
         query_type: RecordType,
-    ) -> Option<(Vec<Record>, DnsOutcome)> {
+    ) -> Option<LocalAnswer> {
+        if domain.name().ends_with(".arpa") {
+            self.resolve_arpa(domain, query_type)
+        } else {
+            self.resolve_forward_local(domain, query_type)
+        }
+    }
+
+    /// Local stage of the forward path.
+    fn resolve_forward_local(
+        &self,
+        domain: &PreprocessedDomain,
+        query_type: RecordType,
+    ) -> Option<LocalAnswer> {
         let tld = domain.tld();
 
         // (2a) Blocked TLDs → NXDOMAIN
         if is_blocked_tld(tld) {
-            return Some((vec![], DnsOutcome::NxDomain));
+            return Some(LocalAnswer::Empty { outcome: DnsOutcome::NxDomain });
         }
         // (2b) Localhost → loopback
         if tld == "localhost" {
             let records = Self::lookup_localhost(domain, query_type);
-            return Some((records, DnsOutcome::Local));
+            return Some(LocalAnswer::Answered { records, outcome: DnsOutcome::Local });
         }
         // (2c) Local zone (configured LAN suffix or local.) → hostname registry
         if let Some(zone) = self.matching_local_zone(domain) {
@@ -87,20 +116,30 @@ impl LocalResolver {
         None
     }
 
-    /// Local stage of the `.arpa` chain. Returns `None` only when a reverse
+    /// Local stage of the `.arpa` path. Returns `None` only when a reverse
     /// query owns no local answer and must fall through to cache/upstream.
-    pub fn resolve_arpa(
+    fn resolve_arpa(
         &self,
         domain: &PreprocessedDomain,
         query_type: RecordType,
-    ) -> Option<(Vec<Record>, DnsOutcome)> {
+    ) -> Option<LocalAnswer> {
         let arpa_suffix = match domain.arpa_prefix() {
             Some(s) => s,
-            None => return Some((vec![], DnsOutcome::NxDomain)),
+            None => {
+                return Some(LocalAnswer::Answered {
+                    records: vec![],
+                    outcome: DnsOutcome::NxDomain,
+                })
+            }
         };
         let label = match domain.arpa_sld() {
             Some(sld) => sld,
-            None => return Some((vec![], DnsOutcome::NxDomain)),
+            None => {
+                return Some(LocalAnswer::Answered {
+                    records: vec![],
+                    outcome: DnsOutcome::NxDomain,
+                })
+            }
         };
 
         match label {
@@ -108,29 +147,51 @@ impl LocalResolver {
             "resolver" if arpa_suffix == "resolver" || arpa_suffix == "_dns.resolver" => {
                 if query_type == RecordType::SVCB && arpa_suffix == "_dns.resolver" {
                     let records = self.build_ddr_records();
-                    return Some((records, DnsOutcome::Local));
+                    return Some(LocalAnswer::Answered { records, outcome: DnsOutcome::Local });
                 }
-                Some((vec![], DnsOutcome::Local))
+                Some(LocalAnswer::Answered { records: vec![], outcome: DnsOutcome::Local })
             }
             // (3) in-addr.arpa. / ip6.arpa. → PTR
             "in-addr" | "ip6" => {
                 // `parse_arpa_name` requires an FQDN, so parse `domain.raw()` (with trailing dot).
                 let Ok(dns_name) = Name::from_str(domain.raw()) else {
-                    return Some((vec![], DnsOutcome::NxDomain));
+                    return Some(LocalAnswer::Answered {
+                        records: vec![],
+                        outcome: DnsOutcome::NxDomain,
+                    });
                 };
                 let Ok(net) = dns_name.parse_arpa_name() else {
-                    return Some((vec![], DnsOutcome::NxDomain));
+                    return Some(LocalAnswer::Answered {
+                        records: vec![],
+                        outcome: DnsOutcome::NxDomain,
+                    });
                 };
                 let addr = net.addr();
                 self.resolve_ptr_by_addr(&addr, domain)
             }
-            // (4) ipv4only.arpa. → NODATA (special-use domain, RFC 8880)
-            "ipv4only" if arpa_suffix == "ipv4only" => Some((vec![], DnsOutcome::Local)),
+            // (4) ipv4only.arpa. / ipv6only.arpa. → NODATA (special-use
+            // domains for NAT64/NAT46 discovery, RFC 8880)
+            "ipv4only" if arpa_suffix == "ipv4only" => {
+                Some(LocalAnswer::Answered { records: vec![], outcome: DnsOutcome::Local })
+            }
+            "ipv6only" if arpa_suffix == "ipv6only" => {
+                Some(LocalAnswer::Answered { records: vec![], outcome: DnsOutcome::Local })
+            }
             // (5) Remaining .arpa names belong to the configured LAN zone only
             // when the complete suffix matches (for example, `home.arpa`).
             _ => match self.matching_local_zone(domain) {
-                Some(zone) => Some(self.resolve_local_domain(domain, zone, query_type)),
-                None => Some((vec![], DnsOutcome::NxDomain)),
+                Some(zone) => match self.resolve_local_domain(domain, zone, query_type) {
+                    // Every `.arpa` answer carries a records field: check and
+                    // refresh report `records: Some(...)` for all `.arpa`
+                    // names, apexes included.
+                    LocalAnswer::Empty { outcome } => {
+                        Some(LocalAnswer::Answered { records: vec![], outcome })
+                    }
+                    answer => Some(answer),
+                },
+                None => {
+                    Some(LocalAnswer::Answered { records: vec![], outcome: DnsOutcome::NxDomain })
+                }
             },
         }
     }
@@ -139,7 +200,7 @@ impl LocalResolver {
     /// zone. Keeping this decision in one place makes normal
     /// queries, `.arpa` queries, config checks, and cache refreshes agree after
     /// a runtime config change.
-    pub fn matching_local_zone<'a>(
+    fn matching_local_zone<'a>(
         &self,
         domain: &'a PreprocessedDomain,
     ) -> Option<LocalZoneMatch<'a>> {
@@ -154,7 +215,7 @@ impl LocalResolver {
         Some(zone)
     }
 
-    pub fn lookup_localhost(domain: &PreprocessedDomain, query_type: RecordType) -> Vec<Record> {
+    fn lookup_localhost(domain: &PreprocessedDomain, query_type: RecordType) -> Vec<Record> {
         let rname = domain.as_dns_name().clone();
 
         match query_type {
@@ -172,7 +233,7 @@ impl LocalResolver {
         }
     }
 
-    pub fn lookup_lan_hostname(
+    fn lookup_lan_hostname(
         &self,
         domain: &PreprocessedDomain,
         hostname: &str,
@@ -210,7 +271,7 @@ impl LocalResolver {
         &self,
         addr: &IpAddr,
         domain: &PreprocessedDomain,
-    ) -> Option<(Vec<Record>, DnsOutcome)> {
+    ) -> Option<LocalAnswer> {
         const PTR_TTL: u32 = 60;
 
         if !LanHostnameRegistry::is_managed_ptr_addr(addr) {
@@ -220,11 +281,14 @@ impl LocalResolver {
         // localhost PTR is owned by the resolver, not the device registry.
         if addr.is_loopback() {
             let Ok(target) = Name::from_utf8("localhost.") else {
-                return Some((vec![], DnsOutcome::Error));
+                return Some(LocalAnswer::Answered { records: vec![], outcome: DnsOutcome::Error });
             };
             let record =
                 Record::from_rdata(domain.as_dns_name().clone(), PTR_TTL, RData::PTR(PTR(target)));
-            return Some((vec![record], DnsOutcome::Local));
+            return Some(LocalAnswer::Answered {
+                records: vec![record],
+                outcome: DnsOutcome::Local,
+            });
         }
 
         if !self.lan_hostname_registry.is_enabled() {
@@ -234,13 +298,16 @@ impl LocalResolver {
         match self.lan_hostname_registry.resolve_ptr_by_addr(addr) {
             Some(fqdn) => {
                 let Ok(target) = Name::from_utf8(&fqdn) else {
-                    return Some((vec![], DnsOutcome::Error));
+                    return Some(LocalAnswer::Answered {
+                        records: vec![],
+                        outcome: DnsOutcome::Error,
+                    });
                 };
                 let rdata = RData::PTR(PTR(target));
                 let record = Record::from_rdata(domain.as_dns_name().clone(), PTR_TTL, rdata);
-                Some((vec![record], DnsOutcome::Local))
+                Some(LocalAnswer::Answered { records: vec![record], outcome: DnsOutcome::Local })
             }
-            None => Some((vec![], DnsOutcome::NxDomain)),
+            None => Some(LocalAnswer::Answered { records: vec![], outcome: DnsOutcome::NxDomain }),
         }
     }
 
@@ -249,29 +316,34 @@ impl LocalResolver {
         domain: &PreprocessedDomain,
         zone: LocalZoneMatch<'_>,
         query_type: RecordType,
-    ) -> (Vec<Record>, DnsOutcome) {
-        // The zone apex carries no hostname, and neither does an unknown host:
-        // both are answered locally so a local zone never leaks upstream.
-        let records = match zone.hostname {
-            Some(hostname) => self.lookup_lan_hostname(domain, hostname, query_type),
-            None => vec![],
-        };
-        let outcome = if records.is_empty() {
-            match zone.zone {
+    ) -> LocalAnswer {
+        // The zone apex carries no hostname: it is answered locally so a local
+        // zone never leaks upstream.
+        let Some(hostname) = zone.hostname else {
+            let outcome = match zone.zone {
                 // `local.` is mDNS territory: staying NOERROR/empty lets a
                 // client fall back to multicast instead of caching a failure.
+                LocalZone::MdnsLocal => DnsOutcome::Local,
+                LocalZone::LanSuffix => DnsOutcome::NxDomain,
+            };
+            return LocalAnswer::Empty { outcome };
+        };
+
+        let records = self.lookup_lan_hostname(domain, hostname, query_type);
+        let outcome = if records.is_empty() {
+            match zone.zone {
                 LocalZone::MdnsLocal => DnsOutcome::Local,
                 LocalZone::LanSuffix => DnsOutcome::NxDomain,
             }
         } else {
             DnsOutcome::Local
         };
-        (records, outcome)
+        LocalAnswer::Answered { records, outcome }
     }
 
     /// DoH Discovery of Resolvers (DDR) SVCB records for the
     /// `_dns.resolver.arpa.` name.
-    pub fn build_ddr_records(&self) -> Vec<Record> {
+    fn build_ddr_records(&self) -> Vec<Record> {
         let Some(doh_runtime) = self.doh_runtime.as_ref() else {
             return Vec::new();
         };
@@ -429,85 +501,299 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn resolve_forward_local_handles_blocked_localhost_and_zone() {
+    async fn resolve_local_handles_blocked_localhost_and_zone() {
         let reg = registry(true, "lan", vec![("dev".to_string(), Ipv4Addr::new(10, 0, 0, 2))]);
         let resolver = make_resolver(reg);
 
-        let (records, outcome) =
-            resolver.resolve_forward_local(&pd("example.invalid."), RecordType::A).unwrap();
-        assert!(records.is_empty());
-        assert_eq!(outcome, DnsOutcome::NxDomain);
+        for domain in ["example.invalid.", "somewhere.onion.", "bar.test."] {
+            assert!(matches!(
+                resolver.resolve_local(&pd(domain), RecordType::A),
+                Some(LocalAnswer::Empty { outcome: DnsOutcome::NxDomain })
+            ));
+        }
 
-        let (records, outcome) =
-            resolver.resolve_forward_local(&pd("localhost."), RecordType::A).unwrap();
-        assert_eq!(outcome, DnsOutcome::Local);
-        assert_eq!(records.len(), 1);
-        assert_eq!(records[0].data, RData::A(A(Ipv4Addr::LOCALHOST)));
+        match resolver.resolve_local(&pd("localhost."), RecordType::A).unwrap() {
+            LocalAnswer::Answered { records, outcome } => {
+                assert_eq!(outcome, DnsOutcome::Local);
+                assert_eq!(records.len(), 1);
+                assert_eq!(records[0].data, RData::A(A(Ipv4Addr::LOCALHOST)));
+            }
+            LocalAnswer::Empty { .. } => panic!("localhost must be answered"),
+        }
 
-        let (records, outcome) =
-            resolver.resolve_forward_local(&pd("dev.lan."), RecordType::A).unwrap();
-        assert_eq!(outcome, DnsOutcome::Local);
-        assert_eq!(records.len(), 1);
-        assert_eq!(records[0].data, RData::A(A(Ipv4Addr::new(10, 0, 0, 2))));
+        match resolver.resolve_local(&pd("dev.lan."), RecordType::A).unwrap() {
+            LocalAnswer::Answered { records, outcome } => {
+                assert_eq!(outcome, DnsOutcome::Local);
+                assert_eq!(records.len(), 1);
+                assert_eq!(records[0].data, RData::A(A(Ipv4Addr::new(10, 0, 0, 2))));
+            }
+            LocalAnswer::Empty { .. } => panic!("zone host must be answered"),
+        }
 
         // Zone apex has no hostname: answered locally with NXDOMAIN.
-        let (records, outcome) =
-            resolver.resolve_forward_local(&pd("lan."), RecordType::A).unwrap();
-        assert!(records.is_empty());
-        assert_eq!(outcome, DnsOutcome::NxDomain);
+        assert!(matches!(
+            resolver.resolve_local(&pd("lan."), RecordType::A),
+            Some(LocalAnswer::Empty { outcome: DnsOutcome::NxDomain })
+        ));
 
         // Unknown `.local` host stays NOERROR/empty so mDNS can take over.
-        let (records, outcome) =
-            resolver.resolve_forward_local(&pd("unknown.local."), RecordType::A).unwrap();
-        assert!(records.is_empty());
-        assert_eq!(outcome, DnsOutcome::Local);
+        match resolver.resolve_local(&pd("unknown.local."), RecordType::A).unwrap() {
+            LocalAnswer::Answered { records, outcome } => {
+                assert!(records.is_empty());
+                assert_eq!(outcome, DnsOutcome::Local);
+            }
+            LocalAnswer::Empty { .. } => panic!("unknown `.local` host must be answered"),
+        }
 
-        assert!(resolver.resolve_forward_local(&pd("example.com."), RecordType::A).is_none());
+        assert!(resolver.resolve_local(&pd("example.com."), RecordType::A).is_none());
     }
 
     #[tokio::test]
-    async fn resolve_arpa_dispatches_locally() {
+    async fn resolve_local_dispatches_arpa_locally() {
         let reg = registry(true, "lan", vec![("dev".to_string(), Ipv4Addr::new(10, 0, 0, 2))]);
         let resolver = make_resolver(reg);
 
-        let (records, outcome) =
-            resolver.resolve_arpa(&pd("resolver.arpa."), RecordType::A).unwrap();
-        assert!(records.is_empty());
-        assert_eq!(outcome, DnsOutcome::Local);
+        match resolver.resolve_local(&pd("resolver.arpa."), RecordType::A).unwrap() {
+            LocalAnswer::Answered { records, outcome } => {
+                assert!(records.is_empty());
+                assert_eq!(outcome, DnsOutcome::Local);
+            }
+            LocalAnswer::Empty { .. } => panic!("resolver.arpa. must be answered"),
+        }
 
         // DDR without a DoH endpoint configured: no records, still local.
-        let (records, outcome) =
-            resolver.resolve_arpa(&pd("_dns.resolver.arpa."), RecordType::SVCB).unwrap();
-        assert!(records.is_empty());
-        assert_eq!(outcome, DnsOutcome::Local);
+        match resolver.resolve_local(&pd("_dns.resolver.arpa."), RecordType::SVCB).unwrap() {
+            LocalAnswer::Answered { records, outcome } => {
+                assert!(records.is_empty());
+                assert_eq!(outcome, DnsOutcome::Local);
+            }
+            LocalAnswer::Empty { .. } => panic!("_dns.resolver.arpa. must be answered"),
+        }
 
-        let (records, outcome) =
-            resolver.resolve_arpa(&pd("ipv4only.arpa."), RecordType::A).unwrap();
-        assert!(records.is_empty());
-        assert_eq!(outcome, DnsOutcome::Local);
+        match resolver.resolve_local(&pd("ipv4only.arpa."), RecordType::A).unwrap() {
+            LocalAnswer::Answered { records, outcome } => {
+                assert!(records.is_empty());
+                assert_eq!(outcome, DnsOutcome::Local);
+            }
+            LocalAnswer::Empty { .. } => panic!("ipv4only.arpa. must be answered"),
+        }
+
+        match resolver.resolve_local(&pd("ipv6only.arpa."), RecordType::A).unwrap() {
+            LocalAnswer::Answered { records, outcome } => {
+                assert!(records.is_empty());
+                assert_eq!(outcome, DnsOutcome::Local);
+            }
+            LocalAnswer::Empty { .. } => panic!("ipv6only.arpa. must be answered"),
+        }
 
         // Not the configured zone suffix.
-        let (records, outcome) =
-            resolver.resolve_arpa(&pd("home.arpa."), RecordType::A).unwrap();
-        assert!(records.is_empty());
-        assert_eq!(outcome, DnsOutcome::NxDomain);
+        match resolver.resolve_local(&pd("home.arpa."), RecordType::A).unwrap() {
+            LocalAnswer::Answered { records, outcome } => {
+                assert!(records.is_empty());
+                assert_eq!(outcome, DnsOutcome::NxDomain);
+            }
+            LocalAnswer::Empty { .. } => panic!("unmatched `.arpa` must be answered"),
+        }
 
         // Managed address without a registered hostname: NXDOMAIN answer.
-        let (records, outcome) =
-            resolver.resolve_arpa(&pd("1.0.0.10.in-addr.arpa."), RecordType::PTR).unwrap();
-        assert!(records.is_empty());
-        assert_eq!(outcome, DnsOutcome::NxDomain);
+        match resolver.resolve_local(&pd("1.0.0.10.in-addr.arpa."), RecordType::PTR).unwrap() {
+            LocalAnswer::Answered { records, outcome } => {
+                assert!(records.is_empty());
+                assert_eq!(outcome, DnsOutcome::NxDomain);
+            }
+            LocalAnswer::Empty { .. } => panic!("managed PTR must be answered"),
+        }
 
         // Unmanaged address: falls through to the cache/upstream stage.
-        assert!(resolver.resolve_arpa(&pd("8.8.8.8.in-addr.arpa."), RecordType::PTR).is_none());
+        assert!(resolver.resolve_local(&pd("8.8.8.8.in-addr.arpa."), RecordType::PTR).is_none());
 
         // LAN zone under `.arpa` when the full suffix matches.
-        let reg = registry(true, "home.arpa", vec![("nas".to_string(), Ipv4Addr::new(10, 0, 0, 3))]);
+        let reg =
+            registry(true, "home.arpa", vec![("nas".to_string(), Ipv4Addr::new(10, 0, 0, 3))]);
         let resolver = make_resolver(reg);
-        let (records, outcome) =
-            resolver.resolve_arpa(&pd("nas.home.arpa."), RecordType::A).unwrap();
-        assert_eq!(outcome, DnsOutcome::Local);
-        assert_eq!(records.len(), 1);
+        match resolver.resolve_local(&pd("nas.home.arpa."), RecordType::A).unwrap() {
+            LocalAnswer::Answered { records, outcome } => {
+                assert_eq!(outcome, DnsOutcome::Local);
+                assert_eq!(records.len(), 1);
+            }
+            LocalAnswer::Empty { .. } => panic!("zone host under `.arpa` must be answered"),
+        }
+    }
+
+    fn arpa_name_from_ipv6(addr: Ipv6Addr) -> String {
+        let octets = addr.octets();
+        let nibbles: Vec<String> = octets
+            .iter()
+            .rev()
+            .flat_map(|b| [format!("{:x}", b & 0x0f), format!("{:x}", b >> 4)])
+            .collect();
+        format!("{}.ip6.arpa.", nibbles.join("."))
+    }
+
+    #[tokio::test]
+    async fn resolve_local_ptr_returns_registered_lan_hostname() {
+        let reg = registry(true, "lan", vec![("nas".to_string(), Ipv4Addr::new(192, 168, 1, 50))]);
+        let resolver = make_resolver(reg);
+
+        match resolver.resolve_local(&pd("50.1.168.192.in-addr.arpa."), RecordType::PTR).unwrap() {
+            LocalAnswer::Answered { records, outcome } => {
+                assert_eq!(outcome, DnsOutcome::Local);
+                assert_eq!(records.len(), 1);
+                match &records[0].data {
+                    RData::PTR(ptr) => assert_eq!(ptr.0.to_string(), "nas.lan."),
+                    other => panic!("expected PTR record, got {:?}", other),
+                }
+            }
+            LocalAnswer::Empty { .. } => panic!("registered PTR must be answered"),
+        }
+    }
+
+    #[tokio::test]
+    async fn resolve_local_ptr_ipv6_returns_registered_lan_hostname() {
+        let ipv6 = Ipv6Addr::new(0xfd01, 0, 0, 0, 0, 0, 0, 99);
+        let reg = registry(true, "lan", vec![("srv".to_string(), Ipv4Addr::new(192, 168, 1, 1))]);
+        reg.set_ipv6("srv", ipv6);
+        let resolver = make_resolver(reg);
+
+        let arpa_name = arpa_name_from_ipv6(ipv6);
+        match resolver.resolve_local(&pd(&arpa_name), RecordType::PTR).unwrap() {
+            LocalAnswer::Answered { records, outcome } => {
+                assert_eq!(outcome, DnsOutcome::Local);
+                assert_eq!(records.len(), 1);
+                match &records[0].data {
+                    RData::PTR(ptr) => assert_eq!(ptr.0.to_string(), "srv.lan."),
+                    other => panic!("expected PTR record, got {:?}", other),
+                }
+            }
+            LocalAnswer::Empty { .. } => panic!("registered IPv6 PTR must be answered"),
+        }
+    }
+
+    #[tokio::test]
+    async fn resolve_local_aaaa_returns_registered_ipv6() {
+        let ipv6 = Ipv6Addr::new(0xfd00, 0, 0, 0, 0, 0, 0, 2);
+        let reg = registry(true, "lan", vec![("dev".to_string(), Ipv4Addr::new(192, 168, 1, 100))]);
+        reg.set_ipv6("dev", ipv6);
+        let resolver = make_resolver(reg);
+
+        match resolver.resolve_local(&pd("dev.lan."), RecordType::AAAA).unwrap() {
+            LocalAnswer::Answered { records, outcome } => {
+                assert_eq!(outcome, DnsOutcome::Local);
+                assert_eq!(records.len(), 1);
+                match &records[0].data {
+                    RData::AAAA(aaaa) => assert_eq!(aaaa.0, ipv6),
+                    other => panic!("expected AAAA record, got {:?}", other),
+                }
+            }
+            LocalAnswer::Empty { .. } => panic!("zone host must be answered"),
+        }
+    }
+
+    #[tokio::test]
+    async fn resolve_local_aaaa_returns_nxdomain_when_no_ipv6() {
+        let reg = registry(true, "lan", vec![("dev".to_string(), Ipv4Addr::new(192, 168, 1, 100))]);
+        let resolver = make_resolver(reg);
+
+        match resolver.resolve_local(&pd("dev.lan."), RecordType::AAAA).unwrap() {
+            LocalAnswer::Answered { records, outcome } => {
+                assert!(records.is_empty());
+                assert_eq!(outcome, DnsOutcome::NxDomain);
+            }
+            LocalAnswer::Empty { .. } => panic!("zone host must be answered"),
+        }
+    }
+
+    #[tokio::test]
+    async fn resolve_local_multi_label_suffix_resolves_host() {
+        let ip = Ipv4Addr::new(192, 168, 1, 60);
+        let reg = registry(true, "home.lan", vec![("nas".to_string(), ip)]);
+        let resolver = make_resolver(reg);
+
+        match resolver.resolve_local(&pd("nas.home.lan."), RecordType::A).unwrap() {
+            LocalAnswer::Answered { records, outcome } => {
+                assert_eq!(outcome, DnsOutcome::Local);
+                assert_eq!(records.len(), 1);
+                match &records[0].data {
+                    RData::A(a) => assert_eq!(a.0, ip),
+                    other => panic!("expected A record, got {:?}", other),
+                }
+            }
+            LocalAnswer::Empty { .. } => panic!("zone host must be answered"),
+        }
+    }
+
+    #[tokio::test]
+    async fn resolve_local_multi_label_suffix_does_not_match_last_label_only() {
+        let ip = Ipv4Addr::new(192, 168, 1, 61);
+        let reg = registry(true, "home.lan", vec![("nas".to_string(), ip)]);
+        let resolver = make_resolver(reg);
+
+        // `nas.lan` is outside the `home.lan` zone, so it must not be
+        // answered from the registry.
+        assert!(resolver.resolve_local(&pd("nas.lan."), RecordType::A).is_none());
+    }
+
+    #[tokio::test]
+    async fn resolve_local_arpa_multi_label_suffix_resolves_host() {
+        let ip = Ipv4Addr::new(192, 168, 1, 62);
+        let reg = registry(true, "mylan.arpa", vec![("nas".to_string(), ip)]);
+        let resolver = make_resolver(reg);
+
+        // `.arpa` names used to answer NXDOMAIN for every suffix except the
+        // hardcoded `home`.
+        match resolver.resolve_local(&pd("nas.mylan.arpa."), RecordType::A).unwrap() {
+            LocalAnswer::Answered { records, outcome } => {
+                assert_eq!(outcome, DnsOutcome::Local);
+                assert_eq!(records.len(), 1);
+                match &records[0].data {
+                    RData::A(a) => assert_eq!(a.0, ip),
+                    other => panic!("expected A record, got {:?}", other),
+                }
+            }
+            LocalAnswer::Empty { .. } => panic!("zone host under `.arpa` must be answered"),
+        }
+    }
+
+    #[tokio::test]
+    async fn resolve_local_home_arpa_suffix_resolves_only_when_enabled() {
+        let ip = Ipv4Addr::new(192, 168, 1, 63);
+        let domain = pd("nas.home.arpa.");
+
+        let enabled = make_resolver(registry(true, "home.arpa", vec![("nas".to_string(), ip)]));
+        match enabled.resolve_local(&domain, RecordType::A).unwrap() {
+            LocalAnswer::Answered { records, outcome } => {
+                assert_eq!(outcome, DnsOutcome::Local);
+                assert_eq!(records.len(), 1);
+                assert!(matches!(&records[0].data, RData::A(a) if a.0 == ip));
+            }
+            LocalAnswer::Empty { .. } => panic!("zone host under `.arpa` must be answered"),
+        }
+
+        let disabled = make_resolver(registry(false, "home.arpa", vec![("nas".to_string(), ip)]));
+        match disabled.resolve_local(&domain, RecordType::A).unwrap() {
+            LocalAnswer::Answered { records, outcome } => {
+                assert!(records.is_empty());
+                assert_eq!(outcome, DnsOutcome::NxDomain);
+            }
+            LocalAnswer::Empty { .. } => panic!("`.arpa` names must be answered"),
+        }
+    }
+
+    #[tokio::test]
+    async fn resolve_local_loopback_ptr_returns_localhost() {
+        let resolver = make_resolver(registry(true, "lan", vec![]));
+
+        match resolver.resolve_local(&pd("1.0.0.127.in-addr.arpa."), RecordType::PTR).unwrap() {
+            LocalAnswer::Answered { records, outcome } => {
+                assert_eq!(outcome, DnsOutcome::Local);
+                assert_eq!(records.len(), 1);
+                match &records[0].data {
+                    RData::PTR(ptr) => assert_eq!(ptr.0.to_string(), "localhost."),
+                    other => panic!("expected PTR record, got {:?}", other),
+                }
+            }
+            LocalAnswer::Empty { .. } => panic!("loopback PTR must be answered"),
+        }
     }
 
     #[test]

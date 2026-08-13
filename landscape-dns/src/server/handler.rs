@@ -27,17 +27,17 @@ use hickory_server::{
 use moka::future::Cache;
 use uuid::Uuid;
 
+#[cfg(test)]
+use crate::server::LocalDnsAnswerProvider;
 use crate::{
     domain::PreprocessedDomain,
     server::{
         engine::{RedirectEngine, ResolveEngine},
-        local::{is_blocked_tld, LocalResolver},
+        local::{LocalAnswer, LocalResolver},
         CacheRuntimeConfig, MetricSenderState,
     },
     CacheDNSItem, CheckChainDnsResult, DNSCache,
 };
-#[cfg(test)]
-use crate::server::LocalDnsAnswerProvider;
 use landscape_common::{
     dns::error::DnsError,
     dns::rule::FilterResult,
@@ -45,9 +45,9 @@ use landscape_common::{
     flow::{DnsRuntimeMarkInfo, FlowMarkInfo},
     metric::dns::{DnsMetric, DnsOutcome},
 };
-use landscape_core::time::get_current_time_ms;
 #[cfg(test)]
 use landscape_core::lan_hostname::LanHostnameRegistry;
+use landscape_core::time::get_current_time_ms;
 
 const LOOKUP_TIMEOUT: Duration = Duration::from_secs(5);
 const RULE_REFRESH_TTL_CAP: u32 = 5;
@@ -109,7 +109,14 @@ impl DnsRequestHandler {
         local_resolver: Arc<LocalResolver>,
     ) -> Self {
         let (redirect_engine, resolve_engine) = Self::test_engines_from_legacy(init);
-        Self::from_engines(redirect_engine, resolve_engine, runtime_config, flow_id, msg_tx, local_resolver)
+        Self::from_engines(
+            redirect_engine,
+            resolve_engine,
+            runtime_config,
+            flow_id,
+            msg_tx,
+            local_resolver,
+        )
     }
 
     #[cfg(test)]
@@ -247,7 +254,10 @@ impl DnsRequestHandler {
         let new_cache = self.build_runtime_cache();
         for (key, value) in current_cache.iter() {
             let (domain, req_type) = &*key;
-            if redirects.lookup(domain, *req_type, self.local_resolver.local_answer_provider()).is_none() {
+            if redirects
+                .lookup(domain, *req_type, self.local_resolver.local_answer_provider())
+                .is_none()
+            {
                 new_cache.insert((domain.clone(), req_type.clone()), value).await;
             }
         }
@@ -268,7 +278,10 @@ impl DnsRequestHandler {
         for (key, value) in current_cache.iter() {
             let (domain, req_type) = &*key;
             let cache_item = value;
-            if redirects.lookup(domain, *req_type, self.local_resolver.local_answer_provider()).is_some() {
+            if redirects
+                .lookup(domain, *req_type, self.local_resolver.local_answer_provider())
+                .is_some()
+            {
                 continue;
             }
             if let Some(resolver) = Self::find_cache_rule(resolves, domain, &cache_item) {
@@ -354,62 +367,38 @@ impl DnsRequestHandler {
         domain: &str,
         query_type: RecordType,
     ) -> Option<(Vec<Record>, DnsOutcome, Option<Uuid>, Option<String>)> {
-        runtime.redirect_engine.lookup(domain, query_type, self.local_resolver.local_answer_provider())
+        runtime.redirect_engine.lookup(
+            domain,
+            query_type,
+            self.local_resolver.local_answer_provider(),
+        )
     }
 
-    pub async fn resolve_arpa(
+    /// The full resolution chain: (1) redirect → (2) local classification →
+    /// (3) cache/upstream. One shared path for live queries, so tests drive
+    /// the exact composition the server uses.
+    async fn resolve_query(
         &self,
         domain: &PreprocessedDomain,
         query_type: RecordType,
     ) -> (Vec<Record>, DnsOutcome) {
         let runtime = self.runtime.load_full();
-        self.resolve_arpa_with_runtime(&runtime, domain, query_type).await
-    }
 
-    async fn resolve_arpa_with_runtime(
-        &self,
-        runtime: &HandlerRuntime,
-        domain: &PreprocessedDomain,
-        query_type: RecordType,
-    ) -> (Vec<Record>, DnsOutcome) {
         // (1) Redirect (global check first)
-        if let Some((records, status, _, _)) =
-            self.lookup_redirects_with_runtime(runtime, domain.raw(), query_type)
-        {
-            return (records, status);
-        }
-
-        // (2) Local `.arpa` answers (DDR / PTR / special-use / LAN zone).
-        // `None` means the resolver does not own the reverse query and it must
-        // continue to (3) Cache → (4) Upstream.
-        match self.local_resolver.resolve_arpa(domain, query_type) {
-            Some((records, outcome)) => (records, outcome),
-            None => self.resolve_from_cache_or_upstream(runtime, domain.raw(), query_type).await,
-        }
-    }
-
-    pub async fn resolve_forward(
-        &self,
-        domain: &PreprocessedDomain,
-        query_type: RecordType,
-    ) -> (Vec<Record>, DnsOutcome) {
-        let runtime = self.runtime.load_full();
-        // (1) Redirect
         if let Some((records, status, _, _)) =
             self.lookup_redirects_with_runtime(&runtime, domain.raw(), query_type)
         {
             return (records, status);
         }
 
-        // (2) Local answers (blocked TLDs, localhost, local zone)
-        if let Some((records, outcome)) =
-            self.local_resolver.resolve_forward_local(domain, query_type)
-        {
-            return (records, outcome);
+        // (2) Local classification (blocked TLDs, localhost, local zone,
+        // `.arpa`). `None` means the resolver does not own the query and it
+        // must continue to (3) Cache → (4) Upstream.
+        match self.local_resolver.resolve_local(domain, query_type) {
+            Some(LocalAnswer::Answered { records, outcome }) => (records, outcome),
+            Some(LocalAnswer::Empty { outcome }) => (vec![], outcome),
+            None => self.resolve_from_cache_or_upstream(&runtime, domain.raw(), query_type).await,
         }
-
-        // (3) Cache → (4) Upstream
-        self.resolve_from_cache_or_upstream(&runtime, domain.raw(), query_type).await
     }
 
     async fn resolve_from_cache_or_upstream(
@@ -496,31 +485,22 @@ impl DnsRequestHandler {
         let runtime = self.runtime.load_full();
         let mut result = CheckChainDnsResult::default();
 
-        let tld = domain.tld();
-
+        // (1) Redirect
         if let Some((records, _status, id, dynamic_source)) =
             self.lookup_redirects_with_runtime(&runtime, domain.raw(), query_type)
         {
             result.redirect_id = id;
             result.dynamic_redirect_source = dynamic_source;
             result.records = Some(crate::to_common_records(records));
-        } else if is_blocked_tld(tld) {
-            return result;
-        } else if tld == "localhost" {
-            let records = LocalResolver::lookup_localhost(domain, query_type);
-            result.records = Some(crate::to_common_records(records));
-            return result;
-        } else if domain.name().ends_with(".arpa") {
-            let (records, _) = self.resolve_arpa_with_runtime(&runtime, domain, query_type).await;
-            result.records = Some(crate::to_common_records(records));
-            return result;
-        } else if let Some(zone) = self.local_resolver.matching_local_zone(domain) {
-            if let Some(hostname) = zone.hostname {
-                let records = self.local_resolver.lookup_lan_hostname(domain, hostname, query_type);
+        } else if let Some(answer) = self.local_resolver.resolve_local(domain, query_type) {
+            // (2) Local classification
+            if let LocalAnswer::Answered { records, .. } = answer {
                 result.records = Some(crate::to_common_records(records));
             }
             return result;
         } else {
+            // (3) Rules (read-only; the cache report below shows what a client
+            // would currently see)
             for (_index, resolver) in runtime.resolve_engine.iter() {
                 if resolver.is_match(domain.raw()) {
                     result.rule_id = Some(resolver.get_config_id());
@@ -551,22 +531,15 @@ impl DnsRequestHandler {
             }
         }
 
-        if let Some((records, filter, _)) =
-            Self::lookup_cache_in(&runtime.cache, domain.raw(), query_type).await
-        {
-            let query_filtered = is_type_filtered(query_type, &filter);
-            result.query_filtered |= query_filtered;
-            if result.rule_filter.is_none() {
-                result.rule_filter = Some(filter.clone());
-            }
-            result.cache_records = Some(if query_filtered && apply_filter {
-                vec![]
-            } else if apply_filter {
-                crate::to_common_records(filter_result(records, &filter))
-            } else {
-                crate::to_common_records(records)
-            });
-        }
+        // (4) Cache report
+        Self::fill_cache_records(
+            &mut result,
+            &runtime.cache,
+            domain.raw(),
+            query_type,
+            apply_filter,
+        )
+        .await;
 
         result
     }
@@ -584,24 +557,38 @@ impl DnsRequestHandler {
         apply_filter: bool,
     ) -> Result<CheckChainDnsResult, DnsError> {
         let runtime = self.runtime.load_full();
-        let tld = domain.tld();
 
+        // (1) Redirect
         if self.lookup_redirects_with_runtime(&runtime, domain.raw(), query_type).is_some() {
             return Err(DnsError::RefreshRedirected(domain.raw().to_string()));
         }
 
-        if is_blocked_tld(tld) {
-            return Ok(CheckChainDnsResult::default());
-        }
-
-        if tld == "localhost" {
-            let records = LocalResolver::lookup_localhost(domain, query_type);
-            return Ok(CheckChainDnsResult {
-                records: Some(crate::to_common_records(records)),
-                ..Default::default()
+        // (2) Local classification. Local answers never enter the cache, but
+        // any stale entry is cleared first (an entry can only exist if an
+        // earlier config let this name reach the cache/upstream stage).
+        if let Some(answer) = self.local_resolver.resolve_local(domain, query_type) {
+            self.clear_cache_entry_and_refresh_maps_if_present(
+                &runtime.cache,
+                domain.raw(),
+                query_type,
+            )
+            .await;
+            return Ok(match answer {
+                LocalAnswer::Answered { records, .. } => CheckChainDnsResult {
+                    records: Some(crate::to_common_records(records)),
+                    ..Default::default()
+                },
+                LocalAnswer::Empty { .. } => CheckChainDnsResult::default(),
             });
         }
 
+        // (2b) Non-local `.arpa` names (public reverse lookups, e.g.
+        // `8.8.8.8.in-addr.arpa.`): the resolver is only a recursive
+        // forwarder here, exactly like the live path. Clear any stale entry
+        // first so the cache converges with what clients see, then resolve
+        // through the rules engine. Without a matching rule the live path
+        // answers NOERROR/empty, so refresh must return Ok as well, not
+        // `RefreshRequiresRule`.
         if domain.name().ends_with(".arpa") {
             self.clear_cache_entry_and_refresh_maps_if_present(
                 &runtime.cache,
@@ -609,28 +596,12 @@ impl DnsRequestHandler {
                 query_type,
             )
             .await;
-            let (records, _) = self.resolve_arpa_with_runtime(&runtime, domain, query_type).await;
+            let (records, _) =
+                self.resolve_from_cache_or_upstream(&runtime, domain.raw(), query_type).await;
             return Ok(CheckChainDnsResult {
                 records: Some(crate::to_common_records(records)),
                 ..Default::default()
             });
-        }
-
-        if let Some(zone) = self.local_resolver.matching_local_zone(domain) {
-            self.clear_cache_entry_and_refresh_maps_if_present(
-                &runtime.cache,
-                domain.raw(),
-                query_type,
-            )
-            .await;
-            if let Some(hostname) = zone.hostname {
-                let records = self.local_resolver.lookup_lan_hostname(domain, hostname, query_type);
-                return Ok(CheckChainDnsResult {
-                    records: Some(crate::to_common_records(records)),
-                    ..Default::default()
-                });
-            }
-            return Ok(CheckChainDnsResult::default());
         }
 
         for (_index, resolver) in runtime.resolve_engine.iter() {
@@ -702,27 +673,44 @@ impl DnsRequestHandler {
 
             self.refresh_runtime_maps_from_cache(&runtime.cache);
 
-            if let Some((records, cache_filter, _)) =
-                Self::lookup_cache_in(&runtime.cache, domain.raw(), query_type).await
-            {
-                let cache_query_filtered = is_type_filtered(query_type, &cache_filter);
-                result.query_filtered |= cache_query_filtered;
-                if result.rule_filter.is_none() {
-                    result.rule_filter = Some(cache_filter.clone());
-                }
-                result.cache_records = Some(if cache_query_filtered && apply_filter {
-                    vec![]
-                } else if apply_filter {
-                    crate::to_common_records(filter_result(records, &cache_filter))
-                } else {
-                    crate::to_common_records(records)
-                });
-            }
+            Self::fill_cache_records(
+                &mut result,
+                &runtime.cache,
+                domain.raw(),
+                query_type,
+                apply_filter,
+            )
+            .await;
 
             return Ok(result);
         }
 
         Err(DnsError::RefreshRequiresRule(domain.raw().to_string()))
+    }
+
+    /// Shared cache report for check/refresh: projects the current cache entry
+    /// into `cache_records` and merges its filter state into the result.
+    async fn fill_cache_records(
+        result: &mut CheckChainDnsResult,
+        cache: &DNSCache,
+        domain: &str,
+        query_type: RecordType,
+        apply_filter: bool,
+    ) {
+        if let Some((records, filter, _)) = Self::lookup_cache_in(cache, domain, query_type).await {
+            let query_filtered = is_type_filtered(query_type, &filter);
+            result.query_filtered |= query_filtered;
+            if result.rule_filter.is_none() {
+                result.rule_filter = Some(filter.clone());
+            }
+            result.cache_records = Some(if query_filtered && apply_filter {
+                vec![]
+            } else if apply_filter {
+                crate::to_common_records(filter_result(records, &filter))
+            } else {
+                crate::to_common_records(records)
+            });
+        }
     }
 
     async fn clear_cache_entry_in(cache: &DNSCache, domain: &str, query_type: RecordType) {
@@ -997,11 +985,7 @@ impl RequestHandler for DnsRequestHandler {
                     .await;
             }
         };
-        let (records, outcome) = if pd.name().ends_with(".arpa") {
-            self.resolve_arpa(&pd, query_type).await
-        } else {
-            self.resolve_forward(&pd, query_type).await
-        };
+        let (records, outcome) = self.resolve_query(&pd, query_type).await;
 
         // Build response
         let mut metadata = Metadata::response_from_request(&request.metadata);
@@ -1201,52 +1185,6 @@ mod tests {
         )
     }
 
-    fn handler_with_lan_config(
-        enable: bool,
-        lan_suffix: &str,
-        devices: Vec<(String, Ipv4Addr)>,
-    ) -> DnsRequestHandler {
-        let registry = landscape_core::lan_hostname::LanHostnameRegistry::new(
-            landscape_common::sys_service::lan_hostname::LanHostnameConfig {
-                enable,
-                lan_suffix: lan_suffix.to_string(),
-            },
-            devices,
-            {
-                let (_tx, rx) = tokio::sync::broadcast::channel(8);
-                landscape_common::event::hub::IPv4AssignEventReader::new(rx)
-            },
-            {
-                let (_tx, rx) = tokio::sync::broadcast::channel(8);
-                landscape_common::event::hub::EnrolledDeviceEventReader::new(rx)
-            },
-        );
-        DnsRequestHandler::new(
-            ChainDnsServerInitInfo::default().into(),
-            shared_cache_runtime_config(5),
-            1,
-            Arc::new(ArcSwapOption::new(None)),
-            test_local_resolver(registry),
-        )
-    }
-
-    fn handler_with_lan_suffix(
-        lan_suffix: &str,
-        devices: Vec<(String, Ipv4Addr)>,
-    ) -> DnsRequestHandler {
-        handler_with_lan_config(true, lan_suffix, devices)
-    }
-
-    fn arpa_name_from_ipv6(addr: Ipv6Addr) -> String {
-        let octets = addr.octets();
-        let nibbles: Vec<String> = octets
-            .iter()
-            .rev()
-            .flat_map(|b| [format!("{:x}", b & 0x0f), format!("{:x}", b >> 4)])
-            .collect();
-        format!("{}.ip6.arpa.", nibbles.join("."))
-    }
-
     fn test_runtime_rule() -> DNSRuntimeRule {
         DNSRuntimeRule {
             resolve_mode: DnsUpstreamConfig::default(),
@@ -1315,21 +1253,21 @@ mod tests {
 
             // resolver.arpa. → resolver branch
             let (records, outcome) = handler
-                .resolve_arpa(&PreprocessedDomain::new("resolver.arpa.").unwrap(), RecordType::A)
+                .resolve_query(&PreprocessedDomain::new("resolver.arpa.").unwrap(), RecordType::A)
                 .await;
             assert!(records.is_empty());
             assert_eq!(outcome, DnsOutcome::Local);
 
             // home.arpa. is not the default `lan` zone.
             let (records, outcome) = handler
-                .resolve_arpa(&PreprocessedDomain::new("home.arpa.").unwrap(), RecordType::A)
+                .resolve_query(&PreprocessedDomain::new("home.arpa.").unwrap(), RecordType::A)
                 .await;
             assert!(records.is_empty());
             assert_eq!(outcome, DnsOutcome::NxDomain);
 
             // in-addr.arpa. → reverse branch
             let (records, _outcome) = handler
-                .resolve_arpa(
+                .resolve_query(
                     &PreprocessedDomain::new("1.0.0.10.in-addr.arpa.").unwrap(),
                     RecordType::PTR,
                 )
@@ -1338,7 +1276,7 @@ mod tests {
 
             // ip6.arpa. → reverse branch
             let (records, _outcome) = handler
-                .resolve_arpa(
+                .resolve_query(
                     &PreprocessedDomain::new(
                         "0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.ip6.arpa.",
                     )
@@ -1350,85 +1288,13 @@ mod tests {
 
             // evilresolver.arpa. is not resolver → NXDOMAIN
             let (records, outcome) = handler
-                .resolve_arpa(
+                .resolve_query(
                     &PreprocessedDomain::new("evilresolver.arpa.").unwrap(),
                     RecordType::A,
                 )
                 .await;
             assert!(records.is_empty());
             assert_eq!(outcome, DnsOutcome::NxDomain);
-        });
-    }
-
-    #[test]
-    fn resolve_forward_blocked_tld_returns_nxdomain() {
-        run_async_test(async {
-            let handler = make_test_handler();
-
-            for domain in &["somewhere.onion.", "foo.invalid.", "bar.test."] {
-                let pd = PreprocessedDomain::new(domain).unwrap();
-                let (records, outcome) = handler.resolve_forward(&pd, RecordType::A).await;
-                assert!(records.is_empty(), "records for {} should be empty", domain);
-                assert_eq!(
-                    outcome,
-                    DnsOutcome::NxDomain,
-                    "outcome for {} should be NxDomain",
-                    domain
-                );
-            }
-        });
-    }
-
-    #[test]
-    fn resolve_arpa_home_requires_matching_lan_suffix() {
-        run_async_test(async {
-            let ip = Ipv4Addr::new(192, 168, 1, 49);
-            let handler = handler_with_lan_suffix("lan", vec![("nas".to_string(), ip)]);
-
-            let (records, outcome) = handler
-                .resolve_arpa(&PreprocessedDomain::new("nas.home.arpa.").unwrap(), RecordType::A)
-                .await;
-            assert!(records.is_empty());
-            assert_eq!(outcome, DnsOutcome::NxDomain);
-        });
-    }
-
-    #[test]
-    fn resolve_arpa_reverse_returns_registered_lan_hostname() {
-        run_async_test(async {
-            let registry = LanHostnameRegistry::new(
-                landscape_common::sys_service::lan_hostname::LanHostnameConfig::default(),
-                vec![("nas".to_string(), Ipv4Addr::new(192, 168, 1, 50))],
-                {
-                    let (_tx, rx) = tokio::sync::broadcast::channel(8);
-                    landscape_common::event::hub::IPv4AssignEventReader::new(rx)
-                },
-                {
-                    let (_tx, rx) = tokio::sync::broadcast::channel(8);
-                    landscape_common::event::hub::EnrolledDeviceEventReader::new(rx)
-                },
-            );
-
-            let handler = DnsRequestHandler::new(
-                ChainDnsServerInitInfo::default().into(),
-                shared_cache_runtime_config(5),
-                1,
-                Arc::new(ArcSwapOption::new(None)),
-                test_local_resolver(registry),
-            );
-
-            let (records, outcome) = handler
-                .resolve_arpa(
-                    &PreprocessedDomain::new("50.1.168.192.in-addr.arpa.").unwrap(),
-                    RecordType::PTR,
-                )
-                .await;
-            assert_eq!(outcome, DnsOutcome::Local);
-            assert_eq!(records.len(), 1);
-            match &records[0].data {
-                RData::PTR(ptr) => assert_eq!(ptr.0.to_string(), "nas.lan."),
-                other => panic!("expected PTR record, got {:?}", other),
-            }
         });
     }
 
@@ -1452,268 +1318,14 @@ mod tests {
 
             // A disabled registry does not own private PTR queries: they fall
             // through to the cache/upstream stage (no rules → NOERROR/empty).
-            let (records, outcome) = handler.resolve_arpa(&domain, RecordType::PTR).await;
+            let (records, outcome) = handler.resolve_query(&domain, RecordType::PTR).await;
             assert!(records.is_empty());
             assert_eq!(outcome, DnsOutcome::Normal);
 
             let loopback_domain = PreprocessedDomain::new("1.0.0.127.in-addr.arpa.").unwrap();
-            let (records, outcome) = handler.resolve_arpa(&loopback_domain, RecordType::PTR).await;
+            let (records, outcome) = handler.resolve_query(&loopback_domain, RecordType::PTR).await;
             assert_eq!(outcome, DnsOutcome::Local);
             assert_eq!(records.len(), 1);
-        });
-    }
-
-    #[test]
-    fn resolve_arpa_reverse_ipv6_returns_registered_lan_hostname() {
-        run_async_test(async {
-            let ipv6 = Ipv6Addr::new(0xfd01, 0, 0, 0, 0, 0, 0, 99);
-            let registry = LanHostnameRegistry::new(
-                landscape_common::sys_service::lan_hostname::LanHostnameConfig::default(),
-                vec![("srv".to_string(), Ipv4Addr::new(192, 168, 1, 1))],
-                {
-                    let (_tx, rx) = tokio::sync::broadcast::channel(8);
-                    landscape_common::event::hub::IPv4AssignEventReader::new(rx)
-                },
-                {
-                    let (_tx, rx) = tokio::sync::broadcast::channel(8);
-                    landscape_common::event::hub::EnrolledDeviceEventReader::new(rx)
-                },
-            );
-            registry.set_ipv6("srv", ipv6);
-            let handler = DnsRequestHandler::new(
-                ChainDnsServerInitInfo::default().into(),
-                shared_cache_runtime_config(5),
-                1,
-                Arc::new(ArcSwapOption::new(None)),
-                test_local_resolver(registry),
-            );
-
-            let (records, outcome) = {
-                let arpa_name = arpa_name_from_ipv6(ipv6);
-                let pd = PreprocessedDomain::new(&arpa_name).unwrap();
-                handler.resolve_arpa(&pd, RecordType::PTR).await
-            };
-            assert_eq!(outcome, DnsOutcome::Local);
-            assert_eq!(records.len(), 1);
-            match &records[0].data {
-                RData::PTR(ptr) => assert_eq!(ptr.0.to_string(), "srv.lan."),
-                other => panic!("expected PTR record, got {:?}", other),
-            }
-        });
-    }
-
-    #[test]
-    fn resolve_forward_local_domain_aaaa_returns_registered_ipv6() {
-        run_async_test(async {
-            let ipv6 = Ipv6Addr::new(0xfd00, 0, 0, 0, 0, 0, 0, 2);
-            let registry = LanHostnameRegistry::new(
-                landscape_common::sys_service::lan_hostname::LanHostnameConfig::default(),
-                vec![("dev".to_string(), Ipv4Addr::new(192, 168, 1, 100))],
-                {
-                    let (_tx, rx) = tokio::sync::broadcast::channel(8);
-                    landscape_common::event::hub::IPv4AssignEventReader::new(rx)
-                },
-                {
-                    let (_tx, rx) = tokio::sync::broadcast::channel(8);
-                    landscape_common::event::hub::EnrolledDeviceEventReader::new(rx)
-                },
-            );
-            registry.set_ipv6("dev", ipv6);
-            let handler = DnsRequestHandler::new(
-                ChainDnsServerInitInfo::default().into(),
-                shared_cache_runtime_config(5),
-                1,
-                Arc::new(ArcSwapOption::new(None)),
-                test_local_resolver(registry),
-            );
-
-            let (records, outcome) = handler
-                .resolve_forward(&PreprocessedDomain::new("dev.lan.").unwrap(), RecordType::AAAA)
-                .await;
-            assert_eq!(outcome, DnsOutcome::Local);
-            assert_eq!(records.len(), 1);
-            match &records[0].data {
-                RData::AAAA(aaaa) => assert_eq!(aaaa.0, ipv6),
-                other => panic!("expected AAAA record, got {:?}", other),
-            }
-        });
-    }
-
-    #[test]
-    fn resolve_forward_local_domain_aaaa_returns_nxdomain_when_no_ipv6() {
-        run_async_test(async {
-            let registry = LanHostnameRegistry::new(
-                landscape_common::sys_service::lan_hostname::LanHostnameConfig::default(),
-                vec![("dev".to_string(), Ipv4Addr::new(192, 168, 1, 100))],
-                {
-                    let (_tx, rx) = tokio::sync::broadcast::channel(8);
-                    landscape_common::event::hub::IPv4AssignEventReader::new(rx)
-                },
-                {
-                    let (_tx, rx) = tokio::sync::broadcast::channel(8);
-                    landscape_common::event::hub::EnrolledDeviceEventReader::new(rx)
-                },
-            );
-            let handler = DnsRequestHandler::new(
-                ChainDnsServerInitInfo::default().into(),
-                shared_cache_runtime_config(5),
-                1,
-                Arc::new(ArcSwapOption::new(None)),
-                test_local_resolver(registry),
-            );
-
-            let (records, outcome) = handler
-                .resolve_forward(&PreprocessedDomain::new("dev.lan.").unwrap(), RecordType::AAAA)
-                .await;
-            assert_eq!(outcome, DnsOutcome::NxDomain);
-            assert!(records.is_empty());
-        });
-    }
-
-    // --- multi-label LAN suffix ---
-
-    #[test]
-    fn resolve_forward_multi_label_lan_suffix_resolves_host() {
-        run_async_test(async {
-            let ip = Ipv4Addr::new(192, 168, 1, 60);
-            let handler = handler_with_lan_suffix("home.lan", vec![("nas".to_string(), ip)]);
-
-            let (records, outcome) = handler
-                .resolve_forward(&PreprocessedDomain::new("nas.home.lan.").unwrap(), RecordType::A)
-                .await;
-            assert_eq!(outcome, DnsOutcome::Local);
-            assert_eq!(records.len(), 1);
-            match &records[0].data {
-                RData::A(a) => assert_eq!(a.0, ip),
-                other => panic!("expected A record, got {:?}", other),
-            }
-        });
-    }
-
-    #[test]
-    fn resolve_forward_multi_label_suffix_does_not_match_last_label_only() {
-        run_async_test(async {
-            let ip = Ipv4Addr::new(192, 168, 1, 61);
-            let handler = handler_with_lan_suffix("home.lan", vec![("nas".to_string(), ip)]);
-
-            // `nas.lan` is outside the `home.lan` zone, so it must not be
-            // answered from the registry.
-            let (records, _) = handler
-                .resolve_forward(&PreprocessedDomain::new("nas.lan.").unwrap(), RecordType::A)
-                .await;
-            assert!(records.is_empty());
-        });
-    }
-
-    #[test]
-    fn resolve_arpa_multi_label_suffix_under_arpa_resolves_host() {
-        run_async_test(async {
-            let ip = Ipv4Addr::new(192, 168, 1, 62);
-            let handler = handler_with_lan_suffix("mylan.arpa", vec![("nas".to_string(), ip)]);
-
-            // `.arpa` names are dispatched to resolve_arpa, which used to
-            // answer NXDOMAIN for every suffix except the hardcoded `home`.
-            let (records, outcome) = handler
-                .resolve_arpa(&PreprocessedDomain::new("nas.mylan.arpa.").unwrap(), RecordType::A)
-                .await;
-            assert_eq!(outcome, DnsOutcome::Local);
-            assert_eq!(records.len(), 1);
-            match &records[0].data {
-                RData::A(a) => assert_eq!(a.0, ip),
-                other => panic!("expected A record, got {:?}", other),
-            }
-        });
-    }
-
-    #[test]
-    fn resolve_arpa_home_suffix_resolves_only_when_enabled() {
-        run_async_test(async {
-            let ip = Ipv4Addr::new(192, 168, 1, 63);
-            let domain = PreprocessedDomain::new("nas.home.arpa.").unwrap();
-            let enabled = handler_with_lan_config(true, "home.arpa", vec![("nas".to_string(), ip)]);
-
-            let (records, outcome) = enabled.resolve_arpa(&domain, RecordType::A).await;
-            assert_eq!(outcome, DnsOutcome::Local);
-            assert_eq!(records.len(), 1);
-            assert!(matches!(&records[0].data, RData::A(a) if a.0 == ip));
-
-            let disabled =
-                handler_with_lan_config(false, "home.arpa", vec![("nas".to_string(), ip)]);
-            let (records, outcome) = disabled.resolve_arpa(&domain, RecordType::A).await;
-            assert_eq!(outcome, DnsOutcome::NxDomain);
-            assert!(records.is_empty());
-        });
-    }
-
-    #[test]
-    fn configured_local_suffix_keeps_mdns_nodata_semantics() {
-        run_async_test(async {
-            let handler = handler_with_lan_suffix("local", vec![]);
-
-            let (records, outcome) = handler
-                .resolve_forward(&PreprocessedDomain::new("unknown.local.").unwrap(), RecordType::A)
-                .await;
-            assert_eq!(outcome, DnsOutcome::Local);
-            assert!(records.is_empty());
-        });
-    }
-
-    #[test]
-    fn resolve_forward_lan_zone_apex_stays_local() {
-        run_async_test(async {
-            let handler = handler_with_lan_suffix("lan", vec![]);
-
-            let (records, outcome) = handler
-                .resolve_forward(&PreprocessedDomain::new("lan.").unwrap(), RecordType::A)
-                .await;
-            assert_eq!(outcome, DnsOutcome::NxDomain);
-            assert!(records.is_empty());
-        });
-    }
-
-    #[test]
-    fn resolve_arpa_loopback_returns_localhost_ptr() {
-        run_async_test(async {
-            let handler = make_test_handler();
-
-            let (records, outcome) = handler
-                .resolve_arpa(
-                    &PreprocessedDomain::new("1.0.0.127.in-addr.arpa.").unwrap(),
-                    RecordType::PTR,
-                )
-                .await;
-            assert_eq!(outcome, DnsOutcome::Local);
-            assert_eq!(records.len(), 1);
-            match &records[0].data {
-                RData::PTR(ptr) => assert_eq!(ptr.0.to_string(), "localhost."),
-                other => panic!("expected PTR record, got {:?}", other),
-            }
-        });
-    }
-
-    #[test]
-    fn resolve_arpa_ipv4only_returns_nodata() {
-        run_async_test(async {
-            let handler = make_test_handler();
-
-            let (records, outcome) = handler
-                .resolve_arpa(&PreprocessedDomain::new("ipv4only.arpa.").unwrap(), RecordType::A)
-                .await;
-            assert!(records.is_empty());
-            assert_eq!(outcome, DnsOutcome::Local);
-        });
-    }
-
-    #[test]
-    fn resolve_arpa_unknown_returns_nxdomain() {
-        run_async_test(async {
-            let handler = make_test_handler();
-
-            let (records, outcome) = handler
-                .resolve_arpa(&PreprocessedDomain::new("foo.bar.arpa.").unwrap(), RecordType::A)
-                .await;
-            assert!(records.is_empty());
-            assert_eq!(outcome, DnsOutcome::NxDomain);
         });
     }
 
@@ -1915,6 +1527,147 @@ mod tests {
             assert!(result.rule_id.is_none());
             assert_eq!(result.records.as_ref().map(Vec::len), Some(1));
             assert!(result.cache_records.is_none());
+        });
+    }
+
+    #[test]
+    fn refresh_cache_entry_clears_stale_unowned_arpa_entry() {
+        run_async_test(async {
+            let handler = DnsRequestHandler::new(
+                ChainDnsServerInitInfo::default().into(),
+                shared_cache_runtime_config(5),
+                1,
+                Arc::new(ArcSwapOption::new(None)),
+                test_local_resolver(test_lan_hostname_registry()),
+            );
+
+            let domain = "8.8.8.8.in-addr.arpa.";
+            handler
+                .insert(
+                    domain,
+                    RecordType::PTR,
+                    vec![sample_a_record(domain, 60, Ipv4Addr::new(1, 1, 1, 1))],
+                    ResponseCode::NoError,
+                    &DnsRuntimeMarkInfo { mark: FlowMark::default(), priority: 0 },
+                    FilterResult::Unfilter,
+                    None,
+                    None,
+                )
+                .await;
+
+            // Public reverse names are not owned locally: without a rule the
+            // live path answers NOERROR/empty, so refresh must return Ok and
+            // drop the stale entry instead of failing with RefreshRequiresRule.
+            let result = handler
+                .refresh_cache_entry(
+                    &PreprocessedDomain::new(domain).unwrap(),
+                    RecordType::PTR,
+                    true,
+                )
+                .await
+                .unwrap();
+
+            assert!(result.records.as_ref().is_some_and(Vec::is_empty));
+
+            let runtime = handler.runtime.load_full();
+            assert!(
+                DnsRequestHandler::lookup_cache_in(&runtime.cache, domain, RecordType::PTR)
+                    .await
+                    .is_none(),
+                "stale reverse entry must be cleared"
+            );
+        });
+    }
+
+    #[test]
+    fn refresh_cache_entry_arpa_with_matching_rule_clears_cache() {
+        run_async_test(async {
+            let handler = DnsRequestHandler::new(
+                ChainDnsServerInitInfo {
+                    dns_rules: vec![DNSRuntimeRule {
+                        filter: FilterResult::OnlyIPv6,
+                        source: vec![DomainConfig {
+                            match_type: DomainMatchType::Full,
+                            value: "8.8.8.8.in-addr.arpa".to_string(),
+                        }],
+                        ..test_runtime_rule()
+                    }],
+                    redirect_rules: vec![],
+                }
+                .into(),
+                shared_cache_runtime_config(5),
+                1,
+                Arc::new(ArcSwapOption::new(None)),
+                test_local_resolver(test_lan_hostname_registry()),
+            );
+
+            let domain = "8.8.8.8.in-addr.arpa.";
+            handler
+                .insert(
+                    domain,
+                    RecordType::A,
+                    vec![sample_a_record(domain, 60, Ipv4Addr::new(1, 1, 1, 1))],
+                    ResponseCode::NoError,
+                    &DnsRuntimeMarkInfo { mark: FlowMark::default(), priority: 0 },
+                    FilterResult::Unfilter,
+                    None,
+                    None,
+                )
+                .await;
+
+            let result = handler
+                .refresh_cache_entry(&PreprocessedDomain::new(domain).unwrap(), RecordType::A, true)
+                .await
+                .unwrap();
+
+            // The OnlyIPv6 rule filters the A query, so no upstream lookup is
+            // attempted and the result is empty — but the stale entry must be
+            // gone so the cache converges with what clients see.
+            assert!(result.records.as_ref().is_some_and(Vec::is_empty));
+
+            let runtime = handler.runtime.load_full();
+            assert!(
+                DnsRequestHandler::lookup_cache_in(&runtime.cache, domain, RecordType::A)
+                    .await
+                    .is_none(),
+                "stale reverse entry must be cleared"
+            );
+        });
+    }
+
+    #[test]
+    fn check_domain_reports_only_cache_for_unowned_arpa() {
+        run_async_test(async {
+            let handler = DnsRequestHandler::new(
+                ChainDnsServerInitInfo::default().into(),
+                shared_cache_runtime_config(5),
+                1,
+                Arc::new(ArcSwapOption::new(None)),
+                test_local_resolver(test_lan_hostname_registry()),
+            );
+
+            let domain = "8.8.8.8.in-addr.arpa.";
+            handler
+                .insert(
+                    domain,
+                    RecordType::PTR,
+                    vec![sample_a_record(domain, 60, Ipv4Addr::new(1, 1, 1, 1))],
+                    ResponseCode::NoError,
+                    &DnsRuntimeMarkInfo { mark: FlowMark::default(), priority: 0 },
+                    FilterResult::Unfilter,
+                    None,
+                    None,
+                )
+                .await;
+
+            let result = handler
+                .check_domain(&PreprocessedDomain::new(domain).unwrap(), RecordType::PTR, true)
+                .await;
+
+            // Check is read-only: unowned reverse names are not resolved
+            // live, only projected from the cache.
+            assert!(result.records.is_none());
+            assert_eq!(result.cache_records.as_ref().map(Vec::len), Some(1));
         });
     }
 
