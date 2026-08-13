@@ -50,7 +50,7 @@ async fn main() -> std::io::Result<()> {
     let (redirect_engine, resolve_engine, _) =
         builder.build_flow(0, vec![default_rule], vec![], vec![], vec![upstream]).await;
     println!("=============================================");
-    server.refresh_flow_runtime(0, redirect_engine, resolve_engine, None).await;
+    server.refresh_flow_runtime(0, redirect_engine, resolve_engine).await;
 
     let _ = tokio::signal::ctrl_c().await;
 

@@ -56,6 +56,12 @@ impl LocalResolver {
         }
     }
 
+    /// Local interface addresses shared with the redirect engine
+    /// (`AllLocalIps` answer mode) and DDR records (address hints).
+    pub fn local_answer_provider(&self) -> Option<&Arc<dyn LocalDnsAnswerProvider>> {
+        self.local_answer_provider.as_ref()
+    }
+
     /// Local stage of the forward resolution chain. Returns `None` when the
     /// name is not local and must continue to the cache/upstream stage.
     pub fn resolve_forward_local(

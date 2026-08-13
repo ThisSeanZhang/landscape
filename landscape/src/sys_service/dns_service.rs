@@ -336,7 +336,6 @@ impl LandscapeDnsService {
         let dns_redirect_rules = self.dns_redirect_rule_service.list_flow_configs(flow_id).await;
         let dynamic_dns_redirects =
             self.dns_redirect_rule_service.list_flow_dynamic_batches(flow_id).await;
-        let (_, doh_runtime) = self.dns_service.current_live_runtime_config();
         let (redirect_engine, resolve_engine, dependencies) = self
             .matcher_builder
             .build_flow(
@@ -350,7 +349,7 @@ impl LandscapeDnsService {
 
         self.store_flow_dependencies(flow_id, dependencies).await;
         self.dns_service
-            .refresh_flow_runtime_kind(flow_id, redirect_engine, resolve_engine, doh_runtime, kind)
+            .refresh_flow_runtime_kind(flow_id, redirect_engine, resolve_engine, kind)
             .await;
         tracing::info!(
             "[flow_id: {flow_id}] build and refresh DNS runtime: {:?}ms",

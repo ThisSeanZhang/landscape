@@ -21,6 +21,7 @@ use crate::{
     server::{
         engine::{RedirectEngine, ResolveEngine},
         handler::DnsRequestHandler,
+        local::LocalResolver,
     },
     CheckChainDnsResult, CheckDnsReq,
 };
@@ -67,9 +68,8 @@ pub struct LandscapeDnsServer {
     pub status: WatchService,
     // internal handlers
     flow_dns_server: Arc<Mutex<HashMap<u32, Arc<FlowServerEntry>>>>,
-    // dynamic updates used for redirection
-    pub local_answer_provider: Option<Arc<dyn LocalDnsAnswerProvider>>,
-    pub doh_advertise_provider: Option<Arc<dyn DohAdvertiseProvider>>,
+    // local answers (localhost / LAN hostname zone / PTR / DDR) shared by all flows
+    pub local_resolver: Arc<LocalResolver>,
     pub lan_hostname_registry: Arc<LanHostnameRegistry>,
     // DNS events
     pub msg_tx: MetricSenderState,
@@ -122,6 +122,14 @@ impl LandscapeDnsServer {
         } else {
             None
         };
+        let doh_listener = doh.map(DohListenerState::from_effective_config);
+        let doh_runtime = doh_listener.as_ref().map(|doh_listener| doh_listener.runtime_config());
+        let local_resolver = Arc::new(LocalResolver::new(
+            lan_hostname_registry.clone(),
+            local_answer_provider,
+            doh_advertise_provider,
+            doh_runtime,
+        ));
 
         Self {
             status,
@@ -134,11 +142,10 @@ impl LandscapeDnsServer {
             )),
             msg_tx: Arc::new(ArcSwapOption::new(msg_tx.map(Arc::new))),
             cache_live_config: Arc::new(ArcSwap::from_pointee(cache_runtime)),
-            doh_listener: doh.map(DohListenerState::from_effective_config),
+            doh_listener,
             _mdns_service: mdns_service,
-            local_answer_provider,
-            doh_advertise_provider,
             lan_hostname_registry,
+            local_resolver,
         }
     }
 
@@ -195,13 +202,11 @@ impl LandscapeDnsServer {
         flow_id: u32,
         redirect_engine: RedirectEngine,
         resolve_engine: ResolveEngine,
-        doh_runtime: Option<DohRuntimeConfig>,
     ) {
         self.refresh_flow_runtime_kind(
             flow_id,
             redirect_engine,
             resolve_engine,
-            doh_runtime,
             FlowRuntimeRefreshKind::Full,
         )
         .await;
@@ -212,7 +217,6 @@ impl LandscapeDnsServer {
         flow_id: u32,
         redirect_engine: RedirectEngine,
         resolve_engine: ResolveEngine,
-        doh_runtime: Option<DohRuntimeConfig>,
         kind: FlowRuntimeRefreshKind,
     ) {
         let entry = self.get_or_create_entry(flow_id).await;
@@ -239,10 +243,7 @@ impl LandscapeDnsServer {
             self.cache_live_config.clone(),
             flow_id,
             self.msg_tx.clone(),
-            self.local_answer_provider.clone(),
-            self.doh_advertise_provider.clone(),
-            self.lan_hostname_registry.clone(),
-            doh_runtime,
+            self.local_resolver.clone(),
         );
         let Some(runtime) = self.build_flow_runtime(flow_id, handler).await else {
             tracing::error!("[flow: {flow_id}]: DNS server start failed, runtime not registered");
@@ -377,10 +378,7 @@ mod tests {
                 Arc::new(ArcSwap::from_pointee(test_cache_runtime_config())),
                 7,
                 Arc::new(ArcSwapOption::new(None)),
-                None,
-                None,
-                test_lan_hostname_registry(),
-                None,
+                Arc::new(LocalResolver::new(test_lan_hostname_registry(), None, None, None)),
             );
             entry.runtime.store(Some(Arc::new(FlowServerRuntime {
                 handler,

@@ -32,22 +32,22 @@ use crate::{
     server::{
         engine::{RedirectEngine, ResolveEngine},
         local::{is_blocked_tld, LocalResolver},
-        CacheRuntimeConfig, DohAdvertiseProvider, LocalDnsAnswerProvider, MetricSenderState,
+        CacheRuntimeConfig, MetricSenderState,
     },
     CacheDNSItem, CheckChainDnsResult, DNSCache,
 };
+#[cfg(test)]
+use crate::server::LocalDnsAnswerProvider;
 use landscape_common::{
     dns::error::DnsError,
     dns::rule::FilterResult,
-    dns::DohRuntimeConfig,
     event::DnsMetricMessage,
     flow::{DnsRuntimeMarkInfo, FlowMarkInfo},
     metric::dns::{DnsMetric, DnsOutcome},
 };
-use landscape_core::{
-    lan_hostname::LanHostnameRegistry,
-    time::get_current_time_ms,
-};
+use landscape_core::time::get_current_time_ms;
+#[cfg(test)]
+use landscape_core::lan_hostname::LanHostnameRegistry;
 
 const LOOKUP_TIMEOUT: Duration = Duration::from_secs(5);
 const RULE_REFRESH_TTL_CAP: u32 = 5;
@@ -72,8 +72,7 @@ pub struct DnsRequestHandler {
     pub flow_id: u32,
     pub msg_tx: MetricSenderState,
     runtime_config: Arc<ArcSwap<CacheRuntimeConfig>>,
-    pub local_answer_provider: Option<Arc<dyn LocalDnsAnswerProvider>>,
-    local_resolver: LocalResolver,
+    local_resolver: Arc<LocalResolver>,
 }
 
 impl DnsRequestHandler {
@@ -83,19 +82,10 @@ impl DnsRequestHandler {
         runtime_config: Arc<ArcSwap<CacheRuntimeConfig>>,
         flow_id: u32,
         msg_tx: MetricSenderState,
-        local_answer_provider: Option<Arc<dyn LocalDnsAnswerProvider>>,
-        doh_advertise_provider: Option<Arc<dyn DohAdvertiseProvider>>,
-        lan_hostname_registry: Arc<LanHostnameRegistry>,
-        doh_runtime: Option<DohRuntimeConfig>,
+        local_resolver: Arc<LocalResolver>,
     ) -> DnsRequestHandler {
         let cache_config = runtime_config.load();
         let cache = Self::build_cache(cache_config.as_ref());
-        let local_resolver = LocalResolver::new(
-            lan_hostname_registry,
-            local_answer_provider.clone(),
-            doh_advertise_provider,
-            doh_runtime,
-        );
 
         DnsRequestHandler {
             runtime: Arc::new(ArcSwap::from_pointee(HandlerRuntime {
@@ -106,7 +96,6 @@ impl DnsRequestHandler {
             flow_id,
             msg_tx,
             runtime_config,
-            local_answer_provider,
             local_resolver,
         }
     }
@@ -117,23 +106,10 @@ impl DnsRequestHandler {
         runtime_config: Arc<ArcSwap<CacheRuntimeConfig>>,
         flow_id: u32,
         msg_tx: MetricSenderState,
-        local_answer_provider: Option<Arc<dyn LocalDnsAnswerProvider>>,
-        doh_advertise_provider: Option<Arc<dyn DohAdvertiseProvider>>,
-        lan_hostname_registry: Arc<LanHostnameRegistry>,
-        doh_runtime: Option<DohRuntimeConfig>,
+        local_resolver: Arc<LocalResolver>,
     ) -> Self {
         let (redirect_engine, resolve_engine) = Self::test_engines_from_legacy(init);
-        Self::from_engines(
-            redirect_engine,
-            resolve_engine,
-            runtime_config,
-            flow_id,
-            msg_tx,
-            local_answer_provider,
-            doh_advertise_provider,
-            lan_hostname_registry,
-            doh_runtime,
-        )
+        Self::from_engines(redirect_engine, resolve_engine, runtime_config, flow_id, msg_tx, local_resolver)
     }
 
     #[cfg(test)]
@@ -271,7 +247,7 @@ impl DnsRequestHandler {
         let new_cache = self.build_runtime_cache();
         for (key, value) in current_cache.iter() {
             let (domain, req_type) = &*key;
-            if redirects.lookup(domain, *req_type, self.local_answer_provider.as_ref()).is_none() {
+            if redirects.lookup(domain, *req_type, self.local_resolver.local_answer_provider()).is_none() {
                 new_cache.insert((domain.clone(), req_type.clone()), value).await;
             }
         }
@@ -292,7 +268,7 @@ impl DnsRequestHandler {
         for (key, value) in current_cache.iter() {
             let (domain, req_type) = &*key;
             let cache_item = value;
-            if redirects.lookup(domain, *req_type, self.local_answer_provider.as_ref()).is_some() {
+            if redirects.lookup(domain, *req_type, self.local_resolver.local_answer_provider()).is_some() {
                 continue;
             }
             if let Some(resolver) = Self::find_cache_rule(resolves, domain, &cache_item) {
@@ -378,7 +354,7 @@ impl DnsRequestHandler {
         domain: &str,
         query_type: RecordType,
     ) -> Option<(Vec<Record>, DnsOutcome, Option<Uuid>, Option<String>)> {
-        runtime.redirect_engine.lookup(domain, query_type, self.local_answer_provider.as_ref())
+        runtime.redirect_engine.lookup(domain, query_type, self.local_resolver.local_answer_provider())
     }
 
     pub async fn resolve_arpa(
@@ -1204,11 +1180,19 @@ mod tests {
             shared_cache_runtime_config(5),
             1,
             Arc::new(ArcSwapOption::new(None)),
-            None,
-            None,
-            test_lan_hostname_registry(),
-            None,
+            test_local_resolver(test_lan_hostname_registry()),
         )
+    }
+
+    fn test_local_resolver(registry: Arc<LanHostnameRegistry>) -> Arc<LocalResolver> {
+        Arc::new(LocalResolver::new(registry, None, None, None))
+    }
+
+    fn test_local_resolver_with_provider(
+        registry: Arc<LanHostnameRegistry>,
+        provider: Option<Arc<dyn LocalDnsAnswerProvider>>,
+    ) -> Arc<LocalResolver> {
+        Arc::new(LocalResolver::new(registry, provider, None, None))
     }
 
     fn test_lan_hostname_registry() -> Arc<LanHostnameRegistry> {
@@ -1242,10 +1226,7 @@ mod tests {
             shared_cache_runtime_config(5),
             1,
             Arc::new(ArcSwapOption::new(None)),
-            None,
-            None,
-            registry,
-            None,
+            test_local_resolver(registry),
         )
     }
 
@@ -1433,10 +1414,7 @@ mod tests {
                 shared_cache_runtime_config(5),
                 1,
                 Arc::new(ArcSwapOption::new(None)),
-                None,
-                None,
-                registry,
-                None,
+                test_local_resolver(registry),
             );
 
             let (records, outcome) = handler
@@ -1468,10 +1446,7 @@ mod tests {
                 shared_cache_runtime_config(5),
                 1,
                 Arc::new(ArcSwapOption::new(None)),
-                None,
-                None,
-                registry,
-                None,
+                test_local_resolver(registry),
             );
             let domain = PreprocessedDomain::new("50.1.168.192.in-addr.arpa.").unwrap();
 
@@ -1510,10 +1485,7 @@ mod tests {
                 shared_cache_runtime_config(5),
                 1,
                 Arc::new(ArcSwapOption::new(None)),
-                None,
-                None,
-                registry,
-                None,
+                test_local_resolver(registry),
             );
 
             let (records, outcome) = {
@@ -1552,10 +1524,7 @@ mod tests {
                 shared_cache_runtime_config(5),
                 1,
                 Arc::new(ArcSwapOption::new(None)),
-                None,
-                None,
-                registry,
-                None,
+                test_local_resolver(registry),
             );
 
             let (records, outcome) = handler
@@ -1590,10 +1559,7 @@ mod tests {
                 shared_cache_runtime_config(5),
                 1,
                 Arc::new(ArcSwapOption::new(None)),
-                None,
-                None,
-                registry,
-                None,
+                test_local_resolver(registry),
             );
 
             let (records, outcome) = handler
@@ -1799,10 +1765,7 @@ mod tests {
                 shared_cache_runtime_config(5),
                 1,
                 Arc::new(ArcSwapOption::new(None)),
-                None,
-                None,
-                test_lan_hostname_registry(),
-                None,
+                test_local_resolver(test_lan_hostname_registry()),
             );
 
             let result = handler
@@ -1828,10 +1791,7 @@ mod tests {
                 shared_cache_runtime_config(5),
                 1,
                 Arc::new(ArcSwapOption::new(None)),
-                None,
-                None,
-                test_lan_hostname_registry(),
-                None,
+                test_local_resolver(test_lan_hostname_registry()),
             );
 
             handler
@@ -1869,10 +1829,7 @@ mod tests {
                 shared_cache_runtime_config(5),
                 1,
                 Arc::new(ArcSwapOption::new(None)),
-                None,
-                None,
-                test_lan_hostname_registry(),
-                None,
+                test_local_resolver(test_lan_hostname_registry()),
             );
 
             handler
@@ -1914,10 +1871,7 @@ mod tests {
                 shared_cache_runtime_config(5),
                 1,
                 Arc::new(ArcSwapOption::new(None)),
-                None,
-                None,
-                test_lan_hostname_registry(),
-                None,
+                test_local_resolver(test_lan_hostname_registry()),
             );
 
             let result = handler
@@ -1946,10 +1900,7 @@ mod tests {
                 shared_cache_runtime_config(5),
                 1,
                 Arc::new(ArcSwapOption::new(None)),
-                None,
-                None,
-                test_lan_hostname_registry(),
-                None,
+                test_local_resolver(test_lan_hostname_registry()),
             );
 
             let result = handler
@@ -1976,10 +1927,7 @@ mod tests {
                 runtime_config.clone(),
                 9,
                 Arc::new(ArcSwapOption::new(None)),
-                None,
-                None,
-                test_lan_hostname_registry(),
-                None,
+                test_local_resolver(test_lan_hostname_registry()),
             );
             let handler_clone = handler.clone();
 
@@ -2035,10 +1983,7 @@ mod tests {
                 shared_cache_runtime_config(5),
                 1,
                 Arc::new(ArcSwapOption::new(None)),
-                None,
-                None,
-                test_lan_hostname_registry(),
-                None,
+                test_local_resolver(test_lan_hostname_registry()),
             );
 
             let old_runtime = handler.runtime.load_full();
@@ -2084,10 +2029,7 @@ mod tests {
                 shared_cache_runtime_config(5),
                 1,
                 Arc::new(ArcSwapOption::new(None)),
-                None,
-                None,
-                test_lan_hostname_registry(),
-                None,
+                test_local_resolver(test_lan_hostname_registry()),
             );
             handler
                 .insert(
@@ -2152,10 +2094,7 @@ mod tests {
                 shared_cache_runtime_config(5),
                 1,
                 Arc::new(ArcSwapOption::new(None)),
-                None,
-                None,
-                test_lan_hostname_registry(),
-                None,
+                test_local_resolver(test_lan_hostname_registry()),
             );
             let rule = test_runtime_rule();
             handler
@@ -2227,10 +2166,7 @@ mod tests {
                 shared_cache_runtime_config(5),
                 1,
                 Arc::new(ArcSwapOption::new(None)),
-                None,
-                None,
-                test_lan_hostname_registry(),
-                None,
+                test_local_resolver(test_lan_hostname_registry()),
             );
             let rule = test_runtime_rule();
             for domain in ["redirected.example.", "kept.example."] {
@@ -2305,10 +2241,7 @@ mod tests {
                 runtime_config.clone(),
                 1,
                 Arc::new(ArcSwapOption::new(None)),
-                None,
-                None,
-                test_lan_hostname_registry(),
-                None,
+                test_local_resolver(test_lan_hostname_registry()),
             );
 
             handler
@@ -2368,15 +2301,15 @@ mod tests {
                 shared_cache_runtime_config(5),
                 1,
                 Arc::new(ArcSwapOption::new(None)),
-                Some(Arc::new(MockLocalAnswerProvider {
-                    addrs: vec![
-                        IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)),
-                        IpAddr::V6(Ipv6Addr::LOCALHOST),
-                    ],
-                })),
-                None,
-                test_lan_hostname_registry(),
-                None,
+                test_local_resolver_with_provider(
+                    test_lan_hostname_registry(),
+                    Some(Arc::new(MockLocalAnswerProvider {
+                        addrs: vec![
+                            IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)),
+                            IpAddr::V6(Ipv6Addr::LOCALHOST),
+                        ],
+                    })),
+                ),
             );
 
             let (records, outcome, redirect_id, _) =
@@ -2416,12 +2349,12 @@ mod tests {
                 shared_cache_runtime_config(5),
                 1,
                 Arc::new(ArcSwapOption::new(None)),
-                Some(Arc::new(MockLocalAnswerProvider {
-                    addrs: vec![IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1))],
-                })),
-                None,
-                test_lan_hostname_registry(),
-                None,
+                test_local_resolver_with_provider(
+                    test_lan_hostname_registry(),
+                    Some(Arc::new(MockLocalAnswerProvider {
+                        addrs: vec![IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1))],
+                    })),
+                ),
             );
 
             assert!(handler.lookup_redirects("example.com.", RecordType::AAAA).is_none());
@@ -2450,10 +2383,7 @@ mod tests {
                 shared_cache_runtime_config(5),
                 1,
                 Arc::new(ArcSwapOption::new(None)),
-                None,
-                None,
-                test_lan_hostname_registry(),
-                None,
+                test_local_resolver(test_lan_hostname_registry()),
             );
 
             let (records, outcome, redirect_id, _) =
