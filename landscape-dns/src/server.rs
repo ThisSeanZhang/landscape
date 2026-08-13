@@ -19,19 +19,23 @@ use crate::{
     listener::{start_flow_dns_listener, DohListenerState},
     mdns::MdnsService,
     server::{
-        engine::{RedirectEngine, ResolveEngine},
-        handler::DnsRequestHandler,
-        local::LocalResolver,
+        handler::DnsRequestHandler, local::LocalResolver, redirect_engine::RedirectEngine,
+        resolve_engine::ResolveEngine,
     },
     CheckChainDnsResult, CheckDnsReq,
 };
 
 pub mod builder;
-pub mod engine;
+pub(crate) mod cache;
+pub(crate) mod chain;
+pub(crate) mod ebpf;
 pub(crate) mod handler;
 pub(crate) mod local;
 pub(crate) mod matcher;
+pub mod redirect_engine;
+pub(crate) mod resolve_engine;
 pub(crate) mod rule;
+pub(crate) mod snapshot;
 
 pub use builder::MatcherBuilder;
 

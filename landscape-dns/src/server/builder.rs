@@ -17,9 +17,10 @@ use landscape_common::{
 use tokio::sync::Mutex;
 
 use crate::server::{
-    engine::{RedirectEngine, ResolveEngine},
     matcher::{DomainMatcher, RuntimeRuleMatcher},
-    rule::{DNSRedirectRuntime, DNSResolveRuntime},
+    redirect_engine::RedirectEngine,
+    resolve_engine::ResolveEngine,
+    rule::{DNSRedirectRuntime, DNSResolveRuntime, RedirectRuleParams, ResolveRuleParams},
 };
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
@@ -66,14 +67,14 @@ impl MatcherBuilder {
             else {
                 continue;
             };
-            redirect_runtimes.push(DNSRedirectRuntime::new(
-                Some(redirect.id),
-                None,
-                redirect.answer_mode,
+            redirect_runtimes.push(DNSRedirectRuntime::new(RedirectRuleParams {
+                redirect_id: Some(redirect.id),
+                dynamic_redirect_source: None,
+                answer_mode: redirect.answer_mode,
                 matcher,
-                redirect.result_info,
-                DEFAULT_STATIC_DNS_REDIRECT_TTL_SECS,
-            ));
+                result_info: redirect.result_info,
+                ttl_secs: DEFAULT_STATIC_DNS_REDIRECT_TTL_SECS,
+            }));
         }
 
         for batch in dynamic_redirects {
@@ -81,14 +82,14 @@ impl MatcherBuilder {
             for record in batch.records {
                 let matcher =
                     RuntimeRuleMatcher::new(vec![record.match_rule.into()], vec![], vec![], false);
-                redirect_runtimes.push(DNSRedirectRuntime::new(
-                    None,
-                    Some(batch.source_id.clone()),
-                    record.answer_mode,
+                redirect_runtimes.push(DNSRedirectRuntime::new(RedirectRuleParams {
+                    redirect_id: None,
+                    dynamic_redirect_source: Some(batch.source_id.clone()),
+                    answer_mode: record.answer_mode,
                     matcher,
-                    record.result_info,
-                    record.ttl_secs,
-                ));
+                    result_info: record.result_info,
+                    ttl_secs: record.ttl_secs,
+                }));
             }
         }
 
@@ -107,16 +108,16 @@ impl MatcherBuilder {
             else {
                 continue;
             };
-            let Some(resolve_runtime) = DNSResolveRuntime::new(
-                rule.id,
-                rule.index,
-                rule.filter,
-                rule.bind_config,
-                rule.mark,
-                upstream.clone(),
+            let Some(resolve_runtime) = DNSResolveRuntime::new(ResolveRuleParams {
+                rule_id: rule.id,
+                order: rule.index,
+                filter: rule.filter,
+                bind_config: rule.bind_config,
+                mark: rule.mark,
+                upstream: upstream.clone(),
                 matcher,
                 flow_id,
-            ) else {
+            }) else {
                 continue;
             };
             resolve_runtimes.insert(rule.index, resolve_runtime);

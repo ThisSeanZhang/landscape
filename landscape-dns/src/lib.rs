@@ -121,7 +121,7 @@ pub struct CacheDNSItem {
 }
 
 impl CacheDNSItem {
-    fn get_update_rules(&self) -> HashSet<FlowMarkInfo> {
+    pub(crate) fn get_update_rules(&self) -> HashSet<FlowMarkInfo> {
         self.get_update_rules_with_mark(&self.mark)
     }
 

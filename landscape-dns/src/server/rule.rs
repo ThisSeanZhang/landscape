@@ -20,6 +20,18 @@ use crate::connection::LandscapeMarkDNSResolver;
 use crate::domain::ParsedDomain;
 use crate::server::matcher::RuntimeRuleMatcher;
 
+/// Pure-data input for [`DNSRedirectRuntime::new`]: mirrors its fields so
+/// construction sites stay self-documenting.
+#[derive(Debug)]
+pub struct RedirectRuleParams {
+    pub redirect_id: Option<Uuid>,
+    pub dynamic_redirect_source: Option<String>,
+    pub answer_mode: DnsRedirectAnswerMode,
+    pub matcher: RuntimeRuleMatcher,
+    pub result_info: Vec<IpAddr>,
+    pub ttl_secs: u32,
+}
+
 #[derive(Debug)]
 pub struct DNSRedirectRuntime {
     pub redirect_id: Option<Uuid>,
@@ -31,14 +43,15 @@ pub struct DNSRedirectRuntime {
 }
 
 impl DNSRedirectRuntime {
-    pub fn new(
-        redirect_id: Option<Uuid>,
-        dynamic_redirect_source: Option<String>,
-        answer_mode: DnsRedirectAnswerMode,
-        matcher: RuntimeRuleMatcher,
-        result_info: Vec<IpAddr>,
-        ttl_secs: u32,
-    ) -> Self {
+    pub fn new(params: RedirectRuleParams) -> Self {
+        let RedirectRuleParams {
+            redirect_id,
+            dynamic_redirect_source,
+            answer_mode,
+            matcher,
+            result_info,
+            ttl_secs,
+        } = params;
         Self {
             matcher,
             redirect_id,
@@ -89,6 +102,20 @@ impl DNSRedirectRuntime {
     }
 }
 
+/// Pure-data input for [`DNSResolveRuntime::new`]: mirrors its fields so
+/// construction sites stay self-documenting and stay in sync at compile time.
+#[derive(Debug)]
+pub struct ResolveRuleParams {
+    pub rule_id: Uuid,
+    pub order: u32,
+    pub filter: FilterResult,
+    pub bind_config: DnsBindConfig,
+    pub mark: FlowMark,
+    pub upstream: DnsUpstreamConfig,
+    pub matcher: RuntimeRuleMatcher,
+    pub flow_id: u32,
+}
+
 #[derive(Debug)]
 pub struct DNSResolveRuntime {
     matcher: RuntimeRuleMatcher,
@@ -103,16 +130,17 @@ pub struct DNSResolveRuntime {
 }
 
 impl DNSResolveRuntime {
-    pub fn new(
-        rule_id: Uuid,
-        order: u32,
-        filter: FilterResult,
-        bind_config: DnsBindConfig,
-        mark_config: FlowMark,
-        upstream: DnsUpstreamConfig,
-        matcher: RuntimeRuleMatcher,
-        flow_id: u32,
-    ) -> Option<Self> {
+    pub fn new(params: ResolveRuleParams) -> Option<Self> {
+        let ResolveRuleParams {
+            rule_id,
+            order,
+            filter,
+            bind_config,
+            mark: mark_config,
+            upstream,
+            matcher,
+            flow_id,
+        } = params;
         let span = tracing::info_span!("dns_rule", flow_id = flow_id);
         let _ = span.enter();
 
@@ -269,11 +297,11 @@ mod tests {
 
     #[test]
     fn dynamic_redirect_solution_preserves_source_and_ttl() {
-        let solution = DNSRedirectRuntime::new(
-            None,
-            Some("docker:test".to_string()),
-            DnsRedirectAnswerMode::StaticIps,
-            RuntimeRuleMatcher::new(
+        let solution = DNSRedirectRuntime::new(RedirectRuleParams {
+            redirect_id: None,
+            dynamic_redirect_source: Some("docker:test".to_string()),
+            answer_mode: DnsRedirectAnswerMode::StaticIps,
+            matcher: RuntimeRuleMatcher::new(
                 vec![DomainConfig {
                     match_type: DomainMatchType::Full,
                     value: "example.com".to_string(),
@@ -282,9 +310,9 @@ mod tests {
                 vec![],
                 false,
             ),
-            vec![IpAddr::V4(Ipv4Addr::new(10, 0, 0, 2))],
-            42,
-        );
+            result_info: vec![IpAddr::V4(Ipv4Addr::new(10, 0, 0, 2))],
+            ttl_secs: 42,
+        });
 
         assert!(solution.is_match(&ParsedDomain::new("example.com.").unwrap()));
         assert!(solution.redirect_id.is_none());

@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, sync::Arc};
+use std::sync::Arc;
 
 use hickory_proto::rr::{Record, RecordType};
 use uuid::Uuid;
@@ -6,10 +6,17 @@ use uuid::Uuid;
 use landscape_common::metric::dns::DnsOutcome;
 
 use crate::domain::ParsedDomain;
-use crate::server::{
-    rule::{DNSRedirectRuntime, DNSResolveRuntime},
-    LocalDnsAnswerProvider,
-};
+use crate::server::{rule::DNSRedirectRuntime, LocalDnsAnswerProvider};
+
+/// Outcome of a matched redirect rule. `redirect_id` and
+/// `dynamic_redirect_source` identify the rule for the check API.
+#[derive(Debug)]
+pub struct RedirectAnswer {
+    pub records: Vec<Record>,
+    pub outcome: DnsOutcome,
+    pub redirect_id: Option<Uuid>,
+    pub dynamic_redirect_source: Option<String>,
+}
 
 #[derive(Debug, Default)]
 pub struct RedirectEngine {
@@ -26,7 +33,7 @@ impl RedirectEngine {
         domain: &ParsedDomain,
         query_type: RecordType,
         local_answer_provider: Option<&Arc<dyn LocalDnsAnswerProvider>>,
-    ) -> Option<(Vec<Record>, DnsOutcome, Option<Uuid>, Option<String>)> {
+    ) -> Option<RedirectAnswer> {
         for rule in &self.rules {
             if !rule.is_match(domain) {
                 continue;
@@ -48,36 +55,13 @@ impl RedirectEngine {
             }
 
             let outcome = if rule.is_block() { DnsOutcome::Block } else { DnsOutcome::Local };
-            return Some((
+            return Some(RedirectAnswer {
                 records,
                 outcome,
-                rule.redirect_id,
-                rule.dynamic_redirect_source.clone(),
-            ));
+                redirect_id: rule.redirect_id,
+                dynamic_redirect_source: rule.dynamic_redirect_source.clone(),
+            });
         }
         None
-    }
-}
-
-#[derive(Debug, Default)]
-pub struct ResolveEngine {
-    rules: BTreeMap<u32, DNSResolveRuntime>,
-}
-
-impl ResolveEngine {
-    pub fn new(rules: BTreeMap<u32, DNSResolveRuntime>) -> Self {
-        Self { rules }
-    }
-
-    pub fn find_match(&self, domain: &ParsedDomain) -> Option<&DNSResolveRuntime> {
-        self.rules.values().find(|rule| rule.is_match(domain))
-    }
-
-    pub fn get(&self, order: u32) -> Option<&DNSResolveRuntime> {
-        self.rules.get(&order)
-    }
-
-    pub fn iter(&self) -> impl Iterator<Item = (&u32, &DNSResolveRuntime)> {
-        self.rules.iter()
     }
 }
