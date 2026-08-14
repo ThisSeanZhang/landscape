@@ -14,6 +14,7 @@ use hickory_server::{
 use crate::{
     domain::ParsedDomain,
     server::{
+        answer::DnsQueryAnswer,
         chain::ResolveChain,
         ebpf::default_dns_mark_map,
         local::LocalResolver,
@@ -106,11 +107,7 @@ impl DnsRequestHandler {
     }
 
     /// The full resolution chain for live queries.
-    async fn resolve_query(
-        &self,
-        domain: &ParsedDomain,
-        query_type: RecordType,
-    ) -> (Vec<Record>, DnsOutcome) {
+    async fn resolve_query(&self, domain: &ParsedDomain, query_type: RecordType) -> DnsQueryAnswer {
         let runtime = self.snapshot.load_full();
         self.chain(&runtime).resolve(domain, query_type).await
     }
@@ -146,12 +143,12 @@ impl DnsRequestHandler {
         domain: &str,
         query_type: RecordType,
         outcome: DnsOutcome,
+        response_code: ResponseCode,
         start_time: Instant,
         src_ip: std::net::IpAddr,
         records: &[Record],
     ) {
         if let Some(msg_tx) = self.msg_tx.load_full() {
-            let response_code = outcome_to_response_code(outcome);
             let dns_metric = DnsMetric {
                 flow_id: self.flow_id,
                 domain: domain.to_string(),
@@ -213,11 +210,13 @@ impl RequestHandler for DnsRequestHandler {
                     .await;
             }
         };
-        let (records, outcome) = self.resolve_query(&pd, query_type).await;
+        let answer = self.resolve_query(&pd, query_type).await;
+        let (records, outcome, response_code) =
+            (answer.records, answer.outcome, answer.response_code);
 
         // Build response
         let builder = MessageResponseBuilder::from_message_request(request);
-        let metadata = response_metadata(&request.metadata, outcome_to_response_code(outcome));
+        let metadata = response_metadata(&request.metadata, response_code);
         let result = if records.is_empty() {
             let response = builder.build_no_records(metadata);
             response_handle.send_response(response).await
@@ -231,7 +230,15 @@ impl RequestHandler for DnsRequestHandler {
             );
             response_handle.send_response(response).await
         };
-        self.send_metric(pd.raw(), query_type, outcome, start_time, src_ip, &records);
+        self.send_metric(
+            pd.raw(),
+            query_type,
+            outcome,
+            response_code,
+            start_time,
+            src_ip,
+            &records,
+        );
 
         match result {
             Ok(info) => info,
@@ -279,14 +286,6 @@ fn validate_request(request: &Request) -> Result<&hickory_proto::op::LowerQuery,
         RecordType::OPT | RecordType::ZERO => Err(ResponseCode::FormErr),
         RecordType::TSIG | RecordType::Unknown(249) => Err(ResponseCode::NotImp),
         _ => Ok(req),
-    }
-}
-
-fn outcome_to_response_code(outcome: DnsOutcome) -> ResponseCode {
-    match outcome {
-        DnsOutcome::NxDomain => ResponseCode::NXDomain,
-        DnsOutcome::Error => ResponseCode::ServFail,
-        _ => ResponseCode::NoError,
     }
 }
 

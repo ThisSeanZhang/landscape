@@ -25,7 +25,7 @@ use landscape_core::lan_hostname::{LanHostnameRegistry, LocalZone, LocalZoneMatc
 
 use crate::{
     domain::ParsedDomain,
-    server::{DohAdvertiseProvider, LocalDnsAnswerProvider},
+    server::{answer::response_code_for, DohAdvertiseProvider, LocalDnsAnswerProvider},
 };
 
 const DDR_DISCOVERY_NAME: &str = "_dns.resolver.arpa.";
@@ -40,6 +40,20 @@ const HOSTNAME_TTL: u32 = 60;
 pub enum LocalAnswer {
     Answered { records: Vec<Record>, outcome: DnsOutcome },
     Empty { outcome: DnsOutcome },
+}
+
+impl LocalAnswer {
+    /// The protocol response code this local answer implies. Local stages
+    /// own their answer, so the code is derived from the business outcome
+    /// (NXDOMAIN for negative classifications, ServFail for local errors,
+    /// NoError otherwise).
+    pub fn response_code(&self) -> hickory_proto::op::ResponseCode {
+        match self {
+            LocalAnswer::Answered { outcome, .. } | LocalAnswer::Empty { outcome } => {
+                response_code_for(*outcome)
+            }
+        }
+    }
 }
 
 /// Local answers that never leave the resolver: blocked TLDs, localhost, the

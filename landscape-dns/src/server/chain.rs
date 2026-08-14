@@ -15,6 +15,7 @@ use landscape_common::{dns::error::DnsError, dns::rule::FilterResult, metric::dn
 use crate::{
     domain::ParsedDomain,
     server::{
+        answer::{response_code_for, DnsQueryAnswer},
         cache::CacheHandle,
         ebpf::DnsMarkMap,
         local::{LocalAnswer, LocalResolver},
@@ -27,27 +28,31 @@ use crate::{
 
 const LOOKUP_TIMEOUT: Duration = Duration::from_secs(5);
 
-/// Outcome of a matched rule's upstream lookup; the cache has already been
-/// updated according to the write policy passed to `lookup_rule_and_cache`.
+/// Outcome of a matched rule's upstream lookup; the caller (`stage_rule`) has
+/// already applied the cache write policy via `apply_outcome_to_cache`.
 enum RuleLookupOutcome {
     /// Upstream answered (possibly an empty NOERROR answer).
     NoError { records: Vec<Record> },
     /// Upstream answered NXDOMAIN.
     NxDomain,
+    /// Upstream answered with an explicit error code (Refused, NotImp,
+    /// FormErr, ServFail, ...). The code is passed through to the client.
+    ErrorCode(ResponseCode),
     /// Unrecoverable upstream failure (timeout, ServFail, ...).
     Failed,
 }
 
 impl RuleLookupOutcome {
     /// The (records, response code) pair to cache for this outcome, if any.
-    /// `NxDomain` caches an empty (negative) answer, `Failed` nothing.
+    /// `NxDomain` caches an empty (negative) answer, explicit error codes and
+    /// failures nothing.
     fn cache_write(&self) -> Option<(Vec<Record>, ResponseCode)> {
         match self {
             RuleLookupOutcome::NoError { records } => {
                 Some((records.clone(), ResponseCode::NoError))
             }
             RuleLookupOutcome::NxDomain => Some((vec![], ResponseCode::NXDomain)),
-            RuleLookupOutcome::Failed => None,
+            RuleLookupOutcome::ErrorCode(_) | RuleLookupOutcome::Failed => None,
         }
     }
 }
@@ -121,11 +126,7 @@ impl<'a> ResolveChain<'a> {
                 .await
             {
                 Ok(rdata_vec) => RuleLookupOutcome::NoError { records: rdata_vec },
-                Err(err) => match err.to_response_code() {
-                    ResponseCode::NXDomain => RuleLookupOutcome::NxDomain,
-                    ResponseCode::NoError => RuleLookupOutcome::NoError { records: vec![] },
-                    _ => RuleLookupOutcome::Failed,
-                },
+                Err(err) => rule_lookup_outcome_from_error(&err),
             };
 
         if let CacheWritePolicy::Write { query_filtered } = policy {
@@ -146,31 +147,36 @@ impl<'a> ResolveChain<'a> {
     // ---- entry points ----
 
     /// The live query path: redirect → local classification → cache/upstream.
-    pub async fn resolve(
-        &self,
-        domain: &ParsedDomain,
-        query_type: RecordType,
-    ) -> (Vec<Record>, DnsOutcome) {
+    pub async fn resolve(&self, domain: &ParsedDomain, query_type: RecordType) -> DnsQueryAnswer {
         // (1) Redirect (global check first)
         if let Some(answer) = self.stage_redirect(domain, query_type) {
-            return (answer.records, answer.outcome);
+            let response_code = answer.response_code();
+            return DnsQueryAnswer {
+                records: answer.records,
+                outcome: answer.outcome,
+                response_code,
+            };
         }
 
         // (2) Local classification (blocked TLDs, localhost, local zone,
         // `.arpa`). `None` means the resolver does not own the query and it
         // must continue to (3) Cache → (4) Upstream.
-        match self.stage_local(domain, query_type) {
-            Some(LocalAnswer::Answered { records, outcome }) => (records, outcome),
-            Some(LocalAnswer::Empty { outcome }) => (vec![], outcome),
-            None => self.resolve_from_cache_or_upstream(domain, query_type).await,
+        if let Some(answer) = self.stage_local(domain, query_type) {
+            let response_code = answer.response_code();
+            let (records, outcome) = match answer {
+                LocalAnswer::Answered { records, outcome } => (records, outcome),
+                LocalAnswer::Empty { outcome } => (vec![], outcome),
+            };
+            return DnsQueryAnswer { records, outcome, response_code };
         }
+        self.resolve_from_cache_or_upstream(domain, query_type).await
     }
 
     async fn resolve_from_cache_or_upstream(
         &self,
         domain: &ParsedDomain,
         query_type: RecordType,
-    ) -> (Vec<Record>, DnsOutcome) {
+    ) -> DnsQueryAnswer {
         if let Some((cached_records, filter, code)) = self.stage_cache(domain, query_type).await {
             if is_type_filtered(query_type, &filter) {
                 let outcome = if code == ResponseCode::NXDomain {
@@ -178,20 +184,32 @@ impl<'a> ResolveChain<'a> {
                 } else {
                     DnsOutcome::Filter
                 };
-                return (vec![], outcome);
+                return DnsQueryAnswer {
+                    records: vec![],
+                    outcome,
+                    response_code: response_code_for(outcome),
+                };
             }
             let outcome =
                 if code == ResponseCode::NXDomain { DnsOutcome::NxDomain } else { DnsOutcome::Hit };
-            return (filter_result(cached_records, &filter), outcome);
+            return DnsQueryAnswer {
+                records: filter_result(cached_records, &filter),
+                outcome,
+                response_code: response_code_for(outcome),
+            };
         }
 
         if let Some(resolver) = self.runtime.resolve_engine.find_match(domain) {
             let filter = resolver.filter_mode();
             if is_type_filtered(query_type, &filter) {
-                return (vec![], DnsOutcome::Filter);
+                return DnsQueryAnswer {
+                    records: vec![],
+                    outcome: DnsOutcome::Filter,
+                    response_code: response_code_for(DnsOutcome::Filter),
+                };
             }
 
-            match self
+            return match self
                 .stage_rule(
                     domain,
                     query_type,
@@ -200,18 +218,33 @@ impl<'a> ResolveChain<'a> {
                 )
                 .await
             {
-                RuleLookupOutcome::NoError { records } => {
-                    return (filter_result(records, &filter), DnsOutcome::Normal);
-                }
-                RuleLookupOutcome::NxDomain => {
-                    return (vec![], DnsOutcome::NxDomain);
-                }
-                RuleLookupOutcome::Failed => {
-                    return (vec![], DnsOutcome::Error);
-                }
-            }
+                RuleLookupOutcome::NoError { records } => DnsQueryAnswer {
+                    records: filter_result(records, &filter),
+                    outcome: DnsOutcome::Normal,
+                    response_code: ResponseCode::NoError,
+                },
+                RuleLookupOutcome::NxDomain => DnsQueryAnswer {
+                    records: vec![],
+                    outcome: DnsOutcome::NxDomain,
+                    response_code: ResponseCode::NXDomain,
+                },
+                RuleLookupOutcome::ErrorCode(code) => DnsQueryAnswer {
+                    records: vec![],
+                    outcome: DnsOutcome::Error,
+                    response_code: code,
+                },
+                RuleLookupOutcome::Failed => DnsQueryAnswer {
+                    records: vec![],
+                    outcome: DnsOutcome::Error,
+                    response_code: response_code_for(DnsOutcome::Error),
+                },
+            };
         }
-        (vec![], DnsOutcome::Normal)
+        DnsQueryAnswer {
+            records: vec![],
+            outcome: DnsOutcome::Normal,
+            response_code: ResponseCode::NoError,
+        }
     }
 
     /// Config-check path: read-only chain report, plus a projection of what a
@@ -309,9 +342,9 @@ impl<'a> ResolveChain<'a> {
         // `RefreshRequiresRule`.
         if domain.name().ends_with(".arpa") {
             self.clear_stale_entry_and_refresh_maps(domain, query_type).await;
-            let (records, _) = self.resolve_from_cache_or_upstream(domain, query_type).await;
+            let answer = self.resolve_from_cache_or_upstream(domain, query_type).await;
             return Ok(CheckChainDnsResult {
-                records: Some(crate::to_common_records(records)),
+                records: Some(crate::to_common_records(answer.records)),
                 ..Default::default()
             });
         }
@@ -342,6 +375,14 @@ impl<'a> ResolveChain<'a> {
             }
             RuleLookupOutcome::NxDomain => {
                 result.records = Some(vec![]);
+            }
+            RuleLookupOutcome::ErrorCode(_) => {
+                // Explicit upstream error: nothing to cache, treat like a
+                // failure for the refresh contract.
+                result.records = Some(vec![]);
+                if !query_filtered {
+                    return Err(DnsError::RefreshFailed(domain.raw().to_string()));
+                }
             }
             RuleLookupOutcome::Failed => {
                 // Filtered queries are served an empty answer, so a
@@ -437,6 +478,22 @@ async fn apply_outcome_to_cache(
                 code,
             ))
             .await;
+    }
+}
+
+/// Maps an upstream lookup error to the rule outcome. Explicit protocol codes
+/// are preserved so they can be passed through to the client; NXDomain and
+/// NoError are still treated as negative answers, everything else fails.
+fn rule_lookup_outcome_from_error(err: &crate::error::DnsError) -> RuleLookupOutcome {
+    match err {
+        crate::error::DnsError::Protocol(code) if *code == ResponseCode::NXDomain => {
+            RuleLookupOutcome::NxDomain
+        }
+        crate::error::DnsError::Protocol(code) if *code == ResponseCode::NoError => {
+            RuleLookupOutcome::NoError { records: vec![] }
+        }
+        crate::error::DnsError::Protocol(code) => RuleLookupOutcome::ErrorCode(*code),
+        _ => RuleLookupOutcome::Failed,
     }
 }
 
@@ -546,6 +603,54 @@ mod tests {
 
         let filtered_none = filter_result(records.clone(), &FilterResult::Unfilter);
         assert_eq!(filtered_none.len(), 2);
+    }
+
+    #[test]
+    fn test_rule_lookup_outcome_from_error_passes_upstream_error_codes_through() {
+        use crate::error::DnsError;
+
+        assert!(matches!(
+            rule_lookup_outcome_from_error(&DnsError::Protocol(ResponseCode::Refused)),
+            RuleLookupOutcome::ErrorCode(ResponseCode::Refused)
+        ));
+        assert!(matches!(
+            rule_lookup_outcome_from_error(&DnsError::Protocol(ResponseCode::NotImp)),
+            RuleLookupOutcome::ErrorCode(ResponseCode::NotImp)
+        ));
+        assert!(matches!(
+            rule_lookup_outcome_from_error(&DnsError::Protocol(ResponseCode::ServFail)),
+            RuleLookupOutcome::ErrorCode(ResponseCode::ServFail)
+        ));
+        assert!(matches!(
+            rule_lookup_outcome_from_error(&DnsError::Protocol(ResponseCode::NXDomain)),
+            RuleLookupOutcome::NxDomain
+        ));
+        assert!(matches!(
+            rule_lookup_outcome_from_error(&DnsError::Protocol(ResponseCode::NoError)),
+            RuleLookupOutcome::NoError { .. }
+        ));
+        assert!(matches!(
+            rule_lookup_outcome_from_error(&DnsError::Timeout),
+            RuleLookupOutcome::Failed
+        ));
+        assert!(matches!(
+            rule_lookup_outcome_from_error(&DnsError::Internal("boom".into())),
+            RuleLookupOutcome::Failed
+        ));
+
+        let no_error = RuleLookupOutcome::NoError { records: vec![] };
+        let (records, code) = no_error.cache_write().unwrap();
+        assert!(records.is_empty());
+        assert_eq!(code, ResponseCode::NoError);
+
+        let nxdomain = RuleLookupOutcome::NxDomain;
+        let (records, code) = nxdomain.cache_write().unwrap();
+        assert!(records.is_empty());
+        assert_eq!(code, ResponseCode::NXDomain);
+
+        // Explicit upstream error codes are never cached, like failures.
+        assert!(RuleLookupOutcome::ErrorCode(ResponseCode::Refused).cache_write().is_none());
+        assert!(RuleLookupOutcome::Failed.cache_write().is_none());
     }
 
     #[test]

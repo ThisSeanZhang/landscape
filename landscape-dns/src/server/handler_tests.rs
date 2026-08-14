@@ -272,30 +272,30 @@ mod tests {
             let handler = make_test_handler(vec![], vec![]);
 
             // resolver.arpa. → resolver branch
-            let (records, outcome) = handler
+            let answer = handler
                 .resolve_query(&ParsedDomain::new("resolver.arpa.").unwrap(), RecordType::A)
                 .await;
-            assert!(records.is_empty());
-            assert_eq!(outcome, DnsOutcome::Local);
+            assert!(answer.records.is_empty());
+            assert_eq!(answer.outcome, DnsOutcome::Local);
 
             // home.arpa. is not the default `lan` zone.
-            let (records, outcome) = handler
+            let answer = handler
                 .resolve_query(&ParsedDomain::new("home.arpa.").unwrap(), RecordType::A)
                 .await;
-            assert!(records.is_empty());
-            assert_eq!(outcome, DnsOutcome::NxDomain);
+            assert!(answer.records.is_empty());
+            assert_eq!(answer.outcome, DnsOutcome::NxDomain);
 
             // in-addr.arpa. → reverse branch
-            let (records, _outcome) = handler
+            let answer = handler
                 .resolve_query(
                     &ParsedDomain::new("1.0.0.10.in-addr.arpa.").unwrap(),
                     RecordType::PTR,
                 )
                 .await;
-            assert!(records.is_empty());
+            assert!(answer.records.is_empty());
 
             // ip6.arpa. → reverse branch
-            let (records, _outcome) = handler
+            let answer = handler
                 .resolve_query(
                     &ParsedDomain::new(
                         "0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.ip6.arpa.",
@@ -304,14 +304,14 @@ mod tests {
                     RecordType::PTR,
                 )
                 .await;
-            assert!(records.is_empty());
+            assert!(answer.records.is_empty());
 
             // evilresolver.arpa. is not resolver → NXDOMAIN
-            let (records, outcome) = handler
+            let answer = handler
                 .resolve_query(&ParsedDomain::new("evilresolver.arpa.").unwrap(), RecordType::A)
                 .await;
-            assert!(records.is_empty());
-            assert_eq!(outcome, DnsOutcome::NxDomain);
+            assert!(answer.records.is_empty());
+            assert_eq!(answer.outcome, DnsOutcome::NxDomain);
         });
     }
 
@@ -329,14 +329,14 @@ mod tests {
 
             // A disabled registry does not own private PTR queries: they fall
             // through to the cache/upstream stage (no rules → NOERROR/empty).
-            let (records, outcome) = handler.resolve_query(&domain, RecordType::PTR).await;
-            assert!(records.is_empty());
-            assert_eq!(outcome, DnsOutcome::Normal);
+            let answer = handler.resolve_query(&domain, RecordType::PTR).await;
+            assert!(answer.records.is_empty());
+            assert_eq!(answer.outcome, DnsOutcome::Normal);
 
             let loopback_domain = ParsedDomain::new("1.0.0.127.in-addr.arpa.").unwrap();
-            let (records, outcome) = handler.resolve_query(&loopback_domain, RecordType::PTR).await;
-            assert_eq!(outcome, DnsOutcome::Local);
-            assert_eq!(records.len(), 1);
+            let answer = handler.resolve_query(&loopback_domain, RecordType::PTR).await;
+            assert_eq!(answer.outcome, DnsOutcome::Local);
+            assert_eq!(answer.records.len(), 1);
         });
     }
 

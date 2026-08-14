@@ -6,7 +6,7 @@ use uuid::Uuid;
 use landscape_common::metric::dns::DnsOutcome;
 
 use crate::domain::ParsedDomain;
-use crate::server::{rule::DNSRedirectRuntime, LocalDnsAnswerProvider};
+use crate::server::{answer::response_code_for, rule::DNSRedirectRuntime, LocalDnsAnswerProvider};
 
 /// Outcome of a matched redirect rule. `redirect_id` and
 /// `dynamic_redirect_source` identify the rule for the check API.
@@ -16,6 +16,15 @@ pub struct RedirectAnswer {
     pub outcome: DnsOutcome,
     pub redirect_id: Option<Uuid>,
     pub dynamic_redirect_source: Option<String>,
+}
+
+impl RedirectAnswer {
+    /// The protocol response code this redirect answer implies: redirect
+    /// answers are served with NoError (including empty/blocked ones), the
+    /// same behavior the live path had before.
+    pub fn response_code(&self) -> hickory_proto::op::ResponseCode {
+        response_code_for(self.outcome)
+    }
 }
 
 #[derive(Debug, Default)]

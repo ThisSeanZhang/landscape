@@ -22,23 +22,4 @@ pub enum DnsError {
     Cache(String),
 }
 
-impl From<ResponseCode> for DnsError {
-    fn from(code: ResponseCode) -> Self {
-        DnsError::Protocol(code)
-    }
-}
-
-impl DnsError {
-    pub fn to_response_code(&self) -> ResponseCode {
-        match self {
-            DnsError::Protocol(code) => *code,
-            DnsError::Timeout => ResponseCode::ServFail,
-            DnsError::NoRuleMatched(_) => ResponseCode::NXDomain,
-            DnsError::Internal(_) => ResponseCode::ServFail,
-            DnsError::Io(_) => ResponseCode::ServFail,
-            DnsError::Cache(_) => ResponseCode::ServFail,
-        }
-    }
-}
-
 pub type DnsResult<T> = Result<T, DnsError>;

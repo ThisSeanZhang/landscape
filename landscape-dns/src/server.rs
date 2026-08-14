@@ -25,6 +25,7 @@ use crate::{
     CheckChainDnsResult, CheckDnsReq,
 };
 
+pub(crate) mod answer;
 pub mod builder;
 pub(crate) mod cache;
 pub(crate) mod chain;
