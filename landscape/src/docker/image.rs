@@ -26,6 +26,12 @@ pub struct PullManager {
     tasks: ARwLock<VecDeque<ARwLock<PullImgTask>>>,
 }
 
+impl Default for PullManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PullManager {
     pub fn new() -> Self {
         let (sock_tx, _) = broadcast::channel(2048);
@@ -73,7 +79,7 @@ impl PullManager {
                 }
             }
         }
-        return true;
+        true
     }
 
     pub async fn pull_img(&self, image_name: String, docker_client: Option<Docker>) {
@@ -101,7 +107,7 @@ impl PullManager {
 
         let task_id = Uuid::new_v4();
         let task_info = PullImgTask {
-            id: task_id.clone(),
+            id: task_id,
             img_name: image_name.clone(),
             layer_current_info: HashMap::new(),
             complete: false,
@@ -153,7 +159,7 @@ impl PullManager {
                         if info_write.complete {
                             break 'download;
                         }
-                        for (_, item) in &info_write.layer_current_info {
+                        for item in info_write.layer_current_info.values() {
                             if item.current != item.total {
                                 continue;
                             }

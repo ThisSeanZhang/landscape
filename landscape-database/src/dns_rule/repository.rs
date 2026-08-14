@@ -17,10 +17,7 @@ impl DNSRuleRepository {
     }
 
     pub async fn find_by_id(&self, id: DBId) -> Result<Option<DNSRuleConfig>, DbErr> {
-        Ok(DNSRuleConfigEntity::find_by_id(id)
-            .one(&self.db)
-            .await?
-            .map(|model| DNSRuleConfig::from(model)))
+        Ok(DNSRuleConfigEntity::find_by_id(id).one(&self.db).await?.map(DNSRuleConfig::from))
     }
 }
 

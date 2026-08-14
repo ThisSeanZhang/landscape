@@ -141,11 +141,11 @@ fn migrate_config_json(config: &mut serde_json::Value) -> bool {
             dhcpv6.as_object_mut().map(|m| m.remove("source"));
             // Clean up ia_pd: remove old fields
             if let Some(ia_pd) = dhcpv6.get_mut("ia_pd") {
-                ia_pd.as_object_mut().map(|m| {
+                if let Some(m) = ia_pd.as_object_mut() {
                     m.remove("max_source_prefix_len");
                     m.remove("pool_start_index");
                     m.remove("pool_end_index");
-                });
+                }
             }
         }
     }

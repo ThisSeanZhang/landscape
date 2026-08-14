@@ -55,10 +55,10 @@ impl From<Model> for FirewallRuleConfig {
     }
 }
 
-impl Into<ActiveModel> for FirewallRuleConfig {
-    fn into(self) -> ActiveModel {
-        let mut active = ActiveModel { id: Set(self.id), ..Default::default() };
-        self.update(&mut active);
+impl From<FirewallRuleConfig> for ActiveModel {
+    fn from(val: FirewallRuleConfig) -> Self {
+        let mut active = ActiveModel { id: Set(val.id), ..Default::default() };
+        val.update(&mut active);
         active
     }
 }
@@ -68,7 +68,7 @@ impl UpdateActiveModel<ActiveModel> for FirewallRuleConfig {
         active.index = Set(self.index);
         active.enable = Set(self.enable);
         active.remark = Set(self.remark);
-        active.items = Set(serde_json::to_value(self.items).unwrap().into());
+        active.items = Set(serde_json::to_value(self.items).unwrap());
         active.mark = Set(self.mark.into());
         active.update_at = Set(self.update_at);
     }

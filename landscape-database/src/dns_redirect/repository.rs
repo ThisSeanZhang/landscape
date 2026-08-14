@@ -22,7 +22,7 @@ impl DNSRedirectRuleRepository {
         Ok(DNSRedirectRuleConfigEntity::find_by_id(id)
             .one(&self.db)
             .await?
-            .map(|model| DNSRedirectRule::from(model)))
+            .map(DNSRedirectRule::from))
     }
 }
 

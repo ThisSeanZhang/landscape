@@ -45,7 +45,7 @@ async fn get_flow_dst_ip_rules(
     Path(id): Path<FlowId>,
 ) -> LandscapeApiResult<Vec<WanIpRuleConfig>> {
     let mut result = state.dst_ip_rule_service.list_flow_configs(id).await;
-    result.sort_by(|a, b| a.index.cmp(&b.index));
+    result.sort_by_key(|a| a.index);
     LandscapeApiResp::success(result)
 }
 

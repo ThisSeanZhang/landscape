@@ -10,6 +10,7 @@ pub const DEFAULT_IA_NA_POOL_SPAN: u64 = 0xFFFF;
 /// Prefix pools are defined in LanIPv6ConfigV2.prefix_groups.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[derive(Default)]
 pub struct DHCPv6ServerConfig {
     pub enable: bool,
 
@@ -22,12 +23,6 @@ pub struct DHCPv6ServerConfig {
     #[serde(default)]
     #[cfg_attr(feature = "openapi", schema(required = false, nullable = false))]
     pub ia_pd: Option<DHCPv6IAPDConfig>,
-}
-
-impl Default for DHCPv6ServerConfig {
-    fn default() -> Self {
-        Self { enable: false, ia_na: None, ia_pd: None }
-    }
 }
 
 /// IA_NA config — address assignment parameters.

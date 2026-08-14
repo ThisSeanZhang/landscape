@@ -136,11 +136,7 @@ impl IfaceManagerService {
         {
             Some(link_config)
         } else {
-            if let Some(iface) = get_iface_by_name(&iface_name).await {
-                Some(from_phy_dev(&iface))
-            } else {
-                None
-            }
+            get_iface_by_name(&iface_name).await.map(|iface| from_phy_dev(&iface))
         };
 
         if let Some(mut link_config) = link_config {
@@ -158,11 +154,7 @@ impl IfaceManagerService {
         {
             Some(link_config)
         } else {
-            if let Some(iface) = get_iface_by_name(&iface_name).await {
-                Some(from_phy_dev(&iface))
-            } else {
-                None
-            }
+            get_iface_by_name(&iface_name).await.map(|iface| from_phy_dev(&iface))
         };
 
         if let Some(mut link_config) = link_config {
@@ -208,11 +200,7 @@ impl IfaceManagerService {
         {
             Some(link_config)
         } else {
-            if let Some(iface) = get_iface_by_name(&iface_name).await {
-                Some(from_phy_dev(&iface))
-            } else {
-                None
-            }
+            get_iface_by_name(&iface_name).await.map(|iface| from_phy_dev(&iface))
         };
 
         if let Some(mut link_config) = link_config {

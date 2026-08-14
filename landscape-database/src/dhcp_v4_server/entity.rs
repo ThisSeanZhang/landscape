@@ -59,13 +59,13 @@ impl From<Model> for DHCPv4ServiceConfig {
     }
 }
 
-impl Into<ActiveModel> for DHCPv4ServiceConfig {
-    fn into(self) -> ActiveModel {
+impl From<DHCPv4ServiceConfig> for ActiveModel {
+    fn from(val: DHCPv4ServiceConfig) -> Self {
         let mut active = ActiveModel {
-            iface_name: Set(self.iface_name.clone()),
+            iface_name: Set(val.iface_name.clone()),
             ..Default::default()
         };
-        update(self, &mut active);
+        update(val, &mut active);
         active
     }
 }

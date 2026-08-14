@@ -63,16 +63,16 @@ impl From<u32> for FlowMark {
     }
 }
 
-impl Into<u32> for FlowMark {
-    fn into(self) -> u32 {
-        let raw_action: u8 = self.action.into();
+impl From<FlowMark> for u32 {
+    fn from(val: FlowMark) -> Self {
+        let raw_action: u8 = val.action.into();
         let mut value = (raw_action as u32) << 8;
 
         if raw_action == FLOW_REDIRECT {
-            value |= self.flow_id as u32;
+            value |= val.flow_id as u32;
         }
 
-        if self.allow_reuse_port {
+        if val.allow_reuse_port {
             value |= FLOW_ALLOW_REUSE_PORT_MASK;
         }
 
@@ -109,9 +109,9 @@ impl From<u8> for FlowMarkAction {
     }
 }
 
-impl Into<u8> for FlowMarkAction {
-    fn into(self) -> u8 {
-        match self {
+impl From<FlowMarkAction> for u8 {
+    fn from(val: FlowMarkAction) -> Self {
+        match val {
             FlowMarkAction::KeepGoing => FLOW_KEEP_GOING,
             FlowMarkAction::Direct => FLOW_DIRECT,
             FlowMarkAction::Drop => FLOW_DROP,

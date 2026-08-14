@@ -34,7 +34,7 @@ use crate::error::LandscapeApiResult;
 pub mod error;
 
 const SECRET_KEY_LENGTH: usize = 20;
-const DEFAULT_EXPIRE_TIME: usize = 60 * 60 * 1;
+const DEFAULT_EXPIRE_TIME: usize = 60 * 60;
 const SYS_TOKEN_EXPIRE_TIME: usize = 60 * 60 * 24 * 365 * 30;
 
 pub static SECRET_KEY: Lazy<String> = Lazy::new(|| {
@@ -61,7 +61,7 @@ pub async fn output_sys_token(auth: &AuthRuntimeConfig) {
         .expect("Failed to open landscape_api_token");
 
     // 写入系统 token
-    file.write(sys_token.as_bytes()).await.expect("Failed to write system token");
+    file.write_all(sys_token.as_bytes()).await.expect("Failed to write system token");
     file.flush().await.expect("Failed to flush system token");
     // 设置文件权限为 0o400（仅文件所有者可读）
     let perms = Permissions::from_mode(0o400);
@@ -192,7 +192,7 @@ async fn login_handler(
         result.success = true;
         result.token = create_jwt(&username, DEFAULT_EXPIRE_TIME)?;
     } else {
-        return Err(AuthError::InvalidUsernameOrPassword)?;
+        Err(AuthError::InvalidUsernameOrPassword)?;
     }
     LandscapeApiResp::success(result)
 }

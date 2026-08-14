@@ -19,6 +19,12 @@ use crate::get_iface_by_name;
 #[allow(dead_code)]
 pub struct RouteWanService {}
 
+impl Default for RouteWanService {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl RouteWanService {
     pub fn new() -> Self {
         RouteWanService {}

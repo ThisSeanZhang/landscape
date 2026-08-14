@@ -63,7 +63,7 @@ pub async fn get_dhcpv6_connect(
         tracing::info!("DHCPv6 recv loop down");
     });
 
-    return Ok((message_rx, send_socket));
+    Ok((message_rx, send_socket))
 }
 
 pub async fn get_icmp_connect(
@@ -113,5 +113,5 @@ pub async fn get_icmp_connect(
         tracing::info!("ICMP recv loop down");
     });
 
-    return Ok((message_rx, send_socket));
+    Ok((message_rx, send_socket))
 }

@@ -50,14 +50,14 @@ impl From<u8> for RouterFlags {
     }
 }
 
-impl Into<u8> for RouterFlags {
-    fn into(self) -> u8 {
-        (self.managed_address_config as u8) << 7
-            | (self.other_config as u8) << 6
-            | (self.home_agent as u8) << 5
-            | (self.prf << 3)
-            | (self.nd_proxy as u8) << 2
-            | self.reserved
+impl From<RouterFlags> for u8 {
+    fn from(val: RouterFlags) -> Self {
+        (val.managed_address_config as u8) << 7
+            | (val.other_config as u8) << 6
+            | (val.home_agent as u8) << 5
+            | (val.prf << 3)
+            | (val.nd_proxy as u8) << 2
+            | val.reserved
     }
 }
 

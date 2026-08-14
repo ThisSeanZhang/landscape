@@ -48,17 +48,17 @@ impl From<Model> for StaticNatMappingV4Config {
             lan_target: model
                 .lan_target
                 .and_then(|target| serde_json::from_value(target).ok())
-                .or_else(|| lan_ipv4.map(|ip| StaticNatV4Target::address(ip))),
+                .or_else(|| lan_ipv4.map(StaticNatV4Target::address)),
             l4_protocols: serde_json::from_value(model.l4_protocols).unwrap(),
             update_at: model.update_at,
         }
     }
 }
 
-impl Into<ActiveModel> for StaticNatMappingV4Config {
-    fn into(self) -> ActiveModel {
-        let mut active = ActiveModel { id: Set(self.id), ..Default::default() };
-        crate::repository::UpdateActiveModel::<ActiveModel>::update(self, &mut active);
+impl From<StaticNatMappingV4Config> for ActiveModel {
+    fn from(val: StaticNatMappingV4Config) -> Self {
+        let mut active = ActiveModel { id: Set(val.id), ..Default::default() };
+        crate::repository::UpdateActiveModel::<ActiveModel>::update(val, &mut active);
         active
     }
 }

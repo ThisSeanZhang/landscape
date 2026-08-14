@@ -30,8 +30,7 @@ pub async fn create_dump(iface_name: String) -> (Sender<Vec<u8>>, Receiver<Box<E
     let interfaces = datalink::interfaces();
     let interface = interfaces
         .into_iter()
-        .filter(interface_names_match)
-        .next()
+        .find(interface_names_match)
         .unwrap_or_else(|| panic!("No such network interface: {}", iface_name));
 
     println!("interface name: {:?}", interface);
@@ -49,7 +48,7 @@ pub async fn create_dump(iface_name: String) -> (Sender<Vec<u8>>, Receiver<Box<E
     //     Err(_) => panic!("SystemTime before UNIX EPOCH!"),
     // };
     // let time = Instant::now();
-    let mac = interface.mac.map(|mac| mac.octets()).map(|o| MacAddr::from(o));
+    let mac = interface.mac.map(|mac| mac.octets()).map(MacAddr::from);
     spawn_named_thread(
         short_thread_name(thread_name::prefix::DUMP_RX, &iface_name),
         move || loop {

@@ -11,7 +11,7 @@ type EtherAddr = [u8; ETHER_ADDR_LEN];
 const LOCAL_ADDR_BIT: u8 = 0x02;
 const MULTICAST_ADDR_BIT: u8 = 0x01;
 
-#[derive(Clone, Copy, Default, Hash, PartialOrd, Eq)]
+#[derive(Clone, Copy, Default, Hash, PartialOrd, Eq, PartialEq)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[cfg_attr(feature = "openapi", schema(value_type = String, example = "00:11:22:33:44:55"))]
 pub struct MacAddr(pub u8, pub u8, pub u8, pub u8, pub u8, pub u8);
@@ -81,8 +81,9 @@ impl MacAddr {
     }
 
     // TODO: Use Result instead
+    #[allow(clippy::should_implement_trait)] // 有 30+ 处调用点使用 MacAddr::from_str 命名，保持兼容
     pub fn from_str(value: &str) -> Option<MacAddr> {
-        let parts: Vec<&str> = value.split(|c| c == ':' || c == '-').collect();
+        let parts: Vec<&str> = value.split([':', '-']).collect();
         if parts.len() != 6 {
             return None;
         }
@@ -148,17 +149,6 @@ impl From<MacAddr> for EtherAddr {
 impl PartialEq<EtherAddr> for MacAddr {
     fn eq(&self, other: &EtherAddr) -> bool {
         *self == MacAddr::from(*other)
-    }
-}
-
-impl PartialEq<MacAddr> for MacAddr {
-    fn eq(&self, other: &MacAddr) -> bool {
-        self.0 == other.0
-            && self.1 == other.1
-            && self.2 == other.2
-            && self.3 == other.3
-            && self.4 == other.4
-            && self.5 == other.5
     }
 }
 

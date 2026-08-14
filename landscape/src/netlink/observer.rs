@@ -68,11 +68,10 @@ pub fn filter_message_status(
                     {
                         let mut ifacename = None;
                         for attr in link_message.attributes {
-                            match attr {
-                                netlink_packet_route::link::LinkAttribute::IfName(iface_name) => {
-                                    ifacename = Some(iface_name);
-                                }
-                                _ => {}
+                            if let netlink_packet_route::link::LinkAttribute::IfName(iface_name) =
+                                attr
+                            {
+                                ifacename = Some(iface_name);
                             }
                         }
 
@@ -121,19 +120,16 @@ pub fn filter_message_status(
 }
 
 pub fn handle_address_msg(message: NetlinkMessage<RouteNetlinkMessage>) {
-    match message.payload {
-        NetlinkPayload::InnerMessage(inner_message) => {
-            match inner_message {
-                RouteNetlinkMessage::NewAddress(link_message) => {
-                    handle_address_update(link_message, true); // 对应 add_wan_ip
-                }
-                RouteNetlinkMessage::DelAddress(link_message) => {
-                    handle_address_update(link_message, false); // 对应 del_wan_ip
-                }
-                _ => {}
+    if let NetlinkPayload::InnerMessage(inner_message) = message.payload {
+        match inner_message {
+            RouteNetlinkMessage::NewAddress(link_message) => {
+                handle_address_update(link_message, true); // 对应 add_wan_ip
             }
+            RouteNetlinkMessage::DelAddress(link_message) => {
+                handle_address_update(link_message, false); // 对应 del_wan_ip
+            }
+            _ => {}
         }
-        _ => {}
     }
 }
 
@@ -143,11 +139,8 @@ fn handle_address_update(link_message: AddressMessage, is_add: bool) {
     let mut addr = None;
 
     for attr in link_message.attributes.iter() {
-        match attr {
-            netlink_packet_route::address::AddressAttribute::Address(address) => {
-                addr = Some(address);
-            }
-            _ => {}
+        if let netlink_packet_route::address::AddressAttribute::Address(address) = attr {
+            addr = Some(address);
         }
     }
 

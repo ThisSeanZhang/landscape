@@ -132,7 +132,7 @@ mod tests {
 
         assert_eq!(usize::from(left.is_ok()) + usize::from(right.is_ok()), 1);
         let error = left.err().or_else(|| right.err()).unwrap();
-        assert!(matches!(error, LanIPv6Error::PrefixSlotOverlap { .. }));
+        assert!(matches!(error, LanIPv6Error::PrefixSlotOverlap(_)));
 
         use landscape_common::database::LandscapeStore;
         let persisted = left_store.list().await.unwrap();

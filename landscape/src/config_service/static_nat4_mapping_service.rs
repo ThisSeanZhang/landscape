@@ -107,7 +107,7 @@ impl StaticNat4MappingService {
         &self,
         nat_config: &NatConfig,
     ) -> Result<(), StaticNatError> {
-        let mappings = self.store.list().await.map_err(|e| StaticNatError::Internal(e))?;
+        let mappings = self.store.list().await.map_err(StaticNatError::Internal)?;
         for (proto, range) in [(6u8, &nat_config.tcp_range), (17u8, &nat_config.udp_range)] {
             for mapping in &mappings {
                 if !mapping.enable || !mapping.l4_protocols.contains(&proto) {

@@ -60,10 +60,10 @@ impl From<Model> for CertAccountConfig {
     }
 }
 
-impl Into<ActiveModel> for CertAccountConfig {
-    fn into(self) -> ActiveModel {
-        let mut active = ActiveModel { id: Set(self.id), ..Default::default() };
-        self.update(&mut active);
+impl From<CertAccountConfig> for ActiveModel {
+    fn from(val: CertAccountConfig) -> Self {
+        let mut active = ActiveModel { id: Set(val.id), ..Default::default() };
+        val.update(&mut active);
         active
     }
 }

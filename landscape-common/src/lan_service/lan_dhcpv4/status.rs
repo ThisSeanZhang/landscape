@@ -32,6 +32,12 @@ pub struct ArpScanStatus {
     infos: VecDeque<ArpScanInfo>,
 }
 
+impl Default for ArpScanStatus {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ArpScanStatus {
     pub fn new() -> Self {
         Self { infos: VecDeque::with_capacity(LAND_ARP_INFO_SIZE) }

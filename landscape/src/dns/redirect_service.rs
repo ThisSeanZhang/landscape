@@ -25,13 +25,12 @@ impl DNSRedirectService {
         dns_events_tx: mpsc::Sender<DnsEvent>,
     ) -> Self {
         let store = store.dns_redirect_rule_store();
-        let dns_rule_service = Self {
+
+        Self {
             store,
             dns_events_tx,
             dynamic_batches: Arc::new(RwLock::new(HashMap::new())),
-        };
-
-        dns_rule_service
+        }
     }
 
     pub async fn set_dynamic_batch(

@@ -66,10 +66,10 @@ impl From<Model> for DNSRuleConfig {
     }
 }
 
-impl Into<ActiveModel> for DNSRuleConfig {
-    fn into(self) -> ActiveModel {
-        let mut active = ActiveModel { id: Set(self.id), ..Default::default() };
-        self.update(&mut active);
+impl From<DNSRuleConfig> for ActiveModel {
+    fn from(val: DNSRuleConfig) -> Self {
+        let mut active = ActiveModel { id: Set(val.id), ..Default::default() };
+        val.update(&mut active);
         active
     }
 }
@@ -79,9 +79,9 @@ impl UpdateActiveModel<ActiveModel> for DNSRuleConfig {
         active.name = Set(self.name);
         active.index = Set(self.index);
         active.enable = Set(self.enable);
-        active.filter = Set(serde_json::to_value(self.filter).unwrap().into());
+        active.filter = Set(serde_json::to_value(self.filter).unwrap());
         active.upstream_id = Set(self.upstream_id);
-        active.bind_config = Set(serde_json::to_value(self.bind_config).unwrap().into());
+        active.bind_config = Set(serde_json::to_value(self.bind_config).unwrap());
         active.mark = Set(self.mark.into());
         active.source = Set(serde_json::to_string(&self.source).unwrap());
         active.flow_id = Set(self.flow_id);

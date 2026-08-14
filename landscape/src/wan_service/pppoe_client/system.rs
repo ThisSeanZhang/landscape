@@ -30,7 +30,7 @@ pub(crate) struct SessionHandle {
 impl SessionHandle {
     pub(crate) async fn shutdown(self, route_service: &IpRouteService) {
         let _ = std::process::Command::new("ip")
-            .args(&[
+            .args([
                 "addr",
                 "del",
                 &format!("{}", self.client_ip),
@@ -42,19 +42,19 @@ impl SessionHandle {
             .output();
 
         let _ = std::process::Command::new("ip")
-            .args(&["neigh", "del", &format!("{}", self.server_ip), "dev", &self.iface_name])
+            .args(["neigh", "del", &format!("{}", self.server_ip), "dev", &self.iface_name])
             .output();
 
         let server_linklocal = eui64_linklocal_from_mac(&self.server_mac);
         let _ = std::process::Command::new("ip")
-            .args(&["neigh", "del", &format!("{}", server_linklocal), "dev", &self.iface_name])
+            .args(["neigh", "del", &format!("{}", server_linklocal), "dev", &self.iface_name])
             .output();
 
         if let Some(ref iface_id) = self.ipv6cp_server_id {
             if iface_id.len() == 8 {
                 let iface_linklocal = iface_id_linklocal(iface_id);
                 let _ = std::process::Command::new("ip")
-                    .args(&[
+                    .args([
                         "neigh",
                         "del",
                         &format!("{}", iface_linklocal),
@@ -67,13 +67,13 @@ impl SessionHandle {
 
         if let Some(ref linklocal) = self.ipv6cp_client_linklocal {
             let _ = std::process::Command::new("ip")
-                .args(&["-6", "addr", "del", &format!("{}/64", linklocal), "dev", &self.iface_name])
+                .args(["-6", "addr", "del", &format!("{}/64", linklocal), "dev", &self.iface_name])
                 .output();
         }
 
         if let Some(ref prev) = self.prev_ipv6_linklocal {
             let _ = std::process::Command::new("ip")
-                .args(&["-6", "addr", "add", &format!("{}/64", prev), "dev", &self.iface_name])
+                .args(["-6", "addr", "add", &format!("{}/64", prev), "dev", &self.iface_name])
                 .output();
         }
 
@@ -85,7 +85,7 @@ impl SessionHandle {
         landscape_ebpf::map_setting::del_ipv4_wan_ip(self.ifindex);
 
         let _ = std::process::Command::new("ip")
-            .args(&["link", "set", "dev", &self.iface_name, "mtu", "1500"])
+            .args(["link", "set", "dev", &self.iface_name, "mtu", "1500"])
             .output();
 
         // PppoeHandle Drop cleans up TC/XDP/SKB state automatically
@@ -126,14 +126,14 @@ pub(crate) async fn create_session(
     );
 
     if let Err(e) = std::process::Command::new("ip")
-        .args(&["link", "set", "dev", iface_name, "mtu", &format!("{}", mru)])
+        .args(["link", "set", "dev", iface_name, "mtu", &format!("{}", mru)])
         .output()
     {
         tracing::error!("failed to set iface MTU for native PPPoE: {e:?}");
     }
 
     if let Err(e) = std::process::Command::new("ip")
-        .args(&[
+        .args([
             "addr",
             "add",
             &format!("{}", client_ip),
@@ -196,7 +196,7 @@ pub(crate) async fn create_session(
         )
     );
     let neigh_result = std::process::Command::new("ip")
-        .args(&[
+        .args([
             "neigh",
             "replace",
             &format!("{}", server_ip),
@@ -224,7 +224,7 @@ pub(crate) async fn create_session(
 
     let server_linklocal = eui64_linklocal_from_mac(&lcp.server_mac);
     let v6_result = std::process::Command::new("ip")
-        .args(&[
+        .args([
             "neigh",
             "replace",
             &format!("{}", server_linklocal),
@@ -254,7 +254,7 @@ pub(crate) async fn create_session(
         if server_iface_id.len() == 8 {
             let iface_linklocal = iface_id_linklocal(server_iface_id);
             let v6_result = std::process::Command::new("ip")
-                .args(&[
+                .args([
                     "neigh",
                     "replace",
                     &format!("{}", iface_linklocal),
@@ -330,11 +330,11 @@ fn setup_linklocal(
             let addr = iface_id_linklocal(iface_id);
 
             let _ = std::process::Command::new("ip")
-                .args(&["-6", "addr", "flush", "dev", iface_name, "scope", "link"])
+                .args(["-6", "addr", "flush", "dev", iface_name, "scope", "link"])
                 .output();
 
             let result = std::process::Command::new("ip")
-                .args(&["-6", "addr", "add", &format!("{}/64", addr), "dev", iface_name])
+                .args(["-6", "addr", "add", &format!("{}/64", addr), "dev", iface_name])
                 .output();
             match result {
                 Ok(output) if output.status.success() => {

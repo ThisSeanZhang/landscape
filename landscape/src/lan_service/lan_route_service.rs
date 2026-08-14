@@ -37,7 +37,7 @@ impl ServiceStarterTrait for RouteLanService {
 
         if config.enable {
             if let Some(iface) = get_iface_by_name(&config.iface_name).await {
-                let route_name = format!("{}-static", &config.iface_name);
+                let route_name = format!("{}-static", config.iface_name);
                 let route_service = self.route_service.clone();
                 let static_routes: Vec<_> = config
                     .static_routes

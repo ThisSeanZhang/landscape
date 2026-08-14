@@ -23,11 +23,8 @@ impl LandscapeSingleIpInfo {
             msg.header.flags.contains(netlink_packet_route::address::AddressHeaderFlags::Permanent);
         let mut address = None;
         for each in msg.attributes.iter() {
-            match each {
-                netlink_packet_route::address::AddressAttribute::Address(ip_addr) => {
-                    address = Some(ip_addr.clone())
-                }
-                _ => {}
+            if let netlink_packet_route::address::AddressAttribute::Address(ip_addr) = each {
+                address = Some(*ip_addr)
             }
         }
 
@@ -143,12 +140,12 @@ pub async fn get_ppp_address(
                     match attr {
                         netlink_packet_route::address::AddressAttribute::Local(addr) => {
                             if let IpAddr::V4(addr) = addr {
-                                out_addr = Some(addr.clone());
+                                out_addr = Some(*addr);
                             }
                         }
                         netlink_packet_route::address::AddressAttribute::Address(addr) => {
                             if let IpAddr::V4(addr) = addr {
-                                peer_addr = Some(addr.clone());
+                                peer_addr = Some(*addr);
                             }
                         }
                         _ => {}
@@ -186,10 +183,8 @@ pub async fn add_address_with_handle(
                             ip_equal = true;
                         }
                     }
-                    AddressAttribute::Label(label) => {
-                        if *label == link_name.to_string() {
-                            link_name_equal = true;
-                        }
+                    AddressAttribute::Label(label) if *label == link_name.to_string() => {
+                        link_name_equal = true;
                     }
                     _ => {}
                 }
@@ -215,7 +210,7 @@ pub async fn add_address_with_handle(
 
 pub fn get_existing_linklocal(iface_name: &str) -> Option<std::net::Ipv6Addr> {
     let output = std::process::Command::new("ip")
-        .args(&["-6", "addr", "show", "dev", iface_name, "scope", "link"])
+        .args(["-6", "addr", "show", "dev", iface_name, "scope", "link"])
         .output()
         .ok()?;
     if !output.status.success() {

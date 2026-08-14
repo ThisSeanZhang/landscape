@@ -171,7 +171,7 @@ async fn handle_iface_pppd_config(
 ) -> LandscapeApiResult<()> {
     validate_pppd_config(&state, &config).await?;
     if state.pppd_service.get_config_by_name(config.iface_name.clone()).await.is_some() {
-        return Err(ServiceConfigError::InvalidConfig {
+        Err(ServiceConfigError::InvalidConfig {
             reason: format!(
                 "PPPoE interface '{}' already exists; update it via its current interface name",
                 config.iface_name
@@ -201,11 +201,11 @@ async fn update_existing_iface_pppd_config(
     JsonBody(config): JsonBody<PPPDServiceConfig>,
 ) -> LandscapeApiResult<()> {
     if state.pppd_service.get_config_by_name(iface_name.clone()).await.is_none() {
-        return Err(ServiceConfigError::NotFound { service_name: "PPPD" })?;
+        Err(ServiceConfigError::NotFound { service_name: "PPPD" })?;
     }
 
     if config.iface_name != iface_name {
-        return Err(ServiceConfigError::InvalidConfig {
+        Err(ServiceConfigError::InvalidConfig {
             reason: "Established PPPoE interfaces cannot be renamed".to_string(),
         })?;
     }

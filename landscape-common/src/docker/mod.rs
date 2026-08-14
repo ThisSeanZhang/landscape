@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
@@ -46,7 +46,7 @@ pub struct DockerCmd {
 
 impl DockerCmd {
     // 生成 Docker 命令
-    pub fn generate_docker_command(&self, home_path: &PathBuf) -> Vec<String> {
+    pub fn generate_docker_command(&self, home_path: &Path) -> Vec<String> {
         let mut command = vec!["docker".to_string(), "run".to_string(), "-d".to_string()];
 
         if let Some(container_name) = &self.container_name {
@@ -126,7 +126,8 @@ impl DockerCmd {
     }
 
     // 执行 Docker 命令
-    pub async fn execute_docker_command(&self, home_path: &PathBuf) -> Result<(), ()> {
+    #[allow(clippy::result_unit_err)] // 内部 API：调用方只关心成功与否
+    pub async fn execute_docker_command(&self, home_path: &Path) -> Result<(), ()> {
         let command = self.generate_docker_command(home_path);
         if let Ok(status) =
             tokio::process::Command::new(&command[0]).args(&command[1..]).status().await

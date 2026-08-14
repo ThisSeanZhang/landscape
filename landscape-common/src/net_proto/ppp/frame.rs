@@ -232,7 +232,7 @@ impl PointToPoint {
     pub fn gen_chap_response(id: u8, peer_id: &str, password: &str, challenge: &[u8]) -> Vec<u8> {
         use md5::{Digest, Md5};
         let mut hasher = Md5::new();
-        hasher.update(&[id]);
+        hasher.update([id]);
         hasher.update(password.as_bytes());
         hasher.update(challenge);
         let hash = hasher.finalize();
@@ -366,9 +366,9 @@ mod tests {
         let pkt = PointToPoint::gen_chap_response(id, "peer", password, &challenge);
 
         let mut hasher = Md5::new();
-        hasher.update(&[id]);
+        hasher.update([id]);
         hasher.update(password.as_bytes());
-        hasher.update(&challenge);
+        hasher.update(challenge);
         let expected = hasher.finalize();
 
         let hash_from_pkt = &pkt[7..23];

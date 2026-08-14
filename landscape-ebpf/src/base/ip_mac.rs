@@ -360,10 +360,7 @@ async fn parse_ipv6_neigh_full_info(
             Ok(Some(msg)) => msg,
             Ok(None) => break,
             Err(e) => {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    format!("netlink error: {e}"),
-                ));
+                return Err(std::io::Error::other(format!("netlink error: {e}")));
             }
         };
 
@@ -392,10 +389,7 @@ async fn parse_ipv4_neigh_full_info(
             Ok(Some(msg)) => msg,
             Ok(None) => break,
             Err(e) => {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    format!("netlink error: {e}"),
-                ));
+                return Err(std::io::Error::other(format!("netlink error: {e}")));
             }
         };
 
@@ -433,10 +427,10 @@ fn ipv4_neigh_msg_to_entry(
                     ipv4_addr = Some(*ip);
                 }
             }
-            NeighbourAttribute::LinkLayerAddress(bytes) => {
-                if bytes.len() >= 6 && !bytes.iter().all(|&b| b == 0) {
-                    mac_bytes = Some(bytes.clone());
-                }
+            NeighbourAttribute::LinkLayerAddress(bytes)
+                if bytes.len() >= 6 && !bytes.iter().all(|&b| b == 0) =>
+            {
+                mac_bytes = Some(bytes.clone());
             }
             _ => {}
         }
@@ -447,12 +441,9 @@ fn ipv4_neigh_msg_to_entry(
         _ => return None,
     };
 
-    let neighbor_mac = match mac_bytes.as_deref() {
-        Some(bytes) => match MacAddr::from_arry(bytes) {
-            Some(mac) => mac,
-            None => return None,
-        },
-        None => return None,
+    let neighbor_mac = {
+        let bytes = mac_bytes.as_deref()?;
+        MacAddr::from_arry(bytes)?
     };
 
     let ifindex = msg.header.ifindex;
@@ -509,10 +500,10 @@ fn ipv6_neigh_msg_to_entry(
                     ipv6_addr = Some(*ip);
                 }
             }
-            NeighbourAttribute::LinkLayerAddress(bytes) => {
-                if bytes.len() >= 6 && !bytes.iter().all(|&b| b == 0) {
-                    mac_bytes = Some(bytes.clone());
-                }
+            NeighbourAttribute::LinkLayerAddress(bytes)
+                if bytes.len() >= 6 && !bytes.iter().all(|&b| b == 0) =>
+            {
+                mac_bytes = Some(bytes.clone());
             }
             _ => {}
         }
@@ -523,12 +514,9 @@ fn ipv6_neigh_msg_to_entry(
         _ => return None,
     };
 
-    let neighbor_mac = match mac_bytes.as_deref() {
-        Some(bytes) => match MacAddr::from_arry(bytes) {
-            Some(mac) => mac,
-            None => return None,
-        },
-        None => return None,
+    let neighbor_mac = {
+        let bytes = mac_bytes.as_deref()?;
+        MacAddr::from_arry(bytes)?
     };
 
     let ifindex = msg.header.ifindex;

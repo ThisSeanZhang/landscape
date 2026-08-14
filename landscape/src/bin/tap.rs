@@ -16,8 +16,7 @@ async fn main() {
     let interfaces = datalink::interfaces();
     let interface = interfaces
         .into_iter()
-        .filter(interface_names_match)
-        .next()
+        .find(interface_names_match)
         .unwrap_or_else(|| panic!("No such network interface: {}", iface_name));
 
     println!("interface name: {:?}", interface);
@@ -27,7 +26,7 @@ async fn main() {
         Ok(_) => panic!("packetdump: unhandled channel type"),
         Err(e) => panic!("packetdump: unable to create channel: {}", e),
     };
-    let mac = interface.mac.map(|mac| mac.octets()).map(|o| MacAddr::from(o));
+    let mac = interface.mac.map(|mac| mac.octets()).map(MacAddr::from);
 
     loop {
         match rx.next() {
@@ -37,22 +36,19 @@ async fn main() {
                     landscape::dump::eth::EthL3Type::Raw(_, _) => {}
                     landscape::dump::eth::EthL3Type::Ipv4(ip_frame) => {
                         println!("ip_frame data: {}", serde_json::json!(&ip_frame));
-                        match ip_frame.protocol {
-                            EthIpType::Udp(udp_frame) => {
-                                println!("udp checksum: {}", udp_frame.checksum);
-                                match udp_frame.playload {
-                                    EthUdpType::Dhcp(dhcp) => {
-                                        println!(
-                                            "dhcp: {}",
-                                            serde_json::to_string_pretty(&*dhcp).unwrap()
-                                        );
-                                    }
-                                    EthUdpType::Raw(data) => {
-                                        println!("udp raw payload: {:?}", data);
-                                    }
+                        if let EthIpType::Udp(udp_frame) = ip_frame.protocol {
+                            println!("udp checksum: {}", udp_frame.checksum);
+                            match udp_frame.playload {
+                                EthUdpType::Dhcp(dhcp) => {
+                                    println!(
+                                        "dhcp: {}",
+                                        serde_json::to_string_pretty(&*dhcp).unwrap()
+                                    );
+                                }
+                                EthUdpType::Raw(data) => {
+                                    println!("udp raw payload: {:?}", data);
                                 }
                             }
-                            _ => {}
                         }
                     }
                 }

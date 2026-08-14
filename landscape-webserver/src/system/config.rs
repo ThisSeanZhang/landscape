@@ -193,7 +193,7 @@ async fn import_init_config(
                         "failed to rollback init config after init lock removal failed: {rollback_err}"
                     );
                 }
-                return Err(LdError::from(e))?;
+                Err(LdError::from(e))?;
             }
         }
 

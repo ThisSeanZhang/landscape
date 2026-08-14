@@ -91,7 +91,7 @@ async fn get_enrolled_device(
     State(app): State<LandscapeApp>,
     Path(id): Path<ConfigId>,
 ) -> LandscapeApiResult<Option<EnrolledDevice>> {
-    let result = app.enrolled_device_service.get(id.into()).await;
+    let result = app.enrolled_device_service.get(id).await;
     LandscapeApiResp::success(result)
 }
 
@@ -123,7 +123,7 @@ async fn update_enrolled_device(
     Path(id): Path<ConfigId>,
     JsonBody(mut payload): JsonBody<EnrolledDevice>,
 ) -> LandscapeApiResult<()> {
-    payload.id = id.into();
+    payload.id = id;
     app.enrolled_device_service.push(payload).await.map_err(EnrolledDeviceError::InvalidData)?;
     LandscapeApiResp::success(())
 }
@@ -142,9 +142,6 @@ async fn delete_enrolled_device(
     State(app): State<LandscapeApp>,
     Path(id): Path<ConfigId>,
 ) -> LandscapeApiResult<()> {
-    app.enrolled_device_service
-        .delete(id.into())
-        .await
-        .map_err(EnrolledDeviceError::InvalidData)?;
+    app.enrolled_device_service.delete(id).await.map_err(EnrolledDeviceError::InvalidData)?;
     LandscapeApiResp::success(())
 }

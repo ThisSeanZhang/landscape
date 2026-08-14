@@ -79,10 +79,10 @@ impl From<Model> for StaticNatMappingConfig {
     }
 }
 
-impl Into<ActiveModel> for StaticNatMappingConfig {
-    fn into(self) -> ActiveModel {
-        let mut active = ActiveModel { id: Set(self.id), ..Default::default() };
-        self.update(&mut active);
+impl From<StaticNatMappingConfig> for ActiveModel {
+    fn from(val: StaticNatMappingConfig) -> Self {
+        let mut active = ActiveModel { id: Set(val.id), ..Default::default() };
+        val.update(&mut active);
         active
     }
 }

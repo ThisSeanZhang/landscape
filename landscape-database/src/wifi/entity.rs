@@ -41,13 +41,13 @@ impl From<Model> for WifiServiceConfig {
     }
 }
 
-impl Into<ActiveModel> for WifiServiceConfig {
-    fn into(self) -> ActiveModel {
+impl From<WifiServiceConfig> for ActiveModel {
+    fn from(val: WifiServiceConfig) -> Self {
         let mut active = ActiveModel {
-            iface_name: Set(self.iface_name.clone()),
+            iface_name: Set(val.iface_name.clone()),
             ..Default::default()
         };
-        self.update(&mut active);
+        val.update(&mut active);
         active
     }
 }

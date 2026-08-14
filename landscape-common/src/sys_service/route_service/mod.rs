@@ -79,7 +79,7 @@ impl LanRouteInfo {
             iface_name: iface_name.to_string(),
             iface_ip: gateway,
             mac: Some(MacAddr::zero()),
-            prefix: prefix,
+            prefix,
             mode: LanRouteMode::Reachable,
         }
     }

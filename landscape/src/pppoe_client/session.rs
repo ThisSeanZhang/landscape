@@ -854,7 +854,7 @@ impl PPPoEClientManager {
     pub(crate) fn can_enable_ebpf_prog(&self) -> bool {
         self.lcp_status.client_config.is_confirm()
             && self.lcp_status.server_config.is_confirm()
-            && self.lcp_status.authenticator.as_ref().map_or(false, |a| a.is_done())
+            && self.lcp_status.authenticator.as_ref().is_some_and(|a| a.is_done())
             && self.lcp_status.ipcp_client_ipaddr.is_confirm()
             && self.lcp_status.ipcp_server_ipaddr.is_confirm()
     }

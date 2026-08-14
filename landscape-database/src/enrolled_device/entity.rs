@@ -58,10 +58,10 @@ impl From<Model> for EnrolledDevice {
     }
 }
 
-impl Into<ActiveModel> for EnrolledDevice {
-    fn into(self) -> ActiveModel {
-        let mut active = ActiveModel { id: Set(self.id), ..Default::default() };
-        update(self, &mut active);
+impl From<EnrolledDevice> for ActiveModel {
+    fn from(val: EnrolledDevice) -> Self {
+        let mut active = ActiveModel { id: Set(val.id), ..Default::default() };
+        update(val, &mut active);
         active
     }
 }
@@ -80,7 +80,7 @@ pub(crate) fn update(data: EnrolledDevice, active: &mut ActiveModel) {
     active.remark = Set(data.remark);
     active.mac = Set(data.mac.to_string());
     active.ipv4 = Set(data.ipv4.map(|ip| ip.to_string()));
-    active.ipv4_int = Set(data.ipv4.map(|ip| u32::from(ip)));
+    active.ipv4_int = Set(data.ipv4.map(u32::from));
     active.ipv6 = Set(data.ipv6.map(|ip| ip.to_string()));
     active.tag = Set(serde_json::to_value(&data.tag).unwrap_or(serde_json::Value::Array(vec![])));
     active.dhcp_custom_options =

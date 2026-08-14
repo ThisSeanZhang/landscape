@@ -24,86 +24,6 @@ fn default_home_path() -> PathBuf {
     path.join(LANDSCAPE_CONFIG_DIR_NAME)
 }
 
-#[cfg(test)]
-mod tests {
-    use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
-
-    use crate::{
-        args::WebCommArgs,
-        config::{settings::LandscapeWebConfig, LandscapeConfig, RuntimeConfig},
-    };
-
-    #[test]
-    fn new_with_file_config_uses_supplied_config_and_keeps_cli_precedence() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let init_config = LandscapeConfig {
-            web: LandscapeWebConfig {
-                port: Some(7000),
-                address: Some(IpAddr::V4(Ipv4Addr::LOCALHOST)),
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-        let args = WebCommArgs {
-            config_dir: Some(temp_dir.path().to_path_buf()),
-            port: Some(8000),
-            ..Default::default()
-        };
-
-        let config = RuntimeConfig::new_with_file_config(args, Some(init_config));
-
-        assert_eq!(config.web.port, 8000);
-        assert_eq!(config.web.address, IpAddr::V4(Ipv4Addr::LOCALHOST));
-    }
-
-    #[test]
-    fn new_with_file_config_reads_landscape_toml_without_supplied_config() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let config_path = temp_dir.path().join(crate::LAND_CONFIG);
-        std::fs::write(
-            config_path,
-            r#"
-                [web]
-                port = 7001
-                address = "::1"
-            "#,
-        )
-        .unwrap();
-        let args = WebCommArgs {
-            config_dir: Some(temp_dir.path().to_path_buf()),
-            ..Default::default()
-        };
-
-        let config = RuntimeConfig::new_with_file_config(args, None);
-
-        assert_eq!(config.web.port, 7001);
-        assert_eq!(config.web.address, IpAddr::V6(Ipv6Addr::LOCALHOST));
-    }
-
-    #[test]
-    fn new_with_file_config_disables_invalid_legacy_lan_suffix_without_panicking() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let config = RuntimeConfig::new_with_file_config(
-            WebCommArgs {
-                config_dir: Some(temp_dir.path().to_path_buf()),
-                ..Default::default()
-            },
-            Some(LandscapeConfig {
-                lan_hostname: crate::config::LandscapeLanHostnameConfig {
-                    enable: Some(true),
-                    lan_suffix: Some("corp.test".to_string()),
-                },
-                ..Default::default()
-            }),
-        );
-
-        assert!(!config.lan_hostname.enable);
-        assert_eq!(config.lan_hostname.lan_suffix, crate::DEFAULT_DNS_LAN_SUFFIX);
-        assert_eq!(config.file_config.lan_hostname.enable, Some(true));
-        assert_eq!(config.file_config.lan_hostname.lan_suffix.as_deref(), Some("corp.test"));
-    }
-}
-
 const fn default_debug_mode() -> bool {
     #[cfg(debug_assertions)]
     {
@@ -308,5 +228,85 @@ impl RuntimeConfig {
             file_config: config,
             auto: args.auto,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+
+    use crate::{
+        args::WebCommArgs,
+        config::{settings::LandscapeWebConfig, LandscapeConfig, RuntimeConfig},
+    };
+
+    #[test]
+    fn new_with_file_config_uses_supplied_config_and_keeps_cli_precedence() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let init_config = LandscapeConfig {
+            web: LandscapeWebConfig {
+                port: Some(7000),
+                address: Some(IpAddr::V4(Ipv4Addr::LOCALHOST)),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let args = WebCommArgs {
+            config_dir: Some(temp_dir.path().to_path_buf()),
+            port: Some(8000),
+            ..Default::default()
+        };
+
+        let config = RuntimeConfig::new_with_file_config(args, Some(init_config));
+
+        assert_eq!(config.web.port, 8000);
+        assert_eq!(config.web.address, IpAddr::V4(Ipv4Addr::LOCALHOST));
+    }
+
+    #[test]
+    fn new_with_file_config_reads_landscape_toml_without_supplied_config() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let config_path = temp_dir.path().join(crate::LAND_CONFIG);
+        std::fs::write(
+            config_path,
+            r#"
+                [web]
+                port = 7001
+                address = "::1"
+            "#,
+        )
+        .unwrap();
+        let args = WebCommArgs {
+            config_dir: Some(temp_dir.path().to_path_buf()),
+            ..Default::default()
+        };
+
+        let config = RuntimeConfig::new_with_file_config(args, None);
+
+        assert_eq!(config.web.port, 7001);
+        assert_eq!(config.web.address, IpAddr::V6(Ipv6Addr::LOCALHOST));
+    }
+
+    #[test]
+    fn new_with_file_config_disables_invalid_legacy_lan_suffix_without_panicking() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let config = RuntimeConfig::new_with_file_config(
+            WebCommArgs {
+                config_dir: Some(temp_dir.path().to_path_buf()),
+                ..Default::default()
+            },
+            Some(LandscapeConfig {
+                lan_hostname: crate::config::LandscapeLanHostnameConfig {
+                    enable: Some(true),
+                    lan_suffix: Some("corp.test".to_string()),
+                },
+                ..Default::default()
+            }),
+        );
+
+        assert!(!config.lan_hostname.enable);
+        assert_eq!(config.lan_hostname.lan_suffix, crate::DEFAULT_DNS_LAN_SUFFIX);
+        assert_eq!(config.file_config.lan_hostname.enable, Some(true));
+        assert_eq!(config.file_config.lan_hostname.lan_suffix.as_deref(), Some("corp.test"));
     }
 }

@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use super::config::{
     IPv6ServiceMode, LanIPv6ConfigV2, LanIPv6ServiceConfigV2, PrefixGroupServiceKind,
 };
-use super::error::LanIPv6Error;
+use super::error::{LanIPv6Error, PrefixSlotOverlapDetails, WanReservedPrefixConflictDetails};
 use crate::service::ServiceConfigError;
 use crate::wan_service::ipv6_pd::LDIAPrefix;
 
@@ -754,13 +754,15 @@ pub fn validate_global_prefix_conflicts(
             continue;
         };
         if start == 0 {
-            return Err(LanIPv6Error::WanReservedPrefixConflict {
-                iface_name: sourced.iface_name.clone(),
-                group_id: sourced.group_id.clone(),
-                service_kind: sourced.service_kind_label().to_string(),
-                index_range: sourced.index_range(),
-                pool_len: sourced.entry.pool_len,
-            });
+            return Err(LanIPv6Error::WanReservedPrefixConflict(Box::new(
+                WanReservedPrefixConflictDetails {
+                    iface_name: sourced.iface_name.clone(),
+                    group_id: sourced.group_id.clone(),
+                    service_kind: sourced.service_kind_label().to_string(),
+                    index_range: sourced.index_range(),
+                    pool_len: sourced.entry.pool_len,
+                },
+            )));
         }
     }
 
@@ -797,7 +799,7 @@ pub fn validate_global_prefix_conflicts(
                 format!("{}-{}", overlap_start, overlap_end)
             };
 
-            return Err(LanIPv6Error::PrefixSlotOverlap {
+            return Err(LanIPv6Error::PrefixSlotOverlap(Box::new(PrefixSlotOverlapDetails {
                 slot_range,
                 left_iface_name: left.iface_name.clone(),
                 left_group_id: left.group_id.clone(),
@@ -809,7 +811,7 @@ pub fn validate_global_prefix_conflicts(
                 right_service_kind: right.service_kind_label().to_string(),
                 right_index_range: right.index_range(),
                 right_pool_len: right.entry.pool_len,
-            });
+            })));
         }
     }
 
@@ -1708,8 +1710,12 @@ mod tests {
         let existing = config_pd_range("lan-b", "wan0", 60, 64, 1, 1);
         let contexts = make_pd_context("wan0", 60, 56);
 
-        assert!(validate_global_prefix_conflicts(&pending, &[existing.clone()], Some(&contexts))
-            .is_err());
+        assert!(validate_global_prefix_conflicts(
+            &pending,
+            std::slice::from_ref(&existing),
+            Some(&contexts)
+        )
+        .is_err());
     }
 
     #[test]

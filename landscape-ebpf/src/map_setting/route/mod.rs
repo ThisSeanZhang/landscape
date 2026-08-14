@@ -544,13 +544,13 @@ where
 
     let value = unsafe { plain::as_bytes(&value) };
 
-    if let Ok(Some(existing)) = rt_lan_map.lookup(&key, MapFlags::ANY) {
+    if let Ok(Some(existing)) = rt_lan_map.lookup(key, MapFlags::ANY) {
         if existing.as_slice() == value {
             return false;
         }
     }
 
-    if let Err(e) = rt_lan_map.update(&key, &value, MapFlags::ANY) {
+    if let Err(e) = rt_lan_map.update(key, value, MapFlags::ANY) {
         tracing::error!("add lan config error:{e:?}");
         return false;
     }
@@ -608,13 +608,13 @@ where
 
     let value = unsafe { plain::as_bytes(&value) };
 
-    if let Ok(Some(existing)) = rt_lan_map.lookup(&key, MapFlags::ANY) {
+    if let Ok(Some(existing)) = rt_lan_map.lookup(key, MapFlags::ANY) {
         if existing.as_slice() == value {
             return false;
         }
     }
 
-    if let Err(e) = rt_lan_map.update(&key, &value, MapFlags::ANY) {
+    if let Err(e) = rt_lan_map.update(key, value, MapFlags::ANY) {
         tracing::error!("add lan config error:{e:?}");
         return false;
     }
@@ -660,7 +660,7 @@ where
     }
     let key = unsafe { plain::as_bytes(&key) };
 
-    match rt_lan_map.lookup(&key, MapFlags::ANY) {
+    match rt_lan_map.lookup(key, MapFlags::ANY) {
         Ok(Some(_)) => {}
         Ok(None) => return false,
         Err(e) => {
@@ -669,7 +669,7 @@ where
         }
     }
 
-    if let Err(e) = rt_lan_map.delete(&key) {
+    if let Err(e) = rt_lan_map.delete(key) {
         tracing::error!("del lan config error:{e:?}");
         return false;
     }
@@ -693,7 +693,7 @@ where
     }
     let key = unsafe { plain::as_bytes(&key) };
 
-    match rt_lan_map.lookup(&key, MapFlags::ANY) {
+    match rt_lan_map.lookup(key, MapFlags::ANY) {
         Ok(Some(_)) => {}
         Ok(None) => return false,
         Err(e) => {
@@ -702,7 +702,7 @@ where
         }
     }
 
-    if let Err(e) = rt_lan_map.delete(&key) {
+    if let Err(e) = rt_lan_map.delete(key) {
         tracing::error!("del lan config error:{e:?}");
         return false;
     }

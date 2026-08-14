@@ -69,7 +69,7 @@ impl ServiceStarterTrait for IPV6PDService {
                 let route_info = RouteTargetInfo {
                     ifindex: iface.index,
                     weight: 1,
-                    mac: iface.mac.clone(),
+                    mac: iface.mac,
                     is_docker: false,
                     iface_name: iface.name.clone(),
                     iface_ip: IpAddr::V6(Ipv6Addr::UNSPECIFIED),

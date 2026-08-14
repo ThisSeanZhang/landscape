@@ -48,10 +48,10 @@ impl From<Model> for NetworkIfaceConfig {
     }
 }
 
-impl Into<ActiveModel> for NetworkIfaceConfig {
-    fn into(self) -> ActiveModel {
-        let mut active = ActiveModel { name: Set(self.name.clone()), ..Default::default() };
-        self.update(&mut active);
+impl From<NetworkIfaceConfig> for ActiveModel {
+    fn from(val: NetworkIfaceConfig) -> Self {
+        let mut active = ActiveModel { name: Set(val.name.clone()), ..Default::default() };
+        val.update(&mut active);
         active
     }
 }

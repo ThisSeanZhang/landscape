@@ -467,7 +467,7 @@ impl DHCPv4ServerManagerService {
         let Some(offer_info) = info else { return None };
 
         let data = offer_info.read().await.get_arp_info();
-        return Some(data);
+        Some(data)
     }
 
     pub async fn resolve_client_match_by_ipv4(&self, ip: Ipv4Addr) -> Option<CallerLookupMatch> {

@@ -8,15 +8,14 @@ use crate::utils::time::get_f64_timestamp;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum ProviderConfig {
+    #[default]
     LetsEncrypt,
-    ZeroSsl { eab_kid: String, eab_hmac_key: String },
-}
-
-impl Default for ProviderConfig {
-    fn default() -> Self {
-        Self::LetsEncrypt
-    }
+    ZeroSsl {
+        eab_kid: String,
+        eab_hmac_key: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

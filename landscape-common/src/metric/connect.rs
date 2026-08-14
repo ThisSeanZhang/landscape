@@ -2,7 +2,6 @@ use std::net::IpAddr;
 
 use serde::{Deserialize, Serialize};
 
-///
 #[derive(Debug, Serialize, Deserialize, Eq, Hash, PartialEq, Clone)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct ConnectKey {
@@ -24,8 +23,10 @@ pub enum ConnectStatusType {
 
 #[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[derive(Default)]
 pub enum MetricResolution {
     #[serde(rename = "second")]
+    #[default]
     Second,
     #[serde(rename = "minute")]
     Minute,
@@ -33,12 +34,6 @@ pub enum MetricResolution {
     Hour,
     #[serde(rename = "day")]
     Day,
-}
-
-impl Default for MetricResolution {
-    fn default() -> Self {
-        MetricResolution::Second
-    }
 }
 
 impl From<u8> for ConnectStatusType {
@@ -51,9 +46,9 @@ impl From<u8> for ConnectStatusType {
     }
 }
 
-impl Into<u8> for ConnectStatusType {
-    fn into(self) -> u8 {
-        match self {
+impl From<ConnectStatusType> for u8 {
+    fn from(val: ConnectStatusType) -> Self {
+        match val {
             ConnectStatusType::Unknow => 0,
             ConnectStatusType::Active => 1,
             ConnectStatusType::Disabled => 2,

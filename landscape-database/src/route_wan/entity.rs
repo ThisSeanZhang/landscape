@@ -35,13 +35,13 @@ impl From<Model> for RouteWanServiceConfig {
     }
 }
 
-impl Into<ActiveModel> for RouteWanServiceConfig {
-    fn into(self) -> ActiveModel {
+impl From<RouteWanServiceConfig> for ActiveModel {
+    fn from(val: RouteWanServiceConfig) -> Self {
         let mut active = ActiveModel {
-            iface_name: Set(self.iface_name.clone()),
+            iface_name: Set(val.iface_name.clone()),
             ..Default::default()
         };
-        self.update(&mut active);
+        val.update(&mut active);
         active
     }
 }

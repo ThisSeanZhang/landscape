@@ -6,6 +6,11 @@ use syn::{parse_macro_input, DeriveInput, Lit};
 ///
 /// Each variant requires `#[api_error(id = "xxx", status = NNN)]` annotation.
 ///
+/// Optional variant flag `serialize`: for single-field tuple variants holding a
+/// `Box<Details>` (where `Details: Serialize`), `error_args()` serializes the
+/// inner struct directly instead of producing `{"0": v0.to_string()}`. Useful to
+/// keep a stable named-key JSON shape while keeping the `Result` small.
+///
 /// Example:
 /// ```ignore
 /// #[derive(thiserror::Error, Debug, LdApiError)]
@@ -62,6 +67,7 @@ pub fn derive_ld_api_error(input: TokenStream) -> TokenStream {
 
         let mut error_id: Option<String> = None;
         let mut status_code: Option<u16> = None;
+        let mut serialize: bool = false;
 
         api_error_attr
             .parse_nested_meta(|meta| {
@@ -77,6 +83,8 @@ pub fn derive_ld_api_error(input: TokenStream) -> TokenStream {
                     if let Lit::Int(i) = lit {
                         status_code = Some(i.base10_parse().unwrap());
                     }
+                } else if meta.path.is_ident("serialize") {
+                    serialize = true;
                 }
                 Ok(())
             })
@@ -112,6 +120,13 @@ pub fn derive_ld_api_error(input: TokenStream) -> TokenStream {
                     .any(|f| f.attrs.iter().any(|a| a.path().is_ident("from")));
                 if has_from {
                     quote! { Self::#variant_ident(..) => serde_json::json!({}) }
+                } else if serialize && fields.unnamed.len() == 1 {
+                    // 单字段 Box<Details> 变体：直接序列化 Details 结构体作为 error_args
+                    quote! {
+                        Self::#variant_ident(v0) => {
+                            serde_json::to_value(v0).unwrap_or_else(|_| serde_json::json!({}))
+                        }
+                    }
                 } else {
                     let bindings: Vec<_> = fields
                         .unnamed

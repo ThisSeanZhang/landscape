@@ -78,15 +78,15 @@ async fn init_service_from_config(
                 let iface_name = iface.name;
                 tracing::info!("set ipv4 is: {}", ipv4);
                 let _ = std::process::Command::new("ip")
-                    .args(&["addr", "add", &format!("{}/{}", ipv4, ipv4_mask), "dev", &iface_name])
+                    .args(["addr", "add", &format!("{}/{}", ipv4, ipv4_mask), "dev", &iface_name])
                     .output();
                 tracing::debug!("start setting");
                 landscape_ebpf::map_setting::add_ipv4_wan_ip(
                     iface.index,
-                    ipv4.clone(),
-                    default_router_ip.clone(),
+                    ipv4,
+                    default_router_ip,
                     ipv4_mask,
-                    iface.mac.clone(),
+                    iface.mac,
                 );
 
                 let lan_info = LanRouteInfo {
@@ -110,7 +110,7 @@ async fn init_service_from_config(
                                 .add_route(RouteInfo {
                                     iface_name: iface_name.clone(),
                                     weight: 1,
-                                    route: RouteType::Ipv4(default_router_ip.clone()),
+                                    route: RouteType::Ipv4(default_router_ip),
                                 })
                                 .await;
                         } else {
@@ -120,7 +120,7 @@ async fn init_service_from_config(
                         let info = RouteTargetInfo {
                             ifindex: iface.index,
                             weight: 1,
-                            mac: iface.mac.clone(),
+                            mac: iface.mac,
                             is_docker: false,
                             iface_name: iface_name.clone(),
                             iface_ip: IpAddr::V4(ipv4),
@@ -134,7 +134,7 @@ async fn init_service_from_config(
                 service_status.just_change_status(ServiceStatus::Running);
                 service_status.wait_to_stopping().await;
                 let _ = std::process::Command::new("ip")
-                    .args(&["addr", "del", &format!("{}/{}", ipv4, ipv4_mask), "dev", &iface_name])
+                    .args(["addr", "del", &format!("{}/{}", ipv4, ipv4_mask), "dev", &iface_name])
                     .output();
 
                 if default_router {

@@ -44,6 +44,12 @@ pub struct MacLinkMapCache {
     inner: RwLock<MacLinkMap>,
 }
 
+impl Default for MacLinkMapCache {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MacLinkMapCache {
     pub fn new() -> Self {
         MacLinkMapCache { inner: RwLock::new(MacLinkMap::new()) }
@@ -111,10 +117,7 @@ async fn scan_once(cache: &Arc<MacLinkMapCache>, handle: &Handle) -> Result<(), 
             Ok(Some(msg)) => msg,
             Ok(None) => break,
             Err(e) => {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    format!("netlink error: {e}"),
-                ));
+                return Err(std::io::Error::other(format!("netlink error: {e}")));
             }
         };
 
@@ -139,10 +142,10 @@ async fn scan_once(cache: &Arc<MacLinkMapCache>, handle: &Handle) -> Result<(), 
                         ipv6 = Some(*ip);
                     }
                 }
-                NeighbourAttribute::LinkLayerAddress(bytes) => {
-                    if bytes.len() >= 6 && !bytes.iter().all(|&b| b == 0) {
-                        mac_bytes = Some(bytes.as_slice());
-                    }
+                NeighbourAttribute::LinkLayerAddress(bytes)
+                    if bytes.len() >= 6 && !bytes.iter().all(|&b| b == 0) =>
+                {
+                    mac_bytes = Some(bytes.as_slice());
                 }
                 _ => {}
             }

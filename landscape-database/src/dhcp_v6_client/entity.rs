@@ -46,13 +46,13 @@ impl From<Model> for IPV6PDServiceConfig {
     }
 }
 
-impl Into<ActiveModel> for IPV6PDServiceConfig {
-    fn into(self) -> ActiveModel {
+impl From<IPV6PDServiceConfig> for ActiveModel {
+    fn from(val: IPV6PDServiceConfig) -> Self {
         let mut active = ActiveModel {
-            iface_name: Set(self.iface_name.clone()),
+            iface_name: Set(val.iface_name.clone()),
             ..Default::default()
         };
-        self.update(&mut active);
+        val.update(&mut active);
         active
     }
 }

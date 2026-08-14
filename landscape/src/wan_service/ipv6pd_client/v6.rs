@@ -99,7 +99,7 @@ pub enum IpV6PdState {
 
 fn get_new_ipv6_xid() -> u32 {
     let mut xid = rand::random();
-    xid = xid & 0x00FFFFFF;
+    xid &= 0x00FFFFFF;
     xid
 }
 impl IpV6PdState {
@@ -109,15 +109,15 @@ impl IpV6PdState {
 
     pub fn get_xid(&self) -> u32 {
         match self {
-            IpV6PdState::Solicit { xid, .. } => xid.clone(),
+            IpV6PdState::Solicit { xid, .. } => *xid,
             // IpV6PdState::Advertise { xid, .. } => xid.clone(),
-            IpV6PdState::Request { xid, .. } => xid.clone(),
-            IpV6PdState::Bound { xid, .. } => xid.clone(),
+            IpV6PdState::Request { xid, .. } => *xid,
+            IpV6PdState::Bound { xid, .. } => *xid,
             IpV6PdState::Confirm => todo!(),
-            IpV6PdState::Renew { xid, .. } => xid.clone(),
-            IpV6PdState::WaitToRebind { xid, .. } => xid.clone(),
-            IpV6PdState::Rebind { xid, .. } => xid.clone(),
-            IpV6PdState::Release { xid, .. } => xid.clone(),
+            IpV6PdState::Renew { xid, .. } => *xid,
+            IpV6PdState::WaitToRebind { xid, .. } => *xid,
+            IpV6PdState::Rebind { xid, .. } => *xid,
+            IpV6PdState::Release { xid, .. } => *xid,
             IpV6PdState::Decline => todo!(),
             IpV6PdState::Stop => 0,
         }
@@ -373,7 +373,7 @@ pub async fn dhcp_v6_pd_client(
                 }
             },
             change_result = service_status_subscribe.changed() => {
-                if let Err(_) = change_result {
+                if change_result.is_err() {
                     tracing::error!("get change result error. exit loop");
                     break;
                 }
@@ -485,7 +485,7 @@ async fn send_current_status_packet(
         IpV6PdState::Solicit { xid } => {
             let mut msg = v6::Message::new(v6::MessageType::Solicit);
             msg.set_opts(get_solicit_options());
-            msg.set_xid_num(xid.clone());
+            msg.set_xid_num(*xid);
             msg.opts_mut().insert(v6::DhcpOption::ClientId(my_client_id.to_vec()));
 
             send_data(&msg, send_socket, None).await;
@@ -525,7 +525,7 @@ async fn send_current_status_packet(
                 xid: get_new_ipv6_xid(),
                 service_id: service_id.clone(),
                 renew_time: Instant::now(),
-                bound_time: bound_time.clone(),
+                bound_time: *bound_time,
                 iapd: iapd.clone(),
             };
             return SendStatusOutcome::RESET_TIMEOUT;
@@ -534,7 +534,7 @@ async fn send_current_status_packet(
         IpV6PdState::Renew { xid, service_id, iapd, renew_time, bound_time } => {
             //
             let mut send_msg = v6::Message::new(V6MessageType::Renew);
-            send_msg.set_xid_num(xid.clone());
+            send_msg.set_xid_num(*xid);
             let mut options = DhcpOptions::new();
             if let Some(ia_prefix) = iapd.opts.get(OptionCode::IAPrefix) {
                 options.insert(ia_prefix.clone());
@@ -561,9 +561,9 @@ async fn send_current_status_packet(
                 tracing::warn!("Renew turn to WaitToRebind");
                 // 切换状态为 Rebind
                 *current_status = IpV6PdState::WaitToRebind {
-                    xid: xid.clone(),
+                    xid: *xid,
                     service_id: service_id.clone(),
-                    bound_time: bound_time.clone(),
+                    bound_time: *bound_time,
                     iapd: iapd.clone(),
                 };
                 return SendStatusOutcome::RESET_TIMEOUT;
@@ -576,14 +576,14 @@ async fn send_current_status_packet(
                 xid: get_new_ipv6_xid(),
                 service_id: service_id.clone(),
                 rebind_time: Instant::now(),
-                bound_time: bound_time.clone(),
+                bound_time: *bound_time,
                 iapd: iapd.clone(),
             };
             return SendStatusOutcome::RESET_TIMEOUT;
         }
         IpV6PdState::Rebind { xid, service_id: _, iapd, rebind_time, .. } => {
             let mut send_msg = v6::Message::new(V6MessageType::Rebind);
-            send_msg.set_xid_num(xid.clone());
+            send_msg.set_xid_num(*xid);
             let mut options = DhcpOptions::new();
             if let Some(ia_prefix) = iapd.opts.get(OptionCode::IAPrefix) {
                 options.insert(ia_prefix.clone());
@@ -753,8 +753,8 @@ async fn handle_packet(
         IpV6PdState::Request { service_id, .. }
         | IpV6PdState::Renew { service_id, .. }
         | IpV6PdState::WaitToRebind { service_id, .. }
-        | IpV6PdState::Rebind { service_id, .. } => match new_v6_msg.msg_type() {
-            V6MessageType::Reply => {
+        | IpV6PdState::Rebind { service_id, .. } => {
+            if new_v6_msg.msg_type() == V6MessageType::Reply {
                 if let Some(v6::DhcpOption::ServerId(new_service_id)) =
                     new_v6_msg.opts().get(OptionCode::ServerId)
                 {
@@ -826,7 +826,7 @@ async fn handle_packet(
                                 info.iface_ip = IpAddr::V6(wan_addr);
                             }
                             info.gateway_ip = IpAddr::V6(ipv6addr);
-                            route_service.insert_ipv6_wan_route(&iface_name, info).await;
+                            route_service.insert_ipv6_wan_route(iface_name, info).await;
                             replace_ip_route(&ia_prefix, ipv6addr, iface_name, ifindex, mac_addr);
                             prefix_map.store(iface_name, ia_prefix, expected_pd_len);
                             let _ = prefix_sender
@@ -842,8 +842,7 @@ async fn handle_packet(
                     }
                 }
             }
-            _ => {}
-        },
+        }
         IpV6PdState::Release { .. } => {}
         IpV6PdState::Stop => {}
         _ => {}
@@ -870,7 +869,7 @@ fn replace_ip_route(
             "via",
             &format!("{}", route_ip),
             "dev",
-            &format!("{}", iface_name),
+            iface_name,
             "expires",
             &format!("{}", iapd.valid_lifetime),
         ])
@@ -881,7 +880,7 @@ fn replace_ip_route(
         iapd.prefix_ip,
         Some(route_ip),
         iapd.prefix_len,
-        mac.clone(),
+        *mac,
     );
     if let Err(e) = result {
         tracing::error!("{e:?}");

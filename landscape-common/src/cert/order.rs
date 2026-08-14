@@ -92,16 +92,12 @@ pub enum KeyType {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[serde(tag = "t", rename_all = "snake_case")]
+#[derive(Default)]
 pub enum CertType {
     Acme(AcmeCertConfig),
     Generated(GeneratedCertConfig),
+    #[default]
     Manual,
-}
-
-impl Default for CertType {
-    fn default() -> Self {
-        Self::Manual
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

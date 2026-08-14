@@ -80,10 +80,10 @@ impl From<Model> for DNSRedirectRule {
 }
 
 /// 从 DNSRedirectRule 转换到 ActiveModel
-impl Into<ActiveModel> for DNSRedirectRule {
-    fn into(self) -> ActiveModel {
-        let mut active = ActiveModel { id: Set(self.id), ..Default::default() };
-        self.update(&mut active);
+impl From<DNSRedirectRule> for ActiveModel {
+    fn from(val: DNSRedirectRule) -> Self {
+        let mut active = ActiveModel { id: Set(val.id), ..Default::default() };
+        val.update(&mut active);
         active
     }
 }
@@ -93,11 +93,11 @@ impl UpdateActiveModel<ActiveModel> for DNSRedirectRule {
     fn update(self, active: &mut ActiveModel) {
         active.remark = Set(self.remark);
         active.enable = Set(self.enable);
-        active.match_rules = Set(serde_json::to_value(self.match_rules).unwrap().into());
+        active.match_rules = Set(serde_json::to_value(self.match_rules).unwrap());
         active.answer_mode = Set(self.answer_mode.as_str().to_string());
-        active.result_info = Set(serde_json::to_value(self.result_info).unwrap().into());
+        active.result_info = Set(serde_json::to_value(self.result_info).unwrap());
         active.block_metadata_queries = Set(self.block_metadata_queries);
-        active.apply_flows = Set(serde_json::to_value(self.apply_flows).unwrap().into());
+        active.apply_flows = Set(serde_json::to_value(self.apply_flows).unwrap());
         active.update_at = Set(self.update_at);
     }
 }

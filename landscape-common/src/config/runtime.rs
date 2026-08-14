@@ -1,4 +1,7 @@
-use std::{net::IpAddr, path::PathBuf};
+use std::{
+    net::IpAddr,
+    path::{Path, PathBuf},
+};
 
 use crate::config::settings::{
     LandscapeConfig, LandscapeDnsConfig, LandscapeMetricConfig, LandscapeTimeConfig,
@@ -282,7 +285,7 @@ impl TimeRuntimeConfig {
 }
 
 impl StoreRuntimeConfig {
-    pub fn create_default_db_store(home_path: &PathBuf) -> String {
+    pub fn create_default_db_store(home_path: &Path) -> String {
         let path = home_path.join(LANDSCAPE_DB_SQLITE_NAME);
         if path.exists() {
             if path.is_dir() {

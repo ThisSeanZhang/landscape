@@ -3580,7 +3580,10 @@ name = "landscape-macro"
 version = "0.22.3"
 dependencies = [
  "quote",
+ "serde",
+ "serde_json",
  "syn 3.0.3",
+ "thiserror 2.0.19",
 ]
 
 [[package]]

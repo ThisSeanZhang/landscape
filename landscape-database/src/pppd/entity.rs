@@ -55,13 +55,13 @@ impl From<Model> for PPPDServiceConfig {
     }
 }
 
-impl Into<ActiveModel> for PPPDServiceConfig {
-    fn into(self) -> ActiveModel {
+impl From<PPPDServiceConfig> for ActiveModel {
+    fn from(val: PPPDServiceConfig) -> Self {
         let mut active = ActiveModel {
-            iface_name: Set(self.iface_name.clone()),
+            iface_name: Set(val.iface_name.clone()),
             ..Default::default()
         };
-        self.update(&mut active);
+        val.update(&mut active);
         active
     }
 }

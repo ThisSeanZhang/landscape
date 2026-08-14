@@ -80,33 +80,31 @@ where
         } else {
             let mut max_index = u64::MIN;
             let mut min_index = u64::MAX;
-            for dir_path in data_floder.read_dir().expect("read_dir call failed") {
-                if let Ok(entry) = dir_path {
-                    let file_path = entry.path();
-                    // println!("文件: {:?}", entry.path());
-                    if file_path.is_dir() {
-                        panic!("不允许存在文件夹");
-                    }
-                    if file_path.extension().unwrap().to_string_lossy().to_string() != name {
-                        panic!(
-                            "不允许存在其他文件: 当前目录后缀为: {:?}, 存在的文件为: {:?}",
-                            name, file_path
-                        );
-                    }
-                    let index = file_path
-                        .file_stem()
-                        .unwrap()
-                        .to_string_lossy()
-                        .to_string()
-                        .parse::<u64>()
-                        .unwrap();
-                    if index > max_index {
-                        max_index = index;
-                    }
+            for entry in data_floder.read_dir().expect("read_dir call failed").flatten() {
+                let file_path = entry.path();
+                // println!("文件: {:?}", entry.path());
+                if file_path.is_dir() {
+                    panic!("不允许存在文件夹");
+                }
+                if file_path.extension().unwrap().to_string_lossy() != name {
+                    panic!(
+                        "不允许存在其他文件: 当前目录后缀为: {:?}, 存在的文件为: {:?}",
+                        name, file_path
+                    );
+                }
+                let index = file_path
+                    .file_stem()
+                    .unwrap()
+                    .to_string_lossy()
+                    .to_string()
+                    .parse::<u64>()
+                    .unwrap();
+                if index > max_index {
+                    max_index = index;
+                }
 
-                    if index < min_index {
-                        min_index = index;
-                    }
+                if index < min_index {
+                    min_index = index;
                 }
             }
 
@@ -120,7 +118,7 @@ where
         let (current_era, writer, index, readers, junk_data_size) = if max_era == 0 {
             // 为空的文件夹, 直接创建文件
             let current_era = 1;
-            let current_era_file_path = data_floder.join(format!("{}.{}", current_era, &name));
+            let current_era_file_path = data_floder.join(format!("{}.{}", current_era, name));
             let writer_file = OpenOptions::new()
                 .create(true)
                 .read(true)
@@ -186,7 +184,7 @@ where
                 }
             }
 
-            let current_era_file_path = data_floder.join(format!("{}.{}", current_era, &name));
+            let current_era_file_path = data_floder.join(format!("{}.{}", current_era, name));
             let writer_file = OpenOptions::new()
                 .create(true)
                 .read(true)
@@ -221,7 +219,7 @@ where
         let temp_collect_file_era = self.current_era + 1;
         self.current_era = temp_collect_file_era + 1;
 
-        let current_era_path = self.path.join(format!("{}.{}", self.current_era, &self.name));
+        let current_era_path = self.path.join(format!("{}.{}", self.current_era, self.name));
         // println!("创建文件: {:?}", current_era_path);
         let current_writer = OpenOptions::new()
             .read(true)
@@ -233,8 +231,7 @@ where
 
         self.writer = BufWriter::new(current_writer);
 
-        let periodization_path =
-            self.path.join(format!("{}.{}", temp_collect_file_era, &self.name));
+        let periodization_path = self.path.join(format!("{}.{}", temp_collect_file_era, self.name));
         let periodization_file = OpenOptions::new()
             .read(true)
             .create(true)
@@ -247,15 +244,15 @@ where
         let mut new_index: HashMap<K, UnitPosition> = HashMap::new();
         let mut periodization_file_pos = 0;
         for (key, UnitPosition { era, start, len }) in self.index.iter_mut() {
-            if !self.readers.contains_key(&era) {
-                let missing_reader = self.path.join(format!("{}.{}", &era, &self.name));
+            if !self.readers.contains_key(era) {
+                let missing_reader = self.path.join(format!("{}.{}", era, self.name));
                 // reader.seek(pos)
                 let missing_reader =
                     OpenOptions::new().read(true).truncate(false).open(missing_reader).unwrap();
                 self.readers.insert(*era, BufReader::new(missing_reader));
             };
 
-            let reader = self.readers.get_mut(&era).unwrap();
+            let reader = self.readers.get_mut(era).unwrap();
             reader.seek(SeekFrom::Start(*start)).unwrap();
             let mut data = reader.take(*len);
             let copy_length = std::io::copy(&mut data, &mut temp_collect_file_era_writer).unwrap();
@@ -282,7 +279,7 @@ where
         new_readers.insert(self.current_era, current_era_reader);
 
         for key in self.readers.keys() {
-            let stale_file_path = self.path.join(format!("{}.{}", key, &self.name));
+            let stale_file_path = self.path.join(format!("{}.{}", key, self.name));
             if let Err(e) = std::fs::remove_file(&stale_file_path) {
                 tracing::error!("{:?} cannot be deleted: {}", stale_file_path, e);
             }
@@ -298,12 +295,12 @@ where
         let key = data.get_store_key();
 
         // 准备写入 SaveUnit::Data(data)
-        let current_pos = self.writer.seek(SeekFrom::Current(0)).unwrap();
+        let current_pos = self.writer.stream_position().unwrap();
         let save_unit: SaveUnit<K, V> = SaveUnit::Data(data);
 
         serde_json::to_writer(&mut self.writer, &save_unit).unwrap();
         self.writer.flush().unwrap();
-        let new_pos = self.writer.seek(SeekFrom::Current(0)).unwrap();
+        let new_pos = self.writer.stream_position().unwrap();
 
         // 记录在 index 中
         let unit = UnitPosition::from((self.current_era, current_pos..new_pos));
@@ -332,7 +329,7 @@ where
 
     pub fn keys(&self) -> Vec<K> {
         let mut result = Vec::new();
-        for (key, _) in &self.index {
+        for key in self.index.keys() {
             result.push(key.clone());
         }
         result
@@ -340,7 +337,7 @@ where
 
     pub fn keys_ref(&self) -> Vec<&K> {
         let mut result = Vec::new();
-        for (key, _) in &self.index {
+        for key in self.index.keys() {
             result.push(key);
         }
         result
@@ -350,16 +347,20 @@ where
         self.index.len()
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.index.is_empty()
+    }
+
     pub fn filter_keys<F>(&self, fun: F) -> impl Iterator<Item = &K>
     where
         F: Fn(&K) -> bool,
     {
-        self.index.iter().map(|(key, _)| key).filter(move |&k| fun(k))
+        self.index.keys().filter(move |&k| fun(k))
     }
 
     pub fn list(&mut self) -> Vec<V> {
         let mut result = Vec::new();
-        for (_, pos) in &self.index {
+        for pos in self.index.values() {
             // 依次读出
             if let Some(reader) = self.readers.get_mut(&pos.era) {
                 reader.seek(SeekFrom::Start(pos.start)).unwrap();
@@ -406,7 +407,7 @@ where
             let path = entry.path();
             if path.is_file() {
                 if let Some(ext) = path.extension() {
-                    if ext.to_string_lossy().to_string() == self.name {
+                    if ext.to_string_lossy() == self.name {
                         if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
                             if stem.parse::<u64>().is_ok() {
                                 let _ = std::fs::remove_file(&path);
@@ -423,7 +424,7 @@ where
         self.index.clear();
 
         // 创建新的 era 1 文件
-        let current_era_file_path = self.path.join(format!("{}.{}", self.current_era, &self.name));
+        let current_era_file_path = self.path.join(format!("{}.{}", self.current_era, self.name));
         let writer_file = OpenOptions::new()
             .create(true)
             .read(true)

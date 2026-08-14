@@ -49,6 +49,6 @@ pub struct IPv6NAInfoItem {
 impl IPv6NAInfoItem {
     pub fn get_cache_key(&self) -> Ipv6Addr {
         // (self.mac.clone(), self.ip.clone())
-        self.ip.clone()
+        self.ip
     }
 }

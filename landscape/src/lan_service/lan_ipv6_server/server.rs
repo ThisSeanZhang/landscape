@@ -508,7 +508,7 @@ pub async fn start_ipv6_lan_server(
         set_iface_ip(sn.sub_router, sn.sub_prefix_len, &iface_name, None, None);
         add_route(sn.sub_prefix, sn.sub_prefix_len, &iface_name, None);
         let lan_info = LanRouteInfo {
-            ifindex: link_ifindex as u32,
+            ifindex: link_ifindex,
             iface_name: iface_name.clone(),
             iface_ip: IpAddr::V6(sn.sub_router),
             mac: Some(mac_addr),
@@ -703,7 +703,7 @@ pub async fn start_ipv6_lan_server(
                     set_iface_ip(sn.sub_router, sn.sub_prefix_len, &iface_name, None, None);
                     add_route(sn.sub_prefix, sn.sub_prefix_len, &iface_name, None);
                     let lan_info = LanRouteInfo {
-                        ifindex: link_ifindex as u32,
+                        ifindex: link_ifindex,
                         iface_name: iface_name.clone(),
                         iface_ip: IpAddr::V6(sn.sub_router),
                         mac: Some(mac_addr),
@@ -738,7 +738,7 @@ pub async fn start_ipv6_lan_server(
             },
             result = service_status_subscribe.changed() => {
                 tracing::debug!("LAN v6 Service change");
-                if let Err(_) = result {
+                if result.is_err() {
                     tracing::error!("get change result error. exit loop");
                     service_status.just_change_status(ServiceStatus::Failed);
                     break;
@@ -785,7 +785,7 @@ pub async fn start_ipv6_lan_server(
     }
     route_service.remove_ipv6_lan_route(&iface_name).await;
 
-    return Ok(());
+    Ok(())
 }
 
 /// Build an RFC 8415 §18.3.11 / §20.4 compliant Reconfigure message.

@@ -29,6 +29,12 @@ pub trait NetProtoCodec: Sized {
 
 pub struct LandscapeCodec<T>(pub std::marker::PhantomData<T>);
 
+impl<T> Default for LandscapeCodec<T> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<T> LandscapeCodec<T> {
     pub fn new() -> Self {
         Self(std::marker::PhantomData)
@@ -247,7 +253,7 @@ macro_rules! define_options {
 
                 /// get the first element matching this option code
                 pub fn get(&self, code: [<$name Code>]) -> Option<&$name> {
-                    let first = crate::net_proto::first(&self.0, |x| {
+                    let first = $crate::net_proto::first(&self.0, |x| {
                         let x_code: $code_type = match x {
                             $(
                                 $name::$variant(_) => $code,
@@ -262,7 +268,7 @@ macro_rules! define_options {
 
                 /// get all elements matching this option code
                 pub fn get_all(&self, code: [<$name Code>]) -> Option<&[$name]> {
-                    let range = crate::net_proto::range_binsearch(&self.0, |x| {
+                    let range = $crate::net_proto::range_binsearch(&self.0, |x| {
                         let x_code: $code_type = match x {
                             $(
                                 $name::$variant(_) => $code,
@@ -277,7 +283,7 @@ macro_rules! define_options {
 
                 /// get the first element matching this option code
                 pub fn get_mut(&mut self, code: [<$name Code>]) -> Option<&mut $name> {
-                    let first = crate::net_proto::first(&self.0, |x| {
+                    let first = $crate::net_proto::first(&self.0, |x| {
                         let x_code: $code_type = match x {
                             $(
                                 $name::$variant(_) => $code,
@@ -292,7 +298,7 @@ macro_rules! define_options {
 
                 /// get all elements matching this option code
                 pub fn get_mut_all(&mut self, code: [<$name Code>]) -> Option<&mut [$name]> {
-                    let range = crate::net_proto::range_binsearch(&self.0, |x| {
+                    let range = $crate::net_proto::range_binsearch(&self.0, |x| {
                         let x_code: $code_type = match x {
                             $(
                                 $name::$variant(_) => $code,
@@ -307,7 +313,7 @@ macro_rules! define_options {
 
                 /// remove the first element with a matching option code
                 pub fn remove(&mut self, code: [<$name Code>]) -> Option<$name> {
-                    let first = crate::net_proto::first(&self.0, |x| {
+                    let first = $crate::net_proto::first(&self.0, |x| {
                         let x_code: $code_type = match x {
                             $(
                                 $name::$variant(_) => $code,
@@ -325,7 +331,7 @@ macro_rules! define_options {
                     &mut self,
                     code: [<$name Code>],
                 ) -> Option<impl Iterator<Item = $name> + '_> {
-                    let range = crate::net_proto::range_binsearch(&self.0, |x| {
+                    let range = $crate::net_proto::range_binsearch(&self.0, |x| {
                         let x_code: $code_type = match x {
                             $(
                                 $name::$variant(_) => $code,

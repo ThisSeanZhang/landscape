@@ -18,6 +18,12 @@ pub struct LandscapePtyService {
     session: Arc<RwLock<HashMap<String, LandscapePtySession>>>,
 }
 
+impl Default for LandscapePtyService {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl LandscapePtyService {
     pub fn new() -> Self {
         Self { session: Arc::new(RwLock::new(HashMap::new())) }

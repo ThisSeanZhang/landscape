@@ -35,13 +35,13 @@ impl From<Model> for FlowWanServiceConfig {
     }
 }
 
-impl Into<ActiveModel> for FlowWanServiceConfig {
-    fn into(self) -> ActiveModel {
+impl From<FlowWanServiceConfig> for ActiveModel {
+    fn from(val: FlowWanServiceConfig) -> Self {
         let mut active = ActiveModel {
-            iface_name: Set(self.iface_name.clone()),
+            iface_name: Set(val.iface_name.clone()),
             ..Default::default()
         };
-        self.update(&mut active);
+        val.update(&mut active);
         active
     }
 }

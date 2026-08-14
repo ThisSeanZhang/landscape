@@ -41,13 +41,7 @@ pub enum EthL3Type {
 impl EthL3Type {
     pub fn from_u16(value: u16, data: &[u8]) -> Self {
         let end = match value {
-            0x0800 => {
-                if let Some(result) = Ipv4EthFrame::new(data) {
-                    Some(EthL3Type::Ipv4(Box::new(result)))
-                } else {
-                    None
-                }
-            }
+            0x0800 => Ipv4EthFrame::new(data).map(|result| EthL3Type::Ipv4(Box::new(result))),
             _ => None,
         };
         if let Some(result) = end {

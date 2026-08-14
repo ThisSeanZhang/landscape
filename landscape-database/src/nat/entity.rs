@@ -50,13 +50,13 @@ impl From<Model> for NatServiceConfig {
     }
 }
 
-impl Into<ActiveModel> for NatServiceConfig {
-    fn into(self) -> ActiveModel {
+impl From<NatServiceConfig> for ActiveModel {
+    fn from(val: NatServiceConfig) -> Self {
         let mut active = ActiveModel {
-            iface_name: Set(self.iface_name.clone()),
+            iface_name: Set(val.iface_name.clone()),
             ..Default::default()
         };
-        self.update(&mut active);
+        val.update(&mut active);
         active
     }
 }

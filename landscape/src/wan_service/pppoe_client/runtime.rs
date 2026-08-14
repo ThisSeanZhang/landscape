@@ -277,11 +277,9 @@ async fn keepalive(
                 let payload = PointToPoint::gen_echo_request_with_magic(
                     echo_req_id, lcp.magic_number,
                 );
-                if let Err(e) = send_pppoe_session_frame(
+                send_pppoe_session_frame(
                     &lcp.server_mac, config.iface_mac, lcp.session_id, payload, tx,
-                ).await {
-                    return Err(e);
-                }
+                ).await?;
                 echo_failures += 1;
                 if echo_failures > MAX_ECHO_FAILURES {
                     return Err(PppoeError::EchoFailed(echo_failures));

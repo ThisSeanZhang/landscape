@@ -62,10 +62,10 @@ impl From<Model> for DnsUpstreamConfig {
 }
 
 /// DnsUpstreamConfig -> ActiveModel
-impl Into<ActiveModel> for DnsUpstreamConfig {
-    fn into(self) -> ActiveModel {
-        let mut active = ActiveModel { id: Set(self.id), ..Default::default() };
-        self.update(&mut active);
+impl From<DnsUpstreamConfig> for ActiveModel {
+    fn from(val: DnsUpstreamConfig) -> Self {
+        let mut active = ActiveModel { id: Set(val.id), ..Default::default() };
+        val.update(&mut active);
         active
     }
 }
@@ -74,8 +74,8 @@ impl Into<ActiveModel> for DnsUpstreamConfig {
 impl UpdateActiveModel<ActiveModel> for DnsUpstreamConfig {
     fn update(self, active: &mut ActiveModel) {
         active.remark = Set(self.remark);
-        active.mode = Set(serde_json::to_value(self.mode).unwrap().into());
-        active.ips = Set(serde_json::to_value(self.ips).unwrap().into());
+        active.mode = Set(serde_json::to_value(self.mode).unwrap());
+        active.ips = Set(serde_json::to_value(self.ips).unwrap());
         active.port = Set(self.port);
         active.enable_ip_validation = Set(self.enable_ip_validation);
         active.update_at = Set(self.update_at);

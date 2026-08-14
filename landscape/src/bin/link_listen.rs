@@ -98,10 +98,8 @@ async fn flush_addresses(handle: &Handle, link: String) -> () {
         while let Some(addr) = addresses.try_next().await.unwrap() {
             handle.address().del(addr).execute().await.unwrap();
         }
-        ()
     } else {
         eprintln!("link {link} not found");
-        ()
     }
 }
 

@@ -18,10 +18,7 @@ pub async fn main() {
 
     let firewall = if let Some(iface) = get_iface_by_name(&args.iface_name).await {
         println!("Starting firewall on ifindex: {:?}", iface.index);
-        match landscape_ebpf::stages::firewall::init_firewall(
-            iface.index as u32,
-            iface.mac.is_some(),
-        ) {
+        match landscape_ebpf::stages::firewall::init_firewall(iface.index, iface.mac.is_some()) {
             Ok(handle) => Some(handle),
             Err(err) => {
                 tracing::debug!("error: {err:?}");

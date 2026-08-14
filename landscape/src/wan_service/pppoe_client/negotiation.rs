@@ -192,8 +192,8 @@ pub(crate) async fn run(
                         return Err(PppoeError::PeerTerminated);
                     } else if ppp.is_termination_ack() {
                         return Err(PppoeError::PeerTerminated);
-                    } else if ppp.is_proto_reject() {
-                        if ppp.payload.len() >= 2 {
+                    } else if ppp.is_proto_reject()
+                        && ppp.payload.len() >= 2 {
                             let proto = u16::from_be_bytes([ppp.payload[0], ppp.payload[1]]);
                             if proto == 0x8021 {
                                 return Err(PppoeError::IpRequiredButRejected);
@@ -209,7 +209,6 @@ pub(crate) async fn run(
                                 ));
                             }
                         }
-                    }
                     timeout_sleep.as_mut().reset(Instant::now() + Duration::from_secs(DEFAULT_TIMEOUT));
                 }
             }
@@ -264,7 +263,7 @@ pub(crate) async fn run(
     }
 }
 
-fn parse_ppp_packet<'a>(raw: &'a [u8], lcp: &LcpPhaseResult) -> Option<PointToPoint> {
+fn parse_ppp_packet(raw: &[u8], lcp: &LcpPhaseResult) -> Option<PointToPoint> {
     if raw.len() < 16 {
         return None;
     }

@@ -50,10 +50,10 @@ impl From<Model> for FirewallBlacklistConfig {
     }
 }
 
-impl Into<ActiveModel> for FirewallBlacklistConfig {
-    fn into(self) -> ActiveModel {
-        let mut active = ActiveModel { id: Set(self.id), ..Default::default() };
-        self.update(&mut active);
+impl From<FirewallBlacklistConfig> for ActiveModel {
+    fn from(val: FirewallBlacklistConfig) -> Self {
+        let mut active = ActiveModel { id: Set(val.id), ..Default::default() };
+        val.update(&mut active);
         active
     }
 }

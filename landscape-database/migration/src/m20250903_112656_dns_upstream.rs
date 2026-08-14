@@ -67,6 +67,7 @@ impl MigrationTrait for Migration {
                 let new_mode: String;
                 let ips: String;
                 let port: String;
+                #[allow(unreachable_patterns, clippy::wildcard_in_or_patterns)]
                 match mode_value["t"].as_str() {
                     Some("cloudflare") => {
                         let Some(mode) = mode_value["mode"].as_str() else {

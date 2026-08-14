@@ -53,7 +53,7 @@ async fn get_ddns_job(
     State(app): State<LandscapeApp>,
     Path(id): Path<ConfigId>,
 ) -> LandscapeApiResult<Option<DdnsJob>> {
-    LandscapeApiResp::success(app.ddns_service.find_by_id(id.into()).await)
+    LandscapeApiResp::success(app.ddns_service.find_by_id(id).await)
 }
 
 #[utoipa::path(
@@ -81,7 +81,7 @@ async fn trigger_ddns_job_sync(
     State(app): State<LandscapeApp>,
     Path(id): Path<ConfigId>,
 ) -> LandscapeApiResult<DdnsJobRuntime> {
-    LandscapeApiResp::success(app.ddns_service.sync_job_now(id.into()).await?)
+    LandscapeApiResp::success(app.ddns_service.sync_job_now(id).await?)
 }
 
 #[utoipa::path(
@@ -97,7 +97,7 @@ async fn update_ddns_job(
     Path(id): Path<ConfigId>,
     JsonBody(mut payload): JsonBody<DdnsJob>,
 ) -> LandscapeApiResult<DdnsJob> {
-    payload.id = id.into();
+    payload.id = id;
     LandscapeApiResp::success(app.ddns_service.checked_set_job(payload).await?)
 }
 
@@ -112,6 +112,6 @@ async fn delete_ddns_job(
     State(app): State<LandscapeApp>,
     Path(id): Path<ConfigId>,
 ) -> LandscapeApiResult<()> {
-    app.ddns_service.delete(id.into()).await;
+    app.ddns_service.delete(id).await;
     LandscapeApiResp::success(())
 }

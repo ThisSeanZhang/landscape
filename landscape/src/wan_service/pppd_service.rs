@@ -310,8 +310,8 @@ pub async fn create_pppd_thread(
                         if let (Some(ip), Some(peer_ip)) = (new_ip4addr.1, new_ip4addr.2) {
                             landscape_ebpf::map_setting::add_ipv4_wan_ip(
                                 new_ip4addr.0,
-                                ip.clone(),
-                                Some(peer_ip.clone()),
+                                ip,
+                                Some(peer_ip),
                                 32,
                                 None,
                             );
@@ -322,7 +322,7 @@ pub async fn create_pppd_thread(
                                 mac: None,
                                 is_docker: false,
                                 iface_name: ppp_iface_name_clone.clone(),
-                                iface_ip: IpAddr::V4(ip.clone()),
+                                iface_ip: IpAddr::V4(ip),
                                 default_route: as_router,
                                 gateway_ip: IpAddr::V4(peer_ip),
                             };
@@ -336,7 +336,7 @@ pub async fn create_pppd_thread(
                                     LanRouteInfo {
                                         ifindex: new_ip4addr.0,
                                         iface_name: ppp_iface_name_clone.clone(),
-                                        iface_ip: IpAddr::V4(ip.clone()),
+                                        iface_ip: IpAddr::V4(ip),
                                         mac: None,
                                         prefix: 32,
                                         mode: LanRouteMode::WanReachable,

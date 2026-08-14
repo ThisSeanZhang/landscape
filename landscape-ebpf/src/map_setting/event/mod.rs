@@ -42,7 +42,7 @@ impl From<&nat_conn_metric_event> for ConnectMetric {
 pub(crate) fn convert_ip(raw: &u_inet_addr, proto: u8) -> IpAddr {
     match proto {
         LANDSCAPE_IPV4_TYPE => {
-            let ip = unsafe { raw.ip.clone().to_be() };
+            let ip = unsafe { raw.ip.to_be() };
             IpAddr::V4(Ipv4Addr::from_bits(ip))
         }
         LANDSCAPE_IPV6_TYPE => {

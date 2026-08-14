@@ -136,7 +136,7 @@ async fn run_unix_registration_listener(
                 }
             }
             change_result = receiver.changed() => {
-                if let Err(_) = change_result {
+                if change_result.is_err() {
                     tracing::error!("docker registration listener status channel closed");
                     break;
                 }
@@ -228,7 +228,7 @@ async fn run_docker_event_loop(
                     }
                 }
                 change_result = receiver.changed() => {
-                    if let Err(_) = change_result {
+                    if change_result.is_err() {
                         tracing::error!("docker event listener status channel closed");
                         return;
                     }
@@ -420,11 +420,11 @@ pub async fn handle_event(
                     }
                 }
                 "destroy" => {
-                    println!("");
+                    println!();
                     // println!("{:?}", emsg);
                     ip_route_service.remove_ipv4_lan_route(&net_id).await;
                     ip_route_service.print_lan_ifaces().await;
-                    println!("");
+                    println!();
                 }
                 _ => {}
             }

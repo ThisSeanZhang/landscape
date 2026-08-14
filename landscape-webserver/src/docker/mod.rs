@@ -120,12 +120,12 @@ async fn run_container(
         .await
     {
         tracing::error!("{:?}", e);
-        return Err(DockerError::CreateContainerError)?;
+        Err(DockerError::CreateContainerError)?;
     } else {
         let query: Option<StartContainerOptions> = None;
         if let Err(e) = &docker.start_container(&container_name, query).await {
             tracing::error!("{:?}", e);
-            return Err(DockerError::StartContainerError)?;
+            Err(DockerError::StartContainerError)?;
         }
     }
     LandscapeApiResp::success(())
@@ -144,7 +144,7 @@ async fn run_cmd_container(
     JsonBody(docker_cmd): JsonBody<DockerCmd>,
 ) -> LandscapeApiResult<()> {
     if let Err(_) = docker_cmd.execute_docker_command(&state.home_path).await {
-        return Err(DockerError::FailToRunContainerByCmd)?;
+        Err(DockerError::FailToRunContainerByCmd)?;
     }
     LandscapeApiResp::success(())
 }
@@ -164,7 +164,7 @@ async fn start_container(
     let docker = state.docker_service.docker_client()?;
     if let Err(e) = &docker.start_container(&container_name, None::<StartContainerOptions>).await {
         tracing::error!("{:?}", e);
-        return Err(DockerError::StartContainerError)?;
+        Err(DockerError::StartContainerError)?;
     }
 
     LandscapeApiResp::success(())
@@ -185,7 +185,7 @@ async fn stop_container(
     let docker = state.docker_service.docker_client()?;
     if let Err(e) = &docker.stop_container(&container_name, None::<StopContainerOptions>).await {
         tracing::error!("{:?}", e);
-        return Err(DockerError::StopContainerError)?;
+        Err(DockerError::StopContainerError)?;
     }
 
     LandscapeApiResp::success(())
@@ -207,7 +207,7 @@ async fn remove_container(
     let config = RemoveContainerOptions { force: true, v: false, link: false };
     if let Err(e) = &docker.remove_container(&container_name, Some(config)).await {
         tracing::error!("{:?}", e);
-        return Err(DockerError::FailToRemoveContainer)?;
+        Err(DockerError::FailToRemoveContainer)?;
     }
 
     LandscapeApiResp::success(())

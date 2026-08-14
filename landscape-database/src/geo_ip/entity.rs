@@ -50,10 +50,10 @@ impl From<Model> for GeoIpSourceConfig {
     }
 }
 
-impl Into<ActiveModel> for GeoIpSourceConfig {
-    fn into(self) -> ActiveModel {
-        let mut active = ActiveModel { id: Set(self.id), ..Default::default() };
-        self.update(&mut active);
+impl From<GeoIpSourceConfig> for ActiveModel {
+    fn from(val: GeoIpSourceConfig) -> Self {
+        let mut active = ActiveModel { id: Set(val.id), ..Default::default() };
+        val.update(&mut active);
         active
     }
 }

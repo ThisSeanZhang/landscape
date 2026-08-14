@@ -93,11 +93,9 @@ impl MigrationTrait for Migration {
 
                 // Parse ipv4_l4_protocol and ipv6_l4_protocol as JSON values
                 let ipv4_l4_protocol: serde_json::Value =
-                    serde_json::from_str(&row.ipv4_l4_protocol)
-                        .unwrap_or_else(|_| serde_json::json!(null));
+                    serde_json::from_str(&row.ipv4_l4_protocol).unwrap_or(serde_json::json!(null));
                 let ipv6_l4_protocol: serde_json::Value =
-                    serde_json::from_str(&row.ipv6_l4_protocol)
-                        .unwrap_or_else(|_| serde_json::json!(null));
+                    serde_json::from_str(&row.ipv6_l4_protocol).unwrap_or(serde_json::json!(null));
 
                 insert.values_panic([
                     row.id.into(),
@@ -219,11 +217,9 @@ impl MigrationTrait for Migration {
 
                 // Parse ipv4_l4_protocol and ipv6_l4_protocol as JSON values
                 let ipv4_l4_protocol: serde_json::Value =
-                    serde_json::from_str(&row.ipv4_l4_protocol)
-                        .unwrap_or_else(|_| serde_json::json!(null));
+                    serde_json::from_str(&row.ipv4_l4_protocol).unwrap_or(serde_json::json!(null));
                 let ipv6_l4_protocol: serde_json::Value =
-                    serde_json::from_str(&row.ipv6_l4_protocol)
-                        .unwrap_or_else(|_| serde_json::json!(null));
+                    serde_json::from_str(&row.ipv6_l4_protocol).unwrap_or(serde_json::json!(null));
 
                 insert.values_panic([
                     row.id.into(),

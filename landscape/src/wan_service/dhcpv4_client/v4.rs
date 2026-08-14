@@ -132,13 +132,13 @@ impl DhcpState {
 
     pub fn get_xid(&self) -> u32 {
         match self {
-            DhcpState::Discovering { xid, .. } => xid.clone(),
+            DhcpState::Discovering { xid, .. } => *xid,
             // DhcpState::Offer { xid, .. } => xid.clone(),
-            DhcpState::Requesting { xid, .. } => xid.clone(),
-            DhcpState::Bound { xid, .. } => xid.clone(),
-            DhcpState::Renewing { xid, .. } => xid.clone(),
-            DhcpState::WaitToRebind { xid, .. } => xid.clone(),
-            DhcpState::Rebind { xid, .. } => xid.clone(),
+            DhcpState::Requesting { xid, .. } => *xid,
+            DhcpState::Bound { xid, .. } => *xid,
+            DhcpState::Renewing { xid, .. } => *xid,
+            DhcpState::WaitToRebind { xid, .. } => *xid,
+            DhcpState::Rebind { xid, .. } => *xid,
             DhcpState::Stopping => 0,
             DhcpState::Stop => 0,
         }
@@ -273,7 +273,7 @@ pub async fn dhcp_v4_client(
 
             // 分支 3: 服务状态变更
             change_result = service_status_subscribe.changed() => {
-                if let Err(_) = change_result { break; }
+                if change_result.is_err() { break; }
                 if service_status.is_exit() {
                     if let Some(args) = ip_arg.take() {
                         let _ = std::process::Command::new("ip").args(&args).output();
@@ -335,7 +335,7 @@ async fn send_current_status_packet(
         } => {
             *current_status = DhcpState::Renewing {
                 xid: get_new_ipv4_xid(),
-                ciaddr: yiaddr.clone(),
+                ciaddr: *yiaddr,
                 yiaddr: Ipv4Addr::UNSPECIFIED,
                 siaddr: *siaddr,
                 options: options.clone(),
@@ -394,7 +394,7 @@ async fn send_current_status_packet(
         DhcpState::WaitToRebind { yiaddr, siaddr, options, lease_time, .. } => {
             *current_status = DhcpState::Rebind {
                 xid: get_new_ipv4_xid(),
-                ciaddr: yiaddr.clone(),
+                ciaddr: *yiaddr,
                 yiaddr: Ipv4Addr::UNSPECIFIED,
                 siaddr: *siaddr,
                 options: options.clone(),
@@ -472,7 +472,7 @@ async fn handle_packet(
         return false;
     };
 
-    if !current_status.can_handle_message(&msg_type) {
+    if !current_status.can_handle_message(msg_type) {
         tracing::error!("self: {current_status:?}");
         tracing::error!("current status can not handle this status");
         return false;
@@ -626,14 +626,14 @@ async fn bind_ipv4(
     }
 
     let lan_info = LanRouteInfo {
-        ifindex: ifindex,
+        ifindex,
         iface_name: iface_name.to_string(),
         iface_ip: IpAddr::V4(new_yiaddr),
-        mac: Some(mac_addr.clone()),
+        mac: Some(*mac_addr),
         prefix: mask as u8,
         mode: LanRouteMode::WanReachable,
     };
-    route_service.insert_ipv4_lan_route(&iface_name, lan_info).await;
+    route_service.insert_ipv4_lan_route(iface_name, lan_info).await;
 
     let gateway_ip = match options.get(OptionCode::Router) {
         Some(DhcpOption::Router(router_ips)) => router_ips.first().copied(),
@@ -641,20 +641,20 @@ async fn bind_ipv4(
     };
     landscape_ebpf::map_setting::add_ipv4_wan_ip(
         ifindex,
-        new_yiaddr.clone(),
+        new_yiaddr,
         gateway_ip,
         mask as u8,
-        Some(mac_addr.clone()),
+        Some(*mac_addr),
     );
 
     if let Some(router_ip) = gateway_ip {
         route_service
             .insert_ipv4_wan_route(
-                &iface_name,
+                iface_name,
                 RouteTargetInfo {
-                    ifindex: ifindex,
+                    ifindex,
                     weight: 1,
-                    mac: Some(mac_addr.clone()),
+                    mac: Some(*mac_addr),
                     is_docker: false,
                     default_route: default_router,
                     iface_name: iface_name.to_string(),

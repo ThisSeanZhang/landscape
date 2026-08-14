@@ -49,10 +49,10 @@ impl From<Model> for DnsProviderProfile {
     }
 }
 
-impl Into<ActiveModel> for DnsProviderProfile {
-    fn into(self) -> ActiveModel {
-        let mut active = ActiveModel { id: Set(self.id), ..Default::default() };
-        self.update(&mut active);
+impl From<DnsProviderProfile> for ActiveModel {
+    fn from(val: DnsProviderProfile) -> Self {
+        let mut active = ActiveModel { id: Set(val.id), ..Default::default() };
+        val.update(&mut active);
         active
     }
 }

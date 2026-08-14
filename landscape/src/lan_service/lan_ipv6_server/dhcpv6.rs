@@ -216,7 +216,7 @@ fn handle_solicit(
     }
 
     // RFC 8415 §20.4.2: include reconfigure key in Reply/Advertise
-    if client_supports_reconfigure(&msg) {
+    if client_supports_reconfigure(msg) {
         if let Some(key) = status.get_reconfigure_key(client_duid) {
             let mut info = vec![1u8];
             info.extend_from_slice(&key);
@@ -256,16 +256,14 @@ fn handle_request_or_renew(
     dns_servers: &[Ipv6Addr],
 ) -> Dhcpv6Result {
     // Verify ServerId (skip for Rebind per RFC 8415)
-    if msg.msg_type() != DhcpV6MessageType::Rebind {
-        if !verify_server_id(msg, server_duid) {
-            return Dhcpv6Result {
-                reply_bytes: None,
-                reply_dst: client_addr,
-                allocated_ips: Vec::new(),
-                expired_ips: Vec::new(),
-                pd_route_changes: Vec::new(),
-            };
-        }
+    if msg.msg_type() != DhcpV6MessageType::Rebind && !verify_server_id(msg, server_duid) {
+        return Dhcpv6Result {
+            reply_bytes: None,
+            reply_dst: client_addr,
+            allocated_ips: Vec::new(),
+            expired_ips: Vec::new(),
+            pd_route_changes: Vec::new(),
+        };
     }
 
     let mut allocated_ips: Vec<(MacAddr, Ipv6Addr)> = Vec::new();
@@ -409,7 +407,7 @@ fn handle_request_or_renew(
     status.consume_prev_suffix(client_duid);
 
     // RFC 8415 §20.4.2: include reconfigure key in Reply
-    if client_supports_reconfigure(&msg) {
+    if client_supports_reconfigure(msg) {
         if let Some(key) = status.get_reconfigure_key(client_duid) {
             let mut info = vec![1u8];
             info.extend_from_slice(&key);
@@ -477,7 +475,7 @@ fn handle_release(
     }));
 
     // RFC 8415 §20.4.2: include reconfigure key in Reply
-    if client_supports_reconfigure(&msg) {
+    if client_supports_reconfigure(msg) {
         if let Some(key) = status.get_reconfigure_key(client_duid) {
             let mut info = vec![1u8];
             info.extend_from_slice(&key);
@@ -569,7 +567,7 @@ fn handle_confirm(
     reply.opts_mut().insert(v6::DhcpOption::StatusCode(status_code));
 
     // RFC 8415 §20.4.2: include reconfigure key in Reply
-    if client_supports_reconfigure(&msg) {
+    if client_supports_reconfigure(msg) {
         if let Some(key) = status.get_reconfigure_key(client_duid) {
             let mut info = vec![1u8];
             info.extend_from_slice(&key);
@@ -612,7 +610,7 @@ fn handle_info_request(
     }
 
     // RFC 8415 §20.4.2: include reconfigure key in Reply
-    if client_supports_reconfigure(&msg) {
+    if client_supports_reconfigure(msg) {
         if let Some(key) = status.get_reconfigure_key(client_duid) {
             let mut info = vec![1u8];
             info.extend_from_slice(&key);

@@ -72,7 +72,7 @@ impl Drop for TcHookProxy {
     fn drop(&mut self) {
         if let Some(mut hook) = self.hook {
             tracing::debug!("detach hook");
-            if let Ok(_) = hook.query() {
+            if hook.query().is_ok() {
                 tracing::debug!("start detach success");
                 if let Err(e) = hook.detach() {
                     tracing::debug!("detach error: {:?}", e);

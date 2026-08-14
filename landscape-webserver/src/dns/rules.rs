@@ -46,7 +46,7 @@ async fn get_flow_dns_rules(
     Path(id): Path<FlowId>,
 ) -> LandscapeApiResult<Vec<DNSRuleConfig>> {
     let mut result = state.dns_rule_service.list_flow_configs(id).await;
-    result.sort_by(|a, b| a.index.cmp(&b.index));
+    result.sort_by_key(|a| a.index);
     LandscapeApiResp::success(result)
 }
 

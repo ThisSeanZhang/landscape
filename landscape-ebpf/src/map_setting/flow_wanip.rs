@@ -72,7 +72,7 @@ where
             std::net::IpAddr::V6(_) => continue,
         };
 
-        let mark: u32 = mark.clone().into();
+        let mark: u32 = (*mark).into();
         let mut value = flow_ip_trie_value_v4::default();
         value.mark = mark;
         value.priority = *priority;
@@ -157,7 +157,7 @@ where
             std::net::IpAddr::V6(addr) => addr,
         };
 
-        let mark: u32 = mark.clone().into();
+        let mark: u32 = (*mark).into();
         let mut value = flow_ip_trie_value_v6::default();
         value.mark = mark;
         value.priority = *priority;

@@ -293,7 +293,7 @@ fn hex_decode(hex: &str) -> Result<Vec<u8>, String> {
     if hex.is_empty() {
         return Ok(vec![]);
     }
-    if hex.len() % 2 != 0 {
+    if !hex.len().is_multiple_of(2) {
         return Err(format!("hex string must have even length, got {}", hex.len()));
     }
     let mut bytes = Vec::with_capacity(hex.len() / 2);

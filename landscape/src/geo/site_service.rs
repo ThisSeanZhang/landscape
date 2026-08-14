@@ -357,7 +357,7 @@ impl GeoSiteService {
                 .filter(|k| !config_names.contains(&k.name))
                 .collect::<HashSet<GeoFileCacheKey>>();
             for key in &need_to_remove {
-                file_cache_lock.del(&key);
+                file_cache_lock.del(key);
             }
             drop(file_cache_lock);
             self.notify_geo_changes(need_to_remove).await;

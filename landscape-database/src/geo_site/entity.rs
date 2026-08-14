@@ -50,10 +50,10 @@ impl From<Model> for GeoSiteSourceConfig {
     }
 }
 
-impl Into<ActiveModel> for GeoSiteSourceConfig {
-    fn into(self) -> ActiveModel {
-        let mut active = ActiveModel { id: Set(self.id), ..Default::default() };
-        self.update(&mut active);
+impl From<GeoSiteSourceConfig> for ActiveModel {
+    fn from(val: GeoSiteSourceConfig) -> Self {
+        let mut active = ActiveModel { id: Set(val.id), ..Default::default() };
+        val.update(&mut active);
         active
     }
 }

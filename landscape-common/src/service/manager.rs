@@ -15,9 +15,14 @@ pub trait ServiceStarterTrait: Clone + Send + Sync + 'static {
     async fn start(&self, config: Self::Config) -> WatchService;
 }
 
+// `H::Config` 关联类型要求 bound 才能编译，属于必要约束
+#[allow(type_alias_bounds)]
+pub type ServiceRegistry<H: ServiceStarterTrait> =
+    Arc<RwLock<HashMap<String, (WatchService, mpsc::Sender<H::Config>)>>>;
+
 #[derive(Clone)]
 pub struct ServiceManager<H: ServiceStarterTrait> {
-    pub services: Arc<RwLock<HashMap<String, (WatchService, mpsc::Sender<H::Config>)>>>,
+    pub services: ServiceRegistry<H>,
     pub starter: H,
 }
 
@@ -80,6 +85,7 @@ impl<H: ServiceStarterTrait> ServiceManager<H> {
         );
     }
 
+    #[allow(clippy::result_unit_err)] // 内部 API：调用方只关心成功与否，无错误详情可传递
     pub async fn update_service(&self, config: H::Config) -> Result<(), ()> {
         let key = config.get_store_key();
         let read_lock = self.services.read().await;

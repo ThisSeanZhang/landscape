@@ -221,13 +221,7 @@ impl RequestHandler for DnsRequestHandler {
             let response = builder.build_no_records(metadata);
             response_handle.send_response(response).await
         } else {
-            let response = builder.build(
-                metadata,
-                records.iter(),
-                vec![].into_iter(),
-                vec![].into_iter(),
-                vec![].into_iter(),
-            );
+            let response = builder.build(metadata, records.iter(), vec![], vec![], vec![]);
             response_handle.send_response(response).await
         };
         self.send_metric(

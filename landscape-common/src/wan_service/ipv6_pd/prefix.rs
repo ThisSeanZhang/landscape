@@ -49,6 +49,12 @@ pub struct IAPrefixMap {
     inner: Arc<DashMap<String, IPV6PDPrefixStatus>>,
 }
 
+impl Default for IAPrefixMap {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl IAPrefixMap {
     pub fn new() -> Self {
         IAPrefixMap { inner: Arc::new(DashMap::new()) }

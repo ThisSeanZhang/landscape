@@ -385,7 +385,7 @@ fn print_plan_preview(plan: &RollbackPlan) {
     println!();
 }
 
-fn prompt_target_selection<'a>(targets: &'a [RollbackTarget]) -> LdResult<&'a RollbackTarget> {
+fn prompt_target_selection(targets: &[RollbackTarget]) -> LdResult<&RollbackTarget> {
     let input = prompt("Select a target by number: ")?;
     let selection: usize = input
         .parse()

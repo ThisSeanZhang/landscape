@@ -37,13 +37,13 @@ impl From<Model> for MSSClampServiceConfig {
     }
 }
 
-impl Into<ActiveModel> for MSSClampServiceConfig {
-    fn into(self) -> ActiveModel {
+impl From<MSSClampServiceConfig> for ActiveModel {
+    fn from(val: MSSClampServiceConfig) -> Self {
         let mut active = ActiveModel {
-            iface_name: Set(self.iface_name.clone()),
+            iface_name: Set(val.iface_name.clone()),
             ..Default::default()
         };
-        self.update(&mut active);
+        val.update(&mut active);
         active
     }
 }

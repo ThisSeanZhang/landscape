@@ -277,10 +277,10 @@ impl DhcpV4AssignStatus {
 
         let mut seed = mac_addr.u32_ckecksum();
         loop {
-            if self.allocated_host.len() as u32 == self.range_capacity {
-                if self.clean_expire_ip().is_empty() {
-                    break;
-                }
+            if self.allocated_host.len() as u32 == self.range_capacity
+                && self.clean_expire_ip().is_empty()
+            {
+                break;
             }
             let index = seed % self.range_capacity;
             let (client_addr, _overflow) = self.ip_range_start.overflowing_add_u32(index);
@@ -428,9 +428,7 @@ impl DhcpV4AssignStatus {
     }
 
     pub fn add_decline_ip(&mut self, ip: Ipv4Addr) {
-        if !self.allocated_host.contains_key(&ip) {
-            self.allocated_host.insert(ip, IpAllocSource::Declined);
-        }
+        self.allocated_host.entry(ip).or_insert(IpAllocSource::Declined);
     }
 
     pub fn is_ip_in_range(&self, ip: Ipv4Addr) -> bool {

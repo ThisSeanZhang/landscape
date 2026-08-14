@@ -58,10 +58,10 @@ impl From<Model> for FlowConfig {
     }
 }
 
-impl Into<ActiveModel> for FlowConfig {
-    fn into(self) -> ActiveModel {
-        let mut active = ActiveModel { id: Set(self.id), ..Default::default() };
-        self.update(&mut active);
+impl From<FlowConfig> for ActiveModel {
+    fn from(val: FlowConfig) -> Self {
+        let mut active = ActiveModel { id: Set(val.id), ..Default::default() };
+        val.update(&mut active);
         active
     }
 }
@@ -70,9 +70,8 @@ impl UpdateActiveModel<ActiveModel> for FlowConfig {
     fn update(self, active: &mut ActiveModel) {
         active.enable = Set(self.enable);
         active.flow_id = Set(self.flow_id);
-        active.flow_match_rules = Set(serde_json::to_value(self.flow_match_rules).unwrap().into());
-        active.packet_handle_iface_name =
-            Set(serde_json::to_value(self.flow_targets).unwrap().into());
+        active.flow_match_rules = Set(serde_json::to_value(self.flow_match_rules).unwrap());
+        active.packet_handle_iface_name = Set(serde_json::to_value(self.flow_targets).unwrap());
         active.name = Set(self.name);
         active.remark = Set(self.remark);
         active.update_at = Set(self.update_at);

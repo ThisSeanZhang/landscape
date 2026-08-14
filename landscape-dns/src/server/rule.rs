@@ -156,7 +156,7 @@ impl DNSResolveRuntime {
 
         let enable_ip_validation = upstream.enable_ip_validation.unwrap_or(false);
         let Some(resolver) =
-            crate::connection::create_resolver(flow_id, mark_config.clone(), bind_config, upstream)
+            crate::connection::create_resolver(flow_id, mark_config, bind_config, upstream)
         else {
             tracing::warn!(rule_id = %rule_id, flow_id = flow_id, "skip DNS rule: failed to build resolver");
             return None;
@@ -290,7 +290,7 @@ fn is_global_ipv6(addr: &std::net::Ipv6Addr) -> bool {
                     || matches!(addr.segments(), [0x2001, 4, 0x112, _, _, _, _, _])
                     // ORCHIDv2 (`2001:20::/28`)
                     // Drone Remote ID Protocol Entity Tags (DETs) Prefix (`2001:30::/28`)`
-                    || matches!(addr.segments(), [0x2001, b, _, _, _, _, _, _] if b >= 0x20 && b <= 0x3F)
+                    || matches!(addr.segments(), [0x2001, b, _, _, _, _, _, _] if (0x20..=0x3F).contains(&b))
                 ))
             // 6to4 (`2002::/16`) – it's not explicitly documented as globally reachable,
             // IANA says N/A.

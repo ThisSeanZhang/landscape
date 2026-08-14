@@ -48,7 +48,7 @@ async fn main() {
         let route_info = RouteTargetInfo {
             ifindex: 6,
             weight: 1,
-            mac: iface.mac.clone(),
+            mac: iface.mac,
             is_docker: false,
             iface_name: "test".to_string(),
             iface_ip: IpAddr::V6(Ipv6Addr::UNSPECIFIED),

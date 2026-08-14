@@ -66,25 +66,23 @@ pub enum DdnsSource {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum DdnsJobStatus {
+    #[default]
     Idle,
     Syncing,
     Success,
     Error,
 }
 
-impl Default for DdnsJobStatus {
-    fn default() -> Self {
-        Self::Idle
-    }
-}
-
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum DdnsRuntimeReason {
     Disabled,
     NotConfigured,
+    #[default]
     Pending,
     Publishing,
     Published,
@@ -102,12 +100,6 @@ pub enum DdnsRuntimeReason {
     NetworkError,
     RemoteRejected,
     UnknownError,
-}
-
-impl Default for DdnsRuntimeReason {
-    fn default() -> Self {
-        Self::Pending
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

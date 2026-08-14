@@ -77,9 +77,9 @@ impl ConfigController for DstIpRuleService {
 
         for r in new_configs.into_iter() {
             if !flow_ids.contains(&r.flow_id) {
-                flow_ids.insert(r.flow_id.clone());
+                flow_ids.insert(r.flow_id);
             }
-            match rule_map.entry(r.flow_id.clone()) {
+            match rule_map.entry(r.flow_id) {
                 std::collections::hash_map::Entry::Occupied(mut entry) => entry.get_mut().push(r),
                 std::collections::hash_map::Entry::Vacant(entry) => {
                     entry.insert(vec![r]);
@@ -103,7 +103,7 @@ async fn update_flow_dst_ip_map(
     rules: Vec<WanIpRuleConfig>,
 ) {
     let mut rules: Vec<WanIpRuleConfig> = rules.into_iter().filter(|r| r.enable).collect();
-    rules.sort_by(|a, b| a.index.cmp(&b.index));
+    rules.sort_by_key(|a| a.index);
     tracing::info!("[flow_id: {flow_id}] update dst ip rules: {rules:?}");
     let result = geo_ip_service.convert_config_to_runtime_rule(rules).await;
     landscape_ebpf::map_setting::flow_wanip::add_wan_ip_mark(flow_id, result);

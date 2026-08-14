@@ -37,13 +37,13 @@ impl From<Model> for LanIPv6ServiceConfigV2 {
     }
 }
 
-impl Into<ActiveModel> for LanIPv6ServiceConfigV2 {
-    fn into(self) -> ActiveModel {
+impl From<LanIPv6ServiceConfigV2> for ActiveModel {
+    fn from(val: LanIPv6ServiceConfigV2) -> Self {
         let mut active = ActiveModel {
-            iface_name: Set(self.iface_name.clone()),
+            iface_name: Set(val.iface_name.clone()),
             ..Default::default()
         };
-        self.update(&mut active);
+        val.update(&mut active);
         active
     }
 }
@@ -52,6 +52,6 @@ impl UpdateActiveModel<ActiveModel> for LanIPv6ServiceConfigV2 {
     fn update(self, active: &mut ActiveModel) {
         active.enable = Set(self.enable);
         active.update_at = Set(self.update_at);
-        active.config = Set(serde_json::to_value(self.config).unwrap().into());
+        active.config = Set(serde_json::to_value(self.config).unwrap());
     }
 }

@@ -77,6 +77,12 @@ impl ServiceStatus {
 #[derive(Clone, Debug)]
 pub struct WatchService(pub watch::Sender<ServiceStatus>);
 
+impl Default for WatchService {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl WatchService {
     pub fn new() -> Self {
         let (sender, _) = watch::channel(ServiceStatus::default());

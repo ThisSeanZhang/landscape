@@ -38,13 +38,13 @@ impl From<Model> for IfaceIpServiceConfig {
     }
 }
 
-impl Into<ActiveModel> for IfaceIpServiceConfig {
-    fn into(self) -> ActiveModel {
+impl From<IfaceIpServiceConfig> for ActiveModel {
+    fn from(val: IfaceIpServiceConfig) -> Self {
         let mut active = ActiveModel {
-            iface_name: Set(self.iface_name.clone()),
+            iface_name: Set(val.iface_name.clone()),
             ..Default::default()
         };
-        self.update(&mut active);
+        val.update(&mut active);
         active
     }
 }

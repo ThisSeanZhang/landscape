@@ -83,7 +83,7 @@ pub async fn create_wifi_service(iface_name: String, config: String, service_sta
         let mut child = match Command::new("hostapd")
             .arg("-i")
             .arg(&iface_name)
-            .arg(&format!("{}", config_path))
+            .arg(&config_path)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
@@ -146,7 +146,7 @@ fn write_config(iface_name: &str, config: &str) -> Result<String, ()> {
         }
     }
 
-    let file_path = file_dir.join(format!("{}.conf", &iface_name));
+    let file_path = file_dir.join(format!("{}.conf", iface_name));
     let path_str = format!("{}", file_path.display());
     tracing::debug!("write config into: {}", path_str);
     let file = OpenOptions::new()
@@ -172,7 +172,7 @@ fn write_config(iface_name: &str, config: &str) -> Result<String, ()> {
 }
 fn delete_config(iface_name: &str) {
     let _ = std::fs::remove_file(
-        LAND_HOME_PATH.join(LANDSCAPE_HOSTAPD_TMP_DIR).join(format!("{}.conf", &iface_name)),
+        LAND_HOME_PATH.join(LANDSCAPE_HOSTAPD_TMP_DIR).join(format!("{}.conf", iface_name)),
     );
 }
 

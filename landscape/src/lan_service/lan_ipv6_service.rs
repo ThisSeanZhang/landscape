@@ -107,7 +107,7 @@ impl ServiceStarterTrait for LanIPv6Service {
 
             // ── Mode handling ──
             let mode = config.config.mode;
-            let dhcpv6_enabled = config.config.dhcpv6.as_ref().map_or(false, |c| c.enable);
+            let dhcpv6_enabled = config.config.dhcpv6.as_ref().is_some_and(|c| c.enable);
 
             match mode {
                 IPv6ServiceMode::Slaac => {

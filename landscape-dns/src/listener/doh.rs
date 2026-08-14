@@ -116,7 +116,7 @@ fn build_tls_acceptor(
         .unwrap_or_else(|| Arc::new(rustls::crypto::ring::default_provider()));
     let mut config = ServerConfig::builder_with_provider(provider)
         .with_safe_default_protocol_versions()
-        .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?
+        .map_err(|e| io::Error::other(e))?
         .with_no_client_auth()
         .with_cert_resolver(server_cert_resolver);
     config.alpn_protocols = vec![b"h2".to_vec()];

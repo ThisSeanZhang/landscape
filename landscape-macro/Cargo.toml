@@ -9,3 +9,8 @@ proc-macro = true
 [dependencies]
 quote = { workspace = true }
 syn = { workspace = true }
+
+[dev-dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }

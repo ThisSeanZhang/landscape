@@ -194,17 +194,14 @@ async fn change_zone(
         state.dhcp_v4_server_service.cleanup_lingering_iface_addr_if_present(config).await;
     }
     state.iface_config_service.change_zone(change_zone.clone()).await;
-    if matches!(change_zone.zone, IfaceZoneType::Wan) {
-        if get_existing_linklocal(&change_zone.iface_name).is_none() {
-            if let Some(iface) = get_iface_by_name(&change_zone.iface_name).await {
-                if let Some(ref mac) = iface.mac {
-                    let ll = mac.to_ipv6_link_local();
-                    if !set_iface_ip_no_limit(&change_zone.iface_name, IpAddr::V6(ll), 64).await {
-                        error!(
-                            "Failed to set link-local address {ll} on {}",
-                            change_zone.iface_name
-                        );
-                    }
+    if matches!(change_zone.zone, IfaceZoneType::Wan)
+        && get_existing_linklocal(&change_zone.iface_name).is_none()
+    {
+        if let Some(iface) = get_iface_by_name(&change_zone.iface_name).await {
+            if let Some(ref mac) = iface.mac {
+                let ll = mac.to_ipv6_link_local();
+                if !set_iface_ip_no_limit(&change_zone.iface_name, IpAddr::V6(ll), 64).await {
+                    error!("Failed to set link-local address {ll} on {}", change_zone.iface_name);
                 }
             }
         }

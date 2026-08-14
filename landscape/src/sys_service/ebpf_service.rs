@@ -7,6 +7,12 @@ pub struct LandscapeEbpfService {
     cancel: CancellationToken,
 }
 
+impl Default for LandscapeEbpfService {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl LandscapeEbpfService {
     pub fn new() -> Self {
         let cancel = CancellationToken::new();

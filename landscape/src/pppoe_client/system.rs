@@ -99,14 +99,14 @@ impl PPPoEClientManager {
                 Some(iface_mac),
             );
             if let Err(e) = std::process::Command::new("ip")
-                .args(&["link", "set", "dev", &iface_name, "mtu", &format!("{}", mru)])
+                .args(["link", "set", "dev", &iface_name, "mtu", &format!("{}", mru)])
                 .output()
             {
                 tracing::error!("failed to set iface MTU for native PPPoE: {e:?}");
             }
 
             if let Err(e) = std::process::Command::new("ip")
-                .args(&[
+                .args([
                     "addr",
                     "add",
                     &format!("{}", client_ip),
@@ -160,7 +160,7 @@ impl PPPoEClientManager {
             }
 
             let neight_run_result = std::process::Command::new("ip")
-                .args(&[
+                .args([
                     "neigh",
                     "replace",
                     &format!("{}", server_ip),
@@ -207,7 +207,7 @@ impl PPPoEClientManager {
             };
             {
                 let v6_result = std::process::Command::new("ip")
-                    .args(&[
+                    .args([
                         "neigh",
                         "replace",
                         &format!("{}", server_linklocal),
@@ -248,7 +248,7 @@ impl PPPoEClientManager {
                         ((server_iface_id[6] as u16) << 8) | (server_iface_id[7] as u16),
                     );
                     let v6_result = std::process::Command::new("ip")
-                        .args(&[
+                        .args([
                             "neigh",
                             "replace",
                             &format!("{}", iface_linklocal),
@@ -286,7 +286,7 @@ impl PPPoEClientManager {
             }
 
             if let Err(e) = std::process::Command::new("ip")
-                .args(&[
+                .args([
                     "addr",
                     "del",
                     &format!("{}", client_ip),
@@ -304,7 +304,7 @@ impl PPPoEClientManager {
             }
 
             if let Err(e) = std::process::Command::new("ip")
-                .args(&["neigh", "del", &format!("{}", server_ip), "dev", &iface_name])
+                .args(["neigh", "del", &format!("{}", server_ip), "dev", &iface_name])
                 .output()
             {
                 tracing::error!(
@@ -316,7 +316,7 @@ impl PPPoEClientManager {
 
             // Delete IPv6 link-local neighbor (EUI-64 from server MAC)
             let _ = std::process::Command::new("ip")
-                .args(&["neigh", "del", &format!("{}", server_linklocal), "dev", &iface_name])
+                .args(["neigh", "del", &format!("{}", server_linklocal), "dev", &iface_name])
                 .output();
 
             // Delete IPv6 link-local neighbor (IPv6CP server interface id)
@@ -333,13 +333,7 @@ impl PPPoEClientManager {
                         ((server_iface_id[6] as u16) << 8) | (server_iface_id[7] as u16),
                     );
                     let _ = std::process::Command::new("ip")
-                        .args(&[
-                            "neigh",
-                            "del",
-                            &format!("{}", iface_linklocal),
-                            "dev",
-                            &iface_name,
-                        ])
+                        .args(["neigh", "del", &format!("{}", iface_linklocal), "dev", &iface_name])
                         .output();
                 }
             }
@@ -353,7 +347,7 @@ impl PPPoEClientManager {
             }
             landscape_ebpf::map_setting::del_ipv4_wan_ip(index);
             if let Err(e) = std::process::Command::new("ip")
-                .args(&["link", "set", "dev", &iface_name, "mtu", "1500"])
+                .args(["link", "set", "dev", &iface_name, "mtu", "1500"])
                 .output()
             {
                 tracing::error!("failed to restore iface MTU after PPPoE teardown: {e:?}");

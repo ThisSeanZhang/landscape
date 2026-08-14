@@ -85,7 +85,7 @@ fn parse_hosts_line_domains(line: &str) -> Vec<&str> {
 fn parse_adguard_domain_rule(line: &str) -> Option<(&str, Option<&str>)> {
     let line = line.strip_prefix("||")?;
 
-    let domain_end = line.find(|c: char| c == '^' || c == '$').unwrap_or(line.len());
+    let domain_end = line.find(['^', '$']).unwrap_or(line.len());
     let domain = &line[..domain_end];
 
     if !is_valid_dns_domain(domain) {

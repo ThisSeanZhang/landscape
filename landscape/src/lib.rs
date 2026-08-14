@@ -195,17 +195,14 @@ pub async fn init_devs(network_config: Vec<NetworkIfaceConfig>) {
                 });
             }
 
-            if matches!(ifconfig.zone_type, IfaceZoneType::Wan) {
-                if get_existing_linklocal(&ifconfig.name).is_none() {
-                    if let Some(iface) = get_iface_by_name(&ifconfig.name).await {
-                        if let Some(ref mac) = iface.mac {
-                            let ll = mac.to_ipv6_link_local();
-                            if !set_iface_ip_no_limit(&ifconfig.name, IpAddr::V6(ll), 64).await {
-                                error!(
-                                    "Failed to set link-local address {ll} on {}",
-                                    ifconfig.name
-                                );
-                            }
+            if matches!(ifconfig.zone_type, IfaceZoneType::Wan)
+                && get_existing_linklocal(&ifconfig.name).is_none()
+            {
+                if let Some(iface) = get_iface_by_name(&ifconfig.name).await {
+                    if let Some(ref mac) = iface.mac {
+                        let ll = mac.to_ipv6_link_local();
+                        if !set_iface_ip_no_limit(&ifconfig.name, IpAddr::V6(ll), 64).await {
+                            error!("Failed to set link-local address {ll} on {}", ifconfig.name);
                         }
                     }
                 }

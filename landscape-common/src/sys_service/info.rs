@@ -38,6 +38,12 @@ pub struct LandscapeSystemInfo {
     pub start_at: u64,
 }
 
+impl Default for LandscapeSystemInfo {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl LandscapeSystemInfo {
     pub fn new() -> LandscapeSystemInfo {
         let start_at = System::boot_time();
@@ -148,6 +154,12 @@ impl<T> WatchResourceTrait for T where T: Clone + Serialize + Default {}
 
 #[derive(Clone, Debug)]
 pub struct WatchResource<T: WatchResourceTrait>(pub watch::Sender<T>);
+
+impl<T: WatchResourceTrait> Default for WatchResource<T> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl<T: WatchResourceTrait> WatchResource<T> {
     pub fn new() -> Self {

@@ -277,7 +277,7 @@ unsafe fn ethtool_ioctl(ifname: &str, cmd: u32, data: u32) -> Result<u32, io::Er
 
     let mut ifr: libc::ifreq = std::mem::zeroed();
     let name_bytes = ifname.as_bytes();
-    let max_len = (libc::IFNAMSIZ - 1) as usize;
+    let max_len = libc::IFNAMSIZ - 1;
     let copy_len = name_bytes.len().min(max_len);
     std::ptr::copy_nonoverlapping(
         name_bytes.as_ptr(),

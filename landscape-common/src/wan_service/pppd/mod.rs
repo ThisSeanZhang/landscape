@@ -93,6 +93,8 @@ impl LandscapeDBStore<String> for PPPDServiceConfig {
 }
 
 impl ZoneAwareConfig for PPPDServiceConfig {
+    // PPPoE 语义：zone 匹配按物理口(attach)进行，iface_name 是拨号后的 ppp0 虚拟口
+    #[allow(clippy::misnamed_getters)]
     fn iface_name(&self) -> &str {
         &self.attach_iface_name
     }
@@ -154,6 +156,7 @@ impl PPPDConfig {
         let _ = std::fs::remove_file(PathBuf::from("/etc/ppp/peers").join(ppp_iface_name));
     }
 
+    #[allow(clippy::result_unit_err)] // 内部 API：调用方只关心成功与否
     pub fn write_config(&self, attach_iface_name: &str, ppp_iface_name: &str) -> Result<(), ()> {
         if let Err(e) = validate_ppp_iface_name(ppp_iface_name) {
             tracing::error!("invalid PPP interface name for write_config: {e}");

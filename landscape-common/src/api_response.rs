@@ -40,7 +40,7 @@ impl<T> LandscapeApiResp<T> {
         message: impl Into<String>,
         args: Value,
     ) -> Self {
-        let args = if args.as_object().map_or(true, |m| m.is_empty()) { None } else { Some(args) };
+        let args = if args.as_object().is_none_or(|m| m.is_empty()) { None } else { Some(args) };
         Self {
             data: None,
             error_id: Some(error_id.into()),

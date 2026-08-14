@@ -41,7 +41,7 @@ async fn get_provider_profile(
     State(app): State<LandscapeApp>,
     Path(id): Path<ConfigId>,
 ) -> LandscapeApiResult<Option<DnsProviderProfile>> {
-    LandscapeApiResp::success(app.dns_provider_profile_service.find_by_id(id.into()).await)
+    LandscapeApiResp::success(app.dns_provider_profile_service.find_by_id(id).await)
 }
 
 #[utoipa::path(
@@ -85,7 +85,7 @@ async fn update_provider_profile(
     Path(id): Path<ConfigId>,
     JsonBody(mut payload): JsonBody<DnsProviderProfile>,
 ) -> LandscapeApiResult<DnsProviderProfile> {
-    payload.id = id.into();
+    payload.id = id;
     LandscapeApiResp::success(app.dns_provider_profile_service.checked_set_profile(payload).await?)
 }
 
@@ -100,6 +100,6 @@ async fn delete_provider_profile(
     State(app): State<LandscapeApp>,
     Path(id): Path<ConfigId>,
 ) -> LandscapeApiResult<()> {
-    app.dns_provider_profile_service.delete_profile(id.into()).await?;
+    app.dns_provider_profile_service.delete_profile(id).await?;
     LandscapeApiResp::success(())
 }

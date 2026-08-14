@@ -26,6 +26,7 @@ pub struct EventHubHandle {
 }
 
 impl EventHubHandle {
+    #[allow(clippy::too_many_arguments)] // 12 个广播 channel 的 tx/rx 成对传入，结构清晰
     pub(super) fn new(
         iface_broadcast_tx: broadcast::Sender<IfaceObserverAction>,
         iface_broadcast_rx: broadcast::Receiver<IfaceObserverAction>,

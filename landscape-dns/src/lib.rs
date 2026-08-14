@@ -37,8 +37,8 @@ pub mod listener;
 pub mod mdns;
 pub mod server;
 
-static RESOLVER_CONF: &'static str = "/etc/resolv.conf";
-static RESOLVER_CONF_LD_BACK: &'static str = "/etc/resolv.conf.ld_back";
+static RESOLVER_CONF: &str = "/etc/resolv.conf";
+static RESOLVER_CONF_LD_BACK: &str = "/etc/resolv.conf.ld_back";
 
 fn check_resolver_conf() -> bool {
     let resolver_file = PathBuf::from(RESOLVER_CONF);
@@ -134,14 +134,14 @@ impl CacheDNSItem {
             match &rdata.data {
                 RData::A(a) => {
                     result.insert(FlowMarkInfo {
-                        mark: info.mark.clone().into(),
+                        mark: info.mark.into(),
                         ip: std::net::IpAddr::V4(a.0),
                         priority: info.priority,
                     });
                 }
                 RData::AAAA(a) => {
                     result.insert(FlowMarkInfo {
-                        mark: info.mark.clone().into(),
+                        mark: info.mark.into(),
                         ip: std::net::IpAddr::V6(a.0),
                         priority: info.priority,
                     });
@@ -155,7 +155,7 @@ impl CacheDNSItem {
                             SvcParamValue::Ipv4Hint(hint) => {
                                 for a in hint.0.iter() {
                                     result.insert(FlowMarkInfo {
-                                        mark: info.mark.clone().into(),
+                                        mark: info.mark.into(),
                                         ip: std::net::IpAddr::V4(a.0),
                                         priority: info.priority,
                                     });
@@ -164,7 +164,7 @@ impl CacheDNSItem {
                             SvcParamValue::Ipv6Hint(hint) => {
                                 for aaaa in hint.0.iter() {
                                     result.insert(FlowMarkInfo {
-                                        mark: info.mark.clone().into(),
+                                        mark: info.mark.into(),
                                         ip: std::net::IpAddr::V6(aaaa.0),
                                         priority: info.priority,
                                     });

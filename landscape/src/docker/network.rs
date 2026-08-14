@@ -59,7 +59,7 @@ pub fn convert_network(net: NetworkInspect) -> Option<LandscapeDockerNetwork> {
                 format!("br-{}", id.get(..12).unwrap_or(&id))
             };
 
-            let ip_info = net.ipam.map(convert_ipam).flatten();
+            let ip_info = net.ipam.and_then(convert_ipam);
 
             Some(LandscapeDockerNetwork {
                 name,
@@ -85,7 +85,7 @@ fn convert_container(container: EndpointResource) -> Option<LandscapeDockerNetwo
 }
 
 fn convert_ipam(ipam: Ipam) -> Option<LandscapeDockerIpInfo> {
-    let Some(config) = ipam.config.as_ref().map(|c| c.get(0)).flatten() else {
+    let Some(config) = ipam.config.as_ref().and_then(|c| c.first()) else {
         return None;
     };
 

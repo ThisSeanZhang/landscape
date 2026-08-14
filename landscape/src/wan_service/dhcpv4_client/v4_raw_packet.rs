@@ -41,22 +41,18 @@ impl<T: NetProtoCodec> Decoder for RawPacketCodec<T> {
             return Ok(None);
         }
 
-        match etherparse::PacketHeaders::from_ethernet_slice(src) {
-            Ok(headers) => {
-                if let Some(etherparse::TransportHeader::Udp(udp)) = headers.transport {
-                    // Check if the destination port matches our source port (incoming packet)
-                    if udp.destination_port == self.source_port {
-                        let payload = headers.payload.slice();
-                        let mut payload_mut = BytesMut::from(payload);
-                        let msg = T::decode(&mut payload_mut).map_err(|e| {
-                            std::io::Error::new(std::io::ErrorKind::Other, e.to_string())
-                        })?;
-                        src.advance(src.len());
-                        return Ok(msg);
-                    }
+        if let Ok(headers) = etherparse::PacketHeaders::from_ethernet_slice(src) {
+            if let Some(etherparse::TransportHeader::Udp(udp)) = headers.transport {
+                // Check if the destination port matches our source port (incoming packet)
+                if udp.destination_port == self.source_port {
+                    let payload = headers.payload.slice();
+                    let mut payload_mut = BytesMut::from(payload);
+                    let msg = T::decode(&mut payload_mut)
+                        .map_err(|e| std::io::Error::other(e.to_string()))?;
+                    src.advance(src.len());
+                    return Ok(msg);
                 }
             }
-            Err(_) => {}
         }
 
         src.clear();
@@ -70,8 +66,7 @@ impl<T: NetProtoCodec> Encoder<(T, Ipv4Addr)> for RawPacketCodec<T> {
     fn encode(&mut self, item: (T, Ipv4Addr), dst: &mut BytesMut) -> Result<(), Self::Error> {
         let (msg, dest_ip) = item;
         let mut payload = BytesMut::new();
-        msg.encode(&mut payload)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
+        msg.encode(&mut payload).map_err(|e| std::io::Error::other(e.to_string()))?;
 
         let builder = etherparse::PacketBuilder::ethernet2(self.mac, [0xff; 6])
             .ipv4(self.source_ip.octets(), dest_ip.octets(), 64)
@@ -81,9 +76,7 @@ impl<T: NetProtoCodec> Encoder<(T, Ipv4Addr)> for RawPacketCodec<T> {
         dst.reserve(packet_size);
 
         let mut writer = dst.writer();
-        builder
-            .write(&mut writer, &payload)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
+        builder.write(&mut writer, &payload).map_err(|e| std::io::Error::other(e.to_string()))?;
 
         Ok(())
     }
@@ -239,17 +232,14 @@ impl RawPacketSocket {
         dest_ip: Ipv4Addr,
     ) -> std::io::Result<()> {
         let mut payload = BytesMut::new();
-        msg.encode(&mut payload)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
+        msg.encode(&mut payload).map_err(|e| std::io::Error::other(e.to_string()))?;
 
         let builder = etherparse::PacketBuilder::ethernet2(self.mac, [0xff; 6])
             .ipv4(Ipv4Addr::UNSPECIFIED.octets(), dest_ip.octets(), 64)
             .udp(self.client_port, self.server_port);
 
         let mut packet = Vec::with_capacity(builder.size(payload.len()));
-        builder
-            .write(&mut packet, &payload)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
+        builder.write(&mut packet, &payload).map_err(|e| std::io::Error::other(e.to_string()))?;
 
         let mut addr: libc::sockaddr_ll = unsafe { std::mem::zeroed() };
         addr.sll_family = AF_PACKET as u16;
@@ -409,8 +399,7 @@ impl AdaptiveDhcpV4Socket {
     pub async fn send(&self, msg: DhcpV4Message, dest_ip: Ipv4Addr) -> std::io::Result<()> {
         if let Some(ref udp) = self.udp {
             let mut buf = BytesMut::new();
-            msg.encode(&mut buf)
-                .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
+            msg.encode(&mut buf).map_err(|e| std::io::Error::other(e.to_string()))?;
             udp.send_to(&buf, (dest_ip, self.server_port)).await?;
             Ok(())
         } else if let Some((ref raw, _)) = self.raw {

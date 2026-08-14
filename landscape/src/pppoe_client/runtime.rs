@@ -165,7 +165,7 @@ pub async fn create_pppoe_client(
             server_ip
         );
         let _ = std::process::Command::new("ip")
-            .args(&[
+            .args([
                 "addr",
                 "del",
                 &format!("{}", client_ip),
@@ -176,7 +176,7 @@ pub async fn create_pppoe_client(
             ])
             .output();
         let _ = std::process::Command::new("ip")
-            .args(&["neigh", "del", &format!("{}", server_ip), "dev", &config.iface_name])
+            .args(["neigh", "del", &format!("{}", server_ip), "dev", &config.iface_name])
             .output();
 
         // Delete IPv6 link-local neighbor (EUI-64 from server MAC + IPv6CP iface id)
@@ -195,7 +195,7 @@ pub async fn create_pppoe_client(
                     ((server_mac_addr[4] as u16) << 8) | (server_mac_addr[5] as u16),
                 );
                 let _ = std::process::Command::new("ip")
-                    .args(&[
+                    .args([
                         "neigh",
                         "del",
                         &format!("{}", server_linklocal),
@@ -217,7 +217,7 @@ pub async fn create_pppoe_client(
                         ((iface_id[6] as u16) << 8) | (iface_id[7] as u16),
                     );
                     let _ = std::process::Command::new("ip")
-                        .args(&[
+                        .args([
                             "neigh",
                             "del",
                             &format!("{}", linklocal),
@@ -229,7 +229,7 @@ pub async fn create_pppoe_client(
             }
         }
         let _ = std::process::Command::new("ip")
-            .args(&["link", "set", "dev", &config.iface_name, "mtu", "1500"])
+            .args(["link", "set", "dev", &config.iface_name, "mtu", "1500"])
             .output();
     }
 

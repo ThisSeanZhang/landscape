@@ -108,6 +108,7 @@ impl ManagerInner {
     }
 }
 
+#[derive(Default)]
 struct ChainState {
     root: Option<ChainRoot>,
     stages: BTreeMap<StageType, StageEntry>,
@@ -428,13 +429,11 @@ impl XdpChainManager {
     }
 
     fn ensure_roots_locked(&self, inner: &mut ManagerInner, ifindex: u32) -> LdEbpfResult<()> {
-        let wan_state =
-            inner.chains.entry((ifindex, ChainDir::Wan)).or_insert_with(ChainState::default);
+        let wan_state = inner.chains.entry((ifindex, ChainDir::Wan)).or_default();
         if wan_state.root.is_none() {
             wan_state.root = Some(self.create_wan_root(ifindex)?);
         }
-        let lan_state =
-            inner.chains.entry((ifindex, ChainDir::Lan)).or_insert_with(ChainState::default);
+        let lan_state = inner.chains.entry((ifindex, ChainDir::Lan)).or_default();
         if lan_state.root.is_none() {
             lan_state.root = Some(self.create_lan_root(ifindex)?);
         }
@@ -451,11 +450,9 @@ impl XdpChainManager {
     ) -> LdEbpfResult<()> {
         {
             let mut inner = self.inner.lock().unwrap();
-            let lan_state =
-                inner.chains.entry((ifindex, ChainDir::Lan)).or_insert_with(ChainState::default);
+            let lan_state = inner.chains.entry((ifindex, ChainDir::Lan)).or_default();
             lan_state.stages.insert(stage, StageEntry { prog_fd: lan_prog_fd, next_stage_map_fd });
-            let wan_state =
-                inner.chains.entry((ifindex, ChainDir::Wan)).or_insert_with(ChainState::default);
+            let wan_state = inner.chains.entry((ifindex, ChainDir::Wan)).or_default();
             wan_state.stages.insert(stage, StageEntry { prog_fd: wan_prog_fd, next_stage_map_fd });
         }
         self.rebuild(ifindex, ChainDir::Lan)?;
@@ -651,7 +648,7 @@ impl XdpChainManager {
             ChainDir::Wan => 1u32,
         };
 
-        for (_, entry) in &state.stages {
+        for entry in state.stages.values() {
             delete_prog_array_fd(entry.next_stage_map_fd, dir_slot);
         }
         delete_prog_array_fd(root.root_next_stage_fd(), 0);
@@ -673,11 +670,5 @@ impl XdpChainManager {
         }
 
         Ok(())
-    }
-}
-
-impl Default for ChainState {
-    fn default() -> Self {
-        Self { root: None, stages: BTreeMap::new() }
     }
 }

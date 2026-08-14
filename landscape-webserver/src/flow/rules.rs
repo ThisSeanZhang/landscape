@@ -38,7 +38,7 @@ fn has_too_many_targets(flow_rule: &FlowConfig) -> bool {
 )]
 async fn get_flow_rules(State(state): State<LandscapeApp>) -> LandscapeApiResult<Vec<FlowConfig>> {
     let mut result = state.flow_rule_service.list().await;
-    result.sort_by(|a, b| a.flow_id.cmp(&b.flow_id));
+    result.sort_by_key(|a| a.flow_id);
     LandscapeApiResp::success(result)
 }
 
@@ -57,7 +57,7 @@ async fn get_flow_rule_by_flow_id(
     Path(id): Path<FlowId>,
 ) -> LandscapeApiResult<FlowConfig> {
     let result = state.flow_rule_service.list_flow_configs(id).await;
-    if result.len() > 0 {
+    if !result.is_empty() {
         LandscapeApiResp::success(result.first().cloned().unwrap())
     } else {
         Err(FlowRuleError::NotFound(Default::default()))?

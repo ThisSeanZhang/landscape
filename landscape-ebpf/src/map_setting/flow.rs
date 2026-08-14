@@ -13,9 +13,9 @@ use super::{apply_raw_map_diff, diff_raw_map, snapshot_raw_map, RawEbpfMapEntrie
 const FLOW_ENTRY_MODE_MAC: u8 = 0;
 const FLOW_ENTRY_MODE_IP: u8 = 1;
 
-impl Into<flow_match_key> for ResolvedFlowEntryRule {
-    fn into(self) -> flow_match_key {
-        flow_match_key_from_rule(&self)
+impl From<ResolvedFlowEntryRule> for flow_match_key {
+    fn from(val: ResolvedFlowEntryRule) -> Self {
+        flow_match_key_from_rule(&val)
     }
 }
 

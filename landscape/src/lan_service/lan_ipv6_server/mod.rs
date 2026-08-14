@@ -259,6 +259,12 @@ pub struct PrefixState {
     pub pd_ranges: Vec<PdRange>,
 }
 
+impl Default for PrefixState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PrefixState {
     pub fn new() -> Self {
         PrefixState {
@@ -325,6 +331,12 @@ pub struct Ipv6LanReplyParams {
 pub struct DnsServers {
     pub static_dns: Option<Ipv6Addr>,
     pub dynamic_dns: Option<Ipv6Addr>,
+}
+
+impl Default for DnsServers {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl DnsServers {
@@ -732,59 +744,58 @@ impl Ipv6ServerStatus {
         }
 
         // Evict dynamic occupant
-        match self.na_owners_by_suffix.remove(&suffix) {
-            Some(SuffixOwner::DynamicDuid(evicted_duid)) => {
-                if mac_duid.as_ref() != Some(&evicted_duid) {
-                    if let Some(mut evicted) = self.na_leases_by_duid.remove(&evicted_duid) {
-                        changes.push_expired(evicted.clone(), Some(suffix));
+        if let Some(SuffixOwner::DynamicDuid(evicted_duid)) =
+            self.na_owners_by_suffix.remove(&suffix)
+        {
+            if mac_duid.as_ref() != Some(&evicted_duid) {
+                if let Some(mut evicted) = self.na_leases_by_duid.remove(&evicted_duid) {
+                    changes.push_expired(evicted.clone(), Some(suffix));
 
-                        if let Some(old) = old_static_suffix {
-                            if old != suffix
-                                && (old >= self.na_pool_start)
-                                && (old < self.na_pool_start + self.na_range_capacity)
-                                && !self.na_owners_by_suffix.contains_key(&old)
-                            {
-                                evicted.prev_suffix = Some(suffix);
-                                evicted.suffix = old;
-                                evicted.is_static = false;
-                                evicted.relative_offer_time = now;
-                                let offer_lifetime = offer_lifetime(self.preferred_lifetime);
-                                evicted.valid_time = offer_lifetime;
-                                evicted.preferred_time = offer_lifetime;
-                                self.na_owners_by_suffix
-                                    .insert(old, SuffixOwner::DynamicDuid(evicted_duid.clone()));
-                                self.set_reconfigure_key(&evicted_duid, evicted.mac);
-                                self.na_leases_by_duid.insert(evicted_duid, evicted.clone());
-                                changes.push_allocated(evicted, Some(suffix));
-                            }
-                        } else if self.na_config.is_some() {
-                            if self
-                                .allocate_dynamic_na_suffix(
-                                    &evicted_duid,
-                                    evicted.mac,
-                                    evicted.hostname.clone(),
-                                    now,
-                                    Some(suffix),
-                                    Some(suffix),
-                                )
-                                .is_some()
-                            {
-                                let reassigned_lease = self
-                                    .na_leases_by_duid
-                                    .get(&evicted_duid)
-                                    .cloned()
-                                    .expect("just inserted");
-                                changes.push_allocated(reassigned_lease, Some(suffix));
-                            } else {
-                                changes.released.push(evicted);
-                            }
+                    if let Some(old) = old_static_suffix {
+                        if old != suffix
+                            && (old >= self.na_pool_start)
+                            && (old < self.na_pool_start + self.na_range_capacity)
+                            && !self.na_owners_by_suffix.contains_key(&old)
+                        {
+                            evicted.prev_suffix = Some(suffix);
+                            evicted.suffix = old;
+                            evicted.is_static = false;
+                            evicted.relative_offer_time = now;
+                            let offer_lifetime = offer_lifetime(self.preferred_lifetime);
+                            evicted.valid_time = offer_lifetime;
+                            evicted.preferred_time = offer_lifetime;
+                            self.na_owners_by_suffix
+                                .insert(old, SuffixOwner::DynamicDuid(evicted_duid.clone()));
+                            self.set_reconfigure_key(&evicted_duid, evicted.mac);
+                            self.na_leases_by_duid.insert(evicted_duid, evicted.clone());
+                            changes.push_allocated(evicted, Some(suffix));
+                        }
+                    } else if self.na_config.is_some() {
+                        if self
+                            .allocate_dynamic_na_suffix(
+                                &evicted_duid,
+                                evicted.mac,
+                                evicted.hostname.clone(),
+                                now,
+                                Some(suffix),
+                                Some(suffix),
+                            )
+                            .is_some()
+                        {
+                            let reassigned_lease = self
+                                .na_leases_by_duid
+                                .get(&evicted_duid)
+                                .cloned()
+                                .expect("just inserted");
+                            changes.push_allocated(reassigned_lease, Some(suffix));
                         } else {
                             changes.released.push(evicted);
                         }
+                    } else {
+                        changes.released.push(evicted);
                     }
                 }
             }
-            _ => {}
         }
 
         self.na_owners_by_suffix.insert(suffix, SuffixOwner::StaticMac(mac));
@@ -1670,8 +1681,7 @@ pub fn compute_subnets(
 
         // NA subnet (may share the same subnet as RA if same pool_index)
         if let Some(ref na) = group.na {
-            let shares_ra_slot =
-                group.ra.as_ref().map_or(false, |ra| ra.pool_index == na.pool_index);
+            let shares_ra_slot = group.ra.as_ref().is_some_and(|ra| ra.pool_index == na.pool_index);
             if shares_ra_slot {
                 if let Some(existing) =
                     result.iter_mut().rev().find(|s| s.group_id == group.group_id)

@@ -60,6 +60,12 @@ pub struct EventHub {
     ia_prefix_mpsc_tx: mpsc::Sender<IAPrefixEvent>,
 }
 
+impl Default for EventHub {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl EventHub {
     pub fn new() -> Self {
         let (tx, rx) = mpsc::channel(IFACE_MPSC_CAPACITY);
@@ -197,6 +203,7 @@ impl EventHub {
         handle
     }
 
+    #[allow(clippy::too_many_arguments)] // 各事件域独立的 channel tx/rx，成对传入
     async fn run_dispatcher(
         mut rx: mpsc::Receiver<IfaceObserverAction>,
         broadcast_tx: broadcast::Sender<IfaceObserverAction>,

@@ -203,7 +203,7 @@ pub async fn dhcp_v4_server(
             }
             // 处理外部关闭服务通知
             change_result = dhcp_server_service_status.changed() => {
-                if let Err(_) = change_result {
+                if change_result.is_err() {
                     tracing::error!("get change result error. exit loop");
                     break;
                 }
@@ -250,8 +250,8 @@ async fn handle_dhcp_message(
         return false;
     };
 
-    match dhcp.opcode() {
-        Opcode::BootRequest => match dhcp.opts().msg_type() {
+    if dhcp.opcode() == Opcode::BootRequest {
+        match dhcp.opts().msg_type() {
             Some(DhcpV4MessageType::Discover) => {
                 let Some(payload) = gen_offer(dhcp_server, &dhcp) else { return false };
                 let payload = encode_dhcpv4(&payload);
@@ -375,8 +375,7 @@ async fn handle_dhcp_message(
             // DhcpV4MessageType::LeaseQueryStatus => todo!(),
             // DhcpV4MessageType::Tls => todo!(),
             _ => {}
-        },
-        _ => {}
+        }
     }
     false
 }
@@ -419,7 +418,7 @@ impl DHCPv4Server {
         let cidr = ipv4.network();
         let broadcast_u32 = u32::from(config.server_ip_addr) | !u32::from(cidr.mask());
 
-        let options = vec![
+        let options = [
             DhcpV4Option::SubnetMask(cidr.mask()),
             DhcpV4Option::Router(vec![config.server_ip_addr]),
             DhcpV4Option::ServerIdentifier(config.server_ip_addr),

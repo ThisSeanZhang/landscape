@@ -162,22 +162,12 @@ pub struct StageEntry {
     pub wan_egress_next_stage_fd: i32,
 }
 
+#[derive(Default)]
 struct IfState {
     ingress_root: Option<IngressRoot>,
     egress_root: Option<EgressRoot>,
     stages: BTreeMap<StageType, StageEntry>,
     has_mac: bool,
-}
-
-impl Default for IfState {
-    fn default() -> Self {
-        Self {
-            ingress_root: None,
-            egress_root: None,
-            stages: BTreeMap::new(),
-            has_mac: false,
-        }
-    }
 }
 
 struct ManagerInner {
@@ -519,7 +509,7 @@ impl TcChainManager {
             ChainDir::WanEgress => state.egress_root.as_ref().unwrap().next_stage_fd,
         };
 
-        for (_, entry) in &state.stages {
+        for entry in state.stages.values() {
             let next_fd = match chain {
                 ChainDir::WanIngress => entry.wan_ingress_next_stage_fd,
                 ChainDir::WanEgress => entry.wan_egress_next_stage_fd,

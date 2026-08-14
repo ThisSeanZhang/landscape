@@ -62,7 +62,7 @@ impl Ipv4EthFrame {
         let source_addr = Ipv4Addr::new(data[12], data[13], data[14], data[15]);
         let denst_addr = Ipv4Addr::new(data[16], data[17], data[18], data[19]);
         let options = None;
-        return Some(Ipv4EthFrame {
+        Some(Ipv4EthFrame {
             version,
             head_len,
             dscp,
@@ -77,7 +77,7 @@ impl Ipv4EthFrame {
             source_addr,
             denst_addr,
             options,
-        });
+        })
     }
 
     pub fn get_header_contain_checksum(&self, is_contain: bool) -> Vec<u8> {
@@ -122,7 +122,7 @@ impl Ipv4EthFrame {
 
         println!("self ip check: {header:?}");
         // Ensure header length is even by padding with a zero byte if necessary
-        if header.len() % 2 != 0 {
+        if !header.len().is_multiple_of(2) {
             header.push(0);
         }
         checksum(&header)
@@ -181,20 +181,8 @@ impl EthIpType {
     pub fn from_u8(value: u8, data: &[u8]) -> Self {
         let end = match value {
             0x01 => IcmpEthFrame::new(data).map(|ic| EthIpType::Icmp(Box::new(ic))),
-            0x04 => {
-                if let Some(result) = Ipv4EthFrame::new(data) {
-                    Some(EthIpType::Ipv4(Box::new(result)))
-                } else {
-                    None
-                }
-            }
-            0x11 => {
-                if let Some(result) = UdpEthFrame::new(data) {
-                    Some(EthIpType::Udp(Box::new(result)))
-                } else {
-                    None
-                }
-            }
+            0x04 => Ipv4EthFrame::new(data).map(|result| EthIpType::Ipv4(Box::new(result))),
+            0x11 => UdpEthFrame::new(data).map(|result| EthIpType::Udp(Box::new(result))),
             _ => None,
         };
 
@@ -265,7 +253,7 @@ fn checksum(mut data: &[u8]) -> u16 {
     }
 
     // If there's a leftover byte, pad with zero and add
-    if let Some(&byte) = data.get(0) {
+    if let Some(&byte) = data.first() {
         let word = (byte as u32) << 8;
         sum = sum.wrapping_add(word);
     }
