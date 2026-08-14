@@ -74,6 +74,7 @@ impl MatcherBuilder {
                 matcher,
                 result_info: redirect.result_info,
                 ttl_secs: DEFAULT_STATIC_DNS_REDIRECT_TTL_SECS,
+                block_metadata_queries: redirect.block_metadata_queries,
             }));
         }
 
@@ -89,6 +90,7 @@ impl MatcherBuilder {
                     matcher,
                     result_info: record.result_info,
                     ttl_secs: record.ttl_secs,
+                    block_metadata_queries: record.block_metadata_queries,
                 }));
             }
         }
@@ -431,6 +433,7 @@ mod tests {
             answer_mode: DnsRedirectAnswerMode::StaticIps,
             result_info: vec![IpAddr::from([192, 0, 2, 1])],
             apply_flows: vec![],
+            block_metadata_queries: true,
             update_at: 0.0,
         }
     }

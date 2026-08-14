@@ -27,6 +27,8 @@ pub enum DNSRedirectRuleConfigs {
     AnswerMode,
     ResultInfo,
     ApplyFlows,
+    /// Append at 0.x: whether metadata queries are intercepted by this rule
+    BlockMetadataQueries,
     UpdateAt,
 }
 

@@ -51,6 +51,7 @@ impl DnsRequestHandler {
                     matcher: RuntimeRuleMatcher::new(rule.match_rules, vec![], vec![], false),
                     result_info: rule.result_info,
                     ttl_secs: rule.ttl_secs,
+                    block_metadata_queries: rule.block_metadata_queries,
                 })
             })
             .collect();
@@ -252,6 +253,7 @@ mod tests {
             }],
             result_info: ips,
             ttl_secs,
+            block_metadata_queries: true,
         }
     }
 

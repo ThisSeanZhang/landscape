@@ -21,7 +21,8 @@ use landscape_common::database::LandscapeStore;
 use landscape_common::dns::provider_profile::DnsProviderProfile;
 use landscape_common::dns::redirect::{
     DnsRedirectAnswerMode, DynamicDnsMatch, DynamicDnsRedirectBatch, DynamicDnsRedirectRecord,
-    DynamicDnsRedirectScope, DEFAULT_STATIC_DNS_REDIRECT_TTL_SECS,
+    DynamicDnsRedirectScope, DEFAULT_BLOCK_METADATA_QUERIES,
+    DEFAULT_STATIC_DNS_REDIRECT_TTL_SECS,
 };
 use landscape_common::service::controller::ConfigController;
 use landscape_database::cert::repository::CertRepository;
@@ -948,6 +949,7 @@ fn build_api_dynamic_dns_redirect_batch(certs: &[CertConfig]) -> DynamicDnsRedir
                 answer_mode: DnsRedirectAnswerMode::AllLocalIps,
                 result_info: vec![],
                 ttl_secs: DEFAULT_STATIC_DNS_REDIRECT_TTL_SECS,
+                block_metadata_queries: DEFAULT_BLOCK_METADATA_QUERIES,
             })
             .collect(),
     }

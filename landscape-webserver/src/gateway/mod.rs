@@ -6,7 +6,8 @@ use landscape_common::api_response::LandscapeApiResp as CommonApiResp;
 use landscape_common::config::ConfigId;
 use landscape_common::dns::redirect::{
     DnsRedirectAnswerMode, DynamicDnsMatch, DynamicDnsRedirectBatch, DynamicDnsRedirectRecord,
-    DynamicDnsRedirectScope, DEFAULT_STATIC_DNS_REDIRECT_TTL_SECS,
+    DynamicDnsRedirectScope, DEFAULT_BLOCK_METADATA_QUERIES,
+    DEFAULT_STATIC_DNS_REDIRECT_TTL_SECS,
 };
 use landscape_common::service::ServiceStatus;
 use landscape_common::sys_service::gateway::{
@@ -417,6 +418,7 @@ fn build_gateway_dynamic_dns_redirect_batch(
                 answer_mode: DnsRedirectAnswerMode::AllLocalIps,
                 result_info: vec![],
                 ttl_secs: DEFAULT_STATIC_DNS_REDIRECT_TTL_SECS,
+                block_metadata_queries: DEFAULT_BLOCK_METADATA_QUERIES,
             })
             .collect(),
     }

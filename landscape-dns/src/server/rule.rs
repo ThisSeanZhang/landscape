@@ -30,6 +30,9 @@ pub struct RedirectRuleParams {
     pub matcher: RuntimeRuleMatcher,
     pub result_info: Vec<IpAddr>,
     pub ttl_secs: u32,
+    /// When true, metadata queries (NS/SOA/TXT/MX/CAA) matching this rule are
+    /// intercepted too; when false they pass through to the upstream resolver.
+    pub block_metadata_queries: bool,
 }
 
 #[derive(Debug)]
@@ -40,6 +43,7 @@ pub struct DNSRedirectRuntime {
     matcher: RuntimeRuleMatcher,
     result_info: Vec<IpAddr>,
     ttl_secs: u32,
+    block_metadata_queries: bool,
 }
 
 impl DNSRedirectRuntime {
@@ -51,6 +55,7 @@ impl DNSRedirectRuntime {
             matcher,
             result_info,
             ttl_secs,
+            block_metadata_queries,
         } = params;
         Self {
             matcher,
@@ -59,11 +64,16 @@ impl DNSRedirectRuntime {
             answer_mode,
             result_info,
             ttl_secs,
+            block_metadata_queries,
         }
     }
 
     pub fn is_match(&self, domain: &ParsedDomain) -> bool {
         self.matcher.is_match(domain)
+    }
+
+    pub fn blocks_metadata_queries(&self) -> bool {
+        self.block_metadata_queries
     }
 
     pub fn lookup(&self, domain: &ParsedDomain, query_type: RecordType) -> Vec<Record> {
@@ -319,6 +329,7 @@ mod tests {
             ),
             result_info: vec![IpAddr::V4(Ipv4Addr::new(10, 0, 0, 2))],
             ttl_secs: 42,
+            block_metadata_queries: true,
         });
 
         assert!(solution.is_match(&ParsedDomain::new("example.com.").unwrap()));

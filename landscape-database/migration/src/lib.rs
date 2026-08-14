@@ -49,6 +49,7 @@ mod m20260620_000000_split_static_nat_v4_v6;
 mod m20260625_000000_enrolled_device_hostname;
 mod m20260721_000000_wan_pd_expected_len;
 mod m20260728_000000_add_name_in_flow;
+mod m20260813_000000_dns_redirect_block_metadata;
 mod tables;
 
 pub struct Migrator;
@@ -106,6 +107,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260625_000000_enrolled_device_hostname::Migration),
             Box::new(m20260721_000000_wan_pd_expected_len::Migration),
             Box::new(m20260728_000000_add_name_in_flow::Migration),
+            Box::new(m20260813_000000_dns_redirect_block_metadata::Migration),
         ]
     }
 }

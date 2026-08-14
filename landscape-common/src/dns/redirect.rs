@@ -23,6 +23,15 @@ use crate::{
 
 pub const DEFAULT_STATIC_DNS_REDIRECT_TTL_SECS: u32 = 10;
 
+/// Default for `block_metadata_queries`: strict interception is the legacy
+/// behavior, so configs created before the field existed keep intercepting
+/// metadata queries (NS/SOA/TXT/MX/CAA) unless explicitly opted out.
+pub const DEFAULT_BLOCK_METADATA_QUERIES: bool = true;
+
+fn default_block_metadata_queries() -> bool {
+    DEFAULT_BLOCK_METADATA_QUERIES
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[serde(rename_all = "snake_case")]
@@ -70,6 +79,14 @@ pub struct DNSRedirectRule {
     pub result_info: Vec<IpAddr>,
 
     pub apply_flows: Vec<FlowId>,
+
+    /// When true (default), metadata queries (NS/SOA/TXT/MX/CAA) matching this
+    /// rule are intercepted too. Set to false to pass them through to the
+    /// upstream resolver, e.g. for certificate issuance flows that need NS
+    /// records.
+    #[serde(default = "default_block_metadata_queries")]
+    #[cfg_attr(feature = "openapi", schema(required = false))]
+    pub block_metadata_queries: bool,
 
     #[serde(default = "get_f64_timestamp")]
     #[cfg_attr(feature = "openapi", schema(required = false))]
@@ -137,6 +154,11 @@ pub struct DynamicDnsRedirectRecord {
     #[cfg_attr(feature = "openapi", schema(value_type = Vec<String>))]
     pub result_info: Vec<IpAddr>,
     pub ttl_secs: u32,
+    /// Whether metadata queries (NS/SOA/TXT/MX/CAA) matching this record are
+    /// intercepted (default true) or passed through to upstream.
+    #[serde(default = "default_block_metadata_queries")]
+    #[cfg_attr(feature = "openapi", schema(required = false))]
+    pub block_metadata_queries: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -147,7 +169,7 @@ pub struct DynamicDnsRedirectBatch {
     pub records: Vec<DynamicDnsRedirectRecord>,
 }
 
-#[derive(Default, Debug)]
+#[derive(Debug)]
 pub struct DNSRedirectRuntimeRule {
     pub redirect_id: Option<Uuid>,
     pub dynamic_redirect_source: Option<String>,
@@ -155,4 +177,19 @@ pub struct DNSRedirectRuntimeRule {
     pub match_rules: Vec<DomainConfig>,
     pub result_info: Vec<IpAddr>,
     pub ttl_secs: u32,
+    pub block_metadata_queries: bool,
+}
+
+impl Default for DNSRedirectRuntimeRule {
+    fn default() -> Self {
+        Self {
+            redirect_id: None,
+            dynamic_redirect_source: None,
+            answer_mode: DnsRedirectAnswerMode::default(),
+            match_rules: vec![],
+            result_info: vec![],
+            ttl_secs: DEFAULT_STATIC_DNS_REDIRECT_TTL_SECS,
+            block_metadata_queries: DEFAULT_BLOCK_METADATA_QUERIES,
+        }
+    }
 }

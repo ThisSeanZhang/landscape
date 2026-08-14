@@ -36,6 +36,9 @@ pub struct Model {
     /// 匹配结果 JSON
     pub result_info: DBJson,
 
+    /// 是否拦截元数据查询（NS/SOA/TXT/MX/CAA）
+    pub block_metadata_queries: bool,
+
     /// 应用的 Flow
     pub apply_flows: DBJson,
 
@@ -69,6 +72,7 @@ impl From<Model> for DNSRedirectRule {
             match_rules: serde_json::from_value(entity.match_rules).unwrap(),
             answer_mode: DnsRedirectAnswerMode::from_db_value(&entity.answer_mode),
             result_info: serde_json::from_value(entity.result_info).unwrap(),
+            block_metadata_queries: entity.block_metadata_queries,
             apply_flows: serde_json::from_value(entity.apply_flows).unwrap(),
             update_at: entity.update_at,
         }
@@ -92,6 +96,7 @@ impl UpdateActiveModel<ActiveModel> for DNSRedirectRule {
         active.match_rules = Set(serde_json::to_value(self.match_rules).unwrap().into());
         active.answer_mode = Set(self.answer_mode.as_str().to_string());
         active.result_info = Set(serde_json::to_value(self.result_info).unwrap().into());
+        active.block_metadata_queries = Set(self.block_metadata_queries);
         active.apply_flows = Set(serde_json::to_value(self.apply_flows).unwrap().into());
         active.update_at = Set(self.update_at);
     }
