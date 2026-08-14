@@ -85,13 +85,8 @@ fn convert_container(container: EndpointResource) -> Option<LandscapeDockerNetwo
 }
 
 fn convert_ipam(ipam: Ipam) -> Option<LandscapeDockerIpInfo> {
-    let Some(config) = ipam.config.as_ref().and_then(|c| c.first()) else {
-        return None;
-    };
-
-    let Some(subnet) = config.subnet.as_ref() else {
-        return None;
-    };
+    let config = ipam.config.as_ref().and_then(|c| c.first())?;
+    let subnet = config.subnet.as_ref()?;
     let Ok(subnet) = cidr::Ipv4Inet::from_str(subnet) else {
         return None;
     };

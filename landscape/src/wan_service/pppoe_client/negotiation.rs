@@ -83,8 +83,8 @@ impl Ipv6cpState {
 pub(crate) async fn run(
     config: &PPPoEClientConfig,
     lcp: &LcpPhaseResult,
-    tx: &mut mpsc::Sender<Box<Vec<u8>>>,
-    rx: &mut mpsc::Receiver<Box<Vec<u8>>>,
+    tx: &mut mpsc::Sender<Vec<u8>>,
+    rx: &mut mpsc::Receiver<Vec<u8>>,
     status_rx: &WatchService,
 ) -> PppoeResult<NegotiationResult> {
     let mut auth: Option<Box<dyn crate::pppoe_client::auth::Authenticator>> = match lcp.auth_type {
@@ -295,7 +295,7 @@ async fn handle_ipcp_packet(
     lcp: &LcpPhaseResult,
     ipcp: &mut IpcpState,
     ppp: &PointToPoint,
-    tx: &mut mpsc::Sender<Box<Vec<u8>>>,
+    tx: &mut mpsc::Sender<Vec<u8>>,
 ) -> Result<(), PppoeError> {
     if ppp.is_ack() {
         for op in PPPOption::from_bytes(&ppp.payload) {
@@ -359,7 +359,7 @@ async fn handle_ipv6cp_packet(
     lcp: &LcpPhaseResult,
     ipv6cp: &mut Ipv6cpState,
     ppp: &PointToPoint,
-    tx: &mut mpsc::Sender<Box<Vec<u8>>>,
+    tx: &mut mpsc::Sender<Vec<u8>>,
 ) -> Result<(), PppoeError> {
     if ppp.is_ack() {
         for op in PPPOption::from_bytes(&ppp.payload) {
@@ -419,7 +419,7 @@ async fn send_ipcp_request(
     config: &PPPoEClientConfig,
     lcp: &LcpPhaseResult,
     ipcp: &mut IpcpState,
-    tx: &mut mpsc::Sender<Box<Vec<u8>>>,
+    tx: &mut mpsc::Sender<Vec<u8>>,
 ) -> Result<(), PppoeError> {
     ipcp.req_id = ipcp.req_id.wrapping_add(1);
     send_ipcp_request_raw(config, lcp, ipcp.req_id, ipcp.requesting_ip, tx).await
@@ -430,7 +430,7 @@ async fn send_ipcp_request_raw(
     lcp: &LcpPhaseResult,
     req_id: u8,
     ip: Ipv4Addr,
-    tx: &mut mpsc::Sender<Box<Vec<u8>>>,
+    tx: &mut mpsc::Sender<Vec<u8>>,
 ) -> Result<(), PppoeError> {
     let payload = PointToPoint::get_ipcp_request_only_client_ip(req_id, ip).convert_to_payload();
     super::send_pppoe_session_frame(&lcp.server_mac, config.iface_mac, lcp.session_id, payload, tx)
@@ -442,7 +442,7 @@ async fn send_ipv6cp_request(
     config: &PPPoEClientConfig,
     lcp: &LcpPhaseResult,
     ipv6cp: &mut Ipv6cpState,
-    tx: &mut mpsc::Sender<Box<Vec<u8>>>,
+    tx: &mut mpsc::Sender<Vec<u8>>,
 ) -> Result<(), PppoeError> {
     ipv6cp.req_id = ipv6cp.req_id.wrapping_add(1);
     send_ipv6cp_request_raw(config, lcp, ipv6cp.req_id, &ipv6cp.our_id, tx).await
@@ -453,7 +453,7 @@ async fn send_ipv6cp_request_raw(
     lcp: &LcpPhaseResult,
     req_id: u8,
     iface_id: &[u8],
-    tx: &mut mpsc::Sender<Box<Vec<u8>>>,
+    tx: &mut mpsc::Sender<Vec<u8>>,
 ) -> Result<(), PppoeError> {
     let payload = PointToPoint::get_ipv6cp_request(iface_id.to_vec(), req_id).convert_to_payload();
     super::send_pppoe_session_frame(&lcp.server_mac, config.iface_mac, lcp.session_id, payload, tx)
@@ -466,7 +466,7 @@ async fn send_echo_request(
     lcp: &LcpPhaseResult,
     echo_id: u8,
     magic: u32,
-    tx: &mut mpsc::Sender<Box<Vec<u8>>>,
+    tx: &mut mpsc::Sender<Vec<u8>>,
 ) -> Result<(), PppoeError> {
     let payload = PointToPoint::gen_echo_request_with_magic(echo_id, magic);
     super::send_pppoe_session_frame(&lcp.server_mac, config.iface_mac, lcp.session_id, payload, tx)
@@ -477,7 +477,7 @@ async fn send_echo_reply(
     config: &PPPoEClientConfig,
     lcp: &LcpPhaseResult,
     ppp: &PointToPoint,
-    tx: &mut mpsc::Sender<Box<Vec<u8>>>,
+    tx: &mut mpsc::Sender<Vec<u8>>,
 ) -> Result<(), PppoeError> {
     let reply = ppp.gen_reply_with_magic(lcp.magic_number);
     super::send_pppoe_session_frame(&lcp.server_mac, config.iface_mac, lcp.session_id, reply, tx)

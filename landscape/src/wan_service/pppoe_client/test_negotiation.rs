@@ -47,15 +47,15 @@ fn mock_lcp(auth_type: u16) -> LcpPhaseResult {
     }
 }
 
-fn wrap_eth(dst: &[u8], src: &[u8], ethertype: u16, payload: Vec<u8>) -> Box<Vec<u8>> {
+fn wrap_eth(dst: &[u8], src: &[u8], ethertype: u16, payload: Vec<u8>) -> Vec<u8> {
     let mut packet = dst.to_vec();
     packet.extend(src);
     packet.extend(ethertype.to_be_bytes());
     packet.extend(payload);
-    Box::new(packet)
+    packet
 }
 
-fn send_session(to_client: &mpsc::Sender<Box<Vec<u8>>>, sid: u16, ppp_payload: Vec<u8>) {
+fn send_session(to_client: &mpsc::Sender<Vec<u8>>, sid: u16, ppp_payload: Vec<u8>) {
     let frame = PPPoEFrame {
         ver: 1,
         t: 1,
@@ -244,8 +244,8 @@ fn lcp_terminate_request(id: u8) -> Vec<u8> {
 fn spawn_nego(
     config: PPPoEClientConfig,
     lcp: LcpPhaseResult,
-    mut client_tx: mpsc::Sender<Box<Vec<u8>>>,
-    mut client_rx: mpsc::Receiver<Box<Vec<u8>>>,
+    mut client_tx: mpsc::Sender<Vec<u8>>,
+    mut client_rx: mpsc::Receiver<Vec<u8>>,
     status: &WatchService,
 ) -> tokio::task::JoinHandle<Result<NegotiationResult, PppoeError>> {
     let status_c = status.clone();
@@ -255,8 +255,8 @@ fn spawn_nego(
 /// Complete PAP auth: read PAP Request, send Ack.
 /// Returns after auth is done (IPCP/IPv6CP requests will have been triggered).
 async fn do_pap_auth(
-    from_client: &mut mpsc::Receiver<Box<Vec<u8>>>,
-    to_client: &mpsc::Sender<Box<Vec<u8>>>,
+    from_client: &mut mpsc::Receiver<Vec<u8>>,
+    to_client: &mpsc::Sender<Vec<u8>>,
     sid: u16,
 ) {
     let pap_req = tokio::time::timeout(Duration::from_secs(2), from_client.recv())
@@ -279,8 +279,8 @@ async fn do_pap_auth(
 /// Complete PAP auth, drain both NCP requests.
 /// Returns (IPCP request, IPv6CP request).
 async fn do_pap_and_read_ncp_requests(
-    from: &mut mpsc::Receiver<Box<Vec<u8>>>,
-    to: &mpsc::Sender<Box<Vec<u8>>>,
+    from: &mut mpsc::Receiver<Vec<u8>>,
+    to: &mpsc::Sender<Vec<u8>>,
     sid: u16,
 ) -> (PointToPoint, PointToPoint) {
     do_pap_auth(from, to, sid).await;
@@ -1090,23 +1090,15 @@ mod integration {
             tokio::time::advance(Duration::from_secs(2)).await;
             elapsed += 2;
 
-            loop {
-                match from_client.try_recv() {
-                    Ok(raw) => {
-                        if let Some(ppp) = extract_ppp(&raw, sid) {
-                            if ppp.is_ipcp() && ppp.is_request() {
-                                send_session(
-                                    &to_client,
-                                    sid,
-                                    ipcp_nak(
-                                        ppp.id,
-                                        Ipv4Addr::new(10, 0, 0, (elapsed as u8 % 100) + 1),
-                                    ),
-                                );
-                            }
-                        }
+            while let Ok(raw) = from_client.try_recv() {
+                if let Some(ppp) = extract_ppp(&raw, sid) {
+                    if ppp.is_ipcp() && ppp.is_request() {
+                        send_session(
+                            &to_client,
+                            sid,
+                            ipcp_nak(ppp.id, Ipv4Addr::new(10, 0, 0, (elapsed as u8 % 100) + 1)),
+                        );
                     }
-                    _ => break,
                 }
             }
         }

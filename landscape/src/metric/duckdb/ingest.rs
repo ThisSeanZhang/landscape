@@ -621,7 +621,7 @@ pub(crate) fn drain_iface_buckets(
             }
         })
         .collect();
-    writes.sort_by(|a, b| (a.report_time, a.ifindex).cmp(&(b.report_time, b.ifindex)));
+    writes.sort_by_key(|w| (w.report_time, w.ifindex));
     writes
 }
 
@@ -762,7 +762,7 @@ pub(crate) fn collect_connect_infos(
         .filter(|state| state.is_active(now_ms))
         .map(|state| state.realtime.clone())
         .collect();
-    infos.sort_by(|a, b| b.last_report_time.cmp(&a.last_report_time));
+    infos.sort_by_key(|i| std::cmp::Reverse(i.last_report_time));
     infos
 }
 
@@ -818,7 +818,7 @@ pub(crate) fn collect_realtime_iface_stats(
             last_report_time: acc.last_report_time,
         })
         .collect();
-    stats.sort_by(|a, b| b.stats.ingress_bps.cmp(&a.stats.ingress_bps));
+    stats.sort_by_key(|s| std::cmp::Reverse(s.stats.ingress_bps));
     stats
 }
 

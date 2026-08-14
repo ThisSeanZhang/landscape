@@ -343,7 +343,7 @@ fn compute_npt_mask(prefix_len: u8) -> u64 {
     mask
 }
 
-pub(crate) fn add_wan_ip<'obj, T>(
+pub(crate) fn add_wan_ip<T>(
     wan_ip_binding: &T,
     ifindex: u32,
     addr: IpAddr,
@@ -409,6 +409,7 @@ pub fn del_ipv4_wan_ip(ifindex: u32) {
     del_wan_ip(ifindex, LANDSCAPE_IPV4_TYPE);
 }
 
+#[allow(clippy::field_reassign_with_default)]
 fn del_wan_ip(ifindex: u32, l3_protocol: u8) {
     tracing::debug!("del wan index - 1: {ifindex:?}");
     let wan_ip_binding = libbpf_rs::MapHandle::from_pinned_path(&MAP_PATHS.wan_ip).unwrap();

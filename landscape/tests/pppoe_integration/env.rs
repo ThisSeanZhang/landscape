@@ -204,7 +204,7 @@ logfile {pppd_log}
             }
 
             let mut child = Command::new("ip")
-                .args(&[
+                .args([
                     "netns",
                     "exec",
                     &cfg.server_ns,
@@ -249,8 +249,8 @@ logfile {pppd_log}
             if !ready {
                 let log_tail = fs::read_to_string(&server_log).unwrap_or_default();
                 let _ = child.kill();
-                let _ = Command::new("ip").args(&["netns", "del", &cfg.client_ns]).status();
-                let _ = Command::new("ip").args(&["netns", "del", &cfg.server_ns]).status();
+                let _ = Command::new("ip").args(["netns", "del", &cfg.client_ns]).status();
+                let _ = Command::new("ip").args(["netns", "del", &cfg.server_ns]).status();
                 return Err(format!(
                     "pppoe-server did not become ready within 4 s.\nServer log:\n{log_tail}"
                 ));

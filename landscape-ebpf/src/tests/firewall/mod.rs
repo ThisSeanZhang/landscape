@@ -9,7 +9,7 @@ use crate::stages::firewall::tc_firewall_skel::TcFirewallSkelBuilder;
 
 mod package;
 
-pub fn test_ingress_and_egress(mut egress_payload: Vec<u8>, mut ingress_payload: Vec<u8>) {
+pub fn test_ingress_and_egress(egress_payload: Vec<u8>, ingress_payload: Vec<u8>) {
     let mut firewall_open_object = MaybeUninit::zeroed();
     let firewall_builder = TcFirewallSkelBuilder::default();
 
@@ -23,7 +23,7 @@ pub fn test_ingress_and_egress(mut egress_payload: Vec<u8>, mut ingress_payload:
     let ingress_firewall = skel.progs.tc_firewall_wan_ingress;
 
     let egress_input = ProgramInput {
-        data_in: Some(&mut egress_payload),
+        data_in: Some(&egress_payload),
         context_in: None,
         context_out: None,
         data_out: None,
@@ -36,7 +36,7 @@ pub fn test_ingress_and_egress(mut egress_payload: Vec<u8>, mut ingress_payload:
     println!("time: {}", result.duration.as_nanos());
 
     let ingress_input = ProgramInput {
-        data_in: Some(&mut ingress_payload),
+        data_in: Some(&ingress_payload),
         context_in: None,
         context_out: None,
         data_out: None,

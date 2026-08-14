@@ -13,10 +13,10 @@ use crate::{
 
 const IP_MATCH_MAX_ENTRIES: u32 = 20840;
 
-pub(crate) fn create_inner_flow_match_map_v4<'obj, T>(
+pub(crate) fn create_inner_flow_match_map_v4<T>(
     outer_map: &T,
     flow_id: u32,
-    ips: &Vec<IpMarkInfo>,
+    ips: &[IpMarkInfo],
 ) -> LdEbpfResult<()>
 where
     T: MapCore,
@@ -54,7 +54,8 @@ where
     Ok(())
 }
 
-fn add_mark_ip_rules_v4<'obj, T>(map: &T, ips: &Vec<IpMarkInfo>) -> libbpf_rs::Result<()>
+#[allow(clippy::field_reassign_with_default)]
+fn add_mark_ip_rules_v4<T>(map: &T, ips: &[IpMarkInfo]) -> libbpf_rs::Result<()>
 where
     T: MapCore,
 {
@@ -98,10 +99,10 @@ pub fn add_wan_ip_mark(flow_id: u32, ips: Vec<IpMarkInfo>) {
     }
 }
 
-pub(crate) fn create_inner_flow_match_map_v6<'obj, T>(
+pub(crate) fn create_inner_flow_match_map_v6<T>(
     outer_map: &T,
     flow_id: u32,
-    ips: &Vec<IpMarkInfo>,
+    ips: &[IpMarkInfo],
 ) -> LdEbpfResult<()>
 where
     T: MapCore,
@@ -139,7 +140,8 @@ where
     Ok(())
 }
 
-fn add_mark_ip_rules_v6<'obj, T>(map: &T, ips: &Vec<IpMarkInfo>) -> libbpf_rs::Result<()>
+#[allow(clippy::field_reassign_with_default)]
+fn add_mark_ip_rules_v6<T>(map: &T, ips: &[IpMarkInfo]) -> libbpf_rs::Result<()>
 where
     T: MapCore,
 {

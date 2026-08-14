@@ -131,7 +131,7 @@ fn build_icmpv6_udp_error() -> Vec<u8> {
     .to_vec()
 }
 
-pub fn run_ipv6_egress_helper(mut payload: Vec<u8>) {
+pub fn run_ipv6_egress_helper(payload: Vec<u8>) {
     let mut landscape_builder = TestNat6V3SkelBuilder::default();
     let pin_root = crate::tests::nat::isolated_pin_root("nat-v6-egress-helper");
     landscape_builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
@@ -152,12 +152,11 @@ pub fn run_ipv6_egress_helper(mut payload: Vec<u8>) {
     );
     let egress_helper = landscape_skel.progs.handle_ipv6_egress;
 
-    let mut ctx = TestSkb::default();
-    ctx.ifindex = ifindex;
+    let mut ctx = TestSkb { ifindex, ..Default::default() };
 
     let mut packet_out = vec![0u8; payload.len()];
     let input = ProgramInput {
-        data_in: Some(&mut payload),
+        data_in: Some(&payload),
         context_in: Some(ctx.as_mut_bytes()),
         context_out: None,
         data_out: Some(&mut packet_out),

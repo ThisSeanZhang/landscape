@@ -460,7 +460,7 @@ impl MemoryMetricStore {
             .filter(|state| state.is_active(now_ms))
             .map(|state| state.realtime.clone())
             .collect();
-        infos.sort_by(|a, b| b.last_report_time.cmp(&a.last_report_time));
+        infos.sort_by_key(|i| std::cmp::Reverse(i.last_report_time));
         infos
     }
 
@@ -511,7 +511,7 @@ impl MemoryMetricStore {
                 last_report_time: acc.last_report_time,
             })
             .collect();
-        stats.sort_by(|a, b| b.stats.ingress_bps.cmp(&a.stats.ingress_bps));
+        stats.sort_by_key(|s| std::cmp::Reverse(s.stats.ingress_bps));
         stats
     }
 

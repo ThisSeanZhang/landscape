@@ -25,7 +25,7 @@ fn build_ipv4_tcp_syn() -> Vec<u8> {
     .to_vec()
 }
 
-pub fn run_ipv4_egress_smoke(mut payload: Vec<u8>) {
+pub fn run_ipv4_egress_smoke(payload: Vec<u8>) {
     let mut builder = TcNatSkelBuilder::default();
     let pin_root = crate::tests::nat::isolated_pin_root("nat-v4-egress");
     builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
@@ -46,12 +46,11 @@ pub fn run_ipv4_egress_smoke(mut payload: Vec<u8>) {
     );
     let egress_nat = skel.progs.tc_nat_wan_egress;
 
-    let mut ctx = TestSkb::default();
-    ctx.ifindex = ifindex;
+    let mut ctx = TestSkb { ifindex, ..Default::default() };
 
     let mut packet_out = vec![0u8; payload.len()];
     let input = ProgramInput {
-        data_in: Some(&mut payload),
+        data_in: Some(&payload),
         context_in: Some(ctx.as_mut_bytes()),
         context_out: None,
         data_out: Some(&mut packet_out),

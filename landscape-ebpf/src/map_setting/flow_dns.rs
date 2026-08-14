@@ -30,10 +30,10 @@ pub fn refreash_flow_dns_inner_map(flow_id: u32, data: Vec<FlowMarkInfo>) {
 // IPv4
 //
 
-pub(crate) fn create_flow_dns_inner_map_v4<'obj, T>(
+pub(crate) fn create_flow_dns_inner_map_v4<T>(
     flow_dns_outer_map: &T,
     flow_id: u32,
-    data: &Vec<FlowMarkInfo>,
+    data: &[FlowMarkInfo],
 ) where
     T: MapCore,
 {
@@ -73,7 +73,8 @@ pub(crate) fn create_flow_dns_inner_map_v4<'obj, T>(
     }
 }
 
-fn update_flow_dns_rules_v4<'obj, T>(map: &T, ips: &Vec<FlowMarkInfo>) -> libbpf_rs::Result<()>
+#[allow(clippy::field_reassign_with_default)]
+fn update_flow_dns_rules_v4<T>(map: &T, ips: &[FlowMarkInfo]) -> libbpf_rs::Result<()>
 where
     T: MapCore,
 {
@@ -113,10 +114,10 @@ where
 // IPv6
 //
 
-pub(crate) fn create_flow_dns_inner_map_v6<'obj, T>(
+pub(crate) fn create_flow_dns_inner_map_v6<T>(
     flow_dns_outer_map: &T,
     flow_id: u32,
-    data: &Vec<FlowMarkInfo>,
+    data: &[FlowMarkInfo],
 ) where
     T: MapCore,
 {
@@ -156,7 +157,8 @@ pub(crate) fn create_flow_dns_inner_map_v6<'obj, T>(
     }
 }
 
-fn update_flow_dns_rules_v6<'obj, T>(map: &T, ips: &Vec<FlowMarkInfo>) -> libbpf_rs::Result<()>
+#[allow(clippy::field_reassign_with_default)]
+fn update_flow_dns_rules_v6<T>(map: &T, ips: &[FlowMarkInfo]) -> libbpf_rs::Result<()>
 where
     T: MapCore,
 {

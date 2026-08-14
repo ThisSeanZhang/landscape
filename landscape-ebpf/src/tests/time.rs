@@ -45,11 +45,11 @@ mod tests {
         let open = builder.open(&mut open_object).expect("open test_time skeleton");
         let skel = open.load().expect("load test_time skeleton");
 
-        let mut data = vec![0_u8; 64];
+        let data = vec![0_u8; 64];
         let result = skel
             .progs
             .test_time
-            .test_run(ProgramInput { data_in: Some(&mut data), ..Default::default() })
+            .test_run(ProgramInput { data_in: Some(&data), ..Default::default() })
             .expect("run test_time program");
         assert_eq!(result.return_value as i32, 0, "test_time program should return TC_ACT_OK");
 

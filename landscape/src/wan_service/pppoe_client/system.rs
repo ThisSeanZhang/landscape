@@ -415,7 +415,7 @@ mod tests {
     fn can_create_dummy(iface: &str) -> bool {
         teardown(iface);
         let created = std::process::Command::new("ip")
-            .args(&["link", "add", iface, "type", "dummy"])
+            .args(["link", "add", iface, "type", "dummy"])
             .status()
             .map(|s| s.success())
             .unwrap_or(false);
@@ -424,7 +424,7 @@ mod tests {
             return false;
         }
         let up = std::process::Command::new("ip")
-            .args(&["link", "set", iface, "up"])
+            .args(["link", "set", iface, "up"])
             .status()
             .map(|s| s.success())
             .unwrap_or(false);
@@ -434,14 +434,14 @@ mod tests {
             return false;
         }
         let _ = std::process::Command::new("ip")
-            .args(&["link", "set", iface, "addrgenmode", "none"])
+            .args(["link", "set", iface, "addrgenmode", "none"])
             .status();
         true
     }
 
     fn setup_with_addr(iface: &str, addr: std::net::Ipv6Addr) -> bool {
         std::process::Command::new("ip")
-            .args(&["-6", "addr", "add", &format!("{}/64", addr), "dev", iface])
+            .args(["-6", "addr", "add", &format!("{}/64", addr), "dev", iface])
             .status()
             .map(|s| s.success())
             .unwrap_or(false)
@@ -449,14 +449,14 @@ mod tests {
 
     fn remove_addr(iface: &str, addr: std::net::Ipv6Addr) -> bool {
         std::process::Command::new("ip")
-            .args(&["-6", "addr", "del", &format!("{}/64", addr), "dev", iface])
+            .args(["-6", "addr", "del", &format!("{}/64", addr), "dev", iface])
             .status()
             .map(|s| s.success())
             .unwrap_or(false)
     }
 
     fn teardown(iface: &str) {
-        let _ = std::process::Command::new("ip").args(&["link", "del", iface]).output();
+        let _ = std::process::Command::new("ip").args(["link", "del", iface]).output();
     }
 
     #[test]

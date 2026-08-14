@@ -137,10 +137,8 @@ async fn scan_once(cache: &Arc<MacLinkMapCache>, handle: &Handle) -> Result<(), 
 
         for attr in &msg.attributes {
             match attr {
-                NeighbourAttribute::Destination(addr) => {
-                    if let NeighbourAddress::Inet6(ip) = addr {
-                        ipv6 = Some(*ip);
-                    }
+                NeighbourAttribute::Destination(NeighbourAddress::Inet6(ip)) => {
+                    ipv6 = Some(*ip);
                 }
                 NeighbourAttribute::LinkLayerAddress(bytes)
                     if bytes.len() >= 6 && !bytes.iter().all(|&b| b == 0) =>

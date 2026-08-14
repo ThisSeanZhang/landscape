@@ -25,7 +25,8 @@ pub(crate) fn check_ifindex(name: &str, ifindex: u32) {
 
 #[allow(dead_code)]
 pub(crate) fn checked_if_nametoindex(name: &str) -> u32 {
-    let ifindex = nix::net::if_::if_nametoindex(name).expect(&format!("if_nametoindex({name})"));
+    let ifindex =
+        nix::net::if_::if_nametoindex(name).unwrap_or_else(|_| panic!("if_nametoindex({name})"));
     check_ifindex(name, ifindex as u32);
     ifindex as u32
 }

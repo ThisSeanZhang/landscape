@@ -381,7 +381,7 @@ mod tests {
     #[test]
     fn reports_missing_device_targets() {
         let device_id = Uuid::new_v4();
-        let modes = vec![FlowEntryMatchMode::Device { device_id }];
+        let modes = [FlowEntryMatchMode::Device { device_id }];
 
         assert_eq!(find_missing_device_id(modes.iter(), &HashMap::new()), Some(device_id));
     }
@@ -389,7 +389,7 @@ mod tests {
     #[test]
     fn accepts_known_device_targets() {
         let device_id = Uuid::new_v4();
-        let modes = vec![FlowEntryMatchMode::Device { device_id }];
+        let modes = [FlowEntryMatchMode::Device { device_id }];
         let devices: DevicesById = HashMap::from([(
             device_id,
             EnrolledDevice {

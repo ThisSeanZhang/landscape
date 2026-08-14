@@ -284,6 +284,7 @@ fn assert_valid_modified_packet(
     assert_eq!(internet_checksum(&packet[OUTER_ICMP_OFFSET..]), 0);
 }
 
+#[allow(clippy::too_many_arguments)]
 fn assert_valid_modified_tcp_packet(
     packet: &[u8],
     outer_src: [u8; 4],
@@ -319,18 +320,18 @@ fn assert_valid_modified_tcp_packet(
 #[test]
 fn xdp_modify_icmp_error_egress_rewrites_inner_echo_id() {
     let mut builder = TestXdpNat4ModifySkelBuilder::default();
-    builder.object_builder_mut().pin_root_path(&pin_root()).unwrap();
+    builder.object_builder_mut().pin_root_path(pin_root()).unwrap();
     let mut open_object = MaybeUninit::uninit();
     let open = builder.open(&mut open_object).unwrap();
     let skel = open.load().unwrap();
 
-    let mut packet = build_icmp_error(LAN_IP, REMOTE_IP, REMOTE_IP, LAN_IP, ORIGINAL_ID);
+    let packet = build_icmp_error(LAN_IP, REMOTE_IP, REMOTE_IP, LAN_IP, ORIGINAL_ID);
     let mut output = vec![0u8; packet.len()];
     let result = skel
         .progs
         .test_xdp_nat4_modify_icmp_error_egress
         .test_run(ProgramInput {
-            data_in: Some(&mut packet),
+            data_in: Some(&packet),
             data_out: Some(&mut output),
             ..Default::default()
         })
@@ -343,18 +344,18 @@ fn xdp_modify_icmp_error_egress_rewrites_inner_echo_id() {
 #[test]
 fn xdp_modify_icmp_error_ingress_restores_inner_echo_id() {
     let mut builder = TestXdpNat4ModifySkelBuilder::default();
-    builder.object_builder_mut().pin_root_path(&pin_root()).unwrap();
+    builder.object_builder_mut().pin_root_path(pin_root()).unwrap();
     let mut open_object = MaybeUninit::uninit();
     let open = builder.open(&mut open_object).unwrap();
     let skel = open.load().unwrap();
 
-    let mut packet = build_icmp_error(ROUTER_IP, WAN_IP, WAN_IP, REMOTE_IP, NAT_ID);
+    let packet = build_icmp_error(ROUTER_IP, WAN_IP, WAN_IP, REMOTE_IP, NAT_ID);
     let mut output = vec![0u8; packet.len()];
     let result = skel
         .progs
         .test_xdp_nat4_modify_icmp_error_ingress
         .test_run(ProgramInput {
-            data_in: Some(&mut packet),
+            data_in: Some(&packet),
             data_out: Some(&mut output),
             ..Default::default()
         })
@@ -367,18 +368,18 @@ fn xdp_modify_icmp_error_ingress_restores_inner_echo_id() {
 #[test]
 fn xdp_modify_udp_mangles_computed_zero_checksum() {
     let mut builder = TestXdpNat4ModifySkelBuilder::default();
-    builder.object_builder_mut().pin_root_path(&pin_root()).unwrap();
+    builder.object_builder_mut().pin_root_path(pin_root()).unwrap();
     let mut open_object = MaybeUninit::uninit();
     let open = builder.open(&mut open_object).unwrap();
     let skel = open.load().unwrap();
 
-    let mut packet = build_udp_packet(true);
+    let packet = build_udp_packet(true);
     let mut output = vec![0u8; packet.len()];
     let result = skel
         .progs
         .test_xdp_nat4_modify_udp_egress
         .test_run(ProgramInput {
-            data_in: Some(&mut packet),
+            data_in: Some(&packet),
             data_out: Some(&mut output),
             ..Default::default()
         })
@@ -403,18 +404,18 @@ fn xdp_modify_udp_mangles_computed_zero_checksum() {
 #[test]
 fn xdp_modify_udp_preserves_disabled_checksum() {
     let mut builder = TestXdpNat4ModifySkelBuilder::default();
-    builder.object_builder_mut().pin_root_path(&pin_root()).unwrap();
+    builder.object_builder_mut().pin_root_path(pin_root()).unwrap();
     let mut open_object = MaybeUninit::uninit();
     let open = builder.open(&mut open_object).unwrap();
     let skel = open.load().unwrap();
 
-    let mut packet = build_udp_packet(false);
+    let packet = build_udp_packet(false);
     let mut output = vec![0u8; packet.len()];
     let result = skel
         .progs
         .test_xdp_nat4_modify_udp_egress
         .test_run(ProgramInput {
-            data_in: Some(&mut packet),
+            data_in: Some(&packet),
             data_out: Some(&mut output),
             ..Default::default()
         })
@@ -432,18 +433,18 @@ fn xdp_modify_udp_preserves_disabled_checksum() {
 #[test]
 fn xdp_modify_icmp_error_udp_mangles_computed_zero_checksum() {
     let mut builder = TestXdpNat4ModifySkelBuilder::default();
-    builder.object_builder_mut().pin_root_path(&pin_root()).unwrap();
+    builder.object_builder_mut().pin_root_path(pin_root()).unwrap();
     let mut open_object = MaybeUninit::uninit();
     let open = builder.open(&mut open_object).unwrap();
     let skel = open.load().unwrap();
 
-    let mut packet = build_udp_icmp_error();
+    let packet = build_udp_icmp_error();
     let mut output = vec![0u8; packet.len()];
     let result = skel
         .progs
         .test_xdp_nat4_modify_icmp_error_udp_egress
         .test_run(ProgramInput {
-            data_in: Some(&mut packet),
+            data_in: Some(&packet),
             data_out: Some(&mut output),
             ..Default::default()
         })
@@ -470,17 +471,17 @@ fn xdp_modify_icmp_error_udp_mangles_computed_zero_checksum() {
 #[test]
 fn xdp_read_icmp_error_with_min_tcp_quote() {
     let mut builder = TestXdpNat4ModifySkelBuilder::default();
-    builder.object_builder_mut().pin_root_path(&pin_root()).unwrap();
+    builder.object_builder_mut().pin_root_path(pin_root()).unwrap();
     let mut open_object = MaybeUninit::uninit();
     let open = builder.open(&mut open_object).unwrap();
     let skel = open.load().unwrap();
 
-    let mut packet =
+    let packet =
         build_tcp_icmp_error(LAN_IP, REMOTE_IP, REMOTE_IP, LAN_IP, REMOTE_PORT, ORIGINAL_ID, 8);
     let result = skel
         .progs
         .test_xdp_nat4_read_icmp_error_tcp_quote
-        .test_run(ProgramInput { data_in: Some(&mut packet), ..Default::default() })
+        .test_run(ProgramInput { data_in: Some(&packet), ..Default::default() })
         .expect("test_run failed");
 
     assert_eq!(result.return_value, 2);
@@ -489,17 +490,17 @@ fn xdp_read_icmp_error_with_min_tcp_quote() {
 #[test]
 fn xdp_read_icmp_error_rejects_incomplete_tcp_ports() {
     let mut builder = TestXdpNat4ModifySkelBuilder::default();
-    builder.object_builder_mut().pin_root_path(&pin_root()).unwrap();
+    builder.object_builder_mut().pin_root_path(pin_root()).unwrap();
     let mut open_object = MaybeUninit::uninit();
     let open = builder.open(&mut open_object).unwrap();
     let skel = open.load().unwrap();
 
-    let mut packet =
+    let packet =
         build_tcp_icmp_error(LAN_IP, REMOTE_IP, REMOTE_IP, LAN_IP, REMOTE_PORT, ORIGINAL_ID, 3);
     let result = skel
         .progs
         .test_xdp_nat4_read_icmp_error_tcp_quote
-        .test_run(ProgramInput { data_in: Some(&mut packet), ..Default::default() })
+        .test_run(ProgramInput { data_in: Some(&packet), ..Default::default() })
         .expect("test_run failed");
 
     assert_eq!(result.return_value, 1);
@@ -508,19 +509,19 @@ fn xdp_read_icmp_error_rejects_incomplete_tcp_ports() {
 #[test]
 fn xdp_modify_icmp_error_egress_accepts_min_tcp_quote() {
     let mut builder = TestXdpNat4ModifySkelBuilder::default();
-    builder.object_builder_mut().pin_root_path(&pin_root()).unwrap();
+    builder.object_builder_mut().pin_root_path(pin_root()).unwrap();
     let mut open_object = MaybeUninit::uninit();
     let open = builder.open(&mut open_object).unwrap();
     let skel = open.load().unwrap();
 
-    let mut packet =
+    let packet =
         build_tcp_icmp_error(LAN_IP, REMOTE_IP, REMOTE_IP, LAN_IP, REMOTE_PORT, ORIGINAL_ID, 8);
     let mut output = vec![0u8; packet.len()];
     let result = skel
         .progs
         .test_xdp_nat4_modify_icmp_error_tcp_egress
         .test_run(ProgramInput {
-            data_in: Some(&mut packet),
+            data_in: Some(&packet),
             data_out: Some(&mut output),
             ..Default::default()
         })
@@ -542,19 +543,18 @@ fn xdp_modify_icmp_error_egress_accepts_min_tcp_quote() {
 #[test]
 fn xdp_modify_icmp_error_ingress_accepts_min_tcp_quote() {
     let mut builder = TestXdpNat4ModifySkelBuilder::default();
-    builder.object_builder_mut().pin_root_path(&pin_root()).unwrap();
+    builder.object_builder_mut().pin_root_path(pin_root()).unwrap();
     let mut open_object = MaybeUninit::uninit();
     let open = builder.open(&mut open_object).unwrap();
     let skel = open.load().unwrap();
 
-    let mut packet =
-        build_tcp_icmp_error(ROUTER_IP, WAN_IP, WAN_IP, REMOTE_IP, NAT_ID, REMOTE_PORT, 8);
+    let packet = build_tcp_icmp_error(ROUTER_IP, WAN_IP, WAN_IP, REMOTE_IP, NAT_ID, REMOTE_PORT, 8);
     let mut output = vec![0u8; packet.len()];
     let result = skel
         .progs
         .test_xdp_nat4_modify_icmp_error_tcp_ingress
         .test_run(ProgramInput {
-            data_in: Some(&mut packet),
+            data_in: Some(&packet),
             data_out: Some(&mut output),
             ..Default::default()
         })
@@ -576,19 +576,19 @@ fn xdp_modify_icmp_error_ingress_accepts_min_tcp_quote() {
 #[test]
 fn xdp_modify_icmp_error_updates_quoted_tcp_checksum_when_present() {
     let mut builder = TestXdpNat4ModifySkelBuilder::default();
-    builder.object_builder_mut().pin_root_path(&pin_root()).unwrap();
+    builder.object_builder_mut().pin_root_path(pin_root()).unwrap();
     let mut open_object = MaybeUninit::uninit();
     let open = builder.open(&mut open_object).unwrap();
     let skel = open.load().unwrap();
 
-    let mut packet =
+    let packet =
         build_tcp_icmp_error(LAN_IP, REMOTE_IP, REMOTE_IP, LAN_IP, REMOTE_PORT, ORIGINAL_ID, 20);
     let mut output = vec![0u8; packet.len()];
     let result = skel
         .progs
         .test_xdp_nat4_modify_icmp_error_tcp_egress
         .test_run(ProgramInput {
-            data_in: Some(&mut packet),
+            data_in: Some(&packet),
             data_out: Some(&mut output),
             ..Default::default()
         })

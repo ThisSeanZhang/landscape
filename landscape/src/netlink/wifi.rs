@@ -139,10 +139,7 @@ pub async fn get_all_wifi_devices() -> HashMap<String, LandscapeWifiInterface> {
     let mut result = HashMap::new();
 
     loop {
-        let msg_opt = match interface_handle.try_next().await {
-            Ok(opt) => opt,
-            Err(_) => None,
-        };
+        let msg_opt = interface_handle.try_next().await.unwrap_or_default();
 
         let msg = match msg_opt {
             Some(m) => m,

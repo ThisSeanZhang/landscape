@@ -132,20 +132,14 @@ pub async fn init_devs(network_config: Vec<NetworkIfaceConfig>) {
                 current_iface
             } else {
                 // TODO 依据网卡类型创建网卡
-                match &ifconfig.create_dev_type {
+                if matches!(&ifconfig.create_dev_type, CreateDevType::Bridge) {
                     // 目前仅处理桥接设别的创建
-                    CreateDevType::Bridge => {
-                        use rtnetlink::LinkBridge;
-                        if let Err(e) = handle
-                            .link()
-                            .add(LinkBridge::new(&ifconfig.name).build())
-                            .execute()
-                            .await
-                        {
-                            tracing::error!("create bridge error: {e:?}");
-                        }
+                    use rtnetlink::LinkBridge;
+                    if let Err(e) =
+                        handle.link().add(LinkBridge::new(&ifconfig.name).build()).execute().await
+                    {
+                        tracing::error!("create bridge error: {e:?}");
                     }
-                    _ => (),
                 }
                 // 创建后重新进行获取, 如果获取不到 进行下一轮
                 let Some(mut current_iface) = get_iface_by_name(&ifconfig.name).await else {
@@ -159,7 +153,7 @@ pub async fn init_devs(network_config: Vec<NetworkIfaceConfig>) {
                     msg.header.index = current_iface.index;
                     msg.header.flags = LinkFlags::Up;
                     msg.header.change_mask = LinkFlags::Up;
-                    if let Ok(_) = handle.link().change(msg).execute().await {
+                    if handle.link().change(msg).execute().await.is_ok() {
                         current_iface.dev_status = DevState::Up;
                     }
                 }

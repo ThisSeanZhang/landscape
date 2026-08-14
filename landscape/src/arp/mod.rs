@@ -10,7 +10,7 @@ pub mod scan;
 
 pub async fn create_arp_listen(
     ifindex: u32,
-) -> std::io::Result<(mpsc::Sender<Box<Vec<u8>>>, mpsc::Receiver<Box<Vec<u8>>>)> {
+) -> std::io::Result<(mpsc::Sender<Vec<u8>>, mpsc::Receiver<Vec<u8>>)> {
     // 创建 AF_PACKET 原始 socket
     let socket =
         socket2::Socket::new(Domain::PACKET, Type::RAW, Some(Protocol::from(ETH_P_ARP.to_be())))?;
@@ -37,8 +37,8 @@ pub async fn create_arp_listen(
 
     let async_fd = AsyncFd::new(socket)?;
 
-    let (out_tx, mut out_rx) = mpsc::channel::<Box<Vec<u8>>>(1024);
-    let (in_tx, in_rx) = mpsc::channel::<Box<Vec<u8>>>(1024);
+    let (out_tx, mut out_rx) = mpsc::channel::<Vec<u8>>(1024);
+    let (in_tx, in_rx) = mpsc::channel::<Vec<u8>>(1024);
 
     tokio::spawn(async move {
         let mut buf = [0u8; 1500];
@@ -87,11 +87,9 @@ pub async fn create_arp_listen(
                                     let data = buf[..n as usize].to_vec();
 
                                     // 验证是否为有效的ARP包
-                                    if is_valid_arp_packet(&data) {
-                                        if let Err(_) = in_tx.send(Box::new(data)).await {
-                                            // 接收通道关闭，退出任务
-                                            break;
-                                        }
+                                    if is_valid_arp_packet(&data) && in_tx.send(data).await.is_err() {
+                                        // 接收通道关闭，退出任务
+                                        break;
                                     }
                                 }
                                 -1 => {

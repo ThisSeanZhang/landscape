@@ -14,7 +14,7 @@ unsafe impl plain::Plain for skb_read_test_result {}
 
 const MAP_KEY: u32 = 0;
 
-fn run_skb_read(payload: &mut Vec<u8>) -> Option<skb_read_test_result> {
+fn run_skb_read(payload: &mut [u8]) -> Option<skb_read_test_result> {
     let builder = TestSkbReadSkelBuilder::default();
     let mut open_object = MaybeUninit::uninit();
     let open = builder.open(&mut open_object).unwrap();

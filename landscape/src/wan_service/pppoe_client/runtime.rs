@@ -218,8 +218,8 @@ async fn keepalive(
     config: &PPPoEClientConfig,
     lcp: &super::lcp::LcpPhaseResult,
     initial_echo_id: u8,
-    tx: &mut tokio::sync::mpsc::Sender<Box<Vec<u8>>>,
-    rx: &mut tokio::sync::mpsc::Receiver<Box<Vec<u8>>>,
+    tx: &mut tokio::sync::mpsc::Sender<Vec<u8>>,
+    rx: &mut tokio::sync::mpsc::Receiver<Vec<u8>>,
     status_rx: &WatchService,
 ) -> PppoeResult<()> {
     let mut echo_req_id: u8 = initial_echo_id;

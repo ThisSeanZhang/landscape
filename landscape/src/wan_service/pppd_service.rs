@@ -224,7 +224,7 @@ impl ServiceStarterTrait for PPPDService {
         let service_status = WatchService::new();
         let route_service = self.route_service.clone();
         if config.enable {
-            if let Some(_) = get_iface_by_name(&config.attach_iface_name).await {
+            if get_iface_by_name(&config.attach_iface_name).await.is_some() {
                 let status_clone = service_status.clone();
                 let iface_name = config.iface_name.clone();
 
@@ -296,7 +296,7 @@ pub async fn create_pppd_thread(
         async move {
             let mut ip4addr: Option<(u32, Option<Ipv4Addr>, Option<Ipv4Addr>)> = None;
             let mut ppp_ipv4_state = initial_ppp_ipv4_state_clone;
-            while let Ok(_) = updata_ip_rx.changed().await {
+            while updata_ip_rx.changed().await.is_ok() {
                 let new_ip4addr = crate::get_ppp_address(&ppp_iface_name_clone).await;
                 let new_ppp_ipv4_state = PppIpv4State::from_snapshot(new_ip4addr);
                 if ppp_ipv4_state != new_ppp_ipv4_state {

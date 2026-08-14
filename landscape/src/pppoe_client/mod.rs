@@ -13,7 +13,6 @@ const LCP_ECHO_INTERVAL: u64 = 20;
 
 /// 接近于永久不触发的 秒数  s    m    h
 // const PAUSE_FOREVER: u64 = 60 * 60 * 24 * 365 * 10;
-
 const DEFAULT_CLIENT_MRU: u16 = 1492;
 const ETH_P_PPOED: u16 = 0x8863;
 const ETH_P_PPOES: u16 = 0x8864;
@@ -31,6 +30,7 @@ pub struct PPPoEClientConfig {
 }
 
 impl PPPoEClientConfig {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         index: u32,
         iface_name: String,

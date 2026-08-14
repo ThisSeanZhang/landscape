@@ -105,7 +105,7 @@ pub(super) async fn run_client(
                 break Err("connection did not fail within post-run timeout".into());
             }
             change_result = status_rx.changed() => {
-                if let Err(_) = change_result {
+                if change_result.is_err() {
                     break Err("status channel closed unexpectedly".into());
                 }
                 let current = status_rx.borrow().clone();

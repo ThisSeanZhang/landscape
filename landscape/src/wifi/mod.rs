@@ -35,7 +35,7 @@ impl ServiceStarterTrait for WifiService {
         let service_status = WatchService::new();
 
         if config.enable {
-            if let Some(_) = get_iface_by_name(&config.iface_name).await {
+            if get_iface_by_name(&config.iface_name).await.is_some() {
                 let status_clone = service_status.clone();
                 let iface_name = config.iface_name.clone();
                 spawn_task_with_resource(

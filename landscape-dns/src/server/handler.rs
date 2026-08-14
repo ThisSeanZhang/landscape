@@ -138,6 +138,7 @@ impl DnsRequestHandler {
         self.chain(&runtime).refresh(domain, query_type, apply_filter).await
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn send_metric(
         &self,
         domain: &str,

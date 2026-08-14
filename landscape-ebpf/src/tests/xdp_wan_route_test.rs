@@ -24,7 +24,7 @@ fn xdp_wan_route_verifier_smoke() {
     {
         let obj_builder = builder.object_builder_mut();
         obj_builder.debug(true);
-        obj_builder.pin_root_path(&test_pin_root()).unwrap();
+        obj_builder.pin_root_path(test_pin_root()).unwrap();
     }
 
     let mut obj = MaybeUninit::uninit();
@@ -36,17 +36,17 @@ fn xdp_wan_route_verifier_smoke() {
 #[ignore = "requires specific BPF map / kernel environment"]
 fn xdp_wan_route_testrun_pass() {
     let mut builder = XdpWanRouteSkelBuilder::default();
-    builder.object_builder_mut().pin_root_path(&test_pin_root()).unwrap();
+    builder.object_builder_mut().pin_root_path(test_pin_root()).unwrap();
 
     let mut obj = MaybeUninit::uninit();
     let open = builder.open(&mut obj).expect("open skel");
     let skel = open.load().expect("load skel");
 
-    let mut pkt = super::dummpy_tcp_pkg();
+    let pkt = super::dummpy_tcp_pkg();
     let result = skel
         .progs
         .xdp_wan_route_ingress
-        .test_run(ProgramInput { data_in: Some(&mut pkt), ..Default::default() })
+        .test_run(ProgramInput { data_in: Some(&pkt), ..Default::default() })
         .expect("test_run");
 
     assert!(

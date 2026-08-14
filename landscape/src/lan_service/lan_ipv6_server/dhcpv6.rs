@@ -31,6 +31,7 @@ pub struct PdRouteChange {
 
 // ── Main entry ─────────────────────────────────────────────────────────────
 
+#[allow(clippy::too_many_arguments)]
 pub fn process_dhcpv6_msg(
     status: &mut Ipv6ServerStatus,
     msg_bytes: &[u8],
@@ -166,6 +167,7 @@ fn client_supports_reconfigure(msg: &v6::Message) -> bool {
 
 // ── Solicit → Advertise ─────────────────────────────────────────────────────
 
+#[allow(clippy::too_many_arguments)]
 fn handle_solicit(
     status: &mut Ipv6ServerStatus,
     msg: &v6::Message,
@@ -243,6 +245,7 @@ fn handle_solicit(
 
 // ── Request / Renew / Rebind → Reply ────────────────────────────────────────
 
+#[allow(clippy::too_many_arguments)]
 fn handle_request_or_renew(
     status: &mut Ipv6ServerStatus,
     msg: &v6::Message,

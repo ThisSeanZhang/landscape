@@ -291,11 +291,10 @@ mod tests {
 
     #[test]
     fn domain_matcher() {
-        let mut configs = vec![];
-        configs.push(DomainConfig {
+        let configs = vec![DomainConfig {
             match_type: DomainMatchType::Domain,
             value: "baidu.com".into(),
-        });
+        }];
 
         let matcher = DomainMatcher::new(configs);
         assert!(matcher.is_match_normalized(pd("baidu.com").name()));

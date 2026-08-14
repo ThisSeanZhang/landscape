@@ -40,11 +40,9 @@ async fn handle_socket(mut socket: WebSocket, who_in: String) {
         loop {
             tokio::select! {
                 msg = socket.recv() => {
-                    if let Some(msg) = msg {
-                        if let Ok(msg) = msg {
-                            if handle_websocket_msg(msg, &mut dump_tx).await.is_break() {
-                                break;
-                            }
+                    if let Some(Ok(msg)) = msg {
+                        if handle_websocket_msg(msg, &mut dump_tx).await.is_break() {
+                            break;
                         }
                     }
                 },

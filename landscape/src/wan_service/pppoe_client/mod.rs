@@ -39,7 +39,7 @@ pub(crate) async fn send_pppoe_session_frame(
     src_mac: MacAddr,
     session_id: u16,
     payload: Vec<u8>,
-    tx: &mut tokio::sync::mpsc::Sender<Box<Vec<u8>>>,
+    tx: &mut tokio::sync::mpsc::Sender<Vec<u8>>,
 ) -> Result<(), PppoeError> {
     use landscape_common::net_proto::pppoe::PPPoEFrame;
     let l2 = build_l2_header(server_mac, src_mac, ETH_P_PPOES);
@@ -52,6 +52,6 @@ pub(crate) async fn send_pppoe_session_frame(
         payload,
     };
     let packet: Vec<u8> = [l2.to_vec(), frame.convert_to_payload()].concat();
-    tx.send(Box::new(packet)).await.map_err(|_| PppoeError::ChannelClosed)?;
+    tx.send(packet).await.map_err(|_| PppoeError::ChannelClosed)?;
     Ok(())
 }

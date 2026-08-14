@@ -109,13 +109,13 @@ fn assert_xdp_round_trip(
         );
     }
 
-    let mut egress = build_ipv6_udp(client_address, remote(), client_port, 9999);
+    let egress = build_ipv6_udp(client_address, remote(), client_port, 9999);
     let mut egress_out = vec![0; egress.len() + 8];
     let result = skel
         .progs
         .egress_nat
         .test_run(ProgramInput {
-            data_in: Some(&mut egress),
+            data_in: Some(&egress),
             data_out: Some(&mut egress_out),
             ..Default::default()
         })
@@ -123,13 +123,13 @@ fn assert_xdp_round_trip(
     assert_eq!(result.return_value, XDP_PASS);
     assert_eq!(packet_source(result.data.as_deref().unwrap()), external_address);
 
-    let mut ingress = build_ipv6_udp(remote(), external_address, 9999, client_port);
+    let ingress = build_ipv6_udp(remote(), external_address, 9999, client_port);
     let mut ingress_out = vec![0; ingress.len() + 8];
     let result = skel
         .progs
         .ingress_nat
         .test_run(ProgramInput {
-            data_in: Some(&mut ingress),
+            data_in: Some(&ingress),
             data_out: Some(&mut ingress_out),
             ..Default::default()
         })

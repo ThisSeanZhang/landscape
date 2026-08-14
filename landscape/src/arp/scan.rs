@@ -20,24 +20,19 @@ pub async fn scan_ip_info(
     tokio::spawn(async move {
         let mut send_num = 0_u16;
 
-        loop {
-            if let Some(ip) = cidr.next() {
-                cidr = ip;
-                if ip.address() == cidr.last_address() {
-                    continue;
-                }
+        while let Some(ip) = cidr.next() {
+            cidr = ip;
+            if ip.address() == cidr.last_address() {
+                continue;
+            }
 
-                if ip.address() == server_addr {
-                    continue;
-                }
-                // println!("request ip: {:?}", ip.address());
-                if let Err(e) =
-                    arp_tx.send(handle_arp_request(&mac, &server_addr, &ip.address())).await
-                {
-                    tracing::error!("sand arp packet error: {e:?}");
-                }
-            } else {
-                break;
+            if ip.address() == server_addr {
+                continue;
+            }
+            // println!("request ip: {:?}", ip.address());
+            if let Err(e) = arp_tx.send(handle_arp_request(&mac, &server_addr, &ip.address())).await
+            {
+                tracing::error!("sand arp packet error: {e:?}");
             }
 
             send_num += 1;
@@ -69,7 +64,7 @@ pub async fn scan_ip_info(
     result
 }
 
-fn handle_arp_response(packet: Box<Vec<u8>>) -> Option<ArpScanInfoItem> {
+fn handle_arp_response(packet: Vec<u8>) -> Option<ArpScanInfoItem> {
     if packet.len() < 42 {
         return None;
     }
@@ -96,7 +91,7 @@ fn handle_arp_response(packet: Box<Vec<u8>>) -> Option<ArpScanInfoItem> {
     Some(ArpScanInfoItem { ip, mac })
 }
 
-fn handle_arp_request(my_mac: &MacAddr, my_ip: &Ipv4Addr, target_ip: &Ipv4Addr) -> Box<Vec<u8>> {
+fn handle_arp_request(my_mac: &MacAddr, my_ip: &Ipv4Addr, target_ip: &Ipv4Addr) -> Vec<u8> {
     let mut buf = vec![0u8; 42]; // 14 (Ethernet) + 28 (ARP)
 
     let mac_slice = my_mac.octets();
@@ -127,5 +122,5 @@ fn handle_arp_request(my_mac: &MacAddr, my_ip: &Ipv4Addr, target_ip: &Ipv4Addr) 
     // TPA: ip (目标 IP)
     buf[38..42].copy_from_slice(&target_ip.octets());
 
-    Box::new(buf)
+    buf
 }

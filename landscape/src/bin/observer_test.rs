@@ -2,7 +2,6 @@ use tracing::Level;
 
 use landscape::observer::ip_observer;
 
-///
 // cargo run --package landscape --bin observer_test
 #[tokio::main]
 async fn main() -> Result<(), String> {

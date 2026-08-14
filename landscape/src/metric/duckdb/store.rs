@@ -329,6 +329,7 @@ fn try_enqueue_cold_dns(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn run_hot_thread(
     mut connect_rx: mpsc::Receiver<ConnectMessage>,
     mut dns_rx: mpsc::Receiver<DnsMetricMessage>,

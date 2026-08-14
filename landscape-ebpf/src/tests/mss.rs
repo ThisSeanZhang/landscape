@@ -15,7 +15,7 @@ const MTU: u16 = 1492;
 const IPV4_TARGET_MSS: u16 = MTU - 20 - 20;
 const IPV6_TARGET_MSS: u16 = MTU - 40 - 20;
 
-fn run_mss_clamp(mut payload: Vec<u8>) -> Vec<u8> {
+fn run_mss_clamp(payload: Vec<u8>) -> Vec<u8> {
     let builder = TcMssSkelBuilder::default();
     let mut open_object = MaybeUninit::uninit();
     let mut open = builder.open(&mut open_object).unwrap();
@@ -27,7 +27,7 @@ fn run_mss_clamp(mut payload: Vec<u8>) -> Vec<u8> {
     skel.progs
         .tc_mss_wan_ingress
         .test_run(ProgramInput {
-            data_in: Some(&mut payload),
+            data_in: Some(&payload),
             data_out: Some(&mut packet_out),
             ..Default::default()
         })

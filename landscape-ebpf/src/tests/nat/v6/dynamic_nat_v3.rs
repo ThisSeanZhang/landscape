@@ -139,12 +139,11 @@ fn assert_egress_ct_status_transition(initial_status: u64, expected_status: u64)
     add_ct6_entry(&skel.maps.nat6_timer_map, &key, src, dst, 443);
     set_ct6_status(&skel.maps.nat6_timer_map, &key, initial_status);
 
-    let mut pkt = build_ipv6_tcp(src, dst, CLIENT_PORT, 443);
-    let mut ctx = TestSkb::default();
-    ctx.ifindex = IFINDEX;
+    let pkt = build_ipv6_tcp(src, dst, CLIENT_PORT, 443);
+    let mut ctx = TestSkb { ifindex: IFINDEX, ..Default::default() };
     let mut packet_out = vec![0u8; pkt.len()];
     let input = ProgramInput {
-        data_in: Some(&mut pkt),
+        data_in: Some(&pkt),
         context_in: Some(ctx.as_mut_bytes()),
         data_out: Some(&mut packet_out),
         ..Default::default()
@@ -178,12 +177,11 @@ fn assert_dynamic_translation(src: Ipv6Addr, dst: Ipv6Addr, prefix_len: u8) {
     );
     add_ct6_entry(&skel.maps.nat6_timer_map, &key, src, dst, 443);
 
-    let mut pkt = build_ipv6_tcp(src, dst, CLIENT_PORT, 443);
-    let mut ctx = TestSkb::default();
-    ctx.ifindex = IFINDEX;
+    let pkt = build_ipv6_tcp(src, dst, CLIENT_PORT, 443);
+    let mut ctx = TestSkb { ifindex: IFINDEX, ..Default::default() };
     let mut packet_out = vec![0u8; pkt.len()];
     let input = ProgramInput {
-        data_in: Some(&mut pkt),
+        data_in: Some(&pkt),
         context_in: Some(ctx.as_mut_bytes()),
         data_out: Some(&mut packet_out),
         ..Default::default()
@@ -244,12 +242,11 @@ fn assert_prefix_refresh(old_src: Ipv6Addr, new_src: Ipv6Addr, prefix_len: u8) {
     );
     add_ct6_entry(&skel.maps.nat6_timer_map, &old_key, old_src, old_remote, 443);
 
-    let mut pkt = build_ipv6_tcp(new_src, new_remote, CLIENT_PORT, 8443);
-    let mut ctx = TestSkb::default();
-    ctx.ifindex = IFINDEX;
+    let pkt = build_ipv6_tcp(new_src, new_remote, CLIENT_PORT, 8443);
+    let mut ctx = TestSkb { ifindex: IFINDEX, ..Default::default() };
     let mut packet_out = vec![0u8; pkt.len()];
     let input = ProgramInput {
-        data_in: Some(&mut pkt),
+        data_in: Some(&pkt),
         context_in: Some(ctx.as_mut_bytes()),
         data_out: Some(&mut packet_out),
         ..Default::default()
@@ -402,13 +399,12 @@ mod tests {
         add_ct6_icmp_entry(&skel.maps.nat6_timer_map, &key, src, dst, 443);
 
         let quoted = build_quoted_ipv6_tcp(dst, src, 443, CLIENT_PORT);
-        let mut pkt = build_ipv6_icmp_time_exceeded(src, dst, &quoted);
+        let pkt = build_ipv6_icmp_time_exceeded(src, dst, &quoted);
 
-        let mut ctx = TestSkb::default();
-        ctx.ifindex = IFINDEX;
+        let mut ctx = TestSkb { ifindex: IFINDEX, ..Default::default() };
         let mut packet_out = vec![0u8; pkt.len()];
         let input = ProgramInput {
-            data_in: Some(&mut pkt),
+            data_in: Some(&pkt),
             context_in: Some(ctx.as_mut_bytes()),
             data_out: Some(&mut packet_out),
             ..Default::default()
@@ -482,13 +478,12 @@ mod tests {
         add_ct6_icmp_entry(&skel.maps.nat6_timer_map, &key, src, dst, 443);
 
         let quoted = build_quoted_ipv6_tcp(wan_src, dst, CLIENT_PORT, 443);
-        let mut pkt = build_ipv6_icmp_time_exceeded(dst, wan_src, &quoted);
+        let pkt = build_ipv6_icmp_time_exceeded(dst, wan_src, &quoted);
 
-        let mut ctx = TestSkb::default();
-        ctx.ifindex = IFINDEX;
+        let mut ctx = TestSkb { ifindex: IFINDEX, ..Default::default() };
         let mut packet_out = vec![0u8; pkt.len()];
         let input = ProgramInput {
-            data_in: Some(&mut pkt),
+            data_in: Some(&pkt),
             context_in: Some(ctx.as_mut_bytes()),
             data_out: Some(&mut packet_out),
             ..Default::default()
@@ -582,13 +577,12 @@ mod tests {
             )
             .expect("failed to insert v3 v6 ct entry");
 
-        let mut pkt = build_ipv6_tcp(new_src, remote, CLIENT_PORT, 80);
-        let mut ctx = TestSkb::default();
-        ctx.ifindex = IFINDEX;
+        let pkt = build_ipv6_tcp(new_src, remote, CLIENT_PORT, 80);
+        let mut ctx = TestSkb { ifindex: IFINDEX, ..Default::default() };
         ctx.mark = 0x8000;
         let mut packet_out = vec![0u8; pkt.len()];
         let input = ProgramInput {
-            data_in: Some(&mut pkt),
+            data_in: Some(&pkt),
             context_in: Some(ctx.as_mut_bytes()),
             data_out: Some(&mut packet_out),
             ..Default::default()
@@ -649,13 +643,12 @@ mod tests {
 
         add_ct6_entry(&skel.maps.nat6_timer_map, &key, old_src, old_remote, 443);
 
-        let mut pkt = build_ipv6_tcp(new_src, new_remote, CLIENT_PORT, 8443);
-        let mut ctx = TestSkb::default();
-        ctx.ifindex = IFINDEX;
+        let pkt = build_ipv6_tcp(new_src, new_remote, CLIENT_PORT, 8443);
+        let mut ctx = TestSkb { ifindex: IFINDEX, ..Default::default() };
         ctx.mark = 0;
         let mut packet_out = vec![0u8; pkt.len()];
         let input = ProgramInput {
-            data_in: Some(&mut pkt),
+            data_in: Some(&pkt),
             context_in: Some(ctx.as_mut_bytes()),
             data_out: Some(&mut packet_out),
             ..Default::default()
@@ -716,12 +709,11 @@ mod tests {
 
         add_ct6_entry(&skel.maps.nat6_timer_map, &key, old_src, old_remote, 443);
 
-        let mut pkt = build_ipv6_tcp(new_src, new_remote, CLIENT_PORT, 8443);
-        let mut ctx = TestSkb::default();
-        ctx.ifindex = IFINDEX;
+        let pkt = build_ipv6_tcp(new_src, new_remote, CLIENT_PORT, 8443);
+        let mut ctx = TestSkb { ifindex: IFINDEX, ..Default::default() };
         let mut packet_out = vec![0u8; pkt.len()];
         let input = ProgramInput {
-            data_in: Some(&mut pkt),
+            data_in: Some(&pkt),
             context_in: Some(ctx.as_mut_bytes()),
             data_out: Some(&mut packet_out),
             ..Default::default()

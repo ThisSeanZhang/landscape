@@ -1,5 +1,6 @@
 use duckdb::{params, Connection};
 
+#[allow(clippy::too_many_arguments)]
 pub fn upsert_metric_bucket_values(
     conn: &Connection,
     table: &str,
@@ -52,6 +53,7 @@ pub fn upsert_metric_bucket_values(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn upsert_iface_metric_bucket_values(
     conn: &Connection,
     ifindex: u32,

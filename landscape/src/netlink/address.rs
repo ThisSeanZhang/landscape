@@ -138,15 +138,15 @@ pub async fn get_ppp_address(
             if matches!(msg.header.family, AddressFamily::Inet) {
                 for attr in msg.attributes.iter() {
                     match attr {
-                        netlink_packet_route::address::AddressAttribute::Local(addr) => {
-                            if let IpAddr::V4(addr) = addr {
-                                out_addr = Some(*addr);
-                            }
+                        netlink_packet_route::address::AddressAttribute::Local(IpAddr::V4(
+                            addr,
+                        )) => {
+                            out_addr = Some(*addr);
                         }
-                        netlink_packet_route::address::AddressAttribute::Address(addr) => {
-                            if let IpAddr::V4(addr) = addr {
-                                peer_addr = Some(*addr);
-                            }
+                        netlink_packet_route::address::AddressAttribute::Address(IpAddr::V4(
+                            addr,
+                        )) => {
+                            peer_addr = Some(*addr);
                         }
                         _ => {}
                     }
@@ -183,7 +183,7 @@ pub async fn add_address_with_handle(
                             ip_equal = true;
                         }
                     }
-                    AddressAttribute::Label(label) if *label == link_name.to_string() => {
+                    AddressAttribute::Label(label) if *label == link_name => {
                         link_name_equal = true;
                     }
                     _ => {}

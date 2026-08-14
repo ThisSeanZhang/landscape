@@ -76,7 +76,7 @@ fn insert_static_nat4_item_entries(
     );
 }
 
-pub(crate) fn add_static_nat4_mapping<'obj, T, I>(nat4_static_map: &T, mappings: I)
+pub(crate) fn add_static_nat4_mapping<T, I>(nat4_static_map: &T, mappings: I)
 where
     T: MapCore,
     I: IntoIterator<Item = StaticNatMappingV4Item>,
@@ -91,7 +91,7 @@ where
     }
 }
 
-pub fn add_static_nat4_mapping_v3<'obj, T, I>(nat4_static_map: &T, mappings: I)
+pub fn add_static_nat4_mapping_v3<T, I>(nat4_static_map: &T, mappings: I)
 where
     T: MapCore,
     I: IntoIterator<Item = StaticNatMappingV4Item>,

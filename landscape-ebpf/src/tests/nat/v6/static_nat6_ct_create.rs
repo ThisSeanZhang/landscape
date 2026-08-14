@@ -135,12 +135,11 @@ mod tests {
 
         // No pre-populated CT entry — create path should be exercised.
 
-        let mut pkt = build_ipv6_udp(lan_host(), remote(), 80, 9999);
-        let mut ctx = TestSkb::default();
-        ctx.ifindex = IFINDEX;
+        let pkt = build_ipv6_udp(lan_host(), remote(), 80, 9999);
+        let mut ctx = TestSkb { ifindex: IFINDEX, ..Default::default() };
         let mut packet_out = vec![0u8; pkt.len()];
         let input = ProgramInput {
-            data_in: Some(&mut pkt),
+            data_in: Some(&pkt),
             context_in: Some(ctx.as_mut_bytes()),
             data_out: Some(&mut packet_out),
             ..Default::default()
@@ -203,12 +202,11 @@ mod tests {
         // No pre-populated CT.
 
         let wan_npt_ip = Ipv6Addr::from_str("2409:8888:6666:4f25::100").unwrap();
-        let mut pkt = build_ipv6_udp(remote(), wan_npt_ip, 9999, 80);
-        let mut ctx = TestSkb::default();
-        ctx.ifindex = IFINDEX;
+        let pkt = build_ipv6_udp(remote(), wan_npt_ip, 9999, 80);
+        let mut ctx = TestSkb { ifindex: IFINDEX, ..Default::default() };
         let mut packet_out = vec![0u8; pkt.len()];
         let input = ProgramInput {
-            data_in: Some(&mut pkt),
+            data_in: Some(&pkt),
             context_in: Some(ctx.as_mut_bytes()),
             data_out: Some(&mut packet_out),
             ..Default::default()
@@ -268,12 +266,11 @@ mod tests {
             vec![StaticNatMappingV6Item { port: 0, lan_ip: lan_host(), l4_protocol: 17 }],
         );
 
-        let mut pkt = build_ipv6_udp(lan_host(), remote(), 443, 9999);
-        let mut ctx = TestSkb::default();
-        ctx.ifindex = IFINDEX;
+        let pkt = build_ipv6_udp(lan_host(), remote(), 443, 9999);
+        let mut ctx = TestSkb { ifindex: IFINDEX, ..Default::default() };
         let mut packet_out = vec![0u8; pkt.len()];
         let input = ProgramInput {
-            data_in: Some(&mut pkt),
+            data_in: Some(&pkt),
             context_in: Some(ctx.as_mut_bytes()),
             data_out: Some(&mut packet_out),
             ..Default::default()
@@ -327,12 +324,11 @@ mod tests {
         );
 
         let wan_npt_ip = Ipv6Addr::from_str("2409:8888:6666:4f25::100").unwrap();
-        let mut pkt = build_ipv6_udp(remote(), wan_npt_ip, 9999, 443);
-        let mut ctx = TestSkb::default();
-        ctx.ifindex = IFINDEX;
+        let pkt = build_ipv6_udp(remote(), wan_npt_ip, 9999, 443);
+        let mut ctx = TestSkb { ifindex: IFINDEX, ..Default::default() };
         let mut packet_out = vec![0u8; pkt.len()];
         let input = ProgramInput {
-            data_in: Some(&mut pkt),
+            data_in: Some(&pkt),
             context_in: Some(ctx.as_mut_bytes()),
             data_out: Some(&mut packet_out),
             ..Default::default()
@@ -388,15 +384,14 @@ mod tests {
         );
 
         for _ in 0..2 {
-            let mut pkt = build_ipv6_udp(local_wan_ip(), remote(), 53, 9999);
-            let mut ctx = TestSkb::default();
-            ctx.ifindex = IFINDEX;
+            let pkt = build_ipv6_udp(local_wan_ip(), remote(), 53, 9999);
+            let mut ctx = TestSkb { ifindex: IFINDEX, ..Default::default() };
             let mut packet_out = vec![0u8; pkt.len()];
             let result = skel
                 .progs
                 .tc_nat_wan_egress
                 .test_run(ProgramInput {
-                    data_in: Some(&mut pkt),
+                    data_in: Some(&pkt),
                     context_in: Some(ctx.as_mut_bytes()),
                     data_out: Some(&mut packet_out),
                     ..Default::default()
@@ -441,15 +436,14 @@ mod tests {
         );
 
         for _ in 0..2 {
-            let mut pkt = build_ipv6_udp(remote(), local_wan_ip(), 9999, 53);
-            let mut ctx = TestSkb::default();
-            ctx.ifindex = IFINDEX;
+            let pkt = build_ipv6_udp(remote(), local_wan_ip(), 9999, 53);
+            let mut ctx = TestSkb { ifindex: IFINDEX, ..Default::default() };
             let mut packet_out = vec![0u8; pkt.len()];
             let result = skel
                 .progs
                 .tc_nat_wan_ingress
                 .test_run(ProgramInput {
-                    data_in: Some(&mut pkt),
+                    data_in: Some(&pkt),
                     context_in: Some(ctx.as_mut_bytes()),
                     data_out: Some(&mut packet_out),
                     ..Default::default()

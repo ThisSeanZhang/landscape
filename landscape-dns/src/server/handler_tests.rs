@@ -78,6 +78,7 @@ impl DnsRequestHandler {
         (RedirectEngine::new(redirects), ResolveEngine::new(resolves))
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn insert(
         &self,
         domain: &str,
@@ -106,6 +107,7 @@ impl DnsRequestHandler {
     }
 }
 
+#[allow(clippy::module_inception)]
 mod tests {
     use super::*;
     use crate::server::snapshot::RULE_REFRESH_TTL_CAP;
@@ -169,7 +171,7 @@ mod tests {
         redirect_rules: Vec<DNSRedirectRuntimeRule>,
     ) -> DnsRequestHandler {
         DnsRequestHandler::new(
-            ChainDnsServerInitInfo { dns_rules, redirect_rules }.into(),
+            ChainDnsServerInitInfo { dns_rules, redirect_rules },
             shared_cache_runtime_config(5),
             1,
             Arc::new(ArcSwapOption::new(None)),
@@ -184,7 +186,7 @@ mod tests {
         redirect_rules: Vec<DNSRedirectRuntimeRule>,
     ) -> DnsRequestHandler {
         DnsRequestHandler::new(
-            ChainDnsServerInitInfo { dns_rules, redirect_rules }.into(),
+            ChainDnsServerInitInfo { dns_rules, redirect_rules },
             shared_cache_runtime_config(5),
             1,
             Arc::new(ArcSwapOption::new(None)),
@@ -199,7 +201,7 @@ mod tests {
         redirect_rules: Vec<DNSRedirectRuntimeRule>,
     ) -> DnsRequestHandler {
         DnsRequestHandler::new(
-            ChainDnsServerInitInfo { dns_rules, redirect_rules }.into(),
+            ChainDnsServerInitInfo { dns_rules, redirect_rules },
             runtime_config,
             flow_id,
             Arc::new(ArcSwapOption::new(None)),

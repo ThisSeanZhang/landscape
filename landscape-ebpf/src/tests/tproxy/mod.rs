@@ -21,7 +21,7 @@ unsafe impl plain::Plain for tproxy_packet_test_result {}
 
 const MAP_KEY: u32 = 0;
 
-fn run_tproxy_packet_test(mut payload: Vec<u8>) -> tproxy_packet_test_result {
+fn run_tproxy_packet_test(payload: Vec<u8>) -> tproxy_packet_test_result {
     let builder = TestTproxyPacketSkelBuilder::default();
     let mut open_object = MaybeUninit::uninit();
     let open = builder.open(&mut open_object).unwrap();
@@ -29,7 +29,7 @@ fn run_tproxy_packet_test(mut payload: Vec<u8>) -> tproxy_packet_test_result {
 
     skel.progs
         .test_tproxy_packet
-        .test_run(ProgramInput { data_in: Some(&mut payload), ..Default::default() })
+        .test_run(ProgramInput { data_in: Some(&payload), ..Default::default() })
         .expect("test_run failed");
 
     let result = skel

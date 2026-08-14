@@ -51,7 +51,9 @@ type V6MessageType = landscape_common::net_proto::udp::dhcp::v6::MessageType;
 #[derive(Clone, Debug)]
 pub enum IpV6PdState {
     /// 初始状态
-    Solicit { xid: u32 },
+    Solicit {
+        xid: u32,
+    },
     /// 发起地址请求
     Request {
         xid: u32,
@@ -62,7 +64,12 @@ pub enum IpV6PdState {
     },
 
     /// 地址激活使用
-    Bound { xid: u32, service_id: Vec<u8>, iapd: v6::IAPD, bound_time: Instant },
+    Bound {
+        xid: u32,
+        service_id: Vec<u8>,
+        iapd: v6::IAPD,
+        bound_time: Instant,
+    },
     /// 确认当前地址状态
     Confirm,
     /// Renew 续订 T1 事件触发
@@ -88,10 +95,10 @@ pub enum IpV6PdState {
         rebind_time: Instant,
         bound_time: Instant,
     },
-
-    ///
-    Release { xid: u32, service_id: Vec<u8> },
-    ///
+    Release {
+        xid: u32,
+        service_id: Vec<u8>,
+    },
     Decline,
     /// 结束
     Stop,
@@ -182,10 +189,11 @@ impl IpV6PdState {
 
 fn gen_client_id(config_mac: MacAddr) -> Vec<u8> {
     let mut result = Vec::with_capacity(10);
-    result.extend_from_slice(&[00, 03, 00, 01]);
+    result.extend_from_slice(&[0x00, 0x03, 0x00, 0x01]);
     result.extend_from_slice(&config_mac.octets());
     result
 }
+#[allow(clippy::too_many_arguments)]
 pub async fn dhcp_v6_pd_client(
     iface_name: String,
     ifindex: u32,
@@ -660,6 +668,7 @@ fn status_timeout_duration(current_status: &IpV6PdState, prev_timeout_times: u64
 }
 /// 处理接收到的报文，根据当前状态决定如何处理
 /// 返回值为是否要进行检查刷新超时时间
+#[allow(clippy::too_many_arguments)]
 async fn handle_packet(
     iface_name: &str,
     ifindex: u32,

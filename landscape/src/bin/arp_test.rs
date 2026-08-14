@@ -33,7 +33,7 @@ pub async fn test_gratuitous() {
         let mut send_interval = tokio::time::interval(Duration::from_secs(10));
         loop {
             send_interval.tick().await;
-            let _ = arp_tx.send(Box::new(packet.clone())).await;
+            let _ = arp_tx.send(packet.clone()).await;
         }
     });
 

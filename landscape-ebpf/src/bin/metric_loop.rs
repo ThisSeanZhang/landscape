@@ -5,7 +5,7 @@ use landscape_core::time::get_boot_time_ns;
 // cargo run --package landscape-ebpf --bin metric_loop
 
 pub fn main() {
-    const MILL_SECOND: u64 = 1000_000_000;
+    const MILL_SECOND: u64 = 1_000_000_000;
     let interval = Duration::from_secs(1);
 
     let (mut next_tick, _next_sec) = if let Ok(current_time) = get_boot_time_ns() {
@@ -22,7 +22,7 @@ pub fn main() {
         println!("Tick at {:?}", Instant::now());
 
         let time = get_boot_time_ns().unwrap_or_default();
-        println!("Tick at {:?}", time / 1000_000_000);
+        println!("Tick at {:?}", time / 1_000_000_000);
         // 睡到精确的下一个时刻（避免时间漂移）
         let now = Instant::now();
         if now < next_tick {

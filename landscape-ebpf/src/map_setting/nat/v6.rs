@@ -72,7 +72,7 @@ fn insert_static_nat6_item_entries(
     );
 }
 
-pub fn add_static_nat6_mapping<'obj, T, I>(static_nat_mappings: &T, mappings: I)
+pub fn add_static_nat6_mapping<T, I>(static_nat_mappings: &T, mappings: I)
 where
     T: MapCore,
     I: IntoIterator<Item = StaticNatMappingV6Item>,

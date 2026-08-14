@@ -161,6 +161,7 @@ pub(crate) struct NativeXdpLink {
 }
 
 impl NativeXdpLink {
+    #[allow(clippy::field_reassign_with_default)]
     pub(crate) fn attach(prog: &Program, ifindex: u32) -> LdEbpfResult<Self> {
         let ifindex_i32 = ifindex as i32;
 
@@ -263,6 +264,7 @@ impl NativeXdpLink {
         Ok(Self { ifindex, prog_fd: prog.as_fd().as_raw_fd() })
     }
 
+    #[allow(clippy::field_reassign_with_default)]
     fn detach(ifindex: i32, prog_fd: i32) {
         let mut opts = libbpf_sys::bpf_xdp_attach_opts::default();
         opts.sz = size_of::<libbpf_sys::bpf_xdp_attach_opts>() as libbpf_sys::size_t;
@@ -310,6 +312,7 @@ impl SkbXdpLink {
         Ok(Self { ifindex })
     }
 
+    #[allow(clippy::field_reassign_with_default)]
     fn detach(ifindex: i32) {
         let mut opts = libbpf_sys::bpf_xdp_attach_opts::default();
         opts.sz = size_of::<libbpf_sys::bpf_xdp_attach_opts>() as libbpf_sys::size_t;

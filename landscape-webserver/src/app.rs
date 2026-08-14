@@ -246,21 +246,17 @@ impl LandscapeApp {
 
         for config in &ip_configs {
             if config.enable {
-                if let IfaceIpModelConfig::Static { ipv4, ipv4_mask, .. } = &config.ip_model {
-                    if let Some(ipv4_addr) = ipv4 {
-                        let ip = IpAddr::V4(*ipv4_addr);
-                        let prefix_len = *ipv4_mask;
-                        tracing::info!(
-                            "Re-applying WAN static IP: {ip}/{prefix_len} on {}",
-                            config.iface_name
-                        );
-                        landscape::netlink::address::set_iface_ip(
-                            &config.iface_name,
-                            ip,
-                            prefix_len,
-                        )
+                if let IfaceIpModelConfig::Static { ipv4: Some(ipv4_addr), ipv4_mask, .. } =
+                    &config.ip_model
+                {
+                    let ip = IpAddr::V4(*ipv4_addr);
+                    let prefix_len = *ipv4_mask;
+                    tracing::info!(
+                        "Re-applying WAN static IP: {ip}/{prefix_len} on {}",
+                        config.iface_name
+                    );
+                    landscape::netlink::address::set_iface_ip(&config.iface_name, ip, prefix_len)
                         .await;
-                    }
                 }
             }
         }

@@ -98,12 +98,14 @@ fn egress_key() -> types::nat4_mapping_key {
 }
 
 fn mapping_pair() -> (types::nat4_egress_mapping_value_v3, types::nat4_mapping_value_v3) {
-    let mut egress = types::nat4_egress_mapping_value_v3::default();
-    egress.addr = WAN_IP.to_bits().to_be();
-    egress.trigger_addr = REMOTE_IP.to_bits().to_be();
-    egress.port = NAT_PORT.to_be();
-    egress.trigger_port = 443u16.to_be();
-    egress.is_allow_reuse = 1;
+    let egress = types::nat4_egress_mapping_value_v3 {
+        addr: WAN_IP.to_bits().to_be(),
+        trigger_addr: REMOTE_IP.to_bits().to_be(),
+        port: NAT_PORT.to_be(),
+        trigger_port: 443u16.to_be(),
+        is_allow_reuse: 1,
+        ..Default::default()
+    };
     let ingress = types::nat4_mapping_value_v3 {
         state_ref: state_ref(STATE_ACTIVE, 1),
         addr: LAN_HOST.to_bits().to_be(),
@@ -173,16 +175,18 @@ fn put_timer_with_key<T: MapCore>(
     client_status: u64,
     server_status: u64,
 ) {
-    let mut value = types::nat4_timer_value_v3::default();
-    value.server_status = server_status;
-    value.client_status = client_status;
-    value.status = status;
-    value.client_addr = types::inet4_addr { addr: LAN_HOST.to_bits().to_be() };
-    value.client_port = LAN_PORT.to_be();
-    value.gress = NAT_MAPPING_EGRESS;
-    value.create_time = 1;
-    value.ifindex = IFINDEX;
-    value.generation_snapshot = generation_snapshot;
+    let value = types::nat4_timer_value_v3 {
+        server_status,
+        client_status,
+        status,
+        client_addr: types::inet4_addr { addr: LAN_HOST.to_bits().to_be() },
+        client_port: LAN_PORT.to_be(),
+        gress: NAT_MAPPING_EGRESS,
+        create_time: 1,
+        ifindex: IFINDEX,
+        generation_snapshot,
+        ..Default::default()
+    };
     map.update(as_bytes(key), as_bytes(&value), MapFlags::ANY).unwrap();
 }
 
@@ -221,8 +225,8 @@ fn run_step_with_key(
     force_queue_push_fail: bool,
 ) -> types::nat4_timer_test_result_v3 {
     put_test_input_with_key(&skel.maps.nat4_timer_test_input_v3, key, force_queue_push_fail, false);
-    let mut data = vec![0u8; 64];
-    let input = ProgramInput { data_in: Some(&mut data), ..Default::default() };
+    let data = vec![0u8; 64];
+    let input = ProgramInput { data_in: Some(&data), ..Default::default() };
     let result = skel.progs.nat_v4_timer_step_test.test_run(input).expect("test_run failed");
     assert_eq!(result.return_value as i32, 0);
     get_test_result(&skel.maps.nat4_timer_test_result_v3)
@@ -232,8 +236,8 @@ fn run_advance(
     skel: &test_nat_v3_timer::TestNatV3TimerSkel<'_>,
 ) -> types::nat4_timer_test_result_v3 {
     put_test_input_with_key(&skel.maps.nat4_timer_test_input_v3, &timer_key(), false, false);
-    let mut data = vec![0u8; 64];
-    let input = ProgramInput { data_in: Some(&mut data), ..Default::default() };
+    let data = vec![0u8; 64];
+    let input = ProgramInput { data_in: Some(&data), ..Default::default() };
     let result = skel.progs.nat_v4_timer_advance_test.test_run(input).expect("test_run failed");
     assert_eq!(result.return_value as i32, 0);
     get_test_result(&skel.maps.nat4_timer_test_result_v3)
@@ -249,8 +253,8 @@ fn run_resolve(
         false,
         track_dynamic_ref,
     );
-    let mut data = vec![0u8; 64];
-    let input = ProgramInput { data_in: Some(&mut data), ..Default::default() };
+    let data = vec![0u8; 64];
+    let input = ProgramInput { data_in: Some(&data), ..Default::default() };
     let result = skel.progs.nat_v4_timer_resolve_test.test_run(input).expect("test_run failed");
     assert_eq!(result.return_value as i32, 0);
     get_test_result(&skel.maps.nat4_timer_test_result_v3)
@@ -727,17 +731,19 @@ mod tests {
         put_mapping_pair(&skel.maps.nat4_ingress_dyn_map, &skel.maps.nat4_egress_dyn_map);
 
         let key = timer_key();
-        let mut value = types::nat4_timer_value_v3::default();
-        value.server_status = CT_SYN;
-        value.client_status = CT_SYN;
-        value.status = TIMER_RELEASE;
-        value.client_addr = types::inet4_addr { addr: LAN_HOST.to_bits().to_be() };
-        value.client_port = LAN_PORT.to_be();
-        value.gress = NAT_MAPPING_INGRESS;
-        value.create_time = 1;
-        value.ifindex = IFINDEX;
-        value.generation_snapshot = GENERATION;
-        value.is_static = 1;
+        let value = types::nat4_timer_value_v3 {
+            server_status: CT_SYN,
+            client_status: CT_SYN,
+            status: TIMER_RELEASE,
+            client_addr: types::inet4_addr { addr: LAN_HOST.to_bits().to_be() },
+            client_port: LAN_PORT.to_be(),
+            gress: NAT_MAPPING_INGRESS,
+            create_time: 1,
+            ifindex: IFINDEX,
+            generation_snapshot: GENERATION,
+            is_static: 1,
+            ..Default::default()
+        };
         skel.maps.nat4_timer_map.update(as_bytes(&key), as_bytes(&value), MapFlags::ANY).unwrap();
 
         let result = run_step(&skel, false);

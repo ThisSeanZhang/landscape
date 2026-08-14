@@ -176,6 +176,7 @@ pub fn upsert_ipv6_ip_mac(
     upsert_ipv6_ip_mac_in_map(&ip_mac_v6, ifindex, ip_addr, mac, dev_mac)
 }
 
+#[allow(clippy::field_reassign_with_default)]
 fn upsert_ipv4_ip_mac_in_map<T>(
     map: &T,
     ifindex: u32,
@@ -203,6 +204,7 @@ where
     Ok(())
 }
 
+#[allow(clippy::field_reassign_with_default)]
 fn upsert_ipv6_ip_mac_in_map<T>(
     map: &T,
     ifindex: u32,
@@ -230,6 +232,7 @@ where
     Ok(())
 }
 
+#[allow(clippy::field_reassign_with_default)]
 fn reconcile_arp_entries_in_map<T>(
     map: &T,
     entries: &[(mac_key_v4, mac_value_v4)],
@@ -422,10 +425,8 @@ fn ipv4_neigh_msg_to_entry(
 
     for attr in &msg.attributes {
         match attr {
-            NeighbourAttribute::Destination(addr) => {
-                if let NeighbourAddress::Inet(ip) = addr {
-                    ipv4_addr = Some(*ip);
-                }
+            NeighbourAttribute::Destination(NeighbourAddress::Inet(ip)) => {
+                ipv4_addr = Some(*ip);
             }
             NeighbourAttribute::LinkLayerAddress(bytes)
                 if bytes.len() >= 6 && !bytes.iter().all(|&b| b == 0) =>
@@ -495,10 +496,8 @@ fn ipv6_neigh_msg_to_entry(
 
     for attr in &msg.attributes {
         match attr {
-            NeighbourAttribute::Destination(addr) => {
-                if let NeighbourAddress::Inet6(ip) = addr {
-                    ipv6_addr = Some(*ip);
-                }
+            NeighbourAttribute::Destination(NeighbourAddress::Inet6(ip)) => {
+                ipv6_addr = Some(*ip);
             }
             NeighbourAttribute::LinkLayerAddress(bytes)
                 if bytes.len() >= 6 && !bytes.iter().all(|&b| b == 0) =>
@@ -601,6 +600,7 @@ mod tests {
         .expect("create ip_mac_v6 test map")
     }
 
+    #[allow(clippy::field_reassign_with_default)]
     fn make_entry(ip: &str, mac: &str, dev_mac: &str, ifindex: u32) -> (mac_key_v4, mac_value_v4) {
         let mut key = mac_key_v4::default();
         key.addr = Ipv4Addr::from_str(ip).unwrap().to_bits().to_be();
@@ -614,6 +614,7 @@ mod tests {
         (key, value)
     }
 
+    #[allow(clippy::field_reassign_with_default)]
     fn make_entry_v6(
         ip: &str,
         mac: &str,
@@ -656,6 +657,7 @@ mod tests {
         .expect("insert ip_mac_v6 entry");
     }
 
+    #[allow(clippy::field_reassign_with_default)]
     fn lookup_entry<T>(map: &T, ip: &str) -> Option<mac_value_v4>
     where
         T: MapCore,

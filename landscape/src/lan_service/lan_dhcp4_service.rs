@@ -262,6 +262,7 @@ impl ControllerService for DHCPv4ServerManagerService {
 }
 
 impl DHCPv4ServerManagerService {
+    #[allow(clippy::too_many_arguments)]
     pub async fn new(
         route_service: IpRouteService,
         store_service: LandscapeDBServiceProvider,
@@ -464,7 +465,7 @@ impl DHCPv4ServerManagerService {
             read_lock.get(&iface_name).map(Clone::clone)
         };
 
-        let Some(offer_info) = info else { return None };
+        let offer_info = info?;
 
         let data = offer_info.read().await.get_arp_info();
         Some(data)

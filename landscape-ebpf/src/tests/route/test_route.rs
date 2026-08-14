@@ -22,6 +22,7 @@ use crate::{
     },
 };
 
+#[allow(clippy::module_inception)]
 pub(crate) mod test_route {
     include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/test_route.skel.rs"));
 }
@@ -60,14 +61,14 @@ mod tests {
             slot: u32,
         }
 
-        let mut key = RouteTargetSlotKeyV6::default();
-        key.flow_id = flow_id;
-        key.slot = slot;
+        let key = RouteTargetSlotKeyV6 { flow_id, slot };
 
-        let mut value = test_route::types::route_target_info_v6::default();
-        value.ifindex = ifindex;
-        value.has_mac = 0;
-        value.is_docker = 0;
+        let value = test_route::types::route_target_info_v6 {
+            ifindex,
+            has_mac: 0,
+            is_docker: 0,
+            ..Default::default()
+        };
 
         skel.maps
             .rt6_target_slot_map
@@ -113,13 +114,13 @@ mod tests {
             TARGET_IFINDEX,
         );
 
-        let mut packet = simple_ipv6_tcp_syn(local_addr(), remote_addr());
+        let packet = simple_ipv6_tcp_syn(local_addr(), remote_addr());
         let mut packet_out = vec![0_u8; packet.len()];
         let result = skel
             .progs
             .test_route_v6_search_route_in_lan
             .test_run(ProgramInput {
-                data_in: Some(&mut packet),
+                data_in: Some(&packet),
                 data_out: Some(&mut packet_out),
                 ..Default::default()
             })
@@ -169,13 +170,13 @@ mod tests {
             TARGET_IFINDEX,
         );
 
-        let mut packet = simple_ipv6_tcp_syn(local_addr(), remote_addr());
+        let packet = simple_ipv6_tcp_syn(local_addr(), remote_addr());
         let mut packet_out = vec![0_u8; packet.len()];
         let result = skel
             .progs
             .test_route_v6_search_route_in_lan
             .test_run(ProgramInput {
-                data_in: Some(&mut packet),
+                data_in: Some(&packet),
                 data_out: Some(&mut packet_out),
                 ..Default::default()
             })
@@ -199,15 +200,14 @@ mod tests {
 
         create_route_cache_inner_map_v6(&skel.maps.rt6_cache_map, WAN_CACHE);
 
-        let mut packet = simple_ipv6_tcp_syn(remote_addr(), local_addr());
-        let mut ctx = TestSkb::default();
-        ctx.ifindex = WAN_IFINDEX;
+        let packet = simple_ipv6_tcp_syn(remote_addr(), local_addr());
+        let mut ctx = TestSkb { ifindex: WAN_IFINDEX, ..Default::default() };
 
         let result = skel
             .progs
             .test_route_v6_setting_cache_in_wan
             .test_run(ProgramInput {
-                data_in: Some(&mut packet),
+                data_in: Some(&packet),
                 context_in: Some(ctx.as_mut_bytes()),
                 ..Default::default()
             })
@@ -249,11 +249,11 @@ mod tests {
 
         put_rt6_target_slot(&skel, 0, 0, 21);
 
-        let mut packet = simple_ipv6_tcp_syn(Ipv6Addr::UNSPECIFIED, Ipv6Addr::UNSPECIFIED);
+        let packet = simple_ipv6_tcp_syn(Ipv6Addr::UNSPECIFIED, Ipv6Addr::UNSPECIFIED);
         let result = skel
             .progs
             .test_route_v6_pick_wan_by_flow_id_default
-            .test_run(ProgramInput { data_in: Some(&mut packet), ..Default::default() })
+            .test_run(ProgramInput { data_in: Some(&packet), ..Default::default() })
             .expect("run test_route_v6_pick_wan_by_flow_id_default");
 
         assert_eq!(result.return_value as i32, 21);
@@ -271,11 +271,11 @@ mod tests {
 
         put_rt6_target_slot(&skel, 5, 0, 21);
 
-        let mut packet = simple_ipv6_tcp_syn(Ipv6Addr::UNSPECIFIED, Ipv6Addr::UNSPECIFIED);
+        let packet = simple_ipv6_tcp_syn(Ipv6Addr::UNSPECIFIED, Ipv6Addr::UNSPECIFIED);
         let result = skel
             .progs
             .test_route_v6_pick_wan_by_flow_id_non_default
-            .test_run(ProgramInput { data_in: Some(&mut packet), ..Default::default() })
+            .test_run(ProgramInput { data_in: Some(&packet), ..Default::default() })
             .expect("run test_route_v6_pick_wan_by_flow_id_non_default");
 
         assert_eq!(result.return_value as i32, 21);
@@ -291,11 +291,11 @@ mod tests {
         let open = builder.open(&mut open_object).unwrap();
         let skel = open.load().unwrap();
 
-        let mut packet = simple_ipv6_tcp_syn(Ipv6Addr::UNSPECIFIED, Ipv6Addr::UNSPECIFIED);
+        let packet = simple_ipv6_tcp_syn(Ipv6Addr::UNSPECIFIED, Ipv6Addr::UNSPECIFIED);
         let result = skel
             .progs
             .test_route_v6_pick_wan_by_flow_id_default
-            .test_run(ProgramInput { data_in: Some(&mut packet), ..Default::default() })
+            .test_run(ProgramInput { data_in: Some(&packet), ..Default::default() })
             .expect("run test_route_v6_pick_wan_by_flow_id_default miss");
 
         assert_eq!(result.return_value as i32, -1);
@@ -311,11 +311,11 @@ mod tests {
         let open = builder.open(&mut open_object).unwrap();
         let skel = open.load().unwrap();
 
-        let mut packet = simple_ipv6_tcp_syn(Ipv6Addr::UNSPECIFIED, Ipv6Addr::UNSPECIFIED);
+        let packet = simple_ipv6_tcp_syn(Ipv6Addr::UNSPECIFIED, Ipv6Addr::UNSPECIFIED);
         let result = skel
             .progs
             .test_route_v6_pick_wan_by_flow_id_non_default
-            .test_run(ProgramInput { data_in: Some(&mut packet), ..Default::default() })
+            .test_run(ProgramInput { data_in: Some(&packet), ..Default::default() })
             .expect("run test_route_v6_pick_wan_by_flow_id_non_default miss");
 
         assert_eq!(result.return_value as i32, 2);
@@ -331,12 +331,12 @@ mod tests {
         let open = builder.open(&mut open_object).unwrap();
         let skel = open.load().unwrap();
 
-        let mut packet = simple_ipv6_tcp_syn(local_addr(), remote_addr());
+        let packet = simple_ipv6_tcp_syn(local_addr(), remote_addr());
 
         let result = skel
             .progs
             .test_route_cached_docker_vlan_id
-            .test_run(ProgramInput { data_in: Some(&mut packet), ..Default::default() })
+            .test_run(ProgramInput { data_in: Some(&packet), ..Default::default() })
             .expect("run cached docker vlan redirect");
 
         assert_eq!(result.return_value, 0xc05);
@@ -352,12 +352,12 @@ mod tests {
         let open = builder.open(&mut open_object).unwrap();
         let skel = open.load().unwrap();
 
-        let mut packet = simple_ipv6_tcp_syn(local_addr(), remote_addr());
+        let packet = simple_ipv6_tcp_syn(local_addr(), remote_addr());
 
         let result = skel
             .progs
             .test_route_cached_docker_redirect_v6
-            .test_run(ProgramInput { data_in: Some(&mut packet), ..Default::default() })
+            .test_run(ProgramInput { data_in: Some(&packet), ..Default::default() })
             .expect("run cached docker vlan push");
 
         assert_eq!(result.return_value, 0x0c05);

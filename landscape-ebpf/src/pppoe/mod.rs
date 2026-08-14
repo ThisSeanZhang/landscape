@@ -22,13 +22,13 @@ mod landscape_pppoe_client {
 pub mod pppoe_handle;
 pub mod pppoe_tc;
 
-fn open_raw_socket(prog_fd: i32) -> Result<i32, ()> {
+fn open_raw_socket(prog_fd: i32) -> std::io::Result<i32> {
     const ETH_P_ALL: u16 = 0x0003;
     unsafe {
         let target_socket =
             socket(AF_PACKET, SOCK_RAW | SOCK_NONBLOCK | SOCK_CLOEXEC, ETH_P_ALL.to_be() as i32);
         if target_socket == -1 {
-            return Err(());
+            return Err(std::io::Error::last_os_error());
         }
 
         libc::setsockopt(
@@ -42,7 +42,7 @@ fn open_raw_socket(prog_fd: i32) -> Result<i32, ()> {
     }
 }
 
-fn bind_raw_socket(socket: &Socket, ifindex: u32) -> Result<(), ()> {
+fn bind_raw_socket(socket: &Socket, ifindex: u32) -> std::io::Result<()> {
     let mut addr: libc::sockaddr_ll = unsafe { std::mem::zeroed() };
     addr.sll_family = AF_PACKET as u16;
     addr.sll_ifindex = ifindex as i32;
@@ -58,12 +58,13 @@ fn bind_raw_socket(socket: &Socket, ifindex: u32) -> Result<(), ()> {
 
     socket.bind(&sockaddr).map_err(|e| {
         tracing::error!("pppoe socket bind failed: {e:?}");
+        std::io::Error::other("pppoe socket bind failed")
     })
 }
 
 pub async fn start(
     index: u32,
-) -> Result<(mpsc::Sender<Box<Vec<u8>>>, mpsc::Receiver<Box<Vec<u8>>>), ()> {
+) -> std::io::Result<(mpsc::Sender<Vec<u8>>, mpsc::Receiver<Vec<u8>>)> {
     let pppoe_builder = PppoeClientSkelBuilder::default();
 
     // pppoe_builder.obj_builder.debug(true);
@@ -84,10 +85,11 @@ pub async fn start(
     bind_raw_socket(&socket, index)?;
     let async_fd = AsyncFd::new(socket).map_err(|e| {
         tracing::error!("pppoe async fd init failed: {e:?}");
+        std::io::Error::other("pppoe async fd init failed")
     })?;
 
-    let (in_tx, mut in_rx) = tokio::sync::mpsc::channel::<Box<Vec<u8>>>(1024);
-    let (out_tx, out_rx) = tokio::sync::mpsc::channel::<Box<Vec<u8>>>(1024);
+    let (in_tx, mut in_rx) = tokio::sync::mpsc::channel::<Vec<u8>>(1024);
+    let (out_tx, out_rx) = tokio::sync::mpsc::channel::<Vec<u8>>(1024);
 
     tokio::spawn(async move {
         let mut recv_buf = [std::mem::MaybeUninit::<u8>::uninit(); 2048];
@@ -123,7 +125,7 @@ pub async fn start(
                             let packet = unsafe {
                                 std::slice::from_raw_parts(recv_buf.as_ptr() as *const u8, len)
                             };
-                            if out_tx.send(Box::new(packet.to_vec())).await.is_err() {
+                            if out_tx.send(packet.to_vec()).await.is_err() {
                                 break;
                             }
                         }

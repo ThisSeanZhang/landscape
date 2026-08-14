@@ -18,7 +18,7 @@ unsafe impl plain::Plain for route_packet_test_result {}
 
 const MAP_KEY: u32 = 0;
 
-fn run_route_packet_test(mut payload: Vec<u8>) -> route_packet_test_result {
+fn run_route_packet_test(payload: Vec<u8>) -> route_packet_test_result {
     let builder = TestRoutePacketSkelBuilder::default();
     let mut open_object = MaybeUninit::uninit();
     let open = builder.open(&mut open_object).unwrap();
@@ -26,7 +26,7 @@ fn run_route_packet_test(mut payload: Vec<u8>) -> route_packet_test_result {
 
     skel.progs
         .test_route_packet
-        .test_run(ProgramInput { data_in: Some(&mut payload), ..Default::default() })
+        .test_run(ProgramInput { data_in: Some(&payload), ..Default::default() })
         .expect("test_run failed");
 
     let result = skel

@@ -554,11 +554,10 @@ fn filter_result(un_filter_records: Vec<Record>, filter: &FilterResult) -> Vec<R
 }
 
 fn is_type_filtered(query_type: RecordType, filter: &FilterResult) -> bool {
-    match (query_type, filter) {
-        (RecordType::A, FilterResult::OnlyIPv6) => true,
-        (RecordType::AAAA, FilterResult::OnlyIPv4) => true,
-        _ => false,
-    }
+    matches!(
+        (query_type, filter),
+        (RecordType::A, FilterResult::OnlyIPv6) | (RecordType::AAAA, FilterResult::OnlyIPv4)
+    )
 }
 
 #[cfg(test)]

@@ -19,9 +19,11 @@ pub fn get_sys_running_status() -> WatchResource<LandscapeStatus> {
         let mut components = Components::new_with_refreshed_list();
 
         loop {
-            let mut ld_status = LandscapeStatus::default();
-            ld_status.uptime = System::uptime();
-            ld_status.load_avg = LoadAvg::from(System::load_average());
+            let mut ld_status = LandscapeStatus {
+                uptime: System::uptime(),
+                load_avg: LoadAvg::from(System::load_average()),
+                ..LandscapeStatus::default()
+            };
 
             sys.refresh_cpu_all();
 

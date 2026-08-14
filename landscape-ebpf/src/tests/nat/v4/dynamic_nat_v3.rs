@@ -176,6 +176,7 @@ fn delete_v3_state<T: MapCore>(map: &T, l4proto: u8, nat_addr: Ipv4Addr, nat_por
     let _ = map.delete(unsafe { plain::as_bytes(&ingress_key) });
 }
 
+#[allow(clippy::too_many_arguments)]
 fn add_v3_ct<T: MapCore>(
     timer_map: &T,
     l4proto: u8,
@@ -198,14 +199,16 @@ fn add_v3_ct<T: MapCore>(
         },
     };
 
-    let mut value = types::nat4_timer_value_v3::default();
-    value.client_addr = types::inet4_addr { addr: client_addr.to_bits().to_be() };
-    value.client_port = client_port.to_be();
-    value.client_status = 1;
-    value.server_status = 1;
-    value.gress = gress;
-    value.generation_snapshot = GENERATION;
-    value.ifindex = IFINDEX;
+    let value = types::nat4_timer_value_v3 {
+        client_addr: types::inet4_addr { addr: client_addr.to_bits().to_be() },
+        client_port: client_port.to_be(),
+        client_status: 1,
+        server_status: 1,
+        gress,
+        generation_snapshot: GENERATION,
+        ifindex: IFINDEX,
+        ..Default::default()
+    };
 
     timer_map
         .update(unsafe { plain::as_bytes(&key) }, unsafe { plain::as_bytes(&value) }, MapFlags::ANY)
@@ -234,6 +237,7 @@ fn delete_v3_ct<T: MapCore>(
     let _ = timer_map.delete(unsafe { plain::as_bytes(&key) });
 }
 
+#[allow(clippy::too_many_arguments)]
 fn add_dynamic_mapping_pair<M1: MapCore, M2: MapCore>(
     egress_map: &M1,
     ingress_map: &M2,
@@ -251,13 +255,14 @@ fn add_dynamic_mapping_pair<M1: MapCore, M2: MapCore>(
         from_port: lan_port.to_be(),
         from_addr: lan_addr.to_bits().to_be(),
     };
-    let mut egress_val = types::nat4_egress_mapping_value_v3::default();
-    egress_val.addr = nat_addr.to_bits().to_be();
-    egress_val.trigger_addr = remote_addr.to_bits().to_be();
-    egress_val.port = nat_port.to_be();
-    egress_val.trigger_port = remote_port.to_be();
-    egress_val.is_allow_reuse = 1;
-
+    let egress_val = types::nat4_egress_mapping_value_v3 {
+        addr: nat_addr.to_bits().to_be(),
+        trigger_addr: remote_addr.to_bits().to_be(),
+        port: nat_port.to_be(),
+        trigger_port: remote_port.to_be(),
+        is_allow_reuse: 1,
+        ..Default::default()
+    };
     let ingress_key = NatMappingKeyV4 {
         gress: NAT_MAPPING_INGRESS,
         l4proto,
@@ -473,13 +478,12 @@ mod tests {
             NAT_MAPPING_EGRESS,
         );
 
-        let mut pkt = build_ipv4_tcp(LAN_HOST, REMOTE_IP, LAN_PORT, 443);
-        let mut ctx = TestSkb::default();
-        ctx.ifindex = IFINDEX;
+        let pkt = build_ipv4_tcp(LAN_HOST, REMOTE_IP, LAN_PORT, 443);
+        let mut ctx = TestSkb { ifindex: IFINDEX, ..Default::default() };
 
         let mut packet_out = vec![0u8; pkt.len()];
         let input = ProgramInput {
-            data_in: Some(&mut pkt),
+            data_in: Some(&pkt),
             context_in: Some(ctx.as_mut_bytes()),
             data_out: Some(&mut packet_out),
             ..Default::default()
@@ -547,13 +551,12 @@ mod tests {
         );
 
         let quoted = build_min_quoted_ipv4_tcp(REMOTE_IP, LAN_HOST, 443, LAN_PORT);
-        let mut pkt = build_ipv4_icmp_time_exceeded(LAN_HOST, REMOTE_IP, &quoted);
-        let mut ctx = TestSkb::default();
-        ctx.ifindex = IFINDEX;
+        let pkt = build_ipv4_icmp_time_exceeded(LAN_HOST, REMOTE_IP, &quoted);
+        let mut ctx = TestSkb { ifindex: IFINDEX, ..Default::default() };
 
         let mut packet_out = vec![0u8; pkt.len()];
         let input = ProgramInput {
-            data_in: Some(&mut pkt),
+            data_in: Some(&pkt),
             context_in: Some(ctx.as_mut_bytes()),
             data_out: Some(&mut packet_out),
             ..Default::default()
@@ -631,12 +634,11 @@ mod tests {
         );
         delete_v3_state(&skel.maps.nat4_ingress_dyn_map, 6, WAN_IP, NAT_PORT);
 
-        let mut pkt = build_ipv4_tcp(LAN_HOST, REMOTE_IP, LAN_PORT, 443);
-        let mut ctx = TestSkb::default();
-        ctx.ifindex = IFINDEX;
+        let pkt = build_ipv4_tcp(LAN_HOST, REMOTE_IP, LAN_PORT, 443);
+        let mut ctx = TestSkb { ifindex: IFINDEX, ..Default::default() };
 
         let input = ProgramInput {
-            data_in: Some(&mut pkt),
+            data_in: Some(&pkt),
             context_in: Some(ctx.as_mut_bytes()),
             context_out: None,
             data_out: None,
@@ -699,13 +701,12 @@ mod tests {
         );
         delete_v3_state(&skel.maps.nat4_ingress_dyn_map, 6, WAN_IP, NAT_PORT);
 
-        let mut pkt = build_ipv4_tcp_syn(LAN_HOST, REMOTE_IP, LAN_PORT, 443);
-        let mut ctx = TestSkb::default();
-        ctx.ifindex = IFINDEX;
+        let pkt = build_ipv4_tcp_syn(LAN_HOST, REMOTE_IP, LAN_PORT, 443);
+        let mut ctx = TestSkb { ifindex: IFINDEX, ..Default::default() };
 
         let mut packet_out = vec![0u8; pkt.len()];
         let input = ProgramInput {
-            data_in: Some(&mut pkt),
+            data_in: Some(&pkt),
             context_in: Some(ctx.as_mut_bytes()),
             data_out: Some(&mut packet_out),
             ..Default::default()
@@ -811,12 +812,11 @@ mod tests {
             443,
         );
 
-        let mut pkt = build_ipv4_tcp(LAN_HOST, REMOTE_IP, LAN_PORT, 443);
-        let mut ctx = TestSkb::default();
-        ctx.ifindex = IFINDEX;
+        let pkt = build_ipv4_tcp(LAN_HOST, REMOTE_IP, LAN_PORT, 443);
+        let mut ctx = TestSkb { ifindex: IFINDEX, ..Default::default() };
 
         let input = ProgramInput {
-            data_in: Some(&mut pkt),
+            data_in: Some(&pkt),
             context_in: Some(ctx.as_mut_bytes()),
             context_out: None,
             data_out: None,
@@ -894,13 +894,12 @@ mod tests {
         add_v3_state(&skel.maps.nat4_ingress_dyn_map, 6, WAN_IP, NAT_PORT);
         delete_v3_ct(&skel.maps.nat4_timer_map, 6, REMOTE_IP, 443, WAN_IP, NAT_PORT);
 
-        let mut pkt = build_ipv4_tcp_syn(REMOTE_IP, WAN_IP, 443, NAT_PORT);
-        let mut ctx = TestSkb::default();
-        ctx.ifindex = IFINDEX;
+        let pkt = build_ipv4_tcp_syn(REMOTE_IP, WAN_IP, 443, NAT_PORT);
+        let mut ctx = TestSkb { ifindex: IFINDEX, ..Default::default() };
 
         let mut packet_out = vec![0u8; pkt.len()];
         let input = ProgramInput {
-            data_in: Some(&mut pkt),
+            data_in: Some(&pkt),
             context_in: Some(ctx.as_mut_bytes()),
             data_out: Some(&mut packet_out),
             ..Default::default()
@@ -994,13 +993,12 @@ mod tests {
         );
 
         let quoted = build_min_quoted_ipv4_tcp(WAN_IP, REMOTE_IP, NAT_PORT, 443);
-        let mut pkt = build_ipv4_icmp_time_exceeded(REMOTE_IP, WAN_IP, &quoted);
-        let mut ctx = TestSkb::default();
-        ctx.ifindex = IFINDEX;
+        let pkt = build_ipv4_icmp_time_exceeded(REMOTE_IP, WAN_IP, &quoted);
+        let mut ctx = TestSkb { ifindex: IFINDEX, ..Default::default() };
 
         let mut packet_out = vec![0u8; pkt.len()];
         let input = ProgramInput {
-            data_in: Some(&mut pkt),
+            data_in: Some(&pkt),
             context_in: Some(ctx.as_mut_bytes()),
             data_out: Some(&mut packet_out),
             ..Default::default()
@@ -1055,12 +1053,11 @@ mod tests {
         put_v3_state(&skel.maps.nat4_ingress_dyn_map, 6, WAN_IP, NAT_PORT, ((2u64) << 56) | 1);
         delete_v3_ct(&skel.maps.nat4_timer_map, 6, REMOTE_IP, 443, WAN_IP, NAT_PORT);
 
-        let mut pkt = build_ipv4_tcp_syn(REMOTE_IP, WAN_IP, 443, NAT_PORT);
-        let mut ctx = TestSkb::default();
-        ctx.ifindex = IFINDEX;
+        let pkt = build_ipv4_tcp_syn(REMOTE_IP, WAN_IP, 443, NAT_PORT);
+        let mut ctx = TestSkb { ifindex: IFINDEX, ..Default::default() };
 
         let input = ProgramInput {
-            data_in: Some(&mut pkt),
+            data_in: Some(&pkt),
             context_in: Some(ctx.as_mut_bytes()),
             context_out: None,
             data_out: None,
@@ -1105,15 +1102,14 @@ mod tests {
             REMOTE_IP,
             443,
         );
-        put_v3_state(&skel.maps.nat4_ingress_dyn_map, 6, WAN_IP, NAT_PORT, ((1u64) << 56) | 0);
+        put_v3_state(&skel.maps.nat4_ingress_dyn_map, 6, WAN_IP, NAT_PORT, (1u64) << 56);
         delete_v3_ct(&skel.maps.nat4_timer_map, 6, REMOTE_IP, 443, WAN_IP, NAT_PORT);
 
-        let mut pkt = build_ipv4_tcp_syn(REMOTE_IP, WAN_IP, 443, NAT_PORT);
-        let mut ctx = TestSkb::default();
-        ctx.ifindex = IFINDEX;
+        let pkt = build_ipv4_tcp_syn(REMOTE_IP, WAN_IP, 443, NAT_PORT);
+        let mut ctx = TestSkb { ifindex: IFINDEX, ..Default::default() };
 
         let input = ProgramInput {
-            data_in: Some(&mut pkt),
+            data_in: Some(&pkt),
             context_in: Some(ctx.as_mut_bytes()),
             context_out: None,
             data_out: None,
@@ -1125,7 +1121,7 @@ mod tests {
         assert_eq!(result.return_value as i32, 2, "active|0 mapping should reject new ingress CT");
 
         let ingress = read_v3_ingress_mapping(&skel.maps.nat4_ingress_dyn_map, 6, WAN_IP, NAT_PORT);
-        assert_eq!(ingress.state_ref, ((1u64) << 56) | 0);
+        assert_eq!(ingress.state_ref, ((1u64) << 56));
 
         let timer_key = types::nat4_timer_key {
             l4proto: 6,
@@ -1188,13 +1184,12 @@ mod tests {
             NAT_MAPPING_INGRESS,
         );
 
-        let mut pkt = build_ipv4_tcp_syn(REMOTE_IP, WAN_IP, 443, NAT_PORT);
-        let mut ctx = TestSkb::default();
-        ctx.ifindex = IFINDEX;
+        let pkt = build_ipv4_tcp_syn(REMOTE_IP, WAN_IP, 443, NAT_PORT);
+        let mut ctx = TestSkb { ifindex: IFINDEX, ..Default::default() };
 
         let mut packet_out = vec![0u8; pkt.len()];
         let input = ProgramInput {
-            data_in: Some(&mut pkt),
+            data_in: Some(&pkt),
             context_in: Some(ctx.as_mut_bytes()),
             data_out: Some(&mut packet_out),
             ..Default::default()
@@ -1293,13 +1288,12 @@ mod tests {
             )
             .unwrap();
 
-        let mut pkt = build_ipv4_tcp_syn(REMOTE_IP, WAN_IP, 443, NAT_PORT);
-        let mut ctx = TestSkb::default();
-        ctx.ifindex = IFINDEX;
+        let pkt = build_ipv4_tcp_syn(REMOTE_IP, WAN_IP, 443, NAT_PORT);
+        let mut ctx = TestSkb { ifindex: IFINDEX, ..Default::default() };
 
         let mut packet_out = vec![0u8; pkt.len()];
         let input = ProgramInput {
-            data_in: Some(&mut pkt),
+            data_in: Some(&pkt),
             context_in: Some(ctx.as_mut_bytes()),
             data_out: Some(&mut packet_out),
             ..Default::default()
@@ -1343,12 +1337,11 @@ mod tests {
             )
             .unwrap();
 
-        let mut cleanup_pkt = build_ipv4_tcp_syn(REMOTE_IP, WAN_IP, 443, NAT_PORT);
-        let mut cleanup_ctx = TestSkb::default();
-        cleanup_ctx.ifindex = IFINDEX;
+        let cleanup_pkt = build_ipv4_tcp_syn(REMOTE_IP, WAN_IP, 443, NAT_PORT);
+        let mut cleanup_ctx = TestSkb { ifindex: IFINDEX, ..Default::default() };
         let mut cleanup_packet_out = vec![0u8; cleanup_pkt.len()];
         let cleanup_input = ProgramInput {
-            data_in: Some(&mut cleanup_pkt),
+            data_in: Some(&cleanup_pkt),
             context_in: Some(cleanup_ctx.as_mut_bytes()),
             data_out: Some(&mut cleanup_packet_out),
             ..Default::default()
@@ -1360,12 +1353,11 @@ mod tests {
             "CT cleanup states after TIMER_RELEASE should still be rejected"
         );
 
-        let mut cleanup_egress_pkt = build_ipv4_tcp_syn(LAN_HOST, REMOTE_IP, LAN_PORT, 443);
-        let mut cleanup_egress_ctx = TestSkb::default();
-        cleanup_egress_ctx.ifindex = IFINDEX;
+        let cleanup_egress_pkt = build_ipv4_tcp_syn(LAN_HOST, REMOTE_IP, LAN_PORT, 443);
+        let mut cleanup_egress_ctx = TestSkb { ifindex: IFINDEX, ..Default::default() };
         let mut cleanup_egress_packet_out = vec![0u8; cleanup_egress_pkt.len()];
         let cleanup_egress_input = ProgramInput {
-            data_in: Some(&mut cleanup_egress_pkt),
+            data_in: Some(&cleanup_egress_pkt),
             context_in: Some(cleanup_egress_ctx.as_mut_bytes()),
             data_out: Some(&mut cleanup_egress_packet_out),
             ..Default::default()
@@ -1461,13 +1453,12 @@ mod tests {
             )
             .unwrap();
 
-        let mut pkt = build_ipv4_tcp_syn(REMOTE_IP, WAN_IP, 443, NAT_PORT);
-        let mut ctx = TestSkb::default();
-        ctx.ifindex = IFINDEX;
+        let pkt = build_ipv4_tcp_syn(REMOTE_IP, WAN_IP, 443, NAT_PORT);
+        let mut ctx = TestSkb { ifindex: IFINDEX, ..Default::default() };
 
         let mut packet_out = vec![0u8; pkt.len()];
         let input = ProgramInput {
-            data_in: Some(&mut pkt),
+            data_in: Some(&pkt),
             context_in: Some(ctx.as_mut_bytes()),
             data_out: Some(&mut packet_out),
             ..Default::default()
@@ -1532,12 +1523,14 @@ mod tests {
             from_port: LAN_PORT.to_be(),
             from_addr: LAN_HOST.to_bits().to_be(),
         };
-        let mut egress_val = types::nat4_egress_mapping_value_v3::default();
-        egress_val.addr = WAN_IP.to_bits().to_be();
-        egress_val.trigger_addr = REMOTE_IP.to_bits().to_be();
-        egress_val.port = NAT_PORT.to_be();
-        egress_val.trigger_port = 443u16.to_be();
-        egress_val.is_allow_reuse = 0;
+        let egress_val = types::nat4_egress_mapping_value_v3 {
+            addr: WAN_IP.to_bits().to_be(),
+            trigger_addr: REMOTE_IP.to_bits().to_be(),
+            port: NAT_PORT.to_be(),
+            trigger_port: 443u16.to_be(),
+            is_allow_reuse: 0,
+            ..Default::default()
+        };
         skel.maps
             .nat4_egress_dyn_map
             .update(
@@ -1549,13 +1542,12 @@ mod tests {
 
         // Packet from the trigger address — passes the lookup trigger check,
         // but nat4_can_create_ct rejects it because is_allow_reuse == 0.
-        let mut pkt = build_ipv4_tcp_syn(REMOTE_IP, WAN_IP, 443, NAT_PORT);
-        let mut ctx = TestSkb::default();
-        ctx.ifindex = IFINDEX;
+        let pkt = build_ipv4_tcp_syn(REMOTE_IP, WAN_IP, 443, NAT_PORT);
+        let mut ctx = TestSkb { ifindex: IFINDEX, ..Default::default() };
 
         let mut packet_out = vec![0u8; pkt.len()];
         let input = ProgramInput {
-            data_in: Some(&mut pkt),
+            data_in: Some(&pkt),
             context_in: Some(ctx.as_mut_bytes()),
             data_out: Some(&mut packet_out),
             ..Default::default()
@@ -1593,13 +1585,12 @@ mod tests {
             }],
         );
 
-        let mut pkt = build_ipv4_tcp_syn(LAN_HOST, REMOTE_IP, 80, 443);
-        let mut ctx = TestSkb::default();
-        ctx.ifindex = IFINDEX;
+        let pkt = build_ipv4_tcp_syn(LAN_HOST, REMOTE_IP, 80, 443);
+        let mut ctx = TestSkb { ifindex: IFINDEX, ..Default::default() };
 
         let mut packet_out = vec![0u8; pkt.len()];
         let input = ProgramInput {
-            data_in: Some(&mut pkt),
+            data_in: Some(&pkt),
             context_in: Some(ctx.as_mut_bytes()),
             data_out: Some(&mut packet_out),
             ..Default::default()
@@ -1724,12 +1715,11 @@ mod tests {
         push_v3_free_port(&skel.maps.nat4_tcp_port_queue, NAT_PORT, 0);
         push_v3_free_port(&skel.maps.nat4_tcp_port_queue, ALT_NAT_PORT, 0);
 
-        let mut first_pkt = build_ipv4_tcp_syn(SECOND_LAN_HOST, REMOTE_IP, SECOND_LAN_PORT, 443);
-        let mut ctx = TestSkb::default();
-        ctx.ifindex = IFINDEX;
+        let first_pkt = build_ipv4_tcp_syn(SECOND_LAN_HOST, REMOTE_IP, SECOND_LAN_PORT, 443);
+        let mut ctx = TestSkb { ifindex: IFINDEX, ..Default::default() };
 
         let first_input = ProgramInput {
-            data_in: Some(&mut first_pkt),
+            data_in: Some(&first_pkt),
             context_in: Some(ctx.as_mut_bytes()),
             context_out: None,
             data_out: None,
@@ -1765,10 +1755,10 @@ mod tests {
             "after a failed allocation the queue advances to the next available port"
         );
 
-        let mut second_pkt = build_ipv4_tcp_syn(SECOND_LAN_HOST, REMOTE_IP, SECOND_LAN_PORT, 443);
+        let second_pkt = build_ipv4_tcp_syn(SECOND_LAN_HOST, REMOTE_IP, SECOND_LAN_PORT, 443);
         let mut packet_out = vec![0u8; second_pkt.len()];
         let second_input = ProgramInput {
-            data_in: Some(&mut second_pkt),
+            data_in: Some(&second_pkt),
             context_in: Some(ctx.as_mut_bytes()),
             data_out: Some(&mut packet_out),
             ..Default::default()
@@ -1873,12 +1863,11 @@ mod tests {
             .expect("lookup stale timer");
         assert!(stale_timer.is_none(), "this scenario requires the old timer to be missing");
 
-        let mut first_pkt = build_ipv4_tcp_syn(SECOND_LAN_HOST, REMOTE_IP, SECOND_LAN_PORT, 443);
-        let mut ctx = TestSkb::default();
-        ctx.ifindex = IFINDEX;
+        let first_pkt = build_ipv4_tcp_syn(SECOND_LAN_HOST, REMOTE_IP, SECOND_LAN_PORT, 443);
+        let mut ctx = TestSkb { ifindex: IFINDEX, ..Default::default() };
 
         let first_input = ProgramInput {
-            data_in: Some(&mut first_pkt),
+            data_in: Some(&first_pkt),
             context_in: Some(ctx.as_mut_bytes()),
             context_out: None,
             data_out: None,
@@ -1898,10 +1887,10 @@ mod tests {
             "without a timer the failed stale port is removed and the next queued port becomes available"
         );
 
-        let mut second_pkt = build_ipv4_tcp_syn(SECOND_LAN_HOST, REMOTE_IP, SECOND_LAN_PORT, 443);
+        let second_pkt = build_ipv4_tcp_syn(SECOND_LAN_HOST, REMOTE_IP, SECOND_LAN_PORT, 443);
         let mut packet_out = vec![0u8; second_pkt.len()];
         let second_input = ProgramInput {
-            data_in: Some(&mut second_pkt),
+            data_in: Some(&second_pkt),
             context_in: Some(ctx.as_mut_bytes()),
             data_out: Some(&mut packet_out),
             ..Default::default()
@@ -2032,13 +2021,12 @@ mod tests {
             "cleanup should reseed the queue from the configured port range"
         );
 
-        let mut pkt = build_ipv4_tcp_syn(SECOND_LAN_HOST, REMOTE_IP, SECOND_LAN_PORT, 443);
-        let mut ctx = TestSkb::default();
-        ctx.ifindex = IFINDEX;
+        let pkt = build_ipv4_tcp_syn(SECOND_LAN_HOST, REMOTE_IP, SECOND_LAN_PORT, 443);
+        let mut ctx = TestSkb { ifindex: IFINDEX, ..Default::default() };
 
         let mut packet_out = vec![0u8; pkt.len()];
         let input = ProgramInput {
-            data_in: Some(&mut pkt),
+            data_in: Some(&pkt),
             context_in: Some(ctx.as_mut_bytes()),
             data_out: Some(&mut packet_out),
             ..Default::default()

@@ -14,7 +14,7 @@ unsafe impl plain::Plain for xdp_scan_test_result {}
 
 const MAP_KEY: u32 = 0;
 
-fn run_xdp_scanner(payload: &mut Vec<u8>) -> Option<xdp_scan_test_result> {
+fn run_xdp_scanner(payload: &mut [u8]) -> Option<xdp_scan_test_result> {
     let builder = TestXdpScannerSkelBuilder::default();
     let mut open_object = MaybeUninit::uninit();
     let open = builder.open(&mut open_object).unwrap();

@@ -40,8 +40,8 @@ impl DohResponseHandle {
             .body(())
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
         let mut respond = self.respond.lock().await;
-        let mut stream = respond.send_response(response, false).map_err(|e| io::Error::other(e))?;
-        stream.send_data(body, true).map_err(|e| io::Error::other(e))?;
+        let mut stream = respond.send_response(response, false).map_err(io::Error::other)?;
+        stream.send_data(body, true).map_err(io::Error::other)?;
         Ok(())
     }
 
@@ -54,9 +54,8 @@ impl DohResponseHandle {
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
 
         let mut respond = self.respond.lock().await;
-        let mut stream =
-            respond.send_response(http_response, false).map_err(|e| io::Error::other(e))?;
-        stream.send_data(Bytes::from(buffer), true).map_err(|e| io::Error::other(e))?;
+        let mut stream = respond.send_response(http_response, false).map_err(io::Error::other)?;
+        stream.send_data(Bytes::from(buffer), true).map_err(io::Error::other)?;
         Ok(())
     }
 }

@@ -26,6 +26,9 @@ pub mod server;
 
 use self::pd::{PdRange, PdSlotKey};
 
+/// A duid (raw bytes) together with the resolved expected prefix for PD route reconciliation.
+type ResolvedPdRoute = (Vec<u8>, Option<(Ipv6Addr, u8)>);
+
 // ── Internal lease types ───────────────────────────────────────────────────
 
 #[derive(Debug, Clone)]
@@ -985,7 +988,7 @@ impl Ipv6ServerStatus {
 
     pub fn reconcile_pd_routes(&mut self) -> Vec<PdRouteCleanup> {
         // Resolve expected prefixes first (immutable pass).
-        let resolved: Vec<(Vec<u8>, Option<(Ipv6Addr, u8)>)> = self
+        let resolved: Vec<ResolvedPdRoute> = self
             .pd_leases_by_duid
             .iter()
             .filter(|(_, lease)| !lease.active_routes.is_empty())

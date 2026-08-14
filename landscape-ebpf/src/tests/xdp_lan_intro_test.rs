@@ -200,7 +200,7 @@ fn lookup_inner_map(outer_map: &impl MapCore, cache_index: u32) -> MapHandle {
 #[test]
 fn xdp_lan_intro_verifier_smoke() {
     let mut builder = XdpLanIntroSkelBuilder::default();
-    builder.object_builder_mut().pin_root_path(&test_pin_root("v")).unwrap();
+    builder.object_builder_mut().pin_root_path(test_pin_root("v")).unwrap();
     let mut obj = std::mem::MaybeUninit::uninit();
     let open = builder.open(&mut obj).expect("open skel");
     let _skel = open.load().expect("verifier rejected");
@@ -223,7 +223,7 @@ fn xdp_lan_intro_trace_flow() {
     let ifindex = if_nametoindex(host.as_str()).expect("ifindex") as i32;
 
     let mut builder = XdpLanIntroSkelBuilder::default();
-    builder.object_builder_mut().pin_root_path(&test_pin_root("t")).unwrap();
+    builder.object_builder_mut().pin_root_path(test_pin_root("t")).unwrap();
     let mut obj = std::mem::MaybeUninit::uninit();
     let open = builder.open(&mut obj).expect("open");
     let skel = open.load().expect("load");
@@ -547,8 +547,7 @@ fn xdp_lan_intro_wan_pipeline() {
             val.ifindex
         );
     }
-    assert!(keys.len() >= 1, "no LAN_CACHE entries found");
-
+    assert!(!keys.is_empty(), "no LAN_CACHE entries found");
     let wan_inner = lookup_inner_map(&share.maps.rt4_cache_map, 0u32);
     let wan_keys: Vec<_> = wan_inner.keys().collect();
     println!("WAN_CACHE (v4) entries: {}", wan_keys.len());
@@ -602,7 +601,7 @@ fn xdp_lan_intro_unknown_ip_no_redirect_test_run() {
     }
 
     // send packet to unknown IP 10.0.0.99
-    let mut pkt = build_ipv4_tcp_pkt(
+    let pkt = build_ipv4_tcp_pkt(
         [0x02, 0, 0, 0, 0, 1],
         [0x02, 0, 0, 0, 0, 2],
         [10, 0, 0, 1],
@@ -612,7 +611,7 @@ fn xdp_lan_intro_unknown_ip_no_redirect_test_run() {
     let run = skel
         .progs
         .xdp_lan_intro
-        .test_run(ProgramInput { data_in: Some(&mut pkt), ..Default::default() })
+        .test_run(ProgramInput { data_in: Some(&pkt), ..Default::default() })
         .expect("test_run");
 
     // XDP_PASS=2: unknown IP should continue to WAN, NOT be redirected via LAN
@@ -620,7 +619,7 @@ fn xdp_lan_intro_unknown_ip_no_redirect_test_run() {
     assert_eq!(ret, 2, "unknown IP should return XDP_PASS(2), got {}", ret);
 
     // known IP 10.0.0.5: should redirect
-    let mut pkt2 = build_ipv4_tcp_pkt(
+    let pkt2 = build_ipv4_tcp_pkt(
         [0x02, 0, 0, 0, 0, 1],
         [0x02, 0, 0, 0, 0, 2],
         [10, 0, 0, 1],
@@ -630,7 +629,7 @@ fn xdp_lan_intro_unknown_ip_no_redirect_test_run() {
     let run2 = skel
         .progs
         .xdp_lan_intro
-        .test_run(ProgramInput { data_in: Some(&mut pkt2), ..Default::default() })
+        .test_run(ProgramInput { data_in: Some(&pkt2), ..Default::default() })
         .expect("test_run");
 
     let ret2 = run2.return_value as i32;
@@ -671,7 +670,7 @@ fn xdp_lan_intro_known_lan_fib_fallback_test_run() {
 
     // do NOT populate ip_mac_v4 for 10.0.0.5 — forces FIB fallback
 
-    let mut pkt = build_ipv4_tcp_pkt(
+    let pkt = build_ipv4_tcp_pkt(
         [0x02, 0, 0, 0, 0, 1],
         [0x02, 0, 0, 0, 0, 2],
         [10, 0, 0, 1],
@@ -681,7 +680,7 @@ fn xdp_lan_intro_known_lan_fib_fallback_test_run() {
     let run = skel
         .progs
         .xdp_lan_intro
-        .test_run(ProgramInput { data_in: Some(&mut pkt), ..Default::default() })
+        .test_run(ProgramInput { data_in: Some(&pkt), ..Default::default() })
         .expect("test_run");
 
     let ret = run.return_value as i32;

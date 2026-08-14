@@ -7,9 +7,7 @@ use landscape_common::net::MacAddr;
 #[tokio::test]
 async fn custom_server_ipcp_reject() {
     require_root();
-    let mut env_cfg = EnvConfig::default();
-    env_cfg.no_server = true;
-
+    let env_cfg = EnvConfig { no_server: true, ..Default::default() };
     let env = PPPoETestEnv::up(&env_cfg).expect("test environment should start");
     let scripted_server = start_scripted_server(
         env.server_ns().to_string(),
@@ -37,9 +35,7 @@ async fn custom_server_ipcp_reject() {
 #[tokio::test]
 async fn custom_server_protocol_rejects_pap() {
     require_root();
-    let mut env_cfg = EnvConfig::default();
-    env_cfg.no_server = true;
-
+    let env_cfg = EnvConfig { no_server: true, ..Default::default() };
     let env = PPPoETestEnv::up(&env_cfg).expect("test environment should start");
     let scripted_server = start_scripted_server(
         env.server_ns().to_string(),
@@ -67,9 +63,7 @@ async fn custom_server_protocol_rejects_pap() {
 #[tokio::test]
 async fn custom_server_protocol_rejects_ipcp() {
     require_root();
-    let mut env_cfg = EnvConfig::default();
-    env_cfg.no_server = true;
-
+    let env_cfg = EnvConfig { no_server: true, ..Default::default() };
     let env = PPPoETestEnv::up(&env_cfg).expect("test environment should start");
     let scripted_server = start_scripted_server(
         env.server_ns().to_string(),
@@ -100,9 +94,7 @@ async fn custom_server_protocol_rejects_ipcp() {
 #[tokio::test]
 async fn custom_server_ipv6cp_nak() {
     require_root();
-    let mut env_cfg = EnvConfig::default();
-    env_cfg.no_server = true;
-
+    let env_cfg = EnvConfig { no_server: true, ..Default::default() };
     let env = PPPoETestEnv::up(&env_cfg).expect("test environment should start");
     let scripted_server = start_scripted_server(
         env.server_ns().to_string(),
@@ -130,9 +122,7 @@ async fn custom_server_ipv6cp_nak() {
 #[tokio::test]
 async fn custom_server_ac_cookie_success() {
     require_root();
-    let mut env_cfg = EnvConfig::default();
-    env_cfg.no_server = true;
-
+    let env_cfg = EnvConfig { no_server: true, ..Default::default() };
     let env = PPPoETestEnv::up(&env_cfg).expect("test environment should start");
     let scripted_server = start_scripted_server(
         env.server_ns().to_string(),
@@ -160,9 +150,7 @@ async fn custom_server_ac_cookie_success() {
 #[tokio::test]
 async fn chap_auth_success() {
     require_root();
-    let mut env_cfg = EnvConfig::default();
-    env_cfg.no_server = true;
-
+    let env_cfg = EnvConfig { no_server: true, ..Default::default() };
     let env = PPPoETestEnv::up(&env_cfg).expect("test environment should start");
     let scripted_server = start_scripted_server(
         env.server_ns().to_string(),
@@ -190,9 +178,7 @@ async fn chap_auth_success() {
 #[tokio::test]
 async fn chap_auth_failure() {
     require_root();
-    let mut env_cfg = EnvConfig::default();
-    env_cfg.no_server = true;
-
+    let env_cfg = EnvConfig { no_server: true, ..Default::default() };
     let env = PPPoETestEnv::up(&env_cfg).expect("test environment should start");
     let scripted_server = start_scripted_server(
         env.server_ns().to_string(),

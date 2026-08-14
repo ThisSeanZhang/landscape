@@ -117,9 +117,11 @@ pub fn put_rt6_cache_ifindex<T: MapCore>(
 ) {
     let inner = lookup_inner_map(outer_map, cache_index);
     let key = make_rt6_cache_key(local, remote);
-    let mut value = rt_cache_value_v6::default();
-    value.ifindex = ifindex;
-    value.has_mac = has_mac as u8;
+    let value = rt_cache_value_v6 {
+        ifindex,
+        has_mac: has_mac as u8,
+        ..Default::default()
+    };
     inner
         .update(as_bytes(&key), as_bytes(&value), MapFlags::ANY)
         .expect("insert route v6 cache ifindex value");
@@ -146,9 +148,10 @@ pub fn lookup_rt4_cache_value<T: MapCore>(
     remote: Ipv4Addr,
 ) -> Option<rt_cache_value_v4> {
     let inner = lookup_inner_map(outer_map, cache_index);
-    let mut key = rt_cache_key_v4::default();
-    key.local_addr = local.to_bits().to_be();
-    key.remote_addr = remote.to_bits().to_be();
+    let key = rt_cache_key_v4 {
+        local_addr: local.to_bits().to_be(),
+        remote_addr: remote.to_bits().to_be(),
+    };
     inner
         .lookup(as_bytes(&key), MapFlags::ANY)
         .expect("lookup route v4 cache value")
@@ -165,11 +168,12 @@ pub fn insert_ip_mac_v6<T: MapCore>(
     let mut key = mac_key_v6::default();
     key.addr.bytes = addr.to_bits().to_be_bytes();
 
-    let mut value = mac_value_v6::default();
-    value.ifindex = ifindex;
-    value.mac = mac.octets();
-    value.dev_mac = dev_mac.octets();
-    value.proto = 0xdd86;
+    let value = mac_value_v6 {
+        ifindex,
+        mac: mac.octets(),
+        dev_mac: dev_mac.octets(),
+        proto: 0xdd86,
+    };
 
     map.update(as_bytes(&key), as_bytes(&value), MapFlags::ANY).expect("insert ip_mac_v6 entry");
 }

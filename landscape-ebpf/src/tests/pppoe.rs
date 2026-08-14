@@ -66,13 +66,13 @@ fn pppoe_egress_ipv4_adds_pppoe_header() {
     open.maps.rodata_data.as_deref_mut().unwrap().pppoe_tmpl = default_tmpl(SESSION_ID);
     let skel = open.load().unwrap();
 
-    let mut plain_pkt = build_ipv4_packet();
+    let plain_pkt = build_ipv4_packet();
     let mut output = vec![0u8; plain_pkt.len() + 8];
 
     skel.progs
         .tc_pppoe_wan_egress
         .test_run(ProgramInput {
-            data_in: Some(&mut plain_pkt),
+            data_in: Some(&plain_pkt),
             data_out: Some(&mut output),
             ..Default::default()
         })
@@ -97,13 +97,13 @@ fn pppoe_egress_ipv6_adds_pppoe_header() {
     open.maps.rodata_data.as_deref_mut().unwrap().pppoe_tmpl = default_tmpl(SESSION_ID);
     let skel = open.load().unwrap();
 
-    let mut plain_pkt = build_ipv6_packet();
+    let plain_pkt = build_ipv6_packet();
     let mut output = vec![0u8; plain_pkt.len() + 8];
 
     skel.progs
         .tc_pppoe_wan_egress
         .test_run(ProgramInput {
-            data_in: Some(&mut plain_pkt),
+            data_in: Some(&plain_pkt),
             data_out: Some(&mut output),
             ..Default::default()
         })
@@ -128,7 +128,7 @@ fn pppoe_egress_non_ip_passes_unchanged() {
     open.maps.rodata_data.as_deref_mut().unwrap().pppoe_tmpl = default_tmpl(SESSION_ID);
     let skel = open.load().unwrap();
 
-    let mut arp_pkt = [
+    let arp_pkt = [
         0xFFu8, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x02, 0x11, 0x22, 0x33, 0x44, 0x55, 0x08, 0x06, 0x00,
         0x01, 0x08, 0x00, 0x06, 0x04, 0x00, 0x01, 0x02, 0x11, 0x22, 0x33, 0x44, 0x55, 0xC0, 0xA8,
         0x01, 0x01, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xC0, 0xA8, 0x01, 0x02,
@@ -140,7 +140,7 @@ fn pppoe_egress_non_ip_passes_unchanged() {
     skel.progs
         .tc_pppoe_wan_egress
         .test_run(ProgramInput {
-            data_in: Some(&mut arp_pkt),
+            data_in: Some(&arp_pkt),
             data_out: Some(&mut output),
             ..Default::default()
         })
@@ -160,12 +160,12 @@ fn pppoe_session_id_is_set_in_rodata() {
     let skel = open.load().unwrap();
 
     // Verify program loaded: simple test_run on empty data should work
-    let mut empty = vec![0u8; 64];
+    let empty = vec![0u8; 64];
     let mut out = vec![0u8; 64];
     skel.progs
         .tc_pppoe_wan_egress
         .test_run(ProgramInput {
-            data_in: Some(&mut empty),
+            data_in: Some(&empty),
             data_out: Some(&mut out),
             ..Default::default()
         })

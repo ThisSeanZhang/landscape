@@ -87,15 +87,14 @@ mod tests {
         )];
         replace_wan_route_slots_v6_with_map(&skel.maps.rt6_target_slot_map, 5, &targets);
 
-        let mut packet = simple_ipv6_tcp_syn(local_addr(), remote_addr());
-        let mut ctx = TestSkb::default();
-        ctx.ifindex = 6;
+        let packet = simple_ipv6_tcp_syn(local_addr(), remote_addr());
+        let mut ctx = TestSkb { ifindex: 6, ..Default::default() };
 
         let result = skel
             .progs
             .tc_lan_ingress_route_v6
             .test_run(ProgramInput {
-                data_in: Some(&mut packet),
+                data_in: Some(&packet),
                 context_in: Some(ctx.as_mut_bytes()),
                 ..Default::default()
             })
@@ -160,15 +159,14 @@ mod tests {
         )];
         replace_wan_route_slots_v4_with_map(&skel.maps.rt4_target_slot_map, 5, &targets);
 
-        let mut packet = simple_ipv4_tcp(local_v4_addr(), remote_v4_addr());
-        let mut ctx = TestSkb::default();
-        ctx.ifindex = 6;
+        let packet = simple_ipv4_tcp(local_v4_addr(), remote_v4_addr());
+        let mut ctx = TestSkb { ifindex: 6, ..Default::default() };
 
         let result = skel
             .progs
             .tc_lan_ingress_route_v4
             .test_run(ProgramInput {
-                data_in: Some(&mut packet),
+                data_in: Some(&packet),
                 context_in: Some(ctx.as_mut_bytes()),
                 ..Default::default()
             })

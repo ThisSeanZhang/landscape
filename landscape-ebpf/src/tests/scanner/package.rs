@@ -40,8 +40,8 @@ pub fn build_ipv4_udp_eth() -> Vec<u8> {
 }
 
 /// 3) IPv4 Ethernet + TCP — first fragment (MF = 1, fragment offset = 0)
-/// Use PacketBuilder::ip with an explicit Ipv4Header where we set `more_fragments = true`.
-/// IPv4 Ethernet + TCP — first fragment (MF = 1, fragment offset = 0)
+///    Use PacketBuilder::ip with an explicit Ipv4Header where we set `more_fragments = true`.
+///    IPv4 Ethernet + TCP — first fragment (MF = 1, fragment offset = 0)
 pub fn build_ipv4_frag_first_eth() -> Vec<u8> {
     let l4_payload = default_payload();
 
@@ -117,7 +117,7 @@ pub fn build_icmpv4_echo_eth() -> Vec<u8> {
 }
 
 /// 6) ICMPv4 Error (Destination Unreachable)
-/// ICMPv4 Error (Destination Unreachable) — 外层 ICMP 包含内层 IP 头 + 8 字节内层 L4
+///    ICMPv4 Error (Destination Unreachable) — 外层 ICMP 包含内层 IP 头 + 8 字节内层 L4
 pub fn build_icmpv4_error_with_inner_ipv4_eth() -> Vec<u8> {
     // 1) 构建内层报文（触发 ICMP error 的原始包）
     let inner_builder = PacketBuilder::ipv4(
@@ -166,7 +166,7 @@ pub fn build_icmpv4_error_with_inner_ipv4_eth() -> Vec<u8> {
 
     // 5) 写入最终数据包
     let mut packet = Vec::with_capacity(outer_builder.size(inner_truncated.len()));
-    outer_builder.write(&mut packet, &inner_truncated).unwrap();
+    outer_builder.write(&mut packet, inner_truncated).unwrap();
 
     packet
 }
@@ -215,7 +215,7 @@ pub fn build_icmpv6_error_with_inner_ipv6_eth() -> Vec<u8> {
     .icmpv6(icmp6_type);
 
     let mut packet = Vec::with_capacity(builder.size(inner_truncated.len()));
-    builder.write(&mut packet, &inner_truncated).unwrap();
+    builder.write(&mut packet, inner_truncated).unwrap();
     packet
 }
 
@@ -446,7 +446,7 @@ pub fn build_ipv6_hop_udp_eth() -> Vec<u8> {
     pkt.extend_from_slice(&0x86DD_u16.to_be_bytes());
 
     // IPv6 header
-    pkt.extend_from_slice(&((6u32 << 28) as u32).to_be_bytes()); // ver=6, tc=0, flow=0
+    pkt.extend_from_slice(&(6u32 << 28).to_be_bytes()); // ver=6, tc=0, flow=0
     pkt.extend_from_slice(&ip_payload_len.to_be_bytes());
     pkt.push(0x00); // next_header = Hop-by-Hop
     pkt.push(64u8);

@@ -50,7 +50,7 @@ impl PPPoEClientManager {
     pub(crate) async fn handle_packet(
         &mut self,
         packet: Vec<u8>,
-        data_sender: &mpsc::Sender<Box<Vec<u8>>>,
+        data_sender: &mpsc::Sender<Vec<u8>>,
     ) -> Option<Vec<Vec<u8>>> {
         let Some(pppoe_data) = PPPoEFrame::new(&packet[14..]) else {
             tracing::error!("conversion to pppoe error, data is: {packet:?}");
@@ -71,7 +71,7 @@ impl PPPoEClientManager {
         &mut self,
         packet: Vec<u8>,
         pppoe_data: PPPoEFrame,
-        data_sender: &mpsc::Sender<Box<Vec<u8>>>,
+        data_sender: &mpsc::Sender<Vec<u8>>,
     ) {
         match &self.pppoe_status {
             PPPoEConnectState::Discovering => {
@@ -93,7 +93,7 @@ impl PPPoEClientManager {
         &mut self,
         packet: Vec<u8>,
         pppoe_data: PPPoEFrame,
-        data_sender: &mpsc::Sender<Box<Vec<u8>>>,
+        data_sender: &mpsc::Sender<Vec<u8>>,
     ) {
         if !pppoe_data.is_offer() {
             self.log_protocol_error(
@@ -130,10 +130,7 @@ impl PPPoEClientManager {
             [&packet[6..12], self.client_mac.octets().as_ref(), &ETH_P_PPOED.to_be_bytes()]
                 .concat();
         let request = PPPoEFrame::get_request(self.my_host_id, ac_cookie);
-        data_sender
-            .send(Box::new([eth_head_data, request.convert_to_payload()].concat()))
-            .await
-            .unwrap();
+        data_sender.send([eth_head_data, request.convert_to_payload()].concat()).await.unwrap();
     }
 
     fn handle_session_confirm(&mut self, pppoe_data: PPPoEFrame, server_mac_addr: Vec<u8>) {
@@ -168,7 +165,7 @@ impl PPPoEClientManager {
     async fn handle_session_packet(
         &mut self,
         mut pppoe_data: PPPoEFrame,
-        data_sender: &mpsc::Sender<Box<Vec<u8>>>,
+        data_sender: &mpsc::Sender<Vec<u8>>,
     ) {
         let Some((l2_header, session_id)) = self.session_l2_header(pppoe_data.sid) else {
             self.log_protocol_error(
@@ -217,7 +214,7 @@ impl PPPoEClientManager {
         lcp: PointToPoint,
         session_id: u16,
         l2_header: Vec<u8>,
-        data_sender: &mpsc::Sender<Box<Vec<u8>>>,
+        data_sender: &mpsc::Sender<Vec<u8>>,
     ) {
         if lcp.is_ack() {
             self.handle_lcp_ack(session_id, l2_header, &lcp, data_sender).await;
@@ -249,7 +246,7 @@ impl PPPoEClientManager {
         session_id: u16,
         l2_header: Vec<u8>,
         lcp: &PointToPoint,
-        data_sender: &mpsc::Sender<Box<Vec<u8>>>,
+        data_sender: &mpsc::Sender<Vec<u8>>,
     ) {
         let (client_mru, magic_number) = Self::parse_lcp_base_options(&lcp.payload);
         if let (Some(mru), Some(magic_number)) = (client_mru, magic_number) {
@@ -271,7 +268,7 @@ impl PPPoEClientManager {
         session_id: u16,
         l2_header: Vec<u8>,
         lcp: &PointToPoint,
-        data_sender: &mpsc::Sender<Box<Vec<u8>>>,
+        data_sender: &mpsc::Sender<Vec<u8>>,
     ) {
         let (client_mru, magic_number) = Self::parse_lcp_base_options(&lcp.payload);
         if let (Some(mru), Some(magic_number)) = (client_mru, magic_number) {
@@ -290,10 +287,7 @@ impl PPPoEClientManager {
                     cfg.mru,
                     cfg.magic_number,
                 );
-                data_sender
-                    .send(Box::new([l2_header, request.convert_to_payload()].concat()))
-                    .await
-                    .unwrap();
+                data_sender.send([l2_header, request.convert_to_payload()].concat()).await.unwrap();
             }
         } else {
             self.log_protocol_error("LCP Configure-Nak missing MRU or magic-number");
@@ -308,7 +302,7 @@ impl PPPoEClientManager {
         session_id: u16,
         l2_header: Vec<u8>,
         lcp: &PointToPoint,
-        data_sender: &mpsc::Sender<Box<Vec<u8>>>,
+        data_sender: &mpsc::Sender<Vec<u8>>,
     ) {
         let (mru, magic_number, auth_type, size) = Self::parse_lcp_request_options(&lcp.payload);
         if let (Some(mru), Some(magic_number), Some(auth_type)) = (mru, magic_number, auth_type) {
@@ -336,7 +330,7 @@ impl PPPoEClientManager {
 
             pppoe_data.payload = lcp.gen_ack();
             let ack = pppoe_data.clone().convert_to_payload();
-            data_sender.send(Box::new([l2_header.clone(), ack].concat())).await.unwrap();
+            data_sender.send([l2_header.clone(), ack].concat()).await.unwrap();
 
             if let TagValue::Nak(cfg) = &self.lcp_status.client_config {
                 let request = PPPoEFrame::get_ppp_mru_config_request(
@@ -345,10 +339,7 @@ impl PPPoEClientManager {
                     cfg.mru,
                     cfg.magic_number,
                 );
-                data_sender
-                    .send(Box::new([l2_header, request.convert_to_payload()].concat()))
-                    .await
-                    .unwrap();
+                data_sender.send([l2_header, request.convert_to_payload()].concat()).await.unwrap();
             }
         } else {
             self.log_protocol_error(
@@ -384,12 +375,12 @@ impl PPPoEClientManager {
         pppoe_data: &mut PPPoEFrame,
         l2_header: Vec<u8>,
         lcp: &PointToPoint,
-        data_sender: &mpsc::Sender<Box<Vec<u8>>>,
+        data_sender: &mpsc::Sender<Vec<u8>>,
     ) {
         if let TagValue::Ack(client_config) = &self.lcp_status.client_config {
             pppoe_data.payload = lcp.gen_reply_with_magic(client_config.magic_number);
             let echo_reply = pppoe_data.clone().convert_to_payload();
-            data_sender.send(Box::new([l2_header, echo_reply].concat())).await.unwrap();
+            data_sender.send([l2_header, echo_reply].concat()).await.unwrap();
         }
     }
 
@@ -398,13 +389,13 @@ impl PPPoEClientManager {
         pppoe_data: &mut PPPoEFrame,
         l2_header: Vec<u8>,
         lcp: &PointToPoint,
-        data_sender: &mpsc::Sender<Box<Vec<u8>>>,
+        data_sender: &mpsc::Sender<Vec<u8>>,
     ) {
         tracing::error!("peer sent LCP Termination-Request, peer initiated teardown");
         self.error_count += 10;
         pppoe_data.payload = lcp.get_termination_ack();
         let reply = pppoe_data.clone().convert_to_payload();
-        data_sender.send(Box::new([l2_header, reply].concat())).await.unwrap();
+        data_sender.send([l2_header, reply].concat()).await.unwrap();
         self.lcp_status.termination = (true, TagValue::Ack(()));
     }
 
@@ -413,7 +404,7 @@ impl PPPoEClientManager {
         lcp: PointToPoint,
         l2_header: Vec<u8>,
         session_id: u16,
-        data_sender: &mpsc::Sender<Box<Vec<u8>>>,
+        data_sender: &mpsc::Sender<Vec<u8>>,
     ) {
         let Some(auth) = self.lcp_status.authenticator.as_mut() else {
             self.log_protocol_error("received auth packet but no authenticator configured");
@@ -423,10 +414,7 @@ impl PPPoEClientManager {
         let result = auth.handle_incoming(&lcp);
         if let Some(payload) = result.response {
             let frame = PPPoEFrame::get_ppp_auth_response(session_id, payload);
-            data_sender
-                .send(Box::new([l2_header, frame.convert_to_payload()].concat()))
-                .await
-                .unwrap();
+            data_sender.send([l2_header, frame.convert_to_payload()].concat()).await.unwrap();
         }
         if result.failed {
             tracing::error!("authentication failed via {:?}", auth);
@@ -443,7 +431,7 @@ impl PPPoEClientManager {
         lcp: PointToPoint,
         session_id: u16,
         l2_header: Vec<u8>,
-        data_sender: &mpsc::Sender<Box<Vec<u8>>>,
+        data_sender: &mpsc::Sender<Vec<u8>>,
     ) {
         if lcp.is_ack() {
             for each in PPPOption::from_bytes(&lcp.payload) {
@@ -480,7 +468,7 @@ impl PPPoEClientManager {
         lcp: PointToPoint,
         session_id: u16,
         l2_header: Vec<u8>,
-        data_sender: &mpsc::Sender<Box<Vec<u8>>>,
+        data_sender: &mpsc::Sender<Vec<u8>>,
     ) {
         let mut reject_options = vec![];
         for each in PPPOption::from_bytes(&lcp.payload) {
@@ -500,14 +488,14 @@ impl PPPoEClientManager {
             );
             pppoe_data.payload = lcp.gen_reject(reject_options);
             let reject = pppoe_data.clone().convert_to_payload();
-            data_sender.send(Box::new([l2_header, reject].concat())).await.unwrap();
+            data_sender.send([l2_header, reject].concat()).await.unwrap();
             return;
         }
 
         if self.lcp_status.ipcp_server_ipaddr.is_confirm() {
             pppoe_data.payload = lcp.gen_ack();
             let ack = pppoe_data.clone().convert_to_payload();
-            data_sender.send(Box::new([l2_header.clone(), ack].concat())).await.unwrap();
+            data_sender.send([l2_header.clone(), ack].concat()).await.unwrap();
             self.send_ipcp_request_if_needed(session_id, l2_header, data_sender).await;
         }
     }
@@ -518,7 +506,7 @@ impl PPPoEClientManager {
         lcp: PointToPoint,
         session_id: u16,
         l2_header: Vec<u8>,
-        data_sender: &mpsc::Sender<Box<Vec<u8>>>,
+        data_sender: &mpsc::Sender<Vec<u8>>,
     ) {
         if lcp.is_ack() {
             for each in PPPOption::from_bytes(&lcp.payload) {
@@ -550,7 +538,7 @@ impl PPPoEClientManager {
         lcp: PointToPoint,
         session_id: u16,
         l2_header: Vec<u8>,
-        data_sender: &mpsc::Sender<Box<Vec<u8>>>,
+        data_sender: &mpsc::Sender<Vec<u8>>,
     ) {
         let mut reject_options = vec![];
         for each in PPPOption::from_bytes(&lcp.payload) {
@@ -569,14 +557,14 @@ impl PPPoEClientManager {
             );
             pppoe_data.payload = lcp.gen_reject(reject_options);
             let reject = pppoe_data.clone().convert_to_payload();
-            data_sender.send(Box::new([l2_header, reject].concat())).await.unwrap();
+            data_sender.send([l2_header, reject].concat()).await.unwrap();
             return;
         }
 
         if self.lcp_status.ip6cp_server_id.is_confirm() {
             pppoe_data.payload = lcp.gen_ack();
             let ack = pppoe_data.clone().convert_to_payload();
-            data_sender.send(Box::new([l2_header.clone(), ack].concat())).await.unwrap();
+            data_sender.send([l2_header.clone(), ack].concat()).await.unwrap();
             self.send_ipv6cp_request_if_needed(session_id, l2_header, data_sender).await;
         }
     }
@@ -585,7 +573,7 @@ impl PPPoEClientManager {
         &self,
         session_id: u16,
         l2_header: Vec<u8>,
-        data_sender: &mpsc::Sender<Box<Vec<u8>>>,
+        data_sender: &mpsc::Sender<Vec<u8>>,
     ) {
         let Some(auth) = self.lcp_status.authenticator.as_ref() else {
             return;
@@ -595,10 +583,7 @@ impl PPPoEClientManager {
         }
         if let Some(payload) = auth.outgoing_packet() {
             let frame = PPPoEFrame::get_ppp_auth_response(session_id, payload);
-            data_sender
-                .send(Box::new([l2_header, frame.convert_to_payload()].concat()))
-                .await
-                .unwrap();
+            data_sender.send([l2_header, frame.convert_to_payload()].concat()).await.unwrap();
         }
     }
 
@@ -606,7 +591,7 @@ impl PPPoEClientManager {
         &self,
         session_id: u16,
         l2_header: Vec<u8>,
-        data_sender: &mpsc::Sender<Box<Vec<u8>>>,
+        data_sender: &mpsc::Sender<Vec<u8>>,
     ) {
         if let TagValue::Nak(ipcp_addr) = &self.lcp_status.ipcp_client_ipaddr {
             tracing::info!("sending IPCP request for local IPv4 address {}", ipcp_addr);
@@ -615,10 +600,7 @@ impl PPPoEClientManager {
                 self.lcp_status.ipcp_req_id,
                 *ipcp_addr,
             );
-            data_sender
-                .send(Box::new([l2_header, request.convert_to_payload()].concat()))
-                .await
-                .unwrap();
+            data_sender.send([l2_header, request.convert_to_payload()].concat()).await.unwrap();
         }
     }
 
@@ -626,7 +608,7 @@ impl PPPoEClientManager {
         &self,
         session_id: u16,
         l2_header: Vec<u8>,
-        data_sender: &mpsc::Sender<Box<Vec<u8>>>,
+        data_sender: &mpsc::Sender<Vec<u8>>,
     ) {
         if let TagValue::Nak(ip6cp_id) = &self.lcp_status.ip6cp_client_id {
             tracing::info!(
@@ -638,10 +620,7 @@ impl PPPoEClientManager {
                 ip6cp_id.clone(),
                 self.lcp_status.ip6cp_req_id,
             );
-            data_sender
-                .send(Box::new([l2_header, request.convert_to_payload()].concat()))
-                .await
-                .unwrap();
+            data_sender.send([l2_header, request.convert_to_payload()].concat()).await.unwrap();
         }
     }
 
@@ -680,7 +659,7 @@ impl PPPoEClientManager {
 
     pub(crate) async fn get_keep_alive_pkt(
         &mut self,
-        data_sender: &mpsc::Sender<Box<Vec<u8>>>,
+        data_sender: &mpsc::Sender<Vec<u8>>,
     ) -> Option<(u16, u64)> {
         let PPPoEConnectState::SessionConfirm { server_mac_addr, session_id, .. } =
             &self.pppoe_status
@@ -698,7 +677,7 @@ impl PPPoEClientManager {
                 config.magic_number,
             );
             if let Err(e) =
-                data_sender.send(Box::new([l2_header, request.convert_to_payload()].concat())).await
+                data_sender.send([l2_header, request.convert_to_payload()].concat()).await
             {
                 tracing::error!("failed to send LCP echo request: {e:?}");
                 self.lcp_status.lcp_echo_times = self.lcp_status.lcp_echo_times.saturating_add(1);
@@ -712,7 +691,7 @@ impl PPPoEClientManager {
         }
     }
 
-    pub(crate) async fn send_packet(&self, data_sender: &mpsc::Sender<Box<Vec<u8>>>) -> bool {
+    pub(crate) async fn send_packet(&self, data_sender: &mpsc::Sender<Vec<u8>>) -> bool {
         // tracing::info!("send_packet, cueernt_status: {:?}", self.pppoe_status);
         let (eth_head_data, sid) = match &self.pppoe_status {
             PPPoEConnectState::Discovering => {
@@ -725,7 +704,7 @@ impl PPPoEClientManager {
                 .concat();
                 let discovery = PPPoEFrame::get_discover_with_host_uniq(self.my_host_id);
                 data_sender
-                    .send(Box::new([eth_head_data, discovery.convert_to_payload()].concat()))
+                    .send([eth_head_data, discovery.convert_to_payload()].concat())
                     .await
                     .unwrap();
                 return true;
@@ -745,7 +724,7 @@ impl PPPoEClientManager {
                     ac_cookie.is_some()
                 );
                 data_sender
-                    .send(Box::new([eth_head_data, request.convert_to_payload()].concat()))
+                    .send([eth_head_data, request.convert_to_payload()].concat())
                     .await
                     .unwrap();
                 return true;
@@ -763,9 +742,7 @@ impl PPPoEClientManager {
                 let termination_request = PPPoEFrame::get_termination_request(*sid, 1);
 
                 if let Err(e) = data_sender
-                    .send(Box::new(
-                        [eth_head_data, termination_request.convert_to_payload()].concat(),
-                    ))
+                    .send([eth_head_data, termination_request.convert_to_payload()].concat())
                     .await
                 {
                     tracing::error!("failed to send LCP termination request: {e:?}");
@@ -789,10 +766,7 @@ impl PPPoEClientManager {
                 cfg.magic_number,
             );
 
-            data_sender
-                .send(Box::new([eth_head_data, request.convert_to_payload()].concat()))
-                .await
-                .unwrap();
+            data_sender.send([eth_head_data, request.convert_to_payload()].concat()).await.unwrap();
             return true;
         }
 
@@ -806,9 +780,7 @@ impl PPPoEClientManager {
                 if let Some(payload) = auth.outgoing_packet() {
                     let frame = PPPoEFrame::get_ppp_auth_response(*sid, payload);
                     data_sender
-                        .send(Box::new(
-                            [eth_head_data.clone(), frame.convert_to_payload()].concat(),
-                        ))
+                        .send([eth_head_data.clone(), frame.convert_to_payload()].concat())
                         .await
                         .unwrap();
                 } else {
@@ -827,10 +799,7 @@ impl PPPoEClientManager {
                 *ipcp_addr,
             );
 
-            data_sender
-                .send(Box::new([eth_head_data, request.convert_to_payload()].concat()))
-                .await
-                .unwrap();
+            data_sender.send([eth_head_data, request.convert_to_payload()].concat()).await.unwrap();
             return true;
         }
 
@@ -841,10 +810,7 @@ impl PPPoEClientManager {
                 self.lcp_status.ip6cp_req_id,
             );
 
-            data_sender
-                .send(Box::new([eth_head_data, request.convert_to_payload()].concat()))
-                .await
-                .unwrap();
+            data_sender.send([eth_head_data, request.convert_to_payload()].concat()).await.unwrap();
             return true;
         }
 

@@ -301,13 +301,15 @@ impl DdnsService {
             .iter()
             .filter(|j| j.enable)
             .filter(|job| {
-                job.sources.iter().any(|s| match s {
-                    DdnsSource::EnrolledDevice {
-                        wan_pd_id: Some(_),
-                        family: IpFamily::Ipv6,
-                        ..
-                    } => true,
-                    _ => false,
+                job.sources.iter().any(|s| {
+                    matches!(
+                        s,
+                        DdnsSource::EnrolledDevice {
+                            wan_pd_id: Some(_),
+                            family: IpFamily::Ipv6,
+                            ..
+                        }
+                    )
                 })
             })
             .cloned()
@@ -648,6 +650,7 @@ impl DdnsService {
         }))
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn sync_one_record_family(
         &self,
         provider: &DnsProviderConfig,
@@ -814,13 +817,12 @@ fn job_matches_wan_event(job: &DdnsJob, event: &WanRouteEvent) -> bool {
 }
 
 fn job_has_matching_source(job: &DdnsJob, wanted_family: IpFamily) -> bool {
-    job.sources.iter().any(|source| match source {
-        DdnsSource::LocalWan { family, .. } | DdnsSource::EnrolledDevice { family, .. }
-            if *family == wanted_family =>
-        {
-            true
-        }
-        _ => false,
+    job.sources.iter().any(|source| {
+        matches!(
+            source,
+            DdnsSource::LocalWan { family, .. } | DdnsSource::EnrolledDevice { family, .. }
+                if *family == wanted_family
+        )
     })
 }
 

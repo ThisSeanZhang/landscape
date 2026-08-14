@@ -59,7 +59,7 @@ pub async fn create_pppoe_client(
         tokio::select! {
             receive_data = rx.recv() => {
                 if let Some(receive_data) = receive_data {
-                    pkt_manager.handle_packet(*receive_data, &tx).await;
+                    pkt_manager.handle_packet(receive_data, &tx).await;
                     if pkt_manager.error_count > 10 {
                         tracing::error!(
                             "native PPPoE hit fatal negotiation threshold on iface={} error_count={}",

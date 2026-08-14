@@ -29,27 +29,27 @@ fn test_config() -> PPPoEClientConfig {
 }
 
 const SERVER_MAC: [u8; 6] = [0x00, 0x11, 0x22, 0x33, 0x44, 0x55];
-fn wrap_eth(dst: &[u8], src: &[u8], ethertype: u16, payload: Vec<u8>) -> Box<Vec<u8>> {
+fn wrap_eth(dst: &[u8], src: &[u8], ethertype: u16, payload: Vec<u8>) -> Vec<u8> {
     let mut packet = dst.to_vec();
     packet.extend(src);
     packet.extend(ethertype.to_be_bytes());
     packet.extend(payload);
-    Box::new(packet)
+    packet
 }
 
-fn build_pado(host_uniq: u32) -> Box<Vec<u8>> {
+fn build_pado(host_uniq: u32) -> Vec<u8> {
     let frame = PPPoEFrame::get_offer_with_host_uniq(host_uniq);
     wrap_eth(&SERVER_MAC, &SERVER_MAC, ETH_P_PPOED, frame.convert_to_payload())
 }
 
-fn build_pado_with_ac_name(host_uniq: u32, ac_name: &str) -> Box<Vec<u8>> {
+fn build_pado_with_ac_name(host_uniq: u32, ac_name: &str) -> Vec<u8> {
     let mut frame = PPPoEFrame::get_offer_with_host_uniq(host_uniq);
     frame.payload.extend(PPPoETag::AcName(ac_name.as_bytes().to_vec()).decode_options());
     frame.length = frame.payload.len() as u16;
     wrap_eth(&SERVER_MAC, &SERVER_MAC, ETH_P_PPOED, frame.convert_to_payload())
 }
 
-fn build_pads(host_uniq: u32, session_id: u16) -> Box<Vec<u8>> {
+fn build_pads(host_uniq: u32, session_id: u16) -> Vec<u8> {
     let mut frame = PPPoEFrame {
         ver: 1,
         t: 1,
@@ -63,7 +63,7 @@ fn build_pads(host_uniq: u32, session_id: u16) -> Box<Vec<u8>> {
     wrap_eth(&SERVER_MAC, &SERVER_MAC, ETH_P_PPOED, frame.convert_to_payload())
 }
 
-fn build_pppoe_session(sid: u16, ppp_payload: Vec<u8>) -> Box<Vec<u8>> {
+fn build_pppoe_session(sid: u16, ppp_payload: Vec<u8>) -> Vec<u8> {
     let frame = PPPoEFrame {
         ver: 1,
         t: 1,
@@ -205,8 +205,8 @@ mod integration {
     async fn test_discovery_success() {
         ensure_test_env();
 
-        let (mut client_tx, mut from_client) = mpsc::channel::<Box<Vec<u8>>>(16);
-        let (to_client, mut client_rx) = mpsc::channel::<Box<Vec<u8>>>(16);
+        let (mut client_tx, mut from_client) = mpsc::channel::<Vec<u8>>(16);
+        let (to_client, mut client_rx) = mpsc::channel::<Vec<u8>>(16);
         let config = test_config();
         let status = WatchService::new();
         status.just_change_status(ServiceStatus::Staring);
@@ -249,8 +249,8 @@ mod integration {
     async fn test_discovery_wrong_host_uniq_ignored() {
         ensure_test_env();
 
-        let (mut client_tx, mut from_client) = mpsc::channel::<Box<Vec<u8>>>(16);
-        let (to_client, mut client_rx) = mpsc::channel::<Box<Vec<u8>>>(16);
+        let (mut client_tx, mut from_client) = mpsc::channel::<Vec<u8>>(16);
+        let (to_client, mut client_rx) = mpsc::channel::<Vec<u8>>(16);
         let config = test_config();
         let status = WatchService::new();
         status.just_change_status(ServiceStatus::Staring);
@@ -287,8 +287,8 @@ mod integration {
         ensure_test_env();
         tokio::time::pause();
 
-        let (mut client_tx, _from_client) = mpsc::channel::<Box<Vec<u8>>>(16);
-        let (_to_client, mut client_rx) = mpsc::channel::<Box<Vec<u8>>>(16);
+        let (mut client_tx, _from_client) = mpsc::channel::<Vec<u8>>(16);
+        let (_to_client, mut client_rx) = mpsc::channel::<Vec<u8>>(16);
         let config = test_config();
         let status = WatchService::new();
         status.just_change_status(ServiceStatus::Staring);
@@ -319,8 +319,8 @@ mod integration {
     async fn test_full_lcp_success() {
         ensure_test_env();
 
-        let (mut client_tx, mut from_client) = mpsc::channel::<Box<Vec<u8>>>(16);
-        let (to_client, mut client_rx) = mpsc::channel::<Box<Vec<u8>>>(16);
+        let (mut client_tx, mut from_client) = mpsc::channel::<Vec<u8>>(16);
+        let (to_client, mut client_rx) = mpsc::channel::<Vec<u8>>(16);
         let config = test_config();
         let status = WatchService::new();
         status.just_change_status(ServiceStatus::Staring);
@@ -394,8 +394,8 @@ mod integration {
     async fn test_lcp_config_rejected() {
         ensure_test_env();
 
-        let (mut client_tx, mut from_client) = mpsc::channel::<Box<Vec<u8>>>(16);
-        let (to_client, mut client_rx) = mpsc::channel::<Box<Vec<u8>>>(16);
+        let (mut client_tx, mut from_client) = mpsc::channel::<Vec<u8>>(16);
+        let (to_client, mut client_rx) = mpsc::channel::<Vec<u8>>(16);
         let config = test_config();
         let status = WatchService::new();
         status.just_change_status(ServiceStatus::Staring);
@@ -444,8 +444,8 @@ mod integration {
     async fn test_lcp_request_missing_auth_type_rejected() {
         ensure_test_env();
 
-        let (mut client_tx, mut from_client) = mpsc::channel::<Box<Vec<u8>>>(16);
-        let (to_client, mut client_rx) = mpsc::channel::<Box<Vec<u8>>>(16);
+        let (mut client_tx, mut from_client) = mpsc::channel::<Vec<u8>>(16);
+        let (to_client, mut client_rx) = mpsc::channel::<Vec<u8>>(16);
         let config = test_config();
         let status = WatchService::new();
         status.just_change_status(ServiceStatus::Staring);
@@ -492,8 +492,8 @@ mod integration {
     async fn test_lcp_config_nak_then_ack() {
         ensure_test_env();
 
-        let (mut client_tx, mut from_client) = mpsc::channel::<Box<Vec<u8>>>(16);
-        let (to_client, mut client_rx) = mpsc::channel::<Box<Vec<u8>>>(16);
+        let (mut client_tx, mut from_client) = mpsc::channel::<Vec<u8>>(16);
+        let (to_client, mut client_rx) = mpsc::channel::<Vec<u8>>(16);
         let config = test_config();
         let status = WatchService::new();
         status.just_change_status(ServiceStatus::Staring);
@@ -558,8 +558,8 @@ mod integration {
     async fn test_channel_closed() {
         ensure_test_env();
 
-        let (mut client_tx, _from_client) = mpsc::channel::<Box<Vec<u8>>>(2);
-        let (to_client, mut client_rx) = mpsc::channel::<Box<Vec<u8>>>(2);
+        let (mut client_tx, _from_client) = mpsc::channel::<Vec<u8>>(2);
+        let (to_client, mut client_rx) = mpsc::channel::<Vec<u8>>(2);
         let config = test_config();
         let status = WatchService::new();
         status.just_change_status(ServiceStatus::Staring);
@@ -582,8 +582,8 @@ mod integration {
     async fn test_service_stopped_during_discovery() {
         ensure_test_env();
 
-        let (mut client_tx, mut from_client) = mpsc::channel::<Box<Vec<u8>>>(16);
-        let (_to_client, mut client_rx) = mpsc::channel::<Box<Vec<u8>>>(16);
+        let (mut client_tx, mut from_client) = mpsc::channel::<Vec<u8>>(16);
+        let (_to_client, mut client_rx) = mpsc::channel::<Vec<u8>>(16);
         let config = test_config();
         let status = WatchService::new();
         status.just_change_status(ServiceStatus::Staring);
@@ -616,8 +616,8 @@ mod integration {
         ensure_test_env();
         tokio::time::pause();
 
-        let (mut client_tx, mut from_client) = mpsc::channel::<Box<Vec<u8>>>(16);
-        let (to_client, mut client_rx) = mpsc::channel::<Box<Vec<u8>>>(16);
+        let (mut client_tx, mut from_client) = mpsc::channel::<Vec<u8>>(16);
+        let (to_client, mut client_rx) = mpsc::channel::<Vec<u8>>(16);
         let config = test_config();
         let status = WatchService::new();
         status.just_change_status(ServiceStatus::Staring);
@@ -650,8 +650,8 @@ mod integration {
         ensure_test_env();
         tokio::time::pause();
 
-        let (mut client_tx, mut from_client) = mpsc::channel::<Box<Vec<u8>>>(16);
-        let (to_client, mut client_rx) = mpsc::channel::<Box<Vec<u8>>>(16);
+        let (mut client_tx, mut from_client) = mpsc::channel::<Vec<u8>>(16);
+        let (to_client, mut client_rx) = mpsc::channel::<Vec<u8>>(16);
         let config = test_config();
         let status = WatchService::new();
         status.just_change_status(ServiceStatus::Staring);
@@ -686,8 +686,8 @@ mod integration {
     async fn test_pads_wrong_host_uniq_ignored() {
         ensure_test_env();
 
-        let (mut client_tx, mut from_client) = mpsc::channel::<Box<Vec<u8>>>(16);
-        let (to_client, mut client_rx) = mpsc::channel::<Box<Vec<u8>>>(16);
+        let (mut client_tx, mut from_client) = mpsc::channel::<Vec<u8>>(16);
+        let (to_client, mut client_rx) = mpsc::channel::<Vec<u8>>(16);
         let config = test_config();
         let status = WatchService::new();
         status.just_change_status(ServiceStatus::Staring);
@@ -732,8 +732,8 @@ mod integration {
     async fn test_ac_name_matching() {
         ensure_test_env();
 
-        let (mut client_tx, mut from_client) = mpsc::channel::<Box<Vec<u8>>>(16);
-        let (to_client, mut client_rx) = mpsc::channel::<Box<Vec<u8>>>(16);
+        let (mut client_tx, mut from_client) = mpsc::channel::<Vec<u8>>(16);
+        let (to_client, mut client_rx) = mpsc::channel::<Vec<u8>>(16);
         let mut config = test_config();
         config.ac_name = Some("desired-ac".into());
         let status = WatchService::new();
@@ -767,8 +767,8 @@ mod integration {
     async fn test_ac_name_mismatch_ignored() {
         ensure_test_env();
 
-        let (mut client_tx, mut from_client) = mpsc::channel::<Box<Vec<u8>>>(16);
-        let (to_client, mut client_rx) = mpsc::channel::<Box<Vec<u8>>>(16);
+        let (mut client_tx, mut from_client) = mpsc::channel::<Vec<u8>>(16);
+        let (to_client, mut client_rx) = mpsc::channel::<Vec<u8>>(16);
         let mut config = test_config();
         config.ac_name = Some("desired-ac".into());
         let status = WatchService::new();
@@ -810,8 +810,8 @@ mod integration {
     async fn test_ac_name_not_configured_any_accepted() {
         ensure_test_env();
 
-        let (mut client_tx, mut from_client) = mpsc::channel::<Box<Vec<u8>>>(16);
-        let (to_client, mut client_rx) = mpsc::channel::<Box<Vec<u8>>>(16);
+        let (mut client_tx, mut from_client) = mpsc::channel::<Vec<u8>>(16);
+        let (to_client, mut client_rx) = mpsc::channel::<Vec<u8>>(16);
         let config = test_config();
         let status = WatchService::new();
         status.just_change_status(ServiceStatus::Staring);

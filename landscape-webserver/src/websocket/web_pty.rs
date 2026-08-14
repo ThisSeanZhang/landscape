@@ -84,7 +84,7 @@ async fn handle_socket(mut socket: WebSocket, session: LandscapePtySession) {
             };
         }
         tracing::info!("Websocket pty destroyed");
-        let _ = socket.close();
+        drop(socket.close());
         drop(session);
     });
 }

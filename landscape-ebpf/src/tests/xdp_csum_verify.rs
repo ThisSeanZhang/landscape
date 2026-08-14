@@ -23,8 +23,8 @@ mod xdp_csum_verify_tests {
         let skel = open_skel.load().unwrap();
 
         let prog = skel.progs.test_csum_ip;
-        let mut dummy = vec![0u8; 64];
-        let input = ProgramInput { data_in: Some(&mut dummy), ..Default::default() };
+        let dummy = vec![0u8; 64];
+        let input = ProgramInput { data_in: Some(&dummy), ..Default::default() };
         let _ = prog.test_run(input).expect("test_run failed");
 
         let map = &skel.maps.csum_map;

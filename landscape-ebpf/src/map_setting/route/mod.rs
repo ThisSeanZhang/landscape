@@ -74,6 +74,7 @@ fn pick_effective_flow(
 }
 
 /// Step 1: Match source client → flow_id
+#[allow(clippy::field_reassign_with_default)]
 pub fn trace_flow_match(req: FlowMatchRequest) -> FlowMatchResult {
     let flow_match_map = match libbpf_rs::MapHandle::from_pinned_path(&MAP_PATHS.flow_match_map) {
         Ok(map) => map,
@@ -273,6 +274,7 @@ fn expected_cache_mark_value(flow_id: u32, effective_mark: &FlowMark) -> u32 {
     mark_value
 }
 
+#[allow(clippy::field_reassign_with_default)]
 fn trace_flow_verdict_single_v4(
     flow_id: u32,
     dst_ip: Ipv4Addr,
@@ -328,6 +330,7 @@ fn trace_flow_verdict_single_v4(
     (ip_rule_match, dns_rule_match, effective_rule_source, effective_mark)
 }
 
+#[allow(clippy::field_reassign_with_default)]
 fn trace_flow_verdict_single_v6(
     flow_id: u32,
     dst_ip: Ipv6Addr,
@@ -383,6 +386,7 @@ fn trace_flow_verdict_single_v6(
     (ip_rule_match, dns_rule_match, effective_rule_source, effective_mark)
 }
 
+#[allow(clippy::field_reassign_with_default)]
 fn trace_cache_check_v4(
     src_ip: Ipv4Addr,
     dst_ip: Ipv4Addr,
@@ -494,7 +498,7 @@ where
     false
 }
 
-pub(crate) fn add_lan_route_inner_v4<'obj, T>(rt_lan_map: &T, lan_info: &LanRouteInfo) -> bool
+pub(crate) fn add_lan_route_inner_v4<T>(rt_lan_map: &T, lan_info: &LanRouteInfo) -> bool
 where
     T: MapCore,
 {
@@ -558,7 +562,7 @@ where
     true
 }
 
-pub(crate) fn add_lan_route_inner_v6<'obj, T>(rt_lan_map: &T, lan_info: &LanRouteInfo) -> bool
+pub(crate) fn add_lan_route_inner_v6<T>(rt_lan_map: &T, lan_info: &LanRouteInfo) -> bool
 where
     T: MapCore,
 {
@@ -644,7 +648,8 @@ where
     changed_v4 || changed_v6
 }
 
-pub(crate) fn del_lan_route_inner_v4<'obj, T>(rt_lan_map: &T, lan_info: &LanRouteInfo) -> bool
+#[allow(clippy::field_reassign_with_default)]
+pub(crate) fn del_lan_route_inner_v4<T>(rt_lan_map: &T, lan_info: &LanRouteInfo) -> bool
 where
     T: MapCore,
 {
@@ -677,7 +682,8 @@ where
     true
 }
 
-pub(crate) fn del_lan_route_inner_v6<'obj, T>(rt_lan_map: &T, lan_info: &LanRouteInfo) -> bool
+#[allow(clippy::field_reassign_with_default)]
+pub(crate) fn del_lan_route_inner_v6<T>(rt_lan_map: &T, lan_info: &LanRouteInfo) -> bool
 where
     T: MapCore,
 {
@@ -766,6 +772,7 @@ fn build_slot_indices(weights: &[u32]) -> Vec<usize> {
     slots
 }
 
+#[allow(clippy::field_reassign_with_default)]
 pub(crate) fn replace_wan_route_slots_v4_with_map<T>(
     rt_target_map: &T,
     flow_id: FlowId,
@@ -820,6 +827,7 @@ pub(crate) fn replace_wan_route_slots_v4_with_map<T>(
     }
 }
 
+#[allow(clippy::field_reassign_with_default)]
 pub(crate) fn replace_wan_route_slots_v6_with_map<T>(
     rt_target_map: &T,
     flow_id: FlowId,
@@ -874,6 +882,7 @@ pub(crate) fn replace_wan_route_slots_v6_with_map<T>(
     }
 }
 
+#[allow(clippy::field_reassign_with_default)]
 fn clear_wan_route_slots_v4<T>(rt_target_map: &T, flow_id: FlowId)
 where
     T: MapCore,
@@ -904,6 +913,7 @@ where
     }
 }
 
+#[allow(clippy::field_reassign_with_default)]
 fn clear_wan_route_slots_v6<T>(rt_target_map: &T, flow_id: FlowId)
 where
     T: MapCore,
@@ -1021,6 +1031,7 @@ mod tests {
         .expect("create test slot map v6")
     }
 
+    #[allow(clippy::field_reassign_with_default)]
     fn insert_v6_slot(map: &MapHandle, flow_id: u32, slot: u32, ifindex: u32) {
         let mut key = route_target_slot_key_v6::default();
         key.flow_id = flow_id;
@@ -1034,6 +1045,7 @@ mod tests {
         map.update(key_bytes, value_bytes, MapFlags::ANY).expect("insert test slot entry");
     }
 
+    #[allow(clippy::field_reassign_with_default)]
     fn lookup_v6_slot(map: &MapHandle, flow_id: u32, slot: u32) -> bool {
         let mut key = route_target_slot_key_v6::default();
         key.flow_id = flow_id;

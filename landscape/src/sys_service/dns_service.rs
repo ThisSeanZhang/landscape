@@ -48,6 +48,7 @@ pub struct LandscapeDnsService {
 }
 
 impl LandscapeDnsService {
+    #[allow(clippy::too_many_arguments)]
     pub async fn new(
         mut receiver: mpsc::Receiver<DnsEvent>,
         dns_rule_service: DNSRuleService,

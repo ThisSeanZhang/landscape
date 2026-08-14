@@ -69,6 +69,7 @@ fn build_ipv4_udp(src: Ipv4Addr, dst: Ipv4Addr, src_port: u16, dst_port: u16) ->
     buf
 }
 
+#[allow(clippy::too_many_arguments)]
 fn add_ct_entry<T: MapCore>(
     timer_map: &T,
     l4proto: u8,
@@ -90,13 +91,15 @@ fn add_ct_entry<T: MapCore>(
             dst_port: nat_port.to_be(),
         },
     };
-    let mut value = types::nat4_timer_value_v3::default();
-    value.server_status = 1;
-    value.client_status = 1;
-    value.gress = gress;
-    value.client_addr = types::inet4_addr { addr: client_addr.to_bits().to_be() };
-    value.client_port = client_port.to_be();
-    value.ifindex = IFINDEX;
+    let value = types::nat4_timer_value_v3 {
+        server_status: 1,
+        client_status: 1,
+        gress,
+        client_addr: types::inet4_addr { addr: client_addr.to_bits().to_be() },
+        client_port: client_port.to_be(),
+        ifindex: IFINDEX,
+        ..Default::default()
+    };
 
     timer_map
         .update(unsafe { plain::as_bytes(&key) }, unsafe { plain::as_bytes(&value) }, MapFlags::ANY)
@@ -150,13 +153,12 @@ mod tests {
             NAT_MAPPING_INGRESS,
         );
 
-        let mut pkt = build_ipv4_tcp(REMOTE_IP, WAN_IP, 9999, 8080);
-        let mut ctx = TestSkb::default();
-        ctx.ifindex = IFINDEX;
+        let pkt = build_ipv4_tcp(REMOTE_IP, WAN_IP, 9999, 8080);
+        let mut ctx = TestSkb { ifindex: IFINDEX, ..Default::default() };
 
         let mut packet_out = vec![0u8; pkt.len()];
         let input = ProgramInput {
-            data_in: Some(&mut pkt),
+            data_in: Some(&pkt),
             context_in: Some(ctx.as_mut_bytes()),
             data_out: Some(&mut packet_out),
             ..Default::default()
@@ -220,13 +222,12 @@ mod tests {
             NAT_MAPPING_EGRESS,
         );
 
-        let mut pkt = build_ipv4_tcp(LAN_HOST, REMOTE_IP, 80, 9999);
-        let mut ctx = TestSkb::default();
-        ctx.ifindex = IFINDEX;
+        let pkt = build_ipv4_tcp(LAN_HOST, REMOTE_IP, 80, 9999);
+        let mut ctx = TestSkb { ifindex: IFINDEX, ..Default::default() };
 
         let mut packet_out = vec![0u8; pkt.len()];
         let input = ProgramInput {
-            data_in: Some(&mut pkt),
+            data_in: Some(&pkt),
             context_in: Some(ctx.as_mut_bytes()),
             data_out: Some(&mut packet_out),
             ..Default::default()
@@ -290,13 +291,12 @@ mod tests {
             NAT_MAPPING_INGRESS,
         );
 
-        let mut pkt = build_ipv4_tcp(REMOTE_IP, WAN_IP, 9999, 8080);
-        let mut ctx = TestSkb::default();
-        ctx.ifindex = IFINDEX;
+        let pkt = build_ipv4_tcp(REMOTE_IP, WAN_IP, 9999, 8080);
+        let mut ctx = TestSkb { ifindex: IFINDEX, ..Default::default() };
 
         let mut packet_out = vec![0u8; pkt.len()];
         let input = ProgramInput {
-            data_in: Some(&mut pkt),
+            data_in: Some(&pkt),
             context_in: Some(ctx.as_mut_bytes()),
             data_out: Some(&mut packet_out),
             ..Default::default()
@@ -351,13 +351,12 @@ mod tests {
         );
 
         // No pre-seeded CT — exercise the create path (CT_RESOLVE_MISS)
-        let mut pkt = build_ipv4_tcp_syn(REMOTE_IP, WAN_IP, 443, 8080);
-        let mut ctx = TestSkb::default();
-        ctx.ifindex = IFINDEX;
+        let pkt = build_ipv4_tcp_syn(REMOTE_IP, WAN_IP, 443, 8080);
+        let mut ctx = TestSkb { ifindex: IFINDEX, ..Default::default() };
 
         let mut packet_out = vec![0u8; pkt.len()];
         let input = ProgramInput {
-            data_in: Some(&mut pkt),
+            data_in: Some(&pkt),
             context_in: Some(ctx.as_mut_bytes()),
             data_out: Some(&mut packet_out),
             ..Default::default()
@@ -449,13 +448,12 @@ mod tests {
             NAT_MAPPING_EGRESS,
         );
 
-        let mut pkt = build_ipv4_tcp(WAN_IP, REMOTE_IP, 80, 9999);
-        let mut ctx = TestSkb::default();
-        ctx.ifindex = IFINDEX;
+        let pkt = build_ipv4_tcp(WAN_IP, REMOTE_IP, 80, 9999);
+        let mut ctx = TestSkb { ifindex: IFINDEX, ..Default::default() };
 
         let mut packet_out = vec![0u8; pkt.len()];
         let input = ProgramInput {
-            data_in: Some(&mut pkt),
+            data_in: Some(&pkt),
             context_in: Some(ctx.as_mut_bytes()),
             data_out: Some(&mut packet_out),
             ..Default::default()
@@ -513,13 +511,12 @@ mod tests {
             NAT_MAPPING_INGRESS,
         );
 
-        let mut pkt = build_ipv4_udp(REMOTE_IP, WAN_IP, 12345, 5353);
-        let mut ctx = TestSkb::default();
-        ctx.ifindex = IFINDEX;
+        let pkt = build_ipv4_udp(REMOTE_IP, WAN_IP, 12345, 5353);
+        let mut ctx = TestSkb { ifindex: IFINDEX, ..Default::default() };
 
         let mut packet_out = vec![0u8; pkt.len()];
         let input = ProgramInput {
-            data_in: Some(&mut pkt),
+            data_in: Some(&pkt),
             context_in: Some(ctx.as_mut_bytes()),
             data_out: Some(&mut packet_out),
             ..Default::default()
@@ -577,13 +574,12 @@ mod tests {
             NAT_MAPPING_EGRESS,
         );
 
-        let mut pkt = build_ipv4_udp(WAN_IP, REMOTE_IP, 53, 12345);
-        let mut ctx = TestSkb::default();
-        ctx.ifindex = IFINDEX;
+        let pkt = build_ipv4_udp(WAN_IP, REMOTE_IP, 53, 12345);
+        let mut ctx = TestSkb { ifindex: IFINDEX, ..Default::default() };
 
         let mut packet_out = vec![0u8; pkt.len()];
         let input = ProgramInput {
-            data_in: Some(&mut pkt),
+            data_in: Some(&pkt),
             context_in: Some(ctx.as_mut_bytes()),
             data_out: Some(&mut packet_out),
             ..Default::default()
@@ -630,13 +626,12 @@ mod tests {
             }],
         );
 
-        let mut pkt = build_ipv4_tcp(REMOTE_IP, WAN_IP, 9999, 9090);
-        let mut ctx = TestSkb::default();
-        ctx.ifindex = IFINDEX;
+        let pkt = build_ipv4_tcp(REMOTE_IP, WAN_IP, 9999, 9090);
+        let mut ctx = TestSkb { ifindex: IFINDEX, ..Default::default() };
 
         let mut packet_out = vec![0u8; pkt.len()];
         let input = ProgramInput {
-            data_in: Some(&mut pkt),
+            data_in: Some(&pkt),
             context_in: Some(ctx.as_mut_bytes()),
             data_out: Some(&mut packet_out),
             ..Default::default()

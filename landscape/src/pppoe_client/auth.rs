@@ -231,7 +231,7 @@ mod tests {
 
             use md5::{Digest, Md5};
             let mut hasher = Md5::new();
-            hasher.update(&[0x02u8]);
+            hasher.update([0x02u8]);
             hasher.update(b"secret");
             hasher.update(&challenge_bytes);
             let expected = hasher.finalize();

@@ -165,10 +165,7 @@ impl DhcpState {
     }
 
     pub fn is_stopping(&self) -> bool {
-        match self {
-            DhcpState::Stopping => true,
-            _ => false,
-        }
+        matches!(self, DhcpState::Stopping)
     }
 }
 
@@ -180,6 +177,7 @@ impl DhcpState {
     hostname,
     route_service
 ))]
+#[allow(clippy::too_many_arguments)]
 pub async fn dhcp_v4_client(
     ifindex: u32,
     iface_name: String,
@@ -448,6 +446,7 @@ fn get_status_timeout_config(
 }
 /// 处理接收到的报文，根据当前状态决定如何处理
 /// 返回值为是否要进行检查刷新超时时间
+#[allow(clippy::too_many_arguments)]
 async fn handle_packet(
     current_status: &mut DhcpState,
     packet: (DhcpV4Message, SocketAddr),
@@ -577,6 +576,7 @@ async fn handle_packet(
     false
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn bind_ipv4(
     renew_time: u64,
     rebinding_time: u64,

@@ -12,7 +12,6 @@ use crate::{
 
 const METRIC_MAX_ENTRIES: u32 = 2048;
 
-///
 pub fn create_metric_inner_map(second: u32) {
     let now = Instant::now();
     #[allow(clippy::needless_update)]

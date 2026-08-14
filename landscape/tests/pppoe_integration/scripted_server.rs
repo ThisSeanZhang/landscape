@@ -207,17 +207,17 @@ fn scripted_server_loop(
                                 return Ok(());
                             }
                             ScriptedServerMode::ChapAuthSuccess
-                            | ScriptedServerMode::ChapAuthFailure => {
-                                if !sent_chap_challenge {
-                                    sent_chap_challenge = true;
-                                    send_session(
-                                        fd,
-                                        source_mac,
-                                        server_mac,
-                                        session_id,
-                                        ppp_chap_challenge(1, &[0x01, 0x02, 0x03, 0x04]),
-                                    )?;
-                                }
+                            | ScriptedServerMode::ChapAuthFailure
+                                if !sent_chap_challenge =>
+                            {
+                                sent_chap_challenge = true;
+                                send_session(
+                                    fd,
+                                    source_mac,
+                                    server_mac,
+                                    session_id,
+                                    ppp_chap_challenge(1, &[0x01, 0x02, 0x03, 0x04]),
+                                )?;
                             }
                             _ => {}
                         }

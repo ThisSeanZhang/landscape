@@ -93,7 +93,7 @@ impl LandscapeDockerService {
             let mut receiver = status.subscribe();
             status.just_change_status(ServiceStatus::Running);
             loop {
-                if let Err(_) = receiver.changed().await {
+                if receiver.changed().await.is_err() {
                     tracing::error!("get change result error. exit loop");
                     break;
                 }
@@ -295,7 +295,7 @@ pub async fn accept_docker_info(
                 .await;
 
         match read_result {
-            Ok(Ok(n)) if n == 0 => {
+            Ok(Ok(0)) => {
                 tracing::error!("Client disconnected");
             }
             Ok(Ok(n)) => {
@@ -360,32 +360,29 @@ pub async fn handle_event(
             //
             // println!("{:?}", emsg);
             if let Some(action) = emsg.action {
-                match action.as_str() {
-                    // "start" => {
-                    //     if let Some(actor) = emsg.actor {
-                    //         if let Some(attr) = actor.attributes {
-                    //             //
-                    //             if let Some(name) = attr.get("name") {
-                    //                 inspect_container_and_set_route(name, ip_route_service, docker)
-                    //                     .await;
-                    //             }
-                    //         }
-                    //     }
-                    // }
-                    "stop" => {
-                        // tracing::info!("docker stop");
-                        if let Some(actor) = emsg.actor {
-                            if let Some(attr) = actor.attributes {
-                                //
-                                if let Some(name) = attr.get("name") {
-                                    // tracing::info!("docker stop name: {name}");
-                                    ip_route_service.remove_ipv4_wan_route(name).await;
-                                    ip_route_service.remove_ipv6_wan_route(name).await;
-                                }
+                // "start" => {
+                //     if let Some(actor) = emsg.actor {
+                //         if let Some(attr) = actor.attributes {
+                //             //
+                //             if let Some(name) = attr.get("name") {
+                //                 inspect_container_and_set_route(name, ip_route_service, docker)
+                //                     .await;
+                //             }
+                //         }
+                //     }
+                // }
+                if action.as_str() == "stop" {
+                    // tracing::info!("docker stop");
+                    if let Some(actor) = emsg.actor {
+                        if let Some(attr) = actor.attributes {
+                            //
+                            if let Some(name) = attr.get("name") {
+                                // tracing::info!("docker stop name: {name}");
+                                ip_route_service.remove_ipv4_wan_route(name).await;
+                                ip_route_service.remove_ipv6_wan_route(name).await;
                             }
                         }
                     }
-                    _ => {}
                 }
             }
         }

@@ -49,8 +49,10 @@ async fn auth_failure() {
 #[tokio::test]
 async fn ipv6cp_rejection() {
     require_root();
-    let mut env_cfg = EnvConfig::default();
-    env_cfg.enable_ipv6cp = false; // server refuses IPv6CP
+    let env_cfg = EnvConfig {
+        enable_ipv6cp: false, // server refuses IPv6CP
+        ..Default::default()
+    };
 
     let env = PPPoETestEnv::up(&env_cfg).expect("test environment should start");
     let client_cfg = ClientConfig {
@@ -119,8 +121,10 @@ async fn disconnect_detection() {
 #[tokio::test]
 async fn server_not_responding() {
     require_root();
-    let mut env_cfg = EnvConfig::default();
-    env_cfg.no_server = true; // never start pppoe-server
+    let env_cfg = EnvConfig {
+        no_server: true, // never start pppoe-server
+        ..Default::default()
+    };
 
     let env = PPPoETestEnv::up(&env_cfg).expect("test environment should start");
     let client_cfg = ClientConfig {
@@ -181,9 +185,10 @@ async fn server_process_killed() {
 #[tokio::test]
 async fn server_sends_terminate() {
     require_root();
-    let mut env_cfg = EnvConfig::default();
-    env_cfg.extra_pppd_options = vec!["maxconnect 5".into()];
-
+    let env_cfg = EnvConfig {
+        extra_pppd_options: vec!["maxconnect 5".into()],
+        ..Default::default()
+    };
     let env = PPPoETestEnv::up(&env_cfg).expect("test environment should start");
     let client_cfg = ClientConfig {
         username: env_cfg.username.clone(),
@@ -235,9 +240,10 @@ async fn client_initiated_stop() {
 #[tokio::test]
 async fn lcp_mru_negotiation() {
     require_root();
-    let mut env_cfg = EnvConfig::default();
-    env_cfg.extra_pppd_options = vec!["mtu 1400".into()];
-
+    let env_cfg = EnvConfig {
+        extra_pppd_options: vec!["mtu 1400".into()],
+        ..Default::default()
+    };
     let env = PPPoETestEnv::up(&env_cfg).expect("test environment should start");
     let client_cfg = ClientConfig {
         username: env_cfg.username.clone(),

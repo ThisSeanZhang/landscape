@@ -77,6 +77,7 @@ const DHCPV4_DOMAIN_NAME_OPTION_CODE: u8 = 15;
 const DHCPV4_DOMAIN_SEARCH_OPTION_CODE: u8 = 119;
 
 #[instrument(skip(server_ip, dhcp_server, service_status, ipv4_assign_sender))]
+#[allow(clippy::too_many_arguments)]
 pub async fn dhcp_v4_server(
     iface_name: String,
     iface_ifindex: u32,
@@ -698,9 +699,7 @@ fn encode_custom_option_with_defaults(
 
 /// get offer
 pub fn gen_offer(server: &mut DHCPv4Server, frame: &DhcpV4Message) -> Option<DhcpV4Message> {
-    let Some(chaddr) = client_chaddr(frame) else {
-        return None;
-    };
+    let chaddr = client_chaddr(frame)?;
     let request_params = if let Some(request_params) = has_option(frame, 55) {
         request_params
     } else {
@@ -760,9 +759,7 @@ fn gen_ack(
     iface_ifindex: u32,
     iface_mac: Option<MacAddr>,
 ) -> Option<DhcpV4Message> {
-    let Some(chaddr) = client_chaddr(frame) else {
-        return None;
-    };
+    let chaddr = client_chaddr(frame)?;
     let request_params = if let Some(request_params) = has_option(frame, 55) {
         request_params
     } else {
@@ -904,11 +901,13 @@ mod tests {
 
     #[test]
     fn resolve_options_returns_global_when_no_per_mac() {
-        let mut config = DHCPv4ServerConfig::default();
-        config.custom_options = vec![
-            CustomDhcpOption::TFTPServerName("192.168.1.1".to_string()),
-            CustomDhcpOption::BootfileName("ipxe.kpxe".to_string()),
-        ];
+        let config = DHCPv4ServerConfig {
+            custom_options: vec![
+                CustomDhcpOption::TFTPServerName("192.168.1.1".to_string()),
+                CustomDhcpOption::BootfileName("ipxe.kpxe".to_string()),
+            ],
+            ..DHCPv4ServerConfig::default()
+        };
         let server = DHCPv4Server::init(config);
         let mac = MacAddr::from_str("00:00:00:00:00:01").unwrap();
 
@@ -923,8 +922,10 @@ mod tests {
 
     #[test]
     fn resolve_options_hot_encodes_global_dnr_domains() {
-        let mut config = DHCPv4ServerConfig::default();
-        config.custom_options = vec![CustomDhcpOption::Dnr(DhcpV4DnrOptionConfig::Local)];
+        let config = DHCPv4ServerConfig {
+            custom_options: vec![CustomDhcpOption::Dnr(DhcpV4DnrOptionConfig::Local)],
+            ..DHCPv4ServerConfig::default()
+        };
         let local_domains = Arc::new(ArcSwap::from_pointee(vec!["old.example.com".to_string()]));
         let dnr_context = DhcpV4DnrRuntimeContext {
             local_domains: local_domains.clone(),
@@ -948,11 +949,13 @@ mod tests {
 
     #[test]
     fn resolve_options_enrolled_overrides_global_by_code() {
-        let mut config = DHCPv4ServerConfig::default();
-        config.custom_options = vec![
-            CustomDhcpOption::TFTPServerName("192.168.1.1".to_string()),
-            CustomDhcpOption::BootfileName("ipxe.kpxe".to_string()),
-        ];
+        let config = DHCPv4ServerConfig {
+            custom_options: vec![
+                CustomDhcpOption::TFTPServerName("192.168.1.1".to_string()),
+                CustomDhcpOption::BootfileName("ipxe.kpxe".to_string()),
+            ],
+            ..DHCPv4ServerConfig::default()
+        };
         let mac = MacAddr::from_str("AA:BB:CC:DD:EE:FF").unwrap();
         let enrolled = EnrolledDevice {
             mac,
@@ -1084,11 +1087,13 @@ mod tests {
 
     #[test]
     fn resolve_options_enrolled_overrides_dhcp_config_common_options() {
-        let mut config = DHCPv4ServerConfig::default();
-        config.custom_options = vec![
-            CustomDhcpOption::TFTPServerName("global-tftp".to_string()),
-            CustomDhcpOption::BootfileName("config.kpxe".to_string()),
-        ];
+        let config = DHCPv4ServerConfig {
+            custom_options: vec![
+                CustomDhcpOption::TFTPServerName("global-tftp".to_string()),
+                CustomDhcpOption::BootfileName("config.kpxe".to_string()),
+            ],
+            ..DHCPv4ServerConfig::default()
+        };
         let mac = MacAddr::from_str("AA:BB:CC:DD:EE:FF").unwrap();
         let enrolled = EnrolledDevice {
             mac,

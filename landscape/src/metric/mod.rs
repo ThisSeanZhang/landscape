@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 
 use landscape_common::{
@@ -234,7 +234,7 @@ pub struct MetricService {
     inner: Arc<MetricServiceInner>,
 }
 
-fn ensure_metric_path(home_path: &PathBuf) -> PathBuf {
+fn ensure_metric_path(home_path: &Path) -> PathBuf {
     let metric_path = home_path.join(LANDSCAPE_METRIC_DIR_NAME);
     if !metric_path.exists() {
         if let Err(e) = std::fs::create_dir_all(&metric_path) {

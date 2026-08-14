@@ -15,7 +15,7 @@ unsafe impl plain::Plain for skb_scan_test_result {}
 
 unsafe impl plain::Plain for skb_icmp_test_result {}
 
-fn run_skb_scanner_icmp(payload: &mut Vec<u8>) -> Option<skb_icmp_test_result> {
+fn run_skb_scanner_icmp(payload: &mut [u8]) -> Option<skb_icmp_test_result> {
     let builder = TestSkbScannerSkelBuilder::default();
     let mut open_object = MaybeUninit::uninit();
     let open = builder.open(&mut open_object).unwrap();
@@ -36,7 +36,7 @@ fn run_skb_scanner_icmp(payload: &mut Vec<u8>) -> Option<skb_icmp_test_result> {
 
 const MAP_KEY: u32 = 0;
 
-fn run_skb_scanner(payload: &mut Vec<u8>) -> Option<skb_scan_test_result> {
+fn run_skb_scanner(payload: &mut [u8]) -> Option<skb_scan_test_result> {
     let builder = TestSkbScannerSkelBuilder::default();
     let mut open_object = MaybeUninit::uninit();
     let open = builder.open(&mut open_object).unwrap();

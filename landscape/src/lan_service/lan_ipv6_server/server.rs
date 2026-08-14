@@ -54,6 +54,7 @@ async fn handle_ra_tick(
 }
 
 /// Returns `false` when the ICMP recv channel is closed and the loop should break.
+#[allow(clippy::too_many_arguments)]
 async fn handle_icmp_msg(
     result: Option<(Vec<u8>, SocketAddr)>,
     iface_name: &str,
@@ -180,47 +181,6 @@ fn record_link_local_mac(
 
 fn is_usable_slaac_source(ip: Ipv6Addr) -> bool {
     !(ip.is_unspecified() || ip.is_loopback() || ip.is_multicast() || ip.is_unicast_link_local())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn record_link_local_mac_updates_cache_for_link_local_source() {
-        let cache = Arc::new(MacLinkMapCache::new());
-        let ifindex = 7;
-        let ll = "fe80::1234:5678:9abc:def0".parse().unwrap();
-        let mac = MacAddr::from([0x02, 0x00, 0x00, 0x12, 0x34, 0x56]);
-        let src = SocketAddr::new(IpAddr::V6(ll), 0);
-
-        assert_eq!(record_link_local_mac(&src, mac, &cache, ifindex), Some(ll));
-        assert_eq!(cache.lookup_mac_by_ll(ifindex, &ll), Some(mac));
-    }
-
-    #[test]
-    fn record_link_local_mac_ignores_non_link_local_source() {
-        let cache = Arc::new(MacLinkMapCache::new());
-        let ifindex = 7;
-        let global = "2001:db8::1".parse().unwrap();
-        let mac = MacAddr::from([0x02, 0x00, 0x00, 0x12, 0x34, 0x56]);
-        let src = SocketAddr::new(IpAddr::V6(global), 0);
-
-        assert_eq!(record_link_local_mac(&src, mac, &cache, ifindex), None);
-        assert_eq!(cache.lookup_mac_by_ll(ifindex, &global), None);
-    }
-
-    #[test]
-    fn slaac_touch_rejects_dad_and_link_local_sources() {
-        assert!(!is_usable_slaac_source(Ipv6Addr::UNSPECIFIED));
-        assert!(!is_usable_slaac_source("fe80::1".parse().unwrap()));
-    }
-
-    #[test]
-    fn slaac_touch_accepts_ula_and_global_sources() {
-        assert!(is_usable_slaac_source("fd00::1".parse().unwrap()));
-        assert!(is_usable_slaac_source("2001:db8::1".parse().unwrap()));
-    }
 }
 
 /// Returns `false` when the DHCP recv channel is closed and the loop should break.
@@ -354,6 +314,7 @@ async fn handle_dhcp_msg(
     true
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn handle_expire_tick(
     iface_name: &str,
     share_status: &Arc<Mutex<Ipv6ServerStatus>>,
@@ -423,6 +384,7 @@ async fn handle_expire_tick(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn start_ipv6_lan_server(
     ifindex: u32,
     iface_name: String,
@@ -845,4 +807,45 @@ fn gen_server_duid(mac: &MacAddr) -> Vec<u8> {
     duid.extend_from_slice(&[0x00, 0x01]);
     duid.extend_from_slice(&mac.octets());
     duid
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn record_link_local_mac_updates_cache_for_link_local_source() {
+        let cache = Arc::new(MacLinkMapCache::new());
+        let ifindex = 7;
+        let ll = "fe80::1234:5678:9abc:def0".parse().unwrap();
+        let mac = MacAddr::from([0x02, 0x00, 0x00, 0x12, 0x34, 0x56]);
+        let src = SocketAddr::new(IpAddr::V6(ll), 0);
+
+        assert_eq!(record_link_local_mac(&src, mac, &cache, ifindex), Some(ll));
+        assert_eq!(cache.lookup_mac_by_ll(ifindex, &ll), Some(mac));
+    }
+
+    #[test]
+    fn record_link_local_mac_ignores_non_link_local_source() {
+        let cache = Arc::new(MacLinkMapCache::new());
+        let ifindex = 7;
+        let global = "2001:db8::1".parse().unwrap();
+        let mac = MacAddr::from([0x02, 0x00, 0x00, 0x12, 0x34, 0x56]);
+        let src = SocketAddr::new(IpAddr::V6(global), 0);
+
+        assert_eq!(record_link_local_mac(&src, mac, &cache, ifindex), None);
+        assert_eq!(cache.lookup_mac_by_ll(ifindex, &global), None);
+    }
+
+    #[test]
+    fn slaac_touch_rejects_dad_and_link_local_sources() {
+        assert!(!is_usable_slaac_source(Ipv6Addr::UNSPECIFIED));
+        assert!(!is_usable_slaac_source("fe80::1".parse().unwrap()));
+    }
+
+    #[test]
+    fn slaac_touch_accepts_ula_and_global_sources() {
+        assert!(is_usable_slaac_source("fd00::1".parse().unwrap()));
+        assert!(is_usable_slaac_source("2001:db8::1".parse().unwrap()));
+    }
 }

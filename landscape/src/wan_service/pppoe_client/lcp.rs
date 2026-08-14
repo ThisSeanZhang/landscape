@@ -48,8 +48,8 @@ enum Phase1State {
 
 pub(crate) async fn run(
     config: &PPPoEClientConfig,
-    tx: &mut mpsc::Sender<Box<Vec<u8>>>,
-    rx: &mut mpsc::Receiver<Box<Vec<u8>>>,
+    tx: &mut mpsc::Sender<Vec<u8>>,
+    rx: &mut mpsc::Receiver<Vec<u8>>,
     status_rx: &WatchService,
 ) -> PppoeResult<LcpPhaseResult> {
     let host_uniq = process::id().swap_bytes();
@@ -273,7 +273,7 @@ async fn handle_lcp_packet(
     state: &mut Phase1State,
     config: &PPPoEClientConfig,
     generated_magic: u32,
-    tx: &mut mpsc::Sender<Box<Vec<u8>>>,
+    tx: &mut mpsc::Sender<Vec<u8>>,
 ) -> Result<Option<LcpPhaseResult>, PppoeError> {
     let Phase1State::LcpNegotiating {
         ref server_mac,
@@ -446,13 +446,13 @@ pub(crate) fn parse_lcp_mru_magic_options(payload: &[u8]) -> (Option<u16>, Optio
 async fn send_padi(
     config: &PPPoEClientConfig,
     host_uniq: u32,
-    tx: &mut mpsc::Sender<Box<Vec<u8>>>,
+    tx: &mut mpsc::Sender<Vec<u8>>,
 ) -> Result<(), PppoeError> {
     tracing::info!(iface = %config.iface_name, host_uniq, "sending PADI");
     let l2 = super::build_l2_header(&MacAddr::broadcast().octets(), config.iface_mac, ETH_P_PPOED);
     let frame = PPPoEFrame::get_discover_with_host_uniq(host_uniq);
     let packet: Vec<u8> = [l2.to_vec(), frame.convert_to_payload()].concat();
-    tx.send(Box::new(packet)).await.map_err(|_| PppoeError::ChannelClosed)?;
+    tx.send(packet).await.map_err(|_| PppoeError::ChannelClosed)?;
     Ok(())
 }
 
@@ -461,13 +461,13 @@ async fn send_padr(
     host_uniq: u32,
     server_mac: &[u8],
     ac_cookie: Option<Vec<u8>>,
-    tx: &mut mpsc::Sender<Box<Vec<u8>>>,
+    tx: &mut mpsc::Sender<Vec<u8>>,
 ) -> Result<(), PppoeError> {
     tracing::info!(iface = %config.iface_name, host_uniq, "sending PADR");
     let l2 = super::build_l2_header(server_mac, config.iface_mac, ETH_P_PPOED);
     let frame = PPPoEFrame::get_request(host_uniq, ac_cookie);
     let packet: Vec<u8> = [l2.to_vec(), frame.convert_to_payload()].concat();
-    tx.send(Box::new(packet)).await.map_err(|_| PppoeError::ChannelClosed)?;
+    tx.send(packet).await.map_err(|_| PppoeError::ChannelClosed)?;
     Ok(())
 }
 
@@ -478,11 +478,11 @@ async fn send_lcp_config_request(
     mru: u16,
     magic: u32,
     server_mac: &[u8],
-    tx: &mut mpsc::Sender<Box<Vec<u8>>>,
+    tx: &mut mpsc::Sender<Vec<u8>>,
 ) -> Result<(), PppoeError> {
     let l2 = super::build_l2_header(server_mac, config.iface_mac, ETH_P_PPOES);
     let frame = PPPoEFrame::get_ppp_mru_config_request(session_id, req_id, mru, magic);
     let packet: Vec<u8> = [l2.to_vec(), frame.convert_to_payload()].concat();
-    tx.send(Box::new(packet)).await.map_err(|_| PppoeError::ChannelClosed)?;
+    tx.send(packet).await.map_err(|_| PppoeError::ChannelClosed)?;
     Ok(())
 }

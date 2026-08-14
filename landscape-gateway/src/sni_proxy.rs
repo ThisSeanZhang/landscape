@@ -384,11 +384,12 @@ mod tests {
         hello.extend_from_slice(host_bytes);
 
         let hello_len = hello.len() as u32;
-        let mut handshake = Vec::new();
-        handshake.push(0x01);
-        handshake.push(((hello_len >> 16) & 0xff) as u8);
-        handshake.push(((hello_len >> 8) & 0xff) as u8);
-        handshake.push((hello_len & 0xff) as u8);
+        let mut handshake = vec![
+            0x01,
+            ((hello_len >> 16) & 0xff) as u8,
+            ((hello_len >> 8) & 0xff) as u8,
+            (hello_len & 0xff) as u8,
+        ];
         handshake.extend_from_slice(&hello);
 
         let record_len = handshake.len() as u16;

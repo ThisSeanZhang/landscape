@@ -90,9 +90,7 @@ pub fn filter_message_status(
                             // Requires root; skip via require_root() if uid != 0.
                         }
 
-                        let Some(ifacename) = ifacename else {
-                            return None;
-                        };
+                        let ifacename = ifacename?;
 
                         let mut result = IfaceObserverAction::Down(ifacename.clone());
                         if link_message

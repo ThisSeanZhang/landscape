@@ -124,7 +124,7 @@ fn assert_dyn_map_entry(
     expected_port: u16,
 ) {
     let val = lookup_nat4_mapping(map, gress, l4proto, from_port, from_addr)
-        .expect(&format!("dyn map entry should exist: gress={gress} l4={l4proto} port={from_port} addr={from_addr:?}"));
+        .unwrap_or_else(|| panic!("dyn map entry should exist: gress={gress} l4={l4proto} port={from_port} addr={from_addr:?}"));
     let addr = [val[8], val[9], val[10], val[11]];
     let port = u16::from_be_bytes([val[16], val[17]]);
     assert_eq!(addr, expected_addr, "nat addr mismatch");
@@ -141,7 +141,7 @@ fn assert_static_map_entry(
     expected_port: u16,
 ) {
     let val = lookup_nat4_mapping(map, gress, l4proto, from_port, from_addr)
-        .expect(&format!("static map entry should exist: gress={gress} l4={l4proto} port={from_port} addr={from_addr:?}"));
+        .unwrap_or_else(|| panic!("static map entry should exist: gress={gress} l4={l4proto} port={from_port} addr={from_addr:?}"));
     let addr = [val[0], val[1], val[2], val[3]];
     let port = u16::from_be_bytes([val[4], val[5]]);
     assert_eq!(addr, expected_addr, "nat addr mismatch");
@@ -170,7 +170,7 @@ fn assert_egress_dyn_map_entry(
     expected_port: u16,
 ) {
     let val = lookup_nat4_mapping(map, gress, l4proto, from_port, from_addr)
-        .expect(&format!("egress dyn map entry should exist: gress={gress} l4={l4proto} port={from_port} addr={from_addr:?}"));
+        .unwrap_or_else(|| panic!("egress dyn map entry should exist: gress={gress} l4={l4proto} port={from_port} addr={from_addr:?}"));
     let addr = [val[0], val[1], val[2], val[3]];
     let port = u16::from_be_bytes([val[4], val[5]]);
     assert_eq!(addr, expected_addr, "nat addr mismatch");
@@ -738,6 +738,7 @@ fn xdp_nat_firewall_pipeline() {
     let _ = Command::new("ip").args(["link", "del", &nat_h]).output();
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build_ipv4_fragment(
     src_ip: [u8; 4],
     dst_ip: [u8; 4],
@@ -1094,6 +1095,7 @@ fn write_egress_dyn_mapping_v4(
     map.update(&k, &v, MapFlags::ANY).unwrap();
 }
 
+#[allow(clippy::too_many_arguments)]
 fn write_frag_cache_entry(
     map: &libbpf_rs::MapMut,
     l3proto: u8,
@@ -1180,7 +1182,7 @@ fn xdp_nat_fragment_ingress() {
         12345,
     );
 
-    let frag_id = (pid & 0xffff) as u32;
+    let frag_id = pid & 0xffff;
 
     let mut saddr6 = [0u8; 16];
     saddr6[12..16].copy_from_slice(&[93, 184, 216, 34]);
@@ -1239,6 +1241,7 @@ fn build_udp_pkt(src_ip: [u8; 4], dst_ip: [u8; 4], src_port: u16, dst_port: u16)
     pkt
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build_icmp_error_pkt(
     src_ip: [u8; 4],
     dst_ip: [u8; 4],
