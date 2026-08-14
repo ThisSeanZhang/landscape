@@ -77,6 +77,7 @@ async function enter() {
       answer_mode: "static_ips",
       result_info: [],
       apply_flows: [],
+      block_metadata_queries: true,
     };
   }
   origin_rule_json.value = JSON.stringify(rule.value);
@@ -181,15 +182,39 @@ async function append_import_rules() {
       :model="rule"
       :cols="5"
     >
-      <n-grid :cols="2">
-        <!-- <n-form-item-gi label="优先级" :span="2">
+      <n-grid :cols="4" :x-gap="12">
+        <!-- <n-form-item-gi label="优先级" :span="4">
           <n-input-number v-model:value="rule.index" clearable />
         </n-form-item-gi> -->
-        <n-form-item-gi :span="2" :label="t('dns.redirect_edit.remark')">
+        <n-form-item-gi :span="3" :label="t('dns.redirect_edit.remark')">
           <n-input v-model:value="rule.remark" />
         </n-form-item-gi>
 
-        <n-form-item-gi :span="2" :label="t('dns.redirect_edit.apply_flows')">
+        <n-form-item-gi :span="1">
+          <template #label>
+            <Notice>
+              {{ t("dns.redirect_edit.block_metadata_queries") }}
+              <template #msg>
+                {{ t("dns.redirect_edit.block_metadata_queries_desc_1") }}
+                <br />
+                {{ t("dns.redirect_edit.block_metadata_queries_desc_2") }}
+                <br />
+                {{ t("dns.redirect_edit.block_metadata_queries_desc_3") }}
+              </template>
+            </Notice>
+          </template>
+
+          <n-switch v-model:value="rule.block_metadata_queries">
+            <template #checked>
+              {{ t("dns.redirect_edit.block_metadata_queries_on") }}
+            </template>
+            <template #unchecked>
+              {{ t("dns.redirect_edit.block_metadata_queries_off") }}
+            </template>
+          </n-switch>
+        </n-form-item-gi>
+
+        <n-form-item-gi :span="4" :label="t('dns.redirect_edit.apply_flows')">
           <n-select
             multiple
             v-model:value="rule.apply_flows"
@@ -203,7 +228,7 @@ async function append_import_rules() {
           />
         </n-form-item-gi>
 
-        <n-form-item-gi :span="2" :label="t('dns.redirect_edit.answer_mode')">
+        <n-form-item-gi :span="4" :label="t('dns.redirect_edit.answer_mode')">
           <n-select
             v-model:value="rule.answer_mode"
             :options="answerModeOptions"
@@ -211,7 +236,7 @@ async function append_import_rules() {
         </n-form-item-gi>
 
         <n-form-item-gi
-          :span="2"
+          :span="4"
           :label="t('dns.redirect_edit.redirect_result')"
           path="result_info"
         >
@@ -244,7 +269,7 @@ async function append_import_rules() {
         </n-form-item-gi>
 
         <n-form-item-gi
-          :span="2"
+          :span="4"
           :label="t('dns.redirect_edit.match_rules')"
           path="match_rules"
         >

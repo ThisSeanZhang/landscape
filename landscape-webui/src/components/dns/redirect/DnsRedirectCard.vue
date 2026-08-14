@@ -20,6 +20,11 @@ const answerModeText = computed(() =>
     ? t("dns.redirect_card.answer_mode_all_local_ips")
     : t("dns.redirect_card.answer_mode_static_ips"),
 );
+const blockMetadataQueriesText = computed(() =>
+  props.rule.block_metadata_queries !== false
+    ? t("dns.redirect_card.block_metadata_queries_on")
+    : t("dns.redirect_card.block_metadata_queries_off"),
+);
 
 async function del() {
   if (props.rule.id) {
@@ -57,6 +62,12 @@ async function del() {
 
       <n-descriptions-item :label="t('dns.redirect_card.answer_mode')">
         {{ answerModeText }}
+      </n-descriptions-item>
+
+      <n-descriptions-item
+        :label="t('dns.redirect_card.block_metadata_queries')"
+      >
+        {{ blockMetadataQueriesText }}
       </n-descriptions-item>
 
       <n-descriptions-item :label="t('dns.redirect_card.response_info')">

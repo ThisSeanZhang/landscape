@@ -82,8 +82,9 @@ pub struct DNSRedirectRule {
 
     /// When true (default), metadata queries (NS/SOA/TXT/MX/CAA) matching this
     /// rule are intercepted too. Set to false to pass them through to the
-    /// upstream resolver, e.g. for certificate issuance flows that need NS
-    /// records.
+    /// upstream resolver, e.g. when certificate issuance (ACME dns-01
+    /// validation) runs on the LAN and needs NS records. The router's own
+    /// certificate issuance is not affected.
     #[serde(default = "default_block_metadata_queries")]
     #[cfg_attr(feature = "openapi", schema(required = false))]
     pub block_metadata_queries: bool,

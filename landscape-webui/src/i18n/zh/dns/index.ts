@@ -38,6 +38,14 @@ export default {
     answer_mode: "回答模式",
     answer_mode_static_ips: "静态 IP 列表",
     answer_mode_all_local_ips: "全部本机 IP",
+    block_metadata_queries: "禁止元数据",
+    block_metadata_queries_desc_1:
+      "开启（默认）后，匹配该规则的 NS/SOA/TXT/MX/CAA 查询也会被拦截。",
+    block_metadata_queries_desc_2:
+      "关闭后放行到上游，例如内网自建的证书签发（ACME dns-01 验证）需要 NS 记录时。",
+    block_metadata_queries_desc_3: "路由器自身的证书签发不受此影响。",
+    block_metadata_queries_on: "拦截",
+    block_metadata_queries_off: "放行",
     redirect_result: "返回的重定向结果",
     all_local_ips_desc:
       "运行时返回当前 route 层可见的全部本机 IP。A 返回 IPv4，AAAA 返回 IPv6，客户端自行选择。",
@@ -136,6 +144,9 @@ export default {
     answer_mode: "回答模式",
     answer_mode_static_ips: "静态 IP 列表",
     answer_mode_all_local_ips: "全部本机 IP",
+    block_metadata_queries: "元数据查询",
+    block_metadata_queries_on: "已拦截",
+    block_metadata_queries_off: "已放行",
     response_info: "回应信息",
     response_all_local_ips: "运行时返回当前全部本机 IP",
     response_block: "空结果，配置的域名将被拦截",

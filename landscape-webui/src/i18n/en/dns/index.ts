@@ -39,6 +39,15 @@ export default {
     answer_mode: "Answer mode",
     answer_mode_static_ips: "Static IP list",
     answer_mode_all_local_ips: "All local IPs",
+    block_metadata_queries: "Deny metadata",
+    block_metadata_queries_desc_1:
+      "When enabled (default), NS/SOA/TXT/MX/CAA queries matching this rule are intercepted too.",
+    block_metadata_queries_desc_2:
+      "Disable to pass them through to the upstream resolver, e.g. when certificate issuance (ACME dns-01 validation) runs on the LAN and needs NS records.",
+    block_metadata_queries_desc_3:
+      "The router's own certificate issuance is not affected.",
+    block_metadata_queries_on: "Intercept",
+    block_metadata_queries_off: "Pass through",
     redirect_result: "Redirected result",
     all_local_ips_desc:
       "Return all current local IPs visible to the route layer at runtime. A returns IPv4, AAAA returns IPv6, and the client chooses.",
@@ -142,6 +151,9 @@ export default {
     answer_mode: "Answer mode",
     answer_mode_static_ips: "Static IP list",
     answer_mode_all_local_ips: "All local IPs",
+    block_metadata_queries: "Metadata queries",
+    block_metadata_queries_on: "Intercepted",
+    block_metadata_queries_off: "Passed through",
     response_info: "Response Info",
     response_all_local_ips: "Return all current local IPs at runtime",
     response_block: "Empty result, treated as block",
