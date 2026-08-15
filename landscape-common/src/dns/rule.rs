@@ -17,6 +17,9 @@ pub enum DnsRuleError {
     #[error("DNS rule '{0}' not found")]
     #[api_error(id = "dns_rule.not_found", status = 404)]
     NotFound(ConfigId),
+    #[error("DNS rule '{0}' cannot be moved to another flow; delete it and create a new rule in the target flow instead")]
+    #[api_error(id = "dns_rule.cannot_change_flow", status = 400)]
+    CannotChangeFlow(ConfigId),
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]

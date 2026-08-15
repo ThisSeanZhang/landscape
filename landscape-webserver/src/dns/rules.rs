@@ -21,6 +21,18 @@ pub fn get_dns_rule_config_paths() -> OpenApiRouter<LandscapeApp> {
         .routes(routes!(get_flow_dns_rules))
 }
 
+async fn ensure_flow_id_unchanged(
+    state: &LandscapeApp,
+    config: &DNSRuleConfig,
+) -> Result<(), DnsRuleError> {
+    if let Some(existing) = state.dns_rule_service.find_by_id(config.id).await {
+        if existing.flow_id != config.flow_id {
+            return Err(DnsRuleError::CannotChangeFlow(config.id));
+        }
+    }
+    Ok(())
+}
+
 #[utoipa::path(
     get,
     path = "/rules",
@@ -83,6 +95,9 @@ async fn add_many_dns_rules(
     State(state): State<LandscapeApp>,
     JsonBody(dns_rules): JsonBody<Vec<DNSRuleConfig>>,
 ) -> LandscapeApiResult<()> {
+    for dns_rule in &dns_rules {
+        ensure_flow_id_unchanged(&state, dns_rule).await?;
+    }
     state.dns_rule_service.checked_set_list(dns_rules).await?;
     LandscapeApiResp::success(())
 }
@@ -98,6 +113,7 @@ async fn add_dns_rules(
     State(state): State<LandscapeApp>,
     JsonBody(dns_rule): JsonBody<DNSRuleConfig>,
 ) -> LandscapeApiResult<DNSRuleConfig> {
+    ensure_flow_id_unchanged(&state, &dns_rule).await?;
     let result = state.dns_rule_service.checked_set(dns_rule).await?;
     LandscapeApiResp::success(result)
 }

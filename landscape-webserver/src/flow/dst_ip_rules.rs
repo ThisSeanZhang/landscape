@@ -20,6 +20,18 @@ pub fn get_dst_ip_rule_config_paths() -> OpenApiRouter<LandscapeApp> {
         .routes(routes!(get_flow_dst_ip_rules))
 }
 
+async fn ensure_flow_id_unchanged(
+    state: &LandscapeApp,
+    config: &WanIpRuleConfig,
+) -> Result<(), DstIpRuleError> {
+    if let Some(existing) = state.dst_ip_rule_service.find_by_id(config.id).await {
+        if existing.flow_id != config.flow_id {
+            return Err(DstIpRuleError::CannotChangeFlow(config.id));
+        }
+    }
+    Ok(())
+}
+
 #[utoipa::path(
     get,
     path = "/dst_ip_rules",
@@ -84,6 +96,7 @@ async fn modify_dst_ip_rules(
     Path(_id): Path<ConfigId>,
     JsonBody(rule): JsonBody<WanIpRuleConfig>,
 ) -> LandscapeApiResult<WanIpRuleConfig> {
+    ensure_flow_id_unchanged(&state, &rule).await?;
     let result = state.dst_ip_rule_service.checked_set(rule).await?;
     LandscapeApiResp::success(result)
 }
@@ -99,6 +112,7 @@ async fn add_dst_ip_rules(
     State(state): State<LandscapeApp>,
     JsonBody(rule): JsonBody<WanIpRuleConfig>,
 ) -> LandscapeApiResult<WanIpRuleConfig> {
+    ensure_flow_id_unchanged(&state, &rule).await?;
     let result = state.dst_ip_rule_service.checked_set(rule).await?;
     LandscapeApiResp::success(result)
 }
@@ -114,6 +128,9 @@ async fn add_many_dst_ip_rules(
     State(state): State<LandscapeApp>,
     JsonBody(rules): JsonBody<Vec<WanIpRuleConfig>>,
 ) -> LandscapeApiResult<()> {
+    for rule in &rules {
+        ensure_flow_id_unchanged(&state, rule).await?;
+    }
     state.dst_ip_rule_service.checked_set_list(rules).await?;
     LandscapeApiResp::success(())
 }

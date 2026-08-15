@@ -16,6 +16,9 @@ pub enum DstIpRuleError {
     #[error("Destination IP rule '{0}' not found")]
     #[api_error(id = "dst_ip_rule.not_found", status = 404)]
     NotFound(ConfigId),
+    #[error("Destination IP rule '{0}' cannot be moved to another flow; delete it and create a new rule in the target flow instead")]
+    #[api_error(id = "dst_ip_rule.cannot_change_flow", status = 400)]
+    CannotChangeFlow(ConfigId),
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
