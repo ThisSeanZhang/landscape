@@ -5,25 +5,20 @@ use hickory_resolver::{
     Resolver,
 };
 
-use landscape_common::{
-    dns::{
-        config::{DnsBindConfig, DnsUpstreamConfig},
-        upstream::DnsUpstreamMode,
-    },
-    flow::mark::FlowMark,
-};
+use landscape_common::dns::config::DnsUpstreamConfig;
+use landscape_common::dns::upstream::DnsUpstreamMode;
 
 use crate::connection::provider::{MarkConnectionProvider, MarkRuntimeProvider};
 
+pub(crate) mod pool;
 pub(crate) mod provider;
 
 pub(crate) type LandscapeMarkDNSResolver = Resolver<MarkConnectionProvider>;
 
 pub(crate) fn create_resolver(
     flow_id: u32,
-    mark: FlowMark,
-    bind_config: DnsBindConfig,
-    DnsUpstreamConfig { mode, ips, port, .. }: DnsUpstreamConfig,
+    mark_value: u32,
+    DnsUpstreamConfig { mode, ips, port, bind_config, .. }: DnsUpstreamConfig,
 ) -> Option<LandscapeMarkDNSResolver> {
     let name_server: Vec<NameServerConfig> = match mode {
         DnsUpstreamMode::Plaintext => ips
@@ -76,8 +71,6 @@ pub(crate) fn create_resolver(
     };
 
     let resolve = ResolverConfig::from_parts(None, vec![], name_server);
-
-    let mark_value = mark.get_dns_mark(flow_id);
 
     let mut options = ResolverOpts::default();
     options.cache_size = 0;

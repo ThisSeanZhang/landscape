@@ -9,7 +9,7 @@ use hickory_resolver::net::runtime::{
     iocompat::AsyncIoTokioAsStd, QuicSocketBinder, RuntimeProvider, TokioHandle, TokioTime,
 };
 
-use landscape_common::dns::config::DnsBindConfig;
+use landscape_common::dns::bind::DnsBindConfig;
 use libc::{setsockopt, SOL_SOCKET, SO_MARK, SO_RCVMARK};
 use std::time::Duration;
 use tokio::net::UdpSocket as TokioUdpSocket;

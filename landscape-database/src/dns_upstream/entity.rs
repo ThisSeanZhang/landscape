@@ -27,6 +27,9 @@ pub struct Model {
 
     pub enable_ip_validation: Option<bool>,
 
+    /// Source-address binding for connections to this upstream
+    pub bind_config: DBJson,
+
     pub update_at: DBTimestamp,
 }
 
@@ -57,6 +60,7 @@ impl From<Model> for DnsUpstreamConfig {
             port: entity.port,
             update_at: entity.update_at,
             enable_ip_validation: entity.enable_ip_validation,
+            bind_config: serde_json::from_value(entity.bind_config).unwrap(),
         }
     }
 }
@@ -78,6 +82,7 @@ impl UpdateActiveModel<ActiveModel> for DnsUpstreamConfig {
         active.ips = Set(serde_json::to_value(self.ips).unwrap());
         active.port = Set(self.port);
         active.enable_ip_validation = Set(self.enable_ip_validation);
+        active.bind_config = Set(serde_json::to_value(self.bind_config).unwrap());
         active.update_at = Set(self.update_at);
     }
 }

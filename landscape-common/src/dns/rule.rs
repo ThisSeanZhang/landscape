@@ -4,7 +4,7 @@ use uuid::Uuid;
 
 use crate::config::ConfigId;
 use crate::database::repository::LandscapeDBStore;
-use crate::dns::config::{DnsBindConfig, DnsUpstreamConfig};
+use crate::dns::config::DnsUpstreamConfig;
 use crate::utils::id::gen_database_uuid;
 use crate::utils::time::get_f64_timestamp;
 use crate::{flow::mark::FlowMark, store::storev2::LandscapeStore};
@@ -34,9 +34,6 @@ pub struct DNSRuleConfig {
     pub upstream_id: Uuid,
     #[serde(default)]
     #[cfg_attr(feature = "openapi", schema(required = true))]
-    pub bind_config: DnsBindConfig,
-    #[serde(default)]
-    #[cfg_attr(feature = "openapi", schema(required = true))]
     pub mark: FlowMark,
     #[serde(default)]
     #[cfg_attr(feature = "openapi", schema(required = true))]
@@ -61,7 +58,6 @@ pub struct DNSRuntimeRule {
     pub enable: bool,
     pub filter: FilterResult,
     pub resolve_mode: DnsUpstreamConfig,
-    pub bind_config: DnsBindConfig,
     pub mark: FlowMark,
     pub source: Vec<DomainConfig>,
     pub flow_id: u32,

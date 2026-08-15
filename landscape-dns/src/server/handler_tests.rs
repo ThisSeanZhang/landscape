@@ -35,10 +35,12 @@ impl DnsRequestHandler {
     fn test_engines_from_legacy(init: ChainDnsServerInitInfo) -> (RedirectEngine, ResolveEngine) {
         use std::collections::BTreeMap;
 
+        use crate::connection::pool::ResolvePool;
         use crate::server::{
             matcher::RuntimeRuleMatcher,
             rule::{DNSRedirectRuntime, DNSResolveRuntime, RedirectRuleParams, ResolveRuleParams},
         };
+        let pool = Arc::new(ResolvePool::default());
 
         let redirects = init
             .redirect_rules
@@ -65,11 +67,11 @@ impl DnsRequestHandler {
                     rule_id: rule.id,
                     order: rule.index,
                     filter: rule.filter,
-                    bind_config: rule.bind_config,
                     mark: rule.mark,
                     upstream: rule.resolve_mode,
                     matcher: RuntimeRuleMatcher::new(rule.source, vec![], vec![], match_all),
                     flow_id: rule.flow_id,
+                    pool: pool.clone(),
                 })?;
                 Some((order, runtime))
             })

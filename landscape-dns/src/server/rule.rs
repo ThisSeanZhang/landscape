@@ -1,4 +1,5 @@
 use std::net::IpAddr;
+use std::sync::Arc;
 
 use hickory_proto::rr::{
     rdata::{A, AAAA},
@@ -9,14 +10,11 @@ use uuid::Uuid;
 use landscape_common::dns::redirect::DnsRedirectAnswerMode;
 use landscape_common::flow::mark::FlowMark;
 use landscape_common::{
-    dns::{
-        config::{DnsBindConfig, DnsUpstreamConfig},
-        rule::FilterResult,
-    },
+    dns::{config::DnsUpstreamConfig, rule::FilterResult},
     flow::DnsRuntimeMarkInfo,
 };
 
-use crate::connection::LandscapeMarkDNSResolver;
+use crate::connection::{pool::ResolvePool, LandscapeMarkDNSResolver};
 use crate::domain::ParsedDomain;
 use crate::server::matcher::RuntimeRuleMatcher;
 
@@ -119,11 +117,11 @@ pub struct ResolveRuleParams {
     pub rule_id: Uuid,
     pub order: u32,
     pub filter: FilterResult,
-    pub bind_config: DnsBindConfig,
     pub mark: FlowMark,
     pub upstream: DnsUpstreamConfig,
     pub matcher: RuntimeRuleMatcher,
     pub flow_id: u32,
+    pub pool: Arc<ResolvePool>,
 }
 
 #[derive(Debug)]
@@ -134,7 +132,7 @@ pub struct DNSResolveRuntime {
     filter: FilterResult,
     flow_id: u32,
     mark: DnsRuntimeMarkInfo,
-    resolver: LandscapeMarkDNSResolver,
+    resolver: Arc<LandscapeMarkDNSResolver>,
 
     enable_ip_validation: bool,
 }
@@ -145,19 +143,18 @@ impl DNSResolveRuntime {
             rule_id,
             order,
             filter,
-            bind_config,
             mark: mark_config,
             upstream,
             matcher,
             flow_id,
+            pool,
         } = params;
         let span = tracing::info_span!("dns_rule", flow_id = flow_id);
         let _ = span.enter();
 
         let enable_ip_validation = upstream.enable_ip_validation.unwrap_or(false);
-        let Some(resolver) =
-            crate::connection::create_resolver(flow_id, mark_config, bind_config, upstream)
-        else {
+        let dns_mark = mark_config.get_dns_mark(flow_id);
+        let Some(resolver) = pool.get_or_create(flow_id, dns_mark, &upstream) else {
             tracing::warn!(rule_id = %rule_id, flow_id = flow_id, "skip DNS rule: failed to build resolver");
             return None;
         };
@@ -177,6 +174,11 @@ impl DNSResolveRuntime {
 
     pub fn mark(&self) -> &DnsRuntimeMarkInfo {
         &self.mark
+    }
+
+    #[cfg(test)]
+    pub fn shared_resolver(&self) -> &Arc<LandscapeMarkDNSResolver> {
+        &self.resolver
     }
 
     pub fn filter_mode(&self) -> FilterResult {

@@ -1,8 +1,9 @@
-use crate::dns::config::{DnsBindConfig, DnsUpstreamConfig};
+use crate::dns::config::DnsUpstreamConfig;
 use crate::dns::rule::{default_flow_id, DNSRuleConfig, FilterResult};
 use crate::utils::id::gen_database_uuid;
 use crate::utils::time::get_f64_timestamp;
 
+pub mod bind;
 pub mod check;
 pub mod config;
 pub mod dnr;
@@ -29,7 +30,6 @@ pub fn gen_default_dns_rule_and_upstream() -> (DNSRuleConfig, DnsUpstreamConfig)
         flow_id: default_flow_id(),
         update_at: get_f64_timestamp(),
         upstream_id: upstream.id,
-        bind_config: DnsBindConfig::default(),
     };
     (rule, upstream)
 }

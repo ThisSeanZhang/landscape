@@ -169,6 +169,9 @@ impl LandscapeDnsService {
                     }
                     DnsEvent::UpstreamsChanged { upstream_ids } => {
                         let upstream_ids = upstream_ids.into_iter().collect::<HashSet<_>>();
+                        // Unconditionally drop pooled resolvers for the changed
+                        // upstreams so the refresh below rebuilds them.
+                        dns_service_clone.matcher_builder.invalidate_upstreams(&upstream_ids);
                         let flow_ids = dns_service_clone
                             .collect_dependent_flows(|deps| {
                                 deps.upstream_ids

@@ -1,8 +1,9 @@
 use serde::{Deserialize, Serialize};
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use std::net::{IpAddr, Ipv4Addr};
 use uuid::Uuid;
 
 use crate::database::repository::LandscapeDBStore;
+use crate::dns::bind::DnsBindConfig;
 use crate::dns::upstream::DnsUpstreamMode;
 use crate::utils::id::gen_database_uuid;
 use crate::utils::time::get_f64_timestamp;
@@ -27,6 +28,11 @@ pub struct DnsUpstreamConfig {
     #[serde(default)]
     #[cfg_attr(feature = "openapi", schema(required = true, nullable = true))]
     pub enable_ip_validation: Option<bool>,
+
+    /// Source-address binding for connections to this upstream (optional).
+    #[serde(default)]
+    #[cfg_attr(feature = "openapi", schema(required = false))]
+    pub bind_config: DnsBindConfig,
 
     #[serde(default = "get_f64_timestamp")]
     #[cfg_attr(feature = "openapi", schema(required = false))]
@@ -54,20 +60,8 @@ impl Default for DnsUpstreamConfig {
             ips: vec![IpAddr::V4(Ipv4Addr::new(1, 0, 0, 1))],
             enable_ip_validation: None,
             port: Some(53),
+            bind_config: DnsBindConfig::default(),
             update_at: get_f64_timestamp(),
         }
     }
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Eq)]
-#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
-pub struct DnsBindConfig {
-    /// 绑定地址 v4 (可选)
-    #[serde(default)]
-    #[cfg_attr(feature = "openapi", schema(required = false, nullable = false, value_type = String))]
-    pub bind_addr4: Option<Ipv4Addr>,
-    /// 绑定地址 v6 (可选)
-    #[serde(default)]
-    #[cfg_attr(feature = "openapi", schema(required = false, nullable = false, value_type = String))]
-    pub bind_addr6: Option<Ipv6Addr>,
 }

@@ -42,5 +42,7 @@ pub enum DNSUpstreamConfigs {
     Port,
     /// Append at 0.8.0
     EnableIpValidation,
+    /// Append at 0.8.x: source-address binding moved here from the rule config
+    BindConfig,
     UpdateAt,
 }

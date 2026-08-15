@@ -96,20 +96,6 @@ async function saveRule() {
     return;
   }
 
-  if (
-    typeof rule.value.bind_config.bind_addr4 === "string" &&
-    rule.value.bind_config.bind_addr4.trim() === ""
-  ) {
-    rule.value.bind_config.bind_addr4 = undefined;
-  }
-
-  if (
-    typeof rule.value.bind_config.bind_addr6 === "string" &&
-    rule.value.bind_config.bind_addr6.trim() === ""
-  ) {
-    rule.value.bind_config.bind_addr6 = undefined;
-  }
-
   try {
     commit_spin.value = true;
     await addDnsRules(rule.value);
@@ -230,18 +216,6 @@ function add_by_quick_btn(match_type: DomainMatchTypeEnum | undefined) {
           <SelectUpstream v-model:upstream_id="rule.upstream_id">
           </SelectUpstream>
         </n-form-item-gi>
-        <!-- <n-form-item-gi :span="2" label="绑定本地 IPv4 (可选)">
-          <n-input
-            v-model:value="rule.bind_config.bind_addr4"
-            clearable
-          ></n-input>
-        </n-form-item-gi>
-        <n-form-item-gi :span="2" label="绑定本地 IPv6 (可选)">
-          <n-input
-            v-model:value="rule.bind_config.bind_addr6"
-            clearable
-          ></n-input>
-        </n-form-item-gi> -->
       </n-grid>
       <n-form-item :show-feedback="false">
         <template #label>

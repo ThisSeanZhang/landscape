@@ -15,7 +15,9 @@ use landscape_common::{
     },
 };
 use tokio::sync::Mutex;
+use uuid::Uuid;
 
+use crate::connection::pool::ResolvePool;
 use crate::server::{
     matcher::{DomainMatcher, RuntimeRuleMatcher},
     redirect_engine::RedirectEngine,
@@ -33,6 +35,7 @@ struct GeoMatcherCacheKey {
 pub struct MatcherBuilder {
     source: Arc<dyn GeoMatcherSource>,
     geo_matchers: Arc<Mutex<HashMap<GeoMatcherCacheKey, Arc<DomainMatcher>>>>,
+    resolvers: Arc<ResolvePool>,
 }
 
 impl MatcherBuilder {
@@ -40,6 +43,7 @@ impl MatcherBuilder {
         Self {
             source,
             geo_matchers: Arc::new(Mutex::new(HashMap::new())),
+            resolvers: Arc::new(ResolvePool::default()),
         }
     }
 
@@ -114,11 +118,11 @@ impl MatcherBuilder {
                 rule_id: rule.id,
                 order: rule.index,
                 filter: rule.filter,
-                bind_config: rule.bind_config,
                 mark: rule.mark,
                 upstream: upstream.clone(),
                 matcher,
                 flow_id,
+                pool: self.resolvers.clone(),
             }) else {
                 continue;
             };
@@ -136,6 +140,13 @@ impl MatcherBuilder {
             }
             None => matchers.clear(),
         }
+    }
+
+    /// Drops every pooled resolver for the given upstream ids so the next
+    /// flow refresh rebuilds them unconditionally. Called on
+    /// `UpstreamsChanged` before the dependent flows are refreshed.
+    pub fn invalidate_upstreams(&self, upstream_ids: &HashSet<Uuid>) {
+        self.resolvers.invalidate(upstream_ids);
     }
 
     async fn build_rule_matcher(
@@ -254,11 +265,13 @@ mod tests {
             redirect::{DNSRedirectRule, DnsRedirectAnswerMode},
             rule::{DNSRuleConfig, DomainConfig, DomainMatchType, RuleSource},
         },
+        flow::mark::FlowMark,
     };
     use std::net::IpAddr;
 
     use super::MatcherBuilder;
     use crate::domain::ParsedDomain;
+    use crate::server::resolve_engine::ResolveEngine;
     use hickory_proto::rr::RecordType;
 
     fn pd(name: &str) -> ParsedDomain {
@@ -373,7 +386,6 @@ mod tests {
             enable: true,
             filter: Default::default(),
             upstream_id: upstream.id,
-            bind_config: Default::default(),
             mark: Default::default(),
             source: vec![
                 RuleSource::GeoKey(missing_a.clone()),
@@ -416,7 +428,6 @@ mod tests {
             enable: true,
             filter: Default::default(),
             upstream_id,
-            bind_config: Default::default(),
             mark: Default::default(),
             source,
             flow_id: 7,
@@ -608,5 +619,243 @@ mod tests {
         assert!(resolve_engine.find_match(&pd("manual.example")).is_some());
         assert!(resolve_engine.find_match(&pd("all.example")).is_none());
         assert!(dependencies.geo_keys.contains(&geo_key(None).get_file_cache_key()));
+    }
+
+    fn direct_rule(index: u32, source: Vec<RuleSource>, upstream_id: uuid::Uuid) -> DNSRuleConfig {
+        DNSRuleConfig {
+            id: uuid::Uuid::new_v4(),
+            name: "direct".to_string(),
+            index,
+            enable: true,
+            filter: Default::default(),
+            upstream_id,
+            // Direct action: SO_MARK stays 0x8000 regardless of the flow.
+            mark: FlowMark::from(0x0100),
+            source,
+            flow_id: 7,
+            update_at: 0.0,
+        }
+    }
+
+    fn first_resolver(engine: &ResolveEngine) -> Arc<crate::connection::LandscapeMarkDNSResolver> {
+        engine.iter().next().expect("expected a resolve rule").1.shared_resolver().clone()
+    }
+
+    #[tokio::test]
+    async fn shares_resolver_for_same_mark_and_upstream() {
+        let (builder, _) = builder();
+        let upstream = DnsUpstreamConfig::default();
+        let rules = vec![
+            dns_rule(10, vec![manual("a.example")], upstream.id),
+            dns_rule(20, vec![manual("b.example")], upstream.id),
+        ];
+
+        let (_, resolve_engine, _) =
+            builder.build_flow(7, rules, vec![], vec![], vec![upstream]).await;
+
+        let mut resolvers = resolve_engine.iter().map(|(_, rule)| rule.shared_resolver().clone());
+        let first = resolvers.next().unwrap();
+        assert!(resolvers.all(|resolver| Arc::ptr_eq(&first, &resolver)));
+    }
+
+    #[tokio::test]
+    async fn keeps_resolver_across_builds_and_rebuilds_after_invalidate() {
+        let (builder, _) = builder();
+        let upstream = DnsUpstreamConfig::default();
+        let rule = dns_rule(10, vec![manual("a.example")], upstream.id);
+
+        let (_, first_engine, _) =
+            builder.build_flow(7, vec![rule.clone()], vec![], vec![], vec![upstream.clone()]).await;
+        let first = first_resolver(&first_engine);
+
+        // Same pool, unchanged upstream: the same resolver is reused.
+        let (_, second_engine, _) =
+            builder.build_flow(7, vec![rule.clone()], vec![], vec![], vec![upstream.clone()]).await;
+        assert!(Arc::ptr_eq(&first, &first_resolver(&second_engine)));
+
+        // UpstreamsChanged evicts the entry; the next build starts fresh.
+        builder.invalidate_upstreams(&HashSet::from([upstream.id]));
+        let (_, third_engine, _) =
+            builder.build_flow(7, vec![rule], vec![], vec![], vec![upstream]).await;
+        assert!(!Arc::ptr_eq(&first, &first_resolver(&third_engine)));
+    }
+
+    #[tokio::test]
+    async fn different_mark_does_not_share_resolver() {
+        let (builder, _) = builder();
+        let upstream = DnsUpstreamConfig::default();
+        let rule = dns_rule(10, vec![manual("a.example")], upstream.id);
+
+        // KeepGoing rules get marked with their owning flow id, so flows 5
+        // and 7 differ in SO_MARK and must not share connections.
+        let (_, flow5_engine, _) =
+            builder.build_flow(5, vec![rule.clone()], vec![], vec![], vec![upstream.clone()]).await;
+        let (_, flow7_engine, _) =
+            builder.build_flow(7, vec![rule], vec![], vec![], vec![upstream]).await;
+
+        assert!(!Arc::ptr_eq(&first_resolver(&flow5_engine), &first_resolver(&flow7_engine)));
+    }
+
+    #[tokio::test]
+    async fn direct_rules_share_across_flows() {
+        let (builder, _) = builder();
+        let upstream = DnsUpstreamConfig::default();
+        let rule = direct_rule(10, vec![manual("a.example")], upstream.id);
+
+        // Direct rules always resolve to SO_MARK 0x8000, so different flows
+        // hitting the same upstream share one connection pool.
+        let (_, flow5_engine, _) =
+            builder.build_flow(5, vec![rule.clone()], vec![], vec![], vec![upstream.clone()]).await;
+        let (_, flow7_engine, _) =
+            builder.build_flow(7, vec![rule], vec![], vec![], vec![upstream]).await;
+
+        assert!(Arc::ptr_eq(&first_resolver(&flow5_engine), &first_resolver(&flow7_engine)));
+    }
+
+    #[tokio::test]
+    async fn different_upstream_does_not_share_resolver() {
+        let (builder, _) = builder();
+        let upstream_a = DnsUpstreamConfig::default();
+        let upstream_b = DnsUpstreamConfig::default();
+
+        let rules = vec![
+            dns_rule(10, vec![manual("a.example")], upstream_a.id),
+            dns_rule(20, vec![manual("b.example")], upstream_b.id),
+        ];
+        let (_, resolve_engine, _) =
+            builder.build_flow(7, rules, vec![], vec![], vec![upstream_a, upstream_b]).await;
+
+        let mut resolvers = resolve_engine.iter().map(|(_, rule)| rule.shared_resolver().clone());
+        let first = resolvers.next().unwrap();
+        assert!(resolvers.all(|resolver| !Arc::ptr_eq(&first, &resolver)));
+    }
+
+    #[tokio::test]
+    async fn pool_key_matches_legacy_mark_computation() {
+        // Every pooled resolver key must equal the per-rule mark the legacy
+        // code applied: `mark.get_dns_mark(flow_id)`. This pins the SO_MARK put
+        // on shared upstream connections to exactly the old per-rule value.
+        let (builder, _) = builder();
+        let upstream = DnsUpstreamConfig::default();
+        let upstream_id = upstream.id;
+        let keepgoing5 = dns_rule(10, vec![manual("a.example")], upstream_id);
+        let keepgoing7 = dns_rule(20, vec![manual("b.example")], upstream_id);
+        let direct = direct_rule(30, vec![manual("c.example")], upstream_id);
+        let redirect_to_5 = DNSRuleConfig {
+            mark: FlowMark::from(0x0305),
+            ..dns_rule(40, vec![manual("d.example")], upstream_id)
+        };
+
+        let (_, flow5_engine, _) =
+            builder.build_flow(5, vec![keepgoing5], vec![], vec![], vec![upstream.clone()]).await;
+        let (_, flow7_engine, _) = builder
+            .build_flow(7, vec![keepgoing7, direct, redirect_to_5], vec![], vec![], vec![upstream])
+            .await;
+        let _ = (first_resolver(&flow5_engine), first_resolver(&flow7_engine));
+
+        let mut keys = builder.resolvers.keys();
+        keys.sort();
+        assert_eq!(
+            keys,
+            vec![
+                (FlowMark::from(0x0100).get_dns_mark(7), upstream_id), // direct: 0x8000
+                (FlowMark::default().get_dns_mark(5), upstream_id),    // keepgoing flow 5: 0x8005
+                (FlowMark::default().get_dns_mark(7), upstream_id),    // keepgoing flow 7: 0x8007
+            ],
+        );
+    }
+
+    #[tokio::test]
+    async fn flow_change_without_invalidate_routes_by_new_flow() {
+        // RulesChanged does a ResolveOnly refresh and never invalidates: a rule
+        // moved to another flow must still be served by a resolver carrying the
+        // new flow's mark (correctness), while the old entry stays pooled
+        // (documented leak that is safe to keep).
+        let (builder, _) = builder();
+        let upstream = DnsUpstreamConfig::default();
+        let upstream_id = upstream.id;
+        let rule = dns_rule(10, vec![manual("a.example")], upstream_id);
+
+        let (_, flow5_engine, _) =
+            builder.build_flow(5, vec![rule.clone()], vec![], vec![], vec![upstream.clone()]).await;
+        let first = first_resolver(&flow5_engine);
+
+        let (_, flow7_engine, _) =
+            builder.build_flow(7, vec![rule], vec![], vec![], vec![upstream]).await;
+        let second = first_resolver(&flow7_engine);
+
+        assert!(!Arc::ptr_eq(&first, &second));
+        let mut keys = builder.resolvers.keys();
+        keys.sort();
+        assert_eq!(
+            keys,
+            vec![(FlowMark::default().get_dns_mark(5), upstream_id), (0x8007, upstream_id)],
+        );
+    }
+
+    #[tokio::test]
+    async fn keepgoing_and_redirect_to_same_flow_share() {
+        // A KeepGoing rule in flow 5 and a Redirect-to-flow-5 rule in flow 7
+        // compute the same SO_MARK (0x8005), so the legacy behaviour already
+        // sent both through the same marked path and pooling must share them.
+        let (builder, _) = builder();
+        let upstream = DnsUpstreamConfig::default();
+        let keepgoing5 = dns_rule(10, vec![manual("a.example")], upstream.id);
+        let redirect_to_5 = DNSRuleConfig {
+            mark: FlowMark::from(0x0305),
+            ..dns_rule(20, vec![manual("b.example")], upstream.id)
+        };
+
+        let (_, flow5_engine, _) =
+            builder.build_flow(5, vec![keepgoing5], vec![], vec![], vec![upstream.clone()]).await;
+        let (_, flow7_engine, _) =
+            builder.build_flow(7, vec![redirect_to_5], vec![], vec![], vec![upstream]).await;
+
+        assert!(Arc::ptr_eq(&first_resolver(&flow5_engine), &first_resolver(&flow7_engine)));
+    }
+
+    #[tokio::test]
+    async fn different_actions_in_same_flow_do_not_share_resolver() {
+        // The SO_MARK is the routing identity: KeepGoing in flow 7 marks
+        // 0x8007 but Direct in the same flow marks 0x8000. Keying by the
+        // owning flow alone would merge them into one pool and the first-built
+        // resolver would serve the other rule with the wrong mark.
+        let (builder, _) = builder();
+        let upstream = DnsUpstreamConfig::default();
+        let keepgoing = dns_rule(10, vec![manual("a.example")], upstream.id);
+        let direct = direct_rule(20, vec![manual("b.example")], upstream.id);
+
+        let (_, resolve_engine, _) =
+            builder.build_flow(7, vec![keepgoing, direct], vec![], vec![], vec![upstream]).await;
+
+        let mut resolvers = resolve_engine.iter().map(|(_, rule)| rule.shared_resolver().clone());
+        let first = resolvers.next().unwrap();
+        assert!(resolvers.all(|resolver| !Arc::ptr_eq(&first, &resolver)));
+    }
+
+    #[tokio::test]
+    async fn redirect_marks_target_flow_not_owning_flow() {
+        // Redirect rules are marked with their *target* flow id: in flow 7 a
+        // KeepGoing rule (0x8007) and a Redirect->5 rule (0x8005) must not
+        // share, even though both belong to flow 7.
+        let (builder, _) = builder();
+        let upstream = DnsUpstreamConfig::default();
+        let upstream_id = upstream.id;
+        let keepgoing = dns_rule(10, vec![manual("a.example")], upstream_id);
+        let redirect_to_5 = DNSRuleConfig {
+            mark: FlowMark::from(0x0305),
+            ..dns_rule(20, vec![manual("b.example")], upstream_id)
+        };
+
+        let (_, resolve_engine, _) = builder
+            .build_flow(7, vec![keepgoing, redirect_to_5], vec![], vec![], vec![upstream])
+            .await;
+
+        let mut resolvers = resolve_engine.iter().map(|(_, rule)| rule.shared_resolver().clone());
+        let first = resolvers.next().unwrap();
+        assert!(resolvers.all(|resolver| !Arc::ptr_eq(&first, &resolver)));
+        let mut keys = builder.resolvers.keys();
+        keys.sort();
+        assert_eq!(keys, vec![(0x8005, upstream_id), (0x8007, upstream_id)]);
     }
 }
