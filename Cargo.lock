@@ -3395,6 +3395,7 @@ dependencies = [
  "sysctl",
  "sysinfo",
  "tempfile",
+ "thiserror 2.0.19",
  "tokio",
  "tokio-stream",
  "tokio-util",

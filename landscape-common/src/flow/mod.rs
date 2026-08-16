@@ -4,7 +4,7 @@ use landscape_macro::LdApiError;
 use serde::{Deserialize, Serialize};
 
 use crate::config::ConfigId;
-use crate::error::LdError;
+use crate::database::error::DbError;
 use crate::service::ServiceConfigError;
 use crate::{flow::mark::FlowMark, net::MacAddr};
 use uuid::Uuid;
@@ -45,7 +45,7 @@ pub enum FlowRuleError {
 
     #[error(transparent)]
     #[api_error(id = "flow_rule.internal", status = 500)]
-    Internal(#[from] LdError),
+    Internal(#[from] DbError),
 }
 
 /// Flow 入口匹配规则

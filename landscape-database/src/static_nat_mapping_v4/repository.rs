@@ -5,7 +5,7 @@ use landscape_common::config_service::static_nat::config4::{
     RuntimeStaticNatMappingV4Config, StaticNatMappingV4Config, StaticNatV4Target,
 };
 use landscape_common::config_service::static_nat::error::StaticNatError;
-use landscape_common::error::LdError;
+use landscape_common::database::error::DbError;
 use migration::Expr;
 use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, Value};
 
@@ -30,7 +30,7 @@ impl StaticNatMappingV4Repository {
 
     pub async fn list_runtime_configs_v4(
         &self,
-    ) -> Result<Vec<RuntimeStaticNatMappingV4Config>, LdError> {
+    ) -> Result<Vec<RuntimeStaticNatMappingV4Config>, DbError> {
         let configs: Vec<StaticNatMappingV4Config> = self.list_all().await?;
         let devices = self.load_devices_for_configs(&configs).await?;
 
@@ -44,7 +44,7 @@ impl StaticNatMappingV4Repository {
     async fn load_devices_for_configs(
         &self,
         configs: &[StaticNatMappingV4Config],
-    ) -> Result<HashMap<DBId, EnrolledDevice>, LdError> {
+    ) -> Result<HashMap<DBId, EnrolledDevice>, DbError> {
         let mut device_ids = HashSet::new();
         for config in configs {
             if let Some(StaticNatV4Target::Device { device_id }) = config.lan_target.as_ref() {
@@ -79,9 +79,9 @@ impl StaticNatMappingV4Repository {
         config: &StaticNatMappingV4Config,
     ) -> Result<bool, StaticNatError> {
         let l4_json = serde_json::to_string(&config.l4_protocols)
-            .map_err(|e| StaticNatError::Internal(LdError::ConfigError(e.to_string())))?;
+            .map_err(|e| StaticNatError::Internal(DbError::Internal(e.to_string())))?;
         let ports_json = serde_json::to_string(&config.mapping_pair_ports)
-            .map_err(|e| StaticNatError::Internal(LdError::ConfigError(e.to_string())))?;
+            .map_err(|e| StaticNatError::Internal(DbError::Internal(e.to_string())))?;
 
         let expr = Expr::cust_with_values(
             "EXISTS (
@@ -100,7 +100,7 @@ impl StaticNatMappingV4Repository {
             .filter(expr)
             .one(&self.db)
             .await
-            .map_err(LdError::from)?;
+            .map_err(DbError::from)?;
         Ok(res.is_some())
     }
 }

@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use landscape_common::{
     config::{InitConfig, StoreRuntimeConfig},
-    error::{LdError, LdResult},
+    database::error::DbError,
 };
 use migration::{Migrator, MigratorTrait};
 use sea_orm::{
@@ -34,7 +34,11 @@ use crate::{
     wifi::repository::WifiServiceRepository,
 };
 
-pub async fn db_action(config: &StoreRuntimeConfig, rollback: &bool, steps: &u32) -> LdResult<()> {
+pub async fn db_action(
+    config: &StoreRuntimeConfig,
+    rollback: &bool,
+    steps: &u32,
+) -> Result<(), DbError> {
     let opt: migration::sea_orm::ConnectOptions = config.database_path.clone().into();
     let database = Database::connect(opt).await?;
 
@@ -47,7 +51,7 @@ pub async fn db_action(config: &StoreRuntimeConfig, rollback: &bool, steps: &u32
     Ok(())
 }
 
-pub async fn rollback_interactive(config: &StoreRuntimeConfig) -> LdResult<()> {
+pub async fn rollback_interactive(config: &StoreRuntimeConfig) -> Result<(), DbError> {
     crate::rollback::interactive_rollback(config).await
 }
 
@@ -96,7 +100,7 @@ impl LandscapeDBServiceProvider {
         Self::new(&StoreRuntimeConfig { database_path: url }).await
     }
 
-    pub async fn validate_init_config_can_import(config: InitConfig) -> LdResult<()> {
+    pub async fn validate_init_config_can_import(config: InitConfig) -> Result<(), DbError> {
         Self::mem_test_db().await.truncate_and_fit_from(Some(config)).await
     }
 }
@@ -124,7 +128,7 @@ macro_rules! define_store {
             async fn import_init_config_in_transaction(
                 txn: &DatabaseTransaction,
                 cfg: InitConfig,
-            ) -> LdResult<()> {
+            ) -> Result<(), DbError> {
                 truncate_tables_reverse!(
                     txn,
                     $( $store_name : ($repo_type, $init_field), )*
@@ -145,15 +149,15 @@ macro_rules! define_store {
                 &self,
                 config: InitConfig,
                 before_commit: F,
-            ) -> LdResult<()>
+            ) -> Result<(), DbError>
             where
-                F: FnOnce() -> LdResult<()>,
+                F: FnOnce() -> Result<(), DbError>,
             {
                 let txn = self.database.begin().await?;
                 let result = async {
                     Self::import_init_config_in_transaction(&txn, config).await?;
                     before_commit()?;
-                    Ok::<(), LdError>(())
+                    Ok::<(), DbError>(())
                 }
                 .await;
 
@@ -171,7 +175,7 @@ macro_rules! define_store {
                 }
             }
 
-            pub async fn truncate_and_fit_from(&self, config: Option<InitConfig>) -> LdResult<()> {
+            pub async fn truncate_and_fit_from(&self, config: Option<InitConfig>) -> Result<(), DbError> {
                 if let Some(cfg) = config {
                     self.truncate_and_fit_from_before_commit(cfg, || Ok(())).await?;
                 }
@@ -219,8 +223,8 @@ define_store!(
 mod tests {
     use landscape_common::config::{InitConfig, StoreRuntimeConfig};
     use landscape_common::config_service::iface::{IfaceZoneType, NetworkIfaceConfig};
+    use landscape_common::database::error::DbError;
     use landscape_common::database::LandscapeStore;
-    use landscape_common::error::LdError;
 
     use crate::provider::LandscapeDBServiceProvider;
 
@@ -290,7 +294,7 @@ mod tests {
         let result = provider
             .truncate_and_fit_from_before_commit(
                 InitConfig { ifaces: vec![replacement], ..Default::default() },
-                || Err(LdError::ConfigError("config write failed".to_string())),
+                || Err(DbError::Internal("config write failed".to_string())),
             )
             .await;
 

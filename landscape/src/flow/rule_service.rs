@@ -1,5 +1,4 @@
 use landscape_common::{
-    error::LdError,
     event::hub::EnrolledDeviceEventReader,
     event::{dns::DnsEvent, route::RouteEvent},
     flow::{config::FlowConfig, FlowEntryMatchMode, FlowRuleError},
@@ -61,22 +60,6 @@ impl FlowRuleService {
 }
 
 impl FlowRuleService {
-    pub async fn find_conflict_by_entry_mode(
-        &self,
-        exclude_id: uuid::Uuid,
-        mode: &FlowEntryMatchMode,
-    ) -> Result<Option<FlowConfig>, LdError> {
-        self.store.find_conflict_by_entry_mode(exclude_id, mode).await
-    }
-
-    pub async fn find_resolved_conflict_by_entry_mode(
-        &self,
-        exclude_id: uuid::Uuid,
-        mode: &FlowEntryMatchMode,
-    ) -> Result<Option<FlowConfig>, LdError> {
-        self.store.find_resolved_conflict_by_entry_mode(exclude_id, mode).await
-    }
-
     pub async fn find_resolved_conflict_for_modes(
         &self,
         exclude_id: uuid::Uuid,

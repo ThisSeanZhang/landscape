@@ -6,7 +6,7 @@ use landscape_common::config_service::static_nat::config::{
     RuntimeStaticNatMappingConfig, StaticNatMappingConfig, StaticNatTarget,
 };
 use landscape_common::config_service::static_nat::error::StaticNatError;
-use landscape_common::error::LdError;
+use landscape_common::database::error::DbError;
 use landscape_common::lan_service::lan_ipv6::{
     checked_allocate_subnet, checked_combine_ipv6_prefix_suffix,
 };
@@ -35,7 +35,7 @@ impl StaticNatMappingConfigRepository {
 
     pub async fn list_runtime_configs(
         &self,
-    ) -> Result<Vec<RuntimeStaticNatMappingConfig>, LdError> {
+    ) -> Result<Vec<RuntimeStaticNatMappingConfig>, DbError> {
         let configs = self.list_all().await?;
         let devices = self.load_devices_for_configs(&configs).await?;
 
@@ -63,7 +63,7 @@ impl StaticNatMappingConfigRepository {
     async fn load_devices_for_configs(
         &self,
         configs: &[StaticNatMappingConfig],
-    ) -> Result<HashMap<DBId, EnrolledDevice>, LdError> {
+    ) -> Result<HashMap<DBId, EnrolledDevice>, DbError> {
         let mut device_ids = HashSet::new();
         for config in configs {
             if let Some(StaticNatTarget::Device { device_id }) = config.lan_target.as_ref() {

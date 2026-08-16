@@ -1,5 +1,5 @@
+use landscape_common::database::error::DbError;
 use landscape_common::ddns::DdnsJob;
-use landscape_common::error::LdError;
 use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter};
 
 use super::entity::{Column, DdnsJobActiveModel, DdnsJobEntity, DdnsJobModel};
@@ -16,7 +16,7 @@ impl DdnsJobRepository {
         Self { db }
     }
 
-    pub async fn find_enabled(&self) -> Result<Vec<DdnsJob>, LdError> {
+    pub async fn find_enabled(&self) -> Result<Vec<DdnsJob>, DbError> {
         let models = DdnsJobEntity::find().filter(Column::Enable.eq(true)).all(self.db()).await?;
         Ok(models.into_iter().map(Into::into).collect())
     }

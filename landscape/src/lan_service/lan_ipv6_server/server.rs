@@ -6,7 +6,7 @@ use std::{
 };
 
 use landscape_common::{
-    error::LdResult,
+    database::error::DbError,
     event::hub::{IPv6AssignEvent, IPv6AssignEventSender, IPv6AssignInfo},
     lan_service::lan_ipv6::LanPrefixGroupConfig,
     net::MacAddr,
@@ -401,7 +401,7 @@ pub async fn start_ipv6_lan_server(
     route_service: IpRouteService,
     device_id_map: Arc<DashMap<MacAddr, Uuid>>,
     mut reconf_rx: mpsc::UnboundedReceiver<MacAddr>,
-) -> LdResult<()> {
+) -> Result<(), DbError> {
     let server_duid = gen_server_duid(&mac_addr);
 
     // ── IPv6 forwarding ──

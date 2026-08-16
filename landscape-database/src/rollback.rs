@@ -3,11 +3,7 @@ use std::{
     io::{self, Write},
 };
 
-use landscape_common::{
-    config::StoreRuntimeConfig,
-    error::{LdError, LdResult},
-    VERSION,
-};
+use landscape_common::{config::StoreRuntimeConfig, database::error::DbError, VERSION};
 use migration::{sea_orm::ConnectOptions, Migrator, MigratorTrait};
 use sea_orm::{Database, DatabaseConnection};
 
@@ -73,13 +69,13 @@ pub const RELEASE_BOUNDARIES: &[ReleaseBoundary] = &[
     },
 ];
 
-pub async fn interactive_rollback(config: &StoreRuntimeConfig) -> LdResult<()> {
+pub async fn interactive_rollback(config: &StoreRuntimeConfig) -> Result<(), DbError> {
     let opt: ConnectOptions = config.database_path.clone().into();
     let database = Database::connect(opt).await?;
     interactive_rollback_with_database(&database).await
 }
 
-async fn interactive_rollback_with_database(database: &DatabaseConnection) -> LdResult<()> {
+async fn interactive_rollback_with_database(database: &DatabaseConnection) -> Result<(), DbError> {
     let all_migrations = migration_names();
     validate_release_boundaries(&all_migrations, RELEASE_BOUNDARIES)?;
 
@@ -117,9 +113,9 @@ async fn interactive_rollback_with_database(database: &DatabaseConnection) -> Ld
 pub fn validate_release_boundaries(
     all_migrations: &[String],
     boundaries: &[ReleaseBoundary],
-) -> LdResult<()> {
+) -> Result<(), DbError> {
     if boundaries.is_empty() {
-        return Err(LdError::DbMsg("No release boundaries are configured.".to_string()));
+        return Err(DbError::Internal("No release boundaries are configured.".to_string()));
     }
 
     let mut seen_versions = HashSet::new();
@@ -128,14 +124,14 @@ pub fn validate_release_boundaries(
 
     for boundary in boundaries {
         if !seen_versions.insert(boundary.version) {
-            return Err(LdError::DbMsg(format!(
+            return Err(DbError::Internal(format!(
                 "Duplicate release version '{}' in rollback boundaries.",
                 boundary.version
             )));
         }
 
         if !seen_migrations.insert(boundary.terminal_migration) {
-            return Err(LdError::DbMsg(format!(
+            return Err(DbError::Internal(format!(
                 "Duplicate terminal migration '{}' in rollback boundaries.",
                 boundary.terminal_migration
             )));
@@ -144,7 +140,7 @@ pub fn validate_release_boundaries(
         let index = migration_index(all_migrations, boundary.terminal_migration)?;
         if let Some(previous_index) = previous_index {
             if index <= previous_index {
-                return Err(LdError::DbMsg(format!(
+                return Err(DbError::Internal(format!(
                     "Rollback boundaries are not ordered by migration sequence: '{}' is out of order.",
                     boundary.version
                 )));
@@ -160,7 +156,7 @@ fn build_rollback_targets(
     current_state: &CurrentSchemaState,
     all_migrations: &[String],
     boundaries: &[ReleaseBoundary],
-) -> LdResult<Vec<RollbackTarget>> {
+) -> Result<Vec<RollbackTarget>, DbError> {
     let mut raw_targets = Vec::new();
 
     for boundary in boundaries.iter().rev() {
@@ -202,10 +198,10 @@ fn build_rollback_plan(
     current_state: &CurrentSchemaState,
     target: &RollbackTarget,
     all_migrations: &[String],
-) -> LdResult<RollbackPlan> {
+) -> Result<RollbackPlan, DbError> {
     let target_index = migration_index(all_migrations, target.terminal_migration)?;
     if target_index >= current_state.head_index {
-        return Err(LdError::DbMsg(format!(
+        return Err(DbError::Internal(format!(
             "Target version '{}' is not older than the current schema head.",
             target.version
         )));
@@ -231,7 +227,7 @@ fn build_rollback_plan(
 pub async fn execute_rollback_plan(
     database: &DatabaseConnection,
     plan: &RollbackPlan,
-) -> LdResult<()> {
+) -> Result<(), DbError> {
     Migrator::down(database, Some(plan.steps)).await?;
     Ok(())
 }
@@ -250,7 +246,7 @@ fn resolve_current_state(
     current_head: &str,
     all_migrations: &[String],
     boundaries: &[ReleaseBoundary],
-) -> LdResult<CurrentSchemaState> {
+) -> Result<CurrentSchemaState, DbError> {
     let head_index = migration_index(all_migrations, current_head)?;
     let release_boundary = current_release_boundary(head_index, all_migrations, boundaries)?;
     let pending_since_release = if let Some(boundary) = release_boundary {
@@ -288,7 +284,7 @@ fn current_release_boundary(
     head_index: usize,
     all_migrations: &[String],
     boundaries: &[ReleaseBoundary],
-) -> LdResult<Option<ReleaseBoundary>> {
+) -> Result<Option<ReleaseBoundary>, DbError> {
     if let Some(boundary) = boundaries.iter().find(|boundary| boundary.version == VERSION) {
         let version_index = migration_index(all_migrations, boundary.terminal_migration)?;
         if version_index <= head_index {
@@ -313,12 +309,12 @@ fn migration_names() -> Vec<String> {
         .collect()
 }
 
-fn migration_index(all_migrations: &[String], migration_name: &str) -> LdResult<usize> {
+fn migration_index(all_migrations: &[String], migration_name: &str) -> Result<usize, DbError> {
     all_migrations
         .iter()
         .position(|name| name == migration_name)
         .ok_or_else(|| {
-            LdError::DbMsg(format!(
+            DbError::Internal(format!(
                 "Migration '{}' is not present in this build. Use the legacy step-based rollback path for manual recovery.",
                 migration_name
             ))
@@ -385,26 +381,26 @@ fn print_plan_preview(plan: &RollbackPlan) {
     println!();
 }
 
-fn prompt_target_selection(targets: &[RollbackTarget]) -> LdResult<&RollbackTarget> {
+fn prompt_target_selection(targets: &[RollbackTarget]) -> Result<&RollbackTarget, DbError> {
     let input = prompt("Select a target by number: ")?;
     let selection: usize = input
         .parse()
-        .map_err(|_| LdError::DbMsg(format!("Invalid rollback selection '{}'.", input)))?;
+        .map_err(|_| DbError::Internal(format!("Invalid rollback selection '{}'.", input)))?;
     if selection == 0 {
-        return Err(LdError::DbMsg("Rollback target selection must start at 1.".to_string()));
+        return Err(DbError::Internal("Rollback target selection must start at 1.".to_string()));
     }
 
-    targets
-        .get(selection - 1)
-        .ok_or_else(|| LdError::DbMsg(format!("Rollback target '{}' is out of range.", selection)))
+    targets.get(selection - 1).ok_or_else(|| {
+        DbError::Internal(format!("Rollback target '{}' is out of range.", selection))
+    })
 }
 
-fn confirm_target_version(target_version: &str) -> LdResult<bool> {
+fn confirm_target_version(target_version: &str) -> Result<bool, DbError> {
     let confirmation = prompt(&format!("Type '{}' to confirm rollback: ", target_version))?;
     Ok(confirmation == target_version)
 }
 
-fn prompt(message: &str) -> LdResult<String> {
+fn prompt(message: &str) -> Result<String, DbError> {
     print!("{message}");
     io::stdout().flush()?;
 

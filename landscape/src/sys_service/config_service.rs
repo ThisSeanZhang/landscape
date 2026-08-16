@@ -3,8 +3,8 @@ use landscape_common::config::{
     InitConfig, LandscapeConfig, LandscapeDnsConfig, LandscapeLanHostnameConfig,
     LandscapeMetricConfig, LandscapeTimeConfig, LandscapeUIConfig, RuntimeConfig,
 };
+use landscape_common::database::error::DbError;
 use landscape_common::database::LandscapeStore;
-use landscape_common::error::{LdError, LdResult};
 use landscape_common::sys_service::gateway::settings::{
     GatewayRuntimeConfig, LandscapeGatewayConfig,
 };
@@ -37,43 +37,41 @@ impl LandscapeConfigService {
         }
     }
 
-    fn section_hash<T: Serialize>(config: &T) -> LdResult<String> {
+    fn section_hash<T: Serialize>(config: &T) -> Result<String, DbError> {
         let content =
-            toml::to_string(config).map_err(|error| LdError::ConfigError(error.to_string()))?;
+            toml::to_string(config).map_err(|error| DbError::Internal(error.to_string()))?;
         let mut hasher = Sha256::new();
         hasher.update(content.as_bytes());
         Ok(hasher.finalize().iter().map(|byte| format!("{byte:02x}")).collect())
     }
 
-    fn read_config_file(path: &Path) -> LdResult<(String, LandscapeConfig)> {
+    fn read_config_file(path: &Path) -> Result<(String, LandscapeConfig), DbError> {
         let content = if path.exists() { std::fs::read_to_string(path)? } else { String::new() };
         let config = if content.is_empty() {
             LandscapeConfig::default()
         } else {
-            toml::from_str(&content).map_err(|error| LdError::ConfigError(error.to_string()))?
+            toml::from_str(&content).map_err(|error| DbError::Internal(error.to_string()))?
         };
         Ok((content, config))
     }
 
-    fn parse_document(content: &str) -> LdResult<DocumentMut> {
-        content
-            .parse()
-            .map_err(|error: toml_edit::TomlError| LdError::ConfigError(error.to_string()))
+    fn parse_document(content: &str) -> Result<DocumentMut, DbError> {
+        content.parse().map_err(|error: toml_edit::TomlError| DbError::Internal(error.to_string()))
     }
 
     fn set_section<T: Serialize>(
         document: &mut DocumentMut,
         name: &str,
         config: &T,
-    ) -> LdResult<()> {
+    ) -> Result<(), DbError> {
         let content =
-            toml::to_string(config).map_err(|error| LdError::ConfigError(error.to_string()))?;
+            toml::to_string(config).map_err(|error| DbError::Internal(error.to_string()))?;
         let section = Self::parse_document(&content)?;
         document[name] = section.as_item().clone();
         Ok(())
     }
 
-    fn write_config_file(path: &Path, content: &str) -> LdResult<()> {
+    fn write_config_file(path: &Path, content: &str) -> Result<(), DbError> {
         let file_name = path.file_name().and_then(|name| name.to_str()).unwrap_or("landscape.toml");
         let tmp_path = path.with_file_name(format!(
             ".{file_name}.tmp.{}.{}",
@@ -81,7 +79,7 @@ impl LandscapeConfigService {
             Uuid::new_v4()
         ));
 
-        let result = (|| -> LdResult<()> {
+        let result = (|| -> Result<(), DbError> {
             let mut options = OpenOptions::new();
             options.write(true).create_new(true);
             #[cfg(unix)]
@@ -103,14 +101,14 @@ impl LandscapeConfigService {
         result
     }
 
-    fn ensure_expected_hash<T: Serialize>(config: &T, expected_hash: &str) -> LdResult<()> {
+    fn ensure_expected_hash<T: Serialize>(config: &T, expected_hash: &str) -> Result<(), DbError> {
         if Self::section_hash(config)? != expected_hash {
-            return Err(LdError::ConfigConflict);
+            return Err(DbError::Conflict);
         }
         Ok(())
     }
 
-    fn read_section_from_file<T, Select>(&self, select: Select) -> LdResult<(T, String)>
+    fn read_section_from_file<T, Select>(&self, select: Select) -> Result<(T, String), DbError>
     where
         T: Serialize,
         Select: FnOnce(LandscapeConfig) -> T,
@@ -129,7 +127,7 @@ impl LandscapeConfigService {
         expected_hash: String,
         select: Select,
         commit: Commit,
-    ) -> LdResult<()>
+    ) -> Result<(), DbError>
     where
         T: Serialize,
         Select: for<'a> Fn(&'a LandscapeConfig) -> &'a T,
@@ -252,11 +250,13 @@ impl LandscapeConfigService {
         self.read_section_from_file(|config| config.gateway).unwrap_or_default()
     }
 
-    pub async fn get_ui_config_from_file(&self) -> LdResult<(LandscapeUIConfig, String)> {
+    pub async fn get_ui_config_from_file(&self) -> Result<(LandscapeUIConfig, String), DbError> {
         self.read_section_from_file(|config| config.ui)
     }
 
-    pub async fn get_metric_config_from_file(&self) -> LdResult<(LandscapeMetricConfig, String)> {
+    pub async fn get_metric_config_from_file(
+        &self,
+    ) -> Result<(LandscapeMetricConfig, String), DbError> {
         self.read_section_from_file(|config| config.metric)
     }
 
@@ -268,7 +268,7 @@ impl LandscapeConfigService {
         &self,
         new_ui: LandscapeUIConfig,
         expected_hash: String,
-    ) -> LdResult<()> {
+    ) -> Result<(), DbError> {
         self.update_section(
             "ui",
             &[],
@@ -290,7 +290,7 @@ impl LandscapeConfigService {
         &self,
         new_metric: LandscapeMetricConfig,
         expected_hash: String,
-    ) -> LdResult<()> {
+    ) -> Result<(), DbError> {
         self.update_section(
             "metric",
             &[],
@@ -313,7 +313,7 @@ impl LandscapeConfigService {
         &self,
         new_dns: LandscapeDnsConfig,
         expected_hash: String,
-    ) -> LdResult<()> {
+    ) -> Result<(), DbError> {
         self.update_section(
             "dns",
             &[],
@@ -336,10 +336,9 @@ impl LandscapeConfigService {
         &self,
         new_lan_hostname: LandscapeLanHostnameConfig,
         expected_hash: String,
-    ) -> LdResult<()> {
-        let new_lan_hostname = new_lan_hostname
-            .normalized()
-            .map_err(|error| LdError::ConfigError(error.to_string()))?;
+    ) -> Result<(), DbError> {
+        let new_lan_hostname =
+            new_lan_hostname.normalized().map_err(|error| DbError::Internal(error.to_string()))?;
         self.update_section(
             "lan_hostname",
             &["hostname_registry"],
@@ -364,7 +363,7 @@ impl LandscapeConfigService {
         &self,
         new_time: LandscapeTimeConfig,
         expected_hash: String,
-    ) -> LdResult<()> {
+    ) -> Result<(), DbError> {
         self.update_section(
             "time",
             &[],
@@ -388,7 +387,7 @@ impl LandscapeConfigService {
         &self,
         new_gateway: LandscapeGatewayConfig,
         expected_hash: String,
-    ) -> LdResult<()> {
+    ) -> Result<(), DbError> {
         self.update_section(
             "gateway",
             &[],
@@ -407,7 +406,7 @@ impl LandscapeConfigService {
         .await
     }
 
-    pub async fn update_auth_password(&self, new_password: String) -> LdResult<()> {
+    pub async fn update_auth_password(&self, new_password: String) -> Result<(), DbError> {
         let _guard = self.write_lock.lock().await;
         let path = self.get_config_path();
         let (content, _) = Self::read_config_file(&path)?;

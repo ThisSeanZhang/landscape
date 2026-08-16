@@ -3,8 +3,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use landscape_common::config::ConfigId;
+use landscape_common::database::error::DbError;
 use landscape_common::database::LandscapeStore;
-use landscape_common::error::LdError;
 use landscape_common::service::ServiceStatus;
 use landscape_common::sys_service::gateway::settings::GatewayRuntimeConfig;
 use landscape_common::sys_service::gateway::HttpUpstreamRuleConfig;
@@ -94,22 +94,22 @@ impl GatewayService {
         self.inner.store(Arc::new(new_inner));
     }
 
-    pub async fn list_rules(&self) -> Result<Vec<HttpUpstreamRuleConfig>, LdError> {
+    pub async fn list_rules(&self) -> Result<Vec<HttpUpstreamRuleConfig>, DbError> {
         self.store.list().await
     }
 
     pub async fn save_rule(
         &self,
         rule: HttpUpstreamRuleConfig,
-    ) -> Result<HttpUpstreamRuleConfig, LdError> {
+    ) -> Result<HttpUpstreamRuleConfig, DbError> {
         self.store.set(rule).await
     }
 
-    pub async fn find_rule(&self, id: ConfigId) -> Result<Option<HttpUpstreamRuleConfig>, LdError> {
+    pub async fn find_rule(&self, id: ConfigId) -> Result<Option<HttpUpstreamRuleConfig>, DbError> {
         Repository::find_by_id(&self.store, id).await
     }
 
-    pub async fn delete_rule(&self, id: ConfigId) -> Result<(), LdError> {
+    pub async fn delete_rule(&self, id: ConfigId) -> Result<(), DbError> {
         self.store.delete(id).await
     }
 
@@ -176,34 +176,26 @@ impl GatewayService {
         self.config.store(Arc::new(config));
     }
 
-    pub async fn list_rules(&self) -> Result<Vec<HttpUpstreamRuleConfig>, LdError> {
-        Err(LdError::ConfigError(
-            "gateway is not supported on this target architecture".to_string(),
-        ))
+    pub async fn list_rules(&self) -> Result<Vec<HttpUpstreamRuleConfig>, DbError> {
+        Err(DbError::Internal("gateway is not supported on this target architecture".to_string()))
     }
 
     pub async fn save_rule(
         &self,
         _rule: HttpUpstreamRuleConfig,
-    ) -> Result<HttpUpstreamRuleConfig, LdError> {
-        Err(LdError::ConfigError(
-            "gateway is not supported on this target architecture".to_string(),
-        ))
+    ) -> Result<HttpUpstreamRuleConfig, DbError> {
+        Err(DbError::Internal("gateway is not supported on this target architecture".to_string()))
     }
 
     pub async fn find_rule(
         &self,
         _id: ConfigId,
-    ) -> Result<Option<HttpUpstreamRuleConfig>, LdError> {
-        Err(LdError::ConfigError(
-            "gateway is not supported on this target architecture".to_string(),
-        ))
+    ) -> Result<Option<HttpUpstreamRuleConfig>, DbError> {
+        Err(DbError::Internal("gateway is not supported on this target architecture".to_string()))
     }
 
-    pub async fn delete_rule(&self, _id: ConfigId) -> Result<(), LdError> {
-        Err(LdError::ConfigError(
-            "gateway is not supported on this target architecture".to_string(),
-        ))
+    pub async fn delete_rule(&self, _id: ConfigId) -> Result<(), DbError> {
+        Err(DbError::Internal("gateway is not supported on this target architecture".to_string()))
     }
 
     pub async fn reload_rules(&self) {}

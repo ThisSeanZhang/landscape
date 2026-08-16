@@ -57,7 +57,7 @@ use landscape_common::{
     args::{DbAction, LandscapeAction, LAND_ARGS, LAND_HOME_PATH},
     concurrency::{runtime_thread_name_fn, spawn_task, task_label, thread_name},
     config::RuntimeConfig,
-    error::LdResult,
+    database::error::DbError,
     event::hub::EventHub,
     wan_service::ipv6_pd::IAPrefixMap,
     VERSION,
@@ -114,11 +114,21 @@ fn log_startup_phase(phase: &str, phase_start: Instant, startup_start: Instant) 
     );
 }
 
+#[derive(Debug, thiserror::Error)]
+pub enum StartupError {
+    #[error(transparent)]
+    Boot(#[from] landscape::boot::BootError),
+    #[error(transparent)]
+    Database(#[from] DbError),
+    #[error("{0}")]
+    Cert(String),
+}
+
 async fn prepare_startup_init(
     home_path: &Path,
     config: &RuntimeConfig,
     init_config_to_import: Option<InitConfig>,
-) -> LdResult<LandscapeDBServiceProvider> {
+) -> Result<LandscapeDBServiceProvider, StartupError> {
     let startup_start = Instant::now();
 
     macro_rules! startup_phase {
@@ -150,7 +160,8 @@ async fn prepare_startup_init(
             db_store_provider
                 .truncate_and_fit_from_before_commit(init_config, || {
                     if let Some(config) = init_file_config_to_persist {
-                        write_config_toml(home_path, config)?;
+                        write_config_toml(home_path, config)
+                            .map_err(|e| DbError::Internal(e.to_string()))?;
                     }
                     Ok(())
                 })
@@ -166,7 +177,7 @@ async fn run_system(
     home_path: PathBuf,
     config: RuntimeConfig,
     db_store_provider: LandscapeDBServiceProvider,
-) -> LdResult<()> {
+) -> Result<(), StartupError> {
     let startup_start = Instant::now();
 
     macro_rules! startup_phase {
@@ -257,9 +268,7 @@ async fn run_system(
     );
     let phase_start = Instant::now();
     if let Err(e) = cert_service.reload_api_tls_mapping().await {
-        return Err(landscape_common::error::LdError::ConfigError(format!(
-            "failed to load api tls certificates: {e}"
-        )));
+        return Err(StartupError::Cert(format!("failed to load api tls certificates: {e}")));
     }
     log_startup_phase("cert_service.reload_api_tls_mapping", phase_start, startup_start);
     #[cfg(feature = "gateway")]
@@ -268,7 +277,7 @@ async fn run_system(
         let gateway_tls_mapping_count = match cert_service.reload_gateway_tls_mapping().await {
             Ok(count) => count,
             Err(e) => {
-                return Err(landscape_common::error::LdError::ConfigError(format!(
+                return Err(StartupError::Cert(format!(
                     "failed to load gateway tls certificates: {e}"
                 )));
             }
@@ -298,9 +307,9 @@ async fn run_system(
     let route_service = IpRouteService::new(route_service_rx, db_store_provider.flow_rule_store());
     let enrolled_devices =
         db_store_provider.enrolled_device_store().list_all().await.map_err(|e| {
-            landscape_common::error::LdError::ConfigError(format!(
+            StartupError::Database(DbError::Internal(format!(
                 "failed to list enrolled devices: {e}"
-            ))
+            )))
         })?;
     let lan_hostname_registry = startup_phase!("lan_hostname.new", {
         let initial_devices: Vec<(String, std::net::Ipv4Addr)> = enrolled_devices
@@ -669,7 +678,7 @@ async fn run_system(
     Ok(())
 }
 
-fn main() -> LdResult<()> {
+fn main() -> Result<(), StartupError> {
     let runtime = RuntimeBuilder::new_multi_thread()
         .enable_all()
         .thread_name_fn(runtime_thread_name_fn(thread_name::prefix::CORE_RUNTIME))
@@ -679,7 +688,7 @@ fn main() -> LdResult<()> {
     runtime.block_on(async_main())
 }
 
-async fn async_main() -> LdResult<()> {
+async fn async_main() -> Result<(), StartupError> {
     let home_path = LAND_HOME_PATH.clone();
 
     let lock_exists = home_path.join(landscape_common::INIT_LOCK_FILE_NAME).exists();
@@ -732,7 +741,9 @@ async fn async_main() -> LdResult<()> {
         match action {
             LandscapeAction::Db { action, rollback, times } => match action {
                 Some(DbAction::Rollback) => {
-                    landscape_database::provider::rollback_interactive(&config.store).await
+                    landscape_database::provider::rollback_interactive(&config.store)
+                        .await
+                        .map_err(StartupError::from)
                 }
                 None if *rollback || times.is_some() => {
                     tracing::warn!(
@@ -744,6 +755,7 @@ async fn async_main() -> LdResult<()> {
                         &times.unwrap_or(1),
                     )
                     .await
+                    .map_err(StartupError::from)
                 }
                 None => {
                     eprintln!(
@@ -760,7 +772,7 @@ async fn async_main() -> LdResult<()> {
     }
 }
 
-async fn do_auto_init(home_path: &PathBuf, config: &RuntimeConfig) -> LdResult<()> {
+async fn do_auto_init(home_path: &PathBuf, config: &RuntimeConfig) -> Result<(), StartupError> {
     let mut interface_map = HashMap::new();
     let devs = landscape::get_all_devices().await;
     tracing::info!("Discovered {} total interfaces.", devs.len());

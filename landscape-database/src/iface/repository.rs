@@ -1,6 +1,6 @@
 use landscape_common::{
     config_service::iface::{IfaceZoneType, NetworkIfaceConfig},
-    error::LdError,
+    database::error::DbError,
 };
 use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter};
 
@@ -18,7 +18,7 @@ impl NetIfaceRepository {
         Self { db }
     }
 
-    pub async fn get_all_wan_iface(&self) -> Result<Vec<NetworkIfaceConfig>, LdError> {
+    pub async fn get_all_wan_iface(&self) -> Result<Vec<NetworkIfaceConfig>, DbError> {
         use crate::repository::Repository;
         let result = NetIfaceConfigEntity::find()
             .filter(Column::ZoneType.eq(IfaceZoneType::Wan))

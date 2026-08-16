@@ -3,8 +3,8 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::cert::order::DnsProviderConfig;
+use crate::database::error::DbError;
 use crate::database::repository::LandscapeDBStore;
-use crate::error::LdError;
 use crate::utils::id::gen_database_uuid;
 use crate::utils::time::get_f64_timestamp;
 
@@ -37,7 +37,7 @@ pub enum DnsProviderProfileError {
 
     #[error(transparent)]
     #[api_error(id = "dns_provider_profile.internal", status = 500)]
-    Internal(#[from] LdError),
+    Internal(#[from] DbError),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

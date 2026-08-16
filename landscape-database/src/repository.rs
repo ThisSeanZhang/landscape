@@ -2,8 +2,8 @@ use std::fmt::Debug;
 
 use async_trait::async_trait;
 use landscape_common::config::FlowId;
+use landscape_common::database::error::DbError;
 use landscape_common::database::repository::LandscapeDBStore;
-use landscape_common::error::LdError;
 use sea_orm::{
     ActiveModelBehavior, ActiveModelTrait, DatabaseConnection, EntityTrait, FromQueryResult,
     IntoActiveModel, PrimaryKeyTrait,
@@ -40,7 +40,7 @@ where
 
     /// Lists all data.
     #[allow(dead_code)]
-    async fn list_all(&self) -> Result<Vec<Self::Data>, LdError> {
+    async fn list_all(&self) -> Result<Vec<Self::Data>, DbError> {
         let models: Vec<Self::Model> = <Self::Entity as EntityTrait>::find().all(self.db()).await?;
         Ok(models.into_iter().map(From::from).collect())
     }
@@ -49,7 +49,7 @@ where
     /// the version, otherwise `checked_upsert` cannot detect stale writes.
     /// A pure insert has no previous version, so the server clock defines it.
     #[allow(dead_code)]
-    async fn set_model(&self, mut data: Self::Data) -> Result<Self::Data, LdError> {
+    async fn set_model(&self, mut data: Self::Data) -> Result<Self::Data, DbError> {
         data.set_update_at(landscape_common::utils::time::get_f64_timestamp());
         let active_model: Self::ActiveModel = data.into();
         let inserted = active_model.insert(self.db()).await?;
@@ -58,14 +58,14 @@ where
 
     /// Deletes by ID.
     #[allow(dead_code)]
-    async fn delete_model(&self, id: Self::Id) -> Result<(), LdError> {
+    async fn delete_model(&self, id: Self::Id) -> Result<(), DbError> {
         <Self::Entity as EntityTrait>::delete_by_id(id).exec(self.db()).await?;
         Ok(())
     }
 
     /// Finds by ID.
     #[allow(dead_code)]
-    async fn find_by_id(&self, id: Self::Id) -> Result<Option<Self::Data>, LdError> {
+    async fn find_by_id(&self, id: Self::Id) -> Result<Option<Self::Data>, DbError> {
         let pk_value = id.into();
         let result = <Self::Entity as EntityTrait>::find_by_id(pk_value).one(self.db()).await?;
         Ok(result.map(From::from))
@@ -84,7 +84,7 @@ where
 
     /// Truncates the table.
     #[allow(dead_code)]
-    async fn truncate_table(&self) -> Result<(), LdError> {
+    async fn truncate_table(&self) -> Result<(), DbError> {
         <Self::Entity as EntityTrait>::delete_many().exec(self.db()).await?;
         Ok(())
     }
@@ -95,10 +95,10 @@ where
         &self,
         id: Self::Id,
         incoming_update_at: f64,
-    ) -> Result<Option<Self::Data>, LdError> {
+    ) -> Result<Option<Self::Data>, DbError> {
         if let Some(existing) = self.find_by_id(id).await? {
             if (existing.get_update_at() - incoming_update_at).abs() > f64::EPSILON {
-                return Err(LdError::ConfigConflict);
+                return Err(DbError::Conflict);
             }
             Ok(Some(existing))
         } else {
@@ -112,10 +112,10 @@ where
         &self,
         id: Self::Id,
         mut config: Self::Data,
-    ) -> Result<Self::Data, LdError> {
+    ) -> Result<Self::Data, DbError> {
         if let Some(existing) = self.find_by_id(id).await? {
             if (existing.get_update_at() - config.get_update_at()).abs() > f64::EPSILON {
-                return Err(LdError::ConfigConflict);
+                return Err(DbError::Conflict);
             }
             // Bump the version monotonically from the stored one (see set_or_update_model).
             config.set_update_at(
@@ -136,7 +136,7 @@ where
         &self,
         id: Self::Id,
         mut config: Self::Data,
-    ) -> Result<Self::Data, LdError> {
+    ) -> Result<Self::Data, DbError> {
         if let Some(data) = self.find_by_id(id).await? {
             // Derive the new version from the row just read, not the client's
             // echoed `update_at`: two requests with the same stale version could

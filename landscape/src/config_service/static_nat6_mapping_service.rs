@@ -9,8 +9,8 @@ use landscape_common::config_service::static_nat::config6::{
     StaticNatMappingV6Config, StaticNatV6PortConfig, StaticNatV6Target,
 };
 use landscape_common::config_service::static_nat::error::StaticNatError;
+use landscape_common::database::error::DbError;
 use landscape_common::database::LandscapeStore;
-use landscape_common::error::LdError;
 use landscape_common::event::hub::{
     EnrolledDeviceEvent, EnrolledDeviceEventReader, IPv6AssignEvent, IPv6AssignEventReader,
 };
@@ -152,7 +152,7 @@ impl StaticNat6MappingService {
     pub async fn checked_set(
         &self,
         config: StaticNatMappingV6Config,
-    ) -> Result<StaticNatMappingV6Config, LdError> {
+    ) -> Result<StaticNatMappingV6Config, DbError> {
         let result = self.store.checked_set(config).await?;
         self.refresh_runtime_rules().await;
         Ok(result)
@@ -161,7 +161,7 @@ impl StaticNat6MappingService {
     pub async fn checked_set_list(
         &self,
         configs: Vec<StaticNatMappingV6Config>,
-    ) -> Result<(), LdError> {
+    ) -> Result<(), DbError> {
         for config in &configs {
             self.store.check_conflict(config).await?;
         }

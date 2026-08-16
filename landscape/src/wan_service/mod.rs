@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use landscape_common::{config_service::iface::IfaceCpuSoftBalance, error::LdResult};
+use landscape_common::{config_service::iface::IfaceCpuSoftBalance, database::error::DbError};
 
 pub mod dhcpv4_client;
 pub mod firewall;
@@ -16,7 +16,7 @@ pub mod wan_route_service;
 pub(crate) fn setting_iface_balance(
     iface_name: &str,
     balance: IfaceCpuSoftBalance,
-) -> LdResult<()> {
+) -> Result<(), DbError> {
     let queues_path = PathBuf::from(format!("/sys/class/net/{}/queues", iface_name));
     if !queues_path.exists() {
         return Ok(());

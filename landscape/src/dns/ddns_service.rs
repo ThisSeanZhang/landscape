@@ -16,7 +16,7 @@ use landscape_common::event::hub::{
 };
 use landscape_common::lan_service::lan_ipv6::{combine_ipv6_prefix_suffix, extract_ipv6_suffix};
 use landscape_common::wan_service::ipv6_pd::IAPrefixMap;
-use landscape_common::{error::LdError, service::controller::ConfigController};
+use landscape_common::{database::error::DbError, service::controller::ConfigController};
 use landscape_database::{
     ddns::repository::DdnsJobRepository,
     dns_provider_profile::repository::DnsProviderProfileRepository,
@@ -249,7 +249,7 @@ impl DdnsService {
         &self,
         device_id: Uuid,
         ip: std::net::Ipv6Addr,
-    ) -> Result<(), LdError> {
+    ) -> Result<(), DbError> {
         let is_new = self.enrolled_cache.entry(device_id).or_default().raw_ips.insert(ip);
 
         let jobs = self.store.find_enabled().await?;
@@ -360,12 +360,12 @@ impl DdnsService {
         runtime.insert(job.id, next);
     }
 
-    async fn sync_all_enabled_jobs(&self) -> Result<(), LdError> {
+    async fn sync_all_enabled_jobs(&self) -> Result<(), DbError> {
         self.sync_jobs_now(self.store.find_enabled().await?).await;
         Ok(())
     }
 
-    async fn retry_pending_jobs(&self) -> Result<(), LdError> {
+    async fn retry_pending_jobs(&self) -> Result<(), DbError> {
         let jobs = self.store.find_enabled().await?;
         let runtime = self.runtime.read().await.clone();
         let pending: Vec<_> =
@@ -378,7 +378,7 @@ impl DdnsService {
         Ok(())
     }
 
-    async fn sync_jobs_for_wan_event(&self, event: WanRouteEvent) -> Result<(), LdError> {
+    async fn sync_jobs_for_wan_event(&self, event: WanRouteEvent) -> Result<(), DbError> {
         let matching: Vec<_> = self
             .store
             .find_enabled()

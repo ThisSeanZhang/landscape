@@ -1,7 +1,7 @@
 use axum::extract::{DefaultBodyLimit, Multipart, Query, State};
 use landscape_common::api_response::LandscapeApiResp as CommonApiResp;
 use landscape_common::config::{InitConfig, InitConfigError};
-use landscape_common::error::LdError;
+use landscape_common::database::error::DbError;
 use landscape_common::sys_service::time_sync::TimeSyncStatus;
 use landscape_common::{INIT_FILE_NAME, INIT_LOCK_FILE_NAME};
 use landscape_core::time::get_time_sync_status as read_time_sync_status;
@@ -167,12 +167,12 @@ async fn import_init_config(
         let previous_init_config = match std::fs::read(&config_path) {
             Ok(bytes) => Some(bytes),
             Err(e) if e.kind() == ErrorKind::NotFound => None,
-            Err(e) => return Err(LdError::from(e))?,
+            Err(e) => return Err(DbError::from(e))?,
         };
-        let mut temp_file = NamedTempFile::new_in(&state.home_path).map_err(LdError::from)?;
-        temp_file.write_all(init_config_content.as_bytes()).map_err(LdError::from)?;
-        temp_file.as_file().sync_all().map_err(LdError::from)?;
-        temp_file.persist(&config_path).map_err(|e| LdError::from(e.error))?;
+        let mut temp_file = NamedTempFile::new_in(&state.home_path).map_err(DbError::from)?;
+        temp_file.write_all(init_config_content.as_bytes()).map_err(DbError::from)?;
+        temp_file.as_file().sync_all().map_err(DbError::from)?;
+        temp_file.persist(&config_path).map_err(|e| DbError::from(e.error))?;
 
         let lock_path = state.home_path.join(INIT_LOCK_FILE_NAME);
         match std::fs::remove_file(lock_path) {
@@ -193,7 +193,7 @@ async fn import_init_config(
                         "failed to rollback init config after init lock removal failed: {rollback_err}"
                     );
                 }
-                Err(LdError::from(e))?;
+                Err(DbError::from(e))?;
             }
         }
 

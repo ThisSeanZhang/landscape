@@ -4,7 +4,7 @@ use serde::Serialize;
 
 use landscape_macro::LdApiError;
 
-use crate::error::LdError;
+use crate::database::error::DbError;
 
 #[derive(Debug, Serialize)]
 pub struct WanReservedPrefixConflictDetails {
@@ -77,5 +77,5 @@ pub enum LanIPv6Error {
 
     #[error(transparent)]
     #[api_error(id = "lan_ipv6.internal", status = 500)]
-    Internal(#[from] LdError),
+    Internal(#[from] DbError),
 }

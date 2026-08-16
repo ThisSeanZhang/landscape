@@ -2,11 +2,28 @@ use std::{fs::OpenOptions, io::Write, path::Path};
 
 use landscape_common::{
     config::{InitConfig, InitConfigError, LandscapeConfig},
-    error::{LdError, LdResult},
     INIT_FILE_NAME, INIT_LOCK_FILE_NAME, LAND_CONFIG, VERSION,
 };
 
 pub mod log;
+
+#[derive(Debug, thiserror::Error)]
+pub enum BootError {
+    #[error("I/O error occurred: {0}")]
+    Io(#[from] std::io::Error),
+
+    #[error("failed to read init config {path}: {source}")]
+    ReadInitConfig { path: String, source: std::io::Error },
+
+    #[error("failed to parse init config {path}: {source}")]
+    ParseInitConfig { path: String, source: toml::de::Error },
+
+    #[error("check boot lock file failed: is not a file")]
+    InvalidLockFile,
+
+    #[error(transparent)]
+    VersionMismatch(#[from] InitConfigError),
+}
 
 pub const INIT_LOCK_FILE_CONTENT: &str = r#"⚠ 警告 ⚠
 如果您不知道删除这个文件的操作是否正确, 请不要删除这个文件.
@@ -25,18 +42,18 @@ If landscape_init.toml does not exist, all existing configurations will be clear
 /// Some: 需要清空并初始化
 /// None: 无需进行初始化
 /// Err: 出现错误退出
-pub fn boot_check<P: AsRef<Path>>(home_path: P) -> LdResult<Option<InitConfig>> {
+pub fn boot_check<P: AsRef<Path>>(home_path: P) -> Result<Option<InitConfig>, BootError> {
     let lock_path = home_path.as_ref().join(INIT_LOCK_FILE_NAME);
 
     if !lock_path.exists() {
         tracing::info!("init lock file not exist, do init");
         let config_path = home_path.as_ref().join(INIT_FILE_NAME);
         let config = if config_path.exists() && config_path.is_file() {
-            let config_raw = std::fs::read_to_string(&config_path).map_err(|e| {
-                LdError::Boot(format!("failed to read init config {}: {e}", config_path.display()))
+            let config_raw = std::fs::read_to_string(&config_path).map_err(|source| {
+                BootError::ReadInitConfig { path: config_path.display().to_string(), source }
             })?;
-            let init_config: InitConfig = toml::from_str(&config_raw).map_err(|e| {
-                LdError::Boot(format!("failed to parse init config {}: {e}", config_path.display()))
+            let init_config: InitConfig = toml::from_str(&config_raw).map_err(|source| {
+                BootError::ParseInitConfig { path: config_path.display().to_string(), source }
             })?;
             check_init_config_version(&init_config)?;
             init_config
@@ -52,14 +69,15 @@ pub fn boot_check<P: AsRef<Path>>(home_path: P) -> LdResult<Option<InitConfig>> 
         return Ok(None);
     }
 
-    Err(LdError::Boot("check boot lock file faile: is not a file".to_string()))
+    Err(BootError::InvalidLockFile)
 }
 
-pub fn check_init_config_version(init_config: &InitConfig) -> LdResult<()> {
-    validate_init_config_version(init_config).map_err(|e| LdError::Boot(e.to_string()))
+pub fn check_init_config_version(init_config: &InitConfig) -> Result<(), BootError> {
+    validate_init_config_version(init_config)?;
+    Ok(())
 }
 
-pub fn write_init_lock<P: AsRef<Path>>(home_path: P) -> LdResult<()> {
+pub fn write_init_lock<P: AsRef<Path>>(home_path: P) -> Result<(), BootError> {
     let lock_path = home_path.as_ref().join(INIT_LOCK_FILE_NAME);
     let mut file = OpenOptions::new().write(true).truncate(true).create(true).open(&lock_path)?;
     file.write_all(INIT_LOCK_FILE_CONTENT.as_bytes())?;
@@ -80,14 +98,17 @@ pub fn validate_init_config_version(init_config: &InitConfig) -> Result<(), Init
     Ok(())
 }
 
-pub fn write_config_toml<P: AsRef<Path>>(home_path: P, config: LandscapeConfig) -> LdResult<()> {
+pub fn write_config_toml<P: AsRef<Path>>(
+    home_path: P,
+    config: LandscapeConfig,
+) -> Result<(), BootError> {
     let config_path = home_path.as_ref().join(LAND_CONFIG);
     let temp_path = home_path.as_ref().join(format!(
         ".{LAND_CONFIG}.tmp.{}.{}",
         std::process::id(),
         landscape_common::utils::time::get_f64_timestamp()
     ));
-    let write_result = (|| -> LdResult<()> {
+    let write_result = (|| -> Result<(), BootError> {
         let mut file =
             OpenOptions::new().write(true).truncate(true).create_new(true).open(&temp_path)?;
         file.write_all(toml::to_string_pretty(&config).unwrap().as_bytes())?;

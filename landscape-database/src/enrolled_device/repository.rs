@@ -1,4 +1,4 @@
-use landscape_common::{config_service::enrolled_device::EnrolledDevice, error::LdError};
+use landscape_common::{config_service::enrolled_device::EnrolledDevice, database::error::DbError};
 use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter};
 use std::net::{Ipv4Addr, Ipv6Addr};
 
@@ -16,7 +16,7 @@ impl EnrolledDeviceRepository {
         Self { db }
     }
 
-    pub async fn find_by_ipv4(&self, ipv4: Ipv4Addr) -> Result<Option<EnrolledDevice>, LdError> {
+    pub async fn find_by_ipv4(&self, ipv4: Ipv4Addr) -> Result<Option<EnrolledDevice>, DbError> {
         use crate::repository::Repository;
         let ip_u32 = u32::from(ipv4);
         let model =
@@ -24,7 +24,7 @@ impl EnrolledDeviceRepository {
         Ok(model.map(|m| m.into()))
     }
 
-    pub async fn find_by_ipv6(&self, ipv6: Ipv6Addr) -> Result<Option<EnrolledDevice>, LdError> {
+    pub async fn find_by_ipv6(&self, ipv6: Ipv6Addr) -> Result<Option<EnrolledDevice>, DbError> {
         use crate::repository::Repository;
         let ipv6_str = ipv6.to_string();
         let model =
@@ -35,7 +35,7 @@ impl EnrolledDeviceRepository {
     pub async fn find_by_hostname(
         &self,
         hostname: String,
-    ) -> Result<Option<EnrolledDevice>, LdError> {
+    ) -> Result<Option<EnrolledDevice>, DbError> {
         use crate::repository::Repository;
         let model = EnrolledDeviceEntity::find()
             .filter(Column::Hostname.eq(hostname))
@@ -55,7 +55,7 @@ impl EnrolledDeviceRepository {
         Ok(model.map(|m| m.into()))
     }
 
-    pub async fn find_by_iface(&self, iface_name: String) -> Result<Vec<EnrolledDevice>, LdError> {
+    pub async fn find_by_iface(&self, iface_name: String) -> Result<Vec<EnrolledDevice>, DbError> {
         use crate::repository::Repository;
         let models = EnrolledDeviceEntity::find()
             .filter(Column::IfaceName.eq(iface_name))
@@ -69,7 +69,7 @@ impl EnrolledDeviceRepository {
         iface_name: String,
         server_ip: Ipv4Addr,
         mask: u8,
-    ) -> Result<Vec<EnrolledDevice>, LdError> {
+    ) -> Result<Vec<EnrolledDevice>, DbError> {
         use crate::repository::Repository;
         let server_ip_u32 = u32::from(server_ip);
         let mask_u32 = if mask == 0 { 0 } else { 0xFFFFFFFFu32 << (32 - mask) };
@@ -97,7 +97,7 @@ impl EnrolledDeviceRepository {
     pub async fn find_ipv6_bindings(
         &self,
         iface_name: String,
-    ) -> Result<Vec<EnrolledDevice>, LdError> {
+    ) -> Result<Vec<EnrolledDevice>, DbError> {
         use crate::repository::Repository;
         let models = EnrolledDeviceEntity::find()
             .filter(
@@ -121,7 +121,7 @@ impl EnrolledDeviceRepository {
         iface_name: String,
         server_ip: std::net::Ipv4Addr,
         mask: u8,
-    ) -> Result<Vec<EnrolledDevice>, LdError> {
+    ) -> Result<Vec<EnrolledDevice>, DbError> {
         use crate::repository::Repository;
         let server_ip_u32 = u32::from(server_ip);
         let mask_u32 = if mask == 0 { 0 } else { 0xFFFFFFFFu32 << (32 - mask) };

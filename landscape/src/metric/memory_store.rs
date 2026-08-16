@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 
 use landscape_common::config::MetricRuntimeConfig;
-use landscape_common::error::LdResult;
+use landscape_common::database::error::DbError;
 use landscape_common::event::{ConnectMessage, DnsMetricMessage};
 use landscape_common::metric::connect::{
     ConnectGlobalStats, ConnectHistoryQueryParams, ConnectHistoryStatus, ConnectKey, ConnectMetric,
@@ -551,7 +551,10 @@ impl MemoryMetricStore {
         Vec::new()
     }
 
-    pub async fn get_global_stats(&self, _force_refresh: bool) -> LdResult<ConnectGlobalStats> {
+    pub async fn get_global_stats(
+        &self,
+        _force_refresh: bool,
+    ) -> Result<ConnectGlobalStats, DbError> {
         Ok(ConnectGlobalStats::default())
     }
 

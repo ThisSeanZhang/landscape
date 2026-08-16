@@ -1,4 +1,4 @@
-use landscape_common::{error::LdError, wan_service::pppd::PPPDServiceConfig};
+use landscape_common::{database::error::DbError, wan_service::pppd::PPPDServiceConfig};
 use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter};
 
 use super::entity::{
@@ -18,7 +18,7 @@ impl PPPDServiceRepository {
     pub async fn get_pppd_configs_by_attach_iface_name(
         &self,
         attach_name: String,
-    ) -> Result<Vec<PPPDServiceConfig>, LdError> {
+    ) -> Result<Vec<PPPDServiceConfig>, DbError> {
         use crate::repository::Repository;
         let all = PPPDServiceConfigEntity::find()
             .filter(Column::AttachIfaceName.eq(attach_name))

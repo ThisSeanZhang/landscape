@@ -14,7 +14,7 @@ use landscape_common::dns::provider_profile::DnsProviderProfileError;
 use landscape_common::dns::redirect::DnsRedirectError;
 use landscape_common::dns::rule::DnsRuleError;
 use landscape_common::dns::upstream::DnsUpstreamError;
-use landscape_common::error::{LdApiErrorInfo, LdError};
+use landscape_common::error::LdApiErrorInfo;
 use landscape_common::flow::ip_mark::DstIpRuleError;
 use landscape_common::flow::FlowRuleError;
 use landscape_common::lan_service::lan_dhcpv4::DhcpError;
@@ -88,8 +88,6 @@ pub enum LandscapeApiError {
     Database(#[from] DbError),
 
     // Generic errors
-    #[error("Internal error: {0}")]
-    Internal(#[from] LdError),
     #[error("Invalid JSON: {0}")]
     JsonError(#[from] serde_json::Error),
     #[error("Invalid request body: {0}")]
@@ -125,11 +123,6 @@ impl LandscapeApiError {
             Self::InitConfig(e) => e.error_id(),
             Self::Database(e) => e.error_id(),
             Self::GatewayUnsupportedTarget => "gateway.unsupported_target",
-            Self::Internal(e) => match e {
-                LdError::ConfigConflict => "config.conflict",
-                LdError::DatabaseError(_) => "database.error",
-                _ => "internal.error",
-            },
             Self::JsonError(_) => "request.invalid_json",
             Self::JsonRejection(_) => "request.invalid_body",
         }
@@ -163,10 +156,6 @@ impl LandscapeApiError {
             Self::InitConfig(e) => StatusCode::from_u16(e.http_status_code()).unwrap(),
             Self::Database(e) => StatusCode::from_u16(e.http_status_code()).unwrap(),
             Self::GatewayUnsupportedTarget => StatusCode::NOT_IMPLEMENTED,
-            Self::Internal(e) => match e {
-                LdError::ConfigConflict => StatusCode::CONFLICT,
-                _ => StatusCode::INTERNAL_SERVER_ERROR,
-            },
             Self::JsonError(_) => StatusCode::BAD_REQUEST,
             Self::JsonRejection(r) => r.status(),
         }
@@ -199,10 +188,7 @@ impl LandscapeApiError {
             Self::LanHostname(e) => e.error_args(),
             Self::InitConfig(e) => e.error_args(),
             Self::Database(e) => e.error_args(),
-            Self::GatewayUnsupportedTarget
-            | Self::Internal(_)
-            | Self::JsonError(_)
-            | Self::JsonRejection(_) => {
+            Self::GatewayUnsupportedTarget | Self::JsonError(_) | Self::JsonRejection(_) => {
                 serde_json::json!({})
             }
         }
@@ -212,13 +198,6 @@ impl LandscapeApiError {
     pub fn to_public_message(&self) -> String {
         match self {
             Self::Database(e) => e.to_public_message(),
-            Self::Internal(e) => {
-                if let LdError::DatabaseError(db_err) = e {
-                    tracing::error!("database error: {db_err:?}");
-                    return "Database operation failed, please try again later".to_string();
-                }
-                e.to_string()
-            }
             _ => self.to_string(),
         }
     }

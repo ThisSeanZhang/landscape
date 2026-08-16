@@ -1,4 +1,4 @@
-use landscape_common::{config_service::geo::GeoIpSourceConfig, error::LdError};
+use landscape_common::{config_service::geo::GeoIpSourceConfig, database::error::DbError};
 use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder};
 
 use crate::DBId;
@@ -20,7 +20,7 @@ impl GeoIpSourceConfigRepository {
     pub async fn query_by_name(
         &self,
         name: Option<String>,
-    ) -> Result<Vec<GeoIpSourceConfig>, LdError> {
+    ) -> Result<Vec<GeoIpSourceConfig>, DbError> {
         let result = GeoIpSourceConfigEntity::find()
             .filter(Column::Name.contains(name.unwrap_or("".to_string())))
             .order_by_desc(Column::UpdateAt)

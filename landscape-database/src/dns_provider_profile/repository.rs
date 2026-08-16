@@ -1,5 +1,5 @@
+use landscape_common::database::error::DbError;
 use landscape_common::dns::provider_profile::DnsProviderProfile;
-use landscape_common::error::LdError;
 use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter};
 
 use super::entity::{
@@ -18,7 +18,7 @@ impl DnsProviderProfileRepository {
         Self { db }
     }
 
-    pub async fn find_by_name(&self, name: &str) -> Result<Option<DnsProviderProfile>, LdError> {
+    pub async fn find_by_name(&self, name: &str) -> Result<Option<DnsProviderProfile>, DbError> {
         let model =
             DnsProviderProfileEntity::find().filter(Column::Name.eq(name)).one(self.db()).await?;
         Ok(model.map(Into::into))

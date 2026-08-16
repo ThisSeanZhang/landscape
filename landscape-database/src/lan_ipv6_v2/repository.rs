@@ -26,12 +26,13 @@ impl LanIPv6V2ServiceRepository {
         &self,
         mut pending: LanIPv6ServiceConfigV2,
     ) -> Result<LanIPv6ServiceConfigV2, LanIPv6Error> {
-        let txn = self.db.begin().await.map_err(landscape_common::error::LdError::from)?;
+        let txn =
+            self.db.begin().await.map_err(landscape_common::database::error::DbError::from)?;
         let result = async {
             let models = LanIPv6ServiceConfigV2Entity::find()
                 .all(&txn)
                 .await
-                .map_err(landscape_common::error::LdError::from)?;
+                .map_err(landscape_common::database::error::DbError::from)?;
             let existing = models.iter().find(|model| model.iface_name == pending.iface_name);
 
             if existing.is_some_and(|model| {
@@ -47,10 +48,18 @@ impl LanIPv6V2ServiceRepository {
             let saved = if let Some(existing) = existing {
                 let mut active = existing.clone().into_active_model();
                 pending.clone().update(&mut active);
-                active.update(&txn).await.map_err(landscape_common::error::LdError::from)?.into()
+                active
+                    .update(&txn)
+                    .await
+                    .map_err(landscape_common::database::error::DbError::from)?
+                    .into()
             } else {
                 let active: LanIPv6ServiceConfigV2ActiveModel = pending.into();
-                active.insert(&txn).await.map_err(landscape_common::error::LdError::from)?.into()
+                active
+                    .insert(&txn)
+                    .await
+                    .map_err(landscape_common::database::error::DbError::from)?
+                    .into()
             };
 
             Ok(saved)
@@ -59,7 +68,7 @@ impl LanIPv6V2ServiceRepository {
 
         match result {
             Ok(saved) => {
-                txn.commit().await.map_err(landscape_common::error::LdError::from)?;
+                txn.commit().await.map_err(landscape_common::database::error::DbError::from)?;
                 Ok(saved)
             }
             Err(error) => {

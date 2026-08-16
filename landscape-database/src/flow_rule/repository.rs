@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use landscape_common::config::FlowId;
-use landscape_common::error::LdError;
+use landscape_common::database::error::DbError;
 use landscape_common::flow::config::FlowConfig;
 use landscape_common::flow::{
     FlowEntryMatchMode, FlowEntryRule, FlowRuleError, FlowTarget, ResolvedFlowEntryMatchMode,
@@ -27,7 +27,7 @@ impl FlowConfigRepository {
         Self { db }
     }
 
-    pub async fn list_runtime_configs(&self) -> Result<Vec<RuntimeFlowConfig>, LdError> {
+    pub async fn list_runtime_configs(&self) -> Result<Vec<RuntimeFlowConfig>, DbError> {
         let configs = self.list_all().await?;
         let devices = self.load_devices_for_configs(&configs).await?;
         let mut result = Vec::new();
@@ -48,7 +48,7 @@ impl FlowConfigRepository {
     async fn load_devices_for_configs(
         &self,
         configs: &[FlowConfig],
-    ) -> Result<DevicesById, LdError> {
+    ) -> Result<DevicesById, DbError> {
         let mut device_ids = HashSet::new();
         for config in configs {
             for rule in &config.flow_match_rules {
@@ -64,7 +64,7 @@ impl FlowConfigRepository {
         Ok(devices.into_iter().map(|device| (device.id, device)).collect())
     }
 
-    pub async fn find_by_flow_id(&self, flow_id: FlowId) -> Result<Option<FlowConfig>, LdError> {
+    pub async fn find_by_flow_id(&self, flow_id: FlowId) -> Result<Option<FlowConfig>, DbError> {
         let result =
             FlowConfigEntity::find().filter(Column::FlowId.eq(flow_id)).one(&self.db).await?;
 
@@ -76,7 +76,7 @@ impl FlowConfigRepository {
         &self,
         exclude_id: DBId,
         mode: &FlowEntryMatchMode,
-    ) -> Result<Option<FlowConfig>, LdError> {
+    ) -> Result<Option<FlowConfig>, DbError> {
         let (condition_sql, params) = match mode {
             FlowEntryMatchMode::Mac { mac_addr } => (
                 "json_extract(json_each.value, '$.mode.t') = 'mac' AND json_extract(json_each.value, '$.mode.mac_addr') = ?",
@@ -114,7 +114,7 @@ impl FlowConfigRepository {
         Ok(result.map(From::from))
     }
 
-    pub async fn find_by_target(&self, t: FlowTarget) -> Result<Vec<FlowConfig>, LdError> {
+    pub async fn find_by_target(&self, t: FlowTarget) -> Result<Vec<FlowConfig>, DbError> {
         // 构造条件 SQL 和参数
         let (condition_sql, param_value) = match t {
             FlowTarget::Interface { name } => (
@@ -150,7 +150,7 @@ impl FlowConfigRepository {
         &self,
         exclude_id: DBId,
         mode: &FlowEntryMatchMode,
-    ) -> Result<Option<FlowConfig>, LdError> {
+    ) -> Result<Option<FlowConfig>, DbError> {
         let configs = self.list_all().await?;
         let mut devices = self.load_devices_for_configs(&configs).await?;
         if let FlowEntryMatchMode::Device { device_id } = mode {
@@ -240,7 +240,7 @@ impl FlowConfigRepository {
     async fn load_devices_for_modes(
         &self,
         modes: &[FlowEntryMatchMode],
-    ) -> Result<DevicesById, LdError> {
+    ) -> Result<DevicesById, DbError> {
         let device_ids = collect_device_ids(modes.iter());
         let devices = EnrolledDeviceRepository::new(self.db.clone())
             .find_by_ids(device_ids.into_iter().collect())

@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 use landscape_common::cert::account::AccountStatus;
 use landscape_common::cert::order::{CertConfig, CertStatus, CertType};
-use landscape_common::error::LdError;
+use landscape_common::database::error::DbError;
 use sea_orm::{
     ActiveModelTrait, DatabaseConnection, EntityTrait, TransactionError, TransactionTrait,
 };
@@ -30,14 +30,14 @@ impl CertRepository {
         account_id: DBId,
         account_status: &AccountStatus,
         hint_prefix: &str,
-    ) -> Result<SyncAccountHintTxResult, LdError> {
+    ) -> Result<SyncAccountHintTxResult, DbError> {
         let account_is_registered = matches!(account_status, AccountStatus::Registered);
         let hint = format!("{hint_prefix} {:?}", account_status);
         let hint_prefix = hint_prefix.to_string();
         let hint_opt = if account_is_registered { None } else { Some(hint) };
 
         self.db
-            .transaction::<_, SyncAccountHintTxResult, LdError>(|txn| {
+            .transaction::<_, SyncAccountHintTxResult, DbError>(|txn| {
                 let hint_prefix = hint_prefix.clone();
                 let hint_opt = hint_opt.clone();
                 Box::pin(async move {
@@ -89,7 +89,7 @@ impl CertRepository {
             })
             .await
             .map_err(|e| match e {
-                TransactionError::Connection(db_err) => LdError::DatabaseError(db_err),
+                TransactionError::Connection(db_err) => DbError::Database(db_err),
                 TransactionError::Transaction(ld_err) => ld_err,
             })
     }

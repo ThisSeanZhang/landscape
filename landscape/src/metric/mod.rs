@@ -4,7 +4,7 @@ use std::sync::{Arc, RwLock};
 use landscape_common::{
     concurrency::{spawn_named_thread, spawn_task, task_label, thread_name},
     config::{MetricMode, MetricRuntimeConfig},
-    error::LdResult,
+    database::error::DbError,
     event::{ConnectMessage, DnsMetricMessage},
     metric::connect::{
         ConnectGlobalStats, ConnectHistoryQueryParams, ConnectHistoryStatus, ConnectKey,
@@ -176,7 +176,7 @@ impl MetricBackend {
         }
     }
 
-    async fn get_global_stats(&self, force_refresh: bool) -> LdResult<ConnectGlobalStats> {
+    async fn get_global_stats(&self, force_refresh: bool) -> Result<ConnectGlobalStats, DbError> {
         match self {
             Self::Off => Ok(ConnectGlobalStats::default()),
             Self::Memory(store) => store.get_global_stats(force_refresh).await,
@@ -375,7 +375,10 @@ impl MetricService {
         self.current_backend().history_dst_ip_stats(params).await
     }
 
-    pub async fn get_global_stats(&self, force_refresh: bool) -> LdResult<ConnectGlobalStats> {
+    pub async fn get_global_stats(
+        &self,
+        force_refresh: bool,
+    ) -> Result<ConnectGlobalStats, DbError> {
         self.current_backend().get_global_stats(force_refresh).await
     }
 

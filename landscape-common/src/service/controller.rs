@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 
 use crate::config::FlowId;
+use crate::database::error::DbError;
 use crate::database::{LandscapeFlowStore, LandscapeStore};
-use crate::error::LdError;
 
 use super::{
     manager::{ServiceManager, ServiceStarterTrait},
@@ -24,7 +24,7 @@ pub trait ControllerService {
         self.get_service().get_all_status().await
     }
 
-    async fn handle_service_config(&self, config: Self::Config) -> Result<(), LdError> {
+    async fn handle_service_config(&self, config: Self::Config) -> Result<(), DbError> {
         // 1. 先检查冲突，获取旧配置用于回滚
         let old_config = self.get_repository().check_conflict(&config).await?;
 
@@ -83,7 +83,7 @@ pub trait ConfigController {
         add_result
     }
 
-    async fn checked_set(&self, config: Self::Config) -> Result<Self::Config, LdError> {
+    async fn checked_set(&self, config: Self::Config) -> Result<Self::Config, DbError> {
         let old_configs = self.list().await;
         let add_result = self.get_repository().checked_set(config).await?;
         let new_configs = self.list().await;
@@ -102,7 +102,7 @@ pub trait ConfigController {
         self.update_many_config(configs).await;
     }
 
-    async fn checked_set_list(&self, configs: Vec<Self::Config>) -> Result<(), LdError> {
+    async fn checked_set_list(&self, configs: Vec<Self::Config>) -> Result<(), DbError> {
         // Phase 1: 预检查所有项的冲突
         for config in &configs {
             self.get_repository().check_conflict(config).await?;

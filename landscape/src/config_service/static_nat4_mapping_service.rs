@@ -5,8 +5,8 @@ use landscape_common::config_service::static_nat::config4::{
     StaticNatMappingV4Config, StaticNatV4Target,
 };
 use landscape_common::config_service::static_nat::error::StaticNatError;
+use landscape_common::database::error::DbError;
 use landscape_common::database::LandscapeStore;
-use landscape_common::error::LdError;
 use landscape_common::event::hub::EnrolledDeviceEventReader;
 use landscape_common::utils::time::get_f64_timestamp;
 use landscape_common::wan_service::nat::config::NatConfig;
@@ -69,7 +69,7 @@ impl StaticNat4MappingService {
     pub async fn checked_set(
         &self,
         config: StaticNatMappingV4Config,
-    ) -> Result<StaticNatMappingV4Config, LdError> {
+    ) -> Result<StaticNatMappingV4Config, DbError> {
         let result = self.store.checked_set(config).await?;
         self.refresh_runtime_rules().await;
         Ok(result)
@@ -78,7 +78,7 @@ impl StaticNat4MappingService {
     pub async fn checked_set_list(
         &self,
         configs: Vec<StaticNatMappingV4Config>,
-    ) -> Result<(), LdError> {
+    ) -> Result<(), DbError> {
         for config in &configs {
             self.store.check_conflict(config).await?;
         }
@@ -133,7 +133,7 @@ impl StaticNat4MappingService {
         &self,
         wan_port: u16,
         protocols: &[u8],
-    ) -> Result<Option<StaticNatError>, LdError> {
+    ) -> Result<Option<StaticNatError>, DbError> {
         let Some(nat_config) = self.nat_store.find_active_nat_config().await? else {
             return Ok(None);
         };

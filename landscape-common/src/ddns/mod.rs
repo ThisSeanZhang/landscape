@@ -5,8 +5,8 @@ use std::net::IpAddr;
 use uuid::Uuid;
 
 use crate::config::ConfigId;
+use crate::database::error::DbError;
 use crate::database::repository::LandscapeDBStore;
-use crate::error::LdError;
 use crate::utils::id::gen_database_uuid;
 use crate::utils::time::get_f64_timestamp;
 
@@ -35,7 +35,7 @@ pub enum DdnsError {
 
     #[error(transparent)]
     #[api_error(id = "ddns.internal", status = 500)]
-    Internal(#[from] LdError),
+    Internal(#[from] DbError),
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]

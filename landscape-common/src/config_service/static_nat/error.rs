@@ -2,7 +2,7 @@ use landscape_macro::LdApiError;
 use uuid::Uuid;
 
 use crate::config::ConfigId;
-use crate::error::LdError;
+use crate::database::error::DbError;
 
 #[derive(thiserror::Error, Debug, LdApiError)]
 #[api_error(crate_path = "crate")]
@@ -37,5 +37,5 @@ pub enum StaticNatError {
 
     #[error(transparent)]
     #[api_error(id = "static_nat.internal", status = 500)]
-    Internal(#[from] LdError),
+    Internal(#[from] DbError),
 }

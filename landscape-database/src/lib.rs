@@ -72,23 +72,28 @@ macro_rules! impl_repository {
             async fn set(
                 &self,
                 config: Self::Data,
-            ) -> Result<Self::Data, landscape_common::error::LdError> {
+            ) -> Result<Self::Data, landscape_common::database::error::DbError> {
                 use crate::repository::Repository;
                 use landscape_common::database::repository::LandscapeDBStore;
                 self.set_or_update_model(config.get_id(), config).await
             }
-            async fn list(&self) -> Result<Vec<Self::Data>, landscape_common::error::LdError> {
+            async fn list(
+                &self,
+            ) -> Result<Vec<Self::Data>, landscape_common::database::error::DbError> {
                 use crate::repository::Repository;
                 self.list_all().await
             }
-            async fn delete(&self, id: Self::Id) -> Result<(), landscape_common::error::LdError> {
+            async fn delete(
+                &self,
+                id: Self::Id,
+            ) -> Result<(), landscape_common::database::error::DbError> {
                 use crate::repository::Repository;
                 self.delete_model(id).await
             }
             async fn find_by_id(
                 &self,
                 id: Self::Id,
-            ) -> Result<Option<Self::Data>, landscape_common::error::LdError> {
+            ) -> Result<Option<Self::Data>, landscape_common::database::error::DbError> {
                 use crate::repository::Repository;
                 Repository::find_by_id(self, id).await
             }
@@ -99,7 +104,7 @@ macro_rules! impl_repository {
             async fn check_conflict(
                 &self,
                 config: &Self::Data,
-            ) -> Result<Option<Self::Data>, landscape_common::error::LdError> {
+            ) -> Result<Option<Self::Data>, landscape_common::database::error::DbError> {
                 use crate::repository::Repository;
                 use landscape_common::database::repository::LandscapeDBStore;
                 self.check_conflict_by_id(config.get_id(), config.get_update_at()).await
@@ -107,7 +112,7 @@ macro_rules! impl_repository {
             async fn checked_set(
                 &self,
                 config: Self::Data,
-            ) -> Result<Self::Data, landscape_common::error::LdError> {
+            ) -> Result<Self::Data, landscape_common::database::error::DbError> {
                 use crate::repository::Repository;
                 use landscape_common::database::repository::LandscapeDBStore;
                 self.checked_set_or_update_model(config.get_id(), config).await
@@ -189,7 +194,7 @@ macro_rules! impl_flow_store {
             async fn find_by_flow_id(
                 &self,
                 flow_id: landscape_common::config::FlowId,
-            ) -> Result<Vec<Self::Data>, landscape_common::error::LdError> {
+            ) -> Result<Vec<Self::Data>, landscape_common::database::error::DbError> {
                 use crate::repository::{FlowFilterExpr, Repository};
                 use sea_orm::{EntityTrait, QueryFilter};
                 let models = <$entity as EntityTrait>::find()

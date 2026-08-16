@@ -1,4 +1,4 @@
-use landscape_common::error::LdError;
+use landscape_common::database::error::DbError;
 use landscape_common::wan_service::nat::config::NatServiceConfig;
 use migration::Expr;
 use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, Value};
@@ -18,7 +18,7 @@ impl NatServiceRepository {
         Self { db }
     }
 
-    pub async fn find_active_nat_config(&self) -> Result<Option<NatServiceConfig>, LdError> {
+    pub async fn find_active_nat_config(&self) -> Result<Option<NatServiceConfig>, DbError> {
         let res = NatServiceConfigEntity::find()
             .filter(NatCol::Enable.eq(true))
             .one(&self.db)
@@ -32,7 +32,7 @@ impl NatServiceRepository {
         proto: u8,
         range_start: u16,
         range_end: u16,
-    ) -> Result<bool, LdError> {
+    ) -> Result<bool, DbError> {
         let expr = Expr::cust_with_values(
             "EXISTS (
                 SELECT 1 FROM json_each(static_nat_mapping_v4_configs.l4_protocols) AS proto,
@@ -55,7 +55,7 @@ impl NatServiceRepository {
         Ok(res.is_some())
     }
 
-    pub async fn is_port_in_dynamic_range(&self, proto: u8, port: u16) -> Result<bool, LdError> {
+    pub async fn is_port_in_dynamic_range(&self, proto: u8, port: u16) -> Result<bool, DbError> {
         let expr = Expr::cust_with_values(
             "EXISTS (
                 SELECT 1 FROM nat_service_config

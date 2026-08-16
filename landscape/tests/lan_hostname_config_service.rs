@@ -2,7 +2,7 @@ use landscape::sys_service::config_service::LandscapeConfigService;
 use landscape_common::{
     args::WebCommArgs,
     config::{LandscapeDnsConfig, LandscapeLanHostnameConfig, RuntimeConfig},
-    error::LdError,
+    database::error::DbError,
     LAND_CONFIG,
 };
 use landscape_database::provider::LandscapeDBServiceProvider;
@@ -88,7 +88,7 @@ async fn update_lan_hostname_config_rejects_stale_hash_without_changing_state() 
         )
         .await;
 
-    assert!(matches!(result, Err(LdError::ConfigConflict)));
+    assert!(matches!(result, Err(DbError::Conflict)));
     assert_eq!(std::fs::read_to_string(config_path).unwrap(), original);
     assert_eq!(service.get_lan_hostname_config_from_memory().lan_suffix.as_deref(), Some("lan"));
     assert_eq!(service.get_lan_hostname_runtime_config().lan_suffix, "lan");
@@ -208,7 +208,7 @@ async fn concurrent_updates_to_same_section_reject_one_stale_hash() {
 
     assert_ne!(first_result.is_ok(), second_result.is_ok());
     let conflict = if first_result.is_err() { first_result } else { second_result };
-    assert!(matches!(conflict, Err(LdError::ConfigConflict)));
+    assert!(matches!(conflict, Err(DbError::Conflict)));
 
     let persisted: landscape_common::config::LandscapeConfig =
         toml::from_str(&std::fs::read_to_string(config_path).unwrap()).unwrap();

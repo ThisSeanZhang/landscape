@@ -1,7 +1,5 @@
 use landscape_macro::LdApiError;
 
-use crate::error::LdError;
-
 #[derive(thiserror::Error, Debug, LdApiError)]
 #[api_error(crate_path = "crate")]
 pub enum NatServiceError {
@@ -16,8 +14,4 @@ pub enum NatServiceError {
     #[error("{name} start ({start}) must be less than end ({end})")]
     #[api_error(id = "nat.port_range_invalid", status = 422)]
     PortRangeInvalid { name: String, start: u16, end: u16 },
-
-    #[error(transparent)]
-    #[api_error(id = "nat.internal", status = 500)]
-    Internal(#[from] LdError),
 }
