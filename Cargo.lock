@@ -3632,6 +3632,7 @@ dependencies = [
  "rcgen",
  "rustls",
  "rustls-pki-types",
+ "sea-orm",
  "serde",
  "serde_json",
  "tempfile",

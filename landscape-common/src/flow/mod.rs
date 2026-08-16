@@ -44,7 +44,7 @@ pub enum FlowRuleError {
     DeviceNotFound(ConfigId),
 
     #[error(transparent)]
-    #[api_error(id = "flow_rule.internal", status = 500)]
+    #[api_error(transparent)]
     Internal(#[from] DbError),
 }
 

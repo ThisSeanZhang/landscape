@@ -195,10 +195,38 @@ impl LandscapeApiError {
     }
 
     /// Public-safe message: database errors only get a generic hint, full details go to logs.
+    /// Domain errors forward to their own `to_public_message` so transparently-wrapped
+    /// `DbError`s keep their redaction (e.g. nested `DbError::Database`).
     pub fn to_public_message(&self) -> String {
         match self {
+            Self::Cert(e) => e.to_public_message(),
+            Self::DnsRule(e) => e.to_public_message(),
+            Self::DnsCheck(e) => e.to_public_message(),
+            Self::DnsUpstream(e) => e.to_public_message(),
+            Self::DnsRedirect(e) => e.to_public_message(),
+            Self::DnsProviderProfile(e) => e.to_public_message(),
+            Self::Ddns(e) => e.to_public_message(),
+            Self::FlowRule(e) => e.to_public_message(),
+            Self::FirewallRule(e) => e.to_public_message(),
+            Self::FirewallBlacklist(e) => e.to_public_message(),
+            Self::Dhcp(e) => e.to_public_message(),
+            Self::LanIPv6(e) => e.to_public_message(),
+            Self::GeoSite(e) => e.to_public_message(),
+            Self::GeoIp(e) => e.to_public_message(),
+            Self::StaticNat(e) => e.to_public_message(),
+            Self::NatService(e) => e.to_public_message(),
+            Self::DstIpRule(e) => e.to_public_message(),
+            Self::EnrolledDevice(e) => e.to_public_message(),
+            Self::ServiceConfig(e) => e.to_public_message(),
+            Self::Auth(e) => e.to_public_message(),
+            Self::Docker(e) => e.to_public_message(),
+            Self::Gateway(e) => e.to_public_message(),
+            Self::LanHostname(e) => e.to_public_message(),
+            Self::InitConfig(e) => e.to_public_message(),
             Self::Database(e) => e.to_public_message(),
-            _ => self.to_string(),
+            Self::GatewayUnsupportedTarget | Self::JsonError(_) | Self::JsonRejection(_) => {
+                self.to_string()
+            }
         }
     }
 }
@@ -217,3 +245,64 @@ impl IntoResponse for LandscapeApiError {
 }
 
 pub type LandscapeApiResult<T> = Result<LandscapeApiResp<T>, LandscapeApiError>;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use landscape_common::config_service::static_nat::error::StaticNatError;
+    use landscape_common::database::error::DbError;
+    use landscape_common::ddns::DdnsError;
+    use landscape_common::dns::provider_profile::DnsProviderProfileError;
+    use landscape_common::flow::FlowRuleError;
+    use landscape_common::lan_service::lan_ipv6::LanIPv6Error;
+    use sea_orm::DbErr;
+
+    #[test]
+    fn direct_db_error_conflict_maps_to_409_conflict() {
+        let e = LandscapeApiError::Database(DbError::Conflict);
+        assert_eq!(e.error_id(), "config.conflict");
+        assert_eq!(e.http_status(), StatusCode::CONFLICT);
+        assert_eq!(
+            e.to_public_message(),
+            "Configuration has been modified by others. Please refresh and try again."
+        );
+    }
+
+    #[test]
+    fn nested_db_error_conflict_delegates_id_status_and_message() {
+        for e in [
+            LandscapeApiError::Ddns(DdnsError::Internal(DbError::Conflict)),
+            LandscapeApiError::FlowRule(FlowRuleError::Internal(DbError::Conflict)),
+            LandscapeApiError::StaticNat(StaticNatError::Internal(DbError::Conflict)),
+            LandscapeApiError::LanIPv6(LanIPv6Error::Internal(DbError::Conflict)),
+            LandscapeApiError::DnsProviderProfile(DnsProviderProfileError::Internal(
+                DbError::Conflict,
+            )),
+        ] {
+            assert_eq!(e.error_id(), "config.conflict");
+            assert_eq!(e.http_status(), StatusCode::CONFLICT);
+            assert_eq!(
+                e.to_public_message(),
+                "Configuration has been modified by others. Please refresh and try again."
+            );
+        }
+    }
+
+    #[test]
+    fn nested_db_error_database_is_redacted() {
+        let db_err = DbError::Database(DbErr::Custom("secret constraint detail".to_string()));
+        let e = LandscapeApiError::Ddns(DdnsError::Internal(db_err));
+        assert_eq!(e.error_id(), "database.error");
+        assert_eq!(e.http_status(), StatusCode::INTERNAL_SERVER_ERROR);
+        let msg = e.to_public_message();
+        assert!(!msg.contains("secret"));
+        assert_eq!(msg, "Database operation failed, please try again later");
+    }
+
+    #[test]
+    fn nested_db_error_conflict_response_is_409() {
+        let e = LandscapeApiError::Ddns(DdnsError::Internal(DbError::Conflict));
+        let resp = e.into_response();
+        assert_eq!(resp.status(), StatusCode::CONFLICT);
+    }
+}

@@ -34,7 +34,7 @@ pub enum DdnsError {
     ZoneAccessDenied(String),
 
     #[error(transparent)]
-    #[api_error(id = "ddns.internal", status = 500)]
+    #[api_error(transparent)]
     Internal(#[from] DbError),
 }
 

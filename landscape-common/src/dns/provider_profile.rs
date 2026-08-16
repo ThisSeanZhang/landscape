@@ -36,7 +36,7 @@ pub enum DnsProviderProfileError {
     CredentialError(String),
 
     #[error(transparent)]
-    #[api_error(id = "dns_provider_profile.internal", status = 500)]
+    #[api_error(transparent)]
     Internal(#[from] DbError),
 }
 

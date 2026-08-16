@@ -76,6 +76,6 @@ pub enum LanIPv6Error {
     PrefixSlotOverlap(Box<PrefixSlotOverlapDetails>),
 
     #[error(transparent)]
-    #[api_error(id = "lan_ipv6.internal", status = 500)]
+    #[api_error(transparent)]
     Internal(#[from] DbError),
 }

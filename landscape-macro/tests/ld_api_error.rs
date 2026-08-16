@@ -14,6 +14,12 @@ pub mod error {
         fn error_id(&self) -> &'static str;
         fn http_status_code(&self) -> u16;
         fn error_args(&self) -> Value;
+        fn to_public_message(&self) -> String
+        where
+            Self: std::fmt::Display,
+        {
+            self.to_string()
+        }
     }
 }
 
@@ -26,6 +32,73 @@ pub struct BoxedDetails {
 impl std::fmt::Display for BoxedDetails {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "boxed error: {} {}", self.iface_name, self.slot_range)
+    }
+}
+
+#[derive(Debug)]
+pub struct InnerError;
+
+impl std::fmt::Display for InnerError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "inner error detail")
+    }
+}
+
+impl std::error::Error for InnerError {}
+
+impl LdApiErrorInfo for InnerError {
+    fn error_id(&self) -> &'static str {
+        "inner.error"
+    }
+
+    fn http_status_code(&self) -> u16 {
+        409
+    }
+
+    fn error_args(&self) -> serde_json::Value {
+        json!({ "iface_name": "lan0" })
+    }
+
+    fn to_public_message(&self) -> String {
+        "redacted inner error".to_string()
+    }
+}
+
+/// Inner error whose inherent `to_public_message` differs from the trait
+/// implementation — transparent delegation must prefer the inherent method
+/// (this is how `DbError`'s redaction is honored when wrapped by a domain error).
+#[derive(Debug)]
+pub struct InherentInnerError;
+
+impl std::fmt::Display for InherentInnerError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "inherent inner error detail")
+    }
+}
+
+impl std::error::Error for InherentInnerError {}
+
+impl InherentInnerError {
+    pub fn to_public_message(&self) -> String {
+        "inherent redacted message".to_string()
+    }
+}
+
+impl LdApiErrorInfo for InherentInnerError {
+    fn error_id(&self) -> &'static str {
+        "inherent.inner.error"
+    }
+
+    fn http_status_code(&self) -> u16 {
+        418
+    }
+
+    fn error_args(&self) -> serde_json::Value {
+        json!({})
+    }
+
+    fn to_public_message(&self) -> String {
+        "trait redacted message".to_string()
     }
 }
 
@@ -49,8 +122,16 @@ pub enum TestApiError {
     Boxed(Box<BoxedDetails>),
 
     #[error(transparent)]
-    #[api_error(id = "test.internal", status = 500)]
-    Internal(#[from] std::io::Error),
+    #[api_error(id = "test.legacy_internal", status = 500)]
+    Legacy(#[from] std::io::Error),
+
+    #[error(transparent)]
+    #[api_error(transparent)]
+    Internal(#[from] InnerError),
+
+    #[error(transparent)]
+    #[api_error(transparent)]
+    Inherent(#[from] InherentInnerError),
 }
 
 use error::LdApiErrorInfo;
@@ -93,9 +174,27 @@ fn boxed_serialize_variant_serializes_inner_struct() {
 }
 
 #[test]
-fn from_variant_is_transparent() {
+fn transparent_variant_delegates_id_status_args_and_message() {
+    let err: TestApiError = InnerError.into();
+    assert_eq!(err.error_id(), "inner.error");
+    assert_eq!(err.http_status_code(), 409);
+    assert_eq!(err.error_args(), json!({ "iface_name": "lan0" }));
+    assert_eq!(err.to_public_message(), "redacted inner error");
+}
+
+#[test]
+fn transparent_variant_prefers_inherent_method_over_trait() {
+    let err: TestApiError = InherentInnerError.into();
+    assert_eq!(err.error_id(), "inherent.inner.error");
+    assert_eq!(err.http_status_code(), 418);
+    assert_eq!(err.to_public_message(), "inherent redacted message");
+}
+
+#[test]
+fn plain_from_variant_keeps_fixed_id_and_status() {
     let err: TestApiError = std::io::Error::other("boom").into();
-    assert_eq!(err.error_id(), "test.internal");
+    assert_eq!(err.error_id(), "test.legacy_internal");
     assert_eq!(err.http_status_code(), 500);
     assert_eq!(err.error_args(), json!({}));
+    assert_eq!(err.to_public_message(), "boom");
 }

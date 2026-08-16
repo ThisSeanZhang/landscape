@@ -36,6 +36,6 @@ pub enum StaticNatError {
     PortInDynamicRange { mapping_id: Uuid, port: u16, protocol: u8, start: u16, end: u16 },
 
     #[error(transparent)]
-    #[api_error(id = "static_nat.internal", status = 500)]
+    #[api_error(transparent)]
     Internal(#[from] DbError),
 }
