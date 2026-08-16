@@ -2,8 +2,7 @@ use axum::extract::{Path, State};
 use landscape_common::api_response::LandscapeApiResp as CommonApiResp;
 use landscape_common::config::{ConfigId, FlowId};
 use landscape_common::dns::rule::DNSRuleConfig;
-use landscape_common::service::controller::ConfigController;
-use landscape_common::service::controller::FlowConfigController;
+use landscape_common::service::controller::{ConfigStoreController, ConfigStoreFlowController};
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 
@@ -25,7 +24,7 @@ async fn ensure_flow_id_unchanged(
     state: &LandscapeApp,
     config: &DNSRuleConfig,
 ) -> Result<(), DnsRuleError> {
-    if let Some(existing) = state.dns_rule_service.find_by_id(config.id).await {
+    if let Some(existing) = state.dns_rule_service.find_by_id(config.id).await? {
         if existing.flow_id != config.flow_id {
             return Err(DnsRuleError::CannotChangeFlow(config.id));
         }
@@ -42,7 +41,7 @@ async fn ensure_flow_id_unchanged(
 async fn get_dns_rules(
     State(state): State<LandscapeApp>,
 ) -> LandscapeApiResult<Vec<DNSRuleConfig>> {
-    let result = state.dns_rule_service.list().await;
+    let result = state.dns_rule_service.list().await?;
     LandscapeApiResp::success(result)
 }
 
@@ -57,7 +56,7 @@ async fn get_flow_dns_rules(
     State(state): State<LandscapeApp>,
     Path(id): Path<FlowId>,
 ) -> LandscapeApiResult<Vec<DNSRuleConfig>> {
-    let mut result = state.dns_rule_service.list_flow_configs(id).await;
+    let mut result = state.dns_rule_service.list_flow_configs(id).await?;
     result.sort_by_key(|a| a.index);
     LandscapeApiResp::success(result)
 }
@@ -76,12 +75,7 @@ async fn get_dns_rule(
     State(state): State<LandscapeApp>,
     Path(id): Path<ConfigId>,
 ) -> LandscapeApiResult<DNSRuleConfig> {
-    let result = state.dns_rule_service.find_by_id(id).await;
-    if let Some(config) = result {
-        LandscapeApiResp::success(config)
-    } else {
-        Err(DnsRuleError::NotFound(id))?
-    }
+    LandscapeApiResp::success(state.dns_rule_service.find_required(id).await?)
 }
 
 #[utoipa::path(
@@ -132,6 +126,6 @@ async fn del_dns_rules(
     State(state): State<LandscapeApp>,
     Path(id): Path<ConfigId>,
 ) -> LandscapeApiResult<()> {
-    state.dns_rule_service.delete(id).await;
+    state.dns_rule_service.delete_required(id).await?;
     LandscapeApiResp::success(())
 }

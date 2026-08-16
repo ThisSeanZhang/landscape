@@ -10,7 +10,7 @@ use landscape_common::{
     dns::{CacheRuntimeConfig, DohRuntimeConfig, FlowDnsDependencies},
     event::{dns::DnsEvent, DnsMetricMessage},
     service::{
-        controller::{ConfigController, FlowConfigController},
+        controller::{ConfigController, ConfigStoreFlowController, FlowConfigController},
         ServiceStatus, WatchService,
     },
 };
@@ -277,7 +277,7 @@ impl LandscapeDnsService {
 
     async fn refresh_all_flows_kind(&self, kind: FlowRuntimeRefreshKind) -> usize {
         let time = Instant::now();
-        let mut flow_rules = self.dns_rule_service.get_flow_hashmap().await;
+        let mut flow_rules = self.dns_rule_service.get_flow_hashmap().await.unwrap();
         let redirect_flow_ids = self
             .dns_redirect_rule_service
             .list()
@@ -323,7 +323,7 @@ impl LandscapeDnsService {
     }
 
     async fn refresh_flow_kind(&self, flow_id: u32, kind: FlowRuntimeRefreshKind) {
-        let flow_rules = self.dns_rule_service.list_flow_configs(flow_id).await;
+        let flow_rules = self.dns_rule_service.list_flow_configs(flow_id).await.unwrap();
         self.refresh_flow_with_rules_kind(flow_id, flow_rules, kind).await;
     }
 

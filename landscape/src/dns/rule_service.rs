@@ -1,9 +1,11 @@
 use std::collections::HashMap;
 
 use landscape_common::{
-    dns::rule::DNSRuleConfig,
+    database::error::DbError,
+    database::store::{Change, ConfigStore},
+    dns::rule::{DNSRuleConfig, DnsRuleError},
     event::dns::DnsEvent,
-    service::controller::{ConfigController, FlowConfigController},
+    service::controller::{ConfigStoreController, ConfigStoreFlowController},
 };
 use landscape_database::{
     dns_rule::repository::DNSRuleRepository, provider::LandscapeDBServiceProvider,
@@ -25,56 +27,67 @@ impl DNSRuleService {
         store: LandscapeDBServiceProvider,
         dns_events_tx: mpsc::Sender<DnsEvent>,
         dns_upstream_service: DnsUpstreamService,
-    ) -> Self {
+    ) -> Result<Self, DbError> {
         let store = store.dns_rule_store();
         let dns_rule_service = Self { store, dns_events_tx, dns_upstream_service };
 
-        let rules = dns_rule_service.list().await;
+        let rules = dns_rule_service.list().await?;
 
         if rules.is_empty() {
             let (rule, upstream) = landscape_common::dns::gen_default_dns_rule_and_upstream();
-            dns_rule_service.set(rule).await;
-            dns_rule_service.dns_upstream_service.set(upstream).await;
+            // Upstream first so a failure can never leave a rule referencing a
+            // missing upstream; an orphan upstream (write succeeded, rule
+            // failed) is harmless and converges on the next boot's re-seed.
+            dns_rule_service.dns_upstream_service.upsert_seed(upstream).await?;
+            dns_rule_service.store.upsert(rule).await?;
         }
 
-        dns_rule_service
+        Ok(dns_rule_service)
     }
 
-    pub async fn get_flow_hashmap(&self) -> HashMap<u32, Vec<DNSRuleConfig>> {
-        let rules = self.list().await;
+    pub async fn get_flow_hashmap(&self) -> Result<HashMap<u32, Vec<DNSRuleConfig>>, DbError> {
+        let rules = self.list().await?;
 
         let mut groups: HashMap<u32, Vec<DNSRuleConfig>> = HashMap::new();
         for rule in rules.into_iter() {
             groups.entry(rule.flow_id).or_default().push(rule);
         }
 
-        groups
+        Ok(groups)
+    }
+
+    pub async fn find_required(&self, id: Uuid) -> Result<DNSRuleConfig, DnsRuleError> {
+        self.find_by_id(id).await?.ok_or(DnsRuleError::NotFound(id))
+    }
+
+    pub async fn delete_required(&self, id: Uuid) -> Result<(), DnsRuleError> {
+        self.delete(id).await?.ok_or(DnsRuleError::NotFound(id))?;
+        Ok(())
     }
 }
 
-impl FlowConfigController for DNSRuleService {}
+#[async_trait::async_trait]
+impl ConfigStoreFlowController for DNSRuleService {}
 
 #[async_trait::async_trait]
-impl ConfigController for DNSRuleService {
+impl ConfigStoreController for DNSRuleService {
     type Id = Uuid;
 
     type Config = DNSRuleConfig;
 
-    type DatabseAction = DNSRuleRepository;
+    type Store = DNSRuleRepository;
 
-    fn get_repository(&self) -> &Self::DatabseAction {
+    fn get_store(&self) -> &Self::Store {
         &self.store
     }
 
-    async fn update_one_config(&self, config: Self::Config) {
-        let _ =
-            self.dns_events_tx.send(DnsEvent::RulesChanged { flow_id: Some(config.flow_id) }).await;
+    async fn notify_changed(&self, changes: Vec<Change<Self::Config>>) {
+        let flow_id = (changes.len() == 1).then(|| changes[0].new.flow_id);
+        let _ = self.dns_events_tx.send(DnsEvent::RulesChanged { flow_id }).await;
     }
-    async fn delete_one_config(&self, config: Self::Config) {
+
+    async fn notify_deleted(&self, old: Self::Config) {
         let _ =
-            self.dns_events_tx.send(DnsEvent::RulesChanged { flow_id: Some(config.flow_id) }).await;
-    }
-    async fn update_many_config(&self, _configs: Vec<Self::Config>) {
-        let _ = self.dns_events_tx.send(DnsEvent::RulesChanged { flow_id: None }).await;
+            self.dns_events_tx.send(DnsEvent::RulesChanged { flow_id: Some(old.flow_id) }).await;
     }
 }

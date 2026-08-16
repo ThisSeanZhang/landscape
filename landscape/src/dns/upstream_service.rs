@@ -1,5 +1,6 @@
 use landscape_common::{
-    dns::config::DnsUpstreamConfig, event::dns::DnsEvent, service::controller::ConfigController,
+    database::error::DbError, database::store::ConfigStore, dns::config::DnsUpstreamConfig,
+    event::dns::DnsEvent, service::controller::ConfigController,
 };
 use landscape_database::{
     dns_upstream::repository::DnsUpstreamRepository, provider::LandscapeDBServiceProvider,
@@ -20,6 +21,11 @@ impl DnsUpstreamService {
     ) -> Self {
         let store = store.dns_upstream_config_store();
         Self { store, dns_events_tx }
+    }
+
+    /// Blind server-authoritative write (startup seeding), no event dispatch.
+    pub async fn upsert_seed(&self, config: DnsUpstreamConfig) -> Result<(), DbError> {
+        self.store.upsert(config).await.map(|_| ())
     }
 }
 

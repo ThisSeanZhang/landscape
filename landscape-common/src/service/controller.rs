@@ -1,7 +1,9 @@
 use std::collections::HashMap;
+use std::fmt::Debug;
 
 use crate::config::FlowId;
 use crate::database::error::DbError;
+use crate::database::store::{Change, ConfigStore};
 use crate::database::{LandscapeFlowStore, LandscapeStore};
 
 use super::{
@@ -148,5 +150,94 @@ where
 {
     async fn list_flow_configs(&self, id: FlowId) -> Vec<Self::Config> {
         self.get_repository().find_by_flow_id(id).await.unwrap()
+    }
+}
+
+/// Next-generation controller over [`ConfigStore`]: shared write orchestration
+/// (transactional, atomic optimistic lock, typed `DbError`) plus a minimal
+/// per-domain notification slot. Runs in parallel with the legacy
+/// [`ConfigController`] and will replace it once all domains are migrated.
+///
+/// # Write semantics
+///
+/// Every write in this trait **notifies**: `checked_set`/`checked_set_list`/
+/// `delete` dispatch to `notify_changed`/`notify_deleted` after the write
+/// succeeds. Domains that do not care (no overridden hook, or a no-op) simply
+/// ignore the notification. Blind server-authoritative writes (seeding, state
+/// machines, link-event sync) are deliberately NOT part of this trait: they go
+/// straight to the underlying [`ConfigStore`] primitives
+/// (`upsert`/`upsert_many`/`delete_and_get`) which never notify.
+///
+/// # Change delivery
+///
+/// `notify_changed` receives the full before/after (`Change { old, new }`) per
+/// item, so a domain can scope its reaction precisely (e.g. DNS redirects
+/// refreshing only `old.apply_flows ∪ new.apply_flows`) instead of the legacy
+/// full-table `after_update_config` diff. Reads (`list`/`find_by_id`) live on
+/// this trait as well and return `Result` so DB errors propagate to the caller
+/// instead of being swallowed; flow-scoped reads are provided by the
+/// [`ConfigStoreFlowController`] subtrait.
+#[async_trait::async_trait]
+pub trait ConfigStoreController: Send + Sync {
+    type Id: Clone + Send + Sync + Debug;
+    type Config: Send + Sync + Clone + Debug;
+    type Store: ConfigStore<Data = Self::Config, Id = Self::Id>
+        + LandscapeStore<Data = Self::Config, Id = Self::Id>
+        + Send
+        + Sync;
+
+    fn get_store(&self) -> &Self::Store;
+
+    /// Domain notification slot: translate the changes into the domain's own
+    /// events (or run any rebuild). Single writes arrive as `vec![change]`;
+    /// domains distinguishing single vs batch branch on `changes.len()`.
+    async fn notify_changed(&self, _changes: Vec<Change<Self::Config>>) {}
+
+    /// Domain notification slot for deletes; `old` is the deleted value.
+    async fn notify_deleted(&self, _old: Self::Config) {}
+
+    /// Optimistic-lock write, then notify. Returns the saved config with the
+    /// refreshed `update_at` for the client to echo back.
+    async fn checked_set(&self, config: Self::Config) -> Result<Self::Config, DbError> {
+        let change = self.get_store().checked_upsert(config).await?;
+        self.notify_changed(vec![change.clone()]).await;
+        Ok(change.new)
+    }
+
+    /// Atomic batch optimistic-lock write in one transaction, then notify.
+    async fn checked_set_list(&self, configs: Vec<Self::Config>) -> Result<(), DbError> {
+        let changes = self.get_store().checked_upsert_many(configs).await?;
+        self.notify_changed(changes).await;
+        Ok(())
+    }
+
+    /// Read and delete atomically, then notify; `Ok(None)` if the id was missing.
+    async fn delete(&self, id: Self::Id) -> Result<Option<Self::Config>, DbError> {
+        let old = self.get_store().delete_and_get(id).await?;
+        if let Some(old) = &old {
+            self.notify_deleted(old.clone()).await;
+        }
+        Ok(old)
+    }
+
+    /// Lists all configs; DB errors propagate instead of being swallowed.
+    async fn list(&self) -> Result<Vec<Self::Config>, DbError> {
+        self.get_store().list().await
+    }
+
+    /// Finds one config; `Ok(None)` if missing. DB errors propagate.
+    async fn find_by_id(&self, id: Self::Id) -> Result<Option<Self::Config>, DbError> {
+        self.get_store().find_by_id(id).await
+    }
+}
+
+/// Flow-scoped reads for configs that belong to a [`FlowId`].
+#[async_trait::async_trait]
+pub trait ConfigStoreFlowController: ConfigStoreController
+where
+    Self::Store: LandscapeFlowStore,
+{
+    async fn list_flow_configs(&self, id: FlowId) -> Result<Vec<Self::Config>, DbError> {
+        self.get_store().find_by_flow_id(id).await
     }
 }

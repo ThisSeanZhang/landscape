@@ -229,7 +229,7 @@ async fn run_system(
             dns_service_tx.clone(),
             dns_upstream_service.clone(),
         )
-        .await
+        .await?
     );
 
     let flow_rule_service = startup_phase!(
