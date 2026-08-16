@@ -7,6 +7,7 @@ edition.workspace = true
 landscape-common = { path = "../landscape-common" }
 migration = { path = "./migration" }
 sea-orm = { workspace = true, features = ["with-uuid", "with-json"] }
+tokio = { workspace = true, features = ["time"] }
 
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -20,8 +21,12 @@ thiserror = { workspace = true }
 tokio = { workspace = true }
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
 tracing-appender = { workspace = true }
+tempfile = { workspace = true }
 
 
 [features]
 default = []
+# NOT wired up: no sqlx-postgres dependency or connection code exists. The
+# feature only toggles `schema_name` attributes on entities. The storage layer
+# (StoreWriter retry classification, WAL semantics) is SQLite-only.
 postgres = []

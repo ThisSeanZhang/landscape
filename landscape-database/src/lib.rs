@@ -1,6 +1,7 @@
 use sea_orm::prelude::Uuid;
 
 pub mod repository;
+pub mod writer;
 
 pub mod ddns;
 pub mod dhcp_v4_server;
@@ -42,15 +43,15 @@ pub mod dns_rule;
 pub mod dns_upstream;
 pub mod gateway;
 
-/// 定义 ID 类型
+/// ID type.
 pub(crate) type DBId = Uuid;
-/// 定义 JSON
+/// JSON value type.
 pub(crate) type DBJson = serde_json::Value;
-/// 定义通用时间戳存储, 用于乐观锁判断
+/// Generic timestamp storage type, used for optimistic-lock checks.
 pub(crate) type DBTimestamp = f64;
 
-/// 为 Repository struct 生成 `impl Repository` + `impl LandscapeStore`
-/// struct 本身由各 repository.rs 手动定义，保持组合灵活性
+/// Generates `impl Repository` + `impl LandscapeStore` for a Repository struct.
+/// The struct itself is defined manually in each repository.rs for composition flexibility.
 macro_rules! impl_repository {
     ($repo:ty, $model:ty, $entity:ty, $active:ty, $data:ty, $id:ty) => {
         #[async_trait::async_trait]
@@ -112,10 +113,75 @@ macro_rules! impl_repository {
                 self.checked_set_or_update_model(config.get_id(), config).await
             }
         }
+        #[async_trait::async_trait]
+        impl landscape_common::database::store::ConfigStore for $repo {
+            type Data = $data;
+            type Id = $id;
+            async fn upsert(
+                &self,
+                config: Self::Data,
+            ) -> Result<
+                landscape_common::database::store::Change<Self::Data>,
+                landscape_common::database::error::DbError,
+            > {
+                crate::writer::StoreWriter::<$entity, $data>::new(self.db.clone())
+                    .upsert(config)
+                    .await
+            }
+            async fn checked_upsert(
+                &self,
+                config: Self::Data,
+            ) -> Result<
+                landscape_common::database::store::Change<Self::Data>,
+                landscape_common::database::error::DbError,
+            > {
+                crate::writer::StoreWriter::<$entity, $data>::new(self.db.clone())
+                    .checked_upsert(config)
+                    .await
+            }
+            async fn upsert_many(
+                &self,
+                configs: Vec<Self::Data>,
+            ) -> Result<
+                Vec<landscape_common::database::store::Change<Self::Data>>,
+                landscape_common::database::error::DbError,
+            > {
+                crate::writer::StoreWriter::<$entity, $data>::new(self.db.clone())
+                    .upsert_many(configs)
+                    .await
+            }
+            async fn checked_upsert_many(
+                &self,
+                configs: Vec<Self::Data>,
+            ) -> Result<
+                Vec<landscape_common::database::store::Change<Self::Data>>,
+                landscape_common::database::error::DbError,
+            > {
+                crate::writer::StoreWriter::<$entity, $data>::new(self.db.clone())
+                    .checked_upsert_many(configs)
+                    .await
+            }
+            async fn delete_and_get(
+                &self,
+                id: Self::Id,
+            ) -> Result<Option<Self::Data>, landscape_common::database::error::DbError> {
+                crate::writer::StoreWriter::<$entity, $data>::new(self.db.clone())
+                    .delete_and_get(id)
+                    .await
+            }
+            async fn find_ids(
+                &self,
+                ids: Vec<Self::Id>,
+            ) -> Result<Vec<Self::Data>, landscape_common::database::error::DbError> {
+                crate::writer::StoreWriter::<$entity, $data>::new(self.db.clone())
+                    .find_ids(ids)
+                    .await
+            }
+        }
     };
 }
 
-/// 为 Model 实现了 FlowFilterExpr 的 Repository 生成 `impl LandscapeFlowStore`
+/// Generates `impl LandscapeFlowStore` for a Repository whose Model implements FlowFilterExpr.
 macro_rules! impl_flow_store {
     ($repo:ty, $model:ty, $entity:ty) => {
         #[async_trait::async_trait]

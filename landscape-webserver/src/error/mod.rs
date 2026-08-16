@@ -29,6 +29,7 @@ use landscape_common::wan_service::nat::error::NatServiceError;
 use crate::api::LandscapeApiResp;
 use crate::auth::error::AuthError;
 use crate::docker::error::DockerError;
+use landscape_common::database::error::DbError;
 
 #[derive(thiserror::Error, Debug)]
 pub enum LandscapeApiError {
@@ -83,6 +84,8 @@ pub enum LandscapeApiError {
     InitConfig(#[from] InitConfigError),
     #[error("gateway is not supported on this target architecture")]
     GatewayUnsupportedTarget,
+    #[error(transparent)]
+    Database(#[from] DbError),
 
     // Generic errors
     #[error("Internal error: {0}")]
@@ -120,9 +123,11 @@ impl LandscapeApiError {
             Self::Gateway(e) => e.error_id(),
             Self::LanHostname(e) => e.error_id(),
             Self::InitConfig(e) => e.error_id(),
+            Self::Database(e) => e.error_id(),
             Self::GatewayUnsupportedTarget => "gateway.unsupported_target",
             Self::Internal(e) => match e {
                 LdError::ConfigConflict => "config.conflict",
+                LdError::DatabaseError(_) => "database.error",
                 _ => "internal.error",
             },
             Self::JsonError(_) => "request.invalid_json",
@@ -156,6 +161,7 @@ impl LandscapeApiError {
             Self::Gateway(e) => StatusCode::from_u16(e.http_status_code()).unwrap(),
             Self::LanHostname(e) => StatusCode::from_u16(e.http_status_code()).unwrap(),
             Self::InitConfig(e) => StatusCode::from_u16(e.http_status_code()).unwrap(),
+            Self::Database(e) => StatusCode::from_u16(e.http_status_code()).unwrap(),
             Self::GatewayUnsupportedTarget => StatusCode::NOT_IMPLEMENTED,
             Self::Internal(e) => match e {
                 LdError::ConfigConflict => StatusCode::CONFLICT,
@@ -192,6 +198,7 @@ impl LandscapeApiError {
             Self::Gateway(e) => e.error_args(),
             Self::LanHostname(e) => e.error_args(),
             Self::InitConfig(e) => e.error_args(),
+            Self::Database(e) => e.error_args(),
             Self::GatewayUnsupportedTarget
             | Self::Internal(_)
             | Self::JsonError(_)
@@ -200,14 +207,32 @@ impl LandscapeApiError {
             }
         }
     }
+
+    /// Public-safe message: database errors only get a generic hint, full details go to logs.
+    pub fn to_public_message(&self) -> String {
+        match self {
+            Self::Database(e) => e.to_public_message(),
+            Self::Internal(e) => {
+                if let LdError::DatabaseError(db_err) = e {
+                    tracing::error!("database error: {db_err:?}");
+                    return "Database operation failed, please try again later".to_string();
+                }
+                e.to_string()
+            }
+            _ => self.to_string(),
+        }
+    }
 }
 
 impl IntoResponse for LandscapeApiError {
     fn into_response(self) -> axum::response::Response {
         let status = self.http_status();
         let args = self.error_args();
-        let resp =
-            CommonLandscapeApiResp::<()>::error_with_args(self.error_id(), self.to_string(), args);
+        let resp = CommonLandscapeApiResp::<()>::error_with_args(
+            self.error_id(),
+            self.to_public_message(),
+            args,
+        );
         (status, Json(resp)).into_response()
     }
 }

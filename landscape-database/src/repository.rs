@@ -9,12 +9,12 @@ use sea_orm::{
     IntoActiveModel, PrimaryKeyTrait,
 };
 
-/// 用于将 domain data 映射到 Sea-ORM ActiveModel 的 trait
+/// Maps domain data onto a Sea-ORM ActiveModel.
 pub trait UpdateActiveModel<ActiveModel> {
     fn update(self, active: &mut ActiveModel);
 }
 
-/// Sea-ORM 特定的 Repository trait（实现细节）
+/// Sea-ORM-specific Repository trait (implementation detail).
 #[async_trait]
 pub trait Repository
 where
@@ -35,32 +35,35 @@ where
         + Sync
         + Debug;
 
-    /// 提供数据库连接
+    /// Provides the database connection.
     fn db(&self) -> &DatabaseConnection;
 
-    /// 列出所有数据
+    /// Lists all data.
     #[allow(dead_code)]
     async fn list_all(&self) -> Result<Vec<Self::Data>, LdError> {
         let models: Vec<Self::Model> = <Self::Entity as EntityTrait>::find().all(self.db()).await?;
         Ok(models.into_iter().map(From::from).collect())
     }
 
-    /// 插入数据
+    /// Inserts data, always refreshing `update_at`: every write path must bump
+    /// the version, otherwise `checked_upsert` cannot detect stale writes.
+    /// A pure insert has no previous version, so the server clock defines it.
     #[allow(dead_code)]
-    async fn set_model(&self, data: Self::Data) -> Result<Self::Data, LdError> {
+    async fn set_model(&self, mut data: Self::Data) -> Result<Self::Data, LdError> {
+        data.set_update_at(landscape_common::utils::time::get_f64_timestamp());
         let active_model: Self::ActiveModel = data.into();
         let inserted = active_model.insert(self.db()).await?;
         Ok(inserted.into())
     }
 
-    /// 删除
+    /// Deletes by ID.
     #[allow(dead_code)]
     async fn delete_model(&self, id: Self::Id) -> Result<(), LdError> {
         <Self::Entity as EntityTrait>::delete_by_id(id).exec(self.db()).await?;
         Ok(())
     }
 
-    /// 查找指定 ID
+    /// Finds by ID.
     #[allow(dead_code)]
     async fn find_by_id(&self, id: Self::Id) -> Result<Option<Self::Data>, LdError> {
         let pk_value = id.into();
@@ -79,14 +82,14 @@ where
         result
     }
 
-    /// 清空
+    /// Truncates the table.
     #[allow(dead_code)]
     async fn truncate_table(&self) -> Result<(), LdError> {
         <Self::Entity as EntityTrait>::delete_many().exec(self.db()).await?;
         Ok(())
     }
 
-    /// 只读冲突检查：比较 incoming_update_at 和数据库中的 update_at
+    /// Read-only conflict check: compares the incoming `update_at` with the stored one.
     #[allow(dead_code)]
     async fn check_conflict_by_id(
         &self,
@@ -103,7 +106,7 @@ where
         }
     }
 
-    /// 乐观锁 set：检查 update_at，刷新时间戳，写入
+    /// Optimistic-lock set: check `update_at`, refresh the timestamp, then write.
     #[allow(dead_code)]
     async fn checked_set_or_update_model(
         &self,
@@ -114,7 +117,10 @@ where
             if (existing.get_update_at() - config.get_update_at()).abs() > f64::EPSILON {
                 return Err(LdError::ConfigConflict);
             }
-            config.set_update_at(landscape_common::utils::time::get_f64_timestamp());
+            // Bump the version monotonically from the stored one (see set_or_update_model).
+            config.set_update_at(
+                existing.next_update_at(landscape_common::utils::time::get_f64_timestamp()),
+            );
             let mut active: Self::ActiveModel = existing.into();
             config.update(&mut active);
             Ok(active.update(self.db()).await?.into())
@@ -129,9 +135,16 @@ where
     async fn set_or_update_model(
         &self,
         id: Self::Id,
-        config: Self::Data,
+        mut config: Self::Data,
     ) -> Result<Self::Data, LdError> {
         if let Some(data) = self.find_by_id(id).await? {
+            // Derive the new version from the row just read, not the client's
+            // echoed `update_at`: two requests with the same stale version could
+            // otherwise write identical versions in the same millisecond, or
+            // even smaller ones on clock rollback.
+            config.set_update_at(
+                data.next_update_at(landscape_common::utils::time::get_f64_timestamp()),
+            );
             let mut d: Self::ActiveModel = data.into();
             config.update(&mut d);
             Ok(d.update(self.db()).await?.into())
@@ -147,7 +160,7 @@ where
     }
 }
 
-/// Flow 过滤表达式（Sea-ORM 特定）
+/// Flow filter expression (Sea-ORM specific).
 pub trait FlowFilterExpr {
     fn get_flow_filter(id: FlowId) -> sea_orm::sea_query::SimpleExpr;
 }

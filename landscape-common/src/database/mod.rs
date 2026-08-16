@@ -1,8 +1,10 @@
+pub mod error;
 pub mod repository;
+pub mod store;
 
 use crate::{config::FlowId, error::LdError};
 
-/// 干净的数据库存储接口，不依赖任何 ORM 类型
+/// Clean storage interface, decoupled from any ORM types
 #[async_trait::async_trait]
 pub trait LandscapeStore: Send + Sync {
     type Data: Send + Sync + std::fmt::Debug;
@@ -14,17 +16,17 @@ pub trait LandscapeStore: Send + Sync {
     async fn find_by_id(&self, id: Self::Id) -> Result<Option<Self::Data>, LdError>;
     async fn find_by_ids(&self, ids: Vec<Self::Id>) -> Vec<Self::Data>;
 
-    /// 只读冲突检查。
-    /// - 记录不存在 → Ok(None)
-    /// - 记录存在且 update_at 匹配 → Ok(Some(旧配置))
-    /// - 记录存在但 update_at 不匹配 → Err(ConfigConflict)
+    /// Read-only conflict check.
+    /// - Record missing → Ok(None)
+    /// - Record exists and `update_at` matches → Ok(Some(old config))
+    /// - Record exists but `update_at` differs → Err(ConfigConflict)
     async fn check_conflict(&self, config: &Self::Data) -> Result<Option<Self::Data>, LdError>;
 
-    /// 乐观锁 set：检查 update_at + 刷新时间戳 + 写入
+    /// Optimistic-lock set: check `update_at`, refresh the timestamp, then write
     async fn checked_set(&self, config: Self::Data) -> Result<Self::Data, LdError>;
 }
 
-/// 支持 Flow 查询的存储接口
+/// Storage interface with Flow-based queries
 #[async_trait::async_trait]
 pub trait LandscapeFlowStore: LandscapeStore {
     async fn find_by_flow_id(&self, flow_id: FlowId) -> Result<Vec<Self::Data>, LdError>;

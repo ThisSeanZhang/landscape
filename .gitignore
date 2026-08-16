@@ -13,6 +13,7 @@ dockerfiles/landscape/apps
 push_*.sh
 net.sh
 *.sqlite
+*.sqlite-*
 
 # pcaps
 *.pcap

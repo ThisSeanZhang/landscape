@@ -4,12 +4,11 @@ use landscape_common::{
     config::{InitConfig, StoreRuntimeConfig},
     error::{LdError, LdResult},
 };
+use migration::{Migrator, MigratorTrait};
 use sea_orm::{
     ActiveModelTrait, Database, DatabaseConnection, DatabaseTransaction, EntityTrait,
     TransactionTrait,
 };
-
-use migration::{Migrator, MigratorTrait};
 
 use crate::{
     cert::repository::CertRepository, cert_account::repository::CertAccountRepository,
@@ -52,8 +51,7 @@ pub async fn rollback_interactive(config: &StoreRuntimeConfig) -> LdResult<()> {
     crate::rollback::interactive_rollback(config).await
 }
 
-/// 存储提供者
-/// 后续有需要再进行抽象
+/// Storage provider; to be abstracted further if needed.
 #[derive(Clone)]
 pub struct LandscapeDBServiceProvider {
     database: DatabaseConnection,
@@ -64,17 +62,38 @@ impl LandscapeDBServiceProvider {
         let mut opt: migration::sea_orm::ConnectOptions = config.database_path.clone().into();
         let (lever, _) = opt.get_sqlx_slow_statements_logging_settings();
         opt.sqlx_slow_statements_logging_settings(lever, Duration::from_secs(10));
+        opt.map_sqlx_sqlite_opts(|sqlite_opts| {
+            sqlite_opts
+                .journal_mode(sea_orm::sqlx::sqlite::SqliteJournalMode::Wal)
+                .busy_timeout(Duration::from_secs(5))
+                .foreign_keys(true)
+        });
 
         let database = Database::connect(opt).await.expect("Database connection failed");
         Migrator::up(&database, None).await.unwrap();
         Self { database }
     }
-
     pub async fn mem_test_db() -> Self {
-        let database =
-            Database::connect("sqlite::memory:").await.expect("Database connection failed");
+        let mut opt: migration::sea_orm::ConnectOptions = "sqlite::memory:".into();
+        // in-memory DB: every connection is a separate database, so force a single connection
+        opt.max_connections(1);
+        let database = Database::connect(opt).await.expect("Database connection failed");
         Migrator::up(&database, None).await.unwrap();
         Self { database }
+    }
+
+    /// File-backed test DB with a real multi-connection pool (WAL enabled).
+    ///
+    /// Unlike `mem_test_db`, each instance connects to the same file, so
+    /// concurrent writers actually contend and can hit
+    /// SQLITE_BUSY_SNAPSHOT / primary-key races. The caller must delete
+    /// `path` afterwards.
+    ///
+    /// The path is embedded in a SQLite URL, so it must be a plain absolute
+    /// path without `?`, `#` or spaces (tempfile paths qualify).
+    pub async fn file_test_db(path: &std::path::Path) -> Self {
+        let url = format!("sqlite://{}?mode=rwc", path.display());
+        Self::new(&StoreRuntimeConfig { database_path: url }).await
     }
 
     pub async fn validate_init_config_can_import(config: InitConfig) -> LdResult<()> {
@@ -96,7 +115,7 @@ macro_rules! define_store {
     ( $( $store_name:ident : ($repo_type:ty, $init_field:ident) ),* $(,)? ) => {
         impl LandscapeDBServiceProvider {
             $(
-                // 生成 getter
+                // Generates a getter
                 pub fn $store_name(&self) -> $repo_type {
                     <$repo_type>::new(self.database.clone())
                 }
