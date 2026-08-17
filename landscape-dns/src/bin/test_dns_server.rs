@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use landscape_common::config_service::geo::{
-    GeoFileCacheKey, GeoMatcherSource, GeoMatcherSourceError, GeoSiteFileConfig,
+    GeoError, GeoFileCacheKey, GeoMatcherSource, GeoSiteFileConfig,
 };
 use landscape_common::dns::gen_default_dns_rule_and_upstream;
 use landscape_common::event::hub::{EnrolledDeviceEventReader, IPv4AssignEventReader};
@@ -16,7 +16,7 @@ impl GeoMatcherSource for EmptyGeoSource {
     async fn load_geo_domains(
         &self,
         _key: &GeoFileCacheKey,
-    ) -> Result<Option<Vec<GeoSiteFileConfig>>, GeoMatcherSourceError> {
+    ) -> Result<Option<Vec<GeoSiteFileConfig>>, GeoError> {
         Ok(None)
     }
 }

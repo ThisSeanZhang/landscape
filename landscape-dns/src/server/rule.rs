@@ -7,6 +7,7 @@ use hickory_proto::rr::{
 };
 use uuid::Uuid;
 
+use landscape_common::dns::error::DnsResult;
 use landscape_common::dns::redirect::DnsRedirectAnswerMode;
 use landscape_common::flow::mark::FlowMark;
 use landscape_common::{
@@ -198,11 +199,7 @@ impl DNSResolveRuntime {
         self.matcher.is_match(domain)
     }
 
-    pub async fn lookup(
-        &self,
-        domain: &str,
-        query_type: RecordType,
-    ) -> crate::error::DnsResult<Vec<Record>> {
+    pub async fn lookup(&self, domain: &str, query_type: RecordType) -> DnsResult<Vec<Record>> {
         match self.resolver.lookup(domain, query_type).await {
             Ok(lookup) => {
                 let result = if self.enable_ip_validation {
@@ -222,7 +219,7 @@ impl DNSResolveRuntime {
                 Ok(result)
             }
             Err(e) => {
-                use crate::error::DnsError;
+                use landscape_common::dns::error::DnsServiceError;
                 match &e {
                     hickory_resolver::net::NetError::Dns(
                         hickory_resolver::net::DnsError::NoRecordsFound(no_records),
@@ -234,10 +231,10 @@ impl DNSResolveRuntime {
                             response_code = ?no_records.response_code,
                             "upstream answered an error code"
                         );
-                        return Err(DnsError::Protocol(no_records.response_code));
+                        return Err(DnsServiceError::Protocol(no_records.response_code));
                     }
                     hickory_resolver::net::NetError::Timeout => {
-                        return Err(DnsError::Timeout);
+                        return Err(DnsServiceError::Timeout);
                     }
                     _ => {}
                 }
@@ -248,7 +245,7 @@ impl DNSResolveRuntime {
                     domain,
                     e
                 );
-                Err(DnsError::Internal(e.to_string()))
+                Err(DnsServiceError::Internal(e.to_string()))
             }
         }
     }

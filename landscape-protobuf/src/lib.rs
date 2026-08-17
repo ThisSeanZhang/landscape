@@ -5,7 +5,7 @@ use std::{
 };
 
 use landscape_common::{
-    config_service::geo::{GeoIpError, GeoIpFileFormat, GeoSiteFileConfig},
+    config_service::geo::{GeoError, GeoIpFileFormat, GeoSiteFileConfig},
     dns::rule::DomainMatchType,
     flow::ip_mark::IpConfig,
 };
@@ -82,9 +82,9 @@ pub async fn read_geo_ips_from_bytes(
 
 pub async fn read_geo_ips_from_bytes_dat(
     contents: impl Into<Vec<u8>>,
-) -> Result<HashMap<String, Vec<IpConfig>>, GeoIpError> {
+) -> Result<HashMap<String, Vec<IpConfig>>, GeoError> {
     let mut result = HashMap::new();
-    let list = GeoIPListOwned::try_from(contents.into()).map_err(|_| GeoIpError::DatDecodeError)?;
+    let list = GeoIPListOwned::try_from(contents.into()).map_err(|_| GeoError::IpDatDecodeError)?;
 
     for entry in list.proto().entry.iter() {
         let domains = entry.cidr.iter().filter_map(convert_ipconfig_from_proto).collect();
@@ -97,7 +97,7 @@ pub async fn read_geo_ips_from_bytes_dat(
 pub fn read_geo_ips_from_bytes_txt(
     contents: impl AsRef<[u8]>,
     txt_key: Option<&str>,
-) -> Result<GeoIpParseResult, GeoIpError> {
+) -> Result<GeoIpParseResult, GeoError> {
     let key = txt_key
         .map(str::trim)
         .filter(|value| !value.is_empty())
@@ -122,7 +122,7 @@ pub fn read_geo_ips_from_bytes_txt(
     }
 
     if values.is_empty() {
-        return Err(GeoIpError::NoValidCidrFound);
+        return Err(GeoError::IpNoValidCidrFound);
     }
 
     let valid_lines = values.len();
@@ -136,7 +136,7 @@ pub async fn read_geo_ips_from_bytes_by_format(
     contents: impl Into<Vec<u8>>,
     format: &GeoIpFileFormat,
     txt_key: Option<&str>,
-) -> Result<GeoIpParseResult, GeoIpError> {
+) -> Result<GeoIpParseResult, GeoError> {
     let contents = contents.into();
     match format {
         GeoIpFileFormat::Dat => {
@@ -219,6 +219,7 @@ mod tests {
         println!("Active memory: {} kbytes", active / 1024);
     }
     #[tokio::test]
+    #[ignore = "requires local file /root/.landscape-router/geosite.dat1"]
     async fn read_raw() {
         test_memory_usage();
 
@@ -235,6 +236,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires local file /root/.landscape-router/geosite.dat1"]
     async fn test() {
         test_memory_usage();
         let result = read_geo_sites("/root/.landscape-router/geosite.dat1").await;
@@ -250,6 +252,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires local file ~/.landscape-router/geoip.dat"]
     async fn test_read() {
         test_memory_usage();
         let home_path = homedir::my_home().unwrap().unwrap().join(".landscape-router");

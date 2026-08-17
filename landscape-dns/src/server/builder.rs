@@ -257,8 +257,7 @@ mod tests {
 
     use landscape_common::{
         config_service::geo::{
-            GeoConfigKey, GeoFileCacheKey, GeoMatcherSource, GeoMatcherSourceError,
-            GeoSiteFileConfig,
+            GeoConfigKey, GeoError, GeoFileCacheKey, GeoMatcherSource, GeoSiteFileConfig,
         },
         dns::{
             config::DnsUpstreamConfig,
@@ -289,10 +288,10 @@ mod tests {
         async fn load_geo_domains(
             &self,
             key: &GeoFileCacheKey,
-        ) -> Result<Option<Vec<GeoSiteFileConfig>>, GeoMatcherSourceError> {
+        ) -> Result<Option<Vec<GeoSiteFileConfig>>, GeoError> {
             self.reads.fetch_add(1, Ordering::Relaxed);
             if self.errors.contains(key) {
-                return Err(GeoMatcherSourceError::ReadFailed {
+                return Err(GeoError::MatcherReadFailed {
                     name: key.name.clone(),
                     key: key.key.clone(),
                 });

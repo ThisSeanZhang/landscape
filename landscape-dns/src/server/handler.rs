@@ -26,7 +26,7 @@ use crate::{
     CheckChainDnsResult,
 };
 use landscape_common::{
-    dns::error::DnsError,
+    dns::error::DnsServiceError,
     event::DnsMetricMessage,
     metric::dns::{DnsMetric, DnsOutcome},
 };
@@ -133,7 +133,7 @@ impl DnsRequestHandler {
         domain: &ParsedDomain,
         query_type: RecordType,
         apply_filter: bool,
-    ) -> Result<CheckChainDnsResult, DnsError> {
+    ) -> Result<CheckChainDnsResult, DnsServiceError> {
         let runtime = self.snapshot.load_full();
         self.chain(&runtime).refresh(domain, query_type, apply_filter).await
     }

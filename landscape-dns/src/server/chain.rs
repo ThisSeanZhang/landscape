@@ -10,7 +10,11 @@ use hickory_proto::{
         RData, Record, RecordType,
     },
 };
-use landscape_common::{dns::error::DnsError, dns::rule::FilterResult, metric::dns::DnsOutcome};
+use landscape_common::{
+    dns::error::{DnsResult, DnsServiceError},
+    dns::rule::FilterResult,
+    metric::dns::DnsOutcome,
+};
 
 use crate::{
     domain::ParsedDomain,
@@ -313,10 +317,10 @@ impl<'a> ResolveChain<'a> {
         domain: &ParsedDomain,
         query_type: RecordType,
         apply_filter: bool,
-    ) -> Result<CheckChainDnsResult, DnsError> {
+    ) -> Result<CheckChainDnsResult, DnsServiceError> {
         // (1) Redirect
         if self.stage_redirect(domain, query_type).is_some() {
-            return Err(DnsError::RefreshRedirected(domain.raw().to_string()));
+            return Err(DnsServiceError::RefreshRedirected(domain.raw().to_string()));
         }
 
         // (2) Local classification. Local answers never enter the cache, but
@@ -350,7 +354,7 @@ impl<'a> ResolveChain<'a> {
         }
 
         let Some(resolver) = self.runtime.resolve_engine.find_match(domain) else {
-            return Err(DnsError::RefreshRequiresRule(domain.raw().to_string()));
+            return Err(DnsServiceError::RefreshRequiresRule(domain.raw().to_string()));
         };
 
         let filter = resolver.filter_mode();
@@ -381,7 +385,7 @@ impl<'a> ResolveChain<'a> {
                 // failure for the refresh contract.
                 result.records = Some(vec![]);
                 if !query_filtered {
-                    return Err(DnsError::RefreshFailed(domain.raw().to_string()));
+                    return Err(DnsServiceError::RefreshFailed(domain.raw().to_string()));
                 }
             }
             RuleLookupOutcome::Failed => {
@@ -390,7 +394,7 @@ impl<'a> ResolveChain<'a> {
                 // resolved at all.
                 result.records = Some(vec![]);
                 if !query_filtered {
-                    return Err(DnsError::RefreshFailed(domain.raw().to_string()));
+                    return Err(DnsServiceError::RefreshFailed(domain.raw().to_string()));
                 }
             }
         }
@@ -484,26 +488,26 @@ async fn apply_outcome_to_cache(
 /// Maps an upstream lookup error to the rule outcome. Explicit protocol codes
 /// are preserved so they can be passed through to the client; NXDomain and
 /// NoError are still treated as negative answers, everything else fails.
-fn rule_lookup_outcome_from_error(err: &crate::error::DnsError) -> RuleLookupOutcome {
+fn rule_lookup_outcome_from_error(err: &DnsServiceError) -> RuleLookupOutcome {
     match err {
-        crate::error::DnsError::Protocol(code) if *code == ResponseCode::NXDomain => {
+        DnsServiceError::Protocol(code) if *code == ResponseCode::NXDomain => {
             RuleLookupOutcome::NxDomain
         }
-        crate::error::DnsError::Protocol(code) if *code == ResponseCode::NoError => {
+        DnsServiceError::Protocol(code) if *code == ResponseCode::NoError => {
             RuleLookupOutcome::NoError { records: vec![] }
         }
-        crate::error::DnsError::Protocol(code) => RuleLookupOutcome::ErrorCode(*code),
+        DnsServiceError::Protocol(code) => RuleLookupOutcome::ErrorCode(*code),
         _ => RuleLookupOutcome::Failed,
     }
 }
 
-async fn with_lookup_timeout<F, T>(future: F, timeout: Duration) -> crate::error::DnsResult<T>
+async fn with_lookup_timeout<F, T>(future: F, timeout: Duration) -> DnsResult<T>
 where
-    F: Future<Output = crate::error::DnsResult<T>>,
+    F: Future<Output = DnsResult<T>>,
 {
     match tokio::time::timeout(timeout, future).await {
         Ok(result) => result,
-        Err(_) => Err(crate::error::DnsError::Timeout),
+        Err(_) => Err(DnsServiceError::Timeout),
     }
 }
 
@@ -606,34 +610,32 @@ mod tests {
 
     #[test]
     fn test_rule_lookup_outcome_from_error_passes_upstream_error_codes_through() {
-        use crate::error::DnsError;
-
         assert!(matches!(
-            rule_lookup_outcome_from_error(&DnsError::Protocol(ResponseCode::Refused)),
+            rule_lookup_outcome_from_error(&DnsServiceError::Protocol(ResponseCode::Refused)),
             RuleLookupOutcome::ErrorCode(ResponseCode::Refused)
         ));
         assert!(matches!(
-            rule_lookup_outcome_from_error(&DnsError::Protocol(ResponseCode::NotImp)),
+            rule_lookup_outcome_from_error(&DnsServiceError::Protocol(ResponseCode::NotImp)),
             RuleLookupOutcome::ErrorCode(ResponseCode::NotImp)
         ));
         assert!(matches!(
-            rule_lookup_outcome_from_error(&DnsError::Protocol(ResponseCode::ServFail)),
+            rule_lookup_outcome_from_error(&DnsServiceError::Protocol(ResponseCode::ServFail)),
             RuleLookupOutcome::ErrorCode(ResponseCode::ServFail)
         ));
         assert!(matches!(
-            rule_lookup_outcome_from_error(&DnsError::Protocol(ResponseCode::NXDomain)),
+            rule_lookup_outcome_from_error(&DnsServiceError::Protocol(ResponseCode::NXDomain)),
             RuleLookupOutcome::NxDomain
         ));
         assert!(matches!(
-            rule_lookup_outcome_from_error(&DnsError::Protocol(ResponseCode::NoError)),
+            rule_lookup_outcome_from_error(&DnsServiceError::Protocol(ResponseCode::NoError)),
             RuleLookupOutcome::NoError { .. }
         ));
         assert!(matches!(
-            rule_lookup_outcome_from_error(&DnsError::Timeout),
+            rule_lookup_outcome_from_error(&DnsServiceError::Timeout),
             RuleLookupOutcome::Failed
         ));
         assert!(matches!(
-            rule_lookup_outcome_from_error(&DnsError::Internal("boom".into())),
+            rule_lookup_outcome_from_error(&DnsServiceError::Internal("boom".into())),
             RuleLookupOutcome::Failed
         ));
 
@@ -658,15 +660,15 @@ mod tests {
             let timeout = with_lookup_timeout(
                 async {
                     tokio::time::sleep(Duration::from_millis(30)).await;
-                    Ok::<_, crate::error::DnsError>(vec![1_u8])
+                    Ok::<_, DnsServiceError>(vec![1_u8])
                 },
                 Duration::from_millis(5),
             )
             .await;
-            assert!(matches!(timeout, Err(crate::error::DnsError::Timeout)));
+            assert!(matches!(timeout, Err(DnsServiceError::Timeout)));
 
             let inner = with_lookup_timeout(
-                async { Ok::<_, crate::error::DnsError>(vec![1_u8, 2_u8]) },
+                async { Ok::<_, DnsServiceError>(vec![1_u8, 2_u8]) },
                 Duration::from_millis(50),
             )
             .await;

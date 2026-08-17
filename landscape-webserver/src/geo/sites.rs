@@ -2,7 +2,7 @@ use axum::extract::{DefaultBodyLimit, Multipart, Path, Query, State};
 use landscape_common::api_response::LandscapeApiResp as CommonApiResp;
 use landscape_common::config::ConfigId;
 use landscape_common::config_service::geo::{
-    GeoDomainConfig, GeoFileCacheKey, GeoSiteError, GeoSiteSourceConfig, QueryGeoDomainConfig,
+    GeoDomainConfig, GeoError, GeoFileCacheKey, GeoSiteSourceConfig, QueryGeoDomainConfig,
     QueryGeoKey,
 };
 use landscape_common::service::controller::ConfigController;
@@ -50,7 +50,7 @@ async fn get_geo_site_cache_detail(
     if let Some(result) = result {
         LandscapeApiResp::success(result)
     } else {
-        Err(GeoSiteError::CacheNotFound(format!("{key:?}")))?
+        Err(GeoError::SiteCacheNotFound(format!("{key:?}")))?
     }
 }
 
@@ -145,7 +145,7 @@ async fn get_geo_rule(
     if let Some(config) = result {
         LandscapeApiResp::success(config)
     } else {
-        Err(GeoSiteError::NotFound(id))?
+        Err(GeoError::SiteNotFound(id))?
     }
 }
 
@@ -215,11 +215,11 @@ async fn update_by_upload(
 
     let file = multipart.next_field().await;
     let Ok(Some(field)) = file else {
-        return Err(GeoSiteError::FileNotFound)?;
+        return Err(GeoError::SiteFileNotFound)?;
     };
 
     let Ok(bytes) = field.bytes().await else {
-        return Err(GeoSiteError::FileReadError)?;
+        return Err(GeoError::SiteFileReadError)?;
     };
 
     state.geo_site_service.update_geo_config_by_bytes(name, bytes).await;

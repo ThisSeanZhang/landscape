@@ -6,7 +6,7 @@ use std::{
 };
 
 use arc_swap::{ArcSwap, ArcSwapOption};
-use landscape_common::dns::error::DnsError;
+use landscape_common::dns::error::DnsServiceError;
 use landscape_common::sys_service::lan_hostname::LanHostnameConfig;
 use landscape_common::{event::DnsMetricMessage, service::WatchService};
 use landscape_core::lan_hostname::LanHostnameRegistry;
@@ -279,13 +279,15 @@ impl LandscapeDnsServer {
     pub async fn invalidate_domain_cache(
         &self,
         req: CheckDnsReq,
-    ) -> Result<CheckChainDnsResult, DnsError> {
+    ) -> Result<CheckChainDnsResult, DnsServiceError> {
         let domain = req.get_domain()?;
         let query_type = convert_record_type(req.record_type);
-        let entry = self.get_entry(req.flow_id).await.ok_or(DnsError::FlowNotFound(req.flow_id))?;
+        let entry =
+            self.get_entry(req.flow_id).await.ok_or(DnsServiceError::FlowNotFound(req.flow_id))?;
 
         let _refresh_guard = entry.refresh_lock.lock().await;
-        let runtime = entry.runtime.load_full().ok_or(DnsError::FlowNotFound(req.flow_id))?;
+        let runtime =
+            entry.runtime.load_full().ok_or(DnsServiceError::FlowNotFound(req.flow_id))?;
 
         let pd = ParsedDomain::new(&domain)?;
         runtime.handler.invalidate_cache_entry(&pd, query_type).await;
@@ -295,13 +297,15 @@ impl LandscapeDnsServer {
     pub async fn refresh_domain_cache(
         &self,
         req: CheckDnsReq,
-    ) -> Result<CheckChainDnsResult, DnsError> {
+    ) -> Result<CheckChainDnsResult, DnsServiceError> {
         let domain = req.get_domain()?;
         let query_type = convert_record_type(req.record_type);
-        let entry = self.get_entry(req.flow_id).await.ok_or(DnsError::FlowNotFound(req.flow_id))?;
+        let entry =
+            self.get_entry(req.flow_id).await.ok_or(DnsServiceError::FlowNotFound(req.flow_id))?;
 
         let _refresh_guard = entry.refresh_lock.lock().await;
-        let runtime = entry.runtime.load_full().ok_or(DnsError::FlowNotFound(req.flow_id))?;
+        let runtime =
+            entry.runtime.load_full().ok_or(DnsServiceError::FlowNotFound(req.flow_id))?;
 
         let pd = ParsedDomain::new(&domain)?;
         runtime.handler.refresh_cache_entry(&pd, query_type, req.apply_filter).await

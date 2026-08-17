@@ -1,10 +1,11 @@
+use hickory_proto::op::ResponseCode;
 use landscape_macro::LdApiError;
 
 use crate::config::FlowId;
 
 #[derive(thiserror::Error, Debug, LdApiError)]
 #[api_error(crate_path = "crate")]
-pub enum DnsError {
+pub enum DnsServiceError {
     #[error("Invalid domain name '{domain}'")]
     #[api_error(id = "dns_domain.invalid", status = 400)]
     Invalid { domain: String },
@@ -24,4 +25,26 @@ pub enum DnsError {
     #[error("DNS cache refresh failed for '{0}'")]
     #[api_error(id = "dns_check.refresh_failed", status = 502)]
     RefreshFailed(String),
+
+    #[error("DNS Protocol error: {0}")]
+    #[api_error(id = "dns_service.protocol", status = 502)]
+    Protocol(ResponseCode),
+
+    #[error("Upstream timeout")]
+    #[api_error(id = "dns_service.timeout", status = 504)]
+    Timeout,
+
+    #[error("Internal error: {0}")]
+    #[api_error(id = "dns_service.internal", status = 500)]
+    Internal(String),
+
+    #[error("Io error: {0}")]
+    #[api_error(id = "dns_service.io", status = 500)]
+    Io(#[from] std::io::Error),
+
+    #[error("Cache error: {0}")]
+    #[api_error(id = "dns_service.cache", status = 500)]
+    Cache(String),
 }
+
+pub type DnsResult<T> = Result<T, DnsServiceError>;

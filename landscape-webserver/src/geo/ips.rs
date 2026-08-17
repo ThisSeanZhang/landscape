@@ -2,7 +2,7 @@ use axum::extract::{DefaultBodyLimit, Multipart, Path, Query, State};
 use landscape_common::api_response::LandscapeApiResp as CommonApiResp;
 use landscape_common::config::ConfigId;
 use landscape_common::config_service::geo::{
-    GeoFileCacheKey, GeoIpConfig, GeoIpError, GeoIpSourceConfig, QueryGeoIpConfig, QueryGeoKey,
+    GeoError, GeoFileCacheKey, GeoIpConfig, GeoIpSourceConfig, QueryGeoIpConfig, QueryGeoKey,
 };
 use landscape_common::service::controller::ConfigController;
 use utoipa_axum::router::OpenApiRouter;
@@ -48,7 +48,7 @@ async fn get_geo_ip_cache_detail(
     if let Some(result) = result {
         LandscapeApiResp::success(result)
     } else {
-        Err(GeoIpError::CacheNotFound(format!("{key:?}")))?
+        Err(GeoError::IpCacheNotFound(format!("{key:?}")))?
     }
 }
 
@@ -143,7 +143,7 @@ async fn get_geo_ip_rule(
     if let Some(config) = result {
         LandscapeApiResp::success(config)
     } else {
-        Err(GeoIpError::NotFound(id))?
+        Err(GeoError::IpNotFound(id))?
     }
 }
 
@@ -213,11 +213,11 @@ async fn update_by_upload(
 
     let file = multipart.next_field().await;
     let Ok(Some(field)) = file else {
-        return Err(GeoIpError::FileNotFound)?;
+        return Err(GeoError::IpFileNotFound)?;
     };
 
     let Ok(bytes) = field.bytes().await else {
-        return Err(GeoIpError::FileReadError)?;
+        return Err(GeoError::IpFileReadError)?;
     };
 
     state.geo_ip_service.update_geo_config_by_bytes(name, bytes).await?;

@@ -10,5 +10,6 @@ export default {
   "geo_ip.config_not_found": "GeoIP config not found ({0})",
   "geo_ip.dat_decode_error": "GeoIP DAT file decode error",
   "geo_ip.no_valid_cidr": "GeoIP TXT file contains no valid CIDR entries",
+  "geo_matcher.read_failed": "Failed to read geosite cache '{name}:{key}'",
   "dst_ip_rule.not_found": "Destination IP rule not found (ID: {0})",
 };

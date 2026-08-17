@@ -6,7 +6,7 @@ use landscape_common::wan_service::firewall::blacklist::FirewallBlacklistConfig;
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 
-use landscape_common::wan_service::firewall::blacklist::FirewallBlacklistError;
+use landscape_common::wan_service::firewall::FirewallError;
 
 use crate::api::JsonBody;
 use crate::LandscapeApp;
@@ -49,7 +49,7 @@ async fn get_firewall_blacklist(
     if let Some(config) = result {
         LandscapeApiResp::success(config)
     } else {
-        Err(FirewallBlacklistError::NotFound(id))?
+        Err(FirewallError::BlacklistNotFound(id))?
     }
 }
 

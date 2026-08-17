@@ -5,7 +5,7 @@ use std::time::Instant;
 use landscape_common::sys_service::lan_hostname::LanHostnameConfig;
 use landscape_common::{
     config::DnsRuntimeConfig,
-    dns::error::DnsError,
+    dns::error::DnsServiceError,
     dns::redirect::DynamicDnsRedirectScope,
     dns::{CacheRuntimeConfig, DohRuntimeConfig, FlowDnsDependencies},
     event::{dns::DnsEvent, DnsMetricMessage},
@@ -243,14 +243,14 @@ impl LandscapeDnsService {
     pub async fn invalidate_domain_cache(
         &self,
         req: CheckDnsReq,
-    ) -> Result<CheckChainDnsResult, DnsError> {
+    ) -> Result<CheckChainDnsResult, DnsServiceError> {
         self.dns_service.invalidate_domain_cache(req).await
     }
 
     pub async fn refresh_domain_cache(
         &self,
         req: CheckDnsReq,
-    ) -> Result<CheckChainDnsResult, DnsError> {
+    ) -> Result<CheckChainDnsResult, DnsServiceError> {
         self.dns_service.refresh_domain_cache(req).await
     }
 

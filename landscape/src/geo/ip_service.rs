@@ -1,8 +1,6 @@
 use landscape_common::store::storev4::LandscapeStoreTrait;
 use landscape_common::{
-    config_service::geo::{
-        GeoFileCacheKey, GeoIpConfig, GeoIpError, GeoIpSource, GeoIpSourceConfig,
-    },
+    config_service::geo::{GeoError, GeoFileCacheKey, GeoIpConfig, GeoIpSource, GeoIpSourceConfig},
     database::LandscapeStore,
     flow::ip_mark::{IpMarkInfo, WanIPRuleSource, WanIpRuleConfig},
     service::controller::ConfigController,
@@ -269,7 +267,7 @@ impl GeoIpService {
         &self,
         source: &GeoIpSource,
         bytes: impl Into<Vec<u8>>,
-    ) -> Result<HashMap<String, Vec<landscape_common::flow::ip_mark::IpConfig>>, GeoIpError> {
+    ) -> Result<HashMap<String, Vec<landscape_common::flow::ip_mark::IpConfig>>, GeoError> {
         let bytes = bytes.into();
         match source {
             GeoIpSource::Url { format, txt_key, .. } => {
@@ -318,13 +316,13 @@ impl GeoIpService {
         &self,
         name: String,
         file_bytes: impl Into<Vec<u8>>,
-    ) -> Result<(), GeoIpError> {
+    ) -> Result<(), GeoError> {
         let config = self
             .query_geo_by_name(Some(name.clone()))
             .await
             .into_iter()
             .find(|config| config.name == name)
-            .ok_or_else(|| GeoIpError::ConfigNotFound(name.clone()))?;
+            .ok_or_else(|| GeoError::IpConfigNotFound(name.clone()))?;
         let result = self.parse_source_bytes(&config.source, file_bytes).await?;
         self.replace_cache_by_name(&name, result).await;
         self.notify_dst_ip_updated();

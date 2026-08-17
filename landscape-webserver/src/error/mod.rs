@@ -6,10 +6,10 @@ use landscape_common::api_response::LandscapeApiResp as CommonLandscapeApiResp;
 use landscape_common::cert::CertError;
 use landscape_common::config::InitConfigError;
 use landscape_common::config_service::enrolled_device::EnrolledDeviceError;
-use landscape_common::config_service::geo::{GeoIpError, GeoSiteError};
+use landscape_common::config_service::geo::GeoError;
 use landscape_common::config_service::static_nat::error::StaticNatError;
 use landscape_common::ddns::DdnsError;
-use landscape_common::dns::error::DnsError;
+use landscape_common::dns::error::DnsServiceError;
 use landscape_common::dns::provider_profile::DnsProviderProfileError;
 use landscape_common::dns::redirect::DnsRedirectError;
 use landscape_common::dns::rule::DnsRuleError;
@@ -22,8 +22,7 @@ use landscape_common::lan_service::lan_ipv6::LanIPv6Error;
 use landscape_common::service::ServiceConfigError;
 use landscape_common::sys_service::gateway::GatewayError;
 use landscape_common::sys_service::lan_hostname::LanHostnameError;
-use landscape_common::wan_service::firewall::blacklist::FirewallBlacklistError;
-use landscape_common::wan_service::firewall::FirewallRuleError;
+use landscape_common::wan_service::firewall::FirewallError;
 use landscape_common::wan_service::nat::error::NatServiceError;
 
 use crate::api::LandscapeApiResp;
@@ -39,7 +38,7 @@ pub enum LandscapeApiError {
     #[error(transparent)]
     DnsRule(#[from] DnsRuleError),
     #[error(transparent)]
-    DnsCheck(#[from] DnsError),
+    DnsCheck(#[from] DnsServiceError),
     #[error(transparent)]
     DnsUpstream(#[from] DnsUpstreamError),
     #[error(transparent)]
@@ -51,17 +50,13 @@ pub enum LandscapeApiError {
     #[error(transparent)]
     FlowRule(#[from] FlowRuleError),
     #[error(transparent)]
-    FirewallRule(#[from] FirewallRuleError),
-    #[error(transparent)]
-    FirewallBlacklist(#[from] FirewallBlacklistError),
+    Firewall(#[from] FirewallError),
     #[error(transparent)]
     Dhcp(#[from] DhcpError),
     #[error(transparent)]
     LanIPv6(#[from] LanIPv6Error),
     #[error(transparent)]
-    GeoSite(#[from] GeoSiteError),
-    #[error(transparent)]
-    GeoIp(#[from] GeoIpError),
+    Geo(#[from] GeoError),
     #[error(transparent)]
     StaticNat(#[from] StaticNatError),
     #[error(transparent)]
@@ -105,12 +100,10 @@ impl LandscapeApiError {
             Self::DnsProviderProfile(e) => e.error_id(),
             Self::Ddns(e) => e.error_id(),
             Self::FlowRule(e) => e.error_id(),
-            Self::FirewallRule(e) => e.error_id(),
-            Self::FirewallBlacklist(e) => e.error_id(),
+            Self::Firewall(e) => e.error_id(),
             Self::Dhcp(e) => e.error_id(),
             Self::LanIPv6(e) => e.error_id(),
-            Self::GeoSite(e) => e.error_id(),
-            Self::GeoIp(e) => e.error_id(),
+            Self::Geo(e) => e.error_id(),
             Self::StaticNat(e) => e.error_id(),
             Self::NatService(e) => e.error_id(),
             Self::DstIpRule(e) => e.error_id(),
@@ -138,12 +131,10 @@ impl LandscapeApiError {
             Self::DnsProviderProfile(e) => StatusCode::from_u16(e.http_status_code()).unwrap(),
             Self::Ddns(e) => StatusCode::from_u16(e.http_status_code()).unwrap(),
             Self::FlowRule(e) => StatusCode::from_u16(e.http_status_code()).unwrap(),
-            Self::FirewallRule(e) => StatusCode::from_u16(e.http_status_code()).unwrap(),
-            Self::FirewallBlacklist(e) => StatusCode::from_u16(e.http_status_code()).unwrap(),
+            Self::Firewall(e) => StatusCode::from_u16(e.http_status_code()).unwrap(),
             Self::Dhcp(e) => StatusCode::from_u16(e.http_status_code()).unwrap(),
             Self::LanIPv6(e) => StatusCode::from_u16(e.http_status_code()).unwrap(),
-            Self::GeoSite(e) => StatusCode::from_u16(e.http_status_code()).unwrap(),
-            Self::GeoIp(e) => StatusCode::from_u16(e.http_status_code()).unwrap(),
+            Self::Geo(e) => StatusCode::from_u16(e.http_status_code()).unwrap(),
             Self::StaticNat(e) => StatusCode::from_u16(e.http_status_code()).unwrap(),
             Self::NatService(e) => StatusCode::from_u16(e.http_status_code()).unwrap(),
             Self::DstIpRule(e) => StatusCode::from_u16(e.http_status_code()).unwrap(),
@@ -171,12 +162,10 @@ impl LandscapeApiError {
             Self::DnsProviderProfile(e) => e.error_args(),
             Self::Ddns(e) => e.error_args(),
             Self::FlowRule(e) => e.error_args(),
-            Self::FirewallRule(e) => e.error_args(),
-            Self::FirewallBlacklist(e) => e.error_args(),
+            Self::Firewall(e) => e.error_args(),
             Self::Dhcp(e) => e.error_args(),
             Self::LanIPv6(e) => e.error_args(),
-            Self::GeoSite(e) => e.error_args(),
-            Self::GeoIp(e) => e.error_args(),
+            Self::Geo(e) => e.error_args(),
             Self::StaticNat(e) => e.error_args(),
             Self::NatService(e) => e.error_args(),
             Self::DstIpRule(e) => e.error_args(),
@@ -207,12 +196,10 @@ impl LandscapeApiError {
             Self::DnsProviderProfile(e) => e.to_public_message(),
             Self::Ddns(e) => e.to_public_message(),
             Self::FlowRule(e) => e.to_public_message(),
-            Self::FirewallRule(e) => e.to_public_message(),
-            Self::FirewallBlacklist(e) => e.to_public_message(),
+            Self::Firewall(e) => e.to_public_message(),
             Self::Dhcp(e) => e.to_public_message(),
             Self::LanIPv6(e) => e.to_public_message(),
-            Self::GeoSite(e) => e.to_public_message(),
-            Self::GeoIp(e) => e.to_public_message(),
+            Self::Geo(e) => e.to_public_message(),
             Self::StaticNat(e) => e.to_public_message(),
             Self::NatService(e) => e.to_public_message(),
             Self::DstIpRule(e) => e.to_public_message(),

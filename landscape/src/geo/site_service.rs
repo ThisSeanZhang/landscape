@@ -1,7 +1,7 @@
 use landscape_common::{
     config_service::geo::{
-        GeoDomainConfig, GeoFileCacheKey, GeoMatcherSource, GeoMatcherSourceError,
-        GeoSiteFileConfig, GeoSiteSource,
+        GeoDomainConfig, GeoError, GeoFileCacheKey, GeoMatcherSource, GeoSiteFileConfig,
+        GeoSiteSource,
     },
     database::LandscapeStore,
     dns::rule::DomainMatchType,
@@ -404,16 +404,15 @@ impl GeoMatcherSource for GeoSiteService {
     async fn load_geo_domains(
         &self,
         key: &GeoFileCacheKey,
-    ) -> Result<Option<Vec<GeoSiteFileConfig>>, GeoMatcherSourceError> {
+    ) -> Result<Option<Vec<GeoSiteFileConfig>>, GeoError> {
         let mut lock = self.file_cache.lock().await;
         let key_exists = lock.keys_ref().into_iter().any(|candidate| candidate == key);
         match lock.get(key) {
             Some(config) => Ok(Some(config.values)),
             None if !key_exists => Ok(None),
-            None => Err(GeoMatcherSourceError::ReadFailed {
-                name: key.name.clone(),
-                key: key.key.clone(),
-            }),
+            None => {
+                Err(GeoError::MatcherReadFailed { name: key.name.clone(), key: key.key.clone() })
+            }
         }
     }
 }

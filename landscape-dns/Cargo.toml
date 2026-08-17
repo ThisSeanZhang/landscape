@@ -31,7 +31,6 @@ arc-swap = { workspace = true }
 tokio-util = { workspace = true, features = ["codec", "net"] }
 tokio = { workspace = true, features = ['fs', 'net'] }
 clap = { workspace = true }
-thiserror = { workspace = true }
 libc = { workspace = true }
 async-trait = { workspace = true }
 zerotrie = { workspace = true }

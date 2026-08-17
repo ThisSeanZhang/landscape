@@ -1,12 +1,12 @@
-use super::error::DnsError;
+use super::error::DnsServiceError;
 
-pub fn normalize_domain_name(domain: &str) -> Result<String, DnsError> {
+pub fn normalize_domain_name(domain: &str) -> Result<String, DnsServiceError> {
     let no_dot = domain.trim().trim_end_matches('.');
     if no_dot.is_empty() {
-        return Err(DnsError::Invalid { domain: domain.to_string() });
+        return Err(DnsServiceError::Invalid { domain: domain.to_string() });
     }
     let ascii = idna::domain_to_ascii(no_dot)
-        .map_err(|_| DnsError::Invalid { domain: domain.to_string() })?;
+        .map_err(|_| DnsServiceError::Invalid { domain: domain.to_string() })?;
     Ok(ascii.to_ascii_lowercase())
 }
 

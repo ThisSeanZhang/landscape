@@ -1,7 +1,7 @@
 use std::{borrow::Cow, sync::Arc};
 
 use hickory_proto::rr::Name;
-use landscape_common::dns::error::DnsError;
+use landscape_common::dns::error::DnsServiceError;
 
 /// Normalize user-provided domain text without forcing an allocation in the
 /// common case: trim trailing dots and lowercase only when uppercase bytes are
@@ -29,11 +29,11 @@ pub struct ParsedDomain {
 }
 
 impl ParsedDomain {
-    pub fn new(fqdn: &str) -> Result<Self, DnsError> {
+    pub fn new(fqdn: &str) -> Result<Self, DnsServiceError> {
         let name = normalize_domain_text(fqdn).into_owned();
         let labels: Vec<String> = name.split('.').map(String::from).collect();
-        let dns_name =
-            Name::from_utf8(&name).map_err(|_| DnsError::Invalid { domain: fqdn.to_string() })?;
+        let dns_name = Name::from_utf8(&name)
+            .map_err(|_| DnsServiceError::Invalid { domain: fqdn.to_string() })?;
         let raw = Arc::from(format!("{}.", name).as_str());
         Ok(Self { raw, name, labels, dns_name })
     }

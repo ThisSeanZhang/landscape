@@ -14,45 +14,54 @@ use crate::utils::time::get_f64_timestamp;
 
 #[derive(thiserror::Error, Debug, LdApiError)]
 #[api_error(crate_path = "crate")]
-pub enum GeoSiteError {
+pub enum GeoError {
     #[error("Geo site '{0}' not found")]
     #[api_error(id = "geo_site.not_found", status = 404)]
-    NotFound(ConfigId),
+    SiteNotFound(ConfigId),
+
     #[error("Geo site cache key '{0}' not found")]
     #[api_error(id = "geo_site.cache_not_found", status = 404)]
-    CacheNotFound(String),
+    SiteCacheNotFound(String),
+
     #[error("Geo site file not found in upload")]
     #[api_error(id = "geo_site.file_not_found", status = 400)]
-    FileNotFound,
+    SiteFileNotFound,
+
     #[error("Geo site file read error")]
     #[api_error(id = "geo_site.file_read_error", status = 400)]
-    FileReadError,
-}
+    SiteFileReadError,
 
-#[derive(thiserror::Error, Debug, LdApiError)]
-#[api_error(crate_path = "crate")]
-pub enum GeoIpError {
     #[error("Geo IP '{0}' not found")]
     #[api_error(id = "geo_ip.not_found", status = 404)]
-    NotFound(ConfigId),
+    IpNotFound(ConfigId),
+
     #[error("Geo IP cache key '{0}' not found")]
     #[api_error(id = "geo_ip.cache_not_found", status = 404)]
-    CacheNotFound(String),
+    IpCacheNotFound(String),
+
     #[error("Geo IP file not found in upload")]
     #[api_error(id = "geo_ip.file_not_found", status = 400)]
-    FileNotFound,
+    IpFileNotFound,
+
     #[error("Geo IP file read error")]
     #[api_error(id = "geo_ip.file_read_error", status = 400)]
-    FileReadError,
+    IpFileReadError,
+
     #[error("Geo IP config '{0}' not found")]
     #[api_error(id = "geo_ip.config_not_found", status = 404)]
-    ConfigNotFound(String),
+    IpConfigNotFound(String),
+
     #[error("Geo IP DAT decode error")]
     #[api_error(id = "geo_ip.dat_decode_error", status = 400)]
-    DatDecodeError,
+    IpDatDecodeError,
+
     #[error("Geo IP TXT file contains no valid CIDR entries")]
     #[api_error(id = "geo_ip.no_valid_cidr", status = 400)]
-    NoValidCidrFound,
+    IpNoValidCidrFound,
+
+    #[error("failed to read geo site cache '{name}:{key}'")]
+    #[api_error(id = "geo_matcher.read_failed", status = 500)]
+    MatcherReadFailed { name: String, key: String },
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, Default)]
@@ -174,19 +183,13 @@ pub struct GeoFileCacheKey {
     pub key: String,
 }
 
-#[derive(thiserror::Error, Debug)]
-pub enum GeoMatcherSourceError {
-    #[error("failed to read geo site cache '{name}:{key}'")]
-    ReadFailed { name: String, key: String },
-}
-
 #[async_trait::async_trait]
 pub trait GeoMatcherSource: Send + Sync {
     /// `None` means the key does not exist; an empty vector is a valid empty key.
     async fn load_geo_domains(
         &self,
         key: &GeoFileCacheKey,
-    ) -> Result<Option<Vec<GeoSiteFileConfig>>, GeoMatcherSourceError>;
+    ) -> Result<Option<Vec<GeoSiteFileConfig>>, GeoError>;
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]

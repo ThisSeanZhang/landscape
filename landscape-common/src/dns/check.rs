@@ -3,7 +3,7 @@ use uuid::Uuid;
 
 use crate::config::FlowId;
 use crate::dns::domain::normalize_domain_name;
-use crate::dns::error::DnsError;
+use crate::dns::error::DnsServiceError;
 use crate::dns::rule::{DNSRuntimeRule, FilterResult, LandscapeDnsRecordType};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -72,7 +72,7 @@ pub struct CheckDnsReq {
 }
 
 impl CheckDnsReq {
-    pub fn get_domain(&self) -> Result<String, DnsError> {
+    pub fn get_domain(&self) -> Result<String, DnsServiceError> {
         Ok(format!("{}.", normalize_domain_name(&self.domain)?))
     }
 }

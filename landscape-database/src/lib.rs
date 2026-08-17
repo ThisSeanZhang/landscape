@@ -8,7 +8,6 @@ pub mod dhcp_v4_server;
 pub mod dhcp_v6_client;
 pub mod dns_provider_profile;
 pub mod enrolled_device;
-pub mod error;
 pub mod firewall;
 pub mod flow_wan;
 pub mod iface;

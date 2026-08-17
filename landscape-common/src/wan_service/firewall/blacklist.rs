@@ -1,21 +1,11 @@
-use landscape_macro::LdApiError;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::config::ConfigId;
 use crate::config_service::geo::GeoConfigKey;
 use crate::database::repository::LandscapeDBStore;
 use crate::flow::ip_mark::IpConfig;
 use crate::utils::id::gen_database_uuid;
 use crate::utils::time::get_f64_timestamp;
-
-#[derive(thiserror::Error, Debug, LdApiError)]
-#[api_error(crate_path = "crate")]
-pub enum FirewallBlacklistError {
-    #[error("Firewall blacklist '{0}' not found")]
-    #[api_error(id = "firewall_blacklist.not_found", status = 404)]
-    NotFound(ConfigId),
-}
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
