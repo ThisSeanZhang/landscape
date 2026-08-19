@@ -10,6 +10,7 @@ import {
   validate_enrolled_device_ip,
 } from "@/api/enrolled_device";
 import { get_all_dhcp_v4_status } from "@/api/service_dhcp_v4";
+import { get_all_lan_ipv6_configs } from "@/api/service_lan_ipv6";
 import { useI18n } from "vue-i18n";
 import { useEnrolledDeviceStore } from "@/stores/enrolled_device";
 import CustomDhcpOptionEditor from "@/components/dhcp_v4/options/CustomDhcpOptionEditor.vue";
@@ -217,8 +218,9 @@ async function enter() {
   const token = ++enterToken.value;
 
   try {
-    const [statusMap, fetched] = await Promise.all([
+    const [dhcpV4StatusMap, lanIpv6Configs, fetched] = await Promise.all([
       get_all_dhcp_v4_status(),
+      get_all_lan_ipv6_configs(),
       props.rule_id
         ? get_enrolled_device_by_id(props.rule_id)
         : Promise.resolve(null),
@@ -226,10 +228,23 @@ async function enter() {
 
     if (token !== enterToken.value || !show.value) return;
 
-    ifaceOptions.value = Array.from(statusMap.keys()).map((name) => ({
-      label: name,
-      value: name,
-    }));
+    const ifaceNames = new Set(dhcpV4StatusMap.keys());
+    for (const config of lanIpv6Configs) {
+      if (config.enable) {
+        ifaceNames.add(config.iface_name);
+      }
+    }
+    ifaceOptions.value = Array.from(ifaceNames)
+      .sort((left, right) =>
+        left.localeCompare(right, undefined, {
+          numeric: true,
+          sensitivity: "base",
+        }),
+      )
+      .map((name) => ({
+        label: name,
+        value: name,
+      }));
 
     if (fetched) {
       rule.value = fetched;
