@@ -20,9 +20,9 @@ pub(crate) fn normalize_domain_text(domain: &str) -> Cow<'_, str> {
 /// redirect engine, resolve engine, cache), so no stage re-normalizes or
 /// re-copies the name.
 pub struct ParsedDomain {
-    /// FQDN with trailing dot, lowercase.
+    /// FQDN with trailing dot, lowercase ASCII/Punycode.
     raw: Arc<str>,
-    /// Normalized name: lowercase, no trailing dot.
+    /// Normalized name: lowercase ASCII/Punycode, no trailing dot.
     name: String,
     labels: Vec<String>,
     dns_name: Name,
@@ -30,10 +30,14 @@ pub struct ParsedDomain {
 
 impl ParsedDomain {
     pub fn new(fqdn: &str) -> Result<Self, DnsServiceError> {
-        let name = normalize_domain_text(fqdn).into_owned();
-        let labels: Vec<String> = name.split('.').map(String::from).collect();
-        let dns_name = Name::from_utf8(&name)
+        let normalized = normalize_domain_text(fqdn);
+        let dns_name = Name::from_utf8(normalized.as_ref())
             .map_err(|_| DnsServiceError::Invalid { domain: fqdn.to_string() })?;
+        // Hickory parses Unicode labels as IDNA and stores their ASCII/Punycode
+        // form. Keep that canonical representation everywhere downstream so
+        // byte-oriented matchers and suffix checks never see UTF-8 labels.
+        let name = dns_name.to_ascii().trim_end_matches('.').to_ascii_lowercase();
+        let labels: Vec<String> = name.split('.').map(String::from).collect();
         let raw = Arc::from(format!("{}.", name).as_str());
         Ok(Self { raw, name, labels, dns_name })
     }
@@ -75,5 +79,27 @@ impl ParsedDomain {
     pub fn hostname_for_tld(&self, tld: &str) -> Option<&str> {
         let suffix = format!(".{}", tld);
         self.name.strip_suffix(&suffix).filter(|h| !h.is_empty())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ParsedDomain;
+
+    #[test]
+    fn canonicalizes_unicode_labels_to_ascii_punycode() {
+        let domain = ParsedDomain::new("载.example.").unwrap();
+
+        assert!(domain.name().is_ascii());
+        assert!(domain.name().starts_with("xn--"));
+        assert_eq!(domain.raw(), format!("{}.", domain.name()));
+    }
+
+    #[test]
+    fn keeps_ascii_domains_lowercase_and_without_duplicate_root_dots() {
+        let domain = ParsedDomain::new("WWW.Example.COM...").unwrap();
+
+        assert_eq!(domain.name(), "www.example.com");
+        assert_eq!(domain.raw(), "www.example.com.");
     }
 }

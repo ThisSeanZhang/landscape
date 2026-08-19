@@ -623,6 +623,18 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn resolve_local_handles_idn_at_lan_suffix_byte_offset() {
+        // Before ParsedDomain canonicalization, subtracting the three-byte
+        // "lan" suffix put byte offset 19 inside this character (bytes 17..20).
+        let input = "aaaaaaaaaaaaaaaaa载.x.";
+        let domain = pd(input);
+        assert!(domain.name().is_ascii());
+
+        let resolver = make_resolver(registry(true, "lan", vec![]));
+        assert!(resolver.resolve_local(&domain, RecordType::A).is_none());
+    }
+
     fn arpa_name_from_ipv6(addr: Ipv6Addr) -> String {
         let octets = addr.octets();
         let nibbles: Vec<String> = octets
