@@ -214,6 +214,41 @@ fn slaac_observation_clears_probe_pending() {
     assert!(!status.slaac_entries.get(&ip).unwrap().probe_pending);
 }
 
+#[test]
+fn should_verify_slaac_addr_requires_unknown_address_in_ra_prefix() {
+    let mut status = make_slaac_status();
+    let mac = MacAddr::from([0x00, 0x11, 0x22, 0x33, 0x44, 0x55]);
+    let candidate = Ipv6Addr::new(0xfd00, 0, 0, 1, 0, 0, 0xAA, 0xBB);
+    let outside = Ipv6Addr::new(0xfd00, 0, 0, 2, 0, 0, 0xAA, 0xBB);
+
+    assert!(status.should_verify_slaac_addr(candidate));
+    assert!(!status.should_verify_slaac_addr(outside));
+
+    status.record_slaac_addr(mac, candidate);
+    assert!(!status.should_verify_slaac_addr(candidate));
+}
+
+#[test]
+fn should_verify_slaac_addr_rejects_dhcpv6_owned_suffix() {
+    let mut status = make_slaac_status();
+    let mac = MacAddr::from([0x00, 0x11, 0x22, 0x33, 0x44, 0x55]);
+    let offered = status.offer_na(b"verification-na", mac, None).unwrap();
+
+    assert!(!status.should_verify_slaac_addr(offered[0]));
+}
+
+#[test]
+fn should_verify_slaac_addr_rejects_router_own_address() {
+    let status = make_slaac_status();
+    let router_ip = status.ra_entries()[0].router;
+
+    assert!(!status.should_verify_slaac_addr(router_ip));
+
+    let suffix = ipv6_suffix(router_ip) + 1;
+    let neighbor = combine_prefix_suffix(status.ra_entries()[0].prefix, 64, suffix);
+    assert!(status.should_verify_slaac_addr(neighbor));
+}
+
 fn pd_prefix(prefix: &str, prefix_len: u8) -> LDIAPrefix {
     LDIAPrefix {
         preferred_lifetime: 1800,

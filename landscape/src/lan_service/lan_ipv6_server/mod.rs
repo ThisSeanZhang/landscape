@@ -1103,6 +1103,21 @@ impl Ipv6ServerStatus {
         Some(entry.mac)
     }
 
+    pub fn should_verify_slaac_addr(&self, ip: Ipv6Addr) -> bool {
+        if self.slaac_entries.contains_key(&ip)
+            || self.na_owners_by_suffix.contains_key(&ipv6_suffix(ip))
+            || self.cached_subnets.iter().any(|sn| sn.sub_router == ip)
+        {
+            return false;
+        }
+
+        self.prefix_state.ra_entries.iter().any(|entry| {
+            let mask =
+                if entry.prefix_len >= 128 { !0u128 } else { !0u128 << (128 - entry.prefix_len) };
+            (u128::from(ip) & mask) == (u128::from(entry.prefix) & mask)
+        })
+    }
+
     /// Unified view of all assigned addresses (SLAAC + DHCPv6 NA).
     pub fn all_addresses(&self) -> Vec<AssignedAddr> {
         let mut result = Vec::new();

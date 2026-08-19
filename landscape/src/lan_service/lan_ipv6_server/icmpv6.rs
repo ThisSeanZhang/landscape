@@ -121,6 +121,9 @@ fn onlink_only_prefixes(status: &Ipv6ServerStatus) -> Vec<(Ipv6Addr, u8)> {
 
 pub enum SlaacActionResult {
     None,
+    VerificationCandidate {
+        ip: Ipv6Addr,
+    },
     Allocated {
         mac: MacAddr,
         ip: Ipv6Addr,
@@ -164,10 +167,15 @@ pub fn handle_na(
                     return SlaacActionResult::Refreshed { mac, ip };
                 }
             }
-            tracing::debug!(
-                "ignoring NeighborAdvertisement without TargetLinkLayerAddress for {ip}"
-            );
-            return SlaacActionResult::None;
+            return if source_matches_target {
+                SlaacActionResult::VerificationCandidate { ip }
+            } else {
+                tracing::debug!(
+                    "ignoring NeighborAdvertisement without TargetLinkLayerAddress for {ip}: \
+                     source does not match target"
+                );
+                SlaacActionResult::None
+            };
         }
     };
 
@@ -233,6 +241,20 @@ pub async fn send_msg(sender: &Arc<UdpSocket>, msg: &Icmpv6Message, dst: SocketA
     }
 }
 
+pub fn solicited_node_multicast(target: Ipv6Addr) -> Ipv6Addr {
+    let octets = target.octets();
+    Ipv6Addr::new(
+        0xff02,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0xff00 | u16::from(octets[13]),
+        u16::from_be_bytes([octets[14], octets[15]]),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -269,6 +291,15 @@ mod tests {
         NetProtoCodec::encode(&msg, &mut bytes).unwrap();
 
         assert_eq!(extract_mac_from_ns(&bytes), None);
+    }
+
+    #[test]
+    fn solicited_node_multicast_uses_low_24_target_bits() {
+        let target: Ipv6Addr = "2001:db8:1234:5678:90ab:cdef:1234:5678".parse().unwrap();
+        assert_eq!(
+            solicited_node_multicast(target),
+            "ff02::1:ff34:5678".parse::<Ipv6Addr>().unwrap()
+        );
     }
 
     #[test]
@@ -341,6 +372,25 @@ mod tests {
                 &mut status,
             ),
             SlaacActionResult::None
+        ));
+    }
+
+    #[test]
+    fn handle_na_returns_candidate_for_matching_source_without_tlla() {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let mut status = Ipv6ServerStatus::new(None, None, vec![], tx);
+        let ip: Ipv6Addr = "fd00::1234".parse().unwrap();
+        let msg = Icmpv6Message::NeighborAdvertisement(NeighborAdvertisement::new(
+            0,
+            ip,
+            IcmpV6Options::new(),
+        ));
+        let mut bytes = BytesMut::new();
+        NetProtoCodec::encode(&msg, &mut bytes).unwrap();
+
+        assert!(matches!(
+            handle_na(&bytes, SocketAddr::new(ip.into(), 0), &mut status),
+            SlaacActionResult::VerificationCandidate { ip: candidate } if candidate == ip
         ));
     }
 }

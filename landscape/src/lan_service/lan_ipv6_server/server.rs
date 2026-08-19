@@ -1,8 +1,8 @@
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     net::{IpAddr, Ipv6Addr, SocketAddr},
     sync::Arc,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use landscape_common::{
@@ -38,6 +38,101 @@ use dashmap::DashMap;
 use uuid::Uuid;
 
 const LEASE_EXPIRE_INTERVAL: u64 = 60 * 10;
+const SLAAC_VERIFICATION_CAPACITY: usize = 1024;
+const SLAAC_VERIFICATION_PROBES_PER_SECOND: usize = 32;
+const SLAAC_VERIFICATION_WARNING_INTERVAL: Duration = Duration::from_secs(60);
+
+#[derive(Debug, Clone, Copy)]
+enum SlaacVerificationState {
+    Pending { probe_at: Instant },
+    Cooldown { expires_at: Instant },
+}
+
+#[derive(Debug)]
+struct SlaacVerificationQueue {
+    entries: HashMap<Ipv6Addr, SlaacVerificationState>,
+    rate_window_started_at: Instant,
+    probes_taken_in_window: usize,
+    last_capacity_warning: Option<Instant>,
+}
+
+impl SlaacVerificationQueue {
+    fn new(now: Instant) -> Self {
+        Self {
+            entries: HashMap::new(),
+            rate_window_started_at: now,
+            probes_taken_in_window: 0,
+            last_capacity_warning: None,
+        }
+    }
+
+    fn enqueue(&mut self, ip: Ipv6Addr, now: Instant, delay: Duration, iface_name: &str) {
+        self.remove_expired_cooldowns(now);
+        if self.entries.contains_key(&ip) {
+            return;
+        }
+        if self.entries.len() >= SLAAC_VERIFICATION_CAPACITY {
+            if self.last_capacity_warning.is_none_or(|last| {
+                now.saturating_duration_since(last) >= SLAAC_VERIFICATION_WARNING_INTERVAL
+            }) {
+                tracing::warn!(
+                    "SLAAC verification queue is full on {iface_name}; dropping candidate {ip}"
+                );
+                self.last_capacity_warning = Some(now);
+            }
+            return;
+        }
+        self.entries.insert(ip, SlaacVerificationState::Pending { probe_at: now + delay });
+    }
+
+    fn remove(&mut self, ip: Ipv6Addr) {
+        self.entries.remove(&ip);
+    }
+
+    fn take_due(&mut self, now: Instant) -> Vec<Ipv6Addr> {
+        self.remove_expired_cooldowns(now);
+        if now.saturating_duration_since(self.rate_window_started_at) >= Duration::from_secs(1) {
+            self.rate_window_started_at = now;
+            self.probes_taken_in_window = 0;
+        }
+
+        let remaining =
+            SLAAC_VERIFICATION_PROBES_PER_SECOND.saturating_sub(self.probes_taken_in_window);
+        if remaining == 0 {
+            return Vec::new();
+        }
+
+        let mut due: Vec<(Ipv6Addr, Instant)> = self
+            .entries
+            .iter()
+            .filter_map(|(ip, state)| match state {
+                SlaacVerificationState::Pending { probe_at } if *probe_at <= now => {
+                    Some((*ip, *probe_at))
+                }
+                _ => None,
+            })
+            .collect();
+        due.sort_unstable_by_key(|(ip, probe_at)| (*probe_at, *ip));
+        due.truncate(remaining);
+
+        let ips: Vec<Ipv6Addr> = due.into_iter().map(|(ip, _)| ip).collect();
+        for ip in &ips {
+            self.entries.remove(ip);
+        }
+        self.probes_taken_in_window += ips.len();
+        ips
+    }
+
+    fn mark_probed(&mut self, ip: Ipv6Addr, now: Instant, cooldown: Duration) {
+        self.entries.insert(ip, SlaacVerificationState::Cooldown { expires_at: now + cooldown });
+    }
+
+    fn remove_expired_cooldowns(&mut self, now: Instant) {
+        self.entries.retain(|_, state| {
+            !matches!(state, SlaacVerificationState::Cooldown { expires_at } if *expires_at <= now)
+        });
+    }
+}
 
 async fn handle_ra_tick(
     share_status: &Arc<Mutex<Ipv6ServerStatus>>,
@@ -68,6 +163,7 @@ async fn handle_icmp_msg(
     ipv6_assign_sender: &IPv6AssignEventSender,
     link_ifindex: u32,
     device_id_map: &DashMap<MacAddr, Uuid>,
+    slaac_verifications: &mut SlaacVerificationQueue,
 ) -> bool {
     let Some((data, src_addr)) = result else {
         tracing::error!("ICMPv6 recv channel closed on {iface_name}");
@@ -110,6 +206,26 @@ async fn handle_icmp_msg(
             let mut status = share_status.lock().await;
             let action = icmpv6::handle_na(&data, src_addr, &mut status);
             match &action {
+                icmpv6::SlaacActionResult::VerificationCandidate { ip }
+                    if params.ra_autonomous
+                        && is_usable_slaac_source(*ip)
+                        && status.should_verify_slaac_addr(*ip) =>
+                {
+                    slaac_verifications.enqueue(
+                        *ip,
+                        Instant::now(),
+                        Duration::from_secs(u64::from(icmp_ad_interval) / 2),
+                        iface_name,
+                    );
+                }
+                icmpv6::SlaacActionResult::Allocated { ip, .. }
+                | icmpv6::SlaacActionResult::Refreshed { ip, .. }
+                | icmpv6::SlaacActionResult::Conflict { ip, .. } => {
+                    slaac_verifications.remove(*ip);
+                }
+                _ => {}
+            }
+            match &action {
                 icmpv6::SlaacActionResult::Allocated { mac, .. }
                 | icmpv6::SlaacActionResult::Conflict { mac, .. } => {
                     record_link_local_mac(&src_addr, *mac, mac_link_cache, link_ifindex);
@@ -151,6 +267,7 @@ async fn handle_icmp_msg(
                     // Refreshed only updates SLAAC activity time and probe
                     // state; it intentionally has no event or prewarm side effect.
                 }
+                icmpv6::SlaacActionResult::VerificationCandidate { .. } => {}
                 _ => {}
             }
         }
@@ -515,6 +632,9 @@ pub async fn start_ipv6_lan_server(
     icmp_ra_interval.reset_immediately();
     let mut dhcp_expire_timer =
         Box::pin(tokio::time::interval(Duration::from_secs(LEASE_EXPIRE_INTERVAL)));
+    let mut slaac_verification_timer = Box::pin(tokio::time::interval(Duration::from_secs(1)));
+    slaac_verification_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    let mut slaac_verifications = SlaacVerificationQueue::new(Instant::now());
 
     let mut service_status_subscribe = service_status.subscribe();
 
@@ -530,6 +650,7 @@ pub async fn start_ipv6_lan_server(
                     result, &iface_name, &service_status, &share_status,
                     &mac_link_cache, &params, &mac_addr, icmp_ad_interval, &icmp_sender,
                     ipv6_assign_sender, link_ifindex, &device_id_map,
+                    &mut slaac_verifications,
                 ).await {
                     break;
                 }
@@ -558,6 +679,32 @@ pub async fn start_ipv6_lan_server(
                     params.valid_lifetime as u64 + LEASE_EXPIRE_INTERVAL,
                     &icmp_sender, &mac_addr, &device_id_map,
                 ).await;
+            },
+            _ = slaac_verification_timer.tick() => {
+                let now = Instant::now();
+                let due = slaac_verifications.take_due(now);
+                for ip in due {
+                    let should_probe = {
+                        let status = share_status.lock().await;
+                        params.ra_autonomous && status.should_verify_slaac_addr(ip)
+                    };
+                    if !should_probe {
+                        continue;
+                    }
+
+                    let multicast = icmpv6::solicited_node_multicast(ip);
+                    let dst = SocketAddr::new(IpAddr::V6(multicast), 0);
+                    let _ = icmpv6::send_msg(
+                        &icmp_sender,
+                        &icmpv6::build_ns(ip, &mac_addr),
+                        dst,
+                    ).await;
+                    slaac_verifications.mark_probed(
+                        ip,
+                        now,
+                        Duration::from_secs(u64::from(icmp_ad_interval)),
+                    );
+                }
             },
             mac = reconf_rx.recv() => {
                 let Some(mac) = mac else {
@@ -813,6 +960,10 @@ fn gen_server_duid(mac: &MacAddr) -> Vec<u8> {
 mod tests {
     use super::*;
 
+    fn verification_queue(now: Instant) -> SlaacVerificationQueue {
+        SlaacVerificationQueue::new(now)
+    }
+
     #[test]
     fn record_link_local_mac_updates_cache_for_link_local_source() {
         let cache = Arc::new(MacLinkMapCache::new());
@@ -847,5 +998,65 @@ mod tests {
     fn slaac_touch_accepts_ula_and_global_sources() {
         assert!(is_usable_slaac_source("fd00::1".parse().unwrap()));
         assert!(is_usable_slaac_source("2001:db8::1".parse().unwrap()));
+    }
+
+    #[test]
+    fn verification_queue_deduplicates_without_moving_deadline() {
+        let now = Instant::now();
+        let ip = "fd00::1".parse().unwrap();
+        let mut queue = verification_queue(now);
+
+        queue.enqueue(ip, now, Duration::from_secs(30), "lan0");
+        queue.enqueue(ip, now + Duration::from_secs(10), Duration::from_secs(30), "lan0");
+
+        assert!(queue.take_due(now + Duration::from_secs(29)).is_empty());
+        assert_eq!(queue.take_due(now + Duration::from_secs(30)), vec![ip]);
+    }
+
+    #[test]
+    fn verification_queue_limits_each_rate_window() {
+        let now = Instant::now();
+        let mut queue = verification_queue(now);
+        for suffix in 1..=40u16 {
+            queue.enqueue(
+                Ipv6Addr::new(0xfd00, 0, 0, 0, 0, 0, 0, suffix),
+                now,
+                Duration::ZERO,
+                "lan0",
+            );
+        }
+
+        assert_eq!(queue.take_due(now).len(), SLAAC_VERIFICATION_PROBES_PER_SECOND);
+        assert!(queue.take_due(now).is_empty());
+        assert_eq!(queue.take_due(now + Duration::from_secs(1)).len(), 8);
+    }
+
+    #[test]
+    fn verification_queue_cooldown_blocks_until_expiry() {
+        let now = Instant::now();
+        let ip = "fd00::1".parse().unwrap();
+        let mut queue = verification_queue(now);
+
+        queue.mark_probed(ip, now, Duration::from_secs(60));
+        queue.enqueue(ip, now + Duration::from_secs(30), Duration::ZERO, "lan0");
+        assert!(queue.take_due(now + Duration::from_secs(30)).is_empty());
+
+        queue.enqueue(ip, now + Duration::from_secs(60), Duration::ZERO, "lan0");
+        assert_eq!(queue.take_due(now + Duration::from_secs(60)), vec![ip]);
+    }
+
+    #[test]
+    fn verification_queue_capacity_counts_cooldown_entries() {
+        let now = Instant::now();
+        let mut queue = verification_queue(now);
+        for suffix in 0..SLAAC_VERIFICATION_CAPACITY {
+            let ip = Ipv6Addr::from(u128::from(0xfd00u16) << 112 | suffix as u128);
+            queue.mark_probed(ip, now, Duration::from_secs(60));
+        }
+
+        let extra = "fd00::ffff".parse().unwrap();
+        queue.enqueue(extra, now, Duration::ZERO, "lan0");
+        assert!(!queue.entries.contains_key(&extra));
+        assert_eq!(queue.entries.len(), SLAAC_VERIFICATION_CAPACITY);
     }
 }
