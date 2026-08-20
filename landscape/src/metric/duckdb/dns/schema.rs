@@ -18,6 +18,10 @@ pub fn create_dns_table(conn: &Connection) -> duckdb::Result<()> {
     conn.execute_batch(sql)
 }
 
-pub fn cleanup_old_dns_metrics(conn: &Connection, cutoff: u64) {
-    let _ = conn.execute("DELETE FROM dns_metrics WHERE report_time < ?1", params![cutoff as i64]);
+pub fn cleanup_old_dns_metrics(conn: &Connection, cutoff: u64) -> usize {
+    conn.execute("DELETE FROM dns_metrics WHERE report_time < ?1", params![cutoff as i64])
+        .unwrap_or_else(|error| {
+            tracing::error!("failed to cleanup old dns metrics: {}", error);
+            0
+        })
 }
