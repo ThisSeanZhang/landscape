@@ -23,7 +23,10 @@ use tokio::sync::oneshot;
 use tokio::sync::Mutex;
 
 #[cfg(feature = "metric-duckdb")]
+pub(crate) mod cold;
+#[cfg(feature = "metric-duckdb")]
 pub mod duckdb;
+pub(crate) mod ingest;
 pub mod memory_store;
 
 #[derive(Clone)]

@@ -1,3 +1,4 @@
+#[cfg(feature = "metric-duckdb")]
 use arc_swap::ArcSwap;
 use landscape_common::config::MetricRuntimeConfig;
 use landscape_common::metric::connect::{
@@ -42,6 +43,7 @@ pub(crate) fn second_ring_capacity(config: &MetricRuntimeConfig) -> usize {
     target_points.saturating_add(8).clamp(32, 4096) as usize
 }
 
+#[cfg(feature = "metric-duckdb")]
 pub(crate) fn clean_ip_string(ip: &IpAddr) -> String {
     match ip {
         IpAddr::V6(v6) => {
@@ -90,12 +92,14 @@ fn metric_to_realtime(metric: &ConnectMetric) -> ConnectRealtimeStatus {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(not(feature = "metric-duckdb"), allow(dead_code))]
 pub(crate) enum BucketKind {
     Minute,
     Hour,
     Day,
 }
 
+#[cfg_attr(not(feature = "metric-duckdb"), allow(dead_code))]
 impl BucketKind {
     pub(crate) fn table_name(self) -> &'static str {
         match self {
@@ -107,6 +111,7 @@ impl BucketKind {
 }
 
 #[derive(Debug, Clone)]
+#[cfg_attr(not(feature = "metric-duckdb"), allow(dead_code))]
 pub(crate) struct BucketWrite {
     pub kind: BucketKind,
     pub metric: ConnectMetric,
@@ -248,17 +253,22 @@ fn scale_u64(value: u64, numerator: u64, denominator: u64) -> u64 {
 
 pub(crate) type IfaceRealtimeCache = Arc<RwLock<HashMap<u32, IfaceRealtimeAcc>>>;
 pub(crate) type IfaceBucketCache = Arc<RwLock<HashMap<IfaceBucketKey, IfaceBucketAcc>>>;
+#[cfg(feature = "metric-duckdb")]
 pub(crate) type IfaceRealtimeSnapshot = Arc<ArcSwap<Vec<IfaceRealtimeStat>>>;
+#[cfg(feature = "metric-duckdb")]
 pub(crate) type ConnectRealtimeSnapshot = Arc<ArcSwap<Vec<ConnectRealtimeStatus>>>;
 
+#[cfg(feature = "metric-duckdb")]
 pub(crate) fn new_iface_realtime_snapshot() -> IfaceRealtimeSnapshot {
     Arc::new(ArcSwap::from_pointee(Vec::new()))
 }
 
+#[cfg(feature = "metric-duckdb")]
 pub(crate) fn new_connect_realtime_snapshot() -> ConnectRealtimeSnapshot {
     Arc::new(ArcSwap::from_pointee(Vec::new()))
 }
 
+#[cfg(feature = "metric-duckdb")]
 pub(crate) fn publish_iface_realtime_snapshot(
     flow_cache: &FlowCache,
     snapshot: &IfaceRealtimeSnapshot,
@@ -267,12 +277,14 @@ pub(crate) fn publish_iface_realtime_snapshot(
     snapshot.store(Arc::new(collect_realtime_iface_stats(flow_cache, now_ms)));
 }
 
+#[cfg(feature = "metric-duckdb")]
 pub(crate) fn collect_iface_realtime_snapshot(
     snapshot: &IfaceRealtimeSnapshot,
 ) -> Vec<IfaceRealtimeStat> {
     snapshot.load_full().as_ref().clone()
 }
 
+#[cfg(feature = "metric-duckdb")]
 pub(crate) fn publish_connect_realtime_snapshot(
     flow_cache: &FlowCache,
     snapshot: &ConnectRealtimeSnapshot,
@@ -281,6 +293,7 @@ pub(crate) fn publish_connect_realtime_snapshot(
     snapshot.store(Arc::new(collect_connect_infos(flow_cache, now_ms)));
 }
 
+#[cfg(feature = "metric-duckdb")]
 pub(crate) fn collect_connect_realtime_snapshot(
     snapshot: &ConnectRealtimeSnapshot,
 ) -> Vec<ConnectRealtimeStatus> {
@@ -288,12 +301,14 @@ pub(crate) fn collect_connect_realtime_snapshot(
 }
 
 #[derive(Debug, Clone, Default)]
+#[cfg_attr(not(feature = "metric-duckdb"), allow(dead_code))]
 pub(crate) struct PersistenceBatch {
     pub summary_metrics: Vec<ConnectMetric>,
     pub bucket_writes: Vec<BucketWrite>,
     pub iface_bucket_writes: Vec<IfaceBucketWrite>,
 }
 
+#[cfg_attr(not(feature = "metric-duckdb"), allow(dead_code))]
 impl PersistenceBatch {
     pub(crate) fn is_empty(&self) -> bool {
         self.summary_metrics.is_empty()
@@ -325,6 +340,7 @@ impl PersistenceBatch {
 }
 
 #[derive(Debug, Clone)]
+#[cfg_attr(not(feature = "metric-duckdb"), allow(dead_code))]
 pub(crate) struct IfaceBucketWrite {
     pub ifindex: u32,
     pub report_time: u64,
@@ -692,6 +708,7 @@ pub(crate) fn process_connect_metric(
 }
 
 #[derive(Default)]
+#[cfg_attr(not(feature = "metric-duckdb"), allow(dead_code))]
 pub(crate) struct FlowCacheStats {
     pub active_flows: usize,
     pub finalized_flows: usize,
@@ -740,6 +757,7 @@ pub(crate) fn cleanup_flow_cache(
     (stats, batch)
 }
 
+#[cfg(feature = "metric-duckdb")]
 pub(crate) fn finalize_all_flows(
     flow_cache: &FlowCache,
     iface_realtime: &IfaceRealtimeCache,
@@ -829,4 +847,237 @@ pub(crate) fn second_points_by_key(
 ) -> Vec<ConnectMetricPoint> {
     let cache = flow_cache.read().expect("metric flow cache poisoned");
     cache.get(key).map(|state| state.second_points_since(cutoff)).unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::net::{IpAddr, Ipv4Addr};
+
+    fn test_metric(
+        create_time: u64,
+        cpu_id: u32,
+        report_time: u64,
+        ingress_bytes: u64,
+        egress_bytes: u64,
+    ) -> ConnectMetric {
+        ConnectMetric {
+            key: ConnectKey { create_time, cpu_id },
+            src_ip: IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)),
+            dst_ip: IpAddr::V4(Ipv4Addr::new(10, 0, 1, 1)),
+            src_port: 10_000 + cpu_id as u16,
+            dst_port: 20_000 + cpu_id as u16,
+            l4_proto: 6,
+            l3_proto: 4,
+            flow_id: cpu_id as u8,
+            trace_id: cpu_id as u8,
+            gress: 0,
+            ifindex: cpu_id + 10,
+            report_time,
+            create_time_ms: create_time,
+            ingress_bytes,
+            ingress_packets: ingress_bytes / 10,
+            egress_bytes,
+            egress_packets: egress_bytes / 10,
+            status: ConnectStatusType::Active,
+        }
+    }
+
+    fn test_caches() -> (FlowCache, IfaceRealtimeCache, IfaceBucketCache) {
+        (
+            Arc::new(RwLock::new(HashMap::new())),
+            Arc::new(RwLock::new(HashMap::new())),
+            Arc::new(RwLock::new(HashMap::new())),
+        )
+    }
+
+    const WINDOW_MS: u64 = 5 * 60 * 1000;
+    const RING_CAP: usize = 64;
+
+    #[test]
+    fn process_connect_metric_creates_active_flow_without_batch() {
+        let (flow, iface_realtime, iface_buckets) = test_caches();
+        let batch = process_connect_metric(
+            &flow,
+            &iface_realtime,
+            &iface_buckets,
+            test_metric(1_000, 0, 60_000, 100, 200),
+            WINDOW_MS,
+            RING_CAP,
+        );
+        assert!(batch.is_empty());
+
+        let infos = collect_connect_infos(&flow, 70_000);
+        assert_eq!(infos.len(), 1);
+        assert_eq!(infos[0].key.cpu_id, 0);
+        assert!(infos[0].ingress_bps > 0);
+        assert_eq!(infos[0].egress_bps > 0, true);
+    }
+
+    #[test]
+    fn process_connect_metric_disabled_flow_emits_buckets_and_summary() {
+        let (flow, iface_realtime, iface_buckets) = test_caches();
+        let mut metric = test_metric(1_000, 0, 60_000, 100, 200);
+        metric.status = ConnectStatusType::Disabled;
+        let batch = process_connect_metric(
+            &flow,
+            &iface_realtime,
+            &iface_buckets,
+            metric,
+            WINDOW_MS,
+            RING_CAP,
+        );
+
+        assert_eq!(batch.summary_metrics.len(), 1);
+        assert_eq!(batch.bucket_writes.len(), 3);
+        let kinds: Vec<_> = batch.bucket_writes.iter().map(|w| w.kind).collect();
+        assert!(kinds.contains(&BucketKind::Minute));
+        assert!(kinds.contains(&BucketKind::Hour));
+        assert!(kinds.contains(&BucketKind::Day));
+        assert_eq!(batch.bucket_writes[0].bucket_report_time, 60_000);
+
+        assert!(collect_connect_infos(&flow, 70_000).is_empty());
+    }
+
+    #[test]
+    fn minute_slot_transition_emits_minute_bucket_and_summary() {
+        let (flow, iface_realtime, iface_buckets) = test_caches();
+        let first = process_connect_metric(
+            &flow,
+            &iface_realtime,
+            &iface_buckets,
+            test_metric(1_000, 0, 60_000, 100, 200),
+            WINDOW_MS,
+            RING_CAP,
+        );
+        assert!(first.is_empty());
+
+        let second = process_connect_metric(
+            &flow,
+            &iface_realtime,
+            &iface_buckets,
+            test_metric(1_000, 0, 120_000, 300, 600),
+            WINDOW_MS,
+            RING_CAP,
+        );
+        assert_eq!(second.summary_metrics.len(), 1);
+        assert_eq!(second.bucket_writes.len(), 1);
+        assert_eq!(second.bucket_writes[0].kind, BucketKind::Minute);
+        assert_eq!(second.bucket_writes[0].bucket_report_time, 60_000);
+        assert_eq!(second.summary_metrics[0].ingress_bytes, 300);
+    }
+
+    #[test]
+    fn stale_flow_is_finalized_and_removed_by_cleanup() {
+        let (flow, iface_realtime, iface_buckets) = test_caches();
+        process_connect_metric(
+            &flow,
+            &iface_realtime,
+            &iface_buckets,
+            test_metric(1_000, 0, 60_000, 100, 200),
+            WINDOW_MS,
+            RING_CAP,
+        );
+
+        let now_ms = 60_000 + STALE_TIMEOUT_MS + 40_000;
+        let (stats, batch) = cleanup_flow_cache(&flow, &iface_realtime, now_ms, WINDOW_MS);
+        assert_eq!(stats.finalized_in_run, 1);
+        assert_eq!(stats.finalized_flows, 1);
+        assert_eq!(batch.bucket_writes.len(), 3);
+        assert!(collect_connect_infos(&flow, now_ms).is_empty());
+    }
+
+    #[test]
+    fn active_flow_survives_cleanup_within_window() {
+        let (flow, iface_realtime, iface_buckets) = test_caches();
+        process_connect_metric(
+            &flow,
+            &iface_realtime,
+            &iface_buckets,
+            test_metric(1_000, 0, 60_000, 100, 200),
+            WINDOW_MS,
+            RING_CAP,
+        );
+
+        let now_ms = 60_000 + 60_000;
+        let (stats, batch) = cleanup_flow_cache(&flow, &iface_realtime, now_ms, WINDOW_MS);
+        assert_eq!(stats.finalized_in_run, 0);
+        assert_eq!(stats.active_flows, 1);
+        assert!(batch.is_empty());
+        assert_eq!(collect_connect_infos(&flow, now_ms).len(), 1);
+    }
+
+    #[test]
+    fn iface_delta_is_split_across_five_second_buckets() {
+        let (flow, iface_realtime, iface_buckets) = test_caches();
+        process_connect_metric(
+            &flow,
+            &iface_realtime,
+            &iface_buckets,
+            test_metric(1_000, 0, 60_000, 100, 200),
+            WINDOW_MS,
+            RING_CAP,
+        );
+        process_connect_metric(
+            &flow,
+            &iface_realtime,
+            &iface_buckets,
+            test_metric(1_000, 0, 67_000, 200, 400),
+            WINDOW_MS,
+            RING_CAP,
+        );
+
+        let writes = drain_iface_buckets(&iface_buckets, &iface_realtime);
+        assert_eq!(writes.len(), 2);
+        assert_eq!(writes[0].report_time, 60_000);
+        assert_eq!(writes[1].report_time, 65_000);
+        assert_eq!(writes[0].ingress_bytes + writes[1].ingress_bytes, 100);
+        assert!(writes[0].ingress_bytes > 0 && writes[1].ingress_bytes > 0);
+    }
+
+    #[test]
+    fn second_ring_points_respect_window_cutoff() {
+        let (flow, iface_realtime, iface_buckets) = test_caches();
+        let key = ConnectKey { create_time: 1_000, cpu_id: 0 };
+        for t in [60_000u64, 61_000, 62_000, 63_000] {
+            process_connect_metric(
+                &flow,
+                &iface_realtime,
+                &iface_buckets,
+                test_metric(1_000, 0, t, 100, 200),
+                WINDOW_MS,
+                RING_CAP,
+            );
+        }
+
+        let points = second_points_by_key(&flow, &key, 62_000);
+        let times: Vec<_> = points.iter().map(|p| p.report_time).collect();
+        assert_eq!(times, vec![62_000, 63_000]);
+    }
+
+    #[test]
+    fn realtime_ip_stats_aggregate_by_source_ip() {
+        let (flow, iface_realtime, iface_buckets) = test_caches();
+        process_connect_metric(
+            &flow,
+            &iface_realtime,
+            &iface_buckets,
+            test_metric(1_000, 0, 60_000, 100, 200),
+            WINDOW_MS,
+            RING_CAP,
+        );
+        process_connect_metric(
+            &flow,
+            &iface_realtime,
+            &iface_buckets,
+            test_metric(2_000, 1, 61_000, 300, 400),
+            WINDOW_MS,
+            RING_CAP,
+        );
+
+        let stats = collect_realtime_ip_stats(&flow, 70_000, true);
+        assert_eq!(stats.len(), 1);
+        assert_eq!(stats[0].stats.active_conns, 2);
+        assert_eq!(stats[0].stats.ingress_bps > 0, true);
+    }
 }
