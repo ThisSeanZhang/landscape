@@ -1,4 +1,4 @@
-use duckdb::DuckdbConnectionManager;
+use duckdb::{params, params_from_iter, DuckdbConnectionManager};
 use landscape_common::concurrency::{spawn_named_thread, task_label, thread_name};
 use landscape_common::config::MetricRuntimeConfig;
 use landscape_common::event::{ConnectMessage, DnsMetricMessage};
@@ -49,6 +49,9 @@ type StoreInitResult<T> = Result<T, String>;
 const DUCKDB_POOL_MAX_SIZE: u32 = 8;
 const DUCKDB_POOL_MIN_IDLE: u32 = 1;
 const COLD_RETRY_DELAY_SECS: u64 = 5;
+const DNS_BATCH_MAX_ROWS: usize = 500;
+const DNS_BATCH_FLUSH_TIMEOUT_SECS: u64 = 5;
+const DNS_METRIC_COLUMNS: usize = 9;
 
 #[derive(Debug)]
 enum ColdEvent {
@@ -352,10 +355,13 @@ async fn run_hot_thread(
     let second_ring_cap = second_ring_capacity(&metric_config);
 
     let mut cleanup_interval = tokio::time::interval(cleanup_interval_duration);
+    cleanup_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     cleanup_interval.tick().await;
     let mut flush_interval = tokio::time::interval(flush_interval_duration);
+    flush_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     flush_interval.tick().await;
     let mut snapshot_interval = tokio::time::interval(Duration::from_secs(1));
+    snapshot_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     snapshot_interval.tick().await;
 
     let mut pending_batch = PersistenceBatch::default();
@@ -463,82 +469,151 @@ fn persist_cold_bucket_writes(
     let conn = cold_pool.get().map_err(|error| {
         format!("failed to get cold duckdb connection for bucket write: {}", error)
     })?;
+    let start = Instant::now();
 
-    for bucket in bucket_writes {
-        let status: u8 = bucket.metric.status.clone().into();
-        connect_schema::upsert_metric_bucket_values(
-            &conn,
-            bucket.kind.table_name(),
-            bucket.metric.key.create_time,
-            bucket.metric.key.cpu_id,
-            bucket.bucket_report_time,
-            bucket.metric.ingress_bytes,
-            bucket.metric.ingress_packets,
-            bucket.metric.egress_bytes,
-            bucket.metric.egress_packets,
-            status,
-            bucket.metric.create_time_ms,
-            bucket.metric.ifindex,
-        )
-        .map_err(|error| {
-            format!("failed to write cold bucket row into {}: {}", bucket.kind.table_name(), error)
-        })?;
+    let tx = conn
+        .unchecked_transaction()
+        .map_err(|error| format!("failed to begin cold duckdb bucket transaction: {}", error))?;
+
+    if !bucket_writes.is_empty() {
+        let mut prepared_table: Option<&str> = None;
+        let mut prepared_stmt: Option<duckdb::Statement<'_>> = None;
+        for bucket in bucket_writes {
+            let table = bucket.kind.table_name();
+            if prepared_table != Some(table) {
+                prepared_stmt = Some(
+                    tx.prepare(&connect_schema::upsert_metric_bucket_values_sql(table)).map_err(
+                        |error| {
+                            format!("failed to prepare cold bucket upsert for {}: {}", table, error)
+                        },
+                    )?,
+                );
+                prepared_table = Some(table);
+            }
+            let status: u8 = bucket.metric.status.clone().into();
+            prepared_stmt
+                .as_mut()
+                .expect("prepared bucket upsert")
+                .execute(params![
+                    bucket.metric.key.create_time as i64,
+                    bucket.metric.key.cpu_id as i64,
+                    bucket.bucket_report_time as i64,
+                    bucket.metric.ifindex as i64,
+                    bucket.metric.ingress_bytes as i64,
+                    bucket.metric.ingress_packets as i64,
+                    bucket.metric.egress_bytes as i64,
+                    bucket.metric.egress_packets as i64,
+                    status as i64,
+                    bucket.metric.create_time_ms as i64,
+                ])
+                .map_err(|error| {
+                    format!("failed to write cold bucket row into {}: {}", table, error)
+                })?;
+        }
+        drop(prepared_stmt);
     }
 
-    for bucket in iface_bucket_writes {
-        connect_schema::upsert_iface_metric_bucket_values(
-            &conn,
-            bucket.ifindex,
-            bucket.report_time,
-            bucket.ingress_bytes,
-            bucket.ingress_packets,
-            bucket.egress_bytes,
-            bucket.egress_packets,
-            bucket.active_conns,
-        )
-        .map_err(|error| format!("failed to write cold iface bucket row: {}", error))?;
+    if !iface_bucket_writes.is_empty() {
+        let mut prepared_stmt = tx
+            .prepare(&connect_schema::upsert_iface_metric_bucket_values_sql())
+            .map_err(|error| format!("failed to prepare cold iface bucket upsert: {}", error))?;
+        for bucket in iface_bucket_writes {
+            prepared_stmt
+                .execute(params![
+                    bucket.ifindex as i64,
+                    bucket.report_time as i64,
+                    bucket.ingress_bytes as i64,
+                    bucket.ingress_packets as i64,
+                    bucket.egress_bytes as i64,
+                    bucket.egress_packets as i64,
+                    bucket.active_conns as i64,
+                ])
+                .map_err(|error| format!("failed to write cold iface bucket row: {}", error))?;
+        }
+        drop(prepared_stmt);
     }
+
+    tx.commit()
+        .map_err(|error| format!("failed to commit cold duckdb bucket transaction: {}", error))?;
+
+    tracing::info!(
+        "phase=cold_duckdb.persist buckets={} iface_buckets={} elapsed_ms={}",
+        bucket_writes.len(),
+        iface_bucket_writes.len(),
+        start.elapsed().as_millis()
+    );
 
     Ok(())
 }
 
-fn persist_cold_dns_metric(
+fn dns_batch_insert_sql(row_count: usize) -> String {
+    let values = (0..row_count)
+        .map(|index| {
+            let base = index * DNS_METRIC_COLUMNS;
+            format!(
+                "(?{}, ?{}, ?{}, ?{}, ?{}, ?{}, ?{}, ?{}, ?{})",
+                base + 1,
+                base + 2,
+                base + 3,
+                base + 4,
+                base + 5,
+                base + 6,
+                base + 7,
+                base + 8,
+                base + 9
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!(
+        "INSERT INTO dns_metrics (
+            flow_id, domain, query_type, response_code,
+            report_time, duration_ms, src_ip, answers, status
+        ) VALUES {values}"
+    )
+}
+
+fn persist_cold_dns_batch(
     cold_pool: &r2d2::Pool<DuckdbConnectionManager>,
-    metric: &DnsMetric,
+    metrics: &[DnsMetric],
 ) -> StoreInitResult<()> {
+    if metrics.is_empty() {
+        return Ok(());
+    }
+
     let conn = cold_pool.get().map_err(|error| {
         format!("failed to get cold duckdb connection for dns write: {}", error)
     })?;
+    let start = Instant::now();
 
-    let answers_json = serde_json::to_string(&metric.answers).unwrap_or_default();
-    let status_json = serde_json::to_string(&metric.status).unwrap_or_default();
-    dns_schema::insert_dns_row(
-        &conn,
-        metric.flow_id,
-        &metric.domain,
-        &metric.query_type,
-        &metric.response_code,
-        metric.report_time,
-        metric.duration_ms,
-        &super::ingest::clean_ip_string(&metric.src_ip),
-        &answers_json,
-        &status_json,
-    )
-    .map_err(|error| format!("failed to write cold dns row: {}", error))?;
+    let sql = dns_batch_insert_sql(metrics.len());
+    let mut values: Vec<Box<dyn duckdb::ToSql>> =
+        Vec::with_capacity(metrics.len() * DNS_METRIC_COLUMNS);
+    for metric in metrics {
+        let answers_json = serde_json::to_string(&metric.answers).unwrap_or_default();
+        let status_json = serde_json::to_string(&metric.status).unwrap_or_default();
+        values.push(Box::new(metric.flow_id as i64));
+        values.push(Box::new(metric.domain.clone()));
+        values.push(Box::new(metric.query_type.clone()));
+        values.push(Box::new(metric.response_code.clone()));
+        values.push(Box::new(metric.report_time as i64));
+        values.push(Box::new(metric.duration_ms as i64));
+        values.push(Box::new(super::ingest::clean_ip_string(&metric.src_ip)));
+        values.push(Box::new(answers_json));
+        values.push(Box::new(status_json));
+    }
+
+    conn.execute(&sql, params_from_iter(values.iter().map(|value| value.as_ref()))).map_err(
+        |error| format!("failed to write cold dns batch of {} rows: {}", metrics.len(), error),
+    )?;
+
+    tracing::info!(
+        "phase=cold_duckdb.persist dns rows={} elapsed_ms={}",
+        metrics.len(),
+        start.elapsed().as_millis()
+    );
 
     Ok(())
-}
-
-fn persist_cold_event(
-    cold_pool: &r2d2::Pool<DuckdbConnectionManager>,
-    event: ColdEvent,
-) -> StoreInitResult<()> {
-    match event {
-        ColdEvent::Buckets(bucket_writes, iface_bucket_writes) => {
-            persist_cold_bucket_writes(cold_pool, &bucket_writes, &iface_bucket_writes)
-        }
-        ColdEvent::Dns(metric) => persist_cold_dns_metric(cold_pool, &metric),
-    }
 }
 
 fn cleanup_cold_store(
@@ -573,11 +648,29 @@ fn cleanup_cold_store(
         stats.deleted_1d,
         cutoff_dns,
     );
-    if let Err(error) = conn.execute("CHECKPOINT", []) {
-        tracing::warn!("failed to checkpoint cold metric duckdb during cleanup: {}", error);
-    }
 
     Ok(())
+}
+
+fn flush_cold_dns_batch(
+    cold_pool: &r2d2::Pool<DuckdbConnectionManager>,
+    dns_batch: &mut Vec<DnsMetric>,
+    dns_batch_deadline: &mut Option<tokio::time::Instant>,
+) -> StoreInitResult<()> {
+    *dns_batch_deadline = None;
+    if dns_batch.is_empty() {
+        return Ok(());
+    }
+    let metrics = std::mem::take(dns_batch);
+    persist_cold_dns_batch(cold_pool, &metrics)
+}
+
+fn invalidate_cold_pool(
+    cold_pool_cell: &Arc<RwLock<Option<r2d2::Pool<DuckdbConnectionManager>>>>,
+    cold_pool: &mut Option<r2d2::Pool<DuckdbConnectionManager>>,
+) {
+    *cold_pool_cell.write().expect("metric cold pool poisoned") = None;
+    *cold_pool = None;
 }
 
 async fn run_cold_thread(
@@ -589,7 +682,11 @@ async fn run_cold_thread(
 ) {
     let cleanup_interval_duration = Duration::from_secs(metric_config.cleanup_interval_secs.max(1));
     let mut cleanup_interval = tokio::time::interval(cleanup_interval_duration);
+    cleanup_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    cleanup_interval.tick().await;
     let mut cold_pool: Option<r2d2::Pool<DuckdbConnectionManager>> = None;
+    let mut dns_batch: Vec<DnsMetric> = Vec::new();
+    let mut dns_batch_deadline: Option<tokio::time::Instant> = None;
 
     loop {
         if *shutdown_rx.borrow() {
@@ -627,26 +724,55 @@ async fn run_cold_thread(
         let active_pool = cold_pool.clone().expect("cold pool set above");
         tokio::select! {
             _ = cleanup_interval.tick() => {
-                if let Err(error) = cleanup_cold_store(&active_pool, &metric_config) {
+                if let Err(error) = flush_cold_dns_batch(&active_pool, &mut dns_batch, &mut dns_batch_deadline) {
+                    tracing::error!("cold metric dns write failed: {}", error);
+                    invalidate_cold_pool(&cold_pool_cell, &mut cold_pool);
+                } else if let Err(error) = cleanup_cold_store(&active_pool, &metric_config) {
                     tracing::error!("cold metric cleanup failed: {}", error);
-                    *cold_pool_cell.write().expect("metric cold pool poisoned") = None;
-                    cold_pool = None;
+                    invalidate_cold_pool(&cold_pool_cell, &mut cold_pool);
                 }
             }
             msg_opt = cold_rx.recv() => {
                 match msg_opt {
-                    Some(event) => {
-                        if let Err(error) = persist_cold_event(&active_pool, event) {
-                            tracing::error!("cold metric write failed: {}", error);
-                            *cold_pool_cell.write().expect("metric cold pool poisoned") = None;
-                            cold_pool = None;
+                    Some(ColdEvent::Buckets(bucket_writes, iface_bucket_writes)) => {
+                        if let Err(error) = flush_cold_dns_batch(&active_pool, &mut dns_batch, &mut dns_batch_deadline) {
+                            tracing::error!("cold metric dns write failed: {}", error);
+                            invalidate_cold_pool(&cold_pool_cell, &mut cold_pool);
+                        } else if let Err(error) = persist_cold_bucket_writes(&active_pool, &bucket_writes, &iface_bucket_writes) {
+                            tracing::error!("cold metric bucket write failed: {}", error);
+                            invalidate_cold_pool(&cold_pool_cell, &mut cold_pool);
                         }
                     }
-                    None => break,
+                    Some(ColdEvent::Dns(metric)) => {
+                        if dns_batch.is_empty() {
+                            dns_batch_deadline =
+                                Some(tokio::time::Instant::now() + Duration::from_secs(DNS_BATCH_FLUSH_TIMEOUT_SECS));
+                        }
+                        dns_batch.push(metric);
+                        if dns_batch.len() >= DNS_BATCH_MAX_ROWS {
+                            if let Err(error) = flush_cold_dns_batch(&active_pool, &mut dns_batch, &mut dns_batch_deadline) {
+                                tracing::error!("cold metric dns write failed: {}", error);
+                                invalidate_cold_pool(&cold_pool_cell, &mut cold_pool);
+                            }
+                        }
+                    }
+                    None => {
+                        let _ = flush_cold_dns_batch(&active_pool, &mut dns_batch, &mut dns_batch_deadline);
+                        break;
+                    }
+                }
+            }
+            _ = tokio::time::sleep_until(dns_batch_deadline.unwrap_or_else(|| {
+                tokio::time::Instant::now() + Duration::from_secs(DNS_BATCH_FLUSH_TIMEOUT_SECS)
+            })), if dns_batch_deadline.is_some() => {
+                if let Err(error) = flush_cold_dns_batch(&active_pool, &mut dns_batch, &mut dns_batch_deadline) {
+                    tracing::error!("cold metric dns write failed: {}", error);
+                    invalidate_cold_pool(&cold_pool_cell, &mut cold_pool);
                 }
             }
             changed = shutdown_rx.changed() => {
                 if changed.is_err() || *shutdown_rx.borrow() {
+                    let _ = flush_cold_dns_batch(&active_pool, &mut dns_batch, &mut dns_batch_deadline);
                     break;
                 }
             }
@@ -899,9 +1025,10 @@ impl DuckMetricStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::metric::duckdb::ingest::PersistenceBatch;
+    use crate::metric::duckdb::ingest::{BucketKind, PersistenceBatch};
     use landscape_common::config::MetricMode;
     use landscape_common::metric::connect::{ConnectGlobalStats, ConnectMetric, ConnectStatusType};
+    use landscape_common::metric::dns::{DnsMetric, DnsOutcome};
     use std::net::{IpAddr, Ipv4Addr};
     use std::sync::Once;
     use tempfile::tempdir;
@@ -911,6 +1038,20 @@ mod tests {
         INIT.call_once(|| {
             landscape_common::init_tracing!();
         });
+    }
+
+    fn test_dns_metric(index: u32) -> DnsMetric {
+        DnsMetric {
+            flow_id: index,
+            domain: format!("host{}.example.com", index % 100),
+            query_type: "A".to_string(),
+            response_code: "NOERROR".to_string(),
+            status: DnsOutcome::Normal,
+            report_time: 1_800_000_000_000 + index as u64 * 1_000,
+            duration_ms: index % 50,
+            src_ip: IpAddr::V4(Ipv4Addr::new(192, 168, 1, (index % 200) as u8 + 1)),
+            answers: vec![format!("1.2.3.{}", (index % 250) + 1)],
+        }
     }
 
     fn test_metric_config() -> MetricRuntimeConfig {
@@ -1160,5 +1301,118 @@ mod tests {
 
         store.shutdown();
         tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+
+    #[test]
+    fn cold_dns_batch_persists_all_rows() {
+        init_test_tracing();
+        let temp_dir = tempdir().unwrap();
+        let db_path = temp_dir.path().join("dns_batch.duckdb");
+        let pool = initialize_cold_storage(&db_path, &test_metric_config()).unwrap();
+
+        let metrics: Vec<DnsMetric> = (0..1200).map(test_dns_metric).collect();
+        for chunk in metrics.chunks(DNS_BATCH_MAX_ROWS) {
+            persist_cold_dns_batch(&pool, chunk).unwrap();
+        }
+
+        let conn = pool.get().unwrap();
+        let count: i64 =
+            conn.query_row("SELECT COUNT(*) FROM dns_metrics", [], |row| row.get(0)).unwrap();
+        assert_eq!(count, metrics.len() as i64);
+    }
+
+    #[test]
+    fn cold_bucket_batch_persists_across_tables_in_one_transaction() {
+        init_test_tracing();
+        let temp_dir = tempdir().unwrap();
+        let db_path = temp_dir.path().join("bucket_batch.duckdb");
+        let pool = initialize_cold_storage(&db_path, &test_metric_config()).unwrap();
+
+        let writes: Vec<BucketWrite> = (0..10)
+            .map(|index| {
+                let kind = if index % 2 == 0 { BucketKind::Minute } else { BucketKind::Hour };
+                BucketWrite {
+                    kind,
+                    metric: test_metric(
+                        10_000 + index as u64,
+                        index % 4,
+                        500_000 + index as u64 * 60_000,
+                        index as u64 * 100,
+                        index as u64,
+                        index as u64 * 200,
+                        index as u64 * 2,
+                    ),
+                    bucket_report_time: 500_000 + index as u64 * 60_000,
+                }
+            })
+            .collect();
+
+        persist_cold_bucket_writes(&pool, &writes, &[]).unwrap();
+
+        let conn = pool.get().unwrap();
+        let minute_count: i64 =
+            conn.query_row("SELECT COUNT(*) FROM conn_metrics_1m", [], |row| row.get(0)).unwrap();
+        let hour_count: i64 =
+            conn.query_row("SELECT COUNT(*) FROM conn_metrics_1h", [], |row| row.get(0)).unwrap();
+        assert_eq!(minute_count, 5);
+        assert_eq!(hour_count, 5);
+    }
+
+    #[test]
+    fn cold_dns_batch_write_is_faster_than_single_row_writes() {
+        init_test_tracing();
+        let temp_dir = tempdir().unwrap();
+
+        let single_db = temp_dir.path().join("dns_single.duckdb");
+        let single_pool = initialize_cold_storage(&single_db, &test_metric_config()).unwrap();
+        let batch_db = temp_dir.path().join("dns_batch_bench.duckdb");
+        let batch_pool = initialize_cold_storage(&batch_db, &test_metric_config()).unwrap();
+
+        let metrics: Vec<DnsMetric> = (0..2000).map(test_dns_metric).collect();
+
+        let conn = single_pool.get().unwrap();
+        let single_start = Instant::now();
+        for metric in &metrics {
+            let answers_json = serde_json::to_string(&metric.answers).unwrap();
+            let status_json = serde_json::to_string(&metric.status).unwrap();
+            conn.execute(
+                "INSERT INTO dns_metrics (
+                    flow_id, domain, query_type, response_code,
+                    report_time, duration_ms, src_ip, answers, status
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                params![
+                    metric.flow_id as i64,
+                    metric.domain.clone(),
+                    metric.query_type.clone(),
+                    metric.response_code.clone(),
+                    metric.report_time as i64,
+                    metric.duration_ms as i64,
+                    super::super::ingest::clean_ip_string(&metric.src_ip),
+                    answers_json,
+                    status_json,
+                ],
+            )
+            .unwrap();
+        }
+        let single_elapsed = single_start.elapsed();
+
+        let batch_start = Instant::now();
+        for chunk in metrics.chunks(DNS_BATCH_MAX_ROWS) {
+            persist_cold_dns_batch(&batch_pool, chunk).unwrap();
+        }
+        let batch_elapsed = batch_start.elapsed();
+
+        tracing::info!(
+            "phase=test.dns_write_bench single_rows={} single_elapsed_ms={} batch_elapsed_ms={}",
+            metrics.len(),
+            single_elapsed.as_millis(),
+            batch_elapsed.as_millis()
+        );
+        assert!(
+            batch_elapsed < single_elapsed,
+            "expected batched writes to be faster: single={}ms batch={}ms",
+            single_elapsed.as_millis(),
+            batch_elapsed.as_millis()
+        );
     }
 }
