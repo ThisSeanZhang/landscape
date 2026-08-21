@@ -10,6 +10,7 @@ members = [
     "landscape-core",
     "landscape-database",
     "landscape-gateway",
+    "landscape-metric",
     "landscape-macro",
     "landscape-database/migration",
     "landscape-dns",

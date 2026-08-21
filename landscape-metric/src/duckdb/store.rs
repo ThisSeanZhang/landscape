@@ -16,10 +16,11 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
-use tokio::sync::{mpsc, watch};
+use tokio::sync::mpsc;
+use tokio_util::sync::CancellationToken;
 
-use crate::metric::cold::ColdStore;
-use crate::metric::ingest::{
+use crate::cold::ColdStore;
+use crate::ingest::{
     cleanup_flow_cache, collect_connect_realtime_snapshot, collect_iface_realtime_snapshot,
     collect_realtime_ip_stats, drain_iface_buckets, finalize_all_flows,
     new_connect_realtime_snapshot, new_iface_realtime_snapshot, process_connect_metric,
@@ -38,7 +39,7 @@ use super::hot_sqlite;
 pub struct DuckMetricStore {
     connect_tx: mpsc::Sender<ConnectMessage>,
     dns_tx: mpsc::Sender<DnsMetricMessage>,
-    shutdown_tx: watch::Sender<bool>,
+    shutdown: CancellationToken,
     pub config: MetricRuntimeConfig,
     pub(crate) hot_pool: SqlitePool,
     pub(crate) cold_pool: Arc<RwLock<Option<r2d2::Pool<DuckdbConnectionManager>>>>,
@@ -448,7 +449,7 @@ async fn run_hot_thread(
     iface_buckets: IfaceBucketCache,
     connect_snapshot: ConnectRealtimeSnapshot,
     iface_snapshot: IfaceRealtimeSnapshot,
-    mut shutdown_rx: watch::Receiver<bool>,
+    shutdown: CancellationToken,
 ) {
     let cleanup_interval_duration = Duration::from_secs(metric_config.cleanup_interval_secs.max(1));
     let flush_interval_duration =
@@ -507,11 +508,7 @@ async fn run_hot_thread(
                 publish_connect_realtime_snapshot(&flow_cache, &connect_snapshot, now_ms);
                 publish_iface_realtime_snapshot(&flow_cache, &iface_snapshot, now_ms);
             }
-            changed = shutdown_rx.changed() => {
-                if changed.is_err() || *shutdown_rx.borrow() {
-                    break;
-                }
-            }
+            _ = shutdown.cancelled() => break,
             msg_opt = connect_rx.recv(), if !connect_closed => {
                 match msg_opt {
                     Some(ConnectMessage::Metric(metric)) => {
@@ -592,7 +589,7 @@ async fn run_cold_thread(
     cold_pool_cell: Arc<RwLock<Option<r2d2::Pool<DuckdbConnectionManager>>>>,
     cold_db_path: PathBuf,
     metric_config: MetricRuntimeConfig,
-    mut shutdown_rx: watch::Receiver<bool>,
+    shutdown: CancellationToken,
 ) {
     let cleanup_interval_duration = Duration::from_secs(metric_config.cleanup_interval_secs.max(1));
     let mut cleanup_interval = tokio::time::interval(cleanup_interval_duration);
@@ -603,7 +600,7 @@ async fn run_cold_thread(
     let mut dns_batch_deadline: Option<tokio::time::Instant> = None;
 
     loop {
-        if *shutdown_rx.borrow() {
+        if shutdown.is_cancelled() {
             break;
         }
 
@@ -624,11 +621,7 @@ async fn run_cold_thread(
                     );
                     tokio::select! {
                         _ = tokio::time::sleep(Duration::from_secs(COLD_RETRY_DELAY_SECS)) => {}
-                        changed = shutdown_rx.changed() => {
-                            if changed.is_err() || *shutdown_rx.borrow() {
-                                break;
-                            }
-                        }
+                        _ = shutdown.cancelled() => break,
                     }
                     continue;
                 }
@@ -704,11 +697,9 @@ async fn run_cold_thread(
                     invalidate_cold_pool(&cold_pool_cell, &mut cold_pool);
                 }
             }
-            changed = shutdown_rx.changed() => {
-                if changed.is_err() || *shutdown_rx.borrow() {
-                    let _ = flush_cold_dns_batch(&active_cold, &mut dns_batch, &mut dns_batch_deadline);
-                    break;
-                }
+            _ = shutdown.cancelled() => {
+                let _ = flush_cold_dns_batch(&active_cold, &mut dns_batch, &mut dns_batch_deadline);
+                break;
             }
         }
     }
@@ -744,7 +735,7 @@ impl DuckMetricStore {
         let (connect_tx, connect_rx) = mpsc::channel::<ConnectMessage>(CHANNEL_CAPACITY);
         let (dns_tx, dns_rx) = mpsc::channel::<DnsMetricMessage>(CHANNEL_CAPACITY);
         let (cold_tx, cold_rx) = mpsc::channel::<ColdEvent>(CHANNEL_CAPACITY);
-        let (shutdown_tx, shutdown_rx) = watch::channel(false);
+        let shutdown = CancellationToken::new();
 
         let phase_start = Instant::now();
         let hot_pool = hot_sqlite::open_hot_pool(&hot_db_path).await?;
@@ -770,7 +761,7 @@ impl DuckMetricStore {
         let hot_thread_cold_pool = cold_pool.clone();
         let hot_thread_cold_tx = cold_tx;
         let hot_thread_config = config.clone();
-        let hot_thread_shutdown = shutdown_rx.clone();
+        let hot_thread_shutdown = shutdown.clone();
         let phase_start = Instant::now();
         spawn_named_thread(thread_name::fixed::METRIC_DB_WRITER, move || {
             let rt = tokio::runtime::Builder::new_current_thread().enable_time().build().unwrap();
@@ -798,7 +789,7 @@ impl DuckMetricStore {
 
         let cold_thread_cell = cold_pool.clone();
         let cold_thread_config = config.clone();
-        let cold_thread_shutdown = shutdown_rx.clone();
+        let cold_thread_shutdown = shutdown.clone();
         let cold_thread_db_path = cold_db_path.clone();
         let phase_start = Instant::now();
         spawn_named_thread(thread_name::fixed::METRIC_DB_COLD, move || {
@@ -827,7 +818,7 @@ impl DuckMetricStore {
         Ok(Self {
             connect_tx,
             dns_tx,
-            shutdown_tx,
+            shutdown,
             config,
             hot_pool,
             cold_pool,
@@ -846,7 +837,7 @@ impl DuckMetricStore {
     }
 
     pub fn shutdown(&self) {
-        let _ = self.shutdown_tx.send(true);
+        self.shutdown.cancel();
     }
 
     pub async fn connect_infos(&self) -> Vec<ConnectRealtimeStatus> {
@@ -959,9 +950,9 @@ impl DuckMetricStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::metric::cold::ColdStore;
-    use crate::metric::duckdb::cold::DuckdbColdStore;
-    use crate::metric::ingest::{BucketKind, PersistenceBatch};
+    use crate::cold::ColdStore;
+    use crate::duckdb::cold::DuckdbColdStore;
+    use crate::ingest::{BucketKind, PersistenceBatch};
     use duckdb::params;
     use landscape_common::config::MetricMode;
     use landscape_common::metric::connect::{ConnectGlobalStats, ConnectMetric, ConnectStatusType};
@@ -1658,7 +1649,7 @@ mod tests {
                     metric.response_code.clone(),
                     metric.report_time as i64,
                     metric.duration_ms as i64,
-                    crate::metric::ingest::clean_ip_string(&metric.src_ip),
+                    crate::ingest::clean_ip_string(&metric.src_ip),
                     answers_json,
                     status_json,
                 ],

@@ -19,7 +19,8 @@ else
 fi
 
 if [ "$mode" = "test" ]; then
-    # Keep test scope aligned with the DuckDB-backed library code path.
+    # Run the extracted metric backend tests and the service crate tests.
+    cargo test -p landscape-metric --features duckdb "$@"
     cargo test -p landscape --lib --features metric-duckdb "$@"
 else
     # Run cargo with metric-duckdb enabled (dynamic linking) plus any extra arguments.

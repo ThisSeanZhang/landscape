@@ -3353,7 +3353,6 @@ dependencies = [
  "cidr",
  "clap 4.6.4",
  "dashmap",
- "duckdb",
  "etherparse",
  "futures",
  "genetlink",
@@ -3367,6 +3366,7 @@ dependencies = [
  "landscape-database",
  "landscape-dns",
  "landscape-ebpf",
+ "landscape-metric",
  "landscape-protobuf",
  "libc",
  "md-5 0.11.0",
@@ -3379,7 +3379,6 @@ dependencies = [
  "pnet",
  "portable-pty",
  "quick-xml",
- "r2d2",
  "rand 0.10.2",
  "rcgen",
  "reqwest 0.13.4",
@@ -3391,7 +3390,6 @@ dependencies = [
  "sha1 0.11.0",
  "sha2 0.11.0",
  "socket2 0.6.5",
- "sqlx",
  "sysctl",
  "sysinfo",
  "tempfile",
@@ -3584,6 +3582,25 @@ dependencies = [
  "serde_json",
  "syn 3.0.3",
  "thiserror 2.0.19",
+]
+
+[[package]]
+name = "landscape-metric"
+version = "0.23.1"
+dependencies = [
+ "arc-swap",
+ "duckdb",
+ "landscape-common",
+ "landscape-core",
+ "r2d2",
+ "serde_json",
+ "sqlx",
+ "tempfile",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "tracing-appender",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -7077,6 +7094,7 @@ dependencies = [
  "bytes",
  "futures-core",
  "futures-sink",
+ "futures-util",
  "libc",
  "pin-project-lite",
  "tokio",

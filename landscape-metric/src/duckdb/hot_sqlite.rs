@@ -8,7 +8,7 @@ use landscape_core::time::get_current_time_ms;
 use sqlx::sqlite::SqlitePoolOptions;
 use sqlx::{QueryBuilder, Row, Sqlite, SqlitePool, Transaction};
 
-use crate::metric::ingest::{clean_ip_string, PersistenceBatch};
+use crate::ingest::{clean_ip_string, PersistenceBatch};
 
 const GLOBAL_STATS_CACHE_KEY: i64 = 1;
 

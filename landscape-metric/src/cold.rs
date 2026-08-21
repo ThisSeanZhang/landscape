@@ -1,7 +1,7 @@
 use landscape_common::config::MetricRuntimeConfig;
 use landscape_common::metric::dns::DnsMetric;
 
-use crate::metric::ingest::{BucketWrite, IfaceBucketWrite};
+use crate::ingest::{BucketWrite, IfaceBucketWrite};
 
 /// Stats for one batch of bucket writes persisted to the cold store.
 #[derive(Debug, Clone, Default)]

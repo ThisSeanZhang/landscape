@@ -9,6 +9,7 @@ landscape-common = { path = "../landscape-common" }
 landscape-core = { path = "../landscape-core" }
 landscape-database = { path = "../landscape-database" }
 landscape-dns = { path = "../landscape-dns" }
+landscape-metric = { path = "../landscape-metric" }
 landscape-protobuf = { path = "../landscape-protobuf" }
 
 anyhow = { workspace = true }
@@ -81,18 +82,14 @@ sysctl = { workspace = true }
 portable-pty = { workspace = true }
 # pseudoterminal = { version = "0.2.1", features = ["non-blocking"] }
 
-duckdb = { workspace = true, optional = true }
-r2d2 = { workspace = true, optional = true }
-sqlx = { workspace = true, optional = true }
-
 etherparse = { workspace = true }
 [dependencies.pnet]
 workspace = true
 
 [features]
 default = []
-metric-duckdb = ["dep:duckdb", "dep:r2d2", "dep:sqlx"]
-duckdb-bundled = ["metric-duckdb", "duckdb/bundled"]
+metric-duckdb = ["landscape-metric/duckdb"]
+duckdb-bundled = ["metric-duckdb", "landscape-metric/duckdb-bundled"]
 
 [dev-dependencies]
 axum = { workspace = true }
