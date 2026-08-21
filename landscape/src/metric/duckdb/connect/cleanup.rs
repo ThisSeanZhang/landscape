@@ -6,6 +6,7 @@ pub struct CleanupStats {
     pub deleted_1m: usize,
     pub deleted_1h: usize,
     pub deleted_1d: usize,
+    pub deleted_aggregate: usize,
     pub deleted_iface_5s: usize,
     pub budget_hit: bool,
     pub elapsed_ms: u128,
@@ -66,6 +67,7 @@ pub fn cleanup_old_cold_metrics_only(
     cutoff_1m: u64,
     cutoff_1h: u64,
     cutoff_1d: u64,
+    cutoff_aggregate: u64,
     cleanup_time_budget_ms: u64,
     cleanup_slice_window_secs: u64,
 ) -> CleanupStats {
@@ -130,6 +132,21 @@ pub fn cleanup_old_cold_metrics_only(
         deadline,
     );
     stats.deleted_1d = deleted_1d;
+    stats.budget_hit = budget_hit;
+    if stats.budget_hit {
+        stats.elapsed_ms = start.elapsed().as_millis();
+        return stats;
+    }
+
+    let (deleted_aggregate, budget_hit) = delete_table_in_slices(
+        conn,
+        "conn_aggregates_1h",
+        "report_time",
+        cutoff_aggregate,
+        slice_window_ms,
+        deadline,
+    );
+    stats.deleted_aggregate = deleted_aggregate;
     stats.budget_hit = budget_hit;
     stats.elapsed_ms = start.elapsed().as_millis();
     stats

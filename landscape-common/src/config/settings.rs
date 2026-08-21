@@ -78,6 +78,15 @@ pub struct LandscapeMetricConfig {
     pub connect_1d_retention_days: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "openapi", schema(required = false, nullable = false))]
+    pub connect_aggregate_retention_days: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "openapi", schema(required = false, nullable = false))]
+    pub connect_summary_retention_days: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "openapi", schema(required = false, nullable = false))]
+    pub connect_summary_max_rows: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "openapi", schema(required = false, nullable = false))]
     pub dns_retention_days: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "openapi", schema(required = false, nullable = false))]
