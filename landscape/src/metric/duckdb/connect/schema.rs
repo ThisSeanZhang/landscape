@@ -1,14 +1,51 @@
 use duckdb::Connection;
 
-#[allow(clippy::too_many_arguments)]
-pub fn upsert_metric_bucket_values_sql(table: &str) -> String {
+/// Number of columns in one `conn_metrics_*` bucket row. Shared with the
+/// cold store so the Rust row layout cannot drift from the SQL column list.
+pub(crate) const BUCKET_COLUMNS: usize = 10;
+/// Number of columns in one `iface_metrics_5s` bucket row; see
+/// [`BUCKET_COLUMNS`].
+pub(crate) const IFACE_BUCKET_COLUMNS: usize = 7;
+
+fn multi_row_values(row_count: usize, column_count: usize) -> String {
+    (0..row_count)
+        .map(|row| {
+            let base = row * column_count;
+            (1..=column_count)
+                .map(|column| format!("?{}", base + column))
+                .collect::<Vec<_>>()
+                .join(", ")
+        })
+        .map(|row| format!("({row})"))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// Multi-row bucket upsert.
+///
+/// DuckDB executes prepared statements row by row, so a loop of single-row
+/// upserts is interpreted once per row. Batching the rows into one
+/// `INSERT ... SELECT` from a `VALUES` list keeps the whole batch on the
+/// vectorized execution path. The `VALUES` list must stay wrapped in a
+/// subquery: a flat multi-row `INSERT ... VALUES ... ON CONFLICT` fails to
+/// bind once the row count grows past a few hundred rows.
+pub fn upsert_metric_bucket_values_sql(table: &str, row_count: usize) -> String {
+    let values = multi_row_values(row_count, BUCKET_COLUMNS);
     format!(
         "
         INSERT INTO {table} (
             create_time, cpu_id, report_time, ifindex,
             ingress_bytes, ingress_packets, egress_bytes, egress_packets,
             status, create_time_ms
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+        )
+        SELECT create_time, cpu_id, report_time, ifindex,
+               ingress_bytes, ingress_packets, egress_bytes, egress_packets,
+               status, create_time_ms
+        FROM (VALUES {values}) AS batch(
+            create_time, cpu_id, report_time, ifindex,
+            ingress_bytes, ingress_packets, egress_bytes, egress_packets,
+            status, create_time_ms
+        )
         ON CONFLICT (create_time, cpu_id, report_time) DO UPDATE SET
             ifindex = CASE
                 WHEN EXCLUDED.create_time_ms >= {table}.create_time_ms THEN EXCLUDED.ifindex
@@ -24,13 +61,24 @@ pub fn upsert_metric_bucket_values_sql(table: &str) -> String {
     )
 }
 
-pub fn upsert_iface_metric_bucket_values_sql() -> String {
-    "
+/// Multi-row iface bucket upsert; see [`upsert_metric_bucket_values_sql`].
+pub fn upsert_iface_metric_bucket_values_sql(row_count: usize) -> String {
+    let values = multi_row_values(row_count, IFACE_BUCKET_COLUMNS);
+    format!(
+        "
         INSERT INTO iface_metrics_5s (
             ifindex, report_time,
             ingress_bytes, ingress_packets, egress_bytes, egress_packets,
             active_conns
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+        )
+        SELECT ifindex, report_time,
+               ingress_bytes, ingress_packets, egress_bytes, egress_packets,
+               active_conns
+        FROM (VALUES {values}) AS batch(
+            ifindex, report_time,
+            ingress_bytes, ingress_packets, egress_bytes, egress_packets,
+            active_conns
+        )
         ON CONFLICT (ifindex, report_time) DO UPDATE SET
             ingress_bytes = iface_metrics_5s.ingress_bytes + EXCLUDED.ingress_bytes,
             ingress_packets = iface_metrics_5s.ingress_packets + EXCLUDED.ingress_packets,
@@ -38,7 +86,7 @@ pub fn upsert_iface_metric_bucket_values_sql() -> String {
             egress_packets = iface_metrics_5s.egress_packets + EXCLUDED.egress_packets,
             active_conns = GREATEST(iface_metrics_5s.active_conns, EXCLUDED.active_conns)
     "
-    .to_string()
+    )
 }
 
 pub fn create_metrics_table(conn: &Connection) -> duckdb::Result<()> {
