@@ -54,6 +54,21 @@ const DUCKDB_POOL_MIN_IDLE: u32 = 1;
 const COLD_RETRY_DELAY_SECS: u64 = 5;
 const DNS_BATCH_MAX_ROWS: usize = 500;
 const DNS_BATCH_FLUSH_TIMEOUT_SECS: u64 = 5;
+/// WAL files above this size are replayed under an elevated memory limit
+/// before the pool opens the database with the configured limit.
+const WAL_PRECHECKPOINT_THRESHOLD_BYTES: u64 = 1024 * 1024;
+/// Minimum memory limit (MB) used while replaying a large WAL. A 16MB WAL
+/// (the `wal_autocheckpoint` threshold) can need roughly 500MB to replay, so
+/// this must stay comfortably above that even when the configured limit is
+/// the 256MB default.
+const WAL_REPLAY_MIN_MEMORY_MB: usize = 1024;
+/// Replay memory needed per WAL byte. Observed at 20-31x on insert-style WAL
+/// replayed against multi-million-row primary key indexes; `wal_autocheckpoint`
+/// only bounds the WAL at commit boundaries, and a single large transaction
+/// (one `persist_buckets` batch is one transaction) can leave more behind, so
+/// the replay budget must scale with the leftover WAL size instead of relying
+/// on the floor alone.
+const WAL_REPLAY_MEMORY_PER_WAL_BYTE: usize = 32;
 
 #[derive(Debug)]
 enum ColdEvent {
@@ -61,12 +76,19 @@ enum ColdEvent {
     Dns(DnsMetric),
 }
 
-fn build_duckdb_config(config: &MetricRuntimeConfig) -> StoreInitResult<duckdb::Config> {
+fn build_duckdb_config_with_memory(
+    config: &MetricRuntimeConfig,
+    max_memory_mb: usize,
+) -> StoreInitResult<duckdb::Config> {
     duckdb::Config::default()
         .threads(config.db_max_threads as i64)
         .map_err(|error| format!("failed to configure duckdb threads: {}", error))?
-        .max_memory(&format!("{}MB", config.db_max_memory_mb))
+        .max_memory(&format!("{}MB", max_memory_mb))
         .map_err(|error| format!("failed to configure duckdb max memory: {}", error))
+}
+
+fn build_duckdb_config(config: &MetricRuntimeConfig) -> StoreInitResult<duckdb::Config> {
+    build_duckdb_config_with_memory(config, config.db_max_memory_mb)
 }
 
 fn metric_db_sidecar_paths(db_path: &Path) -> Vec<PathBuf> {
@@ -213,10 +235,89 @@ fn initialize_cold_storage(
     Ok(disk_pool)
 }
 
+fn wal_size_bytes(db_path: &Path) -> u64 {
+    std::fs::metadata(metric_db_wal_path(db_path)).map(|metadata| metadata.len()).unwrap_or_else(
+        |error| {
+            tracing::debug!(
+                "failed to stat metric cold wal {}: {}",
+                metric_db_wal_path(db_path).display(),
+                error,
+            );
+            0
+        },
+    )
+}
+
+/// Replay a large leftover WAL under an elevated memory limit before the
+/// pool opens the database with the configured limit.
+///
+/// DuckDB replays the WAL while opening the database, and replaying the
+/// multi-megabyte WAL left behind by an abnormal shutdown can need several
+/// times the configured memory limit (observed on a long-lived production
+/// database: a 15.6MB WAL peaked at roughly 490MB during replay). Hitting
+/// the limit during replay surfaced as a fatal DuckDB exception that
+/// aborted the process instead of an error the recovery ladder could
+/// catch, so `systemd` restarted the service, the WAL was still there, and
+/// the service crash-looped. Opening once here with a higher limit,
+/// checkpointing, and closing again drains the WAL so the configured pool
+/// can open cheaply and safely.
+fn precheckpoint_large_wal(db_path: &Path, config: &MetricRuntimeConfig) {
+    let wal_size = wal_size_bytes(db_path);
+    if wal_size <= WAL_PRECHECKPOINT_THRESHOLD_BYTES {
+        return;
+    }
+
+    let replay_memory_mb = config
+        .db_max_memory_mb
+        .max(WAL_REPLAY_MIN_MEMORY_MB)
+        .max((wal_size as usize * WAL_REPLAY_MEMORY_PER_WAL_BYTE) / (1024 * 1024));
+    tracing::warn!(
+        "metric cold wal {} is {} bytes (above {} threshold); replaying it under a {}MB memory limit before opening with the configured {}MB limit",
+        metric_db_wal_path(db_path).display(),
+        wal_size,
+        WAL_PRECHECKPOINT_THRESHOLD_BYTES,
+        replay_memory_mb,
+        config.db_max_memory_mb,
+    );
+
+    let result = build_duckdb_config_with_memory(config, replay_memory_mb)
+        .and_then(|replay_config| {
+            DuckdbConnectionManager::file_with_flags(db_path, replay_config)
+                .map_err(|error| format!("failed to open metric duckdb for wal replay: {}", error))
+        })
+        .and_then(|manager| {
+            r2d2::Pool::builder().max_size(1).build(manager).map_err(|error| {
+                format!("failed to create metric duckdb wal replay pool: {}", error)
+            })
+        })
+        .and_then(|pool| {
+            let conn = pool.get().map_err(|error| {
+                format!("failed to get metric duckdb wal replay connection: {}", error)
+            })?;
+            conn.execute("CHECKPOINT", [])
+                .map(|_| ())
+                .map_err(|error| format!("failed to checkpoint metric duckdb wal: {}", error))
+        });
+
+    match result {
+        Ok(()) => tracing::info!(
+            "metric cold wal replayed and checkpointed: {} -> {} bytes",
+            wal_size,
+            wal_size_bytes(db_path),
+        ),
+        Err(error) => tracing::warn!(
+            "failed to precheckpoint metric cold wal at {}: {}; continuing with the normal open path",
+            metric_db_wal_path(db_path).display(),
+            error,
+        ),
+    }
+}
+
 fn initialize_cold_storage_with_recovery(
     db_path: &Path,
     config: &MetricRuntimeConfig,
 ) -> StoreInitResult<r2d2::Pool<DuckdbConnectionManager>> {
+    precheckpoint_large_wal(db_path, config);
     match initialize_cold_storage(db_path, config) {
         Ok(result) => Ok(result),
         Err(initial_error) => {
@@ -1220,6 +1321,312 @@ mod tests {
             conn.query_row("SELECT COUNT(*) FROM conn_metrics_1h", [], |row| row.get(0)).unwrap();
         assert_eq!(minute_count, 5);
         assert_eq!(hour_count, 5);
+    }
+
+    #[test]
+    fn cold_bucket_upsert_batch_merges_conflicting_rows() {
+        init_test_tracing();
+        let temp_dir = tempdir().unwrap();
+        let db_path = temp_dir.path().join("bucket_merge.duckdb");
+        let pool = initialize_cold_storage(&db_path, &test_metric_config()).unwrap();
+        let cold = DuckdbColdStore::new(pool.clone());
+
+        // Same primary key in one batch: every column must merge exactly like
+        // the single-row upsert did (GREATEST per counter, newer
+        // create_time_ms decides ifindex).
+        let mut older = test_metric(1_000, 1, 60_000, 100, 10, 900, 90);
+        older.ifindex = 11;
+        older.status = ConnectStatusType::Active;
+        older.create_time_ms = 5_000;
+        let mut newer = test_metric(1_000, 1, 60_000, 300, 30, 100, 10);
+        newer.ifindex = 22;
+        newer.status = ConnectStatusType::Disabled;
+        newer.create_time_ms = 9_000;
+        let batch_one = vec![
+            BucketWrite {
+                kind: BucketKind::Minute,
+                metric: older,
+                bucket_report_time: 60_000,
+            },
+            BucketWrite {
+                kind: BucketKind::Minute,
+                metric: newer,
+                bucket_report_time: 60_000,
+            },
+        ];
+        cold.persist_buckets(&batch_one, &[]).unwrap();
+
+        // A later batch with a stale create_time_ms keeps the newer ifindex.
+        let mut stale = test_metric(1_000, 1, 60_000, 50, 5, 50, 5);
+        stale.ifindex = 33;
+        stale.status = ConnectStatusType::Active;
+        stale.create_time_ms = 7_000;
+        let batch_two = vec![BucketWrite {
+            kind: BucketKind::Minute,
+            metric: stale,
+            bucket_report_time: 60_000,
+        }];
+        cold.persist_buckets(&batch_two, &[]).unwrap();
+
+        // An equal create_time_ms takes the later arrival's ifindex, matching
+        // the `>=` in the upsert's CASE expression.
+        let mut tied = test_metric(1_000, 1, 60_000, 10, 1, 10, 1);
+        tied.ifindex = 44;
+        tied.status = ConnectStatusType::Unknow;
+        tied.create_time_ms = 9_000;
+        let batch_three = vec![BucketWrite {
+            kind: BucketKind::Minute,
+            metric: tied,
+            bucket_report_time: 60_000,
+        }];
+        cold.persist_buckets(&batch_three, &[]).unwrap();
+
+        let conn = pool.get().unwrap();
+        let (
+            ifindex,
+            ingress_bytes,
+            ingress_packets,
+            egress_bytes,
+            egress_packets,
+            status,
+            create_time_ms,
+        ): (i64, i64, i64, i64, i64, i64, i64) = conn
+            .query_row(
+                "SELECT ifindex, ingress_bytes, ingress_packets, egress_bytes, egress_packets,
+                        status, create_time_ms
+                 FROM conn_metrics_1m
+                 WHERE create_time = 1000 AND cpu_id = 1 AND report_time = 60000",
+                [],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                        row.get(5)?,
+                        row.get(6)?,
+                    ))
+                },
+            )
+            .unwrap();
+        assert_eq!(ifindex, 44, "an equal create_time_ms must take the later ifindex");
+        assert_eq!(ingress_bytes, 300);
+        assert_eq!(ingress_packets, 30);
+        assert_eq!(egress_bytes, 900);
+        assert_eq!(egress_packets, 90);
+        assert_eq!(status, 2, "GREATEST(status) must keep the larger status");
+        assert_eq!(create_time_ms, 9_000);
+    }
+
+    #[test]
+    fn cold_iface_bucket_upsert_accumulates_duplicate_keys() {
+        init_test_tracing();
+        let temp_dir = tempdir().unwrap();
+        let db_path = temp_dir.path().join("iface_merge.duckdb");
+        let pool = initialize_cold_storage(&db_path, &test_metric_config()).unwrap();
+        let cold = DuckdbColdStore::new(pool.clone());
+
+        // Duplicate (ifindex, report_time) within one batch must fold
+        // additively per counter and keep the max active_conns, exactly like
+        // the row-by-row upsert did.
+        let batch_one = vec![
+            IfaceBucketWrite {
+                ifindex: 5,
+                report_time: 120_000,
+                ingress_bytes: 100,
+                ingress_packets: 10,
+                egress_bytes: 200,
+                egress_packets: 20,
+                active_conns: 3,
+            },
+            IfaceBucketWrite {
+                ifindex: 5,
+                report_time: 120_000,
+                ingress_bytes: 200,
+                ingress_packets: 20,
+                egress_bytes: 50,
+                egress_packets: 5,
+                active_conns: 7,
+            },
+        ];
+        cold.persist_buckets(&[], &batch_one).unwrap();
+
+        // A later batch keeps accumulating against the stored row.
+        let batch_two = vec![IfaceBucketWrite {
+            ifindex: 5,
+            report_time: 120_000,
+            ingress_bytes: 50,
+            ingress_packets: 5,
+            egress_bytes: 500,
+            egress_packets: 50,
+            active_conns: 2,
+        }];
+        cold.persist_buckets(&[], &batch_two).unwrap();
+
+        let conn = pool.get().unwrap();
+        let (ingress_bytes, ingress_packets, egress_bytes, egress_packets, active_conns): (
+            i64,
+            i64,
+            i64,
+            i64,
+            i64,
+        ) = conn
+            .query_row(
+                "SELECT ingress_bytes, ingress_packets, egress_bytes, egress_packets, active_conns
+                 FROM iface_metrics_5s
+                 WHERE ifindex = 5 AND report_time = 120000",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
+            )
+            .unwrap();
+        assert_eq!(ingress_bytes, 350);
+        assert_eq!(ingress_packets, 35);
+        assert_eq!(egress_bytes, 750);
+        assert_eq!(egress_packets, 75);
+        assert_eq!(active_conns, 7, "active_conns must keep the max");
+    }
+
+    #[test]
+    fn cold_bucket_large_interleaved_batch_is_chunked_and_complete() {
+        init_test_tracing();
+        let temp_dir = tempdir().unwrap();
+        let db_path = temp_dir.path().join("bucket_chunks.duckdb");
+        let pool = initialize_cold_storage(&db_path, &test_metric_config()).unwrap();
+
+        // More rows than one upsert chunk per table, with the kinds
+        // interleaved so grouping by table is exercised on every iteration.
+        let kinds = [BucketKind::Minute, BucketKind::Hour, BucketKind::Day];
+        let mut remaining = [2500usize, 1300, 700];
+        let mut writes: Vec<BucketWrite> = Vec::new();
+        let mut next_key: u64 = 20_000;
+        loop {
+            let mut pushed = false;
+            for (kind_slot, remaining_count) in remaining.iter_mut().enumerate() {
+                if *remaining_count == 0 {
+                    continue;
+                }
+                *remaining_count -= 1;
+                pushed = true;
+                let create_time = next_key;
+                next_key += 1;
+                let report_time = 700_000 + create_time;
+                writes.push(BucketWrite {
+                    kind: kinds[kind_slot],
+                    metric: test_metric(create_time, 0, report_time, 100, 10, 200, 20),
+                    bucket_report_time: report_time,
+                });
+            }
+            if !pushed {
+                break;
+            }
+        }
+        assert_eq!(writes.len(), 2500 + 1300 + 700);
+
+        let iface_writes: Vec<IfaceBucketWrite> = (0..900)
+            .map(|index| IfaceBucketWrite {
+                ifindex: (index % 4) as u32 + 1,
+                report_time: 800_000 + index as u64,
+                ingress_bytes: index as u64,
+                ingress_packets: index as u64,
+                egress_bytes: index as u64,
+                egress_packets: index as u64,
+                active_conns: index as u32,
+            })
+            .collect();
+
+        let cold = DuckdbColdStore::new(pool.clone());
+        let stats = cold.persist_buckets(&writes, &iface_writes).unwrap();
+        assert_eq!(stats.rows, writes.len());
+        assert_eq!(stats.iface_rows, iface_writes.len());
+
+        let conn = pool.get().unwrap();
+        let minute_count: i64 =
+            conn.query_row("SELECT COUNT(*) FROM conn_metrics_1m", [], |row| row.get(0)).unwrap();
+        let hour_count: i64 =
+            conn.query_row("SELECT COUNT(*) FROM conn_metrics_1h", [], |row| row.get(0)).unwrap();
+        let day_count: i64 =
+            conn.query_row("SELECT COUNT(*) FROM conn_metrics_1d", [], |row| row.get(0)).unwrap();
+        let iface_count: i64 =
+            conn.query_row("SELECT COUNT(*) FROM iface_metrics_5s", [], |row| row.get(0)).unwrap();
+        assert_eq!(minute_count, 2500);
+        assert_eq!(hour_count, 1300);
+        assert_eq!(day_count, 700);
+        assert_eq!(iface_count, iface_writes.len() as i64);
+    }
+
+    /// Commit `row_count` rows and close the database without checkpointing,
+    /// so the committed data is left sitting in a leftover WAL file — the
+    /// on-disk state an abnormal shutdown (kill, power loss, abort) leaves
+    /// behind.
+    fn write_leftover_wal(db_path: &Path, row_count: u64) {
+        let writer_manager = DuckdbConnectionManager::file_with_flags(
+            db_path,
+            build_duckdb_config(&test_metric_config()).unwrap(),
+        )
+        .unwrap();
+        let writer_pool = r2d2::Pool::builder().max_size(1).build(writer_manager).unwrap();
+        {
+            let conn = writer_pool.get().unwrap();
+            connect_schema::create_metrics_table(&conn).unwrap();
+            conn.execute("PRAGMA disable_checkpoint_on_shutdown", []).unwrap();
+            conn.execute("PRAGMA wal_autocheckpoint='1GB'", []).unwrap();
+            // One literal-values insert per statement keeps this helper fast;
+            // going through DuckdbColdStore would bind hundreds of thousands
+            // of prepared parameters in debug builds.
+            for chunk_start in (0..row_count).step_by(5_000) {
+                let mut sql = String::from(
+                    "INSERT INTO conn_metrics_1m (
+                        create_time, cpu_id, report_time, ifindex,
+                        ingress_bytes, ingress_packets, egress_bytes, egress_packets,
+                        status, create_time_ms
+                    ) VALUES ",
+                );
+                for index in chunk_start..(chunk_start + 5_000).min(row_count) {
+                    let create_time = 30_000 + index;
+                    sql.push_str(&format!(
+                        "({create_time}, 0, {}, 10, 100, 10, 200, 20, 2, {create_time}),",
+                        900_000 + create_time,
+                    ));
+                }
+                sql.pop();
+                conn.execute_batch(&sql).unwrap();
+            }
+        }
+        drop(writer_pool);
+    }
+
+    #[test]
+    fn startup_replays_leftover_wal_before_opening_with_configured_memory() {
+        init_test_tracing();
+        let temp_dir = tempdir().unwrap();
+        let db_path = temp_dir.path().join("wal_leftover.duckdb");
+
+        write_leftover_wal(&db_path, 50_000);
+
+        let leftover_wal = wal_size_bytes(&db_path);
+        assert!(
+            leftover_wal > WAL_PRECHECKPOINT_THRESHOLD_BYTES,
+            "expected a leftover wal above {} bytes, got {}",
+            WAL_PRECHECKPOINT_THRESHOLD_BYTES,
+            leftover_wal,
+        );
+
+        // A tighter-than-default limit for the constrained open: with the WAL
+        // drained first it must still succeed cheaply.
+        let mut config = test_metric_config();
+        config.db_max_memory_mb = 64;
+        let recovered = initialize_cold_storage_with_recovery(&db_path, &config).unwrap();
+        assert!(
+            wal_size_bytes(&db_path) < WAL_PRECHECKPOINT_THRESHOLD_BYTES,
+            "expected the recovery open to drain the leftover wal, got {} bytes",
+            wal_size_bytes(&db_path),
+        );
+
+        let conn = recovered.get().unwrap();
+        let count: i64 =
+            conn.query_row("SELECT COUNT(*) FROM conn_metrics_1m", [], |row| row.get(0)).unwrap();
+        assert_eq!(count, 50_000, "wal replay must preserve committed rows");
     }
 
     #[test]
