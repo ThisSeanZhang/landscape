@@ -18,211 +18,24 @@ use landscape_common::{
     service::{ServiceStatus, WatchService},
     LANDSCAPE_METRIC_DIR_NAME,
 };
+use landscape_metric::MetricEngine;
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
 use tokio::sync::Mutex;
 
-#[cfg(feature = "metric-duckdb")]
-pub(crate) mod cold;
-#[cfg(feature = "metric-duckdb")]
-pub mod duckdb;
-pub(crate) mod ingest;
-pub mod memory_store;
-
-#[derive(Clone)]
-enum MetricBackend {
-    Off,
-    Memory(memory_store::MemoryMetricStore),
-    #[cfg(feature = "metric-duckdb")]
-    Duckdb(duckdb::DuckMetricStore),
+pub mod memory_store {
+    pub use landscape_metric::MemoryMetricStore;
 }
 
-impl MetricBackend {
-    async fn new(base_path: PathBuf, config: MetricRuntimeConfig) -> Self {
-        #[cfg(feature = "metric-duckdb")]
-        {
-            match resolved_metric_mode(config.mode.clone()) {
-                MetricMode::Off => Self::Off,
-                MetricMode::Memory => {
-                    tracing::info!("metric mode=memory, using in-memory realtime backend");
-                    Self::Memory(memory_store::MemoryMetricStore::new(base_path, config).await)
-                }
-                MetricMode::Duckdb => {
-                    match duckdb::DuckMetricStore::new(base_path.clone(), config.clone()).await {
-                        Ok(store) => Self::Duckdb(store),
-                        Err(error) => {
-                            tracing::error!(
-                            "failed to initialize duckdb metric backend, falling back to memory: {}",
-                            error
-                        );
-                            Self::Memory(
-                                memory_store::MemoryMetricStore::new(base_path, config).await,
-                            )
-                        }
-                    }
-                }
-            }
-        }
-
-        #[cfg(not(feature = "metric-duckdb"))]
-        {
-            match resolved_metric_mode(config.mode.clone()) {
-                MetricMode::Off => Self::Off,
-                MetricMode::Memory | MetricMode::Duckdb => {
-                    if matches!(config.mode, MetricMode::Duckdb) {
-                        tracing::warn!(
-                            "metric mode 'duckdb' requested without metric-duckdb feature, falling back to memory"
-                        );
-                    } else {
-                        tracing::info!("metric mode=memory, using in-memory realtime backend");
-                    }
-                    Self::Memory(memory_store::MemoryMetricStore::new(base_path, config).await)
-                }
-            }
-        }
-    }
-
-    fn shutdown(&self) {
-        match self {
-            Self::Off => {}
-            Self::Memory(store) => store.shutdown(),
-            #[cfg(feature = "metric-duckdb")]
-            Self::Duckdb(store) => store.shutdown(),
-        }
-    }
-
-    fn get_connect_msg_channel(&self) -> mpsc::Sender<ConnectMessage> {
-        match self {
-            Self::Off => unreachable!("off metric backend does not expose connect channel"),
-            Self::Memory(store) => store.get_connect_msg_channel(),
-            #[cfg(feature = "metric-duckdb")]
-            Self::Duckdb(store) => store.get_connect_msg_channel(),
-        }
-    }
-
-    fn get_dns_msg_channel(&self) -> mpsc::Sender<DnsMetricMessage> {
-        match self {
-            Self::Off => unreachable!("off metric backend does not expose dns channel"),
-            Self::Memory(store) => store.get_dns_msg_channel(),
-            #[cfg(feature = "metric-duckdb")]
-            Self::Duckdb(store) => store.get_dns_msg_channel(),
-        }
-    }
-
-    async fn connect_infos(&self) -> Vec<ConnectRealtimeStatus> {
-        match self {
-            Self::Off => Vec::new(),
-            Self::Memory(store) => store.connect_infos().await,
-            #[cfg(feature = "metric-duckdb")]
-            Self::Duckdb(store) => store.connect_infos().await,
-        }
-    }
-
-    async fn get_realtime_ip_stats(&self, is_src: bool) -> Vec<IpRealtimeStat> {
-        match self {
-            Self::Off => Vec::new(),
-            Self::Memory(store) => store.get_realtime_ip_stats(is_src).await,
-            #[cfg(feature = "metric-duckdb")]
-            Self::Duckdb(store) => store.get_realtime_ip_stats(is_src).await,
-        }
-    }
-
-    async fn get_realtime_iface_stats(&self) -> Vec<IfaceRealtimeStat> {
-        match self {
-            Self::Off => Vec::new(),
-            Self::Memory(store) => store.get_realtime_iface_stats().await,
-            #[cfg(feature = "metric-duckdb")]
-            Self::Duckdb(store) => store.get_realtime_iface_stats().await,
-        }
-    }
-
-    async fn query_metric_by_key(
-        &self,
-        key: ConnectKey,
-        resolution: MetricResolution,
-    ) -> Vec<ConnectMetricPoint> {
-        match self {
-            Self::Off => Vec::new(),
-            Self::Memory(store) => store.query_metric_by_key(key, resolution).await,
-            #[cfg(feature = "metric-duckdb")]
-            Self::Duckdb(store) => store.query_metric_by_key(key, resolution).await,
-        }
-    }
-
-    async fn history_summaries_complex(
-        &self,
-        params: ConnectHistoryQueryParams,
-    ) -> Vec<ConnectHistoryStatus> {
-        match self {
-            Self::Off => Vec::new(),
-            Self::Memory(store) => store.history_summaries_complex(params).await,
-            #[cfg(feature = "metric-duckdb")]
-            Self::Duckdb(store) => store.history_summaries_complex(params).await,
-        }
-    }
-
-    async fn history_src_ip_stats(&self, params: ConnectHistoryQueryParams) -> Vec<IpHistoryStat> {
-        match self {
-            Self::Off => Vec::new(),
-            Self::Memory(store) => store.history_src_ip_stats(params).await,
-            #[cfg(feature = "metric-duckdb")]
-            Self::Duckdb(store) => store.history_src_ip_stats(params).await,
-        }
-    }
-
-    async fn history_dst_ip_stats(&self, params: ConnectHistoryQueryParams) -> Vec<IpHistoryStat> {
-        match self {
-            Self::Off => Vec::new(),
-            Self::Memory(store) => store.history_dst_ip_stats(params).await,
-            #[cfg(feature = "metric-duckdb")]
-            Self::Duckdb(store) => store.history_dst_ip_stats(params).await,
-        }
-    }
-
-    async fn get_global_stats(&self, force_refresh: bool) -> Result<ConnectGlobalStats, DbError> {
-        match self {
-            Self::Off => Ok(ConnectGlobalStats::default()),
-            Self::Memory(store) => store.get_global_stats(force_refresh).await,
-            #[cfg(feature = "metric-duckdb")]
-            Self::Duckdb(store) => store.get_global_stats(force_refresh).await,
-        }
-    }
-
-    async fn query_dns_history(&self, params: DnsHistoryQueryParams) -> DnsHistoryResponse {
-        match self {
-            Self::Off => DnsHistoryResponse::default(),
-            Self::Memory(store) => store.query_dns_history(params).await,
-            #[cfg(feature = "metric-duckdb")]
-            Self::Duckdb(store) => store.query_dns_history(params).await,
-        }
-    }
-
-    async fn get_dns_summary(&self, params: DnsSummaryQueryParams) -> DnsSummaryResponse {
-        match self {
-            Self::Off => DnsSummaryResponse::default(),
-            Self::Memory(store) => store.get_dns_summary(params).await,
-            #[cfg(feature = "metric-duckdb")]
-            Self::Duckdb(store) => store.get_dns_summary(params).await,
-        }
-    }
-
-    async fn get_dns_lightweight_summary(
-        &self,
-        params: DnsSummaryQueryParams,
-    ) -> DnsLightweightSummaryResponse {
-        match self {
-            Self::Off => DnsLightweightSummaryResponse::default(),
-            Self::Memory(store) => store.get_dns_lightweight_summary(params).await,
-            #[cfg(feature = "metric-duckdb")]
-            Self::Duckdb(store) => store.get_dns_lightweight_summary(params).await,
-        }
-    }
+#[cfg(feature = "metric-duckdb")]
+pub mod duckdb {
+    pub use landscape_metric::DuckMetricStore;
 }
 
 #[derive(Clone)]
 struct MetricServiceState {
     config: MetricRuntimeConfig,
-    store: MetricBackend,
+    engine: MetricEngine,
 }
 
 struct MetricServiceInner {
@@ -247,54 +60,43 @@ fn ensure_metric_path(home_path: &Path) -> PathBuf {
     metric_path
 }
 
-fn resolved_metric_mode(mode: MetricMode) -> MetricMode {
-    #[cfg(feature = "metric-duckdb")]
-    {
-        mode
-    }
-
-    #[cfg(not(feature = "metric-duckdb"))]
-    {
-        if matches!(mode, MetricMode::Duckdb) {
-            MetricMode::Memory
-        } else {
-            mode
-        }
-    }
-}
-
 impl MetricService {
     pub async fn new(home_path: PathBuf, config: MetricRuntimeConfig) -> Self {
         let metric_path = ensure_metric_path(&home_path);
-        let store = MetricBackend::new(metric_path, config.clone()).await;
+        let engine = MetricEngine::new(metric_path, config.clone()).await;
         let status = WatchService::new();
 
         MetricService {
             status,
             inner: Arc::new(MetricServiceInner {
                 home_path,
-                state: RwLock::new(MetricServiceState { config, store }),
+                state: RwLock::new(MetricServiceState { config, engine }),
                 switch_lock: Mutex::new(()),
             }),
         }
     }
 
-    fn current_backend(&self) -> MetricBackend {
-        self.inner.state.read().expect("metric service state poisoned").store.clone()
+    fn current_engine(&self) -> MetricEngine {
+        self.inner.state.read().expect("metric service state poisoned").engine.clone()
     }
 
     fn current_mode(&self) -> MetricMode {
         let config = self.inner.state.read().expect("metric service state poisoned").config.clone();
-        resolved_metric_mode(config.mode)
+        landscape_metric::resolved_metric_mode(config.mode)
     }
 
     fn get_connect_msg_channel(&self) -> mpsc::Sender<ConnectMessage> {
-        self.current_backend().get_connect_msg_channel()
+        self.current_engine()
+            .get_connect_msg_channel()
+            .expect("off metric backend does not expose connect channel")
     }
 
     pub fn get_dns_metric_channel(&self) -> Option<mpsc::Sender<DnsMetricMessage>> {
-        (!matches!(self.current_mode(), MetricMode::Off))
-            .then(|| self.current_backend().get_dns_msg_channel())
+        if matches!(self.current_mode(), MetricMode::Off) {
+            None
+        } else {
+            self.current_engine().get_dns_msg_channel()
+        }
     }
 
     pub async fn start_service(&self) {
@@ -316,21 +118,22 @@ impl MetricService {
 
     pub async fn stop_service(&self) {
         self.status.wait_stop().await;
+        self.current_engine().shutdown();
     }
 
     pub async fn apply_runtime_config(&self, config: MetricRuntimeConfig) {
         let _guard = self.inner.switch_lock.lock().await;
         self.stop_service().await;
 
-        let new_store =
-            MetricBackend::new(ensure_metric_path(&self.inner.home_path), config.clone()).await;
-        let old_store = {
+        let new_engine =
+            MetricEngine::new(ensure_metric_path(&self.inner.home_path), config.clone()).await;
+        let old_engine = {
             let mut state = self.inner.state.write().expect("metric service state poisoned");
-            let old_store = std::mem::replace(&mut state.store, new_store);
+            let old_engine = std::mem::replace(&mut state.engine, new_engine);
             state.config = config;
-            old_store
+            old_engine
         };
-        old_store.shutdown();
+        old_engine.shutdown();
 
         if !matches!(self.current_mode(), MetricMode::Off) {
             self.start_service().await;
@@ -338,15 +141,15 @@ impl MetricService {
     }
 
     pub async fn connect_infos(&self) -> Vec<ConnectRealtimeStatus> {
-        self.current_backend().connect_infos().await
+        self.current_engine().connect_infos().await
     }
 
     pub async fn get_realtime_ip_stats(&self, is_src: bool) -> Vec<IpRealtimeStat> {
-        self.current_backend().get_realtime_ip_stats(is_src).await
+        self.current_engine().get_realtime_ip_stats(is_src).await
     }
 
     pub async fn get_realtime_iface_stats(&self) -> Vec<IfaceRealtimeStat> {
-        self.current_backend().get_realtime_iface_stats().await
+        self.current_engine().get_realtime_iface_stats().await
     }
 
     pub async fn query_metric_by_key(
@@ -354,50 +157,50 @@ impl MetricService {
         key: ConnectKey,
         resolution: MetricResolution,
     ) -> Vec<ConnectMetricPoint> {
-        self.current_backend().query_metric_by_key(key, resolution).await
+        self.current_engine().query_metric_by_key(key, resolution).await
     }
 
     pub async fn history_summaries_complex(
         &self,
         params: ConnectHistoryQueryParams,
     ) -> Vec<ConnectHistoryStatus> {
-        self.current_backend().history_summaries_complex(params).await
+        self.current_engine().history_summaries_complex(params).await
     }
 
     pub async fn history_src_ip_stats(
         &self,
         params: ConnectHistoryQueryParams,
     ) -> Vec<IpHistoryStat> {
-        self.current_backend().history_src_ip_stats(params).await
+        self.current_engine().history_src_ip_stats(params).await
     }
 
     pub async fn history_dst_ip_stats(
         &self,
         params: ConnectHistoryQueryParams,
     ) -> Vec<IpHistoryStat> {
-        self.current_backend().history_dst_ip_stats(params).await
+        self.current_engine().history_dst_ip_stats(params).await
     }
 
     pub async fn get_global_stats(
         &self,
         force_refresh: bool,
     ) -> Result<ConnectGlobalStats, DbError> {
-        self.current_backend().get_global_stats(force_refresh).await
+        self.current_engine().get_global_stats(force_refresh).await
     }
 
     pub async fn query_dns_history(&self, params: DnsHistoryQueryParams) -> DnsHistoryResponse {
-        self.current_backend().query_dns_history(params).await
+        self.current_engine().query_dns_history(params).await
     }
 
     pub async fn get_dns_summary(&self, params: DnsSummaryQueryParams) -> DnsSummaryResponse {
-        self.current_backend().get_dns_summary(params).await
+        self.current_engine().get_dns_summary(params).await
     }
 
     pub async fn get_dns_lightweight_summary(
         &self,
         params: DnsSummaryQueryParams,
     ) -> DnsLightweightSummaryResponse {
-        self.current_backend().get_dns_lightweight_summary(params).await
+        self.current_engine().get_dns_lightweight_summary(params).await
     }
 }
 

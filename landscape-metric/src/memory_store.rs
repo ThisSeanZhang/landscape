@@ -15,8 +15,9 @@ use landscape_common::metric::dns::{
 };
 use landscape_core::time::get_current_time_ms;
 use tokio::sync::mpsc;
+use tokio_util::sync::CancellationToken;
 
-use crate::metric::ingest::{
+use crate::ingest::{
     cleanup_flow_cache, collect_connect_infos, collect_realtime_iface_stats,
     collect_realtime_ip_stats, drain_iface_buckets, process_connect_metric, second_points_by_key,
     second_ring_capacity, second_window_ms, FlowCache, IfaceBucketCache, IfaceRealtimeCache,
@@ -27,6 +28,7 @@ use crate::metric::ingest::{
 pub struct MemoryMetricStore {
     connect_tx: mpsc::Sender<ConnectMessage>,
     dns_tx: mpsc::Sender<DnsMetricMessage>,
+    shutdown: CancellationToken,
     flow_cache: FlowCache,
     second_window_ms: u64,
 }
@@ -35,6 +37,8 @@ impl MemoryMetricStore {
     pub async fn new(_base_path: PathBuf, config: MetricRuntimeConfig) -> Self {
         let (connect_tx, mut connect_rx) = mpsc::channel::<ConnectMessage>(CHANNEL_CAPACITY);
         let (dns_tx, mut dns_rx) = mpsc::channel::<DnsMetricMessage>(CHANNEL_CAPACITY);
+        let shutdown = CancellationToken::new();
+        let worker_shutdown = shutdown.clone();
         let flow_cache: FlowCache =
             Arc::new(std::sync::RwLock::new(std::collections::HashMap::new()));
         let iface_realtime: IfaceRealtimeCache =
@@ -90,6 +94,7 @@ impl MemoryMetricStore {
                             None => dns_closed = true,
                         }
                     }
+                    _ = worker_shutdown.cancelled() => break,
                 }
 
                 if connect_closed && dns_closed {
@@ -98,7 +103,13 @@ impl MemoryMetricStore {
             }
         });
 
-        Self { connect_tx, dns_tx, flow_cache, second_window_ms }
+        Self {
+            connect_tx,
+            dns_tx,
+            shutdown,
+            flow_cache,
+            second_window_ms,
+        }
     }
 
     pub fn get_connect_msg_channel(&self) -> mpsc::Sender<ConnectMessage> {
@@ -109,7 +120,9 @@ impl MemoryMetricStore {
         self.dns_tx.clone()
     }
 
-    pub fn shutdown(&self) {}
+    pub fn shutdown(&self) {
+        self.shutdown.cancel();
+    }
 
     pub async fn connect_infos(&self) -> Vec<ConnectRealtimeStatus> {
         let now_ms = get_current_time_ms().unwrap_or_default();
@@ -332,5 +345,22 @@ mod tests {
 
         let minute_points = store.query_metric_by_key(key, MetricResolution::Minute).await;
         assert!(minute_points.is_empty());
+    }
+
+    #[tokio::test]
+    async fn shutdown_stops_worker_after_store_is_dropped() {
+        let store = MemoryMetricStore::new(PathBuf::new(), test_config()).await;
+        let flow_cache = Arc::downgrade(&store.flow_cache);
+
+        store.shutdown();
+        drop(store);
+
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while flow_cache.upgrade().is_some() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("memory metric worker did not stop after shutdown");
     }
 }

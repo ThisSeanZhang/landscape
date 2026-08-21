@@ -5,10 +5,8 @@ use landscape_core::time::get_current_time_ms;
 use std::collections::HashMap;
 use std::time::Instant;
 
-use crate::metric::cold::{BucketPersistStats, ColdCleanupStats, ColdStore, DnsPersistStats};
-use crate::metric::ingest::{
-    clean_ip_string, BucketKind, BucketWrite, IfaceBucketWrite, MS_PER_DAY,
-};
+use crate::cold::{BucketPersistStats, ColdCleanupStats, ColdStore, DnsPersistStats};
+use crate::ingest::{clean_ip_string, BucketKind, BucketWrite, IfaceBucketWrite, MS_PER_DAY};
 
 use super::connect::{cleanup, schema as connect_schema};
 use super::dns::schema as dns_schema;
