@@ -16,9 +16,13 @@ serde_json = { workspace = true }
 duckdb = { workspace = true, optional = true }
 r2d2 = { workspace = true, optional = true }
 sqlx = { workspace = true, optional = true }
+arrow-array = { workspace = true, optional = true }
+arrow-schema = { workspace = true, optional = true }
+parquet = { workspace = true, optional = true }
 
 [features]
 default = []
+metric-persistent = ["dep:arrow-array", "dep:arrow-schema", "dep:parquet"]
 duckdb = ["dep:duckdb", "dep:r2d2", "dep:sqlx"]
 duckdb-bundled = ["duckdb", "duckdb/bundled"]
 
