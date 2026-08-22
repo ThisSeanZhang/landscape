@@ -20,6 +20,8 @@ use tokio::sync::mpsc;
 pub(crate) mod cold;
 pub(crate) mod ingest;
 pub mod memory_store;
+#[cfg(feature = "metric-persistent")]
+pub(crate) mod persistent;
 
 #[cfg(feature = "duckdb")]
 pub mod duckdb;
@@ -29,19 +31,6 @@ pub use memory_store::MemoryMetricStore;
 #[cfg(feature = "duckdb")]
 pub use duckdb::DuckMetricStore;
 
-#[cfg(feature = "metric-persistent")]
-#[derive(Clone)]
-#[allow(dead_code)]
-struct PersistentMetricStore;
-
-#[cfg(feature = "metric-persistent")]
-#[allow(dead_code)]
-impl PersistentMetricStore {
-    fn new(_base_path: PathBuf, _config: MetricRuntimeConfig) -> Self {
-        todo!("implement persistent metric store")
-    }
-}
-
 #[derive(Clone)]
 enum MetricBackend {
     Off,
@@ -50,7 +39,7 @@ enum MetricBackend {
     Duckdb(DuckMetricStore),
     #[cfg(feature = "metric-persistent")]
     #[allow(dead_code)]
-    Persistent(PersistentMetricStore),
+    Persistent(persistent::PersistentMetricStore),
 }
 
 impl MetricBackend {
