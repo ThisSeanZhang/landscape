@@ -51,6 +51,13 @@ export default {
   conn_retention_day_days: "Aggregated Data (Day)",
   conn_retention_day_days_desc:
     "Retention period for daily aggregated connection metrics in days",
+  conn_detail_settings: "Connection Detail Settings",
+  conn_summary_retention_days: "Detail Retention (Days)",
+  conn_summary_retention_days_desc:
+    "Retention period for per-connection detail summary rows in days",
+  conn_summary_max_rows: "Detail Row Cap",
+  conn_summary_max_rows_desc:
+    "Maximum number of detail summary rows kept per connection (0 = unlimited)",
   dns_retention_days: "DNS Retention (Days)",
   dns_retention_days_desc:
     "Retention period for DNS query logs and metrics in days",

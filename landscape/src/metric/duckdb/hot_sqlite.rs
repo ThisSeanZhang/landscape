@@ -634,3 +634,166 @@ pub async fn cleanup_old_summaries(
 
     tx.commit().await
 }
+
+pub async fn enforce_summary_max_rows(pool: &SqlitePool, max_rows: u64) -> Result<(), sqlx::Error> {
+    if max_rows == 0 {
+        return Ok(());
+    }
+    let count_row = sqlx::query("SELECT COUNT(*) FROM conn_summaries").fetch_one(pool).await?;
+    let total: i64 = count_row.get(0);
+
+    if total <= max_rows as i64 {
+        return Ok(());
+    }
+
+    let excess = (total - max_rows as i64) as u64;
+
+    let mut tx = pool.begin().await?;
+    let row = sqlx::query(
+        "SELECT
+            COALESCE(SUM(total_ingress_bytes), 0),
+            COALESCE(SUM(total_egress_bytes), 0),
+            COALESCE(SUM(total_ingress_pkts), 0),
+            COALESCE(SUM(total_egress_pkts), 0),
+            COUNT(*)
+        FROM conn_summaries
+        WHERE (create_time, cpu_id) IN (
+            SELECT create_time, cpu_id FROM conn_summaries ORDER BY last_report_time ASC LIMIT ?1
+        )",
+    )
+    .bind(excess as i64)
+    .fetch_one(tx.as_mut())
+    .await?;
+
+    let removed = ConnectGlobalStats {
+        total_ingress_bytes: row.get::<i64, _>(0).max(0) as u64,
+        total_egress_bytes: row.get::<i64, _>(1).max(0) as u64,
+        total_ingress_pkts: row.get::<i64, _>(2).max(0) as u64,
+        total_egress_pkts: row.get::<i64, _>(3).max(0) as u64,
+        total_connect_count: row.get::<i64, _>(4).max(0) as u64,
+        last_calculate_time: 0,
+    };
+
+    let deleted = sqlx::query(
+        "DELETE FROM conn_summaries
+         WHERE (create_time, cpu_id) IN (
+            SELECT create_time, cpu_id FROM conn_summaries ORDER BY last_report_time ASC LIMIT ?1
+         )",
+    )
+    .bind(excess as i64)
+    .execute(tx.as_mut())
+    .await?
+    .rows_affected();
+
+    if deleted > 0 {
+        let delta = GlobalStatsDelta::from_removed_stats(&removed);
+        apply_global_stats_cache_delta_tx(&mut tx, delta, current_time_ms()).await?;
+    }
+
+    tx.commit().await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    async fn test_pool() -> SqlitePool {
+        let pool =
+            SqlitePoolOptions::new().max_connections(1).connect("sqlite::memory:").await.unwrap();
+        initialize_schema(&pool).await.unwrap();
+        rebuild_global_stats_cache(&pool).await.unwrap();
+        pool
+    }
+
+    async fn insert_test_summary(pool: &SqlitePool, idx: u64, ingress: u64, egress: u64) {
+        use landscape_common::metric::connect::{ConnectMetric, ConnectStatusType};
+        use std::net::{IpAddr, Ipv4Addr};
+
+        let metric = ConnectMetric {
+            key: landscape_common::metric::connect::ConnectKey {
+                create_time: 1000 + idx,
+                cpu_id: 0,
+            },
+            src_ip: IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)),
+            dst_ip: IpAddr::V4(Ipv4Addr::new(10, 0, 1, 1)),
+            src_port: 10000,
+            dst_port: 443,
+            l4_proto: 6,
+            l3_proto: 4,
+            flow_id: 0,
+            trace_id: 0,
+            gress: 0,
+            ifindex: 1,
+            report_time: 60_000 * (idx + 1),
+            create_time_ms: 1000 + idx,
+            ingress_bytes: ingress,
+            ingress_packets: 1,
+            egress_bytes: egress,
+            egress_packets: 1,
+            status: ConnectStatusType::Active,
+        };
+
+        let batch = super::super::ingest::PersistenceBatch {
+            summary_metrics: vec![metric],
+            bucket_writes: Vec::new(),
+            iface_bucket_writes: Vec::new(),
+            aggregate_writes: Vec::new(),
+        };
+        apply_persistence_batch(pool, &batch).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn row_cap_eviction_keeps_global_stats_consistent() {
+        let pool = test_pool().await;
+        for i in 0..5u64 {
+            insert_test_summary(&pool, i, 100, 200).await;
+        }
+        let before = query_global_stats(&pool).await.unwrap();
+        assert_eq!(before.total_ingress_bytes, 500);
+        assert_eq!(before.total_egress_bytes, 1000);
+        assert_eq!(before.total_connect_count, 5);
+
+        enforce_summary_max_rows(&pool, 3).await.unwrap();
+
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM conn_summaries")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(count, 3);
+
+        let after = query_global_stats(&pool).await.unwrap();
+        assert_eq!(after.total_ingress_bytes, 300);
+        assert_eq!(after.total_egress_bytes, 600);
+        assert_eq!(after.total_connect_count, 3);
+    }
+
+    #[tokio::test]
+    async fn row_cap_zero_means_unlimited() {
+        let pool = test_pool().await;
+        for i in 0..5u64 {
+            insert_test_summary(&pool, i, 10, 20).await;
+        }
+        enforce_summary_max_rows(&pool, 0).await.unwrap();
+
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM conn_summaries")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(count, 5);
+    }
+
+    #[tokio::test]
+    async fn row_cap_no_op_when_under_limit() {
+        let pool = test_pool().await;
+        for i in 0..3u64 {
+            insert_test_summary(&pool, i, 50, 100).await;
+        }
+        let before = query_global_stats(&pool).await.unwrap();
+
+        enforce_summary_max_rows(&pool, 10).await.unwrap();
+
+        let after = query_global_stats(&pool).await.unwrap();
+        assert_eq!(before.total_ingress_bytes, after.total_ingress_bytes);
+        assert_eq!(before.total_connect_count, after.total_connect_count);
+    }
+}

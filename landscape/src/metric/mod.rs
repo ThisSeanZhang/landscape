@@ -7,9 +7,9 @@ use landscape_common::{
     database::error::DbError,
     event::{ConnectMessage, DnsMetricMessage},
     metric::connect::{
-        ConnectGlobalStats, ConnectHistoryQueryParams, ConnectHistoryStatus, ConnectKey,
-        ConnectMetricPoint, ConnectRealtimeStatus, IfaceRealtimeStat, IpHistoryStat,
-        IpRealtimeStat, MetricResolution,
+        ConnectAggregatePoint, ConnectAggregateQueryParams, ConnectGlobalStats,
+        ConnectHistoryQueryParams, ConnectHistoryStatus, ConnectKey, ConnectMetricPoint,
+        ConnectRealtimeStatus, IfaceRealtimeStat, IpHistoryStat, IpRealtimeStat, MetricResolution,
     },
     metric::dns::{
         DnsHistoryQueryParams, DnsHistoryResponse, DnsLightweightSummaryResponse,
@@ -214,6 +214,18 @@ impl MetricBackend {
             Self::Duckdb(store) => store.get_dns_lightweight_summary(params).await,
         }
     }
+
+    async fn query_connection_aggregates(
+        &self,
+        #[allow(unused_variables)] params: ConnectAggregateQueryParams,
+    ) -> Vec<ConnectAggregatePoint> {
+        match self {
+            Self::Off => Vec::new(),
+            Self::Memory(_) => Vec::new(),
+            #[cfg(feature = "metric-duckdb")]
+            Self::Duckdb(store) => store.query_connection_aggregates(params).await,
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -395,6 +407,13 @@ impl MetricService {
         params: DnsSummaryQueryParams,
     ) -> DnsLightweightSummaryResponse {
         self.current_backend().get_dns_lightweight_summary(params).await
+    }
+
+    pub async fn query_connection_aggregates(
+        &self,
+        params: ConnectAggregateQueryParams,
+    ) -> Vec<ConnectAggregatePoint> {
+        self.current_backend().query_connection_aggregates(params).await
     }
 }
 

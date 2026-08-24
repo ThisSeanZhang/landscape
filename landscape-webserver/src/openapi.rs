@@ -117,6 +117,7 @@ impl Modify for SecurityAddon {
         // Schemas referenced by IntoParams but not auto-registered
         landscape_common::metric::connect::ConnectSortKey,
         landscape_common::metric::connect::SortOrder,
+        landscape_common::metric::connect::AggregateGroupBy,
         landscape_common::metric::dns::DnsSortKey,
         landscape_common::metric::dns::DnsOutcome,
         landscape_common::dns::rule::LandscapeDnsRecordType,

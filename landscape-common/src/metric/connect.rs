@@ -289,3 +289,43 @@ pub struct MetricChartRequest {
     #[cfg_attr(feature = "openapi", schema(nullable = false))]
     pub resolution: Option<MetricResolution>,
 }
+
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[serde(rename_all = "lowercase")]
+pub enum AggregateGroupBy {
+    #[default]
+    SrcIp,
+    DstPort,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema, utoipa::IntoParams))]
+#[cfg_attr(feature = "openapi", into_params(parameter_in = Query))]
+pub struct ConnectAggregateQueryParams {
+    #[cfg_attr(feature = "openapi", schema(nullable = false))]
+    pub start_time: Option<u64>,
+    #[cfg_attr(feature = "openapi", schema(nullable = false))]
+    pub end_time: Option<u64>,
+    #[cfg_attr(feature = "openapi", schema(nullable = false))]
+    pub group_by: Option<AggregateGroupBy>,
+    #[cfg_attr(feature = "openapi", schema(nullable = false))]
+    pub src_ip: Option<String>,
+    #[cfg_attr(feature = "openapi", schema(nullable = false))]
+    pub dst_port: Option<u16>,
+    #[cfg_attr(feature = "openapi", schema(nullable = false))]
+    pub l4_proto: Option<u8>,
+    #[cfg_attr(feature = "openapi", schema(nullable = false))]
+    pub limit: Option<usize>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+pub struct ConnectAggregatePoint {
+    pub group_key: String,
+    pub ingress_bytes: u64,
+    pub ingress_packets: u64,
+    pub egress_bytes: u64,
+    pub egress_packets: u64,
+    pub conn_count: u64,
+}

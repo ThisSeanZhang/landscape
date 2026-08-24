@@ -45,6 +45,11 @@ export default {
   conn_retention_hour_days_desc: "按小时聚合的连接指标保存期限（天）",
   conn_retention_day_days: "聚合数据保存 (天级)",
   conn_retention_day_days_desc: "按天聚合的连接指标保存期限（天）",
+  conn_detail_settings: "连接明细设置",
+  conn_summary_retention_days: "明细保存天数",
+  conn_summary_retention_days_desc: "单连接明细汇总行的保存期限（天）",
+  conn_summary_max_rows: "明细行数上限",
+  conn_summary_max_rows_desc: "每条连接保留的最大明细汇总行数（0 = 不限制）",
   dns_retention_days: "DNS 数据保存天数",
   dns_retention_days_desc: "DNS 查询日志和指标的保存期限（天）",
 
