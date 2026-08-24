@@ -175,6 +175,14 @@ fn get_first_non_loopback_with_peer() -> Result<(String, i32, i32), io::Error> {
             continue;
         }
 
+        // /sys/class/net 下可能混有非目录条目，例如内核加载 bonding 模块后生成的
+        // bonding_masters 文件。对其读取 ifindex 会返回 ENOTDIR，导致整个 handler
+        // 启动即退出、不再 enroll。跳过非目录/非符号链接条目。
+        let file_type = entry.file_type()?;
+        if !file_type.is_dir() && !file_type.is_symlink() {
+            continue;
+        }
+
         let iface_path = entry.path();
 
         // 读取 ifindex
