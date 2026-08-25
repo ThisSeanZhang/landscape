@@ -30,8 +30,12 @@ impl DnsWhereBuilder {
 
     pub(crate) fn from_summary_params(params: &DnsSummaryQueryParams) -> Self {
         let mut builder = Self::new();
-        builder.push_param("report_time >= ?", params.start_time as i64);
-        builder.push_param("report_time <= ?", params.end_time as i64);
+        if params.start_time > 0 {
+            builder.push_param("report_time >= ?", params.start_time as i64);
+        }
+        if params.end_time > 0 {
+            builder.push_param("report_time < ?", params.end_time as i64);
+        }
         if let Some(flow_id) = params.flow_id {
             builder.push_param("flow_id = ?", flow_id as i64);
         }
@@ -44,7 +48,7 @@ impl DnsWhereBuilder {
             builder.push_param("report_time >= ?", start as i64);
         }
         if let Some(end) = params.end_time {
-            builder.push_param("report_time <= ?", end as i64);
+            builder.push_param("report_time < ?", end as i64);
         }
         if let Some(flow_id) = params.flow_id {
             builder.push_param("flow_id = ?", flow_id as i64);

@@ -6,6 +6,11 @@ use landscape_common::metric::dns::{
 
 use super::DnsWhereBuilder;
 
+/// 历史查询单页条数上限,防止无界 LIMIT 导致慢查询/超大响应。
+const MAX_PAGE_SIZE: usize = 200;
+/// 历史查询翻页偏移上限。
+const MAX_PAGE_OFFSET: usize = 10_000;
+
 pub fn query_dns_history(conn: &Connection, params: DnsHistoryQueryParams) -> DnsHistoryResponse {
     let builder = DnsWhereBuilder::from_history_params(&params);
     let where_stmt = builder.where_stmt();
@@ -33,8 +38,8 @@ pub fn query_dns_history(conn: &Connection, params: DnsHistoryQueryParams) -> Dn
         SortOrder::Asc => "ASC",
         SortOrder::Desc => "DESC",
     };
-    let limit = params.limit.unwrap_or(20);
-    let offset = params.offset.unwrap_or(0);
+    let limit = params.limit.unwrap_or(20).clamp(1, MAX_PAGE_SIZE);
+    let offset = params.offset.unwrap_or(0).min(MAX_PAGE_OFFSET);
     let order_by = if sort_col == "report_time" {
         format!("{} {}", sort_col, sort_order)
     } else {

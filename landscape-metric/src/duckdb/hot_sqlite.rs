@@ -12,6 +12,9 @@ use crate::ingest::{clean_ip_string, PersistenceBatch};
 
 const GLOBAL_STATS_CACHE_KEY: i64 = 1;
 
+/// 历史查询单页条数上限,防止无界 LIMIT 导致慢查询/超大响应。
+const MAX_PAGE_SIZE: usize = 200;
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct SummaryTotals {
     pub total_ingress_bytes: u64,
@@ -129,9 +132,16 @@ pub async fn open_hot_pool(db_path: &Path) -> Result<SqlitePool, String> {
     initialize_schema(&pool)
         .await
         .map_err(|error| format!("failed to initialize metric sqlite schema: {}", error))?;
-    rebuild_global_stats_cache(&pool).await.map_err(|error| {
-        format!("failed to initialize metric sqlite global stats cache: {}", error)
-    })?;
+    // 缓存与 summary 写入/删除在同一事务内更新,不会漂移;仅当缓存从未
+    // 被写入过(新库)才需要全表重建,避免每次启动都全表扫描。
+    let stats = query_global_stats(&pool)
+        .await
+        .map_err(|error| format!("failed to read metric sqlite global stats cache: {}", error))?;
+    if stats.last_calculate_time == 0 {
+        rebuild_global_stats_cache(&pool).await.map_err(|error| {
+            format!("failed to initialize metric sqlite global stats cache: {}", error)
+        })?;
+    }
 
     Ok(pool)
 }
@@ -514,9 +524,7 @@ pub async fn query_historical_summaries_complex(
     push_connect_common_filters(&mut qb, &params, &mut has_where);
     push_connect_summary_filters(&mut qb, &params, &mut has_where);
     qb.push(" ORDER BY ").push(sort_col).push(" ").push(sort_order);
-    if let Some(limit) = params.limit {
-        qb.push(format!(" LIMIT {}", limit));
-    }
+    qb.push(format!(" LIMIT {}", params.limit.unwrap_or(MAX_PAGE_SIZE).clamp(1, MAX_PAGE_SIZE)));
 
     let rows = qb.build().fetch_all(pool).await?;
     Ok(rows
@@ -576,7 +584,7 @@ pub async fn query_connection_ip_history(
     let mut has_where = false;
     push_connect_common_filters(&mut qb, &params, &mut has_where);
     qb.push(" GROUP BY 1 ORDER BY ").push(sort_col).push(" ").push(sort_order);
-    qb.push(format!(" LIMIT {}", params.limit.unwrap_or(10)));
+    qb.push(format!(" LIMIT {}", params.limit.unwrap_or(10).clamp(1, MAX_PAGE_SIZE)));
 
     let rows = qb.build().fetch_all(pool).await?;
     Ok(rows
