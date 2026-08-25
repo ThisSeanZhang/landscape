@@ -534,7 +534,10 @@ pub(crate) async fn query_historical_summaries_complex(
     push_connect_common_filters(&mut qb, &params, &mut has_where);
     push_connect_summary_filters(&mut qb, &params, &mut has_where);
     qb.push(" ORDER BY ").push(sort_col).push(" ").push(sort_order);
-    qb.push(format!(" LIMIT {}", params.limit.unwrap_or(MAX_PAGE_SIZE).clamp(1, MAX_PAGE_SIZE)));
+    // limit 缺省时不追加 LIMIT:前端"不限"即省略该参数,需要查询全部。
+    if let Some(limit) = params.limit {
+        qb.push(format!(" LIMIT {}", limit.clamp(1, MAX_PAGE_SIZE)));
+    }
 
     let rows = qb.build().fetch_all(pool).await?;
     Ok(rows
@@ -1140,7 +1143,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn history_limit_is_clamped_and_defaulted() {
+    async fn history_limit_is_clamped_and_unlimited_when_omitted() {
         let (_dir, pool) = test_pool().await;
 
         let mut batch = PersistenceBatch::default();
@@ -1168,7 +1171,7 @@ mod tests {
             query_historical_summaries_complex(&pool, ConnectHistoryQueryParams::default())
                 .await
                 .unwrap();
-        assert_eq!(no_limit.len(), 200, "missing limit defaults to MAX_PAGE_SIZE");
+        assert_eq!(no_limit.len(), 250, "missing limit returns all rows (unlimited)");
 
         let zero_limit = query_historical_summaries_complex(
             &pool,

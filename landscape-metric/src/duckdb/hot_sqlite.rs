@@ -524,7 +524,10 @@ pub async fn query_historical_summaries_complex(
     push_connect_common_filters(&mut qb, &params, &mut has_where);
     push_connect_summary_filters(&mut qb, &params, &mut has_where);
     qb.push(" ORDER BY ").push(sort_col).push(" ").push(sort_order);
-    qb.push(format!(" LIMIT {}", params.limit.unwrap_or(MAX_PAGE_SIZE).clamp(1, MAX_PAGE_SIZE)));
+    // limit 缺省时不追加 LIMIT:前端"不限"即省略该参数,需要查询全部。
+    if let Some(limit) = params.limit {
+        qb.push(format!(" LIMIT {}", limit.clamp(1, MAX_PAGE_SIZE)));
+    }
 
     let rows = qb.build().fetch_all(pool).await?;
     Ok(rows
