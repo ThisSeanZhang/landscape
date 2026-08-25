@@ -59,7 +59,8 @@ async fn handle_connect_metric(
     );
     pending.extend(batch);
     if pending.op_count() >= write_batch_size {
-        pending.extend_iface_buckets(drain_iface_buckets(iface_buckets, iface_realtime));
+        // iface 5s 桶已不落库(见 sqlite schema),但必须持续 drain 防止内存桶无限增长。
+        drop(drain_iface_buckets(iface_buckets, iface_realtime));
         flush_connect_batch(pool, pending).await;
     }
 }
@@ -94,7 +95,7 @@ pub(crate) async fn run_connect_worker(
     loop {
         tokio::select! {
             _ = cleanup_interval.tick() => {
-                pending.extend_iface_buckets(drain_iface_buckets(&iface_buckets, &iface_realtime));
+                drop(drain_iface_buckets(&iface_buckets, &iface_realtime));
                 flush_connect_batch(&pool, &mut pending).await;
 
                 let now_ms = get_current_time_ms().unwrap_or_default();
@@ -105,7 +106,7 @@ pub(crate) async fn run_connect_worker(
                     second_window,
                 );
                 pending.extend(batch);
-                pending.extend_iface_buckets(drain_iface_buckets(&iface_buckets, &iface_realtime));
+                drop(drain_iface_buckets(&iface_buckets, &iface_realtime));
                 flush_connect_batch(&pool, &mut pending).await;
 
                 tracing::info!(
@@ -127,12 +128,9 @@ pub(crate) async fn run_connect_worker(
                     (BucketKind::Hour, now_ms.saturating_sub(config.connect_1h_retention_days * MS_PER_DAY)),
                     (BucketKind::Day, now_ms.saturating_sub(config.connect_1d_retention_days * MS_PER_DAY)),
                 ];
-                let iface_cutoff =
-                    now_ms.saturating_sub(config.connect_1m_retention_days * MS_PER_DAY);
                 if let Err(error) = sqlite::connect::cleanup_old_buckets(
                     &pool,
                     cutoffs,
-                    iface_cutoff,
                     config.cleanup_time_budget_ms,
                     config.cleanup_slice_window_secs,
                 ).await {
@@ -173,7 +171,7 @@ pub(crate) async fn run_connect_worker(
                 }
             }
             _ = flush_interval.tick() => {
-                pending.extend_iface_buckets(drain_iface_buckets(&iface_buckets, &iface_realtime));
+                drop(drain_iface_buckets(&iface_buckets, &iface_realtime));
                 flush_connect_batch(&pool, &mut pending).await;
             }
             _ = shutdown.cancelled() => break,
@@ -230,12 +228,12 @@ pub(crate) async fn run_connect_worker(
         }
     }
 
-    pending.extend_iface_buckets(drain_iface_buckets(&iface_buckets, &iface_realtime));
+    drop(drain_iface_buckets(&iface_buckets, &iface_realtime));
     flush_connect_batch(&pool, &mut pending).await;
 
     let final_batch = finalize_all_flows(&flow_cache, &iface_realtime);
     pending.extend(final_batch);
-    pending.extend_iface_buckets(drain_iface_buckets(&iface_buckets, &iface_realtime));
+    drop(drain_iface_buckets(&iface_buckets, &iface_realtime));
     flush_connect_batch(&pool, &mut pending).await;
 
     if let Some(handle) = rebuild_handle.take() {

@@ -457,6 +457,10 @@ pub(crate) async fn query_dns_lightweight_summary(
 }
 
 pub(crate) async fn cleanup_old_dns(pool: &SqlitePool, cutoff: u64) -> Result<u64, sqlx::Error> {
+    // TODO(cleanup): 单条大范围 DELETE 没有分片也没有 cleanup_time_budget_ms 预算。
+    // dns_metrics 保留 7 天原始行,高 QPS 下表大时该删除会长时间独占写锁,
+    // 可能超过写入侧 busy_timeout(5s)导致 DNS 批次被丢弃;后续应仿照
+    // connect 桶表 cleanup_old_buckets/delete_table_in_slices 的分片 + 预算模式改造。
     sqlx::query("DELETE FROM dns_metrics WHERE report_time < ?1")
         .bind(cutoff as i64)
         .execute(pool)

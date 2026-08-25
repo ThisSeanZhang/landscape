@@ -8,7 +8,7 @@ use landscape_common::metric::connect::{
 use landscape_core::time::get_current_time_ms;
 use sqlx::{QueryBuilder, Row, Sqlite, SqlitePool, Transaction};
 
-use crate::ingest::{clean_ip_string, BucketKind, BucketWrite, IfaceBucketWrite, PersistenceBatch};
+use crate::ingest::{clean_ip_string, BucketKind, BucketWrite, PersistenceBatch};
 
 pub(crate) const GLOBAL_STATS_CACHE_KEY: i64 = 1;
 
@@ -107,22 +107,15 @@ pub(crate) async fn initialize_schema(pool: &SqlitePool) -> Result<(), sqlx::Err
         ))
         .execute(pool)
         .await?;
+        // cleanup 按 report_time 范围分片删除,桶表主键前缀是
+        // (create_time, cpu_id),无此索引时每次删除/取 MIN 都全表扫描,
+        // 长时间占用写锁并撞上 batch 写入的 busy_timeout 导致丢批。
+        sqlx::query(&format!(
+            "CREATE INDEX IF NOT EXISTS idx_{table}_report_time ON {table} (report_time)"
+        ))
+        .execute(pool)
+        .await?;
     }
-
-    sqlx::query(
-        "CREATE TABLE IF NOT EXISTS iface_metrics_5s (
-            ifindex INTEGER NOT NULL,
-            report_time INTEGER NOT NULL,
-            ingress_bytes INTEGER NOT NULL,
-            ingress_packets INTEGER NOT NULL,
-            egress_bytes INTEGER NOT NULL,
-            egress_packets INTEGER NOT NULL,
-            active_conns INTEGER NOT NULL,
-            PRIMARY KEY (ifindex, report_time)
-        )",
-    )
-    .execute(pool)
-    .await?;
 
     sqlx::query(
         "CREATE TABLE IF NOT EXISTS conn_summaries (
@@ -309,7 +302,10 @@ async fn upsert_bucket_tx(
             ingress_packets = MAX({table}.ingress_packets, excluded.ingress_packets),
             egress_bytes = MAX({table}.egress_bytes, excluded.egress_bytes),
             egress_packets = MAX({table}.egress_packets, excluded.egress_packets),
-            status = MAX({table}.status, excluded.status),
+            status = CASE
+                WHEN excluded.create_time_ms >= {table}.create_time_ms THEN excluded.status
+                ELSE {table}.status
+            END,
             create_time_ms = MAX({table}.create_time_ms, excluded.create_time_ms)"
     ))
     .bind(write.metric.key.create_time as i64)
@@ -322,36 +318,6 @@ async fn upsert_bucket_tx(
     .bind(write.metric.egress_packets as i64)
     .bind(status as i64)
     .bind(write.metric.create_time_ms as i64)
-    .execute(tx.as_mut())
-    .await?;
-
-    Ok(())
-}
-
-async fn upsert_iface_bucket_tx(
-    tx: &mut Transaction<'_, Sqlite>,
-    write: &IfaceBucketWrite,
-) -> Result<(), sqlx::Error> {
-    sqlx::query(
-        "INSERT INTO iface_metrics_5s (
-            ifindex, report_time,
-            ingress_bytes, ingress_packets, egress_bytes, egress_packets,
-            active_conns
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
-        ON CONFLICT (ifindex, report_time) DO UPDATE SET
-            ingress_bytes = iface_metrics_5s.ingress_bytes + excluded.ingress_bytes,
-            ingress_packets = iface_metrics_5s.ingress_packets + excluded.ingress_packets,
-            egress_bytes = iface_metrics_5s.egress_bytes + excluded.egress_bytes,
-            egress_packets = iface_metrics_5s.egress_packets + excluded.egress_packets,
-            active_conns = MAX(iface_metrics_5s.active_conns, excluded.active_conns)",
-    )
-    .bind(write.ifindex as i64)
-    .bind(write.report_time as i64)
-    .bind(write.ingress_bytes as i64)
-    .bind(write.ingress_packets as i64)
-    .bind(write.egress_bytes as i64)
-    .bind(write.egress_packets as i64)
-    .bind(write.active_conns as i64)
     .execute(tx.as_mut())
     .await?;
 
@@ -384,10 +350,6 @@ pub(crate) async fn apply_connect_batch(
         for write in batch.bucket_writes.iter().filter(|write| write.kind == kind) {
             upsert_bucket_tx(&mut tx, kind.table_name(), write).await?;
         }
-    }
-
-    for write in &batch.iface_bucket_writes {
-        upsert_iface_bucket_tx(&mut tx, write).await?;
     }
 
     tx.commit().await
@@ -752,15 +714,11 @@ pub(crate) async fn cleanup_old_summaries(
 pub(crate) async fn cleanup_old_buckets(
     pool: &SqlitePool,
     cutoffs: [(BucketKind, u64); 3],
-    iface_cutoff: u64,
     cleanup_time_budget_ms: u64,
     cleanup_slice_window_secs: u64,
 ) -> Result<(), sqlx::Error> {
     let deadline = Instant::now() + Duration::from_millis(cleanup_time_budget_ms.max(1));
     let slice_window_ms = cleanup_slice_window_secs.max(1) * 1000;
-
-    delete_table_in_slices(pool, "iface_metrics_5s", iface_cutoff, slice_window_ms, deadline)
-        .await?;
 
     for (kind, cutoff) in cutoffs {
         if Instant::now() >= deadline {
@@ -821,6 +779,7 @@ async fn delete_table_in_slices(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ingest::IfaceBucketWrite;
     use crate::persistent::sqlite::open_connect_pool;
     use landscape_common::metric::connect::{ConnectKey, ConnectMetric, ConnectStatusType};
     use std::net::{IpAddr, Ipv4Addr};
@@ -874,7 +833,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn bucket_upsert_uses_greatest_and_iface_accumulates() {
+    async fn bucket_upsert_uses_greatest_for_counters() {
         let (_dir, pool) = test_pool().await;
         let key = ConnectKey { create_time: 1_000, cpu_id: 1 };
         let bucket_time = 60_000u64;
@@ -891,15 +850,6 @@ mod tests {
             metric: first.clone(),
             bucket_report_time: bucket_time,
         });
-        batch.iface_bucket_writes.push(IfaceBucketWrite {
-            ifindex: 11,
-            report_time: bucket_time,
-            ingress_bytes: 100,
-            ingress_packets: 10,
-            egress_bytes: 200,
-            egress_packets: 20,
-            active_conns: 1,
-        });
         apply_connect_batch(&pool, &batch).await.unwrap();
 
         let mut second_batch = PersistenceBatch::default();
@@ -908,30 +858,52 @@ mod tests {
             metric: second,
             bucket_report_time: bucket_time,
         });
-        second_batch.iface_bucket_writes.push(IfaceBucketWrite {
-            ifindex: 11,
-            report_time: bucket_time,
-            ingress_bytes: 30,
-            ingress_packets: 3,
-            egress_bytes: 40,
-            egress_packets: 4,
-            active_conns: 1,
-        });
         apply_connect_batch(&pool, &second_batch).await.unwrap();
 
         let points = query_metric_by_key(&pool, &key, MetricResolution::Minute).await.unwrap();
         assert_eq!(points.len(), 1);
         assert_eq!(points[0].ingress_bytes, 100, "ingress uses greatest");
         assert_eq!(points[0].egress_bytes, 400, "egress uses greatest");
+    }
 
-        let iface_row =
-            sqlx::query("SELECT ingress_bytes, egress_bytes, active_conns FROM iface_metrics_5s")
-                .fetch_one(&pool)
-                .await
-                .unwrap();
-        assert_eq!(iface_row.get::<i64, _>(0), 130, "iface accumulates");
-        assert_eq!(iface_row.get::<i64, _>(1), 240, "iface accumulates");
-        assert_eq!(iface_row.get::<i64, _>(2), 1);
+    #[tokio::test]
+    async fn bucket_status_follows_newest_create_time_ms() {
+        let (_dir, pool) = test_pool().await;
+        let key = ConnectKey { create_time: 1_000, cpu_id: 1 };
+        let bucket_time = 60_000u64;
+
+        // 新上报(create_time_ms 更大)为 Active(1),旧行为 Disabled(2)。
+        // 修复前 status 取 MAX 会被旧 Disabled 永久钉死,现在按最新覆写。
+        let older = test_metric(1_000, 1, 65_000, 100, 200, ConnectStatusType::Disabled);
+        let mut newer = older.clone();
+        newer.status = ConnectStatusType::Active;
+        newer.create_time_ms = 2_000;
+        newer.ingress_bytes = 300;
+
+        let mut batch = PersistenceBatch::default();
+        batch.bucket_writes.push(BucketWrite {
+            kind: BucketKind::Minute,
+            metric: older,
+            bucket_report_time: bucket_time,
+        });
+        apply_connect_batch(&pool, &batch).await.unwrap();
+
+        let mut second_batch = PersistenceBatch::default();
+        second_batch.bucket_writes.push(BucketWrite {
+            kind: BucketKind::Minute,
+            metric: newer,
+            bucket_report_time: bucket_time,
+        });
+        apply_connect_batch(&pool, &second_batch).await.unwrap();
+
+        let points = query_metric_by_key(&pool, &key, MetricResolution::Minute).await.unwrap();
+        assert_eq!(points.len(), 1);
+        assert_eq!(
+            points[0].status,
+            ConnectStatusType::Active,
+            "status must follow the newest create_time_ms, not MAX(status)"
+        );
+        assert_eq!(points[0].ingress_bytes, 300, "counters keep greatest");
     }
 
     #[tokio::test]
@@ -1056,7 +1028,6 @@ mod tests {
         cleanup_old_buckets(
             &pool,
             [(BucketKind::Minute, 60_000), (BucketKind::Hour, 60_000), (BucketKind::Day, 60_000)],
-            60_000,
             1_000,
             60,
         )
@@ -1080,49 +1051,6 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(kept_points.len(), 1, "retained bucket survives");
-    }
-
-    #[tokio::test]
-    async fn cleanup_old_buckets_deletes_expired_iface_5s_rows() {
-        let (_dir, pool) = test_pool().await;
-
-        let mut batch = PersistenceBatch::default();
-        batch.iface_bucket_writes.push(IfaceBucketWrite {
-            ifindex: 11,
-            report_time: 55_000,
-            ingress_bytes: 100,
-            ingress_packets: 10,
-            egress_bytes: 200,
-            egress_packets: 20,
-            active_conns: 3,
-        });
-        batch.iface_bucket_writes.push(IfaceBucketWrite {
-            ifindex: 12,
-            report_time: 95_000,
-            ingress_bytes: 100,
-            ingress_packets: 10,
-            egress_bytes: 200,
-            egress_packets: 20,
-            active_conns: 3,
-        });
-        apply_connect_batch(&pool, &batch).await.unwrap();
-
-        cleanup_old_buckets(
-            &pool,
-            [(BucketKind::Minute, 60_000), (BucketKind::Hour, 60_000), (BucketKind::Day, 60_000)],
-            60_000,
-            1_000,
-            60,
-        )
-        .await
-        .unwrap();
-
-        let remaining: i64 = sqlx::query("SELECT COUNT(*) FROM iface_metrics_5s")
-            .fetch_one(&pool)
-            .await
-            .unwrap()
-            .get(0);
-        assert_eq!(remaining, 1, "expired iface row deleted, recent row survives");
     }
 
     #[tokio::test]
