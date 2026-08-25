@@ -1,12 +1,13 @@
 import { defineStore } from "pinia";
 import { ref } from "vue";
-import type { LandscapeMetricConfig } from "@landscape-router/types/api/schemas";
+import type {
+  LandscapeMetricConfig,
+  MetricMode,
+} from "@landscape-router/types/api/schemas";
 import { get_metric_config_edit, update_metric_config } from "@/api/sys/config";
 
-type MetricMode = "off" | "memory" | "duckdb";
-
 export const useMetricConfigStore = defineStore("metric_config", () => {
-  const mode = ref<MetricMode>("duckdb");
+  const mode = ref<MetricMode>("persistent");
   const connectSecondWindowMinutes = ref<number | undefined>(undefined);
   const connect1mRetentionDays = ref<number | undefined>(undefined);
   const connect1hRetentionDays = ref<number | undefined>(undefined);
@@ -23,7 +24,7 @@ export const useMetricConfigStore = defineStore("metric_config", () => {
 
   async function loadMetricConfig() {
     const { metric, hash } = await get_metric_config_edit();
-    mode.value = (metric.mode as MetricMode | undefined) ?? "duckdb";
+    mode.value = metric.mode ?? "persistent";
     connectSecondWindowMinutes.value =
       metric.connect_second_window_minutes ?? undefined;
     connect1mRetentionDays.value =
