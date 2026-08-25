@@ -1,5 +1,3 @@
-#[cfg(feature = "duckdb")]
-use arc_swap::ArcSwap;
 use landscape_common::config::MetricRuntimeConfig;
 use landscape_common::metric::connect::{
     ConnectKey, ConnectMetric, ConnectMetricPoint, ConnectRealtimeStatus, ConnectStatusType,
@@ -43,7 +41,7 @@ pub(crate) fn second_ring_capacity(config: &MetricRuntimeConfig) -> usize {
     target_points.saturating_add(8).clamp(32, 4096) as usize
 }
 
-#[cfg(any(feature = "duckdb", feature = "metric-persistent"))]
+#[cfg(feature = "metric-persistent")]
 pub(crate) fn clean_ip_string(ip: &IpAddr) -> String {
     match ip {
         IpAddr::V6(v6) => {
@@ -92,14 +90,14 @@ fn metric_to_realtime(metric: &ConnectMetric) -> ConnectRealtimeStatus {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(not(feature = "duckdb"), allow(dead_code))]
+#[cfg_attr(not(feature = "metric-persistent"), allow(dead_code))]
 pub(crate) enum BucketKind {
     Minute,
     Hour,
     Day,
 }
 
-#[cfg_attr(not(feature = "duckdb"), allow(dead_code))]
+#[cfg_attr(not(feature = "metric-persistent"), allow(dead_code))]
 impl BucketKind {
     pub(crate) fn table_name(self) -> &'static str {
         match self {
@@ -111,7 +109,7 @@ impl BucketKind {
 }
 
 #[derive(Debug, Clone)]
-#[cfg_attr(not(feature = "duckdb"), allow(dead_code))]
+#[cfg_attr(not(feature = "metric-persistent"), allow(dead_code))]
 pub(crate) struct BucketWrite {
     pub kind: BucketKind,
     pub metric: ConnectMetric,
@@ -253,62 +251,16 @@ fn scale_u64(value: u64, numerator: u64, denominator: u64) -> u64 {
 
 pub(crate) type IfaceRealtimeCache = Arc<RwLock<HashMap<u32, IfaceRealtimeAcc>>>;
 pub(crate) type IfaceBucketCache = Arc<RwLock<HashMap<IfaceBucketKey, IfaceBucketAcc>>>;
-#[cfg(feature = "duckdb")]
-pub(crate) type IfaceRealtimeSnapshot = Arc<ArcSwap<Vec<IfaceRealtimeStat>>>;
-#[cfg(feature = "duckdb")]
-pub(crate) type ConnectRealtimeSnapshot = Arc<ArcSwap<Vec<ConnectRealtimeStatus>>>;
-
-#[cfg(feature = "duckdb")]
-pub(crate) fn new_iface_realtime_snapshot() -> IfaceRealtimeSnapshot {
-    Arc::new(ArcSwap::from_pointee(Vec::new()))
-}
-
-#[cfg(feature = "duckdb")]
-pub(crate) fn new_connect_realtime_snapshot() -> ConnectRealtimeSnapshot {
-    Arc::new(ArcSwap::from_pointee(Vec::new()))
-}
-
-#[cfg(feature = "duckdb")]
-pub(crate) fn publish_iface_realtime_snapshot(
-    flow_cache: &FlowCache,
-    snapshot: &IfaceRealtimeSnapshot,
-    now_ms: u64,
-) {
-    snapshot.store(Arc::new(collect_realtime_iface_stats(flow_cache, now_ms)));
-}
-
-#[cfg(feature = "duckdb")]
-pub(crate) fn collect_iface_realtime_snapshot(
-    snapshot: &IfaceRealtimeSnapshot,
-) -> Vec<IfaceRealtimeStat> {
-    snapshot.load_full().as_ref().clone()
-}
-
-#[cfg(feature = "duckdb")]
-pub(crate) fn publish_connect_realtime_snapshot(
-    flow_cache: &FlowCache,
-    snapshot: &ConnectRealtimeSnapshot,
-    now_ms: u64,
-) {
-    snapshot.store(Arc::new(collect_connect_infos(flow_cache, now_ms)));
-}
-
-#[cfg(feature = "duckdb")]
-pub(crate) fn collect_connect_realtime_snapshot(
-    snapshot: &ConnectRealtimeSnapshot,
-) -> Vec<ConnectRealtimeStatus> {
-    snapshot.load_full().as_ref().clone()
-}
 
 #[derive(Debug, Clone, Default)]
-#[cfg_attr(not(feature = "duckdb"), allow(dead_code))]
+#[cfg_attr(not(feature = "metric-persistent"), allow(dead_code))]
 pub(crate) struct PersistenceBatch {
     pub summary_metrics: Vec<ConnectMetric>,
     pub bucket_writes: Vec<BucketWrite>,
     pub iface_bucket_writes: Vec<IfaceBucketWrite>,
 }
 
-#[cfg_attr(not(feature = "duckdb"), allow(dead_code))]
+#[cfg_attr(not(feature = "metric-persistent"), allow(dead_code))]
 impl PersistenceBatch {
     pub(crate) fn is_empty(&self) -> bool {
         self.summary_metrics.is_empty()
@@ -333,14 +285,10 @@ impl PersistenceBatch {
     fn push_bucket(&mut self, kind: BucketKind, metric: ConnectMetric, bucket_report_time: u64) {
         self.bucket_writes.push(BucketWrite { kind, metric, bucket_report_time });
     }
-
-    pub(crate) fn extend_iface_buckets(&mut self, writes: Vec<IfaceBucketWrite>) {
-        self.iface_bucket_writes.extend(writes);
-    }
 }
 
 #[derive(Debug, Clone)]
-#[cfg_attr(not(feature = "duckdb"), allow(dead_code))]
+#[allow(dead_code)]
 pub(crate) struct IfaceBucketWrite {
     pub ifindex: u32,
     pub report_time: u64,
@@ -708,7 +656,7 @@ pub(crate) fn process_connect_metric(
 }
 
 #[derive(Default)]
-#[cfg_attr(not(feature = "duckdb"), allow(dead_code))]
+#[cfg_attr(not(feature = "metric-persistent"), allow(dead_code))]
 pub(crate) struct FlowCacheStats {
     pub active_flows: usize,
     pub finalized_flows: usize,
@@ -757,7 +705,7 @@ pub(crate) fn cleanup_flow_cache(
     (stats, batch)
 }
 
-#[cfg(any(feature = "duckdb", feature = "metric-persistent"))]
+#[cfg(feature = "metric-persistent")]
 pub(crate) fn finalize_all_flows(
     flow_cache: &FlowCache,
     iface_realtime: &IfaceRealtimeCache,

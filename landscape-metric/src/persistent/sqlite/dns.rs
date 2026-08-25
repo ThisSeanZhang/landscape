@@ -197,7 +197,7 @@ pub(crate) async fn query_dns_history(
     Ok(DnsHistoryResponse { items, total: total.max(0) as usize })
 }
 
-/// 线性插值百分位,与 duckdb `percentile_cont` 语义一致。
+/// 线性插值百分位(P50/P95/P99)
 ///
 /// 流式读取 `ORDER BY duration_ms` 的结果,只保留各分位数对应插值位置的
 /// 少量行(floor/ceil,去重后最多 6 个),O(1) 内存;超过最大 rank 后提前退出。

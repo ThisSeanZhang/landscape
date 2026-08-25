@@ -162,11 +162,13 @@ sqlx = { version = "0.8.6", default-features = false, features = [
     "sqlite",
     "runtime-tokio-rustls",
 ] }
-duckdb = { version = "1.4.4", features = ["r2d2", "chrono"] }
 r2d2 = "0.8.10"
 arrow-array = "59.2.0"
 arrow-schema = "59.2.0"
-parquet = { version = "59.2.0", default-features = false, features = ["arrow", "zstd"] }
+parquet = { version = "59.2.0", default-features = false, features = [
+    "arrow",
+    "zstd",
+] }
 hdrhistogram = "7.5.4"
 fs2 = "0.4.3"
 

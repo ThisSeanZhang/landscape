@@ -7,33 +7,18 @@ edition.workspace = true
 landscape-common = { path = "../landscape-common" }
 landscape-core = { path = "../landscape-core" }
 
-arc-swap = { workspace = true }
 tokio = { workspace = true, features = ["sync", "time", "rt", "rt-multi-thread"] }
 tokio-util = { workspace = true, features = ["rt"] }
 tracing = { workspace = true }
 serde_json = { workspace = true }
 
-duckdb = { workspace = true, optional = true }
-futures-util = { workspace = true, optional = true }
-r2d2 = { workspace = true, optional = true }
 sqlx = { workspace = true, optional = true }
-arrow-array = { workspace = true, optional = true }
-arrow-schema = { workspace = true, optional = true }
-parquet = { workspace = true, optional = true }
+futures-util = { workspace = true, optional = true }
 hdrhistogram = { workspace = true, optional = true }
 
 [features]
 default = []
-metric-persistent = [
-    "dep:arrow-array",
-    "dep:arrow-schema",
-    "dep:parquet",
-    "dep:sqlx",
-    "dep:hdrhistogram",
-    "dep:futures-util",
-]
-duckdb = ["dep:duckdb", "dep:r2d2", "dep:sqlx"]
-duckdb-bundled = ["duckdb", "duckdb/bundled"]
+metric-persistent = ["dep:sqlx", "dep:futures-util", "dep:hdrhistogram"]
 
 [dev-dependencies]
 tempfile = { workspace = true }

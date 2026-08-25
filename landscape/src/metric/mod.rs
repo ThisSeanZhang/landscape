@@ -27,11 +27,6 @@ pub mod memory_store {
     pub use landscape_metric::MemoryMetricStore;
 }
 
-#[cfg(feature = "metric-duckdb")]
-pub mod duckdb {
-    pub use landscape_metric::DuckMetricStore;
-}
-
 #[derive(Clone)]
 struct MetricServiceState {
     config: MetricRuntimeConfig,

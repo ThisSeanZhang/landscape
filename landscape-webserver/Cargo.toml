@@ -71,6 +71,4 @@ sea-orm = { workspace = true }
 default = ["gateway", "metric-persistent"]
 gateway = ["dep:landscape-gateway"]
 static = ["landscape-ebpf/static"]
-metric-duckdb = ["landscape/metric-duckdb"]
-duckdb-bundled = ["landscape/duckdb-bundled"]
 metric-persistent = ["landscape/metric-persistent"]

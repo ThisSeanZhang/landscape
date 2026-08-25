@@ -88,8 +88,6 @@ workspace = true
 
 [features]
 default = ["metric-persistent"]
-metric-duckdb = ["landscape-metric/duckdb"]
-duckdb-bundled = ["metric-duckdb", "landscape-metric/duckdb-bundled"]
 metric-persistent = ["landscape-metric/metric-persistent"]
 
 [dev-dependencies]
