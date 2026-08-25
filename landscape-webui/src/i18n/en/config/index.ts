@@ -19,10 +19,11 @@ export default {
 
   metric_mode: "Metric Mode",
   metric_mode_desc:
-    "Disable metrics entirely, keep realtime data in memory only, or enable DuckDB persistence",
+    "Disable metrics entirely, keep realtime data in memory only, or enable persistent storage",
   metric_mode_off: "Off (OFF)",
   metric_mode_memory: "Memory Only (MEM)",
-  metric_mode_duckdb: "Persistent (DB)",
+  metric_mode_persistent: "Persistent (SQLite)",
+  metric_mode_duckdb: "DuckDB Persistent",
 
   language: "Language",
   theme: "Theme",

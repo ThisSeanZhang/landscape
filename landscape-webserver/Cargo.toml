@@ -68,7 +68,7 @@ tracing = { workspace = true }
 sea-orm = { workspace = true }
 
 [features]
-default = ["gateway"]
+default = ["gateway", "metric-persistent"]
 gateway = ["dep:landscape-gateway"]
 static = ["landscape-ebpf/static"]
 metric-duckdb = ["landscape/metric-duckdb"]

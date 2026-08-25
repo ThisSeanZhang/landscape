@@ -10,6 +10,7 @@ const { t } = useI18n();
 const modeOptions = computed(() => [
   { label: t("config.metric_mode_off"), value: "off" },
   { label: t("config.metric_mode_memory"), value: "memory" },
+  { label: t("config.metric_mode_persistent"), value: "persistent" },
   { label: t("config.metric_mode_duckdb"), value: "duckdb" },
 ]);
 

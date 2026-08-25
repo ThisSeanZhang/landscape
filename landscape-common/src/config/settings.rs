@@ -54,8 +54,8 @@ pub struct LandscapeStoreConfig {
 pub enum MetricMode {
     Off,
     Memory,
-    #[default]
     Duckdb,
+    #[default]
     Persistent,
 }
 
