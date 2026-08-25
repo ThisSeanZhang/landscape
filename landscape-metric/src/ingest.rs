@@ -43,7 +43,7 @@ pub(crate) fn second_ring_capacity(config: &MetricRuntimeConfig) -> usize {
     target_points.saturating_add(8).clamp(32, 4096) as usize
 }
 
-#[cfg(feature = "duckdb")]
+#[cfg(any(feature = "duckdb", feature = "metric-persistent"))]
 pub(crate) fn clean_ip_string(ip: &IpAddr) -> String {
     match ip {
         IpAddr::V6(v6) => {
@@ -757,7 +757,7 @@ pub(crate) fn cleanup_flow_cache(
     (stats, batch)
 }
 
-#[cfg(feature = "duckdb")]
+#[cfg(any(feature = "duckdb", feature = "metric-persistent"))]
 pub(crate) fn finalize_all_flows(
     flow_cache: &FlowCache,
     iface_realtime: &IfaceRealtimeCache,

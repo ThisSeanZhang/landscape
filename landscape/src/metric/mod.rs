@@ -61,19 +61,21 @@ fn ensure_metric_path(home_path: &Path) -> PathBuf {
 }
 
 impl MetricService {
-    pub async fn new(home_path: PathBuf, config: MetricRuntimeConfig) -> Self {
+    pub async fn new(home_path: PathBuf, config: MetricRuntimeConfig) -> Result<Self, String> {
         let metric_path = ensure_metric_path(&home_path);
-        let engine = MetricEngine::new(metric_path, config.clone()).await;
+        let engine = MetricEngine::new(metric_path, config.clone())
+            .await
+            .map_err(|error| format!("failed to initialize metric engine: {error}"))?;
         let status = WatchService::new();
 
-        MetricService {
+        Ok(MetricService {
             status,
             inner: Arc::new(MetricServiceInner {
                 home_path,
                 state: RwLock::new(MetricServiceState { config, engine }),
                 switch_lock: Mutex::new(()),
             }),
-        }
+        })
     }
 
     fn current_engine(&self) -> MetricEngine {
@@ -118,25 +120,84 @@ impl MetricService {
 
     pub async fn stop_service(&self) {
         self.status.wait_stop().await;
-        self.current_engine().shutdown();
+        self.current_engine().shutdown().await;
     }
 
-    pub async fn apply_runtime_config(&self, config: MetricRuntimeConfig) {
+    pub async fn apply_runtime_config(&self, config: MetricRuntimeConfig) -> Result<(), String> {
         let _guard = self.inner.switch_lock.lock().await;
+
         self.stop_service().await;
 
-        let new_engine =
-            MetricEngine::new(ensure_metric_path(&self.inner.home_path), config.clone()).await;
-        let old_engine = {
-            let mut state = self.inner.state.write().expect("metric service state poisoned");
-            let old_engine = std::mem::replace(&mut state.engine, new_engine);
-            state.config = config;
-            old_engine
+        let new_engine = match MetricEngine::new(
+            ensure_metric_path(&self.inner.home_path),
+            config.clone(),
+        )
+        .await
+        {
+            Ok(engine) => engine,
+            Err(error) => {
+                tracing::error!(
+                    "failed to rebuild metric engine for new config, restoring previous config: {}",
+                    error
+                );
+                let recovery_error = self.restore_previous_engine().await.err();
+                if !matches!(self.current_mode(), MetricMode::Off) {
+                    self.start_service().await;
+                }
+                return Err(match recovery_error {
+                    Some(recovery_error) => format!("{error}; {recovery_error}"),
+                    None => error,
+                });
+            }
         };
-        old_engine.shutdown();
+
+        {
+            let mut state = self.inner.state.write().expect("metric service state poisoned");
+            state.engine = new_engine;
+            state.config = config;
+        }
 
         if !matches!(self.current_mode(), MetricMode::Off) {
             self.start_service().await;
+        }
+        Ok(())
+    }
+
+    async fn restore_previous_engine(&self) -> Result<(), String> {
+        let previous_config = {
+            let state = self.inner.state.read().expect("metric service state poisoned");
+            state.config.clone()
+        };
+        match MetricEngine::new(ensure_metric_path(&self.inner.home_path), previous_config.clone())
+            .await
+        {
+            Ok(engine) => {
+                let mut state = self.inner.state.write().expect("metric service state poisoned");
+                state.engine = engine;
+                state.config = previous_config;
+                Ok(())
+            }
+            Err(error) => {
+                tracing::error!("failed to restore metric engine with previous config: {}", error);
+                let mut fallback_config = previous_config;
+                fallback_config.mode = MetricMode::Memory;
+                let fallback_engine = MetricEngine::new(
+                    ensure_metric_path(&self.inner.home_path),
+                    fallback_config.clone(),
+                )
+                .await
+                .map_err(|fallback_error| {
+                    format!(
+                        "failed to restore previous metric engine: {error}; failed to start memory fallback: {fallback_error}"
+                    )
+                })?;
+                let mut state = self.inner.state.write().expect("metric service state poisoned");
+                state.engine = fallback_engine;
+                state.config = fallback_config;
+                Err(format!(
+                    "failed to restore previous metric engine: {error}; running memory fallback"
+                ))
+            }
         }
     }
 

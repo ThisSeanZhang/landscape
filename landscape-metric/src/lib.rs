@@ -43,9 +43,9 @@ enum MetricBackend {
 }
 
 impl MetricBackend {
-    async fn new(base_path: PathBuf, config: MetricRuntimeConfig) -> Self {
+    async fn new(base_path: PathBuf, config: MetricRuntimeConfig) -> Result<Self, String> {
         match resolved_metric_mode(config.mode.clone()) {
-            MetricMode::Off => Self::Off,
+            MetricMode::Off => Ok(Self::Off),
             MetricMode::Memory => {
                 #[cfg(feature = "duckdb")]
                 tracing::info!("metric mode=memory, using in-memory realtime backend");
@@ -59,19 +59,19 @@ impl MetricBackend {
                     tracing::info!("metric mode=memory, using in-memory realtime backend");
                 }
 
-                Self::Memory(MemoryMetricStore::new(base_path, config).await)
+                Ok(Self::Memory(MemoryMetricStore::new(base_path, config).await))
             }
             MetricMode::Duckdb => {
                 #[cfg(feature = "duckdb")]
                 {
                     match DuckMetricStore::new(base_path.clone(), config.clone()).await {
-                        Ok(store) => Self::Duckdb(store),
+                        Ok(store) => Ok(Self::Duckdb(store)),
                         Err(error) => {
                             tracing::error!(
                                 "failed to initialize duckdb metric backend, falling back to memory: {}",
                                 error
                             );
-                            Self::Memory(MemoryMetricStore::new(base_path, config).await)
+                            Ok(Self::Memory(MemoryMetricStore::new(base_path, config).await))
                         }
                     }
                 }
@@ -81,20 +81,51 @@ impl MetricBackend {
                     tracing::warn!(
                         "metric mode 'duckdb' requested without landscape-metric duckdb feature, falling back to memory"
                     );
-                    Self::Memory(MemoryMetricStore::new(base_path, config).await)
+                    Ok(Self::Memory(MemoryMetricStore::new(base_path, config).await))
+                }
+            }
+            MetricMode::Persistent => {
+                #[cfg(feature = "metric-persistent")]
+                {
+                    match persistent::PersistentMetricStore::new(base_path.clone(), config.clone())
+                        .await
+                    {
+                        Ok(store) => Ok(Self::Persistent(store)),
+                        Err(error) => {
+                            // Metric data is not required for the system to run; a backend
+                            // failure must not block startup, so fall back to the in-memory
+                            // store and keep serving.
+                            tracing::error!(
+                                "failed to initialize persistent metric backend, falling back to memory: {}",
+                                error
+                            );
+                            Ok(Self::Memory(MemoryMetricStore::new(base_path, config).await))
+                        }
+                    }
+                }
+
+                #[cfg(not(feature = "metric-persistent"))]
+                {
+                    // Metric data is not required for the system to run; a missing feature
+                    // must not block startup, so fall back to the in-memory store.
+                    tracing::error!(
+                        "metric mode 'persistent' requested, but landscape-metric was built \
+                         without the metric-persistent feature; falling back to memory"
+                    );
+                    Ok(Self::Memory(MemoryMetricStore::new(base_path, config).await))
                 }
             }
         }
     }
 
-    fn shutdown(&self) {
+    async fn shutdown(&self) {
         match self {
             Self::Off => {}
             Self::Memory(store) => store.shutdown(),
             #[cfg(feature = "duckdb")]
             Self::Duckdb(store) => store.shutdown(),
             #[cfg(feature = "metric-persistent")]
-            Self::Persistent(_) => {}
+            Self::Persistent(store) => store.shutdown().await,
         }
     }
 
@@ -105,7 +136,7 @@ impl MetricBackend {
             #[cfg(feature = "duckdb")]
             Self::Duckdb(store) => Some(store.get_connect_msg_channel()),
             #[cfg(feature = "metric-persistent")]
-            Self::Persistent(_) => None,
+            Self::Persistent(store) => Some(store.get_connect_msg_channel()),
         }
     }
 
@@ -116,7 +147,7 @@ impl MetricBackend {
             #[cfg(feature = "duckdb")]
             Self::Duckdb(store) => Some(store.get_dns_msg_channel()),
             #[cfg(feature = "metric-persistent")]
-            Self::Persistent(_) => None,
+            Self::Persistent(store) => Some(store.get_dns_msg_channel()),
         }
     }
 
@@ -127,7 +158,7 @@ impl MetricBackend {
             #[cfg(feature = "duckdb")]
             Self::Duckdb(store) => store.connect_infos().await,
             #[cfg(feature = "metric-persistent")]
-            Self::Persistent(_) => Vec::new(),
+            Self::Persistent(store) => store.connect_infos().await,
         }
     }
 
@@ -138,7 +169,7 @@ impl MetricBackend {
             #[cfg(feature = "duckdb")]
             Self::Duckdb(store) => store.get_realtime_ip_stats(is_src).await,
             #[cfg(feature = "metric-persistent")]
-            Self::Persistent(_) => Vec::new(),
+            Self::Persistent(store) => store.get_realtime_ip_stats(is_src).await,
         }
     }
 
@@ -149,7 +180,7 @@ impl MetricBackend {
             #[cfg(feature = "duckdb")]
             Self::Duckdb(store) => store.get_realtime_iface_stats().await,
             #[cfg(feature = "metric-persistent")]
-            Self::Persistent(_) => Vec::new(),
+            Self::Persistent(store) => store.get_realtime_iface_stats().await,
         }
     }
 
@@ -164,7 +195,7 @@ impl MetricBackend {
             #[cfg(feature = "duckdb")]
             Self::Duckdb(store) => store.query_metric_by_key(key, resolution).await,
             #[cfg(feature = "metric-persistent")]
-            Self::Persistent(_) => Vec::new(),
+            Self::Persistent(store) => store.query_metric_by_key(key, resolution).await,
         }
     }
 
@@ -178,7 +209,7 @@ impl MetricBackend {
             #[cfg(feature = "duckdb")]
             Self::Duckdb(store) => store.history_summaries_complex(params).await,
             #[cfg(feature = "metric-persistent")]
-            Self::Persistent(_) => Vec::new(),
+            Self::Persistent(store) => store.history_summaries_complex(params).await,
         }
     }
 
@@ -189,7 +220,7 @@ impl MetricBackend {
             #[cfg(feature = "duckdb")]
             Self::Duckdb(store) => store.history_src_ip_stats(params).await,
             #[cfg(feature = "metric-persistent")]
-            Self::Persistent(_) => Vec::new(),
+            Self::Persistent(store) => store.history_src_ip_stats(params).await,
         }
     }
 
@@ -200,7 +231,7 @@ impl MetricBackend {
             #[cfg(feature = "duckdb")]
             Self::Duckdb(store) => store.history_dst_ip_stats(params).await,
             #[cfg(feature = "metric-persistent")]
-            Self::Persistent(_) => Vec::new(),
+            Self::Persistent(store) => store.history_dst_ip_stats(params).await,
         }
     }
 
@@ -211,7 +242,7 @@ impl MetricBackend {
             #[cfg(feature = "duckdb")]
             Self::Duckdb(store) => store.get_global_stats(force_refresh).await,
             #[cfg(feature = "metric-persistent")]
-            Self::Persistent(_) => Ok(ConnectGlobalStats::default()),
+            Self::Persistent(store) => store.get_global_stats(force_refresh).await,
         }
     }
 
@@ -222,7 +253,7 @@ impl MetricBackend {
             #[cfg(feature = "duckdb")]
             Self::Duckdb(store) => store.query_dns_history(params).await,
             #[cfg(feature = "metric-persistent")]
-            Self::Persistent(_) => DnsHistoryResponse::default(),
+            Self::Persistent(store) => store.query_dns_history(params).await,
         }
     }
 
@@ -233,7 +264,7 @@ impl MetricBackend {
             #[cfg(feature = "duckdb")]
             Self::Duckdb(store) => store.get_dns_summary(params).await,
             #[cfg(feature = "metric-persistent")]
-            Self::Persistent(_) => DnsSummaryResponse::default(),
+            Self::Persistent(store) => store.get_dns_summary(params).await,
         }
     }
 
@@ -247,7 +278,7 @@ impl MetricBackend {
             #[cfg(feature = "duckdb")]
             Self::Duckdb(store) => store.get_dns_lightweight_summary(params).await,
             #[cfg(feature = "metric-persistent")]
-            Self::Persistent(_) => DnsLightweightSummaryResponse::default(),
+            Self::Persistent(store) => store.get_dns_lightweight_summary(params).await,
         }
     }
 }
@@ -259,9 +290,9 @@ pub struct MetricEngine {
 }
 
 impl MetricEngine {
-    pub async fn new(base_path: PathBuf, config: MetricRuntimeConfig) -> Self {
-        let backend = MetricBackend::new(base_path, config.clone()).await;
-        Self { config, backend }
+    pub async fn new(base_path: PathBuf, config: MetricRuntimeConfig) -> Result<Self, String> {
+        let backend = MetricBackend::new(base_path, config.clone()).await?;
+        Ok(Self { config, backend })
     }
 
     pub fn mode(&self) -> MetricMode {
@@ -276,8 +307,8 @@ impl MetricEngine {
         self.backend.get_dns_msg_channel()
     }
 
-    pub fn shutdown(&self) {
-        self.backend.shutdown();
+    pub async fn shutdown(&self) {
+        self.backend.shutdown().await;
     }
 
     pub async fn connect_infos(&self) -> Vec<ConnectRealtimeStatus> {
@@ -345,18 +376,26 @@ impl MetricEngine {
 }
 
 pub fn resolved_metric_mode(mode: MetricMode) -> MetricMode {
-    #[cfg(feature = "duckdb")]
-    {
-        mode
-    }
-
-    #[cfg(not(feature = "duckdb"))]
-    {
-        if matches!(mode, MetricMode::Duckdb) {
-            MetricMode::Memory
-        } else {
+    if matches!(mode, MetricMode::Duckdb) {
+        #[cfg(feature = "duckdb")]
+        {
             mode
         }
+        #[cfg(not(feature = "duckdb"))]
+        {
+            MetricMode::Memory
+        }
+    } else if matches!(mode, MetricMode::Persistent) {
+        #[cfg(feature = "metric-persistent")]
+        {
+            mode
+        }
+        #[cfg(not(feature = "metric-persistent"))]
+        {
+            MetricMode::Memory
+        }
+    } else {
+        mode
     }
 }
 
@@ -372,6 +411,17 @@ mod tests {
         assert!(matches!(mode, MetricMode::Duckdb));
 
         #[cfg(not(feature = "duckdb"))]
+        assert!(matches!(mode, MetricMode::Memory));
+    }
+
+    #[test]
+    fn persistent_metric_mode_resolves_based_on_feature() {
+        let mode = resolved_metric_mode(MetricMode::Persistent);
+
+        #[cfg(feature = "metric-persistent")]
+        assert!(matches!(mode, MetricMode::Persistent));
+
+        #[cfg(not(feature = "metric-persistent"))]
         assert!(matches!(mode, MetricMode::Memory));
     }
 }

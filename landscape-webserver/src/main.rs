@@ -122,6 +122,8 @@ pub enum StartupError {
     Database(#[from] DbError),
     #[error("{0}")]
     Cert(String),
+    #[error("metric: {0}")]
+    Metric(String),
 }
 
 async fn prepare_startup_init(
@@ -250,7 +252,9 @@ async fn run_system(
 
     let metric_service = startup_phase!(
         "metric_service.new",
-        MetricService::new(home_path.clone(), config.metric.clone()).await
+        MetricService::new(home_path.clone(), config.metric.clone())
+            .await
+            .map_err(StartupError::Metric)?
     );
 
     let cert_account_service = startup_phase!(

@@ -56,6 +56,7 @@ pub enum MetricMode {
     Memory,
     #[default]
     Duckdb,
+    Persistent,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
