@@ -7,11 +7,12 @@ use std::collections::{HashMap, VecDeque};
 use std::net::IpAddr;
 use std::sync::{Arc, RwLock};
 
+use super::batch::{Batch, BucketKind};
+
 pub(crate) const CHANNEL_CAPACITY: usize = 1024;
 pub(crate) const MS_PER_MINUTE: u64 = 60 * 1000;
 pub(crate) const MS_PER_HOUR: u64 = 60 * MS_PER_MINUTE;
 pub(crate) const MS_PER_DAY: u64 = 24 * MS_PER_HOUR;
-pub(crate) const IFACE_BUCKET_MS: u64 = 5 * 1000;
 const MS_PER_TEN_MINUTES: u64 = 10 * MS_PER_MINUTE;
 const STALE_TIMEOUT_MS: u64 = 5 * MS_PER_MINUTE;
 const DEFAULT_CONNECT_SAMPLE_INTERVAL_MS: u64 = 5 * 1000;
@@ -39,20 +40,6 @@ pub(crate) fn second_window_ms(config: &MetricRuntimeConfig) -> u64 {
 pub(crate) fn second_ring_capacity(config: &MetricRuntimeConfig) -> usize {
     let target_points = second_window_ms(config) / DEFAULT_CONNECT_SAMPLE_INTERVAL_MS;
     target_points.saturating_add(8).clamp(32, 4096) as usize
-}
-
-#[cfg(feature = "metric-persistent")]
-pub(crate) fn clean_ip_string(ip: &IpAddr) -> String {
-    match ip {
-        IpAddr::V6(v6) => {
-            if let Some(v4) = v6.to_ipv4_mapped() {
-                v4.to_string()
-            } else {
-                v6.to_string()
-            }
-        }
-        IpAddr::V4(v4) => v4.to_string(),
-    }
 }
 
 fn metric_to_point(metric: &ConnectMetric) -> ConnectMetricPoint {
@@ -87,33 +74,6 @@ fn metric_to_realtime(metric: &ConnectMetric) -> ConnectRealtimeStatus {
         last_report_time: metric.report_time,
         status: metric.status.clone(),
     }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(not(feature = "metric-persistent"), allow(dead_code))]
-pub(crate) enum BucketKind {
-    Minute,
-    Hour,
-    Day,
-}
-
-#[cfg_attr(not(feature = "metric-persistent"), allow(dead_code))]
-impl BucketKind {
-    pub(crate) fn table_name(self) -> &'static str {
-        match self {
-            Self::Minute => "conn_metrics_1m",
-            Self::Hour => "conn_metrics_1h",
-            Self::Day => "conn_metrics_1d",
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-#[cfg_attr(not(feature = "metric-persistent"), allow(dead_code))]
-pub(crate) struct BucketWrite {
-    pub kind: BucketKind,
-    pub metric: ConnectMetric,
-    pub bucket_report_time: u64,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -154,32 +114,6 @@ impl IfaceRealtimeAcc {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub(crate) struct IfaceBucketKey {
-    pub ifindex: u32,
-    pub bucket_start: u64,
-}
-
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub(crate) struct IfaceBucketAcc {
-    pub ingress_bytes: u64,
-    pub ingress_packets: u64,
-    pub egress_bytes: u64,
-    pub egress_packets: u64,
-    pub active_conns: u32,
-    pub last_report_time: u64,
-}
-
-impl IfaceBucketAcc {
-    fn add_delta(&mut self, delta: MetricDelta, report_time: u64) {
-        self.ingress_bytes = self.ingress_bytes.saturating_add(delta.ingress_bytes);
-        self.ingress_packets = self.ingress_packets.saturating_add(delta.ingress_packets);
-        self.egress_bytes = self.egress_bytes.saturating_add(delta.egress_bytes);
-        self.egress_packets = self.egress_packets.saturating_add(delta.egress_packets);
-        self.last_report_time = self.last_report_time.max(report_time);
-    }
-}
-
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 struct MetricDelta {
     ingress_bytes: u64,
@@ -206,98 +140,9 @@ impl MetricDelta {
             egress_packets: metric.egress_packets,
         }
     }
-
-    fn is_zero(self) -> bool {
-        self.ingress_bytes == 0
-            && self.ingress_packets == 0
-            && self.egress_bytes == 0
-            && self.egress_packets == 0
-    }
-
-    fn scale(self, numerator: u64, denominator: u64) -> Self {
-        if denominator == 0 {
-            return Self::default();
-        }
-        Self {
-            ingress_bytes: scale_u64(self.ingress_bytes, numerator, denominator),
-            ingress_packets: scale_u64(self.ingress_packets, numerator, denominator),
-            egress_bytes: scale_u64(self.egress_bytes, numerator, denominator),
-            egress_packets: scale_u64(self.egress_packets, numerator, denominator),
-        }
-    }
-
-    fn saturating_sub(self, other: Self) -> Self {
-        Self {
-            ingress_bytes: self.ingress_bytes.saturating_sub(other.ingress_bytes),
-            ingress_packets: self.ingress_packets.saturating_sub(other.ingress_packets),
-            egress_bytes: self.egress_bytes.saturating_sub(other.egress_bytes),
-            egress_packets: self.egress_packets.saturating_sub(other.egress_packets),
-        }
-    }
-
-    fn saturating_add(self, other: Self) -> Self {
-        Self {
-            ingress_bytes: self.ingress_bytes.saturating_add(other.ingress_bytes),
-            ingress_packets: self.ingress_packets.saturating_add(other.ingress_packets),
-            egress_bytes: self.egress_bytes.saturating_add(other.egress_bytes),
-            egress_packets: self.egress_packets.saturating_add(other.egress_packets),
-        }
-    }
-}
-
-fn scale_u64(value: u64, numerator: u64, denominator: u64) -> u64 {
-    ((value as u128).saturating_mul(numerator as u128) / denominator as u128) as u64
 }
 
 pub(crate) type IfaceRealtimeCache = Arc<RwLock<HashMap<u32, IfaceRealtimeAcc>>>;
-pub(crate) type IfaceBucketCache = Arc<RwLock<HashMap<IfaceBucketKey, IfaceBucketAcc>>>;
-
-#[derive(Debug, Clone, Default)]
-#[cfg_attr(not(feature = "metric-persistent"), allow(dead_code))]
-pub(crate) struct PersistenceBatch {
-    pub summary_metrics: Vec<ConnectMetric>,
-    pub bucket_writes: Vec<BucketWrite>,
-    pub iface_bucket_writes: Vec<IfaceBucketWrite>,
-}
-
-#[cfg_attr(not(feature = "metric-persistent"), allow(dead_code))]
-impl PersistenceBatch {
-    pub(crate) fn is_empty(&self) -> bool {
-        self.summary_metrics.is_empty()
-            && self.bucket_writes.is_empty()
-            && self.iface_bucket_writes.is_empty()
-    }
-
-    pub(crate) fn op_count(&self) -> usize {
-        self.summary_metrics.len() + self.bucket_writes.len() + self.iface_bucket_writes.len()
-    }
-
-    pub(crate) fn extend(&mut self, other: Self) {
-        self.summary_metrics.extend(other.summary_metrics);
-        self.bucket_writes.extend(other.bucket_writes);
-        self.iface_bucket_writes.extend(other.iface_bucket_writes);
-    }
-
-    fn push_summary(&mut self, metric: ConnectMetric) {
-        self.summary_metrics.push(metric);
-    }
-
-    fn push_bucket(&mut self, kind: BucketKind, metric: ConnectMetric, bucket_report_time: u64) {
-        self.bucket_writes.push(BucketWrite { kind, metric, bucket_report_time });
-    }
-}
-
-#[derive(Debug, Clone)]
-#[allow(dead_code)]
-pub(crate) struct IfaceBucketWrite {
-    pub ifindex: u32,
-    pub report_time: u64,
-    pub ingress_bytes: u64,
-    pub ingress_packets: u64,
-    pub egress_bytes: u64,
-    pub egress_packets: u64,
-    pub active_conns: u32,
-}
 
 #[derive(Clone)]
 pub(crate) struct FlowState {
@@ -477,7 +322,7 @@ fn add_state_iface_realtime(iface_realtime: &IfaceRealtimeCache, state: &mut Flo
 fn finalize_state_batch(
     state: &mut FlowState,
     mark_disabled: bool,
-    batch: &mut PersistenceBatch,
+    batch: &mut Batch,
     iface_realtime: &IfaceRealtimeCache,
 ) {
     if state.finalized {
@@ -508,100 +353,19 @@ fn finalize_state_batch(
     state.finalized = true;
 }
 
-fn record_iface_delta(
-    iface_buckets: &IfaceBucketCache,
-    ifindex: u32,
-    start_time: u64,
-    end_time: u64,
-    delta: MetricDelta,
-) {
-    if delta.is_zero() {
-        return;
-    }
-
-    let mut cache = iface_buckets.write().expect("metric iface bucket cache poisoned");
-    if end_time <= start_time {
-        let bucket_start = bucket_start(end_time, IFACE_BUCKET_MS);
-        cache
-            .entry(IfaceBucketKey { ifindex, bucket_start })
-            .or_default()
-            .add_delta(delta, end_time);
-        return;
-    }
-
-    let total_duration = end_time - start_time;
-    let mut cursor = start_time;
-    let mut assigned = MetricDelta::default();
-    while cursor < end_time {
-        let bucket = bucket_start(cursor, IFACE_BUCKET_MS);
-        let bucket_end = bucket.saturating_add(IFACE_BUCKET_MS).min(end_time);
-        let segment_duration = bucket_end.saturating_sub(cursor);
-        let mut segment_delta = delta.scale(segment_duration, total_duration);
-        let is_last = bucket_end >= end_time;
-        if is_last {
-            segment_delta = delta.saturating_sub(assigned);
-        } else {
-            assigned = assigned.saturating_add(segment_delta);
-        }
-
-        cache
-            .entry(IfaceBucketKey { ifindex, bucket_start: bucket })
-            .or_default()
-            .add_delta(segment_delta, bucket_end);
-        cursor = bucket_end;
-    }
-}
-
-fn record_metric_iface_delta(
-    iface_buckets: &IfaceBucketCache,
-    previous: Option<&ConnectMetric>,
-    metric: &ConnectMetric,
-) {
-    let (start_time, delta) = match previous {
-        Some(previous) => (previous.report_time, MetricDelta::from_metrics(previous, metric)),
-        None => return,
-    };
-    record_iface_delta(iface_buckets, metric.ifindex, start_time, metric.report_time, delta);
-}
-
-pub(crate) fn drain_iface_buckets(
-    iface_buckets: &IfaceBucketCache,
-    iface_realtime: &IfaceRealtimeCache,
-) -> Vec<IfaceBucketWrite> {
-    let realtime = iface_realtime.read().expect("metric iface realtime cache poisoned");
-    let mut buckets = iface_buckets.write().expect("metric iface bucket cache poisoned");
-    let mut writes: Vec<_> = buckets
-        .drain()
-        .map(|(key, acc)| {
-            let active_conns = realtime.get(&key.ifindex).map(|acc| acc.active_conns).unwrap_or(0);
-            IfaceBucketWrite {
-                ifindex: key.ifindex,
-                report_time: key.bucket_start,
-                ingress_bytes: acc.ingress_bytes,
-                ingress_packets: acc.ingress_packets,
-                egress_bytes: acc.egress_bytes,
-                egress_packets: acc.egress_packets,
-                active_conns,
-            }
-        })
-        .collect();
-    writes.sort_by_key(|w| (w.report_time, w.ifindex));
-    writes
-}
-
+/// 聚合一条连接指标:维护 flow 状态机,产出跨分钟/小时/日边界及终结时的批次片段。
 pub(crate) fn process_connect_metric(
     flow_cache: &FlowCache,
     iface_realtime: &IfaceRealtimeCache,
-    iface_buckets: &IfaceBucketCache,
     metric: ConnectMetric,
     second_window_ms: u64,
     second_ring_cap: usize,
-) -> PersistenceBatch {
+) -> Batch {
     let curr_minute_slot = minute_slot(metric.report_time);
     let curr_hour_refresh_slot = hour_refresh_slot(metric.report_time);
     let curr_day_refresh_slot = day_refresh_slot(metric.report_time);
 
-    let mut batch = PersistenceBatch::default();
+    let mut batch = Batch::default();
     let mut cache = flow_cache.write().expect("metric flow cache poisoned");
     match cache.entry(metric.key.clone()) {
         std::collections::hash_map::Entry::Occupied(mut entry) => {
@@ -610,7 +374,6 @@ pub(crate) fn process_connect_metric(
                 return batch;
             }
 
-            record_metric_iface_delta(iface_buckets, Some(&state.last_metric), &metric);
             remove_state_iface_realtime(iface_realtime, state);
 
             let previous_minute_bucket = minute_slot(state.last_metric.report_time);
@@ -640,7 +403,6 @@ pub(crate) fn process_connect_metric(
             }
         }
         std::collections::hash_map::Entry::Vacant(entry) => {
-            record_metric_iface_delta(iface_buckets, None, &metric);
             let should_finalize = metric.status == ConnectStatusType::Disabled;
             let mut state = FlowState::new(metric, second_window_ms, second_ring_cap);
             if should_finalize {
@@ -656,7 +418,6 @@ pub(crate) fn process_connect_metric(
 }
 
 #[derive(Default)]
-#[cfg_attr(not(feature = "metric-persistent"), allow(dead_code))]
 pub(crate) struct FlowCacheStats {
     pub active_flows: usize,
     pub finalized_flows: usize,
@@ -669,14 +430,14 @@ pub(crate) fn cleanup_flow_cache(
     iface_realtime: &IfaceRealtimeCache,
     now_ms: u64,
     second_window_ms: u64,
-) -> (FlowCacheStats, PersistenceBatch) {
+) -> (FlowCacheStats, Batch) {
     let stale_cutoff = now_ms.saturating_sub(STALE_TIMEOUT_MS);
     let window_cutoff = now_ms.saturating_sub(second_window_ms);
 
     let mut cache = flow_cache.write().expect("metric flow cache poisoned");
     let mut expired_keys = Vec::new();
     let mut stats = FlowCacheStats::default();
-    let mut batch = PersistenceBatch::default();
+    let mut batch = Batch::default();
 
     for (key, state) in cache.iter_mut() {
         if !state.finalized && state.realtime.last_report_time < stale_cutoff {
@@ -709,9 +470,9 @@ pub(crate) fn cleanup_flow_cache(
 pub(crate) fn finalize_all_flows(
     flow_cache: &FlowCache,
     iface_realtime: &IfaceRealtimeCache,
-) -> PersistenceBatch {
+) -> Batch {
     let mut cache = flow_cache.write().expect("metric flow cache poisoned");
-    let mut batch = PersistenceBatch::default();
+    let mut batch = Batch::default();
     for state in cache.values_mut() {
         finalize_state_batch(state, true, &mut batch, iface_realtime);
     }
@@ -753,27 +514,19 @@ pub(crate) fn collect_realtime_ip_stats(
     stats_map.into_iter().map(|(ip, stats)| IpRealtimeStat { ip, stats }).collect()
 }
 
+/// 实时接口统计直接读写路径上增量维护的 iface_realtime 缓存(单一数据源),
+/// 与 flow_cache 全扫结果一致,但查询开销与活跃接口数成正比而非连接数。
 pub(crate) fn collect_realtime_iface_stats(
-    flow_cache: &FlowCache,
+    iface_realtime: &IfaceRealtimeCache,
     now_ms: u64,
 ) -> Vec<IfaceRealtimeStat> {
-    let cache = flow_cache.read().expect("metric flow cache poisoned");
-    let mut stats_map: HashMap<u32, IfaceRealtimeAcc> = HashMap::new();
-
-    for state in cache.values().filter(|state| state.is_active(now_ms)) {
-        let stats = stats_map.entry(state.realtime.ifindex).or_default();
-        stats.ingress_bps = stats.ingress_bps.saturating_add(state.realtime.ingress_bps);
-        stats.egress_bps = stats.egress_bps.saturating_add(state.realtime.egress_bps);
-        stats.ingress_pps = stats.ingress_pps.saturating_add(state.realtime.ingress_pps);
-        stats.egress_pps = stats.egress_pps.saturating_add(state.realtime.egress_pps);
-        stats.active_conns = stats.active_conns.saturating_add(1);
-        stats.last_report_time = stats.last_report_time.max(state.realtime.last_report_time);
-    }
-
-    let mut stats: Vec<_> = stats_map
-        .into_iter()
+    let stale_cutoff = now_ms.saturating_sub(STALE_TIMEOUT_MS);
+    let cache = iface_realtime.read().expect("metric iface realtime cache poisoned");
+    let mut stats: Vec<_> = cache
+        .iter()
+        .filter(|(_, acc)| acc.last_report_time >= stale_cutoff)
         .map(|(ifindex, acc)| IfaceRealtimeStat {
-            ifindex,
+            ifindex: *ifindex,
             stats: IpAggregatedStats {
                 ingress_bps: acc.ingress_bps,
                 egress_bps: acc.egress_bps,
@@ -831,12 +584,8 @@ mod tests {
         }
     }
 
-    fn test_caches() -> (FlowCache, IfaceRealtimeCache, IfaceBucketCache) {
-        (
-            Arc::new(RwLock::new(HashMap::new())),
-            Arc::new(RwLock::new(HashMap::new())),
-            Arc::new(RwLock::new(HashMap::new())),
-        )
+    fn test_caches() -> (FlowCache, IfaceRealtimeCache) {
+        (Arc::new(RwLock::new(HashMap::new())), Arc::new(RwLock::new(HashMap::new())))
     }
 
     const WINDOW_MS: u64 = 5 * 60 * 1000;
@@ -844,11 +593,10 @@ mod tests {
 
     #[test]
     fn process_connect_metric_creates_active_flow_without_batch() {
-        let (flow, iface_realtime, iface_buckets) = test_caches();
+        let (flow, iface_realtime) = test_caches();
         let batch = process_connect_metric(
             &flow,
             &iface_realtime,
-            &iface_buckets,
             test_metric(1_000, 0, 60_000, 100, 200),
             WINDOW_MS,
             RING_CAP,
@@ -859,22 +607,15 @@ mod tests {
         assert_eq!(infos.len(), 1);
         assert_eq!(infos[0].key.cpu_id, 0);
         assert!(infos[0].ingress_bps > 0);
-        assert_eq!(infos[0].egress_bps > 0, true);
+        assert!(infos[0].egress_bps > 0);
     }
 
     #[test]
     fn process_connect_metric_disabled_flow_emits_buckets_and_summary() {
-        let (flow, iface_realtime, iface_buckets) = test_caches();
+        let (flow, iface_realtime) = test_caches();
         let mut metric = test_metric(1_000, 0, 60_000, 100, 200);
         metric.status = ConnectStatusType::Disabled;
-        let batch = process_connect_metric(
-            &flow,
-            &iface_realtime,
-            &iface_buckets,
-            metric,
-            WINDOW_MS,
-            RING_CAP,
-        );
+        let batch = process_connect_metric(&flow, &iface_realtime, metric, WINDOW_MS, RING_CAP);
 
         assert_eq!(batch.summary_metrics.len(), 1);
         assert_eq!(batch.bucket_writes.len(), 3);
@@ -889,11 +630,10 @@ mod tests {
 
     #[test]
     fn minute_slot_transition_emits_minute_bucket_and_summary() {
-        let (flow, iface_realtime, iface_buckets) = test_caches();
+        let (flow, iface_realtime) = test_caches();
         let first = process_connect_metric(
             &flow,
             &iface_realtime,
-            &iface_buckets,
             test_metric(1_000, 0, 60_000, 100, 200),
             WINDOW_MS,
             RING_CAP,
@@ -903,7 +643,6 @@ mod tests {
         let second = process_connect_metric(
             &flow,
             &iface_realtime,
-            &iface_buckets,
             test_metric(1_000, 0, 120_000, 300, 600),
             WINDOW_MS,
             RING_CAP,
@@ -917,11 +656,10 @@ mod tests {
 
     #[test]
     fn stale_flow_is_finalized_and_removed_by_cleanup() {
-        let (flow, iface_realtime, iface_buckets) = test_caches();
+        let (flow, iface_realtime) = test_caches();
         process_connect_metric(
             &flow,
             &iface_realtime,
-            &iface_buckets,
             test_metric(1_000, 0, 60_000, 100, 200),
             WINDOW_MS,
             RING_CAP,
@@ -937,11 +675,10 @@ mod tests {
 
     #[test]
     fn active_flow_survives_cleanup_within_window() {
-        let (flow, iface_realtime, iface_buckets) = test_caches();
+        let (flow, iface_realtime) = test_caches();
         process_connect_metric(
             &flow,
             &iface_realtime,
-            &iface_buckets,
             test_metric(1_000, 0, 60_000, 100, 200),
             WINDOW_MS,
             RING_CAP,
@@ -956,42 +693,13 @@ mod tests {
     }
 
     #[test]
-    fn iface_delta_is_split_across_five_second_buckets() {
-        let (flow, iface_realtime, iface_buckets) = test_caches();
-        process_connect_metric(
-            &flow,
-            &iface_realtime,
-            &iface_buckets,
-            test_metric(1_000, 0, 60_000, 100, 200),
-            WINDOW_MS,
-            RING_CAP,
-        );
-        process_connect_metric(
-            &flow,
-            &iface_realtime,
-            &iface_buckets,
-            test_metric(1_000, 0, 67_000, 200, 400),
-            WINDOW_MS,
-            RING_CAP,
-        );
-
-        let writes = drain_iface_buckets(&iface_buckets, &iface_realtime);
-        assert_eq!(writes.len(), 2);
-        assert_eq!(writes[0].report_time, 60_000);
-        assert_eq!(writes[1].report_time, 65_000);
-        assert_eq!(writes[0].ingress_bytes + writes[1].ingress_bytes, 100);
-        assert!(writes[0].ingress_bytes > 0 && writes[1].ingress_bytes > 0);
-    }
-
-    #[test]
     fn second_ring_points_respect_window_cutoff() {
-        let (flow, iface_realtime, iface_buckets) = test_caches();
+        let (flow, iface_realtime) = test_caches();
         let key = ConnectKey { create_time: 1_000, cpu_id: 0 };
         for t in [60_000u64, 61_000, 62_000, 63_000] {
             process_connect_metric(
                 &flow,
                 &iface_realtime,
-                &iface_buckets,
                 test_metric(1_000, 0, t, 100, 200),
                 WINDOW_MS,
                 RING_CAP,
@@ -1005,11 +713,10 @@ mod tests {
 
     #[test]
     fn realtime_ip_stats_aggregate_by_source_ip() {
-        let (flow, iface_realtime, iface_buckets) = test_caches();
+        let (flow, iface_realtime) = test_caches();
         process_connect_metric(
             &flow,
             &iface_realtime,
-            &iface_buckets,
             test_metric(1_000, 0, 60_000, 100, 200),
             WINDOW_MS,
             RING_CAP,
@@ -1017,7 +724,6 @@ mod tests {
         process_connect_metric(
             &flow,
             &iface_realtime,
-            &iface_buckets,
             test_metric(2_000, 1, 61_000, 300, 400),
             WINDOW_MS,
             RING_CAP,
@@ -1026,6 +732,132 @@ mod tests {
         let stats = collect_realtime_ip_stats(&flow, 70_000, true);
         assert_eq!(stats.len(), 1);
         assert_eq!(stats[0].stats.active_conns, 2);
-        assert_eq!(stats[0].stats.ingress_bps > 0, true);
+        assert!(stats[0].stats.ingress_bps > 0);
+    }
+
+    #[test]
+    fn iface_realtime_stats_read_incremental_cache() {
+        let (flow, iface_realtime) = test_caches();
+        process_connect_metric(
+            &flow,
+            &iface_realtime,
+            test_metric(1_000, 0, 60_000, 100, 200),
+            WINDOW_MS,
+            RING_CAP,
+        );
+        process_connect_metric(
+            &flow,
+            &iface_realtime,
+            test_metric(2_000, 1, 61_000, 300, 400),
+            WINDOW_MS,
+            RING_CAP,
+        );
+
+        let stats = collect_realtime_iface_stats(&iface_realtime, 70_000);
+        assert_eq!(stats.len(), 2);
+        assert!(stats.iter().all(|s| s.stats.active_conns == 1));
+        let total_conns: u32 = stats.iter().map(|s| s.stats.active_conns).sum();
+        assert_eq!(total_conns, 2);
+    }
+
+    #[test]
+    fn finalized_flows_leave_iface_realtime_cache() {
+        let (flow, iface_realtime) = test_caches();
+        process_connect_metric(
+            &flow,
+            &iface_realtime,
+            test_metric(1_000, 0, 60_000, 100, 200),
+            WINDOW_MS,
+            RING_CAP,
+        );
+        assert_eq!(collect_realtime_iface_stats(&iface_realtime, 70_000).len(), 1);
+
+        let mut closed = test_metric(1_000, 0, 61_000, 200, 400);
+        closed.status = ConnectStatusType::Disabled;
+        process_connect_metric(&flow, &iface_realtime, closed, WINDOW_MS, RING_CAP);
+
+        assert!(collect_realtime_iface_stats(&iface_realtime, 70_000).is_empty());
+    }
+
+    fn test_config(window_minutes: u64) -> MetricRuntimeConfig {
+        MetricRuntimeConfig {
+            mode: landscape_common::config::MetricMode::Memory,
+            connect_second_window_minutes: window_minutes,
+            connect_1m_retention_days: 1,
+            connect_1h_retention_days: 7,
+            connect_1d_retention_days: 30,
+            dns_retention_days: 7,
+            write_batch_size: 2,
+            write_flush_interval_secs: 3600,
+            db_max_memory_mb: 128,
+            db_max_threads: 1,
+            cleanup_interval_secs: 3600,
+            cleanup_time_budget_ms: 1_000,
+            cleanup_slice_window_secs: 60,
+        }
+    }
+
+    #[test]
+    fn bucket_start_aligns_down_to_bucket_boundary() {
+        assert_eq!(bucket_start(60_000, MS_PER_MINUTE), 60_000);
+        assert_eq!(bucket_start(65_000, MS_PER_MINUTE), 60_000);
+        assert_eq!(bucket_start(59_999, MS_PER_MINUTE), 0);
+        assert_eq!(bucket_start(3_700_000, MS_PER_HOUR), 3_600_000);
+        assert_eq!(bucket_start(86_400_000, MS_PER_DAY), 86_400_000);
+        assert_eq!(bucket_start(86_400_001, MS_PER_DAY), 86_400_000);
+    }
+
+    #[test]
+    fn slot_helpers_use_expected_granularity() {
+        assert_eq!(minute_slot(61_000), 60_000);
+        assert_eq!(hour_refresh_slot(605_000), 600_000);
+        assert_eq!(hour_refresh_slot(599_999), 0);
+        assert_eq!(day_refresh_slot(3_700_000), 3_600_000);
+        assert_eq!(day_refresh_slot(7_199_999), 7_200_000 - MS_PER_HOUR);
+    }
+
+    #[test]
+    fn second_window_ms_clamps_to_one_minute() {
+        assert_eq!(second_window_ms(&test_config(0)), 60_000);
+        assert_eq!(second_window_ms(&test_config(5)), 5 * 60 * 1000);
+    }
+
+    #[test]
+    fn second_ring_capacity_respects_clamp_bounds() {
+        assert_eq!(second_ring_capacity(&test_config(1)), 32);
+        assert_eq!(second_ring_capacity(&test_config(5)), 68);
+        assert_eq!(second_ring_capacity(&test_config(340)), 4088);
+        assert_eq!(second_ring_capacity(&test_config(100_000)), 4096);
+    }
+
+    #[cfg(feature = "metric-persistent")]
+    #[test]
+    fn finalize_all_flows_emits_disabled_batches_and_clears_realtime() {
+        let (flow, iface_realtime) = test_caches();
+        process_connect_metric(
+            &flow,
+            &iface_realtime,
+            test_metric(1_000, 0, 60_000, 100, 200),
+            WINDOW_MS,
+            RING_CAP,
+        );
+        process_connect_metric(
+            &flow,
+            &iface_realtime,
+            test_metric(2_000, 1, 61_000, 300, 400),
+            WINDOW_MS,
+            RING_CAP,
+        );
+        assert_eq!(collect_realtime_iface_stats(&iface_realtime, 70_000).len(), 2);
+
+        let batch = finalize_all_flows(&flow, &iface_realtime);
+        assert_eq!(batch.summary_metrics.len(), 2);
+        assert_eq!(batch.bucket_writes.len(), 6);
+        assert!(batch.summary_metrics.iter().all(|m| m.status == ConnectStatusType::Disabled));
+        assert!(collect_connect_infos(&flow, 70_000).is_empty());
+        assert!(collect_realtime_iface_stats(&iface_realtime, 70_000).is_empty());
+
+        let second = finalize_all_flows(&flow, &iface_realtime);
+        assert!(second.is_empty());
     }
 }

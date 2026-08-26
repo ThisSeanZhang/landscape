@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 use landscape_common::metric::connect::{
@@ -8,7 +9,18 @@ use landscape_common::metric::connect::{
 use landscape_core::time::get_current_time_ms;
 use sqlx::{QueryBuilder, Row, Sqlite, SqlitePool, Transaction};
 
-use crate::ingest::{clean_ip_string, BucketKind, BucketWrite, PersistenceBatch};
+use super::clean_ip_string;
+use crate::agg::{Batch, BucketKind, BucketWrite};
+
+impl BucketKind {
+    fn table_name(self) -> &'static str {
+        match self {
+            Self::Minute => "conn_metrics_1m",
+            Self::Hour => "conn_metrics_1h",
+            Self::Day => "conn_metrics_1d",
+        }
+    }
+}
 
 pub(crate) const GLOBAL_STATS_CACHE_KEY: i64 = 1;
 
@@ -110,8 +122,11 @@ pub(crate) async fn initialize_schema(pool: &SqlitePool) -> Result<(), sqlx::Err
         // cleanup 按 report_time 范围分片删除,桶表主键前缀是
         // (create_time, cpu_id),无此索引时每次删除/取 MIN 都全表扫描,
         // 长时间占用写锁并撞上 batch 写入的 busy_timeout 导致丢批。
+        // 复合索引覆盖范围扫描与 MIN 游标;版本号升级后在新库上创建,
+        // 无 DROP/ALTER 等修改语句。
         sqlx::query(&format!(
-            "CREATE INDEX IF NOT EXISTS idx_{table}_report_time ON {table} (report_time)"
+            "CREATE INDEX IF NOT EXISTS idx_{table}_report_time_key
+             ON {table} (report_time, create_time, cpu_id)"
         ))
         .execute(pool)
         .await?;
@@ -173,29 +188,6 @@ pub(crate) async fn initialize_schema(pool: &SqlitePool) -> Result<(), sqlx::Err
     .await?;
 
     Ok(())
-}
-
-async fn query_summary_totals_tx(
-    tx: &mut Transaction<'_, Sqlite>,
-    key: &ConnectKey,
-) -> Result<Option<SummaryTotals>, sqlx::Error> {
-    sqlx::query(
-        "SELECT total_ingress_bytes, total_egress_bytes, total_ingress_pkts, total_egress_pkts
-        FROM conn_summaries
-        WHERE create_time = ?1 AND cpu_id = ?2",
-    )
-    .bind(key.create_time as i64)
-    .bind(key.cpu_id as i64)
-    .fetch_optional(tx.as_mut())
-    .await
-    .map(|row_opt| {
-        row_opt.map(|row| SummaryTotals {
-            total_ingress_bytes: row.get::<i64, _>(0).max(0) as u64,
-            total_egress_bytes: row.get::<i64, _>(1).max(0) as u64,
-            total_ingress_pkts: row.get::<i64, _>(2).max(0) as u64,
-            total_egress_pkts: row.get::<i64, _>(3).max(0) as u64,
-        })
-    })
 }
 
 async fn upsert_summary_tx(
@@ -327,7 +319,7 @@ async fn upsert_bucket_tx(
 /// 将一聚合批次(桶 + 连接汇总)以单事务写入 connect.db。
 pub(crate) async fn apply_connect_batch(
     pool: &SqlitePool,
-    batch: &PersistenceBatch,
+    batch: &Batch,
 ) -> Result<(), sqlx::Error> {
     if batch.is_empty() {
         return Ok(());
@@ -336,14 +328,58 @@ pub(crate) async fn apply_connect_batch(
     let mut tx = pool.begin().await?;
     let last_calculate_time = get_current_time_ms().unwrap_or_default();
 
+    // 批量查询本批次涉及的旧汇总值。SQLite 对 bind 参数数量有限制，
+    // 因此按参数预算分块（每个 key 需要两个参数）。
+    let mut keys: Vec<&ConnectKey> =
+        batch.summary_metrics.iter().map(|metric| &metric.key).collect();
+    keys.sort_by_key(|key| (key.create_time, key.cpu_id));
+    keys.dedup();
+    let mut totals: HashMap<ConnectKey, SummaryTotals> = HashMap::with_capacity(keys.len());
+    const MAX_KEYS_PER_QUERY: usize = 400;
+    for key_chunk in keys.chunks(MAX_KEYS_PER_QUERY) {
+        let mut qb = QueryBuilder::<Sqlite>::new(
+            "SELECT create_time, cpu_id, total_ingress_bytes, total_egress_bytes, total_ingress_pkts, total_egress_pkts
+            FROM conn_summaries WHERE (create_time, cpu_id) IN (",
+        );
+        let mut first = true;
+        for key in key_chunk {
+            if !first {
+                qb.push(", ");
+            }
+            first = false;
+            qb.push("(");
+            qb.push_bind(key.create_time as i64);
+            qb.push(", ");
+            qb.push_bind(key.cpu_id as i64);
+            qb.push(")");
+        }
+        qb.push(")");
+        for row in qb.build().fetch_all(tx.as_mut()).await? {
+            totals.insert(
+                ConnectKey {
+                    create_time: row.get::<i64, _>(0).max(0) as u64,
+                    cpu_id: row.get::<i64, _>(1).max(0) as u32,
+                },
+                SummaryTotals {
+                    total_ingress_bytes: row.get::<i64, _>(2).max(0) as u64,
+                    total_egress_bytes: row.get::<i64, _>(3).max(0) as u64,
+                    total_ingress_pkts: row.get::<i64, _>(4).max(0) as u64,
+                    total_egress_pkts: row.get::<i64, _>(5).max(0) as u64,
+                },
+            );
+        }
+    }
+
     for metric in &batch.summary_metrics {
-        let previous_totals = query_summary_totals_tx(&mut tx, &metric.key).await?;
+        let previous_totals = totals.get(&metric.key).copied();
         upsert_summary_tx(&mut tx, metric).await?;
         let merged_totals = previous_totals
             .map(|totals| totals.merge_metric(metric))
             .unwrap_or_else(|| SummaryTotals::from_metric(metric));
         let delta = GlobalStatsDelta::from_summary_change(previous_totals, merged_totals);
         apply_global_stats_delta_tx(&mut tx, delta, last_calculate_time).await?;
+        // 同一批次内同 key 的后续 summary 以合并后的值为基准。
+        totals.insert(metric.key.clone(), merged_totals);
     }
 
     for kind in [BucketKind::Minute, BucketKind::Hour, BucketKind::Day] {
@@ -579,50 +615,43 @@ pub(crate) async fn query_connection_ip_history(
 pub(crate) async fn rebuild_global_stats_cache(
     pool: &SqlitePool,
 ) -> Result<ConnectGlobalStats, sqlx::Error> {
-    let row = sqlx::query(
-        "SELECT
-            COALESCE(SUM(total_ingress_bytes), 0),
-            COALESCE(SUM(total_egress_bytes), 0),
-            COALESCE(SUM(total_ingress_pkts), 0),
-            COALESCE(SUM(total_egress_pkts), 0),
-            COUNT(*)
-        FROM conn_summaries",
+    // 单条 UPDATE 中完成聚合和 cache 写入。SQLite 会在该写语句开始时
+    // 获取写锁，避免 SELECT 与后续 UPDATE 之间被并发写入插队。
+    let mut tx = pool.begin().await?;
+    let now = get_current_time_ms().unwrap_or_default();
+    sqlx::query(
+        "UPDATE conn_global_stats_cache
+         SET total_ingress_bytes = (SELECT COALESCE(SUM(total_ingress_bytes), 0) FROM conn_summaries),
+             total_egress_bytes = (SELECT COALESCE(SUM(total_egress_bytes), 0) FROM conn_summaries),
+             total_ingress_pkts = (SELECT COALESCE(SUM(total_ingress_pkts), 0) FROM conn_summaries),
+             total_egress_pkts = (SELECT COALESCE(SUM(total_egress_pkts), 0) FROM conn_summaries),
+             total_connect_count = (SELECT COUNT(*) FROM conn_summaries),
+             last_calculate_time = ?1
+         WHERE cache_key = ?2",
     )
-    .fetch_one(pool)
+    .bind(now as i64)
+    .bind(GLOBAL_STATS_CACHE_KEY)
+    .execute(tx.as_mut())
     .await?;
 
+    let row = sqlx::query(
+        "SELECT total_ingress_bytes, total_egress_bytes,
+                total_ingress_pkts, total_egress_pkts,
+                total_connect_count, last_calculate_time
+         FROM conn_global_stats_cache WHERE cache_key = ?1",
+    )
+    .bind(GLOBAL_STATS_CACHE_KEY)
+    .fetch_one(tx.as_mut())
+    .await?;
     let stats = ConnectGlobalStats {
         total_ingress_bytes: row.get::<i64, _>(0).max(0) as u64,
         total_egress_bytes: row.get::<i64, _>(1).max(0) as u64,
         total_ingress_pkts: row.get::<i64, _>(2).max(0) as u64,
         total_egress_pkts: row.get::<i64, _>(3).max(0) as u64,
         total_connect_count: row.get::<i64, _>(4).max(0) as u64,
-        last_calculate_time: get_current_time_ms().unwrap_or_default(),
+        last_calculate_time: row.get::<i64, _>(5).max(0) as u64,
     };
-
-    sqlx::query(
-        "INSERT INTO conn_global_stats_cache (
-            cache_key, total_ingress_bytes, total_egress_bytes,
-            total_ingress_pkts, total_egress_pkts, total_connect_count, last_calculate_time
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
-        ON CONFLICT (cache_key) DO UPDATE SET
-            total_ingress_bytes = excluded.total_ingress_bytes,
-            total_egress_bytes = excluded.total_egress_bytes,
-            total_ingress_pkts = excluded.total_ingress_pkts,
-            total_egress_pkts = excluded.total_egress_pkts,
-            total_connect_count = excluded.total_connect_count,
-            last_calculate_time = excluded.last_calculate_time",
-    )
-    .bind(GLOBAL_STATS_CACHE_KEY)
-    .bind(stats.total_ingress_bytes as i64)
-    .bind(stats.total_egress_bytes as i64)
-    .bind(stats.total_ingress_pkts as i64)
-    .bind(stats.total_egress_pkts as i64)
-    .bind(stats.total_connect_count as i64)
-    .bind(stats.last_calculate_time as i64)
-    .execute(pool)
-    .await?;
-
+    tx.commit().await?;
     Ok(stats)
 }
 
@@ -779,8 +808,7 @@ async fn delete_table_in_slices(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ingest::IfaceBucketWrite;
-    use crate::persistent::sqlite::open_connect_pool;
+    use crate::sink::persistent::sqlite::open_connect_pool;
     use landscape_common::metric::connect::{ConnectKey, ConnectMetric, ConnectStatusType};
     use std::net::{IpAddr, Ipv4Addr};
 
@@ -820,16 +848,8 @@ mod tests {
         (dir, pool)
     }
 
-    fn batch_with(
-        summary: Vec<ConnectMetric>,
-        bucket_writes: Vec<BucketWrite>,
-        iface_writes: Vec<IfaceBucketWrite>,
-    ) -> PersistenceBatch {
-        PersistenceBatch {
-            summary_metrics: summary,
-            bucket_writes,
-            iface_bucket_writes: iface_writes,
-        }
+    fn batch_with(summary: Vec<ConnectMetric>, bucket_writes: Vec<BucketWrite>) -> Batch {
+        Batch { summary_metrics: summary, bucket_writes }
     }
 
     #[tokio::test]
@@ -844,7 +864,7 @@ mod tests {
         second.egress_bytes = 400;
         second.create_time_ms = 2_000;
 
-        let mut batch = PersistenceBatch::default();
+        let mut batch = Batch::default();
         batch.bucket_writes.push(BucketWrite {
             kind: BucketKind::Minute,
             metric: first.clone(),
@@ -852,7 +872,7 @@ mod tests {
         });
         apply_connect_batch(&pool, &batch).await.unwrap();
 
-        let mut second_batch = PersistenceBatch::default();
+        let mut second_batch = Batch::default();
         second_batch.bucket_writes.push(BucketWrite {
             kind: BucketKind::Minute,
             metric: second,
@@ -880,7 +900,7 @@ mod tests {
         newer.create_time_ms = 2_000;
         newer.ingress_bytes = 300;
 
-        let mut batch = PersistenceBatch::default();
+        let mut batch = Batch::default();
         batch.bucket_writes.push(BucketWrite {
             kind: BucketKind::Minute,
             metric: older,
@@ -888,7 +908,7 @@ mod tests {
         });
         apply_connect_batch(&pool, &batch).await.unwrap();
 
-        let mut second_batch = PersistenceBatch::default();
+        let mut second_batch = Batch::default();
         second_batch.bucket_writes.push(BucketWrite {
             kind: BucketKind::Minute,
             metric: newer,
@@ -912,10 +932,10 @@ mod tests {
         let key = ConnectKey { create_time: 1_000, cpu_id: 1 };
 
         let first = test_metric(1_000, 1, 65_000, 100, 200, ConnectStatusType::Disabled);
-        apply_connect_batch(&pool, &batch_with(vec![first.clone()], vec![], vec![])).await.unwrap();
+        apply_connect_batch(&pool, &batch_with(vec![first.clone()], vec![])).await.unwrap();
 
         let second = test_metric(1_000, 1, 70_000, 300, 600, ConnectStatusType::Disabled);
-        apply_connect_batch(&pool, &batch_with(vec![second], vec![], vec![])).await.unwrap();
+        apply_connect_batch(&pool, &batch_with(vec![second], vec![])).await.unwrap();
 
         let stats = query_global_stats(&pool).await.unwrap();
         assert_eq!(stats.total_connect_count, 1, "same key counts once");
@@ -939,7 +959,7 @@ mod tests {
 
         let a = test_metric(1_000, 1, 65_000, 100, 200, ConnectStatusType::Disabled);
         let b = test_metric(1_000, 2, 66_000, 400, 800, ConnectStatusType::Disabled);
-        apply_connect_batch(&pool, &batch_with(vec![a, b], vec![], vec![])).await.unwrap();
+        apply_connect_batch(&pool, &batch_with(vec![a, b], vec![])).await.unwrap();
 
         let stats = query_global_stats(&pool).await.unwrap();
         assert_eq!(stats.total_connect_count, 2);
@@ -953,7 +973,7 @@ mod tests {
 
         let old = test_metric(1_000, 1, 65_000, 100, 200, ConnectStatusType::Disabled);
         let recent = test_metric(1_000, 2, 70_000, 400, 800, ConnectStatusType::Disabled);
-        apply_connect_batch(&pool, &batch_with(vec![old, recent], vec![], vec![])).await.unwrap();
+        apply_connect_batch(&pool, &batch_with(vec![old, recent], vec![])).await.unwrap();
 
         let rows = query_historical_summaries_complex(
             &pool,
@@ -988,7 +1008,7 @@ mod tests {
 
         let old = test_metric(1_000, 1, 65_000, 100, 200, ConnectStatusType::Disabled);
         let recent = test_metric(1_000, 2, 70_000, 400, 800, ConnectStatusType::Disabled);
-        apply_connect_batch(&pool, &batch_with(vec![old, recent], vec![], vec![])).await.unwrap();
+        apply_connect_batch(&pool, &batch_with(vec![old, recent], vec![])).await.unwrap();
 
         cleanup_old_summaries(&pool, 68_000).await.unwrap();
 
@@ -1012,7 +1032,7 @@ mod tests {
 
         let expired = test_metric(1_000, 1, 55_000, 100, 200, ConnectStatusType::Active);
         let kept = test_metric(1_000, 2, 95_000, 100, 200, ConnectStatusType::Active);
-        let mut batch = PersistenceBatch::default();
+        let mut batch = Batch::default();
         batch.bucket_writes.push(BucketWrite {
             kind: BucketKind::Minute,
             metric: expired,
@@ -1059,7 +1079,7 @@ mod tests {
 
         let a = test_metric(1_000, 1, 65_000, 100, 200, ConnectStatusType::Disabled);
         let b = test_metric(1_000, 2, 66_000, 400, 800, ConnectStatusType::Disabled);
-        apply_connect_batch(&pool, &batch_with(vec![a, b], vec![], vec![])).await.unwrap();
+        apply_connect_batch(&pool, &batch_with(vec![a, b], vec![])).await.unwrap();
 
         let rebuilt = rebuild_global_stats_cache(&pool).await.unwrap();
         assert_eq!(rebuilt.total_connect_count, 2);
@@ -1074,7 +1094,7 @@ mod tests {
     async fn history_limit_is_clamped_and_unlimited_when_omitted() {
         let (_dir, pool) = test_pool().await;
 
-        let mut batch = PersistenceBatch::default();
+        let mut batch = Batch::default();
         for cpu_id in 0..250u32 {
             batch.summary_metrics.push(test_metric(
                 1_000 + cpu_id as u64,
@@ -1108,5 +1128,157 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(zero_limit.len(), 1, "limit=0 clamped up to 1");
+    }
+
+    #[tokio::test]
+    async fn large_summary_batch_is_split_by_sqlite_parameter_budget() {
+        let (_dir, pool) = test_pool().await;
+        let mut batch = Batch::default();
+        for cpu_id in 0..1_000u32 {
+            batch.summary_metrics.push(test_metric(
+                10_000 + cpu_id as u64,
+                cpu_id,
+                65_000 + cpu_id as u64,
+                10,
+                20,
+                ConnectStatusType::Disabled,
+            ));
+        }
+        apply_connect_batch(&pool, &batch).await.unwrap();
+        let stats = query_global_stats(&pool).await.unwrap();
+        assert_eq!(stats.total_connect_count, 1_000);
+        assert_eq!(stats.total_ingress_bytes, 10_000);
+    }
+
+    #[test]
+    fn bucket_table_name_maps_to_resolution_tables() {
+        assert_eq!(BucketKind::Minute.table_name(), "conn_metrics_1m");
+        assert_eq!(BucketKind::Hour.table_name(), "conn_metrics_1h");
+        assert_eq!(BucketKind::Day.table_name(), "conn_metrics_1d");
+    }
+
+    #[tokio::test]
+    async fn global_stats_stale_is_stale_without_row_or_zero_time() {
+        let (_dir, pool) = test_pool().await;
+
+        sqlx::query(
+            "UPDATE conn_global_stats_cache SET last_calculate_time = 0 WHERE cache_key = 1",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        assert!(global_stats_stale(&pool, 86_400).await.unwrap(), "zero time is stale");
+
+        sqlx::query("DELETE FROM conn_global_stats_cache WHERE cache_key = 1")
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert!(global_stats_stale(&pool, 86_400).await.unwrap(), "missing row is stale");
+    }
+
+    #[tokio::test]
+    async fn global_stats_stale_respects_threshold() {
+        let (_dir, pool) = test_pool().await;
+        let stale_after_secs = 86_400;
+        let threshold_ms = stale_after_secs * 1000;
+        let now = get_current_time_ms().unwrap_or_default();
+
+        sqlx::query(
+            "UPDATE conn_global_stats_cache SET last_calculate_time = ?1 WHERE cache_key = 1",
+        )
+        .bind((now.saturating_sub(threshold_ms).saturating_sub(60_000)) as i64)
+        .execute(&pool)
+        .await
+        .unwrap();
+        assert!(global_stats_stale(&pool, stale_after_secs).await.unwrap(), "older than threshold");
+
+        sqlx::query(
+            "UPDATE conn_global_stats_cache SET last_calculate_time = ?1 WHERE cache_key = 1",
+        )
+        .bind((now + 60_000) as i64)
+        .execute(&pool)
+        .await
+        .unwrap();
+        assert!(
+            !global_stats_stale(&pool, stale_after_secs).await.unwrap(),
+            "fresh time stays non-stale"
+        );
+    }
+
+    fn build_common_filters_sql(params: &ConnectHistoryQueryParams) -> String {
+        let mut qb = QueryBuilder::<Sqlite>::new("SELECT * FROM conn_summaries");
+        let mut has_where = false;
+        push_connect_common_filters(&mut qb, params, &mut has_where);
+        qb.sql().to_string()
+    }
+
+    #[test]
+    fn connect_common_filters_build_where_clauses() {
+        let params = ConnectHistoryQueryParams {
+            start_time: Some(1_000),
+            end_time: Some(2_000),
+            src_ip: Some("10.0.0".to_string()),
+            dst_ip: Some("10.0.1".to_string()),
+            flow_id: Some(7),
+            ifindex: Some(42),
+            ..Default::default()
+        };
+        let sql = build_common_filters_sql(&params);
+        assert!(sql.starts_with("SELECT * FROM conn_summaries WHERE "));
+        assert!(sql.contains("last_report_time >= "));
+        assert!(sql.contains("last_report_time <= "));
+        assert!(sql.contains("src_ip LIKE "));
+        assert!(sql.contains("dst_ip LIKE "));
+        assert!(sql.contains("flow_id = "));
+        assert!(sql.contains("ifindex = "));
+        assert_eq!(sql.matches(" WHERE ").count(), 1, "single WHERE keyword");
+        assert_eq!(sql.matches(" AND ").count(), 5, "one AND per extra filter");
+    }
+
+    #[test]
+    fn connect_common_filters_without_params_emit_no_where() {
+        let sql = build_common_filters_sql(&ConnectHistoryQueryParams::default());
+        assert_eq!(sql, "SELECT * FROM conn_summaries");
+        let empty_ip = ConnectHistoryQueryParams {
+            src_ip: Some(String::new()),
+            dst_ip: Some(String::new()),
+            ..Default::default()
+        };
+        assert_eq!(build_common_filters_sql(&empty_ip), "SELECT * FROM conn_summaries");
+    }
+
+    #[test]
+    fn connect_summary_filters_build_where_clauses() {
+        let params = ConnectHistoryQueryParams {
+            port_start: Some(8_000),
+            port_end: Some(9_000),
+            l3_proto: Some(4),
+            l4_proto: Some(6),
+            status: Some(1),
+            gress: Some(0),
+            ..Default::default()
+        };
+        let mut qb = QueryBuilder::<Sqlite>::new("SELECT * FROM conn_summaries");
+        let mut has_where = false;
+        push_connect_summary_filters(&mut qb, &params, &mut has_where);
+        let sql = qb.sql().to_string();
+        assert!(sql.contains("src_port = "));
+        assert!(sql.contains("dst_port = "));
+        assert!(sql.contains("l3_proto = "));
+        assert!(sql.contains("l4_proto = "));
+        assert!(sql.contains("status = "));
+        assert!(sql.contains("gress = "));
+    }
+
+    #[test]
+    fn connect_summary_filters_without_params_emit_no_where() {
+        let mut qb = QueryBuilder::<Sqlite>::new("SELECT * FROM conn_summaries");
+        let mut has_where = false;
+        push_connect_summary_filters(
+            &mut qb,
+            &ConnectHistoryQueryParams::default(),
+            &mut has_where,
+        );
+        assert_eq!(qb.sql(), "SELECT * FROM conn_summaries");
     }
 }

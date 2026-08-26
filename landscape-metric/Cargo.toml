@@ -7,6 +7,7 @@ edition.workspace = true
 landscape-common = { path = "../landscape-common" }
 landscape-core = { path = "../landscape-core" }
 
+async-trait = { workspace = true }
 tokio = { workspace = true, features = ["sync", "time", "rt", "rt-multi-thread"] }
 tokio-util = { workspace = true, features = ["rt"] }
 tracing = { workspace = true }

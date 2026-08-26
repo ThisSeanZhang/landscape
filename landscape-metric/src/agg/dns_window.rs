@@ -87,6 +87,10 @@ impl DnsMinuteBucket {
             }
         }
 
+        // 仅 Normal/NxDomain 计入延迟。注意 NxDomain 中包含大量本地/缓存秒回的查询
+        // (拦截 TLD、缓存命中的 NXDOMAIN、被类型过滤且缓存为 NXDOMAIN 的查询等),
+        // 其耗时通常为 0~1ms,0ms 会被上方 max(1) 钳为 1ms;当这类查询在窗口内占多数时,
+        // p50/p95/p99 可能显示 1ms,这是正常现象,并非 block/filter/error/local/hit 被计入。
         if matches!(metric.status, DnsOutcome::Normal | DnsOutcome::NxDomain) {
             let _ = self.latency.record(metric.duration_ms.max(1) as u64);
         }

@@ -3325,6 +3325,7 @@ dependencies = [
 name = "landscape-metric"
 version = "0.23.1"
 dependencies = [
+ "async-trait",
  "futures-util",
  "hdrhistogram",
  "landscape-common",

@@ -69,7 +69,7 @@ pub const LANDSCAPE_LOG_DIR_NAME: &str = "logs";
 pub const LANDSCAPE_WEBROOT_DIR_NAME: &str = "static";
 // --- Metric Settings ---
 pub const LANDSCAPE_METRIC_DIR_NAME: &str = "metric";
-pub const LANDSCAPE_METRIC_DB_VERSION: u32 = 14;
+pub const LANDSCAPE_METRIC_DB_VERSION: u32 = 15;
 
 // Metric Retention Defaults
 pub const DEFAULT_METRIC_MODE: MetricMode = MetricMode::Persistent;

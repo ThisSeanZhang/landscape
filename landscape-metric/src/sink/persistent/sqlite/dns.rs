@@ -4,10 +4,15 @@ use landscape_common::metric::dns::{
     DnsHistoryQueryParams, DnsHistoryResponse, DnsLightweightSummaryResponse, DnsMetric,
     DnsSortKey, DnsStatEntry, DnsSummaryQueryParams, DnsSummaryResponse,
 };
+use std::time::{Duration, Instant};
+
 use sqlx::{QueryBuilder, Row, Sqlite, SqlitePool};
 
-use crate::ingest::clean_ip_string;
+use super::clean_ip_string;
 
+/// 延迟统计排除的 status;与内存窗口一致,仅 Normal/NxDomain 计入。
+/// NxDomain 含大量本地/缓存秒回查询(拦截 TLD、缓存 NXDOMAIN、被类型过滤的 NXDOMAIN),
+/// 耗时 0~1ms,故 p50/p95/p99 显示 1ms 属正常,并非 filter 等被计入。
 const LATENCY_EXCLUDE: &str = "'\"block\"', '\"filter\"', '\"error\"', '\"local\"', '\"hit\"'";
 
 const PERCENTILE_QUANTILES: [f64; 3] = [0.50, 0.95, 0.99];
@@ -456,22 +461,50 @@ pub(crate) async fn query_dns_lightweight_summary(
     })
 }
 
-pub(crate) async fn cleanup_old_dns(pool: &SqlitePool, cutoff: u64) -> Result<u64, sqlx::Error> {
-    // TODO(cleanup): 单条大范围 DELETE 没有分片也没有 cleanup_time_budget_ms 预算。
-    // dns_metrics 保留 7 天原始行,高 QPS 下表大时该删除会长时间独占写锁,
-    // 可能超过写入侧 busy_timeout(5s)导致 DNS 批次被丢弃;后续应仿照
-    // connect 桶表 cleanup_old_buckets/delete_table_in_slices 的分片 + 预算模式改造。
-    sqlx::query("DELETE FROM dns_metrics WHERE report_time < ?1")
+pub(crate) async fn cleanup_old_dns(
+    pool: &SqlitePool,
+    cutoff: u64,
+    cleanup_time_budget_ms: u64,
+    cleanup_slice_window_secs: u64,
+) -> Result<u64, sqlx::Error> {
+    let deadline = Instant::now() + Duration::from_millis(cleanup_time_budget_ms.max(1));
+    let slice_window_ms = cleanup_slice_window_secs.max(1).saturating_mul(1000);
+    let mut deleted_total = 0;
+
+    loop {
+        if Instant::now() >= deadline {
+            break;
+        }
+        let next = sqlx::query(
+            "SELECT MIN(report_time) FROM dns_metrics WHERE report_time >= 0 AND report_time < ?1",
+        )
         .bind(cutoff as i64)
-        .execute(pool)
-        .await
-        .map(|result| result.rows_affected())
+        .fetch_optional(pool)
+        .await?
+        .and_then(|row| row.get::<Option<i64>, _>(0))
+        .map(|value| value.max(0) as u64);
+        let Some(slice_start) = next else { break };
+        let slice_end = slice_start.saturating_add(slice_window_ms).min(cutoff);
+        if slice_end <= slice_start {
+            break;
+        }
+        let deleted =
+            sqlx::query("DELETE FROM dns_metrics WHERE report_time >= ?1 AND report_time < ?2")
+                .bind(slice_start as i64)
+                .bind(slice_end as i64)
+                .execute(pool)
+                .await?
+                .rows_affected();
+        deleted_total += deleted;
+    }
+
+    Ok(deleted_total)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::persistent::sqlite::open_dns_pool;
+    use crate::sink::persistent::sqlite::open_dns_pool;
     use landscape_common::metric::dns::{DnsMetric, DnsOutcome, DnsSortKey};
     use std::net::{IpAddr, Ipv4Addr};
 
@@ -685,7 +718,7 @@ mod tests {
         .await
         .unwrap();
 
-        let deleted = cleanup_old_dns(&pool, 150_000).await.unwrap();
+        let deleted = cleanup_old_dns(&pool, 150_000, 1_000, 60).await.unwrap();
         assert_eq!(deleted, 1);
 
         let response = query_dns_history(&pool, DnsHistoryQueryParams::default()).await.unwrap();
@@ -741,5 +774,142 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(deep_offset.items.len(), 0, "offset capped, tail query returns empty");
+    }
+
+    fn build_history_filters_sql(params: &DnsHistoryQueryParams) -> String {
+        let mut qb = QueryBuilder::<Sqlite>::new("SELECT * FROM dns_metrics");
+        let mut has_where = false;
+        push_history_filters(&mut qb, params, &mut has_where);
+        qb.sql().to_string()
+    }
+
+    #[test]
+    fn dns_history_filters_build_where_clauses() {
+        let params = DnsHistoryQueryParams {
+            start_time: Some(100_000),
+            end_time: Some(200_000),
+            flow_id: Some(3),
+            domain: Some("example.com.".to_string()),
+            src_ip: Some("10.0.0".to_string()),
+            query_type: Some("A".to_string()),
+            status: Some(DnsOutcome::Block),
+            min_duration_ms: Some(5),
+            max_duration_ms: Some(50),
+            ..Default::default()
+        };
+        let sql = build_history_filters_sql(&params);
+        assert!(sql.starts_with("SELECT * FROM dns_metrics WHERE "));
+        assert!(sql.contains("report_time >= "));
+        assert!(sql.contains("report_time < "));
+        assert!(sql.contains("flow_id = "));
+        assert!(sql.contains("domain LIKE "));
+        assert!(sql.contains("src_ip LIKE "));
+        assert!(sql.contains("query_type = "));
+        assert!(sql.contains("status = "));
+        assert!(sql.contains("duration_ms >= "));
+        assert!(sql.contains("duration_ms <= "));
+        assert_eq!(sql.matches(" WHERE ").count(), 1, "single WHERE keyword");
+        assert_eq!(sql.matches(" AND ").count(), 8, "one AND per extra filter");
+    }
+
+    #[test]
+    fn dns_history_filters_without_params_emit_no_where() {
+        assert_eq!(
+            build_history_filters_sql(&DnsHistoryQueryParams::default()),
+            "SELECT * FROM dns_metrics"
+        );
+        let empty_strings = DnsHistoryQueryParams {
+            domain: Some(String::new()),
+            src_ip: Some(String::new()),
+            query_type: Some(String::new()),
+            ..Default::default()
+        };
+        assert_eq!(
+            build_history_filters_sql(&empty_strings),
+            "SELECT * FROM dns_metrics",
+            "empty-string filters are skipped"
+        );
+    }
+
+    #[test]
+    fn dns_summary_filters_build_where_clauses() {
+        let params = DnsSummaryQueryParams {
+            start_time: 100_000,
+            end_time: 200_000,
+            flow_id: Some(3),
+        };
+        let mut qb = QueryBuilder::<Sqlite>::new("SELECT * FROM dns_metrics");
+        let mut has_where = false;
+        push_summary_filters(&mut qb, &params, &mut has_where);
+        let summary_sql = qb.sql().to_string();
+        assert!(summary_sql.contains("report_time >= "));
+        assert!(summary_sql.contains("report_time < "));
+        assert!(summary_sql.contains("flow_id = "));
+
+        let mut range_qb = QueryBuilder::<Sqlite>::new("SELECT * FROM dns_metrics");
+        let mut has_where = false;
+        push_range_filters(&mut range_qb, &params, &mut has_where);
+        assert_eq!(range_qb.sql(), summary_sql, "range filters share semantics");
+
+        let mut empty_qb = QueryBuilder::<Sqlite>::new("SELECT * FROM dns_metrics");
+        let mut has_where = false;
+        push_summary_filters(&mut empty_qb, &DnsSummaryQueryParams::default(), &mut has_where);
+        assert_eq!(empty_qb.sql(), "SELECT * FROM dns_metrics");
+    }
+
+    #[tokio::test]
+    async fn cleanup_old_dns_deletes_rows_across_multiple_slices() {
+        let (_dir, pool) = test_pool().await;
+        let metrics = vec![
+            dns_metric(1, "a.com", "A", DnsOutcome::Normal, 100_000, 10),
+            dns_metric(2, "b.com", "A", DnsOutcome::Normal, 100_400, 10),
+            dns_metric(3, "c.com", "A", DnsOutcome::Normal, 101_000, 10),
+            dns_metric(4, "d.com", "A", DnsOutcome::Normal, 101_500, 10),
+            dns_metric(5, "e.com", "A", DnsOutcome::Normal, 102_000, 10),
+        ];
+        insert_dns_batch(&pool, &metrics).await.unwrap();
+
+        let deleted = cleanup_old_dns(&pool, 200_000, 10_000, 1).await.unwrap();
+        assert_eq!(deleted, 5);
+
+        let response = query_dns_history(&pool, DnsHistoryQueryParams::default()).await.unwrap();
+        assert_eq!(response.total, 0, "all expired rows removed across slices");
+    }
+
+    #[tokio::test]
+    async fn cleanup_old_dns_exits_early_when_budget_exhausted() {
+        let (_dir, pool) = test_pool().await;
+        let metrics: Vec<DnsMetric> = (0..200)
+            .map(|index| {
+                dns_metric(
+                    index + 1,
+                    &format!("h{}.com", index),
+                    "A",
+                    DnsOutcome::Normal,
+                    100_000 + index as u64 * 100,
+                    10,
+                )
+            })
+            .collect();
+        insert_dns_batch(&pool, &metrics).await.unwrap();
+
+        let deleted = cleanup_old_dns(&pool, 1_000_000, 1, 1).await.unwrap();
+        assert!(deleted < 200, "tiny budget forces early exit");
+
+        let response = query_dns_history(&pool, DnsHistoryQueryParams::default()).await.unwrap();
+        assert_eq!(response.total as u64 + deleted, 200, "remaining rows are deferred, not lost");
+    }
+
+    #[tokio::test]
+    async fn cleanup_old_dns_clamps_zero_slice_window_to_one_second() {
+        let (_dir, pool) = test_pool().await;
+        let metrics = vec![
+            dns_metric(1, "a.com", "A", DnsOutcome::Normal, 100_000, 10),
+            dns_metric(2, "b.com", "A", DnsOutcome::Normal, 101_000, 10),
+        ];
+        insert_dns_batch(&pool, &metrics).await.unwrap();
+
+        let deleted = cleanup_old_dns(&pool, 102_000, 10_000, 0).await.unwrap();
+        assert_eq!(deleted, 2, "zero slice window falls back to 1s slices");
     }
 }
