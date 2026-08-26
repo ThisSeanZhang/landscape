@@ -94,11 +94,21 @@ impl MetricSink for PersistentMetricStore {
     async fn cleanup_connect(&self, config: &MetricRuntimeConfig) {
         let now_ms = get_current_time_ms().unwrap_or_default();
 
-        let summary_cutoff = now_ms.saturating_sub(config.connect_1d_retention_days * MS_PER_DAY);
+        let summary_cutoff =
+            now_ms.saturating_sub(config.connect_summary_retention_days * MS_PER_DAY);
         if let Err(error) =
             sqlite::connect::cleanup_old_summaries(&self.connect_pool, summary_cutoff).await
         {
             tracing::error!("failed to cleanup persistent conn_summaries: {}", error);
+        }
+
+        if let Err(error) = sqlite::connect::enforce_summary_max_rows(
+            &self.connect_pool,
+            config.connect_summary_max_rows,
+        )
+        .await
+        {
+            tracing::error!("failed to enforce persistent conn_summaries max rows: {}", error);
         }
 
         let cutoffs = [
@@ -322,11 +332,11 @@ mod tests {
             connect_1m_retention_days: 1,
             connect_1h_retention_days: 7,
             connect_1d_retention_days: 30,
+            connect_summary_retention_days: 30,
+            connect_summary_max_rows: 0,
             dns_retention_days: 7,
             write_batch_size: 16,
             write_flush_interval_secs: 1,
-            db_max_memory_mb: 128,
-            db_max_threads: 1,
             cleanup_interval_secs: 3600,
             cleanup_time_budget_ms: 1_000,
             cleanup_slice_window_secs: 60,

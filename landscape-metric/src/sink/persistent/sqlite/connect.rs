@@ -739,6 +739,70 @@ pub(crate) async fn cleanup_old_summaries(
     tx.commit().await
 }
 
+/// conn_summaries 条数硬顶:max_rows == 0 表示不限制。
+/// 超过上限时按 last_report_time 升序淘汰最旧行,并通过
+/// apply_global_stats_delta_tx 保持全局统计缓存一致。
+pub(crate) async fn enforce_summary_max_rows(
+    pool: &SqlitePool,
+    max_rows: u64,
+) -> Result<(), sqlx::Error> {
+    if max_rows == 0 {
+        return Ok(());
+    }
+
+    let total: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM conn_summaries").fetch_one(pool).await?;
+    if total <= max_rows as i64 {
+        return Ok(());
+    }
+    let excess = (total - max_rows as i64) as u64;
+
+    let mut tx = pool.begin().await?;
+    let row = sqlx::query(
+        "SELECT
+            COALESCE(SUM(total_ingress_bytes), 0),
+            COALESCE(SUM(total_egress_bytes), 0),
+            COALESCE(SUM(total_ingress_pkts), 0),
+            COALESCE(SUM(total_egress_pkts), 0),
+            COUNT(*)
+        FROM conn_summaries
+        WHERE (create_time, cpu_id) IN (
+            SELECT create_time, cpu_id FROM conn_summaries ORDER BY last_report_time ASC LIMIT ?1
+        )",
+    )
+    .bind(excess as i64)
+    .fetch_one(tx.as_mut())
+    .await?;
+
+    let removed = ConnectGlobalStats {
+        total_ingress_bytes: row.get::<i64, _>(0).max(0) as u64,
+        total_egress_bytes: row.get::<i64, _>(1).max(0) as u64,
+        total_ingress_pkts: row.get::<i64, _>(2).max(0) as u64,
+        total_egress_pkts: row.get::<i64, _>(3).max(0) as u64,
+        total_connect_count: row.get::<i64, _>(4).max(0) as u64,
+        last_calculate_time: 0,
+    };
+
+    let deleted = sqlx::query(
+        "DELETE FROM conn_summaries
+         WHERE (create_time, cpu_id) IN (
+            SELECT create_time, cpu_id FROM conn_summaries ORDER BY last_report_time ASC LIMIT ?1
+         )",
+    )
+    .bind(excess as i64)
+    .execute(tx.as_mut())
+    .await?
+    .rows_affected();
+
+    if deleted > 0 {
+        let delta = GlobalStatsDelta::from_removed_stats(&removed);
+        apply_global_stats_delta_tx(&mut tx, delta, get_current_time_ms().unwrap_or_default())
+            .await?;
+    }
+
+    tx.commit().await
+}
+
 /// 按 retention 分片删除过期桶,受 cleanup_time_budget_ms 预算约束。
 pub(crate) async fn cleanup_old_buckets(
     pool: &SqlitePool,
@@ -1280,5 +1344,106 @@ mod tests {
             &mut has_where,
         );
         assert_eq!(qb.sql(), "SELECT * FROM conn_summaries");
+    }
+
+    #[tokio::test]
+    async fn row_cap_eviction_keeps_global_stats_consistent() {
+        let (_dir, pool) = test_pool().await;
+        for i in 0..5u64 {
+            apply_connect_batch(
+                &pool,
+                &batch_with(
+                    vec![test_metric(
+                        1_000 + i,
+                        0,
+                        65_000 + i,
+                        100,
+                        200,
+                        ConnectStatusType::Disabled,
+                    )],
+                    vec![],
+                ),
+            )
+            .await
+            .unwrap();
+        }
+
+        let before = query_global_stats(&pool).await.unwrap();
+        assert_eq!(before.total_ingress_bytes, 500);
+        assert_eq!(before.total_egress_bytes, 1_000);
+        assert_eq!(before.total_connect_count, 5);
+
+        enforce_summary_max_rows(&pool, 3).await.unwrap();
+
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM conn_summaries")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(count, 3);
+
+        let after = query_global_stats(&pool).await.unwrap();
+        assert_eq!(after.total_ingress_bytes, 300);
+        assert_eq!(after.total_egress_bytes, 600);
+        assert_eq!(after.total_connect_count, 3);
+    }
+
+    #[tokio::test]
+    async fn row_cap_zero_means_unlimited() {
+        let (_dir, pool) = test_pool().await;
+        for i in 0..5u64 {
+            apply_connect_batch(
+                &pool,
+                &batch_with(
+                    vec![test_metric(
+                        1_000 + i,
+                        0,
+                        65_000 + i,
+                        10,
+                        20,
+                        ConnectStatusType::Disabled,
+                    )],
+                    vec![],
+                ),
+            )
+            .await
+            .unwrap();
+        }
+
+        enforce_summary_max_rows(&pool, 0).await.unwrap();
+
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM conn_summaries")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(count, 5);
+    }
+
+    #[tokio::test]
+    async fn row_cap_no_op_when_under_limit() {
+        let (_dir, pool) = test_pool().await;
+        for i in 0..3u64 {
+            apply_connect_batch(
+                &pool,
+                &batch_with(
+                    vec![test_metric(
+                        1_000 + i,
+                        0,
+                        65_000 + i,
+                        50,
+                        100,
+                        ConnectStatusType::Disabled,
+                    )],
+                    vec![],
+                ),
+            )
+            .await
+            .unwrap();
+        }
+
+        let before = query_global_stats(&pool).await.unwrap();
+        enforce_summary_max_rows(&pool, 10).await.unwrap();
+        let after = query_global_stats(&pool).await.unwrap();
+        assert_eq!(before.total_ingress_bytes, after.total_ingress_bytes);
+        assert_eq!(before.total_connect_count, after.total_connect_count);
     }
 }

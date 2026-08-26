@@ -11,7 +11,6 @@ const modeOptions = computed(() => [
   { label: t("config.metric_mode_off"), value: "off" },
   { label: t("config.metric_mode_memory"), value: "memory" },
   { label: t("config.metric_mode_persistent"), value: "persistent" },
-  { label: t("config.metric_mode_duckdb"), value: "duckdb" },
 ]);
 
 async function handleSaveMetric() {
@@ -110,6 +109,40 @@ async function handleSaveMetric() {
       </n-grid>
 
       <n-divider title-placement="left">
+        {{ t("config.conn_detail_settings") }}
+      </n-divider>
+      <n-grid x-gap="12" :cols="2">
+        <n-gi>
+          <n-form-item :label="t('config.conn_summary_retention_days')">
+            <n-input-number
+              v-model:value="metricStore.connectSummaryRetentionDays"
+              :min="1"
+              :max="3650"
+              placeholder="30"
+              style="width: 100%"
+            />
+            <template #feedback>
+              {{ t("config.conn_summary_retention_days_desc") }}
+            </template>
+          </n-form-item>
+        </n-gi>
+        <n-gi>
+          <n-form-item :label="t('config.conn_summary_max_rows')">
+            <n-input-number
+              v-model:value="metricStore.connectSummaryMaxRows"
+              :min="0"
+              :max="100000000"
+              placeholder="0"
+              style="width: 100%"
+            />
+            <template #feedback>
+              {{ t("config.conn_summary_max_rows_desc") }}
+            </template>
+          </n-form-item>
+        </n-gi>
+      </n-grid>
+
+      <n-divider title-placement="left">
         {{ t("config.dns_retention_days") }}
       </n-divider>
       <n-form-item :label="t('config.dns_retention_days')">
@@ -154,34 +187,6 @@ async function handleSaveMetric() {
             />
             <template #feedback>
               {{ t("config.write_batch_size_desc") }}
-            </template>
-          </n-form-item>
-        </n-gi>
-        <n-gi>
-          <n-form-item :label="t('config.db_max_memory')">
-            <n-input-number
-              v-model:value="metricStore.dbMaxMemoryMb"
-              :min="32"
-              :max="8192"
-              placeholder="256"
-              style="width: 100%"
-            />
-            <template #feedback>
-              {{ t("config.db_max_memory_desc") }}
-            </template>
-          </n-form-item>
-        </n-gi>
-        <n-gi>
-          <n-form-item :label="t('config.db_max_threads')">
-            <n-input-number
-              v-model:value="metricStore.dbMaxThreads"
-              :min="1"
-              :max="64"
-              placeholder="4"
-              style="width: 100%"
-            />
-            <template #feedback>
-              {{ t("config.db_max_threads_desc") }}
             </template>
           </n-form-item>
         </n-gi>

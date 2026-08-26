@@ -22,7 +22,6 @@ export default {
   metric_mode_off: "关闭 (OFF)",
   metric_mode_memory: "内存实时 (MEM)",
   metric_mode_persistent: "持久化 (SQLite)",
-  metric_mode_duckdb: "DuckDB 持久化",
 
   language: "语言设定",
   theme: "外观主题",
@@ -46,6 +45,12 @@ export default {
   conn_retention_hour_days_desc: "按小时聚合的连接指标保存期限（天）",
   conn_retention_day_days: "聚合数据保存 (天级)",
   conn_retention_day_days_desc: "按天聚合的连接指标保存期限（天）",
+  conn_detail_settings: "连接明细设置",
+  conn_summary_retention_days: "明细保存天数",
+  conn_summary_retention_days_desc: "单连接明细汇总行的保存期限（天）",
+  conn_summary_max_rows: "明细行数上限",
+  conn_summary_max_rows_desc:
+    "conn_summaries 表保留的最大明细汇总行数（0 = 不限制）",
   dns_retention_days: "DNS 数据保存天数",
   dns_retention_days_desc: "DNS 查询日志和指标的保存期限（天）",
 
@@ -54,10 +59,6 @@ export default {
   write_batch_size_desc: "指标数据每次刷盘的最大记录数",
   write_flush_interval: "强制提交间隔 (秒)",
   write_flush_interval_desc: "指标数据写入磁盘的强制刷新时间间隔",
-  db_max_memory: "DuckDB 内存限制 (MB)",
-  db_max_memory_desc: "指标数据库允许占用的最大内存上限",
-  db_max_threads: "数据库并发线程",
-  db_max_threads_desc: "数据库处理任务时允许使用的最大线程数",
 
   maintenance_settings: "自动清理设置",
   cleanup_interval: "数据清理间隔 (秒)",

@@ -67,11 +67,11 @@ pub struct MetricRuntimeConfig {
     pub connect_1m_retention_days: u64,
     pub connect_1h_retention_days: u64,
     pub connect_1d_retention_days: u64,
+    pub connect_summary_retention_days: u64,
+    pub connect_summary_max_rows: u64,
     pub dns_retention_days: u64,
     pub write_batch_size: usize,
     pub write_flush_interval_secs: u64,
-    pub db_max_memory_mb: usize,
-    pub db_max_threads: usize,
     pub cleanup_interval_secs: u64,
     pub cleanup_time_budget_ms: u64,
     pub cleanup_slice_window_secs: u64,
@@ -147,11 +147,11 @@ impl RuntimeConfig {
          Connect 1m Retention: {} days\n\
          Connect 1h Retention: {} days\n\
          Connect 1d Retention: {} days\n\
+         Connect Summary Retention: {} days\n\
+         Connect Summary Max Rows: {}\n\
          DNS Retention: {} days\n\
          Write Batch Size: {}\n\
          Write Flush Interval: {}s\n\
-         DB Max Memory: {}MB\n\
-         DB Max Threads: {}\n\
          Cleanup Interval: {}s\n\
          Cleanup Budget: {}ms\n\
           Cleanup Slice Window: {}s\n\
@@ -179,11 +179,11 @@ impl RuntimeConfig {
             self.metric.connect_1m_retention_days,
             self.metric.connect_1h_retention_days,
             self.metric.connect_1d_retention_days,
+            self.metric.connect_summary_retention_days,
+            self.metric.connect_summary_max_rows,
             self.metric.dns_retention_days,
             self.metric.write_batch_size,
             self.metric.write_flush_interval_secs,
-            self.metric.db_max_memory_mb,
-            self.metric.db_max_threads,
             self.metric.cleanup_interval_secs,
             self.metric.cleanup_time_budget_ms,
             self.metric.cleanup_slice_window_secs,
@@ -214,6 +214,12 @@ impl MetricRuntimeConfig {
         if let Some(v) = config.connect_1d_retention_days {
             self.connect_1d_retention_days = v;
         }
+        if let Some(v) = config.connect_summary_retention_days {
+            self.connect_summary_retention_days = v;
+        }
+        if let Some(v) = config.connect_summary_max_rows {
+            self.connect_summary_max_rows = v;
+        }
         if let Some(v) = config.dns_retention_days {
             self.dns_retention_days = v;
         }
@@ -222,12 +228,6 @@ impl MetricRuntimeConfig {
         }
         if let Some(v) = config.write_flush_interval_secs {
             self.write_flush_interval_secs = v;
-        }
-        if let Some(v) = config.db_max_memory_mb {
-            self.db_max_memory_mb = v;
-        }
-        if let Some(v) = config.db_max_threads {
-            self.db_max_threads = v;
         }
         if let Some(v) = config.cleanup_interval_secs {
             self.cleanup_interval_secs = v;

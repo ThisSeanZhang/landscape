@@ -102,6 +102,11 @@ impl RuntimeConfig {
             ),
         };
 
+        let connect_1d_retention_days = config
+            .metric
+            .connect_1d_retention_days
+            .unwrap_or(crate::DEFAULT_METRIC_CONNECT_1D_RETENTION_DAYS);
+
         let metric = MetricRuntimeConfig {
             mode: config.metric.mode.clone().unwrap_or(crate::DEFAULT_METRIC_MODE),
             connect_second_window_minutes: config
@@ -116,10 +121,15 @@ impl RuntimeConfig {
                 .metric
                 .connect_1h_retention_days
                 .unwrap_or(crate::DEFAULT_METRIC_CONNECT_1H_RETENTION_DAYS),
-            connect_1d_retention_days: config
+            connect_1d_retention_days,
+            connect_summary_retention_days: config
                 .metric
-                .connect_1d_retention_days
-                .unwrap_or(crate::DEFAULT_METRIC_CONNECT_1D_RETENTION_DAYS),
+                .connect_summary_retention_days
+                .unwrap_or(connect_1d_retention_days),
+            connect_summary_max_rows: config
+                .metric
+                .connect_summary_max_rows
+                .unwrap_or(crate::DEFAULT_METRIC_CONNECT_SUMMARY_MAX_ROWS),
             dns_retention_days: config
                 .metric
                 .dns_retention_days
@@ -132,14 +142,6 @@ impl RuntimeConfig {
                 .metric
                 .write_flush_interval_secs
                 .unwrap_or(crate::DEFAULT_METRIC_WRITE_FLUSH_INTERVAL_SECS),
-            db_max_memory_mb: config
-                .metric
-                .db_max_memory_mb
-                .unwrap_or(crate::DEFAULT_METRIC_DB_MAX_MEMORY_MB),
-            db_max_threads: config
-                .metric
-                .db_max_threads
-                .unwrap_or(crate::DEFAULT_METRIC_DB_MAX_THREADS),
             cleanup_interval_secs: config
                 .metric
                 .cleanup_interval_secs

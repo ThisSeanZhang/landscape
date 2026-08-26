@@ -23,7 +23,6 @@ export default {
   metric_mode_off: "Off (OFF)",
   metric_mode_memory: "Memory Only (MEM)",
   metric_mode_persistent: "Persistent (SQLite)",
-  metric_mode_duckdb: "DuckDB Persistent",
 
   language: "Language",
   theme: "Theme",
@@ -52,6 +51,13 @@ export default {
   conn_retention_day_days: "Aggregated Data (Day)",
   conn_retention_day_days_desc:
     "Retention period for daily aggregated connection metrics in days",
+  conn_detail_settings: "Connection Detail Settings",
+  conn_summary_retention_days: "Detail Retention (Days)",
+  conn_summary_retention_days_desc:
+    "Retention period for per-connection detail summary rows in days",
+  conn_summary_max_rows: "Detail Row Cap",
+  conn_summary_max_rows_desc:
+    "Maximum number of detail summary rows kept in the conn_summaries table (0 = unlimited)",
   dns_retention_days: "DNS Retention (Days)",
   dns_retention_days_desc:
     "Retention period for DNS query logs and metrics in days",
@@ -61,10 +67,6 @@ export default {
   write_batch_size_desc: "Maximum record count for metrics flush to disk",
   write_flush_interval: "Commit Interval (s)",
   write_flush_interval_desc: "Maximum seconds before forcing a database commit",
-  db_max_memory: "DB Max Memory (MB)",
-  db_max_memory_desc: "Maximum memory allowed for DuckDB (metrics storage)",
-  db_max_threads: "DB Max Threads",
-  db_max_threads_desc: "Maximum background threads for database operations",
 
   maintenance_settings: "Cleanup Settings",
   cleanup_interval: "Cleanup Interval (s)",
