@@ -56,7 +56,7 @@ const frontEndStore = useFrontEndStore();
 const data = ref<DnsMetric[]>([]);
 const loading = ref(false);
 
-const DEFAULT_TIME_WINDOW = 20 * 60 * 1000; // 20 minutes
+const DEFAULT_TIME_WINDOW = 10 * 60 * 1000; // 10 minutes
 
 const searchParams = reactive({
   domain: "",

@@ -59,6 +59,9 @@ export default {
   conn_summary_max_rows_desc:
     "Maximum number of detail summary rows kept in the conn_summaries table (0 = unlimited)",
   dns_retention_days: "DNS Retention (Days)",
+  dns_1m_retention_days: "DNS 1m Bucket Retention (Days)",
+  dns_1m_retention_days_desc:
+    "Retention for 1-minute pre-aggregated buckets (status card & dashboard); usually longer than raw logs",
   dns_retention_days_desc:
     "Retention period for DNS query logs and metrics in days",
 

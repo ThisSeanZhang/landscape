@@ -101,12 +101,16 @@ impl GlobalStatsDelta {
 }
 
 pub(crate) async fn initialize_schema(pool: &SqlitePool) -> Result<(), sqlx::Error> {
+    // 桶表采用追加写模型:report_time 为桶内最后一条 metric 的完整时间(主键),
+    // bucket_time 为对齐粒度桶标识(查询/分组/清理)。同一对齐桶可因时钟乱序
+    // 存在多行,读侧按 bucket_time 分组取最新;写侧同 report_time 冲突直接忽略。
     for table in ["conn_metrics_1m", "conn_metrics_1h", "conn_metrics_1d"] {
         sqlx::query(&format!(
             "CREATE TABLE IF NOT EXISTS {table} (
                 create_time INTEGER NOT NULL,
                 cpu_id INTEGER NOT NULL,
                 report_time INTEGER NOT NULL,
+                bucket_time INTEGER NOT NULL,
                 ifindex INTEGER NOT NULL,
                 ingress_bytes INTEGER NOT NULL,
                 ingress_packets INTEGER NOT NULL,
@@ -119,14 +123,11 @@ pub(crate) async fn initialize_schema(pool: &SqlitePool) -> Result<(), sqlx::Err
         ))
         .execute(pool)
         .await?;
-        // cleanup 按 report_time 范围分片删除,桶表主键前缀是
-        // (create_time, cpu_id),无此索引时每次删除/取 MIN 都全表扫描,
+        // cleanup 按 bucket_time 范围分片删除,无此索引时每次删除/取 MIN 都全表扫描,
         // 长时间占用写锁并撞上 batch 写入的 busy_timeout 导致丢批。
-        // 复合索引覆盖范围扫描与 MIN 游标;版本号升级后在新库上创建,
-        // 无 DROP/ALTER 等修改语句。
         sqlx::query(&format!(
-            "CREATE INDEX IF NOT EXISTS idx_{table}_report_time_key
-             ON {table} (report_time, create_time, cpu_id)"
+            "CREATE INDEX IF NOT EXISTS idx_{table}_bucket_time_key
+             ON {table} (bucket_time, create_time, cpu_id)"
         ))
         .execute(pool)
         .await?;
@@ -273,7 +274,10 @@ async fn apply_global_stats_delta_tx(
     Ok(())
 }
 
-async fn upsert_bucket_tx(
+/// 桶行追加写:同 (create_time, cpu_id, report_time) 冲突直接忽略。
+/// 不对齐桶做读改写合并——同一对齐桶的多次发射(1h 刷新、时钟乱序)以多行共存,
+/// 由读侧按 bucket_time 分组取最新,天然兼容不可变/追加写存储。
+async fn insert_bucket_tx(
     tx: &mut Transaction<'_, Sqlite>,
     table: &str,
     write: &BucketWrite,
@@ -281,27 +285,15 @@ async fn upsert_bucket_tx(
     let status: u8 = write.metric.status.clone().into();
     sqlx::query(&format!(
         "INSERT INTO {table} (
-            create_time, cpu_id, report_time, ifindex,
+            create_time, cpu_id, report_time, bucket_time, ifindex,
             ingress_bytes, ingress_packets, egress_bytes, egress_packets,
             status, create_time_ms
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
-        ON CONFLICT (create_time, cpu_id, report_time) DO UPDATE SET
-            ifindex = CASE
-                WHEN excluded.create_time_ms >= {table}.create_time_ms THEN excluded.ifindex
-                ELSE {table}.ifindex
-            END,
-            ingress_bytes = MAX({table}.ingress_bytes, excluded.ingress_bytes),
-            ingress_packets = MAX({table}.ingress_packets, excluded.ingress_packets),
-            egress_bytes = MAX({table}.egress_bytes, excluded.egress_bytes),
-            egress_packets = MAX({table}.egress_packets, excluded.egress_packets),
-            status = CASE
-                WHEN excluded.create_time_ms >= {table}.create_time_ms THEN excluded.status
-                ELSE {table}.status
-            END,
-            create_time_ms = MAX({table}.create_time_ms, excluded.create_time_ms)"
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+        ON CONFLICT (create_time, cpu_id, report_time) DO NOTHING"
     ))
     .bind(write.metric.key.create_time as i64)
     .bind(write.metric.key.cpu_id as i64)
+    .bind(write.metric.report_time as i64)
     .bind(write.bucket_report_time as i64)
     .bind(write.metric.ifindex as i64)
     .bind(write.metric.ingress_bytes as i64)
@@ -384,7 +376,7 @@ pub(crate) async fn apply_connect_batch(
 
     for kind in [BucketKind::Minute, BucketKind::Hour, BucketKind::Day] {
         for write in batch.bucket_writes.iter().filter(|write| write.kind == kind) {
-            upsert_bucket_tx(&mut tx, kind.table_name(), write).await?;
+            insert_bucket_tx(&mut tx, kind.table_name(), write).await?;
         }
     }
 
@@ -405,12 +397,19 @@ pub(crate) async fn query_metric_by_key(
 
     let rows = sqlx::query(&format!(
         "SELECT
-            report_time,
+            bucket_time,
             ingress_bytes, ingress_packets, egress_bytes, egress_packets,
             status
-        FROM {table}
-        WHERE create_time = ?1 AND cpu_id = ?2
-        ORDER BY report_time"
+        FROM (
+            SELECT
+                bucket_time,
+                ingress_bytes, ingress_packets, egress_bytes, egress_packets,
+                status,
+                ROW_NUMBER() OVER (PARTITION BY bucket_time ORDER BY report_time DESC) AS rn
+            FROM {table}
+            WHERE create_time = ?1 AND cpu_id = ?2
+        ) WHERE rn = 1
+        ORDER BY bucket_time"
     ))
     .bind(key.create_time as i64)
     .bind(key.cpu_id as i64)
@@ -834,8 +833,9 @@ async fn delete_table_in_slices(
     slice_window_ms: u64,
     deadline: Instant,
 ) -> Result<(), sqlx::Error> {
+    // 按对齐桶时间分片删除;追加写模型下同一对齐桶可能有多行,一次删除整片。
     let mut cursor: Option<u64> = sqlx::query(&format!(
-        "SELECT MIN(report_time) FROM {table} WHERE report_time >= 0 AND report_time < ?1"
+        "SELECT MIN(bucket_time) FROM {table} WHERE bucket_time >= 0 AND bucket_time < ?1"
     ))
     .bind(cutoff_exclusive as i64)
     .fetch_optional(pool)
@@ -849,14 +849,14 @@ async fn delete_table_in_slices(
         }
 
         let slice_end = slice_start.saturating_add(slice_window_ms).min(cutoff_exclusive);
-        sqlx::query(&format!("DELETE FROM {table} WHERE report_time >= ?1 AND report_time < ?2"))
+        sqlx::query(&format!("DELETE FROM {table} WHERE bucket_time >= ?1 AND bucket_time < ?2"))
             .bind(slice_start as i64)
             .bind(slice_end as i64)
             .execute(pool)
             .await?;
 
         cursor = sqlx::query(&format!(
-            "SELECT MIN(report_time) FROM {table} WHERE report_time >= ?1 AND report_time < ?2"
+            "SELECT MIN(bucket_time) FROM {table} WHERE bucket_time >= ?1 AND bucket_time < ?2"
         ))
         .bind(slice_end as i64)
         .bind(cutoff_exclusive as i64)
@@ -917,13 +917,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn bucket_upsert_uses_greatest_for_counters() {
+    async fn bucket_append_keeps_rows_and_reads_latest_per_aligned_bucket() {
         let (_dir, pool) = test_pool().await;
         let key = ConnectKey { create_time: 1_000, cpu_id: 1 };
         let bucket_time = 60_000u64;
 
-        let first = test_metric(1_000, 1, 65_000, 100, 200, ConnectStatusType::Active);
+        // 同一对齐桶的两次发射,raw report_time 不同 → 两行共存(追加写)。
+        let first = test_metric(1_000, 1, 61_000, 100, 200, ConnectStatusType::Active);
         let mut second = first.clone();
+        second.report_time = 62_000;
         second.ingress_bytes = 50;
         second.egress_bytes = 400;
         second.create_time_ms = 2_000;
@@ -931,7 +933,7 @@ mod tests {
         let mut batch = Batch::default();
         batch.bucket_writes.push(BucketWrite {
             kind: BucketKind::Minute,
-            metric: first.clone(),
+            metric: first,
             bucket_report_time: bucket_time,
         });
         apply_connect_batch(&pool, &batch).await.unwrap();
@@ -945,23 +947,23 @@ mod tests {
         apply_connect_batch(&pool, &second_batch).await.unwrap();
 
         let points = query_metric_by_key(&pool, &key, MetricResolution::Minute).await.unwrap();
-        assert_eq!(points.len(), 1);
-        assert_eq!(points[0].ingress_bytes, 100, "ingress uses greatest");
-        assert_eq!(points[0].egress_bytes, 400, "egress uses greatest");
+        assert_eq!(points.len(), 1, "latest row per aligned bucket, not two points");
+        assert_eq!(points[0].ingress_bytes, 50, "latest raw row wins entirely");
+        assert_eq!(points[0].egress_bytes, 400);
+        assert_eq!(points[0].report_time, bucket_time, "point time is the aligned bucket");
     }
 
     #[tokio::test]
-    async fn bucket_status_follows_newest_create_time_ms() {
+    async fn bucket_reads_latest_row_status_including_finalized_disabled() {
         let (_dir, pool) = test_pool().await;
         let key = ConnectKey { create_time: 1_000, cpu_id: 1 };
         let bucket_time = 60_000u64;
 
-        // 新上报(create_time_ms 更大)为 Active(1),旧行为 Disabled(2)。
-        // 修复前 status 取 MAX 会被旧 Disabled 永久钉死,现在按最新覆写。
-        let older = test_metric(1_000, 1, 65_000, 100, 200, ConnectStatusType::Disabled);
+        // 旧行为 Disabled(2),新上报(更大 report_time)为 Active → 读侧取最新行。
+        let older = test_metric(1_000, 1, 61_000, 100, 200, ConnectStatusType::Disabled);
         let mut newer = older.clone();
+        newer.report_time = 62_000;
         newer.status = ConnectStatusType::Active;
-        newer.create_time_ms = 2_000;
         newer.ingress_bytes = 300;
 
         let mut batch = Batch::default();
@@ -985,9 +987,40 @@ mod tests {
         assert_eq!(
             points[0].status,
             ConnectStatusType::Active,
-            "status must follow the newest create_time_ms, not MAX(status)"
+            "status must follow the latest raw row, not MAX(status)"
         );
-        assert_eq!(points[0].ingress_bytes, 300, "counters keep greatest");
+        assert_eq!(points[0].ingress_bytes, 300);
+    }
+
+    #[tokio::test]
+    async fn bucket_duplicate_raw_key_is_ignored_on_append() {
+        let (_dir, pool) = test_pool().await;
+        let key = ConnectKey { create_time: 1_000, cpu_id: 1 };
+        let bucket_time = 60_000u64;
+
+        let first = test_metric(1_000, 1, 61_000, 100, 200, ConnectStatusType::Active);
+        let mut second = first.clone();
+        second.ingress_bytes = 999; // 相同 raw report_time → 冲突忽略
+
+        let mut batch = Batch::default();
+        batch.bucket_writes.push(BucketWrite {
+            kind: BucketKind::Minute,
+            metric: first,
+            bucket_report_time: bucket_time,
+        });
+        apply_connect_batch(&pool, &batch).await.unwrap();
+
+        let mut second_batch = Batch::default();
+        second_batch.bucket_writes.push(BucketWrite {
+            kind: BucketKind::Minute,
+            metric: second,
+            bucket_report_time: bucket_time,
+        });
+        apply_connect_batch(&pool, &second_batch).await.unwrap();
+
+        let points = query_metric_by_key(&pool, &key, MetricResolution::Minute).await.unwrap();
+        assert_eq!(points.len(), 1);
+        assert_eq!(points[0].ingress_bytes, 100, "duplicate raw key row dropped");
     }
 
     #[tokio::test]

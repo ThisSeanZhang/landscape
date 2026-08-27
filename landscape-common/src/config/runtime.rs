@@ -70,6 +70,7 @@ pub struct MetricRuntimeConfig {
     pub connect_summary_retention_days: u64,
     pub connect_summary_max_rows: u64,
     pub dns_retention_days: u64,
+    pub dns_1m_retention_days: u64,
     pub write_batch_size: usize,
     pub write_flush_interval_secs: u64,
     pub cleanup_interval_secs: u64,
@@ -148,9 +149,10 @@ impl RuntimeConfig {
          Connect 1h Retention: {} days\n\
          Connect 1d Retention: {} days\n\
          Connect Summary Retention: {} days\n\
-         Connect Summary Max Rows: {}\n\
-         DNS Retention: {} days\n\
-         Write Batch Size: {}\n\
+             Connect Summary Max Rows: {}\n\
+             DNS Retention: {} days\n\
+             DNS 1m Retention: {} days\n\
+             Write Batch Size: {}\n\
          Write Flush Interval: {}s\n\
          Cleanup Interval: {}s\n\
          Cleanup Budget: {}ms\n\
@@ -182,6 +184,7 @@ impl RuntimeConfig {
             self.metric.connect_summary_retention_days,
             self.metric.connect_summary_max_rows,
             self.metric.dns_retention_days,
+            self.metric.dns_1m_retention_days,
             self.metric.write_batch_size,
             self.metric.write_flush_interval_secs,
             self.metric.cleanup_interval_secs,
@@ -222,6 +225,9 @@ impl MetricRuntimeConfig {
         }
         if let Some(v) = config.dns_retention_days {
             self.dns_retention_days = v;
+        }
+        if let Some(v) = config.dns_1m_retention_days {
+            self.dns_1m_retention_days = v;
         }
         if let Some(v) = config.write_batch_size {
             self.write_batch_size = v;

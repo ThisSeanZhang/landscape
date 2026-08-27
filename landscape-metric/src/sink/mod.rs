@@ -11,6 +11,8 @@ use landscape_common::metric::dns::{
     DnsSummaryQueryParams, DnsSummaryResponse,
 };
 
+#[cfg(feature = "metric-persistent")]
+use crate::agg::dns_bucket::{DnsBucketRow, DnsSummaryParts};
 use crate::agg::Batch;
 
 pub(crate) mod memory;
@@ -24,6 +26,10 @@ pub(crate) trait MetricSink: Send + Sync {
     async fn apply_connect_batch(&self, batch: &Batch) -> bool;
     #[cfg(feature = "metric-persistent")]
     async fn apply_dns_batch(&self, metrics: Vec<DnsMetric>) -> bool;
+    /// 追加写入 1m 预聚合桶行(dns_metrics_1m + top 表,纯 INSERT,同键冲突忽略)。
+    /// 桶行由 DNS writer 从原始行批次构建后与原始行同批落库。
+    #[cfg(feature = "metric-persistent")]
+    async fn apply_dns_bucket_rows(&self, rows: Vec<DnsBucketRow>) -> bool;
     async fn cleanup_connect(&self, config: &MetricRuntimeConfig);
     #[cfg(feature = "metric-persistent")]
     async fn cleanup_dns(&self, config: &MetricRuntimeConfig);
@@ -47,4 +53,14 @@ pub(crate) trait MetricSink: Send + Sync {
         &self,
         params: DnsSummaryQueryParams,
     ) -> DnsLightweightSummaryResponse;
+    /// 1m 预聚合桶摘要:按分钟对齐半开区间 [start_ms, end_ms) 从桶表聚合
+    /// (逐行合并,不假设每分钟只有一行),仅服务仪表盘状态卡 DB 查询路径,
+    /// 与内存窗口无关。调用方负责分钟对齐。
+    #[cfg(feature = "metric-persistent")]
+    async fn get_dns_summary_parts(
+        &self,
+        start_ms: u64,
+        end_ms: u64,
+        flow_id: Option<u32>,
+    ) -> DnsSummaryParts;
 }

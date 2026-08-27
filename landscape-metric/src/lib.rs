@@ -34,9 +34,9 @@ use sink::persistent::PersistentMetricStore;
 use sink::MetricSink;
 
 #[cfg(feature = "metric-persistent")]
-use agg::dns_window::{minute_end, minute_start, DnsRecentWindow, DNS_RECENT_WINDOW_SECS};
+use agg::dns_bucket::{minute_end, minute_start};
 #[cfg(feature = "metric-persistent")]
-use landscape_common::metric::dns::DnsMetric;
+use agg::dns_window::{DnsRecentWindow, DNS_RECENT_WINDOW_SECS};
 
 /// 构建后端 sink:内存模式与 Off 模式挂 MemorySink;persistent 初始化失败时
 /// 回退内存 sink,保证 metric 数据不影响系统启动。
@@ -138,7 +138,7 @@ impl MetricEngine {
             // cleanup 由各 writer 任务内的定时器执行,不再占用投递队列。
             let (connect_write_tx, connect_write_rx) = mpsc::channel::<Batch>(256);
             #[cfg(feature = "metric-persistent")]
-            let (dns_write_tx, dns_write_rx) = mpsc::channel::<Vec<DnsMetric>>(256);
+            let (dns_write_tx, dns_write_rx) = mpsc::channel::<workers::DnsWriteMessage>(256);
             let queue_stats = writer_stats.clone();
             let connect_writer_sink = sink.clone();
             let connect_writer_config = config.clone();
@@ -368,10 +368,15 @@ impl MetricEngine {
         self.sink.query_dns_history(params).await
     }
 
-    pub async fn get_dns_summary(&self, params: DnsSummaryQueryParams) -> DnsSummaryResponse {
-        self.sink.get_dns_summary(params).await
-    }
-
+    /// 首页 DNS 状态卡片(DnsStatusCard)专用查询。
+    ///
+    /// DNS 查询架构约定(数据流):
+    /// - 本函数:数据源仅为内存窗口 `DnsRecentWindow`(最近 5 分钟,由采集方向
+    ///   ingest 驱动)。窗口纯内存:不落库、不与 DB 合并,重启后窗口为空时返回全 0。
+    /// - `get_dns_summary`(仪表盘状态卡 DNSDashboard,默认 10min):只查 DB 桶,
+    ///   与本函数无关;历史页 `query_dns_history`:只查 DB 原始行。
+    /// 内存与 DB 互不串门、永不合并。非 persistent 模式(内存 sink)走
+    /// `sink.get_dns_lightweight_summary`。
     pub async fn get_dns_lightweight_summary(
         &self,
         params: DnsSummaryQueryParams,
@@ -379,42 +384,54 @@ impl MetricEngine {
         #[cfg(feature = "metric-persistent")]
         if let Some(window) = &self.dns_window {
             let now_ms = get_current_time_ms().unwrap_or_default();
-            return get_dns_lightweight_summary_from_window(window, &self.sink, params, now_ms)
-                .await;
+            let Some((start, end)) = normalized_dns_range(&params, now_ms) else {
+                // 倒置/异常区间窗口无法回答,返回空。
+                return DnsLightweightSummaryResponse::default();
+            };
+            return window.range_parts(start, end, params.flow_id).into_lightweight_response();
         }
         self.sink.get_dns_lightweight_summary(params).await
     }
+
+    /// 仪表盘状态卡(DNSDashboard,默认 10min)专用查询。
+    ///
+    /// 数据源:仅 DB 1m 预聚合桶表(`dns_metrics_1m` + top 表,由 DNS writer 从
+    /// 原始行批次实时构建),永不读内存窗口;区间不足一个完整分钟时回退原始行
+    /// 保持子分钟精度。首页卡片走 `get_dns_lightweight_summary` 只读内存窗口,
+    /// 与本函数无关。非 persistent 模式(内存 sink)走 `sink.get_dns_summary`。
+    pub async fn get_dns_summary(&self, params: DnsSummaryQueryParams) -> DnsSummaryResponse {
+        #[cfg(feature = "metric-persistent")]
+        if self.dns_window.is_some() {
+            let now_ms = get_current_time_ms().unwrap_or_default();
+            if let Some((start, end)) = normalized_dns_range(&params, now_ms) {
+                let parts = self.sink.get_dns_summary_parts(start, end, params.flow_id).await;
+                return parts.into_summary_response();
+            }
+            // 区间不足一个完整分钟:回退原始行路径保持子分钟精度。
+            return self.sink.get_dns_summary(params).await;
+        }
+        self.sink.get_dns_summary(params).await
+    }
 }
 
+/// 将查询参数归一为分钟对齐的半开区间 [start, end)。
+/// 默认 (0,0) 补全为最近 5 分钟;归一后 start >= end(倒置区间)时返回 None,
+/// 由调用方处理:lightweight 返回空,summary 回退原始行。
 #[cfg(feature = "metric-persistent")]
-async fn get_dns_lightweight_summary_from_window(
-    window: &DnsRecentWindow,
-    sink: &Arc<dyn MetricSink>,
-    mut params: DnsSummaryQueryParams,
-    now_ms: u64,
-) -> DnsLightweightSummaryResponse {
-    let window_start = now_ms.saturating_sub(DNS_RECENT_WINDOW_SECS * 1000);
-    if params.start_time == 0 && params.end_time == 0 {
-        params.start_time = window_start;
-        params.end_time = now_ms;
-    } else if params.end_time == 0 {
-        params.end_time = now_ms;
+fn normalized_dns_range(params: &DnsSummaryQueryParams, now_ms: u64) -> Option<(u64, u64)> {
+    let (mut start_time, mut end_time) = (params.start_time, params.end_time);
+    if start_time == 0 && end_time == 0 {
+        start_time = now_ms.saturating_sub(DNS_RECENT_WINDOW_SECS * 1000);
+        end_time = now_ms;
+    } else if end_time == 0 {
+        end_time = now_ms;
     }
-
-    // 统一为分钟对齐的半开区间 [start, end)。内存窗口以整分钟桶为粒度,
-    // 覆盖 [minute_start(now-5min), minute_end(now)),与 SQL 回退路径
-    // 对同一区间的聚合语义一致,此处可安全命中内存。
-    let start = minute_start(params.start_time);
-    let end = minute_end(params.end_time);
-    let window_start = minute_start(window_start);
-    let window_end = minute_end(now_ms);
-    if params.flow_id.is_none() && start >= window_start && end <= window_end {
-        return window.lightweight_summary_range(start, end);
+    let start = minute_start(start_time);
+    let end = minute_end(end_time);
+    if start >= end {
+        return None;
     }
-
-    params.start_time = start;
-    params.end_time = end;
-    sink.get_dns_lightweight_summary(params).await
+    Some((start, end))
 }
 
 pub fn resolved_metric_mode(mode: MetricMode) -> MetricMode {
@@ -460,6 +477,7 @@ mod tests {
             connect_summary_retention_days: 30,
             connect_summary_max_rows: 0,
             dns_retention_days: 7,
+            dns_1m_retention_days: 30,
             write_batch_size: 2,
             write_flush_interval_secs: 1,
             cleanup_interval_secs: 3600,
@@ -864,7 +882,10 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn dns_window_shows_zero_after_restart_until_new_metrics() {
+        async fn dns_summary_served_from_buckets_after_restart() {
+            // 仪表盘状态卡(get_dns_summary)直查 DB 桶:重启后仍可读重启前的数据;
+            // 首页卡片(get_dns_lightweight_summary)只读内存窗口:重启后为空返回 0,
+            // 新流量进入窗口后恢复。两者互不串门。
             let temp = tempfile::tempdir().unwrap();
             let path = temp.path().to_path_buf();
             let now_ms = get_current_time_ms().unwrap();
@@ -874,6 +895,7 @@ mod tests {
             let tx = engine.get_dns_msg_channel().unwrap();
             tx.send(dns_metric(now_ms - 1_000)).await.unwrap();
 
+            // 等原始行落库(writer 同批构建桶行,桶随原始行一起持久化)。
             let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
             loop {
                 let history = engine
@@ -894,15 +916,21 @@ mod tests {
             engine.shutdown().await;
             drop(engine);
 
+            // 重启后:仪表盘状态卡从 DB 桶读到重启前的数据(桶在 DB,与窗口无关)。
             let restarted =
                 MetricEngine::new(path, test_config(MetricMode::Persistent)).await.unwrap();
-            let summary =
-                restarted.get_dns_lightweight_summary(DnsSummaryQueryParams::default()).await;
+            let summary = restarted.get_dns_summary(DnsSummaryQueryParams::default()).await;
             assert_eq!(
-                summary.total_queries, 0,
-                "recent window intentionally not seeded from disk; shows 0 until new metrics arrive"
+                summary.total_queries, 1,
+                "dashboard summary served from persisted buckets after restart"
             );
 
+            // 首页卡片只读内存窗口:重启后窗口为空 → 0。
+            let lightweight =
+                restarted.get_dns_lightweight_summary(DnsSummaryQueryParams::default()).await;
+            assert_eq!(lightweight.total_queries, 0, "homepage card reads memory window only");
+
+            // 新流量进入窗口后首页卡片恢复。
             let tx = restarted.get_dns_msg_channel().unwrap();
             tx.send(dns_metric(now_ms - 1_000)).await.unwrap();
             let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
@@ -966,73 +994,99 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn window_summary_completes_default_range_params() {
+        async fn dns_parts_complete_default_range_params() {
             let window = DnsRecentWindow::new();
-            let sink: Arc<dyn MetricSink> = Arc::new(MemoryMetricSink);
             let now_ms = 100_000_000_000u64;
             window.ingest(&window_metric(now_ms - 1_000), now_ms);
 
-            let summary = get_dns_lightweight_summary_from_window(
-                &window,
-                &sink,
-                DnsSummaryQueryParams::default(),
-                now_ms,
-            )
-            .await;
+            let (start, end) =
+                normalized_dns_range(&DnsSummaryQueryParams::default(), now_ms).unwrap();
+            let summary = window.range_parts(start, end, None).into_lightweight_response();
             assert_eq!(summary.total_queries, 1, "default (0,0) range completed and hit window");
             assert_eq!(summary.avg_duration_ms, 12.0);
         }
 
         #[tokio::test]
-        async fn window_summary_completes_missing_end_time() {
+        async fn dns_parts_complete_missing_end_time() {
             let window = DnsRecentWindow::new();
-            let sink: Arc<dyn MetricSink> = Arc::new(MemoryMetricSink);
             let now_ms = 100_000_000_000u64;
             let report_time = minute_start(now_ms - 60_000) + 1;
             window.ingest(&window_metric(report_time), now_ms);
 
-            let summary = get_dns_lightweight_summary_from_window(
-                &window,
-                &sink,
-                DnsSummaryQueryParams {
+            let (start, end) = normalized_dns_range(
+                &DnsSummaryQueryParams {
                     start_time: minute_start(report_time),
                     end_time: 0,
                     flow_id: None,
                 },
                 now_ms,
             )
-            .await;
+            .unwrap();
+            let summary = window.range_parts(start, end, None).into_lightweight_response();
             assert_eq!(summary.total_queries, 1, "end_time=0 completed to now and hit window");
         }
 
         #[tokio::test]
-        async fn window_summary_falls_back_to_sink_when_filtered_or_out_of_range() {
+        async fn dns_parts_window_only_never_merges_buckets() {
             let window = DnsRecentWindow::new();
-            let sink: Arc<dyn MetricSink> = Arc::new(MemoryMetricSink);
             let now_ms = 100_000_000_000u64;
-            window.ingest(&window_metric(now_ms - 1_000), now_ms);
+            window.ingest(&window_metric(now_ms - 60_000), now_ms);
 
-            let filtered = get_dns_lightweight_summary_from_window(
-                &window,
-                &sink,
-                DnsSummaryQueryParams { flow_id: Some(1), ..Default::default() },
-                now_ms,
-            )
-            .await;
-            assert_eq!(filtered.total_queries, 0, "flow filter forces SQL fallback");
+            let (start, end) =
+                normalized_dns_range(&DnsSummaryQueryParams::default(), now_ms).unwrap();
+            let parts = window.range_parts(start, end, None);
+            assert_eq!(parts.counts.total_queries, 1, "window-only data served");
 
-            let out_of_range = get_dns_lightweight_summary_from_window(
-                &window,
-                &sink,
-                DnsSummaryQueryParams {
-                    start_time: minute_start(now_ms - 2 * DNS_RECENT_WINDOW_SECS * 1000),
+            // 窗口不落库、查询不合并桶:跨越窗口下界的区间,更早部分在纯内存下不存在。
+            let wide_start = minute_start(now_ms - 2 * DNS_RECENT_WINDOW_SECS * 1000);
+            let parts = window.range_parts(wide_start, end, None);
+            assert_eq!(parts.counts.total_queries, 1, "older part absent from memory-only window");
+        }
+
+        #[tokio::test]
+        async fn dns_parts_filter_by_flow() {
+            let window = DnsRecentWindow::new();
+            let now_ms = 100_000_000_000u64;
+            let minute = minute_start(now_ms);
+            let mut metric = window_metric(minute + 10);
+            metric.flow_id = 1;
+            window.ingest(&metric, now_ms);
+            let mut other = window_metric(minute + 20);
+            other.flow_id = 2;
+            window.ingest(&other, now_ms);
+
+            let (start, end) =
+                normalized_dns_range(&DnsSummaryQueryParams::default(), now_ms).unwrap();
+            let flow_one = window.range_parts(start, end, Some(1));
+            assert_eq!(flow_one.counts.total_queries, 1);
+            let all = window.range_parts(start, end, None);
+            assert_eq!(all.counts.total_queries, 2);
+        }
+
+        #[tokio::test]
+        async fn dns_parts_subminute_range_returns_none() {
+            let now_ms = 100_000_000_000u64;
+            // 分钟内的短区间会被放宽到整个分钟(分钟粒度语义);
+            // 倒置区间(起点晚于终点且跨分钟)归一后为空 → 回退原始行。
+            let widened = normalized_dns_range(
+                &DnsSummaryQueryParams {
+                    start_time: now_ms - 10_000,
                     end_time: now_ms,
                     flow_id: None,
                 },
                 now_ms,
-            )
-            .await;
-            assert_eq!(out_of_range.total_queries, 0, "range before window goes to SQL fallback");
+            );
+            assert!(widened.is_some(), "sub-minute forward range widens to the whole minute");
+
+            let inverted = normalized_dns_range(
+                &DnsSummaryQueryParams {
+                    start_time: now_ms,
+                    end_time: now_ms - 60_000,
+                    flow_id: None,
+                },
+                now_ms,
+            );
+            assert!(inverted.is_none(), "inverted cross-minute range must fall back to raw rows");
         }
     }
 

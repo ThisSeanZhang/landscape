@@ -1,12 +1,13 @@
 pub(crate) mod connect;
 pub(crate) mod dns;
 
-use std::net::IpAddr;
 use std::path::Path;
 use std::time::Duration;
 
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous};
 use sqlx::SqlitePool;
+
+pub(crate) use crate::agg::dns_bucket::clean_ip_string;
 
 /// 读(web 查询)与写(worker 批量写入/cleanup 大范围删除)并发,
 /// 必须用 WAL + synchronous=NORMAL 避免读在写入期间报 SQLITE_BUSY。
@@ -17,19 +18,6 @@ fn connect_options(path: &Path) -> SqliteConnectOptions {
         .journal_mode(SqliteJournalMode::Wal)
         .synchronous(SqliteSynchronous::Normal)
         .busy_timeout(Duration::from_secs(5))
-}
-
-pub(crate) fn clean_ip_string(ip: &IpAddr) -> String {
-    match ip {
-        IpAddr::V6(v6) => {
-            if let Some(v4) = v6.to_ipv4_mapped() {
-                v4.to_string()
-            } else {
-                v6.to_string()
-            }
-        }
-        IpAddr::V4(v4) => v4.to_string(),
-    }
 }
 
 pub(crate) async fn open_connect_pool(path: &Path) -> Result<SqlitePool, String> {
@@ -68,7 +56,7 @@ pub(crate) async fn open_dns_pool(path: &Path) -> Result<SqlitePool, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::net::{Ipv4Addr, Ipv6Addr};
+    use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
     #[test]
     fn clean_ip_string_keeps_ipv4_as_is() {

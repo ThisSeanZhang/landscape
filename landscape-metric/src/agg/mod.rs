@@ -1,5 +1,7 @@
 pub(crate) mod batch;
 #[cfg(feature = "metric-persistent")]
+pub(crate) mod dns_bucket;
+#[cfg(feature = "metric-persistent")]
 pub(crate) mod dns_window;
 pub(crate) mod flow;
 

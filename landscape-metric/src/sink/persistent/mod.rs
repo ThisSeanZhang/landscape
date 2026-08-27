@@ -18,6 +18,7 @@ use sqlx::SqlitePool;
 use tokio::task::JoinHandle;
 
 use super::MetricSink;
+use crate::agg::dns_bucket::{DnsBucketRow, DnsSummaryParts};
 use crate::agg::{Batch, MS_PER_DAY};
 
 /// 全局统计缓存每日漂移校正间隔:超过该时长未重建则后台重建一次。
@@ -86,6 +87,21 @@ impl MetricSink for PersistentMetricStore {
         // 行为决策:同 connect 批次,写失败直接丢弃、不重试,保留 error 日志。
         if let Err(error) = sqlite::dns::insert_dns_batch(&self.dns_pool, &metrics).await {
             tracing::error!("failed to write persistent dns batch, dropping it: {}", error);
+            return false;
+        }
+        true
+    }
+
+    async fn apply_dns_bucket_rows(&self, rows: Vec<DnsBucketRow>) -> bool {
+        if rows.is_empty() {
+            return true;
+        }
+        // 行为决策:同 connect 批次,写失败直接丢弃、不重试,保留 error 日志。
+        if let Err(error) = sqlite::dns::insert_dns_bucket_rows(&self.dns_pool, &rows).await {
+            tracing::error!(
+                "failed to write persistent dns metric buckets, dropping them: {}",
+                error
+            );
             return false;
         }
         true
@@ -206,6 +222,20 @@ impl MetricSink for PersistentMetricStore {
                 tracing::error!("failed to cleanup persistent dns metrics: {}", error)
             }
         }
+
+        let bucket_cutoff = get_current_time_ms()
+            .unwrap_or_default()
+            .saturating_sub(config.dns_1m_retention_days * MS_PER_DAY);
+        if let Err(error) = sqlite::dns::cleanup_old_dns_buckets(
+            &self.dns_pool,
+            bucket_cutoff,
+            config.cleanup_time_budget_ms,
+            config.cleanup_slice_window_secs,
+        )
+        .await
+        {
+            tracing::error!("failed to cleanup persistent dns metric buckets: {}", error);
+        }
     }
 
     async fn close(&self) {
@@ -316,6 +346,22 @@ impl MetricSink for PersistentMetricStore {
             }
         }
     }
+
+    async fn get_dns_summary_parts(
+        &self,
+        start_ms: u64,
+        end_ms: u64,
+        flow_id: Option<u32>,
+    ) -> DnsSummaryParts {
+        match sqlite::dns::query_dns_summary_parts(&self.dns_pool, start_ms, end_ms, flow_id).await
+        {
+            Ok(parts) => parts,
+            Err(error) => {
+                tracing::error!("failed to query persistent dns summary parts: {}", error);
+                DnsSummaryParts::default()
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -335,6 +381,7 @@ mod tests {
             connect_summary_retention_days: 30,
             connect_summary_max_rows: 0,
             dns_retention_days: 7,
+            dns_1m_retention_days: 30,
             write_batch_size: 16,
             write_flush_interval_secs: 1,
             cleanup_interval_secs: 3600,

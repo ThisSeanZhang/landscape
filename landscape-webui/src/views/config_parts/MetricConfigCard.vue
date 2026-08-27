@@ -157,6 +157,18 @@ async function handleSaveMetric() {
           {{ t("config.dns_retention_days_desc") }}
         </template>
       </n-form-item>
+      <n-form-item :label="t('config.dns_1m_retention_days')">
+        <n-input-number
+          v-model:value="metricStore.dns1mRetentionDays"
+          :min="1"
+          :max="365"
+          placeholder="30"
+          style="width: 200px"
+        />
+        <template #feedback>
+          {{ t("config.dns_1m_retention_days_desc") }}
+        </template>
+      </n-form-item>
 
       <n-divider title-placement="left">
         {{ t("config.performance_settings") }}

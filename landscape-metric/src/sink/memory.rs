@@ -3,6 +3,8 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 
+#[cfg(feature = "metric-persistent")]
+use crate::agg::dns_bucket::{DnsBucketRow, DnsSummaryParts};
 use landscape_common::config::MetricRuntimeConfig;
 use landscape_common::database::error::DbError;
 use landscape_common::metric::connect::{
@@ -39,6 +41,11 @@ impl MetricSink for MemoryMetricSink {
 
     #[cfg(feature = "metric-persistent")]
     async fn apply_dns_batch(&self, _metrics: Vec<DnsMetric>) -> bool {
+        true
+    }
+
+    #[cfg(feature = "metric-persistent")]
+    async fn apply_dns_bucket_rows(&self, _rows: Vec<DnsBucketRow>) -> bool {
         true
     }
 
@@ -89,6 +96,16 @@ impl MetricSink for MemoryMetricSink {
         _params: DnsSummaryQueryParams,
     ) -> DnsLightweightSummaryResponse {
         DnsLightweightSummaryResponse::default()
+    }
+
+    #[cfg(feature = "metric-persistent")]
+    async fn get_dns_summary_parts(
+        &self,
+        _start_ms: u64,
+        _end_ms: u64,
+        _flow_id: Option<u32>,
+    ) -> DnsSummaryParts {
+        DnsSummaryParts::default()
     }
 }
 
@@ -257,6 +274,7 @@ mod tests {
             connect_summary_retention_days: 1,
             connect_summary_max_rows: 0,
             dns_retention_days: 1,
+            dns_1m_retention_days: 30,
             write_batch_size: 16,
             write_flush_interval_secs: 1,
             cleanup_interval_secs: 3600,

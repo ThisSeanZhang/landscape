@@ -789,6 +789,7 @@ mod tests {
             connect_summary_retention_days: 30,
             connect_summary_max_rows: 0,
             dns_retention_days: 7,
+            dns_1m_retention_days: 30,
             write_batch_size: 2,
             write_flush_interval_secs: 3600,
             cleanup_interval_secs: 3600,

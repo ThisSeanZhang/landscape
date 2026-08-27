@@ -39,7 +39,7 @@ const loadSummary = async () => {
   loading.value = true;
   try {
     const now = Date.now();
-    const startTime = props.timeRange?.[0] || now - 24 * 60 * 60 * 1000;
+    const startTime = props.timeRange?.[0] || now - 10 * 60 * 1000;
     const endTime = props.timeRange?.[1] || now;
 
     summary.value = await get_dns_summary({

@@ -69,7 +69,7 @@ pub const LANDSCAPE_LOG_DIR_NAME: &str = "logs";
 pub const LANDSCAPE_WEBROOT_DIR_NAME: &str = "static";
 // --- Metric Settings ---
 pub const LANDSCAPE_METRIC_DIR_NAME: &str = "metric";
-pub const LANDSCAPE_METRIC_DB_VERSION: u32 = 15;
+pub const LANDSCAPE_METRIC_DB_VERSION: u32 = 16;
 
 // Metric Retention Defaults
 pub const DEFAULT_METRIC_MODE: MetricMode = MetricMode::Persistent;
@@ -79,6 +79,8 @@ pub const DEFAULT_METRIC_CONNECT_1D_RETENTION_DAYS: u64 = 30;
 /// 0 表示不限制 conn_summaries 行数。
 pub const DEFAULT_METRIC_CONNECT_SUMMARY_MAX_ROWS: u64 = 0;
 pub const DEFAULT_DNS_METRIC_RETENTION_DAYS: u64 = 7;
+/// 1m 预聚合桶保留期:桶行数少、体积小,可支撑比原始行更长的图表保留期。
+pub const DEFAULT_DNS_METRIC_1M_RETENTION_DAYS: u64 = 30;
 pub const DEFAULT_METRIC_CONNECT_SECOND_WINDOW_MINUTES: u64 = 5;
 
 // Metric Performance & Storage Defaults

@@ -134,6 +134,10 @@ impl RuntimeConfig {
                 .metric
                 .dns_retention_days
                 .unwrap_or(crate::DEFAULT_DNS_METRIC_RETENTION_DAYS),
+            dns_1m_retention_days: config
+                .metric
+                .dns_1m_retention_days
+                .unwrap_or(crate::DEFAULT_DNS_METRIC_1M_RETENTION_DAYS),
             write_batch_size: config
                 .metric
                 .write_batch_size

@@ -169,7 +169,7 @@ parquet = { version = "59.2.0", default-features = false, features = [
     "arrow",
     "zstd",
 ] }
-hdrhistogram = "7.5.4"
+hdrhistogram = { version = "7.5.4", features = ["serialization"] }
 fs2 = "0.4.3"
 
 # ============================================================================

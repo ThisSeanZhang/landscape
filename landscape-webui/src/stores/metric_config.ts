@@ -15,6 +15,7 @@ export const useMetricConfigStore = defineStore("metric_config", () => {
   const connectSummaryRetentionDays = ref<number | undefined>(undefined);
   const connectSummaryMaxRows = ref<number | undefined>(undefined);
   const dnsRetentionDays = ref<number | undefined>(undefined);
+  const dns1mRetentionDays = ref<number | undefined>(undefined);
   const writeBatchSize = ref<number | undefined>(undefined);
   const writeFlushIntervalSecs = ref<number | undefined>(undefined);
   const cleanupIntervalSecs = ref<number | undefined>(undefined);
@@ -38,6 +39,7 @@ export const useMetricConfigStore = defineStore("metric_config", () => {
       metric.connect_summary_retention_days ?? undefined;
     connectSummaryMaxRows.value = metric.connect_summary_max_rows ?? undefined;
     dnsRetentionDays.value = metric.dns_retention_days ?? undefined;
+    dns1mRetentionDays.value = metric.dns_1m_retention_days ?? undefined;
     writeBatchSize.value = metric.write_batch_size ?? undefined;
     writeFlushIntervalSecs.value =
       metric.write_flush_interval_secs ?? undefined;
@@ -58,6 +60,7 @@ export const useMetricConfigStore = defineStore("metric_config", () => {
       connect_summary_retention_days: connectSummaryRetentionDays.value,
       connect_summary_max_rows: connectSummaryMaxRows.value,
       dns_retention_days: dnsRetentionDays.value,
+      dns_1m_retention_days: dns1mRetentionDays.value,
       write_batch_size: writeBatchSize.value,
       write_flush_interval_secs: writeFlushIntervalSecs.value,
       cleanup_interval_secs: cleanupIntervalSecs.value,
@@ -83,6 +86,7 @@ export const useMetricConfigStore = defineStore("metric_config", () => {
     connectSummaryRetentionDays,
     connectSummaryMaxRows,
     dnsRetentionDays,
+    dns1mRetentionDays,
     writeBatchSize,
     writeFlushIntervalSecs,
     cleanupIntervalSecs,
