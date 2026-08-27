@@ -102,10 +102,10 @@ impl DnsCounters {
     }
 }
 
-/// top-k 计数累加器:分钟桶内全量计数,读取/驱逐时截断为 k。
-/// 不做逐条淘汰——逐条增量到达的热点域名若在满桶时被淘汰将永远无法累积
-/// (count=1 的新键恒为最小值)。内存由单分钟去重键数天然约束,
-/// 窗口在创建新分钟桶时对旧桶截断,长时间异常基数下仍有界。
+/// top-k 计数累加器:记录阶段全量计数、不淘汰,读取(`top`)时按计数降序截断为 k。
+/// 不做逐条淘汰——逐条增量到达的热点键若在满桶时被淘汰将永远无法累积
+/// (count=1 的新键恒为最小值)。键数上界由单批/单分钟去重键数天然限制,
+/// 截断只发生在输出时,内存峰值受限于批/分钟内的去重键数。
 #[derive(Debug, Clone)]
 pub(crate) struct CountTopK<V> {
     cap: usize,
@@ -132,16 +132,6 @@ where
         items.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
         items.truncate(self.cap);
         items
-    }
-
-    /// 就地截断为 top-k(新分钟桶创建时对旧桶调用,控制内存上界)。
-    pub(crate) fn trim(&mut self) {
-        if self.entries.len() <= self.cap {
-            return;
-        }
-        let keep: Vec<(V, u64)> = self.top();
-        self.entries.clear();
-        self.entries.extend(keep);
     }
 }
 
@@ -179,16 +169,6 @@ where
         items.truncate(self.cap);
         items
     }
-
-    /// 就地截断为 top-k。
-    pub(crate) fn trim(&mut self) {
-        if self.entries.len() <= self.cap {
-            return;
-        }
-        let keep: Vec<(V, u64, u64)> = self.top();
-        self.entries.clear();
-        self.entries.extend(keep.into_iter().map(|(key, count, sum)| (key, (count, sum))));
-    }
 }
 
 fn avg_duration((count, sum): (u64, u64)) -> f64 {
@@ -216,8 +196,13 @@ pub(crate) struct DnsBucketRow {
     pub slowest: Vec<(String, u64, u64)>,
 }
 
-/// 批内 (flow_id, 分钟) 聚合中间态:与内存窗口桶的计数语义一致,但不截断
-/// (单批 ≤ 500 行,全量统计以保证桶是原始行的忠实聚合)。
+/// 单批桶行每维 top 的持久化上界:远大于读侧 top-10 输出,保留跨批累积能力。
+/// 截断后的 dashboard top 为近似统计;原始行仍保留,供后续精确统计 API 查询,
+/// 当前桶查询不会自动回查原始行。
+const BATCH_TOP_K: usize = 50;
+
+/// 批内 (flow_id, 分钟) 聚合中间态:计数/延迟全量统计,top 在输出时截断到
+/// 宽松上界 `BATCH_TOP_K`;桶读侧的 top 为近似统计,精确统计留给后续 API。
 #[derive(Debug)]
 struct BatchAggregate {
     flow_id: u32,
@@ -238,10 +223,10 @@ impl BatchAggregate {
             bucket_time,
             counts: DnsCounters::default(),
             latency: Histogram::<u64>::new(3).expect("create dns batch latency histogram"),
-            top_domains: CountTopK::new(usize::MAX),
-            top_clients: CountTopK::new(usize::MAX),
-            top_blocked: CountTopK::new(usize::MAX),
-            slowest: SlowTopK::new(usize::MAX),
+            top_domains: CountTopK::new(BATCH_TOP_K),
+            top_clients: CountTopK::new(BATCH_TOP_K),
+            top_blocked: CountTopK::new(BATCH_TOP_K),
+            slowest: SlowTopK::new(BATCH_TOP_K),
             last_report_time: 0,
         }
     }
@@ -281,8 +266,9 @@ impl BatchAggregate {
 
 /// 从一批原始行构建 1m 桶行(DNS writer 同批落库,桶的唯一数据源)。
 ///
-/// 按 (flow_id, 分钟) 分组,批次内全量统计(不截断);同一分钟由多个批次各自
-/// 成行,读侧 `GROUP BY bucket_time` 逐行合并,与原始行 SQL 聚合语义一致。
+/// 按 (flow_id, 分钟) 分组,计数/延迟全量统计,top 截断到 `BATCH_TOP_K`
+/// (dashboard 的 top 为近似统计);同一分钟由多个批次各自成行,
+/// 读侧逐行合并(SUM 计数 + 直方图合并 + top union),与原始行 SQL 聚合语义一致。
 pub(crate) fn dns_bucket_rows_from_batch(metrics: &[DnsMetric]) -> Vec<DnsBucketRow> {
     let mut aggregates: HashMap<(u32, u64), BatchAggregate> = HashMap::new();
     for metric in metrics {
@@ -324,12 +310,14 @@ impl Default for DnsSummaryParts {
     }
 }
 
+#[cfg(test)]
 pub(crate) fn merge_top_pairs(map: &mut HashMap<String, u64>, pairs: &[(String, u64)]) {
     for (key, count) in pairs {
         *map.entry(key.clone()).or_insert(0) += count;
     }
 }
 
+#[cfg(test)]
 pub(crate) fn merge_slow_pairs(
     map: &mut HashMap<String, (u64, u64)>,
     pairs: &[(String, u64, u64)],
@@ -595,20 +583,6 @@ mod tests {
     }
 
     #[test]
-    fn count_top_k_trim_keeps_exact_top_k() {
-        let mut top = CountTopK::new(2);
-        for (domain, count) in [("a", 1u64), ("b", 5), ("c", 3), ("d", 2), ("e", 4)] {
-            for _ in 0..count {
-                top.record(domain.to_string(), 1);
-            }
-        }
-        top.trim();
-        assert_eq!(top.entries.len(), 2);
-        let items = top.top();
-        assert_eq!(items, vec![("b".to_string(), 5), ("e".to_string(), 4)]);
-    }
-
-    #[test]
     fn slow_top_k_ranks_by_avg_duration() {
         let mut top = SlowTopK::new(10);
         top.record("slow".to_string(), 900);
@@ -707,6 +681,33 @@ mod tests {
         let flow2 = &rows[2];
         assert_eq!(flow2.counts.total_queries, 1);
         assert_eq!(flow2.top_clients, vec![("10.0.0.2".to_string(), 1)]);
+    }
+
+    #[test]
+    fn batch_rows_cap_tops_at_loose_bound() {
+        // 高基数突发:一批 60 个不同域名/IP,top 截断到 BATCH_TOP_K,计数不受影响。
+        let metrics: Vec<DnsMetric> = (0..60)
+            .map(|index| {
+                let mut metric = dns_metric(
+                    1,
+                    &format!("d{}.com", index),
+                    "A",
+                    DnsOutcome::Normal,
+                    100_000 + index as u64,
+                    10,
+                );
+                metric.src_ip = IpAddr::V4(Ipv4Addr::new(10, 0, 1, index as u8));
+                metric
+            })
+            .collect();
+        let rows = dns_bucket_rows_from_batch(&metrics);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].top_domains.len(), 50, "top domains capped at loose bound");
+        assert_eq!(rows[0].top_clients.len(), 50, "top clients capped at loose bound");
+        assert_eq!(rows[0].slowest.len(), 50, "slowest capped at loose bound");
+        assert_eq!(rows[0].counts.total_queries, 60, "counts stay exact");
+        // 所有并列条目的计数一致;此处仅验证截断后的计数未被改写。
+        assert!(rows[0].top_domains.iter().all(|(_, count)| *count == 1));
     }
 
     #[test]

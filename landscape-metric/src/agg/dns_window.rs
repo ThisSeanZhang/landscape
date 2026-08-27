@@ -9,18 +9,12 @@ use landscape_common::metric::dns::DnsLightweightSummaryResponse;
 
 #[cfg(test)]
 use super::dns_bucket::minute_end;
-use super::dns_bucket::{
-    clean_ip_string, merge_slow_pairs, merge_top_pairs, minute_start, CountTopK, DnsCounters,
-    DnsSummaryParts, SlowTopK, MINUTE_MS,
-};
+use super::dns_bucket::{minute_start, DnsCounters, DnsSummaryParts, MINUTE_MS};
 
 /// DNS 内存窗口时长(5 分钟)。仅服务首页 DnsStatusCard(其默认查询范围同为 5min);
 /// 仪表盘状态卡 DNSDashboard(默认 10min)直接查 DB,不走窗口。
 /// 窗口纯内存:只由采集方向 ingest 驱动,不落库、不与 DB 合并,重启后为空。
 pub(crate) const DNS_RECENT_WINDOW_SECS: u64 = 5 * 60;
-
-/// 每维度每分钟桶保留的 top-k 条数;读侧跨分钟 union 后重排。
-const TOP_K: usize = 20;
 
 #[derive(Debug)]
 struct DnsMinuteBucket {
@@ -29,10 +23,6 @@ struct DnsMinuteBucket {
     counts: DnsCounters,
     /// 仅记录有效查询(Normal/NxDomain)的 duration_ms;block/filter/error/local/hit 不计入。
     latency: Histogram<u64>,
-    top_domains: CountTopK<String>,
-    top_clients: CountTopK<String>,
-    top_blocked: CountTopK<String>,
-    slowest: SlowTopK<String>,
 }
 
 impl DnsMinuteBucket {
@@ -42,43 +32,25 @@ impl DnsMinuteBucket {
             minute_start,
             counts: DnsCounters::default(),
             latency: Histogram::<u64>::new(3).expect("create dns latency histogram"),
-            top_domains: CountTopK::new(TOP_K),
-            top_clients: CountTopK::new(TOP_K),
-            top_blocked: CountTopK::new(TOP_K),
-            slowest: SlowTopK::new(TOP_K),
         }
     }
 
     fn ingest(&mut self, metric: &DnsMetric) {
         self.counts.record(metric);
 
-        self.top_domains.record(metric.domain.clone(), 1);
-        self.top_clients.record(clean_ip_string(&metric.src_ip), 1);
-        if metric.status == DnsOutcome::Block {
-            self.top_blocked.record(metric.domain.clone(), 1);
-        }
-
         // 仅 Normal/NxDomain 计入延迟。注意 NxDomain 中包含大量本地/缓存秒回的查询
         // (拦截 TLD、缓存命中的 NXDOMAIN、被类型过滤且缓存为 NXDOMAIN 的查询等),
         // 其耗时通常为 0~1ms,0ms 会被上方 max(1) 钳为 1ms;当这类查询在窗口内占多数时,
         // p50/p95/p99 可能显示 1ms,这是正常现象,并非 block/filter/error/local/hit 被计入。
         if matches!(metric.status, DnsOutcome::Normal | DnsOutcome::NxDomain) {
-            self.slowest.record(metric.domain.clone(), metric.duration_ms as u64);
             let _ = self.latency.record(metric.duration_ms.max(1) as u64);
         }
-    }
-
-    fn trim(&mut self) {
-        self.top_domains.trim();
-        self.top_clients.trim();
-        self.top_blocked.trim();
-        self.slowest.trim();
     }
 }
 
 /// DNS 最近 5 分钟预聚合窗口(首页 DnsStatusCard 专用)。
 ///
-/// 以 (flow_id × 分钟) 桶滚动维护计数、duration 分位数 sketch 与每维度 top-k 热点。
+/// 以 (flow_id × 分钟) 桶滚动维护计数与 duration 分位数 sketch。
 /// 数据流约定:窗口是纯内存实时结构,唯一数据源是采集方向(worker ingest);
 /// 数据不落库(驱逐即丢弃,无 shutdown drain),查询也不与 DB 桶合并,重启后为空。
 /// 查询区间必须落在窗口覆盖范围内 [minute_start(now-5min), minute_end(now)),
@@ -115,7 +87,6 @@ impl DnsRecentWindow {
             bucket.minute_start > bucket_start
                 || (bucket.minute_start == bucket_start && bucket.flow_id >= metric.flow_id)
         });
-        let mut inserted_new = false;
         match position {
             Some(index)
                 if buckets[index].minute_start == bucket_start
@@ -127,22 +98,11 @@ impl DnsRecentWindow {
                 let mut bucket = DnsMinuteBucket::new(metric.flow_id, bucket_start);
                 bucket.ingest(metric);
                 buckets.insert(index, bucket);
-                inserted_new = true;
             }
             None => {
                 let mut bucket = DnsMinuteBucket::new(metric.flow_id, bucket_start);
                 bucket.ingest(metric);
                 buckets.push_back(bucket);
-                inserted_new = true;
-            }
-        }
-        // 新分钟桶创建意味着更早的分钟已结束(除非时钟乱序),截断其 top-k 映射,
-        // 控制持续异常基数下的内存上界。
-        if inserted_new {
-            for bucket in buckets.iter_mut() {
-                if bucket.minute_start < bucket_start {
-                    bucket.trim();
-                }
             }
         }
 
@@ -187,10 +147,6 @@ impl DnsRecentWindow {
             }
             parts.counts.merge(&bucket.counts);
             let _ = parts.latency.add(&bucket.latency);
-            merge_top_pairs(&mut parts.top_domains, &bucket.top_domains.top());
-            merge_top_pairs(&mut parts.top_clients, &bucket.top_clients.top());
-            merge_top_pairs(&mut parts.top_blocked, &bucket.top_blocked.top());
-            merge_slow_pairs(&mut parts.slowest, &bucket.slowest.top());
         }
         parts
     }
@@ -421,28 +377,5 @@ mod tests {
 
         let all = window.range_parts(minute, minute + MINUTE_MS, None);
         assert_eq!(all.counts.total_queries, 3);
-    }
-
-    #[test]
-    fn new_minute_bucket_trims_completed_bucket_maps() {
-        let window = DnsRecentWindow::new();
-        let t0 = minute_start(NOW_MS);
-        // t0 分钟灌入 25 个不同域名,全量保留。
-        for index in 0..25 {
-            let mut metric = dns_metric(1, t0 + index as u64, "A", DnsOutcome::Normal, 10);
-            metric.domain = format!("d{}.com", index);
-            window.ingest(&metric, NOW_MS);
-        }
-        // 下一分钟的新桶触发对 t0 桶的截断。
-        window.ingest(
-            &dns_metric(1, t0 + MINUTE_MS + 1, "A", DnsOutcome::Normal, 10),
-            NOW_MS + MINUTE_MS,
-        );
-
-        let buckets = window.inner.read().expect("dns recent window poisoned");
-        let first = &buckets[0];
-        let tops = first.top_domains.top();
-        assert_eq!(tops.len(), 20, "completed minute trimmed to top-k");
-        assert_eq!(first.slowest.top().len(), 20);
     }
 }

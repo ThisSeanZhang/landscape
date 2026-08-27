@@ -882,9 +882,8 @@ mod tests {
 
         let mut dns_batches = Vec::new();
         while let Ok(msg) = writer_rx.try_recv() {
-            if let DnsWriteMessage::Metrics(metrics) = msg {
-                dns_batches.push(metrics.len());
-            }
+            let DnsWriteMessage::Metrics(metrics) = msg;
+            dns_batches.push(metrics.len());
         }
         assert_eq!(dns_batches, vec![DNS_BATCH_MAX_ROWS]);
     }
@@ -935,9 +934,8 @@ mod tests {
 
         let mut raw_metrics = 0usize;
         while let Ok(msg) = writer_rx.try_recv() {
-            if let DnsWriteMessage::Metrics(metrics) = msg {
-                raw_metrics += metrics.len();
-            }
+            let DnsWriteMessage::Metrics(metrics) = msg;
+            raw_metrics += metrics.len();
         }
         assert_eq!(raw_metrics, 5, "raw rows flushed at shutdown, window itself not persisted");
     }
