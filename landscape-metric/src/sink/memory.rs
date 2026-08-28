@@ -8,7 +8,7 @@ use crate::agg::dns_bucket::{DnsBucketRow, DnsSummaryParts};
 use landscape_common::config::MetricRuntimeConfig;
 use landscape_common::database::error::DbError;
 use landscape_common::metric::connect::{
-    ConnectGlobalStats, ConnectHistoryQueryParams, ConnectHistoryStatus, ConnectKey,
+    ConnectGlobalStats, ConnectHistoryQueryParams, ConnectHistoryResponse, ConnectKey,
     ConnectMetricPoint, ConnectRealtimeStatus, IfaceRealtimeStat, IpHistoryStat, IpRealtimeStat,
     MetricResolution,
 };
@@ -67,8 +67,8 @@ impl MetricSink for MemoryMetricSink {
     async fn history_summaries_complex(
         &self,
         _params: ConnectHistoryQueryParams,
-    ) -> Vec<ConnectHistoryStatus> {
-        Vec::new()
+    ) -> ConnectHistoryResponse {
+        ConnectHistoryResponse::default()
     }
 
     async fn history_src_ip_stats(&self, _params: ConnectHistoryQueryParams) -> Vec<IpHistoryStat> {
@@ -222,8 +222,8 @@ impl MemoryMetricStore {
     pub async fn history_summaries_complex(
         &self,
         _params: ConnectHistoryQueryParams,
-    ) -> Vec<ConnectHistoryStatus> {
-        Vec::new()
+    ) -> ConnectHistoryResponse {
+        ConnectHistoryResponse::default()
     }
     pub async fn history_src_ip_stats(
         &self,
@@ -273,8 +273,10 @@ mod tests {
             connect_1d_retention_days: 1,
             connect_summary_retention_days: 1,
             connect_summary_max_rows: 0,
+            connect_db_max_bytes: landscape_common::DEFAULT_METRIC_CONNECT_DB_MAX_BYTES,
             dns_retention_days: 1,
             dns_1m_retention_days: 30,
+            dns_db_max_bytes: landscape_common::DEFAULT_DNS_METRIC_DB_MAX_BYTES,
             write_batch_size: 16,
             write_flush_interval_secs: 1,
             cleanup_interval_secs: 3600,

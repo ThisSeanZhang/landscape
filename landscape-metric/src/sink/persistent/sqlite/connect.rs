@@ -2,9 +2,9 @@ use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 use landscape_common::metric::connect::{
-    ConnectGlobalStats, ConnectHistoryQueryParams, ConnectHistoryStatus, ConnectKey,
-    ConnectMetricPoint, ConnectSortKey, ConnectStatusType, IpHistoryStat, MetricResolution,
-    SortOrder,
+    ConnectGlobalStats, ConnectHistoryQueryParams, ConnectHistoryResponse, ConnectHistoryStatus,
+    ConnectKey, ConnectMetricPoint, ConnectSortKey, ConnectStatusType, IpHistoryStat,
+    MetricResolution, SortOrder,
 };
 use landscape_core::time::get_current_time_ms;
 use sqlx::{QueryBuilder, Row, Sqlite, SqlitePool, Transaction};
@@ -25,7 +25,79 @@ impl BucketKind {
 pub(crate) const GLOBAL_STATS_CACHE_KEY: i64 = 1;
 
 /// 历史查询单页条数上限,防止无界 LIMIT 导致慢查询/超大响应。
+/// 注意:`limit=0` 表示不限制(见 `query_historical_summaries_complex`),
+/// 该哨兵值不走本上限。
 const MAX_PAGE_SIZE: usize = 200;
+/// 历史查询翻页偏移上限,避免深分页拖垮 SQLite。
+/// offset 被截断后,超出该上限的页会重复返回同一段数据;前端将
+/// `total` 同步截断到该值(见 HistoryMetric.vue 的 MAX_PAGE_OFFSET),
+/// 保证分页组件不会渲染出重复页。
+const MAX_PAGE_OFFSET: usize = 10_000;
+
+/// 按容量目标删除最旧数据,返回删除行数。
+///
+/// 收敛判定使用主库**逻辑占用**(`page_count - freelist_count` × page_size,见
+/// `super::logical_main_size_bytes`):WAL 模式下已提交删除立即可见,无需每批
+/// checkpoint,循环稳定收敛到 `target_bytes` 以下;物理文件缩小由调用方在循环
+/// 结束后执行 checkpoint + vacuum 尽力完成。
+///
+/// `target_bytes`:
+/// - `Some(target)`:cleanup 路径。逻辑占用超过 target 即开始删除(调用方按容量
+///   上限的 90% 提前清理,给后续写入留余量),删到 ≤ target 或预算耗尽。
+/// - `None`:热回收路径(已 SQLITE_FULL)。不按尺寸判定,直接删除最多
+///   `max_delete_rows` 行,为一次写入重试腾出 freelist 空间。
+///
+/// `rebuild_cache` 仅 cleanup 路径开启,避免满库时频繁全表重建 global stats 缓存。
+pub(crate) async fn enforce_database_size(
+    pool: &SqlitePool,
+    target_bytes: Option<u64>,
+    max_delete_rows: u64,
+    rebuild_cache: bool,
+) -> Result<u64, sqlx::Error> {
+    const DELETE_BATCH_SIZE: u64 = 1_000;
+    let mut deleted = 0;
+    loop {
+        let over_target = match target_bytes {
+            Some(target) => super::logical_main_size_bytes(pool).await? > target,
+            None => true,
+        };
+        if !over_target || deleted >= max_delete_rows {
+            break;
+        }
+        let rows = sqlx::query(&format!(
+            "DELETE FROM conn_summaries WHERE rowid IN \
+             (SELECT rowid FROM conn_summaries ORDER BY last_report_time ASC LIMIT {DELETE_BATCH_SIZE})"
+        ))
+        .execute(pool)
+        .await?
+        .rows_affected();
+        if rows == 0 {
+            let mut deleted_bucket_rows = 0;
+            for table in ["conn_metrics_1m", "conn_metrics_1h", "conn_metrics_1d"] {
+                let rows = sqlx::query(&format!(
+                    "DELETE FROM {table} WHERE rowid IN (SELECT rowid FROM {table} ORDER BY bucket_time ASC LIMIT {DELETE_BATCH_SIZE})"
+                ))
+                .execute(pool)
+                .await?
+                .rows_affected();
+                deleted_bucket_rows += rows;
+                if rows > 0 {
+                    break;
+                }
+            }
+            if deleted_bucket_rows == 0 {
+                break;
+            }
+            deleted += deleted_bucket_rows;
+        } else {
+            deleted += rows;
+        }
+    }
+    if deleted > 0 && rebuild_cache {
+        rebuild_global_stats_cache(pool).await?;
+    }
+    Ok(deleted)
+}
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 struct SummaryTotals {
@@ -430,7 +502,7 @@ pub(crate) async fn query_metric_by_key(
 }
 
 fn parse_ip_or_default(ip: String) -> std::net::IpAddr {
-    ip.parse().unwrap_or_else(|_| "0.0.0.0".parse().expect("valid fallback ip"))
+    ip.parse().unwrap_or(std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED))
 }
 
 fn push_clause(qb: &mut QueryBuilder<'_, Sqlite>, has_where: &mut bool, prefix: &str) {
@@ -508,7 +580,7 @@ fn push_connect_summary_filters(
 pub(crate) async fn query_historical_summaries_complex(
     pool: &SqlitePool,
     params: ConnectHistoryQueryParams,
-) -> Result<Vec<ConnectHistoryStatus>, sqlx::Error> {
+) -> Result<ConnectHistoryResponse, sqlx::Error> {
     let sort_col = match params.sort_key.clone().unwrap_or_default() {
         ConnectSortKey::Port => "src_port",
         ConnectSortKey::Ingress => "total_ingress_bytes",
@@ -521,6 +593,12 @@ pub(crate) async fn query_historical_summaries_complex(
         SortOrder::Desc => "DESC",
     };
 
+    let mut count_qb = QueryBuilder::<Sqlite>::new("SELECT COUNT(*) FROM conn_summaries");
+    let mut count_has_where = false;
+    push_connect_common_filters(&mut count_qb, &params, &mut count_has_where);
+    push_connect_summary_filters(&mut count_qb, &params, &mut count_has_where);
+    let total = count_qb.build().fetch_one(pool).await?.get::<i64, _>(0).max(0) as usize;
+
     let mut qb = QueryBuilder::<Sqlite>::new(
         "SELECT
             create_time, cpu_id, src_ip, dst_ip, src_port, dst_port, l4_proto, l3_proto, flow_id, trace_id,
@@ -530,14 +608,37 @@ pub(crate) async fn query_historical_summaries_complex(
     let mut has_where = false;
     push_connect_common_filters(&mut qb, &params, &mut has_where);
     push_connect_summary_filters(&mut qb, &params, &mut has_where);
-    qb.push(" ORDER BY ").push(sort_col).push(" ").push(sort_order);
-    // limit 缺省时不追加 LIMIT:前端"不限"即省略该参数,需要查询全部。
-    if let Some(limit) = params.limit {
-        qb.push(format!(" LIMIT {}", limit.clamp(1, MAX_PAGE_SIZE)));
+    qb.push(" ORDER BY ")
+        .push(sort_col)
+        .push(" ")
+        .push(sort_order)
+        .push(", create_time DESC, cpu_id DESC");
+    // limit 三态语义:
+    // - `None`:缺省 100(前端分页的兜底默认值;老版本前端"不限"依赖缺省全量,
+    //   已不再支持,调用方如需全量请显式传 0)。
+    // - `Some(0)`:不限制,返回全部匹配行;与 connect_summary_max_rows /
+    //   connect_db_max_bytes 的 "0 = 不限制" 惯例保持一致。此时若带 offset,
+    //   用 SQLite 的 `LIMIT -1 OFFSET n`(OFFSET 必须配 LIMIT 才合法)。
+    // - `Some(n > 0)`:单页上限 clamp 到 MAX_PAGE_SIZE,offset clamp 到
+    //   MAX_PAGE_OFFSET(与前端 itemCount 截断保持一致)。
+    let offset = params.offset.unwrap_or(0).min(MAX_PAGE_OFFSET);
+    match params.limit {
+        Some(0) => {
+            if offset > 0 {
+                qb.push(format!(" LIMIT -1 OFFSET {}", offset));
+            }
+        }
+        Some(limit) => {
+            let limit = limit.clamp(1, MAX_PAGE_SIZE);
+            qb.push(format!(" LIMIT {} OFFSET {}", limit, offset));
+        }
+        None => {
+            qb.push(format!(" LIMIT 100 OFFSET {}", offset));
+        }
     }
 
     let rows = qb.build().fetch_all(pool).await?;
-    Ok(rows
+    let items = rows
         .into_iter()
         .map(|row| ConnectHistoryStatus {
             key: ConnectKey {
@@ -562,7 +663,8 @@ pub(crate) async fn query_historical_summaries_complex(
             create_time_ms: row.get::<i64, _>(17).max(0) as u64,
             gress: row.get::<i64, _>(18) as u8,
         })
-        .collect())
+        .collect();
+    Ok(ConnectHistoryResponse { items, total })
 }
 
 pub(crate) async fn query_connection_ip_history(
@@ -692,7 +794,7 @@ pub(crate) async fn global_stats_stale(
     let last_calculate_time = row_opt.map(|row| row.get::<i64, _>(0).max(0) as u64).unwrap_or(0);
     Ok(last_calculate_time == 0
         || get_current_time_ms().unwrap_or_default().saturating_sub(last_calculate_time)
-            >= stale_after_secs * 1000)
+            >= stale_after_secs.saturating_mul(1000))
 }
 
 pub(crate) async fn cleanup_old_summaries(
@@ -810,7 +912,7 @@ pub(crate) async fn cleanup_old_buckets(
     cleanup_slice_window_secs: u64,
 ) -> Result<(), sqlx::Error> {
     let deadline = Instant::now() + Duration::from_millis(cleanup_time_budget_ms.max(1));
-    let slice_window_ms = cleanup_slice_window_secs.max(1) * 1000;
+    let slice_window_ms = cleanup_slice_window_secs.max(1).saturating_mul(1000);
 
     for (kind, cutoff) in cutoffs {
         if Instant::now() >= deadline {
@@ -849,6 +951,9 @@ async fn delete_table_in_slices(
         }
 
         let slice_end = slice_start.saturating_add(slice_window_ms).min(cutoff_exclusive);
+        if slice_end <= slice_start {
+            break;
+        }
         sqlx::query(&format!("DELETE FROM {table} WHERE bucket_time >= ?1 AND bucket_time < ?2"))
             .bind(slice_start as i64)
             .bind(slice_end as i64)
@@ -908,7 +1013,7 @@ mod tests {
 
     async fn test_pool() -> (tempfile::TempDir, SqlitePool) {
         let dir = tempfile::tempdir().unwrap();
-        let pool = open_connect_pool(&dir.path().join("connect.db")).await.unwrap();
+        let pool = open_connect_pool(&dir.path().join("connect.db"), 0).await.unwrap();
         (dir, pool)
     }
 
@@ -1045,9 +1150,10 @@ mod tests {
         )
         .await
         .unwrap();
-        assert_eq!(history.len(), 1);
-        assert_eq!(history[0].key, key);
-        assert_eq!(history[0].total_ingress_bytes, 300);
+        assert_eq!(history.total, 1);
+        assert_eq!(history.items.len(), 1);
+        assert_eq!(history.items[0].key, key);
+        assert_eq!(history.items[0].total_ingress_bytes, 300);
     }
 
     #[tokio::test]
@@ -1084,8 +1190,9 @@ mod tests {
         )
         .await
         .unwrap();
-        assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].key.cpu_id, 2);
+        assert_eq!(rows.total, 1);
+        assert_eq!(rows.items.len(), 1);
+        assert_eq!(rows.items[0].key.cpu_id, 2);
 
         let ip_rows = query_connection_ip_history(
             &pool,
@@ -1119,8 +1226,9 @@ mod tests {
         )
         .await
         .unwrap();
-        assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].key.cpu_id, 2);
+        assert_eq!(rows.total, 1);
+        assert_eq!(rows.items.len(), 1);
+        assert_eq!(rows.items[0].key.cpu_id, 2);
     }
 
     #[tokio::test]
@@ -1188,7 +1296,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn history_limit_is_clamped_and_unlimited_when_omitted() {
+    async fn history_limit_and_offset_are_clamped() {
         let (_dir, pool) = test_pool().await;
 
         let mut batch = Batch::default();
@@ -1210,21 +1318,51 @@ mod tests {
         )
         .await
         .unwrap();
-        assert_eq!(huge_limit.len(), 200, "limit capped at MAX_PAGE_SIZE");
+        assert_eq!(huge_limit.total, 250);
+        assert_eq!(huge_limit.items.len(), 200, "limit capped at MAX_PAGE_SIZE");
 
         let no_limit =
             query_historical_summaries_complex(&pool, ConnectHistoryQueryParams::default())
                 .await
                 .unwrap();
-        assert_eq!(no_limit.len(), 250, "missing limit returns all rows (unlimited)");
+        assert_eq!(no_limit.items.len(), 100, "missing limit uses bounded default page size");
 
-        let zero_limit = query_historical_summaries_complex(
+        let unlimited = query_historical_summaries_complex(
             &pool,
             ConnectHistoryQueryParams { limit: Some(0), ..Default::default() },
         )
         .await
         .unwrap();
-        assert_eq!(zero_limit.len(), 1, "limit=0 clamped up to 1");
+        assert_eq!(unlimited.items.len(), 250, "limit=0 means unlimited (all rows)");
+
+        let unlimited_with_offset = query_historical_summaries_complex(
+            &pool,
+            ConnectHistoryQueryParams {
+                limit: Some(0),
+                offset: Some(50),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            unlimited_with_offset.items.len(),
+            200,
+            "limit=0 with offset keeps all remaining rows via LIMIT -1 OFFSET"
+        );
+
+        let second_page = query_historical_summaries_complex(
+            &pool,
+            ConnectHistoryQueryParams {
+                limit: Some(50),
+                offset: Some(50),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(second_page.total, 250);
+        assert_eq!(second_page.items.len(), 50);
     }
 
     #[tokio::test]
@@ -1478,5 +1616,90 @@ mod tests {
         let after = query_global_stats(&pool).await.unwrap();
         assert_eq!(before.total_ingress_bytes, after.total_ingress_bytes);
         assert_eq!(before.total_connect_count, after.total_connect_count);
+    }
+
+    #[tokio::test]
+    async fn enforce_database_size_respects_delete_budget() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("connect.db");
+        let pool = open_connect_pool(&db_path, 0).await.unwrap();
+
+        let mut batch = Batch::default();
+        for i in 0..2_500u32 {
+            batch.summary_metrics.push(test_metric(
+                i as u64,
+                1,
+                100_000 + i as u64,
+                100,
+                200,
+                ConnectStatusType::Active,
+            ));
+        }
+        apply_connect_batch(&pool, &batch).await.unwrap();
+
+        // 目标极小 → 必须删除;预算 1_000 行,单次执行不得超删。
+        let deleted = enforce_database_size(&pool, Some(1), 1_000, true).await.unwrap();
+        assert!(deleted <= 1_000, "delete budget must cap single-run deletions");
+
+        let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM conn_summaries")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(total, 2_500 - deleted as i64);
+
+        // 预算耗尽即停,不会在一个预算窗口内把库删空。
+        assert!(total > 0, "delete budget must not exhaust the table in one run");
+
+        // 新的预算窗口可继续收敛(按行数收敛,而非一次清空)。
+        let deleted_again = enforce_database_size(&pool, Some(1), 1_000, true).await.unwrap();
+        assert!(deleted_again > 0);
+
+        pool.close().await;
+    }
+
+    #[tokio::test]
+    async fn enforce_database_size_converges_to_target_not_budget() {
+        // 回归:清理必须收敛到目标尺寸,而不是删满整个删除预算。
+        // 旧实现以物理文件大小为判定,而 WAL 模式下删除不缩文件,导致
+        // 每次清理都删满预算;新实现以主库逻辑占用判定,删到目标即停。
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("connect.db");
+        let pool = open_connect_pool(&db_path, 0).await.unwrap();
+
+        let mut batch = Batch::default();
+        for i in 0..10_000u32 {
+            batch.summary_metrics.push(test_metric(
+                i as u64,
+                1,
+                100_000 + i as u64,
+                100,
+                200,
+                ConnectStatusType::Active,
+            ));
+        }
+        apply_connect_batch(&pool, &batch).await.unwrap();
+        let logical_before = super::super::logical_main_size_bytes(&pool).await.unwrap();
+
+        // 目标 = 当前逻辑占用的一半:预期删除约一半数据后即停止,
+        // 远小于 10_000 的预算。
+        let target = logical_before / 2;
+        let deleted = enforce_database_size(&pool, Some(target), 10_000, true).await.unwrap();
+        let logical_after = super::super::logical_main_size_bytes(&pool).await.unwrap();
+
+        assert!(
+            logical_after <= target,
+            "cleanup must converge to the target (after={logical_after}, target={target})"
+        );
+        assert!(
+            deleted < 10_000,
+            "cleanup must stop at the target, not burn the whole budget (deleted={deleted})"
+        );
+        assert!(deleted > 0, "over-target database must trigger deletion");
+
+        // 已收敛后再次清理:不再删除任何行。
+        let deleted_idle = enforce_database_size(&pool, Some(target), 10_000, true).await.unwrap();
+        assert_eq!(deleted_idle, 0, "under-target database must not delete rows");
+
+        pool.close().await;
     }
 }

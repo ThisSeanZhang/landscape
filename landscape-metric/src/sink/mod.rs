@@ -1,7 +1,7 @@
 use landscape_common::config::MetricRuntimeConfig;
 use landscape_common::database::error::DbError;
 use landscape_common::metric::connect::{
-    ConnectGlobalStats, ConnectHistoryQueryParams, ConnectHistoryStatus, ConnectKey,
+    ConnectGlobalStats, ConnectHistoryQueryParams, ConnectHistoryResponse, ConnectKey,
     ConnectMetricPoint, IpHistoryStat, MetricResolution,
 };
 #[cfg(feature = "metric-persistent")]
@@ -43,7 +43,7 @@ pub(crate) trait MetricSink: Send + Sync {
     async fn history_summaries_complex(
         &self,
         params: ConnectHistoryQueryParams,
-    ) -> Vec<ConnectHistoryStatus>;
+    ) -> ConnectHistoryResponse;
     async fn history_src_ip_stats(&self, params: ConnectHistoryQueryParams) -> Vec<IpHistoryStat>;
     async fn history_dst_ip_stats(&self, params: ConnectHistoryQueryParams) -> Vec<IpHistoryStat>;
     async fn get_global_stats(&self, force_refresh: bool) -> Result<ConnectGlobalStats, DbError>;

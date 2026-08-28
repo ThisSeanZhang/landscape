@@ -45,7 +45,6 @@ export default {
     limit_100: "限制 100 条",
     limit_500: "限制 500 条",
     limit_1000: "限制 1000 条",
-    limit_5000: "限制 5000 条",
     unlimited: "不限制数量",
   },
   stats: {

@@ -45,7 +45,6 @@ export default {
     limit_100: "Limit 100",
     limit_500: "Limit 500",
     limit_1000: "Limit 1000",
-    limit_5000: "Limit 5000",
     unlimited: "Unlimited",
   },
   stats: {

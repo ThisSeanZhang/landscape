@@ -1,12 +1,12 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, Mutex, MutexGuard, RwLock};
 
 use landscape_common::config::{MetricMode, MetricRuntimeConfig};
 use landscape_common::database::error::DbError;
 use landscape_common::event::{ConnectMessage, DnsMetricMessage};
 use landscape_common::metric::connect::{
-    ConnectGlobalStats, ConnectHistoryQueryParams, ConnectHistoryStatus, ConnectKey,
+    ConnectGlobalStats, ConnectHistoryQueryParams, ConnectHistoryResponse, ConnectKey,
     ConnectMetricPoint, ConnectRealtimeStatus, IfaceRealtimeStat, IpHistoryStat, IpRealtimeStat,
     MetricResolution,
 };
@@ -33,6 +33,13 @@ use sink::memory::MemoryMetricSink;
 use sink::persistent::PersistentMetricStore;
 use sink::MetricSink;
 
+fn lock_or_recover<'a, T>(lock: &'a Mutex<T>, name: &str) -> MutexGuard<'a, T> {
+    lock.lock().unwrap_or_else(|poisoned| {
+        tracing::error!("{name} lock poisoned; recovering the inner state");
+        poisoned.into_inner()
+    })
+}
+
 #[cfg(feature = "metric-persistent")]
 use agg::dns_bucket::{minute_end, minute_start};
 #[cfg(feature = "metric-persistent")]
@@ -44,21 +51,23 @@ use agg::dns_window::{DnsRecentWindow, DNS_RECENT_WINDOW_SECS};
 #[cfg(feature = "metric-persistent")]
 async fn build_sink(
     base_path: PathBuf,
-    _config: &MetricRuntimeConfig,
+    config: &MetricRuntimeConfig,
     mode: &MetricMode,
 ) -> (Arc<dyn MetricSink>, bool) {
     match mode {
         MetricMode::Off | MetricMode::Memory => (Arc::new(MemoryMetricSink), false),
-        MetricMode::Persistent => match PersistentMetricStore::new(base_path).await {
-            Ok(store) => (Arc::new(store), true),
-            Err(error) => {
-                tracing::error!(
+        MetricMode::Persistent => {
+            match PersistentMetricStore::new_with_config(base_path, config).await {
+                Ok(store) => (Arc::new(store), true),
+                Err(error) => {
+                    tracing::error!(
                     "failed to initialize persistent metric backend, falling back to memory: {}",
                     error
                 );
-                (Arc::new(MemoryMetricSink), false)
+                    (Arc::new(MemoryMetricSink), false)
+                }
             }
-        },
+        }
         // resolved_metric_mode 已把 duckdb 映射为 persistent/memory,不会走到这里。
         MetricMode::Duckdb => (Arc::new(MemoryMetricSink), false),
     }
@@ -152,9 +161,9 @@ impl MetricEngine {
                 )
                 .await;
             });
-            *connect_writer_tx.lock().expect("metric connect writer tx poisoned") =
+            *lock_or_recover(&connect_writer_tx, "metric connect writer tx") =
                 Some(connect_write_tx.clone());
-            *connect_writer_handle.lock().expect("metric connect writer handle poisoned") =
+            *lock_or_recover(&connect_writer_handle, "metric connect writer handle") =
                 Some(connect_writer);
 
             #[cfg(feature = "metric-persistent")]
@@ -171,10 +180,9 @@ impl MetricEngine {
                     )
                     .await;
                 });
-                *dns_writer_tx.lock().expect("metric dns writer tx poisoned") =
+                *lock_or_recover(&dns_writer_tx, "metric dns writer tx") =
                     Some(dns_write_tx.clone());
-                *dns_writer_handle.lock().expect("metric dns writer handle poisoned") =
-                    Some(dns_writer);
+                *lock_or_recover(&dns_writer_handle, "metric dns writer handle") = Some(dns_writer);
             }
 
             // 行为决策:启动不回填 DNS 最近窗口(不读回磁盘),重启后状态卡展示 0,
@@ -198,7 +206,7 @@ impl MetricEngine {
                 )
                 .await;
             });
-            workers_clone.lock().expect("metric workers poisoned").push(connect_handle);
+            lock_or_recover(&workers_clone, "metric workers").push(connect_handle);
 
             #[cfg(feature = "metric-persistent")]
             {
@@ -219,7 +227,7 @@ impl MetricEngine {
                     )
                     .await;
                 });
-                workers_clone.lock().expect("metric workers poisoned").push(dns_handle);
+                lock_or_recover(&workers_clone, "metric workers").push(dns_handle);
             }
 
             #[cfg(not(feature = "metric-persistent"))]
@@ -229,7 +237,7 @@ impl MetricEngine {
                 let dns_handle = tokio::spawn(async move {
                     workers::run_dns_worker(dns_rx, shutdown_clone).await;
                 });
-                workers_clone.lock().expect("metric workers poisoned").push(dns_handle);
+                lock_or_recover(&workers_clone, "metric workers").push(dns_handle);
             }
         }
 
@@ -275,7 +283,7 @@ impl MetricEngine {
     pub async fn shutdown(&self) {
         self.shutdown.cancel();
         let handles: Vec<JoinHandle<()>> = {
-            let mut workers = self.workers.lock().expect("metric workers poisoned");
+            let mut workers = lock_or_recover(&self.workers, "metric workers");
             workers.drain(..).collect()
         };
         for handle in handles {
@@ -284,23 +292,19 @@ impl MetricEngine {
         // 聚合 worker 已退出(其持有的 writer sender 随之释放),再释放引擎侧的
         // sender,writer 消费完剩余批次后自然退出,保证 finalize 数据落库。
         let connect_writer_tx =
-            self.connect_writer_tx.lock().expect("metric connect writer tx poisoned").take();
+            lock_or_recover(&self.connect_writer_tx, "metric connect writer tx").take();
         drop(connect_writer_tx);
-        let connect_writer_handle = self
-            .connect_writer_handle
-            .lock()
-            .expect("metric connect writer handle poisoned")
-            .take();
+        let connect_writer_handle =
+            lock_or_recover(&self.connect_writer_handle, "metric connect writer handle").take();
         if let Some(handle) = connect_writer_handle {
             let _ = handle.await;
         }
         #[cfg(feature = "metric-persistent")]
         {
-            let dns_writer_tx =
-                self.dns_writer_tx.lock().expect("metric dns writer tx poisoned").take();
+            let dns_writer_tx = lock_or_recover(&self.dns_writer_tx, "metric dns writer tx").take();
             drop(dns_writer_tx);
             let dns_writer_handle =
-                self.dns_writer_handle.lock().expect("metric dns writer handle poisoned").take();
+                lock_or_recover(&self.dns_writer_handle, "metric dns writer handle").take();
             if let Some(handle) = dns_writer_handle {
                 let _ = handle.await;
             }
@@ -339,7 +343,7 @@ impl MetricEngine {
     pub async fn history_summaries_complex(
         &self,
         params: ConnectHistoryQueryParams,
-    ) -> Vec<ConnectHistoryStatus> {
+    ) -> ConnectHistoryResponse {
         self.sink.history_summaries_complex(params).await
     }
 
@@ -477,8 +481,10 @@ mod tests {
             connect_1d_retention_days: 30,
             connect_summary_retention_days: 30,
             connect_summary_max_rows: 0,
+            connect_db_max_bytes: landscape_common::DEFAULT_METRIC_CONNECT_DB_MAX_BYTES,
             dns_retention_days: 7,
             dns_1m_retention_days: 30,
+            dns_db_max_bytes: landscape_common::DEFAULT_DNS_METRIC_DB_MAX_BYTES,
             write_batch_size: 2,
             write_flush_interval_secs: 1,
             cleanup_interval_secs: 3600,
@@ -687,8 +693,8 @@ mod tests {
                     ..Default::default()
                 })
                 .await;
-            assert_eq!(history.len(), 1);
-            assert_eq!(history[0].key, key);
+            assert_eq!(history.items.len(), 1);
+            assert_eq!(history.items[0].key, key);
 
             engine.shutdown().await;
         }
@@ -784,8 +790,8 @@ mod tests {
                     ..Default::default()
                 })
                 .await;
-            assert_eq!(history.len(), 1);
-            assert_eq!(history[0].total_ingress_bytes, 200);
+            assert_eq!(history.items.len(), 1);
+            assert_eq!(history.items[0].total_ingress_bytes, 200);
             restarted.shutdown().await;
         }
 

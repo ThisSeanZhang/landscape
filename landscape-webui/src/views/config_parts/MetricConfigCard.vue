@@ -140,6 +140,20 @@ async function handleSaveMetric() {
             </template>
           </n-form-item>
         </n-gi>
+        <n-gi>
+          <n-form-item :label="t('config.connect_db_max_bytes')">
+            <n-input-number
+              v-model:value="metricStore.connectDbMaxBytes"
+              :min="0"
+              :max="1099511627776"
+              placeholder="536870912"
+              style="width: 100%"
+            />
+            <template #feedback>
+              {{ t("config.connect_db_max_bytes_desc") }}
+            </template>
+          </n-form-item>
+        </n-gi>
       </n-grid>
 
       <n-divider title-placement="left">
@@ -157,18 +171,36 @@ async function handleSaveMetric() {
           {{ t("config.dns_retention_days_desc") }}
         </template>
       </n-form-item>
-      <n-form-item :label="t('config.dns_1m_retention_days')">
-        <n-input-number
-          v-model:value="metricStore.dns1mRetentionDays"
-          :min="1"
-          :max="365"
-          placeholder="30"
-          style="width: 200px"
-        />
-        <template #feedback>
-          {{ t("config.dns_1m_retention_days_desc") }}
-        </template>
-      </n-form-item>
+      <n-grid x-gap="12" :cols="2">
+        <n-gi>
+          <n-form-item :label="t('config.dns_1m_retention_days')">
+            <n-input-number
+              v-model:value="metricStore.dns1mRetentionDays"
+              :min="1"
+              :max="365"
+              placeholder="30"
+              style="width: 100%"
+            />
+            <template #feedback>
+              {{ t("config.dns_1m_retention_days_desc") }}
+            </template>
+          </n-form-item>
+        </n-gi>
+        <n-gi>
+          <n-form-item :label="t('config.dns_db_max_bytes')">
+            <n-input-number
+              v-model:value="metricStore.dnsDbMaxBytes"
+              :min="0"
+              :max="1099511627776"
+              placeholder="1073741824"
+              style="width: 100%"
+            />
+            <template #feedback>
+              {{ t("config.dns_db_max_bytes_desc") }}
+            </template>
+          </n-form-item>
+        </n-gi>
+      </n-grid>
 
       <n-divider title-placement="left">
         {{ t("config.performance_settings") }}

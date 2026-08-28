@@ -18,10 +18,15 @@ use crate::{
 };
 
 fn default_home_path() -> PathBuf {
-    let Some(path) = homedir::my_home().unwrap() else {
-        panic!("can not get home path");
-    };
-    path.join(LANDSCAPE_CONFIG_DIR_NAME)
+    match homedir::my_home() {
+        Ok(Some(path)) => path.join(LANDSCAPE_CONFIG_DIR_NAME),
+        Ok(None) | Err(_) => {
+            tracing::warn!(
+                "unable to determine the user home directory; using a local config path"
+            );
+            PathBuf::from(LANDSCAPE_CONFIG_DIR_NAME)
+        }
+    }
 }
 
 const fn default_debug_mode() -> bool {
@@ -38,8 +43,28 @@ const fn default_debug_mode() -> bool {
 fn read_home_config_file(home_path: PathBuf) -> LandscapeConfig {
     let config_path = home_path.join(LAND_CONFIG);
     if config_path.exists() && config_path.is_file() {
-        let config_raw = std::fs::read_to_string(config_path).unwrap();
-        toml::from_str(&config_raw).unwrap()
+        let config_raw = match std::fs::read_to_string(&config_path) {
+            Ok(config_raw) => config_raw,
+            Err(error) => {
+                tracing::error!(
+                    path = %config_path.display(),
+                    %error,
+                    "failed to read landscape config; falling back to defaults (verify key settings such as database path)"
+                );
+                return LandscapeConfig::default();
+            }
+        };
+        match toml::from_str(&config_raw) {
+            Ok(config) => config,
+            Err(error) => {
+                tracing::error!(
+                    path = %config_path.display(),
+                    %error,
+                    "failed to parse landscape config; falling back to defaults (verify key settings such as database path)"
+                );
+                LandscapeConfig::default()
+            }
+        }
     } else {
         LandscapeConfig::default()
     }
@@ -58,7 +83,11 @@ impl RuntimeConfig {
         let mut home_path = args.config_dir.unwrap_or(default_home_path());
 
         if home_path.is_relative() {
-            home_path = std::env::current_dir().unwrap().join(home_path);
+            let current_dir = std::env::current_dir().unwrap_or_else(|error| {
+                tracing::warn!(%error, "failed to determine current directory; using relative config path");
+                PathBuf::from(".")
+            });
+            home_path = current_dir.join(home_path);
             home_path = home_path.components().collect();
         }
 
@@ -95,11 +124,11 @@ impl RuntimeConfig {
         };
 
         let store = StoreRuntimeConfig {
-            database_path: read_value(
-                &args.database_path,
-                &config.store.database_path,
-                StoreRuntimeConfig::create_default_db_store(&home_path),
-            ),
+            database_path: args
+                .database_path
+                .clone()
+                .or_else(|| config.store.database_path.clone())
+                .unwrap_or_else(|| StoreRuntimeConfig::create_default_db_store(&home_path)),
         };
 
         let connect_1d_retention_days = config
@@ -130,6 +159,10 @@ impl RuntimeConfig {
                 .metric
                 .connect_summary_max_rows
                 .unwrap_or(crate::DEFAULT_METRIC_CONNECT_SUMMARY_MAX_ROWS),
+            connect_db_max_bytes: config
+                .metric
+                .connect_db_max_bytes
+                .unwrap_or(crate::DEFAULT_METRIC_CONNECT_DB_MAX_BYTES),
             dns_retention_days: config
                 .metric
                 .dns_retention_days
@@ -138,6 +171,10 @@ impl RuntimeConfig {
                 .metric
                 .dns_1m_retention_days
                 .unwrap_or(crate::DEFAULT_DNS_METRIC_1M_RETENTION_DAYS),
+            dns_db_max_bytes: config
+                .metric
+                .dns_db_max_bytes
+                .unwrap_or(crate::DEFAULT_DNS_METRIC_DB_MAX_BYTES),
             write_batch_size: config
                 .metric
                 .write_batch_size
@@ -181,8 +218,13 @@ impl RuntimeConfig {
         let lan_hostname = match config.lan_hostname.clone().normalized() {
             Ok(normalized) => {
                 config.lan_hostname = normalized;
-                LanHostnameConfig::from_file_config(&config.lan_hostname)
-                    .expect("normalized LAN hostname config must be valid")
+                match LanHostnameConfig::from_file_config(&config.lan_hostname) {
+                    Ok(runtime) => runtime,
+                    Err(error) => {
+                        tracing::warn!(%error, "normalized LAN hostname config was rejected; using defaults");
+                        LanHostnameConfig::default()
+                    }
+                }
             }
             Err(error) => {
                 tracing::warn!(

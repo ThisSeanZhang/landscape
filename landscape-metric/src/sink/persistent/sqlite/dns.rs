@@ -25,6 +25,62 @@ const MAX_PAGE_SIZE: usize = 200;
 /// 历史查询翻页偏移上限。
 const MAX_PAGE_OFFSET: usize = 10_000;
 
+/// 按容量目标删除最旧数据,返回删除行数。语义与 connect 版本一致:收敛判定用
+/// 主库逻辑占用(见 `super::logical_main_size_bytes`),`target_bytes` 为 `None` 时
+/// 表示热回收路径(已 SQLITE_FULL),不按尺寸判定,直接删除至多 `max_delete_rows` 行。
+pub(crate) async fn enforce_database_size(
+    pool: &SqlitePool,
+    target_bytes: Option<u64>,
+    max_delete_rows: u64,
+) -> Result<u64, sqlx::Error> {
+    const DELETE_BATCH_SIZE: u64 = 1_000;
+    let mut deleted = 0;
+    loop {
+        let over_target = match target_bytes {
+            Some(target) => super::logical_main_size_bytes(pool).await? > target,
+            None => true,
+        };
+        if !over_target || deleted >= max_delete_rows {
+            break;
+        }
+        let rows = sqlx::query(&format!(
+            "DELETE FROM dns_metrics WHERE rowid IN \
+             (SELECT rowid FROM dns_metrics ORDER BY report_time ASC LIMIT {DELETE_BATCH_SIZE})"
+        ))
+        .execute(pool)
+        .await?
+        .rows_affected();
+        if rows == 0 {
+            let mut deleted_bucket_rows = 0;
+            for table in [
+                "dns_metrics_1m",
+                "dns_top_domains_1m",
+                "dns_top_clients_1m",
+                "dns_top_blocked_1m",
+                "dns_slowest_1m",
+            ] {
+                let rows = sqlx::query(&format!(
+                    "DELETE FROM {table} WHERE rowid IN (SELECT rowid FROM {table} ORDER BY bucket_time ASC LIMIT {DELETE_BATCH_SIZE})"
+                ))
+                .execute(pool)
+                .await?
+                .rows_affected();
+                deleted_bucket_rows += rows;
+                if rows > 0 {
+                    break;
+                }
+            }
+            if deleted_bucket_rows == 0 {
+                break;
+            }
+            deleted += deleted_bucket_rows;
+        } else {
+            deleted += rows;
+        }
+    }
+    Ok(deleted)
+}
+
 pub(crate) async fn initialize_schema(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     sqlx::query(
         "CREATE TABLE IF NOT EXISTS dns_metrics (
@@ -175,7 +231,13 @@ pub(crate) async fn insert_dns_batch(
 
     let mut tx = pool.begin().await?;
     for metric in metrics {
-        let answers_json = serde_json::to_string(&metric.answers).unwrap_or_default();
+        let mut answers = metric.answers.iter().take(64).cloned().collect::<Vec<_>>();
+        while serde_json::to_vec(&answers).map(|json| json.len()).unwrap_or(0) > 16 * 1024 {
+            if answers.pop().is_none() {
+                break;
+            }
+        }
+        let answers_json = serde_json::to_string(&answers).unwrap_or_else(|_| "[]".to_string());
         let status_json = serde_json::to_string(&metric.status).unwrap_or_default();
         sqlx::query(
             "INSERT INTO dns_metrics (
@@ -729,7 +791,7 @@ fn dns_metric_from_row(row: &sqlx::sqlite::SqliteRow) -> DnsMetric {
         src_ip: row
             .get::<String, _>(6)
             .parse()
-            .unwrap_or("0.0.0.0".parse().expect("valid fallback ip")),
+            .unwrap_or(std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED)),
         answers: serde_json::from_str(&row.get::<String, _>(7)).unwrap_or_default(),
         status: serde_json::from_str(&row.get::<String, _>(8)).unwrap_or_default(),
     }
@@ -909,6 +971,9 @@ async fn delete_bucket_table_in_slices(
         }
 
         let slice_end = slice_start.saturating_add(slice_window_ms).min(cutoff_exclusive);
+        if slice_end <= slice_start {
+            break;
+        }
         sqlx::query(&format!("DELETE FROM {table} WHERE bucket_time >= ?1 AND bucket_time < ?2"))
             .bind(slice_start as i64)
             .bind(slice_end as i64)
@@ -959,7 +1024,7 @@ mod tests {
 
     async fn test_pool() -> (tempfile::TempDir, SqlitePool) {
         let dir = tempfile::tempdir().unwrap();
-        let pool = open_dns_pool(&dir.path().join("dns.db")).await.unwrap();
+        let pool = open_dns_pool(&dir.path().join("dns.db"), 0).await.unwrap();
         (dir, pool)
     }
 

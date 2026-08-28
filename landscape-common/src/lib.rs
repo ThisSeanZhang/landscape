@@ -69,7 +69,19 @@ pub const LANDSCAPE_LOG_DIR_NAME: &str = "logs";
 pub const LANDSCAPE_WEBROOT_DIR_NAME: &str = "static";
 // --- Metric Settings ---
 pub const LANDSCAPE_METRIC_DIR_NAME: &str = "metric";
-pub const LANDSCAPE_METRIC_DB_VERSION: u32 = 16;
+/// Metric 持久化库版本号。
+///
+/// 版本机制约定:metric 库**不兼容旧数据、不做迁移或原地修改**。当表结构/存储格式
+/// 需要变更时,递增该版本号;启动即创建新的 `metrics_v{version}_connect.sqlite` 与
+/// `metrics_v{version}_dns.sqlite` 文件,旧版本文件自然弃用(不会自动删除)。
+///
+/// 容量控制:主库大小由 `max_page_count`(≈ 上限 − WAL 预留)硬性封顶,写入触顶时
+/// 触发 SQLITE_FULL 并走热回收;cleanup 以容量上限的 90% 为清理目标提前删除最旧
+/// 数据,收敛判定基于主库逻辑占用(`page_count - freelist_count`,见
+/// `landscape-metric::sink::persistent::sqlite::logical_main_size_bytes`)。
+/// `auto_vacuum = INCREMENTAL` 仅对空库首次创建生效(WAL 落盘后即被忽略),
+/// 删除后的物理缩容由 checkpoint + incremental_vacuum 尽力完成,非硬性保证。
+pub const LANDSCAPE_METRIC_DB_VERSION: u32 = 17;
 
 // Metric Retention Defaults
 pub const DEFAULT_METRIC_MODE: MetricMode = MetricMode::Persistent;
@@ -77,10 +89,12 @@ pub const DEFAULT_METRIC_CONNECT_1M_RETENTION_DAYS: u64 = 1;
 pub const DEFAULT_METRIC_CONNECT_1H_RETENTION_DAYS: u64 = 7;
 pub const DEFAULT_METRIC_CONNECT_1D_RETENTION_DAYS: u64 = 30;
 /// 0 表示不限制 conn_summaries 行数。
-pub const DEFAULT_METRIC_CONNECT_SUMMARY_MAX_ROWS: u64 = 0;
+pub const DEFAULT_METRIC_CONNECT_SUMMARY_MAX_ROWS: u64 = 500_000;
+pub const DEFAULT_METRIC_CONNECT_DB_MAX_BYTES: u64 = 512 * 1024 * 1024;
 pub const DEFAULT_DNS_METRIC_RETENTION_DAYS: u64 = 7;
 /// 1m 预聚合桶保留期:桶行数少、体积小,可支撑比原始行更长的图表保留期。
 pub const DEFAULT_DNS_METRIC_1M_RETENTION_DAYS: u64 = 30;
+pub const DEFAULT_DNS_METRIC_DB_MAX_BYTES: u64 = 1024 * 1024 * 1024;
 pub const DEFAULT_METRIC_CONNECT_SECOND_WINDOW_MINUTES: u64 = 5;
 
 // Metric Performance & Storage Defaults

@@ -51,11 +51,17 @@ export default {
   conn_summary_max_rows: "明细行数上限",
   conn_summary_max_rows_desc:
     "conn_summaries 表保留的最大明细汇总行数（0 = 不限制）",
+  connect_db_max_bytes: "连接指标数据库容量上限（字节）",
+  connect_db_max_bytes_desc:
+    "连接指标数据库的最大容量（0 = 不限制）；接近上限时会提前清理最旧数据以保留写入余量",
   dns_retention_days: "DNS 数据保存天数",
   dns_retention_days_desc: "DNS 查询日志和指标的保存期限（天）",
   dns_1m_retention_days: "DNS 1分钟聚合桶保留天数",
   dns_1m_retention_days_desc:
     "1 分钟预聚合桶的保存期限（天），用于状态卡与仪表盘统计，通常大于原始日志保留期",
+  dns_db_max_bytes: "DNS 指标数据库容量上限（字节）",
+  dns_db_max_bytes_desc:
+    "DNS 指标数据库的最大容量（0 = 不限制）；接近上限时会提前清理最旧数据以保留写入余量",
 
   performance_settings: "性能与维护参数",
   write_batch_size: "写入批处理大小",

@@ -184,8 +184,13 @@ pub struct ConnectHistoryQueryParams {
     pub start_time: Option<u64>,
     #[cfg_attr(feature = "openapi", schema(nullable = false))]
     pub end_time: Option<u64>,
+    /// 单页条数上限(1..=200 会被服务端 clamp);`0` 表示不限制、返回全部匹配行
+    /// (与 connect_summary_max_rows / connect_db_max_bytes 的 "0 = 不限制" 惯例一致)。
+    /// 缺省不传时服务端按 100 兜底分页。
     #[cfg_attr(feature = "openapi", schema(nullable = false))]
     pub limit: Option<usize>,
+    #[cfg_attr(feature = "openapi", schema(nullable = false))]
+    pub offset: Option<usize>,
     #[cfg_attr(feature = "openapi", schema(nullable = false))]
     pub src_ip: Option<String>,
     #[cfg_attr(feature = "openapi", schema(nullable = false))]
@@ -241,6 +246,13 @@ pub struct ConnectHistoryStatus {
     pub last_report_time: u64,
 
     pub status: u8,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+pub struct ConnectHistoryResponse {
+    pub items: Vec<ConnectHistoryStatus>,
+    pub total: usize,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]

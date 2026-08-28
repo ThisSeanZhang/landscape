@@ -69,8 +69,10 @@ pub struct MetricRuntimeConfig {
     pub connect_1d_retention_days: u64,
     pub connect_summary_retention_days: u64,
     pub connect_summary_max_rows: u64,
+    pub connect_db_max_bytes: u64,
     pub dns_retention_days: u64,
     pub dns_1m_retention_days: u64,
+    pub dns_db_max_bytes: u64,
     pub write_batch_size: usize,
     pub write_flush_interval_secs: u64,
     pub cleanup_interval_secs: u64,
@@ -149,9 +151,11 @@ impl RuntimeConfig {
          Connect 1h Retention: {} days\n\
          Connect 1d Retention: {} days\n\
          Connect Summary Retention: {} days\n\
-             Connect Summary Max Rows: {}\n\
-             DNS Retention: {} days\n\
-             DNS 1m Retention: {} days\n\
+         Connect Summary Max Rows: {}\n\
+         Connect Database Max Size: {} bytes\n\
+         DNS Retention: {} days\n\
+         DNS 1m Retention: {} days\n\
+         DNS Database Max Size: {} bytes\n\
              Write Batch Size: {}\n\
          Write Flush Interval: {}s\n\
          Cleanup Interval: {}s\n\
@@ -183,8 +187,10 @@ impl RuntimeConfig {
             self.metric.connect_1d_retention_days,
             self.metric.connect_summary_retention_days,
             self.metric.connect_summary_max_rows,
+            self.metric.connect_db_max_bytes,
             self.metric.dns_retention_days,
             self.metric.dns_1m_retention_days,
+            self.metric.dns_db_max_bytes,
             self.metric.write_batch_size,
             self.metric.write_flush_interval_secs,
             self.metric.cleanup_interval_secs,
@@ -223,11 +229,17 @@ impl MetricRuntimeConfig {
         if let Some(v) = config.connect_summary_max_rows {
             self.connect_summary_max_rows = v;
         }
+        if let Some(v) = config.connect_db_max_bytes {
+            self.connect_db_max_bytes = v;
+        }
         if let Some(v) = config.dns_retention_days {
             self.dns_retention_days = v;
         }
         if let Some(v) = config.dns_1m_retention_days {
             self.dns_1m_retention_days = v;
+        }
+        if let Some(v) = config.dns_db_max_bytes {
+            self.dns_db_max_bytes = v;
         }
         if let Some(v) = config.write_batch_size {
             self.write_batch_size = v;
@@ -295,18 +307,26 @@ impl StoreRuntimeConfig {
         let path = home_path.join(LANDSCAPE_DB_SQLITE_NAME);
         if path.exists() {
             if path.is_dir() {
-                panic!(
-                    "Expected a file path for database, but found a directory: {}",
-                    path.display()
+                tracing::error!(
+                    path = %path.display(),
+                    "expected a file path for database, but found a directory"
                 );
             }
         } else {
             if let Some(parent) = path.parent() {
                 if !parent.exists() {
-                    std::fs::create_dir_all(parent).expect("Failed to create database directory");
+                    if let Err(error) = std::fs::create_dir_all(parent) {
+                        tracing::error!(
+                            path = %parent.display(),
+                            %error,
+                            "failed to create database directory"
+                        );
+                    }
                 }
             }
-            std::fs::File::create(&path).expect("Failed to create database file");
+            if let Err(error) = std::fs::File::create(&path) {
+                tracing::error!(path = %path.display(), %error, "failed to create database file");
+            }
         }
         format!("sqlite://{}?mode=rwc", path.display())
     }

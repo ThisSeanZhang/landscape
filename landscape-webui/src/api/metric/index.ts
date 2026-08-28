@@ -4,6 +4,7 @@ import type {
   ConnectMetricPoint,
   ConnectRealtimeStatus,
   ConnectHistoryStatus,
+  ConnectHistoryResponse,
   ConnectGlobalStats,
   GetConnectGlobalStatsParams,
   IfaceRealtimeStat,
@@ -55,7 +56,7 @@ export async function get_connects_info(): Promise<ConnectRealtimeStatus[]> {
 
 export async function get_connect_history(
   params?: ConnectHistoryQueryParams,
-): Promise<ConnectHistoryStatus[]> {
+): Promise<ConnectHistoryResponse> {
   return _getConnectHistory(params);
 }
 

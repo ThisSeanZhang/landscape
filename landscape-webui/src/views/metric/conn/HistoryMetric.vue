@@ -30,8 +30,26 @@ const frontEndStore = useFrontEndStore();
 // 1. Declare all base reactive states.
 const historicalData = ref<any[]>([]);
 const timeRange = ref<number | string | null>(300); // default 5 minutes (300s)
-const queryLimit = ref<number | null>(100); // default limit: 100
 const historyFilter = reactive(new ConnectFilter());
+// 与后端 sqlite 查询偏移上限保持一致,防止翻页超过 offset clamp 后重复展示同一页。
+const MAX_PAGE_OFFSET = 10_000;
+
+const pagination = reactive({
+  page: 1,
+  pageSize: 50, // Default 50
+  itemCount: 0,
+  showSizePicker: true,
+  pageSizes: [50, 100, 200],
+  "onUpdate:page": (page: number) => {
+    pagination.page = page;
+    fetchHistory();
+  },
+  onUpdatePageSize: (pageSize: number) => {
+    pagination.pageSize = pageSize;
+    pagination.page = 1;
+    fetchHistory();
+  },
+});
 const sortKey = computed(() => frontEndStore.history_conn_sort_key);
 const sortOrder = computed(() => frontEndStore.history_conn_sort_order);
 
@@ -98,14 +116,6 @@ const timeRangeOptions = computed(() => [
   { label: t("metric.connect.filter.all_status"), value: null },
 ]);
 
-const limitOptions = computed(() => [
-  { label: t("metric.connect.filter.limit_100"), value: 100 },
-  { label: t("metric.connect.filter.limit_500"), value: 500 },
-  { label: t("metric.connect.filter.limit_1000"), value: 1000 },
-  { label: t("metric.connect.filter.limit_5000"), value: 5000 },
-  { label: t("metric.connect.filter.unlimited"), value: null },
-]);
-
 // 3. Data fetching actions
 const fetchHistory = async () => {
   loading.value = true;
@@ -122,10 +132,11 @@ const fetchHistory = async () => {
       startTime = Date.now() - (timeRange.value as number) * 1000;
     }
 
-    historicalData.value = await get_connect_history({
+    const response = await get_connect_history({
       start_time: startTime,
       end_time: endTime,
-      limit: queryLimit.value || undefined,
+      limit: pagination.pageSize,
+      offset: (pagination.page - 1) * pagination.pageSize,
       src_ip: historyFilter.src_ip || undefined,
       dst_ip: historyFilter.dst_ip || undefined,
       port_start: historyFilter.port_start || undefined,
@@ -138,6 +149,19 @@ const fetchHistory = async () => {
       sort_key: sortKey.value,
       sort_order: sortOrder.value,
     });
+    historicalData.value = response.items;
+    pagination.itemCount = Math.min(response.total, MAX_PAGE_OFFSET);
+    // 过滤条件收紧导致 total 缩小后,若当前页已越界则回到最后一页并重新请求:
+    // 程序赋值不会触发 onUpdate:page,否则列表停留在越界页(空白/陈旧数据)。
+    const maxPage = Math.max(
+      1,
+      Math.ceil(pagination.itemCount / pagination.pageSize),
+    );
+    if (pagination.page > maxPage) {
+      pagination.page = maxPage;
+      await fetchHistory();
+      return;
+    }
   } finally {
     loading.value = false;
   }
@@ -145,6 +169,7 @@ const fetchHistory = async () => {
 
 const resetHistoryFilter = () => {
   Object.assign(historyFilter, new ConnectFilter());
+  pagination.page = 1;
   fetchHistory();
 };
 
@@ -213,6 +238,7 @@ watch(timeRange, (newVal) => {
   } else {
     useCustomTimeRange.value = false;
     customTimeRange.value = null;
+    pagination.page = 1;
     fetchHistory();
   }
 });
@@ -220,12 +246,14 @@ watch(timeRange, (newVal) => {
 // Watch custom range changes.
 watch(customTimeRange, () => {
   if (useCustomTimeRange.value && customTimeRange.value) {
+    pagination.page = 1;
     fetchHistory();
   }
 });
 
-// Auto-query on limit/sort changes.
-watch([queryLimit, sortKey, sortOrder], () => {
+// Auto-query on sort changes.
+watch([sortKey, sortOrder], () => {
+  pagination.page = 1;
   fetchHistory();
 });
 
@@ -238,6 +266,7 @@ watch(
       clearTimeout(debounceTimer);
     }
     debounceTimer = setTimeout(() => {
+      pagination.page = 1;
       fetchHistory();
     }, 800); // 800ms delay
   },
@@ -414,13 +443,6 @@ onMounted(() => {
         :time-picker-props="{ timeZone: prefStore.timezone }"
       />
 
-      <n-select
-        v-model:value="queryLimit"
-        :options="limitOptions"
-        :disabled="loading"
-        style="width: 130px"
-      />
-
       <n-button-group>
         <n-button @click="fetchHistory" type="primary" :loading="loading">{{
           $t("metric.connect.stats.query")
@@ -557,6 +579,12 @@ onMounted(() => {
         />
       </template>
     </n-virtual-list>
+    <n-pagination
+      v-if="pagination.itemCount > pagination.pageSize"
+      v-bind="pagination"
+      :disabled="loading"
+      style="align-self: flex-end; margin-top: 12px"
+    />
     <ConnectChartDrawer
       v-model:show="showChart"
       :conn="showChartKey"
