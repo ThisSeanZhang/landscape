@@ -1,17 +1,18 @@
-use std::time::Duration;
+use std::os::fd::{FromRawFd, OwnedFd};
 
 use landscape_common::event::ConnectMessage;
 use landscape_common::metric::connect::ConnectMetric;
+use tokio::io::unix::AsyncFd;
 use tokio::sync::mpsc;
-use tokio::sync::oneshot::{self, error::TryRecvError};
+use tokio_util::sync::CancellationToken;
 
 use crate::map_setting::share_map::types::nat_conn_metric_event;
 use crate::MAP_PATHS;
 
-pub fn new_metric(
-    mut service_status: oneshot::Receiver<()>,
+
+fn build_connect_ringbuf(
     connect_msg_tx: mpsc::Sender<ConnectMessage>,
-) {
+) -> libbpf_rs::RingBuffer<'static> {
     // let firewall_conn_metric_events =
     //     libbpf_rs::MapHandle::from_pinned_path(&MAP_PATHS.firewall_conn_metric_events).unwrap();
 
@@ -53,14 +54,42 @@ pub fn new_metric(
         // .expect("failed to add firewall_conn_metric_events ringbuf")
         .add(&nat_metric_events, nat_metric_callback)
         .expect("failed to add nat_metric_events ringbuf");
-    let mgr = builder.build().expect("failed to build");
+    builder.build().expect("failed to build")
+}
 
-    'wait_stop: loop {
-        let _ = mgr.poll(Duration::from_millis(1000));
-        match service_status.try_recv() {
-            Ok(_) => break 'wait_stop,
-            Err(TryRecvError::Empty) => {}
-            Err(TryRecvError::Closed) => break 'wait_stop,
+pub async fn new_metric(cancel: CancellationToken, connect_msg_tx: mpsc::Sender<ConnectMessage>) {
+    run_ringbuf_loop(build_connect_ringbuf(connect_msg_tx), cancel).await;
+}
+
+pub async fn run_ringbuf_loop(ringbuf: libbpf_rs::RingBuffer<'_>, cancel: CancellationToken) {
+    // dup 一份 epoll fd 避免与 ringbuf 内部 fd 生命周期纠缠。
+    let epoll_fd = unsafe { libc::dup(ringbuf.epoll_fd()) };
+    if epoll_fd < 0 {
+        tracing::error!("failed to dup ringbuf epoll fd: {}", std::io::Error::last_os_error());
+        return;
+    }
+    let async_fd = match AsyncFd::new(unsafe { OwnedFd::from_raw_fd(epoll_fd) }) {
+        Ok(fd) => fd,
+        Err(error) => {
+            tracing::error!("failed to create AsyncFd for ringbuf epoll fd: {}", error);
+            return;
+        }
+    };
+
+    loop {
+        tokio::select! {
+            _ = cancel.cancelled() => break,
+            readable = async_fd.readable() => {
+                match readable {
+                    Ok(mut guard) => {
+                        guard.clear_ready();
+                        if let Err(error) = ringbuf.consume() {
+                            tracing::error!("failed to consume ringbuf events: {}", error);
+                        }
+                    }
+                    Err(_) => break,
+                }
+            }
         }
     }
 }

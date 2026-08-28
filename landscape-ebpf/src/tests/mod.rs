@@ -33,6 +33,7 @@ pub(crate) fn checked_if_nametoindex(name: &str) -> u32 {
 
 mod check;
 mod firewall;
+mod metric;
 mod mss;
 mod nat;
 mod pppoe;

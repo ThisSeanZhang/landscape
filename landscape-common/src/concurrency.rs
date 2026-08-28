@@ -24,8 +24,6 @@ pub mod thread_name {
         pub const METRIC_DB_WRITER: &str = "ld-mdb";
         /// Background DuckDB cold-store sync thread.
         pub const METRIC_DB_COLD: &str = "ld-mdc";
-        /// eBPF metric event reader thread that feeds userspace metric channels.
-        pub const METRIC_EVENT_READER: &str = "ld-mevt";
         /// eBPF neighbor update listener thread.
         pub const EBPF_NEIGH_UPDATE: &str = "ld-neigh";
     }
@@ -104,6 +102,8 @@ pub mod task_label {
         pub const METRIC_SERVICE_RUN: &str = "metric.service.run";
         /// Metric service stop-signal bridge task.
         pub const METRIC_SERVICE_STOP: &str = "metric.service.stop";
+        /// eBPF connect metric event reader task that feeds userspace connect metric channels.
+        pub const METRIC_EBPF_CONNECT_EVENT_READER: &str = "metric.ebpf.connect.event.reader";
         /// Background task that refreshes cached connect global stats.
         pub const METRIC_GLOBAL_STATS_REFRESH: &str = "metric.global_stats.refresh";
         /// Metric query executor task name used inside the dedicated query runtime.

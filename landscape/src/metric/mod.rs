@@ -1,9 +1,8 @@
-use std::panic::AssertUnwindSafe;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 use landscape_common::{
-    concurrency::{spawn_named_thread, spawn_task, task_label, thread_name},
+    concurrency::{spawn_task, task_label},
     config::{MetricMode, MetricRuntimeConfig},
     database::error::DbError,
     event::{ConnectMessage, DnsMetricMessage},
@@ -21,9 +20,9 @@ use landscape_common::{
 };
 use landscape_metric::MetricEngine;
 use tokio::sync::mpsc;
-use tokio::sync::oneshot;
 use tokio::sync::Mutex;
 use tokio::time::{timeout, Duration};
+use tokio_util::sync::CancellationToken;
 
 pub mod memory_store {
     pub use landscape_metric::MemoryMetricStore;
@@ -301,32 +300,17 @@ pub async fn create_metric_service(
         return;
     }
 
-    let (tx, rx) = oneshot::channel::<()>();
-    let (other_tx, other_rx) = oneshot::channel::<bool>();
     service_status.just_change_status(ServiceStatus::Running);
-    let reader_result = spawn_named_thread(thread_name::fixed::METRIC_EVENT_READER, move || {
-        let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
-            landscape_ebpf::metric::new_metric(rx, connect_msg_tx);
-        }));
-        let reader_ok = result.is_ok();
-        if !reader_ok {
-            tracing::error!("metric event reader panicked; stopping metric service");
-        }
-        let _ = other_tx.send(reader_ok);
-    });
-    let reader_handle = match reader_result {
-        Ok(handle) => handle,
-        Err(error) => {
-            tracing::error!("failed to spawn metric event thread: {}", error);
-            service_status.just_change_status(ServiceStatus::Failed);
-            return;
-        }
-    };
+    let cancel = CancellationToken::new();
+    let mut reader_handle = spawn_task(
+        task_label::task::METRIC_EBPF_CONNECT_EVENT_READER,
+        landscape_ebpf::metric::new_metric(cancel.clone(), connect_msg_tx),
+    );
 
-    // 单任务接管 reader 生命周期:等待外部停止请求 → 通知 reader 退出 → 限时回收
-    // 结果并落定最终状态。reader 收到停止信号后正常 1s 内退出(poll 周期 1s);
-    // 即使异常卡住,也会在预算内强制给出 Stop/Failed,避免状态永久停在 Stopping
-    // 导致配置切换后新引擎无法启动 reader。
+    // 单任务接管 reader 生命周期:等待外部停止请求 → 取消 reader → 限时回收
+    // 结果并落定最终状态。reader 是 tokio 异步任务,收到取消信号后近即时退出
+    // (select! 同时监听取消与 ringbuf 可读);即使异常卡住,也会在预算内 abort
+    // 强制终止,避免状态永久停在 Stopping 导致配置切换后新引擎无法启动 reader。
     // 预算:reader 退出 3s;正常退出后 join 立即完成,不占额外预算。总预算 3s,
     // 小于 stop_service_locked 的 10s 等待,保证配置切换时最终状态已落定。
     const READER_EXIT_TIMEOUT: Duration = Duration::from_secs(3);
@@ -334,38 +318,26 @@ pub async fn create_metric_service(
     spawn_task(task_label::task::METRIC_SERVICE_STOP, async move {
         let _ = service_status_clone.wait_to_stopping().await;
         tracing::info!("Received external stop signal");
-        let _ = tx.send(());
+        cancel.cancel();
 
-        let reader_ok = timeout(READER_EXIT_TIMEOUT, other_rx)
-            .await
-            .ok()
-            .and_then(|result| result.ok())
-            .unwrap_or_else(|| {
-                tracing::error!("timed out waiting for metric event reader to exit");
+        let join_result = timeout(READER_EXIT_TIMEOUT, &mut reader_handle).await;
+        let reader_ok = match join_result {
+            Ok(Ok(())) => true,
+            Ok(Err(_)) => {
+                tracing::error!("metric event reader task exited with an uncaught panic");
                 false
-            });
-        // reader 已正常退出时直接 join(线程已返回,join 立即完成);
-        // 未正常退出(超时/panic)时**不 join、直接 detach**:Rust 线程无法强制
-        // 终止,继续等待只会占住 blocking 线程池线程,卡死的 reader 在后台
-        // 自生自灭(可能残留持有旧 connect channel sender 的引用,但其 poll
-        // 周期 1s、对已关闭通道的 send 会失败退出,不影响新引擎)。
-        let joined_ok = if reader_ok {
-            match reader_handle.join() {
-                Ok(()) => true,
-                Err(_) => {
-                    tracing::error!("metric event reader thread exited with an uncaught panic");
-                    false
-                }
             }
-        } else {
-            tracing::error!(
-                "metric event reader did not exit in time ({READER_EXIT_TIMEOUT:?}); \
-                 leaving the stuck thread detached and marking the service as failed"
-            );
-            false
+            Err(_) => {
+                tracing::error!(
+                    "timed out waiting for metric event reader to exit; aborting the stuck task"
+                );
+                reader_handle.abort();
+                let _ = reader_handle.await;
+                false
+            }
         };
-        tracing::info!("Worker thread exited");
-        if reader_ok && joined_ok {
+        tracing::info!("Worker task exited");
+        if reader_ok {
             service_status_clone.just_change_status(ServiceStatus::Stop);
         } else {
             service_status_clone.just_change_status(ServiceStatus::Failed);
