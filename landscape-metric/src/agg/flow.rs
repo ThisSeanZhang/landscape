@@ -5,7 +5,7 @@ use landscape_common::metric::connect::{
 };
 use std::collections::{HashMap, VecDeque};
 use std::net::IpAddr;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 use super::batch::{Batch, BucketKind};
 
@@ -16,6 +16,20 @@ pub(crate) const MS_PER_DAY: u64 = 24 * MS_PER_HOUR;
 const MS_PER_TEN_MINUTES: u64 = 10 * MS_PER_MINUTE;
 const STALE_TIMEOUT_MS: u64 = 5 * MS_PER_MINUTE;
 const DEFAULT_CONNECT_SAMPLE_INTERVAL_MS: u64 = 5 * 1000;
+
+fn read_or_recover<'a, T>(lock: &'a RwLock<T>, name: &str) -> RwLockReadGuard<'a, T> {
+    lock.read().unwrap_or_else(|poisoned| {
+        tracing::error!("{name} lock poisoned; recovering the inner state");
+        poisoned.into_inner()
+    })
+}
+
+fn write_or_recover<'a, T>(lock: &'a RwLock<T>, name: &str) -> RwLockWriteGuard<'a, T> {
+    lock.write().unwrap_or_else(|poisoned| {
+        tracing::error!("{name} lock poisoned; recovering the inner state");
+        poisoned.into_inner()
+    })
+}
 
 pub(crate) fn bucket_start(report_time: u64, bucket_ms: u64) -> u64 {
     report_time / bucket_ms * bucket_ms
@@ -284,7 +298,7 @@ fn add_iface_realtime_contribution(
     contribution: FlowRateContribution,
     report_time: u64,
 ) {
-    let mut cache = iface_realtime.write().expect("metric iface realtime cache poisoned");
+    let mut cache = write_or_recover(iface_realtime, "metric iface realtime cache");
     cache.entry(contribution.ifindex).or_default().add_contribution(contribution, report_time);
 }
 
@@ -292,7 +306,7 @@ fn remove_iface_realtime_contribution(
     iface_realtime: &IfaceRealtimeCache,
     contribution: FlowRateContribution,
 ) {
-    let mut cache = iface_realtime.write().expect("metric iface realtime cache poisoned");
+    let mut cache = write_or_recover(iface_realtime, "metric iface realtime cache");
     if let Some(acc) = cache.get_mut(&contribution.ifindex) {
         acc.remove_contribution(contribution);
         if acc.active_conns == 0 {
@@ -366,7 +380,7 @@ pub(crate) fn process_connect_metric(
     let curr_day_refresh_slot = day_refresh_slot(metric.report_time);
 
     let mut batch = Batch::default();
-    let mut cache = flow_cache.write().expect("metric flow cache poisoned");
+    let mut cache = write_or_recover(flow_cache, "metric flow cache");
     match cache.entry(metric.key.clone()) {
         std::collections::hash_map::Entry::Occupied(mut entry) => {
             let state = entry.get_mut();
@@ -434,7 +448,7 @@ pub(crate) fn cleanup_flow_cache(
     let stale_cutoff = now_ms.saturating_sub(STALE_TIMEOUT_MS);
     let window_cutoff = now_ms.saturating_sub(second_window_ms);
 
-    let mut cache = flow_cache.write().expect("metric flow cache poisoned");
+    let mut cache = write_or_recover(flow_cache, "metric flow cache");
     let mut expired_keys = Vec::new();
     let mut stats = FlowCacheStats::default();
     let mut batch = Batch::default();
@@ -471,7 +485,7 @@ pub(crate) fn finalize_all_flows(
     flow_cache: &FlowCache,
     iface_realtime: &IfaceRealtimeCache,
 ) -> Batch {
-    let mut cache = flow_cache.write().expect("metric flow cache poisoned");
+    let mut cache = write_or_recover(flow_cache, "metric flow cache");
     let mut batch = Batch::default();
     for state in cache.values_mut() {
         finalize_state_batch(state, true, &mut batch, iface_realtime);
@@ -483,7 +497,7 @@ pub(crate) fn collect_connect_infos(
     flow_cache: &FlowCache,
     now_ms: u64,
 ) -> Vec<ConnectRealtimeStatus> {
-    let cache = flow_cache.read().expect("metric flow cache poisoned");
+    let cache = read_or_recover(flow_cache, "metric flow cache");
     let mut infos: Vec<_> = cache
         .values()
         .filter(|state| state.is_active(now_ms))
@@ -498,7 +512,7 @@ pub(crate) fn collect_realtime_ip_stats(
     now_ms: u64,
     is_src: bool,
 ) -> Vec<IpRealtimeStat> {
-    let cache = flow_cache.read().expect("metric flow cache poisoned");
+    let cache = read_or_recover(flow_cache, "metric flow cache");
     let mut stats_map: HashMap<IpAddr, IpAggregatedStats> = HashMap::new();
 
     for state in cache.values().filter(|state| state.is_active(now_ms)) {
@@ -521,7 +535,7 @@ pub(crate) fn collect_realtime_iface_stats(
     now_ms: u64,
 ) -> Vec<IfaceRealtimeStat> {
     let stale_cutoff = now_ms.saturating_sub(STALE_TIMEOUT_MS);
-    let cache = iface_realtime.read().expect("metric iface realtime cache poisoned");
+    let cache = read_or_recover(iface_realtime, "metric iface realtime cache");
     let mut stats: Vec<_> = cache
         .iter()
         .filter(|(_, acc)| acc.last_report_time >= stale_cutoff)
@@ -546,7 +560,7 @@ pub(crate) fn second_points_by_key(
     key: &ConnectKey,
     cutoff: u64,
 ) -> Vec<ConnectMetricPoint> {
-    let cache = flow_cache.read().expect("metric flow cache poisoned");
+    let cache = read_or_recover(flow_cache, "metric flow cache");
     cache.get(key).map(|state| state.second_points_since(cutoff)).unwrap_or_default()
 }
 
@@ -788,8 +802,10 @@ mod tests {
             connect_1d_retention_days: 30,
             connect_summary_retention_days: 30,
             connect_summary_max_rows: 0,
+            connect_db_max_bytes: landscape_common::DEFAULT_METRIC_CONNECT_DB_MAX_BYTES,
             dns_retention_days: 7,
             dns_1m_retention_days: 30,
+            dns_db_max_bytes: landscape_common::DEFAULT_DNS_METRIC_DB_MAX_BYTES,
             write_batch_size: 2,
             write_flush_interval_secs: 3600,
             cleanup_interval_secs: 3600,

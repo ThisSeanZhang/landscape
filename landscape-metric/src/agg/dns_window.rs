@@ -1,5 +1,5 @@
 use std::collections::VecDeque;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 use hdrhistogram::Histogram;
 use landscape_common::metric::dns::{DnsMetric, DnsOutcome};
@@ -15,6 +15,20 @@ use super::dns_bucket::{minute_start, DnsCounters, DnsSummaryParts, MINUTE_MS};
 /// 仪表盘状态卡 DNSDashboard(默认 10min)直接查 DB,不走窗口。
 /// 窗口纯内存:只由采集方向 ingest 驱动,不落库、不与 DB 合并,重启后为空。
 pub(crate) const DNS_RECENT_WINDOW_SECS: u64 = 5 * 60;
+
+fn read_or_recover<'a, T>(lock: &'a RwLock<T>) -> RwLockReadGuard<'a, T> {
+    lock.read().unwrap_or_else(|poisoned| {
+        tracing::error!("dns recent window lock poisoned; recovering the inner state");
+        poisoned.into_inner()
+    })
+}
+
+fn write_or_recover<'a, T>(lock: &'a RwLock<T>) -> RwLockWriteGuard<'a, T> {
+    lock.write().unwrap_or_else(|poisoned| {
+        tracing::error!("dns recent window lock poisoned; recovering the inner state");
+        poisoned.into_inner()
+    })
+}
 
 #[derive(Debug)]
 struct DnsMinuteBucket {
@@ -82,7 +96,7 @@ impl DnsRecentWindow {
             return;
         }
 
-        let mut buckets = self.inner.write().expect("dns recent window poisoned");
+        let mut buckets = write_or_recover(&self.inner);
         let position = buckets.iter().position(|bucket| {
             bucket.minute_start > bucket_start
                 || (bucket.minute_start == bucket_start && bucket.flow_id >= metric.flow_id)
@@ -118,7 +132,7 @@ impl DnsRecentWindow {
 
     #[cfg(test)]
     pub(crate) fn bucket_count(&self) -> usize {
-        self.inner.read().expect("dns recent window poisoned").len()
+        read_or_recover(&self.inner).len()
     }
 
     /// 按显式区间 `[start_ms, end_ms)` 聚合窗口内分钟桶(分钟粒度),支持 flow 过滤。
@@ -131,7 +145,7 @@ impl DnsRecentWindow {
         end_ms: u64,
         flow_id: Option<u32>,
     ) -> DnsSummaryParts {
-        let buckets = self.inner.read().expect("dns recent window poisoned");
+        let buckets = read_or_recover(&self.inner);
         let mut parts = DnsSummaryParts::default();
         for bucket in buckets.iter() {
             if let Some(flow) = flow_id {

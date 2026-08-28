@@ -150,12 +150,28 @@ fn flush_connect_batch(writer_tx: &ConnectBatchTx, stats: &WriteQueueStats, pend
     if pending.is_empty() {
         return;
     }
-    // TODO(metric-pipeline):try_send 失败(队列满)时批次被直接丢弃;shutdown
-    // 收尾路径(尤其 finalize_all_flows 结果)后续应改为 send().await 兜底。
+    // 常规攒批路径用 try_send:队列满时批次被直接丢弃,避免写线程阻塞影响
+    // 聚合实时性。shutdown 收尾路径(尤其 finalize_all_flows 结果)不经过这里,
+    // 由 flush_connect_batch_on_shutdown 用 send().await(5s 超时)兜底。
     if writer_tx.try_send(std::mem::take(pending)).is_err() {
         stats.dropped();
     }
     *pending = Batch::default();
+}
+
+async fn flush_connect_batch_on_shutdown(
+    writer_tx: &ConnectBatchTx,
+    stats: &WriteQueueStats,
+    pending: &mut Batch,
+) {
+    if pending.is_empty() {
+        return;
+    }
+    let batch = std::mem::take(pending);
+    let send_result = tokio::time::timeout(Duration::from_secs(5), writer_tx.send(batch)).await;
+    if !matches!(send_result, Ok(Ok(()))) {
+        stats.dropped();
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -282,15 +298,13 @@ pub(crate) async fn run_connect_worker(
         }
     }
 
-    flush_connect_batch(&writer_tx, &queue_stats, &mut pending);
+    flush_connect_batch_on_shutdown(&writer_tx, &queue_stats, &mut pending).await;
 
     #[cfg(feature = "metric-persistent")]
     {
         let final_batch = finalize_all_flows(&flow_cache, &iface_realtime);
         pending.extend(final_batch);
-        // TODO(metric-pipeline):此处 try_send 在 connect writer 队列满时会丢弃最终批次
-        // (全部活跃流的 summary/桶),是 shutdown 唯一可能丢数据的点;后续改为 send().await 兜底。
-        flush_connect_batch(&writer_tx, &queue_stats, &mut pending);
+        flush_connect_batch_on_shutdown(&writer_tx, &queue_stats, &mut pending).await;
     }
 }
 
@@ -301,6 +315,26 @@ fn flush_dns_batch(writer_tx: &DnsBatchTx, stats: &WriteQueueStats, batch: &mut 
     }
     let metrics = std::mem::take(batch);
     if writer_tx.try_send(DnsWriteMessage::Metrics(metrics)).is_err() {
+        stats.dropped();
+    }
+}
+
+#[cfg(feature = "metric-persistent")]
+async fn flush_dns_batch_on_shutdown(
+    writer_tx: &DnsBatchTx,
+    stats: &WriteQueueStats,
+    batch: &mut Vec<DnsMetric>,
+) {
+    if batch.is_empty() {
+        return;
+    }
+    let metrics = std::mem::take(batch);
+    let send_result = tokio::time::timeout(
+        Duration::from_secs(5),
+        writer_tx.send(DnsWriteMessage::Metrics(metrics)),
+    )
+    .await;
+    if !matches!(send_result, Ok(Ok(()))) {
         stats.dropped();
     }
 }
@@ -382,7 +416,7 @@ pub(crate) async fn run_dns_worker(
 
     // shutdown 收尾:窗口为纯内存结构,直接丢弃,不落库;仅 flush 剩余原始行批次
     // (1m 桶由 writer 从该批次同批构建)。
-    flush_dns_batch(&writer_tx, &queue_stats, &mut raw_batch);
+    flush_dns_batch_on_shutdown(&writer_tx, &queue_stats, &mut raw_batch).await;
 }
 
 /// 无 metric-persistent feature 时的 DNS worker:内存模式下 DNS 指标不聚合、不落库,
@@ -413,7 +447,7 @@ mod tests {
     use crate::sink::MetricSink;
     use landscape_common::database::error::DbError;
     use landscape_common::metric::connect::{
-        ConnectGlobalStats, ConnectHistoryQueryParams, ConnectHistoryStatus, ConnectKey,
+        ConnectGlobalStats, ConnectHistoryQueryParams, ConnectHistoryResponse, ConnectKey,
         ConnectMetric, ConnectMetricPoint, ConnectStatusType, IpHistoryStat, MetricResolution,
     };
     #[cfg(feature = "metric-persistent")]
@@ -436,8 +470,10 @@ mod tests {
             connect_1d_retention_days: 30,
             connect_summary_retention_days: 30,
             connect_summary_max_rows: 0,
+            connect_db_max_bytes: landscape_common::DEFAULT_METRIC_CONNECT_DB_MAX_BYTES,
             dns_retention_days: 7,
             dns_1m_retention_days: 30,
+            dns_db_max_bytes: landscape_common::DEFAULT_DNS_METRIC_DB_MAX_BYTES,
             write_batch_size: 2,
             write_flush_interval_secs: 3600,
             cleanup_interval_secs: 3600,
@@ -559,8 +595,8 @@ mod tests {
         async fn history_summaries_complex(
             &self,
             _params: ConnectHistoryQueryParams,
-        ) -> Vec<ConnectHistoryStatus> {
-            Vec::new()
+        ) -> ConnectHistoryResponse {
+            ConnectHistoryResponse::default()
         }
 
         async fn history_src_ip_stats(

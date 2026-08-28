@@ -339,19 +339,21 @@ impl LandscapeConfigService {
     ) -> Result<(), DbError> {
         let new_lan_hostname =
             new_lan_hostname.normalized().map_err(|error| DbError::Internal(error.to_string()))?;
+        let runtime_lan_hostname = LanHostnameConfig::from_file_config(&new_lan_hostname)
+            .map_err(|error| DbError::Internal(error.to_string()))?;
+        let file_lan_hostname = new_lan_hostname.clone();
         self.update_section(
             "lan_hostname",
             &["hostname_registry"],
             new_lan_hostname,
             expected_hash,
             |config| &config.lan_hostname,
-            |new_lan_hostname| {
-                let runtime = LanHostnameConfig::from_file_config(new_lan_hostname)
-                    .expect("normalized LAN hostname config must be valid");
+            |_| {
+                let runtime = runtime_lan_hostname.clone();
                 self.config.rcu(|old| {
                     let mut new_config = (**old).clone();
                     new_config.lan_hostname = runtime.clone();
-                    new_config.file_config.lan_hostname = new_lan_hostname.clone();
+                    new_config.file_config.lan_hostname = file_lan_hostname.clone();
                     new_config
                 });
             },
