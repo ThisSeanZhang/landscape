@@ -1,6 +1,9 @@
 use std::mem::MaybeUninit;
+use std::mem::{offset_of, size_of};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::sync::{Arc, Mutex};
 
+use landscape_common::metric::connect::{ConnectKey, ConnectMetric, ConnectStatusType};
 use libbpf_rs::{
     skel::{OpenSkel, SkelBuilder as _},
     ProgramInput, RingBufferBuilder,
@@ -9,6 +12,7 @@ use tokio::time::{timeout, Duration};
 use tokio_util::sync::CancellationToken;
 use zerocopy::IntoBytes;
 
+use crate::map_setting::share_map::types::{nat_conn_metric_event, u_inet_addr};
 use crate::tests::TestSkb;
 
 pub(crate) mod test_metric_ringbuf {
@@ -117,5 +121,149 @@ mod tests {
             .await
             .expect("reader should exit after cancel")
             .expect("reader task should not panic");
+    }
+
+    #[test]
+    fn connect_metric_layout_matches_wire() {
+        assert_eq!(size_of::<u_inet_addr>(), 16, "u_inet_addr must be 16 bytes");
+        assert_eq!(
+            size_of::<ConnectMetric>(),
+            size_of::<nat_conn_metric_event>(),
+            "ConnectMetric wire size must match nat_conn_metric_event"
+        );
+
+        assert_eq!(
+            offset_of!(ConnectMetric, src_addr),
+            offset_of!(nat_conn_metric_event, src_addr)
+        );
+        assert_eq!(
+            offset_of!(ConnectMetric, dst_addr),
+            offset_of!(nat_conn_metric_event, dst_addr)
+        );
+        assert_eq!(
+            offset_of!(ConnectMetric, src_port),
+            offset_of!(nat_conn_metric_event, src_port)
+        );
+        assert_eq!(
+            offset_of!(ConnectMetric, dst_port),
+            offset_of!(nat_conn_metric_event, dst_port)
+        );
+        assert_eq!(offset_of!(ConnectMetric, pad), offset_of!(nat_conn_metric_event, __pad_36));
+        assert_eq!(
+            offset_of!(ConnectMetric, create_time),
+            offset_of!(nat_conn_metric_event, create_time)
+        );
+        assert_eq!(offset_of!(ConnectMetric, report_time), offset_of!(nat_conn_metric_event, time));
+        assert_eq!(
+            offset_of!(ConnectMetric, ingress_bytes),
+            offset_of!(nat_conn_metric_event, ingress_bytes)
+        );
+        assert_eq!(
+            offset_of!(ConnectMetric, ingress_packets),
+            offset_of!(nat_conn_metric_event, ingress_packets)
+        );
+        assert_eq!(
+            offset_of!(ConnectMetric, egress_bytes),
+            offset_of!(nat_conn_metric_event, egress_bytes)
+        );
+        assert_eq!(
+            offset_of!(ConnectMetric, egress_packets),
+            offset_of!(nat_conn_metric_event, egress_packets)
+        );
+        assert_eq!(
+            offset_of!(ConnectMetric, l4_proto),
+            offset_of!(nat_conn_metric_event, l4_proto)
+        );
+        assert_eq!(
+            offset_of!(ConnectMetric, l3_proto),
+            offset_of!(nat_conn_metric_event, l3_proto)
+        );
+        assert_eq!(offset_of!(ConnectMetric, flow_id), offset_of!(nat_conn_metric_event, flow_id));
+        assert_eq!(
+            offset_of!(ConnectMetric, trace_id),
+            offset_of!(nat_conn_metric_event, trace_id)
+        );
+        assert_eq!(offset_of!(ConnectMetric, cpu_id), offset_of!(nat_conn_metric_event, cpu_id));
+        assert_eq!(offset_of!(ConnectMetric, ifindex), offset_of!(nat_conn_metric_event, ifindex));
+        assert_eq!(offset_of!(ConnectMetric, status), offset_of!(nat_conn_metric_event, status));
+        assert_eq!(offset_of!(ConnectMetric, gress), offset_of!(nat_conn_metric_event, gress));
+
+        assert_eq!(size_of::<ConnectMetric>(), 104, "wire size must stay 104 (with tail padding)");
+    }
+
+    #[test]
+    fn connect_metric_roundtrip_v4() {
+        let mut bytes = [0u8; 104];
+        bytes[0..4].copy_from_slice(&[192, 0, 2, 1]); // src_addr 192.0.2.1
+        bytes[16..20].copy_from_slice(&[10, 0, 0, 1]); // dst_addr 10.0.0.1
+        bytes[32..34].copy_from_slice(&[0x12, 0x34]); // src_port BE
+        bytes[34..36].copy_from_slice(&[0xab, 0xcd]); // dst_port BE
+        bytes[40..48].copy_from_slice(&9876543210u64.to_le_bytes()); // create_time ns
+        bytes[48..56].copy_from_slice(&1234567890u64.to_le_bytes()); // time ns
+        bytes[56..64].copy_from_slice(&111u64.to_le_bytes());
+        bytes[64..72].copy_from_slice(&22u64.to_le_bytes());
+        bytes[72..80].copy_from_slice(&333u64.to_le_bytes());
+        bytes[80..88].copy_from_slice(&44u64.to_le_bytes());
+        bytes[88] = 6; // l4_proto tcp
+        bytes[89] = 0; // l3_proto v4
+        bytes[90] = 7; // flow_id
+        bytes[91] = 8; // trace_id
+        bytes[92..96].copy_from_slice(&5u32.to_le_bytes()); // cpu_id
+        bytes[96..100].copy_from_slice(&9u32.to_le_bytes()); // ifindex
+        bytes[100] = 1; // status active
+        bytes[101] = 2; // gress
+
+        let m = ConnectMetric::try_from(&bytes[..]).expect("read wire bytes");
+
+        assert_eq!(m.src_ip(), IpAddr::V4(Ipv4Addr::new(192, 0, 2, 1)));
+        assert_eq!(m.dst_ip(), IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)));
+        assert_eq!(m.src_port, 0x1234);
+        assert_eq!(m.dst_port, 0xabcd);
+        assert_eq!(m.create_time, 9876543210);
+        assert_eq!(m.report_time, 1234, "time ns must be fixed up to ms");
+        assert_eq!(m.create_time_ms(), 9876);
+        assert_eq!(m.key(), ConnectKey { create_time: 9876543210, cpu_id: 5 });
+        assert_eq!(m.ingress_bytes, 111);
+        assert_eq!(m.ingress_packets, 22);
+        assert_eq!(m.egress_bytes, 333);
+        assert_eq!(m.egress_packets, 44);
+        assert_eq!(m.l4_proto, 6);
+        assert_eq!(m.l3_proto, 0);
+        assert_eq!(m.flow_id, 7);
+        assert_eq!(m.trace_id, 8);
+        assert_eq!(m.cpu_id, 5);
+        assert_eq!(m.ifindex, 9);
+        assert_eq!(m.status_type(), ConnectStatusType::Active);
+        assert_eq!(m.gress, 2);
+    }
+
+    #[test]
+    fn connect_metric_roundtrip_v6_and_unknown_status() {
+        let mut bytes = [0u8; 104];
+        bytes[0..16].copy_from_slice(&Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 1).octets());
+        bytes[16..32].copy_from_slice(&Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 2).octets());
+        bytes[32..34].copy_from_slice(&[0x00, 0x50]); // src_port 80 BE
+        bytes[34..36].copy_from_slice(&[0x00, 0x35]); // dst_port 53 BE
+        bytes[40..48].copy_from_slice(&1000u64.to_le_bytes()); // create_time ns
+        bytes[48..56].copy_from_slice(&2_000_000_000u64.to_le_bytes()); // time ns -> 2000 ms
+        bytes[88] = 17; // l4_proto udp
+        bytes[89] = 1; // l3_proto v6
+        bytes[90] = 7; // flow_id
+        bytes[100] = 99; // unknown status
+
+        let m = ConnectMetric::try_from(&bytes[..]).expect("read wire bytes");
+
+        assert_eq!(m.src_ip(), IpAddr::V6(Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 1)));
+        assert_eq!(m.dst_ip(), IpAddr::V6(Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 2)));
+        assert_eq!(m.src_port, 80);
+        assert_eq!(m.dst_port, 53);
+        assert_eq!(m.report_time, 2000);
+        assert_eq!(m.status_type(), ConnectStatusType::Unknow);
+    }
+
+    #[test]
+    fn connect_metric_rejects_wrong_size() {
+        assert!(ConnectMetric::try_from(&[0u8; 103][..]).is_err());
+        assert!(ConnectMetric::try_from(&[0u8; 105][..]).is_err());
     }
 }

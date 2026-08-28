@@ -3180,6 +3180,7 @@ dependencies = [
  "tracing",
  "utoipa",
  "uuid",
+ "zerocopy",
 ]
 
 [[package]]

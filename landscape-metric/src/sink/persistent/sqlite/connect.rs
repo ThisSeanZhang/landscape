@@ -267,7 +267,7 @@ async fn upsert_summary_tx(
     tx: &mut Transaction<'_, Sqlite>,
     metric: &landscape_common::metric::connect::ConnectMetric,
 ) -> Result<(), sqlx::Error> {
-    let status: u8 = metric.status.clone().into();
+    let status: u8 = metric.status_type().into();
     sqlx::query(
         "INSERT INTO conn_summaries (
             create_time, cpu_id, src_ip, dst_ip, src_port, dst_port, l4_proto, l3_proto, flow_id, trace_id, ifindex,
@@ -288,10 +288,10 @@ async fn upsert_summary_tx(
                 ELSE conn_summaries.status
             END",
     )
-    .bind(metric.key.create_time as i64)
-    .bind(metric.key.cpu_id as i64)
-    .bind(clean_ip_string(&metric.src_ip))
-    .bind(clean_ip_string(&metric.dst_ip))
+    .bind(metric.key().create_time as i64)
+    .bind(metric.key().cpu_id as i64)
+    .bind(clean_ip_string(&metric.src_ip()))
+    .bind(clean_ip_string(&metric.dst_ip()))
     .bind(metric.src_port as i64)
     .bind(metric.dst_port as i64)
     .bind(metric.l4_proto as i64)
@@ -305,7 +305,7 @@ async fn upsert_summary_tx(
     .bind(metric.ingress_packets as i64)
     .bind(metric.egress_packets as i64)
     .bind(status as i64)
-    .bind(metric.create_time_ms as i64)
+    .bind(metric.create_time_ms() as i64)
     .bind(metric.gress as i64)
     .execute(tx.as_mut())
     .await?;
@@ -354,7 +354,7 @@ async fn insert_bucket_tx(
     table: &str,
     write: &BucketWrite,
 ) -> Result<(), sqlx::Error> {
-    let status: u8 = write.metric.status.clone().into();
+    let status: u8 = write.metric.status_type().into();
     sqlx::query(&format!(
         "INSERT INTO {table} (
             create_time, cpu_id, report_time, bucket_time, ifindex,
@@ -363,8 +363,8 @@ async fn insert_bucket_tx(
         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
         ON CONFLICT (create_time, cpu_id, report_time) DO NOTHING"
     ))
-    .bind(write.metric.key.create_time as i64)
-    .bind(write.metric.key.cpu_id as i64)
+    .bind(write.metric.key().create_time as i64)
+    .bind(write.metric.key().cpu_id as i64)
     .bind(write.metric.report_time as i64)
     .bind(write.bucket_report_time as i64)
     .bind(write.metric.ifindex as i64)
@@ -373,7 +373,7 @@ async fn insert_bucket_tx(
     .bind(write.metric.egress_bytes as i64)
     .bind(write.metric.egress_packets as i64)
     .bind(status as i64)
-    .bind(write.metric.create_time_ms as i64)
+    .bind(write.metric.create_time_ms() as i64)
     .execute(tx.as_mut())
     .await?;
 
@@ -394,8 +394,8 @@ pub(crate) async fn apply_connect_batch(
 
     // 批量查询本批次涉及的旧汇总值。SQLite 对 bind 参数数量有限制，
     // 因此按参数预算分块（每个 key 需要两个参数）。
-    let mut keys: Vec<&ConnectKey> =
-        batch.summary_metrics.iter().map(|metric| &metric.key).collect();
+    let mut keys: Vec<ConnectKey> =
+        batch.summary_metrics.iter().map(|metric| metric.key()).collect();
     keys.sort_by_key(|key| (key.create_time, key.cpu_id));
     keys.dedup();
     let mut totals: HashMap<ConnectKey, SummaryTotals> = HashMap::with_capacity(keys.len());
@@ -435,7 +435,7 @@ pub(crate) async fn apply_connect_batch(
     }
 
     for metric in &batch.summary_metrics {
-        let previous_totals = totals.get(&metric.key).copied();
+        let previous_totals = totals.get(&metric.key()).copied();
         upsert_summary_tx(&mut tx, metric).await?;
         let merged_totals = previous_totals
             .map(|totals| totals.merge_metric(metric))
@@ -443,7 +443,7 @@ pub(crate) async fn apply_connect_batch(
         let delta = GlobalStatsDelta::from_summary_change(previous_totals, merged_totals);
         apply_global_stats_delta_tx(&mut tx, delta, last_calculate_time).await?;
         // 同一批次内同 key 的后续 summary 以合并后的值为基准。
-        totals.insert(metric.key.clone(), merged_totals);
+        totals.insert(metric.key(), merged_totals);
     }
 
     for kind in [BucketKind::Minute, BucketKind::Hour, BucketKind::Day] {
@@ -989,26 +989,23 @@ mod tests {
         egress_bytes: u64,
         status: ConnectStatusType,
     ) -> ConnectMetric {
-        ConnectMetric {
-            key: ConnectKey { create_time, cpu_id },
-            src_ip: IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)),
-            dst_ip: IpAddr::V4(Ipv4Addr::new(10, 0, 1, 1)),
-            src_port: 10_000 + cpu_id as u16,
-            dst_port: 20_000 + cpu_id as u16,
-            l4_proto: 6,
-            l3_proto: 4,
-            flow_id: cpu_id as u8,
-            trace_id: cpu_id as u8,
-            gress: 0,
-            ifindex: cpu_id + 10,
+        ConnectMetric::from_domain(
+            create_time,
+            cpu_id,
             report_time,
-            create_time_ms: create_time,
+            IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)),
+            IpAddr::V4(Ipv4Addr::new(10, 0, 1, 1)),
+            10_000 + cpu_id as u16,
+            20_000 + cpu_id as u16,
+            cpu_id as u8,
+            cpu_id as u8,
+            cpu_id + 10,
             ingress_bytes,
-            ingress_packets: ingress_bytes / 10,
+            ingress_bytes / 10,
             egress_bytes,
-            egress_packets: egress_bytes / 10,
+            egress_bytes / 10,
             status,
-        }
+        )
     }
 
     async fn test_pool() -> (tempfile::TempDir, SqlitePool) {
@@ -1024,7 +1021,7 @@ mod tests {
     #[tokio::test]
     async fn bucket_append_keeps_rows_and_reads_latest_per_aligned_bucket() {
         let (_dir, pool) = test_pool().await;
-        let key = ConnectKey { create_time: 1_000, cpu_id: 1 };
+        let key = ConnectKey { create_time: 1_000 * 1_000_000, cpu_id: 1 };
         let bucket_time = 60_000u64;
 
         // 同一对齐桶的两次发射,raw report_time 不同 → 两行共存(追加写)。
@@ -1033,7 +1030,6 @@ mod tests {
         second.report_time = 62_000;
         second.ingress_bytes = 50;
         second.egress_bytes = 400;
-        second.create_time_ms = 2_000;
 
         let mut batch = Batch::default();
         batch.bucket_writes.push(BucketWrite {
@@ -1061,14 +1057,14 @@ mod tests {
     #[tokio::test]
     async fn bucket_reads_latest_row_status_including_finalized_disabled() {
         let (_dir, pool) = test_pool().await;
-        let key = ConnectKey { create_time: 1_000, cpu_id: 1 };
+        let key = ConnectKey { create_time: 1_000 * 1_000_000, cpu_id: 1 };
         let bucket_time = 60_000u64;
 
         // 旧行为 Disabled(2),新上报(更大 report_time)为 Active → 读侧取最新行。
         let older = test_metric(1_000, 1, 61_000, 100, 200, ConnectStatusType::Disabled);
         let mut newer = older.clone();
         newer.report_time = 62_000;
-        newer.status = ConnectStatusType::Active;
+        newer.status = ConnectStatusType::Active.into();
         newer.ingress_bytes = 300;
 
         let mut batch = Batch::default();
@@ -1100,7 +1096,7 @@ mod tests {
     #[tokio::test]
     async fn bucket_duplicate_raw_key_is_ignored_on_append() {
         let (_dir, pool) = test_pool().await;
-        let key = ConnectKey { create_time: 1_000, cpu_id: 1 };
+        let key = ConnectKey { create_time: 1_000 * 1_000_000, cpu_id: 1 };
         let bucket_time = 60_000u64;
 
         let first = test_metric(1_000, 1, 61_000, 100, 200, ConnectStatusType::Active);
@@ -1131,7 +1127,7 @@ mod tests {
     #[tokio::test]
     async fn summary_upsert_uses_max_and_global_stats_tracks_single_connection() {
         let (_dir, pool) = test_pool().await;
-        let key = ConnectKey { create_time: 1_000, cpu_id: 1 };
+        let key = ConnectKey { create_time: 1_000 * 1_000_000, cpu_id: 1 };
 
         let first = test_metric(1_000, 1, 65_000, 100, 200, ConnectStatusType::Disabled);
         apply_connect_batch(&pool, &batch_with(vec![first.clone()], vec![])).await.unwrap();
@@ -1261,7 +1257,7 @@ mod tests {
 
         let points = query_metric_by_key(
             &pool,
-            &ConnectKey { create_time: 1_000, cpu_id: 1 },
+            &ConnectKey { create_time: 1_000 * 1_000_000, cpu_id: 1 },
             MetricResolution::Minute,
         )
         .await
@@ -1270,7 +1266,7 @@ mod tests {
 
         let kept_points = query_metric_by_key(
             &pool,
-            &ConnectKey { create_time: 1_000, cpu_id: 2 },
+            &ConnectKey { create_time: 1_000 * 1_000_000, cpu_id: 2 },
             MetricResolution::Minute,
         )
         .await

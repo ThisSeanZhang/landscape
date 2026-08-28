@@ -6,45 +6,29 @@ use tokio::io::unix::AsyncFd;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
-use crate::map_setting::share_map::types::nat_conn_metric_event;
 use crate::MAP_PATHS;
-
 
 fn build_connect_ringbuf(
     connect_msg_tx: mpsc::Sender<ConnectMessage>,
 ) -> libbpf_rs::RingBuffer<'static> {
-    // let firewall_conn_metric_events =
-    //     libbpf_rs::MapHandle::from_pinned_path(&MAP_PATHS.firewall_conn_metric_events).unwrap();
-
     let nat_metric_events =
         libbpf_rs::MapHandle::from_pinned_path(&MAP_PATHS.nat_metric_events).unwrap();
 
-    // let firewall_metric_tx = connect_msg_tx.clone();
-    // let firewall_metric_callback = move |data: &[u8]| -> i32 {
-    //     // let time = landscape_core::time::get_boot_time_ns().unwrap_or_default();
-    //     let firewall_conn_event_value = plain::from_bytes::<firewall_conn_metric_event>(data);
-    //     if let Ok(data) = firewall_conn_event_value {
-    //         let mut event = ConnectMetric::from(data);
-    //         event.key.create_time = revise_time(event.key.create_time);
-    //         event.report_time = revise_time(event.report_time);
-    //         // println!("FirewallMetric, {:#?}, time: {time}", event);
-    //         let _ = firewall_metric_tx.try_send(ConnectMessage::Metric(event));
-    //     }
-    //     0
-    // };
-
     let nat_metric_tx = connect_msg_tx.clone();
     let nat_metric_callback = move |data: &[u8]| -> i32 {
-        // let time = landscape_core::time::get_boot_time_ns().unwrap_or_default();
-        let conn_event_value = plain::from_bytes::<nat_conn_metric_event>(data);
-        if let Ok(data) = conn_event_value {
-            let mut event = ConnectMetric::from(data);
-            event.key.create_time = data.create_time;
-            event.create_time_ms = data.create_time / 1_000_000;
-            event.report_time = data.time / 1_000_000;
-            // println!("NAT Metric, {:#?}", event);
-            let _ = nat_metric_tx.try_send(ConnectMessage::Metric(event));
-        }
+        let event = match ConnectMetric::try_from(data) {
+            Ok(ev) => ev,
+            Err(err) => {
+                tracing::warn!(
+                    len = data.len(),
+                    expected = std::mem::size_of::<ConnectMetric>(),
+                    error = %err,
+                    "dropping nat_conn_metric_event with unexpected wire size"
+                );
+                return 0;
+            }
+        };
+        let _ = nat_metric_tx.try_send(ConnectMessage::Metric(event));
         0
     };
 

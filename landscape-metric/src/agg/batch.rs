@@ -54,29 +54,27 @@ impl Batch {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use landscape_common::metric::connect::ConnectStatusType;
     use std::net::{IpAddr, Ipv4Addr};
 
     fn metric(cpu_id: u32) -> ConnectMetric {
-        ConnectMetric {
-            key: landscape_common::metric::connect::ConnectKey { create_time: 1_000, cpu_id },
-            src_ip: IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)),
-            dst_ip: IpAddr::V4(Ipv4Addr::new(10, 0, 1, 1)),
-            src_port: 10_000,
-            dst_port: 20_000,
-            l4_proto: 6,
-            l3_proto: 4,
-            flow_id: 1,
-            trace_id: 1,
-            gress: 0,
-            ifindex: 2,
-            report_time: 60_000,
-            create_time_ms: 1_000,
-            ingress_bytes: 100,
-            ingress_packets: 10,
-            egress_bytes: 200,
-            egress_packets: 20,
-            status: landscape_common::metric::connect::ConnectStatusType::Active,
-        }
+        ConnectMetric::from_domain(
+            1_000,
+            cpu_id,
+            60_000,
+            IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)),
+            IpAddr::V4(Ipv4Addr::new(10, 0, 1, 1)),
+            10_000,
+            20_000,
+            1,
+            1,
+            2,
+            100,
+            10,
+            200,
+            20,
+            ConnectStatusType::Active,
+        )
     }
 
     #[test]
@@ -125,6 +123,6 @@ mod tests {
         batch.push_summary(metric(0));
         batch.extend(Batch::default());
         assert_eq!(batch.op_count(), 1);
-        assert_eq!(batch.summary_metrics[0].key.cpu_id, 0);
+        assert_eq!(batch.summary_metrics[0].key().cpu_id, 0);
     }
 }

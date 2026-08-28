@@ -483,31 +483,28 @@ mod tests {
     }
 
     fn connect_metric(cpu_id: u32, report_time: u64, ingress_bytes: u64) -> ConnectMetric {
-        ConnectMetric {
-            key: ConnectKey { create_time: 1_000, cpu_id },
-            src_ip: IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)),
-            dst_ip: IpAddr::V4(Ipv4Addr::new(10, 0, 1, 1)),
-            src_port: 10_000 + cpu_id as u16,
-            dst_port: 20_000 + cpu_id as u16,
-            l4_proto: 6,
-            l3_proto: 4,
-            flow_id: cpu_id as u8,
-            trace_id: cpu_id as u8,
-            gress: 0,
-            ifindex: cpu_id + 10,
+        ConnectMetric::from_domain(
+            1_000,
+            cpu_id,
             report_time,
-            create_time_ms: 1_000,
+            IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)),
+            IpAddr::V4(Ipv4Addr::new(10, 0, 1, 1)),
+            10_000 + cpu_id as u16,
+            20_000 + cpu_id as u16,
+            cpu_id as u8,
+            cpu_id as u8,
+            cpu_id + 10,
             ingress_bytes,
-            ingress_packets: ingress_bytes / 10,
-            egress_bytes: ingress_bytes * 2,
-            egress_packets: ingress_bytes / 5,
-            status: ConnectStatusType::Active,
-        }
+            ingress_bytes / 10,
+            ingress_bytes * 2,
+            ingress_bytes / 5,
+            ConnectStatusType::Active,
+        )
     }
 
     fn closed_metric(cpu_id: u32, report_time: u64, ingress_bytes: u64) -> ConnectMetric {
         let mut metric = connect_metric(cpu_id, report_time, ingress_bytes);
-        metric.status = ConnectStatusType::Disabled;
+        metric.status = ConnectStatusType::Disabled.into();
         metric
     }
 

@@ -493,27 +493,29 @@ mod tests {
         }
     }
 
-    fn connect_metric(cpu_id: u32, report_time: u64, ingress_bytes: u64) -> ConnectMetric {
-        ConnectMetric {
-            key: ConnectKey { create_time: 1_000, cpu_id },
-            src_ip: IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)),
-            dst_ip: IpAddr::V4(Ipv4Addr::new(10, 0, 1, 1)),
-            src_port: 10_000 + cpu_id as u16,
-            dst_port: 20_000 + cpu_id as u16,
-            l4_proto: 6,
-            l3_proto: 4,
-            flow_id: cpu_id as u8,
-            trace_id: cpu_id as u8,
-            gress: 0,
-            ifindex: cpu_id + 10,
+    fn connect_metric(
+        cpu_id: u32,
+        create_time_ms: u64,
+        report_time: u64,
+        ingress_bytes: u64,
+    ) -> ConnectMetric {
+        ConnectMetric::from_domain(
+            create_time_ms,
+            cpu_id,
             report_time,
-            create_time_ms: report_time.saturating_sub(1_000),
+            IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)),
+            IpAddr::V4(Ipv4Addr::new(10, 0, 1, 1)),
+            10_000 + cpu_id as u16,
+            20_000 + cpu_id as u16,
+            cpu_id as u8,
+            cpu_id as u8,
+            cpu_id + 10,
             ingress_bytes,
-            ingress_packets: ingress_bytes / 10,
-            egress_bytes: ingress_bytes * 2,
-            egress_packets: ingress_bytes / 5,
-            status: ConnectStatusType::Active,
-        }
+            ingress_bytes / 10,
+            ingress_bytes * 2,
+            ingress_bytes / 5,
+            ConnectStatusType::Active,
+        )
     }
 
     #[cfg(feature = "metric-persistent")]
@@ -538,8 +540,12 @@ mod tests {
         let tx = engine.get_connect_msg_channel().unwrap();
         let now_ms = get_current_time_ms().unwrap();
 
-        tx.send(ConnectMessage::Metric(connect_metric(1, now_ms - 2_000, 100))).await.unwrap();
-        tx.send(ConnectMessage::Metric(connect_metric(2, now_ms - 1_000, 200))).await.unwrap();
+        tx.send(ConnectMessage::Metric(connect_metric(1, now_ms - 3_000, now_ms - 2_000, 100)))
+            .await
+            .unwrap();
+        tx.send(ConnectMessage::Metric(connect_metric(2, now_ms - 2_000, now_ms - 1_000, 200)))
+            .await
+            .unwrap();
 
         let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
         loop {
@@ -563,10 +569,13 @@ mod tests {
         assert_eq!(iface_stats.len(), 2);
         assert!(iface_stats.iter().all(|s| s.stats.active_conns == 1));
 
-        // 内存模式历史查询返回空。
+        // 内存模式历史查询返回空(即使用真实存在于 flow cache 的 key)。
         let points = engine
             .query_metric_by_key(
-                ConnectKey { create_time: 1_000, cpu_id: 1 },
+                ConnectKey {
+                    create_time: (now_ms - 3_000) * 1_000_000,
+                    cpu_id: 1,
+                },
                 MetricResolution::Minute,
             )
             .await;
@@ -583,10 +592,14 @@ mod tests {
             MetricEngine::new(PathBuf::new(), test_config(MetricMode::Memory)).await.unwrap();
         let tx = engine.get_connect_msg_channel().unwrap();
         let now_ms = get_current_time_ms().unwrap();
-        let key = ConnectKey { create_time: 1_000, cpu_id: 1 };
+        let key = ConnectKey { create_time: 1_000 * 1_000_000, cpu_id: 1 };
 
-        tx.send(ConnectMessage::Metric(connect_metric(1, now_ms - 4_000, 100))).await.unwrap();
-        tx.send(ConnectMessage::Metric(connect_metric(1, now_ms - 3_000, 200))).await.unwrap();
+        tx.send(ConnectMessage::Metric(connect_metric(1, 1_000, now_ms - 4_000, 100)))
+            .await
+            .unwrap();
+        tx.send(ConnectMessage::Metric(connect_metric(1, 1_000, now_ms - 3_000, 200)))
+            .await
+            .unwrap();
 
         let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
         loop {
@@ -619,7 +632,9 @@ mod tests {
             MetricEngine::new(PathBuf::new(), test_config(MetricMode::Memory)).await.unwrap();
         let tx = engine.get_connect_msg_channel().unwrap();
         let now_ms = get_current_time_ms().unwrap();
-        tx.send(ConnectMessage::Metric(connect_metric(1, now_ms - 1_000, 100))).await.unwrap();
+        tx.send(ConnectMessage::Metric(connect_metric(1, 1_000, now_ms - 1_000, 100)))
+            .await
+            .unwrap();
 
         let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
         loop {
@@ -659,14 +674,14 @@ mod tests {
             // 对齐到整分钟,避免两条 report_time 跨分钟边界落入不同 1m 桶导致断言 flaky。
             let minute_start = now_ms / 60_000 * 60_000;
 
-            let mut active = connect_metric(1, minute_start - 2_000, 100);
-            active.status = ConnectStatusType::Active;
+            let mut active = connect_metric(1, 1_000, minute_start - 2_000, 100);
+            active.status = ConnectStatusType::Active.into();
             tx.send(ConnectMessage::Metric(active)).await.unwrap();
-            let mut closed = connect_metric(1, minute_start - 1_000, 200);
-            closed.status = ConnectStatusType::Disabled;
+            let mut closed = connect_metric(1, 1_000, minute_start - 1_000, 200);
+            closed.status = ConnectStatusType::Disabled.into();
             tx.send(ConnectMessage::Metric(closed)).await.unwrap();
 
-            let key = ConnectKey { create_time: 1_000, cpu_id: 1 };
+            let key = ConnectKey { create_time: 1_000 * 1_000_000, cpu_id: 1 };
             let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
             let stats = loop {
                 let stats = engine.get_global_stats(false).await.unwrap();
@@ -759,8 +774,8 @@ mod tests {
             let engine =
                 MetricEngine::new(path.clone(), test_config(MetricMode::Persistent)).await.unwrap();
             let tx = engine.get_connect_msg_channel().unwrap();
-            let mut closed = connect_metric(1, now_ms - 1_000, 200);
-            closed.status = ConnectStatusType::Disabled;
+            let mut closed = connect_metric(1, 1_000, now_ms - 1_000, 200);
+            closed.status = ConnectStatusType::Disabled.into();
             tx.send(ConnectMessage::Metric(closed)).await.unwrap();
 
             let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
@@ -858,8 +873,8 @@ mod tests {
             let engine =
                 MetricEngine::new(path.clone(), test_config(MetricMode::Persistent)).await.unwrap();
             let tx = engine.get_connect_msg_channel().unwrap();
-            let mut active = connect_metric(1, now_ms - 1_000, 200);
-            active.status = ConnectStatusType::Active;
+            let mut active = connect_metric(1, 1_000, now_ms - 1_000, 200);
+            active.status = ConnectStatusType::Active.into();
             tx.send(ConnectMessage::Metric(active)).await.unwrap();
 
             let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
@@ -966,7 +981,9 @@ mod tests {
                     .unwrap();
             let tx = engine.get_connect_msg_channel().unwrap();
             let now_ms = get_current_time_ms().unwrap();
-            tx.send(ConnectMessage::Metric(connect_metric(1, now_ms - 1_000, 100))).await.unwrap();
+            tx.send(ConnectMessage::Metric(connect_metric(1, 1_000, now_ms - 1_000, 100)))
+                .await
+                .unwrap();
 
             // 回归:shutdown 不得等待外部仍持活的 Sender 释放。修复前 drain 循环
             // 会因通道永不完全关闭而永久阻塞(store 自身字段亦持有 sender clone)。

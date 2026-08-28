@@ -63,15 +63,15 @@ fn metric_to_point(metric: &ConnectMetric) -> ConnectMetricPoint {
         ingress_packets: metric.ingress_packets,
         egress_bytes: metric.egress_bytes,
         egress_packets: metric.egress_packets,
-        status: metric.status.clone(),
+        status: metric.status_type(),
     }
 }
 
 fn metric_to_realtime(metric: &ConnectMetric) -> ConnectRealtimeStatus {
     ConnectRealtimeStatus {
-        key: metric.key.clone(),
-        src_ip: metric.src_ip,
-        dst_ip: metric.dst_ip,
+        key: metric.key(),
+        src_ip: metric.src_ip(),
+        dst_ip: metric.dst_ip(),
         src_port: metric.src_port,
         dst_port: metric.dst_port,
         l4_proto: metric.l4_proto,
@@ -80,13 +80,13 @@ fn metric_to_realtime(metric: &ConnectMetric) -> ConnectRealtimeStatus {
         trace_id: metric.trace_id,
         gress: metric.gress,
         ifindex: metric.ifindex,
-        create_time_ms: metric.create_time_ms,
+        create_time_ms: metric.create_time_ms(),
         ingress_bps: 0,
         egress_bps: 0,
         ingress_pps: 0,
         egress_pps: 0,
         last_report_time: metric.report_time,
-        status: metric.status.clone(),
+        status: metric.status_type(),
     }
 }
 
@@ -209,8 +209,8 @@ impl FlowState {
         };
 
         self.realtime.last_report_time = metric.report_time;
-        self.realtime.src_ip = metric.src_ip;
-        self.realtime.dst_ip = metric.dst_ip;
+        self.realtime.src_ip = metric.src_ip();
+        self.realtime.dst_ip = metric.dst_ip();
         self.realtime.src_port = metric.src_port;
         self.realtime.dst_port = metric.dst_port;
         self.realtime.l4_proto = metric.l4_proto;
@@ -219,10 +219,10 @@ impl FlowState {
         self.realtime.trace_id = metric.trace_id;
         self.realtime.gress = metric.gress;
         self.realtime.ifindex = metric.ifindex;
-        self.realtime.create_time_ms = metric.create_time_ms;
+        self.realtime.create_time_ms = metric.create_time_ms();
         apply_rate_to_realtime(&mut self.realtime, next_rate);
-        if metric.status != ConnectStatusType::Unknow {
-            self.realtime.status = metric.status.clone();
+        if metric.status_type() != ConnectStatusType::Unknow {
+            self.realtime.status = metric.status_type();
         }
 
         self.last_metric = metric.clone();
@@ -279,7 +279,7 @@ fn rate_from_delta(ifindex: u32, delta: MetricDelta, delta_t_ms: u64) -> FlowRat
 }
 
 fn initial_rate_contribution(metric: &ConnectMetric) -> FlowRateContribution {
-    let start_time = metric.create_time_ms.min(metric.report_time);
+    let start_time = metric.create_time_ms().min(metric.report_time);
     let delta_t = metric.report_time.saturating_sub(start_time);
     rate_from_delta(metric.ifindex, MetricDelta::from_initial(metric), delta_t)
 }
@@ -347,8 +347,8 @@ fn finalize_state_batch(
 
     let mut metric = state.last_metric.clone();
     if mark_disabled {
-        metric.status = ConnectStatusType::Disabled;
-        state.last_metric.status = ConnectStatusType::Disabled;
+        metric.status = ConnectStatusType::Disabled.into();
+        state.last_metric.status = ConnectStatusType::Disabled.into();
         state.realtime.status = ConnectStatusType::Disabled;
     }
 
@@ -381,7 +381,7 @@ pub(crate) fn process_connect_metric(
 
     let mut batch = Batch::default();
     let mut cache = write_or_recover(flow_cache, "metric flow cache");
-    match cache.entry(metric.key.clone()) {
+    match cache.entry(metric.key()) {
         std::collections::hash_map::Entry::Occupied(mut entry) => {
             let state = entry.get_mut();
             if metric.report_time < state.last_metric.report_time {
@@ -408,7 +408,7 @@ pub(crate) fn process_connect_metric(
                 state.last_day_refresh_slot = curr_day_refresh_slot;
             }
 
-            let should_finalize = metric.status == ConnectStatusType::Disabled;
+            let should_finalize = metric.status_type() == ConnectStatusType::Disabled;
             state.update_from_metric(metric, second_window_ms, second_ring_cap);
             if should_finalize {
                 finalize_state_batch(state, true, &mut batch, iface_realtime);
@@ -417,7 +417,7 @@ pub(crate) fn process_connect_metric(
             }
         }
         std::collections::hash_map::Entry::Vacant(entry) => {
-            let should_finalize = metric.status == ConnectStatusType::Disabled;
+            let should_finalize = metric.status_type() == ConnectStatusType::Disabled;
             let mut state = FlowState::new(metric, second_window_ms, second_ring_cap);
             if should_finalize {
                 finalize_state_batch(&mut state, true, &mut batch, iface_realtime);
@@ -576,26 +576,23 @@ mod tests {
         ingress_bytes: u64,
         egress_bytes: u64,
     ) -> ConnectMetric {
-        ConnectMetric {
-            key: ConnectKey { create_time, cpu_id },
-            src_ip: IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)),
-            dst_ip: IpAddr::V4(Ipv4Addr::new(10, 0, 1, 1)),
-            src_port: 10_000 + cpu_id as u16,
-            dst_port: 20_000 + cpu_id as u16,
-            l4_proto: 6,
-            l3_proto: 4,
-            flow_id: cpu_id as u8,
-            trace_id: cpu_id as u8,
-            gress: 0,
-            ifindex: cpu_id + 10,
+        ConnectMetric::from_domain(
+            create_time,
+            cpu_id,
             report_time,
-            create_time_ms: create_time,
+            IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)),
+            IpAddr::V4(Ipv4Addr::new(10, 0, 1, 1)),
+            10_000 + cpu_id as u16,
+            20_000 + cpu_id as u16,
+            cpu_id as u8,
+            cpu_id as u8,
+            cpu_id + 10,
             ingress_bytes,
-            ingress_packets: ingress_bytes / 10,
+            ingress_bytes / 10,
             egress_bytes,
-            egress_packets: egress_bytes / 10,
-            status: ConnectStatusType::Active,
-        }
+            egress_bytes / 10,
+            ConnectStatusType::Active,
+        )
     }
 
     fn test_caches() -> (FlowCache, IfaceRealtimeCache) {
@@ -628,7 +625,7 @@ mod tests {
     fn process_connect_metric_disabled_flow_emits_buckets_and_summary() {
         let (flow, iface_realtime) = test_caches();
         let mut metric = test_metric(1_000, 0, 60_000, 100, 200);
-        metric.status = ConnectStatusType::Disabled;
+        metric.status = ConnectStatusType::Disabled.into();
         let batch = process_connect_metric(&flow, &iface_realtime, metric, WINDOW_MS, RING_CAP);
 
         assert_eq!(batch.summary_metrics.len(), 1);
@@ -709,7 +706,7 @@ mod tests {
     #[test]
     fn second_ring_points_respect_window_cutoff() {
         let (flow, iface_realtime) = test_caches();
-        let key = ConnectKey { create_time: 1_000, cpu_id: 0 };
+        let key = ConnectKey { create_time: 1_000 * 1_000_000, cpu_id: 0 };
         for t in [60_000u64, 61_000, 62_000, 63_000] {
             process_connect_metric(
                 &flow,
@@ -787,7 +784,7 @@ mod tests {
         assert_eq!(collect_realtime_iface_stats(&iface_realtime, 70_000).len(), 1);
 
         let mut closed = test_metric(1_000, 0, 61_000, 200, 400);
-        closed.status = ConnectStatusType::Disabled;
+        closed.status = ConnectStatusType::Disabled.into();
         process_connect_metric(&flow, &iface_realtime, closed, WINDOW_MS, RING_CAP);
 
         assert!(collect_realtime_iface_stats(&iface_realtime, 70_000).is_empty());
@@ -870,7 +867,10 @@ mod tests {
         let batch = finalize_all_flows(&flow, &iface_realtime);
         assert_eq!(batch.summary_metrics.len(), 2);
         assert_eq!(batch.bucket_writes.len(), 6);
-        assert!(batch.summary_metrics.iter().all(|m| m.status == ConnectStatusType::Disabled));
+        assert!(batch
+            .summary_metrics
+            .iter()
+            .all(|m| m.status_type() == ConnectStatusType::Disabled));
         assert!(collect_connect_infos(&flow, 70_000).is_empty());
         assert!(collect_realtime_iface_stats(&iface_realtime, 70_000).is_empty());
 

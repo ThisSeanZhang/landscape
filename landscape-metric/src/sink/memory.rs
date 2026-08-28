@@ -261,7 +261,7 @@ impl MemoryMetricStore {
 mod tests {
     use super::*;
     use landscape_common::config::MetricMode;
-    use landscape_common::metric::connect::{ConnectMetric, ConnectStatusType};
+    use landscape_common::metric::connect::{ConnectKey, ConnectMetric, ConnectStatusType};
     use std::net::{IpAddr, Ipv4Addr};
 
     fn test_config() -> MetricRuntimeConfig {
@@ -285,27 +285,27 @@ mod tests {
         }
     }
 
-    fn test_metric(report_time: u64) -> ConnectMetric {
-        ConnectMetric {
-            key: ConnectKey { create_time: 1, cpu_id: 1 },
-            src_ip: IpAddr::V4(Ipv4Addr::LOCALHOST),
-            dst_ip: IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)),
-            src_port: 1000,
-            dst_port: 2000,
-            l4_proto: 6,
-            l3_proto: 4,
-            flow_id: 1,
-            trace_id: 1,
-            gress: 0,
-            ifindex: 2,
+    fn test_metric(report_time: u64) -> (ConnectMetric, ConnectKey) {
+        let create_time_ms = report_time.saturating_sub(1000);
+        let metric = ConnectMetric::from_domain(
+            create_time_ms,
+            1,
             report_time,
-            create_time_ms: report_time.saturating_sub(1000),
-            ingress_bytes: 100,
-            ingress_packets: 10,
-            egress_bytes: 200,
-            egress_packets: 20,
-            status: ConnectStatusType::Active,
-        }
+            IpAddr::V4(Ipv4Addr::LOCALHOST),
+            IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)),
+            1000,
+            2000,
+            1,
+            1,
+            2,
+            100,
+            10,
+            200,
+            20,
+            ConnectStatusType::Active,
+        );
+        let key = ConnectKey { create_time: create_time_ms * 1_000_000, cpu_id: 1 };
+        (metric, key)
     }
 
     #[tokio::test]
@@ -313,7 +313,8 @@ mod tests {
         let store = MemoryMetricStore::new(PathBuf::new(), test_config()).await;
         let tx = store.get_connect_msg_channel();
         let now = get_current_time_ms().unwrap();
-        tx.send(ConnectMessage::Metric(test_metric(now - 1000))).await.unwrap();
+        let (metric, key) = test_metric(now - 1000);
+        tx.send(ConnectMessage::Metric(metric)).await.unwrap();
 
         let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
         loop {
@@ -327,9 +328,7 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
 
-        let points = store
-            .query_metric_by_key(ConnectKey { create_time: 1, cpu_id: 1 }, MetricResolution::Second)
-            .await;
+        let points = store.query_metric_by_key(key, MetricResolution::Second).await;
         assert_eq!(points.len(), 1);
         assert_eq!(points[0].ingress_bytes, 100);
         store.shutdown();
