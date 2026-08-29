@@ -87,7 +87,7 @@ fn assert_xdp_round_trip(
     client_port: u16,
 ) {
     let mut builder = XdpNatSkelBuilder::default();
-    let pin_root = crate::tests::nat::isolated_pin_root(name);
+    let pin_root = crate::tests::isolated_pin_root(name);
     builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
     let mut open_object = MaybeUninit::uninit();
     let mut open_skel = builder.open(&mut open_object).unwrap();

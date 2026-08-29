@@ -1,13 +1,14 @@
 use std::os::fd::{AsFd, AsRawFd};
 use std::process::Command;
-use std::thread;
 use std::time::Duration;
 
+use crate::tests::net_utils::{
+    dummy_recv_count, dummy_reset, send_raw_packet, settle, wait_for, VethPair,
+};
 use libbpf_rs::{
     skel::{OpenSkel, SkelBuilder as _},
     MapCore, MapFlags,
 };
-use nix::net::if_::if_nametoindex;
 
 use crate::map_setting::share_map::ShareMapSkelBuilder;
 use crate::tests::test_xdp_dummy::TestXdpDummySkelBuilder;
@@ -22,52 +23,6 @@ use crate::tests::PinRootGuard;
 
 fn test_pin_root(prefix: &str) -> PinRootGuard {
     PinRootGuard::new(&format!("xdp-fw-{prefix}"))
-}
-
-fn dummy_recv_count(map: &libbpf_rs::MapMut, is_v6: bool) -> u64 {
-    let k = if is_v6 { 1u32 } else { 0u32 }.to_ne_bytes();
-    map.lookup(&k, MapFlags::ANY)
-        .unwrap()
-        .map_or(0, |v| u64::from_ne_bytes(v[0..8].try_into().unwrap()))
-}
-
-fn dummy_reset(map: &libbpf_rs::MapMut) {
-    let v = [0u8; 8];
-    map.update(&0u32.to_ne_bytes(), &v, MapFlags::ANY).unwrap();
-    map.update(&1u32.to_ne_bytes(), &v, MapFlags::ANY).unwrap();
-}
-
-fn sync_barrier() {
-    thread::sleep(Duration::from_millis(200));
-}
-
-fn send_raw_packet(iface: &str, pkt: &[u8]) {
-    let sock = socket2::Socket::new(
-        socket2::Domain::PACKET,
-        socket2::Type::RAW,
-        Some(socket2::Protocol::from(0x0300)),
-    )
-    .expect("create raw socket");
-    let idx = if_nametoindex(iface).expect("if_nametoindex");
-    let addr = libc::sockaddr_ll {
-        sll_family: libc::AF_PACKET as u16,
-        sll_protocol: 0x0300u16.to_be(),
-        sll_ifindex: idx as i32,
-        sll_hatype: 0,
-        sll_pkttype: 0,
-        sll_halen: 0,
-        sll_addr: [0u8; 8],
-    };
-    unsafe {
-        libc::sendto(
-            sock.as_raw_fd(),
-            pkt.as_ptr() as *const libc::c_void,
-            pkt.len(),
-            0,
-            &addr as *const _ as *const libc::sockaddr,
-            std::mem::size_of::<libc::sockaddr_ll>() as libc::socklen_t,
-        );
-    }
 }
 
 fn build_tcp_pkt(src_ip: [u8; 4], dst_ip: [u8; 4]) -> Vec<u8> {
@@ -109,35 +64,19 @@ fn route_slot_v6(daddr: &[u8; 16]) -> u32 {
 }
 
 #[test]
-#[ignore = "requires veth pairs and root, run in dedicated environment"]
+#[ignore = "requires root and veth pairs; run with --include-ignored"]
 fn xdp_firewall_pipeline() {
-    let pid = crate::tests::test_id();
-    let (lan_h, lan_p) = (format!("fwh{pid}"), format!("fwp{pid}"));
-    let (wan_h, wan_p) = (format!("fwwwh{pid}"), format!("fwwwp{pid}"));
+    let lan_pair = VethPair::create("fw");
+    let wan_pair = VethPair::create("fwww");
+    let lan_p = lan_pair.peer();
+    let wan_p = wan_pair.peer();
 
-    // ── create veth pairs ──
-    let _ = Command::new("ip").args(["link", "del", &lan_h]).output();
-    let _ = Command::new("ip").args(["link", "del", &wan_h]).output();
-    Command::new("ip")
-        .args(["link", "add", &lan_h, "type", "veth", "peer", "name", &lan_p])
-        .output()
-        .unwrap();
-    Command::new("ip")
-        .args(["link", "add", &wan_h, "type", "veth", "peer", "name", &wan_p])
-        .output()
-        .unwrap();
-    Command::new("ip").args(["link", "set", lan_h.as_str(), "up"]).output().unwrap();
-    Command::new("ip").args(["link", "set", lan_p.as_str(), "up"]).output().unwrap();
-    Command::new("ip").args(["link", "set", wan_h.as_str(), "up"]).output().unwrap();
-    Command::new("ip").args(["link", "set", wan_p.as_str(), "up"]).output().unwrap();
-    thread::sleep(Duration::from_millis(100));
-
-    let lan_h_i = if_nametoindex(lan_h.as_str()).unwrap() as u32;
+    let lan_h_i = lan_pair.host_ifindex();
     crate::tests::check_ifindex("lan_h", lan_h_i);
-    let lan_p_i = if_nametoindex(lan_p.as_str()).unwrap() as u32;
-    let wan_h_i = if_nametoindex(wan_h.as_str()).unwrap() as u32;
+    let lan_p_i = lan_pair.peer_ifindex();
+    let wan_h_i = wan_pair.host_ifindex();
     crate::tests::check_ifindex("wan_h", wan_h_i);
-    let wan_p_i = if_nametoindex(wan_p.as_str()).unwrap() as u32;
+    let wan_p_i = wan_pair.peer_ifindex();
 
     // Prevent kernel FIB from matching 203.0.113.1 so xdp_lan_intro falls through to chain
     Command::new("ip").args(["route", "add", "blackhole", "203.0.113.1"]).output().ok();
@@ -204,6 +143,17 @@ fn xdp_firewall_pipeline() {
     let exit_fd = chain.progs.xdp_lan_chain_exit.as_fd().as_raw_fd();
     let wan_root_fd = wan_root.progs.xdp_wan_chain_root.as_fd().as_raw_fd();
     let wr_fd = wr.progs.xdp_wan_route_ingress.as_fd().as_raw_fd();
+
+    // Mark redirect targets native-XDP able, otherwise xdp_lan_intro falls back
+    // to the TC handoff path and the XDP chain never runs.
+    lr.maps
+        .xdp_redirect_able
+        .update(&wan_h_i.to_ne_bytes(), &1u32.to_ne_bytes(), MapFlags::ANY)
+        .unwrap();
+    lr.maps
+        .xdp_redirect_able
+        .update(&lan_h_i.to_ne_bytes(), &1u32.to_ne_bytes(), MapFlags::ANY)
+        .unwrap();
 
     // ── LAN chain: root → mss_lan → firewall_lan → exit ──
     lr.maps
@@ -396,19 +346,19 @@ fn xdp_firewall_pipeline() {
     // Scenario 1: no block → bidirectional flow
     // ════════════════════════════════════════
 
-    sync_barrier();
     dummy_reset(&da.maps.dummy_recv_map);
     dummy_reset(&dc.maps.dummy_recv_map);
 
     let a2c = build_tcp_pkt([10, 0, 0, 1], [203, 0, 113, 1]);
     let c2a = build_tcp_pkt([203, 0, 113, 1], [10, 0, 0, 1]);
 
-    for _ in 0..2 {
-        send_raw_packet(&lan_p, &a2c);
-        send_raw_packet(&wan_p, &c2a);
-        thread::sleep(Duration::from_millis(30));
-    }
-    thread::sleep(Duration::from_millis(500));
+    send_raw_packet(&lan_p, &a2c);
+    send_raw_packet(&wan_p, &c2a);
+    wait_for("v4 packet reached dummy", Duration::from_secs(5), || {
+        dummy_recv_count(&da.maps.dummy_recv_map, false)
+            + dummy_recv_count(&dc.maps.dummy_recv_map, false)
+            > 0
+    });
     let v4_cnt = dummy_recv_count(&da.maps.dummy_recv_map, false)
         + dummy_recv_count(&dc.maps.dummy_recv_map, false);
     assert!(v4_cnt > 0, "no-block: expected v4 packet to reach dummy");
@@ -420,15 +370,11 @@ fn xdp_firewall_pipeline() {
     // ════════════════════════════════════════
     add_block(&fw.maps.firewall_block_ip4_map, [203, 0, 113, 1], &block_action);
 
-    sync_barrier();
     dummy_reset(&da.maps.dummy_recv_map);
     dummy_reset(&dc.maps.dummy_recv_map);
-    for _ in 0..2 {
-        send_raw_packet(&lan_p, &a2c);
-        send_raw_packet(&wan_p, &c2a);
-        thread::sleep(Duration::from_millis(30));
-    }
-    thread::sleep(Duration::from_millis(500));
+    send_raw_packet(&lan_p, &a2c);
+    send_raw_packet(&wan_p, &c2a);
+    settle(300);
     let v4_cnt = dummy_recv_count(&da.maps.dummy_recv_map, false)
         + dummy_recv_count(&dc.maps.dummy_recv_map, false);
     assert_eq!(v4_cnt, 0, "blocked: expected NO v4 packet in dummy");
@@ -443,28 +389,28 @@ fn xdp_firewall_pipeline() {
 
     // 3a: LAN direction — A→C, LAN checks dst(203.0.113.1 not blocked) → PASS
 
-    sync_barrier();
     dummy_reset(&da.maps.dummy_recv_map);
     dummy_reset(&dc.maps.dummy_recv_map);
-    for _ in 0..2 {
-        send_raw_packet(&lan_p, &a2c);
-        thread::sleep(Duration::from_millis(30));
-    }
-    thread::sleep(Duration::from_millis(500));
+    send_raw_packet(&lan_p, &a2c);
+    wait_for("v4 packet reached dummy", Duration::from_secs(5), || {
+        dummy_recv_count(&da.maps.dummy_recv_map, false)
+            + dummy_recv_count(&dc.maps.dummy_recv_map, false)
+            > 0
+    });
     let v4_cnt = dummy_recv_count(&da.maps.dummy_recv_map, false)
         + dummy_recv_count(&dc.maps.dummy_recv_map, false);
     assert!(v4_cnt > 0, "3a LAN: should PASS (checks dst, not src)");
 
     // 3b: WAN direction — C→A, WAN checks src(203.0.113.1 not blocked) → PASS
 
-    sync_barrier();
     dummy_reset(&da.maps.dummy_recv_map);
     dummy_reset(&dc.maps.dummy_recv_map);
-    for _ in 0..2 {
-        send_raw_packet(&wan_p, &c2a);
-        thread::sleep(Duration::from_millis(30));
-    }
-    thread::sleep(Duration::from_millis(500));
+    send_raw_packet(&wan_p, &c2a);
+    wait_for("v4 packet reached dummy", Duration::from_secs(5), || {
+        dummy_recv_count(&da.maps.dummy_recv_map, false)
+            + dummy_recv_count(&dc.maps.dummy_recv_map, false)
+            > 0
+    });
     let v4_cnt = dummy_recv_count(&da.maps.dummy_recv_map, false)
         + dummy_recv_count(&dc.maps.dummy_recv_map, false);
     assert!(v4_cnt > 0, "3b WAN: should PASS (checks src, not dst)");
@@ -475,15 +421,15 @@ fn xdp_firewall_pipeline() {
     del_block(&fw.maps.firewall_block_ip4_map, [10, 0, 0, 1]);
     add_block(&fw.maps.firewall_block_ip4_map, [203, 0, 113, 1], &block_action);
 
-    sync_barrier();
     dummy_reset(&da.maps.dummy_recv_map);
     dummy_reset(&dc.maps.dummy_recv_map);
     let a2c_unblocked = build_tcp_pkt([10, 0, 0, 1], [203, 0, 113, 2]);
-    for _ in 0..2 {
-        send_raw_packet(&lan_p, &a2c_unblocked);
-        thread::sleep(Duration::from_millis(30));
-    }
-    thread::sleep(Duration::from_millis(500));
+    send_raw_packet(&lan_p, &a2c_unblocked);
+    wait_for("v4 packet reached dummy", Duration::from_secs(5), || {
+        dummy_recv_count(&da.maps.dummy_recv_map, false)
+            + dummy_recv_count(&dc.maps.dummy_recv_map, false)
+            > 0
+    });
     let v4_cnt = dummy_recv_count(&da.maps.dummy_recv_map, false)
         + dummy_recv_count(&dc.maps.dummy_recv_map, false);
     assert!(v4_cnt > 0, "4 unblocked: 203.0.113.2 should pass firewall");
@@ -493,15 +439,15 @@ fn xdp_firewall_pipeline() {
     // ════════════════════════════════════════
     del_block(&fw.maps.firewall_block_ip4_map, [203, 0, 113, 1]);
 
-    sync_barrier();
     dummy_reset(&da.maps.dummy_recv_map);
     dummy_reset(&dc.maps.dummy_recv_map);
-    for _ in 0..3 {
-        send_raw_packet(&lan_p, &a2c);
-        send_raw_packet(&wan_p, &c2a);
-        thread::sleep(Duration::from_millis(30));
-    }
-    thread::sleep(Duration::from_millis(500));
+    send_raw_packet(&lan_p, &a2c);
+    send_raw_packet(&wan_p, &c2a);
+    wait_for("v4 packet reached dummy", Duration::from_secs(5), || {
+        dummy_recv_count(&da.maps.dummy_recv_map, false)
+            + dummy_recv_count(&dc.maps.dummy_recv_map, false)
+            > 0
+    });
     let v4_cnt = dummy_recv_count(&da.maps.dummy_recv_map, false)
         + dummy_recv_count(&dc.maps.dummy_recv_map, false);
     assert!(v4_cnt > 0, "unblocked: expected v4 packet after removing block");
@@ -517,15 +463,15 @@ fn xdp_firewall_pipeline() {
 
     // Scenario 6: v6 no block → bidirectional flow
 
-    sync_barrier();
     dummy_reset(&da.maps.dummy_recv_map);
     dummy_reset(&dc.maps.dummy_recv_map);
-    for _ in 0..2 {
-        send_raw_packet(&lan_p, &a2c_v6);
-        send_raw_packet(&wan_p, &c2a_v6);
-        thread::sleep(Duration::from_millis(30));
-    }
-    thread::sleep(Duration::from_millis(500));
+    send_raw_packet(&lan_p, &a2c_v6);
+    send_raw_packet(&wan_p, &c2a_v6);
+    wait_for("v6 packet reached dummy", Duration::from_secs(5), || {
+        dummy_recv_count(&da.maps.dummy_recv_map, true)
+            + dummy_recv_count(&dc.maps.dummy_recv_map, true)
+            > 0
+    });
     let v6_cnt = dummy_recv_count(&da.maps.dummy_recv_map, true)
         + dummy_recv_count(&dc.maps.dummy_recv_map, true);
     assert!(v6_cnt > 0, "v6 no-block: expected v6 dump");
@@ -535,15 +481,11 @@ fn xdp_firewall_pipeline() {
     //   WAN→LAN: firewall_wan blocks src (fd00::2)
     add_block_v6(&fw.maps.firewall_block_ip6_map, v6_wan, &block_action);
 
-    sync_barrier();
     dummy_reset(&da.maps.dummy_recv_map);
     dummy_reset(&dc.maps.dummy_recv_map);
-    for _ in 0..2 {
-        send_raw_packet(&lan_p, &a2c_v6);
-        send_raw_packet(&wan_p, &c2a_v6);
-        thread::sleep(Duration::from_millis(30));
-    }
-    thread::sleep(Duration::from_millis(500));
+    send_raw_packet(&lan_p, &a2c_v6);
+    send_raw_packet(&wan_p, &c2a_v6);
+    settle(300);
     let v6_cnt = dummy_recv_count(&da.maps.dummy_recv_map, true)
         + dummy_recv_count(&dc.maps.dummy_recv_map, true);
     assert_eq!(v6_cnt, 0, "v6 blocked: expected NO v6 dump");
@@ -554,28 +496,28 @@ fn xdp_firewall_pipeline() {
 
     // 8a: LAN direction — A→C, LAN checks dst(fd00::2 not blocked) → PASS
 
-    sync_barrier();
     dummy_reset(&da.maps.dummy_recv_map);
     dummy_reset(&dc.maps.dummy_recv_map);
-    for _ in 0..2 {
-        send_raw_packet(&lan_p, &a2c_v6);
-        thread::sleep(Duration::from_millis(30));
-    }
-    thread::sleep(Duration::from_millis(500));
+    send_raw_packet(&lan_p, &a2c_v6);
+    wait_for("v6 packet reached dummy", Duration::from_secs(5), || {
+        dummy_recv_count(&da.maps.dummy_recv_map, true)
+            + dummy_recv_count(&dc.maps.dummy_recv_map, true)
+            > 0
+    });
     let v6_cnt = dummy_recv_count(&da.maps.dummy_recv_map, true)
         + dummy_recv_count(&dc.maps.dummy_recv_map, true);
     assert!(v6_cnt > 0, "v6 8a LAN: should PASS (checks dst, not src)");
 
     // 8b: WAN direction — C→A, WAN checks src(fd00::2 not blocked) → PASS
 
-    sync_barrier();
     dummy_reset(&da.maps.dummy_recv_map);
     dummy_reset(&dc.maps.dummy_recv_map);
-    for _ in 0..2 {
-        send_raw_packet(&wan_p, &c2a_v6);
-        thread::sleep(Duration::from_millis(30));
-    }
-    thread::sleep(Duration::from_millis(500));
+    send_raw_packet(&wan_p, &c2a_v6);
+    wait_for("v6 packet reached dummy", Duration::from_secs(5), || {
+        dummy_recv_count(&da.maps.dummy_recv_map, true)
+            + dummy_recv_count(&dc.maps.dummy_recv_map, true)
+            > 0
+    });
     let v6_cnt = dummy_recv_count(&da.maps.dummy_recv_map, true)
         + dummy_recv_count(&dc.maps.dummy_recv_map, true);
     assert!(v6_cnt > 0, "v6 8b WAN: should PASS (checks src, not dst)");
@@ -583,15 +525,15 @@ fn xdp_firewall_pipeline() {
     // Scenario 9: v6 delete block → flow resumes
     del_block_v6(&fw.maps.firewall_block_ip6_map, v6_lan);
 
-    sync_barrier();
     dummy_reset(&da.maps.dummy_recv_map);
     dummy_reset(&dc.maps.dummy_recv_map);
-    for _ in 0..2 {
-        send_raw_packet(&lan_p, &a2c_v6);
-        send_raw_packet(&wan_p, &c2a_v6);
-        thread::sleep(Duration::from_millis(30));
-    }
-    thread::sleep(Duration::from_millis(500));
+    send_raw_packet(&lan_p, &a2c_v6);
+    send_raw_packet(&wan_p, &c2a_v6);
+    wait_for("v6 packet reached dummy", Duration::from_secs(5), || {
+        dummy_recv_count(&da.maps.dummy_recv_map, true)
+            + dummy_recv_count(&dc.maps.dummy_recv_map, true)
+            > 0
+    });
     let v6_cnt = dummy_recv_count(&da.maps.dummy_recv_map, true)
         + dummy_recv_count(&dc.maps.dummy_recv_map, true);
     assert!(v6_cnt > 0, "v6 unblocked: expected v6 dump");
@@ -608,6 +550,4 @@ fn xdp_firewall_pipeline() {
     drop(lr);
     drop(share);
     let _ = Command::new("ip").args(["route", "del", "blackhole", "203.0.113.1"]).output();
-    let _ = Command::new("ip").args(["link", "del", &lan_h]).output();
-    let _ = Command::new("ip").args(["link", "del", &wan_h]).output();
 }

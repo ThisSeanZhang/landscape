@@ -15,8 +15,8 @@ use crate::{
     map_setting::add_wan_ip,
     tests::{
         route::package::{
-            as_bytes, create_route_cache_inner_map_v6, insert_ip_mac_v6, isolated_pin_root,
-            lookup_rt6_cache_value, put_rt6_cache_ifindex, simple_ipv6_tcp_syn, WAN_CACHE,
+            as_bytes, create_route_cache_inner_map_v6, insert_ip_mac_v6, lookup_rt6_cache_value,
+            put_rt6_cache_ifindex, simple_ipv6_tcp_syn, WAN_CACHE,
         },
         TestSkb,
     },
@@ -32,6 +32,7 @@ use test_route::TestRouteSkelBuilder;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tests::isolated_pin_root;
 
     const TARGET_IFINDEX: u32 = 11;
     const WAN_IFINDEX: u32 = 6;

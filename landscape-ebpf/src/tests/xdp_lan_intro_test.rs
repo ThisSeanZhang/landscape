@@ -1,6 +1,5 @@
 use std::os::fd::{AsFd, AsRawFd};
 use std::process::Command;
-use std::thread;
 use std::time::Duration;
 
 use libbpf_rs::{
@@ -8,7 +7,6 @@ use libbpf_rs::{
     skel::{OpenSkel, SkelBuilder as _},
     MapCore, MapFlags, MapHandle, MapType, ProgramInput,
 };
-use nix::net::if_::if_nametoindex;
 
 use crate::map_setting::share_map::types::{
     rt_cache_key_v4, rt_cache_key_v6, rt_cache_value_v4, rt_cache_value_v6,
@@ -27,18 +25,9 @@ fn test_pin_root(prefix: &str) -> PinRootGuard {
     PinRootGuard::new(&format!("xdp-lr-{prefix}"))
 }
 
-fn dummy_recv_count(map: &libbpf_rs::MapMut, is_v6: bool) -> u64 {
-    let k = if is_v6 { 1u32 } else { 0u32 }.to_ne_bytes();
-    map.lookup(&k, MapFlags::ANY)
-        .unwrap()
-        .map_or(0, |v| u64::from_ne_bytes(v[0..8].try_into().unwrap()))
-}
-
-fn dummy_reset(map: &libbpf_rs::MapMut) {
-    let v = [0u8; 8];
-    map.update(&0u32.to_ne_bytes(), &v, MapFlags::ANY).unwrap();
-    map.update(&1u32.to_ne_bytes(), &v, MapFlags::ANY).unwrap();
-}
+use crate::tests::net_utils::{
+    dummy_recv_count, dummy_reset, send_raw_packet, settle, wait_for, VethPair,
+};
 
 fn build_ipv4_tcp_pkt(
     src_mac: [u8; 6],
@@ -54,35 +43,6 @@ fn build_ipv4_tcp_pkt(
     let mut pkt = Vec::with_capacity(builder.size(payload.len()));
     builder.write(&mut pkt, &payload).expect("build packet");
     pkt
-}
-
-fn send_raw_packet(iface: &str, pkt: &[u8]) {
-    let sock = socket2::Socket::new(
-        socket2::Domain::PACKET,
-        socket2::Type::RAW,
-        Some(socket2::Protocol::from(0x0300)),
-    )
-    .expect("create raw socket");
-    let idx = if_nametoindex(iface).expect("if_nametoindex");
-    let addr = libc::sockaddr_ll {
-        sll_family: libc::AF_PACKET as u16,
-        sll_protocol: 0x0300u16.to_be(),
-        sll_ifindex: idx as i32,
-        sll_hatype: 0,
-        sll_pkttype: 0,
-        sll_halen: 0,
-        sll_addr: [0u8; 8],
-    };
-    unsafe {
-        libc::sendto(
-            sock.as_raw_fd(),
-            pkt.as_ptr() as *const libc::c_void,
-            pkt.len(),
-            0,
-            &addr as *const _ as *const libc::sockaddr,
-            std::mem::size_of::<libc::sockaddr_ll>() as libc::socklen_t,
-        );
-    }
 }
 
 fn route_slot(daddr: u32) -> u32 {
@@ -202,19 +162,12 @@ fn xdp_lan_intro_verifier_smoke() {
 
 // ── Test B: trace flow (empty maps, smoke test) ──
 
+#[ignore = "requires root and veth pairs; run with --include-ignored"]
 #[test]
 fn xdp_lan_intro_trace_flow() {
-    let pid = crate::tests::test_id();
-    let (host, peer) = (format!("lxdh{pid}"), format!("lxdp{pid}"));
-    let _ = Command::new("ip").args(["link", "del", &host]).output();
-    Command::new("ip")
-        .args(["link", "add", &host, "type", "veth", "peer", "name", &peer])
-        .output()
-        .unwrap();
-    Command::new("ip").args(["link", "set", host.as_str(), "up"]).output().unwrap();
-    Command::new("ip").args(["link", "set", peer.as_str(), "up"]).output().unwrap();
-    thread::sleep(Duration::from_millis(100));
-    let ifindex = if_nametoindex(host.as_str()).expect("ifindex") as i32;
+    let pair = VethPair::create("lxd");
+    let peer = pair.peer();
+    let ifindex = pair.host_ifindex() as i32;
 
     let mut builder = XdpLanIntroSkelBuilder::default();
     let pin_root = test_pin_root("t");
@@ -230,38 +183,27 @@ fn xdp_lan_intro_trace_flow() {
         [10, 0, 0, 1],
         [10, 0, 0, 2],
     );
-    for _ in 0..5 {
-        send_raw_packet(&peer, &pkt);
-        thread::sleep(Duration::from_millis(10));
-    }
-    thread::sleep(Duration::from_millis(500));
+    send_raw_packet(peer, &pkt);
+    settle(300);
 
     drop(skel);
-    let _ = Command::new("ip").args(["link", "del", &host]).output();
 }
 
 // ── Test C: lan_map redirect ──
 
+#[ignore = "requires root and veth pairs; run with --include-ignored"]
 #[test]
 fn xdp_lan_intro_map_redirect() {
-    let pid = crate::tests::test_id();
     let share_pin = test_pin_root("share");
     let mut sb = ShareMapSkelBuilder::default();
     sb.object_builder_mut().pin_root_path(&share_pin).unwrap();
     let mut share_obj = std::mem::MaybeUninit::uninit();
     let share = sb.open(&mut share_obj).unwrap().load().unwrap();
 
-    let (host, peer) = (format!("lrbh{pid}"), format!("lrbp{pid}"));
-    let _ = Command::new("ip").args(["link", "del", &host]).output();
-    Command::new("ip")
-        .args(["link", "add", &host, "type", "veth", "peer", "name", &peer])
-        .output()
-        .unwrap();
-    Command::new("ip").args(["link", "set", host.as_str(), "up"]).output().unwrap();
-    Command::new("ip").args(["link", "set", peer.as_str(), "up"]).output().unwrap();
-    thread::sleep(Duration::from_millis(100));
-    let h_i = if_nametoindex(host.as_str()).unwrap() as u32;
-    let p_i = if_nametoindex(peer.as_str()).unwrap() as u32;
+    let pair = VethPair::create("lrb");
+    let peer = pair.peer();
+    let h_i = pair.host_ifindex();
+    let p_i = pair.peer_ifindex();
 
     let mut lan_key = [0u8; 8];
     lan_key[0..4].copy_from_slice(&32u32.to_ne_bytes());
@@ -282,46 +224,27 @@ fn xdp_lan_intro_map_redirect() {
         [10, 0, 0, 1],
         [10, 0, 0, 2],
     );
-    for _ in 0..5 {
-        send_raw_packet(&peer, &pkt);
-        thread::sleep(Duration::from_millis(10));
-    }
-    thread::sleep(Duration::from_millis(500));
+    send_raw_packet(peer, &pkt);
+    settle(300);
 
     drop(skel);
     drop(share);
-    let _ = Command::new("ip").args(["link", "del", &host]).output();
 }
 
 // ── Test D: bidirectional A↔C (lan_route + wan_route) ──
 
 #[test]
-#[ignore = "requires specific network namespace setup"]
+#[ignore = "requires root and veth pairs; run with --include-ignored"]
 fn xdp_lan_intro_wan_pipeline() {
-    let pid = crate::tests::test_id();
-    let (lan_h, lan_p) = (format!("lrhlh{pid}"), format!("lrhlp{pid}"));
-    let (wan_h, wan_p) = (format!("lrhwh{pid}"), format!("lrhwp{pid}"));
+    let lan_pair = VethPair::create("lrhl");
+    let wan_pair = VethPair::create("lrhw");
+    let lan_p = lan_pair.peer();
+    let wan_p = wan_pair.peer();
 
-    let _ = Command::new("ip").args(["link", "del", &lan_h]).output();
-    let _ = Command::new("ip").args(["link", "del", &wan_h]).output();
-    Command::new("ip")
-        .args(["link", "add", &lan_h, "type", "veth", "peer", "name", &lan_p])
-        .output()
-        .unwrap();
-    Command::new("ip")
-        .args(["link", "add", &wan_h, "type", "veth", "peer", "name", &wan_p])
-        .output()
-        .unwrap();
-    Command::new("ip").args(["link", "set", lan_h.as_str(), "up"]).output().unwrap();
-    Command::new("ip").args(["link", "set", lan_p.as_str(), "up"]).output().unwrap();
-    Command::new("ip").args(["link", "set", wan_h.as_str(), "up"]).output().unwrap();
-    Command::new("ip").args(["link", "set", wan_p.as_str(), "up"]).output().unwrap();
-    thread::sleep(Duration::from_millis(100));
-
-    let lan_h_i = if_nametoindex(lan_h.as_str()).unwrap() as u32;
-    let lan_p_i = if_nametoindex(lan_p.as_str()).unwrap() as u32;
-    let wan_h_i = if_nametoindex(wan_h.as_str()).unwrap() as u32;
-    let wan_p_i = if_nametoindex(wan_p.as_str()).unwrap() as u32;
+    let lan_h_i = lan_pair.host_ifindex();
+    let lan_p_i = lan_pair.peer_ifindex();
+    let wan_h_i = wan_pair.host_ifindex();
+    let wan_p_i = wan_pair.peer_ifindex();
 
     Command::new("ip").args(["route", "add", "blackhole", "203.0.113.1"]).output().ok();
 
@@ -433,6 +356,17 @@ fn xdp_lan_intro_wan_pipeline() {
     let mss_wan_fd = mss.progs.xdp_mss_wan.as_fd().as_raw_fd();
     let wr_fd = wr.progs.xdp_wan_route_ingress.as_fd().as_raw_fd();
 
+    // Mark redirect targets native-XDP able, otherwise xdp_lan_intro falls back
+    // to the TC handoff path and the XDP chain never runs.
+    lr.maps
+        .xdp_redirect_able
+        .update(&wan_h_i.to_ne_bytes(), &1u32.to_ne_bytes(), MapFlags::ANY)
+        .unwrap();
+    lr.maps
+        .xdp_redirect_able
+        .update(&lan_h_i.to_ne_bytes(), &1u32.to_ne_bytes(), MapFlags::ANY)
+        .unwrap();
+
     // ── LAN chain (A→C): lan_route → root → mss → exit ──
     lr.maps
         .xdp_lan_pipe_root_progs
@@ -503,10 +437,7 @@ fn xdp_lan_intro_wan_pipeline() {
         [203, 0, 113, 1],
         1460,
     );
-    for _ in 0..2 {
-        send_raw_packet(&lan_p, &pkt_a2c);
-        thread::sleep(Duration::from_millis(50));
-    }
+    send_raw_packet(&lan_p, &pkt_a2c);
 
     // C→A: TCP SYN → wan_intro → WAN chain → MSS clamp
     let pkt_c2a = build_syn_pkt(
@@ -516,12 +447,13 @@ fn xdp_lan_intro_wan_pipeline() {
         [10, 0, 0, 1],
         1460,
     );
-    for _ in 0..2 {
-        send_raw_packet(&wan_p, &pkt_c2a);
-        thread::sleep(Duration::from_millis(50));
-    }
+    send_raw_packet(&wan_p, &pkt_c2a);
 
-    thread::sleep(Duration::from_millis(3000));
+    wait_for("lan/wan pipeline dummy recv", Duration::from_secs(5), || {
+        dummy_recv_count(&da.maps.dummy_recv_map, false)
+            + dummy_recv_count(&dc.maps.dummy_recv_map, false)
+            > 0
+    });
     let v4_cnt = dummy_recv_count(&da.maps.dummy_recv_map, false)
         + dummy_recv_count(&dc.maps.dummy_recv_map, false);
     assert!(v4_cnt > 0, "no dummy recv");
@@ -557,8 +489,6 @@ fn xdp_lan_intro_wan_pipeline() {
     drop(lr);
     drop(share);
     let _ = Command::new("ip").args(["route", "del", "blackhole", "203.0.113.1"]).output();
-    let _ = Command::new("ip").args(["link", "del", &lan_h]).output();
-    let _ = Command::new("ip").args(["link", "del", &wan_h]).output();
 }
 
 // ── Test E: test_run verification of unknown IP not redirected ──
@@ -716,35 +646,26 @@ fn build_ipv6_tcp_pkt(
 
 // ── Test G: v4 FIB fallback with veth + map verification ──
 
+#[ignore = "requires root and veth pairs; run with --include-ignored"]
 #[test]
 fn xdp_lan_intro_fib_fallback_v4() {
-    let pid = crate::tests::test_id();
-    let (host, peer) = (format!("lrf4h{pid}"), format!("lrf4p{pid}"));
+    let pair = VethPair::create("lrf4");
+    let host = pair.host();
+    let peer = pair.peer();
 
-    let _ = Command::new("ip").args(["link", "del", &host]).output();
-    Command::new("ip")
-        .args(["link", "add", &host, "type", "veth", "peer", "name", &peer])
-        .output()
-        .unwrap();
-    Command::new("ip").args(["link", "set", host.as_str(), "up"]).output().unwrap();
-    Command::new("ip").args(["link", "set", peer.as_str(), "up"]).output().unwrap();
     // route + static ARP so bpf_fib_lookup can resolve the MAC
+    Command::new("ip").args(["route", "add", "10.0.0.200/32", "dev", peer]).output().unwrap();
     Command::new("ip")
-        .args(["route", "add", "10.0.0.200/32", "dev", peer.as_str()])
+        .args(["neigh", "add", "10.0.0.200", "lladdr", "02:00:00:00:00:c8", "dev", peer])
         .output()
         .unwrap();
     Command::new("ip")
-        .args(["neigh", "add", "10.0.0.200", "lladdr", "02:00:00:00:00:c8", "dev", peer.as_str()])
+        .args(["neigh", "add", "10.0.0.200", "lladdr", "02:00:00:00:00:c8", "dev", host])
         .output()
         .unwrap();
-    Command::new("ip")
-        .args(["neigh", "add", "10.0.0.200", "lladdr", "02:00:00:00:00:c8", "dev", host.as_str()])
-        .output()
-        .unwrap();
-    thread::sleep(Duration::from_millis(100));
 
-    let h_i = if_nametoindex(host.as_str()).unwrap() as u32;
-    let p_i = if_nametoindex(peer.as_str()).unwrap() as u32;
+    let h_i = pair.host_ifindex();
+    let p_i = pair.peer_ifindex();
 
     let pin_root = test_pin_root("fib4v");
     let mut b = XdpLanIntroSkelBuilder::default();
@@ -780,36 +701,28 @@ fn xdp_lan_intro_fib_fallback_v4() {
         [10, 0, 0, 1],
         [10, 0, 0, 200],
     );
-    for _ in 0..20 {
-        send_raw_packet(&peer, &pkt);
-        thread::sleep(Duration::from_millis(10));
-    }
-    thread::sleep(Duration::from_millis(500));
+    send_raw_packet(peer, &pkt);
+    wait_for("FIB fallback populated ip_mac_v4", Duration::from_secs(5), || {
+        skel.maps.ip_mac_v4.lookup(&mac_key, MapFlags::ANY).unwrap().is_some()
+    });
 
     let mac_after = skel.maps.ip_mac_v4.lookup(&mac_key, MapFlags::ANY).unwrap();
     assert!(mac_after.is_some(), "FIB should have populated ip_mac_v4 for known LAN IP 10.0.0.200");
 
     drop(skel);
-    let _ = Command::new("ip").args(["neigh", "del", "10.0.0.200", "dev", peer.as_str()]).output();
-    let _ =
-        Command::new("ip").args(["route", "del", "10.0.0.200/32", "dev", peer.as_str()]).output();
-    let _ = Command::new("ip").args(["link", "del", &host]).output();
+    let _ = Command::new("ip").args(["neigh", "del", "10.0.0.200", "dev", peer]).output();
+    let _ = Command::new("ip").args(["route", "del", "10.0.0.200/32", "dev", peer]).output();
 }
 
 // ── Test H: v6 FIB fallback with veth + map verification ──
 
+#[ignore = "requires root and veth pairs; run with --include-ignored"]
 #[test]
 fn xdp_lan_intro_fib_fallback_v6() {
-    let pid = crate::tests::test_id();
-    let (host, peer) = (format!("lrf6h{pid}"), format!("lrf6p{pid}"));
+    let pair = VethPair::create("lrf6");
+    let host = pair.host();
+    let peer = pair.peer();
 
-    let _ = Command::new("ip").args(["link", "del", &host]).output();
-    Command::new("ip")
-        .args(["link", "add", &host, "type", "veth", "peer", "name", &peer])
-        .output()
-        .unwrap();
-    Command::new("ip").args(["link", "set", host.as_str(), "up"]).output().unwrap();
-    Command::new("ip").args(["link", "set", peer.as_str(), "up"]).output().unwrap();
     // bpf_fib_lookup for IPv6 requires forwarding=1 on the ingress device
     let fwd_path = format!("net.ipv6.conf.{}.forwarding", host);
     let fwd_was = Command::new("sysctl")
@@ -819,40 +732,18 @@ fn xdp_lan_intro_fib_fallback_v6() {
         .unwrap_or_default();
     Command::new("sysctl").args(["-w", &format!("{}=1", fwd_path)]).output().unwrap();
     // route + static neighbour so bpf_fib_lookup can resolve the MAC
+    Command::new("ip").args(["-6", "route", "add", "fd00::200/128", "dev", peer]).output().unwrap();
     Command::new("ip")
-        .args(["-6", "route", "add", "fd00::200/128", "dev", peer.as_str()])
+        .args(["-6", "neigh", "add", "fd00::200", "lladdr", "02:00:00:00:00:c8", "dev", peer])
         .output()
         .unwrap();
     Command::new("ip")
-        .args([
-            "-6",
-            "neigh",
-            "add",
-            "fd00::200",
-            "lladdr",
-            "02:00:00:00:00:c8",
-            "dev",
-            peer.as_str(),
-        ])
+        .args(["-6", "neigh", "add", "fd00::200", "lladdr", "02:00:00:00:00:c8", "dev", host])
         .output()
         .unwrap();
-    Command::new("ip")
-        .args([
-            "-6",
-            "neigh",
-            "add",
-            "fd00::200",
-            "lladdr",
-            "02:00:00:00:00:c8",
-            "dev",
-            host.as_str(),
-        ])
-        .output()
-        .unwrap();
-    thread::sleep(Duration::from_millis(100));
 
-    let h_i = if_nametoindex(host.as_str()).unwrap() as u32;
-    let p_i = if_nametoindex(peer.as_str()).unwrap() as u32;
+    let h_i = pair.host_ifindex();
+    let p_i = pair.peer_ifindex();
 
     let pin_root = test_pin_root("fib6v");
     let mut b = XdpLanIntroSkelBuilder::default();
@@ -889,11 +780,10 @@ fn xdp_lan_intro_fib_fallback_v6() {
         [0xfd, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3], // fd00::3
         dst_ip6,                                             // fd00::200
     );
-    for _ in 0..20 {
-        send_raw_packet(&peer, &pkt);
-        thread::sleep(Duration::from_millis(10));
-    }
-    thread::sleep(Duration::from_millis(500));
+    send_raw_packet(peer, &pkt);
+    wait_for("FIB fallback populated ip_mac_v6", Duration::from_secs(5), || {
+        skel.maps.ip_mac_v6.lookup(&mac_key, MapFlags::ANY).unwrap().is_some()
+    });
 
     let mac_after = skel.maps.ip_mac_v6.lookup(&mac_key, MapFlags::ANY).unwrap();
     assert!(mac_after.is_some(), "FIB should have populated ip_mac_v6 for known LAN IP fd00::200");
@@ -903,12 +793,7 @@ fn xdp_lan_intro_fib_fallback_v6() {
     if !fwd_was.is_empty() {
         let _ = Command::new("sysctl").args(["-w", &format!("{}={}", fwd_path, fwd_was)]).output();
     }
-    let _ =
-        Command::new("ip").args(["-6", "neigh", "del", "fd00::200", "dev", peer.as_str()]).output();
-    let _ =
-        Command::new("ip").args(["-6", "neigh", "del", "fd00::200", "dev", host.as_str()]).output();
-    let _ = Command::new("ip")
-        .args(["-6", "route", "del", "fd00::200/128", "dev", peer.as_str()])
-        .output();
-    let _ = Command::new("ip").args(["link", "del", &host]).output();
+    let _ = Command::new("ip").args(["-6", "neigh", "del", "fd00::200", "dev", peer]).output();
+    let _ = Command::new("ip").args(["-6", "neigh", "del", "fd00::200", "dev", host]).output();
+    let _ = Command::new("ip").args(["-6", "route", "del", "fd00::200/128", "dev", peer]).output();
 }

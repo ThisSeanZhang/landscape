@@ -409,13 +409,11 @@ fn peek_v3_free_port<T: MapCore>(queue_map: &T) -> Option<u16> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tests::nat::NAT_V3_TEST_LOCK;
 
     #[test]
     fn tcp_egress_dynamic_v3_existing_state_and_ct() {
-        let _guard = NAT_V3_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let mut builder = TcNatSkelBuilder::default();
-        let pin_root = crate::tests::nat::isolated_pin_root("nat-v4-dynamic-v3");
+        let pin_root = crate::tests::isolated_pin_root("nat-v4-dynamic-v3");
         builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
         let mut open_object = MaybeUninit::uninit();
         let open_skel = builder.open(&mut open_object).unwrap();
@@ -510,9 +508,8 @@ mod tests {
 
     #[test]
     fn tcp_egress_dynamic_v3_icmp_error_accepts_min_quote() {
-        let _guard = NAT_V3_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let mut builder = TcNatSkelBuilder::default();
-        let pin_root = crate::tests::nat::isolated_pin_root("nat-v4-dynamic-v3");
+        let pin_root = crate::tests::isolated_pin_root("nat-v4-dynamic-v3");
         builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
         let mut open_object = MaybeUninit::uninit();
         let open_skel = builder.open(&mut open_object).unwrap();
@@ -580,9 +577,8 @@ mod tests {
 
     #[test]
     fn tcp_egress_dynamic_v3_missing_ingress_cleans_stale_pair_for_non_initiating_packet() {
-        let _guard = NAT_V3_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let mut builder = TcNatSkelBuilder::default();
-        let pin_root = crate::tests::nat::isolated_pin_root("nat-v4-dynamic-v3");
+        let pin_root = crate::tests::isolated_pin_root("nat-v4-dynamic-v3");
         builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
         let mut open_object = MaybeUninit::uninit();
         let open_skel = builder.open(&mut open_object).unwrap();
@@ -668,9 +664,8 @@ mod tests {
 
     #[test]
     fn tcp_egress_dynamic_v3_recreates_mapping_after_generation_wrap() {
-        let _guard = NAT_V3_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let mut builder = TcNatSkelBuilder::default();
-        let pin_root = crate::tests::nat::isolated_pin_root("nat-v4-dynamic-v3");
+        let pin_root = crate::tests::isolated_pin_root("nat-v4-dynamic-v3");
         builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
         let mut open_object = MaybeUninit::uninit();
         let open_skel = builder.open(&mut open_object).unwrap();
@@ -752,9 +747,8 @@ mod tests {
 
     #[test]
     fn tcp_egress_dynamic_v3_mismatched_ingress_owner_cleans_stale_pair() {
-        let _guard = NAT_V3_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let mut builder = TcNatSkelBuilder::default();
-        let pin_root = crate::tests::nat::isolated_pin_root("nat-v4-dynamic-v3");
+        let pin_root = crate::tests::isolated_pin_root("nat-v4-dynamic-v3");
         builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
         let mut open_object = MaybeUninit::uninit();
         let open_skel = builder.open(&mut open_object).unwrap();
@@ -863,9 +857,8 @@ mod tests {
 
     #[test]
     fn tcp_ingress_dynamic_v3_reuse_creates_ct() {
-        let _guard = NAT_V3_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let mut builder = TcNatSkelBuilder::default();
-        let pin_root = crate::tests::nat::isolated_pin_root("nat-v4-dynamic-v3");
+        let pin_root = crate::tests::isolated_pin_root("nat-v4-dynamic-v3");
         builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
         let mut open_object = MaybeUninit::uninit();
         let open_skel = builder.open(&mut open_object).unwrap();
@@ -952,9 +945,8 @@ mod tests {
 
     #[test]
     fn tcp_ingress_dynamic_v3_icmp_error_accepts_min_quote() {
-        let _guard = NAT_V3_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let mut builder = TcNatSkelBuilder::default();
-        let pin_root = crate::tests::nat::isolated_pin_root("nat-v4-dynamic-v3");
+        let pin_root = crate::tests::isolated_pin_root("nat-v4-dynamic-v3");
         builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
         let mut open_object = MaybeUninit::uninit();
         let open_skel = builder.open(&mut open_object).unwrap();
@@ -1022,9 +1014,8 @@ mod tests {
 
     #[test]
     fn tcp_ingress_dynamic_v3_closed_blocks_new_ct() {
-        let _guard = NAT_V3_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let mut builder = TcNatSkelBuilder::default();
-        let pin_root = crate::tests::nat::isolated_pin_root("nat-v4-dynamic-v3");
+        let pin_root = crate::tests::isolated_pin_root("nat-v4-dynamic-v3");
         builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
         let mut open_object = MaybeUninit::uninit();
         let open_skel = builder.open(&mut open_object).unwrap();
@@ -1074,9 +1065,8 @@ mod tests {
 
     #[test]
     fn tcp_ingress_dynamic_v3_active_zero_blocks_new_ct() {
-        let _guard = NAT_V3_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let mut builder = TcNatSkelBuilder::default();
-        let pin_root = crate::tests::nat::isolated_pin_root("nat-v4-dynamic-v3");
+        let pin_root = crate::tests::isolated_pin_root("nat-v4-dynamic-v3");
         builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
         let mut open_object = MaybeUninit::uninit();
         let open_skel = builder.open(&mut open_object).unwrap();
@@ -1143,9 +1133,8 @@ mod tests {
 
     #[test]
     fn tcp_ingress_dynamic_v3_closed_allows_existing_ct() {
-        let _guard = NAT_V3_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let mut builder = TcNatSkelBuilder::default();
-        let pin_root = crate::tests::nat::isolated_pin_root("nat-v4-dynamic-v3");
+        let pin_root = crate::tests::isolated_pin_root("nat-v4-dynamic-v3");
         builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
         let mut open_object = MaybeUninit::uninit();
         let open_skel = builder.open(&mut open_object).unwrap();
@@ -1218,9 +1207,8 @@ mod tests {
 
     #[test]
     fn tcp_dynamic_v3_release_reactivates_but_cleanup_rejects_both_directions() {
-        let _guard = NAT_V3_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let mut builder = TcNatSkelBuilder::default();
-        let pin_root = crate::tests::nat::isolated_pin_root("nat-v4-dynamic-v3");
+        let pin_root = crate::tests::isolated_pin_root("nat-v4-dynamic-v3");
         builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
         let mut open_object = MaybeUninit::uninit();
         let open_skel = builder.open(&mut open_object).unwrap();
@@ -1383,9 +1371,8 @@ mod tests {
 
     #[test]
     fn tcp_ingress_dynamic_v3_ct_pending_ref_rejects_ingress() {
-        let _guard = NAT_V3_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let mut builder = TcNatSkelBuilder::default();
-        let pin_root = crate::tests::nat::isolated_pin_root("nat-v4-dynamic-v3");
+        let pin_root = crate::tests::isolated_pin_root("nat-v4-dynamic-v3");
         builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
         let mut open_object = MaybeUninit::uninit();
         let open_skel = builder.open(&mut open_object).unwrap();
@@ -1474,9 +1461,8 @@ mod tests {
 
     #[test]
     fn tcp_ingress_dynamic_v3_no_reuse_rejects_ct_creation() {
-        let _guard = NAT_V3_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let mut builder = TcNatSkelBuilder::default();
-        let pin_root = crate::tests::nat::isolated_pin_root("nat-v4-dynamic-v3");
+        let pin_root = crate::tests::isolated_pin_root("nat-v4-dynamic-v3");
         builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
         let mut open_object = MaybeUninit::uninit();
         let open_skel = builder.open(&mut open_object).unwrap();
@@ -1559,9 +1545,8 @@ mod tests {
 
     #[test]
     fn tcp_egress_static_v3_creates_ct_without_dynamic_state() {
-        let _guard = NAT_V3_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let mut builder = TcNatSkelBuilder::default();
-        let pin_root = crate::tests::nat::isolated_pin_root("nat-v4-dynamic-v3");
+        let pin_root = crate::tests::isolated_pin_root("nat-v4-dynamic-v3");
         builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
         let mut open_object = MaybeUninit::uninit();
         let open_skel = builder.open(&mut open_object).unwrap();
@@ -1638,9 +1623,8 @@ mod tests {
 
     #[test]
     fn tcp_egress_dynamic_v3_restart_queue_conflict_drops_first_flow_then_uses_next_port() {
-        let _guard = NAT_V3_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let mut builder = TcNatSkelBuilder::default();
-        let pin_root = crate::tests::nat::isolated_pin_root("nat-v4-dynamic-v3");
+        let pin_root = crate::tests::isolated_pin_root("nat-v4-dynamic-v3");
         builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
         let mut open_object = MaybeUninit::uninit();
         let open_skel = builder.open(&mut open_object).unwrap();
@@ -1780,9 +1764,8 @@ mod tests {
 
     #[test]
     fn tcp_egress_dynamic_v3_restart_without_timer_drops_first_flow_then_uses_next_port() {
-        let _guard = NAT_V3_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let mut builder = TcNatSkelBuilder::default();
-        let pin_root = crate::tests::nat::isolated_pin_root("nat-v4-dynamic-v3");
+        let pin_root = crate::tests::isolated_pin_root("nat-v4-dynamic-v3");
         builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
         let mut open_object = MaybeUninit::uninit();
         let open_skel = builder.open(&mut open_object).unwrap();
@@ -1912,9 +1895,8 @@ mod tests {
 
     #[test]
     fn reset_dynamic_nat_v3_runtime_clears_stale_state_and_restores_first_flow() {
-        let _guard = NAT_V3_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let mut builder = TcNatSkelBuilder::default();
-        let pin_root = crate::tests::nat::isolated_pin_root("nat-v4-dynamic-v3");
+        let pin_root = crate::tests::isolated_pin_root("nat-v4-dynamic-v3");
         builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
         let mut open_object = MaybeUninit::uninit();
         let open_skel = builder.open(&mut open_object).unwrap();

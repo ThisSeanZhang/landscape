@@ -17,6 +17,7 @@ once_cell = { workspace = true }
 # self_cell = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
 tokio-util = { workspace = true }
+arc-swap = { workspace = true }
 nix = { workspace = true, features = ["net", "user", "sched"] }
 rtnetlink = { workspace = true }
 netlink-packet-route = { workspace = true }

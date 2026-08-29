@@ -1,38 +1,14 @@
 use std::os::fd::{AsFd, AsRawFd};
-use std::process::Command;
-use std::thread;
 use std::time::Duration;
 
 use libbpf_rs::{
     skel::{OpenSkel, SkelBuilder as _},
     MapCore, MapFlags,
 };
-use nix::net::if_::if_nametoindex;
 
+use crate::tests::net_utils::{send_raw_packet, wait_for, VethPair};
 use crate::tests::test_xdp_chain_stage::TestXdpChainStageSkelBuilder;
 use crate::tests::test_xdp_root::TestXdpRootSkelBuilder;
-
-fn veth_names() -> (String, String) {
-    let pid = crate::tests::test_id();
-    (format!("ldxh{pid}"), format!("ldxp{pid}"))
-}
-
-fn create_veth_pair() -> (String, String, i32) {
-    let (host, peer) = veth_names();
-
-    let _ = Command::new("ip").args(["link", "del", &host]).output();
-    let out = Command::new("ip")
-        .args(["link", "add", &host, "type", "veth", "peer", "name", &peer])
-        .output()
-        .expect("create veth");
-    assert!(out.status.success(), "create veth failed");
-    Command::new("ip").args(["link", "set", &host, "up"]).output().expect("up host");
-    Command::new("ip").args(["link", "set", &peer, "up"]).output().expect("up peer");
-    thread::sleep(Duration::from_millis(100));
-
-    let ifindex = if_nametoindex(host.as_str()).expect("ifindex") as i32;
-    (host, peer, ifindex)
-}
 
 fn update_prog_array(map: &libbpf_rs::MapMut<'_>, idx: u32, fd: i32) {
     map.update(&idx.to_ne_bytes(), &fd.to_ne_bytes(), MapFlags::ANY).expect("update PROG_ARRAY");
@@ -56,45 +32,12 @@ fn build_eth_ipv4_tcp(
     pkt
 }
 
-fn send_raw_packet(iface: &str, pkt: &[u8]) {
-    let sock = socket2::Socket::new(
-        socket2::Domain::PACKET,
-        socket2::Type::RAW,
-        Some(socket2::Protocol::from(0x0300)), // ETH_P_ALL
-    )
-    .expect("create raw socket");
-
-    let idx = if_nametoindex(iface).expect("if_nametoindex");
-
-    let addr = libc::sockaddr_ll {
-        sll_family: libc::AF_PACKET as u16,
-        sll_protocol: 0x0300u16.to_be(),
-        sll_ifindex: idx as i32,
-        sll_hatype: 0,
-        sll_pkttype: 0,
-        sll_halen: 0,
-        sll_addr: [0u8; 8],
-    };
-
-    let addr_ptr = &addr as *const _ as *const libc::sockaddr;
-    let addr_len = std::mem::size_of::<libc::sockaddr_ll>() as libc::socklen_t;
-
-    unsafe {
-        libc::sendto(
-            sock.as_raw_fd(),
-            pkt.as_ptr() as *const libc::c_void,
-            pkt.len(),
-            0,
-            addr_ptr,
-            addr_len,
-        );
-    }
-}
-
 #[test]
-#[ignore = "requires creating veth pair, not suitable for parallel unit tests"]
+#[ignore = "requires root and veth pairs; run with --include-ignored"]
 fn xdp_chain_3level() {
-    let (veth_host, _veth_peer, ifindex) = create_veth_pair();
+    let pair = VethPair::create("ldx");
+    let veth_host = pair.host();
+    let ifindex = pair.host_ifindex() as i32;
 
     // ── load root skel ──
     let root_builder = TestXdpRootSkelBuilder::default();
@@ -130,11 +73,15 @@ fn xdp_chain_3level() {
         [10, 0, 0, 1],
         [10, 0, 0, 2],
     );
-    for _ in 0..5 {
-        send_raw_packet(&veth_host, &pkt);
-        thread::sleep(Duration::from_millis(10));
-    }
-    thread::sleep(Duration::from_millis(500));
+    send_raw_packet(veth_host, &pkt);
+    wait_for("chain2 fallback counter incremented", Duration::from_secs(5), || {
+        chain2_skel
+            .maps
+            .stage_fallback_map
+            .lookup(&0u32.to_ne_bytes(), MapFlags::ANY)
+            .unwrap()
+            .map_or(false, |v| u64::from_ne_bytes(v[0..8].try_into().unwrap()) > 0)
+    });
 
     // ── verify: chain2 fallback counter > 0 (chain traversal completed) ──
     let k = 0u32.to_ne_bytes();
@@ -151,5 +98,4 @@ fn xdp_chain_3level() {
     drop(chain2_skel);
     drop(chain1_skel);
     drop(root_skel);
-    let _ = Command::new("ip").args(["link", "del", &veth_host]).output();
 }

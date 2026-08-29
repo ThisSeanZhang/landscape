@@ -113,7 +113,7 @@ mod tests {
     #[test]
     fn udp_egress_creates_ct_with_is_static_one() {
         let mut builder = TcNatSkelBuilder::default();
-        let pin_root = crate::tests::nat::isolated_pin_root("nat-v6-static-ct-create");
+        let pin_root = crate::tests::isolated_pin_root("nat-v6-static-ct-create");
         builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
         let mut open_object = MaybeUninit::uninit();
         let open_skel = builder.open(&mut open_object).unwrap();
@@ -179,7 +179,7 @@ mod tests {
     #[test]
     fn udp_ingress_creates_ct_with_is_static_one() {
         let mut builder = TcNatSkelBuilder::default();
-        let pin_root = crate::tests::nat::isolated_pin_root("nat-v6-static-ct-create");
+        let pin_root = crate::tests::isolated_pin_root("nat-v6-static-ct-create");
         builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
         let mut open_object = MaybeUninit::uninit();
         let open_skel = builder.open(&mut open_object).unwrap();
@@ -246,7 +246,7 @@ mod tests {
     #[test]
     fn udp_egress_ct_from_port_zero_static() {
         let mut builder = TcNatSkelBuilder::default();
-        let pin_root = crate::tests::nat::isolated_pin_root("nat-v6-port-zero-ct-create");
+        let pin_root = crate::tests::isolated_pin_root("nat-v6-port-zero-ct-create");
         builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
         let mut open_object = MaybeUninit::uninit();
         let open_skel = builder.open(&mut open_object).unwrap();
@@ -303,7 +303,7 @@ mod tests {
     #[test]
     fn udp_ingress_ct_from_port_zero_static() {
         let mut builder = TcNatSkelBuilder::default();
-        let pin_root = crate::tests::nat::isolated_pin_root("nat-v6-port-zero-ct-create");
+        let pin_root = crate::tests::isolated_pin_root("nat-v6-port-zero-ct-create");
         builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
         let mut open_object = MaybeUninit::uninit();
         let open_skel = builder.open(&mut open_object).unwrap();
@@ -364,7 +364,7 @@ mod tests {
     #[test]
     fn udp_egress_zero_prefix_static_creates_pass_ct() {
         let mut builder = TcNatSkelBuilder::default();
-        let pin_root = crate::tests::nat::isolated_pin_root("nat-v6-zero-prefix-egress");
+        let pin_root = crate::tests::isolated_pin_root("nat-v6-zero-prefix-egress");
         builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
         let mut open_object = MaybeUninit::uninit();
         let open_skel = builder.open(&mut open_object).unwrap();
@@ -416,7 +416,7 @@ mod tests {
     #[test]
     fn udp_ingress_zero_prefix_static_creates_pass_ct() {
         let mut builder = TcNatSkelBuilder::default();
-        let pin_root = crate::tests::nat::isolated_pin_root("nat-v6-zero-prefix-ingress");
+        let pin_root = crate::tests::isolated_pin_root("nat-v6-zero-prefix-ingress");
         builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
         let mut open_object = MaybeUninit::uninit();
         let open_skel = builder.open(&mut open_object).unwrap();

@@ -1,14 +1,12 @@
 use std::os::fd::{AsFd, AsRawFd};
-use std::process::Command;
-use std::thread;
 use std::time::Duration;
 
 use libbpf_rs::{
     skel::{OpenSkel, SkelBuilder as _},
     MapCore, MapFlags,
 };
-use nix::net::if_::if_nametoindex;
 
+use crate::tests::net_utils::{send_raw_packet, settle, wait_for, VethPair};
 use crate::tests::test_xdp_dummy::TestXdpDummySkelBuilder;
 use crate::tests::xdp_mss_skel::XdpMssSkelBuilder;
 
@@ -119,47 +117,8 @@ fn dummy_reset_tcp_mss(map: &libbpf_rs::MapMut) {
     map.update(&0u32.to_ne_bytes(), &[0u8; 16], MapFlags::ANY).unwrap();
 }
 
-fn dummy_recv_count(map: &libbpf_rs::MapMut, is_v6: bool) -> u64 {
-    let k = if is_v6 { 1u32 } else { 0u32 }.to_ne_bytes();
-    map.lookup(&k, MapFlags::ANY)
-        .unwrap()
-        .map_or(0, |v| u64::from_ne_bytes(v[0..8].try_into().unwrap()))
-}
-
-fn dummy_reset_recv(map: &libbpf_rs::MapMut) {
-    let v = [0u8; 8];
-    map.update(&0u32.to_ne_bytes(), &v, MapFlags::ANY).unwrap();
-    map.update(&1u32.to_ne_bytes(), &v, MapFlags::ANY).unwrap();
-}
-
-fn send_raw_packet(iface: &str, pkt: &[u8]) {
-    let sock = socket2::Socket::new(
-        socket2::Domain::PACKET,
-        socket2::Type::RAW,
-        Some(socket2::Protocol::from(0x0300)),
-    )
-    .expect("create raw socket");
-    let idx = if_nametoindex(iface).expect("if_nametoindex");
-    let addr = libc::sockaddr_ll {
-        sll_family: libc::AF_PACKET as u16,
-        sll_protocol: 0x0300u16.to_be(),
-        sll_ifindex: idx as i32,
-        sll_hatype: 0,
-        sll_pkttype: 0,
-        sll_halen: 0,
-        sll_addr: [0u8; 8],
-    };
-    unsafe {
-        libc::sendto(
-            sock.as_raw_fd(),
-            pkt.as_ptr() as *const libc::c_void,
-            pkt.len(),
-            0,
-            &addr as *const _ as *const libc::sockaddr,
-            std::mem::size_of::<libc::sockaddr_ll>() as libc::socklen_t,
-        );
-    }
-}
+use crate::tests::net_utils::dummy_recv_count;
+use crate::tests::net_utils::dummy_reset;
 
 #[test]
 fn xdp_mss_verifier() {
@@ -169,19 +128,12 @@ fn xdp_mss_verifier() {
     let _skel = open.load().expect("verifier rejected");
 }
 
+#[ignore = "requires root and veth pairs; run with --include-ignored"]
 #[test]
 fn xdp_mss_syn() {
-    let pid = crate::tests::test_id();
-    let (host, peer) = (format!("xmh{pid}"), format!("xmp{pid}"));
-    let _ = Command::new("ip").args(["link", "del", &host]).output();
-    Command::new("ip")
-        .args(["link", "add", &host, "type", "veth", "peer", "name", &peer])
-        .output()
-        .unwrap();
-    Command::new("ip").args(["link", "set", host.as_str(), "up"]).output().unwrap();
-    Command::new("ip").args(["link", "set", peer.as_str(), "up"]).output().unwrap();
-    thread::sleep(Duration::from_millis(100));
-    let ifindex = if_nametoindex(host.as_str()).unwrap() as i32;
+    let pair = VethPair::create("xm");
+    let peer = pair.peer();
+    let ifindex = pair.host_ifindex() as i32;
 
     let builder = XdpMssSkelBuilder::default();
     let mut obj = std::mem::MaybeUninit::uninit();
@@ -199,12 +151,14 @@ fn xdp_mss_syn() {
         .update(&0u32.to_ne_bytes(), &dummy_fd.to_ne_bytes(), MapFlags::ANY)
         .unwrap();
 
-    dummy_reset_recv(&dummy.maps.dummy_recv_map);
+    dummy_reset(&dummy.maps.dummy_recv_map);
     dummy_reset_tcp_mss(&dummy.maps.dummy_tcp_mss_map);
 
     let pkt = build_syn_pkt(1460);
-    send_raw_packet(&peer, &pkt);
-    thread::sleep(Duration::from_millis(500));
+    send_raw_packet(peer, &pkt);
+    wait_for("MSS clamp: packet reached dummy", Duration::from_secs(5), || {
+        dummy_recv_count(&dummy.maps.dummy_recv_map, false) > 0
+    });
 
     let cnt = dummy_recv_count(&dummy.maps.dummy_recv_map, false);
     assert!(cnt > 0, "MSS clamp: no packet reached dummy");
@@ -214,23 +168,16 @@ fn xdp_mss_syn() {
 
     drop(dummy);
     drop(skel);
-    let _ = Command::new("ip").args(["link", "del", &host]).output();
 }
 
+#[ignore = "requires root and veth pairs; run with --include-ignored"]
 #[test]
 fn xdp_mss_bidirectional() {
-    let pid = crate::tests::test_id();
-    let (host, peer) = (format!("xmh{pid}"), format!("xmp{pid}"));
-    let _ = Command::new("ip").args(["link", "del", &host]).output();
-    Command::new("ip")
-        .args(["link", "add", &host, "type", "veth", "peer", "name", &peer])
-        .output()
-        .unwrap();
-    Command::new("ip").args(["link", "set", host.as_str(), "up"]).output().unwrap();
-    Command::new("ip").args(["link", "set", peer.as_str(), "up"]).output().unwrap();
-    thread::sleep(Duration::from_millis(100));
-    let host_ifindex = if_nametoindex(host.as_str()).unwrap() as i32;
-    let peer_ifindex = if_nametoindex(peer.as_str()).unwrap() as i32;
+    let pair = VethPair::create("xm");
+    let host = pair.host();
+    let peer = pair.peer();
+    let host_ifindex = pair.host_ifindex() as i32;
+    let peer_ifindex = pair.peer_ifindex() as i32;
 
     let builder1 = XdpMssSkelBuilder::default();
     let mut obj1 = std::mem::MaybeUninit::uninit();
@@ -270,19 +217,23 @@ fn xdp_mss_bidirectional() {
 
     let pkt = build_syn_pkt(1460);
 
-    dummy_reset_recv(&dummy_h.maps.dummy_recv_map);
+    dummy_reset(&dummy_h.maps.dummy_recv_map);
     dummy_reset_tcp_mss(&dummy_h.maps.dummy_tcp_mss_map);
-    send_raw_packet(&peer, &pkt);
-    thread::sleep(Duration::from_millis(300));
+    send_raw_packet(peer, &pkt);
+    wait_for("host direction: packet reached dummy", Duration::from_secs(5), || {
+        dummy_recv_count(&dummy_h.maps.dummy_recv_map, false) > 0
+    });
     let cnt = dummy_recv_count(&dummy_h.maps.dummy_recv_map, false);
     let mss = dummy_tcp_mss_value(&dummy_h.maps.dummy_tcp_mss_map);
     assert!(cnt > 0, "host direction: no packet reached dummy");
     assert!(mss > 0 && mss < 1480, "host MSS not clamped, got {}", mss);
 
-    dummy_reset_recv(&dummy_p.maps.dummy_recv_map);
+    dummy_reset(&dummy_p.maps.dummy_recv_map);
     dummy_reset_tcp_mss(&dummy_p.maps.dummy_tcp_mss_map);
-    send_raw_packet(&host, &pkt);
-    thread::sleep(Duration::from_millis(300));
+    send_raw_packet(host, &pkt);
+    wait_for("peer direction: packet reached dummy", Duration::from_secs(5), || {
+        dummy_recv_count(&dummy_p.maps.dummy_recv_map, false) > 0
+    });
     let cnt = dummy_recv_count(&dummy_p.maps.dummy_recv_map, false);
     let mss = dummy_tcp_mss_value(&dummy_p.maps.dummy_tcp_mss_map);
     assert!(cnt > 0, "peer direction: no packet reached dummy");
@@ -292,7 +243,6 @@ fn xdp_mss_bidirectional() {
     drop(dummy_h);
     drop(skel_p);
     drop(skel_h);
-    let _ = Command::new("ip").args(["link", "del", &host]).output();
 }
 
 fn build_non_syn_tcp_pkt() -> Vec<u8> {
@@ -306,19 +256,12 @@ fn build_non_syn_tcp_pkt() -> Vec<u8> {
     pkt
 }
 
+#[ignore = "requires root and veth pairs; run with --include-ignored"]
 #[test]
 fn xdp_mss_non_syn_passthrough() {
-    let pid = crate::tests::test_id();
-    let (host, peer) = (format!("xmh{pid}"), format!("xmp{pid}"));
-    let _ = Command::new("ip").args(["link", "del", &host]).output();
-    Command::new("ip")
-        .args(["link", "add", &host, "type", "veth", "peer", "name", &peer])
-        .output()
-        .unwrap();
-    Command::new("ip").args(["link", "set", host.as_str(), "up"]).output().unwrap();
-    Command::new("ip").args(["link", "set", peer.as_str(), "up"]).output().unwrap();
-    thread::sleep(Duration::from_millis(100));
-    let ifindex = if_nametoindex(host.as_str()).unwrap() as i32;
+    let pair = VethPair::create("xm");
+    let peer = pair.peer();
+    let ifindex = pair.host_ifindex() as i32;
 
     let builder = XdpMssSkelBuilder::default();
     let mut obj = std::mem::MaybeUninit::uninit();
@@ -337,16 +280,15 @@ fn xdp_mss_non_syn_passthrough() {
         )
         .unwrap();
 
-    dummy_reset_recv(&dummy.maps.dummy_recv_map);
+    dummy_reset(&dummy.maps.dummy_recv_map);
     dummy_reset_tcp_mss(&dummy.maps.dummy_tcp_mss_map);
 
     let pkt = build_non_syn_tcp_pkt();
-    for _ in 0..3 {
-        send_raw_packet(&peer, &pkt);
-        thread::sleep(Duration::from_millis(10));
-    }
-    thread::sleep(Duration::from_millis(300));
-
+    send_raw_packet(peer, &pkt);
+    wait_for("non-SYN: packet reached dummy", Duration::from_secs(5), || {
+        dummy_recv_count(&dummy.maps.dummy_recv_map, false) > 0
+    });
+    settle(300);
     let cnt = dummy_recv_count(&dummy.maps.dummy_recv_map, false);
     assert!(cnt > 0, "non-SYN: packet should pass through to dummy");
     let mss_cnt = dummy_tcp_mss_count(&dummy.maps.dummy_tcp_mss_map);
@@ -354,5 +296,4 @@ fn xdp_mss_non_syn_passthrough() {
 
     drop(dummy);
     drop(skel);
-    let _ = Command::new("ip").args(["link", "del", &host]).output();
 }

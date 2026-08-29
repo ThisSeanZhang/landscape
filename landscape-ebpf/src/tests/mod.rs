@@ -57,6 +57,10 @@ impl Drop for PinRootGuard {
     }
 }
 
+pub(crate) fn isolated_pin_root(prefix: &str) -> PinRootGuard {
+    PinRootGuard::new(prefix)
+}
+
 pub(crate) fn check_ifindex(name: &str, ifindex: u32) {
     const PIPELINE_COUNT: u32 = 1024;
     if ifindex >= PIPELINE_COUNT {
@@ -80,6 +84,7 @@ mod firewall;
 mod metric;
 mod mss;
 mod nat;
+mod net_utils;
 mod pppoe;
 mod route;
 mod scanner;

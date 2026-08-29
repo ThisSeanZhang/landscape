@@ -24,9 +24,10 @@ mod tests {
             share_map::types::mac_key_v6,
         },
         tests::{
+            isolated_pin_root,
             route::package::{
                 as_bytes, create_route_cache_inner_map_v4, create_route_cache_inner_map_v6,
-                isolated_pin_root, lookup_rt4_cache_value, lookup_rt6_cache_value, simple_ipv4_tcp,
+                lookup_rt4_cache_value, lookup_rt6_cache_value, simple_ipv4_tcp,
                 simple_ipv6_ns_dad, simple_ipv6_tcp_syn, LAN_CACHE,
             },
             TestSkb,

@@ -1,3 +1,4 @@
+use arc_swap::ArcSwapOption;
 use std::mem::MaybeUninit;
 use std::mem::{offset_of, size_of};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
@@ -279,7 +280,11 @@ mod tests {
         let handle = tokio::spawn(async move {
             cancel_waiter.cancelled().await;
         });
-        let source = ConnectMetricEventSource::test_new(cancel, handle, Arc::new(Mutex::new(tx)));
+        let source = ConnectMetricEventSource::test_new(
+            cancel,
+            handle,
+            Arc::new(ArcSwapOption::new(Some(Arc::new(tx)))),
+        );
 
         let outcome = Box::new(source).stop_with_budget(Duration::from_secs(1)).await;
         assert_eq!(outcome, EventSourceStopOutcome::Clean);
@@ -290,7 +295,11 @@ mod tests {
         let (tx, _rx) = tokio::sync::mpsc::channel::<ConnectMessage>(16);
         let cancel = CancellationToken::new();
         let handle = tokio::spawn(std::future::pending::<()>());
-        let source = ConnectMetricEventSource::test_new(cancel, handle, Arc::new(Mutex::new(tx)));
+        let source = ConnectMetricEventSource::test_new(
+            cancel,
+            handle,
+            Arc::new(ArcSwapOption::new(Some(Arc::new(tx)))),
+        );
 
         let outcome = Box::new(source).stop_with_budget(Duration::from_millis(100)).await;
         assert_eq!(outcome, EventSourceStopOutcome::Aborted);
@@ -303,7 +312,11 @@ mod tests {
         let handle = tokio::spawn(async {
             panic!("intentional test panic");
         });
-        let source = ConnectMetricEventSource::test_new(cancel, handle, Arc::new(Mutex::new(tx)));
+        let source = ConnectMetricEventSource::test_new(
+            cancel,
+            handle,
+            Arc::new(ArcSwapOption::new(Some(Arc::new(tx)))),
+        );
 
         let outcome = Box::new(source).stop_with_budget(Duration::from_secs(1)).await;
         assert_eq!(outcome, EventSourceStopOutcome::Panicked);
@@ -318,7 +331,7 @@ mod tests {
 
         let (tx1, mut rx1) = tokio::sync::mpsc::channel::<ConnectMessage>(16);
         let (tx2, mut rx2) = tokio::sync::mpsc::channel::<ConnectMessage>(16);
-        let tx_slot = Arc::new(Mutex::new(tx1));
+        let tx_slot = Arc::new(ArcSwapOption::new(Some(Arc::new(tx1))));
 
         let mut rb_builder = RingBufferBuilder::new();
         rb_builder
@@ -328,7 +341,10 @@ mod tests {
                     let event = unsafe {
                         std::ptr::read_unaligned(data.as_ptr().cast::<types::test_metric_event>())
                     };
-                    let tx = tx_slot.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+                    let tx = tx_slot.load();
+                    let Some(tx) = tx.as_ref() else {
+                        return 0;
+                    };
                     let metric = ConnectMetric::from_domain(
                         event.seq as u64,
                         0,
@@ -396,7 +412,11 @@ mod tests {
         let handle = tokio::spawn(async move {
             cancel_waiter.cancelled().await;
         });
-        let source = ConnectMetricEventSource::test_new(cancel, handle, Arc::new(Mutex::new(tx)));
+        let source = ConnectMetricEventSource::test_new(
+            cancel,
+            handle,
+            Arc::new(ArcSwapOption::new(Some(Arc::new(tx)))),
+        );
 
         source.request_stop();
 

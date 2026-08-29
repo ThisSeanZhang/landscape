@@ -1,12 +1,10 @@
-use std::process::Command;
-use std::thread;
 use std::time::Duration;
 
+use crate::tests::net_utils::{send_raw_packet, settle, wait_for, VethPair};
 use libbpf_rs::{
     skel::{OpenSkel, SkelBuilder as _},
     MapCore, MapFlags,
 };
-use nix::net::if_::if_nametoindex;
 
 use crate::map_setting::share_map::ShareMapSkelBuilder;
 use crate::tests::test_xdp_dummy::TestXdpDummySkelBuilder;
@@ -16,41 +14,9 @@ use crate::tests::xdp_nat_skel::{types, XdpNatSkelBuilder};
 use crate::tests::PinRootGuard;
 
 use std::os::fd::{AsFd, AsRawFd};
-use std::sync::Mutex;
-
-static XDP_NAT_LOCK: Mutex<()> = Mutex::new(());
 
 fn pin_root(prefix: &str) -> PinRootGuard {
     PinRootGuard::new(&format!("xdp-nat-{prefix}"))
-}
-
-fn send_raw_packet(iface: &str, pkt: &[u8]) {
-    let sock = socket2::Socket::new(
-        socket2::Domain::PACKET,
-        socket2::Type::RAW,
-        Some(socket2::Protocol::from(0x0300)),
-    )
-    .expect("create raw socket");
-    let idx = if_nametoindex(iface).expect("if_nametoindex");
-    let addr = libc::sockaddr_ll {
-        sll_family: libc::AF_PACKET as u16,
-        sll_protocol: 0x0300u16.to_be(),
-        sll_ifindex: idx as i32,
-        sll_hatype: 0,
-        sll_pkttype: 0,
-        sll_halen: 0,
-        sll_addr: [0u8; 8],
-    };
-    unsafe {
-        libc::sendto(
-            sock.as_raw_fd(),
-            pkt.as_ptr() as *const libc::c_void,
-            pkt.len(),
-            0,
-            &addr as *const _ as *const libc::sockaddr,
-            std::mem::size_of::<libc::sockaddr_ll>() as libc::socklen_t,
-        );
-    }
 }
 
 fn build_tcp_pkt(src_ip: [u8; 4], dst_ip: [u8; 4], src_port: u16, dst_port: u16) -> Vec<u8> {
@@ -203,22 +169,36 @@ fn assert_wan_ip_binding(
     assert_eq!(&val[40..48], expected_mask, "npt mask mismatch");
 }
 
+fn wait_nat4_entry(
+    map: &libbpf_rs::MapMut,
+    gress: u8,
+    l4proto: u8,
+    from_port: u16,
+    from_addr: [u8; 4],
+    what: &str,
+) {
+    wait_for(what, Duration::from_secs(5), || {
+        lookup_nat4_mapping(map, gress, l4proto, from_port, from_addr).is_some()
+    });
+}
+
+fn wait_wan_ip_binding(map: &libbpf_rs::MapMut, ifindex: u32, l3proto: u8, what: &str) {
+    let mut k = [0u8; 8];
+    k[0..4].copy_from_slice(&ifindex.to_ne_bytes());
+    k[4] = l3proto;
+    wait_for(what, Duration::from_secs(5), || {
+        map.lookup(&k, MapFlags::ANY).ok().flatten().is_some()
+    });
+}
+
+#[ignore = "requires root and veth pairs; run with --include-ignored"]
 #[test]
 fn xdp_nat_static_egress() {
-    let pid = crate::tests::test_id();
-    let (nat_h, nat_p) = (format!("nath{pid}e"), format!("natp{pid}e"));
+    let pair = VethPair::create("nat");
+    let nat_p = pair.peer();
 
-    let _ = Command::new("ip").args(["link", "del", &nat_h]).output();
-    Command::new("ip")
-        .args(["link", "add", &nat_h, "type", "veth", "peer", "name", &nat_p])
-        .output()
-        .unwrap();
-    Command::new("ip").args(["link", "set", nat_h.as_str(), "up"]).output().unwrap();
-    Command::new("ip").args(["link", "set", nat_p.as_str(), "up"]).output().unwrap();
-    thread::sleep(Duration::from_millis(100));
-
-    let nat_h_i = if_nametoindex(nat_h.as_str()).unwrap() as u32;
-    let _nat_p_i = if_nametoindex(nat_p.as_str()).unwrap() as u32;
+    let nat_h_i = pair.host_ifindex();
+    let _nat_p_i = pair.peer_ifindex();
 
     let share_pin = pin_root("nat4e");
     let mut sb = ShareMapSkelBuilder::default();
@@ -271,11 +251,7 @@ fn xdp_nat_static_egress() {
     share.maps.wan_ip_binding.update(&wan_key, &wan_val, MapFlags::ANY).unwrap();
 
     let pkt = build_tcp_pkt([192, 168, 1, 100], [10, 0, 0, 1], 80, 9999);
-    for _ in 0..2 {
-        send_raw_packet(&nat_p, &pkt);
-        thread::sleep(Duration::from_millis(30));
-    }
-    thread::sleep(Duration::from_millis(500));
+    send_raw_packet(&nat_p, &pkt);
 
     assert_static_map_entry(
         &share.maps.nat4_static_map,
@@ -299,24 +275,15 @@ fn xdp_nat_static_egress() {
     drop(nat);
     drop(dummy);
     drop(share);
-    let _ = Command::new("ip").args(["link", "del", &nat_h]).output();
 }
 
+#[ignore = "requires root and veth pairs; run with --include-ignored"]
 #[test]
 fn xdp_nat_static_ingress() {
-    let pid = crate::tests::test_id();
-    let (nat_h, nat_p) = (format!("nath{pid}i"), format!("natp{pid}i"));
+    let pair = VethPair::create("nat");
+    let nat_p = pair.peer();
 
-    let _ = Command::new("ip").args(["link", "del", &nat_h]).output();
-    Command::new("ip")
-        .args(["link", "add", &nat_h, "type", "veth", "peer", "name", &nat_p])
-        .output()
-        .unwrap();
-    Command::new("ip").args(["link", "set", nat_h.as_str(), "up"]).output().unwrap();
-    Command::new("ip").args(["link", "set", nat_p.as_str(), "up"]).output().unwrap();
-    thread::sleep(Duration::from_millis(100));
-
-    let nat_h_i = if_nametoindex(nat_h.as_str()).unwrap() as u32;
+    let nat_h_i = pair.host_ifindex();
 
     let share_pin = pin_root("nat4i");
     let mut sb = ShareMapSkelBuilder::default();
@@ -348,11 +315,7 @@ fn xdp_nat_static_ingress() {
     );
 
     let pkt = build_tcp_pkt([10, 0, 0, 1], [203, 0, 113, 1], 9999, 8080);
-    for _ in 0..2 {
-        send_raw_packet(&nat_p, &pkt);
-        thread::sleep(Duration::from_millis(30));
-    }
-    thread::sleep(Duration::from_millis(500));
+    send_raw_packet(&nat_p, &pkt);
 
     assert_static_map_entry(
         &share.maps.nat4_static_map,
@@ -367,25 +330,16 @@ fn xdp_nat_static_ingress() {
     drop(nat);
     drop(dummy);
     drop(share);
-    let _ = Command::new("ip").args(["link", "del", &nat_h]).output();
 }
 
+#[ignore = "requires root and veth pairs; run with --include-ignored"]
 #[test]
 fn xdp_nat_dynamic_egress() {
-    let pid = crate::tests::test_id();
-    let (nat_h, nat_p) = (format!("nath{pid}d"), format!("natp{pid}d"));
+    let pair = VethPair::create("nat");
+    let nat_p = pair.peer();
 
-    let _ = Command::new("ip").args(["link", "del", &nat_h]).output();
-    Command::new("ip")
-        .args(["link", "add", &nat_h, "type", "veth", "peer", "name", &nat_p])
-        .output()
-        .unwrap();
-    Command::new("ip").args(["link", "set", nat_h.as_str(), "up"]).output().unwrap();
-    Command::new("ip").args(["link", "set", nat_p.as_str(), "up"]).output().unwrap();
-    thread::sleep(Duration::from_millis(100));
-
-    let nat_h_i = if_nametoindex(nat_h.as_str()).unwrap() as u32;
-    let nat_p_i = if_nametoindex(nat_p.as_str()).unwrap() as u32;
+    let nat_h_i = pair.host_ifindex();
+    let nat_p_i = pair.peer_ifindex();
 
     let share_pin = pin_root("nat4dyn");
     let mut sb = ShareMapSkelBuilder::default();
@@ -430,12 +384,16 @@ fn xdp_nat_dynamic_egress() {
     share.maps.wan_ip_binding.update(&wan_key, &wan_val, MapFlags::ANY).unwrap();
 
     let pkt = build_tcp_syn_pkt([10, 0, 0, 1], [93, 184, 216, 34], 12345, 80);
-    for _ in 0..3 {
-        send_raw_packet(&nat_p, &pkt);
-        thread::sleep(Duration::from_millis(30));
-    }
-    thread::sleep(Duration::from_millis(500));
+    send_raw_packet(&nat_p, &pkt);
 
+    wait_nat4_entry(
+        &nat.maps.nat4_egress_dyn_map,
+        1,
+        6,
+        12345,
+        [10, 0, 0, 1],
+        "egress dyn map entry",
+    );
     assert_egress_dyn_map_entry(
         &nat.maps.nat4_egress_dyn_map,
         1,
@@ -444,6 +402,14 @@ fn xdp_nat_dynamic_egress() {
         [10, 0, 0, 1],
         [203, 0, 113, 1],
         4096,
+    );
+    wait_nat4_entry(
+        &nat.maps.nat4_ingress_dyn_map,
+        0,
+        6,
+        4096,
+        [203, 0, 113, 1],
+        "ingress dyn map entry",
     );
     assert_dyn_map_entry(
         &nat.maps.nat4_ingress_dyn_map,
@@ -486,7 +452,7 @@ fn xdp_nat_dynamic_egress() {
         .unwrap();
 
     send_raw_packet(&nat_p, &pkt);
-    thread::sleep(Duration::from_millis(30));
+    settle(300);
 
     let ct_bytes = nat
         .maps
@@ -501,7 +467,6 @@ fn xdp_nat_dynamic_egress() {
     drop(nat);
     drop(dummy);
     drop(share);
-    let _ = Command::new("ip").args(["link", "del", &nat_h]).output();
 }
 
 fn build_tcp6_pkt(src: [u8; 16], dst: [u8; 16], src_port: u16, dst_port: u16) -> Vec<u8> {
@@ -515,21 +480,12 @@ fn build_tcp6_pkt(src: [u8; 16], dst: [u8; 16], src_port: u16, dst_port: u16) ->
     pkt
 }
 
+#[ignore = "requires root and veth pairs; run with --include-ignored"]
 #[test]
 fn xdp_nat_v6_egress() {
-    let pid = crate::tests::test_id();
-    let (nat_h, nat_p) = (format!("nath{pid}v6"), format!("natp{pid}v6"));
-
-    let _ = Command::new("ip").args(["link", "del", &nat_h]).output();
-    Command::new("ip")
-        .args(["link", "add", &nat_h, "type", "veth", "peer", "name", &nat_p])
-        .output()
-        .unwrap();
-    Command::new("ip").args(["link", "set", nat_h.as_str(), "up"]).output().unwrap();
-    Command::new("ip").args(["link", "set", nat_p.as_str(), "up"]).output().unwrap();
-    thread::sleep(Duration::from_millis(100));
-
-    let nat_h_i = if_nametoindex(nat_h.as_str()).unwrap() as u32;
+    let pair = VethPair::create("nat");
+    let nat_p = pair.peer();
+    let nat_h_i = pair.host_ifindex();
 
     let share_pin = pin_root("nat6e");
     let mut sb = ShareMapSkelBuilder::default();
@@ -559,12 +515,9 @@ fn xdp_nat_v6_egress() {
     let lan_prefix = [0xfd, 0x00, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1];
     let dst = [0x20, 0x01, 0x0d, 0xb8, 0x12, 0x34, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2];
     let pkt = build_tcp6_pkt(lan_prefix, dst, 12345, 80);
-    for _ in 0..2 {
-        send_raw_packet(&nat_p, &pkt);
-        thread::sleep(Duration::from_millis(30));
-    }
-    thread::sleep(Duration::from_millis(500));
+    send_raw_packet(&nat_p, &pkt);
 
+    wait_wan_ip_binding(&share.maps.wan_ip_binding, nat_h_i, 1, "wan ip binding entry");
     assert_wan_ip_binding(
         &share.maps.wan_ip_binding,
         nat_h_i,
@@ -577,26 +530,16 @@ fn xdp_nat_v6_egress() {
 
     drop(nat);
     drop(share);
-    let _ = Command::new("ip").args(["link", "del", &nat_h]).output();
 }
 
+#[ignore = "requires root and veth pairs; run with --include-ignored"]
 #[test]
 fn xdp_nat_firewall_pipeline() {
-    let _lock = XDP_NAT_LOCK.lock().unwrap();
-    let pid = crate::tests::test_id();
-    let (nat_h, nat_p) = (format!("nfh{pid}"), format!("nfp{pid}"));
+    let pair = VethPair::create("nf");
+    let nat_p = pair.peer();
 
-    let _ = Command::new("ip").args(["link", "del", &nat_h]).output();
-    Command::new("ip")
-        .args(["link", "add", &nat_h, "type", "veth", "peer", "name", &nat_p])
-        .output()
-        .unwrap();
-    Command::new("ip").args(["link", "set", nat_h.as_str(), "up"]).output().unwrap();
-    Command::new("ip").args(["link", "set", nat_p.as_str(), "up"]).output().unwrap();
-    thread::sleep(Duration::from_millis(100));
-
-    let nat_h_i = if_nametoindex(nat_h.as_str()).unwrap() as u32;
-    let nat_p_i = if_nametoindex(nat_p.as_str()).unwrap() as u32;
+    let nat_h_i = pair.host_ifindex();
+    let nat_p_i = pair.peer_ifindex();
 
     let share_pin = pin_root("pipeline");
     let mut sb = ShareMapSkelBuilder::default();
@@ -661,11 +604,7 @@ fn xdp_nat_firewall_pipeline() {
     share.maps.wan_ip_binding.update(&wan_key, &wan_val, MapFlags::ANY).unwrap();
 
     let pkt = build_tcp_pkt([192, 168, 1, 100], [10, 0, 0, 1], 80, 9999);
-    for _ in 0..2 {
-        send_raw_packet(&nat_p, &pkt);
-        thread::sleep(Duration::from_millis(30));
-    }
-    thread::sleep(Duration::from_millis(500));
+    send_raw_packet(&nat_p, &pkt);
 
     assert_static_map_entry(
         &share.maps.nat4_static_map,
@@ -692,11 +631,7 @@ fn xdp_nat_firewall_pipeline() {
     fw_key[4..8].copy_from_slice(&[203, 0, 113, 1]);
     fw.maps.firewall_block_ip4_map.update(&fw_key, &block_action, MapFlags::ANY).unwrap();
 
-    for _ in 0..2 {
-        send_raw_packet(&nat_p, &pkt);
-        thread::sleep(Duration::from_millis(30));
-    }
-    thread::sleep(Duration::from_millis(500));
+    send_raw_packet(&nat_p, &pkt);
 
     assert_static_map_entry(
         &share.maps.nat4_static_map,
@@ -728,7 +663,6 @@ fn xdp_nat_firewall_pipeline() {
     drop(nat);
     drop(dummy);
     drop(share);
-    let _ = Command::new("ip").args(["link", "del", &nat_h]).output();
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -814,21 +748,13 @@ fn build_ipv4_tcp_syn_frag(
     pkt
 }
 
+#[ignore = "requires root and veth pairs; run with --include-ignored"]
 #[test]
 fn xdp_nat_fragment_v4() {
     let pid = crate::tests::test_id();
-    let (nat_h, nat_p) = (format!("nath{pid}f4"), format!("natp{pid}f4"));
-
-    let _ = Command::new("ip").args(["link", "del", &nat_h]).output();
-    Command::new("ip")
-        .args(["link", "add", &nat_h, "type", "veth", "peer", "name", &nat_p])
-        .output()
-        .unwrap();
-    Command::new("ip").args(["link", "set", nat_h.as_str(), "up"]).output().unwrap();
-    Command::new("ip").args(["link", "set", nat_p.as_str(), "up"]).output().unwrap();
-    thread::sleep(Duration::from_millis(100));
-
-    let nat_h_i = if_nametoindex(nat_h.as_str()).unwrap() as u32;
+    let pair = VethPair::create("nat");
+    let nat_p = pair.peer();
+    let nat_h_i = pair.host_ifindex();
 
     let share_pin = pin_root("frag4e");
     let mut sb = ShareMapSkelBuilder::default();
@@ -868,12 +794,16 @@ fn xdp_nat_fragment_v4() {
 
     let syn_frag =
         build_ipv4_tcp_syn_frag([10, 0, 0, 1], [93, 184, 216, 34], 22345, 80, frag_id, 0, true);
-    for _ in 0..2 {
-        send_raw_packet(&nat_p, &syn_frag);
-        thread::sleep(Duration::from_millis(30));
-    }
-    thread::sleep(Duration::from_millis(500));
+    send_raw_packet(&nat_p, &syn_frag);
 
+    wait_nat4_entry(
+        &nat.maps.nat4_egress_dyn_map,
+        1,
+        6,
+        22345,
+        [10, 0, 0, 1],
+        "egress dyn map entry",
+    );
     assert_egress_dyn_map_entry(
         &nat.maps.nat4_egress_dyn_map,
         1,
@@ -882,6 +812,14 @@ fn xdp_nat_fragment_v4() {
         [10, 0, 0, 1],
         [203, 0, 113, 1],
         8192,
+    );
+    wait_nat4_entry(
+        &nat.maps.nat4_ingress_dyn_map,
+        0,
+        6,
+        8192,
+        [203, 0, 113, 1],
+        "ingress dyn map entry",
     );
     assert_dyn_map_entry(
         &nat.maps.nat4_ingress_dyn_map,
@@ -895,24 +833,14 @@ fn xdp_nat_fragment_v4() {
 
     drop(nat);
     drop(share);
-    let _ = Command::new("ip").args(["link", "del", &nat_h]).output();
 }
 
+#[ignore = "requires root and veth pairs; run with --include-ignored"]
 #[test]
 fn xdp_nat_v6_ingress() {
-    let pid = crate::tests::test_id();
-    let (nat_h, nat_p) = (format!("nath{pid}v6i"), format!("natp{pid}v6i"));
-
-    let _ = Command::new("ip").args(["link", "del", &nat_h]).output();
-    Command::new("ip")
-        .args(["link", "add", &nat_h, "type", "veth", "peer", "name", &nat_p])
-        .output()
-        .unwrap();
-    Command::new("ip").args(["link", "set", nat_h.as_str(), "up"]).output().unwrap();
-    Command::new("ip").args(["link", "set", nat_p.as_str(), "up"]).output().unwrap();
-    thread::sleep(Duration::from_millis(100));
-
-    let nat_h_i = if_nametoindex(nat_h.as_str()).unwrap() as u32;
+    let pair = VethPair::create("nat");
+    let nat_p = pair.peer();
+    let nat_h_i = pair.host_ifindex();
 
     let share_pin = pin_root("nat6ie");
     let mut sb = ShareMapSkelBuilder::default();
@@ -942,12 +870,9 @@ fn xdp_nat_v6_ingress() {
     let wan_src = [0x20, 0x01, 0x0d, 0xb8, 0x12, 0x34, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2];
     let wan_dst = [0x20, 0x01, 0x0d, 0xb8, 0x56, 0x78, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1];
     let pkt = build_tcp6_pkt(wan_src, wan_dst, 9999, 8080);
-    for _ in 0..2 {
-        send_raw_packet(&nat_p, &pkt);
-        thread::sleep(Duration::from_millis(30));
-    }
-    thread::sleep(Duration::from_millis(500));
+    send_raw_packet(&nat_p, &pkt);
 
+    wait_wan_ip_binding(&share.maps.wan_ip_binding, nat_h_i, 1, "wan ip binding entry");
     assert_wan_ip_binding(
         &share.maps.wan_ip_binding,
         nat_h_i,
@@ -960,24 +885,15 @@ fn xdp_nat_v6_ingress() {
 
     drop(nat);
     drop(share);
-    let _ = Command::new("ip").args(["link", "del", &nat_h]).output();
 }
 
+#[ignore = "requires root and veth pairs; run with --include-ignored"]
 #[test]
 fn xdp_nat_ct_dynamic_multi_pkt() {
-    let pid = crate::tests::test_id();
-    let (nat_h, nat_p) = (format!("nath{pid}ct"), format!("natp{pid}ct"));
+    let pair = VethPair::create("nat");
+    let nat_p = pair.peer();
 
-    let _ = Command::new("ip").args(["link", "del", &nat_h]).output();
-    Command::new("ip")
-        .args(["link", "add", &nat_h, "type", "veth", "peer", "name", &nat_p])
-        .output()
-        .unwrap();
-    Command::new("ip").args(["link", "set", nat_h.as_str(), "up"]).output().unwrap();
-    Command::new("ip").args(["link", "set", nat_p.as_str(), "up"]).output().unwrap();
-    thread::sleep(Duration::from_millis(100));
-
-    let nat_h_i = if_nametoindex(nat_h.as_str()).unwrap() as u32;
+    let nat_h_i = pair.host_ifindex();
 
     let share_pin = pin_root("ctmulti");
     let mut sb = ShareMapSkelBuilder::default();
@@ -1014,12 +930,16 @@ fn xdp_nat_ct_dynamic_multi_pkt() {
     }
 
     let syn_pkt = build_tcp_syn_pkt([10, 0, 0, 2], [93, 184, 216, 34], 33445, 80);
-    for _ in 0..3 {
-        send_raw_packet(&nat_p, &syn_pkt);
-        thread::sleep(Duration::from_millis(30));
-    }
-    thread::sleep(Duration::from_millis(500));
+    send_raw_packet(&nat_p, &syn_pkt);
 
+    wait_nat4_entry(
+        &nat.maps.nat4_egress_dyn_map,
+        1,
+        6,
+        33445,
+        [10, 0, 0, 2],
+        "egress dyn map entry",
+    );
     assert_egress_dyn_map_entry(
         &nat.maps.nat4_egress_dyn_map,
         1,
@@ -1028,6 +948,14 @@ fn xdp_nat_ct_dynamic_multi_pkt() {
         [10, 0, 0, 2],
         [203, 0, 113, 1],
         12288,
+    );
+    wait_nat4_entry(
+        &nat.maps.nat4_ingress_dyn_map,
+        0,
+        6,
+        12288,
+        [203, 0, 113, 1],
+        "ingress dyn map entry",
     );
     assert_dyn_map_entry(
         &nat.maps.nat4_ingress_dyn_map,
@@ -1041,7 +969,6 @@ fn xdp_nat_ct_dynamic_multi_pkt() {
 
     drop(nat);
     drop(share);
-    let _ = Command::new("ip").args(["link", "del", &nat_h]).output();
 }
 
 fn write_dyn_mapping_v4(
@@ -1113,22 +1040,15 @@ fn write_frag_cache_entry(
     map.update(&k, &v, MapFlags::ANY).unwrap();
 }
 
+#[ignore = "requires root and veth pairs; run with --include-ignored"]
 #[test]
 fn xdp_nat_fragment_ingress() {
     let pid = crate::tests::test_id();
-    let (nat_h, nat_p) = (format!("nath{pid}fi"), format!("natp{pid}fi"));
+    let pair = VethPair::create("nat");
+    let nat_p = pair.peer();
 
-    let _ = Command::new("ip").args(["link", "del", &nat_h]).output();
-    Command::new("ip")
-        .args(["link", "add", &nat_h, "type", "veth", "peer", "name", &nat_p])
-        .output()
-        .unwrap();
-    Command::new("ip").args(["link", "set", nat_h.as_str(), "up"]).output().unwrap();
-    Command::new("ip").args(["link", "set", nat_p.as_str(), "up"]).output().unwrap();
-    thread::sleep(Duration::from_millis(100));
-
-    let nat_h_i = if_nametoindex(nat_h.as_str()).unwrap() as u32;
-    let nat_p_i = if_nametoindex(nat_p.as_str()).unwrap() as u32;
+    let nat_h_i = pair.host_ifindex();
+    let nat_p_i = pair.peer_ifindex();
 
     let share_pin = pin_root("fragin");
     let mut sb = ShareMapSkelBuilder::default();
@@ -1192,12 +1112,16 @@ fn xdp_nat_fragment_ingress() {
         0,
         true,
     );
-    for _ in 0..2 {
-        send_raw_packet(&nat_p, &pkt);
-        thread::sleep(Duration::from_millis(30));
-    }
-    thread::sleep(Duration::from_millis(500));
+    send_raw_packet(&nat_p, &pkt);
 
+    wait_nat4_entry(
+        &nat.maps.nat4_egress_dyn_map,
+        1,
+        6,
+        12345,
+        [10, 0, 0, 3],
+        "egress dyn map entry",
+    );
     assert_egress_dyn_map_entry(
         &nat.maps.nat4_egress_dyn_map,
         1,
@@ -1206,6 +1130,14 @@ fn xdp_nat_fragment_ingress() {
         [10, 0, 0, 3],
         [203, 0, 113, 1],
         4097,
+    );
+    wait_nat4_entry(
+        &nat.maps.nat4_ingress_dyn_map,
+        0,
+        6,
+        4097,
+        [203, 0, 113, 1],
+        "ingress dyn map entry",
     );
     assert_dyn_map_entry(
         &nat.maps.nat4_ingress_dyn_map,
@@ -1220,7 +1152,6 @@ fn xdp_nat_fragment_ingress() {
     drop(nat);
     drop(dummy);
     drop(share);
-    let _ = Command::new("ip").args(["link", "del", &nat_h]).output();
 }
 
 fn build_udp_pkt(src_ip: [u8; 4], dst_ip: [u8; 4], src_port: u16, dst_port: u16) -> Vec<u8> {
@@ -1292,20 +1223,13 @@ fn build_icmp_error_pkt(
     pkt
 }
 
+#[ignore = "requires root and veth pairs; run with --include-ignored"]
 #[test]
 fn xdp_nat_dynamic_ingress() {
-    let pid = crate::tests::test_id();
-    let (nat_h, nat_p) = (format!("nath{pid}di"), format!("natp{pid}di"));
-    let _ = Command::new("ip").args(["link", "del", &nat_h]).output();
-    Command::new("ip")
-        .args(["link", "add", &nat_h, "type", "veth", "peer", "name", &nat_p])
-        .output()
-        .unwrap();
-    Command::new("ip").args(["link", "set", nat_h.as_str(), "up"]).output().unwrap();
-    Command::new("ip").args(["link", "set", nat_p.as_str(), "up"]).output().unwrap();
-    thread::sleep(Duration::from_millis(100));
-    let nat_h_i = if_nametoindex(nat_h.as_str()).unwrap() as u32;
-    let nat_p_i = if_nametoindex(nat_p.as_str()).unwrap() as u32;
+    let pair = VethPair::create("nat");
+    let nat_p = pair.peer();
+    let nat_h_i = pair.host_ifindex();
+    let nat_p_i = pair.peer_ifindex();
 
     let share_pin = pin_root("nat4dyn_i");
     let mut sb = ShareMapSkelBuilder::default();
@@ -1351,12 +1275,16 @@ fn xdp_nat_dynamic_ingress() {
     );
 
     let pkt = build_tcp_pkt([93, 184, 216, 34], [203, 0, 113, 1], 8888, 9090);
-    for _ in 0..2 {
-        send_raw_packet(&nat_p, &pkt);
-        thread::sleep(Duration::from_millis(30));
-    }
-    thread::sleep(Duration::from_millis(500));
+    send_raw_packet(&nat_p, &pkt);
 
+    wait_nat4_entry(
+        &nat.maps.nat4_egress_dyn_map,
+        1,
+        6,
+        22222,
+        [10, 0, 0, 5],
+        "egress dyn map entry",
+    );
     assert_egress_dyn_map_entry(
         &nat.maps.nat4_egress_dyn_map,
         1,
@@ -1365,6 +1293,14 @@ fn xdp_nat_dynamic_ingress() {
         [10, 0, 0, 5],
         [203, 0, 113, 1],
         9090,
+    );
+    wait_nat4_entry(
+        &nat.maps.nat4_ingress_dyn_map,
+        0,
+        6,
+        9090,
+        [203, 0, 113, 1],
+        "ingress dyn map entry",
     );
     assert_dyn_map_entry(
         &nat.maps.nat4_ingress_dyn_map,
@@ -1379,23 +1315,15 @@ fn xdp_nat_dynamic_ingress() {
     drop(nat);
     drop(dummy);
     drop(share);
-    let _ = Command::new("ip").args(["link", "del", &nat_h]).output();
 }
 
+#[ignore = "requires root and veth pairs; run with --include-ignored"]
 #[test]
 fn xdp_nat_udp_egress() {
-    let pid = crate::tests::test_id();
-    let (nat_h, nat_p) = (format!("nath{pid}ue"), format!("natp{pid}ue"));
-    let _ = Command::new("ip").args(["link", "del", &nat_h]).output();
-    Command::new("ip")
-        .args(["link", "add", &nat_h, "type", "veth", "peer", "name", &nat_p])
-        .output()
-        .unwrap();
-    Command::new("ip").args(["link", "set", nat_h.as_str(), "up"]).output().unwrap();
-    Command::new("ip").args(["link", "set", nat_p.as_str(), "up"]).output().unwrap();
-    thread::sleep(Duration::from_millis(100));
-    let nat_h_i = if_nametoindex(nat_h.as_str()).unwrap() as u32;
-    let nat_p_i = if_nametoindex(nat_p.as_str()).unwrap() as u32;
+    let pair = VethPair::create("nat");
+    let nat_p = pair.peer();
+    let nat_h_i = pair.host_ifindex();
+    let nat_p_i = pair.peer_ifindex();
 
     let share_pin = pin_root("udp_eg");
     let mut sb = ShareMapSkelBuilder::default();
@@ -1435,12 +1363,16 @@ fn xdp_nat_udp_egress() {
     }
 
     let pkt = build_udp_pkt([10, 0, 0, 6], [93, 184, 216, 34], 22345, 53);
-    for _ in 0..3 {
-        send_raw_packet(&nat_p, &pkt);
-        thread::sleep(Duration::from_millis(30));
-    }
-    thread::sleep(Duration::from_millis(500));
+    send_raw_packet(&nat_p, &pkt);
 
+    wait_nat4_entry(
+        &nat.maps.nat4_egress_dyn_map,
+        1,
+        17,
+        22345,
+        [10, 0, 0, 6],
+        "egress dyn map entry",
+    );
     assert_egress_dyn_map_entry(
         &nat.maps.nat4_egress_dyn_map,
         1,
@@ -1449,6 +1381,14 @@ fn xdp_nat_udp_egress() {
         [10, 0, 0, 6],
         [203, 0, 113, 1],
         20480,
+    );
+    wait_nat4_entry(
+        &nat.maps.nat4_ingress_dyn_map,
+        0,
+        17,
+        20480,
+        [203, 0, 113, 1],
+        "ingress dyn map entry",
     );
     assert_dyn_map_entry(
         &nat.maps.nat4_ingress_dyn_map,
@@ -1463,23 +1403,15 @@ fn xdp_nat_udp_egress() {
     drop(nat);
     drop(dummy);
     drop(share);
-    let _ = Command::new("ip").args(["link", "del", &nat_h]).output();
 }
 
+#[ignore = "requires root and veth pairs; run with --include-ignored"]
 #[test]
 fn xdp_nat_udp_ingress() {
-    let pid = crate::tests::test_id();
-    let (nat_h, nat_p) = (format!("nath{pid}ui"), format!("natp{pid}ui"));
-    let _ = Command::new("ip").args(["link", "del", &nat_h]).output();
-    Command::new("ip")
-        .args(["link", "add", &nat_h, "type", "veth", "peer", "name", &nat_p])
-        .output()
-        .unwrap();
-    Command::new("ip").args(["link", "set", nat_h.as_str(), "up"]).output().unwrap();
-    Command::new("ip").args(["link", "set", nat_p.as_str(), "up"]).output().unwrap();
-    thread::sleep(Duration::from_millis(100));
-    let nat_h_i = if_nametoindex(nat_h.as_str()).unwrap() as u32;
-    let nat_p_i = if_nametoindex(nat_p.as_str()).unwrap() as u32;
+    let pair = VethPair::create("nat");
+    let nat_p = pair.peer();
+    let nat_h_i = pair.host_ifindex();
+    let nat_p_i = pair.peer_ifindex();
 
     let share_pin = pin_root("udp_in");
     let mut sb = ShareMapSkelBuilder::default();
@@ -1525,12 +1457,16 @@ fn xdp_nat_udp_ingress() {
     );
 
     let pkt = build_udp_pkt([93, 184, 216, 34], [203, 0, 113, 1], 53, 9091);
-    for _ in 0..2 {
-        send_raw_packet(&nat_p, &pkt);
-        thread::sleep(Duration::from_millis(30));
-    }
-    thread::sleep(Duration::from_millis(500));
+    send_raw_packet(&nat_p, &pkt);
 
+    wait_nat4_entry(
+        &nat.maps.nat4_egress_dyn_map,
+        1,
+        17,
+        33445,
+        [10, 0, 0, 7],
+        "egress dyn map entry",
+    );
     assert_egress_dyn_map_entry(
         &nat.maps.nat4_egress_dyn_map,
         1,
@@ -1539,6 +1475,14 @@ fn xdp_nat_udp_ingress() {
         [10, 0, 0, 7],
         [203, 0, 113, 1],
         9091,
+    );
+    wait_nat4_entry(
+        &nat.maps.nat4_ingress_dyn_map,
+        0,
+        17,
+        9091,
+        [203, 0, 113, 1],
+        "ingress dyn map entry",
     );
     assert_dyn_map_entry(
         &nat.maps.nat4_ingress_dyn_map,
@@ -1553,23 +1497,16 @@ fn xdp_nat_udp_ingress() {
     drop(nat);
     drop(dummy);
     drop(share);
-    let _ = Command::new("ip").args(["link", "del", &nat_h]).output();
 }
 
+#[ignore = "requires root and veth pairs; run with --include-ignored"]
 #[test]
 fn xdp_nat_fragment_middle() {
     let pid = crate::tests::test_id();
-    let (nat_h, nat_p) = (format!("nath{pid}fm"), format!("natp{pid}fm"));
-    let _ = Command::new("ip").args(["link", "del", &nat_h]).output();
-    Command::new("ip")
-        .args(["link", "add", &nat_h, "type", "veth", "peer", "name", &nat_p])
-        .output()
-        .unwrap();
-    Command::new("ip").args(["link", "set", nat_h.as_str(), "up"]).output().unwrap();
-    Command::new("ip").args(["link", "set", nat_p.as_str(), "up"]).output().unwrap();
-    thread::sleep(Duration::from_millis(100));
-    let nat_h_i = if_nametoindex(nat_h.as_str()).unwrap() as u32;
-    let nat_p_i = if_nametoindex(nat_p.as_str()).unwrap() as u32;
+    let pair = VethPair::create("nat");
+    let nat_p = pair.peer();
+    let nat_h_i = pair.host_ifindex();
+    let nat_p_i = pair.peer_ifindex();
 
     let share_pin = pin_root("fragmid");
     let mut sb = ShareMapSkelBuilder::default();
@@ -1599,40 +1536,29 @@ fn xdp_nat_fragment_middle() {
 
     let first =
         build_ipv4_tcp_syn_frag([10, 0, 0, 8], [93, 184, 216, 34], 22348, 80, frag_id, 0, true);
-    for _ in 0..2 {
-        send_raw_packet(&nat_p, &first);
-        thread::sleep(Duration::from_millis(10));
-    }
+    send_raw_packet(&nat_p, &first);
 
     let middle =
         build_ipv4_fragment([10, 0, 0, 8], [93, 184, 216, 34], frag_id, 8, true, 0, 0, &[0u8; 20]);
-    for _ in 0..2 {
-        send_raw_packet(&nat_p, &middle);
-        thread::sleep(Duration::from_millis(10));
-    }
-    thread::sleep(Duration::from_millis(300));
+    send_raw_packet(&nat_p, &middle);
 
+    settle(300);
+
+    settle(300);
+    settle(300);
     assert_no_egress_dyn_map_entry(&nat.maps.nat4_egress_dyn_map, 1, 6, 22348, [10, 0, 0, 8]);
 
     drop(nat);
     drop(dummy);
     drop(share);
-    let _ = Command::new("ip").args(["link", "del", &nat_h]).output();
 }
 
+#[ignore = "requires root and veth pairs; run with --include-ignored"]
 #[test]
 fn xdp_nat_icmp_error_egress() {
-    let pid = crate::tests::test_id();
-    let (nat_h, nat_p) = (format!("nath{pid}ic"), format!("natp{pid}ic"));
-    let _ = Command::new("ip").args(["link", "del", &nat_h]).output();
-    Command::new("ip")
-        .args(["link", "add", &nat_h, "type", "veth", "peer", "name", &nat_p])
-        .output()
-        .unwrap();
-    Command::new("ip").args(["link", "set", nat_h.as_str(), "up"]).output().unwrap();
-    Command::new("ip").args(["link", "set", nat_p.as_str(), "up"]).output().unwrap();
-    thread::sleep(Duration::from_millis(100));
-    let nat_h_i = if_nametoindex(nat_h.as_str()).unwrap() as u32;
+    let pair = VethPair::create("nat");
+    let nat_p = pair.peer();
+    let nat_h_i = pair.host_ifindex();
 
     let share_pin = pin_root("icmperr");
     let mut sb = ShareMapSkelBuilder::default();
@@ -1682,11 +1608,7 @@ fn xdp_nat_icmp_error_egress() {
         3,
         0,
     );
-    for _ in 0..2 {
-        send_raw_packet(&nat_p, &pkt);
-        thread::sleep(Duration::from_millis(30));
-    }
-    thread::sleep(Duration::from_millis(500));
+    send_raw_packet(&nat_p, &pkt);
 
     assert_static_map_entry(
         &share.maps.nat4_static_map,
@@ -1709,22 +1631,14 @@ fn xdp_nat_icmp_error_egress() {
 
     drop(nat);
     drop(share);
-    let _ = Command::new("ip").args(["link", "del", &nat_h]).output();
 }
 
+#[ignore = "requires root and veth pairs; run with --include-ignored"]
 #[test]
 fn xdp_nat_static_ingress_mark() {
-    let pid = crate::tests::test_id();
-    let (nat_h, nat_p) = (format!("nath{pid}sm"), format!("natp{pid}sm"));
-    let _ = Command::new("ip").args(["link", "del", &nat_h]).output();
-    Command::new("ip")
-        .args(["link", "add", &nat_h, "type", "veth", "peer", "name", &nat_p])
-        .output()
-        .unwrap();
-    Command::new("ip").args(["link", "set", nat_h.as_str(), "up"]).output().unwrap();
-    Command::new("ip").args(["link", "set", nat_p.as_str(), "up"]).output().unwrap();
-    thread::sleep(Duration::from_millis(100));
-    let nat_h_i = if_nametoindex(nat_h.as_str()).unwrap() as u32;
+    let pair = VethPair::create("nat");
+    let nat_p = pair.peer();
+    let nat_h_i = pair.host_ifindex();
 
     let share_pin = pin_root("nat4mark");
     let mut sb = ShareMapSkelBuilder::default();
@@ -1750,11 +1664,7 @@ fn xdp_nat_static_ingress_mark() {
     );
 
     let pkt = build_tcp_pkt([10, 0, 0, 1], [203, 0, 113, 1], 9999, 8080);
-    for _ in 0..2 {
-        send_raw_packet(&nat_p, &pkt);
-        thread::sleep(Duration::from_millis(30));
-    }
-    thread::sleep(Duration::from_millis(500));
+    send_raw_packet(&nat_p, &pkt);
 
     assert_static_map_entry(
         &share.maps.nat4_static_map,
@@ -1768,26 +1678,16 @@ fn xdp_nat_static_ingress_mark() {
 
     drop(nat);
     drop(share);
-    let _ = Command::new("ip").args(["link", "del", &nat_h]).output();
 }
 
+#[ignore = "requires root and veth pairs; run with --include-ignored"]
 #[test]
 fn xdp_nat_chain_pipeline() {
-    let _lock = XDP_NAT_LOCK.lock().unwrap();
-    let pid = crate::tests::test_id();
-    let (nat_h, nat_p) = (format!("nch{pid}"), format!("ncp{pid}"));
+    let pair = VethPair::create("nc");
+    let nat_p = pair.peer();
 
-    let _ = Command::new("ip").args(["link", "del", &nat_h]).output();
-    Command::new("ip")
-        .args(["link", "add", &nat_h, "type", "veth", "peer", "name", &nat_p])
-        .output()
-        .unwrap();
-    Command::new("ip").args(["link", "set", nat_h.as_str(), "up"]).output().unwrap();
-    Command::new("ip").args(["link", "set", nat_p.as_str(), "up"]).output().unwrap();
-    thread::sleep(Duration::from_millis(100));
-
-    let nat_h_i = if_nametoindex(nat_h.as_str()).unwrap() as u32;
-    let nat_p_i = if_nametoindex(nat_p.as_str()).unwrap() as u32;
+    let nat_h_i = pair.host_ifindex();
+    let nat_p_i = pair.peer_ifindex();
 
     let share_pin = pin_root("chain_pipe");
     let mut sb = ShareMapSkelBuilder::default();
@@ -1861,11 +1761,7 @@ fn xdp_nat_chain_pipeline() {
     );
 
     let pkt = build_tcp_pkt([192, 168, 1, 100], [10, 0, 0, 1], 80, 9999);
-    for _ in 0..2 {
-        send_raw_packet(&nat_p, &pkt);
-        thread::sleep(Duration::from_millis(30));
-    }
-    thread::sleep(Duration::from_millis(500));
+    send_raw_packet(&nat_p, &pkt);
 
     assert_static_map_entry(
         &share.maps.nat4_static_map,
@@ -1892,11 +1788,7 @@ fn xdp_nat_chain_pipeline() {
     fw_key[4..8].copy_from_slice(&[203, 0, 113, 1]);
     fw.maps.firewall_block_ip4_map.update(&fw_key, &block_action, MapFlags::ANY).unwrap();
 
-    for _ in 0..2 {
-        send_raw_packet(&nat_p, &pkt);
-        thread::sleep(Duration::from_millis(30));
-    }
-    thread::sleep(Duration::from_millis(500));
+    send_raw_packet(&nat_p, &pkt);
 
     assert_static_map_entry(
         &share.maps.nat4_static_map,
@@ -1929,5 +1821,4 @@ fn xdp_nat_chain_pipeline() {
     drop(dummy);
     drop(chain);
     drop(share);
-    let _ = Command::new("ip").args(["link", "del", &nat_h]).output();
 }

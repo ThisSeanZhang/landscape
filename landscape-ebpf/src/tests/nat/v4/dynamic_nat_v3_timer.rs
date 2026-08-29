@@ -263,13 +263,11 @@ fn run_resolve(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tests::nat::NAT_V3_TEST_LOCK;
 
     #[test]
     fn resolve_rejects_previous_generation_after_wrap_to_zero() {
-        let _guard = NAT_V3_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let mut builder = TestNatV3TimerSkelBuilder::default();
-        let pin_root = crate::tests::nat::isolated_pin_root("nat-v4-dynamic-v3-timer");
+        let pin_root = crate::tests::isolated_pin_root("nat-v4-dynamic-v3-timer");
         builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
         let mut open_object = MaybeUninit::uninit();
         let open = builder.open(&mut open_object).unwrap();
@@ -286,9 +284,8 @@ mod tests {
 
     #[test]
     fn resolve_accepts_matching_zero_generation() {
-        let _guard = NAT_V3_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let mut builder = TestNatV3TimerSkelBuilder::default();
-        let pin_root = crate::tests::nat::isolated_pin_root("nat-v4-dynamic-v3-timer");
+        let pin_root = crate::tests::isolated_pin_root("nat-v4-dynamic-v3-timer");
         builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
         let mut open_object = MaybeUninit::uninit();
         let open = builder.open(&mut open_object).unwrap();
@@ -306,9 +303,8 @@ mod tests {
 
     #[test]
     fn resolve_static_ct_does_not_require_generation_match() {
-        let _guard = NAT_V3_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let mut builder = TestNatV3TimerSkelBuilder::default();
-        let pin_root = crate::tests::nat::isolated_pin_root("nat-v4-dynamic-v3-timer");
+        let pin_root = crate::tests::isolated_pin_root("nat-v4-dynamic-v3-timer");
         builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
         let mut open_object = MaybeUninit::uninit();
         let open = builder.open(&mut open_object).unwrap();
@@ -324,9 +320,8 @@ mod tests {
 
     #[test]
     fn advance_reactivates_release_with_single_cas() {
-        let _guard = NAT_V3_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let mut builder = TestNatV3TimerSkelBuilder::default();
-        let pin_root = crate::tests::nat::isolated_pin_root("nat-v4-dynamic-v3-timer");
+        let pin_root = crate::tests::isolated_pin_root("nat-v4-dynamic-v3-timer");
         builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
         let mut open_object = MaybeUninit::uninit();
         let open = builder.open(&mut open_object).unwrap();
@@ -341,9 +336,8 @@ mod tests {
 
     #[test]
     fn advance_does_not_reactivate_cleanup_state() {
-        let _guard = NAT_V3_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let mut builder = TestNatV3TimerSkelBuilder::default();
-        let pin_root = crate::tests::nat::isolated_pin_root("nat-v4-dynamic-v3-timer");
+        let pin_root = crate::tests::isolated_pin_root("nat-v4-dynamic-v3-timer");
         builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
         let mut open_object = MaybeUninit::uninit();
         let open = builder.open(&mut open_object).unwrap();
@@ -358,9 +352,8 @@ mod tests {
 
     #[test]
     fn release_generation_mismatch_deletes_only_ct() {
-        let _guard = NAT_V3_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let mut builder = TestNatV3TimerSkelBuilder::default();
-        let pin_root = crate::tests::nat::isolated_pin_root("nat-v4-dynamic-v3-timer");
+        let pin_root = crate::tests::isolated_pin_root("nat-v4-dynamic-v3-timer");
         builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
         let mut open_object = MaybeUninit::uninit();
         let open = builder.open(&mut open_object).unwrap();
@@ -382,9 +375,8 @@ mod tests {
 
     #[test]
     fn release_active_two_decrements_ref() {
-        let _guard = NAT_V3_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let mut builder = TestNatV3TimerSkelBuilder::default();
-        let pin_root = crate::tests::nat::isolated_pin_root("nat-v4-dynamic-v3-timer");
+        let pin_root = crate::tests::isolated_pin_root("nat-v4-dynamic-v3-timer");
         builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
         let mut open_object = MaybeUninit::uninit();
         let open = builder.open(&mut open_object).unwrap();
@@ -405,9 +397,8 @@ mod tests {
 
     #[test]
     fn timeout2_bi_syn_transitions_to_release_with_tcp_timeout() {
-        let _guard = NAT_V3_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let mut builder = TestNatV3TimerSkelBuilder::default();
-        let pin_root = crate::tests::nat::isolated_pin_root("nat-v4-dynamic-v3-timer");
+        let pin_root = crate::tests::isolated_pin_root("nat-v4-dynamic-v3-timer");
         builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
         let mut open_object = MaybeUninit::uninit();
         let open = builder.open(&mut open_object).unwrap();
@@ -428,9 +419,8 @@ mod tests {
 
     #[test]
     fn active_transitions_to_timeout1_with_report_interval() {
-        let _guard = NAT_V3_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let mut builder = TestNatV3TimerSkelBuilder::default();
-        let pin_root = crate::tests::nat::isolated_pin_root("nat-v4-dynamic-v3-timer");
+        let pin_root = crate::tests::isolated_pin_root("nat-v4-dynamic-v3-timer");
         builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
         let mut open_object = MaybeUninit::uninit();
         let open = builder.open(&mut open_object).unwrap();
@@ -447,9 +437,8 @@ mod tests {
 
     #[test]
     fn timeout1_transitions_to_timeout2_with_report_interval() {
-        let _guard = NAT_V3_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let mut builder = TestNatV3TimerSkelBuilder::default();
-        let pin_root = crate::tests::nat::isolated_pin_root("nat-v4-dynamic-v3-timer");
+        let pin_root = crate::tests::isolated_pin_root("nat-v4-dynamic-v3-timer");
         builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
         let mut open_object = MaybeUninit::uninit();
         let open = builder.open(&mut open_object).unwrap();
@@ -466,9 +455,8 @@ mod tests {
 
     #[test]
     fn timeout2_tcp_non_syn_uses_tcp_syn_timeout() {
-        let _guard = NAT_V3_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let mut builder = TestNatV3TimerSkelBuilder::default();
-        let pin_root = crate::tests::nat::isolated_pin_root("nat-v4-dynamic-v3-timer");
+        let pin_root = crate::tests::isolated_pin_root("nat-v4-dynamic-v3-timer");
         builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
         let mut open_object = MaybeUninit::uninit();
         let open = builder.open(&mut open_object).unwrap();
@@ -492,9 +480,8 @@ mod tests {
 
     #[test]
     fn timeout2_udp_uses_udp_timeout() {
-        let _guard = NAT_V3_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let mut builder = TestNatV3TimerSkelBuilder::default();
-        let pin_root = crate::tests::nat::isolated_pin_root("nat-v4-dynamic-v3-timer");
+        let pin_root = crate::tests::isolated_pin_root("nat-v4-dynamic-v3-timer");
         builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
         let mut open_object = MaybeUninit::uninit();
         let open = builder.open(&mut open_object).unwrap();
@@ -519,9 +506,8 @@ mod tests {
 
     #[test]
     fn release_last_ref_transitions_to_delete_egress() {
-        let _guard = NAT_V3_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let mut builder = TestNatV3TimerSkelBuilder::default();
-        let pin_root = crate::tests::nat::isolated_pin_root("nat-v4-dynamic-v3-timer");
+        let pin_root = crate::tests::isolated_pin_root("nat-v4-dynamic-v3-timer");
         builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
         let mut open_object = MaybeUninit::uninit();
         let open = builder.open(&mut open_object).unwrap();
@@ -542,9 +528,8 @@ mod tests {
 
     #[test]
     fn delete_egress_removes_old_key_and_transitions_to_delete_ingress() {
-        let _guard = NAT_V3_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let mut builder = TestNatV3TimerSkelBuilder::default();
-        let pin_root = crate::tests::nat::isolated_pin_root("nat-v4-dynamic-v3-timer");
+        let pin_root = crate::tests::isolated_pin_root("nat-v4-dynamic-v3-timer");
         builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
         let mut open_object = MaybeUninit::uninit();
         let open = builder.open(&mut open_object).unwrap();
@@ -566,9 +551,8 @@ mod tests {
 
     #[test]
     fn delete_egress_preserves_retargeted_mapping() {
-        let _guard = NAT_V3_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let mut builder = TestNatV3TimerSkelBuilder::default();
-        let pin_root = crate::tests::nat::isolated_pin_root("nat-v4-dynamic-v3-timer");
+        let pin_root = crate::tests::isolated_pin_root("nat-v4-dynamic-v3-timer");
         builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
         let mut open_object = MaybeUninit::uninit();
         let open = builder.open(&mut open_object).unwrap();
@@ -592,9 +576,8 @@ mod tests {
 
     #[test]
     fn delete_ingress_removes_same_generation_and_transitions_to_push_queue() {
-        let _guard = NAT_V3_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let mut builder = TestNatV3TimerSkelBuilder::default();
-        let pin_root = crate::tests::nat::isolated_pin_root("nat-v4-dynamic-v3-timer");
+        let pin_root = crate::tests::isolated_pin_root("nat-v4-dynamic-v3-timer");
         builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
         let mut open_object = MaybeUninit::uninit();
         let open = builder.open(&mut open_object).unwrap();
@@ -617,9 +600,8 @@ mod tests {
 
     #[test]
     fn delete_ingress_generation_mismatch_stops_cleanup() {
-        let _guard = NAT_V3_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let mut builder = TestNatV3TimerSkelBuilder::default();
-        let pin_root = crate::tests::nat::isolated_pin_root("nat-v4-dynamic-v3-timer");
+        let pin_root = crate::tests::isolated_pin_root("nat-v4-dynamic-v3-timer");
         builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
         let mut open_object = MaybeUninit::uninit();
         let open = builder.open(&mut open_object).unwrap();
@@ -641,9 +623,8 @@ mod tests {
 
     #[test]
     fn push_queue_retries_and_then_deletes_ct() {
-        let _guard = NAT_V3_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let mut builder = TestNatV3TimerSkelBuilder::default();
-        let pin_root = crate::tests::nat::isolated_pin_root("nat-v4-dynamic-v3-timer");
+        let pin_root = crate::tests::isolated_pin_root("nat-v4-dynamic-v3-timer");
         builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
         let mut open_object = MaybeUninit::uninit();
         let open = builder.open(&mut open_object).unwrap();
@@ -667,9 +648,8 @@ mod tests {
 
     #[test]
     fn full_release_cleanup_sequence_completes() {
-        let _guard = NAT_V3_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let mut builder = TestNatV3TimerSkelBuilder::default();
-        let pin_root = crate::tests::nat::isolated_pin_root("nat-v4-dynamic-v3-timer");
+        let pin_root = crate::tests::isolated_pin_root("nat-v4-dynamic-v3-timer");
         builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
         let mut open_object = MaybeUninit::uninit();
         let open = builder.open(&mut open_object).unwrap();
@@ -697,9 +677,8 @@ mod tests {
 
     #[test]
     fn pending_ref_timer_cleanup_deletes_ct_only() {
-        let _guard = NAT_V3_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let mut builder = TestNatV3TimerSkelBuilder::default();
-        let pin_root = crate::tests::nat::isolated_pin_root("nat-v4-dynamic-v3-timer");
+        let pin_root = crate::tests::isolated_pin_root("nat-v4-dynamic-v3-timer");
         builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
         let mut open_object = MaybeUninit::uninit();
         let open = builder.open(&mut open_object).unwrap();
@@ -720,9 +699,8 @@ mod tests {
 
     #[test]
     fn static_ct_release_skips_dynamic_cleanup() {
-        let _guard = NAT_V3_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let mut builder = TestNatV3TimerSkelBuilder::default();
-        let pin_root = crate::tests::nat::isolated_pin_root("nat-v4-dynamic-v3-timer");
+        let pin_root = crate::tests::isolated_pin_root("nat-v4-dynamic-v3-timer");
         builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
         let mut open_object = MaybeUninit::uninit();
         let open = builder.open(&mut open_object).unwrap();

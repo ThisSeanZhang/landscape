@@ -27,7 +27,7 @@ fn build_ipv4_tcp_syn() -> Vec<u8> {
 
 pub fn run_ipv4_egress_smoke(payload: Vec<u8>) {
     let mut builder = TcNatSkelBuilder::default();
-    let pin_root = crate::tests::nat::isolated_pin_root("nat-v4-egress");
+    let pin_root = crate::tests::isolated_pin_root("nat-v4-egress");
     builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
     let mut open_object = MaybeUninit::uninit();
     let open_skel = builder.open(&mut open_object).unwrap();

@@ -122,7 +122,7 @@ fn assert_egress_ct_status_transition(initial_status: u64, expected_status: u64)
     let key = timer_key_for(src, CLIENT_PORT, prefix_len);
 
     let mut builder = TcNatSkelBuilder::default();
-    let pin_root = crate::tests::nat::isolated_pin_root("nat-v6-dynamic-v3");
+    let pin_root = crate::tests::isolated_pin_root("nat-v6-dynamic-v3");
     builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
     let mut open_object = MaybeUninit::uninit();
     let open_skel = builder.open(&mut open_object).unwrap();
@@ -161,7 +161,7 @@ fn assert_dynamic_translation(src: Ipv6Addr, dst: Ipv6Addr, prefix_len: u8) {
     let key = timer_key_for(src, CLIENT_PORT, prefix_len);
 
     let mut builder = TcNatSkelBuilder::default();
-    let pin_root = crate::tests::nat::isolated_pin_root("nat-v6-dynamic-v3");
+    let pin_root = crate::tests::isolated_pin_root("nat-v6-dynamic-v3");
     builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
     let mut open_object = MaybeUninit::uninit();
     let open_skel = builder.open(&mut open_object).unwrap();
@@ -226,7 +226,7 @@ fn assert_prefix_refresh(old_src: Ipv6Addr, new_src: Ipv6Addr, prefix_len: u8) {
     );
 
     let mut builder = TcNatSkelBuilder::default();
-    let pin_root = crate::tests::nat::isolated_pin_root("nat-v6-dynamic-v3");
+    let pin_root = crate::tests::isolated_pin_root("nat-v6-dynamic-v3");
     builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
     let mut open_object = MaybeUninit::uninit();
     let open_skel = builder.open(&mut open_object).unwrap();
@@ -382,7 +382,7 @@ mod tests {
         key.l4_protocol = 58;
 
         let mut builder = TcNatSkelBuilder::default();
-        let pin_root = crate::tests::nat::isolated_pin_root("nat-v6-dynamic-v3");
+        let pin_root = crate::tests::isolated_pin_root("nat-v6-dynamic-v3");
         builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
         let mut open_object = MaybeUninit::uninit();
         let open_skel = builder.open(&mut open_object).unwrap();
@@ -461,7 +461,7 @@ mod tests {
         key.l4_protocol = 58;
 
         let mut builder = TcNatSkelBuilder::default();
-        let pin_root = crate::tests::nat::isolated_pin_root("nat-v6-dynamic-v3");
+        let pin_root = crate::tests::isolated_pin_root("nat-v6-dynamic-v3");
         builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
         let mut open_object = MaybeUninit::uninit();
         let open_skel = builder.open(&mut open_object).unwrap();
@@ -543,7 +543,7 @@ mod tests {
         );
 
         let mut builder = TcNatSkelBuilder::default();
-        let pin_root = crate::tests::nat::isolated_pin_root("nat-v6-dynamic-v3");
+        let pin_root = crate::tests::isolated_pin_root("nat-v6-dynamic-v3");
         builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
         let mut open_object = MaybeUninit::uninit();
         let open_skel = builder.open(&mut open_object).unwrap();
@@ -626,7 +626,7 @@ mod tests {
         );
 
         let mut builder = TcNatSkelBuilder::default();
-        let pin_root = crate::tests::nat::isolated_pin_root("nat-v6-dynamic-v3");
+        let pin_root = crate::tests::isolated_pin_root("nat-v6-dynamic-v3");
         builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
         let mut open_object = MaybeUninit::uninit();
         let open_skel = builder.open(&mut open_object).unwrap();
@@ -692,7 +692,7 @@ mod tests {
         );
 
         let mut builder = TcNatSkelBuilder::default();
-        let pin_root = crate::tests::nat::isolated_pin_root("nat-v6-dynamic-v3");
+        let pin_root = crate::tests::isolated_pin_root("nat-v6-dynamic-v3");
         builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
         let mut open_object = MaybeUninit::uninit();
         let open_skel = builder.open(&mut open_object).unwrap();

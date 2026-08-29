@@ -12,16 +12,10 @@ use crate::map_setting::share_map::types::{
     mac_key_v6, mac_value_v6, rt_cache_key_v4, rt_cache_key_v6, rt_cache_value_v4,
     rt_cache_value_v6,
 };
-use crate::tests::PinRootGuard;
 
 static ROUTE_TEST_PIN_COUNTER: AtomicUsize = AtomicUsize::new(0);
-
 pub const WAN_CACHE: u32 = 0;
 pub const LAN_CACHE: u32 = 1;
-
-pub fn isolated_pin_root(prefix: &str) -> PinRootGuard {
-    PinRootGuard::new(prefix)
-}
 
 pub fn as_bytes<T>(value: &T) -> &[u8] {
     unsafe {

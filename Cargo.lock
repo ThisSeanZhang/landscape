@@ -3264,6 +3264,7 @@ dependencies = [
 name = "landscape-ebpf"
 version = "0.24.0"
 dependencies = [
+ "arc-swap",
  "async-trait",
  "clap 4.6.4",
  "etherparse",

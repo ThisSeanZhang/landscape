@@ -109,15 +109,13 @@ fn add_ct_entry<T: MapCore>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tests::nat::NAT_V3_TEST_LOCK;
 
     const TC_ACT_SHOT: i32 = 2;
 
     #[test]
     fn tcp_ingress_lan_host_v3() {
-        let _guard = NAT_V3_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let mut builder = TcNatSkelBuilder::default();
-        let pin_root = crate::tests::nat::isolated_pin_root("nat-v4-static-v3-lan");
+        let pin_root = crate::tests::isolated_pin_root("nat-v4-static-v3-lan");
         builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
         let mut open_object = MaybeUninit::uninit();
         let open_skel = builder.open(&mut open_object).unwrap();
@@ -184,9 +182,8 @@ mod tests {
 
     #[test]
     fn tcp_egress_lan_host_v3() {
-        let _guard = NAT_V3_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let mut builder = TcNatSkelBuilder::default();
-        let pin_root = crate::tests::nat::isolated_pin_root("nat-v4-static-v3-lan");
+        let pin_root = crate::tests::isolated_pin_root("nat-v4-static-v3-lan");
         builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
         let mut open_object = MaybeUninit::uninit();
         let open_skel = builder.open(&mut open_object).unwrap();
@@ -253,9 +250,8 @@ mod tests {
 
     #[test]
     fn tcp_ingress_local_router_v3() {
-        let _guard = NAT_V3_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let mut builder = TcNatSkelBuilder::default();
-        let pin_root = crate::tests::nat::isolated_pin_root("nat-v4-static-v3-local");
+        let pin_root = crate::tests::isolated_pin_root("nat-v4-static-v3-local");
         builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
         let mut open_object = MaybeUninit::uninit();
         let open_skel = builder.open(&mut open_object).unwrap();
@@ -322,9 +318,8 @@ mod tests {
 
     #[test]
     fn tcp_ingress_local_router_v3_create_path_preserves_dst_ip() {
-        let _guard = NAT_V3_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let mut builder = TcNatSkelBuilder::default();
-        let pin_root = crate::tests::nat::isolated_pin_root("nat-v4-static-v3-local-create");
+        let pin_root = crate::tests::isolated_pin_root("nat-v4-static-v3-local-create");
         builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
         let mut open_object = MaybeUninit::uninit();
         let open_skel = builder.open(&mut open_object).unwrap();
@@ -410,9 +405,8 @@ mod tests {
 
     #[test]
     fn tcp_egress_local_router_v3() {
-        let _guard = NAT_V3_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let mut builder = TcNatSkelBuilder::default();
-        let pin_root = crate::tests::nat::isolated_pin_root("nat-v4-static-v3-local");
+        let pin_root = crate::tests::isolated_pin_root("nat-v4-static-v3-local");
         builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
         let mut open_object = MaybeUninit::uninit();
         let open_skel = builder.open(&mut open_object).unwrap();
@@ -473,9 +467,8 @@ mod tests {
 
     #[test]
     fn udp_ingress_local_router_v3() {
-        let _guard = NAT_V3_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let mut builder = TcNatSkelBuilder::default();
-        let pin_root = crate::tests::nat::isolated_pin_root("nat-v4-static-v3-local");
+        let pin_root = crate::tests::isolated_pin_root("nat-v4-static-v3-local");
         builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
         let mut open_object = MaybeUninit::uninit();
         let open_skel = builder.open(&mut open_object).unwrap();
@@ -536,9 +529,8 @@ mod tests {
 
     #[test]
     fn udp_egress_local_router_v3() {
-        let _guard = NAT_V3_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let mut builder = TcNatSkelBuilder::default();
-        let pin_root = crate::tests::nat::isolated_pin_root("nat-v4-static-v3-local");
+        let pin_root = crate::tests::isolated_pin_root("nat-v4-static-v3-local");
         builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
         let mut open_object = MaybeUninit::uninit();
         let open_skel = builder.open(&mut open_object).unwrap();
@@ -599,9 +591,8 @@ mod tests {
 
     #[test]
     fn tcp_ingress_no_match_drop_v3() {
-        let _guard = NAT_V3_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let mut builder = TcNatSkelBuilder::default();
-        let pin_root = crate::tests::nat::isolated_pin_root("nat-v4-static-v3-local");
+        let pin_root = crate::tests::isolated_pin_root("nat-v4-static-v3-local");
         builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
         let mut open_object = MaybeUninit::uninit();
         let open_skel = builder.open(&mut open_object).unwrap();
