@@ -305,13 +305,11 @@ impl LanIPv6ManagerService {
                         match &event {
                             EnrolledDeviceEvent::Updated { old, new } => {
                                 if let Some(d) = old.as_ref() {
-                                    if d.mac != new.mac || new.ipv6.is_none() {
+                                    if d.mac != new.mac {
                                         device_id_map.remove(&d.mac);
                                     }
                                 }
-                                if new.ipv6.is_some() {
-                                    device_id_map.insert(new.mac, new.id);
-                                }
+                                device_id_map.insert(new.mac, new.id);
                                 let new_iface = new.iface_name.as_deref();
                                 let old_iface = old.as_ref().and_then(|d| d.iface_name.as_deref());
                                 let global = new_iface.is_none() && old_iface.is_none();

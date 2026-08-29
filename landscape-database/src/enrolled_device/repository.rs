@@ -93,7 +93,9 @@ impl EnrolledDeviceRepository {
         Ok(models.into_iter().map(|m| m.into()).collect())
     }
 
-    /// Find devices with IPv6 bindings for a given interface (for SLAAC/DHCPv6)
+    /// Find devices bound to a given interface (for SLAAC/DHCPv6). Devices
+    /// without a static IPv6 suffix are included so that dynamic addresses can
+    /// still be attributed back to them.
     pub async fn find_ipv6_bindings(
         &self,
         iface_name: String,
@@ -101,13 +103,11 @@ impl EnrolledDeviceRepository {
         use crate::repository::Repository;
         let models = EnrolledDeviceEntity::find()
             .filter(
-                sea_orm::Condition::all()
-                    .add(
-                        sea_orm::Condition::any()
-                            .add(Column::IfaceName.eq(iface_name))
-                            .add(Column::IfaceName.is_null()),
-                    )
-                    .add(Column::Ipv6.is_not_null()),
+                sea_orm::Condition::all().add(
+                    sea_orm::Condition::any()
+                        .add(Column::IfaceName.eq(iface_name))
+                        .add(Column::IfaceName.is_null()),
+                ),
             )
             .all(self.db())
             .await?;

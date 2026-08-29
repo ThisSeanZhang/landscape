@@ -33,7 +33,6 @@ type DeviceIpv6Cache = HashMap<Uuid, HashSet<Ipv6Addr>>;
 #[derive(Default)]
 struct DeviceIpv6State {
     addresses: DeviceIpv6Cache,
-    inactive_devices: HashSet<Uuid>,
 }
 
 #[derive(Clone)]
@@ -212,9 +211,6 @@ fn apply_ipv6_assign_event(state: &mut DeviceIpv6State, event: IPv6AssignEvent) 
             let Some(device_id) = info.device_id else {
                 return false;
             };
-            if state.inactive_devices.contains(&device_id) {
-                return false;
-            }
             let new_ips: Vec<_> = info.ips.into_iter().filter(is_usable_dynamic_ipv6).collect();
             if new_ips.is_empty() {
                 return false;
@@ -228,9 +224,6 @@ fn apply_ipv6_assign_event(state: &mut DeviceIpv6State, event: IPv6AssignEvent) 
             let Some(device_id) = info.device_id else {
                 return false;
             };
-            if state.inactive_devices.contains(&device_id) {
-                return false;
-            }
             let Some(entry) = state.addresses.get_mut(&device_id) else {
                 return false;
             };
@@ -247,9 +240,6 @@ fn apply_ipv6_assign_event(state: &mut DeviceIpv6State, event: IPv6AssignEvent) 
             let Some(device_id) = info.device_id else {
                 return false;
             };
-            if state.inactive_devices.contains(&device_id) {
-                return false;
-            }
             let new_ips: HashSet<_> = info.ips.into_iter().filter(is_usable_dynamic_ipv6).collect();
             if new_ips.is_empty() {
                 state.addresses.remove(&device_id).is_some()
@@ -268,20 +258,8 @@ fn is_usable_dynamic_ipv6(ip: &Ipv6Addr) -> bool {
 }
 
 fn apply_enrolled_device_event(state: &mut DeviceIpv6State, event: &EnrolledDeviceEvent) {
-    match event {
-        EnrolledDeviceEvent::Updated { new, .. } => {
-            if new.ipv6.is_none() {
-                state.addresses.remove(&new.id);
-                state.inactive_devices.insert(new.id);
-                return;
-            }
-
-            state.inactive_devices.remove(&new.id);
-        }
-        EnrolledDeviceEvent::Deleted { old } => {
-            state.addresses.remove(&old.id);
-            state.inactive_devices.insert(old.id);
-        }
+    if let EnrolledDeviceEvent::Deleted { old } = event {
+        state.addresses.remove(&old.id);
     }
 }
 
@@ -404,6 +382,9 @@ mod tests {
         let mut state = DeviceIpv6State::default();
         state.addresses.insert(id, HashSet::from([dynamic_ip]));
 
+        // Device updates (even removing the static IPv6 suffix) must keep the
+        // dynamic cache, so mappings can follow addresses of devices without a
+        // static suffix.
         apply_enrolled_device_event(
             &mut state,
             &EnrolledDeviceEvent::Updated {
@@ -420,27 +401,55 @@ mod tests {
                 new: enrolled_device(id, mac, None),
             },
         );
-        assert!(!state.addresses.contains_key(&id));
-        assert!(!apply_ipv6_assign_event(
-            &mut state,
-            IPv6AssignEvent::Flush(assign_info(Some(id), vec![dynamic_ip])),
-        ));
-        apply_enrolled_device_event(
-            &mut state,
-            &EnrolledDeviceEvent::Updated {
-                old: Some(old.clone()),
-                new: enrolled_device(id, mac, ipv6),
-            },
-        );
-        assert!(!state.inactive_devices.contains(&id));
-        assert!(apply_ipv6_assign_event(
-            &mut state,
-            IPv6AssignEvent::Flush(assign_info(Some(id), vec![dynamic_ip])),
-        ));
         assert_eq!(state.addresses[&id], HashSet::from([dynamic_ip]));
 
+        // A flush after the suffix removal still updates the cached addresses.
+        let replacement = "2001:db8::201".parse().unwrap();
+        assert!(apply_ipv6_assign_event(
+            &mut state,
+            IPv6AssignEvent::Flush(assign_info(Some(id), vec![replacement])),
+        ));
+        assert_eq!(state.addresses[&id], HashSet::from([replacement]));
+
+        // Deleting the device removes its cached addresses.
         apply_enrolled_device_event(&mut state, &EnrolledDeviceEvent::Deleted { old });
         assert!(!state.addresses.contains_key(&id));
-        assert!(state.inactive_devices.contains(&id));
+    }
+
+    #[test]
+    fn device_without_static_ipv6_tracks_dynamic_addresses() {
+        let id = Uuid::new_v4();
+        let mac = MacAddr::from([0, 1, 2, 3, 4, 5]);
+        let mut state = DeviceIpv6State::default();
+        let dynamic_a = "2001:db8:1::200".parse().unwrap();
+        let dynamic_b = "fd00:1::300".parse().unwrap();
+
+        // A device registered with only a MAC (no static IPv6 suffix) can still
+        // accumulate dynamic addresses from SLAAC/DHCPv6 assignment events.
+        apply_enrolled_device_event(
+            &mut state,
+            &EnrolledDeviceEvent::Updated { old: None, new: enrolled_device(id, mac, None) },
+        );
+        assert!(apply_ipv6_assign_event(
+            &mut state,
+            IPv6AssignEvent::Allocated(assign_info(Some(id), vec![dynamic_a])),
+        ));
+        assert!(apply_ipv6_assign_event(
+            &mut state,
+            IPv6AssignEvent::Allocated(assign_info(Some(id), vec![dynamic_b])),
+        ));
+        assert_eq!(state.addresses[&id], HashSet::from([dynamic_a, dynamic_b]));
+
+        assert!(apply_ipv6_assign_event(
+            &mut state,
+            IPv6AssignEvent::Expired(assign_info(Some(id), vec![dynamic_a])),
+        ));
+        assert_eq!(state.addresses[&id], HashSet::from([dynamic_b]));
+
+        assert!(apply_ipv6_assign_event(
+            &mut state,
+            IPv6AssignEvent::Flush(assign_info(Some(id), Vec::new())),
+        ));
+        assert!(!state.addresses.contains_key(&id));
     }
 }

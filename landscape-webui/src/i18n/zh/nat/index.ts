@@ -28,7 +28,6 @@ export default {
     validation_ipv6_required: "请输入 IPv6 地址",
     select_protocol_required: "请至少选择一个协议",
     select_device_required: "请选择已登记设备",
-    device_ipv6_required: "启用 IPv6 协议时，所选设备必须存在 IPv6 地址",
     required: "不能为空",
     range: "范围 1-65535",
     invalid_port_value: "存在无效的端口值",

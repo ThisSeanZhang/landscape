@@ -97,17 +97,8 @@ impl StaticNatMappingV6Repository {
         if let Some(StaticNatV6Target::Device { device_ids }) = config.lan_target.as_ref() {
             if config.enable && !config.l4_protocols.is_empty() {
                 for device_id in device_ids {
-                    if !device_id.is_nil() {
-                        match devices.get(device_id) {
-                            None => {
-                                return Err(StaticNatError::DeviceNotFound(*device_id));
-                            }
-                            Some(device) => {
-                                if device.ipv6.is_none() {
-                                    return Err(StaticNatError::DeviceMissingIpv6(*device_id));
-                                }
-                            }
-                        }
+                    if !device_id.is_nil() && !devices.contains_key(device_id) {
+                        return Err(StaticNatError::DeviceNotFound(*device_id));
                     }
                 }
             }

@@ -29,8 +29,6 @@ export default {
     validation_ipv6_required: "IPv6 address is required",
     select_protocol_required: "Please select at least one protocol",
     select_device_required: "Please select an enrolled device",
-    device_ipv6_required:
-      "The selected device must have an IPv6 address when IPv6 protocols are enabled",
     required: "Required",
     range: "Range 1-65535",
     invalid_port_value: "Invalid port value found",

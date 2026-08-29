@@ -40,7 +40,6 @@ const deviceOptions = computed(() =>
   enrolledDeviceStore.bindings.map((d) => ({
     label: d.name,
     value: d.id!,
-    disabled: !d.ipv6,
   })),
 );
 
@@ -144,12 +143,6 @@ const addressTarget = computed<StaticNatV6Target & { t: "address" }>(() => {
   return rule.value.lan_target as StaticNatV6Target & { t: "address" };
 });
 
-const selectedDevices = computed(() =>
-  enrolledDeviceStore.bindings.filter((d) =>
-    selectedDeviceIds.value.includes(d.id!),
-  ),
-);
-
 const ipv6Pattern =
   /^(([0-9a-fA-F]{1,4}:){7}([0-9a-fA-F]{1,4}|:)|(([0-9a-fA-F]{1,4}:){1,7}:)|(([0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4})|(([0-9a-fA-F]{1,4}:){1,5}(:[0-9a-fA-F]{1,4}){1,2})|(([0-9a-fA-F]{1,4}:){1,4}(:[0-9a-fA-F]{1,4}){1,3})|(([0-9a-fA-F]{1,4}:){1,3}(:[0-9a-fA-F]{1,4}){1,4})|(([0-9a-fA-F]{1,4}:){1,2}(:[0-9a-fA-F]{1,4}){1,5})|([0-9a-fA-F]{1,4}:)((:[0-9a-fA-F]{1,4}){1,6})|:((:[0-9a-fA-F]{1,4}){1,7}|:)|fe80:(:[0-9a-fA-F]{0,4}){0,4}%[0-9a-zA-Z]{1,}|::(ffff(:0{1,4}){0,1}:){0,1}((25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])\.){3,3}(25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])|([0-9a-fA-F]{1,4}:){1,4}:((25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])\.){3,3}(25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9]))$/;
 
@@ -201,14 +194,6 @@ async function saveRule() {
         selectedDeviceIds.value.length === 0
       ) {
         message.error(t("nat.mapping.select_device_required"));
-        return;
-      }
-
-      if (
-        targetMode.value === "device" &&
-        selectedDevices.value.some((d) => !d.ipv6)
-      ) {
-        message.error(t("nat.mapping.device_ipv6_required"));
         return;
       }
 
