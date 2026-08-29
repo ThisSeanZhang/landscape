@@ -323,7 +323,6 @@ pub struct ConnectHistoryQueryParams {
     #[cfg_attr(feature = "openapi", schema(nullable = false))]
     pub end_time: Option<u64>,
     /// 单页条数上限(1..=200 会被服务端 clamp);`0` 表示不限制、返回全部匹配行
-    /// (与 connect_summary_max_rows / connect_db_max_bytes 的 "0 = 不限制" 惯例一致)。
     /// 缺省不传时服务端按 100 兜底分页。
     #[cfg_attr(feature = "openapi", schema(nullable = false))]
     pub limit: Option<usize>,

@@ -9,6 +9,7 @@ use crate::config::runtime::{
     StoreRuntimeConfig, TimeRuntimeConfig, WebRuntimeConfig,
 };
 use crate::config::settings::LandscapeConfig;
+use crate::config::{cleanup_budget_secs_to_ms, metric_db_max_mb_to_bytes};
 use crate::sys_service::gateway::settings::GatewayRuntimeConfig;
 use crate::sys_service::lan_hostname::LanHostnameConfig;
 use crate::{
@@ -161,7 +162,8 @@ impl RuntimeConfig {
                 .unwrap_or(crate::DEFAULT_METRIC_CONNECT_SUMMARY_MAX_ROWS),
             connect_db_max_bytes: config
                 .metric
-                .connect_db_max_bytes
+                .connect_db_max_mb
+                .map(metric_db_max_mb_to_bytes)
                 .unwrap_or(crate::DEFAULT_METRIC_CONNECT_DB_MAX_BYTES),
             dns_retention_days: config
                 .metric
@@ -173,7 +175,8 @@ impl RuntimeConfig {
                 .unwrap_or(crate::DEFAULT_DNS_METRIC_1M_RETENTION_DAYS),
             dns_db_max_bytes: config
                 .metric
-                .dns_db_max_bytes
+                .dns_db_max_mb
+                .map(metric_db_max_mb_to_bytes)
                 .unwrap_or(crate::DEFAULT_DNS_METRIC_DB_MAX_BYTES),
             write_batch_size: config
                 .metric
@@ -189,7 +192,8 @@ impl RuntimeConfig {
                 .unwrap_or(crate::DEFAULT_METRIC_CLEANUP_INTERVAL_SECS),
             cleanup_time_budget_ms: config
                 .metric
-                .cleanup_time_budget_ms
+                .cleanup_time_budget_secs
+                .map(cleanup_budget_secs_to_ms)
                 .unwrap_or(crate::DEFAULT_METRIC_CLEANUP_TIME_BUDGET_MS),
             cleanup_slice_window_secs: config
                 .metric

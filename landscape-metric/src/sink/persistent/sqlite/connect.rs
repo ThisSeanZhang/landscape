@@ -617,7 +617,7 @@ pub(crate) async fn query_historical_summaries_complex(
     // - `None`:缺省 100(前端分页的兜底默认值;老版本前端"不限"依赖缺省全量,
     //   已不再支持,调用方如需全量请显式传 0)。
     // - `Some(0)`:不限制,返回全部匹配行;与 connect_summary_max_rows /
-    //   connect_db_max_bytes 的 "0 = 不限制" 惯例保持一致。此时若带 offset,
+    //   connect_db_max_mb 的 "0 = 不限制" 惯例保持一致。此时若带 offset,
     //   用 SQLite 的 `LIMIT -1 OFFSET n`(OFFSET 必须配 LIMIT 才合法)。
     // - `Some(n > 0)`:单页上限 clamp 到 MAX_PAGE_SIZE,offset clamp 到
     //   MAX_PAGE_OFFSET(与前端 itemCount 截断保持一致)。

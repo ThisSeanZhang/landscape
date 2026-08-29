@@ -144,7 +144,7 @@ const DNS_BATCH_MAX_ROWS: usize = 500;
 /// DNS 落库间隔上限:write_flush_interval_secs 配置更大时,DNS 仍按此值兜底,
 /// 避免默认 30s 配置下 DNS 长时间滞留内存。
 #[cfg(feature = "metric-persistent")]
-const DNS_BATCH_FLUSH_TIMEOUT_SECS: u64 = 5;
+const DNS_BATCH_FLUSH_TIMEOUT_SECS: u64 = 15;
 
 fn flush_connect_batch(writer_tx: &ConnectBatchTx, stats: &WriteQueueStats, pending: &mut Batch) {
     if pending.is_empty() {

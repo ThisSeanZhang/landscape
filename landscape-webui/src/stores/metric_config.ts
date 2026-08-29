@@ -14,14 +14,14 @@ export const useMetricConfigStore = defineStore("metric_config", () => {
   const connect1dRetentionDays = ref<number | undefined>(undefined);
   const connectSummaryRetentionDays = ref<number | undefined>(undefined);
   const connectSummaryMaxRows = ref<number | undefined>(undefined);
-  const connectDbMaxBytes = ref<number | undefined>(undefined);
+  const connectDbMaxMb = ref<number | undefined>(undefined);
   const dnsRetentionDays = ref<number | undefined>(undefined);
   const dns1mRetentionDays = ref<number | undefined>(undefined);
-  const dnsDbMaxBytes = ref<number | undefined>(undefined);
+  const dnsDbMaxMb = ref<number | undefined>(undefined);
   const writeBatchSize = ref<number | undefined>(undefined);
   const writeFlushIntervalSecs = ref<number | undefined>(undefined);
   const cleanupIntervalSecs = ref<number | undefined>(undefined);
-  const cleanupTimeBudgetMs = ref<number | undefined>(undefined);
+  const cleanupTimeBudgetSecs = ref<number | undefined>(undefined);
   const cleanupSliceWindowSecs = ref<number | undefined>(undefined);
   const expectedHash = ref<string>("");
 
@@ -40,15 +40,15 @@ export const useMetricConfigStore = defineStore("metric_config", () => {
     connectSummaryRetentionDays.value =
       metric.connect_summary_retention_days ?? undefined;
     connectSummaryMaxRows.value = metric.connect_summary_max_rows ?? undefined;
-    connectDbMaxBytes.value = metric.connect_db_max_bytes ?? undefined;
+    connectDbMaxMb.value = metric.connect_db_max_mb ?? undefined;
     dnsRetentionDays.value = metric.dns_retention_days ?? undefined;
     dns1mRetentionDays.value = metric.dns_1m_retention_days ?? undefined;
-    dnsDbMaxBytes.value = metric.dns_db_max_bytes ?? undefined;
+    dnsDbMaxMb.value = metric.dns_db_max_mb ?? undefined;
     writeBatchSize.value = metric.write_batch_size ?? undefined;
     writeFlushIntervalSecs.value =
       metric.write_flush_interval_secs ?? undefined;
     cleanupIntervalSecs.value = metric.cleanup_interval_secs ?? undefined;
-    cleanupTimeBudgetMs.value = metric.cleanup_time_budget_ms ?? undefined;
+    cleanupTimeBudgetSecs.value = metric.cleanup_time_budget_secs ?? undefined;
     cleanupSliceWindowSecs.value =
       metric.cleanup_slice_window_secs ?? undefined;
     expectedHash.value = hash;
@@ -63,14 +63,14 @@ export const useMetricConfigStore = defineStore("metric_config", () => {
       connect_1d_retention_days: connect1dRetentionDays.value,
       connect_summary_retention_days: connectSummaryRetentionDays.value,
       connect_summary_max_rows: connectSummaryMaxRows.value,
-      connect_db_max_bytes: connectDbMaxBytes.value,
+      connect_db_max_mb: connectDbMaxMb.value,
       dns_retention_days: dnsRetentionDays.value,
       dns_1m_retention_days: dns1mRetentionDays.value,
-      dns_db_max_bytes: dnsDbMaxBytes.value,
+      dns_db_max_mb: dnsDbMaxMb.value,
       write_batch_size: writeBatchSize.value,
       write_flush_interval_secs: writeFlushIntervalSecs.value,
       cleanup_interval_secs: cleanupIntervalSecs.value,
-      cleanup_time_budget_ms: cleanupTimeBudgetMs.value,
+      cleanup_time_budget_secs: cleanupTimeBudgetSecs.value,
       cleanup_slice_window_secs: cleanupSliceWindowSecs.value,
     };
     await update_metric_config({
@@ -91,14 +91,14 @@ export const useMetricConfigStore = defineStore("metric_config", () => {
     connect1dRetentionDays,
     connectSummaryRetentionDays,
     connectSummaryMaxRows,
-    connectDbMaxBytes,
+    connectDbMaxMb,
     dnsRetentionDays,
     dns1mRetentionDays,
-    dnsDbMaxBytes,
+    dnsDbMaxMb,
     writeBatchSize,
     writeFlushIntervalSecs,
     cleanupIntervalSecs,
-    cleanupTimeBudgetMs,
+    cleanupTimeBudgetSecs,
     cleanupSliceWindowSecs,
     expectedHash,
     loadMetricConfig,

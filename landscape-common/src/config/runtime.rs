@@ -7,6 +7,7 @@ use crate::config::settings::{
     LandscapeConfig, LandscapeDnsConfig, LandscapeMetricConfig, LandscapeTimeConfig,
     LandscapeUIConfig, MetricMode,
 };
+use crate::config::{cleanup_budget_secs_to_ms, metric_db_max_mb_to_bytes};
 use crate::sys_service::gateway::settings::GatewayRuntimeConfig;
 use crate::sys_service::lan_hostname::LanHostnameConfig;
 use crate::{
@@ -229,8 +230,8 @@ impl MetricRuntimeConfig {
         if let Some(v) = config.connect_summary_max_rows {
             self.connect_summary_max_rows = v;
         }
-        if let Some(v) = config.connect_db_max_bytes {
-            self.connect_db_max_bytes = v;
+        if let Some(v) = config.connect_db_max_mb {
+            self.connect_db_max_bytes = metric_db_max_mb_to_bytes(v);
         }
         if let Some(v) = config.dns_retention_days {
             self.dns_retention_days = v;
@@ -238,8 +239,8 @@ impl MetricRuntimeConfig {
         if let Some(v) = config.dns_1m_retention_days {
             self.dns_1m_retention_days = v;
         }
-        if let Some(v) = config.dns_db_max_bytes {
-            self.dns_db_max_bytes = v;
+        if let Some(v) = config.dns_db_max_mb {
+            self.dns_db_max_bytes = metric_db_max_mb_to_bytes(v);
         }
         if let Some(v) = config.write_batch_size {
             self.write_batch_size = v;
@@ -250,8 +251,8 @@ impl MetricRuntimeConfig {
         if let Some(v) = config.cleanup_interval_secs {
             self.cleanup_interval_secs = v;
         }
-        if let Some(v) = config.cleanup_time_budget_ms {
-            self.cleanup_time_budget_ms = v;
+        if let Some(v) = config.cleanup_time_budget_secs {
+            self.cleanup_time_budget_ms = cleanup_budget_secs_to_ms(v);
         }
         if let Some(v) = config.cleanup_slice_window_secs {
             self.cleanup_slice_window_secs = v;

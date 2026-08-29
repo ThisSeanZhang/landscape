@@ -58,16 +58,17 @@ export default {
   conn_summary_max_rows: "Detail Row Cap",
   conn_summary_max_rows_desc:
     "Maximum number of detail summary rows kept in the conn_summaries table (0 = unlimited)",
-  connect_db_max_bytes: "Connection Database Size Cap (bytes)",
-  connect_db_max_bytes_desc:
-    "Maximum size of the connection metrics database (0 = unlimited); cleanup starts ahead of the cap to keep write headroom",
+  connect_db_max_mb: "Connection Database Size Cap (MB)",
+  connect_db_max_mb_desc:
+    "Maximum size of the connection metrics database (0 = unlimited, min 16MB when non-zero); cleanup starts ahead of the cap to keep write headroom",
   dns_retention_days: "DNS Retention (Days)",
   dns_1m_retention_days: "DNS 1m Bucket Retention (Days)",
   dns_1m_retention_days_desc:
     "Retention for 1-minute pre-aggregated buckets (status card & dashboard); usually longer than raw logs",
-  dns_db_max_bytes: "DNS Database Size Cap (bytes)",
-  dns_db_max_bytes_desc:
-    "Maximum size of the DNS metrics database (0 = unlimited); cleanup starts ahead of the cap to keep write headroom",
+  dns_db_max_mb: "DNS Database Size Cap (MB)",
+  dns_db_max_mb_desc:
+    "Maximum size of the DNS metrics database (0 = unlimited, min 16MB when non-zero); cleanup starts ahead of the cap to keep write headroom",
+  db_cap_min_hint: "Size cap must be 0 (unlimited) or at least 16MB",
   dns_retention_days_desc:
     "Retention period for DNS query logs and metrics in days",
 
@@ -75,13 +76,14 @@ export default {
   write_batch_size: "Write Batch Size",
   write_batch_size_desc: "Maximum record count for metrics flush to disk",
   write_flush_interval: "Commit Interval (s)",
-  write_flush_interval_desc: "Maximum seconds before forcing a database commit",
+  write_flush_interval_desc:
+    "Maximum seconds before forcing a database commit; DNS logs are flushed every ≤15s regardless",
 
   maintenance_settings: "Cleanup Settings",
   cleanup_interval: "Cleanup Interval (s)",
   cleanup_interval_desc: "Interval between history cleanup tasks",
-  cleanup_budget: "Cleanup Budget (ms)",
-  cleanup_budget_desc: "Maximum milliseconds allowed per cleanup task",
+  cleanup_budget: "Cleanup Budget (s)",
+  cleanup_budget_desc: "Maximum seconds allowed per cleanup task",
   cleanup_slice_window: "Cleanup Slice Window (s)",
   cleanup_slice_window_desc:
     "Time granularity for each cleanup transaction slice",

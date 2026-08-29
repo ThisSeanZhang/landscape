@@ -1,19 +1,43 @@
 <script setup lang="ts">
 import { useMetricConfigStore } from "@/stores/metric_config";
 import { useMessage } from "naive-ui";
-import { computed } from "vue";
+import type { FormInst, FormRules } from "naive-ui";
+import { computed, ref } from "vue";
 import { useI18n } from "vue-i18n";
 
 const metricStore = useMetricConfigStore();
 const message = useMessage();
 const { t } = useI18n();
+const formRef = ref<FormInst | null>(null);
 const modeOptions = computed(() => [
   { label: t("config.metric_mode_off"), value: "off" },
   { label: t("config.metric_mode_memory"), value: "memory" },
   { label: t("config.metric_mode_persistent"), value: "persistent" },
 ]);
 
+const dbCapRule = (): NonNullable<FormRules[string]> => {
+  return {
+    validator: (_rule, value: number | undefined) => {
+      if (value === undefined || value === null || value === 0 || value >= 16) {
+        return true;
+      }
+      return new Error(t("config.db_cap_min_hint"));
+    },
+    trigger: ["blur", "change"],
+  };
+};
+
+const rules: FormRules = {
+  connectDbMaxMb: dbCapRule(),
+  dnsDbMaxMb: dbCapRule(),
+};
+
 async function handleSaveMetric() {
+  try {
+    await formRef.value?.validate();
+  } catch {
+    return;
+  }
   try {
     await metricStore.saveMetricConfig();
     message.success(t("config.save_success"));
@@ -34,8 +58,14 @@ async function handleSaveMetric() {
         {{ t("config.save_metric") }}
       </n-button>
     </template>
-    <n-form label-placement="left" label-width="120">
-      <n-form-item :label="t('config.metric_mode')">
+    <n-form
+      ref="formRef"
+      :model="metricStore"
+      :rules="rules"
+      label-placement="left"
+      label-width="120"
+    >
+      <n-form-item :label="t('config.metric_mode')" path="mode">
         <n-select
           v-model:value="metricStore.mode"
           :options="modeOptions"
@@ -132,7 +162,7 @@ async function handleSaveMetric() {
               v-model:value="metricStore.connectSummaryMaxRows"
               :min="0"
               :max="100000000"
-              placeholder="0"
+              placeholder="500000"
               style="width: 100%"
             />
             <template #feedback>
@@ -141,16 +171,19 @@ async function handleSaveMetric() {
           </n-form-item>
         </n-gi>
         <n-gi>
-          <n-form-item :label="t('config.connect_db_max_bytes')">
+          <n-form-item
+            :label="t('config.connect_db_max_mb')"
+            path="connectDbMaxMb"
+          >
             <n-input-number
-              v-model:value="metricStore.connectDbMaxBytes"
+              v-model:value="metricStore.connectDbMaxMb"
               :min="0"
-              :max="1099511627776"
-              placeholder="536870912"
+              :max="1048576"
+              placeholder="512"
               style="width: 100%"
             />
             <template #feedback>
-              {{ t("config.connect_db_max_bytes_desc") }}
+              {{ t("config.connect_db_max_mb_desc") }}
             </template>
           </n-form-item>
         </n-gi>
@@ -187,16 +220,16 @@ async function handleSaveMetric() {
           </n-form-item>
         </n-gi>
         <n-gi>
-          <n-form-item :label="t('config.dns_db_max_bytes')">
+          <n-form-item :label="t('config.dns_db_max_mb')" path="dnsDbMaxMb">
             <n-input-number
-              v-model:value="metricStore.dnsDbMaxBytes"
+              v-model:value="metricStore.dnsDbMaxMb"
               :min="0"
-              :max="1099511627776"
-              placeholder="1073741824"
+              :max="1048576"
+              placeholder="1024"
               style="width: 100%"
             />
             <template #feedback>
-              {{ t("config.dns_db_max_bytes_desc") }}
+              {{ t("config.dns_db_max_mb_desc") }}
             </template>
           </n-form-item>
         </n-gi>
@@ -257,10 +290,10 @@ async function handleSaveMetric() {
         <n-gi>
           <n-form-item :label="t('config.cleanup_budget')">
             <n-input-number
-              v-model:value="metricStore.cleanupTimeBudgetMs"
-              :min="100"
-              :max="60000"
-              placeholder="2000"
+              v-model:value="metricStore.cleanupTimeBudgetSecs"
+              :min="1"
+              :max="60"
+              placeholder="2"
               style="width: 100%"
             />
             <template #feedback>

@@ -51,6 +51,7 @@ pub async fn update_metric_config(
     State(state): State<LandscapeApp>,
     JsonBody(payload): JsonBody<UpdateMetricConfigRequest>,
 ) -> LandscapeApiResult<()> {
+    payload.new_metric.validate()?;
     let _guard = METRIC_CONFIG_UPDATE_LOCK.lock().await;
 
     let (previous_file_config, current_hash) =
