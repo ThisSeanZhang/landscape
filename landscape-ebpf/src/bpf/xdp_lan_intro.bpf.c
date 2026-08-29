@@ -19,6 +19,7 @@
 
 #include "flow_match.h"
 #include "neigh_ip.h"
+#include "neigh_learn.h"
 
 char LICENSE[] SEC("license") = "GPL";
 
@@ -784,6 +785,8 @@ int xdp_lan_intro(struct xdp_md *ctx) {
         ret = xdp_search_route_in_lan_v4(ctx, &context, &flow_mark);
         if (ret) return ret;
 
+        learn_src_ip_mac_v4_xdp(ctx, &context);
+
         ret = xdp_lan_redirect_v4(ctx, &context);
         if (ret) return ret;
 
@@ -807,6 +810,8 @@ int xdp_lan_intro(struct xdp_md *ctx) {
         u32 flow_mark = 0;
         ret = xdp_search_route_in_lan_v6(ctx, &context, &flow_mark);
         if (ret) return ret;
+
+        learn_src_ip_mac_v6_xdp(ctx, &context);
 
         ret = xdp_lan_redirect_v6(ctx, &context);
         if (ret) return ret;

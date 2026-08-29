@@ -9,6 +9,7 @@
 #include "route_v4.h"
 #include "route_v6.h"
 #include "route/route_packet.h"
+#include "neigh_learn.h"
 
 #include "chain/tc_cb.h"
 #include "tc_chain/tc_handoff.h"
@@ -365,6 +366,8 @@ int tc_lan_ingress_route_v4(struct __sk_buff *skb) {
         return ret;
     }
 
+    learn_src_ip_mac_v4_tc(skb, &context, current_l3_offset);
+
     ret = tc_lan_redirect_v4(skb, current_l3_offset, &context);
     if (ret != TC_ACT_OK) {
         return ret;
@@ -417,6 +420,8 @@ int tc_lan_ingress_route_v6(struct __sk_buff *skb) {
         skb->mark = replace_flow_source(flow_mark, FLOW_FROM_LAN);
         return ret;
     }
+
+    learn_src_ip_mac_v6_tc(skb, &context, current_l3_offset);
 
     ret = tc_lan_redirect_v6(skb, current_l3_offset, &context);
     if (ret != TC_ACT_OK) {
