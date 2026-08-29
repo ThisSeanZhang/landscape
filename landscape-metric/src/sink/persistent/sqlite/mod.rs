@@ -205,8 +205,8 @@ mod tests {
         let expected_max_pages: i64 = {
             let page_size: i64 =
                 sqlx::query_scalar("PRAGMA page_size").fetch_one(&pool).await.unwrap();
-            let main_budget =
-                (1024 * 1024 - (16 * 1024 * 1024).min(1024 * 1024 / 2)).max(page_size as u64 * 256);
+            let wal_reserve = (1024 * 1024 / 2).max(page_size as u64);
+            let main_budget = (1024 * 1024 - wal_reserve).max(page_size as u64 * 256);
             (main_budget.div_ceil(page_size as u64)) as i64
         };
         let mut handles = Vec::new();
