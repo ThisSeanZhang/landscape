@@ -1,11 +1,11 @@
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
+use std::time::Duration;
 
 use landscape_common::{
-    concurrency::{spawn_task, task_label},
     config::{MetricMode, MetricRuntimeConfig},
     database::error::DbError,
-    event::{ConnectMessage, DnsMetricMessage},
+    event::DnsMetricMessage,
     metric::connect::{
         ConnectGlobalStats, ConnectHistoryQueryParams, ConnectHistoryResponse, ConnectKey,
         ConnectMetricPoint, ConnectRealtimeStatus, IfaceRealtimeStat, IpHistoryStat,
@@ -18,26 +18,28 @@ use landscape_common::{
     service::{ServiceStatus, WatchService},
     LANDSCAPE_METRIC_DIR_NAME,
 };
+use landscape_ebpf::metric::{
+    EbpfMetricSourceFactory, EventSourceStopOutcome, MetricSourceFactory, MetricSourceHandle,
+};
 use landscape_metric::MetricEngine;
 use tokio::sync::mpsc;
 use tokio::sync::Mutex;
-use tokio::time::{timeout, Duration};
-use tokio_util::sync::CancellationToken;
 
 pub mod memory_store {
     pub use landscape_metric::MemoryMetricStore;
 }
 
-#[derive(Clone)]
-struct MetricServiceState {
+struct MetricRuntime {
     config: MetricRuntimeConfig,
     engine: MetricEngine,
+    source: Option<Box<dyn MetricSourceHandle>>,
 }
 
 struct MetricServiceInner {
     home_path: PathBuf,
-    state: RwLock<MetricServiceState>,
+    runtime: RwLock<MetricRuntime>,
     switch_lock: Mutex<()>,
+    source_factory: Arc<dyn MetricSourceFactory>,
 }
 
 #[derive(Clone)]
@@ -57,21 +59,29 @@ fn ensure_metric_path(home_path: &Path) -> PathBuf {
 }
 
 impl MetricService {
-    fn read_state(&self) -> RwLockReadGuard<'_, MetricServiceState> {
-        self.inner.state.read().unwrap_or_else(|poisoned| {
-            tracing::error!("metric service state lock poisoned; recovering the inner state");
+    fn read_runtime(&self) -> RwLockReadGuard<'_, MetricRuntime> {
+        self.inner.runtime.read().unwrap_or_else(|poisoned| {
+            tracing::error!("metric service runtime lock poisoned; recovering the inner state");
             poisoned.into_inner()
         })
     }
 
-    fn write_state(&self) -> RwLockWriteGuard<'_, MetricServiceState> {
-        self.inner.state.write().unwrap_or_else(|poisoned| {
-            tracing::error!("metric service state lock poisoned; recovering the inner state");
+    fn write_runtime(&self) -> RwLockWriteGuard<'_, MetricRuntime> {
+        self.inner.runtime.write().unwrap_or_else(|poisoned| {
+            tracing::error!("metric service runtime lock poisoned; recovering the inner state");
             poisoned.into_inner()
         })
     }
 
     pub async fn new(home_path: PathBuf, config: MetricRuntimeConfig) -> Result<Self, String> {
+        Self::new_with_source_factory(home_path, config, Arc::new(EbpfMetricSourceFactory)).await
+    }
+
+    pub async fn new_with_source_factory(
+        home_path: PathBuf,
+        config: MetricRuntimeConfig,
+        source_factory: Arc<dyn MetricSourceFactory>,
+    ) -> Result<Self, String> {
         let metric_path = ensure_metric_path(&home_path);
         let engine = MetricEngine::new(metric_path, config.clone())
             .await
@@ -82,18 +92,19 @@ impl MetricService {
             status,
             inner: Arc::new(MetricServiceInner {
                 home_path,
-                state: RwLock::new(MetricServiceState { config, engine }),
+                runtime: RwLock::new(MetricRuntime { config, engine, source: None }),
                 switch_lock: Mutex::new(()),
+                source_factory,
             }),
         })
     }
 
     fn current_engine(&self) -> MetricEngine {
-        self.read_state().engine.clone()
+        self.read_runtime().engine.clone()
     }
 
     fn current_mode(&self) -> MetricMode {
-        let config = self.read_state().config.clone();
+        let config = self.read_runtime().config.clone();
         landscape_metric::resolved_metric_mode(config.mode)
     }
 
@@ -107,28 +118,44 @@ impl MetricService {
 
     pub async fn start_service(&self) {
         let _guard = self.inner.switch_lock.lock().await;
-        self.start_service_locked().await;
+        if let Err(error) = self.start_service_locked().await {
+            tracing::error!("failed to start metric service: {error}");
+        }
     }
 
-    async fn start_service_locked(&self) {
+    /// 启动流程全同步内联:模式/状态检查 → 取引擎通道 → spawn 事件源 → Running。
+    /// 事件源构建失败(map 缺失等)立即落定 Failed 并返回 Err,由调用方决定
+    /// 是否回滚,而非让任务 panic 后在停止时才被察觉。
+    async fn start_service_locked(&self) -> Result<(), String> {
         if matches!(self.current_mode(), MetricMode::Off) {
             tracing::info!("Metric service disabled by mode=off");
-            return;
+            return Ok(());
         }
 
         let status = self.status.clone();
-        if status.is_stop() {
-            let Some(connect_msg_tx) = self.current_engine().get_connect_msg_channel() else {
-                tracing::error!("metric backend did not expose a connect channel during startup");
-                status.just_change_status(ServiceStatus::Failed);
-                return;
-            };
-            status.just_change_status(ServiceStatus::Staring);
-            spawn_task(task_label::task::METRIC_SERVICE_RUN, async move {
-                create_metric_service(status, connect_msg_tx).await;
-            });
-        } else {
+        if !status.is_stop() {
             tracing::info!("Metric Service is not stopped");
+            return Ok(());
+        }
+        let Some(connect_msg_tx) = self.current_engine().get_connect_msg_channel() else {
+            let error = "metric backend did not expose a connect channel during startup";
+            tracing::error!("{error}");
+            status.just_change_status(ServiceStatus::Failed);
+            return Err(error.to_string());
+        };
+
+        status.just_change_status(ServiceStatus::Staring);
+        match self.inner.source_factory.spawn(connect_msg_tx) {
+            Ok(source) => {
+                self.write_runtime().source = Some(source);
+                status.just_change_status(ServiceStatus::Running);
+                Ok(())
+            }
+            Err(error) => {
+                tracing::error!("failed to spawn metric event source: {error}");
+                status.just_change_status(ServiceStatus::Failed);
+                Err(error)
+            }
         }
     }
 
@@ -137,14 +164,33 @@ impl MetricService {
         self.stop_service_locked().await;
     }
 
+    /// 停止流程全同步内联:置 Stopping → 回收事件源(限时 3s) → 落定
+    /// Stop/Failed → 引擎收尾。事件源回收预算须小于调用方预期,保证配置
+    /// 切换时最终状态已落定、新引擎能立即启动新事件源。
     async fn stop_service_locked(&self) {
-        // 等待预算须 ≥ create_metric_service 的收尾预算(reader 退出 3s,正常路径
-        // 无额外 join 等待),保证超时返回前最终状态(Stop/Failed)已经落定,配置
-        // 切换后新引擎能启动 reader。
-        if timeout(Duration::from_secs(10), self.status.wait_stop()).await.is_err() {
-            // 超时不改状态:最终状态统一由 create_metric_service 按 reader 线程的实际
-            // 结果(reader_ok && joined_ok)判定,避免这里先置 Failed 又被后续 Stop 覆盖。
-            tracing::error!("timed out waiting for metric service reader to stop");
+        const EVENT_SOURCE_EXIT_TIMEOUT: Duration = Duration::from_secs(3);
+
+        // 仅在服务真的在运行/启动中时才先经过 Stopping,避免对已处于
+        // Stop/Failed 的服务(如从未启动)产生无效状态转换的告警噪音。
+        if self.status.is_active() {
+            self.status.just_change_status(ServiceStatus::Stopping);
+        }
+        let source = self.write_runtime().source.take();
+        let outcome = match source {
+            Some(source) => source.stop_with_budget(EVENT_SOURCE_EXIT_TIMEOUT).await,
+            None => {
+                tracing::debug!("no metric event source to stop");
+                EventSourceStopOutcome::Clean
+            }
+        };
+        let final_status = match outcome {
+            EventSourceStopOutcome::Clean => ServiceStatus::Stop,
+            EventSourceStopOutcome::Panicked | EventSourceStopOutcome::Aborted => {
+                ServiceStatus::Failed
+            }
+        };
+        if self.status.current() != final_status {
+            self.status.just_change_status(final_status);
         }
         self.current_engine().shutdown().await;
     }
@@ -168,7 +214,11 @@ impl MetricService {
                 );
                 let recovery_error = self.restore_previous_engine().await.err();
                 if !matches!(self.current_mode(), MetricMode::Off) {
-                    self.start_service_locked().await;
+                    if let Err(start_error) = self.start_service_locked().await {
+                        tracing::error!(
+                            "failed to restart metric service after engine rebuild failure: {start_error}"
+                        );
+                    }
                 }
                 return Err(match recovery_error {
                     Some(recovery_error) => format!("{error}; {recovery_error}"),
@@ -178,29 +228,29 @@ impl MetricService {
         };
 
         {
-            let mut state = self.write_state();
-            state.engine = new_engine;
-            state.config = config;
+            let mut runtime = self.write_runtime();
+            runtime.engine = new_engine;
+            runtime.config = config;
         }
 
         if !matches!(self.current_mode(), MetricMode::Off) {
-            self.start_service_locked().await;
+            self.start_service_locked().await?;
         }
         Ok(())
     }
 
     async fn restore_previous_engine(&self) -> Result<(), String> {
         let previous_config = {
-            let state = self.read_state();
-            state.config.clone()
+            let runtime = self.read_runtime();
+            runtime.config.clone()
         };
         match MetricEngine::new(ensure_metric_path(&self.inner.home_path), previous_config.clone())
             .await
         {
             Ok(engine) => {
-                let mut state = self.write_state();
-                state.engine = engine;
-                state.config = previous_config;
+                let mut runtime = self.write_runtime();
+                runtime.engine = engine;
+                runtime.config = previous_config;
                 Ok(())
             }
             Err(error) => {
@@ -217,9 +267,9 @@ impl MetricService {
                         "failed to restore previous metric engine: {error}; failed to start memory fallback: {fallback_error}"
                     )
                 })?;
-                let mut state = self.write_state();
-                state.engine = fallback_engine;
-                state.config = fallback_config;
+                let mut runtime = self.write_runtime();
+                runtime.engine = fallback_engine;
+                runtime.config = fallback_config;
                 Err(format!(
                     "failed to restore previous metric engine: {error}; running memory fallback"
                 ))
@@ -289,58 +339,4 @@ impl MetricService {
     ) -> DnsLightweightSummaryResponse {
         self.current_engine().get_dns_lightweight_summary(params).await
     }
-}
-
-pub async fn create_metric_service(
-    service_status: WatchService,
-    connect_msg_tx: mpsc::Sender<ConnectMessage>,
-) {
-    if service_status.is_exit() {
-        service_status.just_change_status(ServiceStatus::Stop);
-        return;
-    }
-
-    service_status.just_change_status(ServiceStatus::Running);
-    let cancel = CancellationToken::new();
-    let mut reader_handle = spawn_task(
-        task_label::task::METRIC_EBPF_CONNECT_EVENT_READER,
-        landscape_ebpf::metric::new_metric(cancel.clone(), connect_msg_tx),
-    );
-
-    // 单任务接管 reader 生命周期:等待外部停止请求 → 取消 reader → 限时回收
-    // 结果并落定最终状态。reader 是 tokio 异步任务,收到取消信号后近即时退出
-    // (select! 同时监听取消与 ringbuf 可读);即使异常卡住,也会在预算内 abort
-    // 强制终止,避免状态永久停在 Stopping 导致配置切换后新引擎无法启动 reader。
-    // 预算:reader 退出 3s;正常退出后 join 立即完成,不占额外预算。总预算 3s,
-    // 小于 stop_service_locked 的 10s 等待,保证配置切换时最终状态已落定。
-    const READER_EXIT_TIMEOUT: Duration = Duration::from_secs(3);
-    let service_status_clone = service_status.clone();
-    spawn_task(task_label::task::METRIC_SERVICE_STOP, async move {
-        let _ = service_status_clone.wait_to_stopping().await;
-        tracing::info!("Received external stop signal");
-        cancel.cancel();
-
-        let join_result = timeout(READER_EXIT_TIMEOUT, &mut reader_handle).await;
-        let reader_ok = match join_result {
-            Ok(Ok(())) => true,
-            Ok(Err(_)) => {
-                tracing::error!("metric event reader task exited with an uncaught panic");
-                false
-            }
-            Err(_) => {
-                tracing::error!(
-                    "timed out waiting for metric event reader to exit; aborting the stuck task"
-                );
-                reader_handle.abort();
-                let _ = reader_handle.await;
-                false
-            }
-        };
-        tracing::info!("Worker task exited");
-        if reader_ok {
-            service_status_clone.just_change_status(ServiceStatus::Stop);
-        } else {
-            service_status_clone.just_change_status(ServiceStatus::Failed);
-        }
-    });
 }

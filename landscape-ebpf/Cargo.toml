@@ -8,6 +8,7 @@ landscape-common = { path = "../landscape-common" }
 landscape-core = { path = "../landscape-core" }
 
 thiserror = { workspace = true }
+async-trait = { workspace = true }
 libbpf-rs = { workspace = true }
 libbpf-sys = { workspace = true }
 clap = { workspace = true }

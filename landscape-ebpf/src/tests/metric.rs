@@ -3,6 +3,7 @@ use std::mem::{offset_of, size_of};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::sync::{Arc, Mutex};
 
+use landscape_common::event::ConnectMessage;
 use landscape_common::metric::connect::{ConnectKey, ConnectMetric, ConnectStatusType};
 use libbpf_rs::{
     skel::{OpenSkel, SkelBuilder as _},
@@ -13,6 +14,7 @@ use tokio_util::sync::CancellationToken;
 use zerocopy::IntoBytes;
 
 use crate::map_setting::share_map::types::{nat_conn_metric_event, u_inet_addr};
+use crate::metric::{ConnectMetricEventSource, EventSourceStopOutcome, MetricSourceHandle};
 use crate::tests::TestSkb;
 
 pub(crate) mod test_metric_ringbuf {
@@ -96,7 +98,9 @@ mod tests {
         let ringbuf = rb_builder.build().expect("build ringbuf");
 
         let cancel = CancellationToken::new();
-        let reader = tokio::spawn(crate::metric::run_ringbuf_loop(ringbuf, cancel.clone()));
+        let async_fd = crate::metric::dup_epoll_async_fd(ringbuf.epoll_fd()).expect("dup epoll fd");
+        let reader =
+            tokio::spawn(crate::metric::run_ringbuf_loop(ringbuf, async_fd, cancel.clone()));
 
         for mark in 1001..=1010 {
             run_emit(&skel, mark);
@@ -265,5 +269,143 @@ mod tests {
     fn connect_metric_rejects_wrong_size() {
         assert!(ConnectMetric::try_from(&[0u8; 103][..]).is_err());
         assert!(ConnectMetric::try_from(&[0u8; 105][..]).is_err());
+    }
+
+    #[tokio::test]
+    async fn event_source_stop_cleans_up_running_task() {
+        let (tx, _rx) = tokio::sync::mpsc::channel::<ConnectMessage>(16);
+        let cancel = CancellationToken::new();
+        let cancel_waiter = cancel.clone();
+        let handle = tokio::spawn(async move {
+            cancel_waiter.cancelled().await;
+        });
+        let source = ConnectMetricEventSource::test_new(cancel, handle, Arc::new(Mutex::new(tx)));
+
+        let outcome = Box::new(source).stop_with_budget(Duration::from_secs(1)).await;
+        assert_eq!(outcome, EventSourceStopOutcome::Clean);
+    }
+
+    #[tokio::test]
+    async fn event_source_stop_aborts_stuck_task() {
+        let (tx, _rx) = tokio::sync::mpsc::channel::<ConnectMessage>(16);
+        let cancel = CancellationToken::new();
+        let handle = tokio::spawn(std::future::pending::<()>());
+        let source = ConnectMetricEventSource::test_new(cancel, handle, Arc::new(Mutex::new(tx)));
+
+        let outcome = Box::new(source).stop_with_budget(Duration::from_millis(100)).await;
+        assert_eq!(outcome, EventSourceStopOutcome::Aborted);
+    }
+
+    #[tokio::test]
+    async fn event_source_stop_marks_panicked_task() {
+        let (tx, _rx) = tokio::sync::mpsc::channel::<ConnectMessage>(16);
+        let cancel = CancellationToken::new();
+        let handle = tokio::spawn(async {
+            panic!("intentional test panic");
+        });
+        let source = ConnectMetricEventSource::test_new(cancel, handle, Arc::new(Mutex::new(tx)));
+
+        let outcome = Box::new(source).stop_with_budget(Duration::from_secs(1)).await;
+        assert_eq!(outcome, EventSourceStopOutcome::Panicked);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn event_source_attach_channel_redirects_following_events() {
+        let builder = TestMetricRingbufSkelBuilder::default();
+        let mut open_object = MaybeUninit::uninit();
+        let open_skel = builder.open(&mut open_object).expect("open skeleton");
+        let skel = open_skel.load().expect("load skeleton");
+
+        let (tx1, mut rx1) = tokio::sync::mpsc::channel::<ConnectMessage>(16);
+        let (tx2, mut rx2) = tokio::sync::mpsc::channel::<ConnectMessage>(16);
+        let tx_slot = Arc::new(Mutex::new(tx1));
+
+        let mut rb_builder = RingBufferBuilder::new();
+        rb_builder
+            .add(&skel.maps.test_metric_events, {
+                let tx_slot = tx_slot.clone();
+                move |data: &[u8]| {
+                    let event = unsafe {
+                        std::ptr::read_unaligned(data.as_ptr().cast::<types::test_metric_event>())
+                    };
+                    let tx = tx_slot.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+                    let metric = ConnectMetric::from_domain(
+                        event.seq as u64,
+                        0,
+                        0,
+                        IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+                        IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        ConnectStatusType::Active,
+                    );
+                    let _ = tx.try_send(ConnectMessage::Metric(metric));
+                    0
+                }
+            })
+            .expect("add ringbuf map");
+        let ringbuf = rb_builder.build().expect("build ringbuf");
+
+        let cancel = CancellationToken::new();
+        let async_fd = crate::metric::dup_epoll_async_fd(ringbuf.epoll_fd()).expect("dup epoll fd");
+        let handle =
+            tokio::spawn(crate::metric::run_ringbuf_loop(ringbuf, async_fd, cancel.clone()));
+        let source = ConnectMetricEventSource::test_new(cancel, handle, tx_slot.clone());
+
+        run_emit(&skel, 7);
+        let first = timeout(Duration::from_secs(2), rx1.recv())
+            .await
+            .expect("timed out waiting for first event")
+            .expect("first channel closed");
+        let ConnectMessage::Metric(metric) = first;
+        assert_eq!(metric.create_time_ms(), 7);
+
+        source.attach_channel(tx2);
+        run_emit(&skel, 8);
+        let second = timeout(Duration::from_secs(2), rx2.recv())
+            .await
+            .expect("timed out waiting for redirected event")
+            .expect("second channel closed");
+        let ConnectMessage::Metric(metric) = second;
+        assert_eq!(metric.create_time_ms(), 8);
+
+        match timeout(Duration::from_millis(200), rx1.recv()).await {
+            Ok(None) => {}
+            Ok(Some(ConnectMessage::Metric(m))) => {
+                panic!("old channel received seq={} after attach", m.create_time_ms())
+            }
+            Err(_) => panic!("old channel stayed open after attach"),
+        }
+
+        let outcome = Box::new(source).stop_with_budget(Duration::from_secs(1)).await;
+        assert_eq!(outcome, EventSourceStopOutcome::Clean);
+    }
+
+    #[tokio::test]
+    async fn event_source_request_stop_exits_task() {
+        let (tx, _rx) = tokio::sync::mpsc::channel::<ConnectMessage>(16);
+        let cancel = CancellationToken::new();
+        let cancel_waiter = cancel.clone();
+        let handle = tokio::spawn(async move {
+            cancel_waiter.cancelled().await;
+        });
+        let source = ConnectMetricEventSource::test_new(cancel, handle, Arc::new(Mutex::new(tx)));
+
+        source.request_stop();
+
+        let outcome = Box::new(source).stop_with_budget(Duration::from_secs(1)).await;
+        assert_eq!(outcome, EventSourceStopOutcome::Clean);
+    }
+
+    #[test]
+    fn dup_epoll_async_fd_rejects_bad_fd() {
+        assert!(crate::metric::dup_epoll_async_fd(-1).is_err());
     }
 }

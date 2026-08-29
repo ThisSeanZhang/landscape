@@ -98,12 +98,8 @@ pub mod task_label {
         pub const ROUTE_LAN_STOP: &str = "route.lan.stop";
         /// LAN route observer task reacting to interface events.
         pub const ROUTE_LAN_OBSERVER: &str = "route.lan.observer";
-        /// Metric service async launcher.
-        pub const METRIC_SERVICE_RUN: &str = "metric.service.run";
-        /// Metric service stop-signal bridge task.
-        pub const METRIC_SERVICE_STOP: &str = "metric.service.stop";
-        /// eBPF connect metric event reader task that feeds userspace connect metric channels.
-        pub const METRIC_EBPF_CONNECT_EVENT_READER: &str = "metric.ebpf.connect.event.reader";
+        /// eBPF connect metric event source task that feeds userspace connect metric channels.
+        pub const METRIC_EBPF_CONNECT_EVENT_SOURCE: &str = "metric.ebpf.connect.event.source";
         /// Background task that refreshes cached connect global stats.
         pub const METRIC_GLOBAL_STATS_REFRESH: &str = "metric.global_stats.refresh";
         /// Metric query executor task name used inside the dedicated query runtime.

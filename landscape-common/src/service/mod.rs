@@ -116,6 +116,14 @@ impl WatchService {
         matches!(*self.0.borrow(), ServiceStatus::Stop | ServiceStatus::Failed)
     }
 
+    pub fn is_active(&self) -> bool {
+        matches!(*self.0.borrow(), ServiceStatus::Staring | ServiceStatus::Running)
+    }
+
+    pub fn current(&self) -> ServiceStatus {
+        self.0.borrow().clone()
+    }
+
     pub fn subscribe(&self) -> watch::Receiver<ServiceStatus> {
         self.0.subscribe()
     }
