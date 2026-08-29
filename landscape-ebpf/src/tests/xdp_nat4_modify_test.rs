@@ -1,5 +1,4 @@
 use std::mem::MaybeUninit;
-use std::path::PathBuf;
 
 use libbpf_rs::{
     skel::{OpenSkel, SkelBuilder as _},
@@ -7,6 +6,7 @@ use libbpf_rs::{
 };
 
 use crate::tests::test_xdp_nat4_modify_skel::TestXdpNat4ModifySkelBuilder;
+use crate::tests::PinRootGuard;
 
 const OUTER_IP_OFFSET: usize = 14;
 const OUTER_ICMP_OFFSET: usize = OUTER_IP_OFFSET + 20;
@@ -24,14 +24,8 @@ const NAT_ID: u16 = 0x5678;
 const REMOTE_PORT: u16 = 443;
 const ECHO_SEQUENCE: u16 = 7;
 
-fn pin_root() -> PathBuf {
-    let path = PathBuf::from(format!(
-        "/sys/fs/bpf/landscape-test/xdp-nat4-modify-{}-{}",
-        std::process::id(),
-        crate::tests::test_id()
-    ));
-    std::fs::create_dir_all(&path).expect("create test pin root");
-    path
+fn pin_root() -> PinRootGuard {
+    PinRootGuard::new("xdp-nat4-modify")
 }
 
 fn internet_checksum(data: &[u8]) -> u16 {
@@ -320,7 +314,8 @@ fn assert_valid_modified_tcp_packet(
 #[test]
 fn xdp_modify_icmp_error_egress_rewrites_inner_echo_id() {
     let mut builder = TestXdpNat4ModifySkelBuilder::default();
-    builder.object_builder_mut().pin_root_path(pin_root()).unwrap();
+    let pin_root = pin_root();
+    builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
     let mut open_object = MaybeUninit::uninit();
     let open = builder.open(&mut open_object).unwrap();
     let skel = open.load().unwrap();
@@ -344,7 +339,8 @@ fn xdp_modify_icmp_error_egress_rewrites_inner_echo_id() {
 #[test]
 fn xdp_modify_icmp_error_ingress_restores_inner_echo_id() {
     let mut builder = TestXdpNat4ModifySkelBuilder::default();
-    builder.object_builder_mut().pin_root_path(pin_root()).unwrap();
+    let pin_root = pin_root();
+    builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
     let mut open_object = MaybeUninit::uninit();
     let open = builder.open(&mut open_object).unwrap();
     let skel = open.load().unwrap();
@@ -368,7 +364,8 @@ fn xdp_modify_icmp_error_ingress_restores_inner_echo_id() {
 #[test]
 fn xdp_modify_udp_mangles_computed_zero_checksum() {
     let mut builder = TestXdpNat4ModifySkelBuilder::default();
-    builder.object_builder_mut().pin_root_path(pin_root()).unwrap();
+    let pin_root = pin_root();
+    builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
     let mut open_object = MaybeUninit::uninit();
     let open = builder.open(&mut open_object).unwrap();
     let skel = open.load().unwrap();
@@ -404,7 +401,8 @@ fn xdp_modify_udp_mangles_computed_zero_checksum() {
 #[test]
 fn xdp_modify_udp_preserves_disabled_checksum() {
     let mut builder = TestXdpNat4ModifySkelBuilder::default();
-    builder.object_builder_mut().pin_root_path(pin_root()).unwrap();
+    let pin_root = pin_root();
+    builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
     let mut open_object = MaybeUninit::uninit();
     let open = builder.open(&mut open_object).unwrap();
     let skel = open.load().unwrap();
@@ -433,7 +431,8 @@ fn xdp_modify_udp_preserves_disabled_checksum() {
 #[test]
 fn xdp_modify_icmp_error_udp_mangles_computed_zero_checksum() {
     let mut builder = TestXdpNat4ModifySkelBuilder::default();
-    builder.object_builder_mut().pin_root_path(pin_root()).unwrap();
+    let pin_root = pin_root();
+    builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
     let mut open_object = MaybeUninit::uninit();
     let open = builder.open(&mut open_object).unwrap();
     let skel = open.load().unwrap();
@@ -471,7 +470,8 @@ fn xdp_modify_icmp_error_udp_mangles_computed_zero_checksum() {
 #[test]
 fn xdp_read_icmp_error_with_min_tcp_quote() {
     let mut builder = TestXdpNat4ModifySkelBuilder::default();
-    builder.object_builder_mut().pin_root_path(pin_root()).unwrap();
+    let pin_root = pin_root();
+    builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
     let mut open_object = MaybeUninit::uninit();
     let open = builder.open(&mut open_object).unwrap();
     let skel = open.load().unwrap();
@@ -490,7 +490,8 @@ fn xdp_read_icmp_error_with_min_tcp_quote() {
 #[test]
 fn xdp_read_icmp_error_rejects_incomplete_tcp_ports() {
     let mut builder = TestXdpNat4ModifySkelBuilder::default();
-    builder.object_builder_mut().pin_root_path(pin_root()).unwrap();
+    let pin_root = pin_root();
+    builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
     let mut open_object = MaybeUninit::uninit();
     let open = builder.open(&mut open_object).unwrap();
     let skel = open.load().unwrap();
@@ -509,7 +510,8 @@ fn xdp_read_icmp_error_rejects_incomplete_tcp_ports() {
 #[test]
 fn xdp_modify_icmp_error_egress_accepts_min_tcp_quote() {
     let mut builder = TestXdpNat4ModifySkelBuilder::default();
-    builder.object_builder_mut().pin_root_path(pin_root()).unwrap();
+    let pin_root = pin_root();
+    builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
     let mut open_object = MaybeUninit::uninit();
     let open = builder.open(&mut open_object).unwrap();
     let skel = open.load().unwrap();
@@ -543,7 +545,8 @@ fn xdp_modify_icmp_error_egress_accepts_min_tcp_quote() {
 #[test]
 fn xdp_modify_icmp_error_ingress_accepts_min_tcp_quote() {
     let mut builder = TestXdpNat4ModifySkelBuilder::default();
-    builder.object_builder_mut().pin_root_path(pin_root()).unwrap();
+    let pin_root = pin_root();
+    builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
     let mut open_object = MaybeUninit::uninit();
     let open = builder.open(&mut open_object).unwrap();
     let skel = open.load().unwrap();
@@ -576,7 +579,8 @@ fn xdp_modify_icmp_error_ingress_accepts_min_tcp_quote() {
 #[test]
 fn xdp_modify_icmp_error_updates_quoted_tcp_checksum_when_present() {
     let mut builder = TestXdpNat4ModifySkelBuilder::default();
-    builder.object_builder_mut().pin_root_path(pin_root()).unwrap();
+    let pin_root = pin_root();
+    builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
     let mut open_object = MaybeUninit::uninit();
     let open = builder.open(&mut open_object).unwrap();
     let skel = open.load().unwrap();

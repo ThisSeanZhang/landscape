@@ -1,5 +1,4 @@
 use std::os::fd::{AsFd, AsRawFd};
-use std::path::PathBuf;
 use std::process::Command;
 use std::thread;
 use std::time::Duration;
@@ -19,16 +18,10 @@ use crate::tests::xdp_lan_intro_skel::XdpLanIntroSkelBuilder;
 use crate::tests::xdp_mss_skel::XdpMssSkelBuilder;
 use crate::tests::xdp_wan_chain_skel::XdpWanChainSkelBuilder;
 use crate::tests::xdp_wan_route_skel::XdpWanRouteSkelBuilder;
+use crate::tests::PinRootGuard;
 
-fn test_pin_root(prefix: &str) -> PathBuf {
-    let path = PathBuf::from(format!(
-        "/sys/fs/bpf/landscape-test/xdp-fw-{}-{}-{}",
-        prefix,
-        std::process::id(),
-        crate::tests::test_id()
-    ));
-    let _ = std::fs::create_dir_all(&path);
-    path
+fn test_pin_root(prefix: &str) -> PinRootGuard {
+    PinRootGuard::new(&format!("xdp-fw-{prefix}"))
 }
 
 fn dummy_recv_count(map: &libbpf_rs::MapMut, is_v6: bool) -> u64 {

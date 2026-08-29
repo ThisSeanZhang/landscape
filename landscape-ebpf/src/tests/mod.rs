@@ -1,5 +1,7 @@
 use std::fmt::Debug;
 use std::net::Ipv6Addr;
+use std::ops::Deref;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
 
 use etherparse::PacketBuilder;
@@ -11,6 +13,48 @@ static TEST_ID: AtomicU32 = AtomicU32::new(0);
 
 pub(crate) fn test_id() -> u32 {
     TEST_ID.fetch_add(1, Ordering::Relaxed)
+}
+
+static TEST_PIN_ROOT_COUNTER: AtomicU32 = AtomicU32::new(0);
+
+/// An isolated BPF pin root under `/sys/fs/bpf/landscape-test/`.
+///
+/// Maps declared with `LIBBPF_PIN_BY_NAME` are auto-pinned by libbpf on load,
+/// so tests redirect them into a unique per-test directory. The directory is
+/// removed on drop (after all skels referencing it have been dropped), so
+/// pinned maps never outlive the test that created them.
+pub(crate) struct PinRootGuard(PathBuf);
+
+impl PinRootGuard {
+    pub(crate) fn new(prefix: &str) -> Self {
+        let unique = TEST_PIN_ROOT_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let path = PathBuf::from(format!(
+            "/sys/fs/bpf/landscape-test/{prefix}-{}-{unique}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&path).expect("create isolated bpf pin root");
+        Self(path)
+    }
+}
+
+impl Deref for PinRootGuard {
+    type Target = Path;
+
+    fn deref(&self) -> &Path {
+        &self.0
+    }
+}
+
+impl AsRef<Path> for PinRootGuard {
+    fn as_ref(&self) -> &Path {
+        &self.0
+    }
+}
+
+impl Drop for PinRootGuard {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
 }
 
 pub(crate) fn check_ifindex(name: &str, ifindex: u32) {

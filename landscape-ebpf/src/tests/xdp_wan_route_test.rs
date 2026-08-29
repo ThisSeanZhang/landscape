@@ -1,5 +1,4 @@
 use std::mem::MaybeUninit;
-use std::path::PathBuf;
 
 use libbpf_rs::{
     skel::{OpenSkel, SkelBuilder as _},
@@ -7,24 +6,20 @@ use libbpf_rs::{
 };
 
 use crate::tests::xdp_wan_route_skel::XdpWanRouteSkelBuilder;
+use crate::tests::PinRootGuard;
 
-fn test_pin_root() -> PathBuf {
-    let path = PathBuf::from(format!(
-        "/sys/fs/bpf/landscape-test/xdp-wr-{}-{}",
-        std::process::id(),
-        crate::tests::test_id()
-    ));
-    let _ = std::fs::create_dir_all(&path);
-    path
+fn test_pin_root() -> PinRootGuard {
+    PinRootGuard::new("xdp-wr")
 }
 
 #[test]
 fn xdp_wan_route_verifier_smoke() {
     let mut builder = XdpWanRouteSkelBuilder::default();
+    let pin_root = test_pin_root();
     {
         let obj_builder = builder.object_builder_mut();
         obj_builder.debug(true);
-        obj_builder.pin_root_path(test_pin_root()).unwrap();
+        obj_builder.pin_root_path(&pin_root).unwrap();
     }
 
     let mut obj = MaybeUninit::uninit();
@@ -36,7 +31,8 @@ fn xdp_wan_route_verifier_smoke() {
 #[ignore = "requires specific BPF map / kernel environment"]
 fn xdp_wan_route_testrun_pass() {
     let mut builder = XdpWanRouteSkelBuilder::default();
-    builder.object_builder_mut().pin_root_path(test_pin_root()).unwrap();
+    let pin_root = test_pin_root();
+    builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
 
     let mut obj = MaybeUninit::uninit();
     let open = builder.open(&mut obj).expect("open skel");

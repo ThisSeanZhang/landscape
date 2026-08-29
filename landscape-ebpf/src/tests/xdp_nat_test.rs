@@ -1,4 +1,3 @@
-use std::path::PathBuf;
 use std::process::Command;
 use std::thread;
 use std::time::Duration;
@@ -14,21 +13,15 @@ use crate::tests::test_xdp_dummy::TestXdpDummySkelBuilder;
 use crate::tests::xdp_firewall_skel::XdpFirewallSkelBuilder;
 use crate::tests::xdp_lan_chain_skel::XdpLanChainSkelBuilder;
 use crate::tests::xdp_nat_skel::{types, XdpNatSkelBuilder};
+use crate::tests::PinRootGuard;
 
 use std::os::fd::{AsFd, AsRawFd};
 use std::sync::Mutex;
 
 static XDP_NAT_LOCK: Mutex<()> = Mutex::new(());
 
-fn pin_root(prefix: &str) -> PathBuf {
-    let path = PathBuf::from(format!(
-        "/sys/fs/bpf/landscape-test/xdp-nat-{}-{}-{}",
-        prefix,
-        std::process::id(),
-        crate::tests::test_id()
-    ));
-    let _ = std::fs::create_dir_all(&path);
-    path
+fn pin_root(prefix: &str) -> PinRootGuard {
+    PinRootGuard::new(&format!("xdp-nat-{prefix}"))
 }
 
 fn send_raw_packet(iface: &str, pkt: &[u8]) {

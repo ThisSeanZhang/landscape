@@ -1,5 +1,4 @@
 use std::os::fd::{AsFd, AsRawFd};
-use std::path::PathBuf;
 use std::process::Command;
 use std::thread;
 use std::time::Duration;
@@ -22,16 +21,10 @@ use crate::tests::xdp_lan_intro_skel::XdpLanIntroSkelBuilder;
 use crate::tests::xdp_mss_skel::XdpMssSkelBuilder;
 use crate::tests::xdp_wan_chain_skel::XdpWanChainSkelBuilder;
 use crate::tests::xdp_wan_route_skel::XdpWanRouteSkelBuilder;
+use crate::tests::PinRootGuard;
 
-fn test_pin_root(prefix: &str) -> PathBuf {
-    let path = PathBuf::from(format!(
-        "/sys/fs/bpf/landscape-test/xdp-lr-{}-{}-{}",
-        prefix,
-        std::process::id(),
-        crate::tests::test_id()
-    ));
-    let _ = std::fs::create_dir_all(&path);
-    path
+fn test_pin_root(prefix: &str) -> PinRootGuard {
+    PinRootGuard::new(&format!("xdp-lr-{prefix}"))
 }
 
 fn dummy_recv_count(map: &libbpf_rs::MapMut, is_v6: bool) -> u64 {
@@ -200,7 +193,8 @@ fn lookup_inner_map(outer_map: &impl MapCore, cache_index: u32) -> MapHandle {
 #[test]
 fn xdp_lan_intro_verifier_smoke() {
     let mut builder = XdpLanIntroSkelBuilder::default();
-    builder.object_builder_mut().pin_root_path(test_pin_root("v")).unwrap();
+    let pin_root = test_pin_root("v");
+    builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
     let mut obj = std::mem::MaybeUninit::uninit();
     let open = builder.open(&mut obj).expect("open skel");
     let _skel = open.load().expect("verifier rejected");
@@ -223,7 +217,8 @@ fn xdp_lan_intro_trace_flow() {
     let ifindex = if_nametoindex(host.as_str()).expect("ifindex") as i32;
 
     let mut builder = XdpLanIntroSkelBuilder::default();
-    builder.object_builder_mut().pin_root_path(test_pin_root("t")).unwrap();
+    let pin_root = test_pin_root("t");
+    builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
     let mut obj = std::mem::MaybeUninit::uninit();
     let open = builder.open(&mut obj).expect("open");
     let skel = open.load().expect("load");
