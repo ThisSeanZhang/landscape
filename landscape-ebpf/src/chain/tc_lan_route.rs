@@ -11,10 +11,18 @@ mod tc_lan_ingress_intro_skel {
 }
 use tc_lan_ingress_intro_skel::{TcLanIngressIntroSkel, TcLanIngressIntroSkelBuilder};
 
+mod tc_lan_dao_skel {
+    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/tc_lan_dao.skel.rs"));
+}
+use tc_lan_dao_skel::TcLanDaoSkelBuilder;
+
 pub struct TcLanRouteHandle {
     _intro_skel: TcLanIngressIntroSkel<'static>,
     _intro_backing: OwnedOpenObject,
+    _dao_skel: tc_lan_dao_skel::TcLanDaoSkel<'static>,
+    _dao_backing: OwnedOpenObject,
     ingress_hook: Option<TcHookProxy>,
+    dao_hook: Option<TcHookProxy>,
     _ifindex: u32,
 }
 
@@ -23,6 +31,7 @@ unsafe impl Sync for TcLanRouteHandle {}
 
 impl Drop for TcLanRouteHandle {
     fn drop(&mut self) {
+        self.dao_hook.take();
         self.ingress_hook.take();
     }
 }
@@ -107,14 +116,34 @@ pub fn init_tc_lan_route(
         &intro_skel.progs.tc_lan_ingress_intro,
         ifindex as i32,
         libbpf_rs::TC_INGRESS,
-        1,
+        crate::TC_LAN_INGRESS_INTRO_PRIORITY,
     );
     ingress_hook.attach();
+
+    let (dao_backing, dao_obj) = OwnedOpenObject::new();
+    let dao_builder = TcLanDaoSkelBuilder::default();
+    let mut dao_open_skel = bpf_ctx!(dao_builder.open(dao_obj), "open per-if tc_lan_dao")?;
+    dao_open_skel.maps.rodata_data.as_deref_mut().unwrap().current_l3_offset = l3_offset;
+    crate::bpf_ctx!(
+        pin_and_reuse_map(&mut dao_open_skel.maps.ip_mac_v6, &MAP_PATHS.ip_mac_v6),
+        "tc_lan_dao pin ip_mac_v6"
+    )?;
+    let dao_skel = bpf_ctx!(dao_open_skel.load(), "load per-if tc_lan_dao")?;
+    let mut dao_hook = TcHookProxy::new(
+        &dao_skel.progs.tc_lan_dao,
+        ifindex as i32,
+        libbpf_rs::TC_INGRESS,
+        crate::TC_LAN_INGRESS_DAO_PRIORITY,
+    );
+    dao_hook.attach();
 
     Ok(TcLanRouteHandle {
         _intro_skel: intro_skel,
         _intro_backing: intro_backing,
+        _dao_skel: dao_skel,
+        _dao_backing: dao_backing,
         ingress_hook: Some(ingress_hook),
+        dao_hook: Some(dao_hook),
         _ifindex: ifindex,
     })
 }

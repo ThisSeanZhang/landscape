@@ -124,6 +124,10 @@ pub(crate) struct LandscapeMapPath {
 // const PPPOE_MTU_FILTER_EGRESS_PRIORITY: u32 = 1;
 const PPPOE_EGRESS_PRIORITY: u32 = 2;
 
+// LAN ingress TC classifier priorities (smaller runs first)
+pub(crate) const TC_LAN_INGRESS_INTRO_PRIORITY: u32 = 1;
+pub(crate) const TC_LAN_INGRESS_DAO_PRIORITY: u32 = 2;
+
 // const FLOW_EGRESS_PRIORITY: u32 = 4;
 const LANDSCAPE_IPV4_TYPE: u8 = 0;
 const LANDSCAPE_IPV6_TYPE: u8 = 1;

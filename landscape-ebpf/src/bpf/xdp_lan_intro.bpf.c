@@ -686,7 +686,12 @@ static __always_inline int xdp_search_route_in_lan_v6(struct xdp_md *ctx,
                     struct ethhdr *eth = data;
                     if ((void *)(eth + 1) > data_end) return XDP_DROP;
                     __builtin_memcpy(eth->h_dest, mac_val->mac, 6);
-                    __builtin_memcpy(eth->h_source, mac_val->dev_mac, 6);
+                    // DAD-learned entries carry no dev_mac (the DAD frame does
+                    // not expose the router's own MAC); keep the original
+                    // source MAC instead of emitting an all-zero one.
+                    if (!is_zero_mac(mac_val->dev_mac)) {
+                        __builtin_memcpy(eth->h_source, mac_val->dev_mac, 6);
+                    }
                 }
             }
             if (!target->xdp_redirect_able) {

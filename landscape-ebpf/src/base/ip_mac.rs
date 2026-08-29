@@ -29,6 +29,12 @@ const ARP_SYNC_INTERVAL_SECS: u64 = 10;
 const ETH_P_IPV4_BE: u16 = 0x0008;
 const ETH_P_IPV6_BE: u16 = 0xdd86;
 
+// mac_value_v6.sourced values, must match LD_MAC_SOURCE_* in bpf/neigh_ip.h.
+// LD_MAC_SOURCE_NEIGH is the default (zero) value and is only referenced by tests.
+#[allow(dead_code)]
+const LD_MAC_SOURCE_NEIGH: u8 = 0;
+const LD_MAC_SOURCE_DAD: u8 = 1;
+
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 struct ArpSyncStats {
     deleted: usize,
@@ -294,7 +300,7 @@ where
         })?;
 
         let addr_bytes = unsafe { raw_key.addr.bytes };
-        if !desired_addrs.contains(&addr_bytes) {
+        if !desired_addrs.contains(&addr_bytes) && !is_dad_sourced(map, &raw_key)? {
             stale_keys.push(raw_key);
         }
     }
@@ -313,6 +319,27 @@ where
     }
 
     Ok(ArpSyncStats { deleted: stale_keys.len(), upserted: entries.len() })
+}
+
+/// DAD-learned entries (sourced == LD_MAC_SOURCE_DAD) must survive the
+/// reconcile: the kernel usually has no valid neigh entry for a DAD target,
+/// so they would otherwise be wiped seconds after being learned.
+fn is_dad_sourced<T>(map: &T, key: &mac_key_v6) -> libbpf_rs::Result<bool>
+where
+    T: MapCore,
+{
+    match map.lookup(unsafe { plain::as_bytes(key) }, MapFlags::ANY)? {
+        Some(value) => {
+            let value = read_unaligned::<mac_value_v6>(&value).ok_or_else(|| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!("decode ip_mac_v6 value failed: invalid value size {}", value.len()),
+                )
+            })?;
+            Ok(value.sourced == LD_MAC_SOURCE_DAD)
+        }
+        None => Ok(false),
+    }
 }
 
 fn build_batch_buffers(entries: &[(mac_key_v4, mac_value_v4)]) -> (Vec<u8>, Vec<u8>) {
@@ -633,6 +660,18 @@ mod tests {
         (key, value)
     }
 
+    #[allow(clippy::field_reassign_with_default)]
+    fn make_dad_entry_v6(
+        ip: &str,
+        mac: &str,
+        dev_mac: &str,
+        ifindex: u32,
+    ) -> (mac_key_v6, mac_value_v6) {
+        let mut entry = make_entry_v6(ip, mac, dev_mac, ifindex);
+        entry.1.sourced = LD_MAC_SOURCE_DAD;
+        entry
+    }
+
     fn insert_entry<T>(map: &T, entry: &(mac_key_v4, mac_value_v4))
     where
         T: MapCore,
@@ -812,6 +851,67 @@ mod tests {
         assert_eq!(stats.deleted, 2);
         assert_eq!(stats.upserted, 0);
         assert_eq!(map.keys().count(), 0);
+    }
+
+    #[test]
+    fn reconcile_v6_keeps_dad_sourced_entry() {
+        let map = create_test_ip_mac_v6_map();
+        let dad = make_dad_entry_v6("2001:db8::8", "02:11:22:33:44:55", "02:aa:bb:cc:dd:ee", 7);
+        insert_entry_v6(&map, &dad);
+
+        let stats = reconcile_ipv6_entries_in_map(&map, &[]).expect("reconcile ip_mac_v6 map");
+
+        assert_eq!(stats.deleted, 0);
+        let stored =
+            lookup_entry_v6(&map, "2001:db8::8").expect("DAD entry must survive reconcile");
+        assert_eq!(stored.mac, dad.1.mac);
+        assert_eq!(stored.sourced, LD_MAC_SOURCE_DAD);
+    }
+
+    #[test]
+    fn reconcile_v6_clears_dad_flag_when_kernel_binding_exists() {
+        let map = create_test_ip_mac_v6_map();
+        let dad = make_dad_entry_v6("2001:db8::8", "02:11:22:33:44:55", "02:aa:bb:cc:dd:ee", 7);
+        insert_entry_v6(&map, &dad);
+
+        let neigh = make_entry_v6("2001:db8::8", "02:66:77:88:99:aa", "02:aa:bb:cc:dd:ef", 9);
+        let stats = reconcile_ipv6_entries_in_map(&map, &[neigh]).expect("reconcile ip_mac_v6 map");
+
+        assert_eq!(stats.deleted, 0);
+        assert_eq!(stats.upserted, 1);
+        let stored = lookup_entry_v6(&map, "2001:db8::8").expect("entry missing after update");
+        assert_eq!(stored.mac, neigh.1.mac);
+        assert_eq!(stored.sourced, LD_MAC_SOURCE_NEIGH);
+    }
+
+    #[test]
+    fn reconcile_v6_deletes_neigh_sourced_stale_entries() {
+        let map = create_test_ip_mac_v6_map();
+        let keep = make_entry_v6("2001:db8::8", "02:11:22:33:44:55", "02:aa:bb:cc:dd:ee", 7);
+        let stale = make_entry_v6("2001:db8::9", "02:66:77:88:99:aa", "02:aa:bb:cc:dd:ef", 8);
+        insert_entry_v6(&map, &keep);
+        insert_entry_v6(&map, &stale);
+
+        let stats = reconcile_ipv6_entries_in_map(&map, &[keep]).expect("reconcile ip_mac_v6 map");
+
+        assert_eq!(stats.deleted, 1);
+        assert_eq!(stats.upserted, 1);
+        assert!(lookup_entry_v6(&map, "2001:db8::9").is_none());
+    }
+
+    #[test]
+    fn reconcile_v6_mixed_sources_only_deletes_neigh_sourced() {
+        let map = create_test_ip_mac_v6_map();
+        let dad = make_dad_entry_v6("2001:db8::8", "02:11:22:33:44:55", "02:aa:bb:cc:dd:ee", 7);
+        let stale = make_entry_v6("2001:db8::9", "02:66:77:88:99:aa", "02:aa:bb:cc:dd:ef", 8);
+        insert_entry_v6(&map, &dad);
+        insert_entry_v6(&map, &stale);
+
+        let stats = reconcile_ipv6_entries_in_map(&map, &[]).expect("reconcile ip_mac_v6 map");
+
+        assert_eq!(stats.deleted, 1);
+        assert!(lookup_entry_v6(&map, "2001:db8::8").is_some());
+        assert!(lookup_entry_v6(&map, "2001:db8::9").is_none());
     }
 
     #[test]

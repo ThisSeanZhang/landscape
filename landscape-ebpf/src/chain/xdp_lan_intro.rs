@@ -220,8 +220,12 @@ pub fn init_xdp_lan_intro(ifindex: u32, has_mac: bool) -> LdEbpfResult<XdpLanInt
 
     let intro_skel = bpf_ctx!(intro_open_skel.load(), "load tc_lan_ingress_intro")?;
 
-    let mut ingress_hook =
-        TcHookProxy::new(&intro_skel.progs.tc_lan_ingress_intro, ifindex as i32, TC_INGRESS, 1);
+    let mut ingress_hook = TcHookProxy::new(
+        &intro_skel.progs.tc_lan_ingress_intro,
+        ifindex as i32,
+        TC_INGRESS,
+        crate::TC_LAN_INGRESS_INTRO_PRIORITY,
+    );
     ingress_hook.attach();
 
     Ok(XdpLanIntroHandle {

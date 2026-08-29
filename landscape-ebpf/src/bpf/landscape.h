@@ -165,6 +165,10 @@ struct fragment_cache_value {
     u16 dport;
 };
 
+static __always_inline bool is_zero_mac(const u8 *mac) {
+    return mac[0] == 0 && mac[1] == 0 && mac[2] == 0 && mac[3] == 0 && mac[4] == 0 && mac[5] == 0;
+}
+
 static __always_inline int is_broadcast_mac(struct __sk_buff *skb) {
     u8 *mac;
 
