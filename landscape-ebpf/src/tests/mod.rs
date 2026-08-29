@@ -27,6 +27,7 @@ pub(crate) struct PinRootGuard(PathBuf);
 
 impl PinRootGuard {
     pub(crate) fn new(prefix: &str) -> Self {
+        crate::tests::net_utils::ensure_bpffs();
         let unique = TEST_PIN_ROOT_COUNTER.fetch_add(1, Ordering::Relaxed);
         let path = PathBuf::from(format!(
             "/sys/fs/bpf/landscape-test/{prefix}-{}-{unique}",

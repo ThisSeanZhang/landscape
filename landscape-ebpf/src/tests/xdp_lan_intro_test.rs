@@ -26,7 +26,7 @@ fn test_pin_root(prefix: &str) -> PinRootGuard {
 }
 
 use crate::tests::net_utils::{
-    dummy_recv_count, dummy_reset, send_raw_packet, settle, wait_for, VethPair,
+    dummy_recv_count, dummy_reset, send_raw_packet, settle, wait_for, NetNsGuard, VethPair,
 };
 
 fn build_ipv4_tcp_pkt(
@@ -165,9 +165,14 @@ fn xdp_lan_intro_verifier_smoke() {
 #[ignore = "requires root and veth pairs; run with --include-ignored"]
 #[test]
 fn xdp_lan_intro_trace_flow() {
-    let pair = VethPair::create("lxd");
+    let test_ns = NetNsGuard::create("trx");
+    let peer_ns = NetNsGuard::create("trxp");
+    let pair;
+    {
+        let _e = test_ns.enter();
+        pair = VethPair::create_with_netns("trx", &peer_ns);
+    }
     let peer = pair.peer();
-    let ifindex = pair.host_ifindex() as i32;
 
     let mut builder = XdpLanIntroSkelBuilder::default();
     let pin_root = test_pin_root("t");
@@ -175,7 +180,12 @@ fn xdp_lan_intro_trace_flow() {
     let mut obj = std::mem::MaybeUninit::uninit();
     let open = builder.open(&mut obj).expect("open");
     let skel = open.load().expect("load");
-    let _link = skel.progs.xdp_lan_intro.attach_xdp(ifindex).expect("attach");
+    let _link;
+    {
+        let _e = test_ns.enter();
+        let ifindex = pair.host_ifindex() as i32;
+        _link = skel.progs.xdp_lan_intro.attach_xdp(ifindex).expect("attach");
+    }
 
     let pkt = build_ipv4_tcp_pkt(
         [0x02, 0, 0, 0, 0, 1],
@@ -183,7 +193,10 @@ fn xdp_lan_intro_trace_flow() {
         [10, 0, 0, 1],
         [10, 0, 0, 2],
     );
-    send_raw_packet(peer, &pkt);
+    {
+        let _e = peer_ns.enter();
+        send_raw_packet(peer, &pkt);
+    }
     settle(300);
 
     drop(skel);
@@ -200,10 +213,24 @@ fn xdp_lan_intro_map_redirect() {
     let mut share_obj = std::mem::MaybeUninit::uninit();
     let share = sb.open(&mut share_obj).unwrap().load().unwrap();
 
-    let pair = VethPair::create("lrb");
+    let test_ns = NetNsGuard::create("lrb");
+    let peer_ns = NetNsGuard::create("lrbp");
+    let pair;
+    {
+        let _e = test_ns.enter();
+        pair = VethPair::create_with_netns("lrb", &peer_ns);
+    }
     let peer = pair.peer();
-    let h_i = pair.host_ifindex();
-    let p_i = pair.peer_ifindex();
+    let h_i;
+    let p_i;
+    {
+        let _e = test_ns.enter();
+        h_i = pair.host_ifindex();
+    }
+    {
+        let _e = peer_ns.enter();
+        p_i = pair.peer_ifindex();
+    }
 
     let mut lan_key = [0u8; 8];
     lan_key[0..4].copy_from_slice(&32u32.to_ne_bytes());
@@ -216,7 +243,11 @@ fn xdp_lan_intro_map_redirect() {
     b.object_builder_mut().pin_root_path(&share_pin).unwrap();
     let mut obj = std::mem::MaybeUninit::uninit();
     let skel = b.open(&mut obj).unwrap().load().unwrap();
-    let _link = skel.progs.xdp_lan_intro.attach_xdp(h_i as i32).unwrap();
+    let _link;
+    {
+        let _e = test_ns.enter();
+        _link = skel.progs.xdp_lan_intro.attach_xdp(h_i as i32).unwrap();
+    }
 
     let pkt = build_ipv4_tcp_pkt(
         [0x02, 0, 0, 0, 0, 1],
@@ -224,7 +255,10 @@ fn xdp_lan_intro_map_redirect() {
         [10, 0, 0, 1],
         [10, 0, 0, 2],
     );
-    send_raw_packet(peer, &pkt);
+    {
+        let _e = peer_ns.enter();
+        send_raw_packet(peer, &pkt);
+    }
     settle(300);
 
     drop(skel);
@@ -236,17 +270,33 @@ fn xdp_lan_intro_map_redirect() {
 #[test]
 #[ignore = "requires root and veth pairs; run with --include-ignored"]
 fn xdp_lan_intro_wan_pipeline() {
-    let lan_pair = VethPair::create("lrhl");
-    let wan_pair = VethPair::create("lrhw");
+    let test_ns = NetNsGuard::create("pdl");
+    let peer_ns = NetNsGuard::create("pdlp");
+
+    let lan_pair;
+    let wan_pair;
+    {
+        let _e = test_ns.enter();
+        lan_pair = VethPair::create_with_netns("pdl", &peer_ns);
+        wan_pair = VethPair::create_with_netns("pdw", &peer_ns);
+    }
     let lan_p = lan_pair.peer();
     let wan_p = wan_pair.peer();
 
-    let lan_h_i = lan_pair.host_ifindex();
-    let lan_p_i = lan_pair.peer_ifindex();
-    let wan_h_i = wan_pair.host_ifindex();
-    let wan_p_i = wan_pair.peer_ifindex();
-
-    Command::new("ip").args(["route", "add", "blackhole", "203.0.113.1"]).output().ok();
+    let lan_h_i;
+    let lan_p_i;
+    let wan_h_i;
+    let wan_p_i;
+    {
+        let _e = test_ns.enter();
+        lan_h_i = lan_pair.host_ifindex();
+        wan_h_i = wan_pair.host_ifindex();
+    }
+    {
+        let _e = peer_ns.enter();
+        lan_p_i = lan_pair.peer_ifindex();
+        wan_p_i = wan_pair.peer_ifindex();
+    }
 
     let share_pin = test_pin_root("pipe");
     let mut sb = ShareMapSkelBuilder::default();
@@ -343,10 +393,20 @@ fn xdp_lan_intro_wan_pipeline() {
     let mut mss_obj = std::mem::MaybeUninit::uninit();
     let mss = mss_b.open(&mut mss_obj).unwrap().load().unwrap();
 
-    let _l0 = lr.progs.xdp_lan_intro.attach_xdp(lan_h_i as i32).unwrap();
-    let _l1 = intro.progs.wan_intro_dispatch.attach_xdp(wan_h_i as i32).unwrap();
-    let _l2 = da.progs.xdp_test_dummy.attach_xdp(lan_p_i as i32).unwrap();
-    let _l3 = dc.progs.xdp_test_dummy.attach_xdp(wan_p_i as i32).unwrap();
+    let _l0;
+    let _l1;
+    let _l2;
+    let _l3;
+    {
+        let _e = test_ns.enter();
+        _l0 = lr.progs.xdp_lan_intro.attach_xdp(lan_h_i as i32).unwrap();
+        _l1 = intro.progs.wan_intro_dispatch.attach_xdp(wan_h_i as i32).unwrap();
+    }
+    {
+        let _e = peer_ns.enter();
+        _l2 = da.progs.xdp_test_dummy.attach_xdp(lan_p_i as i32).unwrap();
+        _l3 = dc.progs.xdp_test_dummy.attach_xdp(wan_p_i as i32).unwrap();
+    }
 
     let root_fd = chain.progs.xdp_lan_chain_root.as_fd().as_raw_fd();
     let mss_lan_fd = mss.progs.xdp_mss_lan.as_fd().as_raw_fd();
@@ -429,6 +489,17 @@ fn xdp_lan_intro_wan_pipeline() {
     dummy_reset(&da.maps.dummy_recv_map);
     dummy_reset(&dc.maps.dummy_recv_map);
 
+    // Sending must happen from inside the peer netns (AF_PACKET ifindexes are
+    // per-netns). Counter/map reads are netns-independent.
+    let send_lan = |pkt: &[u8]| {
+        let _e = peer_ns.enter();
+        send_raw_packet(&lan_p, pkt);
+    };
+    let send_wan = |pkt: &[u8]| {
+        let _e = peer_ns.enter();
+        send_raw_packet(&wan_p, pkt);
+    };
+
     // A→C: TCP SYN → LAN chain → MSS clamp
     let pkt_a2c = build_syn_pkt(
         [0x02, 0, 0, 0, 0, 1],
@@ -437,7 +508,7 @@ fn xdp_lan_intro_wan_pipeline() {
         [203, 0, 113, 1],
         1460,
     );
-    send_raw_packet(&lan_p, &pkt_a2c);
+    send_lan(&pkt_a2c);
 
     // C→A: TCP SYN → wan_intro → WAN chain → MSS clamp
     let pkt_c2a = build_syn_pkt(
@@ -447,13 +518,14 @@ fn xdp_lan_intro_wan_pipeline() {
         [10, 0, 0, 1],
         1460,
     );
-    send_raw_packet(&wan_p, &pkt_c2a);
+    send_wan(&pkt_c2a);
 
     wait_for("lan/wan pipeline dummy recv", Duration::from_secs(5), || {
         dummy_recv_count(&da.maps.dummy_recv_map, false)
             + dummy_recv_count(&dc.maps.dummy_recv_map, false)
             > 0
     });
+
     let v4_cnt = dummy_recv_count(&da.maps.dummy_recv_map, false)
         + dummy_recv_count(&dc.maps.dummy_recv_map, false);
     assert!(v4_cnt > 0, "no dummy recv");
@@ -488,7 +560,6 @@ fn xdp_lan_intro_wan_pipeline() {
     drop(intro);
     drop(lr);
     drop(share);
-    let _ = Command::new("ip").args(["route", "del", "blackhole", "203.0.113.1"]).output();
 }
 
 // ── Test E: test_run verification of unknown IP not redirected ──
@@ -649,23 +720,36 @@ fn build_ipv6_tcp_pkt(
 #[ignore = "requires root and veth pairs; run with --include-ignored"]
 #[test]
 fn xdp_lan_intro_fib_fallback_v4() {
-    let pair = VethPair::create("lrf4");
-    let host = pair.host();
+    let test_ns = NetNsGuard::create("f4x");
+    let peer_ns = NetNsGuard::create("f4xp");
+    let pair;
+    let out_pair;
+    {
+        let _e = test_ns.enter();
+        pair = VethPair::create_with_netns("f4x", &peer_ns);
+        // FIB target must be a device other than the ingress (host end), so the
+        // route points out a second pair kept in the test netns.
+        out_pair = VethPair::create("f4o");
+    }
     let peer = pair.peer();
+    let out_host = out_pair.host();
 
-    // route + static ARP so bpf_fib_lookup can resolve the MAC
-    Command::new("ip").args(["route", "add", "10.0.0.200/32", "dev", peer]).output().unwrap();
-    Command::new("ip")
-        .args(["neigh", "add", "10.0.0.200", "lladdr", "02:00:00:00:00:c8", "dev", peer])
-        .output()
-        .unwrap();
-    Command::new("ip")
-        .args(["neigh", "add", "10.0.0.200", "lladdr", "02:00:00:00:00:c8", "dev", host])
-        .output()
-        .unwrap();
-
-    let h_i = pair.host_ifindex();
-    let p_i = pair.peer_ifindex();
+    let h_i;
+    let out_h_i;
+    {
+        let _e = test_ns.enter();
+        // route + static ARP so bpf_fib_lookup can resolve the MAC (test netns only)
+        Command::new("ip")
+            .args(["route", "add", "10.0.0.200/32", "dev", out_host])
+            .output()
+            .unwrap();
+        Command::new("ip")
+            .args(["neigh", "add", "10.0.0.200", "lladdr", "02:00:00:00:00:c8", "dev", out_host])
+            .output()
+            .unwrap();
+        h_i = pair.host_ifindex();
+        out_h_i = out_pair.host_ifindex();
+    }
 
     let pin_root = test_pin_root("fib4v");
     let mut b = XdpLanIntroSkelBuilder::default();
@@ -685,15 +769,21 @@ fn xdp_lan_intro_fib_fallback_v4() {
     mac_key.copy_from_slice(&dst_ip_be);
     skel.maps.ip_mac_v4.delete(&mac_key).ok();
 
-    // pre-fill rt4_lan_map with has_mac=1 (forces MAC lookup → FIB fallback)
+    // pre-fill rt4_lan_map with has_mac=1 (forces MAC lookup → FIB fallback).
+    // ifindex must be a *local* (test-netns) index distinct from the ingress,
+    // since peer-netns ifindexes numerically collide with local ones.
     let mut lan_val = [0u8; 16];
     lan_val[0] = 1; // has_mac = true
-    lan_val[8..12].copy_from_slice(&p_i.to_ne_bytes());
+    lan_val[8..12].copy_from_slice(&out_h_i.to_ne_bytes());
     skel.maps.rt4_lan_map.update(&lan_key, &lan_val, MapFlags::ANY).unwrap();
 
     // do NOT pre-fill ip_mac_v4 for 10.0.0.200
 
-    let _link = skel.progs.xdp_lan_intro.attach_xdp(h_i as i32).unwrap();
+    let _link;
+    {
+        let _e = test_ns.enter();
+        _link = skel.progs.xdp_lan_intro.attach_xdp(h_i as i32).unwrap();
+    }
 
     let pkt = build_ipv4_tcp_pkt(
         [0x02, 0, 0, 0, 0, 1],
@@ -701,7 +791,10 @@ fn xdp_lan_intro_fib_fallback_v4() {
         [10, 0, 0, 1],
         [10, 0, 0, 200],
     );
-    send_raw_packet(peer, &pkt);
+    {
+        let _e = peer_ns.enter();
+        send_raw_packet(peer, &pkt);
+    }
     wait_for("FIB fallback populated ip_mac_v4", Duration::from_secs(5), || {
         skel.maps.ip_mac_v4.lookup(&mac_key, MapFlags::ANY).unwrap().is_some()
     });
@@ -710,8 +803,9 @@ fn xdp_lan_intro_fib_fallback_v4() {
     assert!(mac_after.is_some(), "FIB should have populated ip_mac_v4 for known LAN IP 10.0.0.200");
 
     drop(skel);
-    let _ = Command::new("ip").args(["neigh", "del", "10.0.0.200", "dev", peer]).output();
-    let _ = Command::new("ip").args(["route", "del", "10.0.0.200/32", "dev", peer]).output();
+    let _e = test_ns.enter();
+    let _ = Command::new("ip").args(["neigh", "del", "10.0.0.200", "dev", out_host]).output();
+    let _ = Command::new("ip").args(["route", "del", "10.0.0.200/32", "dev", out_host]).output();
 }
 
 // ── Test H: v6 FIB fallback with veth + map verification ──
@@ -719,81 +813,113 @@ fn xdp_lan_intro_fib_fallback_v4() {
 #[ignore = "requires root and veth pairs; run with --include-ignored"]
 #[test]
 fn xdp_lan_intro_fib_fallback_v6() {
-    let pair = VethPair::create("lrf6");
+    let test_ns = NetNsGuard::create("f6x");
+    let peer_ns = NetNsGuard::create("f6xp");
+    let pair;
+    let out_pair;
+    {
+        let _e = test_ns.enter();
+        pair = VethPair::create_with_netns("f6x", &peer_ns);
+        out_pair = VethPair::create("f6o");
+    }
     let host = pair.host();
     let peer = pair.peer();
+    let out_host = out_pair.host();
 
-    // bpf_fib_lookup for IPv6 requires forwarding=1 on the ingress device
-    let fwd_path = format!("net.ipv6.conf.{}.forwarding", host);
-    let fwd_was = Command::new("sysctl")
-        .args(["-n", &fwd_path])
-        .output()
-        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-        .unwrap_or_default();
-    Command::new("sysctl").args(["-w", &format!("{}=1", fwd_path)]).output().unwrap();
-    // route + static neighbour so bpf_fib_lookup can resolve the MAC
-    Command::new("ip").args(["-6", "route", "add", "fd00::200/128", "dev", peer]).output().unwrap();
-    Command::new("ip")
-        .args(["-6", "neigh", "add", "fd00::200", "lladdr", "02:00:00:00:00:c8", "dev", peer])
-        .output()
-        .unwrap();
-    Command::new("ip")
-        .args(["-6", "neigh", "add", "fd00::200", "lladdr", "02:00:00:00:00:c8", "dev", host])
-        .output()
-        .unwrap();
+    let h_i;
+    let out_h_i;
+    {
+        let _e = test_ns.enter();
+        // bpf_fib_lookup for IPv6 requires forwarding=1 on the ingress device
+        let fwd_path = format!("net.ipv6.conf.{}.forwarding", host);
+        let fwd_was = Command::new("sysctl")
+            .args(["-n", &fwd_path])
+            .output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+            .unwrap_or_default();
+        Command::new("sysctl").args(["-w", &format!("{}=1", fwd_path)]).output().unwrap();
+        // route + static neighbour so bpf_fib_lookup can resolve the MAC (test netns only)
+        Command::new("ip")
+            .args(["-6", "route", "add", "fd00::200/128", "dev", out_host])
+            .output()
+            .unwrap();
+        Command::new("ip")
+            .args([
+                "-6",
+                "neigh",
+                "add",
+                "fd00::200",
+                "lladdr",
+                "02:00:00:00:00:c8",
+                "dev",
+                out_host,
+            ])
+            .output()
+            .unwrap();
+        h_i = pair.host_ifindex();
 
-    let h_i = pair.host_ifindex();
-    let p_i = pair.peer_ifindex();
+        let pin_root = test_pin_root("fib6v");
+        let mut b = XdpLanIntroSkelBuilder::default();
+        b.object_builder_mut().pin_root_path(&pin_root).unwrap();
+        let mut obj = std::mem::MaybeUninit::uninit();
+        let skel = b.open(&mut obj).unwrap().load().unwrap();
 
-    let pin_root = test_pin_root("fib6v");
-    let mut b = XdpLanIntroSkelBuilder::default();
-    b.object_builder_mut().pin_root_path(&pin_root).unwrap();
-    let mut obj = std::mem::MaybeUninit::uninit();
-    let skel = b.open(&mut obj).unwrap().load().unwrap();
+        // 20-byte v6 lan_route_key: prefixlen(4) + addr(16)
+        let mut lan_key = [0u8; 20];
+        lan_key[0..4].copy_from_slice(&128u32.to_ne_bytes());
+        // fd00::200 in network byte order
+        let dst_ip6: [u8; 16] = [0xfd, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x02, 0];
+        lan_key[4..20].copy_from_slice(&dst_ip6);
 
-    // 20-byte v6 lan_route_key: prefixlen(4) + addr(16)
-    let mut lan_key = [0u8; 20];
-    lan_key[0..4].copy_from_slice(&128u32.to_ne_bytes());
-    // fd00::200 in network byte order
-    let dst_ip6: [u8; 16] = [0xfd, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x02, 0];
-    lan_key[4..20].copy_from_slice(&dst_ip6);
+        // 28-byte v6 lan_route_info: has_mac(1) + mac_addr(6) + route_type(1) + ifindex(4) + addr(16)
+        // ifindex must be a *local* (test-netns) index distinct from the ingress,
+        // since peer-netns ifindexes numerically collide with local ones.
+        let mut lan_val = [0u8; 28];
+        lan_val[0] = 1; // has_mac = true
+        out_h_i = out_pair.host_ifindex();
+        lan_val[8..12].copy_from_slice(&out_h_i.to_ne_bytes());
+        // addr stays zero (not used when route_type=ROUTE_TYPE_LAN)
 
-    // 28-byte v6 lan_route_info: has_mac(1) + mac_addr(6) + route_type(1) + ifindex(4) + addr(16)
-    let mut lan_val = [0u8; 28];
-    lan_val[0] = 1; // has_mac = true
-    lan_val[8..12].copy_from_slice(&p_i.to_ne_bytes());
-    // addr stays zero (not used when route_type=ROUTE_TYPE_LAN)
+        skel.maps.rt6_lan_map.delete(&lan_key).ok();
+        skel.maps.rt6_lan_map.update(&lan_key, &lan_val, MapFlags::ANY).unwrap();
 
-    skel.maps.rt6_lan_map.delete(&lan_key).ok();
-    skel.maps.rt6_lan_map.update(&lan_key, &lan_val, MapFlags::ANY).unwrap();
+        // 16-byte v6 mac_key (addr only)
+        let mut mac_key = [0u8; 16];
+        mac_key.copy_from_slice(&dst_ip6);
+        skel.maps.ip_mac_v6.delete(&mac_key).ok();
 
-    // 16-byte v6 mac_key (addr only)
-    let mut mac_key = [0u8; 16];
-    mac_key.copy_from_slice(&dst_ip6);
-    skel.maps.ip_mac_v6.delete(&mac_key).ok();
+        let _link = skel.progs.xdp_lan_intro.attach_xdp(h_i as i32).unwrap();
 
-    let _link = skel.progs.xdp_lan_intro.attach_xdp(h_i as i32).unwrap();
+        let pkt = build_ipv6_tcp_pkt(
+            [0x02, 0, 0, 0, 0, 1],
+            [0x02, 0, 0, 0, 0, 2],
+            [0xfd, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3], // fd00::3
+            dst_ip6,                                             // fd00::200
+        );
+        {
+            let _e = peer_ns.enter();
+            send_raw_packet(peer, &pkt);
+        }
+        wait_for("FIB fallback populated ip_mac_v6", Duration::from_secs(5), || {
+            skel.maps.ip_mac_v6.lookup(&mac_key, MapFlags::ANY).unwrap().is_some()
+        });
 
-    let pkt = build_ipv6_tcp_pkt(
-        [0x02, 0, 0, 0, 0, 1],
-        [0x02, 0, 0, 0, 0, 2],
-        [0xfd, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3], // fd00::3
-        dst_ip6,                                             // fd00::200
-    );
-    send_raw_packet(peer, &pkt);
-    wait_for("FIB fallback populated ip_mac_v6", Duration::from_secs(5), || {
-        skel.maps.ip_mac_v6.lookup(&mac_key, MapFlags::ANY).unwrap().is_some()
-    });
+        let mac_after = skel.maps.ip_mac_v6.lookup(&mac_key, MapFlags::ANY).unwrap();
+        assert!(
+            mac_after.is_some(),
+            "FIB should have populated ip_mac_v6 for known LAN IP fd00::200"
+        );
 
-    let mac_after = skel.maps.ip_mac_v6.lookup(&mac_key, MapFlags::ANY).unwrap();
-    assert!(mac_after.is_some(), "FIB should have populated ip_mac_v6 for known LAN IP fd00::200");
-
-    drop(skel);
-    // restore forwarding
-    if !fwd_was.is_empty() {
-        let _ = Command::new("sysctl").args(["-w", &format!("{}={}", fwd_path, fwd_was)]).output();
+        drop(skel);
+        // restore forwarding
+        if !fwd_was.is_empty() {
+            let _ =
+                Command::new("sysctl").args(["-w", &format!("{}={}", fwd_path, fwd_was)]).output();
+        }
+        let _ =
+            Command::new("ip").args(["-6", "neigh", "del", "fd00::200", "dev", out_host]).output();
+        let _ = Command::new("ip")
+            .args(["-6", "route", "del", "fd00::200/128", "dev", out_host])
+            .output();
     }
-    let _ = Command::new("ip").args(["-6", "neigh", "del", "fd00::200", "dev", peer]).output();
-    let _ = Command::new("ip").args(["-6", "neigh", "del", "fd00::200", "dev", host]).output();
-    let _ = Command::new("ip").args(["-6", "route", "del", "fd00::200/128", "dev", peer]).output();
 }

@@ -3,7 +3,7 @@ use std::process::Command;
 use std::time::Duration;
 
 use crate::tests::net_utils::{
-    dummy_recv_count, dummy_reset, send_raw_packet, settle, wait_for, VethPair,
+    dummy_recv_count, dummy_reset, send_raw_packet, settle, wait_for, NetNsGuard, VethPair,
 };
 use libbpf_rs::{
     skel::{OpenSkel, SkelBuilder as _},
@@ -66,20 +66,23 @@ fn route_slot_v6(daddr: &[u8; 16]) -> u32 {
 #[test]
 #[ignore = "requires root and veth pairs; run with --include-ignored"]
 fn xdp_firewall_pipeline() {
-    let lan_pair = VethPair::create("fw");
-    let wan_pair = VethPair::create("fwww");
+    // Two fresh netns: the router side (lan_h/wan_h + all XDP programs) and the
+    // LAN/WAN segment side (lan_p/wan_p + dummies). Fresh netns restart the
+    // ifindex counter at 1 (small PROG_ARRAY indexes) and keep host routes out
+    // of the test.
+    let test_ns = NetNsGuard::create("fw");
+    let peer_ns = NetNsGuard::create("fwp");
+
+    let lan_pair;
+    let wan_pair;
+    {
+        let _e = test_ns.enter();
+        lan_pair = VethPair::create_with_netns("fw", &peer_ns);
+        wan_pair = VethPair::create_with_netns("fww", &peer_ns);
+    }
+
     let lan_p = lan_pair.peer();
     let wan_p = wan_pair.peer();
-
-    let lan_h_i = lan_pair.host_ifindex();
-    crate::tests::check_ifindex("lan_h", lan_h_i);
-    let lan_p_i = lan_pair.peer_ifindex();
-    let wan_h_i = wan_pair.host_ifindex();
-    crate::tests::check_ifindex("wan_h", wan_h_i);
-    let wan_p_i = wan_pair.peer_ifindex();
-
-    // Prevent kernel FIB from matching 203.0.113.1 so xdp_lan_intro falls through to chain
-    Command::new("ip").args(["route", "add", "blackhole", "203.0.113.1"]).output().ok();
 
     // ── load shared maps ──
     let share_pin = test_pin_root("pipe");
@@ -129,11 +132,42 @@ fn xdp_firewall_pipeline() {
     let mut intro_obj = std::mem::MaybeUninit::uninit();
     let intro = intro_b.open(&mut intro_obj).unwrap().load().unwrap();
 
-    // ── attach XDP programs ──
-    let _l0 = lr.progs.xdp_lan_intro.attach_xdp(lan_h_i as i32).unwrap();
-    let _l1 = intro.progs.wan_intro_dispatch.attach_xdp(wan_h_i as i32).unwrap();
-    let _l2 = da.progs.xdp_test_dummy.attach_xdp(lan_p_i as i32).unwrap();
-    let _l3 = dc.progs.xdp_test_dummy.attach_xdp(wan_p_i as i32).unwrap();
+    // ── attach XDP programs (each side from inside its own netns) ──
+    let lan_h_i;
+    let wan_h_i;
+    let lan_p_i;
+    let wan_p_i;
+    let _l0;
+    let _l1;
+    let _l2;
+    let _l3;
+    {
+        let _e = test_ns.enter();
+        lan_h_i = lan_pair.host_ifindex();
+        crate::tests::check_ifindex("lan_h", lan_h_i);
+        wan_h_i = wan_pair.host_ifindex();
+        crate::tests::check_ifindex("wan_h", wan_h_i);
+        _l0 = lr.progs.xdp_lan_intro.attach_xdp(lan_h_i as i32).unwrap();
+        _l1 = intro.progs.wan_intro_dispatch.attach_xdp(wan_h_i as i32).unwrap();
+    }
+    {
+        let _e = peer_ns.enter();
+        lan_p_i = lan_pair.peer_ifindex();
+        wan_p_i = wan_pair.peer_ifindex();
+        _l2 = da.progs.xdp_test_dummy.attach_xdp(lan_p_i as i32).unwrap();
+        _l3 = dc.progs.xdp_test_dummy.attach_xdp(wan_p_i as i32).unwrap();
+    }
+
+    // Sending must happen from inside the peer netns (AF_PACKET ifindexes are
+    // per-netns). Counter/map reads are netns-independent.
+    let send_lan = |pkt: &[u8]| {
+        let _e = peer_ns.enter();
+        send_raw_packet(&lan_p, pkt);
+    };
+    let send_wan = |pkt: &[u8]| {
+        let _e = peer_ns.enter();
+        send_raw_packet(&wan_p, pkt);
+    };
 
     let root_fd = chain.progs.xdp_lan_chain_root.as_fd().as_raw_fd();
     let mss_lan_fd = mss.progs.xdp_mss_lan.as_fd().as_raw_fd();
@@ -151,6 +185,17 @@ fn xdp_firewall_pipeline() {
         .update(&wan_h_i.to_ne_bytes(), &1u32.to_ne_bytes(), MapFlags::ANY)
         .unwrap();
     lr.maps
+        .xdp_redirect_able
+        .update(&lan_h_i.to_ne_bytes(), &1u32.to_ne_bytes(), MapFlags::ANY)
+        .unwrap();
+    // xdp_wan_route reads its OWN xdp_redirect_able instance when caching
+    // (xdp_setting_cache_in_wan_v4) and when redirecting; populate it too or
+    // cache hits take the TC handoff path and the chain never runs.
+    wr.maps
+        .xdp_redirect_able
+        .update(&wan_h_i.to_ne_bytes(), &1u32.to_ne_bytes(), MapFlags::ANY)
+        .unwrap();
+    wr.maps
         .xdp_redirect_able
         .update(&lan_h_i.to_ne_bytes(), &1u32.to_ne_bytes(), MapFlags::ANY)
         .unwrap();
@@ -352,8 +397,8 @@ fn xdp_firewall_pipeline() {
     let a2c = build_tcp_pkt([10, 0, 0, 1], [203, 0, 113, 1]);
     let c2a = build_tcp_pkt([203, 0, 113, 1], [10, 0, 0, 1]);
 
-    send_raw_packet(&lan_p, &a2c);
-    send_raw_packet(&wan_p, &c2a);
+    send_lan(&a2c);
+    send_wan(&c2a);
     wait_for("v4 packet reached dummy", Duration::from_secs(5), || {
         dummy_recv_count(&da.maps.dummy_recv_map, false)
             + dummy_recv_count(&dc.maps.dummy_recv_map, false)
@@ -372,8 +417,8 @@ fn xdp_firewall_pipeline() {
 
     dummy_reset(&da.maps.dummy_recv_map);
     dummy_reset(&dc.maps.dummy_recv_map);
-    send_raw_packet(&lan_p, &a2c);
-    send_raw_packet(&wan_p, &c2a);
+    send_lan(&a2c);
+    send_wan(&c2a);
     settle(300);
     let v4_cnt = dummy_recv_count(&da.maps.dummy_recv_map, false)
         + dummy_recv_count(&dc.maps.dummy_recv_map, false);
@@ -391,7 +436,7 @@ fn xdp_firewall_pipeline() {
 
     dummy_reset(&da.maps.dummy_recv_map);
     dummy_reset(&dc.maps.dummy_recv_map);
-    send_raw_packet(&lan_p, &a2c);
+    send_lan(&a2c);
     wait_for("v4 packet reached dummy", Duration::from_secs(5), || {
         dummy_recv_count(&da.maps.dummy_recv_map, false)
             + dummy_recv_count(&dc.maps.dummy_recv_map, false)
@@ -405,7 +450,7 @@ fn xdp_firewall_pipeline() {
 
     dummy_reset(&da.maps.dummy_recv_map);
     dummy_reset(&dc.maps.dummy_recv_map);
-    send_raw_packet(&wan_p, &c2a);
+    send_wan(&c2a);
     wait_for("v4 packet reached dummy", Duration::from_secs(5), || {
         dummy_recv_count(&da.maps.dummy_recv_map, false)
             + dummy_recv_count(&dc.maps.dummy_recv_map, false)
@@ -424,7 +469,7 @@ fn xdp_firewall_pipeline() {
     dummy_reset(&da.maps.dummy_recv_map);
     dummy_reset(&dc.maps.dummy_recv_map);
     let a2c_unblocked = build_tcp_pkt([10, 0, 0, 1], [203, 0, 113, 2]);
-    send_raw_packet(&lan_p, &a2c_unblocked);
+    send_lan(&a2c_unblocked);
     wait_for("v4 packet reached dummy", Duration::from_secs(5), || {
         dummy_recv_count(&da.maps.dummy_recv_map, false)
             + dummy_recv_count(&dc.maps.dummy_recv_map, false)
@@ -441,8 +486,8 @@ fn xdp_firewall_pipeline() {
 
     dummy_reset(&da.maps.dummy_recv_map);
     dummy_reset(&dc.maps.dummy_recv_map);
-    send_raw_packet(&lan_p, &a2c);
-    send_raw_packet(&wan_p, &c2a);
+    send_lan(&a2c);
+    send_wan(&c2a);
     wait_for("v4 packet reached dummy", Duration::from_secs(5), || {
         dummy_recv_count(&da.maps.dummy_recv_map, false)
             + dummy_recv_count(&dc.maps.dummy_recv_map, false)
@@ -465,8 +510,8 @@ fn xdp_firewall_pipeline() {
 
     dummy_reset(&da.maps.dummy_recv_map);
     dummy_reset(&dc.maps.dummy_recv_map);
-    send_raw_packet(&lan_p, &a2c_v6);
-    send_raw_packet(&wan_p, &c2a_v6);
+    send_lan(&a2c_v6);
+    send_wan(&c2a_v6);
     wait_for("v6 packet reached dummy", Duration::from_secs(5), || {
         dummy_recv_count(&da.maps.dummy_recv_map, true)
             + dummy_recv_count(&dc.maps.dummy_recv_map, true)
@@ -483,8 +528,8 @@ fn xdp_firewall_pipeline() {
 
     dummy_reset(&da.maps.dummy_recv_map);
     dummy_reset(&dc.maps.dummy_recv_map);
-    send_raw_packet(&lan_p, &a2c_v6);
-    send_raw_packet(&wan_p, &c2a_v6);
+    send_lan(&a2c_v6);
+    send_wan(&c2a_v6);
     settle(300);
     let v6_cnt = dummy_recv_count(&da.maps.dummy_recv_map, true)
         + dummy_recv_count(&dc.maps.dummy_recv_map, true);
@@ -498,7 +543,7 @@ fn xdp_firewall_pipeline() {
 
     dummy_reset(&da.maps.dummy_recv_map);
     dummy_reset(&dc.maps.dummy_recv_map);
-    send_raw_packet(&lan_p, &a2c_v6);
+    send_lan(&a2c_v6);
     wait_for("v6 packet reached dummy", Duration::from_secs(5), || {
         dummy_recv_count(&da.maps.dummy_recv_map, true)
             + dummy_recv_count(&dc.maps.dummy_recv_map, true)
@@ -512,7 +557,7 @@ fn xdp_firewall_pipeline() {
 
     dummy_reset(&da.maps.dummy_recv_map);
     dummy_reset(&dc.maps.dummy_recv_map);
-    send_raw_packet(&wan_p, &c2a_v6);
+    send_wan(&c2a_v6);
     wait_for("v6 packet reached dummy", Duration::from_secs(5), || {
         dummy_recv_count(&da.maps.dummy_recv_map, true)
             + dummy_recv_count(&dc.maps.dummy_recv_map, true)
@@ -527,8 +572,8 @@ fn xdp_firewall_pipeline() {
 
     dummy_reset(&da.maps.dummy_recv_map);
     dummy_reset(&dc.maps.dummy_recv_map);
-    send_raw_packet(&lan_p, &a2c_v6);
-    send_raw_packet(&wan_p, &c2a_v6);
+    send_lan(&a2c_v6);
+    send_wan(&c2a_v6);
     wait_for("v6 packet reached dummy", Duration::from_secs(5), || {
         dummy_recv_count(&da.maps.dummy_recv_map, true)
             + dummy_recv_count(&dc.maps.dummy_recv_map, true)

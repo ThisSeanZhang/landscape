@@ -47,6 +47,21 @@ struct {
 
 char LICENSE[] SEC("license") = "GPL";
 
+struct {
+    __uint(type, BPF_MAP_TYPE_ARRAY);
+    __uint(max_entries, 1);
+    __type(key, u32);
+    __type(value, u32);
+} redirect_target SEC(".maps");
+
+SEC("xdp")
+int xdp_redirect_to(struct xdp_md *ctx) {
+    u32 k = 0;
+    u32 *tgt = bpf_map_lookup_elem(&redirect_target, &k);
+    if (!tgt) return XDP_PASS;
+    return bpf_redirect(*tgt, 0);
+}
+
 SEC("xdp")
 int xdp_test_dummy(struct xdp_md *ctx) {
     u32 pkt_len = (u32)((long)ctx->data_end - (long)ctx->data);
@@ -58,6 +73,10 @@ int xdp_test_dummy(struct xdp_md *ctx) {
 
     struct ethhdr *eth = data;
     if ((void *)(eth + 1) > data_end) goto log_len_only;
+
+    // Skip multicast-destination frames (kernel IPv6 DAD/RS noise), so dummy
+    // counters reflect only unicast test traffic.
+    if (eth->h_dest[0] & 0x01) goto log_len_only;
 
     u16 eth_type = bpf_ntohs(eth->h_proto);
 
