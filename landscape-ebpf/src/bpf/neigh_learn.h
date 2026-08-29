@@ -6,7 +6,8 @@
 #include <bpf/bpf_endian.h>
 
 #include "landscape.h"
-#include "neigh_ip.h"
+#include "neigh_ip4.h"
+#include "neigh_ip6.h"
 #include "route/route_index.h"
 
 static __always_inline void learn_src_ip_mac_v4_xdp(struct xdp_md *ctx,

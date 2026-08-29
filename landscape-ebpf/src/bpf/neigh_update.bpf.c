@@ -5,7 +5,8 @@
 #include <bpf/bpf_core_read.h>
 
 #include "landscape.h"
-#include "neigh_ip.h"
+#include "neigh_ip4.h"
+#include "neigh_ip6.h"
 
 char LICENSE[] SEC("license") = "GPL";
 

@@ -12,7 +12,7 @@
 
 #include "chain/redirect_able.h"
 #include "flow_match.h"
-#include "neigh_ip.h"
+#include "neigh_ip4.h"
 
 static __always_inline int lan_redirect_check_v4(struct __sk_buff *skb, u32 current_l3_offset,
                                                  struct route_context_v4 *context, bool is_lan) {

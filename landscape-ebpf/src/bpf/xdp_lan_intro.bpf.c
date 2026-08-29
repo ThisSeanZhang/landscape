@@ -18,7 +18,8 @@
 #include "route/route_maps_v6.h"
 
 #include "flow_match.h"
-#include "neigh_ip.h"
+#include "neigh_ip4.h"
+#include "neigh_ip6.h"
 #include "neigh_learn.h"
 
 char LICENSE[] SEC("license") = "GPL";

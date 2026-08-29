@@ -7,7 +7,7 @@
 
 #include "landscape.h"
 #include "pkg_def.h"
-#include "neigh_ip.h"
+#include "neigh_ip6.h"
 
 char LICENSE[] SEC("license") = "GPL";
 

@@ -12,7 +12,7 @@
 
 #include "chain/redirect_able.h"
 #include "flow_match.h"
-#include "neigh_ip.h"
+#include "neigh_ip6.h"
 
 // TODO: split two function
 static __always_inline int lan_redirect_check_v6(struct __sk_buff *skb, u32 current_l3_offset,

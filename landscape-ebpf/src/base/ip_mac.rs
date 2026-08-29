@@ -29,7 +29,7 @@ const ARP_SYNC_INTERVAL_SECS: u64 = 10;
 const ETH_P_IPV4_BE: u16 = 0x0008;
 const ETH_P_IPV6_BE: u16 = 0xdd86;
 
-// mac_value_v6.sourced values, must match LD_MAC_SOURCE_* in bpf/neigh_ip.h.
+// mac_value_v6.sourced values, must match LD_MAC_SOURCE_* in bpf/neigh_ip6.h.
 // LD_MAC_SOURCE_NEIGH is the default (zero) value and is only referenced by tests.
 #[allow(dead_code)]
 const LD_MAC_SOURCE_NEIGH: u8 = 0;

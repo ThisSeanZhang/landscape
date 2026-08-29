@@ -16,7 +16,8 @@
 #include "route/route_maps_v4.h"
 #include "route/route_maps_v6.h"
 
-#include "neigh_ip.h"
+#include "neigh_ip4.h"
+#include "neigh_ip6.h"
 #include "chain/redirect_able.h"
 
 char LICENSE[] SEC("license") = "GPL";
