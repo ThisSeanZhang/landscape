@@ -1,4 +1,4 @@
-use std::os::fd::AsRawFd;
+use std::os::fd::{AsFd, AsRawFd};
 use std::process::Command;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -136,6 +136,48 @@ pub(crate) fn send_raw_packet(iface: &str, pkt: &[u8]) {
     }
 }
 
+/// Build a plain IPv4 TCP packet (fixed src/dst MACs, ports 12345→80).
+pub(crate) fn build_tcp_pkt(src_ip: [u8; 4], dst_ip: [u8; 4]) -> Vec<u8> {
+    use etherparse::PacketBuilder;
+    let builder = PacketBuilder::ethernet2([0x02, 0, 0, 0, 0, 1], [0x02, 0, 0, 0, 0, 2])
+        .ipv4(src_ip, dst_ip, 64)
+        .tcp(12345, 80, 1000, 2000);
+    let payload = [0u8; 8];
+    let mut pkt = Vec::with_capacity(builder.size(payload.len()));
+    builder.write(&mut pkt, &payload).expect("build packet");
+    pkt
+}
+
+/// Build a plain IPv6 TCP packet (fixed src/dst MACs, ports 12345→80).
+pub(crate) fn build_tcp6_pkt(src: [u8; 16], dst: [u8; 16]) -> Vec<u8> {
+    use etherparse::PacketBuilder;
+    let builder = PacketBuilder::ethernet2([0x02, 0, 0, 0, 0, 1], [0x02, 0, 0, 0, 0, 2])
+        .ipv6(src, dst, 64)
+        .tcp(12345, 80, 1000, 2000);
+    let payload = [0u8; 8];
+    let mut pkt = Vec::with_capacity(builder.size(payload.len()));
+    builder.write(&mut pkt, &payload).expect("build v6 packet");
+    pkt
+}
+
+/// Route target slot hash for an IPv4 destination (mirrors the BPF side).
+pub(crate) fn route_slot(daddr: u32) -> u32 {
+    let mut hash = daddr;
+    hash ^= hash >> 16;
+    hash ^= hash >> 8;
+    hash & 0xF
+}
+
+/// Route target slot hash for an IPv6 destination (mirrors the BPF side).
+pub(crate) fn route_slot_v6(daddr: &[u8; 16]) -> u32 {
+    let w0 = u32::from_be_bytes([daddr[0], daddr[1], daddr[2], daddr[3]]);
+    let w1 = u32::from_be_bytes([daddr[4], daddr[5], daddr[6], daddr[7]]);
+    let mut hash = w0 ^ w1;
+    hash ^= hash >> 16;
+    hash ^= hash >> 8;
+    hash & 0xF
+}
+
 /// A uniquely named veth pair (`{prefix}h{pid}` / `{prefix}p{pid}`) that is
 /// removed on drop, so tests neither collide nor leak interfaces on panic.
 pub(crate) struct VethPair {
@@ -214,7 +256,7 @@ impl Drop for VethPair {
     }
 }
 
-/// Number of packets the dummy XDP program recorded (`0` = v4, `1` = v6).
+/// Number of packets the dummy XDP program recorded (`false` = v4, `true` = v6).
 pub(crate) fn dummy_recv_count(map: &libbpf_rs::MapMut, is_v6: bool) -> u64 {
     let k = if is_v6 { 1u32 } else { 0u32 }.to_ne_bytes();
     map.lookup(&k, MapFlags::ANY)
@@ -222,9 +264,57 @@ pub(crate) fn dummy_recv_count(map: &libbpf_rs::MapMut, is_v6: bool) -> u64 {
         .map_or(0, |v| u64::from_ne_bytes(v[0..8].try_into().unwrap()))
 }
 
-/// Zero the dummy receive counters for v4 and v6.
+/// Number of non-v4/v6 unicast frames the dummy XDP program recorded (slot 2).
+pub(crate) fn dummy_recv_other(map: &libbpf_rs::MapMut) -> u64 {
+    let k = 2u32.to_ne_bytes();
+    map.lookup(&k, MapFlags::ANY)
+        .unwrap()
+        .map_or(0, |v| u64::from_ne_bytes(v[0..8].try_into().unwrap()))
+}
+
+/// Zero the dummy receive counters (v4/v6/other).
 pub(crate) fn dummy_reset(map: &libbpf_rs::MapMut) {
     let v = [0u8; 8];
-    map.update(&0u32.to_ne_bytes(), &v, MapFlags::ANY).unwrap();
-    map.update(&1u32.to_ne_bytes(), &v, MapFlags::ANY).unwrap();
+    for k in 0u32..3 {
+        map.update(&k.to_ne_bytes(), &v, MapFlags::ANY).unwrap();
+    }
+}
+
+/// A TC classifier attached to a netdev (`clsact` qdisc + `bpf_tc_attach`).
+///
+/// The attach must happen while the caller is inside the netns that owns the
+/// ifindex (same pattern as XDP attach). The qdisc/filter live in that netns
+/// and vanish when the netns is deleted; `Drop` still detaches cleanly.
+pub(crate) struct TCAttach {
+    hook: libbpf_rs::TcHook,
+    attached: bool,
+}
+
+impl TCAttach {
+    /// Attach `prog` to the ingress classifier of `ifindex`.
+    pub(crate) fn attach_ingress(prog: &libbpf_rs::Program, ifindex: i32) -> Self {
+        Self::attach(prog, ifindex, libbpf_rs::TC_INGRESS)
+    }
+
+    /// Attach `prog` to the egress classifier of `ifindex`.
+    pub(crate) fn attach_egress(prog: &libbpf_rs::Program, ifindex: i32) -> Self {
+        Self::attach(prog, ifindex, libbpf_rs::TC_EGRESS)
+    }
+
+    fn attach(prog: &libbpf_rs::Program, ifindex: i32, point: libbpf_rs::TcAttachPoint) -> Self {
+        let mut hook = libbpf_rs::TcHook::new(prog.as_fd());
+        hook.ifindex(ifindex).attach_point(point).replace(true);
+        hook.create().expect("create clsact qdisc");
+        hook.attach().expect("attach tc filter");
+        Self { hook, attached: true }
+    }
+}
+
+impl Drop for TCAttach {
+    fn drop(&mut self) {
+        if self.attached {
+            let _ = self.hook.detach();
+        }
+        let _ = self.hook.destroy();
+    }
 }

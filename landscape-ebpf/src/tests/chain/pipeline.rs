@@ -3,7 +3,8 @@ use std::process::Command;
 use std::time::Duration;
 
 use crate::tests::net_utils::{
-    dummy_recv_count, dummy_reset, send_raw_packet, settle, wait_for, NetNsGuard, VethPair,
+    build_tcp6_pkt, build_tcp_pkt, dummy_recv_count, dummy_reset, route_slot, route_slot_v6,
+    send_raw_packet, settle, wait_for, NetNsGuard, VethPair,
 };
 use libbpf_rs::{
     skel::{OpenSkel, SkelBuilder as _},
@@ -19,50 +20,6 @@ use crate::tests::xdp_lan_intro_skel::XdpLanIntroSkelBuilder;
 use crate::tests::xdp_mss_skel::XdpMssSkelBuilder;
 use crate::tests::xdp_wan_chain_skel::XdpWanChainSkelBuilder;
 use crate::tests::xdp_wan_route_skel::XdpWanRouteSkelBuilder;
-use crate::tests::PinRootGuard;
-
-fn test_pin_root(prefix: &str) -> PinRootGuard {
-    PinRootGuard::new(&format!("xdp-fw-{prefix}"))
-}
-
-fn build_tcp_pkt(src_ip: [u8; 4], dst_ip: [u8; 4]) -> Vec<u8> {
-    use etherparse::PacketBuilder;
-    let builder = PacketBuilder::ethernet2([0x02, 0, 0, 0, 0, 1], [0x02, 0, 0, 0, 0, 2])
-        .ipv4(src_ip, dst_ip, 64)
-        .tcp(12345, 80, 1000, 2000);
-    let payload = [0u8; 8];
-    let mut pkt = Vec::with_capacity(builder.size(payload.len()));
-    builder.write(&mut pkt, &payload).expect("build packet");
-    pkt
-}
-
-fn build_tcp6_pkt(src: [u8; 16], dst: [u8; 16]) -> Vec<u8> {
-    use etherparse::PacketBuilder;
-    let builder = PacketBuilder::ethernet2([0x02, 0, 0, 0, 0, 1], [0x02, 0, 0, 0, 0, 2])
-        .ipv6(src, dst, 64)
-        .tcp(12345, 80, 1000, 2000);
-    let payload = [0u8; 8];
-    let mut pkt = Vec::with_capacity(builder.size(payload.len()));
-    builder.write(&mut pkt, &payload).expect("build v6 packet");
-    pkt
-}
-
-fn route_slot(daddr: u32) -> u32 {
-    let mut hash = daddr;
-    hash ^= hash >> 16;
-    hash ^= hash >> 8;
-    hash & 0xF
-}
-
-fn route_slot_v6(daddr: &[u8; 16]) -> u32 {
-    let w0 = u32::from_be_bytes([daddr[0], daddr[1], daddr[2], daddr[3]]);
-    let w1 = u32::from_be_bytes([daddr[4], daddr[5], daddr[6], daddr[7]]);
-    let mut hash = w0 ^ w1;
-    hash ^= hash >> 16;
-    hash ^= hash >> 8;
-    hash & 0xF
-}
-
 #[test]
 #[ignore = "requires root and veth pairs; run with --include-ignored"]
 fn xdp_firewall_pipeline() {
@@ -85,7 +42,7 @@ fn xdp_firewall_pipeline() {
     let wan_p = wan_pair.peer();
 
     // ── load shared maps ──
-    let share_pin = test_pin_root("pipe");
+    let share_pin = crate::tests::isolated_pin_root("xdp-fw-pipe");
     let mut sb = ShareMapSkelBuilder::default();
     sb.object_builder_mut().pin_root_path(&share_pin).unwrap();
     let mut share_obj = std::mem::MaybeUninit::uninit();

@@ -28,7 +28,7 @@ struct {
     __uint(type, BPF_MAP_TYPE_ARRAY);
     __type(key, u32);
     __type(value, struct dummy_recv_record);
-    __uint(max_entries, 2);
+    __uint(max_entries, 3);
 } dummy_recv_map SEC(".maps");
 
 struct {
@@ -179,6 +179,12 @@ int xdp_test_dummy(struct xdp_md *ctx) {
         return XDP_PASS;
     }
     }
+
+    // Other unicast frame types (e.g. PPPoE) → counter slot 2
+    u32 k = 2;
+    struct dummy_recv_record *rec = bpf_map_lookup_elem(&dummy_recv_map, &k);
+    if (rec) __sync_fetch_and_add(&rec->count, 1);
+    return XDP_PASS;
 
 log_len_only:
     return XDP_PASS;

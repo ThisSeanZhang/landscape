@@ -51,7 +51,7 @@ pub fn test_ingress_and_egress(egress_payload: Vec<u8>, ingress_payload: Vec<u8>
 
 #[cfg(test)]
 pub mod tests {
-    use crate::tests::firewall::{
+    use crate::tests::tc_chain::firewall::{
         package::{icmpv6_ping_egress, icmpv6_ping_ingress},
         test_ingress_and_egress,
     };

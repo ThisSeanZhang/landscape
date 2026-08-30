@@ -56,7 +56,9 @@ static __always_inline void learn_src_ip_mac_v4_tc(struct __sk_buff *skb,
     if (bpf_map_lookup_elem(&ip_mac_v4, &src_key) != NULL) return;
 
     u8 src_mac[6];
-    if (bpf_skb_load_bytes(skb, 0, src_mac, sizeof(src_mac))) return;
+    // Ethernet frames start with the destination MAC; the source MAC is at
+    // offset 6 (the XDP variants read eth->h_source).
+    if (bpf_skb_load_bytes(skb, 6, src_mac, sizeof(src_mac))) return;
 
     struct mac_value_v4 new_val = {
         .ifindex = skb->ingress_ifindex,
@@ -76,7 +78,9 @@ static __always_inline void learn_src_ip_mac_v6_tc(struct __sk_buff *skb,
     if (bpf_map_lookup_elem(&ip_mac_v6, &src_key) != NULL) return;
 
     u8 src_mac[6];
-    if (bpf_skb_load_bytes(skb, 0, src_mac, sizeof(src_mac))) return;
+    // Ethernet frames start with the destination MAC; the source MAC is at
+    // offset 6 (the XDP variants read eth->h_source).
+    if (bpf_skb_load_bytes(skb, 6, src_mac, sizeof(src_mac))) return;
 
     struct mac_value_v6 new_val = {
         .ifindex = skb->ingress_ifindex,

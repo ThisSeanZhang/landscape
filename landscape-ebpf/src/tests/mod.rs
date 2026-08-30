@@ -80,25 +80,18 @@ pub(crate) fn checked_if_nametoindex(name: &str) -> u32 {
     ifindex as u32
 }
 
+mod chain;
 mod check;
-mod firewall;
 mod metric;
 mod mss;
 mod nat;
 mod net_utils;
-mod pppoe;
 mod route;
 mod scanner;
+mod tc_chain;
 mod time;
 mod tproxy;
-mod xdp_chain;
 mod xdp_csum_verify;
-mod xdp_firewall_test;
-mod xdp_lan_intro_test;
-mod xdp_mss_test;
-mod xdp_nat4_modify_test;
-mod xdp_nat_test;
-mod xdp_wan_route_test;
 
 pub(crate) mod test_route_packet {
     include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/test_route_packet.skel.rs"));
@@ -210,30 +203,6 @@ pub struct TestSkb {
     pub tstamp_type: u8,
     pub _padding: [u8; 3],
     pub hwtstamp: u64,
-}
-
-fn dummpy_tcp_pkg() -> Vec<u8> {
-    let builder = PacketBuilder::ethernet2(
-        [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF], //source mac
-        [0x11, 0x22, 0x33, 0x44, 0x55, 0x66],
-    ) //destination mac
-    .ipv4(
-        [192, 168, 1, 1], //source ip
-        [192, 168, 1, 2], //destination ip
-        64,               //time to life
-    )
-    .tcp(
-        21, //source port
-        1234, 12345, // sequence number
-        4000,
-    );
-
-    let tcp_payload = [1, 2, 3, 4, 5, 6, 7, 8];
-
-    let mut payload = Vec::<u8>::with_capacity(builder.size(tcp_payload.len()));
-    builder.write(&mut payload, &tcp_payload).unwrap();
-
-    payload
 }
 
 #[allow(dead_code)]

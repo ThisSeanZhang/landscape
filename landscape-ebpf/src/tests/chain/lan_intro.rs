@@ -5,13 +5,17 @@ use std::time::Duration;
 use libbpf_rs::{
     libbpf_sys,
     skel::{OpenSkel, SkelBuilder as _},
-    MapCore, MapFlags, MapHandle, MapType, ProgramInput,
+    MapCore, MapFlags, MapHandle, MapType,
 };
 
 use crate::map_setting::share_map::types::{
     rt_cache_key_v4, rt_cache_key_v6, rt_cache_value_v4, rt_cache_value_v6,
 };
 use crate::map_setting::share_map::ShareMapSkelBuilder;
+use crate::tests::net_utils::{
+    dummy_recv_count, dummy_reset, route_slot, send_raw_packet, settle, wait_for, NetNsGuard,
+    VethPair,
+};
 use crate::tests::test_xdp_dummy::TestXdpDummySkelBuilder;
 use crate::tests::wan_intro_skel::XdpWanIntroSkelBuilder;
 use crate::tests::xdp_lan_chain_skel::XdpLanChainSkelBuilder;
@@ -19,15 +23,6 @@ use crate::tests::xdp_lan_intro_skel::XdpLanIntroSkelBuilder;
 use crate::tests::xdp_mss_skel::XdpMssSkelBuilder;
 use crate::tests::xdp_wan_chain_skel::XdpWanChainSkelBuilder;
 use crate::tests::xdp_wan_route_skel::XdpWanRouteSkelBuilder;
-use crate::tests::PinRootGuard;
-
-fn test_pin_root(prefix: &str) -> PinRootGuard {
-    PinRootGuard::new(&format!("xdp-lr-{prefix}"))
-}
-
-use crate::tests::net_utils::{
-    dummy_recv_count, dummy_reset, send_raw_packet, settle, wait_for, NetNsGuard, VethPair,
-};
 
 fn build_ipv4_tcp_pkt(
     src_mac: [u8; 6],
@@ -43,13 +38,6 @@ fn build_ipv4_tcp_pkt(
     let mut pkt = Vec::with_capacity(builder.size(payload.len()));
     builder.write(&mut pkt, &payload).expect("build packet");
     pkt
-}
-
-fn route_slot(daddr: u32) -> u32 {
-    let mut hash = daddr;
-    hash ^= hash >> 16;
-    hash ^= hash >> 8;
-    hash & 0xF
 }
 
 fn build_syn_pkt(
@@ -153,7 +141,7 @@ fn lookup_inner_map(outer_map: &impl MapCore, cache_index: u32) -> MapHandle {
 #[test]
 fn xdp_lan_intro_verifier_smoke() {
     let mut builder = XdpLanIntroSkelBuilder::default();
-    let pin_root = test_pin_root("v");
+    let pin_root = crate::tests::isolated_pin_root("xdp-lr-v");
     builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
     let mut obj = std::mem::MaybeUninit::uninit();
     let open = builder.open(&mut obj).expect("open skel");
@@ -175,7 +163,7 @@ fn xdp_lan_intro_trace_flow() {
     let peer = pair.peer();
 
     let mut builder = XdpLanIntroSkelBuilder::default();
-    let pin_root = test_pin_root("t");
+    let pin_root = crate::tests::isolated_pin_root("xdp-lr-t");
     builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
     let mut obj = std::mem::MaybeUninit::uninit();
     let open = builder.open(&mut obj).expect("open");
@@ -207,7 +195,7 @@ fn xdp_lan_intro_trace_flow() {
 #[ignore = "requires root and veth pairs; run with --include-ignored"]
 #[test]
 fn xdp_lan_intro_map_redirect() {
-    let share_pin = test_pin_root("share");
+    let share_pin = crate::tests::isolated_pin_root("xdp-lr-share");
     let mut sb = ShareMapSkelBuilder::default();
     sb.object_builder_mut().pin_root_path(&share_pin).unwrap();
     let mut share_obj = std::mem::MaybeUninit::uninit();
@@ -298,7 +286,7 @@ fn xdp_lan_intro_wan_pipeline() {
         wan_p_i = wan_pair.peer_ifindex();
     }
 
-    let share_pin = test_pin_root("pipe");
+    let share_pin = crate::tests::isolated_pin_root("xdp-lr-pipe");
     let mut sb = ShareMapSkelBuilder::default();
     sb.object_builder_mut().pin_root_path(&share_pin).unwrap();
     let mut share_obj = std::mem::MaybeUninit::uninit();
@@ -562,109 +550,208 @@ fn xdp_lan_intro_wan_pipeline() {
     drop(share);
 }
 
-// ── Test E: test_run verification of unknown IP not redirected ──
+// ── Test E: unknown IP must not be redirected (regression guard) ──
 
 #[test]
-#[ignore = "requires specific BPF map / kernel environment"]
-fn xdp_lan_intro_unknown_ip_no_redirect_test_run() {
-    let pin_root = test_pin_root("trunk");
+#[ignore = "requires root and veth pairs; run with --include-ignored"]
+fn xdp_lan_intro_unknown_ip_no_redirect() {
+    let test_ns = NetNsGuard::create("lre");
+    let peer_ns = NetNsGuard::create("lrep");
+    let pair;
+    let out_pair;
+    {
+        let _e = test_ns.enter();
+        pair = VethPair::create_with_netns("lre", &peer_ns);
+        // redirect target must be a device other than the ingress (the program
+        // passes when lan_info->ifindex == ingress), so use a second pair kept
+        // in the test netns.
+        out_pair = VethPair::create("lreout");
+    }
+    let peer = pair.peer();
+    let h_i;
+    let out_h_i;
+    {
+        let _e = test_ns.enter();
+        h_i = pair.host_ifindex();
+        out_h_i = out_pair.host_ifindex();
+    }
+
+    let pin_root = crate::tests::isolated_pin_root("xdp-lr-unk");
     let mut b = XdpLanIntroSkelBuilder::default();
     b.object_builder_mut().pin_root_path(&pin_root).unwrap();
     let mut obj = std::mem::MaybeUninit::uninit();
-    let open = b.open(&mut obj).unwrap();
-    let skel = open.load().unwrap();
+    let skel = b.open(&mut obj).unwrap().load().unwrap();
 
-    // populate rt4_lan_map with 10.0.0.5 (known entry, to confirm map is functional)
+    // known route 10.0.0.5 → LAN redirect is functional: the redirect target is
+    // the out-pair host veth (same netns as the program), which forwards the
+    // redirected frame to its peer.
     {
         let mut lan_key = [0u8; 8];
         lan_key[0..4].copy_from_slice(&32u32.to_ne_bytes());
         lan_key[4..8].copy_from_slice(&0x0A000005u32.to_be_bytes());
         let mut lan_val = [0u8; 16];
-        lan_val[8..12].copy_from_slice(&99u32.to_ne_bytes()); // dummy ifindex
+        lan_val[8..12].copy_from_slice(&out_h_i.to_ne_bytes());
         skel.maps.rt4_lan_map.update(&lan_key, &lan_val, MapFlags::ANY).unwrap();
     }
 
-    // populate ip_mac_v4 for unknown IP 10.0.0.99 (was the bug: old code would redirect this)
+    // ip_mac_v4 for unknown IP 10.0.0.99 (was the bug: old code redirected this)
     let mut mac_key = [0u8; 4];
     mac_key.copy_from_slice(&0x0A000063u32.to_be_bytes());
     {
         let mut mac_val = [0u8; 20];
-        mac_val[0..4].copy_from_slice(&99u32.to_ne_bytes());
+        mac_val[0..4].copy_from_slice(&out_h_i.to_ne_bytes());
         mac_val[4..10].copy_from_slice(&[0x02, 0, 0, 0, 0, 0x99]);
         mac_val[10..16].copy_from_slice(&[0x02, 0, 0, 0, 0, 0x01]);
         mac_val[16..18].copy_from_slice(&0x0800u16.to_be_bytes());
         skel.maps.ip_mac_v4.update(&mac_key, &mac_val, MapFlags::ANY).unwrap();
     }
 
-    // send packet to unknown IP 10.0.0.99
-    let pkt = build_ipv4_tcp_pkt(
+    // allow XDP redirect to the out-pair host veth
+    skel.maps
+        .xdp_redirect_able
+        .update(&out_h_i.to_ne_bytes(), &1u32.to_ne_bytes(), MapFlags::ANY)
+        .unwrap();
+
+    // counting dummy on the out-pair peer (where redirected packets land)
+    let mut db = TestXdpDummySkelBuilder::default();
+    db.object_builder_mut().pin_root_path(&pin_root).unwrap();
+    let mut dobj = std::mem::MaybeUninit::uninit();
+    let dummy = db.open(&mut dobj).unwrap().load().unwrap();
+
+    let _link;
+    let _dl;
+    {
+        let _e = test_ns.enter();
+        _link = skel.progs.xdp_lan_intro.attach_xdp(h_i as i32).unwrap();
+        _dl = dummy.progs.xdp_test_dummy.attach_xdp(out_pair.peer_ifindex() as i32).unwrap();
+    }
+
+    // 1) unknown IP: must NOT be redirected to the LAN peer
+    let pkt_unknown = build_ipv4_tcp_pkt(
         [0x02, 0, 0, 0, 0, 1],
         [0x02, 0, 0, 0, 0, 2],
         [10, 0, 0, 1],
         [10, 0, 0, 99],
     );
+    dummy_reset(&dummy.maps.dummy_recv_map);
+    {
+        let _e = peer_ns.enter();
+        send_raw_packet(peer, &pkt_unknown);
+    }
+    settle(300);
+    assert_eq!(
+        dummy_recv_count(&dummy.maps.dummy_recv_map, false),
+        0,
+        "unknown IP must not reach the LAN peer"
+    );
 
-    let run = skel
-        .progs
-        .xdp_lan_intro
-        .test_run(ProgramInput { data_in: Some(&pkt), ..Default::default() })
-        .expect("test_run");
+    // ip_mac_v4 for the unknown IP must be untouched
+    let mac_after = skel.maps.ip_mac_v4.lookup(&mac_key, MapFlags::ANY).unwrap();
+    assert!(mac_after.is_some(), "ip_mac_v4 entry for unknown IP should still exist");
+    let raw = mac_after.unwrap();
+    assert_eq!(&raw[0..4], &out_h_i.to_ne_bytes(), "ifindex should remain unchanged");
+    assert_eq!(&raw[4..10], &[0x02, 0, 0, 0, 0, 0x99], "mac should remain unchanged");
+    assert_eq!(&raw[10..16], &[0x02, 0, 0, 0, 0, 0x01], "dev_mac should remain unchanged");
+    assert_eq!(&raw[16..18], &0x0800u16.to_be_bytes(), "proto should remain unchanged");
 
-    // XDP_PASS=2: unknown IP should continue to WAN, NOT be redirected via LAN
-    let ret = run.return_value as i32;
-    assert_eq!(ret, 2, "unknown IP should return XDP_PASS(2), got {}", ret);
-
-    // known IP 10.0.0.5: should redirect
-    let pkt2 = build_ipv4_tcp_pkt(
+    // 2) known IP: still redirected (map is functional)
+    let pkt_known = build_ipv4_tcp_pkt(
         [0x02, 0, 0, 0, 0, 1],
         [0x02, 0, 0, 0, 0, 2],
         [10, 0, 0, 1],
         [10, 0, 0, 5],
     );
+    dummy_reset(&dummy.maps.dummy_recv_map);
+    {
+        let _e = peer_ns.enter();
+        send_raw_packet(peer, &pkt_known);
+    }
+    wait_for("known IP redirected to LAN peer", Duration::from_secs(5), || {
+        dummy_recv_count(&dummy.maps.dummy_recv_map, false) == 1
+    });
 
-    let run2 = skel
-        .progs
-        .xdp_lan_intro
-        .test_run(ProgramInput { data_in: Some(&pkt2), ..Default::default() })
-        .expect("test_run");
-
-    let ret2 = run2.return_value as i32;
-    assert_eq!(ret2, 4, "known IP should be XDP_REDIRECT(4), got {}", ret2);
-
-    // verify ip_mac_v4 for unknown IP was NOT modified (no FIB cache added)
-    let mac_after = skel.maps.ip_mac_v4.lookup(&mac_key, MapFlags::ANY).unwrap();
-    assert!(mac_after.is_some(), "ip_mac_v4 entry for unknown IP should still exist");
-    let raw = mac_after.unwrap();
-    assert_eq!(&raw[0..4], &99u32.to_ne_bytes(), "ifindex should remain unchanged");
-    assert_eq!(&raw[4..10], &[0x02, 0, 0, 0, 0, 0x99], "mac should remain unchanged");
-    assert_eq!(&raw[10..16], &[0x02, 0, 0, 0, 0, 0x01], "dev_mac should remain unchanged");
-    assert_eq!(&raw[16..18], &0x0800u16.to_be_bytes(), "proto should remain unchanged");
+    drop(dummy);
+    drop(skel);
 }
-
-// ── Test F: test_run verification of known LAN without MAC → FIB fallback ──
+// ── Test F: known LAN without MAC → real FIB fallback + XDP redirect ──
 
 #[test]
-#[ignore = "requires kernel FIB resolution support"]
-fn xdp_lan_intro_known_lan_fib_fallback_test_run() {
-    let pin_root = test_pin_root("trfib");
+#[ignore = "requires root and veth pairs; run with --include-ignored"]
+fn xdp_lan_intro_known_lan_fib_fallback() {
+    let test_ns = NetNsGuard::create("lrf");
+    let peer_ns = NetNsGuard::create("lrfp");
+    let pair;
+    let out_pair;
+    {
+        let _e = test_ns.enter();
+        pair = VethPair::create_with_netns("lrf", &peer_ns);
+        // FIB target must be a device other than the ingress (host end), so the
+        // route points out a second pair kept in the test netns.
+        out_pair = VethPair::create("lrfout");
+    }
+    let peer = pair.peer();
+
+    let h_i;
+    let out_h_i;
+    {
+        let _e = test_ns.enter();
+        // route + static neigh so bpf_fib_lookup can resolve the MAC (test netns only)
+        Command::new("ip")
+            .args(["route", "add", "10.0.0.5/32", "dev", out_pair.host()])
+            .output()
+            .unwrap();
+        Command::new("ip")
+            .args([
+                "neigh",
+                "add",
+                "10.0.0.5",
+                "lladdr",
+                "02:00:00:00:00:05",
+                "dev",
+                out_pair.host(),
+            ])
+            .output()
+            .unwrap();
+        h_i = pair.host_ifindex();
+        out_h_i = out_pair.host_ifindex();
+    }
+
+    let pin_root = crate::tests::isolated_pin_root("xdp-lr-fibf");
     let mut b = XdpLanIntroSkelBuilder::default();
     b.object_builder_mut().pin_root_path(&pin_root).unwrap();
     let mut obj = std::mem::MaybeUninit::uninit();
-    let open = b.open(&mut obj).unwrap();
-    let skel = open.load().unwrap();
+    let skel = b.open(&mut obj).unwrap().load().unwrap();
 
-    // populate rt4_lan_map with has_mac=1 for 10.0.0.5 (so MAC required, triggers FIB fallback)
+    let dst_ip_be = 0x0A000005u32.to_be_bytes(); // 10.0.0.5
+
+    // rt4_lan_map with has_mac=1 → ip_mac miss → real FIB fallback
+    let mut lan_key = [0u8; 8];
+    lan_key[0..4].copy_from_slice(&32u32.to_ne_bytes());
+    lan_key[4..8].copy_from_slice(&dst_ip_be);
+    let mut lan_val = [0u8; 16];
+    lan_val[0] = 1; // has_mac = true
+    lan_val[8..12].copy_from_slice(&out_h_i.to_ne_bytes());
+    skel.maps.rt4_lan_map.update(&lan_key, &lan_val, MapFlags::ANY).unwrap();
+
+    // allow XDP redirect to the FIB-resolved device
+    skel.maps
+        .xdp_redirect_able
+        .update(&out_h_i.to_ne_bytes(), &1u32.to_ne_bytes(), MapFlags::ANY)
+        .unwrap();
+
+    // counting dummy on the out-pair peer (where the redirected packet lands)
+    let mut db = TestXdpDummySkelBuilder::default();
+    db.object_builder_mut().pin_root_path(&pin_root).unwrap();
+    let mut dobj = std::mem::MaybeUninit::uninit();
+    let dummy = db.open(&mut dobj).unwrap().load().unwrap();
+
+    let _link;
+    let _dl;
     {
-        let mut lan_key = [0u8; 8];
-        lan_key[0..4].copy_from_slice(&32u32.to_ne_bytes());
-        lan_key[4..8].copy_from_slice(&0x0A000005u32.to_be_bytes());
-        let mut lan_val = [0u8; 16];
-        lan_val[0] = 1; // has_mac = true
-        lan_val[8..12].copy_from_slice(&99u32.to_ne_bytes()); // dummy ifindex
-        skel.maps.rt4_lan_map.update(&lan_key, &lan_val, MapFlags::ANY).unwrap();
+        let _e = test_ns.enter();
+        _link = skel.progs.xdp_lan_intro.attach_xdp(h_i as i32).unwrap();
+        _dl = dummy.progs.xdp_test_dummy.attach_xdp(out_pair.peer_ifindex() as i32).unwrap();
     }
-
-    // do NOT populate ip_mac_v4 for 10.0.0.5 — forces FIB fallback
 
     let pkt = build_ipv4_tcp_pkt(
         [0x02, 0, 0, 0, 0, 1],
@@ -672,33 +759,39 @@ fn xdp_lan_intro_known_lan_fib_fallback_test_run() {
         [10, 0, 0, 1],
         [10, 0, 0, 5],
     );
+    dummy_reset(&dummy.maps.dummy_recv_map);
+    {
+        let _e = peer_ns.enter();
+        send_raw_packet(peer, &pkt);
+    }
+    wait_for("FIB fallback redirected packet to out peer", Duration::from_secs(5), || {
+        dummy_recv_count(&dummy.maps.dummy_recv_map, false) == 1
+    });
 
-    let run = skel
-        .progs
-        .xdp_lan_intro
-        .test_run(ProgramInput { data_in: Some(&pkt), ..Default::default() })
-        .expect("test_run");
-
-    let ret = run.return_value as i32;
-    // bpf_fib_lookup succeeds even in test_run (kernel FIB is still available).
-    // The has_mac=1 path with no ip_mac cache entry should trigger FIB fallback
-    // and redirect to lan_info->ifindex.
-    assert_eq!(ret, 4, "FIB fallback: expected XDP_REDIRECT=4 when FIB resolves MAC, got {ret}");
-
-    // After the run, verify ip_mac_v4 was populated by FIB fallback
+    // FIB cache populated with the resolved MAC and redirect target
     let mut mac_key = [0u8; 4];
-    mac_key.copy_from_slice(&0x0A000005u32.to_be_bytes());
+    mac_key.copy_from_slice(&dst_ip_be);
     let mac_after = skel.maps.ip_mac_v4.lookup(&mac_key, MapFlags::ANY).unwrap();
-    assert!(
-        mac_after.is_some(),
-        "ip_mac_v4 should have been populated by FIB fallback for known LAN IP 10.0.0.5"
-    );
+    assert!(mac_after.is_some(), "FIB should have populated ip_mac_v4 for 10.0.0.5");
     let raw = mac_after.unwrap();
-    assert_eq!(&raw[0..4], &99u32.to_ne_bytes(), "FIB cache ifindex = lan_info->ifindex");
+    assert_eq!(&raw[0..4], &out_h_i.to_ne_bytes(), "FIB cache ifindex = lan_info->ifindex");
+    assert_eq!(&raw[4..10], &[0x02, 0, 0, 0, 0, 0x05], "FIB resolved MAC from static neigh");
     assert_eq!(&raw[10..16], &[0u8; 6], "FIB cache dev_mac = lan_info->mac_addr");
-    assert_ne!(&raw[4..10], &[0u8; 6], "FIB should have resolved MAC (non-zero)");
-}
+    assert_eq!(&raw[16..18], &0x0800u16.to_be_bytes(), "FIB cache proto = ETH_P_IP");
 
+    // second send: MAC cache hit → still redirected
+    dummy_reset(&dummy.maps.dummy_recv_map);
+    {
+        let _e = peer_ns.enter();
+        send_raw_packet(peer, &pkt);
+    }
+    wait_for("cached-MAC redirect to out peer", Duration::from_secs(5), || {
+        dummy_recv_count(&dummy.maps.dummy_recv_map, false) == 1
+    });
+
+    drop(dummy);
+    drop(skel);
+}
 fn build_ipv6_tcp_pkt(
     src_mac: [u8; 6],
     dst_mac: [u8; 6],
@@ -751,7 +844,7 @@ fn xdp_lan_intro_fib_fallback_v4() {
         out_h_i = out_pair.host_ifindex();
     }
 
-    let pin_root = test_pin_root("fib4v");
+    let pin_root = crate::tests::isolated_pin_root("xdp-lr-fib4v");
     let mut b = XdpLanIntroSkelBuilder::default();
     b.object_builder_mut().pin_root_path(&pin_root).unwrap();
     let mut obj = std::mem::MaybeUninit::uninit();
@@ -858,7 +951,7 @@ fn xdp_lan_intro_fib_fallback_v6() {
             .unwrap();
         h_i = pair.host_ifindex();
 
-        let pin_root = test_pin_root("fib6v");
+        let pin_root = crate::tests::isolated_pin_root("xdp-lr-fib6v");
         let mut b = XdpLanIntroSkelBuilder::default();
         b.object_builder_mut().pin_root_path(&pin_root).unwrap();
         let mut obj = std::mem::MaybeUninit::uninit();

@@ -11,13 +11,7 @@ use crate::tests::test_xdp_dummy::TestXdpDummySkelBuilder;
 use crate::tests::xdp_firewall_skel::XdpFirewallSkelBuilder;
 use crate::tests::xdp_lan_chain_skel::XdpLanChainSkelBuilder;
 use crate::tests::xdp_nat_skel::{types, XdpNatSkelBuilder};
-use crate::tests::PinRootGuard;
-
 use std::os::fd::{AsFd, AsRawFd};
-
-fn pin_root(prefix: &str) -> PinRootGuard {
-    PinRootGuard::new(&format!("xdp-nat-{prefix}"))
-}
 
 fn build_tcp_pkt(src_ip: [u8; 4], dst_ip: [u8; 4], src_port: u16, dst_port: u16) -> Vec<u8> {
     use etherparse::PacketBuilder;
@@ -200,7 +194,7 @@ fn xdp_nat_static_egress() {
     let nat_h_i = pair.host_ifindex();
     let _nat_p_i = pair.peer_ifindex();
 
-    let share_pin = pin_root("nat4e");
+    let share_pin = crate::tests::isolated_pin_root("xdp-nat-nat4e");
     let mut sb = ShareMapSkelBuilder::default();
     sb.object_builder_mut().pin_root_path(&share_pin).unwrap();
     let mut share_obj = std::mem::MaybeUninit::uninit();
@@ -285,7 +279,7 @@ fn xdp_nat_static_ingress() {
 
     let nat_h_i = pair.host_ifindex();
 
-    let share_pin = pin_root("nat4i");
+    let share_pin = crate::tests::isolated_pin_root("xdp-nat-nat4i");
     let mut sb = ShareMapSkelBuilder::default();
     sb.object_builder_mut().pin_root_path(&share_pin).unwrap();
     let mut share_obj = std::mem::MaybeUninit::uninit();
@@ -341,7 +335,7 @@ fn xdp_nat_dynamic_egress() {
     let nat_h_i = pair.host_ifindex();
     let nat_p_i = pair.peer_ifindex();
 
-    let share_pin = pin_root("nat4dyn");
+    let share_pin = crate::tests::isolated_pin_root("xdp-nat-nat4dyn");
     let mut sb = ShareMapSkelBuilder::default();
     sb.object_builder_mut().pin_root_path(&share_pin).unwrap();
     let mut share_obj = std::mem::MaybeUninit::uninit();
@@ -487,7 +481,7 @@ fn xdp_nat_v6_egress() {
     let nat_p = pair.peer();
     let nat_h_i = pair.host_ifindex();
 
-    let share_pin = pin_root("nat6e");
+    let share_pin = crate::tests::isolated_pin_root("xdp-nat-nat6e");
     let mut sb = ShareMapSkelBuilder::default();
     sb.object_builder_mut().pin_root_path(&share_pin).unwrap();
     let mut share_obj = std::mem::MaybeUninit::uninit();
@@ -541,7 +535,7 @@ fn xdp_nat_firewall_pipeline() {
     let nat_h_i = pair.host_ifindex();
     let nat_p_i = pair.peer_ifindex();
 
-    let share_pin = pin_root("pipeline");
+    let share_pin = crate::tests::isolated_pin_root("xdp-nat-pipeline");
     let mut sb = ShareMapSkelBuilder::default();
     sb.object_builder_mut().pin_root_path(&share_pin).unwrap();
     let mut share_obj = std::mem::MaybeUninit::uninit();
@@ -756,7 +750,7 @@ fn xdp_nat_fragment_v4() {
     let nat_p = pair.peer();
     let nat_h_i = pair.host_ifindex();
 
-    let share_pin = pin_root("frag4e");
+    let share_pin = crate::tests::isolated_pin_root("xdp-nat-frag4e");
     let mut sb = ShareMapSkelBuilder::default();
     sb.object_builder_mut().pin_root_path(&share_pin).unwrap();
     let mut share_obj = std::mem::MaybeUninit::uninit();
@@ -842,7 +836,7 @@ fn xdp_nat_v6_ingress() {
     let nat_p = pair.peer();
     let nat_h_i = pair.host_ifindex();
 
-    let share_pin = pin_root("nat6ie");
+    let share_pin = crate::tests::isolated_pin_root("xdp-nat-nat6ie");
     let mut sb = ShareMapSkelBuilder::default();
     sb.object_builder_mut().pin_root_path(&share_pin).unwrap();
     let mut share_obj = std::mem::MaybeUninit::uninit();
@@ -895,7 +889,7 @@ fn xdp_nat_ct_dynamic_multi_pkt() {
 
     let nat_h_i = pair.host_ifindex();
 
-    let share_pin = pin_root("ctmulti");
+    let share_pin = crate::tests::isolated_pin_root("xdp-nat-ctmulti");
     let mut sb = ShareMapSkelBuilder::default();
     sb.object_builder_mut().pin_root_path(&share_pin).unwrap();
     let mut share_obj = std::mem::MaybeUninit::uninit();
@@ -1050,7 +1044,7 @@ fn xdp_nat_fragment_ingress() {
     let nat_h_i = pair.host_ifindex();
     let nat_p_i = pair.peer_ifindex();
 
-    let share_pin = pin_root("fragin");
+    let share_pin = crate::tests::isolated_pin_root("xdp-nat-fragin");
     let mut sb = ShareMapSkelBuilder::default();
     sb.object_builder_mut().pin_root_path(&share_pin).unwrap();
     let mut share_obj = std::mem::MaybeUninit::uninit();
@@ -1231,7 +1225,7 @@ fn xdp_nat_dynamic_ingress() {
     let nat_h_i = pair.host_ifindex();
     let nat_p_i = pair.peer_ifindex();
 
-    let share_pin = pin_root("nat4dyn_i");
+    let share_pin = crate::tests::isolated_pin_root("xdp-nat-nat4dyn_i");
     let mut sb = ShareMapSkelBuilder::default();
     sb.object_builder_mut().pin_root_path(&share_pin).unwrap();
     let mut share_obj = std::mem::MaybeUninit::uninit();
@@ -1325,7 +1319,7 @@ fn xdp_nat_udp_egress() {
     let nat_h_i = pair.host_ifindex();
     let nat_p_i = pair.peer_ifindex();
 
-    let share_pin = pin_root("udp_eg");
+    let share_pin = crate::tests::isolated_pin_root("xdp-nat-udp_eg");
     let mut sb = ShareMapSkelBuilder::default();
     sb.object_builder_mut().pin_root_path(&share_pin).unwrap();
     let mut share_obj = std::mem::MaybeUninit::uninit();
@@ -1413,7 +1407,7 @@ fn xdp_nat_udp_ingress() {
     let nat_h_i = pair.host_ifindex();
     let nat_p_i = pair.peer_ifindex();
 
-    let share_pin = pin_root("udp_in");
+    let share_pin = crate::tests::isolated_pin_root("xdp-nat-udp_in");
     let mut sb = ShareMapSkelBuilder::default();
     sb.object_builder_mut().pin_root_path(&share_pin).unwrap();
     let mut share_obj = std::mem::MaybeUninit::uninit();
@@ -1508,7 +1502,7 @@ fn xdp_nat_fragment_middle() {
     let nat_h_i = pair.host_ifindex();
     let nat_p_i = pair.peer_ifindex();
 
-    let share_pin = pin_root("fragmid");
+    let share_pin = crate::tests::isolated_pin_root("xdp-nat-fragmid");
     let mut sb = ShareMapSkelBuilder::default();
     sb.object_builder_mut().pin_root_path(&share_pin).unwrap();
     let mut share_obj = std::mem::MaybeUninit::uninit();
@@ -1560,7 +1554,7 @@ fn xdp_nat_icmp_error_egress() {
     let nat_p = pair.peer();
     let nat_h_i = pair.host_ifindex();
 
-    let share_pin = pin_root("icmperr");
+    let share_pin = crate::tests::isolated_pin_root("xdp-nat-icmperr");
     let mut sb = ShareMapSkelBuilder::default();
     sb.object_builder_mut().pin_root_path(&share_pin).unwrap();
     let mut share_obj = std::mem::MaybeUninit::uninit();
@@ -1640,7 +1634,7 @@ fn xdp_nat_static_ingress_mark() {
     let nat_p = pair.peer();
     let nat_h_i = pair.host_ifindex();
 
-    let share_pin = pin_root("nat4mark");
+    let share_pin = crate::tests::isolated_pin_root("xdp-nat-nat4mark");
     let mut sb = ShareMapSkelBuilder::default();
     sb.object_builder_mut().pin_root_path(&share_pin).unwrap();
     let mut share_obj = std::mem::MaybeUninit::uninit();
@@ -1689,7 +1683,7 @@ fn xdp_nat_chain_pipeline() {
     let nat_h_i = pair.host_ifindex();
     let nat_p_i = pair.peer_ifindex();
 
-    let share_pin = pin_root("chain_pipe");
+    let share_pin = crate::tests::isolated_pin_root("xdp-nat-chain_pipe");
     let mut sb = ShareMapSkelBuilder::default();
     sb.object_builder_mut().pin_root_path(&share_pin).unwrap();
     let mut share_obj = std::mem::MaybeUninit::uninit();
