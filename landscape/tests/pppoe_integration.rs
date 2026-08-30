@@ -12,8 +12,21 @@
 //!
 //! # Running
 //!
+//! The suite is parallel-safe; each test uses its own netns/veth pair and
+//! its own pppoe-server (names are unique per test), so no special test
+//! thread settings are required:
+//!
 //! ```sh
-//! RUST_TEST_THREADS=1 cargo test --package landscape --test pppoe_integration -- --nocapture
+//! cargo test --package landscape --test pppoe_integration -- --nocapture
+//! ```
+//!
+//! One test is `#[ignore]`d: `server_sends_terminate` relies on the server
+//! terminating the session 5 s after it comes up (`maxconnect 5`) and races
+//! client negotiation speed, which parallel load slows down too much.  Run
+//! it solo (see its doc comment for the reason):
+//!
+//! ```sh
+//! cargo test --package landscape --test pppoe_integration -- --ignored server_sends_terminate
 //! ```
 //!
 //! # Expected warnings

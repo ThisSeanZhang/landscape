@@ -56,6 +56,10 @@ pub(super) struct ClientConfig {
     /// Whether to install a default route via the peer (maps to
     /// `PPPoEClientConfig::default_router`).
     pub(super) default_router: bool,
+    /// LCP echo keepalive interval in seconds. `None` keeps the client's
+    /// default (20 s). Link-loss tests set `Some(3)` so that failure
+    /// detection (~6 intervals) takes seconds instead of ~2 minutes.
+    pub(super) echo_interval_secs: Option<u64>,
 }
 
 impl Default for ClientConfig {
@@ -66,6 +70,7 @@ impl Default for ClientConfig {
             mtu: 1492,
             timeout_secs: 30,
             default_router: false,
+            echo_interval_secs: None,
         }
     }
 }
@@ -280,10 +285,6 @@ logfile {pppd_log}
 
     pub(super) fn server_iface(&self) -> &str {
         &self.server_iface
-    }
-
-    pub(super) fn server_pid(&self) -> Option<u32> {
-        self.server_child.as_ref().map(|c| c.id())
     }
 
     pub(super) fn client_info(&self) -> &ClientIfaceInfo {

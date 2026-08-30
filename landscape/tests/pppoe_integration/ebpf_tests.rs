@@ -2,23 +2,37 @@ use super::cmd::cmd_output;
 use super::env::{ClientConfig, EnvConfig, PPPoETestEnv};
 use super::require_root;
 use super::runner::{run_client, ExpectOutcome};
-use std::path::Path;
 use std::time::{Duration, Instant};
 
-fn wait_for_path(path: &str, timeout: Duration) -> bool {
+/// Wait until `tc filter show egress` on `iface` (in `client_ns`) contains
+/// `needle`, or the deadline passes.  Returns the last filter output.
+fn wait_for_egress_filter(client_ns: &str, iface: &str, needle: &str, timeout: Duration) -> String {
     let deadline = Instant::now() + timeout;
+    let mut tc = String::new();
     while Instant::now() < deadline {
-        if Path::new(path).exists() {
-            return true;
+        tc = cmd_output(
+            "ip",
+            &["netns", "exec", client_ns, "tc", "filter", "show", "dev", iface, "egress"],
+        )
+        .expect("tc filter show egress should succeed");
+        if tc.contains(needle) {
+            break;
         }
         std::thread::sleep(Duration::from_millis(50));
     }
-    Path::new(path).exists()
+    tc
 }
 
+/// After the PPPoE session is established, the client's eBPF pipeline must
+/// be active on this test's own interface: the `tc_pppoe_wan_egress` TC
+/// filter is attached to the client veth.  (Reaching `Running` already
+/// implies the pipeline setup succeeded; the filter is this test's own
+/// observable artifact, unlike the pipeline maps, which are process-global
+/// shared maps pinned by whatever client connected first.)
 #[tokio::test]
-async fn ebpf_pipeline_maps_are_created_after_connection() {
+async fn ebpf_pipeline_attaches_after_connection() {
     require_root();
+
     let env_cfg = EnvConfig::default();
     let env = PPPoETestEnv::up(&env_cfg).expect("test environment should start");
     let client_cfg = ClientConfig {
@@ -27,7 +41,6 @@ async fn ebpf_pipeline_maps_are_created_after_connection() {
         ..Default::default()
     };
 
-    let ifindex = env.client_info().index;
     let client_ns = env.client_ns().to_string();
     let iface_name = env.client_info().name.clone();
 
@@ -37,53 +50,21 @@ async fn ebpf_pipeline_maps_are_created_after_connection() {
         &client_cfg,
         ExpectOutcome::Running,
         Some(Box::new(move || {
-            // PPPoE session is fully established and eBPF pipeline should be active.
-            // The pipeline maps are pinned in the global BPF filesystem.
-            let map_base = "/sys/fs/bpf/landscape";
-            let ingress_map = format!("{}/wan_tc_pipeline_ingress_{}", map_base, ifindex);
-            let egress_map = format!("{}/wan_tc_pipeline_egress_{}", map_base, ifindex);
-
+            // The egress TC filter (tc_pppoe_wan_egress) is attached to the
+            // client interface.  Poll for it: the client's eBPF thread
+            // attaches it asynchronously after Running and parallel load can
+            // delay that (RTNL contention).
+            let tc = wait_for_egress_filter(
+                &client_ns,
+                &iface_name,
+                "tc_pppoe_wan_eg",
+                Duration::from_secs(5),
+            );
+            // The kernel truncates the program name to 15 chars.
             assert!(
-                wait_for_path(&ingress_map, Duration::from_secs(3)),
-                "ingress pipeline map should exist at {ingress_map}"
+                tc.contains("tc_pppoe_wan_eg"),
+                "egress filter should reference tc_pppoe_wan_egress, got: {tc}"
             );
-            assert!(
-                wait_for_path(&egress_map, Duration::from_secs(3)),
-                "egress pipeline map should exist at {egress_map}"
-            );
-
-            // Verify TC hooks are present on the interface (pipeline root programs).
-            let tc_ingress = cmd_output(
-                "ip",
-                &[
-                    "netns",
-                    "exec",
-                    &client_ns,
-                    "tc",
-                    "filter",
-                    "show",
-                    "dev",
-                    &iface_name,
-                    "ingress",
-                ],
-            );
-            assert!(tc_ingress.is_ok(), "TC ingress filter should be attached: {tc_ingress:?}");
-
-            let tc_egress = cmd_output(
-                "ip",
-                &[
-                    "netns",
-                    "exec",
-                    &client_ns,
-                    "tc",
-                    "filter",
-                    "show",
-                    "dev",
-                    &iface_name,
-                    "egress",
-                ],
-            );
-            assert!(tc_egress.is_ok(), "TC egress filter should be attached: {tc_egress:?}");
         })),
     )
     .await;
@@ -92,9 +73,13 @@ async fn ebpf_pipeline_maps_are_created_after_connection() {
     assert!(result.is_ok(), "client should connect and activate eBPF pipeline: {result:?}");
 }
 
+/// When the client stops, the TC hook it attached must be detached again
+/// (TcHookProxy drops its filter on teardown).  This is the per-interface
+/// cleanup signal; the shared pipeline maps intentionally persist.
 #[tokio::test]
-async fn ebpf_pipeline_maps_cleaned_up_after_client_stop() {
+async fn ebpf_pipeline_detached_after_client_stop() {
     require_root();
+
     let env_cfg = EnvConfig::default();
     let env = PPPoETestEnv::up(&env_cfg).expect("test environment should start");
     let client_cfg = ClientConfig {
@@ -103,23 +88,27 @@ async fn ebpf_pipeline_maps_cleaned_up_after_client_stop() {
         ..Default::default()
     };
 
-    let ifindex = env.client_info().index;
+    let client_ns = env.client_ns().to_string();
+    let iface_name = env.client_info().name.clone();
 
     let result =
-        run_client(env.client_ns(), env.client_info(), &client_cfg, ExpectOutcome::Running, None)
+        run_client(env.client_ns(), env.client_info(), &client_cfg, ExpectOutcome::Stop, None)
             .await;
-    drop(env);
 
     assert!(result.is_ok(), "client should connect and stop without error: {result:?}");
 
-    // After the client stops, the pipeline's prog_array maps still exist
-    // (they are pinned and shared across pipeline stages), but the PPPoE
-    // slots should be empty. The key check is that the client exited
-    // successfully, which means `unregister_pppoe()` was called without error.
-    let map_base = "/sys/fs/bpf/landscape";
-    let ingress_map = format!("{}/wan_tc_pipeline_ingress_{}", map_base, ifindex);
+    // The egress TC filter the client attached must be gone after the stop.
+    // (Checked while the client netns still exists; `run_client` joins the
+    // client thread, so the hook's Drop has already run.)
+    let tc = cmd_output(
+        "ip",
+        &["netns", "exec", &client_ns, "tc", "filter", "show", "dev", &iface_name, "egress"],
+    )
+    .expect("tc filter show egress should succeed");
     assert!(
-        std::path::Path::new(&ingress_map).exists(),
-        "pipeline ingress map should persist after cleanup (shared map)"
+        !tc.contains("tc_pppoe_wan_eg"),
+        "egress filter should be detached after client stop, got: {tc}"
     );
+
+    drop(env);
 }

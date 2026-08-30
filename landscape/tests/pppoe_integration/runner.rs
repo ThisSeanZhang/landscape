@@ -36,7 +36,7 @@ pub(super) async fn run_client(
     expect: ExpectOutcome,
     on_running: Option<Box<dyn FnOnce() + Send>>,
 ) -> Result<(), String> {
-    let client_cfg = PPPoEClientConfig::new(
+    let mut client_cfg = PPPoEClientConfig::new(
         client_info.index,
         client_info.name.clone(),
         client_info.mac,
@@ -46,6 +46,7 @@ pub(super) async fn run_client(
         cfg.mtu,
         None,
     );
+    client_cfg.lcp_echo_interval = cfg.echo_interval_secs;
 
     let service_status = WatchService::new();
     let service_status_for_task = service_status.clone();
@@ -155,6 +156,14 @@ pub(super) async fn run_client(
             }
         }
     };
+
+    // Ensure the client thread is not stuck in a live session before
+    // joining: any `Err` outcome may have been reached while the client was
+    // still Running (e.g. the post-run timeout).  Signal a graceful stop so
+    // `join()` below returns instead of hanging forever.
+    if outcome.is_err() {
+        service_status.just_change_status(ServiceStatus::Stopping);
+    }
 
     // Propagate any panic from the client thread so it isn't silently lost.
     match client_handle.join() {
