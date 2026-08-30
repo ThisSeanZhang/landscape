@@ -9,7 +9,7 @@
 #include "pkg_def.h"
 #include "neigh_ip6.h"
 #include "neigh_ip6_event.h"
-#include "route/route_maps_v6.h"
+#include "route/route6_lan_maps.h"
 
 char LICENSE[] SEC("license") = "GPL";
 
