@@ -1,3 +1,4 @@
+pub mod ip6_dao_event;
 pub mod tc_lan_route;
 pub mod tc_manager;
 pub mod tc_wan_route;

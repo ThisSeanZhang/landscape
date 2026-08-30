@@ -128,6 +128,14 @@ pub fn init_tc_lan_route(
         pin_and_reuse_map(&mut dao_open_skel.maps.ip_mac_v6, &MAP_PATHS.ip_mac_v6),
         "tc_lan_dao pin ip_mac_v6"
     )?;
+    crate::bpf_ctx!(
+        pin_and_reuse_map(&mut dao_open_skel.maps.rt6_lan_map, &MAP_PATHS.rt6_lan_map),
+        "tc_lan_dao pin rt6_lan_map"
+    )?;
+    crate::bpf_ctx!(
+        pin_and_reuse_map(&mut dao_open_skel.maps.ip6_dao_events, &MAP_PATHS.ip6_dao_events),
+        "tc_lan_dao pin ip6_dao_events"
+    )?;
     let dao_skel = bpf_ctx!(dao_open_skel.load(), "load per-if tc_lan_dao")?;
     let mut dao_hook = TcHookProxy::new(
         &dao_skel.progs.tc_lan_dao,

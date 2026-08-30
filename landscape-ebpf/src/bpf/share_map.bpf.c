@@ -18,6 +18,7 @@
 
 #include "neigh_ip4.h"
 #include "neigh_ip6.h"
+#include "neigh_ip6_event.h"
 #include "chain/redirect_able.h"
 
 char LICENSE[] SEC("license") = "GPL";

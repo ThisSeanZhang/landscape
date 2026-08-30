@@ -8,6 +8,8 @@
 #include "landscape.h"
 #include "pkg_def.h"
 #include "neigh_ip6.h"
+#include "neigh_ip6_event.h"
+#include "route/route_maps_v6.h"
 
 char LICENSE[] SEC("license") = "GPL";
 
@@ -54,6 +56,25 @@ static __always_inline bool is_link_local_ip6(const u8 *bytes) {
 }
 
 static __always_inline bool is_multicast_ip6(const u8 *bytes) { return bytes[0] == 0xff; }
+
+static __always_inline bool is_same_mac(const u8 *a, const u8 *b) {
+    return a[0] == b[0] && a[1] == b[1] && a[2] == b[2] && a[3] == b[3] && a[4] == b[4] &&
+           a[5] == b[5];
+}
+
+// Emit one ip6_dao_event for the ringbuf consumer. ip is the DAD NS target,
+// mac the Ethernet source of the frame that claimed it.
+static __always_inline void emit_ip6_dao_event(u32 ifindex, const u8 *ip, const u8 *mac) {
+    struct ip6_dao_event *event = bpf_ringbuf_reserve(&ip6_dao_events, sizeof(*event), 0);
+    if (!event) {
+        return;
+    }
+    event->ifindex = ifindex;
+    __builtin_memcpy(event->ip, ip, sizeof(event->ip));
+    __builtin_memcpy(event->mac, mac, sizeof(event->mac));
+    __builtin_memset(event->__pad, 0, sizeof(event->__pad));
+    bpf_ringbuf_submit(event, 0);
+}
 
 SEC("tc/ingress")
 int tc_lan_dao(struct __sk_buff *skb) {
@@ -150,6 +171,24 @@ int tc_lan_dao(struct __sk_buff *skb) {
     // itself (RFC 4861), not to a different solicited-node address.
     if (!is_target_solicited_node(daddr, target)) return TC_ACT_UNSPEC;
 
+    // Only learn targets inside subnets this interface directly serves: the
+    // LPM lookup answers "is the target within an advertised LAN subnet".
+    // The extra checks exclude (a) subnets routed to a downstream next-hop
+    // (PD delegation) or WAN, (b) other interfaces' subnets, and (c) the
+    // router's own address in the subnet (value.addr holds the sub_router for
+    // Reachable entries), which must never be bound to a claimant's MAC.
+    struct lan_route_key_v6 lan_key = {0};
+    lan_key.prefixlen = 128;
+    __builtin_memcpy(lan_key.addr.bytes, target, sizeof(target));
+    struct lan_route_info_v6 *lan_info = bpf_map_lookup_elem(&rt6_lan_map, &lan_key);
+    union u_inet6_addr target_addr = {0};
+    __builtin_memcpy(target_addr.bytes, target, sizeof(target));
+    if (!lan_info || lan_info->route_type != ROUTE_TYPE_LAN ||
+        lan_info->ifindex != skb->ingress_ifindex ||
+        ip_addr_equal_in6(&lan_info->addr, &target_addr)) {
+        return TC_ACT_UNSPEC;
+    }
+
     if (current_l3_offset == 0) return TC_ACT_UNSPEC;
 
     // Source link-layer address comes from the Ethernet header
@@ -176,6 +215,18 @@ int tc_lan_dao(struct __sk_buff *skb) {
     // (neigh/FIB learning, userspace) is never overwritten by a DAD frame.
     if (bpf_map_update_elem(&ip_mac_v6, &key, &value, BPF_NOEXIST) == 0) {
         ld_bpf_log("learn DAD NS target: %pI6, ifindex: %d", target, value.ifindex);
+        emit_ip6_dao_event(value.ifindex, target, eth->h_source);
+    } else {
+        // Already bound. Re-report whenever a *different* host now re-claims
+        // the address, regardless of how the binding was learned (DAD, neigh,
+        // or userspace): the original owner may be gone, or this is a
+        // duplicate-address attempt, and userspace re-verifies liveness.
+        // Same-host re-tests (the common benign case) never trigger an event.
+        struct mac_value_v6 *existing = bpf_map_lookup_elem(&ip_mac_v6, &key);
+        if (existing && !is_same_mac(existing->mac, eth->h_source)) {
+            ld_bpf_log("re-claim DAD NS target: %pI6, ifindex: %d", target, value.ifindex);
+            emit_ip6_dao_event(value.ifindex, target, eth->h_source);
+        }
     }
 
     return TC_ACT_UNSPEC;

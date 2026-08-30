@@ -170,9 +170,13 @@ pub async fn run_ringbuf_loop(
     async_fd: AsyncFd<OwnedFd>,
     cancel: CancellationToken,
 ) {
+    let mut async_fd = async_fd;
     loop {
         tokio::select! {
-            _ = cancel.cancelled() => break,
+            _ = cancel.cancelled() => {
+                tracing::info!("ringbuf consumer loop exited on cancellation");
+                return;
+            }
             readable = async_fd.readable() => {
                 match readable {
                     Ok(mut guard) => {
@@ -181,7 +185,16 @@ pub async fn run_ringbuf_loop(
                             tracing::error!("failed to consume ringbuf events: {}", error);
                         }
                     }
-                    Err(_) => break,
+                    Err(error) => {
+                        tracing::error!("ringbuf epoll fd invalid ({error}); re-creating AsyncFd");
+                        match dup_epoll_async_fd(ringbuf.epoll_fd()) {
+                            Ok(fresh) => async_fd = fresh,
+                            Err(e) => {
+                                tracing::error!("failed to re-create ringbuf AsyncFd: {e}; retrying");
+                                tokio::time::sleep(Duration::from_millis(100)).await;
+                            }
+                        }
+                    }
                 }
             }
         }

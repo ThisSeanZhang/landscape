@@ -265,6 +265,7 @@ pub(crate) fn init_path(paths: &LandscapeMapPath) {
 
     reuse_pinned_map_or_recreate(&mut landscape_open.maps.ip_mac_v4, &paths.ip_mac_v4);
     reuse_pinned_map_or_recreate(&mut landscape_open.maps.ip_mac_v6, &paths.ip_mac_v6);
+    reuse_pinned_map_or_recreate(&mut landscape_open.maps.ip6_dao_events, &paths.ip6_dao_events);
     reuse_pinned_map_or_recreate(
         &mut landscape_open.maps.xdp_redirect_able,
         &paths.xdp_redirect_able,

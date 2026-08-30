@@ -1,3 +1,4 @@
+use landscape_common::concurrency::{spawn_task, task_label};
 use landscape_common::database::LandscapeStore as LandscapeDBStore;
 use landscape_common::event::hub::iface::IfaceObserverAction;
 use landscape_common::event::hub::{
@@ -20,6 +21,7 @@ use landscape_database::provider::LandscapeDBServiceProvider;
 use std::collections::HashMap;
 use std::net::Ipv6Addr;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::{mpsc, watch, Mutex};
 use uuid::Uuid;
 
@@ -29,6 +31,7 @@ use super::lan_ipv6_server::{
 use crate::get_iface_by_name;
 use crate::sys_service::route::IpRouteService;
 use dashmap::DashMap;
+use landscape_ebpf::chain::ip6_dao_event::{Ip6DaoEvent, Ip6DaoEventSource};
 
 mod mac_link_map;
 pub use self::mac_link_map::{start_periodic_scan, MacLinkMapCache};
@@ -43,6 +46,8 @@ pub struct LanIPv6Service {
     status_map: Arc<DashMap<String, Arc<Mutex<Ipv6ServerStatus>>>>,
     per_iface_txs: Arc<DashMap<String, watch::Sender<()>>>,
     mac_link_map_cache: Arc<MacLinkMapCache>,
+    /// Per-ifindex channel to the DAD learning consumer of each running server.
+    dao_event_senders: Arc<DashMap<u32, mpsc::Sender<Ip6DaoEvent>>>,
 }
 
 impl LanIPv6Service {
@@ -62,6 +67,84 @@ impl LanIPv6Service {
             status_map: Arc::new(DashMap::new()),
             per_iface_txs: Arc::new(DashMap::new()),
             mac_link_map_cache,
+            dao_event_senders: Arc::new(DashMap::new()),
+        }
+    }
+}
+
+/// Inner DAD dispatch loop: forwards events from `rx` to the per-iface
+/// senders registered in `dao_event_senders`. Runs until the channel closes.
+async fn run_dad_dispatcher(
+    mut rx: mpsc::Receiver<Ip6DaoEvent>,
+    dao_event_senders: Arc<DashMap<u32, mpsc::Sender<Ip6DaoEvent>>>,
+) {
+    while let Some(ev) = rx.recv().await {
+        match dao_event_senders.get(&ev.ifindex) {
+            Some(tx) => {
+                if let Err(error) = tx.try_send(ev) {
+                    tracing::debug!(
+                        "LAN IPv6 server for ifindex {} {error:?}; dropping DAD event",
+                        ev.ifindex
+                    );
+                }
+            }
+            None => {
+                tracing::debug!(
+                    "no LAN IPv6 server for ifindex {}; dropping DAD event",
+                    ev.ifindex
+                );
+            }
+        }
+    }
+}
+
+/// Supervisor keeping the per-ifindex DAD dispatcher and the ringbuf consumer
+/// alive: on task death it re-attaches a fresh channel / rebuilds the consumer.
+async fn supervise_dad_dispatcher(
+    source: Arc<Ip6DaoEventSource>,
+    dao_event_senders: Arc<DashMap<u32, mpsc::Sender<Ip6DaoEvent>>>,
+) {
+    let shutdown = source.cancelled();
+    loop {
+        let (tx, rx) = mpsc::channel(256);
+        source.attach_channel(tx);
+        let senders = dao_event_senders.clone();
+        let dispatch = tokio::spawn(run_dad_dispatcher(rx, senders));
+        let consumer_died = source.consumer_died_token();
+        tokio::select! {
+            _ = shutdown.cancelled() => {
+                tracing::info!("ip6_dao_event dispatcher supervisor shutting down");
+                break;
+            }
+            _ = consumer_died.cancelled() => {
+                tracing::warn!(
+                    "ip6_dao_event ringbuf consumer task exited; rebuilding with a fresh consumer"
+                );
+                if shutdown.is_cancelled() {
+                    break;
+                }
+                if let Err(e) = source.restart_consumer() {
+                    tracing::error!(
+                        "failed to restart ip6_dao_event ringbuf consumer: {e}; retrying in 1s"
+                    );
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                }
+            }
+            result = dispatch => {
+                match result {
+                    Ok(()) => {
+                        tracing::warn!(
+                            "ip6_dao_event dispatcher stopped; restarting with a fresh channel"
+                        );
+                    }
+                    Err(join) => {
+                        tracing::error!("ip6_dao_event dispatcher panicked: {join}; restarting");
+                    }
+                }
+                if shutdown.is_cancelled() {
+                    break;
+                }
+            }
         }
     }
 }
@@ -171,9 +254,16 @@ impl ServiceStarterTrait for LanIPv6Service {
             let prefix_map = self.prefix_map.clone();
             let device_id_map = self.device_id_map.clone();
             let mac_link_cache = self.mac_link_map_cache.clone();
+            // Bounded: the server consumer is rate-limited (32 probes/s with
+            // a 1024-entry probe queue), so under a DAD NS flood the channel
+            // drops events (best-effort) instead of growing without bound.
+            let (dao_tx, dao_rx) = mpsc::channel(1024);
+            self.dao_event_senders.insert(iface.index, dao_tx.clone());
+            let dao_event_senders = self.dao_event_senders.clone();
+            let ifindex = iface.index;
             tokio::spawn(async move {
                 let _ = start_ipv6_lan_server(
-                    iface.index,
+                    ifindex,
                     config.iface_name.clone(),
                     mac_addr,
                     svc_status,
@@ -188,8 +278,13 @@ impl ServiceStarterTrait for LanIPv6Service {
                     route_service,
                     device_id_map,
                     reconf_rx,
+                    dao_rx,
                 )
                 .await;
+                // Only remove the channel we inserted. On a service restart a
+                // newer server may have already replaced this ifindex's entry;
+                // deleting it would close the new server's DAD channel.
+                dao_event_senders.remove_if(&ifindex, |_, v| v.same_channel(&dao_tx));
             });
         }
 
@@ -204,6 +299,9 @@ pub struct LanIPv6ManagerService {
     server_starter: LanIPv6Service,
     #[allow(dead_code)]
     mac_link_map_cache: Arc<MacLinkMapCache>,
+    /// Keeps the global DAD ringbuf consumer alive (Arc refcount only).
+    #[allow(dead_code)]
+    dao_event_source: Option<Arc<Ip6DaoEventSource>>,
 }
 
 impl ControllerService for LanIPv6ManagerService {
@@ -254,6 +352,29 @@ impl LanIPv6ManagerService {
             ipv6_assign_sender,
             mac_link_map_cache.clone(),
         );
+
+        // ── Global DAD NS learning consumer ──
+        // One process-wide ringbuf consumer, dispatching events by ifindex to
+        // the per-iface server channels registered in `dao_event_senders`. A
+        // supervisor keeps the dispatcher alive: if the dispatch task ever
+        // dies, it attaches a fresh channel to the source and restarts.
+        let dao_event_source = match Ip6DaoEventSource::spawn() {
+            Ok(source) => {
+                tracing::info!("ip6_dao_event ringbuf consumer started");
+                Some(Arc::new(source))
+            }
+            Err(e) => {
+                tracing::warn!("ip6_dao_event ringbuf consumer failed to start: {e}");
+                None
+            }
+        };
+        let dao_event_senders = server_starter.dao_event_senders.clone();
+        if let Some(source) = dao_event_source.clone() {
+            spawn_task(
+                task_label::task::EBPF_IP6_DAO_DISPATCHER,
+                supervise_dad_dispatcher(source, dao_event_senders),
+            );
+        }
         let service =
             ServiceManager::init(store.list().await.unwrap(), server_starter.clone()).await;
 
@@ -388,7 +509,13 @@ impl LanIPv6ManagerService {
 
         let store = store_service.lan_ipv6_v2_service_store();
 
-        Self { service, store, server_starter, mac_link_map_cache }
+        Self {
+            service,
+            store,
+            server_starter,
+            mac_link_map_cache,
+            dao_event_source,
+        }
     }
 
     pub async fn refresh_iface_service(&self, iface_name: String) {
@@ -483,5 +610,63 @@ impl LanIPv6ManagerService {
             }
         }
         result
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample_event(ifindex: u32, ip: u8) -> Ip6DaoEvent {
+        Ip6DaoEvent { ifindex, ip: [ip; 16], mac: [1; 6], __pad: [0; 6] }
+    }
+
+    #[tokio::test]
+    async fn dad_dispatcher_forwards_to_matching_ifindex() {
+        let senders: Arc<DashMap<u32, mpsc::Sender<Ip6DaoEvent>>> = Arc::new(DashMap::new());
+        let (tx, mut rx) = mpsc::channel(8);
+        senders.insert(6, tx);
+        let (in_tx, in_rx) = mpsc::channel(8);
+
+        let dispatch = tokio::spawn(run_dad_dispatcher(in_rx, senders));
+        in_tx.send(sample_event(6, 0xfd)).await.expect("send event");
+        drop(in_tx);
+
+        let got = rx.recv().await.expect("event forwarded to matching ifindex");
+        assert_eq!(got.ifindex, 6);
+        dispatch.await.expect("dispatcher exits when the input channel closes");
+    }
+
+    #[tokio::test]
+    async fn dad_dispatcher_drops_unknown_ifindex() {
+        let senders: Arc<DashMap<u32, mpsc::Sender<Ip6DaoEvent>>> = Arc::new(DashMap::new());
+        let (in_tx, in_rx) = mpsc::channel(8);
+
+        let dispatch = tokio::spawn(run_dad_dispatcher(in_rx, senders));
+        in_tx.send(sample_event(99, 0xfd)).await.expect("send event");
+        drop(in_tx);
+
+        dispatch.await.expect("dispatcher exits when the input channel closes");
+    }
+
+    #[tokio::test]
+    async fn dad_dispatcher_survives_closed_per_iface_channel() {
+        // A per-iface receiver that died (service restart race) must not kill
+        // the dispatch loop: later events for live ifindexes still arrive.
+        let senders: Arc<DashMap<u32, mpsc::Sender<Ip6DaoEvent>>> = Arc::new(DashMap::new());
+        let (dead_tx, _dead_rx) = mpsc::channel::<Ip6DaoEvent>(8);
+        senders.insert(6, dead_tx);
+        let (live_tx, mut live_rx) = mpsc::channel::<Ip6DaoEvent>(8);
+        senders.insert(7, live_tx);
+        let (in_tx, in_rx) = mpsc::channel(8);
+
+        let dispatch = tokio::spawn(run_dad_dispatcher(in_rx, senders));
+        in_tx.send(sample_event(6, 0xfd)).await.expect("send event to dead channel");
+        in_tx.send(sample_event(7, 0xfe)).await.expect("send event to live channel");
+        drop(in_tx);
+
+        let got = live_rx.recv().await.expect("event after closed-channel send still forwarded");
+        assert_eq!(got.ifindex, 7);
+        dispatch.await.expect("dispatcher exits when the input channel closes");
     }
 }

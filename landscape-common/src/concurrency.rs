@@ -132,6 +132,10 @@ pub mod task_label {
         pub const EVENT_HUB_DISPATCHER: &str = "event.hub.dispatcher";
         /// eBPF neighbor update async task that periodically syncs ARP/NDP tables.
         pub const EBPF_NEIGH_UPDATE: &str = "ebpf.neigh_update";
+        /// eBPF DAD NS learning ringbuf event source feeding the LAN IPv6 service.
+        pub const EBPF_IP6_DAO_EVENT_SOURCE: &str = "ebpf.ip6_dao.event.source";
+        /// Supervised DAD event dispatcher forwarding ringbuf events to per-iface servers.
+        pub const EBPF_IP6_DAO_DISPATCHER: &str = "ebpf.ip6_dao.dispatcher";
     }
 
     pub mod op {

@@ -195,6 +195,32 @@ mod tests {
 
     const CLIENT_MAC: [u8; 6] = [0x02, 0x00, 0x00, 0x00, 0x00, 0x01];
     const TEST_IFINDEX: u32 = 6;
+    const ROUTER_ADDR: &str = "fd00::1";
+
+    /// Inserts a ROUTE_TYPE_LAN entry into rt6_lan_map, mirroring the userspace
+    /// add_lan_route_inner_v6 layout: 20-byte key {prefixlen(4), addr(16)} and
+    /// 28-byte value {has_mac(1), mac_addr(6), route_type(1), ifindex(4),
+    /// addr(16)}. As in production, the key addr is the router's own address
+    /// (sub_router) inside the subnet, so the LPM lookup matches any address
+    /// sharing the first `prefix_len` bits.
+    fn insert_lan_route_v6<T: MapCore>(
+        map: &T,
+        ifindex: u32,
+        router_addr: Ipv6Addr,
+        prefix_len: u8,
+    ) {
+        let mut key = [0u8; 20];
+        key[0..4].copy_from_slice(&u32::from(prefix_len).to_ne_bytes());
+        key[4..20].copy_from_slice(&router_addr.to_bits().to_be_bytes());
+
+        let mut value = [0u8; 28];
+        value[0] = 1; // has_mac = true
+        value[7] = 0; // ROUTE_TYPE_LAN
+        value[8..12].copy_from_slice(&ifindex.to_ne_bytes());
+        value[12..28].copy_from_slice(&router_addr.to_bits().to_be_bytes());
+
+        map.update(&key, &value, MapFlags::ANY).expect("insert rt6_lan_map entry");
+    }
 
     fn lookup_mac_v6<T: MapCore>(map: &T, addr: Ipv6Addr) -> Option<([u8; 6], u32)> {
         let mut key = mac_key_v6::default();
@@ -217,6 +243,15 @@ mod tests {
         let (backing, obj) = crate::landscape::OwnedOpenObject::new();
         let open = builder.open(obj).unwrap();
         let skel = open.load().unwrap();
+        // Default served subnet (fd00::/64 on the test interface, router's own
+        // address at fd00::1) so DAD learning tests exercise the real
+        // rt6_lan_map guard instead of silently passing on map miss.
+        insert_lan_route_v6(
+            &skel.maps.rt6_lan_map,
+            TEST_IFINDEX,
+            Ipv6Addr::from_str(ROUTER_ADDR).unwrap(),
+            64,
+        );
         let ctx = TestSkb {
             ingress_ifindex: TEST_IFINDEX,
             ifindex: TEST_IFINDEX,
@@ -272,7 +307,7 @@ mod tests {
     /// learned into ip_mac_v6 and passed through (TC_ACT_UNSPEC).
     #[test]
     fn tc_lan_dao_learns_dad_ns() {
-        let target = Ipv6Addr::from_str("fd00::1").unwrap();
+        let target = Ipv6Addr::from_str("fd00::100").unwrap();
         let ret = run_dao_case(&simple_ipv6_ns_dad(CLIENT_MAC, target), |skel| {
             let (mac, ifindex) =
                 lookup_mac_v6(&skel.maps.ip_mac_v6, target).expect("DAD NS must be learned");
@@ -282,10 +317,216 @@ mod tests {
         assert_eq!(ret, -1, "expected TC_ACT_UNSPEC");
     }
 
+    /// A learned DAD NS must also emit one ip6_dao_event carrying the
+    /// ifindex / target IP / source MAC (ringbuf wire layout).
+    #[test]
+    fn tc_lan_dao_emits_dad_event_on_learn() {
+        use crate::chain::ip6_dao_event::Ip6DaoEvent;
+        use landscape_common::net::MacAddr;
+        use libbpf_rs::RingBufferBuilder;
+        use std::sync::{Arc, Mutex};
+        use std::time::Duration;
+        use zerocopy::FromBytes;
+
+        let target = Ipv6Addr::from_str("fd00::100").unwrap();
+        let (skel, mut ctx, backing) = load_tc_lan_dao_skel();
+
+        let events: Arc<Mutex<Vec<Ip6DaoEvent>>> = Arc::new(Mutex::new(Vec::new()));
+        let events_cb = events.clone();
+        let mut rb_builder = RingBufferBuilder::new();
+        rb_builder
+            .add(&skel.maps.ip6_dao_events, move |data: &[u8]| {
+                let event = Ip6DaoEvent::read_from_bytes(data).expect("decode ip6_dao_event");
+                events_cb.lock().unwrap().push(event);
+                0
+            })
+            .expect("add ip6_dao_events ringbuf");
+        let ringbuf = rb_builder.build().expect("build ringbuf");
+
+        let ret = run_on_skel(&skel, &mut ctx, &simple_ipv6_ns_dad(CLIENT_MAC, target));
+        assert_eq!(ret, -1, "expected TC_ACT_UNSPEC");
+
+        ringbuf.poll(Duration::from_millis(100)).expect("poll ringbuf");
+
+        let got = events.lock().unwrap().clone();
+        assert_eq!(got.len(), 1, "exactly one DAD event expected");
+        assert_eq!(got[0].ifindex, TEST_IFINDEX);
+        assert_eq!(got[0].ipv6(), target);
+        assert_eq!(got[0].mac_addr(), MacAddr::from(CLIENT_MAC));
+
+        drop(skel);
+        let _ = ctx;
+        drop(backing);
+    }
+
+    /// An already-learned *authoritative* binding (sourced != DAD) held by a
+    /// *different* host must still emit a re-claim event: BPF_NOEXIST prevents
+    /// overwrite, but any different-host claim is reported so userspace can
+    /// re-verify liveness (the original owner may be gone).
+    #[test]
+    fn tc_lan_dao_authoritative_binding_reclaim_by_other_host_emits_event() {
+        use crate::chain::ip6_dao_event::Ip6DaoEvent;
+        use landscape_common::net::MacAddr;
+        use libbpf_rs::RingBufferBuilder;
+        use std::sync::{Arc, Mutex};
+        use std::time::Duration;
+        use zerocopy::FromBytes;
+
+        let target = Ipv6Addr::from_str("fd00::100").unwrap();
+        let other_mac = [0x02, 0x00, 0x00, 0x00, 0x00, 0x02];
+        let (skel, mut ctx, backing) = load_tc_lan_dao_skel();
+
+        // Pre-insert an authoritative (sourced = LD_MAC_SOURCE_NEIGH) binding
+        // owned by a different host, so the program takes the BPF_NOEXIST
+        // failure path.
+        let mut key = mac_key_v6::default();
+        key.addr.bytes = target.to_bits().to_be_bytes();
+        let mut existing = vec![0u8; 20];
+        existing[0..4].copy_from_slice(&TEST_IFINDEX.to_le_bytes());
+        existing[4..10].copy_from_slice(&other_mac);
+        existing[18] = 0; // LD_MAC_SOURCE_NEIGH
+        skel.maps
+            .ip_mac_v6
+            .update(as_bytes(&key), &existing, MapFlags::ANY)
+            .expect("pre-insert authoritative binding");
+
+        let events: Arc<Mutex<Vec<Ip6DaoEvent>>> = Arc::new(Mutex::new(Vec::new()));
+        let events_cb = events.clone();
+        let mut rb_builder = RingBufferBuilder::new();
+        rb_builder
+            .add(&skel.maps.ip6_dao_events, move |data: &[u8]| {
+                let event = Ip6DaoEvent::read_from_bytes(data).expect("decode ip6_dao_event");
+                events_cb.lock().unwrap().push(event);
+                0
+            })
+            .expect("add ip6_dao_events ringbuf");
+        let ringbuf = rb_builder.build().expect("build ringbuf");
+
+        let ret = run_on_skel(&skel, &mut ctx, &simple_ipv6_ns_dad(CLIENT_MAC, target));
+        assert_eq!(ret, -1, "expected TC_ACT_UNSPEC");
+
+        ringbuf.poll(Duration::from_millis(100)).expect("poll ringbuf");
+
+        let got = events.lock().unwrap().clone();
+        assert_eq!(
+            got.len(),
+            1,
+            "re-claim of an authoritative binding by a different host must emit"
+        );
+        assert_eq!(got[0].ifindex, TEST_IFINDEX);
+        assert_eq!(got[0].ipv6(), target);
+        assert_eq!(got[0].mac_addr(), MacAddr::from(CLIENT_MAC));
+
+        drop(skel);
+        let _ = ctx;
+        drop(backing);
+    }
+
+    /// A re-claim of a DAD-learned address by a *different* host must emit an
+    /// event (potential conflict or vanished owner) carrying the new claimant's
+    /// MAC, so userspace re-verifies liveness.
+    #[test]
+    fn tc_lan_dao_reclaim_by_other_host_emits_event() {
+        use crate::chain::ip6_dao_event::Ip6DaoEvent;
+        use landscape_common::net::MacAddr;
+        use libbpf_rs::RingBufferBuilder;
+        use std::sync::{Arc, Mutex};
+        use std::time::Duration;
+        use zerocopy::FromBytes;
+
+        let target = Ipv6Addr::from_str("fd00::100").unwrap();
+        let other_mac = [0x02, 0x00, 0x00, 0x00, 0x00, 0x02];
+        let (skel, mut ctx, backing) = load_tc_lan_dao_skel();
+
+        // Pre-insert a DAD-learned binding owned by a different host.
+        let mut key = mac_key_v6::default();
+        key.addr.bytes = target.to_bits().to_be_bytes();
+        let mut existing = vec![0u8; 20];
+        existing[0..4].copy_from_slice(&TEST_IFINDEX.to_le_bytes());
+        existing[4..10].copy_from_slice(&other_mac);
+        existing[18] = 1; // LD_MAC_SOURCE_DAD
+        skel.maps
+            .ip_mac_v6
+            .update(as_bytes(&key), &existing, MapFlags::ANY)
+            .expect("pre-insert DAD-sourced binding");
+
+        let events: Arc<Mutex<Vec<Ip6DaoEvent>>> = Arc::new(Mutex::new(Vec::new()));
+        let events_cb = events.clone();
+        let mut rb_builder = RingBufferBuilder::new();
+        rb_builder
+            .add(&skel.maps.ip6_dao_events, move |data: &[u8]| {
+                let event = Ip6DaoEvent::read_from_bytes(data).expect("decode ip6_dao_event");
+                events_cb.lock().unwrap().push(event);
+                0
+            })
+            .expect("add ip6_dao_events ringbuf");
+        let ringbuf = rb_builder.build().expect("build ringbuf");
+
+        let ret = run_on_skel(&skel, &mut ctx, &simple_ipv6_ns_dad(CLIENT_MAC, target));
+        assert_eq!(ret, -1, "expected TC_ACT_UNSPEC");
+
+        ringbuf.poll(Duration::from_millis(100)).expect("poll ringbuf");
+
+        let got = events.lock().unwrap().clone();
+        assert_eq!(got.len(), 1, "exactly one re-claim event expected");
+        assert_eq!(got[0].ifindex, TEST_IFINDEX);
+        assert_eq!(got[0].ipv6(), target);
+        assert_eq!(got[0].mac_addr(), MacAddr::from(CLIENT_MAC));
+
+        drop(skel);
+        let _ = ctx;
+        drop(backing);
+    }
+
+    /// The same host re-testing its own DAD-learned address must not emit a
+    /// second event.
+    #[test]
+    fn tc_lan_dao_reclaim_by_same_host_no_event() {
+        use libbpf_rs::RingBufferBuilder;
+        use std::sync::{Arc, Mutex};
+        use std::time::Duration;
+
+        let target = Ipv6Addr::from_str("fd00::100").unwrap();
+        let (skel, mut ctx, backing) = load_tc_lan_dao_skel();
+
+        // Pre-insert a DAD-learned binding owned by the same host as the frame.
+        let mut key = mac_key_v6::default();
+        key.addr.bytes = target.to_bits().to_be_bytes();
+        let mut existing = vec![0u8; 20];
+        existing[0..4].copy_from_slice(&TEST_IFINDEX.to_le_bytes());
+        existing[4..10].copy_from_slice(&CLIENT_MAC);
+        existing[18] = 1; // LD_MAC_SOURCE_DAD
+        skel.maps
+            .ip_mac_v6
+            .update(as_bytes(&key), &existing, MapFlags::ANY)
+            .expect("pre-insert DAD-sourced binding");
+
+        let events: Arc<Mutex<u32>> = Arc::new(Mutex::new(0));
+        let events_cb = events.clone();
+        let mut rb_builder = RingBufferBuilder::new();
+        rb_builder
+            .add(&skel.maps.ip6_dao_events, move |_: &[u8]| {
+                *events_cb.lock().unwrap() += 1;
+                0
+            })
+            .expect("add ip6_dao_events ringbuf");
+        let ringbuf = rb_builder.build().expect("build ringbuf");
+
+        let ret = run_on_skel(&skel, &mut ctx, &simple_ipv6_ns_dad(CLIENT_MAC, target));
+        assert_eq!(ret, -1, "expected TC_ACT_UNSPEC");
+
+        ringbuf.poll(Duration::from_millis(100)).expect("poll ringbuf");
+        assert_eq!(*events.lock().unwrap(), 0, "no event for same-host re-claim");
+
+        drop(skel);
+        let _ = ctx;
+        drop(backing);
+    }
+
     /// Non-solicited-node destination must not be learned.
     #[test]
     fn tc_lan_dao_skips_unicast_dst() {
-        let target = Ipv6Addr::from_str("fd00::1").unwrap();
+        let target = Ipv6Addr::from_str("fd00::100").unwrap();
         let mut packet = simple_ipv6_ns_dad(CLIENT_MAC, target);
         // overwrite the IPv6 daddr (offset 14 + 24) with a unicast address
         let unicast_dst = Ipv6Addr::from_str("fd00::2").unwrap();
@@ -301,7 +542,7 @@ mod tests {
     /// be learned (RFC 4861: ff02::1:ffXX:XXXX uses the target's last 24 bits).
     #[test]
     fn tc_lan_dao_skips_wrong_solicited_node() {
-        let target = Ipv6Addr::from_str("fd00::1").unwrap();
+        let target = Ipv6Addr::from_str("fd00::100").unwrap();
         let mut packet = simple_ipv6_ns_dad(CLIENT_MAC, target);
         // overwrite the IPv6 daddr (offset 14 + 24) with the solicited-node
         // multicast of a different address (fd00::2)
@@ -318,7 +559,7 @@ mod tests {
     /// the target itself.
     #[test]
     fn tc_lan_dao_skips_wrong_dst_mac() {
-        let target = Ipv6Addr::from_str("fd00::1").unwrap();
+        let target = Ipv6Addr::from_str("fd00::100").unwrap();
         let mut packet = simple_ipv6_ns_dad(CLIENT_MAC, target);
         // overwrite the Ethernet dst MAC (offset 0..6) with the solicited-node
         // multicast MAC of a different address (fd00::2)
@@ -333,7 +574,7 @@ mod tests {
     /// Non-unspecified IPv6 source must not be learned (not DAD).
     #[test]
     fn tc_lan_dao_skips_non_unspecified_src() {
-        let target = Ipv6Addr::from_str("fd00::1").unwrap();
+        let target = Ipv6Addr::from_str("fd00::100").unwrap();
         let mut packet = simple_ipv6_ns_dad(CLIENT_MAC, target);
         // overwrite the IPv6 saddr (offset 14 + 8) with a real source address
         let src = Ipv6Addr::from_str("fd00::10").unwrap();
@@ -348,7 +589,7 @@ mod tests {
     /// Non-NS ICMPv6 (e.g. echo request) must not be learned.
     #[test]
     fn tc_lan_dao_skips_non_ns_icmp() {
-        let target = Ipv6Addr::from_str("fd00::1").unwrap();
+        let target = Ipv6Addr::from_str("fd00::100").unwrap();
         let mut packet = simple_ipv6_ns_dad(CLIENT_MAC, target);
         packet[54] = 128; // ICMPv6 type = echo request
 
@@ -368,12 +609,114 @@ mod tests {
         assert_eq!(ret, -1);
     }
 
+    /// A DAD NS whose target is not covered by any rt6_lan_map entry must not
+    /// be learned or reported: addresses outside the served LAN subnets must
+    /// never bind to a claimant's MAC.
+    #[test]
+    fn tc_lan_dao_skips_target_outside_lan_subnets() {
+        use libbpf_rs::RingBufferBuilder;
+        use std::sync::{Arc, Mutex};
+        use std::time::Duration;
+
+        let target = Ipv6Addr::from_str("2001:db8::1").unwrap();
+        let (skel, mut ctx, backing) = load_tc_lan_dao_skel();
+
+        let events: Arc<Mutex<u32>> = Arc::new(Mutex::new(0));
+        let events_cb = events.clone();
+        let mut rb_builder = RingBufferBuilder::new();
+        rb_builder
+            .add(&skel.maps.ip6_dao_events, move |_: &[u8]| {
+                *events_cb.lock().unwrap() += 1;
+                0
+            })
+            .expect("add ip6_dao_events ringbuf");
+        let ringbuf = rb_builder.build().expect("build ringbuf");
+
+        let ret = run_on_skel(&skel, &mut ctx, &simple_ipv6_ns_dad(CLIENT_MAC, target));
+        assert_eq!(ret, -1, "expected TC_ACT_UNSPEC");
+
+        ringbuf.poll(Duration::from_millis(100)).expect("poll ringbuf");
+        assert!(
+            lookup_mac_v6(&skel.maps.ip_mac_v6, target).is_none(),
+            "out-of-subnet target must not be learned"
+        );
+        assert_eq!(*events.lock().unwrap(), 0, "no event for out-of-subnet target");
+
+        drop(skel);
+        let _ = ctx;
+        drop(backing);
+    }
+
+    /// A DAD NS for the router's own address in the served subnet (the
+    /// ROUTE_TYPE_LAN value's addr) must not be learned: it would redirect
+    /// traffic destined to the router toward the claimant's MAC.
+    #[test]
+    fn tc_lan_dao_skips_router_own_address() {
+        use libbpf_rs::RingBufferBuilder;
+        use std::sync::{Arc, Mutex};
+        use std::time::Duration;
+
+        let target = Ipv6Addr::from_str(ROUTER_ADDR).unwrap();
+        let (skel, mut ctx, backing) = load_tc_lan_dao_skel();
+
+        let events: Arc<Mutex<u32>> = Arc::new(Mutex::new(0));
+        let events_cb = events.clone();
+        let mut rb_builder = RingBufferBuilder::new();
+        rb_builder
+            .add(&skel.maps.ip6_dao_events, move |_: &[u8]| {
+                *events_cb.lock().unwrap() += 1;
+                0
+            })
+            .expect("add ip6_dao_events ringbuf");
+        let ringbuf = rb_builder.build().expect("build ringbuf");
+
+        let ret = run_on_skel(&skel, &mut ctx, &simple_ipv6_ns_dad(CLIENT_MAC, target));
+        assert_eq!(ret, -1, "expected TC_ACT_UNSPEC");
+
+        ringbuf.poll(Duration::from_millis(100)).expect("poll ringbuf");
+        assert!(
+            lookup_mac_v6(&skel.maps.ip_mac_v6, target).is_none(),
+            "router's own address must not be learned"
+        );
+        assert_eq!(*events.lock().unwrap(), 0, "no event for router's own address");
+
+        drop(skel);
+        let _ = ctx;
+        drop(backing);
+    }
+
+    /// A subnet served by a *different* interface (rt6_lan_map ifindex does
+    /// not match the ingress) must not be learned from this interface.
+    #[test]
+    fn tc_lan_dao_skips_other_iface_subnet() {
+        let target = Ipv6Addr::from_str("fd00::2").unwrap();
+        let (skel, mut ctx, backing) = load_tc_lan_dao_skel();
+        // Replace the default entry with one bound to a different interface.
+        insert_lan_route_v6(
+            &skel.maps.rt6_lan_map,
+            TEST_IFINDEX + 1,
+            Ipv6Addr::from_str(ROUTER_ADDR).unwrap(),
+            64,
+        );
+
+        let ret = run_on_skel(&skel, &mut ctx, &simple_ipv6_ns_dad(CLIENT_MAC, target));
+        assert_eq!(ret, -1, "expected TC_ACT_UNSPEC");
+        assert!(
+            lookup_mac_v6(&skel.maps.ip_mac_v6, target).is_none(),
+            "other-interface subnet must not be learned"
+        );
+
+        drop(skel);
+        let _ = ctx;
+        drop(backing);
+    }
+
     /// An existing binding must not be overwritten by a DAD frame: the
     /// program inserts with BPF_NOEXIST, so the pre-existing entry must
     /// survive the DAD NS run untouched.
     #[test]
     fn tc_lan_dao_does_not_overwrite_existing() {
-        let target = Ipv6Addr::from_str("fd00::1").unwrap();
+        let target = Ipv6Addr::from_str("fd00::100").unwrap();
         let existing_mac = [0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff];
         let ret = run_dao_case_with_setup(
             &simple_ipv6_ns_dad(CLIENT_MAC, target),
@@ -400,5 +743,78 @@ mod tests {
             },
         );
         assert_eq!(ret, -1);
+    }
+
+    /// attach_channel redirects the ringbuf consumer: events after the switch
+    /// arrive only on the new channel (the supervisor's dispatcher-restart
+    /// path).
+    #[tokio::test(flavor = "multi_thread")]
+    async fn ip6_dao_source_attach_channel_redirects_events() {
+        use crate::chain::ip6_dao_event::{Ip6DaoEvent, Ip6DaoEventSource};
+        use arc_swap::ArcSwapOption;
+        use landscape_common::concurrency::{spawn_task, task_label};
+        use libbpf_rs::RingBufferBuilder;
+        use std::sync::Arc;
+        use std::time::Duration;
+        use tokio::time::timeout;
+        use tokio_util::sync::CancellationToken;
+        use zerocopy::FromBytes;
+
+        let (skel, mut ctx, backing) = load_tc_lan_dao_skel();
+
+        let (tx1, mut rx1) = tokio::sync::mpsc::channel::<Ip6DaoEvent>(16);
+        let (tx2, mut rx2) = tokio::sync::mpsc::channel::<Ip6DaoEvent>(16);
+        let tx_slot = Arc::new(ArcSwapOption::new(Some(Arc::new(tx1))));
+
+        let mut rb_builder = RingBufferBuilder::new();
+        rb_builder
+            .add(&skel.maps.ip6_dao_events, {
+                let tx_slot = tx_slot.clone();
+                move |data: &[u8]| {
+                    let event = Ip6DaoEvent::read_from_bytes(data).expect("decode ip6_dao_event");
+                    if let Some(tx) = tx_slot.load().as_ref() {
+                        let _ = tx.try_send(event);
+                    }
+                    0
+                }
+            })
+            .expect("add ip6_dao_events ringbuf");
+        let ringbuf = rb_builder.build().expect("build ringbuf");
+        let cancel = CancellationToken::new();
+        let async_fd = crate::metric::dup_epoll_async_fd(ringbuf.epoll_fd()).expect("dup epoll fd");
+        spawn_task(
+            task_label::task::EBPF_IP6_DAO_EVENT_SOURCE,
+            crate::metric::run_ringbuf_loop(ringbuf, async_fd, cancel.clone()),
+        );
+        let source = Ip6DaoEventSource::test_new(cancel, tx_slot);
+
+        let target = Ipv6Addr::from_str("fd00::100").unwrap();
+        let ret = run_on_skel(&skel, &mut ctx, &simple_ipv6_ns_dad(CLIENT_MAC, target));
+        assert_eq!(ret, -1, "expected TC_ACT_UNSPEC");
+        let first = timeout(Duration::from_secs(2), rx1.recv())
+            .await
+            .expect("timed out waiting for first event")
+            .expect("first channel closed");
+        assert_eq!(first.ipv6(), target);
+
+        source.attach_channel(tx2);
+        let target2 = Ipv6Addr::from_str("fd00::101").unwrap();
+        let ret = run_on_skel(&skel, &mut ctx, &simple_ipv6_ns_dad(CLIENT_MAC, target2));
+        assert_eq!(ret, -1, "expected TC_ACT_UNSPEC");
+        let second = timeout(Duration::from_secs(2), rx2.recv())
+            .await
+            .expect("timed out waiting for redirected event")
+            .expect("second channel closed");
+        assert_eq!(second.ipv6(), target2);
+
+        match timeout(Duration::from_millis(200), rx1.recv()).await {
+            Ok(None) => {}
+            Ok(Some(_)) => panic!("old channel received an event after attach_channel"),
+            Err(_) => {}
+        }
+
+        drop(skel);
+        let _ = ctx;
+        drop(backing);
     }
 }

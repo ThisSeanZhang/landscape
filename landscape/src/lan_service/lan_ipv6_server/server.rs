@@ -35,6 +35,7 @@ use crate::{
     sys_service::route::IpRouteService,
 };
 use dashmap::DashMap;
+use landscape_ebpf::chain::ip6_dao_event::Ip6DaoEvent;
 use uuid::Uuid;
 
 const LEASE_EXPIRE_INTERVAL: u64 = 60 * 10;
@@ -131,6 +132,15 @@ impl SlaacVerificationQueue {
         self.entries.retain(|_, state| {
             !matches!(state, SlaacVerificationState::Cooldown { expires_at } if *expires_at <= now)
         });
+    }
+}
+
+/// Awaits the next DAD event; once the channel is gone, the future never
+/// resolves so the enclosing select simply stops serving this arm.
+async fn dad_recv(rx: &mut Option<mpsc::Receiver<Ip6DaoEvent>>) -> Option<Ip6DaoEvent> {
+    match rx.as_mut() {
+        Some(rx) => rx.recv().await,
+        None => std::future::pending().await,
     }
 }
 
@@ -518,7 +528,9 @@ pub async fn start_ipv6_lan_server(
     route_service: IpRouteService,
     device_id_map: Arc<DashMap<MacAddr, Uuid>>,
     mut reconf_rx: mpsc::UnboundedReceiver<MacAddr>,
+    dad_rx: mpsc::Receiver<Ip6DaoEvent>,
 ) -> Result<(), DbError> {
+    let mut dad_rx = Some(dad_rx);
     let server_duid = gen_server_duid(&mac_addr);
 
     // ── IPv6 forwarding ──
@@ -684,11 +696,7 @@ pub async fn start_ipv6_lan_server(
                 let now = Instant::now();
                 let due = slaac_verifications.take_due(now);
                 for ip in due {
-                    let should_probe = {
-                        let status = share_status.lock().await;
-                        params.ra_autonomous && status.should_verify_slaac_addr(ip)
-                    };
-                    if !should_probe {
+                    if !params.ra_autonomous {
                         continue;
                     }
 
@@ -844,6 +852,27 @@ pub async fn start_ipv6_lan_server(
                 }
                 // Immediate RA after prefix change
                 icmp_ra_interval.reset_immediately();
+            },
+            ev = dad_recv(&mut dad_rx) => {
+                let Some(ev) = ev else {
+                    // Only happens if the per-iface DAD channel was removed
+                    // (service restart race or shutdown); keep serving
+                    // RA/DHCPv6, just stop learning DAD events.
+                    tracing::warn!("DAD event channel closed on {iface_name}; DAD learning disabled");
+                    dad_rx = None;
+                    continue;
+                };
+                let ip = ev.ipv6();
+                // No RA-prefix re-check: the eBPF rt6_lan_map guard already
+                // bounds the event to this interface's served subnets.
+                if params.ra_autonomous {
+                    slaac_verifications.enqueue(
+                        ip,
+                        Instant::now(),
+                        Duration::from_secs(u64::from(icmp_ad_interval) / 2),
+                        &iface_name,
+                    );
+                }
             },
             result = service_status_subscribe.changed() => {
                 tracing::debug!("LAN v6 Service change");
