@@ -17,6 +17,7 @@ pub(crate) struct PPPoEClientManager {
     pub(crate) lcp_status: LCPStatus,
     pub(crate) peer_id: String,
     pub(crate) password: String,
+    echo_interval: u64,
 }
 
 impl PPPoEClientManager {
@@ -34,6 +35,7 @@ impl PPPoEClientManager {
         requested_mru: u16,
         peer_id: String,
         password: String,
+        lcp_echo_interval: Option<u64>,
     ) -> Self {
         let my_host_id = process::id().swap_bytes();
         PPPoEClientManager {
@@ -44,6 +46,7 @@ impl PPPoEClientManager {
             lcp_status: LCPStatus::new(client_mac, requested_mru),
             peer_id,
             password,
+            echo_interval: lcp_echo_interval.unwrap_or(LCP_ECHO_INTERVAL),
         }
     }
 
@@ -681,11 +684,11 @@ impl PPPoEClientManager {
             {
                 tracing::error!("failed to send LCP echo request: {e:?}");
                 self.lcp_status.lcp_echo_times = self.lcp_status.lcp_echo_times.saturating_add(1);
-                return Some((self.lcp_status.lcp_echo_times, LCP_ECHO_INTERVAL));
+                return Some((self.lcp_status.lcp_echo_times, self.echo_interval));
             }
             tracing::debug!("sending LCP echo request id={}", self.lcp_status.echo_req_id);
             self.lcp_status.lcp_echo_times = self.lcp_status.lcp_echo_times.saturating_add(1);
-            Some((self.lcp_status.lcp_echo_times, LCP_ECHO_INTERVAL))
+            Some((self.lcp_status.lcp_echo_times, self.echo_interval))
         } else {
             None
         }
@@ -860,6 +863,7 @@ mod tests {
             1492,
             "user".to_string(),
             "pass".to_string(),
+            None,
         );
         assert!(!manager.can_enable_ebpf_prog());
 
@@ -890,6 +894,7 @@ mod tests {
             1492,
             "user".to_string(),
             "pass".to_string(),
+            None,
         );
         let lcp = landscape_common::net_proto::ppp::PointToPoint {
             protocol: 0xc021,
@@ -913,6 +918,7 @@ mod tests {
             1492,
             "user".to_string(),
             "pass".to_string(),
+            None,
         );
         assert!(!manager.can_enable_ebpf_prog());
 
@@ -943,6 +949,7 @@ mod tests {
             1492,
             "user".to_string(),
             "pass".to_string(),
+            None,
         );
 
         manager.lcp_status.client_config = super::TagValue::Reject;

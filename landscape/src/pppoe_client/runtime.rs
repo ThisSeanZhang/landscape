@@ -40,6 +40,7 @@ pub async fn create_pppoe_client(
         config.requested_mru,
         config.peer_id.clone(),
         config.password.clone(),
+        config.lcp_echo_interval,
     );
 
     let mut bpf_thread_notice = None;

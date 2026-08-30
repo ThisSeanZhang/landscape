@@ -27,6 +27,10 @@ pub struct PPPoEClientConfig {
     pub default_router: bool,
     pub requested_mru: u16,
     pub ac_name: Option<String>,
+    /// LCP echo keepalive interval in seconds. `None` uses the default
+    /// `LCP_ECHO_INTERVAL` (20 s). Tests use a smaller value to speed up
+    /// link-loss detection.
+    pub lcp_echo_interval: Option<u64>,
 }
 
 impl PPPoEClientConfig {
@@ -54,6 +58,7 @@ impl PPPoEClientConfig {
                 requested_mru.min(DEFAULT_CLIENT_MRU)
             },
             ac_name,
+            lcp_echo_interval: None,
         }
     }
 }
