@@ -13,7 +13,9 @@ pub static LAND_HOSTNAME: Lazy<String> = Lazy::new(|| {
 pub static LAND_ARGS: Lazy<WebCommArgs> = Lazy::new(|| {
     dotenvy::dotenv().ok();
     if std::env::var_os("LANDSCAPE_IGNORE_CLI_ARGS").is_some() {
-        WebCommArgs::try_parse().unwrap_or_default()
+        // Test/embedded use: ignore the real argv (test harness filters etc.)
+        // and parse from nothing, so env vars and defaults still apply.
+        WebCommArgs::try_parse_from(std::iter::empty::<String>()).unwrap_or_default()
     } else {
         WebCommArgs::parse()
     }
