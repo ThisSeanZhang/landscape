@@ -7,7 +7,7 @@ use landscape_common::metric::connect::{
     MetricResolution, SortOrder,
 };
 use landscape_core::time::get_current_time_ms;
-use sqlx::{QueryBuilder, Row, Sqlite, SqlitePool, Transaction};
+use sqlx::{QueryBuilder, Row, Sqlite, SqliteConnection, SqlitePool};
 
 use super::clean_ip_string;
 use crate::agg::{Batch, BucketKind, BucketWrite};
@@ -264,7 +264,7 @@ pub(crate) async fn initialize_schema(pool: &SqlitePool) -> Result<(), sqlx::Err
 }
 
 async fn upsert_summary_tx(
-    tx: &mut Transaction<'_, Sqlite>,
+    conn: &mut SqliteConnection,
     metric: &landscape_common::metric::connect::ConnectMetric,
 ) -> Result<(), sqlx::Error> {
     let status: u8 = metric.status_type().into();
@@ -307,14 +307,14 @@ async fn upsert_summary_tx(
     .bind(status as i64)
     .bind(metric.create_time_ms() as i64)
     .bind(metric.gress as i64)
-    .execute(tx.as_mut())
+    .execute(&mut *conn)
     .await?;
 
     Ok(())
 }
 
 async fn apply_global_stats_delta_tx(
-    tx: &mut Transaction<'_, Sqlite>,
+    conn: &mut SqliteConnection,
     delta: GlobalStatsDelta,
     last_calculate_time: u64,
 ) -> Result<(), sqlx::Error> {
@@ -340,7 +340,7 @@ async fn apply_global_stats_delta_tx(
     .bind(delta.total_connect_count as i64)
     .bind(last_calculate_time as i64)
     .bind(GLOBAL_STATS_CACHE_KEY)
-    .execute(tx.as_mut())
+    .execute(&mut *conn)
     .await?;
 
     Ok(())
@@ -350,7 +350,7 @@ async fn apply_global_stats_delta_tx(
 /// 不对齐桶做读改写合并——同一对齐桶的多次发射(1h 刷新、时钟乱序)以多行共存,
 /// 由读侧按 bucket_time 分组取最新,天然兼容不可变/追加写存储。
 async fn insert_bucket_tx(
-    tx: &mut Transaction<'_, Sqlite>,
+    conn: &mut SqliteConnection,
     table: &str,
     write: &BucketWrite,
 ) -> Result<(), sqlx::Error> {
@@ -374,7 +374,7 @@ async fn insert_bucket_tx(
     .bind(write.metric.egress_packets as i64)
     .bind(status as i64)
     .bind(write.metric.create_time_ms() as i64)
-    .execute(tx.as_mut())
+    .execute(&mut *conn)
     .await?;
 
     Ok(())
@@ -389,70 +389,74 @@ pub(crate) async fn apply_connect_batch(
         return Ok(());
     }
 
-    let mut tx = pool.begin().await?;
-    let last_calculate_time = get_current_time_ms().unwrap_or_default();
+    super::run_write_tx(pool, batch, |conn, batch| {
+        Box::pin(async move {
+            let last_calculate_time = get_current_time_ms().unwrap_or_default();
 
-    // 批量查询本批次涉及的旧汇总值。SQLite 对 bind 参数数量有限制，
-    // 因此按参数预算分块（每个 key 需要两个参数）。
-    let mut keys: Vec<ConnectKey> =
-        batch.summary_metrics.iter().map(|metric| metric.key()).collect();
-    keys.sort_by_key(|key| (key.create_time, key.cpu_id));
-    keys.dedup();
-    let mut totals: HashMap<ConnectKey, SummaryTotals> = HashMap::with_capacity(keys.len());
-    const MAX_KEYS_PER_QUERY: usize = 400;
-    for key_chunk in keys.chunks(MAX_KEYS_PER_QUERY) {
-        let mut qb = QueryBuilder::<Sqlite>::new(
-            "SELECT create_time, cpu_id, total_ingress_bytes, total_egress_bytes, total_ingress_pkts, total_egress_pkts
-            FROM conn_summaries WHERE (create_time, cpu_id) IN (",
-        );
-        let mut first = true;
-        for key in key_chunk {
-            if !first {
-                qb.push(", ");
+            // 批量查询本批次涉及的旧汇总值。SQLite 对 bind 参数数量有限制，
+            // 因此按参数预算分块（每个 key 需要两个参数）。
+            let mut keys: Vec<ConnectKey> =
+                batch.summary_metrics.iter().map(|metric| metric.key()).collect();
+            keys.sort_by_key(|key| (key.create_time, key.cpu_id));
+            keys.dedup();
+            let mut totals: HashMap<ConnectKey, SummaryTotals> = HashMap::with_capacity(keys.len());
+            const MAX_KEYS_PER_QUERY: usize = 400;
+            for key_chunk in keys.chunks(MAX_KEYS_PER_QUERY) {
+                let mut qb = QueryBuilder::<Sqlite>::new(
+                    "SELECT create_time, cpu_id, total_ingress_bytes, total_egress_bytes, total_ingress_pkts, total_egress_pkts
+                    FROM conn_summaries WHERE (create_time, cpu_id) IN (",
+                );
+                let mut first = true;
+                for key in key_chunk {
+                    if !first {
+                        qb.push(", ");
+                    }
+                    first = false;
+                    qb.push("(");
+                    qb.push_bind(key.create_time as i64);
+                    qb.push(", ");
+                    qb.push_bind(key.cpu_id as i64);
+                    qb.push(")");
+                }
+                qb.push(")");
+                for row in qb.build().fetch_all(&mut *conn).await? {
+                    totals.insert(
+                        ConnectKey {
+                            create_time: row.get::<i64, _>(0).max(0) as u64,
+                            cpu_id: row.get::<i64, _>(1).max(0) as u32,
+                        },
+                        SummaryTotals {
+                            total_ingress_bytes: row.get::<i64, _>(2).max(0) as u64,
+                            total_egress_bytes: row.get::<i64, _>(3).max(0) as u64,
+                            total_ingress_pkts: row.get::<i64, _>(4).max(0) as u64,
+                            total_egress_pkts: row.get::<i64, _>(5).max(0) as u64,
+                        },
+                    );
+                }
             }
-            first = false;
-            qb.push("(");
-            qb.push_bind(key.create_time as i64);
-            qb.push(", ");
-            qb.push_bind(key.cpu_id as i64);
-            qb.push(")");
-        }
-        qb.push(")");
-        for row in qb.build().fetch_all(tx.as_mut()).await? {
-            totals.insert(
-                ConnectKey {
-                    create_time: row.get::<i64, _>(0).max(0) as u64,
-                    cpu_id: row.get::<i64, _>(1).max(0) as u32,
-                },
-                SummaryTotals {
-                    total_ingress_bytes: row.get::<i64, _>(2).max(0) as u64,
-                    total_egress_bytes: row.get::<i64, _>(3).max(0) as u64,
-                    total_ingress_pkts: row.get::<i64, _>(4).max(0) as u64,
-                    total_egress_pkts: row.get::<i64, _>(5).max(0) as u64,
-                },
-            );
-        }
-    }
 
-    for metric in &batch.summary_metrics {
-        let previous_totals = totals.get(&metric.key()).copied();
-        upsert_summary_tx(&mut tx, metric).await?;
-        let merged_totals = previous_totals
-            .map(|totals| totals.merge_metric(metric))
-            .unwrap_or_else(|| SummaryTotals::from_metric(metric));
-        let delta = GlobalStatsDelta::from_summary_change(previous_totals, merged_totals);
-        apply_global_stats_delta_tx(&mut tx, delta, last_calculate_time).await?;
-        // 同一批次内同 key 的后续 summary 以合并后的值为基准。
-        totals.insert(metric.key(), merged_totals);
-    }
+            for metric in &batch.summary_metrics {
+                let previous_totals = totals.get(&metric.key()).copied();
+                upsert_summary_tx(&mut *conn, metric).await?;
+                let merged_totals = previous_totals
+                    .map(|totals| totals.merge_metric(metric))
+                    .unwrap_or_else(|| SummaryTotals::from_metric(metric));
+                let delta = GlobalStatsDelta::from_summary_change(previous_totals, merged_totals);
+                apply_global_stats_delta_tx(&mut *conn, delta, last_calculate_time).await?;
+                // 同一批次内同 key 的后续 summary 以合并后的值为基准。
+                totals.insert(metric.key(), merged_totals);
+            }
 
-    for kind in [BucketKind::Minute, BucketKind::Hour, BucketKind::Day] {
-        for write in batch.bucket_writes.iter().filter(|write| write.kind == kind) {
-            insert_bucket_tx(&mut tx, kind.table_name(), write).await?;
-        }
-    }
+            for kind in [BucketKind::Minute, BucketKind::Hour, BucketKind::Day] {
+                for write in batch.bucket_writes.iter().filter(|write| write.kind == kind) {
+                    insert_bucket_tx(&mut *conn, kind.table_name(), write).await?;
+                }
+            }
 
-    tx.commit().await
+            Ok(())
+        })
+    })
+    .await
 }
 
 pub(crate) async fn query_metric_by_key(
@@ -718,42 +722,44 @@ pub(crate) async fn rebuild_global_stats_cache(
 ) -> Result<ConnectGlobalStats, sqlx::Error> {
     // 单条 UPDATE 中完成聚合和 cache 写入。SQLite 会在该写语句开始时
     // 获取写锁，避免 SELECT 与后续 UPDATE 之间被并发写入插队。
-    let mut tx = pool.begin().await?;
-    let now = get_current_time_ms().unwrap_or_default();
-    sqlx::query(
-        "UPDATE conn_global_stats_cache
-         SET total_ingress_bytes = (SELECT COALESCE(SUM(total_ingress_bytes), 0) FROM conn_summaries),
-             total_egress_bytes = (SELECT COALESCE(SUM(total_egress_bytes), 0) FROM conn_summaries),
-             total_ingress_pkts = (SELECT COALESCE(SUM(total_ingress_pkts), 0) FROM conn_summaries),
-             total_egress_pkts = (SELECT COALESCE(SUM(total_egress_pkts), 0) FROM conn_summaries),
-             total_connect_count = (SELECT COUNT(*) FROM conn_summaries),
-             last_calculate_time = ?1
-         WHERE cache_key = ?2",
-    )
-    .bind(now as i64)
-    .bind(GLOBAL_STATS_CACHE_KEY)
-    .execute(tx.as_mut())
-    .await?;
+    super::run_write_tx(pool, (), |conn, _| {
+        Box::pin(async move {
+            let now = get_current_time_ms().unwrap_or_default();
+            sqlx::query(
+                "UPDATE conn_global_stats_cache
+                 SET total_ingress_bytes = (SELECT COALESCE(SUM(total_ingress_bytes), 0) FROM conn_summaries),
+                     total_egress_bytes = (SELECT COALESCE(SUM(total_egress_bytes), 0) FROM conn_summaries),
+                     total_ingress_pkts = (SELECT COALESCE(SUM(total_ingress_pkts), 0) FROM conn_summaries),
+                     total_egress_pkts = (SELECT COALESCE(SUM(total_egress_pkts), 0) FROM conn_summaries),
+                     total_connect_count = (SELECT COUNT(*) FROM conn_summaries),
+                     last_calculate_time = ?1
+                 WHERE cache_key = ?2",
+            )
+            .bind(now as i64)
+            .bind(GLOBAL_STATS_CACHE_KEY)
+            .execute(&mut *conn)
+            .await?;
 
-    let row = sqlx::query(
-        "SELECT total_ingress_bytes, total_egress_bytes,
-                total_ingress_pkts, total_egress_pkts,
-                total_connect_count, last_calculate_time
-         FROM conn_global_stats_cache WHERE cache_key = ?1",
-    )
-    .bind(GLOBAL_STATS_CACHE_KEY)
-    .fetch_one(tx.as_mut())
-    .await?;
-    let stats = ConnectGlobalStats {
-        total_ingress_bytes: row.get::<i64, _>(0).max(0) as u64,
-        total_egress_bytes: row.get::<i64, _>(1).max(0) as u64,
-        total_ingress_pkts: row.get::<i64, _>(2).max(0) as u64,
-        total_egress_pkts: row.get::<i64, _>(3).max(0) as u64,
-        total_connect_count: row.get::<i64, _>(4).max(0) as u64,
-        last_calculate_time: row.get::<i64, _>(5).max(0) as u64,
-    };
-    tx.commit().await?;
-    Ok(stats)
+            let row = sqlx::query(
+                "SELECT total_ingress_bytes, total_egress_bytes,
+                        total_ingress_pkts, total_egress_pkts,
+                        total_connect_count, last_calculate_time
+                 FROM conn_global_stats_cache WHERE cache_key = ?1",
+            )
+            .bind(GLOBAL_STATS_CACHE_KEY)
+            .fetch_one(&mut *conn)
+            .await?;
+            Ok(ConnectGlobalStats {
+                total_ingress_bytes: row.get::<i64, _>(0).max(0) as u64,
+                total_egress_bytes: row.get::<i64, _>(1).max(0) as u64,
+                total_ingress_pkts: row.get::<i64, _>(2).max(0) as u64,
+                total_egress_pkts: row.get::<i64, _>(3).max(0) as u64,
+                total_connect_count: row.get::<i64, _>(4).max(0) as u64,
+                last_calculate_time: row.get::<i64, _>(5).max(0) as u64,
+            })
+        })
+    })
+    .await
 }
 
 pub(crate) async fn query_global_stats(
@@ -801,43 +807,47 @@ pub(crate) async fn cleanup_old_summaries(
     pool: &SqlitePool,
     cutoff_exclusive: u64,
 ) -> Result<(), sqlx::Error> {
-    let mut tx = pool.begin().await?;
-    let row = sqlx::query(
-        "SELECT
-            COALESCE(SUM(total_ingress_bytes), 0),
-            COALESCE(SUM(total_egress_bytes), 0),
-            COALESCE(SUM(total_ingress_pkts), 0),
-            COALESCE(SUM(total_egress_pkts), 0),
-            COUNT(*)
-        FROM conn_summaries
-        WHERE last_report_time < ?1",
-    )
-    .bind(cutoff_exclusive as i64)
-    .fetch_one(tx.as_mut())
-    .await?;
-
-    let removed = ConnectGlobalStats {
-        total_ingress_bytes: row.get::<i64, _>(0).max(0) as u64,
-        total_egress_bytes: row.get::<i64, _>(1).max(0) as u64,
-        total_ingress_pkts: row.get::<i64, _>(2).max(0) as u64,
-        total_egress_pkts: row.get::<i64, _>(3).max(0) as u64,
-        total_connect_count: row.get::<i64, _>(4).max(0) as u64,
-        last_calculate_time: 0,
-    };
-
-    let deleted = sqlx::query("DELETE FROM conn_summaries WHERE last_report_time < ?1")
-        .bind(cutoff_exclusive as i64)
-        .execute(tx.as_mut())
-        .await?
-        .rows_affected();
-
-    if deleted > 0 {
-        let delta = GlobalStatsDelta::from_removed_stats(&removed);
-        apply_global_stats_delta_tx(&mut tx, delta, get_current_time_ms().unwrap_or_default())
+    super::run_write_tx(pool, (cutoff_exclusive,), |conn, (cutoff_exclusive,)| {
+        Box::pin(async move {
+            let row = sqlx::query(
+                "SELECT
+                    COALESCE(SUM(total_ingress_bytes), 0),
+                    COALESCE(SUM(total_egress_bytes), 0),
+                    COALESCE(SUM(total_ingress_pkts), 0),
+                    COALESCE(SUM(total_egress_pkts), 0),
+                    COUNT(*)
+                FROM conn_summaries
+                WHERE last_report_time < ?1",
+            )
+            .bind(*cutoff_exclusive as i64)
+            .fetch_one(&mut *conn)
             .await?;
-    }
 
-    tx.commit().await
+            let removed = ConnectGlobalStats {
+                total_ingress_bytes: row.get::<i64, _>(0).max(0) as u64,
+                total_egress_bytes: row.get::<i64, _>(1).max(0) as u64,
+                total_ingress_pkts: row.get::<i64, _>(2).max(0) as u64,
+                total_egress_pkts: row.get::<i64, _>(3).max(0) as u64,
+                total_connect_count: row.get::<i64, _>(4).max(0) as u64,
+                last_calculate_time: 0,
+            };
+
+            let deleted = sqlx::query("DELETE FROM conn_summaries WHERE last_report_time < ?1")
+                .bind(*cutoff_exclusive as i64)
+                .execute(&mut *conn)
+                .await?
+                .rows_affected();
+
+            if deleted > 0 {
+                let delta = GlobalStatsDelta::from_removed_stats(&removed);
+                apply_global_stats_delta_tx(conn, delta, get_current_time_ms().unwrap_or_default())
+                    .await?;
+            }
+
+            Ok(())
+        })
+    })
+    .await
 }
 
 /// conn_summaries 条数硬顶:max_rows == 0 表示不限制。
@@ -858,50 +868,58 @@ pub(crate) async fn enforce_summary_max_rows(
     }
     let excess = (total - max_rows as i64) as u64;
 
-    let mut tx = pool.begin().await?;
-    let row = sqlx::query(
-        "SELECT
-            COALESCE(SUM(total_ingress_bytes), 0),
-            COALESCE(SUM(total_egress_bytes), 0),
-            COALESCE(SUM(total_ingress_pkts), 0),
-            COALESCE(SUM(total_egress_pkts), 0),
-            COUNT(*)
-        FROM conn_summaries
-        WHERE (create_time, cpu_id) IN (
-            SELECT create_time, cpu_id FROM conn_summaries ORDER BY last_report_time ASC LIMIT ?1
-        )",
-    )
-    .bind(excess as i64)
-    .fetch_one(tx.as_mut())
-    .await?;
-
-    let removed = ConnectGlobalStats {
-        total_ingress_bytes: row.get::<i64, _>(0).max(0) as u64,
-        total_egress_bytes: row.get::<i64, _>(1).max(0) as u64,
-        total_ingress_pkts: row.get::<i64, _>(2).max(0) as u64,
-        total_egress_pkts: row.get::<i64, _>(3).max(0) as u64,
-        total_connect_count: row.get::<i64, _>(4).max(0) as u64,
-        last_calculate_time: 0,
-    };
-
-    let deleted = sqlx::query(
-        "DELETE FROM conn_summaries
-         WHERE (create_time, cpu_id) IN (
-            SELECT create_time, cpu_id FROM conn_summaries ORDER BY last_report_time ASC LIMIT ?1
-         )",
-    )
-    .bind(excess as i64)
-    .execute(tx.as_mut())
-    .await?
-    .rows_affected();
-
-    if deleted > 0 {
-        let delta = GlobalStatsDelta::from_removed_stats(&removed);
-        apply_global_stats_delta_tx(&mut tx, delta, get_current_time_ms().unwrap_or_default())
+    super::run_write_tx(pool, (excess,), |conn, (excess,)| {
+        Box::pin(async move {
+            let row = sqlx::query(
+                "SELECT
+                    COALESCE(SUM(total_ingress_bytes), 0),
+                    COALESCE(SUM(total_egress_bytes), 0),
+                    COALESCE(SUM(total_ingress_pkts), 0),
+                    COALESCE(SUM(total_egress_pkts), 0),
+                    COUNT(*)
+                FROM conn_summaries
+                WHERE (create_time, cpu_id) IN (
+                    SELECT create_time, cpu_id FROM conn_summaries ORDER BY last_report_time ASC LIMIT ?1
+                )",
+            )
+            .bind(*excess as i64)
+            .fetch_one(&mut *conn)
             .await?;
-    }
 
-    tx.commit().await
+            let removed = ConnectGlobalStats {
+                total_ingress_bytes: row.get::<i64, _>(0).max(0) as u64,
+                total_egress_bytes: row.get::<i64, _>(1).max(0) as u64,
+                total_ingress_pkts: row.get::<i64, _>(2).max(0) as u64,
+                total_egress_pkts: row.get::<i64, _>(3).max(0) as u64,
+                total_connect_count: row.get::<i64, _>(4).max(0) as u64,
+                last_calculate_time: 0,
+            };
+
+            let deleted = sqlx::query(
+                "DELETE FROM conn_summaries
+                 WHERE (create_time, cpu_id) IN (
+                    SELECT create_time, cpu_id FROM conn_summaries ORDER BY last_report_time ASC LIMIT ?1
+                 )",
+            )
+            .bind(*excess as i64)
+            .execute(&mut *conn)
+            .await?
+            .rows_affected();
+
+            if deleted > 0 {
+                let delta = GlobalStatsDelta::from_removed_stats(&removed);
+                apply_global_stats_delta_tx(
+                    conn,
+                    delta,
+                    get_current_time_ms().unwrap_or_default(),
+                )
+                .await?;
+            }
+
+            Ok(())
+        })
+    })
+    .await
 }
 
 /// 按 retention 分片删除过期桶,受 cleanup_time_budget_ms 预算约束。

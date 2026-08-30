@@ -2,6 +2,7 @@ pub(crate) mod sqlite;
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use landscape_common::config::MetricRuntimeConfig;
 use landscape_common::database::error::DbError;
@@ -28,6 +29,12 @@ const GLOBAL_STATS_REBUILD_INTERVAL_SECS: u64 = 24 * 3600;
 const CLEANUP_MAX_DELETE_ROWS: u64 = 100_000;
 /// SQLITE_FULL 热路径回收的单次删除行数预算(控制写入路径延迟)。
 const HOT_RECLAIM_MAX_DELETE_ROWS: u64 = 10_000;
+
+/// SQLITE_BUSY(写锁被其他连接瞬时占用)的有限重试次数;之后才丢弃批次。
+/// 单次尝试本身最多等 busy_timeout(5s),重试覆盖锁在数秒内释放的场景。
+const BUSY_RETRY_ATTEMPTS: usize = 3;
+/// 每次 BUSY 重试前的退避延迟。
+const BUSY_RETRY_DELAYS_MS: [u64; BUSY_RETRY_ATTEMPTS] = [200, 1_000, 2_000];
 
 /// 持久化 sink:聚合批次以单事务批量写入 sqlite,历史查询直接查库。
 #[derive(Clone)]
@@ -176,27 +183,55 @@ impl MetricSink for PersistentMetricStore {
         if batch.is_empty() {
             return true;
         }
-        // 行为决策:写失败直接丢批次、不重试。metric 数据非关键路径,背压/重试会拖垮
-        // 采集链路;代价是断电或磁盘异常时会丢少量聚合数据,因此必须保留 error 日志便于排查。
-        // 唯一例外:数据库满(SQLITE_FULL)时先做一次小预算回收(删最旧 + 压缩)再重试一次,
-        // 避免容量上限到达后写入路径持续丢批、只等每轮 cleanup 腾空间。
-        match sqlite::connect::apply_connect_batch(&self.connect_pool, batch).await {
-            Ok(()) => true,
-            Err(error) => {
-                if sqlite::is_sqlite_full(&error) && self.reclaim_connect_space().await {
-                    if let Err(retry_error) =
-                        sqlite::connect::apply_connect_batch(&self.connect_pool, batch).await
-                    {
+        // 写失败不无限重试(metric 数据非关键路径,避免背压拖垮采集链路):
+        // SQLITE_FULL 先热回收再重试一次;SQLITE_BUSY 有限退避重试。
+        let mut busy_retries_left = BUSY_RETRY_ATTEMPTS;
+        loop {
+            match sqlite::connect::apply_connect_batch(&self.connect_pool, batch).await {
+                Ok(()) => return true,
+                Err(error) => {
+                    if sqlite::is_sqlite_full(&error) && self.reclaim_connect_space().await {
+                        if let Err(retry_error) =
+                            sqlite::connect::apply_connect_batch(&self.connect_pool, batch).await
+                        {
+                            tracing::error!(
+                                "failed to write persistent connect batch (retry after reclaim), dropping it: {}",
+                                retry_error
+                            );
+                            return false;
+                        }
+                        return true;
+                    }
+                    if sqlite::is_sqlite_busy(&error) {
+                        if busy_retries_left > 0 {
+                            let attempt = BUSY_RETRY_ATTEMPTS - busy_retries_left + 1;
+                            let delay = BUSY_RETRY_DELAYS_MS[attempt - 1];
+                            tracing::warn!(
+                                attempt,
+                                "persistent connect batch write blocked by sqlite lock (busy), \
+                                 retrying in {}ms: {}",
+                                delay,
+                                error
+                            );
+                            tokio::time::sleep(Duration::from_millis(delay)).await;
+                            busy_retries_left -= 1;
+                            continue;
+                        }
                         tracing::error!(
-                            "failed to write persistent connect batch (retry after reclaim), dropping it: {}",
-                            retry_error
+                            "failed to write persistent connect batch after {} busy retries, \
+                             dropping it (possible leaked write lock; restart the service \
+                             if this keeps happening): {}",
+                            BUSY_RETRY_ATTEMPTS,
+                            error
                         );
                         return false;
                     }
-                    return true;
+                    tracing::error!(
+                        "failed to write persistent connect batch, dropping it: {}",
+                        error
+                    );
+                    return false;
                 }
-                tracing::error!("failed to write persistent connect batch, dropping it: {}", error);
-                false
             }
         }
     }
@@ -205,23 +240,50 @@ impl MetricSink for PersistentMetricStore {
         if metrics.is_empty() {
             return true;
         }
-        match sqlite::dns::insert_dns_batch(&self.dns_pool, &metrics).await {
-            Ok(()) => true,
-            Err(error) => {
-                if sqlite::is_sqlite_full(&error) && self.reclaim_dns_space().await {
-                    if let Err(retry_error) =
-                        sqlite::dns::insert_dns_batch(&self.dns_pool, &metrics).await
-                    {
+        let mut busy_retries_left = BUSY_RETRY_ATTEMPTS;
+        loop {
+            match sqlite::dns::insert_dns_batch(&self.dns_pool, &metrics).await {
+                Ok(()) => return true,
+                Err(error) => {
+                    if sqlite::is_sqlite_full(&error) && self.reclaim_dns_space().await {
+                        if let Err(retry_error) =
+                            sqlite::dns::insert_dns_batch(&self.dns_pool, &metrics).await
+                        {
+                            tracing::error!(
+                                "failed to write persistent dns batch (retry after reclaim), dropping it: {}",
+                                retry_error
+                            );
+                            return false;
+                        }
+                        return true;
+                    }
+                    if sqlite::is_sqlite_busy(&error) {
+                        if busy_retries_left > 0 {
+                            let attempt = BUSY_RETRY_ATTEMPTS - busy_retries_left + 1;
+                            let delay = BUSY_RETRY_DELAYS_MS[attempt - 1];
+                            tracing::warn!(
+                                attempt,
+                                "persistent dns batch write blocked by sqlite lock (busy), \
+                                 retrying in {}ms: {}",
+                                delay,
+                                error
+                            );
+                            tokio::time::sleep(Duration::from_millis(delay)).await;
+                            busy_retries_left -= 1;
+                            continue;
+                        }
                         tracing::error!(
-                            "failed to write persistent dns batch (retry after reclaim), dropping it: {}",
-                            retry_error
+                            "failed to write persistent dns batch after {} busy retries, \
+                             dropping it (possible leaked write lock; restart the service \
+                             if this keeps happening): {}",
+                            BUSY_RETRY_ATTEMPTS,
+                            error
                         );
                         return false;
                     }
-                    return true;
+                    tracing::error!("failed to write persistent dns batch, dropping it: {}", error);
+                    return false;
                 }
-                tracing::error!("failed to write persistent dns batch, dropping it: {}", error);
-                false
             }
         }
     }
@@ -230,26 +292,53 @@ impl MetricSink for PersistentMetricStore {
         if rows.is_empty() {
             return true;
         }
-        match sqlite::dns::insert_dns_bucket_rows(&self.dns_pool, &rows).await {
-            Ok(()) => true,
-            Err(error) => {
-                if sqlite::is_sqlite_full(&error) && self.reclaim_dns_space().await {
-                    if let Err(retry_error) =
-                        sqlite::dns::insert_dns_bucket_rows(&self.dns_pool, &rows).await
-                    {
+        let mut busy_retries_left = BUSY_RETRY_ATTEMPTS;
+        loop {
+            match sqlite::dns::insert_dns_bucket_rows(&self.dns_pool, &rows).await {
+                Ok(()) => return true,
+                Err(error) => {
+                    if sqlite::is_sqlite_full(&error) && self.reclaim_dns_space().await {
+                        if let Err(retry_error) =
+                            sqlite::dns::insert_dns_bucket_rows(&self.dns_pool, &rows).await
+                        {
+                            tracing::error!(
+                                "failed to write persistent dns metric buckets (retry after reclaim), dropping them: {}",
+                                retry_error
+                            );
+                            return false;
+                        }
+                        return true;
+                    }
+                    if sqlite::is_sqlite_busy(&error) {
+                        if busy_retries_left > 0 {
+                            let attempt = BUSY_RETRY_ATTEMPTS - busy_retries_left + 1;
+                            let delay = BUSY_RETRY_DELAYS_MS[attempt - 1];
+                            tracing::warn!(
+                                attempt,
+                                "persistent dns metric buckets write blocked by sqlite lock (busy), \
+                                 retrying in {}ms: {}",
+                                delay,
+                                error
+                            );
+                            tokio::time::sleep(Duration::from_millis(delay)).await;
+                            busy_retries_left -= 1;
+                            continue;
+                        }
                         tracing::error!(
-                            "failed to write persistent dns metric buckets (retry after reclaim), dropping them: {}",
-                            retry_error
+                            "failed to write persistent dns metric buckets after {} busy retries, \
+                             dropping them (possible leaked write lock; restart the service \
+                             if this keeps happening): {}",
+                            BUSY_RETRY_ATTEMPTS,
+                            error
                         );
                         return false;
                     }
-                    return true;
+                    tracing::error!(
+                        "failed to write persistent dns metric buckets, dropping them: {}",
+                        error
+                    );
+                    return false;
                 }
-                tracing::error!(
-                    "failed to write persistent dns metric buckets, dropping them: {}",
-                    error
-                );
-                false
             }
         }
     }
@@ -621,8 +710,9 @@ impl MetricSink for PersistentMetricStore {
 mod tests {
     use super::*;
     use landscape_common::metric::connect::{ConnectMetric, ConnectStatusType};
+    use landscape_common::metric::dns::{DnsMetric, DnsOutcome};
     use std::net::{IpAddr, Ipv4Addr};
-    use std::time::Duration;
+    use std::time::{Duration, Instant};
 
     fn test_config() -> MetricRuntimeConfig {
         MetricRuntimeConfig {
@@ -777,5 +867,110 @@ mod tests {
         );
 
         store.close().await;
+    }
+
+    fn dns_test_metric(flow_id: u32, report_time: u64) -> DnsMetric {
+        DnsMetric {
+            flow_id,
+            domain: "example.com".to_string(),
+            query_type: "A".to_string(),
+            response_code: "NOERROR".to_string(),
+            status: DnsOutcome::Normal,
+            report_time,
+            duration_ms: 10,
+            src_ip: IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)),
+            answers: Vec::new(),
+        }
+    }
+
+    /// 写锁被占用超过 busy_timeout 时,写入应有限重试并在锁释放后成功,而非丢批。
+    #[tokio::test]
+    async fn busy_write_lock_recovers_via_retry() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = PersistentMetricStore::new(temp.path().to_path_buf()).await.unwrap();
+
+        // 占住写锁 ~5.3s(超过一次 busy_timeout),由后台任务释放。
+        let mut holder = store.dns_pool.acquire().await.unwrap();
+        sqlx::query("BEGIN IMMEDIATE").execute(&mut *holder).await.unwrap();
+        sqlx::query(
+            "INSERT INTO dns_metrics (
+                flow_id, domain, query_type, response_code,
+                report_time, duration_ms, src_ip, answers, status
+            ) VALUES (1, 'hold.com', 'A', 'NOERROR', 1, 1, '127.0.0.1', '[]', '\"normal\"')",
+        )
+        .execute(&mut *holder)
+        .await
+        .unwrap();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(5_300)).await;
+            sqlx::query("COMMIT").execute(&mut *holder).await.unwrap();
+        });
+
+        let metrics = vec![dns_test_metric(2, 2_000)];
+        assert!(
+            store.apply_dns_batch(metrics).await,
+            "batch must be written via busy retry once the lock is released"
+        );
+
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM dns_metrics")
+            .fetch_one(&store.dns_pool)
+            .await
+            .unwrap();
+        assert_eq!(count, 2, "both the held row and the retried batch row persisted");
+
+        store.close().await;
+    }
+
+    /// 端到端回归(真实磁盘满):tmpfs 小挂载点写满后写入报 SQLITE_FULL,
+    /// 释放空间后须立即恢复(无写锁泄漏)。需 root;环境不支持时自动跳过。
+    #[tokio::test]
+    async fn full_disk_recovers_without_lock_leak() {
+        use std::io::Write;
+
+        let dir = tempfile::tempdir().unwrap();
+        let mount_point = dir.path().join("fullfs");
+        std::fs::create_dir_all(&mount_point).unwrap();
+        let mounted = std::process::Command::new("mount")
+            .args(["-t", "tmpfs", "-o", "size=8M", "tmpfs"])
+            .arg(&mount_point)
+            .status()
+            .map(|status| status.success())
+            .unwrap_or(false);
+        if !mounted {
+            tracing::warn!("skipping full-disk test: tmpfs mount unavailable (root required)");
+            return;
+        }
+
+        let store = PersistentMetricStore::new(mount_point.to_path_buf()).await.unwrap();
+
+        // 填满 tmpfs,此后 WAL 无法增长。
+        let junk_path = mount_point.join("junk.bin");
+        let mut junk = std::fs::File::create(&junk_path).unwrap();
+        let chunk = [0u8; 64 * 1024];
+        while junk.write_all(&chunk).is_ok() {}
+
+        let metrics = vec![dns_test_metric(1, 100_000)];
+        let error = sqlite::dns::insert_dns_batch(&store.dns_pool, &metrics).await.unwrap_err();
+        assert!(
+            sqlite::is_sqlite_full(&error),
+            "full disk must surface as SQLITE_FULL, got: {error}"
+        );
+
+        // 先关闭再删除:tmpfs 上删除仍打开的文件不释放空间。
+        drop(junk);
+        std::fs::remove_file(&junk_path).unwrap();
+
+        let start = Instant::now();
+        assert!(
+            store.apply_dns_batch(metrics).await,
+            "write must recover once disk space is freed"
+        );
+        assert!(
+            start.elapsed() < Duration::from_secs(1),
+            "write lock must not be leaked by the failed full-disk transactions"
+        );
+
+        store.close().await;
+        let _ = std::process::Command::new("umount").arg(&mount_point).status();
     }
 }

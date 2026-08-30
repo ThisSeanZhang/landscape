@@ -229,35 +229,40 @@ pub(crate) async fn insert_dns_batch(
         return Ok(());
     }
 
-    let mut tx = pool.begin().await?;
-    for metric in metrics {
-        let mut answers = metric.answers.iter().take(64).cloned().collect::<Vec<_>>();
-        while serde_json::to_vec(&answers).map(|json| json.len()).unwrap_or(0) > 16 * 1024 {
-            if answers.pop().is_none() {
-                break;
+    super::run_write_tx(pool, metrics, |conn, metrics| {
+        Box::pin(async move {
+            for metric in *metrics {
+                let mut answers = metric.answers.iter().take(64).cloned().collect::<Vec<_>>();
+                while serde_json::to_vec(&answers).map(|json| json.len()).unwrap_or(0) > 16 * 1024 {
+                    if answers.pop().is_none() {
+                        break;
+                    }
+                }
+                let answers_json =
+                    serde_json::to_string(&answers).unwrap_or_else(|_| "[]".to_string());
+                let status_json = serde_json::to_string(&metric.status).unwrap_or_default();
+                sqlx::query(
+                    "INSERT INTO dns_metrics (
+                        flow_id, domain, query_type, response_code,
+                        report_time, duration_ms, src_ip, answers, status
+                    ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                )
+                .bind(metric.flow_id as i64)
+                .bind(metric.domain.clone())
+                .bind(metric.query_type.clone())
+                .bind(metric.response_code.clone())
+                .bind(metric.report_time as i64)
+                .bind(metric.duration_ms as i64)
+                .bind(clean_ip_string(&metric.src_ip))
+                .bind(answers_json)
+                .bind(status_json)
+                .execute(&mut *conn)
+                .await?;
             }
-        }
-        let answers_json = serde_json::to_string(&answers).unwrap_or_else(|_| "[]".to_string());
-        let status_json = serde_json::to_string(&metric.status).unwrap_or_default();
-        sqlx::query(
-            "INSERT INTO dns_metrics (
-                flow_id, domain, query_type, response_code,
-                report_time, duration_ms, src_ip, answers, status
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-        )
-        .bind(metric.flow_id as i64)
-        .bind(metric.domain.clone())
-        .bind(metric.query_type.clone())
-        .bind(metric.response_code.clone())
-        .bind(metric.report_time as i64)
-        .bind(metric.duration_ms as i64)
-        .bind(clean_ip_string(&metric.src_ip))
-        .bind(answers_json)
-        .bind(status_json)
-        .execute(tx.as_mut())
-        .await?;
-    }
-    tx.commit().await
+            Ok(())
+        })
+    })
+    .await
 }
 
 /// 1m 预聚合桶批量落库(单事务,追加写)。
@@ -272,103 +277,107 @@ pub(crate) async fn insert_dns_bucket_rows(
         return Ok(());
     }
 
-    let mut tx = pool.begin().await?;
-    for row in rows {
-        let mut histogram_blob = Vec::new();
-        V2Serializer::new()
-            .serialize(&row.latency, &mut histogram_blob)
-            .map_err(|error| sqlx::Error::Protocol(error.to_string()))?;
+    super::run_write_tx(pool, rows, |conn, rows| {
+        Box::pin(async move {
+            for row in *rows {
+                let mut histogram_blob = Vec::new();
+                V2Serializer::new()
+                    .serialize(&row.latency, &mut histogram_blob)
+                    .map_err(|error| sqlx::Error::Protocol(error.to_string()))?;
 
-        sqlx::query(
-            "INSERT INTO dns_metrics_1m (
-                flow_id, bucket_time, report_time,
-                total_queries, total_effective_queries, cache_hit_count,
-                total_v4, hit_count_v4, total_v6, hit_count_v6,
-                total_other, hit_count_other, block_count, filter_count,
-                nxdomain_count, error_count, latency_histogram
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)
-            ON CONFLICT (flow_id, report_time) DO NOTHING",
-        )
-        .bind(row.flow_id as i64)
-        .bind(row.bucket_time as i64)
-        .bind(row.report_time as i64)
-        .bind(row.counts.total_queries as i64)
-        .bind(row.counts.total_effective_queries as i64)
-        .bind(row.counts.cache_hit_count as i64)
-        .bind(row.counts.total_v4 as i64)
-        .bind(row.counts.hit_count_v4 as i64)
-        .bind(row.counts.total_v6 as i64)
-        .bind(row.counts.hit_count_v6 as i64)
-        .bind(row.counts.total_other as i64)
-        .bind(row.counts.hit_count_other as i64)
-        .bind(row.counts.block_count as i64)
-        .bind(row.counts.filter_count as i64)
-        .bind(row.counts.nxdomain_count as i64)
-        .bind(row.counts.error_count as i64)
-        .bind(histogram_blob)
-        .execute(tx.as_mut())
-        .await?;
+                sqlx::query(
+                    "INSERT INTO dns_metrics_1m (
+                        flow_id, bucket_time, report_time,
+                        total_queries, total_effective_queries, cache_hit_count,
+                        total_v4, hit_count_v4, total_v6, hit_count_v6,
+                        total_other, hit_count_other, block_count, filter_count,
+                        nxdomain_count, error_count, latency_histogram
+                    ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)
+                    ON CONFLICT (flow_id, report_time) DO NOTHING",
+                )
+                .bind(row.flow_id as i64)
+                .bind(row.bucket_time as i64)
+                .bind(row.report_time as i64)
+                .bind(row.counts.total_queries as i64)
+                .bind(row.counts.total_effective_queries as i64)
+                .bind(row.counts.cache_hit_count as i64)
+                .bind(row.counts.total_v4 as i64)
+                .bind(row.counts.hit_count_v4 as i64)
+                .bind(row.counts.total_v6 as i64)
+                .bind(row.counts.hit_count_v6 as i64)
+                .bind(row.counts.total_other as i64)
+                .bind(row.counts.hit_count_other as i64)
+                .bind(row.counts.block_count as i64)
+                .bind(row.counts.filter_count as i64)
+                .bind(row.counts.nxdomain_count as i64)
+                .bind(row.counts.error_count as i64)
+                .bind(histogram_blob)
+                .execute(&mut *conn)
+                .await?;
 
-        for (domain, count) in &row.top_domains {
-            sqlx::query(
-                "INSERT INTO dns_top_domains_1m (flow_id, bucket_time, report_time, domain, count)
-                 VALUES (?1, ?2, ?3, ?4, ?5)
-                 ON CONFLICT (flow_id, report_time, domain) DO NOTHING",
-            )
-            .bind(row.flow_id as i64)
-            .bind(row.bucket_time as i64)
-            .bind(row.report_time as i64)
-            .bind(domain.clone())
-            .bind(*count as i64)
-            .execute(tx.as_mut())
-            .await?;
-        }
-        for (client, count) in &row.top_clients {
-            sqlx::query(
-                "INSERT INTO dns_top_clients_1m (flow_id, bucket_time, report_time, src_ip, count)
-                 VALUES (?1, ?2, ?3, ?4, ?5)
-                 ON CONFLICT (flow_id, report_time, src_ip) DO NOTHING",
-            )
-            .bind(row.flow_id as i64)
-            .bind(row.bucket_time as i64)
-            .bind(row.report_time as i64)
-            .bind(client.clone())
-            .bind(*count as i64)
-            .execute(tx.as_mut())
-            .await?;
-        }
-        for (domain, count) in &row.top_blocked {
-            sqlx::query(
-                "INSERT INTO dns_top_blocked_1m (flow_id, bucket_time, report_time, domain, count)
-                 VALUES (?1, ?2, ?3, ?4, ?5)
-                 ON CONFLICT (flow_id, report_time, domain) DO NOTHING",
-            )
-            .bind(row.flow_id as i64)
-            .bind(row.bucket_time as i64)
-            .bind(row.report_time as i64)
-            .bind(domain.clone())
-            .bind(*count as i64)
-            .execute(tx.as_mut())
-            .await?;
-        }
-        for (domain, count, sum_duration) in &row.slowest {
-            sqlx::query(
-                "INSERT INTO dns_slowest_1m (
-                    flow_id, bucket_time, report_time, domain, count, sum_duration
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
-                 ON CONFLICT (flow_id, report_time, domain) DO NOTHING",
-            )
-            .bind(row.flow_id as i64)
-            .bind(row.bucket_time as i64)
-            .bind(row.report_time as i64)
-            .bind(domain.clone())
-            .bind(*count as i64)
-            .bind(*sum_duration as i64)
-            .execute(tx.as_mut())
-            .await?;
-        }
-    }
-    tx.commit().await
+                for (domain, count) in &row.top_domains {
+                    sqlx::query(
+                        "INSERT INTO dns_top_domains_1m (flow_id, bucket_time, report_time, domain, count)
+                         VALUES (?1, ?2, ?3, ?4, ?5)
+                         ON CONFLICT (flow_id, report_time, domain) DO NOTHING",
+                    )
+                    .bind(row.flow_id as i64)
+                    .bind(row.bucket_time as i64)
+                    .bind(row.report_time as i64)
+                    .bind(domain.clone())
+                    .bind(*count as i64)
+                    .execute(&mut *conn)
+                    .await?;
+                }
+                for (client, count) in &row.top_clients {
+                    sqlx::query(
+                        "INSERT INTO dns_top_clients_1m (flow_id, bucket_time, report_time, src_ip, count)
+                         VALUES (?1, ?2, ?3, ?4, ?5)
+                         ON CONFLICT (flow_id, report_time, src_ip) DO NOTHING",
+                    )
+                    .bind(row.flow_id as i64)
+                    .bind(row.bucket_time as i64)
+                    .bind(row.report_time as i64)
+                    .bind(client.clone())
+                    .bind(*count as i64)
+                    .execute(&mut *conn)
+                    .await?;
+                }
+                for (domain, count) in &row.top_blocked {
+                    sqlx::query(
+                        "INSERT INTO dns_top_blocked_1m (flow_id, bucket_time, report_time, domain, count)
+                         VALUES (?1, ?2, ?3, ?4, ?5)
+                         ON CONFLICT (flow_id, report_time, domain) DO NOTHING",
+                    )
+                    .bind(row.flow_id as i64)
+                    .bind(row.bucket_time as i64)
+                    .bind(row.report_time as i64)
+                    .bind(domain.clone())
+                    .bind(*count as i64)
+                    .execute(&mut *conn)
+                    .await?;
+                }
+                for (domain, count, sum_duration) in &row.slowest {
+                    sqlx::query(
+                        "INSERT INTO dns_slowest_1m (
+                            flow_id, bucket_time, report_time, domain, count, sum_duration
+                         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                         ON CONFLICT (flow_id, report_time, domain) DO NOTHING",
+                    )
+                    .bind(row.flow_id as i64)
+                    .bind(row.bucket_time as i64)
+                    .bind(row.report_time as i64)
+                    .bind(domain.clone())
+                    .bind(*count as i64)
+                    .bind(*sum_duration as i64)
+                    .execute(&mut *conn)
+                    .await?;
+                }
+            }
+            Ok(())
+        })
+    })
+    .await
 }
 
 /// 桶段查询过滤器:按对齐桶时间半开区间 + 可选 flow。

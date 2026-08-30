@@ -6,8 +6,10 @@ use std::time::Duration;
 
 use futures_util::future::BoxFuture;
 use sqlx::pool::PoolConnectionMetadata;
-use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous};
-use sqlx::{Row, SqlitePool};
+use sqlx::sqlite::{
+    SqliteConnectOptions, SqliteConnection, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous,
+};
+use sqlx::{Acquire, Row, SqlitePool};
 
 pub(crate) use crate::agg::dns_bucket::clean_ip_string;
 
@@ -131,6 +133,51 @@ pub(crate) fn is_sqlite_full(error: &sqlx::Error) -> bool {
     }
 }
 
+/// SQLITE_BUSY(5):写锁被其他连接瞬时占用,写入路径据此做有限重试。
+pub(crate) fn is_sqlite_busy(error: &sqlx::Error) -> bool {
+    matches!(error, sqlx::Error::Database(db_error) if db_error.code().as_deref() == Some("5"))
+}
+
+/// 单事务执行写主体;失败时显式回滚(不依赖 Transaction Drop 的 fire-and-forget
+/// 回滚——sqlx 0.8.6 中失败会被静默吞掉,连接可能带锁回池)。回滚失败或
+/// commit 失败时直接丢弃连接,写锁随连接关闭释放。
+pub(crate) async fn run_write_tx<T, D, F>(
+    pool: &SqlitePool,
+    data: D,
+    body: F,
+) -> Result<T, sqlx::Error>
+where
+    F: for<'c> FnOnce(&'c mut SqliteConnection, &'c D) -> BoxFuture<'c, Result<T, sqlx::Error>>,
+{
+    let mut conn = pool.acquire().await?;
+    let mut tx = conn.begin().await?;
+    match body(tx.as_mut(), &data).await {
+        Ok(value) => match tx.commit().await {
+            Ok(()) => Ok(value),
+            Err(error) => {
+                tracing::warn!(
+                    "failed to commit sqlite write transaction, discarding connection to release the write lock: {}",
+                    error
+                );
+                let _ = conn.close().await;
+                Err(error)
+            }
+        },
+        Err(error) => match tx.rollback().await {
+            Ok(()) => Err(error),
+            Err(rollback_error) => {
+                tracing::error!(
+                        "failed to rollback sqlite write transaction after write error \
+                         (possible leaked write lock; restart the service if writes keep failing): {}",
+                        rollback_error
+                    );
+                let _ = conn.close().await;
+                Err(error)
+            }
+        },
+    }
+}
+
 pub(crate) async fn checkpoint_and_compact(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     // A truncate checkpoint reclaims completed WAL segments. It can report busy while a reader is
     // active; keep going so incremental_vacuum can still reclaim deleted pages.
@@ -144,7 +191,9 @@ pub(crate) async fn checkpoint_and_compact(pool: &SqlitePool) -> Result<(), sqlx
 #[cfg(test)]
 mod tests {
     use super::*;
+    use landscape_common::metric::dns::{DnsMetric, DnsOutcome};
     use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+    use std::time::Instant;
 
     #[test]
     fn clean_ip_string_keeps_ipv4_as_is() {
@@ -224,6 +273,59 @@ mod tests {
         for handle in handles {
             handle.await.unwrap();
         }
+        pool.close().await;
+    }
+
+    fn dns_metric_for_test(flow_id: u32, report_time: u64) -> DnsMetric {
+        DnsMetric {
+            flow_id,
+            domain: "example.com".to_string(),
+            query_type: "A".to_string(),
+            response_code: "NOERROR".to_string(),
+            status: DnsOutcome::Normal,
+            report_time,
+            duration_ms: 10,
+            src_ip: IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)),
+            answers: Vec::new(),
+        }
+    }
+
+    /// 回归:写事务失败后写锁必须已释放,后续写入立即成功(不残留 database is locked)。
+    #[tokio::test]
+    async fn failed_write_transaction_does_not_leak_write_lock() {
+        let dir = tempfile::tempdir().unwrap();
+        let pool = open_dns_pool(&dir.path().join("dns.db"), 0).await.unwrap();
+
+        // NOT NULL 约束失败触发事务错误路径。
+        let failed = run_write_tx(&pool, (), |conn, _| {
+            Box::pin(async move {
+                sqlx::query(
+                    "INSERT INTO dns_metrics (
+                        flow_id, domain, query_type, response_code,
+                        report_time, duration_ms, src_ip, answers, status
+                    ) VALUES (NULL, 'x.com', 'A', 'NOERROR', 1, 1, '127.0.0.1', '[]', '\"normal\"')",
+                )
+                .execute(&mut *conn)
+                .await?;
+                Ok(())
+            })
+        })
+        .await;
+        assert!(failed.is_err(), "NOT NULL violation must fail the transaction");
+
+        // 失败后写入应 <1s 成功,而非等满 busy_timeout 报 database is locked。
+        let start = Instant::now();
+        crate::sink::persistent::sqlite::dns::insert_dns_batch(
+            &pool,
+            &[dns_metric_for_test(1, 100_000)],
+        )
+        .await
+        .unwrap();
+        assert!(
+            start.elapsed() < Duration::from_secs(1),
+            "write lock must not be leaked after a failed write transaction"
+        );
+
         pool.close().await;
     }
 }
