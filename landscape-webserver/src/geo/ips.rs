@@ -22,6 +22,7 @@ pub fn get_geo_ip_config_paths() -> OpenApiRouter<LandscapeApp> {
         .routes(routes!(add_many_geo_ips))
         .routes(routes!(get_geo_ip_rule, del_geo_ip))
         .routes(routes!(get_geo_ip_cache, refresh_geo_ip_cache))
+        .routes(routes!(refresh_geo_ip_config_by_name))
         .routes(routes!(search_geo_ip_cache))
         .routes(routes!(get_geo_ip_cache_detail))
         .merge(upload_router)
@@ -105,6 +106,21 @@ async fn get_geo_ip_cache(
 )]
 async fn refresh_geo_ip_cache(State(state): State<LandscapeApp>) -> LandscapeApiResult<()> {
     state.geo_ip_service.refresh(true).await;
+    LandscapeApiResp::success(())
+}
+
+#[utoipa::path(
+    post,
+    path = "/ips/{name}/refresh",
+    tag = "Geo IPs",
+    params(("name" = String, Path, description = "Geo IP config name")),
+    responses((status = 200, description = "Success"))
+)]
+async fn refresh_geo_ip_config_by_name(
+    State(state): State<LandscapeApp>,
+    Path(name): Path<String>,
+) -> LandscapeApiResult<()> {
+    state.geo_ip_service.refresh_one(&name).await;
     LandscapeApiResp::success(())
 }
 

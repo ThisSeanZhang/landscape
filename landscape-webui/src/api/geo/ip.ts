@@ -6,6 +6,7 @@ import {
   delGeoIp,
   getGeoIpCache,
   refreshGeoIpCache,
+  refreshGeoIpConfigByName,
   searchGeoIpCache,
   getGeoIpCacheDetail,
   updateGeoIpByUpload as _updateGeoIpByUpload,
@@ -53,6 +54,10 @@ export async function get_geo_cache_key(
 
 export async function refresh_geo_cache_key(): Promise<void> {
   await refreshGeoIpCache();
+}
+
+export async function refresh_geo_ip_by_name(name: string): Promise<void> {
+  await refreshGeoIpConfigByName(name);
 }
 
 export async function search_geo_ip_cache(
