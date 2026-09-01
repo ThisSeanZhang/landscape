@@ -1,5 +1,9 @@
 <script setup lang="ts">
-import { delete_geo_ip_config, update_geo_ip_by_upload } from "@/api/geo/ip";
+import {
+  delete_geo_ip_config,
+  refresh_geo_ip_by_name,
+  update_geo_ip_by_upload,
+} from "@/api/geo/ip";
 import type { GeoIpSourceConfig } from "@landscape-router/types/api/schemas";
 import { computed, ref } from "vue";
 import { useFrontEndStore } from "@/stores/front_end_config";
@@ -35,6 +39,18 @@ const show_upload = ref(false);
 const onGeoUpload = async (formData: FormData) => {
   await update_geo_ip_by_upload(props.geo_ip_source.name, formData);
 };
+
+const refreshing = ref(false);
+async function force_refresh() {
+  refreshing.value = true;
+  try {
+    await refresh_geo_ip_by_name(props.geo_ip_source.name);
+    emit("refresh");
+    emit("refresh:keys");
+  } finally {
+    refreshing.value = false;
+  }
+}
 </script>
 <template>
   <n-flex>
@@ -109,6 +125,19 @@ const onGeoUpload = async (formData: FormData) => {
           >
             {{ t("geo.item_card.update_with_file") }}
           </n-button>
+
+          <n-popconfirm
+            v-if="geo_ip_source.source.t === 'url'"
+            :positive-button-props="{ loading: refreshing }"
+            @positive-click="force_refresh"
+          >
+            <template #trigger>
+              <n-button size="small" type="primary" secondary>
+                {{ t("geo.item_card.force_refresh") }}
+              </n-button>
+            </template>
+            {{ t("geo.item_card.force_refresh_confirm") }}
+          </n-popconfirm>
 
           <n-button
             size="small"
