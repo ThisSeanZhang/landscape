@@ -11,6 +11,42 @@ on:
       - dev
 
 jobs:
+  rust-check:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake clang curl gcc llvm make pkg-config libelf-dev libclang-dev zlib1g-dev zstd
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+
+      - name: Setup sccache
+        run: |
+          wget -qO- https://github.com/mozilla/sccache/releases/download/v0.12.0/sccache-v0.12.0-x86_64-unknown-linux-musl.tar.gz | sudo tar -xzf - -C /usr/local/bin/ --strip-components=1
+          echo "RUSTC_WRAPPER=sccache" >> $GITHUB_ENV
+
+      - name: Setup cache
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cache/sccache
+          key: ${{ runner.os }}-check-${{ github.sha }}
+          restore-keys: ${{ runner.os }}-check-
+
+      - name: Check Rust code
+        run: cargo check --workspace --features metric-persistent
+
+      - name: Run clippy
+        run: cargo clippy --workspace --features metric-persistent -- -D warnings
+
   rust-format-check:
     runs-on: ubuntu-latest
     
