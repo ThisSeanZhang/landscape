@@ -247,7 +247,7 @@ jobs:
             target: x86_64-unknown-linux-musl
             toolchain: stable
             bindgen: false
-            gateway: false
+            gateway: true
 
     container: 
       image: thisseanzhang/landscape:build_base_musl
@@ -258,7 +258,7 @@ jobs:
 
       - name: Setup sccache
         run: |
-          apk add --no-cache curl gzip tar wget
+          apk add --no-cache cmake curl gzip tar wget
           sccache_arch=${{ matrix.settings.architecture }}
           if [ "${sccache_arch}" = "x86_64" ] || [ "${sccache_arch}" = "aarch64" ]; then
             wget -qO- https://github.com/mozilla/sccache/releases/download/${sccache_version}/sccache-${sccache_version}-${sccache_arch}-unknown-linux-musl.tar.gz | tar -xzf - -C /usr/local/bin/ --strip-components=1

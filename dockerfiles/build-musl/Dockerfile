@@ -10,6 +10,7 @@ RUN apk update && apk add --no-cache \
     gcc \
     build-base \
     make \
+    cmake \
     pkgconf \
     elfutils-dev \
     linux-headers
