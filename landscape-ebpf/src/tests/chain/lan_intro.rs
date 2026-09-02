@@ -481,11 +481,11 @@ fn xdp_lan_intro_wan_pipeline() {
     // per-netns). Counter/map reads are netns-independent.
     let send_lan = |pkt: &[u8]| {
         let _e = peer_ns.enter();
-        send_raw_packet(&lan_p, pkt);
+        send_raw_packet(lan_p, pkt);
     };
     let send_wan = |pkt: &[u8]| {
         let _e = peer_ns.enter();
-        send_raw_packet(&wan_p, pkt);
+        send_raw_packet(wan_p, pkt);
     };
 
     // A→C: TCP SYN → LAN chain → MSS clamp

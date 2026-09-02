@@ -80,7 +80,7 @@ fn xdp_chain_3level() {
             .stage_fallback_map
             .lookup(&0u32.to_ne_bytes(), MapFlags::ANY)
             .unwrap()
-            .map_or(false, |v| u64::from_ne_bytes(v[0..8].try_into().unwrap()) > 0)
+            .is_some_and(|v| u64::from_ne_bytes(v[0..8].try_into().unwrap()) > 0)
     });
 
     // ── verify: chain2 fallback counter > 0 (chain traversal completed) ──

@@ -119,11 +119,11 @@ fn xdp_firewall_pipeline() {
     // per-netns). Counter/map reads are netns-independent.
     let send_lan = |pkt: &[u8]| {
         let _e = peer_ns.enter();
-        send_raw_packet(&lan_p, pkt);
+        send_raw_packet(lan_p, pkt);
     };
     let send_wan = |pkt: &[u8]| {
         let _e = peer_ns.enter();
-        send_raw_packet(&wan_p, pkt);
+        send_raw_packet(wan_p, pkt);
     };
 
     let root_fd = chain.progs.xdp_lan_chain_root.as_fd().as_raw_fd();

@@ -245,7 +245,7 @@ fn xdp_nat_static_egress() {
     share.maps.wan_ip_binding.update(&wan_key, &wan_val, MapFlags::ANY).unwrap();
 
     let pkt = build_tcp_pkt([192, 168, 1, 100], [10, 0, 0, 1], 80, 9999);
-    send_raw_packet(&nat_p, &pkt);
+    send_raw_packet(nat_p, &pkt);
 
     assert_static_map_entry(
         &share.maps.nat4_static_map,
@@ -309,7 +309,7 @@ fn xdp_nat_static_ingress() {
     );
 
     let pkt = build_tcp_pkt([10, 0, 0, 1], [203, 0, 113, 1], 9999, 8080);
-    send_raw_packet(&nat_p, &pkt);
+    send_raw_packet(nat_p, &pkt);
 
     assert_static_map_entry(
         &share.maps.nat4_static_map,
@@ -378,7 +378,7 @@ fn xdp_nat_dynamic_egress() {
     share.maps.wan_ip_binding.update(&wan_key, &wan_val, MapFlags::ANY).unwrap();
 
     let pkt = build_tcp_syn_pkt([10, 0, 0, 1], [93, 184, 216, 34], 12345, 80);
-    send_raw_packet(&nat_p, &pkt);
+    send_raw_packet(nat_p, &pkt);
 
     wait_nat4_entry(
         &nat.maps.nat4_egress_dyn_map,
@@ -445,7 +445,7 @@ fn xdp_nat_dynamic_egress() {
         )
         .unwrap();
 
-    send_raw_packet(&nat_p, &pkt);
+    send_raw_packet(nat_p, &pkt);
     settle(300);
 
     let ct_bytes = nat
@@ -509,7 +509,7 @@ fn xdp_nat_v6_egress() {
     let lan_prefix = [0xfd, 0x00, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1];
     let dst = [0x20, 0x01, 0x0d, 0xb8, 0x12, 0x34, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2];
     let pkt = build_tcp6_pkt(lan_prefix, dst, 12345, 80);
-    send_raw_packet(&nat_p, &pkt);
+    send_raw_packet(nat_p, &pkt);
 
     wait_wan_ip_binding(&share.maps.wan_ip_binding, nat_h_i, 1, "wan ip binding entry");
     assert_wan_ip_binding(
@@ -598,7 +598,7 @@ fn xdp_nat_firewall_pipeline() {
     share.maps.wan_ip_binding.update(&wan_key, &wan_val, MapFlags::ANY).unwrap();
 
     let pkt = build_tcp_pkt([192, 168, 1, 100], [10, 0, 0, 1], 80, 9999);
-    send_raw_packet(&nat_p, &pkt);
+    send_raw_packet(nat_p, &pkt);
 
     assert_static_map_entry(
         &share.maps.nat4_static_map,
@@ -625,7 +625,7 @@ fn xdp_nat_firewall_pipeline() {
     fw_key[4..8].copy_from_slice(&[203, 0, 113, 1]);
     fw.maps.firewall_block_ip4_map.update(&fw_key, &block_action, MapFlags::ANY).unwrap();
 
-    send_raw_packet(&nat_p, &pkt);
+    send_raw_packet(nat_p, &pkt);
 
     assert_static_map_entry(
         &share.maps.nat4_static_map,
@@ -788,7 +788,7 @@ fn xdp_nat_fragment_v4() {
 
     let syn_frag =
         build_ipv4_tcp_syn_frag([10, 0, 0, 1], [93, 184, 216, 34], 22345, 80, frag_id, 0, true);
-    send_raw_packet(&nat_p, &syn_frag);
+    send_raw_packet(nat_p, &syn_frag);
 
     wait_nat4_entry(
         &nat.maps.nat4_egress_dyn_map,
@@ -864,7 +864,7 @@ fn xdp_nat_v6_ingress() {
     let wan_src = [0x20, 0x01, 0x0d, 0xb8, 0x12, 0x34, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2];
     let wan_dst = [0x20, 0x01, 0x0d, 0xb8, 0x56, 0x78, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1];
     let pkt = build_tcp6_pkt(wan_src, wan_dst, 9999, 8080);
-    send_raw_packet(&nat_p, &pkt);
+    send_raw_packet(nat_p, &pkt);
 
     wait_wan_ip_binding(&share.maps.wan_ip_binding, nat_h_i, 1, "wan ip binding entry");
     assert_wan_ip_binding(
@@ -924,7 +924,7 @@ fn xdp_nat_ct_dynamic_multi_pkt() {
     }
 
     let syn_pkt = build_tcp_syn_pkt([10, 0, 0, 2], [93, 184, 216, 34], 33445, 80);
-    send_raw_packet(&nat_p, &syn_pkt);
+    send_raw_packet(nat_p, &syn_pkt);
 
     wait_nat4_entry(
         &nat.maps.nat4_egress_dyn_map,
@@ -1106,7 +1106,7 @@ fn xdp_nat_fragment_ingress() {
         0,
         true,
     );
-    send_raw_packet(&nat_p, &pkt);
+    send_raw_packet(nat_p, &pkt);
 
     wait_nat4_entry(
         &nat.maps.nat4_egress_dyn_map,
@@ -1269,7 +1269,7 @@ fn xdp_nat_dynamic_ingress() {
     );
 
     let pkt = build_tcp_pkt([93, 184, 216, 34], [203, 0, 113, 1], 8888, 9090);
-    send_raw_packet(&nat_p, &pkt);
+    send_raw_packet(nat_p, &pkt);
 
     wait_nat4_entry(
         &nat.maps.nat4_egress_dyn_map,
@@ -1357,7 +1357,7 @@ fn xdp_nat_udp_egress() {
     }
 
     let pkt = build_udp_pkt([10, 0, 0, 6], [93, 184, 216, 34], 22345, 53);
-    send_raw_packet(&nat_p, &pkt);
+    send_raw_packet(nat_p, &pkt);
 
     wait_nat4_entry(
         &nat.maps.nat4_egress_dyn_map,
@@ -1451,7 +1451,7 @@ fn xdp_nat_udp_ingress() {
     );
 
     let pkt = build_udp_pkt([93, 184, 216, 34], [203, 0, 113, 1], 53, 9091);
-    send_raw_packet(&nat_p, &pkt);
+    send_raw_packet(nat_p, &pkt);
 
     wait_nat4_entry(
         &nat.maps.nat4_egress_dyn_map,
@@ -1530,11 +1530,11 @@ fn xdp_nat_fragment_middle() {
 
     let first =
         build_ipv4_tcp_syn_frag([10, 0, 0, 8], [93, 184, 216, 34], 22348, 80, frag_id, 0, true);
-    send_raw_packet(&nat_p, &first);
+    send_raw_packet(nat_p, &first);
 
     let middle =
         build_ipv4_fragment([10, 0, 0, 8], [93, 184, 216, 34], frag_id, 8, true, 0, 0, &[0u8; 20]);
-    send_raw_packet(&nat_p, &middle);
+    send_raw_packet(nat_p, &middle);
 
     settle(300);
 
@@ -1602,7 +1602,7 @@ fn xdp_nat_icmp_error_egress() {
         3,
         0,
     );
-    send_raw_packet(&nat_p, &pkt);
+    send_raw_packet(nat_p, &pkt);
 
     assert_static_map_entry(
         &share.maps.nat4_static_map,
@@ -1658,7 +1658,7 @@ fn xdp_nat_static_ingress_mark() {
     );
 
     let pkt = build_tcp_pkt([10, 0, 0, 1], [203, 0, 113, 1], 9999, 8080);
-    send_raw_packet(&nat_p, &pkt);
+    send_raw_packet(nat_p, &pkt);
 
     assert_static_map_entry(
         &share.maps.nat4_static_map,
@@ -1755,7 +1755,7 @@ fn xdp_nat_chain_pipeline() {
     );
 
     let pkt = build_tcp_pkt([192, 168, 1, 100], [10, 0, 0, 1], 80, 9999);
-    send_raw_packet(&nat_p, &pkt);
+    send_raw_packet(nat_p, &pkt);
 
     assert_static_map_entry(
         &share.maps.nat4_static_map,
@@ -1782,7 +1782,7 @@ fn xdp_nat_chain_pipeline() {
     fw_key[4..8].copy_from_slice(&[203, 0, 113, 1]);
     fw.maps.firewall_block_ip4_map.update(&fw_key, &block_action, MapFlags::ANY).unwrap();
 
-    send_raw_packet(&nat_p, &pkt);
+    send_raw_packet(nat_p, &pkt);
 
     assert_static_map_entry(
         &share.maps.nat4_static_map,
