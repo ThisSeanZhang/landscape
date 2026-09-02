@@ -228,7 +228,10 @@ pub async fn execute_rollback_plan(
     database: &DatabaseConnection,
     plan: &RollbackPlan,
 ) -> Result<(), DbError> {
-    Migrator::down(database, Some(plan.steps)).await?;
+    // Each rolled-back migration runs in its own transaction (schema change
+    // and seaql_migrations row removed atomically), so an interrupted
+    // rollback can be retried instead of leaving a half-rolled-back schema.
+    migration::runner::down_transactional::<Migrator, _>(database, Some(plan.steps)).await?;
     Ok(())
 }
 
@@ -411,7 +414,6 @@ fn prompt(message: &str) -> Result<String, DbError> {
 
 #[cfg(test)]
 mod tests {
-    use migration::MigratorTrait;
     use sea_orm::Database;
 
     use super::*;
@@ -505,8 +507,11 @@ mod tests {
 
     #[tokio::test]
     async fn execute_rollback_plan_moves_database_to_target_boundary() {
-        let database = Database::connect("sqlite::memory:").await.unwrap();
-        Migrator::up(&database, None).await.unwrap();
+        // in-memory DB: every connection is a separate database, so force a single connection
+        let mut opt: ConnectOptions = "sqlite::memory:".into();
+        opt.max_connections(1);
+        let database = Database::connect(opt).await.unwrap();
+        migration::runner::up_transactional::<Migrator, _>(&database, None).await.unwrap();
 
         let all_migrations = migration_names();
         let current_head = applied_migration_names(&database).await.unwrap().pop().unwrap();

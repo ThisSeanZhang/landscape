@@ -4,7 +4,7 @@ use landscape_common::{
     config::{InitConfig, StoreRuntimeConfig},
     database::error::DbError,
 };
-use migration::{Migrator, MigratorTrait};
+use migration::Migrator;
 use sea_orm::{
     ActiveModelTrait, Database, DatabaseConnection, DatabaseTransaction, EntityTrait,
     TransactionTrait,
@@ -43,9 +43,9 @@ pub async fn db_action(
     let database = Database::connect(opt).await?;
 
     if *rollback {
-        Migrator::down(&database, Some(*steps)).await?;
+        migration::runner::down_transactional::<Migrator, _>(&database, Some(*steps)).await?;
     } else {
-        Migrator::up(&database, Some(*steps)).await?;
+        migration::runner::up_transactional::<Migrator, _>(&database, Some(*steps)).await?;
     }
 
     Ok(())
@@ -61,8 +61,43 @@ pub struct LandscapeDBServiceProvider {
     database: DatabaseConnection,
 }
 
+/// All connection failures are retried with the bounded backoff below: during
+/// boot even "unable to open database file" can be transient (mount point not
+/// ready yet, disk busy), so no error class is fail-fast. Permanent failures
+/// (bad path, permissions) surface after at most ~15s of total delay.
+const MAX_CONNECT_ATTEMPTS: usize = 5;
+const CONNECT_BACKOFF_START: Duration = Duration::from_secs(1);
+const CONNECT_BACKOFF_MAX: Duration = Duration::from_secs(30);
+
+async fn connect_with_retry(
+    opt: migration::sea_orm::ConnectOptions,
+) -> Result<DatabaseConnection, DbError> {
+    let mut backoff = CONNECT_BACKOFF_START;
+    let mut last_err = None;
+
+    for attempt in 1..=MAX_CONNECT_ATTEMPTS {
+        match Database::connect(opt.clone()).await {
+            Ok(database) => return Ok(database),
+            Err(err) => {
+                tracing::error!(
+                    "database connection attempt {}/{} failed: {err:?}",
+                    attempt,
+                    MAX_CONNECT_ATTEMPTS
+                );
+                last_err = Some(err);
+                if attempt < MAX_CONNECT_ATTEMPTS {
+                    tokio::time::sleep(backoff).await;
+                    backoff = (backoff * 2).min(CONNECT_BACKOFF_MAX);
+                }
+            }
+        }
+    }
+
+    Err(DbError::Database(last_err.expect("at least one attempt was made")))
+}
+
 impl LandscapeDBServiceProvider {
-    pub async fn new(config: &StoreRuntimeConfig) -> Self {
+    pub async fn new(config: &StoreRuntimeConfig) -> Result<Self, DbError> {
         let mut opt: migration::sea_orm::ConnectOptions = config.database_path.clone().into();
         let (lever, _) = opt.get_sqlx_slow_statements_logging_settings();
         opt.sqlx_slow_statements_logging_settings(lever, Duration::from_secs(10));
@@ -73,16 +108,24 @@ impl LandscapeDBServiceProvider {
                 .foreign_keys(true)
         });
 
-        let database = Database::connect(opt).await.expect("Database connection failed");
-        Migrator::up(&database, None).await.unwrap();
-        Self { database }
+        let database = connect_with_retry(opt).await?;
+
+        // Migration failures are persistent (bad/half-applied schema), not
+        // transient: no retry, fail fast with a clean error.
+        if let Err(err) = migration::runner::up_transactional::<Migrator, _>(&database, None).await
+        {
+            tracing::error!("database migration failed: {err:?}");
+            return Err(err.into());
+        }
+
+        Ok(Self { database })
     }
     pub async fn mem_test_db() -> Self {
         let mut opt: migration::sea_orm::ConnectOptions = "sqlite::memory:".into();
         // in-memory DB: every connection is a separate database, so force a single connection
         opt.max_connections(1);
         let database = Database::connect(opt).await.expect("Database connection failed");
-        Migrator::up(&database, None).await.unwrap();
+        migration::runner::up_transactional::<Migrator, _>(&database, None).await.unwrap();
         Self { database }
     }
 
@@ -97,7 +140,9 @@ impl LandscapeDBServiceProvider {
     /// path without `?`, `#` or spaces (tempfile paths qualify).
     pub async fn file_test_db(path: &std::path::Path) -> Self {
         let url = format!("sqlite://{}?mode=rwc", path.display());
-        Self::new(&StoreRuntimeConfig { database_path: url }).await
+        Self::new(&StoreRuntimeConfig { database_path: url })
+            .await
+            .expect("file test db init failed")
     }
 
     pub async fn validate_init_config_can_import(config: InitConfig) -> Result<(), DbError> {
@@ -232,10 +277,22 @@ mod tests {
     pub async fn test_run_database() {
         landscape_common::init_tracing!();
 
+        let dir = tempfile::tempdir().unwrap();
         let config = StoreRuntimeConfig {
-            database_path: "sqlite://../db.sqlite?mode=rwc".to_string(),
+            database_path: format!("sqlite://{}?mode=rwc", dir.path().join("test.db").display()),
         };
-        let _provider = LandscapeDBServiceProvider::new(&config).await;
+        let _provider = LandscapeDBServiceProvider::new(&config).await.unwrap();
+    }
+
+    #[tokio::test]
+    pub async fn reopening_database_after_migrations_is_noop() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("reopen.db");
+
+        let _first = LandscapeDBServiceProvider::file_test_db(&path).await;
+        // Second open must find zero pending migrations and succeed (the
+        // transactional runner re-derives pending state from seaql_migrations).
+        let _second = LandscapeDBServiceProvider::file_test_db(&path).await;
     }
 
     #[tokio::test]

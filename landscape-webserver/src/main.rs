@@ -152,7 +152,7 @@ async fn prepare_startup_init(
 
     let db_store_provider = startup_phase!(
         "db_store_provider.new",
-        LandscapeDBServiceProvider::new(&config.store).await
+        LandscapeDBServiceProvider::new(&config.store).await?
     );
 
     if let Some(init_config) = init_config_to_import {
@@ -790,7 +790,7 @@ async fn do_auto_init(home_path: &PathBuf, config: &RuntimeConfig) -> Result<(),
         return Ok(());
     }
 
-    let db_store_provider = LandscapeDBServiceProvider::new(&config.store).await;
+    let db_store_provider = LandscapeDBServiceProvider::new(&config.store).await?;
     let store = db_store_provider.iface_store();
     for cfg in default_configs {
         store.set_or_update_model(cfg.name.clone(), cfg).await.unwrap();

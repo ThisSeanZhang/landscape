@@ -25,3 +25,6 @@ features = [
     "with-uuid",
     "with-json",
 ]
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt"] }

@@ -1,5 +1,7 @@
 pub use sea_orm_migration::prelude::*;
 
+pub mod runner;
+
 mod m20250511_170500_dns_rule;
 mod m20250517_083437_iface_config;
 mod m20250518_081203_dhcp_v4_server;
