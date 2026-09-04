@@ -1,5 +1,5 @@
 //! `nat4`/`nat6_static_map`, dynamic `nat4`/`nat6` maps, timer maps and the
-//! port queue (see `share_map.skel.rs`).
+//! port queue C anchor: real program skels.
 
 use zerocopy::{FromBytes, Immutable, IntoBytes};
 
@@ -160,7 +160,7 @@ pub(crate) struct Nat6TimerValue {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::maps::share_map::types as share;
+    use crate::stages::nat::xdp_nat_skel::types as share;
 
     #[test]
     fn nat_layouts_match_skel() {

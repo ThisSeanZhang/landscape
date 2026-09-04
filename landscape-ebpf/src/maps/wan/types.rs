@@ -1,4 +1,4 @@
-//! `wan_ip_binding` map (see `share_map.skel.rs`).
+//! `wan_ip_binding` map C anchor: real program skels.
 
 use zerocopy::{FromBytes, Immutable, IntoBytes};
 
@@ -24,8 +24,8 @@ pub(crate) struct WanIpInfoValue {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::maps::share_map::types as share;
     use crate::maps::Inet6Bytes;
+    use crate::stages::nat::xdp_nat_skel::types as share;
 
     #[test]
     fn wan_ip_layouts_match_skel() {

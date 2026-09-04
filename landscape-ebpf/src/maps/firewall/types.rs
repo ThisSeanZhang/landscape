@@ -1,5 +1,5 @@
-//! `firewall_block_ip4` / `firewall_block_ip6` LPM maps (see
-//! `share_map.skel.rs`).
+//! `firewall_block_ip4` / `firewall_block_ip6` LPM maps (C anchor:
+//! `xdp_firewall.skel.rs`).
 
 use zerocopy::{FromBytes, Immutable, IntoBytes};
 
@@ -26,7 +26,7 @@ pub(crate) struct FirewallAction {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::maps::share_map::types as share;
+    use crate::stages::firewall::xdp_firewall_skel::types as share;
 
     #[test]
     fn firewall_layouts_match_skel() {

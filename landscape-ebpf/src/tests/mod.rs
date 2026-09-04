@@ -62,6 +62,50 @@ pub(crate) fn isolated_pin_root(prefix: &str) -> PinRootGuard {
     PinRootGuard::new(prefix)
 }
 
+/// Stands up every shared map inside `root` via the production per-domain
+/// init code, then hands back pinned handles to the ones integration tests
+/// seed / assert on. Mirrors what the deleted `share_map` skeleton used to
+/// do for tests: maps are created before the programs under test load, so
+/// their `LIBBPF_PIN_BY_NAME` maps are reused from the same pin root.
+pub(crate) fn init_shared_maps_for_test(root: &Path) -> TestSharedMaps {
+    let paths = crate::LandscapeMapPath::from_root(root);
+    crate::maps::init_maps_for_test(&paths);
+    TestSharedMaps::open(&paths)
+}
+
+/// Pinned handles to the shared maps integration tests read/write directly
+/// (previously exposed through the `share_map` skeleton's `maps` struct).
+#[derive(Debug)]
+pub(crate) struct TestSharedMaps {
+    pub wan_ip_binding: libbpf_rs::MapHandle,
+    pub nat4_static_map: libbpf_rs::MapHandle,
+    pub rt4_lan_map: libbpf_rs::MapHandle,
+    pub rt6_lan_map: libbpf_rs::MapHandle,
+    pub rt4_target_slot_map: libbpf_rs::MapHandle,
+    pub rt6_target_slot_map: libbpf_rs::MapHandle,
+    pub rt4_cache_map: libbpf_rs::MapHandle,
+    pub rt6_cache_map: libbpf_rs::MapHandle,
+}
+
+impl TestSharedMaps {
+    pub(crate) fn open(paths: &crate::LandscapeMapPath) -> Self {
+        let pin = |path: &Path| {
+            libbpf_rs::MapHandle::from_pinned_path(path)
+                .unwrap_or_else(|e| panic!("open test map at {}: {e}", path.display()))
+        };
+        Self {
+            wan_ip_binding: pin(&paths.wan_ip),
+            nat4_static_map: pin(&paths.nat4_static_map),
+            rt4_lan_map: pin(&paths.rt4_lan_map),
+            rt6_lan_map: pin(&paths.rt6_lan_map),
+            rt4_target_slot_map: pin(&paths.rt4_target_slot_map),
+            rt6_target_slot_map: pin(&paths.rt6_target_slot_map),
+            rt4_cache_map: pin(&paths.rt4_cache_map),
+            rt6_cache_map: pin(&paths.rt6_cache_map),
+        }
+    }
+}
+
 pub(crate) fn check_ifindex(name: &str, ifindex: u32) {
     const PIPELINE_COUNT: u32 = 1024;
     if ifindex >= PIPELINE_COUNT {
@@ -86,6 +130,8 @@ mod metric;
 mod mss;
 mod nat;
 mod net_utils;
+
+pub(crate) use net_utils::ensure_bpffs;
 mod route;
 mod scanner;
 mod tc_chain;

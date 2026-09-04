@@ -8,10 +8,7 @@ use libbpf_rs::{
     MapCore, MapFlags, MapHandle, MapType,
 };
 
-use crate::maps::share_map::types::{
-    rt_cache_key_v4, rt_cache_key_v6, rt_cache_value_v4, rt_cache_value_v6,
-};
-use crate::maps::share_map::ShareMapSkelBuilder;
+use crate::maps::{RtCacheKeyV4, RtCacheKeyV6, RtCacheValueV4, RtCacheValueV6};
 use crate::tests::net_utils::{
     dummy_recv_count, dummy_reset, route_slot, send_raw_packet, settle, wait_for, NetNsGuard,
     VethPair,
@@ -196,11 +193,7 @@ fn xdp_lan_intro_trace_flow() {
 #[test]
 fn xdp_lan_intro_map_redirect() {
     let share_pin = crate::tests::isolated_pin_root("xdp-lr-share");
-    let mut sb = ShareMapSkelBuilder::default();
-    sb.object_builder_mut().pin_root_path(&share_pin).unwrap();
-    let mut share_obj = std::mem::MaybeUninit::uninit();
-    let share = sb.open(&mut share_obj).unwrap().load().unwrap();
-
+    let maps = crate::tests::init_shared_maps_for_test(&share_pin);
     let test_ns = NetNsGuard::create("lrb");
     let peer_ns = NetNsGuard::create("lrbp");
     let pair;
@@ -225,7 +218,7 @@ fn xdp_lan_intro_map_redirect() {
     lan_key[4..8].copy_from_slice(&0x0A000002u32.to_be_bytes());
     let mut lan_val = [0u8; 16];
     lan_val[8..12].copy_from_slice(&p_i.to_ne_bytes());
-    share.maps.rt4_lan_map.update(&lan_key, &lan_val, MapFlags::ANY).unwrap();
+    maps.rt4_lan_map.update(&lan_key, &lan_val, MapFlags::ANY).unwrap();
 
     let mut b = XdpLanIntroSkelBuilder::default();
     b.object_builder_mut().pin_root_path(&share_pin).unwrap();
@@ -250,7 +243,7 @@ fn xdp_lan_intro_map_redirect() {
     settle(300);
 
     drop(skel);
-    drop(share);
+    drop(maps);
 }
 
 // ── Test D: bidirectional A↔C (lan_route + wan_route) ──
@@ -287,11 +280,7 @@ fn xdp_lan_intro_wan_pipeline() {
     }
 
     let share_pin = crate::tests::isolated_pin_root("xdp-lr-pipe");
-    let mut sb = ShareMapSkelBuilder::default();
-    sb.object_builder_mut().pin_root_path(&share_pin).unwrap();
-    let mut share_obj = std::mem::MaybeUninit::uninit();
-    let share = sb.open(&mut share_obj).unwrap().load().unwrap();
-
+    let maps = crate::tests::init_shared_maps_for_test(&share_pin);
     // A→C: slot target → wan_h
     {
         let s = route_slot(0xCB007101);
@@ -300,7 +289,7 @@ fn xdp_lan_intro_wan_pipeline() {
         k[0..4].copy_from_slice(&0u32.to_ne_bytes());
         k[4..8].copy_from_slice(&s.to_ne_bytes());
         v[0..4].copy_from_slice(&wan_h_i.to_ne_bytes());
-        share.maps.rt4_target_slot_map.update(&k, &v, MapFlags::ANY).unwrap();
+        maps.rt4_target_slot_map.update(&k, &v, MapFlags::ANY).unwrap();
     }
     // C→A: lan route → lan_p
     {
@@ -309,7 +298,7 @@ fn xdp_lan_intro_wan_pipeline() {
         k[0..4].copy_from_slice(&32u32.to_ne_bytes());
         k[4..8].copy_from_slice(&0x0A000001u32.to_be_bytes());
         v[8..12].copy_from_slice(&lan_h_i.to_ne_bytes());
-        share.maps.rt4_lan_map.update(&k, &v, MapFlags::ANY).unwrap();
+        maps.rt4_lan_map.update(&k, &v, MapFlags::ANY).unwrap();
     }
 
     // Create inner LRU_HASH maps for rt4_cache_map / rt6_cache_map
@@ -320,15 +309,15 @@ fn xdp_lan_intro_wan_pipeline() {
     for (cache_idx, name) in [(0u32, "wan"), (1u32, "lan")] {
         for (outer, ksz, vsz, label) in [
             (
-                &share.maps.rt4_cache_map,
-                std::mem::size_of::<rt_cache_key_v4>() as u32,
-                std::mem::size_of::<rt_cache_value_v4>() as u32,
+                &maps.rt4_cache_map,
+                std::mem::size_of::<RtCacheKeyV4>() as u32,
+                std::mem::size_of::<RtCacheValueV4>() as u32,
                 "v4",
             ),
             (
-                &share.maps.rt6_cache_map,
-                std::mem::size_of::<rt_cache_key_v6>() as u32,
-                std::mem::size_of::<rt_cache_value_v6>() as u32,
+                &maps.rt6_cache_map,
+                std::mem::size_of::<RtCacheKeyV6>() as u32,
+                std::mem::size_of::<RtCacheValueV6>() as u32,
                 "v6",
             ),
         ] {
@@ -519,13 +508,13 @@ fn xdp_lan_intro_wan_pipeline() {
     assert!(v4_cnt > 0, "no dummy recv");
 
     // Verify cache entries exist
-    let lan_inner = lookup_inner_map(&share.maps.rt4_cache_map, 1u32);
+    let lan_inner = lookup_inner_map(&maps.rt4_cache_map, 1u32);
     let keys: Vec<_> = lan_inner.keys().collect();
     println!("LAN_CACHE (v4) entries: {}", keys.len());
     for k in &keys {
         let raw = lan_inner.lookup(k, MapFlags::ANY).unwrap().unwrap();
-        let val: rt_cache_value_v4 = read_unaligned(&raw);
-        let key: rt_cache_key_v4 = read_unaligned(k);
+        let val: RtCacheValueV4 = read_unaligned(&raw);
+        let key: RtCacheKeyV4 = read_unaligned(k);
         println!(
             "  saddr={:08x} daddr={:08x} -> mark={} ifidx={}",
             u32::from_be(key.local_addr),
@@ -535,7 +524,7 @@ fn xdp_lan_intro_wan_pipeline() {
         );
     }
     assert!(!keys.is_empty(), "no LAN_CACHE entries found");
-    let wan_inner = lookup_inner_map(&share.maps.rt4_cache_map, 0u32);
+    let wan_inner = lookup_inner_map(&maps.rt4_cache_map, 0u32);
     let wan_keys: Vec<_> = wan_inner.keys().collect();
     println!("WAN_CACHE (v4) entries: {}", wan_keys.len());
 
@@ -547,7 +536,7 @@ fn xdp_lan_intro_wan_pipeline() {
     drop(wr);
     drop(intro);
     drop(lr);
-    drop(share);
+    drop(maps);
 }
 
 // ── Test E: unknown IP must not be redirected (regression guard) ──

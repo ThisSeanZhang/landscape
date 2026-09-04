@@ -11,7 +11,6 @@ use libbpf_rs::{
     MapCore, MapFlags,
 };
 
-use crate::maps::share_map::ShareMapSkelBuilder;
 use crate::tests::test_xdp_dummy::TestXdpDummySkelBuilder;
 use crate::tests::wan_intro_skel::XdpWanIntroSkelBuilder;
 use crate::tests::xdp_firewall_skel::XdpFirewallSkelBuilder;
@@ -43,11 +42,7 @@ fn xdp_firewall_pipeline() {
 
     // ── load shared maps ──
     let share_pin = crate::tests::isolated_pin_root("xdp-fw-pipe");
-    let mut sb = ShareMapSkelBuilder::default();
-    sb.object_builder_mut().pin_root_path(&share_pin).unwrap();
-    let mut share_obj = std::mem::MaybeUninit::uninit();
-    let share = sb.open(&mut share_obj).unwrap().load().unwrap();
-
+    let maps = crate::tests::init_shared_maps_for_test(&share_pin);
     // ── load skeletons ──
     let mut lr_b = XdpLanIntroSkelBuilder::default();
     lr_b.object_builder_mut().pin_root_path(&share_pin).unwrap();
@@ -258,7 +253,7 @@ fn xdp_firewall_pipeline() {
         k[0..4].copy_from_slice(&0u32.to_ne_bytes());
         k[4..8].copy_from_slice(&s.to_ne_bytes());
         v[0..4].copy_from_slice(&wan_h_i.to_ne_bytes());
-        share.maps.rt4_target_slot_map.update(&k, &v, MapFlags::ANY).unwrap();
+        maps.rt4_target_slot_map.update(&k, &v, MapFlags::ANY).unwrap();
     }
 
     // C→A: LAN route → lan_p
@@ -268,7 +263,7 @@ fn xdp_firewall_pipeline() {
         k[0..4].copy_from_slice(&32u32.to_ne_bytes());
         k[4..8].copy_from_slice(&lan_ip.to_be_bytes());
         v[8..12].copy_from_slice(&lan_h_i.to_ne_bytes());
-        share.maps.rt4_lan_map.update(&k, &v, MapFlags::ANY).unwrap();
+        maps.rt4_lan_map.update(&k, &v, MapFlags::ANY).unwrap();
     }
 
     // route slot for 203.0.113.2
@@ -280,7 +275,7 @@ fn xdp_firewall_pipeline() {
         k[0..4].copy_from_slice(&0u32.to_ne_bytes());
         k[4..8].copy_from_slice(&s2.to_ne_bytes());
         v[0..4].copy_from_slice(&wan_h_i.to_ne_bytes());
-        share.maps.rt4_target_slot_map.update(&k, &v, MapFlags::ANY).unwrap();
+        maps.rt4_target_slot_map.update(&k, &v, MapFlags::ANY).unwrap();
     }
 
     // v6 LAN route: fd00::1 → lan_h
@@ -292,7 +287,7 @@ fn xdp_firewall_pipeline() {
         let mut v = [0u8; 28];
         v[0] = 1;
         v[8..12].copy_from_slice(&lan_h_i.to_ne_bytes());
-        share.maps.rt6_lan_map.update(&k, &v, MapFlags::ANY).unwrap();
+        maps.rt6_lan_map.update(&k, &v, MapFlags::ANY).unwrap();
     }
 
     // v6 WAN target slot: fd00::2 → wan_h
@@ -304,7 +299,7 @@ fn xdp_firewall_pipeline() {
         k[4..8].copy_from_slice(&slot.to_ne_bytes());
         let mut v = [0u8; 28];
         v[0..4].copy_from_slice(&wan_h_i.to_ne_bytes());
-        share.maps.rt6_target_slot_map.update(&k, &v, MapFlags::ANY).unwrap();
+        maps.rt6_target_slot_map.update(&k, &v, MapFlags::ANY).unwrap();
     }
 
     // ── block map helpers ──
@@ -550,6 +545,6 @@ fn xdp_firewall_pipeline() {
     drop(wr);
     drop(intro);
     drop(lr);
-    drop(share);
+    drop(maps);
     let _ = Command::new("ip").args(["route", "del", "blackhole", "203.0.113.1"]).output();
 }

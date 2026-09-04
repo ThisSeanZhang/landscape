@@ -5,7 +5,9 @@ pub(crate) mod neigh_update {
     include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/neigh_update.skel.rs"));
 }
 
+mod init;
 mod setting;
 pub(crate) mod types;
 
+pub use init::*;
 pub use setting::*;

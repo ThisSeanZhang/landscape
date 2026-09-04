@@ -8,9 +8,8 @@ use etherparse::PacketBuilder;
 use landscape_common::net::MacAddr;
 use libbpf_rs::{libbpf_sys, MapCore, MapFlags, MapHandle, MapType};
 
-use crate::maps::share_map::types::{
-    mac_key_v6, mac_value_v6, rt_cache_key_v4, rt_cache_key_v6, rt_cache_value_v4,
-    rt_cache_value_v6,
+use crate::maps::{
+    MacKeyV6, MacValueV6, RtCacheKeyV4, RtCacheKeyV6, RtCacheValueV4, RtCacheValueV6,
 };
 
 static ROUTE_TEST_PIN_COUNTER: AtomicUsize = AtomicUsize::new(0);
@@ -51,8 +50,8 @@ pub fn create_route_cache_inner_map_v4<T: MapCore>(outer_map: &T, cache_index: u
     let map = MapHandle::create(
         MapType::LruHash,
         Some(format!("route_test_rt4_cache_{cache_index}_{unique}")),
-        std::mem::size_of::<rt_cache_key_v4>() as u32,
-        std::mem::size_of::<rt_cache_value_v4>() as u32,
+        std::mem::size_of::<RtCacheKeyV4>() as u32,
+        std::mem::size_of::<RtCacheValueV4>() as u32,
         65_536,
         &opts,
     )
@@ -75,8 +74,8 @@ pub fn create_route_cache_inner_map_v6<T: MapCore>(outer_map: &T, cache_index: u
     let map = MapHandle::create(
         MapType::LruHash,
         Some(format!("route_test_rt6_cache_{cache_index}_{unique}")),
-        std::mem::size_of::<rt_cache_key_v6>() as u32,
-        std::mem::size_of::<rt_cache_value_v6>() as u32,
+        std::mem::size_of::<RtCacheKeyV6>() as u32,
+        std::mem::size_of::<RtCacheValueV6>() as u32,
         65_536,
         &opts,
     )
@@ -88,11 +87,11 @@ pub fn create_route_cache_inner_map_v6<T: MapCore>(outer_map: &T, cache_index: u
         .expect("attach route v6 cache inner map");
 }
 
-pub fn make_rt6_cache_key(local: Ipv6Addr, remote: Ipv6Addr) -> rt_cache_key_v6 {
-    let mut key = rt_cache_key_v6::default();
-    key.local_addr.bytes = local.to_bits().to_be_bytes();
-    key.remote_addr.bytes = remote.to_bits().to_be_bytes();
-    key
+pub fn make_rt6_cache_key(local: Ipv6Addr, remote: Ipv6Addr) -> RtCacheKeyV6 {
+    RtCacheKeyV6 {
+        local_addr: local.to_bits().to_be_bytes(),
+        remote_addr: remote.to_bits().to_be_bytes(),
+    }
 }
 
 pub fn put_rt6_cache_ifindex<T: MapCore>(
@@ -105,7 +104,7 @@ pub fn put_rt6_cache_ifindex<T: MapCore>(
 ) {
     let inner = lookup_inner_map(outer_map, cache_index);
     let key = make_rt6_cache_key(local, remote);
-    let value = rt_cache_value_v6 {
+    let value = RtCacheValueV6 {
         ifindex,
         has_mac: has_mac as u8,
         ..Default::default()
@@ -120,13 +119,13 @@ pub fn lookup_rt6_cache_value<T: MapCore>(
     cache_index: u32,
     local: Ipv6Addr,
     remote: Ipv6Addr,
-) -> Option<rt_cache_value_v6> {
+) -> Option<RtCacheValueV6> {
     let inner = lookup_inner_map(outer_map, cache_index);
     let key = make_rt6_cache_key(local, remote);
     inner
         .lookup(as_bytes(&key), MapFlags::ANY)
         .expect("lookup route v6 cache value")
-        .map(|bytes| read_unaligned::<rt_cache_value_v6>(&bytes))
+        .map(|bytes| read_unaligned::<RtCacheValueV6>(&bytes))
 }
 
 pub fn lookup_rt4_cache_value<T: MapCore>(
@@ -134,16 +133,16 @@ pub fn lookup_rt4_cache_value<T: MapCore>(
     cache_index: u32,
     local: Ipv4Addr,
     remote: Ipv4Addr,
-) -> Option<rt_cache_value_v4> {
+) -> Option<RtCacheValueV4> {
     let inner = lookup_inner_map(outer_map, cache_index);
-    let key = rt_cache_key_v4 {
+    let key = RtCacheKeyV4 {
         local_addr: local.to_bits().to_be(),
         remote_addr: remote.to_bits().to_be(),
     };
     inner
         .lookup(as_bytes(&key), MapFlags::ANY)
         .expect("lookup route v4 cache value")
-        .map(|bytes| read_unaligned::<rt_cache_value_v4>(&bytes))
+        .map(|bytes| read_unaligned::<RtCacheValueV4>(&bytes))
 }
 
 pub fn insert_ip_mac_v6<T: MapCore>(
@@ -153,15 +152,15 @@ pub fn insert_ip_mac_v6<T: MapCore>(
     dev_mac: MacAddr,
     ifindex: u32,
 ) {
-    let mut key = mac_key_v6::default();
-    key.addr.bytes = addr.to_bits().to_be_bytes();
+    let key = MacKeyV6 { addr: addr.to_bits().to_be_bytes() };
 
-    let value = mac_value_v6 {
+    let value = MacValueV6 {
         ifindex,
         mac: mac.octets(),
         dev_mac: dev_mac.octets(),
         proto: 0xdd86,
         sourced: 0,
+        ..Default::default()
     };
 
     map.update(as_bytes(&key), as_bytes(&value), MapFlags::ANY).expect("insert ip_mac_v6 entry");

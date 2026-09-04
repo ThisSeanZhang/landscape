@@ -1,5 +1,5 @@
 //! `rt4`/`rt6_lan_map`, `rt4`/`rt6_cache_map`, `rt4`/`rt6_target_slot_map`
-//! (see `share_map.skel.rs`).
+//! C anchor: real program skels.
 
 use zerocopy::{FromBytes, Immutable, IntoBytes};
 
@@ -119,7 +119,7 @@ pub(crate) struct RouteTargetInfoV6 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::maps::share_map::types as share;
+    use crate::chain::xdp_wan_route::xdp_wan_route_skel::types as share;
 
     #[test]
     fn route_layouts_match_skel() {

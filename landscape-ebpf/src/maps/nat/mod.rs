@@ -41,6 +41,7 @@ fn update_raw_entries<M: MapCore>(map: &M, entries: RawEbpfMapEntries) -> LdEbpf
     Ok(())
 }
 
+mod init;
 pub(crate) mod types;
 pub mod v4;
 pub mod v6;
@@ -53,3 +54,5 @@ pub use v6::{
     add_static_nat6_mapping, build_static_nat6_entries, reconcile_static_nat6_entries,
     reconcile_static_nat6_map,
 };
+
+pub use init::*;

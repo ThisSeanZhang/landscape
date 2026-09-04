@@ -6,7 +6,6 @@ use libbpf_rs::{
     MapCore, MapFlags,
 };
 
-use crate::maps::share_map::ShareMapSkelBuilder;
 use crate::maps::{Nat4TimerKey, Nat4TimerValueV3};
 use crate::tests::test_xdp_dummy::TestXdpDummySkelBuilder;
 use crate::tests::xdp_firewall_skel::XdpFirewallSkelBuilder;
@@ -33,7 +32,7 @@ fn build_tcp_syn_pkt(src_ip: [u8; 4], dst_ip: [u8; 4], src_port: u16, dst_port: 
 }
 
 fn write_static_mapping_v4(
-    map: &libbpf_rs::MapMut,
+    map: &impl MapCore,
     gress: u8,
     l4proto: u8,
     from_port: u16,
@@ -55,7 +54,7 @@ fn write_static_mapping_v4(
 }
 
 fn lookup_nat4_mapping(
-    map: &libbpf_rs::MapMut,
+    map: &impl MapCore,
     gress: u8,
     l4proto: u8,
     from_port: u16,
@@ -70,7 +69,7 @@ fn lookup_nat4_mapping(
 }
 
 fn assert_dyn_map_entry(
-    map: &libbpf_rs::MapMut,
+    map: &impl MapCore,
     gress: u8,
     l4proto: u8,
     from_port: u16,
@@ -87,7 +86,7 @@ fn assert_dyn_map_entry(
 }
 
 fn assert_static_map_entry(
-    map: &libbpf_rs::MapMut,
+    map: &impl MapCore,
     gress: u8,
     l4proto: u8,
     from_port: u16,
@@ -105,7 +104,7 @@ fn assert_static_map_entry(
 
 #[allow(dead_code)]
 fn assert_no_dyn_map_entry(
-    map: &libbpf_rs::MapMut,
+    map: &impl MapCore,
     gress: u8,
     l4proto: u8,
     from_port: u16,
@@ -116,7 +115,7 @@ fn assert_no_dyn_map_entry(
 }
 
 fn assert_egress_dyn_map_entry(
-    map: &libbpf_rs::MapMut,
+    map: &impl MapCore,
     gress: u8,
     l4proto: u8,
     from_port: u16,
@@ -133,7 +132,7 @@ fn assert_egress_dyn_map_entry(
 }
 
 fn assert_no_egress_dyn_map_entry(
-    map: &libbpf_rs::MapMut,
+    map: &impl MapCore,
     gress: u8,
     l4proto: u8,
     from_port: u16,
@@ -144,7 +143,7 @@ fn assert_no_egress_dyn_map_entry(
 }
 
 fn assert_wan_ip_binding(
-    map: &libbpf_rs::MapMut,
+    map: &impl MapCore,
     ifindex: u32,
     l3proto: u8,
     expected_wan: &[u8],
@@ -166,7 +165,7 @@ fn assert_wan_ip_binding(
 }
 
 fn wait_nat4_entry(
-    map: &libbpf_rs::MapMut,
+    map: &impl MapCore,
     gress: u8,
     l4proto: u8,
     from_port: u16,
@@ -178,7 +177,7 @@ fn wait_nat4_entry(
     });
 }
 
-fn wait_wan_ip_binding(map: &libbpf_rs::MapMut, ifindex: u32, l3proto: u8, what: &str) {
+fn wait_wan_ip_binding(map: &impl MapCore, ifindex: u32, l3proto: u8, what: &str) {
     let mut k = [0u8; 8];
     k[0..4].copy_from_slice(&ifindex.to_ne_bytes());
     k[4] = l3proto;
@@ -197,11 +196,7 @@ fn xdp_nat_static_egress() {
     let _nat_p_i = pair.peer_ifindex();
 
     let share_pin = crate::tests::isolated_pin_root("xdp-nat-nat4e");
-    let mut sb = ShareMapSkelBuilder::default();
-    sb.object_builder_mut().pin_root_path(&share_pin).unwrap();
-    let mut share_obj = std::mem::MaybeUninit::uninit();
-    let share = sb.open(&mut share_obj).unwrap().load().unwrap();
-
+    let maps = crate::tests::init_shared_maps_for_test(&share_pin);
     let mut nat_b = XdpNatSkelBuilder::default();
     nat_b.object_builder_mut().pin_root_path(&share_pin).unwrap();
     let mut nat_obj = std::mem::MaybeUninit::uninit();
@@ -222,7 +217,7 @@ fn xdp_nat_static_egress() {
     let _l0 = nat.progs.egress_nat.attach_xdp(nat_h_i as i32).unwrap();
 
     write_static_mapping_v4(
-        &share.maps.nat4_static_map,
+        &maps.nat4_static_map,
         1,
         6,
         80,
@@ -231,7 +226,7 @@ fn xdp_nat_static_egress() {
         8080,
     );
     write_static_mapping_v4(
-        &share.maps.nat4_static_map,
+        &maps.nat4_static_map,
         0,
         6,
         8080,
@@ -244,13 +239,13 @@ fn xdp_nat_static_egress() {
     wan_key[0..4].copy_from_slice(&nat_h_i.to_ne_bytes());
     let mut wan_val = [0u8; 48];
     wan_val[0..4].copy_from_slice(&[203, 0, 113, 1]);
-    share.maps.wan_ip_binding.update(&wan_key, &wan_val, MapFlags::ANY).unwrap();
+    maps.wan_ip_binding.update(&wan_key, &wan_val, MapFlags::ANY).unwrap();
 
     let pkt = build_tcp_pkt([192, 168, 1, 100], [10, 0, 0, 1], 80, 9999);
     send_raw_packet(nat_p, &pkt);
 
     assert_static_map_entry(
-        &share.maps.nat4_static_map,
+        &maps.nat4_static_map,
         1,
         6,
         80,
@@ -259,7 +254,7 @@ fn xdp_nat_static_egress() {
         8080,
     );
     assert_static_map_entry(
-        &share.maps.nat4_static_map,
+        &maps.nat4_static_map,
         0,
         6,
         8080,
@@ -270,7 +265,7 @@ fn xdp_nat_static_egress() {
 
     drop(nat);
     drop(dummy);
-    drop(share);
+    drop(maps);
 }
 
 #[ignore = "requires root and veth pairs; run with --include-ignored"]
@@ -282,11 +277,7 @@ fn xdp_nat_static_ingress() {
     let nat_h_i = pair.host_ifindex();
 
     let share_pin = crate::tests::isolated_pin_root("xdp-nat-nat4i");
-    let mut sb = ShareMapSkelBuilder::default();
-    sb.object_builder_mut().pin_root_path(&share_pin).unwrap();
-    let mut share_obj = std::mem::MaybeUninit::uninit();
-    let share = sb.open(&mut share_obj).unwrap().load().unwrap();
-
+    let maps = crate::tests::init_shared_maps_for_test(&share_pin);
     let mut nat_b = XdpNatSkelBuilder::default();
     nat_b.object_builder_mut().pin_root_path(&share_pin).unwrap();
     let mut nat_obj = std::mem::MaybeUninit::uninit();
@@ -301,7 +292,7 @@ fn xdp_nat_static_ingress() {
     let _l0 = nat.progs.ingress_nat.attach_xdp(nat_h_i as i32).unwrap();
 
     write_static_mapping_v4(
-        &share.maps.nat4_static_map,
+        &maps.nat4_static_map,
         0,
         6,
         8080,
@@ -314,7 +305,7 @@ fn xdp_nat_static_ingress() {
     send_raw_packet(nat_p, &pkt);
 
     assert_static_map_entry(
-        &share.maps.nat4_static_map,
+        &maps.nat4_static_map,
         0,
         6,
         8080,
@@ -325,7 +316,7 @@ fn xdp_nat_static_ingress() {
 
     drop(nat);
     drop(dummy);
-    drop(share);
+    drop(maps);
 }
 
 #[ignore = "requires root and veth pairs; run with --include-ignored"]
@@ -338,11 +329,7 @@ fn xdp_nat_dynamic_egress() {
     let nat_p_i = pair.peer_ifindex();
 
     let share_pin = crate::tests::isolated_pin_root("xdp-nat-nat4dyn");
-    let mut sb = ShareMapSkelBuilder::default();
-    sb.object_builder_mut().pin_root_path(&share_pin).unwrap();
-    let mut share_obj = std::mem::MaybeUninit::uninit();
-    let share = sb.open(&mut share_obj).unwrap().load().unwrap();
-
+    let maps = crate::tests::init_shared_maps_for_test(&share_pin);
     let mut nat_b = XdpNatSkelBuilder::default();
     nat_b.object_builder_mut().pin_root_path(&share_pin).unwrap();
     let mut nat_obj = std::mem::MaybeUninit::uninit();
@@ -377,7 +364,7 @@ fn xdp_nat_dynamic_egress() {
     wan_key[0..4].copy_from_slice(&nat_h_i.to_ne_bytes());
     let mut wan_val = [0u8; 48];
     wan_val[0..4].copy_from_slice(&[203, 0, 113, 1]);
-    share.maps.wan_ip_binding.update(&wan_key, &wan_val, MapFlags::ANY).unwrap();
+    maps.wan_ip_binding.update(&wan_key, &wan_val, MapFlags::ANY).unwrap();
 
     let pkt = build_tcp_syn_pkt([10, 0, 0, 1], [93, 184, 216, 34], 12345, 80);
     send_raw_packet(nat_p, &pkt);
@@ -449,7 +436,7 @@ fn xdp_nat_dynamic_egress() {
 
     drop(nat);
     drop(dummy);
-    drop(share);
+    drop(maps);
 }
 
 fn build_tcp6_pkt(src: [u8; 16], dst: [u8; 16], src_port: u16, dst_port: u16) -> Vec<u8> {
@@ -471,11 +458,7 @@ fn xdp_nat_v6_egress() {
     let nat_h_i = pair.host_ifindex();
 
     let share_pin = crate::tests::isolated_pin_root("xdp-nat-nat6e");
-    let mut sb = ShareMapSkelBuilder::default();
-    sb.object_builder_mut().pin_root_path(&share_pin).unwrap();
-    let mut share_obj = std::mem::MaybeUninit::uninit();
-    let share = sb.open(&mut share_obj).unwrap().load().unwrap();
-
+    let maps = crate::tests::init_shared_maps_for_test(&share_pin);
     let mut nat_b = XdpNatSkelBuilder::default();
     nat_b.object_builder_mut().pin_root_path(&share_pin).unwrap();
     let mut nat_obj = std::mem::MaybeUninit::uninit();
@@ -493,16 +476,16 @@ fn xdp_nat_v6_egress() {
     wan_val[16..24].copy_from_slice(&[0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0]);
     wan_val[32] = 48;
     wan_val[40..48].copy_from_slice(&[0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0, 0]);
-    share.maps.wan_ip_binding.update(&wan_key, &wan_val, MapFlags::ANY).unwrap();
+    maps.wan_ip_binding.update(&wan_key, &wan_val, MapFlags::ANY).unwrap();
 
     let lan_prefix = [0xfd, 0x00, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1];
     let dst = [0x20, 0x01, 0x0d, 0xb8, 0x12, 0x34, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2];
     let pkt = build_tcp6_pkt(lan_prefix, dst, 12345, 80);
     send_raw_packet(nat_p, &pkt);
 
-    wait_wan_ip_binding(&share.maps.wan_ip_binding, nat_h_i, 1, "wan ip binding entry");
+    wait_wan_ip_binding(&maps.wan_ip_binding, nat_h_i, 1, "wan ip binding entry");
     assert_wan_ip_binding(
-        &share.maps.wan_ip_binding,
+        &maps.wan_ip_binding,
         nat_h_i,
         1,
         &[0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0],
@@ -512,7 +495,7 @@ fn xdp_nat_v6_egress() {
     );
 
     drop(nat);
-    drop(share);
+    drop(maps);
 }
 
 #[ignore = "requires root and veth pairs; run with --include-ignored"]
@@ -525,11 +508,7 @@ fn xdp_nat_firewall_pipeline() {
     let nat_p_i = pair.peer_ifindex();
 
     let share_pin = crate::tests::isolated_pin_root("xdp-nat-pipeline");
-    let mut sb = ShareMapSkelBuilder::default();
-    sb.object_builder_mut().pin_root_path(&share_pin).unwrap();
-    let mut share_obj = std::mem::MaybeUninit::uninit();
-    let share = sb.open(&mut share_obj).unwrap().load().unwrap();
-
+    let maps = crate::tests::init_shared_maps_for_test(&share_pin);
     let mut nat_b = XdpNatSkelBuilder::default();
     nat_b.object_builder_mut().pin_root_path(&share_pin).unwrap();
     let mut nat_obj = std::mem::MaybeUninit::uninit();
@@ -562,7 +541,7 @@ fn xdp_nat_firewall_pipeline() {
         .unwrap();
 
     write_static_mapping_v4(
-        &share.maps.nat4_static_map,
+        &maps.nat4_static_map,
         1,
         6,
         80,
@@ -571,7 +550,7 @@ fn xdp_nat_firewall_pipeline() {
         8080,
     );
     write_static_mapping_v4(
-        &share.maps.nat4_static_map,
+        &maps.nat4_static_map,
         0,
         6,
         8080,
@@ -584,13 +563,13 @@ fn xdp_nat_firewall_pipeline() {
     wan_key[0..4].copy_from_slice(&nat_h_i.to_ne_bytes());
     let mut wan_val = [0u8; 48];
     wan_val[0..4].copy_from_slice(&[203, 0, 113, 1]);
-    share.maps.wan_ip_binding.update(&wan_key, &wan_val, MapFlags::ANY).unwrap();
+    maps.wan_ip_binding.update(&wan_key, &wan_val, MapFlags::ANY).unwrap();
 
     let pkt = build_tcp_pkt([192, 168, 1, 100], [10, 0, 0, 1], 80, 9999);
     send_raw_packet(nat_p, &pkt);
 
     assert_static_map_entry(
-        &share.maps.nat4_static_map,
+        &maps.nat4_static_map,
         1,
         6,
         80,
@@ -599,7 +578,7 @@ fn xdp_nat_firewall_pipeline() {
         8080,
     );
     assert_static_map_entry(
-        &share.maps.nat4_static_map,
+        &maps.nat4_static_map,
         0,
         6,
         8080,
@@ -617,7 +596,7 @@ fn xdp_nat_firewall_pipeline() {
     send_raw_packet(nat_p, &pkt);
 
     assert_static_map_entry(
-        &share.maps.nat4_static_map,
+        &maps.nat4_static_map,
         1,
         6,
         80,
@@ -626,7 +605,7 @@ fn xdp_nat_firewall_pipeline() {
         8080,
     );
     assert_static_map_entry(
-        &share.maps.nat4_static_map,
+        &maps.nat4_static_map,
         0,
         6,
         8080,
@@ -645,7 +624,7 @@ fn xdp_nat_firewall_pipeline() {
     drop(fw);
     drop(nat);
     drop(dummy);
-    drop(share);
+    drop(maps);
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -740,11 +719,7 @@ fn xdp_nat_fragment_v4() {
     let nat_h_i = pair.host_ifindex();
 
     let share_pin = crate::tests::isolated_pin_root("xdp-nat-frag4e");
-    let mut sb = ShareMapSkelBuilder::default();
-    sb.object_builder_mut().pin_root_path(&share_pin).unwrap();
-    let mut share_obj = std::mem::MaybeUninit::uninit();
-    let share = sb.open(&mut share_obj).unwrap().load().unwrap();
-
+    let maps = crate::tests::init_shared_maps_for_test(&share_pin);
     let mut nat_b = XdpNatSkelBuilder::default();
     nat_b.object_builder_mut().pin_root_path(&share_pin).unwrap();
     let mut nat_obj = std::mem::MaybeUninit::uninit();
@@ -758,7 +733,7 @@ fn xdp_nat_fragment_v4() {
     wan_key[0..4].copy_from_slice(&nat_h_i.to_ne_bytes());
     let mut wan_val = [0u8; 48];
     wan_val[0..4].copy_from_slice(&[203, 0, 113, 1]);
-    share.maps.wan_ip_binding.update(&wan_key, &wan_val, MapFlags::ANY).unwrap();
+    maps.wan_ip_binding.update(&wan_key, &wan_val, MapFlags::ANY).unwrap();
 
     let port_be = 0x2000u16.to_be_bytes();
     let tcp_queue_fd = nat.maps.nat4_tcp_port_queue.as_fd().as_raw_fd();
@@ -815,7 +790,7 @@ fn xdp_nat_fragment_v4() {
     );
 
     drop(nat);
-    drop(share);
+    drop(maps);
 }
 
 #[ignore = "requires root and veth pairs; run with --include-ignored"]
@@ -826,11 +801,7 @@ fn xdp_nat_v6_ingress() {
     let nat_h_i = pair.host_ifindex();
 
     let share_pin = crate::tests::isolated_pin_root("xdp-nat-nat6ie");
-    let mut sb = ShareMapSkelBuilder::default();
-    sb.object_builder_mut().pin_root_path(&share_pin).unwrap();
-    let mut share_obj = std::mem::MaybeUninit::uninit();
-    let share = sb.open(&mut share_obj).unwrap().load().unwrap();
-
+    let maps = crate::tests::init_shared_maps_for_test(&share_pin);
     let mut nat_b = XdpNatSkelBuilder::default();
     nat_b.object_builder_mut().pin_root_path(&share_pin).unwrap();
     let mut nat_obj = std::mem::MaybeUninit::uninit();
@@ -848,16 +819,16 @@ fn xdp_nat_v6_ingress() {
     wan_val[16..24].copy_from_slice(&[0xfd, 0x00, 0, 0, 0, 0, 0, 0]);
     wan_val[32] = 48;
     wan_val[40..48].copy_from_slice(&[0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0, 0]);
-    share.maps.wan_ip_binding.update(&wan_key, &wan_val, MapFlags::ANY).unwrap();
+    maps.wan_ip_binding.update(&wan_key, &wan_val, MapFlags::ANY).unwrap();
 
     let wan_src = [0x20, 0x01, 0x0d, 0xb8, 0x12, 0x34, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2];
     let wan_dst = [0x20, 0x01, 0x0d, 0xb8, 0x56, 0x78, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1];
     let pkt = build_tcp6_pkt(wan_src, wan_dst, 9999, 8080);
     send_raw_packet(nat_p, &pkt);
 
-    wait_wan_ip_binding(&share.maps.wan_ip_binding, nat_h_i, 1, "wan ip binding entry");
+    wait_wan_ip_binding(&maps.wan_ip_binding, nat_h_i, 1, "wan ip binding entry");
     assert_wan_ip_binding(
-        &share.maps.wan_ip_binding,
+        &maps.wan_ip_binding,
         nat_h_i,
         1,
         &[0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0],
@@ -867,7 +838,7 @@ fn xdp_nat_v6_ingress() {
     );
 
     drop(nat);
-    drop(share);
+    drop(maps);
 }
 
 #[ignore = "requires root and veth pairs; run with --include-ignored"]
@@ -879,11 +850,7 @@ fn xdp_nat_ct_dynamic_multi_pkt() {
     let nat_h_i = pair.host_ifindex();
 
     let share_pin = crate::tests::isolated_pin_root("xdp-nat-ctmulti");
-    let mut sb = ShareMapSkelBuilder::default();
-    sb.object_builder_mut().pin_root_path(&share_pin).unwrap();
-    let mut share_obj = std::mem::MaybeUninit::uninit();
-    let share = sb.open(&mut share_obj).unwrap().load().unwrap();
-
+    let maps = crate::tests::init_shared_maps_for_test(&share_pin);
     let mut nat_b = XdpNatSkelBuilder::default();
     nat_b.object_builder_mut().pin_root_path(&share_pin).unwrap();
     let mut nat_obj = std::mem::MaybeUninit::uninit();
@@ -897,7 +864,7 @@ fn xdp_nat_ct_dynamic_multi_pkt() {
     wan_key[0..4].copy_from_slice(&nat_h_i.to_ne_bytes());
     let mut wan_val = [0u8; 48];
     wan_val[0..4].copy_from_slice(&[203, 0, 113, 1]);
-    share.maps.wan_ip_binding.update(&wan_key, &wan_val, MapFlags::ANY).unwrap();
+    maps.wan_ip_binding.update(&wan_key, &wan_val, MapFlags::ANY).unwrap();
 
     let port_be = 0x3000u16.to_be_bytes();
     let tcp_queue_fd = nat.maps.nat4_tcp_port_queue.as_fd().as_raw_fd();
@@ -951,11 +918,11 @@ fn xdp_nat_ct_dynamic_multi_pkt() {
     );
 
     drop(nat);
-    drop(share);
+    drop(maps);
 }
 
 fn write_dyn_mapping_v4(
-    map: &libbpf_rs::MapMut,
+    map: &impl MapCore,
     gress: u8,
     l4proto: u8,
     from_port: u16,
@@ -977,7 +944,7 @@ fn write_dyn_mapping_v4(
 }
 
 fn write_egress_dyn_mapping_v4(
-    map: &libbpf_rs::MapMut,
+    map: &impl MapCore,
     gress: u8,
     l4proto: u8,
     from_port: u16,
@@ -1000,7 +967,7 @@ fn write_egress_dyn_mapping_v4(
 
 #[allow(clippy::too_many_arguments)]
 fn write_frag_cache_entry(
-    map: &libbpf_rs::MapMut,
+    map: &impl MapCore,
     l3proto: u8,
     l4proto: u8,
     frag_id: u32,
@@ -1034,11 +1001,7 @@ fn xdp_nat_fragment_ingress() {
     let nat_p_i = pair.peer_ifindex();
 
     let share_pin = crate::tests::isolated_pin_root("xdp-nat-fragin");
-    let mut sb = ShareMapSkelBuilder::default();
-    sb.object_builder_mut().pin_root_path(&share_pin).unwrap();
-    let mut share_obj = std::mem::MaybeUninit::uninit();
-    let share = sb.open(&mut share_obj).unwrap().load().unwrap();
-
+    let maps = crate::tests::init_shared_maps_for_test(&share_pin);
     let mut nat_b = XdpNatSkelBuilder::default();
     nat_b.object_builder_mut().pin_root_path(&share_pin).unwrap();
     let mut nat_obj = std::mem::MaybeUninit::uninit();
@@ -1057,7 +1020,7 @@ fn xdp_nat_fragment_ingress() {
     wan_key[0..4].copy_from_slice(&nat_h_i.to_ne_bytes());
     let mut wan_val = [0u8; 48];
     wan_val[0..4].copy_from_slice(&[203, 0, 113, 1]);
-    share.maps.wan_ip_binding.update(&wan_key, &wan_val, MapFlags::ANY).unwrap();
+    maps.wan_ip_binding.update(&wan_key, &wan_val, MapFlags::ANY).unwrap();
 
     write_egress_dyn_mapping_v4(
         &nat.maps.nat4_egress_dyn_map,
@@ -1134,7 +1097,7 @@ fn xdp_nat_fragment_ingress() {
 
     drop(nat);
     drop(dummy);
-    drop(share);
+    drop(maps);
 }
 
 fn build_udp_pkt(src_ip: [u8; 4], dst_ip: [u8; 4], src_port: u16, dst_port: u16) -> Vec<u8> {
@@ -1215,10 +1178,7 @@ fn xdp_nat_dynamic_ingress() {
     let nat_p_i = pair.peer_ifindex();
 
     let share_pin = crate::tests::isolated_pin_root("xdp-nat-nat4dyn_i");
-    let mut sb = ShareMapSkelBuilder::default();
-    sb.object_builder_mut().pin_root_path(&share_pin).unwrap();
-    let mut share_obj = std::mem::MaybeUninit::uninit();
-    let share = sb.open(&mut share_obj).unwrap().load().unwrap();
+    let maps = crate::tests::init_shared_maps_for_test(&share_pin);
     let mut nat_b = XdpNatSkelBuilder::default();
     nat_b.object_builder_mut().pin_root_path(&share_pin).unwrap();
     let mut nat_obj = std::mem::MaybeUninit::uninit();
@@ -1236,7 +1196,7 @@ fn xdp_nat_dynamic_ingress() {
     wan_key[0..4].copy_from_slice(&nat_h_i.to_ne_bytes());
     let mut wan_val = [0u8; 48];
     wan_val[0..4].copy_from_slice(&[203, 0, 113, 1]);
-    share.maps.wan_ip_binding.update(&wan_key, &wan_val, MapFlags::ANY).unwrap();
+    maps.wan_ip_binding.update(&wan_key, &wan_val, MapFlags::ANY).unwrap();
 
     write_egress_dyn_mapping_v4(
         &nat.maps.nat4_egress_dyn_map,
@@ -1297,7 +1257,7 @@ fn xdp_nat_dynamic_ingress() {
 
     drop(nat);
     drop(dummy);
-    drop(share);
+    drop(maps);
 }
 
 #[ignore = "requires root and veth pairs; run with --include-ignored"]
@@ -1309,10 +1269,7 @@ fn xdp_nat_udp_egress() {
     let nat_p_i = pair.peer_ifindex();
 
     let share_pin = crate::tests::isolated_pin_root("xdp-nat-udp_eg");
-    let mut sb = ShareMapSkelBuilder::default();
-    sb.object_builder_mut().pin_root_path(&share_pin).unwrap();
-    let mut share_obj = std::mem::MaybeUninit::uninit();
-    let share = sb.open(&mut share_obj).unwrap().load().unwrap();
+    let maps = crate::tests::init_shared_maps_for_test(&share_pin);
     let mut nat_b = XdpNatSkelBuilder::default();
     nat_b.object_builder_mut().pin_root_path(&share_pin).unwrap();
     let mut nat_obj = std::mem::MaybeUninit::uninit();
@@ -1330,7 +1287,7 @@ fn xdp_nat_udp_egress() {
     wan_key[0..4].copy_from_slice(&nat_h_i.to_ne_bytes());
     let mut wan_val = [0u8; 48];
     wan_val[0..4].copy_from_slice(&[203, 0, 113, 1]);
-    share.maps.wan_ip_binding.update(&wan_key, &wan_val, MapFlags::ANY).unwrap();
+    maps.wan_ip_binding.update(&wan_key, &wan_val, MapFlags::ANY).unwrap();
 
     let port_be = 0x5000u16.to_be_bytes();
     let udp_queue_fd = nat.maps.nat4_udp_port_queue.as_fd().as_raw_fd();
@@ -1385,7 +1342,7 @@ fn xdp_nat_udp_egress() {
 
     drop(nat);
     drop(dummy);
-    drop(share);
+    drop(maps);
 }
 
 #[ignore = "requires root and veth pairs; run with --include-ignored"]
@@ -1397,10 +1354,7 @@ fn xdp_nat_udp_ingress() {
     let nat_p_i = pair.peer_ifindex();
 
     let share_pin = crate::tests::isolated_pin_root("xdp-nat-udp_in");
-    let mut sb = ShareMapSkelBuilder::default();
-    sb.object_builder_mut().pin_root_path(&share_pin).unwrap();
-    let mut share_obj = std::mem::MaybeUninit::uninit();
-    let share = sb.open(&mut share_obj).unwrap().load().unwrap();
+    let maps = crate::tests::init_shared_maps_for_test(&share_pin);
     let mut nat_b = XdpNatSkelBuilder::default();
     nat_b.object_builder_mut().pin_root_path(&share_pin).unwrap();
     let mut nat_obj = std::mem::MaybeUninit::uninit();
@@ -1418,7 +1372,7 @@ fn xdp_nat_udp_ingress() {
     wan_key[0..4].copy_from_slice(&nat_h_i.to_ne_bytes());
     let mut wan_val = [0u8; 48];
     wan_val[0..4].copy_from_slice(&[203, 0, 113, 1]);
-    share.maps.wan_ip_binding.update(&wan_key, &wan_val, MapFlags::ANY).unwrap();
+    maps.wan_ip_binding.update(&wan_key, &wan_val, MapFlags::ANY).unwrap();
 
     write_egress_dyn_mapping_v4(
         &nat.maps.nat4_egress_dyn_map,
@@ -1479,7 +1433,7 @@ fn xdp_nat_udp_ingress() {
 
     drop(nat);
     drop(dummy);
-    drop(share);
+    drop(maps);
 }
 
 #[ignore = "requires root and veth pairs; run with --include-ignored"]
@@ -1492,10 +1446,7 @@ fn xdp_nat_fragment_middle() {
     let nat_p_i = pair.peer_ifindex();
 
     let share_pin = crate::tests::isolated_pin_root("xdp-nat-fragmid");
-    let mut sb = ShareMapSkelBuilder::default();
-    sb.object_builder_mut().pin_root_path(&share_pin).unwrap();
-    let mut share_obj = std::mem::MaybeUninit::uninit();
-    let share = sb.open(&mut share_obj).unwrap().load().unwrap();
+    let maps = crate::tests::init_shared_maps_for_test(&share_pin);
     let mut nat_b = XdpNatSkelBuilder::default();
     nat_b.object_builder_mut().pin_root_path(&share_pin).unwrap();
     let mut nat_obj = std::mem::MaybeUninit::uninit();
@@ -1513,7 +1464,7 @@ fn xdp_nat_fragment_middle() {
     wan_key[0..4].copy_from_slice(&nat_h_i.to_ne_bytes());
     let mut wan_val = [0u8; 48];
     wan_val[0..4].copy_from_slice(&[203, 0, 113, 1]);
-    share.maps.wan_ip_binding.update(&wan_key, &wan_val, MapFlags::ANY).unwrap();
+    maps.wan_ip_binding.update(&wan_key, &wan_val, MapFlags::ANY).unwrap();
 
     let frag_id = (pid & 0xffff) as u16;
 
@@ -1533,7 +1484,7 @@ fn xdp_nat_fragment_middle() {
 
     drop(nat);
     drop(dummy);
-    drop(share);
+    drop(maps);
 }
 
 #[ignore = "requires root and veth pairs; run with --include-ignored"]
@@ -1544,10 +1495,7 @@ fn xdp_nat_icmp_error_egress() {
     let nat_h_i = pair.host_ifindex();
 
     let share_pin = crate::tests::isolated_pin_root("xdp-nat-icmperr");
-    let mut sb = ShareMapSkelBuilder::default();
-    sb.object_builder_mut().pin_root_path(&share_pin).unwrap();
-    let mut share_obj = std::mem::MaybeUninit::uninit();
-    let share = sb.open(&mut share_obj).unwrap().load().unwrap();
+    let maps = crate::tests::init_shared_maps_for_test(&share_pin);
     let mut nat_b = XdpNatSkelBuilder::default();
     nat_b.object_builder_mut().pin_root_path(&share_pin).unwrap();
     let mut nat_obj = std::mem::MaybeUninit::uninit();
@@ -1557,7 +1505,7 @@ fn xdp_nat_icmp_error_egress() {
     let _l0 = nat.progs.egress_nat.attach_xdp(nat_h_i as i32).unwrap();
 
     write_static_mapping_v4(
-        &share.maps.nat4_static_map,
+        &maps.nat4_static_map,
         1,
         1,
         0,
@@ -1566,7 +1514,7 @@ fn xdp_nat_icmp_error_egress() {
         0,
     );
     write_static_mapping_v4(
-        &share.maps.nat4_static_map,
+        &maps.nat4_static_map,
         0,
         1,
         0,
@@ -1579,7 +1527,7 @@ fn xdp_nat_icmp_error_egress() {
     wan_key[0..4].copy_from_slice(&nat_h_i.to_ne_bytes());
     let mut wan_val = [0u8; 48];
     wan_val[0..4].copy_from_slice(&[203, 0, 113, 1]);
-    share.maps.wan_ip_binding.update(&wan_key, &wan_val, MapFlags::ANY).unwrap();
+    maps.wan_ip_binding.update(&wan_key, &wan_val, MapFlags::ANY).unwrap();
 
     let pkt = build_icmp_error_pkt(
         [192, 168, 1, 200],
@@ -1594,7 +1542,7 @@ fn xdp_nat_icmp_error_egress() {
     send_raw_packet(nat_p, &pkt);
 
     assert_static_map_entry(
-        &share.maps.nat4_static_map,
+        &maps.nat4_static_map,
         1,
         1,
         0,
@@ -1603,7 +1551,7 @@ fn xdp_nat_icmp_error_egress() {
         0,
     );
     assert_static_map_entry(
-        &share.maps.nat4_static_map,
+        &maps.nat4_static_map,
         0,
         1,
         0,
@@ -1613,7 +1561,7 @@ fn xdp_nat_icmp_error_egress() {
     );
 
     drop(nat);
-    drop(share);
+    drop(maps);
 }
 
 #[ignore = "requires root and veth pairs; run with --include-ignored"]
@@ -1624,10 +1572,7 @@ fn xdp_nat_static_ingress_mark() {
     let nat_h_i = pair.host_ifindex();
 
     let share_pin = crate::tests::isolated_pin_root("xdp-nat-nat4mark");
-    let mut sb = ShareMapSkelBuilder::default();
-    sb.object_builder_mut().pin_root_path(&share_pin).unwrap();
-    let mut share_obj = std::mem::MaybeUninit::uninit();
-    let share = sb.open(&mut share_obj).unwrap().load().unwrap();
+    let maps = crate::tests::init_shared_maps_for_test(&share_pin);
     let mut nat_b = XdpNatSkelBuilder::default();
     nat_b.object_builder_mut().pin_root_path(&share_pin).unwrap();
     let mut nat_obj = std::mem::MaybeUninit::uninit();
@@ -1637,7 +1582,7 @@ fn xdp_nat_static_ingress_mark() {
     let _l0 = nat.progs.ingress_nat.attach_xdp(nat_h_i as i32).unwrap();
 
     write_static_mapping_v4(
-        &share.maps.nat4_static_map,
+        &maps.nat4_static_map,
         0,
         6,
         8080,
@@ -1650,7 +1595,7 @@ fn xdp_nat_static_ingress_mark() {
     send_raw_packet(nat_p, &pkt);
 
     assert_static_map_entry(
-        &share.maps.nat4_static_map,
+        &maps.nat4_static_map,
         0,
         6,
         8080,
@@ -1660,7 +1605,7 @@ fn xdp_nat_static_ingress_mark() {
     );
 
     drop(nat);
-    drop(share);
+    drop(maps);
 }
 
 #[ignore = "requires root and veth pairs; run with --include-ignored"]
@@ -1673,11 +1618,7 @@ fn xdp_nat_chain_pipeline() {
     let nat_p_i = pair.peer_ifindex();
 
     let share_pin = crate::tests::isolated_pin_root("xdp-nat-chain_pipe");
-    let mut sb = ShareMapSkelBuilder::default();
-    sb.object_builder_mut().pin_root_path(&share_pin).unwrap();
-    let mut share_obj = std::mem::MaybeUninit::uninit();
-    let share = sb.open(&mut share_obj).unwrap().load().unwrap();
-
+    let maps = crate::tests::init_shared_maps_for_test(&share_pin);
     let chain_b = XdpLanChainSkelBuilder::default();
     let mut chain_obj = std::mem::MaybeUninit::uninit();
     let chain = chain_b.open(&mut chain_obj).unwrap().load().unwrap();
@@ -1722,10 +1663,10 @@ fn xdp_nat_chain_pipeline() {
     wan_key[0..4].copy_from_slice(&nat_h_i.to_ne_bytes());
     let mut wan_val = [0u8; 48];
     wan_val[0..4].copy_from_slice(&[203, 0, 113, 1]);
-    share.maps.wan_ip_binding.update(&wan_key, &wan_val, MapFlags::ANY).unwrap();
+    maps.wan_ip_binding.update(&wan_key, &wan_val, MapFlags::ANY).unwrap();
 
     write_static_mapping_v4(
-        &share.maps.nat4_static_map,
+        &maps.nat4_static_map,
         1,
         6,
         80,
@@ -1734,7 +1675,7 @@ fn xdp_nat_chain_pipeline() {
         8080,
     );
     write_static_mapping_v4(
-        &share.maps.nat4_static_map,
+        &maps.nat4_static_map,
         0,
         6,
         8080,
@@ -1747,7 +1688,7 @@ fn xdp_nat_chain_pipeline() {
     send_raw_packet(nat_p, &pkt);
 
     assert_static_map_entry(
-        &share.maps.nat4_static_map,
+        &maps.nat4_static_map,
         1,
         6,
         80,
@@ -1756,7 +1697,7 @@ fn xdp_nat_chain_pipeline() {
         8080,
     );
     assert_static_map_entry(
-        &share.maps.nat4_static_map,
+        &maps.nat4_static_map,
         0,
         6,
         8080,
@@ -1774,7 +1715,7 @@ fn xdp_nat_chain_pipeline() {
     send_raw_packet(nat_p, &pkt);
 
     assert_static_map_entry(
-        &share.maps.nat4_static_map,
+        &maps.nat4_static_map,
         1,
         6,
         80,
@@ -1783,7 +1724,7 @@ fn xdp_nat_chain_pipeline() {
         8080,
     );
     assert_static_map_entry(
-        &share.maps.nat4_static_map,
+        &maps.nat4_static_map,
         0,
         6,
         8080,
@@ -1803,5 +1744,5 @@ fn xdp_nat_chain_pipeline() {
     drop(nat);
     drop(dummy);
     drop(chain);
-    drop(share);
+    drop(maps);
 }

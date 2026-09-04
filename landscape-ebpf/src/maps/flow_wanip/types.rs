@@ -36,7 +36,7 @@ pub(crate) struct FlowIpTrieValueV6 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::maps::share_map::types as share;
+    use crate::chain::xdp_wan_route::xdp_wan_route_skel::types as share;
 
     #[test]
     fn flow_ip_trie_layouts_match_skel() {

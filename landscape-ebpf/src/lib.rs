@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use landscape_common::args::LAND_ARGS;
 use once_cell::sync::Lazy;
@@ -29,50 +29,7 @@ static MAP_PATHS: Lazy<LandscapeMapPath> = Lazy::new(|| {
             panic!("can not create bpf map path: {ebpf_map_path:?}, err: {e:?}");
         }
     }
-    let paths = LandscapeMapPath {
-        wan_ip: PathBuf::from(format!("{}/wan_ip_binding", ebpf_map_path)),
-        nat6_static_map: PathBuf::from(format!("{}/nat6_static_map", ebpf_map_path)),
-        nat4_static_map: PathBuf::from(format!("{}/nat4_static_map", ebpf_map_path)),
-
-        firewall_ipv4_block: PathBuf::from(format!("{}/firewall_block_ip4_map", ebpf_map_path)),
-        firewall_ipv6_block: PathBuf::from(format!("{}/firewall_block_ip6_map", ebpf_map_path)),
-        // DNS
-        dns_flow_socks: PathBuf::from(format!("{}/dns_flow_socks", ebpf_map_path)),
-        // metric
-        metric_map: PathBuf::from(format!("{}/metric_map", ebpf_map_path)),
-
-        // nat_conn_events: PathBuf::from(format!("{}/nat_conn_events", ebpf_map_path)),
-        nat_metric_events: PathBuf::from(format!("{}/nat_metric_events", ebpf_map_path)),
-
-        // firewall_conn_events: PathBuf::from(format!("{}/firewall_conn_events", ebpf_map_path)),
-        firewall_conn_metric_events: PathBuf::from(format!(
-            "{}/firewall_conn_metric_events",
-            ebpf_map_path
-        )),
-
-        flow_match_map: PathBuf::from(format!("{}/flow_match_map", ebpf_map_path)),
-        // route
-        // v4 version map path
-        rt4_lan_map: PathBuf::from(format!("{}/rt4_lan_map", ebpf_map_path)),
-        rt4_target_slot_map: PathBuf::from(format!("{}/rt4_target_slot_map", ebpf_map_path)),
-        flow4_dns_map: PathBuf::from(format!("{}/flow4_dns_map", ebpf_map_path)),
-        flow4_ip_map: PathBuf::from(format!("{}/flow4_ip_map", ebpf_map_path)),
-
-        rt6_lan_map: PathBuf::from(format!("{}/rt6_lan_map", ebpf_map_path)),
-        rt6_target_slot_map: PathBuf::from(format!("{}/rt6_target_slot_map", ebpf_map_path)),
-        flow6_dns_map: PathBuf::from(format!("{}/flow6_dns_map", ebpf_map_path)),
-        flow6_ip_map: PathBuf::from(format!("{}/flow6_ip_map", ebpf_map_path)),
-
-        rt4_cache_map: PathBuf::from(format!("{}/rt4_cache_map", ebpf_map_path)),
-        rt6_cache_map: PathBuf::from(format!("{}/rt6_cache_map", ebpf_map_path)),
-
-        ip_mac_v4: PathBuf::from(format!("{}/ip_mac_v4", ebpf_map_path)),
-        ip_mac_v6: PathBuf::from(format!("{}/ip_mac_v6", ebpf_map_path)),
-        ip6_dao_events: PathBuf::from(format!("{}/ip6_dao_events", ebpf_map_path)),
-
-        xdp_redirect_able: PathBuf::from(format!("{}/xdp_redirect_able", ebpf_map_path)),
-        xdp_base: PathBuf::from(format!("{}/xdp", ebpf_map_path)),
-    };
+    let paths = LandscapeMapPath::from_root(Path::new(&ebpf_map_path));
     tracing::info!("ebpf map paths is: {paths:#?}");
     maps::init_path(&paths);
     paths
@@ -95,8 +52,6 @@ pub(crate) struct LandscapeMapPath {
     /// DNS Socket fd <=> Flow ID
     pub dns_flow_socks: PathBuf,
 
-    /// metric
-    pub metric_map: PathBuf,
     pub nat_metric_events: PathBuf,
     pub firewall_conn_metric_events: PathBuf,
 
@@ -123,6 +78,63 @@ pub(crate) struct LandscapeMapPath {
 
     pub xdp_redirect_able: PathBuf,
     pub xdp_base: PathBuf,
+}
+
+impl LandscapeMapPath {
+    /// Build every shared-map pin path under `root`.
+    ///
+    /// Pin file names are the per-domain `*_PIN` constants, which are also
+    /// referenced by the corresponding `MapCreateSpec.name`, so production
+    /// paths, skeleton pin reuse and tests all share one source of truth.
+    pub(crate) fn from_root(root: &Path) -> Self {
+        use crate::maps::{
+            dns, firewall, flow, flow_dns, flow_wanip, mac, nat, redirect_able, route, wan,
+        };
+
+        Self {
+            wan_ip: root.join(wan::WAN_IP_BINDING_PIN),
+            // NAT
+            nat6_static_map: root.join(nat::NAT6_STATIC_MAP_PIN),
+            nat4_static_map: root.join(nat::NAT4_STATIC_MAP_PIN),
+
+            // 防火墙黑名单
+            firewall_ipv4_block: root.join(firewall::FIREWALL_BLOCK_IP4_MAP_PIN),
+            firewall_ipv6_block: root.join(firewall::FIREWALL_BLOCK_IP6_MAP_PIN),
+
+            // Flow
+            flow_match_map: root.join(flow::FLOW_MATCH_MAP_PIN),
+
+            // DNS Socket fd <=> Flow ID
+            dns_flow_socks: root.join(dns::DNS_FLOW_SOCKS_PIN),
+
+            nat_metric_events: root.join(nat::NAT_METRIC_EVENTS_PIN),
+            firewall_conn_metric_events: root.join(firewall::FIREWALL_CONN_METRIC_EVENTS_PIN),
+
+            // route - LAN
+            rt4_lan_map: root.join(route::RT4_LAN_MAP_PIN),
+            rt4_target_slot_map: root.join(route::RT4_TARGET_SLOT_MAP_PIN),
+            flow4_dns_map: root.join(flow_dns::FLOW4_DNS_MAP_PIN),
+            flow4_ip_map: root.join(flow_wanip::FLOW4_IP_MAP_PIN),
+
+            rt6_lan_map: root.join(route::RT6_LAN_MAP_PIN),
+            rt6_target_slot_map: root.join(route::RT6_TARGET_SLOT_MAP_PIN),
+            flow6_dns_map: root.join(flow_dns::FLOW6_DNS_MAP_PIN),
+            flow6_ip_map: root.join(flow_wanip::FLOW6_IP_MAP_PIN),
+
+            rt4_cache_map: root.join(route::RT4_CACHE_MAP_PIN),
+            rt6_cache_map: root.join(route::RT6_CACHE_MAP_PIN),
+
+            // IP MAC
+            ip_mac_v4: root.join(mac::IP_MAC_V4_PIN),
+            ip_mac_v6: root.join(mac::IP_MAC_V6_PIN),
+
+            // DAD NS learning ringbuf
+            ip6_dao_events: root.join(mac::IP6_DAO_EVENTS_PIN),
+
+            xdp_redirect_able: root.join(redirect_able::XDP_REDIRECT_ABLE_PIN),
+            xdp_base: root.join("xdp"),
+        }
+    }
 }
 
 // Fire wall -> nat -> pppoe

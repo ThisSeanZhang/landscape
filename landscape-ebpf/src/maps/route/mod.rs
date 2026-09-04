@@ -8,11 +8,13 @@
 //! * `cache.rs` — verdict cache inner-map lifecycle
 
 pub mod cache;
+mod init;
 mod lan;
 mod trace;
 pub(crate) mod types;
 mod wan;
 
+pub use init::*;
 pub use lan::*;
 pub use trace::*;
 pub use wan::*;

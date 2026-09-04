@@ -11,7 +11,7 @@ mod tc_lan_ingress_intro_skel {
 }
 use tc_lan_ingress_intro_skel::{TcLanIngressIntroSkel, TcLanIngressIntroSkelBuilder};
 
-mod tc_lan_dao_skel {
+pub(crate) mod tc_lan_dao_skel {
     include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/tc_lan_dao.skel.rs"));
 }
 use tc_lan_dao_skel::TcLanDaoSkelBuilder;
