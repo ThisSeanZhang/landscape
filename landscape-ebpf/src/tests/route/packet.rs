@@ -11,14 +11,14 @@ use libbpf_rs::{
 use crate::tests::{
     route::package::{simple_ipv4_tcp, simple_ipv4_udp, simple_ipv6_tcp_syn, simple_ipv6_udp},
     scanner::package::{build_ipv6_frag_eth, build_ipv6_frag_nonfirst_eth},
-    test_route_packet::{types::route_packet_test_result, TestRoutePacketSkelBuilder},
+    test_route_packet::TestRoutePacketSkelBuilder,
+    wire::RoutePacketTestResult,
 };
-
-unsafe impl plain::Plain for route_packet_test_result {}
+use zerocopy::FromBytes;
 
 const MAP_KEY: u32 = 0;
 
-fn run_route_packet_test(payload: Vec<u8>) -> route_packet_test_result {
+fn run_route_packet_test(payload: Vec<u8>) -> RoutePacketTestResult {
     let builder = TestRoutePacketSkelBuilder::default();
     let mut open_object = MaybeUninit::uninit();
     let open = builder.open(&mut open_object).unwrap();
@@ -35,11 +35,7 @@ fn run_route_packet_test(payload: Vec<u8>) -> route_packet_test_result {
         .lookup(&MAP_KEY.to_le_bytes(), MapFlags::ANY)
         .unwrap()
         .unwrap();
-    *plain::from_bytes::<route_packet_test_result>(&result).unwrap()
-}
-
-fn ipv6_bytes(addr: &crate::tests::test_route_packet::types::u_inet6_addr) -> [u8; 16] {
-    unsafe { addr.bytes }
+    RoutePacketTestResult::read_from_bytes(&result).unwrap()
 }
 
 #[cfg(test)]
@@ -103,8 +99,8 @@ mod tests {
         let result = run_route_packet_test(simple_ipv6_tcp_syn(src, dst));
         assert_eq!(result.forward_ret, TC_ACT_OK);
         assert_eq!(result.offset.l3_protocol, LANDSCAPE_IPV6_TYPE);
-        assert_eq!(Ipv6Addr::from(ipv6_bytes(&result.v6.saddr)), src);
-        assert_eq!(Ipv6Addr::from(ipv6_bytes(&result.v6.daddr)), dst);
+        assert_eq!(Ipv6Addr::from(result.v6.saddr), src);
+        assert_eq!(Ipv6Addr::from(result.v6.daddr), dst);
     }
 
     #[test]
@@ -113,8 +109,8 @@ mod tests {
         let dst = Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 20);
         let result = run_route_packet_test(simple_ipv6_udp(src, dst));
         assert_eq!(result.forward_ret, TC_ACT_OK);
-        assert_eq!(Ipv6Addr::from(ipv6_bytes(&result.v6.saddr)), src);
-        assert_eq!(Ipv6Addr::from(ipv6_bytes(&result.v6.daddr)), dst);
+        assert_eq!(Ipv6Addr::from(result.v6.saddr), src);
+        assert_eq!(Ipv6Addr::from(result.v6.daddr), dst);
     }
 
     #[test]

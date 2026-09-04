@@ -2,12 +2,11 @@ use std::os::fd::{AsFd, AsRawFd};
 
 use landscape_common::flow::ip_mark::IpMarkInfo;
 use libbpf_rs::{libbpf_sys, MapCore, MapFlags, MapHandle, MapType};
+use zerocopy::IntoBytes;
 
 use crate::{
     bpf_error::LdEbpfResult,
-    map_setting::share_map::types::{
-        flow_ip_trie_key_v4, flow_ip_trie_key_v6, flow_ip_trie_value_v4, flow_ip_trie_value_v6,
-    },
+    map_types::{FlowIpTrieKeyV4, FlowIpTrieKeyV6, FlowIpTrieValueV4, FlowIpTrieValueV6},
     MAP_PATHS,
 };
 
@@ -29,8 +28,8 @@ where
         ..Default::default()
     };
 
-    let key_size = size_of::<flow_ip_trie_key_v4>() as u32;
-    let value_size = size_of::<flow_ip_trie_value_v4>() as u32;
+    let key_size = size_of::<FlowIpTrieKeyV4>() as u32;
+    let value_size = size_of::<FlowIpTrieValueV4>() as u32;
 
     let map = MapHandle::create(
         MapType::LpmTrie,
@@ -45,10 +44,8 @@ where
 
     let map_fd = map.as_fd().as_raw_fd();
 
-    let key = flow_id;
-    let key_value = unsafe { plain::as_bytes(&key) };
-
-    let value_value = unsafe { plain::as_bytes(&map_fd) };
+    let key_value = flow_id.as_bytes();
+    let value_value = map_fd.as_bytes();
 
     outer_map.update(key_value, value_value, MapFlags::ANY)?;
     Ok(())
@@ -74,16 +71,16 @@ where
         };
 
         let mark: u32 = (*mark).into();
-        let mut value = flow_ip_trie_value_v4::default();
+        let mut value = FlowIpTrieValueV4::default();
         value.mark = mark;
         value.priority = *priority;
 
-        let mut key = flow_ip_trie_key_v4::default();
+        let mut key = FlowIpTrieKeyV4::default();
         key.addr = ipv4_addr.to_bits().to_be();
         key.prefixlen = cidr.prefix;
 
-        keys.extend_from_slice(unsafe { plain::as_bytes(&key) });
-        values.extend_from_slice(unsafe { plain::as_bytes(&value) });
+        keys.extend_from_slice(key.as_bytes());
+        values.extend_from_slice(value.as_bytes());
         count += 1;
     }
 
@@ -115,8 +112,8 @@ where
         ..Default::default()
     };
 
-    let key_size = size_of::<flow_ip_trie_key_v6>() as u32;
-    let value_size = size_of::<flow_ip_trie_value_v6>() as u32;
+    let key_size = size_of::<FlowIpTrieKeyV6>() as u32;
+    let value_size = size_of::<FlowIpTrieValueV6>() as u32;
 
     let map = MapHandle::create(
         MapType::LpmTrie,
@@ -131,10 +128,8 @@ where
 
     let map_fd = map.as_fd().as_raw_fd();
 
-    let key = flow_id;
-    let key_value = unsafe { plain::as_bytes(&key) };
-
-    let value_value = unsafe { plain::as_bytes(&map_fd) };
+    let key_value = flow_id.as_bytes();
+    let value_value = map_fd.as_bytes();
 
     outer_map.update(key_value, value_value, MapFlags::ANY)?;
     Ok(())
@@ -160,16 +155,16 @@ where
         };
 
         let mark: u32 = (*mark).into();
-        let mut value = flow_ip_trie_value_v6::default();
+        let mut value = FlowIpTrieValueV6::default();
         value.mark = mark;
         value.priority = *priority;
 
-        let mut key = flow_ip_trie_key_v6::default();
-        key.addr.bytes = ipv6_addr.to_bits().to_be_bytes();
+        let mut key = FlowIpTrieKeyV6::default();
+        key.addr.copy_from_slice(&ipv6_addr.to_bits().to_be_bytes());
         key.prefixlen = cidr.prefix;
 
-        keys.extend_from_slice(unsafe { plain::as_bytes(&key) });
-        values.extend_from_slice(unsafe { plain::as_bytes(&value) });
+        keys.extend_from_slice(key.as_bytes());
+        values.extend_from_slice(value.as_bytes());
         count += 1;
     }
 

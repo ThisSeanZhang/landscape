@@ -10,11 +10,12 @@ use libbpf_rs::{
     skel::{OpenSkel, SkelBuilder as _},
     MapCore, MapFlags, ProgramInput,
 };
-use zerocopy::IntoBytes;
+use zerocopy::{FromBytes, IntoBytes};
 
 use crate::{
     map_setting::add_wan_ip,
-    stages::nat::tc_nat_skel::{types, TcNatSkelBuilder},
+    map_types::{Nat6TimerKey, Nat6TimerValue},
+    stages::nat::tc_nat_skel::TcNatSkelBuilder,
     tests::TestSkb,
 };
 
@@ -60,12 +61,12 @@ fn npt_id_mask(prefix_len: u8) -> u8 {
     }
 }
 
-fn timer_key_for(src: Ipv6Addr, client_port: u16, prefix_len: u8) -> types::nat6_timer_key {
+fn timer_key_for(src: Ipv6Addr, client_port: u16, prefix_len: u8) -> Nat6TimerKey {
     let bytes = src.octets();
     let mut client_suffix = [0u8; 8];
     client_suffix.copy_from_slice(&bytes[8..]);
 
-    types::nat6_timer_key {
+    Nat6TimerKey {
         client_suffix,
         client_port: client_port.to_be(),
         id_byte: bytes[7] & npt_id_mask(prefix_len),
@@ -75,43 +76,40 @@ fn timer_key_for(src: Ipv6Addr, client_port: u16, prefix_len: u8) -> types::nat6
 
 fn add_ct6_entry<T: MapCore>(
     timer_map: &T,
-    key: &types::nat6_timer_key,
+    key: &Nat6TimerKey,
     src: Ipv6Addr,
     trigger_addr: Ipv6Addr,
     trigger_port: u16,
 ) {
-    let mut value = types::nat6_timer_value {
+    let mut value = Nat6TimerValue {
         server_status: 1,
         client_status: 1,
         is_allow_reuse: 1,
         need_prefix_replace: 1,
         ..Default::default()
     };
-    value.trigger_addr = types::u_inet6_addr { bytes: trigger_addr.octets() };
+    value.trigger_addr = trigger_addr.octets();
     value.trigger_port = trigger_port.to_be();
     value.client_prefix.copy_from_slice(&src.octets()[..8]);
 
     timer_map
-        .update(unsafe { plain::as_bytes(key) }, unsafe { plain::as_bytes(&value) }, MapFlags::ANY)
+        .update(key.as_bytes(), value.as_bytes(), MapFlags::ANY)
         .expect("failed to insert v3 v6 ct entry");
 }
 
-fn lookup_ct6_entry<T: MapCore>(
-    timer_map: &T,
-    key: &types::nat6_timer_key,
-) -> types::nat6_timer_value {
+fn lookup_ct6_entry<T: MapCore>(timer_map: &T, key: &Nat6TimerKey) -> Nat6TimerValue {
     let bytes = timer_map
-        .lookup(unsafe { plain::as_bytes(key) }, MapFlags::ANY)
+        .lookup(key.as_bytes(), MapFlags::ANY)
         .expect("lookup ct entry")
         .expect("missing ct entry");
-    unsafe { std::ptr::read_unaligned(bytes.as_ptr().cast::<types::nat6_timer_value>()) }
+    Nat6TimerValue::read_from_bytes(&bytes).unwrap()
 }
 
-fn set_ct6_status<T: MapCore>(timer_map: &T, key: &types::nat6_timer_key, status: u64) {
+fn set_ct6_status<T: MapCore>(timer_map: &T, key: &Nat6TimerKey, status: u64) {
     let mut value = lookup_ct6_entry(timer_map, key);
     value.status = status;
     timer_map
-        .update(unsafe { plain::as_bytes(key) }, unsafe { plain::as_bytes(&value) }, MapFlags::ANY)
+        .update(key.as_bytes(), value.as_bytes(), MapFlags::ANY)
         .expect("failed to update v6 ct status");
 }
 
@@ -219,11 +217,7 @@ fn assert_prefix_refresh(old_src: Ipv6Addr, new_src: Ipv6Addr, prefix_len: u8) {
 
     let old_key = timer_key_for(old_src, CLIENT_PORT, prefix_len);
     let new_key = timer_key_for(new_src, CLIENT_PORT, prefix_len);
-    assert_eq!(
-        unsafe { plain::as_bytes(&old_key) },
-        unsafe { plain::as_bytes(&new_key) },
-        "test setup must keep the same dynamic NAT key",
-    );
+    assert_eq!(old_key, new_key, "test setup must keep the same dynamic NAT key",);
 
     let mut builder = TcNatSkelBuilder::default();
     let pin_root = crate::tests::isolated_pin_root("nat-v6-dynamic-v3");
@@ -262,7 +256,7 @@ fn assert_prefix_refresh(old_src: Ipv6Addr, new_src: Ipv6Addr, prefix_len: u8) {
         "existing CT should refresh stored client prefix when delegated prefix changes",
     );
     assert_eq!(
-        unsafe { value.trigger_addr.bytes },
+        value.trigger_addr,
         old_remote.octets(),
         "trigger_addr should NOT be overwritten on cache update — set at CT creation only",
     );
@@ -346,28 +340,24 @@ mod tests {
 
     fn add_ct6_icmp_entry<T: MapCore>(
         timer_map: &T,
-        key: &types::nat6_timer_key,
+        key: &Nat6TimerKey,
         src: Ipv6Addr,
         trigger_addr: Ipv6Addr,
         trigger_port: u16,
     ) {
-        let mut value = types::nat6_timer_value {
+        let mut value = Nat6TimerValue {
             server_status: 1,
             client_status: 1,
             is_allow_reuse: 1,
             need_prefix_replace: 1,
             ..Default::default()
         };
-        value.trigger_addr = types::u_inet6_addr { bytes: trigger_addr.octets() };
+        value.trigger_addr = trigger_addr.octets();
         value.trigger_port = trigger_port.to_be();
         value.client_prefix.copy_from_slice(&src.octets()[..8]);
 
         timer_map
-            .update(
-                unsafe { plain::as_bytes(key) },
-                unsafe { plain::as_bytes(&value) },
-                MapFlags::ANY,
-            )
+            .update(key.as_bytes(), value.as_bytes(), MapFlags::ANY)
             .expect("failed to insert v3 v6 ct entry");
     }
 
@@ -536,11 +526,7 @@ mod tests {
 
         let key = timer_key_for(old_src, CLIENT_PORT, prefix_len);
         let new_key = timer_key_for(new_src, CLIENT_PORT, prefix_len);
-        assert_eq!(
-            unsafe { plain::as_bytes(&key) },
-            unsafe { plain::as_bytes(&new_key) },
-            "test setup must keep the same dynamic NAT key",
-        );
+        assert_eq!(key, new_key, "test setup must keep the same dynamic NAT key",);
 
         let mut builder = TcNatSkelBuilder::default();
         let pin_root = crate::tests::isolated_pin_root("nat-v6-dynamic-v3");
@@ -558,23 +544,19 @@ mod tests {
             Some(MacAddr::broadcast()),
         );
 
-        let mut value = types::nat6_timer_value {
+        let mut value = Nat6TimerValue {
             server_status: 1,
             client_status: 1,
             is_allow_reuse: 0,
             need_prefix_replace: 1,
             ..Default::default()
         };
-        value.trigger_addr = types::u_inet6_addr { bytes: remote.octets() };
+        value.trigger_addr = remote.octets();
         value.trigger_port = 80u16.to_be();
         value.client_prefix.copy_from_slice(&old_src.octets()[..8]);
         skel.maps
             .nat6_timer_map
-            .update(
-                unsafe { plain::as_bytes(&key) },
-                unsafe { plain::as_bytes(&value) },
-                MapFlags::ANY,
-            )
+            .update(key.as_bytes(), value.as_bytes(), MapFlags::ANY)
             .expect("failed to insert v3 v6 ct entry");
 
         let pkt = build_ipv6_tcp(new_src, remote, CLIENT_PORT, 80);
@@ -597,7 +579,7 @@ mod tests {
             "is_allow_reuse should update from skb->mark when ancestor matches"
         );
         assert_eq!(
-            unsafe { ct_value.trigger_addr.bytes },
+            ct_value.trigger_addr,
             remote.octets(),
             "trigger_addr should NOT be overwritten on cache update"
         );
@@ -619,11 +601,7 @@ mod tests {
 
         let key = timer_key_for(old_src, CLIENT_PORT, prefix_len);
         let new_key = timer_key_for(new_src, CLIENT_PORT, prefix_len);
-        assert_eq!(
-            unsafe { plain::as_bytes(&key) },
-            unsafe { plain::as_bytes(&new_key) },
-            "test setup must keep the same dynamic NAT key",
-        );
+        assert_eq!(key, new_key, "test setup must keep the same dynamic NAT key",);
 
         let mut builder = TcNatSkelBuilder::default();
         let pin_root = crate::tests::isolated_pin_root("nat-v6-dynamic-v3");
@@ -663,7 +641,7 @@ mod tests {
             "is_allow_reuse should stay 1 when non-ancestor triggers cache update"
         );
         assert_eq!(
-            unsafe { ct_value.trigger_addr.bytes },
+            ct_value.trigger_addr,
             old_remote.octets(),
             "trigger_addr should NOT be overwritten on cache update"
         );
@@ -685,11 +663,7 @@ mod tests {
 
         let key = timer_key_for(old_src, CLIENT_PORT, prefix_len);
         let new_key = timer_key_for(new_src, CLIENT_PORT, prefix_len);
-        assert_eq!(
-            unsafe { plain::as_bytes(&key) },
-            unsafe { plain::as_bytes(&new_key) },
-            "test setup must keep the same dynamic NAT key",
-        );
+        assert_eq!(key, new_key, "test setup must keep the same dynamic NAT key",);
 
         let mut builder = TcNatSkelBuilder::default();
         let pin_root = crate::tests::isolated_pin_root("nat-v6-dynamic-v3");
@@ -729,7 +703,7 @@ mod tests {
             "client_prefix should still refresh"
         );
         assert_eq!(
-            unsafe { ct_value.trigger_addr.bytes },
+            ct_value.trigger_addr,
             old_remote.octets(),
             "trigger_addr should NOT be overwritten — creation-time value preserved"
         );

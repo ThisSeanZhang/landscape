@@ -4,17 +4,16 @@ use libbpf_rs::{
     skel::{OpenSkel, SkelBuilder as _},
     MapCore, MapFlags, ProgramInput,
 };
+use zerocopy::FromBytes;
 
-use crate::tests::test_skb_read_skel::types::skb_read_test_result;
 use crate::tests::test_skb_read_skel::TestSkbReadSkelBuilder;
+use crate::tests::wire::SkbReadTestResult;
 
 use super::package::*;
 
-unsafe impl plain::Plain for skb_read_test_result {}
-
 const MAP_KEY: u32 = 0;
 
-fn run_skb_read(payload: &mut [u8]) -> Option<skb_read_test_result> {
+fn run_skb_read(payload: &mut [u8]) -> Option<SkbReadTestResult> {
     let builder = TestSkbReadSkelBuilder::default();
     let mut open_object = MaybeUninit::uninit();
     let open = builder.open(&mut open_object).unwrap();
@@ -30,7 +29,7 @@ fn run_skb_read(payload: &mut [u8]) -> Option<skb_read_test_result> {
     let bytes =
         skel.maps.skb_read_test_map.lookup(&MAP_KEY.to_le_bytes(), MapFlags::ANY).ok().flatten()?;
 
-    Some(*plain::from_bytes::<skb_read_test_result>(&bytes).ok()?)
+    SkbReadTestResult::read_from_bytes(&bytes).ok()
 }
 
 #[cfg(test)]
@@ -43,20 +42,28 @@ mod tests {
 
     const TC_ACT_SHOT: i32 = 2;
 
-    fn assert_v4_ok(r: &skb_read_test_result) {
+    fn assert_v4_ok(r: &SkbReadTestResult) {
         assert_eq!(r.l3_proto, 4);
         assert_eq!(r.scan_ret, 0, "scan_ret={}", r.scan_ret);
         assert_eq!(r.read_l3_ret, TC_ACT_OK, "read_l3_ret={}", r.read_l3_ret);
         assert_eq!(r.read_info_ret, TC_ACT_OK, "read_info_ret={}", r.read_info_ret);
     }
-    fn assert_v6_ok(r: &skb_read_test_result) {
+    fn assert_v6_ok(r: &SkbReadTestResult) {
         assert_eq!(r.l3_proto, 6);
         assert_eq!(r.scan_ret, 0, "scan_ret={}", r.scan_ret);
         assert_eq!(r.read_l3_ret, TC_ACT_OK, "read_l3_ret={}", r.read_l3_ret);
         assert_eq!(r.read_info_ret, TC_ACT_OK, "read_info_ret={}", r.read_info_ret);
     }
 
-    fn pv4(r: &skb_read_test_result) {
+    fn u32x4(bytes: &[u8; 16]) -> [u32; 4] {
+        let mut out = [0u32; 4];
+        for (o, c) in out.iter_mut().zip(bytes.chunks_exact(4)) {
+            *o = u32::from_ne_bytes(c.try_into().unwrap());
+        }
+        out
+    }
+
+    fn pv4(r: &SkbReadTestResult) {
         println!(
             "v4 scan={} read_l3={} read_info={} saddr={:#x} daddr={:#x} sport={} dport={}",
             r.scan_ret,
@@ -68,9 +75,9 @@ mod tests {
             r.v4_info.dst_port
         );
     }
-    fn pv6(r: &skb_read_test_result) {
-        let saddr = unsafe { r.v6_info.src_addr.all };
-        let daddr = unsafe { r.v6_info.dst_addr.all };
+    fn pv6(r: &SkbReadTestResult) {
+        let saddr = u32x4(&r.v6_info.src_addr);
+        let daddr = u32x4(&r.v6_info.dst_addr);
         println!(
             "v6 scan={} read_l3={} read_info={} saddr={:08x}:{:08x}:{:08x}:{:08x} daddr={:08x}:{:08x}:{:08x}:{:08x} sport={} dport={}",
             r.scan_ret,
@@ -95,8 +102,8 @@ mod tests {
 
         assert_eq!(r.v4_l3_saddr.to_ne_bytes(), [192, 168, 1, 1]);
         assert_eq!(r.v4_l3_daddr.to_ne_bytes(), [192, 168, 1, 2]);
-        assert_eq!(r.v4_info.src_addr.addr.to_ne_bytes(), [192, 168, 1, 1]);
-        assert_eq!(r.v4_info.dst_addr.addr.to_ne_bytes(), [192, 168, 1, 2]);
+        assert_eq!(r.v4_info.src_addr.to_ne_bytes(), [192, 168, 1, 1]);
+        assert_eq!(r.v4_info.dst_addr.to_ne_bytes(), [192, 168, 1, 2]);
         assert_eq!(u16::from_be(r.v4_info.src_port), 21);
         assert_eq!(u16::from_be(r.v4_info.dst_port), 1234);
     }
@@ -197,8 +204,8 @@ mod tests {
         assert_eq!(r.v4_l3_daddr.to_ne_bytes(), [10, 0, 0, 1]);
 
         // deep read: src flipped to inner daddr (10.0.0.2)
-        assert_eq!(r.v4_info.src_addr.addr.to_ne_bytes(), [10, 0, 0, 2]);
-        assert_eq!(r.v4_info.dst_addr.addr.to_ne_bytes(), [10, 0, 0, 1]);
+        assert_eq!(r.v4_info.src_addr.to_ne_bytes(), [10, 0, 0, 2]);
+        assert_eq!(r.v4_info.dst_addr.to_ne_bytes(), [10, 0, 0, 1]);
         // inner UDP ports (flipped: dst_port=source, src_port=dest)
         assert_eq!(u16::from_be(r.v4_info.dst_port), 1234);
         assert_eq!(u16::from_be(r.v4_info.src_port), 4321);
@@ -210,8 +217,8 @@ mod tests {
         let r = run_skb_read(&mut pkt).expect("no result");
         assert_v4_ok(&r);
 
-        assert_eq!(r.v4_info.src_addr.addr.to_ne_bytes(), [10, 0, 0, 2]);
-        assert_eq!(r.v4_info.dst_addr.addr.to_ne_bytes(), [10, 0, 0, 1]);
+        assert_eq!(r.v4_info.src_addr.to_ne_bytes(), [10, 0, 0, 2]);
+        assert_eq!(r.v4_info.dst_addr.to_ne_bytes(), [10, 0, 0, 1]);
         assert_eq!(u16::from_be(r.v4_info.dst_port), 1234);
         assert_eq!(u16::from_be(r.v4_info.src_port), 4321);
     }
@@ -240,10 +247,10 @@ mod tests {
             [0x20010db8u32.to_be(), 0x00010000u32.to_be(), 0, 0x00000001u32.to_be()];
         let expected_daddr =
             [0x20010db8u32.to_be(), 0x00010000u32.to_be(), 0, 0x00000002u32.to_be()];
-        assert_eq!(r.v6_l3_saddr, expected_saddr);
-        assert_eq!(r.v6_l3_daddr, expected_daddr);
-        let saddr = unsafe { r.v6_info.src_addr.all };
-        let daddr = unsafe { r.v6_info.dst_addr.all };
+        assert_eq!(u32x4(&r.v6_l3_saddr), expected_saddr);
+        assert_eq!(u32x4(&r.v6_l3_daddr), expected_daddr);
+        let saddr = u32x4(&r.v6_info.src_addr);
+        let daddr = u32x4(&r.v6_info.dst_addr);
         assert_eq!(saddr, expected_saddr);
         assert_eq!(daddr, expected_daddr);
         assert_eq!(u16::from_be(r.v6_info.src_port), 21);
@@ -260,7 +267,7 @@ mod tests {
 
         let expected_saddr =
             [0x20010db8u32.to_be(), 0x00010000u32.to_be(), 0, 0x00000001u32.to_be()];
-        assert_eq!(r.v6_l3_saddr, expected_saddr);
+        assert_eq!(u32x4(&r.v6_l3_saddr), expected_saddr);
         assert_eq!(u16::from_be(r.v6_info.src_port), 5000);
         assert_eq!(u16::from_be(r.v6_info.dst_port), 6000);
     }
@@ -275,7 +282,7 @@ mod tests {
 
         let expected_saddr =
             [0x20010db8u32.to_be(), 0x00010000u32.to_be(), 0, 0x00000001u32.to_be()];
-        assert_eq!(r.v6_l3_saddr, expected_saddr);
+        assert_eq!(u32x4(&r.v6_l3_saddr), expected_saddr);
         assert_eq!(u16::from_be(r.v6_info.src_port), 5000);
         assert_eq!(u16::from_be(r.v6_info.dst_port), 6000);
     }
@@ -290,7 +297,7 @@ mod tests {
 
         let expected_saddr =
             [0x20010db8u32.to_be(), 0x00010000u32.to_be(), 0, 0x00000001u32.to_be()];
-        assert_eq!(r.v6_l3_saddr, expected_saddr);
+        assert_eq!(u32x4(&r.v6_l3_saddr), expected_saddr);
         // first fragment has L4 accessible
         assert_ne!(r.v6_info.src_port, 0);
     }
@@ -328,8 +335,8 @@ mod tests {
             0,
             u32::from_ne_bytes([0x00, 0x01, 0x00, 0x01]),
         ];
-        assert_eq!(r.v6_l3_saddr, outer_src);
-        assert_eq!(r.v6_l3_daddr, outer_dst);
+        assert_eq!(u32x4(&r.v6_l3_saddr), outer_src);
+        assert_eq!(u32x4(&r.v6_l3_daddr), outer_dst);
 
         // deep: src flipped to inner daddr (2001:db8::1:2)
         let inner_dst = [
@@ -338,8 +345,8 @@ mod tests {
             0,
             u32::from_ne_bytes([0x00, 0x01, 0x00, 0x02]),
         ];
-        let saddr = unsafe { r.v6_info.src_addr.all };
-        let daddr = unsafe { r.v6_info.dst_addr.all };
+        let saddr = u32x4(&r.v6_info.src_addr);
+        let daddr = u32x4(&r.v6_info.dst_addr);
         assert_eq!(saddr, inner_dst);
         assert_eq!(daddr, outer_dst);
         // inner UDP ports flipped

@@ -10,11 +10,12 @@ use libbpf_rs::{
     skel::{OpenSkel, SkelBuilder as _},
     MapCore, MapFlags, ProgramInput,
 };
-use zerocopy::IntoBytes;
+use zerocopy::{FromBytes, IntoBytes};
 
 use crate::{
     map_setting::{add_wan_ip, nat::StaticNatMappingV6Item},
-    stages::nat::tc_nat_skel::{types, TcNatSkelBuilder},
+    map_types::{Nat6TimerKey, Nat6TimerValue},
+    stages::nat::tc_nat_skel::TcNatSkelBuilder,
     tests::TestSkb,
 };
 
@@ -49,16 +50,11 @@ fn npt_id_mask(prefix_len: u8) -> u8 {
     }
 }
 
-fn egress_ct6_key(
-    src: Ipv6Addr,
-    src_port: u16,
-    l4proto: u8,
-    prefix_len: u8,
-) -> types::nat6_timer_key {
+fn egress_ct6_key(src: Ipv6Addr, src_port: u16, l4proto: u8, prefix_len: u8) -> Nat6TimerKey {
     let bytes = src.octets();
     let mut suffix = [0u8; 8];
     suffix.copy_from_slice(&bytes[8..]);
-    types::nat6_timer_key {
+    Nat6TimerKey {
         client_suffix: suffix,
         client_port: src_port.to_be(),
         id_byte: bytes[7] & npt_id_mask(prefix_len),
@@ -66,16 +62,11 @@ fn egress_ct6_key(
     }
 }
 
-fn ingress_ct6_key(
-    dst: Ipv6Addr,
-    dst_port: u16,
-    l4proto: u8,
-    prefix_len: u8,
-) -> types::nat6_timer_key {
+fn ingress_ct6_key(dst: Ipv6Addr, dst_port: u16, l4proto: u8, prefix_len: u8) -> Nat6TimerKey {
     let bytes = dst.octets();
     let mut suffix = [0u8; 8];
     suffix.copy_from_slice(&bytes[8..]);
-    types::nat6_timer_key {
+    Nat6TimerKey {
         client_suffix: suffix,
         client_port: dst_port.to_be(),
         id_byte: bytes[7] & npt_id_mask(prefix_len),
@@ -83,9 +74,9 @@ fn ingress_ct6_key(
     }
 }
 
-fn lookup_ct6<T: MapCore>(map: &T, key: &types::nat6_timer_key) -> Option<types::nat6_timer_value> {
-    let raw = map.lookup(unsafe { plain::as_bytes(key) }, MapFlags::ANY).ok()??;
-    Some(unsafe { std::ptr::read_unaligned(raw.as_ptr().cast::<types::nat6_timer_value>()) })
+fn lookup_ct6<T: MapCore>(map: &T, key: &Nat6TimerKey) -> Option<Nat6TimerValue> {
+    let raw = map.lookup(key.as_bytes(), MapFlags::ANY).ok()??;
+    Nat6TimerValue::read_from_bytes(&raw).ok()
 }
 
 fn build_ipv6_udp(src: Ipv6Addr, dst: Ipv6Addr, src_port: u16, dst_port: u16) -> Vec<u8> {

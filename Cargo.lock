@@ -3277,7 +3277,6 @@ dependencies = [
  "netlink-packet-route",
  "nix 0.31.3",
  "once_cell",
- "plain",
  "regex",
  "rtnetlink",
  "serde",

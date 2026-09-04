@@ -6,27 +6,6 @@ use crate::bpf_error::LdEbpfResult;
 
 use super::{apply_raw_map_diff, diff_raw_map, snapshot_raw_map, RawEbpfMapEntries};
 
-#[repr(C)]
-#[derive(Debug, Default, Clone, Copy)]
-pub(crate) struct NatMappingKeyV4 {
-    pub gress: u8,
-    pub l4proto: u8,
-    pub from_port: u16,
-    pub from_addr: u32,
-}
-
-unsafe impl plain::Plain for NatMappingKeyV4 {}
-
-#[repr(C)]
-#[derive(Debug, Default, Clone, Copy)]
-pub(crate) struct Nat4StMappingValue {
-    pub addr: u32,
-    pub port: u16,
-    pub _pad: [u8; 2],
-}
-
-unsafe impl plain::Plain for Nat4StMappingValue {}
-
 #[derive(Debug, Clone, Copy)]
 pub struct StaticNatMappingV4Item {
     pub wan_port: u16,
@@ -65,6 +44,7 @@ fn update_raw_entries<M: MapCore>(map: &M, entries: RawEbpfMapEntries) -> LdEbpf
 pub mod v4;
 pub mod v6;
 
+pub(crate) use crate::map_types::{Nat4StMappingValue, NatMappingKeyV4};
 pub use v4::{
     add_static_nat4_mapping_v3, build_static_nat4_entries, reconcile_static_nat4_entries,
     reconcile_static_nat4_map,

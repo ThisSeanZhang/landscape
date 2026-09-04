@@ -4,6 +4,7 @@ use std::{
 };
 
 use libbpf_rs::{libbpf_sys, MapCore, MapFlags, MapHandle, MapType};
+use zerocopy::IntoBytes;
 
 use crate::{
     map_setting::share_map::types::{net_metric_key, net_metric_value},
@@ -41,9 +42,9 @@ pub fn create_metric_inner_map(second: u32) {
     let flow_dns_match_map = libbpf_rs::MapHandle::from_pinned_path(&MAP_PATHS.metric_map).unwrap();
 
     let key = second;
-    let key_value = unsafe { plain::as_bytes(&key) };
+    let key_value = key.as_bytes();
 
-    let value_value = unsafe { plain::as_bytes(&map_fd) };
+    let value_value = map_fd.as_bytes();
 
     if let Err(e) = flow_dns_match_map.update(key_value, value_value, MapFlags::ANY) {
         let last_os_error = std::io::Error::last_os_error();

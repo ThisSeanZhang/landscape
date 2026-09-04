@@ -10,6 +10,7 @@ pub mod dns_result_sink;
 pub mod flow_socket_registrar;
 pub mod landscape;
 pub mod map_setting;
+pub(crate) mod map_types;
 pub mod metric;
 pub mod pppoe;
 pub mod stages;

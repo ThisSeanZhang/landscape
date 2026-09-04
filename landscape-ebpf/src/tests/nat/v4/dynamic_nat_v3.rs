@@ -10,7 +10,7 @@ use libbpf_rs::{
     skel::{OpenSkel, SkelBuilder as _},
     MapCore, MapFlags, ProgramInput,
 };
-use zerocopy::IntoBytes;
+use zerocopy::{FromBytes, IntoBytes};
 
 use crate::{
     map_setting::{
@@ -18,7 +18,11 @@ use crate::{
         nat::NatMappingKeyV4,
         nat::{add_static_nat4_mapping_v3, StaticNatMappingV4Item},
     },
-    stages::nat::tc_nat_skel::{types, TcNatSkelBuilder},
+    map_types::{
+        Nat4EgressMappingValueV3, Nat4MappingValueV3, Nat4PortQueueValueV3, Nat4TimerKey,
+        Nat4TimerValueV3,
+    },
+    stages::nat::tc_nat_skel::TcNatSkelBuilder,
     tests::TestSkb,
     NAT_MAPPING_EGRESS, NAT_MAPPING_INGRESS,
 };
@@ -145,20 +149,14 @@ fn put_v3_state<T: MapCore>(
         from_addr: nat_addr.to_bits().to_be(),
     };
     let bytes = map
-        .lookup(unsafe { plain::as_bytes(&ingress_key) }, MapFlags::ANY)
+        .lookup(ingress_key.as_bytes(), MapFlags::ANY)
         .expect("lookup v3 ingress entry")
         .expect("missing v3 ingress entry");
-    let mut value =
-        unsafe { std::ptr::read_unaligned(bytes.as_ptr().cast::<types::nat4_mapping_value_v3>()) };
+    let mut value = Nat4MappingValueV3::read_from_bytes(&bytes).unwrap();
     value.generation = GENERATION;
     value.state_ref = state_ref;
 
-    map.update(
-        unsafe { plain::as_bytes(&ingress_key) },
-        unsafe { plain::as_bytes(&value) },
-        MapFlags::ANY,
-    )
-    .expect("insert v3 state");
+    map.update(ingress_key.as_bytes(), value.as_bytes(), MapFlags::ANY).expect("insert v3 state");
 }
 
 fn add_v3_state<T: MapCore>(map: &T, l4proto: u8, nat_addr: Ipv4Addr, nat_port: u16) {
@@ -173,7 +171,7 @@ fn delete_v3_state<T: MapCore>(map: &T, l4proto: u8, nat_addr: Ipv4Addr, nat_por
         from_addr: nat_addr.to_bits().to_be(),
     };
 
-    let _ = map.delete(unsafe { plain::as_bytes(&ingress_key) });
+    let _ = map.delete(ingress_key.as_bytes());
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -188,19 +186,17 @@ fn add_v3_ct<T: MapCore>(
     client_port: u16,
     gress: u8,
 ) {
-    let key = types::nat4_timer_key {
+    let key = Nat4TimerKey {
         l4proto,
         _pad: [0; 3],
-        pair_ip: types::inet4_pair {
-            src_addr: types::inet4_addr { addr: src_addr.to_bits().to_be() },
-            dst_addr: types::inet4_addr { addr: nat_addr.to_bits().to_be() },
-            src_port: src_port.to_be(),
-            dst_port: nat_port.to_be(),
-        },
+        src_addr: src_addr.to_bits().to_be(),
+        dst_addr: nat_addr.to_bits().to_be(),
+        src_port: src_port.to_be(),
+        dst_port: nat_port.to_be(),
     };
 
-    let value = types::nat4_timer_value_v3 {
-        client_addr: types::inet4_addr { addr: client_addr.to_bits().to_be() },
+    let value = Nat4TimerValueV3 {
+        client_addr: client_addr.to_bits().to_be(),
         client_port: client_port.to_be(),
         client_status: 1,
         server_status: 1,
@@ -210,9 +206,7 @@ fn add_v3_ct<T: MapCore>(
         ..Default::default()
     };
 
-    timer_map
-        .update(unsafe { plain::as_bytes(&key) }, unsafe { plain::as_bytes(&value) }, MapFlags::ANY)
-        .expect("insert v3 ct");
+    timer_map.update(key.as_bytes(), value.as_bytes(), MapFlags::ANY).expect("insert v3 ct");
 }
 
 fn delete_v3_ct<T: MapCore>(
@@ -223,18 +217,16 @@ fn delete_v3_ct<T: MapCore>(
     nat_addr: Ipv4Addr,
     nat_port: u16,
 ) {
-    let key = types::nat4_timer_key {
+    let key = Nat4TimerKey {
         l4proto,
         _pad: [0; 3],
-        pair_ip: types::inet4_pair {
-            src_addr: types::inet4_addr { addr: src_addr.to_bits().to_be() },
-            dst_addr: types::inet4_addr { addr: nat_addr.to_bits().to_be() },
-            src_port: src_port.to_be(),
-            dst_port: nat_port.to_be(),
-        },
+        src_addr: src_addr.to_bits().to_be(),
+        dst_addr: nat_addr.to_bits().to_be(),
+        src_port: src_port.to_be(),
+        dst_port: nat_port.to_be(),
     };
 
-    let _ = timer_map.delete(unsafe { plain::as_bytes(&key) });
+    let _ = timer_map.delete(key.as_bytes());
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -255,7 +247,7 @@ fn add_dynamic_mapping_pair<M1: MapCore, M2: MapCore>(
         from_port: lan_port.to_be(),
         from_addr: lan_addr.to_bits().to_be(),
     };
-    let egress_val = types::nat4_egress_mapping_value_v3 {
+    let egress_val = Nat4EgressMappingValueV3 {
         addr: nat_addr.to_bits().to_be(),
         trigger_addr: remote_addr.to_bits().to_be(),
         port: nat_port.to_be(),
@@ -269,7 +261,7 @@ fn add_dynamic_mapping_pair<M1: MapCore, M2: MapCore>(
         from_port: nat_port.to_be(),
         from_addr: nat_addr.to_bits().to_be(),
     };
-    let ingress_val = types::nat4_mapping_value_v3 {
+    let ingress_val = Nat4MappingValueV3 {
         state_ref: ((1u64) << 56) | 1,
         addr: lan_addr.to_bits().to_be(),
         trigger_addr: remote_addr.to_bits().to_be(),
@@ -281,18 +273,10 @@ fn add_dynamic_mapping_pair<M1: MapCore, M2: MapCore>(
     };
 
     egress_map
-        .update(
-            unsafe { plain::as_bytes(&egress_key) },
-            unsafe { plain::as_bytes(&egress_val) },
-            MapFlags::ANY,
-        )
+        .update(egress_key.as_bytes(), egress_val.as_bytes(), MapFlags::ANY)
         .expect("insert egress mapping");
     ingress_map
-        .update(
-            unsafe { plain::as_bytes(&ingress_key) },
-            unsafe { plain::as_bytes(&ingress_val) },
-            MapFlags::ANY,
-        )
+        .update(ingress_key.as_bytes(), ingress_val.as_bytes(), MapFlags::ANY)
         .expect("insert ingress mapping");
 }
 
@@ -318,17 +302,15 @@ fn delete_dynamic_mapping_pair<M1: MapCore, M2: MapCore>(
         from_addr: nat_addr.to_bits().to_be(),
     };
 
-    let _ = egress_map.delete(unsafe { plain::as_bytes(&egress_key) });
-    let _ = ingress_map.delete(unsafe { plain::as_bytes(&ingress_key) });
+    let _ = egress_map.delete(egress_key.as_bytes());
+    let _ = ingress_map.delete(ingress_key.as_bytes());
 }
 
 fn push_v3_free_port<T: MapCore>(queue_map: &T, port: u16, last_generation: u16) {
     let key: [u8; 0] = [];
-    let value = types::nat4_port_queue_value_v3 { port: port.to_be(), last_generation };
+    let value = Nat4PortQueueValueV3 { port: port.to_be(), last_generation };
 
-    queue_map
-        .update(&key, unsafe { plain::as_bytes(&value) }, MapFlags::ANY)
-        .expect("push v3 free port");
+    queue_map.update(&key, value.as_bytes(), MapFlags::ANY).expect("push v3 free port");
 }
 
 fn clear_v3_free_port_queue<T: MapCore>(queue_map: &T) {
@@ -348,7 +330,7 @@ fn read_v3_ingress_mapping<T: MapCore>(
     l4proto: u8,
     nat_addr: Ipv4Addr,
     nat_port: u16,
-) -> types::nat4_mapping_value_v3 {
+) -> Nat4MappingValueV3 {
     let ingress_key = NatMappingKeyV4 {
         gress: NAT_MAPPING_INGRESS,
         l4proto,
@@ -356,10 +338,10 @@ fn read_v3_ingress_mapping<T: MapCore>(
         from_addr: nat_addr.to_bits().to_be(),
     };
     let bytes = map
-        .lookup(unsafe { plain::as_bytes(&ingress_key) }, MapFlags::ANY)
+        .lookup(ingress_key.as_bytes(), MapFlags::ANY)
         .expect("lookup v3 ingress mapping")
         .expect("ingress mapping should exist");
-    unsafe { std::ptr::read_unaligned(bytes.as_ptr().cast::<types::nat4_mapping_value_v3>()) }
+    Nat4MappingValueV3::read_from_bytes(&bytes).unwrap()
 }
 
 fn reset_dynamic_nat_v3_runtime_for_test<M1, M2, M3, M4, M5, M6>(
@@ -400,9 +382,7 @@ fn reset_dynamic_nat_v3_runtime_for_test<M1, M2, M3, M4, M5, M6>(
 fn peek_v3_free_port<T: MapCore>(queue_map: &T) -> Option<u16> {
     let key: [u8; 0] = [];
     let value = queue_map.lookup(&key, MapFlags::ANY).expect("peek v3 free-port queue")?;
-    let value = unsafe {
-        std::ptr::read_unaligned(value.as_ptr().cast::<types::nat4_port_queue_value_v3>())
-    };
+    let value = Nat4PortQueueValueV3::read_from_bytes(&value).unwrap();
     Some(u16::from_be(value.port))
 }
 
@@ -657,7 +637,7 @@ mod tests {
         let stale_mapping = skel
             .maps
             .nat4_egress_dyn_map
-            .lookup(unsafe { plain::as_bytes(&egress_key) }, MapFlags::ANY)
+            .lookup(egress_key.as_bytes(), MapFlags::ANY)
             .expect("lookup stale egress mapping");
         assert!(stale_mapping.is_none(), "stale egress mapping should be deleted");
     }
@@ -723,25 +703,21 @@ mod tests {
         assert_eq!(ingress.generation, 0);
         assert_eq!(ingress.state_ref, ((1u64) << 56) | 1);
 
-        let timer_key = types::nat4_timer_key {
+        let timer_key = Nat4TimerKey {
             l4proto: 6,
             _pad: [0; 3],
-            pair_ip: types::inet4_pair {
-                src_addr: types::inet4_addr { addr: REMOTE_IP.to_bits().to_be() },
-                dst_addr: types::inet4_addr { addr: WAN_IP.to_bits().to_be() },
-                src_port: 443u16.to_be(),
-                dst_port: NAT_PORT.to_be(),
-            },
+            src_addr: REMOTE_IP.to_bits().to_be(),
+            dst_addr: WAN_IP.to_bits().to_be(),
+            src_port: 443u16.to_be(),
+            dst_port: NAT_PORT.to_be(),
         };
         let timer_bytes = skel
             .maps
             .nat4_timer_map
-            .lookup(unsafe { plain::as_bytes(&timer_key) }, MapFlags::ANY)
+            .lookup(timer_key.as_bytes(), MapFlags::ANY)
             .expect("lookup wrapped-generation CT")
             .expect("wrapped-generation CT should exist");
-        let timer = unsafe {
-            std::ptr::read_unaligned(timer_bytes.as_ptr().cast::<types::nat4_timer_value_v3>())
-        };
+        let timer = Nat4TimerValueV3::read_from_bytes(&timer_bytes).unwrap();
         assert_eq!(timer.generation_snapshot, 0);
     }
 
@@ -833,7 +809,7 @@ mod tests {
         let first_mapping = skel
             .maps
             .nat4_egress_dyn_map
-            .lookup(unsafe { plain::as_bytes(&first_egress_key) }, MapFlags::ANY)
+            .lookup(first_egress_key.as_bytes(), MapFlags::ANY)
             .expect("lookup first stale egress mapping");
         assert!(first_mapping.is_none(), "stale egress mapping should be deleted");
 
@@ -846,7 +822,7 @@ mod tests {
         let second_mapping = skel
             .maps
             .nat4_egress_dyn_map
-            .lookup(unsafe { plain::as_bytes(&second_egress_key) }, MapFlags::ANY)
+            .lookup(second_egress_key.as_bytes(), MapFlags::ANY)
             .expect("lookup second egress mapping");
         assert!(second_mapping.is_some(), "unrelated egress mapping should be preserved");
 
@@ -920,25 +896,21 @@ mod tests {
         assert_eq!(ingress.generation, GENERATION);
         assert_eq!(ingress.state_ref, ((1u64) << 56) | 2, "reuse ingress should incref state_ref");
 
-        let timer_key = types::nat4_timer_key {
+        let timer_key = Nat4TimerKey {
             l4proto: 6,
             _pad: [0; 3],
-            pair_ip: types::inet4_pair {
-                src_addr: types::inet4_addr { addr: REMOTE_IP.to_bits().to_be() },
-                dst_addr: types::inet4_addr { addr: WAN_IP.to_bits().to_be() },
-                src_port: 443u16.to_be(),
-                dst_port: NAT_PORT.to_be(),
-            },
+            src_addr: REMOTE_IP.to_bits().to_be(),
+            dst_addr: WAN_IP.to_bits().to_be(),
+            src_port: 443u16.to_be(),
+            dst_port: NAT_PORT.to_be(),
         };
         let timer_bytes = skel
             .maps
             .nat4_timer_map
-            .lookup(unsafe { plain::as_bytes(&timer_key) }, MapFlags::ANY)
+            .lookup(timer_key.as_bytes(), MapFlags::ANY)
             .expect("lookup v3 ct");
         let timer_bytes = timer_bytes.expect("ingress reuse should create ct");
-        let timer = unsafe {
-            std::ptr::read_unaligned(timer_bytes.as_ptr().cast::<types::nat4_timer_value_v3>())
-        };
+        let timer = Nat4TimerValueV3::read_from_bytes(&timer_bytes).unwrap();
         assert_eq!(timer.generation_snapshot, GENERATION);
         assert_eq!(timer.client_port, LAN_PORT.to_be());
     }
@@ -1113,20 +1085,18 @@ mod tests {
         let ingress = read_v3_ingress_mapping(&skel.maps.nat4_ingress_dyn_map, 6, WAN_IP, NAT_PORT);
         assert_eq!(ingress.state_ref, ((1u64) << 56));
 
-        let timer_key = types::nat4_timer_key {
+        let timer_key = Nat4TimerKey {
             l4proto: 6,
             _pad: [0; 3],
-            pair_ip: types::inet4_pair {
-                src_addr: types::inet4_addr { addr: REMOTE_IP.to_bits().to_be() },
-                dst_addr: types::inet4_addr { addr: WAN_IP.to_bits().to_be() },
-                src_port: 443u16.to_be(),
-                dst_port: NAT_PORT.to_be(),
-            },
+            src_addr: REMOTE_IP.to_bits().to_be(),
+            dst_addr: WAN_IP.to_bits().to_be(),
+            src_port: 443u16.to_be(),
+            dst_port: NAT_PORT.to_be(),
         };
         let timer_bytes = skel
             .maps
             .nat4_timer_map
-            .lookup(unsafe { plain::as_bytes(&timer_key) }, MapFlags::ANY)
+            .lookup(timer_key.as_bytes(), MapFlags::ANY)
             .expect("lookup v3 ct");
         assert!(timer_bytes.is_none(), "active|0 ingress should not create ct");
     }
@@ -1247,33 +1217,25 @@ mod tests {
             NAT_MAPPING_INGRESS,
         );
 
-        let ct_key = types::nat4_timer_key {
+        let ct_key = Nat4TimerKey {
             l4proto: 6,
             _pad: [0; 3],
-            pair_ip: types::inet4_pair {
-                src_addr: types::inet4_addr { addr: REMOTE_IP.to_bits().to_be() },
-                dst_addr: types::inet4_addr { addr: WAN_IP.to_bits().to_be() },
-                src_port: 443u16.to_be(),
-                dst_port: NAT_PORT.to_be(),
-            },
+            src_addr: REMOTE_IP.to_bits().to_be(),
+            dst_addr: WAN_IP.to_bits().to_be(),
+            src_port: 443u16.to_be(),
+            dst_port: NAT_PORT.to_be(),
         };
         let ct_bytes = skel
             .maps
             .nat4_timer_map
-            .lookup(unsafe { plain::as_bytes(&ct_key) }, MapFlags::ANY)
+            .lookup(ct_key.as_bytes(), MapFlags::ANY)
             .unwrap()
             .expect("ct should exist");
-        let mut ct_value = unsafe {
-            std::ptr::read_unaligned(ct_bytes.as_ptr().cast::<types::nat4_timer_value_v3>())
-        };
+        let mut ct_value = Nat4TimerValueV3::read_from_bytes(&ct_bytes).unwrap();
         ct_value.status = 40;
         skel.maps
             .nat4_timer_map
-            .update(
-                unsafe { plain::as_bytes(&ct_key) },
-                unsafe { plain::as_bytes(&ct_value) },
-                MapFlags::ANY,
-            )
+            .update(ct_key.as_bytes(), ct_value.as_bytes(), MapFlags::ANY)
             .unwrap();
 
         let pkt = build_ipv4_tcp_syn(REMOTE_IP, WAN_IP, 443, NAT_PORT);
@@ -1307,22 +1269,16 @@ mod tests {
         let ct_bytes = skel
             .maps
             .nat4_timer_map
-            .lookup(unsafe { plain::as_bytes(&ct_key) }, MapFlags::ANY)
+            .lookup(ct_key.as_bytes(), MapFlags::ANY)
             .unwrap()
             .expect("reactivated ct should exist");
-        let mut ct_value = unsafe {
-            std::ptr::read_unaligned(ct_bytes.as_ptr().cast::<types::nat4_timer_value_v3>())
-        };
+        let mut ct_value = Nat4TimerValueV3::read_from_bytes(&ct_bytes).unwrap();
         assert_eq!(ct_value.status, 20, "TIMER_RELEASE CT should become TIMER_ACTIVE");
 
         ct_value.status = 50;
         skel.maps
             .nat4_timer_map
-            .update(
-                unsafe { plain::as_bytes(&ct_key) },
-                unsafe { plain::as_bytes(&ct_value) },
-                MapFlags::ANY,
-            )
+            .update(ct_key.as_bytes(), ct_value.as_bytes(), MapFlags::ANY)
             .unwrap();
 
         let cleanup_pkt = build_ipv4_tcp_syn(REMOTE_IP, WAN_IP, 443, NAT_PORT);
@@ -1360,12 +1316,10 @@ mod tests {
         let ct_bytes = skel
             .maps
             .nat4_timer_map
-            .lookup(unsafe { plain::as_bytes(&ct_key) }, MapFlags::ANY)
+            .lookup(ct_key.as_bytes(), MapFlags::ANY)
             .unwrap()
             .expect("cleanup ct should exist");
-        let ct_value = unsafe {
-            std::ptr::read_unaligned(ct_bytes.as_ptr().cast::<types::nat4_timer_value_v3>())
-        };
+        let ct_value = Nat4TimerValueV3::read_from_bytes(&ct_bytes).unwrap();
         assert_eq!(ct_value.status, 50, "cleanup CT must not be reactivated");
     }
 
@@ -1411,33 +1365,25 @@ mod tests {
             NAT_MAPPING_INGRESS,
         );
 
-        let ct_key = types::nat4_timer_key {
+        let ct_key = Nat4TimerKey {
             l4proto: 6,
             _pad: [0; 3],
-            pair_ip: types::inet4_pair {
-                src_addr: types::inet4_addr { addr: REMOTE_IP.to_bits().to_be() },
-                dst_addr: types::inet4_addr { addr: WAN_IP.to_bits().to_be() },
-                src_port: 443u16.to_be(),
-                dst_port: NAT_PORT.to_be(),
-            },
+            src_addr: REMOTE_IP.to_bits().to_be(),
+            dst_addr: WAN_IP.to_bits().to_be(),
+            src_port: 443u16.to_be(),
+            dst_port: NAT_PORT.to_be(),
         };
         let ct_bytes = skel
             .maps
             .nat4_timer_map
-            .lookup(unsafe { plain::as_bytes(&ct_key) }, MapFlags::ANY)
+            .lookup(ct_key.as_bytes(), MapFlags::ANY)
             .unwrap()
             .expect("ct should exist");
-        let mut ct_value = unsafe {
-            std::ptr::read_unaligned(ct_bytes.as_ptr().cast::<types::nat4_timer_value_v3>())
-        };
+        let mut ct_value = Nat4TimerValueV3::read_from_bytes(&ct_bytes).unwrap();
         ct_value.status = 10;
         skel.maps
             .nat4_timer_map
-            .update(
-                unsafe { plain::as_bytes(&ct_key) },
-                unsafe { plain::as_bytes(&ct_value) },
-                MapFlags::ANY,
-            )
+            .update(ct_key.as_bytes(), ct_value.as_bytes(), MapFlags::ANY)
             .unwrap();
 
         let pkt = build_ipv4_tcp_syn(REMOTE_IP, WAN_IP, 443, NAT_PORT);
@@ -1484,7 +1430,7 @@ mod tests {
             from_port: NAT_PORT.to_be(),
             from_addr: WAN_IP.to_bits().to_be(),
         };
-        let ingress_val = types::nat4_mapping_value_v3 {
+        let ingress_val = Nat4MappingValueV3 {
             state_ref: ((1u64) << 56) | 1, // ACTIVE, ref=1
             addr: LAN_HOST.to_bits().to_be(),
             trigger_addr: REMOTE_IP.to_bits().to_be(),
@@ -1496,11 +1442,7 @@ mod tests {
         };
         skel.maps
             .nat4_ingress_dyn_map
-            .update(
-                unsafe { plain::as_bytes(&ingress_key) },
-                unsafe { plain::as_bytes(&ingress_val) },
-                MapFlags::ANY,
-            )
+            .update(ingress_key.as_bytes(), ingress_val.as_bytes(), MapFlags::ANY)
             .unwrap();
 
         let egress_key = NatMappingKeyV4 {
@@ -1509,7 +1451,7 @@ mod tests {
             from_port: LAN_PORT.to_be(),
             from_addr: LAN_HOST.to_bits().to_be(),
         };
-        let egress_val = types::nat4_egress_mapping_value_v3 {
+        let egress_val = Nat4EgressMappingValueV3 {
             addr: WAN_IP.to_bits().to_be(),
             trigger_addr: REMOTE_IP.to_bits().to_be(),
             port: NAT_PORT.to_be(),
@@ -1519,11 +1461,7 @@ mod tests {
         };
         skel.maps
             .nat4_egress_dyn_map
-            .update(
-                unsafe { plain::as_bytes(&egress_key) },
-                unsafe { plain::as_bytes(&egress_val) },
-                MapFlags::ANY,
-            )
+            .update(egress_key.as_bytes(), egress_val.as_bytes(), MapFlags::ANY)
             .unwrap();
 
         // Packet from the trigger address — passes the lookup trigger check,
@@ -1599,25 +1537,21 @@ mod tests {
             panic!("expected TCP transport header in output");
         }
 
-        let timer_key = types::nat4_timer_key {
+        let timer_key = Nat4TimerKey {
             l4proto: 6,
             _pad: [0; 3],
-            pair_ip: types::inet4_pair {
-                src_addr: types::inet4_addr { addr: REMOTE_IP.to_bits().to_be() },
-                dst_addr: types::inet4_addr { addr: WAN_IP.to_bits().to_be() },
-                src_port: 443u16.to_be(),
-                dst_port: 8080u16.to_be(),
-            },
+            src_addr: REMOTE_IP.to_bits().to_be(),
+            dst_addr: WAN_IP.to_bits().to_be(),
+            src_port: 443u16.to_be(),
+            dst_port: 8080u16.to_be(),
         };
         let timer_bytes = skel
             .maps
             .nat4_timer_map
-            .lookup(unsafe { plain::as_bytes(&timer_key) }, MapFlags::ANY)
+            .lookup(timer_key.as_bytes(), MapFlags::ANY)
             .expect("lookup static v3 ct");
         let timer_bytes = timer_bytes.expect("static egress should create ct");
-        let timer = unsafe {
-            std::ptr::read_unaligned(timer_bytes.as_ptr().cast::<types::nat4_timer_value_v3>())
-        };
+        let timer = Nat4TimerValueV3::read_from_bytes(&timer_bytes).unwrap();
         assert_eq!(timer.client_port, 80u16.to_be());
     }
 
@@ -1727,7 +1661,7 @@ mod tests {
         let second_mapping = skel
             .maps
             .nat4_egress_dyn_map
-            .lookup(unsafe { plain::as_bytes(&second_egress_key) }, MapFlags::ANY)
+            .lookup(second_egress_key.as_bytes(), MapFlags::ANY)
             .expect("lookup second flow mapping after conflict");
         assert!(
             second_mapping.is_none(),
@@ -1829,20 +1763,18 @@ mod tests {
         push_v3_free_port(&skel.maps.nat4_tcp_port_queue, NAT_PORT, 0);
         push_v3_free_port(&skel.maps.nat4_tcp_port_queue, ALT_NAT_PORT, 0);
 
-        let stale_timer_key = types::nat4_timer_key {
+        let stale_timer_key = Nat4TimerKey {
             l4proto: 6,
             _pad: [0; 3],
-            pair_ip: types::inet4_pair {
-                src_addr: types::inet4_addr { addr: REMOTE_IP.to_bits().to_be() },
-                dst_addr: types::inet4_addr { addr: WAN_IP.to_bits().to_be() },
-                src_port: 443u16.to_be(),
-                dst_port: NAT_PORT.to_be(),
-            },
+            src_addr: REMOTE_IP.to_bits().to_be(),
+            dst_addr: WAN_IP.to_bits().to_be(),
+            src_port: 443u16.to_be(),
+            dst_port: NAT_PORT.to_be(),
         };
         let stale_timer = skel
             .maps
             .nat4_timer_map
-            .lookup(unsafe { plain::as_bytes(&stale_timer_key) }, MapFlags::ANY)
+            .lookup(stale_timer_key.as_bytes(), MapFlags::ANY)
             .expect("lookup stale timer");
         assert!(stale_timer.is_none(), "this scenario requires the old timer to be missing");
 
@@ -1994,7 +1926,7 @@ mod tests {
         let stale_mapping = skel
             .maps
             .nat4_ingress_dyn_map
-            .lookup(unsafe { plain::as_bytes(&stale_ingress_key) }, MapFlags::ANY)
+            .lookup(stale_ingress_key.as_bytes(), MapFlags::ANY)
             .expect("lookup stale mapping after cleanup");
         assert!(stale_mapping.is_none(), "cleanup should remove stale dynamic mappings");
         assert_eq!(

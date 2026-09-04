@@ -2,9 +2,10 @@ use landscape_common::config_service::static_nat::config6::{
     RuntimeStaticNatMappingV6Config, StaticNatV6PortConfig,
 };
 use libbpf_rs::MapCore;
+use zerocopy::IntoBytes;
 
 use crate::bpf_error::LdEbpfResult;
-use crate::map_setting::share_map::types::{static_nat6_mapping_key, static_nat6_mapping_value};
+use crate::map_types::{StaticNat6MappingKey, StaticNat6MappingValue};
 use crate::MAP_PATHS;
 
 use super::super::RawEbpfMapEntries;
@@ -56,20 +57,17 @@ fn insert_static_nat6_item_entries(
     let ipv6_addr = static_mapping.lan_ip;
     let ip_bytes = ipv6_addr.to_bits().to_be_bytes();
 
-    let mut key = static_nat6_mapping_key {
+    let mut key = StaticNat6MappingKey {
         port: static_mapping.port.to_be(),
         l4_protocol: static_mapping.l4_protocol,
         ..Default::default()
     };
     key.ip_suffix.copy_from_slice(&ip_bytes[8..16]);
 
-    let mut value = static_nat6_mapping_value::default();
+    let mut value = StaticNat6MappingValue::default();
     value.lan_prefix.copy_from_slice(&ip_bytes[0..8]);
 
-    entries.insert(
-        unsafe { plain::as_bytes(&key) }.to_vec(),
-        unsafe { plain::as_bytes(&value) }.to_vec(),
-    );
+    entries.insert(key.as_bytes().to_vec(), value.as_bytes().to_vec());
 }
 
 pub fn add_static_nat6_mapping<T, I>(static_nat_mappings: &T, mappings: I)
@@ -102,17 +100,20 @@ where
 mod tests {
     use std::net::Ipv6Addr;
 
+    use zerocopy::FromBytes;
+
     use super::*;
 
     fn decode_single_entry(
         config: RuntimeStaticNatMappingV6Config,
-    ) -> (static_nat6_mapping_key, static_nat6_mapping_value) {
+    ) -> (StaticNat6MappingKey, StaticNat6MappingValue) {
         let entries = build_static_nat6_entries(&[config]);
         assert_eq!(entries.len(), 1);
         let (key, value) = entries.into_iter().next().unwrap();
-        (unsafe { std::ptr::read_unaligned(key.as_ptr().cast()) }, unsafe {
-            std::ptr::read_unaligned(value.as_ptr().cast())
-        })
+        (
+            StaticNat6MappingKey::read_from_bytes(&key).unwrap(),
+            StaticNat6MappingValue::read_from_bytes(&value).unwrap(),
+        )
     }
 
     #[test]

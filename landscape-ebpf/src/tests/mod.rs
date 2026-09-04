@@ -91,6 +91,7 @@ mod scanner;
 mod tc_chain;
 mod time;
 mod tproxy;
+mod wire;
 mod xdp_csum_verify;
 
 pub(crate) mod test_route_packet {

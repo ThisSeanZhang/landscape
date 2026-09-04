@@ -5,16 +5,16 @@ use libbpf_rs::{
     MapCore, MapFlags, ProgramInput,
 };
 
-use crate::tests::test_xdp_scanner_skel::types::xdp_scan_test_result;
+use zerocopy::FromBytes;
+
 use crate::tests::test_xdp_scanner_skel::TestXdpScannerSkelBuilder;
+use crate::tests::wire::SkbScanResult;
 
 use super::package::*;
 
-unsafe impl plain::Plain for xdp_scan_test_result {}
-
 const MAP_KEY: u32 = 0;
 
-fn run_xdp_scanner(payload: &mut [u8]) -> Option<xdp_scan_test_result> {
+fn run_xdp_scanner(payload: &mut [u8]) -> Option<SkbScanResult> {
     let builder = TestXdpScannerSkelBuilder::default();
     let mut open_object = MaybeUninit::uninit();
     let open = builder.open(&mut open_object).unwrap();
@@ -30,7 +30,7 @@ fn run_xdp_scanner(payload: &mut [u8]) -> Option<xdp_scan_test_result> {
     let bytes =
         skel.maps.xdp_scan_test_map.lookup(&MAP_KEY.to_le_bytes(), MapFlags::ANY).ok().flatten()?;
 
-    Some(*plain::from_bytes::<xdp_scan_test_result>(&bytes).ok()?)
+    SkbScanResult::read_from_bytes(&bytes).ok()
 }
 
 #[cfg(test)]
@@ -39,21 +39,21 @@ mod tests {
 
     // ── helpers ──
 
-    fn assert_v4_ok(r: &xdp_scan_test_result) {
+    fn assert_v4_ok(r: &SkbScanResult) {
         assert_eq!(r.l3_proto, 4);
         assert_eq!(r.scan_ret, 0, "scan_ret={}", r.scan_ret);
     }
-    fn assert_v6_ok(r: &xdp_scan_test_result) {
+    fn assert_v6_ok(r: &SkbScanResult) {
         assert_eq!(r.l3_proto, 6);
         assert_eq!(r.scan_ret, 0, "scan_ret={}", r.scan_ret);
     }
-    fn pv4(r: &xdp_scan_test_result) {
+    fn pv4(r: &SkbScanResult) {
         let v = &r.v4;
         println!("v4 off={} proto={} frag_t={} frag_off={} frag_id={} pkt_t={} err_l3={} err_l4={} err_proto={}",
             v.l4_offset, v.l4_protocol, v.fragment_type, v.fragment_off, v.fragment_id,
             v.pkt_type, v.icmp_error_l3_offset, v.icmp_error_inner_l4_offset, v.icmp_error_l4_protocol);
     }
-    fn pv6(r: &xdp_scan_test_result) {
+    fn pv6(r: &SkbScanResult) {
         let v = &r.v6;
         println!("v6 off={} proto={} frag_t={} frag_off={} frag_id={} pkt_t={} err_l3={} err_l4={} err_proto={}",
             v.l4_offset, v.l4_protocol, v.fragment_type, v.fragment_off, v.fragment_id,

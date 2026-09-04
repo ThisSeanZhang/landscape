@@ -9,19 +9,20 @@ use libbpf_rs::{
     MapCore, MapFlags, ProgramInput,
 };
 
+use crate::map_types::Inet6Bytes;
 use crate::tests::{
     scanner::package::{
         build_icmpv4_error_with_inner_ipv4_eth, build_ipv4_tcp_eth, build_ipv4_udp_eth,
         build_ipv6_tcp_eth,
     },
-    test_tproxy_packet::{types::tproxy_packet_test_result, TestTproxyPacketSkelBuilder},
+    test_tproxy_packet::TestTproxyPacketSkelBuilder,
+    wire::TproxyPacketTestResult,
 };
-
-unsafe impl plain::Plain for tproxy_packet_test_result {}
+use zerocopy::FromBytes;
 
 const MAP_KEY: u32 = 0;
 
-fn run_tproxy_packet_test(payload: Vec<u8>) -> tproxy_packet_test_result {
+fn run_tproxy_packet_test(payload: Vec<u8>) -> TproxyPacketTestResult {
     let builder = TestTproxyPacketSkelBuilder::default();
     let mut open_object = MaybeUninit::uninit();
     let open = builder.open(&mut open_object).unwrap();
@@ -38,11 +39,7 @@ fn run_tproxy_packet_test(payload: Vec<u8>) -> tproxy_packet_test_result {
         .lookup(&MAP_KEY.to_le_bytes(), MapFlags::ANY)
         .unwrap()
         .unwrap();
-    *plain::from_bytes::<tproxy_packet_test_result>(&result).unwrap()
-}
-
-fn ipv6_bytes(addr: &crate::tests::test_tproxy_packet::types::u_inet_addr) -> [u8; 16] {
-    unsafe { addr.bits }
+    TproxyPacketTestResult::read_from_bytes(&result).unwrap()
 }
 
 fn build_ipv6_udp_eth() -> Vec<u8> {
@@ -177,14 +174,8 @@ mod tests {
         assert_eq!(result.read_ret, TC_ACT_OK);
         assert_eq!(result.offset.l3_protocol, LANDSCAPE_IPV4_TYPE);
         assert_eq!(result.offset.l4_protocol, IPPROTO_TCP);
-        assert_eq!(
-            Ipv4Addr::from(unsafe { result.pair.src_addr.ip }.to_be()),
-            Ipv4Addr::new(192, 168, 1, 1)
-        );
-        assert_eq!(
-            Ipv4Addr::from(unsafe { result.pair.dst_addr.ip }.to_be()),
-            Ipv4Addr::new(192, 168, 1, 2)
-        );
+        assert_eq!(Ipv4Addr::from(result.pair.src_addr.ipv4()), Ipv4Addr::new(192, 168, 1, 1));
+        assert_eq!(Ipv4Addr::from(result.pair.dst_addr.ipv4()), Ipv4Addr::new(192, 168, 1, 2));
         assert_eq!(u16::from_be(result.pair.src_port), 21);
         assert_eq!(u16::from_be(result.pair.dst_port), 1234);
     }
@@ -205,11 +196,11 @@ mod tests {
         assert_eq!(result.offset.l3_protocol, LANDSCAPE_IPV6_TYPE);
         assert_eq!(result.offset.l4_protocol, IPPROTO_TCP);
         assert_eq!(
-            Ipv6Addr::from(ipv6_bytes(&result.pair.src_addr)),
+            Ipv6Addr::from(result.pair.src_addr),
             Ipv6Addr::new(0x2001, 0xdb8, 1, 0, 0, 0, 0, 1)
         );
         assert_eq!(
-            Ipv6Addr::from(ipv6_bytes(&result.pair.dst_addr)),
+            Ipv6Addr::from(result.pair.dst_addr),
             Ipv6Addr::new(0x2001, 0xdb8, 1, 0, 0, 0, 0, 2)
         );
         assert_eq!(u16::from_be(result.pair.src_port), 21);

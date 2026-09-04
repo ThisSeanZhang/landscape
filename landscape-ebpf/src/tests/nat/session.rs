@@ -7,11 +7,13 @@ use libbpf_rs::{
 };
 
 use crate::map_setting::share_map::ShareMapSkelBuilder;
+use crate::map_types::{Nat4TimerKey, Nat4TimerValueV3};
 use crate::tests::test_xdp_dummy::TestXdpDummySkelBuilder;
 use crate::tests::xdp_firewall_skel::XdpFirewallSkelBuilder;
 use crate::tests::xdp_lan_chain_skel::XdpLanChainSkelBuilder;
-use crate::tests::xdp_nat_skel::{types, XdpNatSkelBuilder};
+use crate::tests::xdp_nat_skel::XdpNatSkelBuilder;
 use std::os::fd::{AsFd, AsRawFd};
+use zerocopy::{FromBytes, IntoBytes};
 
 fn build_tcp_pkt(src_ip: [u8; 4], dst_ip: [u8; 4], src_port: u16, dst_port: u16) -> Vec<u8> {
     use etherparse::PacketBuilder;
@@ -415,35 +417,23 @@ fn xdp_nat_dynamic_egress() {
         12345,
     );
 
-    let ct_key = types::nat4_timer_key {
+    let ct_key = Nat4TimerKey {
         l4proto: 6,
         _pad: [0; 3],
-        pair_ip: types::inet4_pair {
-            src_addr: types::inet4_addr {
-                addr: u32::from_be_bytes([93, 184, 216, 34]).to_be(),
-            },
-            dst_addr: types::inet4_addr { addr: u32::from_be_bytes([203, 0, 113, 1]).to_be() },
-            src_port: 80u16.to_be(),
-            dst_port: 4096u16.to_be(),
-        },
+        src_addr: u32::from_be_bytes([93, 184, 216, 34]).to_be(),
+        dst_addr: u32::from_be_bytes([203, 0, 113, 1]).to_be(),
+        src_port: 80u16.to_be(),
+        dst_port: 4096u16.to_be(),
     };
     let ct_bytes = nat
         .maps
         .nat4_timer_map
-        .lookup(unsafe { plain::as_bytes(&ct_key) }, MapFlags::ANY)
+        .lookup(ct_key.as_bytes(), MapFlags::ANY)
         .unwrap()
         .expect("dynamic CT should exist");
-    let mut ct_value =
-        unsafe { std::ptr::read_unaligned(ct_bytes.as_ptr().cast::<types::nat4_timer_value_v3>()) };
+    let mut ct_value = Nat4TimerValueV3::read_from_bytes(&ct_bytes).unwrap();
     ct_value.status = 50;
-    nat.maps
-        .nat4_timer_map
-        .update(
-            unsafe { plain::as_bytes(&ct_key) },
-            unsafe { plain::as_bytes(&ct_value) },
-            MapFlags::ANY,
-        )
-        .unwrap();
+    nat.maps.nat4_timer_map.update(ct_key.as_bytes(), ct_value.as_bytes(), MapFlags::ANY).unwrap();
 
     send_raw_packet(nat_p, &pkt);
     settle(300);
@@ -451,11 +441,10 @@ fn xdp_nat_dynamic_egress() {
     let ct_bytes = nat
         .maps
         .nat4_timer_map
-        .lookup(unsafe { plain::as_bytes(&ct_key) }, MapFlags::ANY)
+        .lookup(ct_key.as_bytes(), MapFlags::ANY)
         .unwrap()
         .expect("cleanup CT should exist");
-    let ct_value =
-        unsafe { std::ptr::read_unaligned(ct_bytes.as_ptr().cast::<types::nat4_timer_value_v3>()) };
+    let ct_value = Nat4TimerValueV3::read_from_bytes(&ct_bytes).unwrap();
     assert_eq!(ct_value.status, 50, "XDP egress must not reactivate cleanup CT");
 
     drop(nat);

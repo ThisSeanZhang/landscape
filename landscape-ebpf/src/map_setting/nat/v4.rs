@@ -1,5 +1,6 @@
 use landscape_common::config_service::static_nat::config4::RuntimeStaticNatMappingV4Config;
 use libbpf_rs::MapCore;
+use zerocopy::IntoBytes;
 
 use crate::bpf_error::LdEbpfResult;
 use crate::{MAP_PATHS, NAT_MAPPING_EGRESS, NAT_MAPPING_INGRESS};
@@ -66,14 +67,10 @@ fn insert_static_nat4_item_entries(
 
     egress_mapping_value.port = static_mapping.wan_port.to_be();
 
-    entries.insert(
-        unsafe { plain::as_bytes(&ingress_mapping_key) }.to_vec(),
-        unsafe { plain::as_bytes(&ingress_mapping_value) }.to_vec(),
-    );
-    entries.insert(
-        unsafe { plain::as_bytes(&egress_mapping_key) }.to_vec(),
-        unsafe { plain::as_bytes(&egress_mapping_value) }.to_vec(),
-    );
+    entries
+        .insert(ingress_mapping_key.as_bytes().to_vec(), ingress_mapping_value.as_bytes().to_vec());
+    entries
+        .insert(egress_mapping_key.as_bytes().to_vec(), egress_mapping_value.as_bytes().to_vec());
 }
 
 pub(crate) fn add_static_nat4_mapping<T, I>(nat4_static_map: &T, mappings: I)

@@ -1,6 +1,7 @@
 use std::os::fd::{AsFd, AsRawFd};
 
 use libbpf_rs::{libbpf_sys, MapCore, MapFlags, MapHandle, MapType};
+use zerocopy::IntoBytes;
 
 use crate::{
     map_setting::share_map::types::{
@@ -38,8 +39,8 @@ where
 
     let map_fd = map.as_fd().as_raw_fd();
 
-    let key_value = unsafe { plain::as_bytes(&cache_type) };
-    let value_value = unsafe { plain::as_bytes(&map_fd) };
+    let key_value = cache_type.as_bytes();
+    let value_value = map_fd.as_bytes();
 
     if let Err(e) = outer_map.update(key_value, value_value, MapFlags::ANY) {
         let last_os_error = std::io::Error::last_os_error();

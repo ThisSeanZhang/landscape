@@ -9,14 +9,15 @@ use libbpf_rs::{
     skel::{OpenSkel, SkelBuilder as _},
     MapCore, MapFlags, ProgramInput,
 };
-use zerocopy::IntoBytes;
+use zerocopy::{FromBytes, IntoBytes};
 
 use crate::{
     map_setting::{
         add_wan_ip,
         nat::{add_static_nat4_mapping_v3, StaticNatMappingV4Item},
     },
-    stages::nat::tc_nat_skel::{types, TcNatSkelBuilder},
+    map_types::{Nat4TimerKey, Nat4TimerValueV3},
+    stages::nat::tc_nat_skel::TcNatSkelBuilder,
     tests::TestSkb,
     NAT_MAPPING_EGRESS, NAT_MAPPING_INGRESS,
 };
@@ -81,28 +82,26 @@ fn add_ct_entry<T: MapCore>(
     client_port: u16,
     gress: u8,
 ) {
-    let key = types::nat4_timer_key {
+    let key = Nat4TimerKey {
         l4proto,
         _pad: [0; 3],
-        pair_ip: types::inet4_pair {
-            src_addr: types::inet4_addr { addr: src_addr.to_bits().to_be() },
-            dst_addr: types::inet4_addr { addr: nat_addr.to_bits().to_be() },
-            src_port: src_port.to_be(),
-            dst_port: nat_port.to_be(),
-        },
+        src_addr: src_addr.to_bits().to_be(),
+        dst_addr: nat_addr.to_bits().to_be(),
+        src_port: src_port.to_be(),
+        dst_port: nat_port.to_be(),
     };
-    let value = types::nat4_timer_value_v3 {
+    let value = Nat4TimerValueV3 {
         server_status: 1,
         client_status: 1,
         gress,
-        client_addr: types::inet4_addr { addr: client_addr.to_bits().to_be() },
+        client_addr: client_addr.to_bits().to_be(),
         client_port: client_port.to_be(),
         ifindex: IFINDEX,
         ..Default::default()
     };
 
     timer_map
-        .update(unsafe { plain::as_bytes(&key) }, unsafe { plain::as_bytes(&value) }, MapFlags::ANY)
+        .update(key.as_bytes(), value.as_bytes(), MapFlags::ANY)
         .expect("failed to insert CT entry");
 }
 
@@ -376,27 +375,23 @@ mod tests {
         }
 
         // verify CT was created and stores the concrete dst (WAN_IP) as client_addr
-        let timer_key = types::nat4_timer_key {
+        let timer_key = Nat4TimerKey {
             l4proto: 6,
             _pad: [0; 3],
-            pair_ip: types::inet4_pair {
-                src_addr: types::inet4_addr { addr: REMOTE_IP.to_bits().to_be() },
-                dst_addr: types::inet4_addr { addr: WAN_IP.to_bits().to_be() },
-                src_port: 443u16.to_be(),
-                dst_port: 8080u16.to_be(),
-            },
+            src_addr: REMOTE_IP.to_bits().to_be(),
+            dst_addr: WAN_IP.to_bits().to_be(),
+            src_port: 443u16.to_be(),
+            dst_port: 8080u16.to_be(),
         };
         let timer_bytes = skel
             .maps
             .nat4_timer_map
-            .lookup(unsafe { plain::as_bytes(&timer_key) }, MapFlags::ANY)
+            .lookup(timer_key.as_bytes(), MapFlags::ANY)
             .expect("lookup ct");
         let timer_bytes = timer_bytes.expect("ingress should create CT");
-        let timer = unsafe {
-            std::ptr::read_unaligned(timer_bytes.as_ptr().cast::<types::nat4_timer_value_v3>())
-        };
+        let timer = Nat4TimerValueV3::read_from_bytes(&timer_bytes).unwrap();
         assert_eq!(
-            timer.client_addr.addr,
+            timer.client_addr,
             WAN_IP.to_bits().to_be(),
             "CT client_addr must be WAN_IP, not 0"
         );

@@ -10,14 +10,15 @@ use landscape_common::{
     sys_service::route_service::{LanRouteInfo, RouteTargetInfo},
 };
 use libbpf_rs::{MapCore, MapFlags};
+use zerocopy::{FromBytes, IntoBytes};
 
 use crate::{
-    map_setting::share_map::types::{
-        flow_dns_match_key_v4, flow_dns_match_key_v6, flow_dns_match_value_v4,
-        flow_dns_match_value_v6, flow_ip_trie_key_v4, flow_ip_trie_key_v6, flow_ip_trie_value_v4,
-        flow_ip_trie_value_v6, flow_match_key, lan_route_info_v4, lan_route_info_v6,
-        lan_route_key_v4, lan_route_key_v6, route_target_info_v4, route_target_info_v6,
-        rt_cache_key_v4, rt_cache_key_v6, rt_cache_value_v4, rt_cache_value_v6,
+    map_types::{
+        FlowDnsMatchKeyV4, FlowDnsMatchKeyV6, FlowDnsMatchValueV4, FlowDnsMatchValueV6,
+        FlowIpTrieKeyV4, FlowIpTrieKeyV6, FlowIpTrieValueV4, FlowIpTrieValueV6, FlowMatchKey,
+        LanRouteInfoV4, LanRouteInfoV6, LanRouteKeyV4, LanRouteKeyV6, RouteTargetInfoV4,
+        RouteTargetInfoV6, RouteTargetSlotKeyV4, RouteTargetSlotKeyV6, RtCacheKeyV4, RtCacheKeyV6,
+        RtCacheValueV4, RtCacheValueV6,
     },
     LANDSCAPE_IPV4_TYPE, LANDSCAPE_IPV6_TYPE, MAP_PATHS,
 };
@@ -34,20 +35,6 @@ const FLOW_TARGET_SLOT_COUNT: usize = 16;
 const ROUTE_TYPE_LAN: u8 = 0;
 const ROUTE_TYPE_NEXTHOP: u8 = 1;
 const ROUTE_TYPE_WAN: u8 = 2;
-
-#[repr(C)]
-#[derive(Clone, Copy, Default)]
-struct route_target_slot_key_v4 {
-    flow_id: u32,
-    slot: u32,
-}
-
-#[repr(C)]
-#[derive(Clone, Copy, Default)]
-struct route_target_slot_key_v6 {
-    flow_id: u32,
-    slot: u32,
-}
 
 fn invalidate_lan_route_cache_with_outer_maps<T, U>(rt4_cache_map: &T, rt6_cache_map: &U)
 where
@@ -97,15 +84,14 @@ pub fn trace_flow_match(req: FlowMatchRequest) -> FlowMatchResult {
 
     // MAC match
     let flow_id_by_mac = if let Some(mac) = &req.src_mac {
-        let mut key = flow_match_key::default();
+        let mut key = FlowMatchKey::default();
         key.prefixlen = 80; // FLOW_MAC_MATCH_LEN
         key.l3_protocol = 0;
         key.is_match_ip = FLOW_ENTRY_MODE_MAC;
-        key.__anon_flow_match_key_1.mac.mac = mac.octets();
+        key.set_src_mac(mac.octets());
 
-        let key_bytes = unsafe { plain::as_bytes(&key) };
-        match flow_match_map.lookup(key_bytes, MapFlags::ANY) {
-            Ok(Some(val)) => plain::from_bytes::<u32>(&val).ok().copied(),
+        match flow_match_map.lookup(key.as_bytes(), MapFlags::ANY) {
+            Ok(Some(val)) => u32::read_from_bytes(&val).ok(),
             _ => None,
         }
     } else {
@@ -114,15 +100,14 @@ pub fn trace_flow_match(req: FlowMatchRequest) -> FlowMatchResult {
 
     // IPv4 match
     let flow_id_by_ipv4 = if let Some(ipv4) = &req.src_ipv4 {
-        let mut key = flow_match_key::default();
+        let mut key = FlowMatchKey::default();
         key.prefixlen = 64; // FLOW_IP_IPV4_MATCH_LEN
         key.l3_protocol = LANDSCAPE_IPV4_TYPE;
         key.is_match_ip = FLOW_ENTRY_MODE_IP;
-        key.__anon_flow_match_key_1.src_addr.ip = ipv4.to_bits().to_be();
+        key.set_src_ipv4_be(ipv4.to_bits());
 
-        let key_bytes = unsafe { plain::as_bytes(&key) };
-        match flow_match_map.lookup(key_bytes, MapFlags::ANY) {
-            Ok(Some(val)) => plain::from_bytes::<u32>(&val).ok().copied(),
+        match flow_match_map.lookup(key.as_bytes(), MapFlags::ANY) {
+            Ok(Some(val)) => u32::read_from_bytes(&val).ok(),
             _ => None,
         }
     } else {
@@ -131,15 +116,14 @@ pub fn trace_flow_match(req: FlowMatchRequest) -> FlowMatchResult {
 
     // IPv6 match
     let flow_id_by_ipv6 = if let Some(ipv6) = &req.src_ipv6 {
-        let mut key = flow_match_key::default();
+        let mut key = FlowMatchKey::default();
         key.prefixlen = 160; // FLOW_IP_IPV6_MATCH_LEN
         key.l3_protocol = LANDSCAPE_IPV6_TYPE;
         key.is_match_ip = FLOW_ENTRY_MODE_IP;
-        key.__anon_flow_match_key_1.src_addr.bits = ipv6.to_bits().to_be_bytes();
+        key.set_src_ipv6(*ipv6);
 
-        let key_bytes = unsafe { plain::as_bytes(&key) };
-        match flow_match_map.lookup(key_bytes, MapFlags::ANY) {
-            Ok(Some(val)) => plain::from_bytes::<u32>(&val).ok().copied(),
+        match flow_match_map.lookup(key.as_bytes(), MapFlags::ANY) {
+            Ok(Some(val)) => u32::read_from_bytes(&val).ok(),
             _ => None,
         }
     } else {
@@ -238,8 +222,8 @@ fn lookup_inner_map(
 ) -> Option<libbpf_rs::MapHandle> {
     match outer_map.lookup(outer_key, MapFlags::ANY) {
         Ok(Some(val)) => {
-            let id = plain::from_bytes::<i32>(&val).ok()?;
-            libbpf_rs::MapHandle::from_map_id(*id as u32).ok()
+            let id = i32::read_from_bytes(&val).ok()?;
+            libbpf_rs::MapHandle::from_map_id(id as u32).ok()
         }
         _ => None,
     }
@@ -279,24 +263,22 @@ fn trace_flow_verdict_single_v4(
     flow_id: u32,
     dst_ip: Ipv4Addr,
 ) -> (Option<FlowRuleMatchResult>, Option<FlowRuleMatchResult>, FlowVerdictSource, FlowMark) {
-    let flow_id_key = unsafe { plain::as_bytes(&flow_id) };
+    let flow_id_key = flow_id.as_bytes();
 
     // IP trie lookup
     let ip_rule_match = (|| -> Option<FlowRuleMatchResult> {
         let outer = libbpf_rs::MapHandle::from_pinned_path(&MAP_PATHS.flow4_ip_map).ok()?;
         let inner = lookup_inner_map(&outer, flow_id_key)?;
 
-        let mut trie_key = flow_ip_trie_key_v4::default();
+        let mut trie_key = FlowIpTrieKeyV4::default();
         trie_key.prefixlen = 32;
         trie_key.addr = dst_ip.to_bits().to_be();
-        let key_bytes = unsafe { plain::as_bytes(&trie_key) };
 
-        let val_bytes = inner.lookup(key_bytes, MapFlags::ANY).ok()??;
-        if val_bytes.len() < size_of::<flow_ip_trie_value_v4>() {
+        let val_bytes = inner.lookup(trie_key.as_bytes(), MapFlags::ANY).ok()??;
+        if val_bytes.len() < size_of::<FlowIpTrieValueV4>() {
             return None;
         }
-        let val =
-            unsafe { std::ptr::read_unaligned(val_bytes.as_ptr() as *const flow_ip_trie_value_v4) };
+        let val = FlowIpTrieValueV4::read_from_bytes(&val_bytes).ok()?;
         Some(FlowRuleMatchResult {
             mark: FlowMark::from(val.mark),
             priority: val.priority,
@@ -308,17 +290,14 @@ fn trace_flow_verdict_single_v4(
         let outer = libbpf_rs::MapHandle::from_pinned_path(&MAP_PATHS.flow4_dns_map).ok()?;
         let inner = lookup_inner_map(&outer, flow_id_key)?;
 
-        let mut dns_key = flow_dns_match_key_v4::default();
+        let mut dns_key = FlowDnsMatchKeyV4::default();
         dns_key.addr = dst_ip.to_bits().to_be();
-        let key_bytes = unsafe { plain::as_bytes(&dns_key) };
 
-        let val_bytes = inner.lookup(key_bytes, MapFlags::ANY).ok()??;
-        if val_bytes.len() < size_of::<flow_dns_match_value_v4>() {
+        let val_bytes = inner.lookup(dns_key.as_bytes(), MapFlags::ANY).ok()??;
+        if val_bytes.len() < size_of::<FlowDnsMatchValueV4>() {
             return None;
         }
-        let val = unsafe {
-            std::ptr::read_unaligned(val_bytes.as_ptr() as *const flow_dns_match_value_v4)
-        };
+        let val = FlowDnsMatchValueV4::read_from_bytes(&val_bytes).ok()?;
         Some(FlowRuleMatchResult {
             mark: FlowMark::from(val.mark),
             priority: val.priority,
@@ -335,24 +314,22 @@ fn trace_flow_verdict_single_v6(
     flow_id: u32,
     dst_ip: Ipv6Addr,
 ) -> (Option<FlowRuleMatchResult>, Option<FlowRuleMatchResult>, FlowVerdictSource, FlowMark) {
-    let flow_id_key = unsafe { plain::as_bytes(&flow_id) };
+    let flow_id_key = flow_id.as_bytes();
 
     // IP trie lookup
     let ip_rule_match = (|| -> Option<FlowRuleMatchResult> {
         let outer = libbpf_rs::MapHandle::from_pinned_path(&MAP_PATHS.flow6_ip_map).ok()?;
         let inner = lookup_inner_map(&outer, flow_id_key)?;
 
-        let mut trie_key = flow_ip_trie_key_v6::default();
+        let mut trie_key = FlowIpTrieKeyV6::default();
         trie_key.prefixlen = 128;
-        trie_key.addr.bytes = dst_ip.to_bits().to_be_bytes();
-        let key_bytes = unsafe { plain::as_bytes(&trie_key) };
+        trie_key.addr = dst_ip.to_bits().to_be_bytes();
 
-        let val_bytes = inner.lookup(key_bytes, MapFlags::ANY).ok()??;
-        if val_bytes.len() < size_of::<flow_ip_trie_value_v6>() {
+        let val_bytes = inner.lookup(trie_key.as_bytes(), MapFlags::ANY).ok()??;
+        if val_bytes.len() < size_of::<FlowIpTrieValueV6>() {
             return None;
         }
-        let val =
-            unsafe { std::ptr::read_unaligned(val_bytes.as_ptr() as *const flow_ip_trie_value_v6) };
+        let val = FlowIpTrieValueV6::read_from_bytes(&val_bytes).ok()?;
         Some(FlowRuleMatchResult {
             mark: FlowMark::from(val.mark),
             priority: val.priority,
@@ -364,17 +341,14 @@ fn trace_flow_verdict_single_v6(
         let outer = libbpf_rs::MapHandle::from_pinned_path(&MAP_PATHS.flow6_dns_map).ok()?;
         let inner = lookup_inner_map(&outer, flow_id_key)?;
 
-        let mut dns_key = flow_dns_match_key_v6::default();
-        dns_key.addr.bytes = dst_ip.to_bits().to_be_bytes();
-        let key_bytes = unsafe { plain::as_bytes(&dns_key) };
+        let mut dns_key = FlowDnsMatchKeyV6::default();
+        dns_key.addr = dst_ip.to_bits().to_be_bytes();
 
-        let val_bytes = inner.lookup(key_bytes, MapFlags::ANY).ok()??;
-        if val_bytes.len() < size_of::<flow_dns_match_value_v6>() {
+        let val_bytes = inner.lookup(dns_key.as_bytes(), MapFlags::ANY).ok()??;
+        if val_bytes.len() < size_of::<FlowDnsMatchValueV6>() {
             return None;
         }
-        let val = unsafe {
-            std::ptr::read_unaligned(val_bytes.as_ptr() as *const flow_dns_match_value_v6)
-        };
+        let val = FlowDnsMatchValueV6::read_from_bytes(&val_bytes).ok()?;
         Some(FlowRuleMatchResult {
             mark: FlowMark::from(val.mark),
             priority: val.priority,
@@ -396,22 +370,19 @@ fn trace_cache_check_v4(
         let outer = libbpf_rs::MapHandle::from_pinned_path(&MAP_PATHS.rt4_cache_map).ok()?;
 
         let cache_index = LAN_CACHE;
-        let index_key = unsafe { plain::as_bytes(&cache_index) };
+        let index_key = cache_index.as_bytes();
         let inner = lookup_inner_map(&outer, index_key)?;
 
-        let mut cache_key = rt_cache_key_v4::default();
+        let mut cache_key = RtCacheKeyV4::default();
         cache_key.local_addr = src_ip.to_bits().to_be();
         cache_key.remote_addr = dst_ip.to_bits().to_be();
-        let key_bytes = unsafe { plain::as_bytes(&cache_key) };
 
-        match inner.lookup(key_bytes, MapFlags::ANY) {
+        match inner.lookup(cache_key.as_bytes(), MapFlags::ANY) {
             Ok(Some(val_bytes)) => {
-                if val_bytes.len() < size_of::<rt_cache_value_v4>() {
+                if val_bytes.len() < size_of::<RtCacheValueV4>() {
                     return Some((false, None, true));
                 }
-                let val = unsafe {
-                    std::ptr::read_unaligned(val_bytes.as_ptr() as *const rt_cache_value_v4)
-                };
+                let val = RtCacheValueV4::read_from_bytes(&val_bytes).ok()?;
                 let cached_mark_value = val.mark_value;
                 let consistent = cached_mark_value == expected_cache_mark;
                 Some((true, Some(cached_mark_value), consistent))
@@ -423,6 +394,7 @@ fn trace_cache_check_v4(
     result.unwrap_or((false, None, true))
 }
 
+#[allow(clippy::field_reassign_with_default)]
 fn trace_cache_check_v6(
     src_ip: Ipv6Addr,
     dst_ip: Ipv6Addr,
@@ -432,22 +404,19 @@ fn trace_cache_check_v6(
         let outer = libbpf_rs::MapHandle::from_pinned_path(&MAP_PATHS.rt6_cache_map).ok()?;
 
         let cache_index = LAN_CACHE;
-        let index_key = unsafe { plain::as_bytes(&cache_index) };
+        let index_key = cache_index.as_bytes();
         let inner = lookup_inner_map(&outer, index_key)?;
 
-        let mut cache_key = rt_cache_key_v6::default();
-        cache_key.local_addr.bytes = src_ip.to_bits().to_be_bytes();
-        cache_key.remote_addr.bytes = dst_ip.to_bits().to_be_bytes();
-        let key_bytes = unsafe { plain::as_bytes(&cache_key) };
+        let mut cache_key = RtCacheKeyV6::default();
+        cache_key.local_addr = src_ip.to_bits().to_be_bytes();
+        cache_key.remote_addr = dst_ip.to_bits().to_be_bytes();
 
-        match inner.lookup(key_bytes, MapFlags::ANY) {
+        match inner.lookup(cache_key.as_bytes(), MapFlags::ANY) {
             Ok(Some(val_bytes)) => {
-                if val_bytes.len() < size_of::<rt_cache_value_v6>() {
+                if val_bytes.len() < size_of::<RtCacheValueV6>() {
                     return Some((false, None, true));
                 }
-                let val = unsafe {
-                    std::ptr::read_unaligned(val_bytes.as_ptr() as *const rt_cache_value_v6)
-                };
+                let val = RtCacheValueV6::read_from_bytes(&val_bytes).ok()?;
                 let cached_mark_value = val.mark_value;
                 let consistent = cached_mark_value == expected_cache_mark;
                 Some((true, Some(cached_mark_value), consistent))
@@ -502,8 +471,8 @@ pub(crate) fn add_lan_route_inner_v4<T>(rt_lan_map: &T, lan_info: &LanRouteInfo)
 where
     T: MapCore,
 {
-    let mut key = lan_route_key_v4::default();
-    let mut value = lan_route_info_v4::default();
+    let mut key = LanRouteKeyV4::default();
+    let mut value = LanRouteInfoV4::default();
 
     key.prefixlen = lan_info.prefix as u32;
     match lan_info.iface_ip {
@@ -515,14 +484,14 @@ where
             return false;
         }
     }
-    let key = unsafe { plain::as_bytes(&key) };
+    let key = key.as_bytes();
 
     value.ifindex = lan_info.ifindex;
     if let Some(mac) = lan_info.mac {
         value.mac_addr = mac.octets();
-        value.has_mac = std::mem::MaybeUninit::new(true);
+        value.has_mac = true;
     } else {
-        value.has_mac = std::mem::MaybeUninit::new(false);
+        value.has_mac = false;
     }
 
     match &lan_info.mode {
@@ -546,7 +515,7 @@ where
         }
     }
 
-    let value = unsafe { plain::as_bytes(&value) };
+    let value = value.as_bytes();
 
     if let Ok(Some(existing)) = rt_lan_map.lookup(key, MapFlags::ANY) {
         if existing.as_slice() == value {
@@ -566,8 +535,8 @@ pub(crate) fn add_lan_route_inner_v6<T>(rt_lan_map: &T, lan_info: &LanRouteInfo)
 where
     T: MapCore,
 {
-    let mut key = lan_route_key_v6::default();
-    let mut value = lan_route_info_v6::default();
+    let mut key = LanRouteKeyV6::default();
+    let mut value = LanRouteInfoV6::default();
 
     key.prefixlen = lan_info.prefix as u32;
     match lan_info.iface_ip {
@@ -575,18 +544,18 @@ where
             return false;
         }
         std::net::IpAddr::V6(ipv6_addr) => {
-            key.addr.bytes = ipv6_addr.to_bits().to_be_bytes();
-            value.addr.bytes = ipv6_addr.to_bits().to_be_bytes();
+            key.addr = ipv6_addr.to_bits().to_be_bytes();
+            value.addr = ipv6_addr.to_bits().to_be_bytes();
         }
     }
-    let key = unsafe { plain::as_bytes(&key) };
+    let key = key.as_bytes();
 
     value.ifindex = lan_info.ifindex;
     if let Some(mac) = lan_info.mac {
         value.mac_addr = mac.octets();
-        value.has_mac = std::mem::MaybeUninit::new(true);
+        value.has_mac = true;
     } else {
-        value.has_mac = std::mem::MaybeUninit::new(false);
+        value.has_mac = false;
     }
 
     match &lan_info.mode {
@@ -601,7 +570,7 @@ where
                     return false;
                 }
                 std::net::IpAddr::V6(ipv6_addr) => {
-                    value.addr.bytes = ipv6_addr.to_bits().to_be_bytes();
+                    value.addr = ipv6_addr.to_bits().to_be_bytes();
                 }
             }
         }
@@ -610,7 +579,7 @@ where
         }
     }
 
-    let value = unsafe { plain::as_bytes(&value) };
+    let value = value.as_bytes();
 
     if let Ok(Some(existing)) = rt_lan_map.lookup(key, MapFlags::ANY) {
         if existing.as_slice() == value {
@@ -653,7 +622,7 @@ pub(crate) fn del_lan_route_inner_v4<T>(rt_lan_map: &T, lan_info: &LanRouteInfo)
 where
     T: MapCore,
 {
-    let mut key = lan_route_key_v4::default();
+    let mut key = LanRouteKeyV4::default();
     key.prefixlen = lan_info.prefix as u32;
     match lan_info.iface_ip {
         std::net::IpAddr::V4(ipv4_addr) => {
@@ -663,7 +632,7 @@ where
             return false;
         }
     }
-    let key = unsafe { plain::as_bytes(&key) };
+    let key = key.as_bytes();
 
     match rt_lan_map.lookup(key, MapFlags::ANY) {
         Ok(Some(_)) => {}
@@ -687,17 +656,17 @@ pub(crate) fn del_lan_route_inner_v6<T>(rt_lan_map: &T, lan_info: &LanRouteInfo)
 where
     T: MapCore,
 {
-    let mut key = lan_route_key_v6::default();
+    let mut key = LanRouteKeyV6::default();
     key.prefixlen = lan_info.prefix as u32;
     match lan_info.iface_ip {
         std::net::IpAddr::V4(_) => {
             return false;
         }
         std::net::IpAddr::V6(ipv6_addr) => {
-            key.addr.bytes = ipv6_addr.to_bits().to_be_bytes();
+            key.addr = ipv6_addr.to_bits().to_be_bytes();
         }
     }
-    let key = unsafe { plain::as_bytes(&key) };
+    let key = key.as_bytes();
 
     match rt_lan_map.lookup(key, MapFlags::ANY) {
         Ok(Some(_)) => {}
@@ -792,17 +761,16 @@ pub(crate) fn replace_wan_route_slots_v4_with_map<T>(
     let weights: Vec<u32> = filtered.iter().map(|(_, weight)| *weight).collect();
     let slots = build_slot_indices(&weights);
     let slot_count = slots.len() as u32;
-    let mut keys =
-        Vec::with_capacity(slots.len() * std::mem::size_of::<route_target_slot_key_v4>());
-    let mut values = Vec::with_capacity(slots.len() * std::mem::size_of::<route_target_info_v4>());
+    let mut keys = Vec::with_capacity(slots.len() * std::mem::size_of::<RouteTargetSlotKeyV4>());
+    let mut values = Vec::with_capacity(slots.len() * std::mem::size_of::<RouteTargetInfoV4>());
 
     for (slot, target_index) in slots.into_iter().enumerate() {
         let (target, _) = filtered[target_index];
-        let mut key = route_target_slot_key_v4::default();
+        let mut key = RouteTargetSlotKeyV4::default();
         key.flow_id = flow_id;
         key.slot = slot as u32;
 
-        let mut value = route_target_info_v4::default();
+        let mut value = RouteTargetInfoV4::default();
         value.ifindex = target.ifindex;
         value.is_docker = u8::from(target.is_docker);
         if let IpAddr::V4(ipv4_addr) = target.gateway_ip {
@@ -816,8 +784,8 @@ pub(crate) fn replace_wan_route_slots_v4_with_map<T>(
             None => value.has_mac = 0,
         }
 
-        keys.extend_from_slice(unsafe { plain::as_bytes(&key) });
-        values.extend_from_slice(unsafe { plain::as_bytes(&value) });
+        keys.extend_from_slice(key.as_bytes());
+        values.extend_from_slice(value.as_bytes());
     }
 
     if let Err(e) =
@@ -847,21 +815,20 @@ pub(crate) fn replace_wan_route_slots_v6_with_map<T>(
     let weights: Vec<u32> = filtered.iter().map(|(_, weight)| *weight).collect();
     let slots = build_slot_indices(&weights);
     let slot_count = slots.len() as u32;
-    let mut keys =
-        Vec::with_capacity(slots.len() * std::mem::size_of::<route_target_slot_key_v6>());
-    let mut values = Vec::with_capacity(slots.len() * std::mem::size_of::<route_target_info_v6>());
+    let mut keys = Vec::with_capacity(slots.len() * std::mem::size_of::<RouteTargetSlotKeyV6>());
+    let mut values = Vec::with_capacity(slots.len() * std::mem::size_of::<RouteTargetInfoV6>());
 
     for (slot, target_index) in slots.into_iter().enumerate() {
         let (target, _) = filtered[target_index];
-        let mut key = route_target_slot_key_v6::default();
+        let mut key = RouteTargetSlotKeyV6::default();
         key.flow_id = flow_id;
         key.slot = slot as u32;
 
-        let mut value = route_target_info_v6::default();
+        let mut value = RouteTargetInfoV6::default();
         value.ifindex = target.ifindex;
         value.is_docker = u8::from(target.is_docker);
         if let IpAddr::V6(ipv6_addr) = target.gateway_ip {
-            value.gate_addr.bytes = ipv6_addr.to_bits().to_be_bytes();
+            value.gate_addr = ipv6_addr.to_bits().to_be_bytes();
         }
         match target.mac {
             Some(mac) => {
@@ -871,8 +838,8 @@ pub(crate) fn replace_wan_route_slots_v6_with_map<T>(
             None => value.has_mac = 0,
         }
 
-        keys.extend_from_slice(unsafe { plain::as_bytes(&key) });
-        values.extend_from_slice(unsafe { plain::as_bytes(&value) });
+        keys.extend_from_slice(key.as_bytes());
+        values.extend_from_slice(value.as_bytes());
     }
 
     if let Err(e) =
@@ -887,15 +854,14 @@ fn clear_wan_route_slots_v4<T>(rt_target_map: &T, flow_id: FlowId)
 where
     T: MapCore,
 {
-    let mut keys = Vec::with_capacity(
-        FLOW_TARGET_SLOT_COUNT * std::mem::size_of::<route_target_slot_key_v4>(),
-    );
+    let mut keys =
+        Vec::with_capacity(FLOW_TARGET_SLOT_COUNT * std::mem::size_of::<RouteTargetSlotKeyV4>());
     let mut count = 0;
     for slot in 0..FLOW_TARGET_SLOT_COUNT as u32 {
-        let mut key = route_target_slot_key_v4::default();
+        let mut key = RouteTargetSlotKeyV4::default();
         key.flow_id = flow_id;
         key.slot = slot;
-        let key_bytes = unsafe { plain::as_bytes(&key) };
+        let key_bytes = key.as_bytes();
         match rt_target_map.lookup(key_bytes, MapFlags::ANY) {
             Ok(Some(_)) => {
                 count += 1;
@@ -918,15 +884,14 @@ fn clear_wan_route_slots_v6<T>(rt_target_map: &T, flow_id: FlowId)
 where
     T: MapCore,
 {
-    let mut keys = Vec::with_capacity(
-        FLOW_TARGET_SLOT_COUNT * std::mem::size_of::<route_target_slot_key_v6>(),
-    );
+    let mut keys =
+        Vec::with_capacity(FLOW_TARGET_SLOT_COUNT * std::mem::size_of::<RouteTargetSlotKeyV6>());
     let mut count = 0;
     for slot in 0..FLOW_TARGET_SLOT_COUNT as u32 {
-        let mut key = route_target_slot_key_v6::default();
+        let mut key = RouteTargetSlotKeyV6::default();
         key.flow_id = flow_id;
         key.slot = slot;
-        let key_bytes = unsafe { plain::as_bytes(&key) };
+        let key_bytes = key.as_bytes();
         match rt_target_map.lookup(key_bytes, MapFlags::ANY) {
             Ok(Some(_)) => {
                 count += 1;
@@ -1023,8 +988,8 @@ mod tests {
         MapHandle::create(
             MapType::Hash,
             None::<&str>,
-            std::mem::size_of::<route_target_slot_key_v6>() as u32,
-            std::mem::size_of::<route_target_info_v6>() as u32,
+            std::mem::size_of::<RouteTargetSlotKeyV6>() as u32,
+            std::mem::size_of::<RouteTargetInfoV6>() as u32,
             256,
             &opts,
         )
@@ -1033,24 +998,23 @@ mod tests {
 
     #[allow(clippy::field_reassign_with_default)]
     fn insert_v6_slot(map: &MapHandle, flow_id: u32, slot: u32, ifindex: u32) {
-        let mut key = route_target_slot_key_v6::default();
+        let mut key = RouteTargetSlotKeyV6::default();
         key.flow_id = flow_id;
         key.slot = slot;
 
-        let mut value = route_target_info_v6::default();
+        let mut value = RouteTargetInfoV6::default();
         value.ifindex = ifindex;
 
-        let key_bytes = unsafe { plain::as_bytes(&key) };
-        let value_bytes = unsafe { plain::as_bytes(&value) };
-        map.update(key_bytes, value_bytes, MapFlags::ANY).expect("insert test slot entry");
+        map.update(key.as_bytes(), value.as_bytes(), MapFlags::ANY)
+            .expect("insert test slot entry");
     }
 
     #[allow(clippy::field_reassign_with_default)]
     fn lookup_v6_slot(map: &MapHandle, flow_id: u32, slot: u32) -> bool {
-        let mut key = route_target_slot_key_v6::default();
+        let mut key = RouteTargetSlotKeyV6::default();
         key.flow_id = flow_id;
         key.slot = slot;
-        map.lookup(unsafe { plain::as_bytes(&key) }, MapFlags::ANY).is_ok_and(|v| v.is_some())
+        map.lookup(key.as_bytes(), MapFlags::ANY).is_ok_and(|v| v.is_some())
     }
 
     #[test]

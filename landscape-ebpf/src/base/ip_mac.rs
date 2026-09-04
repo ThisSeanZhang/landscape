@@ -11,6 +11,7 @@ use netlink_packet_route::neighbour::{NeighbourAddress, NeighbourAttribute, Neig
 use netlink_packet_route::AddressFamily;
 use rtnetlink::IpVersion;
 use tokio_util::sync::CancellationToken;
+use zerocopy::{FromBytes, IntoBytes};
 
 pub(crate) mod neigh_update {
     include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/neigh_update.skel.rs"));
@@ -18,11 +19,8 @@ pub(crate) mod neigh_update {
 
 use neigh_update::*;
 
-use crate::base::ip_mac::neigh_update::types::mac_key_v4;
-use crate::base::ip_mac::neigh_update::types::mac_key_v6;
-use crate::base::ip_mac::neigh_update::types::mac_value_v4;
-use crate::base::ip_mac::neigh_update::types::mac_value_v6;
 use crate::landscape::OwnedOpenObject;
+use crate::map_types::{MacKeyV4, MacKeyV6, MacValueV4, MacValueV6};
 use crate::{bpf_error::LdEbpfResult, landscape::pin_and_reuse_map, MAP_PATHS};
 
 const ARP_SYNC_INTERVAL_SECS: u64 = 10;
@@ -193,20 +191,16 @@ fn upsert_ipv4_ip_mac_in_map<T>(
 where
     T: MapCore,
 {
-    let mut key = mac_key_v4::default();
+    let mut key = MacKeyV4::default();
     key.addr = ip_addr.to_bits().to_be();
 
-    let mut value = mac_value_v4::default();
+    let mut value = MacValueV4::default();
     value.ifindex = ifindex;
     value.proto = ETH_P_IPV4_BE;
     value.mac = mac.octets();
     value.dev_mac = dev_mac.octets();
 
-    map.update(
-        unsafe { plain::as_bytes(&key) },
-        unsafe { plain::as_bytes(&value) },
-        MapFlags::ANY,
-    )?;
+    map.update(key.as_bytes(), value.as_bytes(), MapFlags::ANY)?;
     Ok(())
 }
 
@@ -221,27 +215,23 @@ fn upsert_ipv6_ip_mac_in_map<T>(
 where
     T: MapCore,
 {
-    let mut key = mac_key_v6::default();
-    key.addr.bytes = ip_addr.to_bits().to_be_bytes();
+    let mut key = MacKeyV6::default();
+    key.addr = ip_addr.to_bits().to_be_bytes();
 
-    let mut value = mac_value_v6::default();
+    let mut value = MacValueV6::default();
     value.ifindex = ifindex;
     value.proto = ETH_P_IPV6_BE;
     value.mac = mac.octets();
     value.dev_mac = dev_mac.octets();
 
-    map.update(
-        unsafe { plain::as_bytes(&key) },
-        unsafe { plain::as_bytes(&value) },
-        MapFlags::ANY,
-    )?;
+    map.update(key.as_bytes(), value.as_bytes(), MapFlags::ANY)?;
     Ok(())
 }
 
 #[allow(clippy::field_reassign_with_default)]
 fn reconcile_arp_entries_in_map<T>(
     map: &T,
-    entries: &[(mac_key_v4, mac_value_v4)],
+    entries: &[(MacKeyV4, MacValueV4)],
 ) -> libbpf_rs::Result<ArpSyncStats>
 where
     T: MapCore,
@@ -250,7 +240,7 @@ where
     let mut stale_keys = Vec::new();
 
     for raw_key in map.keys() {
-        let raw_key = read_unaligned::<mac_key_v4>(&raw_key).ok_or_else(|| {
+        let raw_key = MacKeyV4::read_from_bytes(&raw_key).map_err(|_| {
             std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
                 format!("decode ip_mac_v4 key failed: invalid key size {}", raw_key.len()),
@@ -258,14 +248,14 @@ where
         })?;
 
         if !desired_addrs.contains(&raw_key.addr) {
-            let mut stale_key = mac_key_v4::default();
+            let mut stale_key = MacKeyV4::default();
             stale_key.addr = raw_key.addr;
             stale_keys.push(stale_key);
         }
     }
 
     for key in &stale_keys {
-        if let Err(e) = map.delete(unsafe { plain::as_bytes(key) }) {
+        if let Err(e) = map.delete(key.as_bytes()) {
             if e.kind() != ErrorKind::NotFound {
                 return Err(e);
             }
@@ -282,31 +272,29 @@ where
 
 fn reconcile_ipv6_entries_in_map<T>(
     map: &T,
-    entries: &[(mac_key_v6, mac_value_v6)],
+    entries: &[(MacKeyV6, MacValueV6)],
 ) -> libbpf_rs::Result<ArpSyncStats>
 where
     T: MapCore,
 {
-    let desired_addrs: HashSet<[u8; 16]> =
-        entries.iter().map(|(key, _)| unsafe { key.addr.bytes }).collect();
+    let desired_addrs: HashSet<[u8; 16]> = entries.iter().map(|(key, _)| key.addr).collect();
     let mut stale_keys = Vec::new();
 
     for raw_key in map.keys() {
-        let raw_key = read_unaligned::<mac_key_v6>(&raw_key).ok_or_else(|| {
+        let raw_key = MacKeyV6::read_from_bytes(&raw_key).map_err(|_| {
             std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
                 format!("decode ip_mac_v6 key failed: invalid key size {}", raw_key.len()),
             )
         })?;
 
-        let addr_bytes = unsafe { raw_key.addr.bytes };
-        if !desired_addrs.contains(&addr_bytes) && !is_dad_sourced(map, &raw_key)? {
+        if !desired_addrs.contains(&raw_key.addr) && !is_dad_sourced(map, &raw_key)? {
             stale_keys.push(raw_key);
         }
     }
 
     for key in &stale_keys {
-        if let Err(e) = map.delete(unsafe { plain::as_bytes(key) }) {
+        if let Err(e) = map.delete(key.as_bytes()) {
             if e.kind() != ErrorKind::NotFound {
                 return Err(e);
             }
@@ -324,13 +312,13 @@ where
 /// DAD-learned entries (sourced == LD_MAC_SOURCE_DAD) must survive the
 /// reconcile: the kernel usually has no valid neigh entry for a DAD target,
 /// so they would otherwise be wiped seconds after being learned.
-fn is_dad_sourced<T>(map: &T, key: &mac_key_v6) -> libbpf_rs::Result<bool>
+fn is_dad_sourced<T>(map: &T, key: &MacKeyV6) -> libbpf_rs::Result<bool>
 where
     T: MapCore,
 {
-    match map.lookup(unsafe { plain::as_bytes(key) }, MapFlags::ANY)? {
+    match map.lookup(key.as_bytes(), MapFlags::ANY)? {
         Some(value) => {
-            let value = read_unaligned::<mac_value_v6>(&value).ok_or_else(|| {
+            let value = MacValueV6::read_from_bytes(&value).map_err(|_| {
                 std::io::Error::new(
                     std::io::ErrorKind::InvalidData,
                     format!("decode ip_mac_v6 value failed: invalid value size {}", value.len()),
@@ -342,44 +330,33 @@ where
     }
 }
 
-fn build_batch_buffers(entries: &[(mac_key_v4, mac_value_v4)]) -> (Vec<u8>, Vec<u8>) {
-    let mut keys = Vec::with_capacity(entries.len() * std::mem::size_of::<mac_key_v4>());
-    let mut values = Vec::with_capacity(entries.len() * std::mem::size_of::<mac_value_v4>());
+fn build_batch_buffers(entries: &[(MacKeyV4, MacValueV4)]) -> (Vec<u8>, Vec<u8>) {
+    let mut keys = Vec::with_capacity(entries.len() * std::mem::size_of::<MacKeyV4>());
+    let mut values = Vec::with_capacity(entries.len() * std::mem::size_of::<MacValueV4>());
 
     for (key, value) in entries {
-        keys.extend_from_slice(unsafe { plain::as_bytes(key) });
-        values.extend_from_slice(unsafe { plain::as_bytes(value) });
+        keys.extend_from_slice(key.as_bytes());
+        values.extend_from_slice(value.as_bytes());
     }
 
     (keys, values)
 }
 
-fn build_batch_buffers_v6(entries: &[(mac_key_v6, mac_value_v6)]) -> (Vec<u8>, Vec<u8>) {
-    let mut keys = Vec::with_capacity(entries.len() * std::mem::size_of::<mac_key_v6>());
-    let mut values = Vec::with_capacity(entries.len() * std::mem::size_of::<mac_value_v6>());
+fn build_batch_buffers_v6(entries: &[(MacKeyV6, MacValueV6)]) -> (Vec<u8>, Vec<u8>) {
+    let mut keys = Vec::with_capacity(entries.len() * std::mem::size_of::<MacKeyV6>());
+    let mut values = Vec::with_capacity(entries.len() * std::mem::size_of::<MacValueV6>());
 
     for (key, value) in entries {
-        keys.extend_from_slice(unsafe { plain::as_bytes(key) });
-        values.extend_from_slice(unsafe { plain::as_bytes(value) });
+        keys.extend_from_slice(key.as_bytes());
+        values.extend_from_slice(value.as_bytes());
     }
 
     (keys, values)
-}
-
-fn read_unaligned<T>(bytes: &[u8]) -> Option<T>
-where
-    T: Copy,
-{
-    if bytes.len() != std::mem::size_of::<T>() {
-        return None;
-    }
-
-    Some(unsafe { std::ptr::read_unaligned(bytes.as_ptr().cast::<T>()) })
 }
 
 async fn parse_ipv6_neigh_full_info(
     handle: &rtnetlink::Handle,
-) -> Result<Vec<(mac_key_v6, mac_value_v6)>, std::io::Error> {
+) -> Result<Vec<(MacKeyV6, MacValueV6)>, std::io::Error> {
     let mut results = Vec::new();
     let mut dev_mac_cache = std::collections::HashMap::new();
 
@@ -408,7 +385,7 @@ async fn parse_ipv6_neigh_full_info(
 
 async fn parse_ipv4_neigh_full_info(
     handle: &rtnetlink::Handle,
-) -> Result<Vec<(mac_key_v4, mac_value_v4)>, std::io::Error> {
+) -> Result<Vec<(MacKeyV4, MacValueV4)>, std::io::Error> {
     let mut results = Vec::new();
     let mut dev_mac_cache = std::collections::HashMap::new();
 
@@ -438,7 +415,7 @@ async fn parse_ipv4_neigh_full_info(
 fn ipv4_neigh_msg_to_entry(
     msg: &netlink_packet_route::neighbour::NeighbourMessage,
     dev_mac_cache: &mut std::collections::HashMap<String, MacAddr>,
-) -> Option<(mac_key_v4, mac_value_v4)> {
+) -> Option<(MacKeyV4, MacValueV4)> {
     match msg.header.state {
         NeighbourState::Failed
         | NeighbourState::Incomplete
@@ -494,8 +471,8 @@ fn ipv4_neigh_msg_to_entry(
         }
     };
 
-    let mut key = mac_key_v4::default();
-    let mut value = mac_value_v4::default();
+    let mut key = MacKeyV4::default();
+    let mut value = MacValueV4::default();
 
     key.addr = ip_addr.to_bits().to_be();
     value.ifindex = ifindex;
@@ -509,7 +486,7 @@ fn ipv4_neigh_msg_to_entry(
 fn ipv6_neigh_msg_to_entry(
     msg: &netlink_packet_route::neighbour::NeighbourMessage,
     dev_mac_cache: &mut std::collections::HashMap<String, MacAddr>,
-) -> Option<(mac_key_v6, mac_value_v6)> {
+) -> Option<(MacKeyV6, MacValueV6)> {
     match msg.header.state {
         NeighbourState::Failed
         | NeighbourState::Incomplete
@@ -565,10 +542,10 @@ fn ipv6_neigh_msg_to_entry(
         }
     };
 
-    let mut key = mac_key_v6::default();
-    let mut value = mac_value_v6::default();
+    let mut key = MacKeyV6::default();
+    let mut value = MacValueV6::default();
 
-    key.addr.bytes = ip_addr.to_bits().to_be_bytes();
+    key.addr = ip_addr.to_bits().to_be_bytes();
     value.ifindex = ifindex;
     value.proto = ETH_P_IPV6_BE;
     value.mac = neighbor_mac.octets();
@@ -601,8 +578,8 @@ mod tests {
         MapHandle::create(
             MapType::Hash,
             Option::<&str>::None,
-            std::mem::size_of::<mac_key_v4>() as u32,
-            std::mem::size_of::<mac_value_v4>() as u32,
+            std::mem::size_of::<MacKeyV4>() as u32,
+            std::mem::size_of::<MacValueV4>() as u32,
             128,
             &opts,
         )
@@ -619,8 +596,8 @@ mod tests {
         MapHandle::create(
             MapType::Hash,
             Option::<&str>::None,
-            std::mem::size_of::<mac_key_v6>() as u32,
-            std::mem::size_of::<mac_value_v6>() as u32,
+            std::mem::size_of::<MacKeyV6>() as u32,
+            std::mem::size_of::<MacValueV6>() as u32,
             128,
             &opts,
         )
@@ -628,11 +605,11 @@ mod tests {
     }
 
     #[allow(clippy::field_reassign_with_default)]
-    fn make_entry(ip: &str, mac: &str, dev_mac: &str, ifindex: u32) -> (mac_key_v4, mac_value_v4) {
-        let mut key = mac_key_v4::default();
+    fn make_entry(ip: &str, mac: &str, dev_mac: &str, ifindex: u32) -> (MacKeyV4, MacValueV4) {
+        let mut key = MacKeyV4::default();
         key.addr = Ipv4Addr::from_str(ip).unwrap().to_bits().to_be();
 
-        let mut value = mac_value_v4::default();
+        let mut value = MacValueV4::default();
         value.ifindex = ifindex;
         value.mac = MacAddr::from_str(mac).unwrap().octets();
         value.dev_mac = MacAddr::from_str(dev_mac).unwrap().octets();
@@ -642,16 +619,11 @@ mod tests {
     }
 
     #[allow(clippy::field_reassign_with_default)]
-    fn make_entry_v6(
-        ip: &str,
-        mac: &str,
-        dev_mac: &str,
-        ifindex: u32,
-    ) -> (mac_key_v6, mac_value_v6) {
-        let mut key = mac_key_v6::default();
-        key.addr.bytes = std::net::Ipv6Addr::from_str(ip).unwrap().to_bits().to_be_bytes();
+    fn make_entry_v6(ip: &str, mac: &str, dev_mac: &str, ifindex: u32) -> (MacKeyV6, MacValueV6) {
+        let mut key = MacKeyV6::default();
+        key.addr = std::net::Ipv6Addr::from_str(ip).unwrap().to_bits().to_be_bytes();
 
-        let mut value = mac_value_v6::default();
+        let mut value = MacValueV6::default();
         value.ifindex = ifindex;
         value.mac = MacAddr::from_str(mac).unwrap().octets();
         value.dev_mac = MacAddr::from_str(dev_mac).unwrap().octets();
@@ -666,59 +638,52 @@ mod tests {
         mac: &str,
         dev_mac: &str,
         ifindex: u32,
-    ) -> (mac_key_v6, mac_value_v6) {
+    ) -> (MacKeyV6, MacValueV6) {
         let mut entry = make_entry_v6(ip, mac, dev_mac, ifindex);
         entry.1.sourced = LD_MAC_SOURCE_DAD;
         entry
     }
 
-    fn insert_entry<T>(map: &T, entry: &(mac_key_v4, mac_value_v4))
+    fn insert_entry<T>(map: &T, entry: &(MacKeyV4, MacValueV4))
     where
         T: MapCore,
     {
-        map.update(
-            unsafe { plain::as_bytes(&entry.0) },
-            unsafe { plain::as_bytes(&entry.1) },
-            MapFlags::ANY,
-        )
-        .expect("insert ip_mac entry");
+        map.update(entry.0.as_bytes(), entry.1.as_bytes(), MapFlags::ANY)
+            .expect("insert ip_mac entry");
     }
 
-    fn insert_entry_v6<T>(map: &T, entry: &(mac_key_v6, mac_value_v6))
+    fn insert_entry_v6<T>(map: &T, entry: &(MacKeyV6, MacValueV6))
     where
         T: MapCore,
     {
-        map.update(
-            unsafe { plain::as_bytes(&entry.0) },
-            unsafe { plain::as_bytes(&entry.1) },
-            MapFlags::ANY,
-        )
-        .expect("insert ip_mac_v6 entry");
+        map.update(entry.0.as_bytes(), entry.1.as_bytes(), MapFlags::ANY)
+            .expect("insert ip_mac_v6 entry");
     }
 
     #[allow(clippy::field_reassign_with_default)]
-    fn lookup_entry<T>(map: &T, ip: &str) -> Option<mac_value_v4>
+    fn lookup_entry<T>(map: &T, ip: &str) -> Option<MacValueV4>
     where
         T: MapCore,
     {
-        let mut key = mac_key_v4::default();
+        let mut key = MacKeyV4::default();
         key.addr = Ipv4Addr::from_str(ip).unwrap().to_bits().to_be();
 
-        map.lookup(unsafe { plain::as_bytes(&key) }, MapFlags::ANY)
+        map.lookup(key.as_bytes(), MapFlags::ANY)
             .expect("lookup ip_mac entry")
-            .map(|value| read_unaligned::<mac_value_v4>(&value).expect("decode ip_mac entry"))
+            .map(|value| MacValueV4::read_from_bytes(&value).expect("decode ip_mac entry"))
     }
 
-    fn lookup_entry_v6<T>(map: &T, ip: &str) -> Option<mac_value_v6>
+    #[allow(clippy::field_reassign_with_default)]
+    fn lookup_entry_v6<T>(map: &T, ip: &str) -> Option<MacValueV6>
     where
         T: MapCore,
     {
-        let mut key = mac_key_v6::default();
-        key.addr.bytes = std::net::Ipv6Addr::from_str(ip).unwrap().to_bits().to_be_bytes();
+        let mut key = MacKeyV6::default();
+        key.addr = std::net::Ipv6Addr::from_str(ip).unwrap().to_bits().to_be_bytes();
 
-        map.lookup(unsafe { plain::as_bytes(&key) }, MapFlags::ANY)
+        map.lookup(key.as_bytes(), MapFlags::ANY)
             .expect("lookup ip_mac_v6 entry")
-            .map(|value| read_unaligned::<mac_value_v6>(&value).expect("decode ip_mac_v6 entry"))
+            .map(|value| MacValueV6::read_from_bytes(&value).expect("decode ip_mac_v6 entry"))
     }
 
     #[test]
@@ -1047,10 +1012,7 @@ mod tests {
         assert_eq!(value.mac, MacAddr::from_str("02:11:22:33:44:55").unwrap().octets());
         assert_eq!(value.dev_mac, dev_mac.octets());
         assert_eq!(value.proto, ETH_P_IPV6_BE);
-        assert_eq!(
-            unsafe { key.addr.bytes },
-            Ipv6Addr::from_str("2001:db8::1").unwrap().to_bits().to_be_bytes()
-        );
+        assert_eq!(key.addr, Ipv6Addr::from_str("2001:db8::1").unwrap().to_bits().to_be_bytes());
     }
 
     #[test]
