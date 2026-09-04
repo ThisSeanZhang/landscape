@@ -2,7 +2,7 @@ use super::*;
 use crate::server::LocalDnsAnswerProvider;
 use arc_swap::ArcSwapOption;
 use landscape_common::dns::rule::FilterResult;
-use landscape_common::flow::DnsRuntimeMarkInfo;
+use landscape_common::flow::{DnsRuntimeMarkInfo, NoopDnsResultSink};
 use landscape_core::lan_hostname::LanHostnameRegistry;
 use uuid::Uuid;
 
@@ -29,6 +29,7 @@ impl DnsRequestHandler {
             flow_id,
             msg_tx,
             local_resolver,
+            Arc::new(NoopDnsResultSink),
         )
     }
 

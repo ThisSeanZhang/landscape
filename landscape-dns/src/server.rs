@@ -7,6 +7,7 @@ use std::{
 
 use arc_swap::{ArcSwap, ArcSwapOption};
 use landscape_common::dns::error::DnsServiceError;
+use landscape_common::flow::{DnsResultSink, FlowSocketRegistrar};
 use landscape_common::sys_service::lan_hostname::LanHostnameConfig;
 use landscape_common::{event::DnsMetricMessage, service::WatchService};
 use landscape_core::lan_hostname::LanHostnameRegistry;
@@ -29,7 +30,6 @@ pub(crate) mod answer;
 pub mod builder;
 pub(crate) mod cache;
 pub(crate) mod chain;
-pub(crate) mod ebpf;
 pub(crate) mod handler;
 pub(crate) mod local;
 pub(crate) mod matcher;
@@ -83,6 +83,8 @@ pub struct LandscapeDnsServer {
     cache_live_config: Arc<ArcSwap<CacheRuntimeConfig>>,
     doh_listener: Option<DohListenerState>,
     _mdns_service: Option<Arc<MdnsService>>,
+    result_sink: Arc<dyn DnsResultSink>,
+    socket_registrar: Arc<dyn FlowSocketRegistrar>,
 }
 
 struct FlowServerRuntime {
@@ -112,6 +114,7 @@ impl FlowServerEntry {
 }
 
 impl LandscapeDnsServer {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         listen_port: u16,
         msg_tx: Option<mpsc::Sender<DnsMetricMessage>>,
@@ -120,6 +123,8 @@ impl LandscapeDnsServer {
         local_answer_provider: Option<Arc<dyn LocalDnsAnswerProvider>>,
         doh_advertise_provider: Option<Arc<dyn DohAdvertiseProvider>>,
         lan_hostname_registry: Arc<LanHostnameRegistry>,
+        result_sink: Arc<dyn DnsResultSink>,
+        socket_registrar: Arc<dyn FlowSocketRegistrar>,
     ) -> Self {
         let status = WatchService::new();
         let mdns_service = if local_answer_provider.is_some() {
@@ -151,6 +156,8 @@ impl LandscapeDnsServer {
             _mdns_service: mdns_service,
             lan_hostname_registry,
             local_resolver,
+            result_sink,
+            socket_registrar,
         }
     }
 
@@ -249,6 +256,7 @@ impl LandscapeDnsServer {
             flow_id,
             self.msg_tx.clone(),
             self.local_resolver.clone(),
+            self.result_sink.clone(),
         );
         let Some(runtime) = self.build_flow_runtime(flow_id, handler).await else {
             tracing::error!("[flow: {flow_id}]: DNS server start failed, runtime not registered");
@@ -344,6 +352,7 @@ impl LandscapeDnsServer {
             self.udp_listener_addr,
             self.build_effective_doh_listener_config(),
             handler,
+            self.socket_registrar.clone(),
         )
         .await
     }
@@ -358,6 +367,7 @@ mod tests {
     use super::*;
     use arc_swap::ArcSwap;
     use landscape_common::dns::CacheRuntimeConfig;
+    use landscape_common::flow::NoopDnsResultSink;
     use landscape_common::sys_service::lan_hostname::LanHostnameConfig;
     use landscape_core::lan_hostname::LanHostnameRegistry;
 
@@ -388,6 +398,7 @@ mod tests {
                 7,
                 Arc::new(ArcSwapOption::new(None)),
                 Arc::new(LocalResolver::new(test_lan_hostname_registry(), None, None, None)),
+                Arc::new(NoopDnsResultSink),
             );
             entry.runtime.store(Some(Arc::new(FlowServerRuntime {
                 handler,

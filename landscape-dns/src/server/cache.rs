@@ -14,12 +14,12 @@ use uuid::Uuid;
 
 use landscape_common::{
     dns::rule::FilterResult,
-    flow::{DnsRuntimeMarkInfo, FlowMarkInfo},
+    flow::{DnsResultSink, DnsRuntimeMarkInfo, FlowMarkInfo},
 };
 
 use crate::{
     domain::ParsedDomain,
-    server::{ebpf::DnsMarkMap, rule::DNSResolveRuntime, CacheRuntimeConfig},
+    server::{rule::DNSResolveRuntime, CacheRuntimeConfig},
     CacheDNSItem, DNSCache,
 };
 
@@ -36,13 +36,13 @@ pub(crate) struct CacheEntry {
 }
 
 /// Cache operations shared by the resolution chain, admin APIs and runtime
-/// swaps: lookup with TTL decrement, insert with eBPF mark side effects and
+/// swaps: lookup with TTL decrement, insert with datapath side effects and
 /// invalidation.
 pub(crate) struct CacheHandle {
     cache: DNSCache,
     runtime_config: Arc<ArcSwap<CacheRuntimeConfig>>,
     flow_id: u32,
-    maps: Arc<dyn DnsMarkMap>,
+    sink: Arc<dyn DnsResultSink>,
 }
 
 impl std::fmt::Debug for CacheHandle {
@@ -59,13 +59,13 @@ impl CacheHandle {
     pub fn new(
         runtime_config: Arc<ArcSwap<CacheRuntimeConfig>>,
         flow_id: u32,
-        maps: Arc<dyn DnsMarkMap>,
+        sink: Arc<dyn DnsResultSink>,
     ) -> Self {
         Self {
             cache: Self::build_cache(runtime_config.load().as_ref()),
             runtime_config,
             flow_id,
-            maps,
+            sink,
         }
     }
 
@@ -188,7 +188,6 @@ impl CacheHandle {
         if min_ttl == 0 {
             return;
         }
-        let need_insert_in_ebpf_map = mark.mark.need_insert_in_ebpf_map();
         let cache_item = CacheDNSItem {
             rdatas,
             response_code,
@@ -203,11 +202,9 @@ impl CacheHandle {
 
         self.cache.insert((domain_key, query_type), Arc::new(cache_item)).await;
 
-        // write the mark into the mark eBPF map
-        if need_insert_in_ebpf_map {
-            // TODO: if the write fails, return an error and respond to the client with a query error
-            self.maps
-                .update_flow_dns_rule(self.flow_id, update_dns_mark_list.into_iter().collect());
+        // hand the resulting marks to the datapath sink
+        if !update_dns_mark_list.is_empty() {
+            self.sink.record_dns_answer(self.flow_id, update_dns_mark_list.into_iter().collect());
         }
     }
 

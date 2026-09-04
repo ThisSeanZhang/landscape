@@ -10,11 +10,16 @@ use crate::{flow::mark::FlowMark, net::MacAddr};
 use uuid::Uuid;
 
 pub mod config;
+pub mod dns_result_sink;
+pub mod flow_socket_registrar;
 pub mod ip_mark;
 pub mod mark;
 pub mod service;
 pub mod target;
 pub mod trace;
+
+pub use dns_result_sink::{DnsResultSink, NoopDnsResultSink};
+pub use flow_socket_registrar::{FlowSocketRegistrar, NoopFlowSocketRegistrar};
 
 #[derive(thiserror::Error, Debug, LdApiError)]
 #[api_error(crate_path = "crate")]

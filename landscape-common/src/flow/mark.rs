@@ -23,7 +23,10 @@ pub struct FlowMark {
 }
 
 impl FlowMark {
-    pub fn need_insert_in_ebpf_map(&self) -> bool {
+    /// Whether a DNS answer carrying this mark should be registered with the
+    /// datapath. `KeepGoing` flows only register when reuse-port is allowed;
+    /// the addressed action types (Direct/Drop/Redirect) always register.
+    pub fn should_insert_dns_mark(&self) -> bool {
         match self.action {
             FlowMarkAction::KeepGoing => self.allow_reuse_port,
             _ => true,

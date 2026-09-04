@@ -10,6 +10,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::server::handler::DnsRequestHandler;
 use landscape_common::dns::DohRuntimeConfig;
+use landscape_common::flow::FlowSocketRegistrar;
 use socket2::{Domain, Protocol, Socket, Type};
 
 mod doh;
@@ -143,20 +144,21 @@ pub async fn start_flow_dns_listener(
     addr: SocketAddr,
     doh: Option<EffectiveDohListenerConfig>,
     handler: DnsRequestHandler,
+    socket_registrar: Arc<dyn FlowSocketRegistrar>,
 ) -> CancellationToken {
     let Ok((udp, sock_fd)) = create_udp_socket(addr).await else {
         tracing::error!("[flow: {flow_id}]: create udp socket error");
         return cancelled_token();
     };
 
-    attach_dns_socket(flow_id, sock_fd, false);
+    attach_dns_socket(socket_registrar.as_ref(), flow_id, sock_fd, false);
 
     let doh_handler = handler.clone();
     let mut server = Server::new(handler);
     server.register_socket(udp);
 
     if let Some(doh) = doh {
-        register_doh_listener(&mut server, flow_id, doh, doh_handler);
+        register_doh_listener(&mut server, flow_id, doh, doh_handler, socket_registrar.clone());
     }
 
     let token = server.shutdown_token().clone();
@@ -181,10 +183,11 @@ fn register_doh_listener(
     flow_id: u32,
     doh: EffectiveDohListenerConfig,
     handler: DnsRequestHandler,
+    socket_registrar: Arc<dyn FlowSocketRegistrar>,
 ) {
     match create_tcp_listener(doh.addr) {
         Ok((listener, sock_fd)) => {
-            attach_dns_socket(flow_id, sock_fd, true);
+            attach_dns_socket(socket_registrar.as_ref(), flow_id, sock_fd, true);
             doh::spawn_doh_listener(
                 flow_id,
                 listener,
@@ -204,15 +207,13 @@ fn register_doh_listener(
     }
 }
 
-fn attach_dns_socket(flow_id: u32, sock_fd: i32, is_tcp: bool) {
-    if is_tcp {
-        landscape_ebpf::map_setting::dns::setting_dns_sock_map_tcp(sock_fd, flow_id);
-    } else {
-        landscape_ebpf::map_setting::dns::setting_dns_sock_map(sock_fd, flow_id);
-    }
-    if let Err(e) = landscape_ebpf::dns_dispatcher::attach_reuseport_ebpf(sock_fd) {
-        tracing::error!("[flow: {flow_id}]: attach reuseport eBPF error: {e:?}");
-    }
+fn attach_dns_socket(
+    socket_registrar: &dyn FlowSocketRegistrar,
+    flow_id: u32,
+    sock_fd: i32,
+    is_tcp: bool,
+) {
+    socket_registrar.register_dns_socket(flow_id, sock_fd, is_tcp)
 }
 
 fn cancelled_token() -> CancellationToken {

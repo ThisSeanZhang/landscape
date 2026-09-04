@@ -6,6 +6,8 @@ use once_cell::sync::Lazy;
 pub mod base;
 pub mod bpf_error;
 pub(crate) mod bpf_rs_shared;
+pub mod dns_result_sink;
+pub mod flow_socket_registrar;
 pub mod landscape;
 pub mod map_setting;
 pub mod metric;

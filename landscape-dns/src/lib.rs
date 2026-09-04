@@ -126,7 +126,7 @@ impl CacheDNSItem {
 
     fn get_update_rules_with_mark(&self, info: &DnsRuntimeMarkInfo) -> HashSet<FlowMarkInfo> {
         let mut result = HashSet::new();
-        if !info.mark.need_insert_in_ebpf_map() {
+        if !info.mark.should_insert_dns_mark() {
             return result;
         }
         for rdata in self.rdatas.iter() {

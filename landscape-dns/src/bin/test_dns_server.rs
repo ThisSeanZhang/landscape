@@ -5,6 +5,7 @@ use landscape_common::config_service::geo::{
 };
 use landscape_common::dns::gen_default_dns_rule_and_upstream;
 use landscape_common::event::hub::{EnrolledDeviceEventReader, IPv4AssignEventReader};
+use landscape_common::flow::{NoopDnsResultSink, NoopFlowSocketRegistrar};
 use landscape_common::sys_service::lan_hostname::LanHostnameConfig;
 use landscape_core::lan_hostname::LanHostnameRegistry;
 use landscape_dns::server::{CacheRuntimeConfig, LandscapeDnsServer, MatcherBuilder};
@@ -43,6 +44,8 @@ async fn main() -> std::io::Result<()> {
         None,
         None,
         lan_hostname_registry,
+        Arc::new(NoopDnsResultSink),
+        Arc::new(NoopFlowSocketRegistrar),
     );
 
     let (default_rule, upstream) = gen_default_dns_rule_and_upstream();

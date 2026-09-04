@@ -3239,7 +3239,6 @@ dependencies = [
  "jemallocator",
  "landscape-common",
  "landscape-core",
- "landscape-ebpf",
  "landscape-protobuf",
  "libc",
  "moka",

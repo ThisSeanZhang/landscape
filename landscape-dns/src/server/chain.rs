@@ -13,6 +13,7 @@ use hickory_proto::{
 use landscape_common::{
     dns::error::{DnsResult, DnsServiceError},
     dns::rule::FilterResult,
+    flow::DnsResultSink,
     metric::dns::DnsOutcome,
 };
 
@@ -21,7 +22,6 @@ use crate::{
     server::{
         answer::{response_code_for, DnsQueryAnswer},
         cache::CacheHandle,
-        ebpf::DnsMarkMap,
         local::{LocalAnswer, LocalResolver},
         redirect_engine::RedirectAnswer,
         rule::DNSResolveRuntime,
@@ -78,7 +78,7 @@ enum CacheWritePolicy {
 pub(crate) struct ResolveChain<'a> {
     runtime: &'a RuntimeSnapshot,
     local_resolver: &'a LocalResolver,
-    maps: &'a dyn DnsMarkMap,
+    sink: &'a dyn DnsResultSink,
     flow_id: u32,
 }
 
@@ -86,10 +86,10 @@ impl<'a> ResolveChain<'a> {
     pub fn new(
         runtime: &'a RuntimeSnapshot,
         local_resolver: &'a LocalResolver,
-        maps: &'a dyn DnsMarkMap,
+        sink: &'a dyn DnsResultSink,
         flow_id: u32,
     ) -> Self {
-        Self { runtime, local_resolver, maps, flow_id }
+        Self { runtime, local_resolver, sink, flow_id }
     }
 
     // ---- stages ----
@@ -451,11 +451,11 @@ impl<'a> ResolveChain<'a> {
     }
 
     fn refresh_maps_from_cache(&self) {
-        self.maps.refresh_flow_dns(
+        self.sink.refresh_dns_marks(
             self.flow_id,
             self.runtime.cache.dns_mark_list().into_iter().collect(),
         );
-        self.maps.recreate_route_cache();
+        self.sink.rebuild_route_cache();
     }
 }
 

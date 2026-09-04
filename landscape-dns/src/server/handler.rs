@@ -16,7 +16,6 @@ use crate::{
     server::{
         answer::DnsQueryAnswer,
         chain::ResolveChain,
-        ebpf::default_dns_mark_map,
         local::LocalResolver,
         redirect_engine::{RedirectAnswer, RedirectEngine},
         resolve_engine::ResolveEngine,
@@ -28,6 +27,7 @@ use crate::{
 use landscape_common::{
     dns::error::DnsServiceError,
     event::DnsMetricMessage,
+    flow::DnsResultSink,
     metric::dns::{DnsMetric, DnsOutcome},
 };
 use landscape_core::time::get_current_time_ms;
@@ -47,6 +47,7 @@ impl DnsRequestHandler {
         flow_id: u32,
         msg_tx: MetricSenderState,
         local_resolver: Arc<LocalResolver>,
+        sink: Arc<dyn DnsResultSink>,
     ) -> DnsRequestHandler {
         DnsRequestHandler {
             snapshot: Arc::new(SnapshotStore::new(
@@ -55,7 +56,7 @@ impl DnsRequestHandler {
                 runtime_config,
                 flow_id,
                 local_resolver,
-                default_dns_mark_map(),
+                sink,
             )),
             flow_id,
             msg_tx,
@@ -101,7 +102,7 @@ impl DnsRequestHandler {
         ResolveChain::new(
             runtime,
             self.snapshot.local_resolver(),
-            self.snapshot.maps().as_ref(),
+            self.snapshot.sink().as_ref(),
             self.snapshot.flow_id(),
         )
     }
