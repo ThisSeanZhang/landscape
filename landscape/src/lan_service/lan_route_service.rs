@@ -109,6 +109,8 @@ pub async fn create_route_lan_service(
             Err(err) => {
                 tracing::error!("failed to start tc lan route for {iface_name}: {err}");
                 service_status.just_change_status(ServiceStatus::Failed);
+                landscape_ebpf::chain::xdp_manager::XdpChainManager::instance()
+                    .remove_roots(ifindex);
                 landscape_ebpf::maps::redirect_able::del_xdp_redirect_able(ifindex);
                 return;
             }
@@ -119,6 +121,7 @@ pub async fn create_route_lan_service(
     let _ = service_status.wait_to_stopping().await;
     tracing::info!("Receiving external stop signal");
     drop(xdp_handle);
+    landscape_ebpf::chain::xdp_manager::XdpChainManager::instance().remove_roots(ifindex);
     drop(tc_handle);
     landscape_ebpf::maps::redirect_able::del_xdp_redirect_able(ifindex);
 

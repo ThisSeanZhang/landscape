@@ -98,6 +98,13 @@ fn delete_prog_array_fd(map_fd: i32, key: u32) {
         unsafe { libbpf_sys::bpf_map_delete_elem(map_fd, k.as_ptr() as *const std::ffi::c_void) };
 }
 
+fn clear_map_entries(map: &libbpf_rs::MapMut<'_>) {
+    let keys: Vec<Vec<u8>> = map.keys().collect();
+    for key in keys {
+        let _ = map.delete(&key);
+    }
+}
+
 struct ManagerInner {
     chains: HashMap<(u32, ChainDir), ChainState>,
 }
@@ -417,6 +424,15 @@ impl XdpChainManager {
 
         let skel = bpf_ctx!(open_skel.load(), "load xdp seed skeleton")?;
 
+        // No chains exist in this process yet, so any entry left in these
+        // maps belongs to a previous run (crash or kill). Dropping them lets
+        // the kernel finally unload the orphaned root/exit programs.
+        clear_map_entries(&skel.maps.xdp_pipe_root_progs);
+        clear_map_entries(&skel.maps.xdp_lan_pipe_root_progs);
+        clear_map_entries(&skel.maps.xdp_pipe_exits_lan);
+        clear_map_entries(&skel.maps.xdp_pipe_exits_wan);
+        clear_map_entries(&skel.maps.wan_intro_dispatch_map);
+
         Ok(Self {
             _seed: skel,
             _backing: backing,
@@ -464,7 +480,7 @@ impl XdpChainManager {
     }
 
     pub fn remove(&self, ifindex: u32, stage: StageType) -> LdEbpfResult<()> {
-        let both_empty;
+        let has_remaining_stages;
         {
             let mut inner = self.inner.lock().unwrap();
             if let Some(state) = inner.chains.get_mut(&(ifindex, ChainDir::Lan)) {
@@ -473,26 +489,67 @@ impl XdpChainManager {
             if let Some(state) = inner.chains.get_mut(&(ifindex, ChainDir::Wan)) {
                 state.stages.remove(&stage);
             }
-            both_empty = inner
+            has_remaining_stages = inner
                 .chains
                 .get(&(ifindex, ChainDir::Lan))
-                .map(|s| s.stages.is_empty())
-                .unwrap_or(true)
-                && inner
+                .map(|s| !s.stages.is_empty())
+                .unwrap_or(false)
+                || inner
                     .chains
                     .get(&(ifindex, ChainDir::Wan))
-                    .map(|s| s.stages.is_empty())
-                    .unwrap_or(true);
+                    .map(|s| !s.stages.is_empty())
+                    .unwrap_or(false);
         }
-        if both_empty {
-            let mut inner = self.inner.lock().unwrap();
-            inner.chains.remove(&(ifindex, ChainDir::Lan));
-            inner.chains.remove(&(ifindex, ChainDir::Wan));
-        } else {
+        self.remove_roots(ifindex);
+        if has_remaining_stages {
             self.rebuild(ifindex, ChainDir::Lan)?;
             self.rebuild(ifindex, ChainDir::Wan)?;
         }
         Ok(())
+    }
+
+    /// Tear down the XDP chains for `ifindex` so their programs can unload.
+    ///
+    /// A chain is only removed once no stages remain registered for it: while
+    /// stages are still attached their bookkeeping must survive so the chain
+    /// can be relinked when the route service restarts.
+    pub fn remove_roots(&self, ifindex: u32) {
+        let mut inner = self.inner.lock().unwrap();
+
+        let lan_removed = Self::remove_chain_locked(&mut inner, ifindex, ChainDir::Lan);
+        let wan_removed = Self::remove_chain_locked(&mut inner, ifindex, ChainDir::Wan);
+
+        if wan_removed {
+            let _ = self._seed.maps.xdp_pipe_root_progs.delete(&ifindex.to_ne_bytes());
+            let mut dispatch_key = [0u8; 16];
+            dispatch_key[0..4].copy_from_slice(&2u32.to_le_bytes());
+            dispatch_key[8..12].copy_from_slice(&ifindex.to_le_bytes());
+            let _ = self._seed.maps.wan_intro_dispatch_map.delete(&dispatch_key);
+        }
+        if lan_removed {
+            let _ = self._seed.maps.xdp_lan_pipe_root_progs.delete(&ifindex.to_ne_bytes());
+        }
+
+        // The exit prog arrays use a single shared slot (0), so only clear it
+        // once no chain of that direction remains on any interface.
+        if lan_removed && !Self::has_dir_chains(&inner, ChainDir::Lan) {
+            let _ = self._seed.maps.xdp_pipe_exits_lan.delete(&0u32.to_ne_bytes());
+        }
+        if wan_removed && !Self::has_dir_chains(&inner, ChainDir::Wan) {
+            let _ = self._seed.maps.xdp_pipe_exits_wan.delete(&0u32.to_ne_bytes());
+        }
+    }
+
+    fn remove_chain_locked(inner: &mut ManagerInner, ifindex: u32, chain: ChainDir) -> bool {
+        match inner.chains.get(&(ifindex, chain)) {
+            Some(state) if !state.stages.is_empty() => return false,
+            _ => {}
+        }
+        inner.chains.remove(&(ifindex, chain)).is_some()
+    }
+
+    fn has_dir_chains(inner: &ManagerInner, chain: ChainDir) -> bool {
+        inner.chains.keys().any(|(_, dir)| *dir == chain)
     }
 
     pub fn set_exit(&self, ifindex: u32, exit_fd: i32) -> LdEbpfResult<()> {
