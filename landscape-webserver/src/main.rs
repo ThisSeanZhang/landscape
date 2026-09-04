@@ -207,7 +207,7 @@ async fn run_system(
 
     startup_phase!(
         "xdp_redirect_able.clear",
-        landscape_ebpf::map_setting::redirect_able::clear_xdp_redirect_able()
+        landscape_ebpf::maps::redirect_able::clear_xdp_redirect_able()
     );
 
     let (dns_service_tx, dns_service_rx) = mpsc::channel(DNS_EVENT_CHANNEL_SIZE);

@@ -12,7 +12,7 @@ use libbpf_rs::{
 use zerocopy::IntoBytes;
 
 use crate::{
-    map_setting::add_wan_ip,
+    maps::wan::add_wan_ip,
     tests::{
         route::package::{
             as_bytes, create_route_cache_inner_map_v6, insert_ip_mac_v6, lookup_rt6_cache_value,

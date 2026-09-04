@@ -17,7 +17,7 @@ use landscape_common::{
 };
 use landscape_database::flow_rule::repository::FlowConfigRepository;
 use landscape_dns::server::LocalDnsAnswerProvider;
-use landscape_ebpf::map_setting::route::{add_lan_route, del_lan_route};
+use landscape_ebpf::maps::route::{add_lan_route, del_lan_route};
 use tokio::sync::{broadcast, mpsc, RwLock};
 
 use landscape_common::database::LandscapeStore;
@@ -141,21 +141,21 @@ fn sync_removed_lan_routes(routes: impl IntoIterator<Item = LanRouteInfo>) {
 fn sync_default_ipv4_wan_route(default_route: Option<RouteTargetInfo>) {
     if let Some(route) = default_route {
         let default_target = [(route, 1)];
-        landscape_ebpf::map_setting::route::replace_wan_route_slots_v4(0, &default_target);
+        landscape_ebpf::maps::route::replace_wan_route_slots_v4(0, &default_target);
     } else {
-        landscape_ebpf::map_setting::route::del_wan_route_slots_v4(0);
+        landscape_ebpf::maps::route::del_wan_route_slots_v4(0);
     }
-    landscape_ebpf::map_setting::route::cache::recreate_route_lan_cache_inner_map();
+    landscape_ebpf::maps::route::cache::recreate_route_lan_cache_inner_map();
 }
 
 fn sync_default_ipv6_wan_route(default_route: Option<RouteTargetInfo>) {
     if let Some(route) = default_route {
         let default_target = [(route, 1)];
-        landscape_ebpf::map_setting::route::replace_wan_route_slots_v6(0, &default_target);
+        landscape_ebpf::maps::route::replace_wan_route_slots_v6(0, &default_target);
     } else {
-        landscape_ebpf::map_setting::route::del_wan_route_slots_v6(0);
+        landscape_ebpf::maps::route::del_wan_route_slots_v6(0);
     }
-    landscape_ebpf::map_setting::route::cache::recreate_route_lan_cache_inner_map();
+    landscape_ebpf::maps::route::cache::recreate_route_lan_cache_inner_map();
 }
 
 fn find_route_target<'a>(
@@ -200,9 +200,9 @@ fn apply_ipv4_target_refresh_result(result: HashMap<FlowId, Vec<(RouteTargetInfo
 
     for (flow_id, configs) in result {
         if configs.is_empty() {
-            landscape_ebpf::map_setting::route::del_wan_route_slots_v4(flow_id);
+            landscape_ebpf::maps::route::del_wan_route_slots_v4(flow_id);
         } else {
-            landscape_ebpf::map_setting::route::replace_wan_route_slots_v4(flow_id, &configs);
+            landscape_ebpf::maps::route::replace_wan_route_slots_v4(flow_id, &configs);
         }
     }
 }
@@ -212,9 +212,9 @@ fn apply_ipv6_target_refresh_result(result: HashMap<FlowId, Vec<(RouteTargetInfo
 
     for (flow_id, configs) in result {
         if configs.is_empty() {
-            landscape_ebpf::map_setting::route::del_wan_route_slots_v6(flow_id);
+            landscape_ebpf::maps::route::del_wan_route_slots_v6(flow_id);
         } else {
-            landscape_ebpf::map_setting::route::replace_wan_route_slots_v6(flow_id, &configs);
+            landscape_ebpf::maps::route::replace_wan_route_slots_v6(flow_id, &configs);
         }
     }
 }
@@ -284,7 +284,7 @@ impl IpRouteService {
 
         refresh_ipv4_target_bpf_map(&flow_configs, ipv4_wan_infos);
         refresh_ipv6_target_bpf_map(&flow_configs, ipv6_wan_infos);
-        landscape_ebpf::map_setting::route::cache::recreate_route_lan_cache_inner_map();
+        landscape_ebpf::maps::route::cache::recreate_route_lan_cache_inner_map();
     }
 
     async fn load_flow_configs_for_event(&self, event: RouteEvent) -> Option<Vec<FlowConfig>> {
@@ -586,14 +586,14 @@ impl IpRouteService {
         let flow_configs = self.flow_repo.find_by_target(t).await.unwrap_or_default();
         let ipv4_wan_infos = self.clone_ipv4_wan_infos().await;
         refresh_ipv4_target_bpf_map(&flow_configs, ipv4_wan_infos);
-        landscape_ebpf::map_setting::route::cache::recreate_route_lan_cache_inner_map();
+        landscape_ebpf::maps::route::cache::recreate_route_lan_cache_inner_map();
     }
 
     pub async fn refresh_ipv6_target_map(&self, t: FlowTarget) {
         let flow_configs = self.flow_repo.find_by_target(t).await.unwrap_or_default();
         let ipv6_wan_infos = self.clone_ipv6_wan_infos().await;
         refresh_ipv6_target_bpf_map(&flow_configs, ipv6_wan_infos);
-        landscape_ebpf::map_setting::route::cache::recreate_route_lan_cache_inner_map();
+        landscape_ebpf::maps::route::cache::recreate_route_lan_cache_inner_map();
     }
 
     pub fn load_reachable_local_ipv4_addrs(&self) -> Arc<Vec<IpAddr>> {

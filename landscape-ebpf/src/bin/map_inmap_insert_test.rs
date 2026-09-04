@@ -7,8 +7,8 @@ pub fn main() {
     landscape_common::init_tracing!();
     landscape_ebpf::setting_libbpf_log();
 
-    landscape_ebpf::map_setting::flow_dns::refreash_flow_dns_inner_map(12, vec![]);
-    landscape_ebpf::map_setting::flow_dns::update_flow_dns_rule(
+    landscape_ebpf::maps::flow_dns::refreash_flow_dns_inner_map(12, vec![]);
+    landscape_ebpf::maps::flow_dns::update_flow_dns_rule(
         12,
         vec![FlowMarkInfo {
             mark: FlowMark::default().into(),
@@ -17,7 +17,7 @@ pub fn main() {
         }],
     );
 
-    landscape_ebpf::map_setting::flow_dns::update_flow_dns_rule(
+    landscape_ebpf::maps::flow_dns::update_flow_dns_rule(
         12,
         vec![FlowMarkInfo {
             mark: FlowMark::default().into(),
@@ -26,5 +26,5 @@ pub fn main() {
         }],
     );
 
-    // landscape_ebpf::map_setting::flow_wanip::add_wan_ip_mark(1, vec![]);
+    // landscape_ebpf::maps::flow_wanip::add_wan_ip_mark(1, vec![]);
 }

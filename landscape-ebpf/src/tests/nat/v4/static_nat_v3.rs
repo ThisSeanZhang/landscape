@@ -12,11 +12,11 @@ use libbpf_rs::{
 use zerocopy::{FromBytes, IntoBytes};
 
 use crate::{
-    map_setting::{
-        add_wan_ip,
+    maps::{
         nat::{add_static_nat4_mapping_v3, StaticNatMappingV4Item},
+        wan::add_wan_ip,
     },
-    map_types::{Nat4TimerKey, Nat4TimerValueV3},
+    maps::{Nat4TimerKey, Nat4TimerValueV3},
     stages::nat::tc_nat_skel::TcNatSkelBuilder,
     tests::TestSkb,
     NAT_MAPPING_EGRESS, NAT_MAPPING_INGRESS,

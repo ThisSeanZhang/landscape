@@ -163,11 +163,11 @@ pub fn init_xdp_wan_route(ifindex: u32, has_mac: bool) -> LdEbpfResult<XdpWanRou
     intro_open_skel.maps.rodata_data.as_deref_mut().unwrap().current_l3_offset = l3_offset;
     intro_open_skel.maps.rodata_data.as_deref_mut().unwrap().xdp_handoff_enabled = true;
 
-    crate::map_setting::reuse_pinned_map_or_recreate(
+    crate::maps::reuse_pinned_map_or_recreate(
         &mut intro_open_skel.maps.tc_pipe_root_progs,
         &tc_pipe_root_progs_path(),
     );
-    crate::map_setting::reuse_pinned_map_or_recreate(
+    crate::maps::reuse_pinned_map_or_recreate(
         &mut intro_open_skel.maps.wan_intro_dispatch_map,
         &wan_intro_dispatch_path(),
     );
@@ -187,7 +187,7 @@ pub fn init_xdp_wan_route(ifindex: u32, has_mac: bool) -> LdEbpfResult<XdpWanRou
 
     egress_intro_open_skel.maps.rodata_data.as_deref_mut().unwrap().current_l3_offset = l3_offset;
 
-    crate::map_setting::reuse_pinned_map_or_recreate(
+    crate::maps::reuse_pinned_map_or_recreate(
         &mut egress_intro_open_skel.maps.tc_wan_egress_roots,
         &tc_wan_egress_roots_path(),
     );

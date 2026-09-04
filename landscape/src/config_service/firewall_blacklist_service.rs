@@ -80,7 +80,7 @@ pub async fn resolve_and_sync_blacklist(
 
     tracing::info!("sync firewall blacklist: new_ips={}, old_ips={}", new_ips.len(), old_ips.len());
 
-    landscape_ebpf::map_setting::sync_firewall_blacklist(new_ips, old_ips);
+    landscape_ebpf::maps::firewall::sync_firewall_blacklist(new_ips, old_ips);
 }
 
 async fn resolve_configs(

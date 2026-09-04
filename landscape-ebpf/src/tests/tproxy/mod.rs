@@ -9,7 +9,7 @@ use libbpf_rs::{
     MapCore, MapFlags, ProgramInput,
 };
 
-use crate::map_types::Inet6Bytes;
+use crate::maps::Inet6Bytes;
 use crate::tests::{
     scanner::package::{
         build_icmpv4_error_with_inner_ipv4_eth, build_ipv4_tcp_eth, build_ipv4_udp_eth,

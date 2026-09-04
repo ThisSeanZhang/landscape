@@ -81,7 +81,7 @@ async fn init_service_from_config(
                     .args(["addr", "add", &format!("{}/{}", ipv4, ipv4_mask), "dev", &iface_name])
                     .output();
                 tracing::debug!("start setting");
-                landscape_ebpf::map_setting::add_ipv4_wan_ip(
+                landscape_ebpf::maps::wan::add_ipv4_wan_ip(
                     iface.index,
                     ipv4,
                     default_router_ip,
@@ -142,7 +142,7 @@ async fn init_service_from_config(
                 }
                 route_service.remove_ipv4_wan_route(&iface_name).await;
                 route_service.remove_ipv4_lan_route(&iface_name).await;
-                landscape_ebpf::map_setting::del_ipv4_wan_ip(iface.index);
+                landscape_ebpf::maps::wan::del_ipv4_wan_ip(iface.index);
                 service_status.just_change_status(ServiceStatus::Stop);
             }
         }

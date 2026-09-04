@@ -11,7 +11,7 @@ use libbpf_rs::{
     MapCore, MapFlags,
 };
 
-use crate::map_setting::share_map::ShareMapSkelBuilder;
+use crate::maps::share_map::ShareMapSkelBuilder;
 use crate::tests::test_xdp_dummy::TestXdpDummySkelBuilder;
 use crate::tests::wan_intro_skel::XdpWanIntroSkelBuilder;
 use crate::tests::xdp_firewall_skel::XdpFirewallSkelBuilder;

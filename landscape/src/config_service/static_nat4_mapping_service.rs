@@ -199,7 +199,7 @@ impl StaticNat4MappingService {
             }
         };
 
-        if let Err(error) = landscape_ebpf::map_setting::nat::reconcile_static_nat4_map(&configs) {
+        if let Err(error) = landscape_ebpf::maps::nat::reconcile_static_nat4_map(&configs) {
             tracing::error!("failed to reconcile static NAT v4 map: {error:?}");
         }
     }

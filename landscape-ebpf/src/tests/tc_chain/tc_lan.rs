@@ -18,7 +18,7 @@ mod tests {
     use zerocopy::IntoBytes;
 
     use crate::{
-        map_setting::{
+        maps::{
             flow_wanip::create_inner_flow_match_map_v4, flow_wanip::create_inner_flow_match_map_v6,
             route::replace_wan_route_slots_v4_with_map, route::replace_wan_route_slots_v6_with_map,
             share_map::types::mac_key_v6,

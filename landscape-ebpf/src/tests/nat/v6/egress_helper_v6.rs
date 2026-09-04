@@ -12,7 +12,7 @@ use libbpf_rs::{
 use zerocopy::IntoBytes;
 
 use crate::{
-    map_setting::add_wan_ip,
+    maps::wan::add_wan_ip,
     tests::{nat::test_nat6_v3::TestNat6V3SkelBuilder, TestSkb},
 };
 

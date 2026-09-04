@@ -9,7 +9,7 @@ pub async fn main() {
     let cancel_clone = cancel.clone();
 
     let done = tokio::spawn(async move {
-        if let Err(e) = landscape_ebpf::base::ip_mac::neigh_update(cancel_clone).await {
+        if let Err(e) = landscape_ebpf::maps::mac::neigh_update(cancel_clone).await {
             tracing::warn!("neigh_update test exited with error: {e}");
         }
     });

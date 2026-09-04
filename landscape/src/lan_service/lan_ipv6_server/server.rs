@@ -243,7 +243,7 @@ async fn handle_icmp_msg(
                 _ => {}
             }
             if let icmpv6::SlaacActionResult::Allocated { mac, ip } = &action {
-                if let Err(e) = landscape_ebpf::base::ip_mac::upsert_ipv6_ip_mac(
+                if let Err(e) = landscape_ebpf::maps::mac::upsert_ipv6_ip_mac(
                     link_ifindex,
                     *ip,
                     *mac,
@@ -362,12 +362,9 @@ async fn handle_dhcp_msg(
             let mut alloc_by_mac: std::collections::HashMap<MacAddr, Vec<Ipv6Addr>> =
                 std::collections::HashMap::new();
             for (mac, ip) in &result.allocated_ips {
-                if let Err(e) = landscape_ebpf::base::ip_mac::upsert_ipv6_ip_mac(
-                    link_ifindex,
-                    *ip,
-                    *mac,
-                    mac_addr,
-                ) {
+                if let Err(e) =
+                    landscape_ebpf::maps::mac::upsert_ipv6_ip_mac(link_ifindex, *ip, *mac, mac_addr)
+                {
                     tracing::warn!("failed to prewarm ip_mac_v6 for DHCPv6 {ip} -> {mac}: {e}");
                 }
                 alloc_by_mac.entry(*mac).or_default().push(*ip);

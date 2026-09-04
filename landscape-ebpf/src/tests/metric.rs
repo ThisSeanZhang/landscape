@@ -14,7 +14,7 @@ use tokio::time::{timeout, Duration};
 use tokio_util::sync::CancellationToken;
 use zerocopy::IntoBytes;
 
-use crate::map_setting::share_map::types::{nat_conn_metric_event, u_inet_addr};
+use crate::maps::share_map::types::{nat_conn_metric_event, u_inet_addr};
 use crate::metric::{ConnectMetricEventSource, EventSourceStopOutcome, MetricSourceHandle};
 use crate::tests::TestSkb;
 

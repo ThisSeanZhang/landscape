@@ -54,11 +54,11 @@ pub fn init_tc_wan_route(
     let mut open_skel = bpf_ctx!(builder.open(obj), "open per-if tc_wan_ingress_intro")?;
     open_skel.maps.rodata_data.as_deref_mut().unwrap().current_l3_offset = l3_offset;
     open_skel.maps.rodata_data.as_deref_mut().unwrap().xdp_handoff_enabled = xdp_handoff_enabled;
-    crate::map_setting::reuse_pinned_map_or_recreate(
+    crate::maps::reuse_pinned_map_or_recreate(
         &mut open_skel.maps.tc_pipe_root_progs,
         &tc_pipe_root_progs_path(),
     );
-    crate::map_setting::reuse_pinned_map_or_recreate(
+    crate::maps::reuse_pinned_map_or_recreate(
         &mut open_skel.maps.wan_intro_dispatch_map,
         &wan_intro_dispatch_path(),
     );
@@ -71,7 +71,7 @@ pub fn init_tc_wan_route(
     let builder = TcWanEgressIntroSkelBuilder::default();
     let mut open_skel = bpf_ctx!(builder.open(egress_obj), "open per-if tc_wan_egress_intro")?;
     open_skel.maps.rodata_data.as_deref_mut().unwrap().current_l3_offset = l3_offset;
-    crate::map_setting::reuse_pinned_map_or_recreate(
+    crate::maps::reuse_pinned_map_or_recreate(
         &mut open_skel.maps.tc_wan_egress_roots,
         &tc_wan_egress_roots_path(),
     );

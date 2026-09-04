@@ -151,9 +151,9 @@ fn handle_address_update(link_message: AddressMessage, is_add: bool) {
         };
 
         // if is_add {
-        //     landscape_ebpf::map_setting::add_ipv4_wan_ip(link_ifindex, ip.clone());
+        //     landscape_ebpf::maps::wan::add_ipv4_wan_ip(link_ifindex, ip.clone());
         // } else {
-        //     landscape_ebpf::map_setting::del_ipv4_wan_ip(link_ifindex);
+        //     landscape_ebpf::maps::wan::del_ipv4_wan_ip(link_ifindex);
         // }
     }
 }

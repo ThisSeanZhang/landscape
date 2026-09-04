@@ -226,7 +226,7 @@ impl TcChainManager {
         let builder = TcWanIngressExitSkelBuilder::default();
         let (back, obj) = OwnedOpenObject::new();
         let mut open_skel = bpf_ctx!(builder.open(obj), "open tc_wan_ingress_exit skeleton")?;
-        crate::map_setting::reuse_pinned_map_or_recreate(
+        crate::maps::reuse_pinned_map_or_recreate(
             &mut open_skel.maps.tc_pipe_exits_wan_ingress,
             &tc_pipe_exits_wan_ingress_path(),
         );
@@ -312,7 +312,7 @@ impl TcChainManager {
         let builder = TcWanEgressExitSkelBuilder::default();
         let (back, obj) = OwnedOpenObject::new();
         let mut open_skel = bpf_ctx!(builder.open(obj), "open tc_wan_egress_exit skeleton")?;
-        crate::map_setting::reuse_pinned_map_or_recreate(
+        crate::maps::reuse_pinned_map_or_recreate(
             &mut open_skel.maps.tc_pipe_exits_wan_egress,
             &tc_pipe_exits_wan_egress_path(),
         );

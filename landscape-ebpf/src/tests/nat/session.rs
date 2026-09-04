@@ -6,8 +6,8 @@ use libbpf_rs::{
     MapCore, MapFlags,
 };
 
-use crate::map_setting::share_map::ShareMapSkelBuilder;
-use crate::map_types::{Nat4TimerKey, Nat4TimerValueV3};
+use crate::maps::share_map::ShareMapSkelBuilder;
+use crate::maps::{Nat4TimerKey, Nat4TimerValueV3};
 use crate::tests::test_xdp_dummy::TestXdpDummySkelBuilder;
 use crate::tests::xdp_firewall_skel::XdpFirewallSkelBuilder;
 use crate::tests::xdp_lan_chain_skel::XdpLanChainSkelBuilder;

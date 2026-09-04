@@ -13,8 +13,8 @@ use libbpf_rs::{
 use zerocopy::{FromBytes, IntoBytes};
 
 use crate::{
-    map_setting::{add_wan_ip, nat::StaticNatMappingV6Item},
-    map_types::{Nat6TimerKey, Nat6TimerValue},
+    maps::{nat::StaticNatMappingV6Item, wan::add_wan_ip},
+    maps::{Nat6TimerKey, Nat6TimerValue},
     stages::nat::tc_nat_skel::TcNatSkelBuilder,
     tests::TestSkb,
 };
@@ -96,7 +96,7 @@ fn build_ipv6_udp(src: Ipv6Addr, dst: Ipv6Addr, src_port: u16, dst_port: u16) ->
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::map_setting::nat::add_static_nat6_mapping;
+    use crate::maps::nat::add_static_nat6_mapping;
 
     const LAN_CLIENT_SUFFIX: [u8; 8] = [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00];
     const LAN_CLIENT_PREFIX: [u8; 8] = [0xfd, 0x00, 0x12, 0x34, 0x56, 0x78, 0xab, 0xc5];

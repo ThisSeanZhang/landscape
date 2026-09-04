@@ -308,7 +308,7 @@ pub async fn create_pppd_thread(
                     let update = if let Some(data) = ip4addr { data != new_ip4addr } else { true };
                     if update {
                         if let (Some(ip), Some(peer_ip)) = (new_ip4addr.1, new_ip4addr.2) {
-                            landscape_ebpf::map_setting::add_ipv4_wan_ip(
+                            landscape_ebpf::maps::wan::add_ipv4_wan_ip(
                                 new_ip4addr.0,
                                 ip,
                                 Some(peer_ip),

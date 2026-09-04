@@ -13,8 +13,8 @@ use libbpf_rs::{
 use zerocopy::{FromBytes, IntoBytes};
 
 use crate::{
-    map_setting::add_wan_ip,
-    map_types::{Nat6TimerKey, Nat6TimerValue},
+    maps::wan::add_wan_ip,
+    maps::{Nat6TimerKey, Nat6TimerValue},
     stages::nat::tc_nat_skel::TcNatSkelBuilder,
     tests::TestSkb,
 };

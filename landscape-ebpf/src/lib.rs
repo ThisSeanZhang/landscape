@@ -3,14 +3,12 @@ use std::path::PathBuf;
 use landscape_common::args::LAND_ARGS;
 use once_cell::sync::Lazy;
 
-pub mod base;
 pub mod bpf_error;
 pub(crate) mod bpf_rs_shared;
 pub mod dns_result_sink;
 pub mod flow_socket_registrar;
 pub mod landscape;
-pub mod map_setting;
-pub(crate) mod map_types;
+pub mod maps;
 pub mod metric;
 pub mod pppoe;
 pub mod stages;
@@ -76,7 +74,7 @@ static MAP_PATHS: Lazy<LandscapeMapPath> = Lazy::new(|| {
         xdp_base: PathBuf::from(format!("{}/xdp", ebpf_map_path)),
     };
     tracing::info!("ebpf map paths is: {paths:#?}");
-    map_setting::init_path(&paths);
+    maps::init_path(&paths);
     paths
 });
 

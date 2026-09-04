@@ -72,13 +72,13 @@ pub async fn create_route_wan_service(
 ) {
     service_status.just_change_status(ServiceStatus::Staring);
     tracing::info!("start route wan at ifindex: {ifindex}");
-    landscape_ebpf::map_setting::redirect_able::del_xdp_redirect_able(ifindex);
+    landscape_ebpf::maps::redirect_able::del_xdp_redirect_able(ifindex);
 
     let mut xdp_handle: Option<landscape_ebpf::chain::xdp_wan_route::XdpWanRouteHandle> = None;
 
     let xdp_ok = match landscape_ebpf::chain::xdp_wan_route::init_xdp_wan_route(ifindex, has_mac) {
         Ok(handle) => {
-            landscape_ebpf::map_setting::redirect_able::set_xdp_redirect_able(ifindex, true);
+            landscape_ebpf::maps::redirect_able::set_xdp_redirect_able(ifindex, true);
             tracing::info!("xdp handoff enabled for {iface_name}");
             xdp_handle = Some(handle);
             true
@@ -87,7 +87,7 @@ pub async fn create_route_wan_service(
             tracing::warn!(
                 "failed to start xdp wan route for {iface_name}: {err}, starting TC only"
             );
-            landscape_ebpf::map_setting::redirect_able::set_xdp_redirect_able(ifindex, false);
+            landscape_ebpf::maps::redirect_able::set_xdp_redirect_able(ifindex, false);
             false
         }
     };
@@ -98,7 +98,7 @@ pub async fn create_route_wan_service(
             Err(err) => {
                 tracing::error!("failed to start tc wan route for {iface_name}: {err}");
                 service_status.just_change_status(ServiceStatus::Failed);
-                landscape_ebpf::map_setting::redirect_able::del_xdp_redirect_able(ifindex);
+                landscape_ebpf::maps::redirect_able::del_xdp_redirect_able(ifindex);
                 return;
             }
         };
@@ -109,7 +109,7 @@ pub async fn create_route_wan_service(
     tracing::info!("Receiving external stop signal");
     drop(xdp_handle);
     drop(tc_handle);
-    landscape_ebpf::map_setting::redirect_able::del_xdp_redirect_able(ifindex);
+    landscape_ebpf::maps::redirect_able::del_xdp_redirect_able(ifindex);
 
     service_status.just_change_status(ServiceStatus::Stop);
 }

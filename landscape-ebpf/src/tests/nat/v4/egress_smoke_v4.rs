@@ -10,7 +10,7 @@ use libbpf_rs::{
 };
 use zerocopy::IntoBytes;
 
-use crate::{map_setting::add_wan_ip, stages::nat::tc_nat_skel::TcNatSkelBuilder, tests::TestSkb};
+use crate::{maps::wan::add_wan_ip, stages::nat::tc_nat_skel::TcNatSkelBuilder, tests::TestSkb};
 
 /// https://www.cloudshark.org/captures/456a264486bf?filter=tcp
 /// 192.168.101.201:56186 -> 50.18.88.205:443

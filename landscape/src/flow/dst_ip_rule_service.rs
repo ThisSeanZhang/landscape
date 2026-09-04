@@ -93,7 +93,7 @@ impl ConfigController for DstIpRuleService {
             update_flow_dst_ip_map(geo_ip_service, flow_id, rules).await;
         }
         // TODO: 应当只清理当前 Flow 的缓存
-        landscape_ebpf::map_setting::route::cache::recreate_route_lan_cache_inner_map();
+        landscape_ebpf::maps::route::cache::recreate_route_lan_cache_inner_map();
     }
 }
 
@@ -106,7 +106,7 @@ async fn update_flow_dst_ip_map(
     rules.sort_by_key(|a| a.index);
     tracing::info!("[flow_id: {flow_id}] update dst ip rules: {rules:?}");
     let result = geo_ip_service.convert_config_to_runtime_rule(rules).await;
-    landscape_ebpf::map_setting::flow_wanip::add_wan_ip_mark(flow_id, result);
+    landscape_ebpf::maps::flow_wanip::add_wan_ip_mark(flow_id, result);
 }
 
 #[cfg(test)]

@@ -394,23 +394,23 @@ impl XdpChainManager {
         let (backing, obj) = OwnedOpenObject::new();
         let mut open_skel = bpf_ctx!(builder.open(obj), "open xdp_wan_intro skeleton")?;
 
-        crate::map_setting::reuse_pinned_map_or_recreate(
+        crate::maps::reuse_pinned_map_or_recreate(
             &mut open_skel.maps.xdp_pipe_root_progs,
             &xdp_pipe_root_progs_path(),
         );
-        crate::map_setting::reuse_pinned_map_or_recreate(
+        crate::maps::reuse_pinned_map_or_recreate(
             &mut open_skel.maps.xdp_pipe_exits_lan,
             &xdp_pipe_exits_lan_path(),
         );
-        crate::map_setting::reuse_pinned_map_or_recreate(
+        crate::maps::reuse_pinned_map_or_recreate(
             &mut open_skel.maps.xdp_pipe_exits_wan,
             &xdp_pipe_exits_wan_path(),
         );
-        crate::map_setting::reuse_pinned_map_or_recreate(
+        crate::maps::reuse_pinned_map_or_recreate(
             &mut open_skel.maps.xdp_lan_pipe_root_progs,
             &xdp_lan_pipe_root_progs_path(),
         );
-        crate::map_setting::reuse_pinned_map_or_recreate(
+        crate::maps::reuse_pinned_map_or_recreate(
             &mut open_skel.maps.wan_intro_dispatch_map,
             &wan_intro_dispatch_path(),
         );
@@ -526,7 +526,7 @@ impl XdpChainManager {
     pub(crate) fn set_skb_pending(&self, ifindex: u32, pending: SkbPending) {
         let _ = self.skb_bundles.lock().unwrap().remove(&ifindex);
 
-        match crate::map_setting::redirect_able::get_xdp_redirect_able(ifindex) {
+        match crate::maps::redirect_able::get_xdp_redirect_able(ifindex) {
             Some(true) => {
                 // Native XDP is already serving this interface — store the
                 // skeleton as pending for potential future SKB fallback.

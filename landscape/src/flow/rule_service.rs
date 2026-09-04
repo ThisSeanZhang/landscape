@@ -48,9 +48,7 @@ impl FlowRuleService {
             }
         };
 
-        if let Err(error) =
-            landscape_ebpf::map_setting::flow::reconcile_flow_match_map(&runtime_configs)
-        {
+        if let Err(error) = landscape_ebpf::maps::flow::reconcile_flow_match_map(&runtime_configs) {
             tracing::error!("failed to reconcile flow match map: {error:?}");
             return;
         }

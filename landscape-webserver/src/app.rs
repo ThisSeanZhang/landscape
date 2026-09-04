@@ -211,7 +211,7 @@ impl LandscapeApp {
         );
         tracing::info!("All service managers stopped");
 
-        landscape_ebpf::map_setting::cleanup_pinned_maps();
+        landscape_ebpf::maps::cleanup_pinned_maps();
 
         self.metric_service.stop_service().await;
         tracing::info!("Metric service stopped");

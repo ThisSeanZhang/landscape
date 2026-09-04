@@ -18,7 +18,7 @@ impl LandscapeEbpfService {
         let cancel = CancellationToken::new();
         let cancel_clone = cancel.clone();
         spawn_task(task_label::task::EBPF_NEIGH_UPDATE, async move {
-            if let Err(e) = landscape_ebpf::base::ip_mac::neigh_update(cancel_clone).await {
+            if let Err(e) = landscape_ebpf::maps::mac::neigh_update(cancel_clone).await {
                 tracing::warn!("eBPF neigh_update service exited with error: {e}");
             }
         });

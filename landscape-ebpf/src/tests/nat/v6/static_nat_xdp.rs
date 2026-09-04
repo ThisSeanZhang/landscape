@@ -12,7 +12,7 @@ use libbpf_rs::{
 };
 
 use crate::{
-    map_setting::{add_wan_ip, nat::StaticNatMappingV6Item},
+    maps::{nat::StaticNatMappingV6Item, wan::add_wan_ip},
     tests::xdp_nat_skel::XdpNatSkelBuilder,
 };
 
@@ -103,7 +103,7 @@ fn assert_xdp_round_trip(
         Some(MacAddr::broadcast()),
     );
     if let Some(target) = static_target {
-        crate::map_setting::nat::add_static_nat6_mapping(
+        crate::maps::nat::add_static_nat6_mapping(
             &skel.maps.nat6_static_map,
             vec![StaticNatMappingV6Item { port: client_port, lan_ip: target, l4_protocol: 17 }],
         );

@@ -2,7 +2,7 @@
 //! test_skb_scanner / test_xdp_scanner / test_skb_read / test_tproxy_packet /
 //! test_route_packet).
 //!
-//! Same conventions as `crate::map_types`: layouts are pinned by layout
+//! Same conventions as `crate::maps`: layouts are pinned by layout
 //! consistency tests; C unions (`u_inet_addr` / `u_inet6_addr` / `in6_addr`) are modeled
 //! as `[u8; 16]`; implicit padding is spelled out explicitly. These types are
 //! decode-only, so only `FromBytes` is derived.
@@ -433,12 +433,12 @@ mod tests {
         assert_field!(RoutePacketTestResult, route_skel::route_packet_test_result, forward_ret);
     }
 
-    /// The `map_types` NAT mirrors are used by both runtime (tc/share skel)
+    /// The `maps` NAT mirrors are used by both runtime (tc/share skel)
     /// and tests (xdp skel); cross-check against the xdp skel here to make
     /// sure both generated skeletons agree on the layout.
     #[test]
     fn nat_timer_layouts_match_xdp_skel() {
-        use crate::map_types::{Nat4TimerKey, Nat4TimerValueV3, Nat6TimerKey, Nat6TimerValue};
+        use crate::maps::{Nat4TimerKey, Nat4TimerValueV3, Nat6TimerKey, Nat6TimerValue};
         use crate::tests::xdp_nat_skel::types as xdp;
 
         assert_size!(Nat4TimerKey, xdp::nat4_timer_key);

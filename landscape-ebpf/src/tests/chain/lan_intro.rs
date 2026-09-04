@@ -8,10 +8,10 @@ use libbpf_rs::{
     MapCore, MapFlags, MapHandle, MapType,
 };
 
-use crate::map_setting::share_map::types::{
+use crate::maps::share_map::types::{
     rt_cache_key_v4, rt_cache_key_v6, rt_cache_value_v4, rt_cache_value_v6,
 };
-use crate::map_setting::share_map::ShareMapSkelBuilder;
+use crate::maps::share_map::ShareMapSkelBuilder;
 use crate::tests::net_utils::{
     dummy_recv_count, dummy_reset, route_slot, send_raw_packet, settle, wait_for, NetNsGuard,
     VethPair,

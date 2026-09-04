@@ -1,7 +1,7 @@
 use landscape_common::flow::FlowSocketRegistrar;
 
 use crate::dns_dispatcher::attach_reuseport_ebpf;
-use crate::map_setting::dns;
+use crate::maps::dns;
 
 /// eBPF-backed [`FlowSocketRegistrar`]: writes the DNS socket into the
 /// flow->socket sockmap and attaches the reuseport dispatcher.

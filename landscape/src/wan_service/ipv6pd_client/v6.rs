@@ -221,7 +221,7 @@ pub async fn dhcp_v6_pd_client(
     // }
 
     tracing::info!("DHCP V6 Client Staring");
-    // landscape_ebpf::map_setting::add_expose_port(client_port);
+    // landscape_ebpf::maps::add_expose_port(client_port);
     let socket_addr = SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), client_port);
 
     let socket2 = socket2::Socket::new(Domain::IPV6, Type::DGRAM, Some(Protocol::UDP)).unwrap();
@@ -435,7 +435,7 @@ async fn clear_active_pd_prefix(
     }
 
     route_service.remove_ipv6_wan_route(iface_name).await;
-    landscape_ebpf::map_setting::del_ipv6_wan_ip(ifindex);
+    landscape_ebpf::maps::wan::del_ipv6_wan_ip(ifindex);
     if let Some(wan_addr) = current_wan_addr.take() {
         del_iface_ip(wan_addr, 128, iface_name);
     }
@@ -884,7 +884,7 @@ fn replace_ip_route(
         ])
         .output();
 
-    landscape_ebpf::map_setting::add_ipv6_wan_ip(
+    landscape_ebpf::maps::wan::add_ipv6_wan_ip(
         ifindex,
         iapd.prefix_ip,
         Some(route_ip),

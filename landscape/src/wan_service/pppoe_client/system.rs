@@ -82,7 +82,7 @@ impl SessionHandle {
         }
         route_service.remove_ipv4_wan_route(&self.iface_name).await;
         route_service.remove_ipv4_lan_route(&self.iface_name).await;
-        landscape_ebpf::map_setting::del_ipv4_wan_ip(self.ifindex);
+        landscape_ebpf::maps::wan::del_ipv4_wan_ip(self.ifindex);
 
         let _ = std::process::Command::new("ip")
             .args(["link", "set", "dev", &self.iface_name, "mtu", "1500"])
@@ -117,7 +117,7 @@ pub(crate) async fn create_session(
         lcp.session_id
     );
 
-    landscape_ebpf::map_setting::add_ipv4_wan_ip(
+    landscape_ebpf::maps::wan::add_ipv4_wan_ip(
         index,
         client_ip,
         Some(server_ip),

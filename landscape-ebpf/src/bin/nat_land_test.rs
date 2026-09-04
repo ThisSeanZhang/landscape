@@ -9,7 +9,7 @@ use std::net::Ipv4Addr;
 async fn main() {
     let ifindex: u32 = 96;
     let addr = Ipv4Addr::new(10, 200, 1, 1);
-    landscape_ebpf::map_setting::add_ipv4_wan_ip(ifindex, addr, None, 24, None);
+    landscape_ebpf::maps::wan::add_ipv4_wan_ip(ifindex, addr, None, 24, None);
 
     let nat = init_nat(ifindex, true, &NatConfig::default()).expect("failed to start nat test");
 

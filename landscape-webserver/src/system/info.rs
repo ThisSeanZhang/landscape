@@ -96,8 +96,7 @@ async fn get_cpu_count(State(state): State<SysStatus>) -> LandscapeApiResult<usi
 async fn get_xdp_redirect_able_all() -> LandscapeApiResult<Vec<XdpRedirectAbleInfo>> {
     let devs = landscape::get_all_devices().await;
     let ifindexes: Vec<u32> = devs.iter().map(|d| d.index).collect();
-    let able_map =
-        landscape_ebpf::map_setting::redirect_able::batch_query_xdp_redirect_able(&ifindexes);
+    let able_map = landscape_ebpf::maps::redirect_able::batch_query_xdp_redirect_able(&ifindexes);
     let redirect_able = devs
         .into_iter()
         .map(|dev| XdpRedirectAbleInfo {
@@ -126,6 +125,6 @@ async fn get_xdp_redirect_able(
 ) -> LandscapeApiResult<XdpRedirectAbleInfo> {
     let ifindex = get_interface_index_by_name(&ifname)
         .ok_or_else(|| ServiceConfigError::IfaceNotFound { iface_name: ifname.clone() })?;
-    let redirect_able = landscape_ebpf::map_setting::redirect_able::is_xdp_redirect_able(ifindex);
+    let redirect_able = landscape_ebpf::maps::redirect_able::is_xdp_redirect_able(ifindex);
     LandscapeApiResp::success(XdpRedirectAbleInfo { ifname, redirect_able })
 }

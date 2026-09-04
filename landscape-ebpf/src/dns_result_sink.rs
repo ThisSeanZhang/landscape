@@ -1,6 +1,6 @@
 use landscape_common::flow::{DnsResultSink, FlowMarkInfo};
 
-use crate::map_setting::{flow_dns, route};
+use crate::maps::{flow_dns, route};
 
 /// eBPF-backed [`DnsResultSink`]: writes DNS answers into the flow-dns mark
 /// maps and keeps the LAN route cache in sync.

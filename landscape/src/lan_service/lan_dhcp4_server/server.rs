@@ -840,7 +840,7 @@ fn gen_ack(
 
     if !is_nak {
         if let Some(dev_mac) = iface_mac {
-            if let Err(e) = landscape_ebpf::base::ip_mac::upsert_ipv4_ip_mac(
+            if let Err(e) = landscape_ebpf::maps::mac::upsert_ipv4_ip_mac(
                 iface_ifindex,
                 client_addr,
                 chaddr,

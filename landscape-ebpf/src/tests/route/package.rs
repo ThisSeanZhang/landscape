@@ -8,7 +8,7 @@ use etherparse::PacketBuilder;
 use landscape_common::net::MacAddr;
 use libbpf_rs::{libbpf_sys, MapCore, MapFlags, MapHandle, MapType};
 
-use crate::map_setting::share_map::types::{
+use crate::maps::share_map::types::{
     mac_key_v6, mac_value_v6, rt_cache_key_v4, rt_cache_key_v6, rt_cache_value_v4,
     rt_cache_value_v6,
 };

@@ -639,7 +639,7 @@ async fn bind_ipv4(
         Some(DhcpOption::Router(router_ips)) => router_ips.first().copied(),
         _ => None,
     };
-    landscape_ebpf::map_setting::add_ipv4_wan_ip(
+    landscape_ebpf::maps::wan::add_ipv4_wan_ip(
         ifindex,
         new_yiaddr,
         gateway_ip,

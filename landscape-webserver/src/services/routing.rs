@@ -23,8 +23,8 @@ pub fn get_route_paths() -> OpenApiRouter<LandscapeApp> {
     responses((status = 200, description = "Success"))
 )]
 async fn reset_cache() -> LandscapeApiResult<()> {
-    landscape_ebpf::map_setting::route::cache::recreate_route_lan_cache_inner_map();
-    // landscape_ebpf::map_setting::route::cache::recreate_route_wan_cache_inner_map();
+    landscape_ebpf::maps::route::cache::recreate_route_lan_cache_inner_map();
+    // landscape_ebpf::maps::route::cache::recreate_route_wan_cache_inner_map();
     LandscapeApiResp::success(())
 }
 
@@ -38,7 +38,7 @@ async fn reset_cache() -> LandscapeApiResult<()> {
 async fn trace_flow_match(
     JsonBody(req): JsonBody<FlowMatchRequest>,
 ) -> LandscapeApiResult<FlowMatchResult> {
-    let result = landscape_ebpf::map_setting::route::trace_flow_match(req);
+    let result = landscape_ebpf::maps::route::trace_flow_match(req);
     LandscapeApiResp::success(result)
 }
 
@@ -52,6 +52,6 @@ async fn trace_flow_match(
 async fn trace_verdict(
     JsonBody(req): JsonBody<FlowVerdictRequest>,
 ) -> LandscapeApiResult<FlowVerdictResult> {
-    let result = landscape_ebpf::map_setting::route::trace_flow_verdict(req);
+    let result = landscape_ebpf::maps::route::trace_flow_verdict(req);
     LandscapeApiResp::success(result)
 }
