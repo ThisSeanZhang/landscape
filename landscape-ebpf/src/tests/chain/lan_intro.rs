@@ -3,12 +3,11 @@ use std::process::Command;
 use std::time::Duration;
 
 use libbpf_rs::{
-    libbpf_sys,
     skel::{OpenSkel, SkelBuilder as _},
-    MapCore, MapFlags, MapHandle, MapType,
+    MapCore, MapFlags, MapHandle,
 };
 
-use crate::maps::{RtCacheKeyV4, RtCacheKeyV6, RtCacheValueV4, RtCacheValueV6};
+use crate::maps::{RtCacheKeyV4, RtCacheValueV4};
 use crate::tests::net_utils::{
     dummy_recv_count, dummy_reset, route_slot, send_raw_packet, settle, wait_for, NetNsGuard,
     VethPair,
@@ -299,40 +298,6 @@ fn xdp_lan_intro_wan_pipeline() {
         k[4..8].copy_from_slice(&0x0A000001u32.to_be_bytes());
         v[8..12].copy_from_slice(&lan_h_i.to_ne_bytes());
         maps.rt4_lan_map.update(&k, &v, MapFlags::ANY).unwrap();
-    }
-
-    // Create inner LRU_HASH maps for rt4_cache_map / rt6_cache_map
-    let opts = libbpf_sys::bpf_map_create_opts {
-        sz: std::mem::size_of::<libbpf_sys::bpf_map_create_opts>() as libbpf_sys::size_t,
-        ..Default::default()
-    };
-    for (cache_idx, name) in [(0u32, "wan"), (1u32, "lan")] {
-        for (outer, ksz, vsz, label) in [
-            (
-                &maps.rt4_cache_map,
-                std::mem::size_of::<RtCacheKeyV4>() as u32,
-                std::mem::size_of::<RtCacheValueV4>() as u32,
-                "v4",
-            ),
-            (
-                &maps.rt6_cache_map,
-                std::mem::size_of::<RtCacheKeyV6>() as u32,
-                std::mem::size_of::<RtCacheValueV6>() as u32,
-                "v6",
-            ),
-        ] {
-            let inner = MapHandle::create(
-                MapType::LruHash,
-                Some(format!("rt{label}_cache_{name}")),
-                ksz,
-                vsz,
-                65536,
-                &opts,
-            )
-            .expect("create inner LRU");
-            let fd = inner.as_fd().as_raw_fd().to_ne_bytes();
-            outer.update(&cache_idx.to_ne_bytes(), &fd, MapFlags::ANY).unwrap();
-        }
     }
 
     let mut lr_b = XdpLanIntroSkelBuilder::default();

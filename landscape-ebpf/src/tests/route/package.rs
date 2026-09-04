@@ -1,20 +1,15 @@
-use std::{
-    net::{Ipv4Addr, Ipv6Addr},
-    os::fd::{AsFd, AsRawFd},
-    sync::atomic::{AtomicUsize, Ordering},
-};
+use std::net::{Ipv4Addr, Ipv6Addr};
 
 use etherparse::PacketBuilder;
 use landscape_common::net::MacAddr;
-use libbpf_rs::{libbpf_sys, MapCore, MapFlags, MapHandle, MapType};
+use libbpf_rs::{MapCore, MapFlags, MapHandle};
 
 use crate::maps::{
-    MacKeyV6, MacValueV6, RtCacheKeyV4, RtCacheKeyV6, RtCacheValueV4, RtCacheValueV6,
+    route::cache::create_inner_map_generic_with_outer, MacKeyV6, MacValueV6, RtCacheKeyV4,
+    RtCacheKeyV6, RtCacheValueV4, RtCacheValueV6,
 };
 
-static ROUTE_TEST_PIN_COUNTER: AtomicUsize = AtomicUsize::new(0);
-pub const WAN_CACHE: u32 = 0;
-pub const LAN_CACHE: u32 = 1;
+pub(crate) use crate::maps::route::cache::{LAN_CACHE, WAN_CACHE};
 
 pub fn as_bytes<T>(value: &T) -> &[u8] {
     unsafe {
@@ -40,51 +35,21 @@ pub fn lookup_inner_map_id<T: MapCore>(outer_map: &T, cache_index: u32) -> i32 {
 }
 
 pub fn create_route_cache_inner_map_v4<T: MapCore>(outer_map: &T, cache_index: u32) {
-    let unique = ROUTE_TEST_PIN_COUNTER.fetch_add(1, Ordering::Relaxed);
-    #[allow(clippy::needless_update)]
-    let opts = libbpf_sys::bpf_map_create_opts {
-        sz: std::mem::size_of::<libbpf_sys::bpf_map_create_opts>() as libbpf_sys::size_t,
-        ..Default::default()
-    };
-
-    let map = MapHandle::create(
-        MapType::LruHash,
-        Some(format!("route_test_rt4_cache_{cache_index}_{unique}")),
-        std::mem::size_of::<RtCacheKeyV4>() as u32,
-        std::mem::size_of::<RtCacheValueV4>() as u32,
-        65_536,
-        &opts,
-    )
-    .expect("create route v4 cache inner map");
-
-    let map_fd = map.as_fd().as_raw_fd();
-    outer_map
-        .update(as_bytes(&cache_index), as_bytes(&map_fd), MapFlags::ANY)
-        .expect("attach route v4 cache inner map");
+    create_inner_map_generic_with_outer::<_, RtCacheKeyV4, RtCacheValueV4>(
+        outer_map,
+        format!("route_test_rt4_cache_{cache_index}"),
+        cache_index,
+    );
+    lookup_inner_map_id(outer_map, cache_index);
 }
 
 pub fn create_route_cache_inner_map_v6<T: MapCore>(outer_map: &T, cache_index: u32) {
-    let unique = ROUTE_TEST_PIN_COUNTER.fetch_add(1, Ordering::Relaxed);
-    #[allow(clippy::needless_update)]
-    let opts = libbpf_sys::bpf_map_create_opts {
-        sz: std::mem::size_of::<libbpf_sys::bpf_map_create_opts>() as libbpf_sys::size_t,
-        ..Default::default()
-    };
-
-    let map = MapHandle::create(
-        MapType::LruHash,
-        Some(format!("route_test_rt6_cache_{cache_index}_{unique}")),
-        std::mem::size_of::<RtCacheKeyV6>() as u32,
-        std::mem::size_of::<RtCacheValueV6>() as u32,
-        65_536,
-        &opts,
-    )
-    .expect("create route v6 cache inner map");
-
-    let map_fd = map.as_fd().as_raw_fd();
-    outer_map
-        .update(as_bytes(&cache_index), as_bytes(&map_fd), MapFlags::ANY)
-        .expect("attach route v6 cache inner map");
+    create_inner_map_generic_with_outer::<_, RtCacheKeyV6, RtCacheValueV6>(
+        outer_map,
+        format!("route_test_rt6_cache_{cache_index}"),
+        cache_index,
+    );
+    lookup_inner_map_id(outer_map, cache_index);
 }
 
 pub fn make_rt6_cache_key(local: Ipv6Addr, remote: Ipv6Addr) -> RtCacheKeyV6 {
