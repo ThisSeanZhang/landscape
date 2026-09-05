@@ -67,7 +67,7 @@ struct {
  *                          └─ tc_wan_ingress_exit_redirect  (Route = Exit)
  *                               ├─ route_wan_ingress entry (broadcast → v4/v6 dispatch)
  *                               ├─ rt4_wan_ingress / rt6_wan_ingress logic
- *                               └─ route4/route6_lan_redirect_check → bpf_redirect(LAN)
+ *                               └─ tc_route4/6_lan_redirect_check_in_wan → bpf_redirect(LAN)
  *
  *    Each stage (PPPoE / MSS / FW / NAT) shares the same exit map:
  *      tc_pipe_exits_wan_ingress[0] = tc_wan_ingress_exit_redirect
@@ -82,7 +82,7 @@ struct {
  *      └─ ingress_ifindex == 0  (local outbound)
  *           ├─ route_wan_egress entry (broadcast → v4/v6 dispatch)
  *           ├─ rt4_wan_egress / rt6_wan_egress logic
- *           └─ pick_wan:
+ *           └─ tc_route4/6_pick_wan_in_wan_egress:
  *                ├─ same WAN → bpf_tail_call(&tc_wan_egress_roots, target)
  *                └─ cross WAN → sets FORWARDED + bpf_redirect(target, 0)
  *
@@ -105,8 +105,8 @@ struct {
  *  ─────────────────────────────────────────────────────────────────────────
  *
  *    tc_lan_ingress_intro  (Route logic, selects WAN or LAN)
- *      ├─ tc_lan_redirect → LAN (direct LAN redirect)
- *      └─ tc_pick_wan → sets FORWARDED + bpf_redirect(target_wan, 0)
+ *      ├─ tc_route4/6_lan_redirect_check_in_lan → LAN (direct LAN redirect)
+ *      └─ tc_route4/6_pick_wan_in_lan → sets FORWARDED + bpf_redirect(target_wan, 0)
  *
  *    ▸ packet arrives at the egress of the target WAN interface
  *

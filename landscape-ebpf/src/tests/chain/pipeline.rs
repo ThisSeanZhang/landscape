@@ -141,7 +141,7 @@ fn xdp_firewall_pipeline() {
         .update(&lan_h_i.to_ne_bytes(), &1u32.to_ne_bytes(), MapFlags::ANY)
         .unwrap();
     // xdp_wan_route reads its OWN xdp_redirect_able instance when caching
-    // (xdp_setting_cache_in_wan_v4) and when redirecting; populate it too or
+    // (xdp_route4_set_cache_in_wan) and when redirecting; populate it too or
     // cache hits take the TC handoff path and the chain never runs.
     wr.maps
         .xdp_redirect_able

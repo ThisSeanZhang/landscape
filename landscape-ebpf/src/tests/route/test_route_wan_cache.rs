@@ -20,7 +20,7 @@ use crate::tests::{
 };
 
 #[test]
-fn v6_setting_cache_in_wan_writes_reverse_key() {
+fn v6_set_cache_in_wan_writes_reverse_key() {
     let mut builder = TestRouteSkelBuilder::default();
     let pin_root = isolated_pin_root("route-helper-v6-wan-cache");
     builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
@@ -36,13 +36,13 @@ fn v6_setting_cache_in_wan_writes_reverse_key() {
 
     let result = skel
         .progs
-        .test_route_v6_setting_cache_in_wan
+        .test_route_v6_set_cache_in_wan
         .test_run(ProgramInput {
             data_in: Some(&packet),
             context_in: Some(ctx.as_mut_bytes()),
             ..Default::default()
         })
-        .expect("run test_route_v6_setting_cache_in_wan");
+        .expect("run test_route_v6_set_cache_in_wan");
 
     assert_eq!(result.return_value as i32, 0);
 

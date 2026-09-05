@@ -137,8 +137,9 @@ static __always_inline int xdp_match_flow_id_v6(struct xdp_md *ctx, const union 
 
 // ── XDP-adapted flow_verdict ──
 
-static __always_inline int
-xdp_flow_verdict_v4(struct xdp_md *ctx, const struct route4_context *context, u32 *init_flow_id_) {
+static __always_inline int xdp_route4_flow_verdict(struct xdp_md *ctx,
+                                                   const struct route4_context *context,
+                                                   u32 *init_flow_id_) {
     volatile u32 flow_id = *init_flow_id_ & 0xff;
     u8 flow_action;
 
@@ -186,8 +187,9 @@ keep_going:
     return 0;
 }
 
-static __always_inline int
-xdp_flow_verdict_v6(struct xdp_md *ctx, const struct route6_context *context, u32 *init_flow_id_) {
+static __always_inline int xdp_route6_flow_verdict(struct xdp_md *ctx,
+                                                   const struct route6_context *context,
+                                                   u32 *init_flow_id_) {
     volatile u32 flow_id = *init_flow_id_ & 0xff;
     u8 flow_action;
 
@@ -422,9 +424,9 @@ static __always_inline int xdp_route6_cache_pick_wan(struct xdp_md *ctx,
 
 // ── LAN→LAN redirect (shared with xdp_wan_route) ──
 
-static __always_inline int xdp_route4_lan_redirect(struct xdp_md *ctx,
-                                                   struct route4_context *context) {
-#define BPF_LOG_TOPIC "xdp_route4_lan_redirect"
+static __always_inline int xdp_route4_lan_redirect_check_in_lan(struct xdp_md *ctx,
+                                                                struct route4_context *context) {
+#define BPF_LOG_TOPIC "xdp_route4_lan_redirect_check_in_lan"
     struct route4_lan_key key = {.prefixlen = 32, .addr = context->daddr};
     struct mac_key_v4 mac_key = {.addr = context->daddr};
     struct mac_value_v4 *mac_val;
@@ -490,8 +492,8 @@ static __always_inline int xdp_route4_lan_redirect(struct xdp_md *ctx,
 #undef BPF_LOG_TOPIC
 }
 
-static __always_inline int xdp_route6_lan_redirect(struct xdp_md *ctx,
-                                                   struct route6_context *context) {
+static __always_inline int xdp_route6_lan_redirect_check_in_lan(struct xdp_md *ctx,
+                                                                struct route6_context *context) {
     struct route6_lan_key key = {.prefixlen = 128};
     struct mac_value_v6 *mac_val;
     COPY_ADDR_FROM(key.addr.bytes, context->daddr.bytes);
@@ -555,9 +557,9 @@ static __always_inline int xdp_route6_lan_redirect(struct xdp_md *ctx,
     return xdp_redirect_or_tc_handoff(ctx, lan_info->ifindex, 0);
 }
 
-// ── search_route_in_lan: cache lookup → tailcall to LAN→WAN chain ──
+// ── search_cache_in_lan: cache lookup → tailcall to LAN→WAN chain ──
 
-static __always_inline int xdp_route4_search_route_in_lan(struct xdp_md *ctx,
+static __always_inline int xdp_route4_search_cache_in_lan(struct xdp_md *ctx,
                                                           const struct route4_context *context,
                                                           u32 *flow_mark) {
     struct route4_cache_key search_key = {.local_addr = context->saddr,
@@ -658,7 +660,7 @@ static __always_inline int xdp_route4_search_route_in_lan(struct xdp_md *ctx,
     return 0;
 }
 
-static __always_inline int xdp_route6_search_route_in_lan(struct xdp_md *ctx,
+static __always_inline int xdp_route6_search_cache_in_lan(struct xdp_md *ctx,
                                                           const struct route6_context *context,
                                                           u32 *flow_mark) {
     struct route6_cache_key search_key = {};
@@ -788,15 +790,15 @@ int xdp_lan_intro(struct xdp_md *ctx) {
         }
 
         u32 flow_mark = 0;
-        ret = xdp_route4_search_route_in_lan(ctx, &context, &flow_mark);
+        ret = xdp_route4_search_cache_in_lan(ctx, &context, &flow_mark);
         if (ret) return ret;
 
         learn_src_ip_mac_v4_xdp(ctx, &context);
 
-        ret = xdp_route4_lan_redirect(ctx, &context);
+        ret = xdp_route4_lan_redirect_check_in_lan(ctx, &context);
         if (ret) return ret;
 
-        ret = xdp_flow_verdict_v4(ctx, &context, &flow_mark);
+        ret = xdp_route4_flow_verdict(ctx, &context, &flow_mark);
         if (ret) return ret;
 
         ret = xdp_route4_cache_pick_wan(ctx, &context, flow_mark);
@@ -814,15 +816,15 @@ int xdp_lan_intro(struct xdp_md *ctx) {
         }
 
         u32 flow_mark = 0;
-        ret = xdp_route6_search_route_in_lan(ctx, &context, &flow_mark);
+        ret = xdp_route6_search_cache_in_lan(ctx, &context, &flow_mark);
         if (ret) return ret;
 
         learn_src_ip_mac_v6_xdp(ctx, &context);
 
-        ret = xdp_route6_lan_redirect(ctx, &context);
+        ret = xdp_route6_lan_redirect_check_in_lan(ctx, &context);
         if (ret) return ret;
 
-        ret = xdp_flow_verdict_v6(ctx, &context, &flow_mark);
+        ret = xdp_route6_flow_verdict(ctx, &context, &flow_mark);
         if (ret) return ret;
 
         ret = xdp_route6_cache_pick_wan(ctx, &context, flow_mark);

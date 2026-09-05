@@ -52,11 +52,11 @@ int tc_wan_ingress_route_v4(struct __sk_buff *skb) {
         return ret;
     }
 
-    ret = route4_lan_redirect_check(skb, l3, &context, false);
+    ret = tc_route4_lan_redirect_check_in_wan(skb, l3, &context, false);
     if (ret == TC_ACT_REDIRECT) {
         u8 mark = get_cache_mask(skb->mark);
         if (mark == INGRESS_STATIC_MARK) {
-            route4_setting_cache_in_wan(&context, l3, skb->ifindex);
+            route4_set_cache_in_wan(&context, l3, skb->ifindex);
         }
     }
 
@@ -92,11 +92,11 @@ int tc_wan_ingress_route_v6(struct __sk_buff *skb) {
         return ret;
     }
 
-    ret = route6_lan_redirect_check(skb, l3, &context, false);
+    ret = tc_route6_lan_redirect_check_in_wan(skb, l3, &context, false);
     if (ret == TC_ACT_REDIRECT) {
         u8 mark = get_cache_mask(skb->mark);
         if (mark == INGRESS_STATIC_MARK) {
-            route6_setting_cache_in_wan(&context, l3, skb->ifindex);
+            route6_set_cache_in_wan(&context, l3, skb->ifindex);
         }
     }
 

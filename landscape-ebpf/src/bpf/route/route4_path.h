@@ -18,9 +18,11 @@
 #include "../flow_match.h"
 #include "../neigh_ip4.h"
 
-static __always_inline int route4_lan_redirect_check(struct __sk_buff *skb, u32 current_l3_offset,
-                                                     struct route4_context *context, bool is_lan) {
-#define BPF_LOG_TOPIC "route4_lan_redirect_check"
+static __always_inline int tc_route4_lan_redirect_check_in_wan(struct __sk_buff *skb,
+                                                               u32 current_l3_offset,
+                                                               struct route4_context *context,
+                                                               bool is_lan) {
+#define BPF_LOG_TOPIC "tc_route4_lan_redirect_check_in_wan"
 
     int ret;
     struct route4_lan_key lan_search_key = {0};
@@ -120,9 +122,9 @@ static __always_inline int route4_lan_redirect_check(struct __sk_buff *skb, u32 
 #undef BPF_LOG_TOPIC
 }
 
-static __always_inline int flow_verdict_v4(struct __sk_buff *skb, u32 current_l3_offset,
-                                           struct route4_context *context, u32 *init_flow_id_) {
-#define BPF_LOG_TOPIC "flow_verdict_v4"
+static __always_inline int route4_flow_verdict(struct __sk_buff *skb, u32 current_l3_offset,
+                                               struct route4_context *context, u32 *init_flow_id_) {
+#define BPF_LOG_TOPIC "route4_flow_verdict"
 
     volatile u32 flow_id = *init_flow_id_ & 0xff;
     u8 flow_action;
@@ -358,11 +360,11 @@ static __always_inline int route4_redirect_by_cached_target(struct __sk_buff *sk
     return bpf_redirect_neigh(target->ifindex, &param, sizeof(param), 0);
 }
 
-static __always_inline int route4_search_route_in_lan(struct __sk_buff *skb,
+static __always_inline int route4_search_cache_in_lan(struct __sk_buff *skb,
                                                       const u32 current_l3_offset,
                                                       const struct route4_context *context,
                                                       u32 *flow_mark) {
-#define BPF_LOG_TOPIC "route4_search_route_in_lan"
+#define BPF_LOG_TOPIC "route4_search_cache_in_lan"
     int ret = 0;
     u32 key = WAN_CACHE;
     struct route4_cache_key search_key = {0};
@@ -434,9 +436,9 @@ static __always_inline int route4_search_route_in_lan(struct __sk_buff *skb,
 #undef BPF_LOG_TOPIC
 }
 
-static __always_inline int route4_setting_cache_in_wan(const struct route4_context *context,
-                                                       u32 current_l3_offset, u32 ifindex) {
-#define BPF_LOG_TOPIC "route4_setting_cache_in_wan"
+static __always_inline int route4_set_cache_in_wan(const struct route4_context *context,
+                                                   u32 current_l3_offset, u32 ifindex) {
+#define BPF_LOG_TOPIC "route4_set_cache_in_wan"
     struct route4_cache_key search_key = {0};
     struct route4_cache_value *target = NULL;
 
@@ -498,9 +500,9 @@ static __always_inline int route4_setting_cache_in_wan(const struct route4_conte
 #undef BPF_LOG_TOPIC
 }
 
-static __always_inline int route4_setting_cache_in_lan(const struct route4_context *context,
-                                                       u32 flow_mark) {
-#define BPF_LOG_TOPIC "route4_setting_cache_in_lan"
+static __always_inline int route4_set_cache_in_lan(const struct route4_context *context,
+                                                   u32 flow_mark) {
+#define BPF_LOG_TOPIC "route4_set_cache_in_lan"
     struct route4_cache_key search_key = {0};
     struct route4_cache_value *target = NULL;
     u32 key = WAN_CACHE;

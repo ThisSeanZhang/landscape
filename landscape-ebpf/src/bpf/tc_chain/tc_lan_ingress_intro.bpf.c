@@ -24,9 +24,10 @@ const volatile u32 current_l3_offset = 14;
 #define TC_LAN_INGRESS_V4_SLOT 0
 #define TC_LAN_INGRESS_V6_SLOT 1
 
-static __always_inline int tc_lan_redirect_v4(struct __sk_buff *skb, u32 current_l3_offset,
-                                              struct route4_context *context) {
-#define BPF_LOG_TOPIC "tc_lan_redirect_v4"
+static __always_inline int tc_route4_lan_redirect_check_in_lan(struct __sk_buff *skb,
+                                                               u32 current_l3_offset,
+                                                               struct route4_context *context) {
+#define BPF_LOG_TOPIC "tc_route4_lan_redirect_check_in_lan"
     int ret;
     struct route4_lan_key lan_search_key = {0};
     struct mac_key_v4 mac_key_search = {0};
@@ -111,9 +112,10 @@ static __always_inline int tc_lan_redirect_v4(struct __sk_buff *skb, u32 current
 #undef BPF_LOG_TOPIC
 }
 
-static __always_inline int tc_lan_redirect_v6(struct __sk_buff *skb, u32 current_l3_offset,
-                                              struct route6_context *context) {
-#define BPF_LOG_TOPIC "tc_lan_redirect_v6"
+static __always_inline int tc_route6_lan_redirect_check_in_lan(struct __sk_buff *skb,
+                                                               u32 current_l3_offset,
+                                                               struct route6_context *context) {
+#define BPF_LOG_TOPIC "tc_route6_lan_redirect_check_in_lan"
     int ret;
     struct route6_lan_key lan_search_key = {0};
     struct mac_key_v6 mac_key_search = {0};
@@ -196,9 +198,10 @@ static __always_inline int tc_lan_redirect_v6(struct __sk_buff *skb, u32 current
 #undef BPF_LOG_TOPIC
 }
 
-static __always_inline int tc_pick_wan_v4(struct __sk_buff *skb, u32 current_l3_offset,
-                                          const struct route4_context *context, const u32 flow_id) {
-#define BPF_LOG_TOPIC "tc_lan_pick_wan_v4"
+static __always_inline int tc_route4_pick_wan_in_lan(struct __sk_buff *skb, u32 current_l3_offset,
+                                                     const struct route4_context *context,
+                                                     const u32 flow_id) {
+#define BPF_LOG_TOPIC "tc_route4_pick_wan_in_lan"
     const u32 resolved_flow_id = get_flow_id(flow_id);
 
     struct route4_slot_key slot_key = {
@@ -266,9 +269,10 @@ static __always_inline int tc_pick_wan_v4(struct __sk_buff *skb, u32 current_l3_
 #undef BPF_LOG_TOPIC
 }
 
-static __always_inline int tc_pick_wan_v6(struct __sk_buff *skb, u32 current_l3_offset,
-                                          const struct route6_context *context, const u32 flow_id) {
-#define BPF_LOG_TOPIC "tc_pick_wan_v6"
+static __always_inline int tc_route6_pick_wan_in_lan(struct __sk_buff *skb, u32 current_l3_offset,
+                                                     const struct route6_context *context,
+                                                     const u32 flow_id) {
+#define BPF_LOG_TOPIC "tc_route6_pick_wan_in_lan"
     const u32 resolved_flow_id = get_flow_id(flow_id);
 
     struct route6_slot_key slot_key = {
@@ -359,7 +363,7 @@ int tc_lan_ingress_route_v4(struct __sk_buff *skb) {
         return TC_ACT_UNSPEC;
     }
 
-    ret = route4_search_route_in_lan(skb, current_l3_offset, &context, &flow_mark);
+    ret = route4_search_cache_in_lan(skb, current_l3_offset, &context, &flow_mark);
     if (ret != TC_ACT_OK) {
         skb->mark = replace_flow_source(flow_mark, FLOW_FROM_LAN);
         return ret;
@@ -367,12 +371,12 @@ int tc_lan_ingress_route_v4(struct __sk_buff *skb) {
 
     learn_src_ip_mac_v4_tc(skb, &context, current_l3_offset);
 
-    ret = tc_lan_redirect_v4(skb, current_l3_offset, &context);
+    ret = tc_route4_lan_redirect_check_in_lan(skb, current_l3_offset, &context);
     if (ret != TC_ACT_OK) {
         return ret;
     }
 
-    ret = flow_verdict_v4(skb, current_l3_offset, &context, &flow_mark);
+    ret = route4_flow_verdict(skb, current_l3_offset, &context, &flow_mark);
     if (ret != TC_ACT_OK) {
         return ret;
     }
@@ -380,10 +384,10 @@ int tc_lan_ingress_route_v4(struct __sk_buff *skb) {
     barrier_var(flow_mark);
     skb->mark = replace_flow_source(flow_mark, FLOW_FROM_LAN);
 
-    ret = tc_pick_wan_v4(skb, current_l3_offset, &context, flow_mark);
+    ret = tc_route4_pick_wan_in_lan(skb, current_l3_offset, &context, flow_mark);
 
     if (ret == TC_ACT_REDIRECT) {
-        route4_setting_cache_in_lan(&context, flow_mark);
+        route4_set_cache_in_lan(&context, flow_mark);
     }
     return ret;
 #undef BPF_LOG_TOPIC
@@ -414,7 +418,7 @@ int tc_lan_ingress_route_v6(struct __sk_buff *skb) {
         return TC_ACT_UNSPEC;
     }
 
-    ret = route6_search_route_in_lan(skb, current_l3_offset, &context, &flow_mark);
+    ret = route6_search_cache_in_lan(skb, current_l3_offset, &context, &flow_mark);
     if (ret != TC_ACT_OK) {
         skb->mark = replace_flow_source(flow_mark, FLOW_FROM_LAN);
         return ret;
@@ -422,12 +426,12 @@ int tc_lan_ingress_route_v6(struct __sk_buff *skb) {
 
     learn_src_ip_mac_v6_tc(skb, &context, current_l3_offset);
 
-    ret = tc_lan_redirect_v6(skb, current_l3_offset, &context);
+    ret = tc_route6_lan_redirect_check_in_lan(skb, current_l3_offset, &context);
     if (ret != TC_ACT_OK) {
         return ret;
     }
 
-    ret = flow_verdict_v6(skb, current_l3_offset, &context, &flow_mark);
+    ret = route6_flow_verdict(skb, current_l3_offset, &context, &flow_mark);
     if (ret != TC_ACT_OK) {
         return ret;
     }
@@ -435,10 +439,10 @@ int tc_lan_ingress_route_v6(struct __sk_buff *skb) {
     barrier_var(flow_mark);
     skb->mark = replace_flow_source(flow_mark, FLOW_FROM_LAN);
 
-    ret = tc_pick_wan_v6(skb, current_l3_offset, &context, flow_mark);
+    ret = tc_route6_pick_wan_in_lan(skb, current_l3_offset, &context, flow_mark);
 
     if (ret == TC_ACT_REDIRECT) {
-        route6_setting_cache_in_lan(&context, flow_mark);
+        route6_set_cache_in_lan(&context, flow_mark);
     }
     return ret;
 #undef BPF_LOG_TOPIC

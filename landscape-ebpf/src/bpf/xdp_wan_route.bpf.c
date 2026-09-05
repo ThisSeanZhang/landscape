@@ -69,8 +69,8 @@ static __always_inline int xdp_read_ipv6(struct xdp_md *ctx, struct route6_conte
 
 // ── is_current_wan_packet: skb->ingress_ifindex → ctx->ingress_ifindex ──
 
-static __always_inline int xdp_is_wan_packet_v4(struct xdp_md *ctx,
-                                                struct route4_context *context) {
+static __always_inline int xdp_route4_is_current_wan_packet(struct xdp_md *ctx,
+                                                            struct route4_context *context) {
     struct wan_ip_info_key key = {};
     key.ifindex = ctx->ingress_ifindex;
     key.l3_protocol = LANDSCAPE_IPV4_TYPE;
@@ -80,8 +80,8 @@ static __always_inline int xdp_is_wan_packet_v4(struct xdp_md *ctx,
     return 0;
 }
 
-static __always_inline int xdp_is_wan_packet_v6(struct xdp_md *ctx,
-                                                struct route6_context *context) {
+static __always_inline int xdp_route6_is_current_wan_packet(struct xdp_md *ctx,
+                                                            struct route6_context *context) {
     struct wan_ip_info_key key = {};
     key.ifindex = ctx->ingress_ifindex;
     key.l3_protocol = LANDSCAPE_IPV6_TYPE;
@@ -91,12 +91,12 @@ static __always_inline int xdp_is_wan_packet_v6(struct xdp_md *ctx,
     return 0;
 }
 
-// ── lan_redirect: lan_map lookup with MAC resolution via cache or FIB ──
+// ── lan_redirect_check_in_wan: lan_map lookup with MAC resolution via cache or FIB ──
 
-static __always_inline int xdp_route4_lan_redirect(struct xdp_md *ctx,
-                                                   struct route4_context *context,
-                                                   struct xdp_pipe_meta *meta) {
-#define BPF_LOG_TOPIC "xdp_route4_lan_redirect"
+static __always_inline int xdp_route4_lan_redirect_check_in_wan(struct xdp_md *ctx,
+                                                                struct route4_context *context,
+                                                                struct xdp_pipe_meta *meta) {
+#define BPF_LOG_TOPIC "xdp_route4_lan_redirect_check_in_wan"
     struct route4_lan_key lan_key = {.prefixlen = 32, .addr = context->daddr};
     struct mac_key_v4 mac_key = {.addr = context->daddr};
     struct mac_value_v4 *mac_val;
@@ -166,9 +166,9 @@ static __always_inline int xdp_route4_lan_redirect(struct xdp_md *ctx,
 #undef BPF_LOG_TOPIC
 }
 
-static __always_inline int xdp_route6_lan_redirect(struct xdp_md *ctx,
-                                                   struct route6_context *context,
-                                                   struct xdp_pipe_meta *meta) {
+static __always_inline int xdp_route6_lan_redirect_check_in_wan(struct xdp_md *ctx,
+                                                                struct route6_context *context,
+                                                                struct xdp_pipe_meta *meta) {
     struct route6_lan_key lan_key = {.prefixlen = 128};
     struct mac_key_v6 mac_key = {};
     struct mac_value_v6 *mac_val;
@@ -244,8 +244,8 @@ static __always_inline int xdp_route6_lan_redirect(struct xdp_md *ctx,
 
 // ── main XDP wan_route ingress ──
 
-static __always_inline void xdp_route4_setting_cache_in_wan(struct xdp_md *ctx,
-                                                            const struct route4_context *context) {
+static __always_inline void xdp_route4_set_cache_in_wan(struct xdp_md *ctx,
+                                                        const struct route4_context *context) {
     struct route4_cache_key cache_key = {
         .local_addr = context->daddr,
         .remote_addr = context->saddr,
@@ -284,8 +284,8 @@ static __always_inline void xdp_route4_setting_cache_in_wan(struct xdp_md *ctx,
     }
 }
 
-static __always_inline void xdp_route6_setting_cache_in_wan(struct xdp_md *ctx,
-                                                            const struct route6_context *context) {
+static __always_inline void xdp_route6_set_cache_in_wan(struct xdp_md *ctx,
+                                                        const struct route6_context *context) {
     struct route6_cache_key cache_key = {};
     __builtin_memcpy(cache_key.local_addr.bytes, context->daddr.bytes, 16);
     __builtin_memcpy(cache_key.remote_addr.bytes, context->saddr.bytes, 16);
@@ -344,14 +344,14 @@ int xdp_wan_route_ingress(struct xdp_md *ctx) {
             return XDP_PASS;
         }
 
-        ret = xdp_is_wan_packet_v4(ctx, &context);
+        ret = xdp_route4_is_current_wan_packet(ctx, &context);
         if (ret) return ret;
         xdp_get_meta(ctx, &meta);
 
-        ret = xdp_route4_lan_redirect(ctx, &context, &meta);
+        ret = xdp_route4_lan_redirect_check_in_wan(ctx, &context, &meta);
         if (ret && (ret != XDP_PASS || meta.mark == XDP_HANDOFF_TC_REDIRECT_MAGIC)) {
             if (get_cache_mask(meta.mark) == INGRESS_STATIC_MARK) {
-                xdp_route4_setting_cache_in_wan(ctx, &context);
+                xdp_route4_set_cache_in_wan(ctx, &context);
             }
         }
         return ret;
@@ -363,13 +363,13 @@ int xdp_wan_route_ingress(struct xdp_md *ctx) {
         if (unlikely(is_broadcast_ip6(context.daddr.bytes))) {
             return XDP_PASS;
         }
-        ret = xdp_is_wan_packet_v6(ctx, &context);
+        ret = xdp_route6_is_current_wan_packet(ctx, &context);
         if (ret) return ret;
         xdp_get_meta(ctx, &meta);
-        ret = xdp_route6_lan_redirect(ctx, &context, &meta);
+        ret = xdp_route6_lan_redirect_check_in_wan(ctx, &context, &meta);
         if (ret && (ret != XDP_PASS || meta.mark == XDP_HANDOFF_TC_REDIRECT_MAGIC)) {
             if (get_cache_mask(meta.mark) == INGRESS_STATIC_MARK) {
-                xdp_route6_setting_cache_in_wan(ctx, &context);
+                xdp_route6_set_cache_in_wan(ctx, &context);
             }
         }
         return ret;

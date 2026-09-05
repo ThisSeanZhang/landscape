@@ -63,7 +63,7 @@ mod tests {
         let open = builder.open(&mut open_object).unwrap();
         let skel = open.load().unwrap();
 
-        // Create LAN cache inner map so setting_cache_in_lan_v6 can write to it
+        // Create LAN cache inner map so route6_set_cache_in_lan can write to it
         create_route_cache_inner_map_v6(&skel.maps.rt6_cache_map, LAN_CACHE);
 
         // Flow match: destination IP match in flow_id=0's inner IP trie →

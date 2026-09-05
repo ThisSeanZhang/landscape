@@ -28,8 +28,8 @@ static __always_inline int read_route_context_v6(struct __sk_buff *skb,
 }
 
 SEC("tc")
-int test_route_v6_search_route_in_lan(struct __sk_buff *skb) {
-#define BPF_LOG_TOPIC "test_route_v6_search_route_in_lan"
+int test_route_v6_search_cache_in_lan(struct __sk_buff *skb) {
+#define BPF_LOG_TOPIC "test_route_v6_search_cache_in_lan"
     struct route6_context context = {0};
     u32 flow_mark = skb->mark;
     int ret = read_route_context_v6(skb, &context);
@@ -37,20 +37,20 @@ int test_route_v6_search_route_in_lan(struct __sk_buff *skb) {
         return ret;
     }
 
-    return route6_search_route_in_lan(skb, current_l3_offset, &context, &flow_mark);
+    return route6_search_cache_in_lan(skb, current_l3_offset, &context, &flow_mark);
 #undef BPF_LOG_TOPIC
 }
 
 SEC("tc")
-int test_route_v6_setting_cache_in_wan(struct __sk_buff *skb) {
-#define BPF_LOG_TOPIC "test_route_v6_setting_cache_in_wan"
+int test_route_v6_set_cache_in_wan(struct __sk_buff *skb) {
+#define BPF_LOG_TOPIC "test_route_v6_set_cache_in_wan"
     struct route6_context context = {0};
     int ret = read_route_context_v6(skb, &context);
     if (ret != TC_ACT_OK) {
         return ret;
     }
 
-    return route6_setting_cache_in_wan(&context, current_l3_offset, skb->ifindex);
+    return route6_set_cache_in_wan(&context, current_l3_offset, skb->ifindex);
 #undef BPF_LOG_TOPIC
 }
 

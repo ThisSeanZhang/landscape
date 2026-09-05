@@ -22,7 +22,7 @@ use crate::{
 };
 
 #[test]
-fn v6_search_route_in_lan_uses_ip_mac_v6() {
+fn v6_search_cache_in_lan_uses_ip_mac_v6() {
     let mut builder = TestRouteSkelBuilder::default();
     let pin_root = isolated_pin_root("route-helper-v6-search");
     builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
@@ -57,13 +57,13 @@ fn v6_search_route_in_lan_uses_ip_mac_v6() {
     let mut packet_out = vec![0_u8; packet.len()];
     let result = skel
         .progs
-        .test_route_v6_search_route_in_lan
+        .test_route_v6_search_cache_in_lan
         .test_run(ProgramInput {
             data_in: Some(&packet),
             data_out: Some(&mut packet_out),
             ..Default::default()
         })
-        .expect("run test_route_v6_search_route_in_lan");
+        .expect("run test_route_v6_search_cache_in_lan");
 
     assert_eq!(result.return_value as i32, 7);
     assert_eq!(&packet_out[0..6], &next_hop_mac.octets());
@@ -72,7 +72,7 @@ fn v6_search_route_in_lan_uses_ip_mac_v6() {
 }
 
 #[test]
-fn v6_search_route_in_lan_falls_back_to_gateway_mac() {
+fn v6_search_cache_in_lan_falls_back_to_gateway_mac() {
     let mut builder = TestRouteSkelBuilder::default();
     let pin_root = isolated_pin_root("route-helper-v6-gateway-fallback");
     builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
@@ -107,13 +107,13 @@ fn v6_search_route_in_lan_falls_back_to_gateway_mac() {
     let mut packet_out = vec![0_u8; packet.len()];
     let result = skel
         .progs
-        .test_route_v6_search_route_in_lan
+        .test_route_v6_search_cache_in_lan
         .test_run(ProgramInput {
             data_in: Some(&packet),
             data_out: Some(&mut packet_out),
             ..Default::default()
         })
-        .expect("run test_route_v6_search_route_in_lan gateway fallback");
+        .expect("run test_route_v6_search_cache_in_lan gateway fallback");
 
     assert_eq!(result.return_value as i32, 7);
     assert_eq!(&packet_out[0..6], &gateway_mac.octets());
