@@ -1,7 +1,7 @@
 //! Startup creation/pinning of the per-flow DNS rule outer maps.
 //!
 //! Creation parameters mirror the C `SEC(".maps")` definitions in
-//! `src/bpf/route/route_maps_v4.h` / `route_maps_v6.h`. Passing the pin
+//! `src/bpf/route/flow4_maps.h` / `flow6_maps.h`. Passing the pin
 //! paths explicitly lets tests create the maps under an isolated (temporary)
 //! bpffs directory.
 
@@ -20,7 +20,7 @@ use super::types::{
 const FLOW_OUTER_MAX_ENTRIES: u32 = 256;
 const DNS_MATCH_MAX_ENTRIES: u32 = 4096;
 
-/// Pin 文件名 = C map 符号名（见 `route_maps_v4.h` / `route_maps_v6.h`）。
+/// Pin 文件名 = C map 符号名（见 `flow4_maps.h` / `flow6_maps.h`）。
 pub(crate) const FLOW4_DNS_MAP_PIN: &str = "flow4_dns_map";
 pub(crate) const FLOW6_DNS_MAP_PIN: &str = "flow6_dns_map";
 

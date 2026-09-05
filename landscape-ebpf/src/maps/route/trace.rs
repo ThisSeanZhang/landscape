@@ -17,7 +17,7 @@ use crate::{
     maps::{
         FlowDnsMatchKeyV4, FlowDnsMatchKeyV6, FlowDnsMatchValueV4, FlowDnsMatchValueV6,
         FlowIpTrieKeyV4, FlowIpTrieKeyV6, FlowIpTrieValueV4, FlowIpTrieValueV6, FlowMatchKey,
-        LandscapeMapPath, RtCacheKeyV4, RtCacheKeyV6, RtCacheValueV4, RtCacheValueV6,
+        LandscapeMapPath, Route4CacheKey, Route4CacheValue, Route6CacheKey, Route6CacheValue,
     },
     LANDSCAPE_IPV4_TYPE, LANDSCAPE_IPV6_TYPE,
 };
@@ -358,16 +358,16 @@ fn trace_cache_check_v4(
         let index_key = cache_index.as_bytes();
         let inner = lookup_inner_map(&outer, index_key)?;
 
-        let mut cache_key = RtCacheKeyV4::default();
+        let mut cache_key = Route4CacheKey::default();
         cache_key.local_addr = src_ip.to_bits().to_be();
         cache_key.remote_addr = dst_ip.to_bits().to_be();
 
         match inner.lookup(cache_key.as_bytes(), MapFlags::ANY) {
             Ok(Some(val_bytes)) => {
-                if val_bytes.len() < size_of::<RtCacheValueV4>() {
+                if val_bytes.len() < size_of::<Route4CacheValue>() {
                     return Some((false, None, true));
                 }
-                let val = RtCacheValueV4::read_from_bytes(&val_bytes).ok()?;
+                let val = Route4CacheValue::read_from_bytes(&val_bytes).ok()?;
                 let cached_mark_value = val.mark_value;
                 let consistent = cached_mark_value == expected_cache_mark;
                 Some((true, Some(cached_mark_value), consistent))
@@ -393,16 +393,16 @@ fn trace_cache_check_v6(
         let index_key = cache_index.as_bytes();
         let inner = lookup_inner_map(&outer, index_key)?;
 
-        let mut cache_key = RtCacheKeyV6::default();
+        let mut cache_key = Route6CacheKey::default();
         cache_key.local_addr = src_ip.to_bits().to_be_bytes();
         cache_key.remote_addr = dst_ip.to_bits().to_be_bytes();
 
         match inner.lookup(cache_key.as_bytes(), MapFlags::ANY) {
             Ok(Some(val_bytes)) => {
-                if val_bytes.len() < size_of::<RtCacheValueV6>() {
+                if val_bytes.len() < size_of::<Route6CacheValue>() {
                     return Some((false, None, true));
                 }
-                let val = RtCacheValueV6::read_from_bytes(&val_bytes).ok()?;
+                let val = Route6CacheValue::read_from_bytes(&val_bytes).ok()?;
                 let cached_mark_value = val.mark_value;
                 let consistent = cached_mark_value == expected_cache_mark;
                 Some((true, Some(cached_mark_value), consistent))

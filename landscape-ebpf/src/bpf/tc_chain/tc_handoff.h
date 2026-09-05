@@ -2,7 +2,7 @@
 #define __LD_TC_HANDOFF_H_
 
 #include "chain/xdp_meta.h"
-#include "route/route_index.h"
+#include "route/route_common.h"
 
 const volatile bool xdp_handoff_enabled = false;
 

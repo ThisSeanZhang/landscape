@@ -1,9 +1,9 @@
-#ifndef __LD_ROUTE_MAP_V6_H__
-#define __LD_ROUTE_MAP_V6_H__
+#ifndef __LD_FLOW6_MAPS_H__
+#define __LD_FLOW6_MAPS_H__
 #include <vmlinux.h>
 #include <bpf/bpf_helpers.h>
+
 #include "../landscape.h"
-#include "route6_lan_maps.h"
 
 // reusable
 struct flow_dns_match_value_v6 {
@@ -62,58 +62,4 @@ struct {
     __array(values, struct each_flow_ip_trie_v6);
 } flow6_ip_map SEC(".maps");
 
-struct route_target_slot_key_v6 {
-    __u32 flow_id;
-    __u32 slot;
-};
-
-struct route_target_info_v6 {
-    u32 ifindex;
-    union u_inet6_addr gate_addr;
-    u8 has_mac;
-    u8 is_docker;
-    u8 mac[6];
-};
-
-struct {
-    __uint(type, BPF_MAP_TYPE_HASH);
-    __type(key, struct route_target_slot_key_v6);
-    __type(value, struct route_target_info_v6);
-    __uint(max_entries, 4096);
-    __uint(map_flags, BPF_F_NO_PREALLOC);
-    __uint(pinning, LIBBPF_PIN_BY_NAME);
-} rt6_target_slot_map SEC(".maps");
-
-struct rt_cache_key_v6 {
-    union u_inet6_addr local_addr;
-    union u_inet6_addr remote_addr;
-} _rt_cache_key_v6;
-
-struct rt_cache_value_v6 {
-    __u32 mark_value;
-    u8 has_mac;
-    u8 is_docker;
-    u8 xdp_redirect_able;
-    u8 _pad;
-    __u32 ifindex;
-    union u_inet6_addr gate_addr;
-    u8 mac[6];
-} _rt_cache_value_v6;
-
-// 缓存
-struct each_v6_cache {
-    __uint(type, BPF_MAP_TYPE_LRU_HASH);
-    __uint(key_size, sizeof(struct rt_cache_key_v6));
-    __uint(value_size, sizeof(struct rt_cache_value_v6));
-    __uint(max_entries, 65536);
-};
-
-struct {
-    __uint(type, BPF_MAP_TYPE_ARRAY_OF_MAPS);
-    __type(key, u32);
-    __uint(max_entries, 4);
-    __uint(pinning, LIBBPF_PIN_BY_NAME);
-    __array(values, struct each_v6_cache);
-} rt6_cache_map SEC(".maps");
-
-#endif /* __LD_ROUTE_MAP_V6_H__ */
+#endif /* __LD_FLOW6_MAPS_H__ */

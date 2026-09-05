@@ -1,7 +1,7 @@
 //! Startup creation/pinning of the per-flow WAN-IP trie outer maps.
 //!
 //! Creation parameters mirror the C `SEC(".maps")` definitions in
-//! `src/bpf/route/route_maps_v4.h` / `route_maps_v6.h`. Passing the pin
+//! `src/bpf/route/flow4_maps.h` / `flow6_maps.h`. Passing the pin
 //! paths explicitly lets tests create the maps under an isolated (temporary)
 //! bpffs directory.
 
@@ -18,7 +18,7 @@ use super::types::{FlowIpTrieKeyV4, FlowIpTrieKeyV6, FlowIpTrieValueV4, FlowIpTr
 const FLOW_OUTER_MAX_ENTRIES: u32 = 256;
 const FLOW_IP_TRIE_MAX_ENTRIES: u32 = 65536;
 
-/// Pin 文件名 = C map 符号名（见 `route_maps_v4.h` / `route_maps_v6.h`）。
+/// Pin 文件名 = C map 符号名（见 `flow4_maps.h` / `flow6_maps.h`）。
 pub(crate) const FLOW4_IP_MAP_PIN: &str = "flow4_ip_map";
 pub(crate) const FLOW6_IP_MAP_PIN: &str = "flow6_ip_map";
 

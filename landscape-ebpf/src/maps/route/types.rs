@@ -1,18 +1,18 @@
-//! `rt4`/`rt6_lan_map`, `rt4`/`rt6_cache_map`, `rt4`/`rt6_target_slot_map`
+//! `rt4`/`rt6_lan_map`, `rt4`/`rt6_cache_map`, `rt4`/`rt6_slot_map`
 //! C anchor: real program skels.
 
 use zerocopy::{FromBytes, Immutable, IntoBytes};
 
 #[repr(C)]
 #[derive(Debug, Default, Clone, Copy, FromBytes, IntoBytes, Immutable, PartialEq, Eq)]
-pub(crate) struct LanRouteKeyV4 {
+pub(crate) struct Route4LanKey {
     pub prefixlen: u32,
     pub addr: u32,
 }
 
 #[repr(C)]
 #[derive(Debug, Default, Clone, Copy, FromBytes, IntoBytes, Immutable, PartialEq, Eq)]
-pub(crate) struct LanRouteKeyV6 {
+pub(crate) struct Route6LanKey {
     pub prefixlen: u32,
     pub addr: [u8; 16],
 }
@@ -21,7 +21,7 @@ pub(crate) struct LanRouteKeyV6 {
 /// so only `IntoBytes` is derived.
 #[repr(C)]
 #[derive(Debug, Default, Clone, Copy, IntoBytes, Immutable, PartialEq, Eq)]
-pub(crate) struct LanRouteInfoV4 {
+pub(crate) struct Route4LanInfo {
     pub has_mac: bool,
     pub mac_addr: [u8; 6],
     pub route_type: u8,
@@ -31,7 +31,7 @@ pub(crate) struct LanRouteInfoV4 {
 
 #[repr(C)]
 #[derive(Debug, Default, Clone, Copy, IntoBytes, Immutable, PartialEq, Eq)]
-pub(crate) struct LanRouteInfoV6 {
+pub(crate) struct Route6LanInfo {
     pub has_mac: bool,
     pub mac_addr: [u8; 6],
     pub route_type: u8,
@@ -41,21 +41,21 @@ pub(crate) struct LanRouteInfoV6 {
 
 #[repr(C)]
 #[derive(Debug, Default, Clone, Copy, FromBytes, IntoBytes, Immutable, PartialEq, Eq)]
-pub(crate) struct RtCacheKeyV4 {
+pub(crate) struct Route4CacheKey {
     pub local_addr: u32,
     pub remote_addr: u32,
 }
 
 #[repr(C)]
 #[derive(Debug, Default, Clone, Copy, FromBytes, IntoBytes, Immutable, PartialEq, Eq)]
-pub(crate) struct RtCacheKeyV6 {
+pub(crate) struct Route6CacheKey {
     pub local_addr: [u8; 16],
     pub remote_addr: [u8; 16],
 }
 
 #[repr(C)]
 #[derive(Debug, Default, Clone, Copy, FromBytes, IntoBytes, Immutable, PartialEq, Eq)]
-pub(crate) struct RtCacheValueV4 {
+pub(crate) struct Route4CacheValue {
     pub mark_value: u32,
     pub has_mac: u8,
     pub is_docker: u8,
@@ -70,7 +70,7 @@ pub(crate) struct RtCacheValueV4 {
 
 #[repr(C)]
 #[derive(Debug, Default, Clone, Copy, FromBytes, IntoBytes, Immutable, PartialEq, Eq)]
-pub(crate) struct RtCacheValueV6 {
+pub(crate) struct Route6CacheValue {
     pub mark_value: u32,
     pub has_mac: u8,
     pub is_docker: u8,
@@ -84,21 +84,21 @@ pub(crate) struct RtCacheValueV6 {
 
 #[repr(C)]
 #[derive(Debug, Default, Clone, Copy, FromBytes, IntoBytes, Immutable, PartialEq, Eq)]
-pub(crate) struct RouteTargetSlotKeyV4 {
+pub(crate) struct Route4SlotKey {
     pub flow_id: u32,
     pub slot: u32,
 }
 
 #[repr(C)]
 #[derive(Debug, Default, Clone, Copy, FromBytes, IntoBytes, Immutable, PartialEq, Eq)]
-pub(crate) struct RouteTargetSlotKeyV6 {
+pub(crate) struct Route6SlotKey {
     pub flow_id: u32,
     pub slot: u32,
 }
 
 #[repr(C)]
 #[derive(Debug, Default, Clone, Copy, FromBytes, IntoBytes, Immutable, PartialEq, Eq)]
-pub(crate) struct RouteTargetInfoV4 {
+pub(crate) struct Route4TargetInfo {
     pub ifindex: u32,
     pub gate_addr: u32,
     pub has_mac: u8,
@@ -108,7 +108,7 @@ pub(crate) struct RouteTargetInfoV4 {
 
 #[repr(C)]
 #[derive(Debug, Default, Clone, Copy, FromBytes, IntoBytes, Immutable, PartialEq, Eq)]
-pub(crate) struct RouteTargetInfoV6 {
+pub(crate) struct Route6TargetInfo {
     pub ifindex: u32,
     pub gate_addr: [u8; 16],
     pub has_mac: u8,
@@ -123,75 +123,75 @@ mod tests {
 
     #[test]
     fn route_layouts_match_skel() {
-        assert_size!(LanRouteKeyV4, share::lan_route_key_v4);
-        assert_field!(LanRouteKeyV4, share::lan_route_key_v4, prefixlen);
-        assert_field!(LanRouteKeyV4, share::lan_route_key_v4, addr);
+        assert_size!(Route4LanKey, share::route4_lan_key);
+        assert_field!(Route4LanKey, share::route4_lan_key, prefixlen);
+        assert_field!(Route4LanKey, share::route4_lan_key, addr);
 
-        assert_size!(LanRouteKeyV6, share::lan_route_key_v6);
-        assert_field!(LanRouteKeyV6, share::lan_route_key_v6, prefixlen);
-        assert_field!(LanRouteKeyV6, share::lan_route_key_v6, addr);
+        assert_size!(Route6LanKey, share::route6_lan_key);
+        assert_field!(Route6LanKey, share::route6_lan_key, prefixlen);
+        assert_field!(Route6LanKey, share::route6_lan_key, addr);
 
-        assert_size!(LanRouteInfoV4, share::lan_route_info_v4);
-        assert_field!(LanRouteInfoV4, share::lan_route_info_v4, has_mac);
-        assert_field!(LanRouteInfoV4, share::lan_route_info_v4, mac_addr);
-        assert_field!(LanRouteInfoV4, share::lan_route_info_v4, route_type);
-        assert_field!(LanRouteInfoV4, share::lan_route_info_v4, ifindex);
-        assert_field!(LanRouteInfoV4, share::lan_route_info_v4, addr);
+        assert_size!(Route4LanInfo, share::route4_lan_info);
+        assert_field!(Route4LanInfo, share::route4_lan_info, has_mac);
+        assert_field!(Route4LanInfo, share::route4_lan_info, mac_addr);
+        assert_field!(Route4LanInfo, share::route4_lan_info, route_type);
+        assert_field!(Route4LanInfo, share::route4_lan_info, ifindex);
+        assert_field!(Route4LanInfo, share::route4_lan_info, addr);
 
-        assert_size!(LanRouteInfoV6, share::lan_route_info_v6);
-        assert_field!(LanRouteInfoV6, share::lan_route_info_v6, has_mac);
-        assert_field!(LanRouteInfoV6, share::lan_route_info_v6, mac_addr);
-        assert_field!(LanRouteInfoV6, share::lan_route_info_v6, route_type);
-        assert_field!(LanRouteInfoV6, share::lan_route_info_v6, ifindex);
-        assert_field!(LanRouteInfoV6, share::lan_route_info_v6, addr);
+        assert_size!(Route6LanInfo, share::route6_lan_info);
+        assert_field!(Route6LanInfo, share::route6_lan_info, has_mac);
+        assert_field!(Route6LanInfo, share::route6_lan_info, mac_addr);
+        assert_field!(Route6LanInfo, share::route6_lan_info, route_type);
+        assert_field!(Route6LanInfo, share::route6_lan_info, ifindex);
+        assert_field!(Route6LanInfo, share::route6_lan_info, addr);
 
-        assert_size!(RtCacheKeyV4, share::rt_cache_key_v4);
-        assert_field!(RtCacheKeyV4, share::rt_cache_key_v4, local_addr);
-        assert_field!(RtCacheKeyV4, share::rt_cache_key_v4, remote_addr);
+        assert_size!(Route4CacheKey, share::route4_cache_key);
+        assert_field!(Route4CacheKey, share::route4_cache_key, local_addr);
+        assert_field!(Route4CacheKey, share::route4_cache_key, remote_addr);
 
-        assert_size!(RtCacheKeyV6, share::rt_cache_key_v6);
-        assert_field!(RtCacheKeyV6, share::rt_cache_key_v6, local_addr);
-        assert_field!(RtCacheKeyV6, share::rt_cache_key_v6, remote_addr);
+        assert_size!(Route6CacheKey, share::route6_cache_key);
+        assert_field!(Route6CacheKey, share::route6_cache_key, local_addr);
+        assert_field!(Route6CacheKey, share::route6_cache_key, remote_addr);
 
-        assert_size!(RtCacheValueV4, share::rt_cache_value_v4);
-        assert_field!(RtCacheValueV4, share::rt_cache_value_v4, mark_value);
-        assert_field!(RtCacheValueV4, share::rt_cache_value_v4, has_mac);
-        assert_field!(RtCacheValueV4, share::rt_cache_value_v4, is_docker);
-        assert_field!(RtCacheValueV4, share::rt_cache_value_v4, xdp_redirect_able);
-        assert_field!(RtCacheValueV4, share::rt_cache_value_v4, ifindex);
-        assert_field!(RtCacheValueV4, share::rt_cache_value_v4, gate_addr);
-        assert_field!(RtCacheValueV4, share::rt_cache_value_v4, mac);
-        assert_field!(RtCacheValueV4, share::rt_cache_value_v4, l2_data);
+        assert_size!(Route4CacheValue, share::route4_cache_value);
+        assert_field!(Route4CacheValue, share::route4_cache_value, mark_value);
+        assert_field!(Route4CacheValue, share::route4_cache_value, has_mac);
+        assert_field!(Route4CacheValue, share::route4_cache_value, is_docker);
+        assert_field!(Route4CacheValue, share::route4_cache_value, xdp_redirect_able);
+        assert_field!(Route4CacheValue, share::route4_cache_value, ifindex);
+        assert_field!(Route4CacheValue, share::route4_cache_value, gate_addr);
+        assert_field!(Route4CacheValue, share::route4_cache_value, mac);
+        assert_field!(Route4CacheValue, share::route4_cache_value, l2_data);
 
-        assert_size!(RtCacheValueV6, share::rt_cache_value_v6);
-        assert_field!(RtCacheValueV6, share::rt_cache_value_v6, mark_value);
-        assert_field!(RtCacheValueV6, share::rt_cache_value_v6, has_mac);
-        assert_field!(RtCacheValueV6, share::rt_cache_value_v6, is_docker);
-        assert_field!(RtCacheValueV6, share::rt_cache_value_v6, xdp_redirect_able);
-        assert_field!(RtCacheValueV6, share::rt_cache_value_v6, ifindex);
-        assert_field!(RtCacheValueV6, share::rt_cache_value_v6, gate_addr);
-        assert_field!(RtCacheValueV6, share::rt_cache_value_v6, mac);
+        assert_size!(Route6CacheValue, share::route6_cache_value);
+        assert_field!(Route6CacheValue, share::route6_cache_value, mark_value);
+        assert_field!(Route6CacheValue, share::route6_cache_value, has_mac);
+        assert_field!(Route6CacheValue, share::route6_cache_value, is_docker);
+        assert_field!(Route6CacheValue, share::route6_cache_value, xdp_redirect_able);
+        assert_field!(Route6CacheValue, share::route6_cache_value, ifindex);
+        assert_field!(Route6CacheValue, share::route6_cache_value, gate_addr);
+        assert_field!(Route6CacheValue, share::route6_cache_value, mac);
 
-        assert_size!(RouteTargetSlotKeyV4, share::route_target_slot_key_v4);
-        assert_field!(RouteTargetSlotKeyV4, share::route_target_slot_key_v4, flow_id);
-        assert_field!(RouteTargetSlotKeyV4, share::route_target_slot_key_v4, slot);
+        assert_size!(Route4SlotKey, share::route4_slot_key);
+        assert_field!(Route4SlotKey, share::route4_slot_key, flow_id);
+        assert_field!(Route4SlotKey, share::route4_slot_key, slot);
 
-        assert_size!(RouteTargetSlotKeyV6, share::route_target_slot_key_v6);
-        assert_field!(RouteTargetSlotKeyV6, share::route_target_slot_key_v6, flow_id);
-        assert_field!(RouteTargetSlotKeyV6, share::route_target_slot_key_v6, slot);
+        assert_size!(Route6SlotKey, share::route6_slot_key);
+        assert_field!(Route6SlotKey, share::route6_slot_key, flow_id);
+        assert_field!(Route6SlotKey, share::route6_slot_key, slot);
 
-        assert_size!(RouteTargetInfoV4, share::route_target_info_v4);
-        assert_field!(RouteTargetInfoV4, share::route_target_info_v4, ifindex);
-        assert_field!(RouteTargetInfoV4, share::route_target_info_v4, gate_addr);
-        assert_field!(RouteTargetInfoV4, share::route_target_info_v4, has_mac);
-        assert_field!(RouteTargetInfoV4, share::route_target_info_v4, is_docker);
-        assert_field!(RouteTargetInfoV4, share::route_target_info_v4, mac);
+        assert_size!(Route4TargetInfo, share::route4_target_info);
+        assert_field!(Route4TargetInfo, share::route4_target_info, ifindex);
+        assert_field!(Route4TargetInfo, share::route4_target_info, gate_addr);
+        assert_field!(Route4TargetInfo, share::route4_target_info, has_mac);
+        assert_field!(Route4TargetInfo, share::route4_target_info, is_docker);
+        assert_field!(Route4TargetInfo, share::route4_target_info, mac);
 
-        assert_size!(RouteTargetInfoV6, share::route_target_info_v6);
-        assert_field!(RouteTargetInfoV6, share::route_target_info_v6, ifindex);
-        assert_field!(RouteTargetInfoV6, share::route_target_info_v6, gate_addr);
-        assert_field!(RouteTargetInfoV6, share::route_target_info_v6, has_mac);
-        assert_field!(RouteTargetInfoV6, share::route_target_info_v6, is_docker);
-        assert_field!(RouteTargetInfoV6, share::route_target_info_v6, mac);
+        assert_size!(Route6TargetInfo, share::route6_target_info);
+        assert_field!(Route6TargetInfo, share::route6_target_info, ifindex);
+        assert_field!(Route6TargetInfo, share::route6_target_info, gate_addr);
+        assert_field!(Route6TargetInfo, share::route6_target_info, has_mac);
+        assert_field!(Route6TargetInfo, share::route6_target_info, is_docker);
+        assert_field!(Route6TargetInfo, share::route6_target_info, mac);
     }
 }

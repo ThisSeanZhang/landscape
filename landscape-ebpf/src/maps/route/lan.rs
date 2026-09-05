@@ -8,7 +8,7 @@ use libbpf_rs::{MapCore, MapFlags};
 use zerocopy::IntoBytes;
 
 use super::cache;
-use crate::maps::{LanRouteInfoV4, LanRouteInfoV6, LanRouteKeyV4, LanRouteKeyV6, LandscapeMapPath};
+use crate::maps::{LandscapeMapPath, Route4LanInfo, Route4LanKey, Route6LanInfo, Route6LanKey};
 const ROUTE_TYPE_LAN: u8 = 0;
 const ROUTE_TYPE_NEXTHOP: u8 = 1;
 const ROUTE_TYPE_WAN: u8 = 2;
@@ -79,8 +79,8 @@ pub(crate) fn add_lan_route_inner_v4<T>(rt_lan_map: &T, lan_info: &LanRouteInfo)
 where
     T: MapCore,
 {
-    let mut key = LanRouteKeyV4::default();
-    let mut value = LanRouteInfoV4::default();
+    let mut key = Route4LanKey::default();
+    let mut value = Route4LanInfo::default();
 
     key.prefixlen = lan_info.prefix as u32;
     match lan_info.iface_ip {
@@ -143,8 +143,8 @@ pub(crate) fn add_lan_route_inner_v6<T>(rt_lan_map: &T, lan_info: &LanRouteInfo)
 where
     T: MapCore,
 {
-    let mut key = LanRouteKeyV6::default();
-    let mut value = LanRouteInfoV6::default();
+    let mut key = Route6LanKey::default();
+    let mut value = Route6LanInfo::default();
 
     key.prefixlen = lan_info.prefix as u32;
     match lan_info.iface_ip {
@@ -234,7 +234,7 @@ pub(crate) fn del_lan_route_inner_v4<T>(rt_lan_map: &T, lan_info: &LanRouteInfo)
 where
     T: MapCore,
 {
-    let mut key = LanRouteKeyV4::default();
+    let mut key = Route4LanKey::default();
     key.prefixlen = lan_info.prefix as u32;
     match lan_info.iface_ip {
         std::net::IpAddr::V4(ipv4_addr) => {
@@ -268,7 +268,7 @@ pub(crate) fn del_lan_route_inner_v6<T>(rt_lan_map: &T, lan_info: &LanRouteInfo)
 where
     T: MapCore,
 {
-    let mut key = LanRouteKeyV6::default();
+    let mut key = Route6LanKey::default();
     key.prefixlen = lan_info.prefix as u32;
     match lan_info.iface_ip {
         std::net::IpAddr::V4(_) => {

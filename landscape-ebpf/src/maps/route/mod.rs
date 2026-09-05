@@ -31,7 +31,7 @@ mod tests {
     use libbpf_rs::{libbpf_sys, MapCore, MapFlags, MapHandle, MapType};
     use zerocopy::IntoBytes;
 
-    use super::types::{RouteTargetInfoV6, RouteTargetSlotKeyV6};
+    use super::types::{Route6SlotKey, Route6TargetInfo};
     use super::*;
 
     fn dummy_v6_route_target(ifindex: u32) -> RouteTargetInfo {
@@ -56,8 +56,8 @@ mod tests {
         MapHandle::create(
             MapType::Hash,
             None::<&str>,
-            std::mem::size_of::<RouteTargetSlotKeyV6>() as u32,
-            std::mem::size_of::<RouteTargetInfoV6>() as u32,
+            std::mem::size_of::<Route6SlotKey>() as u32,
+            std::mem::size_of::<Route6TargetInfo>() as u32,
             256,
             &opts,
         )
@@ -66,11 +66,11 @@ mod tests {
 
     #[allow(clippy::field_reassign_with_default)]
     fn insert_v6_slot(map: &MapHandle, flow_id: u32, slot: u32, ifindex: u32) {
-        let mut key = RouteTargetSlotKeyV6::default();
+        let mut key = Route6SlotKey::default();
         key.flow_id = flow_id;
         key.slot = slot;
 
-        let mut value = RouteTargetInfoV6::default();
+        let mut value = Route6TargetInfo::default();
         value.ifindex = ifindex;
 
         map.update(key.as_bytes(), value.as_bytes(), MapFlags::ANY)
@@ -79,7 +79,7 @@ mod tests {
 
     #[allow(clippy::field_reassign_with_default)]
     fn lookup_v6_slot(map: &MapHandle, flow_id: u32, slot: u32) -> bool {
-        let mut key = RouteTargetSlotKeyV6::default();
+        let mut key = Route6SlotKey::default();
         key.flow_id = flow_id;
         key.slot = slot;
         map.lookup(key.as_bytes(), MapFlags::ANY).is_ok_and(|v| v.is_some())

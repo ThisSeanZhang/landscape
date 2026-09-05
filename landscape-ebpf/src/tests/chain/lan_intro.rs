@@ -7,7 +7,7 @@ use libbpf_rs::{
     MapCore, MapFlags, MapHandle,
 };
 
-use crate::maps::{RtCacheKeyV4, RtCacheValueV4};
+use crate::maps::{Route4CacheKey, Route4CacheValue};
 use crate::tests::net_utils::{
     dummy_recv_count, dummy_reset, route_slot, send_raw_packet, settle, wait_for, NetNsGuard,
     VethPair,
@@ -288,7 +288,7 @@ fn xdp_lan_intro_wan_pipeline() {
         k[0..4].copy_from_slice(&0u32.to_ne_bytes());
         k[4..8].copy_from_slice(&s.to_ne_bytes());
         v[0..4].copy_from_slice(&wan_h_i.to_ne_bytes());
-        maps.rt4_target_slot_map.update(&k, &v, MapFlags::ANY).unwrap();
+        maps.rt4_slot_map.update(&k, &v, MapFlags::ANY).unwrap();
     }
     // C→A: lan route → lan_p
     {
@@ -478,8 +478,8 @@ fn xdp_lan_intro_wan_pipeline() {
     println!("LAN_CACHE (v4) entries: {}", keys.len());
     for k in &keys {
         let raw = lan_inner.lookup(k, MapFlags::ANY).unwrap().unwrap();
-        let val: RtCacheValueV4 = read_unaligned(&raw);
-        let key: RtCacheKeyV4 = read_unaligned(k);
+        let val: Route4CacheValue = read_unaligned(&raw);
+        let key: Route4CacheKey = read_unaligned(k);
         println!(
             "  saddr={:08x} daddr={:08x} -> mark={} ifidx={}",
             u32::from_be(key.local_addr),
@@ -911,14 +911,14 @@ fn xdp_lan_intro_fib_fallback_v6() {
         let mut obj = std::mem::MaybeUninit::uninit();
         let skel = b.open(&mut obj).unwrap().load().unwrap();
 
-        // 20-byte v6 lan_route_key: prefixlen(4) + addr(16)
+        // 20-byte v6 route6_lan_key: prefixlen(4) + addr(16)
         let mut lan_key = [0u8; 20];
         lan_key[0..4].copy_from_slice(&128u32.to_ne_bytes());
         // fd00::200 in network byte order
         let dst_ip6: [u8; 16] = [0xfd, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x02, 0];
         lan_key[4..20].copy_from_slice(&dst_ip6);
 
-        // 28-byte v6 lan_route_info: has_mac(1) + mac_addr(6) + route_type(1) + ifindex(4) + addr(16)
+        // 28-byte v6 route6_lan_info: has_mac(1) + mac_addr(6) + route_type(1) + ifindex(4) + addr(16)
         // ifindex must be a *local* (test-netns) index distinct from the ingress,
         // since peer-netns ifindexes numerically collide with local ones.
         let mut lan_val = [0u8; 28];

@@ -9,7 +9,7 @@
 #include "pkg_def.h"
 #include "neigh_ip6.h"
 #include "neigh_ip6_event.h"
-#include "route/route6_lan_maps.h"
+#include "route/route6_lan.h"
 
 char LICENSE[] SEC("license") = "GPL";
 
@@ -177,10 +177,10 @@ int tc_lan_dao(struct __sk_buff *skb) {
     // (PD delegation) or WAN, (b) other interfaces' subnets, and (c) the
     // router's own address in the subnet (value.addr holds the sub_router for
     // Reachable entries), which must never be bound to a claimant's MAC.
-    struct lan_route_key_v6 lan_key = {0};
+    struct route6_lan_key lan_key = {0};
     lan_key.prefixlen = 128;
     __builtin_memcpy(lan_key.addr.bytes, target, sizeof(target));
-    struct lan_route_info_v6 *lan_info = bpf_map_lookup_elem(&rt6_lan_map, &lan_key);
+    struct route6_lan_info *lan_info = bpf_map_lookup_elem(&rt6_lan_map, &lan_key);
     union u_inet6_addr target_addr = {0};
     __builtin_memcpy(target_addr.bytes, target, sizeof(target));
     if (!lan_info || lan_info->route_type != ROUTE_TYPE_LAN ||

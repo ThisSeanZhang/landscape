@@ -253,7 +253,7 @@ fn xdp_firewall_pipeline() {
         k[0..4].copy_from_slice(&0u32.to_ne_bytes());
         k[4..8].copy_from_slice(&s.to_ne_bytes());
         v[0..4].copy_from_slice(&wan_h_i.to_ne_bytes());
-        maps.rt4_target_slot_map.update(&k, &v, MapFlags::ANY).unwrap();
+        maps.rt4_slot_map.update(&k, &v, MapFlags::ANY).unwrap();
     }
 
     // C→A: LAN route → lan_p
@@ -275,7 +275,7 @@ fn xdp_firewall_pipeline() {
         k[0..4].copy_from_slice(&0u32.to_ne_bytes());
         k[4..8].copy_from_slice(&s2.to_ne_bytes());
         v[0..4].copy_from_slice(&wan_h_i.to_ne_bytes());
-        maps.rt4_target_slot_map.update(&k, &v, MapFlags::ANY).unwrap();
+        maps.rt4_slot_map.update(&k, &v, MapFlags::ANY).unwrap();
     }
 
     // v6 LAN route: fd00::1 → lan_h
@@ -299,7 +299,7 @@ fn xdp_firewall_pipeline() {
         k[4..8].copy_from_slice(&slot.to_ne_bytes());
         let mut v = [0u8; 28];
         v[0..4].copy_from_slice(&wan_h_i.to_ne_bytes());
-        maps.rt6_target_slot_map.update(&k, &v, MapFlags::ANY).unwrap();
+        maps.rt6_slot_map.update(&k, &v, MapFlags::ANY).unwrap();
     }
 
     // ── block map helpers ──

@@ -82,8 +82,8 @@ pub(crate) struct TestSharedMaps {
     pub nat4_static_map: libbpf_rs::MapHandle,
     pub rt4_lan_map: libbpf_rs::MapHandle,
     pub rt6_lan_map: libbpf_rs::MapHandle,
-    pub rt4_target_slot_map: libbpf_rs::MapHandle,
-    pub rt6_target_slot_map: libbpf_rs::MapHandle,
+    pub rt4_slot_map: libbpf_rs::MapHandle,
+    pub rt6_slot_map: libbpf_rs::MapHandle,
     pub rt4_cache_map: libbpf_rs::MapHandle,
     pub rt6_cache_map: libbpf_rs::MapHandle,
 }
@@ -99,8 +99,8 @@ impl TestSharedMaps {
             nat4_static_map: pin(&paths.nat4_static_map),
             rt4_lan_map: pin(&paths.rt4_lan_map),
             rt6_lan_map: pin(&paths.rt6_lan_map),
-            rt4_target_slot_map: pin(&paths.rt4_target_slot_map),
-            rt6_target_slot_map: pin(&paths.rt6_target_slot_map),
+            rt4_slot_map: pin(&paths.rt4_slot_map),
+            rt6_slot_map: pin(&paths.rt6_slot_map),
             rt4_cache_map: pin(&paths.rt4_cache_map),
             rt6_cache_map: pin(&paths.rt6_cache_map),
         }

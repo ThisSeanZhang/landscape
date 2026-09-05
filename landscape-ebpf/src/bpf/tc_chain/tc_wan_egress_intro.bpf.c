@@ -6,9 +6,10 @@
 #include <bpf/bpf_core_read.h>
 
 #include "landscape.h"
-#include "route_v4.h"
-#include "route_v6.h"
-#include "route/route_packet.h"
+#include "route/route4_path.h"
+#include "route/route6_path.h"
+#include "route/route4_context.h"
+#include "route/route6_context.h"
 
 #include "chain/tc_cb.h"
 
@@ -31,17 +32,17 @@ struct {
 // ── tc_lan_redirect: adapted from lan_redirect_check (no is_lan) ──
 
 static __always_inline int tc_egress_redirect_v4(struct __sk_buff *skb, u32 current_l3_offset,
-                                                 struct route_context_v4 *context) {
+                                                 struct route4_context *context) {
 #define BPF_LOG_TOPIC "tc_egress_redirect_v4"
     int ret;
-    struct lan_route_key_v4 lan_search_key = {0};
+    struct route4_lan_key lan_search_key = {0};
     struct mac_key_v4 mac_key_search = {0};
     struct mac_value_v4 *mac_value = NULL;
 
     lan_search_key.prefixlen = 32;
     lan_search_key.addr = context->daddr;
 
-    struct lan_route_info_v4 *lan_info = bpf_map_lookup_elem(&rt4_lan_map, &lan_search_key);
+    struct route4_lan_info *lan_info = bpf_map_lookup_elem(&rt4_lan_map, &lan_search_key);
 
     if (lan_info == NULL) return TC_ACT_OK;
 
@@ -101,17 +102,17 @@ static __always_inline int tc_egress_redirect_v4(struct __sk_buff *skb, u32 curr
 }
 
 static __always_inline int tc_egress_redirect_v6(struct __sk_buff *skb, u32 current_l3_offset,
-                                                 struct route_context_v6 *context) {
+                                                 struct route6_context *context) {
 #define BPF_LOG_TOPIC "tc_egress_redirect_v6"
     int ret;
-    struct lan_route_key_v6 lan_search_key = {0};
+    struct route6_lan_key lan_search_key = {0};
     struct mac_key_v6 mac_key_search = {0};
     struct mac_value_v6 *mac_value = NULL;
 
     lan_search_key.prefixlen = 128;
     COPY_ADDR_FROM(lan_search_key.addr.bytes, context->daddr.bytes);
 
-    struct lan_route_info_v6 *lan_info = bpf_map_lookup_elem(&rt6_lan_map, &lan_search_key);
+    struct route6_lan_info *lan_info = bpf_map_lookup_elem(&rt6_lan_map, &lan_search_key);
 
     if (lan_info == NULL) return TC_ACT_OK;
 
@@ -173,17 +174,16 @@ static __always_inline int tc_egress_redirect_v6(struct __sk_buff *skb, u32 curr
 // ── tc_pick_wan: adapted from pick_wan_and_send_by_flow_id, always tailcalls to target root ──
 
 static __always_inline int tc_pick_wan_v4(struct __sk_buff *skb, u32 current_l3_offset,
-                                          const struct route_context_v4 *context,
-                                          const u32 flow_id) {
+                                          const struct route4_context *context, const u32 flow_id) {
 #define BPF_LOG_TOPIC "tc_wan_pick_wan_v4"
     int ret;
     const u32 resolved_flow_id = get_flow_id(flow_id);
 
-    struct route_target_slot_key_v4 slot_key = {
+    struct route4_slot_key slot_key = {
         .flow_id = resolved_flow_id,
-        .slot = route_target_slot_v4(context->daddr),
+        .slot = route4_target_slot(context->daddr),
     };
-    struct route_target_info_v4 *target_info = bpf_map_lookup_elem(&rt4_target_slot_map, &slot_key);
+    struct route4_target_info *target_info = bpf_map_lookup_elem(&rt4_slot_map, &slot_key);
 
     if (target_info == NULL) {
         if (resolved_flow_id == 0) {
@@ -248,17 +248,16 @@ static __always_inline int tc_pick_wan_v4(struct __sk_buff *skb, u32 current_l3_
 }
 
 static __always_inline int tc_pick_wan_v6(struct __sk_buff *skb, u32 current_l3_offset,
-                                          const struct route_context_v6 *context,
-                                          const u32 flow_id) {
+                                          const struct route6_context *context, const u32 flow_id) {
 #define BPF_LOG_TOPIC "tc_pick_wan_v6"
     int ret;
     const u32 resolved_flow_id = get_flow_id(flow_id);
 
-    struct route_target_slot_key_v6 slot_key = {
+    struct route6_slot_key slot_key = {
         .flow_id = resolved_flow_id,
-        .slot = route_target_slot_v6(&context->daddr),
+        .slot = route6_target_slot(&context->daddr),
     };
-    struct route_target_info_v6 *target_info = bpf_map_lookup_elem(&rt6_target_slot_map, &slot_key);
+    struct route6_target_info *target_info = bpf_map_lookup_elem(&rt6_slot_map, &slot_key);
 
     if (target_info == NULL) {
         if (resolved_flow_id == 0) {
@@ -323,7 +322,7 @@ int tc_wan_egress_route_v4(struct __sk_buff *skb) {
 #define BPF_LOG_TOPIC "tc_wan_egress_route_v4"
     int ret = 0;
     u32 flow_mark = skb->mark;
-    struct route_context_v4 context = {0};
+    struct route4_context context = {0};
     struct packet_offset_info offset_info = {0};
 
     ret = scan_route_packet(skb, current_l3_offset, &offset_info);
@@ -334,7 +333,7 @@ int tc_wan_egress_route_v4(struct __sk_buff *skb) {
         return TC_ACT_OK;
     }
 
-    ret = read_route_context_v4_from_scan(skb, &offset_info, &context);
+    ret = route4_read_context_from_scan(skb, &offset_info, &context);
     if (ret != TC_ACT_OK) {
         return TC_ACT_OK;
     }
@@ -367,7 +366,7 @@ int tc_wan_egress_route_v6(struct __sk_buff *skb) {
 #define BPF_LOG_TOPIC "tc_wan_egress_route_v6"
     int ret = 0;
     u32 flow_mark = skb->mark;
-    struct route_context_v6 context = {0};
+    struct route6_context context = {0};
     struct packet_offset_info offset_info = {0};
 
     ret = scan_route_packet(skb, current_l3_offset, &offset_info);
@@ -378,7 +377,7 @@ int tc_wan_egress_route_v6(struct __sk_buff *skb) {
         return TC_ACT_OK;
     }
 
-    ret = read_route_context_v6_from_scan(skb, &offset_info, &context);
+    ret = route6_read_context_from_scan(skb, &offset_info, &context);
     if (ret != TC_ACT_OK) {
         return TC_ACT_OK;
     }

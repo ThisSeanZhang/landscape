@@ -557,10 +557,8 @@ pub(crate) fn init_path(paths: &LandscapeMapPath) {
     // content is re-synced from user space anyway).
     route::init_rt4_lan_map(&paths.rt4_lan_map).expect("init rt4_lan_map failed");
     route::init_rt6_lan_map(&paths.rt6_lan_map).expect("init rt6_lan_map failed");
-    route::init_rt4_target_slot_map(&paths.rt4_target_slot_map)
-        .expect("init rt4_target_slot_map failed");
-    route::init_rt6_target_slot_map(&paths.rt6_target_slot_map)
-        .expect("init rt6_target_slot_map failed");
+    route::init_rt4_slot_map(&paths.rt4_slot_map).expect("init rt4_slot_map failed");
+    route::init_rt6_slot_map(&paths.rt6_slot_map).expect("init rt6_slot_map failed");
 
     // per-flow rule outers
     flow_dns::init_flow4_dns_map(&paths.flow4_dns_map).expect("init flow4_dns_map failed");
@@ -607,10 +605,8 @@ pub(crate) fn init_maps_for_test(paths: &LandscapeMapPath) {
 
     route::init_rt4_lan_map(&paths.rt4_lan_map).expect("test init rt4_lan_map");
     route::init_rt6_lan_map(&paths.rt6_lan_map).expect("test init rt6_lan_map");
-    route::init_rt4_target_slot_map(&paths.rt4_target_slot_map)
-        .expect("test init rt4_target_slot_map");
-    route::init_rt6_target_slot_map(&paths.rt6_target_slot_map)
-        .expect("test init rt6_target_slot_map");
+    route::init_rt4_slot_map(&paths.rt4_slot_map).expect("test init rt4_slot_map");
+    route::init_rt6_slot_map(&paths.rt6_slot_map).expect("test init rt6_slot_map");
     flow_dns::init_flow4_dns_map(&paths.flow4_dns_map).expect("test init flow4_dns_map");
     flow_dns::init_flow6_dns_map(&paths.flow6_dns_map).expect("test init flow6_dns_map");
     flow_wanip::init_flow4_ip_map(&paths.flow4_ip_map).expect("test init flow4_ip_map");
@@ -673,12 +669,12 @@ mod tests {
             FlowDnsMatchKeyV6,
             FlowIpTrieKeyV4,
             FlowIpTrieKeyV6,
-            LanRouteKeyV4,
-            LanRouteKeyV6,
-            RtCacheKeyV4,
-            RtCacheKeyV6,
-            RouteTargetSlotKeyV4,
-            RouteTargetSlotKeyV6,
+            Route4LanKey,
+            Route6LanKey,
+            Route4CacheKey,
+            Route6CacheKey,
+            Route4SlotKey,
+            Route6SlotKey,
             NatMappingKeyV4,
             StaticNat6MappingKey,
             Nat4TimerKey,
@@ -1092,8 +1088,8 @@ mod tests {
                 firewall::FIREWALL_CONN_METRIC_EVENTS_PIN,
                 route::RT4_LAN_MAP_PIN,
                 route::RT6_LAN_MAP_PIN,
-                route::RT4_TARGET_SLOT_MAP_PIN,
-                route::RT6_TARGET_SLOT_MAP_PIN,
+                route::RT4_SLOT_MAP_PIN,
+                route::RT6_SLOT_MAP_PIN,
                 flow_dns::FLOW4_DNS_MAP_PIN,
                 flow_wanip::FLOW4_IP_MAP_PIN,
                 flow_dns::FLOW6_DNS_MAP_PIN,

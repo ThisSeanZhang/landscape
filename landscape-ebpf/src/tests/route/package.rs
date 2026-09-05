@@ -5,8 +5,8 @@ use landscape_common::net::MacAddr;
 use libbpf_rs::{MapCore, MapFlags, MapHandle};
 
 use crate::maps::{
-    route::cache::create_inner_map_generic_with_outer, MacKeyV6, MacValueV6, RtCacheKeyV4,
-    RtCacheKeyV6, RtCacheValueV4, RtCacheValueV6,
+    route::cache::create_inner_map_generic_with_outer, MacKeyV6, MacValueV6, Route4CacheKey,
+    Route4CacheValue, Route6CacheKey, Route6CacheValue,
 };
 
 pub(crate) use crate::maps::route::cache::{LAN_CACHE, WAN_CACHE};
@@ -35,7 +35,7 @@ pub fn lookup_inner_map_id<T: MapCore>(outer_map: &T, cache_index: u32) -> i32 {
 }
 
 pub fn create_route_cache_inner_map_v4<T: MapCore>(outer_map: &T, cache_index: u32) {
-    create_inner_map_generic_with_outer::<_, RtCacheKeyV4, RtCacheValueV4>(
+    create_inner_map_generic_with_outer::<_, Route4CacheKey, Route4CacheValue>(
         outer_map,
         format!("route_test_rt4_cache_{cache_index}"),
         cache_index,
@@ -44,7 +44,7 @@ pub fn create_route_cache_inner_map_v4<T: MapCore>(outer_map: &T, cache_index: u
 }
 
 pub fn create_route_cache_inner_map_v6<T: MapCore>(outer_map: &T, cache_index: u32) {
-    create_inner_map_generic_with_outer::<_, RtCacheKeyV6, RtCacheValueV6>(
+    create_inner_map_generic_with_outer::<_, Route6CacheKey, Route6CacheValue>(
         outer_map,
         format!("route_test_rt6_cache_{cache_index}"),
         cache_index,
@@ -52,8 +52,8 @@ pub fn create_route_cache_inner_map_v6<T: MapCore>(outer_map: &T, cache_index: u
     lookup_inner_map_id(outer_map, cache_index);
 }
 
-pub fn make_rt6_cache_key(local: Ipv6Addr, remote: Ipv6Addr) -> RtCacheKeyV6 {
-    RtCacheKeyV6 {
+pub fn make_rt6_cache_key(local: Ipv6Addr, remote: Ipv6Addr) -> Route6CacheKey {
+    Route6CacheKey {
         local_addr: local.to_bits().to_be_bytes(),
         remote_addr: remote.to_bits().to_be_bytes(),
     }
@@ -69,7 +69,7 @@ pub fn put_rt6_cache_ifindex<T: MapCore>(
 ) {
     let inner = lookup_inner_map(outer_map, cache_index);
     let key = make_rt6_cache_key(local, remote);
-    let value = RtCacheValueV6 {
+    let value = Route6CacheValue {
         ifindex,
         has_mac: has_mac as u8,
         ..Default::default()
@@ -84,13 +84,13 @@ pub fn lookup_rt6_cache_value<T: MapCore>(
     cache_index: u32,
     local: Ipv6Addr,
     remote: Ipv6Addr,
-) -> Option<RtCacheValueV6> {
+) -> Option<Route6CacheValue> {
     let inner = lookup_inner_map(outer_map, cache_index);
     let key = make_rt6_cache_key(local, remote);
     inner
         .lookup(as_bytes(&key), MapFlags::ANY)
         .expect("lookup route v6 cache value")
-        .map(|bytes| read_unaligned::<RtCacheValueV6>(&bytes))
+        .map(|bytes| read_unaligned::<Route6CacheValue>(&bytes))
 }
 
 pub fn lookup_rt4_cache_value<T: MapCore>(
@@ -98,16 +98,16 @@ pub fn lookup_rt4_cache_value<T: MapCore>(
     cache_index: u32,
     local: Ipv4Addr,
     remote: Ipv4Addr,
-) -> Option<RtCacheValueV4> {
+) -> Option<Route4CacheValue> {
     let inner = lookup_inner_map(outer_map, cache_index);
-    let key = RtCacheKeyV4 {
+    let key = Route4CacheKey {
         local_addr: local.to_bits().to_be(),
         remote_addr: remote.to_bits().to_be(),
     };
     inner
         .lookup(as_bytes(&key), MapFlags::ANY)
         .expect("lookup route v4 cache value")
-        .map(|bytes| read_unaligned::<RtCacheValueV4>(&bytes))
+        .map(|bytes| read_unaligned::<Route4CacheValue>(&bytes))
 }
 
 pub fn insert_ip_mac_v6<T: MapCore>(

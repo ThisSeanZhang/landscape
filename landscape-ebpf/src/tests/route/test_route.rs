@@ -57,14 +57,14 @@ mod tests {
     ) {
         #[repr(C)]
         #[derive(Default, Clone, Copy)]
-        struct RouteTargetSlotKeyV6 {
+        struct Route6SlotKey {
             flow_id: u32,
             slot: u32,
         }
 
-        let key = RouteTargetSlotKeyV6 { flow_id, slot };
+        let key = Route6SlotKey { flow_id, slot };
 
-        let value = test_route::types::route_target_info_v6 {
+        let value = test_route::types::route6_target_info {
             ifindex,
             has_mac: 0,
             is_docker: 0,
@@ -72,7 +72,7 @@ mod tests {
         };
 
         skel.maps
-            .rt6_target_slot_map
+            .rt6_slot_map
             .update(as_bytes(&key), as_bytes(&value), MapFlags::ANY)
             .expect("insert rt6 target slot");
     }

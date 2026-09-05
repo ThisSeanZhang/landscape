@@ -67,7 +67,7 @@ struct {
  *                          └─ tc_wan_ingress_exit_redirect  (Route = Exit)
  *                               ├─ route_wan_ingress entry (broadcast → v4/v6 dispatch)
  *                               ├─ rt4_wan_ingress / rt6_wan_ingress logic
- *                               └─ lan_redirect_check_v4/v6 → bpf_redirect(LAN)
+ *                               └─ route4/route6_lan_redirect_check → bpf_redirect(LAN)
  *
  *    Each stage (PPPoE / MSS / FW / NAT) shares the same exit map:
  *      tc_pipe_exits_wan_ingress[0] = tc_wan_ingress_exit_redirect

@@ -4,7 +4,9 @@ use std::path::Path;
 use libbpf_rs::{libbpf_sys, MapCore, MapFlags, MapHandle, MapType};
 use zerocopy::IntoBytes;
 
-use crate::maps::route::types::{RtCacheKeyV4, RtCacheKeyV6, RtCacheValueV4, RtCacheValueV6};
+use crate::maps::route::types::{
+    Route4CacheKey, Route4CacheValue, Route6CacheKey, Route6CacheValue,
+};
 use crate::maps::LandscapeMapPath;
 
 /// WAN verdict cache lives at outer slot 0, LAN at slot 1
@@ -83,12 +85,12 @@ where
     T: MapCore,
     U: MapCore,
 {
-    create_inner_map_generic_with_outer::<_, RtCacheKeyV4, RtCacheValueV4>(
+    create_inner_map_generic_with_outer::<_, Route4CacheKey, Route4CacheValue>(
         rt4_cache_map,
         "rt4_cache_lan".into(),
         LAN_CACHE,
     );
-    create_inner_map_generic_with_outer::<_, RtCacheKeyV6, RtCacheValueV6>(
+    create_inner_map_generic_with_outer::<_, Route6CacheKey, Route6CacheValue>(
         rt6_cache_map,
         "rt6_cache_lan".into(),
         LAN_CACHE,
@@ -107,12 +109,12 @@ pub(crate) fn recreate_route_lan_cache_inner_map_with_outer_maps<T, U>(
 
 /// 修改了 静态 NAT 需要清理
 pub fn recreate_route_wan_cache_inner_map(paths: &LandscapeMapPath) {
-    create_inner_map_generic::<_, RtCacheKeyV4, RtCacheValueV4>(
+    create_inner_map_generic::<_, Route4CacheKey, Route4CacheValue>(
         &paths.rt4_cache_map,
         "rt4_cache_wan".into(),
         WAN_CACHE,
     );
-    create_inner_map_generic::<_, RtCacheKeyV6, RtCacheValueV6>(
+    create_inner_map_generic::<_, Route6CacheKey, Route6CacheValue>(
         &paths.rt6_cache_map,
         "rt6_cache_wan".into(),
         WAN_CACHE,

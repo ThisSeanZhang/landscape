@@ -103,12 +103,12 @@ pub fn init_xdp_wan_route(
         "xdp_wan_route pin rt6_lan_map"
     )?;
     crate::bpf_ctx!(
-        pin_and_reuse_map(&mut open_skel.maps.rt4_target_slot_map, &paths.rt4_target_slot_map,),
-        "xdp_wan_route pin rt4_target_slot_map"
+        pin_and_reuse_map(&mut open_skel.maps.rt4_slot_map, &paths.rt4_slot_map,),
+        "xdp_wan_route pin rt4_slot_map"
     )?;
     crate::bpf_ctx!(
-        pin_and_reuse_map(&mut open_skel.maps.rt6_target_slot_map, &paths.rt6_target_slot_map,),
-        "xdp_wan_route pin rt6_target_slot_map"
+        pin_and_reuse_map(&mut open_skel.maps.rt6_slot_map, &paths.rt6_slot_map,),
+        "xdp_wan_route pin rt6_slot_map"
     )?;
     crate::bpf_ctx!(
         pin_and_reuse_map(&mut open_skel.maps.flow4_dns_map, &paths.flow4_dns_map),
@@ -211,18 +211,12 @@ pub fn init_xdp_wan_route(
         "tc_wan_egress_intro pin rt6_lan_map"
     )?;
     crate::bpf_ctx!(
-        pin_and_reuse_map(
-            &mut egress_intro_open_skel.maps.rt4_target_slot_map,
-            &paths.rt4_target_slot_map,
-        ),
-        "tc_wan_egress_intro pin rt4_target_slot_map"
+        pin_and_reuse_map(&mut egress_intro_open_skel.maps.rt4_slot_map, &paths.rt4_slot_map,),
+        "tc_wan_egress_intro pin rt4_slot_map"
     )?;
     crate::bpf_ctx!(
-        pin_and_reuse_map(
-            &mut egress_intro_open_skel.maps.rt6_target_slot_map,
-            &paths.rt6_target_slot_map,
-        ),
-        "tc_wan_egress_intro pin rt6_target_slot_map"
+        pin_and_reuse_map(&mut egress_intro_open_skel.maps.rt6_slot_map, &paths.rt6_slot_map,),
+        "tc_wan_egress_intro pin rt6_slot_map"
     )?;
     crate::bpf_ctx!(
         pin_and_reuse_map(&mut egress_intro_open_skel.maps.flow4_dns_map, &paths.flow4_dns_map),

@@ -9,8 +9,7 @@ use libbpf_rs::{MapCore, MapFlags};
 use zerocopy::IntoBytes;
 
 use crate::maps::{
-    LandscapeMapPath, RouteTargetInfoV4, RouteTargetInfoV6, RouteTargetSlotKeyV4,
-    RouteTargetSlotKeyV6,
+    LandscapeMapPath, Route4SlotKey, Route4TargetInfo, Route6SlotKey, Route6TargetInfo,
 };
 const FLOW_TARGET_SLOT_COUNT: usize = 16;
 pub fn replace_wan_route_slots_v4(
@@ -18,7 +17,7 @@ pub fn replace_wan_route_slots_v4(
     flow_id: FlowId,
     targets: &[(RouteTargetInfo, u32)],
 ) {
-    let rt_target_map = libbpf_rs::MapHandle::from_pinned_path(&paths.rt4_target_slot_map).unwrap();
+    let rt_target_map = libbpf_rs::MapHandle::from_pinned_path(&paths.rt4_slot_map).unwrap();
     replace_wan_route_slots_v4_with_map(&rt_target_map, flow_id, targets);
 }
 
@@ -27,17 +26,17 @@ pub fn replace_wan_route_slots_v6(
     flow_id: FlowId,
     targets: &[(RouteTargetInfo, u32)],
 ) {
-    let rt_target_map = libbpf_rs::MapHandle::from_pinned_path(&paths.rt6_target_slot_map).unwrap();
+    let rt_target_map = libbpf_rs::MapHandle::from_pinned_path(&paths.rt6_slot_map).unwrap();
     replace_wan_route_slots_v6_with_map(&rt_target_map, flow_id, targets);
 }
 
 pub fn del_wan_route_slots_v4(paths: &LandscapeMapPath, flow_id: FlowId) {
-    let rt_target_map = libbpf_rs::MapHandle::from_pinned_path(&paths.rt4_target_slot_map).unwrap();
+    let rt_target_map = libbpf_rs::MapHandle::from_pinned_path(&paths.rt4_slot_map).unwrap();
     clear_wan_route_slots_v4(&rt_target_map, flow_id);
 }
 
 pub fn del_wan_route_slots_v6(paths: &LandscapeMapPath, flow_id: FlowId) {
-    let rt_target_map = libbpf_rs::MapHandle::from_pinned_path(&paths.rt6_target_slot_map).unwrap();
+    let rt_target_map = libbpf_rs::MapHandle::from_pinned_path(&paths.rt6_slot_map).unwrap();
     clear_wan_route_slots_v6(&rt_target_map, flow_id);
 }
 
@@ -93,16 +92,16 @@ pub(crate) fn replace_wan_route_slots_v4_with_map<T>(
     let weights: Vec<u32> = filtered.iter().map(|(_, weight)| *weight).collect();
     let slots = build_slot_indices(&weights);
     let slot_count = slots.len() as u32;
-    let mut keys = Vec::with_capacity(slots.len() * std::mem::size_of::<RouteTargetSlotKeyV4>());
-    let mut values = Vec::with_capacity(slots.len() * std::mem::size_of::<RouteTargetInfoV4>());
+    let mut keys = Vec::with_capacity(slots.len() * std::mem::size_of::<Route4SlotKey>());
+    let mut values = Vec::with_capacity(slots.len() * std::mem::size_of::<Route4TargetInfo>());
 
     for (slot, target_index) in slots.into_iter().enumerate() {
         let (target, _) = filtered[target_index];
-        let mut key = RouteTargetSlotKeyV4::default();
+        let mut key = Route4SlotKey::default();
         key.flow_id = flow_id;
         key.slot = slot as u32;
 
-        let mut value = RouteTargetInfoV4::default();
+        let mut value = Route4TargetInfo::default();
         value.ifindex = target.ifindex;
         value.is_docker = u8::from(target.is_docker);
         if let IpAddr::V4(ipv4_addr) = target.gateway_ip {
@@ -147,16 +146,16 @@ pub(crate) fn replace_wan_route_slots_v6_with_map<T>(
     let weights: Vec<u32> = filtered.iter().map(|(_, weight)| *weight).collect();
     let slots = build_slot_indices(&weights);
     let slot_count = slots.len() as u32;
-    let mut keys = Vec::with_capacity(slots.len() * std::mem::size_of::<RouteTargetSlotKeyV6>());
-    let mut values = Vec::with_capacity(slots.len() * std::mem::size_of::<RouteTargetInfoV6>());
+    let mut keys = Vec::with_capacity(slots.len() * std::mem::size_of::<Route6SlotKey>());
+    let mut values = Vec::with_capacity(slots.len() * std::mem::size_of::<Route6TargetInfo>());
 
     for (slot, target_index) in slots.into_iter().enumerate() {
         let (target, _) = filtered[target_index];
-        let mut key = RouteTargetSlotKeyV6::default();
+        let mut key = Route6SlotKey::default();
         key.flow_id = flow_id;
         key.slot = slot as u32;
 
-        let mut value = RouteTargetInfoV6::default();
+        let mut value = Route6TargetInfo::default();
         value.ifindex = target.ifindex;
         value.is_docker = u8::from(target.is_docker);
         if let IpAddr::V6(ipv6_addr) = target.gateway_ip {
@@ -187,10 +186,10 @@ where
     T: MapCore,
 {
     let mut keys =
-        Vec::with_capacity(FLOW_TARGET_SLOT_COUNT * std::mem::size_of::<RouteTargetSlotKeyV4>());
+        Vec::with_capacity(FLOW_TARGET_SLOT_COUNT * std::mem::size_of::<Route4SlotKey>());
     let mut count = 0;
     for slot in 0..FLOW_TARGET_SLOT_COUNT as u32 {
-        let mut key = RouteTargetSlotKeyV4::default();
+        let mut key = Route4SlotKey::default();
         key.flow_id = flow_id;
         key.slot = slot;
         let key_bytes = key.as_bytes();
@@ -217,10 +216,10 @@ where
     T: MapCore,
 {
     let mut keys =
-        Vec::with_capacity(FLOW_TARGET_SLOT_COUNT * std::mem::size_of::<RouteTargetSlotKeyV6>());
+        Vec::with_capacity(FLOW_TARGET_SLOT_COUNT * std::mem::size_of::<Route6SlotKey>());
     let mut count = 0;
     for slot in 0..FLOW_TARGET_SLOT_COUNT as u32 {
-        let mut key = RouteTargetSlotKeyV6::default();
+        let mut key = Route6SlotKey::default();
         key.flow_id = flow_id;
         key.slot = slot;
         let key_bytes = key.as_bytes();

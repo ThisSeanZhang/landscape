@@ -44,12 +44,12 @@ pub struct LandscapeMapPath {
 
     /// route - LAN
     pub rt4_lan_map: PathBuf,
-    pub rt4_target_slot_map: PathBuf,
+    pub rt4_slot_map: PathBuf,
     pub flow4_dns_map: PathBuf,
     pub flow4_ip_map: PathBuf,
 
     pub rt6_lan_map: PathBuf,
-    pub rt6_target_slot_map: PathBuf,
+    pub rt6_slot_map: PathBuf,
     pub flow6_dns_map: PathBuf,
     pub flow6_ip_map: PathBuf,
 
@@ -100,12 +100,12 @@ impl LandscapeMapPath {
 
             // route - LAN
             rt4_lan_map: root.join(route::RT4_LAN_MAP_PIN),
-            rt4_target_slot_map: root.join(route::RT4_TARGET_SLOT_MAP_PIN),
+            rt4_slot_map: root.join(route::RT4_SLOT_MAP_PIN),
             flow4_dns_map: root.join(flow_dns::FLOW4_DNS_MAP_PIN),
             flow4_ip_map: root.join(flow_wanip::FLOW4_IP_MAP_PIN),
 
             rt6_lan_map: root.join(route::RT6_LAN_MAP_PIN),
-            rt6_target_slot_map: root.join(route::RT6_TARGET_SLOT_MAP_PIN),
+            rt6_slot_map: root.join(route::RT6_SLOT_MAP_PIN),
             flow6_dns_map: root.join(flow_dns::FLOW6_DNS_MAP_PIN),
             flow6_ip_map: root.join(flow_wanip::FLOW6_IP_MAP_PIN),
 

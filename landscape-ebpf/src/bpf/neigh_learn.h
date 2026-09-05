@@ -8,10 +8,11 @@
 #include "landscape.h"
 #include "neigh_ip4.h"
 #include "neigh_ip6.h"
-#include "route/route_index.h"
+#include "route/route4_context.h"
+#include "route/route6_context.h"
 
 static __always_inline void learn_src_ip_mac_v4_xdp(struct xdp_md *ctx,
-                                                    const struct route_context_v4 *context) {
+                                                    const struct route4_context *context) {
     struct mac_key_v4 src_key = {.addr = context->saddr};
     if (bpf_map_lookup_elem(&ip_mac_v4, &src_key) != NULL) return;
 
@@ -29,7 +30,7 @@ static __always_inline void learn_src_ip_mac_v4_xdp(struct xdp_md *ctx,
 }
 
 static __always_inline void learn_src_ip_mac_v6_xdp(struct xdp_md *ctx,
-                                                    const struct route_context_v6 *context) {
+                                                    const struct route6_context *context) {
     struct mac_key_v6 src_key = {};
     COPY_ADDR_FROM(src_key.addr.bytes, context->saddr.bytes);
     if (bpf_map_lookup_elem(&ip_mac_v6, &src_key) != NULL) return;
@@ -48,7 +49,7 @@ static __always_inline void learn_src_ip_mac_v6_xdp(struct xdp_md *ctx,
 }
 
 static __always_inline void learn_src_ip_mac_v4_tc(struct __sk_buff *skb,
-                                                   const struct route_context_v4 *context,
+                                                   const struct route4_context *context,
                                                    u32 current_l3_offset) {
     if (unlikely(current_l3_offset == 0)) return;
 
@@ -69,7 +70,7 @@ static __always_inline void learn_src_ip_mac_v4_tc(struct __sk_buff *skb,
 }
 
 static __always_inline void learn_src_ip_mac_v6_tc(struct __sk_buff *skb,
-                                                   const struct route_context_v6 *context,
+                                                   const struct route6_context *context,
                                                    u32 current_l3_offset) {
     if (unlikely(current_l3_offset == 0)) return;
 
