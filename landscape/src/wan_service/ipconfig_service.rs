@@ -21,8 +21,8 @@ use landscape_database::{
 };
 
 use crate::get_iface_by_name;
-use crate::pppoe_client::PPPoEClientConfig;
 use crate::sys_service::route::IpRouteService;
+use crate::wan_service::pppoe_client::PPPoEClientConfig;
 use landscape_common::dev::LandscapeInterface;
 
 #[derive(Clone)]

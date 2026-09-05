@@ -19,8 +19,6 @@ pub(crate) trait Authenticator: std::fmt::Debug + Send + Sync {
 
     #[allow(dead_code)]
     fn protocol(&self) -> u16;
-
-    fn is_done(&self) -> bool;
 }
 
 #[derive(Debug)]
@@ -60,15 +58,10 @@ impl Authenticator for PapAuthenticator {
     fn protocol(&self) -> u16 {
         0xc023
     }
-
-    fn is_done(&self) -> bool {
-        self.done
-    }
 }
 
 #[derive(Debug)]
 pub(crate) struct ChapAuthenticator {
-    done: bool,
     peer_id: String,
     password: String,
     challenge: Option<Vec<u8>>,
@@ -78,7 +71,6 @@ pub(crate) struct ChapAuthenticator {
 impl ChapAuthenticator {
     pub(crate) fn new(peer_id: &str, password: &str) -> Self {
         ChapAuthenticator {
-            done: false,
             peer_id: peer_id.into(),
             password: password.into(),
             challenge: None,
@@ -102,7 +94,6 @@ impl Authenticator for ChapAuthenticator {
                 failed: false,
             }
         } else if pkt.is_chap_success() {
-            self.done = true;
             AuthResult { response: None, done: true, failed: false }
         } else if pkt.is_chap_failure() {
             AuthResult { response: None, done: true, failed: true }
@@ -117,10 +108,6 @@ impl Authenticator for ChapAuthenticator {
 
     fn protocol(&self) -> u16 {
         0xc223
-    }
-
-    fn is_done(&self) -> bool {
-        self.done
     }
 }
 
@@ -172,12 +159,12 @@ mod tests {
         #[test]
         fn ack_sets_done() {
             let mut auth = PapAuthenticator::new("user", "pass");
-            assert!(!auth.is_done());
+            assert!(auth.outgoing_packet().is_some());
             let result = auth.handle_incoming(&make_pap_pkt(2));
             assert!(result.done);
             assert!(!result.failed);
             assert!(result.response.is_none());
-            assert!(auth.is_done());
+            assert!(auth.outgoing_packet().is_none());
         }
 
         #[test]
@@ -215,7 +202,6 @@ mod tests {
 
             assert!(!result.done, "not done after challenge");
             assert!(!result.failed);
-            assert!(!auth.is_done());
             assert!(result.response.is_some(), "must produce a response");
 
             let resp = result.response.unwrap();
@@ -241,13 +227,12 @@ mod tests {
         #[test]
         fn success_after_challenge() {
             let mut auth = ChapAuthenticator::new("peer", "secret");
-            auth.handle_incoming(&make_chap_challenge(1, &[1, 2, 3]));
-            assert!(!auth.is_done(), "still not done after challenge");
+            let challenge_result = auth.handle_incoming(&make_chap_challenge(1, &[1, 2, 3]));
+            assert!(!challenge_result.done, "still not done after challenge");
 
             let result = auth.handle_incoming(&make_chap_success(1));
             assert!(result.done);
             assert!(!result.failed);
-            assert!(auth.is_done());
         }
 
         #[test]
@@ -258,7 +243,6 @@ mod tests {
             let result = auth.handle_incoming(&make_chap_failure(1));
             assert!(result.done);
             assert!(result.failed);
-            assert!(!auth.is_done());
         }
 
         #[test]

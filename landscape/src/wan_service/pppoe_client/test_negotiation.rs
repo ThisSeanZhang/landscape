@@ -8,7 +8,7 @@ use landscape_common::net_proto::ppp::{PPPOption, PointToPoint};
 use landscape_common::net_proto::pppoe::PPPoEFrame;
 use landscape_common::service::{ServiceStatus, WatchService};
 
-use crate::pppoe_client::PPPoEClientConfig;
+use super::PPPoEClientConfig;
 
 use super::error::PppoeError;
 use super::lcp::LcpPhaseResult;

@@ -8,8 +8,8 @@ use landscape_common::net_proto::ppp::{PPPOption, PointToPoint};
 use landscape_common::net_proto::pppoe::PPPoEFrame;
 use landscape_common::service::WatchService;
 
-use crate::pppoe_client::auth::{ChapAuthenticator, PapAuthenticator};
-use crate::pppoe_client::PPPoEClientConfig;
+use super::auth::{Authenticator, ChapAuthenticator, PapAuthenticator};
+use super::PPPoEClientConfig;
 
 use super::error::PppoeError;
 use super::lcp::LcpPhaseResult;
@@ -87,7 +87,7 @@ pub(crate) async fn run(
     rx: &mut mpsc::Receiver<Vec<u8>>,
     status_rx: &WatchService,
 ) -> PppoeResult<NegotiationResult> {
-    let mut auth: Option<Box<dyn crate::pppoe_client::auth::Authenticator>> = match lcp.auth_type {
+    let mut auth: Option<Box<dyn Authenticator>> = match lcp.auth_type {
         0xc023 => Some(Box::new(PapAuthenticator::new(&config.peer_id, &config.password))),
         0xc223 => Some(Box::new(ChapAuthenticator::new(&config.peer_id, &config.password))),
         _ => return Err(PppoeError::UnsupportedAuthType(lcp.auth_type)),
@@ -124,9 +124,10 @@ pub(crate) async fn run(
     tokio::pin!(timeout_sleep);
     timeout_sleep.as_mut().reset(Instant::now() + Duration::from_secs(DEFAULT_TIMEOUT));
 
+    let echo_interval = config.lcp_echo_interval.unwrap_or(LCP_ECHO_INTERVAL);
     let echo_sleep = sleep(Duration::from_secs(0));
     tokio::pin!(echo_sleep);
-    echo_sleep.as_mut().reset(Instant::now() + Duration::from_secs(LCP_ECHO_INTERVAL));
+    echo_sleep.as_mut().reset(Instant::now() + Duration::from_secs(echo_interval));
 
     loop {
         tokio::select! {
@@ -257,7 +258,7 @@ pub(crate) async fn run(
                 if echo_failures > MAX_ECHO_FAILURES {
                     return Err(PppoeError::EchoFailed(echo_failures));
                 }
-                echo_sleep.as_mut().reset(Instant::now() + Duration::from_secs(LCP_ECHO_INTERVAL));
+                echo_sleep.as_mut().reset(Instant::now() + Duration::from_secs(echo_interval));
             }
         }
     }

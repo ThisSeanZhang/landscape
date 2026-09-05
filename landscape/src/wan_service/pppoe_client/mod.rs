@@ -1,5 +1,6 @@
 use landscape_common::net::MacAddr;
 
+pub(crate) mod auth;
 mod error;
 mod lcp;
 mod negotiation;
@@ -11,7 +12,6 @@ mod test_lcp;
 
 #[cfg(test)]
 mod test_negotiation;
-pub use crate::pppoe_client::PPPoEClientConfig;
 pub use error::PppoeError;
 pub use runtime::run;
 
@@ -22,6 +22,58 @@ pub const LCP_ECHO_INTERVAL: u64 = 20;
 pub const DEFAULT_CLIENT_MRU: u16 = 1492;
 pub const ETH_P_PPOED: u16 = 0x8863;
 pub const ETH_P_PPOES: u16 = 0x8864;
+
+#[derive(Clone, Debug)]
+pub struct PPPoEClientConfig {
+    pub index: u32,
+    pub iface_name: String,
+    pub iface_mac: MacAddr,
+    pub peer_id: String,
+    pub password: String,
+    pub default_router: bool,
+    pub requested_mru: u16,
+    pub ac_name: Option<String>,
+    /// LCP echo keepalive interval in seconds. `None` uses the default
+    /// `LCP_ECHO_INTERVAL` (20 s). Tests use a smaller value to speed up
+    /// link-loss detection.
+    pub lcp_echo_interval: Option<u64>,
+    /// Base backoff (seconds) between redial attempts after a failed session.
+    /// `None` uses the default 300 s; the delay grows linearly with the retry
+    /// count and is capped at 30 minutes. Tests use a smaller value to speed
+    /// up reconnect scenarios.
+    pub redial_backoff_base_secs: Option<u64>,
+}
+
+impl PPPoEClientConfig {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        index: u32,
+        iface_name: String,
+        iface_mac: MacAddr,
+        peer_id: String,
+        password: String,
+        default_router: bool,
+        requested_mru: u16,
+        ac_name: Option<String>,
+    ) -> Self {
+        Self {
+            index,
+            iface_name,
+            iface_mac,
+            peer_id,
+            password,
+            default_router,
+            requested_mru: if requested_mru == 0 {
+                DEFAULT_CLIENT_MRU
+            } else {
+                requested_mru.min(DEFAULT_CLIENT_MRU)
+            },
+            ac_name,
+            lcp_echo_interval: None,
+            redial_backoff_base_secs: None,
+        }
+    }
+}
 
 pub(crate) const MAX_DISCOVERY_RETRIES: u8 = 5;
 pub(crate) const MAX_LCP_RETRIES: u8 = 5;

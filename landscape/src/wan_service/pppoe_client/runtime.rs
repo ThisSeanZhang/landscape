@@ -4,7 +4,7 @@ use landscape_common::net_proto::ppp::PointToPoint;
 use landscape_common::net_proto::pppoe::PPPoEFrame;
 use landscape_common::service::{ServiceStatus, WatchService};
 
-use crate::pppoe_client::PPPoEClientConfig;
+use super::PPPoEClientConfig;
 use crate::sys_service::route::IpRouteService;
 
 use super::error::PppoeError;
@@ -41,14 +41,13 @@ pub async fn run(
         "PPPoE client started, eBPF channel created"
     );
 
-    status_rx.just_change_status(ServiceStatus::Running);
-
     let mut retry_count: u64 = 0;
     let mut session_handle: Option<SessionHandle> = None;
 
     loop {
         if retry_count > 0 {
-            let delay = Duration::from_secs((5 * 60 * retry_count).min(30 * 60));
+            let backoff_base = config.redial_backoff_base_secs.unwrap_or(5 * 60);
+            let delay = Duration::from_secs((backoff_base * retry_count).min(30 * 60));
             tokio::select! {
                 _ = sleep(delay) => {},
                 _ = status_rx.wait_to_stopping() => {
@@ -168,6 +167,9 @@ pub async fn run(
         {
             Ok(handle) => {
                 session_handle = Some(handle);
+                if !status_rx.is_running() {
+                    status_rx.just_change_status(ServiceStatus::Running);
+                }
                 tracing::info!(
                     iface_name = %config.iface_name,
                     "PPPoE eBPF and system state applied, session is fully established"
@@ -232,13 +234,41 @@ async fn keepalive(
     echo_failures += 1;
     echo_req_id = echo_req_id.wrapping_add(1);
 
+    let echo_interval = config.lcp_echo_interval.unwrap_or(LCP_ECHO_INTERVAL);
+
     let echo_sleep = sleep(Duration::from_secs(0));
     tokio::pin!(echo_sleep);
-    echo_sleep.as_mut().reset(Instant::now() + Duration::from_secs(LCP_ECHO_INTERVAL));
+    echo_sleep.as_mut().reset(Instant::now() + Duration::from_secs(echo_interval));
 
     loop {
         tokio::select! {
             _ = status_rx.wait_to_stopping() => {
+                // Graceful hangup: tell the peer we are going away instead of
+                // vanishing silently, then wait (bounded) for the Terminate-Ack
+                // so the frame is actually flushed to the wire.
+                let term = PointToPoint::get_termination_request(echo_req_id).convert_to_payload();
+                if send_pppoe_session_frame(
+                    &lcp.server_mac, config.iface_mac, lcp.session_id, term, tx,
+                )
+                .await
+                .is_ok()
+                {
+                    let ack_wait = sleep(Duration::from_secs(2));
+                    tokio::pin!(ack_wait);
+                    loop {
+                        tokio::select! {
+                            _ = &mut ack_wait => break,
+                            received = rx.recv() => {
+                                let Some(raw) = received else { break };
+                                if let Some(ppp) = parse_ppp_packet(&raw, lcp.session_id) {
+                                    if ppp.is_lcp_config() && ppp.is_termination_ack() {
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
                 return Err(PppoeError::ServiceStopped);
             }
             received = rx.recv() => {
@@ -285,7 +315,7 @@ async fn keepalive(
                     return Err(PppoeError::EchoFailed(echo_failures));
                 }
                 echo_sleep.as_mut().reset(
-                    Instant::now() + Duration::from_secs(LCP_ECHO_INTERVAL)
+                    Instant::now() + Duration::from_secs(echo_interval)
                 );
             }
         }

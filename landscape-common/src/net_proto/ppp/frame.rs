@@ -186,16 +186,6 @@ impl PointToPoint {
         result
     }
 
-    pub fn gen_reply(&self) -> Vec<u8> {
-        let mut result = vec![];
-        result.extend(self.protocol.to_be_bytes());
-        result.push(10);
-        result.push(self.id);
-        result.extend(self.length.to_be_bytes());
-        result.extend(self.payload.clone());
-        result
-    }
-
     pub fn gen_reply_with_magic(&self, magic_number: u32) -> Vec<u8> {
         let mut result = vec![];
         result.extend(self.protocol.to_be_bytes());
@@ -255,25 +245,6 @@ impl PointToPoint {
             code: 1,
             id,
             length: 10,
-            payload: options,
-        }
-    }
-
-    pub fn get_ipcp_request(id: u8, ip: Ipv4Addr, dns1: Ipv4Addr, dns2: Ipv4Addr) -> PointToPoint {
-        let ip = ip.octets();
-        let dns1 = dns1.octets();
-        let dns2 = dns2.octets();
-        let options: Vec<u8> = [
-            3, 6, ip[0], ip[1], ip[2], ip[3], 0x81, 6, dns1[0], dns1[1], dns1[2], dns1[3], 0x83, 6,
-            dns2[0], dns2[1], dns2[2], dns2[3],
-        ]
-        .to_vec();
-
-        PointToPoint {
-            protocol: 0x8021,
-            code: 1,
-            id,
-            length: 22,
             payload: options,
         }
     }

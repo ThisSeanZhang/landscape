@@ -6,7 +6,7 @@ use landscape_common::net_proto::ppp::PointToPoint;
 use landscape_common::net_proto::pppoe::{PPPoEFrame, PPPoETag};
 use landscape_common::service::{ServiceStatus, WatchService};
 
-use crate::pppoe_client::PPPoEClientConfig;
+use super::PPPoEClientConfig;
 
 use super::lcp::run;
 use super::{DEFAULT_TIMEOUT, ETH_P_PPOED, ETH_P_PPOES, MAX_DISCOVERY_RETRIES, MAX_LCP_RETRIES};

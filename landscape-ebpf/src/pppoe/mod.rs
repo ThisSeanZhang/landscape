@@ -20,7 +20,6 @@ mod landscape_pppoe_client {
 }
 
 pub mod pppoe_handle;
-pub mod pppoe_tc;
 
 fn open_raw_socket(prog_fd: i32) -> std::io::Result<i32> {
     const ETH_P_ALL: u16 = 0x0003;

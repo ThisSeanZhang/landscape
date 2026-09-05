@@ -7,12 +7,12 @@ use landscape_common::sys_service::route_service::{LanRouteInfo, LanRouteMode, R
 use landscape_ebpf::pppoe::pppoe_handle::PppoeHandle;
 
 use crate::get_existing_linklocal;
-use crate::pppoe_client::PPPoEClientConfig;
 use crate::sys_service::route::IpRouteService;
 
 use super::error::PppoeError;
 use super::lcp::LcpPhaseResult;
 use super::negotiation::NegotiationResult;
+use super::PPPoEClientConfig;
 
 pub(crate) struct SessionHandle {
     _pppoe_handle: PppoeHandle,

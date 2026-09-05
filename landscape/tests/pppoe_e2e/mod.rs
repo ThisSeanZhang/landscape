@@ -1,10 +1,8 @@
 mod cmd;
-mod ebpf_tests;
 mod env;
 mod runner;
+mod scenarios;
 mod scripted_server;
-mod scripted_server_tests;
-mod standard_server_tests;
 
 use std::fs;
 
@@ -14,11 +12,21 @@ use std::fs;
 /// space (hygiene; the tests assert per-interface artifacts, not these
 /// shared maps).
 pub(super) fn test_bpf_map_space() -> String {
-    format!("pppoe-test-{}", std::process::id())
+    format!("pppoe-e2e-{}", std::process::id())
 }
 
-fn require_root() {
+/// Tests need root (netns, veth, eBPF).  When not root, skip the whole
+/// binary gracefully so `cargo test --workspace` stays green on dev
+/// machines — mirrors the behaviour of the previous pppoe_integration
+/// suite.  Tests are additionally `#[ignore]`d; `require_root` guards
+/// manual `--include-ignored` runs.
+pub(super) fn require_root() {
     std::env::set_var("LANDSCAPE_IGNORE_CLI_ARGS", "1");
+
+    // Surface the client's tracing output in test logs (idempotent).
+    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+    let _ = tracing_subscriber::fmt().with_env_filter(filter).try_init();
 
     // Isolate the client's BPF map space for the whole test process so the
     // PPPoE pipeline pins its maps under a unique directory instead of the

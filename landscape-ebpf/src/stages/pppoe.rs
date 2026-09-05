@@ -37,6 +37,12 @@ pub fn init_xdp_pppoe(ifindex: u32, session_id: u16) -> LdEbpfResult<XdpPppoeHan
     let (backing, obj) = OwnedOpenObject::new();
     let mut open_skel = bpf_ctx!(builder.open(obj), "open xdp_pppoe skeleton")?;
 
+    // Touch the chain manager first: its lazy initialization creates the
+    // shared pipe-root pin files this stage reuses below.  On a fresh
+    // process where no XDP root program has been attached yet, reusing
+    // those pins before this point would fail with ENOENT.
+    let manager = XdpChainManager::instance();
+
     crate::bpf_ctx!(
         pin_and_reuse_map(&mut open_skel.maps.xdp_pipe_root_progs, &xdp_pipe_root_progs_path()),
         "xdp_pppoe pin xdp_pipe_root_progs"
@@ -66,7 +72,6 @@ pub fn init_xdp_pppoe(ifindex: u32, session_id: u16) -> LdEbpfResult<XdpPppoeHan
     let lan_fd = skel.progs.xdp_pppoe_encap_lan.as_fd().as_raw_fd();
     let next_fd = skel.maps.next_stage.as_fd().as_raw_fd();
 
-    let manager = XdpChainManager::instance();
     manager.inject(ifindex, StageType::Pppoe, lan_fd, 0, next_fd)?;
 
     Ok(XdpPppoeHandle { _skel: skel, _backing: backing, ifindex })
