@@ -25,10 +25,12 @@ mod tests {
         },
         tests::{
             isolated_pin_root,
-            route::package::{
-                as_bytes, create_route_cache_inner_map_v4, create_route_cache_inner_map_v6,
-                lookup_rt4_cache_value, lookup_rt6_cache_value, simple_ipv4_tcp,
-                simple_ipv6_ns_dad, simple_ipv6_tcp_syn, LAN_CACHE,
+            route::{
+                map_helper::{
+                    as_bytes, create_route_cache_inner_map_v4, create_route_cache_inner_map_v6,
+                    lookup_rt4_cache_value, lookup_rt6_cache_value, LAN_CACHE,
+                },
+                packet_builder::{simple_ipv4_tcp, simple_ipv6_ns_dad, simple_ipv6_tcp_syn},
             },
             TestSkb,
         },

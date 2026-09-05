@@ -9,7 +9,9 @@ use libbpf_rs::{
 };
 
 use crate::tests::{
-    route::package::{simple_ipv4_tcp, simple_ipv4_udp, simple_ipv6_tcp_syn, simple_ipv6_udp},
+    route::packet_builder::{
+        simple_ipv4_tcp, simple_ipv4_udp, simple_ipv6_tcp_syn, simple_ipv6_udp,
+    },
     scanner::package::{build_ipv6_frag_eth, build_ipv6_frag_nonfirst_eth},
     test_route_packet::TestRoutePacketSkelBuilder,
     wire::RoutePacketTestResult,
