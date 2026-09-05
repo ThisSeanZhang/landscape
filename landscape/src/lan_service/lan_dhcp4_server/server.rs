@@ -24,6 +24,7 @@ use landscape_common::lan_service::lan_dhcpv4::config::{
     CustomDhcpOption, DHCPv4ServerConfig, DhcpV4DnrOptionConfig,
 };
 use landscape_common::lan_service::lan_dhcpv4::status::DHCPv4OfferInfo;
+use landscape_common::lan_service::mac_binding::MacBindingDataplane;
 use landscape_common::net::MacAddr;
 use landscape_common::sys_service::lan_hostname::LanHostnameConfig;
 
@@ -76,7 +77,7 @@ const DHCPV4_DOMAIN_NAME_OPTION_CODE: u8 = 15;
 /// Option 119 — Domain Search (RFC 3397).
 const DHCPV4_DOMAIN_SEARCH_OPTION_CODE: u8 = 119;
 
-#[instrument(skip(server_ip, dhcp_server, service_status, ipv4_assign_sender))]
+#[instrument(skip(server_ip, dhcp_server, service_status, ipv4_assign_sender, dataplane))]
 #[allow(clippy::too_many_arguments)]
 pub async fn dhcp_v4_server(
     iface_name: String,
@@ -87,6 +88,7 @@ pub async fn dhcp_v4_server(
     dhcp_server: DHCPv4Server,
     service_status: WatchService,
     ipv4_assign_sender: IPv4AssignEventSender,
+    dataplane: Arc<dyn MacBindingDataplane>,
 ) {
     service_status.just_change_status(ServiceStatus::Staring);
 
@@ -176,6 +178,7 @@ pub async fn dhcp_v4_server(
                         message,
                         &ipv4_assign_sender,
                         &iface_name,
+                        dataplane.as_ref(),
                     ).await;
                     },
                     None => {
@@ -227,6 +230,7 @@ pub async fn dhcp_v4_server(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn handle_dhcp_message(
     dhcp_server: &mut DHCPv4Server,
     send_socket: &Arc<UdpSocket>,
@@ -235,6 +239,7 @@ async fn handle_dhcp_message(
     (message, msg_addr): (Vec<u8>, SocketAddr),
     ipv4_assign_sender: &IPv4AssignEventSender,
     iface_name: &str,
+    dataplane: &dyn MacBindingDataplane,
 ) -> bool {
     if message.len() < 240
         || u32::from_be_bytes([message[236], message[237], message[238], message[239]])
@@ -273,7 +278,9 @@ async fn handle_dhcp_message(
             Some(DhcpV4MessageType::Request) => {
                 let mac = chaddr;
                 let hostname = get_hostname(&dhcp);
-                let Some(payload) = gen_ack(dhcp_server, &dhcp, iface_ifindex, iface_mac) else {
+                let Some(payload) =
+                    gen_ack(dhcp_server, &dhcp, iface_ifindex, iface_mac, dataplane)
+                else {
                     return false;
                 };
 
@@ -758,6 +765,7 @@ fn gen_ack(
     frame: &DhcpV4Message,
     iface_ifindex: u32,
     iface_mac: Option<MacAddr>,
+    dataplane: &dyn MacBindingDataplane,
 ) -> Option<DhcpV4Message> {
     let chaddr = client_chaddr(frame)?;
     let request_params = if let Some(request_params) = has_option(frame, 55) {
@@ -840,17 +848,7 @@ fn gen_ack(
 
     if !is_nak {
         if let Some(dev_mac) = iface_mac {
-            if let Err(e) = landscape_ebpf::maps::mac::upsert_ipv4_ip_mac(
-                iface_ifindex,
-                client_addr,
-                chaddr,
-                dev_mac,
-            ) {
-                tracing::warn!(
-                    "failed to prewarm ip_mac_v4 for DHCP lease {client_addr} -> {}: {e}",
-                    chaddr
-                );
-            }
+            dataplane.learn_ipv4(iface_ifindex, client_addr, chaddr, dev_mac);
         }
     }
 
@@ -865,6 +863,7 @@ mod tests {
     };
 
     use arc_swap::ArcSwap;
+    use landscape_common::lan_service::mac_binding::NoopMacBindingDataplane;
     use landscape_common::net_proto::udp::dhcp::v4::{Opcode, OptionCode};
     use landscape_common::net_proto::udp::dhcp::{
         Decodable, Decoder, DhcpV4Message, DhcpV4MessageType, DhcpV4Option, Encodable, Encoder,
@@ -1166,7 +1165,7 @@ mod tests {
         let mut msg = message_with_hlen(255, &[0xaa; 6]);
         msg.opts_mut().insert(DhcpV4Option::MessageType(DhcpV4MessageType::Request));
         msg.opts_mut().insert(DhcpV4Option::RequestedIpAddress(Ipv4Addr::new(192, 168, 1, 100)));
-        assert!(gen_ack(&mut server, &msg, 1, None).is_none());
+        assert!(gen_ack(&mut server, &msg, 1, None, &NoopMacBindingDataplane).is_none());
     }
 
     #[tokio::test]
@@ -1189,6 +1188,7 @@ mod tests {
             (buf, SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 68)),
             &sender,
             "test",
+            &NoopMacBindingDataplane,
         )
         .await;
         assert!(!handled);
@@ -1205,7 +1205,7 @@ mod tests {
         let offered = server.offer_ip(&MacAddr::from_arry(&mac).unwrap(), None).unwrap();
         msg.opts_mut().insert(DhcpV4Option::RequestedIpAddress(offered));
 
-        let ack = gen_ack(&mut server, &msg, 1, None).expect("ack");
+        let ack = gen_ack(&mut server, &msg, 1, None, &NoopMacBindingDataplane).expect("ack");
         assert_eq!(ack.opts().msg_type(), Some(DhcpV4MessageType::Ack));
         assert_eq!(ack.yiaddr(), offered);
         assert_eq!(ack.ciaddr(), Ipv4Addr::UNSPECIFIED);
@@ -1228,7 +1228,7 @@ mod tests {
         // Out-of-range address: ack_request() refuses it, so the server NAKs.
         msg.opts_mut().insert(DhcpV4Option::RequestedIpAddress(Ipv4Addr::new(10, 99, 99, 99)));
 
-        let nak = gen_ack(&mut server, &msg, 1, None).expect("nak");
+        let nak = gen_ack(&mut server, &msg, 1, None, &NoopMacBindingDataplane).expect("nak");
         assert_eq!(nak.opts().msg_type(), Some(DhcpV4MessageType::Nak));
         // RFC 2131 4.3.2: the NAK carries no address...
         assert_eq!(nak.yiaddr(), Ipv4Addr::UNSPECIFIED);

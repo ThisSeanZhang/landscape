@@ -5,8 +5,7 @@ use libbpf_rs::MapCore;
 use zerocopy::IntoBytes;
 
 use crate::bpf_error::LdEbpfResult;
-use crate::maps::{StaticNat6MappingKey, StaticNat6MappingValue};
-use crate::MAP_PATHS;
+use crate::maps::{LandscapeMapPath, StaticNat6MappingKey, StaticNat6MappingValue};
 
 use super::super::RawEbpfMapEntries;
 use super::{reconcile_raw_map, update_raw_entries, StaticNatMappingV6Item};
@@ -41,13 +40,19 @@ pub fn build_static_nat6_entries(configs: &[RuntimeStaticNatMappingV6Config]) ->
     entries
 }
 
-pub fn reconcile_static_nat6_entries(desired: RawEbpfMapEntries) -> LdEbpfResult<()> {
-    let static_nat_mappings = libbpf_rs::MapHandle::from_pinned_path(&MAP_PATHS.nat6_static_map)?;
+pub fn reconcile_static_nat6_entries(
+    paths: &LandscapeMapPath,
+    desired: RawEbpfMapEntries,
+) -> LdEbpfResult<()> {
+    let static_nat_mappings = libbpf_rs::MapHandle::from_pinned_path(&paths.nat6_static_map)?;
     reconcile_raw_map(&static_nat_mappings, desired)
 }
 
-pub fn reconcile_static_nat6_map(configs: &[RuntimeStaticNatMappingV6Config]) -> LdEbpfResult<()> {
-    reconcile_static_nat6_entries(build_static_nat6_entries(configs))
+pub fn reconcile_static_nat6_map(
+    paths: &LandscapeMapPath,
+    configs: &[RuntimeStaticNatMappingV6Config],
+) -> LdEbpfResult<()> {
+    reconcile_static_nat6_entries(paths, build_static_nat6_entries(configs))
 }
 
 fn insert_static_nat6_item_entries(

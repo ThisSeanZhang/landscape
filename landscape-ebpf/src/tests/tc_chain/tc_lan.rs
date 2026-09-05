@@ -786,7 +786,12 @@ mod tests {
             task_label::task::EBPF_IP6_DAO_EVENT_SOURCE,
             crate::metric::run_ringbuf_loop(ringbuf, async_fd, cancel.clone()),
         );
-        let source = Ip6DaoEventSource::test_new(cancel, tx_slot);
+        let pin_root = isolated_pin_root("ip6-dao-source");
+        let source = Ip6DaoEventSource::test_new(
+            Arc::new(crate::LandscapeMapPath::from_root(&pin_root)),
+            cancel,
+            tx_slot,
+        );
 
         let target = Ipv6Addr::from_str("fd00::100").unwrap();
         let ret = run_on_skel(&skel, &mut ctx, &simple_ipv6_ns_dad(CLIENT_MAC, target));

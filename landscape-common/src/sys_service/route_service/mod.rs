@@ -1,3 +1,5 @@
+pub mod dataplane;
+
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
 use crate::{flow::FlowTarget, net::MacAddr};

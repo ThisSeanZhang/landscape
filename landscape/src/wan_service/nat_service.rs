@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr};
+use std::sync::Arc;
 
 use landscape_common::database::LandscapeStore;
 use landscape_common::ddns::IpFamily;
@@ -9,6 +10,7 @@ use landscape_common::service::controller::ControllerService;
 use landscape_common::service::manager::ServiceManager;
 use landscape_common::sys_service::route_service::RouteTargetInfo;
 use landscape_common::wan_service::nat::config::{NatConfig, NatServiceConfig};
+use landscape_common::wan_service::nat::dataplane::NatDataplane;
 use landscape_common::{
     concurrency::{spawn_task, spawn_task_with_resource, task_label},
     service::{manager::ServiceStarterTrait, ServiceStatus, WatchService},
@@ -64,8 +66,10 @@ async fn restart_nat_for_changed_wan_ipv4(
     last_ips.insert(owner, ip);
 }
 
-#[derive(Clone, Default)]
-pub struct NatService;
+#[derive(Clone)]
+pub struct NatService {
+    dataplane: Arc<dyn NatDataplane>,
+}
 
 #[async_trait::async_trait]
 impl ServiceStarterTrait for NatService {
@@ -78,6 +82,7 @@ impl ServiceStarterTrait for NatService {
             if let Some(iface) = get_iface_by_name(&config.iface_name).await {
                 let status_clone = service_status.clone();
                 let iface_name = config.iface_name.clone();
+                let dataplane = self.dataplane.clone();
                 spawn_task_with_resource(
                     task_label::task::NAT_RUN,
                     iface_name.clone(),
@@ -88,6 +93,7 @@ impl ServiceStarterTrait for NatService {
                             iface.mac.is_some(),
                             config.nat_config,
                             status_clone,
+                            dataplane,
                         )
                         .await
                     },
@@ -107,10 +113,11 @@ pub async fn create_nat_service(
     has_mac: bool,
     nat_config: NatConfig,
     service_status: WatchService,
+    dataplane: Arc<dyn NatDataplane>,
 ) {
     service_status.just_change_status(ServiceStatus::Staring);
 
-    let nat = match landscape_ebpf::stages::nat::init_nat(ifindex as u32, has_mac, &nat_config) {
+    let nat = match dataplane.attach(ifindex as u32, has_mac, &nat_config) {
         Ok(handle) => handle,
         Err(err) => {
             tracing::error!("failed to start nat for {iface_name}: {err}");
@@ -155,10 +162,12 @@ impl NatServiceManagerService {
         store_service: LandscapeDBServiceProvider,
         mut dev_observer: IfaceEventReader,
         route_service: IpRouteService,
+        dataplane: Arc<dyn NatDataplane>,
     ) -> Self {
         let mut wan_route_events = route_service.subscribe_wan_route_events();
         let store = store_service.nat_service_store();
-        let service = ServiceManager::init(store.list().await.unwrap(), Default::default()).await;
+        let service =
+            ServiceManager::init(store.list().await.unwrap(), NatService { dataplane }).await;
 
         let service_clone = service.clone();
         spawn_task(task_label::task::NAT_OBSERVER, async move {

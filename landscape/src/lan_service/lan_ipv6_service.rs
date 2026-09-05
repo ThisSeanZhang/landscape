@@ -31,6 +31,8 @@ use super::lan_ipv6_server::{
 use crate::get_iface_by_name;
 use crate::sys_service::route::IpRouteService;
 use dashmap::DashMap;
+use landscape_common::lan_service::mac_binding::MacBindingDataplane;
+
 use landscape_ebpf::chain::ip6_dao_event::{Ip6DaoEvent, Ip6DaoEventSource};
 
 mod mac_link_map;
@@ -46,6 +48,7 @@ pub struct LanIPv6Service {
     status_map: Arc<DashMap<String, Arc<Mutex<Ipv6ServerStatus>>>>,
     per_iface_txs: Arc<DashMap<String, watch::Sender<()>>>,
     mac_link_map_cache: Arc<MacLinkMapCache>,
+    mac_binding: Arc<dyn MacBindingDataplane>,
     /// Per-ifindex channel to the DAD learning consumer of each running server.
     dao_event_senders: Arc<DashMap<u32, mpsc::Sender<Ip6DaoEvent>>>,
 }
@@ -57,6 +60,7 @@ impl LanIPv6Service {
         enrolled_device_store: EnrolledDeviceRepository,
         ipv6_assign_sender: IPv6AssignEventSender,
         mac_link_map_cache: Arc<MacLinkMapCache>,
+        mac_binding: Arc<dyn MacBindingDataplane>,
     ) -> Self {
         Self {
             route_service,
@@ -67,6 +71,7 @@ impl LanIPv6Service {
             status_map: Arc::new(DashMap::new()),
             per_iface_txs: Arc::new(DashMap::new()),
             mac_link_map_cache,
+            mac_binding,
             dao_event_senders: Arc::new(DashMap::new()),
         }
     }
@@ -254,6 +259,7 @@ impl ServiceStarterTrait for LanIPv6Service {
             let prefix_map = self.prefix_map.clone();
             let device_id_map = self.device_id_map.clone();
             let mac_link_cache = self.mac_link_map_cache.clone();
+            let mac_binding = self.mac_binding.clone();
             // Bounded: the server consumer is rate-limited (32 probes/s with
             // a 1024-entry probe queue), so under a DAD NS flood the channel
             // drops events (best-effort) instead of growing without bound.
@@ -279,6 +285,7 @@ impl ServiceStarterTrait for LanIPv6Service {
                     device_id_map,
                     reconf_rx,
                     dao_rx,
+                    mac_binding,
                 )
                 .await;
                 // Only remove the channel we inserted. On a service restart a
@@ -329,6 +336,7 @@ impl LanIPv6ManagerService {
         Ok(saved)
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn new(
         store_service: LandscapeDBServiceProvider,
         mut dev_observer: IfaceEventReader,
@@ -337,6 +345,8 @@ impl LanIPv6ManagerService {
         route_service: IpRouteService,
         prefix_map: IAPrefixMap,
         ipv6_assign_sender: IPv6AssignEventSender,
+        mac_binding: Arc<dyn MacBindingDataplane>,
+        dao_event_source: Option<Arc<Ip6DaoEventSource>>,
     ) -> Self {
         let store = store_service.lan_ipv6_v2_service_store();
         let enrolled_device_store = store_service.enrolled_device_store();
@@ -351,6 +361,7 @@ impl LanIPv6ManagerService {
             enrolled_device_store,
             ipv6_assign_sender,
             mac_link_map_cache.clone(),
+            mac_binding,
         );
 
         // ── Global DAD NS learning consumer ──
@@ -358,16 +369,6 @@ impl LanIPv6ManagerService {
         // the per-iface server channels registered in `dao_event_senders`. A
         // supervisor keeps the dispatcher alive: if the dispatch task ever
         // dies, it attaches a fresh channel to the source and restarts.
-        let dao_event_source = match Ip6DaoEventSource::spawn() {
-            Ok(source) => {
-                tracing::info!("ip6_dao_event ringbuf consumer started");
-                Some(Arc::new(source))
-            }
-            Err(e) => {
-                tracing::warn!("ip6_dao_event ringbuf consumer failed to start: {e}");
-                None
-            }
-        };
         let dao_event_senders = server_starter.dao_event_senders.clone();
         if let Some(source) = dao_event_source.clone() {
             spawn_task(

@@ -1,5 +1,8 @@
+use std::sync::Arc;
+
 use landscape_common::database::LandscapeStore;
 use landscape_common::event::hub::IfaceEventReader;
+use landscape_common::wan_service::wan_route::dataplane::WanRouteDataplane;
 use landscape_common::wan_service::wan_route::RouteWanServiceConfig;
 use landscape_common::{
     concurrency::{spawn_task, spawn_task_with_resource, task_label},
@@ -17,17 +20,13 @@ use crate::get_iface_by_name;
 
 #[derive(Clone)]
 #[allow(dead_code)]
-pub struct RouteWanService {}
-
-impl Default for RouteWanService {
-    fn default() -> Self {
-        Self::new()
-    }
+pub struct RouteWanService {
+    dataplane: Arc<dyn WanRouteDataplane>,
 }
 
 impl RouteWanService {
-    pub fn new() -> Self {
-        RouteWanService {}
+    pub fn new(dataplane: Arc<dyn WanRouteDataplane>) -> Self {
+        RouteWanService { dataplane }
     }
 }
 
@@ -42,6 +41,7 @@ impl ServiceStarterTrait for RouteWanService {
             if let Some(iface) = get_iface_by_name(&config.iface_name).await {
                 let status_clone = service_status.clone();
                 let iface_name = config.iface_name.clone();
+                let dataplane = self.dataplane.clone();
                 spawn_task_with_resource(
                     task_label::task::ROUTE_WAN_RUN,
                     iface_name.clone(),
@@ -51,6 +51,7 @@ impl ServiceStarterTrait for RouteWanService {
                             iface.index,
                             iface.mac.is_some(),
                             status_clone,
+                            dataplane,
                         )
                         .await
                     },
@@ -69,16 +70,17 @@ pub async fn create_route_wan_service(
     ifindex: u32,
     has_mac: bool,
     service_status: WatchService,
+    dataplane: Arc<dyn WanRouteDataplane>,
 ) {
     service_status.just_change_status(ServiceStatus::Staring);
     tracing::info!("start route wan at ifindex: {ifindex}");
-    landscape_ebpf::maps::redirect_able::del_xdp_redirect_able(ifindex);
+    dataplane.del_redirect_able(ifindex);
 
-    let mut xdp_handle: Option<landscape_ebpf::chain::xdp_wan_route::XdpWanRouteHandle> = None;
+    let mut xdp_handle: Option<Box<dyn landscape_common::ebpf::DataplaneGuard>> = None;
 
-    let xdp_ok = match landscape_ebpf::chain::xdp_wan_route::init_xdp_wan_route(ifindex, has_mac) {
+    let xdp_ok = match dataplane.install_xdp_route(ifindex, has_mac) {
         Ok(handle) => {
-            landscape_ebpf::maps::redirect_able::set_xdp_redirect_able(ifindex, true);
+            dataplane.set_redirect_able(ifindex, true);
             tracing::info!("xdp handoff enabled for {iface_name}");
             xdp_handle = Some(handle);
             true
@@ -87,32 +89,30 @@ pub async fn create_route_wan_service(
             tracing::warn!(
                 "failed to start xdp wan route for {iface_name}: {err}, starting TC only"
             );
-            landscape_ebpf::maps::redirect_able::set_xdp_redirect_able(ifindex, false);
+            dataplane.set_redirect_able(ifindex, false);
             false
         }
     };
 
-    let tc_handle =
-        match landscape_ebpf::chain::tc_wan_route::init_tc_wan_route(ifindex, has_mac, xdp_ok) {
-            Ok(handle) => handle,
-            Err(err) => {
-                tracing::error!("failed to start tc wan route for {iface_name}: {err}");
-                service_status.just_change_status(ServiceStatus::Failed);
-                landscape_ebpf::chain::xdp_manager::XdpChainManager::instance()
-                    .remove_roots(ifindex);
-                landscape_ebpf::maps::redirect_able::del_xdp_redirect_able(ifindex);
-                return;
-            }
-        };
+    let tc_handle = match dataplane.install_tc_route(ifindex, has_mac, xdp_ok) {
+        Ok(handle) => handle,
+        Err(err) => {
+            tracing::error!("failed to start tc wan route for {iface_name}: {err}");
+            service_status.just_change_status(ServiceStatus::Failed);
+            dataplane.remove_xdp_roots(ifindex);
+            dataplane.del_redirect_able(ifindex);
+            return;
+        }
+    };
 
     service_status.just_change_status(ServiceStatus::Running);
     tracing::info!("Waiting for external stop signal");
     let _ = service_status.wait_to_stopping().await;
     tracing::info!("Receiving external stop signal");
     drop(xdp_handle);
-    landscape_ebpf::chain::xdp_manager::XdpChainManager::instance().remove_roots(ifindex);
+    dataplane.remove_xdp_roots(ifindex);
     drop(tc_handle);
-    landscape_ebpf::maps::redirect_able::del_xdp_redirect_able(ifindex);
+    dataplane.del_redirect_able(ifindex);
 
     service_status.just_change_status(ServiceStatus::Stop);
 }
@@ -142,9 +142,10 @@ impl RouteWanServiceManagerService {
     pub async fn new(
         store_service: LandscapeDBServiceProvider,
         mut dev_observer: IfaceEventReader,
+        dataplane: Arc<dyn WanRouteDataplane>,
     ) -> Self {
         let store = store_service.route_wan_service_store();
-        let server_starter = RouteWanService::new();
+        let server_starter = RouteWanService::new(dataplane);
         let service =
             ServiceManager::init(store.list().await.unwrap(), server_starter.clone()).await;
 

@@ -1,8 +1,11 @@
+use std::sync::Arc;
+
 use tokio::time::{sleep, Duration, Instant};
 
 use landscape_common::net_proto::ppp::PointToPoint;
 use landscape_common::net_proto::pppoe::PPPoEFrame;
 use landscape_common::service::{ServiceStatus, WatchService};
+use landscape_common::wan_service::pppoe::PppoeDataplane;
 
 use super::PPPoEClientConfig;
 use crate::sys_service::route::IpRouteService;
@@ -14,9 +17,10 @@ use super::{send_pppoe_session_frame, PppoeResult, ETH_P_PPOES, LCP_ECHO_INTERVA
 async fn shutdown_session(
     session_handle: &mut Option<SessionHandle>,
     route_service: &IpRouteService,
+    dataplane: &dyn PppoeDataplane,
 ) {
     if let Some(handle) = session_handle.take() {
-        handle.shutdown(route_service).await;
+        handle.shutdown(route_service, dataplane).await;
     }
 }
 
@@ -24,6 +28,7 @@ pub async fn run(
     config: PPPoEClientConfig,
     status_rx: WatchService,
     route_service: IpRouteService,
+    dataplane: Arc<dyn PppoeDataplane>,
 ) {
     status_rx.just_change_status(ServiceStatus::Staring);
 
@@ -51,7 +56,7 @@ pub async fn run(
             tokio::select! {
                 _ = sleep(delay) => {},
                 _ = status_rx.wait_to_stopping() => {
-                    shutdown_session(&mut session_handle, &route_service).await;
+                    shutdown_session(&mut session_handle, &route_service, dataplane.as_ref()).await;
                     status_rx.just_change_status(ServiceStatus::Stop);
                     break;
                 }
@@ -86,12 +91,12 @@ pub async fn run(
                     error = %e,
                     "LCP phase fatal error, exiting"
                 );
-                shutdown_session(&mut session_handle, &route_service).await;
+                shutdown_session(&mut session_handle, &route_service, dataplane.as_ref()).await;
                 status_rx.just_change_status(ServiceStatus::Failed);
                 break;
             }
             Err(PppoeError::ServiceStopped) => {
-                shutdown_session(&mut session_handle, &route_service).await;
+                shutdown_session(&mut session_handle, &route_service, dataplane.as_ref()).await;
                 status_rx.just_change_status(ServiceStatus::Stop);
                 break;
             }
@@ -101,7 +106,7 @@ pub async fn run(
                     error = %e,
                     "LCP phase error, retrying"
                 );
-                shutdown_session(&mut session_handle, &route_service).await;
+                shutdown_session(&mut session_handle, &route_service, dataplane.as_ref()).await;
                 retry_count += 1;
                 continue;
             }
@@ -129,12 +134,12 @@ pub async fn run(
                         error = %e,
                         "Negotiation phase fatal error, exiting"
                     );
-                    shutdown_session(&mut session_handle, &route_service).await;
+                    shutdown_session(&mut session_handle, &route_service, dataplane.as_ref()).await;
                     status_rx.just_change_status(ServiceStatus::Failed);
                     break;
                 }
                 Err(PppoeError::ServiceStopped) => {
-                    shutdown_session(&mut session_handle, &route_service).await;
+                    shutdown_session(&mut session_handle, &route_service, dataplane.as_ref()).await;
                     status_rx.just_change_status(ServiceStatus::Stop);
                     break;
                 }
@@ -144,7 +149,7 @@ pub async fn run(
                         error = %e,
                         "Negotiation phase error, retrying"
                     );
-                    shutdown_session(&mut session_handle, &route_service).await;
+                    shutdown_session(&mut session_handle, &route_service, dataplane.as_ref()).await;
                     retry_count += 1;
                     continue;
                 }
@@ -160,10 +165,16 @@ pub async fn run(
             "PPPoE session established, negotiation phase completed"
         );
 
-        shutdown_session(&mut session_handle, &route_service).await;
+        shutdown_session(&mut session_handle, &route_service, dataplane.as_ref()).await;
 
-        match super::system::create_session(&config, &lcp_result, &nego_result, &route_service)
-            .await
+        match super::system::create_session(
+            &config,
+            &lcp_result,
+            &nego_result,
+            &route_service,
+            dataplane.as_ref(),
+        )
+        .await
         {
             Ok(handle) => {
                 session_handle = Some(handle);
@@ -193,12 +204,12 @@ pub async fn run(
             .await
         {
             Ok(()) => {
-                shutdown_session(&mut session_handle, &route_service).await;
+                shutdown_session(&mut session_handle, &route_service, dataplane.as_ref()).await;
                 status_rx.just_change_status(ServiceStatus::Stop);
                 break;
             }
             Err(PppoeError::ServiceStopped) => {
-                shutdown_session(&mut session_handle, &route_service).await;
+                shutdown_session(&mut session_handle, &route_service, dataplane.as_ref()).await;
                 status_rx.just_change_status(ServiceStatus::Stop);
                 break;
             }
@@ -208,7 +219,7 @@ pub async fn run(
                     error = %e,
                     "Keepalive lost, reconnecting"
                 );
-                shutdown_session(&mut session_handle, &route_service).await;
+                shutdown_session(&mut session_handle, &route_service, dataplane.as_ref()).await;
                 retry_count += 1;
                 continue;
             }

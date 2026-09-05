@@ -1,8 +1,11 @@
+use std::sync::Arc;
+
 use landscape_common::{
     event::dns::DstIpEvent,
     flow::ip_mark::IpConfig,
     service::controller::ConfigController,
     wan_service::firewall::blacklist::{FirewallBlacklistConfig, FirewallBlacklistSource},
+    wan_service::firewall::dataplane::FirewallDataplane,
 };
 use landscape_database::{
     firewall_blacklist::repository::FirewallBlacklistRepository,
@@ -17,6 +20,7 @@ use crate::geo::ip_service::GeoIpService;
 pub struct FirewallBlacklistService {
     store: FirewallBlacklistRepository,
     geo_ip_service: GeoIpService,
+    dataplane: Arc<dyn FirewallDataplane>,
 }
 
 impl FirewallBlacklistService {
@@ -24,13 +28,20 @@ impl FirewallBlacklistService {
         store: LandscapeDBServiceProvider,
         geo_ip_service: GeoIpService,
         mut receiver: broadcast::Receiver<DstIpEvent>,
+        dataplane: Arc<dyn FirewallDataplane>,
     ) -> Self {
         let store = store.firewall_blacklist_store();
-        let service = Self { store, geo_ip_service };
+        let service = Self { store, geo_ip_service, dataplane };
 
         // Initial full sync
         let configs = service.list().await;
-        resolve_and_sync_blacklist(&service.geo_ip_service, configs, vec![]).await;
+        resolve_and_sync_blacklist(
+            &service.geo_ip_service,
+            configs,
+            vec![],
+            service.dataplane.as_ref(),
+        )
+        .await;
 
         // Listen for GeoIP update events
         let service_clone = service.clone();
@@ -40,8 +51,13 @@ impl FirewallBlacklistService {
                     DstIpEvent::GeoIpUpdated => {
                         tracing::info!("refresh firewall blacklist due to GeoIP update");
                         let configs = service_clone.list().await;
-                        resolve_and_sync_blacklist(&service_clone.geo_ip_service, configs, vec![])
-                            .await;
+                        resolve_and_sync_blacklist(
+                            &service_clone.geo_ip_service,
+                            configs,
+                            vec![],
+                            service_clone.dataplane.as_ref(),
+                        )
+                        .await;
                     }
                 }
             }
@@ -66,7 +82,13 @@ impl ConfigController for FirewallBlacklistService {
         new_configs: Vec<Self::Config>,
         old_configs: Vec<Self::Config>,
     ) {
-        resolve_and_sync_blacklist(&self.geo_ip_service, new_configs, old_configs).await;
+        resolve_and_sync_blacklist(
+            &self.geo_ip_service,
+            new_configs,
+            old_configs,
+            self.dataplane.as_ref(),
+        )
+        .await;
     }
 }
 
@@ -74,13 +96,14 @@ pub async fn resolve_and_sync_blacklist(
     geo_ip_service: &GeoIpService,
     new_configs: Vec<FirewallBlacklistConfig>,
     old_configs: Vec<FirewallBlacklistConfig>,
+    dataplane: &dyn FirewallDataplane,
 ) {
     let new_ips = resolve_configs(geo_ip_service, &new_configs).await;
     let old_ips = resolve_configs(geo_ip_service, &old_configs).await;
 
     tracing::info!("sync firewall blacklist: new_ips={}, old_ips={}", new_ips.len(), old_ips.len());
 
-    landscape_ebpf::maps::firewall::sync_firewall_blacklist(new_ips, old_ips);
+    dataplane.sync_blacklist(new_ips, old_ips);
 }
 
 async fn resolve_configs(

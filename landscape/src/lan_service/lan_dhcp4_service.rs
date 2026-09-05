@@ -39,6 +39,7 @@ use crate::LandscapeSingleIpInfo;
 use landscape_common::event::hub::{
     EnrolledDeviceEvent, EnrolledDeviceEventReader, IPv4AssignEventSender,
 };
+use landscape_common::lan_service::mac_binding::MacBindingDataplane;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct IfaceIpv4Cleanup {
@@ -82,6 +83,7 @@ pub struct DHCPv4ServerStarter {
     /// Live LAN suffix, advertised as DHCP option 15/119.
     lan_domain_state: Arc<ArcSwap<LanHostnameConfig>>,
     ipv4_assign_sender: IPv4AssignEventSender,
+    mac_binding: Arc<dyn MacBindingDataplane>,
 }
 
 impl DHCPv4ServerStarter {
@@ -92,6 +94,7 @@ impl DHCPv4ServerStarter {
         dns_runtime_config: landscape_common::config::DnsRuntimeConfig,
         lan_domain_state: Arc<ArcSwap<LanHostnameConfig>>,
         ipv4_assign_sender: IPv4AssignEventSender,
+        mac_binding: Arc<dyn MacBindingDataplane>,
     ) -> DHCPv4ServerStarter {
         DHCPv4ServerStarter {
             route_service,
@@ -102,6 +105,7 @@ impl DHCPv4ServerStarter {
             iface_scan_map: Arc::new(RwLock::new(HashMap::new())),
             iface_status_map: Arc::new(RwLock::new(HashMap::new())),
             ipv4_assign_sender,
+            mac_binding,
         }
     }
 }
@@ -168,6 +172,7 @@ impl ServiceStarterTrait for DHCPv4ServerStarter {
                 config.iface_name.clone(),
             );
             let ipv4_sender = self.ipv4_assign_sender.clone();
+            let mac_binding = self.mac_binding.clone();
             tokio::spawn(async move {
                 crate::lan_service::lan_dhcp4_server::server::dhcp_v4_server(
                     config.iface_name,
@@ -178,6 +183,7 @@ impl ServiceStarterTrait for DHCPv4ServerStarter {
                     dhcp_server,
                     svc_status,
                     ipv4_sender,
+                    mac_binding,
                 )
                 .await;
                 stop_dhcp_server.cancel();
@@ -272,6 +278,7 @@ impl DHCPv4ServerManagerService {
         mut dev_observer: IfaceEventReader,
         ipv4_assign_sender: IPv4AssignEventSender,
         mut device_reader: EnrolledDeviceEventReader,
+        mac_binding: Arc<dyn MacBindingDataplane>,
     ) -> Self {
         let store = store_service.dhcp_v4_server_store();
         let server_starter = DHCPv4ServerStarter::new(
@@ -281,6 +288,7 @@ impl DHCPv4ServerManagerService {
             dns_runtime_config,
             lan_domain_state,
             ipv4_assign_sender,
+            mac_binding,
         );
         let service =
             ServiceManager::init(store.list().await.unwrap(), server_starter.clone()).await;

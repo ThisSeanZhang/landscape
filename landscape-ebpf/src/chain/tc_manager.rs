@@ -1,19 +1,16 @@
 use std::collections::{BTreeMap, HashMap};
 use std::os::fd::{AsFd, AsRawFd};
 use std::path::Path;
-use std::path::PathBuf;
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex};
 
 use libbpf_rs::libbpf_sys;
 use libbpf_rs::skel::{OpenSkel, SkelBuilder};
 use libbpf_rs::{MapCore, MapFlags, MapHandle, MapType};
 
-use landscape_common::args::LAND_ARGS;
-
 use crate::bpf_ctx;
 use crate::bpf_error::LdEbpfResult;
 use crate::landscape::{pin_and_reuse_map, OwnedOpenObject};
-use crate::MAP_PATHS;
+use crate::LandscapeMapPath;
 
 mod tc_wan_ingress_exit_skel {
     include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/tc_wan_ingress_exit.skel.rs"));
@@ -45,30 +42,6 @@ pub enum StageType {
 pub enum ChainDir {
     WanIngress,
     WanEgress,
-}
-
-pub(crate) fn tc_chain_base() -> PathBuf {
-    PathBuf::from(format!("/sys/fs/bpf/landscape/{}/tc_chain", LAND_ARGS.ebpf_map_space))
-}
-
-pub(crate) fn tc_pipe_root_progs_path() -> PathBuf {
-    tc_chain_base().join("tc_pipe_root_progs")
-}
-
-pub(crate) fn wan_intro_dispatch_path() -> PathBuf {
-    tc_chain_base().join("wan_intro_dispatch")
-}
-
-pub(crate) fn tc_pipe_exits_wan_ingress_path() -> PathBuf {
-    tc_chain_base().join("tc_pipe_exits_wan_ingress")
-}
-
-pub(crate) fn tc_pipe_exits_wan_egress_path() -> PathBuf {
-    tc_chain_base().join("tc_pipe_exits_wan_egress")
-}
-
-pub(crate) fn tc_wan_egress_roots_path() -> PathBuf {
-    tc_chain_base().join("tc_wan_egress_roots")
 }
 
 const TC_INTRO_IFINDEX_TYPE: u32 = 2;
@@ -181,6 +154,7 @@ impl ManagerInner {
 }
 
 pub struct TcChainManager {
+    paths: Arc<LandscapeMapPath>,
     _exit_wi: tc_wan_ingress_exit_skel::TcWanIngressExitSkel<'static>,
     _exit_we: tc_wan_egress_exit_skel::TcWanEgressExitSkel<'static>,
     _back_wi: OwnedOpenObject,
@@ -188,30 +162,27 @@ pub struct TcChainManager {
     inner: Mutex<ManagerInner>,
 }
 
-static MANAGER: OnceLock<TcChainManager> = OnceLock::new();
-
 impl TcChainManager {
-    pub fn instance() -> &'static Self {
-        MANAGER.get_or_init(|| Self::init().expect("TC chain manager init failed"))
-    }
-
-    fn init() -> LdEbpfResult<Self> {
-        std::fs::create_dir_all(tc_chain_base()).expect("create tc_chain dir failed");
+    /// Create the TC chain pin directory, seed its prog-array maps and load
+    /// the two exit skeletons.
+    pub fn new(paths: Arc<LandscapeMapPath>) -> LdEbpfResult<Self> {
+        std::fs::create_dir_all(paths.tc_chain_base()).expect("create tc_chain dir failed");
 
         // ── 1. Create and pin all seed PROG_ARRAY / HASH maps directly in Rust ──
 
-        create_pinned_prog_array(&tc_pipe_root_progs_path(), 1024)?;
-        create_pinned_map(&wan_intro_dispatch_path(), MapType::Hash, 16, 4, 1024)?;
-        create_pinned_prog_array(&tc_pipe_exits_wan_ingress_path(), 1)?;
-        create_pinned_prog_array(&tc_pipe_exits_wan_egress_path(), 1)?;
-        create_pinned_prog_array(&tc_wan_egress_roots_path(), 1024)?;
+        create_pinned_prog_array(&paths.tc_pipe_root_progs_path(), 1024)?;
+        create_pinned_map(&paths.tc_wan_intro_dispatch_path(), MapType::Hash, 16, 4, 1024)?;
+        create_pinned_prog_array(&paths.tc_pipe_exits_wan_ingress_path(), 1)?;
+        create_pinned_prog_array(&paths.tc_pipe_exits_wan_egress_path(), 1)?;
+        create_pinned_prog_array(&paths.tc_wan_egress_roots_path(), 1024)?;
 
         // ── 2. Load exit skeletons and inject their program FDs ──
 
-        let (exit_wi, back_wi) = Self::init_exit_wan_ingress()?;
-        let (exit_we, back_we) = Self::init_exit_wan_egress()?;
+        let (exit_wi, back_wi) = Self::init_exit_wan_ingress(&paths)?;
+        let (exit_we, back_we) = Self::init_exit_wan_egress(&paths)?;
 
         Ok(Self {
+            paths,
             _exit_wi: exit_wi,
             _exit_we: exit_we,
             _back_wi: back_wi,
@@ -221,6 +192,7 @@ impl TcChainManager {
     }
 
     fn init_exit_wan_ingress(
+        paths: &LandscapeMapPath,
     ) -> LdEbpfResult<(tc_wan_ingress_exit_skel::TcWanIngressExitSkel<'static>, OwnedOpenObject)>
     {
         let builder = TcWanIngressExitSkelBuilder::default();
@@ -228,72 +200,66 @@ impl TcChainManager {
         let mut open_skel = bpf_ctx!(builder.open(obj), "open tc_wan_ingress_exit skeleton")?;
         crate::maps::reuse_pinned_map_or_recreate(
             &mut open_skel.maps.tc_pipe_exits_wan_ingress,
-            &tc_pipe_exits_wan_ingress_path(),
+            &paths.tc_pipe_exits_wan_ingress_path(),
         );
         crate::bpf_ctx!(
-            pin_and_reuse_map(&mut open_skel.maps.flow_match_map, &MAP_PATHS.flow_match_map),
+            pin_and_reuse_map(&mut open_skel.maps.flow_match_map, &paths.flow_match_map),
             "tc_wan_ingress_exit pin flow_match_map"
         )?;
         crate::bpf_ctx!(
-            pin_and_reuse_map(&mut open_skel.maps.wan_ip_binding, &MAP_PATHS.wan_ip),
+            pin_and_reuse_map(&mut open_skel.maps.wan_ip_binding, &paths.wan_ip),
             "tc_wan_ingress_exit pin wan_ip_binding"
         )?;
         crate::bpf_ctx!(
-            pin_and_reuse_map(&mut open_skel.maps.rt4_lan_map, &MAP_PATHS.rt4_lan_map),
+            pin_and_reuse_map(&mut open_skel.maps.rt4_lan_map, &paths.rt4_lan_map),
             "tc_wan_ingress_exit pin rt4_lan_map"
         )?;
         crate::bpf_ctx!(
-            pin_and_reuse_map(&mut open_skel.maps.rt6_lan_map, &MAP_PATHS.rt6_lan_map),
+            pin_and_reuse_map(&mut open_skel.maps.rt6_lan_map, &paths.rt6_lan_map),
             "tc_wan_ingress_exit pin rt6_lan_map"
         )?;
         crate::bpf_ctx!(
-            pin_and_reuse_map(
-                &mut open_skel.maps.rt4_target_slot_map,
-                &MAP_PATHS.rt4_target_slot_map,
-            ),
+            pin_and_reuse_map(&mut open_skel.maps.rt4_target_slot_map, &paths.rt4_target_slot_map,),
             "tc_wan_ingress_exit pin rt4_target_slot_map"
         )?;
         crate::bpf_ctx!(
-            pin_and_reuse_map(
-                &mut open_skel.maps.rt6_target_slot_map,
-                &MAP_PATHS.rt6_target_slot_map,
-            ),
+            pin_and_reuse_map(&mut open_skel.maps.rt6_target_slot_map, &paths.rt6_target_slot_map,),
             "tc_wan_ingress_exit pin rt6_target_slot_map"
         )?;
         crate::bpf_ctx!(
-            pin_and_reuse_map(&mut open_skel.maps.flow4_dns_map, &MAP_PATHS.flow4_dns_map),
+            pin_and_reuse_map(&mut open_skel.maps.flow4_dns_map, &paths.flow4_dns_map),
             "tc_wan_ingress_exit pin flow4_dns_map"
         )?;
         crate::bpf_ctx!(
-            pin_and_reuse_map(&mut open_skel.maps.flow6_dns_map, &MAP_PATHS.flow6_dns_map),
+            pin_and_reuse_map(&mut open_skel.maps.flow6_dns_map, &paths.flow6_dns_map),
             "tc_wan_ingress_exit pin flow6_dns_map"
         )?;
         crate::bpf_ctx!(
-            pin_and_reuse_map(&mut open_skel.maps.flow4_ip_map, &MAP_PATHS.flow4_ip_map),
+            pin_and_reuse_map(&mut open_skel.maps.flow4_ip_map, &paths.flow4_ip_map),
             "tc_wan_ingress_exit pin flow4_ip_map"
         )?;
         crate::bpf_ctx!(
-            pin_and_reuse_map(&mut open_skel.maps.flow6_ip_map, &MAP_PATHS.flow6_ip_map),
+            pin_and_reuse_map(&mut open_skel.maps.flow6_ip_map, &paths.flow6_ip_map),
             "tc_wan_ingress_exit pin flow6_ip_map"
         )?;
         crate::bpf_ctx!(
-            pin_and_reuse_map(&mut open_skel.maps.rt4_cache_map, &MAP_PATHS.rt4_cache_map),
+            pin_and_reuse_map(&mut open_skel.maps.rt4_cache_map, &paths.rt4_cache_map),
             "tc_wan_ingress_exit pin rt4_cache_map"
         )?;
         crate::bpf_ctx!(
-            pin_and_reuse_map(&mut open_skel.maps.rt6_cache_map, &MAP_PATHS.rt6_cache_map),
+            pin_and_reuse_map(&mut open_skel.maps.rt6_cache_map, &paths.rt6_cache_map),
             "tc_wan_ingress_exit pin rt6_cache_map"
         )?;
         crate::bpf_ctx!(
-            pin_and_reuse_map(&mut open_skel.maps.ip_mac_v4, &MAP_PATHS.ip_mac_v4),
+            pin_and_reuse_map(&mut open_skel.maps.ip_mac_v4, &paths.ip_mac_v4),
             "tc_wan_ingress_exit pin ip_mac_v4"
         )?;
         crate::bpf_ctx!(
-            pin_and_reuse_map(&mut open_skel.maps.ip_mac_v6, &MAP_PATHS.ip_mac_v6),
+            pin_and_reuse_map(&mut open_skel.maps.ip_mac_v6, &paths.ip_mac_v6),
             "tc_wan_ingress_exit pin ip_mac_v6"
         )?;
         crate::bpf_ctx!(
-            pin_and_reuse_map(&mut open_skel.maps.xdp_redirect_able, &MAP_PATHS.xdp_redirect_able),
+            pin_and_reuse_map(&mut open_skel.maps.xdp_redirect_able, &paths.xdp_redirect_able),
             "tc_wan_ingress_exit pin xdp_redirect_able"
         )?;
         let skel = bpf_ctx!(open_skel.load(), "load tc_wan_ingress_exit skeleton")?;
@@ -307,6 +273,7 @@ impl TcChainManager {
     }
 
     fn init_exit_wan_egress(
+        paths: &LandscapeMapPath,
     ) -> LdEbpfResult<(tc_wan_egress_exit_skel::TcWanEgressExitSkel<'static>, OwnedOpenObject)>
     {
         let builder = TcWanEgressExitSkelBuilder::default();
@@ -314,7 +281,7 @@ impl TcChainManager {
         let mut open_skel = bpf_ctx!(builder.open(obj), "open tc_wan_egress_exit skeleton")?;
         crate::maps::reuse_pinned_map_or_recreate(
             &mut open_skel.maps.tc_pipe_exits_wan_egress,
-            &tc_pipe_exits_wan_egress_path(),
+            &paths.tc_pipe_exits_wan_egress_path(),
         );
         let skel = bpf_ctx!(open_skel.load(), "load tc_wan_egress_exit skeleton")?;
         let exit_fd = skel.progs.tc_wan_egress_exit_redirect.as_fd().as_raw_fd();
@@ -359,7 +326,7 @@ impl TcChainManager {
 
         pin_and_reuse_map(
             &mut ingress_open_skel.maps.tc_pipe_exits_wan_ingress,
-            &tc_pipe_exits_wan_ingress_path(),
+            &self.paths.tc_pipe_exits_wan_ingress_path(),
         )?;
 
         let ingress_skel = bpf_ctx!(ingress_open_skel.load(), "load tc_wan_ingress_root")?;
@@ -367,7 +334,7 @@ impl TcChainManager {
         let ingress_root_fd = ingress_skel.progs.tc_wan_chain_ingress_root.as_fd().as_raw_fd();
         let ing_next_fd = ingress_skel.maps.wan_ingress_root_next_stage.as_fd().as_raw_fd();
 
-        pinned_map(&tc_pipe_root_progs_path())?.update(
+        pinned_map(&self.paths.tc_pipe_root_progs_path())?.update(
             &ifindex.to_ne_bytes(),
             &ingress_root_fd.to_ne_bytes(),
             MapFlags::ANY,
@@ -377,7 +344,7 @@ impl TcChainManager {
         dispatch_key[0..4].copy_from_slice(&TC_INTRO_IFINDEX_TYPE.to_le_bytes());
         dispatch_key[8..12].copy_from_slice(&ifindex.to_le_bytes());
         let dispatch_val = ifindex.to_ne_bytes();
-        pinned_map(&wan_intro_dispatch_path())?.update(
+        pinned_map(&self.paths.tc_wan_intro_dispatch_path())?.update(
             &dispatch_key,
             &dispatch_val,
             MapFlags::ANY,
@@ -398,7 +365,7 @@ impl TcChainManager {
 
         pin_and_reuse_map(
             &mut egress_open_skel.maps.tc_pipe_exits_wan_egress,
-            &tc_pipe_exits_wan_egress_path(),
+            &self.paths.tc_pipe_exits_wan_egress_path(),
         )?;
 
         let egress_skel = bpf_ctx!(egress_open_skel.load(), "load tc_wan_egress_root")?;
@@ -406,7 +373,7 @@ impl TcChainManager {
         let egress_root_fd = egress_skel.progs.tc_wan_chain_egress_root.as_fd().as_raw_fd();
         let eg_next_fd = egress_skel.maps.wan_egress_root_next_stage.as_fd().as_raw_fd();
 
-        pinned_map(&tc_wan_egress_roots_path())?.update(
+        pinned_map(&self.paths.tc_wan_egress_roots_path())?.update(
             &ifindex.to_ne_bytes(),
             &egress_root_fd.to_ne_bytes(),
             MapFlags::ANY,
@@ -436,17 +403,17 @@ impl TcChainManager {
             return;
         }
 
-        if let Ok(map) = pinned_map(&tc_pipe_root_progs_path()) {
+        if let Ok(map) = pinned_map(&self.paths.tc_pipe_root_progs_path()) {
             let _ = map.delete(&ifindex.to_ne_bytes());
         }
-        if let Ok(map) = pinned_map(&tc_wan_egress_roots_path()) {
+        if let Ok(map) = pinned_map(&self.paths.tc_wan_egress_roots_path()) {
             let _ = map.delete(&ifindex.to_ne_bytes());
         }
 
         let mut dispatch_key = [0u8; 16];
         dispatch_key[0..4].copy_from_slice(&TC_INTRO_IFINDEX_TYPE.to_le_bytes());
         dispatch_key[8..12].copy_from_slice(&ifindex.to_le_bytes());
-        if let Ok(map) = pinned_map(&wan_intro_dispatch_path()) {
+        if let Ok(map) = pinned_map(&self.paths.tc_wan_intro_dispatch_path()) {
             let _ = map.delete(&dispatch_key);
         }
     }

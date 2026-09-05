@@ -15,6 +15,7 @@ use landscape_common::event::hub::{
     EnrolledDeviceEvent, EnrolledDeviceEventReader, IPv6AssignEvent, IPv6AssignEventReader,
 };
 use landscape_common::utils::time::get_f64_timestamp;
+use landscape_common::wan_service::nat::dataplane::NatDataplane;
 use landscape_common::LANDSCAPE_DEFAULE_DHCP_V6_CLIENT_PORT;
 use landscape_database::provider::LandscapeDBServiceProvider;
 use landscape_database::static_nat_mapping_v6::repository::StaticNatMappingV6Repository;
@@ -41,6 +42,7 @@ pub struct StaticNat6MappingService {
     wan_iid: Arc<u64>,
     device_ipv6_state: Arc<RwLock<DeviceIpv6State>>,
     refresh_lock: Arc<Mutex<()>>,
+    dataplane: Arc<dyn NatDataplane>,
 }
 
 impl StaticNat6MappingService {
@@ -49,12 +51,14 @@ impl StaticNat6MappingService {
         device_reader: EnrolledDeviceEventReader,
         ipv6_reader: IPv6AssignEventReader,
         wan_iid: Arc<u64>,
+        dataplane: Arc<dyn NatDataplane>,
     ) -> Self {
         let service = Self {
             store: store_provider.static_nat_mapping_v6_store(),
             wan_iid,
             device_ipv6_state: Arc::new(RwLock::new(DeviceIpv6State::default())),
             refresh_lock: Arc::new(Mutex::new(())),
+            dataplane,
         };
 
         let is_empty = service.store.list().await.is_ok_and(|l| l.is_empty());
@@ -199,9 +203,7 @@ impl StaticNat6MappingService {
                 }
             };
 
-        if let Err(error) = landscape_ebpf::maps::nat::reconcile_static_nat6_map(&configs) {
-            tracing::error!("failed to reconcile static NAT v6 map: {error:?}");
-        }
+        self.dataplane.sync_static_nat6(&configs);
     }
 }
 

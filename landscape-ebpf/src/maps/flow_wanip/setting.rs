@@ -6,8 +6,9 @@ use zerocopy::IntoBytes;
 
 use crate::{
     bpf_error::LdEbpfResult,
-    maps::{FlowIpTrieKeyV4, FlowIpTrieKeyV6, FlowIpTrieValueV4, FlowIpTrieValueV6},
-    MAP_PATHS,
+    maps::{
+        FlowIpTrieKeyV4, FlowIpTrieKeyV6, FlowIpTrieValueV4, FlowIpTrieValueV6, LandscapeMapPath,
+    },
 };
 
 const IP_MATCH_MAX_ENTRIES: u32 = 20840;
@@ -90,8 +91,8 @@ where
     Ok(())
 }
 
-pub fn add_wan_ip_mark(flow_id: u32, ips: Vec<IpMarkInfo>) {
-    if let Err(e) = add_wan_ip_mark_inner(flow_id, ips) {
+pub fn add_wan_ip_mark(paths: &LandscapeMapPath, flow_id: u32, ips: Vec<IpMarkInfo>) {
+    if let Err(e) = add_wan_ip_mark_inner(paths, flow_id, ips) {
         tracing::error!("{e:?}");
     }
 }
@@ -174,11 +175,15 @@ where
     Ok(())
 }
 
-fn add_wan_ip_mark_inner(flow_id: u32, ips: Vec<IpMarkInfo>) -> LdEbpfResult<()> {
-    let flow_ip_match_map = libbpf_rs::MapHandle::from_pinned_path(&MAP_PATHS.flow4_ip_map)?;
+fn add_wan_ip_mark_inner(
+    paths: &LandscapeMapPath,
+    flow_id: u32,
+    ips: Vec<IpMarkInfo>,
+) -> LdEbpfResult<()> {
+    let flow_ip_match_map = libbpf_rs::MapHandle::from_pinned_path(&paths.flow4_ip_map)?;
     create_inner_flow_match_map_v4(&flow_ip_match_map, flow_id, &ips)?;
 
-    let flow_ip_match_map = libbpf_rs::MapHandle::from_pinned_path(&MAP_PATHS.flow6_ip_map)?;
+    let flow_ip_match_map = libbpf_rs::MapHandle::from_pinned_path(&paths.flow6_ip_map)?;
     create_inner_flow_match_map_v6(&flow_ip_match_map, flow_id, &ips)?;
     Ok(())
 }

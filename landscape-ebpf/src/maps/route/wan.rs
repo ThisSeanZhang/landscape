@@ -8,32 +8,36 @@ use landscape_common::sys_service::route_service::RouteTargetInfo;
 use libbpf_rs::{MapCore, MapFlags};
 use zerocopy::IntoBytes;
 
-use crate::{
-    maps::{RouteTargetInfoV4, RouteTargetInfoV6, RouteTargetSlotKeyV4, RouteTargetSlotKeyV6},
-    MAP_PATHS,
+use crate::maps::{
+    LandscapeMapPath, RouteTargetInfoV4, RouteTargetInfoV6, RouteTargetSlotKeyV4,
+    RouteTargetSlotKeyV6,
 };
 const FLOW_TARGET_SLOT_COUNT: usize = 16;
-pub fn replace_wan_route_slots_v4(flow_id: FlowId, targets: &[(RouteTargetInfo, u32)]) {
-    let rt_target_map =
-        libbpf_rs::MapHandle::from_pinned_path(&MAP_PATHS.rt4_target_slot_map).unwrap();
+pub fn replace_wan_route_slots_v4(
+    paths: &LandscapeMapPath,
+    flow_id: FlowId,
+    targets: &[(RouteTargetInfo, u32)],
+) {
+    let rt_target_map = libbpf_rs::MapHandle::from_pinned_path(&paths.rt4_target_slot_map).unwrap();
     replace_wan_route_slots_v4_with_map(&rt_target_map, flow_id, targets);
 }
 
-pub fn replace_wan_route_slots_v6(flow_id: FlowId, targets: &[(RouteTargetInfo, u32)]) {
-    let rt_target_map =
-        libbpf_rs::MapHandle::from_pinned_path(&MAP_PATHS.rt6_target_slot_map).unwrap();
+pub fn replace_wan_route_slots_v6(
+    paths: &LandscapeMapPath,
+    flow_id: FlowId,
+    targets: &[(RouteTargetInfo, u32)],
+) {
+    let rt_target_map = libbpf_rs::MapHandle::from_pinned_path(&paths.rt6_target_slot_map).unwrap();
     replace_wan_route_slots_v6_with_map(&rt_target_map, flow_id, targets);
 }
 
-pub fn del_wan_route_slots_v4(flow_id: FlowId) {
-    let rt_target_map =
-        libbpf_rs::MapHandle::from_pinned_path(&MAP_PATHS.rt4_target_slot_map).unwrap();
+pub fn del_wan_route_slots_v4(paths: &LandscapeMapPath, flow_id: FlowId) {
+    let rt_target_map = libbpf_rs::MapHandle::from_pinned_path(&paths.rt4_target_slot_map).unwrap();
     clear_wan_route_slots_v4(&rt_target_map, flow_id);
 }
 
-pub fn del_wan_route_slots_v6(flow_id: FlowId) {
-    let rt_target_map =
-        libbpf_rs::MapHandle::from_pinned_path(&MAP_PATHS.rt6_target_slot_map).unwrap();
+pub fn del_wan_route_slots_v6(paths: &LandscapeMapPath, flow_id: FlowId) {
+    let rt_target_map = libbpf_rs::MapHandle::from_pinned_path(&paths.rt6_target_slot_map).unwrap();
     clear_wan_route_slots_v6(&rt_target_map, flow_id);
 }
 

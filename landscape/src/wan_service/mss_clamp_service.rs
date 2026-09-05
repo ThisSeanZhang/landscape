@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use landscape_common::database::LandscapeStore;
 use landscape_common::event::hub::IfaceEventReader;
 use landscape_common::{
@@ -8,6 +10,7 @@ use landscape_common::{
         manager::{ServiceManager, ServiceStarterTrait},
         ServiceStatus, WatchService,
     },
+    wan_service::mss_clamp::dataplane::MssClampDataplane,
     wan_service::mss_clamp::MSSClampServiceConfig,
 };
 use landscape_database::{
@@ -16,8 +19,10 @@ use landscape_database::{
 
 use crate::get_iface_by_name;
 
-#[derive(Clone, Default)]
-pub struct MssClampService;
+#[derive(Clone)]
+pub struct MssClampService {
+    dataplane: Arc<dyn MssClampDataplane>,
+}
 
 #[async_trait::async_trait]
 impl ServiceStarterTrait for MssClampService {
@@ -30,6 +35,7 @@ impl ServiceStarterTrait for MssClampService {
             if let Some(iface) = get_iface_by_name(&config.iface_name).await {
                 let status_clone = service_status.clone();
                 let iface_name = config.iface_name.clone();
+                let dataplane = self.dataplane.clone();
                 spawn_task_with_resource(
                     task_label::task::MSS_CLAMP_RUN,
                     iface_name.clone(),
@@ -40,6 +46,7 @@ impl ServiceStarterTrait for MssClampService {
                             config.clamp_size,
                             iface.mac.is_some(),
                             status_clone,
+                            dataplane,
                         )
                         .await
                     },
@@ -59,10 +66,11 @@ pub async fn run_mss_clamp(
     mtu_size: u16,
     has_mac: bool,
     service_status: WatchService,
+    dataplane: Arc<dyn MssClampDataplane>,
 ) {
     service_status.just_change_status(ServiceStatus::Staring);
 
-    let mss_clamp = match landscape_ebpf::stages::mss::init_mss(ifindex as u32, mtu_size, has_mac) {
+    let mss_clamp = match dataplane.attach(ifindex as u32, mtu_size, has_mac) {
         Ok(handle) => handle,
         Err(err) => {
             tracing::error!("failed to start mss clamp for {iface_name}: {err}");
@@ -106,9 +114,11 @@ impl MssClampServiceManagerService {
     pub async fn new(
         store_service: LandscapeDBServiceProvider,
         mut dev_observer: IfaceEventReader,
+        dataplane: Arc<dyn MssClampDataplane>,
     ) -> Self {
         let store = store_service.mss_clamp_service_store();
-        let service = ServiceManager::init(store.list().await.unwrap(), Default::default()).await;
+        let service =
+            ServiceManager::init(store.list().await.unwrap(), MssClampService { dataplane }).await;
 
         let service_clone = service.clone();
         spawn_task(task_label::task::MSS_CLAMP_OBSERVER, async move {

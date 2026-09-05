@@ -1,3 +1,5 @@
+pub mod dataplane;
+
 use std::net::IpAddr;
 
 use serde::{Deserialize, Serialize};

@@ -1,6 +1,7 @@
 use std::{
     net::{IpAddr, Ipv4Addr, SocketAddr},
     pin::Pin,
+    sync::Arc,
     time::Duration,
 };
 
@@ -18,6 +19,7 @@ use landscape_common::{
     service::{ServiceStatus, WatchService},
     sys_service::route_service::RouteTargetInfo,
     sys_service::route_service::{LanRouteInfo, LanRouteMode},
+    wan_service::addr_binding::WanAddrBinding,
     LANDSCAPE_DEFAULE_DHCP_V4_SERVER_PORT, SYSCTL_IPV4_RP_FILTER_PATTERN,
 };
 
@@ -175,7 +177,8 @@ impl DhcpState {
     client_port,
     service_status,
     hostname,
-    route_service
+    route_service,
+    addr_binding
 ))]
 #[allow(clippy::too_many_arguments)]
 pub async fn dhcp_v4_client(
@@ -187,6 +190,7 @@ pub async fn dhcp_v4_client(
     hostname: String,
     default_router: bool,
     route_service: IpRouteService,
+    addr_binding: Arc<dyn WanAddrBinding>,
 ) {
     service_status.just_change_status(ServiceStatus::Staring);
     tracing::info!("DHCP V4 Client Starting");
@@ -255,7 +259,7 @@ pub async fn dhcp_v4_client(
                     Ok(packet) => {
                         let need_reset_time = handle_packet(&mut status, packet,
                             &mut ip_arg, default_router, &iface_name, ifindex, &route_service,
-                            &mac_addr).await;
+                            addr_binding.as_ref(), &mac_addr).await;
 
                         if matches!(status, DhcpState::Bound { .. }) {
                             connect_failure_count = 0;
@@ -455,6 +459,7 @@ async fn handle_packet(
     iface_name: &str,
     ifindex: u32,
     route_service: &IpRouteService,
+    addr_binding: &dyn WanAddrBinding,
     mac_addr: &MacAddr,
 ) -> bool {
     let (dhcp, _msg_addr) = packet;
@@ -548,6 +553,7 @@ async fn handle_packet(
                             iface_name,
                             ifindex,
                             route_service,
+                            addr_binding,
                             mac_addr,
                         )
                         .await;
@@ -592,6 +598,7 @@ async fn bind_ipv4(
     iface_name: &str,
     ifindex: u32,
     route_service: &IpRouteService,
+    addr_binding: &dyn WanAddrBinding,
     mac_addr: &MacAddr,
 ) -> DhcpState {
     if let Some(args) = ip_arg.take() {
@@ -639,13 +646,7 @@ async fn bind_ipv4(
         Some(DhcpOption::Router(router_ips)) => router_ips.first().copied(),
         _ => None,
     };
-    landscape_ebpf::maps::wan::add_ipv4_wan_ip(
-        ifindex,
-        new_yiaddr,
-        gateway_ip,
-        mask as u8,
-        Some(*mac_addr),
-    );
+    addr_binding.bind_ipv4(ifindex, new_yiaddr, gateway_ip, mask as u8, Some(*mac_addr));
 
     if let Some(router_ip) = gateway_ip {
         route_service

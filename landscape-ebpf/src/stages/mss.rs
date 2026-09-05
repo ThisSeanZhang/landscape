@@ -1,5 +1,8 @@
+use std::sync::Arc;
+
 use crate::bpf_ctx;
 use crate::bpf_error::LdEbpfResult;
+use crate::runtime::EbpfRuntime;
 
 // ========================================================================
 // TC MSS clamp
@@ -15,6 +18,7 @@ pub struct MssHandle {
 }
 
 pub struct TcMssHandle {
+    runtime: Arc<EbpfRuntime>,
     _skel: tc_mss_skel::TcMssSkel<'static>,
     _backing: crate::landscape::OwnedOpenObject,
     ifindex: u32,
@@ -22,23 +26,24 @@ pub struct TcMssHandle {
 
 impl Drop for TcMssHandle {
     fn drop(&mut self) {
-        use crate::chain::tc_manager::{StageType, TcChainManager};
-        let manager = TcChainManager::instance();
-        let _ = manager.remove(self.ifindex, StageType::Mss);
+        use crate::chain::tc_manager::StageType;
+        let _ = self.runtime.tc.remove(self.ifindex, StageType::Mss);
     }
 }
 
-pub fn attach_tc_mss(ifindex: u32, mtu: u16, has_mac: bool) -> LdEbpfResult<TcMssHandle> {
-    use crate::chain::tc_manager::{
-        tc_pipe_exits_wan_egress_path, tc_pipe_exits_wan_ingress_path, StageEntry, StageType,
-        TcChainManager,
-    };
+pub fn attach_tc_mss(
+    rt: &Arc<EbpfRuntime>,
+    ifindex: u32,
+    mtu: u16,
+    has_mac: bool,
+) -> LdEbpfResult<TcMssHandle> {
+    use crate::chain::tc_manager::{StageEntry, StageType};
     use crate::landscape::{pin_and_reuse_map, OwnedOpenObject};
     use libbpf_rs::skel::{OpenSkel, SkelBuilder};
     use std::os::fd::{AsFd, AsRawFd};
 
-    let manager = TcChainManager::instance();
-    manager.ensure_roots(ifindex, has_mac)?;
+    let paths = &rt.paths;
+    rt.tc.ensure_roots(ifindex, has_mac)?;
 
     let builder = tc_mss_skel::TcMssSkelBuilder::default();
     let (backing, obj) = OwnedOpenObject::new();
@@ -50,11 +55,11 @@ pub fn attach_tc_mss(ifindex: u32, mtu: u16, has_mac: bool) -> LdEbpfResult<TcMs
 
     pin_and_reuse_map(
         &mut open_skel.maps.tc_pipe_exits_wan_ingress,
-        &tc_pipe_exits_wan_ingress_path(),
+        &paths.tc_pipe_exits_wan_ingress_path(),
     )?;
     pin_and_reuse_map(
         &mut open_skel.maps.tc_pipe_exits_wan_egress,
-        &tc_pipe_exits_wan_egress_path(),
+        &paths.tc_pipe_exits_wan_egress_path(),
     )?;
 
     let skel = bpf_ctx!(open_skel.load(), "load tc_mss skeleton")?;
@@ -66,9 +71,14 @@ pub fn attach_tc_mss(ifindex: u32, mtu: u16, has_mac: bool) -> LdEbpfResult<TcMs
         wan_egress_next_stage_fd: skel.maps.wan_egress_next_stage.as_fd().as_raw_fd(),
     };
 
-    manager.inject(ifindex, StageType::Mss, entry)?;
+    rt.tc.inject(ifindex, StageType::Mss, entry)?;
 
-    Ok(TcMssHandle { _skel: skel, _backing: backing, ifindex })
+    Ok(TcMssHandle {
+        runtime: rt.clone(),
+        _skel: skel,
+        _backing: backing,
+        ifindex,
+    })
 }
 
 // ========================================================================
@@ -80,6 +90,7 @@ pub(crate) mod xdp_mss_skel {
 }
 
 pub struct XdpMssHandle {
+    runtime: Arc<EbpfRuntime>,
     _skel: xdp_mss_skel::XdpMssSkel<'static>,
     _backing: crate::landscape::OwnedOpenObject,
     ifindex: u32,
@@ -90,43 +101,47 @@ unsafe impl Sync for XdpMssHandle {}
 
 impl Drop for XdpMssHandle {
     fn drop(&mut self) {
-        use crate::chain::xdp_manager::{StageType, XdpChainManager};
-        let manager = XdpChainManager::instance();
-        let _ = manager.remove(self.ifindex, StageType::Mss);
+        use crate::chain::xdp_manager::StageType;
+        let _ = self.runtime.xdp.remove(self.ifindex, StageType::Mss);
     }
 }
 
-pub fn init_xdp_mss(ifindex: u32, mtu_size: u16) -> LdEbpfResult<XdpMssHandle> {
-    use crate::chain::xdp_manager::{
-        xdp_lan_pipe_root_progs_path, xdp_pipe_exits_lan_path, xdp_pipe_exits_wan_path,
-        xdp_pipe_root_progs_path, StageType, XdpChainManager,
-    };
+pub fn init_xdp_mss(
+    rt: &Arc<EbpfRuntime>,
+    ifindex: u32,
+    mtu_size: u16,
+) -> LdEbpfResult<XdpMssHandle> {
+    use crate::chain::xdp_manager::StageType;
     use crate::landscape::{pin_and_reuse_map, OwnedOpenObject};
     use libbpf_rs::skel::{OpenSkel, SkelBuilder};
     use std::os::fd::{AsFd, AsRawFd};
 
     use xdp_mss_skel::XdpMssSkelBuilder;
 
+    let paths = &rt.paths;
     let builder = XdpMssSkelBuilder::default();
     let (backing, obj) = OwnedOpenObject::new();
     let mut open_skel = bpf_ctx!(builder.open(obj), "open xdp_mss skeleton")?;
 
     crate::bpf_ctx!(
-        pin_and_reuse_map(&mut open_skel.maps.xdp_pipe_root_progs, &xdp_pipe_root_progs_path(),),
+        pin_and_reuse_map(
+            &mut open_skel.maps.xdp_pipe_root_progs,
+            &paths.xdp_pipe_root_progs_path(),
+        ),
         "xdp_mss pin xdp_pipe_root_progs"
     )?;
     crate::bpf_ctx!(
-        pin_and_reuse_map(&mut open_skel.maps.xdp_pipe_exits_lan, &xdp_pipe_exits_lan_path(),),
+        pin_and_reuse_map(&mut open_skel.maps.xdp_pipe_exits_lan, &paths.xdp_pipe_exits_lan_path(),),
         "xdp_mss pin xdp_pipe_exits_lan"
     )?;
     crate::bpf_ctx!(
-        pin_and_reuse_map(&mut open_skel.maps.xdp_pipe_exits_wan, &xdp_pipe_exits_wan_path(),),
+        pin_and_reuse_map(&mut open_skel.maps.xdp_pipe_exits_wan, &paths.xdp_pipe_exits_wan_path(),),
         "xdp_mss pin xdp_pipe_exits_wan"
     )?;
     crate::bpf_ctx!(
         pin_and_reuse_map(
             &mut open_skel.maps.xdp_lan_pipe_root_progs,
-            &xdp_lan_pipe_root_progs_path(),
+            &paths.xdp_lan_pipe_root_progs_path(),
         ),
         "xdp_mss pin xdp_lan_pipe_root_progs"
     )?;
@@ -143,19 +158,28 @@ pub fn init_xdp_mss(ifindex: u32, mtu_size: u16) -> LdEbpfResult<XdpMssHandle> {
     let wan_fd = skel.progs.xdp_mss_wan.as_fd().as_raw_fd();
     let next_fd = skel.maps.next_stage.as_fd().as_raw_fd();
 
-    let manager = XdpChainManager::instance();
-    manager.inject(ifindex, StageType::Mss, lan_fd, wan_fd, next_fd)?;
+    rt.xdp.inject(ifindex, StageType::Mss, lan_fd, wan_fd, next_fd)?;
 
-    Ok(XdpMssHandle { _skel: skel, _backing: backing, ifindex })
+    Ok(XdpMssHandle {
+        runtime: rt.clone(),
+        _skel: skel,
+        _backing: backing,
+        ifindex,
+    })
 }
 
 // ========================================================================
 // Mode-aware unified entry (TC ingress+egress + XDP LAN+WAN)
 // ========================================================================
 
-pub fn init_mss(ifindex: u32, mtu: u16, has_mac: bool) -> LdEbpfResult<MssHandle> {
+pub fn init_mss(
+    rt: &Arc<EbpfRuntime>,
+    ifindex: u32,
+    mtu: u16,
+    has_mac: bool,
+) -> LdEbpfResult<MssHandle> {
     Ok(MssHandle {
-        tc: Some(attach_tc_mss(ifindex, mtu, has_mac)?),
-        xdp: Some(init_xdp_mss(ifindex, mtu)?),
+        tc: Some(attach_tc_mss(rt, ifindex, mtu, has_mac)?),
+        xdp: Some(init_xdp_mss(rt, ifindex, mtu)?),
     })
 }

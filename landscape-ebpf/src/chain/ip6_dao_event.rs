@@ -8,8 +8,8 @@ use tokio::sync::mpsc::error::TrySendError;
 use tokio_util::sync::CancellationToken;
 use zerocopy::FromBytes;
 
+use crate::maps::LandscapeMapPath;
 use crate::metric::{dup_epoll_async_fd, run_ringbuf_loop};
-use crate::MAP_PATHS;
 
 /// A DAD NS target learned by the per-iface `tc_lan_dao` data path.
 /// Wire layout must match `struct ip6_dao_event` in bpf/neigh_ip6_event.h;
@@ -49,6 +49,7 @@ impl Ip6DaoEvent {
 /// dispatcher task dies, and rebuilds the ringbuf consumer when its task exits
 /// unexpectedly, so DAD learning self-heals instead of silently going dark.
 pub struct Ip6DaoEventSource {
+    paths: Arc<LandscapeMapPath>,
     cancel: CancellationToken,
     tx_slot: Arc<ArcSwapOption<mpsc::Sender<Ip6DaoEvent>>>,
     /// Fired when the current ringbuf consumer task exits.
@@ -58,22 +59,28 @@ pub struct Ip6DaoEventSource {
 impl Ip6DaoEventSource {
     /// Starts the process-wide ringbuf consumer. Events are dropped until a
     /// channel is attached via [`Self::attach_channel`].
-    pub fn spawn() -> Result<Self, String> {
+    pub fn spawn(paths: Arc<LandscapeMapPath>) -> Result<Self, String> {
         let tx_slot = Arc::new(ArcSwapOption::<mpsc::Sender<Ip6DaoEvent>>::new(None));
         let cancel = CancellationToken::new();
         let died = CancellationToken::new();
-        Self::spawn_consumer_loop(tx_slot.clone(), cancel.clone(), died.clone())?;
-        Ok(Ip6DaoEventSource { cancel, tx_slot, died: std::sync::Mutex::new(died) })
+        Self::spawn_consumer_loop(paths.clone(), tx_slot.clone(), cancel.clone(), died.clone())?;
+        Ok(Ip6DaoEventSource {
+            paths,
+            cancel,
+            tx_slot,
+            died: std::sync::Mutex::new(died),
+        })
     }
 
     /// Opens the pinned `ip6_dao_events` ringbuf and spawns the consumption
     /// loop, firing `died` on any exit so the supervisor can rebuild it.
     fn spawn_consumer_loop(
+        paths: Arc<LandscapeMapPath>,
         tx_slot: Arc<ArcSwapOption<mpsc::Sender<Ip6DaoEvent>>>,
         cancel: CancellationToken,
         died: CancellationToken,
     ) -> Result<(), String> {
-        let map = libbpf_rs::MapHandle::from_pinned_path(&MAP_PATHS.ip6_dao_events)
+        let map = libbpf_rs::MapHandle::from_pinned_path(&paths.ip6_dao_events)
             .map_err(|e| format!("failed to open pinned ip6_dao_events map: {e}"))?;
         let tx_slot_cb = tx_slot.clone();
         let callback = move |data: &[u8]| -> i32 {
@@ -147,7 +154,12 @@ impl Ip6DaoEventSource {
             return Ok(());
         }
         let died = CancellationToken::new();
-        Self::spawn_consumer_loop(self.tx_slot.clone(), self.cancel.clone(), died.clone())?;
+        Self::spawn_consumer_loop(
+            self.paths.clone(),
+            self.tx_slot.clone(),
+            self.cancel.clone(),
+            died.clone(),
+        )?;
         *self.died.lock().unwrap() = died;
         Ok(())
     }
@@ -163,10 +175,12 @@ impl Ip6DaoEventSource {
 
     #[cfg(test)]
     pub(crate) fn test_new(
+        paths: Arc<LandscapeMapPath>,
         cancel: CancellationToken,
         tx_slot: Arc<ArcSwapOption<mpsc::Sender<Ip6DaoEvent>>>,
     ) -> Self {
         Ip6DaoEventSource {
+            paths,
             cancel,
             tx_slot,
             died: std::sync::Mutex::new(CancellationToken::new()),

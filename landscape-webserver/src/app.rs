@@ -1,6 +1,7 @@
 use std::{net::IpAddr, path::PathBuf, sync::Arc, time::Duration};
 
 use arc_swap::ArcSwap;
+use landscape_ebpf::maps::LandscapeMapPath;
 
 use landscape::{
     cert::{account_service::CertAccountService, order_service::CertService},
@@ -48,6 +49,8 @@ use crate::gateway_runtime::GatewayService;
 pub struct LandscapeApp {
     pub home_path: PathBuf,
     pub auth: Arc<ArcSwap<AuthRuntimeConfig>>,
+    /// eBPF map pin paths (for ad-hoc map introspection endpoints).
+    pub(crate) ebpf_paths: Arc<LandscapeMapPath>,
     pub dns_service: LandscapeDnsService,
     pub ddns_service: DdnsService,
     pub dns_provider_profile_service: DnsProviderProfileService,

@@ -18,9 +18,7 @@ use landscape_common::{
     service::{ServiceStatus, WatchService},
     LANDSCAPE_METRIC_DIR_NAME,
 };
-use landscape_ebpf::metric::{
-    EbpfMetricSourceFactory, EventSourceStopOutcome, MetricSourceFactory, MetricSourceHandle,
-};
+use landscape_ebpf::metric::{EventSourceStopOutcome, MetricSourceFactory, MetricSourceHandle};
 use landscape_metric::MetricEngine;
 use tokio::sync::mpsc;
 use tokio::sync::Mutex;
@@ -73,11 +71,7 @@ impl MetricService {
         })
     }
 
-    pub async fn new(home_path: PathBuf, config: MetricRuntimeConfig) -> Result<Self, String> {
-        Self::new_with_source_factory(home_path, config, Arc::new(EbpfMetricSourceFactory)).await
-    }
-
-    pub async fn new_with_source_factory(
+    pub async fn new(
         home_path: PathBuf,
         config: MetricRuntimeConfig,
         source_factory: Arc<dyn MetricSourceFactory>,

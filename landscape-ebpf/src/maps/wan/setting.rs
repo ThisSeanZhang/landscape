@@ -7,30 +7,33 @@ use landscape_common::net::MacAddr;
 use libbpf_rs::{MapCore, MapFlags};
 use zerocopy::IntoBytes;
 
-use crate::{LANDSCAPE_IPV4_TYPE, LANDSCAPE_IPV6_TYPE, MAP_PATHS};
+use crate::maps::LandscapeMapPath;
+use crate::{LANDSCAPE_IPV4_TYPE, LANDSCAPE_IPV6_TYPE};
 
 use super::types::{WanIpInfoKey, WanIpInfoValue};
 use crate::maps::Inet6Bytes;
 
 pub fn add_ipv6_wan_ip(
+    paths: &LandscapeMapPath,
     ifindex: u32,
     addr: Ipv6Addr,
     gateway: Option<Ipv6Addr>,
     mask: u8,
     mac: Option<MacAddr>,
 ) {
-    let wan_ip_binding = libbpf_rs::MapHandle::from_pinned_path(&MAP_PATHS.wan_ip).unwrap();
+    let wan_ip_binding = libbpf_rs::MapHandle::from_pinned_path(&paths.wan_ip).unwrap();
     add_wan_ip(&wan_ip_binding, ifindex, IpAddr::V6(addr), gateway.map(IpAddr::V6), mask, mac);
 }
 
 pub fn add_ipv4_wan_ip(
+    paths: &LandscapeMapPath,
     ifindex: u32,
     addr: Ipv4Addr,
     gateway: Option<Ipv4Addr>,
     mask: u8,
     mac: Option<MacAddr>,
 ) {
-    let wan_ip_binding = libbpf_rs::MapHandle::from_pinned_path(&MAP_PATHS.wan_ip).unwrap();
+    let wan_ip_binding = libbpf_rs::MapHandle::from_pinned_path(&paths.wan_ip).unwrap();
     add_wan_ip(&wan_ip_binding, ifindex, IpAddr::V4(addr), gateway.map(IpAddr::V4), mask, mac);
 }
 
@@ -119,18 +122,18 @@ pub(crate) fn add_wan_ip<T>(
     }
 }
 
-pub fn del_ipv6_wan_ip(ifindex: u32) {
-    del_wan_ip(ifindex, LANDSCAPE_IPV6_TYPE);
+pub fn del_ipv6_wan_ip(paths: &LandscapeMapPath, ifindex: u32) {
+    del_wan_ip(paths, ifindex, LANDSCAPE_IPV6_TYPE);
 }
 
-pub fn del_ipv4_wan_ip(ifindex: u32) {
-    del_wan_ip(ifindex, LANDSCAPE_IPV4_TYPE);
+pub fn del_ipv4_wan_ip(paths: &LandscapeMapPath, ifindex: u32) {
+    del_wan_ip(paths, ifindex, LANDSCAPE_IPV4_TYPE);
 }
 
 #[allow(clippy::field_reassign_with_default)]
-fn del_wan_ip(ifindex: u32, l3_protocol: u8) {
+fn del_wan_ip(paths: &LandscapeMapPath, ifindex: u32, l3_protocol: u8) {
     tracing::debug!("del wan index - 1: {ifindex:?}");
-    let wan_ip_binding = libbpf_rs::MapHandle::from_pinned_path(&MAP_PATHS.wan_ip).unwrap();
+    let wan_ip_binding = libbpf_rs::MapHandle::from_pinned_path(&paths.wan_ip).unwrap();
     let mut key = WanIpInfoKey::default();
     key.ifindex = ifindex;
     key.l3_protocol = l3_protocol;

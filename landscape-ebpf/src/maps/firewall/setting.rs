@@ -7,11 +7,15 @@ use landscape_common::flow::ip_mark::IpConfig;
 use libbpf_rs::{MapCore, MapFlags};
 use zerocopy::IntoBytes;
 
-use crate::MAP_PATHS;
+use crate::maps::LandscapeMapPath;
 
 use super::types::{FirewallAction, Ipv4LpmKey, Ipv6LpmKey};
 
-pub fn sync_firewall_blacklist(new_ips: Vec<IpConfig>, old_ips: Vec<IpConfig>) {
+pub fn sync_firewall_blacklist(
+    paths: &LandscapeMapPath,
+    new_ips: Vec<IpConfig>,
+    old_ips: Vec<IpConfig>,
+) {
     let new_set: HashSet<IpConfig> = new_ips.into_iter().collect();
     let old_set: HashSet<IpConfig> = old_ips.into_iter().collect();
 
@@ -26,7 +30,7 @@ pub fn sync_firewall_blacklist(new_ips: Vec<IpConfig>, old_ips: Vec<IpConfig>) {
 
     // IPv4 block map
     if !add_v4.is_empty() || !del_v4.is_empty() {
-        let map = libbpf_rs::MapHandle::from_pinned_path(&MAP_PATHS.firewall_ipv4_block).unwrap();
+        let map = libbpf_rs::MapHandle::from_pinned_path(&paths.firewall_ipv4_block).unwrap();
         if !del_v4.is_empty() {
             if let Err(e) = delete_blacklist_ipv4(&map, &del_v4) {
                 tracing::error!("del firewall blacklist ipv4: {e:?}");
@@ -41,7 +45,7 @@ pub fn sync_firewall_blacklist(new_ips: Vec<IpConfig>, old_ips: Vec<IpConfig>) {
 
     // IPv6 block map
     if !add_v6.is_empty() || !del_v6.is_empty() {
-        let map = libbpf_rs::MapHandle::from_pinned_path(&MAP_PATHS.firewall_ipv6_block).unwrap();
+        let map = libbpf_rs::MapHandle::from_pinned_path(&paths.firewall_ipv6_block).unwrap();
         if !del_v6.is_empty() {
             if let Err(e) = delete_blacklist_ipv6(&map, &del_v6) {
                 tracing::error!("del firewall blacklist ipv6: {e:?}");

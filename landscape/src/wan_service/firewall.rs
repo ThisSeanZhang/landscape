@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use landscape_common::database::LandscapeStore;
 use landscape_common::service::manager::ServiceManager;
 use landscape_common::{
@@ -6,6 +8,7 @@ use landscape_common::{
     service::{
         controller::ControllerService, manager::ServiceStarterTrait, ServiceStatus, WatchService,
     },
+    wan_service::firewall::dataplane::FirewallDataplane,
     wan_service::firewall::service::FirewallServiceConfig,
 };
 
@@ -16,8 +19,10 @@ use landscape_database::{
 
 use crate::get_iface_by_name;
 
-#[derive(Clone, Default)]
-pub struct FirewallService {}
+#[derive(Clone)]
+pub struct FirewallService {
+    dataplane: Arc<dyn FirewallDataplane>,
+}
 
 #[async_trait::async_trait]
 impl ServiceStarterTrait for FirewallService {
@@ -30,6 +35,7 @@ impl ServiceStarterTrait for FirewallService {
             if let Some(iface) = get_iface_by_name(&config.iface_name).await {
                 let status_clone = service_status.clone();
                 let iface_name = config.iface_name.clone();
+                let dataplane = self.dataplane.clone();
                 spawn_task_with_resource(
                     task_label::task::FIREWALL_RUN,
                     iface_name.clone(),
@@ -39,6 +45,7 @@ impl ServiceStarterTrait for FirewallService {
                             iface.index as i32,
                             iface.mac.is_some(),
                             status_clone,
+                            dataplane,
                         )
                         .await
                     },
@@ -57,10 +64,11 @@ pub async fn create_firewall_service(
     ifindex: i32,
     has_mac: bool,
     service_status: WatchService,
+    dataplane: Arc<dyn FirewallDataplane>,
 ) {
     service_status.just_change_status(ServiceStatus::Staring);
 
-    let firewall = match landscape_ebpf::stages::firewall::init_firewall(ifindex as u32, has_mac) {
+    let firewall = match dataplane.attach(ifindex as u32, has_mac) {
         Ok(handle) => handle,
         Err(err) => {
             tracing::error!("failed to start firewall for {iface_name}: {err}");
@@ -104,10 +112,11 @@ impl FirewallServiceManagerService {
     pub async fn new(
         store_service: LandscapeDBServiceProvider,
         mut dev_observer: IfaceEventReader,
+        dataplane: Arc<dyn FirewallDataplane>,
     ) -> Self {
         let store = store_service.firewall_service_store();
         let service =
-            ServiceManager::init(store.list().await.unwrap(), FirewallService::default()).await;
+            ServiceManager::init(store.list().await.unwrap(), FirewallService { dataplane }).await;
 
         let service_clone = service.clone();
         spawn_task(task_label::task::FIREWALL_OBSERVER, async move {

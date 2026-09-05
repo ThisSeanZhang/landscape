@@ -1,10 +1,10 @@
 use std::net::IpAddr;
 
+use landscape_common::ebpf::DataplaneGuard;
 use landscape_common::global_const::default_router::{RouteInfo, RouteType, LD_ALL_ROUTERS};
 use landscape_common::net::MacAddr;
 use landscape_common::sys_service::route_service::{LanRouteInfo, LanRouteMode, RouteTargetInfo};
-
-use landscape_ebpf::pppoe::pppoe_handle::PppoeHandle;
+use landscape_common::wan_service::pppoe::{PppoeDataplane, PppoeEgressTmpl};
 
 use crate::get_existing_linklocal;
 use crate::sys_service::route::IpRouteService;
@@ -15,7 +15,7 @@ use super::negotiation::NegotiationResult;
 use super::PPPoEClientConfig;
 
 pub(crate) struct SessionHandle {
-    _pppoe_handle: PppoeHandle,
+    _session_guard: Box<dyn DataplaneGuard>,
     client_ip: std::net::Ipv4Addr,
     server_ip: std::net::Ipv4Addr,
     server_mac: Vec<u8>,
@@ -28,7 +28,11 @@ pub(crate) struct SessionHandle {
 }
 
 impl SessionHandle {
-    pub(crate) async fn shutdown(self, route_service: &IpRouteService) {
+    pub(crate) async fn shutdown(
+        self,
+        route_service: &IpRouteService,
+        dataplane: &dyn PppoeDataplane,
+    ) {
         let _ = std::process::Command::new("ip")
             .args([
                 "addr",
@@ -82,14 +86,15 @@ impl SessionHandle {
         }
         route_service.remove_ipv4_wan_route(&self.iface_name).await;
         route_service.remove_ipv4_lan_route(&self.iface_name).await;
-        landscape_ebpf::maps::wan::del_ipv4_wan_ip(self.ifindex);
+        dataplane.unbind_wan_ipv4(self.ifindex);
 
         let _ = std::process::Command::new("ip")
             .args(["link", "set", "dev", &self.iface_name, "mtu", "1500"])
             .output();
 
-        // PppoeHandle Drop cleans up TC/XDP/SKB state automatically
-        drop(self._pppoe_handle);
+        // Dropping the guard detaches the TC/XDP dataplane and recycles
+        // the SKB fallback state automatically.
+        drop(self._session_guard);
 
         tracing::info!("PPPoE system state cleaned up for iface={}", self.iface_name);
     }
@@ -100,6 +105,7 @@ pub(crate) async fn create_session(
     lcp: &LcpPhaseResult,
     nego: &NegotiationResult,
     route_service: &IpRouteService,
+    dataplane: &dyn PppoeDataplane,
 ) -> Result<SessionHandle, PppoeError> {
     let mru = lcp.mru.min(config.requested_mru);
     let client_ip = nego.client_ip;
@@ -117,13 +123,7 @@ pub(crate) async fn create_session(
         lcp.session_id
     );
 
-    landscape_ebpf::maps::wan::add_ipv4_wan_ip(
-        index,
-        client_ip,
-        Some(server_ip),
-        32,
-        Some(iface_mac),
-    );
+    dataplane.bind_wan_ipv4(index, client_ip, Some(server_ip), 32, Some(iface_mac));
 
     if let Err(e) = std::process::Command::new("ip")
         .args(["link", "set", "dev", iface_name, "mtu", &format!("{}", mru)])
@@ -286,7 +286,7 @@ pub(crate) async fn create_session(
         setup_linklocal(iface_name, nego.ipv6cp_client_id.as_deref());
 
     let dmac: [u8; 6] = lcp.server_mac[..6].try_into().expect("server MAC must be 6 bytes");
-    let tmpl = landscape_ebpf::pppoe::pppoe_handle::PppoeEgressTmpl {
+    let tmpl = PppoeEgressTmpl {
         dmac,
         smac: iface_mac.octets(),
         eth_proto: (0x8864u16).to_be(),
@@ -295,8 +295,8 @@ pub(crate) async fn create_session(
         session_id: lcp.session_id.to_be(),
         ..Default::default()
     };
-    let pppoe_handle = landscape_ebpf::pppoe::pppoe_handle::create_pppoe_handle(index, tmpl, mru)
-        .map_err(|e| PppoeError::EbpfInitFailed(format!("{}", e)))?;
+    let session_guard =
+        dataplane.attach_session(index, tmpl, mru).map_err(PppoeError::EbpfInitFailed)?;
 
     tracing::info!(
         "native PPPoE eBPF TC enabled for iface={} session_id={}",
@@ -305,7 +305,7 @@ pub(crate) async fn create_session(
     );
 
     Ok(SessionHandle {
-        _pppoe_handle: pppoe_handle,
+        _session_guard: session_guard,
         client_ip,
         server_ip,
         server_mac: lcp.server_mac.clone(),

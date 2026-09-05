@@ -1,3 +1,5 @@
+pub mod dataplane;
+
 use serde::{Deserialize, Serialize};
 
 use crate::config_service::iface::{ServiceKind, ZoneAwareConfig, ZoneRequirement};

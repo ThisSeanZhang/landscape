@@ -76,6 +76,7 @@ pub(crate) fn init_shared_maps_for_test(root: &Path) -> TestSharedMaps {
 /// Pinned handles to the shared maps integration tests read/write directly
 /// (previously exposed through the `share_map` skeleton's `maps` struct).
 #[derive(Debug)]
+#[allow(dead_code)] // pinned handles exist for map-layout parity; not every test reads each one
 pub(crate) struct TestSharedMaps {
     pub wan_ip_binding: libbpf_rs::MapHandle,
     pub nat4_static_map: libbpf_rs::MapHandle,

@@ -27,6 +27,7 @@ use landscape_common::{
     lan_service::lan_ipv6::checked_allocate_subnet,
     service::{ServiceStatus, WatchService},
     utils::time::get_f64_timestamp,
+    wan_service::addr_binding::WanAddrBinding,
     wan_service::ipv6_pd::{IAPrefixMap, LDIAPrefix},
     LANDSCAPE_DEFAULE_DHCP_V6_SERVER_PORT,
 };
@@ -206,6 +207,7 @@ pub async fn dhcp_v6_pd_client(
     service_status: WatchService,
     wan_route_info: RouteTargetInfo,
     route_service: IpRouteService,
+    addr_binding: Arc<dyn WanAddrBinding>,
     prefix_map: IAPrefixMap,
     shared_wan_iid: Arc<u64>,
     prefix_sender: IAPrefixEventSender,
@@ -334,6 +336,7 @@ pub async fn dhcp_v6_pd_client(
                         &iface_name,
                         ifindex,
                         &route_service,
+                        addr_binding.as_ref(),
                         &prefix_map,
                         &prefix_sender,
                         &mut current_wan_addr,
@@ -359,6 +362,7 @@ pub async fn dhcp_v6_pd_client(
                             data,
                             &wan_route_info,
                             &route_service,
+                            addr_binding.as_ref(),
                             &prefix_map,
                             &mac_addr,
                             shared_wan_iid.as_ref(),
@@ -405,6 +409,7 @@ pub async fn dhcp_v6_pd_client(
         &iface_name,
         ifindex,
         &route_service,
+        addr_binding.as_ref(),
         &prefix_map,
         &prefix_sender,
         &mut current_wan_addr,
@@ -425,6 +430,7 @@ async fn clear_active_pd_prefix(
     iface_name: &str,
     ifindex: u32,
     route_service: &IpRouteService,
+    addr_binding: &dyn WanAddrBinding,
     prefix_map: &IAPrefixMap,
     prefix_sender: &IAPrefixEventSender,
     current_wan_addr: &mut Option<Ipv6Addr>,
@@ -435,7 +441,7 @@ async fn clear_active_pd_prefix(
     }
 
     route_service.remove_ipv6_wan_route(iface_name).await;
-    landscape_ebpf::maps::wan::del_ipv6_wan_ip(ifindex);
+    addr_binding.unbind_ipv6(ifindex);
     if let Some(wan_addr) = current_wan_addr.take() {
         del_iface_ip(wan_addr, 128, iface_name);
     }
@@ -677,6 +683,7 @@ async fn handle_packet(
     (msg, msg_addr): (Vec<u8>, SocketAddr),
     wan_route_info: &RouteTargetInfo,
     route_service: &IpRouteService,
+    addr_binding: &dyn WanAddrBinding,
     prefix_map: &IAPrefixMap,
     mac_addr: &Option<MacAddr>,
     shared_wan_iid: &u64,
@@ -836,7 +843,14 @@ async fn handle_packet(
                             }
                             info.gateway_ip = IpAddr::V6(ipv6addr);
                             route_service.insert_ipv6_wan_route(iface_name, info).await;
-                            replace_ip_route(&ia_prefix, ipv6addr, iface_name, ifindex, mac_addr);
+                            replace_ip_route(
+                                &ia_prefix,
+                                ipv6addr,
+                                iface_name,
+                                ifindex,
+                                mac_addr,
+                                addr_binding,
+                            );
                             prefix_map.store(iface_name, ia_prefix, expected_pd_len);
                             let _ = prefix_sender
                                 .send(IAPrefixEvent::Updated { iface_name: iface_name.to_string() })
@@ -866,6 +880,7 @@ fn replace_ip_route(
     iface_name: &str,
     ifindex: u32,
     mac: &Option<MacAddr>,
+    addr_binding: &dyn WanAddrBinding,
 ) {
     let result = std::process::Command::new("ip")
         .args([
@@ -884,13 +899,7 @@ fn replace_ip_route(
         ])
         .output();
 
-    landscape_ebpf::maps::wan::add_ipv6_wan_ip(
-        ifindex,
-        iapd.prefix_ip,
-        Some(route_ip),
-        iapd.prefix_len,
-        *mac,
-    );
+    addr_binding.bind_ipv6(ifindex, iapd.prefix_ip, Some(route_ip), iapd.prefix_len, *mac);
     if let Err(e) = result {
         tracing::error!("{e:?}");
     }

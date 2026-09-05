@@ -6,10 +6,7 @@ use libbpf_rs::{MapCore, MapFlags};
 use zerocopy::IntoBytes;
 
 use super::cache;
-use crate::{
-    maps::{LanRouteInfoV4, LanRouteInfoV6, LanRouteKeyV4, LanRouteKeyV6},
-    MAP_PATHS,
-};
+use crate::maps::{LanRouteInfoV4, LanRouteInfoV6, LanRouteKeyV4, LanRouteKeyV6, LandscapeMapPath};
 const ROUTE_TYPE_LAN: u8 = 0;
 const ROUTE_TYPE_NEXTHOP: u8 = 1;
 const ROUTE_TYPE_WAN: u8 = 2;
@@ -21,11 +18,11 @@ where
 {
     cache::recreate_route_lan_cache_inner_map_with_outer_maps(rt4_cache_map, rt6_cache_map);
 }
-pub fn add_lan_route(lan_info: LanRouteInfo) {
-    let rt4_lan_map = libbpf_rs::MapHandle::from_pinned_path(&MAP_PATHS.rt4_lan_map).unwrap();
-    let rt6_lan_map = libbpf_rs::MapHandle::from_pinned_path(&MAP_PATHS.rt6_lan_map).unwrap();
-    let rt4_cache_map = libbpf_rs::MapHandle::from_pinned_path(&MAP_PATHS.rt4_cache_map).unwrap();
-    let rt6_cache_map = libbpf_rs::MapHandle::from_pinned_path(&MAP_PATHS.rt6_cache_map).unwrap();
+pub fn add_lan_route(paths: &LandscapeMapPath, lan_info: LanRouteInfo) {
+    let rt4_lan_map = libbpf_rs::MapHandle::from_pinned_path(&paths.rt4_lan_map).unwrap();
+    let rt6_lan_map = libbpf_rs::MapHandle::from_pinned_path(&paths.rt6_lan_map).unwrap();
+    let rt4_cache_map = libbpf_rs::MapHandle::from_pinned_path(&paths.rt4_cache_map).unwrap();
+    let rt6_cache_map = libbpf_rs::MapHandle::from_pinned_path(&paths.rt6_cache_map).unwrap();
 
     let _ = add_lan_route_with_maps(
         &rt4_lan_map,
@@ -188,9 +185,9 @@ where
     true
 }
 
-pub fn del_lan_route(lan_info: LanRouteInfo) {
-    let rt4_lan_map = libbpf_rs::MapHandle::from_pinned_path(&MAP_PATHS.rt4_lan_map).unwrap();
-    let rt6_lan_map = libbpf_rs::MapHandle::from_pinned_path(&MAP_PATHS.rt6_lan_map).unwrap();
+pub fn del_lan_route(paths: &LandscapeMapPath, lan_info: LanRouteInfo) {
+    let rt4_lan_map = libbpf_rs::MapHandle::from_pinned_path(&paths.rt4_lan_map).unwrap();
+    let rt6_lan_map = libbpf_rs::MapHandle::from_pinned_path(&paths.rt6_lan_map).unwrap();
 
     let _ = del_lan_route_with_maps(&rt4_lan_map, &rt6_lan_map, &lan_info);
 }

@@ -5,6 +5,8 @@ use landscape::wan_service::pppoe_client::{run, PPPoEClientConfig};
 use landscape_common::event::route::RouteEvent;
 use landscape_common::service::{ServiceStatus, WatchService};
 use landscape_database::provider::LandscapeDBServiceProvider;
+use landscape_ebpf::runtime::EbpfRuntime;
+use std::sync::Arc;
 use std::time::Duration;
 
 // ── client spec ──────────────────────────────────────────────────────────────
@@ -58,9 +60,11 @@ impl ClientHandle {
 /// client network namespace.  `setns(2)` only affects the calling thread, so
 /// the client runs on a dedicated OS thread with its own single-threaded
 /// tokio runtime; the returned handle lets the (host-side) test thread steer
-/// and observe the shared `WatchService`.
+/// and observe the shared `WatchService`.  `scenario` selects the client's
+/// isolated eBPF map space so parallel scenarios never share one.
 pub(super) fn start_client(
     client_ns: &str,
+    scenario: &str,
     info: &ClientIfaceInfo,
     spec: &ClientSpec,
 ) -> ClientHandle {
@@ -72,6 +76,7 @@ pub(super) fn start_client(
     let status_for_task = status.clone();
     let (done_tx, done_rx) = std::sync::mpsc::channel::<()>();
     let ns = client_ns.to_string();
+    let scenario = scenario.to_string();
     let cfg = PPPoEClientConfig {
         index: info.index,
         iface_name: info.name.clone(),
@@ -96,8 +101,13 @@ pub(super) fn start_client(
             let provider = LandscapeDBServiceProvider::mem_test_db().await;
             let flow_repo = provider.flow_rule_store();
             let (_evt_tx, evt_rx) = tokio::sync::mpsc::channel::<RouteEvent>(16);
-            let route_service = IpRouteService::new(evt_rx, flow_repo);
-            run(cfg, status_for_task, route_service).await;
+            let ebpf_rt = Arc::new(
+                EbpfRuntime::init(&super::test_bpf_map_space(&scenario), None)
+                    .expect("ebpf runtime in client ns"),
+            );
+            let route_service =
+                IpRouteService::new(evt_rx, flow_repo, ebpf_rt.clone().route_table());
+            run(cfg, status_for_task, route_service, ebpf_rt.pppoe_dataplane()).await;
         });
 
         let _ = done_tx.send(());

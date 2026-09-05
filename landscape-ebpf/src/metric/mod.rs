@@ -12,7 +12,7 @@ use tokio::task::JoinHandle;
 use tokio::time::{timeout, Duration};
 use tokio_util::sync::CancellationToken;
 
-use crate::MAP_PATHS;
+use crate::maps::LandscapeMapPath;
 
 /// 事件源实际终止方式,决定服务最终状态。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -42,15 +42,22 @@ pub trait MetricSourceFactory: Send + Sync {
     ) -> Result<Box<dyn MetricSourceHandle>, String>;
 }
 
-#[derive(Default)]
-pub struct EbpfMetricSourceFactory;
+pub struct EbpfMetricSourceFactory {
+    paths: Arc<LandscapeMapPath>,
+}
+
+impl EbpfMetricSourceFactory {
+    pub fn new(paths: Arc<LandscapeMapPath>) -> Self {
+        Self { paths }
+    }
+}
 
 impl MetricSourceFactory for EbpfMetricSourceFactory {
     fn spawn(
         &self,
         connect_msg_tx: mpsc::Sender<ConnectMessage>,
     ) -> Result<Box<dyn MetricSourceHandle>, String> {
-        Ok(Box::new(ConnectMetricEventSource::spawn(connect_msg_tx)?))
+        Ok(Box::new(ConnectMetricEventSource::spawn(self.paths.clone(), connect_msg_tx)?))
     }
 }
 
@@ -102,11 +109,13 @@ pub struct ConnectMetricEventSource {
 }
 
 impl ConnectMetricEventSource {
-    pub fn spawn(connect_msg_tx: mpsc::Sender<ConnectMessage>) -> Result<Self, String> {
+    pub fn spawn(
+        paths: Arc<LandscapeMapPath>,
+        connect_msg_tx: mpsc::Sender<ConnectMessage>,
+    ) -> Result<Self, String> {
         let tx_slot = Arc::new(ArcSwapOption::new(Some(Arc::new(connect_msg_tx))));
-        let nat_metric_events =
-            libbpf_rs::MapHandle::from_pinned_path(&MAP_PATHS.nat_metric_events)
-                .map_err(|error| format!("failed to open pinned nat_metric_events map: {error}"))?;
+        let nat_metric_events = libbpf_rs::MapHandle::from_pinned_path(&paths.nat_metric_events)
+            .map_err(|error| format!("failed to open pinned nat_metric_events map: {error}"))?;
         let ringbuf = build_connect_ringbuf(&nat_metric_events, tx_slot.clone())?;
         let async_fd = dup_epoll_async_fd(ringbuf.epoll_fd())?;
         let cancel = CancellationToken::new();

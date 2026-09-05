@@ -5,6 +5,7 @@ use libbpf_rs::{libbpf_sys, MapCore, MapFlags, MapHandle, MapType};
 use zerocopy::IntoBytes;
 
 use crate::maps::route::types::{RtCacheKeyV4, RtCacheKeyV6, RtCacheValueV4, RtCacheValueV6};
+use crate::maps::LandscapeMapPath;
 
 /// WAN verdict cache lives at outer slot 0, LAN at slot 1
 /// (`rt4/6_cache_map` is an ARRAY_OF_MAPS indexed by cache type).
@@ -92,14 +93,14 @@ pub(crate) fn recreate_route_lan_cache_inner_map_with_outer_maps<T, U>(
 }
 
 /// 修改了 静态 NAT 需要清理
-pub fn recreate_route_wan_cache_inner_map() {
+pub fn recreate_route_wan_cache_inner_map(paths: &LandscapeMapPath) {
     create_inner_map_generic::<_, RtCacheKeyV4, RtCacheValueV4>(
-        &crate::MAP_PATHS.rt4_cache_map,
+        &paths.rt4_cache_map,
         "rt4_cache_wan".into(),
         WAN_CACHE,
     );
     create_inner_map_generic::<_, RtCacheKeyV6, RtCacheValueV6>(
-        &crate::MAP_PATHS.rt6_cache_map,
+        &paths.rt6_cache_map,
         "rt6_cache_wan".into(),
         WAN_CACHE,
     );
@@ -107,11 +108,11 @@ pub fn recreate_route_wan_cache_inner_map() {
 
 /// 在修改了 DNS 规则， DST IP 规则。 Flow Match 规则后调用
 /// 使缓存失效
-pub fn recreate_route_lan_cache_inner_map() {
-    let rt4_cache_map = libbpf_rs::MapHandle::from_pinned_path(&crate::MAP_PATHS.rt4_cache_map)
-        .expect("open rt4_cache");
-    let rt6_cache_map = libbpf_rs::MapHandle::from_pinned_path(&crate::MAP_PATHS.rt6_cache_map)
-        .expect("open rt6_cache");
+pub fn recreate_route_lan_cache_inner_map(paths: &LandscapeMapPath) {
+    let rt4_cache_map =
+        libbpf_rs::MapHandle::from_pinned_path(&paths.rt4_cache_map).expect("open rt4_cache");
+    let rt6_cache_map =
+        libbpf_rs::MapHandle::from_pinned_path(&paths.rt6_cache_map).expect("open rt6_cache");
 
     recreate_route_lan_cache_inner_map_impl(&rt4_cache_map, &rt6_cache_map);
 }

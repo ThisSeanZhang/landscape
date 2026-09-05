@@ -1,7 +1,9 @@
+use std::sync::Arc;
+
 use landscape_common::{
     event::hub::EnrolledDeviceEventReader,
     event::{dns::DnsEvent, route::RouteEvent},
-    flow::{config::FlowConfig, FlowEntryMatchMode, FlowRuleError},
+    flow::{config::FlowConfig, dataplane::FlowRuleDataplane, FlowEntryMatchMode, FlowRuleError},
     service::controller::{ConfigController, FlowConfigController},
 };
 use landscape_database::{
@@ -16,6 +18,7 @@ pub struct FlowRuleService {
     store: FlowConfigRepository,
     dns_events_tx: mpsc::Sender<DnsEvent>,
     route_events_tx: mpsc::Sender<RouteEvent>,
+    dataplane: Arc<dyn FlowRuleDataplane>,
 }
 
 impl FlowRuleService {
@@ -24,9 +27,10 @@ impl FlowRuleService {
         dns_events_tx: mpsc::Sender<DnsEvent>,
         route_events_tx: mpsc::Sender<RouteEvent>,
         device_reader: EnrolledDeviceEventReader,
+        dataplane: Arc<dyn FlowRuleDataplane>,
     ) -> Self {
         let store = store_provider.flow_rule_store();
-        let result = Self { store, dns_events_tx, route_events_tx };
+        let result = Self { store, dns_events_tx, route_events_tx, dataplane };
         result.refresh_flow_matches().await;
 
         let this = result.clone();
@@ -48,10 +52,7 @@ impl FlowRuleService {
             }
         };
 
-        if let Err(error) = landscape_ebpf::maps::flow::reconcile_flow_match_map(&runtime_configs) {
-            tracing::error!("failed to reconcile flow match map: {error:?}");
-            return;
-        }
+        self.dataplane.sync_flow_matches(&runtime_configs);
 
         let _ = self.dns_events_tx.send(DnsEvent::FlowUpdated).await;
     }

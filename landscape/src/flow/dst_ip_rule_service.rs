@@ -1,8 +1,9 @@
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 use landscape_common::{
     event::dns::DstIpEvent,
-    flow::ip_mark::WanIpRuleConfig,
+    flow::{dataplane::FlowRuleDataplane, ip_mark::WanIpRuleConfig},
     service::controller::{ConfigController, FlowConfigController},
 };
 use landscape_database::{
@@ -17,6 +18,7 @@ use crate::geo::ip_service::GeoIpService;
 pub struct DstIpRuleService {
     store: DstIpRuleRepository,
     geo_ip_service: GeoIpService,
+    dataplane: Arc<dyn FlowRuleDataplane>,
 }
 
 impl DstIpRuleService {
@@ -24,9 +26,10 @@ impl DstIpRuleService {
         store: LandscapeDBServiceProvider,
         geo_ip_service: GeoIpService,
         mut receiver: broadcast::Receiver<DstIpEvent>,
+        dataplane: Arc<dyn FlowRuleDataplane>,
     ) -> Self {
         let store = store.dst_ip_rule_store();
-        let dst_ip_rule_service = Self { store, geo_ip_service };
+        let dst_ip_rule_service = Self { store, geo_ip_service, dataplane };
         dst_ip_rule_service.update_many_config(dst_ip_rule_service.list().await).await;
         let dst_ip_rule_service_clone = dst_ip_rule_service.clone();
         tokio::spawn(async move {
@@ -63,12 +66,14 @@ impl ConfigController for DstIpRuleService {
     async fn update_one_config(&self, config: Self::Config) {
         let flow_id = config.flow_id;
         let rules = self.list_flow_configs(flow_id).await;
-        update_flow_dst_ip_map(self.geo_ip_service.clone(), flow_id, rules).await;
+        update_flow_dst_ip_map(self.geo_ip_service.clone(), self.dataplane.clone(), flow_id, rules)
+            .await;
     }
     async fn delete_one_config(&self, config: Self::Config) {
         let flow_id = config.flow_id;
         let rules = self.list_flow_configs(flow_id).await;
-        update_flow_dst_ip_map(self.geo_ip_service.clone(), flow_id, rules).await;
+        update_flow_dst_ip_map(self.geo_ip_service.clone(), self.dataplane.clone(), flow_id, rules)
+            .await;
     }
 
     async fn update_many_config(&self, new_configs: Vec<Self::Config>) {
@@ -90,15 +95,16 @@ impl ConfigController for DstIpRuleService {
         for flow_id in flow_ids {
             let rules = rule_map.remove(&flow_id).unwrap_or_default();
             let geo_ip_service = self.geo_ip_service.clone();
-            update_flow_dst_ip_map(geo_ip_service, flow_id, rules).await;
+            update_flow_dst_ip_map(geo_ip_service, self.dataplane.clone(), flow_id, rules).await;
         }
         // TODO: 应当只清理当前 Flow 的缓存
-        landscape_ebpf::maps::route::cache::recreate_route_lan_cache_inner_map();
+        self.dataplane.invalidate_lan_cache();
     }
 }
 
 async fn update_flow_dst_ip_map(
     geo_ip_service: GeoIpService,
+    dataplane: Arc<dyn FlowRuleDataplane>,
     flow_id: u32,
     rules: Vec<WanIpRuleConfig>,
 ) {
@@ -106,7 +112,7 @@ async fn update_flow_dst_ip_map(
     rules.sort_by_key(|a| a.index);
     tracing::info!("[flow_id: {flow_id}] update dst ip rules: {rules:?}");
     let result = geo_ip_service.convert_config_to_runtime_rule(rules).await;
-    landscape_ebpf::maps::flow_wanip::add_wan_ip_mark(flow_id, result);
+    dataplane.set_dst_ip_marks(flow_id, result);
 }
 
 #[cfg(test)]

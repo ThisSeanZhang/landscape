@@ -10,28 +10,31 @@ pub async fn main() {
     landscape_common::init_tracing!();
     landscape_ebpf::setting_libbpf_log();
 
+    let paths =
+        landscape_ebpf::runtime::init_map_paths("dns_dispatcher_test").expect("init map paths");
+
     let is_test_udp = true;
 
     if is_test_udp {
-        test_udp().await;
+        test_udp(&paths).await;
     } else {
-        test_tcp().await;
+        test_tcp(&paths).await;
     }
 }
-pub async fn test_tcp() {
+pub async fn test_tcp(paths: &landscape_ebpf::maps::LandscapeMapPath) {
     let (listener1, sock_fd1) = create_tcp_listener("0.0.0.0:55").await.unwrap();
     let (listener2, sock_fd2) = create_tcp_listener("0.0.0.0:55").await.unwrap();
 
-    landscape_ebpf::maps::dns::setting_dns_sock_map_tcp(sock_fd1, 0);
-    landscape_ebpf::maps::dns::setting_dns_sock_map_tcp(sock_fd2, 10);
+    landscape_ebpf::maps::dns::setting_dns_sock_map_tcp(paths, sock_fd1, 0);
+    landscape_ebpf::maps::dns::setting_dns_sock_map_tcp(paths, sock_fd2, 10);
 
     // attach eBPF
-    landscape_ebpf::dns_dispatcher::attach_reuseport_ebpf(sock_fd1).unwrap();
+    landscape_ebpf::dns_dispatcher::attach_reuseport_ebpf(paths, sock_fd1).unwrap();
 
     println!("Listening on TCP port 55 with sk_reuseport eBPF");
 
     let (listener3, sock_fd3) = create_tcp_listener("0.0.0.0:55").await.unwrap();
-    landscape_ebpf::maps::dns::setting_dns_sock_map_tcp(sock_fd3, 20);
+    landscape_ebpf::maps::dns::setting_dns_sock_map_tcp(paths, sock_fd3, 20);
 
     tokio::select! {
         _ = tokio::signal::ctrl_c()=> {},
@@ -41,21 +44,21 @@ pub async fn test_tcp() {
     }
 }
 
-pub async fn test_udp() {
+pub async fn test_udp(paths: &landscape_ebpf::maps::LandscapeMapPath) {
     let (udp_socket1, sock_fd1) = create_udp_socket("0.0.0.0:55").await.unwrap();
     let (udp_socket2, sock_fd2) = create_udp_socket("0.0.0.0:55").await.unwrap();
 
-    landscape_ebpf::maps::dns::setting_dns_sock_map(sock_fd1, 0);
-    landscape_ebpf::maps::dns::setting_dns_sock_map(sock_fd2, 10);
+    landscape_ebpf::maps::dns::setting_dns_sock_map(paths, sock_fd1, 0);
+    landscape_ebpf::maps::dns::setting_dns_sock_map(paths, sock_fd2, 10);
 
     // attach eBPF
-    landscape_ebpf::dns_dispatcher::attach_reuseport_ebpf(sock_fd1).unwrap();
+    landscape_ebpf::dns_dispatcher::attach_reuseport_ebpf(paths, sock_fd1).unwrap();
 
     println!("Listening on UDP port 55 with sk_reuseport eBPF");
 
     let (udp_socket3, sock_fd3) = create_udp_socket("0.0.0.0:55").await.unwrap();
 
-    landscape_ebpf::maps::dns::setting_dns_sock_map(sock_fd3, 20);
+    landscape_ebpf::maps::dns::setting_dns_sock_map(paths, sock_fd3, 20);
 
     tokio::select! {
         _ = tokio::signal::ctrl_c()=> {},

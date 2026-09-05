@@ -1,9 +1,11 @@
 use std::os::fd::AsRawFd;
+use std::sync::Arc;
 
 use landscape_common::wan_service::nat::config::NatConfig;
 
 use crate::bpf_ctx;
 use crate::bpf_error::LdEbpfResult;
+use crate::runtime::EbpfRuntime;
 
 // ========================================================================
 // TC NAT
@@ -23,6 +25,7 @@ pub struct NatHandle {
 }
 
 pub struct TcNatHandle {
+    runtime: Arc<EbpfRuntime>,
     _skel: tc_nat_skel::TcNatSkel<'static>,
     _backing: crate::landscape::OwnedOpenObject,
     ifindex: u32,
@@ -30,13 +33,13 @@ pub struct TcNatHandle {
 
 impl Drop for TcNatHandle {
     fn drop(&mut self) {
-        use crate::chain::tc_manager::{StageType, TcChainManager};
-        let manager = TcChainManager::instance();
-        let _ = manager.remove(self.ifindex, StageType::Nat);
+        use crate::chain::tc_manager::StageType;
+        let _ = self.runtime.tc.remove(self.ifindex, StageType::Nat);
     }
 }
 
 pub struct XdpNatHandle {
+    runtime: Arc<EbpfRuntime>,
     _skel: xdp_nat_skel::XdpNatSkel<'static>,
     _backing: crate::landscape::OwnedOpenObject,
     ifindex: u32,
@@ -47,9 +50,8 @@ unsafe impl Sync for XdpNatHandle {}
 
 impl Drop for XdpNatHandle {
     fn drop(&mut self) {
-        use crate::chain::xdp_manager::{StageType, XdpChainManager};
-        let manager = XdpChainManager::instance();
-        let _ = manager.remove(self.ifindex, StageType::Nat);
+        use crate::chain::xdp_manager::StageType;
+        let _ = self.runtime.xdp.remove(self.ifindex, StageType::Nat);
     }
 }
 
@@ -94,18 +96,19 @@ fn seed_runtime_queues<M1, M2, M3>(
 // TC NAT — full (ingress + egress)
 // ========================================================================
 
-pub fn attach_tc_nat(ifindex: u32, has_mac: bool, config: &NatConfig) -> LdEbpfResult<TcNatHandle> {
-    use crate::chain::tc_manager::{
-        tc_pipe_exits_wan_egress_path, tc_pipe_exits_wan_ingress_path, StageEntry, StageType,
-        TcChainManager,
-    };
+pub fn attach_tc_nat(
+    rt: &Arc<EbpfRuntime>,
+    ifindex: u32,
+    has_mac: bool,
+    config: &NatConfig,
+) -> LdEbpfResult<TcNatHandle> {
+    use crate::chain::tc_manager::{StageEntry, StageType};
     use crate::landscape::{pin_and_reuse_map, OwnedOpenObject};
-    use crate::MAP_PATHS;
     use libbpf_rs::skel::{OpenSkel, SkelBuilder};
     use std::os::fd::{AsFd, AsRawFd};
 
-    let manager = TcChainManager::instance();
-    manager.ensure_roots(ifindex, has_mac)?;
+    let paths = &rt.paths;
+    rt.tc.ensure_roots(ifindex, has_mac)?;
 
     let builder = tc_nat_skel::TcNatSkelBuilder::default();
     let (backing, obj) = OwnedOpenObject::new();
@@ -123,17 +126,17 @@ pub fn attach_tc_nat(ifindex: u32, has_mac: bool, config: &NatConfig) -> LdEbpfR
 
     pin_and_reuse_map(
         &mut open_skel.maps.tc_pipe_exits_wan_ingress,
-        &tc_pipe_exits_wan_ingress_path(),
+        &paths.tc_pipe_exits_wan_ingress_path(),
     )?;
     pin_and_reuse_map(
         &mut open_skel.maps.tc_pipe_exits_wan_egress,
-        &tc_pipe_exits_wan_egress_path(),
+        &paths.tc_pipe_exits_wan_egress_path(),
     )?;
 
-    pin_and_reuse_map(&mut open_skel.maps.wan_ip_binding, &MAP_PATHS.wan_ip)?;
-    pin_and_reuse_map(&mut open_skel.maps.nat6_static_map, &MAP_PATHS.nat6_static_map)?;
-    pin_and_reuse_map(&mut open_skel.maps.nat4_static_map, &MAP_PATHS.nat4_static_map)?;
-    pin_and_reuse_map(&mut open_skel.maps.nat_metric_events, &MAP_PATHS.nat_metric_events)?;
+    pin_and_reuse_map(&mut open_skel.maps.wan_ip_binding, &paths.wan_ip)?;
+    pin_and_reuse_map(&mut open_skel.maps.nat6_static_map, &paths.nat6_static_map)?;
+    pin_and_reuse_map(&mut open_skel.maps.nat4_static_map, &paths.nat4_static_map)?;
+    pin_and_reuse_map(&mut open_skel.maps.nat_metric_events, &paths.nat_metric_events)?;
 
     let skel = bpf_ctx!(open_skel.load(), "load tc_nat skeleton")?;
 
@@ -151,9 +154,14 @@ pub fn attach_tc_nat(ifindex: u32, has_mac: bool, config: &NatConfig) -> LdEbpfR
         wan_egress_next_stage_fd: skel.maps.wan_egress_next_stage.as_fd().as_raw_fd(),
     };
 
-    manager.inject(ifindex, StageType::Nat, entry)?;
+    rt.tc.inject(ifindex, StageType::Nat, entry)?;
 
-    Ok(TcNatHandle { _skel: skel, _backing: backing, ifindex })
+    Ok(TcNatHandle {
+        runtime: rt.clone(),
+        _skel: skel,
+        _backing: backing,
+        ifindex,
+    })
 }
 
 // ========================================================================
@@ -161,27 +169,22 @@ pub fn attach_tc_nat(ifindex: u32, has_mac: bool, config: &NatConfig) -> LdEbpfR
 // ========================================================================
 
 fn init_nat_xdp_unified(
+    rt: &Arc<EbpfRuntime>,
     ifindex: u32,
     has_mac: bool,
     config: &NatConfig,
 ) -> LdEbpfResult<(TcNatHandle, XdpNatHandle)> {
-    use crate::chain::tc_manager::{
-        tc_pipe_exits_wan_egress_path, tc_pipe_exits_wan_ingress_path, StageEntry, StageType,
-        TcChainManager,
-    };
-    use crate::chain::xdp_manager::{
-        xdp_lan_pipe_root_progs_path, xdp_pipe_exits_lan_path, xdp_pipe_exits_wan_path,
-        xdp_pipe_root_progs_path, StageType as XdpStageType, XdpChainManager,
-    };
+    use crate::chain::tc_manager::{StageEntry, StageType};
+    use crate::chain::xdp_manager::StageType as XdpStageType;
     use crate::landscape::{pin_and_reuse_map, OwnedOpenObject};
-    use crate::MAP_PATHS;
     use libbpf_rs::skel::{OpenSkel, SkelBuilder};
     use std::os::fd::{AsFd, AsRawFd};
 
+    let paths = &rt.paths;
+
     // ── 1. Load TC nat first (ingress + egress, for runtime map sharing with XDP) ──
 
-    let tc_manager = TcChainManager::instance();
-    tc_manager.ensure_roots(ifindex, has_mac)?;
+    rt.tc.ensure_roots(ifindex, has_mac)?;
 
     let tc_builder = tc_nat_skel::TcNatSkelBuilder::default();
     let (tc_backing, tc_obj) = OwnedOpenObject::new();
@@ -198,16 +201,16 @@ fn init_nat_xdp_unified(
 
     pin_and_reuse_map(
         &mut tc_open.maps.tc_pipe_exits_wan_ingress,
-        &tc_pipe_exits_wan_ingress_path(),
+        &paths.tc_pipe_exits_wan_ingress_path(),
     )?;
     pin_and_reuse_map(
         &mut tc_open.maps.tc_pipe_exits_wan_egress,
-        &tc_pipe_exits_wan_egress_path(),
+        &paths.tc_pipe_exits_wan_egress_path(),
     )?;
-    pin_and_reuse_map(&mut tc_open.maps.wan_ip_binding, &MAP_PATHS.wan_ip)?;
-    pin_and_reuse_map(&mut tc_open.maps.nat6_static_map, &MAP_PATHS.nat6_static_map)?;
-    pin_and_reuse_map(&mut tc_open.maps.nat4_static_map, &MAP_PATHS.nat4_static_map)?;
-    pin_and_reuse_map(&mut tc_open.maps.nat_metric_events, &MAP_PATHS.nat_metric_events)?;
+    pin_and_reuse_map(&mut tc_open.maps.wan_ip_binding, &paths.wan_ip)?;
+    pin_and_reuse_map(&mut tc_open.maps.nat6_static_map, &paths.nat6_static_map)?;
+    pin_and_reuse_map(&mut tc_open.maps.nat4_static_map, &paths.nat4_static_map)?;
+    pin_and_reuse_map(&mut tc_open.maps.nat_metric_events, &paths.nat_metric_events)?;
 
     let tc_skel = bpf_ctx!(tc_open.load(), "load tc_nat skeleton")?;
 
@@ -225,39 +228,42 @@ fn init_nat_xdp_unified(
     let mut xdp_open = bpf_ctx!(xdp_builder.open(xdp_obj), "open xdp_nat skeleton")?;
 
     crate::bpf_ctx!(
-        pin_and_reuse_map(&mut xdp_open.maps.xdp_pipe_root_progs, &xdp_pipe_root_progs_path()),
+        pin_and_reuse_map(
+            &mut xdp_open.maps.xdp_pipe_root_progs,
+            &paths.xdp_pipe_root_progs_path()
+        ),
         "xdp_nat pin xdp_pipe_root_progs"
     )?;
     crate::bpf_ctx!(
-        pin_and_reuse_map(&mut xdp_open.maps.xdp_pipe_exits_lan, &xdp_pipe_exits_lan_path()),
+        pin_and_reuse_map(&mut xdp_open.maps.xdp_pipe_exits_lan, &paths.xdp_pipe_exits_lan_path()),
         "xdp_nat pin xdp_pipe_exits_lan"
     )?;
     crate::bpf_ctx!(
-        pin_and_reuse_map(&mut xdp_open.maps.xdp_pipe_exits_wan, &xdp_pipe_exits_wan_path()),
+        pin_and_reuse_map(&mut xdp_open.maps.xdp_pipe_exits_wan, &paths.xdp_pipe_exits_wan_path()),
         "xdp_nat pin xdp_pipe_exits_wan"
     )?;
     crate::bpf_ctx!(
         pin_and_reuse_map(
             &mut xdp_open.maps.xdp_lan_pipe_root_progs,
-            &xdp_lan_pipe_root_progs_path(),
+            &paths.xdp_lan_pipe_root_progs_path(),
         ),
         "xdp_nat pin xdp_lan_pipe_root_progs"
     )?;
 
     crate::bpf_ctx!(
-        pin_and_reuse_map(&mut xdp_open.maps.wan_ip_binding, &MAP_PATHS.wan_ip),
+        pin_and_reuse_map(&mut xdp_open.maps.wan_ip_binding, &paths.wan_ip),
         "xdp_nat pin wan_ip_binding"
     )?;
     crate::bpf_ctx!(
-        pin_and_reuse_map(&mut xdp_open.maps.nat6_static_map, &MAP_PATHS.nat6_static_map,),
+        pin_and_reuse_map(&mut xdp_open.maps.nat6_static_map, &paths.nat6_static_map,),
         "xdp_nat pin nat6_static_map"
     )?;
     crate::bpf_ctx!(
-        pin_and_reuse_map(&mut xdp_open.maps.nat4_static_map, &MAP_PATHS.nat4_static_map),
+        pin_and_reuse_map(&mut xdp_open.maps.nat4_static_map, &paths.nat4_static_map),
         "xdp_nat pin nat4_static_map"
     )?;
     crate::bpf_ctx!(
-        pin_and_reuse_map(&mut xdp_open.maps.nat_metric_events, &MAP_PATHS.nat_metric_events,),
+        pin_and_reuse_map(&mut xdp_open.maps.nat_metric_events, &paths.nat_metric_events,),
         "xdp_nat pin nat_metric_events"
     )?;
 
@@ -313,17 +319,26 @@ fn init_nat_xdp_unified(
         wan_ingress_next_stage_fd: tc_skel.maps.wan_ingress_next_stage.as_fd().as_raw_fd(),
         wan_egress_next_stage_fd: tc_skel.maps.wan_egress_next_stage.as_fd().as_raw_fd(),
     };
-    tc_manager.inject(ifindex, StageType::Nat, tc_entry)?;
+    rt.tc.inject(ifindex, StageType::Nat, tc_entry)?;
 
     let xdp_lan_fd = xdp_skel.progs.egress_nat.as_fd().as_raw_fd();
     let xdp_wan_fd = xdp_skel.progs.ingress_nat.as_fd().as_raw_fd();
     let xdp_next_fd = xdp_skel.maps.next_stage.as_fd().as_raw_fd();
-    let xdp_manager = XdpChainManager::instance();
-    xdp_manager.inject(ifindex, XdpStageType::Nat, xdp_lan_fd, xdp_wan_fd, xdp_next_fd)?;
+    rt.xdp.inject(ifindex, XdpStageType::Nat, xdp_lan_fd, xdp_wan_fd, xdp_next_fd)?;
 
     Ok((
-        TcNatHandle { _skel: tc_skel, _backing: tc_backing, ifindex },
-        XdpNatHandle { _skel: xdp_skel, _backing: xdp_backing, ifindex },
+        TcNatHandle {
+            runtime: rt.clone(),
+            _skel: tc_skel,
+            _backing: tc_backing,
+            ifindex,
+        },
+        XdpNatHandle {
+            runtime: rt.clone(),
+            _skel: xdp_skel,
+            _backing: xdp_backing,
+            ifindex,
+        },
     ))
 }
 
@@ -331,7 +346,12 @@ fn init_nat_xdp_unified(
 // Mode-aware unified entry (TC ingress+egress + XDP LAN+WAN)
 // ========================================================================
 
-pub fn init_nat(ifindex: u32, has_mac: bool, config: &NatConfig) -> LdEbpfResult<NatHandle> {
-    let (tc, xdp) = init_nat_xdp_unified(ifindex, has_mac, config)?;
+pub fn init_nat(
+    rt: &Arc<EbpfRuntime>,
+    ifindex: u32,
+    has_mac: bool,
+    config: &NatConfig,
+) -> LdEbpfResult<NatHandle> {
+    let (tc, xdp) = init_nat_xdp_unified(rt, ifindex, has_mac, config)?;
     Ok(NatHandle { tc: Some(tc), xdp: Some(xdp) })
 }

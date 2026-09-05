@@ -15,8 +15,8 @@ use zerocopy::{FromBytes, IntoBytes};
 
 use crate::landscape::OwnedOpenObject;
 use crate::maps::mac::neigh_update::*;
-use crate::maps::{MacKeyV4, MacKeyV6, MacValueV4, MacValueV6};
-use crate::{bpf_error::LdEbpfResult, landscape::pin_and_reuse_map, MAP_PATHS};
+use crate::maps::{LandscapeMapPath, MacKeyV4, MacKeyV6, MacValueV4, MacValueV6};
+use crate::{bpf_error::LdEbpfResult, landscape::pin_and_reuse_map};
 
 const ARP_SYNC_INTERVAL_SECS: u64 = 10;
 const ETH_P_IPV4_BE: u16 = 0x0008;
@@ -40,17 +40,17 @@ pub struct NeighUpdateHandle {
     _link: Option<libbpf_rs::Link>,
 }
 
-pub fn init_neigh_update_handle() -> LdEbpfResult<NeighUpdateHandle> {
+pub fn init_neigh_update_handle(paths: &LandscapeMapPath) -> LdEbpfResult<NeighUpdateHandle> {
     let (backing, obj) = OwnedOpenObject::new();
     let builder = NeighUpdateSkelBuilder::default();
     let mut open_skel = crate::bpf_ctx!(builder.open(obj), "neigh_update open skeleton failed")?;
 
     crate::bpf_ctx!(
-        pin_and_reuse_map(&mut open_skel.maps.ip_mac_v4, &MAP_PATHS.ip_mac_v4),
+        pin_and_reuse_map(&mut open_skel.maps.ip_mac_v4, &paths.ip_mac_v4),
         "neigh_update prepare ip_mac_v4 failed"
     )?;
     crate::bpf_ctx!(
-        pin_and_reuse_map(&mut open_skel.maps.ip_mac_v6, &MAP_PATHS.ip_mac_v6),
+        pin_and_reuse_map(&mut open_skel.maps.ip_mac_v6, &paths.ip_mac_v6),
         "neigh_update prepare ip_mac_v6 failed"
     )?;
 
@@ -69,18 +69,21 @@ pub fn init_neigh_update_handle() -> LdEbpfResult<NeighUpdateHandle> {
     Ok(NeighUpdateHandle { _skel: skel, _backing: backing, _link: link })
 }
 
-pub async fn neigh_update(cancel: CancellationToken) -> LdEbpfResult<()> {
-    let _handle = init_neigh_update_handle()?;
+pub async fn neigh_update(
+    paths: std::sync::Arc<LandscapeMapPath>,
+    cancel: CancellationToken,
+) -> LdEbpfResult<()> {
+    let _handle = init_neigh_update_handle(&paths)?;
 
     let (connection, netlink_handle, _) = rtnetlink::new_connection()?;
     let conn_task = tokio::spawn(connection);
 
     loop {
         tracing::info!("sync current arp info");
-        sync_arp_table_to_ebpf_map(&netlink_handle).await;
+        sync_arp_table_to_ebpf_map(&paths, &netlink_handle).await;
 
         tracing::info!("sync current ipv6 neigh info");
-        sync_neigh_v6_table_to_ebpf_map(&netlink_handle).await;
+        sync_neigh_v6_table_to_ebpf_map(&paths, &netlink_handle).await;
 
         tokio::select! {
             _ = cancel.cancelled() => {
@@ -93,7 +96,7 @@ pub async fn neigh_update(cancel: CancellationToken) -> LdEbpfResult<()> {
     }
 }
 
-pub async fn sync_arp_table_to_ebpf_map(handle: &rtnetlink::Handle) {
+pub async fn sync_arp_table_to_ebpf_map(paths: &LandscapeMapPath, handle: &rtnetlink::Handle) {
     let entries = match parse_ipv4_neigh_full_info(handle).await {
         Ok(entries) => entries,
         Err(e) => {
@@ -102,7 +105,7 @@ pub async fn sync_arp_table_to_ebpf_map(handle: &rtnetlink::Handle) {
         }
     };
 
-    let ip_mac_v4 = match libbpf_rs::MapHandle::from_pinned_path(&MAP_PATHS.ip_mac_v4) {
+    let ip_mac_v4 = match libbpf_rs::MapHandle::from_pinned_path(&paths.ip_mac_v4) {
         Ok(map) => map,
         Err(e) => {
             tracing::error!("open pinned ip_mac_v4 map error, skip current arp sync: {e}");
@@ -124,7 +127,7 @@ pub async fn sync_arp_table_to_ebpf_map(handle: &rtnetlink::Handle) {
     }
 }
 
-pub async fn sync_neigh_v6_table_to_ebpf_map(handle: &rtnetlink::Handle) {
+pub async fn sync_neigh_v6_table_to_ebpf_map(paths: &LandscapeMapPath, handle: &rtnetlink::Handle) {
     let entries = match parse_ipv6_neigh_full_info(handle).await {
         Ok(entries) => entries,
         Err(e) => {
@@ -133,7 +136,7 @@ pub async fn sync_neigh_v6_table_to_ebpf_map(handle: &rtnetlink::Handle) {
         }
     };
 
-    let ip_mac_v6 = match libbpf_rs::MapHandle::from_pinned_path(&MAP_PATHS.ip_mac_v6) {
+    let ip_mac_v6 = match libbpf_rs::MapHandle::from_pinned_path(&paths.ip_mac_v6) {
         Ok(map) => map,
         Err(e) => {
             tracing::error!("open pinned ip_mac_v6 map error, skip current ipv6 neigh sync: {e}");
@@ -156,22 +159,24 @@ pub async fn sync_neigh_v6_table_to_ebpf_map(handle: &rtnetlink::Handle) {
 }
 
 pub fn upsert_ipv4_ip_mac(
+    paths: &LandscapeMapPath,
     ifindex: u32,
     ip_addr: Ipv4Addr,
     mac: MacAddr,
     dev_mac: MacAddr,
 ) -> LdEbpfResult<()> {
-    let ip_mac_v4 = MapHandle::from_pinned_path(&MAP_PATHS.ip_mac_v4)?;
+    let ip_mac_v4 = MapHandle::from_pinned_path(&paths.ip_mac_v4)?;
     upsert_ipv4_ip_mac_in_map(&ip_mac_v4, ifindex, ip_addr, mac, dev_mac)
 }
 
 pub fn upsert_ipv6_ip_mac(
+    paths: &LandscapeMapPath,
     ifindex: u32,
     ip_addr: Ipv6Addr,
     mac: MacAddr,
     dev_mac: MacAddr,
 ) -> LdEbpfResult<()> {
-    let ip_mac_v6 = MapHandle::from_pinned_path(&MAP_PATHS.ip_mac_v6)?;
+    let ip_mac_v6 = MapHandle::from_pinned_path(&paths.ip_mac_v6)?;
     upsert_ipv6_ip_mac_in_map(&ip_mac_v6, ifindex, ip_addr, mac, dev_mac)
 }
 

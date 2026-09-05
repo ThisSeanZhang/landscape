@@ -4,22 +4,24 @@ use landscape_common::flow::FlowMarkInfo;
 use libbpf_rs::{libbpf_sys, MapCore, MapFlags, MapHandle, MapType};
 use zerocopy::{FromBytes, IntoBytes};
 
-use crate::{
-    maps::{FlowDnsMatchKeyV4, FlowDnsMatchKeyV6, FlowDnsMatchValueV4, FlowDnsMatchValueV6},
-    MAP_PATHS,
+use crate::maps::{
+    FlowDnsMatchKeyV4, FlowDnsMatchKeyV6, FlowDnsMatchValueV4, FlowDnsMatchValueV6,
+    LandscapeMapPath,
 };
 
 const DNS_MATCH_MAX_ENTRIES: u32 = 10240;
 
 /// 相当于刷新现有的所有记录
-pub fn refreash_flow_dns_inner_map(flow_id: u32, data: Vec<FlowMarkInfo>) {
-    let flow_dns_match_map =
-        libbpf_rs::MapHandle::from_pinned_path(&MAP_PATHS.flow4_dns_map).unwrap();
+pub fn refreash_flow_dns_inner_map(
+    paths: &LandscapeMapPath,
+    flow_id: u32,
+    data: Vec<FlowMarkInfo>,
+) {
+    let flow_dns_match_map = libbpf_rs::MapHandle::from_pinned_path(&paths.flow4_dns_map).unwrap();
 
     create_flow_dns_inner_map_v4(&flow_dns_match_map, flow_id, &data);
 
-    let flow_dns_match_map =
-        libbpf_rs::MapHandle::from_pinned_path(&MAP_PATHS.flow6_dns_map).unwrap();
+    let flow_dns_match_map = libbpf_rs::MapHandle::from_pinned_path(&paths.flow6_dns_map).unwrap();
 
     create_flow_dns_inner_map_v6(&flow_dns_match_map, flow_id, &data);
 }
@@ -189,9 +191,8 @@ where
 }
 
 /// 只更新部分 DNS 指定的规则
-pub fn update_flow_dns_rule(flow_id: u32, data: Vec<FlowMarkInfo>) {
-    let flow_dns_match_map =
-        libbpf_rs::MapHandle::from_pinned_path(&MAP_PATHS.flow4_dns_map).unwrap();
+pub fn update_flow_dns_rule(paths: &LandscapeMapPath, flow_id: u32, data: Vec<FlowMarkInfo>) {
+    let flow_dns_match_map = libbpf_rs::MapHandle::from_pinned_path(&paths.flow4_dns_map).unwrap();
 
     let key_value = flow_id.as_bytes();
     if let Ok(Some(fd_id_arr)) = flow_dns_match_map.lookup(key_value, MapFlags::ANY) {
@@ -204,8 +205,7 @@ pub fn update_flow_dns_rule(flow_id: u32, data: Vec<FlowMarkInfo>) {
         create_flow_dns_inner_map_v4(&flow_dns_match_map, flow_id, &data);
     }
 
-    let flow_dns_match_map =
-        libbpf_rs::MapHandle::from_pinned_path(&MAP_PATHS.flow6_dns_map).unwrap();
+    let flow_dns_match_map = libbpf_rs::MapHandle::from_pinned_path(&paths.flow6_dns_map).unwrap();
 
     let key_value = flow_id.as_bytes();
     if let Ok(Some(fd_id_arr)) = flow_dns_match_map.lookup(key_value, MapFlags::ANY) {

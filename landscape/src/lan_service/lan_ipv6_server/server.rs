@@ -35,6 +35,8 @@ use crate::{
     sys_service::route::IpRouteService,
 };
 use dashmap::DashMap;
+use landscape_common::lan_service::mac_binding::MacBindingDataplane;
+
 use landscape_ebpf::chain::ip6_dao_event::Ip6DaoEvent;
 use uuid::Uuid;
 
@@ -174,6 +176,7 @@ async fn handle_icmp_msg(
     link_ifindex: u32,
     device_id_map: &DashMap<MacAddr, Uuid>,
     slaac_verifications: &mut SlaacVerificationQueue,
+    dataplane: &dyn MacBindingDataplane,
 ) -> bool {
     let Some((data, src_addr)) = result else {
         tracing::error!("ICMPv6 recv channel closed on {iface_name}");
@@ -243,14 +246,7 @@ async fn handle_icmp_msg(
                 _ => {}
             }
             if let icmpv6::SlaacActionResult::Allocated { mac, ip } = &action {
-                if let Err(e) = landscape_ebpf::maps::mac::upsert_ipv6_ip_mac(
-                    link_ifindex,
-                    *ip,
-                    *mac,
-                    *mac_addr,
-                ) {
-                    tracing::warn!("failed to prewarm ip_mac_v6 for ND {ip} -> {mac}: {e}");
-                }
+                dataplane.learn_ipv6(link_ifindex, *ip, *mac, *mac_addr);
             }
 
             match action {
@@ -326,6 +322,7 @@ async fn handle_dhcp_msg(
     ipv6_assign_sender: &IPv6AssignEventSender,
     route_service: &IpRouteService,
     device_id_map: &DashMap<MacAddr, Uuid>,
+    dataplane: &dyn MacBindingDataplane,
 ) -> bool {
     let Some((msg_bytes, msg_addr)) = result else {
         tracing::error!("DHCPv6 recv channel closed on {iface_name}");
@@ -362,11 +359,7 @@ async fn handle_dhcp_msg(
             let mut alloc_by_mac: std::collections::HashMap<MacAddr, Vec<Ipv6Addr>> =
                 std::collections::HashMap::new();
             for (mac, ip) in &result.allocated_ips {
-                if let Err(e) =
-                    landscape_ebpf::maps::mac::upsert_ipv6_ip_mac(link_ifindex, *ip, *mac, mac_addr)
-                {
-                    tracing::warn!("failed to prewarm ip_mac_v6 for DHCPv6 {ip} -> {mac}: {e}");
-                }
+                dataplane.learn_ipv6(link_ifindex, *ip, *mac, mac_addr);
                 alloc_by_mac.entry(*mac).or_default().push(*ip);
             }
             for (mac, grouped_ips) in alloc_by_mac {
@@ -526,6 +519,7 @@ pub async fn start_ipv6_lan_server(
     device_id_map: Arc<DashMap<MacAddr, Uuid>>,
     mut reconf_rx: mpsc::UnboundedReceiver<MacAddr>,
     dad_rx: mpsc::Receiver<Ip6DaoEvent>,
+    dataplane: Arc<dyn MacBindingDataplane>,
 ) -> Result<(), DbError> {
     let mut dad_rx = Some(dad_rx);
     let server_duid = gen_server_duid(&mac_addr);
@@ -659,7 +653,7 @@ pub async fn start_ipv6_lan_server(
                     result, &iface_name, &service_status, &share_status,
                     &mac_link_cache, &params, &mac_addr, icmp_ad_interval, &icmp_sender,
                     ipv6_assign_sender, link_ifindex, &device_id_map,
-                    &mut slaac_verifications,
+                    &mut slaac_verifications, dataplane.as_ref(),
                 ).await {
                     break;
                 }
@@ -676,6 +670,7 @@ pub async fn start_ipv6_lan_server(
                         &mac_link_cache, &service_status, &share_status,
                         &server_duid, &params, dhcp_sender,
                         ipv6_assign_sender, &route_service, &device_id_map,
+                        dataplane.as_ref(),
                     ).await {
                         break;
                     }

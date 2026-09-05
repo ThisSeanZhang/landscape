@@ -1,8 +1,5 @@
 use std::path::{Path, PathBuf};
 
-use landscape_common::args::LAND_ARGS;
-use once_cell::sync::Lazy;
-
 pub mod bpf_error;
 pub(crate) mod bpf_rs_shared;
 pub mod dns_result_sink;
@@ -11,6 +8,8 @@ pub mod landscape;
 pub mod maps;
 pub mod metric;
 pub mod pppoe;
+pub mod runtime;
+mod runtime_impls;
 pub mod stages;
 pub mod tproxy;
 
@@ -20,23 +19,11 @@ mod tests;
 pub mod chain;
 pub mod dns_dispatcher;
 
-static MAP_PATHS: Lazy<LandscapeMapPath> = Lazy::new(|| {
-    let ebpf_map_space = &LAND_ARGS.ebpf_map_space;
-    tracing::info!("ebpf_map_space is: {ebpf_map_space}");
-    let ebpf_map_path = format!("/sys/fs/bpf/landscape/{}", ebpf_map_space);
-    if !PathBuf::from(&ebpf_map_path).exists() {
-        if let Err(e) = std::fs::create_dir_all(&ebpf_map_path) {
-            panic!("can not create bpf map path: {ebpf_map_path:?}, err: {e:?}");
-        }
-    }
-    let paths = LandscapeMapPath::from_root(Path::new(&ebpf_map_path));
-    tracing::info!("ebpf map paths is: {paths:#?}");
-    maps::init_path(&paths);
-    paths
-});
-
 #[derive(Clone, Debug)]
-pub(crate) struct LandscapeMapPath {
+pub struct LandscapeMapPath {
+    /// The bpffs directory every pin below lives under
+    /// (`/sys/fs/bpf/landscape/<map space>`).
+    pub root: PathBuf,
     pub wan_ip: PathBuf,
     // NAT
     pub nat6_static_map: PathBuf,
@@ -86,11 +73,12 @@ impl LandscapeMapPath {
     /// Pin file names are the per-domain `*_PIN` constants, which are also
     /// referenced by the corresponding `MapCreateSpec.name`, so production
     /// paths, skeleton pin reuse and tests all share one source of truth.
-    pub(crate) fn from_root(root: &Path) -> Self {
+    pub fn from_root(root: &Path) -> Self {
         use crate::maps::{
             dns, firewall, flow, flow_dns, flow_wanip, mac, nat, redirect_able, route, wan,
         };
 
+        let root = root.to_path_buf();
         Self {
             wan_ip: root.join(wan::WAN_IP_BINDING_PIN),
             // NAT
@@ -133,7 +121,54 @@ impl LandscapeMapPath {
 
             xdp_redirect_able: root.join(redirect_able::XDP_REDIRECT_ABLE_PIN),
             xdp_base: root.join("xdp"),
+            root,
         }
+    }
+
+    /// TC chain pin directory (`<root>/tc_chain`), seeded by
+    /// [`crate::runtime::EbpfRuntime::init`] via `TcChainManager::new`.
+    pub fn tc_chain_base(&self) -> PathBuf {
+        self.root.join("tc_chain")
+    }
+
+    pub fn tc_pipe_root_progs_path(&self) -> PathBuf {
+        self.tc_chain_base().join("tc_pipe_root_progs")
+    }
+
+    pub fn tc_wan_intro_dispatch_path(&self) -> PathBuf {
+        self.tc_chain_base().join("wan_intro_dispatch")
+    }
+
+    pub fn tc_pipe_exits_wan_ingress_path(&self) -> PathBuf {
+        self.tc_chain_base().join("tc_pipe_exits_wan_ingress")
+    }
+
+    pub fn tc_pipe_exits_wan_egress_path(&self) -> PathBuf {
+        self.tc_chain_base().join("tc_pipe_exits_wan_egress")
+    }
+
+    pub fn tc_wan_egress_roots_path(&self) -> PathBuf {
+        self.tc_chain_base().join("tc_wan_egress_roots")
+    }
+
+    pub fn xdp_pipe_root_progs_path(&self) -> PathBuf {
+        self.xdp_base.join("pipe_root_progs")
+    }
+
+    pub fn xdp_pipe_exits_lan_path(&self) -> PathBuf {
+        self.xdp_base.join("pipe_exits_lan")
+    }
+
+    pub fn xdp_pipe_exits_wan_path(&self) -> PathBuf {
+        self.xdp_base.join("pipe_exits_wan")
+    }
+
+    pub fn xdp_lan_pipe_root_progs_path(&self) -> PathBuf {
+        self.xdp_base.join("lan_pipe_root_progs")
+    }
+
+    pub fn xdp_wan_intro_dispatch_path(&self) -> PathBuf {
+        self.xdp_base.join("wan_intro_dispatch")
     }
 }
 

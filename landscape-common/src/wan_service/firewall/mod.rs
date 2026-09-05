@@ -1,4 +1,5 @@
 pub mod blacklist;
+pub mod dataplane;
 pub mod service;
 
 use landscape_macro::LdApiError;

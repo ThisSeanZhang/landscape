@@ -6,9 +6,11 @@ use landscape_common::{
     service::{ServiceStatus, WatchService},
     LANDSCAPE_DEFAULE_DHCP_V4_CLIENT_PORT,
 };
+use landscape_ebpf::runtime::EbpfRuntime;
 
 use clap::Parser;
 use landscape_database::provider::LandscapeDBServiceProvider;
+use std::sync::Arc;
 use tokio::sync::mpsc;
 
 #[derive(Parser, Debug, Clone)]
@@ -33,6 +35,7 @@ async fn main() {
     let status = service_status.clone();
 
     let (_, route_rx) = mpsc::channel(1);
+    let rt = Arc::new(EbpfRuntime::init("dhcp_client_test", None).expect("init ebpf maps"));
     tokio::spawn(async move {
         if let Some(iface) = get_iface_by_name(&args.iface_name).await {
             if let Some(mac) = iface.mac {
@@ -44,7 +47,8 @@ async fn main() {
                     status,
                     "TEST-PC".to_string(),
                     false,
-                    IpRouteService::new(route_rx, flow_repo),
+                    IpRouteService::new(route_rx, flow_repo, rt.clone().route_table()),
+                    rt.wan_addr_binding(),
                 )
                 .await;
             }

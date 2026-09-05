@@ -1,8 +1,8 @@
 use super::cmd::cmd_output;
 use super::env::{EnvConfig, PPPoETestEnv};
-use super::require_root;
 use super::runner::{start_client, wait_for_exit, wait_for_running, ClientSpec};
 use super::scripted_server::{start_scripted_server, ScriptedServerMode};
+use super::require_root;
 use std::time::{Duration, Instant};
 
 fn spec_from(cfg: &EnvConfig) -> ClientSpec {
@@ -52,7 +52,8 @@ async fn basic_connect_and_stop() {
         ScriptedServerMode::Success,
     );
 
-    let client = start_client(env.client_ns(), env.client_info(), &spec_from(&env_cfg));
+    let client =
+        start_client(env.client_ns(), "basic-connect", env.client_info(), &spec_from(&env_cfg));
     wait_for_running(&client.status, Duration::from_secs(30))
         .await
         .expect("client should reach Running after full negotiation");
@@ -78,7 +79,8 @@ async fn pap_protocol_rejected_is_fatal() {
         ScriptedServerMode::ProtocolRejectPap,
     );
 
-    let client = start_client(env.client_ns(), env.client_info(), &spec_from(&env_cfg));
+    let client =
+        start_client(env.client_ns(), "pap-rejected", env.client_info(), &spec_from(&env_cfg));
     let outcome =
         wait_for_exit(&client.status, Duration::from_secs(30)).await.expect("client should exit");
 
@@ -122,7 +124,7 @@ async fn link_loss_triggers_redial_and_reconnect() {
         redial_backoff_base_secs: Some(1),
         ..spec_from(&env_cfg)
     };
-    let client = start_client(env.client_ns(), env.client_info(), &spec);
+    let client = start_client(env.client_ns(), "redial-reconnect", env.client_info(), &spec);
     wait_for_running(&client.status, Duration::from_secs(30))
         .await
         .expect("first session should reach Running");
@@ -168,7 +170,8 @@ async fn ebpf_pipeline_attaches_and_detaches() {
         ScriptedServerMode::Success,
     );
 
-    let client = start_client(env.client_ns(), env.client_info(), &spec_from(&env_cfg));
+    let client =
+        start_client(env.client_ns(), "ebpf-pipeline", env.client_info(), &spec_from(&env_cfg));
     wait_for_running(&client.status, Duration::from_secs(30))
         .await
         .expect("client should reach Running");

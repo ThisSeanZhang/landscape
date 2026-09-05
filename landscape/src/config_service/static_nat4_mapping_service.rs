@@ -1,4 +1,5 @@
 use std::net::Ipv4Addr;
+use std::sync::Arc;
 
 use landscape_common::config_service::static_nat::config::StaticMapPair;
 use landscape_common::config_service::static_nat::config4::{
@@ -10,6 +11,7 @@ use landscape_common::database::LandscapeStore;
 use landscape_common::event::hub::EnrolledDeviceEventReader;
 use landscape_common::utils::time::get_f64_timestamp;
 use landscape_common::wan_service::nat::config::NatConfig;
+use landscape_common::wan_service::nat::dataplane::NatDataplane;
 use landscape_common::LANDSCAPE_DEFAULE_DHCP_V4_CLIENT_PORT;
 use landscape_database::nat::repository::NatServiceRepository;
 use landscape_database::provider::LandscapeDBServiceProvider;
@@ -20,16 +22,19 @@ use uuid::Uuid;
 pub struct StaticNat4MappingService {
     store: StaticNatMappingV4Repository,
     nat_store: NatServiceRepository,
+    dataplane: Arc<dyn NatDataplane>,
 }
 
 impl StaticNat4MappingService {
     pub async fn new(
         store_provider: LandscapeDBServiceProvider,
         device_reader: EnrolledDeviceEventReader,
+        dataplane: Arc<dyn NatDataplane>,
     ) -> Self {
         let service = Self {
             store: store_provider.static_nat_mapping_v4_store(),
             nat_store: store_provider.nat_service_store(),
+            dataplane,
         };
 
         let is_empty = service.store.list().await.is_ok_and(|l| l.is_empty());
@@ -199,9 +204,7 @@ impl StaticNat4MappingService {
             }
         };
 
-        if let Err(error) = landscape_ebpf::maps::nat::reconcile_static_nat4_map(&configs) {
-            tracing::error!("failed to reconcile static NAT v4 map: {error:?}");
-        }
+        self.dataplane.sync_static_nat4(&configs);
     }
 }
 

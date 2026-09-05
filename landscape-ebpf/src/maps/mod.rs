@@ -34,7 +34,7 @@ use std::{
 use libbpf_rs::{AsRawLibbpf, MapCore, MapFlags, MapHandle, MapType, OpenMapMut};
 
 use crate::bpf_error::LdEbpfResult;
-use crate::LandscapeMapPath;
+pub use crate::LandscapeMapPath;
 
 /// Typed accessors for the `u_inet_addr` / `u_inet6_addr` unions modeled as
 /// `[u8; 16]`.

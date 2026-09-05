@@ -3,8 +3,8 @@ use libbpf_rs::MapCore;
 use zerocopy::IntoBytes;
 
 use crate::bpf_error::LdEbpfResult;
-use crate::maps::{Nat4StMappingValue, NatMappingKeyV4};
-use crate::{MAP_PATHS, NAT_MAPPING_EGRESS, NAT_MAPPING_INGRESS};
+use crate::maps::{LandscapeMapPath, Nat4StMappingValue, NatMappingKeyV4};
+use crate::{NAT_MAPPING_EGRESS, NAT_MAPPING_INGRESS};
 
 use super::super::RawEbpfMapEntries;
 use super::{reconcile_raw_map, update_raw_entries, StaticNatMappingV4Item};
@@ -30,13 +30,19 @@ pub fn build_static_nat4_entries(configs: &[RuntimeStaticNatMappingV4Config]) ->
     entries
 }
 
-pub fn reconcile_static_nat4_entries(desired: RawEbpfMapEntries) -> LdEbpfResult<()> {
-    let nat4_static_map = libbpf_rs::MapHandle::from_pinned_path(&MAP_PATHS.nat4_static_map)?;
+pub fn reconcile_static_nat4_entries(
+    paths: &LandscapeMapPath,
+    desired: RawEbpfMapEntries,
+) -> LdEbpfResult<()> {
+    let nat4_static_map = libbpf_rs::MapHandle::from_pinned_path(&paths.nat4_static_map)?;
     reconcile_raw_map(&nat4_static_map, desired)
 }
 
-pub fn reconcile_static_nat4_map(configs: &[RuntimeStaticNatMappingV4Config]) -> LdEbpfResult<()> {
-    reconcile_static_nat4_entries(build_static_nat4_entries(configs))
+pub fn reconcile_static_nat4_map(
+    paths: &LandscapeMapPath,
+    configs: &[RuntimeStaticNatMappingV4Config],
+) -> LdEbpfResult<()> {
+    reconcile_static_nat4_entries(paths, build_static_nat4_entries(configs))
 }
 
 fn insert_static_nat4_item_entries(

@@ -1,4 +1,5 @@
 use std::net::IpAddr;
+use std::sync::Arc;
 
 use landscape_common::database::LandscapeStore;
 use landscape_common::event::hub::IfaceEventReader;
@@ -14,7 +15,9 @@ use landscape_common::{
         manager::{ServiceManager, ServiceStarterTrait},
         ServiceStatus, WatchService,
     },
+    wan_service::addr_binding::WanAddrBinding,
     wan_service::ip_config::{IfaceIpModelConfig, IfaceIpServiceConfig},
+    wan_service::pppoe::PppoeDataplane,
 };
 use landscape_database::{
     iface_ip::repository::IfaceIpServiceRepository, provider::LandscapeDBServiceProvider,
@@ -29,11 +32,17 @@ use landscape_common::dev::LandscapeInterface;
 #[allow(dead_code)]
 pub struct IPConfigService {
     route_service: IpRouteService,
+    addr_binding: Arc<dyn WanAddrBinding>,
+    pppoe_dataplane: Arc<dyn PppoeDataplane>,
 }
 
 impl IPConfigService {
-    pub fn new(route_service: IpRouteService) -> Self {
-        IPConfigService { route_service }
+    pub fn new(
+        route_service: IpRouteService,
+        addr_binding: Arc<dyn WanAddrBinding>,
+        pppoe_dataplane: Arc<dyn PppoeDataplane>,
+    ) -> Self {
+        IPConfigService { route_service, addr_binding, pppoe_dataplane }
     }
 }
 #[async_trait::async_trait]
@@ -48,9 +57,18 @@ impl ServiceStarterTrait for IPConfigService {
                 let status_clone = service_status.clone();
 
                 let route_service = self.route_service.clone();
+                let addr_binding = self.addr_binding.clone();
+                let pppoe_dataplane = self.pppoe_dataplane.clone();
                 tokio::spawn(async move {
-                    init_service_from_config(iface, config.ip_model, status_clone, route_service)
-                        .await
+                    init_service_from_config(
+                        iface,
+                        config.ip_model,
+                        status_clone,
+                        route_service,
+                        addr_binding,
+                        pppoe_dataplane,
+                    )
+                    .await
                 });
             } else {
                 tracing::error!("Interface {} not found", config.iface_name);
@@ -66,6 +84,8 @@ async fn init_service_from_config(
     service_config: IfaceIpModelConfig,
     service_status: WatchService,
     route_service: IpRouteService,
+    addr_binding: Arc<dyn WanAddrBinding>,
+    pppoe_dataplane: Arc<dyn PppoeDataplane>,
 ) {
     match service_config {
         IfaceIpModelConfig::Nothing => {}
@@ -81,13 +101,7 @@ async fn init_service_from_config(
                     .args(["addr", "add", &format!("{}/{}", ipv4, ipv4_mask), "dev", &iface_name])
                     .output();
                 tracing::debug!("start setting");
-                landscape_ebpf::maps::wan::add_ipv4_wan_ip(
-                    iface.index,
-                    ipv4,
-                    default_router_ip,
-                    ipv4_mask,
-                    iface.mac,
-                );
+                addr_binding.bind_ipv4(iface.index, ipv4, default_router_ip, ipv4_mask, iface.mac);
 
                 let lan_info = LanRouteInfo {
                     ifindex: iface.index,
@@ -142,7 +156,7 @@ async fn init_service_from_config(
                 }
                 route_service.remove_ipv4_wan_route(&iface_name).await;
                 route_service.remove_ipv4_lan_route(&iface_name).await;
-                landscape_ebpf::maps::wan::del_ipv4_wan_ip(iface.index);
+                addr_binding.unbind_ipv4(iface.index);
                 service_status.just_change_status(ServiceStatus::Stop);
             }
         }
@@ -161,6 +175,7 @@ async fn init_service_from_config(
                     ),
                     service_status,
                     route_service,
+                    pppoe_dataplane,
                 )
                 .await;
             } else {
@@ -180,6 +195,7 @@ async fn init_service_from_config(
                     hostname,
                     default_router,
                     route_service,
+                    addr_binding,
                 )
                 .await;
             } else {
@@ -213,6 +229,8 @@ impl ControllerService for IfaceIpServiceManagerService {
 impl IfaceIpServiceManagerService {
     pub async fn new(
         route_service: IpRouteService,
+        addr_binding: Arc<dyn WanAddrBinding>,
+        pppoe_dataplane: Arc<dyn PppoeDataplane>,
         store_service: LandscapeDBServiceProvider,
         mut dev_observer: IfaceEventReader,
     ) -> Self {
@@ -226,7 +244,7 @@ impl IfaceIpServiceManagerService {
             }
         }
 
-        let server_starter = IPConfigService::new(route_service);
+        let server_starter = IPConfigService::new(route_service, addr_binding, pppoe_dataplane);
         let service = ServiceManager::init(init_configs, server_starter.clone()).await;
 
         let service_clone = service.clone();

@@ -2,10 +2,10 @@ use std::collections::HashMap;
 
 use libbpf_rs::{MapCore, MapFlags};
 
-use crate::MAP_PATHS;
+use crate::maps::LandscapeMapPath;
 
-pub fn set_xdp_redirect_able(ifindex: u32, able: bool) {
-    let map = match libbpf_rs::MapHandle::from_pinned_path(&MAP_PATHS.xdp_redirect_able) {
+pub fn set_xdp_redirect_able(paths: &LandscapeMapPath, ifindex: u32, able: bool) {
+    let map = match libbpf_rs::MapHandle::from_pinned_path(&paths.xdp_redirect_able) {
         Ok(map) => map,
         Err(e) => {
             tracing::warn!("open xdp_redirect_able map failed: {e}");
@@ -20,8 +20,8 @@ pub fn set_xdp_redirect_able(ifindex: u32, able: bool) {
     }
 }
 
-pub fn del_xdp_redirect_able(ifindex: u32) {
-    let map = match libbpf_rs::MapHandle::from_pinned_path(&MAP_PATHS.xdp_redirect_able) {
+pub fn del_xdp_redirect_able(paths: &LandscapeMapPath, ifindex: u32) {
+    let map = match libbpf_rs::MapHandle::from_pinned_path(&paths.xdp_redirect_able) {
         Ok(map) => map,
         Err(e) => {
             tracing::warn!("open xdp_redirect_able map failed: {e}");
@@ -35,8 +35,8 @@ pub fn del_xdp_redirect_able(ifindex: u32) {
     }
 }
 
-pub fn clear_xdp_redirect_able() {
-    let map = match libbpf_rs::MapHandle::from_pinned_path(&MAP_PATHS.xdp_redirect_able) {
+pub fn clear_xdp_redirect_able(paths: &LandscapeMapPath) {
+    let map = match libbpf_rs::MapHandle::from_pinned_path(&paths.xdp_redirect_able) {
         Ok(map) => map,
         Err(e) => {
             tracing::warn!("open xdp_redirect_able map failed: {e}");
@@ -52,12 +52,12 @@ pub fn clear_xdp_redirect_able() {
     }
 }
 
-pub fn is_xdp_redirect_able(ifindex: u32) -> bool {
-    get_xdp_redirect_able(ifindex).unwrap_or(false)
+pub fn is_xdp_redirect_able(paths: &LandscapeMapPath, ifindex: u32) -> bool {
+    get_xdp_redirect_able(paths, ifindex).unwrap_or(false)
 }
 
-pub fn get_xdp_redirect_able(ifindex: u32) -> Option<bool> {
-    let map = match libbpf_rs::MapHandle::from_pinned_path(&MAP_PATHS.xdp_redirect_able) {
+pub fn get_xdp_redirect_able(paths: &LandscapeMapPath, ifindex: u32) -> Option<bool> {
+    let map = match libbpf_rs::MapHandle::from_pinned_path(&paths.xdp_redirect_able) {
         Ok(map) => map,
         Err(e) => {
             tracing::warn!("open xdp_redirect_able map failed: {e}");
@@ -83,8 +83,11 @@ pub fn get_xdp_redirect_able(ifindex: u32) -> Option<bool> {
     }
 }
 
-pub fn batch_query_xdp_redirect_able(ifindexes: &[u32]) -> HashMap<u32, bool> {
-    let map = match libbpf_rs::MapHandle::from_pinned_path(&MAP_PATHS.xdp_redirect_able) {
+pub fn batch_query_xdp_redirect_able(
+    paths: &LandscapeMapPath,
+    ifindexes: &[u32],
+) -> HashMap<u32, bool> {
+    let map = match libbpf_rs::MapHandle::from_pinned_path(&paths.xdp_redirect_able) {
         Ok(map) => map,
         Err(e) => {
             tracing::warn!("open xdp_redirect_able map failed: {e}");

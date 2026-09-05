@@ -1,5 +1,7 @@
 use clap::Parser;
 use landscape::get_iface_by_name;
+use landscape_ebpf::runtime::EbpfRuntime;
+use std::sync::Arc;
 
 #[derive(Parser, Debug, Clone)]
 pub struct Args {
@@ -16,9 +18,10 @@ pub async fn main() {
     let args = Args::parse();
     tracing::info!("using args is: {:#?}", args);
 
+    let rt = Arc::new(EbpfRuntime::init("firewall_test", None).expect("init ebpf maps"));
     let firewall = if let Some(iface) = get_iface_by_name(&args.iface_name).await {
         println!("Starting firewall on ifindex: {:?}", iface.index);
-        match landscape_ebpf::stages::firewall::init_firewall(iface.index, iface.mac.is_some()) {
+        match rt.firewall().attach(iface.index, iface.mac.is_some()) {
             Ok(handle) => Some(handle),
             Err(err) => {
                 tracing::debug!("error: {err:?}");

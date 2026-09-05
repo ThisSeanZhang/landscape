@@ -9,6 +9,7 @@ use landscape_common::{
     dns::redirect::DynamicDnsRedirectScope,
     dns::{CacheRuntimeConfig, DohRuntimeConfig, FlowDnsDependencies},
     event::{dns::DnsEvent, DnsMetricMessage},
+    flow::{DnsResultSink, FlowSocketRegistrar},
     service::{
         controller::{ConfigController, ConfigStoreFlowController, FlowConfigController},
         ServiceStatus, WatchService,
@@ -23,8 +24,6 @@ use landscape_dns::{
     },
     CheckChainDnsResult, CheckDnsReq,
 };
-use landscape_ebpf::dns_result_sink::EbpfDnsResultSink;
-use landscape_ebpf::flow_socket_registrar::EbpfFlowSocketRegistrar;
 use rustls::server::ResolvesServerCert;
 use std::net::{Ipv6Addr, SocketAddr, SocketAddrV6};
 use tokio::sync::mpsc;
@@ -62,6 +61,8 @@ impl LandscapeDnsService {
         cert_service: CertService,
         msg_tx: Option<mpsc::Sender<DnsMetricMessage>>,
         lan_hostname_registry: Arc<LanHostnameRegistry>,
+        dns_result_sink: Arc<dyn DnsResultSink>,
+        flow_socket_registrar: Arc<dyn FlowSocketRegistrar>,
     ) -> Self {
         let (cache_runtime, doh_runtime) = split_dns_runtime_config(&dns_config);
         if prepare_system_dns() {
@@ -90,8 +91,8 @@ impl LandscapeDnsService {
             Some(Arc::new(route_service) as Arc<dyn LocalDnsAnswerProvider>),
             Some(Arc::new(api_tls_resolver) as Arc<dyn landscape_dns::server::DohAdvertiseProvider>),
             lan_hostname_registry,
-            Arc::new(EbpfDnsResultSink),
-            Arc::new(EbpfFlowSocketRegistrar),
+            dns_result_sink,
+            flow_socket_registrar,
         );
 
         // dns_service.restart(53).await;

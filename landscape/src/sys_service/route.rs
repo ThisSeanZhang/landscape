@@ -13,11 +13,13 @@ use landscape_common::{
     dns::dnr::{is_valid_dnr_ipv4_addr, is_valid_dnr_ipv6_addr},
     event::route::RouteEvent,
     flow::{config::FlowConfig, FlowTarget},
-    sys_service::route_service::{LanIPv6RouteKey, LanRouteInfo, LanRouteMode, RouteTargetInfo},
+    sys_service::route_service::{
+        dataplane::{NoopRouteTableDataplane, RouteTableDataplane},
+        LanIPv6RouteKey, LanRouteInfo, LanRouteMode, RouteTargetInfo,
+    },
 };
 use landscape_database::flow_rule::repository::FlowConfigRepository;
 use landscape_dns::server::LocalDnsAnswerProvider;
-use landscape_ebpf::maps::route::{add_lan_route, del_lan_route};
 use tokio::sync::{broadcast, mpsc, RwLock};
 
 use landscape_common::database::LandscapeStore;
@@ -33,6 +35,7 @@ type Ipv6LanRoutesByKey = HashMap<LanIPv6RouteKey, LanRouteInfo>;
 #[derive(Clone)]
 pub struct IpRouteService {
     flow_repo: FlowConfigRepository,
+    dataplane: Arc<dyn RouteTableDataplane>,
     ipv4_wan_ifaces: ShareRwLock<WanRoutesByOwner>,
     ipv6_wan_ifaces: ShareRwLock<WanRoutesByOwner>,
     wan_route_events: broadcast::Sender<WanRouteEvent>,
@@ -118,44 +121,53 @@ fn reconcile_wan_route(
     }
 }
 
-fn sync_ipv4_lan_update(update: Ipv4LanBucketUpdate) {
+fn sync_ipv4_lan_update(dataplane: &dyn RouteTableDataplane, update: Ipv4LanBucketUpdate) {
     if let Ipv4LanBucketUpdate::Changed { removed, added } = update {
-        sync_removed_lan_routes(removed);
-        add_lan_route(added);
+        sync_removed_lan_routes(dataplane, removed);
+        dataplane.add_lan_route(added);
     }
 }
 
-fn sync_ipv6_lan_update(update: Ipv6LanRouteUpdate) {
+fn sync_ipv6_lan_update(dataplane: &dyn RouteTableDataplane, update: Ipv6LanRouteUpdate) {
     if let Ipv6LanRouteUpdate::Changed { removed, added } = update {
-        sync_removed_lan_routes(removed);
-        add_lan_route(added);
+        sync_removed_lan_routes(dataplane, removed);
+        dataplane.add_lan_route(added);
     }
 }
 
-fn sync_removed_lan_routes(routes: impl IntoIterator<Item = LanRouteInfo>) {
+fn sync_removed_lan_routes(
+    dataplane: &dyn RouteTableDataplane,
+    routes: impl IntoIterator<Item = LanRouteInfo>,
+) {
     for route in routes {
-        del_lan_route(route);
+        dataplane.del_lan_route(route);
     }
 }
 
-fn sync_default_ipv4_wan_route(default_route: Option<RouteTargetInfo>) {
+fn sync_default_ipv4_wan_route(
+    dataplane: &dyn RouteTableDataplane,
+    default_route: Option<RouteTargetInfo>,
+) {
     if let Some(route) = default_route {
         let default_target = [(route, 1)];
-        landscape_ebpf::maps::route::replace_wan_route_slots_v4(0, &default_target);
+        dataplane.replace_wan_slots_v4(0, &default_target);
     } else {
-        landscape_ebpf::maps::route::del_wan_route_slots_v4(0);
+        dataplane.del_wan_slots_v4(0);
     }
-    landscape_ebpf::maps::route::cache::recreate_route_lan_cache_inner_map();
+    dataplane.invalidate_lan_cache();
 }
 
-fn sync_default_ipv6_wan_route(default_route: Option<RouteTargetInfo>) {
+fn sync_default_ipv6_wan_route(
+    dataplane: &dyn RouteTableDataplane,
+    default_route: Option<RouteTargetInfo>,
+) {
     if let Some(route) = default_route {
         let default_target = [(route, 1)];
-        landscape_ebpf::maps::route::replace_wan_route_slots_v6(0, &default_target);
+        dataplane.replace_wan_slots_v6(0, &default_target);
     } else {
-        landscape_ebpf::maps::route::del_wan_route_slots_v6(0);
+        dataplane.del_wan_slots_v6(0);
     }
-    landscape_ebpf::maps::route::cache::recreate_route_lan_cache_inner_map();
+    dataplane.invalidate_lan_cache();
 }
 
 fn find_route_target<'a>(
@@ -195,26 +207,32 @@ fn collect_target_refresh_result(
     result
 }
 
-fn apply_ipv4_target_refresh_result(result: HashMap<FlowId, Vec<(RouteTargetInfo, u32)>>) {
+fn apply_ipv4_target_refresh_result(
+    dataplane: &dyn RouteTableDataplane,
+    result: HashMap<FlowId, Vec<(RouteTargetInfo, u32)>>,
+) {
     tracing::info!("ipv4 flow target refresh result: {result:#?}");
 
     for (flow_id, configs) in result {
         if configs.is_empty() {
-            landscape_ebpf::maps::route::del_wan_route_slots_v4(flow_id);
+            dataplane.del_wan_slots_v4(flow_id);
         } else {
-            landscape_ebpf::maps::route::replace_wan_route_slots_v4(flow_id, &configs);
+            dataplane.replace_wan_slots_v4(flow_id, &configs);
         }
     }
 }
 
-fn apply_ipv6_target_refresh_result(result: HashMap<FlowId, Vec<(RouteTargetInfo, u32)>>) {
+fn apply_ipv6_target_refresh_result(
+    dataplane: &dyn RouteTableDataplane,
+    result: HashMap<FlowId, Vec<(RouteTargetInfo, u32)>>,
+) {
     tracing::info!("ipv6 flow target refresh result: {result:#?}");
 
     for (flow_id, configs) in result {
         if configs.is_empty() {
-            landscape_ebpf::maps::route::del_wan_route_slots_v6(flow_id);
+            dataplane.del_wan_slots_v6(flow_id);
         } else {
-            landscape_ebpf::maps::route::replace_wan_route_slots_v6(flow_id, &configs);
+            dataplane.replace_wan_slots_v6(flow_id, &configs);
         }
     }
 }
@@ -247,10 +265,12 @@ impl IpRouteService {
     pub fn new(
         route_event_sender: mpsc::Receiver<RouteEvent>,
         flow_repo: FlowConfigRepository,
+        dataplane: Arc<dyn RouteTableDataplane>,
     ) -> Self {
         let (wan_route_events, _) = broadcast::channel(64);
         let service = IpRouteService {
             flow_repo,
+            dataplane,
             ipv4_wan_ifaces: Arc::new(RwLock::new(HashMap::new())),
             ipv6_wan_ifaces: Arc::new(RwLock::new(HashMap::new())),
             wan_route_events,
@@ -282,9 +302,9 @@ impl IpRouteService {
         let ipv4_wan_infos = self.clone_ipv4_wan_infos().await;
         let ipv6_wan_infos = self.clone_ipv6_wan_infos().await;
 
-        refresh_ipv4_target_bpf_map(&flow_configs, ipv4_wan_infos);
-        refresh_ipv6_target_bpf_map(&flow_configs, ipv6_wan_infos);
-        landscape_ebpf::maps::route::cache::recreate_route_lan_cache_inner_map();
+        refresh_ipv4_target_bpf_map(&*self.dataplane, &flow_configs, ipv4_wan_infos);
+        refresh_ipv6_target_bpf_map(&*self.dataplane, &flow_configs, ipv6_wan_infos);
+        self.dataplane.invalidate_lan_cache();
     }
 
     async fn load_flow_configs_for_event(&self, event: RouteEvent) -> Option<Vec<FlowConfig>> {
@@ -469,7 +489,7 @@ impl IpRouteService {
             self.upsert_ipv6_lan_route_by_key(&mut lock, key, new_info)
         };
 
-        sync_ipv6_lan_update(update);
+        sync_ipv6_lan_update(&*self.dataplane, update);
     }
 
     pub async fn insert_ipv4_lan_route(&self, key: &str, info: LanRouteInfo) {
@@ -478,7 +498,7 @@ impl IpRouteService {
             self.upsert_ipv4_lan_routes_for_owner(&mut lock, key, info)
         };
 
-        sync_ipv4_lan_update(update);
+        sync_ipv4_lan_update(&*self.dataplane, update);
     }
 
     pub async fn remove_ipv6_lan_route(&self, key: &str) {
@@ -487,7 +507,7 @@ impl IpRouteService {
             self.remove_ipv6_lan_routes_for_iface(&mut lock, key)
         };
 
-        sync_removed_lan_routes(removed_routes);
+        sync_removed_lan_routes(&*self.dataplane, removed_routes);
     }
 
     pub async fn remove_ipv6_lan_route_by_key(&self, key: &LanIPv6RouteKey) {
@@ -496,7 +516,7 @@ impl IpRouteService {
             self.remove_ipv6_lan_route_by_key_inner(&mut lock, key)
         };
 
-        sync_removed_lan_routes(removed);
+        sync_removed_lan_routes(&*self.dataplane, removed);
     }
 
     pub async fn remove_ipv4_lan_route(&self, key: &str) {
@@ -505,7 +525,7 @@ impl IpRouteService {
             self.remove_ipv4_lan_routes_for_owner(&mut lock, key)
         };
 
-        sync_removed_lan_routes(removed.into_iter().flatten());
+        sync_removed_lan_routes(&*self.dataplane, removed.into_iter().flatten());
     }
 
     pub async fn insert_ipv6_wan_route(&self, key: &str, info: RouteTargetInfo) {
@@ -575,25 +595,25 @@ impl IpRouteService {
     pub async fn refresh_default_router(&self) {
         let ipv4_default =
             self.ipv4_wan_ifaces.read().await.values().find(|route| route.default_route).cloned();
-        sync_default_ipv4_wan_route(ipv4_default);
+        sync_default_ipv4_wan_route(&*self.dataplane, ipv4_default);
 
         let ipv6_default =
             self.ipv6_wan_ifaces.read().await.values().find(|route| route.default_route).cloned();
-        sync_default_ipv6_wan_route(ipv6_default);
+        sync_default_ipv6_wan_route(&*self.dataplane, ipv6_default);
     }
 
     pub async fn refresh_ipv4_target_map(&self, t: FlowTarget) {
         let flow_configs = self.flow_repo.find_by_target(t).await.unwrap_or_default();
         let ipv4_wan_infos = self.clone_ipv4_wan_infos().await;
-        refresh_ipv4_target_bpf_map(&flow_configs, ipv4_wan_infos);
-        landscape_ebpf::maps::route::cache::recreate_route_lan_cache_inner_map();
+        refresh_ipv4_target_bpf_map(&*self.dataplane, &flow_configs, ipv4_wan_infos);
+        self.dataplane.invalidate_lan_cache();
     }
 
     pub async fn refresh_ipv6_target_map(&self, t: FlowTarget) {
         let flow_configs = self.flow_repo.find_by_target(t).await.unwrap_or_default();
         let ipv6_wan_infos = self.clone_ipv6_wan_infos().await;
-        refresh_ipv6_target_bpf_map(&flow_configs, ipv6_wan_infos);
-        landscape_ebpf::maps::route::cache::recreate_route_lan_cache_inner_map();
+        refresh_ipv6_target_bpf_map(&*self.dataplane, &flow_configs, ipv6_wan_infos);
+        self.dataplane.invalidate_lan_cache();
     }
 
     pub fn load_reachable_local_ipv4_addrs(&self) -> Arc<Vec<IpAddr>> {
@@ -765,19 +785,21 @@ fn is_valid_dns_answer_ipv6(ip: Ipv6Addr) -> bool {
 }
 
 pub fn refresh_ipv4_target_bpf_map(
+    dataplane: &dyn RouteTableDataplane,
     flow_configs: &Vec<FlowConfig>,
     ipv4_wan_infos: HashMap<String, RouteTargetInfo>,
 ) {
     let result = collect_target_refresh_result(flow_configs, &ipv4_wan_infos);
-    apply_ipv4_target_refresh_result(result);
+    apply_ipv4_target_refresh_result(dataplane, result);
 }
 
 pub fn refresh_ipv6_target_bpf_map(
+    dataplane: &dyn RouteTableDataplane,
     flow_configs: &Vec<FlowConfig>,
     ipv6_wan_infos: HashMap<String, RouteTargetInfo>,
 ) {
     let result = collect_target_refresh_result(flow_configs, &ipv6_wan_infos);
-    apply_ipv6_target_refresh_result(result);
+    apply_ipv6_target_refresh_result(dataplane, result);
 }
 
 pub async fn test_used_ip_route() -> (mpsc::Sender<RouteEvent>, IpRouteService) {
@@ -785,7 +807,7 @@ pub async fn test_used_ip_route() -> (mpsc::Sender<RouteEvent>, IpRouteService) 
         landscape_database::provider::LandscapeDBServiceProvider::mem_test_db().await;
     let flow_repo = db_store_provider.flow_rule_store();
     let (route_tx, route_rx) = mpsc::channel(1);
-    let ip_route = IpRouteService::new(route_rx, flow_repo);
+    let ip_route = IpRouteService::new(route_rx, flow_repo, Arc::new(NoopRouteTableDataplane));
     (route_tx, ip_route)
 }
 

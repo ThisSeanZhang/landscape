@@ -1,5 +1,8 @@
+use std::sync::Arc;
+
 use crate::bpf_ctx;
 use crate::bpf_error::LdEbpfResult;
+use crate::runtime::EbpfRuntime;
 
 // ========================================================================
 // TC firewall
@@ -16,6 +19,7 @@ pub struct FirewallHandle {
 }
 
 pub struct TcFirewallHandle {
+    runtime: Arc<EbpfRuntime>,
     _skel: tc_firewall_skel::TcFirewallSkel<'static>,
     _backing: crate::landscape::OwnedOpenObject,
     ifindex: u32,
@@ -23,24 +27,23 @@ pub struct TcFirewallHandle {
 
 impl Drop for TcFirewallHandle {
     fn drop(&mut self) {
-        use crate::chain::tc_manager::{StageType, TcChainManager};
-        let manager = TcChainManager::instance();
-        let _ = manager.remove(self.ifindex, StageType::Firewall);
+        use crate::chain::tc_manager::StageType;
+        let _ = self.runtime.tc.remove(self.ifindex, StageType::Firewall);
     }
 }
 
-pub fn attach_tc_firewall(ifindex: u32, has_mac: bool) -> LdEbpfResult<TcFirewallHandle> {
-    use crate::chain::tc_manager::{
-        tc_pipe_exits_wan_egress_path, tc_pipe_exits_wan_ingress_path, StageEntry, StageType,
-        TcChainManager,
-    };
+pub fn attach_tc_firewall(
+    rt: &Arc<EbpfRuntime>,
+    ifindex: u32,
+    has_mac: bool,
+) -> LdEbpfResult<TcFirewallHandle> {
+    use crate::chain::tc_manager::{StageEntry, StageType};
     use crate::landscape::{pin_and_reuse_map, OwnedOpenObject};
-    use crate::MAP_PATHS;
     use libbpf_rs::skel::{OpenSkel, SkelBuilder};
     use std::os::fd::{AsFd, AsRawFd};
 
-    let manager = TcChainManager::instance();
-    manager.ensure_roots(ifindex, has_mac)?;
+    let paths = &rt.paths;
+    rt.tc.ensure_roots(ifindex, has_mac)?;
 
     let builder = tc_firewall_skel::TcFirewallSkelBuilder::default();
     let (backing, obj) = OwnedOpenObject::new();
@@ -51,18 +54,18 @@ pub fn attach_tc_firewall(ifindex: u32, has_mac: bool) -> LdEbpfResult<TcFirewal
 
     pin_and_reuse_map(
         &mut open_skel.maps.tc_pipe_exits_wan_ingress,
-        &tc_pipe_exits_wan_ingress_path(),
+        &paths.tc_pipe_exits_wan_ingress_path(),
     )?;
     pin_and_reuse_map(
         &mut open_skel.maps.tc_pipe_exits_wan_egress,
-        &tc_pipe_exits_wan_egress_path(),
+        &paths.tc_pipe_exits_wan_egress_path(),
     )?;
 
-    pin_and_reuse_map(&mut open_skel.maps.firewall_block_ip4_map, &MAP_PATHS.firewall_ipv4_block)?;
-    pin_and_reuse_map(&mut open_skel.maps.firewall_block_ip6_map, &MAP_PATHS.firewall_ipv6_block)?;
+    pin_and_reuse_map(&mut open_skel.maps.firewall_block_ip4_map, &paths.firewall_ipv4_block)?;
+    pin_and_reuse_map(&mut open_skel.maps.firewall_block_ip6_map, &paths.firewall_ipv6_block)?;
     pin_and_reuse_map(
         &mut open_skel.maps.firewall_conn_metric_events,
-        &MAP_PATHS.firewall_conn_metric_events,
+        &paths.firewall_conn_metric_events,
     )?;
 
     let skel = bpf_ctx!(open_skel.load(), "load tc_firewall skeleton")?;
@@ -74,9 +77,14 @@ pub fn attach_tc_firewall(ifindex: u32, has_mac: bool) -> LdEbpfResult<TcFirewal
         wan_egress_next_stage_fd: skel.maps.wan_egress_next_stage.as_fd().as_raw_fd(),
     };
 
-    manager.inject(ifindex, StageType::Firewall, entry)?;
+    rt.tc.inject(ifindex, StageType::Firewall, entry)?;
 
-    Ok(TcFirewallHandle { _skel: skel, _backing: backing, ifindex })
+    Ok(TcFirewallHandle {
+        runtime: rt.clone(),
+        _skel: skel,
+        _backing: backing,
+        ifindex,
+    })
 }
 
 // ========================================================================
@@ -88,6 +96,7 @@ pub(crate) mod xdp_firewall_skel {
 }
 
 pub struct XdpFirewallHandle {
+    runtime: Arc<EbpfRuntime>,
     _skel: xdp_firewall_skel::XdpFirewallSkel<'static>,
     _backing: crate::landscape::OwnedOpenObject,
     ifindex: u32,
@@ -98,66 +107,59 @@ unsafe impl Sync for XdpFirewallHandle {}
 
 impl Drop for XdpFirewallHandle {
     fn drop(&mut self) {
-        use crate::chain::xdp_manager::{StageType, XdpChainManager};
-        let manager = XdpChainManager::instance();
-        let _ = manager.remove(self.ifindex, StageType::Firewall);
+        use crate::chain::xdp_manager::StageType;
+        let _ = self.runtime.xdp.remove(self.ifindex, StageType::Firewall);
     }
 }
 
-pub fn init_xdp_firewall(ifindex: u32) -> LdEbpfResult<XdpFirewallHandle> {
-    use crate::chain::xdp_manager::{
-        xdp_lan_pipe_root_progs_path, xdp_pipe_exits_lan_path, xdp_pipe_exits_wan_path,
-        xdp_pipe_root_progs_path, StageType, XdpChainManager,
-    };
+pub fn init_xdp_firewall(rt: &Arc<EbpfRuntime>, ifindex: u32) -> LdEbpfResult<XdpFirewallHandle> {
+    use crate::chain::xdp_manager::StageType;
     use crate::landscape::{pin_and_reuse_map, OwnedOpenObject};
-    use crate::MAP_PATHS;
     use libbpf_rs::skel::{OpenSkel, SkelBuilder};
     use std::os::fd::{AsFd, AsRawFd};
 
     use xdp_firewall_skel::XdpFirewallSkelBuilder;
 
+    let paths = &rt.paths;
     let builder = XdpFirewallSkelBuilder::default();
     let (backing, obj) = OwnedOpenObject::new();
     let mut open_skel = bpf_ctx!(builder.open(obj), "open xdp_firewall skeleton")?;
 
     crate::bpf_ctx!(
-        pin_and_reuse_map(&mut open_skel.maps.xdp_pipe_root_progs, &xdp_pipe_root_progs_path(),),
+        pin_and_reuse_map(
+            &mut open_skel.maps.xdp_pipe_root_progs,
+            &paths.xdp_pipe_root_progs_path(),
+        ),
         "xdp_firewall pin xdp_pipe_root_progs"
     )?;
     crate::bpf_ctx!(
-        pin_and_reuse_map(&mut open_skel.maps.xdp_pipe_exits_lan, &xdp_pipe_exits_lan_path(),),
+        pin_and_reuse_map(&mut open_skel.maps.xdp_pipe_exits_lan, &paths.xdp_pipe_exits_lan_path(),),
         "xdp_firewall pin xdp_pipe_exits_lan"
     )?;
     crate::bpf_ctx!(
-        pin_and_reuse_map(&mut open_skel.maps.xdp_pipe_exits_wan, &xdp_pipe_exits_wan_path(),),
+        pin_and_reuse_map(&mut open_skel.maps.xdp_pipe_exits_wan, &paths.xdp_pipe_exits_wan_path(),),
         "xdp_firewall pin xdp_pipe_exits_wan"
     )?;
     crate::bpf_ctx!(
         pin_and_reuse_map(
             &mut open_skel.maps.xdp_lan_pipe_root_progs,
-            &xdp_lan_pipe_root_progs_path(),
+            &paths.xdp_lan_pipe_root_progs_path(),
         ),
         "xdp_firewall pin xdp_lan_pipe_root_progs"
     )?;
 
     crate::bpf_ctx!(
-        pin_and_reuse_map(
-            &mut open_skel.maps.firewall_block_ip4_map,
-            &MAP_PATHS.firewall_ipv4_block,
-        ),
+        pin_and_reuse_map(&mut open_skel.maps.firewall_block_ip4_map, &paths.firewall_ipv4_block,),
         "xdp_firewall pin firewall_block_ip4_map"
     )?;
     crate::bpf_ctx!(
-        pin_and_reuse_map(
-            &mut open_skel.maps.firewall_block_ip6_map,
-            &MAP_PATHS.firewall_ipv6_block,
-        ),
+        pin_and_reuse_map(&mut open_skel.maps.firewall_block_ip6_map, &paths.firewall_ipv6_block,),
         "xdp_firewall pin firewall_block_ip6_map"
     )?;
     crate::bpf_ctx!(
         pin_and_reuse_map(
             &mut open_skel.maps.firewall_conn_metric_events,
-            &MAP_PATHS.firewall_conn_metric_events,
+            &paths.firewall_conn_metric_events,
         ),
         "xdp_firewall pin firewall_conn_metric_events"
     )?;
@@ -168,19 +170,27 @@ pub fn init_xdp_firewall(ifindex: u32) -> LdEbpfResult<XdpFirewallHandle> {
     let wan_fd = skel.progs.xdp_firewall_wan.as_fd().as_raw_fd();
     let next_fd = skel.maps.next_stage.as_fd().as_raw_fd();
 
-    let manager = XdpChainManager::instance();
-    manager.inject(ifindex, StageType::Firewall, lan_fd, wan_fd, next_fd)?;
+    rt.xdp.inject(ifindex, StageType::Firewall, lan_fd, wan_fd, next_fd)?;
 
-    Ok(XdpFirewallHandle { _skel: skel, _backing: backing, ifindex })
+    Ok(XdpFirewallHandle {
+        runtime: rt.clone(),
+        _skel: skel,
+        _backing: backing,
+        ifindex,
+    })
 }
 
 // ========================================================================
 // Mode-aware unified entry (TC ingress+egress + XDP LAN+WAN)
 // ========================================================================
 
-pub fn init_firewall(ifindex: u32, has_mac: bool) -> LdEbpfResult<FirewallHandle> {
+pub fn init_firewall(
+    rt: &Arc<EbpfRuntime>,
+    ifindex: u32,
+    has_mac: bool,
+) -> LdEbpfResult<FirewallHandle> {
     Ok(FirewallHandle {
-        tc: Some(attach_tc_firewall(ifindex, has_mac)?),
-        xdp: Some(init_xdp_firewall(ifindex)?),
+        tc: Some(attach_tc_firewall(rt, ifindex, has_mac)?),
+        xdp: Some(init_xdp_firewall(rt, ifindex)?),
     })
 }

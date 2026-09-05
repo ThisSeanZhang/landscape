@@ -14,6 +14,7 @@ pub mod ddns;
 pub mod dev;
 pub mod dhcp;
 pub mod docker;
+pub mod ebpf;
 pub mod error;
 pub mod event;
 pub mod flow;

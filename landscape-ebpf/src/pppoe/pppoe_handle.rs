@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use libbpf_rs::{
     skel::{OpenSkel, SkelBuilder},
     TC_EGRESS,
@@ -6,8 +8,9 @@ use libbpf_rs::{
 use crate::{
     bpf_error::LdEbpfResult,
     bpf_rs_shared::xdp_skb_pppoe_skel,
-    chain::xdp_manager::{SkbPending, XdpChainManager},
+    chain::xdp_manager::SkbPending,
     landscape::{OwnedOpenObject, TcHookProxy},
+    runtime::EbpfRuntime,
     stages::pppoe::XdpPppoeHandle,
     PPPOE_EGRESS_PRIORITY,
 };
@@ -25,6 +28,7 @@ struct StandalonePppoe {
 }
 
 pub struct PppoeHandle {
+    runtime: Arc<EbpfRuntime>,
     _tc: StandalonePppoe,
     _xdp: XdpPppoeHandle,
     _ifindex: u32,
@@ -35,12 +39,13 @@ unsafe impl Sync for PppoeHandle {}
 
 impl Drop for PppoeHandle {
     fn drop(&mut self) {
-        let _ = XdpChainManager::instance().take_skb_pending(self._ifindex);
-        let _ = XdpChainManager::instance().take_skb_bundle(self._ifindex);
+        let _ = self.runtime.xdp.take_skb_pending(self._ifindex);
+        let _ = self.runtime.xdp.take_skb_bundle(self._ifindex);
     }
 }
 
 pub fn create_pppoe_handle(
+    rt: Arc<EbpfRuntime>,
     ifindex: u32,
     tmpl: PppoeEgressTmpl,
     _mtu: u16,
@@ -48,11 +53,16 @@ pub fn create_pppoe_handle(
     let session_id = u16::from_be(tmpl.session_id);
 
     let tc = attach_standalone_pppoe(ifindex, tmpl)?;
-    let xdp = crate::stages::pppoe::init_xdp_pppoe(ifindex, session_id)?;
+    let xdp = crate::stages::pppoe::init_xdp_pppoe(&rt, ifindex, session_id)?;
     let pending = prepare_pppoe_skb_pending(ifindex, session_id)?;
-    XdpChainManager::instance().set_skb_pending(ifindex, pending);
+    rt.xdp.set_skb_pending(ifindex, pending);
 
-    Ok(PppoeHandle { _tc: tc, _xdp: xdp, _ifindex: ifindex })
+    Ok(PppoeHandle {
+        runtime: rt.clone(),
+        _tc: tc,
+        _xdp: xdp,
+        _ifindex: ifindex,
+    })
 }
 
 fn attach_standalone_pppoe(ifindex: u32, tmpl: PppoeEgressTmpl) -> LdEbpfResult<StandalonePppoe> {

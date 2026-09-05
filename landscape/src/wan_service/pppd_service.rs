@@ -3,6 +3,7 @@ use std::net::IpAddr;
 use std::net::Ipv4Addr;
 use std::os::unix::process::CommandExt;
 use std::process::{Child, Command, ExitStatus, Stdio};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use landscape_common::sys_service::route_service::LanRouteInfo;
@@ -17,6 +18,7 @@ use landscape_common::global_const::default_router::LD_ALL_ROUTERS;
 use landscape_common::service::controller::ControllerService;
 use landscape_common::service::manager::ServiceManager;
 use landscape_common::service::ServiceStatus;
+use landscape_common::wan_service::addr_binding::WanAddrBinding;
 use landscape_common::wan_service::pppd::PPPDConfig;
 use landscape_common::{
     concurrency::{
@@ -208,11 +210,12 @@ fn stop_pppd_process(child: &mut Child, ppp_iface_name: &str) {
 #[derive(Clone)]
 pub struct PPPDService {
     route_service: IpRouteService,
+    addr_binding: Arc<dyn WanAddrBinding>,
 }
 
 impl PPPDService {
-    pub fn new(route_service: IpRouteService) -> Self {
-        PPPDService { route_service }
+    pub fn new(route_service: IpRouteService, addr_binding: Arc<dyn WanAddrBinding>) -> Self {
+        PPPDService { route_service, addr_binding }
     }
 }
 
@@ -223,6 +226,7 @@ impl ServiceStarterTrait for PPPDService {
     async fn start(&self, config: PPPDServiceConfig) -> WatchService {
         let service_status = WatchService::new();
         let route_service = self.route_service.clone();
+        let addr_binding = self.addr_binding.clone();
         if config.enable {
             if get_iface_by_name(&config.attach_iface_name).await.is_some() {
                 let status_clone = service_status.clone();
@@ -238,6 +242,7 @@ impl ServiceStarterTrait for PPPDService {
                             config.pppd_config,
                             status_clone,
                             route_service,
+                            addr_binding,
                         )
                         .await
                     },
@@ -257,6 +262,7 @@ pub async fn create_pppd_thread(
     pppd_conf: PPPDConfig,
     service_status: WatchService,
     route_service: IpRouteService,
+    addr_binding: Arc<dyn WanAddrBinding>,
 ) {
     service_status.just_change_status(ServiceStatus::Staring);
 
@@ -288,6 +294,7 @@ pub async fn create_pppd_thread(
     let (updata_ip, mut updata_ip_rx) = watch::channel(());
     let ppp_iface_name_clone = ppp_iface_name.clone();
     let route_service_clone = route_service.clone();
+    let addr_binding_clone = addr_binding.clone();
     let ppp_ipv4_state_tx_clone = ppp_ipv4_state_tx.clone();
     let initial_ppp_ipv4_state_clone = initial_ppp_ipv4_state.clone();
     spawn_task_with_resource(
@@ -308,7 +315,7 @@ pub async fn create_pppd_thread(
                     let update = if let Some(data) = ip4addr { data != new_ip4addr } else { true };
                     if update {
                         if let (Some(ip), Some(peer_ip)) = (new_ip4addr.1, new_ip4addr.2) {
-                            landscape_ebpf::maps::wan::add_ipv4_wan_ip(
+                            addr_binding_clone.bind_ipv4(
                                 new_ip4addr.0,
                                 ip,
                                 Some(peer_ip),
@@ -535,9 +542,10 @@ impl PPPDServiceConfigManagerService {
     pub async fn new(
         store_service: LandscapeDBServiceProvider,
         route_service: IpRouteService,
+        addr_binding: Arc<dyn WanAddrBinding>,
     ) -> Self {
         let store = store_service.pppd_service_store();
-        let server_starter = PPPDService::new(route_service);
+        let server_starter = PPPDService::new(route_service, addr_binding);
         let service = ServiceManager::init(store.list().await.unwrap(), server_starter).await;
 
         Self { service, store }

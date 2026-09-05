@@ -1,8 +1,7 @@
 use std::collections::{BTreeMap, HashMap};
 use std::mem::size_of;
 use std::os::fd::{AsFd, AsRawFd};
-use std::path::PathBuf;
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex};
 
 use libbpf_rs::libbpf_sys;
 use libbpf_rs::skel::{OpenSkel, SkelBuilder};
@@ -11,7 +10,8 @@ use libbpf_rs::{MapCore, MapFlags, Program, Xdp, XdpFlags};
 use crate::bpf_ctx;
 use crate::bpf_error::LdEbpfResult;
 use crate::landscape::{pin_and_reuse_map, OwnedOpenObject};
-use crate::MAP_PATHS;
+use crate::runtime::EbpfRuntime;
+use crate::LandscapeMapPath;
 
 pub(crate) mod xdp_wan_intro_skel {
     include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/xdp_wan_intro.skel.rs"));
@@ -50,26 +50,6 @@ pub enum StageType {
     Firewall = 1,
     Nat = 2,
     Pppoe = 3,
-}
-
-pub(crate) fn xdp_pipe_root_progs_path() -> PathBuf {
-    MAP_PATHS.xdp_base.join("pipe_root_progs")
-}
-
-pub(crate) fn xdp_pipe_exits_lan_path() -> PathBuf {
-    MAP_PATHS.xdp_base.join("pipe_exits_lan")
-}
-
-pub(crate) fn xdp_pipe_exits_wan_path() -> PathBuf {
-    MAP_PATHS.xdp_base.join("pipe_exits_wan")
-}
-
-pub(crate) fn xdp_lan_pipe_root_progs_path() -> PathBuf {
-    MAP_PATHS.xdp_base.join("lan_pipe_root_progs")
-}
-
-pub(crate) fn wan_intro_dispatch_path() -> PathBuf {
-    MAP_PATHS.xdp_base.join("wan_intro_dispatch")
 }
 
 fn update_prog_array_fd(map_fd: i32, key: u32, val: i32) -> LdEbpfResult<()> {
@@ -148,9 +128,8 @@ impl ChainRoot {
     }
 }
 
-static MANAGER: OnceLock<XdpChainManager> = OnceLock::new();
-
 pub struct XdpChainManager {
+    paths: Arc<LandscapeMapPath>,
     _seed: xdp_wan_intro_skel::XdpWanIntroSkel<'static>,
     _backing: OwnedOpenObject,
     inner: Mutex<ManagerInner>,
@@ -163,13 +142,14 @@ pub struct XdpChainManager {
 // crash-recovery cleanup can still scan and clear interfaces with disabled
 // route services.
 pub(crate) struct NativeXdpLink {
+    rt: Arc<EbpfRuntime>,
     ifindex: i32,
     prog_fd: i32,
 }
 
 impl NativeXdpLink {
     #[allow(clippy::field_reassign_with_default)]
-    pub(crate) fn attach(prog: &Program, ifindex: u32) -> LdEbpfResult<Self> {
+    pub(crate) fn attach(rt: Arc<EbpfRuntime>, prog: &Program, ifindex: u32) -> LdEbpfResult<Self> {
         let ifindex_i32 = ifindex as i32;
 
         // Native and generic (SKB) XDP cannot be active at the same time on
@@ -187,12 +167,12 @@ impl NativeXdpLink {
         // (no-op if the unconditional detach above already handled it)
         // and return the skeleton to the pending pool so it can be
         // reused if native XDP fails now or in the future.
-        if let Some(old_bundle) = XdpChainManager::instance().take_skb_bundle(ifindex) {
+        if let Some(old_bundle) = rt.xdp.take_skb_bundle(ifindex) {
             let SkbXdpBundle { _link: _, _skel, _backing } = old_bundle;
-            XdpChainManager::instance().set_skb_pending(ifindex, SkbPending::new(_backing, _skel));
+            rt.xdp.set_skb_pending(ifindex, SkbPending::new(_backing, _skel));
         }
 
-        let result = Self::try_native(prog, ifindex_i32);
+        let result = Self::try_native(rt.clone(), prog, ifindex_i32);
 
         match result {
             Ok(link) => {
@@ -203,12 +183,12 @@ impl NativeXdpLink {
             Err(e) => {
                 // Native XDP failed — consume the pending SKB skeleton
                 // (if any) and attach it as a fallback.
-                if let Some(pending) = XdpChainManager::instance().take_skb_pending(ifindex) {
+                if let Some(pending) = rt.xdp.take_skb_pending(ifindex) {
                     let SkbPending { _skel, _backing } = pending;
                     match SkbXdpLink::attach(&_skel.progs.xdp_skb_pppoe, ifindex) {
                         Ok(skb_link) => {
                             let bundle = SkbXdpBundle::new(_backing, _skel, skb_link);
-                            XdpChainManager::instance().set_skb_bundle(ifindex, bundle);
+                            rt.xdp.set_skb_bundle(ifindex, bundle);
                         }
                         Err(skb_err) => {
                             tracing::warn!(
@@ -223,8 +203,8 @@ impl NativeXdpLink {
         }
     }
 
-    fn try_native(prog: &Program, ifindex: i32) -> LdEbpfResult<Self> {
-        match landscape_common::args::LAND_ARGS.try_native_xdp {
+    fn try_native(rt: Arc<EbpfRuntime>, prog: &Program, ifindex: i32) -> LdEbpfResult<Self> {
+        match rt.try_native_xdp.clone() {
             None => {
                 return Err(crate::bpf_error::LandscapeEbpfError::Context {
                     context: format!(
@@ -268,7 +248,7 @@ impl NativeXdpLink {
             });
         }
 
-        Ok(Self { ifindex, prog_fd: prog.as_fd().as_raw_fd() })
+        Ok(Self { rt, ifindex, prog_fd: prog.as_fd().as_raw_fd() })
     }
 
     #[allow(clippy::field_reassign_with_default)]
@@ -381,21 +361,18 @@ impl Drop for NativeXdpLink {
         Self::detach(self.ifindex, self.prog_fd);
         // If native XDP had failed and SKB was running as fallback,
         // detach it and recycle the skeleton back as pending for reuse.
-        if let Some(old_bundle) = XdpChainManager::instance().take_skb_bundle(self.ifindex as u32) {
+        if let Some(old_bundle) = self.rt.xdp.take_skb_bundle(self.ifindex as u32) {
             let SkbXdpBundle { _link: _, _skel, _backing } = old_bundle;
-            XdpChainManager::instance()
-                .set_skb_pending(self.ifindex as u32, SkbPending::new(_backing, _skel));
+            self.rt.xdp.set_skb_pending(self.ifindex as u32, SkbPending::new(_backing, _skel));
         }
     }
 }
 
 impl XdpChainManager {
-    pub fn instance() -> &'static Self {
-        MANAGER.get_or_init(|| Self::init().expect("XDP chain manager init failed"))
-    }
-
-    fn init() -> LdEbpfResult<Self> {
-        std::fs::create_dir_all(&MAP_PATHS.xdp_base).expect("create xdp_base dir failed");
+    /// Create the XDP pin directory, seed its prog-array maps, load the
+    /// wan-intro seed skeleton and clear stale entries left by previous runs.
+    pub fn new(paths: Arc<LandscapeMapPath>) -> LdEbpfResult<Self> {
+        std::fs::create_dir_all(&paths.xdp_base).expect("create xdp_base dir failed");
 
         let builder = XdpWanIntroSkelBuilder::default();
         let (backing, obj) = OwnedOpenObject::new();
@@ -403,23 +380,23 @@ impl XdpChainManager {
 
         crate::maps::reuse_pinned_map_or_recreate(
             &mut open_skel.maps.xdp_pipe_root_progs,
-            &xdp_pipe_root_progs_path(),
+            &paths.xdp_pipe_root_progs_path(),
         );
         crate::maps::reuse_pinned_map_or_recreate(
             &mut open_skel.maps.xdp_pipe_exits_lan,
-            &xdp_pipe_exits_lan_path(),
+            &paths.xdp_pipe_exits_lan_path(),
         );
         crate::maps::reuse_pinned_map_or_recreate(
             &mut open_skel.maps.xdp_pipe_exits_wan,
-            &xdp_pipe_exits_wan_path(),
+            &paths.xdp_pipe_exits_wan_path(),
         );
         crate::maps::reuse_pinned_map_or_recreate(
             &mut open_skel.maps.xdp_lan_pipe_root_progs,
-            &xdp_lan_pipe_root_progs_path(),
+            &paths.xdp_lan_pipe_root_progs_path(),
         );
         crate::maps::reuse_pinned_map_or_recreate(
             &mut open_skel.maps.wan_intro_dispatch_map,
-            &wan_intro_dispatch_path(),
+            &paths.xdp_wan_intro_dispatch_path(),
         );
 
         let skel = bpf_ctx!(open_skel.load(), "load xdp seed skeleton")?;
@@ -434,6 +411,7 @@ impl XdpChainManager {
         clear_map_entries(&skel.maps.wan_intro_dispatch_map);
 
         Ok(Self {
+            paths,
             _seed: skel,
             _backing: backing,
             inner: Mutex::new(ManagerInner::new()),
@@ -567,9 +545,10 @@ impl XdpChainManager {
         Ok(())
     }
 
-    pub(crate) fn create_wan_intro_link(&self, ifindex: u32) -> LdEbpfResult<NativeXdpLink> {
-        let link = NativeXdpLink::attach(&self._seed.progs.wan_intro_dispatch, ifindex)?;
-        Ok(link)
+    /// The seed skeleton's wan-intro dispatch program, for callers attaching
+    /// a [`NativeXdpLink`] (which needs the owning [`EbpfRuntime`]).
+    pub(crate) fn wan_intro_prog(&self) -> &Program<'_> {
+        &self._seed.progs.wan_intro_dispatch
     }
 
     pub(crate) fn set_skb_bundle(&self, ifindex: u32, bundle: SkbXdpBundle) {
@@ -583,7 +562,7 @@ impl XdpChainManager {
     pub(crate) fn set_skb_pending(&self, ifindex: u32, pending: SkbPending) {
         let _ = self.skb_bundles.lock().unwrap().remove(&ifindex);
 
-        match crate::maps::redirect_able::get_xdp_redirect_able(ifindex) {
+        match crate::maps::redirect_able::get_xdp_redirect_able(&self.paths, ifindex) {
             Some(true) => {
                 // Native XDP is already serving this interface — store the
                 // skeleton as pending for potential future SKB fallback.
@@ -620,12 +599,21 @@ impl XdpChainManager {
         let (backing, obj) = OwnedOpenObject::new();
         let mut open_skel = bpf_ctx!(builder.open(obj), "open xdp_wan_chain")?;
 
-        pin_and_reuse_map(&mut open_skel.maps.xdp_pipe_root_progs, &xdp_pipe_root_progs_path())?;
-        pin_and_reuse_map(&mut open_skel.maps.xdp_pipe_exits_lan, &xdp_pipe_exits_lan_path())?;
-        pin_and_reuse_map(&mut open_skel.maps.xdp_pipe_exits_wan, &xdp_pipe_exits_wan_path())?;
+        pin_and_reuse_map(
+            &mut open_skel.maps.xdp_pipe_root_progs,
+            &self.paths.xdp_pipe_root_progs_path(),
+        )?;
+        pin_and_reuse_map(
+            &mut open_skel.maps.xdp_pipe_exits_lan,
+            &self.paths.xdp_pipe_exits_lan_path(),
+        )?;
+        pin_and_reuse_map(
+            &mut open_skel.maps.xdp_pipe_exits_wan,
+            &self.paths.xdp_pipe_exits_wan_path(),
+        )?;
         pin_and_reuse_map(
             &mut open_skel.maps.xdp_lan_pipe_root_progs,
-            &xdp_lan_pipe_root_progs_path(),
+            &self.paths.xdp_lan_pipe_root_progs_path(),
         )?;
 
         let skel = bpf_ctx!(open_skel.load(), "load xdp_wan_chain")?;
@@ -659,14 +647,23 @@ impl XdpChainManager {
         let (backing, obj) = OwnedOpenObject::new();
         let mut open_skel = bpf_ctx!(builder.open(obj), "open xdp_lan_chain")?;
 
-        pin_and_reuse_map(&mut open_skel.maps.xdp_pipe_root_progs, &xdp_pipe_root_progs_path())?;
-        pin_and_reuse_map(&mut open_skel.maps.xdp_pipe_exits_lan, &xdp_pipe_exits_lan_path())?;
-        pin_and_reuse_map(&mut open_skel.maps.xdp_pipe_exits_wan, &xdp_pipe_exits_wan_path())?;
+        pin_and_reuse_map(
+            &mut open_skel.maps.xdp_pipe_root_progs,
+            &self.paths.xdp_pipe_root_progs_path(),
+        )?;
+        pin_and_reuse_map(
+            &mut open_skel.maps.xdp_pipe_exits_lan,
+            &self.paths.xdp_pipe_exits_lan_path(),
+        )?;
+        pin_and_reuse_map(
+            &mut open_skel.maps.xdp_pipe_exits_wan,
+            &self.paths.xdp_pipe_exits_wan_path(),
+        )?;
         pin_and_reuse_map(
             &mut open_skel.maps.xdp_lan_pipe_root_progs,
-            &xdp_lan_pipe_root_progs_path(),
+            &self.paths.xdp_lan_pipe_root_progs_path(),
         )?;
-        pin_and_reuse_map(&mut open_skel.maps.xdp_redirect_able, &MAP_PATHS.xdp_redirect_able)?;
+        pin_and_reuse_map(&mut open_skel.maps.xdp_redirect_able, &self.paths.xdp_redirect_able)?;
 
         let skel = bpf_ctx!(open_skel.load(), "load xdp_lan_chain")?;
 

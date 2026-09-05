@@ -7,6 +7,7 @@ use landscape_common::event::hub::{IAPrefixEventSender, IfaceEventReader};
 use landscape_common::lan_service::lan_ipv6::{mark_wan_iid, PdPrefixContext, PdPrefixContextMap};
 use landscape_common::service::manager::ServiceStarterTrait;
 use landscape_common::sys_service::route_service::RouteTargetInfo;
+use landscape_common::wan_service::addr_binding::WanAddrBinding;
 use landscape_common::wan_service::ipv6_pd::IAPrefixMap;
 use landscape_common::wan_service::ipv6_pd::IPV6PDPrefixStatus;
 use landscape_common::wan_service::ipv6_pd::LDIAPrefix;
@@ -32,6 +33,7 @@ pub fn generate_wan_iid() -> u64 {
 #[derive(Clone)]
 pub struct IPV6PDService {
     route_service: IpRouteService,
+    addr_binding: Arc<dyn WanAddrBinding>,
     prefix_map: IAPrefixMap,
     shared_wan_iid: Arc<u64>,
     prefix_sender: IAPrefixEventSender,
@@ -40,12 +42,14 @@ pub struct IPV6PDService {
 impl IPV6PDService {
     pub fn new(
         route_service: IpRouteService,
+        addr_binding: Arc<dyn WanAddrBinding>,
         prefix_map: IAPrefixMap,
         shared_wan_iid: Arc<u64>,
         prefix_sender: IAPrefixEventSender,
     ) -> Self {
         Self {
             route_service,
+            addr_binding,
             prefix_map,
             shared_wan_iid,
             prefix_sender,
@@ -61,6 +65,7 @@ impl ServiceStarterTrait for IPV6PDService {
         let service_status = WatchService::new();
         if config.enable {
             let route_service = self.route_service.clone();
+            let addr_binding = self.addr_binding.clone();
             let prefix_map = self.prefix_map.clone();
             let shared_wan_iid = self.shared_wan_iid.clone();
             let prefix_sender = self.prefix_sender.clone();
@@ -88,6 +93,7 @@ impl ServiceStarterTrait for IPV6PDService {
                         status_clone,
                         route_info,
                         route_service,
+                        addr_binding,
                         prefix_map,
                         shared_wan_iid,
                         prefix_sender,
@@ -131,13 +137,19 @@ impl DHCPv6ClientManagerService {
         store_service: LandscapeDBServiceProvider,
         mut dev_observer: IfaceEventReader,
         route_service: IpRouteService,
+        addr_binding: Arc<dyn WanAddrBinding>,
         prefix_map: IAPrefixMap,
         prefix_sender: IAPrefixEventSender,
         shared_wan_iid: Arc<u64>,
     ) -> Self {
         let store = store_service.dhcp_v6_client_store();
-        let server_starter =
-            IPV6PDService::new(route_service, prefix_map.clone(), shared_wan_iid, prefix_sender);
+        let server_starter = IPV6PDService::new(
+            route_service,
+            addr_binding,
+            prefix_map.clone(),
+            shared_wan_iid,
+            prefix_sender,
+        );
         let service = ServiceManager::init(store.list().await.unwrap(), server_starter).await;
 
         let service_clone = service.clone();

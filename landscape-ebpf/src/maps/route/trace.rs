@@ -17,9 +17,9 @@ use crate::{
     maps::{
         FlowDnsMatchKeyV4, FlowDnsMatchKeyV6, FlowDnsMatchValueV4, FlowDnsMatchValueV6,
         FlowIpTrieKeyV4, FlowIpTrieKeyV6, FlowIpTrieValueV4, FlowIpTrieValueV6, FlowMatchKey,
-        RtCacheKeyV4, RtCacheKeyV6, RtCacheValueV4, RtCacheValueV6,
+        LandscapeMapPath, RtCacheKeyV4, RtCacheKeyV6, RtCacheValueV4, RtCacheValueV6,
     },
-    LANDSCAPE_IPV4_TYPE, LANDSCAPE_IPV6_TYPE, MAP_PATHS,
+    LANDSCAPE_IPV4_TYPE, LANDSCAPE_IPV6_TYPE,
 };
 const FLOW_ENTRY_MODE_MAC: u8 = 0;
 const FLOW_ENTRY_MODE_IP: u8 = 1;
@@ -44,8 +44,8 @@ pub(crate) fn pick_effective_flow(
 
 /// Step 1: Match source client → flow_id
 #[allow(clippy::field_reassign_with_default)]
-pub fn trace_flow_match(req: FlowMatchRequest) -> FlowMatchResult {
-    let flow_match_map = match libbpf_rs::MapHandle::from_pinned_path(&MAP_PATHS.flow_match_map) {
+pub fn trace_flow_match(paths: &LandscapeMapPath, req: FlowMatchRequest) -> FlowMatchResult {
+    let flow_match_map = match libbpf_rs::MapHandle::from_pinned_path(&paths.flow_match_map) {
         Ok(map) => map,
         Err(e) => {
             tracing::error!("Failed to open flow_match_map: {e:?}");
@@ -143,17 +143,17 @@ pub fn trace_flow_match(req: FlowMatchRequest) -> FlowMatchResult {
 }
 
 /// Step 2: Flow verdict on multiple dst_ips (supports both IPv4 and IPv6)
-pub fn trace_flow_verdict(req: FlowVerdictRequest) -> FlowVerdictResult {
+pub fn trace_flow_verdict(paths: &LandscapeMapPath, req: FlowVerdictRequest) -> FlowVerdictResult {
     let verdicts = req
         .dst_ips
         .iter()
         .map(|dst_ip| match dst_ip {
             IpAddr::V4(v4) => {
                 let (ip_rule_match, dns_rule_match, effective_rule_source, effective_mark) =
-                    trace_flow_verdict_single_v4(req.flow_id, *v4);
+                    trace_flow_verdict_single_v4(paths, req.flow_id, *v4);
                 let expected_cache_mark = expected_cache_mark_value(req.flow_id, &effective_mark);
                 let (has_cache, cached_mark, cache_consistent) = if let Some(src) = req.src_ipv4 {
-                    trace_cache_check_v4(src, *v4, expected_cache_mark)
+                    trace_cache_check_v4(paths, src, *v4, expected_cache_mark)
                 } else {
                     (false, None, true)
                 };
@@ -172,10 +172,10 @@ pub fn trace_flow_verdict(req: FlowVerdictRequest) -> FlowVerdictResult {
             }
             IpAddr::V6(v6) => {
                 let (ip_rule_match, dns_rule_match, effective_rule_source, effective_mark) =
-                    trace_flow_verdict_single_v6(req.flow_id, *v6);
+                    trace_flow_verdict_single_v6(paths, req.flow_id, *v6);
                 let expected_cache_mark = expected_cache_mark_value(req.flow_id, &effective_mark);
                 let (has_cache, cached_mark, cache_consistent) = if let Some(src) = req.src_ipv6 {
-                    trace_cache_check_v6(src, *v6, expected_cache_mark)
+                    trace_cache_check_v6(paths, src, *v6, expected_cache_mark)
                 } else {
                     (false, None, true)
                 };
@@ -242,6 +242,7 @@ pub(crate) fn expected_cache_mark_value(flow_id: u32, effective_mark: &FlowMark)
 
 #[allow(clippy::field_reassign_with_default)]
 fn trace_flow_verdict_single_v4(
+    paths: &LandscapeMapPath,
     flow_id: u32,
     dst_ip: Ipv4Addr,
 ) -> (Option<FlowRuleMatchResult>, Option<FlowRuleMatchResult>, FlowVerdictSource, FlowMark) {
@@ -249,7 +250,7 @@ fn trace_flow_verdict_single_v4(
 
     // IP trie lookup
     let ip_rule_match = (|| -> Option<FlowRuleMatchResult> {
-        let outer = libbpf_rs::MapHandle::from_pinned_path(&MAP_PATHS.flow4_ip_map).ok()?;
+        let outer = libbpf_rs::MapHandle::from_pinned_path(&paths.flow4_ip_map).ok()?;
         let inner = lookup_inner_map(&outer, flow_id_key)?;
 
         let mut trie_key = FlowIpTrieKeyV4::default();
@@ -269,7 +270,7 @@ fn trace_flow_verdict_single_v4(
 
     // DNS hash lookup
     let dns_rule_match = (|| -> Option<FlowRuleMatchResult> {
-        let outer = libbpf_rs::MapHandle::from_pinned_path(&MAP_PATHS.flow4_dns_map).ok()?;
+        let outer = libbpf_rs::MapHandle::from_pinned_path(&paths.flow4_dns_map).ok()?;
         let inner = lookup_inner_map(&outer, flow_id_key)?;
 
         let mut dns_key = FlowDnsMatchKeyV4::default();
@@ -293,6 +294,7 @@ fn trace_flow_verdict_single_v4(
 
 #[allow(clippy::field_reassign_with_default)]
 fn trace_flow_verdict_single_v6(
+    paths: &LandscapeMapPath,
     flow_id: u32,
     dst_ip: Ipv6Addr,
 ) -> (Option<FlowRuleMatchResult>, Option<FlowRuleMatchResult>, FlowVerdictSource, FlowMark) {
@@ -300,7 +302,7 @@ fn trace_flow_verdict_single_v6(
 
     // IP trie lookup
     let ip_rule_match = (|| -> Option<FlowRuleMatchResult> {
-        let outer = libbpf_rs::MapHandle::from_pinned_path(&MAP_PATHS.flow6_ip_map).ok()?;
+        let outer = libbpf_rs::MapHandle::from_pinned_path(&paths.flow6_ip_map).ok()?;
         let inner = lookup_inner_map(&outer, flow_id_key)?;
 
         let mut trie_key = FlowIpTrieKeyV6::default();
@@ -320,7 +322,7 @@ fn trace_flow_verdict_single_v6(
 
     // DNS hash lookup
     let dns_rule_match = (|| -> Option<FlowRuleMatchResult> {
-        let outer = libbpf_rs::MapHandle::from_pinned_path(&MAP_PATHS.flow6_dns_map).ok()?;
+        let outer = libbpf_rs::MapHandle::from_pinned_path(&paths.flow6_dns_map).ok()?;
         let inner = lookup_inner_map(&outer, flow_id_key)?;
 
         let mut dns_key = FlowDnsMatchKeyV6::default();
@@ -344,12 +346,13 @@ fn trace_flow_verdict_single_v6(
 
 #[allow(clippy::field_reassign_with_default)]
 fn trace_cache_check_v4(
+    paths: &LandscapeMapPath,
     src_ip: Ipv4Addr,
     dst_ip: Ipv4Addr,
     expected_cache_mark: u32,
 ) -> (bool, Option<u32>, bool) {
     let result = (|| -> Option<(bool, Option<u32>, bool)> {
-        let outer = libbpf_rs::MapHandle::from_pinned_path(&MAP_PATHS.rt4_cache_map).ok()?;
+        let outer = libbpf_rs::MapHandle::from_pinned_path(&paths.rt4_cache_map).ok()?;
 
         let cache_index = LAN_CACHE;
         let index_key = cache_index.as_bytes();
@@ -378,12 +381,13 @@ fn trace_cache_check_v4(
 
 #[allow(clippy::field_reassign_with_default)]
 fn trace_cache_check_v6(
+    paths: &LandscapeMapPath,
     src_ip: Ipv6Addr,
     dst_ip: Ipv6Addr,
     expected_cache_mark: u32,
 ) -> (bool, Option<u32>, bool) {
     let result = (|| -> Option<(bool, Option<u32>, bool)> {
-        let outer = libbpf_rs::MapHandle::from_pinned_path(&MAP_PATHS.rt6_cache_map).ok()?;
+        let outer = libbpf_rs::MapHandle::from_pinned_path(&paths.rt6_cache_map).ok()?;
 
         let cache_index = LAN_CACHE;
         let index_key = cache_index.as_bytes();

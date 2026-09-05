@@ -4,7 +4,8 @@ use landscape_common::flow::{
 use zerocopy::IntoBytes;
 
 use crate::bpf_error::LdEbpfResult;
-use crate::{maps::FlowMatchKey, LANDSCAPE_IPV4_TYPE, LANDSCAPE_IPV6_TYPE, MAP_PATHS};
+use crate::maps::{FlowMatchKey, LandscapeMapPath};
+use crate::{LANDSCAPE_IPV4_TYPE, LANDSCAPE_IPV6_TYPE};
 
 use crate::maps::{apply_raw_map_diff, diff_raw_map, snapshot_raw_map, RawEbpfMapEntries};
 
@@ -55,18 +56,24 @@ pub fn build_flow_match_entries(configs: &[RuntimeFlowConfig]) -> RawEbpfMapEntr
     entries
 }
 
-pub fn reconcile_flow_match_entries(desired: RawEbpfMapEntries) -> LdEbpfResult<()> {
-    let flow_match_map = libbpf_rs::MapHandle::from_pinned_path(&MAP_PATHS.flow_match_map)?;
+pub fn reconcile_flow_match_entries(
+    paths: &LandscapeMapPath,
+    desired: RawEbpfMapEntries,
+) -> LdEbpfResult<()> {
+    let flow_match_map = libbpf_rs::MapHandle::from_pinned_path(&paths.flow_match_map)?;
     let current = snapshot_raw_map(&flow_match_map)?;
     let diff = diff_raw_map(&current, &desired);
     let changed = !diff.is_empty();
     apply_raw_map_diff(&flow_match_map, diff)?;
     if changed {
-        crate::maps::route::cache::recreate_route_lan_cache_inner_map();
+        crate::maps::route::cache::recreate_route_lan_cache_inner_map(paths);
     }
     Ok(())
 }
 
-pub fn reconcile_flow_match_map(configs: &[RuntimeFlowConfig]) -> LdEbpfResult<()> {
-    reconcile_flow_match_entries(build_flow_match_entries(configs))
+pub fn reconcile_flow_match_map(
+    paths: &LandscapeMapPath,
+    configs: &[RuntimeFlowConfig],
+) -> LdEbpfResult<()> {
+    reconcile_flow_match_entries(paths, build_flow_match_entries(configs))
 }

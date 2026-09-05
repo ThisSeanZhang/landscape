@@ -1,6 +1,6 @@
 use libbpf_rs::{MapCore, MapFlags};
 
-use crate::MAP_PATHS;
+use crate::maps::LandscapeMapPath;
 
 const DNS_FLOW_PROTO_UDP: u8 = 17;
 const DNS_FLOW_PROTO_TCP: u8 = 6;
@@ -24,12 +24,11 @@ fn setting_dns_sock_map_inner<T: MapCore>(
     }
 }
 
-pub fn setting_dns_sock_map(sock_fd: i32, flow_id: u32) {
-    let Ok(dns_flow_socks) = libbpf_rs::MapHandle::from_pinned_path(&MAP_PATHS.dns_flow_socks)
-    else {
+pub fn setting_dns_sock_map(paths: &LandscapeMapPath, sock_fd: i32, flow_id: u32) {
+    let Ok(dns_flow_socks) = libbpf_rs::MapHandle::from_pinned_path(&paths.dns_flow_socks) else {
         tracing::warn!(
             "dns_flow_socks map not found at {:?}, skip dns sock map update",
-            MAP_PATHS.dns_flow_socks
+            paths.dns_flow_socks
         );
         return;
     };
@@ -37,12 +36,11 @@ pub fn setting_dns_sock_map(sock_fd: i32, flow_id: u32) {
     setting_dns_sock_map_inner(&dns_flow_socks, sock_fd, flow_id, DNS_FLOW_PROTO_UDP);
 }
 
-pub fn setting_dns_sock_map_tcp(sock_fd: i32, flow_id: u32) {
-    let Ok(dns_flow_socks) = libbpf_rs::MapHandle::from_pinned_path(&MAP_PATHS.dns_flow_socks)
-    else {
+pub fn setting_dns_sock_map_tcp(paths: &LandscapeMapPath, sock_fd: i32, flow_id: u32) {
+    let Ok(dns_flow_socks) = libbpf_rs::MapHandle::from_pinned_path(&paths.dns_flow_socks) else {
         tracing::warn!(
             "dns_flow_socks map not found at {:?}, skip dns sock map update",
-            MAP_PATHS.dns_flow_socks
+            paths.dns_flow_socks
         );
         return;
     };

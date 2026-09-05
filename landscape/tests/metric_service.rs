@@ -100,13 +100,9 @@ impl MetricSourceHandle for FakeSourceHandle {
 
 async fn service_with(factory: &FakeSourceFactory) -> MetricService {
     let dir = tempfile::tempdir().expect("create temp dir");
-    MetricService::new_with_source_factory(
-        dir.path().to_path_buf(),
-        memory_config(),
-        Arc::new(factory.clone()),
-    )
-    .await
-    .expect("build metric service")
+    MetricService::new(dir.path().to_path_buf(), memory_config(), Arc::new(factory.clone()))
+        .await
+        .expect("build metric service")
 }
 
 fn status(service: &MetricService) -> ServiceStatus {
@@ -210,13 +206,10 @@ async fn apply_runtime_config_restarts_source_with_new_engine() {
 async fn mode_off_start_is_noop() {
     let factory = FakeSourceFactory::new();
     let dir = tempfile::tempdir().expect("create temp dir");
-    let service = MetricService::new_with_source_factory(
-        dir.path().to_path_buf(),
-        off_config(),
-        Arc::new(factory.clone()),
-    )
-    .await
-    .expect("build metric service");
+    let service =
+        MetricService::new(dir.path().to_path_buf(), off_config(), Arc::new(factory.clone()))
+            .await
+            .expect("build metric service");
 
     service.start_service().await;
 

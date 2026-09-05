@@ -1,4 +1,3 @@
-use landscape_common::concurrency::{spawn_task, task_label};
 use tokio_util::sync::CancellationToken;
 
 #[derive(Clone)]
@@ -7,22 +6,10 @@ pub struct LandscapeEbpfService {
     cancel: CancellationToken,
 }
 
-impl Default for LandscapeEbpfService {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl LandscapeEbpfService {
-    pub fn new() -> Self {
-        let cancel = CancellationToken::new();
-        let cancel_clone = cancel.clone();
-        spawn_task(task_label::task::EBPF_NEIGH_UPDATE, async move {
-            if let Err(e) = landscape_ebpf::maps::mac::neigh_update(cancel_clone).await {
-                tracing::warn!("eBPF neigh_update service exited with error: {e}");
-            }
-        });
-
+    /// `cancel` comes from [`landscape_ebpf::runtime::EbpfRuntime::start_neigh_update`],
+    /// which owns the ringbuf consumer task.
+    pub fn new(cancel: CancellationToken) -> Self {
         LandscapeEbpfService { cancel }
     }
 

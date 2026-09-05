@@ -1,3 +1,4 @@
+use axum::extract::State;
 use landscape_common::api_response::LandscapeApiResp as CommonApiResp;
 use landscape_common::flow::trace::{
     FlowMatchRequest, FlowMatchResult, FlowVerdictRequest, FlowVerdictResult,
@@ -22,8 +23,8 @@ pub fn get_route_paths() -> OpenApiRouter<LandscapeApp> {
     tag = "Route",
     responses((status = 200, description = "Success"))
 )]
-async fn reset_cache() -> LandscapeApiResult<()> {
-    landscape_ebpf::maps::route::cache::recreate_route_lan_cache_inner_map();
+async fn reset_cache(State(state): State<LandscapeApp>) -> LandscapeApiResult<()> {
+    landscape_ebpf::maps::route::cache::recreate_route_lan_cache_inner_map(&state.ebpf_paths);
     // landscape_ebpf::maps::route::cache::recreate_route_wan_cache_inner_map();
     LandscapeApiResp::success(())
 }
@@ -36,9 +37,10 @@ async fn reset_cache() -> LandscapeApiResult<()> {
     responses((status = 200, body = CommonApiResp<FlowMatchResult>))
 )]
 async fn trace_flow_match(
+    State(state): State<LandscapeApp>,
     JsonBody(req): JsonBody<FlowMatchRequest>,
 ) -> LandscapeApiResult<FlowMatchResult> {
-    let result = landscape_ebpf::maps::route::trace_flow_match(req);
+    let result = landscape_ebpf::maps::route::trace_flow_match(&state.ebpf_paths, req);
     LandscapeApiResp::success(result)
 }
 
@@ -50,8 +52,9 @@ async fn trace_flow_match(
     responses((status = 200, body = CommonApiResp<FlowVerdictResult>))
 )]
 async fn trace_verdict(
+    State(state): State<LandscapeApp>,
     JsonBody(req): JsonBody<FlowVerdictRequest>,
 ) -> LandscapeApiResult<FlowVerdictResult> {
-    let result = landscape_ebpf::maps::route::trace_flow_verdict(req);
+    let result = landscape_ebpf::maps::route::trace_flow_verdict(&state.ebpf_paths, req);
     LandscapeApiResp::success(result)
 }

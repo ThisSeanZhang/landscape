@@ -1,13 +1,12 @@
 use libbpf_rs::skel::{OpenSkel, SkelBuilder};
 use libbpf_rs::TC_EGRESS;
 
+use std::sync::Arc;
+
 use crate::bpf_ctx;
 use crate::bpf_error::LdEbpfResult;
-use crate::chain::tc_manager::{
-    tc_pipe_root_progs_path, tc_wan_egress_roots_path, wan_intro_dispatch_path, TcChainManager,
-};
 use crate::landscape::{pin_and_reuse_map, OwnedOpenObject, TcHookProxy};
-use crate::MAP_PATHS;
+use crate::runtime::EbpfRuntime;
 
 mod tc_wan_ingress_intro_skel {
     include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/tc_wan_ingress_intro.skel.rs"));
@@ -40,12 +39,13 @@ impl Drop for TcWanRouteHandle {
 }
 
 pub fn init_tc_wan_route(
+    rt: &Arc<EbpfRuntime>,
     ifindex: u32,
     has_mac: bool,
     xdp_handoff_enabled: bool,
 ) -> LdEbpfResult<TcWanRouteHandle> {
-    let manager = TcChainManager::instance();
-    manager.ensure_roots(ifindex, has_mac)?;
+    let paths = &rt.paths;
+    rt.tc.ensure_roots(ifindex, has_mac)?;
 
     let l3_offset: u32 = if has_mac { 14 } else { 0 };
 
@@ -56,11 +56,11 @@ pub fn init_tc_wan_route(
     open_skel.maps.rodata_data.as_deref_mut().unwrap().xdp_handoff_enabled = xdp_handoff_enabled;
     crate::maps::reuse_pinned_map_or_recreate(
         &mut open_skel.maps.tc_pipe_root_progs,
-        &tc_pipe_root_progs_path(),
+        &paths.tc_pipe_root_progs_path(),
     );
     crate::maps::reuse_pinned_map_or_recreate(
         &mut open_skel.maps.wan_intro_dispatch_map,
-        &wan_intro_dispatch_path(),
+        &paths.tc_wan_intro_dispatch_path(),
     );
     let intro_skel = bpf_ctx!(open_skel.load(), "load per-if tc_wan_ingress_intro")?;
     let mut ingress_hook =
@@ -73,66 +73,66 @@ pub fn init_tc_wan_route(
     open_skel.maps.rodata_data.as_deref_mut().unwrap().current_l3_offset = l3_offset;
     crate::maps::reuse_pinned_map_or_recreate(
         &mut open_skel.maps.tc_wan_egress_roots,
-        &tc_wan_egress_roots_path(),
+        &paths.tc_wan_egress_roots_path(),
     );
     crate::bpf_ctx!(
-        pin_and_reuse_map(&mut open_skel.maps.flow_match_map, &MAP_PATHS.flow_match_map),
+        pin_and_reuse_map(&mut open_skel.maps.flow_match_map, &paths.flow_match_map),
         "tc_wan_egress pin flow_match_map"
     )?;
     crate::bpf_ctx!(
-        pin_and_reuse_map(&mut open_skel.maps.wan_ip_binding, &MAP_PATHS.wan_ip),
+        pin_and_reuse_map(&mut open_skel.maps.wan_ip_binding, &paths.wan_ip),
         "tc_wan_egress pin wan_ip_binding"
     )?;
     crate::bpf_ctx!(
-        pin_and_reuse_map(&mut open_skel.maps.rt4_lan_map, &MAP_PATHS.rt4_lan_map),
+        pin_and_reuse_map(&mut open_skel.maps.rt4_lan_map, &paths.rt4_lan_map),
         "tc_wan_egress pin rt4_lan_map"
     )?;
     crate::bpf_ctx!(
-        pin_and_reuse_map(&mut open_skel.maps.rt6_lan_map, &MAP_PATHS.rt6_lan_map),
+        pin_and_reuse_map(&mut open_skel.maps.rt6_lan_map, &paths.rt6_lan_map),
         "tc_wan_egress pin rt6_lan_map"
     )?;
     crate::bpf_ctx!(
-        pin_and_reuse_map(&mut open_skel.maps.rt4_target_slot_map, &MAP_PATHS.rt4_target_slot_map),
+        pin_and_reuse_map(&mut open_skel.maps.rt4_target_slot_map, &paths.rt4_target_slot_map),
         "tc_wan_egress pin rt4_target_slot_map"
     )?;
     crate::bpf_ctx!(
-        pin_and_reuse_map(&mut open_skel.maps.rt6_target_slot_map, &MAP_PATHS.rt6_target_slot_map),
+        pin_and_reuse_map(&mut open_skel.maps.rt6_target_slot_map, &paths.rt6_target_slot_map),
         "tc_wan_egress pin rt6_target_slot_map"
     )?;
     crate::bpf_ctx!(
-        pin_and_reuse_map(&mut open_skel.maps.flow4_dns_map, &MAP_PATHS.flow4_dns_map),
+        pin_and_reuse_map(&mut open_skel.maps.flow4_dns_map, &paths.flow4_dns_map),
         "tc_wan_egress pin flow4_dns_map"
     )?;
     crate::bpf_ctx!(
-        pin_and_reuse_map(&mut open_skel.maps.flow6_dns_map, &MAP_PATHS.flow6_dns_map),
+        pin_and_reuse_map(&mut open_skel.maps.flow6_dns_map, &paths.flow6_dns_map),
         "tc_wan_egress pin flow6_dns_map"
     )?;
     crate::bpf_ctx!(
-        pin_and_reuse_map(&mut open_skel.maps.flow4_ip_map, &MAP_PATHS.flow4_ip_map),
+        pin_and_reuse_map(&mut open_skel.maps.flow4_ip_map, &paths.flow4_ip_map),
         "tc_wan_egress pin flow4_ip_map"
     )?;
     crate::bpf_ctx!(
-        pin_and_reuse_map(&mut open_skel.maps.flow6_ip_map, &MAP_PATHS.flow6_ip_map),
+        pin_and_reuse_map(&mut open_skel.maps.flow6_ip_map, &paths.flow6_ip_map),
         "tc_wan_egress pin flow6_ip_map"
     )?;
     crate::bpf_ctx!(
-        pin_and_reuse_map(&mut open_skel.maps.rt4_cache_map, &MAP_PATHS.rt4_cache_map),
+        pin_and_reuse_map(&mut open_skel.maps.rt4_cache_map, &paths.rt4_cache_map),
         "tc_wan_egress pin rt4_cache_map"
     )?;
     crate::bpf_ctx!(
-        pin_and_reuse_map(&mut open_skel.maps.rt6_cache_map, &MAP_PATHS.rt6_cache_map),
+        pin_and_reuse_map(&mut open_skel.maps.rt6_cache_map, &paths.rt6_cache_map),
         "tc_wan_egress pin rt6_cache_map"
     )?;
     crate::bpf_ctx!(
-        pin_and_reuse_map(&mut open_skel.maps.ip_mac_v4, &MAP_PATHS.ip_mac_v4),
+        pin_and_reuse_map(&mut open_skel.maps.ip_mac_v4, &paths.ip_mac_v4),
         "tc_wan_egress pin ip_mac_v4"
     )?;
     crate::bpf_ctx!(
-        pin_and_reuse_map(&mut open_skel.maps.ip_mac_v6, &MAP_PATHS.ip_mac_v6),
+        pin_and_reuse_map(&mut open_skel.maps.ip_mac_v6, &paths.ip_mac_v6),
         "tc_wan_egress pin ip_mac_v6"
     )?;
     crate::bpf_ctx!(
-        pin_and_reuse_map(&mut open_skel.maps.xdp_redirect_able, &MAP_PATHS.xdp_redirect_able),
+        pin_and_reuse_map(&mut open_skel.maps.xdp_redirect_able, &paths.xdp_redirect_able),
         "tc_wan_egress pin xdp_redirect_able"
     )?;
     let egress_intro_skel = bpf_ctx!(open_skel.load(), "load per-if tc_wan_egress_intro")?;
