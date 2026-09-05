@@ -30,15 +30,20 @@ pub(crate) fn create_inner_map_generic_with_outer<T, K, V>(
     let key_size = size_of::<K>() as u32;
     let value_size = size_of::<V>() as u32;
 
-    let map = MapHandle::create(
+    let map = match MapHandle::create(
         MapType::LruHash,
-        Some(name),
+        Some(name.clone()),
         key_size,
         value_size,
         DNS_MATCH_MAX_ENTRIES,
         &opts,
-    )
-    .expect("Failed to create inner LRU map");
+    ) {
+        Ok(map) => map,
+        Err(e) => {
+            tracing::error!("create inner LRU map {name} failed, skip cache refresh: {e:?}");
+            return;
+        }
+    };
 
     let map_fd = map.as_fd().as_raw_fd();
 
@@ -60,8 +65,16 @@ where
 {
     tracing::debug!("rt_cache_map at: {:?}, for: {}", path.as_ref().display(), name);
 
-    let outer_map =
-        libbpf_rs::MapHandle::from_pinned_path(path).expect("Failed to load pinned outer map");
+    let outer_map = match libbpf_rs::MapHandle::from_pinned_path(&path) {
+        Ok(map) => map,
+        Err(e) => {
+            tracing::error!(
+                "open pinned outer cache map {} failed, skip cache refresh: {e:?}",
+                path.as_ref().display()
+            );
+            return;
+        }
+    };
     create_inner_map_generic_with_outer::<_, K, V>(&outer_map, name, cache_type);
 }
 
@@ -109,10 +122,20 @@ pub fn recreate_route_wan_cache_inner_map(paths: &LandscapeMapPath) {
 /// 在修改了 DNS 规则， DST IP 规则。 Flow Match 规则后调用
 /// 使缓存失效
 pub fn recreate_route_lan_cache_inner_map(paths: &LandscapeMapPath) {
-    let rt4_cache_map =
-        libbpf_rs::MapHandle::from_pinned_path(&paths.rt4_cache_map).expect("open rt4_cache");
-    let rt6_cache_map =
-        libbpf_rs::MapHandle::from_pinned_path(&paths.rt6_cache_map).expect("open rt6_cache");
+    let rt4_cache_map = match libbpf_rs::MapHandle::from_pinned_path(&paths.rt4_cache_map) {
+        Ok(map) => map,
+        Err(e) => {
+            tracing::error!("open pinned rt4_cache_map failed, skip lan cache refresh: {e:?}");
+            return;
+        }
+    };
+    let rt6_cache_map = match libbpf_rs::MapHandle::from_pinned_path(&paths.rt6_cache_map) {
+        Ok(map) => map,
+        Err(e) => {
+            tracing::error!("open pinned rt6_cache_map failed, skip lan cache refresh: {e:?}");
+            return;
+        }
+    };
 
     recreate_route_lan_cache_inner_map_impl(&rt4_cache_map, &rt6_cache_map);
 }

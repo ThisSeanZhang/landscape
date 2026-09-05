@@ -8,7 +8,7 @@ use libbpf_rs::skel::{OpenSkel, SkelBuilder};
 use libbpf_rs::{MapCore, MapFlags, MapHandle, MapType};
 
 use crate::bpf_ctx;
-use crate::bpf_error::LdEbpfResult;
+use crate::bpf_error::{LandscapeEbpfError, LdEbpfResult};
 use crate::landscape::{pin_and_reuse_map, OwnedOpenObject};
 use crate::LandscapeMapPath;
 
@@ -166,7 +166,11 @@ impl TcChainManager {
     /// Create the TC chain pin directory, seed its prog-array maps and load
     /// the two exit skeletons.
     pub fn new(paths: Arc<LandscapeMapPath>) -> LdEbpfResult<Self> {
-        std::fs::create_dir_all(paths.tc_chain_base()).expect("create tc_chain dir failed");
+        let tc_chain_base = paths.tc_chain_base();
+        std::fs::create_dir_all(&tc_chain_base).map_err(|e| LandscapeEbpfError::Context {
+            context: format!("can not create tc chain dir {}", tc_chain_base.display()),
+            source: e.into(),
+        })?;
 
         // ── 1. Create and pin all seed PROG_ARRAY / HASH maps directly in Rust ──
 

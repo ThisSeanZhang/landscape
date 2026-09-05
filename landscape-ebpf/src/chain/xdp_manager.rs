@@ -8,7 +8,7 @@ use libbpf_rs::skel::{OpenSkel, SkelBuilder};
 use libbpf_rs::{MapCore, MapFlags, Program, Xdp, XdpFlags};
 
 use crate::bpf_ctx;
-use crate::bpf_error::LdEbpfResult;
+use crate::bpf_error::{LandscapeEbpfError, LdEbpfResult};
 use crate::landscape::{pin_and_reuse_map, OwnedOpenObject};
 use crate::runtime::EbpfRuntime;
 use crate::LandscapeMapPath;
@@ -372,7 +372,10 @@ impl XdpChainManager {
     /// Create the XDP pin directory, seed its prog-array maps, load the
     /// wan-intro seed skeleton and clear stale entries left by previous runs.
     pub fn new(paths: Arc<LandscapeMapPath>) -> LdEbpfResult<Self> {
-        std::fs::create_dir_all(&paths.xdp_base).expect("create xdp_base dir failed");
+        std::fs::create_dir_all(&paths.xdp_base).map_err(|e| LandscapeEbpfError::Context {
+            context: format!("can not create xdp base dir {}", paths.xdp_base.display()),
+            source: e.into(),
+        })?;
 
         let builder = XdpWanIntroSkelBuilder::default();
         let (backing, obj) = OwnedOpenObject::new();

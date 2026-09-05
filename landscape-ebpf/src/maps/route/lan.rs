@@ -1,6 +1,8 @@
 //! LAN prefix route maps (`rt4/6_lan_map`): add/del entries in Reachable /
 //! NextHop / WanReachable modes, invalidating the LAN verdict cache on change.
 
+use std::path::Path;
+
 use landscape_common::sys_service::route_service::LanRouteInfo;
 use libbpf_rs::{MapCore, MapFlags};
 use zerocopy::IntoBytes;
@@ -18,11 +20,27 @@ where
 {
     cache::recreate_route_lan_cache_inner_map_with_outer_maps(rt4_cache_map, rt6_cache_map);
 }
+/// Open a pinned map, logging (instead of panicking) when it is missing.
+fn open_pinned_map(path: &Path) -> Option<libbpf_rs::MapHandle> {
+    match libbpf_rs::MapHandle::from_pinned_path(path) {
+        Ok(map) => Some(map),
+        Err(e) => {
+            tracing::error!("open pinned map {} failed: {e}", path.display());
+            None
+        }
+    }
+}
+
 pub fn add_lan_route(paths: &LandscapeMapPath, lan_info: LanRouteInfo) {
-    let rt4_lan_map = libbpf_rs::MapHandle::from_pinned_path(&paths.rt4_lan_map).unwrap();
-    let rt6_lan_map = libbpf_rs::MapHandle::from_pinned_path(&paths.rt6_lan_map).unwrap();
-    let rt4_cache_map = libbpf_rs::MapHandle::from_pinned_path(&paths.rt4_cache_map).unwrap();
-    let rt6_cache_map = libbpf_rs::MapHandle::from_pinned_path(&paths.rt6_cache_map).unwrap();
+    let (Some(rt4_lan_map), Some(rt6_lan_map), Some(rt4_cache_map), Some(rt6_cache_map)) = (
+        open_pinned_map(&paths.rt4_lan_map),
+        open_pinned_map(&paths.rt6_lan_map),
+        open_pinned_map(&paths.rt4_cache_map),
+        open_pinned_map(&paths.rt6_cache_map),
+    ) else {
+        tracing::error!("skip lan route add: {lan_info:?}");
+        return;
+    };
 
     let _ = add_lan_route_with_maps(
         &rt4_lan_map,
@@ -186,8 +204,12 @@ where
 }
 
 pub fn del_lan_route(paths: &LandscapeMapPath, lan_info: LanRouteInfo) {
-    let rt4_lan_map = libbpf_rs::MapHandle::from_pinned_path(&paths.rt4_lan_map).unwrap();
-    let rt6_lan_map = libbpf_rs::MapHandle::from_pinned_path(&paths.rt6_lan_map).unwrap();
+    let (Some(rt4_lan_map), Some(rt6_lan_map)) =
+        (open_pinned_map(&paths.rt4_lan_map), open_pinned_map(&paths.rt6_lan_map))
+    else {
+        tracing::error!("skip lan route del: {lan_info:?}");
+        return;
+    };
 
     let _ = del_lan_route_with_maps(&rt4_lan_map, &rt6_lan_map, &lan_info);
 }

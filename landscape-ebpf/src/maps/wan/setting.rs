@@ -21,7 +21,13 @@ pub fn add_ipv6_wan_ip(
     mask: u8,
     mac: Option<MacAddr>,
 ) {
-    let wan_ip_binding = libbpf_rs::MapHandle::from_pinned_path(&paths.wan_ip).unwrap();
+    let Ok(wan_ip_binding) = libbpf_rs::MapHandle::from_pinned_path(&paths.wan_ip) else {
+        tracing::error!(
+            "open pinned wan_ip_binding ({:?}) failed, skip ipv6 wan ip bind",
+            paths.wan_ip
+        );
+        return;
+    };
     add_wan_ip(&wan_ip_binding, ifindex, IpAddr::V6(addr), gateway.map(IpAddr::V6), mask, mac);
 }
 
@@ -33,7 +39,13 @@ pub fn add_ipv4_wan_ip(
     mask: u8,
     mac: Option<MacAddr>,
 ) {
-    let wan_ip_binding = libbpf_rs::MapHandle::from_pinned_path(&paths.wan_ip).unwrap();
+    let Ok(wan_ip_binding) = libbpf_rs::MapHandle::from_pinned_path(&paths.wan_ip) else {
+        tracing::error!(
+            "open pinned wan_ip_binding ({:?}) failed, skip ipv4 wan ip bind",
+            paths.wan_ip
+        );
+        return;
+    };
     add_wan_ip(&wan_ip_binding, ifindex, IpAddr::V4(addr), gateway.map(IpAddr::V4), mask, mac);
 }
 
@@ -133,7 +145,13 @@ pub fn del_ipv4_wan_ip(paths: &LandscapeMapPath, ifindex: u32) {
 #[allow(clippy::field_reassign_with_default)]
 fn del_wan_ip(paths: &LandscapeMapPath, ifindex: u32, l3_protocol: u8) {
     tracing::debug!("del wan index - 1: {ifindex:?}");
-    let wan_ip_binding = libbpf_rs::MapHandle::from_pinned_path(&paths.wan_ip).unwrap();
+    let Ok(wan_ip_binding) = libbpf_rs::MapHandle::from_pinned_path(&paths.wan_ip) else {
+        tracing::error!(
+            "open pinned wan_ip_binding ({:?}) failed, skip wan ip unbind",
+            paths.wan_ip
+        );
+        return;
+    };
     let mut key = WanIpInfoKey::default();
     key.ifindex = ifindex;
     key.l3_protocol = l3_protocol;
