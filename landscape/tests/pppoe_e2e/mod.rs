@@ -5,6 +5,7 @@ mod scenarios;
 mod scripted_server;
 
 use std::fs;
+use std::path::PathBuf;
 
 /// Isolated BPF map space name for one e2e scenario.  Each scenario pins its
 /// maps under its own directory (`pppoe-e2e-{pid}-{scenario}`) instead of the
@@ -15,6 +16,38 @@ use std::fs;
 /// would race on map creation and lose with `File exists` pin errors.
 pub(super) fn test_bpf_map_space(scenario: &str) -> String {
     format!("pppoe-e2e-{}-{scenario}", std::process::id())
+}
+
+/// Removes the scenario's eBPF map space directory when dropped, so repeated
+/// runs don't leak pinned maps (each pin keeps its kernel object — and its
+/// kernel memory — alive even after the test process exits).
+///
+/// Declare it as the FIRST binding of a scenario so it drops LAST: after the
+/// client has fully exited and released its map fds.  Drop also runs on
+/// panic unwind, so a failing scenario still cleans up after itself.
+pub(super) struct MapSpaceCleanup {
+    root: PathBuf,
+}
+
+impl MapSpaceCleanup {
+    pub(super) fn new(scenario: &str) -> Self {
+        // Matches the bpffs root layout of `EbpfRuntime` (`root_for_space`).
+        Self {
+            root: PathBuf::from("/sys/fs/bpf/landscape").join(test_bpf_map_space(scenario)),
+        }
+    }
+}
+
+impl Drop for MapSpaceCleanup {
+    fn drop(&mut self) {
+        match std::fs::remove_dir_all(&self.root) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => {
+                eprintln!("failed to clean up eBPF map space {}: {e}", self.root.display());
+            }
+        }
+    }
 }
 
 /// Tests need root (netns, veth, eBPF).  When not root, skip the whole

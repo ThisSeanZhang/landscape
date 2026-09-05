@@ -2,7 +2,7 @@ use super::cmd::cmd_output;
 use super::env::{EnvConfig, PPPoETestEnv};
 use super::runner::{start_client, wait_for_exit, wait_for_running, ClientSpec};
 use super::scripted_server::{start_scripted_server, ScriptedServerMode};
-use super::require_root;
+use super::{require_root, MapSpaceCleanup};
 use std::time::{Duration, Instant};
 
 fn spec_from(cfg: &EnvConfig) -> ClientSpec {
@@ -42,6 +42,9 @@ fn wait_for_egress_filter(client_ns: &str, iface: &str, needle: &str, timeout: D
 #[ignore = "requires root, veth pairs and eBPF; run with --include-ignored"]
 async fn basic_connect_and_stop() {
     require_root();
+    // First binding → drops last, after the client exited and released its
+    // map fds: removes this scenario's eBPF map space from bpffs.
+    let _map_space_cleanup = MapSpaceCleanup::new("basic-connect");
 
     let env_cfg = EnvConfig::default();
     let env = PPPoETestEnv::up(&env_cfg).expect("test environment should start");
@@ -69,6 +72,7 @@ async fn basic_connect_and_stop() {
 #[ignore = "requires root, veth pairs and eBPF; run with --include-ignored"]
 async fn pap_protocol_rejected_is_fatal() {
     require_root();
+    let _map_space_cleanup = MapSpaceCleanup::new("pap-rejected");
 
     let env_cfg = EnvConfig::default();
     let env = PPPoETestEnv::up(&env_cfg).expect("test environment should start");
@@ -107,6 +111,7 @@ async fn pap_protocol_rejected_is_fatal() {
 #[ignore = "requires root, veth pairs and eBPF; run with --include-ignored"]
 async fn link_loss_triggers_redial_and_reconnect() {
     require_root();
+    let _map_space_cleanup = MapSpaceCleanup::new("redial-reconnect");
 
     let env_cfg = EnvConfig::default();
     let env = PPPoETestEnv::up(&env_cfg).expect("test environment should start");
@@ -160,6 +165,7 @@ async fn link_loss_triggers_redial_and_reconnect() {
 #[ignore = "requires root, veth pairs and eBPF; run with --include-ignored"]
 async fn ebpf_pipeline_attaches_and_detaches() {
     require_root();
+    let _map_space_cleanup = MapSpaceCleanup::new("ebpf-pipeline");
 
     let env_cfg = EnvConfig::default();
     let env = PPPoETestEnv::up(&env_cfg).expect("test environment should start");
