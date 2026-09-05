@@ -57,9 +57,9 @@ fn default_flow_reads_target_from_slot_map() {
     let packet = simple_ipv6_tcp_syn(Ipv6Addr::UNSPECIFIED, Ipv6Addr::UNSPECIFIED);
     let result = skel
         .progs
-        .test_route_v6_pick_wan_by_flow_id_default
+        .test_route6_pick_wan_by_flow_id_default
         .test_run(ProgramInput { data_in: Some(&packet), ..Default::default() })
-        .expect("run test_route_v6_pick_wan_by_flow_id_default");
+        .expect("run test_route6_pick_wan_by_flow_id_default");
 
     assert_eq!(result.return_value as i32, 21);
 }
@@ -79,9 +79,9 @@ fn non_default_flow_reads_target_from_slot_map() {
     let packet = simple_ipv6_tcp_syn(Ipv6Addr::UNSPECIFIED, Ipv6Addr::UNSPECIFIED);
     let result = skel
         .progs
-        .test_route_v6_pick_wan_by_flow_id_non_default
+        .test_route6_pick_wan_by_flow_id_non_default
         .test_run(ProgramInput { data_in: Some(&packet), ..Default::default() })
-        .expect("run test_route_v6_pick_wan_by_flow_id_non_default");
+        .expect("run test_route6_pick_wan_by_flow_id_non_default");
 
     assert_eq!(result.return_value as i32, 21);
 }
@@ -99,9 +99,9 @@ fn default_flow_without_slots_passes() {
     let packet = simple_ipv6_tcp_syn(Ipv6Addr::UNSPECIFIED, Ipv6Addr::UNSPECIFIED);
     let result = skel
         .progs
-        .test_route_v6_pick_wan_by_flow_id_default
+        .test_route6_pick_wan_by_flow_id_default
         .test_run(ProgramInput { data_in: Some(&packet), ..Default::default() })
-        .expect("run test_route_v6_pick_wan_by_flow_id_default miss");
+        .expect("run test_route6_pick_wan_by_flow_id_default miss");
 
     assert_eq!(result.return_value as i32, -1);
 }
@@ -119,9 +119,9 @@ fn non_default_flow_without_slots_drops() {
     let packet = simple_ipv6_tcp_syn(Ipv6Addr::UNSPECIFIED, Ipv6Addr::UNSPECIFIED);
     let result = skel
         .progs
-        .test_route_v6_pick_wan_by_flow_id_non_default
+        .test_route6_pick_wan_by_flow_id_non_default
         .test_run(ProgramInput { data_in: Some(&packet), ..Default::default() })
-        .expect("run test_route_v6_pick_wan_by_flow_id_non_default miss");
+        .expect("run test_route6_pick_wan_by_flow_id_non_default miss");
 
     assert_eq!(result.return_value as i32, 2);
 }

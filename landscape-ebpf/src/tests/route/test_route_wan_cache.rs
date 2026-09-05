@@ -10,7 +10,7 @@ use crate::tests::{
     isolated_pin_root,
     route::{
         map_helper::{
-            create_route_cache_inner_map_v6, local_addr, lookup_rt6_cache_value, remote_addr,
+            create_route6_cache_inner_map, local_addr, lookup_rt6_cache_value, remote_addr,
             WAN_CACHE, WAN_IFINDEX,
         },
         packet_builder::simple_ipv6_tcp_syn,
@@ -29,7 +29,7 @@ fn v6_set_cache_in_wan_writes_reverse_key() {
     let open = builder.open(&mut open_object).unwrap();
     let skel = open.load().unwrap();
 
-    create_route_cache_inner_map_v6(&skel.maps.rt6_cache_map, WAN_CACHE);
+    create_route6_cache_inner_map(&skel.maps.rt6_cache_map, WAN_CACHE);
 
     let packet = simple_ipv6_tcp_syn(remote_addr(), local_addr());
     let mut ctx = TestSkb { ifindex: WAN_IFINDEX, ..Default::default() };

@@ -27,7 +27,7 @@ mod tests {
             isolated_pin_root,
             route::{
                 map_helper::{
-                    as_bytes, create_route_cache_inner_map_v4, create_route_cache_inner_map_v6,
+                    as_bytes, create_route4_cache_inner_map, create_route6_cache_inner_map,
                     lookup_rt4_cache_value, lookup_rt6_cache_value, LAN_CACHE,
                 },
                 packet_builder::{simple_ipv4_tcp, simple_ipv6_ns_dad, simple_ipv6_tcp_syn},
@@ -50,11 +50,11 @@ mod tests {
         Ipv6Addr::from_str("2001:db8:2::20").unwrap()
     }
 
-    /// Verify that tc_lan_ingress_route_v6 (the LAN ingress route worker in the
+    /// Verify that tc_route6_lan_ingress (the LAN ingress route worker in the
     /// tc_chain architecture) populates the LAN cache after a successful WAN
     /// redirect — the same behavior as the old route_lan_ingress.
     #[test]
-    fn tc_lan_ingress_route_v6_populates_lan_cache_on_redirect() {
+    fn tc_route6_lan_ingress_populates_lan_cache_on_redirect() {
         let mut builder = TcLanIngressIntroSkelBuilder::default();
         let pin_root = isolated_pin_root("tc-lan-ingress-route-v6-cache");
         builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
@@ -64,7 +64,7 @@ mod tests {
         let skel = open.load().unwrap();
 
         // Create LAN cache inner map so route6_set_cache_in_lan can write to it
-        create_route_cache_inner_map_v6(&skel.maps.rt6_cache_map, LAN_CACHE);
+        create_route6_cache_inner_map(&skel.maps.rt6_cache_map, LAN_CACHE);
 
         // Flow match: destination IP match in flow_id=0's inner IP trie →
         // mark=0x0305 (action=FLOW_REDIRECT, flow_id=5)
@@ -96,13 +96,13 @@ mod tests {
 
         let result = skel
             .progs
-            .tc_lan_ingress_route_v6
+            .tc_route6_lan_ingress
             .test_run(ProgramInput {
                 data_in: Some(&packet),
                 context_in: Some(ctx.as_mut_bytes()),
                 ..Default::default()
             })
-            .expect("run tc_lan_ingress_route_v6");
+            .expect("run tc_route6_lan_ingress");
 
         // bpf_redirect returns TC_ACT_REDIRECT (7) on success
         assert_eq!(result.return_value as i32, 7);
@@ -127,10 +127,10 @@ mod tests {
         Ipv4Addr::from_str("10.0.0.20").unwrap()
     }
 
-    /// Verify that tc_lan_ingress_route_v4 (IPv4 route worker in the tc_chain
+    /// Verify that tc_route4_lan_ingress (IPv4 route worker in the tc_chain
     /// architecture) populates the LAN cache after a successful WAN redirect.
     #[test]
-    fn tc_lan_ingress_route_v4_populates_lan_cache_on_redirect() {
+    fn tc_route4_lan_ingress_populates_lan_cache_on_redirect() {
         let mut builder = TcLanIngressIntroSkelBuilder::default();
         let pin_root = isolated_pin_root("tc-lan-ingress-route-v4-cache");
         builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
@@ -139,7 +139,7 @@ mod tests {
         let open = builder.open(&mut open_object).unwrap();
         let skel = open.load().unwrap();
 
-        create_route_cache_inner_map_v4(&skel.maps.rt4_cache_map, LAN_CACHE);
+        create_route4_cache_inner_map(&skel.maps.rt4_cache_map, LAN_CACHE);
 
         let rules = vec![IpMarkInfo {
             mark: FlowMark::from(0x0305),
@@ -168,13 +168,13 @@ mod tests {
 
         let result = skel
             .progs
-            .tc_lan_ingress_route_v4
+            .tc_route4_lan_ingress
             .test_run(ProgramInput {
                 data_in: Some(&packet),
                 context_in: Some(ctx.as_mut_bytes()),
                 ..Default::default()
             })
-            .expect("run tc_lan_ingress_route_v4");
+            .expect("run tc_route4_lan_ingress");
 
         assert_eq!(result.return_value as i32, 7);
 
@@ -205,12 +205,7 @@ mod tests {
     /// addr(16)}. As in production, the key addr is the router's own address
     /// (sub_router) inside the subnet, so the LPM lookup matches any address
     /// sharing the first `prefix_len` bits.
-    fn insert_lan_route_v6<T: MapCore>(
-        map: &T,
-        ifindex: u32,
-        router_addr: Ipv6Addr,
-        prefix_len: u8,
-    ) {
+    fn insert_route6_lan<T: MapCore>(map: &T, ifindex: u32, router_addr: Ipv6Addr, prefix_len: u8) {
         let mut key = [0u8; 20];
         key[0..4].copy_from_slice(&u32::from(prefix_len).to_ne_bytes());
         key[4..20].copy_from_slice(&router_addr.to_bits().to_be_bytes());
@@ -248,7 +243,7 @@ mod tests {
         // Default served subnet (fd00::/64 on the test interface, router's own
         // address at fd00::1) so DAD learning tests exercise the real
         // rt6_lan_map guard instead of silently passing on map miss.
-        insert_lan_route_v6(
+        insert_route6_lan(
             &skel.maps.rt6_lan_map,
             TEST_IFINDEX,
             Ipv6Addr::from_str(ROUTER_ADDR).unwrap(),
@@ -694,7 +689,7 @@ mod tests {
         let target = Ipv6Addr::from_str("fd00::2").unwrap();
         let (skel, mut ctx, backing) = load_tc_lan_dao_skel();
         // Replace the default entry with one bound to a different interface.
-        insert_lan_route_v6(
+        insert_route6_lan(
             &skel.maps.rt6_lan_map,
             TEST_IFINDEX + 1,
             Ipv6Addr::from_str(ROUTER_ADDR).unwrap(),

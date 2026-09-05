@@ -339,8 +339,8 @@ static __always_inline int tc_route6_pick_wan_in_lan(struct __sk_buff *skb, u32 
 }
 
 SEC("tc/ingress")
-int tc_lan_ingress_route_v4(struct __sk_buff *skb) {
-#define BPF_LOG_TOPIC "tc_lan_ingress_route_v4"
+int tc_route4_lan_ingress(struct __sk_buff *skb) {
+#define BPF_LOG_TOPIC "tc_route4_lan_ingress"
     int ret = 0;
     u32 flow_mark = skb->mark;
     struct route4_context context = {0};
@@ -394,8 +394,8 @@ int tc_lan_ingress_route_v4(struct __sk_buff *skb) {
 }
 
 SEC("tc/ingress")
-int tc_lan_ingress_route_v6(struct __sk_buff *skb) {
-#define BPF_LOG_TOPIC "tc_lan_ingress_route_v6"
+int tc_route6_lan_ingress(struct __sk_buff *skb) {
+#define BPF_LOG_TOPIC "tc_route6_lan_ingress"
     int ret = 0;
     u32 flow_mark = skb->mark;
     struct route6_context context = {0};
@@ -457,8 +457,8 @@ struct {
 } ls_lan_ingress_tails SEC(".maps") = {
     .values =
         {
-            [TC_LAN_INGRESS_V4_SLOT] = (void *)&tc_lan_ingress_route_v4,
-            [TC_LAN_INGRESS_V6_SLOT] = (void *)&tc_lan_ingress_route_v6,
+            [TC_LAN_INGRESS_V4_SLOT] = (void *)&tc_route4_lan_ingress,
+            [TC_LAN_INGRESS_V6_SLOT] = (void *)&tc_route6_lan_ingress,
         },
 };
 

@@ -325,8 +325,8 @@ static __always_inline int tc_route6_pick_wan_in_wan_egress(struct __sk_buff *sk
 // ── route workers ──
 
 SEC("tc/egress")
-int tc_wan_egress_route_v4(struct __sk_buff *skb) {
-#define BPF_LOG_TOPIC "tc_wan_egress_route_v4"
+int tc_route4_wan_egress(struct __sk_buff *skb) {
+#define BPF_LOG_TOPIC "tc_route4_wan_egress"
     int ret = 0;
     u32 flow_mark = skb->mark;
     struct route4_context context = {0};
@@ -369,8 +369,8 @@ int tc_wan_egress_route_v4(struct __sk_buff *skb) {
 }
 
 SEC("tc/egress")
-int tc_wan_egress_route_v6(struct __sk_buff *skb) {
-#define BPF_LOG_TOPIC "tc_wan_egress_route_v6"
+int tc_route6_wan_egress(struct __sk_buff *skb) {
+#define BPF_LOG_TOPIC "tc_route6_wan_egress"
     int ret = 0;
     u32 flow_mark = skb->mark;
     struct route6_context context = {0};
@@ -421,8 +421,8 @@ struct {
 } ls_wan_e_tails SEC(".maps") = {
     .values =
         {
-            [TC_EGRESS_V4_SLOT] = (void *)&tc_wan_egress_route_v4,
-            [TC_EGRESS_V6_SLOT] = (void *)&tc_wan_egress_route_v6,
+            [TC_EGRESS_V4_SLOT] = (void *)&tc_route4_wan_egress,
+            [TC_EGRESS_V6_SLOT] = (void *)&tc_route6_wan_egress,
         },
 };
 

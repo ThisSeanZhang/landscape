@@ -12,8 +12,8 @@ char LICENSE[] SEC("license") = "GPL";
 
 const volatile u32 current_l3_offset = 14;
 
-static __always_inline int read_route_context_v6(struct __sk_buff *skb,
-                                                 struct route6_context *context) {
+static __always_inline int read_route6_context(struct __sk_buff *skb,
+                                               struct route6_context *context) {
     struct ipv6hdr *ip6h;
 
     if (VALIDATE_READ_DATA(skb, &ip6h, current_l3_offset, sizeof(struct ipv6hdr))) {
@@ -32,7 +32,7 @@ int test_route_v6_search_cache_in_lan(struct __sk_buff *skb) {
 #define BPF_LOG_TOPIC "test_route_v6_search_cache_in_lan"
     struct route6_context context = {0};
     u32 flow_mark = skb->mark;
-    int ret = read_route_context_v6(skb, &context);
+    int ret = read_route6_context(skb, &context);
     if (ret != TC_ACT_OK) {
         return ret;
     }
@@ -45,7 +45,7 @@ SEC("tc")
 int test_route_v6_set_cache_in_wan(struct __sk_buff *skb) {
 #define BPF_LOG_TOPIC "test_route_v6_set_cache_in_wan"
     struct route6_context context = {0};
-    int ret = read_route_context_v6(skb, &context);
+    int ret = read_route6_context(skb, &context);
     if (ret != TC_ACT_OK) {
         return ret;
     }
@@ -55,10 +55,10 @@ int test_route_v6_set_cache_in_wan(struct __sk_buff *skb) {
 }
 
 SEC("tc")
-int test_route_v6_pick_wan_by_flow_id_default(struct __sk_buff *skb) {
-#define BPF_LOG_TOPIC "test_route_v6_pick_wan_by_flow_id_default"
+int test_route6_pick_wan_by_flow_id_default(struct __sk_buff *skb) {
+#define BPF_LOG_TOPIC "test_route6_pick_wan_by_flow_id_default"
     struct route6_context context = {0};
-    int ret = read_route_context_v6(skb, &context);
+    int ret = read_route6_context(skb, &context);
     if (ret != TC_ACT_OK) {
         return ret;
     }
@@ -80,10 +80,10 @@ int test_route_v6_pick_wan_by_flow_id_default(struct __sk_buff *skb) {
 }
 
 SEC("tc")
-int test_route_v6_pick_wan_by_flow_id_non_default(struct __sk_buff *skb) {
-#define BPF_LOG_TOPIC "test_route_v6_pick_wan_by_flow_id_non_default"
+int test_route6_pick_wan_by_flow_id_non_default(struct __sk_buff *skb) {
+#define BPF_LOG_TOPIC "test_route6_pick_wan_by_flow_id_non_default"
     struct route6_context context = {0};
-    int ret = read_route_context_v6(skb, &context);
+    int ret = read_route6_context(skb, &context);
     if (ret != TC_ACT_OK) {
         return ret;
     }
@@ -105,8 +105,8 @@ int test_route_v6_pick_wan_by_flow_id_non_default(struct __sk_buff *skb) {
 }
 
 SEC("tc")
-int test_route_cached_docker_vlan_id(struct __sk_buff *skb) {
-#define BPF_LOG_TOPIC "test_route_cached_docker_vlan_id"
+int test_route6_cached_docker_vlan_id(struct __sk_buff *skb) {
+#define BPF_LOG_TOPIC "test_route6_cached_docker_vlan_id"
     struct route6_cache_value target = {0};
     target.mark_value = 0x0305;
 
@@ -115,8 +115,8 @@ int test_route_cached_docker_vlan_id(struct __sk_buff *skb) {
 }
 
 SEC("tc")
-int test_route_cached_docker_redirect_v6(struct __sk_buff *skb) {
-#define BPF_LOG_TOPIC "test_route_cached_docker_redirect_v6"
+int test_route6_cached_docker_redirect(struct __sk_buff *skb) {
+#define BPF_LOG_TOPIC "test_route6_cached_docker_redirect"
     struct route6_cache_value target = {0};
     target.mark_value = 0x0305;
 

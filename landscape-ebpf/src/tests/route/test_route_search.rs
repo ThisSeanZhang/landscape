@@ -12,7 +12,7 @@ use crate::{
         isolated_pin_root,
         route::{
             map_helper::{
-                create_route_cache_inner_map_v6, gateway_addr, insert_ip_mac_v6, local_addr,
+                create_route6_cache_inner_map, gateway_addr, insert_ip_mac_v6, local_addr,
                 put_rt6_cache_ifindex, remote_addr, wan_addr, TARGET_IFINDEX, WAN_CACHE,
             },
             packet_builder::simple_ipv6_tcp_syn,
@@ -31,7 +31,7 @@ fn v6_search_cache_in_lan_uses_ip_mac_v6() {
     let open = builder.open(&mut open_object).unwrap();
     let skel = open.load().unwrap();
 
-    create_route_cache_inner_map_v6(&skel.maps.rt6_cache_map, WAN_CACHE);
+    create_route6_cache_inner_map(&skel.maps.rt6_cache_map, WAN_CACHE);
     put_rt6_cache_ifindex(
         &skel.maps.rt6_cache_map,
         WAN_CACHE,
@@ -81,7 +81,7 @@ fn v6_search_cache_in_lan_falls_back_to_gateway_mac() {
     let open = builder.open(&mut open_object).unwrap();
     let skel = open.load().unwrap();
 
-    create_route_cache_inner_map_v6(&skel.maps.rt6_cache_map, WAN_CACHE);
+    create_route6_cache_inner_map(&skel.maps.rt6_cache_map, WAN_CACHE);
     put_rt6_cache_ifindex(
         &skel.maps.rt6_cache_map,
         WAN_CACHE,

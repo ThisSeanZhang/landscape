@@ -148,7 +148,7 @@ pub(crate) struct TproxyPacketTestResult {
     pub read_ret: i32,
 }
 
-/// C side `route_context_v4`.
+/// C side `route4_context`.
 #[repr(C)]
 #[derive(Debug, Default, Clone, Copy, FromBytes, Immutable, PartialEq, Eq)]
 pub(crate) struct RouteContextV4 {
@@ -159,7 +159,7 @@ pub(crate) struct RouteContextV4 {
     pub smac: [u8; 6],
 }
 
-/// C side `route_context_v6`.
+/// C side `route6_context`.
 #[repr(C)]
 #[derive(Debug, Default, Clone, Copy, FromBytes, Immutable, PartialEq, Eq)]
 pub(crate) struct RouteContextV6 {

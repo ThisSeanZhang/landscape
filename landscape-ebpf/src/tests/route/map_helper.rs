@@ -53,7 +53,7 @@ pub(crate) fn lookup_inner_map_id<T: MapCore>(outer_map: &T, cache_index: u32) -
     read_unaligned::<i32>(&value)
 }
 
-pub(crate) fn create_route_cache_inner_map_v4<T: MapCore>(outer_map: &T, cache_index: u32) {
+pub(crate) fn create_route4_cache_inner_map<T: MapCore>(outer_map: &T, cache_index: u32) {
     create_inner_map_generic_with_outer::<_, Route4CacheKey, Route4CacheValue>(
         outer_map,
         format!("route_test_rt4_cache_{cache_index}"),
@@ -62,7 +62,7 @@ pub(crate) fn create_route_cache_inner_map_v4<T: MapCore>(outer_map: &T, cache_i
     lookup_inner_map_id(outer_map, cache_index);
 }
 
-pub(crate) fn create_route_cache_inner_map_v6<T: MapCore>(outer_map: &T, cache_index: u32) {
+pub(crate) fn create_route6_cache_inner_map<T: MapCore>(outer_map: &T, cache_index: u32) {
     create_inner_map_generic_with_outer::<_, Route6CacheKey, Route6CacheValue>(
         outer_map,
         format!("route_test_rt6_cache_{cache_index}"),

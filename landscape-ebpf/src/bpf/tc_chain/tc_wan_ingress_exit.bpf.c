@@ -26,8 +26,8 @@ static __always_inline u8 get_wan_ingress_l3_offset(struct __sk_buff *skb) {
 #define TC_INGRESS_V6_SLOT 1
 
 SEC("tc/ingress")
-int tc_wan_ingress_route_v4(struct __sk_buff *skb) {
-#define BPF_LOG_TOPIC "tc_wan_ingress_route_v4"
+int tc_route4_wan_ingress(struct __sk_buff *skb) {
+#define BPF_LOG_TOPIC "tc_route4_wan_ingress"
     int ret = 0;
     struct route4_context context = {0};
     struct packet_offset_info offset_info = {0};
@@ -65,8 +65,8 @@ int tc_wan_ingress_route_v4(struct __sk_buff *skb) {
 }
 
 SEC("tc/ingress")
-int tc_wan_ingress_route_v6(struct __sk_buff *skb) {
-#define BPF_LOG_TOPIC "tc_wan_ingress_route_v6"
+int tc_route6_wan_ingress(struct __sk_buff *skb) {
+#define BPF_LOG_TOPIC "tc_route6_wan_ingress"
     int ret = 0;
     struct route6_context context = {0};
     struct packet_offset_info offset_info = {0};
@@ -113,8 +113,8 @@ struct {
 } ls_wan_in_tails SEC(".maps") = {
     .values =
         {
-            [TC_INGRESS_V4_SLOT] = (void *)&tc_wan_ingress_route_v4,
-            [TC_INGRESS_V6_SLOT] = (void *)&tc_wan_ingress_route_v6,
+            [TC_INGRESS_V4_SLOT] = (void *)&tc_route4_wan_ingress,
+            [TC_INGRESS_V6_SLOT] = (void *)&tc_route6_wan_ingress,
         },
 };
 

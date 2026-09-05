@@ -28,7 +28,7 @@ fn cached_docker_target_recovers_flow_vlan_id_from_mark() {
 
     let result = skel
         .progs
-        .test_route_cached_docker_vlan_id
+        .test_route6_cached_docker_vlan_id
         .test_run(ProgramInput { data_in: Some(&packet), ..Default::default() })
         .expect("run cached docker vlan redirect");
 
@@ -49,7 +49,7 @@ fn cached_docker_vlan_push_uses_flow_vlan_id_from_mark() {
 
     let result = skel
         .progs
-        .test_route_cached_docker_redirect_v6
+        .test_route6_cached_docker_redirect
         .test_run(ProgramInput { data_in: Some(&packet), ..Default::default() })
         .expect("run cached docker vlan push");
 
