@@ -9,6 +9,8 @@ pub(crate) mod packet_builder;
 mod packet;
 
 #[cfg(test)]
+mod test_lan_redirect_check;
+#[cfg(test)]
 mod test_route_docker;
 #[cfg(test)]
 mod test_route_search;

@@ -6,13 +6,18 @@ use libbpf_rs::{MapCore, MapFlags, MapHandle};
 
 use crate::maps::{
     route::cache::create_inner_map_generic_with_outer, MacKeyV6, MacValueV6, Route4CacheKey,
-    Route4CacheValue, Route6CacheKey, Route6CacheValue,
+    Route4CacheValue, Route4LanInfo, Route4LanKey, Route6CacheKey, Route6CacheValue, Route6LanInfo,
+    Route6LanKey,
 };
 
 pub(crate) use crate::maps::route::cache::{LAN_CACHE, WAN_CACHE};
 
 pub(crate) const TARGET_IFINDEX: u32 = 11;
 pub(crate) const WAN_IFINDEX: u32 = 6;
+
+// Mirrors ROUTE_TYPE_* in maps/route/lan.rs and bpf route headers.
+pub(crate) const LAN_ROUTE_TYPE: u8 = 0;
+pub(crate) const WAN_ROUTE_TYPE: u8 = 2;
 
 pub(crate) fn local_addr() -> Ipv6Addr {
     Ipv6Addr::from_str("fd00::10").unwrap()
@@ -148,4 +153,55 @@ pub(crate) fn insert_ip_mac_v6<T: MapCore>(
     };
 
     map.update(as_bytes(&key), as_bytes(&value), MapFlags::ANY).expect("insert ip_mac_v6 entry");
+}
+
+/// Insert a `rt6_lan_map` entry. `key_addr` is the LPM key address, `value_addr`
+/// the `addr` field of the value (route_type / ifindex / mac owned by the entry).
+pub(crate) fn insert_route6_lan_entry<T: MapCore>(
+    map: &T,
+    prefix: u8,
+    key_addr: Ipv6Addr,
+    value_addr: Ipv6Addr,
+    route_type: u8,
+    ifindex: u32,
+    has_mac: bool,
+    mac_addr: [u8; 6],
+) {
+    let key = Route6LanKey {
+        prefixlen: prefix as u32,
+        addr: key_addr.to_bits().to_be_bytes(),
+    };
+    let value = Route6LanInfo {
+        has_mac,
+        mac_addr,
+        route_type,
+        ifindex,
+        addr: value_addr.to_bits().to_be_bytes(),
+    };
+    map.update(as_bytes(&key), as_bytes(&value), MapFlags::ANY).expect("insert route6 lan entry");
+}
+
+/// v4 twin of `insert_route6_lan_entry` (see `route4_lan_info` C layout).
+pub(crate) fn insert_route4_lan_entry<T: MapCore>(
+    map: &T,
+    prefix: u8,
+    key_addr: Ipv4Addr,
+    value_addr: Ipv4Addr,
+    route_type: u8,
+    ifindex: u32,
+    has_mac: bool,
+    mac_addr: [u8; 6],
+) {
+    let key = Route4LanKey {
+        prefixlen: prefix as u32,
+        addr: key_addr.to_bits().to_be(),
+    };
+    let value = Route4LanInfo {
+        has_mac,
+        mac_addr,
+        route_type,
+        ifindex,
+        addr: value_addr.to_bits().to_be(),
+    };
+    map.update(as_bytes(&key), as_bytes(&value), MapFlags::ANY).expect("insert route4 lan entry");
 }

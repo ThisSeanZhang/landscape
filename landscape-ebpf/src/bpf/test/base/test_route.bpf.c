@@ -6,6 +6,7 @@
 #include <bpf/bpf_tracing.h>
 
 #include "landscape.h"
+#include "route/route4_path.h"
 #include "route/route6_path.h"
 
 char LICENSE[] SEC("license") = "GPL";
@@ -23,6 +24,21 @@ static __always_inline int read_route6_context(struct __sk_buff *skb,
     COPY_ADDR_FROM(context->saddr.all, ip6h->saddr.in6_u.u6_addr32);
     COPY_ADDR_FROM(context->daddr.all, ip6h->daddr.in6_u.u6_addr32);
     context->l4_protocol = ip6h->nexthdr;
+
+    return TC_ACT_OK;
+}
+
+static __always_inline int read_route4_context(struct __sk_buff *skb,
+                                               struct route4_context *context) {
+    struct iphdr *iph;
+
+    if (VALIDATE_READ_DATA(skb, &iph, current_l3_offset, sizeof(struct iphdr))) {
+        return TC_ACT_SHOT;
+    }
+
+    context->saddr = iph->saddr;
+    context->daddr = iph->daddr;
+    context->l4_protocol = iph->protocol;
 
     return TC_ACT_OK;
 }
@@ -126,5 +142,87 @@ int test_route6_cached_docker_redirect(struct __sk_buff *skb) {
     }
 
     return skb->vlan_tci;
+#undef BPF_LOG_TOPIC
+}
+
+// ── lan_redirect_check unit hooks: each wraps one of the three per-hook
+//    lan_redirect_check implementations so tests can lock their behaviour
+//    before any dedup refactor. F1 (in_wan) is always invoked with
+//    is_lan = false, matching its only production caller. ──
+
+SEC("tc")
+int test_route4_lan_redirect_check_in_wan(struct __sk_buff *skb) {
+#define BPF_LOG_TOPIC "test_route4_lan_redirect_check_in_wan"
+    struct route4_context context = {0};
+    int ret = read_route4_context(skb, &context);
+    if (ret != TC_ACT_OK) {
+        return ret;
+    }
+
+    return tc_route4_lan_redirect_check_in_wan(skb, current_l3_offset, &context, false);
+#undef BPF_LOG_TOPIC
+}
+
+SEC("tc")
+int test_route4_lan_redirect_check_in_lan(struct __sk_buff *skb) {
+#define BPF_LOG_TOPIC "test_route4_lan_redirect_check_in_lan"
+    struct route4_context context = {0};
+    int ret = read_route4_context(skb, &context);
+    if (ret != TC_ACT_OK) {
+        return ret;
+    }
+
+    return tc_route4_lan_redirect_check_in_lan(skb, current_l3_offset, &context);
+#undef BPF_LOG_TOPIC
+}
+
+SEC("tc")
+int test_route4_lan_redirect_check_in_wan_egress(struct __sk_buff *skb) {
+#define BPF_LOG_TOPIC "test_route4_lan_redirect_check_in_wan_egress"
+    struct route4_context context = {0};
+    int ret = read_route4_context(skb, &context);
+    if (ret != TC_ACT_OK) {
+        return ret;
+    }
+
+    return tc_route4_lan_redirect_check_in_wan_egress(skb, current_l3_offset, &context);
+#undef BPF_LOG_TOPIC
+}
+SEC("tc")
+int test_route6_lan_redirect_check_in_wan(struct __sk_buff *skb) {
+#define BPF_LOG_TOPIC "test_route6_lan_redirect_check_in_wan"
+    struct route6_context context = {0};
+    int ret = read_route6_context(skb, &context);
+    if (ret != TC_ACT_OK) {
+        return ret;
+    }
+
+    return tc_route6_lan_redirect_check_in_wan(skb, current_l3_offset, &context, false);
+#undef BPF_LOG_TOPIC
+}
+
+SEC("tc")
+int test_route6_lan_redirect_check_in_lan(struct __sk_buff *skb) {
+#define BPF_LOG_TOPIC "test_route6_lan_redirect_check_in_lan"
+    struct route6_context context = {0};
+    int ret = read_route6_context(skb, &context);
+    if (ret != TC_ACT_OK) {
+        return ret;
+    }
+
+    return tc_route6_lan_redirect_check_in_lan(skb, current_l3_offset, &context);
+#undef BPF_LOG_TOPIC
+}
+
+SEC("tc")
+int test_route6_lan_redirect_check_in_wan_egress(struct __sk_buff *skb) {
+#define BPF_LOG_TOPIC "test_route6_lan_redirect_check_in_wan_egress"
+    struct route6_context context = {0};
+    int ret = read_route6_context(skb, &context);
+    if (ret != TC_ACT_OK) {
+        return ret;
+    }
+
+    return tc_route6_lan_redirect_check_in_wan_egress(skb, current_l3_offset, &context);
 #undef BPF_LOG_TOPIC
 }

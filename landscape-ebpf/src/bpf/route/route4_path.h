@@ -23,6 +23,10 @@ static __always_inline int tc_route4_lan_redirect_check_in_wan(struct __sk_buff 
                                                                struct route4_context *context,
                                                                bool is_lan) {
 #define BPF_LOG_TOPIC "tc_route4_lan_redirect_check_in_wan"
+    // NOTE: `is_lan` gates the same-iface MAC rewrite hairpin below. Its only
+    // production caller (tc_route4_wan_ingress) passes false, so that branch
+    // is currently dead code; the LAN-ingress variant (tc_route4_lan_redirect_check_in_lan)
+    // inlines the is_lan=true behaviour instead. Revisit before dedup.
 
     int ret;
     struct route4_lan_key lan_search_key = {0};
@@ -37,6 +41,13 @@ static __always_inline int tc_route4_lan_redirect_check_in_wan(struct __sk_buff 
     if (likely(lan_info != NULL)) {
         if (lan_info->route_type == ROUTE_TYPE_WAN) {
             if (lan_info->addr == context->daddr) return TC_ACT_UNSPEC;
+            // NOTE (suspected bug): WAN-typed entry hit with addr != daddr
+            // falls through into the LAN redirect tail below, i.e. F1 will
+            // redirect to lan_info->ifindex. F2 (in_lan) and F3
+            // (in_wan_egress) both return TC_ACT_OK here instead. Locked as
+            // current behaviour by tests test_route4/6_lan_redirect_check_in_wan
+            // (WAN-other row). No WanReachable entry producer exists today, so
+            // this branch is dormant; revisit before any dedup refactor.
         }
         // is LAN Packet, redirect to lan
         if (unlikely(lan_info->ifindex == skb->ifindex)) {
@@ -119,6 +130,168 @@ static __always_inline int tc_route4_lan_redirect_check_in_wan(struct __sk_buff 
     // ld_bpf_log("lan_info ip: %pI4", lan_search_key.addr.in6_u.u6_addr8);
 
     return TC_ACT_OK;
+#undef BPF_LOG_TOPIC
+}
+
+static __always_inline int tc_route4_lan_redirect_check_in_lan(struct __sk_buff *skb,
+                                                               u32 current_l3_offset,
+                                                               struct route4_context *context) {
+#define BPF_LOG_TOPIC "tc_route4_lan_redirect_check_in_lan"
+    int ret;
+    struct route4_lan_key lan_search_key = {0};
+    struct mac_key_v4 mac_key_search = {0};
+    struct mac_value_v4 *mac_value = NULL;
+
+    lan_search_key.prefixlen = 32;
+    lan_search_key.addr = context->daddr;
+
+    struct route4_lan_info *lan_info = bpf_map_lookup_elem(&rt4_lan_map, &lan_search_key);
+
+    if (lan_info == NULL) {
+        return TC_ACT_OK;
+    }
+
+    if (lan_info->route_type == ROUTE_TYPE_WAN) {
+        if (lan_info->addr == context->daddr) return TC_ACT_UNSPEC;
+        return TC_ACT_OK;
+    }
+
+    if (unlikely(lan_info->ifindex == skb->ingress_ifindex)) {
+        if (lan_info->has_mac && lan_info->addr != 0 && lan_info->addr != context->daddr) {
+            mac_key_search.addr = context->daddr;
+            mac_value = bpf_map_lookup_elem(&ip_mac_v4, &mac_key_search);
+            if (mac_value) {
+                if (!bpf_skb_store_bytes(skb, 0, &mac_value->mac, 14, 0)) {
+                    return bpf_redirect(lan_info->ifindex, 0);
+                }
+            }
+        }
+        return TC_ACT_UNSPEC;
+    }
+
+    if (lan_info->route_type == ROUTE_TYPE_LAN && lan_info->addr == context->daddr) {
+        return TC_ACT_UNSPEC;
+    }
+
+    if (current_l3_offset == 0 && lan_info->has_mac) {
+        unsigned char ethhdr[14];
+        ethhdr[12] = 0x08;
+        ethhdr[13] = 0x00;
+
+        if (bpf_skb_change_head(skb, 14, 0)) return TC_ACT_SHOT;
+        if (bpf_skb_store_bytes(skb, 0, ethhdr, sizeof(ethhdr), 0)) return TC_ACT_SHOT;
+    }
+
+    bool target_has_mac = lan_info->has_mac;
+    if (unlikely(lan_info->route_type == ROUTE_TYPE_NEXTHOP)) {
+        mac_key_search.addr = lan_info->addr;
+    } else {
+        mac_key_search.addr = context->daddr;
+    }
+
+    if (target_has_mac) {
+        mac_value = bpf_map_lookup_elem(&ip_mac_v4, &mac_key_search);
+        if (mac_value) {
+            ret = store_mac_v4(skb, mac_value->mac, lan_info->mac_addr);
+            if (!ret) return bpf_redirect(lan_info->ifindex, 0);
+            ld_bpf_log("store_mac_v4 err: %d", ret);
+        } else {
+            ld_bpf_log("can't find mac, IP: %pI4, target ifindex: %d", &mac_key_search.addr,
+                       lan_info->ifindex);
+        }
+    } else {
+        return bpf_redirect(lan_info->ifindex, 0);
+    }
+
+    struct bpf_redir_neigh param;
+    param.nh_family = AF_INET;
+
+    if (unlikely(lan_info->route_type == ROUTE_TYPE_NEXTHOP)) {
+        param.ipv6_nh[0] = lan_info->addr;
+    } else {
+        param.ipv6_nh[0] = lan_search_key.addr;
+    }
+
+    ret = bpf_redirect_neigh(lan_info->ifindex, &param, sizeof(param), 0);
+    if (unlikely(ret != 7)) {
+        ld_bpf_log("bpf_redirect_neigh error: %d", ret);
+    }
+
+    return ret;
+#undef BPF_LOG_TOPIC
+}
+
+// ── tc_route4/6_lan_redirect_check_in_wan_egress: adapted from
+// tc_route4/6_lan_redirect_check_in_wan (no is_lan) ──
+
+static __always_inline int
+tc_route4_lan_redirect_check_in_wan_egress(struct __sk_buff *skb, u32 current_l3_offset,
+                                           struct route4_context *context) {
+#define BPF_LOG_TOPIC "tc_route4_lan_redirect_check_in_wan_egress"
+    int ret;
+    struct route4_lan_key lan_search_key = {0};
+    struct mac_key_v4 mac_key_search = {0};
+    struct mac_value_v4 *mac_value = NULL;
+
+    lan_search_key.prefixlen = 32;
+    lan_search_key.addr = context->daddr;
+
+    struct route4_lan_info *lan_info = bpf_map_lookup_elem(&rt4_lan_map, &lan_search_key);
+
+    if (lan_info == NULL) return TC_ACT_OK;
+
+    if (lan_info->route_type == ROUTE_TYPE_WAN) return TC_ACT_OK;
+
+    if (unlikely(lan_info->ifindex == skb->ifindex)) return TC_ACT_UNSPEC;
+
+    if (lan_info->route_type == ROUTE_TYPE_LAN && lan_info->addr == context->daddr)
+        return TC_ACT_UNSPEC;
+
+    if (current_l3_offset == 0 && lan_info->has_mac) {
+        unsigned char ethhdr[14];
+        ethhdr[12] = 0x08;
+        ethhdr[13] = 0x00;
+
+        if (bpf_skb_change_head(skb, 14, 0)) return TC_ACT_SHOT;
+        if (bpf_skb_store_bytes(skb, 0, ethhdr, sizeof(ethhdr), 0)) return TC_ACT_SHOT;
+    }
+
+    bool target_has_mac = lan_info->has_mac;
+    if (unlikely(lan_info->route_type == ROUTE_TYPE_NEXTHOP)) {
+        mac_key_search.addr = lan_info->addr;
+    } else {
+        mac_key_search.addr = context->daddr;
+    }
+
+    if (target_has_mac) {
+        mac_value = bpf_map_lookup_elem(&ip_mac_v4, &mac_key_search);
+        if (mac_value) {
+            ret = store_mac_v4(skb, mac_value->mac, lan_info->mac_addr);
+            if (!ret) return bpf_redirect(lan_info->ifindex, 0);
+            ld_bpf_log("store_mac_v4 err: %d", ret);
+        } else {
+            ld_bpf_log("can't find mac, IP: %pI4, target ifindex: %d", &mac_key_search.addr,
+                       lan_info->ifindex);
+        }
+    } else {
+        return bpf_redirect(lan_info->ifindex, 0);
+    }
+
+    struct bpf_redir_neigh param;
+    param.nh_family = AF_INET;
+
+    if (unlikely(lan_info->route_type == ROUTE_TYPE_NEXTHOP)) {
+        param.ipv6_nh[0] = lan_info->addr;
+    } else {
+        param.ipv6_nh[0] = lan_search_key.addr;
+    }
+
+    ret = bpf_redirect_neigh(lan_info->ifindex, &param, sizeof(param), 0);
+    if (unlikely(ret != 7)) {
+        ld_bpf_log("bpf_redirect_neigh error: %d", ret);
+    }
+
+    return ret;
 #undef BPF_LOG_TOPIC
 }
 
