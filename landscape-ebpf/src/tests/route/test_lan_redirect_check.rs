@@ -112,6 +112,7 @@ fn run_v6_progs(
 }
 
 /// v6 scenario with a single lan entry; asserts the three return codes.
+#[allow(clippy::too_many_arguments)]
 fn v6_with_entry(
     pin: &str,
     prefix: u8,
