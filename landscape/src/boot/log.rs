@@ -134,7 +134,8 @@ pub fn init_logger(log_config: LogRuntimeConfig) -> Result<(), Box<dyn std::erro
         let file_appender: RollingFileAppender = RollingFileAppender::builder()
             .rotation(Rotation::DAILY)
             .max_log_files(log_config.max_log_files)
-            .filename_prefix("landscape.log")
+            .filename_prefix("landscape")
+            .filename_suffix("log")
             .build(&log_config.log_path)
             .expect("failed to initialize rolling file appender");
 
