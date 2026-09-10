@@ -133,7 +133,7 @@ jobs:
 
           - architecture: loongarch64
             target: loongarch64-unknown-linux-musl
-            gateway: false
+            gateway: true
 
           # ---- 动态 gnu / dynamic glibc ----
           - architecture: riscv64
@@ -146,7 +146,7 @@ jobs:
 
           - architecture: loongarch64
             target: loongarch64-unknown-linux-gnu
-            gateway: false
+            gateway: true
 
     steps:
       - name: Checkout code
