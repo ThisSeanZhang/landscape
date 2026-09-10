@@ -30,7 +30,7 @@ default-members = ["landscape-webserver"]
 # ============================================================================
 sysinfo = "0.39.6"
 anyhow = "1.0.104"
-thiserror = "2.0.19"
+thiserror = "2.0.20"
 once_cell = "1.21.4"
 chrono = "0.4.45"
 arc-swap = "1.9.2"
@@ -46,8 +46,8 @@ paste = "1.0.15"
 rand = "0.10.2"
 colored = "3.1.1"
 dotenvy = "0.15.7"
-uuid = { version = "1.24.0", features = ["v4", "serde"] }
-clap = { version = "4.6.4", default-features = false, features = [
+uuid = { version = "1.26.0", features = ["v4", "serde"] }
+clap = { version = "4.6.6", default-features = false, features = [
     "std",
     "derive",
     "help",
@@ -61,11 +61,11 @@ clap = { version = "4.6.4", default-features = false, features = [
 tokio = { version = "1.53.1" }
 tokio-stream = "0.1.19"
 tokio-util = { version = "0.7.19", features = ["codec", "net"] }
-tokio-rustls = "0.26.4"
-async-trait = "0.1.91"
+tokio-rustls = "0.26.5"
+async-trait = "0.1.92"
 async-std = { version = "1.13.2", features = ["attributes", "tokio1"] }
-futures = "0.3.33"
-futures-util = { version = "0.3.33", default-features = false }
+futures = "0.3.34"
+futures-util = { version = "0.3.34", default-features = false }
 
 # ============================================================================
 # Serialization & Data Formats
@@ -74,13 +74,13 @@ serde = { version = "1.0.229", features = ["derive"] }
 serde_json = { version = "1.0.151" }
 # Only used by geo's file cache — keep version pinned, do not upgrade
 bincode = { version = "2.0.1", features = ["std", "serde"] }
-toml = "1.1.4"
+toml = "1.1.5"
 toml_edit = "0.25.13"
 bytes = "1.12.1"
 http = "1.5.0"
 h2 = "0.4.15"
 deku = "0.20.3"
-zerocopy = "0.8.55"
+zerocopy = "0.8.57"
 
 # ============================================================================
 # Network & Protocols
@@ -98,7 +98,7 @@ etherparse = "0.21.0"
 cidr = { version = "0.3.2" }
 idna = "1.1.0"
 dhcproto = "0.15.0"
-reqwest = { version = "0.13.4", default-features = false, features = [
+reqwest = { version = "0.13.5", default-features = false, features = [
     "rustls",
 ] }
 hickory-server = "0.26.1"
@@ -106,11 +106,11 @@ hickory-client = "0.25.2"
 hickory-resolver = "0.26.1"
 hickory-proto = "0.26.1"
 quinn = { version = "0.11.11", features = ["runtime-tokio"] }
-zerotrie = { version = "0.2", features = ["alloc"] }
-aho-corasick = "1.1.4"
+zerotrie = { version = "0.2.5", features = ["alloc"] }
+aho-corasick = "1.1.5"
 ahash = "0.8.12"
-moka = { version = "0.12.15", features = ["future"] }
-zbus = "5.18.0"
+moka = { version = "0.12.16", features = ["future"] }
+zbus = "5.19.0"
 
 # ============================================================================
 # Web & HTTP
@@ -123,7 +123,7 @@ axum-extra = { version = "0.12.6", features = [
 axum-server = "0.8.0"
 headers = "0.4.1"
 tower = { version = "0.5.3", features = ["util"] }
-tower-http = { version = "0.7.0", features = ["fs", "trace"] }
+tower-http = { version = "0.7.1", features = ["fs", "trace"] }
 utoipa = { version = "5.5.0", features = ["uuid", "openapi_extensions"] }
 utoipa-axum = "0.2"
 utoipa-scalar = { version = "0.3", features = ["axum"] }
@@ -132,7 +132,7 @@ jsonwebtoken = { version = "11.0.0", features = ["rust_crypto"] }
 # ============================================================================
 # Security & Cryptography
 # ============================================================================
-rustls = { version = "0.23.43", default-features = false, features = [
+rustls = { version = "0.23.44", default-features = false, features = [
     "ring",
     "logging",
     "std",
@@ -140,15 +140,15 @@ rustls = { version = "0.23.43", default-features = false, features = [
 ] }
 rustls-pki-types = "1.15.1"
 pem = "4.0.0"
-rcgen = "0.14.8"
+rcgen = "0.14.10"
 instant-acme = "0.8.5"
-base64 = "0.23.0"
+base64 = "0.23.1"
 x509-parser = "0.18.1"
 sha2 = "0.11.0"
 hmac = "0.13.0"
 md-5 = "0.11.0"
 sha1 = "0.11.0"
-quick-xml = { version = "0.41.0", features = ["serialize"] }
+quick-xml = { version = "0.42.0", features = ["serialize"] }
 
 # ============================================================================
 # Database & Storage
@@ -189,7 +189,7 @@ libbpf-sys = { version = "1.7.0" }
 # Code Generation & Macros
 # ============================================================================
 quote = "1.0.47"
-syn = "3.0.3"
+syn = "3.0.5"
 quick-protobuf = "0.8.1"
 
 # ============================================================================
@@ -200,9 +200,9 @@ walkdir = "2.5.0"
 tempfile = "3.27.0"
 jemallocator = "0.5.4"
 jemalloc-ctl = "0.5.4"
-bollard = "0.21.0"
+bollard = "0.21.1"
 portable-pty = { version = "0.9.0" }
-pingora = { version = "0.8.1", default-features = false, features = [
+pingora = { version = "0.9.0", default-features = false, features = [
     "proxy",
     "lb",
     "rustls",

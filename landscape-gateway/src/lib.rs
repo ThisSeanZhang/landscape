@@ -5,7 +5,7 @@ pub mod sni_proxy;
 use std::io::ErrorKind;
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 
 #[cfg(unix)]
 use std::os::unix::io::AsRawFd;
@@ -390,6 +390,7 @@ async fn run_https_server_inner(
                         }
                     }
 
+                    let handshake_start = Instant::now();
                     let tls_result = tokio::select! {
                         _ = connection_cancel.cancelled() => return,
                         result = tokio::time::timeout(Duration::from_secs(60), acceptor.accept(stream)) => result,
@@ -406,7 +407,10 @@ async fn run_https_server_inner(
                         }
                     };
 
-                    let stream: Stream = Box::new(GatewayTlsStream::new(tls_stream));
+                    let stream: Stream = Box::new(GatewayTlsStream::new(
+                        tls_stream,
+                        Some(handshake_start.elapsed()),
+                    ));
                     tokio::select! {
                         _ = connection_cancel.cancelled() => {}
                         _ = app.process_new(stream, &connection_shutdown) => {}
@@ -442,18 +446,20 @@ fn gateway_https_bind_failure_diagnosis(kind: ErrorKind) -> &'static str {
 struct GatewayTlsStream {
     inner: TokioTlsStream<TcpStream>,
     established_ts: SystemTime,
+    establishment_duration: Option<Duration>,
     socket_digest: Arc<SocketDigest>,
     unique_id: i32,
 }
 
 impl GatewayTlsStream {
-    fn new(inner: TokioTlsStream<TcpStream>) -> Self {
+    fn new(inner: TokioTlsStream<TcpStream>, establishment_duration: Option<Duration>) -> Self {
         #[cfg(unix)]
         let raw_fd = inner.get_ref().0.as_raw_fd();
 
         Self {
             inner,
             established_ts: SystemTime::now(),
+            establishment_duration,
             #[cfg(unix)]
             socket_digest: Arc::new(SocketDigest::from_raw_fd(raw_fd)),
             #[cfg(windows)]
@@ -533,7 +539,11 @@ impl pingora::protocols::Ssl for GatewayTlsStream {
 
 impl GetTimingDigest for GatewayTlsStream {
     fn get_timing_digest(&self) -> Vec<Option<TimingDigest>> {
-        vec![Some(TimingDigest { established_ts: self.established_ts })]
+        vec![Some(TimingDigest {
+            established_ts: self.established_ts,
+            establishment_duration: self.establishment_duration,
+            offload_wait_duration: None,
+        })]
     }
 }
 
