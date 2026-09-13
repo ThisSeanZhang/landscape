@@ -472,7 +472,8 @@ static __always_inline int xdp_route4_lan_redirect_check_in_lan(struct xdp_md *c
 
             struct mac_value_v4 new_val = {.ifindex = lan_info->ifindex, .proto = ETH_IPV4};
             __builtin_memcpy(new_val.mac, fib.dmac, 6);
-            __builtin_memcpy(new_val.dev_mac, lan_info->mac_addr, 6);
+            // fib.smac 才是出口网卡真实源 MAC（与 xdp_wan_route 的 FIB 兜底一致）。
+            __builtin_memcpy(new_val.dev_mac, fib.smac, 6);
             bpf_map_update_elem(&ip_mac_v4, &mac_key, &new_val, BPF_ANY);
 
             void *data = (void *)(long)ctx->data;
@@ -480,7 +481,7 @@ static __always_inline int xdp_route4_lan_redirect_check_in_lan(struct xdp_md *c
             struct ethhdr *eth = data;
             if ((void *)(eth + 1) > data_end) return XDP_PASS;
             __builtin_memcpy(eth->h_dest, fib.dmac, 6);
-            __builtin_memcpy(eth->h_source, lan_info->mac_addr, 6);
+            __builtin_memcpy(eth->h_source, fib.smac, 6);
             // ld_bpf_log("bpf_redirect 2");
             return xdp_redirect_or_tc_handoff(ctx, lan_info->ifindex, 0);
         }
@@ -540,7 +541,8 @@ static __always_inline int xdp_route6_lan_redirect_check_in_lan(struct xdp_md *c
 
             struct mac_value_v6 new_val = {.ifindex = lan_info->ifindex, .proto = ETH_IPV6};
             __builtin_memcpy(new_val.mac, fib.dmac, 6);
-            __builtin_memcpy(new_val.dev_mac, lan_info->mac_addr, 6);
+            // fib.smac 才是出口网卡真实源 MAC（与 xdp_wan_route 的 FIB 兜底一致）。
+            __builtin_memcpy(new_val.dev_mac, fib.smac, 6);
             bpf_map_update_elem(&ip_mac_v6, &hop_key, &new_val, BPF_ANY);
 
             void *data = (void *)(long)ctx->data;
@@ -548,7 +550,7 @@ static __always_inline int xdp_route6_lan_redirect_check_in_lan(struct xdp_md *c
             struct ethhdr *eth = data;
             if ((void *)(eth + 1) > data_end) return XDP_PASS;
             __builtin_memcpy(eth->h_dest, fib.dmac, 6);
-            __builtin_memcpy(eth->h_source, lan_info->mac_addr, 6);
+            __builtin_memcpy(eth->h_source, fib.smac, 6);
             return xdp_redirect_or_tc_handoff(ctx, lan_info->ifindex, 0);
         }
         return 0;
@@ -590,7 +592,12 @@ static __always_inline int xdp_route4_search_cache_in_lan(struct xdp_md *ctx,
                     struct ethhdr *eth = data;
                     if ((void *)(eth + 1) > data_end) return XDP_DROP;
                     __builtin_memcpy(eth->h_dest, mac_val->mac, 6);
-                    __builtin_memcpy(eth->h_source, mac_val->dev_mac, 6);
+                    // 自学习(neigh_learn)/DAD 的表项没有 dev_mac，直接写会产生
+                    // 00:00:00:00:00:00 源 MAC；与 IPv6 分支保持一致，
+                    // 此时保留原始源 MAC。
+                    if (!is_zero_mac(mac_val->dev_mac)) {
+                        __builtin_memcpy(eth->h_source, mac_val->dev_mac, 6);
+                    }
                 }
             }
             if (!target->xdp_redirect_able) {

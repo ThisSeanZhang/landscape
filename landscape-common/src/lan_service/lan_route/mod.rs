@@ -63,12 +63,21 @@ pub struct StaticRouteConfig {
 }
 
 impl StaticRouteConfig {
-    pub fn to_lan_info(&self, ifindex: u32, iface_name: &str) -> LanRouteInfo {
+    pub fn to_lan_info(
+        &self,
+        ifindex: u32,
+        iface_name: &str,
+        mac: Option<MacAddr>,
+    ) -> LanRouteInfo {
         LanRouteInfo {
             ifindex,
             iface_name: iface_name.to_string(),
             iface_ip: self.subnet,
-            mac: Some(MacAddr::zero()),
+            // 下一跳路由的源 MAC 必须是出口网卡的真实 MAC。
+            // 若填 Some(MacAddr::zero())，eBPF 会把 00:00:00:00:00:00
+            // 写成以太网源地址，部分交换机/旁路由会丢包或学错绑定。
+            // 传 None 时 has_mac=false，eBPF 走不重写 MAC 的兜底分支。
+            mac,
             prefix: self.sub_prefix,
             mode: LanRouteMode::NextHop { next_hop_ip: self.next_hop },
         }

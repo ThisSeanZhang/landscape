@@ -642,6 +642,11 @@ fn xdp_lan_intro_known_lan_fib_fallback() {
         // FIB target must be a device other than the ingress (host end), so the
         // route points out a second pair kept in the test netns.
         out_pair = VethPair::create("lrfout");
+        // 固定 out 端 MAC，便于确定性地断言 FIB 填充的 dev_mac(fib.smac)。
+        Command::new("ip")
+            .args(["link", "set", out_pair.host(), "address", "02:00:00:00:00:aa"])
+            .output()
+            .unwrap();
     }
     let peer = pair.peer();
 
@@ -730,7 +735,7 @@ fn xdp_lan_intro_known_lan_fib_fallback() {
     let raw = mac_after.unwrap();
     assert_eq!(&raw[0..4], &out_h_i.to_ne_bytes(), "FIB cache ifindex = lan_info->ifindex");
     assert_eq!(&raw[4..10], &[0x02, 0, 0, 0, 0, 0x05], "FIB resolved MAC from static neigh");
-    assert_eq!(&raw[10..16], &[0u8; 6], "FIB cache dev_mac = lan_info->mac_addr");
+    assert_eq!(&raw[10..16], &[0x02, 0, 0, 0, 0, 0xaa], "FIB cache dev_mac = fib.smac");
     assert_eq!(&raw[16..18], &0x0800u16.to_be_bytes(), "FIB cache proto = ETH_P_IP");
 
     // second send: MAC cache hit → still redirected

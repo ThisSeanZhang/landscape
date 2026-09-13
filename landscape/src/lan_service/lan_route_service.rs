@@ -47,7 +47,7 @@ impl ServiceStarterTrait for RouteLanService {
                     .static_routes
                     .into_iter()
                     .flat_map(|routes| routes.into_iter())
-                    .map(|e2| e2.to_lan_info(iface.index, &iface.name))
+                    .map(|e2| e2.to_lan_info(iface.index, &iface.name, iface.mac))
                     .collect();
 
                 for info in static_routes {
