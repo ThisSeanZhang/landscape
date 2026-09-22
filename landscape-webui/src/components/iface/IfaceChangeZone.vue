@@ -8,7 +8,6 @@ import { stop_and_del_lan_ipv6 } from "@/api/service_lan_ipv6";
 import { stop_and_del_iface_config } from "@/api/service_ipconfig";
 import { stop_and_del_iface_ipv6pd } from "@/api/service_ipv6pd";
 import { stop_and_del_iface_nat } from "@/api/service_nat";
-import { delete_and_stop_iface_pppd_by_attach_iface_name } from "@/api/service_pppd";
 import { IfaceZoneType } from "@landscape-router/types/api/schemas";
 import IfaceDisableGuardModal from "@/components/iface/IfaceDisableGuardModal.vue";
 import { ref } from "vue";

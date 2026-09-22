@@ -318,6 +318,9 @@ onUnmounted(() => {
 });
 
 onNodeClick(({ node }) => {
+  if (node.data?.virtual) {
+    return;
+  }
   selectedIfaceId.value = Number(node.id);
 });
 

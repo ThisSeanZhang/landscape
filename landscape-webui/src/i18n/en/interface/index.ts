@@ -22,7 +22,7 @@ export default {
   update: "Update",
   change_zone_title: "Change Interface Zone",
   change_zone_warning_1:
-    "Changing zone will reset all services running on this interface",
+    "Changing zone will reset all services running on this interface and delete its PPPoE dial-up configs",
   change_zone_warning_2:
     "It is recommended to set the IP configuration method in `/etc/network/interfaces` to manual",
   zone_undefined: "Undefined",

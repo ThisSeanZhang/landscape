@@ -7,17 +7,18 @@ import IpConfigModal from "@/components/ipconfig/IpConfigModal.vue";
 import IPv6PDEditModal from "@/components/ipv6pd/IPv6PDEditModal.vue";
 import MSSClampServiceEditModal from "@/components/mss_clamp/MSSClampServiceEditModal.vue";
 import NATEditModal from "@/components/nat/NATEditModal.vue";
-import PPPDServiceListDrawer from "@/components/pppd/PPPDServiceListDrawer.vue";
+import PPPDCreateConfigModal from "@/components/pppd/CreatePPPDConfigModal.vue";
 import RouteLanServiceEditModal from "@/components/route/lan/RouteLanServiceEditModal.vue";
 import RouteWanServiceEditModal from "@/components/route/wan/RouteWanServiceEditModal.vue";
 import WifiModeChange from "@/components/wifi/WifiModeChange.vue";
 import WifiServiceEditModal from "@/components/wifi/WifiServiceEditModal.vue";
-import { Link } from "@vicons/carbon";
+import { Edit, Link, TrashCan } from "@vicons/carbon";
 import { useThemeVars } from "naive-ui";
 import { changeColor } from "seemly";
 import { computed, ref } from "vue";
 import { useI18n } from "vue-i18n";
 
+import { stop_and_del_iface_pppd } from "@/api/service_pppd";
 import { DevStateType, NetDev } from "@/lib/dev";
 import { IfaceZoneType } from "@landscape-router/types/api/schemas";
 import { formatPackets, formatRate } from "@/lib/util";
@@ -65,7 +66,8 @@ const iface_lan_ipv6_edit_show = ref(false);
 const iface_ipv6pd_edit_show = ref(false);
 const iface_nat_edit_show = ref(false);
 const iface_service_edit_show = ref(false);
-const show_pppd_drawer = ref(false);
+const show_pppd_create_modal = ref(false);
+const show_pppd_edit_modal = ref(false);
 const show_route_lan_drawer = ref(false);
 const show_route_wan_drawer = ref(false);
 
@@ -111,7 +113,23 @@ const mss_clamp_status = computed(
   () => mssClampConfigStore.GET_STATUS_BY_IFACE_NAME(props.node.name).value,
 );
 
+const is_virtual_pppd = computed(() => props.node.virtual);
+const is_live_pppd = computed(
+  () =>
+    !props.node.virtual &&
+    props.node.dev_type === "ppp" &&
+    props.node.pppd_config !== undefined,
+);
+const can_delete_pppd = computed(
+  () =>
+    (is_virtual_pppd.value || is_live_pppd.value) &&
+    props.node.pppd_config?.enable !== true,
+);
+
 const status_type = computed(() => {
+  if (is_virtual_pppd.value) {
+    return props.node.pppd_config?.enable ? "warning" : "default";
+  }
   if (props.node.dev_status.t === DevStateType.Up) {
     return "success";
   }
@@ -120,6 +138,23 @@ const status_type = computed(() => {
   }
   return "warning";
 });
+
+const status_text = computed(() => {
+  if (is_virtual_pppd.value) {
+    return props.node.pppd_config?.enable
+      ? t("pppoe.status_not_dialed")
+      : t("pppoe.status_disabled");
+  }
+  return props.node.dev_status.t;
+});
+
+async function delete_pppd_config() {
+  if (props.node.pppd_config === undefined) {
+    return;
+  }
+  await stop_and_del_iface_pppd(props.node.pppd_config.iface_name);
+  await refreshGraph();
+}
 
 const zone_type = computed(() => {
   if (props.node.zone_type === IfaceZoneType.wan) {
@@ -183,6 +218,10 @@ async function refreshGraph() {
 }
 
 function openServiceEditor(service_key: string) {
+  if (is_virtual_pppd.value) {
+    return;
+  }
+
   switch (service_key) {
     case "ip_config":
       iface_service_edit_show.value = true;
@@ -215,7 +254,7 @@ function openServiceEditor(service_key: string) {
       show_mss_clamp_edit.value = true;
       break;
     case "pppd":
-      show_pppd_drawer.value = true;
+      show_pppd_create_modal.value = true;
       break;
   }
 }
@@ -389,6 +428,40 @@ const node_style = computed(() => ({
                 :show_switch="show_switch"
                 @refresh="refreshGraph"
               />
+              <n-popconfirm
+                v-if="can_delete_pppd"
+                @positive-click="delete_pppd_config"
+              >
+                <template #trigger>
+                  <n-button
+                    quaternary
+                    circle
+                    size="tiny"
+                    type="error"
+                    :focusable="false"
+                    data-testid="topology-node-delete-pppd"
+                    @click.stop
+                  >
+                    <template #icon>
+                      <n-icon><TrashCan /></n-icon>
+                    </template>
+                  </n-button>
+                </template>
+                {{ t("common.confirm_delete") }}
+              </n-popconfirm>
+              <n-button
+                v-if="is_virtual_pppd || is_live_pppd"
+                quaternary
+                circle
+                size="tiny"
+                :focusable="false"
+                data-testid="topology-node-edit-pppd"
+                @click.stop="show_pppd_edit_modal = true"
+              >
+                <template #icon>
+                  <n-icon><Edit /></n-icon>
+                </template>
+              </n-button>
               <n-button
                 v-if="show_switch.pppd"
                 quaternary
@@ -396,14 +469,14 @@ const node_style = computed(() => ({
                 size="tiny"
                 :focusable="false"
                 data-testid="topology-node-open-pppd"
-                @click.stop="show_pppd_drawer = true"
+                @click.stop="show_pppd_create_modal = true"
               >
                 <template #icon>
                   <n-icon><Link /></n-icon>
                 </template>
               </n-button>
               <n-tag size="small" :type="status_type" round>
-                {{ node.dev_status.t }}
+                {{ status_text }}
               </n-tag>
             </div>
           </div>
@@ -414,6 +487,18 @@ const node_style = computed(() => ({
             </n-tag>
             <n-tag v-for="tag in role_tags" :key="tag" size="tiny" tertiary>
               {{ tag }}
+            </n-tag>
+            <n-tag
+              v-if="(is_virtual_pppd || is_live_pppd) && node.pppd_config"
+              size="tiny"
+              :type="is_virtual_pppd ? 'warning' : 'default'"
+              round
+            >
+              {{
+                t("pppoe.attach_to", {
+                  iface_name: node.pppd_config.attach_iface_name,
+                })
+              }}
             </n-tag>
           </div>
 
@@ -458,8 +543,12 @@ const node_style = computed(() => ({
           <template #trigger>
             <span
               class="topology-node__service-pill"
+              :class="{
+                'topology-node__service-pill--disabled': is_virtual_pppd,
+              }"
               role="button"
-              tabindex="0"
+              :tabindex="is_virtual_pppd ? -1 : 0"
+              :aria-disabled="is_virtual_pppd"
               :data-testid="`topology-node-${node.index}-service-${item.key}`"
               :style="serviceStatusStyle(item.status)"
               @click.stop="openServiceEditor(item.key)"
@@ -469,14 +558,26 @@ const node_style = computed(() => ({
               <span>{{ item.short_label }}</span>
             </span>
           </template>
-          {{ item.label }} · {{ serviceStatusText(item.status) }}
+          {{
+            is_virtual_pppd
+              ? `${item.label} · ${t("pppoe.service_locked_hint")}`
+              : `${item.label} · ${serviceStatusText(item.status)}`
+          }}
         </n-tooltip>
       </div>
     </div>
 
-    <PPPDServiceListDrawer
-      v-model:show="show_pppd_drawer"
+    <PPPDCreateConfigModal
+      v-model:show="show_pppd_create_modal"
       :attach_iface_name="node.name"
+      :origin_value="undefined"
+      @refresh="refreshGraph"
+    />
+    <PPPDCreateConfigModal
+      v-if="node.pppd_config !== undefined"
+      v-model:show="show_pppd_edit_modal"
+      :attach_iface_name="node.pppd_config.attach_iface_name"
+      :origin_value="node.pppd_config"
       @refresh="refreshGraph"
     />
     <IpConfigModal
@@ -715,6 +816,13 @@ const node_style = computed(() => ({
 
 .topology-node__service-pill--muted {
   opacity: 0.78;
+}
+
+.topology-node__service-pill--disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+  pointer-events: none;
+  transform: none;
 }
 
 .topology-node__handle {

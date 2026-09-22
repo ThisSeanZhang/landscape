@@ -30,10 +30,11 @@ const value = ref<PPPDServiceConfig>(
 const isEditing = computed(() => props.origin_value !== undefined);
 const existingIfaceNames = ref<string[]>([]);
 const PPP_IFACE_NAME_PATTERN = /^[A-Za-z0-9_-]{1,15}$/;
+const initial_snapshot = ref("");
 
-const isModified = computed(() => {
-  return JSON.stringify(value.value) !== JSON.stringify(props.origin_value);
-});
+const isModified = computed(
+  () => JSON.stringify(value.value) !== initial_snapshot.value,
+);
 
 async function init_conf_value() {
   const iface_infos = (await new_ifaces()) as unknown as {
@@ -51,6 +52,7 @@ async function init_conf_value() {
           attach_iface_name: props.attach_iface_name,
         },
   );
+  initial_snapshot.value = JSON.stringify(value.value);
 }
 
 async function confirm_config() {
@@ -94,7 +96,9 @@ async function confirm_config() {
   <ConfigModal
     v-model:show="show"
     v-model:enabled="value.enable"
-    :title="t('pppoe.editor.title')"
+    :title="
+      isEditing ? t('pppoe.editor.title') : t('pppoe.editor.create_title')
+    "
     width="600px"
     @after-enter="init_conf_value"
   >
@@ -102,6 +106,10 @@ async function confirm_config() {
     <!-- {{ origin_value }} -->
 
     <n-form style="flex: 1" ref="formRef" :model="value" :cols="4">
+      <n-form-item :label="t('pppoe.editor.attach_iface')">
+        <n-input :value="attach_iface_name" disabled />
+      </n-form-item>
+
       <n-grid :cols="5">
         <n-form-item-gi :span="2" :label="t('pppoe.editor.default_route')">
           <n-switch v-model:value="value.pppd_config.default_route">

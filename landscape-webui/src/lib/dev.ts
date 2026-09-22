@@ -1,4 +1,5 @@
 import { IfaceZoneType } from "@landscape-router/types/api/schemas";
+import type { PPPDServiceConfig } from "@/lib/pppd";
 
 export class NetDev {
   name: string;
@@ -19,6 +20,9 @@ export class NetDev {
 
   wifi_info: WifiIface | undefined;
   wifi_mode: WifiMode | undefined;
+
+  pppd_config: PPPDServiceConfig | undefined;
+  virtual: boolean;
 
   constructor(obj: any) {
     this.name = obj.name;
@@ -47,9 +51,14 @@ export class NetDev {
     this.wifi_info =
       obj.wifi_info != null ? new WifiIface(obj.wifi_info) : undefined;
     this.wifi_mode = obj.wifi_mode ?? WifiMode.Undefined;
+    this.pppd_config = obj.pppd_config;
+    this.virtual = obj.virtual ?? false;
   }
   // left Handle
   has_target_hook() {
+    if (this.virtual) {
+      return false;
+    }
     if (this.dev_kind == "bridge") {
       return false;
     }

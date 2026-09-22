@@ -243,5 +243,15 @@ async fn delete_and_stop_iface_pppd(
     State(state): State<LandscapeApp>,
     Path(iface_name): Path<String>,
 ) -> LandscapeApiResult<Option<WatchService>> {
+    if let Some(config) = state.pppd_service.get_config_by_name(iface_name.clone()).await {
+        if config.enable {
+            Err(ServiceConfigError::InvalidConfig {
+                reason: format!(
+                    "PPPD config '{}' is still enabled; disable it before deleting",
+                    iface_name
+                ),
+            })?;
+        }
+    }
     LandscapeApiResp::success(delete_ppp_iface(&state, &iface_name).await)
 }
