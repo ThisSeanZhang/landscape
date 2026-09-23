@@ -31,7 +31,7 @@ use crate::{
     route_wan::repository::RouteWanServiceRepository,
     static_nat_mapping_v4::repository::StaticNatMappingV4Repository,
     static_nat_mapping_v6::repository::StaticNatMappingV6Repository,
-    wifi::repository::WifiServiceRepository,
+    wan_link::repository::WanLinkRepository, wifi::repository::WifiServiceRepository,
 };
 
 pub async fn db_action(
@@ -262,6 +262,7 @@ define_store!(
     gateway_http_upstream_store: (GatewayHttpUpstreamRepository, gateway_rules),
     dns_provider_profile_store: (DnsProviderProfileRepository, dns_provider_profiles),
     ddns_job_store: (DdnsJobRepository, ddns_jobs),
+    wan_link_store: (WanLinkRepository, wan_links),
 );
 
 #[cfg(test)]

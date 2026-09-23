@@ -2,6 +2,7 @@ pub mod addr_binding;
 pub mod firewall;
 pub mod ip_config;
 pub mod ipv6_pd;
+pub mod link;
 pub mod mss_clamp;
 pub mod nat;
 pub mod pppd;

@@ -184,6 +184,7 @@ impl LandscapeConfigService {
             gateway_rules: self.store.gateway_http_upstream_store().list().await.unwrap(),
             ddns_jobs: self.store.ddns_job_store().list().await.unwrap(),
             dns_provider_profiles: self.store.dns_provider_profile_store().list().await.unwrap(),
+            wan_links: self.store.wan_link_store().list().await.unwrap(),
         }
     }
 

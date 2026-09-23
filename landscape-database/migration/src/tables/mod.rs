@@ -27,3 +27,4 @@ pub mod firewall_blacklist;
 pub mod gateway;
 pub mod lan_ipv6;
 pub mod lan_ipv6_v2;
+pub mod wan_link;

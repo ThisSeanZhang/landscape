@@ -265,6 +265,7 @@ fn dynamic_ra_group(snapshot: u8, pool_index: u32) -> LanPrefixGroupConfig {
         parent: PrefixParentSource::Pd {
             depend_iface: "wan0".into(),
             expected_pd_len_snapshot: snapshot,
+            link_id: None,
         },
         ra: Some(RaPrefixConfig {
             pool_index,

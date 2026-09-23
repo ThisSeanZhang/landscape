@@ -44,7 +44,7 @@ pub fn validate_ppp_iface_name(iface_name: &str) -> Result<(), ServiceConfigErro
     Ok(())
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum PPPoEPlugin {

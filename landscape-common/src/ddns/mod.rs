@@ -51,7 +51,21 @@ pub enum IpFamily {
 #[serde(tag = "t", rename_all = "snake_case")]
 pub enum DdnsSource {
     LocalWan {
+        /// The referenced link's net iface. Legacy binaries resolve the route
+        /// owner by this name.
+        ///
+        /// TODO(wan-link-cleanup): writers must keep `iface_name` synced with
+        /// the link's net iface for the downgrade window; once uuid-only
+        /// matching is ubiquitous, drop name-based matching and the sync
+        /// requirement in one sweep.
         iface_name: String,
+        /// The referenced link's stable identity. Once the link runtime
+        /// lands, the route owner will be resolved strictly through this
+        /// field — no name fallback, and a missing or dangling `link_id`
+        /// surfaces as "unresolved". Until then consumers still match by
+        /// `iface_name` (see TODO(wan-link-cleanup) above).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        link_id: Option<Uuid>,
         family: IpFamily,
     },
     EnrolledDevice {
@@ -59,6 +73,10 @@ pub enum DdnsSource {
         #[serde(default)]
         #[serde(skip_serializing_if = "Option::is_none")]
         wan_pd_id: Option<String>,
+        /// Stable identity of the link whose PD prefix provides the device
+        /// address. Same dual-field rule as `LocalWan::link_id`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        wan_pd_link_id: Option<Uuid>,
         family: IpFamily,
     },
 }
@@ -255,10 +273,10 @@ impl DdnsJob {
         let mut seen_sources = HashSet::new();
         for source in &self.sources {
             let source_key = match source {
-                DdnsSource::LocalWan { iface_name, family } => {
+                DdnsSource::LocalWan { iface_name, family, .. } => {
                     format!("local_wan:{}:{family:?}", iface_name.trim())
                 }
-                DdnsSource::EnrolledDevice { device_id, wan_pd_id, family } => {
+                DdnsSource::EnrolledDevice { device_id, wan_pd_id, family, .. } => {
                     format!("enrolled_device:{device_id}:{:?}:{family:?}", wan_pd_id)
                 }
             };
@@ -401,6 +419,7 @@ mod tests {
             enable: true,
             sources: vec![DdnsSource::LocalWan {
                 iface_name: "wan0".to_string(),
+                link_id: None,
                 family: IpFamily::Ipv4,
             }],
             zone_name: " Example.COM. ".to_string(),
@@ -425,10 +444,12 @@ mod tests {
             sources: vec![
                 DdnsSource::LocalWan {
                     iface_name: "wan0".to_string(),
+                    link_id: None,
                     family: IpFamily::Ipv4,
                 },
                 DdnsSource::LocalWan {
                     iface_name: "wan0".to_string(),
+                    link_id: None,
                     family: IpFamily::Ipv4,
                 },
             ],

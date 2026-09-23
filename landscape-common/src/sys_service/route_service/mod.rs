@@ -48,7 +48,7 @@ impl RouteTargetInfo {
         if self.is_docker {
             FlowTarget::Netns { container_name: self.iface_name.clone() }
         } else {
-            FlowTarget::Interface { name: self.iface_name.clone() }
+            FlowTarget::Interface { name: self.iface_name.clone(), link_id: None }
         }
     }
 }

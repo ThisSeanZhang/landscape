@@ -358,6 +358,7 @@ mod tests {
                     parent: PrefixParentSource::Pd {
                         depend_iface: "wan0".to_string(),
                         expected_pd_len_snapshot: 56,
+                        link_id: None,
                     },
                     ra: None,
                     na: Some(NaPrefixConfig { pool_index: 1 }),
@@ -454,6 +455,7 @@ mod tests {
                     parent: PrefixParentSource::Pd {
                         depend_iface: "wan0".to_string(),
                         expected_pd_len_snapshot: 56,
+                        link_id: None,
                     },
                     ra: None,
                     na: Some(NaPrefixConfig { pool_index: 1 }),

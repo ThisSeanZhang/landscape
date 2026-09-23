@@ -26,6 +26,7 @@ use crate::wan_service::firewall::service::FirewallServiceConfig;
 use crate::wan_service::firewall::FirewallRuleConfig;
 use crate::wan_service::ip_config::IfaceIpServiceConfig;
 use crate::wan_service::ipv6_pd::IPV6PDServiceConfig;
+use crate::wan_service::link::WanLinkConfig;
 use crate::wan_service::mss_clamp::MSSClampServiceConfig;
 use crate::wan_service::nat::config::NatServiceConfig;
 use crate::wan_service::pppd::PPPDServiceConfig;
@@ -96,6 +97,8 @@ pub struct InitConfig {
     pub ddns_jobs: Vec<DdnsJob>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub dns_provider_profiles: Vec<DnsProviderProfile>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub wan_links: Vec<WanLinkConfig>,
 }
 
 #[cfg(test)]

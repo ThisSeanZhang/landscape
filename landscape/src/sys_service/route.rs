@@ -175,7 +175,7 @@ fn find_route_target<'a>(
     target: &FlowTarget,
 ) -> Option<&'a RouteTargetInfo> {
     match target {
-        FlowTarget::Interface { name } => wan_infos.get(name),
+        FlowTarget::Interface { name, .. } => wan_infos.get(name),
         FlowTarget::Netns { container_name } => wan_infos.get(container_name),
     }
 }
@@ -1336,7 +1336,10 @@ mod tests {
     }
 
     fn iface_target(name: &str, weight: u32) -> WeightedFlowTarget {
-        WeightedFlowTarget::new(FlowTarget::Interface { name: name.to_string() }, weight)
+        WeightedFlowTarget::new(
+            FlowTarget::Interface { name: name.to_string(), link_id: None },
+            weight,
+        )
     }
 
     fn netns_target(container_name: &str, weight: u32) -> WeightedFlowTarget {

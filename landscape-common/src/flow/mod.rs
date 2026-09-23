@@ -150,8 +150,26 @@ fn default_prefix_len() -> u8 {
 #[serde(tag = "t")]
 #[serde(rename_all = "snake_case")]
 pub enum FlowTarget {
-    Interface { name: String },
-    Netns { container_name: String },
+    Interface {
+        /// The referenced link's net iface. Legacy binaries resolve the route
+        /// owner by this name.
+        ///
+        /// TODO(wan-link-cleanup): writers must keep `name` synced with the
+        /// link's net iface for the downgrade window; once uuid-only matching
+        /// is ubiquitous, drop `name`-based matching and the sync requirement
+        /// in one sweep.
+        name: String,
+        /// The referenced link's stable identity. Once the link runtime
+        /// lands, the route owner will be resolved strictly through this
+        /// field — no name fallback, and a missing or dangling `link_id`
+        /// surfaces as "unresolved". Until then consumers still match by
+        /// `name` (see TODO(wan-link-cleanup) above).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        link_id: Option<Uuid>,
+    },
+    Netns {
+        container_name: String,
+    },
 }
 
 fn default_flow_target_weight() -> u32 {

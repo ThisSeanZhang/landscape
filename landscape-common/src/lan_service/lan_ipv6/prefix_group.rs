@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::net::Ipv6Addr;
 
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 use super::config::{
     IPv6ServiceMode, LanIPv6ConfigV2, LanIPv6ServiceConfigV2, PrefixGroupServiceKind,
@@ -20,9 +21,23 @@ pub enum PrefixParentSource {
         parent_prefix_len: u8,
     },
     Pd {
+        /// The referenced link's net iface. Legacy binaries resolve the PD
+        /// source by this name.
+        ///
+        /// TODO(wan-link-cleanup): writers must keep `depend_iface` synced with
+        /// the link's net iface for the downgrade window; once uuid-only
+        /// matching is ubiquitous, drop name-based matching and the sync
+        /// requirement in one sweep.
         depend_iface: String,
         #[serde(alias = "planned_parent_prefix_len")]
         expected_pd_len_snapshot: u8,
+        /// The referenced link's stable identity. Once the link runtime lands,
+        /// the PD source will be resolved strictly through this field — no name
+        /// fallback, and a missing or dangling `link_id` surfaces as
+        /// "unresolved". Until then consumers still match by `depend_iface`
+        /// (see TODO(wan-link-cleanup) above).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        link_id: Option<Uuid>,
     },
 }
 
@@ -120,7 +135,7 @@ impl PrefixParentSource {
             PrefixParentSource::Static { base_prefix, parent_prefix_len } => {
                 ExpandedParentKey::Resolved(normalize_ipv6_prefix(*base_prefix, *parent_prefix_len))
             }
-            PrefixParentSource::Pd { depend_iface, expected_pd_len_snapshot } => {
+            PrefixParentSource::Pd { depend_iface, expected_pd_len_snapshot, .. } => {
                 if let Some(prefix) = pd_contexts
                     .and_then(|contexts| contexts.get(depend_iface))
                     .and_then(|context| context.actual_prefix.as_ref())
@@ -238,7 +253,7 @@ impl LanPrefixGroupConfig {
                     });
                 }
             }
-            PrefixParentSource::Pd { depend_iface, expected_pd_len_snapshot } => {
+            PrefixParentSource::Pd { depend_iface, expected_pd_len_snapshot, .. } => {
                 if depend_iface.trim().is_empty() {
                     return Err(ServiceConfigError::InvalidConfig {
                         reason: "PD parent interface must not be empty".to_string(),
@@ -1022,6 +1037,7 @@ mod tests {
                     parent: PrefixParentSource::Pd {
                         depend_iface: "eth0".to_string(),
                         expected_pd_len_snapshot: 60,
+                        link_id: None,
                     },
                     ra: Some(RaPrefixConfig {
                         pool_index: 1,
@@ -1065,6 +1081,7 @@ mod tests {
             parent: PrefixParentSource::Pd {
                 depend_iface: "eth0".to_string(),
                 expected_pd_len_snapshot: 60,
+                link_id: None,
             },
             ra: Some(RaPrefixConfig {
                 pool_index: 1,
@@ -1085,6 +1102,7 @@ mod tests {
             parent: PrefixParentSource::Pd {
                 depend_iface: "eth0".to_string(),
                 expected_pd_len_snapshot: 60,
+                link_id: None,
             },
             ra: Some(RaPrefixConfig {
                 pool_index: 1,
@@ -1105,6 +1123,7 @@ mod tests {
             parent: PrefixParentSource::Pd {
                 depend_iface: "eth0".to_string(),
                 expected_pd_len_snapshot: 60,
+                link_id: None,
             },
             ra: None,
             na: Some(NaPrefixConfig { pool_index: 15 }),
@@ -1121,6 +1140,7 @@ mod tests {
             parent: PrefixParentSource::Pd {
                 depend_iface: "eth0".to_string(),
                 expected_pd_len_snapshot: 60,
+                link_id: None,
             },
             ra: None,
             na: Some(NaPrefixConfig { pool_index: 16 }),
@@ -1137,6 +1157,7 @@ mod tests {
             parent: PrefixParentSource::Pd {
                 depend_iface: "eth0".to_string(),
                 expected_pd_len_snapshot: 60,
+                link_id: None,
             },
             ra: None,
             na: Some(NaPrefixConfig { pool_index: 38 }),
@@ -1155,6 +1176,7 @@ mod tests {
                 parent: PrefixParentSource::Pd {
                     depend_iface: "eth0".to_string(),
                     expected_pd_len_snapshot: 60,
+                    link_id: None,
                 },
                 ra: Some(RaPrefixConfig {
                     pool_index: 1,
@@ -1169,6 +1191,7 @@ mod tests {
                 parent: PrefixParentSource::Pd {
                     depend_iface: "eth0".to_string(),
                     expected_pd_len_snapshot: 56,
+                    link_id: None,
                 },
                 ra: None,
                 na: None,
@@ -1197,6 +1220,7 @@ mod tests {
                     parent: PrefixParentSource::Pd {
                         depend_iface: "wan0".to_string(),
                         expected_pd_len_snapshot: 60,
+                        link_id: None,
                     },
                     ra: Some(RaPrefixConfig {
                         pool_index: 0,
@@ -1224,6 +1248,7 @@ mod tests {
                     parent: PrefixParentSource::Pd {
                         depend_iface: "wan1".to_string(),
                         expected_pd_len_snapshot: 56,
+                        link_id: None,
                     },
                     ra: None,
                     na: None,
@@ -1287,6 +1312,7 @@ mod tests {
             PrefixParentSource::Pd {
                 depend_iface: "wan0".to_string(),
                 expected_pd_len_snapshot: 60,
+                link_id: None,
             }
         );
         let serialized = serde_json::to_value(parent).unwrap();
@@ -1416,6 +1442,7 @@ mod tests {
                     parent: PrefixParentSource::Pd {
                         depend_iface: depend_iface.to_string(),
                         expected_pd_len_snapshot: snapshot_len,
+                        link_id: None,
                     },
                     ra: None,
                     na: None,

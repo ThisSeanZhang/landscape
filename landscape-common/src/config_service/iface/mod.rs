@@ -135,6 +135,7 @@ pub enum ServiceKind {
     IpConfig,
     #[serde(rename = "pppoe")]
     PPPoE,
+    WanLink,
     NAT,
     Firewall,
     MssClamp,
@@ -151,6 +152,7 @@ impl std::fmt::Display for ServiceKind {
         match self {
             Self::IpConfig => write!(f, "IP Config"),
             Self::PPPoE => write!(f, "PPPoE"),
+            Self::WanLink => write!(f, "WAN Link"),
             Self::NAT => write!(f, "NAT"),
             Self::Firewall => write!(f, "Firewall"),
             Self::MssClamp => write!(f, "MSS Clamp"),

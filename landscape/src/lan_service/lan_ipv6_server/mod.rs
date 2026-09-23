@@ -1615,7 +1615,7 @@ pub fn compute_subnets(
             PrefixParentSource::Static { base_prefix, parent_prefix_len } => {
                 (pd::normalize_prefix(*base_prefix, *parent_prefix_len), *parent_prefix_len)
             }
-            PrefixParentSource::Pd { depend_iface, expected_pd_len_snapshot } => {
+            PrefixParentSource::Pd { depend_iface, expected_pd_len_snapshot, .. } => {
                 match prefix_map.load_for_lan(depend_iface) {
                     Some((prefix, expected_pd_len))
                         if pd_expectation_fits_snapshot(

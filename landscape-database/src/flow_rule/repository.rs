@@ -117,7 +117,7 @@ impl FlowConfigRepository {
     pub async fn find_by_target(&self, t: FlowTarget) -> Result<Vec<FlowConfig>, DbError> {
         // 构造条件 SQL 和参数
         let (condition_sql, param_value) = match t {
-            FlowTarget::Interface { name } => (
+            FlowTarget::Interface { name, .. } => (
                 "json_extract(json_each.value, '$.target.t') = 'interface' AND json_extract(json_each.value, '$.target.name') = ?",
                 name,
             ),
