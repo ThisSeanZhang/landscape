@@ -44,6 +44,9 @@ pub enum SessionSpec {
     /// No session child (ethernet without v4 intent, or static configured
     /// without an address — legacy "assign nothing" semantics).
     None,
+    /// The configured session cannot be established (e.g. the attach iface has
+    /// no MAC for PPPoE/DHCP). The driver publishes `Failed` without spawning.
+    Invalid,
     Static(StaticSpec),
     Dhcp {
         hostname: Option<String>,
@@ -126,6 +129,18 @@ impl SessionDriver for RealSessionDriver {
             link_id.to_string(),
             async move {
                 match spec {
+                    SessionSpec::Invalid => {
+                        // Resolution rejected this link (e.g. missing attach
+                        // MAC). Fail cleanly instead of panicking or silently
+                        // continuing with a bogus session.
+                        tracing::error!(
+                            link_id = %link_id,
+                            iface = %iface.name,
+                            "link session unavailable (invalid attach); marking failed"
+                        );
+                        status.just_change_status(ServiceStatus::Failed);
+                        session.set(SessionState::Failed);
+                    }
                     SessionSpec::None => {
                         // No v4 acquisition: the anchor is the net iface being
                         // present. Publish Ready immediately.
@@ -409,12 +424,20 @@ pub mod mocks {
             status: WatchService,
             session: SessionSignal,
         ) {
+            let invalid = matches!(spec, SessionSpec::Invalid);
             self.calls.lock().unwrap().push((link_id, iface.name.clone(), spec));
             let behavior = self.behavior;
             let lease = self.lease;
             let control = self.control.lock().unwrap().take();
             let _handle = tokio::spawn(async move {
                 status.just_change_status(ServiceStatus::Staring);
+                if invalid {
+                    // Mirrors RealSessionDriver: an unresolvable session fails
+                    // without running.
+                    status.just_change_status(ServiceStatus::Failed);
+                    session.set(SessionState::Failed);
+                    return;
+                }
                 match behavior {
                     SessionBehavior::RunUntilStop => {
                         status.just_change_status(ServiceStatus::Running);

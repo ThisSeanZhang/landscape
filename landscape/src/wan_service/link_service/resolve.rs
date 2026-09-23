@@ -1,4 +1,5 @@
 use landscape_common::dev::LandscapeInterface;
+use landscape_common::net::MacAddr;
 use landscape_common::wan_service::link::{
     WanLinkConfig, WanLinkKindConfig, WanNatConfig, WanV4Model,
 };
@@ -47,6 +48,7 @@ pub fn resolve_mss_clamp(link: &WanLinkConfig) -> u16 {
 pub fn resolve_pppoe_client_config(
     link: &WanLinkConfig,
     iface: &LandscapeInterface,
+    iface_mac: MacAddr,
     default_router: bool,
 ) -> crate::wan_service::pppoe_client::PPPoEClientConfig {
     let WanLinkKindConfig::PppoeNative {
@@ -64,7 +66,7 @@ pub fn resolve_pppoe_client_config(
         link_id: link.id,
         index: iface.index,
         iface_name: iface.name.clone(),
-        iface_mac: iface.mac.expect("caller checked the attach iface mac"),
+        iface_mac,
         peer_id: username.clone(),
         password: password.clone(),
         default_router,
@@ -73,6 +75,24 @@ pub fn resolve_pppoe_client_config(
         ac_name: ac_name.clone(),
         lcp_echo_interval: *lcp_echo_interval,
         redial_backoff_base_secs: *redial_backoff_base_secs,
+    }
+}
+
+/// PPPoE needs a concrete MAC; a MAC-less attach yields `Invalid` rather than
+/// panicking.
+fn pppoe_session(
+    link: &WanLinkConfig,
+    iface: &LandscapeInterface,
+    default_router: bool,
+) -> SessionSpec {
+    match iface.mac {
+        Some(iface_mac) => SessionSpec::PppoeNative(Box::new(resolve_pppoe_client_config(
+            link,
+            iface,
+            iface_mac,
+            default_router,
+        ))),
+        None => SessionSpec::Invalid,
     }
 }
 
@@ -99,12 +119,17 @@ pub fn resolve_pppd_config(link: &WanLinkConfig, default_route: bool) -> PPPDCon
 ///   intent the session runs but registers no default route
 /// - static with `ipv4 = None` keeps the legacy "assign nothing" semantics
 pub fn resolve_session_spec(link: &WanLinkConfig, iface: &LandscapeInterface) -> SessionSpec {
+    // A session kind that needs an attach MAC cannot be established without
+    // one. Reject up front so neither the DHCP nor the PPPoE path can panic;
+    // the driver turns `Invalid` into a clean `Failed`.
+    if link.requires_attach_mac() && iface.mac.is_none() {
+        return SessionSpec::Invalid;
+    }
+
     if !link.v4_active() {
         return match &link.kind {
             WanLinkKindConfig::Ethernet => SessionSpec::None,
-            WanLinkKindConfig::PppoeNative { .. } => {
-                SessionSpec::PppoeNative(Box::new(resolve_pppoe_client_config(link, iface, false)))
-            }
+            WanLinkKindConfig::PppoeNative { .. } => pppoe_session(link, iface, false),
             WanLinkKindConfig::Pppd { .. } => SessionSpec::Pppd {
                 attach_iface_name: link.attach_iface_name.clone(),
                 ppp_iface_name: link.net_iface_name(),
@@ -143,11 +168,7 @@ pub fn resolve_session_spec(link: &WanLinkConfig, iface: &LandscapeInterface) ->
             }
         }
         (WanLinkKindConfig::PppoeNative { .. }, WanV4Model::Ipcp { default_router }) => {
-            SessionSpec::PppoeNative(Box::new(resolve_pppoe_client_config(
-                link,
-                iface,
-                *default_router,
-            )))
+            pppoe_session(link, iface, *default_router)
         }
         (WanLinkKindConfig::Pppd { .. }, WanV4Model::Ipcp { default_router }) => {
             SessionSpec::Pppd {
@@ -163,7 +184,12 @@ pub fn resolve_session_spec(link: &WanLinkConfig, iface: &LandscapeInterface) ->
 
 #[cfg(test)]
 mod tests {
+    use std::net::Ipv4Addr;
+
+    use landscape_common::wan_service::link::WanV4Config;
+
     use super::*;
+    use crate::wan_service::link_service::drivers::mocks::test_iface;
 
     fn pppoe(requested_mru: Option<u16>) -> WanLinkConfig {
         WanLinkConfig {
@@ -194,5 +220,46 @@ mod tests {
             resolve_mss_clamp(&pppoe(None)),
             crate::wan_service::pppoe_client::DEFAULT_CLIENT_MRU
         );
+    }
+
+    fn ethernet(v4: WanV4Config) -> WanLinkConfig {
+        WanLinkConfig {
+            attach_iface_name: "wan0".to_string(),
+            kind: WanLinkKindConfig::Ethernet,
+            v4,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn mac_less_attach_is_invalid_for_pppoe_and_dhcp() {
+        let iface = test_iface("wan0", 5, None);
+
+        // PPPoE needs a MAC to build L2 frames.
+        assert!(matches!(resolve_session_spec(&pppoe(None), &iface), SessionSpec::Invalid));
+
+        // An active DHCP client needs a MAC for its client identifier.
+        let dhcp = ethernet(WanV4Config {
+            enable: true,
+            model: WanV4Model::DhcpClient {
+                hostname: None,
+                default_router: true,
+                custome_opts: vec![],
+            },
+        });
+        assert!(matches!(resolve_session_spec(&dhcp, &iface), SessionSpec::Invalid));
+
+        // Static binds opportunistically, so a MAC-less attach is allowed.
+        let stat = ethernet(WanV4Config {
+            enable: true,
+            model: WanV4Model::Static {
+                ipv4: Some(Ipv4Addr::new(192, 0, 2, 10)),
+                ipv4_mask: Some(24),
+                ipv6: None,
+                default_router: true,
+                default_router_ip: Some(Ipv4Addr::new(192, 0, 2, 1)),
+            },
+        });
+        assert!(matches!(resolve_session_spec(&stat, &iface), SessionSpec::Static(_)));
     }
 }

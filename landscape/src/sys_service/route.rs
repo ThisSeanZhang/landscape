@@ -672,19 +672,6 @@ impl IpRouteService {
 
     // ── Link routes (uuid keyed) ───────────────────────────────────
 
-    /// Link routes paired with their link uuid. Used by the NAT reconcile loop.
-    pub async fn get_all_ipv4_link_routes(&self) -> Vec<(Uuid, RouteTargetInfo)> {
-        self.ipv4_wan_ifaces
-            .read()
-            .await
-            .iter()
-            .filter_map(|(owner, info)| match owner {
-                RouteOwner::Link(id) => Some((*id, info.clone())),
-                RouteOwner::Netns(_) => None,
-            })
-            .collect()
-    }
-
     pub fn subscribe_wan_route_events(&self) -> broadcast::Receiver<WanRouteEvent> {
         self.wan_route_events.subscribe()
     }

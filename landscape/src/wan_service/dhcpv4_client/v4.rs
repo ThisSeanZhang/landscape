@@ -119,6 +119,19 @@ impl DhcpState {
             DhcpState::Discovering { .. } | DhcpState::Requesting { .. } | DhcpState::Rebind { .. }
         )
     }
+
+    /// Whether the client currently holds (or is renewing) a lease, i.e. the
+    /// interface has an address. Used to decide when dropping back to
+    /// `Discovering` is a lease *loss* the link runtime must observe.
+    fn had_lease(&self) -> bool {
+        matches!(
+            self,
+            DhcpState::Bound { .. }
+                | DhcpState::Renewing { .. }
+                | DhcpState::WaitToRebind { .. }
+                | DhcpState::Rebind { .. }
+        )
+    }
 }
 
 fn get_new_ipv4_xid() -> u32 {
@@ -251,6 +264,7 @@ pub async fn dhcp_v4_client(
                     &io,
                     &mut status,
                     &hostname,
+                    &session,
                 ).await;
 
                 if need_reset_timeout {
@@ -317,6 +331,7 @@ async fn send_current_status_packet(
     io: &AdaptiveDhcpV4Socket,
     current_status: &mut DhcpState,
     hostname: &str,
+    session: &SessionSignal,
 ) -> bool {
     let send_res = match current_status {
         DhcpState::Discovering { ciaddr, xid, send_count } => {
@@ -416,6 +431,10 @@ async fn send_current_status_packet(
             if Instant::now() > *lease_time {
                 tracing::warn!("Rebind turn to Discover");
                 *current_status = DhcpState::init_status(None);
+                // The lease fully expired without a successful rebind: the
+                // address is gone, so the link runtime must stop/rebind its
+                // sections instead of holding a stale one.
+                session.set(SessionState::Lost { retrying: true });
                 return true;
             }
             let msg = gen_request(*xid, mac_addr, *ciaddr, *yiaddr, options.clone(), hostname);
@@ -581,6 +600,11 @@ async fn handle_packet(
                     }
                 }
                 MessageType::Nak => {
+                    // Renew/rebind rejected: if we held a lease, this is a loss;
+                    // an initial Request being NAKed is not.
+                    if current_status.had_lease() {
+                        session.set(SessionState::Lost { retrying: true });
+                    }
                     // 获取 ip 失败 重新进入 discover
                     *current_status = DhcpState::init_status(None);
                     return true;
@@ -693,6 +717,15 @@ async fn bind_ipv4(
         session.set(SessionState::Ready {
             lease: Some(WanV4Lease { ifindex, ip: new_yiaddr, gateway: router_ip }),
         });
+    } else {
+        // A DHCP ACK without a Router option leaves the address usable only on
+        // the local link (no WAN route), so the link is not usable. Report a
+        // clear failure instead of staying `Starting` forever.
+        tracing::warn!(
+            iface_name = %iface_name,
+            "DHCP ACK without a Router option; marking session failed"
+        );
+        session.set(SessionState::Failed);
     }
 
     let renew_time = tokio::time::Instant::now() + Duration::from_secs(renew_time);

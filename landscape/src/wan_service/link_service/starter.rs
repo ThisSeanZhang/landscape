@@ -54,19 +54,27 @@ struct ActiveSession {
 
 /// Identity of the session work. A config edit that leaves this unchanged must
 /// not touch the running session.
+///
+/// The attach iface is part of the identity because the session driver binds to
+/// a concrete device (index), so moving a link to another iface must
+/// re-establish the session. PD toggles are deliberately *not* part of the key:
+/// PD is a section that rides on the session, not a session input — including it
+/// would needlessly redial on every PD toggle.
 #[derive(PartialEq, Clone)]
 struct SessionKey {
+    attach_iface_name: String,
+    attach_ifindex: u32,
     kind: WanLinkKindConfig,
     v4: WanV4Config,
-    pd_enable: bool,
 }
 
 impl SessionKey {
-    fn from(config: &WanLinkConfig) -> Self {
+    fn from(config: &WanLinkConfig, attach: &LandscapeInterface) -> Self {
         Self {
+            attach_iface_name: attach.name.clone(),
+            attach_ifindex: attach.index,
             kind: config.kind.clone(),
             v4: config.v4.clone(),
-            pd_enable: config.pd.enable,
         }
     }
 }
@@ -253,24 +261,23 @@ async fn ensure_session(
     deps: &WanLinkDeps,
     session: &mut Option<ActiveSession>,
 ) {
-    let want = config.active() && attach.is_some();
-    let new_key = SessionKey::from(config);
-    let needs_restart = match session {
-        Some(active) => !want || active.key != new_key,
-        None => want,
+    // Tear down any running session when the link has no acquisition intent or
+    // its attach iface is gone.
+    let (Some(attach), true) = (attach, config.active()) else {
+        if let Some(active) = session.take() {
+            active.status.wait_stop().await;
+        }
+        return;
     };
-    if !needs_restart {
+
+    let new_key = SessionKey::from(config, attach);
+    if session.as_ref().is_some_and(|active| active.key == new_key) {
         return;
     }
 
     if let Some(active) = session.take() {
         active.status.wait_stop().await;
     }
-    if !want {
-        return;
-    }
-
-    let attach = attach.expect("checked above");
     let spec = resolve_session_spec(config, attach);
     let (tx, rx) = SessionSignal::new();
     let status = WatchService::new();
@@ -315,12 +322,6 @@ async fn reconcile(
     let mss_ok = ready && config.mss.enable;
     let nat_ok = ready && config.nat.enable && lease.is_some();
 
-    let desired_pd = PdSpec {
-        mac: config.pd.mac,
-        expected_pd_len: config.pd.expected_pd_len.unwrap_or(DEFAULT_PD_LEN),
-    };
-    let desired_nat = resolve_nat(&config.nat);
-
     if !pd_ok {
         if let Some((status, _)) = children.pd.take() {
             status.wait_stop().await;
@@ -346,19 +347,25 @@ async fn reconcile(
     };
     let link_id = config.id;
 
-    let pd_needs = match &children.pd {
-        Some((_, key)) => key != &desired_pd,
-        None => true,
-    };
-    if pd_ok && pd_needs {
-        if let Some((status, _)) = children.pd.take() {
-            status.wait_stop().await;
+    if pd_ok {
+        let desired_pd = PdSpec {
+            mac: config.pd.mac,
+            expected_pd_len: config.pd.expected_pd_len.unwrap_or(DEFAULT_PD_LEN),
+        };
+        let pd_needs = match &children.pd {
+            Some((_, key)) => key != &desired_pd,
+            None => true,
+        };
+        if pd_needs {
+            if let Some((status, _)) = children.pd.take() {
+                status.wait_stop().await;
+            }
+            let status = WatchService::new();
+            deps.section_runner
+                .spawn(link_id, net.clone(), SectionTask::Pd(desired_pd.clone()), status.clone())
+                .await;
+            children.pd = Some((status, desired_pd));
         }
-        let status = WatchService::new();
-        deps.section_runner
-            .spawn(link_id, net.clone(), SectionTask::Pd(desired_pd.clone()), status.clone())
-            .await;
-        children.pd = Some((status, desired_pd));
     }
 
     if fw_ok && children.firewall.is_none() {
@@ -397,6 +404,7 @@ async fn reconcile(
     }
 
     if nat_ok {
+        let desired_nat = resolve_nat(&config.nat);
         let lease_now = lease.expect("nat requires a lease");
         let nat_needs = match &children.nat {
             Some((_, key)) => key != &desired_nat || *last_nat_lease != Some(lease_now),

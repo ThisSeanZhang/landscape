@@ -7,7 +7,7 @@ use landscape_common::service::WatchService;
 use landscape_common::wan_service::ipv6_pd::IAPrefixMap;
 use landscape_common::wan_service::link::session::WanV4Lease;
 use landscape_common::wan_service::link::{
-    WanLinkConfig, WanNatConfig, WanPdConfig, WanV4Config, WanV4Model,
+    WanLinkConfig, WanLinkKindConfig, WanNatConfig, WanPdConfig, WanV4Config, WanV4Model,
 };
 use tokio::sync::mpsc;
 use uuid::Uuid;
@@ -307,6 +307,102 @@ async fn ethernet_pd_only_starts_pd_section_without_nat() {
             .iter()
             .any(|(_, _, task)| matches!(task, SectionTask::Nat(_))),
         "PD-only ethernet has no v4 lease, so NAT must not start"
+    );
+
+    status.wait_stop().await;
+    let _ = handle.await;
+}
+
+#[tokio::test]
+async fn changing_attach_iface_restarts_the_session() {
+    let session =
+        Arc::new(MockSessionDriver::new(SessionBehavior::RunUntilStop).with_lease(WanV4Lease {
+            ifindex: 5,
+            ip: Ipv4Addr::new(192, 0, 2, 10),
+            gateway: Ipv4Addr::new(192, 0, 2, 1),
+        }));
+    let sections = MockSectionRunner::new();
+    let session_driver: Arc<dyn SessionDriver> = session.clone();
+    let deps = Arc::new(WanLinkDeps {
+        iface_lookup: Arc::new(StaticIfaceLookup(vec![
+            test_iface("wan0", 5, Some(WAN0_MAC)),
+            test_iface("wan1", 7, Some(WAN0_MAC)),
+        ])),
+        session_driver,
+        section_runner: sections,
+        status_store: Arc::default(),
+        prefix_map: IAPrefixMap::new(),
+    });
+
+    let status = WatchService::new();
+    let (config_tx, config_rx) = mpsc::channel(4);
+    let mut cfg = link(false);
+    cfg.attach_iface_name = "wan0".to_string();
+
+    let handle = tokio::spawn(run_link_instance(cfg.clone(), status.clone(), config_rx, deps));
+
+    assert!(wait_for(|| session.calls.lock().unwrap().len() == 1).await);
+    assert_eq!(session.calls.lock().unwrap()[0].1, "wan0");
+
+    // Move the link to another iface: the session must be re-established there.
+    let mut edited = cfg.clone();
+    edited.attach_iface_name = "wan1".to_string();
+    config_tx.send(edited).await.unwrap();
+
+    assert!(
+        wait_for(|| session.calls.lock().unwrap().len() == 2).await,
+        "moving the link to another attach iface must restart the session"
+    );
+    assert_eq!(session.calls.lock().unwrap()[1].1, "wan1");
+
+    status.wait_stop().await;
+    let _ = handle.await;
+}
+
+#[tokio::test]
+async fn mac_less_attach_yields_invalid_session_without_sections() {
+    let session = Arc::new(MockSessionDriver::new(SessionBehavior::RunUntilStop));
+    let sections = MockSectionRunner::new();
+    let session_driver: Arc<dyn SessionDriver> = session.clone();
+    let deps = Arc::new(WanLinkDeps {
+        iface_lookup: Arc::new(StaticIfaceLookup(vec![test_iface("wan0", 5, None)])),
+        session_driver,
+        section_runner: sections.clone(),
+        status_store: Arc::default(),
+        prefix_map: IAPrefixMap::new(),
+    });
+
+    let status = WatchService::new();
+    let (_config_tx, config_rx) = mpsc::channel(4);
+    let mut cfg = link(true);
+    cfg.kind = WanLinkKindConfig::PppoeNative {
+        username: "u".to_string(),
+        password: "p".to_string(),
+        requested_mru: None,
+        ac_name: None,
+        lcp_echo_interval: None,
+        redial_backoff_base_secs: None,
+    };
+    cfg.v4 = WanV4Config {
+        enable: true,
+        model: WanV4Model::Ipcp { default_router: true },
+    };
+
+    let handle = tokio::spawn(run_link_instance(cfg, status.clone(), config_rx, deps));
+
+    assert!(
+        wait_for(|| {
+            matches!(
+                session.calls.lock().unwrap().first().map(|(_, _, spec)| spec),
+                Some(SessionSpec::Invalid)
+            )
+        })
+        .await,
+        "a MAC-less PPPoE attach must resolve to Invalid"
+    );
+    assert!(
+        sections.calls.lock().unwrap().is_empty(),
+        "no section may start for an invalid session"
     );
 
     status.wait_stop().await;

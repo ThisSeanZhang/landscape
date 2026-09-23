@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use axum::extract::{Path, State};
+use landscape::get_iface_by_name;
 use landscape_common::api_response::LandscapeApiResp as CommonApiResp;
 use landscape_common::service::ServiceConfigError;
 use landscape_common::wan_service::link::{check_link_cardinality, LinkStatus, WanLinkConfig};
@@ -82,6 +83,7 @@ async fn handle_link_config(
 ) -> LandscapeApiResult<()> {
     config.validate()?;
     state.validate_zone(&config).await?;
+    check_attach_mac(&config).await?;
     check_cardinality(&state, &config).await?;
     state.wan_link_service.handle_service_config(config).await?;
     LandscapeApiResp::success(())
@@ -114,4 +116,23 @@ async fn check_cardinality(
         .await
         .unwrap_or_default();
     check_link_cardinality(config, &others)
+}
+
+/// Reject, at save time, links whose session kind needs an attach MAC that the
+/// interface does not expose. Strict: a missing/unfindable attach iface is also
+/// rejected here (the runtime never has to guess).
+async fn check_attach_mac(config: &WanLinkConfig) -> Result<(), ServiceConfigError> {
+    if !config.requires_attach_mac() {
+        return Ok(());
+    }
+    let iface_name = &config.attach_iface_name;
+    match get_iface_by_name(iface_name).await {
+        Some(iface) if iface.mac.is_some() => Ok(()),
+        Some(_) => Err(ServiceConfigError::InvalidConfig {
+            reason: format!(
+                "attach iface '{iface_name}' has no MAC address; required for PPPoE/DHCP"
+            ),
+        }),
+        None => Err(ServiceConfigError::IfaceNotFound { iface_name: iface_name.clone() }),
+    }
 }

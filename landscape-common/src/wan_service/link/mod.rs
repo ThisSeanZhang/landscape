@@ -283,6 +283,18 @@ impl WanLinkConfig {
         self.pd.enable
     }
 
+    /// Whether establishing this link's session requires the attach iface to
+    /// expose a MAC address.
+    ///
+    /// - `PppoeNative` always builds raw Ethernet frames, so it needs a MAC.
+    /// - An active v4 DHCP client needs a MAC for its client identifier/CHADDR.
+    /// - Static uses the MAC opportunistically, pppd does not read it, and the
+    ///   Ethernet PD-only anchor needs none.
+    pub fn requires_attach_mac(&self) -> bool {
+        matches!(self.kind, WanLinkKindConfig::PppoeNative { .. })
+            || (self.v4_active() && matches!(self.v4.model, WanV4Model::DhcpClient { .. }))
+    }
+
     /// A link establishes only if it has an acquisition intent (v4 or PD).
     pub fn active(&self) -> bool {
         self.v4_active() || self.pd_active()
@@ -513,6 +525,56 @@ mod tests {
 
         config.pd.enable = true;
         assert!(config.active(), "PD alone must start the link");
+    }
+
+    #[test]
+    fn requires_attach_mac_per_kind() {
+        let mut config = ethernet_link();
+        // Inactive ethernet: nothing to establish.
+        assert!(!config.requires_attach_mac());
+
+        // Active DHCP needs a MAC.
+        config.v4 = WanV4Config {
+            enable: true,
+            model: WanV4Model::DhcpClient {
+                hostname: None,
+                default_router: true,
+                custome_opts: vec![],
+            },
+        };
+        assert!(config.requires_attach_mac());
+
+        // Static binds opportunistically.
+        config.v4.model = WanV4Model::Static {
+            ipv4: Some(std::net::Ipv4Addr::new(192, 0, 2, 10)),
+            ipv4_mask: None,
+            ipv6: None,
+            default_router: true,
+            default_router_ip: None,
+        };
+        assert!(!config.requires_attach_mac());
+
+        // PPPoE always needs a MAC, even PD-only.
+        config.kind = WanLinkKindConfig::PppoeNative {
+            username: "u".to_string(),
+            password: "p".to_string(),
+            requested_mru: None,
+            ac_name: None,
+            lcp_echo_interval: None,
+            redial_backoff_base_secs: None,
+        };
+        config.v4 = WanV4Config::default();
+        assert!(config.requires_attach_mac());
+
+        // pppd does not read the attach MAC.
+        config.kind = WanLinkKindConfig::Pppd {
+            ppp_iface_name: "ppp0".to_string(),
+            peer_id: "u".to_string(),
+            password: "p".to_string(),
+            ac: None,
+            plugin: PPPoEPlugin::default(),
+        };
+        assert!(!config.requires_attach_mac());
     }
 
     #[test]
