@@ -12,11 +12,13 @@ use landscape_common::sys_service::route_service::LanRouteMode;
 use landscape_common::sys_service::route_service::RouteTargetInfo;
 use landscape_common::wan_service::pppd::PPPDConfig;
 use landscape_common::wan_service::pppd::PPPoEPlugin;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, Notify, Semaphore};
 use tokio_util::sync::CancellationToken;
 
 use super::env::{PppIpv4State, PppRouteSink, PppdChild, PppdEnv, PppdTimings, SystemPppdEnv};
-use super::supervisor::{run_pppd_supervisor, PppSessionHealth, PppdRetryController};
+use super::supervisor::{
+    observer_failure_exit, run_pppd_supervisor, PppSessionHealth, PppdRetryController, SessionExit,
+};
 use super::{create_pppd_thread, PppdConfigStore};
 
 const ATTACH: &str = "eth0";
@@ -84,6 +86,8 @@ struct FakeConfig {
     spawn_fail_times: usize,
     term_ignored: bool,
     panic_on_spawn: bool,
+    block_poll_after_first: bool,
+    block_addr_ready: bool,
 }
 
 struct FakeState {
@@ -92,6 +96,8 @@ struct FakeState {
     current_addr: PppIpv4State,
     addr_ready_calls: Vec<PppIpv4State>,
     cleanup_calls: usize,
+    route_calls_after_cleanup: usize,
+    poll_calls: usize,
     exits: Vec<CancellationToken>,
     signals: Vec<Vec<i32>>,
 }
@@ -101,6 +107,10 @@ struct FakeEnv {
     state: Arc<Mutex<FakeState>>,
     spawn_tx: mpsc::UnboundedSender<tokio::time::Instant>,
     spawn_rx: Mutex<Option<mpsc::UnboundedReceiver<tokio::time::Instant>>>,
+    poll_started: Notify,
+    poll_gate: Semaphore,
+    route_started: Notify,
+    route_gate: Semaphore,
 }
 
 impl FakeEnv {
@@ -114,11 +124,17 @@ impl FakeEnv {
                 current_addr: PppIpv4State::Missing,
                 addr_ready_calls: Vec::new(),
                 cleanup_calls: 0,
+                route_calls_after_cleanup: 0,
+                poll_calls: 0,
                 exits: Vec::new(),
                 signals: Vec::new(),
             })),
             spawn_tx,
             spawn_rx: Mutex::new(Some(spawn_rx)),
+            poll_started: Notify::new(),
+            poll_gate: Semaphore::new(0),
+            route_started: Notify::new(),
+            route_gate: Semaphore::new(0),
         }
     }
 
@@ -140,6 +156,18 @@ impl FakeEnv {
 
     fn cleanup_calls(&self) -> usize {
         self.state.lock().unwrap().cleanup_calls
+    }
+
+    fn route_calls_after_cleanup(&self) -> usize {
+        self.state.lock().unwrap().route_calls_after_cleanup
+    }
+
+    async fn wait_for_blocked_poll(&self) {
+        self.poll_started.notified().await;
+    }
+
+    async fn wait_for_blocked_route(&self) {
+        self.route_started.notified().await;
     }
 
     fn trigger_exit(&self, index: usize) {
@@ -183,11 +211,28 @@ impl PppdEnv for FakeEnv {
     }
 
     async fn poll_addr(&self, _iface: &str) -> PppIpv4State {
-        self.state.lock().unwrap().current_addr.clone()
+        let (state, should_block) = {
+            let mut state = self.state.lock().unwrap();
+            state.poll_calls += 1;
+            (state.current_addr.clone(), self.config.block_poll_after_first && state.poll_calls > 1)
+        };
+        if should_block {
+            self.poll_started.notify_one();
+            let _permit = self.poll_gate.acquire().await.unwrap();
+        }
+        state
     }
 
     async fn on_addr_ready(&self, state: &PppIpv4State, _as_router: bool, _iface: &str) {
-        self.state.lock().unwrap().addr_ready_calls.push(state.clone());
+        if self.config.block_addr_ready {
+            self.route_started.notify_one();
+            let _permit = self.route_gate.acquire().await.unwrap();
+        }
+        let mut fake_state = self.state.lock().unwrap();
+        if fake_state.cleanup_calls > 0 {
+            fake_state.route_calls_after_cleanup += 1;
+        }
+        fake_state.addr_ready_calls.push(state.clone());
     }
 
     async fn cleanup(&self, _iface: &str, _as_router: bool) {
@@ -386,6 +431,13 @@ fn retry_controller_resets_after_healthy() {
 }
 
 #[test]
+fn observer_panic_does_not_override_graceful_stop() {
+    assert_eq!(observer_failure_exit(SessionExit::Stop), SessionExit::Stop);
+    assert_eq!(observer_failure_exit(SessionExit::Retry), SessionExit::Failed);
+    assert_eq!(observer_failure_exit(SessionExit::Failed), SessionExit::Failed);
+}
+
+#[test]
 fn session_health_requires_reset_or_change() {
     let mut health = PppSessionHealth::new(PppIpv4State::Missing);
     assert!(!health.is_healthy());
@@ -518,6 +570,89 @@ async fn normal_dial_then_graceful_stop() {
     assert_eq!(env.cleanup_calls(), 1);
     assert!(env.signals(0).contains(&libc::SIGTERM));
     assert!(!env.signals(0).contains(&libc::SIGKILL));
+}
+
+#[tokio::test]
+async fn address_ready_before_supervisor_start_is_applied_once() {
+    let env = Arc::new(FakeEnv::new(FakeConfig::default()));
+    env.set_addr(ready(2));
+    let status = running_status();
+    let task = spawn_supervisor(&env, status.clone(), fast_timings());
+
+    wait_until(|| env.spawn_count() == 1, Duration::from_secs(1)).await;
+    wait_until(|| env.addr_ready_calls() == vec![ready(2)], Duration::from_secs(1)).await;
+    tokio::time::sleep(Duration::from_millis(30)).await;
+    assert_eq!(env.addr_ready_calls(), vec![ready(2)]);
+
+    status.just_change_status(ServiceStatus::Stopping);
+    let _ = tokio::time::timeout(Duration::from_secs(2), task).await.unwrap();
+    assert_eq!(env.cleanup_calls(), 1);
+}
+
+#[tokio::test]
+async fn address_applied_once_is_not_reapplied_on_redial() {
+    let env = Arc::new(FakeEnv::new(FakeConfig::default()));
+    env.set_addr(ready(2));
+    let status = running_status();
+    let task = spawn_supervisor(&env, status.clone(), fast_timings());
+
+    wait_until(|| env.spawn_count() == 1, Duration::from_secs(1)).await;
+    wait_until(|| env.addr_ready_calls().len() == 1, Duration::from_secs(1)).await;
+    env.trigger_exit(0);
+    wait_until(|| env.spawn_count() >= 2, Duration::from_secs(1)).await;
+    tokio::time::sleep(Duration::from_millis(30)).await;
+    assert_eq!(env.addr_ready_calls(), vec![ready(2)]);
+
+    status.just_change_status(ServiceStatus::Stopping);
+    let _ = tokio::time::timeout(Duration::from_secs(2), task).await.unwrap();
+    assert_eq!(env.cleanup_calls(), 1);
+}
+
+#[tokio::test]
+async fn stop_interrupts_blocked_address_poll_before_cleanup() {
+    let env = Arc::new(FakeEnv::new(FakeConfig {
+        block_poll_after_first: true,
+        ..FakeConfig::default()
+    }));
+    let status = running_status();
+    let task = spawn_supervisor(&env, status.clone(), fast_timings());
+
+    wait_until(|| env.spawn_count() == 1, Duration::from_secs(1)).await;
+    tokio::time::timeout(Duration::from_secs(1), env.wait_for_blocked_poll())
+        .await
+        .expect("observer did not enter blocked address poll");
+    status.just_change_status(ServiceStatus::Stopping);
+
+    let _ = tokio::time::timeout(Duration::from_secs(1), task)
+        .await
+        .expect("stop was blocked by address polling")
+        .unwrap();
+    assert!(env.signals(0).contains(&libc::SIGTERM));
+    assert_eq!(env.cleanup_calls(), 1);
+    assert_eq!(env.route_calls_after_cleanup(), 0);
+}
+
+#[tokio::test]
+async fn stop_interrupts_blocked_route_sync_before_cleanup() {
+    let env =
+        Arc::new(FakeEnv::new(FakeConfig { block_addr_ready: true, ..FakeConfig::default() }));
+    let status = running_status();
+    let task = spawn_supervisor(&env, status.clone(), fast_timings());
+
+    wait_until(|| env.spawn_count() == 1, Duration::from_secs(1)).await;
+    env.set_addr(ready(2));
+    tokio::time::timeout(Duration::from_secs(1), env.wait_for_blocked_route())
+        .await
+        .expect("observer did not enter blocked route sync");
+    status.just_change_status(ServiceStatus::Stopping);
+
+    let _ = tokio::time::timeout(Duration::from_secs(1), task)
+        .await
+        .expect("stop was blocked by route synchronization")
+        .unwrap();
+    assert!(env.signals(0).contains(&libc::SIGTERM));
+    assert_eq!(env.cleanup_calls(), 1);
+    assert_eq!(env.route_calls_after_cleanup(), 0);
 }
 
 #[tokio::test]
