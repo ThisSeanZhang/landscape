@@ -13,21 +13,17 @@ use sea_orm::{
 use crate::{
     cert::repository::CertRepository, cert_account::repository::CertAccountRepository,
     ddns::repository::DdnsJobRepository, dhcp_v4_server::repository::DHCPv4ServerRepository,
-    dhcp_v6_client::repository::DHCPv6ClientRepository,
     dns_provider_profile::repository::DnsProviderProfileRepository,
     dns_redirect::repository::DNSRedirectRuleRepository, dns_rule::repository::DNSRuleRepository,
     dns_upstream::repository::DnsUpstreamRepository, dst_ip_rule::repository::DstIpRuleRepository,
     enrolled_device::repository::EnrolledDeviceRepository,
-    firewall::repository::FirewallServiceRepository,
     firewall_blacklist::repository::FirewallBlacklistRepository,
     firewall_rule::repository::FirewallRuleRepository, flow_rule::repository::FlowConfigRepository,
     flow_wan::repository::FlowWanServiceRepository,
     gateway::repository::GatewayHttpUpstreamRepository,
     geo_ip::repository::GeoIpSourceConfigRepository, geo_site::repository::GeoSiteConfigRepository,
-    iface::repository::NetIfaceRepository, iface_ip::repository::IfaceIpServiceRepository,
-    lan_ipv6_v2::repository::LanIPv6V2ServiceRepository,
-    mss_clamp::repository::MssClampServiceRepository, nat::repository::NatServiceRepository,
-    pppd::repository::PPPDServiceRepository, route_lan::repository::RouteLanServiceRepository,
+    iface::repository::NetIfaceRepository, lan_ipv6_v2::repository::LanIPv6V2ServiceRepository,
+    route_lan::repository::RouteLanServiceRepository,
     route_wan::repository::RouteWanServiceRepository,
     static_nat_mapping_v4::repository::StaticNatMappingV4Repository,
     static_nat_mapping_v6::repository::StaticNatMappingV6Repository,
@@ -235,18 +231,12 @@ define_store!(
     iface_store: (NetIfaceRepository, ifaces),
     dhcp_v4_server_store: (DHCPv4ServerRepository, dhcpv4_services),
     wifi_service_store: (WifiServiceRepository, wifi_configs),
-    firewall_service_store: (FirewallServiceRepository, firewalls),
     firewall_rule_store: (FirewallRuleRepository, firewall_rules),
     firewall_blacklist_store: (FirewallBlacklistRepository, firewall_blacklists),
-    iface_ip_service_store: (IfaceIpServiceRepository, ipconfigs),
-    nat_service_store: (NatServiceRepository, nats),
     flow_rule_store: (FlowConfigRepository, flow_rules),
     flow_wan_service_store: (FlowWanServiceRepository, marks),
     dst_ip_rule_store: (DstIpRuleRepository, dst_ip_mark),
-    pppd_service_store: (PPPDServiceRepository, pppds),
     dns_rule_store: (DNSRuleRepository, dns_rules),
-    dhcp_v6_client_store: (DHCPv6ClientRepository, dhcpv6pds),
-    mss_clamp_service_store: (MssClampServiceRepository, mss_clamps),
     geo_ip_rule_store: (GeoIpSourceConfigRepository, geo_ips),
     geo_site_rule_store: (GeoSiteConfigRepository, geo_sites),
     route_lan_service_store: (RouteLanServiceRepository, route_lans),
@@ -374,5 +364,23 @@ mod tests {
         let result = LandscapeDBServiceProvider::validate_init_config_can_import(init_config).await;
 
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    pub async fn truncate_and_fit_from_imports_wan_links() {
+        use landscape_common::wan_service::link::WanLinkConfig;
+
+        let provider = LandscapeDBServiceProvider::mem_test_db().await;
+        let link = WanLinkConfig {
+            attach_iface_name: "wan0".to_string(),
+            ..Default::default()
+        };
+        let init_config = InitConfig { wan_links: vec![link], ..Default::default() };
+
+        provider.truncate_and_fit_from(Some(init_config)).await.unwrap();
+
+        let imported = provider.wan_link_store().list().await.unwrap();
+        assert_eq!(imported.len(), 1);
+        assert_eq!(imported[0].attach_iface_name, "wan0");
     }
 }

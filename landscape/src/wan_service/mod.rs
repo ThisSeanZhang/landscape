@@ -4,9 +4,9 @@ use landscape_common::{config_service::iface::IfaceCpuSoftBalance, database::err
 
 pub mod dhcpv4_client;
 pub mod firewall;
-pub mod ipconfig_service;
 pub mod ipv6pd_client;
 pub mod ipv6pd_service;
+pub mod link_service;
 pub mod mss_clamp_service;
 pub mod nat_service;
 pub mod pppd_service;

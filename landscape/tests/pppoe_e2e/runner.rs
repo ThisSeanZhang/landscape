@@ -4,10 +4,12 @@ use landscape::sys_service::route::IpRouteService;
 use landscape::wan_service::pppoe_client::{run, PPPoEClientConfig};
 use landscape_common::event::route::RouteEvent;
 use landscape_common::service::{ServiceStatus, WatchService};
+use landscape_common::wan_service::link::session::SessionSignal;
 use landscape_database::provider::LandscapeDBServiceProvider;
 use landscape_ebpf::runtime::EbpfRuntime;
 use std::sync::Arc;
 use std::time::Duration;
+use uuid::Uuid;
 
 // ── client spec ──────────────────────────────────────────────────────────────
 
@@ -78,6 +80,7 @@ pub(super) fn start_client(
     let ns = client_ns.to_string();
     let scenario = scenario.to_string();
     let cfg = PPPoEClientConfig {
+        link_id: Uuid::new_v4(),
         index: info.index,
         iface_name: info.name.clone(),
         iface_mac: info.mac,
@@ -100,19 +103,15 @@ pub(super) fn start_client(
         rt.block_on(async move {
             let provider = LandscapeDBServiceProvider::mem_test_db().await;
             let flow_repo = provider.flow_rule_store();
-            let wan_link_repo = provider.wan_link_store();
             let (_evt_tx, evt_rx) = tokio::sync::mpsc::channel::<RouteEvent>(16);
             let ebpf_rt = Arc::new(
                 EbpfRuntime::init(&super::test_bpf_map_space(&scenario), None)
                     .expect("ebpf runtime in client ns"),
             );
-            let route_service = IpRouteService::new(
-                evt_rx,
-                flow_repo,
-                wan_link_repo,
-                ebpf_rt.clone().route_table(),
-            );
-            run(cfg, status_for_task, route_service, ebpf_rt.pppoe_dataplane()).await;
+            let route_service =
+                IpRouteService::new(evt_rx, flow_repo, ebpf_rt.clone().route_table());
+            let (session, _session_rx) = SessionSignal::new();
+            run(cfg, status_for_task, route_service, ebpf_rt.pppoe_dataplane(), session).await;
         });
 
         let _ = done_tx.send(());

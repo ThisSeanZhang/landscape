@@ -14,6 +14,12 @@ use crate::utils::id::gen_database_uuid;
 use crate::utils::time::get_f64_timestamp;
 use crate::wan_service::pppd::{validate_ppp_iface_name, PPPoEPlugin};
 
+pub mod session;
+pub mod status;
+
+pub use session::{SessionSignal, SessionState, WanV4Lease};
+pub use status::{LinkState, LinkStatus};
+
 pub const MSS_CLAMP_MIN: u16 = 536;
 pub const MSS_CLAMP_MAX: u16 = 1500;
 pub const PD_LEN_MIN: u8 = 56;
@@ -402,6 +408,59 @@ fn check_nat_range(name: &str, range: &Option<Range<u16>>) -> Result<(), Service
     Ok(())
 }
 
+fn is_ip_mode(kind: &WanLinkKindConfig) -> bool {
+    matches!(kind, WanLinkKindConfig::Ethernet | WanLinkKindConfig::PppoeNative { .. })
+}
+
+/// Cross-row cardinality rules for links sharing one attach iface:
+/// - at most one ip-mode link (`Ethernet` xor `PppoeNative`)
+/// - at most one `Pppd` link
+/// - `PppoeNative` and `Pppd` are mutually exclusive
+/// - `Ethernet` + `Pppd` may coexist
+///
+/// `others` must already be filtered to the same attach iface and must not
+/// contain `config` itself.
+pub fn check_link_cardinality(
+    config: &WanLinkConfig,
+    others: &[WanLinkConfig],
+) -> Result<(), ServiceConfigError> {
+    use WanLinkKindConfig::{Pppd, PppoeNative};
+    for other in others {
+        if other.id == config.id {
+            continue;
+        }
+        match (&config.kind, &other.kind) {
+            (Pppd { .. }, Pppd { .. }) => {
+                return Err(ServiceConfigError::InvalidConfig {
+                    reason: format!(
+                        "another pppd link ({}) already exists on attach iface {}",
+                        other.id, config.attach_iface_name
+                    ),
+                });
+            }
+            (PppoeNative { .. }, Pppd { .. }) | (Pppd { .. }, PppoeNative { .. }) => {
+                return Err(ServiceConfigError::InvalidConfig {
+                    reason: format!(
+                        "pppoe_native and pppd links are mutually exclusive on attach iface {}",
+                        config.attach_iface_name
+                    ),
+                });
+            }
+            _ if is_ip_mode(&config.kind) && is_ip_mode(&other.kind) => {
+                return Err(ServiceConfigError::InvalidConfig {
+                    reason: format!(
+                        "another ip-mode link ({}) already exists on attach iface {}",
+                        other.id, config.attach_iface_name
+                    ),
+                });
+            }
+            // Ethernet + Pppd is the only allowed pair.
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -555,5 +614,88 @@ mod tests {
         assert!(config.validate().is_err());
         config.mss.clamp_size = Some(536);
         assert!(config.validate().is_ok());
+    }
+
+    fn pppd_link(id: &str, attach: &str) -> WanLinkConfig {
+        WanLinkConfig {
+            id: Uuid::parse_str(id).unwrap(),
+            attach_iface_name: attach.to_string(),
+            kind: WanLinkKindConfig::Pppd {
+                ppp_iface_name: "ppp0".to_string(),
+                peer_id: "user".to_string(),
+                password: "pass".to_string(),
+                ac: None,
+                plugin: PPPoEPlugin::default(),
+            },
+            ..Default::default()
+        }
+    }
+
+    fn pppoe_native_link(id: &str, attach: &str) -> WanLinkConfig {
+        WanLinkConfig {
+            id: Uuid::parse_str(id).unwrap(),
+            attach_iface_name: attach.to_string(),
+            kind: WanLinkKindConfig::PppoeNative {
+                username: "u".to_string(),
+                password: "p".to_string(),
+                requested_mru: None,
+                ac_name: None,
+                lcp_echo_interval: None,
+                redial_backoff_base_secs: None,
+            },
+            ..Default::default()
+        }
+    }
+
+    const ID_A: &str = "00000000-0000-0000-0000-000000000001";
+    const ID_B: &str = "00000000-0000-0000-0000-000000000002";
+
+    #[test]
+    fn cardinality_allows_ethernet_plus_pppd() {
+        let mut config = ethernet_link();
+        config.id = Uuid::parse_str(ID_A).unwrap();
+        let others = vec![pppd_link(ID_B, "wan0")];
+        assert!(check_link_cardinality(&config, &others).is_ok());
+    }
+
+    #[test]
+    fn cardinality_rejects_duplicate_ip_mode() {
+        let mut config = ethernet_link();
+        config.id = Uuid::parse_str(ID_A).unwrap();
+        let others = vec![pppoe_native_link(ID_B, "wan0")];
+        assert!(check_link_cardinality(&config, &others).is_err());
+
+        let config = pppoe_native_link(ID_A, "wan0");
+        let others = vec![pppoe_native_link(ID_B, "wan0")];
+        assert!(check_link_cardinality(&config, &others).is_err());
+    }
+
+    #[test]
+    fn cardinality_rejects_duplicate_pppd() {
+        let config = pppd_link(ID_A, "wan0");
+        let others = vec![pppd_link(ID_B, "wan0")];
+        assert!(check_link_cardinality(&config, &others).is_err());
+    }
+
+    #[test]
+    fn cardinality_rejects_pppoe_native_with_pppd() {
+        let config = pppoe_native_link(ID_A, "wan0");
+        let others = vec![pppd_link(ID_B, "wan0")];
+        assert!(check_link_cardinality(&config, &others).is_err());
+
+        let config = pppd_link(ID_A, "wan0");
+        let others = vec![pppoe_native_link(ID_B, "wan0")];
+        assert!(check_link_cardinality(&config, &others).is_err());
+    }
+
+    #[test]
+    fn cardinality_ignores_self_and_other_attach_ifaces() {
+        let mut config = ethernet_link();
+        config.id = Uuid::parse_str(ID_A).unwrap();
+        let mut other_iface = config.clone();
+        other_iface.attach_iface_name = "wan1".to_string();
+        let mut same_id = pppoe_native_link(ID_A, "wan0");
+        same_id.attach_iface_name = "wan0".to_string();
+        assert!(check_link_cardinality(&config, &[other_iface, same_id]).is_ok());
     }
 }

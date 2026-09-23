@@ -1,4 +1,5 @@
 use landscape_common::net::MacAddr;
+use uuid::Uuid;
 
 pub(crate) mod auth;
 mod error;
@@ -25,6 +26,8 @@ pub const ETH_P_PPOES: u16 = 0x8864;
 
 #[derive(Clone, Debug)]
 pub struct PPPoEClientConfig {
+    /// Owning WAN link uuid; the WAN route owner at runtime.
+    pub link_id: Uuid,
     pub index: u32,
     pub iface_name: String,
     pub iface_mac: MacAddr,
@@ -47,6 +50,7 @@ pub struct PPPoEClientConfig {
 impl PPPoEClientConfig {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
+        link_id: Uuid,
         index: u32,
         iface_name: String,
         iface_mac: MacAddr,
@@ -57,6 +61,7 @@ impl PPPoEClientConfig {
         ac_name: Option<String>,
     ) -> Self {
         Self {
+            link_id,
             index,
             iface_name,
             iface_mac,

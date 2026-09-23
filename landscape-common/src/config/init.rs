@@ -22,16 +22,17 @@ use crate::lan_service::lan_ipv6::LanIPv6ServiceConfigV2;
 use crate::lan_service::lan_route::RouteLanServiceConfig;
 use crate::sys_service::gateway::HttpUpstreamRuleConfig;
 use crate::wan_service::firewall::blacklist::FirewallBlacklistConfig;
-use crate::wan_service::firewall::service::FirewallServiceConfig;
 use crate::wan_service::firewall::FirewallRuleConfig;
-use crate::wan_service::ip_config::IfaceIpServiceConfig;
-use crate::wan_service::ipv6_pd::IPV6PDServiceConfig;
 use crate::wan_service::link::WanLinkConfig;
-use crate::wan_service::mss_clamp::MSSClampServiceConfig;
-use crate::wan_service::nat::config::NatServiceConfig;
-use crate::wan_service::pppd::PPPDServiceConfig;
 use crate::wan_service::wan_route::RouteWanServiceConfig;
 
+/// Full export/import snapshot of the persisted configuration.
+///
+/// Import is guarded by a strict version check (`validate_init_config_version`
+/// rejects any file whose `version` differs from this build's `VERSION`), so the
+/// wire format is only ever exchanged between identical versions. There is no
+/// need to keep backwards/forwards compatibility here: fields can be removed
+/// freely and the release that changes them simply bumps the version.
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
 #[serde(default)]
 pub struct InitConfig {
@@ -40,13 +41,7 @@ pub struct InitConfig {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub ifaces: Vec<NetworkIfaceConfig>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub ipconfigs: Vec<IfaceIpServiceConfig>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub nats: Vec<NatServiceConfig>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub marks: Vec<FlowWanServiceConfig>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub pppds: Vec<PPPDServiceConfig>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub flow_rules: Vec<FlowConfig>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -54,11 +49,7 @@ pub struct InitConfig {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub dst_ip_mark: Vec<WanIpRuleConfig>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub dhcpv6pds: Vec<IPV6PDServiceConfig>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub lan_ipv6s: Vec<LanIPv6ServiceConfigV2>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub firewalls: Vec<FirewallServiceConfig>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub firewall_rules: Vec<FirewallRuleConfig>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -67,8 +58,6 @@ pub struct InitConfig {
     pub wifi_configs: Vec<WifiServiceConfig>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub dhcpv4_services: Vec<DHCPv4ServiceConfig>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub mss_clamps: Vec<MSSClampServiceConfig>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub geo_ips: Vec<GeoIpSourceConfig>,
     #[serde(skip_serializing_if = "Vec::is_empty")]

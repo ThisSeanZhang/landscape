@@ -1,65 +1,9 @@
 use std::sync::Arc;
 
-use landscape_common::database::LandscapeStore;
-use landscape_common::event::hub::IfaceEventReader;
-use landscape_common::{
-    concurrency::{spawn_task, spawn_task_with_resource, task_label},
-    event::hub::iface::IfaceObserverAction,
-    service::{
-        controller::ControllerService,
-        manager::{ServiceManager, ServiceStarterTrait},
-        ServiceStatus, WatchService,
-    },
-    wan_service::mss_clamp::dataplane::MssClampDataplane,
-    wan_service::mss_clamp::MSSClampServiceConfig,
-};
-use landscape_database::{
-    mss_clamp::repository::MssClampServiceRepository, provider::LandscapeDBServiceProvider,
-};
+use landscape_common::service::{ServiceStatus, WatchService};
+use landscape_common::wan_service::mss_clamp::dataplane::MssClampDataplane;
 
-use crate::get_iface_by_name;
-
-#[derive(Clone)]
-pub struct MssClampService {
-    dataplane: Arc<dyn MssClampDataplane>,
-}
-
-#[async_trait::async_trait]
-impl ServiceStarterTrait for MssClampService {
-    type Config = MSSClampServiceConfig;
-
-    async fn start(&self, config: MSSClampServiceConfig) -> WatchService {
-        let service_status = WatchService::new();
-
-        if config.enable {
-            if let Some(iface) = get_iface_by_name(&config.iface_name).await {
-                let status_clone = service_status.clone();
-                let iface_name = config.iface_name.clone();
-                let dataplane = self.dataplane.clone();
-                spawn_task_with_resource(
-                    task_label::task::MSS_CLAMP_RUN,
-                    iface_name.clone(),
-                    async move {
-                        run_mss_clamp(
-                            iface_name,
-                            iface.index as i32,
-                            config.clamp_size,
-                            iface.mac.is_some(),
-                            status_clone,
-                            dataplane,
-                        )
-                        .await
-                    },
-                );
-            } else {
-                tracing::error!("Interface {} not found", config.iface_name);
-            }
-        }
-
-        service_status
-    }
-}
-
+/// MSS clamp service body, driven by the WAN link runtime's mss section.
 pub async fn run_mss_clamp(
     iface_name: String,
     ifindex: i32,
@@ -87,61 +31,4 @@ pub async fn run_mss_clamp(
     drop(mss_clamp);
 
     service_status.just_change_status(ServiceStatus::Stop);
-}
-
-#[derive(Clone)]
-pub struct MssClampServiceManagerService {
-    store: MssClampServiceRepository,
-    service: ServiceManager<MssClampService>,
-}
-
-impl ControllerService for MssClampServiceManagerService {
-    type Id = String;
-    type Config = MSSClampServiceConfig;
-    type DatabseAction = MssClampServiceRepository;
-    type H = MssClampService;
-
-    fn get_service(&self) -> &ServiceManager<Self::H> {
-        &self.service
-    }
-
-    fn get_repository(&self) -> &Self::DatabseAction {
-        &self.store
-    }
-}
-
-impl MssClampServiceManagerService {
-    pub async fn new(
-        store_service: LandscapeDBServiceProvider,
-        mut dev_observer: IfaceEventReader,
-        dataplane: Arc<dyn MssClampDataplane>,
-    ) -> Self {
-        let store = store_service.mss_clamp_service_store();
-        let service =
-            ServiceManager::init(store.list().await.unwrap(), MssClampService { dataplane }).await;
-
-        let service_clone = service.clone();
-        spawn_task(task_label::task::MSS_CLAMP_OBSERVER, async move {
-            while let Ok(msg) = dev_observer.recv().await {
-                match msg {
-                    IfaceObserverAction::Up(iface_name) => {
-                        tracing::info!("restart {iface_name} Firewall service");
-                        let service_config = if let Some(service_config) =
-                            store.find_by_id(iface_name.clone()).await.unwrap()
-                        {
-                            service_config
-                        } else {
-                            continue;
-                        };
-
-                        let _ = service_clone.update_service(service_config).await;
-                    }
-                    IfaceObserverAction::Down(_) => {}
-                }
-            }
-        });
-
-        let store = store_service.mss_clamp_service_store();
-        Self { service, store }
-    }
 }

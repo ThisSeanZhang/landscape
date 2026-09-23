@@ -1,7 +1,6 @@
 use axum::extract::{Path, State};
 use landscape::{get_existing_linklocal, get_iface_by_name, set_iface_ip_no_limit};
 use landscape_common::api_response::LandscapeApiResp as CommonApiResp;
-use landscape_common::database::LandscapeStore;
 use landscape_common::dev::iface::{IfaceTopology, IfacesInfo};
 use landscape_common::service::controller::ControllerService;
 use landscape_common::{
@@ -95,11 +94,14 @@ async fn get_wan_candidates(State(state): State<LandscapeApp>) -> LandscapeApiRe
         .map(|c| c.name)
         .collect();
 
-    let pppd_configs = state.pppd_service.get_repository().list().await.unwrap_or_default();
+    let pppd_links = state.wan_link_service.list_links().await.into_iter().filter(|link| {
+        matches!(link.kind, landscape_common::wan_service::link::WanLinkKindConfig::Pppd { .. })
+    });
 
-    for cfg in pppd_configs {
-        if !names.iter().any(|n| n == &cfg.iface_name) {
-            names.push(cfg.iface_name);
+    for cfg in pppd_links {
+        let name = cfg.net_iface_name();
+        if !names.iter().any(|n| n == &name) {
+            names.push(name);
         }
     }
 
@@ -116,8 +118,7 @@ async fn get_wan_candidates(State(state): State<LandscapeApp>) -> LandscapeApiRe
 async fn get_wan_links(
     State(state): State<LandscapeApp>,
 ) -> LandscapeApiResult<Vec<WanLinkConfig>> {
-    let links = state.wan_link_repo.list().await.unwrap_or_default();
-    LandscapeApiResp::success(links)
+    LandscapeApiResp::success(state.wan_link_service.list_links().await)
 }
 
 #[utoipa::path(

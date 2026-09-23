@@ -17,6 +17,7 @@ fn ensure_test_env() {
 
 fn test_config() -> PPPoEClientConfig {
     PPPoEClientConfig::new(
+        uuid::Uuid::new_v4(),
         1,
         "eth0".into(),
         MacAddr::new(0x02, 0x03, 0x04, 0x05, 0x06, 0x07),

@@ -283,7 +283,14 @@ fn spawn_supervisor(
     timings: PppdTimings,
 ) -> tokio::task::JoinHandle<bool> {
     let env_dyn: Arc<dyn PppdEnv> = env.clone();
-    tokio::spawn(run_pppd_supervisor(PPP.to_string(), true, status, env_dyn, timings))
+    tokio::spawn(run_pppd_supervisor(
+        PPP.to_string(),
+        true,
+        status,
+        env_dyn,
+        timings,
+        landscape_common::wan_service::link::session::SessionSignal::default(),
+    ))
 }
 
 // ── fake route sink / config store ───────────────────────────
@@ -872,6 +879,7 @@ async fn lifecycle_normal_stop_sets_stop_and_deletes_config() {
         status.clone(),
         env_dyn,
         store_dyn,
+        landscape_common::wan_service::link::session::SessionSignal::default(),
     ));
 
     tokio::time::timeout(
@@ -907,6 +915,7 @@ async fn config_write_failure_sets_failed_without_side_effects() {
         status.clone(),
         env_dyn,
         store_dyn,
+        landscape_common::wan_service::link::session::SessionSignal::default(),
     )
     .await;
 
@@ -932,6 +941,7 @@ async fn supervisor_panic_sets_failed_and_cleans_up() {
         status.clone(),
         env_dyn,
         store_dyn,
+        landscape_common::wan_service::link::session::SessionSignal::default(),
     )
     .await;
 

@@ -5,6 +5,7 @@ use landscape_common::global_const::default_router::{RouteInfo, RouteType, LD_AL
 use landscape_common::net::MacAddr;
 use landscape_common::sys_service::route_service::{LanRouteInfo, LanRouteMode, RouteTargetInfo};
 use landscape_common::wan_service::pppoe::{PppoeDataplane, PppoeEgressTmpl};
+use uuid::Uuid;
 
 use crate::get_existing_linklocal;
 use crate::sys_service::route::IpRouteService;
@@ -16,6 +17,7 @@ use super::PPPoEClientConfig;
 
 pub(crate) struct SessionHandle {
     _session_guard: Box<dyn DataplaneGuard>,
+    link_id: Uuid,
     client_ip: std::net::Ipv4Addr,
     server_ip: std::net::Ipv4Addr,
     server_mac: Vec<u8>,
@@ -84,7 +86,7 @@ impl SessionHandle {
         if self.default_router {
             LD_ALL_ROUTERS.del_route_by_iface(&self.iface_name).await;
         }
-        route_service.remove_ipv4_wan_route(&self.iface_name).await;
+        route_service.remove_ipv4_link_route(self.link_id).await;
         route_service.remove_ipv4_lan_route(&self.iface_name).await;
         dataplane.unbind_wan_ipv4(self.ifindex);
 
@@ -157,8 +159,8 @@ pub(crate) async fn create_session(
     };
     route_service.insert_ipv4_lan_route(iface_name, lan_info).await;
     route_service
-        .insert_ipv4_wan_route(
-            iface_name,
+        .insert_ipv4_link_route(
+            config.link_id,
             RouteTargetInfo {
                 ifindex: index,
                 weight: 1,
@@ -306,6 +308,7 @@ pub(crate) async fn create_session(
 
     Ok(SessionHandle {
         _session_guard: session_guard,
+        link_id: config.link_id,
         client_ip,
         server_ip,
         server_mac: lcp.server_mac.clone(),

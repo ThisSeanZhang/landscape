@@ -4,9 +4,11 @@ use landscape::{
 };
 use landscape_common::{
     service::{ServiceStatus, WatchService},
+    wan_service::link::session::SessionSignal,
     LANDSCAPE_DEFAULE_DHCP_V4_CLIENT_PORT,
 };
 use landscape_ebpf::runtime::EbpfRuntime;
+use uuid::Uuid;
 
 use clap::Parser;
 use landscape_database::provider::LandscapeDBServiceProvider;
@@ -29,7 +31,6 @@ async fn main() {
 
     let db_store_provider = LandscapeDBServiceProvider::mem_test_db().await;
     let flow_repo = db_store_provider.flow_rule_store();
-    let wan_link_repo = db_store_provider.wan_link_store();
 
     let service_status = WatchService::new();
 
@@ -48,13 +49,10 @@ async fn main() {
                     status,
                     "TEST-PC".to_string(),
                     false,
-                    IpRouteService::new(
-                        route_rx,
-                        flow_repo,
-                        wan_link_repo,
-                        rt.clone().route_table(),
-                    ),
+                    IpRouteService::new(route_rx, flow_repo, rt.clone().route_table()),
                     rt.wan_addr_binding(),
+                    Uuid::new_v4(),
+                    SessionSignal::default(),
                 )
                 .await;
             }

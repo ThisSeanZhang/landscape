@@ -43,13 +43,8 @@ use landscape::{
         config_service::LandscapeConfigService, dns_service::LandscapeDnsService,
         ebpf_service::LandscapeEbpfService,
     },
-    wan_service::firewall::FirewallServiceManagerService,
     wan_service::{
-        ipconfig_service::IfaceIpServiceManagerService,
-        ipv6pd_service::{generate_wan_iid, DHCPv6ClientManagerService},
-        mss_clamp_service::MssClampServiceManagerService,
-        nat_service::NatServiceManagerService,
-        pppd_service::PPPDServiceConfigManagerService,
+        ipv6pd_service::generate_wan_iid, link_service::WanLinkServiceManagerService,
         wan_route_service::RouteWanServiceManagerService,
     },
     wifi::WifiServiceManagerService,
@@ -321,7 +316,6 @@ async fn run_system(
     let route_service = IpRouteService::new(
         route_service_rx,
         db_store_provider.flow_rule_store(),
-        db_store_provider.wan_link_store(),
         ebpf_rt.clone().route_table(),
     );
     let enrolled_devices =
@@ -457,28 +451,6 @@ async fn run_system(
     )
     .await;
 
-    let mss_clamp_service = MssClampServiceManagerService::new(
-        db_store_provider.clone(),
-        event_handle.subscribe_iface(),
-        ebpf_rt.clone().mss_clamp(),
-    )
-    .await;
-
-    let firewall_service = FirewallServiceManagerService::new(
-        db_store_provider.clone(),
-        event_handle.subscribe_iface(),
-        ebpf_rt.clone().firewall(),
-    )
-    .await;
-
-    let nat_service = NatServiceManagerService::new(
-        db_store_provider.clone(),
-        event_handle.subscribe_iface(),
-        route_service.clone(),
-        ebpf_rt.clone().nat(),
-    )
-    .await;
-
     let wifi_service = WifiServiceManagerService::new(db_store_provider.clone()).await;
 
     let iface_config_service = IfaceManagerService::new(db_store_provider.clone()).await;
@@ -496,34 +468,22 @@ async fn run_system(
     )
     .await;
 
-    let wan_ip_service = IfaceIpServiceManagerService::new(
+    let wan_link_service = WanLinkServiceManagerService::new(
         route_service.clone(),
         ebpf_rt.clone().wan_addr_binding(),
         ebpf_rt.clone().pppoe_dataplane(),
+        ebpf_rt.clone().nat(),
+        ebpf_rt.clone().firewall(),
+        ebpf_rt.clone().mss_clamp(),
+        prefix_map.clone(),
+        shared_wan_iid,
+        ipv6_prefix_sender.clone(),
         db_store_provider.clone(),
         event_handle.subscribe_iface(),
     )
     .await;
 
     let docker_service = LandscapeDockerService::new(home_path.clone(), route_service.clone());
-
-    let pppd_service = PPPDServiceConfigManagerService::new(
-        db_store_provider.clone(),
-        route_service.clone(),
-        ebpf_rt.clone().wan_addr_binding(),
-    )
-    .await;
-
-    let ipv6_pd_service = DHCPv6ClientManagerService::new(
-        db_store_provider.clone(),
-        event_handle.subscribe_iface(),
-        route_service.clone(),
-        ebpf_rt.clone().wan_addr_binding(),
-        prefix_map.clone(),
-        ipv6_prefix_sender.clone(),
-        shared_wan_iid,
-    )
-    .await;
 
     startup_phase!(
         "docker_service.start_to_listen_event",
@@ -546,31 +506,24 @@ async fn run_system(
         dst_ip_rule_service,
         geo_ip_service,
         config_service,
-        wan_link_repo: db_store_provider.wan_link_store(),
         metric_service,
         route_service,
         dhcp_v4_server_service,
-        wan_ip_service,
+        wan_link_service,
 
         route_lan_service,
         route_wan_service,
 
         docker_service,
 
-        pppd_service,
-
         // IPV6
-        ipv6_pd_service,
         lan_ipv6_service,
         static_nat4_mapping_service,
         static_nat6_mapping_service,
         dns_redirect_service,
         dns_upstream_service,
         iface_config_service,
-        mss_clamp_service,
-        firewall_service,
         wifi_service,
-        nat_service,
         // ebpf
         ebpf_service,
         enrolled_device_service,

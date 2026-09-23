@@ -6,9 +6,11 @@ use std::{
 };
 
 use tokio::time::Instant;
+use uuid::Uuid;
 
 use super::v4_raw_packet::AdaptiveDhcpV4Socket;
 use crate::sys_service::route::IpRouteService;
+use landscape_common::wan_service::link::session::{SessionSignal, SessionState, WanV4Lease};
 use landscape_common::{
     global_const::default_router::{RouteInfo, RouteType, LD_ALL_ROUTERS},
     net::MacAddr,
@@ -178,7 +180,8 @@ impl DhcpState {
     service_status,
     hostname,
     route_service,
-    addr_binding
+    addr_binding,
+    session
 ))]
 #[allow(clippy::too_many_arguments)]
 pub async fn dhcp_v4_client(
@@ -191,8 +194,11 @@ pub async fn dhcp_v4_client(
     default_router: bool,
     route_service: IpRouteService,
     addr_binding: Arc<dyn WanAddrBinding>,
+    link_id: Uuid,
+    session: SessionSignal,
 ) {
     service_status.just_change_status(ServiceStatus::Staring);
+    session.set(SessionState::Starting);
     tracing::info!("DHCP V4 Client Starting");
 
     set_iface_ipv4_rp_filter_to_0(&iface_name);
@@ -259,7 +265,7 @@ pub async fn dhcp_v4_client(
                     Ok(packet) => {
                         let need_reset_time = handle_packet(&mut status, packet,
                             &mut ip_arg, default_router, &iface_name, ifindex, &route_service,
-                            addr_binding.as_ref(), &mac_addr).await;
+                            addr_binding.as_ref(), &mac_addr, link_id, &session).await;
 
                         if matches!(status, DhcpState::Bound { .. }) {
                             connect_failure_count = 0;
@@ -290,8 +296,10 @@ pub async fn dhcp_v4_client(
     if default_router {
         LD_ALL_ROUTERS.del_route_by_iface(&iface_name).await;
     }
-    route_service.remove_ipv4_wan_route(&iface_name).await;
+    route_service.remove_ipv4_link_route(link_id).await;
     route_service.remove_ipv4_lan_route(&iface_name).await;
+    addr_binding.unbind_ipv4(ifindex);
+    session.set(SessionState::Idle);
 
     if !service_status.is_stop() {
         service_status.just_change_status(if service_status.is_exit() {
@@ -461,6 +469,8 @@ async fn handle_packet(
     route_service: &IpRouteService,
     addr_binding: &dyn WanAddrBinding,
     mac_addr: &MacAddr,
+    link_id: Uuid,
+    session: &SessionSignal,
 ) -> bool {
     let (dhcp, _msg_addr) = packet;
     if dhcp.opcode() != DhcpV4OpCode::BootReply {
@@ -555,6 +565,8 @@ async fn handle_packet(
                             route_service,
                             addr_binding,
                             mac_addr,
+                            link_id,
+                            session,
                         )
                         .await;
 
@@ -600,6 +612,8 @@ async fn bind_ipv4(
     route_service: &IpRouteService,
     addr_binding: &dyn WanAddrBinding,
     mac_addr: &MacAddr,
+    link_id: Uuid,
+    session: &SessionSignal,
 ) -> DhcpState {
     if let Some(args) = ip_arg.take() {
         if let Err(result) = std::process::Command::new("ip").args(&args).output() {
@@ -650,8 +664,8 @@ async fn bind_ipv4(
 
     if let Some(router_ip) = gateway_ip {
         route_service
-            .insert_ipv4_wan_route(
-                iface_name,
+            .insert_ipv4_link_route(
+                link_id,
                 RouteTargetInfo {
                     ifindex,
                     weight: 1,
@@ -675,6 +689,10 @@ async fn bind_ipv4(
         } else {
             LD_ALL_ROUTERS.del_route_by_iface(iface_name).await;
         }
+
+        session.set(SessionState::Ready {
+            lease: Some(WanV4Lease { ifindex, ip: new_yiaddr, gateway: router_ip }),
+        });
     }
 
     let renew_time = tokio::time::Instant::now() + Duration::from_secs(renew_time);

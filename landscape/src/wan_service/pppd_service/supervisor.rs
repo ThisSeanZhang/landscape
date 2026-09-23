@@ -5,6 +5,7 @@ use std::time::Duration;
 use futures::FutureExt;
 use landscape_common::service::ServiceStatus;
 use landscape_common::service::WatchService;
+use landscape_common::wan_service::link::session::{SessionSignal, SessionState, WanV4Lease};
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
@@ -191,6 +192,15 @@ async fn stop_pppd_process_async(
     }
 }
 
+fn lease_from(state: &PppIpv4State) -> Option<WanV4Lease> {
+    match state {
+        PppIpv4State::Ready { ifindex, local, peer } => {
+            Some(WanV4Lease { ifindex: *ifindex, ip: *local, gateway: *peer })
+        }
+        _ => None,
+    }
+}
+
 /// Polls and applies PPP IPv4 state independently from the process supervisor.
 /// Cancellation drops an in-flight netlink poll or route update so shutdown can
 /// join this task before the final route cleanup.
@@ -204,6 +214,7 @@ async fn observe_addresses(
     mut last_applied: Option<PppIpv4State>,
     initial_state_tx: oneshot::Sender<PppIpv4State>,
     state_tx: mpsc::UnboundedSender<PppIpv4State>,
+    session: SessionSignal,
 ) -> Option<PppIpv4State> {
     let initial_state = tokio::select! {
         _ = cancel.cancelled() => return last_applied,
@@ -219,6 +230,7 @@ async fn observe_addresses(
             _ = cancel.cancelled() => return last_applied,
             _ = env.on_addr_ready(&initial_state, as_router, &ppp_iface_name) => {
                 last_applied = Some(initial_state.clone());
+                session.set(SessionState::Ready { lease: lease_from(&initial_state) });
             }
         }
     } else if !initial_state.is_ready() {
@@ -249,10 +261,14 @@ async fn observe_addresses(
                             _ = cancel.cancelled() => return last_applied,
                             _ = env.on_addr_ready(&state, as_router, &ppp_iface_name) => {
                                 last_applied = Some(state.clone());
+                                session.set(SessionState::Ready { lease: lease_from(&state) });
                             }
                         }
                     } else if !state.is_ready() {
-                        last_applied = None;
+                        let was_applied = last_applied.take().is_some();
+                        if was_applied {
+                            session.set(SessionState::Lost { retrying: true });
+                        }
                     }
 
                     last_observed = state;
@@ -271,6 +287,7 @@ pub(crate) async fn run_pppd_supervisor(
     service_status: WatchService,
     env: Arc<dyn PppdEnv>,
     timings: PppdTimings,
+    session: SessionSignal,
 ) -> bool {
     let graceful = AssertUnwindSafe(supervise_loop(
         ppp_iface_name.clone(),
@@ -278,6 +295,7 @@ pub(crate) async fn run_pppd_supervisor(
         service_status,
         env.clone(),
         timings,
+        session.clone(),
     ))
     .catch_unwind()
     .await
@@ -290,6 +308,7 @@ pub(crate) async fn run_pppd_supervisor(
     // migrated to the tokio version (LD_ALL_ROUTERS still shells out via
     // blocking `std::process::Command`).
     env.cleanup(&ppp_iface_name, as_router).await;
+    session.set(if graceful { SessionState::Idle } else { SessionState::Failed });
     graceful
 }
 
@@ -300,6 +319,7 @@ async fn run_session(
     env: Arc<dyn PppdEnv>,
     timings: &PppdTimings,
     last_applied: &mut Option<PppIpv4State>,
+    session: &SessionSignal,
 ) -> SessionResult {
     let cancel = CancellationToken::new();
     let (initial_state_tx, initial_state_rx) = oneshot::channel();
@@ -309,6 +329,7 @@ async fn run_session(
     let observer_iface = ppp_iface_name.to_string();
     let observer_timings = timings.clone();
     let observer_last_applied = last_applied.clone();
+    let observer_session = session.clone();
     let observer: JoinHandle<Option<PppIpv4State>> = tokio::spawn(observe_addresses(
         observer_iface,
         as_router,
@@ -318,6 +339,7 @@ async fn run_session(
         observer_last_applied,
         initial_state_tx,
         state_tx,
+        observer_session,
     ));
 
     let session = AssertUnwindSafe(async {
@@ -427,6 +449,7 @@ async fn supervise_loop(
     service_status: WatchService,
     env: Arc<dyn PppdEnv>,
     timings: PppdTimings,
+    session: SessionSignal,
 ) -> bool {
     let mut retry = PppdRetryController::new();
     let mut last_applied = None;
@@ -439,21 +462,22 @@ async fn supervise_loop(
         }
 
         tracing::info!("Starting PPPD for {}", ppp_iface_name);
-        let session = run_session(
+        let outcome = run_session(
             &ppp_iface_name,
             as_router,
             &service_status,
             env.clone(),
             &timings,
             &mut last_applied,
+            &session,
         )
         .await;
 
-        if session.healthy {
+        if outcome.healthy {
             retry.note_healthy();
         }
 
-        match session.exit {
+        match outcome.exit {
             SessionExit::Stop => return true,
             SessionExit::Failed => return false,
             SessionExit::Retry => {

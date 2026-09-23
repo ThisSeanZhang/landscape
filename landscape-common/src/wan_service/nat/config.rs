@@ -50,7 +50,7 @@ impl ZoneAwareConfig for NatServiceConfig {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct NatConfig {
     #[cfg_attr(feature = "openapi", schema(value_type = Object))]

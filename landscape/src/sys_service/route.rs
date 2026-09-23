@@ -19,7 +19,6 @@ use landscape_common::{
     },
 };
 use landscape_database::flow_rule::repository::FlowConfigRepository;
-use landscape_database::wan_link::repository::WanLinkRepository;
 use landscape_dns::server::LocalDnsAnswerProvider;
 use tokio::sync::{broadcast, mpsc, RwLock};
 use uuid::Uuid;
@@ -50,7 +49,6 @@ type Ipv6LanRoutesByKey = HashMap<LanIPv6RouteKey, LanRouteInfo>;
 #[derive(Clone)]
 pub struct IpRouteService {
     flow_repo: FlowConfigRepository,
-    wan_link_repo: WanLinkRepository,
     dataplane: Arc<dyn RouteTableDataplane>,
     ipv4_wan_ifaces: ShareRwLock<WanRoutesByOwner>,
     ipv6_wan_ifaces: ShareRwLock<WanRoutesByOwner>,
@@ -303,13 +301,11 @@ impl IpRouteService {
     pub fn new(
         route_event_sender: mpsc::Receiver<RouteEvent>,
         flow_repo: FlowConfigRepository,
-        wan_link_repo: WanLinkRepository,
         dataplane: Arc<dyn RouteTableDataplane>,
     ) -> Self {
         let (wan_route_events, _) = broadcast::channel(64);
         let service = IpRouteService {
             flow_repo,
-            wan_link_repo,
             dataplane,
             ipv4_wan_ifaces: Arc::new(RwLock::new(HashMap::new())),
             ipv6_wan_ifaces: Arc::new(RwLock::new(HashMap::new())),
@@ -377,21 +373,6 @@ impl IpRouteService {
         kind: WanRouteEventKind,
     ) {
         let _ = self.wan_route_events.send(WanRouteEvent { owner, family, kind });
-    }
-
-    /// TODO(wan-link-cleanup): transitional seam. The per-iface WAN producers
-    /// still register by net iface name; resolve that to the owning link uuid
-    /// through the `wan_links` store until the link runtime hands the uuid to
-    /// the producer directly. Resolution failure is unresolved — never a name
-    /// fallback.
-    async fn resolve_link_id(&self, iface_name: &str) -> Option<Uuid> {
-        match self.wan_link_repo.find_links_touching_iface(iface_name).await {
-            Ok(links) => links.first().map(|link| link.id),
-            Err(error) => {
-                tracing::warn!(iface_name, %error, "failed to resolve wan link for iface");
-                None
-            }
-        }
     }
 
     async fn insert_wan_route_owner(
@@ -689,73 +670,7 @@ impl IpRouteService {
             .await;
     }
 
-    // ── Transitional per-iface entry points (resolve iface → link uuid) ──
-    //
-    // TODO(wan-link-cleanup): once the link runtime hands the uuid to the
-    // per-iface producers, these resolve-by-name entry points (and the
-    // `resolve_link_id` seam) go away; callers use `insert_*_link_route`.
-
-    pub async fn insert_ipv4_wan_route(&self, iface_name: &str, info: RouteTargetInfo) {
-        match self.resolve_link_id(iface_name).await {
-            Some(link_id) => self.insert_ipv4_link_route(link_id, info).await,
-            None => {
-                tracing::error!(iface_name, "insert wan route: no link owns iface; dropped")
-            }
-        }
-    }
-
-    pub async fn insert_ipv6_wan_route(&self, iface_name: &str, info: RouteTargetInfo) {
-        match self.resolve_link_id(iface_name).await {
-            Some(link_id) => self.insert_ipv6_link_route(link_id, info).await,
-            None => {
-                tracing::error!(iface_name, "insert wan route: no link owns iface; dropped")
-            }
-        }
-    }
-
-    pub async fn remove_ipv4_wan_route(&self, iface_name: &str) {
-        match self.resolve_link_id(iface_name).await {
-            Some(link_id) => self.remove_ipv4_link_route(link_id).await,
-            None => {
-                tracing::error!(iface_name, "remove wan route: no link owns iface; dropped")
-            }
-        }
-    }
-
-    pub async fn remove_ipv6_wan_route(&self, iface_name: &str) {
-        match self.resolve_link_id(iface_name).await {
-            Some(link_id) => self.remove_ipv6_link_route(link_id).await,
-            None => {
-                tracing::error!(iface_name, "remove wan route: no link owns iface; dropped")
-            }
-        }
-    }
-
-    /// Legacy name-keyed view of link routes, consumed by the (name-keyed) NAT
-    /// service. Docker/netns routes are excluded.
-    pub async fn get_all_ipv4_wan_routes(&self) -> HashMap<String, RouteTargetInfo> {
-        self.ipv4_wan_ifaces
-            .read()
-            .await
-            .iter()
-            .filter_map(|(owner, info)| match owner {
-                RouteOwner::Link(_) => Some((info.iface_name.clone(), info.clone())),
-                RouteOwner::Netns(_) => None,
-            })
-            .collect()
-    }
-
-    pub async fn get_all_ipv6_wan_routes(&self) -> HashMap<String, RouteTargetInfo> {
-        self.ipv6_wan_ifaces
-            .read()
-            .await
-            .iter()
-            .filter_map(|(owner, info)| match owner {
-                RouteOwner::Link(_) => Some((info.iface_name.clone(), info.clone())),
-                RouteOwner::Netns(_) => None,
-            })
-            .collect()
-    }
+    // ── Link routes (uuid keyed) ───────────────────────────────────
 
     /// Link routes paired with their link uuid. Used by the NAT reconcile loop.
     pub async fn get_all_ipv4_link_routes(&self) -> Vec<(Uuid, RouteTargetInfo)> {
@@ -988,10 +903,8 @@ pub async fn test_used_ip_route() -> (mpsc::Sender<RouteEvent>, IpRouteService) 
     let db_store_provider =
         landscape_database::provider::LandscapeDBServiceProvider::mem_test_db().await;
     let flow_repo = db_store_provider.flow_rule_store();
-    let wan_link_repo = db_store_provider.wan_link_store();
     let (route_tx, route_rx) = mpsc::channel(1);
-    let ip_route =
-        IpRouteService::new(route_rx, flow_repo, wan_link_repo, Arc::new(NoopRouteTableDataplane));
+    let ip_route = IpRouteService::new(route_rx, flow_repo, Arc::new(NoopRouteTableDataplane));
     (route_tx, ip_route)
 }
 

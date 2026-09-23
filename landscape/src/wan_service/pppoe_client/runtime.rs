@@ -5,6 +5,7 @@ use tokio::time::{sleep, Duration, Instant};
 use landscape_common::net_proto::ppp::PointToPoint;
 use landscape_common::net_proto::pppoe::PPPoEFrame;
 use landscape_common::service::{ServiceStatus, WatchService};
+use landscape_common::wan_service::link::session::{SessionSignal, SessionState, WanV4Lease};
 use landscape_common::wan_service::pppoe::PppoeDataplane;
 
 use super::PPPoEClientConfig;
@@ -29,8 +30,10 @@ pub async fn run(
     status_rx: WatchService,
     route_service: IpRouteService,
     dataplane: Arc<dyn PppoeDataplane>,
+    session: SessionSignal,
 ) {
     status_rx.just_change_status(ServiceStatus::Staring);
+    session.set(SessionState::Starting);
 
     let Ok((mut tx, mut rx)) = landscape_ebpf::pppoe::start(config.index).await else {
         tracing::error!(
@@ -38,6 +41,7 @@ pub async fn run(
             "PPPoE eBPF channel created fail"
         );
         status_rx.just_change_status(ServiceStatus::Stop);
+        session.set(SessionState::Failed);
         return;
     };
 
@@ -58,6 +62,7 @@ pub async fn run(
                 _ = status_rx.wait_to_stopping() => {
                     shutdown_session(&mut session_handle, &route_service, dataplane.as_ref()).await;
                     status_rx.just_change_status(ServiceStatus::Stop);
+                    session.set(SessionState::Idle);
                     break;
                 }
             }
@@ -93,11 +98,13 @@ pub async fn run(
                 );
                 shutdown_session(&mut session_handle, &route_service, dataplane.as_ref()).await;
                 status_rx.just_change_status(ServiceStatus::Failed);
+                session.set(SessionState::Failed);
                 break;
             }
             Err(PppoeError::ServiceStopped) => {
                 shutdown_session(&mut session_handle, &route_service, dataplane.as_ref()).await;
                 status_rx.just_change_status(ServiceStatus::Stop);
+                session.set(SessionState::Idle);
                 break;
             }
             Err(e) => {
@@ -107,6 +114,7 @@ pub async fn run(
                     "LCP phase error, retrying"
                 );
                 shutdown_session(&mut session_handle, &route_service, dataplane.as_ref()).await;
+                session.set(SessionState::Lost { retrying: true });
                 retry_count += 1;
                 continue;
             }
@@ -136,11 +144,13 @@ pub async fn run(
                     );
                     shutdown_session(&mut session_handle, &route_service, dataplane.as_ref()).await;
                     status_rx.just_change_status(ServiceStatus::Failed);
+                    session.set(SessionState::Failed);
                     break;
                 }
                 Err(PppoeError::ServiceStopped) => {
                     shutdown_session(&mut session_handle, &route_service, dataplane.as_ref()).await;
                     status_rx.just_change_status(ServiceStatus::Stop);
+                    session.set(SessionState::Idle);
                     break;
                 }
                 Err(e) => {
@@ -150,6 +160,7 @@ pub async fn run(
                         "Negotiation phase error, retrying"
                     );
                     shutdown_session(&mut session_handle, &route_service, dataplane.as_ref()).await;
+                    session.set(SessionState::Lost { retrying: true });
                     retry_count += 1;
                     continue;
                 }
@@ -181,6 +192,13 @@ pub async fn run(
                 if !status_rx.is_running() {
                     status_rx.just_change_status(ServiceStatus::Running);
                 }
+                session.set(SessionState::Ready {
+                    lease: Some(WanV4Lease {
+                        ifindex: config.index,
+                        ip: nego_result.client_ip,
+                        gateway: nego_result.server_ip,
+                    }),
+                });
                 tracing::info!(
                     iface_name = %config.iface_name,
                     "PPPoE eBPF and system state applied, session is fully established"
@@ -194,6 +212,7 @@ pub async fn run(
                 );
                 // Session negotiated but system setup failed — still need cleanup
                 status_rx.just_change_status(ServiceStatus::Failed);
+                session.set(SessionState::Failed);
                 break;
             }
         }
@@ -206,11 +225,13 @@ pub async fn run(
             Ok(()) => {
                 shutdown_session(&mut session_handle, &route_service, dataplane.as_ref()).await;
                 status_rx.just_change_status(ServiceStatus::Stop);
+                session.set(SessionState::Idle);
                 break;
             }
             Err(PppoeError::ServiceStopped) => {
                 shutdown_session(&mut session_handle, &route_service, dataplane.as_ref()).await;
                 status_rx.just_change_status(ServiceStatus::Stop);
+                session.set(SessionState::Idle);
                 break;
             }
             Err(e) => {
@@ -220,6 +241,7 @@ pub async fn run(
                     "Keepalive lost, reconnecting"
                 );
                 shutdown_session(&mut session_handle, &route_service, dataplane.as_ref()).await;
+                session.set(SessionState::Lost { retrying: true });
                 retry_count += 1;
                 continue;
             }

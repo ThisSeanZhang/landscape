@@ -46,12 +46,7 @@ async fn main() {
     let flow_repo = db_store_provider.flow_rule_store();
     let (_, route_rx) = mpsc::channel(1);
     let rt = Arc::new(EbpfRuntime::init("dhcp_v6_test", None).expect("init ebpf maps"));
-    let ip_route = IpRouteService::new(
-        route_rx,
-        flow_repo,
-        db_store_provider.wan_link_store(),
-        rt.clone().route_table(),
-    );
+    let ip_route = IpRouteService::new(route_rx, flow_repo, rt.clone().route_table());
     let status = service_status.clone();
     let prefix_map = IAPrefixMap::new();
     let (prefix_tx, _prefix_rx) = mpsc::channel(1);

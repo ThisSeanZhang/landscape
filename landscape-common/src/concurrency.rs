@@ -122,6 +122,14 @@ pub mod task_label {
         pub const NAT_OBSERVER: &str = "nat.service.observer";
         /// NAT observer task reacting to WAN route events.
         pub const NAT_WAN_ROUTE_OBSERVER: &str = "nat.service.wan_route_observer";
+        /// One WAN link instance supervising its session + sub-services.
+        pub const WAN_LINK_RUN: &str = "wan_link.instance.run";
+        /// WAN link session (v4 acquisition) child task.
+        pub const WAN_LINK_SESSION: &str = "wan_link.session";
+        /// WAN link sub-service (nat/firewall/mss/pd) child task.
+        pub const WAN_LINK_SECTION: &str = "wan_link.section";
+        /// WAN link manager observer reacting to interface events.
+        pub const WAN_LINK_IFACE_OBSERVER: &str = "wan_link.iface_observer";
         /// EventHub dispatcher task that receives events and dispatches to domain broadcast channels.
         pub const EVENT_HUB_DISPATCHER: &str = "event.hub.dispatcher";
         /// eBPF neighbor update async task that periodically syncs ARP/NDP tables.
