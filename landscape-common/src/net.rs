@@ -12,9 +12,27 @@ const LOCAL_ADDR_BIT: u8 = 0x02;
 const MULTICAST_ADDR_BIT: u8 = 0x01;
 
 #[derive(Clone, Copy, Default, Hash, PartialOrd, Eq, PartialEq)]
-#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
-#[cfg_attr(feature = "openapi", schema(value_type = String, example = "00:11:22:33:44:55"))]
 pub struct MacAddr(pub u8, pub u8, pub u8, pub u8, pub u8, pub u8);
+
+// `MacAddr` serializes as `"aa:bb:cc:dd:ee:ff"` but is a 6-field tuple struct.
+// The `ToSchema` derive would render it as a 6-element array, so the schema is
+// implemented manually as a plain string.
+#[cfg(feature = "openapi")]
+impl utoipa::PartialSchema for MacAddr {
+    fn schema() -> utoipa::openapi::RefOr<utoipa::openapi::schema::Schema> {
+        utoipa::openapi::ObjectBuilder::new()
+            .schema_type(utoipa::openapi::schema::Type::String)
+            .examples(vec!["00:11:22:33:44:55"])
+            .into()
+    }
+}
+
+#[cfg(feature = "openapi")]
+impl utoipa::ToSchema for MacAddr {
+    fn name() -> std::borrow::Cow<'static, str> {
+        std::borrow::Cow::Borrowed("MacAddr")
+    }
+}
 
 impl MacAddr {
     /// Construct a new `MacAddr` instance.

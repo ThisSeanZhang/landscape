@@ -240,13 +240,22 @@ pub struct WanNatConfig {
     pub enable: bool,
     /// `None` → runtime default 32768..65535.
     #[serde(default)]
-    #[cfg_attr(feature = "openapi", schema(value_type = Object))]
+    #[cfg_attr(
+        feature = "openapi",
+        schema(value_type = crate::wan_service::nat::PortRange)
+    )]
     pub tcp_range: Option<Range<u16>>,
     #[serde(default)]
-    #[cfg_attr(feature = "openapi", schema(value_type = Object))]
+    #[cfg_attr(
+        feature = "openapi",
+        schema(value_type = crate::wan_service::nat::PortRange)
+    )]
     pub udp_range: Option<Range<u16>>,
     #[serde(default)]
-    #[cfg_attr(feature = "openapi", schema(value_type = Object))]
+    #[cfg_attr(
+        feature = "openapi",
+        schema(value_type = crate::wan_service::nat::PortRange)
+    )]
     pub icmp_in_range: Option<Range<u16>>,
 }
 

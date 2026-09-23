@@ -53,11 +53,11 @@ impl ZoneAwareConfig for NatServiceConfig {
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct NatConfig {
-    #[cfg_attr(feature = "openapi", schema(value_type = Object))]
+    #[cfg_attr(feature = "openapi", schema(value_type = crate::wan_service::nat::PortRange))]
     pub tcp_range: Range<u16>,
-    #[cfg_attr(feature = "openapi", schema(value_type = Object))]
+    #[cfg_attr(feature = "openapi", schema(value_type = crate::wan_service::nat::PortRange))]
     pub udp_range: Range<u16>,
-    #[cfg_attr(feature = "openapi", schema(value_type = Object))]
+    #[cfg_attr(feature = "openapi", schema(value_type = crate::wan_service::nat::PortRange))]
     pub icmp_in_range: Range<u16>,
 }
 
