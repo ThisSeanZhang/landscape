@@ -431,6 +431,7 @@ pub async fn dhcp_v6_pd_client(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn clear_active_pd_prefix(
     iface_name: &str,
     link_id: Uuid,

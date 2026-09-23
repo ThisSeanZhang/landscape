@@ -338,7 +338,7 @@ async fn read_rows<T: FromQueryResult, C: sea_orm::ConnectionTrait>(
     table: impl IntoTableRef,
 ) -> Result<Vec<T>, DbErr> {
     let select = Query::select().expr(Expr::col(Asterisk)).from(table).to_owned();
-    Ok(T::find_by_statement(backend.build(&select)).all(db).await?)
+    T::find_by_statement(backend.build(&select)).all(db).await
 }
 
 fn normalize_plugin(raw: &str) -> String {
@@ -453,11 +453,9 @@ async fn remap_ddns_sources<C: sea_orm::ConnectionTrait>(
                     // Only clear a stale link_id when there was a legacy
                     // reference to resolve; `wan_pd_id = null` (auto) never
                     // carries a link id.
-                    None if name.is_some() => {
-                        if source.get(link_field).is_some() {
-                            source.as_object_mut().map(|o| o.remove(link_field));
-                            changed = true;
-                        }
+                    None if name.is_some() && source.get(link_field).is_some() => {
+                        source.as_object_mut().map(|o| o.remove(link_field));
+                        changed = true;
                     }
                     None => {}
                 }
