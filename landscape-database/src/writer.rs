@@ -18,10 +18,13 @@ use crate::repository::UpdateActiveModel;
 type IdTypeOf<E> = <<E as EntityTrait>::PrimaryKey as sea_orm::PrimaryKeyTrait>::ValueType;
 
 /// Runs `$body(txn)` inside a transaction, retrying retryable SQLite write races
-/// (see [`is_retryable_code`]) with bounded jitter. Retries cover every statement
-/// in the transaction and the COMMIT itself, because WAL read-to-write upgrades
-/// can hit SQLITE_BUSY / SQLITE_BUSY_SNAPSHOT at any point; a failed attempt is
-/// rolled back and re-run in a fresh transaction (re-reading the latest snapshot).
+/// (see [`is_retryable_code`]) with bounded exponential backoff. Retries cover
+/// every statement in the transaction and the COMMIT itself, because WAL
+/// read-to-write upgrades can hit SQLITE_BUSY / SQLITE_BUSY_SNAPSHOT at any
+/// point — and SQLite deliberately skips the busy handler for upgrades from an
+/// open read transaction (deadlock avoidance), so this loop is the only wait
+/// mechanism they get. A failed attempt is rolled back and re-run in a fresh
+/// transaction (re-reading the latest snapshot).
 ///
 /// A macro because the body borrows the transaction for the duration of its
 /// future, which a `FnMut`-generic signature cannot express without GATs.
@@ -68,14 +71,29 @@ macro_rules! txn_retry_loop {
     }};
 }
 
-/// Max attempts for a retryable write race. In WAL mode a losing transaction can
-/// fail immediately (busy_timeout does not cover read-to-write upgrades); each
-/// attempt re-reads the latest snapshot, and the jitter breaks lock-step retry
-/// loops between concurrent writers.
-const MAX_RETRIES: u32 = 5;
+/// Max attempts for a retryable write race.
+///
+/// In WAL mode an upgrade from an open read transaction whose write lock is
+/// merely *held* by another transaction fails immediately with SQLITE_BUSY (5):
+/// SQLite skips the busy handler there (`sqlite3BtreeBeginTrans` only retries
+/// through it while no read transaction is open, to avoid read-vs-write
+/// deadlocks), so this loop is the only wait such upgrades get. Its total
+/// budget must therefore comfortably exceed a rival transaction's lock-hold
+/// time — our writes span several await points, and a starved runtime thread
+/// can stretch a rival into the tens of milliseconds. 12 attempts with the
+/// backoff below give ~1.3s; the previous 5 attempts / ~35ms budget let a
+/// loaded test runner starve the winner past the loser's retries, surfacing
+/// "concurrent write retry exhausted" instead of `DbError::Conflict`.
+const MAX_RETRIES: u32 = 12;
 
-/// Bounded random sleep (1-8ms plus a per-retry ramp) before retrying a write
-/// race. Entropy mixes a global counter with the wall clock so two racing
+/// Per-retry backoff cap; delays are jitter + min(2^retries, this cap) ms.
+const RETRY_BACKOFF_CAP_MS: u64 = 256;
+
+/// Bounded random sleep (1-8ms jitter plus exponential backoff) before
+/// retrying a write race. The first retries stay millisecond-scale — a racing
+/// writer usually commits quickly and the loser converges on its first retry —
+/// while sustained lock contention backs off up to `RETRY_BACKOFF_CAP_MS`.
+/// Entropy mixes a global counter with the wall clock so two racing
 /// writers can never reproduce each other's retry rhythm.
 fn retry_delay(retries: u32) -> std::time::Duration {
     static RETRY_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -87,7 +105,8 @@ fn retry_delay(retries: u32) -> std::time::Duration {
     // splitmix64-style mixing: spreads the sequential counter over the jitter range
     let entropy = (ns as u64) ^ seq.wrapping_mul(0x9E37_79B9_7F4A_7C15);
     let jitter_ms = 1 + (entropy % 8);
-    std::time::Duration::from_millis(jitter_ms + (retries as u64) * 3)
+    let backoff_ms = RETRY_BACKOFF_CAP_MS.min(1u64 << retries.min(16));
+    std::time::Duration::from_millis(jitter_ms + backoff_ms)
 }
 
 /// Outcome of one `upsert_inner` attempt.
@@ -350,7 +369,7 @@ mod tests {
 
     use crate::iface::repository::NetIfaceRepository;
     use crate::provider::LandscapeDBServiceProvider;
-    use crate::writer::is_retryable_code;
+    use crate::writer::{is_retryable_code, retry_delay, MAX_RETRIES, RETRY_BACKOFF_CAP_MS};
 
     fn iface(name: &str) -> NetworkIfaceConfig {
         NetworkIfaceConfig::crate_bridge(name.to_string(), Some(IfaceZoneType::Lan))
@@ -551,6 +570,8 @@ mod tests {
         // (1555/5/517) is deterministically covered by
         // `retryable_codes_cover_pk_races_and_wal_busy`; this only proves that
         // multi-connection contention converges to one row without 500s.
+        // (Flaked the same way as the checked-upsert test below before the
+        // retry budget was widened — see the stability note there.)
         let (a, b) = {
             let provider_a = LandscapeDBServiceProvider::file_test_db(&path).await;
             let provider_b = LandscapeDBServiceProvider::file_test_db(&path).await;
@@ -580,6 +601,21 @@ mod tests {
         // the version strictly above the stored one): two writers submitting the
         // same base version must produce exactly one success and one
         // DbError::Conflict — a lost update would silently let both succeed.
+        //
+        // Stability note (used to flake ~1-in-3 under the parallel suite while
+        // passing standalone): `upsert_inner` reads before it writes, so the
+        // UPDATE is a WAL read-to-write upgrade. While the rival writer merely
+        // HOLDS the write lock, SQLite returns SQLITE_BUSY (code 5) immediately
+        // — busy_timeout is deliberately skipped for such upgrades (deadlock
+        // avoidance in sqlite3BtreeBeginTrans: the busy handler only retries
+        // while no read transaction is open). The loser's only wait is the
+        // txn_retry_loop budget, which used to be ~35ms over 5 attempts —
+        // shorter than a winner stretched across await points on a starved
+        // runtime thread, so the loser exhausted retries and returned a
+        // Database error instead of Conflict (log: "last db code 5"). The
+        // ~1.3s budget in MAX_RETRIES/retry_delay removes both that 500-class
+        // bug and this flake: exhausting now requires a rival to hold the
+        // write lock for over a second.
         let base = {
             let provider = LandscapeDBServiceProvider::file_test_db(&path).await;
             provider.iface_store().upsert(iface("br0")).await.unwrap().new
@@ -615,5 +651,26 @@ mod tests {
         assert!(!is_retryable_code(Some("2067")));
         assert!(!is_retryable_code(Some("19")));
         assert!(!is_retryable_code(None));
+    }
+
+    #[test]
+    fn retry_budget_outlasts_rival_lock_hold() {
+        // 12 attempts = 1 initial + 11 slept retries (retries 1..MAX_RETRIES).
+        let mut total = std::time::Duration::ZERO;
+        for retries in 1..MAX_RETRIES {
+            let delay = retry_delay(retries);
+            assert!(
+                delay <= std::time::Duration::from_millis(RETRY_BACKOFF_CAP_MS + 8),
+                "per-retry delay must stay within backoff cap + max jitter"
+            );
+            total += delay;
+        }
+        // The budget is the only wait a WAL read-to-write upgrade gets
+        // (busy_timeout is skipped there), so it must exceed a rival
+        // transaction's lock-hold time; ~35ms proved too small.
+        assert!(total >= std::time::Duration::from_millis(1_000));
+        // Common case: a racing writer commits quickly, so the first retries
+        // must not add meaningful latency.
+        assert!(retry_delay(1) <= std::time::Duration::from_millis(2 + 8));
     }
 }
