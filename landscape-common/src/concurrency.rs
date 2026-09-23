@@ -47,8 +47,6 @@ pub mod thread_name {
         pub const MSS_CLAMP: &str = "ld-mss";
         /// hostapd watchdog threads keyed by interface.
         pub const WIFI: &str = "ld-wifi";
-        /// PPPD watchdog threads keyed by PPP interface name.
-        pub const PPPD: &str = "ld-ppp";
         /// PTY reader threads keyed by PTY session id.
         pub const PTY_READ: &str = "ld-ptyr";
         /// PTY writer threads keyed by PTY session id.
@@ -116,10 +114,6 @@ pub mod task_label {
         pub const MSS_CLAMP_OBSERVER: &str = "mss_clamp.observer";
         /// PPPD service async launcher.
         pub const PPPD_RUN: &str = "pppd.service.run";
-        /// PPPD service stop-signal bridge task.
-        pub const PPPD_STOP: &str = "pppd.service.stop";
-        /// PPPD watcher that polls acquired addresses and syncs routes.
-        pub const PPPD_IP_WATCH: &str = "pppd.service.ip_watch";
         /// NAT service async launcher.
         pub const NAT_RUN: &str = "nat.service.run";
         /// NAT service stop-signal bridge task.
