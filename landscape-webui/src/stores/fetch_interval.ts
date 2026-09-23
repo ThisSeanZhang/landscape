@@ -3,17 +3,15 @@ import { computed, ref, watch } from "vue";
 
 import { useSysInfo } from "./systeminfo";
 import { useIfaceNodeStore } from "./iface_node";
-import { useIpConfigStore } from "./status_ipconfig";
-import { useNATConfigStore } from "@/stores/status_nats";
+import { useWanLinkStore } from "./wan_link";
+import { useWanLinkStatusStore } from "./status_wan_link";
 import { useDockerStore } from "./status_docker";
 import { useDnsStore } from "./status_dns";
 import { useIPv6PDStore } from "./status_ipv6pd";
 import { useLanIPv6Store } from "./status_lan_ipv6";
-import { useFirewallConfigStore } from "./status_firewall";
 import { useWifiConfigStore } from "./status_wifi";
 import { useDHCPv4ConfigStore } from "./status_dhcp_v4";
 import { useMetricStore } from "./status_metric";
-import { useMSSClampConfigStore } from "./status_mss_clamp";
 import { useRouteLanConfigStore } from "./status_route_lan";
 import { useRouteWanConfigStore } from "./status_route_wan";
 
@@ -22,17 +20,15 @@ import useDockerImgTask from "@/stores/docker_img_task";
 export const useFetchIntervalStore = defineStore("fetch_interval", () => {
   const sysinfo = useSysInfo();
   const ifaceNodeStore = useIfaceNodeStore();
-  const ipConfigStore = useIpConfigStore();
-  const natConfigStore = useNATConfigStore();
+  const wanLinkStore = useWanLinkStore();
+  const wanLinkStatusStore = useWanLinkStatusStore();
   const dockerStore = useDockerStore();
   const dnsStore = useDnsStore();
   const ipv6PDStore = useIPv6PDStore();
   const lanIpv6Store = useLanIPv6Store();
-  const firewallConfigStore = useFirewallConfigStore();
   const wifiConfigStore = useWifiConfigStore();
   const dhcpv4ConfigStore = useDHCPv4ConfigStore();
   const metricStore = useMetricStore();
-  const mssclampConfigStore = useMSSClampConfigStore();
   const routeLanConfigStore = useRouteLanConfigStore();
   const routeWanConfigStore = useRouteWanConfigStore();
 
@@ -48,15 +44,13 @@ export const useFetchIntervalStore = defineStore("fetch_interval", () => {
       await dockerStore.UPDATE_INFO();
       await dnsStore.UPDATE_INFO();
       await ifaceNodeStore.UPDATE_INFO();
-      await ipConfigStore.UPDATE_INFO();
-      await natConfigStore.UPDATE_INFO();
+      await wanLinkStore.load();
+      await wanLinkStatusStore.UPDATE_INFO();
       await ipv6PDStore.UPDATE_INFO();
       await lanIpv6Store.UPDATE_INFO();
-      await firewallConfigStore.UPDATE_INFO();
       await wifiConfigStore.UPDATE_INFO();
       await dhcpv4ConfigStore.UPDATE_INFO();
       await metricStore.UPDATE_INFO();
-      await mssclampConfigStore.UPDATE_INFO();
 
       await routeLanConfigStore.UPDATE_INFO();
       await routeWanConfigStore.UPDATE_INFO();

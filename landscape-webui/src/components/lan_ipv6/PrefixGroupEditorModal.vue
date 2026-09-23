@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import {
-  get_all_ipv6pd_configs,
   get_all_ipv6pd_status,
   get_current_ip_prefix_info,
   type LDIAPrefix,
@@ -17,7 +16,6 @@ import {
   shouldResetStalePlannerSelection,
 } from "@/lib/ipv6_planner";
 import { ServiceStatus } from "@/lib/services";
-import type { IPV6PDServiceConfig } from "@/lib/ipv6pd";
 import type {
   IPv6ServiceMode,
   LanIPv6ServiceConfigV2,
@@ -94,7 +92,6 @@ const draftGroupId = ref("");
 const otherLanConfigsV2 = ref<LanIPv6ServiceConfigV2[]>([]);
 const prefixInfos = ref<Map<string, LDIAPrefix | null>>(new Map());
 const ipv6PdIfaces = ref<Map<string, ServiceStatus>>(new Map());
-const ipv6PdConfigs = ref<IPV6PDServiceConfig[]>([]);
 const wanLinkStore = useWanLinkStore();
 const expectedPdLens = ref<Map<string, number>>(new Map());
 
@@ -126,7 +123,7 @@ const availableServiceKinds = computed(() => {
 
 const ipv6PdOptions = computed(() => {
   return wanLinkStore.options.map((link) => {
-    const status = ipv6PdIfaces.value.get(link.net_iface);
+    const status = ipv6PdIfaces.value.get(link.value);
     const statusLabel = status ? ` - ${status.t}` : "";
     const expected = expectedPdLens.value.get(link.value) ?? "";
     return {
@@ -623,20 +620,15 @@ function updatePdPoolLen(value: number | null) {
 }
 
 async function searchIpv6Pd() {
-  const [statuses, configs] = await Promise.all([
+  const [statuses] = await Promise.all([
     get_all_ipv6pd_status(),
-    get_all_ipv6pd_configs(),
     wanLinkStore.refresh(),
   ]);
   ipv6PdIfaces.value = statuses;
-  ipv6PdConfigs.value = configs;
   const lens = new Map<string, number>();
-  for (const config of configs) {
-    const link = wanLinkStore.options.find(
-      (option) => option.net_iface === config.iface_name,
-    );
-    if (link) {
-      lens.set(link.value, config.config.expected_pd_len);
+  for (const link of wanLinkStore.links) {
+    if (link.id !== undefined && link.pd?.enable) {
+      lens.set(link.id, link.pd.expected_pd_len ?? 60);
     }
   }
   expectedPdLens.value = lens;

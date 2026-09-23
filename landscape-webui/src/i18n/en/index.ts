@@ -35,10 +35,10 @@ import natUi from "./nat/index";
 import natErr from "./nat/error";
 import networkUi from "./network/index";
 import notFoundUi from "./not_found/index";
-import pppoeUi from "./pppoe/index";
 import sysinfoUi from "./sysinfo/index";
 import terminalUi from "./terminal/index";
 import topologyUi from "./topology/index";
+import wanLinkUi from "./wan_link/index";
 import wifiUi from "./wifi/index";
 
 import authErr from "./error/auth";
@@ -68,10 +68,10 @@ export default {
   nat: natUi,
   network: networkUi,
   not_found: notFoundUi,
-  pppoe: pppoeUi,
   sysinfo: sysinfoUi,
   terminal: terminalUi,
   topology: topologyUi,
+  wan_link: wanLinkUi,
   wifi: wifiUi,
   // "metric" is a cross-cutting concern for metrics display pages.
   // DNS metrics here display query analytics, not DNS feature configuration.

@@ -7,6 +7,7 @@ export default {
   confirm_delete: "Confirm deletion?",
   no_remark: "No remark",
   not_configured: "N/A",
+  disabled: "Disabled",
   starting: "Starting",
   running: "Running",
   stopping: "Stopping",

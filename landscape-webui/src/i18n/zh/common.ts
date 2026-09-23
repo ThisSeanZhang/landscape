@@ -7,6 +7,7 @@ export default {
   confirm_delete: "确定删除吗",
   no_remark: "无备注",
   not_configured: "未配置",
+  disabled: "未启用",
   starting: "启动中",
   running: "运行中",
   stopping: "停止中",

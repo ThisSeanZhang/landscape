@@ -30,6 +30,7 @@ const {
   fitView,
   getViewport,
   onNodeClick,
+  onNodesChange,
   onPaneClick,
   setCenter,
   setViewport,
@@ -289,6 +290,34 @@ ifaceNodeStore.SETTING_CALL_BACK(() => {
   scheduleFitTopology("readable");
 });
 
+// Feed measured node heights back into the layout store (batched per frame).
+const pending_heights = new Map<string, number>();
+let heights_flush_handle: number | null = null;
+
+onNodesChange((changes) => {
+  for (const change of changes) {
+    if (change.type !== "dimensions" || !change.dimensions) {
+      continue;
+    }
+    if (change.dimensions.height > 0) {
+      pending_heights.set(change.id, change.dimensions.height);
+    }
+  }
+
+  if (pending_heights.size === 0 || heights_flush_handle !== null) {
+    return;
+  }
+
+  heights_flush_handle = requestAnimationFrame(() => {
+    heights_flush_handle = null;
+    if (pending_heights.size === 0) {
+      return;
+    }
+    ifaceNodeStore.UPDATE_NODE_HEIGHTS(pending_heights);
+    pending_heights.clear();
+  });
+});
+
 watch(
   width,
   (currentWidth) => {
@@ -314,13 +343,14 @@ onMounted(() => {
 });
 
 onUnmounted(() => {
+  if (heights_flush_handle !== null) {
+    cancelAnimationFrame(heights_flush_handle);
+    heights_flush_handle = null;
+  }
   metricStore.SET_ENABLE("iface", false);
 });
 
 onNodeClick(({ node }) => {
-  if (node.data?.virtual) {
-    return;
-  }
   selectedIfaceId.value = Number(node.id);
 });
 

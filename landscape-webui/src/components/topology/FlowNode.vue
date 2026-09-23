@@ -1,26 +1,25 @@
 <script setup lang="ts">
 import { Handle, Position } from "@vue-flow/core";
 import DHCPv4ServiceEditModal from "@/components/dhcp_v4/DHCPv4ServiceEditModal.vue";
-import FirewallServiceEditModal from "@/components/firewall/FirewallServiceEditModal.vue";
 import LanIPv6EditModal from "@/components/lan_ipv6/LanIPv6EditModal.vue";
-import IpConfigModal from "@/components/ipconfig/IpConfigModal.vue";
-import IPv6PDEditModal from "@/components/ipv6pd/IPv6PDEditModal.vue";
-import MSSClampServiceEditModal from "@/components/mss_clamp/MSSClampServiceEditModal.vue";
-import NATEditModal from "@/components/nat/NATEditModal.vue";
-import PPPDCreateConfigModal from "@/components/pppd/CreatePPPDConfigModal.vue";
 import RouteLanServiceEditModal from "@/components/route/lan/RouteLanServiceEditModal.vue";
 import RouteWanServiceEditModal from "@/components/route/wan/RouteWanServiceEditModal.vue";
+import WanLinkEditModal from "@/components/wan_link/WanLinkEditModal.vue";
 import WifiModeChange from "@/components/wifi/WifiModeChange.vue";
 import WifiServiceEditModal from "@/components/wifi/WifiServiceEditModal.vue";
-import { Edit, Link, TrashCan } from "@vicons/carbon";
+import { Add, Edit } from "@vicons/carbon";
 import { useThemeVars } from "naive-ui";
 import { changeColor } from "seemly";
 import { computed, ref } from "vue";
 import { useI18n } from "vue-i18n";
 
-import { stop_and_del_iface_pppd } from "@/api/service_pppd";
 import { DevStateType, NetDev } from "@/lib/dev";
-import { IfaceZoneType } from "@landscape-router/types/api/schemas";
+import {
+  IfaceZoneType,
+  type IfaceRealtimeStat,
+  type LinkStatus,
+  type WanLinkConfig,
+} from "@landscape-router/types/api/schemas";
 import { formatPackets, formatRate } from "@/lib/util";
 import {
   ServiceExhibitSwitch,
@@ -28,18 +27,20 @@ import {
   get_service_status_color,
   get_service_status_label,
 } from "@/lib/services";
+import {
+  useWanLinkStore,
+  wanLinkKind,
+  wanLinkLabel,
+  wanLinkNetIface,
+  type WanLinkKind,
+} from "@/stores/wan_link";
+import { useWanLinkStatusStore } from "@/stores/status_wan_link";
 import { useDHCPv4ConfigStore } from "@/stores/status_dhcp_v4";
-import { useFirewallConfigStore } from "@/stores/status_firewall";
-import { useIpConfigStore } from "@/stores/status_ipconfig";
-import { useIPv6PDStore } from "@/stores/status_ipv6pd";
 import { useLanIPv6Store } from "@/stores/status_lan_ipv6";
-import { useMSSClampConfigStore } from "@/stores/status_mss_clamp";
-import { useNATConfigStore } from "@/stores/status_nats";
 import { useRouteLanConfigStore } from "@/stores/status_route_lan";
 import { useRouteWanConfigStore } from "@/stores/status_route_wan";
 import { useWifiConfigStore } from "@/stores/status_wifi";
 import { useIfaceNodeStore } from "@/stores/iface_node";
-import type { IfaceRealtimeStat } from "@landscape-router/types/api/schemas";
 
 const props = withDefaults(
   defineProps<{
@@ -58,44 +59,26 @@ const { t } = useI18n();
 const themeVars = useThemeVars();
 const show_switch = computed(() => new ServiceExhibitSwitch(props.node));
 const ifaceNodeStore = useIfaceNodeStore();
-const show_mss_clamp_edit = ref(false);
+const wanLinkStore = useWanLinkStore();
+const wanLinkStatusStore = useWanLinkStatusStore();
 const iface_dhcp_v4_service_edit_show = ref(false);
 const iface_wifi_edit_show = ref(false);
-const iface_firewall_edit_show = ref(false);
 const iface_lan_ipv6_edit_show = ref(false);
-const iface_ipv6pd_edit_show = ref(false);
-const iface_nat_edit_show = ref(false);
-const iface_service_edit_show = ref(false);
-const show_pppd_create_modal = ref(false);
-const show_pppd_edit_modal = ref(false);
 const show_route_lan_drawer = ref(false);
 const show_route_wan_drawer = ref(false);
 
-const ipConfigStore = useIpConfigStore();
+const show_link_modal = ref(false);
+const editing_link = ref<WanLinkConfig | undefined>(undefined);
+const create_link_kind = ref<WanLinkKind>("ethernet");
+
 const dhcpv4ConfigStore = useDHCPv4ConfigStore();
-const natConfigStore = useNATConfigStore();
-const firewallConfigStore = useFirewallConfigStore();
-const ipv6PDStore = useIPv6PDStore();
 const lanIpv6Store = useLanIPv6Store();
 const wifiConfigStore = useWifiConfigStore();
 const routeLanConfigStore = useRouteLanConfigStore();
 const routeWanConfigStore = useRouteWanConfigStore();
-const mssClampConfigStore = useMSSClampConfigStore();
 
-const ip_config_status = computed(
-  () => ipConfigStore.GET_STATUS_BY_IFACE_NAME(props.node.name).value,
-);
 const dhcp_v4_status = computed(
   () => dhcpv4ConfigStore.GET_STATUS_BY_IFACE_NAME(props.node.name).value,
-);
-const nat_status = computed(
-  () => natConfigStore.GET_STATUS_BY_IFACE_NAME(props.node.name).value,
-);
-const firewall_status = computed(
-  () => firewallConfigStore.GET_STATUS_BY_IFACE_NAME(props.node.name).value,
-);
-const ipv6pd_status = computed(
-  () => ipv6PDStore.GET_STATUS_BY_IFACE_NAME(props.node.name).value,
 );
 const lan_ipv6_status = computed(
   () => lanIpv6Store.GET_STATUS_BY_IFACE_NAME(props.node.name).value,
@@ -109,27 +92,8 @@ const route_lan_status = computed(
 const route_wan_status = computed(
   () => routeWanConfigStore.GET_STATUS_BY_IFACE_NAME(props.node.name).value,
 );
-const mss_clamp_status = computed(
-  () => mssClampConfigStore.GET_STATUS_BY_IFACE_NAME(props.node.name).value,
-);
-
-const is_virtual_pppd = computed(() => props.node.virtual);
-const is_live_pppd = computed(
-  () =>
-    !props.node.virtual &&
-    props.node.dev_type === "ppp" &&
-    props.node.pppd_config !== undefined,
-);
-const can_delete_pppd = computed(
-  () =>
-    (is_virtual_pppd.value || is_live_pppd.value) &&
-    props.node.pppd_config?.enable !== true,
-);
 
 const status_type = computed(() => {
-  if (is_virtual_pppd.value) {
-    return props.node.pppd_config?.enable ? "warning" : "default";
-  }
   if (props.node.dev_status.t === DevStateType.Up) {
     return "success";
   }
@@ -139,22 +103,7 @@ const status_type = computed(() => {
   return "warning";
 });
 
-const status_text = computed(() => {
-  if (is_virtual_pppd.value) {
-    return props.node.pppd_config?.enable
-      ? t("pppoe.status_not_dialed")
-      : t("pppoe.status_disabled");
-  }
-  return props.node.dev_status.t;
-});
-
-async function delete_pppd_config() {
-  if (props.node.pppd_config === undefined) {
-    return;
-  }
-  await stop_and_del_iface_pppd(props.node.pppd_config.iface_name);
-  await refreshGraph();
-}
+const status_text = computed(() => props.node.dev_status.t);
 
 const zone_type = computed(() => {
   if (props.node.zone_type === IfaceZoneType.wan) {
@@ -195,16 +144,155 @@ const has_metric = computed(
       (props.metric.stats.active_conns || 0) > 0),
 );
 
+// ---- WAN links ----
+
+const iface_links = computed(() =>
+  is_wan_node.value ? wanLinkStore.byIface(props.node.name) : [],
+);
+
+function link_status(link_id: string | undefined): LinkStatus | undefined {
+  if (!link_id) return undefined;
+  return wanLinkStatusStore.status.get(link_id);
+}
+
+function link_state_color(state: LinkStatus["state"] | undefined) {
+  if (!state) return themeVars.value.textColor3;
+  switch (state) {
+    case "running":
+      return themeVars.value.successColor;
+    case "starting":
+    case "degraded":
+      return themeVars.value.warningColor;
+    case "failed":
+      return themeVars.value.errorColor;
+    default:
+      return themeVars.value.textColor3;
+  }
+}
+
+function link_state_label(state: LinkStatus["state"] | undefined) {
+  if (!state) return t("common.not_configured");
+  return t(`wan_link.state_${state}`);
+}
+
+function link_kind_label(link: WanLinkConfig) {
+  switch (wanLinkKind(link)) {
+    case "pppoe_native":
+      return "PPPoE";
+    case "pppd":
+      return "pppd";
+    default:
+      return "eth";
+  }
+}
+
+/** Live state of the ppp device a pppd link owns (folded into the link row). */
+function link_net_dev(net_iface: string) {
+  return ifaceNodeStore.net_devs.find((each) => each.name === net_iface);
+}
+
+function link_tooltip(link: WanLinkConfig) {
+  const status = link_status(link.id);
+  if (!status) {
+    return `${wanLinkLabel(link)} · ${t("common.not_configured")}`;
+  }
+  const parts = [
+    `session: ${get_service_status_label(status.session, t)}`,
+    `PD: ${get_service_status_label(status.pd, t)}`,
+    `NAT: ${get_service_status_label(status.nat, t)}`,
+    `FW: ${get_service_status_label(status.firewall, t)}`,
+    `MSS: ${get_service_status_label(status.mss, t)}`,
+  ];
+  return `${wanLinkLabel(link)} · ${link_state_label(status.state)}\n${parts.join(" · ")}`;
+}
+
+interface LinkServiceChip {
+  key: "pd" | "nat" | "firewall" | "mss";
+  short: string;
+  status?: ServiceStatus;
+  enabled: boolean;
+}
+
+/**
+ * All four sub-service chips render on every link row (disabled ones greyed
+ * out) so every row keeps the same two-line height and cards stay uniform.
+ */
+function link_service_chips(link: WanLinkConfig): LinkServiceChip[] {
+  const status = link_status(link.id);
+  return [
+    {
+      key: "pd",
+      short: "PD",
+      enabled: link.pd?.enable ?? false,
+      status: status?.pd,
+    },
+    {
+      key: "nat",
+      short: "NAT",
+      enabled: link.nat?.enable ?? false,
+      status: status?.nat,
+    },
+    {
+      key: "firewall",
+      short: "FW",
+      enabled: link.firewall?.enable ?? false,
+      status: status?.firewall,
+    },
+    {
+      key: "mss",
+      short: "MSS",
+      enabled: link.mss?.enable ?? false,
+      status: status?.mss,
+    },
+  ];
+}
+
+function link_service_label(key: LinkServiceChip["key"]) {
+  return t(`wan_link.tab_${key}`);
+}
+
+function link_chip_style(chip: LinkServiceChip) {
+  if (!chip.enabled) {
+    return {
+      borderColor: changeColor(themeVars.value.textColor3, { alpha: 0.18 }),
+      backgroundColor: "transparent",
+      color: changeColor(themeVars.value.textColor3, { alpha: 0.55 }),
+    };
+  }
+  return serviceStatusStyle(chip.status);
+}
+
+function link_chip_tooltip(chip: LinkServiceChip) {
+  if (!chip.enabled) {
+    return `${link_service_label(chip.key)} · ${t("common.disabled")}`;
+  }
+  return `${link_service_label(chip.key)} · ${serviceStatusText(chip.status)}`;
+}
+
+function open_link_edit(link: WanLinkConfig) {
+  editing_link.value = link;
+  show_link_modal.value = true;
+}
+
+function open_link_create() {
+  editing_link.value = undefined;
+  create_link_kind.value = "ethernet";
+  show_link_modal.value = true;
+}
+
+async function refreshGraph() {
+  await Promise.all([
+    ifaceNodeStore.UPDATE_INFO(),
+    wanLinkStatusStore.UPDATE_INFO(),
+  ]);
+}
+
 function serviceStatusText(status?: ServiceStatus) {
   return get_service_status_label(status, t);
 }
 
-function serviceStatusColor(status?: ServiceStatus) {
-  return get_service_status_color(status, themeVars.value);
-}
-
 function serviceStatusStyle(status?: ServiceStatus) {
-  const color = serviceStatusColor(status);
+  const color = get_service_status_color(status, themeVars.value);
 
   return {
     borderColor: changeColor(color, { alpha: status ? 0.45 : 0.22 }),
@@ -213,33 +301,13 @@ function serviceStatusStyle(status?: ServiceStatus) {
   };
 }
 
-async function refreshGraph() {
-  await ifaceNodeStore.UPDATE_INFO();
-}
-
 function openServiceEditor(service_key: string) {
-  if (is_virtual_pppd.value) {
-    return;
-  }
-
   switch (service_key) {
-    case "ip_config":
-      iface_service_edit_show.value = true;
-      break;
     case "dhcp_v4":
       iface_dhcp_v4_service_edit_show.value = true;
       break;
-    case "nat":
-      iface_nat_edit_show.value = true;
-      break;
-    case "firewall":
-      iface_firewall_edit_show.value = true;
-      break;
     case "wifi":
       iface_wifi_edit_show.value = true;
-      break;
-    case "ipv6pd":
-      iface_ipv6pd_edit_show.value = true;
       break;
     case "lan_ipv6":
       iface_lan_ipv6_edit_show.value = true;
@@ -249,12 +317,6 @@ function openServiceEditor(service_key: string) {
       break;
     case "route_wan":
       show_route_wan_drawer.value = true;
-      break;
-    case "mss_clamp":
-      show_mss_clamp_edit.value = true;
-      break;
-    case "pppd":
-      show_pppd_create_modal.value = true;
       break;
   }
 }
@@ -267,22 +329,6 @@ const service_items = computed(() => {
     status?: ServiceStatus;
   }> = [];
 
-  if (show_switch.value.mss_clamp) {
-    items.push({
-      key: "mss_clamp",
-      label: t("topology.panel.open_mss_clamp"),
-      short_label: "MSS",
-      status: mss_clamp_status.value,
-    });
-  }
-  if (show_switch.value.ip_config) {
-    items.push({
-      key: "ip_config",
-      label: t("topology.panel.open_ip_config"),
-      short_label: "IP",
-      status: ip_config_status.value,
-    });
-  }
   if (show_switch.value.dhcp_v4) {
     items.push({
       key: "dhcp_v4",
@@ -291,36 +337,12 @@ const service_items = computed(() => {
       status: dhcp_v4_status.value,
     });
   }
-  if (show_switch.value.nat_config) {
-    items.push({
-      key: "nat",
-      label: t("topology.panel.open_nat"),
-      short_label: "NAT",
-      status: nat_status.value,
-    });
-  }
-  if (show_switch.value.firewall) {
-    items.push({
-      key: "firewall",
-      label: t("topology.panel.open_firewall"),
-      short_label: "FW",
-      status: firewall_status.value,
-    });
-  }
   if (show_switch.value.wifi) {
     items.push({
       key: "wifi",
       label: t("topology.panel.open_wifi"),
       short_label: "WF",
       status: wifi_status.value,
-    });
-  }
-  if (show_switch.value.ipv6pd) {
-    items.push({
-      key: "ipv6pd",
-      label: t("topology.panel.open_ipv6pd"),
-      short_label: "PD",
-      status: ipv6pd_status.value,
     });
   }
   if (show_switch.value.lan_ipv6) {
@@ -337,14 +359,6 @@ const service_items = computed(() => {
       label: t("topology.panel.open_route_lan"),
       short_label: "LR",
       status: route_lan_status.value,
-    });
-  }
-  if (show_switch.value.route_wan) {
-    items.push({
-      key: "route_wan",
-      label: t("topology.panel.open_route_wan"),
-      short_label: "WR",
-      status: route_wan_status.value,
     });
   }
 
@@ -383,6 +397,9 @@ const node_style = computed(() => ({
     alpha: 0.98,
   }),
   "--topology-node-handle-shadow": `0 0 0 4px ${changeColor(themeVars.value.primaryColor, { alpha: 0.12 })}`,
+  "--topology-node-link-hover": changeColor(themeVars.value.primaryColor, {
+    alpha: 0.08,
+  }),
 }));
 </script>
 
@@ -421,6 +438,20 @@ const node_style = computed(() => ({
               </n-performant-ellipsis>
             </div>
             <div class="topology-node__header-actions">
+              <n-button
+                v-if="is_wan_node"
+                quaternary
+                circle
+                size="tiny"
+                :focusable="false"
+                :data-testid="`topology-node-${node.index}-wan-link-add`"
+                :aria-label="t('wan_link.add_link')"
+                @click.stop="open_link_create"
+              >
+                <template #icon>
+                  <n-icon><Add /></n-icon>
+                </template>
+              </n-button>
               <WifiModeChange
                 v-if="show_switch.wifi || show_switch.station"
                 :iface_name="node.name"
@@ -428,56 +459,32 @@ const node_style = computed(() => ({
                 :show_switch="show_switch"
                 @refresh="refreshGraph"
               />
-              <n-popconfirm
-                v-if="can_delete_pppd"
-                @positive-click="delete_pppd_config"
-              >
-                <template #trigger>
-                  <n-button
-                    quaternary
-                    circle
-                    size="tiny"
-                    type="error"
-                    :focusable="false"
-                    data-testid="topology-node-delete-pppd"
-                    @click.stop
-                  >
-                    <template #icon>
-                      <n-icon><TrashCan /></n-icon>
-                    </template>
-                  </n-button>
-                </template>
-                {{ t("common.confirm_delete") }}
-              </n-popconfirm>
-              <n-button
-                v-if="is_virtual_pppd || is_live_pppd"
-                quaternary
-                circle
-                size="tiny"
-                :focusable="false"
-                data-testid="topology-node-edit-pppd"
-                @click.stop="show_pppd_edit_modal = true"
-              >
-                <template #icon>
-                  <n-icon><Edit /></n-icon>
-                </template>
-              </n-button>
-              <n-button
-                v-if="show_switch.pppd"
-                quaternary
-                circle
-                size="tiny"
-                :focusable="false"
-                data-testid="topology-node-open-pppd"
-                @click.stop="show_pppd_create_modal = true"
-              >
-                <template #icon>
-                  <n-icon><Link /></n-icon>
-                </template>
-              </n-button>
               <n-tag size="small" :type="status_type" round>
                 {{ status_text }}
               </n-tag>
+              <n-tooltip
+                v-if="show_switch.route_wan"
+                trigger="hover"
+                placement="bottom"
+              >
+                <template #trigger>
+                  <span
+                    class="topology-node__service-pill topology-node__service-pill--inline"
+                    role="button"
+                    tabindex="0"
+                    :data-testid="`topology-node-${node.index}-service-route_wan`"
+                    :style="serviceStatusStyle(route_wan_status)"
+                    @click.stop="openServiceEditor('route_wan')"
+                    @keydown.enter.stop.prevent="openServiceEditor('route_wan')"
+                    @keydown.space.stop.prevent="openServiceEditor('route_wan')"
+                  >
+                    WR
+                  </span>
+                </template>
+                {{
+                  `${t("topology.panel.open_route_wan")} · ${serviceStatusText(route_wan_status)}`
+                }}
+              </n-tooltip>
             </div>
           </div>
 
@@ -487,18 +494,6 @@ const node_style = computed(() => ({
             </n-tag>
             <n-tag v-for="tag in role_tags" :key="tag" size="tiny" tertiary>
               {{ tag }}
-            </n-tag>
-            <n-tag
-              v-if="(is_virtual_pppd || is_live_pppd) && node.pppd_config"
-              size="tiny"
-              :type="is_virtual_pppd ? 'warning' : 'default'"
-              round
-            >
-              {{
-                t("pppoe.attach_to", {
-                  iface_name: node.pppd_config.attach_iface_name,
-                })
-              }}
             </n-tag>
           </div>
 
@@ -524,6 +519,111 @@ const node_style = computed(() => ({
               }}</span>
             </div>
           </div>
+
+          <div
+            v-if="is_wan_node && iface_links.length > 0"
+            class="topology-node__links"
+          >
+            <div
+              v-for="link in iface_links"
+              :key="link.id"
+              class="topology-node__link-row"
+              role="button"
+              tabindex="0"
+              :data-testid="`topology-node-${node.index}-wan-link-${link.id}`"
+              @click.stop="open_link_edit(link)"
+              @keydown.enter.stop.prevent="open_link_edit(link)"
+            >
+              <div class="topology-node__link-top">
+                <n-tooltip trigger="hover" placement="top">
+                  <template #trigger>
+                    <span class="topology-node__link-main">
+                      <span
+                        class="topology-node__link-dot"
+                        :style="{
+                          backgroundColor: link_state_color(
+                            link_status(link.id)?.state,
+                          ),
+                        }"
+                      />
+                      <n-performant-ellipsis
+                        :tooltip="false"
+                        style="max-width: 96px"
+                      >
+                        {{ wanLinkLabel(link) }}
+                      </n-performant-ellipsis>
+                      <n-tag size="tiny" round :bordered="false">
+                        {{ link_kind_label(link) }}
+                      </n-tag>
+                    </span>
+                  </template>
+                  <span style="white-space: pre-line">{{
+                    link_tooltip(link)
+                  }}</span>
+                </n-tooltip>
+
+                <span
+                  v-if="wanLinkKind(link) === 'pppd'"
+                  class="topology-node__link-netdev"
+                >
+                  <span
+                    class="topology-node__link-dot topology-node__link-dot--sm"
+                    :style="{
+                      backgroundColor:
+                        link_net_dev(wanLinkNetIface(link))?.dev_status.t ===
+                        DevStateType.Up
+                          ? themeVars.successColor
+                          : themeVars.borderColor,
+                    }"
+                  />
+                  <n-performant-ellipsis
+                    :tooltip="false"
+                    style="max-width: 72px"
+                  >
+                    {{ wanLinkNetIface(link) }}
+                  </n-performant-ellipsis>
+                </span>
+
+                <span class="topology-node__link-actions">
+                  <n-button
+                    quaternary
+                    circle
+                    size="tiny"
+                    :focusable="false"
+                    :data-testid="`topology-node-${node.index}-wan-link-edit`"
+                    @click.stop="open_link_edit(link)"
+                  >
+                    <template #icon>
+                      <n-icon><Edit /></n-icon>
+                    </template>
+                  </n-button>
+                </span>
+              </div>
+
+              <div class="topology-node__link-chips">
+                <n-tooltip
+                  v-for="chip in link_service_chips(link)"
+                  :key="chip.key"
+                  trigger="hover"
+                  placement="top"
+                >
+                  <template #trigger>
+                    <span
+                      class="topology-node__link-chip"
+                      :class="{
+                        'topology-node__link-chip--off': !chip.enabled,
+                      }"
+                      :data-testid="`topology-node-${node.index}-wan-link-${link.id}-chip-${chip.key}`"
+                      :style="link_chip_style(chip)"
+                    >
+                      {{ chip.short }}
+                    </span>
+                  </template>
+                  {{ link_chip_tooltip(chip) }}
+                </n-tooltip>
+              </div>
+            </div>
+          </div>
         </div>
 
         <Handle
@@ -543,12 +643,8 @@ const node_style = computed(() => ({
           <template #trigger>
             <span
               class="topology-node__service-pill"
-              :class="{
-                'topology-node__service-pill--disabled': is_virtual_pppd,
-              }"
               role="button"
-              :tabindex="is_virtual_pppd ? -1 : 0"
-              :aria-disabled="is_virtual_pppd"
+              tabindex="0"
               :data-testid="`topology-node-${node.index}-service-${item.key}`"
               :style="serviceStatusStyle(item.status)"
               @click.stop="openServiceEditor(item.key)"
@@ -558,51 +654,23 @@ const node_style = computed(() => ({
               <span>{{ item.short_label }}</span>
             </span>
           </template>
-          {{
-            is_virtual_pppd
-              ? `${item.label} · ${t("pppoe.service_locked_hint")}`
-              : `${item.label} · ${serviceStatusText(item.status)}`
-          }}
+          {{ `${item.label} · ${serviceStatusText(item.status)}` }}
         </n-tooltip>
       </div>
     </div>
 
-    <PPPDCreateConfigModal
-      v-model:show="show_pppd_create_modal"
+    <WanLinkEditModal
+      v-model:show="show_link_modal"
       :attach_iface_name="node.name"
-      :origin_value="undefined"
-      @refresh="refreshGraph"
-    />
-    <PPPDCreateConfigModal
-      v-if="node.pppd_config !== undefined"
-      v-model:show="show_pppd_edit_modal"
-      :attach_iface_name="node.pppd_config.attach_iface_name"
-      :origin_value="node.pppd_config"
-      @refresh="refreshGraph"
-    />
-    <IpConfigModal
-      v-model:show="iface_service_edit_show"
-      :zone="node.zone_type"
-      :iface_name="node.name"
+      :attach_mac="node.mac ?? null"
+      :origin="editing_link"
+      :initial_kind="create_link_kind"
       @refresh="refreshGraph"
     />
     <DHCPv4ServiceEditModal
       v-model:show="iface_dhcp_v4_service_edit_show"
       :zone="node.zone_type"
       :iface_name="node.name"
-      @refresh="refreshGraph"
-    />
-    <NATEditModal
-      v-model:show="iface_nat_edit_show"
-      :zone="node.zone_type"
-      :iface_name="node.name"
-      @refresh="refreshGraph"
-    />
-    <IPv6PDEditModal
-      v-model:show="iface_ipv6pd_edit_show"
-      :zone="node.zone_type"
-      :iface_name="node.name"
-      :mac="node.mac ?? null"
       @refresh="refreshGraph"
     />
     <LanIPv6EditModal
@@ -612,21 +680,11 @@ const node_style = computed(() => ({
       :mac="node.mac"
       @refresh="refreshGraph"
     />
-    <FirewallServiceEditModal
-      v-model:show="iface_firewall_edit_show"
-      :zone="node.zone_type"
-      :iface_name="node.name"
-      @refresh="refreshGraph"
-    />
     <WifiServiceEditModal
       v-model:show="iface_wifi_edit_show"
       :zone="node.zone_type"
       :iface_name="node.name"
       @refresh="refreshGraph"
-    />
-    <MSSClampServiceEditModal
-      v-model:show="show_mss_clamp_edit"
-      :iface_name="node.name"
     />
     <RouteLanServiceEditModal
       v-model:show="show_route_lan_drawer"
@@ -784,6 +842,101 @@ const node_style = computed(() => ({
   text-overflow: ellipsis;
 }
 
+.topology-node__links {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 8px;
+  padding: 6px;
+  border-radius: 10px;
+  border: 1px dashed var(--topology-node-service-border);
+  background: var(--topology-node-service-bg);
+}
+
+.topology-node__link-row {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  padding: 2px 4px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background-color 0.18s ease;
+}
+
+.topology-node__link-row:hover {
+  background: var(--topology-node-link-hover);
+}
+
+.topology-node__link-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  min-width: 0;
+}
+
+.topology-node__link-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding-left: 14px;
+}
+
+.topology-node__link-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px solid;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.topology-node__link-main {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--topology-node-text);
+}
+
+.topology-node__link-dot {
+  width: 8px;
+  height: 8px;
+  flex: none;
+  border-radius: 999px;
+}
+
+.topology-node__link-dot--sm {
+  width: 6px;
+  height: 6px;
+}
+
+.topology-node__link-netdev {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  font-size: 11px;
+  color: var(--topology-node-muted);
+}
+
+.topology-node__link-actions {
+  display: inline-flex;
+  align-items: center;
+  opacity: 0;
+  transition: opacity 0.18s ease;
+}
+
+.topology-node__link-row:hover .topology-node__link-actions,
+.topology-node__link-row:focus-visible .topology-node__link-actions {
+  opacity: 1;
+}
+
 .topology-node__services {
   display: flex;
   flex-wrap: wrap;
@@ -818,11 +971,10 @@ const node_style = computed(() => ({
   opacity: 0.78;
 }
 
-.topology-node__service-pill--disabled {
-  cursor: not-allowed;
-  opacity: 0.5;
-  pointer-events: none;
-  transform: none;
+.topology-node__service-pill--inline {
+  padding: 2px 6px;
+  font-size: 10px;
+  flex: none;
 }
 
 .topology-node__handle {

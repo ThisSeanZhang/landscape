@@ -9,7 +9,6 @@ import {
   get_lan_ipv6_config,
   update_lan_ipv6_config,
 } from "@/api/service_lan_ipv6";
-import { get_all_ipv6pd_configs } from "@/api/service_ipv6pd";
 import { useWanLinkStore } from "@/stores/wan_link";
 import type {
   LanIPv6ServiceConfigV2,
@@ -96,17 +95,11 @@ function allowed_service_kinds_for_type(): ("ra" | "na" | "pd")[] {
 }
 
 async function on_modal_enter() {
-  const [pdConfigs] = await Promise.all([
-    get_all_ipv6pd_configs().catch(() => []),
-    wanLinkStore.refresh(),
-  ]);
+  await wanLinkStore.refresh();
   const lens = new Map<string, number>();
-  for (const config of pdConfigs) {
-    const link = wanLinkStore.options.find(
-      (option) => option.net_iface === config.iface_name,
-    );
-    if (link) {
-      lens.set(link.value, config.config.expected_pd_len);
+  for (const link of wanLinkStore.links) {
+    if (link.id !== undefined && link.pd?.enable) {
+      lens.set(link.id, link.pd.expected_pd_len ?? 60);
     }
   }
   expectedPdLens.value = lens;
