@@ -279,11 +279,7 @@ unsafe fn ethtool_ioctl(ifname: &str, cmd: u32, data: u32) -> Result<u32, io::Er
     let name_bytes = ifname.as_bytes();
     let max_len = libc::IFNAMSIZ - 1;
     let copy_len = name_bytes.len().min(max_len);
-    std::ptr::copy_nonoverlapping(
-        name_bytes.as_ptr(),
-        ifr.ifr_name.as_mut_ptr() as *mut u8,
-        copy_len,
-    );
+    std::ptr::copy_nonoverlapping(name_bytes.as_ptr(), ifr.ifr_name.as_mut_ptr(), copy_len);
 
     let mut eval = EthtoolValue { cmd, data };
     ifr.ifr_ifru.ifru_data = &mut eval as *mut EthtoolValue as *mut libc::c_char;
