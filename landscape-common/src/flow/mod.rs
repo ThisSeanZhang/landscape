@@ -49,6 +49,14 @@ pub enum FlowRuleError {
     #[api_error(id = "flow_rule.device_not_found", status = 404)]
     DeviceNotFound(ConfigId),
 
+    #[error("Flow interface target link '{0}' not found")]
+    #[api_error(id = "flow_rule.link_not_found", status = 404)]
+    LinkNotFound(ConfigId),
+
+    #[error("Flow interface target is missing its link reference")]
+    #[api_error(id = "flow_rule.link_required", status = 422)]
+    LinkRequired,
+
     #[error(transparent)]
     #[api_error(transparent)]
     Internal(#[from] DbError),

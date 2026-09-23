@@ -13,6 +13,7 @@ use landscape_common::net_proto::udp::dhcp::{
 
 use socket2::{Domain, Protocol, Type};
 use tokio::{net::UdpSocket, time::Instant};
+use uuid::Uuid;
 
 use crate::{
     netlink::ipv6::{del_iface_ip, set_iface_ip},
@@ -197,6 +198,7 @@ fn gen_client_id(config_mac: MacAddr) -> Vec<u8> {
 #[allow(clippy::too_many_arguments)]
 pub async fn dhcp_v6_pd_client(
     iface_name: String,
+    link_id: Uuid,
     ifindex: u32,
     // for ebpf map setting
     mac_addr: Option<MacAddr>,
@@ -334,6 +336,7 @@ pub async fn dhcp_v6_pd_client(
                 if send_outcome.prefix_expired {
                     clear_active_pd_prefix(
                         &iface_name,
+                        link_id,
                         ifindex,
                         &route_service,
                         addr_binding.as_ref(),
@@ -356,6 +359,7 @@ pub async fn dhcp_v6_pd_client(
                     Some(data) => {
                         let need_reset_time = handle_packet(
                             &iface_name,
+                            link_id,
                             ifindex,
                             &client_id,
                             &mut status,
@@ -407,6 +411,7 @@ pub async fn dhcp_v6_pd_client(
 
     clear_active_pd_prefix(
         &iface_name,
+        link_id,
         ifindex,
         &route_service,
         addr_binding.as_ref(),
@@ -428,6 +433,7 @@ pub async fn dhcp_v6_pd_client(
 
 async fn clear_active_pd_prefix(
     iface_name: &str,
+    link_id: Uuid,
     ifindex: u32,
     route_service: &IpRouteService,
     addr_binding: &dyn WanAddrBinding,
@@ -435,20 +441,21 @@ async fn clear_active_pd_prefix(
     prefix_sender: &IAPrefixEventSender,
     current_wan_addr: &mut Option<Ipv6Addr>,
 ) {
-    let removed = prefix_map.remove(iface_name);
+    let removed = prefix_map.remove(link_id);
     if let Some(status) = removed.as_ref() {
         remove_ip_route(&status.actual_prefix, iface_name);
     }
 
-    route_service.remove_ipv6_wan_route(iface_name).await;
+    route_service.remove_ipv6_link_route(link_id).await;
     addr_binding.unbind_ipv6(ifindex);
     if let Some(wan_addr) = current_wan_addr.take() {
         del_iface_ip(wan_addr, 128, iface_name);
     }
 
     if removed.is_some() {
-        let _ =
-            prefix_sender.send(IAPrefixEvent::Expired { iface_name: iface_name.to_string() }).await;
+        let _ = prefix_sender
+            .send(IAPrefixEvent::Expired { iface_name: iface_name.to_string(), link_id })
+            .await;
     }
 }
 
@@ -677,6 +684,7 @@ fn status_timeout_duration(current_status: &IpV6PdState, prev_timeout_times: u64
 #[allow(clippy::too_many_arguments)]
 async fn handle_packet(
     iface_name: &str,
+    link_id: Uuid,
     ifindex: u32,
     my_client_id: &[u8],
     current_status: &mut IpV6PdState,
@@ -842,7 +850,7 @@ async fn handle_packet(
                                 info.iface_ip = IpAddr::V6(wan_addr);
                             }
                             info.gateway_ip = IpAddr::V6(ipv6addr);
-                            route_service.insert_ipv6_wan_route(iface_name, info).await;
+                            route_service.insert_ipv6_link_route(link_id, info).await;
                             replace_ip_route(
                                 &ia_prefix,
                                 ipv6addr,
@@ -851,9 +859,12 @@ async fn handle_packet(
                                 mac_addr,
                                 addr_binding,
                             );
-                            prefix_map.store(iface_name, ia_prefix, expected_pd_len);
+                            prefix_map.store(link_id, ia_prefix, expected_pd_len);
                             let _ = prefix_sender
-                                .send(IAPrefixEvent::Updated { iface_name: iface_name.to_string() })
+                                .send(IAPrefixEvent::Updated {
+                                    iface_name: iface_name.to_string(),
+                                    link_id,
+                                })
                                 .await;
                             tracing::debug!("current status move to: {:#?}", current_status);
                             return true;

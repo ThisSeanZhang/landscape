@@ -95,8 +95,9 @@ async fn get_flow_rule(
 )]
 async fn add_flow_rule(
     State(state): State<LandscapeApp>,
-    JsonBody(flow_rule): JsonBody<FlowConfig>,
+    JsonBody(mut flow_rule): JsonBody<FlowConfig>,
 ) -> LandscapeApiResult<FlowConfig> {
+    state.flow_rule_service.materialize_target_mirrors(&mut flow_rule).await?;
     flow_rule.validate()?;
 
     if has_only_zero_weight_targets(&flow_rule) {

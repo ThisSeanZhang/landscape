@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { get_docker_container_summarys } from "@/api/docker";
-import { get_wan_candidates } from "@/api/iface";
+import { useWanLinkStore } from "@/stores/wan_link";
 import type {
   FlowTarget,
   WeightedFlowTarget,
@@ -14,7 +14,7 @@ const target_rules = defineModel<WeightedFlowTarget[]>("target_rules", {
   required: true,
 });
 
-const iface_wans = ref<string[]>([]);
+const wanLinkStore = useWanLinkStore();
 const docker_containers = ref<any[]>([]);
 
 onMounted(async () => {
@@ -22,12 +22,15 @@ onMounted(async () => {
 });
 
 async function refresh_wan_ifaces() {
-  iface_wans.value = await get_wan_candidates();
+  await wanLinkStore.ensureLoaded();
   docker_containers.value = await get_docker_container_summarys();
 }
 
 const iface_wan_options = computed(() =>
-  iface_wans.value.map((name) => ({ label: name, value: name })),
+  wanLinkStore.options.map((link) => ({
+    label: link.label,
+    value: link.value,
+  })),
 );
 
 const docker_options = computed(() =>
@@ -50,7 +53,7 @@ enum FlowTargetEnum {
 
 function onCreate(): WeightedFlowTarget {
   return {
-    target: { t: "interface", name: "" },
+    target: { t: "interface", name: "", link_id: undefined },
     weight: 1,
   };
 }
@@ -75,6 +78,7 @@ function handleUpdateValue(value: FlowTarget["t"], index: number) {
       target: {
         t: FlowTargetEnum.Interface,
         name: "",
+        link_id: undefined,
       },
       weight,
     };
@@ -88,11 +92,17 @@ function handleUpdateValue(value: FlowTarget["t"], index: number) {
     };
   }
 }
+
+function handleLinkChange(linkId: string, index: number) {
+  const link = wanLinkStore.options.find((item) => item.value === linkId);
+  const target = target_rules.value[index]?.target;
+  if (target && target.t === "interface") {
+    target.name = link?.net_iface ?? "";
+  }
+}
 </script>
 
 <template>
-  <!-- {{ docker_options }} -->
-  <!-- {{ docker_containers }} -->
   <n-dynamic-input
     :min="0"
     :max="16"
@@ -113,7 +123,8 @@ function handleUpdateValue(value: FlowTarget["t"], index: number) {
 
         <n-select
           v-if="value.target.t == 'interface'"
-          v-model:value="value.target.name"
+          v-model:value="value.target.link_id"
+          @update:value="handleLinkChange($event, index)"
           :style="{ width: '56%' }"
           :options="iface_wan_options"
           :placeholder="t('flow.target_rule.iface_placeholder')"

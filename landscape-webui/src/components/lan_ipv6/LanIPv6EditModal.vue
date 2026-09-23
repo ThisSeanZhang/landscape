@@ -10,6 +10,7 @@ import {
   update_lan_ipv6_config,
 } from "@/api/service_lan_ipv6";
 import { get_all_ipv6pd_configs } from "@/api/service_ipv6pd";
+import { useWanLinkStore } from "@/stores/wan_link";
 import type {
   LanIPv6ServiceConfigV2,
   LanPrefixGroupConfig,
@@ -21,6 +22,7 @@ import PrefixGroupEditorModal from "@/components/lan_ipv6/PrefixGroupEditorModal
 
 const { t } = useI18n({ useScope: "global" });
 let ipv6PDStore = useIPv6PDStore();
+const wanLinkStore = useWanLinkStore();
 const message = useMessage();
 
 const show_model = defineModel<boolean>("show", { required: true });
@@ -94,13 +96,20 @@ function allowed_service_kinds_for_type(): ("ra" | "na" | "pd")[] {
 }
 
 async function on_modal_enter() {
-  const pdConfigs = await get_all_ipv6pd_configs().catch(() => []);
-  expectedPdLens.value = new Map(
-    pdConfigs.map((config) => [
-      config.iface_name,
-      config.config.expected_pd_len,
-    ]),
-  );
+  const [pdConfigs] = await Promise.all([
+    get_all_ipv6pd_configs().catch(() => []),
+    wanLinkStore.refresh(),
+  ]);
+  const lens = new Map<string, number>();
+  for (const config of pdConfigs) {
+    const link = wanLinkStore.options.find(
+      (option) => option.net_iface === config.iface_name,
+    );
+    if (link) {
+      lens.set(link.value, config.config.expected_pd_len);
+    }
+  }
+  expectedPdLens.value = lens;
   try {
     let config = await get_lan_ipv6_config(iface_info.iface_name);
     if (config) {

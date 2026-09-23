@@ -98,7 +98,7 @@ pub struct PdPrefixContext {
     pub actual_prefix: Option<LDIAPrefix>,
 }
 
-pub type PdPrefixContextMap = HashMap<String, PdPrefixContext>;
+pub type PdPrefixContextMap = HashMap<Uuid, PdPrefixContext>;
 
 fn normalize_ipv6_prefix(addr: Ipv6Addr, prefix_len: u8) -> Ipv6Addr {
     let value = u128::from_be_bytes(addr.octets());
@@ -116,7 +116,7 @@ fn normalize_ipv6_prefix(addr: Ipv6Addr, prefix_len: u8) -> Ipv6Addr {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ExpandedParentKey {
     Resolved(Ipv6Addr),
-    PdFallback(String),
+    PdFallback(Option<Uuid>),
 }
 
 impl PrefixParentSource {
@@ -135,18 +135,18 @@ impl PrefixParentSource {
             PrefixParentSource::Static { base_prefix, parent_prefix_len } => {
                 ExpandedParentKey::Resolved(normalize_ipv6_prefix(*base_prefix, *parent_prefix_len))
             }
-            PrefixParentSource::Pd { depend_iface, expected_pd_len_snapshot, .. } => {
-                if let Some(prefix) = pd_contexts
-                    .and_then(|contexts| contexts.get(depend_iface))
-                    .and_then(|context| context.actual_prefix.as_ref())
-                {
+            PrefixParentSource::Pd { link_id, expected_pd_len_snapshot, .. } => {
+                let prefix = link_id
+                    .and_then(|id| pd_contexts.and_then(|contexts| contexts.get(&id)))
+                    .and_then(|context| context.actual_prefix.as_ref());
+                if let Some(prefix) = prefix {
                     let actual_network = normalize_ipv6_prefix(prefix.prefix_ip, prefix.prefix_len);
                     ExpandedParentKey::Resolved(normalize_ipv6_prefix(
                         actual_network,
                         *expected_pd_len_snapshot,
                     ))
                 } else {
-                    ExpandedParentKey::PdFallback(depend_iface.clone())
+                    ExpandedParentKey::PdFallback(*link_id)
                 }
             }
         }
@@ -253,12 +253,12 @@ impl LanPrefixGroupConfig {
                     });
                 }
             }
-            PrefixParentSource::Pd { depend_iface, expected_pd_len_snapshot, .. } => {
-                if depend_iface.trim().is_empty() {
+            PrefixParentSource::Pd { link_id, expected_pd_len_snapshot, .. } => {
+                let Some(link_id) = link_id else {
                     return Err(ServiceConfigError::InvalidConfig {
-                        reason: "PD parent interface must not be empty".to_string(),
+                        reason: "PD parent must reference a WAN link (missing link_id)".to_string(),
                     });
-                }
+                };
                 if *expected_pd_len_snapshot == 0 || *expected_pd_len_snapshot > 127 {
                     return Err(ServiceConfigError::InvalidConfig {
                         reason: format!(
@@ -270,12 +270,9 @@ impl LanPrefixGroupConfig {
                 // A WAN-expectation/snapshot mismatch is an availability state, not an
                 // invalid LAN configuration. Keep the configuration saveable so either
                 // side can be changed later; runtime subnet activation applies that gate.
-                if pd_contexts.is_some_and(|contexts| !contexts.contains_key(depend_iface)) {
+                if pd_contexts.is_some_and(|contexts| !contexts.contains_key(link_id)) {
                     return Err(ServiceConfigError::InvalidConfig {
-                        reason: format!(
-                            "PD parent interface '{}' has no IPv6 PD configuration",
-                            depend_iface
-                        ),
+                        reason: format!("PD parent link '{link_id}' has no IPv6 PD configuration"),
                     });
                 }
             }
@@ -841,6 +838,17 @@ mod tests {
     use super::super::dhcpv6_config::DHCPv6ServerConfig;
     use super::*;
     use crate::error::LdApiErrorInfo;
+    use uuid::Uuid;
+
+    /// Deterministic per-iface link uuid so tests can key prefix maps and
+    /// PD-parent references to the same identity.
+    fn test_link(iface_name: &str) -> Uuid {
+        let mut bytes = [0u8; 16];
+        let raw = iface_name.as_bytes();
+        let len = raw.len().min(16);
+        bytes[..len].copy_from_slice(&raw[..len]);
+        Uuid::from_bytes(bytes)
+    }
 
     fn pd_context(
         iface_name: &str,
@@ -848,7 +856,7 @@ mod tests {
         actual_prefix_len: Option<u8>,
     ) -> PdPrefixContextMap {
         HashMap::from([(
-            iface_name.to_string(),
+            test_link(iface_name),
             PdPrefixContext {
                 expected_pd_len,
                 actual_prefix: actual_prefix_len.map(|prefix_len| LDIAPrefix {
@@ -1037,7 +1045,7 @@ mod tests {
                     parent: PrefixParentSource::Pd {
                         depend_iface: "eth0".to_string(),
                         expected_pd_len_snapshot: 60,
-                        link_id: None,
+                        link_id: Some(test_link("eth0")),
                     },
                     ra: Some(RaPrefixConfig {
                         pool_index: 1,
@@ -1081,7 +1089,7 @@ mod tests {
             parent: PrefixParentSource::Pd {
                 depend_iface: "eth0".to_string(),
                 expected_pd_len_snapshot: 60,
-                link_id: None,
+                link_id: Some(test_link("eth0")),
             },
             ra: Some(RaPrefixConfig {
                 pool_index: 1,
@@ -1102,7 +1110,7 @@ mod tests {
             parent: PrefixParentSource::Pd {
                 depend_iface: "eth0".to_string(),
                 expected_pd_len_snapshot: 60,
-                link_id: None,
+                link_id: Some(test_link("eth0")),
             },
             ra: Some(RaPrefixConfig {
                 pool_index: 1,
@@ -1123,7 +1131,7 @@ mod tests {
             parent: PrefixParentSource::Pd {
                 depend_iface: "eth0".to_string(),
                 expected_pd_len_snapshot: 60,
-                link_id: None,
+                link_id: Some(test_link("eth0")),
             },
             ra: None,
             na: Some(NaPrefixConfig { pool_index: 15 }),
@@ -1140,7 +1148,7 @@ mod tests {
             parent: PrefixParentSource::Pd {
                 depend_iface: "eth0".to_string(),
                 expected_pd_len_snapshot: 60,
-                link_id: None,
+                link_id: Some(test_link("eth0")),
             },
             ra: None,
             na: Some(NaPrefixConfig { pool_index: 16 }),
@@ -1157,7 +1165,7 @@ mod tests {
             parent: PrefixParentSource::Pd {
                 depend_iface: "eth0".to_string(),
                 expected_pd_len_snapshot: 60,
-                link_id: None,
+                link_id: Some(test_link("eth0")),
             },
             ra: None,
             na: Some(NaPrefixConfig { pool_index: 38 }),
@@ -1176,7 +1184,7 @@ mod tests {
                 parent: PrefixParentSource::Pd {
                     depend_iface: "eth0".to_string(),
                     expected_pd_len_snapshot: 60,
-                    link_id: None,
+                    link_id: Some(test_link("eth0")),
                 },
                 ra: Some(RaPrefixConfig {
                     pool_index: 1,
@@ -1191,7 +1199,7 @@ mod tests {
                 parent: PrefixParentSource::Pd {
                     depend_iface: "eth0".to_string(),
                     expected_pd_len_snapshot: 56,
-                    link_id: None,
+                    link_id: Some(test_link("eth0")),
                 },
                 ra: None,
                 na: None,
@@ -1220,7 +1228,7 @@ mod tests {
                     parent: PrefixParentSource::Pd {
                         depend_iface: "wan0".to_string(),
                         expected_pd_len_snapshot: 60,
-                        link_id: None,
+                        link_id: Some(test_link("wan0")),
                     },
                     ra: Some(RaPrefixConfig {
                         pool_index: 0,
@@ -1248,7 +1256,7 @@ mod tests {
                     parent: PrefixParentSource::Pd {
                         depend_iface: "wan1".to_string(),
                         expected_pd_len_snapshot: 56,
-                        link_id: None,
+                        link_id: Some(test_link("wan1")),
                     },
                     ra: None,
                     na: None,
@@ -1278,14 +1286,14 @@ mod tests {
         };
         let contexts = HashMap::from([
             (
-                "wan0".to_string(),
+                test_link("wan0"),
                 PdPrefixContext {
                     expected_pd_len: 60,
                     actual_prefix: Some(prefix.clone()),
                 },
             ),
             (
-                "wan1".to_string(),
+                test_link("wan1"),
                 PdPrefixContext { expected_pd_len: 56, actual_prefix: Some(prefix) },
             ),
         ]);
@@ -1442,7 +1450,7 @@ mod tests {
                     parent: PrefixParentSource::Pd {
                         depend_iface: depend_iface.to_string(),
                         expected_pd_len_snapshot: snapshot_len,
-                        link_id: None,
+                        link_id: Some(test_link(depend_iface)),
                     },
                     ra: None,
                     na: None,
@@ -1466,7 +1474,7 @@ mod tests {
 
     fn make_pd_context(iface_name: &str, expected_len: u8, actual_len: u8) -> PdPrefixContextMap {
         HashMap::from([(
-            iface_name.to_string(),
+            test_link(iface_name),
             PdPrefixContext {
                 expected_pd_len: expected_len,
                 actual_prefix: Some(LDIAPrefix {

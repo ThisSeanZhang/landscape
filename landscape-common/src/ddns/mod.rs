@@ -256,15 +256,14 @@ impl DdnsJob {
 
         for source in &self.sources {
             match source {
-                DdnsSource::LocalWan { iface_name, .. } => {
-                    if iface_name.trim().is_empty() {
-                        return Err("DDNS source iface_name must not be empty".to_string());
+                DdnsSource::LocalWan { link_id, .. } => {
+                    if link_id.is_none() {
+                        return Err("DDNS source link_id is required".to_string());
                     }
                 }
-                DdnsSource::EnrolledDevice { wan_pd_id, .. } => {
-                    let iface = wan_pd_id.as_ref().ok_or("DDNS source wan_pd_id is required")?;
-                    if iface.trim().is_empty() {
-                        return Err("DDNS source wan_pd_id must not be empty".to_string());
+                DdnsSource::EnrolledDevice { wan_pd_link_id, .. } => {
+                    if wan_pd_link_id.is_none() {
+                        return Err("DDNS source wan_pd_link_id is required".to_string());
                     }
                 }
             }
@@ -273,11 +272,11 @@ impl DdnsJob {
         let mut seen_sources = HashSet::new();
         for source in &self.sources {
             let source_key = match source {
-                DdnsSource::LocalWan { iface_name, family, .. } => {
-                    format!("local_wan:{}:{family:?}", iface_name.trim())
+                DdnsSource::LocalWan { link_id, family, .. } => {
+                    format!("local_wan:{link_id:?}:{family:?}")
                 }
-                DdnsSource::EnrolledDevice { device_id, wan_pd_id, family, .. } => {
-                    format!("enrolled_device:{device_id}:{:?}:{family:?}", wan_pd_id)
+                DdnsSource::EnrolledDevice { device_id, wan_pd_link_id, family, .. } => {
+                    format!("enrolled_device:{device_id}:{wan_pd_link_id:?}:{family:?}")
                 }
             };
             if !seen_sources.insert(source_key) {
@@ -437,6 +436,7 @@ mod tests {
 
     #[test]
     fn validate_rejects_duplicate_sources() {
+        let link_id = Uuid::new_v4();
         let job = DdnsJob {
             id: Uuid::nil(),
             name: "test".to_string(),
@@ -444,12 +444,12 @@ mod tests {
             sources: vec![
                 DdnsSource::LocalWan {
                     iface_name: "wan0".to_string(),
-                    link_id: None,
+                    link_id: Some(link_id),
                     family: IpFamily::Ipv4,
                 },
                 DdnsSource::LocalWan {
                     iface_name: "wan0".to_string(),
-                    link_id: None,
+                    link_id: Some(link_id),
                     family: IpFamily::Ipv4,
                 },
             ],

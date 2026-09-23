@@ -100,13 +100,18 @@ pub(super) fn start_client(
         rt.block_on(async move {
             let provider = LandscapeDBServiceProvider::mem_test_db().await;
             let flow_repo = provider.flow_rule_store();
+            let wan_link_repo = provider.wan_link_store();
             let (_evt_tx, evt_rx) = tokio::sync::mpsc::channel::<RouteEvent>(16);
             let ebpf_rt = Arc::new(
                 EbpfRuntime::init(&super::test_bpf_map_space(&scenario), None)
                     .expect("ebpf runtime in client ns"),
             );
-            let route_service =
-                IpRouteService::new(evt_rx, flow_repo, ebpf_rt.clone().route_table());
+            let route_service = IpRouteService::new(
+                evt_rx,
+                flow_repo,
+                wan_link_repo,
+                ebpf_rt.clone().route_table(),
+            );
             run(cfg, status_for_task, route_service, ebpf_rt.pppoe_dataplane()).await;
         });
 

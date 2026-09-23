@@ -10,6 +10,12 @@ use landscape_common::{
 };
 
 use super::*;
+use uuid::Uuid;
+
+/// Fixed link uuid used by the PD-parent fixtures in this module.
+fn wan_link() -> Uuid {
+    Uuid::from_u128(1)
+}
 
 fn make_slaac_status() -> Ipv6ServerStatus {
     let na_config = DHCPv6IANAConfig {
@@ -265,7 +271,7 @@ fn dynamic_ra_group(snapshot: u8, pool_index: u32) -> LanPrefixGroupConfig {
         parent: PrefixParentSource::Pd {
             depend_iface: "wan0".into(),
             expected_pd_len_snapshot: snapshot,
-            link_id: None,
+            link_id: Some(wan_link()),
         },
         ra: Some(RaPrefixConfig {
             pool_index,
@@ -280,25 +286,25 @@ fn dynamic_ra_group(snapshot: u8, pool_index: u32) -> LanPrefixGroupConfig {
 #[test]
 fn dynamic_subnets_use_snapshot_instead_of_actual_prefix_len() {
     let prefix_map = IAPrefixMap::new();
-    prefix_map.store("wan0", pd_prefix("2001:db8:1200::", 56), 60);
+    prefix_map.store(wan_link(), pd_prefix("2001:db8:1200::", 56), 60);
 
     let subnets = compute_subnets(&[dynamic_ra_group(60, 15)], &prefix_map, 300);
     assert_eq!(subnets.len(), 1);
     assert_eq!(subnets[0].sub_prefix, "2001:db8:1200:f::".parse::<Ipv6Addr>().unwrap());
-    assert_eq!(prefix_map.load_actual("wan0").unwrap().prefix_len, 56);
+    assert_eq!(prefix_map.load_actual(wan_link()).unwrap().prefix_len, 56);
 }
 
 #[test]
 fn dynamic_subnets_require_both_wan_and_snapshot_compatibility() {
     let prefix_map = IAPrefixMap::new();
-    prefix_map.store("wan0", pd_prefix("2001:db8:1200::", 64), 60);
+    prefix_map.store(wan_link(), pd_prefix("2001:db8:1200::", 64), 60);
     assert!(compute_subnets(&[dynamic_ra_group(60, 1)], &prefix_map, 300).is_empty());
-    assert!(prefix_map.load_actual("wan0").is_some());
+    assert!(prefix_map.load_actual(wan_link()).is_some());
 
-    prefix_map.store("wan0", pd_prefix("2001:db8:1200::", 56), 64);
+    prefix_map.store(wan_link(), pd_prefix("2001:db8:1200::", 56), 64);
     assert!(compute_subnets(&[dynamic_ra_group(60, 1)], &prefix_map, 300).is_empty());
-    assert!(prefix_map.load_for_lan("wan0").is_some());
+    assert!(prefix_map.load_for_lan(wan_link()).is_some());
 
-    let _ = prefix_map.remove("wan0");
+    let _ = prefix_map.remove(wan_link());
     assert!(compute_subnets(&[dynamic_ra_group(60, 1)], &prefix_map, 300).is_empty());
 }

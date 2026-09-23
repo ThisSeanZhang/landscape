@@ -2,7 +2,7 @@ pub mod dataplane;
 
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
-use crate::{flow::FlowTarget, net::MacAddr};
+use crate::net::MacAddr;
 
 #[derive(Eq, Hash, PartialEq, Debug, Clone)]
 pub struct RouteTargetInfo {
@@ -42,14 +42,6 @@ impl RouteTargetInfo {
                 gateway_ip: IpAddr::V6(Ipv6Addr::UNSPECIFIED),
             },
         )
-    }
-
-    pub fn get_flow_target(&self) -> FlowTarget {
-        if self.is_docker {
-            FlowTarget::Netns { container_name: self.iface_name.clone() }
-        } else {
-            FlowTarget::Interface { name: self.iface_name.clone(), link_id: None }
-        }
     }
 }
 

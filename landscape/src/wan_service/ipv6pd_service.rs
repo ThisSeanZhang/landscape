@@ -3,6 +3,8 @@ use std::net::IpAddr;
 use std::net::Ipv6Addr;
 use std::sync::Arc;
 
+use uuid::Uuid;
+
 use landscape_common::event::hub::{IAPrefixEventSender, IfaceEventReader};
 use landscape_common::lan_service::lan_ipv6::{mark_wan_iid, PdPrefixContext, PdPrefixContextMap};
 use landscape_common::service::manager::ServiceStarterTrait;
@@ -21,6 +23,7 @@ use landscape_common::{
 };
 use landscape_database::{
     dhcp_v6_client::repository::DHCPv6ClientRepository, provider::LandscapeDBServiceProvider,
+    wan_link::repository::WanLinkRepository,
 };
 
 use crate::get_iface_by_name;
@@ -33,6 +36,7 @@ pub fn generate_wan_iid() -> u64 {
 #[derive(Clone)]
 pub struct IPV6PDService {
     route_service: IpRouteService,
+    wan_link_repo: WanLinkRepository,
     addr_binding: Arc<dyn WanAddrBinding>,
     prefix_map: IAPrefixMap,
     shared_wan_iid: Arc<u64>,
@@ -42,6 +46,7 @@ pub struct IPV6PDService {
 impl IPV6PDService {
     pub fn new(
         route_service: IpRouteService,
+        wan_link_repo: WanLinkRepository,
         addr_binding: Arc<dyn WanAddrBinding>,
         prefix_map: IAPrefixMap,
         shared_wan_iid: Arc<u64>,
@@ -49,10 +54,24 @@ impl IPV6PDService {
     ) -> Self {
         Self {
             route_service,
+            wan_link_repo,
             addr_binding,
             prefix_map,
             shared_wan_iid,
             prefix_sender,
+        }
+    }
+
+    /// TODO(wan-link-cleanup): transitional seam. The legacy per-iface PD config
+    /// only carries the net iface; resolve the owning link uuid through the
+    /// `wan_links` store until the link runtime drives PD directly.
+    async fn resolve_link_id(&self, iface_name: &str) -> Option<uuid::Uuid> {
+        match self.wan_link_repo.find_links_touching_iface(iface_name).await {
+            Ok(links) => links.first().map(|link| link.id),
+            Err(error) => {
+                tracing::warn!(iface_name, %error, "failed to resolve wan link for PD iface");
+                None
+            }
         }
     }
 }
@@ -71,6 +90,15 @@ impl ServiceStarterTrait for IPV6PDService {
             let prefix_sender = self.prefix_sender.clone();
             let expected_pd_len = config.config.expected_pd_len;
             if let Some(iface) = get_iface_by_name(&config.iface_name).await {
+                let Some(link_id) = self.resolve_link_id(&config.iface_name).await else {
+                    tracing::error!(
+                        iface_name = %config.iface_name,
+                        "IPv6PD: no link owns iface; refusing to start"
+                    );
+                    service_status
+                        .just_change_status(landscape_common::service::ServiceStatus::Failed);
+                    return service_status;
+                };
                 let route_info = RouteTargetInfo {
                     ifindex: iface.index,
                     weight: 1,
@@ -85,6 +113,7 @@ impl ServiceStarterTrait for IPV6PDService {
                 tokio::spawn(async move {
                     crate::wan_service::ipv6pd_client::v6::dhcp_v6_pd_client(
                         config.iface_name,
+                        link_id,
                         iface.index,
                         iface.mac,
                         config.config.mac,
@@ -115,6 +144,7 @@ pub struct DHCPv6ClientManagerService {
     store: DHCPv6ClientRepository,
     service: ServiceManager<IPV6PDService>,
     prefix_map: IAPrefixMap,
+    wan_link_repo: WanLinkRepository,
 }
 
 impl ControllerService for DHCPv6ClientManagerService {
@@ -143,8 +173,10 @@ impl DHCPv6ClientManagerService {
         shared_wan_iid: Arc<u64>,
     ) -> Self {
         let store = store_service.dhcp_v6_client_store();
+        let wan_link_repo = store_service.wan_link_store();
         let server_starter = IPV6PDService::new(
             route_service,
+            wan_link_repo.clone(),
             addr_binding,
             prefix_map.clone(),
             shared_wan_iid,
@@ -174,35 +206,45 @@ impl DHCPv6ClientManagerService {
         });
 
         let store = store_service.dhcp_v6_client_store();
-        Self { service, store, prefix_map }
+        Self { service, store, prefix_map, wan_link_repo }
     }
 
-    pub fn get_ipv6_prefix_infos(&self) -> HashMap<String, Option<LDIAPrefix>> {
+    /// TODO(wan-link-cleanup): transitional seam for the legacy per-iface PD
+    /// store; resolve the owning link uuid until PD is link-driven.
+    async fn resolve_link_id(&self, iface_name: &str) -> Option<Uuid> {
+        match self.wan_link_repo.find_links_touching_iface(iface_name).await {
+            Ok(links) => links.first().map(|link| link.id),
+            Err(error) => {
+                tracing::warn!(iface_name, %error, "failed to resolve wan link for PD iface");
+                None
+            }
+        }
+    }
+
+    pub fn get_ipv6_prefix_infos(&self) -> HashMap<Uuid, Option<LDIAPrefix>> {
         self.prefix_map.get_info()
     }
 
-    pub fn get_ipv6_prefix_statuses(&self) -> HashMap<String, IPV6PDPrefixStatus> {
+    pub fn get_ipv6_prefix_statuses(&self) -> HashMap<Uuid, IPV6PDPrefixStatus> {
         self.prefix_map.get_prefix_statuses()
     }
 
     pub async fn get_pd_prefix_contexts(&self) -> PdPrefixContextMap {
-        self.store
-            .list()
-            .await
-            .unwrap_or_default()
-            .into_iter()
-            .map(|config| {
-                let iface_name = config.iface_name;
-                let actual_prefix = self.prefix_map.load_actual(&iface_name);
-                (
-                    iface_name,
-                    PdPrefixContext {
-                        expected_pd_len: config.config.expected_pd_len,
-                        actual_prefix,
-                    },
-                )
-            })
-            .collect()
+        let mut result = PdPrefixContextMap::new();
+        for config in self.store.list().await.unwrap_or_default() {
+            let Some(link_id) = self.resolve_link_id(&config.iface_name).await else {
+                continue;
+            };
+            let actual_prefix = self.prefix_map.load_actual(link_id);
+            result.insert(
+                link_id,
+                PdPrefixContext {
+                    expected_pd_len: config.config.expected_pd_len,
+                    actual_prefix,
+                },
+            );
+        }
+        result
     }
 }
 

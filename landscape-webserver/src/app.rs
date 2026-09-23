@@ -41,6 +41,7 @@ use landscape_common::{
     config::AuthRuntimeConfig, database::LandscapeStore, service::controller::ControllerService,
     wan_service::ip_config::IfaceIpModelConfig,
 };
+use landscape_database::wan_link::repository::WanLinkRepository;
 
 use crate::gateway_runtime::GatewayService;
 
@@ -61,6 +62,9 @@ pub struct LandscapeApp {
     pub dst_ip_rule_service: DstIpRuleService,
     pub geo_ip_service: GeoIpService,
     pub config_service: LandscapeConfigService,
+
+    /// WAN link store (read-only link candidate views for selectors).
+    pub(crate) wan_link_repo: WanLinkRepository,
 
     pub dhcp_v4_server_service: DHCPv4ServerManagerService,
 

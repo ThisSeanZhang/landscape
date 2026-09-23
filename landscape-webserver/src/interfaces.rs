@@ -7,6 +7,7 @@ use landscape_common::service::controller::ControllerService;
 use landscape_common::{
     config_service::iface::{IfaceCpuSoftBalance, NetworkIfaceConfig},
     dev::iface::BridgeCreate,
+    wan_service::link::WanLinkConfig,
 };
 use landscape_common::{
     config_service::iface::{IfaceZoneType, WifiMode},
@@ -26,6 +27,7 @@ pub fn get_iface_paths() -> OpenApiRouter<LandscapeApp> {
         .routes(routes!(get_ifaces_new))
         .routes(routes!(get_wan_ifaces))
         .routes(routes!(get_wan_candidates))
+        .routes(routes!(get_wan_links))
         .routes(routes!(manage_ifaces))
         .routes(routes!(create_bridge))
         .routes(routes!(delete_bridge))
@@ -102,6 +104,20 @@ async fn get_wan_candidates(State(state): State<LandscapeApp>) -> LandscapeApiRe
     }
 
     LandscapeApiResp::success(names)
+}
+
+#[utoipa::path(
+    get,
+    path = "/wan_links",
+    tag = "Interfaces",
+    operation_id = "get_wan_links",
+    responses((status = 200, body = CommonApiResp<Vec<WanLinkConfig>>))
+)]
+async fn get_wan_links(
+    State(state): State<LandscapeApp>,
+) -> LandscapeApiResult<Vec<WanLinkConfig>> {
+    let links = state.wan_link_repo.list().await.unwrap_or_default();
+    LandscapeApiResp::success(links)
 }
 
 #[utoipa::path(

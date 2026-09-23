@@ -20,7 +20,7 @@ use landscape_common::{database::error::DbError, service::controller::ConfigCont
 use landscape_database::{
     ddns::repository::DdnsJobRepository,
     dns_provider_profile::repository::DnsProviderProfileRepository,
-    provider::LandscapeDBServiceProvider,
+    provider::LandscapeDBServiceProvider, wan_link::repository::WanLinkRepository,
 };
 
 use tokio::sync::{broadcast, Mutex, RwLock};
@@ -28,7 +28,7 @@ use tokio::time::MissedTickBehavior;
 use uuid::Uuid;
 
 use crate::cert::dns_provider::{build_record_updater, validate_provider_zone_access};
-use crate::sys_service::route::{IpRouteService, WanRouteEvent};
+use crate::sys_service::route::{IpRouteService, RouteOwner, WanRouteEvent};
 
 const DDNS_SYNC_INTERVAL_SECS: u64 = 60;
 const DDNS_RETRY_INTERVAL_SECS: u64 = 5;
@@ -56,6 +56,7 @@ struct ResolveRecordIpError {
 pub struct DdnsService {
     store: DdnsJobRepository,
     profile_store: DnsProviderProfileRepository,
+    wan_link_repo: WanLinkRepository,
     route_service: IpRouteService,
     runtime: DdnsRuntimeMap,
     sync_lock: DdnsSyncLock,
@@ -72,9 +73,11 @@ impl DdnsService {
         prefix_reader: IAPrefixEventReader,
         enrolled_ipv6_cache: HashMap<Uuid, Ipv6Addr>,
     ) -> Self {
+        let wan_link_repo = store.wan_link_store();
         let service = Self {
             store: store.ddns_job_store(),
             profile_store: store.dns_provider_profile_store(),
+            wan_link_repo,
             route_service,
             runtime: Arc::new(RwLock::new(HashMap::new())),
             sync_lock: Arc::new(Mutex::new(())),
@@ -269,8 +272,8 @@ impl DdnsService {
         tokio::spawn(async move {
             loop {
                 match reader.recv().await {
-                    Ok(IAPrefixEvent::Updated { iface_name })
-                    | Ok(IAPrefixEvent::Expired { iface_name }) => {
+                    Ok(IAPrefixEvent::Updated { link_id, .. })
+                    | Ok(IAPrefixEvent::Expired { link_id, .. }) => {
                         let jobs = match svc.store.find_enabled().await {
                             Ok(jobs) => jobs,
                             Err(e) => {
@@ -280,7 +283,7 @@ impl DdnsService {
                         };
                         let matching: Vec<_> = jobs
                             .into_iter()
-                            .filter(|job| job_has_enrolled_device_ipv6_for_wan(job, &iface_name))
+                            .filter(|job| job_has_enrolled_device_ipv6_for_wan(job, link_id))
                             .collect();
                         if !matching.is_empty() {
                             svc.sync_jobs_now(matching).await;
@@ -305,7 +308,7 @@ impl DdnsService {
                     matches!(
                         s,
                         DdnsSource::EnrolledDevice {
-                            wan_pd_id: Some(_),
+                            wan_pd_link_id: Some(_),
                             family: IpFamily::Ipv6,
                             ..
                         }
@@ -319,9 +322,40 @@ impl DdnsService {
         }
     }
 
+    /// Resolve every source link uuid and refresh the downgrade name mirrors.
+    /// Rejects missing or dangling link references.
+    async fn materialize_link_mirrors(&self, config: &mut DdnsJob) -> Result<(), DdnsError> {
+        for source in &mut config.sources {
+            match source {
+                DdnsSource::LocalWan { iface_name, link_id, .. } => {
+                    let id = link_id.ok_or_else(|| {
+                        DdnsError::InvalidConfig("DDNS source link_id is required".to_string())
+                    })?;
+                    let link = self.wan_link_repo.find_by_id(id).await?.ok_or_else(|| {
+                        DdnsError::InvalidConfig(format!("DDNS source link {id} not found"))
+                    })?;
+                    *iface_name = link.net_iface_name();
+                }
+                DdnsSource::EnrolledDevice { wan_pd_id, wan_pd_link_id, .. } => {
+                    let id = wan_pd_link_id.ok_or_else(|| {
+                        DdnsError::InvalidConfig(
+                            "DDNS source wan_pd_link_id is required".to_string(),
+                        )
+                    })?;
+                    let link = self.wan_link_repo.find_by_id(id).await?.ok_or_else(|| {
+                        DdnsError::InvalidConfig(format!("DDNS source link {id} not found"))
+                    })?;
+                    *wan_pd_id = Some(link.net_iface_name());
+                }
+            }
+        }
+        Ok(())
+    }
+
     pub async fn checked_set_job(&self, mut config: DdnsJob) -> Result<DdnsJob, DdnsError> {
         config.normalize_for_save().map_err(DdnsError::InvalidConfig)?;
         config.validate().map_err(DdnsError::InvalidConfig)?;
+        self.materialize_link_mirrors(&mut config).await?;
         let profile = self
             .profile_store
             .find_by_id(config.provider_profile_id)
@@ -518,10 +552,26 @@ impl DdnsService {
         let mut last_error = None;
         for source in sources {
             match source {
-                DdnsSource::LocalWan { iface_name, family, .. } if *family == wanted_family => {
+                DdnsSource::LocalWan { iface_name, link_id, family, .. }
+                    if *family == wanted_family =>
+                {
+                    let Some(link_id) = link_id else {
+                        last_error = Some(ResolveRecordIpError {
+                            status: DdnsJobStatus::Idle,
+                            reason: DdnsRuntimeReason::NoMatchingSource,
+                            detail: "DDNS source is missing its link reference".to_string(),
+                            retryable: false,
+                            next_retry_at: None,
+                        });
+                        continue;
+                    };
                     let route = match family {
-                        IpFamily::Ipv4 => self.route_service.get_ipv4_wan_route(iface_name).await,
-                        IpFamily::Ipv6 => self.route_service.get_ipv6_wan_route(iface_name).await,
+                        IpFamily::Ipv4 => {
+                            self.route_service.get_ipv4_wan_route_by_link(*link_id).await
+                        }
+                        IpFamily::Ipv6 => {
+                            self.route_service.get_ipv6_wan_route_by_link(*link_id).await
+                        }
                     };
                     if let Some(route) = route {
                         if wanted_family == IpFamily::Ipv6 {
@@ -552,11 +602,11 @@ impl DdnsService {
                         next_retry_at: Some(ts + DDNS_RETRY_INTERVAL_SECS as f64),
                     });
                 }
-                DdnsSource::EnrolledDevice { device_id, wan_pd_id, family, .. }
+                DdnsSource::EnrolledDevice { device_id, wan_pd_link_id, family, .. }
                     if *family == wanted_family =>
                 {
-                    match (wanted_family, wan_pd_id) {
-                        (IpFamily::Ipv6, Some(wan)) => {
+                    match (wanted_family, wan_pd_link_id) {
+                        (IpFamily::Ipv6, Some(wan_link_id)) => {
                             let entry = match self.enrolled_cache.get(device_id) {
                                 Some(e) => e,
                                 None => {
@@ -575,14 +625,14 @@ impl DdnsService {
                             let raw_ips: Vec<Ipv6Addr> = entry.raw_ips.iter().copied().collect();
                             drop(entry);
 
-                            let pd = match self.prefix_map.load_actual(wan) {
+                            let pd = match self.prefix_map.load_actual(*wan_link_id) {
                                 Some(p) => p,
                                 None => {
                                     last_error = Some(ResolveRecordIpError {
                                         status: DdnsJobStatus::Idle,
                                         reason: DdnsRuntimeReason::WaitingWanPdPrefix,
                                         detail: format!(
-                                            "waiting for WAN {wan} PD prefix delegation"
+                                            "waiting for WAN link {wan_link_id} PD prefix delegation"
                                         ),
                                         retryable: true,
                                         next_retry_at: Some(ts + DDNS_RETRY_INTERVAL_SECS as f64),
@@ -801,18 +851,22 @@ fn effective_ttl_config_updated_at(job: &DdnsJob, profile: &DnsProviderProfile) 
 }
 
 fn job_matches_wan_event(job: &DdnsJob, event: &WanRouteEvent) -> bool {
-    job.sources.iter().any(|source| match source {
-        DdnsSource::LocalWan { iface_name, family, .. }
-            if iface_name == &event.owner && *family == event.family =>
-        {
-            true
-        }
-        DdnsSource::EnrolledDevice { wan_pd_id: Some(iface), family, .. }
-            if iface == &event.owner && *family == event.family =>
-        {
-            true
-        }
-        _ => false,
+    // Only link routes can back a DDNS source; netns/docker route events
+    // never match.
+    let RouteOwner::Link(event_link_id) = &event.owner else {
+        return false;
+    };
+    job.sources.iter().any(|source| {
+        let source_link_id = match source {
+            DdnsSource::LocalWan { link_id, family, .. } if *family == event.family => *link_id,
+            DdnsSource::EnrolledDevice { wan_pd_link_id, family, .. }
+                if *family == event.family =>
+            {
+                *wan_pd_link_id
+            }
+            _ => None,
+        };
+        source_link_id == Some(*event_link_id)
     })
 }
 
@@ -832,7 +886,7 @@ fn job_has_enrolled_device_ipv6_for_device(job: &DdnsJob, device_id: Uuid) -> bo
             source,
             DdnsSource::EnrolledDevice {
                 device_id: id,
-                wan_pd_id: Some(_),
+                wan_pd_link_id: Some(_),
                 family: IpFamily::Ipv6,
                 ..
             } if *id == device_id
@@ -840,15 +894,15 @@ fn job_has_enrolled_device_ipv6_for_device(job: &DdnsJob, device_id: Uuid) -> bo
     })
 }
 
-fn job_has_enrolled_device_ipv6_for_wan(job: &DdnsJob, wan_pd_id: &str) -> bool {
+fn job_has_enrolled_device_ipv6_for_wan(job: &DdnsJob, link_id: Uuid) -> bool {
     job.sources.iter().any(|source| {
         matches!(
             source,
             DdnsSource::EnrolledDevice {
-                wan_pd_id: Some(iface),
+                wan_pd_link_id: Some(id),
                 family: IpFamily::Ipv6,
                 ..
-            } if iface == wan_pd_id
+            } if *id == link_id
         )
     })
 }
@@ -1174,16 +1228,17 @@ mod tests {
 
     #[test]
     fn wan_event_only_matches_same_iface_and_family() {
+        let link_id = Uuid::new_v4();
         let job = test_job(vec![DdnsSource::LocalWan {
             iface_name: "wan0".to_string(),
-            link_id: None,
+            link_id: Some(link_id),
             family: IpFamily::Ipv4,
         }]);
 
         assert!(job_matches_wan_event(
             &job,
             &WanRouteEvent {
-                owner: "wan0".to_string(),
+                owner: RouteOwner::Link(link_id),
                 family: IpFamily::Ipv4,
                 kind: WanRouteEventKind::Upserted,
             }
@@ -1191,7 +1246,7 @@ mod tests {
         assert!(!job_matches_wan_event(
             &job,
             &WanRouteEvent {
-                owner: "wan1".to_string(),
+                owner: RouteOwner::Link(Uuid::new_v4()),
                 family: IpFamily::Ipv4,
                 kind: WanRouteEventKind::Upserted,
             }
@@ -1199,7 +1254,7 @@ mod tests {
         assert!(!job_matches_wan_event(
             &job,
             &WanRouteEvent {
-                owner: "wan0".to_string(),
+                owner: RouteOwner::Link(link_id),
                 family: IpFamily::Ipv6,
                 kind: WanRouteEventKind::Upserted,
             }
@@ -1210,7 +1265,7 @@ mod tests {
     fn fast_retry_only_applies_before_first_publish() {
         let job = test_job(vec![DdnsSource::LocalWan {
             iface_name: "wan0".to_string(),
-            link_id: None,
+            link_id: Some(Uuid::new_v4()),
             family: IpFamily::Ipv4,
         }]);
         let mut runtime = DdnsJobRuntime::from_config(&job);
@@ -1230,7 +1285,7 @@ mod tests {
     fn custom_job_ttl_overrides_profile_default() {
         let job = test_job(vec![DdnsSource::LocalWan {
             iface_name: "wan0".to_string(),
-            link_id: None,
+            link_id: Some(Uuid::new_v4()),
             family: IpFamily::Ipv4,
         }]);
 
@@ -1242,7 +1297,7 @@ mod tests {
     fn inherited_job_ttl_uses_profile_default() {
         let mut job = test_job(vec![DdnsSource::LocalWan {
             iface_name: "wan0".to_string(),
-            link_id: None,
+            link_id: Some(Uuid::new_v4()),
             family: IpFamily::Ipv4,
         }]);
         job.ttl = None;
@@ -1255,7 +1310,7 @@ mod tests {
     fn single_stack_job_summary_ignores_unconfigured_family() {
         let job = test_job(vec![DdnsSource::LocalWan {
             iface_name: "wan0".to_string(),
-            link_id: None,
+            link_id: Some(Uuid::new_v4()),
             family: IpFamily::Ipv6,
         }]);
         let mut runtime = DdnsJobRuntime::from_config(&job);
@@ -1274,17 +1329,18 @@ mod tests {
 
     #[test]
     fn wan_event_matches_enrolled_device_source() {
+        let link_id = Uuid::new_v4();
         let job = test_job(vec![DdnsSource::EnrolledDevice {
             device_id: Uuid::nil(),
             wan_pd_id: Some("wan0".to_string()),
-            wan_pd_link_id: None,
+            wan_pd_link_id: Some(link_id),
             family: IpFamily::Ipv4,
         }]);
 
         assert!(job_matches_wan_event(
             &job,
             &WanRouteEvent {
-                owner: "wan0".to_string(),
+                owner: RouteOwner::Link(link_id),
                 family: IpFamily::Ipv4,
                 kind: WanRouteEventKind::Upserted,
             }
@@ -1292,7 +1348,7 @@ mod tests {
         assert!(!job_matches_wan_event(
             &job,
             &WanRouteEvent {
-                owner: "wan0".to_string(),
+                owner: RouteOwner::Link(link_id),
                 family: IpFamily::Ipv6,
                 kind: WanRouteEventKind::Upserted,
             }
@@ -1300,7 +1356,7 @@ mod tests {
         assert!(!job_matches_wan_event(
             &job,
             &WanRouteEvent {
-                owner: "wan1".to_string(),
+                owner: RouteOwner::Link(Uuid::new_v4()),
                 family: IpFamily::Ipv4,
                 kind: WanRouteEventKind::Upserted,
             }
@@ -1319,7 +1375,7 @@ mod tests {
         assert!(!job_matches_wan_event(
             &job,
             &WanRouteEvent {
-                owner: "any".to_string(),
+                owner: RouteOwner::Link(Uuid::new_v4()),
                 family: IpFamily::Ipv4,
                 kind: WanRouteEventKind::Upserted,
             }

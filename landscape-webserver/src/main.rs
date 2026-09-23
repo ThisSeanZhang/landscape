@@ -321,6 +321,7 @@ async fn run_system(
     let route_service = IpRouteService::new(
         route_service_rx,
         db_store_provider.flow_rule_store(),
+        db_store_provider.wan_link_store(),
         ebpf_rt.clone().route_table(),
     );
     let enrolled_devices =
@@ -545,6 +546,7 @@ async fn run_system(
         dst_ip_rule_service,
         geo_ip_service,
         config_service,
+        wan_link_repo: db_store_provider.wan_link_store(),
         metric_service,
         route_service,
         dhcp_v4_server_service,

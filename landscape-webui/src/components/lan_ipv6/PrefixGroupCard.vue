@@ -48,7 +48,9 @@ const snapshotStatus = computed(() => {
   if (props.group.parent.t !== "pd") {
     return undefined;
   }
-  const expected = props.expectedPdLens.get(props.group.parent.depend_iface);
+  const expected = props.expectedPdLens.get(
+    props.group.parent.link_id ?? props.group.parent.depend_iface,
+  );
   const snapshot = props.group.parent.expected_pd_len_snapshot;
   const compatibility = lanSnapshotCompatibility(expected, snapshot);
   if (compatibility === "unavailable") {

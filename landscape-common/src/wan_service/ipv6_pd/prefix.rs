@@ -1,6 +1,7 @@
 use std::{collections::HashMap, net::Ipv6Addr, sync::Arc};
 
 use dashmap::DashMap;
+use uuid::Uuid;
 
 pub const fn prefix_len_meets_expectation(actual_prefix_len: u8, expected_pd_len: u8) -> bool {
     actual_prefix_len <= expected_pd_len
@@ -46,7 +47,7 @@ impl IPV6PDPrefixStatus {
 
 #[derive(Clone)]
 pub struct IAPrefixMap {
-    inner: Arc<DashMap<String, IPV6PDPrefixStatus>>,
+    inner: Arc<DashMap<Uuid, IPV6PDPrefixStatus>>,
 }
 
 impl Default for IAPrefixMap {
@@ -60,17 +61,17 @@ impl IAPrefixMap {
         IAPrefixMap { inner: Arc::new(DashMap::new()) }
     }
 
-    pub fn store(&self, iface_name: &str, prefix: LDIAPrefix, expected_pd_len: u8) {
-        self.inner.insert(iface_name.to_string(), IPV6PDPrefixStatus::new(expected_pd_len, prefix));
+    pub fn store(&self, link_id: Uuid, prefix: LDIAPrefix, expected_pd_len: u8) {
+        self.inner.insert(link_id, IPV6PDPrefixStatus::new(expected_pd_len, prefix));
     }
 
-    pub fn remove(&self, iface_name: &str) -> Option<IPV6PDPrefixStatus> {
-        self.inner.remove(iface_name).map(|(_, status)| status)
+    pub fn remove(&self, link_id: Uuid) -> Option<IPV6PDPrefixStatus> {
+        self.inner.remove(&link_id).map(|(_, status)| status)
     }
 
     /// Return the acquired prefix without applying LAN capacity policy.
-    pub fn load_actual(&self, iface_name: &str) -> Option<LDIAPrefix> {
-        self.inner.get(iface_name).map(|v| v.actual_prefix.clone())
+    pub fn load_actual(&self, link_id: Uuid) -> Option<LDIAPrefix> {
+        self.inner.get(&link_id).map(|v| v.actual_prefix.clone())
     }
 
     /// Return the acquired prefix only when it satisfies the WAN PD expectation.
@@ -78,8 +79,8 @@ impl IAPrefixMap {
     /// This is the WAN-side policy gate: it compares the acquired prefix length with
     /// `expected_pd_len`. LAN snapshot compatibility is a separate policy applied by
     /// the LAN IPv6 service.
-    pub fn load_for_lan(&self, iface_name: &str) -> Option<(LDIAPrefix, u8)> {
-        self.inner.get(iface_name).and_then(|status| {
+    pub fn load_for_lan(&self, link_id: Uuid) -> Option<(LDIAPrefix, u8)> {
+        self.inner.get(&link_id).and_then(|status| {
             if status.meets_expected_pd_len {
                 Some((status.actual_prefix.clone(), status.expected_pd_len))
             } else {
@@ -88,21 +89,20 @@ impl IAPrefixMap {
         })
     }
 
-    pub fn get_info(&self) -> HashMap<String, Option<LDIAPrefix>> {
-        self.inner
-            .iter()
-            .map(|e| (e.key().clone(), Some(e.value().actual_prefix.clone())))
-            .collect()
+    pub fn get_info(&self) -> HashMap<Uuid, Option<LDIAPrefix>> {
+        self.inner.iter().map(|e| (*e.key(), Some(e.value().actual_prefix.clone()))).collect()
     }
 
-    pub fn get_prefix_statuses(&self) -> HashMap<String, IPV6PDPrefixStatus> {
-        self.inner.iter().map(|e| (e.key().clone(), e.value().clone())).collect()
+    pub fn get_prefix_statuses(&self) -> HashMap<Uuid, IPV6PDPrefixStatus> {
+        self.inner.iter().map(|e| (*e.key(), e.value().clone())).collect()
     }
 }
 
 #[cfg(test)]
 mod tests {
     use std::net::Ipv6Addr;
+
+    use uuid::Uuid;
 
     use super::{
         pd_expectation_fits_snapshot, prefix_len_meets_expectation, IAPrefixMap,
@@ -144,9 +144,10 @@ mod tests {
     #[test]
     fn store_writes_actual_prefix_and_expected_len_together() {
         let map = IAPrefixMap::new();
-        map.store("wan0", prefix(56), 64);
+        let link_id = Uuid::new_v4();
+        map.store(link_id, prefix(56), 64);
 
-        let status = map.get_prefix_statuses().remove("wan0").unwrap();
+        let status = map.get_prefix_statuses().remove(&link_id).unwrap();
         assert_eq!(status.expected_pd_len, 64);
         assert!(status.meets_expected_pd_len);
         assert_eq!(status.actual_prefix.prefix_len, 56);
@@ -161,10 +162,11 @@ mod tests {
     #[test]
     fn store_writes_expected_pd_len_with_prefix() {
         let map = IAPrefixMap::new();
+        let link_id = Uuid::new_v4();
 
-        map.store("wan0", prefix(56), 58);
+        map.store(link_id, prefix(56), 58);
 
-        let status = map.get_prefix_statuses().remove("wan0").unwrap();
+        let status = map.get_prefix_statuses().remove(&link_id).unwrap();
         assert_eq!(status.expected_pd_len, 58);
         assert!(status.meets_expected_pd_len);
     }
@@ -172,13 +174,14 @@ mod tests {
     #[test]
     fn lan_access_is_gated_but_actual_access_is_not() {
         let map = IAPrefixMap::new();
-        map.store("wan0", prefix(64), 60);
+        let link_id = Uuid::new_v4();
+        map.store(link_id, prefix(64), 60);
 
-        assert_eq!(map.load_actual("wan0").unwrap().prefix_len, 64);
-        assert!(map.load_for_lan("wan0").is_none());
+        assert_eq!(map.load_actual(link_id).unwrap().prefix_len, 64);
+        assert!(map.load_for_lan(link_id).is_none());
 
-        map.store("wan0", prefix(56), 60);
-        let (actual, expected_pd_len) = map.load_for_lan("wan0").unwrap();
+        map.store(link_id, prefix(56), 60);
+        let (actual, expected_pd_len) = map.load_for_lan(link_id).unwrap();
         assert_eq!(actual.prefix_len, 56);
         assert_eq!(expected_pd_len, 60);
     }
@@ -186,13 +189,14 @@ mod tests {
     #[test]
     fn remove_returns_the_previous_status_and_clears_the_entry() {
         let map = IAPrefixMap::new();
-        map.store("wan0", prefix(56), 60);
+        let link_id = Uuid::new_v4();
+        map.store(link_id, prefix(56), 60);
 
-        let removed = map.remove("wan0").unwrap();
+        let removed = map.remove(link_id).unwrap();
 
         assert_eq!(removed.expected_pd_len, 60);
         assert_eq!(removed.actual_prefix.prefix_len, 56);
-        assert!(map.load_actual("wan0").is_none());
-        assert!(map.remove("wan0").is_none());
+        assert!(map.load_actual(link_id).is_none());
+        assert!(map.remove(link_id).is_none());
     }
 }

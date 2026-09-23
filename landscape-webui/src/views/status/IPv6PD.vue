@@ -1,9 +1,11 @@
 <script lang="ts" setup>
 import { get_all_ipv6pd_prefix_status } from "@/api/service_ipv6pd";
 import type { IPV6PDPrefixStatus } from "@/api/service_ipv6pd";
+import { useWanLinkStore } from "@/stores/wan_link";
 import { onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 const { t } = useI18n();
+const wanLinkStore = useWanLinkStore();
 
 onMounted(async () => {
   await get_info();
@@ -14,11 +16,12 @@ const infos = ref<{ label: string; value: IPV6PDPrefixStatus }[]>([]);
 async function get_info() {
   try {
     loading.value = true;
+    await wanLinkStore.ensureLoaded();
     let req_data = await get_all_ipv6pd_prefix_status();
     const result = [];
-    for (const [label, value] of req_data) {
+    for (const [linkId, value] of req_data) {
       result.push({
-        label,
+        label: wanLinkStore.labelFor(linkId),
         value,
       });
     }

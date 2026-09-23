@@ -1,14 +1,19 @@
 use std::sync::Arc;
 
 use landscape_common::{
+    database::LandscapeStore,
     event::hub::EnrolledDeviceEventReader,
     event::{dns::DnsEvent, route::RouteEvent},
-    flow::{config::FlowConfig, dataplane::FlowRuleDataplane, FlowEntryMatchMode, FlowRuleError},
+    flow::{
+        config::FlowConfig, dataplane::FlowRuleDataplane, FlowEntryMatchMode, FlowRuleError,
+        FlowTarget,
+    },
     service::controller::{ConfigController, FlowConfigController},
 };
 use landscape_database::{
     flow_rule::repository::{find_duplicate_resolved_modes, FlowConfigRepository},
     provider::LandscapeDBServiceProvider,
+    wan_link::repository::WanLinkRepository,
 };
 use tokio::sync::mpsc;
 use uuid::Uuid;
@@ -16,6 +21,7 @@ use uuid::Uuid;
 #[derive(Clone)]
 pub struct FlowRuleService {
     store: FlowConfigRepository,
+    wan_link_repo: WanLinkRepository,
     dns_events_tx: mpsc::Sender<DnsEvent>,
     route_events_tx: mpsc::Sender<RouteEvent>,
     dataplane: Arc<dyn FlowRuleDataplane>,
@@ -30,7 +36,14 @@ impl FlowRuleService {
         dataplane: Arc<dyn FlowRuleDataplane>,
     ) -> Self {
         let store = store_provider.flow_rule_store();
-        let result = Self { store, dns_events_tx, route_events_tx, dataplane };
+        let wan_link_repo = store_provider.wan_link_store();
+        let result = Self {
+            store,
+            wan_link_repo,
+            dns_events_tx,
+            route_events_tx,
+            dataplane,
+        };
         result.refresh_flow_matches().await;
 
         let this = result.clone();
@@ -80,6 +93,30 @@ impl FlowRuleService {
         modes: &[FlowEntryMatchMode],
     ) -> Result<(), FlowRuleError> {
         self.store.validate_modes_resolvable(modes).await
+    }
+
+    /// Resolve each interface target's link uuid and refresh the downgrade
+    /// `name` mirror. Rejects missing or dangling link references.
+    pub async fn materialize_target_mirrors(
+        &self,
+        config: &mut FlowConfig,
+    ) -> Result<(), FlowRuleError> {
+        for target in &mut config.flow_targets {
+            let FlowTarget::Interface { name, link_id } = &mut target.target else {
+                continue;
+            };
+            let Some(id) = *link_id else {
+                return Err(FlowRuleError::LinkRequired);
+            };
+            let link = self
+                .wan_link_repo
+                .find_by_id(id)
+                .await
+                .map_err(FlowRuleError::Internal)?
+                .ok_or(FlowRuleError::LinkNotFound(id))?;
+            *name = link.net_iface_name();
+        }
+        Ok(())
     }
 }
 

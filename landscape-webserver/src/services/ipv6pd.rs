@@ -10,6 +10,7 @@ use landscape_common::wan_service::ipv6_pd::IPV6PDServiceConfig;
 use landscape_common::wan_service::ipv6_pd::LDIAPrefix;
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
+use uuid::Uuid;
 
 use landscape_common::service::ServiceConfigError;
 
@@ -47,11 +48,11 @@ async fn get_all_ipv6pd_configs(
     path = "/ipv6pd/prefix-status",
     tag = "IPv6 PD",
     operation_id = "get_all_ipv6pd_prefix_status",
-    responses((status = 200, body = CommonApiResp<HashMap<String, IPV6PDPrefixStatus>>))
+    responses((status = 200, body = CommonApiResp<HashMap<Uuid, IPV6PDPrefixStatus>>))
 )]
 async fn get_all_prefix_status(
     State(state): State<LandscapeApp>,
-) -> LandscapeApiResult<HashMap<String, IPV6PDPrefixStatus>> {
+) -> LandscapeApiResult<HashMap<Uuid, IPV6PDPrefixStatus>> {
     LandscapeApiResp::success(state.ipv6_pd_service.get_ipv6_prefix_statuses())
 }
 
@@ -59,11 +60,11 @@ async fn get_all_prefix_status(
     get,
     path = "/ipv6pd/infos",
     tag = "IPv6 PD",
-    responses((status = 200, body = CommonApiResp<HashMap<String, Option<LDIAPrefix>>>))
+    responses((status = 200, body = CommonApiResp<HashMap<Uuid, Option<LDIAPrefix>>>))
 )]
 async fn get_current_ip_prefix_info(
     State(state): State<LandscapeApp>,
-) -> LandscapeApiResult<HashMap<String, Option<LDIAPrefix>>> {
+) -> LandscapeApiResult<HashMap<Uuid, Option<LDIAPrefix>>> {
     LandscapeApiResp::success(state.ipv6_pd_service.get_ipv6_prefix_infos())
 }
 

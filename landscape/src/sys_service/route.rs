@@ -19,14 +19,29 @@ use landscape_common::{
     },
 };
 use landscape_database::flow_rule::repository::FlowConfigRepository;
+use landscape_database::wan_link::repository::WanLinkRepository;
 use landscape_dns::server::LocalDnsAnswerProvider;
 use tokio::sync::{broadcast, mpsc, RwLock};
+use uuid::Uuid;
 
 use landscape_common::database::LandscapeStore;
 
 type ShareRwLock<T> = Arc<RwLock<T>>;
-// One owner (interface / container) maps to one active WAN route target.
-type WanRoutesByOwner = HashMap<String, RouteTargetInfo>;
+
+/// Identity of a registered WAN route target.
+///
+/// - `Link` is a managed WAN link, addressed by its permanent uuid. Flow rules
+///   and DDNS resolve through this key.
+/// - `Netns` is a docker/container network namespace, which has no managed link
+///   identity and stays addressed by its container name.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum RouteOwner {
+    Link(Uuid),
+    Netns(String),
+}
+
+// One owner (link / container) maps to one active WAN route target.
+type WanRoutesByOwner = HashMap<RouteOwner, RouteTargetInfo>;
 // One owner may publish multiple IPv4 LAN routes; same-subnet routes replace each other.
 type Ipv4LanRoutesByOwner = HashMap<String, Vec<LanRouteInfo>>;
 // Each IPv6 LAN route is keyed individually to support precise updates and removals.
@@ -35,6 +50,7 @@ type Ipv6LanRoutesByKey = HashMap<LanIPv6RouteKey, LanRouteInfo>;
 #[derive(Clone)]
 pub struct IpRouteService {
     flow_repo: FlowConfigRepository,
+    wan_link_repo: WanLinkRepository,
     dataplane: Arc<dyn RouteTableDataplane>,
     ipv4_wan_ifaces: ShareRwLock<WanRoutesByOwner>,
     ipv6_wan_ifaces: ShareRwLock<WanRoutesByOwner>,
@@ -71,7 +87,7 @@ pub enum WanRouteEventKind {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WanRouteEvent {
-    pub owner: String,
+    pub owner: RouteOwner,
     pub family: IpFamily,
     pub kind: WanRouteEventKind,
 }
@@ -103,20 +119,35 @@ fn reconcile_ipv4_lan_bucket(
 
 fn reconcile_wan_route(
     routes: &mut WanRoutesByOwner,
-    key: &str,
+    owner: &RouteOwner,
     info: RouteTargetInfo,
 ) -> WanRouteUpdate {
-    match routes.get(key) {
+    match routes.get(owner) {
         Some(old) if old == &info => WanRouteUpdate::Noop,
         _ => {
             let mut refresh_default_router = info.default_route;
-            if let Some(old_info) = routes.insert(key.to_string(), info.clone()) {
+            if let Some(old_info) = routes.insert(owner.clone(), info.clone()) {
                 refresh_default_router = refresh_default_router || old_info.default_route;
             }
             WanRouteUpdate::Changed {
                 refresh_default_router,
-                target: info.get_flow_target(),
+                target: flow_target_for(owner, &info),
             }
+        }
+    }
+}
+
+/// Build the flow-rule reference for a route target from its owner key. The
+/// owner is the source of truth: `Link` routes always resolve through the link
+/// uuid, `Netns` routes through the container name.
+fn flow_target_for(owner: &RouteOwner, info: &RouteTargetInfo) -> FlowTarget {
+    match owner {
+        RouteOwner::Link(link_id) => FlowTarget::Interface {
+            name: info.iface_name.clone(),
+            link_id: Some(*link_id),
+        },
+        RouteOwner::Netns(container_name) => {
+            FlowTarget::Netns { container_name: container_name.clone() }
         }
     }
 }
@@ -175,8 +206,15 @@ fn find_route_target<'a>(
     target: &FlowTarget,
 ) -> Option<&'a RouteTargetInfo> {
     match target {
-        FlowTarget::Interface { name, .. } => wan_infos.get(name),
-        FlowTarget::Netns { container_name } => wan_infos.get(container_name),
+        // Strict uuid resolution: an unresolved (missing) link_id never falls
+        // back to the interface name.
+        FlowTarget::Interface { link_id: Some(link_id), .. } => {
+            wan_infos.get(&RouteOwner::Link(*link_id))
+        }
+        FlowTarget::Interface { link_id: None, .. } => None,
+        FlowTarget::Netns { container_name } => {
+            wan_infos.get(&RouteOwner::Netns(container_name.clone()))
+        }
     }
 }
 
@@ -265,11 +303,13 @@ impl IpRouteService {
     pub fn new(
         route_event_sender: mpsc::Receiver<RouteEvent>,
         flow_repo: FlowConfigRepository,
+        wan_link_repo: WanLinkRepository,
         dataplane: Arc<dyn RouteTableDataplane>,
     ) -> Self {
         let (wan_route_events, _) = broadcast::channel(64);
         let service = IpRouteService {
             flow_repo,
+            wan_link_repo,
             dataplane,
             ipv4_wan_ifaces: Arc::new(RwLock::new(HashMap::new())),
             ipv6_wan_ifaces: Arc::new(RwLock::new(HashMap::new())),
@@ -330,9 +370,74 @@ impl IpRouteService {
         clone_locked_state(&self.ipv6_wan_ifaces).await
     }
 
-    fn notify_wan_route_change(&self, owner: &str, family: IpFamily, kind: WanRouteEventKind) {
-        let _ =
-            self.wan_route_events.send(WanRouteEvent { owner: owner.to_string(), family, kind });
+    fn notify_wan_route_change(
+        &self,
+        owner: RouteOwner,
+        family: IpFamily,
+        kind: WanRouteEventKind,
+    ) {
+        let _ = self.wan_route_events.send(WanRouteEvent { owner, family, kind });
+    }
+
+    /// TODO(wan-link-cleanup): transitional seam. The per-iface WAN producers
+    /// still register by net iface name; resolve that to the owning link uuid
+    /// through the `wan_links` store until the link runtime hands the uuid to
+    /// the producer directly. Resolution failure is unresolved — never a name
+    /// fallback.
+    async fn resolve_link_id(&self, iface_name: &str) -> Option<Uuid> {
+        match self.wan_link_repo.find_links_touching_iface(iface_name).await {
+            Ok(links) => links.first().map(|link| link.id),
+            Err(error) => {
+                tracing::warn!(iface_name, %error, "failed to resolve wan link for iface");
+                None
+            }
+        }
+    }
+
+    async fn insert_wan_route_owner(
+        &self,
+        family: IpFamily,
+        owner: RouteOwner,
+        info: RouteTargetInfo,
+    ) {
+        let update = match family {
+            IpFamily::Ipv4 => {
+                let mut lock = self.ipv4_wan_ifaces.write().await;
+                reconcile_wan_route(&mut lock, &owner, info)
+            }
+            IpFamily::Ipv6 => {
+                let mut lock = self.ipv6_wan_ifaces.write().await;
+                reconcile_wan_route(&mut lock, &owner, info)
+            }
+        };
+        let changed = !matches!(update, WanRouteUpdate::Noop);
+
+        match family {
+            IpFamily::Ipv4 => self.apply_ipv4_wan_route_update(update).await,
+            IpFamily::Ipv6 => self.apply_ipv6_wan_route_update(update).await,
+        }
+        if changed {
+            self.notify_wan_route_change(owner, family, WanRouteEventKind::Upserted);
+        }
+    }
+
+    async fn remove_wan_route_owner(&self, family: IpFamily, owner: &RouteOwner) {
+        let removed = match family {
+            IpFamily::Ipv4 => self.ipv4_wan_ifaces.write().await.remove(owner),
+            IpFamily::Ipv6 => self.ipv6_wan_ifaces.write().await.remove(owner),
+        };
+        let had_removed = removed.is_some();
+        match family {
+            IpFamily::Ipv4 => {
+                self.apply_removed_ipv4_wan_route(removed.map(|i| (owner.clone(), i))).await
+            }
+            IpFamily::Ipv6 => {
+                self.apply_removed_ipv6_wan_route(removed.map(|i| (owner.clone(), i))).await
+            }
+        }
+        if had_removed {
+            self.notify_wan_route_change(owner.clone(), family, WanRouteEventKind::Removed);
+        }
     }
 
     async fn apply_ipv4_wan_route_update(&self, update: WanRouteUpdate) {
@@ -353,18 +458,18 @@ impl IpRouteService {
         }
     }
 
-    async fn apply_removed_ipv4_wan_route(&self, removed: Option<RouteTargetInfo>) {
-        if let Some(info) = removed {
-            self.refresh_ipv4_target_map(info.get_flow_target()).await;
+    async fn apply_removed_ipv4_wan_route(&self, removed: Option<(RouteOwner, RouteTargetInfo)>) {
+        if let Some((owner, info)) = removed {
+            self.refresh_ipv4_target_map(flow_target_for(&owner, &info)).await;
             if info.default_route {
                 self.refresh_default_router().await;
             }
         }
     }
 
-    async fn apply_removed_ipv6_wan_route(&self, removed: Option<RouteTargetInfo>) {
-        if let Some(info) = removed {
-            self.refresh_ipv6_target_map(info.get_flow_target()).await;
+    async fn apply_removed_ipv6_wan_route(&self, removed: Option<(RouteOwner, RouteTargetInfo)>) {
+        if let Some((owner, info)) = removed {
+            self.refresh_ipv6_target_map(flow_target_for(&owner, &info)).await;
             if info.default_route {
                 self.refresh_default_router().await;
             }
@@ -450,12 +555,12 @@ impl IpRouteService {
     pub async fn remove_all_wan_docker(&self) {
         {
             let mut lock = self.ipv4_wan_ifaces.write().await;
-            lock.retain(|_, value| !value.is_docker);
+            lock.retain(|owner, _| !matches!(owner, RouteOwner::Netns(_)));
         }
 
         {
             let mut lock = self.ipv6_wan_ifaces.write().await;
-            lock.retain(|_, value| !value.is_docker);
+            lock.retain(|owner, _| !matches!(owner, RouteOwner::Netns(_)));
         }
     }
 
@@ -528,64 +633,141 @@ impl IpRouteService {
         sync_removed_lan_routes(&*self.dataplane, removed.into_iter().flatten());
     }
 
-    pub async fn insert_ipv6_wan_route(&self, key: &str, info: RouteTargetInfo) {
-        let update = {
-            let mut lock = self.ipv6_wan_ifaces.write().await;
-            reconcile_wan_route(&mut lock, key, info)
-        };
-        let changed = !matches!(update, WanRouteUpdate::Noop);
+    // ── WAN link routes (uuid-keyed) ───────────────────────────────
 
-        self.apply_ipv6_wan_route_update(update).await;
-        if changed {
-            self.notify_wan_route_change(key, IpFamily::Ipv6, WanRouteEventKind::Upserted);
+    pub async fn insert_ipv4_link_route(&self, link_id: Uuid, info: RouteTargetInfo) {
+        self.insert_wan_route_owner(IpFamily::Ipv4, RouteOwner::Link(link_id), info).await;
+    }
+
+    pub async fn insert_ipv6_link_route(&self, link_id: Uuid, info: RouteTargetInfo) {
+        self.insert_wan_route_owner(IpFamily::Ipv6, RouteOwner::Link(link_id), info).await;
+    }
+
+    pub async fn remove_ipv4_link_route(&self, link_id: Uuid) {
+        self.remove_wan_route_owner(IpFamily::Ipv4, &RouteOwner::Link(link_id)).await;
+    }
+
+    pub async fn remove_ipv6_link_route(&self, link_id: Uuid) {
+        self.remove_wan_route_owner(IpFamily::Ipv6, &RouteOwner::Link(link_id)).await;
+    }
+
+    pub async fn get_ipv4_wan_route_by_link(&self, link_id: Uuid) -> Option<RouteTargetInfo> {
+        self.ipv4_wan_ifaces.read().await.get(&RouteOwner::Link(link_id)).cloned()
+    }
+
+    pub async fn get_ipv6_wan_route_by_link(&self, link_id: Uuid) -> Option<RouteTargetInfo> {
+        self.ipv6_wan_ifaces.read().await.get(&RouteOwner::Link(link_id)).cloned()
+    }
+
+    // ── Netns / docker routes (container-name keyed) ───────────────
+
+    pub async fn insert_ipv4_netns_route(&self, container_name: &str, info: RouteTargetInfo) {
+        self.insert_wan_route_owner(
+            IpFamily::Ipv4,
+            RouteOwner::Netns(container_name.to_string()),
+            info,
+        )
+        .await;
+    }
+
+    pub async fn insert_ipv6_netns_route(&self, container_name: &str, info: RouteTargetInfo) {
+        self.insert_wan_route_owner(
+            IpFamily::Ipv6,
+            RouteOwner::Netns(container_name.to_string()),
+            info,
+        )
+        .await;
+    }
+
+    pub async fn remove_ipv4_netns_route(&self, container_name: &str) {
+        self.remove_wan_route_owner(IpFamily::Ipv4, &RouteOwner::Netns(container_name.to_string()))
+            .await;
+    }
+
+    pub async fn remove_ipv6_netns_route(&self, container_name: &str) {
+        self.remove_wan_route_owner(IpFamily::Ipv6, &RouteOwner::Netns(container_name.to_string()))
+            .await;
+    }
+
+    // ── Transitional per-iface entry points (resolve iface → link uuid) ──
+    //
+    // TODO(wan-link-cleanup): once the link runtime hands the uuid to the
+    // per-iface producers, these resolve-by-name entry points (and the
+    // `resolve_link_id` seam) go away; callers use `insert_*_link_route`.
+
+    pub async fn insert_ipv4_wan_route(&self, iface_name: &str, info: RouteTargetInfo) {
+        match self.resolve_link_id(iface_name).await {
+            Some(link_id) => self.insert_ipv4_link_route(link_id, info).await,
+            None => {
+                tracing::error!(iface_name, "insert wan route: no link owns iface; dropped")
+            }
         }
     }
 
-    pub async fn insert_ipv4_wan_route(&self, key: &str, info: RouteTargetInfo) {
-        let update = {
-            let mut lock = self.ipv4_wan_ifaces.write().await;
-            reconcile_wan_route(&mut lock, key, info)
-        };
-        let changed = !matches!(update, WanRouteUpdate::Noop);
-
-        self.apply_ipv4_wan_route_update(update).await;
-        if changed {
-            self.notify_wan_route_change(key, IpFamily::Ipv4, WanRouteEventKind::Upserted);
+    pub async fn insert_ipv6_wan_route(&self, iface_name: &str, info: RouteTargetInfo) {
+        match self.resolve_link_id(iface_name).await {
+            Some(link_id) => self.insert_ipv6_link_route(link_id, info).await,
+            None => {
+                tracing::error!(iface_name, "insert wan route: no link owns iface; dropped")
+            }
         }
     }
 
-    pub async fn remove_ipv4_wan_route(&self, key: &str) {
-        let removed = self.ipv4_wan_ifaces.write().await.remove(key);
-        let had_removed = removed.is_some();
-        self.apply_removed_ipv4_wan_route(removed).await;
-        if had_removed {
-            self.notify_wan_route_change(key, IpFamily::Ipv4, WanRouteEventKind::Removed);
+    pub async fn remove_ipv4_wan_route(&self, iface_name: &str) {
+        match self.resolve_link_id(iface_name).await {
+            Some(link_id) => self.remove_ipv4_link_route(link_id).await,
+            None => {
+                tracing::error!(iface_name, "remove wan route: no link owns iface; dropped")
+            }
         }
     }
 
-    pub async fn get_ipv4_wan_route(&self, key: &str) -> Option<RouteTargetInfo> {
-        self.ipv4_wan_ifaces.read().await.get(key).cloned()
+    pub async fn remove_ipv6_wan_route(&self, iface_name: &str) {
+        match self.resolve_link_id(iface_name).await {
+            Some(link_id) => self.remove_ipv6_link_route(link_id).await,
+            None => {
+                tracing::error!(iface_name, "remove wan route: no link owns iface; dropped")
+            }
+        }
     }
 
+    /// Legacy name-keyed view of link routes, consumed by the (name-keyed) NAT
+    /// service. Docker/netns routes are excluded.
     pub async fn get_all_ipv4_wan_routes(&self) -> HashMap<String, RouteTargetInfo> {
-        self.clone_ipv4_wan_infos().await
-    }
-
-    pub async fn remove_ipv6_wan_route(&self, key: &str) {
-        let removed = self.ipv6_wan_ifaces.write().await.remove(key);
-        let had_removed = removed.is_some();
-        self.apply_removed_ipv6_wan_route(removed).await;
-        if had_removed {
-            self.notify_wan_route_change(key, IpFamily::Ipv6, WanRouteEventKind::Removed);
-        }
-    }
-
-    pub async fn get_ipv6_wan_route(&self, key: &str) -> Option<RouteTargetInfo> {
-        self.ipv6_wan_ifaces.read().await.get(key).cloned()
+        self.ipv4_wan_ifaces
+            .read()
+            .await
+            .iter()
+            .filter_map(|(owner, info)| match owner {
+                RouteOwner::Link(_) => Some((info.iface_name.clone(), info.clone())),
+                RouteOwner::Netns(_) => None,
+            })
+            .collect()
     }
 
     pub async fn get_all_ipv6_wan_routes(&self) -> HashMap<String, RouteTargetInfo> {
-        self.clone_ipv6_wan_infos().await
+        self.ipv6_wan_ifaces
+            .read()
+            .await
+            .iter()
+            .filter_map(|(owner, info)| match owner {
+                RouteOwner::Link(_) => Some((info.iface_name.clone(), info.clone())),
+                RouteOwner::Netns(_) => None,
+            })
+            .collect()
+    }
+
+    /// Link routes paired with their link uuid. Used by the NAT reconcile loop.
+    pub async fn get_all_ipv4_link_routes(&self) -> Vec<(Uuid, RouteTargetInfo)> {
+        self.ipv4_wan_ifaces
+            .read()
+            .await
+            .iter()
+            .filter_map(|(owner, info)| match owner {
+                RouteOwner::Link(id) => Some((*id, info.clone())),
+                RouteOwner::Netns(_) => None,
+            })
+            .collect()
     }
 
     pub fn subscribe_wan_route_events(&self) -> broadcast::Receiver<WanRouteEvent> {
@@ -787,7 +969,7 @@ fn is_valid_dns_answer_ipv6(ip: Ipv6Addr) -> bool {
 pub fn refresh_ipv4_target_bpf_map(
     dataplane: &dyn RouteTableDataplane,
     flow_configs: &Vec<FlowConfig>,
-    ipv4_wan_infos: HashMap<String, RouteTargetInfo>,
+    ipv4_wan_infos: WanRoutesByOwner,
 ) {
     let result = collect_target_refresh_result(flow_configs, &ipv4_wan_infos);
     apply_ipv4_target_refresh_result(dataplane, result);
@@ -796,7 +978,7 @@ pub fn refresh_ipv4_target_bpf_map(
 pub fn refresh_ipv6_target_bpf_map(
     dataplane: &dyn RouteTableDataplane,
     flow_configs: &Vec<FlowConfig>,
-    ipv6_wan_infos: HashMap<String, RouteTargetInfo>,
+    ipv6_wan_infos: WanRoutesByOwner,
 ) {
     let result = collect_target_refresh_result(flow_configs, &ipv6_wan_infos);
     apply_ipv6_target_refresh_result(dataplane, result);
@@ -806,8 +988,10 @@ pub async fn test_used_ip_route() -> (mpsc::Sender<RouteEvent>, IpRouteService) 
     let db_store_provider =
         landscape_database::provider::LandscapeDBServiceProvider::mem_test_db().await;
     let flow_repo = db_store_provider.flow_rule_store();
+    let wan_link_repo = db_store_provider.wan_link_store();
     let (route_tx, route_rx) = mpsc::channel(1);
-    let ip_route = IpRouteService::new(route_rx, flow_repo, Arc::new(NoopRouteTableDataplane));
+    let ip_route =
+        IpRouteService::new(route_rx, flow_repo, wan_link_repo, Arc::new(NoopRouteTableDataplane));
     (route_tx, ip_route)
 }
 
@@ -876,26 +1060,27 @@ mod tests {
         run_async_test(async {
             let (_tx, service) = test_used_ip_route().await;
             let mut events = service.subscribe_wan_route_events();
+            let link_id = Uuid::new_v4();
             let route = ipv4_wan_route("wan0", Ipv4Addr::new(198, 51, 100, 10));
 
-            service.insert_ipv4_wan_route("wan0", route.clone()).await;
+            service.insert_ipv4_link_route(link_id, route.clone()).await;
             assert_eq!(
                 events.recv().await.unwrap(),
                 WanRouteEvent {
-                    owner: "wan0".to_string(),
+                    owner: RouteOwner::Link(link_id),
                     family: IpFamily::Ipv4,
                     kind: WanRouteEventKind::Upserted,
                 }
             );
 
-            service.insert_ipv4_wan_route("wan0", route).await;
+            service.insert_ipv4_link_route(link_id, route).await;
             assert!(tokio::time::timeout(Duration::from_millis(50), events.recv()).await.is_err());
 
-            service.remove_ipv4_wan_route("wan0").await;
+            service.remove_ipv4_link_route(link_id).await;
             assert_eq!(
                 events.recv().await.unwrap(),
                 WanRouteEvent {
-                    owner: "wan0".to_string(),
+                    owner: RouteOwner::Link(link_id),
                     family: IpFamily::Ipv4,
                     kind: WanRouteEventKind::Removed,
                 }
@@ -1335,9 +1520,9 @@ mod tests {
         }
     }
 
-    fn iface_target(name: &str, weight: u32) -> WeightedFlowTarget {
+    fn iface_target(link_id: Uuid, name: &str, weight: u32) -> WeightedFlowTarget {
         WeightedFlowTarget::new(
-            FlowTarget::Interface { name: name.to_string(), link_id: None },
+            FlowTarget::Interface { name: name.to_string(), link_id: Some(link_id) },
             weight,
         )
     }
@@ -1351,13 +1536,19 @@ mod tests {
 
     #[test]
     fn collect_refresh_enabled_flow_with_matching_targets() {
+        let id0 = Uuid::new_v4();
+        let id1 = Uuid::new_v4();
         let mut wan_infos = WanRoutesByOwner::new();
         wan_infos
-            .insert("wan0".to_string(), ipv4_wan_route("wan0", Ipv4Addr::new(198, 51, 100, 1)));
-        wan_infos.insert("wan1".to_string(), ipv4_wan_route("wan1", Ipv4Addr::new(203, 0, 113, 1)));
+            .insert(RouteOwner::Link(id0), ipv4_wan_route("wan0", Ipv4Addr::new(198, 51, 100, 1)));
+        wan_infos
+            .insert(RouteOwner::Link(id1), ipv4_wan_route("wan1", Ipv4Addr::new(203, 0, 113, 1)));
 
-        let configs =
-            vec![flow_config(5, true, vec![iface_target("wan0", 3), iface_target("wan1", 1)])];
+        let configs = vec![flow_config(
+            5,
+            true,
+            vec![iface_target(id0, "wan0", 3), iface_target(id1, "wan1", 1)],
+        )];
 
         let result = collect_target_refresh_result(&configs, &wan_infos);
 
@@ -1371,11 +1562,12 @@ mod tests {
 
     #[test]
     fn collect_refresh_disabled_flow_yields_empty() {
+        let id0 = Uuid::new_v4();
         let mut wan_infos = WanRoutesByOwner::new();
         wan_infos
-            .insert("wan0".to_string(), ipv4_wan_route("wan0", Ipv4Addr::new(198, 51, 100, 1)));
+            .insert(RouteOwner::Link(id0), ipv4_wan_route("wan0", Ipv4Addr::new(198, 51, 100, 1)));
 
-        let configs = vec![flow_config(5, false, vec![iface_target("wan0", 1)])];
+        let configs = vec![flow_config(5, false, vec![iface_target(id0, "wan0", 1)])];
 
         let result = collect_target_refresh_result(&configs, &wan_infos);
 
@@ -1387,7 +1579,8 @@ mod tests {
     fn collect_refresh_enabled_flow_with_unresolved_targets_yields_empty() {
         let wan_infos = WanRoutesByOwner::new(); // no routes registered
 
-        let configs = vec![flow_config(5, true, vec![iface_target("missing_wan", 2)])];
+        let configs =
+            vec![flow_config(5, true, vec![iface_target(Uuid::new_v4(), "missing_wan", 2)])];
 
         let result = collect_target_refresh_result(&configs, &wan_infos);
 
@@ -1397,14 +1590,15 @@ mod tests {
 
     #[test]
     fn collect_refresh_partial_match_keeps_only_resolved() {
+        let id0 = Uuid::new_v4();
         let mut wan_infos = WanRoutesByOwner::new();
         wan_infos
-            .insert("wan0".to_string(), ipv4_wan_route("wan0", Ipv4Addr::new(198, 51, 100, 1)));
+            .insert(RouteOwner::Link(id0), ipv4_wan_route("wan0", Ipv4Addr::new(198, 51, 100, 1)));
 
         let configs = vec![flow_config(
             5,
             true,
-            vec![iface_target("wan0", 3), iface_target("missing_wan", 1)],
+            vec![iface_target(id0, "wan0", 3), iface_target(Uuid::new_v4(), "missing_wan", 1)],
         )];
 
         let result = collect_target_refresh_result(&configs, &wan_infos);
@@ -1418,7 +1612,10 @@ mod tests {
     #[test]
     fn collect_refresh_netns_target_resolves_by_container_name() {
         let mut wan_infos = WanRoutesByOwner::new();
-        wan_infos.insert("ns0".to_string(), ipv4_wan_route("ns0", Ipv4Addr::new(10, 0, 0, 1)));
+        wan_infos.insert(
+            RouteOwner::Netns("ns0".to_string()),
+            ipv4_wan_route("ns0", Ipv4Addr::new(10, 0, 0, 1)),
+        );
 
         let configs = vec![flow_config(3, true, vec![netns_target("ns0", 5)])];
 
@@ -1432,14 +1629,15 @@ mod tests {
 
     #[test]
     fn collect_refresh_multiple_flows_independent() {
+        let id0 = Uuid::new_v4();
         let mut wan_infos = WanRoutesByOwner::new();
         wan_infos
-            .insert("wan0".to_string(), ipv4_wan_route("wan0", Ipv4Addr::new(198, 51, 100, 1)));
+            .insert(RouteOwner::Link(id0), ipv4_wan_route("wan0", Ipv4Addr::new(198, 51, 100, 1)));
 
         let configs = vec![
-            flow_config(1, true, vec![iface_target("wan0", 2)]),
-            flow_config(2, false, vec![iface_target("wan0", 1)]),
-            flow_config(3, true, vec![iface_target("missing", 1)]),
+            flow_config(1, true, vec![iface_target(id0, "wan0", 2)]),
+            flow_config(2, false, vec![iface_target(id0, "wan0", 1)]),
+            flow_config(3, true, vec![iface_target(Uuid::new_v4(), "missing", 1)]),
         ];
 
         let result = collect_target_refresh_result(&configs, &wan_infos);

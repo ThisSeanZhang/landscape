@@ -578,10 +578,11 @@ function plannerParentFromGroup(
     };
   }
 
+  const dependIface = group.parent.link_id ?? group.parent.depend_iface;
   return {
     t: "pd",
-    key: `pd:${group.parent.depend_iface}/${group.parent.expected_pd_len_snapshot}`,
-    dependIface: group.parent.depend_iface,
+    key: `pd:${dependIface}/${group.parent.expected_pd_len_snapshot}`,
+    dependIface,
     snapshotPrefixLen: group.parent.expected_pd_len_snapshot,
   };
 }

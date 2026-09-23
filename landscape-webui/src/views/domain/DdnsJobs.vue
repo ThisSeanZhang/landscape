@@ -1,5 +1,5 @@
 <script lang="ts" setup>
-import { get_wan_candidates } from "@/api/iface";
+import { useWanLinkStore, type WanLinkOption } from "@/stores/wan_link";
 import { get_current_ip_prefix_info } from "@/api/service_ipv6pd";
 import {
   delete_ddns_job,
@@ -39,7 +39,10 @@ const frontEndStore = useFrontEndStore();
 const items = ref<DdnsJob[]>([]);
 const runtimeMap = ref<Map<string, DdnsJobRuntime>>(new Map());
 const providerProfiles = ref<DnsProviderProfile[]>([]);
-const ifaceOptions = ref<{ label: string; value: string }[]>([]);
+const wanLinkStore = useWanLinkStore();
+const ifaceOptions = ref<WanLinkOption[]>([]);
+const netIfaceForLink = (linkId: string) => wanLinkStore.netIfaceFor(linkId);
+const linkLabel = (linkId: string) => wanLinkStore.labelFor(linkId);
 const wanPdOptions = ref<
   { label: string; value: string; disabled?: boolean }[]
 >([]);
@@ -167,13 +170,13 @@ function resetForm(item?: DdnsJob) {
     source.t === "local_wan"
       ? {
           kind: "wan" as const,
-          target_id: source.iface_name,
+          target_id: source.link_id ?? "",
           family: source.family,
         }
       : {
           kind: "lan_device" as const,
           target_id: source.device_id,
-          wan_pd_id: source.wan_pd_id ?? "",
+          wan_pd_id: source.wan_pd_link_id ?? "",
           family: "ipv6" as const,
         },
   ) ?? [
@@ -189,26 +192,22 @@ function resetForm(item?: DdnsJob) {
 async function refresh() {
   loading.value = true;
   try {
-    const [jobs, runtimeStatuses, profiles, wanCandidates, prefixInfos] =
-      await Promise.all([
-        get_ddns_jobs(),
-        get_ddns_job_status(),
-        get_dns_provider_profiles(),
-        get_wan_candidates(),
-        get_current_ip_prefix_info(),
-      ]);
+    const [jobs, runtimeStatuses, profiles, , prefixInfos] = await Promise.all([
+      get_ddns_jobs(),
+      get_ddns_job_status(),
+      get_dns_provider_profiles(),
+      wanLinkStore.refresh(),
+      get_current_ip_prefix_info(),
+    ]);
     items.value = jobs;
     runtimeMap.value = new Map(
       runtimeStatuses.map((item) => [item.job_id, item]),
     );
     providerProfiles.value = profiles;
-    ifaceOptions.value = wanCandidates.map((name: string) => ({
-      label: name,
-      value: name,
-    }));
+    ifaceOptions.value = wanLinkStore.options;
     wanPdOptions.value = Array.from(prefixInfos.entries()).map(
       ([key, value]) => ({
-        label: key,
+        label: linkLabel(key),
         value: key,
         disabled: value === null,
       }),
@@ -238,7 +237,7 @@ function sourceTags(job: DdnsJob | null) {
           { size: "small", type: "info" },
           {
             default: () =>
-              `${frontEndStore.MASK_INFO(source.iface_name)} / ${source.family.toUpperCase()}`,
+              `${source.link_id ? linkLabel(source.link_id) : frontEndStore.MASK_INFO(source.iface_name)} / ${source.family.toUpperCase()}`,
           },
         )
       : h(
@@ -246,7 +245,7 @@ function sourceTags(job: DdnsJob | null) {
           { size: "small", type: "success" },
           {
             default: () =>
-              `${deviceName(source.device_id)}${source.wan_pd_id ? ` @${source.wan_pd_id}` : ""}`,
+              `${deviceName(source.device_id)}${source.wan_pd_link_id ? ` @${linkLabel(source.wan_pd_link_id)}` : ""}`,
           },
         ),
   );
@@ -397,8 +396,8 @@ function createSourceInputItem(): SourceInputItem {
 
 function ddnsSourceKey(item: DdnsSource) {
   return item.t === "local_wan"
-    ? `${item.t}:${item.iface_name}:${item.family}`
-    : `${item.t}:${item.device_id}:${item.wan_pd_id ?? "null"}:${item.family}`;
+    ? `${item.t}:${item.link_id ?? "null"}:${item.family}`
+    : `${item.t}:${item.device_id}:${item.wan_pd_link_id ?? "null"}:${item.family}`;
 }
 
 function updateSourceKind(index: number, value: "wan" | "lan_device") {
@@ -460,14 +459,18 @@ async function save() {
         if (item.kind === "wan") {
           return {
             t: "local_wan" as const,
-            iface_name: item.target_id,
+            iface_name: netIfaceForLink(item.target_id),
+            link_id: item.target_id,
             family: item.family,
           };
         }
         return {
           t: "enrolled_device" as const,
           device_id: item.target_id,
-          wan_pd_id: item.wan_pd_id || undefined,
+          wan_pd_id: item.wan_pd_id
+            ? netIfaceForLink(item.wan_pd_id)
+            : undefined,
+          wan_pd_link_id: item.wan_pd_id || undefined,
           family: "ipv6" as const,
         };
       });

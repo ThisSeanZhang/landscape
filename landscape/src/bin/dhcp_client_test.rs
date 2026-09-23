@@ -29,6 +29,7 @@ async fn main() {
 
     let db_store_provider = LandscapeDBServiceProvider::mem_test_db().await;
     let flow_repo = db_store_provider.flow_rule_store();
+    let wan_link_repo = db_store_provider.wan_link_store();
 
     let service_status = WatchService::new();
 
@@ -47,7 +48,12 @@ async fn main() {
                     status,
                     "TEST-PC".to_string(),
                     false,
-                    IpRouteService::new(route_rx, flow_repo, rt.clone().route_table()),
+                    IpRouteService::new(
+                        route_rx,
+                        flow_repo,
+                        wan_link_repo,
+                        rt.clone().route_table(),
+                    ),
                     rt.wan_addr_binding(),
                 )
                 .await;

@@ -7,7 +7,9 @@ use landscape_common::event::hub::{
 };
 use landscape_common::lan_service::lan_ipv6::DHCPv6OfferInfo;
 use landscape_common::lan_service::lan_ipv6::IPv6NAInfo;
-use landscape_common::lan_service::lan_ipv6::{IPv6ServiceMode, LanIPv6ServiceConfigV2};
+use landscape_common::lan_service::lan_ipv6::{
+    IPv6ServiceMode, LanIPv6ServiceConfigV2, PrefixParentSource,
+};
 use landscape_common::net::MacAddr;
 use landscape_common::service::controller::ControllerService;
 use landscape_common::service::manager::ServiceManager;
@@ -18,6 +20,7 @@ use landscape_common::wan_service::ipv6_pd::IAPrefixMap;
 use landscape_database::enrolled_device::repository::EnrolledDeviceRepository;
 use landscape_database::lan_ipv6_v2::repository::LanIPv6V2ServiceRepository;
 use landscape_database::provider::LandscapeDBServiceProvider;
+use landscape_database::wan_link::repository::WanLinkRepository;
 use std::collections::HashMap;
 use std::net::Ipv6Addr;
 use std::sync::Arc;
@@ -309,6 +312,7 @@ pub struct LanIPv6ManagerService {
     /// Keeps the global DAD ringbuf consumer alive (Arc refcount only).
     #[allow(dead_code)]
     dao_event_source: Option<Arc<Ip6DaoEventSource>>,
+    wan_link_repo: WanLinkRepository,
 }
 
 impl ControllerService for LanIPv6ManagerService {
@@ -350,6 +354,7 @@ impl LanIPv6ManagerService {
     ) -> Self {
         let store = store_service.lan_ipv6_v2_service_store();
         let enrolled_device_store = store_service.enrolled_device_store();
+        let wan_link_repo = store_service.wan_link_store();
         let prefix_map_for_starter = prefix_map.clone();
 
         let mac_link_map_cache = Arc::new(MacLinkMapCache::new());
@@ -516,7 +521,38 @@ impl LanIPv6ManagerService {
             server_starter,
             mac_link_map_cache,
             dao_event_source,
+            wan_link_repo,
         }
+    }
+
+    /// Resolve every PD group's link uuid and refresh the downgrade
+    /// `depend_iface` mirror. Rejects missing or dangling link references.
+    pub async fn materialize_pd_mirrors(
+        &self,
+        config: &mut LanIPv6ServiceConfigV2,
+    ) -> Result<(), landscape_common::service::ServiceConfigError> {
+        for group in &mut config.config.prefix_groups {
+            let PrefixParentSource::Pd { depend_iface, link_id, .. } = &mut group.parent else {
+                continue;
+            };
+            let Some(id) = *link_id else {
+                return Err(landscape_common::service::ServiceConfigError::InvalidConfig {
+                    reason: "PD parent must reference a WAN link (missing link_id)".to_string(),
+                });
+            };
+            let link = self
+                .wan_link_repo
+                .find_by_id(id)
+                .await
+                .map_err(|error| landscape_common::service::ServiceConfigError::InvalidConfig {
+                    reason: format!("failed to resolve PD parent link {id}: {error}"),
+                })?
+                .ok_or_else(|| landscape_common::service::ServiceConfigError::InvalidConfig {
+                    reason: format!("PD parent link {id} not found"),
+                })?;
+            *depend_iface = link.net_iface_name();
+        }
+        Ok(())
     }
 
     pub async fn refresh_iface_service(&self, iface_name: String) {

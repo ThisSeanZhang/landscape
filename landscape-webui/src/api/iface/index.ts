@@ -3,6 +3,7 @@ import {
   getIfacesNew,
   getWanIfaces,
   getWanCandidates,
+  getWanLinks,
   manageIface,
   getCpuBalance,
   setCpuBalance,
@@ -14,6 +15,7 @@ export {
   getIfacesNew as new_ifaces,
   getWanIfaces as get_wan_ifaces,
   getWanCandidates as get_wan_candidates,
+  getWanLinks as get_wan_links,
   manageIface as manage_iface,
   getCpuBalance as get_iface_cpu_balance,
 };

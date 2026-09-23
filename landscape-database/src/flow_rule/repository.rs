@@ -117,10 +117,13 @@ impl FlowConfigRepository {
     pub async fn find_by_target(&self, t: FlowTarget) -> Result<Vec<FlowConfig>, DbError> {
         // 构造条件 SQL 和参数
         let (condition_sql, param_value) = match t {
-            FlowTarget::Interface { name, .. } => (
-                "json_extract(json_each.value, '$.target.t') = 'interface' AND json_extract(json_each.value, '$.target.name') = ?",
-                name,
+            // Strict uuid resolution: interface targets always resolve through
+            // the link uuid, never the interface name.
+            FlowTarget::Interface { link_id: Some(link_id), .. } => (
+                "json_extract(json_each.value, '$.target.t') = 'interface' AND json_extract(json_each.value, '$.target.link_id') = ?",
+                link_id.to_string(),
             ),
+            FlowTarget::Interface { link_id: None, .. } => return Ok(Vec::new()),
             FlowTarget::Netns { container_name } => (
                 "json_extract(json_each.value, '$.target.t') = 'netns' AND json_extract(json_each.value, '$.target.container_name') = ?",
                 container_name,

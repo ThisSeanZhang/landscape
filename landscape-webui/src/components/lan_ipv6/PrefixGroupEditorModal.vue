@@ -6,6 +6,7 @@ import {
   type LDIAPrefix,
 } from "@/api/service_ipv6pd";
 import { get_all_lan_ipv6_configs } from "@/api/service_lan_ipv6";
+import { useWanLinkStore } from "@/stores/wan_link";
 import PdPrefixPlanner from "@/components/lan_ipv6/PdPrefixPlanner.vue";
 import {
   alignPlannerUnitRangeToPrefix,
@@ -94,7 +95,22 @@ const otherLanConfigsV2 = ref<LanIPv6ServiceConfigV2[]>([]);
 const prefixInfos = ref<Map<string, LDIAPrefix | null>>(new Map());
 const ipv6PdIfaces = ref<Map<string, ServiceStatus>>(new Map());
 const ipv6PdConfigs = ref<IPV6PDServiceConfig[]>([]);
+const wanLinkStore = useWanLinkStore();
 const expectedPdLens = ref<Map<string, number>>(new Map());
+
+const netIfaceForLink = (linkId: string) => wanLinkStore.netIfaceFor(linkId);
+const linkLabel = (linkId: string) => wanLinkStore.labelFor(linkId);
+function toLinkId(value: string): string | undefined {
+  return wanLinkStore.options.some((option) => option.value === value)
+    ? value
+    : undefined;
+}
+function pdParentMirror(value: string): string {
+  if (toLinkId(value)) {
+    return netIfaceForLink(value);
+  }
+  return value;
+}
 const draftGroupState = ref<LanPrefixGroupConfig>();
 const staleSelectionsCleared = ref(false);
 const emptyDraftActionVisible = ref(false);
@@ -109,12 +125,13 @@ const availableServiceKinds = computed(() => {
 });
 
 const ipv6PdOptions = computed(() => {
-  return ipv6PdConfigs.value.map((config) => {
-    const status = ipv6PdIfaces.value.get(config.iface_name);
+  return wanLinkStore.options.map((link) => {
+    const status = ipv6PdIfaces.value.get(link.net_iface);
     const statusLabel = status ? ` - ${status.t}` : "";
+    const expected = expectedPdLens.value.get(link.value) ?? "";
     return {
-      value: config.iface_name,
-      label: `${config.iface_name} /${config.config.expected_pd_len}${statusLabel}`,
+      value: link.value,
+      label: `${link.label} /${expected}${statusLabel}`,
     };
   });
 });
@@ -145,6 +162,9 @@ const displayParentLabel = computed(() => {
   }
   if (group.parent.t === "static") {
     return `${group.parent.base_prefix}/${group.parent.parent_prefix_len}`;
+  }
+  if (group.parent.link_id) {
+    return linkLabel(group.parent.link_id);
   }
   return group.parent.depend_iface || props.parentLabel;
 });
@@ -212,7 +232,8 @@ function createEmptyDraftGroup(): LanPrefixGroupConfig {
     group_id: draftGroupId.value,
     parent: {
       t: "pd",
-      depend_iface: dependIface.value,
+      depend_iface: pdParentMirror(dependIface.value),
+      link_id: toLinkId(dependIface.value),
       expected_pd_len_snapshot: snapshotPrefixLen.value,
     },
     ra: null,
@@ -240,7 +261,8 @@ function syncParentIntoDraftGroup() {
   }
   group.parent = {
     t: "pd",
-    depend_iface: dependIface.value,
+    depend_iface: pdParentMirror(dependIface.value),
+    link_id: toLinkId(dependIface.value),
     expected_pd_len_snapshot: snapshotPrefixLen.value,
   };
 }
@@ -604,12 +626,20 @@ async function searchIpv6Pd() {
   const [statuses, configs] = await Promise.all([
     get_all_ipv6pd_status(),
     get_all_ipv6pd_configs(),
+    wanLinkStore.refresh(),
   ]);
   ipv6PdIfaces.value = statuses;
   ipv6PdConfigs.value = configs;
-  expectedPdLens.value = new Map(
-    configs.map((config) => [config.iface_name, config.config.expected_pd_len]),
-  );
+  const lens = new Map<string, number>();
+  for (const config of configs) {
+    const link = wanLinkStore.options.find(
+      (option) => option.net_iface === config.iface_name,
+    );
+    if (link) {
+      lens.set(link.value, config.config.expected_pd_len);
+    }
+  }
+  expectedPdLens.value = lens;
 }
 
 async function loadPlannerContext() {
@@ -644,7 +674,8 @@ function initDraftGroup() {
       staticBasePrefix.value = props.group.parent.base_prefix;
       staticPrefixLen.value = props.group.parent.parent_prefix_len;
     } else {
-      dependIface.value = props.group.parent.depend_iface;
+      dependIface.value =
+        props.group.parent.link_id ?? props.group.parent.depend_iface;
       snapshotPrefixLen.value =
         expectedPdLens.value.get(dependIface.value) ??
         props.group.parent.expected_pd_len_snapshot;
@@ -739,7 +770,11 @@ async function commit() {
       ? cloneValue(draftGroup.value)
       : undefined;
 
-  if (groupToCommit?.parent.t === "pd" && !groupToCommit.parent.depend_iface) {
+  if (
+    groupToCommit?.parent.t === "pd" &&
+    !groupToCommit.parent.link_id &&
+    !groupToCommit.parent.depend_iface
+  ) {
     window.$message.error(t("lan_ipv6.planner_save_error_no_parent_iface"));
     return;
   }

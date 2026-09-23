@@ -336,8 +336,8 @@ pub async fn accept_docker_info(
 
                 let (ipv4, ipv6) = RouteTargetInfo::docker_new(ifindex, &container_name);
 
-                ip_route_service.insert_ipv4_wan_route(&container_name, ipv4).await;
-                ip_route_service.insert_ipv6_wan_route(&container_name, ipv6).await;
+                ip_route_service.insert_ipv4_netns_route(&container_name, ipv4).await;
+                ip_route_service.insert_ipv6_netns_route(&container_name, ipv6).await;
                 ip_route_service.print_wan_ifaces().await;
             }
             Ok(Err(e)) => {
@@ -378,8 +378,8 @@ pub async fn handle_event(
                             //
                             if let Some(name) = attr.get("name") {
                                 // tracing::info!("docker stop name: {name}");
-                                ip_route_service.remove_ipv4_wan_route(name).await;
-                                ip_route_service.remove_ipv6_wan_route(name).await;
+                                ip_route_service.remove_ipv4_netns_route(name).await;
+                                ip_route_service.remove_ipv6_netns_route(name).await;
                             }
                         }
                     }

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::net::{IpAddr, Ipv4Addr};
 use std::sync::Arc;
 
@@ -19,17 +19,22 @@ use landscape_database::nat::repository::NatServiceRepository;
 use landscape_database::provider::LandscapeDBServiceProvider;
 
 use crate::get_iface_by_name;
-use crate::sys_service::route::{IpRouteService, WanRouteEventKind};
+use crate::sys_service::route::{IpRouteService, RouteOwner, WanRouteEventKind};
 
-fn wan_ipv4_changed(last_ips: &HashMap<String, Ipv4Addr>, owner: &str, ip: Ipv4Addr) -> bool {
+fn wan_ipv4_changed(
+    last_ips: &HashMap<RouteOwner, Ipv4Addr>,
+    owner: &RouteOwner,
+    ip: Ipv4Addr,
+) -> bool {
     last_ips.get(owner) != Some(&ip)
 }
 
 async fn restart_nat_for_changed_wan_ipv4(
-    last_ips: &mut HashMap<String, Ipv4Addr>,
+    last_ips: &mut HashMap<RouteOwner, Ipv4Addr>,
     store: &NatServiceRepository,
     service: &ServiceManager<NatService>,
-    owner: String,
+    iface_name: String,
+    owner: RouteOwner,
     route: RouteTargetInfo,
 ) {
     let IpAddr::V4(ip) = route.iface_ip else {
@@ -40,12 +45,12 @@ async fn restart_nat_for_changed_wan_ipv4(
     }
     let previous = last_ips.get(&owner).copied();
 
-    let service_config = match store.find_by_id(owner.clone()).await {
+    let service_config = match store.find_by_id(iface_name.clone()).await {
         Ok(Some(config)) if config.enable => Some(config),
         Ok(_) => None,
         Err(error) => {
             tracing::error!(
-                iface_name = %owner,
+                %iface_name,
                 %error,
                 "failed to load NAT config for WAN IPv4 route"
             );
@@ -55,7 +60,7 @@ async fn restart_nat_for_changed_wan_ipv4(
 
     if let Some(service_config) = service_config {
         tracing::info!(
-            iface_name = %owner,
+            %iface_name,
             ifindex = route.ifindex,
             ?previous,
             new_ip = %ip,
@@ -202,18 +207,21 @@ impl NatServiceManagerService {
                             skipped,
                             "NAT WAN route observer lagged; reconciling current IPv4 routes"
                         );
-                        let routes = route_service.get_all_ipv4_wan_routes().await;
-                        for (owner, route) in &routes {
+                        let routes = route_service.get_all_ipv4_link_routes().await;
+                        let live: HashSet<RouteOwner> =
+                            routes.iter().map(|(id, _)| RouteOwner::Link(*id)).collect();
+                        for (id, route) in &routes {
                             restart_nat_for_changed_wan_ipv4(
                                 &mut last_ips,
                                 &store,
                                 &service_clone,
-                                owner.clone(),
+                                route.iface_name.clone(),
+                                RouteOwner::Link(*id),
                                 route.clone(),
                             )
                             .await;
                         }
-                        last_ips.retain(|owner, _| routes.contains_key(owner));
+                        last_ips.retain(|owner, _| live.contains(owner));
                         continue;
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
@@ -227,7 +235,12 @@ impl NatServiceManagerService {
                         last_ips.remove(&event.owner);
                     }
                     WanRouteEventKind::Upserted => {
-                        let Some(route) = route_service.get_ipv4_wan_route(&event.owner).await
+                        // NAT is name-keyed and only applies to WAN links;
+                        // docker/netns route events are ignored.
+                        let RouteOwner::Link(link_id) = &event.owner else {
+                            continue;
+                        };
+                        let Some(route) = route_service.get_ipv4_wan_route_by_link(*link_id).await
                         else {
                             continue;
                         };
@@ -235,6 +248,7 @@ impl NatServiceManagerService {
                             &mut last_ips,
                             &store,
                             &service_clone,
+                            route.iface_name.clone(),
                             event.owner,
                             route,
                         )
@@ -254,18 +268,22 @@ mod tests {
     use std::collections::HashMap;
     use std::net::Ipv4Addr;
 
-    use super::wan_ipv4_changed;
+    use uuid::Uuid;
+
+    use super::{wan_ipv4_changed, RouteOwner};
 
     #[test]
     fn wan_ipv4_changes_are_compared_per_owner() {
         let mut last_ips = HashMap::new();
         let first_ip = Ipv4Addr::new(192, 0, 2, 10);
+        let owner = RouteOwner::Link(Uuid::new_v4());
+        let other = RouteOwner::Link(Uuid::new_v4());
 
-        assert!(wan_ipv4_changed(&last_ips, "wan0", first_ip));
+        assert!(wan_ipv4_changed(&last_ips, &owner, first_ip));
 
-        last_ips.insert("wan0".to_string(), first_ip);
-        assert!(!wan_ipv4_changed(&last_ips, "wan0", first_ip));
-        assert!(wan_ipv4_changed(&last_ips, "wan0", Ipv4Addr::new(192, 0, 2, 11)));
-        assert!(wan_ipv4_changed(&last_ips, "wan1", first_ip));
+        last_ips.insert(owner.clone(), first_ip);
+        assert!(!wan_ipv4_changed(&last_ips, &owner, first_ip));
+        assert!(wan_ipv4_changed(&last_ips, &owner, Ipv4Addr::new(192, 0, 2, 11)));
+        assert!(wan_ipv4_changed(&last_ips, &other, first_ip));
     }
 }
