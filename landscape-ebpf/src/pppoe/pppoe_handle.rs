@@ -8,7 +8,7 @@ use libbpf_rs::{
 use crate::{
     bpf_error::LdEbpfResult,
     bpf_rs_shared::xdp_skb_pppoe_skel,
-    chain::xdp_manager::SkbPending,
+    chain::hub::{ChainHub, SkbPending},
     landscape::{OwnedOpenObject, TcHookProxy},
     runtime::EbpfRuntime,
     stages::pppoe::XdpPppoeHandle,
@@ -28,7 +28,7 @@ struct StandalonePppoe {
 }
 
 pub struct PppoeHandle {
-    runtime: Arc<EbpfRuntime>,
+    hub: Arc<ChainHub>,
     _tc: StandalonePppoe,
     _xdp: XdpPppoeHandle,
     _ifindex: u32,
@@ -39,8 +39,8 @@ unsafe impl Sync for PppoeHandle {}
 
 impl Drop for PppoeHandle {
     fn drop(&mut self) {
-        let _ = self.runtime.xdp.take_skb_pending(self._ifindex);
-        let _ = self.runtime.xdp.take_skb_bundle(self._ifindex);
+        let _ = self.hub.take_skb_pending(self._ifindex);
+        let _ = self.hub.take_skb_bundle(self._ifindex);
     }
 }
 
@@ -55,10 +55,10 @@ pub fn create_pppoe_handle(
     let tc = attach_standalone_pppoe(ifindex, tmpl)?;
     let xdp = crate::stages::pppoe::init_xdp_pppoe(&rt, ifindex, session_id)?;
     let pending = prepare_pppoe_skb_pending(ifindex, session_id)?;
-    rt.xdp.set_skb_pending(ifindex, pending);
+    rt.hub.set_skb_pending(ifindex, pending);
 
     Ok(PppoeHandle {
-        runtime: rt.clone(),
+        hub: rt.hub.clone(),
         _tc: tc,
         _xdp: xdp,
         _ifindex: ifindex,

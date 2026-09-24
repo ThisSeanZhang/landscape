@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use crate::bpf_ctx;
 use crate::bpf_error::LdEbpfResult;
-use crate::chain::xdp_manager::NativeXdpLink;
+use crate::chain::hub::NativeXdpLink;
 use crate::landscape::{pin_and_reuse_map, OwnedOpenObject, TcHookProxy};
 use crate::runtime::EbpfRuntime;
 
@@ -141,11 +141,7 @@ pub fn init_xdp_lan_intro(
 
     let link = NativeXdpLink::attach(rt.clone(), &skel.progs.xdp_lan_intro, ifindex)?;
 
-    rt.xdp.ensure_roots(ifindex, 0)?;
-
     // ── TC ingress intro (XDP handoff + normal TC processing) ──
-
-    rt.tc.ensure_roots(ifindex, has_mac, 0)?;
 
     let (intro_backing, intro_obj) = OwnedOpenObject::new();
     let intro_builder = TcLanIngressIntroSkelBuilder::default();

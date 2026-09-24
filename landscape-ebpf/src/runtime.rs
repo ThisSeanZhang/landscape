@@ -14,8 +14,7 @@
 use std::sync::Arc;
 
 use crate::bpf_error::LdEbpfResult;
-use crate::chain::tc_manager::TcChainManager;
-use crate::chain::xdp_manager::XdpChainManager;
+use crate::chain::hub::ChainHub;
 use crate::maps;
 use crate::metric::EbpfMetricSourceFactory;
 use crate::LandscapeMapPath;
@@ -49,19 +48,20 @@ pub fn init_map_paths(space: &str) -> LdEbpfResult<Arc<LandscapeMapPath>> {
     Ok(paths)
 }
 
-/// The running eBPF subsystem: shared map pin paths plus the TC/XDP chain
-/// managers, all created eagerly by [`EbpfRuntime::init`].
+/// The running eBPF subsystem: shared map pin paths plus the chain hub
+/// (seed maps + per-link chain registry), created eagerly by
+/// [`EbpfRuntime::init`].
 #[derive(Clone)]
 pub struct EbpfRuntime {
     pub(crate) paths: Arc<LandscapeMapPath>,
-    pub(crate) tc: Arc<TcChainManager>,
-    pub(crate) xdp: Arc<XdpChainManager>,
+    pub(crate) hub: Arc<ChainHub>,
     pub(crate) try_native_xdp: Option<Vec<i32>>,
 }
 
 impl EbpfRuntime {
-    /// Create the map space, seed every shared map and build the TC/XDP
-    /// chain managers (which load their exit skeletons).
+    /// Create the map space, seed every shared map and build the chain hub
+    /// (which creates the chain seed maps and loads the exit/intro
+    /// skeletons).
     ///
     /// `try_native_xdp` mirrors the CLI `--try-xdp` flag: `None` disables
     /// native XDP attach, `Some([])` enables it on every interface and
@@ -70,9 +70,8 @@ impl EbpfRuntime {
     /// The returned runtime exclusively owns `space`.
     pub fn init(space: &str, try_native_xdp: Option<Vec<i32>>) -> LdEbpfResult<Self> {
         let paths = init_map_paths(space)?;
-        let tc = Arc::new(TcChainManager::new(paths.clone())?);
-        let xdp = Arc::new(XdpChainManager::new(paths.clone())?);
-        Ok(Self { paths, tc, xdp, try_native_xdp })
+        let hub = ChainHub::init(paths.clone())?;
+        Ok(Self { paths, hub, try_native_xdp })
     }
 
     /// Shared map pin paths.
@@ -80,14 +79,10 @@ impl EbpfRuntime {
         &self.paths
     }
 
-    /// TC chain manager.
-    pub fn tc(&self) -> &TcChainManager {
-        &self.tc
-    }
-
-    /// XDP chain manager.
-    pub fn xdp(&self) -> &XdpChainManager {
-        &self.xdp
+    /// Chain hub: seed maps, exit programs and the per-interface chain
+    /// registry.
+    pub fn hub(&self) -> &Arc<ChainHub> {
+        &self.hub
     }
 
     /// Native XDP attach configuration this runtime was built with.

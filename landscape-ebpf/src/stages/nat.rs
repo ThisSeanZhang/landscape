@@ -5,6 +5,7 @@ use landscape_common::wan_service::nat::config::NatConfig;
 
 use crate::bpf_ctx;
 use crate::bpf_error::LdEbpfResult;
+use crate::chain::link_chain::{LinkChain, StageType};
 use crate::runtime::EbpfRuntime;
 
 // ========================================================================
@@ -25,24 +26,21 @@ pub struct NatHandle {
 }
 
 pub struct TcNatHandle {
-    runtime: Arc<EbpfRuntime>,
+    chain: Arc<LinkChain>,
     _skel: tc_nat_skel::TcNatSkel<'static>,
     _backing: crate::landscape::OwnedOpenObject,
-    ifindex: u32,
 }
 
 impl Drop for TcNatHandle {
     fn drop(&mut self) {
-        use crate::chain::tc_manager::StageType;
-        let _ = self.runtime.tc.remove(self.ifindex, StageType::Nat);
+        let _ = self.chain.remove_tc(StageType::Nat);
     }
 }
 
 pub struct XdpNatHandle {
-    runtime: Arc<EbpfRuntime>,
+    chain: Arc<LinkChain>,
     _skel: xdp_nat_skel::XdpNatSkel<'static>,
     _backing: crate::landscape::OwnedOpenObject,
-    ifindex: u32,
 }
 
 unsafe impl Send for XdpNatHandle {}
@@ -50,8 +48,7 @@ unsafe impl Sync for XdpNatHandle {}
 
 impl Drop for XdpNatHandle {
     fn drop(&mut self) {
-        use crate::chain::xdp_manager::StageType;
-        let _ = self.runtime.xdp.remove(self.ifindex, StageType::Nat);
+        let _ = self.chain.remove_xdp(StageType::Nat);
     }
 }
 
@@ -102,7 +99,7 @@ pub fn attach_tc_nat(
     has_mac: bool,
     config: &NatConfig,
 ) -> LdEbpfResult<TcNatHandle> {
-    use crate::chain::tc_manager::{StageEntry, StageType};
+    use crate::chain::link_chain::TcStageEntry;
     use crate::landscape::{pin_and_reuse_map, OwnedOpenObject};
     use libbpf_rs::skel::{OpenSkel, SkelBuilder};
     use std::os::fd::{AsFd, AsRawFd};
@@ -146,21 +143,17 @@ pub fn attach_tc_nat(
         config,
     );
 
-    let entry = StageEntry {
+    let entry = TcStageEntry {
         wan_ingress_prog_fd: skel.progs.tc_nat_wan_ingress.as_fd().as_raw_fd(),
         wan_egress_prog_fd: skel.progs.tc_nat_wan_egress.as_fd().as_raw_fd(),
         wan_ingress_next_stage_fd: skel.maps.wan_ingress_next_stage.as_fd().as_raw_fd(),
         wan_egress_next_stage_fd: skel.maps.wan_egress_next_stage.as_fd().as_raw_fd(),
     };
 
-    rt.tc.inject(ifindex, StageType::Nat, entry)?;
+    let chain = rt.hub.get_or_create_chain(ifindex);
+    chain.inject_tc(StageType::Nat, entry)?;
 
-    Ok(TcNatHandle {
-        runtime: rt.clone(),
-        _skel: skel,
-        _backing: backing,
-        ifindex,
-    })
+    Ok(TcNatHandle { chain, _skel: skel, _backing: backing })
 }
 
 // ========================================================================
@@ -173,8 +166,7 @@ fn init_nat_xdp_unified(
     has_mac: bool,
     config: &NatConfig,
 ) -> LdEbpfResult<(TcNatHandle, XdpNatHandle)> {
-    use crate::chain::tc_manager::{StageEntry, StageType};
-    use crate::chain::xdp_manager::StageType as XdpStageType;
+    use crate::chain::link_chain::TcStageEntry;
     use crate::landscape::{pin_and_reuse_map, OwnedOpenObject};
     use libbpf_rs::skel::{OpenSkel, SkelBuilder};
     use std::os::fd::{AsFd, AsRawFd};
@@ -308,34 +300,33 @@ fn init_nat_xdp_unified(
 
     let xdp_skel = bpf_ctx!(xdp_open.load(), "load xdp_nat skeleton")?;
 
-    // ── 3. Inject into chain managers ──
+    // ── 3. Inject into the link's stage chains ──
 
-    let tc_entry = StageEntry {
+    let chain = rt.hub.get_or_create_chain(ifindex);
+
+    let tc_entry = TcStageEntry {
         wan_ingress_prog_fd: tc_skel.progs.tc_nat_wan_ingress.as_fd().as_raw_fd(),
         wan_egress_prog_fd: tc_skel.progs.tc_nat_wan_egress.as_fd().as_raw_fd(),
         wan_ingress_next_stage_fd: tc_skel.maps.wan_ingress_next_stage.as_fd().as_raw_fd(),
         wan_egress_next_stage_fd: tc_skel.maps.wan_egress_next_stage.as_fd().as_raw_fd(),
     };
-    rt.tc.inject(ifindex, StageType::Nat, tc_entry)?;
+    chain.inject_tc(StageType::Nat, tc_entry)?;
 
     let xdp_lan_fd = xdp_skel.progs.egress_nat.as_fd().as_raw_fd();
     let xdp_wan_fd = xdp_skel.progs.ingress_nat.as_fd().as_raw_fd();
     let xdp_next_fd = xdp_skel.maps.next_stage.as_fd().as_raw_fd();
-    rt.xdp.inject(ifindex, XdpStageType::Nat, xdp_lan_fd, xdp_wan_fd, xdp_next_fd)?;
+    if let Err(err) = chain.inject_xdp(StageType::Nat, xdp_lan_fd, xdp_wan_fd, xdp_next_fd) {
+        let _ = chain.remove_tc(StageType::Nat);
+        return Err(err);
+    }
 
     Ok((
         TcNatHandle {
-            runtime: rt.clone(),
+            chain: chain.clone(),
             _skel: tc_skel,
             _backing: tc_backing,
-            ifindex,
         },
-        XdpNatHandle {
-            runtime: rt.clone(),
-            _skel: xdp_skel,
-            _backing: xdp_backing,
-            ifindex,
-        },
+        XdpNatHandle { chain, _skel: xdp_skel, _backing: xdp_backing },
     ))
 }
 

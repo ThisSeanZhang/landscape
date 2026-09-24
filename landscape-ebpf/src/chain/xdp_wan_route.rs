@@ -1,4 +1,3 @@
-use std::os::fd::{AsFd, AsRawFd};
 use std::sync::Arc;
 
 use libbpf_rs::skel::{OpenSkel, SkelBuilder};
@@ -6,7 +5,7 @@ use libbpf_rs::{TC_EGRESS, TC_INGRESS};
 
 use crate::bpf_ctx;
 use crate::bpf_error::LdEbpfResult;
-use crate::chain::xdp_manager::NativeXdpLink;
+use crate::chain::hub::NativeXdpLink;
 use crate::landscape::{pin_and_reuse_map, OwnedOpenObject, TcHookProxy};
 use crate::runtime::EbpfRuntime;
 
@@ -149,9 +148,7 @@ pub fn init_xdp_wan_route(
 
     let skel = bpf_ctx!(open_skel.load(), "load xdp_wan_route skeleton")?;
 
-    let link = NativeXdpLink::attach(rt.clone(), rt.xdp.wan_intro_prog(), ifindex)?;
-    let exit_fd = skel.progs.xdp_wan_route_ingress.as_fd().as_raw_fd();
-    rt.xdp.set_exit(ifindex, exit_fd)?;
+    let link = NativeXdpLink::attach(rt.clone(), rt.hub.wan_intro_prog(), ifindex)?;
 
     // ── TC ingress intro (XDP handoff + normal TC processing) ──
 

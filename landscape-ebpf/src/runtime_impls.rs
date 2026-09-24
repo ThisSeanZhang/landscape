@@ -326,7 +326,7 @@ impl LanRouteDataplane for EbpfLanRouteDataplane {
     }
 
     fn remove_xdp_roots(&self, ifindex: u32) {
-        self.rt.xdp.remove_roots(ifindex);
+        self.rt.hub.remove_xdp_roots(ifindex);
     }
 
     fn set_redirect_able(&self, ifindex: u32, able: bool) {
@@ -380,7 +380,7 @@ impl WanRouteDataplane for EbpfWanRouteDataplane {
     }
 
     fn remove_xdp_roots(&self, ifindex: u32) {
-        self.rt.xdp.remove_roots(ifindex);
+        self.rt.hub.remove_xdp_roots(ifindex);
     }
 
     fn set_redirect_able(&self, ifindex: u32, able: bool) {
@@ -522,13 +522,12 @@ impl EbpfWanLinkChainDataplane {
 
 struct WanLinkChainGuard {
     rt: Arc<EbpfRuntime>,
-    ifindex: u32,
+    chain: Arc<crate::chain::link_chain::LinkChain>,
 }
 
 impl Drop for WanLinkChainGuard {
     fn drop(&mut self) {
-        self.rt.xdp.remove_roots(self.ifindex);
-        self.rt.tc.remove_roots(self.ifindex);
+        self.rt.hub.close_if_current(&self.chain);
     }
 }
 
@@ -541,8 +540,11 @@ impl WanLinkChainDataplane for EbpfWanLinkChainDataplane {
         has_mac: bool,
         link_chain_id: u16,
     ) -> Result<Box<dyn DataplaneGuard>, String> {
-        self.rt.xdp.ensure_roots(ifindex, link_chain_id).map_err(|e| e.to_string())?;
-        self.rt.tc.ensure_roots(ifindex, has_mac, link_chain_id).map_err(|e| e.to_string())?;
-        Ok(Box::new(WanLinkChainGuard { rt: self.rt.clone(), ifindex }))
+        let chain = self
+            .rt
+            .hub
+            .open_link_chain(ifindex, has_mac, link_chain_id)
+            .map_err(|e| e.to_string())?;
+        Ok(Box::new(WanLinkChainGuard { rt: self.rt.clone(), chain }))
     }
 }

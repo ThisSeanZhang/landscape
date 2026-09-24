@@ -126,7 +126,7 @@ impl LandscapeMapPath {
     }
 
     /// TC chain pin directory (`<root>/tc_chain`), seeded by
-    /// [`crate::runtime::EbpfRuntime::init`] via `TcChainManager::new`.
+    /// [`crate::runtime::EbpfRuntime::init`] via `ChainHub::init`.
     pub fn tc_chain_base(&self) -> PathBuf {
         self.root.join("tc_chain")
     }
