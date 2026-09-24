@@ -227,6 +227,35 @@ const ppp_iface_locked = computed(() => {
   return kind_config.value.ppp_iface_name === origin_kind.ppp_iface_name;
 });
 
+/** The pppd iface name must be globally unique: it must not collide with a
+ * system interface or another link's ppp name (on any attach iface). */
+const ppp_iface_name_conflict = computed<string | undefined>(() => {
+  if (kind_config.value.t !== "pppd") {
+    return undefined;
+  }
+  const ppp_iface_name = kind_config.value.ppp_iface_name;
+  if (!ppp_iface_name || !PPP_IFACE_NAME_PATTERN.test(ppp_iface_name)) {
+    return undefined;
+  }
+  const origin_kind = props.origin?.kind;
+  const origin_ppp_iface =
+    origin_kind?.t === "pppd" ? origin_kind.ppp_iface_name : undefined;
+  if (
+    ppp_iface_name !== origin_ppp_iface &&
+    existing_ifaces.value.includes(ppp_iface_name)
+  ) {
+    return t("wan_link.validation.ppp_iface_conflict");
+  }
+  const used_by_other = wanLinkStore.links.some((link) => {
+    if (link.id === config.value.id) return false;
+    if (link.kind?.t !== "pppd") return false;
+    return link.kind.ppp_iface_name === ppp_iface_name;
+  });
+  return used_by_other
+    ? t("wan_link.validation.ppp_iface_conflict")
+    : undefined;
+});
+
 /** 切换类型：kind 字段整体重置，并复位不兼容的 v4 模型与 MSS auto。 */
 function on_kind_change(value: WanLinkKind) {
   config.value.kind = default_kind_config(value);
@@ -347,12 +376,9 @@ const link_active = computed(
 );
 
 function validate(): string | undefined {
-  // link 数量/类型互斥不在前端限制，由后端 check_link_cardinality 兜底。
-  const other_links = wanLinkStore.links.filter(
-    (link) =>
-      link.attach_iface_name === props.attach_iface_name &&
-      link.id !== config.value.id,
-  );
+  // Link count / kind exclusivity is not enforced here; the backend's
+  // check_link_cardinality is the authority. The pppd iface name conflict is
+  // checked live as the user types (ppp_iface_name_conflict).
 
   if (kind_config.value.t === "pppoe_native") {
     if (!kind_config.value.username || !kind_config.value.password) {
@@ -368,22 +394,8 @@ function validate(): string | undefined {
     if (kind_config.value.ppp_iface_name === props.attach_iface_name) {
       return t("wan_link.validation.ppp_iface_same_as_attach");
     }
-    const origin_kind = props.origin?.kind;
-    const origin_ppp_iface =
-      origin_kind?.t === "pppd" ? origin_kind.ppp_iface_name : undefined;
-    const ppp_iface_name = kind_config.value.ppp_iface_name;
-    if (
-      ppp_iface_name !== origin_ppp_iface &&
-      existing_ifaces.value.includes(ppp_iface_name)
-    ) {
-      return t("wan_link.validation.ppp_iface_conflict");
-    }
-    const used_by_other = other_links.some((link) => {
-      if (link.kind?.t !== "pppd") return false;
-      return link.kind.ppp_iface_name === ppp_iface_name;
-    });
-    if (used_by_other) {
-      return t("wan_link.validation.ppp_iface_conflict");
+    if (ppp_iface_name_conflict.value) {
+      return ppp_iface_name_conflict.value;
     }
     if (!kind_config.value.peer_id || !kind_config.value.password) {
       return t("wan_link.validation.username_password_required");
@@ -585,7 +597,13 @@ async function remove_config() {
 
           <template v-else-if="kind_config.t === 'pppd'">
             <n-form :model="config">
-              <n-form-item :label="t('wan_link.ppp_iface_name')">
+              <n-form-item
+                :label="t('wan_link.ppp_iface_name')"
+                :validation-status="
+                  ppp_iface_name_conflict ? 'error' : undefined
+                "
+                :feedback="ppp_iface_name_conflict"
+              >
                 <n-input
                   v-model:value="kind_config.ppp_iface_name"
                   :disabled="ppp_iface_locked"

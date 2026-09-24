@@ -4,7 +4,9 @@ use axum::extract::{Path, State};
 use landscape::get_iface_by_name;
 use landscape_common::api_response::LandscapeApiResp as CommonApiResp;
 use landscape_common::service::ServiceConfigError;
-use landscape_common::wan_service::link::{check_link_cardinality, LinkStatus, WanLinkConfig};
+use landscape_common::wan_service::link::{
+    check_link_cardinality, check_ppp_iface_name_unique, LinkStatus, WanLinkConfig,
+};
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 use uuid::Uuid;
@@ -109,13 +111,15 @@ async fn check_cardinality(
     state: &LandscapeApp,
     config: &WanLinkConfig,
 ) -> Result<(), ServiceConfigError> {
-    let others = state
-        .wan_link_service
-        .get_repository()
-        .find_by_attach_iface_name(&config.attach_iface_name)
-        .await
-        .unwrap_or_default();
-    check_link_cardinality(config, &others)
+    // The wan_links table is tiny; fetch everything once and split in memory.
+    let all = state.wan_link_service.list_links().await;
+    let others: Vec<WanLinkConfig> = all
+        .iter()
+        .filter(|link| link.attach_iface_name == config.attach_iface_name)
+        .cloned()
+        .collect();
+    check_link_cardinality(config, &others)?;
+    check_ppp_iface_name_unique(config, &all)
 }
 
 /// Reject, at save time, links whose session kind needs an attach MAC that the

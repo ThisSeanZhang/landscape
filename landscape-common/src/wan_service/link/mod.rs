@@ -52,7 +52,8 @@ pub fn allocate_link_chain_id(used: impl IntoIterator<Item = u16>) -> Option<u16
 ///
 /// Cross-row cardinality rules (enforced by the manager, they need DB access):
 /// - at most one ip-mode link (`Ethernet` xor `PppoeNative`) per attach iface
-/// - at most one `Pppd` link per attach iface
+/// - any number of `Pppd` links may stack on one attach iface, but each needs
+///   a globally unique `ppp_iface_name`
 /// - `PppoeNative` and `Pppd` are mutually exclusive on the same attach iface
 /// - `Ethernet` and `Pppd` may coexist (matches the legacy capability)
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -464,7 +465,8 @@ fn is_ip_mode(kind: &WanLinkKindConfig) -> bool {
 
 /// Cross-row cardinality rules for links sharing one attach iface:
 /// - at most one ip-mode link (`Ethernet` xor `PppoeNative`)
-/// - at most one `Pppd` link
+/// - any number of `Pppd` links may stack (each needs a globally unique
+///   `ppp_iface_name`, see [`check_ppp_iface_name_unique`])
 /// - `PppoeNative` and `Pppd` are mutually exclusive
 /// - `Ethernet` + `Pppd` may coexist
 ///
@@ -480,14 +482,6 @@ pub fn check_link_cardinality(
             continue;
         }
         match (&config.kind, &other.kind) {
-            (Pppd { .. }, Pppd { .. }) => {
-                return Err(ServiceConfigError::InvalidConfig {
-                    reason: format!(
-                        "another pppd link ({}) already exists on attach iface {}",
-                        other.id, config.attach_iface_name
-                    ),
-                });
-            }
             (PppoeNative { .. }, Pppd { .. }) | (Pppd { .. }, PppoeNative { .. }) => {
                 return Err(ServiceConfigError::InvalidConfig {
                     reason: format!(
@@ -504,8 +498,40 @@ pub fn check_link_cardinality(
                     ),
                 });
             }
-            // Ethernet + Pppd is the only allowed pair.
+            // Multiple `Pppd` links and `Ethernet` + `Pppd` are allowed pairs.
             _ => {}
+        }
+    }
+    Ok(())
+}
+
+/// `ppp_iface_name` must be unique across ALL links, regardless of attach
+/// iface: two pppd links sharing a name would share the same
+/// `/etc/ppp/peers/<name>` file and the same ppp device.
+///
+/// `all_others` must contain every other link (any attach iface) and must not
+/// contain `config` itself.
+pub fn check_ppp_iface_name_unique(
+    config: &WanLinkConfig,
+    all_others: &[WanLinkConfig],
+) -> Result<(), ServiceConfigError> {
+    let WanLinkKindConfig::Pppd { ppp_iface_name, .. } = &config.kind else {
+        return Ok(());
+    };
+    for other in all_others {
+        if other.id == config.id {
+            continue;
+        }
+        let WanLinkKindConfig::Pppd { ppp_iface_name: other_name, .. } = &other.kind else {
+            continue;
+        };
+        if other_name == ppp_iface_name {
+            return Err(ServiceConfigError::InvalidConfig {
+                reason: format!(
+                    "ppp_iface_name '{}' is already used by link {}",
+                    ppp_iface_name, other.id
+                ),
+            });
         }
     }
     Ok(())
@@ -756,11 +782,15 @@ mod tests {
     }
 
     fn pppd_link(id: &str, attach: &str) -> WanLinkConfig {
+        pppd_link_named(id, attach, "ppp0")
+    }
+
+    fn pppd_link_named(id: &str, attach: &str, ppp_iface: &str) -> WanLinkConfig {
         WanLinkConfig {
             id: Uuid::parse_str(id).unwrap(),
             attach_iface_name: attach.to_string(),
             kind: WanLinkKindConfig::Pppd {
-                ppp_iface_name: "ppp0".to_string(),
+                ppp_iface_name: ppp_iface.to_string(),
                 peer_id: "user".to_string(),
                 password: "pass".to_string(),
                 ac: None,
@@ -788,6 +818,7 @@ mod tests {
 
     const ID_A: &str = "00000000-0000-0000-0000-000000000001";
     const ID_B: &str = "00000000-0000-0000-0000-000000000002";
+    const ID_C: &str = "00000000-0000-0000-0000-000000000003";
 
     #[test]
     fn cardinality_allows_ethernet_plus_pppd() {
@@ -810,10 +841,10 @@ mod tests {
     }
 
     #[test]
-    fn cardinality_rejects_duplicate_pppd() {
-        let config = pppd_link(ID_A, "wan0");
-        let others = vec![pppd_link(ID_B, "wan0")];
-        assert!(check_link_cardinality(&config, &others).is_err());
+    fn cardinality_allows_duplicate_pppd() {
+        let config = pppd_link_named(ID_A, "wan0", "ppp0");
+        let others = vec![pppd_link_named(ID_B, "wan0", "ppp1")];
+        assert!(check_link_cardinality(&config, &others).is_ok());
     }
 
     #[test]
@@ -836,5 +867,34 @@ mod tests {
         let mut same_id = pppoe_native_link(ID_A, "wan0");
         same_id.attach_iface_name = "wan0".to_string();
         assert!(check_link_cardinality(&config, &[other_iface, same_id]).is_ok());
+    }
+
+    #[test]
+    fn ppp_iface_name_uniqueness() {
+        // Same name on the same attach iface is rejected.
+        let config = pppd_link_named(ID_A, "wan0", "ppp0");
+        let others = vec![pppd_link_named(ID_B, "wan0", "ppp0")];
+        assert!(check_ppp_iface_name_unique(&config, &others).is_err());
+
+        // Same name on a different attach iface is still rejected (global scope).
+        let others = vec![pppd_link_named(ID_B, "wan1", "ppp0")];
+        assert!(check_ppp_iface_name_unique(&config, &others).is_err());
+
+        // Distinct names pass.
+        let others = vec![pppd_link_named(ID_B, "wan0", "ppp1")];
+        assert!(check_ppp_iface_name_unique(&config, &others).is_ok());
+
+        // Self (same id) is ignored.
+        let others = vec![pppd_link_named(ID_A, "wan0", "ppp0")];
+        assert!(check_ppp_iface_name_unique(&config, &others).is_ok());
+
+        // Non-pppd configs and non-pppd others are ignored.
+        let config = pppoe_native_link(ID_A, "wan0");
+        let others = vec![pppoe_native_link(ID_B, "wan0")];
+        assert!(check_ppp_iface_name_unique(&config, &others).is_ok());
+
+        let config = pppd_link(ID_A, "wan0");
+        let others = vec![pppoe_native_link(ID_C, "wan0")];
+        assert!(check_ppp_iface_name_unique(&config, &others).is_ok());
     }
 }
