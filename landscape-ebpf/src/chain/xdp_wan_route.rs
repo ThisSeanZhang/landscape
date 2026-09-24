@@ -149,14 +149,11 @@ pub fn init_xdp_wan_route(
 
     let skel = bpf_ctx!(open_skel.load(), "load xdp_wan_route skeleton")?;
 
-    rt.xdp.ensure_roots(ifindex)?;
     let link = NativeXdpLink::attach(rt.clone(), rt.xdp.wan_intro_prog(), ifindex)?;
     let exit_fd = skel.progs.xdp_wan_route_ingress.as_fd().as_raw_fd();
     rt.xdp.set_exit(ifindex, exit_fd)?;
 
     // ── TC ingress intro (XDP handoff + normal TC processing) ──
-
-    rt.tc.ensure_roots(ifindex, has_mac)?;
 
     let (intro_backing, intro_obj) = OwnedOpenObject::new();
     let intro_builder = TcWanIngressIntroSkelBuilder::default();

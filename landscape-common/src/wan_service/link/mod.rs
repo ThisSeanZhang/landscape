@@ -15,9 +15,11 @@ use crate::utils::id::gen_database_uuid;
 use crate::utils::time::get_f64_timestamp;
 use crate::wan_service::pppd::{validate_ppp_iface_name, PPPoEPlugin};
 
+pub mod dataplane;
 pub mod session;
 pub mod status;
 
+pub use dataplane::WanLinkChainDataplane;
 pub use session::{SessionSignal, SessionState, WanV4Lease};
 pub use status::{LinkState, LinkStatus};
 

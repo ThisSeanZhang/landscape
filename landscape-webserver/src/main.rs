@@ -475,6 +475,7 @@ async fn run_system(
         ebpf_rt.clone().nat(),
         ebpf_rt.clone().firewall(),
         ebpf_rt.clone().mss_clamp(),
+        ebpf_rt.clone().wan_link_chain(),
         prefix_map.clone(),
         shared_wan_iid,
         ipv6_prefix_sender.clone(),

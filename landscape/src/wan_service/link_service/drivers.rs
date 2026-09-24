@@ -93,6 +93,7 @@ pub trait SessionDriver: Send + Sync {
     async fn spawn(
         &self,
         link_id: Uuid,
+        link_chain_id: u16,
         iface: LandscapeInterface,
         spec: SessionSpec,
         status: WatchService,
@@ -114,6 +115,7 @@ impl SessionDriver for RealSessionDriver {
     async fn spawn(
         &self,
         link_id: Uuid,
+        link_chain_id: u16,
         iface: LandscapeInterface,
         spec: SessionSpec,
         status: WatchService,
@@ -153,6 +155,7 @@ impl SessionDriver for RealSessionDriver {
                     SessionSpec::Static(static_spec) => {
                         run_static_v4(
                             link_id,
+                            link_chain_id,
                             iface,
                             static_spec,
                             status,
@@ -180,6 +183,7 @@ impl SessionDriver for RealSessionDriver {
                                 route_service,
                                 addr_binding,
                                 link_id,
+                                link_chain_id,
                                 session,
                             )
                             .await;
@@ -207,6 +211,7 @@ impl SessionDriver for RealSessionDriver {
                             route_service,
                             addr_binding,
                             link_id,
+                            link_chain_id,
                             session,
                         )
                         .await;
@@ -234,6 +239,7 @@ pub trait SectionRunner: Send + Sync {
     async fn spawn(
         &self,
         link_id: Uuid,
+        link_chain_id: u16,
         iface: LandscapeInterface,
         task: SectionTask,
         status: WatchService,
@@ -253,6 +259,7 @@ impl SectionRunner for RealSectionRunner {
     async fn spawn(
         &self,
         link_id: Uuid,
+        link_chain_id: u16,
         iface: LandscapeInterface,
         task: SectionTask,
         status: WatchService,
@@ -309,6 +316,7 @@ impl SectionRunner for RealSectionRunner {
                         let route_info =
                             landscape_common::sys_service::route_service::RouteTargetInfo {
                                 ifindex: iface.index,
+                                link_chain_id,
                                 weight: 1,
                                 mac: iface.mac,
                                 is_docker: false,
@@ -320,6 +328,7 @@ impl SectionRunner for RealSectionRunner {
                         crate::wan_service::ipv6pd_client::v6::dhcp_v6_pd_client(
                             iface_name,
                             link_id,
+                            link_chain_id,
                             iface.index,
                             iface.mac,
                             pd.mac,
@@ -419,6 +428,7 @@ pub mod mocks {
         async fn spawn(
             &self,
             link_id: Uuid,
+            _link_chain_id: u16,
             iface: LandscapeInterface,
             spec: SessionSpec,
             status: WatchService,
@@ -507,6 +517,7 @@ pub mod mocks {
         async fn spawn(
             &self,
             link_id: Uuid,
+            _link_chain_id: u16,
             iface: LandscapeInterface,
             task: SectionTask,
             status: WatchService,

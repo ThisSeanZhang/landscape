@@ -43,7 +43,6 @@ pub fn attach_tc_firewall(
     use std::os::fd::{AsFd, AsRawFd};
 
     let paths = &rt.paths;
-    rt.tc.ensure_roots(ifindex, has_mac)?;
 
     let builder = tc_firewall_skel::TcFirewallSkelBuilder::default();
     let (backing, obj) = OwnedOpenObject::new();

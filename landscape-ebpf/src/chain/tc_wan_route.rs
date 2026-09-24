@@ -45,8 +45,6 @@ pub fn init_tc_wan_route(
     xdp_handoff_enabled: bool,
 ) -> LdEbpfResult<TcWanRouteHandle> {
     let paths = &rt.paths;
-    rt.tc.ensure_roots(ifindex, has_mac)?;
-
     let l3_offset: u32 = if has_mac { 14 } else { 0 };
 
     let (intro_backing, obj) = OwnedOpenObject::new();

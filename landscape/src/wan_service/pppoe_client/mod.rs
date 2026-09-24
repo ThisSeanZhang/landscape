@@ -28,6 +28,8 @@ pub const ETH_P_PPOES: u16 = 0x8864;
 pub struct PPPoEClientConfig {
     /// Owning WAN link uuid; the WAN route owner at runtime.
     pub link_id: Uuid,
+    /// Stable eBPF chain id of the owning WAN link.
+    pub link_chain_id: u16,
     pub index: u32,
     pub iface_name: String,
     pub iface_mac: MacAddr,
@@ -62,6 +64,7 @@ impl PPPoEClientConfig {
     ) -> Self {
         Self {
             link_id,
+            link_chain_id: 0,
             index,
             iface_name,
             iface_mac,

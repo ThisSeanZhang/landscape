@@ -43,7 +43,6 @@ pub fn attach_tc_mss(
     use std::os::fd::{AsFd, AsRawFd};
 
     let paths = &rt.paths;
-    rt.tc.ensure_roots(ifindex, has_mac)?;
 
     let builder = tc_mss_skel::TcMssSkelBuilder::default();
     let (backing, obj) = OwnedOpenObject::new();

@@ -99,6 +99,7 @@ impl ManagerInner {
 struct ChainState {
     root: Option<ChainRoot>,
     stages: BTreeMap<StageType, StageEntry>,
+    link_chain_id: u16,
 }
 
 struct StageEntry {
@@ -423,15 +424,21 @@ impl XdpChainManager {
         })
     }
 
-    pub fn ensure_roots(&self, ifindex: u32) -> LdEbpfResult<()> {
+    pub fn ensure_roots(&self, ifindex: u32, link_chain_id: u16) -> LdEbpfResult<()> {
         let mut inner = self.inner.lock().unwrap();
-        self.ensure_roots_locked(&mut inner, ifindex)
+        self.ensure_roots_locked(&mut inner, ifindex, link_chain_id)
     }
 
-    fn ensure_roots_locked(&self, inner: &mut ManagerInner, ifindex: u32) -> LdEbpfResult<()> {
+    fn ensure_roots_locked(
+        &self,
+        inner: &mut ManagerInner,
+        ifindex: u32,
+        link_chain_id: u16,
+    ) -> LdEbpfResult<()> {
         let wan_state = inner.chains.entry((ifindex, ChainDir::Wan)).or_default();
+        wan_state.link_chain_id = link_chain_id;
         if wan_state.root.is_none() {
-            wan_state.root = Some(self.create_wan_root(ifindex)?);
+            wan_state.root = Some(self.create_wan_root(ifindex, link_chain_id)?);
         }
         let lan_state = inner.chains.entry((ifindex, ChainDir::Lan)).or_default();
         if lan_state.root.is_none() {
@@ -597,7 +604,7 @@ impl XdpChainManager {
         self.skb_pending.lock().unwrap().remove(&ifindex)
     }
 
-    fn create_wan_root(&self, ifindex: u32) -> LdEbpfResult<ChainRoot> {
+    fn create_wan_root(&self, ifindex: u32, _link_chain_id: u16) -> LdEbpfResult<ChainRoot> {
         let builder = XdpWanChainSkelBuilder::default();
         let (backing, obj) = OwnedOpenObject::new();
         let mut open_skel = bpf_ctx!(builder.open(obj), "open xdp_wan_chain")?;
@@ -693,7 +700,12 @@ impl XdpChainManager {
 
     fn rebuild(&self, ifindex: u32, chain: ChainDir) -> LdEbpfResult<()> {
         let mut inner = self.inner.lock().unwrap();
-        self.ensure_roots_locked(&mut inner, ifindex)?;
+        let link_chain_id = inner
+            .chains
+            .get(&(ifindex, ChainDir::Wan))
+            .map(|state| state.link_chain_id)
+            .unwrap_or(0);
+        self.ensure_roots_locked(&mut inner, ifindex, link_chain_id)?;
 
         let state = inner.chains.get_mut(&(ifindex, chain)).ok_or_else(|| {
             crate::bpf_error::LandscapeEbpfError::Context {

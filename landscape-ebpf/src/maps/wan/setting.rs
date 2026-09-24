@@ -16,6 +16,7 @@ use crate::maps::Inet6Bytes;
 pub fn add_ipv6_wan_ip(
     paths: &LandscapeMapPath,
     ifindex: u32,
+    _link_chain_id: u16,
     addr: Ipv6Addr,
     gateway: Option<Ipv6Addr>,
     mask: u8,
@@ -34,6 +35,7 @@ pub fn add_ipv6_wan_ip(
 pub fn add_ipv4_wan_ip(
     paths: &LandscapeMapPath,
     ifindex: u32,
+    _link_chain_id: u16,
     addr: Ipv4Addr,
     gateway: Option<Ipv4Addr>,
     mask: u8,
@@ -134,11 +136,11 @@ pub(crate) fn add_wan_ip<T>(
     }
 }
 
-pub fn del_ipv6_wan_ip(paths: &LandscapeMapPath, ifindex: u32) {
+pub fn del_ipv6_wan_ip(paths: &LandscapeMapPath, ifindex: u32, _link_chain_id: u16) {
     del_wan_ip(paths, ifindex, LANDSCAPE_IPV6_TYPE);
 }
 
-pub fn del_ipv4_wan_ip(paths: &LandscapeMapPath, ifindex: u32) {
+pub fn del_ipv4_wan_ip(paths: &LandscapeMapPath, ifindex: u32, _link_chain_id: u16) {
     del_wan_ip(paths, ifindex, LANDSCAPE_IPV4_TYPE);
 }
 

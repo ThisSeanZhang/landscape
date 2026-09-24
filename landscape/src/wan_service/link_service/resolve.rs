@@ -64,6 +64,7 @@ pub fn resolve_pppoe_client_config(
     };
     crate::wan_service::pppoe_client::PPPoEClientConfig {
         link_id: link.id,
+        link_chain_id: link.link_chain_id,
         index: iface.index,
         iface_name: iface.name.clone(),
         iface_mac,

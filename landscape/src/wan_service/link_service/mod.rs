@@ -17,6 +17,7 @@ use landscape_common::service::WatchService;
 use landscape_common::wan_service::addr_binding::WanAddrBinding;
 use landscape_common::wan_service::firewall::dataplane::FirewallDataplane;
 use landscape_common::wan_service::ipv6_pd::{IAPrefixMap, IPV6PDPrefixStatus, LDIAPrefix};
+use landscape_common::wan_service::link::dataplane::WanLinkChainDataplane;
 use landscape_common::wan_service::link::{LinkStatus, WanLinkConfig, WanLinkKindConfig};
 use landscape_common::wan_service::mss_clamp::dataplane::MssClampDataplane;
 use landscape_common::wan_service::nat::dataplane::NatDataplane;
@@ -66,6 +67,7 @@ impl WanLinkServiceManagerService {
         nat_dataplane: Arc<dyn NatDataplane>,
         firewall_dataplane: Arc<dyn FirewallDataplane>,
         mss_dataplane: Arc<dyn MssClampDataplane>,
+        chain_dp: Arc<dyn WanLinkChainDataplane>,
         prefix_map: IAPrefixMap,
         shared_wan_iid: Arc<u64>,
         prefix_sender: IAPrefixEventSender,
@@ -97,6 +99,7 @@ impl WanLinkServiceManagerService {
             section_runner,
             status_store: Arc::default(),
             prefix_map,
+            chain_dp,
         });
         Self::with_deps(deps, store_service, dev_observer).await
     }

@@ -15,7 +15,7 @@ async fn main() {
     );
     let ifindex: u32 = 96;
     let addr = Ipv4Addr::new(10, 200, 1, 1);
-    landscape_ebpf::maps::wan::add_ipv4_wan_ip(rt.paths(), ifindex, addr, None, 24, None);
+    landscape_ebpf::maps::wan::add_ipv4_wan_ip(rt.paths(), ifindex, 0, addr, None, 24, None);
 
     let nat = landscape_ebpf::stages::nat::init_nat(&rt, ifindex, true, &NatConfig::default())
         .expect("failed to start nat test");

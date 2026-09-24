@@ -141,6 +141,7 @@ struct IfState {
     egress_root: Option<EgressRoot>,
     stages: BTreeMap<StageType, StageEntry>,
     has_mac: bool,
+    link_chain_id: u16,
 }
 
 struct ManagerInner {
@@ -297,9 +298,14 @@ impl TcChainManager {
         Ok((skel, back))
     }
 
-    pub fn ensure_roots(&self, ifindex: u32, has_mac: bool) -> LdEbpfResult<()> {
+    pub fn ensure_roots(
+        &self,
+        ifindex: u32,
+        has_mac: bool,
+        link_chain_id: u16,
+    ) -> LdEbpfResult<()> {
         let mut inner = self.inner.lock().unwrap();
-        self.ensure_roots_locked(&mut inner, ifindex, has_mac)
+        self.ensure_roots_locked(&mut inner, ifindex, has_mac, link_chain_id)
     }
 
     fn ensure_roots_locked(
@@ -307,12 +313,15 @@ impl TcChainManager {
         inner: &mut ManagerInner,
         ifindex: u32,
         has_mac: bool,
+        link_chain_id: u16,
     ) -> LdEbpfResult<()> {
         let state = inner.interfaces.entry(ifindex).or_default();
         state.has_mac = has_mac;
+        state.link_chain_id = link_chain_id;
         let l3_offset: u32 = if has_mac { 14 } else { 0 };
         if state.ingress_root.is_none() {
-            state.ingress_root = Some(self.create_ingress_root(ifindex, l3_offset)?);
+            state.ingress_root =
+                Some(self.create_ingress_root(ifindex, l3_offset, link_chain_id)?);
         }
         if state.egress_root.is_none() {
             state.egress_root = Some(self.create_egress_roots(ifindex)?);
@@ -320,7 +329,12 @@ impl TcChainManager {
         Ok(())
     }
 
-    fn create_ingress_root(&self, ifindex: u32, l3_offset: u32) -> LdEbpfResult<IngressRoot> {
+    fn create_ingress_root(
+        &self,
+        ifindex: u32,
+        l3_offset: u32,
+        _link_chain_id: u16,
+    ) -> LdEbpfResult<IngressRoot> {
         let ingress_builder = TcWanIngressRootSkelBuilder::default();
         let (ingress_back, ingress_obj) = OwnedOpenObject::new();
         let mut ingress_open_skel =
@@ -460,7 +474,9 @@ impl TcChainManager {
                 ChainDir::WanIngress => {
                     if state.ingress_root.is_none() {
                         let l3_offset: u32 = if has_mac { 14 } else { 0 };
-                        state.ingress_root = Some(self.create_ingress_root(ifindex, l3_offset)?);
+                        let link_chain_id = state.link_chain_id;
+                        state.ingress_root =
+                            Some(self.create_ingress_root(ifindex, l3_offset, link_chain_id)?);
                     }
                     if state.egress_root.is_none() {
                         state.egress_root = Some(self.create_egress_roots(ifindex)?);

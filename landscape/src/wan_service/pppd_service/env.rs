@@ -113,6 +113,7 @@ pub(crate) struct SystemRouteSink {
     route_service: IpRouteService,
     addr_binding: Arc<dyn WanAddrBinding>,
     link_id: Uuid,
+    link_chain_id: u16,
 }
 
 impl SystemRouteSink {
@@ -120,15 +121,21 @@ impl SystemRouteSink {
         route_service: IpRouteService,
         addr_binding: Arc<dyn WanAddrBinding>,
         link_id: Uuid,
+        link_chain_id: u16,
     ) -> Self {
-        Self { route_service, addr_binding, link_id }
+        Self {
+            route_service,
+            addr_binding,
+            link_id,
+            link_chain_id,
+        }
     }
 }
 
 #[async_trait::async_trait]
 impl PppRouteSink for SystemRouteSink {
     fn bind_ipv4(&self, ifindex: u32, local: Ipv4Addr, peer: Ipv4Addr, mask: u8) {
-        self.addr_binding.bind_ipv4(ifindex, local, Some(peer), mask, None);
+        self.addr_binding.bind_ipv4(ifindex, self.link_chain_id, local, Some(peer), mask, None);
     }
 
     async fn insert_wan_route(&self, _iface: &str, info: RouteTargetInfo) {
@@ -164,6 +171,7 @@ impl PppRouteSink for SystemRouteSink {
 
 pub(crate) struct SystemPppdEnv {
     sink: Arc<dyn PppRouteSink>,
+    link_chain_id: u16,
 }
 
 impl SystemPppdEnv {
@@ -171,15 +179,22 @@ impl SystemPppdEnv {
         route_service: IpRouteService,
         addr_binding: Arc<dyn WanAddrBinding>,
         link_id: Uuid,
+        link_chain_id: u16,
     ) -> Self {
         Self {
-            sink: Arc::new(SystemRouteSink::new(route_service, addr_binding, link_id)),
+            sink: Arc::new(SystemRouteSink::new(
+                route_service,
+                addr_binding,
+                link_id,
+                link_chain_id,
+            )),
+            link_chain_id,
         }
     }
 
     #[cfg(test)]
     pub(crate) fn with_sink(sink: Arc<dyn PppRouteSink>) -> Self {
-        Self { sink }
+        Self { sink, link_chain_id: 0 }
     }
 }
 
@@ -251,6 +266,7 @@ impl PppdEnv for SystemPppdEnv {
                 iface,
                 RouteTargetInfo {
                     ifindex: *ifindex,
+                    link_chain_id: self.link_chain_id,
                     weight: 1,
                     mac: None,
                     is_docker: false,

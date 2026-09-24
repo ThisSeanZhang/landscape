@@ -18,6 +18,7 @@ use super::PPPoEClientConfig;
 pub(crate) struct SessionHandle {
     _session_guard: Box<dyn DataplaneGuard>,
     link_id: Uuid,
+    link_chain_id: u16,
     client_ip: std::net::Ipv4Addr,
     server_ip: std::net::Ipv4Addr,
     server_mac: Vec<u8>,
@@ -88,7 +89,7 @@ impl SessionHandle {
         }
         route_service.remove_ipv4_link_route(self.link_id).await;
         route_service.remove_ipv4_lan_route(&self.iface_name).await;
-        dataplane.unbind_wan_ipv4(self.ifindex);
+        dataplane.unbind_wan_ipv4(self.ifindex, self.link_chain_id);
 
         let _ = std::process::Command::new("ip")
             .args(["link", "set", "dev", &self.iface_name, "mtu", "1500"])
@@ -125,7 +126,14 @@ pub(crate) async fn create_session(
         lcp.session_id
     );
 
-    dataplane.bind_wan_ipv4(index, client_ip, Some(server_ip), 32, Some(iface_mac));
+    dataplane.bind_wan_ipv4(
+        index,
+        config.link_chain_id,
+        client_ip,
+        Some(server_ip),
+        32,
+        Some(iface_mac),
+    );
 
     if let Err(e) = std::process::Command::new("ip")
         .args(["link", "set", "dev", iface_name, "mtu", &format!("{}", mru)])
@@ -163,6 +171,7 @@ pub(crate) async fn create_session(
             config.link_id,
             RouteTargetInfo {
                 ifindex: index,
+                link_chain_id: config.link_chain_id,
                 weight: 1,
                 mac: Some(iface_mac),
                 is_docker: false,
@@ -309,6 +318,7 @@ pub(crate) async fn create_session(
     Ok(SessionHandle {
         _session_guard: session_guard,
         link_id: config.link_id,
+        link_chain_id: config.link_chain_id,
         client_ip,
         server_ip,
         server_mac: lcp.server_mac.clone(),

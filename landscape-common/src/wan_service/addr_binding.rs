@@ -11,24 +11,26 @@ pub trait WanAddrBinding: Send + Sync {
     fn bind_ipv4(
         &self,
         ifindex: u32,
+        link_chain_id: u16,
         addr: Ipv4Addr,
         gateway: Option<Ipv4Addr>,
         mask: u8,
         mac: Option<MacAddr>,
     );
 
-    fn unbind_ipv4(&self, ifindex: u32);
+    fn unbind_ipv4(&self, ifindex: u32, link_chain_id: u16);
 
     fn bind_ipv6(
         &self,
         ifindex: u32,
+        link_chain_id: u16,
         addr: Ipv6Addr,
         gateway: Option<Ipv6Addr>,
         mask: u8,
         mac: Option<MacAddr>,
     );
 
-    fn unbind_ipv6(&self, ifindex: u32);
+    fn unbind_ipv6(&self, ifindex: u32, link_chain_id: u16);
 }
 
 /// No-op implementation for tests.
@@ -38,6 +40,7 @@ impl WanAddrBinding for NoopWanAddrBinding {
     fn bind_ipv4(
         &self,
         _ifindex: u32,
+        _link_chain_id: u16,
         _addr: Ipv4Addr,
         _gateway: Option<Ipv4Addr>,
         _mask: u8,
@@ -45,11 +48,12 @@ impl WanAddrBinding for NoopWanAddrBinding {
     ) {
     }
 
-    fn unbind_ipv4(&self, _ifindex: u32) {}
+    fn unbind_ipv4(&self, _ifindex: u32, _link_chain_id: u16) {}
 
     fn bind_ipv6(
         &self,
         _ifindex: u32,
+        _link_chain_id: u16,
         _addr: Ipv6Addr,
         _gateway: Option<Ipv6Addr>,
         _mask: u8,
@@ -57,5 +61,5 @@ impl WanAddrBinding for NoopWanAddrBinding {
     ) {
     }
 
-    fn unbind_ipv6(&self, _ifindex: u32) {}
+    fn unbind_ipv6(&self, _ifindex: u32, _link_chain_id: u16) {}
 }

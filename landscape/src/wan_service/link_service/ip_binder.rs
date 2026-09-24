@@ -86,6 +86,7 @@ fn usable_gateway(gw: &Ipv4Addr) -> bool {
 #[allow(clippy::too_many_arguments)]
 pub async fn run_static_v4(
     link_id: Uuid,
+    link_chain_id: u16,
     iface: LandscapeInterface,
     spec: StaticSpec,
     status: WatchService,
@@ -106,7 +107,14 @@ pub async fn run_static_v4(
         system_ops.add_ipv6(&iface_name, ipv6).await;
     }
 
-    addr_binding.bind_ipv4(iface.index, spec.ipv4, spec.default_router_ip, spec.mask, iface.mac);
+    addr_binding.bind_ipv4(
+        iface.index,
+        link_chain_id,
+        spec.ipv4,
+        spec.default_router_ip,
+        spec.mask,
+        iface.mac,
+    );
 
     route_service
         .insert_ipv4_lan_route(
@@ -145,6 +153,7 @@ pub async fn run_static_v4(
                 link_id,
                 RouteTargetInfo {
                     ifindex: iface.index,
+                    link_chain_id,
                     weight: 1,
                     mac: iface.mac,
                     is_docker: false,
@@ -177,7 +186,7 @@ pub async fn run_static_v4(
     }
     route_service.remove_ipv4_link_route(link_id).await;
     route_service.remove_ipv4_lan_route(&iface_name).await;
-    addr_binding.unbind_ipv4(iface.index);
+    addr_binding.unbind_ipv4(iface.index, link_chain_id);
     session.set(SessionState::Idle);
     status.just_change_status(ServiceStatus::Stop);
 }

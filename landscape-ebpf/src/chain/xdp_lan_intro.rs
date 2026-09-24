@@ -141,11 +141,11 @@ pub fn init_xdp_lan_intro(
 
     let link = NativeXdpLink::attach(rt.clone(), &skel.progs.xdp_lan_intro, ifindex)?;
 
-    rt.xdp.ensure_roots(ifindex)?;
+    rt.xdp.ensure_roots(ifindex, 0)?;
 
     // ── TC ingress intro (XDP handoff + normal TC processing) ──
 
-    rt.tc.ensure_roots(ifindex, has_mac)?;
+    rt.tc.ensure_roots(ifindex, has_mac, 0)?;
 
     let (intro_backing, intro_obj) = OwnedOpenObject::new();
     let intro_builder = TcLanIngressIntroSkelBuilder::default();

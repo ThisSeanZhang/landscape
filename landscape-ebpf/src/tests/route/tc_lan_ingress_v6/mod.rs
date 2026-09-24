@@ -129,6 +129,7 @@ fn seed_wan_slots(
         RouteTargetInfo {
             weight: 0,
             ifindex,
+            link_chain_id: 0,
             mac,
             default_route: false,
             is_docker,

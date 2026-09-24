@@ -19,6 +19,7 @@ use landscape_common::net::MacAddr;
 use landscape_common::sys_service::route_service::dataplane::RouteTableDataplane;
 use landscape_common::wan_service::addr_binding::WanAddrBinding;
 use landscape_common::wan_service::firewall::dataplane::FirewallDataplane;
+use landscape_common::wan_service::link::dataplane::WanLinkChainDataplane;
 use landscape_common::wan_service::mss_clamp::dataplane::MssClampDataplane;
 use landscape_common::wan_service::nat::config::NatConfig;
 use landscape_common::wan_service::nat::dataplane::NatDataplane;
@@ -95,16 +96,25 @@ impl PppoeDataplane for EbpfPppoeDataplane {
     fn bind_wan_ipv4(
         &self,
         ifindex: u32,
+        link_chain_id: u16,
         addr: std::net::Ipv4Addr,
         gateway: Option<std::net::Ipv4Addr>,
         mask: u8,
         mac: Option<MacAddr>,
     ) {
-        maps::wan::add_ipv4_wan_ip(&self.rt.paths, ifindex, addr, gateway, mask, mac);
+        maps::wan::add_ipv4_wan_ip(
+            &self.rt.paths,
+            ifindex,
+            link_chain_id,
+            addr,
+            gateway,
+            mask,
+            mac,
+        );
     }
 
-    fn unbind_wan_ipv4(&self, ifindex: u32) {
-        maps::wan::del_ipv4_wan_ip(&self.rt.paths, ifindex);
+    fn unbind_wan_ipv4(&self, ifindex: u32, link_chain_id: u16) {
+        maps::wan::del_ipv4_wan_ip(&self.rt.paths, ifindex, link_chain_id);
     }
 }
 
@@ -126,31 +136,49 @@ impl WanAddrBinding for EbpfWanAddrBinding {
     fn bind_ipv4(
         &self,
         ifindex: u32,
+        link_chain_id: u16,
         addr: std::net::Ipv4Addr,
         gateway: Option<std::net::Ipv4Addr>,
         mask: u8,
         mac: Option<MacAddr>,
     ) {
-        maps::wan::add_ipv4_wan_ip(&self.rt.paths, ifindex, addr, gateway, mask, mac);
+        maps::wan::add_ipv4_wan_ip(
+            &self.rt.paths,
+            ifindex,
+            link_chain_id,
+            addr,
+            gateway,
+            mask,
+            mac,
+        );
     }
 
-    fn unbind_ipv4(&self, ifindex: u32) {
-        maps::wan::del_ipv4_wan_ip(&self.rt.paths, ifindex);
+    fn unbind_ipv4(&self, ifindex: u32, link_chain_id: u16) {
+        maps::wan::del_ipv4_wan_ip(&self.rt.paths, ifindex, link_chain_id);
     }
 
     fn bind_ipv6(
         &self,
         ifindex: u32,
+        link_chain_id: u16,
         addr: std::net::Ipv6Addr,
         gateway: Option<std::net::Ipv6Addr>,
         mask: u8,
         mac: Option<MacAddr>,
     ) {
-        maps::wan::add_ipv6_wan_ip(&self.rt.paths, ifindex, addr, gateway, mask, mac);
+        maps::wan::add_ipv6_wan_ip(
+            &self.rt.paths,
+            ifindex,
+            link_chain_id,
+            addr,
+            gateway,
+            mask,
+            mac,
+        );
     }
 
-    fn unbind_ipv6(&self, ifindex: u32) {
-        maps::wan::del_ipv6_wan_ip(&self.rt.paths, ifindex);
+    fn unbind_ipv6(&self, ifindex: u32, link_chain_id: u16) {
+        maps::wan::del_ipv6_wan_ip(&self.rt.paths, ifindex, link_chain_id);
     }
 }
 
@@ -475,5 +503,46 @@ impl MacBindingDataplane for EbpfMacBindingDataplane {
         if let Err(e) = maps::mac::upsert_ipv6_ip_mac(&self.rt.paths, ifindex, ip, mac, dev_mac) {
             tracing::error!("upsert ipv6 ip_mac binding error: {e:?}");
         }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// WAN link stage-chain root
+// ─────────────────────────────────────────────────────────────────────────
+
+pub struct EbpfWanLinkChainDataplane {
+    rt: Arc<EbpfRuntime>,
+}
+
+impl EbpfWanLinkChainDataplane {
+    pub(crate) fn new(rt: Arc<EbpfRuntime>) -> Self {
+        Self { rt }
+    }
+}
+
+struct WanLinkChainGuard {
+    rt: Arc<EbpfRuntime>,
+    ifindex: u32,
+}
+
+impl Drop for WanLinkChainGuard {
+    fn drop(&mut self) {
+        self.rt.xdp.remove_roots(self.ifindex);
+        self.rt.tc.remove_roots(self.ifindex);
+    }
+}
+
+impl DataplaneGuard for WanLinkChainGuard {}
+
+impl WanLinkChainDataplane for EbpfWanLinkChainDataplane {
+    fn open(
+        &self,
+        ifindex: u32,
+        has_mac: bool,
+        link_chain_id: u16,
+    ) -> Result<Box<dyn DataplaneGuard>, String> {
+        self.rt.xdp.ensure_roots(ifindex, link_chain_id).map_err(|e| e.to_string())?;
+        self.rt.tc.ensure_roots(ifindex, has_mac, link_chain_id).map_err(|e| e.to_string())?;
+        Ok(Box::new(WanLinkChainGuard { rt: self.rt.clone(), ifindex }))
     }
 }

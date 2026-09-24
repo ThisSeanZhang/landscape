@@ -208,6 +208,7 @@ pub async fn dhcp_v4_client(
     route_service: IpRouteService,
     addr_binding: Arc<dyn WanAddrBinding>,
     link_id: Uuid,
+    link_chain_id: u16,
     session: SessionSignal,
 ) {
     service_status.just_change_status(ServiceStatus::Staring);
@@ -279,7 +280,7 @@ pub async fn dhcp_v4_client(
                     Ok(packet) => {
                         let need_reset_time = handle_packet(&mut status, packet,
                             &mut ip_arg, default_router, &iface_name, ifindex, &route_service,
-                            addr_binding.as_ref(), &mac_addr, link_id, &session).await;
+                            addr_binding.as_ref(), &mac_addr, link_id, link_chain_id, &session).await;
 
                         if matches!(status, DhcpState::Bound { .. }) {
                             connect_failure_count = 0;
@@ -312,7 +313,7 @@ pub async fn dhcp_v4_client(
     }
     route_service.remove_ipv4_link_route(link_id).await;
     route_service.remove_ipv4_lan_route(&iface_name).await;
-    addr_binding.unbind_ipv4(ifindex);
+    addr_binding.unbind_ipv4(ifindex, link_chain_id);
     session.set(SessionState::Idle);
 
     if !service_status.is_stop() {
@@ -489,6 +490,7 @@ async fn handle_packet(
     addr_binding: &dyn WanAddrBinding,
     mac_addr: &MacAddr,
     link_id: Uuid,
+    link_chain_id: u16,
     session: &SessionSignal,
 ) -> bool {
     let (dhcp, _msg_addr) = packet;
@@ -585,6 +587,7 @@ async fn handle_packet(
                             addr_binding,
                             mac_addr,
                             link_id,
+                            link_chain_id,
                             session,
                         )
                         .await;
@@ -637,6 +640,7 @@ async fn bind_ipv4(
     addr_binding: &dyn WanAddrBinding,
     mac_addr: &MacAddr,
     link_id: Uuid,
+    link_chain_id: u16,
     session: &SessionSignal,
 ) -> DhcpState {
     if let Some(args) = ip_arg.take() {
@@ -684,7 +688,14 @@ async fn bind_ipv4(
         Some(DhcpOption::Router(router_ips)) => router_ips.first().copied(),
         _ => None,
     };
-    addr_binding.bind_ipv4(ifindex, new_yiaddr, gateway_ip, mask as u8, Some(*mac_addr));
+    addr_binding.bind_ipv4(
+        ifindex,
+        link_chain_id,
+        new_yiaddr,
+        gateway_ip,
+        mask as u8,
+        Some(*mac_addr),
+    );
 
     if let Some(router_ip) = gateway_ip {
         route_service
@@ -692,6 +703,7 @@ async fn bind_ipv4(
                 link_id,
                 RouteTargetInfo {
                     ifindex,
+                    link_chain_id,
                     weight: 1,
                     mac: Some(*mac_addr),
                     is_docker: false,

@@ -908,6 +908,7 @@ mod tests {
         RouteTargetInfo {
             weight: 1,
             ifindex: 1,
+            link_chain_id: 0,
             mac: None,
             default_route: true,
             is_docker: false,

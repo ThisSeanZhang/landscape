@@ -5,6 +5,7 @@ use std::time::Duration;
 use landscape_common::net::MacAddr;
 use landscape_common::service::WatchService;
 use landscape_common::wan_service::ipv6_pd::IAPrefixMap;
+use landscape_common::wan_service::link::dataplane::NoopWanLinkChainDataplane;
 use landscape_common::wan_service::link::session::WanV4Lease;
 use landscape_common::wan_service::link::{
     WanLinkConfig, WanLinkKindConfig, WanNatConfig, WanPdConfig, WanV4Config, WanV4Model,
@@ -45,6 +46,7 @@ fn deps(session: Arc<dyn SessionDriver>, sections: Arc<MockSectionRunner>) -> Ar
         section_runner: sections,
         status_store: Arc::default(),
         prefix_map: IAPrefixMap::new(),
+        chain_dp: Arc::new(NoopWanLinkChainDataplane),
     })
 }
 
@@ -332,6 +334,7 @@ async fn changing_attach_iface_restarts_the_session() {
         section_runner: sections,
         status_store: Arc::default(),
         prefix_map: IAPrefixMap::new(),
+        chain_dp: Arc::new(NoopWanLinkChainDataplane),
     });
 
     let status = WatchService::new();
@@ -370,6 +373,7 @@ async fn mac_less_attach_yields_invalid_session_without_sections() {
         section_runner: sections.clone(),
         status_store: Arc::default(),
         prefix_map: IAPrefixMap::new(),
+        chain_dp: Arc::new(NoopWanLinkChainDataplane),
     });
 
     let status = WatchService::new();

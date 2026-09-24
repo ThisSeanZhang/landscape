@@ -171,6 +171,13 @@ impl EbpfRuntime {
         Arc::new(crate::runtime_impls::EbpfWanRouteDataplane::new(self))
     }
 
+    /// WAN link stage-chain root capability.
+    pub fn wan_link_chain(
+        self: Arc<Self>,
+    ) -> Arc<dyn landscape_common::wan_service::link::dataplane::WanLinkChainDataplane> {
+        Arc::new(crate::runtime_impls::EbpfWanLinkChainDataplane::new(self))
+    }
+
     /// System route table sync capability.
     pub fn route_table(
         self: Arc<Self>,

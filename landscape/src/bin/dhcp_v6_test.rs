@@ -55,6 +55,7 @@ async fn main() {
     tokio::spawn(async move {
         let route_info = RouteTargetInfo {
             ifindex: 6,
+            link_chain_id: 0,
             weight: 1,
             mac: iface.mac,
             is_docker: false,
@@ -67,6 +68,7 @@ async fn main() {
         dhcp_v6_pd_client(
             args.iface_name,
             link_id,
+            0,
             iface.index,
             iface.mac,
             mac_addr,

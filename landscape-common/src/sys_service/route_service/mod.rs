@@ -8,6 +8,7 @@ use crate::net::MacAddr;
 pub struct RouteTargetInfo {
     pub weight: u32,
     pub ifindex: u32,
+    pub link_chain_id: u16,
     pub mac: Option<MacAddr>,
     pub default_route: bool,
     pub is_docker: bool,
@@ -24,6 +25,7 @@ impl RouteTargetInfo {
             RouteTargetInfo {
                 weight: 0,
                 ifindex,
+                link_chain_id: 0,
                 mac: Some(MacAddr::dummy()),
                 default_route: false,
                 is_docker: true,
@@ -34,6 +36,7 @@ impl RouteTargetInfo {
             RouteTargetInfo {
                 weight: 0,
                 ifindex,
+                link_chain_id: 0,
                 mac: Some(MacAddr::dummy()),
                 default_route: false,
                 is_docker: true,

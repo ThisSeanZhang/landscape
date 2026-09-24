@@ -108,7 +108,6 @@ pub fn attach_tc_nat(
     use std::os::fd::{AsFd, AsRawFd};
 
     let paths = &rt.paths;
-    rt.tc.ensure_roots(ifindex, has_mac)?;
 
     let builder = tc_nat_skel::TcNatSkelBuilder::default();
     let (backing, obj) = OwnedOpenObject::new();
@@ -183,8 +182,6 @@ fn init_nat_xdp_unified(
     let paths = &rt.paths;
 
     // ── 1. Load TC nat first (ingress + egress, for runtime map sharing with XDP) ──
-
-    rt.tc.ensure_roots(ifindex, has_mac)?;
 
     let tc_builder = tc_nat_skel::TcNatSkelBuilder::default();
     let (tc_backing, tc_obj) = OwnedOpenObject::new();

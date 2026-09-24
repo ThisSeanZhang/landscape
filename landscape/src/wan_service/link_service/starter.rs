@@ -22,7 +22,9 @@ use std::time::Duration;
 
 use landscape_common::concurrency::task_label;
 use landscape_common::dev::LandscapeInterface;
+use landscape_common::ebpf::DataplaneGuard;
 use landscape_common::service::{ServiceStatus, WatchService};
+use landscape_common::wan_service::link::dataplane::WanLinkChainDataplane;
 use landscape_common::wan_service::link::session::{SessionSignal, SessionState, WanV4Lease};
 use landscape_common::wan_service::link::{
     LinkState, LinkStatus, WanLinkConfig, WanLinkKindConfig, WanV4Config,
@@ -44,6 +46,8 @@ pub struct WanLinkDeps {
     pub status_store: LinkStatusStore,
     /// Shared PD prefix map, also read by the manager's status endpoints.
     pub prefix_map: landscape_common::wan_service::ipv6_pd::IAPrefixMap,
+    /// Owns the link's stage-chain root in the eBPF datapath.
+    pub chain_dp: Arc<dyn WanLinkChainDataplane>,
 }
 
 struct ActiveSession {
@@ -137,11 +141,20 @@ pub async fn run_link_instance(
     let mut children = SectionChildren::default();
     let mut session: Option<ActiveSession> = None;
     let mut last_nat_lease: Option<WanV4Lease> = None;
+    let mut chain_guard: Option<(u32, Box<dyn DataplaneGuard>)> = None;
 
     let mut attach = deps.iface_lookup.get(&config.attach_iface_name).await;
     ensure_session(&config, attach.as_ref(), &deps, &mut session).await;
-    reconcile(&config, &mut session, attach.as_ref(), &deps, &mut children, &mut last_nat_lease)
-        .await;
+    reconcile(
+        &config,
+        &mut session,
+        attach.as_ref(),
+        &deps,
+        &mut children,
+        &mut last_nat_lease,
+        &mut chain_guard,
+    )
+    .await;
     publish_status(&config, &status, session.as_ref(), &children, &deps.status_store).await;
 
     // Keep a receiver alive even when no session exists, so the select arm can
@@ -175,6 +188,7 @@ pub async fn run_link_instance(
                     &deps,
                     &mut children,
                     &mut last_nat_lease,
+                    &mut chain_guard,
                 )
                 .await;
                 publish_status(&config, &status, session.as_ref(), &children, &deps.status_store).await;
@@ -188,6 +202,7 @@ pub async fn run_link_instance(
                     &deps,
                     &mut children,
                     &mut last_nat_lease,
+                    &mut chain_guard,
                 )
                 .await;
                 publish_status(&config, &status, session.as_ref(), &children, &deps.status_store).await;
@@ -207,6 +222,7 @@ pub async fn run_link_instance(
                     &deps,
                     &mut children,
                     &mut last_nat_lease,
+                    &mut chain_guard,
                 )
                 .await;
                 publish_status(&config, &status, session.as_ref(), &children, &deps.status_store).await;
@@ -281,7 +297,9 @@ async fn ensure_session(
     let spec = resolve_session_spec(config, attach);
     let (tx, rx) = SessionSignal::new();
     let status = WatchService::new();
-    deps.session_driver.spawn(config.id, attach.clone(), spec, status.clone(), tx).await;
+    deps.session_driver
+        .spawn(config.id, config.link_chain_id, attach.clone(), spec, status.clone(), tx)
+        .await;
     *session = Some(ActiveSession { status, rx, key: new_key });
 }
 
@@ -297,6 +315,7 @@ async fn reconcile(
     deps: &WanLinkDeps,
     children: &mut SectionChildren,
     last_nat_lease: &mut Option<WanV4Lease>,
+    chain_guard: &mut Option<(u32, Box<dyn DataplaneGuard>)>,
 ) {
     let state = session.as_ref().map(|s| s.rx.borrow().clone()).unwrap_or(SessionState::Idle);
     let lease = match &state {
@@ -343,8 +362,18 @@ async fn reconcile(
     }
 
     let Some(net) = net_iface else {
+        *chain_guard = None;
         return;
     };
+    if chain_guard.as_ref().map(|(idx, _)| *idx) != Some(net.index) {
+        match deps.chain_dp.open(net.index, net.mac.is_some(), config.link_chain_id) {
+            Ok(guard) => *chain_guard = Some((net.index, guard)),
+            Err(err) => {
+                tracing::error!(iface = %net.name, "failed to open WAN link chain root: {err}");
+                *chain_guard = None;
+            }
+        }
+    }
     let link_id = config.id;
 
     if pd_ok {
@@ -362,7 +391,13 @@ async fn reconcile(
             }
             let status = WatchService::new();
             deps.section_runner
-                .spawn(link_id, net.clone(), SectionTask::Pd(desired_pd.clone()), status.clone())
+                .spawn(
+                    link_id,
+                    config.link_chain_id,
+                    net.clone(),
+                    SectionTask::Pd(desired_pd.clone()),
+                    status.clone(),
+                )
                 .await;
             children.pd = Some((status, desired_pd));
         }
@@ -371,7 +406,13 @@ async fn reconcile(
     if fw_ok && children.firewall.is_none() {
         let status = WatchService::new();
         deps.section_runner
-            .spawn(link_id, net.clone(), SectionTask::Firewall, status.clone())
+            .spawn(
+                link_id,
+                config.link_chain_id,
+                net.clone(),
+                SectionTask::Firewall,
+                status.clone(),
+            )
             .await;
         children.firewall = Some(status);
     }
@@ -394,6 +435,7 @@ async fn reconcile(
             deps.section_runner
                 .spawn(
                     link_id,
+                    config.link_chain_id,
                     net.clone(),
                     SectionTask::Mss { clamp_size: desired_clamp },
                     status.clone(),
@@ -416,7 +458,13 @@ async fn reconcile(
             }
             let status = WatchService::new();
             deps.section_runner
-                .spawn(link_id, net.clone(), SectionTask::Nat(desired_nat.clone()), status.clone())
+                .spawn(
+                    link_id,
+                    config.link_chain_id,
+                    net.clone(),
+                    SectionTask::Nat(desired_nat.clone()),
+                    status.clone(),
+                )
                 .await;
             children.nat = Some((status, desired_nat));
             *last_nat_lease = Some(lease_now);

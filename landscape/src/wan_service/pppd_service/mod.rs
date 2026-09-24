@@ -100,9 +100,11 @@ pub(crate) async fn spawn_pppd_session(
     route_service: IpRouteService,
     addr_binding: Arc<dyn WanAddrBinding>,
     link_id: Uuid,
+    link_chain_id: u16,
     session: SessionSignal,
 ) {
-    let env: Arc<dyn PppdEnv> = Arc::new(SystemPppdEnv::new(route_service, addr_binding, link_id));
+    let env: Arc<dyn PppdEnv> =
+        Arc::new(SystemPppdEnv::new(route_service, addr_binding, link_id, link_chain_id));
     let config_store: Arc<dyn PppdConfigStore> = Arc::new(SystemPppdConfigStore);
 
     create_pppd_thread(

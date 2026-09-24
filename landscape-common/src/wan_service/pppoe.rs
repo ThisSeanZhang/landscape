@@ -39,6 +39,7 @@ pub trait PppoeDataplane: Send + Sync {
     fn bind_wan_ipv4(
         &self,
         ifindex: u32,
+        link_chain_id: u16,
         addr: Ipv4Addr,
         gateway: Option<Ipv4Addr>,
         mask: u8,
@@ -46,7 +47,7 @@ pub trait PppoeDataplane: Send + Sync {
     );
 
     /// Remove the WAN IPv4 binding of `ifindex`.
-    fn unbind_wan_ipv4(&self, ifindex: u32);
+    fn unbind_wan_ipv4(&self, ifindex: u32, link_chain_id: u16);
 }
 
 /// No-op implementation for tests.
@@ -65,6 +66,7 @@ impl PppoeDataplane for NoopPppoeDataplane {
     fn bind_wan_ipv4(
         &self,
         _ifindex: u32,
+        _link_chain_id: u16,
         _addr: Ipv4Addr,
         _gateway: Option<Ipv4Addr>,
         _mask: u8,
@@ -72,5 +74,5 @@ impl PppoeDataplane for NoopPppoeDataplane {
     ) {
     }
 
-    fn unbind_wan_ipv4(&self, _ifindex: u32) {}
+    fn unbind_wan_ipv4(&self, _ifindex: u32, _link_chain_id: u16) {}
 }

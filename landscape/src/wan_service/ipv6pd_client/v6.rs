@@ -199,6 +199,7 @@ fn gen_client_id(config_mac: MacAddr) -> Vec<u8> {
 pub async fn dhcp_v6_pd_client(
     iface_name: String,
     link_id: Uuid,
+    link_chain_id: u16,
     ifindex: u32,
     // for ebpf map setting
     mac_addr: Option<MacAddr>,
@@ -337,6 +338,7 @@ pub async fn dhcp_v6_pd_client(
                     clear_active_pd_prefix(
                         &iface_name,
                         link_id,
+                        link_chain_id,
                         ifindex,
                         &route_service,
                         addr_binding.as_ref(),
@@ -412,6 +414,7 @@ pub async fn dhcp_v6_pd_client(
     clear_active_pd_prefix(
         &iface_name,
         link_id,
+        link_chain_id,
         ifindex,
         &route_service,
         addr_binding.as_ref(),
@@ -435,6 +438,7 @@ pub async fn dhcp_v6_pd_client(
 async fn clear_active_pd_prefix(
     iface_name: &str,
     link_id: Uuid,
+    link_chain_id: u16,
     ifindex: u32,
     route_service: &IpRouteService,
     addr_binding: &dyn WanAddrBinding,
@@ -448,7 +452,7 @@ async fn clear_active_pd_prefix(
     }
 
     route_service.remove_ipv6_link_route(link_id).await;
-    addr_binding.unbind_ipv6(ifindex);
+    addr_binding.unbind_ipv6(ifindex, link_chain_id);
     if let Some(wan_addr) = current_wan_addr.take() {
         del_iface_ip(wan_addr, 128, iface_name);
     }
@@ -851,6 +855,7 @@ async fn handle_packet(
                                 info.iface_ip = IpAddr::V6(wan_addr);
                             }
                             info.gateway_ip = IpAddr::V6(ipv6addr);
+                            let link_chain_id = info.link_chain_id;
                             route_service.insert_ipv6_link_route(link_id, info).await;
                             replace_ip_route(
                                 &ia_prefix,
@@ -858,6 +863,7 @@ async fn handle_packet(
                                 iface_name,
                                 ifindex,
                                 mac_addr,
+                                link_chain_id,
                                 addr_binding,
                             );
                             prefix_map.store(link_id, ia_prefix, expected_pd_len);
@@ -892,6 +898,7 @@ fn replace_ip_route(
     iface_name: &str,
     ifindex: u32,
     mac: &Option<MacAddr>,
+    link_chain_id: u16,
     addr_binding: &dyn WanAddrBinding,
 ) {
     let result = std::process::Command::new("ip")
@@ -911,7 +918,14 @@ fn replace_ip_route(
         ])
         .output();
 
-    addr_binding.bind_ipv6(ifindex, iapd.prefix_ip, Some(route_ip), iapd.prefix_len, *mac);
+    addr_binding.bind_ipv6(
+        ifindex,
+        link_chain_id,
+        iapd.prefix_ip,
+        Some(route_ip),
+        iapd.prefix_len,
+        *mac,
+    );
     if let Err(e) = result {
         tracing::error!("{e:?}");
     }

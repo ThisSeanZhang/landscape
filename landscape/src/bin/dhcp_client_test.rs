@@ -52,6 +52,7 @@ async fn main() {
                     IpRouteService::new(route_rx, flow_repo, rt.clone().route_table()),
                     rt.wan_addr_binding(),
                     Uuid::new_v4(),
+                    0,
                     SessionSignal::default(),
                 )
                 .await;
