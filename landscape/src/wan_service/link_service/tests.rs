@@ -408,3 +408,40 @@ async fn mac_less_attach_yields_invalid_session_without_sections() {
     status.wait_stop().await;
     let _ = handle.await;
 }
+
+#[tokio::test]
+async fn manager_allocates_then_freezes_link_chain_id() {
+    use landscape_common::event::hub::EventHub;
+    use landscape_database::provider::LandscapeDBServiceProvider;
+
+    let hub = EventHub::new().spawn();
+    let provider = LandscapeDBServiceProvider::mem_test_db().await;
+    let session = Arc::new(MockSessionDriver::new(SessionBehavior::RunUntilStop));
+    let sections = MockSectionRunner::new();
+    let manager = super::WanLinkServiceManagerService::with_deps(
+        deps(session, sections),
+        provider,
+        hub.subscribe_iface(),
+    )
+    .await;
+
+    // A brand-new link submits 0; the manager lets the insert path allocate 1.
+    let mut cfg = link(false);
+    cfg.v4.enable = false; // inactive: this test only checks persisted identity
+    cfg.link_chain_id = 0;
+    let id = cfg.id;
+    manager.handle_service_config(cfg).await.unwrap();
+
+    let stored = manager.list_links().await.into_iter().find(|l| l.id == id).unwrap();
+    assert_eq!(stored.link_chain_id, 1, "first allocation must be 1");
+
+    // Editing submits a bogus value; the manager forces the stored one back.
+    let mut edited = stored.clone();
+    edited.link_chain_id = 999;
+    edited.name = "edited".to_string();
+    manager.handle_service_config(edited).await.unwrap();
+
+    let stored = manager.list_links().await.into_iter().find(|l| l.id == id).unwrap();
+    assert_eq!(stored.link_chain_id, 1, "update must not change the chain id");
+    assert_eq!(stored.name, "edited");
+}

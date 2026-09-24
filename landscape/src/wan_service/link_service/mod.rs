@@ -200,9 +200,13 @@ impl WanLinkServiceManagerService {
     }
 
     /// Persist the config and hand it to the link instance.
+    ///
+    /// `link_chain_id` is backend-managed by the repository: an existing link
+    /// keeps its stored value (client changes are ignored), a new link lets the
+    /// insert path assign the smallest free id.
     pub async fn handle_service_config(&self, config: WanLinkConfig) -> Result<(), DbError> {
-        self.store.checked_set(config.clone()).await?;
-        self.upsert_instance(config).await;
+        let stored = self.store.upsert_preserving_chain_id(config).await?;
+        self.upsert_instance(stored).await;
         Ok(())
     }
 

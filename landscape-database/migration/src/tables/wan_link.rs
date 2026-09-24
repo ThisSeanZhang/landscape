@@ -7,6 +7,7 @@ pub enum WanLinks {
     Id,
     Name,
     AttachIfaceName,
+    LinkChainId,
     Kind,
     V4,
     Pd,

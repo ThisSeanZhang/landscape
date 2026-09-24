@@ -437,7 +437,7 @@ mod tests {
         assert_eq!(targets.first().unwrap().display_label, "current release boundary 0.21.0");
         assert_eq!(targets.get(1).unwrap().display_label, "previous release 0.20.1");
         assert_eq!(targets.get(2).unwrap().display_label, "older release 0.19.0");
-        assert_eq!(targets.first().unwrap().steps, 6);
+        assert_eq!(targets.first().unwrap().steps, 7);
     }
 
     #[test]
@@ -453,10 +453,11 @@ mod tests {
             .unwrap();
 
         let plan = build_rollback_plan(&current_state, &target, &all_migrations).unwrap();
-        assert_eq!(plan.steps, 9);
+        assert_eq!(plan.steps, 10);
         assert_eq!(
             plan.rollback_migrations,
             vec![
+                "m20260924_000000_wan_link_chain_id".to_string(),
                 "m20260922_000000_wan_links".to_string(),
                 "m20260815_000000_dns_upstream_bind".to_string(),
                 "m20260813_000000_dns_redirect_block_metadata".to_string(),

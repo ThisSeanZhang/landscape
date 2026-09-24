@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::net::{Ipv4Addr, Ipv6Addr};
 use std::ops::Range;
 
@@ -24,6 +25,18 @@ pub const MSS_CLAMP_MIN: u16 = 536;
 pub const MSS_CLAMP_MAX: u16 = 1500;
 pub const PD_LEN_MIN: u8 = 56;
 pub const PD_LEN_MAX: u8 = 64;
+
+/// Valid range of the per-link chain id used by the eBPF dispatch map value.
+/// `0` is reserved: it means "not yet assigned" and is never a valid chain id.
+pub const LINK_CHAIN_ID_MIN: u16 = 1;
+pub const LINK_CHAIN_ID_MAX: u16 = 1023;
+
+/// Smallest free link chain id in `[LINK_CHAIN_ID_MIN, LINK_CHAIN_ID_MAX]`,
+/// skipping the values in `used`. Returns `None` when the range is exhausted.
+pub fn allocate_link_chain_id(used: impl IntoIterator<Item = u16>) -> Option<u16> {
+    let used: HashSet<u16> = used.into_iter().collect();
+    (LINK_CHAIN_ID_MIN..=LINK_CHAIN_ID_MAX).find(|id| !used.contains(id))
+}
 
 /// A single WAN uplink: one session (ethernet / native PPPoE / pppd) plus the
 /// sub-services that ride on it.
@@ -54,6 +67,13 @@ pub struct WanLinkConfig {
     pub name: String,
 
     pub attach_iface_name: String,
+
+    /// eBPF WAN chain id this link maps to. `0` means "not assigned"; the
+    /// backend allocates a unique value in `[LINK_CHAIN_ID_MIN, LINK_CHAIN_ID_MAX]`
+    /// right before the row is first inserted and never lets it change afterwards.
+    #[serde(default)]
+    #[cfg_attr(feature = "openapi", schema(required = false))]
+    pub link_chain_id: u16,
 
     #[serde(default)]
     pub kind: WanLinkKindConfig,
@@ -315,6 +335,15 @@ impl WanLinkConfig {
         if self.attach_iface_name.trim().is_empty() {
             return Err(ServiceConfigError::InvalidConfig {
                 reason: "attach_iface_name must not be empty".to_string(),
+            });
+        }
+
+        if self.link_chain_id > LINK_CHAIN_ID_MAX {
+            return Err(ServiceConfigError::InvalidConfig {
+                reason: format!(
+                    "link_chain_id ({}) must be 0 (unassigned) or between {LINK_CHAIN_ID_MIN} and {LINK_CHAIN_ID_MAX}",
+                    self.link_chain_id
+                ),
             });
         }
 
@@ -685,6 +714,45 @@ mod tests {
         assert!(config.validate().is_err());
         config.mss.clamp_size = Some(536);
         assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn allocate_link_chain_id_picks_smallest_free_slot() {
+        assert_eq!(allocate_link_chain_id([]), Some(LINK_CHAIN_ID_MIN));
+        assert_eq!(allocate_link_chain_id([1, 2]), Some(3));
+        assert_eq!(allocate_link_chain_id([1, 3]), Some(2));
+        // 0 is reserved and must be ignored even if reported as used.
+        assert_eq!(allocate_link_chain_id([0, 1]), Some(2));
+        // Out-of-range values do not collide with any valid slot.
+        assert_eq!(allocate_link_chain_id([LINK_CHAIN_ID_MAX]), Some(1));
+    }
+
+    #[test]
+    fn allocate_link_chain_id_returns_none_when_exhausted() {
+        let all: Vec<u16> = (LINK_CHAIN_ID_MIN..=LINK_CHAIN_ID_MAX).collect();
+        assert_eq!(allocate_link_chain_id(all), None);
+    }
+
+    #[test]
+    fn validates_link_chain_id_range() {
+        let mut config = ethernet_link();
+        assert!(config.validate().is_ok(), "0 (unassigned) is valid at validate time");
+
+        config.link_chain_id = LINK_CHAIN_ID_MIN;
+        assert!(config.validate().is_ok());
+
+        config.link_chain_id = LINK_CHAIN_ID_MAX;
+        assert!(config.validate().is_ok());
+
+        config.link_chain_id = LINK_CHAIN_ID_MAX + 1;
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn empty_config_leaves_link_chain_id_unassigned() {
+        let config: WanLinkConfig =
+            serde_json::from_value(serde_json::json!({"attach_iface_name": "wan0"})).unwrap();
+        assert_eq!(config.link_chain_id, 0);
     }
 
     fn pppd_link(id: &str, attach: &str) -> WanLinkConfig {

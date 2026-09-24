@@ -383,4 +383,127 @@ mod tests {
         assert_eq!(imported.len(), 1);
         assert_eq!(imported[0].attach_iface_name, "wan0");
     }
+
+    #[tokio::test]
+    pub async fn wan_link_inserts_allocate_sequential_chain_ids() {
+        use landscape_common::wan_service::link::WanLinkConfig;
+        use sea_orm::prelude::Uuid;
+
+        let provider = LandscapeDBServiceProvider::mem_test_db().await;
+        let store = provider.wan_link_store();
+
+        let mut assigned = Vec::new();
+        for iface in ["wan0", "wan1", "wan2"] {
+            let link = WanLinkConfig {
+                id: Uuid::new_v4(),
+                attach_iface_name: iface.to_string(),
+                ..Default::default()
+            };
+            let stored = store.set(link).await.unwrap();
+            assigned.push(stored.link_chain_id);
+        }
+
+        assert_eq!(assigned, vec![1, 2, 3]);
+    }
+
+    #[tokio::test]
+    pub async fn wan_link_insert_reallocates_conflicting_chain_id() {
+        use landscape_common::wan_service::link::WanLinkConfig;
+        use sea_orm::prelude::Uuid;
+
+        let provider = LandscapeDBServiceProvider::mem_test_db().await;
+        let store = provider.wan_link_store();
+
+        let first = WanLinkConfig {
+            id: Uuid::new_v4(),
+            attach_iface_name: "wan0".to_string(),
+            link_chain_id: 5,
+            ..Default::default()
+        };
+        let stored_first = store.set(first).await.unwrap();
+        assert_eq!(stored_first.link_chain_id, 5);
+
+        let second = WanLinkConfig {
+            id: Uuid::new_v4(),
+            attach_iface_name: "wan1".to_string(),
+            link_chain_id: 5,
+            ..Default::default()
+        };
+        let stored_second = store.set(second).await.unwrap();
+        assert_eq!(stored_second.link_chain_id, 1, "conflict must take the smallest free slot");
+    }
+
+    #[tokio::test]
+    pub async fn wan_link_update_keeps_chain_id() {
+        use landscape_common::wan_service::link::WanLinkConfig;
+        use sea_orm::prelude::Uuid;
+
+        let provider = LandscapeDBServiceProvider::mem_test_db().await;
+        let store = provider.wan_link_store();
+
+        let link = WanLinkConfig {
+            id: Uuid::new_v4(),
+            attach_iface_name: "wan0".to_string(),
+            ..Default::default()
+        };
+        let stored = store.set(link).await.unwrap();
+        let assigned = stored.link_chain_id;
+        assert!(assigned >= 1);
+
+        let mut changed = stored.clone();
+        changed.link_chain_id = 999;
+        changed.name = "renamed".to_string();
+        let stored_again = store.set(changed).await.unwrap();
+
+        assert_eq!(stored_again.link_chain_id, assigned, "chain id is immutable after creation");
+        assert_eq!(stored_again.name, "renamed");
+    }
+
+    #[tokio::test]
+    pub async fn wan_link_chain_id_lifecycle() {
+        use landscape_common::wan_service::link::WanLinkConfig;
+        use sea_orm::prelude::Uuid;
+
+        let provider = LandscapeDBServiceProvider::mem_test_db().await;
+        let store = provider.wan_link_store();
+
+        let new_link = |iface: &str, chain: u16| WanLinkConfig {
+            id: Uuid::new_v4(),
+            attach_iface_name: iface.to_string(),
+            link_chain_id: chain,
+            ..Default::default()
+        };
+
+        // First allocation: 0 -> 1, 2, 3
+        let a = store.set(new_link("wan0", 0)).await.unwrap();
+        let b = store.set(new_link("wan1", 0)).await.unwrap();
+        let c = store.set(new_link("wan2", 0)).await.unwrap();
+        assert_eq!((a.link_chain_id, b.link_chain_id, c.link_chain_id), (1, 2, 3));
+
+        // Editing keeps the assigned id, even if the client sends 0.
+        let mut b_edit = b.clone();
+        b_edit.name = "edited".to_string();
+        b_edit.link_chain_id = 0;
+        let b_edit = store.set(b_edit).await.unwrap();
+        assert_eq!(b_edit.link_chain_id, 2, "edit must keep the original id");
+        assert_eq!(b_edit.name, "edited");
+
+        // Editing with an explicit different value is still forced back.
+        let mut b_force = b_edit.clone();
+        b_force.link_chain_id = 999;
+        let b_force = store.set(b_force).await.unwrap();
+        assert_eq!(b_force.link_chain_id, 2, "chain id is immutable");
+
+        // Deleting frees the slot; the next allocation reuses the smallest gap.
+        store.delete(a.id).await.unwrap();
+        let d = store.set(new_link("wan3", 0)).await.unwrap();
+        assert_eq!(d.link_chain_id, 1, "freed id must be reused");
+
+        // A conflicting explicit value is reallocated; an out-of-range one too.
+        let e = store.set(new_link("wan4", 2)).await.unwrap();
+        assert_eq!(e.link_chain_id, 4);
+
+        let f = store.set(new_link("wan5", 5000)).await.unwrap();
+        assert_eq!(f.link_chain_id, 5);
+    }
 }
