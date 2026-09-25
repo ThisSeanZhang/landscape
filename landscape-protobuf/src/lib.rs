@@ -1,7 +1,6 @@
 use std::{
     collections::HashMap,
     net::{IpAddr, Ipv4Addr, Ipv6Addr},
-    path::Path,
 };
 
 use landscape_common::{
@@ -28,20 +27,6 @@ pub async fn read_geo_sites_from_bytes(
 ) -> HashMap<String, Vec<GeoSiteFileConfig>> {
     let mut result = HashMap::new();
     let list = GeoSiteListOwned::try_from(contents.into()).unwrap();
-
-    for entry in list.proto().entry.iter() {
-        let domains = entry.domain.iter().map(convert_domain_from_proto).collect();
-        result.insert(entry.country_code.to_string(), domains);
-    }
-    result
-}
-
-pub async fn read_geo_sites<T: AsRef<Path>>(
-    geo_file_path: T,
-) -> HashMap<String, Vec<GeoSiteFileConfig>> {
-    let mut result = HashMap::new();
-    let data = tokio::fs::read(geo_file_path).await.unwrap();
-    let list = GeoSiteListOwned::try_from(data).unwrap();
 
     for entry in list.proto().entry.iter() {
         let domains = entry.domain.iter().map(convert_domain_from_proto).collect();
@@ -147,18 +132,6 @@ pub async fn read_geo_ips_from_bytes_by_format(
     }
 }
 
-pub async fn read_geo_ips<T: AsRef<Path>>(geo_file_path: T) -> HashMap<String, Vec<IpConfig>> {
-    let mut result = HashMap::new();
-    let data = tokio::fs::read(geo_file_path).await.unwrap();
-    let list = GeoIPListOwned::try_from(data).unwrap();
-
-    for entry in list.proto().entry.iter() {
-        let domains = entry.cidr.iter().filter_map(convert_ipconfig_from_proto).collect();
-        result.insert(entry.country_code.to_string(), domains);
-    }
-    result
-}
-
 pub fn convert_ipconfig_from_proto(value: &crate::protos::geo::CIDR) -> Option<IpConfig> {
     let bytes = value.ip.as_ref();
     let result = match bytes.len() {
@@ -195,88 +168,59 @@ fn parse_txt_cidr_line(line: &str) -> Option<IpConfig> {
 }
 
 #[cfg(test)]
-#[global_allocator]
-static GLOBAL: jemallocator::Jemalloc = jemallocator::Jemalloc;
-
-#[cfg(test)]
 mod tests {
-    use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
-
-    use jemalloc_ctl::{epoch, stats};
-
-    use crate::{
-        protos::geo::{GeoIPListOwned, GeoSiteListOwned},
-        read_geo_ips_from_bytes_txt, read_geo_sites,
+    use std::{
+        borrow::Cow,
+        net::{IpAddr, Ipv4Addr, Ipv6Addr},
     };
 
-    fn test_memory_usage() {
-        epoch::advance().unwrap();
+    use landscape_common::dns::rule::DomainMatchType;
 
-        let allocated = stats::allocated::read().unwrap();
-        let active = stats::active::read().unwrap();
+    use crate::{
+        convert_domain_from_proto, convert_ipconfig_from_proto,
+        protos::geo::{mod_Domain::Type, Domain, CIDR},
+        read_geo_ips_from_bytes_txt,
+    };
 
-        println!("Allocated memory: {} kbytes", allocated / 1024);
-        println!("Active memory: {} kbytes", active / 1024);
-    }
-    #[tokio::test]
-    #[ignore = "requires local file /root/.landscape-router/geosite.dat1"]
-    async fn read_raw() {
-        test_memory_usage();
+    #[test]
+    fn convert_ipconfig_from_proto_handles_ipv4_ipv6_and_invalid() {
+        let v4 =
+            convert_ipconfig_from_proto(&CIDR { ip: Cow::Borrowed(&[192, 168, 1, 0]), prefix: 24 })
+                .unwrap();
+        assert_eq!(v4.ip, IpAddr::V4(Ipv4Addr::new(192, 168, 1, 0)));
+        assert_eq!(v4.prefix, 24);
 
-        let data = tokio::fs::read("/root/.landscape-router/geosite.dat1").await.unwrap();
-        let list = GeoSiteListOwned::try_from(data).unwrap();
+        let v6_bytes = [0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+        let v6 = convert_ipconfig_from_proto(&CIDR { ip: Cow::Borrowed(&v6_bytes), prefix: 32 })
+            .unwrap();
+        assert_eq!(v6.ip, IpAddr::V6(Ipv6Addr::from(v6_bytes)));
+        assert_eq!(v6.prefix, 32);
 
-        for entry in list.proto().entry.iter() {
-            if entry.country_code == "STEAM" {
-                for domain_config in entry.domain.iter() {
-                    println!("{:?}: {:?}", entry.country_code, domain_config);
-                }
-            }
-        }
-    }
-
-    #[tokio::test]
-    #[ignore = "requires local file /root/.landscape-router/geosite.dat1"]
-    async fn test() {
-        test_memory_usage();
-        let result = read_geo_sites("/root/.landscape-router/geosite.dat1").await;
-        test_memory_usage();
-        for (domain, domain_configs) in result {
-            if domain == "test" {
-                for domain_config in domain_configs {
-                    println!("{domain:?}: {:?}", domain_config);
-                }
-            }
-        }
-        test_memory_usage();
+        let invalid =
+            convert_ipconfig_from_proto(&CIDR { ip: Cow::Borrowed(&[1, 2, 3]), prefix: 24 });
+        assert!(invalid.is_none());
     }
 
-    #[tokio::test]
-    #[ignore = "requires local file ~/.landscape-router/geoip.dat"]
-    async fn test_read() {
-        test_memory_usage();
-        let home_path = homedir::my_home().unwrap().unwrap().join(".landscape-router");
-        let geo_file_path = home_path.join("geoip.dat");
+    #[test]
+    fn convert_domain_from_proto_maps_type_and_lowercases_value() {
+        let domain = Domain {
+            type_pb: Type::Domain,
+            value: Cow::Borrowed("Example.COM"),
+            attribute: vec![],
+        };
+        let config = convert_domain_from_proto(&domain);
+        assert_eq!(config.match_type, DomainMatchType::Domain);
+        assert_eq!(config.value, "example.com");
+        assert!(config.attributes.is_empty());
 
-        let data = tokio::fs::read(geo_file_path).await.unwrap();
-        let list = GeoIPListOwned::try_from(data).unwrap();
-        test_memory_usage();
-
-        let mut sum = 0;
-        for entry in list.proto().entry.iter() {
-            // println!("{:?}", entry.country_code);
-            if entry.country_code == "cn".to_uppercase() {
-                println!("{:?}", entry.cidr.len());
-            } else {
-                sum += entry.cidr.len()
-            }
-            // println!("reverse_match : {:?}", entry.reverse_match);
-            // if entry.reverse_match {
-            //     println!("reverse_match : {:?}", entry.cidr);
-            // }
-        }
-        println!("other count: {sum:?}");
-        test_memory_usage();
+        let domain = Domain {
+            type_pb: Type::Regex,
+            value: Cow::Borrowed("*.Example.COM"),
+            attribute: vec![],
+        };
+        let config = convert_domain_from_proto(&domain);
+        assert_eq!(config.match_type, DomainMatchType::Regex);
+        assert_eq!(config.value, "*.example.com");
     }
 
     #[test]

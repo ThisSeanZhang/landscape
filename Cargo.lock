@@ -3285,9 +3285,6 @@ dependencies = [
 name = "landscape-protobuf"
 version = "0.24.3"
 dependencies = [
- "homedir",
- "jemalloc-ctl",
- "jemallocator",
  "landscape-common",
  "pb-rs",
  "quick-protobuf",

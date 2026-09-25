@@ -10,12 +10,6 @@ landscape-common = { path = "../landscape-common" }
 quick-protobuf = { workspace = true }
 tokio = { workspace = true, features = ['fs', 'net'] }
 
-
 [build-dependencies]
 pb-rs = { workspace = true }
 walkdir = { workspace = true }
-
-[dev-dependencies]
-homedir = { workspace = true }
-jemallocator = { workspace = true }
-jemalloc-ctl = { workspace = true }
