@@ -7,6 +7,7 @@ use landscape_common::wan_service::mss_clamp::dataplane::MssClampDataplane;
 pub async fn run_mss_clamp(
     iface_name: String,
     ifindex: i32,
+    link_chain_id: u16,
     mtu_size: u16,
     has_mac: bool,
     service_status: WatchService,
@@ -14,7 +15,7 @@ pub async fn run_mss_clamp(
 ) {
     service_status.just_change_status(ServiceStatus::Staring);
 
-    let mss_clamp = match dataplane.attach(ifindex as u32, mtu_size, has_mac) {
+    let mss_clamp = match dataplane.attach(ifindex as u32, link_chain_id, mtu_size, has_mac) {
         Ok(handle) => handle,
         Err(err) => {
             tracing::error!("failed to start mss clamp for {iface_name}: {err}");

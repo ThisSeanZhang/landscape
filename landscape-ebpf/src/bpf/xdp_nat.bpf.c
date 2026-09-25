@@ -19,6 +19,10 @@
 char LICENSE[] SEC("license") = "GPL";
 
 const volatile u32 current_ifindex = 0;
+// Chain identity for directly-attached instances (tests, standalone tools)
+// where no intro program stores the chain id in XDP metadata. Inside a chain
+// the meta is always set by the intro, so this fallback never fires.
+const volatile u32 current_chain_id = 0;
 
 static __always_inline void xdp_apply_ingress_static_mark(struct xdp_md *ctx,
                                                           struct xdp_pipe_meta *meta, void *data) {
@@ -65,9 +69,13 @@ static __always_inline int nat_v4_egress(struct xdp_md *ctx) {
     struct nat4_port_queue_value_v3 alloc_item = {};
 
     u32 wan_if = meta.target_ifindex ? meta.target_ifindex : current_ifindex;
-    ret = xdp_nat4_st_egress_lookup(wan_if, nat_l4_protocol, &ip_pair, &result);
+    // wan_ip_binding is keyed by the logical chain id.  Never fall back to the
+    // ifindex here: ifindices and chain ids share the same small-integer
+    // space, and a collision would silently NAT with the wrong WAN address.
+    u32 wan_chain = meta.chain_id ? meta.chain_id : current_chain_id;
+    ret = xdp_nat4_st_egress_lookup(wan_chain, nat_l4_protocol, &ip_pair, &result);
     if (ret) {
-        ret = xdp_nat4_dyn_egress_lookup_and_check(wan_if, meta.mark, nat_l4_protocol,
+        ret = xdp_nat4_dyn_egress_lookup_and_check(wan_chain, meta.mark, nat_l4_protocol,
                                                    allow_create_mapping, &ip_pair, &result,
                                                    &dyn_ingress, &alloc_item);
         if (ret) return XDP_DROP;
@@ -256,9 +264,10 @@ static __always_inline int nat_v6_egress(struct xdp_md *ctx) {
     ip_pair.dst_port = dport;
 
     u32 wan_if = meta.target_ifindex ? meta.target_ifindex : current_ifindex;
+    u32 wan_chain = meta.chain_id ? meta.chain_id : current_chain_id;
 
-    ret =
-        xdp_ipv6_egress_prefix_check_and_replace(data, data_end, wan_if, meta.mark, &idx, &ip_pair);
+    ret = xdp_ipv6_egress_prefix_check_and_replace(data, data_end, wan_chain, wan_if, meta.mark,
+                                                   &idx, &ip_pair);
     if (ret) return XDP_DROP;
 
     return XDP_PASS;
@@ -295,10 +304,11 @@ static __always_inline int nat_v6_ingress(struct xdp_md *ctx) {
     ip_pair.dst_port = dport;
 
     u32 wan_if = meta.target_ifindex ? meta.target_ifindex : current_ifindex;
+    u32 wan_chain = meta.chain_id ? meta.chain_id : current_chain_id;
 
     bool is_static = false;
-    ret = xdp_ipv6_ingress_prefix_check_and_replace(data, data_end, wan_if, meta.mark, &idx,
-                                                    &ip_pair, &is_static);
+    ret = xdp_ipv6_ingress_prefix_check_and_replace(data, data_end, wan_chain, wan_if, meta.mark,
+                                                    &idx, &ip_pair, &is_static);
     if (ret == -1) return XDP_DROP;
     if (ret == 1) {
         meta.mark = replace_cache_mask(meta.mark, INGRESS_STATIC_MARK);

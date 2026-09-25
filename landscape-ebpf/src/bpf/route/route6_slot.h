@@ -12,6 +12,7 @@ struct route6_slot_key {
 
 struct route6_target_info {
     u32 ifindex;
+    u32 chain_id;
     union u_inet6_addr gate_addr;
     u8 has_mac;
     u8 is_docker;

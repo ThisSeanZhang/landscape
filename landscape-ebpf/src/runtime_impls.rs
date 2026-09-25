@@ -80,12 +80,14 @@ impl PppoeDataplane for EbpfPppoeDataplane {
     fn attach_session(
         &self,
         ifindex: u32,
+        link_chain_id: u16,
         tmpl: PppoeEgressTmpl,
         mtu: u16,
     ) -> Result<Box<dyn DataplaneGuard>, String> {
         crate::pppoe::pppoe_handle::create_pppoe_handle(
             self.rt.clone(),
             ifindex,
+            link_chain_id,
             to_bpf_tmpl(&tmpl),
             mtu,
         )
@@ -197,8 +199,13 @@ impl EbpfFirewallDataplane {
 }
 
 impl FirewallDataplane for EbpfFirewallDataplane {
-    fn attach(&self, ifindex: u32, has_mac: bool) -> Result<Box<dyn DataplaneGuard>, String> {
-        crate::stages::firewall::init_firewall(&self.rt, ifindex, has_mac)
+    fn attach(
+        &self,
+        ifindex: u32,
+        link_chain_id: u16,
+        has_mac: bool,
+    ) -> Result<Box<dyn DataplaneGuard>, String> {
+        crate::stages::firewall::init_firewall(&self.rt, ifindex, link_chain_id, has_mac)
             .map(|handle| Box::new(handle) as Box<dyn DataplaneGuard>)
             .map_err(|e| e.to_string())
     }
@@ -230,10 +237,11 @@ impl NatDataplane for EbpfNatDataplane {
     fn attach(
         &self,
         ifindex: u32,
+        link_chain_id: u16,
         has_mac: bool,
         config: &NatConfig,
     ) -> Result<Box<dyn DataplaneGuard>, String> {
-        crate::stages::nat::init_nat(&self.rt, ifindex, has_mac, config)
+        crate::stages::nat::init_nat(&self.rt, ifindex, link_chain_id, has_mac, config)
             .map(|handle| Box::new(handle) as Box<dyn DataplaneGuard>)
             .map_err(|e| e.to_string())
     }
@@ -275,10 +283,11 @@ impl MssClampDataplane for EbpfMssClampDataplane {
     fn attach(
         &self,
         ifindex: u32,
+        link_chain_id: u16,
         mtu: u16,
         has_mac: bool,
     ) -> Result<Box<dyn DataplaneGuard>, String> {
-        crate::stages::mss::init_mss(&self.rt, ifindex, mtu, has_mac)
+        crate::stages::mss::init_mss(&self.rt, ifindex, link_chain_id, mtu, has_mac)
             .map(|handle| Box::new(handle) as Box<dyn DataplaneGuard>)
             .map_err(|e| e.to_string())
     }
@@ -323,10 +332,6 @@ impl LanRouteDataplane for EbpfLanRouteDataplane {
         )
         .map(|handle| Box::new(handle) as Box<dyn DataplaneGuard>)
         .map_err(|e| e.to_string())
-    }
-
-    fn remove_xdp_roots(&self, ifindex: u32) {
-        self.rt.hub.remove_xdp_roots(ifindex);
     }
 
     fn set_redirect_able(&self, ifindex: u32, able: bool) {
@@ -377,10 +382,6 @@ impl WanRouteDataplane for EbpfWanRouteDataplane {
         )
         .map(|handle| Box::new(handle) as Box<dyn DataplaneGuard>)
         .map_err(|e| e.to_string())
-    }
-
-    fn remove_xdp_roots(&self, ifindex: u32) {
-        self.rt.hub.remove_xdp_roots(ifindex);
     }
 
     fn set_redirect_able(&self, ifindex: u32, able: bool) {

@@ -54,7 +54,10 @@ fn lan_ingress_lan_cache_hit_with_zero_ifindex_falls_back_to_pick_wan() {
 
     assert_eq!(ret, RET_REDIRECT);
     assert_eq!(mark, 0x0200_0305);
-    assert_eq!(forwarded, 0, "cache-hit pick_wan bypasses the tc wrapper, so no cb flag is set");
+    assert_eq!(
+        forwarded, 1,
+        "WAN-bound pick_wan records FORWARDED + chain id so the egress intro enters the chain directly"
+    );
 
     let cache = lookup_rt4_cache_value(
         &skel.maps.rt4_cache_map,
@@ -326,7 +329,7 @@ fn lan_ingress_wan_cache_hit_rewrites_header_from_remote_ip_mac() {
     assert_eq!(&out[6..12], &dev_mac.octets());
     assert_eq!(&out[12..14], &[0x08, 0x00]);
     assert_eq!(mark, 0x0200_0000, "WAN-cache hit keeps the original mark value (0)");
-    assert_eq!(forwarded, 0);
+    assert_eq!(forwarded, 1, "WAN-cache hit records FORWARDED + chain id before redirecting");
 }
 
 #[test]
@@ -383,12 +386,12 @@ fn lan_ingress_wan_cache_no_mac_entry_redirects_directly() {
     assert_eq!(ret, RET_REDIRECT, "mac-less WAN-cache entry redirects directly");
     assert_eq!(out, pkt);
     assert_eq!(mark, 0x0200_0000, "WAN-cache hit keeps the original mark value (0)");
-    assert_eq!(forwarded, 0);
+    assert_eq!(forwarded, 1, "WAN-cache hit records FORWARDED + chain id before redirecting");
 }
 
 #[test]
 fn lan_ingress_wan_cache_hit_without_wan_binding_is_inert() {
-    // The WAN-cache fast path requires wan_ip_binding[target->ifindex]; a
+    // The WAN-cache fast path requires wan_ip_binding[target->chain_id]; a
     // stale cache entry without a binding must not redirect.
     load_skel!("tc-lan-flow-wan-cache-nobind", skel);
     create_route4_cache_inner_map(&skel.maps.rt4_cache_map, WAN_CACHE);

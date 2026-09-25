@@ -47,13 +47,14 @@ impl Drop for PppoeHandle {
 pub fn create_pppoe_handle(
     rt: Arc<EbpfRuntime>,
     ifindex: u32,
+    link_chain_id: u16,
     tmpl: PppoeEgressTmpl,
     _mtu: u16,
 ) -> LdEbpfResult<PppoeHandle> {
     let session_id = u16::from_be(tmpl.session_id);
 
     let tc = attach_standalone_pppoe(ifindex, tmpl)?;
-    let xdp = crate::stages::pppoe::init_xdp_pppoe(&rt, ifindex, session_id)?;
+    let xdp = crate::stages::pppoe::init_xdp_pppoe(&rt, ifindex, link_chain_id, session_id)?;
     let pending = prepare_pppoe_skb_pending(ifindex, session_id)?;
     rt.hub.set_skb_pending(ifindex, pending);
 

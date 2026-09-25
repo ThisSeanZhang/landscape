@@ -214,7 +214,7 @@ pub(crate) mod test_csum_verify_skel {
 }
 
 #[repr(C, packed)]
-#[derive(IntoBytes, FromBytes, Debug, Clone, Copy, Default)]
+#[derive(IntoBytes, FromBytes, Debug, Clone, Copy)]
 pub struct TestSkb {
     pub len: u32,
     pub pkt_type: u32,
@@ -251,6 +251,17 @@ pub struct TestSkb {
     pub tstamp_type: u8,
     pub _padding: [u8; 3],
     pub hwtstamp: u64,
+}
+
+impl Default for TestSkb {
+    fn default() -> Self {
+        // Direct NAT unit tests enter the stage without the real WAN intro,
+        // so model their synthetic chain id alongside the physical test
+        // ifindex used by those fixtures.
+        let mut skb: Self = unsafe { std::mem::zeroed() };
+        skb.cb[2] = 6;
+        skb
+    }
 }
 
 #[allow(dead_code)]

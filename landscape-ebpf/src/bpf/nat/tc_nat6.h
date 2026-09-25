@@ -2,6 +2,7 @@
 #define LD_NAT6_V3_H
 #include <vmlinux.h>
 #include "../landscape_log.h"
+#include "../chain/tc_cb.h"
 #include "../scanner/scan_types.h"
 #include "nat_common.h"
 #include "nat6_map_ops.h"
@@ -109,7 +110,7 @@ static __always_inline int ipv6_egress_prefix_check_and_replace(struct __sk_buff
     int ret;
 
     struct wan_ip_info_key wan_search_key = {0};
-    wan_search_key.ifindex = ifindex;
+    wan_search_key.chain_id = tc_cb_chain_id(skb);
     wan_search_key.l3_protocol = LANDSCAPE_IPV6_TYPE;
 
     struct wan_ip_info_value *wan_ip_info = bpf_map_lookup_elem(&wan_ip_binding, &wan_search_key);
@@ -292,7 +293,7 @@ static __always_inline int ipv6_ingress_prefix_check_and_replace(struct __sk_buf
     __be64 local_client_prefix = {0};
 
     struct wan_ip_info_key wan_search_key = {0};
-    wan_search_key.ifindex = ifindex;
+    wan_search_key.chain_id = tc_cb_chain_id(skb);
     wan_search_key.l3_protocol = LANDSCAPE_IPV6_TYPE;
 
     struct wan_ip_info_value *wan_ip_info = bpf_map_lookup_elem(&wan_ip_binding, &wan_search_key);

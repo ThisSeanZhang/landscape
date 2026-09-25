@@ -12,7 +12,7 @@
 //!     lan worker; the legacy route4_pick_wan_and_send_by_flow_id twin passes
 //!     default-flow traffic instead);
 //!   * a slot target on the egress device itself (ifindex == skb->ifindex)
-//!     tail-calls into tc_wan_egress_roots[ifindex]; with the root map empty
+//!     tail-calls into tc_wan_egress_roots[chain_id]; with the root map empty
 //!     (no chain assembled) the packet is dropped — root assembly is out of
 //!     scope for these worker-level tests;
 //!   * the docker slot branch never sets the forwarded cb flag;
@@ -159,7 +159,7 @@ fn seed_wan_slots(
         RouteTargetInfo {
             weight: 0,
             ifindex,
-            link_chain_id: 0,
+            link_chain_id: 1,
             mac,
             default_route: false,
             is_docker,
@@ -266,7 +266,7 @@ fn wan_egress_docker_slot_pushes_vlan_and_redirects() {
 #[test]
 fn wan_egress_same_device_target_tailcalls_into_empty_root_and_shots() {
     // A slot target on the egress device itself tail-calls into
-    // tc_wan_egress_roots[ifindex]; with no chain assembled the tail call
+    // tc_wan_egress_roots[chain_id]; with no chain assembled the tail call
     // fails and the worker falls back to TC_ACT_SHOT.
     load_skel!("tc-wan-eg-same-dev", skel);
     seed_flow_rule(&skel, remote_wan_addr(), FLOW_REDIRECT_MARK);

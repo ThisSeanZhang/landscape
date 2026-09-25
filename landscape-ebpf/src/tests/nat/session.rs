@@ -14,6 +14,11 @@ use crate::tests::xdp_nat_skel::XdpNatSkelBuilder;
 use std::os::fd::{AsFd, AsRawFd};
 use zerocopy::{FromBytes, IntoBytes};
 
+/// Synthetic chain id for directly-attached NAT instances in these tests.
+/// `wan_ip_binding` is keyed by the chain id (published to the datapath via
+/// the `current_chain_id` rodata), not by the physical ifindex.
+const NAT_TEST_CHAIN_ID: u32 = 1;
+
 fn build_tcp_pkt(src_ip: [u8; 4], dst_ip: [u8; 4], src_port: u16, dst_port: u16) -> Vec<u8> {
     use etherparse::PacketBuilder;
     let builder = PacketBuilder::ethernet2([0x02, 0, 0, 0, 0, 1], [0x02, 0, 0, 0, 0, 2])
@@ -335,6 +340,7 @@ fn xdp_nat_dynamic_egress() {
     let mut nat_obj = std::mem::MaybeUninit::uninit();
     let mut nat_open = nat_b.open(&mut nat_obj).unwrap();
     nat_open.maps.rodata_data.as_deref_mut().unwrap().current_ifindex = nat_h_i;
+    nat_open.maps.rodata_data.as_deref_mut().unwrap().current_chain_id = NAT_TEST_CHAIN_ID;
     let nat = nat_open.load().unwrap();
 
     let d_b = TestXdpDummySkelBuilder::default();
@@ -361,7 +367,7 @@ fn xdp_nat_dynamic_egress() {
     }
 
     let mut wan_key = [0u8; 8];
-    wan_key[0..4].copy_from_slice(&nat_h_i.to_ne_bytes());
+    wan_key[0..4].copy_from_slice(&NAT_TEST_CHAIN_ID.to_ne_bytes());
     let mut wan_val = [0u8; 48];
     wan_val[0..4].copy_from_slice(&[203, 0, 113, 1]);
     maps.wan_ip_binding.update(&wan_key, &wan_val, MapFlags::ANY).unwrap();
@@ -725,12 +731,13 @@ fn xdp_nat_fragment_v4() {
     let mut nat_obj = std::mem::MaybeUninit::uninit();
     let mut nat_open = nat_b.open(&mut nat_obj).unwrap();
     nat_open.maps.rodata_data.as_deref_mut().unwrap().current_ifindex = nat_h_i;
+    nat_open.maps.rodata_data.as_deref_mut().unwrap().current_chain_id = NAT_TEST_CHAIN_ID;
     let nat = nat_open.load().unwrap();
 
     let _l0 = nat.progs.egress_nat.attach_xdp(nat_h_i as i32).unwrap();
 
     let mut wan_key = [0u8; 8];
-    wan_key[0..4].copy_from_slice(&nat_h_i.to_ne_bytes());
+    wan_key[0..4].copy_from_slice(&NAT_TEST_CHAIN_ID.to_ne_bytes());
     let mut wan_val = [0u8; 48];
     wan_val[0..4].copy_from_slice(&[203, 0, 113, 1]);
     maps.wan_ip_binding.update(&wan_key, &wan_val, MapFlags::ANY).unwrap();
@@ -856,12 +863,13 @@ fn xdp_nat_ct_dynamic_multi_pkt() {
     let mut nat_obj = std::mem::MaybeUninit::uninit();
     let mut nat_open = nat_b.open(&mut nat_obj).unwrap();
     nat_open.maps.rodata_data.as_deref_mut().unwrap().current_ifindex = nat_h_i;
+    nat_open.maps.rodata_data.as_deref_mut().unwrap().current_chain_id = NAT_TEST_CHAIN_ID;
     let nat = nat_open.load().unwrap();
 
     let _l0 = nat.progs.egress_nat.attach_xdp(nat_h_i as i32).unwrap();
 
     let mut wan_key = [0u8; 8];
-    wan_key[0..4].copy_from_slice(&nat_h_i.to_ne_bytes());
+    wan_key[0..4].copy_from_slice(&NAT_TEST_CHAIN_ID.to_ne_bytes());
     let mut wan_val = [0u8; 48];
     wan_val[0..4].copy_from_slice(&[203, 0, 113, 1]);
     maps.wan_ip_binding.update(&wan_key, &wan_val, MapFlags::ANY).unwrap();
@@ -1275,6 +1283,7 @@ fn xdp_nat_udp_egress() {
     let mut nat_obj = std::mem::MaybeUninit::uninit();
     let mut nat_open = nat_b.open(&mut nat_obj).unwrap();
     nat_open.maps.rodata_data.as_deref_mut().unwrap().current_ifindex = nat_h_i;
+    nat_open.maps.rodata_data.as_deref_mut().unwrap().current_chain_id = NAT_TEST_CHAIN_ID;
     let nat = nat_open.load().unwrap();
     let d_b = TestXdpDummySkelBuilder::default();
     let mut d_obj = std::mem::MaybeUninit::uninit();
@@ -1284,7 +1293,7 @@ fn xdp_nat_udp_egress() {
     let _l1 = dummy.progs.xdp_test_dummy.attach_xdp(nat_p_i as i32).unwrap();
 
     let mut wan_key = [0u8; 8];
-    wan_key[0..4].copy_from_slice(&nat_h_i.to_ne_bytes());
+    wan_key[0..4].copy_from_slice(&NAT_TEST_CHAIN_ID.to_ne_bytes());
     let mut wan_val = [0u8; 48];
     wan_val[0..4].copy_from_slice(&[203, 0, 113, 1]);
     maps.wan_ip_binding.update(&wan_key, &wan_val, MapFlags::ANY).unwrap();

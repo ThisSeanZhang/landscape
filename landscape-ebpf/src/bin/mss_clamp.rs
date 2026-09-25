@@ -11,7 +11,7 @@ pub async fn main() {
     );
     let ifindex = 2;
     println!("Starting mss clamp on ifindex: {:?}", ifindex);
-    let mss_clamp = landscape_ebpf::stages::mss::init_mss(&rt, ifindex, 1492, true).unwrap();
+    let mss_clamp = landscape_ebpf::stages::mss::init_mss(&rt, ifindex, 1, 1492, true).unwrap();
 
     let _ = tokio::signal::ctrl_c().await;
 

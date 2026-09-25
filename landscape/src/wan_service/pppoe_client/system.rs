@@ -306,8 +306,9 @@ pub(crate) async fn create_session(
         session_id: lcp.session_id.to_be(),
         ..Default::default()
     };
-    let session_guard =
-        dataplane.attach_session(index, tmpl, mru).map_err(PppoeError::EbpfInitFailed)?;
+    let session_guard = dataplane
+        .attach_session(index, config.link_chain_id, tmpl, mru)
+        .map_err(PppoeError::EbpfInitFailed)?;
 
     tracing::info!(
         "native PPPoE eBPF TC enabled for iface={} session_id={}",

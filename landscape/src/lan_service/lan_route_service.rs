@@ -115,7 +115,6 @@ pub async fn create_route_lan_service(
         Err(err) => {
             tracing::error!("failed to start tc lan route for {iface_name}: {err}");
             service_status.just_change_status(ServiceStatus::Failed);
-            dataplane.remove_xdp_roots(ifindex);
             dataplane.del_redirect_able(ifindex);
             return;
         }
@@ -126,7 +125,6 @@ pub async fn create_route_lan_service(
     let _ = service_status.wait_to_stopping().await;
     tracing::info!("Receiving external stop signal");
     drop(xdp_handle);
-    dataplane.remove_xdp_roots(ifindex);
     drop(tc_handle);
     dataplane.del_redirect_able(ifindex);
 

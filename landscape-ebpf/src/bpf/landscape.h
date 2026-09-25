@@ -33,6 +33,11 @@
 #define LANDSCAPE_IPV4_TYPE 0
 #define LANDSCAPE_IPV6_TYPE 1
 
+// wan_intro_dispatch_map selector types.  The key layout is shared between
+// the XDP and TC intro programs and the Rust writer in
+// landscape-ebpf/src/maps/wan/setting.rs.
+#define WAN_INTRO_PPP_SESSION_TYPE 3
+
 #define PRINT_MAC_ADDR(mac)                                                                        \
     ld_bpf_log("mac: %02x:%02x:%02x:%02x:%02x:%02x", (mac)[0], (mac)[1], (mac)[2], (mac)[3],       \
                (mac)[4], (mac)[5])

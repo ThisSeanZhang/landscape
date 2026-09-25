@@ -34,8 +34,8 @@ use crate::{
                 as_bytes, create_route6_cache_inner_map, gateway_addr, insert_ip_mac_v6,
                 insert_route6_lan_entry, local_addr, lookup_ip_mac_v6, lookup_rt6_cache_value,
                 put_rt6_cache_full, put_rt6_cache_value, remote_addr, seed_flow_match_mac,
-                LAN_CACHE, LAN_ROUTE_TYPE, ROUTE_TYPE_NEXTHOP, TARGET_IFINDEX, WAN_CACHE,
-                WAN_IFINDEX, WAN_ROUTE_TYPE,
+                LAN_CACHE, LAN_ROUTE_TYPE, ROUTE_TYPE_NEXTHOP, TARGET_CHAIN_ID, TARGET_IFINDEX,
+                WAN_CACHE, WAN_IFINDEX, WAN_ROUTE_TYPE,
             },
             packet_builder::{simple_ipv4_tcp, simple_ipv6_tcp_syn},
         },
@@ -129,7 +129,7 @@ fn seed_wan_slots(
         RouteTargetInfo {
             weight: 0,
             ifindex,
-            link_chain_id: 0,
+            link_chain_id: TARGET_CHAIN_ID as u16,
             mac,
             default_route: false,
             is_docker,
@@ -146,7 +146,7 @@ fn seed_wan_slots(
 fn seed_wan_binding(skel: &TcLanIngressIntroSkel<'_>) {
     crate::maps::wan::add_wan_ip(
         &skel.maps.wan_ip_binding,
-        TARGET_IFINDEX,
+        TARGET_CHAIN_ID,
         IpAddr::V6(wan_self_addr()),
         Some(IpAddr::V6(gateway_addr())),
         64,

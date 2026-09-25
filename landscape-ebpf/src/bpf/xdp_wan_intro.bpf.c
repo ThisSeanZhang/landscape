@@ -22,8 +22,6 @@
 #define ETH_P_PPP_IPV4 bpf_htons(0x0021)
 #define ETH_P_PPP_IPV6 bpf_htons(0x0057)
 
-#define WAN_INTRO_IFINDEX_TYPE 2
-
 struct __attribute__((packed)) pppoe_header {
     u8 version_and_type;
     u8 code;
@@ -63,8 +61,8 @@ struct dispatch_key {
 };
 
 struct dispatch_value {
-    // Prog array index of the matched chain root
-    u32 next_pipe_root_index;
+    // Logical link chain id, used as the root prog-array key.
+    u32 chain_id;
 };
 
 struct {
@@ -74,15 +72,27 @@ struct {
     __uint(max_entries, XDP_PIPE_MAX_ENTRIES);
 } wan_intro_dispatch_map SEC(".maps");
 
+static __always_inline int wan_intro_store_chain_meta(struct xdp_md *ctx, u32 chain_id) {
+    struct xdp_pipe_meta meta = {.chain_id = chain_id};
+    void *data_meta = (void *)(long)ctx->data_meta;
+    void *data = (void *)(long)ctx->data;
+    if (data_meta + sizeof(meta) <= data) {
+        __builtin_memcpy(data_meta, &meta, sizeof(meta));
+        return 0;
+    }
+    return xdp_set_meta(ctx, &meta);
+}
+
 static __always_inline int wan_intro_tailcall_root(struct xdp_md *ctx, struct dispatch_key *key) {
     struct dispatch_value *value = bpf_map_lookup_elem(&wan_intro_dispatch_map, key);
     if (!value) {
         return XDP_PASS;
     }
 
-    bpf_tail_call(ctx, &xdp_pipe_root_progs, value->next_pipe_root_index);
-    ld_bpf_log("wan_intro tail call failed, dispatch_type=%u root_index=%u", key->dispatch_type,
-               value->next_pipe_root_index);
+    if (wan_intro_store_chain_meta(ctx, value->chain_id) != 0) return XDP_PASS;
+    bpf_tail_call(ctx, &xdp_pipe_root_progs, value->chain_id);
+    ld_bpf_log("wan_intro tail call failed, dispatch_type=%u chain_id=%u", key->dispatch_type,
+               value->chain_id);
     return XDP_PASS;
 }
 
@@ -110,13 +120,13 @@ int wan_intro_dispatch(struct xdp_md *ctx) {
     //   ├─ looks up wan_intro_dispatch_map
     //   │     ├─ miss  → XDP_PASS
     //   │     └─ hit   → bpf_tail_call(&xdp_pipe_root_progs,
-    //   │                        value->next_pipe_root_index)
+    //   │                        value->chain_id)
     //   │                    │
     //   │                    ▼  chain root (linked-list head)
     //   │                         │→ &next_stage[0] → ... → wan_route
     //   │                                                    │
     //   │                                              bpf_redirect()
-    //   └─ does not write meta (dispatch only classifies / dispatches)
+    //   └─ stores the selected chain id in XDP metadata for later stages
     //
 
     if (eth->h_proto == ETH_IPV4) {
@@ -131,11 +141,6 @@ int wan_intro_dispatch(struct xdp_md *ctx) {
 
         key.dispatch_type = LANDSCAPE_IPV4_TYPE;
         key.v4.daddr = iph->daddr;
-        wan_intro_tailcall_root(ctx, &key);
-
-        key.v6.prefix64 = 0;
-        key.dispatch_type = WAN_INTRO_IFINDEX_TYPE;
-        key.ifindex = ctx->ingress_ifindex;
         return wan_intro_tailcall_root(ctx, &key);
     }
 
@@ -151,11 +156,6 @@ int wan_intro_dispatch(struct xdp_md *ctx) {
 
         key.dispatch_type = LANDSCAPE_IPV6_TYPE;
         __builtin_memcpy(&key.v6.prefix64, &ip6h->daddr, sizeof(key.v6.prefix64));
-        wan_intro_tailcall_root(ctx, &key);
-
-        key.v6.prefix64 = 0;
-        key.dispatch_type = WAN_INTRO_IFINDEX_TYPE;
-        key.ifindex = ctx->ingress_ifindex;
         return wan_intro_tailcall_root(ctx, &key);
     }
 
@@ -175,8 +175,15 @@ int wan_intro_dispatch(struct xdp_md *ctx) {
     bool is_v6 = pppoe->protocol == ETH_P_PPP_IPV6;
     u16 l2_proto = is_v6 ? ETH_IPV6 : ETH_IPV4;
 
+    // Session-scoped selector: the most specific classifier when several
+    // PPPoE sessions share one attach iface.  Registered from Rust when the
+    // session is established (stages/pppoe.rs).
+    struct dispatch_key session_key = {
+        .dispatch_type = WAN_INTRO_PPP_SESSION_TYPE,
+    };
+    session_key.ppp.session_id = bpf_htonl((__u32)bpf_ntohs(pppoe->session_id));
+
     key.dispatch_type = is_v6 ? LANDSCAPE_IPV6_TYPE : LANDSCAPE_IPV4_TYPE;
-    key.ppp.session_id = bpf_htonl((__u32)bpf_ntohs(pppoe->session_id));
 
     if (is_v6) {
         struct ipv6hdr *ip6h = (struct ipv6hdr *)(pppoe + 1);
@@ -221,11 +228,10 @@ int wan_intro_dispatch(struct xdp_md *ctx) {
     __builtin_memcpy(eth->h_dest, mac_pair, sizeof(mac_pair));
     eth->h_proto = l2_proto;
 
-    wan_intro_tailcall_root(ctx, &key);
+    // Lookup order: PPPoE session id (most specific), then the inner IP
+    // selector.  Anything else belongs to no logical WAN chain and passes.
+    wan_intro_tailcall_root(ctx, &session_key);
 
-    key.v6.prefix64 = 0;
-    key.dispatch_type = WAN_INTRO_IFINDEX_TYPE;
-    key.ifindex = ctx->ingress_ifindex;
     return wan_intro_tailcall_root(ctx, &key);
 
 #undef BPF_LOG_TOPIC

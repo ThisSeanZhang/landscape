@@ -66,7 +66,7 @@ int test_route_v6_set_cache_in_wan(struct __sk_buff *skb) {
         return ret;
     }
 
-    return route6_set_cache_in_wan(&context, current_l3_offset, skb->ifindex);
+    return route6_set_cache_in_wan(&context, current_l3_offset, skb->ifindex, tc_cb_chain_id(skb));
 #undef BPF_LOG_TOPIC
 }
 

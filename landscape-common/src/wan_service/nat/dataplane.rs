@@ -15,6 +15,7 @@ pub trait NatDataplane: Send + Sync {
     fn attach(
         &self,
         ifindex: u32,
+        link_chain_id: u16,
         has_mac: bool,
         config: &NatConfig,
     ) -> Result<Box<dyn DataplaneGuard>, String>;
@@ -33,6 +34,7 @@ impl NatDataplane for NoopNatDataplane {
     fn attach(
         &self,
         _ifindex: u32,
+        _link_chain_id: u16,
         _has_mac: bool,
         _config: &NatConfig,
     ) -> Result<Box<dyn DataplaneGuard>, String> {

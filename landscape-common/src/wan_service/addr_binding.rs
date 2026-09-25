@@ -1,6 +1,6 @@
-//! WAN address binding: write the WAN interface address/gateway/MAC
-//! into the eBPF `wan_ip_binding` map so the datapath picks the right
-//! egress interface.
+//! WAN address binding: write the WAN address/gateway/MAC for a logical chain
+//! into the eBPF `wan_ip_binding` map. The physical ifindex remains the
+//! redirect/device context passed alongside the chain id.
 
 use std::net::{Ipv4Addr, Ipv6Addr};
 

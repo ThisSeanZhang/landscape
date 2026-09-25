@@ -3,6 +3,7 @@ use std::sync::Arc;
 use crate::bpf_ctx;
 use crate::bpf_error::LdEbpfResult;
 use crate::chain::link_chain::{LinkChain, StageType};
+use crate::maps::wan::{register_ppp_session_selector, remove_ppp_session_selector};
 use crate::runtime::EbpfRuntime;
 
 pub(crate) mod xdp_pppoe_skel {
@@ -13,6 +14,9 @@ pub struct XdpPppoeHandle {
     chain: Arc<LinkChain>,
     _skel: xdp_pppoe_skel::XdpPppoeSkel<'static>,
     _backing: crate::landscape::OwnedOpenObject,
+    paths: crate::LandscapeMapPath,
+    link_chain_id: u16,
+    session_id: u16,
 }
 
 unsafe impl Send for XdpPppoeHandle {}
@@ -21,12 +25,14 @@ unsafe impl Sync for XdpPppoeHandle {}
 impl Drop for XdpPppoeHandle {
     fn drop(&mut self) {
         let _ = self.chain.remove_xdp(StageType::Pppoe);
+        remove_ppp_session_selector(&self.paths, self.link_chain_id, self.session_id);
     }
 }
 
 pub fn init_xdp_pppoe(
     rt: &Arc<EbpfRuntime>,
     ifindex: u32,
+    link_chain_id: u16,
     session_id: u16,
 ) -> LdEbpfResult<XdpPppoeHandle> {
     use crate::landscape::{pin_and_reuse_map, OwnedOpenObject};
@@ -35,7 +41,7 @@ pub fn init_xdp_pppoe(
 
     use xdp_pppoe_skel::XdpPppoeSkelBuilder;
 
-    let paths = &rt.paths;
+    let paths = rt.paths.as_ref();
     let builder = XdpPppoeSkelBuilder::default();
     let (backing, obj) = OwnedOpenObject::new();
     let mut open_skel = bpf_ctx!(builder.open(obj), "open xdp_pppoe skeleton")?;
@@ -72,8 +78,17 @@ pub fn init_xdp_pppoe(
     let lan_fd = skel.progs.xdp_pppoe_encap_lan.as_fd().as_raw_fd();
     let next_fd = skel.maps.next_stage.as_fd().as_raw_fd();
 
-    let chain = rt.hub.get_or_create_chain(ifindex);
+    let chain = rt.hub.get_or_create_chain(link_chain_id, ifindex)?;
     chain.inject_xdp(StageType::Pppoe, lan_fd, 0, next_fd)?;
 
-    Ok(XdpPppoeHandle { chain, _skel: skel, _backing: backing })
+    register_ppp_session_selector(paths, link_chain_id, session_id);
+
+    Ok(XdpPppoeHandle {
+        chain,
+        _skel: skel,
+        _backing: backing,
+        paths: paths.clone(),
+        link_chain_id,
+        session_id,
+    })
 }

@@ -9,8 +9,8 @@
 //! - the XDP wan-intro dispatch program (attached by the WAN route service),
 //! - the process-global XDP LAN/WAN exit programs and their shared slots,
 //! - the SKB-mode XDP fallback skeleton pool for PPPoE,
-//! - the registry of per-interface [`LinkChain`]s, driven by the link
-//!   service lifecycle.
+//! - the registry of logical [`LinkChain`]s keyed by chain id, driven by the
+//!   link service lifecycle. Multiple logical chains may share one device.
 
 use std::collections::HashMap;
 use std::mem::size_of;
@@ -53,6 +53,16 @@ use xdp_wan_intro_skel::XdpWanIntroSkelBuilder;
 use xdp_wan_route_exit_skel::XdpWanRouteSkelBuilder;
 
 fn clear_map_entries(map: &libbpf_rs::MapMut<'_>) {
+    let keys: Vec<Vec<u8>> = map.keys().collect();
+    for key in keys {
+        let _ = map.delete(&key);
+    }
+}
+
+fn clear_pinned_map_entries(path: &std::path::Path) {
+    let Ok(map) = libbpf_rs::MapHandle::from_pinned_path(path) else {
+        return;
+    };
     let keys: Vec<Vec<u8>> = map.keys().collect();
     for key in keys {
         let _ = map.delete(&key);
@@ -347,7 +357,9 @@ pub struct ChainHub {
     _xdp_lan_exit_backing: OwnedOpenObject,
     _xdp_wan_exit: xdp_wan_route_exit_skel::XdpWanRouteSkel<'static>,
     _xdp_wan_exit_backing: OwnedOpenObject,
-    chains: Mutex<HashMap<u32, Arc<LinkChain>>>,
+    /// Logical chains are keyed by their immutable chain id.  Several
+    /// logical chains may share one physical ifindex.
+    chains: Mutex<HashMap<u16, Arc<LinkChain>>>,
     skb_bundles: Mutex<HashMap<u32, SkbXdpBundle>>,
     skb_pending: Mutex<HashMap<u32, SkbPending>>,
 }
@@ -418,6 +430,10 @@ impl ChainHub {
         clear_map_entries(&skel.maps.xdp_pipe_exits_lan);
         clear_map_entries(&skel.maps.xdp_pipe_exits_wan);
         clear_map_entries(&skel.maps.wan_intro_dispatch_map);
+        // The TC dispatch map is pinned by the tc_wan_route loader rather
+        // than the seed skeleton; apply the same previous-run cleanup to any
+        // pin that already exists.
+        clear_pinned_map_entries(&paths.tc_wan_intro_dispatch_path());
 
         // These are runtime-global exits, not per-link programs.  Keep both
         // skeletons alive for the lifetime of the hub and install their FDs
@@ -680,7 +696,7 @@ impl ChainHub {
 
     // ── Chain registry ──────────────────────────────────────────────────
 
-    /// Open (or reuse) the stage-chain for `ifindex`, creating and
+    /// Open (or reuse) the stage-chain for `link_chain_id`, creating and
     /// registering its XDP + TC roots, driven by the link lifecycle.
     pub fn open_link_chain(
         self: &Arc<Self>,
@@ -688,17 +704,37 @@ impl ChainHub {
         has_mac: bool,
         link_chain_id: u16,
     ) -> LdEbpfResult<Arc<LinkChain>> {
+        if link_chain_id == 0 {
+            return Err(crate::bpf_error::LandscapeEbpfError::Context {
+                context: "cannot open unassigned link chain id".to_string(),
+                source: libbpf_rs::Error::from_raw_os_error(libc::EINVAL),
+            });
+        }
         let (chain, created) = {
             let mut chains = self.chains.lock().unwrap();
-            match chains.get(&ifindex) {
+            match chains.get(&link_chain_id) {
                 Some(chain) => (chain.clone(), false),
                 None => {
-                    let chain = LinkChain::create(self.clone(), ifindex)?;
-                    chains.insert(ifindex, chain.clone());
+                    let chain = LinkChain::create(self.clone(), ifindex, link_chain_id)?;
+                    chains.insert(link_chain_id, chain.clone());
                     (chain, true)
                 }
             }
         };
+        if chain.physical_ifindex() != ifindex {
+            if created {
+                self.close_if_current(&chain);
+            }
+            return Err(crate::bpf_error::LandscapeEbpfError::Context {
+                context: format!(
+                    "chain id {} is already bound to ifindex {}, not {}",
+                    link_chain_id,
+                    chain.physical_ifindex(),
+                    ifindex
+                ),
+                source: libbpf_rs::Error::from_raw_os_error(libc::EINVAL),
+            });
+        }
         if let Err(err) = chain.open_roots(has_mac, link_chain_id) {
             if created {
                 self.close_if_current(&chain);
@@ -708,27 +744,53 @@ impl ChainHub {
         Ok(chain)
     }
 
-    /// Get the stage-chain for `ifindex`, creating an empty one if none is
+    /// Get the stage-chain for `link_chain_id`, creating an empty one if none is
     /// open yet (stage attach path: roots are then created lazily).
-    pub fn get_or_create_chain(self: &Arc<Self>, ifindex: u32) -> Arc<LinkChain> {
+    ///
+    /// Returns an error (instead of panicking) for an unassigned chain id so a
+    /// bad config degrades into a per-service error rather than taking the
+    /// daemon down.
+    pub fn get_or_create_chain(
+        self: &Arc<Self>,
+        link_chain_id: u16,
+        ifindex: u32,
+    ) -> LdEbpfResult<Arc<LinkChain>> {
+        if link_chain_id == 0 {
+            return Err(crate::bpf_error::LandscapeEbpfError::Context {
+                context: "cannot attach a stage to unassigned link chain id 0".to_string(),
+                source: libbpf_rs::Error::from_raw_os_error(libc::EINVAL),
+            });
+        }
         let mut chains = self.chains.lock().unwrap();
-        match chains.get(&ifindex) {
-            Some(chain) => chain.clone(),
+        match chains.get(&link_chain_id) {
+            Some(chain) => {
+                if chain.physical_ifindex() != ifindex {
+                    return Err(crate::bpf_error::LandscapeEbpfError::Context {
+                        context: format!(
+                            "chain id {} is bound to ifindex {}, not {}",
+                            link_chain_id,
+                            chain.physical_ifindex(),
+                            ifindex
+                        ),
+                        source: libbpf_rs::Error::from_raw_os_error(libc::EINVAL),
+                    });
+                }
+                Ok(chain.clone())
+            }
             None => {
-                let chain =
-                    LinkChain::create(self.clone(), ifindex).expect("create chain state failed");
-                chains.insert(ifindex, chain.clone());
-                chain
+                let chain = LinkChain::create(self.clone(), ifindex, link_chain_id)?;
+                chains.insert(link_chain_id, chain.clone());
+                Ok(chain)
             }
         }
     }
 
     /// Close `chain` only if it is still the current registry generation for
-    /// its interface.  This prevents a delayed guard from closing a newer
+    /// its chain id.  This prevents a delayed guard from closing a newer
     /// chain opened after the original guard was dropped.
     pub fn close_if_current(&self, chain: &Arc<LinkChain>) {
         let mut chains = self.chains.lock().unwrap();
-        let Some(current) = chains.get(&chain.ifindex()).cloned() else {
+        let Some(current) = chains.get(&chain.link_chain_id()).cloned() else {
             return;
         };
         if !Arc::ptr_eq(&current, chain) {
@@ -738,15 +800,7 @@ impl ChainHub {
         // a new generation could be inserted between removal and cleanup and
         // the old generation would delete the new generation's map slots.
         current.close();
-        chains.remove(&chain.ifindex());
-    }
-
-    /// Remove only the XDP roots of `ifindex` (route-service teardown path).
-    pub fn remove_xdp_roots(&self, ifindex: u32) {
-        let chain = self.chains.lock().unwrap().get(&ifindex).cloned();
-        if let Some(chain) = chain {
-            chain.remove_xdp_roots();
-        }
+        chains.remove(&chain.link_chain_id());
     }
 
     // ── XDP intro / exit ────────────────────────────────────────────────

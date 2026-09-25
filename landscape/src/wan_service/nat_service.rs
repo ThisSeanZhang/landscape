@@ -8,6 +8,7 @@ use landscape_common::wan_service::nat::dataplane::NatDataplane;
 pub async fn create_nat_service(
     iface_name: String,
     ifindex: i32,
+    link_chain_id: u16,
     has_mac: bool,
     nat_config: NatConfig,
     service_status: WatchService,
@@ -15,7 +16,7 @@ pub async fn create_nat_service(
 ) {
     service_status.just_change_status(ServiceStatus::Staring);
 
-    let nat = match dataplane.attach(ifindex as u32, has_mac, &nat_config) {
+    let nat = match dataplane.attach(ifindex as u32, link_chain_id, has_mac, &nat_config) {
         Ok(handle) => handle,
         Err(err) => {
             tracing::error!("failed to start nat for {iface_name}: {err}");

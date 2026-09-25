@@ -1,5 +1,5 @@
 use std::{
-    mem::MaybeUninit,
+    mem::{size_of, MaybeUninit},
     net::{IpAddr, Ipv6Addr},
     str::FromStr,
 };
@@ -74,6 +74,9 @@ fn packet_destination(packet: &[u8]) -> Ipv6Addr {
 fn packet_data(output: &[u8]) -> &[u8] {
     if output.get(12..14) == Some(&[0x86, 0xdd]) {
         output
+    } else if output.get(24..26) == Some(&[0x86, 0xdd]) {
+        // 12-byte `xdp_pipe_meta` prefix: test_run copies from data_meta on.
+        &output[12..]
     } else {
         &output[8..]
     }
@@ -110,13 +113,15 @@ fn assert_xdp_round_trip(
     }
 
     let egress = build_ipv6_udp(client_address, remote(), client_port, 9999);
-    let mut egress_out = vec![0; egress.len() + 8];
+    let (data, mut ctx) = chain_meta_input(&egress);
+    let mut egress_out = vec![0_u8; data.len()];
     let result = skel
         .progs
         .egress_nat
         .test_run(ProgramInput {
-            data_in: Some(&egress),
+            data_in: Some(&data),
             data_out: Some(&mut egress_out),
+            context_in: Some(&mut ctx),
             ..Default::default()
         })
         .expect("egress test_run failed");
@@ -124,18 +129,56 @@ fn assert_xdp_round_trip(
     assert_eq!(packet_source(result.data.as_deref().unwrap()), external_address);
 
     let ingress = build_ipv6_udp(remote(), external_address, 9999, client_port);
-    let mut ingress_out = vec![0; ingress.len() + 8];
+    let (data, mut ctx) = chain_meta_input(&ingress);
+    let mut ingress_out = vec![0_u8; data.len()];
     let result = skel
         .progs
         .ingress_nat
         .test_run(ProgramInput {
-            data_in: Some(&ingress),
+            data_in: Some(&data),
             data_out: Some(&mut ingress_out),
+            context_in: Some(&mut ctx),
             ..Default::default()
         })
         .expect("ingress test_run failed");
     assert_eq!(result.return_value, XDP_PASS);
     assert_eq!(packet_destination(result.data.as_deref().unwrap()), client_address);
+}
+
+#[repr(C)]
+struct XdpMd {
+    data: u32,
+    data_end: u32,
+    data_meta: u32,
+    ingress_ifindex: u32,
+    rx_queue_index: u32,
+    egress_ifindex: u32,
+}
+
+/// Build the `xdp_pipe_meta` prefix the WAN intro would have stored before
+/// tail-calling into the chain, plus the XDP context pointing at it.
+/// `wan_ip_binding` lookups key strictly on `meta.chain_id` now (no ifindex
+/// fallback), so the test must mirror the intro behavior instead of relying
+/// on the ifindex/chain-id coincidence.
+fn chain_meta_input(pkt: &[u8]) -> (Vec<u8>, [u8; size_of::<XdpMd>()]) {
+    // struct xdp_pipe_meta { u32 mark; u32 target_ifindex; u32 chain_id; }
+    let mut data = Vec::with_capacity(12 + pkt.len());
+    data.extend_from_slice(&0u32.to_ne_bytes()); // mark
+    data.extend_from_slice(&0u32.to_ne_bytes()); // target_ifindex
+    data.extend_from_slice(&IFINDEX.to_ne_bytes()); // chain id = binding key
+    data.extend_from_slice(pkt);
+
+    let ctx = XdpMd {
+        data: 12,
+        data_end: data.len() as u32,
+        data_meta: 0,
+        ingress_ifindex: IFINDEX,
+        rx_queue_index: 0,
+        egress_ifindex: 0,
+    };
+    let ctx_bytes =
+        unsafe { std::ptr::read((&ctx as *const XdpMd).cast::<[u8; size_of::<XdpMd>()]>()) };
+    (data, ctx_bytes)
 }
 
 #[test]

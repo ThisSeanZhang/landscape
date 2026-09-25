@@ -288,6 +288,7 @@ static __always_inline int xdp_route4_cache_pick_wan(struct xdp_md *ctx,
             if (entry) {
                 entry->mark_value = flow_id;
                 entry->ifindex = info->ifindex;
+                entry->chain_id = info->chain_id;
                 entry->has_mac = info->has_mac;
                 entry->is_docker = info->is_docker;
                 entry->xdp_redirect_able = xdp_redirect_target_able(info->ifindex) ? 1 : 0;
@@ -297,6 +298,7 @@ static __always_inline int xdp_route4_cache_pick_wan(struct xdp_md *ctx,
                 struct route4_cache_value new_entry = {};
                 new_entry.mark_value = flow_id;
                 new_entry.ifindex = info->ifindex;
+                new_entry.chain_id = info->chain_id;
                 new_entry.has_mac = info->has_mac;
                 new_entry.is_docker = info->is_docker;
                 new_entry.xdp_redirect_able = xdp_redirect_target_able(info->ifindex) ? 1 : 0;
@@ -312,7 +314,7 @@ static __always_inline int xdp_route4_cache_pick_wan(struct xdp_md *ctx,
         return XDP_PASS;
     }
     if (!xdp_redirect_target_able(info->ifindex)) {
-        int ret = xdp_set_tc_redirect_meta(ctx, flow_id, info->ifindex);
+        int ret = xdp_set_tc_redirect_meta(ctx, flow_id, info->ifindex, info->chain_id);
         if (ret) return XDP_DROP;
         return XDP_PASS;
     }
@@ -321,10 +323,11 @@ static __always_inline int xdp_route4_cache_pick_wan(struct xdp_md *ctx,
     xdp_get_meta(ctx, &meta);
     meta.mark = flow_id;
     meta.target_ifindex = info->ifindex;
+    meta.chain_id = info->chain_id;
     xdp_set_meta(ctx, &meta);
 
     // bpf_printk("[lan_route] cache_pick_wan_v4 tailcall to ifindex=%u", info->ifindex);
-    bpf_tail_call(ctx, &xdp_lan_pipe_root_progs, info->ifindex);
+    bpf_tail_call(ctx, &xdp_lan_pipe_root_progs, info->chain_id);
     bpf_printk("[lan_route] cache_pick_wan_v4 tailcall FAILED for ifindex=%u", info->ifindex);
     return XDP_DROP;
 }
@@ -381,6 +384,7 @@ static __always_inline int xdp_route6_cache_pick_wan(struct xdp_md *ctx,
             if (entry) {
                 entry->mark_value = flow_id;
                 entry->ifindex = info->ifindex;
+                entry->chain_id = info->chain_id;
                 entry->has_mac = info->has_mac;
                 entry->is_docker = info->is_docker;
                 entry->xdp_redirect_able = xdp_redirect_target_able(info->ifindex) ? 1 : 0;
@@ -390,6 +394,7 @@ static __always_inline int xdp_route6_cache_pick_wan(struct xdp_md *ctx,
                 struct route6_cache_value new_entry = {};
                 new_entry.mark_value = flow_id;
                 new_entry.ifindex = info->ifindex;
+                new_entry.chain_id = info->chain_id;
                 new_entry.has_mac = info->has_mac;
                 new_entry.is_docker = info->is_docker;
                 new_entry.xdp_redirect_able = xdp_redirect_target_able(info->ifindex) ? 1 : 0;
@@ -405,7 +410,7 @@ static __always_inline int xdp_route6_cache_pick_wan(struct xdp_md *ctx,
         return XDP_PASS;
     }
     if (!xdp_redirect_target_able(info->ifindex)) {
-        int ret = xdp_set_tc_redirect_meta(ctx, flow_id, info->ifindex);
+        int ret = xdp_set_tc_redirect_meta(ctx, flow_id, info->ifindex, info->chain_id);
         if (ret) return XDP_DROP;
         return XDP_PASS;
     }
@@ -414,10 +419,11 @@ static __always_inline int xdp_route6_cache_pick_wan(struct xdp_md *ctx,
     xdp_get_meta(ctx, &meta);
     meta.mark = flow_id;
     meta.target_ifindex = info->ifindex;
+    meta.chain_id = info->chain_id;
     xdp_set_meta(ctx, &meta);
 
     // bpf_printk("[lan_route] cache_pick_wan_v6 tailcall to ifindex=%u", info->ifindex);
-    bpf_tail_call(ctx, &xdp_lan_pipe_root_progs, info->ifindex);
+    bpf_tail_call(ctx, &xdp_lan_pipe_root_progs, info->chain_id);
     bpf_printk("[lan_route] cache_pick_wan_v6 tailcall FAILED for ifindex=%u", info->ifindex);
     return XDP_DROP;
 }
@@ -453,7 +459,7 @@ static __always_inline int xdp_route4_lan_redirect_check_in_lan(struct xdp_md *c
             if ((void *)(eth + 1) > data_end) return XDP_PASS;
             __builtin_memcpy(eth->h_dest, mac_val->mac, 6);
             __builtin_memcpy(eth->h_source, lan_info->mac_addr, 6);
-            ret = xdp_redirect_or_tc_handoff(ctx, lan_info->ifindex, 0);
+            ret = xdp_redirect_or_tc_handoff(ctx, lan_info->ifindex, 0, 0);
             // ld_bpf_log("bpf_redirect 1 %pI4 -> %pI4 idx: %d ret: %d", &context->saddr,
             //            &context->daddr, lan_info->ifindex, ret);
             return ret;
@@ -482,13 +488,13 @@ static __always_inline int xdp_route4_lan_redirect_check_in_lan(struct xdp_md *c
             __builtin_memcpy(eth->h_dest, fib.dmac, 6);
             __builtin_memcpy(eth->h_source, lan_info->mac_addr, 6);
             // ld_bpf_log("bpf_redirect 2");
-            return xdp_redirect_or_tc_handoff(ctx, lan_info->ifindex, 0);
+            return xdp_redirect_or_tc_handoff(ctx, lan_info->ifindex, 0, 0);
         }
         return 0;
     }
 
     // ld_bpf_log("bpf_redirect 3");
-    return xdp_redirect_or_tc_handoff(ctx, lan_info->ifindex, 0);
+    return xdp_redirect_or_tc_handoff(ctx, lan_info->ifindex, 0, 0);
 #undef BPF_LOG_TOPIC
 }
 
@@ -524,7 +530,7 @@ static __always_inline int xdp_route6_lan_redirect_check_in_lan(struct xdp_md *c
             if ((void *)(eth + 1) > data_end) return XDP_PASS;
             __builtin_memcpy(eth->h_dest, mac_val->mac, 6);
             __builtin_memcpy(eth->h_source, lan_info->mac_addr, 6);
-            return xdp_redirect_or_tc_handoff(ctx, lan_info->ifindex, 0);
+            return xdp_redirect_or_tc_handoff(ctx, lan_info->ifindex, 0, 0);
         }
 
         struct bpf_fib_lookup fib = {};
@@ -549,12 +555,12 @@ static __always_inline int xdp_route6_lan_redirect_check_in_lan(struct xdp_md *c
             if ((void *)(eth + 1) > data_end) return XDP_PASS;
             __builtin_memcpy(eth->h_dest, fib.dmac, 6);
             __builtin_memcpy(eth->h_source, lan_info->mac_addr, 6);
-            return xdp_redirect_or_tc_handoff(ctx, lan_info->ifindex, 0);
+            return xdp_redirect_or_tc_handoff(ctx, lan_info->ifindex, 0, 0);
         }
         return 0;
     }
 
-    return xdp_redirect_or_tc_handoff(ctx, lan_info->ifindex, 0);
+    return xdp_redirect_or_tc_handoff(ctx, lan_info->ifindex, 0, 0);
 }
 
 // ── search_cache_in_lan: cache lookup → tailcall to LAN→WAN chain ──
@@ -575,7 +581,7 @@ static __always_inline int xdp_route4_search_cache_in_lan(struct xdp_md *ctx,
                 xdp_set_docker_meta(ctx, target->mark_value, target->ifindex);
                 return XDP_PASS;
             }
-            struct wan_ip_info_key wan_key = {.ifindex = target->ifindex,
+            struct wan_ip_info_key wan_key = {.chain_id = target->chain_id,
                                               .l3_protocol = LANDSCAPE_IPV4_TYPE};
             struct wan_ip_info_value *wan_info = bpf_map_lookup_elem(&wan_ip_binding, &wan_key);
             if (wan_info != NULL && target->has_mac) {
@@ -594,7 +600,8 @@ static __always_inline int xdp_route4_search_cache_in_lan(struct xdp_md *ctx,
                 }
             }
             if (!target->xdp_redirect_able) {
-                int ret = xdp_set_tc_redirect_meta(ctx, target->mark_value, target->ifindex);
+                int ret = xdp_set_tc_redirect_meta(ctx, target->mark_value, target->ifindex,
+                                                   target->chain_id);
                 if (ret) return XDP_DROP;
                 return XDP_PASS;
             }
@@ -603,10 +610,11 @@ static __always_inline int xdp_route4_search_cache_in_lan(struct xdp_md *ctx,
                 xdp_get_meta(ctx, &meta);
                 meta.target_ifindex = target->ifindex;
                 meta.mark = target->mark_value;
+                meta.chain_id = target->chain_id;
                 xdp_set_meta(ctx, &meta);
                 // bpf_printk("[lan_route] search_lan_v4 WAN-hit tailcall to ifindex=%u",
                 //            target->ifindex);
-                bpf_tail_call(ctx, &xdp_lan_pipe_root_progs, target->ifindex);
+                bpf_tail_call(ctx, &xdp_lan_pipe_root_progs, target->chain_id);
                 bpf_printk("[lan_route] search_lan_v4 WAN-hit tailcall FAILED ifindex=%u",
                            target->ifindex);
                 return XDP_DROP;
@@ -638,7 +646,8 @@ static __always_inline int xdp_route4_search_cache_in_lan(struct xdp_md *ctx,
                     }
                 }
                 if (!target->xdp_redirect_able) {
-                    int ret = xdp_set_tc_redirect_meta(ctx, target->mark_value, target->ifindex);
+                    int ret = xdp_set_tc_redirect_meta(ctx, target->mark_value, target->ifindex,
+                                                       target->chain_id);
                     if (ret) return XDP_DROP;
                     return XDP_PASS;
                 }
@@ -646,10 +655,11 @@ static __always_inline int xdp_route4_search_cache_in_lan(struct xdp_md *ctx,
                 xdp_get_meta(ctx, &meta);
                 meta.target_ifindex = target->ifindex;
                 meta.mark = target->mark_value;
+                meta.chain_id = target->chain_id;
                 xdp_set_meta(ctx, &meta);
                 // bpf_printk("[lan_route] search_lan_v4 LAN-hit tailcall to ifindex=%u",
                 //            target->ifindex);
-                bpf_tail_call(ctx, &xdp_lan_pipe_root_progs, target->ifindex);
+                bpf_tail_call(ctx, &xdp_lan_pipe_root_progs, target->chain_id);
                 bpf_printk("[lan_route] search_lan_v4 LAN-hit tailcall FAILED ifindex=%u",
                            target->ifindex);
                 return XDP_DROP;
@@ -678,7 +688,7 @@ static __always_inline int xdp_route6_search_cache_in_lan(struct xdp_md *ctx,
             }
             // bpf_printk("[wan_cache_r] v6 HIT src=%pI6c dst=%pI6c ifindex=%u has_mac=%u",
             //            &context->saddr, &context->daddr, target->ifindex, target->has_mac);
-            struct wan_ip_info_key wan_key = {.ifindex = target->ifindex,
+            struct wan_ip_info_key wan_key = {.chain_id = target->chain_id,
                                               .l3_protocol = LANDSCAPE_IPV6_TYPE};
             struct wan_ip_info_value *wan_info = bpf_map_lookup_elem(&wan_ip_binding, &wan_key);
             if (wan_info != NULL && target->has_mac) {
@@ -704,7 +714,8 @@ static __always_inline int xdp_route6_search_cache_in_lan(struct xdp_md *ctx,
                 }
             }
             if (!target->xdp_redirect_able) {
-                int ret = xdp_set_tc_redirect_meta(ctx, target->mark_value, target->ifindex);
+                int ret = xdp_set_tc_redirect_meta(ctx, target->mark_value, target->ifindex,
+                                                   target->chain_id);
                 if (ret) return XDP_DROP;
                 return XDP_PASS;
             }
@@ -713,8 +724,9 @@ static __always_inline int xdp_route6_search_cache_in_lan(struct xdp_md *ctx,
                 xdp_get_meta(ctx, &meta);
                 meta.target_ifindex = target->ifindex;
                 meta.mark = target->mark_value;
+                meta.chain_id = target->chain_id;
                 xdp_set_meta(ctx, &meta);
-                bpf_tail_call(ctx, &xdp_lan_pipe_root_progs, target->ifindex);
+                bpf_tail_call(ctx, &xdp_lan_pipe_root_progs, target->chain_id);
                 bpf_printk("[lan_route] search_lan_v6 WAN-hit tailcall FAILED ifindex=%u",
                            target->ifindex);
                 return XDP_DROP;
@@ -747,7 +759,8 @@ static __always_inline int xdp_route6_search_cache_in_lan(struct xdp_md *ctx,
                     }
                 }
                 if (!target->xdp_redirect_able) {
-                    int ret = xdp_set_tc_redirect_meta(ctx, target->mark_value, target->ifindex);
+                    int ret = xdp_set_tc_redirect_meta(ctx, target->mark_value, target->ifindex,
+                                                       target->chain_id);
                     if (ret) return XDP_DROP;
                     return XDP_PASS;
                 }
@@ -755,8 +768,9 @@ static __always_inline int xdp_route6_search_cache_in_lan(struct xdp_md *ctx,
                 xdp_get_meta(ctx, &meta);
                 meta.target_ifindex = target->ifindex;
                 meta.mark = target->mark_value;
+                meta.chain_id = target->chain_id;
                 xdp_set_meta(ctx, &meta);
-                bpf_tail_call(ctx, &xdp_lan_pipe_root_progs, target->ifindex);
+                bpf_tail_call(ctx, &xdp_lan_pipe_root_progs, target->chain_id);
                 bpf_printk("[lan_route] search_lan_v6 LAN-hit tailcall FAILED ifindex=%u",
                            target->ifindex);
                 return XDP_DROP;

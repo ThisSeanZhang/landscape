@@ -176,11 +176,12 @@ static __always_inline int xdp_read_nat_info6(void *data, void *data_end,
 }
 
 static __always_inline int xdp_ipv6_egress_prefix_check_and_replace(void *data, void *data_end,
-                                                                    u32 wan_if, u32 mark,
+                                                                    u32 chain_id, u32 wan_if,
+                                                                    u32 mark,
                                                                     struct scan_ipv6_idx *idx,
                                                                     struct inet_pair *ip_pair) {
     struct wan_ip_info_key wan_key = {0};
-    wan_key.ifindex = wan_if;
+    wan_key.chain_id = chain_id;
     wan_key.l3_protocol = LANDSCAPE_IPV6_TYPE;
     struct wan_ip_info_value *wan_ip = bpf_map_lookup_elem(&wan_ip_binding, &wan_key);
     if (!wan_ip) return -1;
@@ -299,15 +300,14 @@ do_xdp_nptv6:
     return 0;
 }
 
-static __always_inline int xdp_ipv6_ingress_prefix_check_and_replace(void *data, void *data_end,
-                                                                     u32 wan_if, u32 mark,
-                                                                     struct scan_ipv6_idx *idx,
-                                                                     struct inet_pair *ip_pair,
-                                                                     bool *out_is_static) {
+static __always_inline int
+xdp_ipv6_ingress_prefix_check_and_replace(void *data, void *data_end, u32 chain_id, u32 wan_if,
+                                          u32 mark, struct scan_ipv6_idx *idx,
+                                          struct inet_pair *ip_pair, bool *out_is_static) {
     __be64 local_client_prefix = {0};
 
     struct wan_ip_info_key wan_key = {0};
-    wan_key.ifindex = wan_if;
+    wan_key.chain_id = chain_id;
     wan_key.l3_protocol = LANDSCAPE_IPV6_TYPE;
     struct wan_ip_info_value *wan_ip = bpf_map_lookup_elem(&wan_ip_binding, &wan_key);
     if (!wan_ip) return -1;

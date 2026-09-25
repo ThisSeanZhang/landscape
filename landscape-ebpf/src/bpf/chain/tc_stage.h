@@ -77,8 +77,10 @@ struct {
  *  ─────────────────────────────────────────────────────────────────────────
  *
  *    tc_wan_egress_intro  (Route logic, three entry paths)
- *      ├─ CB_FORWARDED → bpf_tail_call(&tc_wan_egress_roots, skb->ifindex)  (forwarded)
- *      ├─ ingress_ifindex != 0 → TC_ACT_OK  (compat bypass)
+ *      ├─ CB_FORWARDED → bpf_tail_call(&tc_wan_egress_roots, cb.chain_id) (forwarded;
+ *      │        chain id 0 → TC_ACT_OK, stale/foreign flag)
+ *      ├─ ingress_ifindex != 0 → bpf_tail_call(&tc_wan_egress_roots, cb.chain_id)
+ *      │        (redirected, compat; chain id 0 → TC_ACT_OK)
  *      └─ ingress_ifindex == 0  (local outbound)
  *           ├─ route_wan_egress entry (broadcast → v4/v6 dispatch)
  *           ├─ rt4_wan_egress / rt6_wan_egress logic
@@ -86,7 +88,7 @@ struct {
  *                ├─ same WAN → bpf_tail_call(&tc_wan_egress_roots, target)
  *                └─ cross WAN → sets FORWARDED + bpf_redirect(target, 0)
  *
- *    tc_wan_chain_egress_root (per-WAN-interface, in tc_wan_egress_root.bpf.c)
+ *    tc_wan_chain_egress_root (per logical WAN chain, in tc_wan_egress_root.bpf.c)
  *      ├─ bpf_tail_call(skb, &wan_egress_root_next_stage, 0)
  *      │    └─ MSS
  *      │         └─ TC_CHAIN_WAN_EGRESS(skb) → NAT
@@ -110,7 +112,7 @@ struct {
  *
  *    ▸ packet arrives at the egress of the target WAN interface
  *
- *    tc_wan_egress_intro sees CB_FORWARDED → bpf_tail_call(&tc_wan_egress_roots, skb->ifindex)
+ *    tc_wan_egress_intro sees CB_FORWARDED → bpf_tail_call(&tc_wan_egress_roots, cb.chain_id)
  *      └─ tc_wan_chain_egress_root
  *           ├─ MSS → NAT → FW → PPPoE  (WAN egress chain)
  *           └─ tc_pipe_exits_wan_egress → tc_wan_egress_exit_redirect → TC_ACT_OK
@@ -127,7 +129,7 @@ struct {
  *  and `wan_egress_root_next_stage` (in tc_wan_egress_root.bpf.c)
  *  maps (max_entries=1 each, no tc_stage.h dependency).
  *
- *  Intro → tc_wan_egress_roots[ifindex]    → tc_wan_chain_egress_root  (WAN egress)
+ *  Intro → tc_wan_egress_roots[chain_id]   → tc_wan_chain_egress_root  (WAN egress)
  *  Stage → wan_ingress_next_stage[0]       → next WAN ingress stage
  *  Stage → wan_egress_next_stage[0]        → next WAN egress stage
  *

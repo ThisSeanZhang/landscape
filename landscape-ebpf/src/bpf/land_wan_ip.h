@@ -8,7 +8,7 @@
 #define IPV6_WAN_ADDR_SUFFIX_LEN 16 - 7
 
 struct wan_ip_info_key {
-    u32 ifindex;
+    u32 chain_id;
     u8 l3_protocol;
     u8 _pad[3];
 };
@@ -29,7 +29,7 @@ struct wan_ip_info_value {
 
 struct {
     __uint(type, BPF_MAP_TYPE_HASH);
-    __type(key, struct wan_ip_info_key);      // index
+    __type(key, struct wan_ip_info_key);      // logical chain id + L3 protocol
     __type(value, struct wan_ip_info_value);  // ipv4
     __uint(max_entries, 256);
     __uint(map_flags, BPF_F_NO_PREALLOC);

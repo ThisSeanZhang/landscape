@@ -15,6 +15,7 @@
 #include "route_common.h"
 
 #include "../chain/redirect_able.h"
+#include "../chain/tc_cb.h"
 #include "../flow_match.h"
 #include "../neigh_ip4.h"
 
@@ -441,6 +442,13 @@ static __always_inline int route4_pick_wan_and_send_by_flow_id(struct __sk_buff 
         return ret;
     }
 
+    // WAN targets carry a non-zero chain id.  Record it before redirecting so
+    // the target's egress intro enters the right logical chain directly.
+    if (target_info->chain_id != 0) {
+        tc_cb_set_chain_id(skb, target_info->chain_id);
+        skb->cb[TC_CHAIN_CB_FORWARDED_OFFSET] = 1;
+    }
+
     bool target_has_mac = target_info->has_mac;
 
     if (!target_has_mac) {
@@ -477,7 +485,7 @@ static __always_inline int route4_is_current_wan_packet(struct __sk_buff *skb,
 #define BPF_LOG_TOPIC "route4_is_current_wan_packet"
 
     struct wan_ip_info_key wan_search_key = {0};
-    wan_search_key.ifindex = skb->ingress_ifindex;
+    wan_search_key.chain_id = tc_cb_chain_id(skb);
     wan_search_key.l3_protocol = LANDSCAPE_IPV4_TYPE;
 
     struct wan_ip_info_value *wan_ip_info = bpf_map_lookup_elem(&wan_ip_binding, &wan_search_key);
@@ -551,13 +559,16 @@ static __always_inline int route4_search_cache_in_lan(struct __sk_buff *skb,
         struct route4_cache_value *target = bpf_map_lookup_elem(wan_cache, &search_key);
         if (target) {
             struct wan_ip_info_key wan_search_key = {0};
-            wan_search_key.ifindex = target->ifindex;
+            wan_search_key.chain_id = target->chain_id;
             wan_search_key.l3_protocol = LANDSCAPE_IPV4_TYPE;
 
             struct wan_ip_info_value *wan_ip_info =
                 bpf_map_lookup_elem(&wan_ip_binding, &wan_search_key);
             if (wan_ip_info != NULL) {
                 bool target_has_mac = target->has_mac;
+
+                tc_cb_set_chain_id(skb, target->chain_id);
+                skb->cb[TC_CHAIN_CB_FORWARDED_OFFSET] = 1;
 
                 if (!target_has_mac) {
                     return bpf_redirect(target->ifindex, 0);
@@ -610,7 +621,8 @@ static __always_inline int route4_search_cache_in_lan(struct __sk_buff *skb,
 }
 
 static __always_inline int route4_set_cache_in_wan(const struct route4_context *context,
-                                                   u32 current_l3_offset, u32 ifindex) {
+                                                   u32 current_l3_offset, u32 ifindex,
+                                                   u32 chain_id) {
 #define BPF_LOG_TOPIC "route4_set_cache_in_wan"
     struct route4_cache_key search_key = {0};
     struct route4_cache_value *target = NULL;
@@ -640,12 +652,14 @@ static __always_inline int route4_set_cache_in_wan(const struct route4_context *
         target = bpf_map_lookup_elem(wan_cache, &search_key);
         if (target) {
             target->ifindex = ifindex;
+            target->chain_id = chain_id;
             target->has_mac = current_l3_offset > 0;
             target->xdp_redirect_able = xdp_redirect_target_able(ifindex) ? 1 : 0;
         } else {
             struct route4_cache_value new_target_cache = {0};
             new_target_cache.has_mac = current_l3_offset > 0;
             new_target_cache.ifindex = ifindex;
+            new_target_cache.chain_id = chain_id;
             new_target_cache.xdp_redirect_able = xdp_redirect_target_able(ifindex) ? 1 : 0;
             // if (new_target_cache.has_mac) {
             //     struct wan_ip_info_value *wan_ip = bpf_map_lookup_elem(wan_cache, &search_key);
@@ -709,6 +723,7 @@ static __always_inline int route4_set_cache_in_lan(const struct route4_context *
             new_target_cache.mark_value = flow_mark;
             if (slot_target != NULL) {
                 new_target_cache.ifindex = slot_target->ifindex;
+                new_target_cache.chain_id = slot_target->chain_id;
                 new_target_cache.has_mac = slot_target->has_mac;
                 new_target_cache.is_docker = slot_target->is_docker;
                 new_target_cache.gate_addr = slot_target->gate_addr;

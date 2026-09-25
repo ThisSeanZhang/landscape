@@ -79,6 +79,7 @@ static __always_inline int tc_route4_pick_wan_in_lan(struct __sk_buff *skb, u32 
         }
     }
 
+    tc_cb_set_chain_id(skb, target_info->chain_id);
     skb->cb[TC_CHAIN_CB_FORWARDED_OFFSET] = 1;
 
     if (mac_stored) {
@@ -150,6 +151,7 @@ static __always_inline int tc_route6_pick_wan_in_lan(struct __sk_buff *skb, u32 
         }
     }
 
+    tc_cb_set_chain_id(skb, target_info->chain_id);
     skb->cb[TC_CHAIN_CB_FORWARDED_OFFSET] = 1;
 
     if (mac_stored) return bpf_redirect(target_info->ifindex, 0);

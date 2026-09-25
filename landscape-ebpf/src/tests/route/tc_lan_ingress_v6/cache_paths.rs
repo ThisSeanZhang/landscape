@@ -54,7 +54,10 @@ fn lan6_ingress_lan_cache_hit_with_zero_ifindex_falls_back_to_pick_wan() {
 
     assert_eq!(ret, RET_REDIRECT);
     assert_eq!(mark, 0x0200_0305);
-    assert_eq!(forwarded, 0, "cache-hit pick_wan bypasses the tc wrapper");
+    assert_eq!(
+        forwarded, 1,
+        "WAN-bound pick_wan records FORWARDED + chain id so the egress intro enters the chain directly"
+    );
 
     let cache =
         lookup_rt6_cache_value(&skel.maps.rt6_cache_map, LAN_CACHE, local_addr(), remote_addr())
@@ -307,7 +310,7 @@ fn lan6_ingress_wan_cache_hit_rewrites_header_from_remote_ip_mac() {
     assert_eq!(&out[6..12], &dev_mac.octets());
     assert_eq!(&out[12..14], &[0x86, 0xdd]);
     assert_eq!(mark, 0x0200_0000, "WAN-cache hit keeps the original mark value (0)");
-    assert_eq!(forwarded, 0);
+    assert_eq!(forwarded, 1, "WAN-cache hit records FORWARDED + chain id before redirecting");
 }
 
 #[test]
@@ -363,7 +366,7 @@ fn lan6_ingress_wan_cache_no_mac_entry_redirects_directly() {
     assert_eq!(ret, RET_REDIRECT, "mac-less WAN-cache entry redirects directly");
     assert_eq!(out, pkt);
     assert_eq!(mark, 0x0200_0000, "WAN-cache hit keeps the original mark value (0)");
-    assert_eq!(forwarded, 0);
+    assert_eq!(forwarded, 1, "WAN-cache hit records FORWARDED + chain id before redirecting");
 }
 
 #[test]

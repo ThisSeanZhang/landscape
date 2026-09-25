@@ -63,7 +63,7 @@ pub(crate) const RT6_LAN_MAP_SPEC: MapCreateSpec = MapCreateSpec {
 };
 
 /// `rt4_slot_map`: `BPF_MAP_TYPE_HASH`, key
-/// `route4_slot_key` (8), value `route4_target_info` (16), 4096
+/// `route4_slot_key` (8), value `route4_target_info` (20), 4096
 /// entries, `BPF_F_NO_PREALLOC`.
 pub(crate) const RT4_SLOT_MAP_SPEC: MapCreateSpec = MapCreateSpec {
     map_type: MapType::Hash,
@@ -76,7 +76,7 @@ pub(crate) const RT4_SLOT_MAP_SPEC: MapCreateSpec = MapCreateSpec {
 };
 
 /// `rt6_slot_map`: `BPF_MAP_TYPE_HASH`, key
-/// `route6_slot_key` (8), value `route6_target_info` (28), 4096
+/// `route6_slot_key` (8), value `route6_target_info` (32), 4096
 /// entries, `BPF_F_NO_PREALLOC`.
 pub(crate) const RT6_SLOT_MAP_SPEC: MapCreateSpec = MapCreateSpec {
     map_type: MapType::Hash,

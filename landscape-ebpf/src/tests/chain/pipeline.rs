@@ -22,6 +22,7 @@ use crate::tests::xdp_wan_route_skel::XdpWanRouteSkelBuilder;
 #[test]
 #[ignore = "requires root and veth pairs; run with --include-ignored"]
 fn xdp_firewall_pipeline() {
+    const WAN_CHAIN_ID: u32 = 1;
     // Two fresh netns: the router side (lan_h/wan_h + all XDP programs) and the
     // LAN/WAN segment side (lan_p/wan_p + dummies). Fresh netns restart the
     // ifindex counter at 1 (small PROG_ARRAY indexes) and keep host routes out
@@ -155,7 +156,7 @@ fn xdp_firewall_pipeline() {
     // ── LAN chain: root → mss_lan → firewall_lan → exit ──
     lr.maps
         .xdp_lan_pipe_root_progs
-        .update(&wan_h_i.to_ne_bytes(), &root_fd.to_ne_bytes(), MapFlags::ANY)
+        .update(&WAN_CHAIN_ID.to_ne_bytes(), &root_fd.to_ne_bytes(), MapFlags::ANY)
         .unwrap();
     chain
         .maps
@@ -215,7 +216,7 @@ fn xdp_firewall_pipeline() {
         let daddr_be = u32::from_be_bytes([10, 0, 0, 1]);
         let mut dispatch_key = [0u8; 16];
         dispatch_key[12..16].copy_from_slice(&daddr_be.to_be_bytes());
-        let dispatch_val = wan_h_i.to_ne_bytes();
+        let dispatch_val = WAN_CHAIN_ID.to_ne_bytes();
         intro
             .maps
             .wan_intro_dispatch_map
@@ -228,7 +229,7 @@ fn xdp_firewall_pipeline() {
         let mut dispatch_key = [0u8; 16];
         dispatch_key[0..4].copy_from_slice(&1u32.to_le_bytes());
         dispatch_key[8..16].copy_from_slice(&v6_lan[0..8]);
-        let dispatch_val = wan_h_i.to_ne_bytes();
+        let dispatch_val = WAN_CHAIN_ID.to_ne_bytes();
         intro
             .maps
             .wan_intro_dispatch_map
@@ -238,7 +239,7 @@ fn xdp_firewall_pipeline() {
     intro
         .maps
         .xdp_pipe_root_progs
-        .update(&wan_h_i.to_ne_bytes(), &wan_root_fd.to_ne_bytes(), MapFlags::ANY)
+        .update(&WAN_CHAIN_ID.to_ne_bytes(), &wan_root_fd.to_ne_bytes(), MapFlags::ANY)
         .unwrap();
 
     // ── routing table setup ──
@@ -249,10 +250,11 @@ fn xdp_firewall_pipeline() {
     {
         let s = route_slot(wan_ip);
         let mut k = [0u8; 8];
-        let mut v = [0u8; 16];
+        let mut v = [0u8; 20];
         k[0..4].copy_from_slice(&0u32.to_ne_bytes());
         k[4..8].copy_from_slice(&s.to_ne_bytes());
         v[0..4].copy_from_slice(&wan_h_i.to_ne_bytes());
+        v[4..8].copy_from_slice(&WAN_CHAIN_ID.to_ne_bytes());
         maps.rt4_slot_map.update(&k, &v, MapFlags::ANY).unwrap();
     }
 
@@ -271,10 +273,11 @@ fn xdp_firewall_pipeline() {
         let wan_ip2: u32 = u32::from_be_bytes([203, 0, 113, 2]);
         let s2 = route_slot(wan_ip2);
         let mut k = [0u8; 8];
-        let mut v = [0u8; 16];
+        let mut v = [0u8; 20];
         k[0..4].copy_from_slice(&0u32.to_ne_bytes());
         k[4..8].copy_from_slice(&s2.to_ne_bytes());
         v[0..4].copy_from_slice(&wan_h_i.to_ne_bytes());
+        v[4..8].copy_from_slice(&WAN_CHAIN_ID.to_ne_bytes());
         maps.rt4_slot_map.update(&k, &v, MapFlags::ANY).unwrap();
     }
 
@@ -297,8 +300,9 @@ fn xdp_firewall_pipeline() {
         let mut k = [0u8; 8];
         k[0..4].copy_from_slice(&0u32.to_ne_bytes());
         k[4..8].copy_from_slice(&slot.to_ne_bytes());
-        let mut v = [0u8; 28];
+        let mut v = [0u8; 32];
         v[0..4].copy_from_slice(&wan_h_i.to_ne_bytes());
+        v[4..8].copy_from_slice(&WAN_CHAIN_ID.to_ne_bytes());
         maps.rt6_slot_map.update(&k, &v, MapFlags::ANY).unwrap();
     }
 

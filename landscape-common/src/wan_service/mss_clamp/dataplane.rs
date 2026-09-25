@@ -10,6 +10,7 @@ pub trait MssClampDataplane: Send + Sync {
     fn attach(
         &self,
         ifindex: u32,
+        link_chain_id: u16,
         mtu: u16,
         has_mac: bool,
     ) -> Result<Box<dyn DataplaneGuard>, String>;
@@ -22,6 +23,7 @@ impl MssClampDataplane for NoopMssClampDataplane {
     fn attach(
         &self,
         _ifindex: u32,
+        _link_chain_id: u16,
         _mtu: u16,
         _has_mac: bool,
     ) -> Result<Box<dyn DataplaneGuard>, String> {

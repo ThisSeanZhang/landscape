@@ -15,6 +15,7 @@ struct route4_cache_value {
     u8 xdp_redirect_able;
     u8 _pad;
     __u32 ifindex;
+    __u32 chain_id;
     __be32 gate_addr;
     u8 mac[6];
     u8 l2_data[8];

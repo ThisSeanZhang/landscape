@@ -33,6 +33,7 @@ impl Drop for TcMssHandle {
 pub fn attach_tc_mss(
     rt: &Arc<EbpfRuntime>,
     ifindex: u32,
+    link_chain_id: u16,
     mtu: u16,
     has_mac: bool,
 ) -> LdEbpfResult<TcMssHandle> {
@@ -69,7 +70,7 @@ pub fn attach_tc_mss(
         wan_egress_next_stage_fd: skel.maps.wan_egress_next_stage.as_fd().as_raw_fd(),
     };
 
-    let chain = rt.hub.get_or_create_chain(ifindex);
+    let chain = rt.hub.get_or_create_chain(link_chain_id, ifindex)?;
     chain.inject_tc(StageType::Mss, entry)?;
 
     Ok(TcMssHandle { chain, _skel: skel, _backing: backing })
@@ -101,6 +102,7 @@ impl Drop for XdpMssHandle {
 pub fn init_xdp_mss(
     rt: &Arc<EbpfRuntime>,
     ifindex: u32,
+    link_chain_id: u16,
     mtu_size: u16,
 ) -> LdEbpfResult<XdpMssHandle> {
     use crate::landscape::{pin_and_reuse_map, OwnedOpenObject};
@@ -149,7 +151,7 @@ pub fn init_xdp_mss(
     let wan_fd = skel.progs.xdp_mss_wan.as_fd().as_raw_fd();
     let next_fd = skel.maps.next_stage.as_fd().as_raw_fd();
 
-    let chain = rt.hub.get_or_create_chain(ifindex);
+    let chain = rt.hub.get_or_create_chain(link_chain_id, ifindex)?;
     chain.inject_xdp(StageType::Mss, lan_fd, wan_fd, next_fd)?;
 
     Ok(XdpMssHandle { chain, _skel: skel, _backing: backing })
@@ -162,11 +164,12 @@ pub fn init_xdp_mss(
 pub fn init_mss(
     rt: &Arc<EbpfRuntime>,
     ifindex: u32,
+    link_chain_id: u16,
     mtu: u16,
     has_mac: bool,
 ) -> LdEbpfResult<MssHandle> {
     Ok(MssHandle {
-        tc: Some(attach_tc_mss(rt, ifindex, mtu, has_mac)?),
-        xdp: Some(init_xdp_mss(rt, ifindex, mtu)?),
+        tc: Some(attach_tc_mss(rt, ifindex, link_chain_id, mtu, has_mac)?),
+        xdp: Some(init_xdp_mss(rt, ifindex, link_chain_id, mtu)?),
     })
 }

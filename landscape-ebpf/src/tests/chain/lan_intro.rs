@@ -250,6 +250,7 @@ fn xdp_lan_intro_map_redirect() {
 #[test]
 #[ignore = "requires root and veth pairs; run with --include-ignored"]
 fn xdp_lan_intro_wan_pipeline() {
+    const WAN_CHAIN_ID: u32 = 1;
     let test_ns = NetNsGuard::create("pdl");
     let peer_ns = NetNsGuard::create("pdlp");
 
@@ -284,10 +285,11 @@ fn xdp_lan_intro_wan_pipeline() {
     {
         let s = route_slot(0xCB007101);
         let mut k = [0u8; 8];
-        let mut v = [0u8; 16];
+        let mut v = [0u8; 20];
         k[0..4].copy_from_slice(&0u32.to_ne_bytes());
         k[4..8].copy_from_slice(&s.to_ne_bytes());
         v[0..4].copy_from_slice(&wan_h_i.to_ne_bytes());
+        v[4..8].copy_from_slice(&1u32.to_ne_bytes());
         maps.rt4_slot_map.update(&k, &v, MapFlags::ANY).unwrap();
     }
     // C→A: lan route → lan_p
@@ -372,7 +374,7 @@ fn xdp_lan_intro_wan_pipeline() {
     // ── LAN chain (A→C): lan_route → root → mss → exit ──
     lr.maps
         .xdp_lan_pipe_root_progs
-        .update(&wan_h_i.to_ne_bytes(), &root_fd.to_ne_bytes(), MapFlags::ANY)
+        .update(&WAN_CHAIN_ID.to_ne_bytes(), &root_fd.to_ne_bytes(), MapFlags::ANY)
         .unwrap();
     chain
         .maps
@@ -400,7 +402,7 @@ fn xdp_lan_intro_wan_pipeline() {
         let daddr_be = u32::from_be(0x0A000001_u32);
         let mut dispatch_key = [0u8; 16];
         dispatch_key[12..16].copy_from_slice(&daddr_be.to_ne_bytes());
-        let dispatch_val = wan_h_i.to_ne_bytes();
+        let dispatch_val = WAN_CHAIN_ID.to_ne_bytes();
         intro
             .maps
             .wan_intro_dispatch_map
@@ -410,7 +412,7 @@ fn xdp_lan_intro_wan_pipeline() {
     intro
         .maps
         .xdp_pipe_root_progs
-        .update(&wan_h_i.to_ne_bytes(), &wan_root_fd.to_ne_bytes(), MapFlags::ANY)
+        .update(&WAN_CHAIN_ID.to_ne_bytes(), &wan_root_fd.to_ne_bytes(), MapFlags::ANY)
         .unwrap();
     wan_root
         .maps

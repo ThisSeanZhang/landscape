@@ -17,6 +17,7 @@ struct route6_cache_value {
     u8 xdp_redirect_able;
     u8 _pad;
     __u32 ifindex;
+    __u32 chain_id;
     union u_inet6_addr gate_addr;
     u8 mac[6];
 } _route6_cache_value;

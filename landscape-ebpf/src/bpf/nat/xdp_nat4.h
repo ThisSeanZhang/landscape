@@ -355,7 +355,7 @@ xdp_nat4_ct_create(u32 mark, u32 ifindex, const struct nat4_timer_key *ct_key,
     return 0;
 }
 
-static __always_inline int xdp_nat4_st_egress_lookup(u32 wan_ifindex, u8 ip_protocol,
+static __always_inline int xdp_nat4_st_egress_lookup(u32 wan_chain_id, u8 ip_protocol,
                                                      const struct inet4_pair *pkt_ip_pair,
                                                      struct nat4_egress_result *result) {
     struct nat4_mapping_key egress_key = {
@@ -374,7 +374,7 @@ static __always_inline int xdp_nat4_st_egress_lookup(u32 wan_ifindex, u8 ip_prot
     if (!nat4_lookup_static_ingress(ip_protocol, st_egress->port)) return -1;
 
     struct wan_ip_info_key wan_key = {
-        .ifindex = wan_ifindex,
+        .chain_id = wan_chain_id,
         .l3_protocol = LANDSCAPE_IPV4_TYPE,
     };
     struct wan_ip_info_value *wan_info = bpf_map_lookup_elem(&wan_ip_binding, &wan_key);
@@ -386,7 +386,7 @@ static __always_inline int xdp_nat4_st_egress_lookup(u32 wan_ifindex, u8 ip_prot
 }
 
 static __always_inline int xdp_nat4_dyn_egress_lookup_and_check(
-    u32 wan_ifindex, u32 mark, u8 ip_protocol, bool allow_create,
+    u32 wan_chain_id, u32 mark, u8 ip_protocol, bool allow_create,
     const struct inet4_pair *pkt_ip_pair, struct nat4_egress_result *result,
     struct nat4_mapping_value_v3 **dyn_ingress_out, struct nat4_port_queue_value_v3 *alloc_item) {
     *dyn_ingress_out = NULL;
@@ -436,7 +436,7 @@ static __always_inline int xdp_nat4_dyn_egress_lookup_and_check(
     if (!allow_create) return -1;
 
     struct wan_ip_info_key wan_key = {
-        .ifindex = wan_ifindex,
+        .chain_id = wan_chain_id,
         .l3_protocol = LANDSCAPE_IPV4_TYPE,
     };
     struct wan_ip_info_value *wan_info = bpf_map_lookup_elem(&wan_ip_binding, &wan_key);

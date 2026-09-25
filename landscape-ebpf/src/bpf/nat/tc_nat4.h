@@ -4,6 +4,7 @@
 #include <vmlinux.h>
 
 #include "../landscape_log.h"
+#include "../chain/tc_cb.h"
 #include "nat_common.h"
 #include "nat_metric.h"
 #include "nat4_map_ops.h"
@@ -115,7 +116,7 @@ static __always_inline int nat4_dyn_egress_lookup_and_check(
     }
 
     struct wan_ip_info_key wan_search_key = {
-        .ifindex = ifindex,
+        .chain_id = tc_cb_chain_id(skb),
         .l3_protocol = LANDSCAPE_IPV4_TYPE,
     };
     struct wan_ip_info_value *wan_ip_info = bpf_map_lookup_elem(&wan_ip_binding, &wan_search_key);
@@ -151,7 +152,7 @@ static __always_inline int nat4_dyn_egress_lookup_and_check(
     return TC_ACT_OK;
 }
 
-static __always_inline int nat4_st_egress_lookup(u32 ifindex, u8 ip_protocol,
+static __always_inline int nat4_st_egress_lookup(u32 chain_id, u8 ip_protocol,
                                                  const struct inet4_pair *pkt_ip_pair,
                                                  struct nat4_egress_result *result) {
     struct nat4_mapping_key static_egress_key = {
@@ -173,7 +174,7 @@ static __always_inline int nat4_st_egress_lookup(u32 ifindex, u8 ip_protocol,
     if (!st_ingress) return TC_ACT_SHOT;
 
     struct wan_ip_info_key wan_search_key = {
-        .ifindex = ifindex,
+        .chain_id = chain_id,
         .l3_protocol = LANDSCAPE_IPV4_TYPE,
     };
     struct wan_ip_info_value *wan_ip_info = bpf_map_lookup_elem(&wan_ip_binding, &wan_search_key);

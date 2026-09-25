@@ -13,6 +13,7 @@ use crate::maps::{
 pub(crate) use crate::maps::route::cache::{LAN_CACHE, WAN_CACHE};
 
 pub(crate) const TARGET_IFINDEX: u32 = 11;
+pub(crate) const TARGET_CHAIN_ID: u32 = 1;
 pub(crate) const WAN_IFINDEX: u32 = 6;
 
 // Mirrors ROUTE_TYPE_* in maps/route/lan.rs and bpf route headers.
@@ -112,6 +113,7 @@ pub(crate) fn put_rt4_cache_full<T: MapCore>(
     let value = Route4CacheValue {
         mark_value,
         ifindex,
+        chain_id: TARGET_CHAIN_ID,
         has_mac: has_mac as u8,
         is_docker: is_docker as u8,
         gate_addr: gate_addr.to_bits().to_be(),
@@ -211,6 +213,7 @@ pub(crate) fn put_rt6_cache_full<T: MapCore>(
     let value = Route6CacheValue {
         mark_value,
         ifindex,
+        chain_id: TARGET_CHAIN_ID,
         has_mac: has_mac as u8,
         is_docker: is_docker as u8,
         gate_addr: gate_addr.octets(),

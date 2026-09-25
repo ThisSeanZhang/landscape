@@ -96,6 +96,7 @@ fn seed_runtime_queues<M1, M2, M3>(
 pub fn attach_tc_nat(
     rt: &Arc<EbpfRuntime>,
     ifindex: u32,
+    link_chain_id: u16,
     has_mac: bool,
     config: &NatConfig,
 ) -> LdEbpfResult<TcNatHandle> {
@@ -150,7 +151,7 @@ pub fn attach_tc_nat(
         wan_egress_next_stage_fd: skel.maps.wan_egress_next_stage.as_fd().as_raw_fd(),
     };
 
-    let chain = rt.hub.get_or_create_chain(ifindex);
+    let chain = rt.hub.get_or_create_chain(link_chain_id, ifindex)?;
     chain.inject_tc(StageType::Nat, entry)?;
 
     Ok(TcNatHandle { chain, _skel: skel, _backing: backing })
@@ -163,6 +164,7 @@ pub fn attach_tc_nat(
 fn init_nat_xdp_unified(
     rt: &Arc<EbpfRuntime>,
     ifindex: u32,
+    link_chain_id: u16,
     has_mac: bool,
     config: &NatConfig,
 ) -> LdEbpfResult<(TcNatHandle, XdpNatHandle)> {
@@ -290,6 +292,7 @@ fn init_nat_xdp_unified(
         let xdp_rodata =
             xdp_open.maps.rodata_data.as_deref_mut().expect("xdp_nat rodata not memory mapped");
         xdp_rodata.current_ifindex = ifindex;
+        xdp_rodata.current_chain_id = link_chain_id as u32;
         xdp_rodata.tcp_range_start = config.tcp_range.start;
         xdp_rodata.tcp_range_end = config.tcp_range.end;
         xdp_rodata.udp_range_start = config.udp_range.start;
@@ -302,7 +305,7 @@ fn init_nat_xdp_unified(
 
     // ── 3. Inject into the link's stage chains ──
 
-    let chain = rt.hub.get_or_create_chain(ifindex);
+    let chain = rt.hub.get_or_create_chain(link_chain_id, ifindex)?;
 
     let tc_entry = TcStageEntry {
         wan_ingress_prog_fd: tc_skel.progs.tc_nat_wan_ingress.as_fd().as_raw_fd(),
@@ -337,9 +340,10 @@ fn init_nat_xdp_unified(
 pub fn init_nat(
     rt: &Arc<EbpfRuntime>,
     ifindex: u32,
+    link_chain_id: u16,
     has_mac: bool,
     config: &NatConfig,
 ) -> LdEbpfResult<NatHandle> {
-    let (tc, xdp) = init_nat_xdp_unified(rt, ifindex, has_mac, config)?;
+    let (tc, xdp) = init_nat_xdp_unified(rt, ifindex, link_chain_id, has_mac, config)?;
     Ok(NatHandle { tc: Some(tc), xdp: Some(xdp) })
 }

@@ -34,6 +34,7 @@ impl Drop for TcFirewallHandle {
 pub fn attach_tc_firewall(
     rt: &Arc<EbpfRuntime>,
     ifindex: u32,
+    link_chain_id: u16,
     has_mac: bool,
 ) -> LdEbpfResult<TcFirewallHandle> {
     use crate::chain::link_chain::TcStageEntry;
@@ -75,7 +76,7 @@ pub fn attach_tc_firewall(
         wan_egress_next_stage_fd: skel.maps.wan_egress_next_stage.as_fd().as_raw_fd(),
     };
 
-    let chain = rt.hub.get_or_create_chain(ifindex);
+    let chain = rt.hub.get_or_create_chain(link_chain_id, ifindex)?;
     chain.inject_tc(StageType::Firewall, entry)?;
 
     Ok(TcFirewallHandle { chain, _skel: skel, _backing: backing })
@@ -104,7 +105,11 @@ impl Drop for XdpFirewallHandle {
     }
 }
 
-pub fn init_xdp_firewall(rt: &Arc<EbpfRuntime>, ifindex: u32) -> LdEbpfResult<XdpFirewallHandle> {
+pub fn init_xdp_firewall(
+    rt: &Arc<EbpfRuntime>,
+    ifindex: u32,
+    link_chain_id: u16,
+) -> LdEbpfResult<XdpFirewallHandle> {
     use crate::landscape::{pin_and_reuse_map, OwnedOpenObject};
     use libbpf_rs::skel::{OpenSkel, SkelBuilder};
     use std::os::fd::{AsFd, AsRawFd};
@@ -161,7 +166,7 @@ pub fn init_xdp_firewall(rt: &Arc<EbpfRuntime>, ifindex: u32) -> LdEbpfResult<Xd
     let wan_fd = skel.progs.xdp_firewall_wan.as_fd().as_raw_fd();
     let next_fd = skel.maps.next_stage.as_fd().as_raw_fd();
 
-    let chain = rt.hub.get_or_create_chain(ifindex);
+    let chain = rt.hub.get_or_create_chain(link_chain_id, ifindex)?;
     chain.inject_xdp(StageType::Firewall, lan_fd, wan_fd, next_fd)?;
 
     Ok(XdpFirewallHandle { chain, _skel: skel, _backing: backing })
@@ -174,10 +179,11 @@ pub fn init_xdp_firewall(rt: &Arc<EbpfRuntime>, ifindex: u32) -> LdEbpfResult<Xd
 pub fn init_firewall(
     rt: &Arc<EbpfRuntime>,
     ifindex: u32,
+    link_chain_id: u16,
     has_mac: bool,
 ) -> LdEbpfResult<FirewallHandle> {
     Ok(FirewallHandle {
-        tc: Some(attach_tc_firewall(rt, ifindex, has_mac)?),
-        xdp: Some(init_xdp_firewall(rt, ifindex)?),
+        tc: Some(attach_tc_firewall(rt, ifindex, link_chain_id, has_mac)?),
+        xdp: Some(init_xdp_firewall(rt, ifindex, link_chain_id)?),
     })
 }

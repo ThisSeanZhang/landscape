@@ -7,13 +7,14 @@ use landscape_common::wan_service::firewall::dataplane::FirewallDataplane;
 pub async fn create_firewall_service(
     iface_name: String,
     ifindex: i32,
+    link_chain_id: u16,
     has_mac: bool,
     service_status: WatchService,
     dataplane: Arc<dyn FirewallDataplane>,
 ) {
     service_status.just_change_status(ServiceStatus::Staring);
 
-    let firewall = match dataplane.attach(ifindex as u32, has_mac) {
+    let firewall = match dataplane.attach(ifindex as u32, link_chain_id, has_mac) {
         Ok(handle) => handle,
         Err(err) => {
             tracing::error!("failed to start firewall for {iface_name}: {err}");

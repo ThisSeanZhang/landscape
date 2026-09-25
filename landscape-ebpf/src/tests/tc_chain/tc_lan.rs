@@ -80,7 +80,7 @@ mod tests {
             RouteTargetInfo {
                 weight: 0,
                 ifindex: 11,
-                link_chain_id: 0,
+                link_chain_id: 1,
                 mac: None,
                 default_route: false,
                 is_docker: false,
@@ -153,7 +153,7 @@ mod tests {
             RouteTargetInfo {
                 weight: 0,
                 ifindex: 11,
-                link_chain_id: 0,
+                link_chain_id: 1,
                 mac: None,
                 default_route: false,
                 is_docker: false,

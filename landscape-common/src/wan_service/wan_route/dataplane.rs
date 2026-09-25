@@ -22,10 +22,6 @@ pub trait WanRouteDataplane: Send + Sync {
         xdp_handoff_enabled: bool,
     ) -> Result<Box<dyn DataplaneGuard>, String>;
 
-    /// Remove this interface's entries from the XDP root prog-arrays
-    /// (used when switching away from XDP mode).
-    fn remove_xdp_roots(&self, ifindex: u32);
-
     /// Mark `ifindex` as XDP-redirect-able (or not).
     fn set_redirect_able(&self, ifindex: u32, able: bool);
 
@@ -53,8 +49,6 @@ impl WanRouteDataplane for NoopWanRouteDataplane {
     ) -> Result<Box<dyn DataplaneGuard>, String> {
         Ok(Box::new(()))
     }
-
-    fn remove_xdp_roots(&self, _ifindex: u32) {}
 
     fn set_redirect_able(&self, _ifindex: u32, _able: bool) {}
 

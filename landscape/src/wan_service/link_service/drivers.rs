@@ -275,7 +275,13 @@ impl SectionRunner for RealSectionRunner {
                     format!("{iface_name}.nat"),
                     async move {
                         crate::wan_service::nat_service::create_nat_service(
-                            iface_name, ifindex, has_mac, nat_config, status, dataplane,
+                            iface_name,
+                            ifindex,
+                            link_chain_id,
+                            has_mac,
+                            nat_config,
+                            status,
+                            dataplane,
                         )
                         .await;
                     },
@@ -288,7 +294,12 @@ impl SectionRunner for RealSectionRunner {
                     format!("{iface_name}.firewall"),
                     async move {
                         crate::wan_service::firewall::create_firewall_service(
-                            iface_name, ifindex, has_mac, status, dataplane,
+                            iface_name,
+                            ifindex,
+                            link_chain_id,
+                            has_mac,
+                            status,
+                            dataplane,
                         )
                         .await;
                     },
@@ -301,7 +312,13 @@ impl SectionRunner for RealSectionRunner {
                     format!("{iface_name}.mss"),
                     async move {
                         crate::wan_service::mss_clamp_service::run_mss_clamp(
-                            iface_name, ifindex, clamp_size, has_mac, status, dataplane,
+                            iface_name,
+                            ifindex,
+                            link_chain_id,
+                            clamp_size,
+                            has_mac,
+                            status,
+                            dataplane,
                         )
                         .await;
                     },

@@ -21,9 +21,9 @@ static __always_inline bool xdp_redirect_target_able(u32 ifindex) {
 }
 
 static __always_inline int xdp_redirect_or_tc_handoff(struct xdp_md *ctx, u32 target_ifindex,
-                                                      u32 mark) {
+                                                      u32 mark, u32 chain_id) {
     if (xdp_redirect_target_able(target_ifindex)) return bpf_redirect(target_ifindex, 0);
-    if (xdp_set_tc_redirect_meta(ctx, mark, target_ifindex) != 0) return XDP_DROP;
+    if (xdp_set_tc_redirect_meta(ctx, mark, target_ifindex, chain_id) != 0) return XDP_DROP;
     return XDP_PASS;
 }
 

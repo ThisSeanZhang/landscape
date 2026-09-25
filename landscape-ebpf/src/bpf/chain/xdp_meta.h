@@ -7,6 +7,7 @@
 struct xdp_pipe_meta {
     u32 mark;
     u32 target_ifindex;
+    u32 chain_id;
 };
 
 static __always_inline int xdp_get_meta(struct xdp_md *ctx, struct xdp_pipe_meta *meta) {
@@ -38,6 +39,7 @@ struct xdp_docker_handoff_payload {
 struct xdp_tc_redirect_handoff_payload {
     u32 mark;
     u32 target_ifindex;
+    u32 chain_id;
 };
 
 union xdp_handoff_payload {
@@ -70,10 +72,15 @@ static __always_inline int xdp_set_docker_meta(struct xdp_md *ctx, u32 mark, u32
 }
 
 static __always_inline int xdp_set_tc_redirect_meta(struct xdp_md *ctx, u32 mark,
-                                                    u32 target_ifindex) {
+                                                    u32 target_ifindex, u32 chain_id) {
     struct xdp_handoff_meta ho = {
         .magic = XDP_HANDOFF_TC_REDIRECT_MAGIC,
-        .payload.tc_redirect = {.mark = mark, .target_ifindex = target_ifindex},
+        .payload.tc_redirect =
+            {
+                .mark = mark,
+                .target_ifindex = target_ifindex,
+                .chain_id = chain_id,
+            },
     };
     return xdp_set_handoff_meta(ctx, &ho);
 }

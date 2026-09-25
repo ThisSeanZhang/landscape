@@ -4,8 +4,8 @@
 //! attach interface: the XDP Lan/Wan direction roots, the TC
 //! WanIngress/WanEgress roots, and the stage table linking them together.
 //! The Lan-direction chain is the symmetric (LAN-ingress) pipeline of the
-//! same WAN link — both are keyed by ifindex for now and will move to
-//! `link_chain_id` with the chain-id refactor.
+//! same WAN link.  Logical roots are keyed by the immutable link chain id;
+//! the physical ifindex is retained only for device-specific operations.
 //!
 //! Lifecycle is driven by the link service: [`ChainHub::open_link_chain`]
 //! creates the roots and registers them in the shared prog-array /
@@ -45,9 +45,6 @@ use tc_wan_egress_root_skel::TcWanEgressRootSkelBuilder;
 use tc_wan_ingress_root_skel::TcWanIngressRootSkelBuilder;
 use xdp_lan_chain_skel::XdpLanChainSkelBuilder;
 use xdp_wan_chain_skel::XdpWanChainSkelBuilder;
-
-const TC_INTRO_IFINDEX_TYPE: u32 = 2;
-const WAN_INTRO_IFINDEX_TYPE: u32 = 2;
 
 /// Chain stage kinds, shared by the XDP and TC stage tables.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -173,9 +170,6 @@ pub struct TcStageEntry {
 struct LinkChainInner {
     closed: bool,
     has_mac: bool,
-    /// Link metadata only for now: all root slots are still keyed by
-    /// ifindex. TODO(chain-id refactor): key the roots by `link_chain_id`
-    /// instead; LAN ifaces (id 0) will not own a chain then.
     link_chain_id: u16,
     xdp_lan_root: Option<XdpChainRoot>,
     xdp_wan_root: Option<XdpChainRoot>,
@@ -189,21 +183,32 @@ struct LinkChainInner {
 pub struct LinkChain {
     hub: Arc<ChainHub>,
     ifindex: u32,
+    link_chain_id: u16,
     inner: Mutex<LinkChainInner>,
 }
 
 impl LinkChain {
-    /// Create an empty chain state for `ifindex`. Roots are created lazily by
-    /// [`LinkChain::open_roots`] or by the first stage injection.
-    pub(crate) fn create(hub: Arc<ChainHub>, ifindex: u32) -> LdEbpfResult<Arc<Self>> {
+    /// Create an empty logical chain state bound to physical `ifindex`. Roots
+    /// are created lazily by [`LinkChain::open_roots`] or by the first stage
+    /// injection.
+    pub(crate) fn create(
+        hub: Arc<ChainHub>,
+        ifindex: u32,
+        link_chain_id: u16,
+    ) -> LdEbpfResult<Arc<Self>> {
         Ok(Arc::new(Self {
             hub,
             ifindex,
+            link_chain_id,
             inner: Mutex::new(LinkChainInner::default()),
         }))
     }
 
-    pub(crate) fn ifindex(&self) -> u32 {
+    pub(crate) fn link_chain_id(&self) -> u16 {
+        self.link_chain_id
+    }
+
+    pub(crate) fn physical_ifindex(&self) -> u32 {
         self.ifindex
     }
 
@@ -218,7 +223,17 @@ impl LinkChain {
             });
         }
         inner.has_mac = has_mac;
-        inner.link_chain_id = link_chain_id;
+        if inner.link_chain_id == 0 {
+            inner.link_chain_id = link_chain_id;
+        } else if inner.link_chain_id != link_chain_id {
+            return Err(crate::bpf_error::LandscapeEbpfError::Context {
+                context: format!(
+                    "chain id mismatch for ifindex={}: {} != {}",
+                    self.ifindex, inner.link_chain_id, link_chain_id
+                ),
+                source: libbpf_rs::Error::from_raw_os_error(libc::EINVAL),
+            });
+        }
         if inner.xdp_wan_root.is_none() {
             inner.xdp_wan_root = Some(self.create_wan_root()?);
         }
@@ -429,15 +444,15 @@ impl LinkChain {
 
         if wan_cleanup {
             let seed = self.hub.xdp_seed();
-            let _ = seed.maps.xdp_pipe_root_progs.delete(&self.ifindex.to_ne_bytes());
-            let mut dispatch_key = [0u8; 16];
-            dispatch_key[0..4].copy_from_slice(&WAN_INTRO_IFINDEX_TYPE.to_le_bytes());
-            dispatch_key[8..12].copy_from_slice(&self.ifindex.to_le_bytes());
-            let _ = seed.maps.wan_intro_dispatch_map.delete(&dispatch_key);
+            let _ =
+                seed.maps.xdp_pipe_root_progs.delete(&(self.link_chain_id as u32).to_ne_bytes());
         }
         if lan_cleanup {
             let seed = self.hub.xdp_seed();
-            let _ = seed.maps.xdp_lan_pipe_root_progs.delete(&self.ifindex.to_ne_bytes());
+            let _ = seed
+                .maps
+                .xdp_lan_pipe_root_progs
+                .delete(&(self.link_chain_id as u32).to_ne_bytes());
         }
     }
 
@@ -467,17 +482,10 @@ impl LinkChain {
         }
 
         if let Ok(map) = pinned_map(&self.hub.paths.tc_pipe_root_progs_path()) {
-            let _ = map.delete(&self.ifindex.to_ne_bytes());
+            let _ = map.delete(&(self.link_chain_id as u32).to_ne_bytes());
         }
         if let Ok(map) = pinned_map(&self.hub.paths.tc_wan_egress_roots_path()) {
-            let _ = map.delete(&self.ifindex.to_ne_bytes());
-        }
-
-        let mut dispatch_key = [0u8; 16];
-        dispatch_key[0..4].copy_from_slice(&TC_INTRO_IFINDEX_TYPE.to_le_bytes());
-        dispatch_key[8..12].copy_from_slice(&self.ifindex.to_le_bytes());
-        if let Ok(map) = pinned_map(&self.hub.paths.tc_wan_intro_dispatch_path()) {
-            let _ = map.delete(&dispatch_key);
+            let _ = map.delete(&(self.link_chain_id as u32).to_ne_bytes());
         }
     }
 
@@ -511,21 +519,11 @@ impl LinkChain {
         let root_prog_fd = skel.progs.xdp_wan_chain_root.as_fd().as_raw_fd();
         let root_next_fd = skel.maps.root_next_stage.as_fd().as_raw_fd();
 
-        let slot_bytes = self.ifindex.to_ne_bytes();
+        let slot_bytes = (self.link_chain_id as u32).to_ne_bytes();
         let root_bytes = root_prog_fd.to_ne_bytes();
         self.hub.xdp_seed().maps.xdp_pipe_root_progs.update(
             &slot_bytes,
             &root_bytes,
-            MapFlags::ANY,
-        )?;
-
-        let mut dispatch_key = [0u8; 16];
-        dispatch_key[0..4].copy_from_slice(&WAN_INTRO_IFINDEX_TYPE.to_le_bytes());
-        dispatch_key[8..12].copy_from_slice(&self.ifindex.to_le_bytes());
-        let dispatch_val = self.ifindex.to_ne_bytes();
-        self.hub.xdp_seed().maps.wan_intro_dispatch_map.update(
-            &dispatch_key,
-            &dispatch_val,
             MapFlags::ANY,
         )?;
 
@@ -566,7 +564,7 @@ impl LinkChain {
         let root_next_fd = skel.maps.root_next_stage.as_fd().as_raw_fd();
 
         self.hub.xdp_seed().maps.xdp_lan_pipe_root_progs.update(
-            &self.ifindex.to_ne_bytes(),
+            &(self.link_chain_id as u32).to_ne_bytes(),
             &root_prog_fd.to_ne_bytes(),
             MapFlags::ANY,
         )?;
@@ -598,21 +596,10 @@ impl LinkChain {
         let ing_next_fd = ingress_skel.maps.wan_ingress_root_next_stage.as_fd().as_raw_fd();
 
         pinned_map(&paths.tc_pipe_root_progs_path())?.update(
-            &self.ifindex.to_ne_bytes(),
+            &(self.link_chain_id as u32).to_ne_bytes(),
             &ingress_root_fd.to_ne_bytes(),
             MapFlags::ANY,
         )?;
-
-        let mut dispatch_key = [0u8; 16];
-        dispatch_key[0..4].copy_from_slice(&TC_INTRO_IFINDEX_TYPE.to_le_bytes());
-        dispatch_key[8..12].copy_from_slice(&self.ifindex.to_le_bytes());
-        let dispatch_val = self.ifindex.to_ne_bytes();
-        pinned_map(&paths.tc_wan_intro_dispatch_path())?.update(
-            &dispatch_key,
-            &dispatch_val,
-            MapFlags::ANY,
-        )?;
-
         Ok(TcIngressRoot {
             _skel: ingress_skel,
             _backing: ingress_back,
@@ -638,7 +625,7 @@ impl LinkChain {
         let eg_next_fd = egress_skel.maps.wan_egress_root_next_stage.as_fd().as_raw_fd();
 
         pinned_map(&paths.tc_wan_egress_roots_path())?.update(
-            &self.ifindex.to_ne_bytes(),
+            &(self.link_chain_id as u32).to_ne_bytes(),
             &egress_root_fd.to_ne_bytes(),
             MapFlags::ANY,
         )?;

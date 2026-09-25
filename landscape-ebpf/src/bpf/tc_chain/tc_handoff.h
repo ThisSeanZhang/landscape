@@ -1,6 +1,7 @@
 #ifndef __LD_TC_HANDOFF_H_
 #define __LD_TC_HANDOFF_H_
 
+#include "chain/tc_cb.h"
 #include "chain/xdp_meta.h"
 #include "route/route_common.h"
 
@@ -23,6 +24,7 @@ static __always_inline int xdp_handoff_check(struct __sk_buff *skb, bool from_la
         }
         if (ho->magic == XDP_HANDOFF_TC_REDIRECT_MAGIC) {
             skb->mark = ho->payload.tc_redirect.mark;
+            tc_cb_set_chain_id(skb, ho->payload.tc_redirect.chain_id);
             return bpf_redirect(ho->payload.tc_redirect.target_ifindex, 0);
         }
     }

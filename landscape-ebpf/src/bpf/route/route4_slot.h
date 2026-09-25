@@ -10,6 +10,7 @@ struct route4_slot_key {
 
 struct route4_target_info {
     u32 ifindex;
+    u32 chain_id;
     __be32 gate_addr;
     u8 has_mac;
     u8 is_docker;

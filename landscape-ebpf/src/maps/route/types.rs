@@ -62,6 +62,7 @@ pub(crate) struct Route4CacheValue {
     pub xdp_redirect_able: u8,
     pub _pad: u8,
     pub ifindex: u32,
+    pub chain_id: u32,
     pub gate_addr: u32,
     pub mac: [u8; 6],
     pub l2_data: [u8; 8],
@@ -77,6 +78,7 @@ pub(crate) struct Route6CacheValue {
     pub xdp_redirect_able: u8,
     pub _pad: u8,
     pub ifindex: u32,
+    pub chain_id: u32,
     pub gate_addr: [u8; 16],
     pub mac: [u8; 6],
     pub _pad_tail: [u8; 2],
@@ -100,6 +102,7 @@ pub(crate) struct Route6SlotKey {
 #[derive(Debug, Default, Clone, Copy, FromBytes, IntoBytes, Immutable, PartialEq, Eq)]
 pub(crate) struct Route4TargetInfo {
     pub ifindex: u32,
+    pub chain_id: u32,
     pub gate_addr: u32,
     pub has_mac: u8,
     pub is_docker: u8,
@@ -110,6 +113,7 @@ pub(crate) struct Route4TargetInfo {
 #[derive(Debug, Default, Clone, Copy, FromBytes, IntoBytes, Immutable, PartialEq, Eq)]
 pub(crate) struct Route6TargetInfo {
     pub ifindex: u32,
+    pub chain_id: u32,
     pub gate_addr: [u8; 16],
     pub has_mac: u8,
     pub is_docker: u8,
@@ -159,6 +163,7 @@ mod tests {
         assert_field!(Route4CacheValue, share::route4_cache_value, is_docker);
         assert_field!(Route4CacheValue, share::route4_cache_value, xdp_redirect_able);
         assert_field!(Route4CacheValue, share::route4_cache_value, ifindex);
+        assert_field!(Route4CacheValue, share::route4_cache_value, chain_id);
         assert_field!(Route4CacheValue, share::route4_cache_value, gate_addr);
         assert_field!(Route4CacheValue, share::route4_cache_value, mac);
         assert_field!(Route4CacheValue, share::route4_cache_value, l2_data);
@@ -169,6 +174,7 @@ mod tests {
         assert_field!(Route6CacheValue, share::route6_cache_value, is_docker);
         assert_field!(Route6CacheValue, share::route6_cache_value, xdp_redirect_able);
         assert_field!(Route6CacheValue, share::route6_cache_value, ifindex);
+        assert_field!(Route6CacheValue, share::route6_cache_value, chain_id);
         assert_field!(Route6CacheValue, share::route6_cache_value, gate_addr);
         assert_field!(Route6CacheValue, share::route6_cache_value, mac);
 
@@ -182,6 +188,7 @@ mod tests {
 
         assert_size!(Route4TargetInfo, share::route4_target_info);
         assert_field!(Route4TargetInfo, share::route4_target_info, ifindex);
+        assert_field!(Route4TargetInfo, share::route4_target_info, chain_id);
         assert_field!(Route4TargetInfo, share::route4_target_info, gate_addr);
         assert_field!(Route4TargetInfo, share::route4_target_info, has_mac);
         assert_field!(Route4TargetInfo, share::route4_target_info, is_docker);
@@ -189,6 +196,7 @@ mod tests {
 
         assert_size!(Route6TargetInfo, share::route6_target_info);
         assert_field!(Route6TargetInfo, share::route6_target_info, ifindex);
+        assert_field!(Route6TargetInfo, share::route6_target_info, chain_id);
         assert_field!(Route6TargetInfo, share::route6_target_info, gate_addr);
         assert_field!(Route6TargetInfo, share::route6_target_info, has_mac);
         assert_field!(Route6TargetInfo, share::route6_target_info, is_docker);

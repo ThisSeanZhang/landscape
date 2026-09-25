@@ -81,7 +81,8 @@ pub(super) fn start_client(
     let scenario = scenario.to_string();
     let cfg = PPPoEClientConfig {
         link_id: Uuid::new_v4(),
-        link_chain_id: 0,
+        // A real, non-zero chain id: session attach now refuses id 0.
+        link_chain_id: 1,
         index: info.index,
         iface_name: info.name.clone(),
         iface_mac: info.mac,

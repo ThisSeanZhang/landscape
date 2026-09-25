@@ -8,8 +8,6 @@
 #include "chain/tc_cb.h"
 #include "tc_chain/tc_handoff.h"
 
-#define TC_INTRO_IFINDEX_TYPE 2
-
 struct __attribute__((packed)) pppoe_header {
     u8 version_and_type;
     u8 code;
@@ -43,7 +41,7 @@ struct dispatch_key {
 };
 
 struct dispatch_value {
-    u32 next_pipe_root_index;
+    u32 chain_id;
 };
 
 char LICENSE[] SEC("license") = "GPL";
@@ -67,7 +65,8 @@ struct {
 static __always_inline void tc_intro_dispatch(struct __sk_buff *skb, struct dispatch_key *key) {
     struct dispatch_value *value = bpf_map_lookup_elem(&wan_intro_dispatch_map, key);
     if (!value) return;
-    bpf_tail_call(skb, &tc_pipe_root_progs, value->next_pipe_root_index);
+    tc_cb_set_chain_id(skb, value->chain_id);
+    bpf_tail_call(skb, &tc_pipe_root_progs, value->chain_id);
 }
 
 SEC("tc/ingress")
@@ -98,10 +97,8 @@ int tc_wan_intro(struct __sk_buff *skb) {
 
     tc_intro_dispatch(skb, &key);
 
-    key.v6.prefix64 = 0;
-    key.dispatch_type = TC_INTRO_IFINDEX_TYPE;
-    key.ifindex = skb->ingress_ifindex;
-    tc_intro_dispatch(skb, &key);
-
-    return TC_ACT_SHOT;
+    // No selector matched: the packet does not belong to any logical WAN
+    // chain, hand it to the kernel stack instead of guessing an ifindex
+    // fallback.
+    return TC_ACT_OK;
 }

@@ -19,7 +19,8 @@ use crate::tests::{
         map_helper::{
             as_bytes, create_route6_cache_inner_map, insert_ip_mac_v6, insert_route6_lan_entry,
             lookup_rt6_cache_value, put_rt6_cache_value, LAN_CACHE, LAN_ROUTE_TYPE,
-            ROUTE_TYPE_NEXTHOP, TARGET_IFINDEX, WAN_CACHE, WAN_IFINDEX, WAN_ROUTE_TYPE,
+            ROUTE_TYPE_NEXTHOP, TARGET_CHAIN_ID, TARGET_IFINDEX, WAN_CACHE, WAN_IFINDEX,
+            WAN_ROUTE_TYPE,
         },
         packet_builder::{simple_ipv4_tcp, simple_ipv6_tcp_syn},
     },
@@ -57,7 +58,7 @@ fn wan_ctx(mark: u32) -> TestSkb {
         ifindex: LOOPBACK_IFINDEX,
         ingress_ifindex: WAN_IFINDEX,
         mark,
-        cb: [0, 14, 0, 0, 0], // cb[1] = l3 offset, written by the wan ingress root
+        cb: [0, 14, TARGET_CHAIN_ID, 0, 0], // cb[1] = l3 offset, cb[2] = chain id
         ..Default::default()
     }
 }
@@ -94,7 +95,7 @@ fn run_wan6_ingress(
 fn seed_wan_self_binding(skel: &TcWanIngressExitSkel<'_>) {
     crate::maps::wan::add_wan_ip(
         &skel.maps.wan_ip_binding,
-        WAN_IFINDEX,
+        TARGET_CHAIN_ID,
         IpAddr::V6(wan_self_addr()),
         None,
         64,
@@ -317,7 +318,7 @@ fn wan6_ingress_raw_l3_frame_prepends_mac_and_redirects() {
         ifindex: LOOPBACK_IFINDEX,
         ingress_ifindex: WAN_IFINDEX,
         mark: INGRESS_STATIC_MARK,
-        cb: [0, 0, 0, 0, 0],
+        cb: [0, 0, TARGET_CHAIN_ID, 0, 0],
         ..Default::default()
     };
     let mut out = vec![0_u8; raw.len() + 64];
@@ -366,7 +367,8 @@ fn wan6_ingress_non_matching_wan_binding_continues_to_lan_redirect() {
 
 #[test]
 fn wan6_ingress_static_mark_insert_sets_xdp_flag() {
-    // set_cache_in_wan insert row (TRUE row of the xdp flag, key = skb->ifindex).
+    // set_cache_in_wan insert row (TRUE row of the xdp flag, keyed by the
+    // physical skb ifindex).
     load_skel!("tc-wan6-xdp-able", skel);
     create_route6_cache_inner_map(&skel.maps.rt6_cache_map, WAN_CACHE);
     seed_lan_entry(&skel, false);
@@ -539,7 +541,7 @@ fn wan6_ingress_raw_l3_no_mac_entry_redirects_bare() {
         ifindex: LOOPBACK_IFINDEX,
         ingress_ifindex: WAN_IFINDEX,
         mark: 0,
-        cb: [0, 0, 0, 0, 0], // cb[1] = 0 → l3_offset 0
+        cb: [0, 0, TARGET_CHAIN_ID, 0, 0], // cb[1] = 0 → l3_offset 0
         ..Default::default()
     };
     let (ret, out) = run_wan6_ingress(&skel, raw, &mut ctx);

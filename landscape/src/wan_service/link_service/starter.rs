@@ -126,6 +126,9 @@ async fn stop_any(slot: &mut Option<WatchService>) {
     }
 }
 
+/// Open chain root guard keyed by its identity: (physical ifindex, chain id).
+type ChainGuard = ((u32, u16), Box<dyn DataplaneGuard>);
+
 /// Runs one link instance until `status` is stopped or the manager drops the
 /// config sender.
 pub async fn run_link_instance(
@@ -141,7 +144,7 @@ pub async fn run_link_instance(
     let mut children = SectionChildren::default();
     let mut session: Option<ActiveSession> = None;
     let mut last_nat_lease: Option<WanV4Lease> = None;
-    let mut chain_guard: Option<(u32, Box<dyn DataplaneGuard>)> = None;
+    let mut chain_guard: Option<ChainGuard> = None;
 
     let mut attach = deps.iface_lookup.get(&config.attach_iface_name).await;
     ensure_session(&config, attach.as_ref(), &deps, &mut session).await;
@@ -315,7 +318,7 @@ async fn reconcile(
     deps: &WanLinkDeps,
     children: &mut SectionChildren,
     last_nat_lease: &mut Option<WanV4Lease>,
-    chain_guard: &mut Option<(u32, Box<dyn DataplaneGuard>)>,
+    chain_guard: &mut Option<ChainGuard>,
 ) {
     let state = session.as_ref().map(|s| s.rx.borrow().clone()).unwrap_or(SessionState::Idle);
     let lease = match &state {
@@ -365,12 +368,19 @@ async fn reconcile(
         *chain_guard = None;
         return;
     };
-    if chain_guard.as_ref().map(|(idx, _)| *idx) != Some(net.index) {
+    if chain_guard.as_ref().map(|(identity, _)| *identity)
+        != Some((net.index, config.link_chain_id))
+    {
         match deps.chain_dp.open(net.index, net.mac.is_some(), config.link_chain_id) {
-            Ok(guard) => *chain_guard = Some((net.index, guard)),
+            Ok(guard) => *chain_guard = Some(((net.index, config.link_chain_id), guard)),
             Err(err) => {
                 tracing::error!(iface = %net.name, "failed to open WAN link chain root: {err}");
                 *chain_guard = None;
+                // Without the chain root no stage can attach to a logical
+                // chain; spawning the sections anyway would only surface
+                // per-service errors, so stop here and retry on the next
+                // reconcile pass.
+                return;
             }
         }
     }

@@ -30,6 +30,7 @@ pub trait PppoeDataplane: Send + Sync {
     fn attach_session(
         &self,
         ifindex: u32,
+        link_chain_id: u16,
         tmpl: PppoeEgressTmpl,
         mtu: u16,
     ) -> Result<Box<dyn DataplaneGuard>, String>;
@@ -57,6 +58,7 @@ impl PppoeDataplane for NoopPppoeDataplane {
     fn attach_session(
         &self,
         _ifindex: u32,
+        _link_chain_id: u16,
         _tmpl: PppoeEgressTmpl,
         _mtu: u16,
     ) -> Result<Box<dyn DataplaneGuard>, String> {

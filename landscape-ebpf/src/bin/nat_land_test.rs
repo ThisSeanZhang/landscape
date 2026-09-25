@@ -14,11 +14,15 @@ async fn main() {
             .expect("failed to init ebpf runtime"),
     );
     let ifindex: u32 = 96;
+    // The wan_ip_binding key and the NAT stage must target the same logical
+    // chain now that both are keyed by chain id instead of ifindex.
+    let chain_id = 1;
     let addr = Ipv4Addr::new(10, 200, 1, 1);
-    landscape_ebpf::maps::wan::add_ipv4_wan_ip(rt.paths(), ifindex, 0, addr, None, 24, None);
+    landscape_ebpf::maps::wan::add_ipv4_wan_ip(rt.paths(), ifindex, chain_id, addr, None, 24, None);
 
-    let nat = landscape_ebpf::stages::nat::init_nat(&rt, ifindex, true, &NatConfig::default())
-        .expect("failed to start nat test");
+    let nat =
+        landscape_ebpf::stages::nat::init_nat(&rt, ifindex, chain_id, true, &NatConfig::default())
+            .expect("failed to start nat test");
 
     let _ = tokio::signal::ctrl_c().await;
 

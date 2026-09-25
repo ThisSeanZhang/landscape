@@ -5,7 +5,7 @@ use zerocopy::{FromBytes, Immutable, IntoBytes};
 #[repr(C)]
 #[derive(Debug, Default, Clone, Copy, FromBytes, IntoBytes, Immutable, PartialEq, Eq)]
 pub(crate) struct WanIpInfoKey {
-    pub ifindex: u32,
+    pub chain_id: u32,
     pub l3_protocol: u8,
     pub _pad: [u8; 3],
 }
@@ -30,7 +30,7 @@ mod tests {
     #[test]
     fn wan_ip_layouts_match_skel() {
         assert_size!(WanIpInfoKey, share::wan_ip_info_key);
-        assert_field!(WanIpInfoKey, share::wan_ip_info_key, ifindex);
+        assert_field!(WanIpInfoKey, share::wan_ip_info_key, chain_id);
         assert_field!(WanIpInfoKey, share::wan_ip_info_key, l3_protocol);
 
         assert_size!(WanIpInfoValue, share::wan_ip_info_value);

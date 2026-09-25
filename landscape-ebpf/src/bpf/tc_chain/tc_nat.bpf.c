@@ -50,7 +50,7 @@ static __always_inline int tc_nat_v4_egress_do(struct __sk_buff *skb, u32 ifinde
     u8 nat_l4_protocol = is_icmpx_error ? idx.icmp_error_l4_protocol : idx.l4_protocol;
     bool allow_create_mapping = !is_icmpx_error && pkt_can_begin_ct(idx.pkt_type);
 
-    ret = nat4_st_egress_lookup(ifindex, nat_l4_protocol, &ip_pair, &result);
+    ret = nat4_st_egress_lookup(tc_cb_chain_id(skb), nat_l4_protocol, &ip_pair, &result);
     if (ret != TC_ACT_OK) {
         ret = nat4_dyn_egress_lookup_and_check(skb, ifindex, nat_l4_protocol, allow_create_mapping,
                                                &ip_pair, &result, &dyn_ingress, &alloc_item);

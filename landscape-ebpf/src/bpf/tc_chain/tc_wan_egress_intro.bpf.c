@@ -86,6 +86,7 @@ static __always_inline int tc_route4_pick_wan_in_wan_egress(struct __sk_buff *sk
             }
         }
 
+        tc_cb_set_chain_id(skb, target_info->chain_id);
         skb->cb[TC_CHAIN_CB_FORWARDED_OFFSET] = 1;
 
         if (mac_stored) {
@@ -102,7 +103,10 @@ static __always_inline int tc_route4_pick_wan_in_wan_egress(struct __sk_buff *sk
         return ret;
     }
 
-    bpf_tail_call(skb, &tc_wan_egress_roots, target_info->ifindex);
+    // Entering the chain directly: stages inside read the chain id from
+    // skb->cb, so record it before the tail call.
+    tc_cb_set_chain_id(skb, target_info->chain_id);
+    bpf_tail_call(skb, &tc_wan_egress_roots, target_info->chain_id);
     return TC_ACT_SHOT;
 #undef BPF_LOG_TOPIC
 }
@@ -160,6 +164,7 @@ static __always_inline int tc_route6_pick_wan_in_wan_egress(struct __sk_buff *sk
             }
         }
 
+        tc_cb_set_chain_id(skb, target_info->chain_id);
         skb->cb[TC_CHAIN_CB_FORWARDED_OFFSET] = 1;
 
         if (mac_stored) return bpf_redirect(target_info->ifindex, 0);
@@ -172,7 +177,10 @@ static __always_inline int tc_route6_pick_wan_in_wan_egress(struct __sk_buff *sk
         return ret;
     }
 
-    bpf_tail_call(skb, &tc_wan_egress_roots, target_info->ifindex);
+    // Entering the chain directly: stages inside read the chain id from
+    // skb->cb, so record it before the tail call.
+    tc_cb_set_chain_id(skb, target_info->chain_id);
+    bpf_tail_call(skb, &tc_wan_egress_roots, target_info->chain_id);
     return TC_ACT_SHOT;
 #undef BPF_LOG_TOPIC
 }
@@ -285,12 +293,18 @@ SEC("tc/egress")
 int tc_wan_egress_intro(struct __sk_buff *skb) {
 #define BPF_LOG_TOPIC "tc_wan_egress_intro <<<"
     if (skb->cb[TC_CHAIN_CB_FORWARDED_OFFSET]) {
-        bpf_tail_call(skb, &tc_wan_egress_roots, skb->ifindex);
+        u32 chain_id = tc_cb_chain_id(skb);
+        // No chain id means the flag is stale or foreign; let the packet
+        // continue to the device instead of guessing an ifindex fallback.
+        if (chain_id == 0) return TC_ACT_OK;
+        bpf_tail_call(skb, &tc_wan_egress_roots, chain_id);
         return TC_ACT_SHOT;
     }
 
     if (likely(skb->ingress_ifindex != 0)) {
-        bpf_tail_call(skb, &tc_wan_egress_roots, skb->ifindex);
+        u32 chain_id = tc_cb_chain_id(skb);
+        if (chain_id == 0) return TC_ACT_OK;
+        bpf_tail_call(skb, &tc_wan_egress_roots, chain_id);
         return TC_ACT_SHOT;
     }
 

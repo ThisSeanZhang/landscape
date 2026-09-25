@@ -7,7 +7,7 @@
 use std::mem::size_of;
 use std::path::Path;
 
-use libbpf_rs::{libbpf_sys, MapHandle, MapType};
+use libbpf_rs::{libbpf_sys, MapCore, MapHandle, MapType};
 
 use crate::bpf_error::LdEbpfResult;
 use crate::maps::{ensure_pinned_map, MapCreateSpec};
@@ -30,8 +30,19 @@ pub(crate) const WAN_IP_BINDING_SPEC: MapCreateSpec = MapCreateSpec {
 };
 
 /// Create or reuse the pinned `wan_ip_binding` map at `path`.
+///
+/// The map layout is stable across boots, but the key semantics are not:
+/// keys are per-boot `link_chain_id` allocations, and entries left by a
+/// previous run (keyed by that run's chain ids, or by the older ifindex
+/// scheme) would be misread as bindings for this run's chains.  Drop any
+/// leftover entries so the map starts empty.
 pub fn init_wan_ip_binding_map(path: &Path) -> LdEbpfResult<MapHandle> {
-    ensure_pinned_map(&WAN_IP_BINDING_SPEC, path)
+    let map = ensure_pinned_map(&WAN_IP_BINDING_SPEC, path)?;
+    let keys: Vec<Vec<u8>> = map.keys().collect();
+    for key in keys {
+        let _ = map.delete(&key);
+    }
+    Ok(map)
 }
 
 #[cfg(test)]

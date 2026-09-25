@@ -103,6 +103,7 @@ pub(crate) fn replace_wan_route_slots_v4_with_map<T>(
 
         let mut value = Route4TargetInfo::default();
         value.ifindex = target.ifindex;
+        value.chain_id = target.link_chain_id as u32;
         value.is_docker = u8::from(target.is_docker);
         if let IpAddr::V4(ipv4_addr) = target.gateway_ip {
             value.gate_addr = ipv4_addr.to_bits().to_be();
@@ -157,6 +158,7 @@ pub(crate) fn replace_wan_route_slots_v6_with_map<T>(
 
         let mut value = Route6TargetInfo::default();
         value.ifindex = target.ifindex;
+        value.chain_id = target.link_chain_id as u32;
         value.is_docker = u8::from(target.is_docker);
         if let IpAddr::V6(ipv6_addr) = target.gateway_ip {
             value.gate_addr = ipv6_addr.to_bits().to_be_bytes();
