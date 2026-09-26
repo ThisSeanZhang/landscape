@@ -19,6 +19,10 @@ net.sh
 *.pcap
 *.cap
 
+# core dumps
+core
+core.*
+
 # DuckDB local library
 libduckdb/
 

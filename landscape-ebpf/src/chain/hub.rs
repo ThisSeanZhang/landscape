@@ -71,6 +71,11 @@ fn clear_pinned_map_entries(path: &std::path::Path) {
 
 // ── Pure Rust map creation (delete-if-exists then create + pin) ──
 
+/// Capacity of the TC chain-root prog arrays created here. Must stay in sync
+/// with `XDP_PIPE_MAX_ENTRIES` in bpf/chain/pipe_limits.h: pinned-map reuse
+/// compares `max_entries` and every pinned instance must agree.
+const TC_ROOT_PROG_ARRAY_MAX_ENTRIES: u32 = 1024;
+
 fn bpf_create_opts() -> libbpf_sys::bpf_map_create_opts {
     libbpf_sys::bpf_map_create_opts {
         sz: std::mem::size_of::<libbpf_sys::bpf_map_create_opts>() as libbpf_sys::size_t,
@@ -362,6 +367,11 @@ pub struct ChainHub {
     chains: Mutex<HashMap<u16, Arc<LinkChain>>>,
     skb_bundles: Mutex<HashMap<u32, SkbXdpBundle>>,
     skb_pending: Mutex<HashMap<u32, SkbPending>>,
+    /// Refcount of PPPoE handles sharing the SKB stripper per attach iface.
+    /// The stripper is dispatch-map driven, so a single instance serves
+    /// every session on an iface; it must only be torn down when the last
+    /// session leaves.
+    skb_refs: Mutex<HashMap<u32, usize>>,
 }
 
 impl ChainHub {
@@ -377,11 +387,17 @@ impl ChainHub {
 
         // ── 1. Create and pin all TC seed PROG_ARRAY / HASH maps ──
 
-        create_pinned_prog_array(&paths.tc_pipe_root_progs_path(), 1024)?;
-        create_pinned_map(&paths.tc_wan_intro_dispatch_path(), MapType::Hash, 16, 4, 1024)?;
+        create_pinned_prog_array(&paths.tc_pipe_root_progs_path(), TC_ROOT_PROG_ARRAY_MAX_ENTRIES)?;
+        create_pinned_map(
+            &paths.tc_wan_intro_dispatch_path(),
+            MapType::Hash,
+            16,
+            4,
+            crate::maps::wan::WAN_DISPATCH_MAX_ENTRIES,
+        )?;
         create_pinned_prog_array(&paths.tc_pipe_exits_wan_ingress_path(), 1)?;
         create_pinned_prog_array(&paths.tc_pipe_exits_wan_egress_path(), 1)?;
-        create_pinned_prog_array(&paths.tc_wan_egress_roots_path(), 1024)?;
+        create_pinned_prog_array(&paths.tc_wan_egress_roots_path(), TC_ROOT_PROG_ARRAY_MAX_ENTRIES)?;
 
         // ── 2. Load TC exit skeletons and inject their program FDs ──
 
@@ -457,6 +473,7 @@ impl ChainHub {
             chains: Mutex::new(HashMap::new()),
             skb_bundles: Mutex::new(HashMap::new()),
             skb_pending: Mutex::new(HashMap::new()),
+            skb_refs: Mutex::new(HashMap::new()),
         }))
     }
 
@@ -816,6 +833,49 @@ impl ChainHub {
     }
 
     // ── SKB fallback pool ───────────────────────────────────────────────
+
+    /// Register interest in the SKB stripper for `ifindex`.  Returns true
+    /// when the caller is the first and must prepare/park the pending
+    /// skeleton; later sessions reuse the same map-driven instance.
+    ///
+    /// NOTE: the retain and the caller's subsequent skeleton preparation are
+    /// not atomic. A second session created in between returns false and
+    /// proceeds immediately, so its frames briefly take the IP-dispatch
+    /// fallback until the first session's stripper attaches — benign: no
+    /// packet is dropped or dispatched to the wrong chain.
+    pub(crate) fn retain_skb_stripper(&self, ifindex: u32) -> bool {
+        let mut refs = self.skb_refs.lock().unwrap();
+        let count = refs.entry(ifindex).or_insert(0);
+        *count += 1;
+        *count == 1
+    }
+
+    /// Abandon all interest in the SKB stripper for `ifindex`, e.g. after the
+    /// first session's preparation failed.  Removing the entry (instead of
+    /// decrementing) lets a later session's `retain_skb_stripper` return true
+    /// and retry, instead of every session believing someone else owns it.
+    pub(crate) fn forget_skb_stripper(&self, ifindex: u32) {
+        self.skb_refs.lock().unwrap().remove(&ifindex);
+    }
+
+    /// Release interest in the SKB stripper.  Returns true when the caller
+    /// was the last session on `ifindex` and the pending/bundle may be
+    /// dropped (detaching the program).
+    pub(crate) fn release_skb_stripper(&self, ifindex: u32) -> bool {
+        let mut refs = self.skb_refs.lock().unwrap();
+        match refs.get_mut(&ifindex) {
+            Some(count) => {
+                *count = count.saturating_sub(1);
+                if *count == 0 {
+                    refs.remove(&ifindex);
+                    true
+                } else {
+                    false
+                }
+            }
+            None => false,
+        }
+    }
 
     pub(crate) fn set_skb_bundle(&self, ifindex: u32, bundle: SkbXdpBundle) {
         self.skb_bundles.lock().unwrap().insert(ifindex, bundle);

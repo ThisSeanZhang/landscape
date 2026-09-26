@@ -127,6 +127,7 @@ pub(crate) fn checked_if_nametoindex(name: &str) -> u32 {
 
 mod chain;
 mod check;
+mod intro;
 mod metric;
 mod mss;
 mod nat;
@@ -183,6 +184,14 @@ pub(crate) mod xdp_wan_chain_skel {
 
 pub(crate) mod wan_intro_skel {
     include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/xdp_wan_intro.skel.rs"));
+}
+
+pub(crate) mod tc_wan_intro_skel {
+    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/tc_wan_ingress_intro.skel.rs"));
+}
+
+pub(crate) mod test_tc_sniff_skel {
+    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/test_tc_sniff.skel.rs"));
 }
 
 pub(crate) mod test_xdp_scanner_skel {

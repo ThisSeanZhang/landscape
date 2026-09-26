@@ -30,6 +30,7 @@ static __always_inline int xdp_set_meta(struct xdp_md *ctx, struct xdp_pipe_meta
 
 #define XDP_HANDOFF_DOCKER_MAGIC 0x4C444844
 #define XDP_HANDOFF_TC_REDIRECT_MAGIC 0x4C445443
+#define XDP_HANDOFF_PPP_CHAIN_MAGIC 0x4C445043
 
 struct xdp_docker_handoff_payload {
     u32 mark;
@@ -42,9 +43,16 @@ struct xdp_tc_redirect_handoff_payload {
     u32 chain_id;
 };
 
+struct xdp_ppp_chain_handoff_payload {
+    // Chain resolved from the PPPoE session selector by the XDP-side
+    // stripper; the TC ingress intro enters the chain directly.
+    u32 chain_id;
+};
+
 union xdp_handoff_payload {
     struct xdp_docker_handoff_payload docker;
     struct xdp_tc_redirect_handoff_payload tc_redirect;
+    struct xdp_ppp_chain_handoff_payload ppp_chain;
 };
 
 struct xdp_handoff_meta {
@@ -91,6 +99,17 @@ static __always_inline bool xdp_has_tc_redirect_meta(struct xdp_md *ctx) {
     if (data_meta + sizeof(struct xdp_handoff_meta) > data) return false;
     struct xdp_handoff_meta *ho = data_meta;
     return ho->magic == XDP_HANDOFF_TC_REDIRECT_MAGIC;
+}
+
+// Record the chain resolved from a PPPoE session selector so the TC ingress
+// intro can enter the chain without re-running the IP selector lookup.
+// Failure is tolerated by callers: the TC side falls back to IP dispatch.
+static __always_inline int xdp_set_ppp_chain_meta(struct xdp_md *ctx, u32 chain_id) {
+    struct xdp_handoff_meta ho = {
+        .magic = XDP_HANDOFF_PPP_CHAIN_MAGIC,
+        .payload.ppp_chain = {.chain_id = chain_id},
+    };
+    return xdp_set_handoff_meta(ctx, &ho);
 }
 
 #endif /* __LD_PIPELINE_H_ */

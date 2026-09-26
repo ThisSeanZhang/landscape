@@ -3,7 +3,7 @@
 #include <vmlinux.h>
 #include <bpf/bpf_helpers.h>
 
-#define XDP_PIPE_MAX_ENTRIES 1024
+#include "pipe_limits.h"
 
 struct {
     __uint(type, BPF_MAP_TYPE_PROG_ARRAY);

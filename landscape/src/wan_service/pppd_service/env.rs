@@ -3,7 +3,7 @@ use std::net::IpAddr;
 use std::net::Ipv4Addr;
 use std::process::ExitStatus;
 use std::process::Stdio;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use landscape_common::global_const::default_router::RouteInfo;
@@ -101,6 +101,7 @@ pub(crate) trait PppdEnv: Send + Sync {
 #[async_trait::async_trait]
 pub(crate) trait PppRouteSink: Send + Sync {
     fn bind_ipv4(&self, ifindex: u32, local: Ipv4Addr, peer: Ipv4Addr, mask: u8);
+    fn unbind_ipv4(&self, ifindex: u32);
     async fn insert_wan_route(&self, iface: &str, info: RouteTargetInfo);
     async fn insert_lan_route(&self, iface: &str, info: LanRouteInfo);
     async fn add_default_route(&self, iface: &str);
@@ -138,6 +139,10 @@ impl PppRouteSink for SystemRouteSink {
         self.addr_binding.bind_ipv4(ifindex, self.link_chain_id, local, Some(peer), mask, None);
     }
 
+    fn unbind_ipv4(&self, ifindex: u32) {
+        self.addr_binding.unbind_ipv4(ifindex, self.link_chain_id);
+    }
+
     async fn insert_wan_route(&self, _iface: &str, info: RouteTargetInfo) {
         self.route_service.insert_ipv4_link_route(self.link_id, info).await;
     }
@@ -172,6 +177,11 @@ impl PppRouteSink for SystemRouteSink {
 pub(crate) struct SystemPppdEnv {
     sink: Arc<dyn PppRouteSink>,
     link_chain_id: u16,
+    /// ppp ifindex of the last applied `Ready` binding. Kept so the WAN IP /
+    /// dispatch selectors can be released on address change and on teardown:
+    /// `unbind_ipv4` removes entries by (ifindex, chain id) and a stale
+    /// selector would keep pointing at a chain id that can be reallocated.
+    applied_ppp_ifindex: Mutex<Option<u32>>,
 }
 
 impl SystemPppdEnv {
@@ -189,12 +199,13 @@ impl SystemPppdEnv {
                 link_chain_id,
             )),
             link_chain_id,
+            applied_ppp_ifindex: Mutex::new(None),
         }
     }
 
     #[cfg(test)]
     pub(crate) fn with_sink(sink: Arc<dyn PppRouteSink>) -> Self {
-        Self { sink, link_chain_id: 0 }
+        Self { sink, link_chain_id: 0, applied_ppp_ifindex: Mutex::new(None) }
     }
 }
 
@@ -259,7 +270,16 @@ impl PppdEnv for SystemPppdEnv {
             return;
         };
 
+        // A reconnect may hand us a new address or a new ppp ifindex: release
+        // the previous binding first so its dispatch selectors cannot linger
+        // and point at a chain id that later gets reallocated.
+        if let Some(previous) = self.applied_ppp_ifindex.lock().unwrap().take() {
+            self.sink.unbind_ipv4(previous);
+        }
+
         self.sink.bind_ipv4(*ifindex, *local, *peer, 32);
+
+        *self.applied_ppp_ifindex.lock().unwrap() = Some(*ifindex);
 
         self.sink
             .insert_wan_route(
@@ -305,5 +325,12 @@ impl PppdEnv for SystemPppdEnv {
         }
         self.sink.remove_wan_route(iface).await;
         self.sink.remove_lan_route(iface).await;
+
+        // Drop the WAN IP / dispatch selectors registered while Ready. Without
+        // this the stale selectors would keep pointing at a chain id that can
+        // be reallocated to another link.
+        if let Some(applied) = self.applied_ppp_ifindex.lock().unwrap().take() {
+            self.sink.unbind_ipv4(applied);
+        }
     }
 }

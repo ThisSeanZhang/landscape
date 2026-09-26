@@ -298,6 +298,7 @@ fn spawn_supervisor(
 #[derive(Debug, PartialEq)]
 enum SinkCall {
     Bind { ifindex: u32, local: Ipv4Addr, peer: Ipv4Addr, mask: u8 },
+    Unbind { ifindex: u32 },
     WanRoute { iface: String, info: RouteTargetInfo },
     LanRoute { iface: String, info: LanRouteInfo },
     AddDefault(String),
@@ -321,6 +322,10 @@ impl RecordingRouteSink {
 impl PppRouteSink for RecordingRouteSink {
     fn bind_ipv4(&self, ifindex: u32, local: Ipv4Addr, peer: Ipv4Addr, mask: u8) {
         self.calls.lock().unwrap().push(SinkCall::Bind { ifindex, local, peer, mask });
+    }
+
+    fn unbind_ipv4(&self, ifindex: u32) {
+        self.calls.lock().unwrap().push(SinkCall::Unbind { ifindex });
     }
 
     async fn insert_wan_route(&self, iface: &str, info: RouteTargetInfo) {
@@ -551,6 +556,67 @@ async fn system_env_cleanup_depends_on_router_flag() {
     assert_eq!(
         sink.take(),
         vec![SinkCall::RemoveWan(PPP.to_string()), SinkCall::RemoveLan(PPP.to_string()),]
+    );
+}
+
+#[tokio::test]
+async fn system_env_cleanup_unbinds_applied_address() {
+    let sink = Arc::new(RecordingRouteSink::default());
+    let dyn_sink: Arc<dyn PppRouteSink> = sink.clone();
+    let env = SystemPppdEnv::with_sink(dyn_sink);
+
+    env.on_addr_ready(&ready(2), false, PPP).await;
+    let _ = sink.take();
+
+    env.cleanup(PPP, false).await;
+    assert_eq!(
+        sink.take(),
+        vec![
+            SinkCall::RemoveWan(PPP.to_string()),
+            SinkCall::RemoveLan(PPP.to_string()),
+            SinkCall::Unbind { ifindex: 7 },
+        ]
+    );
+}
+
+#[tokio::test]
+async fn system_env_reconnect_releases_previous_binding() {
+    let sink = Arc::new(RecordingRouteSink::default());
+    let dyn_sink: Arc<dyn PppRouteSink> = sink.clone();
+    let env = SystemPppdEnv::with_sink(dyn_sink);
+
+    env.on_addr_ready(&ready(2), false, PPP).await;
+    let first = sink.take();
+    assert_eq!(
+        &first[0..1],
+        &[SinkCall::Bind {
+            ifindex: 7,
+            local: Ipv4Addr::new(10, 0, 0, 2),
+            peer: Ipv4Addr::new(10, 0, 0, 1),
+            mask: 32,
+        }]
+    );
+
+    // Reconnect on a new ppp ifindex: the old selector is released before
+    // the new one is installed.
+    let next = PppIpv4State::Ready {
+        ifindex: 8,
+        local: Ipv4Addr::new(10, 0, 0, 2),
+        peer: Ipv4Addr::new(10, 0, 0, 1),
+    };
+    env.on_addr_ready(&next, false, PPP).await;
+    let second = sink.take();
+    assert_eq!(
+        &second[0..2],
+        &[
+            SinkCall::Unbind { ifindex: 7 },
+            SinkCall::Bind {
+                ifindex: 8,
+                local: Ipv4Addr::new(10, 0, 0, 2),
+                peer: Ipv4Addr::new(10, 0, 0, 1),
+                mask: 32,
+            },
+        ]
     );
 }
 

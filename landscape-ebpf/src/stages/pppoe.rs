@@ -15,6 +15,7 @@ pub struct XdpPppoeHandle {
     _skel: xdp_pppoe_skel::XdpPppoeSkel<'static>,
     _backing: crate::landscape::OwnedOpenObject,
     paths: crate::LandscapeMapPath,
+    attach_ifindex: u32,
     link_chain_id: u16,
     session_id: u16,
 }
@@ -25,7 +26,12 @@ unsafe impl Sync for XdpPppoeHandle {}
 impl Drop for XdpPppoeHandle {
     fn drop(&mut self) {
         let _ = self.chain.remove_xdp(StageType::Pppoe);
-        remove_ppp_session_selector(&self.paths, self.link_chain_id, self.session_id);
+        remove_ppp_session_selector(
+            &self.paths,
+            self.attach_ifindex,
+            self.link_chain_id,
+            self.session_id,
+        );
     }
 }
 
@@ -81,13 +87,14 @@ pub fn init_xdp_pppoe(
     let chain = rt.hub.get_or_create_chain(link_chain_id, ifindex)?;
     chain.inject_xdp(StageType::Pppoe, lan_fd, 0, next_fd)?;
 
-    register_ppp_session_selector(paths, link_chain_id, session_id);
+    register_ppp_session_selector(paths, ifindex, link_chain_id, session_id);
 
     Ok(XdpPppoeHandle {
         chain,
         _skel: skel,
         _backing: backing,
         paths: paths.clone(),
+        attach_ifindex: ifindex,
         link_chain_id,
         session_id,
     })

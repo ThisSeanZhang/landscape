@@ -7,6 +7,20 @@
 
 const volatile bool xdp_handoff_enabled = false;
 
+// Read the PPP-chain handoff metadata written by the SKB-mode XDP PPPoE
+// stripper. Returns the resolved chain id, or 0 when no such metadata is
+// present. Intentionally NOT gated by `xdp_handoff_enabled`: the stripper
+// runs in SKB mode precisely when native XDP failed, which is also when the
+// flag would be false.
+static __always_inline u32 tc_read_ppp_chain_handoff(struct __sk_buff *skb) {
+    void *dm = (void *)(long)skb->data_meta;
+    void *d = (void *)(long)skb->data;
+    if (dm + sizeof(struct xdp_handoff_meta) > d) return 0;
+    struct xdp_handoff_meta *ho = dm;
+    if (ho->magic != XDP_HANDOFF_PPP_CHAIN_MAGIC) return 0;
+    return ho->payload.ppp_chain.chain_id;
+}
+
 static __always_inline int xdp_handoff_check(struct __sk_buff *skb, bool from_lan) {
     if (!xdp_handoff_enabled) return TC_ACT_OK;
 
@@ -26,6 +40,11 @@ static __always_inline int xdp_handoff_check(struct __sk_buff *skb, bool from_la
             skb->mark = ho->payload.tc_redirect.mark;
             tc_cb_set_chain_id(skb, ho->payload.tc_redirect.chain_id);
             return bpf_redirect(ho->payload.tc_redirect.target_ifindex, 0);
+        }
+        if (ho->magic == XDP_HANDOFF_PPP_CHAIN_MAGIC) {
+            // Consumed by the caller's fast path before reaching here; keep
+            // flowing so IP dispatch can act as the fallback.
+            return TC_ACT_OK;
         }
     }
 

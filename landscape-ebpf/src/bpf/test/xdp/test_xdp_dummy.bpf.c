@@ -17,6 +17,7 @@ struct dummy_recv_record {
 struct dummy_meta_record {
     u32 mark;
     u32 ifindex;
+    u32 chain_id;
 };
 
 struct dummy_tcp_mss_record {
@@ -86,6 +87,7 @@ int xdp_test_dummy(struct xdp_md *ctx) {
         if (mrec) {
             mrec->mark = meta.mark;
             mrec->ifindex = meta.target_ifindex;
+            mrec->chain_id = meta.chain_id;
         }
     }
 

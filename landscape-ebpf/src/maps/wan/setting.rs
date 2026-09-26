@@ -14,9 +14,14 @@ use crate::{LANDSCAPE_IPV4_TYPE, LANDSCAPE_IPV6_TYPE};
 use super::types::{WanIpInfoKey, WanIpInfoValue};
 use crate::maps::Inet6Bytes;
 
+/// Capacity of the pinned `wan_intro_dispatch_map`, shared by the XDP WAN
+/// intro, the SKB-mode PPPoE stripper and the TC WAN ingress intro. Must match
+/// `WAN_DISPATCH_MAX_ENTRIES` in bpf/chain/pipe_limits.h.
+pub(crate) const WAN_DISPATCH_MAX_ENTRIES: u32 = 1024;
+
 pub fn add_ipv6_wan_ip(
     paths: &LandscapeMapPath,
-    _ifindex: u32,
+    ifindex: u32,
     link_chain_id: u16,
     addr: Ipv6Addr,
     gateway: Option<Ipv6Addr>,
@@ -38,12 +43,12 @@ pub fn add_ipv6_wan_ip(
         mask,
         mac,
     );
-    register_dispatch_selector(paths, link_chain_id, IpAddr::V6(addr));
+    register_dispatch_selector(paths, ifindex, link_chain_id, IpAddr::V6(addr));
 }
 
 pub fn add_ipv4_wan_ip(
     paths: &LandscapeMapPath,
-    _ifindex: u32,
+    ifindex: u32,
     link_chain_id: u16,
     addr: Ipv4Addr,
     gateway: Option<Ipv4Addr>,
@@ -65,7 +70,7 @@ pub fn add_ipv4_wan_ip(
         mask,
         mac,
     );
-    register_dispatch_selector(paths, link_chain_id, IpAddr::V4(addr));
+    register_dispatch_selector(paths, ifindex, link_chain_id, IpAddr::V4(addr));
 }
 
 /// Compute the NPT (Network Prefix Translation) mask for IPv6 prefix translation.
@@ -153,18 +158,25 @@ pub(crate) fn add_wan_ip<T>(
     }
 }
 
-pub fn del_ipv6_wan_ip(paths: &LandscapeMapPath, _ifindex: u32, link_chain_id: u16) {
+pub fn del_ipv6_wan_ip(paths: &LandscapeMapPath, ifindex: u32, link_chain_id: u16) {
     del_wan_ip(paths, link_chain_id, LANDSCAPE_IPV6_TYPE);
-    remove_dispatch_selectors(paths, link_chain_id, LANDSCAPE_IPV6_TYPE);
+    remove_dispatch_selectors(paths, ifindex, link_chain_id, LANDSCAPE_IPV6_TYPE);
 }
 
-pub fn del_ipv4_wan_ip(paths: &LandscapeMapPath, _ifindex: u32, link_chain_id: u16) {
+pub fn del_ipv4_wan_ip(paths: &LandscapeMapPath, ifindex: u32, link_chain_id: u16) {
     del_wan_ip(paths, link_chain_id, LANDSCAPE_IPV4_TYPE);
-    remove_dispatch_selectors(paths, link_chain_id, LANDSCAPE_IPV4_TYPE);
+    remove_dispatch_selectors(paths, ifindex, link_chain_id, LANDSCAPE_IPV4_TYPE);
 }
 
-fn dispatch_key(addr: IpAddr) -> [u8; 16] {
+/// `wan_intro_dispatch_map` selector key.  Must byte-match `struct
+/// dispatch_key` in bpf/chain/wan_dispatch.h: little-endian u32 dispatch
+/// type at 0..4, little-endian u32 ingress ifindex at 4..8 (selector scope —
+/// two WAN links may reuse the same address), then the v4 address as a
+/// big-endian u32 at 12..16 or the first 8 bytes of the v6 address at
+/// 8..16 (the /64 prefix).
+pub(crate) fn dispatch_key(ifindex: u32, addr: IpAddr) -> [u8; 16] {
     let mut key = [0u8; 16];
+    key[4..8].copy_from_slice(&ifindex.to_ne_bytes());
     match addr {
         IpAddr::V4(ip) => {
             key[0] = LANDSCAPE_IPV4_TYPE;
@@ -178,8 +190,8 @@ fn dispatch_key(addr: IpAddr) -> [u8; 16] {
     key
 }
 
-fn register_dispatch_selector(paths: &LandscapeMapPath, chain_id: u16, addr: IpAddr) {
-    let key = dispatch_key(addr);
+fn register_dispatch_selector(paths: &LandscapeMapPath, ifindex: u32, chain_id: u16, addr: IpAddr) {
+    let key = dispatch_key(ifindex, addr);
     let value = (chain_id as u32).to_ne_bytes();
     for path in [paths.xdp_wan_intro_dispatch_path(), paths.tc_wan_intro_dispatch_path()] {
         let Ok(map) = libbpf_rs::MapHandle::from_pinned_path(&path) else {
@@ -191,15 +203,21 @@ fn register_dispatch_selector(paths: &LandscapeMapPath, chain_id: u16, addr: IpA
     }
 }
 
-fn remove_dispatch_selectors(paths: &LandscapeMapPath, chain_id: u16, dispatch_type: u8) {
+fn remove_dispatch_selectors(
+    paths: &LandscapeMapPath,
+    ifindex: u32,
+    chain_id: u16,
+    dispatch_type: u8,
+) {
     let expected = (chain_id as u32).to_ne_bytes();
+    let scope = ifindex.to_ne_bytes();
     for path in [paths.xdp_wan_intro_dispatch_path(), paths.tc_wan_intro_dispatch_path()] {
         let Ok(map) = libbpf_rs::MapHandle::from_pinned_path(&path) else {
             continue;
         };
         let keys: Vec<Vec<u8>> = map.keys().collect();
         for key in keys {
-            if key.first().copied() == Some(dispatch_type) {
+            if key.first().copied() == Some(dispatch_type) && key.get(4..8) == Some(&scope[..]) {
                 if let Ok(Some(value)) = map.lookup(&key, MapFlags::ANY) {
                     if value.len() >= 4 && value[0..4] == expected {
                         let _ = map.delete(&key);
@@ -215,21 +233,30 @@ fn remove_dispatch_selectors(paths: &LandscapeMapPath, chain_id: u16, dispatch_t
 const WAN_INTRO_PPP_SESSION_TYPE: u8 = 3;
 
 /// PPPoE session-scoped dispatch key.  Must byte-match `struct dispatch_ppp`
-/// in bpf/xdp_wan_intro.bpf.c: little-endian u32 dispatch type at 0..4, then
-/// the session id as a big-endian u32 (high 16 bits zero) at 12..16 — the
-/// same encoding the C side builds with `bpf_htonl((__u32)bpf_ntohs(sid))`.
-fn ppp_session_dispatch_key(session_id: u16) -> [u8; 16] {
+/// in bpf/chain/wan_dispatch.h: little-endian u32 dispatch type at 0..4,
+/// little-endian u32 ingress ifindex at 4..8, then the session id as a
+/// big-endian u16 at 14..16 — verbatim from the PPPoE header, so the C side
+/// assigns it without any byte-order conversion.
+pub(crate) fn ppp_session_dispatch_key(ifindex: u32, session_id: u16) -> [u8; 16] {
     let mut key = [0u8; 16];
     key[0] = WAN_INTRO_PPP_SESSION_TYPE;
-    key[12..16].copy_from_slice(&(u32::from(session_id)).to_be_bytes());
+    key[4..8].copy_from_slice(&ifindex.to_ne_bytes());
+    key[14..16].copy_from_slice(&session_id.to_be_bytes());
     key
 }
 
 /// Map a PPPoE session id to its logical chain in both pinned dispatch maps,
 /// so the WAN intro can pick the correct chain for inbound session frames
-/// when several sessions share one attach iface.
-pub fn register_ppp_session_selector(paths: &LandscapeMapPath, chain_id: u16, session_id: u16) {
-    let key = ppp_session_dispatch_key(session_id);
+/// when several sessions share one attach iface.  The key is scoped by the
+/// attach iface: session ids are only unique per BRAS, so two WAN links may
+/// reuse the same id without colliding.
+pub fn register_ppp_session_selector(
+    paths: &LandscapeMapPath,
+    ifindex: u32,
+    chain_id: u16,
+    session_id: u16,
+) {
+    let key = ppp_session_dispatch_key(ifindex, session_id);
     let value = (chain_id as u32).to_ne_bytes();
     for path in [paths.xdp_wan_intro_dispatch_path(), paths.tc_wan_intro_dispatch_path()] {
         let Ok(map) = libbpf_rs::MapHandle::from_pinned_path(&path) else {
@@ -242,8 +269,13 @@ pub fn register_ppp_session_selector(paths: &LandscapeMapPath, chain_id: u16, se
 }
 
 /// Drop the session selector again, but only if it still points at `chain_id`.
-pub fn remove_ppp_session_selector(paths: &LandscapeMapPath, chain_id: u16, session_id: u16) {
-    let key = ppp_session_dispatch_key(session_id);
+pub fn remove_ppp_session_selector(
+    paths: &LandscapeMapPath,
+    ifindex: u32,
+    chain_id: u16,
+    session_id: u16,
+) {
+    let key = ppp_session_dispatch_key(ifindex, session_id);
     let expected = (chain_id as u32).to_ne_bytes();
     for path in [paths.xdp_wan_intro_dispatch_path(), paths.tc_wan_intro_dispatch_path()] {
         let Ok(map) = libbpf_rs::MapHandle::from_pinned_path(&path) else {
@@ -284,17 +316,24 @@ mod ppp_session_tests {
 
     #[test]
     fn key_layout_matches_c_dispatch_ppp() {
-        let key = ppp_session_dispatch_key(0x1234);
+        let key = ppp_session_dispatch_key(0x11223344, 0x1234);
         // little-endian u32 dispatch type
         assert_eq!(&key[0..4], &[3, 0, 0, 0]);
-        // big-endian u32 session id, high half zero
-        assert_eq!(&key[4..12], &[0u8; 8]);
-        assert_eq!(&key[12..16], &[0x00, 0x00, 0x12, 0x34]);
+        // little-endian u32 ingress ifindex scope
+        assert_eq!(&key[4..8], &[0x44, 0x33, 0x22, 0x11]);
+        // big-endian u16 session id at [14..16), high bytes zero
+        assert_eq!(&key[8..14], &[0u8; 6]);
+        assert_eq!(&key[14..16], &[0x12, 0x34]);
     }
 
     #[test]
     fn key_layout_max_session() {
-        let key = ppp_session_dispatch_key(0xffff);
-        assert_eq!(&key[12..16], &[0x00, 0x00, 0xff, 0xff]);
+        let key = ppp_session_dispatch_key(1, 0xffff);
+        assert_eq!(&key[14..16], &[0xff, 0xff]);
+    }
+
+    #[test]
+    fn same_session_different_ifindex_yields_distinct_keys() {
+        assert_ne!(ppp_session_dispatch_key(2, 7), ppp_session_dispatch_key(3, 7));
     }
 }

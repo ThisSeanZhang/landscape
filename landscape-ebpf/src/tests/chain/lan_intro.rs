@@ -394,13 +394,15 @@ fn xdp_lan_intro_wan_pipeline() {
 
     // ── WAN chain (C→A): wan_intro → wan_root → mss → wan_route_ingress ──
     {
-        // dispatch_key layout (16 bytes, 8-byte aligned due to __be64 in union):
+        // dispatch_key layout (16 bytes, mirrors struct dispatch_key in
+        // bpf/chain/wan_dispatch.h):
         //   [0..4)  dispatch_type (u32 LE) = 0 (direct IPv4)
-        //   [4..8)  padding
+        //   [4..8)  ingress_ifindex (u32 LE) — selector scope
         //   [8..12) v4._pad = 0
         //   [12..16) v4.daddr (u32 BE) = 10.0.0.1
         let daddr_be = u32::from_be(0x0A000001_u32);
         let mut dispatch_key = [0u8; 16];
+        dispatch_key[4..8].copy_from_slice(&wan_h_i.to_ne_bytes());
         dispatch_key[12..16].copy_from_slice(&daddr_be.to_ne_bytes());
         let dispatch_val = WAN_CHAIN_ID.to_ne_bytes();
         intro

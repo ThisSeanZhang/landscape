@@ -213,8 +213,12 @@ fn xdp_firewall_pipeline() {
 
     // ── WAN intro dispatch: route 10.0.0.1 → wan_h (the same interface, for chain processing) ──
     {
+        // dispatch_key layout mirrors struct dispatch_key
+        // (bpf/chain/wan_dispatch.h): type @0..4 LE, ingress ifindex @4..8
+        // LE, v4 daddr @12..16 BE.
         let daddr_be = u32::from_be_bytes([10, 0, 0, 1]);
         let mut dispatch_key = [0u8; 16];
+        dispatch_key[4..8].copy_from_slice(&wan_h_i.to_ne_bytes());
         dispatch_key[12..16].copy_from_slice(&daddr_be.to_be_bytes());
         let dispatch_val = WAN_CHAIN_ID.to_ne_bytes();
         intro
@@ -228,6 +232,7 @@ fn xdp_firewall_pipeline() {
         let v6_lan: [u8; 16] = [0xfd, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1];
         let mut dispatch_key = [0u8; 16];
         dispatch_key[0..4].copy_from_slice(&1u32.to_le_bytes());
+        dispatch_key[4..8].copy_from_slice(&wan_h_i.to_ne_bytes());
         dispatch_key[8..16].copy_from_slice(&v6_lan[0..8]);
         let dispatch_val = WAN_CHAIN_ID.to_ne_bytes();
         intro
