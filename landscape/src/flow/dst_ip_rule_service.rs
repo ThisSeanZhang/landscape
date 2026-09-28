@@ -2,9 +2,10 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use landscape_common::{
+    database::store::Change,
     event::dns::DstIpEvent,
     flow::{dataplane::FlowRuleDataplane, ip_mark::WanIpRuleConfig},
-    service::controller::{ConfigController, FlowConfigController},
+    service::controller::{ConfigStoreController, ConfigStoreFlowController},
 };
 use landscape_database::{
     dst_ip_rule::repository::DstIpRuleRepository, provider::LandscapeDBServiceProvider,
@@ -30,16 +31,15 @@ impl DstIpRuleService {
     ) -> Self {
         let store = store.dst_ip_rule_store();
         let dst_ip_rule_service = Self { store, geo_ip_service, dataplane };
-        dst_ip_rule_service.update_many_config(dst_ip_rule_service.list().await).await;
+        dst_ip_rule_service.apply_loaded_configs().await;
+
         let dst_ip_rule_service_clone = dst_ip_rule_service.clone();
         tokio::spawn(async move {
             while let Ok(event) = receiver.recv().await {
                 match event {
                     DstIpEvent::GeoIpUpdated => {
                         tracing::info!("refresh dst ip rule");
-                        dst_ip_rule_service_clone
-                            .update_many_config(dst_ip_rule_service_clone.list().await)
-                            .await;
+                        dst_ip_rule_service_clone.apply_loaded_configs().await;
                     }
                 }
             }
@@ -47,49 +47,37 @@ impl DstIpRuleService {
 
         dst_ip_rule_service
     }
-}
 
-impl FlowConfigController for DstIpRuleService {}
-
-#[async_trait::async_trait]
-impl ConfigController for DstIpRuleService {
-    type Id = Uuid;
-
-    type Config = WanIpRuleConfig;
-
-    type DatabseAction = DstIpRuleRepository;
-
-    fn get_repository(&self) -> &Self::DatabseAction {
-        &self.store
+    async fn apply_loaded_configs(&self) {
+        let configs = match self.list().await {
+            Ok(configs) => configs,
+            Err(error) => {
+                tracing::error!("failed to load dst ip rules: {error:?}");
+                Vec::new()
+            }
+        };
+        self.apply_configs(configs).await;
     }
 
-    async fn update_one_config(&self, config: Self::Config) {
-        let flow_id = config.flow_id;
-        let rules = self.list_flow_configs(flow_id).await;
-        update_flow_dst_ip_map(self.geo_ip_service.clone(), self.dataplane.clone(), flow_id, rules)
-            .await;
-    }
-    async fn delete_one_config(&self, config: Self::Config) {
-        let flow_id = config.flow_id;
-        let rules = self.list_flow_configs(flow_id).await;
+    async fn refresh_flow(&self, flow_id: u32) {
+        let rules = match self.list_flow_configs(flow_id).await {
+            Ok(rules) => rules,
+            Err(error) => {
+                tracing::error!("failed to load dst ip rules for flow {flow_id}: {error:?}");
+                return;
+            }
+        };
         update_flow_dst_ip_map(self.geo_ip_service.clone(), self.dataplane.clone(), flow_id, rules)
             .await;
     }
 
-    async fn update_many_config(&self, new_configs: Vec<Self::Config>) {
+    async fn apply_configs(&self, configs: Vec<WanIpRuleConfig>) {
         let mut flow_ids = HashSet::new();
         let mut rule_map: HashMap<u32, Vec<WanIpRuleConfig>> = HashMap::new();
 
-        for r in new_configs.into_iter() {
-            if !flow_ids.contains(&r.flow_id) {
-                flow_ids.insert(r.flow_id);
-            }
-            match rule_map.entry(r.flow_id) {
-                std::collections::hash_map::Entry::Occupied(mut entry) => entry.get_mut().push(r),
-                std::collections::hash_map::Entry::Vacant(entry) => {
-                    entry.insert(vec![r]);
-                }
-            }
+        for r in configs.into_iter() {
+            flow_ids.insert(r.flow_id);
+            rule_map.entry(r.flow_id).or_default().push(r);
         }
 
         for flow_id in flow_ids {
@@ -99,6 +87,34 @@ impl ConfigController for DstIpRuleService {
         }
         // TODO: 应当只清理当前 Flow 的缓存
         self.dataplane.invalidate_lan_cache();
+    }
+}
+
+impl ConfigStoreFlowController for DstIpRuleService {}
+
+#[async_trait::async_trait]
+impl ConfigStoreController for DstIpRuleService {
+    type Id = Uuid;
+
+    type Config = WanIpRuleConfig;
+
+    type Store = DstIpRuleRepository;
+
+    fn get_store(&self) -> &Self::Store {
+        &self.store
+    }
+
+    async fn notify_changed(&self, changes: Vec<Change<Self::Config>>) {
+        if changes.len() == 1 {
+            let flow_id = changes[0].new.flow_id;
+            self.refresh_flow(flow_id).await;
+        } else {
+            self.apply_configs(changes.into_iter().map(|c| c.new).collect()).await;
+        }
+    }
+
+    async fn notify_deleted(&self, old: Self::Config) {
+        self.refresh_flow(old.flow_id).await;
     }
 }
 

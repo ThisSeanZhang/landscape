@@ -1,8 +1,8 @@
 use axum::extract::{Path, State};
 use landscape_common::api_response::LandscapeApiResp as CommonApiResp;
-use landscape_common::service::controller::FlowConfigController;
+use landscape_common::service::controller::ConfigStoreFlowController;
 use landscape_common::{config::ConfigId, flow::config::FlowConfig};
-use landscape_common::{config::FlowId, service::controller::ConfigController};
+use landscape_common::{config::FlowId, service::controller::ConfigStoreController};
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 
@@ -37,7 +37,7 @@ fn has_too_many_targets(flow_rule: &FlowConfig) -> bool {
     responses((status = 200, description = "Success", body = CommonApiResp<Vec<FlowConfig>>))
 )]
 async fn get_flow_rules(State(state): State<LandscapeApp>) -> LandscapeApiResult<Vec<FlowConfig>> {
-    let mut result = state.flow_rule_service.list().await;
+    let mut result = state.flow_rule_service.list().await?;
     result.sort_by_key(|a| a.flow_id);
     LandscapeApiResp::success(result)
 }
@@ -56,7 +56,7 @@ async fn get_flow_rule_by_flow_id(
     State(state): State<LandscapeApp>,
     Path(id): Path<FlowId>,
 ) -> LandscapeApiResult<FlowConfig> {
-    let result = state.flow_rule_service.list_flow_configs(id).await;
+    let result = state.flow_rule_service.list_flow_configs(id).await?;
     if !result.is_empty() {
         LandscapeApiResp::success(result.first().cloned().unwrap())
     } else {
@@ -78,7 +78,7 @@ async fn get_flow_rule(
     State(state): State<LandscapeApp>,
     Path(id): Path<ConfigId>,
 ) -> LandscapeApiResult<FlowConfig> {
-    let result = state.flow_rule_service.find_by_id(id).await;
+    let result = state.flow_rule_service.find_by_id(id).await?;
     if let Some(config) = result {
         LandscapeApiResp::success(config)
     } else {
@@ -159,6 +159,6 @@ async fn del_flow_rule(
     State(state): State<LandscapeApp>,
     Path(id): Path<ConfigId>,
 ) -> LandscapeApiResult<()> {
-    state.flow_rule_service.delete(id).await;
+    state.flow_rule_service.delete(id).await?;
     LandscapeApiResp::success(())
 }

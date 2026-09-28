@@ -2,7 +2,7 @@ use axum::extract::{Path, State};
 use landscape_common::api_response::LandscapeApiResp as CommonApiResp;
 use landscape_common::config::{ConfigId, FlowId};
 use landscape_common::flow::ip_mark::WanIpRuleConfig;
-use landscape_common::service::controller::{ConfigController, FlowConfigController};
+use landscape_common::service::controller::{ConfigStoreController, ConfigStoreFlowController};
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 
@@ -24,7 +24,7 @@ async fn ensure_flow_id_unchanged(
     state: &LandscapeApp,
     config: &WanIpRuleConfig,
 ) -> Result<(), DstIpRuleError> {
-    if let Some(existing) = state.dst_ip_rule_service.find_by_id(config.id).await {
+    if let Ok(Some(existing)) = state.dst_ip_rule_service.find_by_id(config.id).await {
         if existing.flow_id != config.flow_id {
             return Err(DstIpRuleError::CannotChangeFlow(config.id));
         }
@@ -41,7 +41,7 @@ async fn ensure_flow_id_unchanged(
 async fn get_dst_ip_rules(
     State(state): State<LandscapeApp>,
 ) -> LandscapeApiResult<Vec<WanIpRuleConfig>> {
-    let result = state.dst_ip_rule_service.list().await;
+    let result = state.dst_ip_rule_service.list().await?;
     LandscapeApiResp::success(result)
 }
 
@@ -56,7 +56,7 @@ async fn get_flow_dst_ip_rules(
     State(state): State<LandscapeApp>,
     Path(id): Path<FlowId>,
 ) -> LandscapeApiResult<Vec<WanIpRuleConfig>> {
-    let mut result = state.dst_ip_rule_service.list_flow_configs(id).await;
+    let mut result = state.dst_ip_rule_service.list_flow_configs(id).await?;
     result.sort_by_key(|a| a.index);
     LandscapeApiResp::success(result)
 }
@@ -75,7 +75,7 @@ async fn get_dst_ip_rule(
     State(state): State<LandscapeApp>,
     Path(id): Path<ConfigId>,
 ) -> LandscapeApiResult<WanIpRuleConfig> {
-    let result = state.dst_ip_rule_service.find_by_id(id).await;
+    let result = state.dst_ip_rule_service.find_by_id(id).await?;
     if let Some(config) = result {
         LandscapeApiResp::success(config)
     } else {
@@ -149,6 +149,6 @@ async fn del_dst_ip_rule(
     State(state): State<LandscapeApp>,
     Path(id): Path<ConfigId>,
 ) -> LandscapeApiResult<()> {
-    state.dst_ip_rule_service.delete(id).await;
+    state.dst_ip_rule_service.delete(id).await?;
     LandscapeApiResp::success(())
 }

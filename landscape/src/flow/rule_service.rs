@@ -1,10 +1,11 @@
 use std::sync::Arc;
 
 use landscape_common::{
+    database::store::Change,
     event::hub::EnrolledDeviceEventReader,
     event::{dns::DnsEvent, route::RouteEvent},
     flow::{config::FlowConfig, dataplane::FlowRuleDataplane, FlowEntryMatchMode, FlowRuleError},
-    service::controller::{ConfigController, FlowConfigController},
+    service::controller::{ConfigStoreController, ConfigStoreFlowController},
 };
 use landscape_database::{
     flow_rule::repository::{find_duplicate_resolved_modes, FlowConfigRepository},
@@ -83,41 +84,29 @@ impl FlowRuleService {
     }
 }
 
-impl FlowConfigController for FlowRuleService {}
+impl ConfigStoreFlowController for FlowRuleService {}
 
 #[async_trait::async_trait]
-impl ConfigController for FlowRuleService {
+impl ConfigStoreController for FlowRuleService {
     type Id = Uuid;
     type Config = FlowConfig;
-    type DatabseAction = FlowConfigRepository;
+    type Store = FlowConfigRepository;
 
-    fn get_repository(&self) -> &Self::DatabseAction {
+    fn get_store(&self) -> &Self::Store {
         &self.store
     }
 
-    async fn update_one_config(&self, config: Self::Config) {
-        let _ = self
-            .route_events_tx
-            .send(RouteEvent::FlowRuleUpdate { flow_id: Some(config.flow_id) })
-            .await;
-    }
-
-    async fn delete_one_config(&self, config: Self::Config) {
-        let _ = self
-            .route_events_tx
-            .send(RouteEvent::FlowRuleUpdate { flow_id: Some(config.flow_id) })
-            .await;
-    }
-
-    async fn update_many_config(&self, _configs: Vec<Self::Config>) {
-        let _ = self.route_events_tx.send(RouteEvent::FlowRuleUpdate { flow_id: None }).await;
-    }
-
-    async fn after_update_config(
-        &self,
-        _new_configs: Vec<Self::Config>,
-        _old_configs: Vec<Self::Config>,
-    ) {
+    async fn notify_changed(&self, changes: Vec<Change<Self::Config>>) {
         self.refresh_flow_matches().await;
+        let flow_id = (changes.len() == 1).then(|| changes[0].new.flow_id);
+        let _ = self.route_events_tx.send(RouteEvent::FlowRuleUpdate { flow_id }).await;
+    }
+
+    async fn notify_deleted(&self, old: Self::Config) {
+        self.refresh_flow_matches().await;
+        let _ = self
+            .route_events_tx
+            .send(RouteEvent::FlowRuleUpdate { flow_id: Some(old.flow_id) })
+            .await;
     }
 }
