@@ -3,11 +3,12 @@ use std::fmt::Debug;
 
 use crate::config::FlowId;
 use crate::database::error::DbError;
+use crate::database::repository::LandscapeDBStore;
 use crate::database::store::{Change, ConfigStore};
 use crate::database::{LandscapeFlowStore, LandscapeStore};
 
 use super::{
-    manager::{ServiceManager, ServiceStarterTrait},
+    manager::{ServiceKeyProvider, ServiceManager, ServiceStarterTrait},
     WatchService,
 };
 
@@ -239,5 +240,446 @@ where
 {
     async fn list_flow_configs(&self, id: FlowId) -> Result<Vec<Self::Config>, DbError> {
         self.get_store().find_by_flow_id(id).await
+    }
+}
+
+/// Service-managed controller over [`ConfigStoreController`]: orchestrates a
+/// running service (through [`ServiceManager`]) around the transactional
+/// store. Successor of the legacy [`ControllerService`].
+///
+/// # Write ordering (service-first, hardened)
+///
+/// 1. The previous config is loaded for rollback; DB errors surface before
+///    any service churn.
+/// 2. The service manager must accept the config (`update_service`) before
+///    anything is persisted; a rejected config fails fast with
+///    [`DbError::ServiceStart`] and leaves the store untouched (the legacy
+///    trait silently swallowed this failure).
+/// 3. The store write is a single atomic `checked_upsert` — no separate
+///    pre-check, so no check-then-write race window.
+/// 4. If the store write fails, the service is rolled back: an existing
+///    config is restored with `update_service_wait` (which awaits channel
+///    capacity, so the rollback can never be dropped by a full queue), while
+///    a fresh insert is stopped with `stop_service` (which also covers the
+///    "queued but not yet started" case the legacy trait left running).
+///
+/// Every successful write notifies through the base trait's
+/// `notify_changed`/`notify_deleted` slots, which the legacy `ControllerService`
+/// never did.
+#[async_trait::async_trait]
+pub trait ConfigStoreServiceController: ConfigStoreController
+where
+    Self::Config: LandscapeDBStore<Self::Id> + ServiceKeyProvider,
+{
+    type H: ServiceStarterTrait<Config = Self::Config>;
+
+    fn get_service(&self) -> &ServiceManager<Self::H>;
+
+    /// Start the service with the config, then persist it atomically.
+    async fn handle_service_config(&self, config: Self::Config) -> Result<Self::Config, DbError> {
+        let service_key = config.service_key();
+
+        let old = self.get_store().find_by_id(config.get_id()).await?;
+
+        if self.get_service().update_service(config.clone()).await.is_err() {
+            return Err(DbError::ServiceStart(format!(
+                "service manager rejected config for '{service_key}'"
+            )));
+        }
+
+        match self.get_store().checked_upsert(config).await {
+            Ok(change) => {
+                self.notify_changed(vec![change.clone()]).await;
+                Ok(change.new)
+            }
+            Err(error) => {
+                tracing::warn!(
+                    service_key,
+                    error = ?error,
+                    "persisting service config failed; rolling service back"
+                );
+                match &old {
+                    Some(prev) => self.get_service().update_service_wait(prev.clone()).await,
+                    None => {
+                        let _ = self.get_service().stop_service(service_key).await;
+                    }
+                }
+                Err(error)
+            }
+        }
+    }
+
+    /// Delete from the store, stop the running service, then notify;
+    /// `Ok(None)` if the id was missing (the store is left untouched).
+    async fn delete_and_stop_service(&self, id: Self::Id) -> Result<Option<WatchService>, DbError> {
+        let old = self.get_store().delete_and_get(id).await?;
+        let Some(old) = old else { return Ok(None) };
+        let status = self.get_service().stop_service(old.service_key()).await;
+        self.notify_deleted(old).await;
+        Ok(status)
+    }
+
+    /// Status of every running service, keyed by service key.
+    async fn get_all_status(&self) -> HashMap<String, WatchService> {
+        self.get_service().get_all_status().await
+    }
+}
+
+#[cfg(test)]
+mod service_controller_tests {
+    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+    use std::sync::{Arc, Mutex};
+    use std::time::Duration;
+
+    use super::*;
+    use crate::database::repository::LandscapeDBStore;
+
+    #[derive(Clone, Debug, PartialEq)]
+    struct MockConfig {
+        id: String,
+        value: u32,
+        update_at: f64,
+    }
+
+    impl LandscapeDBStore<String> for MockConfig {
+        fn get_id(&self) -> String {
+            self.id.clone()
+        }
+        fn get_update_at(&self) -> f64 {
+            self.update_at
+        }
+        fn set_update_at(&mut self, ts: f64) {
+            self.update_at = ts;
+        }
+    }
+
+    impl ServiceKeyProvider for MockConfig {
+        fn service_key(&self) -> String {
+            self.id.clone()
+        }
+    }
+
+    #[derive(Clone, Default)]
+    struct MockStore {
+        rows: Arc<Mutex<HashMap<String, MockConfig>>>,
+        ts: Arc<AtomicU64>,
+        fail_checked_upsert: Arc<AtomicBool>,
+    }
+
+    impl MockStore {
+        fn next_ts(&self) -> f64 {
+            self.ts.fetch_add(1, Ordering::SeqCst) as f64 + 1.0
+        }
+        fn seed(&self, config: MockConfig) {
+            self.rows.lock().unwrap().insert(config.id.clone(), config);
+        }
+        fn get(&self, id: &str) -> Option<MockConfig> {
+            self.rows.lock().unwrap().get(id).cloned()
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl LandscapeStore for MockStore {
+        type Data = MockConfig;
+        type Id = String;
+
+        async fn set(&self, mut config: MockConfig) -> Result<MockConfig, DbError> {
+            config.update_at = self.next_ts();
+            self.rows.lock().unwrap().insert(config.id.clone(), config.clone());
+            Ok(config)
+        }
+
+        async fn list(&self) -> Result<Vec<MockConfig>, DbError> {
+            Ok(self.rows.lock().unwrap().values().cloned().collect())
+        }
+
+        async fn delete(&self, id: String) -> Result<(), DbError> {
+            self.rows.lock().unwrap().remove(&id);
+            Ok(())
+        }
+
+        async fn find_by_id(&self, id: String) -> Result<Option<MockConfig>, DbError> {
+            Ok(self.get(&id))
+        }
+
+        async fn find_by_ids(&self, ids: Vec<String>) -> Vec<MockConfig> {
+            let rows = self.rows.lock().unwrap();
+            ids.into_iter().filter_map(|id| rows.get(&id).cloned()).collect()
+        }
+
+        async fn check_conflict(&self, config: &MockConfig) -> Result<Option<MockConfig>, DbError> {
+            match self.get(&config.id) {
+                Some(old) if old.update_at != config.update_at => Err(DbError::Conflict),
+                other => Ok(other),
+            }
+        }
+
+        async fn checked_set(&self, config: MockConfig) -> Result<MockConfig, DbError> {
+            self.checked_upsert(config).await.map(|c| c.new)
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl ConfigStore for MockStore {
+        type Data = MockConfig;
+        type Id = String;
+
+        async fn upsert(&self, mut config: MockConfig) -> Result<Change<MockConfig>, DbError> {
+            let old = self.get(&config.id);
+            config.update_at = self.next_ts();
+            self.rows.lock().unwrap().insert(config.id.clone(), config.clone());
+            Ok(Change { old, new: config })
+        }
+
+        async fn checked_upsert(
+            &self,
+            mut config: MockConfig,
+        ) -> Result<Change<MockConfig>, DbError> {
+            if self.fail_checked_upsert.load(Ordering::SeqCst) {
+                return Err(DbError::Conflict);
+            }
+            let old = self.get(&config.id);
+            if let Some(old) = &old {
+                if old.update_at != config.update_at {
+                    return Err(DbError::Conflict);
+                }
+            }
+            config.update_at = self.next_ts();
+            self.rows.lock().unwrap().insert(config.id.clone(), config.clone());
+            Ok(Change { old, new: config })
+        }
+
+        async fn upsert_many(
+            &self,
+            configs: Vec<MockConfig>,
+        ) -> Result<Vec<Change<MockConfig>>, DbError> {
+            let mut changes = Vec::with_capacity(configs.len());
+            for config in configs {
+                changes.push(self.upsert(config).await?);
+            }
+            Ok(changes)
+        }
+
+        async fn checked_upsert_many(
+            &self,
+            configs: Vec<MockConfig>,
+        ) -> Result<Vec<Change<MockConfig>>, DbError> {
+            let mut changes = Vec::with_capacity(configs.len());
+            for config in configs {
+                changes.push(self.checked_upsert(config).await?);
+            }
+            Ok(changes)
+        }
+
+        async fn delete_and_get(&self, id: String) -> Result<Option<MockConfig>, DbError> {
+            Ok(self.rows.lock().unwrap().remove(&id))
+        }
+
+        async fn find_ids(&self, ids: Vec<String>) -> Result<Vec<MockConfig>, DbError> {
+            let rows = self.rows.lock().unwrap();
+            Ok(ids.into_iter().filter_map(|id| rows.get(&id).cloned()).collect())
+        }
+    }
+
+    /// Records every `start()` invocation as `(key, value)`; optionally blocks
+    /// inside `start()` forever so the supervisor stops consuming its channel.
+    #[derive(Clone)]
+    struct MockStarter {
+        started: Arc<Mutex<Vec<(String, u32)>>>,
+        block_start: Arc<AtomicBool>,
+    }
+
+    impl MockStarter {
+        fn new() -> Self {
+            Self {
+                started: Arc::new(Mutex::new(Vec::new())),
+                block_start: Arc::new(AtomicBool::new(false)),
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl ServiceStarterTrait for MockStarter {
+        type Config = MockConfig;
+
+        async fn start(&self, config: MockConfig) -> WatchService {
+            self.started.lock().unwrap().push((config.id.clone(), config.value));
+            if self.block_start.load(Ordering::SeqCst) {
+                std::future::pending::<()>().await;
+            }
+            WatchService::new()
+        }
+    }
+
+    struct MockController {
+        store: MockStore,
+        service: ServiceManager<MockStarter>,
+        notify_log: Arc<Mutex<Vec<String>>>,
+    }
+
+    async fn controller(store: MockStore, starter: MockStarter) -> MockController {
+        MockController {
+            store: store.clone(),
+            service: ServiceManager::init(Vec::new(), starter).await,
+            notify_log: Arc::new(Mutex::new(Vec::new())),
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl ConfigStoreController for MockController {
+        type Id = String;
+        type Config = MockConfig;
+        type Store = MockStore;
+
+        fn get_store(&self) -> &Self::Store {
+            &self.store
+        }
+
+        async fn notify_changed(&self, changes: Vec<Change<Self::Config>>) {
+            for change in changes {
+                self.notify_log.lock().unwrap().push(format!("changed:{}", change.new.value));
+            }
+        }
+
+        async fn notify_deleted(&self, old: Self::Config) {
+            self.notify_log.lock().unwrap().push(format!("deleted:{}", old.value));
+        }
+    }
+
+    impl ConfigStoreServiceController for MockController {
+        type H = MockStarter;
+
+        fn get_service(&self) -> &ServiceManager<Self::H> {
+            &self.service
+        }
+    }
+
+    async fn wait_for(mut cond: impl FnMut() -> bool) {
+        for _ in 0..400 {
+            if cond() {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        panic!("condition not met in time");
+    }
+
+    #[tokio::test]
+    async fn happy_path_persists_and_starts_service() {
+        let store = MockStore::default();
+        let starter = MockStarter::new();
+        let controller = controller(store.clone(), starter.clone()).await;
+
+        let config = MockConfig { id: "wan0".to_string(), value: 1, update_at: 0.0 };
+        let saved = controller.handle_service_config(config).await.unwrap();
+
+        assert!(saved.update_at > 0.0);
+        assert_eq!(store.get("wan0").unwrap().value, 1);
+        // `update_service` returning Ok only means the config is queued; the
+        // actual `start()` runs in the spawned supervisor loop.
+        wait_for(|| !starter.started.lock().unwrap().is_empty()).await;
+        assert_eq!(*starter.started.lock().unwrap(), vec![("wan0".to_string(), 1)]);
+        assert_eq!(*controller.notify_log.lock().unwrap(), vec!["changed:1".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn service_rejection_leaves_store_untouched() {
+        let store = MockStore::default();
+        let starter = MockStarter::new();
+        starter.block_start.store(true, Ordering::SeqCst);
+        let controller = controller(store.clone(), starter.clone()).await;
+
+        // Fill the service channel: the first update is consumed by the
+        // (blocked) supervisor, the second one queues up, the third must be
+        // rejected with a full channel.
+        assert!(controller
+            .service
+            .update_service(MockConfig { id: "wan0".to_string(), value: 1, update_at: 0.0 })
+            .await
+            .is_ok());
+        wait_for(|| !starter.started.lock().unwrap().is_empty()).await;
+        assert!(controller
+            .service
+            .update_service(MockConfig { id: "wan0".to_string(), value: 2, update_at: 0.0 })
+            .await
+            .is_ok());
+
+        let result = controller
+            .handle_service_config(MockConfig { id: "wan0".to_string(), value: 3, update_at: 0.0 })
+            .await;
+
+        assert!(matches!(result, Err(DbError::ServiceStart(_))));
+        assert!(store.get("wan0").is_none(), "rejected config must not be persisted");
+        assert!(controller.notify_log.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn write_failure_rolls_back_to_previous_config() {
+        let store = MockStore::default();
+        let old = MockConfig { id: "wan0".to_string(), value: 7, update_at: 0.0 };
+        store.seed(old.clone());
+        let starter = MockStarter::new();
+        let controller = controller(store.clone(), starter.clone()).await;
+
+        // Incoming config echoes the stored update_at, but the write fails.
+        store.fail_checked_upsert.store(true, Ordering::SeqCst);
+        let incoming = MockConfig {
+            id: "wan0".to_string(),
+            value: 8,
+            update_at: old.update_at,
+        };
+
+        let result = controller.handle_service_config(incoming).await;
+        assert!(matches!(result, Err(DbError::Conflict)));
+
+        // The service was started with the new config, then rolled back to the
+        // previous one; the store still holds the previous value.
+        wait_for(|| starter.started.lock().unwrap().len() >= 2).await;
+        assert_eq!(
+            *starter.started.lock().unwrap(),
+            vec![("wan0".to_string(), 8), ("wan0".to_string(), 7)]
+        );
+        assert_eq!(store.get("wan0").unwrap().value, 7);
+    }
+
+    #[tokio::test]
+    async fn write_failure_on_fresh_insert_stops_service() {
+        let store = MockStore::default();
+        let starter = MockStarter::new();
+        let controller = controller(store.clone(), starter.clone()).await;
+
+        store.fail_checked_upsert.store(true, Ordering::SeqCst);
+        let incoming = MockConfig { id: "wan0".to_string(), value: 1, update_at: 0.0 };
+
+        let result = controller.handle_service_config(incoming).await;
+        assert!(matches!(result, Err(DbError::Conflict)));
+
+        // The spawned service entry is stopped and removed, nothing persisted.
+        assert!(controller.service.get_all_status().await.is_empty());
+        assert!(store.get("wan0").is_none());
+    }
+
+    #[tokio::test]
+    async fn delete_and_stop_service_roundtrip() {
+        let store = MockStore::default();
+        let starter = MockStarter::new();
+        let controller = controller(store.clone(), starter.clone()).await;
+
+        let missing = controller.delete_and_stop_service("wan0".to_string()).await.unwrap();
+        assert!(missing.is_none());
+
+        controller
+            .handle_service_config(MockConfig { id: "wan0".to_string(), value: 3, update_at: 0.0 })
+            .await
+            .unwrap();
+
+        let deleted = controller.delete_and_stop_service("wan0".to_string()).await.unwrap();
+        assert!(deleted.is_some());
+        assert!(store.get("wan0").is_none());
+        assert_eq!(
+            *controller.notify_log.lock().unwrap(),
+            vec!["changed:3".to_string(), "deleted:3".to_string()]
+        );
+        assert!(controller.service.get_all_status().await.is_empty());
     }
 }

@@ -22,6 +22,12 @@ pub enum DbError {
     #[api_error(id = "database.error", status = 500)]
     Database(#[from] DbErr),
 
+    /// Service-side failure while accepting a config: the service manager
+    /// rejected the update before anything was persisted.
+    #[error("Failed to start service: {0}")]
+    #[api_error(id = "service.start_failed", status = 500)]
+    ServiceStart(String),
+
     #[error("I/O error occurred: {0}")]
     #[api_error(id = "internal.error", status = 500)]
     Io(#[from] io::Error),
@@ -45,6 +51,10 @@ impl DbError {
             DbError::Database(e) => {
                 tracing::error!("database error: {e:?}");
                 "Database operation failed, please try again later".to_string()
+            }
+            DbError::ServiceStart(service) => {
+                tracing::error!("service start failed: {service}");
+                "Internal error, please try again later".to_string()
             }
             DbError::Io(e) => {
                 tracing::error!("io error: {e:?}");
