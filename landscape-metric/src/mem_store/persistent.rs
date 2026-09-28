@@ -266,7 +266,7 @@ async fn run_memory_recorder(
             _ = cancel.cancelled() => break,
             _ = cleanup.tick() => store.cleanup(retention_days).await,
             _ = ticker.tick() => {
-                let finished = aggregator.ingest(&memtrack::snapshot());
+                let finished = aggregator.ingest(&memtrack::capture_compact());
                 if !finished.is_empty() && !store.record_minute(&finished).await {
                     // 写失败不中断:分钟行已丢失,聚合器已翻转到新分钟。
                     continue;

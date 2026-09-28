@@ -1,8 +1,8 @@
-//! 分钟聚合纯逻辑:1s 快照 → 每分钟每子系统一行(无 IO,两种构建可测)。
+//! 分钟聚合纯逻辑:1s 紧凑快照 → 每分钟每子系统一行(无 IO,两种构建可测)。
 
 use std::collections::HashMap;
 
-use landscape_common::memtrack::MemorySnapshot;
+use landscape_common::memtrack::{subsystem_label, CompactSnapshot, SlotCounters};
 use landscape_common::metric::memory::{MemMinuteRecord, PROCESS_SUBSYSTEM};
 
 #[derive(Default)]
@@ -41,11 +41,11 @@ impl SubsystemMinuteAcc {
     }
 }
 
-/// 跨分钟滚动聚合器:ingest 1s 快照,分钟翻转时吐出上一分钟的全部行。
+/// 跨分钟滚动聚合器:ingest 1s 紧凑快照,分钟翻转时吐出上一分钟的全部行。
 #[derive(Default)]
 pub struct MinuteAggregator {
     current_minute: Option<u64>,
-    subsystems: HashMap<String, SubsystemMinuteAcc>,
+    subsystems: HashMap<usize, SubsystemMinuteAcc>,
     process: SubsystemMinuteAcc,
 }
 
@@ -55,8 +55,9 @@ impl MinuteAggregator {
     }
 
     /// 写入一个快照;若跨入新分钟,返回刚结束分钟的行(可能为空:同一分钟
-    /// 内首次 ingest 不产生行)。
-    pub fn ingest(&mut self, snapshot: &MemorySnapshot) -> Vec<MemMinuteRecord> {
+    /// 内首次 ingest 不产生行)。跳过从未使用的全零槽位(累计计数器单调,
+    /// 全零 = 进程启动以来无分配,过滤不丢信息且减少空行入库)。
+    pub fn ingest(&mut self, snapshot: &CompactSnapshot) -> Vec<MemMinuteRecord> {
         let minute = snapshot.timestamp_ms / 60_000 * 60_000;
         let finished = match self.current_minute {
             None => {
@@ -71,11 +72,14 @@ impl MinuteAggregator {
         };
         let rows = finished.map(|minute_ts| self.take_rows(minute_ts)).unwrap_or_default();
 
-        for stat in &snapshot.modules {
-            self.subsystems.entry(stat.subsystem.clone()).or_default().ingest(
-                stat.live_bytes,
-                stat.allocated_bytes,
-                stat.freed_bytes,
+        for (slot, counters) in snapshot.iter_slots() {
+            if counters == SlotCounters::default() {
+                continue;
+            }
+            self.subsystems.entry(slot).or_default().ingest(
+                counters.live_bytes,
+                counters.allocated_bytes,
+                counters.freed_bytes,
             );
         }
         if let Some(rss) = snapshot.meta.process_rss_bytes {
@@ -93,7 +97,7 @@ impl MinuteAggregator {
     fn take_rows(&mut self, minute_ts: u64) -> Vec<MemMinuteRecord> {
         let mut rows: Vec<MemMinuteRecord> = std::mem::take(&mut self.subsystems)
             .into_iter()
-            .map(|(name, acc)| acc.finish(name, minute_ts))
+            .map(|(slot, acc)| acc.finish(subsystem_label(slot).to_string(), minute_ts))
             .collect();
         if self.process.samples > 0 {
             rows.push(self.process.finish(PROCESS_SUBSYSTEM.to_string(), minute_ts));
@@ -106,33 +110,33 @@ impl MinuteAggregator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use landscape_common::memtrack::{ModuleMemStat, SnapshotMeta};
+    use landscape_common::memtrack::{CompactSnapshot, SnapshotMeta};
 
+    /// 仅填充 dns 槽位(下标 0)的紧凑快照,其余槽位保持全零(会被聚合器过滤)。
     fn snap(
         timestamp_ms: u64,
         live: u64,
         allocated: u64,
         freed: u64,
         rss: Option<u64>,
-    ) -> MemorySnapshot {
-        MemorySnapshot {
-            timestamp_ms,
-            precise: false,
-            meta: SnapshotMeta {
-                process_rss_bytes: rss,
-                process_virtual_bytes: rss,
-                total_live_bytes: live,
-                untracked_bytes: None,
-            },
-            modules: vec![ModuleMemStat {
-                subsystem: "dns".to_string(),
+    ) -> CompactSnapshot {
+        let mut snapshot = CompactSnapshot::zeroed(timestamp_ms);
+        snapshot.set_slot(
+            0,
+            SlotCounters {
                 allocated_bytes: allocated,
                 freed_bytes: freed,
                 live_bytes: live,
-                alloc_events: 0,
-                free_events: 0,
-            }],
-        }
+                ..Default::default()
+            },
+        );
+        snapshot.meta = SnapshotMeta {
+            process_rss_bytes: rss,
+            process_virtual_bytes: rss,
+            total_live_bytes: live,
+            untracked_bytes: None,
+        };
+        snapshot
     }
 
     #[test]

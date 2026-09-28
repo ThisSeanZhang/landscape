@@ -21,7 +21,8 @@ pub mod tag;
 pub use allocator::CountingAllocator;
 pub use mapping::{subsystem_from_task_label, subsystem_from_thread_name};
 pub use registry::{
-    subsystem_label, MemorySnapshot, ModuleMemStat, SnapshotMeta, SUBSYSTEMS, UNATTRIBUTED,
+    subsystem_label, CompactSnapshot, MemorySnapshot, ModuleMemStat, SlotCounters, SnapshotMeta,
+    SUBSYSTEMS, UNATTRIBUTED,
 };
 pub use sampler::{start_sampler, start_sampler_with, MemoryHistory};
 pub use tag::{with_tag, TaggedFuture};
@@ -29,24 +30,22 @@ pub use tag::{with_tag, TaggedFuture};
 use registry::registry;
 use std::sync::atomic::Ordering;
 
-/// 采集一次全量快照:各子系统计数器 + 进程 RSS。
-pub fn snapshot() -> MemorySnapshot {
-    let reg = registry();
-    let mut modules = Vec::with_capacity(SUBSYSTEMS.len());
+/// 零分配采集紧凑快照,供采样热路径(RAM 环形缓冲、分钟聚合)使用。
+pub fn capture_compact() -> CompactSnapshot {
+    let mut stats = [SlotCounters::default(); SUBSYSTEMS.len()];
     let mut total_live = 0u64;
-    for (index, counters) in reg.iter().enumerate() {
+    for (index, counters) in registry().iter().enumerate() {
         let allocated = counters.allocated_bytes.load(Ordering::Relaxed);
         let freed = counters.freed_bytes.load(Ordering::Relaxed);
         let live = allocated.saturating_sub(freed);
         total_live = total_live.saturating_add(live);
-        modules.push(ModuleMemStat {
-            subsystem: SUBSYSTEMS[index].to_string(),
+        stats[index] = SlotCounters {
             allocated_bytes: allocated,
             freed_bytes: freed,
             live_bytes: live,
             alloc_events: counters.alloc_events.load(Ordering::Relaxed),
             free_events: counters.free_events.load(Ordering::Relaxed),
-        });
+        };
     }
 
     let (virtual_bytes, rss_bytes) = read_proc_statm();
@@ -55,7 +54,7 @@ pub fn snapshot() -> MemorySnapshot {
         rss as i64 - total_live as i64
     });
 
-    MemorySnapshot {
+    CompactSnapshot {
         timestamp_ms: crate::utils::time::now_ms(),
         precise: cfg!(feature = "mem-track-precise"),
         meta: SnapshotMeta {
@@ -64,8 +63,13 @@ pub fn snapshot() -> MemorySnapshot {
             total_live_bytes: total_live,
             untracked_bytes,
         },
-        modules,
+        stats,
     }
+}
+
+/// API 查询边界用的全量快照;采样热路径走 [`capture_compact`]。
+pub fn snapshot() -> MemorySnapshot {
+    capture_compact().to_snapshot()
 }
 
 /// 读取 `/proc/self/statm`(单位:页)返回 `(VmSize, VmRSS)` 字节。

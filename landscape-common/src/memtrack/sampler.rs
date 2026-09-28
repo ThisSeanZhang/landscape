@@ -5,17 +5,18 @@ use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use super::registry::MemorySnapshot;
+use super::registry::{CompactSnapshot, MemorySnapshot};
 use crate::concurrency::{spawn_task, task_label};
 
 /// 默认采样周期(1s)与缓冲容量(1 小时)。
 pub const DEFAULT_SAMPLE_INTERVAL: Duration = Duration::from_secs(1);
 pub const DEFAULT_CAPACITY: usize = 3600;
 
-/// 内存快照环形缓冲(克隆共享同一底层)。
+/// 内存快照环形缓冲(克隆共享同一底层)。内部存紧凑快照(内联定长数组,
+/// 采样路径零堆分配),查询时才转换为 API 快照。
 #[derive(Clone)]
 pub struct MemoryHistory {
-    inner: Arc<Mutex<VecDeque<MemorySnapshot>>>,
+    inner: Arc<Mutex<VecDeque<CompactSnapshot>>>,
     capacity: usize,
 }
 
@@ -27,7 +28,7 @@ impl MemoryHistory {
         }
     }
 
-    fn push(&self, snapshot: MemorySnapshot) {
+    fn push(&self, snapshot: CompactSnapshot) {
         let mut guard = self.inner.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         if guard.len() == self.capacity {
             guard.pop_front();
@@ -39,9 +40,9 @@ impl MemoryHistory {
     pub fn recent(&self, limit: usize) -> Vec<MemorySnapshot> {
         let guard = self.inner.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         if limit == 0 || limit >= guard.len() {
-            guard.iter().cloned().collect()
+            guard.iter().map(|compact| compact.to_snapshot()).collect()
         } else {
-            guard.iter().skip(guard.len() - limit).cloned().collect()
+            guard.iter().skip(guard.len() - limit).map(|compact| compact.to_snapshot()).collect()
         }
     }
 
@@ -68,7 +69,7 @@ pub fn start_sampler_with(interval: Duration, capacity: usize) -> MemoryHistory 
         ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
             ticker.tick().await;
-            task_history.push(super::snapshot());
+            task_history.push(super::capture_compact());
         }
     });
     history
@@ -95,7 +96,7 @@ mod tests {
     async fn ring_respects_capacity_and_recent_limit() {
         let history = MemoryHistory::new(4);
         for i in 0..10 {
-            let mut snap = super::super::snapshot();
+            let mut snap = super::super::capture_compact();
             snap.timestamp_ms = i;
             history.push(snap);
         }

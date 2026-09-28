@@ -150,6 +150,77 @@ impl MemorySnapshot {
     }
 }
 
+/// 单个槽位的计数器快照值。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SlotCounters {
+    pub allocated_bytes: u64,
+    pub freed_bytes: u64,
+    pub live_bytes: u64,
+    pub alloc_events: u64,
+    pub free_events: u64,
+}
+
+/// 紧凑快照:槽位定长计数器数组,无 String/Vec 堆分配,供采样热路径
+/// (RAM 环形缓冲、分钟聚合)使用;API 边界经 [`CompactSnapshot::to_snapshot`]
+/// 转换(分配 Vec/String,仅查询时发生)。
+#[derive(Clone, Debug)]
+pub struct CompactSnapshot {
+    pub timestamp_ms: u64,
+    pub precise: bool,
+    pub meta: SnapshotMeta,
+    /// 顺序同 SUBSYSTEMS。
+    pub(crate) stats: [SlotCounters; SUBSYSTEMS.len()],
+}
+
+impl CompactSnapshot {
+    /// 全零快照(测试构造用)。
+    pub fn zeroed(timestamp_ms: u64) -> Self {
+        CompactSnapshot {
+            timestamp_ms,
+            precise: false,
+            meta: SnapshotMeta::default(),
+            stats: [SlotCounters::default(); SUBSYSTEMS.len()],
+        }
+    }
+
+    pub fn set_slot(&mut self, slot: usize, counters: SlotCounters) {
+        if let Some(dst) = self.stats.get_mut(slot) {
+            *dst = counters;
+        }
+    }
+
+    /// 越界返回全零。
+    pub fn counters(&self, slot: usize) -> SlotCounters {
+        self.stats.get(slot.min(UNATTRIBUTED)).copied().unwrap_or_default()
+    }
+
+    /// 遍历全部槽位,调用方自行过滤全零槽位。
+    pub fn iter_slots(&self) -> impl Iterator<Item = (usize, SlotCounters)> + '_ {
+        self.stats.iter().enumerate().map(|(slot, counters)| (slot, *counters))
+    }
+
+    pub fn to_snapshot(&self) -> MemorySnapshot {
+        let modules = SUBSYSTEMS
+            .iter()
+            .zip(self.stats.iter())
+            .map(|(name, c)| ModuleMemStat {
+                subsystem: (*name).to_string(),
+                allocated_bytes: c.allocated_bytes,
+                freed_bytes: c.freed_bytes,
+                live_bytes: c.live_bytes,
+                alloc_events: c.alloc_events,
+                free_events: c.free_events,
+            })
+            .collect();
+        MemorySnapshot {
+            timestamp_ms: self.timestamp_ms,
+            precise: self.precise,
+            meta: self.meta.clone(),
+            modules,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -159,6 +230,31 @@ mod tests {
         assert_eq!(subsystem_label(0), "dns");
         assert_eq!(subsystem_label(UNATTRIBUTED), "unattributed");
         assert_eq!(subsystem_label(usize::MAX), "unattributed");
+    }
+
+    #[test]
+    fn compact_snapshot_slots_and_conversion() {
+        let mut compact = CompactSnapshot::zeroed(42);
+        compact.set_slot(
+            0,
+            SlotCounters {
+                allocated_bytes: 100,
+                freed_bytes: 40,
+                live_bytes: 60,
+                alloc_events: 7,
+                free_events: 5,
+            },
+        );
+        assert_eq!(compact.counters(0).live_bytes, 60);
+        // 越界读取回落到全零。
+        assert_eq!(compact.counters(usize::MAX), SlotCounters::default());
+        assert_eq!(compact.iter_slots().count(), SUBSYSTEMS.len());
+
+        let snapshot = compact.to_snapshot();
+        assert_eq!(snapshot.timestamp_ms, 42);
+        assert_eq!(snapshot.modules.len(), SUBSYSTEMS.len());
+        assert_eq!(snapshot.modules[0].subsystem, "dns");
+        assert_eq!(snapshot.modules[0].live_bytes, 60);
     }
 
     #[test]
