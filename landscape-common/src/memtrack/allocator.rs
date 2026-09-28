@@ -85,7 +85,7 @@ mod precise {
         let data = data_addr as *mut u8;
         debug_assert!(data_addr >= base as usize + HEADER_SIZE);
         debug_assert!(base as usize + base_size >= data_addr + layout.size());
-        debug_assert!(data_addr % layout.align() == 0);
+        debug_assert!(data_addr.is_multiple_of(layout.align()));
         debug_assert!(data_addr - base as usize <= HEADER_SIZE + layout.align());
 
         let owner = current_tag();

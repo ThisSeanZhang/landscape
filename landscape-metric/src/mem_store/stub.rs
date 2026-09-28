@@ -6,15 +6,15 @@
 
 use std::path::PathBuf;
 
-use landscape_common::metric::memory::{MemHistoryQueryParams, MemMinuteRecord};
+use landscape_common::metric::memory::{MemHistoryQueryParams, MemHistoryResponse};
 
 /// no-op 记录句柄。
 pub struct MemRecording;
 
 impl MemRecording {
     /// 恒返回空:非 persistent 构建不落库。
-    pub async fn query_history(&self, _params: &MemHistoryQueryParams) -> Vec<MemMinuteRecord> {
-        Vec::new()
+    pub async fn query_history(&self, _params: &MemHistoryQueryParams) -> MemHistoryResponse {
+        MemHistoryResponse::default()
     }
 
     pub async fn stop_recorder(&mut self) {}

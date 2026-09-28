@@ -6,7 +6,9 @@ use std::time::Duration;
 
 use landscape_common::concurrency::{spawn_task, task_label};
 use landscape_common::memtrack;
-use landscape_common::metric::memory::{MemHistoryQueryParams, MemMinuteRecord};
+use landscape_common::metric::memory::{
+    MemHistoryQueryParams, MemHistoryResponse, MemMinuteRecord,
+};
 use landscape_common::utils::time::now_ms;
 use landscape_common::{LANDSCAPE_METRIC_DB_VERSION, LANDSCAPE_METRIC_DIR_NAME};
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous};
@@ -96,29 +98,64 @@ impl MemMetricStore {
         tx.commit().await.is_ok()
     }
 
-    pub async fn query_history(&self, params: &MemHistoryQueryParams) -> Vec<MemMinuteRecord> {
+    pub async fn query_history(&self, params: &MemHistoryQueryParams) -> MemHistoryResponse {
         let (start, end) = normalized_range(params, now_ms());
+        // `limit` 语义 = 时间轴上的分钟数上限(取最近 N 分钟),避免把某个
+        // 子系统序列从中间截断导致下标错位。
         let limit = params.limit.unwrap_or(0) as i64;
 
-        let sql_base = "SELECT minute_ts, subsystem, live_avg, live_max, alloc_delta, free_delta
-             FROM mem_1m WHERE minute_ts >= ? AND minute_ts < ?";
-        let mut sql = String::with_capacity(sql_base.len() + 96);
-        sql.push_str(sql_base);
+        let mut timeline_sql = String::from(
+            "SELECT DISTINCT minute_ts FROM mem_1m WHERE minute_ts >= ? AND minute_ts < ?",
+        );
         if params.subsystem.is_some() {
-            sql.push_str(" AND subsystem = ?");
+            timeline_sql.push_str(" AND subsystem = ?");
         }
-        sql.push_str(" ORDER BY minute_ts ASC, subsystem ASC");
+        timeline_sql.push_str(if limit > 0 {
+            " ORDER BY minute_ts DESC LIMIT ?"
+        } else {
+            " ORDER BY minute_ts ASC"
+        });
+
+        let mut timeline_query =
+            sqlx::query_as::<_, (i64,)>(&timeline_sql).bind(start as i64).bind(end as i64);
+        if let Some(subsystem) = &params.subsystem {
+            timeline_query = timeline_query.bind(subsystem);
+        }
         if limit > 0 {
-            sql.push_str(&format!(" LIMIT {limit}"));
+            timeline_query = timeline_query.bind(limit);
         }
 
-        let mut query = sqlx::query_as::<_, (i64, String, i64, i64, i64, i64)>(&sql)
-            .bind(start as i64)
+        let mut timeline: Vec<u64> = match timeline_query.fetch_all(&self.pool).await {
+            Ok(rows) => rows.into_iter().map(|(minute_ts,)| minute_ts.max(0) as u64).collect(),
+            Err(error) => {
+                tracing::warn!("memory metric timeline query failed: {error}");
+                return MemHistoryResponse::default();
+            }
+        };
+        if limit > 0 {
+            timeline.reverse();
+        }
+        let Some(&cutoff) = timeline.first() else {
+            return MemHistoryResponse::default();
+        };
+
+        let mut rows_sql = String::from(
+            "SELECT minute_ts, subsystem, live_avg, live_max, alloc_delta, free_delta
+             FROM mem_1m WHERE minute_ts >= ? AND minute_ts < ?",
+        );
+        if params.subsystem.is_some() {
+            rows_sql.push_str(" AND subsystem = ?");
+        }
+        rows_sql.push_str(" ORDER BY minute_ts ASC, subsystem ASC");
+
+        let mut rows_query = sqlx::query_as::<_, (i64, String, i64, i64, i64, i64)>(&rows_sql)
+            .bind(cutoff as i64)
             .bind(end as i64);
         if let Some(subsystem) = &params.subsystem {
-            query = query.bind(subsystem);
+            rows_query = rows_query.bind(subsystem);
         }
-        match query.fetch_all(&self.pool).await {
+
+        let records: Vec<MemMinuteRecord> = match rows_query.fetch_all(&self.pool).await {
             Ok(rows) => rows
                 .into_iter()
                 .map(|(minute_ts, subsystem, live_avg, live_max, alloc_delta, free_delta)| {
@@ -134,9 +171,11 @@ impl MemMetricStore {
                 .collect(),
             Err(error) => {
                 tracing::warn!("memory metric query failed: {error}");
-                Vec::new()
+                return MemHistoryResponse::default();
             }
-        }
+        };
+
+        MemHistoryResponse::from_rows(records, timeline)
     }
 
     pub async fn cleanup(&self, retention_days: u64) {
@@ -183,7 +222,7 @@ pub struct MemRecording {
 
 impl MemRecording {
     /// 查询已持久化的分钟历史(失败/无数据返回空)。
-    pub async fn query_history(&self, params: &MemHistoryQueryParams) -> Vec<MemMinuteRecord> {
+    pub async fn query_history(&self, params: &MemHistoryQueryParams) -> MemHistoryResponse {
         self.store.query_history(params).await
     }
 
@@ -282,6 +321,7 @@ async fn run_memory_recorder(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use landscape_common::metric::memory::MinutePoint;
 
     #[test]
     fn normalized_range_defaults_and_clamps() {
@@ -344,9 +384,10 @@ mod tests {
                 limit: None,
             })
             .await;
-        assert_eq!(queried.len(), 1);
-        assert_eq!(queried[0].subsystem, "dns");
-        assert_eq!(queried[0].live_avg_bytes, 1_000);
+        assert_eq!(queried.timestamps, vec![600_000]);
+        assert_eq!(queried.series.len(), 1);
+        assert_eq!(queried.series[0].subsystem, "dns");
+        assert_eq!(queried.series[0].points, vec![MinutePoint([1_000, 1_200, 500, 400])]);
 
         store.cleanup(0).await;
         let queried = store
@@ -356,7 +397,63 @@ mod tests {
                 ..Default::default()
             })
             .await;
-        assert!(queried.is_empty());
+        assert!(queried.timestamps.is_empty());
+        assert!(queried.series.is_empty());
+
+        store.close().await;
+    }
+
+    #[tokio::test]
+    async fn memory_store_series_gap_fill_and_timeline_limit() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = MemMetricStore::open(temp.path()).await.unwrap();
+
+        let row = |minute_ts: u64, subsystem: &str, live_avg: u64| MemMinuteRecord {
+            minute_ts,
+            subsystem: subsystem.to_string(),
+            live_avg_bytes: live_avg,
+            live_max_bytes: live_avg + 10,
+            alloc_delta_bytes: 1,
+            free_delta_bytes: 2,
+        };
+        // dns 连续两分钟;firewall 仅第一分钟(第二分钟缺行 → 补 0 对齐)。
+        assert!(
+            store
+                .record_minute(&[
+                    row(600_000, "dns", 100),
+                    row(600_000, "firewall", 50),
+                    row(660_000, "dns", 200),
+                ])
+                .await
+        );
+
+        let resp = store
+            .query_history(&MemHistoryQueryParams {
+                start_time: 0,
+                end_time: 1_000_000,
+                ..Default::default()
+            })
+            .await;
+        assert_eq!(resp.timestamps, vec![600_000, 660_000]);
+        assert_eq!(resp.series.len(), 2);
+        let dns = resp.series.iter().find(|s| s.subsystem == "dns").unwrap();
+        assert_eq!(dns.points, vec![MinutePoint([100, 110, 1, 2]), MinutePoint([200, 210, 1, 2])]);
+        let fw = resp.series.iter().find(|s| s.subsystem == "firewall").unwrap();
+        assert_eq!(fw.points, vec![MinutePoint([50, 60, 1, 2]), MinutePoint([0, 0, 0, 0])]);
+
+        // limit = 时间轴分钟数上限:只保留最近 1 分钟,窗口内无数据的子系统不出现。
+        let limited = store
+            .query_history(&MemHistoryQueryParams {
+                start_time: 0,
+                end_time: 1_000_000,
+                limit: Some(1),
+                ..Default::default()
+            })
+            .await;
+        assert_eq!(limited.timestamps, vec![660_000]);
+        assert_eq!(limited.series.len(), 1);
+        assert_eq!(limited.series[0].subsystem, "dns");
+        assert_eq!(limited.series[0].points, vec![MinutePoint([200, 210, 1, 2])]);
 
         store.close().await;
     }

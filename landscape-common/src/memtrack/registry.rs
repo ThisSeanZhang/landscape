@@ -149,9 +149,49 @@ pub struct SlotCounters {
     pub free_events: u64,
 }
 
+impl From<SlotCounters> for SlotPoint {
+    fn from(counters: SlotCounters) -> Self {
+        SlotPoint([
+            counters.allocated_bytes,
+            counters.freed_bytes,
+            counters.live_bytes,
+            counters.alloc_events,
+            counters.free_events,
+        ])
+    }
+}
+
+/// 位置数组形式的槽位快照点:JSON 为
+/// `[allocated_bytes, freed_bytes, live_bytes, alloc_events, free_events]`。
+///
+/// 用位置数组而非命名字段对象是为了在批量历史里显著压缩 JSON 体积
+/// (字段名不再逐点重复),字段顺序即契约,勿调整。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize)]
+pub struct SlotPoint(pub [u64; 5]);
+
+/// 单个子系统的一段共享时间轴取值序列。
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+pub struct SubsystemSeries {
+    pub subsystem: String,
+    #[cfg_attr(feature = "openapi", schema(value_type = Vec<Vec<u64>>))]
+    pub points: Vec<SlotPoint>,
+}
+
+/// RAM 环形缓冲历史的批量响应:所有 series 共享一条 `timestamps` 轴,
+/// 缺失时刻按位置数组补零对齐。`precise`/`meta` 为进程级信息(内存历史
+/// 恒有值;SQLite 分钟历史复用同一形状但置 `None`)。
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+pub struct MemorySeriesResponse {
+    pub timestamps: Vec<u64>,
+    pub precise: Option<bool>,
+    pub meta: Option<Vec<SnapshotMeta>>,
+    pub series: Vec<SubsystemSeries>,
+}
+
 /// 紧凑快照:槽位定长计数器数组,无 String/Vec 堆分配,供采样热路径
-/// (RAM 环形缓冲、分钟聚合)使用;API 边界经 [`CompactSnapshot::to_snapshot`]
-/// 转换(分配 Vec/String,仅查询时发生)。
+/// (RAM 环形缓冲、分钟聚合)使用;仅在 API 查询边界才转换为响应类型。
 #[derive(Clone, Debug)]
 pub struct CompactSnapshot {
     pub timestamp_ms: u64,

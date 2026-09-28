@@ -8,7 +8,7 @@
 
 use axum::extract::{Query, State};
 use landscape_common::api_response::LandscapeApiResp as CommonApiResp;
-use landscape_common::memtrack::{self, MemorySnapshot};
+use landscape_common::memtrack::{self, MemorySeriesResponse, MemorySnapshot};
 use landscape_common::metric::memory::{MemHistoryQueryParams, MemHistoryResponse};
 use utoipa::IntoParams;
 use utoipa_axum::router::OpenApiRouter;
@@ -24,7 +24,7 @@ pub fn get_memory_paths() -> OpenApiRouter<LandscapeApp> {
 }
 
 /// 历史查询缺省返回的快照数量(300 = 最近 5 分钟);显式传 0 仍返回全部
-/// (最多环形缓冲容量,1s × 3600,响应可达数十 MB,谨慎使用)。
+/// (最多环形缓冲容量,1s × 3600,谨慎使用)。
 const DEFAULT_HISTORY_LIMIT: usize = 300;
 
 #[derive(Debug, Default, serde::Deserialize, IntoParams)]
@@ -32,6 +32,8 @@ const DEFAULT_HISTORY_LIMIT: usize = 300;
 struct MemoryRecentParams {
     /// 最近快照数量;0 返回全部,缺省 300。
     limit: Option<usize>,
+    /// 按子系统过滤,缺省返回全部。
+    subsystem: Option<String>,
 }
 
 #[utoipa::path(
@@ -51,14 +53,17 @@ async fn get_memory_modules() -> LandscapeApiResult<MemorySnapshot> {
     tag = "Memory",
     operation_id = "get_memory_modules_history",
     params(MemoryRecentParams),
-    responses((status = 200, description = "Success", body = CommonApiResp<Vec<MemorySnapshot>>))
+    responses((status = 200, description = "Success", body = CommonApiResp<MemorySeriesResponse>))
 )]
 async fn get_memory_modules_history(
     State(state): State<LandscapeApp>,
     Query(params): Query<MemoryRecentParams>,
-) -> LandscapeApiResult<Vec<MemorySnapshot>> {
+) -> LandscapeApiResult<MemorySeriesResponse> {
     LandscapeApiResp::success(
-        state.memory_history.recent(params.limit.unwrap_or(DEFAULT_HISTORY_LIMIT)),
+        state.memory_history.recent_series(
+            params.limit.unwrap_or(DEFAULT_HISTORY_LIMIT),
+            params.subsystem.as_deref(),
+        ),
     )
 }
 

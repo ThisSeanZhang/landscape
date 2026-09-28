@@ -36,14 +36,79 @@ pub struct MemHistoryQueryParams {
     pub end_time: u64,
     /// 按子系统过滤,缺省返回全部。
     pub subsystem: Option<String>,
-    /// 最多返回行数(每分钟每子系统一行),0 表示不限。
+    /// 时间轴上的分钟数上限(最近 N 分钟),0 表示不限。
     pub limit: Option<u32>,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+/// 位置数组形式的分钟聚合点:JSON 为
+/// `[live_avg_bytes, live_max_bytes, alloc_delta_bytes, free_delta_bytes]`。
+/// 字段顺序即契约,勿调整。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize)]
+pub struct MinutePoint(pub [u64; 4]);
+
+impl From<&MemMinuteRecord> for MinutePoint {
+    fn from(record: &MemMinuteRecord) -> Self {
+        MinutePoint([
+            record.live_avg_bytes,
+            record.live_max_bytes,
+            record.alloc_delta_bytes,
+            record.free_delta_bytes,
+        ])
+    }
+}
+
+/// 单个子系统在一段共享时间轴上的分钟取值。
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+pub struct MemSubsystemSeries {
+    pub subsystem: String,
+    #[cfg_attr(feature = "openapi", schema(value_type = Vec<Vec<u64>>))]
+    pub points: Vec<MinutePoint>,
+}
+
+/// 分钟级持久化历史的批量响应。形状与 RAM 历史
+/// (`memtrack::MemorySeriesResponse`)统一:共享 `timestamps` 轴、各 series
+/// 按位置对齐;`precise`/`meta` 为 RAM 专有,此处恒为 `None`。
+///
+/// 缺失分钟以全零点补零对齐——**注意这会把“无数据”显示为“用量为 0”**。
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct MemHistoryResponse {
-    pub items: Vec<MemMinuteRecord>,
+    pub timestamps: Vec<u64>,
+    pub precise: Option<bool>,
+    pub meta: Option<Vec<crate::memtrack::SnapshotMeta>>,
+    pub series: Vec<MemSubsystemSeries>,
+}
+
+impl MemHistoryResponse {
+    /// 由分钟行与共享时间轴构建各子系统序列;缺失分钟补零对齐。
+    pub fn from_rows(rows: Vec<MemMinuteRecord>, timeline: Vec<u64>) -> Self {
+        use std::collections::{BTreeMap, HashMap};
+
+        let mut grouped: BTreeMap<String, HashMap<u64, MinutePoint>> = BTreeMap::new();
+        for row in rows {
+            let point = MinutePoint::from(&row);
+            grouped.entry(row.subsystem).or_default().insert(row.minute_ts, point);
+        }
+
+        let series = grouped
+            .into_iter()
+            .map(|(subsystem, by_ts)| MemSubsystemSeries {
+                subsystem,
+                points: timeline
+                    .iter()
+                    .map(|ts| by_ts.get(ts).copied().unwrap_or_default())
+                    .collect(),
+            })
+            .collect();
+
+        MemHistoryResponse {
+            timestamps: timeline,
+            precise: None,
+            meta: None,
+            series,
+        }
+    }
 }
 
 /// 内存指标默认保留天数(行数小:每分钟每子系统 1 行)。

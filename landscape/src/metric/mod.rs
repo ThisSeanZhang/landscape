@@ -376,11 +376,9 @@ impl MetricService {
     /// 最近实时数据走 `/api/v1/system/memory` 的 RAM 环形缓冲,互不串门。
     pub async fn query_memory_history(&self, params: MemHistoryQueryParams) -> MemHistoryResponse {
         let mem = self.inner.mem_recording.lock().await;
-        MemHistoryResponse {
-            items: match mem.as_ref() {
-                Some(recording) => recording.query_history(&params).await,
-                None => Vec::new(),
-            },
+        match mem.as_ref() {
+            Some(recording) => recording.query_history(&params).await,
+            None => MemHistoryResponse::default(),
         }
     }
 }
