@@ -9,11 +9,12 @@ use landscape_common::config_service::static_nat::config6::{
     StaticNatMappingV6Config, StaticNatV6PortConfig, StaticNatV6Target,
 };
 use landscape_common::config_service::static_nat::error::StaticNatError;
-use landscape_common::database::error::DbError;
+use landscape_common::database::store::{Change, ConfigStore};
 use landscape_common::database::LandscapeStore;
 use landscape_common::event::hub::{
     EnrolledDeviceEvent, EnrolledDeviceEventReader, IPv6AssignEvent, IPv6AssignEventReader,
 };
+use landscape_common::service::controller::ConfigStoreController;
 use landscape_common::utils::time::get_f64_timestamp;
 use landscape_common::wan_service::nat::dataplane::NatDataplane;
 use landscape_common::LANDSCAPE_DEFAULE_DHCP_V6_CLIENT_PORT;
@@ -137,50 +138,12 @@ impl StaticNat6MappingService {
     }
 
     async fn init_default_rules(&self) {
-        for config in default_static_mapping_v6_rules() {
-            let _ = self.store.set(config).await;
+        if let Err(error) = self.store.upsert_many(default_static_mapping_v6_rules()).await {
+            tracing::error!("failed to seed default static NAT v6 rules: {error:?}");
         }
     }
 
     // --- V6 CRUD ---
-
-    pub async fn list(&self) -> Vec<StaticNatMappingV6Config> {
-        self.store.list().await.unwrap_or_default()
-    }
-
-    pub async fn find_by_id(&self, id: Uuid) -> Option<StaticNatMappingV6Config> {
-        self.store.find_by_id(id).await.ok()?
-    }
-
-    pub async fn checked_set(
-        &self,
-        config: StaticNatMappingV6Config,
-    ) -> Result<StaticNatMappingV6Config, DbError> {
-        let result = self.store.checked_set(config).await?;
-        self.refresh_runtime_rules().await;
-        Ok(result)
-    }
-
-    pub async fn checked_set_list(
-        &self,
-        configs: Vec<StaticNatMappingV6Config>,
-    ) -> Result<(), DbError> {
-        for config in &configs {
-            self.store.check_conflict(config).await?;
-        }
-        for config in configs {
-            self.store.checked_set(config).await?;
-        }
-        self.refresh_runtime_rules().await;
-        Ok(())
-    }
-
-    pub async fn delete(&self, id: Uuid) {
-        if self.find_by_id(id).await.is_some() {
-            let _ = self.store.delete(id).await;
-            self.refresh_runtime_rules().await;
-        }
-    }
 
     pub async fn validate_runtime_target(
         &self,
@@ -204,6 +167,25 @@ impl StaticNat6MappingService {
             };
 
         self.dataplane.sync_static_nat6(&configs);
+    }
+}
+
+#[async_trait::async_trait]
+impl ConfigStoreController for StaticNat6MappingService {
+    type Id = Uuid;
+    type Config = StaticNatMappingV6Config;
+    type Store = StaticNatMappingV6Repository;
+
+    fn get_store(&self) -> &Self::Store {
+        &self.store
+    }
+
+    async fn notify_changed(&self, _changes: Vec<Change<Self::Config>>) {
+        self.refresh_runtime_rules().await;
+    }
+
+    async fn notify_deleted(&self, _old: Self::Config) {
+        self.refresh_runtime_rules().await;
     }
 }
 

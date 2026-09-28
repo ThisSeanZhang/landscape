@@ -4,6 +4,7 @@ use landscape_common::config::ConfigId;
 use landscape_common::config_service::static_nat::config::PortConflictCheckResponse;
 use landscape_common::config_service::static_nat::config4::StaticNatMappingV4Config;
 use landscape_common::config_service::static_nat::error::StaticNatError;
+use landscape_common::service::controller::ConfigStoreController;
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 
@@ -28,7 +29,7 @@ pub fn get_static_nat_mapping_v4_paths() -> OpenApiRouter<LandscapeApp> {
 async fn get_static_nat_mappings_v4(
     State(state): State<LandscapeApp>,
 ) -> LandscapeApiResult<Vec<StaticNatMappingV4Config>> {
-    let result = state.static_nat4_mapping_service.list().await;
+    let result = state.static_nat4_mapping_service.list().await?;
     LandscapeApiResp::success(result)
 }
 
@@ -46,7 +47,7 @@ async fn get_static_nat_mapping_v4(
     State(state): State<LandscapeApp>,
     Path(id): Path<ConfigId>,
 ) -> LandscapeApiResult<StaticNatMappingV4Config> {
-    let result = state.static_nat4_mapping_service.find_by_id(id).await;
+    let result = state.static_nat4_mapping_service.find_by_id(id).await?;
     if let Some(config) = result {
         LandscapeApiResp::success(config)
     } else {
@@ -106,7 +107,7 @@ async fn del_static_nat_mapping_v4(
     State(state): State<LandscapeApp>,
     Path(id): Path<ConfigId>,
 ) -> LandscapeApiResult<()> {
-    state.static_nat4_mapping_service.delete(id).await;
+    state.static_nat4_mapping_service.delete(id).await?;
     LandscapeApiResp::success(())
 }
 
