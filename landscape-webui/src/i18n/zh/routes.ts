@@ -26,6 +26,7 @@ export default {
   "connect-history-src": "源 IP 历史",
   "connect-history-dst": "目的 IP 历史",
   "dns-metric": "DNS 指标",
+  "mem-metric": "内存指标",
   "ipv6-pd": "上游 PD 前缀",
   "dhcp-v4": "DHCPv4 租约",
   "ipv6-ra": "IPv6 分配信息",

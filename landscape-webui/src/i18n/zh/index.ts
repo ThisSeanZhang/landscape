@@ -31,6 +31,7 @@ import lanIpv6Ui from "./lan_ipv6/index";
 import lanIpv6Err from "./lan_ipv6/error";
 import dnsMetrics from "./metrics/dns";
 import connectMetrics from "./metrics/connect";
+import memMetrics from "./metrics/mem";
 import natUi from "./nat/index";
 import natErr from "./nat/error";
 import networkUi from "./network/index";
@@ -80,6 +81,7 @@ export default {
   metric: {
     dns: dnsMetrics,
     connect: connectMetrics,
+    mem: memMetrics,
   },
   errors: {
     ...certErr,

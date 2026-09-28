@@ -1,10 +1,13 @@
 <script setup lang="ts">
 import { useI18n } from "vue-i18n";
 import { computed } from "vue";
+import { useRouter } from "vue-router";
 import { useThemeVars } from "naive-ui";
+import { ChartLine } from "@vicons/carbon";
 import { useSysInfo } from "@/stores/systeminfo";
 
 const sysinfo = useSysInfo();
+const router = useRouter();
 const { t } = useI18n({ useScope: "global" });
 const themeVars = useThemeVars();
 
@@ -47,7 +50,24 @@ const getUsageColor = (percentage: number) => {
     <!-- Header -->
     <template #header>
       <n-flex align="center" justify="space-between">
-        <span>{{ t("sysinfo.mem") }}</span>
+        <n-flex align="center" :size="4">
+          <span>{{ t("sysinfo.mem") }}</span>
+          <n-tooltip trigger="hover">
+            <template #trigger>
+              <n-button
+                quaternary
+                circle
+                size="tiny"
+                @click="router.push('/metrics/memory')"
+              >
+                <template #icon>
+                  <n-icon><ChartLine /></n-icon>
+                </template>
+              </n-button>
+            </template>
+            {{ t("metric.mem.title") }}
+          </n-tooltip>
+        </n-flex>
         <n-tag size="small" :bordered="false"> {{ memData.total }} GB </n-tag>
       </n-flex>
     </template>
