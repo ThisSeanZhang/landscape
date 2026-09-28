@@ -260,17 +260,15 @@ async fn run_memory_recorder(
     cleanup.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut aggregator = MinuteAggregator::new();
 
-    store.cleanup(retention_days).await;
     loop {
         tokio::select! {
             _ = cancel.cancelled() => break,
+            // interval 首个 tick 立即触发,启动时的清理由此覆盖。
             _ = cleanup.tick() => store.cleanup(retention_days).await,
             _ = ticker.tick() => {
                 let finished = aggregator.ingest(&memtrack::capture_compact());
-                if !finished.is_empty() && !store.record_minute(&finished).await {
-                    // 写失败不中断:分钟行已丢失,聚合器已翻转到新分钟。
-                    continue;
-                }
+                // 写失败不中断:分钟行已丢失,聚合器已翻转到新分钟。
+                let _ = store.record_minute(&finished).await;
             }
         }
     }

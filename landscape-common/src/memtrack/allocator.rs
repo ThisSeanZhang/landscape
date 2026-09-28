@@ -190,22 +190,11 @@ unsafe impl GlobalAlloc for CountingAllocator {
         }
     }
 
+    // counting 模式不覆写 realloc:trait 默认实现(alloc → copy → dealloc)
+    // 经由上方已覆写的 alloc/dealloc 计账,行为与手写一致。
+    #[cfg(feature = "mem-track-precise")]
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
-        #[cfg(feature = "mem-track-precise")]
-        {
-            precise::realloc(ptr, layout, new_size)
-        }
-        #[cfg(not(feature = "mem-track-precise"))]
-        {
-            // 默认语义经由上方 alloc/dealloc 计账:新块与旧块同记当前标签。
-            let new_layout = Layout::from_size_align_unchecked(new_size, layout.align());
-            let new_ptr = self.alloc_counting(new_layout);
-            if !new_ptr.is_null() {
-                std::ptr::copy_nonoverlapping(ptr, new_ptr, layout.size().min(new_size));
-                self.dealloc_counting(ptr, layout);
-            }
-            new_ptr
-        }
+        precise::realloc(ptr, layout, new_size)
     }
 }
 

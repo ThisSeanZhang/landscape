@@ -30,7 +30,8 @@ pub use tag::{with_tag, TaggedFuture};
 use registry::registry;
 use std::sync::atomic::Ordering;
 
-/// 零分配采集紧凑快照,供采样热路径(RAM 环形缓冲、分钟聚合)使用。
+/// 采集紧凑快照,供采样热路径(RAM 环形缓冲、分钟聚合)使用。注册表扫描
+/// 无堆分配;Linux 上 statm 读取会经 read_to_string 产生一次小额分配。
 pub fn capture_compact() -> CompactSnapshot {
     let mut stats = [SlotCounters::default(); SUBSYSTEMS.len()];
     let mut total_live = 0u64;

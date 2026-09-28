@@ -22,7 +22,8 @@ pub fn subsystem_from_task_label(label: &str) -> usize {
         "gateway" => "gateway",
         "wifi" => "wifi",
         "mss_clamp" => "wan",
-        "pppd" => "pppoe",
+        "pppd" => "pppd",
+        "pppoe" => "pppoe",
         "ebpf" => "ebpf",
         "event" => "event",
         "web" | "ws" => "webserver",
@@ -93,7 +94,8 @@ mod tests {
             "gateway"
         );
         assert_eq!(subsystem_label(subsystem_from_task_label("mss_clamp.observer")), "wan");
-        assert_eq!(subsystem_label(subsystem_from_task_label("pppd.service.run")), "pppoe");
+        assert_eq!(subsystem_label(subsystem_from_task_label("pppd.service.run")), "pppd");
+        assert_eq!(subsystem_label(subsystem_from_task_label("pppoe.client.run")), "pppoe");
         assert_eq!(subsystem_label(subsystem_from_task_label("service.manager.spawn")), "service");
         assert_eq!(subsystem_label(subsystem_from_task_label("mem.sample")), "metric");
         assert_eq!(subsystem_label(subsystem_from_task_label("netlink.conn.driver")), "netlink");

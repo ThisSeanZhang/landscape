@@ -2,8 +2,6 @@
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use crate::utils::time::now_ms;
-
 /// 子系统标签。索引即槽位 ID,`UNATTRIBUTED` 为兜底槽位(未打标任务、启动
 /// 早期分配)。入库与 API 按名称存储,追加新条目时保持已有顺序稳定。
 pub const SUBSYSTEMS: &[&str] = &[
@@ -31,6 +29,7 @@ pub const SUBSYSTEMS: &[&str] = &[
     "flow",
     "arp",
     "sys",
+    "pppd",
     "unattributed",
 ];
 
@@ -101,7 +100,7 @@ impl Registry {
 
 /// 按槽位 ID 取子系统名称;越界回落到 unattributed。
 pub fn subsystem_label(index: usize) -> &'static str {
-    SUBSYSTEMS.get(index.min(UNATTRIBUTED)).copied().unwrap_or("unattributed")
+    SUBSYSTEMS[index.min(UNATTRIBUTED)]
 }
 
 /// 子系统累计值(快照的单项)。
@@ -138,16 +137,6 @@ pub struct MemorySnapshot {
     pub precise: bool,
     pub meta: SnapshotMeta,
     pub modules: Vec<ModuleMemStat>,
-}
-
-impl MemorySnapshot {
-    pub fn timestamp(&self) -> u64 {
-        if self.timestamp_ms == 0 {
-            now_ms()
-        } else {
-            self.timestamp_ms
-        }
-    }
 }
 
 /// 单个槽位的计数器快照值。
@@ -189,9 +178,9 @@ impl CompactSnapshot {
         }
     }
 
-    /// 越界返回全零。
+    /// 越界回落到 unattributed 槽位。
     pub fn counters(&self, slot: usize) -> SlotCounters {
-        self.stats.get(slot.min(UNATTRIBUTED)).copied().unwrap_or_default()
+        self.stats[slot.min(UNATTRIBUTED)]
     }
 
     /// 遍历全部槽位,调用方自行过滤全零槽位。

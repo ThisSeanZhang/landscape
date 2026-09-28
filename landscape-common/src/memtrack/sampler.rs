@@ -23,7 +23,7 @@ pub struct MemoryHistory {
 impl MemoryHistory {
     fn new(capacity: usize) -> Self {
         MemoryHistory {
-            inner: Arc::new(Mutex::new(VecDeque::with_capacity(capacity.min(4096)))),
+            inner: Arc::new(Mutex::new(VecDeque::with_capacity(capacity))),
             capacity,
         }
     }
