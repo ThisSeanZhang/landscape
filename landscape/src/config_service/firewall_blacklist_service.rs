@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use landscape_common::{
+    concurrency::{spawn_task, task_label},
     event::dns::DstIpEvent,
     flow::ip_mark::IpConfig,
     service::controller::ConfigController,
@@ -45,7 +46,7 @@ impl FirewallBlacklistService {
 
         // Listen for GeoIP update events
         let service_clone = service.clone();
-        tokio::spawn(async move {
+        spawn_task(task_label::task::FIREWALL_BLACKLIST_OBSERVER, async move {
             while let Ok(event) = receiver.recv().await {
                 match event {
                     DstIpEvent::GeoIpUpdated => {

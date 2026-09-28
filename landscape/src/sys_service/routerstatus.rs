@@ -1,3 +1,4 @@
+use landscape_common::concurrency::{spawn_task, task_label};
 use landscape_common::sys_service::info::{
     CpuUsage, LandscapeStatus, LoadAvg, MemUsage, WatchResource,
 };
@@ -9,7 +10,7 @@ pub fn get_sys_running_status() -> WatchResource<LandscapeStatus> {
     let status = WatchResource::new();
 
     let clone_status = status.clone();
-    tokio::spawn(async move {
+    spawn_task(task_label::task::SYS_STATUS_SAMPLER, async move {
         let mut interval = tokio::time::interval(Duration::from_secs(1));
         let mut sys = System::new_with_specifics(
             RefreshKind::nothing()

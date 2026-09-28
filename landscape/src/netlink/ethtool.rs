@@ -1,6 +1,7 @@
 use std::io;
 
 use futures::stream::TryStreamExt;
+use landscape_common::concurrency::{spawn_task, task_label};
 use netlink_packet_core::{
     DefaultNla, Emitable, NetlinkHeader, NetlinkMessage, NetlinkPayload, ParseableParametrized,
     NLA_F_NESTED, NLM_F_ACK, NLM_F_REQUEST,
@@ -181,7 +182,7 @@ fn make_features_msg(payload: EthtoolPayload) -> NetlinkMessage<GenlMessage<Etht
 
 async fn ethtool_request(payload: EthtoolPayload) -> Result<(), Box<dyn std::error::Error>> {
     let (connection, mut handle, _) = genetlink::new_connection()?;
-    tokio::spawn(connection);
+    spawn_task(task_label::task::NETLINK_CONN_ETHTOOL, connection);
 
     let msg = make_features_msg(payload);
     let mut stream = handle.request(msg).await?;
@@ -197,7 +198,7 @@ async fn ethtool_request_with_reply(
     payload: EthtoolPayload,
 ) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
     let (connection, mut handle, _) = genetlink::new_connection()?;
-    tokio::spawn(connection);
+    spawn_task(task_label::task::NETLINK_CONN_ETHTOOL, connection);
 
     let msg = make_features_msg(payload);
     let mut stream = handle.request(msg).await?;

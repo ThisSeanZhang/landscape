@@ -4,6 +4,7 @@ use std::process::Command;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use landscape_common::concurrency::{spawn_task, task_label};
 use landscape_common::database::LandscapeStore;
 use landscape_common::event::hub::IfaceEventReader;
 use landscape_common::lan_service::lan_dhcpv4::config::DHCPv4ServiceConfig;
@@ -172,7 +173,7 @@ impl ServiceStarterTrait for DHCPv4ServerStarter {
             );
             let ipv4_sender = self.ipv4_assign_sender.clone();
             let mac_binding = self.mac_binding.clone();
-            tokio::spawn(async move {
+            spawn_task(task_label::task::DHCP_V4_SERVICE_OBSERVER, async move {
                 crate::lan_service::lan_dhcp4_server::server::dhcp_v4_server(
                     config.iface_name,
                     iface_ifindex,
@@ -198,7 +199,7 @@ impl ServiceStarterTrait for DHCPv4ServerStarter {
                         .clone()
                 };
 
-                tokio::spawn(async move {
+                spawn_task(task_label::task::DHCP_V4_SERVICE_OBSERVER, async move {
                     let mut scan_interval =
                         tokio::time::interval(Duration::from_millis(LAND_ARP_SCAN_INTERVAL));
                     loop {
@@ -293,7 +294,7 @@ impl DHCPv4ServerManagerService {
             ServiceManager::init(store.list().await.unwrap(), server_starter.clone()).await;
 
         let service_clone = service.clone();
-        tokio::spawn(async move {
+        spawn_task(task_label::task::DHCP_V4_SERVICE_OBSERVER, async move {
             while let Ok(msg) = dev_observer.recv().await {
                 match msg {
                     IfaceObserverAction::Up(iface_name) => {
@@ -314,7 +315,7 @@ impl DHCPv4ServerManagerService {
         });
 
         let status_map = server_starter.iface_status_map.clone();
-        tokio::spawn(async move {
+        spawn_task(task_label::task::DHCP_V4_SERVICE_OBSERVER, async move {
             while let Ok(event) = device_reader.recv().await {
                 let affected = extract_binding_ifaces(&event);
                 let targets: Vec<String> = {

@@ -20,7 +20,10 @@ use crate::{
 };
 
 use landscape_common::{
-    event::hub::IAPrefixEvent, net::MacAddr, sys_service::route_service::RouteTargetInfo,
+    concurrency::{spawn_task, task_label},
+    event::hub::IAPrefixEvent,
+    net::MacAddr,
+    sys_service::route_service::RouteTargetInfo,
 };
 use landscape_common::{
     event::hub::IAPrefixEventSender,
@@ -250,7 +253,7 @@ pub async fn dhcp_v6_pd_client(
     let (message_tx, mut message_rx) = tokio::sync::mpsc::channel::<(Vec<u8>, SocketAddr)>(1024);
 
     // 接收数据
-    tokio::spawn(async move {
+    spawn_task(task_label::task::WAN_IPV6PD_CLIENT_RENEW, async move {
         // 超时重发定时器
 
         let mut buf = vec![0u8; 65535];

@@ -17,6 +17,7 @@ use landscape_common::cert::order::{
     AcmeCertConfig, CertConfig, CertParsedInfo, CertStatus, CertType, ChallengeType,
 };
 use landscape_common::cert::CertError;
+use landscape_common::concurrency::{spawn_task, task_label};
 use landscape_common::database::LandscapeStore;
 use landscape_common::dns::provider_profile::DnsProviderProfile;
 use landscape_common::dns::redirect::{
@@ -96,7 +97,7 @@ impl CertService {
                     let svc = service.clone();
                     let id = cert.id;
                     tracing::info!("Resuming issuance for cert {id}");
-                    tokio::spawn(async move {
+                    spawn_task(task_label::task::CERT_ORDER_REFRESH, async move {
                         if let Err(e) = svc.enqueue_issuance_task(id).await {
                             tracing::error!("Failed to resume cert {id}: {e}");
                         }
@@ -108,7 +109,7 @@ impl CertService {
         // Auto-renewal background task: check every hour
         {
             let svc = service.clone();
-            tokio::spawn(async move {
+            spawn_task(task_label::task::CERT_ORDER_REFRESH, async move {
                 loop {
                     tokio::time::sleep(Duration::from_secs(3600)).await;
                     svc.check_auto_renewals().await;
@@ -200,7 +201,7 @@ impl CertService {
                 let saved = self.set_and_notify(config).await;
                 let svc = self.clone();
                 let id = saved.id;
-                tokio::spawn(async move {
+                spawn_task(task_label::task::CERT_ORDER_REFRESH, async move {
                     if let Err(e) = svc.enqueue_issuance_task(id).await {
                         tracing::error!("Auto-renewal failed for cert {id}: {e}");
                     }
@@ -428,7 +429,7 @@ impl CertService {
         }
 
         let svc = self.clone();
-        tokio::spawn(async move {
+        spawn_task(task_label::task::CERT_ORDER_REFRESH, async move {
             if let Err(e) = svc.run_issue_task(id, cancel).await {
                 tracing::error!("Issue task failed for cert {id}: {e}");
             }

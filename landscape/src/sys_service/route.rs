@@ -8,6 +8,7 @@ use std::{
 use arc_swap::ArcSwap;
 use hickory_proto::rr::RecordType;
 use landscape_common::{
+    concurrency::{spawn_task, task_label},
     config::FlowId,
     ddns::IpFamily,
     dns::dnr::{is_valid_dnr_ipv4_addr, is_valid_dnr_ipv6_addr},
@@ -287,7 +288,7 @@ impl IpRouteService {
 
     fn spawn_route_event_worker(&self, mut route_event_receiver: mpsc::Receiver<RouteEvent>) {
         let route_service = self.clone();
-        tokio::spawn(async move {
+        spawn_task(task_label::task::ROUTE_SERVICE_OBSERVER, async move {
             while let Some(event) = route_event_receiver.recv().await {
                 route_service.handle_route_event(event).await;
             }

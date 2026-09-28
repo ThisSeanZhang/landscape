@@ -5,6 +5,7 @@ use std::time::Duration;
 
 use dashmap::DashMap;
 use landscape_common::cert::order::DnsProviderConfig;
+use landscape_common::concurrency::{spawn_task, task_label};
 use landscape_common::database::LandscapeStore;
 use landscape_common::ddns::{
     fqdn_for_zone_record, DdnsError, DdnsFamilyRuntime, DdnsJob, DdnsJobRuntime, DdnsJobStatus,
@@ -120,7 +121,7 @@ impl DdnsService {
 
     fn spawn_sync_loop(&self) {
         let service = self.clone();
-        tokio::spawn(async move {
+        spawn_task(task_label::task::DNS_DDNS_JOB, async move {
             let mut ticker = tokio::time::interval(Duration::from_secs(DDNS_SYNC_INTERVAL_SECS));
             ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
             loop {
@@ -134,7 +135,7 @@ impl DdnsService {
 
     fn spawn_retry_loop(&self) {
         let service = self.clone();
-        tokio::spawn(async move {
+        spawn_task(task_label::task::DNS_DDNS_JOB, async move {
             let mut ticker = tokio::time::interval(Duration::from_secs(DDNS_RETRY_INTERVAL_SECS));
             ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
             ticker.tick().await;
@@ -150,7 +151,7 @@ impl DdnsService {
     fn spawn_wan_update_loop(&self) {
         let service = self.clone();
         let mut events = self.route_service.subscribe_wan_route_events();
-        tokio::spawn(async move {
+        spawn_task(task_label::task::DNS_DDNS_JOB, async move {
             loop {
                 match events.recv().await {
                     Ok(event) => {
@@ -169,7 +170,7 @@ impl DdnsService {
 
     fn spawn_ipv6_assign_loop(&self, mut reader: IPv6AssignEventReader) {
         let service = self.clone();
-        tokio::spawn(async move {
+        spawn_task(task_label::task::DNS_DDNS_JOB, async move {
             loop {
                 match reader.recv().await {
                     Ok(IPv6AssignEvent::Allocated(info)) => {
@@ -266,7 +267,7 @@ impl DdnsService {
 
     fn spawn_pd_prefix_loop(&self, mut reader: IAPrefixEventReader) {
         let svc = self.clone();
-        tokio::spawn(async move {
+        spawn_task(task_label::task::DNS_DDNS_JOB, async move {
             loop {
                 match reader.recv().await {
                     Ok(IAPrefixEvent::Updated { iface_name })

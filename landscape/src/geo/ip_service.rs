@@ -1,5 +1,6 @@
 use landscape_common::geo_cache::file_store::GeoStoreKeyProvider;
 use landscape_common::{
+    concurrency::{spawn_task, task_label},
     config_service::geo::{
         GeoError, GeoFileCacheKey, GeoIpConfig, GeoIpLookupResult, GeoIpSource, GeoIpSourceConfig,
         RawDatState,
@@ -65,7 +66,7 @@ impl GeoIpService {
             raw_downloading: Arc::new(Mutex::new(HashSet::new())),
         };
         let service_clone = service.clone();
-        tokio::spawn(async move {
+        spawn_task(task_label::task::GEO_IP_OBSERVER, async move {
             let mut ticker = tokio::time::interval(Duration::from_secs(A_DAY));
 
             // The current network may not be ready; delaying the update check.
@@ -230,7 +231,7 @@ impl GeoIpService {
 
         let service = self.clone();
         let name = config.name.clone();
-        tokio::spawn(async move {
+        spawn_task(task_label::task::GEO_IP_OBSERVER, async move {
             if let Err(e) = service.refresh_one(&name).await {
                 tracing::error!("background download geo ip dat for '{}' failed: {}", name, e);
             }

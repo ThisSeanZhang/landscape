@@ -9,6 +9,7 @@ use tokio::net::UdpSocket;
 use tokio_util::sync::CancellationToken;
 
 use crate::server::handler::DnsRequestHandler;
+use landscape_common::concurrency::{spawn_task, task_label};
 use landscape_common::dns::DohRuntimeConfig;
 use landscape_common::flow::FlowSocketRegistrar;
 use socket2::{Domain, Protocol, Socket, Type};
@@ -164,7 +165,7 @@ pub async fn start_flow_dns_listener(
     let token = server.shutdown_token().clone();
     let shutdown = token.clone();
 
-    tokio::spawn(async move {
+    spawn_task(task_label::task::DNS_LISTENER_SERVE, async move {
         let result = server.block_until_done().await;
         shutdown.cancel();
 

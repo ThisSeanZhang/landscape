@@ -1,6 +1,7 @@
 use std::net::IpAddr;
 use std::sync::Arc;
 
+use landscape_common::concurrency::{spawn_task, task_label};
 use landscape_common::database::LandscapeStore;
 use landscape_common::event::hub::IfaceEventReader;
 use landscape_common::sys_service::route_service::{LanRouteInfo, LanRouteMode, RouteTargetInfo};
@@ -59,7 +60,7 @@ impl ServiceStarterTrait for IPConfigService {
                 let route_service = self.route_service.clone();
                 let addr_binding = self.addr_binding.clone();
                 let pppoe_dataplane = self.pppoe_dataplane.clone();
-                tokio::spawn(async move {
+                spawn_task(task_label::task::WAN_IPCONFIG_OBSERVER, async move {
                     init_service_from_config(
                         iface,
                         config.ip_model,
@@ -249,7 +250,7 @@ impl IfaceIpServiceManagerService {
 
         let service_clone = service.clone();
         let iface_store = store_service.iface_store();
-        tokio::spawn(async move {
+        spawn_task(task_label::task::WAN_IPCONFIG_OBSERVER, async move {
             while let Ok(msg) = dev_observer.recv().await {
                 match msg {
                     IfaceObserverAction::Up(iface_name) => {

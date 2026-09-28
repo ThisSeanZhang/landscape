@@ -6,6 +6,7 @@ use std::{
     },
 };
 
+use landscape_common::concurrency::{spawn_task, task_label};
 use landscape_pppoe_client::*;
 use libbpf_rs::skel::{OpenSkel, SkelBuilder};
 use libc::{
@@ -90,7 +91,7 @@ pub async fn start(
     let (in_tx, mut in_rx) = tokio::sync::mpsc::channel::<Vec<u8>>(1024);
     let (out_tx, out_rx) = tokio::sync::mpsc::channel::<Vec<u8>>(1024);
 
-    tokio::spawn(async move {
+    spawn_task(task_label::task::PPPOE_CLIENT_RUN, async move {
         let mut recv_buf = [std::mem::MaybeUninit::<u8>::uninit(); 2048];
 
         loop {

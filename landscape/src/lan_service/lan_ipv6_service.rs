@@ -114,7 +114,8 @@ async fn supervise_dad_dispatcher(
         let (tx, rx) = mpsc::channel(256);
         source.attach_channel(tx);
         let senders = dao_event_senders.clone();
-        let dispatch = tokio::spawn(run_dad_dispatcher(rx, senders));
+        let dispatch =
+            spawn_task(task_label::task::EBPF_IP6_DAO_DISPATCHER, run_dad_dispatcher(rx, senders));
         let consumer_died = source.consumer_died_token();
         tokio::select! {
             _ = shutdown.cancelled() => {
@@ -267,7 +268,7 @@ impl ServiceStarterTrait for LanIPv6Service {
             self.dao_event_senders.insert(iface.index, dao_tx.clone());
             let dao_event_senders = self.dao_event_senders.clone();
             let ifindex = iface.index;
-            tokio::spawn(async move {
+            spawn_task(task_label::task::LAN_IPV6_SERVICE_OBSERVER, async move {
                 let _ = start_ipv6_lan_server(
                     ifindex,
                     config.iface_name.clone(),
@@ -380,7 +381,7 @@ impl LanIPv6ManagerService {
             ServiceManager::init(store.list().await.unwrap(), server_starter.clone()).await;
 
         let service_clone = service.clone();
-        tokio::spawn(async move {
+        spawn_task(task_label::task::LAN_IPV6_SERVICE_OBSERVER, async move {
             while let Ok(msg) = dev_observer.recv().await {
                 match msg {
                     IfaceObserverAction::Up(iface_name) => {
@@ -404,7 +405,7 @@ impl LanIPv6ManagerService {
         let device_id_map = server_starter.device_id_map.clone();
         let per_iface_txs = server_starter.per_iface_txs.clone();
         let ipv6_assign_sender = server_starter.ipv6_assign_sender.clone();
-        tokio::spawn(async move {
+        spawn_task(task_label::task::LAN_IPV6_SERVICE_OBSERVER, async move {
             loop {
                 tokio::select! {
                     msg = prefix_update_tx.recv() => {

@@ -120,7 +120,7 @@ impl Ip6DaoEventSource {
             task_label::task::EBPF_IP6_DAO_EVENT_SOURCE,
             run_ringbuf_loop(ringbuf, async_fd, cancel),
         );
-        tokio::spawn(async move {
+        spawn_task(task_label::task::EBPF_IP6_DAO_EVENT_SOURCE, async move {
             match consumer.await {
                 Ok(()) => tracing::warn!("ip6_dao_event ringbuf consumer stopped"),
                 Err(join) => tracing::error!("ip6_dao_event ringbuf consumer panicked: {join}"),

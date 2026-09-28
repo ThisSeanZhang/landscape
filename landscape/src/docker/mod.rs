@@ -3,6 +3,7 @@ use bollard::{
     query_parameters::{EventsOptions, InspectContainerOptions, InspectNetworkOptions},
     Docker,
 };
+use landscape_common::concurrency::{spawn_task, task_label};
 use landscape_common::docker::error::DockerError;
 use landscape_common::docker::DockerTargetEnroll;
 use landscape_common::{
@@ -62,7 +63,7 @@ impl LandscapeDockerService {
         let docker_client = self.docker_client.clone();
 
         scan_all_lan_net(&route_service, &docker_client).await;
-        tokio::spawn(async move {
+        spawn_task(task_label::task::DOCKER_EVENT_LISTENER, async move {
             status.just_change_status(ServiceStatus::Staring);
 
             let unix_socket = unix_sock::listen_unix_sock(path).await;
@@ -73,7 +74,7 @@ impl LandscapeDockerService {
             let unix_route_service = route_service.clone();
             let event_docker_client = docker_client.clone();
             let unix_docker_client = docker_client;
-            let unix_listener = tokio::spawn(async move {
+            let unix_listener = spawn_task(task_label::task::DOCKER_EVENT_UNIX, async move {
                 run_unix_registration_listener(
                     unix_status,
                     unix_route_service,
@@ -85,10 +86,11 @@ impl LandscapeDockerService {
 
             let docker_status = status.clone();
             let docker_route_service = route_service.clone();
-            let docker_event_listener = tokio::spawn(async move {
-                run_docker_event_loop(docker_status, docker_route_service, event_docker_client)
-                    .await;
-            });
+            let docker_event_listener =
+                spawn_task(task_label::task::DOCKER_EVENT_LISTENER, async move {
+                    run_docker_event_loop(docker_status, docker_route_service, event_docker_client)
+                        .await;
+                });
 
             let mut receiver = status.subscribe();
             status.just_change_status(ServiceStatus::Running);
@@ -285,7 +287,7 @@ pub async fn accept_docker_info(
         }
     };
     let ip_route_service = ip_route_service.clone();
-    tokio::spawn(async move {
+    spawn_task(task_label::task::DOCKER_EVENT_UNIX, async move {
         const MAX_REGISTRATION_BYTES: usize = 4096;
 
         let mut buf = Vec::with_capacity(256);

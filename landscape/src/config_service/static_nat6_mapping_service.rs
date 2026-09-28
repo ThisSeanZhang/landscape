@@ -5,6 +5,7 @@ use std::{
     time::Duration,
 };
 
+use landscape_common::concurrency::{spawn_task, task_label};
 use landscape_common::config_service::static_nat::config6::{
     StaticNatMappingV6Config, StaticNatV6PortConfig, StaticNatV6Target,
 };
@@ -77,7 +78,7 @@ impl StaticNat6MappingService {
 
     fn spawn_device_event_loop(&self, mut reader: EnrolledDeviceEventReader) {
         let this = self.clone();
-        tokio::spawn(async move {
+        spawn_task(task_label::task::NAT_STATIC_V6_OBSERVER, async move {
             loop {
                 match reader.recv().await {
                     Ok(event) => {
@@ -102,7 +103,7 @@ impl StaticNat6MappingService {
         let (refresh_tx, mut refresh_rx) = mpsc::channel(1);
 
         let this = self.clone();
-        tokio::spawn(async move {
+        spawn_task(task_label::task::NAT_STATIC_V6_OBSERVER, async move {
             loop {
                 match reader.recv().await {
                     Ok(event) => {
@@ -128,7 +129,7 @@ impl StaticNat6MappingService {
         });
 
         let this = self.clone();
-        tokio::spawn(async move {
+        spawn_task(task_label::task::NAT_STATIC_V6_OBSERVER, async move {
             while refresh_rx.recv().await.is_some() {
                 tokio::time::sleep(Duration::from_secs(1)).await;
                 while refresh_rx.try_recv().is_ok() {}

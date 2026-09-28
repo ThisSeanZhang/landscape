@@ -1,6 +1,7 @@
 use std::net::{IpAddr, Ipv6Addr, SocketAddr};
 use std::sync::Arc;
 
+use landscape_common::concurrency::{spawn_task, task_label};
 use landscape_common::LANDSCAPE_DEFAULE_DHCP_V6_SERVER_PORT;
 use tokio::sync::mpsc;
 
@@ -37,7 +38,7 @@ pub async fn get_dhcpv6_connect(
     let (message_tx, message_rx) = mpsc::channel::<(Vec<u8>, SocketAddr)>(1024);
 
     // Receive loop
-    tokio::spawn(async move {
+    spawn_task(task_label::task::LAN_DHCP_V6_CONNECTION, async move {
         let mut buf = vec![0u8; 65535];
         loop {
             tokio::select! {
@@ -85,7 +86,7 @@ pub async fn get_icmp_connect(
 
     let (message_tx, message_rx) = mpsc::channel::<(Vec<u8>, SocketAddr)>(1024);
 
-    tokio::spawn(async move {
+    spawn_task(task_label::task::LAN_DHCP_V6_CONNECTION, async move {
         let mut buf = vec![0u8; 65535];
 
         loop {

@@ -1,6 +1,7 @@
 use std::{net::Ipv4Addr, time::Duration};
 
 use cidr::Ipv4Inet;
+use landscape_common::concurrency::{spawn_task, task_label};
 use landscape_common::{lan_service::lan_dhcpv4::status::ArpScanInfoItem, net::MacAddr};
 use tokio_util::sync::CancellationToken;
 
@@ -17,7 +18,7 @@ pub async fn scan_ip_info(
 
     let scan_done = CancellationToken::new();
     let child_token = scan_done.child_token();
-    tokio::spawn(async move {
+    spawn_task(task_label::task::ARP_SCAN, async move {
         let mut send_num = 0_u16;
 
         while let Some(ip) = cidr.next() {

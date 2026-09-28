@@ -8,6 +8,7 @@ use bollard::Docker;
 use tokio::sync::broadcast;
 use tokio::sync::RwLock;
 
+use landscape_common::concurrency::{spawn_task, task_label};
 use landscape_common::docker::image::{ImgPullEvent, PullImgTask, PullImgTaskItem};
 use tokio_stream::StreamExt;
 use uuid::Uuid;
@@ -120,7 +121,7 @@ impl PullManager {
             drop(write);
         }
         let sock_tx = self.sock_tx.clone();
-        tokio::spawn(async move {
+        spawn_task(task_label::task::DOCKER_IMAGE_OP, async move {
             let mut stream = docker.create_image(Some(options), None, None);
 
             'download: while let Some(res) = stream.next().await {

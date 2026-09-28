@@ -6,6 +6,7 @@ use std::sync::Arc;
 use arc_swap::ArcSwap;
 use dashmap::DashMap;
 
+use landscape_common::concurrency::{spawn_task, task_label};
 use landscape_common::event::hub::{
     EnrolledDeviceEvent, EnrolledDeviceEventReader, IPv4AssignEvent, IPv4AssignEventReader,
 };
@@ -90,7 +91,7 @@ impl LanHostnameRegistry {
         // Listener: device + DHCP events, serialized via select!
         {
             let map = hostname_map.clone();
-            tokio::spawn(async move {
+            spawn_task(task_label::task::DNS_HOSTNAME_OBSERVER, async move {
                 use tokio::sync::broadcast::error::RecvError;
                 let mut device_reader = device_reader;
                 let mut ipv4_reader = ipv4_reader;

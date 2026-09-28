@@ -17,6 +17,7 @@ use tokio_rustls::TlsAcceptor;
 use tokio_util::sync::CancellationToken;
 
 use crate::{listener::DohTimeouts, server::handler::DnsRequestHandler};
+use landscape_common::concurrency::{spawn_task, task_label};
 
 mod request;
 mod response;
@@ -51,7 +52,7 @@ pub(crate) fn spawn_doh_listener(
         }
     };
 
-    tokio::spawn(async move {
+    spawn_task(task_label::task::DNS_DOH_HANDLER, async move {
         let handler = Arc::new(handler);
         let mut connection_tasks = JoinSet::new();
         loop {

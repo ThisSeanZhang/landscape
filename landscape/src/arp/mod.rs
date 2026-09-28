@@ -1,5 +1,6 @@
 use std::{mem, net::Ipv4Addr};
 
+use landscape_common::concurrency::{spawn_task, task_label};
 use landscape_common::net::MacAddr;
 use libc::{sockaddr_ll, ETH_P_ARP};
 use socket2::{Domain, Protocol, Type};
@@ -40,7 +41,7 @@ pub async fn create_arp_listen(
     let (out_tx, mut out_rx) = mpsc::channel::<Vec<u8>>(1024);
     let (in_tx, in_rx) = mpsc::channel::<Vec<u8>>(1024);
 
-    tokio::spawn(async move {
+    spawn_task(task_label::task::ARP_LEARN, async move {
         let mut buf = [0u8; 1500];
 
         loop {

@@ -4,6 +4,7 @@ use std::net::{Ipv4Addr, Ipv6Addr};
 use std::time::Duration;
 
 use futures::stream::TryStreamExt;
+use landscape_common::concurrency::{spawn_task, task_label};
 use landscape_common::net::MacAddr;
 use libbpf_rs::skel::{OpenSkel, SkelBuilder};
 use libbpf_rs::{ErrorKind, MapCore, MapFlags, MapHandle};
@@ -75,7 +76,7 @@ pub async fn neigh_update(
     let _handle = init_neigh_update_handle(&paths)?;
 
     let (connection, netlink_handle, _) = rtnetlink::new_connection()?;
-    let conn_task = tokio::spawn(connection);
+    let conn_task = spawn_task(task_label::task::NETLINK_CONN_DRIVER, connection);
 
     loop {
         tracing::info!("sync current arp info");

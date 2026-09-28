@@ -1,4 +1,5 @@
 use landscape_common::{
+    concurrency::{spawn_task, task_label},
     config_service::geo::{
         GeoDomainConfig, GeoError, GeoFileCacheKey, GeoMatcherSource, GeoSiteFileConfig,
         GeoSiteLookupResult, GeoSiteSource, RawDatState,
@@ -115,7 +116,7 @@ impl GeoSiteService {
             raw_downloading: Arc::new(Mutex::new(HashSet::new())),
         };
         let service_clone = service.clone();
-        tokio::spawn(async move {
+        spawn_task(task_label::task::GEO_SITE_OBSERVER, async move {
             let mut ticker = tokio::time::interval(Duration::from_secs(A_DAY));
             // The current network may not be ready; delaying the update check.
             tokio::time::sleep(Duration::from_secs(30)).await;
@@ -450,7 +451,7 @@ impl GeoSiteService {
 
         let service = self.clone();
         let name = config.name.clone();
-        tokio::spawn(async move {
+        spawn_task(task_label::task::GEO_SITE_OBSERVER, async move {
             service.refresh_one(&name).await;
             service.raw_downloading.lock().await.remove(&id);
         });

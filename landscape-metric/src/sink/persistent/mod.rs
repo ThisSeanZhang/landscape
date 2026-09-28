@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use landscape_common::concurrency::{spawn_task, task_label};
 use landscape_common::config::MetricRuntimeConfig;
 use landscape_common::database::error::DbError;
 use landscape_common::metric::connect::{
@@ -474,7 +475,7 @@ impl MetricSink for PersistentMetricStore {
                         "phase=persistent_connect.global_stats_rebuild starting daily drift correction rebuild"
                     );
                     let rebuild_pool = self.connect_pool.clone();
-                    *guard = Some(tokio::spawn(async move {
+                    *guard = Some(spawn_task(task_label::task::METRIC_STATS_REBUILD, async move {
                         if let Err(error) =
                             sqlite::connect::rebuild_global_stats_cache(&rebuild_pool).await
                         {

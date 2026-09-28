@@ -4,6 +4,7 @@ use std::time::Instant;
 
 use landscape_common::sys_service::lan_hostname::LanHostnameConfig;
 use landscape_common::{
+    concurrency::{spawn_task, task_label},
     config::DnsRuntimeConfig,
     dns::error::DnsServiceError,
     dns::redirect::DynamicDnsRedirectScope,
@@ -117,7 +118,7 @@ impl LandscapeDnsService {
         );
         dns_service.dns_service.status.just_change_status(status);
         let dns_service_clone = dns_service.clone();
-        tokio::spawn(async move {
+        spawn_task(task_label::task::DNS_SERVICE_OBSERVER, async move {
             while let Some(event) = receiver.recv().await {
                 match event {
                     DnsEvent::RulesChanged { flow_id: None } => {

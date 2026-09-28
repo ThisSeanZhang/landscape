@@ -1,3 +1,4 @@
+use landscape_common::concurrency::{spawn_task, task_label};
 use landscape_common::{event::hub::iface::IfaceObserverAction, event::hub::EventHub};
 use netlink_packet_core::{NetlinkMessage, NetlinkPayload};
 use netlink_packet_route::{address::AddressMessage, RouteNetlinkMessage};
@@ -9,14 +10,14 @@ use tracing::instrument;
 use super::handle::create_connection_with_messages;
 
 pub async fn ip_observer() {
-    tokio::spawn(async move {
+    spawn_task(task_label::task::EVENT_NETLINK_DISPATCH, async move {
         let (mut connection, _, mut messages) =
             create_connection_with_messages().map_err(|e| format!("{e}")).unwrap();
         let mgroup_flags = RTMGRP_IPV4_IFADDR;
 
         let addr = netlink_sys::SocketAddr::new(0, mgroup_flags);
         connection.socket_mut().socket_mut().bind(&addr).expect("failed to bind");
-        tokio::spawn(connection);
+        spawn_task(task_label::task::NETLINK_CONN_OBSERVER, connection);
         while let Some((message, _)) = messages.next().await {
             println!("Route change message - {message:?}");
             handle_address_msg(message);
@@ -27,20 +28,20 @@ pub async fn ip_observer() {
 pub async fn dev_observer(hub: &EventHub) {
     let sender = hub.iface_sender();
 
-    tokio::spawn(async move {
+    spawn_task(task_label::task::EVENT_NETLINK_DISPATCH, async move {
         let (mut connection, _, mut messages) =
             create_connection_with_messages().map_err(|e| format!("{e}")).unwrap();
         let mgroup_flags = RTMGRP_LINK;
 
         let addr = netlink_sys::SocketAddr::new(0, mgroup_flags);
         connection.socket_mut().socket_mut().bind(&addr).expect("failed to bind");
-        tokio::spawn(connection);
+        spawn_task(task_label::task::NETLINK_CONN_OBSERVER, connection);
         while let Some((message, _)) = messages.next().await {
             // println!("Route change message - {message:?}");
             if let Some(msg) = filter_message_status(message) {
                 if let IfaceObserverAction::Up(ref ifname) = msg {
                     let ifname = ifname.clone();
-                    tokio::spawn(async move {
+                    spawn_task(task_label::task::EVENT_NETLINK_DISPATCH, async move {
                         crate::netlink::ethtool::disable_gro(&ifname).await;
                     });
                 }

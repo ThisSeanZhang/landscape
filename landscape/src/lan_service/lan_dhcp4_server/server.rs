@@ -4,6 +4,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+use landscape_common::concurrency::{spawn_task, task_label};
 use landscape_common::net_proto::udp::dhcp::v4::{Flags, Opcode, OptionCode};
 use landscape_common::net_proto::udp::dhcp::{
     try_decode_dhcpv4, v4_helpers::apply_custom_and_filter, v4_helpers::get_default_request_list,
@@ -94,7 +95,7 @@ pub async fn dhcp_v4_server(
 
     let ip = server_ip;
     let link_name = iface_name.clone();
-    tokio::spawn(async move {
+    spawn_task(task_label::task::DHCP_V4_SERVER_HANDLER, async move {
         let handle = match crate::netlink::handle::create_handle() {
             Ok(h) => h,
             Err(e) => {
@@ -131,7 +132,7 @@ pub async fn dhcp_v4_server(
 
     let (message_tx, mut message_rx) = tokio::sync::mpsc::channel::<(Vec<u8>, SocketAddr)>(1024);
 
-    tokio::spawn(async move {
+    spawn_task(task_label::task::DHCP_V4_SERVER_HANDLER, async move {
         let mut buf = vec![0u8; 65535];
         loop {
             tokio::select! {

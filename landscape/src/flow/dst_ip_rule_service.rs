@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use landscape_common::{
+    concurrency::{spawn_task, task_label},
     database::store::Change,
     event::dns::DstIpEvent,
     flow::{dataplane::FlowRuleDataplane, ip_mark::WanIpRuleConfig},
@@ -34,7 +35,7 @@ impl DstIpRuleService {
         dst_ip_rule_service.apply_loaded_configs().await;
 
         let dst_ip_rule_service_clone = dst_ip_rule_service.clone();
-        tokio::spawn(async move {
+        spawn_task(task_label::task::FLOW_DST_IP_OBSERVER, async move {
             while let Ok(event) = receiver.recv().await {
                 match event {
                     DstIpEvent::GeoIpUpdated => {

@@ -5,6 +5,7 @@ use std::time::Duration;
 
 #[cfg(feature = "metric-persistent")]
 use crate::agg::dns_bucket::{DnsBucketRow, DnsSummaryParts};
+use landscape_common::concurrency::{spawn_task, task_label};
 use landscape_common::config::MetricRuntimeConfig;
 use landscape_common::database::error::DbError;
 use landscape_common::metric::connect::{
@@ -134,7 +135,7 @@ impl MemoryMetricStore {
         let second_window_ms = agg::second_window_ms(&config);
         let second_ring_cap = agg::second_ring_capacity(&config);
         let cleanup_interval = Duration::from_secs(config.cleanup_interval_secs.max(1));
-        let worker = tokio::spawn(async move {
+        let worker = spawn_task(task_label::task::METRIC_MEM_SINK_WORKER, async move {
             let mut cleanup_tick = tokio::time::interval(cleanup_interval);
             cleanup_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             cleanup_tick.tick().await;

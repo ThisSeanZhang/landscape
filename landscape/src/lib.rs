@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::net::IpAddr;
 
 use futures::stream::TryStreamExt;
+use landscape_common::concurrency::{spawn_task, task_label};
 use landscape_common::config_service::iface::{
     CreateDevType, IfaceZoneType, NetworkIfaceConfig, WifiMode,
 };
@@ -183,7 +184,7 @@ pub async fn init_devs(network_config: Vec<NetworkIfaceConfig>) {
                     .output()
                     .unwrap();
                 let ifname = ifconfig.name.clone();
-                tokio::spawn(async move {
+                spawn_task(task_label::task::EVENT_NETLINK_DISPATCH, async move {
                     netlink::ethtool::disable_gro(&ifname).await;
                 });
             }

@@ -3,6 +3,7 @@ use std::net::IpAddr;
 use std::net::Ipv6Addr;
 use std::sync::Arc;
 
+use landscape_common::concurrency::{spawn_task, task_label};
 use landscape_common::event::hub::{IAPrefixEventSender, IfaceEventReader};
 use landscape_common::lan_service::lan_ipv6::{mark_wan_iid, PdPrefixContext, PdPrefixContextMap};
 use landscape_common::service::manager::ServiceStarterTrait;
@@ -87,7 +88,7 @@ impl ServiceStarterTrait for IPV6PDService {
                     gateway_ip: IpAddr::V6(Ipv6Addr::UNSPECIFIED),
                 };
                 let status_clone = service_status.clone();
-                tokio::spawn(async move {
+                spawn_task(task_label::task::WAN_IPV6PD_OBSERVER, async move {
                     crate::wan_service::ipv6pd_client::v6::dhcp_v6_pd_client(
                         config.iface_name,
                         iface.index,
@@ -163,7 +164,7 @@ impl DHCPv6ClientManagerService {
         let service = ServiceManager::init(configs, server_starter).await;
 
         let service_clone = service.clone();
-        tokio::spawn(async move {
+        spawn_task(task_label::task::WAN_IPV6PD_OBSERVER, async move {
             while let Ok(msg) = dev_observer.recv().await {
                 match msg {
                     IfaceObserverAction::Up(iface_name) => {

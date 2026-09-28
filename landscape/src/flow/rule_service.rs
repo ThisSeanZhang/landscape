@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use landscape_common::{
+    concurrency::{spawn_task, task_label},
     database::store::Change,
     event::hub::EnrolledDeviceEventReader,
     event::{dns::DnsEvent, route::RouteEvent},
@@ -35,7 +36,7 @@ impl FlowRuleService {
         result.refresh_flow_matches().await;
 
         let this = result.clone();
-        tokio::spawn(async move {
+        spawn_task(task_label::task::FLOW_RULE_OBSERVER, async move {
             let mut rx = device_reader;
             while rx.recv().await.is_ok() {
                 this.refresh_flow_matches().await;

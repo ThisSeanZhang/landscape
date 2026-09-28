@@ -1,6 +1,7 @@
 use std::net::Ipv4Addr;
 use std::sync::Arc;
 
+use landscape_common::concurrency::{spawn_task, task_label};
 use landscape_common::config_service::static_nat::config::StaticMapPair;
 use landscape_common::config_service::static_nat::config4::{
     StaticNatMappingV4Config, StaticNatV4Target,
@@ -47,7 +48,7 @@ impl StaticNat4MappingService {
         service.refresh_runtime_rules().await;
 
         let this = service.clone();
-        tokio::spawn(async move {
+        spawn_task(task_label::task::NAT_STATIC_V4_OBSERVER, async move {
             let mut rx = device_reader;
             while rx.recv().await.is_ok() {
                 this.refresh_runtime_rules().await;

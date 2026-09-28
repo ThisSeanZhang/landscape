@@ -4,6 +4,7 @@ use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
 use futures::stream::TryStreamExt;
+use landscape_common::concurrency::{spawn_task, task_label};
 use landscape_common::net::MacAddr;
 use netlink_packet_route::neighbour::{NeighbourAddress, NeighbourAttribute, NeighbourState};
 use netlink_packet_route::AddressFamily;
@@ -77,7 +78,7 @@ impl MacLinkMapCache {
 /// with exponential backoff.
 pub fn start_periodic_scan(cache: &Arc<MacLinkMapCache>, interval_secs: u64) {
     let cache = cache.clone();
-    tokio::spawn(async move {
+    spawn_task(task_label::task::LAN_MAC_LINK_OBSERVER, async move {
         let mut retry = Duration::from_secs(1);
 
         loop {
@@ -91,7 +92,7 @@ pub fn start_periodic_scan(cache: &Arc<MacLinkMapCache>, interval_secs: u64) {
                     continue;
                 }
             };
-            tokio::spawn(connection);
+            spawn_task(task_label::task::NETLINK_CONN_DRIVER, connection);
             retry = Duration::from_secs(1);
 
             // ── Scan loop for this connection ──
