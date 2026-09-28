@@ -38,7 +38,9 @@ use landscape::{
 };
 
 use landscape_common::{
-    config::AuthRuntimeConfig, database::LandscapeStore, service::controller::ControllerService,
+    config::AuthRuntimeConfig,
+    database::LandscapeStore,
+    service::controller::{ConfigStoreServiceController, ControllerService},
     wan_service::ip_config::IfaceIpModelConfig,
 };
 use landscape_core::time::SyncTimeService;
@@ -185,7 +187,11 @@ impl LandscapeApp {
         self.wan_ip_service.delete_and_stop_iface_service(iface_name.to_string()).await;
         self.firewall_service.delete_and_stop_iface_service(iface_name.to_string()).await;
         self.nat_service.delete_and_stop_iface_service(iface_name.to_string()).await;
-        self.ipv6_pd_service.delete_and_stop_iface_service(iface_name.to_string()).await;
+        if let Err(error) =
+            self.ipv6_pd_service.delete_and_stop_service(iface_name.to_string()).await
+        {
+            tracing::error!("failed to remove IPv6PD service for {iface_name}: {error:?}");
+        }
         self.route_wan_service.delete_and_stop_iface_service(iface_name.to_string()).await;
         self.dhcp_v4_server_service.delete_and_stop_iface_service(iface_name.to_string()).await;
         self.lan_ipv6_service.delete_and_stop_iface_service(iface_name.to_string()).await;

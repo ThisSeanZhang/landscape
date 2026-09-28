@@ -2,8 +2,7 @@ use std::collections::HashMap;
 
 use axum::extract::{Path, State};
 use landscape_common::api_response::LandscapeApiResp as CommonApiResp;
-use landscape_common::database::LandscapeStore as LandscapeDBStore;
-use landscape_common::service::controller::ControllerService;
+use landscape_common::service::controller::{ConfigStoreController, ConfigStoreServiceController};
 use landscape_common::service::{ServiceStatus, WatchService};
 use landscape_common::wan_service::ipv6_pd::IPV6PDPrefixStatus;
 use landscape_common::wan_service::ipv6_pd::IPV6PDServiceConfig;
@@ -37,9 +36,7 @@ pub fn get_iface_pdclient_paths() -> OpenApiRouter<LandscapeApp> {
 async fn get_all_ipv6pd_configs(
     State(state): State<LandscapeApp>,
 ) -> LandscapeApiResult<Vec<IPV6PDServiceConfig>> {
-    LandscapeApiResp::success(
-        state.ipv6_pd_service.get_repository().list().await.unwrap_or_default(),
-    )
+    LandscapeApiResp::success(state.ipv6_pd_service.list().await.unwrap_or_default())
 }
 
 #[utoipa::path(
@@ -94,7 +91,7 @@ async fn get_iface_pd_config(
     State(state): State<LandscapeApp>,
     Path(iface_name): Path<String>,
 ) -> LandscapeApiResult<IPV6PDServiceConfig> {
-    if let Some(iface_config) = state.ipv6_pd_service.get_config_by_name(iface_name).await {
+    if let Some(iface_config) = state.ipv6_pd_service.find_by_id(iface_name).await? {
         LandscapeApiResp::success(iface_config)
     } else {
         Err(ServiceConfigError::NotFound { service_name: "IPV6PD" })?
@@ -130,5 +127,5 @@ async fn delete_and_stop_iface_service(
     State(state): State<LandscapeApp>,
     Path(iface_name): Path<String>,
 ) -> LandscapeApiResult<Option<WatchService>> {
-    LandscapeApiResp::success(state.ipv6_pd_service.delete_and_stop_iface_service(iface_name).await)
+    LandscapeApiResp::success(state.ipv6_pd_service.delete_and_stop_service(iface_name).await?)
 }

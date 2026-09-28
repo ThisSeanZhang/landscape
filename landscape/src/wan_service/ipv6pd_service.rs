@@ -12,10 +12,15 @@ use landscape_common::wan_service::ipv6_pd::IAPrefixMap;
 use landscape_common::wan_service::ipv6_pd::IPV6PDPrefixStatus;
 use landscape_common::wan_service::ipv6_pd::LDIAPrefix;
 
+use landscape_common::database::error::DbError;
 use landscape_common::database::LandscapeStore;
 use landscape_common::{
     event::hub::iface::IfaceObserverAction,
-    service::{controller::ControllerService, manager::ServiceManager, WatchService},
+    service::{
+        controller::{ConfigStoreController, ConfigStoreServiceController},
+        manager::ServiceManager,
+        WatchService,
+    },
     wan_service::ipv6_pd::IPV6PDServiceConfig,
     LANDSCAPE_DEFAULE_DHCP_V6_CLIENT_PORT,
 };
@@ -117,18 +122,22 @@ pub struct DHCPv6ClientManagerService {
     prefix_map: IAPrefixMap,
 }
 
-impl ControllerService for DHCPv6ClientManagerService {
+#[async_trait::async_trait]
+impl ConfigStoreController for DHCPv6ClientManagerService {
     type Id = String;
     type Config = IPV6PDServiceConfig;
-    type DatabseAction = DHCPv6ClientRepository;
+    type Store = DHCPv6ClientRepository;
+
+    fn get_store(&self) -> &Self::Store {
+        &self.store
+    }
+}
+
+impl ConfigStoreServiceController for DHCPv6ClientManagerService {
     type H = IPV6PDService;
 
     fn get_service(&self) -> &ServiceManager<Self::H> {
         &self.service
-    }
-
-    fn get_repository(&self) -> &Self::DatabseAction {
-        &self.store
     }
 }
 
@@ -141,8 +150,9 @@ impl DHCPv6ClientManagerService {
         prefix_map: IAPrefixMap,
         prefix_sender: IAPrefixEventSender,
         shared_wan_iid: Arc<u64>,
-    ) -> Self {
+    ) -> Result<Self, DbError> {
         let store = store_service.dhcp_v6_client_store();
+        let configs = store.list().await?;
         let server_starter = IPV6PDService::new(
             route_service,
             addr_binding,
@@ -150,7 +160,7 @@ impl DHCPv6ClientManagerService {
             shared_wan_iid,
             prefix_sender,
         );
-        let service = ServiceManager::init(store.list().await.unwrap(), server_starter).await;
+        let service = ServiceManager::init(configs, server_starter).await;
 
         let service_clone = service.clone();
         tokio::spawn(async move {
@@ -158,12 +168,15 @@ impl DHCPv6ClientManagerService {
                 match msg {
                     IfaceObserverAction::Up(iface_name) => {
                         tracing::info!("restart {iface_name} IPv6PD service");
-                        let service_config = if let Some(service_config) =
-                            store.find_by_id(iface_name.clone()).await.unwrap()
-                        {
-                            service_config
-                        } else {
-                            continue;
+                        let service_config = match store.find_by_id(iface_name.clone()).await {
+                            Ok(Some(service_config)) => service_config,
+                            Ok(None) => continue,
+                            Err(error) => {
+                                tracing::error!(
+                                    "failed to load IPv6PD config for {iface_name}: {error:?}"
+                                );
+                                continue;
+                            }
                         };
 
                         let _ = service_clone.update_service(service_config).await;
@@ -174,7 +187,7 @@ impl DHCPv6ClientManagerService {
         });
 
         let store = store_service.dhcp_v6_client_store();
-        Self { service, store, prefix_map }
+        Ok(Self { service, store, prefix_map })
     }
 
     pub fn get_ipv6_prefix_infos(&self) -> HashMap<String, Option<LDIAPrefix>> {

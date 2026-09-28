@@ -525,7 +525,7 @@ async fn run_system(
         ipv6_prefix_sender.clone(),
         shared_wan_iid,
     )
-    .await;
+    .await?;
 
     startup_phase!(
         "docker_service.start_to_listen_event",
