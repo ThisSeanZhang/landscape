@@ -2,12 +2,18 @@ use std::net::Ipv4Addr;
 
 use crate::{
     config::{settings::LandscapeConfig, InitConfig},
-    config_service::iface::{CreateDevType, IfaceZoneType, NetworkIfaceConfig, WifiMode},
+    config_service::{
+        iface::{CreateDevType, IfaceZoneType, NetworkIfaceConfig, WifiMode},
+        static_nat::{
+            config::StaticMapPair,
+            config4::{StaticNatMappingV4Config, StaticNatV4Target},
+        },
+    },
     lan_service::{
         lan_dhcpv4::config::{DHCPv4ServerConfig, DHCPv4ServiceConfig},
         lan_route::RouteLanServiceConfig,
     },
-    utils::time::get_f64_timestamp,
+    utils::{id::gen_database_uuid, time::get_f64_timestamp},
     wan_service::{
         firewall::service::FirewallServiceConfig,
         ip_config::{IfaceIpModelConfig, IfaceIpServiceConfig},
@@ -21,15 +27,18 @@ use crate::{
 
 use super::{
     ConfigCliArgs, ConfigCliError, WanMode, BASE_ENABLED_SERVICES, DEFAULT_MSS_CLAMP_SIZE,
-    KNOWN_SERVICES, WAN_SERVICES,
+    KNOWN_SERVICES, LAN_SERVICES, WAN_SERVICES,
 };
+
+/// TCP protocol number, the only L4 protocol emitted by `--static-nat`.
+const TCP_L4_PROTOCOL: u8 = 6;
 
 impl ConfigCliArgs {
     fn default_route(&self) -> bool {
         !self.no_wan_default_route
     }
 
-    fn resolve_enabled_services(&self) -> Result<Vec<&'static str>, ConfigCliError> {
+    fn resolve_enabled_services(&self, has_lan: bool) -> Result<Vec<&'static str>, ConfigCliError> {
         for name in self.enable.iter().chain(self.disable.iter()) {
             if !KNOWN_SERVICES.contains(&name.as_str()) {
                 return Err(ConfigCliError::UnknownService(name.clone()));
@@ -61,30 +70,45 @@ impl ConfigCliArgs {
             }
             enabled.retain(|name| !WAN_SERVICES.contains(name));
         }
+        if !has_lan {
+            for name in &enabled {
+                if LAN_SERVICES.contains(name) && self.enable.iter().any(|e| e.as_str() == *name) {
+                    return Err(ConfigCliError::LanServiceWithoutLan((*name).to_string()));
+                }
+            }
+            enabled.retain(|name| !LAN_SERVICES.contains(name));
+        }
 
         Ok(enabled)
     }
 
     /// Build the [`InitConfig`] described by these arguments.
     pub fn build_init_config(&self) -> Result<InitConfig, ConfigCliError> {
-        let lan_iface = self.lan_iface.clone().ok_or(ConfigCliError::MissingLanIface)?;
+        let lan_iface = self.lan_iface.clone();
         let wan_iface = match self.wan_mode {
             WanMode::None => None,
             _ => Some(self.wan_iface.clone().ok_or(ConfigCliError::MissingWanIface)?),
         };
+        if lan_iface.is_none() && wan_iface.is_none() {
+            return Err(ConfigCliError::MissingAnyIface);
+        }
+        if lan_iface.is_none() {
+            self.reject_lan_flags()?;
+        }
 
         let mut members = Vec::new();
         for member in &self.lan_member {
             if members.contains(member) {
                 continue;
             }
-            if Some(member) == wan_iface.as_ref() || member == &lan_iface {
+            if Some(member) == wan_iface.as_ref() || Some(member) == lan_iface.as_ref() {
                 return Err(ConfigCliError::InvalidLanMember(member.clone()));
             }
             members.push(member.clone());
         }
 
-        let enabled = self.resolve_enabled_services()?;
+        let enabled = self.resolve_enabled_services(lan_iface.is_some())?;
+        let static_nat_pairs = self.parse_static_nat_pairs()?;
         let now = get_f64_timestamp();
 
         let mut ifaces = Vec::new();
@@ -100,18 +124,23 @@ impl ConfigCliArgs {
                 update_at: now,
             });
         }
-        ifaces.push(NetworkIfaceConfig::crate_bridge(lan_iface.clone(), Some(IfaceZoneType::Lan)));
-        for member in &members {
-            ifaces.push(NetworkIfaceConfig {
-                name: member.clone(),
-                create_dev_type: CreateDevType::NoNeedToCreate,
-                controller_name: Some(lan_iface.clone()),
-                zone_type: IfaceZoneType::default(),
-                enable_in_boot: true,
-                wifi_mode: WifiMode::default(),
-                xps_rps: None,
-                update_at: now,
-            });
+        if let Some(lan_iface) = &lan_iface {
+            ifaces.push(NetworkIfaceConfig::crate_bridge(
+                lan_iface.clone(),
+                Some(IfaceZoneType::Lan),
+            ));
+            for member in &members {
+                ifaces.push(NetworkIfaceConfig {
+                    name: member.clone(),
+                    create_dev_type: CreateDevType::NoNeedToCreate,
+                    controller_name: Some(lan_iface.clone()),
+                    zone_type: IfaceZoneType::default(),
+                    enable_in_boot: true,
+                    wifi_mode: WifiMode::default(),
+                    xps_rps: None,
+                    update_at: now,
+                });
+            }
         }
 
         let mut ipconfigs = Vec::new();
@@ -188,17 +217,51 @@ impl ConfigCliArgs {
             _ => wan_iface.clone(),
         };
 
+        let mut config = LandscapeConfig::default();
+        if let Some(user) = &self.admin_user {
+            if user.is_empty() {
+                return Err(ConfigCliError::EmptyAdminCredential("admin-user"));
+            }
+            config.auth.admin_user = Some(user.clone());
+        }
+        if let Some(pass) = &self.admin_pass {
+            if pass.is_empty() {
+                return Err(ConfigCliError::EmptyAdminCredential("admin-pass"));
+            }
+            config.auth.admin_pass = Some(pass.clone());
+        }
+
         let mut init = InitConfig {
             version: VERSION.to_string(),
-            config: LandscapeConfig::default(),
+            config,
             ifaces,
             ipconfigs,
             pppds,
             ..Default::default()
         };
 
-        if !self.no_lan_dhcp {
-            init.dhcpv4_services.push(self.build_dhcp_config(&lan_iface, now)?);
+        if !static_nat_pairs.is_empty() {
+            let mapping = StaticNatMappingV4Config {
+                id: gen_database_uuid(),
+                name: None,
+                enable: true,
+                remark: "generated by `landscape config`".to_string(),
+                wan_iface_name: wan_service_iface.clone(),
+                mapping_pair_ports: static_nat_pairs,
+                lan_target: Some(StaticNatV4Target::Local),
+                l4_protocols: vec![TCP_L4_PROTOCOL],
+                update_at: now,
+            };
+            mapping
+                .validate()
+                .map_err(|e| ConfigCliError::InvalidStaticNatConfig(e.to_string()))?;
+            init.static_nat_mappings_v4.push(mapping);
+        }
+
+        if let Some(lan_iface) = &lan_iface {
+            if !self.no_lan_dhcp {
+                init.dhcpv4_services.push(self.build_dhcp_config(lan_iface, now)?);
+            }
         }
 
         if let Some(iface) = &wan_service_iface {
@@ -226,29 +289,38 @@ impl ConfigCliArgs {
                         enable: true,
                         update_at: now,
                     }),
-                    "route-lan" => init.route_lans.push(RouteLanServiceConfig {
-                        iface_name: lan_iface.clone(),
-                        enable: true,
-                        static_routes: None,
-                        update_at: now,
-                    }),
+                    "route-lan" => push_route_lan(&mut init, lan_iface.as_deref(), now),
                     _ => {}
                 }
             }
         } else {
-            for service in &enabled {
-                if *service == "route-lan" {
-                    init.route_lans.push(RouteLanServiceConfig {
-                        iface_name: lan_iface.clone(),
-                        enable: true,
-                        static_routes: None,
-                        update_at: now,
-                    });
-                }
-            }
+            push_route_lan(&mut init, lan_iface.as_deref(), now);
         }
 
         Ok(init)
+    }
+
+    fn reject_lan_flags(&self) -> Result<(), ConfigCliError> {
+        if !self.lan_member.is_empty() {
+            return Err(ConfigCliError::LanFlagWithoutLan("lan-member"));
+        }
+        if self.no_lan_dhcp {
+            return Err(ConfigCliError::LanFlagWithoutLan("no-lan-dhcp"));
+        }
+        if self.lan_dhcp_range.is_some() {
+            return Err(ConfigCliError::LanFlagWithoutLan("lan-dhcp-range"));
+        }
+        if self.lan_dhcp_lease.is_some() {
+            return Err(ConfigCliError::LanFlagWithoutLan("lan-dhcp-lease"));
+        }
+        Ok(())
+    }
+
+    fn parse_static_nat_pairs(&self) -> Result<Vec<StaticMapPair>, ConfigCliError> {
+        if !self.static_nat.is_empty() && self.wan_mode == WanMode::None {
+            return Err(ConfigCliError::StaticNatWithoutWan);
+        }
+        self.static_nat.iter().map(|raw| parse_static_nat_pair(raw)).collect()
     }
 
     fn pppoe_credentials(&self, mode: &'static str) -> Result<(String, String), ConfigCliError> {
@@ -327,6 +399,25 @@ fn parse_dhcp_range(raw: &str) -> Result<(Ipv4Addr, Option<Ipv4Addr>), ConfigCli
     Ok((start, end))
 }
 
+fn parse_static_nat_pair(raw: &str) -> Result<StaticMapPair, ConfigCliError> {
+    let invalid = || ConfigCliError::InvalidStaticNat(raw.to_string());
+    let (wan_port, lan_port) = raw.split_once(':').ok_or_else(invalid)?;
+    let wan_port = wan_port.trim().parse::<u16>().map_err(|_| invalid())?;
+    let lan_port = lan_port.trim().parse::<u16>().map_err(|_| invalid())?;
+    Ok(StaticMapPair { wan_port, lan_port })
+}
+
+fn push_route_lan(init: &mut InitConfig, lan_iface: Option<&str>, now: f64) {
+    if let Some(name) = lan_iface {
+        init.route_lans.push(RouteLanServiceConfig {
+            iface_name: name.to_string(),
+            enable: true,
+            static_routes: None,
+            update_at: now,
+        });
+    }
+}
+
 fn default_dhcp_range_start(server_ip: Ipv4Addr, network_mask: u8) -> Ipv4Addr {
     let mask_bits = if network_mask == 0 { 0 } else { u32::MAX << (32 - network_mask) };
     let network = u32::from(server_ip) & mask_bits;
@@ -397,13 +488,173 @@ mod tests {
     }
 
     #[test]
-    fn lan_iface_is_required() {
+    fn missing_both_ifaces_is_rejected() {
+        let args = ConfigCliArgs { wan_mode: WanMode::None, ..Default::default() };
+        assert!(matches!(args.build_init_config(), Err(ConfigCliError::MissingAnyIface)));
+    }
+
+    #[test]
+    fn wan_only_omits_lan_bridge_dhcp_and_route_lan() {
         let args = ConfigCliArgs {
             wan_iface: Some("eth0".to_string()),
             lan_iface: None,
             ..Default::default()
         };
-        assert!(matches!(args.build_init_config(), Err(ConfigCliError::MissingLanIface)));
+        let init = args.build_init_config().unwrap();
+
+        assert_eq!(init.ifaces.len(), 1);
+        assert_eq!(init.ifaces[0].name, "eth0");
+        assert_eq!(init.ifaces[0].zone_type, IfaceZoneType::Wan);
+
+        assert_eq!(init.dhcpv4_services.len(), 0);
+        assert_eq!(init.route_lans.len(), 0);
+        assert_eq!(init.nats.len(), 1);
+        assert_eq!(init.route_wans.len(), 1);
+        assert!(init.static_nat_mappings_v4.is_empty());
+    }
+
+    #[test]
+    fn wan_only_rejects_lan_scoped_flags() {
+        let cases: Vec<ConfigCliArgs> = vec![
+            ConfigCliArgs {
+                wan_iface: Some("eth0".to_string()),
+                lan_member: vec!["eth1".to_string()],
+                ..Default::default()
+            },
+            ConfigCliArgs {
+                wan_iface: Some("eth0".to_string()),
+                no_lan_dhcp: true,
+                ..Default::default()
+            },
+            ConfigCliArgs {
+                wan_iface: Some("eth0".to_string()),
+                lan_dhcp_range: Some("192.168.5.10".to_string()),
+                ..Default::default()
+            },
+            ConfigCliArgs {
+                wan_iface: Some("eth0".to_string()),
+                lan_dhcp_lease: Some(3600),
+                ..Default::default()
+            },
+        ];
+        for args in cases {
+            assert!(matches!(args.build_init_config(), Err(ConfigCliError::LanFlagWithoutLan(_))));
+        }
+    }
+
+    #[test]
+    fn wan_only_rejects_explicit_lan_service() {
+        let args = ConfigCliArgs {
+            wan_iface: Some("eth0".to_string()),
+            enable: vec!["route-lan".to_string()],
+            ..Default::default()
+        };
+        assert!(matches!(
+            args.build_init_config(),
+            Err(ConfigCliError::LanServiceWithoutLan(name)) if name == "route-lan"
+        ));
+    }
+
+    #[test]
+    fn admin_credentials_land_in_config_auth() {
+        let mut args = base_args();
+        args.admin_user = Some("admin".to_string());
+        args.admin_pass = Some("secret".to_string());
+
+        let init = args.build_init_config().unwrap();
+        assert_eq!(init.config.auth.admin_user.as_deref(), Some("admin"));
+        assert_eq!(init.config.auth.admin_pass.as_deref(), Some("secret"));
+
+        let init = base_args().build_init_config().unwrap();
+        assert_eq!(init.config.auth.admin_user, None);
+        assert_eq!(init.config.auth.admin_pass, None);
+    }
+
+    #[test]
+    fn partial_admin_credentials_are_allowed() {
+        let mut args = base_args();
+        args.admin_pass = Some("secret".to_string());
+        let init = args.build_init_config().unwrap();
+        assert_eq!(init.config.auth.admin_user, None);
+        assert_eq!(init.config.auth.admin_pass.as_deref(), Some("secret"));
+    }
+
+    #[test]
+    fn empty_admin_credentials_are_rejected() {
+        let mut args = base_args();
+        args.admin_user = Some(String::new());
+        assert!(matches!(
+            args.build_init_config(),
+            Err(ConfigCliError::EmptyAdminCredential("admin-user"))
+        ));
+
+        let mut args = base_args();
+        args.admin_pass = Some(String::new());
+        assert!(matches!(
+            args.build_init_config(),
+            Err(ConfigCliError::EmptyAdminCredential("admin-pass"))
+        ));
+    }
+
+    #[test]
+    fn static_nat_pairs_become_one_local_tcp_mapping() {
+        let mut args = base_args();
+        args.wan_mode = WanMode::Static;
+        args.wan_ip = Some("203.0.113.2/24".to_string());
+        args.wan_gateway = Some(Ipv4Addr::new(203, 0, 113, 1));
+        args.static_nat = vec!["22:22".to_string(), "6443:16443".to_string()];
+
+        let init = args.build_init_config().unwrap();
+        assert_eq!(init.static_nat_mappings_v4.len(), 1);
+        let mapping = &init.static_nat_mappings_v4[0];
+        assert!(mapping.enable);
+        assert_eq!(mapping.wan_iface_name.as_deref(), Some("eth0"));
+        assert_eq!(
+            mapping.mapping_pair_ports,
+            vec![
+                StaticMapPair { wan_port: 22, lan_port: 22 },
+                StaticMapPair { wan_port: 6443, lan_port: 16443 }
+            ]
+        );
+        assert_eq!(mapping.lan_target, Some(StaticNatV4Target::Local));
+        assert_eq!(mapping.l4_protocols, vec![TCP_L4_PROTOCOL]);
+    }
+
+    #[test]
+    fn static_nat_attaches_to_pppd_iface() {
+        let mut args = base_args();
+        args.wan_mode = WanMode::Pppd;
+        args.pppoe_username = Some("user".to_string());
+        args.pppoe_password = Some("pass".to_string());
+        args.static_nat = vec!["22:22".to_string()];
+
+        let init = args.build_init_config().unwrap();
+        assert_eq!(init.static_nat_mappings_v4[0].wan_iface_name.as_deref(), Some("ppp0"));
+    }
+
+    #[test]
+    fn static_nat_requires_wan() {
+        let args = ConfigCliArgs {
+            wan_mode: WanMode::None,
+            lan_iface: Some("br_lan".to_string()),
+            static_nat: vec!["22:22".to_string()],
+            ..Default::default()
+        };
+        assert!(matches!(args.build_init_config(), Err(ConfigCliError::StaticNatWithoutWan)));
+    }
+
+    #[test]
+    fn invalid_static_nat_is_rejected() {
+        let mut args = base_args();
+        args.static_nat = vec!["22".to_string()];
+        assert!(matches!(args.build_init_config(), Err(ConfigCliError::InvalidStaticNat(_))));
+
+        args.static_nat = vec!["a:b".to_string()];
+        assert!(matches!(args.build_init_config(), Err(ConfigCliError::InvalidStaticNat(_))));
+
+        // Port 0 is rejected by the mapping validation.
+        args.static_nat = vec!["0:22".to_string()];
+        assert!(matches!(args.build_init_config(), Err(ConfigCliError::InvalidStaticNatConfig(_))));
     }
 
     #[test]

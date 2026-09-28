@@ -106,6 +106,31 @@ assert_not_has "none: no wan iface/services" "$OUT" \
   'zone_type = "wan"' '[[ipconfigs]]' '[[nats]]' '[[route_wans]]' '[[mss_clamps]]'
 assert_has "none: route-lan kept" "$OUT" '[[route_lans]]'
 
+echo "== auth =="
+run "admin creds" 0 --wan-iface eth0 --lan-iface br_lan \
+  --admin-user admin --admin-pass secret --stdout
+assert_has "auth: written to config" "$OUT" 'admin_user = "admin"' 'admin_pass = "secret"'
+run "admin pass only" 0 --wan-iface eth0 --lan-iface br_lan --admin-pass secret --stdout
+assert_has "auth: partial allowed" "$OUT" 'admin_pass = "secret"'
+assert_not_has "auth: user stays unset" "$OUT" 'admin_user'
+
+echo "== wan-only =="
+run "wan-only static" 0 --wan-iface eth0 --wan-mode static \
+  --wan-ip 203.0.113.2/24 --wan-gateway 203.0.113.1 \
+  --static-nat 22:22 --static-nat 6443:16443 --stdout
+assert_has "wan-only: wan iface" "$OUT" 'name = "eth0"' 'zone_type = "wan"'
+assert_has "wan-only: static model" "$OUT" 't = "static"' 'ipv4 = "203.0.113.2"'
+assert_not_has "wan-only: no lan bridge" "$OUT" 'create_dev_type = "bridge"' 'zone_type = "lan"'
+assert_not_has "wan-only: no lan services" "$OUT" '[[route_lans]]' '[[dhcpv4_services]]'
+assert_has "wan-only: wan services" "$OUT" '[[nats]]' '[[route_wans]]'
+assert_has "wan-only: static nat" "$OUT" \
+  '[[static_nat_mappings_v4]]' 't = "local"' 'wan_port = 22' 'lan_port = 22' \
+  'wan_port = 6443' 'lan_port = 16443'
+
+run "wan-only dhcp" 0 --wan-iface eth0 --wan-mode dhcp --stdout
+assert_has "wan-only dhcp: client model" "$OUT" 't = "dhcpclient"' 'name = "eth0"'
+assert_not_has "wan-only dhcp: no lan" "$OUT" '[[route_lans]]' '[[dhcpv4_services]]' '[[static_nat_mappings_v4]]'
+
 run "lan member" 0 --wan-iface eth0 --lan-iface br_lan --lan-member eth1 --lan-member eth2 --stdout
 assert_has "lan member: controller" "$OUT" 'name = "eth1"' 'name = "eth2"' 'controller_name = "br_lan"'
 
@@ -152,8 +177,22 @@ run "re-write with force" 0 --wan-iface eth0 --lan-iface br_lan --dir "$WORK" --
 echo "== validation errors =="
 run "missing wan-iface" 1 --lan-iface br_lan
 assert_has "missing wan-iface msg" "$OUT" "--wan-iface is required"
-run "missing lan-iface" 1 --wan-iface eth0
-assert_has "missing lan-iface msg" "$OUT" "--lan-iface is required"
+run "missing both ifaces" 1 --wan-mode none
+assert_has "missing both ifaces msg" "$OUT" "at least one of --wan-iface or --lan-iface"
+run "empty admin-user" 1 --wan-iface eth0 --lan-iface br_lan --admin-user ""
+assert_has "empty admin-user msg" "$OUT" "must not be empty"
+run "wan-only with lan-member" 1 --wan-iface eth0 --lan-member eth1
+assert_has "wan-only with lan-member msg" "$OUT" "--lan-member requires --lan-iface"
+run "wan-only with lan dhcp range" 1 --wan-iface eth0 --lan-dhcp-range 192.168.5.10
+assert_has "wan-only with lan dhcp range msg" "$OUT" "--lan-dhcp-range requires --lan-iface"
+run "lan service with wan-only" 1 --wan-iface eth0 --enable route-lan
+assert_has "lan service with wan-only msg" "$OUT" "requires --lan-iface"
+run "static-nat without wan" 1 --wan-mode none --lan-iface br_lan --static-nat 22:22
+assert_has "static-nat without wan msg" "$OUT" "--static-nat requires --wan-mode"
+run "invalid static-nat" 1 --wan-iface eth0 --static-nat 22
+assert_has "invalid static-nat msg" "$OUT" "invalid static NAT mapping"
+run "zero static-nat port" 1 --wan-iface eth0 --static-nat 0:22
+assert_has "zero static-nat port msg" "$OUT" "invalid static NAT configuration"
 run "static missing ip" 1 --wan-iface eth0 --lan-iface br_lan --wan-mode static
 assert_has "static missing ip msg" "$OUT" "--wan-ip is required"
 run "static missing gateway" 1 --wan-iface eth0 --lan-iface br_lan --wan-mode static --wan-ip 1.2.3.4/24

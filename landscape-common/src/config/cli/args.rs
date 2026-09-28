@@ -49,6 +49,9 @@ impl From<PppdPluginArg> for PPPoEPlugin {
 /// imported by the same version, so always generate it with the target binary.
 ///
 /// Interface names are always explicit; no interface probing is performed.
+///
+/// Supported topologies: WAN + LAN bridge (default), LAN-only
+/// (`--wan-mode none`) and WAN-only (omit `--lan-iface`).
 #[derive(Args, Debug, Clone)]
 pub struct ConfigCliArgs {
     /// Print the generated TOML to stdout instead of writing a file
@@ -62,6 +65,15 @@ pub struct ConfigCliArgs {
     /// Overwrite an existing landscape_init.toml
     #[arg(short, long)]
     pub force: bool,
+
+    // ── Auth ─────────────────────────────────────────────────────────────
+    /// Admin username written to [config.auth] (default: root)
+    #[arg(long, value_name = "USER")]
+    pub admin_user: Option<String>,
+
+    /// Admin password written to [config.auth] (default: root)
+    #[arg(long, value_name = "PASS")]
+    pub admin_pass: Option<String>,
 
     // ── WAN ──────────────────────────────────────────────────────────────
     /// WAN physical interface name (required unless --wan-mode none)
@@ -112,12 +124,18 @@ pub struct ConfigCliArgs {
     #[arg(long, value_enum, default_value_t = PppdPluginArg::RpPppoe)]
     pub pppd_plugin: PppdPluginArg,
 
+    // ── Static NAT ───────────────────────────────────────────────────────
+    /// Static NAT port mapping to the router itself (TCP only, repeatable):
+    /// <wan_port>:<lan_port>, e.g. --static-nat 22:22
+    #[arg(long = "static-nat", value_name = "WAN_PORT:LAN_PORT")]
+    pub static_nat: Vec<String>,
+
     // ── LAN ──────────────────────────────────────────────────────────────
-    /// LAN bridge interface name (required)
+    /// LAN bridge interface name (omit for a WAN-only deployment)
     #[arg(long, value_name = "NAME")]
     pub lan_iface: Option<String>,
 
-    /// LAN bridge address, e.g. 192.168.5.1/24
+    /// LAN bridge address, e.g. 192.168.5.1/24 (unused without --lan-iface)
     #[arg(long, value_name = "CIDR", default_value = DEFAULT_LAN_IP)]
     pub lan_ip: String,
 
@@ -154,6 +172,8 @@ impl Default for ConfigCliArgs {
             stdout: false,
             dir: None,
             force: false,
+            admin_user: None,
+            admin_pass: None,
             wan_iface: None,
             wan_mode: WanMode::Dhcp,
             wan_ip: None,
@@ -166,6 +186,7 @@ impl Default for ConfigCliArgs {
             pppoe_mtu: DEFAULT_PPPOE_MTU,
             pppd_iface: DEFAULT_PPPD_IFACE.to_string(),
             pppd_plugin: PppdPluginArg::RpPppoe,
+            static_nat: Vec::new(),
             lan_iface: None,
             lan_ip: DEFAULT_LAN_IP.to_string(),
             lan_member: Vec::new(),

@@ -24,6 +24,7 @@ const KNOWN_SERVICES: &[&str] = &["nat", "firewall", "mss-clamp", "route-wan", "
 /// Enabled by default for every WAN-capable mode.
 const BASE_ENABLED_SERVICES: &[&str] = &["nat", "route-wan", "route-lan"];
 const WAN_SERVICES: &[&str] = &["nat", "firewall", "mss-clamp", "route-wan"];
+const LAN_SERVICES: &[&str] = &["route-lan"];
 
 #[cfg(test)]
 mod tests {
@@ -110,6 +111,8 @@ mod tests {
             "stdout",
             "dir",
             "force",
+            "admin-user",
+            "admin-pass",
             "wan-iface",
             "wan-mode",
             "wan-ip",
@@ -122,6 +125,7 @@ mod tests {
             "pppoe-mtu",
             "pppd-iface",
             "pppd-plugin",
+            "static-nat",
             "lan-iface",
             "lan-ip",
             "lan-member",
@@ -172,10 +176,10 @@ mod tests {
         assert_eq!(args.pppd_plugin, PppdPluginArg::RpPppoe);
     }
 
-    fn default_services(mode: WanMode) -> BTreeSet<&'static str> {
+    fn default_services(mode: WanMode, lan_iface: Option<&str>) -> BTreeSet<&'static str> {
         let mut args = ConfigCliArgs {
             wan_iface: Some("eth0".to_string()),
-            lan_iface: Some("br_lan".to_string()),
+            lan_iface: lan_iface.map(str::to_string),
             wan_mode: mode,
             ..Default::default()
         };
@@ -213,22 +217,27 @@ mod tests {
 
     #[test]
     fn config_cli_default_services_are_locked() {
+        let lan = Some("br_lan");
         assert_eq!(
-            default_services(WanMode::Dhcp),
+            default_services(WanMode::Dhcp, lan),
             BTreeSet::from(["nat", "route-wan", "route-lan"])
         );
         assert_eq!(
-            default_services(WanMode::Static),
+            default_services(WanMode::Static, lan),
             BTreeSet::from(["nat", "route-wan", "route-lan"])
         );
         assert_eq!(
-            default_services(WanMode::Pppoe),
+            default_services(WanMode::Pppoe, lan),
             BTreeSet::from(["nat", "mss-clamp", "route-wan", "route-lan"])
         );
         assert_eq!(
-            default_services(WanMode::Pppd),
+            default_services(WanMode::Pppd, lan),
             BTreeSet::from(["nat", "mss-clamp", "route-wan", "route-lan"])
         );
-        assert_eq!(default_services(WanMode::None), BTreeSet::from(["route-lan"]));
+        assert_eq!(default_services(WanMode::None, lan), BTreeSet::from(["route-lan"]));
+
+        // WAN-only deployments drop route-lan from the defaults.
+        assert_eq!(default_services(WanMode::Dhcp, None), BTreeSet::from(["nat", "route-wan"]));
+        assert_eq!(default_services(WanMode::Static, None), BTreeSet::from(["nat", "route-wan"]));
     }
 }
