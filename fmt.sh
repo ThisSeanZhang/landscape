@@ -2,19 +2,21 @@
 set -e
 
 usage() {
-    echo "Usage: $0 [--all] [--rust] [--c] [--frontend]"
+    echo "Usage: $0 [--all] [--rust] [--clippy] [--c] [--frontend]"
     echo ""
-    echo "Format source code. Run without options to format all languages."
+    echo "Format source code. Run without options to format all languages and run clippy."
     echo ""
     echo "Options:"
-    echo "  -a, --all         Format all (Rust + C + Frontend), same as no options"
+    echo "  -a, --all         Format all (Rust + C + Frontend) and run clippy, same as no options"
     echo "  -r, --rust        Format Rust code only (cargo fmt)"
+    echo "  -l, --clippy      Run clippy check only (same as CI: cargo clippy -D warnings)"
     echo "  -c, --c           Format C/eBPF code only (clang-format-18)"
     echo "  -f, --frontend    Format Frontend code only (prettier)"
 }
 
 FORMAT_ALL=false
 FORMAT_RUST=false
+FORMAT_CLIPPY=false
 FORMAT_C=false
 FORMAT_FRONTEND=false
 
@@ -23,6 +25,7 @@ while [[ $# -gt 0 ]]; do
         -h|--help) usage; exit 0 ;;
         -a|--all) FORMAT_ALL=true; shift ;;
         -r|--rust) FORMAT_RUST=true; shift ;;
+        -l|--clippy) FORMAT_CLIPPY=true; shift ;;
         -c|--c) FORMAT_C=true; shift ;;
         -f|--frontend) FORMAT_FRONTEND=true; shift ;;
         *)
@@ -34,13 +37,18 @@ while [[ $# -gt 0 ]]; do
 done
 
 # Default: format all if no specific option is given
-if ! $FORMAT_RUST && ! $FORMAT_C && ! $FORMAT_FRONTEND; then
+if ! $FORMAT_RUST && ! $FORMAT_CLIPPY && ! $FORMAT_C && ! $FORMAT_FRONTEND; then
     FORMAT_ALL=true
 fi
 
 if $FORMAT_ALL || $FORMAT_RUST; then
     echo "Formatting Rust code..."
     cargo fmt
+fi
+
+if $FORMAT_ALL || $FORMAT_CLIPPY; then
+    echo "Running clippy check (same as CI)..."
+    cargo clippy --workspace --features metric-persistent -- -D warnings
 fi
 
 if $FORMAT_ALL || $FORMAT_C; then
