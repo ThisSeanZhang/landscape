@@ -107,6 +107,12 @@ const ROUTE_EVENT_CHANNEL_SIZE: usize = 128;
 
 const UPLOAD_GEO_FILE_SIZE_LIMIT: usize = 100 * 1024 * 1024;
 
+/// 按子系统记账的全局分配器(默认计数模式;`mem-track-precise` feature
+/// 启用分配头精确归属)。必须尽早声明,覆盖进程全部堆分配。
+#[global_allocator]
+static GLOBAL_ALLOCATOR: landscape_common::memtrack::CountingAllocator =
+    landscape_common::memtrack::CountingAllocator;
+
 fn log_startup_phase(phase: &str, phase_start: Instant, startup_start: Instant) {
     tracing::info!(
         "startup phase={} elapsed_ms={} since_run_ms={}",
@@ -533,6 +539,9 @@ async fn run_system(
     );
 
     startup_phase!("metric_service.start_service", metric_service.start_service().await);
+    // 内存快照环形缓冲:1s 采样、最近 1 小时,服务 /system/memory 实时查询;
+    // 分钟级持久化由 metric_service(MemRecording)独立负责。
+    let memory_history = landscape_common::memtrack::start_sampler();
     let auth_share = Arc::new(ArcSwap::from_pointee(config.auth.clone()));
     let landscape_app_status = LandscapeApp {
         home_path: home_path.clone(),
@@ -550,6 +559,7 @@ async fn run_system(
         geo_ip_service,
         config_service,
         metric_service,
+        memory_history,
         route_service,
         dhcp_v4_server_service,
         wan_ip_service,

@@ -40,6 +40,7 @@ use landscape::{
 use landscape_common::{
     config::AuthRuntimeConfig,
     database::LandscapeStore,
+    memtrack::MemoryHistory,
     service::controller::{ConfigStoreServiceController, ControllerService},
     wan_service::ip_config::IfaceIpModelConfig,
 };
@@ -72,6 +73,9 @@ pub struct LandscapeApp {
 
     /// Metric
     pub metric_service: MetricService,
+
+    /// 进程内存快照环形缓冲(1s 采样,最近 1 小时),服务 /system/memory 实时查询。
+    pub memory_history: MemoryHistory,
 
     /// Route
     pub route_service: IpRouteService,

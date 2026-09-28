@@ -38,6 +38,7 @@ use crate::services::routing::get_route_paths;
 use crate::services::wan::get_route_wan_paths;
 use crate::services::wifi::get_wifi_service_paths;
 use crate::system::config::get_sys_config_paths;
+use crate::system::memory::get_memory_paths;
 use crate::LandscapeApp;
 
 struct SecurityAddon;
@@ -72,6 +73,7 @@ impl Modify for SecurityAddon {
         (name = "Interfaces", description = "Network interface management"),
         (name = "System Config", description = "System configuration management"),
         (name = "System Info", description = "System information and status"),
+        (name = "Memory", description = "Per-subsystem process memory usage"),
         (name = "Route", description = "Route tracing and cache management"),
         (name = "Route WAN", description = "WAN route service management"),
         (name = "Route LAN", description = "LAN route service management"),
@@ -144,7 +146,7 @@ pub fn build_interfaces_openapi_router() -> OpenApiRouter<LandscapeApp> {
 
 /// /system — system info + global config (sysinfo has its own state type, handled separately)
 pub fn build_system_openapi_router() -> OpenApiRouter<LandscapeApp> {
-    OpenApiRouter::new().merge(get_sys_config_paths())
+    OpenApiRouter::new().merge(get_sys_config_paths()).merge(get_memory_paths())
 }
 
 /// /services — per-interface network services
@@ -326,7 +328,8 @@ pub fn build_full_openapi_spec() -> utoipa::openapi::OpenApi {
             "name": "System",
             "tags": [
                 "System Config",
-                "System Info"
+                "System Info",
+                "Memory"
             ]
         },
         {
