@@ -34,12 +34,10 @@ use std::sync::atomic::Ordering;
 /// 无堆分配;Linux 上 statm 读取会经 read_to_string 产生一次小额分配。
 pub fn capture_compact() -> CompactSnapshot {
     let mut stats = [SlotCounters::default(); SUBSYSTEMS.len()];
-    let mut total_live = 0u64;
     for (index, counters) in registry().iter().enumerate() {
         let allocated = counters.allocated_bytes.load(Ordering::Relaxed);
         let freed = counters.freed_bytes.load(Ordering::Relaxed);
         let live = allocated.saturating_sub(freed);
-        total_live = total_live.saturating_add(live);
         stats[index] = SlotCounters {
             allocated_bytes: allocated,
             freed_bytes: freed,
@@ -49,6 +47,7 @@ pub fn capture_compact() -> CompactSnapshot {
         };
     }
 
+    let total_live = global_live_bytes(&stats);
     let (virtual_bytes, rss_bytes) = read_proc_statm();
     let untracked_bytes = rss_bytes.map(|rss| {
         // RSS 与分配器视角的差值:RSS 更小(未触碰页/已归还)为负,更大为开销。
@@ -66,6 +65,13 @@ pub fn capture_compact() -> CompactSnapshot {
         },
         stats,
     }
+}
+
+fn global_live_bytes(stats: &[SlotCounters]) -> u64 {
+    let (allocated, freed) = stats.iter().fold((0u128, 0u128), |(allocated, freed), slot| {
+        (allocated + slot.allocated_bytes as u128, freed + slot.freed_bytes as u128)
+    });
+    allocated.saturating_sub(freed).min(u64::MAX as u128) as u64
 }
 
 /// API 查询边界用的全量快照;采样热路径走 [`capture_compact`]。
@@ -101,6 +107,26 @@ fn read_proc_statm() -> (Option<u64>, Option<u64>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn global_live_subtracts_frees_after_summing_subsystems() {
+        let stats = [
+            SlotCounters {
+                allocated_bytes: 100,
+                live_bytes: 100,
+                freed_bytes: 0,
+                ..Default::default()
+            },
+            SlotCounters {
+                allocated_bytes: 0,
+                freed_bytes: 60,
+                ..Default::default()
+            },
+        ];
+
+        assert_eq!(global_live_bytes(&stats), 40);
+        assert_eq!(stats.iter().map(|slot| slot.live_bytes).sum::<u64>(), 100);
+    }
 
     #[test]
     fn snapshot_covers_all_subsystems_and_meta() {

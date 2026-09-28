@@ -2,7 +2,8 @@
 //! 记录与查询参数,由 landscape-metric 的 memory store 写入/查询,
 //! webserver 暴露为 `/api/v1/metrics/memory` 系列 API。
 
-/// 一个子系统在一分钟内的聚合值。
+/// 一个子系统在一分钟内的聚合值。`(process)` 保留行以 live 字段表示 RSS;
+/// 该行不采集分配器流量,因此 alloc/free 字段为 0。
 ///
 /// 进程级 RSS 以保留名 `(process)` 作为 subsystem 存于同一张表。
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -11,9 +12,9 @@ pub struct MemMinuteRecord {
     /// 分钟起始时间戳(ms)。
     pub minute_ts: u64,
     pub subsystem: String,
-    /// live = allocated − freed 的分钟内平均。
+    /// 子系统为 live 平均值;`(process)` 为 RSS 平均值。
     pub live_avg_bytes: u64,
-    /// live 分钟内最大(泄漏排查用)。
+    /// 子系统 live 或进程 RSS 的分钟内最大值。
     pub live_max_bytes: u64,
     /// 分钟内累计分配字节。
     pub alloc_delta_bytes: u64,

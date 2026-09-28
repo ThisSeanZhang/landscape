@@ -18,10 +18,14 @@ struct SubsystemMinuteAcc {
 }
 
 impl SubsystemMinuteAcc {
-    fn ingest(&mut self, live: u64, allocated: u64, freed: u64) {
+    fn ingest_live(&mut self, live: u64) {
         self.live_sum += live as u128;
         self.live_max = self.live_max.max(live);
         self.samples += 1;
+    }
+
+    fn ingest_subsystem(&mut self, live: u64, allocated: u64, freed: u64) {
+        self.ingest_live(live);
         self.alloc_first.get_or_insert(allocated);
         self.alloc_last = allocated;
         self.free_first.get_or_insert(freed);
@@ -76,22 +80,29 @@ impl MinuteAggregator {
             if counters == SlotCounters::default() {
                 continue;
             }
-            self.subsystems.entry(slot).or_default().ingest(
+            self.subsystems.entry(slot).or_default().ingest_subsystem(
                 counters.live_bytes,
                 counters.allocated_bytes,
                 counters.freed_bytes,
             );
         }
         if let Some(rss) = snapshot.meta.process_rss_bytes {
-            self.process.ingest(rss, rss, rss);
+            self.process.ingest_live(rss);
         }
 
         rows
     }
 
-    /// 收尾:强制吐出当前分钟(重启/停止时调用,避免丢最后一段)。
+    /// 显式强制吐出当前分钟。后台 recorder 停止时会丢弃未完成分钟。
     pub fn flush_current(&mut self) -> Vec<MemMinuteRecord> {
         self.current_minute.take().map(|minute_ts| self.take_rows(minute_ts)).unwrap_or_default()
+    }
+
+    /// 丢弃当前未完成分钟,用于 recorder 停止或重启。
+    pub fn discard_current(&mut self) {
+        self.current_minute = None;
+        self.subsystems.clear();
+        self.process = SubsystemMinuteAcc::default();
     }
 
     fn take_rows(&mut self, minute_ts: u64) -> Vec<MemMinuteRecord> {
@@ -158,11 +169,29 @@ mod tests {
         let process = rows.iter().find(|r| r.subsystem == PROCESS_SUBSYSTEM).unwrap();
         assert_eq!(process.live_avg_bytes, 1_050);
         assert_eq!(process.live_max_bytes, 1_100);
+        assert_eq!(process.alloc_delta_bytes, 0);
+        assert_eq!(process.free_delta_bytes, 0);
 
         let tail = agg.flush_current();
         assert_eq!(tail.len(), 2);
         assert_eq!(tail[0].minute_ts, minute + 60_000);
         assert_eq!(tail.iter().find(|r| r.subsystem == "dns").unwrap().live_avg_bytes, 130);
         assert!(agg.flush_current().is_empty());
+    }
+
+    #[test]
+    fn discard_current_drops_incomplete_minute() {
+        let mut agg = MinuteAggregator::new();
+        let minute = 600_000;
+        assert!(agg.ingest(&snap(minute + 1_000, 100, 300, 200, Some(1_000))).is_empty());
+
+        agg.discard_current();
+
+        assert!(agg.ingest(&snap(minute + 61_000, 120, 400, 280, Some(1_100))).is_empty());
+        let rows = agg.flush_current();
+        let dns = rows.iter().find(|row| row.subsystem == "dns").unwrap();
+        assert_eq!(dns.minute_ts, minute + 60_000);
+        assert_eq!(dns.live_avg_bytes, 120);
+        assert_eq!(dns.alloc_delta_bytes, 0);
     }
 }

@@ -63,7 +63,7 @@ impl MemMetricStore {
         Ok(MemMetricStore { pool })
     }
 
-    /// 写入一个分钟的行;同键(分钟+子系统)重复写入时覆盖(重启回放场景)。
+    /// 写入已完成分钟的行;同键重复写入时保留已存行,避免覆盖完整数据。
     pub async fn record_minute(&self, rows: &[MemMinuteRecord]) -> bool {
         if rows.is_empty() {
             return true;
@@ -77,9 +77,10 @@ impl MemMetricStore {
         };
         for row in rows {
             let result = sqlx::query(
-                "INSERT OR REPLACE INTO mem_1m
+                "INSERT INTO mem_1m
                     (minute_ts, subsystem, live_avg, live_max, alloc_delta, free_delta)
-                 VALUES (?, ?, ?, ?, ?, ?)",
+                 VALUES (?, ?, ?, ?, ?, ?)
+                 ON CONFLICT(minute_ts, subsystem) DO NOTHING",
             )
             .bind(row.minute_ts as i64)
             .bind(&row.subsystem)
@@ -226,7 +227,7 @@ impl MemRecording {
         self.store.query_history(params).await
     }
 
-    /// 停止后台记录任务(收尾写入当前分钟)。store 保持可用(仅供查询)。
+    /// 停止后台记录任务(丢弃未完成分钟)。store 保持可用(仅供查询)。
     pub async fn stop_recorder(&mut self) {
         if let Some(recorder) = self.recorder.take() {
             recorder.stop().await;
@@ -311,10 +312,7 @@ async fn run_memory_recorder(
             }
         }
     }
-    let tail = aggregator.flush_current();
-    if !tail.is_empty() {
-        store.record_minute(&tail).await;
-    }
+    aggregator.discard_current();
     // 不在此处 close 共享池:store 仍被查询路径持有,随所有权释放自然关闭。
 }
 
@@ -374,7 +372,15 @@ mod tests {
             },
         ];
         assert!(store.record_minute(&rows).await);
-        assert!(store.record_minute(&rows[..1]).await);
+        let replacement = MemMinuteRecord {
+            minute_ts: 600_000,
+            subsystem: "dns".to_string(),
+            live_avg_bytes: 9_000,
+            live_max_bytes: 9_500,
+            alloc_delta_bytes: 800,
+            free_delta_bytes: 700,
+        };
+        assert!(store.record_minute(&[replacement]).await);
 
         let queried = store
             .query_history(&MemHistoryQueryParams {
