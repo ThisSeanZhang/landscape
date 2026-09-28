@@ -9,7 +9,6 @@ use libbpf_rs::skel::{OpenSkel, SkelBuilder};
 use libbpf_rs::{ErrorKind, MapCore, MapFlags, MapHandle};
 use netlink_packet_route::neighbour::{NeighbourAddress, NeighbourAttribute, NeighbourState};
 use netlink_packet_route::AddressFamily;
-use rtnetlink::IpVersion;
 use tokio_util::sync::CancellationToken;
 use zerocopy::{FromBytes, IntoBytes};
 
@@ -360,7 +359,7 @@ async fn parse_ipv6_neigh_full_info(
     let mut results = Vec::new();
     let mut dev_mac_cache = std::collections::HashMap::new();
 
-    let mut stream = handle.neighbours().get().set_family(IpVersion::V6).execute();
+    let mut stream = handle.neighbours().get().set_address_family(AddressFamily::Inet6).execute();
 
     loop {
         let msg = match stream.try_next().await {
@@ -389,7 +388,7 @@ async fn parse_ipv4_neigh_full_info(
     let mut results = Vec::new();
     let mut dev_mac_cache = std::collections::HashMap::new();
 
-    let mut stream = handle.neighbours().get().set_family(IpVersion::V4).execute();
+    let mut stream = handle.neighbours().get().set_address_family(AddressFamily::Inet).execute();
 
     loop {
         let msg = match stream.try_next().await {

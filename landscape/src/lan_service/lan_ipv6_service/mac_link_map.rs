@@ -7,7 +7,7 @@ use futures::stream::TryStreamExt;
 use landscape_common::net::MacAddr;
 use netlink_packet_route::neighbour::{NeighbourAddress, NeighbourAttribute, NeighbourState};
 use netlink_packet_route::AddressFamily;
-use rtnetlink::{Handle, IpVersion};
+use rtnetlink::Handle;
 
 struct MacLinkMap {
     mac_to_ll: HashMap<(u32, MacAddr), Ipv6Addr>,
@@ -110,7 +110,7 @@ pub fn start_periodic_scan(cache: &Arc<MacLinkMapCache>, interval_secs: u64) {
 }
 
 async fn scan_once(cache: &Arc<MacLinkMapCache>, handle: &Handle) -> Result<(), std::io::Error> {
-    let mut stream = handle.neighbours().get().set_family(IpVersion::V6).execute();
+    let mut stream = handle.neighbours().get().set_address_family(AddressFamily::Inet6).execute();
 
     loop {
         let msg = match stream.try_next().await {
