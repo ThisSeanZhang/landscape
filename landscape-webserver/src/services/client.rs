@@ -43,7 +43,7 @@ struct CallerIdentityResponse {
     path = "/client/caller",
     tag = "Client",
     operation_id = "get_client_caller",
-    responses((status = 200, body = CommonApiResp<CallerIdentityResponse>))
+    responses((status = 200, description = "Success", body = CommonApiResp<CallerIdentityResponse>))
 )]
 async fn get_client_caller(
     State(state): State<LandscapeApp>,

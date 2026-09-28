@@ -24,7 +24,7 @@ pub fn get_enrolled_device_config_paths() -> OpenApiRouter<LandscapeApp> {
     path = "/check_invalid/{iface_name}",
     tag = "Enrolled Devices",
     params(("iface_name" = String, Path, description = "Interface name")),
-    responses((status = 200, body = CommonApiResp<Vec<EnrolledDevice>>))
+    responses((status = 200, description = "Success", body = CommonApiResp<Vec<EnrolledDevice>>))
 )]
 async fn check_iface_validity(
     State(app): State<LandscapeApp>,
@@ -53,7 +53,7 @@ async fn check_iface_validity(
     path = "/validate_ip",
     tag = "Enrolled Devices",
     request_body = ValidateIpPayload,
-    responses((status = 200, body = CommonApiResp<bool>))
+    responses((status = 200, description = "Success", body = CommonApiResp<bool>))
 )]
 async fn handle_validate_ip(
     State(app): State<LandscapeApp>,
@@ -71,7 +71,7 @@ async fn handle_validate_ip(
     get,
     path = "/all",
     tag = "Enrolled Devices",
-    responses((status = 200, body = CommonApiResp<Vec<EnrolledDevice>>))
+    responses((status = 200, description = "Success", body = CommonApiResp<Vec<EnrolledDevice>>))
 )]
 async fn list_enrolled_devices(
     State(app): State<LandscapeApp>,
@@ -85,7 +85,7 @@ async fn list_enrolled_devices(
     path = "/{id}",
     tag = "Enrolled Devices",
     params(("id" = Uuid, Path, description = "Enrolled device ID")),
-    responses((status = 200, body = CommonApiResp<Option<EnrolledDevice>>))
+    responses((status = 200, description = "Success", body = CommonApiResp<Option<EnrolledDevice>>))
 )]
 async fn get_enrolled_device(
     State(app): State<LandscapeApp>,

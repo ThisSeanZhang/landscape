@@ -24,7 +24,7 @@ pub fn get_cert_account_paths() -> OpenApiRouter<LandscapeApp> {
     get,
     path = "/accounts",
     tag = "Certificate Accounts",
-    responses((status = 200, body = CommonApiResp<Vec<CertAccountConfig>>))
+    responses((status = 200, description = "Success", body = CommonApiResp<Vec<CertAccountConfig>>))
 )]
 async fn list_cert_accounts(
     State(state): State<LandscapeApp>,
@@ -38,7 +38,7 @@ async fn list_cert_accounts(
     path = "/accounts",
     tag = "Certificate Accounts",
     request_body = CertAccountConfig,
-    responses((status = 200, body = CommonApiResp<CertAccountConfig>))
+    responses((status = 200, description = "Success", body = CommonApiResp<CertAccountConfig>))
 )]
 async fn create_cert_account(
     State(state): State<LandscapeApp>,
@@ -58,7 +58,7 @@ async fn create_cert_account(
     tag = "Certificate Accounts",
     params(("id" = Uuid, Path, description = "Certificate account ID")),
     responses(
-        (status = 200, body = CommonApiResp<CertAccountConfig>),
+        (status = 200, description = "Success", body = CommonApiResp<CertAccountConfig>),
         (status = 404, description = "Not found")
     )
 )]
@@ -99,7 +99,7 @@ async fn delete_cert_account(
     tag = "Certificate Accounts",
     params(("id" = Uuid, Path, description = "Certificate account ID")),
     responses(
-        (status = 200, body = CommonApiResp<CertAccountConfig>),
+        (status = 200, description = "Success", body = CommonApiResp<CertAccountConfig>),
         (status = 404, description = "Not found"),
         (status = 400, description = "Staging not supported"),
         (status = 500, description = "Registration failed")
@@ -120,7 +120,7 @@ async fn register_cert_account(
     tag = "Certificate Accounts",
     params(("id" = Uuid, Path, description = "Certificate account ID")),
     responses(
-        (status = 200, body = CommonApiResp<CertAccountConfig>),
+        (status = 200, description = "Success", body = CommonApiResp<CertAccountConfig>),
         (status = 404, description = "Not found"),
         (status = 500, description = "Verification failed")
     )
@@ -140,7 +140,7 @@ async fn verify_cert_account(
     tag = "Certificate Accounts",
     params(("id" = Uuid, Path, description = "Certificate account ID")),
     responses(
-        (status = 200, body = CommonApiResp<CertAccountConfig>),
+        (status = 200, description = "Success", body = CommonApiResp<CertAccountConfig>),
         (status = 404, description = "Not found"),
         (status = 500, description = "Deactivation failed")
     )

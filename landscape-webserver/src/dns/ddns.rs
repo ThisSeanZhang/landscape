@@ -24,7 +24,7 @@ pub fn get_ddns_paths() -> OpenApiRouter<LandscapeApp> {
     get,
     path = "/ddns",
     tag = "DDNS",
-    responses((status = 200, body = CommonApiResp<Vec<DdnsJob>>))
+    responses((status = 200, description = "Success", body = CommonApiResp<Vec<DdnsJob>>))
 )]
 async fn list_ddns_jobs(State(app): State<LandscapeApp>) -> LandscapeApiResult<Vec<DdnsJob>> {
     LandscapeApiResp::success(app.ddns_service.list().await)
@@ -34,7 +34,7 @@ async fn list_ddns_jobs(State(app): State<LandscapeApp>) -> LandscapeApiResult<V
     get,
     path = "/ddns/status",
     tag = "DDNS",
-    responses((status = 200, body = CommonApiResp<Vec<DdnsJobRuntime>>))
+    responses((status = 200, description = "Success", body = CommonApiResp<Vec<DdnsJobRuntime>>))
 )]
 async fn list_ddns_job_status(
     State(app): State<LandscapeApp>,
@@ -47,7 +47,7 @@ async fn list_ddns_job_status(
     path = "/ddns/{id}",
     tag = "DDNS",
     params(("id" = Uuid, Path, description = "DDNS job ID")),
-    responses((status = 200, body = CommonApiResp<Option<DdnsJob>>))
+    responses((status = 200, description = "Success", body = CommonApiResp<Option<DdnsJob>>))
 )]
 async fn get_ddns_job(
     State(app): State<LandscapeApp>,
@@ -61,7 +61,7 @@ async fn get_ddns_job(
     path = "/ddns",
     tag = "DDNS",
     request_body = DdnsJob,
-    responses((status = 200, body = CommonApiResp<DdnsJob>))
+    responses((status = 200, description = "Success", body = CommonApiResp<DdnsJob>))
 )]
 async fn create_ddns_job(
     State(app): State<LandscapeApp>,
@@ -75,7 +75,7 @@ async fn create_ddns_job(
     path = "/ddns/{id}/sync",
     tag = "DDNS",
     params(("id" = Uuid, Path, description = "DDNS job ID")),
-    responses((status = 200, body = CommonApiResp<DdnsJobRuntime>))
+    responses((status = 200, description = "Success", body = CommonApiResp<DdnsJobRuntime>))
 )]
 async fn trigger_ddns_job_sync(
     State(app): State<LandscapeApp>,
@@ -90,7 +90,7 @@ async fn trigger_ddns_job_sync(
     tag = "DDNS",
     params(("id" = Uuid, Path, description = "DDNS job ID")),
     request_body = DdnsJob,
-    responses((status = 200, body = CommonApiResp<DdnsJob>))
+    responses((status = 200, description = "Success", body = CommonApiResp<DdnsJob>))
 )]
 async fn update_ddns_job(
     State(app): State<LandscapeApp>,

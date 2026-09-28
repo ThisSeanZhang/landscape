@@ -32,7 +32,7 @@ pub fn get_iface_pdclient_paths() -> OpenApiRouter<LandscapeApp> {
     path = "/ipv6pd",
     tag = "IPv6 PD",
     operation_id = "get_all_ipv6pd_configs",
-    responses((status = 200, body = CommonApiResp<Vec<IPV6PDServiceConfig>>))
+    responses((status = 200, description = "Success", body = CommonApiResp<Vec<IPV6PDServiceConfig>>))
 )]
 async fn get_all_ipv6pd_configs(
     State(state): State<LandscapeApp>,
@@ -47,7 +47,7 @@ async fn get_all_ipv6pd_configs(
     path = "/ipv6pd/prefix-status",
     tag = "IPv6 PD",
     operation_id = "get_all_ipv6pd_prefix_status",
-    responses((status = 200, body = CommonApiResp<HashMap<String, IPV6PDPrefixStatus>>))
+    responses((status = 200, description = "Success", body = CommonApiResp<HashMap<String, IPV6PDPrefixStatus>>))
 )]
 async fn get_all_prefix_status(
     State(state): State<LandscapeApp>,
@@ -59,7 +59,7 @@ async fn get_all_prefix_status(
     get,
     path = "/ipv6pd/infos",
     tag = "IPv6 PD",
-    responses((status = 200, body = CommonApiResp<HashMap<String, Option<LDIAPrefix>>>))
+    responses((status = 200, description = "Success", body = CommonApiResp<HashMap<String, Option<LDIAPrefix>>>))
 )]
 async fn get_current_ip_prefix_info(
     State(state): State<LandscapeApp>,
@@ -72,7 +72,7 @@ async fn get_current_ip_prefix_info(
     path = "/ipv6pd/status",
     tag = "IPv6 PD",
     operation_id = "get_all_ipv6pd_status",
-    responses((status = 200, body = CommonApiResp<HashMap<String, ServiceStatus>>))
+    responses((status = 200, description = "Success", body = CommonApiResp<HashMap<String, ServiceStatus>>))
 )]
 async fn get_all_status(
     State(state): State<LandscapeApp>,
@@ -86,7 +86,7 @@ async fn get_all_status(
     tag = "IPv6 PD",
     params(("iface_name" = String, Path, description = "Interface name")),
     responses(
-        (status = 200, body = CommonApiResp<IPV6PDServiceConfig>),
+        (status = 200, description = "Success", body = CommonApiResp<IPV6PDServiceConfig>),
         (status = 404, description = "Not found")
     )
 )]
@@ -124,7 +124,7 @@ async fn handle_iface_pd(
     tag = "IPv6 PD",
     operation_id = "delete_and_stop_ipv6pd_service",
     params(("iface_name" = String, Path, description = "Interface name")),
-    responses((status = 200, body = CommonApiResp<Option<ServiceStatus>>))
+    responses((status = 200, description = "Success", body = CommonApiResp<Option<ServiceStatus>>))
 )]
 async fn delete_and_stop_iface_service(
     State(state): State<LandscapeApp>,

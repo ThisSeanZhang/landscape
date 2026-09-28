@@ -36,7 +36,7 @@ pub fn get_lan_ipv6_paths() -> OpenApiRouter<LandscapeApp> {
     path = "/lan_ipv6/assigned_ips",
     tag = "LAN IPv6",
     operation_id = "get_all_lan_ipv6_assigned_ips",
-    responses((status = 200, body = CommonApiResp<HashMap<String, IPv6NAInfo>>))
+    responses((status = 200, description = "Success", body = CommonApiResp<HashMap<String, IPv6NAInfo>>))
 )]
 async fn get_all_iface_assigned_ips(
     State(state): State<LandscapeApp>,
@@ -50,7 +50,7 @@ async fn get_all_iface_assigned_ips(
     tag = "LAN IPv6",
     operation_id = "get_lan_ipv6_assigned_ips_by_iface_name",
     params(("iface_name" = String, Path, description = "Interface name")),
-    responses((status = 200, body = CommonApiResp<Option<IPv6NAInfo>>))
+    responses((status = 200, description = "Success", body = CommonApiResp<Option<IPv6NAInfo>>))
 )]
 async fn get_assigned_ips_by_iface_name(
     State(state): State<LandscapeApp>,
@@ -66,7 +66,7 @@ async fn get_assigned_ips_by_iface_name(
     path = "/lan_ipv6/status",
     tag = "LAN IPv6",
     operation_id = "get_all_lan_ipv6_status",
-    responses((status = 200, body = CommonApiResp<HashMap<String, ServiceStatus>>))
+    responses((status = 200, description = "Success", body = CommonApiResp<HashMap<String, ServiceStatus>>))
 )]
 async fn get_all_status(
     State(state): State<LandscapeApp>,
@@ -79,7 +79,7 @@ async fn get_all_status(
     path = "/lan_ipv6",
     tag = "LAN IPv6",
     operation_id = "get_all_lan_ipv6_configs",
-    responses((status = 200, body = CommonApiResp<Vec<LanIPv6ServiceConfigV2>>))
+    responses((status = 200, description = "Success", body = CommonApiResp<Vec<LanIPv6ServiceConfigV2>>))
 )]
 async fn get_all_lan_ipv6_configs(
     State(state): State<LandscapeApp>,
@@ -95,7 +95,7 @@ async fn get_all_lan_ipv6_configs(
     tag = "LAN IPv6",
     params(("iface_name" = String, Path, description = "Interface name")),
     responses(
-        (status = 200, body = CommonApiResp<LanIPv6ServiceConfigV2>),
+        (status = 200, description = "Success", body = CommonApiResp<LanIPv6ServiceConfigV2>),
         (status = 404, description = "Not found")
     )
 )]
@@ -138,7 +138,7 @@ async fn handle_lan_ipv6(
     path = "/lan_ipv6/{iface_name}",
     tag = "LAN IPv6",
     params(("iface_name" = String, Path, description = "Interface name")),
-    responses((status = 200, body = CommonApiResp<Option<ServiceStatus>>))
+    responses((status = 200, description = "Success", body = CommonApiResp<Option<ServiceStatus>>))
 )]
 async fn delete_and_stop_lan_ipv6(
     State(state): State<LandscapeApp>,
@@ -155,7 +155,7 @@ async fn delete_and_stop_lan_ipv6(
     tag = "LAN IPv6",
     operation_id = "get_lan_ipv6_dhcpv6_assigned_by_iface_name",
     params(("iface_name" = String, Path, description = "Interface name")),
-    responses((status = 200, body = CommonApiResp<Option<DHCPv6OfferInfo>>))
+    responses((status = 200, description = "Success", body = CommonApiResp<Option<DHCPv6OfferInfo>>))
 )]
 async fn get_dhcpv6_assigned_by_iface_name(
     State(state): State<LandscapeApp>,
@@ -171,7 +171,7 @@ async fn get_dhcpv6_assigned_by_iface_name(
     path = "/lan_ipv6/dhcpv6_assigned",
     tag = "LAN IPv6",
     operation_id = "get_all_lan_ipv6_dhcpv6_assigned",
-    responses((status = 200, body = CommonApiResp<HashMap<String, DHCPv6OfferInfo>>))
+    responses((status = 200, description = "Success", body = CommonApiResp<HashMap<String, DHCPv6OfferInfo>>))
 )]
 async fn get_all_dhcpv6_assigned(
     State(state): State<LandscapeApp>,

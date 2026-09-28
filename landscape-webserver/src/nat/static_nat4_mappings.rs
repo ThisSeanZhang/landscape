@@ -23,7 +23,7 @@ pub fn get_static_nat_mapping_v4_paths() -> OpenApiRouter<LandscapeApp> {
     get,
     path = "/static_mappings/v4",
     tag = "Static NAT Mappings",
-    responses((status = 200, body = CommonApiResp<Vec<StaticNatMappingV4Config>>))
+    responses((status = 200, description = "Success", body = CommonApiResp<Vec<StaticNatMappingV4Config>>))
 )]
 async fn get_static_nat_mappings_v4(
     State(state): State<LandscapeApp>,
@@ -38,7 +38,7 @@ async fn get_static_nat_mappings_v4(
     tag = "Static NAT Mappings",
     params(("id" = Uuid, Path, description = "Static NAT mapping v4 ID")),
     responses(
-        (status = 200, body = CommonApiResp<StaticNatMappingV4Config>),
+        (status = 200, description = "Success", body = CommonApiResp<StaticNatMappingV4Config>),
         (status = 404, description = "Not found")
     )
 )]
@@ -59,7 +59,7 @@ async fn get_static_nat_mapping_v4(
     path = "/static_mappings/v4",
     tag = "Static NAT Mappings",
     request_body = StaticNatMappingV4Config,
-    responses((status = 200, body = CommonApiResp<StaticNatMappingV4Config>))
+    responses((status = 200, description = "Success", body = CommonApiResp<StaticNatMappingV4Config>))
 )]
 async fn add_static_nat_mapping_v4(
     State(state): State<LandscapeApp>,
@@ -124,7 +124,7 @@ struct CheckConflictQuery {
         ("wan_port" = u16, Query, description = "WAN port to check for dynamic range conflict"),
         ("protocols" = String, Query, description = "Comma-separated protocol numbers (6=TCP, 17=UDP)")
     ),
-    responses((status = 200, body = CommonApiResp<PortConflictCheckResponse>))
+    responses((status = 200, description = "Success", body = CommonApiResp<PortConflictCheckResponse>))
 )]
 async fn check_static_nat_v4_conflict(
     State(state): State<LandscapeApp>,

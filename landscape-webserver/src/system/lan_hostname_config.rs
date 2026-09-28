@@ -14,7 +14,7 @@ use crate::LandscapeApp;
     path = "/config/edit/lan_hostname",
     tag = "System Config",
     operation_id = "get_lan_hostname_config",
-    responses((status = 200, body = CommonApiResp<GetLanHostnameConfigResponse>))
+    responses((status = 200, description = "Success", body = CommonApiResp<GetLanHostnameConfigResponse>))
 )]
 pub async fn get_lan_hostname_config(
     State(state): State<LandscapeApp>,
@@ -28,7 +28,7 @@ pub async fn get_lan_hostname_config(
     path = "/config/lan_hostname",
     tag = "System Config",
     operation_id = "get_lan_hostname_config_fast",
-    responses((status = 200, body = CommonApiResp<LandscapeLanHostnameConfig>))
+    responses((status = 200, description = "Success", body = CommonApiResp<LandscapeLanHostnameConfig>))
 )]
 pub async fn get_lan_hostname_config_fast(
     State(state): State<LandscapeApp>,

@@ -35,7 +35,7 @@ pub fn get_geo_ip_config_paths() -> OpenApiRouter<LandscapeApp> {
     path = "/ips/cache/lookup",
     tag = "Geo IPs",
     params(("ip" = String, Query, description = "IP address to reverse lookup")),
-    responses((status = 200, body = CommonApiResp<Vec<GeoIpLookupResult>>))
+    responses((status = 200, description = "Success", body = CommonApiResp<Vec<GeoIpLookupResult>>))
 )]
 async fn lookup_geo_ip_address(
     State(state): State<LandscapeApp>,
@@ -53,7 +53,7 @@ async fn lookup_geo_ip_address(
         ("key" = String, Query, description = "Geo cache key")
     ),
     responses(
-        (status = 200, body = CommonApiResp<GeoIpConfig>),
+        (status = 200, description = "Success", body = CommonApiResp<GeoIpConfig>),
         (status = 404, description = "Not found")
     )
 )]
@@ -77,7 +77,7 @@ async fn get_geo_ip_cache_detail(
         ("name" = Option<String>, Query, description = "Filter by name"),
         ("key" = Option<String>, Query, description = "Filter by key")
     ),
-    responses((status = 200, body = CommonApiResp<Vec<GeoFileCacheKey>>))
+    responses((status = 200, description = "Success", body = CommonApiResp<Vec<GeoFileCacheKey>>))
 )]
 async fn search_geo_ip_cache(
     State(state): State<LandscapeApp>,
@@ -105,7 +105,7 @@ async fn search_geo_ip_cache(
     get,
     path = "/ips/cache",
     tag = "Geo IPs",
-    responses((status = 200, body = CommonApiResp<Vec<GeoFileCacheKey>>))
+    responses((status = 200, description = "Success", body = CommonApiResp<Vec<GeoFileCacheKey>>))
 )]
 async fn get_geo_ip_cache(
     State(state): State<LandscapeApp>,
@@ -147,7 +147,7 @@ async fn refresh_geo_ip_config_by_name(
     params(
         ("name" = Option<String>, Query, description = "Filter by name")
     ),
-    responses((status = 200, body = CommonApiResp<Vec<GeoIpSourceConfig>>))
+    responses((status = 200, description = "Success", body = CommonApiResp<Vec<GeoIpSourceConfig>>))
 )]
 async fn get_geo_ips(
     State(state): State<LandscapeApp>,
@@ -163,7 +163,7 @@ async fn get_geo_ips(
     tag = "Geo IPs",
     params(("id" = Uuid, Path, description = "Geo IP rule ID")),
     responses(
-        (status = 200, body = CommonApiResp<GeoIpSourceConfig>),
+        (status = 200, description = "Success", body = CommonApiResp<GeoIpSourceConfig>),
         (status = 404, description = "Not found")
     )
 )]
@@ -184,7 +184,7 @@ async fn get_geo_ip_rule(
     path = "/ips",
     tag = "Geo IPs",
     request_body = GeoIpSourceConfig,
-    responses((status = 200, body = CommonApiResp<GeoIpSourceConfig>))
+    responses((status = 200, description = "Success", body = CommonApiResp<GeoIpSourceConfig>))
 )]
 async fn add_geo_ip(
     State(state): State<LandscapeApp>,

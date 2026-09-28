@@ -14,7 +14,7 @@ use crate::LandscapeApp;
     path = "/time/sync_status",
     tag = "System Config",
     operation_id = "get_time_sync_status",
-    responses((status = 200, body = CommonApiResp<TimeSyncStatus>))
+    responses((status = 200, description = "Success", body = CommonApiResp<TimeSyncStatus>))
 )]
 pub async fn get_time_sync_status(
     State(state): State<LandscapeApp>,
@@ -27,7 +27,7 @@ pub async fn get_time_sync_status(
     path = "/config/edit/time",
     tag = "System Config",
     operation_id = "get_time_config",
-    responses((status = 200, body = CommonApiResp<GetTimeConfigResponse>))
+    responses((status = 200, description = "Success", body = CommonApiResp<GetTimeConfigResponse>))
 )]
 pub async fn get_time_config(
     State(state): State<LandscapeApp>,
@@ -41,7 +41,7 @@ pub async fn get_time_config(
     path = "/config/time",
     tag = "System Config",
     operation_id = "get_time_config_fast",
-    responses((status = 200, body = CommonApiResp<LandscapeTimeConfig>))
+    responses((status = 200, description = "Success", body = CommonApiResp<LandscapeTimeConfig>))
 )]
 pub async fn get_time_config_fast(
     State(state): State<LandscapeApp>,

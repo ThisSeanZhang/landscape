@@ -42,7 +42,7 @@ pub fn get_iface_paths() -> OpenApiRouter<LandscapeApp> {
     path = "/all_old",
     tag = "Interfaces",
     operation_id = "get_ifaces_old",
-    responses((status = 200, body = CommonApiResp<Vec<IfaceTopology>>))
+    responses((status = 200, description = "Success", body = CommonApiResp<Vec<IfaceTopology>>))
 )]
 async fn get_ifaces_old(
     State(state): State<LandscapeApp>,
@@ -56,7 +56,7 @@ async fn get_ifaces_old(
     path = "/all",
     tag = "Interfaces",
     operation_id = "get_ifaces_new",
-    responses((status = 200, body = CommonApiResp<IfacesInfo>))
+    responses((status = 200, description = "Success", body = CommonApiResp<IfacesInfo>))
 )]
 async fn get_ifaces_new(State(state): State<LandscapeApp>) -> LandscapeApiResult<IfacesInfo> {
     let result = state.iface_config_service.read_ifaces().await;
@@ -68,7 +68,7 @@ async fn get_ifaces_new(State(state): State<LandscapeApp>) -> LandscapeApiResult
     path = "/wan_configs",
     tag = "Interfaces",
     operation_id = "get_wan_ifaces",
-    responses((status = 200, body = CommonApiResp<Vec<NetworkIfaceConfig>>))
+    responses((status = 200, description = "Success", body = CommonApiResp<Vec<NetworkIfaceConfig>>))
 )]
 async fn get_wan_ifaces(
     State(state): State<LandscapeApp>,
@@ -82,7 +82,7 @@ async fn get_wan_ifaces(
     path = "/wan_candidates",
     tag = "Interfaces",
     operation_id = "get_wan_candidates",
-    responses((status = 200, body = CommonApiResp<Vec<String>>))
+    responses((status = 200, description = "Success", body = CommonApiResp<Vec<String>>))
 )]
 async fn get_wan_candidates(State(state): State<LandscapeApp>) -> LandscapeApiResult<Vec<String>> {
     let mut names: Vec<String> = state
@@ -272,7 +272,7 @@ async fn change_wifi_mode(
     tag = "Interfaces",
     operation_id = "get_cpu_balance",
     params(("iface_name" = String, Path, description = "Interface name")),
-    responses((status = 200, body = CommonApiResp<Option<IfaceCpuSoftBalance>>))
+    responses((status = 200, description = "Success", body = CommonApiResp<Option<IfaceCpuSoftBalance>>))
 )]
 async fn get_cpu_balance(
     State(state): State<LandscapeApp>,

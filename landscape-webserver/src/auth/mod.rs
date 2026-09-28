@@ -254,7 +254,7 @@ pub fn get_auth_route(auth: Arc<ArcSwap<AuthRuntimeConfig>>) -> Router {
     security(()),
     request_body = LoginInfo,
     responses(
-        (status = 200, body = CommonApiResp<LoginResult>),
+        (status = 200, description = "Success", body = CommonApiResp<LoginResult>),
         (status = 401, description = "Invalid credentials"),
         (status = 429, description = "Too many login attempts")
     )

@@ -9,7 +9,6 @@ landscape-core = { path = "../landscape-core" }
 landscape-protobuf = { path = "../landscape-protobuf" }
 
 hickory-server = { workspace = true, features = ["https-ring"] }
-hickory-client = { workspace = true }
 hickory-resolver = { workspace = true, features = [
     "system-config",
     "__tls",

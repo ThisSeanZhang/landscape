@@ -60,7 +60,7 @@ pub fn get_iface_ipconfig_paths() -> OpenApiRouter<LandscapeApp> {
     tag = "IP Config",
     operation_id = "get_runtime_ip_addresses",
     params(("iface_name" = String, Path, description = "Interface name")),
-    responses((status = 200, body = CommonApiResp<Vec<RuntimeIpAddress>>))
+    responses((status = 200, description = "Success", body = CommonApiResp<Vec<RuntimeIpAddress>>))
 )]
 async fn get_runtime_ip_addresses(
     State(_state): State<LandscapeApp>,
@@ -87,7 +87,7 @@ async fn get_runtime_ip_addresses(
     get,
     path = "/ip/status",
     tag = "IP Config",
-    responses((status = 200, body = CommonApiResp<HashMap<String, ServiceStatus>>))
+    responses((status = 200, description = "Success", body = CommonApiResp<HashMap<String, ServiceStatus>>))
 )]
 async fn get_all_ipconfig_status(
     State(state): State<LandscapeApp>,
@@ -102,7 +102,7 @@ async fn get_all_ipconfig_status(
     operation_id = "get_ipconfig_service_config",
     params(("iface_name" = String, Path, description = "Interface name")),
     responses(
-        (status = 200, body = CommonApiResp<IfaceIpServiceConfig>),
+        (status = 200, description = "Success", body = CommonApiResp<IfaceIpServiceConfig>),
         (status = 404, description = "Not found")
     )
 )]
@@ -140,7 +140,7 @@ async fn handle_iface_service_status(
     tag = "IP Config",
     operation_id = "delete_and_stop_ipconfig_service",
     params(("iface_name" = String, Path, description = "Interface name")),
-    responses((status = 200, body = CommonApiResp<Option<ServiceStatus>>))
+    responses((status = 200, description = "Success", body = CommonApiResp<Option<ServiceStatus>>))
 )]
 async fn delete_and_stop_iface_service(
     State(state): State<LandscapeApp>,

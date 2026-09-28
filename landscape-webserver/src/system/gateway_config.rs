@@ -13,7 +13,7 @@ use crate::LandscapeApp;
     path = "/config/edit/gateway",
     tag = "System Config",
     operation_id = "get_gateway_config",
-    responses((status = 200, body = CommonApiResp<GetGatewayConfigResponse>))
+    responses((status = 200, description = "Success", body = CommonApiResp<GetGatewayConfigResponse>))
 )]
 pub async fn get_gateway_config(
     State(state): State<LandscapeApp>,
@@ -27,7 +27,7 @@ pub async fn get_gateway_config(
     path = "/config/gateway",
     tag = "System Config",
     operation_id = "get_gateway_config_fast",
-    responses((status = 200, body = CommonApiResp<LandscapeGatewayConfig>))
+    responses((status = 200, description = "Success", body = CommonApiResp<LandscapeGatewayConfig>))
 )]
 pub async fn get_gateway_config_fast(
     State(state): State<LandscapeApp>,

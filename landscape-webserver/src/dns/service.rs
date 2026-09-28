@@ -20,7 +20,7 @@ pub fn get_dns_service_paths() -> OpenApiRouter<LandscapeApp> {
     path = "/service",
     tag = "DNS Service",
     operation_id = "get_dns_service_status",
-    responses((status = 200, body = CommonApiResp<ServiceStatus>))
+    responses((status = 200, description = "Success", body = CommonApiResp<ServiceStatus>))
 )]
 async fn get_dns_service_status(
     State(state): State<LandscapeApp>,

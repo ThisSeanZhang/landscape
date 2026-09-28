@@ -26,7 +26,7 @@ pub fn get_docker_images_paths() -> OpenApiRouter<LandscapeApp> {
     path = "/images/tasks",
     tag = "Docker Images",
     operation_id = "get_docker_pull_tasks",
-    responses((status = 200, body = CommonApiResp<Vec<PullImgTask>>))
+    responses((status = 200, description = "Success", body = CommonApiResp<Vec<PullImgTask>>))
 )]
 async fn get_current_task(
     State(state): State<LandscapeApp>,
@@ -39,7 +39,7 @@ async fn get_current_task(
     path = "/images",
     tag = "Docker Images",
     operation_id = "get_all_docker_images",
-    responses((status = 200, body = inline(CommonApiResp<serde_json::Value>)))
+    responses((status = 200, description = "Success", body = inline(CommonApiResp<serde_json::Value>)))
 )]
 async fn get_all_images(
     State(state): State<LandscapeApp>,

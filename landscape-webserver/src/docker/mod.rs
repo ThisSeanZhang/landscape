@@ -44,7 +44,7 @@ pub fn get_docker_paths() -> OpenApiRouter<LandscapeApp> {
     path = "/service",
     tag = "Docker",
     operation_id = "get_docker_status",
-    responses((status = 200, body = CommonApiResp<ServiceStatus>))
+    responses((status = 200, description = "Success", body = CommonApiResp<ServiceStatus>))
 )]
 async fn get_docker_status(State(state): State<LandscapeApp>) -> LandscapeApiResult<WatchService> {
     LandscapeApiResp::success(state.docker_service.status)
@@ -55,7 +55,7 @@ async fn get_docker_status(State(state): State<LandscapeApp>) -> LandscapeApiRes
     path = "/service",
     tag = "Docker",
     operation_id = "start_docker_status",
-    responses((status = 200, body = CommonApiResp<ServiceStatus>))
+    responses((status = 200, description = "Success", body = CommonApiResp<ServiceStatus>))
 )]
 async fn start_docker_status(
     State(state): State<LandscapeApp>,
@@ -69,7 +69,7 @@ async fn start_docker_status(
     path = "/service",
     tag = "Docker",
     operation_id = "stop_docker_status",
-    responses((status = 200, body = CommonApiResp<ServiceStatus>))
+    responses((status = 200, description = "Success", body = CommonApiResp<ServiceStatus>))
 )]
 async fn stop_docker_status(State(state): State<LandscapeApp>) -> LandscapeApiResult<WatchService> {
     state.docker_service.status.wait_stop().await;
@@ -81,7 +81,7 @@ async fn stop_docker_status(State(state): State<LandscapeApp>) -> LandscapeApiRe
     path = "/containers",
     tag = "Docker",
     operation_id = "get_all_containers",
-    responses((status = 200, body = inline(CommonApiResp<serde_json::Value>)))
+    responses((status = 200, description = "Success", body = inline(CommonApiResp<serde_json::Value>)))
 )]
 async fn get_all_containers(
     State(state): State<LandscapeApp>,

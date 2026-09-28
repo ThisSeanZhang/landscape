@@ -21,7 +21,7 @@ pub fn get_static_nat_mapping_v6_paths() -> OpenApiRouter<LandscapeApp> {
     get,
     path = "/static_mappings/v6",
     tag = "Static NAT Mappings",
-    responses((status = 200, body = CommonApiResp<Vec<StaticNatMappingV6Config>>))
+    responses((status = 200, description = "Success", body = CommonApiResp<Vec<StaticNatMappingV6Config>>))
 )]
 async fn get_static_nat_mappings_v6(
     State(state): State<LandscapeApp>,
@@ -36,7 +36,7 @@ async fn get_static_nat_mappings_v6(
     tag = "Static NAT Mappings",
     params(("id" = Uuid, Path, description = "Static NAT mapping v6 ID")),
     responses(
-        (status = 200, body = CommonApiResp<StaticNatMappingV6Config>),
+        (status = 200, description = "Success", body = CommonApiResp<StaticNatMappingV6Config>),
         (status = 404, description = "Not found")
     )
 )]
@@ -57,7 +57,7 @@ async fn get_static_nat_mapping_v6(
     path = "/static_mappings/v6",
     tag = "Static NAT Mappings",
     request_body = StaticNatMappingV6Config,
-    responses((status = 200, body = CommonApiResp<StaticNatMappingV6Config>))
+    responses((status = 200, description = "Success", body = CommonApiResp<StaticNatMappingV6Config>))
 )]
 async fn add_static_nat_mapping_v6(
     State(state): State<LandscapeApp>,

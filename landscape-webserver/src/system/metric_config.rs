@@ -16,7 +16,7 @@ static METRIC_CONFIG_UPDATE_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::c
     path = "/config/edit/metric",
     tag = "System Config",
     operation_id = "get_metric_config",
-    responses((status = 200, body = CommonApiResp<GetMetricConfigResponse>))
+    responses((status = 200, description = "Success", body = CommonApiResp<GetMetricConfigResponse>))
 )]
 pub async fn get_metric_config(
     State(state): State<LandscapeApp>,
@@ -30,7 +30,7 @@ pub async fn get_metric_config(
     path = "/config/metric",
     tag = "System Config",
     operation_id = "get_metric_config_fast",
-    responses((status = 200, body = CommonApiResp<LandscapeMetricConfig>))
+    responses((status = 200, description = "Success", body = CommonApiResp<LandscapeMetricConfig>))
 )]
 pub async fn get_metric_config_fast(
     State(state): State<LandscapeApp>,

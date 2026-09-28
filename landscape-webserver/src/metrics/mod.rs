@@ -40,7 +40,7 @@ pub fn get_metric_paths() -> OpenApiRouter<LandscapeApp> {
     path = "/connections/iface_stats",
     tag = "Metric",
     operation_id = "get_iface_stats",
-    responses((status = 200, body = CommonApiResp<Vec<IfaceRealtimeStat>>))
+    responses((status = 200, description = "Success", body = CommonApiResp<Vec<IfaceRealtimeStat>>))
 )]
 async fn get_iface_stats(
     State(state): State<LandscapeApp>,
@@ -54,7 +54,7 @@ async fn get_iface_stats(
     path = "/status",
     tag = "Metric",
     operation_id = "get_metric_status",
-    responses((status = 200, body = CommonApiResp<ServiceStatus>))
+    responses((status = 200, description = "Success", body = CommonApiResp<ServiceStatus>))
 )]
 async fn get_metric_status(State(state): State<LandscapeApp>) -> LandscapeApiResult<ServiceStatus> {
     let status = state.metric_service.status.current();
@@ -66,7 +66,7 @@ async fn get_metric_status(State(state): State<LandscapeApp>) -> LandscapeApiRes
     path = "/connections",
     tag = "Metric",
     operation_id = "get_connects_info",
-    responses((status = 200, body = CommonApiResp<Vec<ConnectRealtimeStatus>>))
+    responses((status = 200, description = "Success", body = CommonApiResp<Vec<ConnectRealtimeStatus>>))
 )]
 async fn get_connects_info(
     State(state): State<LandscapeApp>,
@@ -81,7 +81,7 @@ async fn get_connects_info(
     tag = "Metric",
     operation_id = "get_connect_metric_info",
     request_body = MetricChartRequest,
-    responses((status = 200, body = CommonApiResp<Vec<ConnectMetricPoint>>))
+    responses((status = 200, description = "Success", body = CommonApiResp<Vec<ConnectMetricPoint>>))
 )]
 async fn get_connect_metric_info(
     State(state): State<LandscapeApp>,
@@ -98,7 +98,7 @@ async fn get_connect_metric_info(
     tag = "Metric",
     operation_id = "get_connect_history",
     params(ConnectHistoryQueryParams),
-    responses((status = 200, body = CommonApiResp<ConnectHistoryResponse>))
+    responses((status = 200, description = "Success", body = CommonApiResp<ConnectHistoryResponse>))
 )]
 async fn get_connect_history(
     State(state): State<LandscapeApp>,
@@ -114,7 +114,7 @@ async fn get_connect_history(
     tag = "Metric",
     operation_id = "get_connect_global_stats",
     params(GetConnectGlobalStatsParams),
-    responses((status = 200, body = CommonApiResp<ConnectGlobalStats>))
+    responses((status = 200, description = "Success", body = CommonApiResp<ConnectGlobalStats>))
 )]
 async fn get_connect_global_stats(
     State(state): State<LandscapeApp>,
@@ -129,7 +129,7 @@ async fn get_connect_global_stats(
     path = "/connections/src_ip_stats",
     tag = "Metric",
     operation_id = "get_src_ip_stats",
-    responses((status = 200, body = CommonApiResp<Vec<IpRealtimeStat>>))
+    responses((status = 200, description = "Success", body = CommonApiResp<Vec<IpRealtimeStat>>))
 )]
 async fn get_src_ip_stats(
     State(state): State<LandscapeApp>,
@@ -143,7 +143,7 @@ async fn get_src_ip_stats(
     path = "/connections/dst_ip_stats",
     tag = "Metric",
     operation_id = "get_dst_ip_stats",
-    responses((status = 200, body = CommonApiResp<Vec<IpRealtimeStat>>))
+    responses((status = 200, description = "Success", body = CommonApiResp<Vec<IpRealtimeStat>>))
 )]
 async fn get_dst_ip_stats(
     State(state): State<LandscapeApp>,
@@ -158,7 +158,7 @@ async fn get_dst_ip_stats(
     tag = "Metric",
     operation_id = "get_history_src_ip_stats",
     params(ConnectHistoryQueryParams),
-    responses((status = 200, body = CommonApiResp<Vec<IpHistoryStat>>))
+    responses((status = 200, description = "Success", body = CommonApiResp<Vec<IpHistoryStat>>))
 )]
 async fn get_history_src_ip_stats(
     State(state): State<LandscapeApp>,
@@ -174,7 +174,7 @@ async fn get_history_src_ip_stats(
     tag = "Metric",
     operation_id = "get_history_dst_ip_stats",
     params(ConnectHistoryQueryParams),
-    responses((status = 200, body = CommonApiResp<Vec<IpHistoryStat>>))
+    responses((status = 200, description = "Success", body = CommonApiResp<Vec<IpHistoryStat>>))
 )]
 async fn get_history_dst_ip_stats(
     State(state): State<LandscapeApp>,
@@ -190,7 +190,7 @@ async fn get_history_dst_ip_stats(
     tag = "Metric",
     operation_id = "get_dns_history",
     params(DnsHistoryQueryParams),
-    responses((status = 200, body = CommonApiResp<DnsHistoryResponse>))
+    responses((status = 200, description = "Success", body = CommonApiResp<DnsHistoryResponse>))
 )]
 async fn get_dns_history(
     State(state): State<LandscapeApp>,
@@ -206,7 +206,7 @@ async fn get_dns_history(
     tag = "Metric",
     operation_id = "get_dns_summary",
     params(DnsSummaryQueryParams),
-    responses((status = 200, body = CommonApiResp<DnsSummaryResponse>))
+    responses((status = 200, description = "Success", body = CommonApiResp<DnsSummaryResponse>))
 )]
 async fn get_dns_summary(
     State(state): State<LandscapeApp>,
@@ -222,7 +222,7 @@ async fn get_dns_summary(
     tag = "Metric",
     operation_id = "get_dns_lightweight_summary",
     params(DnsSummaryQueryParams),
-    responses((status = 200, body = CommonApiResp<DnsLightweightSummaryResponse>))
+    responses((status = 200, description = "Success", body = CommonApiResp<DnsLightweightSummaryResponse>))
 )]
 async fn get_dns_lightweight_summary(
     State(state): State<LandscapeApp>,

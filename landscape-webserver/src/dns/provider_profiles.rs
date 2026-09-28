@@ -22,7 +22,7 @@ pub fn get_dns_provider_profile_paths() -> OpenApiRouter<LandscapeApp> {
     get,
     path = "/provider_profiles",
     tag = "DNS Provider Profiles",
-    responses((status = 200, body = CommonApiResp<Vec<DnsProviderProfile>>))
+    responses((status = 200, description = "Success", body = CommonApiResp<Vec<DnsProviderProfile>>))
 )]
 async fn list_provider_profiles(
     State(app): State<LandscapeApp>,
@@ -35,7 +35,7 @@ async fn list_provider_profiles(
     path = "/provider_profiles/{id}",
     tag = "DNS Provider Profiles",
     params(("id" = Uuid, Path, description = "DNS provider profile ID")),
-    responses((status = 200, body = CommonApiResp<Option<DnsProviderProfile>>))
+    responses((status = 200, description = "Success", body = CommonApiResp<Option<DnsProviderProfile>>))
 )]
 async fn get_provider_profile(
     State(app): State<LandscapeApp>,
@@ -49,7 +49,7 @@ async fn get_provider_profile(
     path = "/provider_profiles",
     tag = "DNS Provider Profiles",
     request_body = DnsProviderProfile,
-    responses((status = 200, body = CommonApiResp<DnsProviderProfile>))
+    responses((status = 200, description = "Success", body = CommonApiResp<DnsProviderProfile>))
 )]
 async fn create_provider_profile(
     State(app): State<LandscapeApp>,
@@ -63,7 +63,7 @@ async fn create_provider_profile(
     path = "/provider_profiles/validate",
     tag = "DNS Provider Profiles",
     request_body = DnsProviderCredentialCheckRequest,
-    responses((status = 200, body = CommonApiResp<DnsProviderCredentialCheckResult>))
+    responses((status = 200, description = "Success", body = CommonApiResp<DnsProviderCredentialCheckResult>))
 )]
 async fn validate_provider_profile(
     State(app): State<LandscapeApp>,
@@ -78,7 +78,7 @@ async fn validate_provider_profile(
     tag = "DNS Provider Profiles",
     params(("id" = Uuid, Path, description = "DNS provider profile ID")),
     request_body = DnsProviderProfile,
-    responses((status = 200, body = CommonApiResp<DnsProviderProfile>))
+    responses((status = 200, description = "Success", body = CommonApiResp<DnsProviderProfile>))
 )]
 async fn update_provider_profile(
     State(app): State<LandscapeApp>,

@@ -47,7 +47,7 @@ pub struct GatewayStatus {
     get,
     path = "/rules",
     tag = "Gateway",
-    responses((status = 200, body = CommonApiResp<Vec<HttpUpstreamRuleConfig>>))
+    responses((status = 200, description = "Success", body = CommonApiResp<Vec<HttpUpstreamRuleConfig>>))
 )]
 async fn list_gateway_rules(
     State(state): State<LandscapeApp>,
@@ -62,7 +62,7 @@ async fn list_gateway_rules(
     path = "/rules",
     tag = "Gateway",
     request_body = HttpUpstreamRuleConfig,
-    responses((status = 200, body = CommonApiResp<HttpUpstreamRuleConfig>))
+    responses((status = 200, description = "Success", body = CommonApiResp<HttpUpstreamRuleConfig>))
 )]
 async fn create_gateway_rule(
     State(state): State<LandscapeApp>,
@@ -85,7 +85,7 @@ async fn create_gateway_rule(
     tag = "Gateway",
     params(("id" = Uuid, Path, description = "Gateway rule ID")),
     responses(
-        (status = 200, body = CommonApiResp<HttpUpstreamRuleConfig>),
+        (status = 200, description = "Success", body = CommonApiResp<HttpUpstreamRuleConfig>),
         (status = 404, description = "Not found")
     )
 )]
@@ -129,7 +129,7 @@ async fn delete_gateway_rule(
     get,
     path = "/status",
     tag = "Gateway",
-    responses((status = 200, body = CommonApiResp<GatewayStatus>))
+    responses((status = 200, description = "Success", body = CommonApiResp<GatewayStatus>))
 )]
 async fn get_gateway_status(
     State(state): State<LandscapeApp>,
@@ -141,7 +141,7 @@ async fn get_gateway_status(
     post,
     path = "/restart",
     tag = "Gateway",
-    responses((status = 200, body = CommonApiResp<GatewayStatus>))
+    responses((status = 200, description = "Success", body = CommonApiResp<GatewayStatus>))
 )]
 async fn restart_gateway(State(state): State<LandscapeApp>) -> LandscapeApiResult<GatewayStatus> {
     ensure_gateway_supported(&state)?;

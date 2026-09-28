@@ -26,7 +26,7 @@ pub fn get_cert_paths() -> OpenApiRouter<LandscapeApp> {
     get,
     path = "/certs",
     tag = "Certificates",
-    responses((status = 200, body = CommonApiResp<Vec<CertConfig>>))
+    responses((status = 200, description = "Success", body = CommonApiResp<Vec<CertConfig>>))
 )]
 async fn list_certs(State(state): State<LandscapeApp>) -> LandscapeApiResult<Vec<CertConfig>> {
     let result = state.cert_service.list().await;
@@ -38,7 +38,7 @@ async fn list_certs(State(state): State<LandscapeApp>) -> LandscapeApiResult<Vec
     path = "/certs",
     tag = "Certificates",
     request_body = CertConfig,
-    responses((status = 200, body = CommonApiResp<CertConfig>))
+    responses((status = 200, description = "Success", body = CommonApiResp<CertConfig>))
 )]
 async fn create_cert(
     State(state): State<LandscapeApp>,
@@ -54,7 +54,7 @@ async fn create_cert(
     tag = "Certificates",
     params(("id" = Uuid, Path, description = "Certificate ID")),
     responses(
-        (status = 200, body = CommonApiResp<CertConfig>),
+        (status = 200, description = "Success", body = CommonApiResp<CertConfig>),
         (status = 404, description = "Not found")
     )
 )]
@@ -76,7 +76,7 @@ async fn get_cert(
     tag = "Certificates",
     params(("id" = Uuid, Path, description = "Certificate ID")),
     responses(
-        (status = 200, body = CommonApiResp<CertParsedInfo>),
+        (status = 200, description = "Success", body = CommonApiResp<CertParsedInfo>),
         (status = 404, description = "Not found"),
         (status = 500, description = "Parse failed")
     )
@@ -113,7 +113,7 @@ async fn delete_cert(
     tag = "Certificates",
     params(("id" = Uuid, Path, description = "Certificate ID")),
     responses(
-        (status = 200, body = CommonApiResp<CertConfig>),
+        (status = 200, description = "Success", body = CommonApiResp<CertConfig>),
         (status = 404, description = "Not found"),
         (status = 500, description = "Issuance failed")
     )
@@ -132,7 +132,7 @@ async fn issue_cert(
     tag = "Certificates",
     params(("id" = Uuid, Path, description = "Certificate ID")),
     responses(
-        (status = 200, body = CommonApiResp<CertConfig>),
+        (status = 200, description = "Success", body = CommonApiResp<CertConfig>),
         (status = 404, description = "Not found"),
         (status = 409, description = "Invalid status transition")
     )
@@ -151,7 +151,7 @@ async fn cancel_cert(
     tag = "Certificates",
     params(("id" = Uuid, Path, description = "Certificate ID")),
     responses(
-        (status = 200, body = CommonApiResp<CertConfig>),
+        (status = 200, description = "Success", body = CommonApiResp<CertConfig>),
         (status = 404, description = "Not found"),
         (status = 500, description = "Revocation failed")
     )
@@ -170,7 +170,7 @@ async fn revoke_cert(
     tag = "Certificates",
     params(("id" = Uuid, Path, description = "Certificate ID")),
     responses(
-        (status = 200, body = CommonApiResp<CertConfig>),
+        (status = 200, description = "Success", body = CommonApiResp<CertConfig>),
         (status = 404, description = "Not found"),
         (status = 500, description = "Renewal failed")
     )

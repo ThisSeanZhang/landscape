@@ -34,7 +34,7 @@ fn has_too_many_targets(flow_rule: &FlowConfig) -> bool {
     get,
     path = "/rules",
     tag = "Flow Rules",
-    responses((status = 200, body = CommonApiResp<Vec<FlowConfig>>))
+    responses((status = 200, description = "Success", body = CommonApiResp<Vec<FlowConfig>>))
 )]
 async fn get_flow_rules(State(state): State<LandscapeApp>) -> LandscapeApiResult<Vec<FlowConfig>> {
     let mut result = state.flow_rule_service.list().await;
@@ -48,7 +48,7 @@ async fn get_flow_rules(State(state): State<LandscapeApp>) -> LandscapeApiResult
     tag = "Flow Rules",
     params(("id" = u32, Path, description = "Flow ID")),
     responses(
-        (status = 200, body = CommonApiResp<FlowConfig>),
+        (status = 200, description = "Success", body = CommonApiResp<FlowConfig>),
         (status = 404, description = "Not found")
     )
 )]
@@ -70,7 +70,7 @@ async fn get_flow_rule_by_flow_id(
     tag = "Flow Rules",
     params(("id" = Uuid, Path, description = "Flow rule config ID")),
     responses(
-        (status = 200, body = CommonApiResp<FlowConfig>),
+        (status = 200, description = "Success", body = CommonApiResp<FlowConfig>),
         (status = 404, description = "Not found")
     )
 )]
@@ -91,7 +91,7 @@ async fn get_flow_rule(
     path = "/rules",
     tag = "Flow Rules",
     request_body = FlowConfig,
-    responses((status = 200, body = CommonApiResp<FlowConfig>))
+    responses((status = 200, description = "Success", body = CommonApiResp<FlowConfig>))
 )]
 async fn add_flow_rule(
     State(state): State<LandscapeApp>,

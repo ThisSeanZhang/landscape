@@ -116,7 +116,7 @@ pub fn get_sys_config_paths() -> OpenApiRouter<LandscapeApp> {
     path = "/config/export",
     tag = "System Config",
     operation_id = "export_init_config",
-    responses((status = 200, body = CommonApiResp<ExportInitConfigResponse>))
+    responses((status = 200, description = "Success", body = CommonApiResp<ExportInitConfigResponse>))
 )]
 async fn export_init_config(
     State(state): State<LandscapeApp>,
@@ -139,7 +139,7 @@ async fn export_init_config(
     operation_id = "import_init_config",
     params(ImportInitConfigQuery),
     request_body(content = inline(UploadFileForm), content_type = "multipart/form-data"),
-    responses((status = 200, body = CommonApiResp<ImportInitConfigResponse>))
+    responses((status = 200, description = "Success", body = CommonApiResp<ImportInitConfigResponse>))
 )]
 async fn import_init_config(
     State(state): State<LandscapeApp>,

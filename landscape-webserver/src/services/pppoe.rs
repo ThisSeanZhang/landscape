@@ -101,7 +101,7 @@ pub fn get_iface_pppd_paths() -> OpenApiRouter<LandscapeApp> {
     get,
     path = "/pppoe",
     tag = "PPPoE",
-    responses((status = 200, body = CommonApiResp<Vec<PPPDServiceConfig>>))
+    responses((status = 200, description = "Success", body = CommonApiResp<Vec<PPPDServiceConfig>>))
 )]
 async fn get_all_pppd_configs(
     State(state): State<LandscapeApp>,
@@ -113,7 +113,7 @@ async fn get_all_pppd_configs(
     get,
     path = "/pppoe/status",
     tag = "PPPoE",
-    responses((status = 200, body = CommonApiResp<HashMap<String, ServiceStatus>>))
+    responses((status = 200, description = "Success", body = CommonApiResp<HashMap<String, ServiceStatus>>))
 )]
 async fn get_all_pppd_status(
     State(state): State<LandscapeApp>,
@@ -126,7 +126,7 @@ async fn get_all_pppd_status(
     path = "/pppoe/attach/{iface_name}",
     tag = "PPPoE",
     params(("iface_name" = String, Path, description = "Attach interface name")),
-    responses((status = 200, body = CommonApiResp<Vec<PPPDServiceConfig>>))
+    responses((status = 200, description = "Success", body = CommonApiResp<Vec<PPPDServiceConfig>>))
 )]
 async fn get_iface_pppd_config_by_attach_iface_name(
     State(state): State<LandscapeApp>,
@@ -143,7 +143,7 @@ async fn get_iface_pppd_config_by_attach_iface_name(
     tag = "PPPoE",
     params(("iface_name" = String, Path, description = "Interface name")),
     responses(
-        (status = 200, body = CommonApiResp<PPPDServiceConfig>),
+        (status = 200, description = "Success", body = CommonApiResp<PPPDServiceConfig>),
         (status = 404, description = "Not found")
     )
 )]
@@ -237,7 +237,7 @@ async fn delete_and_stop_iface_pppd_by_attach_iface_name(
     path = "/pppoe/{iface_name}",
     tag = "PPPoE",
     params(("iface_name" = String, Path, description = "Interface name")),
-    responses((status = 200, body = CommonApiResp<Option<ServiceStatus>>))
+    responses((status = 200, description = "Success", body = CommonApiResp<Option<ServiceStatus>>))
 )]
 async fn delete_and_stop_iface_pppd(
     State(state): State<LandscapeApp>,

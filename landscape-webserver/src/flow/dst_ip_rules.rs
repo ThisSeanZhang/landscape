@@ -36,7 +36,7 @@ async fn ensure_flow_id_unchanged(
     get,
     path = "/dst_ip_rules",
     tag = "Destination IP Rules",
-    responses((status = 200, body = CommonApiResp<Vec<WanIpRuleConfig>>))
+    responses((status = 200, description = "Success", body = CommonApiResp<Vec<WanIpRuleConfig>>))
 )]
 async fn get_dst_ip_rules(
     State(state): State<LandscapeApp>,
@@ -50,7 +50,7 @@ async fn get_dst_ip_rules(
     path = "/dst_ip_rules/flow/{flow_id}",
     tag = "Destination IP Rules",
     params(("flow_id" = u32, Path, description = "Flow ID")),
-    responses((status = 200, body = CommonApiResp<Vec<WanIpRuleConfig>>))
+    responses((status = 200, description = "Success", body = CommonApiResp<Vec<WanIpRuleConfig>>))
 )]
 async fn get_flow_dst_ip_rules(
     State(state): State<LandscapeApp>,
@@ -67,7 +67,7 @@ async fn get_flow_dst_ip_rules(
     tag = "Destination IP Rules",
     params(("id" = Uuid, Path, description = "Destination IP rule ID")),
     responses(
-        (status = 200, body = CommonApiResp<WanIpRuleConfig>),
+        (status = 200, description = "Success", body = CommonApiResp<WanIpRuleConfig>),
         (status = 404, description = "Not found")
     )
 )]
@@ -89,7 +89,7 @@ async fn get_dst_ip_rule(
     tag = "Destination IP Rules",
     params(("id" = Uuid, Path, description = "Destination IP rule ID")),
     request_body = WanIpRuleConfig,
-    responses((status = 200, body = CommonApiResp<WanIpRuleConfig>))
+    responses((status = 200, description = "Success", body = CommonApiResp<WanIpRuleConfig>))
 )]
 async fn modify_dst_ip_rules(
     State(state): State<LandscapeApp>,
@@ -106,7 +106,7 @@ async fn modify_dst_ip_rules(
     path = "/dst_ip_rules",
     tag = "Destination IP Rules",
     request_body = WanIpRuleConfig,
-    responses((status = 200, body = CommonApiResp<WanIpRuleConfig>))
+    responses((status = 200, description = "Success", body = CommonApiResp<WanIpRuleConfig>))
 )]
 async fn add_dst_ip_rules(
     State(state): State<LandscapeApp>,
