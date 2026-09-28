@@ -1,0 +1,164 @@
+//! 分钟聚合纯逻辑:1s 快照 → 每分钟每子系统一行(无 IO,两种构建可测)。
+
+use std::collections::HashMap;
+
+use landscape_common::memtrack::MemorySnapshot;
+use landscape_common::metric::memory::{MemMinuteRecord, PROCESS_SUBSYSTEM};
+
+#[derive(Default)]
+struct SubsystemMinuteAcc {
+    live_sum: u128,
+    live_max: u64,
+    samples: u64,
+    /// 分钟内首/末次快照的累计值,差值即分钟内增量。
+    alloc_first: Option<u64>,
+    alloc_last: u64,
+    free_first: Option<u64>,
+    free_last: u64,
+}
+
+impl SubsystemMinuteAcc {
+    fn ingest(&mut self, live: u64, allocated: u64, freed: u64) {
+        self.live_sum += live as u128;
+        self.live_max = self.live_max.max(live);
+        self.samples += 1;
+        self.alloc_first.get_or_insert(allocated);
+        self.alloc_last = allocated;
+        self.free_first.get_or_insert(freed);
+        self.free_last = freed;
+    }
+
+    fn finish(&self, subsystem: String, minute_ts: u64) -> MemMinuteRecord {
+        let samples = self.samples.max(1);
+        MemMinuteRecord {
+            minute_ts,
+            subsystem,
+            live_avg_bytes: (self.live_sum / samples as u128) as u64,
+            live_max_bytes: self.live_max,
+            alloc_delta_bytes: self.alloc_last.saturating_sub(self.alloc_first.unwrap_or(0)),
+            free_delta_bytes: self.free_last.saturating_sub(self.free_first.unwrap_or(0)),
+        }
+    }
+}
+
+/// 跨分钟滚动聚合器:ingest 1s 快照,分钟翻转时吐出上一分钟的全部行。
+#[derive(Default)]
+pub struct MinuteAggregator {
+    current_minute: Option<u64>,
+    subsystems: HashMap<String, SubsystemMinuteAcc>,
+    process: SubsystemMinuteAcc,
+}
+
+impl MinuteAggregator {
+    pub fn new() -> Self {
+        MinuteAggregator::default()
+    }
+
+    /// 写入一个快照;若跨入新分钟,返回刚结束分钟的行(可能为空:同一分钟
+    /// 内首次 ingest 不产生行)。
+    pub fn ingest(&mut self, snapshot: &MemorySnapshot) -> Vec<MemMinuteRecord> {
+        let minute = snapshot.timestamp_ms / 60_000 * 60_000;
+        let finished = match self.current_minute {
+            None => {
+                self.current_minute = Some(minute);
+                None
+            }
+            Some(current) if current == minute => None,
+            Some(current) => {
+                self.current_minute = Some(minute);
+                Some(current)
+            }
+        };
+        let rows = finished.map(|minute_ts| self.take_rows(minute_ts)).unwrap_or_default();
+
+        for stat in &snapshot.modules {
+            self.subsystems.entry(stat.subsystem.clone()).or_default().ingest(
+                stat.live_bytes,
+                stat.allocated_bytes,
+                stat.freed_bytes,
+            );
+        }
+        if let Some(rss) = snapshot.meta.process_rss_bytes {
+            self.process.ingest(rss, rss, rss);
+        }
+
+        rows
+    }
+
+    /// 收尾:强制吐出当前分钟(重启/停止时调用,避免丢最后一段)。
+    pub fn flush_current(&mut self) -> Vec<MemMinuteRecord> {
+        self.current_minute.take().map(|minute_ts| self.take_rows(minute_ts)).unwrap_or_default()
+    }
+
+    fn take_rows(&mut self, minute_ts: u64) -> Vec<MemMinuteRecord> {
+        let mut rows: Vec<MemMinuteRecord> = std::mem::take(&mut self.subsystems)
+            .into_iter()
+            .map(|(name, acc)| acc.finish(name, minute_ts))
+            .collect();
+        if self.process.samples > 0 {
+            rows.push(self.process.finish(PROCESS_SUBSYSTEM.to_string(), minute_ts));
+        }
+        self.process = SubsystemMinuteAcc::default();
+        rows
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use landscape_common::memtrack::{ModuleMemStat, SnapshotMeta};
+
+    fn snap(
+        timestamp_ms: u64,
+        live: u64,
+        allocated: u64,
+        freed: u64,
+        rss: Option<u64>,
+    ) -> MemorySnapshot {
+        MemorySnapshot {
+            timestamp_ms,
+            precise: false,
+            meta: SnapshotMeta {
+                process_rss_bytes: rss,
+                process_virtual_bytes: rss,
+                total_live_bytes: live,
+                untracked_bytes: None,
+            },
+            modules: vec![ModuleMemStat {
+                subsystem: "dns".to_string(),
+                allocated_bytes: allocated,
+                freed_bytes: freed,
+                live_bytes: live,
+                alloc_events: 0,
+                free_events: 0,
+            }],
+        }
+    }
+
+    #[test]
+    fn aggregator_emits_rows_on_minute_rollover() {
+        let mut agg = MinuteAggregator::new();
+        let minute = 600_000u64;
+
+        assert!(agg.ingest(&snap(minute + 1_000, 100, 300, 200, Some(1_000))).is_empty());
+        assert!(agg.ingest(&snap(minute + 2_000, 120, 400, 280, Some(1_100))).is_empty());
+
+        let rows = agg.ingest(&snap(minute + 61_000, 130, 500, 370, Some(1_200)));
+        assert_eq!(rows.len(), 2);
+        let dns = rows.iter().find(|r| r.subsystem == "dns").unwrap();
+        assert_eq!(dns.minute_ts, minute);
+        assert_eq!(dns.live_avg_bytes, 110);
+        assert_eq!(dns.live_max_bytes, 120);
+        assert_eq!(dns.alloc_delta_bytes, 100);
+        assert_eq!(dns.free_delta_bytes, 80);
+        let process = rows.iter().find(|r| r.subsystem == PROCESS_SUBSYSTEM).unwrap();
+        assert_eq!(process.live_avg_bytes, 1_050);
+        assert_eq!(process.live_max_bytes, 1_100);
+
+        let tail = agg.flush_current();
+        assert_eq!(tail.len(), 2);
+        assert_eq!(tail[0].minute_ts, minute + 60_000);
+        assert_eq!(tail.iter().find(|r| r.subsystem == "dns").unwrap().live_avg_bytes, 130);
+        assert!(agg.flush_current().is_empty());
+    }
+}

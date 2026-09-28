@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard, RwLock};
 
+use landscape_common::concurrency::{spawn_task, task_label};
 use landscape_common::config::{MetricMode, MetricRuntimeConfig};
 use landscape_common::database::error::DbError;
 use landscape_common::event::{ConnectMessage, DnsMetricMessage};
@@ -20,6 +21,7 @@ use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
 pub(crate) mod agg;
+pub mod mem_store;
 pub(crate) mod sink;
 pub(crate) mod workers;
 
@@ -150,7 +152,7 @@ impl MetricEngine {
             let connect_writer_sink = sink.clone();
             let connect_writer_config = config.clone();
             let connect_writer_stats = queue_stats.clone();
-            let connect_writer = tokio::spawn(async move {
+            let connect_writer = spawn_task(task_label::task::METRIC_CONNECT_WRITER, async move {
                 workers::run_connect_writer(
                     connect_writer_sink,
                     connect_write_rx,
@@ -169,7 +171,7 @@ impl MetricEngine {
                 let dns_writer_sink = sink.clone();
                 let dns_writer_config = config.clone();
                 let dns_writer_stats = queue_stats.clone();
-                let dns_writer = tokio::spawn(async move {
+                let dns_writer = spawn_task(task_label::task::METRIC_DNS_WRITER, async move {
                     workers::run_dns_writer(
                         dns_writer_sink,
                         dns_write_rx,
@@ -192,7 +194,7 @@ impl MetricEngine {
             let workers_clone = workers.clone();
             let write_tx_clone = connect_write_tx.clone();
             let queue_stats_clone = queue_stats.clone();
-            let connect_handle = tokio::spawn(async move {
+            let connect_handle = spawn_task(task_label::task::METRIC_CONNECT_WORKER, async move {
                 workers::run_connect_worker(
                     connect_rx,
                     write_tx_clone,
@@ -214,7 +216,7 @@ impl MetricEngine {
                 let dns_window_clone = dns_window.clone();
                 let write_tx_clone = dns_write_tx.clone();
                 let queue_stats_clone = queue_stats.clone();
-                let dns_handle = tokio::spawn(async move {
+                let dns_handle = spawn_task(task_label::task::METRIC_DNS_WORKER, async move {
                     workers::run_dns_worker(
                         dns_rx,
                         write_tx_clone,
@@ -232,7 +234,7 @@ impl MetricEngine {
             {
                 let shutdown_clone = shutdown.clone();
                 let workers_clone = workers.clone();
-                let dns_handle = tokio::spawn(async move {
+                let dns_handle = spawn_task(task_label::task::METRIC_DNS_WORKER, async move {
                     workers::run_dns_worker(dns_rx, shutdown_clone).await;
                 });
                 lock_or_recover(&workers_clone, "metric workers").push(dns_handle);

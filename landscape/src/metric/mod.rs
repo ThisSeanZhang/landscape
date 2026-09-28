@@ -15,6 +15,9 @@ use landscape_common::{
         DnsHistoryQueryParams, DnsHistoryResponse, DnsLightweightSummaryResponse,
         DnsSummaryQueryParams, DnsSummaryResponse,
     },
+    metric::memory::{
+        MemHistoryQueryParams, MemHistoryResponse, DEFAULT_MEM_METRIC_RETENTION_DAYS,
+    },
     service::{ServiceStatus, WatchService},
     LANDSCAPE_METRIC_DIR_NAME,
 };
@@ -38,6 +41,9 @@ struct MetricServiceInner {
     runtime: RwLock<MetricRuntime>,
     switch_lock: Mutex<()>,
     source_factory: Arc<dyn MetricSourceFactory>,
+    /// 内存指标记录。非 persistent 构建下是 no-op 实现(stub),恒为 None,
+    /// 因此本文件无需任何 cfg。
+    mem_recording: Mutex<Option<landscape_metric::mem_store::MemRecording>>,
 }
 
 #[derive(Clone)]
@@ -89,6 +95,7 @@ impl MetricService {
                 runtime: RwLock::new(MetricRuntime { config, engine, source: None }),
                 switch_lock: Mutex::new(()),
                 source_factory,
+                mem_recording: Mutex::new(None),
             }),
         })
     }
@@ -143,12 +150,35 @@ impl MetricService {
             Ok(source) => {
                 self.write_runtime().source = Some(source);
                 status.just_change_status(ServiceStatus::Running);
+                self.ensure_memory_recording().await;
                 Ok(())
             }
             Err(error) => {
                 tracing::error!("failed to spawn metric event source: {error}");
                 status.just_change_status(ServiceStatus::Failed);
-                Err(error)
+                Err(error.to_string())
+            }
+        }
+    }
+
+    /// 内存指标记录:仅 persistent 模式与 persistent 构建启用(非 persistent
+    /// 构建下 `start_memory_recording` 恒返回 None,自然退化);打开失败或
+    /// 记录任务异常都不影响 metric 主流程(历史查询返回空)。
+    async fn ensure_memory_recording(&self) {
+        if !matches!(self.current_mode(), MetricMode::Persistent) {
+            return;
+        }
+        let mut mem = self.inner.mem_recording.lock().await;
+        match mem.as_mut() {
+            // 已打开:恢复被 stop_service 停掉的 recorder。
+            Some(recording) => recording.spawn_recorder(DEFAULT_MEM_METRIC_RETENTION_DAYS),
+            None => {
+                let home_path = self.inner.home_path.clone();
+                *mem = landscape_metric::mem_store::start_memory_recording(
+                    home_path,
+                    DEFAULT_MEM_METRIC_RETENTION_DAYS,
+                )
+                .await;
             }
         }
     }
@@ -185,6 +215,14 @@ impl MetricService {
         };
         if self.status.current() != final_status {
             self.status.just_change_status(final_status);
+        }
+        // 停止内存指标记录(收尾写入当前分钟);store 保留供历史查询,
+        // 下次 start_service 时 recorder 会被重新拉起。
+        {
+            let mut mem = self.inner.mem_recording.lock().await;
+            if let Some(recording) = mem.as_mut() {
+                recording.stop_recorder().await;
+            }
         }
         self.current_engine().shutdown().await;
     }
@@ -332,5 +370,17 @@ impl MetricService {
         params: DnsSummaryQueryParams,
     ) -> DnsLightweightSummaryResponse {
         self.current_engine().get_dns_lightweight_summary(params).await
+    }
+
+    /// 已持久化的内存指标分钟历史(persistent 构建;未启用/无数据返回空)。
+    /// 最近实时数据走 `/api/v1/system/memory` 的 RAM 环形缓冲,互不串门。
+    pub async fn query_memory_history(&self, params: MemHistoryQueryParams) -> MemHistoryResponse {
+        let mem = self.inner.mem_recording.lock().await;
+        MemHistoryResponse {
+            items: match mem.as_ref() {
+                Some(recording) => recording.query_history(&params).await,
+                None => Vec::new(),
+            },
+        }
     }
 }
