@@ -126,6 +126,100 @@ pub mod task_label {
         pub const EBPF_IP6_DAO_EVENT_SOURCE: &str = "ebpf.ip6_dao.event.source";
         /// Supervised DAD event dispatcher forwarding ringbuf events to per-iface servers.
         pub const EBPF_IP6_DAO_DISPATCHER: &str = "ebpf.ip6_dao.dispatcher";
+        /// Periodic in-process memory snapshot sampler feeding the RAM ring buffer.
+        pub const MEM_SAMPLE: &str = "mem.sample";
+
+        // ── netlink 连接驱动与事件转发 ──────────────────────────────
+        /// rtnetlink route connection driver.
+        pub const NETLINK_CONN_DRIVER: &str = "netlink.conn.driver";
+        /// nl80211 (WiFi) connection driver.
+        pub const NETLINK_CONN_WIFI: &str = "netlink.conn.wifi";
+        /// rtnetlink connection driver for the ethtool channel.
+        pub const NETLINK_CONN_ETHTOOL: &str = "netlink.conn.ethtool";
+        /// rtnetlink connection driver bound to observer multicast groups.
+        pub const NETLINK_CONN_OBSERVER: &str = "netlink.conn.observer";
+        /// Netlink observer task forwarding link/address events into the event hub.
+        pub const EVENT_NETLINK_DISPATCH: &str = "event.netlink.dispatch";
+
+        // ── 构造器内长驻事件监听 ────────────────────────────────────
+        /// Firewall blacklist listener reacting to GeoIP update events.
+        pub const FIREWALL_BLACKLIST_OBSERVER: &str = "firewall.blacklist.observer";
+        /// Static NAT v4 mapping listener reacting to device events.
+        pub const NAT_STATIC_V4_OBSERVER: &str = "nat.static_v4.observer";
+        /// Static NAT v6 mapping listeners reacting to device/IPv6 events.
+        pub const NAT_STATIC_V6_OBSERVER: &str = "nat.static_v6.observer";
+        /// Flow rule listener reacting to DNS service events.
+        pub const FLOW_RULE_OBSERVER: &str = "flow.rule.observer";
+        /// Destination IP rule listener reacting to geo/DNS events.
+        pub const FLOW_DST_IP_OBSERVER: &str = "flow.dst_ip.observer";
+        /// IP route service listener reacting to rule store changes.
+        pub const ROUTE_SERVICE_OBSERVER: &str = "route.service.observer";
+        /// DNS resolver conf listener reacting to DNS config changes.
+        pub const DNS_SERVICE_OBSERVER: &str = "dns.service.observer";
+        /// 1s host status sampling loop (CPU/memory/temperature).
+        pub const SYS_STATUS_SAMPLER: &str = "sys.status.sampler";
+        /// DDNS background job scheduler.
+        pub const DNS_DDNS_JOB: &str = "dns.ddns.job";
+        /// ACME certificate order refresh/renewal background task.
+        pub const CERT_ORDER_REFRESH: &str = "cert.order.refresh";
+        /// GeoIP service listener reacting to rule/config update events.
+        pub const GEO_IP_OBSERVER: &str = "geo.ip.observer";
+        /// GeoSite service listener reacting to rule update events.
+        pub const GEO_SITE_OBSERVER: &str = "geo.site.observer";
+        /// WAN interface IP config listener reacting to iface events.
+        pub const WAN_IPCONFIG_OBSERVER: &str = "wan.ipconfig.observer";
+        /// DHCPv6 PD client service listener reacting to iface events.
+        pub const WAN_IPV6PD_OBSERVER: &str = "wan.ipv6pd.observer";
+        /// DHCPv6 PD client session receive loop.
+        pub const WAN_IPV6PD_CLIENT_RENEW: &str = "wan.ipv6pd_client.rx";
+        /// LAN hostname registry listener for device/DHCP events.
+        pub const DNS_HOSTNAME_OBSERVER: &str = "dns.hostname.observer";
+        /// ARP learning listener for address events.
+        pub const ARP_LEARN: &str = "arp.learn";
+        /// Periodic ARP scan task.
+        pub const ARP_SCAN: &str = "arp.scan";
+
+        // ── 每连接/每请求任务 ───────────────────────────────────────
+        /// DNS UDP/TCP socket serve loop.
+        pub const DNS_LISTENER_SERVE: &str = "dns.listener.serve";
+        /// DNS-over-HTTPS socket serve loop.
+        pub const DNS_DOH_HANDLER: &str = "dns.doh.handler";
+        /// DHCPv4 server per-socket packet loop.
+        pub const DHCP_V4_SERVER_HANDLER: &str = "dhcp.server.handler";
+        /// DHCPv4 service listener reacting to iface/config events.
+        pub const DHCP_V4_SERVICE_OBSERVER: &str = "dhcp.v4_service.observer";
+        /// DHCPv6 server per-connection handler.
+        pub const LAN_DHCP_V6_CONNECTION: &str = "lan.dhcpv6.connection";
+        /// LAN IPv6 service listener reacting to iface/prefix events.
+        pub const LAN_IPV6_SERVICE_OBSERVER: &str = "lan.ipv6.observer";
+        /// MAC-link map listener reacting to neighbor events.
+        pub const LAN_MAC_LINK_OBSERVER: &str = "lan.mac_link.observer";
+        /// Docker unix-socket API event listener.
+        pub const DOCKER_EVENT_UNIX: &str = "docker.event.unix";
+        /// Docker engine event stream listener.
+        pub const DOCKER_EVENT_LISTENER: &str = "docker.event.listen";
+        /// Docker image pull/inspect background operation.
+        pub const DOCKER_IMAGE_OP: &str = "docker.image.op";
+
+        // ── metric 引擎内部 ─────────────────────────────────────────
+        /// Metric connect aggregation worker.
+        pub const METRIC_CONNECT_WORKER: &str = "metric.connect.worker";
+        /// Metric DNS aggregation worker.
+        pub const METRIC_DNS_WORKER: &str = "metric.dns.worker";
+        /// Metric connect batch writer.
+        pub const METRIC_CONNECT_WRITER: &str = "metric.connect.writer";
+        /// Metric DNS batch writer.
+        pub const METRIC_DNS_WRITER: &str = "metric.dns.writer";
+        /// Daily connect global-stats drift correction rebuild.
+        pub const METRIC_STATS_REBUILD: &str = "metric.stats.rebuild";
+        /// Memory-mode sink realtime aggregation worker.
+        pub const METRIC_MEM_SINK_WORKER: &str = "metric.mem_sink.worker";
+        /// Memory minute-level persistence recorder.
+        pub const METRIC_MEM_RECORDER: &str = "metric.mem.recorder";
+
+        // ── 其它 ───────────────────────────────────────────────────
+        /// PPPoE client session task.
+        pub const PPPOE_CLIENT_RUN: &str = "pppoe.client.run";
     }
 
     pub mod op {
@@ -196,7 +290,10 @@ where
     F: FnOnce() -> T + Send + 'static,
     T: Send + 'static,
 {
-    thread::Builder::new().name(name.into()).spawn(f)
+    let name = name.into();
+    // 专用线程按线程名归属记账(如 ld-fw-* → firewall),标签线程生命周期有效。
+    let tag = crate::memtrack::subsystem_from_thread_name(&name);
+    thread::Builder::new().name(name).spawn(move || crate::memtrack::tag::with_tag(tag, f))
 }
 
 pub fn spawn_thread_with_key<F, T>(
@@ -216,7 +313,13 @@ where
     Fut: Future + Send + 'static,
     Fut::Output: Send + 'static,
 {
-    tokio::spawn(future.instrument(tracing::info_span!("task", task = label)))
+    // 每次 poll 期间将当前线程归属到该任务标签对应的子系统,任务迁移到
+    // 其他 worker 线程后仍正确归属。
+    let tag = crate::memtrack::subsystem_from_task_label(label);
+    tokio::spawn(
+        crate::memtrack::TaggedFuture::new(tag, future)
+            .instrument(tracing::info_span!("task", task = label)),
+    )
 }
 
 pub fn spawn_task_with_resource<Fut>(
@@ -229,7 +332,11 @@ where
     Fut::Output: Send + 'static,
 {
     let resource = resource.to_string();
-    tokio::spawn(future.instrument(tracing::info_span!("task", task = label, resource = %resource)))
+    let tag = crate::memtrack::subsystem_from_task_label(label);
+    tokio::spawn(
+        crate::memtrack::TaggedFuture::new(tag, future)
+            .instrument(tracing::info_span!("task", task = label, resource = %resource)),
+    )
 }
 
 fn sanitize_token(value: &str) -> String {
