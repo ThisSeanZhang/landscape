@@ -30,7 +30,9 @@ use landscape_database::{
 use reqwest::Client;
 use tokio::sync::{broadcast, Mutex};
 
-use super::raw_file::{persist_raw_bytes, raw_dat_path, remove_raw_dat};
+use super::raw_file::{
+    raw_dat_path, remove_raw_dat, stream_to_tmp, write_bytes_to_tmp, SealedRawFile,
+};
 
 const A_DAY: u64 = 60 * 60 * 24;
 
@@ -153,11 +155,19 @@ impl GeoIpService {
                 response.status()
             )));
         }
-        let bytes =
-            response.bytes().await.map_err(|e| GeoError::IpSourceRequestFailed(e.to_string()))?;
-        let result = self.parse_source_bytes(&config.source, bytes.clone()).await?;
         let dat_path = raw_dat_path("ip", config.id);
-        if let Err(e) = persist_raw_bytes(&dat_path, &bytes) {
+        let sealed = stream_to_tmp(response.bytes_stream(), &dat_path)
+            .await
+            .map_err(|e| GeoError::IpSourceRequestFailed(format!("stream to {dat_path:?}: {e}")))?;
+        let result =
+            match self.parse_source_bytes(&config.source, read_back(&sealed, &dat_path)?).await {
+                Ok(result) => result,
+                Err(e) => {
+                    sealed.abort();
+                    return Err(e);
+                }
+            };
+        if let Err(e) = sealed.commit() {
             tracing::warn!("persist raw geo ip file {:?} failed: {}", dat_path, e);
         }
         self.replace_cache_by_name(&config.name, result).await;
@@ -435,9 +445,19 @@ impl GeoIpService {
             .find(|config| config.name == name)
             .ok_or_else(|| GeoError::IpConfigNotFound(name.clone()))?;
         let file_bytes = file_bytes.into();
-        let result = self.parse_source_bytes(&config.source, file_bytes.clone()).await?;
         let dat_path = raw_dat_path("ip", config.id);
-        if let Err(e) = persist_raw_bytes(&dat_path, &file_bytes) {
+        let sealed = write_bytes_to_tmp(&dat_path, &file_bytes)
+            .map_err(|e| GeoError::RawDatReadFailed(format!("{dat_path:?}: {e}")))?;
+        drop(file_bytes);
+        let result =
+            match self.parse_source_bytes(&config.source, read_back(&sealed, &dat_path)?).await {
+                Ok(result) => result,
+                Err(e) => {
+                    sealed.abort();
+                    return Err(e);
+                }
+            };
+        if let Err(e) = sealed.commit() {
             tracing::warn!("persist raw geo ip file {:?} failed: {}", dat_path, e);
         }
         self.replace_cache_by_name(&name, result).await;
@@ -445,6 +465,10 @@ impl GeoIpService {
         self.notify_dst_ip_updated();
         Ok(())
     }
+}
+
+fn read_back(sealed: &SealedRawFile, dat_path: &std::path::Path) -> Result<Vec<u8>, GeoError> {
+    sealed.read_back().map_err(|e| GeoError::RawDatReadFailed(format!("{dat_path:?}: {e}")))
 }
 
 fn cidr_contains(network: IpAddr, prefix: u32, ip: IpAddr) -> bool {
