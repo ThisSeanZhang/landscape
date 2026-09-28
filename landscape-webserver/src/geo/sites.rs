@@ -1,9 +1,11 @@
 use axum::extract::{DefaultBodyLimit, Multipart, Path, Query, State};
+use axum::http::{header, HeaderMap, HeaderValue};
+use axum::response::{IntoResponse, Response};
 use landscape_common::api_response::LandscapeApiResp as CommonApiResp;
 use landscape_common::config::ConfigId;
 use landscape_common::config_service::geo::{
     GeoDomainConfig, GeoError, GeoFileCacheKey, GeoSiteLookupResult, GeoSiteSourceConfig,
-    QueryGeoDomainConfig, QueryGeoKey, QueryGeoSiteDomain,
+    QueryGeoDomainConfig, QueryGeoKey, QueryGeoSiteDomain, RawDatState,
 };
 use landscape_common::service::controller::ConfigController;
 use utoipa_axum::router::OpenApiRouter;
@@ -11,7 +13,10 @@ use utoipa_axum::routes;
 
 use crate::api::{JsonBody, UploadFileForm};
 use crate::LandscapeApp;
-use crate::{api::LandscapeApiResp, error::LandscapeApiResult, UPLOAD_GEO_FILE_SIZE_LIMIT};
+use crate::{
+    api::LandscapeApiResp, error::LandscapeApiError, error::LandscapeApiResult,
+    UPLOAD_GEO_FILE_SIZE_LIMIT,
+};
 
 pub fn get_geo_site_config_paths() -> OpenApiRouter<LandscapeApp> {
     let upload_router = OpenApiRouter::new()
@@ -22,6 +27,7 @@ pub fn get_geo_site_config_paths() -> OpenApiRouter<LandscapeApp> {
         .routes(routes!(get_geo_sites, add_geo_site))
         .routes(routes!(add_many_geo_sites))
         .routes(routes!(get_geo_rule, del_geo_site))
+        .routes(routes!(download_geo_site_dat))
         .routes(routes!(get_geo_site_cache, refresh_geo_site_cache))
         .routes(routes!(refresh_geo_site_config_by_name))
         .routes(routes!(search_geo_site_cache))
@@ -213,6 +219,37 @@ async fn del_geo_site(
 ) -> LandscapeApiResult<()> {
     state.geo_site_service.delete(id).await;
     LandscapeApiResp::success(())
+}
+
+#[utoipa::path(
+    get,
+    path = "/sites/{id}/dat",
+    tag = "Geo Sites",
+    params(("id" = Uuid, Path, description = "Geo site rule ID")),
+    responses(
+        (status = 200, description = "Raw dat file bytes", content_type = "application/octet-stream"),
+        (status = 404, description = "Dat not found; background download started"),
+        (status = 409, description = "Download task already running")
+    )
+)]
+async fn download_geo_site_dat(
+    State(state): State<LandscapeApp>,
+    Path(id): Path<ConfigId>,
+) -> Result<Response, LandscapeApiError> {
+    match state.geo_site_service.get_raw_dat_or_start_download(id).await? {
+        RawDatState::Ready(bytes) => {
+            let mut headers = HeaderMap::new();
+            headers
+                .insert(header::CONTENT_TYPE, HeaderValue::from_static("application/octet-stream"));
+            let disposition =
+                HeaderValue::from_str(&format!("attachment; filename=\"site-{id}.raw\""))
+                    .map_err(|e| GeoError::RawDatReadFailed(e.to_string()))?;
+            headers.insert(header::CONTENT_DISPOSITION, disposition);
+            Ok((headers, bytes).into_response())
+        }
+        RawDatState::Started => Err(GeoError::RawDatNotReady)?,
+        RawDatState::Running => Err(GeoError::RawDatDownloadRunning)?,
+    }
 }
 
 #[utoipa::path(

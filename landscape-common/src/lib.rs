@@ -136,6 +136,8 @@ pub const LANDSCAPE_DB_SQLITE_NAME: &str = "landscape_db.sqlite";
 pub const LANDSCAPE_HOSTAPD_TMP_DIR: &str = "hostapd_tmp";
 /// GEO_CACHE Path
 pub const LANDSCAPE_GEO_CACHE_TMP_DIR: &str = "geo_tmp";
+/// GEO raw source files (downloaded originals, format as configured) path
+pub const LANDSCAPE_GEO_RAW_DIR: &str = "geo/raw";
 
 /// Landscape default lan bridge name
 pub const LANDSCAPE_DEFAULT_LAN_NAME: &str = "br_lan";

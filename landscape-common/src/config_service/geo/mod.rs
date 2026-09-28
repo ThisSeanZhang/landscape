@@ -31,6 +31,22 @@ pub enum GeoError {
     #[api_error(id = "geo_site.file_read_error", status = 400)]
     SiteFileReadError,
 
+    #[error("Geo site DAT decode error")]
+    #[api_error(id = "geo_site.dat_decode_error", status = 400)]
+    SiteDatDecodeError,
+
+    #[error("Geo raw dat not found, background download started")]
+    #[api_error(id = "geo.raw_dat_not_ready", status = 404)]
+    RawDatNotReady,
+
+    #[error("Geo raw dat download already running")]
+    #[api_error(id = "geo.raw_dat_download_running", status = 409)]
+    RawDatDownloadRunning,
+
+    #[error("Geo raw dat read failed: {0}")]
+    #[api_error(id = "geo.raw_dat_read_failed", status = 500)]
+    RawDatReadFailed(String),
+
     #[error("invalid GeoSite lookup domain '{0}'")]
     #[api_error(id = "geo_site.invalid_lookup_domain", status = 400)]
     SiteInvalidLookupDomain(String),
@@ -78,6 +94,13 @@ pub enum GeoError {
     #[error("failed to read geo site cache '{name}:{key}'")]
     #[api_error(id = "geo_matcher.read_failed", status = 500)]
     MatcherReadFailed { name: String, key: String },
+}
+
+#[derive(Debug)]
+pub enum RawDatState {
+    Ready(Vec<u8>),
+    Started,
+    Running,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, Default)]

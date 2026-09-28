@@ -24,15 +24,16 @@ pub struct GeoIpParseResult {
 
 pub async fn read_geo_sites_from_bytes(
     contents: impl Into<Vec<u8>>,
-) -> HashMap<String, Vec<GeoSiteFileConfig>> {
+) -> Result<HashMap<String, Vec<GeoSiteFileConfig>>, GeoError> {
     let mut result = HashMap::new();
-    let list = GeoSiteListOwned::try_from(contents.into()).unwrap();
+    let list =
+        GeoSiteListOwned::try_from(contents.into()).map_err(|_| GeoError::SiteDatDecodeError)?;
 
     for entry in list.proto().entry.iter() {
         let domains = entry.domain.iter().map(convert_domain_from_proto).collect();
         result.insert(entry.country_code.to_string(), domains);
     }
-    result
+    Ok(result)
 }
 
 pub fn convert_match_type_from_proto(value: Type) -> DomainMatchType {

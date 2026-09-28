@@ -2,6 +2,7 @@ use landscape_common::geo_cache::file_store::GeoStoreKeyProvider;
 use landscape_common::{
     config_service::geo::{
         GeoError, GeoFileCacheKey, GeoIpConfig, GeoIpLookupResult, GeoIpSource, GeoIpSourceConfig,
+        RawDatState,
     },
     database::LandscapeStore,
     flow::ip_mark::{IpMarkInfo, WanIPRuleSource, WanIpRuleConfig},
@@ -13,6 +14,7 @@ use uuid::Uuid;
 use std::{
     collections::HashMap,
     collections::HashSet,
+    fs,
     net::IpAddr,
     sync::Arc,
     time::{Duration, Instant},
@@ -28,6 +30,8 @@ use landscape_database::{
 use reqwest::Client;
 use tokio::sync::{broadcast, Mutex};
 
+use super::raw_file::{persist_raw_bytes, raw_dat_path, remove_raw_dat};
+
 const A_DAY: u64 = 60 * 60 * 24;
 
 pub type GeoDomainCacheStore = Arc<Mutex<GeoCacheStore<GeoFileCacheKey, GeoIpConfig>>>;
@@ -37,6 +41,7 @@ pub struct GeoIpService {
     store: GeoIpSourceConfigRepository,
     file_cache: GeoDomainCacheStore,
     dst_ip_events_tx: broadcast::Sender<DstIpEvent>,
+    raw_downloading: Arc<Mutex<HashSet<Uuid>>>,
 }
 
 impl GeoIpService {
@@ -51,7 +56,12 @@ impl GeoIpService {
             "ip".to_string(),
         )));
 
-        let service = Self { store, file_cache, dst_ip_events_tx };
+        let service = Self {
+            store,
+            file_cache,
+            dst_ip_events_tx,
+            raw_downloading: Arc::new(Mutex::new(HashSet::new())),
+        };
         let service_clone = service.clone();
         tokio::spawn(async move {
             let mut ticker = tokio::time::interval(Duration::from_secs(A_DAY));
@@ -145,7 +155,11 @@ impl GeoIpService {
         }
         let bytes =
             response.bytes().await.map_err(|e| GeoError::IpSourceRequestFailed(e.to_string()))?;
-        let result = self.parse_source_bytes(&config.source, bytes).await?;
+        let result = self.parse_source_bytes(&config.source, bytes.clone()).await?;
+        let dat_path = raw_dat_path("ip", config.id);
+        if let Err(e) = persist_raw_bytes(&dat_path, &bytes) {
+            tracing::warn!("persist raw geo ip file {:?} failed: {}", dat_path, e);
+        }
         self.replace_cache_by_name(&config.name, result).await;
 
         if let GeoIpSource::Url { next_update_at, .. } = &mut config.source {
@@ -161,6 +175,60 @@ impl GeoIpService {
         Ok(())
     }
 
+    async fn has_cached_name(&self, name: &str) -> bool {
+        let lock = self.file_cache.lock().await;
+        lock.keys().into_iter().any(|key| key.name == name)
+    }
+
+    async fn try_restore_from_raw(&self, config: &GeoIpSourceConfig) {
+        let dat_path = raw_dat_path("ip", config.id);
+        let Ok(bytes) = fs::read(&dat_path) else {
+            return;
+        };
+        match self.parse_source_bytes(&config.source, bytes).await {
+            Ok(result) if !result.is_empty() => {
+                self.replace_cache_by_name(&config.name, result).await;
+                tracing::info!("restored geo ip cache '{}' from {:?}", config.name, dat_path);
+            }
+            Ok(_) => {}
+            Err(e) => {
+                tracing::warn!("restore geo ip cache from {:?} failed: {}", dat_path, e);
+            }
+        }
+    }
+
+    pub async fn get_raw_dat_or_start_download(&self, id: Uuid) -> Result<RawDatState, GeoError> {
+        let dat_path = raw_dat_path("ip", id);
+        if dat_path.exists() {
+            let bytes = fs::read(&dat_path)
+                .map_err(|e| GeoError::RawDatReadFailed(format!("{dat_path:?}: {e}")))?;
+            return Ok(RawDatState::Ready(bytes));
+        }
+
+        let Some(config) = self.find_by_id(id).await else {
+            return Err(GeoError::IpNotFound(id));
+        };
+        if !matches!(config.source, GeoIpSource::Url { .. }) {
+            return Err(GeoError::RawDatNotReady);
+        }
+
+        let mut tasks = self.raw_downloading.lock().await;
+        if !tasks.insert(id) {
+            return Ok(RawDatState::Running);
+        }
+        drop(tasks);
+
+        let service = self.clone();
+        let name = config.name.clone();
+        tokio::spawn(async move {
+            if let Err(e) = service.refresh_one(&name).await {
+                tracing::error!("background download geo ip dat for '{}' failed: {}", name, e);
+            }
+            service.raw_downloading.lock().await.remove(&id);
+        });
+        Ok(RawDatState::Started)
+    }
+
     pub async fn refresh(&self, force: bool) {
         // 读取当前规则
         let configs: Vec<GeoIpSourceConfig> = self.store.list().await.unwrap();
@@ -174,6 +242,9 @@ impl GeoIpService {
 
             match &config.source {
                 GeoIpSource::Url { next_update_at, .. } => {
+                    if !self.has_cached_name(&config.name).await {
+                        self.try_restore_from_raw(&config).await;
+                    }
                     if !force && *next_update_at >= now {
                         continue;
                     }
@@ -363,7 +434,12 @@ impl GeoIpService {
             .into_iter()
             .find(|config| config.name == name)
             .ok_or_else(|| GeoError::IpConfigNotFound(name.clone()))?;
-        let result = self.parse_source_bytes(&config.source, file_bytes).await?;
+        let file_bytes = file_bytes.into();
+        let result = self.parse_source_bytes(&config.source, file_bytes.clone()).await?;
+        let dat_path = raw_dat_path("ip", config.id);
+        if let Err(e) = persist_raw_bytes(&dat_path, &file_bytes) {
+            tracing::warn!("persist raw geo ip file {:?} failed: {}", dat_path, e);
+        }
         self.replace_cache_by_name(&name, result).await;
         self.store.set(config).await.map_err(|e| GeoError::IpConfigStoreFailed(e.to_string()))?;
         self.notify_dst_ip_updated();
@@ -409,6 +485,11 @@ impl ConfigController for GeoIpService {
                 self.notify_dst_ip_updated();
             }
         }
+    }
+
+    async fn delete(&self, id: Self::Id) {
+        ConfigController::delete(self, id).await;
+        remove_raw_dat("ip", id);
     }
 }
 
