@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::config_service::iface::{ServiceKind, ZoneAwareConfig, ZoneRequirement};
 use crate::database::repository::LandscapeDBStore;
-use crate::store::storev2::LandscapeStore;
+use crate::service::manager::ServiceKeyProvider;
 use crate::utils::time::get_f64_timestamp;
 use crate::wan_service::nat::error::NatServiceError;
 
@@ -20,8 +20,8 @@ pub struct NatServiceConfig {
     pub update_at: f64,
 }
 
-impl LandscapeStore for NatServiceConfig {
-    fn get_store_key(&self) -> String {
+impl ServiceKeyProvider for NatServiceConfig {
+    fn service_key(&self) -> String {
         self.iface_name.clone()
     }
 }

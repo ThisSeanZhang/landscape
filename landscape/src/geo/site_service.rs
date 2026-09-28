@@ -21,7 +21,7 @@ use landscape_common::{
     args::LAND_HOME_PATH,
     config_service::geo::{normalize_adguard_key, GeoSiteSourceConfig},
     event::dns::DnsEvent,
-    store::storev4::StoreFileManager,
+    geo_cache::file_store::GeoCacheStore,
     LANDSCAPE_GEO_CACHE_TMP_DIR,
 };
 use landscape_database::{
@@ -34,7 +34,7 @@ use tokio::sync::{mpsc, Mutex};
 
 const A_DAY: u64 = 60 * 60 * 24;
 
-pub type GeoDomainCacheStore = Arc<Mutex<StoreFileManager<GeoFileCacheKey, GeoDomainConfig>>>;
+pub type GeoDomainCacheStore = Arc<Mutex<GeoCacheStore<GeoFileCacheKey, GeoDomainConfig>>>;
 
 type GeoContentHash = [u8; 32];
 
@@ -99,7 +99,7 @@ impl GeoSiteService {
     ) -> Self {
         let store = store.geo_site_rule_store();
 
-        let file_cache = Arc::new(Mutex::new(StoreFileManager::new(
+        let file_cache = Arc::new(Mutex::new(GeoCacheStore::new(
             LAND_HOME_PATH.join(LANDSCAPE_GEO_CACHE_TMP_DIR),
             "site".to_string(),
         )));
@@ -134,7 +134,7 @@ impl GeoSiteService {
     }
 
     fn apply_geo_values<I>(
-        file_cache_lock: &mut StoreFileManager<GeoFileCacheKey, GeoDomainConfig>,
+        file_cache_lock: &mut GeoCacheStore<GeoFileCacheKey, GeoDomainConfig>,
         name: &str,
         entries: I,
         before: &HashMap<GeoFileCacheKey, GeoContentHash>,

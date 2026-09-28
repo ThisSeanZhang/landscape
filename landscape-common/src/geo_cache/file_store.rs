@@ -11,7 +11,7 @@ use std::{
 // 最大垃圾空间阈值
 const JUNK_DATA_MAX_SIZE: u64 = 1024 * 1024 * 8;
 
-pub trait LandscapeStoreTrait {
+pub trait GeoStoreKeyProvider {
     type K;
     fn get_store_key(&self) -> Self::K;
 
@@ -46,7 +46,7 @@ impl From<(u64, Range<u64>)> for UnitPosition {
 
 /// 一个可扩展的文件管理器，支持存储 T 类型的对象
 #[derive(Debug)]
-pub struct StoreFileManager<K, V> {
+pub struct GeoCacheStore<K, V> {
     path: PathBuf,
     name: String,
 
@@ -63,13 +63,13 @@ pub struct StoreFileManager<K, V> {
     _marker: std::marker::PhantomData<V>,
 }
 
-impl<K, V> StoreFileManager<K, V>
+impl<K, V> GeoCacheStore<K, V>
 where
     K: Hash + Eq + Clone + Serialize + for<'de> Deserialize<'de>,
-    V: LandscapeStoreTrait<K = K> + Serialize + for<'de> Deserialize<'de>,
+    V: GeoStoreKeyProvider<K = K> + Serialize + for<'de> Deserialize<'de>,
 {
     /// 创建管理器
-    pub fn new(path: PathBuf, name: String) -> StoreFileManager<K, V> {
+    pub fn new(path: PathBuf, name: String) -> GeoCacheStore<K, V> {
         let data_floder = path.join(&name);
         // 文件夹不存在 创建它
         // max 和
@@ -203,7 +203,7 @@ where
             (current_era, BufWriter::new(writer_file), index, readers, junk_data_size)
         };
 
-        StoreFileManager {
+        GeoCacheStore {
             path: data_floder,
             name,
             current_era,
@@ -477,7 +477,7 @@ mod tests {
         }
     }
 
-    impl LandscapeStoreTrait for TestValue {
+    impl GeoStoreKeyProvider for TestValue {
         type K = String;
 
         fn get_store_key(&self) -> Self::K {
@@ -485,8 +485,8 @@ mod tests {
         }
     }
 
-    fn open_store(path: &Path) -> StoreFileManager<String, TestValue> {
-        StoreFileManager::new(path.to_path_buf(), "items".to_string())
+    fn open_store(path: &Path) -> GeoCacheStore<String, TestValue> {
+        GeoCacheStore::new(path.to_path_buf(), "items".to_string())
     }
 
     fn store_files(path: &Path) -> Vec<String> {

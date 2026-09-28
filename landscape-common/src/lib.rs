@@ -31,9 +31,9 @@ pub mod cert;
 pub mod dns;
 
 pub mod database;
+pub mod geo_cache;
 pub mod net_proto;
 pub mod pty;
-pub mod store;
 
 pub mod net;
 pub mod sys_service;

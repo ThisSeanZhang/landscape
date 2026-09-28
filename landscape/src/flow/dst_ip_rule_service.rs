@@ -122,13 +122,13 @@ mod tests {
 
     use landscape_common::{
         config_service::geo::{GeoFileCacheKey, GeoIpConfig},
-        store::storev4::StoreFileManager,
+        geo_cache::file_store::GeoCacheStore,
         LANDSCAPE_GEO_CACHE_TMP_DIR,
     };
 
     #[test]
     pub fn load_ip_test() {
-        let mut ip_store: StoreFileManager<GeoFileCacheKey, GeoIpConfig> = StoreFileManager::new(
+        let mut ip_store: GeoCacheStore<GeoFileCacheKey, GeoIpConfig> = GeoCacheStore::new(
             PathBuf::from("/root/.landscape-router").join(LANDSCAPE_GEO_CACHE_TMP_DIR),
             "ip".to_string(),
         );

@@ -4,7 +4,7 @@ use std::process::Command;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use landscape_common::database::LandscapeStore as LandscapeDBStore;
+use landscape_common::database::LandscapeStore;
 use landscape_common::event::hub::IfaceEventReader;
 use landscape_common::lan_service::lan_dhcpv4::config::DHCPv4ServiceConfig;
 use landscape_common::lan_service::lan_dhcpv4::status::ArpScanInfo;
@@ -13,14 +13,13 @@ use landscape_common::lan_service::lan_dhcpv4::status::DHCPv4OfferInfo;
 use landscape_common::lan_service::lan_dhcpv4::DhcpError;
 use landscape_common::service::controller::ControllerService;
 use landscape_common::service::WatchService;
-use landscape_common::store::storev2::LandscapeStore;
 use landscape_common::sys_service::client::{CallerLookupMatch, CallerLookupSource};
 use landscape_common::sys_service::route_service::LanRouteInfo;
 use landscape_common::sys_service::route_service::LanRouteMode;
 use landscape_common::LAND_ARP_SCAN_INTERVAL;
 use landscape_common::{
     event::hub::iface::IfaceObserverAction,
-    service::manager::{ServiceManager, ServiceStarterTrait},
+    service::manager::{ServiceKeyProvider, ServiceManager, ServiceStarterTrait},
 };
 use landscape_database::dhcp_v4_server::repository::DHCPv4ServerRepository;
 use landscape_database::provider::LandscapeDBServiceProvider;
@@ -144,7 +143,7 @@ impl ServiceStarterTrait for DHCPv4ServerStarter {
                 .await
                 .unwrap_or_default();
 
-            let store_key = config.get_store_key();
+            let store_key = config.service_key();
 
             let status = DhcpV4AssignStatus::from_config_and_devices(&config.config, bindings);
             let status_arc = Arc::new(Mutex::new(status));

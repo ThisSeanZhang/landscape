@@ -5,8 +5,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::database::repository::LandscapeDBStore;
 use crate::net_proto::udp::dhcp::{DhcpV4Option, Encodable};
+use crate::service::manager::ServiceKeyProvider;
 use crate::service::ServiceConfigError;
-use crate::store::storev2::LandscapeStore;
 use crate::utils::time::get_f64_timestamp;
 use crate::LANDSCAPE_DEFAULT_LAN_NAME;
 
@@ -397,8 +397,8 @@ impl Default for DHCPv4ServiceConfig {
     }
 }
 
-impl LandscapeStore for DHCPv4ServiceConfig {
-    fn get_store_key(&self) -> String {
+impl ServiceKeyProvider for DHCPv4ServiceConfig {
+    fn service_key(&self) -> String {
         self.iface_name.clone()
     }
 }

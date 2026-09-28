@@ -241,7 +241,7 @@ mod tests {
     use landscape_common::{
         config_service::geo::{GeoDomainConfig, GeoFileCacheKey},
         dns::rule::{DomainConfig, DomainMatchType},
-        store::storev4::StoreFileManager,
+        geo_cache::file_store::GeoCacheStore,
         LANDSCAPE_GEO_CACHE_TMP_DIR,
     };
 
@@ -427,13 +427,12 @@ mod tests {
         println!("==== start ====");
         test_memory_usage();
 
-        let mut site_store: StoreFileManager<GeoFileCacheKey, GeoDomainConfig> =
-            StoreFileManager::new(
-                PathBuf::from("/root/.landscape-router").join(LANDSCAPE_GEO_CACHE_TMP_DIR),
-                "site".to_string(),
-            );
+        let mut site_store: GeoCacheStore<GeoFileCacheKey, GeoDomainConfig> = GeoCacheStore::new(
+            PathBuf::from("/root/.landscape-router").join(LANDSCAPE_GEO_CACHE_TMP_DIR),
+            "site".to_string(),
+        );
 
-        println!("==== after StoreFileManager::new ====");
+        println!("==== after GeoCacheStore::new ====");
         test_memory_usage();
 
         let all = site_store.list();

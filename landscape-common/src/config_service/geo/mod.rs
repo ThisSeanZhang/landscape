@@ -8,7 +8,7 @@ use crate::config::ConfigId;
 use crate::database::repository::LandscapeDBStore;
 use crate::dns::rule::{DomainConfig, DomainMatchType};
 use crate::flow::ip_mark::IpConfig;
-use crate::store::storev4::LandscapeStoreTrait;
+use crate::geo_cache::file_store::GeoStoreKeyProvider;
 use crate::utils::id::gen_database_uuid;
 use crate::utils::time::get_f64_timestamp;
 
@@ -176,7 +176,7 @@ pub struct GeoSiteLookupResult {
     pub values: Vec<GeoSiteFileConfig>,
 }
 
-impl LandscapeStoreTrait for GeoDomainConfig {
+impl GeoStoreKeyProvider for GeoDomainConfig {
     type K = GeoFileCacheKey;
     fn get_store_key(&self) -> GeoFileCacheKey {
         GeoFileCacheKey { name: self.name.clone(), key: self.key.clone() }
@@ -318,7 +318,7 @@ pub struct GeoIpLookupResult {
     pub values: Vec<IpConfig>,
 }
 
-impl LandscapeStoreTrait for GeoIpConfig {
+impl GeoStoreKeyProvider for GeoIpConfig {
     type K = GeoFileCacheKey;
     fn get_store_key(&self) -> GeoFileCacheKey {
         GeoFileCacheKey { name: self.name.clone(), key: self.key.clone() }

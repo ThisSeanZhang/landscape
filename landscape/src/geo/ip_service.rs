@@ -1,4 +1,4 @@
-use landscape_common::store::storev4::LandscapeStoreTrait;
+use landscape_common::geo_cache::file_store::GeoStoreKeyProvider;
 use landscape_common::{
     config_service::geo::{
         GeoError, GeoFileCacheKey, GeoIpConfig, GeoIpLookupResult, GeoIpSource, GeoIpSourceConfig,
@@ -19,7 +19,7 @@ use std::{
 };
 
 use landscape_common::{
-    args::LAND_HOME_PATH, event::dns::DstIpEvent, store::storev4::StoreFileManager,
+    args::LAND_HOME_PATH, event::dns::DstIpEvent, geo_cache::file_store::GeoCacheStore,
     LANDSCAPE_GEO_CACHE_TMP_DIR,
 };
 use landscape_database::{
@@ -30,7 +30,7 @@ use tokio::sync::{broadcast, Mutex};
 
 const A_DAY: u64 = 60 * 60 * 24;
 
-pub type GeoDomainCacheStore = Arc<Mutex<StoreFileManager<GeoFileCacheKey, GeoIpConfig>>>;
+pub type GeoDomainCacheStore = Arc<Mutex<GeoCacheStore<GeoFileCacheKey, GeoIpConfig>>>;
 
 #[derive(Clone)]
 pub struct GeoIpService {
@@ -46,7 +46,7 @@ impl GeoIpService {
     ) -> Self {
         let store = store.geo_ip_rule_store();
 
-        let file_cache = Arc::new(Mutex::new(StoreFileManager::new(
+        let file_cache = Arc::new(Mutex::new(GeoCacheStore::new(
             LAND_HOME_PATH.join(LANDSCAPE_GEO_CACHE_TMP_DIR),
             "ip".to_string(),
         )));
@@ -417,7 +417,7 @@ mod tests {
 
     use landscape_common::{
         config_service::geo::{GeoFileCacheKey, GeoIpConfig},
-        store::storev4::StoreFileManager,
+        geo_cache::file_store::GeoCacheStore,
         LANDSCAPE_GEO_CACHE_TMP_DIR,
     };
     use std::{net::IpAddr, path::PathBuf, str::FromStr};
@@ -436,7 +436,7 @@ mod tests {
     // cargo test --package landscape --lib -- config_service::geo_ip_service::tests --show-output
     #[test]
     fn load_test() {
-        let file_cache: StoreFileManager<GeoFileCacheKey, GeoIpConfig> = StoreFileManager::new(
+        let file_cache: GeoCacheStore<GeoFileCacheKey, GeoIpConfig> = GeoCacheStore::new(
             PathBuf::from("/root/.landscape-router").join(LANDSCAPE_GEO_CACHE_TMP_DIR),
             "ip".to_string(),
         );

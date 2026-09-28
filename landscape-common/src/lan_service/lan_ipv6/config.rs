@@ -4,7 +4,7 @@ use super::dhcpv6_config::DHCPv6ServerConfig;
 use super::prefix_group::LanPrefixGroupConfig;
 use crate::config_service::iface::{ServiceKind, ZoneAwareConfig, ZoneRequirement};
 use crate::database::repository::LandscapeDBStore;
-use crate::store::storev2::LandscapeStore;
+use crate::service::manager::ServiceKeyProvider;
 use crate::utils::time::get_f64_timestamp;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq, Eq)]
@@ -115,6 +115,12 @@ pub struct LanIPv6ServiceConfigV2 {
     pub update_at: f64,
 }
 
+impl ServiceKeyProvider for LanIPv6ServiceConfigV2 {
+    fn service_key(&self) -> String {
+        self.iface_name.clone()
+    }
+}
+
 impl LandscapeDBStore<String> for LanIPv6ServiceConfigV2 {
     fn get_id(&self) -> String {
         self.iface_name.clone()
@@ -129,12 +135,6 @@ impl LandscapeDBStore<String> for LanIPv6ServiceConfigV2 {
 
 pub fn ra_flag_default() -> RouterFlags {
     0xc0.into()
-}
-
-impl LandscapeStore for LanIPv6ServiceConfigV2 {
-    fn get_store_key(&self) -> String {
-        self.iface_name.clone()
-    }
 }
 
 impl ZoneAwareConfig for LanIPv6ServiceConfigV2 {

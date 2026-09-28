@@ -1,10 +1,8 @@
-use crate::{
-    database::repository::LandscapeDBStore, store::storev2::LandscapeStore,
-    utils::time::get_f64_timestamp,
-};
+use crate::{database::repository::LandscapeDBStore, utils::time::get_f64_timestamp};
 use serde::{Deserialize, Serialize};
 
 use crate::net::MacAddr;
+use crate::service::manager::ServiceKeyProvider;
 use crate::service::ServiceConfigError;
 
 pub const DEFAULT_EXPECTED_PD_LEN: u8 = 60;
@@ -51,6 +49,12 @@ impl IPV6PDConfig {
     }
 }
 
+impl ServiceKeyProvider for IPV6PDServiceConfig {
+    fn service_key(&self) -> String {
+        self.iface_name.clone()
+    }
+}
+
 impl LandscapeDBStore<String> for IPV6PDServiceConfig {
     fn get_id(&self) -> String {
         self.iface_name.clone()
@@ -60,12 +64,6 @@ impl LandscapeDBStore<String> for IPV6PDServiceConfig {
     }
     fn set_update_at(&mut self, ts: f64) {
         self.update_at = ts;
-    }
-}
-
-impl LandscapeStore for IPV6PDServiceConfig {
-    fn get_store_key(&self) -> String {
-        self.iface_name.clone()
     }
 }
 

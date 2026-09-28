@@ -1,7 +1,6 @@
 use serde::{Deserialize, Serialize};
 
 use crate::database::repository::LandscapeDBStore;
-use crate::store::storev2::LandscapeStore;
 use crate::utils::time::get_f64_timestamp;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -12,12 +11,6 @@ pub struct FlowWanServiceConfig {
     #[serde(default = "get_f64_timestamp")]
     #[cfg_attr(feature = "openapi", schema(required = false))]
     pub update_at: f64,
-}
-
-impl LandscapeStore for FlowWanServiceConfig {
-    fn get_store_key(&self) -> String {
-        self.iface_name.clone()
-    }
 }
 
 impl LandscapeDBStore<String> for FlowWanServiceConfig {

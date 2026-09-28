@@ -2,8 +2,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::config_service::iface::{ServiceKind, ZoneAwareConfig, ZoneRequirement};
 use crate::database::repository::LandscapeDBStore;
+use crate::service::manager::ServiceKeyProvider;
 use crate::service::ServiceConfigError;
-use crate::store::storev2::LandscapeStore;
 use crate::utils::time::get_f64_timestamp;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -17,8 +17,8 @@ pub struct WifiServiceConfig {
     pub update_at: f64,
 }
 
-impl LandscapeStore for WifiServiceConfig {
-    fn get_store_key(&self) -> String {
+impl ServiceKeyProvider for WifiServiceConfig {
+    fn service_key(&self) -> String {
         self.iface_name.clone()
     }
 }

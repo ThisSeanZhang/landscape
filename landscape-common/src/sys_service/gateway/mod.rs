@@ -5,7 +5,6 @@ use uuid::Uuid;
 
 use crate::config::ConfigId;
 use crate::database::repository::LandscapeDBStore;
-use crate::store::storev2::LandscapeStore;
 use crate::utils::id::gen_database_uuid;
 use crate::utils::time::get_f64_timestamp;
 use crate::LdApiError;
@@ -216,12 +215,6 @@ pub struct HealthCheckConfig {
     pub timeout_secs: u64,
     pub unhealthy_threshold: u32,
     pub healthy_threshold: u32,
-}
-
-impl LandscapeStore for HttpUpstreamRuleConfig {
-    fn get_store_key(&self) -> String {
-        self.id.to_string()
-    }
 }
 
 impl LandscapeDBStore<Uuid> for HttpUpstreamRuleConfig {

@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use crate::config_service::iface::{ServiceKind, ZoneAwareConfig, ZoneRequirement};
 use crate::database::repository::LandscapeDBStore;
 use crate::net::MacAddr;
-use crate::store::storev2::LandscapeStore;
+use crate::service::manager::ServiceKeyProvider;
 use crate::sys_service::route_service::{LanRouteInfo, LanRouteMode};
 use crate::utils::time::get_f64_timestamp;
 
@@ -22,8 +22,8 @@ pub struct RouteLanServiceConfig {
     pub static_routes: Option<Vec<StaticRouteConfig>>,
 }
 
-impl LandscapeStore for RouteLanServiceConfig {
-    fn get_store_key(&self) -> String {
+impl ServiceKeyProvider for RouteLanServiceConfig {
+    fn service_key(&self) -> String {
         self.iface_name.clone()
     }
 }

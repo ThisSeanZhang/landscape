@@ -7,7 +7,7 @@ use crate::config_service::iface::{
 };
 use crate::database::repository::LandscapeDBStore;
 use crate::net_proto::udp::dhcp::DhcpV4Options;
-use crate::store::storev2::LandscapeStore;
+use crate::service::manager::ServiceKeyProvider;
 use crate::utils::time::get_f64_timestamp;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -21,8 +21,8 @@ pub struct IfaceIpServiceConfig {
     pub update_at: f64,
 }
 
-impl LandscapeStore for IfaceIpServiceConfig {
-    fn get_store_key(&self) -> String {
+impl ServiceKeyProvider for IfaceIpServiceConfig {
+    fn service_key(&self) -> String {
         self.iface_name.clone()
     }
 }

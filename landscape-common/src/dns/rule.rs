@@ -6,9 +6,9 @@ use crate::config::ConfigId;
 use crate::database::error::DbError;
 use crate::database::repository::LandscapeDBStore;
 use crate::dns::config::DnsUpstreamConfig;
+use crate::flow::mark::FlowMark;
 use crate::utils::id::gen_database_uuid;
 use crate::utils::time::get_f64_timestamp;
-use crate::{flow::mark::FlowMark, store::storev2::LandscapeStore};
 
 use crate::config_service::geo::GeoConfigKey;
 
@@ -69,12 +69,6 @@ pub struct DNSRuntimeRule {
     pub mark: FlowMark,
     pub source: Vec<DomainConfig>,
     pub flow_id: u32,
-}
-
-impl LandscapeStore for DNSRuleConfig {
-    fn get_store_key(&self) -> String {
-        self.index.to_string()
-    }
 }
 
 impl LandscapeDBStore<Uuid> for DNSRuleConfig {

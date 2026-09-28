@@ -3,13 +3,16 @@ use std::{collections::HashMap, sync::Arc};
 use tokio::sync::{mpsc, RwLock};
 
 use crate::concurrency::{spawn_task_with_resource, task_label};
-use crate::store::storev2::LandscapeStore;
 
 use super::WatchService;
 
+pub trait ServiceKeyProvider {
+    fn service_key(&self) -> String;
+}
+
 #[async_trait::async_trait]
 pub trait ServiceStarterTrait: Clone + Send + Sync + 'static {
-    type Config: LandscapeStore + Send + Sync + 'static;
+    type Config: ServiceKeyProvider + Send + Sync + 'static;
 
     /// 核心服务初始化逻辑
     async fn start(&self, config: Self::Config) -> WatchService;
@@ -38,7 +41,7 @@ impl<H: ServiceStarterTrait> ServiceManager<H> {
     }
 
     async fn spawn_service(&self, service_config: H::Config) {
-        let key = service_config.get_store_key();
+        let key = service_config.service_key();
         let (tx, mut rx) = mpsc::channel(1);
         let _ = tx.send(service_config).await;
         let service_status = WatchService::new();
@@ -61,7 +64,7 @@ impl<H: ServiceStarterTrait> ServiceManager<H> {
                         exist_status.wait_stop().await;
                     }
 
-                    let key = config.get_store_key();
+                    let key = config.service_key();
                     let status = starter.clone().start(config).await;
 
                     iface_status = Some(status.clone());
@@ -87,7 +90,7 @@ impl<H: ServiceStarterTrait> ServiceManager<H> {
 
     #[allow(clippy::result_unit_err)] // 内部 API：调用方只关心成功与否，无错误详情可传递
     pub async fn update_service(&self, config: H::Config) -> Result<(), ()> {
-        let key = config.get_store_key();
+        let key = config.service_key();
         let read_lock = self.services.read().await;
         if let Some((_, sender)) = read_lock.get(&key) {
             let result = if let Err(e) = sender.try_send(config) {
@@ -114,7 +117,7 @@ impl<H: ServiceStarterTrait> ServiceManager<H> {
     }
 
     pub async fn update_service_wait(&self, config: H::Config) {
-        let key = config.get_store_key();
+        let key = config.service_key();
         let sender = {
             let read_lock = self.services.read().await;
             read_lock.get(&key).map(|(_, sender)| sender.clone())

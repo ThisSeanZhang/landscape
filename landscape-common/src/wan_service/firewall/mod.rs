@@ -9,10 +9,7 @@ use uuid::Uuid;
 
 use crate::config::ConfigId;
 use crate::flow::mark::FlowMark;
-use crate::{
-    network::LandscapeIpProtocolCode, store::storev2::LandscapeStore,
-    LANDSCAPE_DEFAULE_DHCP_V6_CLIENT_PORT,
-};
+use crate::{network::LandscapeIpProtocolCode, LANDSCAPE_DEFAULE_DHCP_V6_CLIENT_PORT};
 
 #[derive(thiserror::Error, Debug, LdApiError)]
 #[api_error(crate_path = "crate")]
@@ -51,12 +48,6 @@ pub struct FirewallRuleConfig {
     #[serde(default = "get_f64_timestamp")]
     #[cfg_attr(feature = "openapi", schema(required = false))]
     pub update_at: f64,
-}
-
-impl LandscapeStore for FirewallRuleConfig {
-    fn get_store_key(&self) -> String {
-        self.index.to_string()
-    }
 }
 
 impl LandscapeDBStore<Uuid> for FirewallRuleConfig {

@@ -1,6 +1,6 @@
 use crate::database::repository::LandscapeDBStore;
 use crate::utils::time::get_f64_timestamp;
-use crate::{store::storev2::LandscapeStore, LANDSCAPE_DEFAULT_LAN_NAME};
+use crate::LANDSCAPE_DEFAULT_LAN_NAME;
 use sea_orm::{prelude::StringLen, DeriveActiveEnum, EnumIter};
 use serde::{Deserialize, Serialize};
 
@@ -27,12 +27,6 @@ pub struct NetworkIfaceConfig {
     #[serde(default = "get_f64_timestamp")]
     #[cfg_attr(feature = "openapi", schema(required = false))]
     pub update_at: f64,
-}
-
-impl LandscapeStore for NetworkIfaceConfig {
-    fn get_store_key(&self) -> String {
-        self.name.clone()
-    }
 }
 
 impl LandscapeDBStore<String> for NetworkIfaceConfig {
