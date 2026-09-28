@@ -393,8 +393,8 @@ pub(crate) async fn apply_connect_batch(
         Box::pin(async move {
             let last_calculate_time = now_ms();
 
-            // 批量查询本批次涉及的旧汇总值。SQLite 对 bind 参数数量有限制，
-            // 因此按参数预算分块（每个 key 需要两个参数）。
+            // 批量查询本批次涉及的旧汇总值。SQLite 对 bind 参数数量有限制,
+            // 因此按参数预算分块(每个 key 需要两个参数)。
             let mut keys: Vec<ConnectKey> =
                 batch.summary_metrics.iter().map(|metric| metric.key()).collect();
             keys.sort_by_key(|key| (key.create_time, key.cpu_id));
@@ -721,7 +721,7 @@ pub(crate) async fn rebuild_global_stats_cache(
     pool: &SqlitePool,
 ) -> Result<ConnectGlobalStats, sqlx::Error> {
     // 单条 UPDATE 中完成聚合和 cache 写入。SQLite 会在该写语句开始时
-    // 获取写锁，避免 SELECT 与后续 UPDATE 之间被并发写入插队。
+    // 获取写锁,避免 SELECT 与后续 UPDATE 之间被并发写入插队。
     super::run_write_tx(pool, (), |conn, _| {
         Box::pin(async move {
             let now = now_ms();

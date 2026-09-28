@@ -373,7 +373,7 @@ impl MetricService {
     }
 
     /// 已持久化的内存指标分钟历史(persistent 构建;未启用/无数据返回空)。
-    /// 最近实时数据走 `/api/v1/system/memory` 的 RAM 环形缓冲,互不串门。
+    /// 最近实时数据走 `/api/v1/system/memory` 的 RAM 环形缓冲,两条链路相互独立。
     pub async fn query_memory_history(&self, params: MemHistoryQueryParams) -> MemHistoryResponse {
         let mem = self.inner.mem_recording.lock().await;
         match mem.as_ref() {

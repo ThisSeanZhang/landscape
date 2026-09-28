@@ -379,7 +379,7 @@ impl MetricEngine {
     /// - `get_dns_summary`(仪表盘状态卡 DNSDashboard,默认 10min):只查 DB 桶,
     ///   与本函数无关;历史页 `query_dns_history`:只查 DB 原始行。
     ///
-    /// 内存与 DB 互不串门、永不合并。非 persistent 模式(内存 sink)走
+    /// 内存与 DB 相互独立、永不合并。非 persistent 模式(内存 sink)走
     /// `sink.get_dns_lightweight_summary`。
     pub async fn get_dns_lightweight_summary(
         &self,
@@ -897,7 +897,7 @@ mod tests {
         async fn dns_summary_served_from_buckets_after_restart() {
             // 仪表盘状态卡(get_dns_summary)直查 DB 桶:重启后仍可读重启前的数据;
             // 首页卡片(get_dns_lightweight_summary)只读内存窗口:重启后为空返回 0,
-            // 新流量进入窗口后恢复。两者互不串门。
+            // 新流量进入窗口后恢复。两条数据路径相互独立。
             let temp = tempfile::tempdir().unwrap();
             let path = temp.path().to_path_buf();
             let now_ms = now_ms();

@@ -275,7 +275,6 @@ mod tests {
             },
         );
         assert_eq!(compact.counters(0).live_bytes, 60);
-        // 越界读取回落到全零。
         assert_eq!(compact.counters(usize::MAX), SlotCounters::default());
         assert_eq!(compact.iter_slots().count(), SUBSYSTEMS.len());
 

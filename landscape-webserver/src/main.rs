@@ -539,8 +539,7 @@ async fn run_system(
     );
 
     startup_phase!("metric_service.start_service", metric_service.start_service().await);
-    // 内存快照环形缓冲:1s 采样、最近 1 小时,服务 /system/memory 实时查询;
-    // 分钟级持久化由 metric_service(MemRecording)独立负责。
+    // RAM 环形缓冲仅服务实时查询;分钟级持久化由 metric_service(MemRecording)独立负责。
     let memory_history = landscape_common::memtrack::start_sampler();
     let auth_share = Arc::new(ArcSwap::from_pointee(config.auth.clone()));
     let landscape_app_status = LandscapeApp {

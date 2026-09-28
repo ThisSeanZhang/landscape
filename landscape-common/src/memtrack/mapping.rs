@@ -10,8 +10,8 @@ fn index_of(name: &str) -> usize {
     SUBSYSTEMS.iter().position(|s| *s == name).unwrap_or(UNATTRIBUTED)
 }
 
-/// task label 前缀 → 子系统。覆盖 `concurrency::task_label` 的现有标签,
-/// 以及后续迁移裸 `tokio::spawn` 时会引入的前缀(dhcp/geo/dns/arp/...)。
+/// task label 前缀 → 子系统。覆盖 `concurrency::task_label` 的全部标签前缀
+/// (dhcp/geo/dns/arp/...)。
 pub fn subsystem_from_task_label(label: &str) -> usize {
     let head = label.split('.').next().unwrap_or("");
     let mapped = match head {
