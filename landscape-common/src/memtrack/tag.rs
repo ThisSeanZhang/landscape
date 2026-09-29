@@ -16,7 +16,8 @@ thread_local! {
     static CURRENT_TAG: Cell<usize> = const { Cell::new(UNATTRIBUTED) };
 }
 
-/// 读取当前线程的归属标签(分配器热路径使用)。
+/// 读取当前线程的归属标签(分配器热路径使用;mem-track 未开启时无调用方)。
+#[cfg_attr(not(feature = "mem-track"), allow(dead_code))]
 #[inline]
 pub(crate) fn current_tag() -> usize {
     CURRENT_TAG.with(|tag| tag.get())

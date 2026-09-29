@@ -146,6 +146,7 @@ mod tests {
             process_virtual_bytes: rss,
             total_live_bytes: live,
             untracked_bytes: None,
+            composition: None,
         };
         snapshot
     }

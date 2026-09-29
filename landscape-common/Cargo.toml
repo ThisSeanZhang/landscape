@@ -55,9 +55,7 @@ utoipa = { workspace = true, optional = true }
 
 [features]
 openapi = ["utoipa"]
-# 在分配器头部记录 owner,dealloc 按真实归属扣减,各子系统 live 字节精确
-# (每个分配额外 32 字节 + 少量写放大,仅调试用途)。
-mem-track-precise = []
+mem-track = []
 
 [dev-dependencies]
 tempfile = { workspace = true }

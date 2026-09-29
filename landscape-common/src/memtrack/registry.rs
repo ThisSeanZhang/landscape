@@ -2,6 +2,8 @@
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use super::composition::MemoryComposition;
+
 /// 子系统标签。索引即槽位 ID,`UNATTRIBUTED` 为兜底槽位(未打标任务、启动
 /// 早期分配)。入库与 API 按名称存储,追加新条目时保持已有顺序稳定。
 pub const SUBSYSTEMS: &[&str] = &[
@@ -61,18 +63,22 @@ static REGISTRY: Registry = Registry {
 };
 
 impl Registry {
+    // mem-track 未开启时分配器不记账,读取/记录路径仅测试使用。
+    #[cfg_attr(not(feature = "mem-track"), allow(dead_code))]
     pub(crate) fn get(&self, index: usize) -> &SubsystemCounters {
         &self.slots[index.min(UNATTRIBUTED)]
     }
 }
 
 impl SubsystemCounters {
+    #[cfg_attr(not(feature = "mem-track"), allow(dead_code))]
     #[inline]
     pub(crate) fn record_alloc(&self, bytes: usize) {
         self.allocated_bytes.fetch_add(bytes as u64, Ordering::Relaxed);
         self.alloc_events.fetch_add(1, Ordering::Relaxed);
     }
 
+    #[cfg_attr(not(feature = "mem-track"), allow(dead_code))]
     #[inline]
     pub(crate) fn record_free(&self, bytes: usize) {
         self.freed_bytes.fetch_add(bytes as u64, Ordering::Relaxed);
@@ -84,10 +90,12 @@ pub(crate) fn registry() -> &'static Registry {
     &REGISTRY
 }
 
+#[cfg_attr(not(feature = "mem-track"), allow(dead_code))]
 pub(crate) fn record_alloc(tag: usize, bytes: usize) {
     REGISTRY.get(tag).record_alloc(bytes);
 }
 
+#[cfg_attr(not(feature = "mem-track"), allow(dead_code))]
 pub(crate) fn record_free(tag: usize, bytes: usize) {
     REGISTRY.get(tag).record_free(bytes);
 }
@@ -110,7 +118,7 @@ pub struct ModuleMemStat {
     pub subsystem: String,
     pub allocated_bytes: u64,
     pub freed_bytes: u64,
-    /// allocated - freed。计数模式下为估算值(见模块文档);精确模式精确。
+    /// allocated - freed。
     pub live_bytes: u64,
     pub alloc_events: u64,
     pub free_events: u64,
@@ -126,15 +134,19 @@ pub struct SnapshotMeta {
     /// RSS − Σ(live):正值为分配器外开销(元数据/碎片/线程栈),负值为
     /// 尚未触碰或已归还操作系统的页。
     pub untracked_bytes: Option<i64>,
+    /// RSS 构成分桶(smaps + mallinfo2,仅 Linux;采样热路径不填,API 查询
+    /// 边界按需计算,见 `memtrack::composition`)。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub composition: Option<MemoryComposition>,
 }
 
 /// 一次全量快照。
-#[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct MemorySnapshot {
     pub timestamp_ms: u64,
-    /// 是否为精确模式(feature `mem-track-precise`)。
-    pub precise: bool,
+    /// 是否启用了内存跟踪(feature `mem-track`);false 时各子系统计数恒为零。
+    pub enabled: bool,
     pub meta: SnapshotMeta,
     pub modules: Vec<ModuleMemStat>,
 }
@@ -179,13 +191,13 @@ pub struct SubsystemSeries {
 }
 
 /// RAM 环形缓冲历史的批量响应:所有 series 共享一条 `timestamps` 轴,
-/// 缺失时刻按位置数组补零对齐。`precise`/`meta` 为进程级信息(内存历史
+/// 缺失时刻按位置数组补零对齐。`enabled`/`meta` 为进程级信息(内存历史
 /// 恒有值;SQLite 分钟历史复用同一形状但置 `None`)。
 #[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct MemorySeriesResponse {
     pub timestamps: Vec<u64>,
-    pub precise: Option<bool>,
+    pub enabled: Option<bool>,
     pub meta: Option<Vec<SnapshotMeta>>,
     pub series: Vec<SubsystemSeries>,
 }
@@ -195,7 +207,7 @@ pub struct MemorySeriesResponse {
 #[derive(Clone, Debug)]
 pub struct CompactSnapshot {
     pub timestamp_ms: u64,
-    pub precise: bool,
+    pub enabled: bool,
     pub meta: SnapshotMeta,
     /// 顺序同 SUBSYSTEMS。
     pub(crate) stats: [SlotCounters; SUBSYSTEMS.len()],
@@ -206,7 +218,7 @@ impl CompactSnapshot {
     pub fn zeroed(timestamp_ms: u64) -> Self {
         CompactSnapshot {
             timestamp_ms,
-            precise: false,
+            enabled: false,
             meta: SnapshotMeta::default(),
             stats: [SlotCounters::default(); SUBSYSTEMS.len()],
         }
@@ -243,7 +255,7 @@ impl CompactSnapshot {
             .collect();
         MemorySnapshot {
             timestamp_ms: self.timestamp_ms,
-            precise: self.precise,
+            enabled: self.enabled,
             meta: self.meta.clone(),
             modules,
         }

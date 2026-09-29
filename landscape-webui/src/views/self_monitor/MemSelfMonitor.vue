@@ -72,11 +72,63 @@ const refreshLive = async () => {
 
 const meta = computed(() => snapshot.value?.meta);
 
+const trackingDisabled = computed(
+  () => snapshot.value !== null && snapshot.value.enabled === false,
+);
+
 const untracked = computed(() => {
   const value = meta.value?.untracked_bytes;
   if (value === null || value === undefined) return "--";
   const sign = value > 0 ? "+" : "";
   return `${sign}${formatSize(value)}`;
+});
+
+const compositionRows = computed(() => {
+  const comp = snapshot.value?.meta?.composition;
+  if (!comp) return [];
+  const rows: Array<{ label: string; value: string }> = [
+    {
+      label: t("self_monitor.mem.comp_heap"),
+      value: formatSize(comp.heap_rss_bytes),
+    },
+    {
+      label: t("self_monitor.mem.comp_thread_stacks"),
+      value: formatSize(comp.thread_stacks_rss_bytes),
+    },
+    {
+      label: t("self_monitor.mem.comp_file_backed"),
+      value: formatSize(comp.file_backed_rss_bytes),
+    },
+    {
+      label: t("self_monitor.mem.comp_other_anon"),
+      value: formatSize(comp.other_anon_rss_bytes),
+    },
+  ];
+  if (comp.malloc_in_use_bytes != null) {
+    rows.push({
+      label: t("self_monitor.mem.comp_malloc_in_use"),
+      value: formatSize(comp.malloc_in_use_bytes),
+    });
+  }
+  if (comp.malloc_free_held_bytes != null) {
+    rows.push({
+      label: t("self_monitor.mem.comp_malloc_free_held"),
+      value: formatSize(comp.malloc_free_held_bytes),
+    });
+  }
+  if (comp.header_overhead_bytes != null) {
+    rows.push({
+      label: t("self_monitor.mem.comp_header_overhead"),
+      value: formatSize(comp.header_overhead_bytes),
+    });
+  }
+  if (comp.c_heap_estimated_bytes != null) {
+    rows.push({
+      label: t("self_monitor.mem.comp_c_heap"),
+      value: formatSize(comp.c_heap_estimated_bytes),
+    });
+  }
+  return rows;
 });
 
 const liveChartSeries = computed(() => {
@@ -288,7 +340,13 @@ onUnmounted(() => {
 
 <template>
   <n-flex vertical style="flex: 1; overflow: hidden; min-height: 0">
+    <n-empty
+      v-if="trackingDisabled"
+      :description="t('self_monitor.mem.need_mem_track')"
+      style="flex: 1; justify-content: center"
+    />
     <n-card
+      v-else
       size="small"
       :bordered="false"
       style="margin-bottom: 12px; background-color: #f9f9f910; flex-shrink: 0"
@@ -300,19 +358,11 @@ onUnmounted(() => {
           }}</span>
           <n-tooltip trigger="hover">
             <template #trigger>
-              <n-tag
-                size="small"
-                :bordered="false"
-                :type="snapshot?.precise ? 'success' : 'default'"
-              >
-                {{
-                  snapshot?.precise
-                    ? t("self_monitor.mem.precise")
-                    : t("self_monitor.mem.counting")
-                }}
+              <n-tag size="small" :bordered="false" type="success">
+                {{ t("self_monitor.mem.enabled") }}
               </n-tag>
             </template>
-            {{ t("self_monitor.mem.mode_tip") }}
+            {{ t("self_monitor.mem.enabled_tip") }}
           </n-tooltip>
         </n-flex>
       </n-flex>
@@ -374,12 +424,31 @@ onUnmounted(() => {
               </n-icon>
             </n-flex>
           </template>
-          {{ t("self_monitor.mem.untracked_tip") }}
+          <n-flex vertical size="small">
+            <span>{{ t("self_monitor.mem.untracked_tip") }}</span>
+            <template v-if="compositionRows.length > 0">
+              <n-divider style="margin: 4px 0" />
+              <div style="font-weight: 600; margin-bottom: 2px">
+                {{ t("self_monitor.mem.composition") }}
+              </div>
+              <n-flex
+                v-for="row in compositionRows"
+                :key="row.label"
+                justify="space-between"
+                size="large"
+                style="gap: 24px"
+              >
+                <span>{{ row.label }}</span>
+                <span style="font-weight: 600">{{ row.value }}</span>
+              </n-flex>
+            </template>
+          </n-flex>
         </n-tooltip>
       </n-flex>
     </n-card>
 
     <n-tabs
+      v-if="!trackingDisabled"
       v-model:value="activeTab"
       type="line"
       size="small"

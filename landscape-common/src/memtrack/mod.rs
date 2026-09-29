@@ -4,21 +4,22 @@
 //! 归属标签(见 [`tag`]),累加到 [`registry`] 对应子系统槽位;标签由
 //! `spawn_task`/专用线程启动时设置,映射规则见 [`mapping`]。
 //!
-//! - 默认计数模式:仅原子累加,开销约 1~3%;跨子系统传递后由他处 drop 的
-//!   内存 live 估算可能漂移(流量准确,全局总 live 精确)。
-//! - feature `mem-track-precise`:分配附加 32 字节头部记录 owner,dealloc
-//!   按真实 owner 扣减,各子系统 live 精确。
+//! 仅在显式开启 feature `mem-track` 时统计:分配附加 32 字节头部记录
+//! owner,dealloc 按真实归属扣减,各子系统 live 精确。未开启时分配器为
+//! `System` 纯透传,零开销、不计数,各子系统计数恒为零。
 //!
-//! Σ(子系统 live) ≠ 进程 RSS(元数据/碎片/线程栈),差值在快照中以
-//! `untracked_bytes` 明示。
+//! Σ(子系统 live) ≠ 进程 RSS(元数据/碎片/线程栈/C 库堆),差值在快照中
+//! 以 `untracked_bytes` 明示,其构成拆解见 [`composition`]。
 
 pub mod allocator;
+pub mod composition;
 pub mod mapping;
 pub mod registry;
 pub mod sampler;
 pub mod tag;
 
 pub use allocator::CountingAllocator;
+pub use composition::MemoryComposition;
 pub use mapping::{subsystem_from_task_label, subsystem_from_thread_name};
 pub use registry::{
     CompactSnapshot, MemorySeriesResponse, MemorySnapshot, ModuleMemStat, SUBSYSTEMS, SlotCounters,
@@ -32,6 +33,7 @@ use std::sync::atomic::Ordering;
 
 /// 采集紧凑快照,供采样热路径(RAM 环形缓冲、分钟聚合)使用。注册表扫描
 /// 无堆分配;Linux 上 statm 读取会经 read_to_string 产生一次小额分配。
+/// 不计算 RSS 构成(见 [`composition`],由 API 查询边界按需补充)。
 pub fn capture_compact() -> CompactSnapshot {
     let mut stats = [SlotCounters::default(); SUBSYSTEMS.len()];
     for (index, counters) in registry().iter().enumerate() {
@@ -56,12 +58,13 @@ pub fn capture_compact() -> CompactSnapshot {
 
     CompactSnapshot {
         timestamp_ms: crate::utils::time::now_ms(),
-        precise: cfg!(feature = "mem-track-precise"),
+        enabled: cfg!(feature = "mem-track"),
         meta: SnapshotMeta {
             process_rss_bytes: rss_bytes,
             process_virtual_bytes: virtual_bytes,
             total_live_bytes: total_live,
             untracked_bytes,
+            composition: None,
         },
         stats,
     }
@@ -74,9 +77,21 @@ fn global_live_bytes(stats: &[SlotCounters]) -> u64 {
     allocated.saturating_sub(freed).min(u64::MAX as u128) as u64
 }
 
-/// API 查询边界用的全量快照;采样热路径走 [`capture_compact`]。
+/// API 查询边界用的全量快照:在紧凑快照之上按需计算 RSS 构成分桶
+/// (smaps 解析 + mallinfo2,仅 Linux;热路径采样不含构成);采样热路径
+/// 走 [`capture_compact`]。
 pub fn snapshot() -> MemorySnapshot {
-    capture_compact().to_snapshot()
+    let mut compact = capture_compact();
+    let live_alloc_events: u64 = compact
+        .iter_slots()
+        .map(|(_, counters)| counters.alloc_events.saturating_sub(counters.free_events))
+        .sum();
+    if let Some(composition) =
+        composition::build_composition(compact.meta.total_live_bytes, live_alloc_events)
+    {
+        compact.meta.composition = Some(composition);
+    }
+    compact.to_snapshot()
 }
 
 /// 读取 `/proc/self/statm`(单位:页)返回 `(VmSize, VmRSS)` 字节。
@@ -130,8 +145,12 @@ mod tests {
 
     #[test]
     fn snapshot_covers_all_subsystems_and_meta() {
-        // 测试二进制未安装全局分配器,显式经过 CountingAllocator 保证计数非零。
+        // 测试二进制未安装全局分配器,显式经过 CountingAllocator;仅在
+        // mem-track 开启时计数非零,未开启时纯透传、不计数。全局计数被同
+        // 二进制内并行测试共享,只能断言本测试独占槽位(0)的差值。
         use std::alloc::{GlobalAlloc, Layout};
+        use std::sync::atomic::Ordering::Relaxed;
+        let slot0_before = registry().get(0).allocated_bytes.load(Relaxed);
         let layout = Layout::from_size_align(128, 8).unwrap();
         let ptr = super::tag::with_tag(0, || unsafe {
             super::allocator::CountingAllocator.alloc(layout)
@@ -141,10 +160,20 @@ mod tests {
         let snap = snapshot();
         assert_eq!(snap.modules.len(), SUBSYSTEMS.len());
         assert_eq!(snap.modules[UNATTRIBUTED].subsystem, "unattributed");
-        assert!(snap.meta.total_live_bytes > 0);
+        assert_eq!(snap.enabled, cfg!(feature = "mem-track"));
+        let slot0_after = registry().get(0).allocated_bytes.load(Relaxed);
+        if cfg!(feature = "mem-track") {
+            assert!(slot0_after > slot0_before);
+            assert!(snap.meta.total_live_bytes > 0);
+        } else {
+            assert_eq!(slot0_after, slot0_before);
+        }
+        // API 查询边界按需计算 RSS 构成(仅 Linux 有值)。
+        if cfg!(target_os = "linux") {
+            assert!(snap.meta.composition.is_some());
+        }
 
         unsafe { super::allocator::CountingAllocator.dealloc(ptr, layout) };
-        assert!(snap.precise == cfg!(feature = "mem-track-precise"));
     }
 
     #[cfg(target_os = "linux")]

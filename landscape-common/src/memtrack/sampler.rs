@@ -68,10 +68,8 @@ impl MemoryHistory {
 fn build_series(samples: &[CompactSnapshot], subsystem: Option<&str>) -> MemorySeriesResponse {
     let timestamps: Vec<u64> = samples.iter().map(|snapshot| snapshot.timestamp_ms).collect();
     let meta: Vec<SnapshotMeta> = samples.iter().map(|snapshot| snapshot.meta.clone()).collect();
-    let precise = samples
-        .first()
-        .map(|snapshot| snapshot.precise)
-        .unwrap_or(cfg!(feature = "mem-track-precise"));
+    let enabled =
+        samples.first().map(|snapshot| snapshot.enabled).unwrap_or(cfg!(feature = "mem-track"));
 
     // 只输出窗口内曾经非零的槽位;从未使用的槽位整段为零,输出无信息。
     let mut used = [false; SUBSYSTEMS.len()];
@@ -101,7 +99,7 @@ fn build_series(samples: &[CompactSnapshot], subsystem: Option<&str>) -> MemoryS
 
     MemorySeriesResponse {
         timestamps,
-        precise: Some(precise),
+        enabled: Some(enabled),
         meta: Some(meta),
         series,
     }
@@ -143,7 +141,7 @@ mod tests {
         let series = history.recent_series(0, None);
         assert_eq!(series.timestamps.len(), history.len());
         assert_eq!(series.meta.as_ref().unwrap().len(), history.len());
-        assert!(series.precise.is_some());
+        assert!(series.enabled.is_some());
     }
 
     #[tokio::test]

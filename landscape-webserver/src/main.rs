@@ -108,8 +108,8 @@ const ROUTE_EVENT_CHANNEL_SIZE: usize = 128;
 
 const UPLOAD_GEO_FILE_SIZE_LIMIT: usize = 100 * 1024 * 1024;
 
-/// 按子系统记账的全局分配器(默认计数模式;`mem-track-precise` feature
-/// 启用分配头精确归属)。必须尽早声明,覆盖进程全部堆分配。
+/// 按子系统记账的全局分配器(feature `mem-track` 显式开启时精确归属;
+/// 未开启时为 System 纯透传,零开销)。必须尽早声明,覆盖进程全部堆分配。
 #[global_allocator]
 static GLOBAL_ALLOCATOR: landscape_common::memtrack::CountingAllocator =
     landscape_common::memtrack::CountingAllocator;

@@ -1,15 +1,14 @@
 //! 全局分配器包装:`#[global_allocator]` 声明处位于最终二进制
 //! (`landscape-webserver/src/main.rs`)。
 //!
-//! 计数模式(默认)仅做线程本地标签读取 + 原子累加,realloc/alloc_zeroed 走
-//! trait 默认实现(经由本包装的 alloc/dealloc 计账)。精确模式
-//! (feature `mem-track-precise`)在每次分配前附加 32 字节头部,记录 owner
-//! 与基础布局,dealloc/realloc 按真实 owner 扣减,各子系统 live 字节精确。
+//! 仅在显式开启 feature `mem-track` 时统计:每次分配前附加 32 字节头部,
+//! 记录 owner 与基础布局,dealloc/realloc 按真实 owner 扣减,各子系统
+//! live 字节精确。未开启时本包装为 `System` 的纯透传,零开销、不计数。
 
-use std::alloc::{GlobalAlloc, Layout, System};
+#[cfg(not(feature = "mem-track"))]
+use std::alloc::System;
 
-use super::registry::{record_alloc, record_free};
-use super::tag::current_tag;
+use std::alloc::{GlobalAlloc, Layout};
 
 /// 全局分配器。在二进制中声明:
 ///
@@ -20,28 +19,12 @@ use super::tag::current_tag;
 /// ```
 pub struct CountingAllocator;
 
-impl CountingAllocator {
-    #[cfg(not(feature = "mem-track-precise"))]
-    #[inline]
-    fn alloc_counting(&self, layout: Layout) -> *mut u8 {
-        let ptr = unsafe { System.alloc(layout) };
-        if !ptr.is_null() {
-            record_alloc(current_tag(), layout.size());
-        }
-        ptr
-    }
-
-    #[cfg(not(feature = "mem-track-precise"))]
-    #[inline]
-    fn dealloc_counting(&self, ptr: *mut u8, layout: Layout) {
-        record_free(current_tag(), layout.size());
-        unsafe { System.dealloc(ptr, layout) }
-    }
-}
-
-#[cfg(feature = "mem-track-precise")]
+#[cfg(feature = "mem-track")]
 mod precise {
-    use super::*;
+    use std::alloc::{GlobalAlloc, Layout, System};
+
+    use super::super::registry::{record_alloc, record_free};
+    use super::super::tag::current_tag;
 
     pub(super) const HEADER_SIZE: usize = 32;
     const HEADER_ALIGN: usize = 8;
@@ -104,11 +87,10 @@ mod precise {
     }
 
     /// `fallback_layout`:magic 不匹配(分配器安装前的极早期分配,理论不可达)
-    /// 时按计数语义回收,不泄漏。
+    /// 时按原布局直接回收,不泄漏也不计账。
     pub(super) fn dealloc(ptr: *mut u8, fallback_layout: Layout) {
         let header = AllocHeader::read_before(ptr);
         if header.magic != MAGIC {
-            record_free(current_tag(), fallback_layout.size());
             unsafe { System.dealloc(ptr, fallback_layout) };
             return;
         }
@@ -126,7 +108,7 @@ mod precise {
     pub(super) fn realloc(ptr: *mut u8, old_layout: Layout, new_size: usize) -> *mut u8 {
         let header = AllocHeader::read_before(ptr);
         if header.magic != MAGIC {
-            return counting_realloc_fallback(ptr, old_layout, new_size);
+            return passthrough_realloc(ptr, old_layout, new_size);
         }
         let Ok(new_layout) = Layout::from_size_align(new_size, old_layout.align()) else {
             return std::ptr::null_mut();
@@ -144,21 +126,9 @@ mod precise {
         new_ptr
     }
 
-    fn counting_realloc_fallback(ptr: *mut u8, old_layout: Layout, new_size: usize) -> *mut u8 {
-        let Ok(new_layout) = Layout::from_size_align(new_size, old_layout.align()) else {
-            return std::ptr::null_mut();
-        };
-        let new_ptr = unsafe { System.alloc(new_layout) };
-        if new_ptr.is_null() {
-            return std::ptr::null_mut();
-        }
-        unsafe {
-            std::ptr::copy_nonoverlapping(ptr, new_ptr, old_layout.size().min(new_size));
-            System.dealloc(ptr, old_layout);
-        }
-        record_alloc(current_tag(), new_size);
-        record_free(current_tag(), old_layout.size());
-        new_ptr
+    /// 无头分配的纯透传 realloc(理论不可达路径,不计账)。
+    fn passthrough_realloc(ptr: *mut u8, old_layout: Layout, new_size: usize) -> *mut u8 {
+        unsafe { System.realloc(ptr, old_layout, new_size) }
     }
 
     #[test]
@@ -169,30 +139,28 @@ mod precise {
 
 unsafe impl GlobalAlloc for CountingAllocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        #[cfg(feature = "mem-track-precise")]
+        #[cfg(feature = "mem-track")]
         {
             precise::alloc(layout)
         }
-        #[cfg(not(feature = "mem-track-precise"))]
+        #[cfg(not(feature = "mem-track"))]
         {
-            self.alloc_counting(layout)
+            unsafe { System.alloc(layout) }
         }
     }
 
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-        #[cfg(feature = "mem-track-precise")]
+        #[cfg(feature = "mem-track")]
         {
             precise::dealloc(ptr, layout)
         }
-        #[cfg(not(feature = "mem-track-precise"))]
+        #[cfg(not(feature = "mem-track"))]
         {
-            self.dealloc_counting(ptr, layout)
+            unsafe { System.dealloc(ptr, layout) }
         }
     }
 
-    // counting 模式不覆写 realloc:trait 默认实现(alloc → copy → dealloc)
-    // 经由上方已覆写的 alloc/dealloc 计账,行为与手写一致。
-    #[cfg(feature = "mem-track-precise")]
+    #[cfg(feature = "mem-track")]
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
         precise::realloc(ptr, layout, new_size)
     }
@@ -220,17 +188,19 @@ mod tests {
         let ptr = with_tag(0, || unsafe { GlobalAlloc::alloc(&CountingAllocator, layout) });
         assert!(!ptr.is_null());
         let after = allocated(0);
-        #[cfg(feature = "mem-track-precise")]
-        assert_eq!(after, before + 64);
-        #[cfg(not(feature = "mem-track-precise"))]
-        assert!(after >= before + 64);
+        if cfg!(feature = "mem-track") {
+            assert_eq!(after, before + 64);
+        } else {
+            assert_eq!(after, before);
+        }
 
         let freed_before = freed(0);
         unsafe { GlobalAlloc::dealloc(&CountingAllocator, ptr, layout) };
-        #[cfg(feature = "mem-track-precise")]
-        assert_eq!(freed(0), freed_before + 64);
-        #[cfg(not(feature = "mem-track-precise"))]
-        assert!(freed(0) >= freed_before);
+        if cfg!(feature = "mem-track") {
+            assert_eq!(freed(0), freed_before + 64);
+        } else {
+            assert_eq!(freed(0), freed_before);
+        }
     }
 
     #[test]
@@ -243,7 +213,7 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "mem-track-precise")]
+    #[cfg(feature = "mem-track")]
     #[test]
     fn free_attributed_to_allocating_owner_even_after_tag_change() {
         let layout = Layout::from_size_align(128, 16).unwrap();
@@ -258,7 +228,7 @@ mod tests {
         assert_eq!(freed(2), freed_before + 128);
     }
 
-    #[cfg(feature = "mem-track-precise")]
+    #[cfg(feature = "mem-track")]
     #[test]
     fn realloc_preserves_owner_and_counts() {
         let layout = Layout::from_size_align(32, 8).unwrap();
@@ -281,7 +251,7 @@ mod tests {
         });
     }
 
-    #[cfg(feature = "mem-track-precise")]
+    #[cfg(feature = "mem-track")]
     #[test]
     fn various_alignments_roundtrip() {
         // 槽位 10(lan):避开 alloc_attributed_to_current_tag 占用的槽 0,
@@ -305,10 +275,11 @@ mod tests {
         let ptr =
             with_tag(usize::MAX, || unsafe { GlobalAlloc::alloc(&CountingAllocator, layout) });
         assert!(!ptr.is_null());
-        #[cfg(feature = "mem-track-precise")]
-        assert_eq!(allocated(UNATTRIBUTED), before + 16);
-        #[cfg(not(feature = "mem-track-precise"))]
-        assert!(allocated(UNATTRIBUTED) >= before);
+        if cfg!(feature = "mem-track") {
+            assert_eq!(allocated(UNATTRIBUTED), before + 16);
+        } else {
+            assert_eq!(allocated(UNATTRIBUTED), before);
+        }
         unsafe { GlobalAlloc::dealloc(&CountingAllocator, ptr, layout) };
     }
 }
