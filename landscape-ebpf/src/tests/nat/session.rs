@@ -1,9 +1,9 @@
 use std::time::Duration;
 
-use crate::tests::net_utils::{send_raw_packet, settle, wait_for, VethPair};
+use crate::tests::net_utils::{VethPair, send_raw_packet, settle, wait_for};
 use libbpf_rs::{
-    skel::{OpenSkel, SkelBuilder as _},
     MapCore, MapFlags,
+    skel::{OpenSkel, SkelBuilder as _},
 };
 
 use crate::maps::{Nat4TimerKey, Nat4TimerValueV3};
@@ -111,7 +111,10 @@ fn assert_no_dyn_map_entry(
     from_addr: [u8; 4],
 ) {
     let result = lookup_nat4_mapping(map, gress, l4proto, from_port, from_addr);
-    assert!(result.is_none(), "expected no dyn map entry for gress={gress} l4={l4proto} port={from_port} addr={from_addr:?}");
+    assert!(
+        result.is_none(),
+        "expected no dyn map entry for gress={gress} l4={l4proto} port={from_port} addr={from_addr:?}"
+    );
 }
 
 fn assert_egress_dyn_map_entry(
@@ -139,7 +142,10 @@ fn assert_no_egress_dyn_map_entry(
     from_addr: [u8; 4],
 ) {
     let result = lookup_nat4_mapping(map, gress, l4proto, from_port, from_addr);
-    assert!(result.is_none(), "expected no egress dyn map entry for gress={gress} l4={l4proto} port={from_port} addr={from_addr:?}");
+    assert!(
+        result.is_none(),
+        "expected no egress dyn map entry for gress={gress} l4={l4proto} port={from_port} addr={from_addr:?}"
+    );
 }
 
 fn assert_wan_ip_binding(

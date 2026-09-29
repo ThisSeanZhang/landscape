@@ -8,7 +8,7 @@ use landscape_common::{
 use landscape_database::{
     dns_redirect::repository::DNSRedirectRuleRepository, provider::LandscapeDBServiceProvider,
 };
-use tokio::sync::{mpsc, RwLock};
+use tokio::sync::{RwLock, mpsc};
 use uuid::Uuid;
 
 #[derive(Clone)]

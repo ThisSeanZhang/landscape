@@ -1,6 +1,6 @@
 use std::sync::{
-    atomic::{AtomicU64, Ordering},
     Arc,
+    atomic::{AtomicU64, Ordering},
 };
 use std::time::Duration;
 
@@ -15,8 +15,8 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 use crate::agg::{
-    cleanup_flow_cache, process_connect_metric, second_ring_capacity, second_window_ms, Batch,
-    FlowCache, IfaceRealtimeCache,
+    Batch, FlowCache, IfaceRealtimeCache, cleanup_flow_cache, process_connect_metric,
+    second_ring_capacity, second_window_ms,
 };
 #[cfg(feature = "metric-persistent")]
 use crate::agg::{dns_window::DnsRecentWindow, finalize_all_flows};

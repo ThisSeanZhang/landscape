@@ -407,11 +407,13 @@ fn lan_ingress_wan_cache_hit_without_wan_binding_is_inert() {
 
     assert_eq!(ret, RET_SHOT, "no binding → WAN-cache entry is inert → default drop");
     assert_eq!(mark, 0x0200_0000);
-    assert!(lookup_rt4_cache_value(
-        &skel.maps.rt4_cache_map,
-        LAN_CACHE,
-        client_addr(),
-        remote_wan_addr()
-    )
-    .is_none());
+    assert!(
+        lookup_rt4_cache_value(
+            &skel.maps.rt4_cache_map,
+            LAN_CACHE,
+            client_addr(),
+            remote_wan_addr()
+        )
+        .is_none()
+    );
 }

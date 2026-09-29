@@ -1,6 +1,6 @@
 use proc_macro::TokenStream;
 use quote::{format_ident, quote};
-use syn::{parse_macro_input, DeriveInput, Lit};
+use syn::{DeriveInput, Lit, parse_macro_input};
 
 /// `#[derive(LdApiError)]` — auto-generate `LdApiErrorInfo` implementation for enums.
 ///

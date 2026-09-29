@@ -3,7 +3,7 @@ use std::sync::Arc;
 use landscape_common::flow::FlowSocketRegistrar;
 
 use crate::dns_dispatcher::attach_reuseport_ebpf;
-use crate::maps::{dns, LandscapeMapPath};
+use crate::maps::{LandscapeMapPath, dns};
 
 /// eBPF-backed [`FlowSocketRegistrar`]: writes the DNS socket into the
 /// flow->socket sockmap and attaches the reuseport dispatcher.

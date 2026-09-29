@@ -40,10 +40,10 @@ impl DnsProviderProfileService {
         if matches!(config.provider_config, DnsProviderConfig::Manual) {
             return Err(DnsProviderProfileError::ManualNotAllowed);
         }
-        if let Some(existing) = self.store.find_by_name(&config.name).await? {
-            if existing.id != config.id {
-                return Err(DnsProviderProfileError::NameConflict(config.name.clone()));
-            }
+        if let Some(existing) = self.store.find_by_name(&config.name).await?
+            && existing.id != config.id
+        {
+            return Err(DnsProviderProfileError::NameConflict(config.name.clone()));
         }
         Ok(self.checked_set(config).await?)
     }

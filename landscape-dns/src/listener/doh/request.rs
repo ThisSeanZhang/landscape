@@ -1,6 +1,6 @@
-use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use bytes::BytesMut;
-use http::{header, Method, Request as HttpRequest, StatusCode};
+use http::{Method, Request as HttpRequest, StatusCode, header};
 use std::time::Duration;
 
 use super::{MAX_DNS_MESSAGE_SIZE, MIME_APPLICATION_DNS};
@@ -151,10 +151,10 @@ async fn read_post_body(
         release_capacity(&mut body, chunk_len)?;
     }
 
-    if let Some(content_length) = content_length {
-        if bytes.len() != content_length {
-            return Err(DohRequestError::bad_request("body length mismatch"));
-        }
+    if let Some(content_length) = content_length
+        && bytes.len() != content_length
+    {
+        return Err(DohRequestError::bad_request("body length mismatch"));
     }
     Ok(bytes)
 }

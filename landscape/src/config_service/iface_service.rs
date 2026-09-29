@@ -31,11 +31,11 @@ impl IfaceManagerService {
     }
 
     pub async fn manage_dev(&self, dev_name: String) {
-        if self.get_iface_config(dev_name.clone()).await.is_none() {
-            if let Some(iface) = get_iface_by_name(&dev_name).await {
-                let config = from_phy_dev(&iface);
-                self.set_iface_config(config).await;
-            }
+        if self.get_iface_config(dev_name.clone()).await.is_none()
+            && let Some(iface) = get_iface_by_name(&dev_name).await
+        {
+            let config = from_phy_dev(&iface);
+            self.set_iface_config(config).await;
         }
     }
 

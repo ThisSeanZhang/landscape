@@ -1,8 +1,8 @@
 use std::mem::MaybeUninit;
 
 use libbpf_rs::{
-    skel::{OpenSkel, SkelBuilder as _},
     ProgramInput,
+    skel::{OpenSkel, SkelBuilder as _},
 };
 
 use crate::stages::firewall::tc_firewall_skel::TcFirewallSkelBuilder;

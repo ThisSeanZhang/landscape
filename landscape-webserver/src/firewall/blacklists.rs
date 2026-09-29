@@ -8,8 +8,8 @@ use utoipa_axum::routes;
 
 use landscape_common::wan_service::firewall::FirewallError;
 
-use crate::api::JsonBody;
 use crate::LandscapeApp;
+use crate::api::JsonBody;
 use crate::{api::LandscapeApiResp, error::LandscapeApiResult};
 
 pub fn get_firewall_blacklist_config_paths() -> OpenApiRouter<LandscapeApp> {

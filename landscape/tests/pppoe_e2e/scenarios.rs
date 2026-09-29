@@ -1,8 +1,8 @@
 use super::cmd::cmd_output;
 use super::env::{EnvConfig, PPPoETestEnv};
-use super::runner::{start_client, wait_for_exit, wait_for_running, ClientSpec};
-use super::scripted_server::{start_scripted_server, ScriptedServerMode};
-use super::{require_root, MapSpaceCleanup};
+use super::runner::{ClientSpec, start_client, wait_for_exit, wait_for_running};
+use super::scripted_server::{ScriptedServerMode, start_scripted_server};
+use super::{MapSpaceCleanup, require_root};
 use std::time::{Duration, Instant};
 
 fn spec_from(cfg: &EnvConfig) -> ClientSpec {

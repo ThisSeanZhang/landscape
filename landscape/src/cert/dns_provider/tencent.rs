@@ -12,13 +12,13 @@
 use chrono::Utc;
 use hmac::{Hmac, KeyInit, Mac};
 use landscape_common::cert::CertError;
-use reqwest::header::{CONTENT_TYPE, HOST};
 use reqwest::Client;
+use reqwest::header::{CONTENT_TYPE, HOST};
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
-use super::common::{candidate_zones, relative_record_name, unquote_txt_value, RecordStore};
+use super::common::{RecordStore, candidate_zones, relative_record_name, unquote_txt_value};
 use super::{DnsChallengeSolver, DnsRecordUpdater};
 
 const TENCENT_API_BASE: &str = "https://dnspod.tencentcloudapi.com/";

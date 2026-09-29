@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 
 use futures::stream::TryStreamExt;
-use rtnetlink::{new_connection, Error, Handle};
+use rtnetlink::{Error, Handle, new_connection};
 
 #[tokio::main]
 async fn main() -> Result<(), ()> {

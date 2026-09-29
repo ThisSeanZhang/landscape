@@ -1,12 +1,12 @@
 use std::mem::MaybeUninit;
 
 use libbpf_rs::{
-    skel::{OpenSkel, SkelBuilder as _},
     MapCore, MapFlags,
+    skel::{OpenSkel, SkelBuilder as _},
 };
 
 use crate::tests::net_utils::{
-    build_tcp_pkt, dummy_recv_count, dummy_reset, send_raw_packet, wait_for, NetNsGuard, VethPair,
+    NetNsGuard, VethPair, build_tcp_pkt, dummy_recv_count, dummy_reset, send_raw_packet, wait_for,
 };
 use crate::tests::test_xdp_dummy::TestXdpDummySkelBuilder;
 use crate::tests::xdp_wan_route_skel::XdpWanRouteSkelBuilder;

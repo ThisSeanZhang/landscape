@@ -11,9 +11,9 @@ use landscape_common::metric::dns::{
     DnsSummaryQueryParams, DnsSummaryResponse,
 };
 
+use crate::agg::Batch;
 #[cfg(feature = "metric-persistent")]
 use crate::agg::dns_bucket::{DnsBucketRow, DnsSummaryParts};
-use crate::agg::Batch;
 
 pub(crate) mod memory;
 #[cfg(feature = "metric-persistent")]

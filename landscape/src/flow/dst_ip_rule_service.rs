@@ -138,9 +138,9 @@ mod tests {
     use std::path::PathBuf;
 
     use landscape_common::{
+        LANDSCAPE_GEO_CACHE_TMP_DIR,
         config_service::geo::{GeoFileCacheKey, GeoIpConfig},
         geo_cache::file_store::GeoCacheStore,
-        LANDSCAPE_GEO_CACHE_TMP_DIR,
     };
 
     #[test]

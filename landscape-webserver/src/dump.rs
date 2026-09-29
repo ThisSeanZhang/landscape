@@ -1,11 +1,11 @@
+use axum::{Router, routing::get};
 use axum::{
     extract::{
-        ws::{Message, Utf8Bytes, WebSocket, WebSocketUpgrade},
         Path,
+        ws::{Message, Utf8Bytes, WebSocket, WebSocketUpgrade},
     },
     response::IntoResponse,
 };
-use axum::{routing::get, Router};
 use landscape::dump::eth::EthFram;
 use landscape_common::concurrency::{spawn_task, task_label};
 use std::ops::ControlFlow;
@@ -40,11 +40,10 @@ async fn handle_socket(mut socket: WebSocket, who_in: String) {
         loop {
             tokio::select! {
                 msg = socket.recv() => {
-                    if let Some(Ok(msg)) = msg {
-                        if handle_websocket_msg(msg, &mut dump_tx).await.is_break() {
+                    if let Some(Ok(msg)) = msg
+                        && handle_websocket_msg(msg, &mut dump_tx).await.is_break() {
                             break;
                         }
-                    }
                 },
                 packet = dump_rx.recv() => {
                     if let Some(packet) = packet {

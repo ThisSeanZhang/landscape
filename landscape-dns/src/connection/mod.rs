@@ -1,8 +1,8 @@
 use std::{sync::Arc, time::Duration};
 
 use hickory_resolver::{
-    config::{ConnectionConfig, NameServerConfig, ProtocolConfig, ResolverConfig, ResolverOpts},
     Resolver,
+    config::{ConnectionConfig, NameServerConfig, ProtocolConfig, ResolverConfig, ResolverOpts},
 };
 
 use landscape_common::dns::config::DnsUpstreamConfig;

@@ -6,7 +6,7 @@ use landscape_common::{
     concurrency::{spawn_task, spawn_task_with_resource, task_label},
     event::hub::iface::IfaceObserverAction,
     service::{
-        controller::ControllerService, manager::ServiceStarterTrait, ServiceStatus, WatchService,
+        ServiceStatus, WatchService, controller::ControllerService, manager::ServiceStarterTrait,
     },
     wan_service::firewall::dataplane::FirewallDataplane,
     wan_service::firewall::service::FirewallServiceConfig,

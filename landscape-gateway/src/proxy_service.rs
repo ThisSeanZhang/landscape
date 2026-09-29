@@ -176,10 +176,10 @@ impl ProxyHttp for LandscapeReverseProxy {
 
         ctx.rewritten_path = apply_path_rewrite(upstream_request, matched_route)?;
 
-        if matches!(matched_route.client_ip_headers, ClientIpHeaderPolicy::Standard) {
-            if let Some(client_addr) = session.client_addr().and_then(|addr| addr.as_inet()) {
-                apply_client_ip_headers(upstream_request, client_addr.ip())?;
-            }
+        if matches!(matched_route.client_ip_headers, ClientIpHeaderPolicy::Standard)
+            && let Some(client_addr) = session.client_addr().and_then(|addr| addr.as_inet())
+        {
+            apply_client_ip_headers(upstream_request, client_addr.ip())?;
         }
 
         apply_configured_headers(
@@ -198,17 +198,16 @@ impl ProxyHttp for LandscapeReverseProxy {
         ctx: &mut Self::CTX,
     ) -> FailToProxy {
         if is_trailing_slash_redirect_error(e) {
-            if session.response_written().is_none() {
-                if let Some(location) = ctx.redirect_location.as_deref() {
-                    if let Err(write_err) = write_redirect_response(session, location).await {
-                        tracing::error!(
-                            location,
-                            original_error = %e,
-                            write_error = %write_err,
-                            "Failed to write trailing slash redirect response"
-                        );
-                    }
-                }
+            if session.response_written().is_none()
+                && let Some(location) = ctx.redirect_location.as_deref()
+                && let Err(write_err) = write_redirect_response(session, location).await
+            {
+                tracing::error!(
+                    location,
+                    original_error = %e,
+                    write_error = %write_err,
+                    "Failed to write trailing slash redirect response"
+                );
             }
 
             return FailToProxy { error_code: 308, can_reuse_downstream: false };
@@ -217,17 +216,18 @@ impl ProxyHttp for LandscapeReverseProxy {
         let classified = classify_proxy_error(e);
         log_proxy_error(ctx, e, &classified);
 
-        if classified.status_code > 0 && session.response_written().is_none() {
-            if let Err(write_err) = write_gateway_error_response(session, &classified).await {
-                tracing::error!(
-                    reason_code = classified.reason_code,
-                    error_type = e.etype().as_str(),
-                    error_source = e.esource().as_str(),
-                    original_error = %e,
-                    write_error = %write_err,
-                    "Failed to write gateway error response"
-                );
-            }
+        if classified.status_code > 0
+            && session.response_written().is_none()
+            && let Err(write_err) = write_gateway_error_response(session, &classified).await
+        {
+            tracing::error!(
+                reason_code = classified.reason_code,
+                error_type = e.etype().as_str(),
+                error_source = e.esource().as_str(),
+                original_error = %e,
+                write_error = %write_err,
+                "Failed to write gateway error response"
+            );
         }
 
         FailToProxy {
@@ -402,19 +402,15 @@ fn path_matches_prefix(path: &str, prefix: &str) -> bool {
 
 fn normalize_prefix(prefix: &str) -> String {
     let trimmed = prefix.trim();
-    if trimmed == "/" {
-        "/".to_string()
-    } else {
-        trimmed.trim_end_matches('/').to_string()
-    }
+    if trimmed == "/" { "/".to_string() } else { trimmed.trim_end_matches('/').to_string() }
 }
 
 fn extract_host(req: &RequestHeader) -> Option<String> {
-    if let Some(host) = req.headers.get("host") {
-        if let Ok(h) = host.to_str() {
-            let h = h.split(':').next().unwrap_or(h);
-            return Some(h.to_ascii_lowercase());
-        }
+    if let Some(host) = req.headers.get("host")
+        && let Ok(h) = host.to_str()
+    {
+        let h = h.split(':').next().unwrap_or(h);
+        return Some(h.to_ascii_lowercase());
     }
 
     if let Some(authority) = req.uri.authority() {
@@ -488,11 +484,7 @@ fn rewrite_path_and_query(path_and_query: &str, prefix: &str) -> String {
         }
     };
 
-    if let Some(query) = query {
-        format!("{stripped_path}?{query}")
-    } else {
-        stripped_path
-    }
+    if let Some(query) = query { format!("{stripped_path}?{query}") } else { stripped_path }
 }
 
 fn trailing_slash_redirect_location(
@@ -545,11 +537,7 @@ fn apply_client_ip_headers(
 }
 
 fn forwarded_for_value(client_ip: &str) -> String {
-    if client_ip.contains(':') {
-        format!("\"[{client_ip}]\"")
-    } else {
-        client_ip.to_string()
-    }
+    if client_ip.contains(':') { format!("\"[{client_ip}]\"") } else { client_ip.to_string() }
 }
 
 fn apply_configured_headers(
@@ -769,11 +757,7 @@ fn classify_downstream_error(error_type: &pingora::ErrorType) -> GatewayErrorRes
 }
 
 fn normalize_status_code(code: u16) -> u16 {
-    if StatusCode::from_u16(code).is_ok() {
-        code
-    } else {
-        500
-    }
+    if StatusCode::from_u16(code).is_ok() { code } else { 500 }
 }
 
 fn status_line(code: u16) -> String {

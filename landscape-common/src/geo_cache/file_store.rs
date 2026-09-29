@@ -107,11 +107,7 @@ where
                 }
             }
 
-            if max_index == u64::MAX {
-                (0, 0)
-            } else {
-                (max_index, min_index)
-            }
+            if max_index == u64::MAX { (0, 0) } else { (max_index, min_index) }
         };
 
         let (current_era, writer, index, readers, junk_data_size) = if max_era == 0 {
@@ -422,16 +418,13 @@ where
         for entry in dir_entries {
             let entry = entry.unwrap();
             let path = entry.path();
-            if path.is_file() {
-                if let Some(ext) = path.extension() {
-                    if ext.to_string_lossy() == self.name {
-                        if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
-                            if stem.parse::<u64>().is_ok() {
-                                let _ = std::fs::remove_file(&path);
-                            }
-                        }
-                    }
-                }
+            if path.is_file()
+                && let Some(ext) = path.extension()
+                && ext.to_string_lossy() == self.name
+                && let Some(stem) = path.file_stem().and_then(|s| s.to_str())
+                && stem.parse::<u64>().is_ok()
+            {
+                let _ = std::fs::remove_file(&path);
             }
         }
 

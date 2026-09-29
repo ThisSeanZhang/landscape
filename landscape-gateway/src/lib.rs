@@ -14,14 +14,14 @@ use std::os::windows::io::AsRawSocket;
 
 use arc_swap::ArcSwap;
 use landscape_common::concurrency::{runtime_thread_name_fn, spawn_named_thread, thread_name};
-use landscape_common::sys_service::gateway::settings::GatewayRuntimeConfig;
 use landscape_common::sys_service::gateway::HttpUpstreamRuleConfig;
+use landscape_common::sys_service::gateway::settings::GatewayRuntimeConfig;
 
 use landscape_common::service::{ServiceStatus, WatchService};
 use pingora::apps::ServerApp;
 use pingora::protocols::{
-    GetProxyDigest, GetSocketDigest, GetTimingDigest, Peek, Shutdown, SocketDigest, Stream,
-    TimingDigest, UniqueID, ALPN,
+    ALPN, GetProxyDigest, GetSocketDigest, GetTimingDigest, Peek, Shutdown, SocketDigest, Stream,
+    TimingDigest, UniqueID,
 };
 use rustls::ServerConfig;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
@@ -29,10 +29,10 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::runtime::Builder as RuntimeBuilder;
 use tokio::sync::watch;
 use tokio::task::JoinSet;
-use tokio_rustls::{server::TlsStream as TokioTlsStream, TlsAcceptor};
+use tokio_rustls::{TlsAcceptor, server::TlsStream as TokioTlsStream};
 use tokio_util::sync::CancellationToken;
 
-use crate::sni_proxy::{parse_sni_from_client_hello, proxy_tls_passthrough, SniProxyRouter};
+use crate::sni_proxy::{SniProxyRouter, parse_sni_from_client_hello, proxy_tls_passthrough};
 
 pub type SharedRules = Arc<ArcSwap<Vec<HttpUpstreamRuleConfig>>>;
 
@@ -222,10 +222,10 @@ fn run_pingora_server(
     };
     server.run(run_args);
 
-    if let Some(handle) = https_handle {
-        if let Err(e) = handle.join() {
-            tracing::error!("Gateway HTTPS thread panicked: {:?}", e);
-        }
+    if let Some(handle) = https_handle
+        && let Err(e) = handle.join()
+    {
+        tracing::error!("Gateway HTTPS thread panicked: {:?}", e);
     }
 }
 
@@ -246,18 +246,17 @@ fn run_https_server(
     runtime.block_on(async move {
         if let Err(error) =
             run_https_server_inner(rules, https_port, tls_config, server_conf, status, cancel).await
+            && !error.already_logged
         {
-            if !error.already_logged {
-                tracing::error!(
-                    component = "gateway_https",
-                    event = "startup_failed",
-                    port = error.port,
-                    bind_addr = %error.bind_addr,
-                    error_kind = ?error.source.kind(),
-                    error = %error.source,
-                    "Gateway HTTPS listener exited with startup error"
-                );
-            }
+            tracing::error!(
+                component = "gateway_https",
+                event = "startup_failed",
+                port = error.port,
+                bind_addr = %error.bind_addr,
+                error_kind = ?error.source.kind(),
+                error = %error.source,
+                "Gateway HTTPS listener exited with startup error"
+            );
         }
     });
 }
@@ -361,8 +360,8 @@ async fn run_https_server_inner(
                             result = stream.peek(&mut peek_buf) => result,
                         } {
                             Ok(size) if size > 0 => {
-                                if let Some(sni) = parse_sni_from_client_hello(&peek_buf[..size]) {
-                                    if let Some(target) = sni_proxy_router.match_target(&sni) {
+                                if let Some(sni) = parse_sni_from_client_hello(&peek_buf[..size])
+                                    && let Some(target) = sni_proxy_router.match_target(&sni) {
                                         tracing::info!(
                                             "Gateway HTTPS passthrough '{}' via rule '{}' -> {}:{}",
                                             target.sni,
@@ -380,7 +379,6 @@ async fn run_https_server_inner(
                                         }
                                         return;
                                     }
-                                }
                             }
                             Ok(_) => return,
                             Err(e) => {

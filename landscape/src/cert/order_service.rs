@@ -3,8 +3,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::cert::{
-    extract_cert_dns_names_from_pem, reload_api_tls_resolver, reload_gateway_tls_resolver,
-    validate_certified_key_from_pem, SharedSniResolver,
+    SharedSniResolver, extract_cert_dns_names_from_pem, reload_api_tls_resolver,
+    reload_gateway_tls_resolver, validate_certified_key_from_pem,
 };
 use crate::dns::redirect_service::DNSRedirectService;
 use chrono::{Datelike, Duration as ChronoDuration, Utc};
@@ -12,24 +12,24 @@ use instant_acme::{
     Account, ChallengeType as AcmeChallengeType, Identifier, NewOrder, OrderStatus, RetryPolicy,
     RevocationRequest,
 };
+use landscape_common::cert::CertError;
 use landscape_common::cert::account::AccountStatus;
 use landscape_common::cert::order::{
     AcmeCertConfig, CertConfig, CertParsedInfo, CertStatus, CertType, ChallengeType,
 };
-use landscape_common::cert::CertError;
 use landscape_common::concurrency::{spawn_task, task_label};
 use landscape_common::database::LandscapeStore;
 use landscape_common::dns::provider_profile::DnsProviderProfile;
 use landscape_common::dns::redirect::{
-    DnsRedirectAnswerMode, DynamicDnsMatch, DynamicDnsRedirectBatch, DynamicDnsRedirectRecord,
-    DynamicDnsRedirectScope, DEFAULT_BLOCK_METADATA_QUERIES, DEFAULT_STATIC_DNS_REDIRECT_TTL_SECS,
+    DEFAULT_BLOCK_METADATA_QUERIES, DEFAULT_STATIC_DNS_REDIRECT_TTL_SECS, DnsRedirectAnswerMode,
+    DynamicDnsMatch, DynamicDnsRedirectBatch, DynamicDnsRedirectRecord, DynamicDnsRedirectScope,
 };
 use landscape_common::service::controller::ConfigController;
 use landscape_database::cert::repository::CertRepository;
 use landscape_database::dns_provider_profile::repository::DnsProviderProfileRepository;
 use landscape_database::provider::LandscapeDBServiceProvider;
 use rcgen::{
-    date_time_ymd, CertificateParams, DistinguishedName, DnType, ExtendedKeyUsagePurpose, KeyPair,
+    CertificateParams, DistinguishedName, DnType, ExtendedKeyUsagePurpose, KeyPair, date_time_ymd,
 };
 use rustls_pki_types::CertificateDer;
 use sha2::{Digest, Sha256};
@@ -92,17 +92,17 @@ impl CertService {
         // Startup resume: re-trigger ACME certs stuck in Processing
         let certs = service.list().await;
         for cert in certs {
-            if matches!(cert.status, CertStatus::Processing) {
-                if let CertType::Acme(_) = &cert.cert_type {
-                    let svc = service.clone();
-                    let id = cert.id;
-                    tracing::info!("Resuming issuance for cert {id}");
-                    spawn_task(task_label::task::CERT_ORDER_REFRESH, async move {
-                        if let Err(e) = svc.enqueue_issuance_task(id).await {
-                            tracing::error!("Failed to resume cert {id}: {e}");
-                        }
-                    });
-                }
+            if matches!(cert.status, CertStatus::Processing)
+                && let CertType::Acme(_) = &cert.cert_type
+            {
+                let svc = service.clone();
+                let id = cert.id;
+                tracing::info!("Resuming issuance for cert {id}");
+                spawn_task(task_label::task::CERT_ORDER_REFRESH, async move {
+                    if let Err(e) = svc.enqueue_issuance_task(id).await {
+                        tracing::error!("Failed to resume cert {id}: {e}");
+                    }
+                });
             }
         }
 
@@ -218,16 +218,15 @@ impl CertService {
     ) -> Result<CertConfig, CertError> {
         let existing = self.find_by_id(config.id).await;
 
-        if let Some(existing) = existing.as_ref() {
-            if let (CertType::Acme(existing_acme), CertType::Acme(new_acme)) =
+        if let Some(existing) = existing.as_ref()
+            && let (CertType::Acme(existing_acme), CertType::Acme(new_acme)) =
                 (&existing.cert_type, &config.cert_type)
-            {
-                let has_valid_certificate = matches!(existing.status, CertStatus::Valid)
-                    && existing.certificate.as_deref().is_some_and(|pem| !pem.trim().is_empty());
+        {
+            let has_valid_certificate = matches!(existing.status, CertStatus::Valid)
+                && existing.certificate.as_deref().is_some_and(|pem| !pem.trim().is_empty());
 
-                if existing_acme.account_id != new_acme.account_id && has_valid_certificate {
-                    return Err(CertError::AcmeAccountChangeRequiresRevocation);
-                }
+            if existing_acme.account_id != new_acme.account_id && has_valid_certificate {
+                return Err(CertError::AcmeAccountChangeRequiresRevocation);
             }
         }
 
@@ -519,7 +518,7 @@ impl CertService {
             _ => {
                 return Err(CertError::InvalidStatusTransition(
                     "not an ACME certificate".to_string(),
-                ))
+                ));
             }
         };
 
@@ -822,7 +821,7 @@ impl CertService {
             _ => {
                 return Err(CertError::InvalidStatusTransition(
                     "not an ACME certificate".to_string(),
-                ))
+                ));
             }
         };
 
@@ -894,7 +893,7 @@ impl CertService {
             _ => {
                 return Err(CertError::InvalidStatusTransition(
                     "not an ACME certificate".to_string(),
-                ))
+                ));
             }
         };
 
@@ -962,11 +961,7 @@ fn cert_domain_to_dynamic_match(domain: &str) -> Option<DynamicDnsMatch> {
     }
 
     if let Some(suffix) = normalized.strip_prefix("*.") {
-        if suffix.is_empty() {
-            None
-        } else {
-            Some(DynamicDnsMatch::Domain(suffix.to_string()))
-        }
+        if suffix.is_empty() { None } else { Some(DynamicDnsMatch::Domain(suffix.to_string())) }
     } else {
         Some(DynamicDnsMatch::Full(normalized))
     }
@@ -1154,12 +1149,11 @@ fn parse_cert_details(pem_str: &str) -> Result<CertParsedInfo, CertError> {
         }
     }
 
-    if subject_alt_names.is_empty() {
-        if let Some(cn) = cert.subject().iter_common_name().next() {
-            if let Ok(cn_str) = cn.as_str() {
-                subject_alt_names.push(cn_str.to_string());
-            }
-        }
+    if subject_alt_names.is_empty()
+        && let Some(cn) = cert.subject().iter_common_name().next()
+        && let Ok(cn_str) = cn.as_str()
+    {
+        subject_alt_names.push(cn_str.to_string());
     }
 
     let mut hasher = Sha256::new();

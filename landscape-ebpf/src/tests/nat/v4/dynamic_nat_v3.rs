@@ -3,28 +3,28 @@ use std::{
     net::{IpAddr, Ipv4Addr},
 };
 
-use etherparse::{icmpv4, Icmpv4Type, PacketBuilder};
+use etherparse::{Icmpv4Type, PacketBuilder, icmpv4};
 use landscape_common::net::MacAddr;
 use landscape_common::wan_service::nat::config::NatConfig;
 use libbpf_rs::{
-    skel::{OpenSkel, SkelBuilder as _},
     MapCore, MapFlags, ProgramInput,
+    skel::{OpenSkel, SkelBuilder as _},
 };
 use zerocopy::{FromBytes, IntoBytes};
 
 use crate::{
-    maps::{
-        nat::{add_static_nat4_mapping_v3, StaticNatMappingV4Item},
-        wan::add_wan_ip,
-        NatMappingKeyV4,
-    },
+    NAT_MAPPING_EGRESS, NAT_MAPPING_INGRESS,
     maps::{
         Nat4EgressMappingValueV3, Nat4MappingValueV3, Nat4PortQueueValueV3, Nat4TimerKey,
         Nat4TimerValueV3,
     },
+    maps::{
+        NatMappingKeyV4,
+        nat::{StaticNatMappingV4Item, add_static_nat4_mapping_v3},
+        wan::add_wan_ip,
+    },
     stages::nat::tc_nat_skel::TcNatSkelBuilder,
     tests::TestSkb,
-    NAT_MAPPING_EGRESS, NAT_MAPPING_INGRESS,
 };
 
 const WAN_IP: Ipv4Addr = Ipv4Addr::new(203, 0, 113, 1);

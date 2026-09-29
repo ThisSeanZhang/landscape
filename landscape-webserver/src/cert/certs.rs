@@ -1,14 +1,14 @@
 use axum::extract::{Path, State};
 use landscape_common::api_response::LandscapeApiResp as CommonApiResp;
-use landscape_common::cert::order::{CertConfig, CertParsedInfo};
 use landscape_common::cert::CertError;
+use landscape_common::cert::order::{CertConfig, CertParsedInfo};
 use landscape_common::config::ConfigId;
 use landscape_common::service::controller::ConfigController;
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 
-use crate::api::JsonBody;
 use crate::LandscapeApp;
+use crate::api::JsonBody;
 use crate::{api::LandscapeApiResp, error::LandscapeApiResult};
 
 pub fn get_cert_paths() -> OpenApiRouter<LandscapeApp> {

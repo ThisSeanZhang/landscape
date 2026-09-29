@@ -1,7 +1,7 @@
 use bytes::{Buf, BufMut, BytesMut};
-use landscape_common::net_proto::udp::dhcp::{try_decode_dhcpv4, DhcpV4Message};
 use landscape_common::net_proto::NetProtoCodec;
-use libc::{sock_filter, sock_fprog, AF_PACKET, ETH_P_IP, SOL_SOCKET, SO_ATTACH_FILTER};
+use landscape_common::net_proto::udp::dhcp::{DhcpV4Message, try_decode_dhcpv4};
+use libc::{AF_PACKET, ETH_P_IP, SO_ATTACH_FILTER, SOL_SOCKET, sock_filter, sock_fprog};
 use socket2::{Domain, Protocol, Socket, Type};
 use std::mem::MaybeUninit;
 use std::net::Ipv4Addr;
@@ -41,17 +41,17 @@ impl<T: NetProtoCodec> Decoder for RawPacketCodec<T> {
             return Ok(None);
         }
 
-        if let Ok(headers) = etherparse::PacketHeaders::from_ethernet_slice(src) {
-            if let Some(etherparse::TransportHeader::Udp(udp)) = headers.transport {
-                // Check if the destination port matches our source port (incoming packet)
-                if udp.destination_port == self.source_port {
-                    let payload = headers.payload.slice();
-                    let mut payload_mut = BytesMut::from(payload);
-                    let msg = T::decode(&mut payload_mut)
-                        .map_err(|e| std::io::Error::other(e.to_string()))?;
-                    src.advance(src.len());
-                    return Ok(msg);
-                }
+        if let Ok(headers) = etherparse::PacketHeaders::from_ethernet_slice(src)
+            && let Some(etherparse::TransportHeader::Udp(udp)) = headers.transport
+        {
+            // Check if the destination port matches our source port (incoming packet)
+            if udp.destination_port == self.source_port {
+                let payload = headers.payload.slice();
+                let mut payload_mut = BytesMut::from(payload);
+                let msg = T::decode(&mut payload_mut)
+                    .map_err(|e| std::io::Error::other(e.to_string()))?;
+                src.advance(src.len());
+                return Ok(msg);
             }
         }
 
@@ -301,11 +301,7 @@ fn attach_dhcp_filter(socket: &Socket, client_port: u16) -> std::io::Result<()> 
         )
     };
 
-    if ret == 0 {
-        Ok(())
-    } else {
-        Err(std::io::Error::last_os_error())
-    }
+    if ret == 0 { Ok(()) } else { Err(std::io::Error::last_os_error()) }
 }
 
 use std::net::{IpAddr, SocketAddr};

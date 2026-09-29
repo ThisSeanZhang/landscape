@@ -5,19 +5,19 @@ use std::{
 };
 
 use hickory_proto::rr::{
-    rdata::{
-        svcb::{Alpn, IpHint, SvcParamKey, SvcParamValue, SVCB},
-        A, AAAA, PTR,
-    },
     Name, RData, Record, RecordType,
+    rdata::{
+        A, AAAA, PTR,
+        svcb::{Alpn, IpHint, SVCB, SvcParamKey, SvcParamValue},
+    },
 };
 use landscape_common::{
     dns::{
+        DohRuntimeConfig,
         dnr::{
             encode_unknown_svc_param_value, normalize_advertise_domains,
             normalize_doh_path_template,
         },
-        DohRuntimeConfig,
     },
     metric::dns::DnsOutcome,
 };
@@ -25,7 +25,7 @@ use landscape_core::lan_hostname::{LanHostnameRegistry, LocalZone, LocalZoneMatc
 
 use crate::{
     domain::ParsedDomain,
-    server::{answer::response_code_for, DohAdvertiseProvider, LocalDnsAnswerProvider},
+    server::{DohAdvertiseProvider, LocalDnsAnswerProvider, answer::response_code_for},
 };
 
 const DDR_DISCOVERY_NAME: &str = "_dns.resolver.arpa.";
@@ -139,7 +139,7 @@ impl LocalResolver {
                 return Some(LocalAnswer::Answered {
                     records: vec![],
                     outcome: DnsOutcome::NxDomain,
-                })
+                });
             }
         };
         let label = match domain.arpa_sld() {
@@ -148,7 +148,7 @@ impl LocalResolver {
                 return Some(LocalAnswer::Answered {
                     records: vec![],
                     outcome: DnsOutcome::NxDomain,
-                })
+                });
             }
         };
 

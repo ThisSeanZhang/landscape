@@ -3,8 +3,8 @@ mod xdp_csum_verify_tests {
     use std::mem::MaybeUninit;
 
     use libbpf_rs::{
-        skel::{OpenSkel, SkelBuilder as _},
         MapCore, MapFlags, ProgramInput,
+        skel::{OpenSkel, SkelBuilder as _},
     };
 
     use crate::tests::test_csum_verify_skel::TestCsumVerifySkelBuilder;

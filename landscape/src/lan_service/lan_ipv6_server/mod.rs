@@ -7,13 +7,13 @@ use std::{
 use landscape_common::{
     config_service::enrolled_device::EnrolledDevice,
     lan_service::lan_ipv6::{
-        checked_allocate_subnet, DHCPv6AddressItem, DHCPv6IANAConfig, DHCPv6IAPDConfig,
+        DEFAULT_IA_NA_POOL_SPAN, DHCPv6AddressItem, DHCPv6IANAConfig, DHCPv6IAPDConfig,
         DHCPv6OfferInfo, DHCPv6PrefixItem, IPv6NAInfo, IPv6NAInfoItem, LanPrefixGroupConfig,
-        PrefixParentSource, DEFAULT_IA_NA_POOL_SPAN,
+        PrefixParentSource, checked_allocate_subnet,
     },
     net::MacAddr,
     utils::time::get_f64_timestamp,
-    wan_service::ipv6_pd::{pd_expectation_fits_snapshot, IAPrefixMap},
+    wan_service::ipv6_pd::{IAPrefixMap, pd_expectation_fits_snapshot},
 };
 use tokio::sync::{mpsc, watch};
 
@@ -303,17 +303,17 @@ impl PrefixState {
                 });
             }
 
-            if let Some(ref pd) = sn.pd_config {
-                if seen_pd_groups.insert(pd.group_id.clone()) {
-                    self.pd_ranges.push(PdRange {
-                        group_id: pd.group_id.clone(),
-                        parent: pd.parent,
-                        parent_len: pd.parent_len,
-                        pool_len: pd.pool_len,
-                        start_idx: pd.start_idx,
-                        end_idx: pd.end_idx,
-                    });
-                }
+            if let Some(ref pd) = sn.pd_config
+                && seen_pd_groups.insert(pd.group_id.clone())
+            {
+                self.pd_ranges.push(PdRange {
+                    group_id: pd.group_id.clone(),
+                    parent: pd.parent,
+                    parent_len: pd.parent_len,
+                    pool_len: pd.pool_len,
+                    start_idx: pd.start_idx,
+                    end_idx: pd.end_idx,
+                });
             }
         }
     }
@@ -705,26 +705,24 @@ impl Ipv6ServerStatus {
         }
 
         // Conflict: suffix is statically owned by another MAC
-        if let Some(SuffixOwner::StaticMac(owner)) = self.na_owners_by_suffix.get(&suffix) {
-            if *owner != mac {
-                return MacSuffixBindResult::StaticConflict { owner: *owner };
-            }
+        if let Some(SuffixOwner::StaticMac(owner)) = self.na_owners_by_suffix.get(&suffix)
+            && *owner != mac
+        {
+            return MacSuffixBindResult::StaticConflict { owner: *owner };
         }
 
         let old_static_suffix = self.na_static_by_mac.get(&mac).copied();
-        if let Some(old) = old_static_suffix {
-            if old != suffix {
-                match self.na_owners_by_suffix.get(&old) {
-                    Some(SuffixOwner::StaticMac(owner)) if *owner == mac => {}
-                    Some(_) => {
-                        return MacSuffixBindResult::InvariantViolation {
-                            reason: format!(
-                                "static suffix {old} for {mac} owned by another source"
-                            ),
-                        };
-                    }
-                    None => {}
+        if let Some(old) = old_static_suffix
+            && old != suffix
+        {
+            match self.na_owners_by_suffix.get(&old) {
+                Some(SuffixOwner::StaticMac(owner)) if *owner == mac => {}
+                Some(_) => {
+                    return MacSuffixBindResult::InvariantViolation {
+                        reason: format!("static suffix {old} for {mac} owned by another source"),
+                    };
                 }
+                None => {}
             }
         }
 
@@ -732,88 +730,82 @@ impl Ipv6ServerStatus {
         let mac_duid = self.lease_duid_for_mac(mac);
 
         self.na_static_by_mac.insert(mac, suffix);
-        if let Some(old) = old_static_suffix {
-            if old != suffix
-                && self.na_owners_by_suffix.get(&old) == Some(&SuffixOwner::StaticMac(mac))
-            {
-                self.na_owners_by_suffix.remove(&old);
-            }
+        if let Some(old) = old_static_suffix
+            && old != suffix
+            && self.na_owners_by_suffix.get(&old) == Some(&SuffixOwner::StaticMac(mac))
+        {
+            self.na_owners_by_suffix.remove(&old);
         }
 
-        if let Some(ref duid) = mac_duid {
-            if let Some(lease) = self.na_leases_by_duid.get(duid) {
-                self.remove_dynamic_owner_if_matches(lease.suffix, duid);
-            }
+        if let Some(ref duid) = mac_duid
+            && let Some(lease) = self.na_leases_by_duid.get(duid)
+        {
+            self.remove_dynamic_owner_if_matches(lease.suffix, duid);
         }
 
         // Evict dynamic occupant
         if let Some(SuffixOwner::DynamicDuid(evicted_duid)) =
             self.na_owners_by_suffix.remove(&suffix)
+            && mac_duid.as_ref() != Some(&evicted_duid)
+            && let Some(mut evicted) = self.na_leases_by_duid.remove(&evicted_duid)
         {
-            if mac_duid.as_ref() != Some(&evicted_duid) {
-                if let Some(mut evicted) = self.na_leases_by_duid.remove(&evicted_duid) {
-                    changes.push_expired(evicted.clone(), Some(suffix));
+            changes.push_expired(evicted.clone(), Some(suffix));
 
-                    if let Some(old) = old_static_suffix {
-                        if old != suffix
-                            && (old >= self.na_pool_start)
-                            && (old < self.na_pool_start + self.na_range_capacity)
-                            && !self.na_owners_by_suffix.contains_key(&old)
-                        {
-                            evicted.prev_suffix = Some(suffix);
-                            evicted.suffix = old;
-                            evicted.is_static = false;
-                            evicted.relative_offer_time = now;
-                            let offer_lifetime = offer_lifetime(self.preferred_lifetime);
-                            evicted.valid_time = offer_lifetime;
-                            evicted.preferred_time = offer_lifetime;
-                            self.na_owners_by_suffix
-                                .insert(old, SuffixOwner::DynamicDuid(evicted_duid.clone()));
-                            self.set_reconfigure_key(&evicted_duid, evicted.mac);
-                            self.na_leases_by_duid.insert(evicted_duid, evicted.clone());
-                            changes.push_allocated(evicted, Some(suffix));
-                        }
-                    } else if self.na_config.is_some() {
-                        if self
-                            .allocate_dynamic_na_suffix(
-                                &evicted_duid,
-                                evicted.mac,
-                                evicted.hostname.clone(),
-                                now,
-                                Some(suffix),
-                                Some(suffix),
-                            )
-                            .is_some()
-                        {
-                            let reassigned_lease = self
-                                .na_leases_by_duid
-                                .get(&evicted_duid)
-                                .cloned()
-                                .expect("just inserted");
-                            changes.push_allocated(reassigned_lease, Some(suffix));
-                        } else {
-                            changes.released.push(evicted);
-                        }
-                    } else {
-                        changes.released.push(evicted);
-                    }
+            if let Some(old) = old_static_suffix {
+                if old != suffix
+                    && (old >= self.na_pool_start)
+                    && (old < self.na_pool_start + self.na_range_capacity)
+                    && !self.na_owners_by_suffix.contains_key(&old)
+                {
+                    evicted.prev_suffix = Some(suffix);
+                    evicted.suffix = old;
+                    evicted.is_static = false;
+                    evicted.relative_offer_time = now;
+                    let offer_lifetime = offer_lifetime(self.preferred_lifetime);
+                    evicted.valid_time = offer_lifetime;
+                    evicted.preferred_time = offer_lifetime;
+                    self.na_owners_by_suffix
+                        .insert(old, SuffixOwner::DynamicDuid(evicted_duid.clone()));
+                    self.set_reconfigure_key(&evicted_duid, evicted.mac);
+                    self.na_leases_by_duid.insert(evicted_duid, evicted.clone());
+                    changes.push_allocated(evicted, Some(suffix));
                 }
+            } else if self.na_config.is_some() {
+                if self
+                    .allocate_dynamic_na_suffix(
+                        &evicted_duid,
+                        evicted.mac,
+                        evicted.hostname.clone(),
+                        now,
+                        Some(suffix),
+                        Some(suffix),
+                    )
+                    .is_some()
+                {
+                    let reassigned_lease =
+                        self.na_leases_by_duid.get(&evicted_duid).cloned().expect("just inserted");
+                    changes.push_allocated(reassigned_lease, Some(suffix));
+                } else {
+                    changes.released.push(evicted);
+                }
+            } else {
+                changes.released.push(evicted);
             }
         }
 
         self.na_owners_by_suffix.insert(suffix, SuffixOwner::StaticMac(mac));
-        if let Some(duid) = mac_duid {
-            if let Some(lease) = self.na_leases_by_duid.get_mut(&duid) {
-                let previous = lease.suffix;
-                lease.suffix = suffix;
-                lease.is_static = true;
-                lease.prev_suffix = (previous != suffix).then_some(previous);
-                lease.relative_offer_time = now;
-                let offer_lifetime = offer_lifetime(self.preferred_lifetime);
-                lease.valid_time = offer_lifetime;
-                lease.preferred_time = offer_lifetime;
-                changes.push_allocated(lease.clone(), (previous != suffix).then_some(previous));
-            }
+        if let Some(duid) = mac_duid
+            && let Some(lease) = self.na_leases_by_duid.get_mut(&duid)
+        {
+            let previous = lease.suffix;
+            lease.suffix = suffix;
+            lease.is_static = true;
+            lease.prev_suffix = (previous != suffix).then_some(previous);
+            lease.relative_offer_time = now;
+            let offer_lifetime = offer_lifetime(self.preferred_lifetime);
+            lease.valid_time = offer_lifetime;
+            lease.preferred_time = offer_lifetime;
+            changes.push_allocated(lease.clone(), (previous != suffix).then_some(previous));
         }
 
         MacSuffixBindResult::Bound(changes)
@@ -883,10 +875,10 @@ impl Ipv6ServerStatus {
         // Re-use existing lease if the slot is still valid
         if let Some(lease) = self.pd_leases_by_duid.get(duid) {
             let key = (lease.group_id.clone(), lease.sub_index);
-            if self.pd_owners_by_slot.get(&key) == Some(&duid.to_vec()) {
-                if let Some((prefix, prefix_len)) = self.resolve_pd_key(&key) {
-                    return Some((prefix, prefix_len));
-                }
+            if self.pd_owners_by_slot.get(&key) == Some(&duid.to_vec())
+                && let Some((prefix, prefix_len)) = self.resolve_pd_key(&key)
+            {
+                return Some((prefix, prefix_len));
             }
             // Slot became invalid — remove stale lease
             self.pd_leases_by_duid.remove(duid);
@@ -1220,20 +1212,20 @@ impl Ipv6ServerStatus {
                 SuffixOwner::StaticMac(mac) => self.static_lease_duid_for_mac(*mac),
                 SuffixOwner::DynamicDuid(duid) => Some(duid.clone()),
             };
-            if let Some(duid) = duid_vec {
-                if let Some(lease) = self.na_leases_by_duid.get(&duid) {
-                    return Some(AssignedAddr {
-                        ip,
-                        mac: Some(lease.mac),
-                        duid: Some(lease.duid_hex.clone()),
-                        hostname: lease.hostname.clone(),
-                        source: AddrSource::Dhcpv6Na,
-                        is_static: lease.is_static,
-                        relative_active_time: lease.relative_offer_time,
-                        preferred_lifetime: lease.preferred_time,
-                        valid_lifetime: lease.valid_time,
-                    });
-                }
+            if let Some(duid) = duid_vec
+                && let Some(lease) = self.na_leases_by_duid.get(&duid)
+            {
+                return Some(AssignedAddr {
+                    ip,
+                    mac: Some(lease.mac),
+                    duid: Some(lease.duid_hex.clone()),
+                    hostname: lease.hostname.clone(),
+                    source: AddrSource::Dhcpv6Na,
+                    is_static: lease.is_static,
+                    relative_active_time: lease.relative_offer_time,
+                    preferred_lifetime: lease.preferred_time,
+                    valid_lifetime: lease.valid_time,
+                });
             }
             // Static-only binding (no DUID lease yet)
             if let SuffixOwner::StaticMac(mac) = owner {
@@ -1367,10 +1359,10 @@ impl Ipv6ServerStatus {
         if let Some(old) = previous_suffix {
             self.remove_dynamic_owner_if_matches(old, duid);
         }
-        if let Some(old_duid) = self.static_lease_duid_for_mac(mac) {
-            if old_duid != duid {
-                self.na_leases_by_duid.remove(&old_duid);
-            }
+        if let Some(old_duid) = self.static_lease_duid_for_mac(mac)
+            && old_duid != duid
+        {
+            self.na_leases_by_duid.remove(&old_duid);
         }
         self.na_owners_by_suffix.insert(suffix, SuffixOwner::StaticMac(mac));
         let offer_lifetime = offer_lifetime(self.preferred_lifetime);
@@ -1517,7 +1509,7 @@ impl Ipv6ServerStatus {
                 .chain(changes.expired.iter().map(|c| &c.lease))
                 .chain(changes.released.iter()),
             DeviceBindingResult::AlreadyBound | DeviceBindingResult::StaticConflict { .. } => {
-                return
+                return;
             }
             DeviceBindingResult::InvariantViolation { .. } => return,
         };
@@ -1538,10 +1530,10 @@ impl Ipv6ServerStatus {
     }
 
     pub fn set_reconfigure_key(&mut self, duid: &[u8], mac: MacAddr) {
-        if let Some(old_duid) = self.lease_duid_for_mac(mac) {
-            if old_duid.as_slice() != duid {
-                self.reconfigure_keys.remove(&old_duid);
-            }
+        if let Some(old_duid) = self.lease_duid_for_mac(mac)
+            && old_duid.as_slice() != duid
+        {
+            self.reconfigure_keys.remove(&old_duid);
         }
         if !self.reconfigure_keys.contains_key(duid) {
             self.reconfigure_keys.insert(duid.to_vec(), Self::generate_reconfigure_key());
@@ -1739,29 +1731,30 @@ pub fn compute_subnets(
         }
 
         // PD-only group: no RA, no NA, just PD delegation
-        if group.ra.is_none() && group.na.is_none() {
-            if let Some(pd) = valid_pd {
-                result.push(SubnetState {
+        if group.ra.is_none()
+            && group.na.is_none()
+            && let Some(pd) = valid_pd
+        {
+            result.push(SubnetState {
+                group_id: group.group_id.clone(),
+                sub_prefix: parent_ip,
+                sub_prefix_len: parent_len,
+                sub_router: Ipv6Addr::UNSPECIFIED,
+                pool_index: pd.start_index,
+                ra_preferred_lifetime: 0,
+                ra_valid_lifetime: 0,
+                has_ra: false,
+                is_na: false,
+                source: source.clone(),
+                pd_config: Some(PdSubnetConfig {
                     group_id: group.group_id.clone(),
-                    sub_prefix: parent_ip,
-                    sub_prefix_len: parent_len,
-                    sub_router: Ipv6Addr::UNSPECIFIED,
-                    pool_index: pd.start_index,
-                    ra_preferred_lifetime: 0,
-                    ra_valid_lifetime: 0,
-                    has_ra: false,
-                    is_na: false,
-                    source: source.clone(),
-                    pd_config: Some(PdSubnetConfig {
-                        group_id: group.group_id.clone(),
-                        parent: parent_ip,
-                        parent_len,
-                        pool_len: pd.pool_len,
-                        start_idx: pd.start_index,
-                        end_idx: pd.end_index,
-                    }),
-                });
-            }
+                    parent: parent_ip,
+                    parent_len,
+                    pool_len: pd.pool_len,
+                    start_idx: pd.start_index,
+                    end_idx: pd.end_index,
+                }),
+            });
         }
     }
 

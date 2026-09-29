@@ -6,11 +6,11 @@ use std::sync::Arc;
 use std::{future::Future, io, pin::Pin};
 
 use hickory_resolver::net::runtime::{
-    iocompat::AsyncIoTokioAsStd, QuicSocketBinder, RuntimeProvider, TokioHandle, TokioTime,
+    QuicSocketBinder, RuntimeProvider, TokioHandle, TokioTime, iocompat::AsyncIoTokioAsStd,
 };
 
 use landscape_common::dns::bind::DnsBindConfig;
-use libc::{setsockopt, SOL_SOCKET, SO_MARK, SO_RCVMARK};
+use libc::{SO_MARK, SO_RCVMARK, SOL_SOCKET, setsockopt};
 use std::time::Duration;
 use tokio::net::UdpSocket as TokioUdpSocket;
 use tokio::net::{TcpSocket, TcpStream as TokioTcpStream};
@@ -192,11 +192,7 @@ pub fn set_socket_mark(fd: RawFd, mark_value: u32) -> io::Result<()> {
         )
     };
 
-    if result == -1 {
-        Err(std::io::Error::last_os_error())
-    } else {
-        Ok(())
-    }
+    if result == -1 { Err(std::io::Error::last_os_error()) } else { Ok(()) }
 }
 
 #[allow(dead_code)]
@@ -212,9 +208,5 @@ pub fn set_socket_income_mark(fd: RawFd, mark_value: u32) -> io::Result<()> {
         )
     };
 
-    if result == -1 {
-        Err(std::io::Error::last_os_error())
-    } else {
-        Ok(())
-    }
+    if result == -1 { Err(std::io::Error::last_os_error()) } else { Ok(()) }
 }

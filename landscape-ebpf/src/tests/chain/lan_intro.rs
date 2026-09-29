@@ -3,14 +3,14 @@ use std::process::Command;
 use std::time::Duration;
 
 use libbpf_rs::{
-    skel::{OpenSkel, SkelBuilder as _},
     MapCore, MapFlags, MapHandle,
+    skel::{OpenSkel, SkelBuilder as _},
 };
 
 use crate::maps::{Route4CacheKey, Route4CacheValue};
 use crate::tests::net_utils::{
-    dummy_recv_count, dummy_reset, route_slot, send_raw_packet, settle, wait_for, NetNsGuard,
-    VethPair,
+    NetNsGuard, VethPair, dummy_recv_count, dummy_reset, route_slot, send_raw_packet, settle,
+    wait_for,
 };
 use crate::tests::test_xdp_dummy::TestXdpDummySkelBuilder;
 use crate::tests::wan_intro_skel::XdpWanIntroSkelBuilder;

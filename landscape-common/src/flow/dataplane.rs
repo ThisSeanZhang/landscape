@@ -1,8 +1,8 @@
 //! Flow rule sync: push flow-match rules and per-flow destination-IP
 //! marks into the eBPF maps and invalidate the verdict cache.
 
-use crate::flow::ip_mark::IpMarkInfo;
 use crate::flow::RuntimeFlowConfig;
+use crate::flow::ip_mark::IpMarkInfo;
 
 /// eBPF capability for the flow rule services.
 pub trait FlowRuleDataplane: Send + Sync {

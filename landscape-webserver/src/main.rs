@@ -9,7 +9,7 @@ use std::{
 use arc_swap::ArcSwap;
 
 use axum::{
-    handler::HandlerWithoutStateExt, http::StatusCode, response::IntoResponse, routing::get, Router,
+    Router, handler::HandlerWithoutStateExt, http::StatusCode, response::IntoResponse, routing::get,
 };
 
 use axum_server::tls_rustls::RustlsConfig;
@@ -46,7 +46,7 @@ use landscape::{
     wan_service::firewall::FirewallServiceManagerService,
     wan_service::{
         ipconfig_service::IfaceIpServiceManagerService,
-        ipv6pd_service::{generate_wan_iid, DHCPv6ClientManagerService},
+        ipv6pd_service::{DHCPv6ClientManagerService, generate_wan_iid},
         mss_clamp_service::MssClampServiceManagerService,
         nat_service::NatServiceManagerService,
         pppd_service::PPPDServiceConfigManagerService,
@@ -56,13 +56,13 @@ use landscape::{
 };
 use landscape_common::lan_service::lan_route::RouteLanServiceConfig;
 use landscape_common::{
-    args::{DbAction, LandscapeAction, LAND_ARGS, LAND_HOME_PATH},
+    VERSION,
+    args::{DbAction, LAND_ARGS, LAND_HOME_PATH, LandscapeAction},
     concurrency::{runtime_thread_name_fn, spawn_task, task_label, thread_name},
     config::RuntimeConfig,
     database::error::DbError,
     event::hub::EventHub,
     wan_service::ipv6_pd::IAPrefixMap,
-    VERSION,
 };
 use landscape_common::{config::InitConfig, lan_service::lan_dhcpv4::config::DHCPv4ServiceConfig};
 use landscape_core::{lan_hostname::LanHostnameRegistry, time::SyncTimeService};
@@ -906,7 +906,7 @@ async fn do_auto_init(home_path: &PathBuf, config: &RuntimeConfig) -> Result<(),
 }
 
 async fn shutdown_signal() {
-    use tokio::signal::unix::{signal, SignalKind};
+    use tokio::signal::unix::{SignalKind, signal};
     // Ctrl+C (SIGINT)
     let ctrl_c = async {
         tokio::signal::ctrl_c().await.expect("failed to install Ctrl+C handler");
@@ -930,11 +930,11 @@ async fn shutdown_signal() {
 /// NOT Found
 async fn handle_404(web_root: PathBuf) -> impl IntoResponse {
     let path = web_root.join("index.html");
-    if path.exists() {
-        if let Ok(content) = std::fs::read_to_string(path) {
-            return (StatusCode::OK, [(axum::http::header::CONTENT_TYPE, "text/html")], content)
-                .into_response();
-        }
+    if path.exists()
+        && let Ok(content) = std::fs::read_to_string(path)
+    {
+        return (StatusCode::OK, [(axum::http::header::CONTENT_TYPE, "text/html")], content)
+            .into_response();
     }
     (StatusCode::NOT_FOUND, "Not found").into_response()
 }

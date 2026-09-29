@@ -7,10 +7,10 @@ use landscape_common::config_service::static_nat::config6::{
 use landscape_common::config_service::static_nat::error::StaticNatError;
 use landscape_common::database::error::DbError;
 use landscape_common::lan_service::lan_ipv6::{
-    checked_allocate_subnet, checked_combine_ipv6_prefix_suffix,
+    LanIPv6ServiceConfigV2, LanPrefixGroupConfig, PrefixParentSource,
 };
 use landscape_common::lan_service::lan_ipv6::{
-    LanIPv6ServiceConfigV2, LanPrefixGroupConfig, PrefixParentSource,
+    checked_allocate_subnet, checked_combine_ipv6_prefix_suffix,
 };
 use sea_orm::DatabaseConnection;
 
@@ -18,10 +18,10 @@ use super::entity::{
     StaticNatMappingV6ConfigActiveModel, StaticNatMappingV6ConfigEntity,
     StaticNatMappingV6ConfigModel,
 };
+use crate::DBId;
 use crate::enrolled_device::repository::EnrolledDeviceRepository;
 use crate::lan_ipv6_v2::repository::LanIPv6V2ServiceRepository;
 use crate::repository::Repository;
-use crate::DBId;
 
 #[derive(Clone)]
 pub struct StaticNatMappingV6Repository {
@@ -94,12 +94,13 @@ impl StaticNatMappingV6Repository {
     ) -> Result<(), StaticNatError> {
         let devices = self.load_devices_for_configs(std::slice::from_ref(config)).await?;
 
-        if let Some(StaticNatV6Target::Device { device_ids }) = config.lan_target.as_ref() {
-            if config.enable && !config.l4_protocols.is_empty() {
-                for device_id in device_ids {
-                    if !device_id.is_nil() && !devices.contains_key(device_id) {
-                        return Err(StaticNatError::DeviceNotFound(*device_id));
-                    }
+        if let Some(StaticNatV6Target::Device { device_ids }) = config.lan_target.as_ref()
+            && config.enable
+            && !config.l4_protocols.is_empty()
+        {
+            for device_id in device_ids {
+                if !device_id.is_nil() && !devices.contains_key(device_id) {
+                    return Err(StaticNatError::DeviceNotFound(*device_id));
                 }
             }
         }

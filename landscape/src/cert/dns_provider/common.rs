@@ -66,11 +66,7 @@ pub fn record_name(domain: &str) -> String {
 }
 
 pub fn fqdn(name: &str) -> String {
-    if name.ends_with('.') {
-        name.to_string()
-    } else {
-        format!("{name}.")
-    }
+    if name.ends_with('.') { name.to_string() } else { format!("{name}.") }
 }
 
 pub fn quote_txt_value(value: &str) -> String {

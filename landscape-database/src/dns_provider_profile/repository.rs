@@ -5,8 +5,8 @@ use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter};
 use super::entity::{
     Column, DnsProviderProfileActiveModel, DnsProviderProfileEntity, DnsProviderProfileModel,
 };
-use crate::repository::Repository;
 use crate::DBId;
+use crate::repository::Repository;
 
 #[derive(Clone)]
 pub struct DnsProviderProfileRepository {

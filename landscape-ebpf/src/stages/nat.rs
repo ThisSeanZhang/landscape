@@ -103,7 +103,7 @@ pub fn attach_tc_nat(
     config: &NatConfig,
 ) -> LdEbpfResult<TcNatHandle> {
     use crate::chain::tc_manager::{StageEntry, StageType};
-    use crate::landscape::{pin_and_reuse_map, OwnedOpenObject};
+    use crate::landscape::{OwnedOpenObject, pin_and_reuse_map};
     use libbpf_rs::skel::{OpenSkel, SkelBuilder};
     use std::os::fd::{AsFd, AsRawFd};
 
@@ -176,7 +176,7 @@ fn init_nat_xdp_unified(
 ) -> LdEbpfResult<(TcNatHandle, XdpNatHandle)> {
     use crate::chain::tc_manager::{StageEntry, StageType};
     use crate::chain::xdp_manager::StageType as XdpStageType;
-    use crate::landscape::{pin_and_reuse_map, OwnedOpenObject};
+    use crate::landscape::{OwnedOpenObject, pin_and_reuse_map};
     use libbpf_rs::skel::{OpenSkel, SkelBuilder};
     use std::os::fd::{AsFd, AsRawFd};
 

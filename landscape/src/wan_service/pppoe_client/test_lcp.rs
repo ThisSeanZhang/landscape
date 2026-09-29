@@ -12,7 +12,7 @@ use super::lcp::run;
 use super::{DEFAULT_TIMEOUT, ETH_P_PPOED, ETH_P_PPOES, MAX_DISCOVERY_RETRIES, MAX_LCP_RETRIES};
 
 fn ensure_test_env() {
-    std::env::set_var("LANDSCAPE_IGNORE_CLI_ARGS", "1");
+    unsafe { std::env::set_var("LANDSCAPE_IGNORE_CLI_ARGS", "1") };
 }
 
 fn test_config() -> PPPoEClientConfig {

@@ -126,20 +126,21 @@ impl MigrationTrait for Migration {
             let iface_name: String = row.try_get("", "iface_name")?;
             let records_json: Option<serde_json::Value> = row.try_get("", "mac_binding_records")?;
 
-            if let Some(records) = records_json {
-                if let Some(records_array) = records.as_array() {
-                    for record in records_array {
-                        let mac = record.get("mac").and_then(|m| m.as_str());
-                        let ip = record.get("ip").and_then(|i| i.as_str());
+            if let Some(records) = records_json
+                && let Some(records_array) = records.as_array()
+            {
+                for record in records_array {
+                    let mac = record.get("mac").and_then(|m| m.as_str());
+                    let ip = record.get("ip").and_then(|i| i.as_str());
 
-                        if let (Some(mac_str), Some(ip_str)) = (mac, ip) {
-                            let ip_u32 = if let Ok(ipv4) = ip_str.parse::<std::net::Ipv4Addr>() {
-                                Some(u32::from(ipv4))
-                            } else {
-                                None
-                            };
+                    if let (Some(mac_str), Some(ip_str)) = (mac, ip) {
+                        let ip_u32 = if let Ok(ipv4) = ip_str.parse::<std::net::Ipv4Addr>() {
+                            Some(u32::from(ipv4))
+                        } else {
+                            None
+                        };
 
-                            db.execute(Statement::from_sql_and_values(
+                        db.execute(Statement::from_sql_and_values(
                                 manager.get_database_backend(),
                                 "INSERT OR IGNORE INTO enrolled_devices (id, update_at, iface_name, name, mac, ipv4, ipv4_int, tag)
                                  VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
@@ -155,7 +156,6 @@ impl MigrationTrait for Migration {
                                 ],
                             ))
                             .await?;
-                        }
                     }
                 }
             }

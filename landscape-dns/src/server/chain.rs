@@ -3,11 +3,11 @@ use std::{future::Future, time::Duration};
 use hickory_proto::{
     op::ResponseCode,
     rr::{
-        rdata::{
-            svcb::{SvcParamKey, SVCB},
-            HTTPS,
-        },
         RData, Record, RecordType,
+        rdata::{
+            HTTPS,
+            svcb::{SVCB, SvcParamKey},
+        },
     },
 };
 use landscape_common::{
@@ -18,16 +18,16 @@ use landscape_common::{
 };
 
 use crate::{
+    CheckChainDnsResult,
     domain::ParsedDomain,
     server::{
-        answer::{response_code_for, DnsQueryAnswer},
+        answer::{DnsQueryAnswer, response_code_for},
         cache::CacheHandle,
         local::{LocalAnswer, LocalResolver},
         redirect_engine::RedirectAnswer,
         rule::DNSResolveRuntime,
         snapshot::RuntimeSnapshot,
     },
-    CheckChainDnsResult,
 };
 
 const LOOKUP_TIMEOUT: Duration = Duration::from_secs(5);
@@ -528,28 +528,28 @@ fn filter_result(un_filter_records: Vec<Record>, filter: &FilterResult) -> Vec<R
             // For HTTPS records, strip ipv4hint/ipv6hint SvcParams
             // that contradict the IP-version filter, so clients won't
             // use a hint to bypass the filter.
-            if r.record_type() == RecordType::HTTPS {
-                if let RData::HTTPS(https) = r.data.clone() {
-                    let key_to_remove = match filter {
-                        FilterResult::OnlyIPv4 => Some(SvcParamKey::Ipv6Hint),
-                        FilterResult::OnlyIPv6 => Some(SvcParamKey::Ipv4Hint),
-                        FilterResult::Unfilter => None,
-                    };
-                    if let Some(remove_key) = key_to_remove {
-                        let filtered_params: Vec<_> = https
-                            .0
-                            .svc_params
-                            .iter()
-                            .filter(|(k, _)| *k != remove_key)
-                            .cloned()
-                            .collect();
-                        let new_svcb = SVCB::new(
-                            https.0.svc_priority,
-                            https.0.target_name.clone(),
-                            filtered_params,
-                        );
-                        r.data = RData::HTTPS(HTTPS(new_svcb));
-                    }
+            if r.record_type() == RecordType::HTTPS
+                && let RData::HTTPS(https) = r.data.clone()
+            {
+                let key_to_remove = match filter {
+                    FilterResult::OnlyIPv4 => Some(SvcParamKey::Ipv6Hint),
+                    FilterResult::OnlyIPv6 => Some(SvcParamKey::Ipv4Hint),
+                    FilterResult::Unfilter => None,
+                };
+                if let Some(remove_key) = key_to_remove {
+                    let filtered_params: Vec<_> = https
+                        .0
+                        .svc_params
+                        .iter()
+                        .filter(|(k, _)| *k != remove_key)
+                        .cloned()
+                        .collect();
+                    let new_svcb = SVCB::new(
+                        https.0.svc_priority,
+                        https.0.target_name.clone(),
+                        filtered_params,
+                    );
+                    r.data = RData::HTTPS(HTTPS(new_svcb));
                 }
             }
             r

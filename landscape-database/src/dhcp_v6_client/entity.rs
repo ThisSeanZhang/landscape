@@ -3,7 +3,7 @@ use landscape_common::{
     net::MacAddr,
     wan_service::ipv6_pd::{IPV6PDConfig, IPV6PDServiceConfig},
 };
-use sea_orm::{entity::prelude::*, ActiveValue::Set};
+use sea_orm::{ActiveValue::Set, entity::prelude::*};
 use serde::{Deserialize, Serialize};
 
 use crate::DBTimestamp;

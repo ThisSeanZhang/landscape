@@ -5,7 +5,7 @@ use regex::{Regex, RegexSet};
 use std::{collections::BTreeMap, sync::Arc, time::Instant};
 use zerotrie::ZeroTrieSimpleAscii;
 
-use crate::domain::{normalize_domain_text, ParsedDomain};
+use crate::domain::{ParsedDomain, normalize_domain_text};
 
 pub fn domain_rule_matches_normalized(
     match_type: &DomainMatchType,
@@ -239,10 +239,10 @@ mod tests {
     use jemalloc_ctl::{epoch, stats};
 
     use landscape_common::{
+        LANDSCAPE_GEO_CACHE_TMP_DIR,
         config_service::geo::{GeoDomainConfig, GeoFileCacheKey},
         dns::rule::{DomainConfig, DomainMatchType},
         geo_cache::file_store::GeoCacheStore,
-        LANDSCAPE_GEO_CACHE_TMP_DIR,
     };
 
     use super::{DomainMatcher, RuntimeRuleMatcher};

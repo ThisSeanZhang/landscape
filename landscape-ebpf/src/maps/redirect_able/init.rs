@@ -10,7 +10,7 @@ use std::path::Path;
 use libbpf_rs::{MapHandle, MapType};
 
 use crate::bpf_error::LdEbpfResult;
-use crate::maps::{ensure_pinned_map, MapCreateSpec};
+use crate::maps::{MapCreateSpec, ensure_pinned_map};
 
 const XDP_REDIRECT_ABLE_MAX_ENTRIES: u32 = 1024;
 

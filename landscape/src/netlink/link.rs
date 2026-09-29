@@ -9,11 +9,7 @@ pub async fn get_iface_by_name(name: &str) -> Option<LandscapeInterface> {
     let handle = create_handle().ok()?;
     let mut links = handle.link().get().match_name(name.to_string()).execute();
 
-    if let Ok(Some(msg)) = links.try_next().await {
-        parse_link_message(msg)
-    } else {
-        None
-    }
+    if let Ok(Some(msg)) = links.try_next().await { parse_link_message(msg) } else { None }
 }
 
 pub async fn get_iface_by_name_with_handle(
@@ -22,11 +18,7 @@ pub async fn get_iface_by_name_with_handle(
 ) -> Option<LandscapeInterface> {
     let mut links = handle.link().get().match_name(name.to_string()).execute();
 
-    if let Ok(Some(msg)) = links.try_next().await {
-        parse_link_message(msg)
-    } else {
-        None
-    }
+    if let Ok(Some(msg)) = links.try_next().await { parse_link_message(msg) } else { None }
 }
 
 pub async fn get_all_devices() -> Vec<LandscapeInterface> {
@@ -101,11 +93,7 @@ pub async fn set_controller(
         msg.attributes = vec![LinkAttribute::Controller(master_index.unwrap_or(0))];
 
         let create_result = handle.link().change(msg).execute().await;
-        if create_result.is_ok() {
-            Some(dev)
-        } else {
-            None
-        }
+        if create_result.is_ok() { Some(dev) } else { None }
     } else {
         None
     }
@@ -116,11 +104,7 @@ pub async fn change_dev_status(iface_name: &str, up: bool) -> Option<LandscapeIn
         let status = if up { "up" } else { "down" };
         let result =
             std::process::Command::new("ip").args(["link", "set", iface_name, status]).output();
-        if result.is_ok() {
-            Some(dev)
-        } else {
-            None
-        }
+        if result.is_ok() { Some(dev) } else { None }
     } else {
         None
     }

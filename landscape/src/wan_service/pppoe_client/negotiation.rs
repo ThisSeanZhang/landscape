@@ -1,19 +1,19 @@
 use std::net::Ipv4Addr;
 
 use tokio::sync::mpsc;
-use tokio::time::{sleep, Duration, Instant};
+use tokio::time::{Duration, Instant, sleep};
 
 use landscape_common::net::MacAddr;
 use landscape_common::net_proto::ppp::{PPPOption, PointToPoint};
 use landscape_common::net_proto::pppoe::PPPoEFrame;
 use landscape_common::service::WatchService;
 
-use super::auth::{Authenticator, ChapAuthenticator, PapAuthenticator};
 use super::PPPoEClientConfig;
+use super::auth::{Authenticator, ChapAuthenticator, PapAuthenticator};
 
 use super::error::PppoeError;
 use super::lcp::LcpPhaseResult;
-use super::{PppoeResult, DEFAULT_TIMEOUT, ETH_P_PPOES, LCP_ECHO_INTERVAL};
+use super::{DEFAULT_TIMEOUT, ETH_P_PPOES, LCP_ECHO_INTERVAL, PppoeResult};
 
 #[derive(Debug)]
 pub(crate) struct NegotiationResult {
@@ -103,17 +103,15 @@ pub(crate) async fn run(
     let mut echo_req_id: u8 = 0;
     let mut echo_failures: u8 = 0;
 
-    if auth_is_pap {
-        if let Some(payload) = auth.as_ref().unwrap().outgoing_packet() {
-            super::send_pppoe_session_frame(
-                &lcp.server_mac,
-                config.iface_mac,
-                lcp.session_id,
-                payload,
-                tx,
-            )
-            .await?;
-        }
+    if auth_is_pap && let Some(payload) = auth.as_ref().unwrap().outgoing_packet() {
+        super::send_pppoe_session_frame(
+            &lcp.server_mac,
+            config.iface_mac,
+            lcp.session_id,
+            payload,
+            tx,
+        )
+        .await?;
     }
 
     send_echo_request(config, lcp, echo_req_id, lcp.magic_number, tx).await?;
@@ -219,15 +217,13 @@ pub(crate) async fn run(
                     if auth_retries > MAX_AUTH_RETRIES {
                         return Err(PppoeError::AuthFailed("auth timeout".into()));
                     }
-                    if auth_is_pap {
-                        if let Some(authenticator) = auth.as_ref() {
-                            if let Some(payload) = authenticator.outgoing_packet() {
+                    if auth_is_pap
+                        && let Some(authenticator) = auth.as_ref()
+                            && let Some(payload) = authenticator.outgoing_packet() {
                                 super::send_pppoe_session_frame(
                                     &lcp.server_mac, config.iface_mac, lcp.session_id, payload, tx,
                                 ).await?;
                             }
-                        }
-                    }
                     timeout_sleep.as_mut().reset(Instant::now() + Duration::from_secs(DEFAULT_TIMEOUT));
                 } else {
                     if !ipcp.done() {

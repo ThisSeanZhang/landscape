@@ -1,7 +1,7 @@
 // tests/gen_packets.rs  或 src/test_pkgs.rs
 use etherparse::{
-    icmpv4::DestUnreachableHeader, IcmpEchoHeader, Icmpv4Header, Icmpv4Type, IpFragOffset,
-    IpHeaders, IpNumber, Ipv4Extensions, Ipv4Header, PacketBuilder,
+    IcmpEchoHeader, Icmpv4Header, Icmpv4Type, IpFragOffset, IpHeaders, IpNumber, Ipv4Extensions,
+    Ipv4Header, PacketBuilder, icmpv4::DestUnreachableHeader,
 };
 
 /// Helper: simple payload used in many packets

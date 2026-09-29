@@ -6,9 +6,8 @@ use std::{
 };
 
 use landscape_common::net_proto::udp::dhcp::{
-    get_solicit_options,
+    Decodable, Decoder, Encodable, Encoder, get_solicit_options,
     v6::{self, DhcpOption, DhcpOptions, Message, OptionCode},
-    Decodable, Decoder, Encodable, Encoder,
 };
 
 use socket2::{Domain, Protocol, Type};
@@ -20,19 +19,19 @@ use crate::{
 };
 
 use landscape_common::{
-    concurrency::{spawn_task, task_label},
-    event::hub::IAPrefixEvent,
-    net::MacAddr,
-    sys_service::route_service::RouteTargetInfo,
-};
-use landscape_common::{
+    LANDSCAPE_DEFAULE_DHCP_V6_SERVER_PORT,
     event::hub::IAPrefixEventSender,
     lan_service::lan_ipv6::checked_allocate_subnet,
     service::{ServiceStatus, WatchService},
     utils::time::get_f64_timestamp,
     wan_service::addr_binding::WanAddrBinding,
     wan_service::ipv6_pd::{IAPrefixMap, LDIAPrefix},
-    LANDSCAPE_DEFAULE_DHCP_V6_SERVER_PORT,
+};
+use landscape_common::{
+    concurrency::{spawn_task, task_label},
+    event::hub::IAPrefixEvent,
+    net::MacAddr,
+    sys_service::route_service::RouteTargetInfo,
 };
 
 pub const IPV6_TIMEOUT_DEFAULT_DURACTION: u64 = 10;
@@ -179,10 +178,9 @@ impl IpV6PdState {
             | IpV6PdState::WaitToRebind { service_id, .. } => {
                 if let Some(v6::DhcpOption::ServerId(new_service_id)) =
                     new_v6_msg.opts().get(OptionCode::ServerId)
+                    && service_id == new_service_id
                 {
-                    if service_id == new_service_id {
-                        return true;
-                    }
+                    return true;
                 }
                 false
             }
@@ -776,14 +774,13 @@ async fn handle_packet(
             if new_v6_msg.msg_type() == V6MessageType::Reply {
                 if let Some(v6::DhcpOption::ServerId(new_service_id)) =
                     new_v6_msg.opts().get(OptionCode::ServerId)
+                    && &service_id != new_service_id
                 {
-                    if &service_id != new_service_id {
-                        tracing::warn!(
-                            "receiver a replay from another server, id is: {:?}",
-                            new_service_id
-                        );
-                        return false;
-                    }
+                    tracing::warn!(
+                        "receiver a replay from another server, id is: {:?}",
+                        new_service_id
+                    );
+                    return false;
                 }
 
                 if let Some(v6::DhcpOption::IAPD(iapd)) = new_v6_msg.opts().get(OptionCode::IAPD) {
@@ -829,10 +826,10 @@ async fn handle_packet(
                             let mut info = wan_route_info.clone();
                             if let Some(wan_addr) = derive_wan_pd_addr(&ia_prefix, *shared_wan_iid)
                             {
-                                if current_wan_addr.as_ref() != Some(&wan_addr) {
-                                    if let Some(old_addr) = current_wan_addr.replace(wan_addr) {
-                                        del_iface_ip(old_addr, 128, iface_name);
-                                    }
+                                if current_wan_addr.as_ref() != Some(&wan_addr)
+                                    && let Some(old_addr) = current_wan_addr.replace(wan_addr)
+                                {
+                                    del_iface_ip(old_addr, 128, iface_name);
                                 }
 
                                 set_iface_ip(

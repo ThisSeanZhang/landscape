@@ -3,12 +3,12 @@ use std::net::Ipv4Addr;
 
 use serde::{Deserialize, Serialize};
 
+use crate::LANDSCAPE_DEFAULT_LAN_NAME;
 use crate::database::repository::LandscapeDBStore;
 use crate::net_proto::udp::dhcp::{DhcpV4Option, Encodable};
-use crate::service::manager::ServiceKeyProvider;
 use crate::service::ServiceConfigError;
+use crate::service::manager::ServiceKeyProvider;
 use crate::utils::time::get_f64_timestamp;
-use crate::LANDSCAPE_DEFAULT_LAN_NAME;
 
 use crate::{
     LANDSCAPE_DEFAULE_LAN_DHCP_RANGE_START, LANDSCAPE_DEFAULE_LAN_DHCP_SERVER_IP,
@@ -522,12 +522,12 @@ impl DHCPv4ServerConfig {
             }
         }
 
-        if let Some(lease) = self.address_lease_time {
-            if lease == 0 {
-                return Err(ServiceConfigError::InvalidConfig {
-                    reason: "address_lease_time must be > 0".to_string(),
-                });
-            }
+        if let Some(lease) = self.address_lease_time
+            && lease == 0
+        {
+            return Err(ServiceConfigError::InvalidConfig {
+                reason: "address_lease_time must be > 0".to_string(),
+            });
         }
 
         validate_custom_options(&self.custom_options)?;

@@ -5,9 +5,9 @@ use landscape_common::config::{
 };
 use landscape_common::sys_service::time_sync::TimeSyncStatus;
 
+use crate::LandscapeApp;
 use crate::api::{JsonBody, LandscapeApiResp};
 use crate::error::LandscapeApiResult;
-use crate::LandscapeApp;
 
 #[utoipa::path(
     get,

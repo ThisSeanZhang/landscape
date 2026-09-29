@@ -7,7 +7,7 @@ use crate::bpf_error::LdEbpfResult;
 use crate::maps::{FlowMatchKey, LandscapeMapPath};
 use crate::{LANDSCAPE_IPV4_TYPE, LANDSCAPE_IPV6_TYPE};
 
-use crate::maps::{apply_raw_map_diff, diff_raw_map, snapshot_raw_map, RawEbpfMapEntries};
+use crate::maps::{RawEbpfMapEntries, apply_raw_map_diff, diff_raw_map, snapshot_raw_map};
 
 const FLOW_ENTRY_MODE_MAC: u8 = 0;
 const FLOW_ENTRY_MODE_IP: u8 = 1;

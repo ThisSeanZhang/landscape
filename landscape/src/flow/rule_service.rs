@@ -5,11 +5,11 @@ use landscape_common::{
     database::store::Change,
     event::hub::EnrolledDeviceEventReader,
     event::{dns::DnsEvent, route::RouteEvent},
-    flow::{config::FlowConfig, dataplane::FlowRuleDataplane, FlowEntryMatchMode, FlowRuleError},
+    flow::{FlowEntryMatchMode, FlowRuleError, config::FlowConfig, dataplane::FlowRuleDataplane},
     service::controller::{ConfigStoreController, ConfigStoreFlowController},
 };
 use landscape_database::{
-    flow_rule::repository::{find_duplicate_resolved_modes, FlowConfigRepository},
+    flow_rule::repository::{FlowConfigRepository, find_duplicate_resolved_modes},
     provider::LandscapeDBServiceProvider,
 };
 use tokio::sync::mpsc;

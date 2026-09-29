@@ -102,11 +102,7 @@ async fn query_ntp_time_with_sampling(
 /// Bind a local socket matching the server address family so that `send_to`
 /// never fails with `EINVAL` on the first resolved (possibly IPv6) address.
 fn bind_addr_for(addr: &SocketAddr) -> &'static str {
-    if addr.is_ipv4() {
-        "0.0.0.0:0"
-    } else {
-        "[::]:0"
-    }
+    if addr.is_ipv4() { "0.0.0.0:0" } else { "[::]:0" }
 }
 
 async fn query_ntp_time_from_server(server: &str) -> io::Result<NtpQueryResult> {
@@ -191,10 +187,10 @@ fn normalize_ntp_server_addr(server: &str) -> String {
         return DEFAULT_TIME_FALLBACK_SERVER.to_string();
     }
 
-    if let Some((_, port)) = server.rsplit_once(':') {
-        if port.parse::<u16>().is_ok() {
-            return server.to_string();
-        }
+    if let Some((_, port)) = server.rsplit_once(':')
+        && port.parse::<u16>().is_ok()
+    {
+        return server.to_string();
     }
 
     format!("{server}:123")

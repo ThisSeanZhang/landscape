@@ -1,8 +1,8 @@
 use std::mem::MaybeUninit;
 
 use libbpf_rs::{
-    skel::{OpenSkel, SkelBuilder as _},
     MapCore, MapFlags, ProgramInput,
+    skel::{OpenSkel, SkelBuilder as _},
 };
 
 use zerocopy::FromBytes;
@@ -49,15 +49,33 @@ mod tests {
     }
     fn pv4(r: &SkbScanResult) {
         let v = &r.v4;
-        println!("v4 off={} proto={} frag_t={} frag_off={} frag_id={} pkt_t={} err_l3={} err_l4={} err_proto={}",
-            v.l4_offset, v.l4_protocol, v.fragment_type, v.fragment_off, v.fragment_id,
-            v.pkt_type, v.icmp_error_l3_offset, v.icmp_error_inner_l4_offset, v.icmp_error_l4_protocol);
+        println!(
+            "v4 off={} proto={} frag_t={} frag_off={} frag_id={} pkt_t={} err_l3={} err_l4={} err_proto={}",
+            v.l4_offset,
+            v.l4_protocol,
+            v.fragment_type,
+            v.fragment_off,
+            v.fragment_id,
+            v.pkt_type,
+            v.icmp_error_l3_offset,
+            v.icmp_error_inner_l4_offset,
+            v.icmp_error_l4_protocol
+        );
     }
     fn pv6(r: &SkbScanResult) {
         let v = &r.v6;
-        println!("v6 off={} proto={} frag_t={} frag_off={} frag_id={} pkt_t={} err_l3={} err_l4={} err_proto={}",
-            v.l4_offset, v.l4_protocol, v.fragment_type, v.fragment_off, v.fragment_id,
-            v.pkt_type, v.icmp_error_l3_offset, v.icmp_error_inner_l4_offset, v.icmp_error_l4_protocol);
+        println!(
+            "v6 off={} proto={} frag_t={} frag_off={} frag_id={} pkt_t={} err_l3={} err_l4={} err_proto={}",
+            v.l4_offset,
+            v.l4_protocol,
+            v.fragment_type,
+            v.fragment_off,
+            v.fragment_id,
+            v.pkt_type,
+            v.icmp_error_l3_offset,
+            v.icmp_error_inner_l4_offset,
+            v.icmp_error_l4_protocol
+        );
     }
 
     // ── v4 tests ──

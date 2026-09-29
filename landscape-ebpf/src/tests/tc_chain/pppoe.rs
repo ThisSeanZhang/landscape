@@ -2,8 +2,8 @@ use std::mem::MaybeUninit;
 
 use etherparse::PacketBuilder;
 use libbpf_rs::{
-    skel::{OpenSkel, SkelBuilder as _},
     ProgramInput,
+    skel::{OpenSkel, SkelBuilder as _},
 };
 
 mod tc_pppoe_skel {

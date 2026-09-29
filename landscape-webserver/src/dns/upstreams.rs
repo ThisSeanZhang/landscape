@@ -8,8 +8,8 @@ use utoipa_axum::routes;
 
 use landscape_common::dns::upstream::DnsUpstreamError;
 
-use crate::api::JsonBody;
 use crate::LandscapeApp;
+use crate::api::JsonBody;
 use crate::{api::LandscapeApiResp, error::LandscapeApiResult};
 
 pub fn get_dns_upstream_config_paths() -> OpenApiRouter<LandscapeApp> {

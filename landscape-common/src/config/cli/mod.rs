@@ -13,7 +13,7 @@ mod output;
 
 pub use args::{ConfigCliArgs, PppdPluginArg, WanMode};
 pub use error::ConfigCliError;
-pub use output::{render_init_config, run_config_cli, write_init_config_file, ConfigOutput};
+pub use output::{ConfigOutput, render_init_config, run_config_cli, write_init_config_file};
 
 const DEFAULT_LAN_IP: &str = "192.168.5.1/24";
 const DEFAULT_PPPOE_MTU: u32 = 1492;

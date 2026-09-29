@@ -7,10 +7,10 @@
 use std::mem::size_of;
 use std::path::Path;
 
-use libbpf_rs::{libbpf_sys, MapHandle, MapType};
+use libbpf_rs::{MapHandle, MapType, libbpf_sys};
 
 use crate::bpf_error::LdEbpfResult;
-use crate::maps::{ensure_pinned_map, MapCreateSpec};
+use crate::maps::{MapCreateSpec, ensure_pinned_map};
 
 use super::types::{WanIpInfoKey, WanIpInfoValue};
 

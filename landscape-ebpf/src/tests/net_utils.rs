@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 
 use libbpf_rs::{MapCore, MapFlags};
 use nix::net::if_::if_nametoindex;
-use nix::sched::{setns, CloneFlags};
+use nix::sched::{CloneFlags, setns};
 
 use crate::tests::test_id;
 

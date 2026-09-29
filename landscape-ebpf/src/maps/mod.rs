@@ -33,8 +33,8 @@ use std::{
 
 use libbpf_rs::{AsRawLibbpf, MapCore, MapFlags, MapHandle, MapType, OpenMapMut};
 
-use crate::bpf_error::LdEbpfResult;
 pub use crate::LandscapeMapPath;
+use crate::bpf_error::LdEbpfResult;
 
 /// Typed accessors for the `u_inet_addr` / `u_inet6_addr` unions modeled as
 /// `[u8; 16]`.
@@ -1067,10 +1067,10 @@ mod tests {
     /// keep their data while per-boot maps are rebuilt empty.
     #[test]
     fn init_path_creates_all_maps_and_reuses_on_restart() {
+        use crate::LandscapeMapPath;
         use crate::maps::{
             dns, firewall, flow, flow_dns, flow_wanip, mac, nat, redirect_able, route, wan,
         };
-        use crate::LandscapeMapPath;
 
         let Some(_) = run_or_skip("init-path", |root| {
             let paths = LandscapeMapPath::from_root(root);

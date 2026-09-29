@@ -2,7 +2,7 @@ use std::{mem, net::Ipv4Addr};
 
 use landscape_common::concurrency::{spawn_task, task_label};
 use landscape_common::net::MacAddr;
-use libc::{sockaddr_ll, ETH_P_ARP};
+use libc::{ETH_P_ARP, sockaddr_ll};
 use socket2::{Domain, Protocol, Type};
 use std::os::fd::AsRawFd;
 use tokio::{io::unix::AsyncFd, sync::mpsc};

@@ -4,20 +4,20 @@ use std::process::Command;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use landscape_common::LAND_ARP_SCAN_INTERVAL;
 use landscape_common::concurrency::{spawn_task, task_label};
 use landscape_common::database::LandscapeStore;
 use landscape_common::event::hub::IfaceEventReader;
+use landscape_common::lan_service::lan_dhcpv4::DhcpError;
 use landscape_common::lan_service::lan_dhcpv4::config::DHCPv4ServiceConfig;
 use landscape_common::lan_service::lan_dhcpv4::status::ArpScanInfo;
 use landscape_common::lan_service::lan_dhcpv4::status::ArpScanStatus;
 use landscape_common::lan_service::lan_dhcpv4::status::DHCPv4OfferInfo;
-use landscape_common::lan_service::lan_dhcpv4::DhcpError;
-use landscape_common::service::controller::ControllerService;
 use landscape_common::service::WatchService;
+use landscape_common::service::controller::ControllerService;
 use landscape_common::sys_service::client::{CallerLookupMatch, CallerLookupSource};
 use landscape_common::sys_service::route_service::LanRouteInfo;
 use landscape_common::sys_service::route_service::LanRouteMode;
-use landscape_common::LAND_ARP_SCAN_INTERVAL;
 use landscape_common::{
     event::hub::iface::IfaceObserverAction,
     service::manager::{ServiceKeyProvider, ServiceManager, ServiceStarterTrait},
@@ -30,12 +30,12 @@ use tokio_util::sync::CancellationToken;
 use arc_swap::ArcSwap;
 use landscape_common::sys_service::lan_hostname::LanHostnameConfig;
 
+use crate::LandscapeSingleIpInfo;
 use crate::cert::SharedSniResolver;
 use crate::get_iface_by_name;
 use crate::lan_service::lan_dhcp4_server::server::{DHCPv4Server, DhcpV4DnrRuntimeContext};
 use crate::lan_service::lan_dhcp4_server::status::{DhcpV4AssignStatus, StaticBindingEntry};
 use crate::sys_service::route::IpRouteService;
-use crate::LandscapeSingleIpInfo;
 use landscape_common::event::hub::{
     EnrolledDeviceEvent, EnrolledDeviceEventReader, IPv4AssignEventSender,
 };
@@ -516,10 +516,10 @@ fn extract_binding_ifaces(event: &EnrolledDeviceEvent) -> HashSet<String> {
     let mut set = HashSet::new();
     match event {
         EnrolledDeviceEvent::Updated { old, new } => {
-            if let Some(d) = old.as_ref() {
-                if let Some(ref iface) = d.iface_name {
-                    set.insert(iface.clone());
-                }
+            if let Some(d) = old.as_ref()
+                && let Some(ref iface) = d.iface_name
+            {
+                set.insert(iface.clone());
             }
             if let Some(ref iface) = new.iface_name {
                 set.insert(iface.clone());

@@ -9,8 +9,8 @@
 //     https://help.aliyun.com/document_detail/29773.html
 //   DescribeDomainInfo:
 //     https://help.aliyun.com/document_detail/29780.html
-use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use base64::Engine;
+use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use chrono::Utc;
 use hmac::{Hmac, KeyInit, Mac};
 use landscape_common::cert::CertError;
@@ -20,7 +20,7 @@ use serde_json::Value;
 use sha1::Sha1;
 use uuid::Uuid;
 
-use super::common::{candidate_zones, relative_record_name, RecordStore};
+use super::common::{RecordStore, candidate_zones, relative_record_name};
 use super::{DnsChallengeSolver, DnsRecordUpdater};
 
 const ALIYUN_API_BASE: &str = "https://alidns.aliyuncs.com/";

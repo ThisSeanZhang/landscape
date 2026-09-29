@@ -362,14 +362,14 @@ async fn rollback_txn(txn: DatabaseTransaction) {
 #[cfg(test)]
 mod tests {
     use landscape_common::config_service::iface::{IfaceZoneType, NetworkIfaceConfig};
+    use landscape_common::database::LandscapeStore;
     use landscape_common::database::error::DbError;
     use landscape_common::database::repository::LandscapeDBStore;
     use landscape_common::database::store::ConfigStore;
-    use landscape_common::database::LandscapeStore;
 
     use crate::iface::repository::NetIfaceRepository;
     use crate::provider::LandscapeDBServiceProvider;
-    use crate::writer::{is_retryable_code, retry_delay, MAX_RETRIES, RETRY_BACKOFF_CAP_MS};
+    use crate::writer::{MAX_RETRIES, RETRY_BACKOFF_CAP_MS, is_retryable_code, retry_delay};
 
     fn iface(name: &str) -> NetworkIfaceConfig {
         NetworkIfaceConfig::crate_bridge(name.to_string(), Some(IfaceZoneType::Lan))

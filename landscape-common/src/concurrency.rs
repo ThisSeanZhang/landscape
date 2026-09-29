@@ -3,8 +3,8 @@ use std::fmt::Display;
 use std::future::Future;
 use std::hash::{Hash, Hasher};
 use std::io;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::thread;
 
 use tokio::task::JoinHandle as TokioJoinHandle;
@@ -378,7 +378,7 @@ fn short_hash(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{runtime_thread_name_fn, short_thread_name, thread_name, MAX_THREAD_NAME_LEN};
+    use super::{MAX_THREAD_NAME_LEN, runtime_thread_name_fn, short_thread_name, thread_name};
 
     #[test]
     fn thread_name_keeps_short_names() {

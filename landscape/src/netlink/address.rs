@@ -1,8 +1,8 @@
 use std::net::{IpAddr, Ipv4Addr};
 
 use futures::stream::TryStreamExt;
-use netlink_packet_route::address::{AddressAttribute, AddressMessage};
 use netlink_packet_route::AddressFamily;
+use netlink_packet_route::address::{AddressAttribute, AddressMessage};
 use rtnetlink::Handle;
 use serde::Serialize;
 

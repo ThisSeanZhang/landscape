@@ -1,20 +1,20 @@
 use std::net::IpAddr;
 use std::sync::Arc;
 
+use landscape_common::LANDSCAPE_DEFAULE_DHCP_V4_CLIENT_PORT;
 use landscape_common::concurrency::{spawn_task, task_label};
 use landscape_common::database::LandscapeStore;
 use landscape_common::event::hub::IfaceEventReader;
 use landscape_common::sys_service::route_service::{LanRouteInfo, LanRouteMode, RouteTargetInfo};
-use landscape_common::LANDSCAPE_DEFAULE_DHCP_V4_CLIENT_PORT;
 use landscape_common::{
     args::LAND_HOSTNAME,
     config_service::iface::IfaceZoneType,
     event::hub::iface::IfaceObserverAction,
-    global_const::default_router::{RouteInfo, RouteType, LD_ALL_ROUTERS},
+    global_const::default_router::{LD_ALL_ROUTERS, RouteInfo, RouteType},
     service::{
+        ServiceStatus, WatchService,
         controller::ControllerService,
         manager::{ServiceManager, ServiceStarterTrait},
-        ServiceStatus, WatchService,
     },
     wan_service::addr_binding::WanAddrBinding,
     wan_service::ip_config::{IfaceIpModelConfig, IfaceIpServiceConfig},
@@ -114,36 +114,35 @@ async fn init_service_from_config(
                 };
                 route_service.insert_ipv4_lan_route(&iface_name, lan_info).await;
 
-                if let Some(default_router_ip) = default_router_ip {
-                    if !default_router_ip.is_broadcast()
-                        && !default_router_ip.is_unspecified()
-                        && !default_router_ip.is_loopback()
-                    {
-                        if default_router {
-                            tracing::info!("setting default route: {:?}", default_router_ip);
-                            LD_ALL_ROUTERS
-                                .add_route(RouteInfo {
-                                    iface_name: iface_name.clone(),
-                                    weight: 1,
-                                    route: RouteType::Ipv4(default_router_ip),
-                                })
-                                .await;
-                        } else {
-                            LD_ALL_ROUTERS.del_route_by_iface(&iface_name).await;
-                        }
-
-                        let info = RouteTargetInfo {
-                            ifindex: iface.index,
-                            weight: 1,
-                            mac: iface.mac,
-                            is_docker: false,
-                            iface_name: iface_name.clone(),
-                            iface_ip: IpAddr::V4(ipv4),
-                            default_route: default_router,
-                            gateway_ip: IpAddr::V4(default_router_ip),
-                        };
-                        route_service.insert_ipv4_wan_route(&iface_name, info).await;
+                if let Some(default_router_ip) = default_router_ip
+                    && !default_router_ip.is_broadcast()
+                    && !default_router_ip.is_unspecified()
+                    && !default_router_ip.is_loopback()
+                {
+                    if default_router {
+                        tracing::info!("setting default route: {:?}", default_router_ip);
+                        LD_ALL_ROUTERS
+                            .add_route(RouteInfo {
+                                iface_name: iface_name.clone(),
+                                weight: 1,
+                                route: RouteType::Ipv4(default_router_ip),
+                            })
+                            .await;
+                    } else {
+                        LD_ALL_ROUTERS.del_route_by_iface(&iface_name).await;
                     }
+
+                    let info = RouteTargetInfo {
+                        ifindex: iface.index,
+                        weight: 1,
+                        mac: iface.mac,
+                        is_docker: false,
+                        iface_name: iface_name.clone(),
+                        iface_ip: IpAddr::V4(ipv4),
+                        default_route: default_router,
+                        gateway_ip: IpAddr::V4(default_router_ip),
+                    };
+                    route_service.insert_ipv4_wan_route(&iface_name, info).await;
                 }
 
                 service_status.just_change_status(ServiceStatus::Running);

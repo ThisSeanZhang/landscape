@@ -1,6 +1,6 @@
 use landscape_common::database::repository::LandscapeDBStore;
 use landscape_common::lan_service::lan_ipv6::{
-    validate_global_prefix_conflicts, LanIPv6Error, LanIPv6ServiceConfigV2,
+    LanIPv6Error, LanIPv6ServiceConfigV2, validate_global_prefix_conflicts,
 };
 use sea_orm::{
     ActiveModelTrait, DatabaseConnection, EntityTrait, IntoActiveModel, TransactionTrait,

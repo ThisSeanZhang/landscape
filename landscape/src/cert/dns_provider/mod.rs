@@ -5,8 +5,8 @@ mod common;
 mod google;
 pub(crate) mod tencent;
 
-use landscape_common::cert::order::DnsProviderConfig;
 use landscape_common::cert::CertError;
+use landscape_common::cert::order::DnsProviderConfig;
 
 /// Fallback TTL (seconds) used when a provider does not define its own default.
 pub const GLOBAL_PROVIDER_TTL: u32 = 600;
@@ -189,10 +189,10 @@ mod tests {
     use axum::response::IntoResponse;
     use axum::routing::{delete, get, post};
     use axum::{Json, Router};
-    use serde_json::{json, Value};
+    use serde_json::{Value, json};
 
     use super::common::unquote_txt_value;
-    use super::{aliyun, aws, build_solver, cloudflare, google, tencent, DnsChallengeSolver};
+    use super::{DnsChallengeSolver, aliyun, aws, build_solver, cloudflare, google, tencent};
 
     async fn spawn_router(router: Router) -> String {
         let listener =

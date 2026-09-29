@@ -313,16 +313,15 @@ impl StoreRuntimeConfig {
                 );
             }
         } else {
-            if let Some(parent) = path.parent() {
-                if !parent.exists() {
-                    if let Err(error) = std::fs::create_dir_all(parent) {
-                        tracing::error!(
-                            path = %parent.display(),
-                            %error,
-                            "failed to create database directory"
-                        );
-                    }
-                }
+            if let Some(parent) = path.parent()
+                && !parent.exists()
+                && let Err(error) = std::fs::create_dir_all(parent)
+            {
+                tracing::error!(
+                    path = %parent.display(),
+                    %error,
+                    "failed to create database directory"
+                );
             }
             if let Err(error) = std::fs::File::create(&path) {
                 tracing::error!(path = %path.display(), %error, "failed to create database file");

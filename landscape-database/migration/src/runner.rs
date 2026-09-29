@@ -5,7 +5,7 @@ use sea_orm_migration::sea_orm::{
     ActiveValue, ConnectionTrait, DatabaseTransaction, DbErr, EntityTrait, QueryTrait,
     TransactionTrait,
 };
-use sea_orm_migration::{seaql_migrations, MigrationTrait, MigratorTrait, SchemaManager};
+use sea_orm_migration::{MigrationTrait, MigratorTrait, SchemaManager, seaql_migrations};
 
 /// Apply all pending migrations of `M`, wrapping each migration together with
 /// its `seaql_migrations` bookkeeping row in a single transaction.

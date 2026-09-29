@@ -2,9 +2,9 @@ use axum::extract::State;
 use landscape_common::api_response::LandscapeApiResp as CommonApiResp;
 use landscape_common::config::{GetUIConfigResponse, LandscapeUIConfig, UpdateUIConfigRequest};
 
+use crate::LandscapeApp;
 use crate::api::{JsonBody, LandscapeApiResp};
 use crate::error::LandscapeApiResult;
-use crate::LandscapeApp;
 
 #[utoipa::path(
     get,

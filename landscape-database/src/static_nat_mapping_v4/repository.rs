@@ -13,10 +13,10 @@ use super::entity::{
     StaticNatMappingV4ConfigActiveModel, StaticNatMappingV4ConfigEntity,
     StaticNatMappingV4ConfigModel,
 };
+use crate::DBId;
 use crate::enrolled_device::repository::EnrolledDeviceRepository;
 use crate::nat::entity::{Column as NatCol, NatServiceConfigEntity};
 use crate::repository::Repository;
-use crate::DBId;
 
 #[derive(Clone)]
 pub struct StaticNatMappingV4Repository {

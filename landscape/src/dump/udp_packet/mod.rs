@@ -1,5 +1,5 @@
 use landscape_common::net_proto::udp::dhcp::{
-    try_decode_dhcpv4, DhcpV4Message, Encodable, Encoder,
+    DhcpV4Message, Encodable, Encoder, try_decode_dhcpv4,
 };
 use pnet::util::Octets;
 use serde::{Deserialize, Serialize};
@@ -114,10 +114,9 @@ impl EthUdpType {
 fn identifier_type(data: &[u8]) -> EthUdpType {
     if data.len() >= 240
         && u32::from_be_bytes([data[236], data[237], data[238], data[239]]) == DHCP_MAGIC_COOKIE
+        && let Some(dhcp) = try_decode_dhcpv4(data)
     {
-        if let Some(dhcp) = try_decode_dhcpv4(data) {
-            return EthUdpType::Dhcp(Box::new(dhcp));
-        }
+        return EthUdpType::Dhcp(Box::new(dhcp));
     }
 
     EthUdpType::Raw(data.to_vec())

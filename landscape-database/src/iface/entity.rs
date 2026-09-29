@@ -3,7 +3,7 @@ use landscape_common::{
     config_service::iface::CreateDevType, config_service::iface::IfaceZoneType,
     config_service::iface::NetworkIfaceConfig, config_service::iface::WifiMode,
 };
-use sea_orm::{entity::prelude::*, ActiveValue::Set};
+use sea_orm::{ActiveValue::Set, entity::prelude::*};
 use serde::{Deserialize, Serialize};
 
 use crate::{DBJson, DBTimestamp};

@@ -24,9 +24,9 @@ use landscape_common::net_proto::udp::dhcp::v6::{
 use landscape_common::net_proto::udp::dhcp::{Encodable, Encoder};
 
 use super::{
-    compute_subnets,
+    Ipv6LanReplyParams, Ipv6ServerStatus, compute_subnets,
     connection::{get_dhcpv6_connect, get_icmp_connect},
-    dhcpv6, icmpv6, ra, Ipv6LanReplyParams, Ipv6ServerStatus,
+    dhcpv6, icmpv6, ra,
 };
 use crate::{
     addresses_by_iface_name,
@@ -544,12 +544,12 @@ pub async fn start_ipv6_lan_server(
     let address = addresses_by_iface_name(iface_name.to_string()).await;
     let mut link_ifindex = 0;
     for addr in address.iter() {
-        if let std::net::IpAddr::V6(ipv6_addr) = addr.address {
-            if ipv6_addr.is_unicast_link_local() {
-                link_ifindex = addr.ifindex;
-                tracing::info!("address {:?}", ipv6_addr);
-                break;
-            }
+        if let std::net::IpAddr::V6(ipv6_addr) = addr.address
+            && ipv6_addr.is_unicast_link_local()
+        {
+            link_ifindex = addr.ifindex;
+            tracing::info!("address {:?}", ipv6_addr);
+            break;
         }
     }
 
@@ -664,8 +664,8 @@ pub async fn start_ipv6_lan_server(
                     None => std::future::pending().await,
                 }
             } => {
-                if let Some(ref dhcp_sender) = dhcp_sender {
-                    if !handle_dhcp_msg(
+                if let Some(ref dhcp_sender) = dhcp_sender
+                    && !handle_dhcp_msg(
                         result, &iface_name, mac_addr, link_ifindex,
                         &mac_link_cache, &service_status, &share_status,
                         &server_duid, &params, dhcp_sender,
@@ -674,7 +674,6 @@ pub async fn start_ipv6_lan_server(
                     ).await {
                         break;
                     }
-                }
             },
             _ = dhcp_expire_timer.tick() => {
                 handle_expire_tick(

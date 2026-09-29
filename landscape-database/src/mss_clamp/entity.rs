@@ -1,6 +1,6 @@
 use crate::repository::UpdateActiveModel;
 use landscape_common::wan_service::mss_clamp::MSSClampServiceConfig;
-use sea_orm::{entity::prelude::*, ActiveValue::Set};
+use sea_orm::{ActiveValue::Set, entity::prelude::*};
 use serde::{Deserialize, Serialize};
 
 use crate::DBTimestamp;

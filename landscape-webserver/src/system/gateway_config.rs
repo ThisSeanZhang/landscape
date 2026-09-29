@@ -4,9 +4,9 @@ use landscape_common::config::{
     GetGatewayConfigResponse, LandscapeGatewayConfig, UpdateGatewayConfigRequest,
 };
 
+use crate::LandscapeApp;
 use crate::api::{JsonBody, LandscapeApiResp};
 use crate::error::LandscapeApiResult;
-use crate::LandscapeApp;
 
 #[utoipa::path(
     get,

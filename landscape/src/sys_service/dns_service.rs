@@ -9,21 +9,20 @@ use landscape_common::{
     dns::error::DnsServiceError,
     dns::redirect::DynamicDnsRedirectScope,
     dns::{CacheRuntimeConfig, DohRuntimeConfig, FlowDnsDependencies},
-    event::{dns::DnsEvent, DnsMetricMessage},
+    event::{DnsMetricMessage, dns::DnsEvent},
     flow::{DnsResultSink, FlowSocketRegistrar},
     service::{
-        controller::{ConfigController, ConfigStoreFlowController, FlowConfigController},
         ServiceStatus, WatchService,
+        controller::{ConfigController, ConfigStoreFlowController, FlowConfigController},
     },
 };
 use landscape_core::lan_hostname::LanHostnameRegistry;
 use landscape_dns::{
-    prepare_system_dns,
+    CheckChainDnsResult, CheckDnsReq, prepare_system_dns,
     server::{
         DohTimeouts, EffectiveDohListenerConfig, FlowRuntimeRefreshKind, LandscapeDnsServer,
         LocalDnsAnswerProvider, MatcherBuilder,
     },
-    CheckChainDnsResult, CheckDnsReq,
 };
 use rustls::server::ResolvesServerCert;
 use std::net::{Ipv6Addr, SocketAddr, SocketAddrV6};

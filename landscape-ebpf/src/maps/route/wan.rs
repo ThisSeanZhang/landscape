@@ -203,10 +203,10 @@ where
         }
     }
 
-    if count > 0 {
-        if let Err(e) = rt_target_map.delete_batch(&keys, count, MapFlags::ANY, MapFlags::ANY) {
-            tracing::error!("delete ipv4 wan slot batch error:{e:?}");
-        }
+    if count > 0
+        && let Err(e) = rt_target_map.delete_batch(&keys, count, MapFlags::ANY, MapFlags::ANY)
+    {
+        tracing::error!("delete ipv4 wan slot batch error:{e:?}");
     }
 }
 
@@ -233,10 +233,10 @@ where
         }
     }
 
-    if count > 0 {
-        if let Err(e) = rt_target_map.delete_batch(&keys, count, MapFlags::ANY, MapFlags::ANY) {
-            tracing::error!("delete ipv6 wan slot batch error:{e:?}");
-        }
+    if count > 0
+        && let Err(e) = rt_target_map.delete_batch(&keys, count, MapFlags::ANY, MapFlags::ANY)
+    {
+        tracing::error!("delete ipv6 wan slot batch error:{e:?}");
     }
 }
 

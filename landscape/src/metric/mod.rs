@@ -3,6 +3,7 @@ use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::time::Duration;
 
 use landscape_common::{
+    LANDSCAPE_METRIC_DIR_NAME,
     config::{MetricMode, MetricRuntimeConfig},
     database::error::DbError,
     event::DnsMetricMessage,
@@ -16,15 +17,14 @@ use landscape_common::{
         DnsSummaryQueryParams, DnsSummaryResponse,
     },
     self_monitor::memory::{
-        MemHistoryQueryParams, MemHistoryResponse, DEFAULT_MEM_METRIC_RETENTION_DAYS,
+        DEFAULT_MEM_METRIC_RETENTION_DAYS, MemHistoryQueryParams, MemHistoryResponse,
     },
     service::{ServiceStatus, WatchService},
-    LANDSCAPE_METRIC_DIR_NAME,
 };
 use landscape_ebpf::metric::{EventSourceStopOutcome, MetricSourceFactory, MetricSourceHandle};
 use landscape_metric::MetricEngine;
-use tokio::sync::mpsc;
 use tokio::sync::Mutex;
+use tokio::sync::mpsc;
 
 pub mod memory_store {
     pub use landscape_metric::MemoryMetricStore;
@@ -54,10 +54,10 @@ pub struct MetricService {
 
 fn ensure_metric_path(home_path: &Path) -> PathBuf {
     let metric_path = home_path.join(LANDSCAPE_METRIC_DIR_NAME);
-    if !metric_path.exists() {
-        if let Err(e) = std::fs::create_dir_all(&metric_path) {
-            tracing::error!("Failed to create metric directory: {}", e);
-        }
+    if !metric_path.exists()
+        && let Err(e) = std::fs::create_dir_all(&metric_path)
+    {
+        tracing::error!("Failed to create metric directory: {}", e);
     }
     metric_path
 }
@@ -245,12 +245,12 @@ impl MetricService {
                     error
                 );
                 let recovery_error = self.restore_previous_engine().await.err();
-                if !matches!(self.current_mode(), MetricMode::Off) {
-                    if let Err(start_error) = self.start_service_locked().await {
-                        tracing::error!(
-                            "failed to restart metric service after engine rebuild failure: {start_error}"
-                        );
-                    }
+                if !matches!(self.current_mode(), MetricMode::Off)
+                    && let Err(start_error) = self.start_service_locked().await
+                {
+                    tracing::error!(
+                        "failed to restart metric service after engine rebuild failure: {start_error}"
+                    );
                 }
                 return Err(match recovery_error {
                     Some(recovery_error) => format!("{error}; {recovery_error}"),

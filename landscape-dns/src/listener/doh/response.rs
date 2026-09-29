@@ -12,7 +12,7 @@ use hickory_server::{
     server::{ResponseHandler, ResponseInfo},
     zone_handler::MessageResponse,
 };
-use http::{header, Response as HttpResponse, StatusCode};
+use http::{Response as HttpResponse, StatusCode, header};
 
 use super::MIME_APPLICATION_DNS;
 

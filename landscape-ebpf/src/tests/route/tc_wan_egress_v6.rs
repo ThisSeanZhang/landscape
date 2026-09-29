@@ -7,13 +7,13 @@ use std::{
 };
 
 use landscape_common::{
-    flow::{ip_mark::IpConfig, ip_mark::IpMarkInfo, mark::FlowMark, FlowMarkInfo},
+    flow::{FlowMarkInfo, ip_mark::IpConfig, ip_mark::IpMarkInfo, mark::FlowMark},
     net::MacAddr,
     sys_service::route_service::RouteTargetInfo,
 };
 use libbpf_rs::{
-    skel::{OpenSkel, SkelBuilder as _},
     ProgramInput,
+    skel::{OpenSkel, SkelBuilder as _},
 };
 use zerocopy::IntoBytes;
 
@@ -23,17 +23,15 @@ use crate::{
         route::replace_wan_route_slots_v6_with_map,
     },
     tests::{
-        isolated_pin_root,
+        TestSkb, isolated_pin_root,
         route::{
             map_helper::{
-                create_route6_cache_inner_map, gateway_addr, insert_ip_mac_v6,
-                insert_route6_lan_entry, local_addr, lookup_rt6_cache_value, remote_addr,
                 LAN_CACHE, LAN_ROUTE_TYPE, ROUTE_TYPE_NEXTHOP, TARGET_IFINDEX, WAN_CACHE,
-                WAN_ROUTE_TYPE,
+                WAN_ROUTE_TYPE, create_route6_cache_inner_map, gateway_addr, insert_ip_mac_v6,
+                insert_route6_lan_entry, local_addr, lookup_rt6_cache_value, remote_addr,
             },
             packet_builder::simple_ipv6_tcp_syn,
         },
-        TestSkb,
     },
 };
 
@@ -131,20 +129,14 @@ fn seed_wan_slots(
 fn assert_no_route_cache(skel: &TcWanEgressIntroSkel<'_>) {
     create_route6_cache_inner_map(&skel.maps.rt6_cache_map, LAN_CACHE);
     create_route6_cache_inner_map(&skel.maps.rt6_cache_map, WAN_CACHE);
-    assert!(lookup_rt6_cache_value(
-        &skel.maps.rt6_cache_map,
-        LAN_CACHE,
-        local_addr(),
-        remote_addr()
-    )
-    .is_none());
-    assert!(lookup_rt6_cache_value(
-        &skel.maps.rt6_cache_map,
-        WAN_CACHE,
-        local_addr(),
-        remote_addr()
-    )
-    .is_none());
+    assert!(
+        lookup_rt6_cache_value(&skel.maps.rt6_cache_map, LAN_CACHE, local_addr(), remote_addr())
+            .is_none()
+    );
+    assert!(
+        lookup_rt6_cache_value(&skel.maps.rt6_cache_map, WAN_CACHE, local_addr(), remote_addr())
+            .is_none()
+    );
 }
 
 // ---------------------------------------------------------------------------

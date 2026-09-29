@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use tokio::time::{sleep, Duration, Instant};
+use tokio::time::{Duration, Instant, sleep};
 
 use landscape_common::net_proto::ppp::PointToPoint;
 use landscape_common::net_proto::pppoe::PPPoEFrame;
@@ -12,7 +12,7 @@ use crate::sys_service::route::IpRouteService;
 
 use super::error::PppoeError;
 use super::system::SessionHandle;
-use super::{send_pppoe_session_frame, PppoeResult, ETH_P_PPOES, LCP_ECHO_INTERVAL};
+use super::{ETH_P_PPOES, LCP_ECHO_INTERVAL, PppoeResult, send_pppoe_session_frame};
 
 async fn shutdown_session(
     session_handle: &mut Option<SessionHandle>,
@@ -271,11 +271,10 @@ async fn keepalive(
                             _ = &mut ack_wait => break,
                             received = rx.recv() => {
                                 let Some(raw) = received else { break };
-                                if let Some(ppp) = parse_ppp_packet(&raw, lcp.session_id) {
-                                    if ppp.is_lcp_config() && ppp.is_termination_ack() {
+                                if let Some(ppp) = parse_ppp_packet(&raw, lcp.session_id)
+                                    && ppp.is_lcp_config() && ppp.is_termination_ack() {
                                         break;
                                     }
-                                }
                             }
                         }
                     }

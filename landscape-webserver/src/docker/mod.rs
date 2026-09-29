@@ -20,7 +20,7 @@ use utoipa_axum::routes;
 
 use crate::api::{JsonBody, LandscapeApiResp};
 use crate::error::LandscapeApiResult;
-use crate::{docker::error::DockerError, LandscapeApp};
+use crate::{LandscapeApp, docker::error::DockerError};
 
 pub mod error;
 mod image;

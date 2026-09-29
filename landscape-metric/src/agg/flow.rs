@@ -867,10 +867,9 @@ mod tests {
         let batch = finalize_all_flows(&flow, &iface_realtime);
         assert_eq!(batch.summary_metrics.len(), 2);
         assert_eq!(batch.bucket_writes.len(), 6);
-        assert!(batch
-            .summary_metrics
-            .iter()
-            .all(|m| m.status_type() == ConnectStatusType::Disabled));
+        assert!(
+            batch.summary_metrics.iter().all(|m| m.status_type() == ConnectStatusType::Disabled)
+        );
         assert!(collect_connect_infos(&flow, 70_000).is_empty());
         assert!(collect_realtime_iface_stats(&iface_realtime, 70_000).is_empty());
 

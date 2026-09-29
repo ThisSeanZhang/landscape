@@ -16,8 +16,8 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 use super::env::{PppIpv4State, PppRouteSink, PppdChild, PppdEnv, PppdTimings, SystemPppdEnv};
-use super::supervisor::{run_pppd_supervisor, PppSessionHealth, PppdRetryController};
-use super::{create_pppd_thread, PppdConfigStore};
+use super::supervisor::{PppSessionHealth, PppdRetryController, run_pppd_supervisor};
+use super::{PppdConfigStore, create_pppd_thread};
 
 const ATTACH: &str = "eth0";
 const PPP: &str = "ppp0";
@@ -210,11 +210,7 @@ impl PppdChild for FakeChild {
     }
 
     fn try_wait(&mut self) -> io::Result<Option<ExitStatus>> {
-        if self.exit.is_cancelled() {
-            Ok(Some(ExitStatus::from_raw(0)))
-        } else {
-            Ok(None)
-        }
+        if self.exit.is_cancelled() { Ok(Some(ExitStatus::from_raw(0))) } else { Ok(None) }
     }
 
     async fn signal_group(&self, signal: i32) -> io::Result<()> {
@@ -327,11 +323,7 @@ impl FakeConfigStore {
 impl PppdConfigStore for FakeConfigStore {
     fn write(&self, _conf: &PPPDConfig, _attach: &str, _ppp: &str) -> Result<(), ()> {
         self.state.lock().unwrap().writes += 1;
-        if self.write_fail {
-            Err(())
-        } else {
-            Ok(())
-        }
+        if self.write_fail { Err(()) } else { Ok(()) }
     }
 
     fn delete(&self, _conf: &PPPDConfig, _ppp: &str) {

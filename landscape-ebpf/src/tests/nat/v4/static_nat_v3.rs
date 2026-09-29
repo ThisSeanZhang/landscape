@@ -6,20 +6,20 @@ use std::{
 use etherparse::PacketBuilder;
 use landscape_common::net::MacAddr;
 use libbpf_rs::{
-    skel::{OpenSkel, SkelBuilder as _},
     MapCore, MapFlags, ProgramInput,
+    skel::{OpenSkel, SkelBuilder as _},
 };
 use zerocopy::{FromBytes, IntoBytes};
 
 use crate::{
+    NAT_MAPPING_EGRESS, NAT_MAPPING_INGRESS,
+    maps::{Nat4TimerKey, Nat4TimerValueV3},
     maps::{
-        nat::{add_static_nat4_mapping_v3, StaticNatMappingV4Item},
+        nat::{StaticNatMappingV4Item, add_static_nat4_mapping_v3},
         wan::add_wan_ip,
     },
-    maps::{Nat4TimerKey, Nat4TimerValueV3},
     stages::nat::tc_nat_skel::TcNatSkelBuilder,
     tests::TestSkb,
-    NAT_MAPPING_EGRESS, NAT_MAPPING_INGRESS,
 };
 
 const WAN_IP: Ipv4Addr = Ipv4Addr::new(203, 0, 113, 1);

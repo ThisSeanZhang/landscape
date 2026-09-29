@@ -7,9 +7,9 @@ use std::{
 use landscape_common::concurrency::{spawn_task, task_label};
 use landscape_common::net_proto::udp::dhcp::v4::{Flags, Opcode, OptionCode};
 use landscape_common::net_proto::udp::dhcp::{
-    try_decode_dhcpv4, v4_helpers::apply_custom_and_filter, v4_helpers::get_default_request_list,
-    v4_helpers::get_hostname, v4_helpers::has_option, DhcpV4Message, DhcpV4MessageType,
-    DhcpV4Option, Encodable, Encoder,
+    DhcpV4Message, DhcpV4MessageType, DhcpV4Option, Encodable, Encoder, try_decode_dhcpv4,
+    v4_helpers::apply_custom_and_filter, v4_helpers::get_default_request_list,
+    v4_helpers::get_hostname, v4_helpers::has_option,
 };
 
 use arc_swap::ArcSwap;
@@ -17,8 +17,8 @@ use cidr::Ipv4Inet;
 #[cfg(test)]
 use landscape_common::config_service::enrolled_device::EnrolledDevice;
 use landscape_common::dns::dnr::{
-    encode_dhcpv4_dnr_payload_truncated, is_valid_dnr_ipv4_addr, normalize_advertise_domains,
-    DHCPV4_DNR_OPTION_CODE,
+    DHCPV4_DNR_OPTION_CODE, encode_dhcpv4_dnr_payload_truncated, is_valid_dnr_ipv4_addr,
+    normalize_advertise_domains,
 };
 use landscape_common::event::hub::{IPv4AssignEvent, IPv4AssignEventSender, IPv4AssignInfo};
 use landscape_common::lan_service::lan_dhcpv4::config::{
@@ -847,10 +847,8 @@ fn gen_ack(
         apply_custom_and_filter(&mut reply, custom_opts, &filter_set);
     }
 
-    if !is_nak {
-        if let Some(dev_mac) = iface_mac {
-            dataplane.learn_ipv4(iface_ifindex, client_addr, chaddr, dev_mac);
-        }
+    if !is_nak && let Some(dev_mac) = iface_mac {
+        dataplane.learn_ipv4(iface_ifindex, client_addr, chaddr, dev_mac);
     }
 
     Some(reply)
@@ -871,7 +869,7 @@ mod tests {
     };
     use landscape_common::{
         config_service::enrolled_device::EnrolledDevice,
-        dns::dnr::{encode_dns_name, DHCPV4_DNR_OPTION_CODE},
+        dns::dnr::{DHCPV4_DNR_OPTION_CODE, encode_dns_name},
         event::hub::IPv4AssignEventSender,
         lan_service::lan_dhcpv4::config::{
             CustomDhcpOption, DHCPv4ServerConfig, DhcpV4DnrOptionConfig,
@@ -881,9 +879,9 @@ mod tests {
     use tokio::net::UdpSocket;
 
     use super::{
-        client_chaddr, gen_ack, gen_offer, handle_dhcp_message, DHCPv4Server,
-        DhcpV4DnrRuntimeContext, LanHostnameConfig, DHCPV4_DOMAIN_NAME_OPTION_CODE,
-        DHCPV4_DOMAIN_SEARCH_OPTION_CODE,
+        DHCPV4_DOMAIN_NAME_OPTION_CODE, DHCPV4_DOMAIN_SEARCH_OPTION_CODE, DHCPv4Server,
+        DhcpV4DnrRuntimeContext, LanHostnameConfig, client_chaddr, gen_ack, gen_offer,
+        handle_dhcp_message,
     };
 
     fn option_payload(server: &DHCPv4Server, mac: &MacAddr, code: u8) -> Vec<u8> {

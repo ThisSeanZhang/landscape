@@ -134,19 +134,18 @@ impl LandscapeApp {
         let requirement = C::zone_requirement();
 
         // WanOrPpp: check if this is a PPP device first
-        if matches!(requirement, ZoneRequirement::WanOrPpp) {
-            if let Some(ppp_config) =
+        if matches!(requirement, ZoneRequirement::WanOrPpp)
+            && let Some(ppp_config) =
                 self.pppd_service.get_config_by_name(iface_name.to_string()).await
+        {
+            // PPP service exists for this interface, verify the attached interface exists
+            if self
+                .iface_config_service
+                .get_iface_config(ppp_config.attach_iface_name)
+                .await
+                .is_some()
             {
-                // PPP service exists for this interface, verify the attached interface exists
-                if self
-                    .iface_config_service
-                    .get_iface_config(ppp_config.attach_iface_name)
-                    .await
-                    .is_some()
-                {
-                    return Ok(()); // Valid PPP device, skip zone check
-                }
+                return Ok(()); // Valid PPP device, skip zone check
             }
         }
 
@@ -266,19 +265,17 @@ impl LandscapeApp {
         let ip_configs = self.wan_ip_service.get_repository().list().await.unwrap_or_default();
 
         for config in &ip_configs {
-            if config.enable {
-                if let IfaceIpModelConfig::Static { ipv4: Some(ipv4_addr), ipv4_mask, .. } =
+            if config.enable
+                && let IfaceIpModelConfig::Static { ipv4: Some(ipv4_addr), ipv4_mask, .. } =
                     &config.ip_model
-                {
-                    let ip = IpAddr::V4(*ipv4_addr);
-                    let prefix_len = *ipv4_mask;
-                    tracing::info!(
-                        "Re-applying WAN static IP: {ip}/{prefix_len} on {}",
-                        config.iface_name
-                    );
-                    landscape::netlink::address::set_iface_ip(&config.iface_name, ip, prefix_len)
-                        .await;
-                }
+            {
+                let ip = IpAddr::V4(*ipv4_addr);
+                let prefix_len = *ipv4_mask;
+                tracing::info!(
+                    "Re-applying WAN static IP: {ip}/{prefix_len} on {}",
+                    config.iface_name
+                );
+                landscape::netlink::address::set_iface_ip(&config.iface_name, ip, prefix_len).await;
             }
         }
     }

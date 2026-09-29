@@ -10,8 +10,8 @@ use landscape_common::net::MacAddr;
 use landscape_common::service::controller::{ConfigStoreController, ConfigStoreServiceController};
 use landscape_common::sys_service::route_service::dataplane::NoopRouteTableDataplane;
 use landscape_common::wan_service::addr_binding::NoopWanAddrBinding;
-use landscape_common::wan_service::ipv6_pd::config::{IPV6PDConfig, IPV6PDServiceConfig};
 use landscape_common::wan_service::ipv6_pd::IAPrefixMap;
+use landscape_common::wan_service::ipv6_pd::config::{IPV6PDConfig, IPV6PDServiceConfig};
 use landscape_database::provider::LandscapeDBServiceProvider;
 use tokio::sync::mpsc;
 

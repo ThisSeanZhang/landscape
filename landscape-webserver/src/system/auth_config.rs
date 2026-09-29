@@ -2,10 +2,10 @@ use axum::extract::State;
 use landscape_common::auth::ChangePasswordRequest;
 use subtle::ConstantTimeEq;
 
+use crate::LandscapeApp;
 use crate::api::{JsonBody, LandscapeApiResp};
 use crate::auth::error::AuthError;
 use crate::error::LandscapeApiResult;
-use crate::LandscapeApp;
 
 /// Password complexity: >= 8 chars, at least one lowercase, one uppercase, one digit.
 fn validate_password_complexity(password: &str) -> bool {

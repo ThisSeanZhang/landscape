@@ -17,11 +17,11 @@ mod aggregate;
 #[cfg(feature = "metric-persistent")]
 mod persistent;
 #[cfg(feature = "metric-persistent")]
-pub use persistent::{start_memory_recording, MemMetricStore, MemRecording};
+pub use persistent::{MemMetricStore, MemRecording, start_memory_recording};
 
 #[cfg(not(feature = "metric-persistent"))]
 mod stub;
 #[cfg(not(feature = "metric-persistent"))]
-pub use stub::{start_memory_recording, MemRecording};
+pub use stub::{MemRecording, start_memory_recording};
 
 pub use aggregate::MinuteAggregator;

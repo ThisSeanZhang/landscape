@@ -7,7 +7,7 @@ use crate::maps::{LandscapeMapPath, Nat4StMappingValue, NatMappingKeyV4};
 use crate::{NAT_MAPPING_EGRESS, NAT_MAPPING_INGRESS};
 
 use super::super::RawEbpfMapEntries;
-use super::{reconcile_raw_map, update_raw_entries, StaticNatMappingV4Item};
+use super::{StaticNatMappingV4Item, reconcile_raw_map, update_raw_entries};
 
 pub fn build_static_nat4_entries(configs: &[RuntimeStaticNatMappingV4Config]) -> RawEbpfMapEntries {
     let mut entries = RawEbpfMapEntries::new();

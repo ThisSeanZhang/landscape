@@ -38,7 +38,7 @@ pub fn attach_tc_firewall(
     has_mac: bool,
 ) -> LdEbpfResult<TcFirewallHandle> {
     use crate::chain::tc_manager::{StageEntry, StageType};
-    use crate::landscape::{pin_and_reuse_map, OwnedOpenObject};
+    use crate::landscape::{OwnedOpenObject, pin_and_reuse_map};
     use libbpf_rs::skel::{OpenSkel, SkelBuilder};
     use std::os::fd::{AsFd, AsRawFd};
 
@@ -114,7 +114,7 @@ impl Drop for XdpFirewallHandle {
 
 pub fn init_xdp_firewall(rt: &Arc<EbpfRuntime>, ifindex: u32) -> LdEbpfResult<XdpFirewallHandle> {
     use crate::chain::xdp_manager::StageType;
-    use crate::landscape::{pin_and_reuse_map, OwnedOpenObject};
+    use crate::landscape::{OwnedOpenObject, pin_and_reuse_map};
     use libbpf_rs::skel::{OpenSkel, SkelBuilder};
     use std::os::fd::{AsFd, AsRawFd};
 

@@ -8,8 +8,8 @@ use utoipa_axum::routes;
 
 use landscape_common::flow::ip_mark::DstIpRuleError;
 
-use crate::api::JsonBody;
 use crate::LandscapeApp;
+use crate::api::JsonBody;
 use crate::{api::LandscapeApiResp, error::LandscapeApiResult};
 
 pub fn get_dst_ip_rule_config_paths() -> OpenApiRouter<LandscapeApp> {
@@ -24,10 +24,10 @@ async fn ensure_flow_id_unchanged(
     state: &LandscapeApp,
     config: &WanIpRuleConfig,
 ) -> Result<(), DstIpRuleError> {
-    if let Ok(Some(existing)) = state.dst_ip_rule_service.find_by_id(config.id).await {
-        if existing.flow_id != config.flow_id {
-            return Err(DstIpRuleError::CannotChangeFlow(config.id));
-        }
+    if let Ok(Some(existing)) = state.dst_ip_rule_service.find_by_id(config.id).await
+        && existing.flow_id != config.flow_id
+    {
+        return Err(DstIpRuleError::CannotChangeFlow(config.id));
     }
     Ok(())
 }

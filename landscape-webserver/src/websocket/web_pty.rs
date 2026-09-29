@@ -1,11 +1,11 @@
 use axum::{
+    Router,
     extract::{
-        ws::{Message, WebSocket},
         Query, WebSocketUpgrade,
+        ws::{Message, WebSocket},
     },
     response::IntoResponse,
     routing::get,
-    Router,
 };
 use futures::SinkExt;
 use landscape::sys_service::web_pty::LandscapePtySession;
@@ -66,11 +66,10 @@ async fn handle_socket(mut socket: WebSocket, session: LandscapePtySession) {
             tokio::select! {
                 msg = socket.recv() => {
                     if let Some(msg) = msg {
-                        if let Ok(msg) = msg {
-                            if handle_websocket_msg(msg, &input).await {
+                        if let Ok(msg) = msg
+                            && handle_websocket_msg(msg, &input).await {
                                 break;
                             }
-                        }
                     } else {
                         break;
                     }
@@ -120,12 +119,12 @@ async fn handle_pty_msg(
         Ok(pty_msg) => {
             // tracing::debug!("pty from backend: {pty_msg:?}");
             // 将 PtyOutMessage 序列化成 JSON 发送给前端
-            if let Ok(data) = serde_json::to_string(&pty_msg) {
-                if let Err(e) = socket.send(Message::Text(data.into())).await {
-                    tracing::error!("send data to front error: {e:?}");
-                    // 发送失败，说明连接可能已经关闭
-                    return true;
-                }
+            if let Ok(data) = serde_json::to_string(&pty_msg)
+                && let Err(e) = socket.send(Message::Text(data.into())).await
+            {
+                tracing::error!("send data to front error: {e:?}");
+                // 发送失败，说明连接可能已经关闭
+                return true;
             }
         }
         Err(broadcast::error::RecvError::Lagged(_)) => {}

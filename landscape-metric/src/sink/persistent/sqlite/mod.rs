@@ -61,8 +61,8 @@ fn connection_pragmas(
     &mut sqlx::sqlite::SqliteConnection,
     PoolConnectionMetadata,
 ) -> BoxFuture<'_, Result<(), sqlx::Error>>
-       + Send
-       + Sync {
++ Send
++ Sync {
     move |conn, _meta| Box::pin(apply_connection_pragmas(conn, max_bytes))
 }
 
@@ -167,10 +167,10 @@ where
             Ok(()) => Err(error),
             Err(rollback_error) => {
                 tracing::error!(
-                        "failed to rollback sqlite write transaction after write error \
+                    "failed to rollback sqlite write transaction after write error \
                          (possible leaked write lock; restart the service if writes keep failing): {}",
-                        rollback_error
-                    );
+                    rollback_error
+                );
                 let _ = conn.close().await;
                 Err(error)
             }

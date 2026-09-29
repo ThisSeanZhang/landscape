@@ -186,11 +186,7 @@ impl EthIpType {
             _ => None,
         };
 
-        if let Some(result) = end {
-            result
-        } else {
-            EthIpType::Raw(value, data.to_vec())
-        }
+        if let Some(result) = end { result } else { EthIpType::Raw(value, data.to_vec()) }
     }
 
     pub fn caculate_checksum(&mut self, source_addr: &Ipv4Addr, denst_addr: &Ipv4Addr) -> u16 {

@@ -9,9 +9,9 @@ use tempfile::NamedTempFile;
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 
+use crate::LandscapeApp;
 use crate::api::{LandscapeApiResp, UploadFileForm};
 use crate::error::LandscapeApiResult;
-use crate::LandscapeApp;
 
 const UPLOAD_INIT_CONFIG_SIZE_LIMIT: usize = 16 * 1024 * 1024;
 
@@ -208,12 +208,12 @@ async fn import_init_config(
 #[cfg(test)]
 mod tests {
     use axum::{
+        Router,
         body::Body,
         extract::{Multipart, Request},
         routing::post,
-        Router,
     };
-    use landscape_common::{config::InitConfig, VERSION};
+    use landscape_common::{VERSION, config::InitConfig};
     use tower::ServiceExt;
 
     use super::{

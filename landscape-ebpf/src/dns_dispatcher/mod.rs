@@ -9,7 +9,7 @@ use crate::maps::LandscapeMapPath;
 use land_dns_dispatcher::*;
 use libbpf_rs::skel::{OpenSkel, SkelBuilder};
 use libc::SO_ATTACH_REUSEPORT_EBPF;
-use libc::{setsockopt, socklen_t, SOL_SOCKET};
+use libc::{SOL_SOCKET, setsockopt, socklen_t};
 use std::os::fd::AsFd;
 use std::os::fd::AsRawFd;
 

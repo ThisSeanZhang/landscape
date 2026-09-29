@@ -5,8 +5,8 @@ use landscape_common::docker::network::LandscapeDockerNetwork;
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 
-use crate::docker::error::DockerError;
 use crate::LandscapeApp;
+use crate::docker::error::DockerError;
 use crate::{api::LandscapeApiResp, error::LandscapeApiResult};
 
 pub fn get_docker_networks_paths() -> OpenApiRouter<LandscapeApp> {

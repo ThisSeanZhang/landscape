@@ -7,7 +7,7 @@ use tracing_appender::rolling::{RollingFileAppender, Rotation};
 use tracing_subscriber::fmt::time::ChronoLocal;
 use tracing_subscriber::layer::{Filter, SubscriberExt};
 use tracing_subscriber::util::SubscriberInitExt;
-use tracing_subscriber::{fmt, registry, EnvFilter, Layer};
+use tracing_subscriber::{EnvFilter, Layer, fmt, registry};
 
 struct KeywordFilter {
     keywords: Vec<String>,

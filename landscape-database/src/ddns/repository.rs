@@ -3,8 +3,8 @@ use landscape_common::ddns::DdnsJob;
 use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter};
 
 use super::entity::{Column, DdnsJobActiveModel, DdnsJobEntity, DdnsJobModel};
-use crate::repository::Repository;
 use crate::DBId;
+use crate::repository::Repository;
 
 #[derive(Clone)]
 pub struct DdnsJobRepository {

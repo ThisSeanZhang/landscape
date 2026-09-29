@@ -1,22 +1,21 @@
 use std::mem::MaybeUninit;
 
 use libbpf_rs::{
-    skel::{OpenSkel, SkelBuilder as _},
     ProgramInput,
+    skel::{OpenSkel, SkelBuilder as _},
 };
 use zerocopy::IntoBytes;
 
 use crate::tests::{
-    isolated_pin_root,
+    TestSkb, isolated_pin_root,
     route::{
         map_helper::{
-            create_route6_cache_inner_map, local_addr, lookup_rt6_cache_value, remote_addr,
-            WAN_CACHE, WAN_IFINDEX,
+            WAN_CACHE, WAN_IFINDEX, create_route6_cache_inner_map, local_addr,
+            lookup_rt6_cache_value, remote_addr,
         },
         packet_builder::simple_ipv6_tcp_syn,
         test_route::TestRouteSkelBuilder,
     },
-    TestSkb,
 };
 
 #[test]

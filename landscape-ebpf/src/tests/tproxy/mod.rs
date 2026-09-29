@@ -5,8 +5,8 @@ use std::{
 
 use etherparse::{IcmpEchoHeader, Icmpv4Type, PacketBuilder};
 use libbpf_rs::{
-    skel::{OpenSkel, SkelBuilder as _},
     MapCore, MapFlags, ProgramInput,
+    skel::{OpenSkel, SkelBuilder as _},
 };
 
 use crate::maps::Inet6Bytes;

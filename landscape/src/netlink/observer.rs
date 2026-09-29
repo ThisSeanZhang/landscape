@@ -1,7 +1,7 @@
 use landscape_common::concurrency::{spawn_task, task_label};
-use landscape_common::{event::hub::iface::IfaceObserverAction, event::hub::EventHub};
+use landscape_common::{event::hub::EventHub, event::hub::iface::IfaceObserverAction};
 use netlink_packet_core::{NetlinkMessage, NetlinkPayload};
-use netlink_packet_route::{address::AddressMessage, RouteNetlinkMessage};
+use netlink_packet_route::{RouteNetlinkMessage, address::AddressMessage};
 use netlink_sys::AsyncSocket;
 use rtnetlink::constants::{RTMGRP_IPV4_IFADDR, RTMGRP_LINK};
 use tokio_stream::StreamExt;

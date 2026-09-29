@@ -8,8 +8,8 @@ use utoipa_axum::routes;
 
 use landscape_common::dns::redirect::DnsRedirectError;
 
-use crate::api::JsonBody;
 use crate::LandscapeApp;
+use crate::api::JsonBody;
 use crate::{api::LandscapeApiResp, error::LandscapeApiResult};
 
 pub fn get_dns_redirect_config_paths() -> OpenApiRouter<LandscapeApp> {

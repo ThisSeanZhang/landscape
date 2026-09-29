@@ -1,12 +1,12 @@
 use std::collections::HashSet;
 
 use axum::extract::{Path, State};
-use axum::http::{header::HeaderName, HeaderValue};
+use axum::http::{HeaderValue, header::HeaderName};
 use landscape_common::api_response::LandscapeApiResp as CommonApiResp;
 use landscape_common::config::ConfigId;
 use landscape_common::dns::redirect::{
-    DnsRedirectAnswerMode, DynamicDnsMatch, DynamicDnsRedirectBatch, DynamicDnsRedirectRecord,
-    DynamicDnsRedirectScope, DEFAULT_BLOCK_METADATA_QUERIES, DEFAULT_STATIC_DNS_REDIRECT_TTL_SECS,
+    DEFAULT_BLOCK_METADATA_QUERIES, DEFAULT_STATIC_DNS_REDIRECT_TTL_SECS, DnsRedirectAnswerMode,
+    DynamicDnsMatch, DynamicDnsRedirectBatch, DynamicDnsRedirectRecord, DynamicDnsRedirectScope,
 };
 use landscape_common::service::ServiceStatus;
 use landscape_common::sys_service::gateway::{
@@ -17,8 +17,8 @@ use serde::Serialize;
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 
-use crate::api::JsonBody;
 use crate::LandscapeApp;
+use crate::api::JsonBody;
 use crate::{
     api::LandscapeApiResp,
     error::{LandscapeApiError, LandscapeApiResult},
@@ -388,11 +388,7 @@ fn normalize_prefix(prefix: &str) -> Result<String, GatewayError> {
     }
 
     let normalized = trimmed.trim_end_matches('/');
-    if normalized.is_empty() {
-        Ok("/".to_string())
-    } else {
-        Ok(normalized.to_string())
-    }
+    if normalized.is_empty() { Ok("/".to_string()) } else { Ok(normalized.to_string()) }
 }
 
 fn build_gateway_dynamic_dns_redirect_batch(
@@ -425,11 +421,7 @@ fn build_gateway_dynamic_dns_redirect_batch(
 
 fn normalize_gateway_domain(domain: &str) -> Option<String> {
     let normalized = domain.trim().trim_end_matches('.').to_ascii_lowercase();
-    if normalized.is_empty() {
-        None
-    } else {
-        Some(normalized)
-    }
+    if normalized.is_empty() { None } else { Some(normalized) }
 }
 
 fn gateway_domain_to_dynamic_match(domain: &str) -> DynamicDnsMatch {

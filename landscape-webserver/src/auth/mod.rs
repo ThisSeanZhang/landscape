@@ -10,20 +10,20 @@ use std::time::Instant;
 use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
 
-use axum::extract::{ConnectInfo, State};
 use axum::Router;
+use axum::extract::{ConnectInfo, State};
 use axum::{extract::Request, middleware::Next, response::Response};
+use landscape_common::LANDSCAPE_SYS_TOKEN_FILE_ANME;
 use landscape_common::api_response::LandscapeApiResp as CommonApiResp;
 use landscape_common::args::LAND_HOME_PATH;
 use landscape_common::auth::LoginInfo;
 use landscape_common::auth::LoginResult;
 use landscape_common::config::AuthRuntimeConfig;
-use landscape_common::LANDSCAPE_SYS_TOKEN_FILE_ANME;
 use once_cell::sync::Lazy;
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 
-use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
+use jsonwebtoken::{DecodingKey, EncodingKey, Header, Validation, decode, encode};
 use rand::RngExt;
 use serde::{Deserialize, Serialize};
 use subtle::ConstantTimeEq;
@@ -63,15 +63,15 @@ struct LoginRateLimiter {
 impl LoginRateLimiter {
     fn check(&self, ip: IpAddr, now: Instant) -> Result<(), Duration> {
         let mut entries = self.entries.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(state) = entries.get_mut(&ip) {
-            if let Some(blocked_until) = state.blocked_until {
-                if now < blocked_until {
-                    return Err(blocked_until.saturating_duration_since(now));
-                }
-                state.blocked_until = None;
-                state.failures = 0;
-                state.window_start = None;
+        if let Some(state) = entries.get_mut(&ip)
+            && let Some(blocked_until) = state.blocked_until
+        {
+            if now < blocked_until {
+                return Err(blocked_until.saturating_duration_since(now));
             }
+            state.blocked_until = None;
+            state.failures = 0;
+            state.window_start = None;
         }
         Ok(())
     }
@@ -188,16 +188,15 @@ pub async fn auth_handler(
         let mut response = next.run(req).await;
 
         let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() as usize;
-        if token_data.claims.exp.saturating_sub(now) < DEFAULT_EXPIRE_TIME / 2 {
-            if let Ok(new_token) = create_jwt(&token_data.claims.sub, DEFAULT_EXPIRE_TIME) {
-                if let Ok(value) = axum::http::HeaderValue::from_str(&new_token) {
-                    response.headers_mut().insert("X-Refresh-Token", value);
-                    response.headers_mut().append(
-                        axum::http::header::ACCESS_CONTROL_EXPOSE_HEADERS,
-                        axum::http::HeaderValue::from_static("X-Refresh-Token"),
-                    );
-                }
-            }
+        if token_data.claims.exp.saturating_sub(now) < DEFAULT_EXPIRE_TIME / 2
+            && let Ok(new_token) = create_jwt(&token_data.claims.sub, DEFAULT_EXPIRE_TIME)
+            && let Ok(value) = axum::http::HeaderValue::from_str(&new_token)
+        {
+            response.headers_mut().insert("X-Refresh-Token", value);
+            response.headers_mut().append(
+                axum::http::header::ACCESS_CONTROL_EXPOSE_HEADERS,
+                axum::http::HeaderValue::from_static("X-Refresh-Token"),
+            );
         }
 
         Ok(response)

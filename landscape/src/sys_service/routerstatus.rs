@@ -70,10 +70,10 @@ pub fn get_sys_running_status() -> WatchResource<LandscapeStatus> {
                     // Heuristic for core temp: "Core 0", "Core 1", etc.
                     // Note: This relies on "Core X" naming convention.
                     if label.starts_with("Core") {
-                        if let Some(num_str) = label.split_whitespace().last() {
-                            if let Ok(core_idx) = num_str.parse::<usize>() {
-                                core_temps.push((core_idx, temp));
-                            }
+                        if let Some(num_str) = label.split_whitespace().last()
+                            && let Ok(core_idx) = num_str.parse::<usize>()
+                        {
+                            core_temps.push((core_idx, temp));
                         }
                         // Also track for average fallback
                         temp_sum += temp;

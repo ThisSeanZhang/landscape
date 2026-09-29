@@ -105,8 +105,8 @@ mod tests {
     use std::net::Ipv6Addr;
 
     use super::{
-        pd_expectation_fits_snapshot, prefix_len_meets_expectation, IAPrefixMap,
-        IPV6PDPrefixStatus, LDIAPrefix,
+        IAPrefixMap, IPV6PDPrefixStatus, LDIAPrefix, pd_expectation_fits_snapshot,
+        prefix_len_meets_expectation,
     };
 
     fn prefix(prefix_len: u8) -> LDIAPrefix {

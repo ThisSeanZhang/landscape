@@ -1,5 +1,5 @@
 use crate::dns::config::DnsUpstreamConfig;
-use crate::dns::rule::{default_flow_id, DNSRuleConfig, FilterResult};
+use crate::dns::rule::{DNSRuleConfig, FilterResult, default_flow_id};
 use crate::utils::id::gen_database_uuid;
 use crate::utils::time::get_f64_timestamp;
 

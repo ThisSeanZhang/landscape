@@ -646,9 +646,14 @@ mod tests {
             assert!(!Arc::ptr_eq(&old_runtime, &new_runtime));
             assert!(!Arc::ptr_eq(&old_runtime.resolve_engine, &new_runtime.resolve_engine));
             assert!(!Arc::ptr_eq(&old_runtime.redirect_engine, &new_runtime.redirect_engine));
-            assert!(handler
-                .lookup_redirects(&ParsedDomain::new("old.example.com.").unwrap(), RecordType::A)
-                .is_none());
+            assert!(
+                handler
+                    .lookup_redirects(
+                        &ParsedDomain::new("old.example.com.").unwrap(),
+                        RecordType::A
+                    )
+                    .is_none()
+            );
 
             let records = handler
                 .lookup_redirects(&ParsedDomain::new("new.example.com.").unwrap(), RecordType::A)
@@ -687,13 +692,15 @@ mod tests {
 
             handler.renew_engines(redirect_engine, resolve_engine).await;
 
-            assert!(handler
-                .snapshot
-                .load_full()
-                .cache
-                .get(&(Arc::from("redirected.example."), RecordType::A))
-                .await
-                .is_none());
+            assert!(
+                handler
+                    .snapshot
+                    .load_full()
+                    .cache
+                    .get(&(Arc::from("redirected.example."), RecordType::A))
+                    .await
+                    .is_none()
+            );
         });
     }
 
@@ -802,11 +809,13 @@ mod tests {
 
             let new_runtime = handler.snapshot.load_full();
             assert!(Arc::ptr_eq(&old_runtime.resolve_engine, &new_runtime.resolve_engine));
-            assert!(new_runtime
-                .cache
-                .get(&(Arc::from("redirected.example."), RecordType::A))
-                .await
-                .is_none());
+            assert!(
+                new_runtime
+                    .cache
+                    .get(&(Arc::from("redirected.example."), RecordType::A))
+                    .await
+                    .is_none()
+            );
             let new_kept =
                 new_runtime.cache.get(&(Arc::from("kept.example."), RecordType::A)).await.unwrap();
             assert!(Arc::ptr_eq(&old_kept, &new_kept));
@@ -856,11 +865,13 @@ mod tests {
             assert!(Arc::ptr_eq(&old_runtime.resolve_engine, &new_runtime.resolve_engine));
             assert!(Arc::ptr_eq(&old_runtime.redirect_engine, &new_runtime.redirect_engine));
             assert_eq!(handler.snapshot.runtime_config().load().negative_cache_ttl, 22);
-            assert!(new_runtime
-                .cache
-                .get(&(Arc::from("cached.example.com."), RecordType::A))
-                .await
-                .is_some());
+            assert!(
+                new_runtime
+                    .cache
+                    .get(&(Arc::from("cached.example.com."), RecordType::A))
+                    .await
+                    .is_some()
+            );
         });
     }
 
@@ -907,9 +918,11 @@ mod tests {
                 vec![test_all_local_ips_redirect_rule("example.com", 17)],
             );
 
-            assert!(handler
-                .lookup_redirects(&ParsedDomain::new("example.com.").unwrap(), RecordType::AAAA)
-                .is_none());
+            assert!(
+                handler
+                    .lookup_redirects(&ParsedDomain::new("example.com.").unwrap(), RecordType::AAAA)
+                    .is_none()
+            );
         });
     }
 

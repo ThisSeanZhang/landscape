@@ -38,7 +38,7 @@ pub fn attach_tc_mss(
     has_mac: bool,
 ) -> LdEbpfResult<TcMssHandle> {
     use crate::chain::tc_manager::{StageEntry, StageType};
-    use crate::landscape::{pin_and_reuse_map, OwnedOpenObject};
+    use crate::landscape::{OwnedOpenObject, pin_and_reuse_map};
     use libbpf_rs::skel::{OpenSkel, SkelBuilder};
     use std::os::fd::{AsFd, AsRawFd};
 
@@ -112,7 +112,7 @@ pub fn init_xdp_mss(
     mtu_size: u16,
 ) -> LdEbpfResult<XdpMssHandle> {
     use crate::chain::xdp_manager::StageType;
-    use crate::landscape::{pin_and_reuse_map, OwnedOpenObject};
+    use crate::landscape::{OwnedOpenObject, pin_and_reuse_map};
     use libbpf_rs::skel::{OpenSkel, SkelBuilder};
     use std::os::fd::{AsFd, AsRawFd};
 

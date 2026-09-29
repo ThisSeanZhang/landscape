@@ -4,8 +4,8 @@ use std::sync::Arc;
 
 use landscape_common::database::LandscapeStore;
 use landscape_common::ddns::IpFamily;
-use landscape_common::event::hub::iface::IfaceObserverAction;
 use landscape_common::event::hub::IfaceEventReader;
+use landscape_common::event::hub::iface::IfaceObserverAction;
 use landscape_common::service::controller::ControllerService;
 use landscape_common::service::manager::ServiceManager;
 use landscape_common::sys_service::route_service::RouteTargetInfo;
@@ -13,7 +13,7 @@ use landscape_common::wan_service::nat::config::{NatConfig, NatServiceConfig};
 use landscape_common::wan_service::nat::dataplane::NatDataplane;
 use landscape_common::{
     concurrency::{spawn_task, spawn_task_with_resource, task_label},
-    service::{manager::ServiceStarterTrait, ServiceStatus, WatchService},
+    service::{ServiceStatus, WatchService, manager::ServiceStarterTrait},
 };
 use landscape_database::nat::repository::NatServiceRepository;
 use landscape_database::provider::LandscapeDBServiceProvider;

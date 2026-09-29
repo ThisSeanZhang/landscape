@@ -1,8 +1,8 @@
 use std::{fs::OpenOptions, io::Write, path::Path};
 
 use landscape_common::{
-    config::{InitConfig, InitConfigError, LandscapeConfig},
     INIT_FILE_NAME, INIT_LOCK_FILE_NAME, LAND_CONFIG, VERSION,
+    config::{InitConfig, InitConfigError, LandscapeConfig},
 };
 
 pub mod log;

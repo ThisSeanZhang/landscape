@@ -5,8 +5,8 @@ use std::{
 
 use landscape_common::net::MacAddr;
 use libbpf_rs::{
-    skel::{OpenSkel, SkelBuilder as _},
     ProgramInput,
+    skel::{OpenSkel, SkelBuilder as _},
 };
 use zerocopy::IntoBytes;
 

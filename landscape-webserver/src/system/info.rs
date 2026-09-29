@@ -1,16 +1,16 @@
 use std::sync::Arc;
 
 use axum::extract::Path;
-use axum::{extract::State, routing::get, Router};
+use axum::{Router, extract::State, routing::get};
 use landscape_ebpf::maps::LandscapeMapPath;
 
 use landscape::sys_service::routerstatus::get_sys_running_status;
 use landscape_common::api_response::LandscapeApiResp as CommonApiResp;
-use landscape_common::dev::{get_interface_index_by_name, LandscapeInterface};
+use landscape_common::dev::{LandscapeInterface, get_interface_index_by_name};
 use landscape_common::service::ServiceConfigError;
 use landscape_common::sys_service::capability::Capability;
 use landscape_common::sys_service::info::{
-    LandscapeStatus, LandscapeSystemInfo, WatchResource, XdpRedirectAbleInfo, LAND_SYS_BASE_INFO,
+    LAND_SYS_BASE_INFO, LandscapeStatus, LandscapeSystemInfo, WatchResource, XdpRedirectAbleInfo,
 };
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
@@ -115,7 +115,7 @@ async fn interval_fetch_info(
     responses((status = 200, description = "Success", body = CommonApiResp<usize>))
 )]
 async fn get_cpu_count(State(state): State<SysStatus>) -> LandscapeApiResult<usize> {
-    let cpu_count = state.0 .0.borrow().cpus.len();
+    let cpu_count = state.0.0.borrow().cpus.len();
     LandscapeApiResp::success(cpu_count)
 }
 

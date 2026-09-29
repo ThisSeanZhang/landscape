@@ -2,8 +2,8 @@ use std::{mem::MaybeUninit, net::IpAddr};
 
 use landscape_common::net::MacAddr;
 use libbpf_rs::{
-    skel::{OpenSkel, SkelBuilder as _},
     ProgramInput,
+    skel::{OpenSkel, SkelBuilder as _},
 };
 
 use crate::{
@@ -12,8 +12,8 @@ use crate::{
         isolated_pin_root,
         route::{
             map_helper::{
-                create_route6_cache_inner_map, gateway_addr, insert_ip_mac_v6, local_addr,
-                put_rt6_cache_ifindex, remote_addr, wan_addr, TARGET_IFINDEX, WAN_CACHE,
+                TARGET_IFINDEX, WAN_CACHE, create_route6_cache_inner_map, gateway_addr,
+                insert_ip_mac_v6, local_addr, put_rt6_cache_ifindex, remote_addr, wan_addr,
             },
             packet_builder::simple_ipv6_tcp_syn,
             test_route::TestRouteSkelBuilder,

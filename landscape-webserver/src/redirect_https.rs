@@ -1,10 +1,10 @@
 use std::net::SocketAddr;
 
 use axum::{
-    handler::HandlerWithoutStateExt,
-    http::{uri::Authority, StatusCode, Uri},
-    response::Redirect,
     BoxError,
+    handler::HandlerWithoutStateExt,
+    http::{StatusCode, Uri, uri::Authority},
+    response::Redirect,
 };
 use axum_extra::extract::TypedHeader;
 use headers::Host;

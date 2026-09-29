@@ -1,13 +1,13 @@
 use std::os::fd::{AsFd, AsRawFd};
 use std::path::Path;
 
-use libbpf_rs::{libbpf_sys, MapCore, MapFlags, MapHandle, MapType};
+use libbpf_rs::{MapCore, MapFlags, MapHandle, MapType, libbpf_sys};
 use zerocopy::IntoBytes;
 
+use crate::maps::LandscapeMapPath;
 use crate::maps::route::types::{
     Route4CacheKey, Route4CacheValue, Route6CacheKey, Route6CacheValue,
 };
-use crate::maps::LandscapeMapPath;
 
 /// WAN verdict cache lives at outer slot 0, LAN at slot 1
 /// (`rt4/6_cache_map` is an ARRAY_OF_MAPS indexed by cache type).

@@ -1,8 +1,8 @@
 use std::mem::MaybeUninit;
 
 use libbpf_rs::{
-    skel::{OpenSkel, SkelBuilder as _},
     MapCore, MapFlags, ProgramInput,
+    skel::{OpenSkel, SkelBuilder as _},
 };
 use zerocopy::FromBytes;
 
@@ -307,8 +307,8 @@ mod tests {
         assert_ne!(r.icmp_error_l3_offset, 0);
         assert_ne!(r.icmp_error_inner_l4_offset, 0);
         assert_eq!(r.icmp_error_l4_protocol, 17); // inner UDP
-                                                  // v4_saddr set by scan_ipv4_upgrade_icmp to inner daddr (10.0.0.2)
-                                                  // stored as network byte order; use from_be for native comparison
+        // v4_saddr set by scan_ipv4_upgrade_icmp to inner daddr (10.0.0.2)
+        // stored as network byte order; use from_be for native comparison
         assert_eq!(u32::from_be(r.v4_saddr), u32::from_be_bytes([10, 0, 0, 2]));
     }
 
@@ -321,8 +321,8 @@ mod tests {
         assert_ne!(r.icmp_error_l3_offset, 0);
         assert_ne!(r.icmp_error_inner_l4_offset, 0);
         assert_eq!(r.icmp_error_l4_protocol, 17); // inner UDP
-                                                  // v6_saddr set by scan_ipv6_upgrade_icmp to inner daddr
-                                                  // inner dst: [0x20,0x01,0x0d,0xb8,0,0,0,0,0,0,0,0,0,1,0,2]
+        // v6_saddr set by scan_ipv6_upgrade_icmp to inner daddr
+        // inner dst: [0x20,0x01,0x0d,0xb8,0,0,0,0,0,0,0,0,0,1,0,2]
         let expected: [u8; 16] = [0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 2];
         assert_eq!(r.v6_saddr, expected);
     }

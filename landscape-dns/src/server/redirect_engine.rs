@@ -6,7 +6,7 @@ use uuid::Uuid;
 use landscape_common::metric::dns::DnsOutcome;
 
 use crate::domain::ParsedDomain;
-use crate::server::{answer::response_code_for, rule::DNSRedirectRuntime, LocalDnsAnswerProvider};
+use crate::server::{LocalDnsAnswerProvider, answer::response_code_for, rule::DNSRedirectRuntime};
 
 /// Outcome of a matched redirect rule. `redirect_id` and
 /// `dynamic_redirect_source` identify the rule for the check API.
@@ -109,7 +109,7 @@ mod tests {
         sync::Arc,
     };
 
-    use hickory_proto::rr::{rdata::A, RData, RecordType};
+    use hickory_proto::rr::{RData, RecordType, rdata::A};
 
     use landscape_common::dns::{
         redirect::DnsRedirectAnswerMode,

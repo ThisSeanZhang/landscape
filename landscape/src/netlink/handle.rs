@@ -1,7 +1,7 @@
 use std::io;
 
 use landscape_common::concurrency::{spawn_task, task_label};
-use rtnetlink::{new_connection, Handle};
+use rtnetlink::{Handle, new_connection};
 
 /// Re-export new_connection for observer use.
 /// Observers need to bind multicast groups before spawning the connection.

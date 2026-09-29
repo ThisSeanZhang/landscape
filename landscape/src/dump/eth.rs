@@ -44,11 +44,7 @@ impl EthL3Type {
             0x0800 => Ipv4EthFrame::new(data).map(|result| EthL3Type::Ipv4(Box::new(result))),
             _ => None,
         };
-        if let Some(result) = end {
-            result
-        } else {
-            EthL3Type::Raw(value, data.to_vec())
-        }
+        if let Some(result) = end { result } else { EthL3Type::Raw(value, data.to_vec()) }
     }
 }
 
@@ -85,17 +81,9 @@ impl EthFram {
             cursor += 6;
 
             let direction = if src_mac == mac {
-                if dst_mac == mac {
-                    PacketDirection::LOOP
-                } else {
-                    PacketDirection::OUT
-                }
+                if dst_mac == mac { PacketDirection::LOOP } else { PacketDirection::OUT }
             } else {
-                if dst_mac == mac {
-                    PacketDirection::IN
-                } else {
-                    PacketDirection::UnKnow
-                }
+                if dst_mac == mac { PacketDirection::IN } else { PacketDirection::UnKnow }
             };
 
             let eth_type = (data[cursor] as u16) << 8;

@@ -118,28 +118,27 @@ impl LandscapeMetricConfig {
         for (name, value) in
             [("connect_db_max_mb", self.connect_db_max_mb), ("dns_db_max_mb", self.dns_db_max_mb)]
         {
-            if let Some(v) = value {
-                if v != 0
-                    && !(crate::MIN_METRIC_DB_MAX_MB..=crate::MAX_METRIC_DB_MAX_MB).contains(&v)
-                {
-                    return Err(ServiceConfigError::InvalidConfig {
-                        reason: format!(
-                            "{name} must be 0 (unlimited) or between {} and {} MB, got {v}",
-                            crate::MIN_METRIC_DB_MAX_MB,
-                            crate::MAX_METRIC_DB_MAX_MB,
-                        ),
-                    });
-                }
-            }
-        }
-        if let Some(v) = self.cleanup_time_budget_secs {
-            if !(1..=60).contains(&v) {
+            if let Some(v) = value
+                && v != 0
+                && !(crate::MIN_METRIC_DB_MAX_MB..=crate::MAX_METRIC_DB_MAX_MB).contains(&v)
+            {
                 return Err(ServiceConfigError::InvalidConfig {
                     reason: format!(
-                        "cleanup_time_budget_secs must be between 1 and 60 seconds, got {v}"
+                        "{name} must be 0 (unlimited) or between {} and {} MB, got {v}",
+                        crate::MIN_METRIC_DB_MAX_MB,
+                        crate::MAX_METRIC_DB_MAX_MB,
                     ),
                 });
             }
+        }
+        if let Some(v) = self.cleanup_time_budget_secs
+            && !(1..=60).contains(&v)
+        {
+            return Err(ServiceConfigError::InvalidConfig {
+                reason: format!(
+                    "cleanup_time_budget_secs must be between 1 and 60 seconds, got {v}"
+                ),
+            });
         }
         Ok(())
     }

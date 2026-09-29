@@ -12,12 +12,12 @@ use super::PPPoEClientConfig;
 
 use super::error::PppoeError;
 use super::lcp::LcpPhaseResult;
-use super::negotiation::run;
 use super::negotiation::NegotiationResult;
+use super::negotiation::run;
 use super::{DEFAULT_TIMEOUT, ETH_P_PPOES, LCP_ECHO_INTERVAL};
 
 fn ensure_test_env() {
-    std::env::set_var("LANDSCAPE_IGNORE_CLI_ARGS", "1");
+    unsafe { std::env::set_var("LANDSCAPE_IGNORE_CLI_ARGS", "1") };
 }
 
 fn test_config() -> PPPoEClientConfig {
@@ -294,11 +294,7 @@ async fn do_pap_and_read_ncp_requests(
         .expect("expected NCP request 2");
     let pa = extract_ppp(&a, sid).unwrap();
     let pb = extract_ppp(&b, sid).unwrap();
-    if pa.is_ipcp() {
-        (pa, pb)
-    } else {
-        (pb, pa)
-    }
+    if pa.is_ipcp() { (pa, pb) } else { (pb, pa) }
 }
 
 mod auth_tests {
@@ -631,11 +627,7 @@ mod integration {
         let (ipcp_ppp, v6_ppp) = {
             let a = extract_ppp(&ipcp_raw, sid).unwrap();
             let b = extract_ppp(&v6_raw, sid).unwrap();
-            if a.is_ipcp() {
-                (a, b)
-            } else {
-                (b, a)
-            }
+            if a.is_ipcp() { (a, b) } else { (b, a) }
         };
         assert!(ipcp_ppp.is_request(), "IPCP is a request");
         assert!(v6_ppp.is_ipv6cp() && v6_ppp.is_request(), "IPv6CP is a request");

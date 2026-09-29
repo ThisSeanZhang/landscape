@@ -103,25 +103,25 @@ impl StaticNatMappingV6Config {
             }
         }
 
-        if self.enable {
-            if let StaticNatV6PortConfig::Ports { ports } = &self.port_config {
-                if ports.is_empty() {
+        if self.enable
+            && let StaticNatV6PortConfig::Ports { ports } = &self.port_config
+        {
+            if ports.is_empty() {
+                return Err(ServiceConfigError::InvalidConfig {
+                    reason: "port_config ports list must not be empty when enabled".to_string(),
+                });
+            }
+            let mut seen = HashSet::new();
+            for (i, &port) in ports.iter().enumerate() {
+                if port == 0 {
                     return Err(ServiceConfigError::InvalidConfig {
-                        reason: "port_config ports list must not be empty when enabled".to_string(),
+                        reason: format!("port_config ports[{i}] must not be 0"),
                     });
                 }
-                let mut seen = HashSet::new();
-                for (i, &port) in ports.iter().enumerate() {
-                    if port == 0 {
-                        return Err(ServiceConfigError::InvalidConfig {
-                            reason: format!("port_config ports[{i}] must not be 0"),
-                        });
-                    }
-                    if !seen.insert(port) {
-                        return Err(ServiceConfigError::InvalidConfig {
-                            reason: format!("port_config ports[{i}] ({port}) is duplicated"),
-                        });
-                    }
+                if !seen.insert(port) {
+                    return Err(ServiceConfigError::InvalidConfig {
+                        reason: format!("port_config ports[{i}] ({port}) is duplicated"),
+                    });
                 }
             }
         }

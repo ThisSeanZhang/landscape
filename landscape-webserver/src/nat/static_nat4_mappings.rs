@@ -8,8 +8,8 @@ use landscape_common::service::controller::ConfigStoreController;
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 
-use crate::api::JsonBody;
 use crate::LandscapeApp;
+use crate::api::JsonBody;
 use crate::{api::LandscapeApiResp, error::LandscapeApiResult};
 
 pub fn get_static_nat_mapping_v4_paths() -> OpenApiRouter<LandscapeApp> {

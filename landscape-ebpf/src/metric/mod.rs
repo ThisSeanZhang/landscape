@@ -9,7 +9,7 @@ use landscape_common::metric::connect::ConnectMetric;
 use tokio::io::unix::AsyncFd;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
-use tokio::time::{interval, timeout, Duration, MissedTickBehavior};
+use tokio::time::{Duration, MissedTickBehavior, interval, timeout};
 use tokio_util::sync::CancellationToken;
 
 use crate::maps::LandscapeMapPath;

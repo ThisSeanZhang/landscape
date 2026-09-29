@@ -3,8 +3,8 @@ use landscape::{
     wan_service::dhcpv4_client::v4::dhcp_v4_client,
 };
 use landscape_common::{
-    service::{ServiceStatus, WatchService},
     LANDSCAPE_DEFAULE_DHCP_V4_CLIENT_PORT,
+    service::{ServiceStatus, WatchService},
 };
 use landscape_ebpf::runtime::EbpfRuntime;
 
@@ -37,21 +37,21 @@ async fn main() {
     let (_, route_rx) = mpsc::channel(1);
     let rt = Arc::new(EbpfRuntime::init("dhcp_client_test", None).expect("init ebpf maps"));
     tokio::spawn(async move {
-        if let Some(iface) = get_iface_by_name(&args.iface_name).await {
-            if let Some(mac) = iface.mac {
-                dhcp_v4_client(
-                    iface.index,
-                    iface.name,
-                    mac,
-                    LANDSCAPE_DEFAULE_DHCP_V4_CLIENT_PORT,
-                    status,
-                    "TEST-PC".to_string(),
-                    false,
-                    IpRouteService::new(route_rx, flow_repo, rt.clone().route_table()),
-                    rt.wan_addr_binding(),
-                )
-                .await;
-            }
+        if let Some(iface) = get_iface_by_name(&args.iface_name).await
+            && let Some(mac) = iface.mac
+        {
+            dhcp_v4_client(
+                iface.index,
+                iface.name,
+                mac,
+                LANDSCAPE_DEFAULE_DHCP_V4_CLIENT_PORT,
+                status,
+                "TEST-PC".to_string(),
+                false,
+                IpRouteService::new(route_rx, flow_repo, rt.clone().route_table()),
+                rt.wan_addr_binding(),
+            )
+            .await;
         }
     });
 

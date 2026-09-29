@@ -1,7 +1,7 @@
 use crate::repository::UpdateActiveModel;
 use crate::{DBId, DBJson, DBTimestamp};
 use landscape_common::dns::provider_profile::DnsProviderProfile;
-use sea_orm::{entity::prelude::*, ActiveValue::Set};
+use sea_orm::{ActiveValue::Set, entity::prelude::*};
 use serde::{Deserialize, Serialize};
 
 pub type DnsProviderProfileModel = Model;

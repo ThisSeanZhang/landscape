@@ -132,7 +132,7 @@ fn ipv6_tcp_with_hop_by_hop(src: Ipv6Addr, dst: Ipv6Addr) -> Vec<u8> {
     pkt.extend_from_slice(&src.octets());
     pkt.extend_from_slice(&dst.octets());
     pkt.extend_from_slice(&[6, 0, 0, 0, 0, 0, 0, 0]); // hbh: next=TCP, hdr_ext_len=0
-                                                      // TCP header (20 bytes) + 4-byte payload
+    // TCP header (20 bytes) + 4-byte payload
     pkt.extend_from_slice(&12345_u16.to_be_bytes());
     pkt.extend_from_slice(&443_u16.to_be_bytes());
     pkt.extend_from_slice(&[0, 0, 0, 1]); // seq
@@ -162,13 +162,10 @@ fn lan6_ingress_default_flow_without_slot_target_drops() {
         lookup_ip_mac_v6(&skel.maps.ip_mac_v6, local_addr()).is_some(),
         "neighbour learning happens before the verdict/lookup"
     );
-    assert!(lookup_rt6_cache_value(
-        &skel.maps.rt6_cache_map,
-        LAN_CACHE,
-        local_addr(),
-        remote_addr()
-    )
-    .is_none());
+    assert!(
+        lookup_rt6_cache_value(&skel.maps.rt6_cache_map, LAN_CACHE, local_addr(), remote_addr())
+            .is_none()
+    );
 }
 
 #[test]
@@ -210,13 +207,10 @@ fn lan6_ingress_flow_drop_shots_with_untouched_mark() {
     assert_eq!(ret, RET_SHOT, "FLOW_DROP rule must drop");
     assert_eq!(mark, 0, "drop returns before the mark-source write");
     assert!(lookup_ip_mac_v6(&skel.maps.ip_mac_v6, local_addr()).is_some());
-    assert!(lookup_rt6_cache_value(
-        &skel.maps.rt6_cache_map,
-        LAN_CACHE,
-        local_addr(),
-        remote_addr()
-    )
-    .is_none());
+    assert!(
+        lookup_rt6_cache_value(&skel.maps.rt6_cache_map, LAN_CACHE, local_addr(), remote_addr())
+            .is_none()
+    );
 }
 
 #[test]

@@ -1,7 +1,7 @@
 use std::os::fd::{AsFd, AsRawFd};
 
 use landscape_common::flow::ip_mark::IpMarkInfo;
-use libbpf_rs::{libbpf_sys, MapCore, MapFlags, MapHandle, MapType};
+use libbpf_rs::{MapCore, MapFlags, MapHandle, MapType, libbpf_sys};
 use zerocopy::IntoBytes;
 
 use crate::{

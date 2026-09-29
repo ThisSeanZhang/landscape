@@ -2,7 +2,7 @@ use std::{collections::VecDeque, net::Ipv4Addr};
 
 use serde::{Deserialize, Serialize};
 
-use crate::{net::MacAddr, LAND_ARP_INFO_SIZE};
+use crate::{LAND_ARP_INFO_SIZE, net::MacAddr};
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]

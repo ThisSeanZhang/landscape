@@ -116,11 +116,10 @@ impl SyncTimeService {
     pub async fn stop(&self) {
         self.inner.cancel.cancel();
         let task = self.inner.task.lock().ok().and_then(|mut slot| slot.take());
-        if let Some(task) = task {
-            if tokio::time::timeout(StdDuration::from_secs(STOP_TIMEOUT_SECS), task).await.is_err()
-            {
-                tracing::warn!("time sync task did not stop within {STOP_TIMEOUT_SECS}s");
-            }
+        if let Some(task) = task
+            && tokio::time::timeout(StdDuration::from_secs(STOP_TIMEOUT_SECS), task).await.is_err()
+        {
+            tracing::warn!("time sync task did not stop within {STOP_TIMEOUT_SECS}s");
         }
     }
 }
@@ -365,11 +364,7 @@ async fn run_time_sync_loop(
 }
 
 fn advance_backoff(current: u64) -> u64 {
-    if current == 0 {
-        BACKOFF_INITIAL_SECS
-    } else {
-        (current * 2).min(BACKOFF_MAX_SECS)
-    }
+    if current == 0 { BACKOFF_INITIAL_SECS } else { (current * 2).min(BACKOFF_MAX_SECS) }
 }
 
 pub fn set_system_time(time: SystemTime) -> io::Result<()> {
@@ -383,11 +378,7 @@ pub fn set_system_time(time: SystemTime) -> io::Result<()> {
     };
 
     let result = unsafe { libc::clock_settime(libc::CLOCK_REALTIME, &ts) };
-    if result == 0 {
-        Ok(())
-    } else {
-        Err(io::Error::last_os_error())
-    }
+    if result == 0 { Ok(()) } else { Err(io::Error::last_os_error()) }
 }
 
 #[cfg(test)]

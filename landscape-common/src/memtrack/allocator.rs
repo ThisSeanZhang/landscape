@@ -201,7 +201,7 @@ unsafe impl GlobalAlloc for CountingAllocator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::memtrack::registry::{registry, UNATTRIBUTED};
+    use crate::memtrack::registry::{UNATTRIBUTED, registry};
     use crate::memtrack::tag::with_tag;
     use std::sync::atomic::Ordering;
 

@@ -7,10 +7,10 @@ use std::sync::Arc;
 
 use landscape_common::concurrency::{spawn_task_with_resource, task_label};
 use landscape_common::database::LandscapeStore;
+use landscape_common::service::ServiceStatus;
 use landscape_common::service::controller::ControllerService;
 use landscape_common::service::manager::ServiceManager;
-use landscape_common::service::ServiceStatus;
-use landscape_common::service::{manager::ServiceStarterTrait, WatchService};
+use landscape_common::service::{WatchService, manager::ServiceStarterTrait};
 use landscape_common::wan_service::addr_binding::WanAddrBinding;
 use landscape_common::wan_service::pppd::PPPDConfig;
 use landscape_common::wan_service::pppd::PPPDServiceConfig;

@@ -10,7 +10,7 @@ use hickory_server::{
     server::{Request, RequestHandler},
 };
 use http::{Request as HttpRequest, StatusCode};
-use rustls::{crypto::CryptoProvider, server::ResolvesServerCert, ServerConfig};
+use rustls::{ServerConfig, crypto::CryptoProvider, server::ResolvesServerCert};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::task::JoinSet;
 use tokio_rustls::TlsAcceptor;

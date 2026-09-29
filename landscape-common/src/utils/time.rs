@@ -1,7 +1,7 @@
 use std::mem;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use libc::{clock_gettime, timespec, CLOCK_BOOTTIME};
+use libc::{CLOCK_BOOTTIME, clock_gettime, timespec};
 use tokio::time::{Duration, Instant};
 
 pub struct LdCountdown {
@@ -16,11 +16,7 @@ impl LdCountdown {
 
     pub fn remaining(&self) -> Duration {
         let elapsed = self.start.elapsed();
-        if elapsed >= self.duration {
-            Duration::from_secs(0)
-        } else {
-            self.duration - elapsed
-        }
+        if elapsed >= self.duration { Duration::from_secs(0) } else { self.duration - elapsed }
     }
 }
 

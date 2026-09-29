@@ -32,15 +32,15 @@ pub fn sync_firewall_blacklist(
     if !add_v4.is_empty() || !del_v4.is_empty() {
         match libbpf_rs::MapHandle::from_pinned_path(&paths.firewall_ipv4_block) {
             Ok(map) => {
-                if !del_v4.is_empty() {
-                    if let Err(e) = delete_blacklist_ipv4(&map, &del_v4) {
-                        tracing::error!("del firewall blacklist ipv4: {e:?}");
-                    }
+                if !del_v4.is_empty()
+                    && let Err(e) = delete_blacklist_ipv4(&map, &del_v4)
+                {
+                    tracing::error!("del firewall blacklist ipv4: {e:?}");
                 }
-                if !add_v4.is_empty() {
-                    if let Err(e) = add_blacklist_ipv4(&map, &add_v4) {
-                        tracing::error!("add firewall blacklist ipv4: {e:?}");
-                    }
+                if !add_v4.is_empty()
+                    && let Err(e) = add_blacklist_ipv4(&map, &add_v4)
+                {
+                    tracing::error!("add firewall blacklist ipv4: {e:?}");
                 }
             }
             Err(e) => {
@@ -56,15 +56,15 @@ pub fn sync_firewall_blacklist(
     if !add_v6.is_empty() || !del_v6.is_empty() {
         match libbpf_rs::MapHandle::from_pinned_path(&paths.firewall_ipv6_block) {
             Ok(map) => {
-                if !del_v6.is_empty() {
-                    if let Err(e) = delete_blacklist_ipv6(&map, &del_v6) {
-                        tracing::error!("del firewall blacklist ipv6: {e:?}");
-                    }
+                if !del_v6.is_empty()
+                    && let Err(e) = delete_blacklist_ipv6(&map, &del_v6)
+                {
+                    tracing::error!("del firewall blacklist ipv6: {e:?}");
                 }
-                if !add_v6.is_empty() {
-                    if let Err(e) = add_blacklist_ipv6(&map, &add_v6) {
-                        tracing::error!("add firewall blacklist ipv6: {e:?}");
-                    }
+                if !add_v6.is_empty()
+                    && let Err(e) = add_blacklist_ipv6(&map, &add_v6)
+                {
+                    tracing::error!("add firewall blacklist ipv6: {e:?}");
                 }
             }
             Err(e) => {

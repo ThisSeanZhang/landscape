@@ -6,8 +6,8 @@ use std::time::Duration;
 use futures::stream::TryStreamExt;
 use landscape_common::concurrency::{spawn_task, task_label};
 use landscape_common::net::MacAddr;
-use netlink_packet_route::neighbour::{NeighbourAddress, NeighbourAttribute, NeighbourState};
 use netlink_packet_route::AddressFamily;
+use netlink_packet_route::neighbour::{NeighbourAddress, NeighbourAttribute, NeighbourState};
 use rtnetlink::Handle;
 
 struct MacLinkMap {

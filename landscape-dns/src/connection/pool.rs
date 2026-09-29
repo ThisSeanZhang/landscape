@@ -4,7 +4,7 @@ use std::sync::{Arc, RwLock};
 use landscape_common::dns::config::DnsUpstreamConfig;
 use uuid::Uuid;
 
-use crate::connection::{create_resolver, LandscapeMarkDNSResolver};
+use crate::connection::{LandscapeMarkDNSResolver, create_resolver};
 
 /// Key under which resolvers are shared: the DNS mark (the SO_MARK applied to
 /// upstream connections, i.e. the flow component plus the always-set reuse

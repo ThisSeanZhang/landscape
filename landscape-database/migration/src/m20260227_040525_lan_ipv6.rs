@@ -109,22 +109,19 @@ fn migrate_config_json(config: &mut serde_json::Value) -> bool {
     {
         for src in dhcpv6_sources {
             // Add NA source if ia_na exists
-            if ia_na_exists {
-                if let Some(na_src) = migrate_na_source(&src) {
-                    new_sources.push(na_src);
-                }
+            if ia_na_exists && let Some(na_src) = migrate_na_source(&src) {
+                new_sources.push(na_src);
             }
             // Add PD source if ia_pd exists
             if let Some((delegate_prefix_len, max_source_prefix_len, pool_start_index)) = ia_pd_info
-            {
-                if let Some(pd_src) = migrate_pd_source(
+                && let Some(pd_src) = migrate_pd_source(
                     &src,
                     delegate_prefix_len,
                     max_source_prefix_len,
                     pool_start_index,
-                ) {
-                    new_sources.push(pd_src);
-                }
+                )
+            {
+                new_sources.push(pd_src);
             }
         }
         migrated = true;
@@ -140,12 +137,12 @@ fn migrate_config_json(config: &mut serde_json::Value) -> bool {
         if let Some(dhcpv6) = config.get_mut("dhcpv6") {
             dhcpv6.as_object_mut().map(|m| m.remove("source"));
             // Clean up ia_pd: remove old fields
-            if let Some(ia_pd) = dhcpv6.get_mut("ia_pd") {
-                if let Some(m) = ia_pd.as_object_mut() {
-                    m.remove("max_source_prefix_len");
-                    m.remove("pool_start_index");
-                    m.remove("pool_end_index");
-                }
+            if let Some(ia_pd) = dhcpv6.get_mut("ia_pd")
+                && let Some(m) = ia_pd.as_object_mut()
+            {
+                m.remove("max_source_prefix_len");
+                m.remove("pool_start_index");
+                m.remove("pool_end_index");
             }
         }
     }

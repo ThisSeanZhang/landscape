@@ -1,11 +1,11 @@
 use bollard::{
+    Docker,
     models::EventMessageTypeEnum,
     query_parameters::{EventsOptions, InspectContainerOptions, InspectNetworkOptions},
-    Docker,
 };
 use landscape_common::concurrency::{spawn_task, task_label};
-use landscape_common::docker::error::DockerError;
 use landscape_common::docker::DockerTargetEnroll;
+use landscape_common::docker::error::DockerError;
 use landscape_common::{
     service::{ServiceStatus, WatchService},
     sys_service::route_service::RouteTargetInfo,
@@ -375,14 +375,14 @@ pub async fn handle_event(
                 // }
                 if action.as_str() == "stop" {
                     // tracing::info!("docker stop");
-                    if let Some(actor) = emsg.actor {
-                        if let Some(attr) = actor.attributes {
-                            //
-                            if let Some(name) = attr.get("name") {
-                                // tracing::info!("docker stop name: {name}");
-                                ip_route_service.remove_ipv4_wan_route(name).await;
-                                ip_route_service.remove_ipv6_wan_route(name).await;
-                            }
+                    if let Some(actor) = emsg.actor
+                        && let Some(attr) = actor.attributes
+                    {
+                        //
+                        if let Some(name) = attr.get("name") {
+                            // tracing::info!("docker stop name: {name}");
+                            ip_route_service.remove_ipv4_wan_route(name).await;
+                            ip_route_service.remove_ipv6_wan_route(name).await;
                         }
                     }
                 }
@@ -412,10 +412,10 @@ pub async fn handle_event(
                     };
 
                     // println!("net_info: {:?}", net_info);
-                    if let Some(network_info) = network::convert_network(net_info) {
-                        if let Some(info) = network_info.convert_to_lan_info() {
-                            ip_route_service.insert_ipv4_lan_route(&network_info.id, info).await;
-                        }
+                    if let Some(network_info) = network::convert_network(net_info)
+                        && let Some(info) = network_info.convert_to_lan_info()
+                    {
+                        ip_route_service.insert_ipv4_lan_route(&network_info.id, info).await;
                     }
                 }
                 "destroy" => {

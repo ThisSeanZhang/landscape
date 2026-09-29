@@ -8,8 +8,8 @@ use utoipa_axum::routes;
 
 use landscape_common::dns::rule::DnsRuleError;
 
-use crate::api::JsonBody;
 use crate::LandscapeApp;
+use crate::api::JsonBody;
 use crate::{api::LandscapeApiResp, error::LandscapeApiResult};
 
 pub fn get_dns_rule_config_paths() -> OpenApiRouter<LandscapeApp> {
@@ -24,10 +24,10 @@ async fn ensure_flow_id_unchanged(
     state: &LandscapeApp,
     config: &DNSRuleConfig,
 ) -> Result<(), DnsRuleError> {
-    if let Some(existing) = state.dns_rule_service.find_by_id(config.id).await? {
-        if existing.flow_id != config.flow_id {
-            return Err(DnsRuleError::CannotChangeFlow(config.id));
-        }
+    if let Some(existing) = state.dns_rule_service.find_by_id(config.id).await?
+        && existing.flow_id != config.flow_id
+    {
+        return Err(DnsRuleError::CannotChangeFlow(config.id));
     }
     Ok(())
 }

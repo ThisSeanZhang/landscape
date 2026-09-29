@@ -3,8 +3,8 @@ use std::io;
 use futures::stream::TryStreamExt;
 use landscape_common::concurrency::{spawn_task, task_label};
 use netlink_packet_core::{
-    DefaultNla, Emitable, NetlinkHeader, NetlinkMessage, NetlinkPayload, ParseableParametrized,
-    NLA_F_NESTED, NLM_F_ACK, NLM_F_REQUEST,
+    DefaultNla, Emitable, NLA_F_NESTED, NLM_F_ACK, NLM_F_REQUEST, NetlinkHeader, NetlinkMessage,
+    NetlinkPayload, ParseableParametrized,
 };
 use netlink_packet_generic::{GenlFamily, GenlHeader, GenlMessage};
 use tracing::{error, info, warn};
@@ -271,32 +271,30 @@ pub async fn get_gro_nl(dev_name: &str) -> Result<bool, Box<dyn std::error::Erro
 /// Call ETHTOOL_GGRO / ETHTOOL_SGRO via SIOCETHTOOL ioctl.
 /// Returns `Ok(data)` on success, where `data` reflects the `ethtool_value.data` field.
 unsafe fn ethtool_ioctl(ifname: &str, cmd: u32, data: u32) -> Result<u32, io::Error> {
-    let sock = libc::socket(libc::AF_INET, libc::SOCK_DGRAM, 0);
+    let sock = unsafe { libc::socket(libc::AF_INET, libc::SOCK_DGRAM, 0) };
     if sock < 0 {
         return Err(io::Error::last_os_error());
     }
 
-    let mut ifr: libc::ifreq = std::mem::zeroed();
+    let mut ifr: libc::ifreq = unsafe { std::mem::zeroed() };
     let name_bytes = ifname.as_bytes();
     let max_len = libc::IFNAMSIZ - 1;
     let copy_len = name_bytes.len().min(max_len);
-    std::ptr::copy_nonoverlapping(
-        name_bytes.as_ptr(),
-        ifr.ifr_name.as_mut_ptr() as *mut u8,
-        copy_len,
-    );
+    unsafe {
+        std::ptr::copy_nonoverlapping(
+            name_bytes.as_ptr(),
+            ifr.ifr_name.as_mut_ptr() as *mut u8,
+            copy_len,
+        );
+    }
 
     let mut eval = EthtoolValue { cmd, data };
     ifr.ifr_ifru.ifru_data = &mut eval as *mut EthtoolValue as *mut libc::c_char;
 
-    let ret = libc::ioctl(sock, libc::SIOCETHTOOL as libc::Ioctl, &ifr);
-    libc::close(sock);
+    let ret = unsafe { libc::ioctl(sock, libc::SIOCETHTOOL as libc::Ioctl, &ifr) };
+    unsafe { libc::close(sock) };
 
-    if ret < 0 {
-        Err(io::Error::last_os_error())
-    } else {
-        Ok(eval.data)
-    }
+    if ret < 0 { Err(io::Error::last_os_error()) } else { Ok(eval.data) }
 }
 
 // ─── ioctl API ───
@@ -352,7 +350,7 @@ pub async fn disable_gro(dev_name: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use netlink_packet_core::{parse_u32, NlasIterator};
+    use netlink_packet_core::{NlasIterator, parse_u32};
 
     /// Netlink header (16 bytes) + Generic netlink header (4 bytes) = 20
     const GENL_PAYLOAD_OFFSET: usize = 20;

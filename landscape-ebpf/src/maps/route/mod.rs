@@ -28,7 +28,7 @@ mod tests {
         flow::trace::{FlowMatchSource, FlowRuleMatchResult, FlowVerdictSource},
         sys_service::route_service::RouteTargetInfo,
     };
-    use libbpf_rs::{libbpf_sys, MapCore, MapFlags, MapHandle, MapType};
+    use libbpf_rs::{MapCore, MapFlags, MapHandle, MapType, libbpf_sys};
     use zerocopy::IntoBytes;
 
     use super::types::{Route6SlotKey, Route6TargetInfo};

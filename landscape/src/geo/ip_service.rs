@@ -8,7 +8,7 @@ use landscape_common::{
     database::LandscapeStore,
     flow::ip_mark::{IpMarkInfo, WanIPRuleSource, WanIpRuleConfig},
     service::controller::ConfigController,
-    utils::time::{get_f64_timestamp, MILL_A_DAY},
+    utils::time::{MILL_A_DAY, get_f64_timestamp},
 };
 use uuid::Uuid;
 
@@ -22,17 +22,17 @@ use std::{
 };
 
 use landscape_common::{
-    args::LAND_HOME_PATH, event::dns::DstIpEvent, geo_cache::file_store::GeoCacheStore,
-    LANDSCAPE_GEO_CACHE_TMP_DIR,
+    LANDSCAPE_GEO_CACHE_TMP_DIR, args::LAND_HOME_PATH, event::dns::DstIpEvent,
+    geo_cache::file_store::GeoCacheStore,
 };
 use landscape_database::{
     geo_ip::repository::GeoIpSourceConfigRepository, provider::LandscapeDBServiceProvider,
 };
 use reqwest::Client;
-use tokio::sync::{broadcast, Mutex};
+use tokio::sync::{Mutex, broadcast};
 
 use super::raw_file::{
-    raw_dat_path, remove_raw_dat, stream_to_tmp, write_bytes_to_tmp, SealedRawFile,
+    SealedRawFile, raw_dat_path, remove_raw_dat, stream_to_tmp, write_bytes_to_tmp,
 };
 
 const A_DAY: u64 = 60 * 60 * 24;
@@ -522,9 +522,9 @@ impl ConfigController for GeoIpService {
 mod tests {
 
     use landscape_common::{
+        LANDSCAPE_GEO_CACHE_TMP_DIR,
         config_service::geo::{GeoFileCacheKey, GeoIpConfig},
         geo_cache::file_store::GeoCacheStore,
-        LANDSCAPE_GEO_CACHE_TMP_DIR,
     };
     use std::{net::IpAddr, path::PathBuf, str::FromStr};
 

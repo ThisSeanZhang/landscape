@@ -8,8 +8,8 @@ use utoipa_axum::routes;
 
 use landscape_common::flow::FlowRuleError;
 
-use crate::api::JsonBody;
 use crate::LandscapeApp;
+use crate::api::JsonBody;
 use crate::{api::LandscapeApiResp, error::LandscapeApiResult};
 
 pub fn get_flow_rule_config_paths() -> OpenApiRouter<LandscapeApp> {

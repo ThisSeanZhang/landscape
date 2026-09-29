@@ -6,8 +6,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::config_service::iface::{ServiceKind, ZoneAwareConfig, ZoneRequirement};
 use crate::database::repository::LandscapeDBStore;
-use crate::service::manager::ServiceKeyProvider;
 use crate::service::ServiceConfigError;
+use crate::service::manager::ServiceKeyProvider;
 use crate::utils::time::get_f64_timestamp;
 
 const PPP_IFACE_NAME_MAX_LEN: usize = 15;
@@ -139,10 +139,10 @@ impl PPPDConfig {
         }
         check("peer_id", &self.peer_id, false)?;
         check("password", &self.password, false)?;
-        if let Some(ac) = &self.ac {
-            if !ac.trim().is_empty() {
-                check("ac", ac, true)?;
-            }
+        if let Some(ac) = &self.ac
+            && !ac.trim().is_empty()
+        {
+            check("ac", ac, true)?;
         }
         Ok(())
     }
@@ -165,7 +165,9 @@ impl PPPDConfig {
 
         let path = PathBuf::from("/etc/ppp/peers");
         if !path.exists() {
-            tracing::error!("The directory /etc/ppp/peers does not exist, please check whether ppp is installed");
+            tracing::error!(
+                "The directory /etc/ppp/peers does not exist, please check whether ppp is installed"
+            );
             return Err(());
         }
 

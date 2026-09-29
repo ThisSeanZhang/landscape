@@ -7,11 +7,11 @@ use libbpf_rs::libbpf_sys;
 use libbpf_rs::skel::{OpenSkel, SkelBuilder};
 use libbpf_rs::{MapCore, MapFlags, Program, Xdp, XdpFlags};
 
+use crate::LandscapeMapPath;
 use crate::bpf_ctx;
 use crate::bpf_error::{LandscapeEbpfError, LdEbpfResult};
-use crate::landscape::{pin_and_reuse_map, OwnedOpenObject};
+use crate::landscape::{OwnedOpenObject, pin_and_reuse_map};
 use crate::runtime::EbpfRuntime;
-use crate::LandscapeMapPath;
 
 pub(crate) mod xdp_wan_intro_skel {
     include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/xdp_wan_intro.skel.rs"));

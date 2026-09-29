@@ -2,10 +2,10 @@ use landscape_common::dns::redirect::DNSRedirectRule;
 use sea_orm::{DatabaseConnection, DbErr, EntityTrait};
 
 use crate::{
+    DBId,
     dns_redirect::entity::{
         DNSRedirectRuleConfigActiveModel, DNSRedirectRuleConfigEntity, DNSRedirectRuleConfigModel,
     },
-    DBId,
 };
 
 #[derive(Clone)]

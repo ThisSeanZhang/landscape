@@ -31,13 +31,13 @@ use std::{
 };
 
 use landscape_common::{
-    flow::{ip_mark::IpConfig, ip_mark::IpMarkInfo, mark::FlowMark, FlowMarkInfo},
+    flow::{FlowMarkInfo, ip_mark::IpConfig, ip_mark::IpMarkInfo, mark::FlowMark},
     net::MacAddr,
     sys_service::route_service::RouteTargetInfo,
 };
 use libbpf_rs::{
-    skel::{OpenSkel, SkelBuilder as _},
     ProgramInput,
+    skel::{OpenSkel, SkelBuilder as _},
 };
 use zerocopy::IntoBytes;
 
@@ -47,16 +47,15 @@ use crate::{
         route::replace_wan_route_slots_v4_with_map,
     },
     tests::{
-        isolated_pin_root,
+        TestSkb, isolated_pin_root,
         route::{
             map_helper::{
+                LAN_CACHE, LAN_ROUTE_TYPE, ROUTE_TYPE_NEXTHOP, TARGET_IFINDEX, WAN_ROUTE_TYPE,
                 create_route4_cache_inner_map, insert_ip_mac_v4, insert_route4_lan_entry,
-                lookup_rt4_cache_value, seed_flow_match_ip_v4, seed_flow_match_mac, LAN_CACHE,
-                LAN_ROUTE_TYPE, ROUTE_TYPE_NEXTHOP, TARGET_IFINDEX, WAN_ROUTE_TYPE,
+                lookup_rt4_cache_value, seed_flow_match_ip_v4, seed_flow_match_mac,
             },
             packet_builder::{simple_ipv4_tcp, simple_ipv6_tcp_syn},
         },
-        TestSkb,
     },
 };
 
@@ -177,20 +176,24 @@ fn assert_no_route_cache(skel: &TcWanEgressIntroSkel<'_>) {
         &skel.maps.rt4_cache_map,
         crate::tests::route::map_helper::WAN_CACHE,
     );
-    assert!(lookup_rt4_cache_value(
-        &skel.maps.rt4_cache_map,
-        LAN_CACHE,
-        local_addr(),
-        remote_wan_addr()
-    )
-    .is_none());
-    assert!(lookup_rt4_cache_value(
-        &skel.maps.rt4_cache_map,
-        crate::tests::route::map_helper::WAN_CACHE,
-        local_addr(),
-        remote_wan_addr()
-    )
-    .is_none());
+    assert!(
+        lookup_rt4_cache_value(
+            &skel.maps.rt4_cache_map,
+            LAN_CACHE,
+            local_addr(),
+            remote_wan_addr()
+        )
+        .is_none()
+    );
+    assert!(
+        lookup_rt4_cache_value(
+            &skel.maps.rt4_cache_map,
+            crate::tests::route::map_helper::WAN_CACHE,
+            local_addr(),
+            remote_wan_addr()
+        )
+        .is_none()
+    );
 }
 
 // ---------------------------------------------------------------------------

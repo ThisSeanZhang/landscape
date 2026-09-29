@@ -1,15 +1,15 @@
 use std::mem::MaybeUninit;
 
 use libbpf_rs::{
-    skel::{OpenSkel, SkelBuilder as _},
     MapCore, MapFlags, ProgramInput,
+    skel::{OpenSkel, SkelBuilder as _},
 };
 
 pub(crate) mod test_time {
     include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/test_time.skel.rs"));
 }
 
-use test_time::{types, TestTimeSkelBuilder};
+use test_time::{TestTimeSkelBuilder, types};
 
 fn clock_gettime_ns(clock_id: libc::clockid_t) -> std::io::Result<u64> {
     let mut ts: libc::timespec = unsafe { std::mem::zeroed() };

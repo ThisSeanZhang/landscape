@@ -1,6 +1,6 @@
 use crate::repository::UpdateActiveModel;
 use landscape_common::sys_service::gateway::{HttpUpstreamMatchRule, HttpUpstreamRuleConfig};
-use sea_orm::{entity::prelude::*, ActiveValue::Set};
+use sea_orm::{ActiveValue::Set, entity::prelude::*};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 

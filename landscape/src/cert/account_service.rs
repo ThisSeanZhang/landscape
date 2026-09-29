@@ -1,7 +1,7 @@
 use base64::Engine;
 use instant_acme::{Account, ExternalAccountKey, LetsEncrypt, NewAccount, ZeroSsl};
-use landscape_common::cert::account::{AccountStatus, CertAccountConfig, ProviderConfig};
 use landscape_common::cert::CertError;
+use landscape_common::cert::account::{AccountStatus, CertAccountConfig, ProviderConfig};
 use landscape_common::service::controller::ConfigController;
 use landscape_database::cert_account::repository::CertAccountRepository;
 use landscape_database::provider::LandscapeDBServiceProvider;
@@ -10,10 +10,10 @@ use uuid::Uuid;
 
 /// Check if an instant-acme error indicates the account does not exist on the server
 fn is_account_not_exist_error(err: &instant_acme::Error) -> bool {
-    if let instant_acme::Error::Api(problem) = err {
-        if let Some(ref t) = problem.r#type {
-            return t == "urn:ietf:params:acme:error:accountDoesNotExist";
-        }
+    if let instant_acme::Error::Api(problem) = err
+        && let Some(ref t) = problem.r#type
+    {
+        return t == "urn:ietf:params:acme:error:accountDoesNotExist";
     }
     false
 }

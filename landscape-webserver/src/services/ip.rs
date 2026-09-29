@@ -12,8 +12,8 @@ use landscape::netlink::address::addresses_by_iface_name;
 use landscape_common::service::ServiceConfigError;
 use serde::Serialize;
 
-use crate::api::JsonBody;
 use crate::LandscapeApp;
+use crate::api::JsonBody;
 use crate::{api::LandscapeApiResp, error::LandscapeApiResult};
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]

@@ -1,11 +1,11 @@
 use axum::{
+    Router,
     extract::{
-        ws::{CloseFrame, Message, Utf8Bytes, WebSocket},
         State, WebSocketUpgrade,
+        ws::{CloseFrame, Message, Utf8Bytes, WebSocket},
     },
     response::IntoResponse,
     routing::get,
-    Router,
 };
 use landscape_common::{
     concurrency::{spawn_task, task_label},
@@ -42,11 +42,10 @@ async fn handle_socket(
             let msg = tokio::select! {
                 msg = socket.recv() => {
                     if let Some(msg) = msg {
-                        if let Ok(msg) = msg {
-                            if handle_websocket_msg(msg).await {
+                        if let Ok(msg) = msg
+                            && handle_websocket_msg(msg).await {
                                 break;
                             }
-                        }
                     } else {
                         break;
                     }

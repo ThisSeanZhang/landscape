@@ -6,8 +6,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use super::registry::{
-    subsystem_label, CompactSnapshot, MemorySeriesResponse, SlotCounters, SlotPoint, SnapshotMeta,
-    SubsystemSeries, SUBSYSTEMS,
+    CompactSnapshot, MemorySeriesResponse, SUBSYSTEMS, SlotCounters, SlotPoint, SnapshotMeta,
+    SubsystemSeries, subsystem_label,
 };
 use crate::concurrency::{spawn_task, task_label};
 

@@ -172,11 +172,7 @@ where
 }
 
 fn avg_duration((count, sum): (u64, u64)) -> f64 {
-    if count == 0 {
-        0.0
-    } else {
-        sum as f64 / count as f64
-    }
+    if count == 0 { 0.0 } else { sum as f64 / count as f64 }
 }
 
 /// 一个 (flow_id, 分钟) 的预聚合行,由 DNS writer 从原始行批次构建后追加写入。
@@ -366,11 +362,7 @@ impl DnsSummaryParts {
     /// 已记录延迟样本的均值(ms);无样本时为 0。
     #[cfg(test)]
     pub(crate) fn avg_duration_ms(&self) -> f64 {
-        if self.latency.is_empty() {
-            0.0
-        } else {
-            self.latency.mean()
-        }
+        if self.latency.is_empty() { 0.0 } else { self.latency.mean() }
     }
 
     /// 组装轻量摘要(计数 + 延迟分位数,与 sqlite 回退路径同语义)。
@@ -478,11 +470,7 @@ impl DnsSummaryParts {
 }
 
 fn quantile_or_zero(latency: &Histogram<u64>, quantile: f64) -> f64 {
-    if latency.is_empty() {
-        0.0
-    } else {
-        latency.value_at_quantile(quantile) as f64
-    }
+    if latency.is_empty() { 0.0 } else { latency.value_at_quantile(quantile) as f64 }
 }
 
 #[cfg(test)]

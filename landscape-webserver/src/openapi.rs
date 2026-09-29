@@ -1,8 +1,9 @@
-use utoipa::openapi::security::{HttpAuthScheme, HttpBuilder, SecurityScheme};
 use utoipa::openapi::PathItem;
+use utoipa::openapi::security::{HttpAuthScheme, HttpBuilder, SecurityScheme};
 use utoipa::{Modify, OpenApi};
 use utoipa_axum::router::OpenApiRouter;
 
+use crate::LandscapeApp;
 use crate::auth::get_auth_openapi_router;
 use crate::cert::accounts::get_cert_account_paths;
 use crate::cert::certs::get_cert_paths;
@@ -39,7 +40,6 @@ use crate::services::routing::get_route_paths;
 use crate::services::wan::get_route_wan_paths;
 use crate::services::wifi::get_wifi_service_paths;
 use crate::system::config::get_sys_config_paths;
-use crate::LandscapeApp;
 
 struct SecurityAddon;
 

@@ -5,7 +5,7 @@ use landscape_common::api_response::LandscapeApiResp as CommonApiResp;
 use landscape_common::lan_service::lan_ipv6::DHCPv6OfferInfo;
 use landscape_common::lan_service::lan_ipv6::IPv6NAInfo;
 use landscape_common::lan_service::lan_ipv6::{
-    validate_global_prefix_conflicts, LanIPv6ServiceConfigV2,
+    LanIPv6ServiceConfigV2, validate_global_prefix_conflicts,
 };
 use landscape_common::service::controller::ControllerService;
 use landscape_common::service::{ServiceStatus, WatchService};
@@ -15,8 +15,8 @@ use utoipa_axum::routes;
 use landscape_common::database::LandscapeStore as LandscapeDBStore;
 use landscape_common::service::ServiceConfigError;
 
-use crate::api::JsonBody;
 use crate::LandscapeApp;
+use crate::api::JsonBody;
 use crate::{api::LandscapeApiResp, error::LandscapeApiResult};
 
 pub fn get_lan_ipv6_paths() -> OpenApiRouter<LandscapeApp> {

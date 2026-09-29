@@ -2,8 +2,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::config_service::iface::{ServiceKind, ZoneAwareConfig, ZoneRequirement};
 use crate::database::repository::LandscapeDBStore;
-use crate::service::manager::ServiceKeyProvider;
 use crate::service::ServiceConfigError;
+use crate::service::manager::ServiceKeyProvider;
 use crate::utils::time::get_f64_timestamp;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

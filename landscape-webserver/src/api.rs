@@ -1,11 +1,11 @@
 use axum::{
+    Json,
     extract::{FromRequest, Request},
     http::StatusCode,
     response::{IntoResponse, Response},
-    Json,
 };
 use landscape_common::api_response::LandscapeApiResp as CommonLandscapeApiResp;
-use serde::{de::DeserializeOwned, Serialize};
+use serde::{Serialize, de::DeserializeOwned};
 
 use crate::error::LandscapeApiError;
 

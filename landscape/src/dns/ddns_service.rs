@@ -8,8 +8,8 @@ use landscape_common::cert::order::DnsProviderConfig;
 use landscape_common::concurrency::{spawn_task, task_label};
 use landscape_common::database::LandscapeStore;
 use landscape_common::ddns::{
-    fqdn_for_zone_record, DdnsError, DdnsFamilyRuntime, DdnsJob, DdnsJobRuntime, DdnsJobStatus,
-    DdnsRecordRuntime, DdnsRuntimeReason, DdnsSource, IpFamily,
+    DdnsError, DdnsFamilyRuntime, DdnsJob, DdnsJobRuntime, DdnsJobStatus, DdnsRecordRuntime,
+    DdnsRuntimeReason, DdnsSource, IpFamily, fqdn_for_zone_record,
 };
 use landscape_common::dns::provider_profile::DnsProviderProfile;
 use landscape_common::event::hub::{
@@ -24,7 +24,7 @@ use landscape_database::{
     provider::LandscapeDBServiceProvider,
 };
 
-use tokio::sync::{broadcast, Mutex, RwLock};
+use tokio::sync::{Mutex, RwLock, broadcast};
 use tokio::time::MissedTickBehavior;
 use uuid::Uuid;
 
@@ -185,15 +185,15 @@ impl DdnsService {
                         }
                     }
                     Ok(IPv6AssignEvent::Expired(info)) => {
-                        if let Some(device_id) = info.device_id {
-                            if let Some(mut entry) = service.enrolled_cache.get_mut(&device_id) {
-                                for ip in &info.ips {
-                                    entry.raw_ips.remove(ip);
-                                }
-                                if entry.raw_ips.is_empty() {
-                                    drop(entry);
-                                    service.enrolled_cache.remove(&device_id);
-                                }
+                        if let Some(device_id) = info.device_id
+                            && let Some(mut entry) = service.enrolled_cache.get_mut(&device_id)
+                        {
+                            for ip in &info.ips {
+                                entry.raw_ips.remove(ip);
+                            }
+                            if entry.raw_ips.is_empty() {
+                                drop(entry);
+                                service.enrolled_cache.remove(&device_id);
                             }
                         }
                     }
@@ -525,23 +525,21 @@ impl DdnsService {
                         IpFamily::Ipv6 => self.route_service.get_ipv6_wan_route(iface_name).await,
                     };
                     if let Some(route) = route {
-                        if wanted_family == IpFamily::Ipv6 {
-                            if let IpAddr::V6(addr) = route.iface_ip {
-                                if !((addr.segments()[0] & 0xe000) == 0x2000)
-                                    && !addr.is_unique_local()
-                                {
-                                    last_error = Some(ResolveRecordIpError {
-                                        status: DdnsJobStatus::Idle,
-                                        reason: DdnsRuntimeReason::WaitingWanIp,
-                                        detail: format!(
-                                            "WAN interface '{iface_name}' IPv6 address is link-local, waiting for a global/unique-local address"
-                                        ),
-                                        retryable: true,
-                                        next_retry_at: Some(ts + DDNS_RETRY_INTERVAL_SECS as f64),
-                                    });
-                                    continue;
-                                }
-                            }
+                        if wanted_family == IpFamily::Ipv6
+                            && let IpAddr::V6(addr) = route.iface_ip
+                            && !((addr.segments()[0] & 0xe000) == 0x2000)
+                            && !addr.is_unique_local()
+                        {
+                            last_error = Some(ResolveRecordIpError {
+                                status: DdnsJobStatus::Idle,
+                                reason: DdnsRuntimeReason::WaitingWanIp,
+                                detail: format!(
+                                    "WAN interface '{iface_name}' IPv6 address is link-local, waiting for a global/unique-local address"
+                                ),
+                                retryable: true,
+                                next_retry_at: Some(ts + DDNS_RETRY_INTERVAL_SECS as f64),
+                            });
+                            continue;
                         }
                         return Ok(vec![route.iface_ip]);
                     }
@@ -794,11 +792,7 @@ fn effective_ddns_ttl(job: &DdnsJob, profile: &DnsProviderProfile) -> Option<u32
 }
 
 fn effective_ttl_config_updated_at(job: &DdnsJob, profile: &DnsProviderProfile) -> f64 {
-    if job.ttl.is_some() {
-        job.update_at
-    } else {
-        job.update_at.max(profile.update_at)
-    }
+    if job.ttl.is_some() { job.update_at } else { job.update_at.max(profile.update_at) }
 }
 
 fn job_matches_wan_event(job: &DdnsJob, event: &WanRouteEvent) -> bool {

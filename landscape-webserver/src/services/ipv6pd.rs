@@ -12,8 +12,8 @@ use utoipa_axum::routes;
 
 use landscape_common::service::ServiceConfigError;
 
-use crate::api::JsonBody;
 use crate::LandscapeApp;
+use crate::api::JsonBody;
 use crate::{api::LandscapeApiResp, error::LandscapeApiResult};
 
 pub fn get_iface_pdclient_paths() -> OpenApiRouter<LandscapeApp> {

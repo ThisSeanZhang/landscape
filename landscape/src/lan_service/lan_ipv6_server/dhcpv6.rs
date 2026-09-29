@@ -2,13 +2,13 @@ use std::net::{Ipv6Addr, SocketAddr};
 use std::sync::Arc;
 
 use landscape_common::net::MacAddr;
-use landscape_common::net_proto::udp::dhcp::v6::{
-    self, Authentication, IAAddr, IAPrefix, Status, StatusCode, IANA, IAPD,
-};
 use landscape_common::net_proto::udp::dhcp::DhcpV6MessageType;
+use landscape_common::net_proto::udp::dhcp::v6::{
+    self, Authentication, IAAddr, IANA, IAPD, IAPrefix, Status, StatusCode,
+};
 use landscape_common::net_proto::udp::dhcp::{Decodable, Decoder, Encodable, Encoder};
 
-use super::{offer_lifetime, Ipv6LanReplyParams, Ipv6ServerStatus};
+use super::{Ipv6LanReplyParams, Ipv6ServerStatus, offer_lifetime};
 use crate::lan_service::lan_ipv6_service::MacLinkMapCache;
 
 // ── Result types ───────────────────────────────────────────────────────────
@@ -218,18 +218,18 @@ fn handle_solicit(
     }
 
     // RFC 8415 §20.4.2: include reconfigure key in Reply/Advertise
-    if client_supports_reconfigure(msg) {
-        if let Some(key) = status.get_reconfigure_key(client_duid) {
-            let mut info = vec![1u8];
-            info.extend_from_slice(&key);
-            reply.opts_mut().insert(v6::DhcpOption::Authentication(Authentication {
-                proto: 3,
-                algo: 0,
-                rdm: 0,
-                replay_detection: 0,
-                info,
-            }));
-        }
+    if client_supports_reconfigure(msg)
+        && let Some(key) = status.get_reconfigure_key(client_duid)
+    {
+        let mut info = vec![1u8];
+        info.extend_from_slice(&key);
+        reply.opts_mut().insert(v6::DhcpOption::Authentication(Authentication {
+            proto: 3,
+            algo: 0,
+            rdm: 0,
+            replay_detection: 0,
+            info,
+        }));
     }
 
     let reply_bytes = encode_reply(&reply);
@@ -350,19 +350,19 @@ fn handle_request_or_renew(
         if msg.msg_type() == DhcpV6MessageType::Rebind || msg.msg_type() == DhcpV6MessageType::Renew
         {
             let server_addrs = status.get_na_addresses(client_duid);
-            if let Some(v6::DhcpOption::IANA(client_iana)) = msg.opts().get(v6::OptionCode::IANA) {
-                if let Some(ia_addrs) = client_iana.opts.get_all(v6::OptionCode::IAAddr) {
-                    for ia_opt in ia_addrs {
-                        if let v6::DhcpOption::IAAddr(ia_addr) = ia_opt {
-                            if !server_addrs.contains(&ia_addr.addr) {
-                                iana.opts.insert(v6::DhcpOption::IAAddr(IAAddr {
-                                    addr: ia_addr.addr,
-                                    preferred_life: 0,
-                                    valid_life: 0,
-                                    opts: v6::DhcpOptions::new(),
-                                }));
-                            }
-                        }
+            if let Some(v6::DhcpOption::IANA(client_iana)) = msg.opts().get(v6::OptionCode::IANA)
+                && let Some(ia_addrs) = client_iana.opts.get_all(v6::OptionCode::IAAddr)
+            {
+                for ia_opt in ia_addrs {
+                    if let v6::DhcpOption::IAAddr(ia_addr) = ia_opt
+                        && !server_addrs.contains(&ia_addr.addr)
+                    {
+                        iana.opts.insert(v6::DhcpOption::IAAddr(IAAddr {
+                            addr: ia_addr.addr,
+                            preferred_life: 0,
+                            valid_life: 0,
+                            opts: v6::DhcpOptions::new(),
+                        }));
                     }
                 }
             }
@@ -378,22 +378,22 @@ fn handle_request_or_renew(
         if msg.msg_type() == DhcpV6MessageType::Rebind || msg.msg_type() == DhcpV6MessageType::Renew
         {
             let server_prefix = status.get_pd_prefix(client_duid);
-            if let Some(v6::DhcpOption::IAPD(client_iapd)) = msg.opts().get(v6::OptionCode::IAPD) {
-                if let Some(ia_prefixes) = client_iapd.opts.get_all(v6::OptionCode::IAPrefix) {
-                    for ia_opt in ia_prefixes {
-                        if let v6::DhcpOption::IAPrefix(ia_prefix) = ia_opt {
-                            let still_valid = server_prefix
-                                .map(|(p, l)| p == ia_prefix.prefix_ip && l == ia_prefix.prefix_len)
-                                .unwrap_or(false);
-                            if !still_valid {
-                                iapd.opts.insert(v6::DhcpOption::IAPrefix(IAPrefix {
-                                    preferred_lifetime: 0,
-                                    valid_lifetime: 0,
-                                    prefix_len: ia_prefix.prefix_len,
-                                    prefix_ip: ia_prefix.prefix_ip,
-                                    opts: v6::DhcpOptions::new(),
-                                }));
-                            }
+            if let Some(v6::DhcpOption::IAPD(client_iapd)) = msg.opts().get(v6::OptionCode::IAPD)
+                && let Some(ia_prefixes) = client_iapd.opts.get_all(v6::OptionCode::IAPrefix)
+            {
+                for ia_opt in ia_prefixes {
+                    if let v6::DhcpOption::IAPrefix(ia_prefix) = ia_opt {
+                        let still_valid = server_prefix
+                            .map(|(p, l)| p == ia_prefix.prefix_ip && l == ia_prefix.prefix_len)
+                            .unwrap_or(false);
+                        if !still_valid {
+                            iapd.opts.insert(v6::DhcpOption::IAPrefix(IAPrefix {
+                                preferred_lifetime: 0,
+                                valid_lifetime: 0,
+                                prefix_len: ia_prefix.prefix_len,
+                                prefix_ip: ia_prefix.prefix_ip,
+                                opts: v6::DhcpOptions::new(),
+                            }));
                         }
                     }
                 }
@@ -410,18 +410,18 @@ fn handle_request_or_renew(
     status.consume_prev_suffix(client_duid);
 
     // RFC 8415 §20.4.2: include reconfigure key in Reply
-    if client_supports_reconfigure(msg) {
-        if let Some(key) = status.get_reconfigure_key(client_duid) {
-            let mut info = vec![1u8];
-            info.extend_from_slice(&key);
-            reply.opts_mut().insert(v6::DhcpOption::Authentication(Authentication {
-                proto: 3,
-                algo: 0,
-                rdm: 0,
-                replay_detection: 0,
-                info,
-            }));
-        }
+    if client_supports_reconfigure(msg)
+        && let Some(key) = status.get_reconfigure_key(client_duid)
+    {
+        let mut info = vec![1u8];
+        info.extend_from_slice(&key);
+        reply.opts_mut().insert(v6::DhcpOption::Authentication(Authentication {
+            proto: 3,
+            algo: 0,
+            rdm: 0,
+            replay_detection: 0,
+            info,
+        }));
     }
 
     let reply_bytes = encode_reply(&reply);
@@ -478,18 +478,18 @@ fn handle_release(
     }));
 
     // RFC 8415 §20.4.2: include reconfigure key in Reply
-    if client_supports_reconfigure(msg) {
-        if let Some(key) = status.get_reconfigure_key(client_duid) {
-            let mut info = vec![1u8];
-            info.extend_from_slice(&key);
-            reply.opts_mut().insert(v6::DhcpOption::Authentication(Authentication {
-                proto: 3,
-                algo: 0,
-                rdm: 0,
-                replay_detection: 0,
-                info,
-            }));
-        }
+    if client_supports_reconfigure(msg)
+        && let Some(key) = status.get_reconfigure_key(client_duid)
+    {
+        let mut info = vec![1u8];
+        info.extend_from_slice(&key);
+        reply.opts_mut().insert(v6::DhcpOption::Authentication(Authentication {
+            proto: 3,
+            algo: 0,
+            rdm: 0,
+            replay_detection: 0,
+            info,
+        }));
     }
 
     Dhcpv6Result {
@@ -538,16 +538,16 @@ fn handle_confirm(
 ) -> Dhcpv6Result {
     let mut all_on_link = true;
 
-    if let Some(v6::DhcpOption::IANA(client_iana)) = msg.opts().get(v6::OptionCode::IANA) {
-        if let Some(ia_addrs) = client_iana.opts.get_all(v6::OptionCode::IAAddr) {
-            for ia_opt in ia_addrs {
-                if let v6::DhcpOption::IAAddr(ia_addr) = ia_opt {
-                    match status.check_address_owner(ia_addr.addr, client_duid, mac) {
-                        super::NaAddressCheck::Owned => {}
-                        _ => {
-                            all_on_link = false;
-                            break;
-                        }
+    if let Some(v6::DhcpOption::IANA(client_iana)) = msg.opts().get(v6::OptionCode::IANA)
+        && let Some(ia_addrs) = client_iana.opts.get_all(v6::OptionCode::IAAddr)
+    {
+        for ia_opt in ia_addrs {
+            if let v6::DhcpOption::IAAddr(ia_addr) = ia_opt {
+                match status.check_address_owner(ia_addr.addr, client_duid, mac) {
+                    super::NaAddressCheck::Owned => {}
+                    _ => {
+                        all_on_link = false;
+                        break;
                     }
                 }
             }
@@ -570,18 +570,18 @@ fn handle_confirm(
     reply.opts_mut().insert(v6::DhcpOption::StatusCode(status_code));
 
     // RFC 8415 §20.4.2: include reconfigure key in Reply
-    if client_supports_reconfigure(msg) {
-        if let Some(key) = status.get_reconfigure_key(client_duid) {
-            let mut info = vec![1u8];
-            info.extend_from_slice(&key);
-            reply.opts_mut().insert(v6::DhcpOption::Authentication(Authentication {
-                proto: 3,
-                algo: 0,
-                rdm: 0,
-                replay_detection: 0,
-                info,
-            }));
-        }
+    if client_supports_reconfigure(msg)
+        && let Some(key) = status.get_reconfigure_key(client_duid)
+    {
+        let mut info = vec![1u8];
+        info.extend_from_slice(&key);
+        reply.opts_mut().insert(v6::DhcpOption::Authentication(Authentication {
+            proto: 3,
+            algo: 0,
+            rdm: 0,
+            replay_detection: 0,
+            info,
+        }));
     }
 
     Dhcpv6Result {
@@ -613,18 +613,18 @@ fn handle_info_request(
     }
 
     // RFC 8415 §20.4.2: include reconfigure key in Reply
-    if client_supports_reconfigure(msg) {
-        if let Some(key) = status.get_reconfigure_key(client_duid) {
-            let mut info = vec![1u8];
-            info.extend_from_slice(&key);
-            reply.opts_mut().insert(v6::DhcpOption::Authentication(Authentication {
-                proto: 3,
-                algo: 0,
-                rdm: 0,
-                replay_detection: 0,
-                info,
-            }));
-        }
+    if client_supports_reconfigure(msg)
+        && let Some(key) = status.get_reconfigure_key(client_duid)
+    {
+        let mut info = vec![1u8];
+        info.extend_from_slice(&key);
+        reply.opts_mut().insert(v6::DhcpOption::Authentication(Authentication {
+            proto: 3,
+            algo: 0,
+            rdm: 0,
+            replay_detection: 0,
+            info,
+        }));
     }
 
     Dhcpv6Result {
@@ -734,23 +734,15 @@ fn extract_duid(msg: &v6::Message) -> Option<Vec<u8>> {
 }
 
 fn extract_iana_id(msg: &v6::Message) -> Option<u32> {
-    msg.opts().get(v6::OptionCode::IANA).and_then(|opt| {
-        if let v6::DhcpOption::IANA(iana) = opt {
-            Some(iana.id)
-        } else {
-            None
-        }
-    })
+    msg.opts()
+        .get(v6::OptionCode::IANA)
+        .and_then(|opt| if let v6::DhcpOption::IANA(iana) = opt { Some(iana.id) } else { None })
 }
 
 fn extract_iapd_id(msg: &v6::Message) -> Option<u32> {
-    msg.opts().get(v6::OptionCode::IAPD).and_then(|opt| {
-        if let v6::DhcpOption::IAPD(iapd) = opt {
-            Some(iapd.id)
-        } else {
-            None
-        }
-    })
+    msg.opts()
+        .get(v6::OptionCode::IAPD)
+        .and_then(|opt| if let v6::DhcpOption::IAPD(iapd) = opt { Some(iapd.id) } else { None })
 }
 
 fn extract_mac_from_duid(duid: &[u8]) -> Option<MacAddr> {

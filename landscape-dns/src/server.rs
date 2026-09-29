@@ -11,19 +11,18 @@ use landscape_common::flow::{DnsResultSink, FlowSocketRegistrar};
 use landscape_common::sys_service::lan_hostname::LanHostnameConfig;
 use landscape_common::{event::DnsMetricMessage, service::WatchService};
 use landscape_core::lan_hostname::LanHostnameRegistry;
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::{Mutex, mpsc};
 use tokio_util::sync::CancellationToken;
 
 use crate::{
-    convert_record_type,
+    CheckChainDnsResult, CheckDnsReq, convert_record_type,
     domain::ParsedDomain,
-    listener::{start_flow_dns_listener, DohListenerState},
+    listener::{DohListenerState, start_flow_dns_listener},
     mdns::MdnsService,
     server::{
         handler::DnsRequestHandler, local::LocalResolver, redirect_engine::RedirectEngine,
         resolve_engine::ResolveEngine,
     },
-    CheckChainDnsResult, CheckDnsReq,
 };
 
 pub(crate) mod answer;

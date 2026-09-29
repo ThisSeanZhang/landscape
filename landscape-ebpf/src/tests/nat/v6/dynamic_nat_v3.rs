@@ -4,11 +4,11 @@ use std::{
     str::FromStr,
 };
 
-use etherparse::{icmpv6, Icmpv6Type, PacketBuilder, PacketHeaders};
+use etherparse::{Icmpv6Type, PacketBuilder, PacketHeaders, icmpv6};
 use landscape_common::net::MacAddr;
 use libbpf_rs::{
-    skel::{OpenSkel, SkelBuilder as _},
     MapCore, MapFlags, ProgramInput,
+    skel::{OpenSkel, SkelBuilder as _},
 };
 use zerocopy::{FromBytes, IntoBytes};
 
@@ -54,11 +54,7 @@ fn build_ipv6_tcp(src: Ipv6Addr, dst: Ipv6Addr, src_port: u16, dst_port: u16) ->
 }
 
 fn npt_id_mask(prefix_len: u8) -> u8 {
-    if prefix_len >= 64 {
-        0
-    } else {
-        ((1u16 << (64 - prefix_len)) - 1) as u8
-    }
+    if prefix_len >= 64 { 0 } else { ((1u16 << (64 - prefix_len)) - 1) as u8 }
 }
 
 fn timer_key_for(src: Ipv6Addr, client_port: u16, prefix_len: u8) -> Nat6TimerKey {

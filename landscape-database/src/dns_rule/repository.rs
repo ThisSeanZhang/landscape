@@ -2,8 +2,8 @@ use landscape_common::dns::rule::DNSRuleConfig;
 use sea_orm::{DatabaseConnection, DbErr, EntityTrait};
 
 use crate::{
-    dns_rule::entity::{DNSRuleConfigActiveModel, DNSRuleConfigEntity, DNSRuleConfigModel},
     DBId,
+    dns_rule::entity::{DNSRuleConfigActiveModel, DNSRuleConfigEntity, DNSRuleConfigModel},
 };
 
 #[derive(Clone)]

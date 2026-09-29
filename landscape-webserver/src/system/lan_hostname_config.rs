@@ -5,9 +5,9 @@ use landscape_common::sys_service::lan_hostname::{
     GetLanHostnameConfigResponse, UpdateLanHostnameConfigRequest,
 };
 
+use crate::LandscapeApp;
 use crate::api::{JsonBody, LandscapeApiResp};
 use crate::error::LandscapeApiResult;
-use crate::LandscapeApp;
 
 #[utoipa::path(
     get,

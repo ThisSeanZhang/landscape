@@ -60,13 +60,15 @@ fn lan_ingress_broadcast_dst_hands_to_stack() {
     assert_eq!(ret, RET_UNSPEC, "broadcast must hand to the stack (UNSPEC)");
     assert_eq!(mark, 0, "no mark must be written");
     assert!(lookup_ip_mac_v4(&skel.maps.ip_mac_v4, client_addr()).is_none());
-    assert!(lookup_rt4_cache_value(
-        &skel.maps.rt4_cache_map,
-        LAN_CACHE,
-        client_addr(),
-        Ipv4Addr::BROADCAST
-    )
-    .is_none());
+    assert!(
+        lookup_rt4_cache_value(
+            &skel.maps.rt4_cache_map,
+            LAN_CACHE,
+            client_addr(),
+            Ipv4Addr::BROADCAST
+        )
+        .is_none()
+    );
 }
 
 #[test]
@@ -111,13 +113,15 @@ fn lan_ingress_default_flow_without_slot_target_drops() {
         lookup_ip_mac_v4(&skel.maps.ip_mac_v4, client_addr()).is_some(),
         "neighbour learning happens before the verdict/lookup"
     );
-    assert!(lookup_rt4_cache_value(
-        &skel.maps.rt4_cache_map,
-        LAN_CACHE,
-        client_addr(),
-        remote_wan_addr()
-    )
-    .is_none());
+    assert!(
+        lookup_rt4_cache_value(
+            &skel.maps.rt4_cache_map,
+            LAN_CACHE,
+            client_addr(),
+            remote_wan_addr()
+        )
+        .is_none()
+    );
 }
 
 #[test]
@@ -163,13 +167,15 @@ fn lan_ingress_flow_drop_shots_with_untouched_mark() {
     assert_eq!(ret, RET_SHOT, "FLOW_DROP rule must drop");
     assert_eq!(mark, 0, "drop returns before the mark-source write");
     assert!(lookup_ip_mac_v4(&skel.maps.ip_mac_v4, client_addr()).is_some());
-    assert!(lookup_rt4_cache_value(
-        &skel.maps.rt4_cache_map,
-        LAN_CACHE,
-        client_addr(),
-        remote_wan_addr()
-    )
-    .is_none());
+    assert!(
+        lookup_rt4_cache_value(
+            &skel.maps.rt4_cache_map,
+            LAN_CACHE,
+            client_addr(),
+            remote_wan_addr()
+        )
+        .is_none()
+    );
 }
 
 #[test]
@@ -640,13 +646,15 @@ fn lan_ingress_lan_map_own_addr_hands_to_stack() {
 
     assert_eq!(ret, RET_UNSPEC, "LAN-typed entry for the target address itself");
     assert_eq!(mark, 0, "lan_redirect short return leaves the mark untouched");
-    assert!(lookup_rt4_cache_value(
-        &skel.maps.rt4_cache_map,
-        LAN_CACHE,
-        client_addr(),
-        remote_wan_addr()
-    )
-    .is_none());
+    assert!(
+        lookup_rt4_cache_value(
+            &skel.maps.rt4_cache_map,
+            LAN_CACHE,
+            client_addr(),
+            remote_wan_addr()
+        )
+        .is_none()
+    );
 }
 
 #[test]

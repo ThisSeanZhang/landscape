@@ -1,8 +1,8 @@
 use std::mem::MaybeUninit;
 
 use libbpf_rs::{
-    skel::{OpenSkel, SkelBuilder as _},
     ProgramInput,
+    skel::{OpenSkel, SkelBuilder as _},
 };
 
 use crate::tests::test_xdp_nat4_modify_skel::TestXdpNat4ModifySkelBuilder;

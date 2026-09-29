@@ -5,9 +5,9 @@ use landscape_common::config::{
 };
 use landscape_common::database::error::DbError;
 
+use crate::LandscapeApp;
 use crate::api::{JsonBody, LandscapeApiResp};
 use crate::error::LandscapeApiResult;
-use crate::LandscapeApp;
 
 static METRIC_CONFIG_UPDATE_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 

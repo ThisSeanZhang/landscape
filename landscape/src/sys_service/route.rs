@@ -13,15 +13,15 @@ use landscape_common::{
     ddns::IpFamily,
     dns::dnr::{is_valid_dnr_ipv4_addr, is_valid_dnr_ipv6_addr},
     event::route::RouteEvent,
-    flow::{config::FlowConfig, FlowTarget},
+    flow::{FlowTarget, config::FlowConfig},
     sys_service::route_service::{
-        dataplane::{NoopRouteTableDataplane, RouteTableDataplane},
         LanIPv6RouteKey, LanRouteInfo, LanRouteMode, RouteTargetInfo,
+        dataplane::{NoopRouteTableDataplane, RouteTableDataplane},
     },
 };
 use landscape_database::flow_rule::repository::FlowConfigRepository;
 use landscape_dns::server::LocalDnsAnswerProvider;
-use tokio::sync::{broadcast, mpsc, RwLock};
+use tokio::sync::{RwLock, broadcast, mpsc};
 
 use landscape_common::database::LandscapeStore;
 

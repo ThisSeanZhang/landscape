@@ -18,9 +18,9 @@ use landscape_common::{
 };
 
 use crate::{
-    domain::ParsedDomain,
-    server::{rule::DNSResolveRuntime, CacheRuntimeConfig},
     CacheDNSItem, DNSCache,
+    domain::ParsedDomain,
+    server::{CacheRuntimeConfig, rule::DNSResolveRuntime},
 };
 
 /// Data required to write (or update) one cache entry.

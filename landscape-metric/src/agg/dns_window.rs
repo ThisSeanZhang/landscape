@@ -9,7 +9,7 @@ use landscape_common::metric::dns::DnsLightweightSummaryResponse;
 
 #[cfg(test)]
 use super::dns_bucket::minute_end;
-use super::dns_bucket::{minute_start, DnsCounters, DnsSummaryParts, MINUTE_MS};
+use super::dns_bucket::{DnsCounters, DnsSummaryParts, MINUTE_MS, minute_start};
 
 /// DNS 内存窗口时长(5 分钟)。仅服务首页 DnsStatusCard(其默认查询范围同为 5min);
 /// 仪表盘状态卡 DNSDashboard(默认 10min)直接查 DB,不走窗口。
@@ -148,10 +148,10 @@ impl DnsRecentWindow {
         let buckets = read_or_recover(&self.inner);
         let mut parts = DnsSummaryParts::default();
         for bucket in buckets.iter() {
-            if let Some(flow) = flow_id {
-                if bucket.flow_id != flow {
-                    continue;
-                }
+            if let Some(flow) = flow_id
+                && bucket.flow_id != flow
+            {
+                continue;
             }
             if bucket.minute_start.saturating_add(MINUTE_MS) <= start_ms {
                 continue;

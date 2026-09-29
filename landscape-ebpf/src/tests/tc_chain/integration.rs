@@ -9,13 +9,13 @@ use std::time::Duration;
 
 use etherparse::{IcmpEchoHeader, Icmpv4Type, PacketBuilder};
 use libbpf_rs::{
-    skel::{OpenSkel, SkelBuilder as _},
     MapCore, MapFlags,
+    skel::{OpenSkel, SkelBuilder as _},
 };
 
 use crate::tests::net_utils::{
-    build_tcp_pkt, dummy_recv_count, dummy_recv_other, dummy_reset, send_raw_packet, settle,
-    wait_for, NetNsGuard, TCAttach, VethPair,
+    NetNsGuard, TCAttach, VethPair, build_tcp_pkt, dummy_recv_count, dummy_recv_other, dummy_reset,
+    send_raw_packet, settle, wait_for,
 };
 use crate::tests::test_xdp_dummy::TestXdpDummySkelBuilder;
 use crate::tests::xdp_lan_intro_skel::XdpLanIntroSkelBuilder;
@@ -28,8 +28,8 @@ use tc_lan_ingress_intro_skel::TcLanIngressIntroSkelBuilder;
 pub(crate) mod tc_pppoe_skel {
     include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/tc_pppoe.skel.rs"));
 }
-use tc_pppoe_skel::types::pppoe_egress_tmpl;
 use tc_pppoe_skel::TcPppoeSkelBuilder;
+use tc_pppoe_skel::types::pppoe_egress_tmpl;
 
 /// Common two-veth-pair environment: an ingress pair crossing into a peer
 /// netns, plus an out pair kept entirely in the test netns (redirect target).

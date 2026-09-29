@@ -158,10 +158,11 @@ impl LanHostnameRegistry {
     /// for. A configured suffix may contain multiple labels.
     pub fn match_local_zone<'a>(&self, name: &'a str) -> Option<LocalZoneMatch<'a>> {
         let config = self.config.load();
-        if config.enable && !config.lan_suffix.is_empty() {
-            if let Some(hostname) = strip_zone_suffix(name, &config.lan_suffix) {
-                return Some(LocalZoneMatch { zone: LocalZone::LanSuffix, hostname });
-            }
+        if config.enable
+            && !config.lan_suffix.is_empty()
+            && let Some(hostname) = strip_zone_suffix(name, &config.lan_suffix)
+        {
+            return Some(LocalZoneMatch { zone: LocalZone::LanSuffix, hostname });
         }
         strip_zone_suffix(name, MDNS_LOCAL_ZONE)
             .map(|hostname| LocalZoneMatch { zone: LocalZone::MdnsLocal, hostname })
@@ -233,11 +234,11 @@ impl LanHostnameRegistry {
     }
 
     pub fn set_ipv6(&self, hostname: &str, ipv6: Ipv6Addr) -> bool {
-        if let Ok(punycode) = idna::domain_to_ascii(hostname) {
-            if let Some(mut record) = self.hostname_map.get_mut(&punycode) {
-                record.ipv6 = Some(ipv6);
-                return true;
-            }
+        if let Ok(punycode) = idna::domain_to_ascii(hostname)
+            && let Some(mut record) = self.hostname_map.get_mut(&punycode)
+        {
+            record.ipv6 = Some(ipv6);
+            return true;
         }
         false
     }
@@ -251,27 +252,26 @@ fn is_shared_ipv4(ip: Ipv4Addr) -> bool {
 fn handle_device_event(map: &DashMap<String, HostnameRecord>, event: EnrolledDeviceEvent) {
     match event {
         EnrolledDeviceEvent::Updated { old, new } => {
-            if let Some(ref old_device) = old {
-                if let Some(ref old_hostname) = old_device.hostname {
-                    if let Ok(punycode) = idna::domain_to_ascii(old_hostname) {
-                        map.remove(&punycode);
-                    }
-                }
+            if let Some(ref old_device) = old
+                && let Some(ref old_hostname) = old_device.hostname
+                && let Ok(punycode) = idna::domain_to_ascii(old_hostname)
+            {
+                map.remove(&punycode);
             }
-            if let (Some(ref hostname), Some(ipv4)) = (&new.hostname, new.ipv4) {
-                if let Ok(punycode) = idna::domain_to_ascii(hostname) {
-                    map.insert(
-                        punycode,
-                        HostnameRecord { ipv4, ipv6: new.ipv6, from_enrolled_device: true },
-                    );
-                }
+            if let (Some(hostname), Some(ipv4)) = (&new.hostname, new.ipv4)
+                && let Ok(punycode) = idna::domain_to_ascii(hostname)
+            {
+                map.insert(
+                    punycode,
+                    HostnameRecord { ipv4, ipv6: new.ipv6, from_enrolled_device: true },
+                );
             }
         }
         EnrolledDeviceEvent::Deleted { old } => {
-            if let Some(ref hostname) = old.hostname {
-                if let Ok(punycode) = idna::domain_to_ascii(hostname) {
-                    map.remove(&punycode);
-                }
+            if let Some(ref hostname) = old.hostname
+                && let Ok(punycode) = idna::domain_to_ascii(hostname)
+            {
+                map.remove(&punycode);
             }
         }
     }
@@ -280,9 +280,10 @@ fn handle_device_event(map: &DashMap<String, HostnameRecord>, event: EnrolledDev
 fn handle_ipv4_event(map: &DashMap<String, HostnameRecord>, event: IPv4AssignEvent) {
     match event {
         IPv4AssignEvent::Allocated(info) => {
-            if let Some(hostname) = info.hostname {
-                if let Ok(punycode) = idna::domain_to_ascii(&hostname) {
-                    map.entry(punycode)
+            if let Some(hostname) = info.hostname
+                && let Ok(punycode) = idna::domain_to_ascii(&hostname)
+            {
+                map.entry(punycode)
                         .and_modify(|rec| {
                             if rec.from_enrolled_device {
                                 tracing::debug!(
@@ -298,14 +299,13 @@ fn handle_ipv4_event(map: &DashMap<String, HostnameRecord>, event: IPv4AssignEve
                             ipv6: None,
                             from_enrolled_device: false,
                         });
-                }
             }
         }
         IPv4AssignEvent::Expired(info) => {
-            if let Some(hostname) = info.hostname {
-                if let Ok(punycode) = idna::domain_to_ascii(&hostname) {
-                    map.remove_if(&punycode, |_, rec| !rec.from_enrolled_device);
-                }
+            if let Some(hostname) = info.hostname
+                && let Ok(punycode) = idna::domain_to_ascii(&hostname)
+            {
+                map.remove_if(&punycode, |_, rec| !rec.from_enrolled_device);
             }
         }
     }

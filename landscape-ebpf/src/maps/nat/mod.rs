@@ -4,7 +4,7 @@ use libbpf_rs::{MapCore, MapFlags};
 
 use crate::bpf_error::LdEbpfResult;
 
-use super::{apply_raw_map_diff, diff_raw_map, snapshot_raw_map, RawEbpfMapEntries};
+use super::{RawEbpfMapEntries, apply_raw_map_diff, diff_raw_map, snapshot_raw_map};
 
 #[derive(Debug, Clone, Copy)]
 pub struct StaticNatMappingV4Item {

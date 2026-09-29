@@ -7,10 +7,10 @@ use std::sync::{Arc, Mutex};
 use landscape_common::event::ConnectMessage;
 use landscape_common::metric::connect::{ConnectKey, ConnectMetric, ConnectStatusType};
 use libbpf_rs::{
-    skel::{OpenSkel, SkelBuilder as _},
     ProgramInput, RingBufferBuilder,
+    skel::{OpenSkel, SkelBuilder as _},
 };
-use tokio::time::{timeout, Duration};
+use tokio::time::{Duration, timeout};
 use tokio_util::sync::CancellationToken;
 use zerocopy::IntoBytes;
 
@@ -22,7 +22,7 @@ pub(crate) mod test_metric_ringbuf {
     include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/test_metric_ringbuf.skel.rs"));
 }
 
-use test_metric_ringbuf::{types, TestMetricRingbufSkel, TestMetricRingbufSkelBuilder};
+use test_metric_ringbuf::{TestMetricRingbufSkel, TestMetricRingbufSkelBuilder, types};
 
 fn run_emit(skel: &TestMetricRingbufSkel, mark: u32) {
     let pkt = vec![0u8; 64];

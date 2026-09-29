@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use landscape_common::memtrack::{subsystem_label, CompactSnapshot, SlotCounters};
+use landscape_common::memtrack::{CompactSnapshot, SlotCounters, subsystem_label};
 use landscape_common::self_monitor::memory::{MemMinuteRecord, PROCESS_SUBSYSTEM};
 
 #[derive(Default)]

@@ -11,7 +11,7 @@ use std::path::Path;
 use libbpf_rs::{MapHandle, MapType};
 
 use crate::bpf_error::LdEbpfResult;
-use crate::maps::{ensure_pinned_map, InnerMapSpec, MapCreateSpec};
+use crate::maps::{InnerMapSpec, MapCreateSpec, ensure_pinned_map};
 
 use super::types::{
     FlowDnsMatchKeyV4, FlowDnsMatchKeyV6, FlowDnsMatchValueV4, FlowDnsMatchValueV6,

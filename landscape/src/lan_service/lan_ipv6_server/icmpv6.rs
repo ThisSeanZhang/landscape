@@ -1,10 +1,10 @@
 use bytes::BytesMut;
 use landscape_common::net::MacAddr;
+use landscape_common::net_proto::NetProtoCodec;
 use landscape_common::net_proto::icmpv6::messages::{
     Icmpv6Message, NeighborSolicitation, RouterAdvertisement,
 };
 use landscape_common::net_proto::icmpv6::options::{IcmpV6Option, IcmpV6Options};
-use landscape_common::net_proto::NetProtoCodec;
 use std::net::{Ipv6Addr, SocketAddr};
 use std::sync::Arc;
 use tokio::net::UdpSocket;
@@ -162,10 +162,11 @@ pub fn handle_na(
             // Only use this as a refresh when it is clearly the response to
             // our pending probe; no new MAC can be learned on this path.
             let source_matches_target = matches!(src_addr, SocketAddr::V6(src) if *src.ip() == ip);
-            if msg.flags & NA_SOLICITED_FLAG != 0 && source_matches_target {
-                if let Some(mac) = status.touch_slaac_probe(ip) {
-                    return SlaacActionResult::Refreshed { mac, ip };
-                }
+            if msg.flags & NA_SOLICITED_FLAG != 0
+                && source_matches_target
+                && let Some(mac) = status.touch_slaac_probe(ip)
+            {
+                return SlaacActionResult::Refreshed { mac, ip };
             }
             return if source_matches_target {
                 SlaacActionResult::VerificationCandidate { ip }
@@ -258,10 +259,10 @@ pub fn solicited_node_multicast(target: Ipv6Addr) -> Ipv6Addr {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use landscape_common::net_proto::NetProtoCodec;
     use landscape_common::net_proto::icmpv6::messages::{
         NeighborAdvertisement, NeighborSolicitation,
     };
-    use landscape_common::net_proto::NetProtoCodec;
     use tokio::sync::mpsc;
 
     #[test]

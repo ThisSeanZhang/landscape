@@ -11,8 +11,8 @@ use utoipa_axum::routes;
 
 use landscape_common::lan_service::lan_dhcpv4::DhcpError;
 
-use crate::api::JsonBody;
 use crate::LandscapeApp;
+use crate::api::JsonBody;
 use crate::{api::LandscapeApiResp, error::LandscapeApiResult};
 
 pub fn get_dhcp_v4_service_paths() -> OpenApiRouter<LandscapeApp> {

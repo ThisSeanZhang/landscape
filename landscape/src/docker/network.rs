@@ -5,14 +5,14 @@ use std::{
 };
 
 use bollard::{
+    Docker,
     models::{EndpointResource, Ipam, NetworkInspect},
     query_parameters::{InspectNetworkOptions, ListNetworksOptions},
-    Docker,
 };
 use landscape_common::{
     docker::{
-        network::{LandscapeDockerIpInfo, LandscapeDockerNetwork, LandscapeDockerNetworkContainer},
         DOCKER_NETWORK_BRIDGE_NAME_OPTION_KEY,
+        network::{LandscapeDockerIpInfo, LandscapeDockerNetwork, LandscapeDockerNetworkContainer},
     },
     net::MacAddr,
 };
@@ -25,12 +25,11 @@ pub async fn inspect_all_networks(
 
     let mut result = Vec::with_capacity(networks.len());
     for network in networks {
-        if let Some(id) = &network.id {
-            if let Ok(net) = docker.inspect_network(id, None::<InspectNetworkOptions>).await {
-                if let Some(net) = convert_network(net) {
-                    result.push(net);
-                }
-            }
+        if let Some(id) = &network.id
+            && let Ok(net) = docker.inspect_network(id, None::<InspectNetworkOptions>).await
+            && let Some(net) = convert_network(net)
+        {
+            result.push(net);
         }
     }
 

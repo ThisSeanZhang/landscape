@@ -122,7 +122,7 @@ mod tests {
     use crate::error::LdApiErrorInfo;
 
     use super::{
-        normalize_lan_suffix, LanHostnameConfig, LanHostnameError, LandscapeLanHostnameConfig,
+        LanHostnameConfig, LanHostnameError, LandscapeLanHostnameConfig, normalize_lan_suffix,
     };
 
     #[test]

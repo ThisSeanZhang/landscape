@@ -21,11 +21,11 @@ pub mod tag;
 pub use allocator::CountingAllocator;
 pub use mapping::{subsystem_from_task_label, subsystem_from_thread_name};
 pub use registry::{
-    subsystem_label, CompactSnapshot, MemorySeriesResponse, MemorySnapshot, ModuleMemStat,
-    SlotCounters, SlotPoint, SnapshotMeta, SubsystemSeries, SUBSYSTEMS, UNATTRIBUTED,
+    CompactSnapshot, MemorySeriesResponse, MemorySnapshot, ModuleMemStat, SUBSYSTEMS, SlotCounters,
+    SlotPoint, SnapshotMeta, SubsystemSeries, UNATTRIBUTED, subsystem_label,
 };
-pub use sampler::{start_sampler, start_sampler_with, MemoryHistory};
-pub use tag::{with_tag, TaggedFuture};
+pub use sampler::{MemoryHistory, start_sampler, start_sampler_with};
+pub use tag::{TaggedFuture, with_tag};
 
 use registry::registry;
 use std::sync::atomic::Ordering;

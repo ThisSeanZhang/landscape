@@ -6,8 +6,8 @@ use landscape_common::flow::trace::{
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 
-use crate::api::JsonBody;
 use crate::LandscapeApp;
+use crate::api::JsonBody;
 use crate::{api::LandscapeApiResp, error::LandscapeApiResult};
 
 pub fn get_route_paths() -> OpenApiRouter<LandscapeApp> {

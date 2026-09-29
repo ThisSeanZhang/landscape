@@ -8,20 +8,20 @@ use landscape_common::config_service::static_nat::config::{
 use landscape_common::config_service::static_nat::error::StaticNatError;
 use landscape_common::database::error::DbError;
 use landscape_common::lan_service::lan_ipv6::{
-    checked_allocate_subnet, checked_combine_ipv6_prefix_suffix,
+    LanIPv6ServiceConfigV2, LanPrefixGroupConfig, PrefixParentSource,
 };
 use landscape_common::lan_service::lan_ipv6::{
-    LanIPv6ServiceConfigV2, LanPrefixGroupConfig, PrefixParentSource,
+    checked_allocate_subnet, checked_combine_ipv6_prefix_suffix,
 };
 use sea_orm::DatabaseConnection;
 
 use super::entity::{
     StaticNatMappingConfigActiveModel, StaticNatMappingConfigEntity, StaticNatMappingConfigModel,
 };
+use crate::DBId;
 use crate::enrolled_device::repository::EnrolledDeviceRepository;
 use crate::lan_ipv6_v2::repository::LanIPv6V2ServiceRepository;
 use crate::repository::Repository;
-use crate::DBId;
 
 #[derive(Clone)]
 pub struct StaticNatMappingConfigRepository {
@@ -82,17 +82,17 @@ impl StaticNatMappingConfigRepository {
         config: &StaticNatMappingConfig,
     ) -> Result<(), StaticNatError> {
         let devices = self.load_devices_for_configs(std::slice::from_ref(config)).await?;
-        if let Some(StaticNatTarget::Device { device_id }) = config.lan_target.as_ref() {
-            if !device_id.is_nil() && config.enable {
-                let device = devices
-                    .get(device_id)
-                    .ok_or_else(|| StaticNatError::DeviceNotFound(*device_id))?;
-                if !config.ipv4_l4_protocol.is_empty() && device.ipv4.is_none() {
-                    return Err(StaticNatError::DeviceMissingIpv4(*device_id));
-                }
-                if !config.ipv6_l4_protocol.is_empty() && device.ipv6.is_none() {
-                    return Err(StaticNatError::DeviceMissingIpv6(*device_id));
-                }
+        if let Some(StaticNatTarget::Device { device_id }) = config.lan_target.as_ref()
+            && !device_id.is_nil()
+            && config.enable
+        {
+            let device =
+                devices.get(device_id).ok_or_else(|| StaticNatError::DeviceNotFound(*device_id))?;
+            if !config.ipv4_l4_protocol.is_empty() && device.ipv4.is_none() {
+                return Err(StaticNatError::DeviceMissingIpv4(*device_id));
+            }
+            if !config.ipv6_l4_protocol.is_empty() && device.ipv6.is_none() {
+                return Err(StaticNatError::DeviceMissingIpv6(*device_id));
             }
         }
 

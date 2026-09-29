@@ -6,7 +6,7 @@ use std::{
 
 use uuid::Uuid;
 
-use landscape_common::{args::LAND_HOME_PATH, LANDSCAPE_GEO_RAW_DIR};
+use landscape_common::{LANDSCAPE_GEO_RAW_DIR, args::LAND_HOME_PATH};
 
 pub fn raw_dat_path(kind: &str, id: Uuid) -> PathBuf {
     LAND_HOME_PATH.join(LANDSCAPE_GEO_RAW_DIR).join(format!("{kind}-{id}.raw"))
@@ -120,10 +120,10 @@ pub fn write_bytes_to_tmp(final_path: &Path, bytes: &[u8]) -> std::io::Result<Se
 
 pub fn remove_raw_dat(kind: &str, id: Uuid) {
     let path = raw_dat_path(kind, id);
-    if let Err(e) = fs::remove_file(&path) {
-        if e.kind() != std::io::ErrorKind::NotFound {
-            tracing::warn!("remove raw geo file {:?} failed: {}", path, e);
-        }
+    if let Err(e) = fs::remove_file(&path)
+        && e.kind() != std::io::ErrorKind::NotFound
+    {
+        tracing::warn!("remove raw geo file {:?} failed: {}", path, e);
     }
 }
 

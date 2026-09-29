@@ -6,12 +6,12 @@ use std::{
 use landscape_common::{
     config_service::geo::{GeoConfigKey, GeoFileCacheKey, GeoMatcherSource},
     dns::{
+        FlowDnsDependencies,
         config::DnsUpstreamConfig,
         redirect::{
-            DNSRedirectRule, DynamicDnsRedirectBatch, DEFAULT_STATIC_DNS_REDIRECT_TTL_SECS,
+            DEFAULT_STATIC_DNS_REDIRECT_TTL_SECS, DNSRedirectRule, DynamicDnsRedirectBatch,
         },
         rule::{DNSRuleConfig, DomainConfig, RuleSource},
-        FlowDnsDependencies,
     },
 };
 use tokio::sync::Mutex;
@@ -250,8 +250,8 @@ mod tests {
     use std::{
         collections::{HashMap, HashSet},
         sync::{
-            atomic::{AtomicUsize, Ordering},
             Arc,
+            atomic::{AtomicUsize, Ordering},
         },
     };
 
@@ -533,9 +533,11 @@ mod tests {
             .await;
 
         assert_eq!(resolve_engine.iter().count(), 1);
-        assert!(resolve_engine
-            .find_match(&pd("fallback.example"))
-            .is_some_and(|rule| rule.order() == 20));
+        assert!(
+            resolve_engine
+                .find_match(&pd("fallback.example"))
+                .is_some_and(|rule| rule.order() == 20)
+        );
         assert!(dependencies.geo_keys.contains(&inverse.get_file_cache_key()));
     }
 

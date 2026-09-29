@@ -29,29 +29,29 @@ pub(crate) fn setting_iface_balance(
 
             if name.starts_with("tx-") {
                 let xps_path = entry.path().join("xps_cpus");
-                if xps_path.exists() {
-                    if let Err(e) = std::fs::write(&xps_path, &balance.xps) {
-                        tracing::error!(
-                            "setting xps_cpus for {} at {:?} error: {:?}",
-                            name,
-                            xps_path,
-                            e
-                        );
-                    }
+                if xps_path.exists()
+                    && let Err(e) = std::fs::write(&xps_path, &balance.xps)
+                {
+                    tracing::error!(
+                        "setting xps_cpus for {} at {:?} error: {:?}",
+                        name,
+                        xps_path,
+                        e
+                    );
                 }
             }
 
             if name.starts_with("rx-") {
                 let rps_path = entry.path().join("rps_cpus");
-                if rps_path.exists() {
-                    if let Err(e) = std::fs::write(&rps_path, &balance.rps) {
-                        tracing::error!(
-                            "setting rps_cpus for {} at {:?} error: {:?}",
-                            name,
-                            rps_path,
-                            e
-                        );
-                    }
+                if rps_path.exists()
+                    && let Err(e) = std::fs::write(&rps_path, &balance.rps)
+                {
+                    tracing::error!(
+                        "setting rps_cpus for {} at {:?} error: {:?}",
+                        name,
+                        rps_path,
+                        e
+                    );
                 }
             }
         }

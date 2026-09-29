@@ -2,8 +2,8 @@ use crate::{database::repository::LandscapeDBStore, utils::time::get_f64_timesta
 use serde::{Deserialize, Serialize};
 
 use crate::net::MacAddr;
-use crate::service::manager::ServiceKeyProvider;
 use crate::service::ServiceConfigError;
+use crate::service::manager::ServiceKeyProvider;
 
 pub const DEFAULT_EXPECTED_PD_LEN: u8 = 60;
 
@@ -83,7 +83,7 @@ impl crate::config_service::iface::ZoneAwareConfig for IPV6PDServiceConfig {
 mod tests {
     use serde_json::json;
 
-    use super::{IPV6PDConfig, DEFAULT_EXPECTED_PD_LEN};
+    use super::{DEFAULT_EXPECTED_PD_LEN, IPV6PDConfig};
 
     fn config_with_expected_len(expected_pd_len: u8) -> IPV6PDConfig {
         serde_json::from_value(json!({

@@ -7,8 +7,8 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-use super::common::{candidate_zones, fqdn, record_name, unquote_txt_value, RecordStore};
 use super::DnsChallengeSolver;
+use super::common::{RecordStore, candidate_zones, fqdn, record_name, unquote_txt_value};
 
 const GOOGLE_DNS_API_BASE: &str = "https://dns.googleapis.com/dns/v1";
 const GOOGLE_DNS_SCOPE: &str = "https://www.googleapis.com/auth/ndev.clouddns.readwrite";
@@ -177,10 +177,10 @@ impl GoogleSolver {
 
     async fn access_token(&self) -> Result<String, CertError> {
         let now = Utc::now().timestamp();
-        if let Some(token) = self.token_cache.lock().unwrap().clone() {
-            if token.expires_at - 60 > now {
-                return Ok(token.access_token);
-            }
+        if let Some(token) = self.token_cache.lock().unwrap().clone()
+            && token.expires_at - 60 > now
+        {
+            return Ok(token.access_token);
         }
 
         let iat = now;

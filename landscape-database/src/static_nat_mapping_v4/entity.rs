@@ -1,7 +1,7 @@
 use landscape_common::config_service::static_nat::config4::{
     StaticNatMappingV4Config, StaticNatV4Target,
 };
-use sea_orm::{entity::prelude::*, ActiveValue::Set};
+use sea_orm::{ActiveValue::Set, entity::prelude::*};
 use serde::{Deserialize, Serialize};
 
 use crate::DBId;

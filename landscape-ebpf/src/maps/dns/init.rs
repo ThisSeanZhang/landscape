@@ -9,7 +9,7 @@ use std::path::Path;
 use libbpf_rs::{MapHandle, MapType};
 
 use crate::bpf_error::LdEbpfResult;
-use crate::maps::{ensure_pinned_map, MapCreateSpec};
+use crate::maps::{MapCreateSpec, ensure_pinned_map};
 
 /// Pin 文件名 = C map 符号名（见 `land_dns_dispatcher.h`）。
 pub(crate) const DNS_FLOW_SOCKS_PIN: &str = "dns_flow_socks";

@@ -1,7 +1,7 @@
 use std::process;
 
 use tokio::sync::mpsc;
-use tokio::time::{sleep, Duration, Instant};
+use tokio::time::{Duration, Instant, sleep};
 
 use landscape_common::net::MacAddr;
 use landscape_common::net_proto::ppp::{PPPOption, PointToPoint};
@@ -12,7 +12,7 @@ use super::PPPoEClientConfig;
 
 use super::error::PppoeError;
 use super::{
-    PppoeResult, DEFAULT_TIMEOUT, ETH_P_PPOED, ETH_P_PPOES, MAX_DISCOVERY_RETRIES, MAX_LCP_RETRIES,
+    DEFAULT_TIMEOUT, ETH_P_PPOED, ETH_P_PPOES, MAX_DISCOVERY_RETRIES, MAX_LCP_RETRIES, PppoeResult,
 };
 
 #[derive(Clone)]
@@ -84,7 +84,7 @@ pub(crate) async fn run(
                             state = next;
                             discovery_retries = 0;
                             // Send PADR immediately on transition
-                            if let Phase1State::ReuqestSession { ref server_mac, ref ac_cookie } = &state {
+                            if let Phase1State::ReuqestSession { server_mac, ac_cookie } = &state {
                                 send_padr(config, host_uniq, server_mac, ac_cookie.clone(), tx).await?;
                             }
                             timeout_sleep.as_mut().reset(Instant::now() + Duration::from_secs(DEFAULT_TIMEOUT));
@@ -190,18 +190,18 @@ fn handle_discovery(
         return Ok(None);
     }
 
-    if let Some(ref allowed) = config.ac_name {
-        if !allowed.is_empty() {
-            let received = ac_name.as_ref().map(|n| String::from_utf8_lossy(n).into_owned());
-            if received.as_deref() != Some(allowed.as_str()) {
-                tracing::info!(
-                    iface = %config.iface_name,
-                    expected_ac = %allowed,
-                    ?received,
-                    "ignoring PADO from non-matching AC"
-                );
-                return Ok(None);
-            }
+    if let Some(ref allowed) = config.ac_name
+        && !allowed.is_empty()
+    {
+        let received = ac_name.as_ref().map(|n| String::from_utf8_lossy(n).into_owned());
+        if received.as_deref() != Some(allowed.as_str()) {
+            tracing::info!(
+                iface = %config.iface_name,
+                expected_ac = %allowed,
+                ?received,
+                "ignoring PADO from non-matching AC"
+            );
+            return Ok(None);
         }
     }
 
@@ -275,10 +275,10 @@ async fn handle_lcp_packet(
     generated_magic: u32,
     tx: &mut mpsc::Sender<Vec<u8>>,
 ) -> Result<Option<LcpPhaseResult>, PppoeError> {
-    let Phase1State::LcpNegotiating {
+    let &mut Phase1State::LcpNegotiating {
         ref server_mac,
-        session_id,
-        our_mru,
+        ref mut session_id,
+        ref mut our_mru,
         ref mut our_magic,
         ref mut cfg_req_id,
         ref mut our_config_acked,

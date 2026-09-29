@@ -1,7 +1,7 @@
 use super::cmd::enter_netns;
 use super::env::ClientIfaceInfo;
 use landscape::sys_service::route::IpRouteService;
-use landscape::wan_service::pppoe_client::{run, PPPoEClientConfig};
+use landscape::wan_service::pppoe_client::{PPPoEClientConfig, run};
 use landscape_common::event::route::RouteEvent;
 use landscape_common::service::{ServiceStatus, WatchService};
 use landscape_database::provider::LandscapeDBServiceProvider;

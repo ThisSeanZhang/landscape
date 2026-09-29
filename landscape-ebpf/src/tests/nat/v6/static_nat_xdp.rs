@@ -7,8 +7,8 @@ use std::{
 use etherparse::{PacketBuilder, PacketHeaders};
 use landscape_common::net::MacAddr;
 use libbpf_rs::{
-    skel::{OpenSkel, SkelBuilder as _},
     ProgramInput,
+    skel::{OpenSkel, SkelBuilder as _},
 };
 
 use crate::{
@@ -72,11 +72,7 @@ fn packet_destination(packet: &[u8]) -> Ipv6Addr {
 }
 
 fn packet_data(output: &[u8]) -> &[u8] {
-    if output.get(12..14) == Some(&[0x86, 0xdd]) {
-        output
-    } else {
-        &output[8..]
-    }
+    if output.get(12..14) == Some(&[0x86, 0xdd]) { output } else { &output[8..] }
 }
 
 fn assert_xdp_round_trip(

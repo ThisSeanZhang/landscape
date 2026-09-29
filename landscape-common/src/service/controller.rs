@@ -8,8 +8,8 @@ use crate::database::store::{Change, ConfigStore};
 use crate::database::{LandscapeFlowStore, LandscapeStore};
 
 use super::{
-    manager::{ServiceKeyProvider, ServiceManager, ServiceStarterTrait},
     WatchService,
+    manager::{ServiceKeyProvider, ServiceManager, ServiceStarterTrait},
 };
 
 #[async_trait::async_trait]
@@ -592,17 +592,21 @@ mod service_controller_tests {
         // Fill the service channel: the first update is consumed by the
         // (blocked) supervisor, the second one queues up, the third must be
         // rejected with a full channel.
-        assert!(controller
-            .service
-            .update_service(MockConfig { id: "wan0".to_string(), value: 1, update_at: 0.0 })
-            .await
-            .is_ok());
+        assert!(
+            controller
+                .service
+                .update_service(MockConfig { id: "wan0".to_string(), value: 1, update_at: 0.0 })
+                .await
+                .is_ok()
+        );
         wait_for(|| !starter.started.lock().unwrap().is_empty()).await;
-        assert!(controller
-            .service
-            .update_service(MockConfig { id: "wan0".to_string(), value: 2, update_at: 0.0 })
-            .await
-            .is_ok());
+        assert!(
+            controller
+                .service
+                .update_service(MockConfig { id: "wan0".to_string(), value: 2, update_at: 0.0 })
+                .await
+                .is_ok()
+        );
 
         let result = controller
             .handle_service_config(MockConfig { id: "wan0".to_string(), value: 3, update_at: 0.0 })

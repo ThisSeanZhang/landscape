@@ -120,11 +120,11 @@ impl DhcpV4AssignStatus {
                     status.allocated_host.remove(&old_ip);
                     status.ip_owner.remove(&old_ip);
                 }
-                if let Some(old_mac) = status.ip_owner.insert(ipv4, device.mac) {
-                    if old_mac != device.mac {
-                        status.static_bindings.remove(&old_mac);
-                        status.offered_ip.remove(&old_mac);
-                    }
+                if let Some(old_mac) = status.ip_owner.insert(ipv4, device.mac)
+                    && old_mac != device.mac
+                {
+                    status.static_bindings.remove(&old_mac);
+                    status.offered_ip.remove(&old_mac);
                 }
                 status.allocated_host.insert(ipv4, IpAllocSource::Static(device.mac));
                 status.offered_ip.insert(
@@ -169,21 +169,21 @@ impl DhcpV4AssignStatus {
 
         if let Some(old_entry) = self.static_bindings.remove(&mac) {
             self.ip_owner.remove(&old_entry.ipv4);
-            if let Some(IpAllocSource::Static(m)) = self.allocated_host.get(&old_entry.ipv4) {
-                if *m == mac {
-                    self.allocated_host.remove(&old_entry.ipv4);
-                }
+            if let Some(IpAllocSource::Static(m)) = self.allocated_host.get(&old_entry.ipv4)
+                && *m == mac
+            {
+                self.allocated_host.remove(&old_entry.ipv4);
             }
             self.offered_ip.remove(&mac);
             self.per_mac_options.remove(&mac);
         }
 
-        if let Some(old_mac) = self.ip_owner.insert(ip, mac) {
-            if old_mac != mac {
-                self.static_bindings.remove(&old_mac);
-                self.offered_ip.remove(&old_mac);
-                self.per_mac_options.remove(&old_mac);
-            }
+        if let Some(old_mac) = self.ip_owner.insert(ip, mac)
+            && old_mac != mac
+        {
+            self.static_bindings.remove(&old_mac);
+            self.offered_ip.remove(&old_mac);
+            self.per_mac_options.remove(&old_mac);
         }
 
         self.static_bindings.insert(mac, entry.clone());
@@ -227,23 +227,19 @@ impl DhcpV4AssignStatus {
         self.offered_ip.remove(mac);
         self.per_mac_options.remove(mac);
 
-        if let Some(IpAllocSource::Static(m)) = self.allocated_host.get(&ip) {
-            if *m == *mac {
-                let has_dynamic = self.offered_ip.values().any(|c| c.ip == ip && !c.is_static);
-                if !has_dynamic {
-                    self.allocated_host.remove(&ip);
-                }
+        if let Some(IpAllocSource::Static(m)) = self.allocated_host.get(&ip)
+            && *m == *mac
+        {
+            let has_dynamic = self.offered_ip.values().any(|c| c.ip == ip && !c.is_static);
+            if !has_dynamic {
+                self.allocated_host.remove(&ip);
             }
         }
     }
 
     fn find_dynamic_owner_of_ip(&self, ip: Ipv4Addr) -> Option<MacAddr> {
         self.offered_ip.iter().find_map(|(mac, cache)| {
-            if cache.ip == ip && !cache.is_static {
-                Some(*mac)
-            } else {
-                None
-            }
+            if cache.ip == ip && !cache.is_static { Some(*mac) } else { None }
         })
     }
 
@@ -251,10 +247,10 @@ impl DhcpV4AssignStatus {
         if let Some(entry) = self.static_bindings.get(mac_addr) {
             let ip = entry.ipv4;
             let hostname = hostname.or_else(|| entry.hostname.clone());
-            if let Some(old) = self.offered_ip.get(mac_addr) {
-                if old.ip != ip {
-                    self.allocated_host.remove(&old.ip);
-                }
+            if let Some(old) = self.offered_ip.get(mac_addr)
+                && old.ip != ip
+            {
+                self.allocated_host.remove(&old.ip);
             }
             self.offered_ip.insert(
                 *mac_addr,
@@ -400,28 +396,28 @@ impl DhcpV4AssignStatus {
     }
 
     pub fn conflicts_with_static_binding(&self, mac_addr: &MacAddr, ip_addr: Ipv4Addr) -> bool {
-        if let Some(entry) = self.static_bindings.get(mac_addr) {
-            if entry.ipv4 != ip_addr {
-                tracing::warn!(
-                    "client {:?} requested {:?}, but static binding requires {:?}",
-                    mac_addr,
-                    ip_addr,
-                    entry.ipv4
-                );
-                return true;
-            }
+        if let Some(entry) = self.static_bindings.get(mac_addr)
+            && entry.ipv4 != ip_addr
+        {
+            tracing::warn!(
+                "client {:?} requested {:?}, but static binding requires {:?}",
+                mac_addr,
+                ip_addr,
+                entry.ipv4
+            );
+            return true;
         }
 
-        if let Some(static_mac) = self.ip_owner.get(&ip_addr) {
-            if static_mac != mac_addr {
-                tracing::warn!(
-                    "client {:?} requested static IP {:?} owned by {:?}",
-                    mac_addr,
-                    ip_addr,
-                    static_mac
-                );
-                return true;
-            }
+        if let Some(static_mac) = self.ip_owner.get(&ip_addr)
+            && static_mac != mac_addr
+        {
+            tracing::warn!(
+                "client {:?} requested static IP {:?} owned by {:?}",
+                mac_addr,
+                ip_addr,
+                static_mac
+            );
+            return true;
         }
 
         false

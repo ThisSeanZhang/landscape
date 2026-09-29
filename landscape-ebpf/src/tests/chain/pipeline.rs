@@ -3,12 +3,12 @@ use std::process::Command;
 use std::time::Duration;
 
 use crate::tests::net_utils::{
-    build_tcp6_pkt, build_tcp_pkt, dummy_recv_count, dummy_reset, route_slot, route_slot_v6,
-    send_raw_packet, settle, wait_for, NetNsGuard, VethPair,
+    NetNsGuard, VethPair, build_tcp_pkt, build_tcp6_pkt, dummy_recv_count, dummy_reset, route_slot,
+    route_slot_v6, send_raw_packet, settle, wait_for,
 };
 use libbpf_rs::{
-    skel::{OpenSkel, SkelBuilder as _},
     MapCore, MapFlags,
+    skel::{OpenSkel, SkelBuilder as _},
 };
 
 use crate::tests::test_xdp_dummy::TestXdpDummySkelBuilder;

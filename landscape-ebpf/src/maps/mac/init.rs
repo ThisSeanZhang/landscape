@@ -11,7 +11,7 @@ use std::path::Path;
 use libbpf_rs::{MapHandle, MapType};
 
 use crate::bpf_error::LdEbpfResult;
-use crate::maps::{ensure_pinned_map, MapCreateSpec};
+use crate::maps::{MapCreateSpec, ensure_pinned_map};
 
 use super::types::{MacKeyV4, MacKeyV6, MacValueV4, MacValueV6};
 

@@ -1,7 +1,7 @@
 use crate::repository::{FlowFilterExpr, UpdateActiveModel};
 use landscape_common::dns::redirect::{DNSRedirectRule, DnsRedirectAnswerMode};
 use migration::SimpleExpr;
-use sea_orm::{entity::prelude::*, ActiveValue::Set};
+use sea_orm::{ActiveValue::Set, entity::prelude::*};
 use serde::{Deserialize, Serialize};
 use serde_json;
 

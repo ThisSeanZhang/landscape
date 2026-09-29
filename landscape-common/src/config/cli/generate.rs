@@ -1,7 +1,8 @@
 use std::net::Ipv4Addr;
 
 use crate::{
-    config::{settings::LandscapeConfig, InitConfig},
+    VERSION,
+    config::{InitConfig, settings::LandscapeConfig},
     config_service::{
         iface::{CreateDevType, IfaceZoneType, NetworkIfaceConfig, WifiMode},
         static_nat::{
@@ -22,12 +23,11 @@ use crate::{
         pppd::{PPPDConfig, PPPDServiceConfig},
         wan_route::RouteWanServiceConfig,
     },
-    VERSION,
 };
 
 use super::{
-    ConfigCliArgs, ConfigCliError, WanMode, BASE_ENABLED_SERVICES, DEFAULT_MSS_CLAMP_SIZE,
-    KNOWN_SERVICES, LAN_SERVICES, WAN_SERVICES,
+    BASE_ENABLED_SERVICES, ConfigCliArgs, ConfigCliError, DEFAULT_MSS_CLAMP_SIZE, KNOWN_SERVICES,
+    LAN_SERVICES, WAN_SERVICES, WanMode,
 };
 
 /// TCP protocol number, the only L4 protocol emitted by `--static-nat`.
@@ -254,10 +254,10 @@ impl ConfigCliArgs {
             init.static_nat_mappings_v4.push(mapping);
         }
 
-        if let Some(lan_iface) = &lan_iface {
-            if !self.no_lan_dhcp {
-                init.dhcpv4_services.push(self.build_dhcp_config(lan_iface, now)?);
-            }
+        if let Some(lan_iface) = &lan_iface
+            && !self.no_lan_dhcp
+        {
+            init.dhcpv4_services.push(self.build_dhcp_config(lan_iface, now)?);
         }
 
         if let Some(iface) = &wan_service_iface {
@@ -289,10 +289,10 @@ impl ConfigCliArgs {
                 }
             }
         }
-        if let Some(lan_iface) = lan_iface.as_deref() {
-            if enabled.contains(&"route-lan") {
-                push_route_lan(&mut init, lan_iface, now);
-            }
+        if let Some(lan_iface) = lan_iface.as_deref()
+            && enabled.contains(&"route-lan")
+        {
+            push_route_lan(&mut init, lan_iface, now);
         }
 
         Ok(init)

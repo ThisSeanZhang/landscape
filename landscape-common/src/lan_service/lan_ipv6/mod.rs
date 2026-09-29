@@ -10,18 +10,17 @@ pub use config::{
 };
 
 pub use dhcpv6_config::{
-    DHCPv6IANAConfig, DHCPv6IAPDConfig, DHCPv6ServerConfig, DEFAULT_IA_NA_POOL_SPAN,
+    DEFAULT_IA_NA_POOL_SPAN, DHCPv6IANAConfig, DHCPv6IAPDConfig, DHCPv6ServerConfig,
 };
 
 pub use dhcpv6_status::{DHCPv6AddressItem, DHCPv6OfferInfo, DHCPv6PrefixItem};
 pub use error::LanIPv6Error;
 
 pub use prefix_group::{
-    validate_cross_interface_v2, validate_cross_interface_v2_with_pd_context,
-    validate_global_prefix_conflicts, validate_prefix_groups,
-    validate_prefix_groups_with_pd_context, ExpandedPrefixEntry, LanPrefixGroupConfig,
-    NaPrefixConfig, PdPrefixContext, PdPrefixContextMap, PdPrefixRangeConfig, PrefixParentSource,
-    RaPrefixConfig,
+    ExpandedPrefixEntry, LanPrefixGroupConfig, NaPrefixConfig, PdPrefixContext, PdPrefixContextMap,
+    PdPrefixRangeConfig, PrefixParentSource, RaPrefixConfig, validate_cross_interface_v2,
+    validate_cross_interface_v2_with_pd_context, validate_global_prefix_conflicts,
+    validate_prefix_groups, validate_prefix_groups_with_pd_context,
 };
 
 pub use ipv6_na::{IPv6NAInfo, IPv6NAInfoItem};
@@ -129,8 +128,8 @@ pub fn extract_ipv6_suffix(ip: Ipv6Addr, prefix_len: u8) -> Ipv6Addr {
 #[cfg(test)]
 mod tests {
     use super::{
-        checked_allocate_subnet, checked_combine_ipv6_prefix_suffix, checked_extract_ipv6_suffix,
-        ipv6_iid, is_lan_iid, is_wan_iid, mark_wan_iid, WAN_IID_MARKER,
+        WAN_IID_MARKER, checked_allocate_subnet, checked_combine_ipv6_prefix_suffix,
+        checked_extract_ipv6_suffix, ipv6_iid, is_lan_iid, is_wan_iid, mark_wan_iid,
     };
     use std::net::Ipv6Addr;
 

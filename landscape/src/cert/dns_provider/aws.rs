@@ -7,10 +7,10 @@ use reqwest::{Client, Method};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
-use super::common::{
-    candidate_zones, fqdn, quote_txt_value, record_name, unquote_txt_value, RecordStore,
-};
 use super::DnsChallengeSolver;
+use super::common::{
+    RecordStore, candidate_zones, fqdn, quote_txt_value, record_name, unquote_txt_value,
+};
 
 const AWS_ROUTE53_BASE: &str = "https://route53.amazonaws.com";
 const AWS_ROUTE53_CHINA_BASE: &str = "https://route53.amazonaws.com.cn";

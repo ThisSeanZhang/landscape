@@ -14,7 +14,7 @@ use utoipa::IntoParams;
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 
-use crate::{api::LandscapeApiResp, error::LandscapeApiResult, LandscapeApp};
+use crate::{LandscapeApp, api::LandscapeApiResp, error::LandscapeApiResult};
 
 pub fn get_memory_paths() -> OpenApiRouter<LandscapeApp> {
     OpenApiRouter::new()

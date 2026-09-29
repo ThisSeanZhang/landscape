@@ -12,8 +12,8 @@ mod tests {
         sys_service::route_service::RouteTargetInfo,
     };
     use libbpf_rs::{
-        skel::{OpenSkel, SkelBuilder as _},
         MapCore, MapFlags, ProgramInput,
+        skel::{OpenSkel, SkelBuilder as _},
     };
     use zerocopy::IntoBytes;
 
@@ -24,15 +24,14 @@ mod tests {
             route::replace_wan_route_slots_v6_with_map,
         },
         tests::{
-            isolated_pin_root,
+            TestSkb, isolated_pin_root,
             route::{
                 map_helper::{
-                    as_bytes, create_route4_cache_inner_map, create_route6_cache_inner_map,
-                    lookup_rt4_cache_value, lookup_rt6_cache_value, LAN_CACHE,
+                    LAN_CACHE, as_bytes, create_route4_cache_inner_map,
+                    create_route6_cache_inner_map, lookup_rt4_cache_value, lookup_rt6_cache_value,
                 },
                 packet_builder::{simple_ipv4_tcp, simple_ipv6_ns_dad, simple_ipv6_tcp_syn},
             },
-            TestSkb,
         },
     };
 
@@ -231,8 +230,8 @@ mod tests {
         })
     }
 
-    fn load_tc_lan_dao_skel(
-    ) -> (tc_lan_dao::TcLanDaoSkel<'static>, TestSkb, crate::landscape::OwnedOpenObject) {
+    fn load_tc_lan_dao_skel()
+    -> (tc_lan_dao::TcLanDaoSkel<'static>, TestSkb, crate::landscape::OwnedOpenObject) {
         let mut builder = TcLanDaoSkelBuilder::default();
         let pin_root = isolated_pin_root("tc-lan-dao-direct");
         builder.object_builder_mut().pin_root_path(&pin_root).unwrap();

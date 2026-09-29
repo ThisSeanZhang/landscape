@@ -8,22 +8,21 @@ use std::{
 
 use landscape_common::net::MacAddr;
 use libbpf_rs::{
-    skel::{OpenSkel, SkelBuilder as _},
     MapCore, MapFlags, ProgramInput,
+    skel::{OpenSkel, SkelBuilder as _},
 };
 use zerocopy::IntoBytes;
 
 use crate::tests::{
-    isolated_pin_root,
+    TestSkb, isolated_pin_root,
     route::{
         map_helper::{
-            as_bytes, create_route6_cache_inner_map, insert_ip_mac_v6, insert_route6_lan_entry,
-            lookup_rt6_cache_value, put_rt6_cache_value, LAN_CACHE, LAN_ROUTE_TYPE,
-            ROUTE_TYPE_NEXTHOP, TARGET_IFINDEX, WAN_CACHE, WAN_IFINDEX, WAN_ROUTE_TYPE,
+            LAN_CACHE, LAN_ROUTE_TYPE, ROUTE_TYPE_NEXTHOP, TARGET_IFINDEX, WAN_CACHE, WAN_IFINDEX,
+            WAN_ROUTE_TYPE, as_bytes, create_route6_cache_inner_map, insert_ip_mac_v6,
+            insert_route6_lan_entry, lookup_rt6_cache_value, put_rt6_cache_value,
         },
         packet_builder::{simple_ipv4_tcp, simple_ipv6_tcp_syn},
     },
-    TestSkb,
 };
 
 pub(crate) mod tc_wan_ingress_exit {
@@ -278,13 +277,10 @@ fn wan6_ingress_lan_entry_same_iface_hands_to_stack() {
 
     assert_eq!(ret, RET_UNSPEC, "entry pointing at the incoming device itself");
     assert_eq!(out, reply_pkt());
-    assert!(lookup_rt6_cache_value(
-        &skel.maps.rt6_cache_map,
-        WAN_CACHE,
-        lan_client(),
-        public_src()
-    )
-    .is_none());
+    assert!(
+        lookup_rt6_cache_value(&skel.maps.rt6_cache_map, WAN_CACHE, lan_client(), public_src())
+            .is_none()
+    );
 }
 
 #[test]

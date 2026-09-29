@@ -14,12 +14,12 @@ use libbpf_rs::{MapCore, MapFlags};
 use zerocopy::{FromBytes, IntoBytes};
 
 use crate::{
+    LANDSCAPE_IPV4_TYPE, LANDSCAPE_IPV6_TYPE,
     maps::{
         FlowDnsMatchKeyV4, FlowDnsMatchKeyV6, FlowDnsMatchValueV4, FlowDnsMatchValueV6,
         FlowIpTrieKeyV4, FlowIpTrieKeyV6, FlowIpTrieValueV4, FlowIpTrieValueV6, FlowMatchKey,
         LandscapeMapPath, Route4CacheKey, Route4CacheValue, Route6CacheKey, Route6CacheValue,
     },
-    LANDSCAPE_IPV4_TYPE, LANDSCAPE_IPV6_TYPE,
 };
 const FLOW_ENTRY_MODE_MAC: u8 = 0;
 const FLOW_ENTRY_MODE_IP: u8 = 1;

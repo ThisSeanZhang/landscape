@@ -13,10 +13,10 @@
 use std::mem::size_of;
 use std::path::Path;
 
-use libbpf_rs::{libbpf_sys, MapHandle, MapType};
+use libbpf_rs::{MapHandle, MapType, libbpf_sys};
 
 use crate::bpf_error::LdEbpfResult;
-use crate::maps::{recreate_pinned_map, InnerMapSpec, MapCreateSpec};
+use crate::maps::{InnerMapSpec, MapCreateSpec, recreate_pinned_map};
 
 use super::cache;
 use super::types::{

@@ -8,10 +8,10 @@
 use std::mem::size_of;
 use std::path::Path;
 
-use libbpf_rs::{libbpf_sys, MapHandle, MapType};
+use libbpf_rs::{MapHandle, MapType, libbpf_sys};
 
 use crate::bpf_error::LdEbpfResult;
-use crate::maps::{ensure_pinned_map, InnerMapSpec, MapCreateSpec};
+use crate::maps::{InnerMapSpec, MapCreateSpec, ensure_pinned_map};
 
 use super::types::{FlowIpTrieKeyV4, FlowIpTrieKeyV6, FlowIpTrieValueV4, FlowIpTrieValueV6};
 

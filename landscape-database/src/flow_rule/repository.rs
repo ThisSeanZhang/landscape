@@ -10,10 +10,10 @@ use landscape_common::flow::{
 use migration::Expr;
 use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter};
 
+use crate::DBId;
 use crate::enrolled_device::repository::EnrolledDeviceRepository;
 use crate::flow_rule::entity::Column;
 use crate::repository::Repository;
-use crate::DBId;
 
 use super::entity::{FlowConfigActiveModel, FlowConfigEntity, FlowConfigModel};
 
@@ -153,14 +153,12 @@ impl FlowConfigRepository {
     ) -> Result<Option<FlowConfig>, DbError> {
         let configs = self.list_all().await?;
         let mut devices = self.load_devices_for_configs(&configs).await?;
-        if let FlowEntryMatchMode::Device { device_id } = mode {
-            if !devices.contains_key(device_id) {
-                if let Some(device) =
-                    EnrolledDeviceRepository::new(self.db.clone()).find_by_id(*device_id).await?
-                {
-                    devices.insert(device.id, device);
-                }
-            }
+        if let FlowEntryMatchMode::Device { device_id } = mode
+            && !devices.contains_key(device_id)
+            && let Some(device) =
+                EnrolledDeviceRepository::new(self.db.clone()).find_by_id(*device_id).await?
+        {
+            devices.insert(device.id, device);
         }
         let Some(target_mode) = resolve_flow_entry_mode(mode.clone(), &devices) else {
             return Ok(None);
@@ -172,10 +170,10 @@ impl FlowConfigRepository {
             }
 
             for rule in &config.flow_match_rules {
-                if let Some(mode) = resolve_flow_entry_mode(rule.mode.clone(), &devices) {
-                    if mode == target_mode {
-                        return Ok(Some(config));
-                    }
+                if let Some(mode) = resolve_flow_entry_mode(rule.mode.clone(), &devices)
+                    && mode == target_mode
+                {
+                    return Ok(Some(config));
                 }
             }
         }
@@ -205,10 +203,10 @@ impl FlowConfigRepository {
                     continue;
                 }
                 for rule in &config.flow_match_rules {
-                    if let Some(rule_mode) = resolve_flow_entry_mode(rule.mode.clone(), &devices) {
-                        if rule_mode == resolved {
-                            return Ok(Some((mode.clone(), config.clone())));
-                        }
+                    if let Some(rule_mode) = resolve_flow_entry_mode(rule.mode.clone(), &devices)
+                        && rule_mode == resolved
+                    {
+                        return Ok(Some((mode.clone(), config.clone())));
                     }
                 }
             }
@@ -284,10 +282,10 @@ fn find_missing_device_id<'a>(
     devices: &DevicesById,
 ) -> Option<DBId> {
     for mode in modes {
-        if let FlowEntryMatchMode::Device { device_id } = mode {
-            if !devices.contains_key(device_id) {
-                return Some(*device_id);
-            }
+        if let FlowEntryMatchMode::Device { device_id } = mode
+            && !devices.contains_key(device_id)
+        {
+            return Some(*device_id);
         }
     }
 
@@ -355,7 +353,7 @@ pub fn find_duplicate_resolved_modes(
 
 #[cfg(test)]
 mod tests {
-    use super::{find_duplicate_resolved_modes, find_missing_device_id, DevicesById};
+    use super::{DevicesById, find_duplicate_resolved_modes, find_missing_device_id};
     use landscape_common::config_service::enrolled_device::EnrolledDevice;
     use landscape_common::flow::{FlowEntryMatchMode, ResolvedFlowEntryMatchMode};
     use landscape_common::net::MacAddr;

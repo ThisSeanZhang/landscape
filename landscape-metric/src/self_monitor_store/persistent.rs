@@ -11,8 +11,8 @@ use landscape_common::self_monitor::memory::{
 };
 use landscape_common::utils::time::now_ms;
 use landscape_common::{LANDSCAPE_METRIC_DB_VERSION, LANDSCAPE_METRIC_DIR_NAME};
-use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous};
 use sqlx::SqlitePool;
+use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 

@@ -3,8 +3,8 @@ use std::{
     io::{self, Write},
 };
 
-use landscape_common::{config::StoreRuntimeConfig, database::error::DbError, VERSION};
-use migration::{sea_orm::ConnectOptions, Migrator, MigratorTrait};
+use landscape_common::{VERSION, config::StoreRuntimeConfig, database::error::DbError};
+use migration::{Migrator, MigratorTrait, sea_orm::ConnectOptions};
 use sea_orm::{Database, DatabaseConnection};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -138,13 +138,13 @@ pub fn validate_release_boundaries(
         }
 
         let index = migration_index(all_migrations, boundary.terminal_migration)?;
-        if let Some(previous_index) = previous_index {
-            if index <= previous_index {
-                return Err(DbError::Internal(format!(
-                    "Rollback boundaries are not ordered by migration sequence: '{}' is out of order.",
-                    boundary.version
-                )));
-            }
+        if let Some(previous_index) = previous_index
+            && index <= previous_index
+        {
+            return Err(DbError::Internal(format!(
+                "Rollback boundaries are not ordered by migration sequence: '{}' is out of order.",
+                boundary.version
+            )));
         }
         previous_index = Some(index);
     }
@@ -327,23 +327,20 @@ fn migration_index(all_migrations: &[String], migration_name: &str) -> Result<us
 fn print_targets(current_state: &CurrentSchemaState, targets: &[RollbackTarget]) {
     println!("Current release: {}", current_state.release_label);
     println!("Current DB head: {}", current_state.head);
-    if let Some(boundary) = current_state.release_boundary {
-        if !current_state.pending_since_release.is_empty() {
-            let step_label = if current_state.pending_since_release.len() == 1 {
-                "migration"
-            } else {
-                "migrations"
-            };
-            println!(
-                "Current DB is ahead of the {} release boundary ({}) by {} {}:",
-                boundary.version,
-                boundary.terminal_migration,
-                current_state.pending_since_release.len(),
-                step_label
-            );
-            for migration in &current_state.pending_since_release {
-                println!("  - {}", migration);
-            }
+    if let Some(boundary) = current_state.release_boundary
+        && !current_state.pending_since_release.is_empty()
+    {
+        let step_label =
+            if current_state.pending_since_release.len() == 1 { "migration" } else { "migrations" };
+        println!(
+            "Current DB is ahead of the {} release boundary ({}) by {} {}:",
+            boundary.version,
+            boundary.terminal_migration,
+            current_state.pending_since_release.len(),
+            step_label
+        );
+        for migration in &current_state.pending_since_release {
+            println!("  - {}", migration);
         }
     }
     println!();

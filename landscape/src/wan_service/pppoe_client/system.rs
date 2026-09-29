@@ -1,7 +1,7 @@
 use std::net::IpAddr;
 
 use landscape_common::ebpf::DataplaneGuard;
-use landscape_common::global_const::default_router::{RouteInfo, RouteType, LD_ALL_ROUTERS};
+use landscape_common::global_const::default_router::{LD_ALL_ROUTERS, RouteInfo, RouteType};
 use landscape_common::net::MacAddr;
 use landscape_common::sys_service::route_service::{LanRouteInfo, LanRouteMode, RouteTargetInfo};
 use landscape_common::wan_service::pppoe::{PppoeDataplane, PppoeEgressTmpl};
@@ -9,10 +9,10 @@ use landscape_common::wan_service::pppoe::{PppoeDataplane, PppoeEgressTmpl};
 use crate::get_existing_linklocal;
 use crate::sys_service::route::IpRouteService;
 
+use super::PPPoEClientConfig;
 use super::error::PppoeError;
 use super::lcp::LcpPhaseResult;
 use super::negotiation::NegotiationResult;
-use super::PPPoEClientConfig;
 
 pub(crate) struct SessionHandle {
     _session_guard: Box<dyn DataplaneGuard>,
@@ -54,19 +54,13 @@ impl SessionHandle {
             .args(["neigh", "del", &format!("{}", server_linklocal), "dev", &self.iface_name])
             .output();
 
-        if let Some(ref iface_id) = self.ipv6cp_server_id {
-            if iface_id.len() == 8 {
-                let iface_linklocal = iface_id_linklocal(iface_id);
-                let _ = std::process::Command::new("ip")
-                    .args([
-                        "neigh",
-                        "del",
-                        &format!("{}", iface_linklocal),
-                        "dev",
-                        &self.iface_name,
-                    ])
-                    .output();
-            }
+        if let Some(ref iface_id) = self.ipv6cp_server_id
+            && iface_id.len() == 8
+        {
+            let iface_linklocal = iface_id_linklocal(iface_id);
+            let _ = std::process::Command::new("ip")
+                .args(["neigh", "del", &format!("{}", iface_linklocal), "dev", &self.iface_name])
+                .output();
         }
 
         if let Some(ref linklocal) = self.ipv6cp_client_linklocal {
@@ -250,34 +244,34 @@ pub(crate) async fn create_session(
         }
     }
 
-    if let Some(ref server_iface_id) = nego.ipv6cp_server_id {
-        if server_iface_id.len() == 8 {
-            let iface_linklocal = iface_id_linklocal(server_iface_id);
-            let v6_result = std::process::Command::new("ip")
-                .args([
-                    "neigh",
-                    "replace",
-                    &format!("{}", iface_linklocal),
-                    "lladdr",
-                    &server_mac_str,
-                    "dev",
+    if let Some(ref server_iface_id) = nego.ipv6cp_server_id
+        && server_iface_id.len() == 8
+    {
+        let iface_linklocal = iface_id_linklocal(server_iface_id);
+        let v6_result = std::process::Command::new("ip")
+            .args([
+                "neigh",
+                "replace",
+                &format!("{}", iface_linklocal),
+                "lladdr",
+                &server_mac_str,
+                "dev",
+                iface_name,
+            ])
+            .output();
+        match v6_result {
+            Ok(output) if output.status.success() => {}
+            Ok(output) => {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                tracing::error!(
+                    "add IPv6 iface-id neigh failed for {} on {}: {}",
+                    iface_linklocal,
                     iface_name,
-                ])
-                .output();
-            match v6_result {
-                Ok(output) if output.status.success() => {}
-                Ok(output) => {
-                    let stderr = String::from_utf8_lossy(&output.stderr);
-                    tracing::error!(
-                        "add IPv6 iface-id neigh failed for {} on {}: {}",
-                        iface_linklocal,
-                        iface_name,
-                        stderr.trim()
-                    );
-                }
-                Err(e) => {
-                    tracing::error!("add IPv6 iface-id neigh error: {e:?}");
-                }
+                    stderr.trim()
+                );
+            }
+            Err(e) => {
+                tracing::error!("add IPv6 iface-id neigh error: {e:?}");
             }
         }
     }
@@ -325,34 +319,34 @@ fn setup_linklocal(
     let prev = get_existing_linklocal(iface_name);
     let mut new = None;
 
-    if let Some(iface_id) = client_iface_id {
-        if iface_id.len() == 8 {
-            let addr = iface_id_linklocal(iface_id);
+    if let Some(iface_id) = client_iface_id
+        && iface_id.len() == 8
+    {
+        let addr = iface_id_linklocal(iface_id);
 
-            let _ = std::process::Command::new("ip")
-                .args(["-6", "addr", "flush", "dev", iface_name, "scope", "link"])
-                .output();
+        let _ = std::process::Command::new("ip")
+            .args(["-6", "addr", "flush", "dev", iface_name, "scope", "link"])
+            .output();
 
-            let result = std::process::Command::new("ip")
-                .args(["-6", "addr", "add", &format!("{}/64", addr), "dev", iface_name])
-                .output();
-            match result {
-                Ok(output) if output.status.success() => {
-                    tracing::info!(iface = %iface_name, linklocal = %addr, "IPv6 link-local address set from IPv6CP");
-                    new = Some(addr);
-                }
-                Ok(output) => {
-                    let stderr = String::from_utf8_lossy(&output.stderr);
-                    tracing::error!(
-                        "add IPv6 link-local {} on {}: {}",
-                        addr,
-                        iface_name,
-                        stderr.trim()
-                    );
-                }
-                Err(e) => {
-                    tracing::error!("add IPv6 link-local error: {e:?}");
-                }
+        let result = std::process::Command::new("ip")
+            .args(["-6", "addr", "add", &format!("{}/64", addr), "dev", iface_name])
+            .output();
+        match result {
+            Ok(output) if output.status.success() => {
+                tracing::info!(iface = %iface_name, linklocal = %addr, "IPv6 link-local address set from IPv6CP");
+                new = Some(addr);
+            }
+            Ok(output) => {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                tracing::error!(
+                    "add IPv6 link-local {} on {}: {}",
+                    addr,
+                    iface_name,
+                    stderr.trim()
+                );
+            }
+            Err(e) => {
+                tracing::error!("add IPv6 link-local error: {e:?}");
             }
         }
     }

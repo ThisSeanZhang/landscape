@@ -14,9 +14,9 @@ use std::io::{self, BufRead, ErrorKind};
 
 use landscape_ebpf::landscape::TcHookProxy;
 use landscape_ebpf::tproxy::landscape_tproxy::*;
+use libbpf_rs::TC_INGRESS;
 use libbpf_rs::skel::OpenSkel;
 use libbpf_rs::skel::SkelBuilder;
-use libbpf_rs::TC_INGRESS;
 use tracing_subscriber::filter::LevelFilter;
 
 #[derive(Debug, Clone, Serialize, Deserialize, ValueEnum, PartialEq)]
@@ -226,7 +226,11 @@ async fn run_connection_loop(socket_path: PathBuf, enroll: DockerTargetEnroll) {
                 }
             },
             Err(e) => {
-                tracing::warn!("Error registering Edge to Landscape via {:?}. The next registration attempt will be in {loop_interval} seconds. Error: {:?}", socket_path, e);
+                tracing::warn!(
+                    "Error registering Edge to Landscape via {:?}. The next registration attempt will be in {loop_interval} seconds. Error: {:?}",
+                    socket_path,
+                    e
+                );
             }
         }
         tokio::time::sleep(tokio::time::Duration::from_secs(loop_interval)).await;
@@ -254,7 +258,7 @@ pub fn get_container_id() -> Option<String> {
             let fields: Vec<&str> = line.split_whitespace().collect();
             if fields.len() >= 5 {
                 let root = fields[3]; // 第4列（root 路径）
-                                      // 查找路径中是否包含容器 ID（64位或12位）
+                // 查找路径中是否包含容器 ID（64位或12位）
                 if let Some(id) = extract_container_id_from_path(root) {
                     return Some(id);
                 }

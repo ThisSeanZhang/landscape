@@ -30,10 +30,10 @@ pub use sink::memory::MemoryMetricStore;
 pub mod memory_store {
     pub use crate::sink::memory::MemoryMetricStore;
 }
+use sink::MetricSink;
 use sink::memory::MemoryMetricSink;
 #[cfg(feature = "metric-persistent")]
 use sink::persistent::PersistentMetricStore;
-use sink::MetricSink;
 
 fn lock_or_recover<'a, T>(lock: &'a Mutex<T>, name: &str) -> MutexGuard<'a, T> {
     lock.lock().unwrap_or_else(|poisoned| {
@@ -45,7 +45,7 @@ fn lock_or_recover<'a, T>(lock: &'a Mutex<T>, name: &str) -> MutexGuard<'a, T> {
 #[cfg(feature = "metric-persistent")]
 use agg::dns_bucket::{minute_end, minute_start};
 #[cfg(feature = "metric-persistent")]
-use agg::dns_window::{DnsRecentWindow, DNS_RECENT_WINDOW_SECS};
+use agg::dns_window::{DNS_RECENT_WINDOW_SECS, DnsRecentWindow};
 
 /// 构建后端 sink:内存模式与 Off 模式挂 MemorySink;persistent 初始化失败时
 /// 回退内存 sink,保证 metric 数据不影响系统启动。
@@ -63,9 +63,9 @@ async fn build_sink(
                 Ok(store) => (Arc::new(store), true),
                 Err(error) => {
                     tracing::error!(
-                    "failed to initialize persistent metric backend, falling back to memory: {}",
-                    error
-                );
+                        "failed to initialize persistent metric backend, falling back to memory: {}",
+                        error
+                    );
                     (Arc::new(MemoryMetricSink), false)
                 }
             }

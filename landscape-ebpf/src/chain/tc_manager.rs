@@ -7,10 +7,10 @@ use libbpf_rs::libbpf_sys;
 use libbpf_rs::skel::{OpenSkel, SkelBuilder};
 use libbpf_rs::{MapCore, MapFlags, MapHandle, MapType};
 
+use crate::LandscapeMapPath;
 use crate::bpf_ctx;
 use crate::bpf_error::{LandscapeEbpfError, LdEbpfResult};
-use crate::landscape::{pin_and_reuse_map, OwnedOpenObject};
-use crate::LandscapeMapPath;
+use crate::landscape::{OwnedOpenObject, pin_and_reuse_map};
 
 mod tc_wan_ingress_exit_skel {
     include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/tc_wan_ingress_exit.skel.rs"));

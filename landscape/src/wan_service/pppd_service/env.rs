@@ -6,9 +6,9 @@ use std::process::Stdio;
 use std::sync::Arc;
 use std::time::Duration;
 
+use landscape_common::global_const::default_router::LD_ALL_ROUTERS;
 use landscape_common::global_const::default_router::RouteInfo;
 use landscape_common::global_const::default_router::RouteType;
-use landscape_common::global_const::default_router::LD_ALL_ROUTERS;
 use landscape_common::sys_service::route_service::LanRouteInfo;
 use landscape_common::sys_service::route_service::LanRouteMode;
 use landscape_common::sys_service::route_service::RouteTargetInfo;
@@ -205,11 +205,7 @@ impl PppdChild for TokioPppChild {
         }
 
         let err = io::Error::last_os_error();
-        if err.raw_os_error() == Some(libc::ESRCH) {
-            Ok(())
-        } else {
-            Err(err)
-        }
+        if err.raw_os_error() == Some(libc::ESRCH) { Ok(()) } else { Err(err) }
     }
 }
 

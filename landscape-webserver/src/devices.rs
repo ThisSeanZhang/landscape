@@ -9,7 +9,7 @@ use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 
 use crate::api::JsonBody;
-use crate::{api::LandscapeApiResp, error::LandscapeApiResult, LandscapeApp};
+use crate::{LandscapeApp, api::LandscapeApiResp, error::LandscapeApiResult};
 
 pub fn get_enrolled_device_config_paths() -> OpenApiRouter<LandscapeApp> {
     OpenApiRouter::new()

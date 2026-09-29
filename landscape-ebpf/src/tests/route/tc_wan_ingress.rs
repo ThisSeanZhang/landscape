@@ -29,22 +29,21 @@ use std::{
 
 use landscape_common::net::MacAddr;
 use libbpf_rs::{
-    skel::{OpenSkel, SkelBuilder as _},
     MapCore, MapFlags, ProgramInput,
+    skel::{OpenSkel, SkelBuilder as _},
 };
 use zerocopy::IntoBytes;
 
 use crate::tests::{
-    isolated_pin_root,
+    TestSkb, isolated_pin_root,
     route::{
         map_helper::{
-            as_bytes, create_route4_cache_inner_map, insert_ip_mac_v4, insert_route4_lan_entry,
-            lookup_rt4_cache_value, put_rt4_cache_value, LAN_CACHE, LAN_ROUTE_TYPE,
-            ROUTE_TYPE_NEXTHOP, TARGET_IFINDEX, WAN_CACHE, WAN_IFINDEX, WAN_ROUTE_TYPE,
+            LAN_CACHE, LAN_ROUTE_TYPE, ROUTE_TYPE_NEXTHOP, TARGET_IFINDEX, WAN_CACHE, WAN_IFINDEX,
+            WAN_ROUTE_TYPE, as_bytes, create_route4_cache_inner_map, insert_ip_mac_v4,
+            insert_route4_lan_entry, lookup_rt4_cache_value, put_rt4_cache_value,
         },
         packet_builder::{simple_ipv4_tcp, simple_ipv6_tcp_syn},
     },
-    TestSkb,
 };
 
 pub(crate) mod tc_wan_ingress_exit {
@@ -195,13 +194,10 @@ fn wan_ingress_lan_redirect_with_static_mark_writes_reverse_wan_cache() {
     assert_eq!(cache.ifindex, LOOPBACK_IFINDEX);
     assert_eq!(cache.has_mac, 1);
     // forward-direction key must not exist
-    assert!(lookup_rt4_cache_value(
-        &skel.maps.rt4_cache_map,
-        WAN_CACHE,
-        public_src(),
-        lan_client()
-    )
-    .is_none());
+    assert!(
+        lookup_rt4_cache_value(&skel.maps.rt4_cache_map, WAN_CACHE, public_src(), lan_client())
+            .is_none()
+    );
 }
 
 #[test]
@@ -238,13 +234,10 @@ fn wan_ingress_wan_typed_self_entry_hands_to_stack() {
     let (ret, _out) = run_wan_ingress(&skel, &reply_pkt(), &mut wan_ctx(INGRESS_STATIC_MARK));
 
     assert_eq!(ret, RET_UNSPEC, "WAN-typed entry whose addr is the daddr itself");
-    assert!(lookup_rt4_cache_value(
-        &skel.maps.rt4_cache_map,
-        WAN_CACHE,
-        lan_client(),
-        public_src()
-    )
-    .is_none());
+    assert!(
+        lookup_rt4_cache_value(&skel.maps.rt4_cache_map, WAN_CACHE, lan_client(), public_src())
+            .is_none()
+    );
 }
 
 #[test]

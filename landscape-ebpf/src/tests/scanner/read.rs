@@ -1,8 +1,8 @@
 use std::mem::MaybeUninit;
 
 use libbpf_rs::{
-    skel::{OpenSkel, SkelBuilder as _},
     MapCore, MapFlags, ProgramInput,
+    skel::{OpenSkel, SkelBuilder as _},
 };
 use zerocopy::FromBytes;
 
@@ -83,8 +83,14 @@ mod tests {
             r.scan_ret,
             r.read_l3_ret,
             r.read_info_ret,
-            saddr[0], saddr[1], saddr[2], saddr[3],
-            daddr[0], daddr[1], daddr[2], daddr[3],
+            saddr[0],
+            saddr[1],
+            saddr[2],
+            saddr[3],
+            daddr[0],
+            daddr[1],
+            daddr[2],
+            daddr[3],
             r.v6_info.src_port,
             r.v6_info.dst_port
         );

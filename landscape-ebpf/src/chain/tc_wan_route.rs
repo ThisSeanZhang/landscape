@@ -1,11 +1,11 @@
-use libbpf_rs::skel::{OpenSkel, SkelBuilder};
 use libbpf_rs::TC_EGRESS;
+use libbpf_rs::skel::{OpenSkel, SkelBuilder};
 
 use std::sync::Arc;
 
 use crate::bpf_ctx;
 use crate::bpf_error::LdEbpfResult;
-use crate::landscape::{pin_and_reuse_map, OwnedOpenObject, TcHookProxy};
+use crate::landscape::{OwnedOpenObject, TcHookProxy, pin_and_reuse_map};
 use crate::runtime::EbpfRuntime;
 
 mod tc_wan_ingress_intro_skel {

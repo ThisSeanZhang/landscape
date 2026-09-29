@@ -10,7 +10,7 @@ use landscape_common::concurrency::{spawn_task, task_label};
 use landscape_pppoe_client::*;
 use libbpf_rs::skel::{OpenSkel, SkelBuilder};
 use libc::{
-    socket, socklen_t, AF_PACKET, SOCK_CLOEXEC, SOCK_NONBLOCK, SOCK_RAW, SOL_SOCKET, SO_ATTACH_BPF,
+    AF_PACKET, SO_ATTACH_BPF, SOCK_CLOEXEC, SOCK_NONBLOCK, SOCK_RAW, SOL_SOCKET, socket, socklen_t,
 };
 use socket2::Socket;
 use tokio::io::unix::AsyncFd;

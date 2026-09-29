@@ -2,11 +2,11 @@ use std::collections::HashMap;
 use std::collections::VecDeque;
 use std::sync::Arc;
 
+use bollard::Docker;
 use bollard::models::CreateImageInfo;
 use bollard::query_parameters::CreateImageOptions;
-use bollard::Docker;
-use tokio::sync::broadcast;
 use tokio::sync::RwLock;
+use tokio::sync::broadcast;
 
 use landscape_common::concurrency::{spawn_task, task_label};
 use landscape_common::docker::image::{ImgPullEvent, PullImgTask, PullImgTaskItem};
@@ -183,7 +183,7 @@ impl PullManager {
 mod tests {
 
     use tokio::sync::broadcast;
-    use tokio::time::{sleep, Duration};
+    use tokio::time::{Duration, sleep};
 
     #[tokio::test]
     async fn test1() {

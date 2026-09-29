@@ -31,7 +31,7 @@ pub fn init_xdp_pppoe(
     session_id: u16,
 ) -> LdEbpfResult<XdpPppoeHandle> {
     use crate::chain::xdp_manager::StageType;
-    use crate::landscape::{pin_and_reuse_map, OwnedOpenObject};
+    use crate::landscape::{OwnedOpenObject, pin_and_reuse_map};
     use libbpf_rs::skel::{OpenSkel, SkelBuilder};
     use std::os::fd::{AsFd, AsRawFd};
 

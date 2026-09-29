@@ -1,18 +1,18 @@
 use std::sync::Arc;
 
 use libbpf_rs::{
-    skel::{OpenSkel, SkelBuilder},
     TC_EGRESS,
+    skel::{OpenSkel, SkelBuilder},
 };
 
 use crate::{
+    PPPOE_EGRESS_PRIORITY,
     bpf_error::LdEbpfResult,
     bpf_rs_shared::xdp_skb_pppoe_skel,
     chain::xdp_manager::SkbPending,
     landscape::{OwnedOpenObject, TcHookProxy},
     runtime::EbpfRuntime,
     stages::pppoe::XdpPppoeHandle,
-    PPPOE_EGRESS_PRIORITY,
 };
 
 mod tc_pppoe_skel {

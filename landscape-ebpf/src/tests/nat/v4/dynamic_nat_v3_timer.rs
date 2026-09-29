@@ -2,15 +2,15 @@ use std::mem::MaybeUninit;
 use std::net::Ipv4Addr;
 
 use libbpf_rs::{
-    skel::{OpenSkel, SkelBuilder as _},
     MapCore, MapFlags, ProgramInput,
+    skel::{OpenSkel, SkelBuilder as _},
 };
 
 pub(crate) mod test_nat_v3_timer {
     include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/test_nat_v3_timer.skel.rs"));
 }
 
-use test_nat_v3_timer::{types, TestNatV3TimerSkelBuilder};
+use test_nat_v3_timer::{TestNatV3TimerSkelBuilder, types};
 
 const NAT_MAPPING_INGRESS: u8 = 0;
 const NAT_MAPPING_EGRESS: u8 = 1;

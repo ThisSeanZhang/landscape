@@ -1,12 +1,12 @@
 use std::{mem::MaybeUninit, net::Ipv6Addr};
 
 use etherparse::{
-    ether_type, ip_number, Ethernet2Header, IpFragOffset, Ipv6FragmentHeader, Ipv6Header,
-    PacketBuilder, PacketHeaders, TcpHeader, TcpOptionElement, TransportHeader,
+    Ethernet2Header, IpFragOffset, Ipv6FragmentHeader, Ipv6Header, PacketBuilder, PacketHeaders,
+    TcpHeader, TcpOptionElement, TransportHeader, ether_type, ip_number,
 };
 use libbpf_rs::{
-    skel::{OpenSkel, SkelBuilder as _},
     ProgramInput,
+    skel::{OpenSkel, SkelBuilder as _},
 };
 
 use crate::stages::mss::tc_mss_skel::TcMssSkelBuilder;

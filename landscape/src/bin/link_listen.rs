@@ -1,13 +1,13 @@
 use futures::stream::StreamExt;
 use futures::stream::TryStreamExt;
 use netlink_packet_core::NetlinkMessage;
+use netlink_packet_route::AddressFamily;
+use netlink_packet_route::RouteNetlinkMessage;
 use netlink_packet_route::nsid::NsidAttribute;
 use netlink_packet_route::nsid::NsidHeader;
 use netlink_packet_route::nsid::NsidMessage;
-use netlink_packet_route::AddressFamily;
-use netlink_packet_route::RouteNetlinkMessage;
 use netlink_sys::{AsyncSocket, SocketAddr};
-use rtnetlink::{constants::RTMGRP_LINK, new_connection, Handle};
+use rtnetlink::{Handle, constants::RTMGRP_LINK, new_connection};
 
 #[tokio::main]
 async fn main() -> Result<(), String> {

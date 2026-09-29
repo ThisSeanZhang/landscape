@@ -1,6 +1,6 @@
 use hickory_proto::{
     op::ResponseCode,
-    rr::{rdata::svcb::SvcParamValue, RData, Record, RecordType},
+    rr::{RData, Record, RecordType, rdata::svcb::SvcParamValue},
 };
 use landscape_common::dns::rule::LandscapeDnsRecordType;
 use landscape_common::{

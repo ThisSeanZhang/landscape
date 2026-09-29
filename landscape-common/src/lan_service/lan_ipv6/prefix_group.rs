@@ -392,41 +392,35 @@ impl LanPrefixGroupConfig {
         let include_na = matches!(mode, IPv6ServiceMode::Stateful | IPv6ServiceMode::SlaacDhcpv6);
         let include_pd = matches!(mode, IPv6ServiceMode::Stateful | IPv6ServiceMode::SlaacDhcpv6);
 
-        if include_ra {
-            if let Some(ra) = &self.ra {
-                result.push(ExpandedPrefixEntry {
-                    parent: parent.clone(),
-                    parent_prefix_len,
-                    service_kind: PrefixGroupServiceKind::Ra,
-                    start_index: ra.pool_index,
-                    end_index: ra.pool_index,
-                    pool_len: 64,
-                });
-            }
+        if include_ra && let Some(ra) = &self.ra {
+            result.push(ExpandedPrefixEntry {
+                parent: parent.clone(),
+                parent_prefix_len,
+                service_kind: PrefixGroupServiceKind::Ra,
+                start_index: ra.pool_index,
+                end_index: ra.pool_index,
+                pool_len: 64,
+            });
         }
-        if include_na {
-            if let Some(na) = &self.na {
-                result.push(ExpandedPrefixEntry {
-                    parent: parent.clone(),
-                    parent_prefix_len,
-                    service_kind: PrefixGroupServiceKind::Na,
-                    start_index: na.pool_index,
-                    end_index: na.pool_index,
-                    pool_len: 64,
-                });
-            }
+        if include_na && let Some(na) = &self.na {
+            result.push(ExpandedPrefixEntry {
+                parent: parent.clone(),
+                parent_prefix_len,
+                service_kind: PrefixGroupServiceKind::Na,
+                start_index: na.pool_index,
+                end_index: na.pool_index,
+                pool_len: 64,
+            });
         }
-        if include_pd {
-            if let Some(pd) = &self.pd {
-                result.push(ExpandedPrefixEntry {
-                    parent,
-                    parent_prefix_len,
-                    service_kind: PrefixGroupServiceKind::IaPd,
-                    start_index: pd.start_index,
-                    end_index: pd.end_index,
-                    pool_len: pd.pool_len,
-                });
-            }
+        if include_pd && let Some(pd) = &self.pd {
+            result.push(ExpandedPrefixEntry {
+                parent,
+                parent_prefix_len,
+                service_kind: PrefixGroupServiceKind::IaPd,
+                start_index: pd.start_index,
+                end_index: pd.end_index,
+                pool_len: pd.pool_len,
+            });
         }
         result
     }
@@ -548,12 +542,12 @@ impl LanIPv6ConfigV2 {
                         reason: "Slaac mode requires M flag to be 0".to_string(),
                     });
                 }
-                if let Some(dhcpv6) = &self.dhcpv6 {
-                    if dhcpv6.enable {
-                        return Err(ServiceConfigError::InvalidConfig {
-                            reason: "Slaac mode does not allow DHCPv6 to be enabled".to_string(),
-                        });
-                    }
+                if let Some(dhcpv6) = &self.dhcpv6
+                    && dhcpv6.enable
+                {
+                    return Err(ServiceConfigError::InvalidConfig {
+                        reason: "Slaac mode does not allow DHCPv6 to be enabled".to_string(),
+                    });
                 }
             }
             IPv6ServiceMode::Stateful => {
@@ -588,15 +582,15 @@ impl LanIPv6ConfigV2 {
                     });
                 }
                 for group in &ra_groups {
-                    if let PrefixParentSource::Static { base_prefix, .. } = &group.parent {
-                        if !is_ula(*base_prefix) {
-                            return Err(ServiceConfigError::InvalidConfig {
-                                reason: format!(
-                                    "SlaacDhcpv6 mode requires RA prefix groups to be ULA (fc00::/7), got: {}",
-                                    base_prefix
-                                ),
-                            });
-                        }
+                    if let PrefixParentSource::Static { base_prefix, .. } = &group.parent
+                        && !is_ula(*base_prefix)
+                    {
+                        return Err(ServiceConfigError::InvalidConfig {
+                            reason: format!(
+                                "SlaacDhcpv6 mode requires RA prefix groups to be ULA (fc00::/7), got: {}",
+                                base_prefix
+                            ),
+                        });
                     }
                 }
                 if !self.ra_flag.managed_address_config || !self.ra_flag.other_config {
@@ -821,7 +815,7 @@ pub fn validate_global_prefix_conflicts(
 #[cfg(test)]
 mod tests {
     use super::super::config::{
-        ra_flag_default, LanIPv6ConfigV2, LanIPv6ServiceConfigV2, RouterFlags,
+        LanIPv6ConfigV2, LanIPv6ServiceConfigV2, RouterFlags, ra_flag_default,
     };
     use super::super::dhcpv6_config::DHCPv6ServerConfig;
     use super::*;
@@ -1265,12 +1259,14 @@ mod tests {
             ),
         ]);
 
-        assert!(validate_cross_interface_v2_with_pd_context(
-            &new_config,
-            &other_configs,
-            Some(&contexts),
-        )
-        .is_err());
+        assert!(
+            validate_cross_interface_v2_with_pd_context(
+                &new_config,
+                &other_configs,
+                Some(&contexts),
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -1710,12 +1706,14 @@ mod tests {
         let existing = config_pd_range("lan-b", "wan0", 60, 64, 1, 1);
         let contexts = make_pd_context("wan0", 60, 56);
 
-        assert!(validate_global_prefix_conflicts(
-            &pending,
-            std::slice::from_ref(&existing),
-            Some(&contexts)
-        )
-        .is_err());
+        assert!(
+            validate_global_prefix_conflicts(
+                &pending,
+                std::slice::from_ref(&existing),
+                Some(&contexts)
+            )
+            .is_err()
+        );
     }
 
     #[test]

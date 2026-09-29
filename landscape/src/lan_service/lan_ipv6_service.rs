@@ -22,11 +22,11 @@ use std::collections::HashMap;
 use std::net::Ipv6Addr;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::{mpsc, watch, Mutex};
+use tokio::sync::{Mutex, mpsc, watch};
 use uuid::Uuid;
 
 use super::lan_ipv6_server::{
-    server::start_ipv6_lan_server, AddrSource, Ipv6LanReplyParams, Ipv6ServerStatus,
+    AddrSource, Ipv6LanReplyParams, Ipv6ServerStatus, server::start_ipv6_lan_server,
 };
 use crate::get_iface_by_name;
 use crate::sys_service::route::IpRouteService;
@@ -36,7 +36,7 @@ use landscape_common::lan_service::mac_binding::MacBindingDataplane;
 use landscape_ebpf::chain::ip6_dao_event::{Ip6DaoEvent, Ip6DaoEventSource};
 
 mod mac_link_map;
-pub use self::mac_link_map::{start_periodic_scan, MacLinkMapCache};
+pub use self::mac_link_map::{MacLinkMapCache, start_periodic_scan};
 
 #[derive(Clone)]
 pub struct LanIPv6Service {
@@ -427,11 +427,10 @@ impl LanIPv6ManagerService {
                         };
                         match &event {
                             EnrolledDeviceEvent::Updated { old, new } => {
-                                if let Some(d) = old.as_ref() {
-                                    if d.mac != new.mac {
+                                if let Some(d) = old.as_ref()
+                                    && d.mac != new.mac {
                                         device_id_map.remove(&d.mac);
                                     }
-                                }
                                 device_id_map.insert(new.mac, new.id);
                                 let new_iface = new.iface_name.as_deref();
                                 let old_iface = old.as_ref().and_then(|d| d.iface_name.as_deref());

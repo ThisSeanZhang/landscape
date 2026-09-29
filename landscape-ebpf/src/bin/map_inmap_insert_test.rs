@@ -1,6 +1,6 @@
 use std::net::Ipv4Addr;
 
-use landscape_common::flow::{mark::FlowMark, FlowMarkInfo};
+use landscape_common::flow::{FlowMarkInfo, mark::FlowMark};
 
 // cargo run --package landscape-ebpf --bin map_inmap_insert_test
 pub fn main() {

@@ -18,7 +18,7 @@ use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 
 use crate::api::JsonBody;
-use crate::{api::LandscapeApiResp, error::LandscapeApiResult, LandscapeApp};
+use crate::{LandscapeApp, api::LandscapeApiResp, error::LandscapeApiResult};
 
 pub fn get_iface_paths() -> OpenApiRouter<LandscapeApp> {
     OpenApiRouter::new()
@@ -196,14 +196,12 @@ async fn change_zone(
     state.iface_config_service.change_zone(change_zone.clone()).await;
     if matches!(change_zone.zone, IfaceZoneType::Wan)
         && get_existing_linklocal(&change_zone.iface_name).is_none()
+        && let Some(iface) = get_iface_by_name(&change_zone.iface_name).await
+        && let Some(ref mac) = iface.mac
     {
-        if let Some(iface) = get_iface_by_name(&change_zone.iface_name).await {
-            if let Some(ref mac) = iface.mac {
-                let ll = mac.to_ipv6_link_local();
-                if !set_iface_ip_no_limit(&change_zone.iface_name, IpAddr::V6(ll), 64).await {
-                    error!("Failed to set link-local address {ll} on {}", change_zone.iface_name);
-                }
-            }
+        let ll = mac.to_ipv6_link_local();
+        if !set_iface_ip_no_limit(&change_zone.iface_name, IpAddr::V6(ll), 64).await {
+            error!("Failed to set link-local address {ll} on {}", change_zone.iface_name);
         }
     }
     LandscapeApiResp::success(())

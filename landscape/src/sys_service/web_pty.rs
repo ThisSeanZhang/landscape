@@ -9,7 +9,7 @@ use std::{
     io::{Read, Write},
     sync::Arc,
 };
-use tokio::sync::{broadcast, mpsc, watch, RwLock};
+use tokio::sync::{RwLock, broadcast, mpsc, watch};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
@@ -201,7 +201,7 @@ impl LandscapePtySession {
             None => {
                 return Err(spawn_err.unwrap_or_else(|| {
                     PtyError::SpawnCommand("No viable shell found".to_string())
-                }))
+                }));
             }
         };
 

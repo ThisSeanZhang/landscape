@@ -8,7 +8,7 @@ use crate::bpf_error::LdEbpfResult;
 use crate::maps::{LandscapeMapPath, StaticNat6MappingKey, StaticNat6MappingValue};
 
 use super::super::RawEbpfMapEntries;
-use super::{reconcile_raw_map, update_raw_entries, StaticNatMappingV6Item};
+use super::{StaticNatMappingV6Item, reconcile_raw_map, update_raw_entries};
 
 pub fn build_static_nat6_entries(configs: &[RuntimeStaticNatMappingV6Config]) -> RawEbpfMapEntries {
     let mut entries = RawEbpfMapEntries::new();

@@ -6,14 +6,14 @@ use landscape_common::database::LandscapeStore;
 use landscape_common::service::controller::{ConfigController, ControllerService};
 use landscape_common::service::{ServiceStatus, WatchService};
 use landscape_common::wan_service::ip_config::IfaceIpModelConfig;
-use landscape_common::wan_service::pppd::{validate_ppp_iface_name, PPPDServiceConfig};
+use landscape_common::wan_service::pppd::{PPPDServiceConfig, validate_ppp_iface_name};
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 
 use landscape_common::service::ServiceConfigError;
 
-use crate::api::JsonBody;
 use crate::LandscapeApp;
+use crate::api::JsonBody;
 use crate::{api::LandscapeApiResp, error::LandscapeApiResult};
 
 async fn validate_pppd_config(
@@ -50,19 +50,18 @@ async fn validate_pppd_config(
         });
     }
 
-    if config.enable {
-        if let Some(ip_config) =
+    if config.enable
+        && let Some(ip_config) =
             state.wan_ip_service.get_config_by_name(config.attach_iface_name.clone()).await
-        {
-            if ip_config.enable && matches!(ip_config.ip_model, IfaceIpModelConfig::PPPoE { .. }) {
-                return Err(ServiceConfigError::InvalidConfig {
-                    reason: format!(
-                        "Interface '{}' already uses native PPPoE in IP Config; disable it before enabling PPPD-based PPPoE",
-                        config.attach_iface_name
-                    ),
-                });
-            }
-        }
+        && ip_config.enable
+        && matches!(ip_config.ip_model, IfaceIpModelConfig::PPPoE { .. })
+    {
+        return Err(ServiceConfigError::InvalidConfig {
+            reason: format!(
+                "Interface '{}' already uses native PPPoE in IP Config; disable it before enabling PPPD-based PPPoE",
+                config.attach_iface_name
+            ),
+        });
     }
 
     Ok(())
@@ -243,15 +242,15 @@ async fn delete_and_stop_iface_pppd(
     State(state): State<LandscapeApp>,
     Path(iface_name): Path<String>,
 ) -> LandscapeApiResult<Option<WatchService>> {
-    if let Some(config) = state.pppd_service.get_config_by_name(iface_name.clone()).await {
-        if config.enable {
-            Err(ServiceConfigError::InvalidConfig {
-                reason: format!(
-                    "PPPD config '{}' is still enabled; disable it before deleting",
-                    iface_name
-                ),
-            })?;
-        }
+    if let Some(config) = state.pppd_service.get_config_by_name(iface_name.clone()).await
+        && config.enable
+    {
+        Err(ServiceConfigError::InvalidConfig {
+            reason: format!(
+                "PPPD config '{}' is still enabled; disable it before deleting",
+                iface_name
+            ),
+        })?;
     }
     LandscapeApiResp::success(delete_ppp_iface(&state, &iface_name).await)
 }

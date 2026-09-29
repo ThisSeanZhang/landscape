@@ -125,10 +125,10 @@ where
 
     let value = value.as_bytes();
 
-    if let Ok(Some(existing)) = rt_lan_map.lookup(key, MapFlags::ANY) {
-        if existing.as_slice() == value {
-            return false;
-        }
+    if let Ok(Some(existing)) = rt_lan_map.lookup(key, MapFlags::ANY)
+        && existing.as_slice() == value
+    {
+        return false;
     }
 
     if let Err(e) = rt_lan_map.update(key, value, MapFlags::ANY) {
@@ -189,10 +189,10 @@ where
 
     let value = value.as_bytes();
 
-    if let Ok(Some(existing)) = rt_lan_map.lookup(key, MapFlags::ANY) {
-        if existing.as_slice() == value {
-            return false;
-        }
+    if let Ok(Some(existing)) = rt_lan_map.lookup(key, MapFlags::ANY)
+        && existing.as_slice() == value
+    {
+        return false;
     }
 
     if let Err(e) = rt_lan_map.update(key, value, MapFlags::ANY) {

@@ -18,11 +18,7 @@ fn adguard_modifier_name(modifier: &str) -> Option<String> {
 
     let name_end = modifier.find('=').unwrap_or(modifier.len());
     let name = modifier[..name_end].trim();
-    if name.is_empty() {
-        None
-    } else {
-        Some(name.to_ascii_lowercase())
-    }
+    if name.is_empty() { None } else { Some(name.to_ascii_lowercase()) }
 }
 
 fn modifier_names(modifiers: &str) -> Option<Vec<String>> {
@@ -94,11 +90,7 @@ fn parse_adguard_domain_rule(line: &str) -> Option<(&str, Option<&str>)> {
 
     let modifiers = if domain_end < line.len() && line.as_bytes()[domain_end] == b'^' {
         let after_caret = &line[domain_end + 1..];
-        if after_caret.is_empty() {
-            None
-        } else {
-            Some(after_caret.strip_prefix('$')?)
-        }
+        if after_caret.is_empty() { None } else { Some(after_caret.strip_prefix('$')?) }
     } else if domain_end < line.len() && line.as_bytes()[domain_end] == b'$' {
         Some(&line[domain_end + 1..])
     } else {
@@ -140,11 +132,7 @@ fn parse_bare_domain_rule(line: &str) -> Option<(&str, Option<&str>)> {
         None => (line, None),
     };
 
-    if is_bare_domain(domain) {
-        Some((domain, modifiers))
-    } else {
-        None
-    }
+    if is_bare_domain(domain) { Some((domain, modifiers)) } else { None }
 }
 
 fn extract_leading_dns_domain(line: &str) -> Option<&str> {
@@ -156,11 +144,7 @@ fn extract_leading_dns_domain(line: &str) -> Option<&str> {
         .unwrap_or(line.len());
     let domain = &line[..domain_end];
 
-    if is_valid_dns_domain(domain) {
-        Some(domain)
-    } else {
-        None
-    }
+    if is_valid_dns_domain(domain) { Some(domain) } else { None }
 }
 
 fn extract_http_rule_host(line: &str) -> Option<&str> {
@@ -171,11 +155,7 @@ fn extract_http_rule_host(line: &str) -> Option<&str> {
         .unwrap_or(line.len());
     let host = &line[..host_end];
 
-    if is_valid_dns_domain(host) {
-        Some(host)
-    } else {
-        None
-    }
+    if is_valid_dns_domain(host) { Some(host) } else { None }
 }
 
 /// Extract an approximate domain from negative rules (`@@` / `$badfilter`).
@@ -333,10 +313,10 @@ pub fn parse_adguard_rules(contents: &[u8]) -> Vec<GeoSiteFileConfig> {
         }
 
         if let Some((domain, modifiers)) = parse_adguard_domain_rule(line) {
-            if let Some(mods) = modifiers {
-                if modifiers_contain_badfilter(mods) || !modifiers_are_dns_safe(mods) {
-                    continue;
-                }
+            if let Some(mods) = modifiers
+                && (modifiers_contain_badfilter(mods) || !modifiers_are_dns_safe(mods))
+            {
+                continue;
             }
             candidates.push(ParsedAdguardRule {
                 match_type: DomainMatchType::Domain,
@@ -352,10 +332,10 @@ pub fn parse_adguard_rules(contents: &[u8]) -> Vec<GeoSiteFileConfig> {
         }
 
         if let Some((domain, modifiers)) = parse_bare_domain_rule(line) {
-            if let Some(mods) = modifiers {
-                if modifiers_contain_badfilter(mods) || !modifiers_are_dns_safe(mods) {
-                    continue;
-                }
+            if let Some(mods) = modifiers
+                && (modifiers_contain_badfilter(mods) || !modifiers_are_dns_safe(mods))
+            {
+                continue;
             }
             candidates.push(ParsedAdguardRule {
                 match_type: DomainMatchType::Domain,

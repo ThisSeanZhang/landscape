@@ -7,14 +7,14 @@ use std::{
 use etherparse::{PacketBuilder, PacketHeaders};
 use landscape_common::net::MacAddr;
 use libbpf_rs::{
-    skel::{OpenSkel, SkelBuilder as _},
     MapCore, MapFlags, ProgramInput,
+    skel::{OpenSkel, SkelBuilder as _},
 };
 use zerocopy::{FromBytes, IntoBytes};
 
 use crate::{
-    maps::{nat::StaticNatMappingV6Item, wan::add_wan_ip},
     maps::{Nat6TimerKey, Nat6TimerValue},
+    maps::{nat::StaticNatMappingV6Item, wan::add_wan_ip},
     stages::nat::tc_nat_skel::TcNatSkelBuilder,
     tests::TestSkb,
 };
@@ -43,11 +43,7 @@ fn remote() -> Ipv6Addr {
 }
 
 fn npt_id_mask(prefix_len: u8) -> u8 {
-    if prefix_len >= 64 {
-        0
-    } else {
-        ((1u16 << (64 - prefix_len)) - 1) as u8
-    }
+    if prefix_len >= 64 { 0 } else { ((1u16 << (64 - prefix_len)) - 1) as u8 }
 }
 
 fn egress_ct6_key(src: Ipv6Addr, src_port: u16, l4proto: u8, prefix_len: u8) -> Nat6TimerKey {

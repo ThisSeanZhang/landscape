@@ -9,7 +9,7 @@ use uuid::Uuid;
 
 use crate::config::ConfigId;
 use crate::flow::mark::FlowMark;
-use crate::{network::LandscapeIpProtocolCode, LANDSCAPE_DEFAULE_DHCP_V6_CLIENT_PORT};
+use crate::{LANDSCAPE_DEFAULE_DHCP_V6_CLIENT_PORT, network::LandscapeIpProtocolCode};
 
 #[derive(thiserror::Error, Debug, LdApiError)]
 #[api_error(crate_path = "crate")]

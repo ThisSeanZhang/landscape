@@ -10,7 +10,8 @@ use tokio::time::Instant;
 use super::v4_raw_packet::AdaptiveDhcpV4Socket;
 use crate::sys_service::route::IpRouteService;
 use landscape_common::{
-    global_const::default_router::{RouteInfo, RouteType, LD_ALL_ROUTERS},
+    LANDSCAPE_DEFAULE_DHCP_V4_SERVER_PORT, SYSCTL_IPV4_RP_FILTER_PATTERN,
+    global_const::default_router::{LD_ALL_ROUTERS, RouteInfo, RouteType},
     net::MacAddr,
     net_proto::dhcp::{
         DhcpV4Flags, DhcpV4Message, DhcpV4MessageType as MessageType, DhcpV4OpCode,
@@ -20,7 +21,6 @@ use landscape_common::{
     sys_service::route_service::RouteTargetInfo,
     sys_service::route_service::{LanRouteInfo, LanRouteMode},
     wan_service::addr_binding::WanAddrBinding,
-    LANDSCAPE_DEFAULE_DHCP_V4_SERVER_PORT, SYSCTL_IPV4_RP_FILTER_PATTERN,
 };
 
 pub const DEFAULT_TIME_OUT: u64 = 4;
@@ -601,10 +601,10 @@ async fn bind_ipv4(
     addr_binding: &dyn WanAddrBinding,
     mac_addr: &MacAddr,
 ) -> DhcpState {
-    if let Some(args) = ip_arg.take() {
-        if let Err(result) = std::process::Command::new("ip").args(&args).output() {
-            tracing::error!("{:?}", result);
-        }
+    if let Some(args) = ip_arg.take()
+        && let Err(result) = std::process::Command::new("ip").args(&args).output()
+    {
+        tracing::error!("{:?}", result);
     }
     let mut args =
         vec!["addr".to_string(), "replace".to_string(), format!("{}/{}", new_yiaddr, mask)];

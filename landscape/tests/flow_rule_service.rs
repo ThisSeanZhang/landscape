@@ -25,8 +25,8 @@ fn flow_config(flow_id: u32) -> FlowConfig {
     }
 }
 
-async fn flow_rule_service(
-) -> (FlowRuleService, mpsc::Receiver<DnsEvent>, mpsc::Receiver<RouteEvent>) {
+async fn flow_rule_service()
+-> (FlowRuleService, mpsc::Receiver<DnsEvent>, mpsc::Receiver<RouteEvent>) {
     let provider = LandscapeDBServiceProvider::mem_test_db().await;
     let (dns_events_tx, dns_events_rx) = mpsc::channel(8);
     let (route_events_tx, route_events_rx) = mpsc::channel(8);

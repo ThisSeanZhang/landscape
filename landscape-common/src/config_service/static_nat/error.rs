@@ -27,11 +27,15 @@ pub enum StaticNatError {
     #[api_error(id = "static_nat.invalid_target", status = 422)]
     InvalidTarget(String),
 
-    #[error("Static NAT port {port} conflicts with dynamic range on '{iface_name}' ({protocol} range {start}-{end})")]
+    #[error(
+        "Static NAT port {port} conflicts with dynamic range on '{iface_name}' ({protocol} range {start}-{end})"
+    )]
     #[api_error(id = "static_nat.port_conflict", status = 409)]
     PortConflict { port: u16, iface_name: String, protocol: u8, start: u16, end: u16 },
 
-    #[error("Static NAT mapping {mapping_id} port {port} overlaps with dynamic {protocol} range {start}-{end}")]
+    #[error(
+        "Static NAT mapping {mapping_id} port {port} overlaps with dynamic {protocol} range {start}-{end}"
+    )]
     #[api_error(id = "static_nat.port_in_dynamic_range", status = 409)]
     PortInDynamicRange { mapping_id: Uuid, port: u16, protocol: u8, start: u16, end: u16 },
 

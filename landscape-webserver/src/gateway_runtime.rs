@@ -3,11 +3,11 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use landscape_common::config::ConfigId;
-use landscape_common::database::error::DbError;
 use landscape_common::database::LandscapeStore;
+use landscape_common::database::error::DbError;
 use landscape_common::service::ServiceStatus;
-use landscape_common::sys_service::gateway::settings::GatewayRuntimeConfig;
 use landscape_common::sys_service::gateway::HttpUpstreamRuleConfig;
+use landscape_common::sys_service::gateway::settings::GatewayRuntimeConfig;
 use landscape_database::gateway::repository::GatewayHttpUpstreamRepository;
 #[cfg(feature = "gateway")]
 use landscape_database::repository::Repository;

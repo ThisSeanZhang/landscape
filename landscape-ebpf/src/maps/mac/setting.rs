@@ -8,8 +8,8 @@ use landscape_common::concurrency::{spawn_task, task_label};
 use landscape_common::net::MacAddr;
 use libbpf_rs::skel::{OpenSkel, SkelBuilder};
 use libbpf_rs::{ErrorKind, MapCore, MapFlags, MapHandle};
-use netlink_packet_route::neighbour::{NeighbourAddress, NeighbourAttribute, NeighbourState};
 use netlink_packet_route::AddressFamily;
+use netlink_packet_route::neighbour::{NeighbourAddress, NeighbourAttribute, NeighbourState};
 use tokio_util::sync::CancellationToken;
 use zerocopy::{FromBytes, IntoBytes};
 
@@ -255,10 +255,10 @@ where
     }
 
     for key in &stale_keys {
-        if let Err(e) = map.delete(key.as_bytes()) {
-            if e.kind() != ErrorKind::NotFound {
-                return Err(e);
-            }
+        if let Err(e) = map.delete(key.as_bytes())
+            && e.kind() != ErrorKind::NotFound
+        {
+            return Err(e);
         }
     }
 
@@ -294,10 +294,10 @@ where
     }
 
     for key in &stale_keys {
-        if let Err(e) = map.delete(key.as_bytes()) {
-            if e.kind() != ErrorKind::NotFound {
-                return Err(e);
-            }
+        if let Err(e) = map.delete(key.as_bytes())
+            && e.kind() != ErrorKind::NotFound
+        {
+            return Err(e);
         }
     }
 
@@ -564,7 +564,7 @@ fn get_device_mac(dev_name: &str) -> Option<MacAddr> {
 mod tests {
     use std::str::FromStr;
 
-    use libbpf_rs::{libbpf_sys, MapHandle, MapType};
+    use libbpf_rs::{MapHandle, MapType, libbpf_sys};
 
     use super::*;
 
@@ -1098,11 +1098,10 @@ mod tests {
             ipv6_neigh_msg_to_entry(&make_msg(Ipv6Addr::from_str("::1").unwrap()), &mut cache,)
                 .is_none()
         );
-        assert!(ipv6_neigh_msg_to_entry(
-            &make_msg(Ipv6Addr::from_str("ff02::1").unwrap()),
-            &mut cache,
-        )
-        .is_none());
+        assert!(
+            ipv6_neigh_msg_to_entry(&make_msg(Ipv6Addr::from_str("ff02::1").unwrap()), &mut cache,)
+                .is_none()
+        );
     }
 
     #[test]

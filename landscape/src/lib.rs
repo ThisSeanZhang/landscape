@@ -32,8 +32,8 @@ pub mod sys_service;
 pub use crate::netlink::link::get_iface_by_name;
 pub use netlink::address::set_iface_ip as set_iface_ip_no_limit;
 pub use netlink::address::{
-    addresses_by_iface_id, addresses_by_iface_name, get_existing_linklocal, get_ppp_address,
-    LandscapeSingleIpInfo,
+    LandscapeSingleIpInfo, addresses_by_iface_id, addresses_by_iface_name, get_existing_linklocal,
+    get_ppp_address,
 };
 pub use netlink::convert::{
     convert_link_kind, convert_link_state, convert_link_type, parse_link_message,
@@ -111,10 +111,10 @@ pub async fn init_devs(network_config: Vec<NetworkIfaceConfig>) {
             using_iw_change_wifi_mode(&config.name, &config.wifi_mode);
 
             // Setting Iface Balance
-            if let Some(balance) = &config.xps_rps {
-                if let Err(e) = wan_service::setting_iface_balance(&config.name, balance.clone()) {
-                    tracing::error!("setting iface balance error: {e:?}");
-                }
+            if let Some(balance) = &config.xps_rps
+                && let Err(e) = wan_service::setting_iface_balance(&config.name, balance.clone())
+            {
+                tracing::error!("setting iface balance error: {e:?}");
             }
 
             dev_tx.send((0, config.clone())).unwrap();
@@ -191,14 +191,12 @@ pub async fn init_devs(network_config: Vec<NetworkIfaceConfig>) {
 
             if matches!(ifconfig.zone_type, IfaceZoneType::Wan)
                 && get_existing_linklocal(&ifconfig.name).is_none()
+                && let Some(iface) = get_iface_by_name(&ifconfig.name).await
+                && let Some(ref mac) = iface.mac
             {
-                if let Some(iface) = get_iface_by_name(&ifconfig.name).await {
-                    if let Some(ref mac) = iface.mac {
-                        let ll = mac.to_ipv6_link_local();
-                        if !set_iface_ip_no_limit(&ifconfig.name, IpAddr::V6(ll), 64).await {
-                            error!("Failed to set link-local address {ll} on {}", ifconfig.name);
-                        }
-                    }
+                let ll = mac.to_ipv6_link_local();
+                if !set_iface_ip_no_limit(&ifconfig.name, IpAddr::V6(ll), 64).await {
+                    error!("Failed to set link-local address {ll} on {}", ifconfig.name);
                 }
             }
 

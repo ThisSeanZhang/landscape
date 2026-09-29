@@ -2,8 +2,8 @@ use std::net::IpAddr;
 use std::sync::Arc;
 
 use hickory_proto::rr::{
-    rdata::{A, AAAA},
     RData, Record, RecordType,
+    rdata::{A, AAAA},
 };
 use uuid::Uuid;
 
@@ -15,7 +15,7 @@ use landscape_common::{
     flow::DnsRuntimeMarkInfo,
 };
 
-use crate::connection::{pool::ResolvePool, LandscapeMarkDNSResolver};
+use crate::connection::{LandscapeMarkDNSResolver, pool::ResolvePool};
 use crate::domain::ParsedDomain;
 use crate::server::matcher::RuntimeRuleMatcher;
 

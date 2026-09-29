@@ -1,6 +1,6 @@
 use crate::repository::UpdateActiveModel;
 use landscape_common::lan_service::lan_dhcpv4::config::{DHCPv4ServerConfig, DHCPv4ServiceConfig};
-use sea_orm::{entity::prelude::*, ActiveValue::Set};
+use sea_orm::{ActiveValue::Set, entity::prelude::*};
 use serde::{Deserialize, Serialize};
 
 use crate::{DBJson, DBTimestamp};

@@ -14,10 +14,10 @@ use landscape_common::service::controller::ConfigController;
 use landscape_common::utils::time::get_f64_timestamp;
 use pem::parse_many;
 use rcgen::generate_simple_self_signed;
+use rustls::ServerConfig;
 use rustls::crypto::CryptoProvider;
 use rustls::server::{ClientHello, ResolvesServerCert, ResolvesServerCertUsingSni};
 use rustls::sign::CertifiedKey;
-use rustls::ServerConfig;
 use rustls_pki_types::{CertificateDer, PrivateKeyDer};
 use uuid::Uuid;
 
@@ -298,25 +298,22 @@ pub(crate) fn extract_cert_dns_names_from_pem(cert_pem: &str) -> Result<Vec<Stri
             ext.parsed_extension()
         {
             for name in &san.general_names {
-                if let x509_parser::extensions::GeneralName::DNSName(dns) = name {
-                    if let Some(normalized) = normalize_domain_name(dns) {
-                        if seen.insert(normalized.clone()) {
-                            names.push(normalized);
-                        }
-                    }
+                if let x509_parser::extensions::GeneralName::DNSName(dns) = name
+                    && let Some(normalized) = normalize_domain_name(dns)
+                    && seen.insert(normalized.clone())
+                {
+                    names.push(normalized);
                 }
             }
         }
     }
 
-    if names.is_empty() {
-        if let Some(cn) = cert.subject().iter_common_name().next() {
-            if let Ok(cn_str) = cn.as_str() {
-                if let Some(normalized) = normalize_domain_name(cn_str) {
-                    names.push(normalized);
-                }
-            }
-        }
+    if names.is_empty()
+        && let Some(cn) = cert.subject().iter_common_name().next()
+        && let Ok(cn_str) = cn.as_str()
+        && let Some(normalized) = normalize_domain_name(cn_str)
+    {
+        names.push(normalized);
     }
 
     Ok(names)
@@ -380,11 +377,7 @@ fn build_resolver_snapshot_from_entries(
 
 fn normalize_domain_name(domain: &str) -> Option<String> {
     let normalized = domain.trim().to_ascii_lowercase();
-    if normalized.is_empty() {
-        None
-    } else {
-        Some(normalized)
-    }
+    if normalized.is_empty() { None } else { Some(normalized) }
 }
 
 fn wildcard_suffix(pattern: &str) -> Option<String> {
@@ -415,11 +408,11 @@ fn build_certified_key_from_pem(
     key_pem: &str,
 ) -> Result<CertifiedKey, String> {
     let mut full_cert = cert_pem.to_string();
-    if let Some(chain) = chain_pem {
-        if !chain.trim().is_empty() {
-            full_cert.push('\n');
-            full_cert.push_str(chain);
-        }
+    if let Some(chain) = chain_pem
+        && !chain.trim().is_empty()
+    {
+        full_cert.push('\n');
+        full_cert.push_str(chain);
     }
 
     let cert_pems =

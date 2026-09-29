@@ -6,14 +6,14 @@ use std::{
 
 use landscape_common::net::MacAddr;
 use libbpf_rs::{
-    skel::{OpenSkel, SkelBuilder as _},
     ProgramInput,
+    skel::{OpenSkel, SkelBuilder as _},
 };
 use zerocopy::IntoBytes;
 
 use crate::{
     maps::wan::add_wan_ip,
-    tests::{nat::test_nat6_v3::TestNat6V3SkelBuilder, TestSkb},
+    tests::{TestSkb, nat::test_nat6_v3::TestNat6V3SkelBuilder},
 };
 
 // 2001:db8:12::2 => 2001:db8:1::1 inner 2001:db8:1::1 => 2001:db8:2::2 id 0x5edf

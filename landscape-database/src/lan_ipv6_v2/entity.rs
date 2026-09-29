@@ -1,6 +1,6 @@
 use crate::repository::UpdateActiveModel;
 use landscape_common::lan_service::lan_ipv6::LanIPv6ServiceConfigV2;
-use sea_orm::{entity::prelude::*, ActiveValue::Set};
+use sea_orm::{ActiveValue::Set, entity::prelude::*};
 use serde::{Deserialize, Serialize};
 
 use crate::{DBJson, DBTimestamp};

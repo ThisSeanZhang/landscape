@@ -56,7 +56,7 @@ impl Drop for MapSpaceCleanup {
 /// suite.  Tests are additionally `#[ignore]`d; `require_root` guards
 /// manual `--include-ignored` runs.
 pub(super) fn require_root() {
-    std::env::set_var("LANDSCAPE_IGNORE_CLI_ARGS", "1");
+    unsafe { std::env::set_var("LANDSCAPE_IGNORE_CLI_ARGS", "1") };
 
     // Surface the client's tracing output in test logs (idempotent).
     let filter = tracing_subscriber::EnvFilter::try_from_default_env()

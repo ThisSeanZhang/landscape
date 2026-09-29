@@ -8,7 +8,7 @@ use landscape_common::{
     dns::rule::DomainMatchType,
     flow::ip_mark::IpConfig,
 };
-use protos::geo::{mod_Domain::Type, Domain, GeoIPListOwned, GeoSiteListOwned};
+use protos::geo::{Domain, GeoIPListOwned, GeoSiteListOwned, mod_Domain::Type};
 
 pub mod adguard;
 mod protos;
@@ -179,7 +179,7 @@ mod tests {
 
     use crate::{
         convert_domain_from_proto, convert_ipconfig_from_proto,
-        protos::geo::{mod_Domain::Type, Domain, CIDR},
+        protos::geo::{CIDR, Domain, mod_Domain::Type},
         read_geo_ips_from_bytes_txt,
     };
 

@@ -9,8 +9,8 @@ use landscape_common::wan_service::nat::error::NatServiceError;
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 
-use crate::api::JsonBody;
 use crate::LandscapeApp;
+use crate::api::JsonBody;
 use crate::{api::LandscapeApiResp, error::LandscapeApiResult};
 
 pub fn get_iface_nat_paths() -> OpenApiRouter<LandscapeApp> {

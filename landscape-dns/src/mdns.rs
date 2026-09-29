@@ -12,17 +12,17 @@ use std::{
 use hickory_proto::{
     op::{Message, MessageType, OpCode, Query},
     rr::{
-        rdata::{A, AAAA},
         DNSClass, Name, RData, Record, RecordType,
+        rdata::{A, AAAA},
     },
 };
 use nix::{
     cmsg_space,
     ifaddrs::getifaddrs,
-    net::if_::{if_nametoindex, InterfaceFlags},
+    net::if_::{InterfaceFlags, if_nametoindex},
     sys::socket::{
-        recvmsg, sendmsg, setsockopt, sockopt, ControlMessage, ControlMessageOwned, MsgFlags,
-        SockaddrIn, SockaddrIn6,
+        ControlMessage, ControlMessageOwned, MsgFlags, SockaddrIn, SockaddrIn6, recvmsg, sendmsg,
+        setsockopt, sockopt,
     },
 };
 use socket2::{Domain, InterfaceIndexOrAddress, Protocol, Socket, Type};
@@ -296,11 +296,7 @@ fn select_response_interfaces(interfaces: &[MdnsInterface], ifindex: u32) -> Vec
         .filter(|interface| interface.ifindex == ifindex)
         .cloned()
         .collect::<Vec<_>>();
-    if matched.is_empty() {
-        vec![MdnsInterface::fallback(ifindex)]
-    } else {
-        matched
-    }
+    if matched.is_empty() { vec![MdnsInterface::fallback(ifindex)] } else { matched }
 }
 
 fn build_response(
@@ -470,25 +466,27 @@ fn spawn_socket_listener(
     tx: mpsc::Sender<io::Result<MdnsPacket>>,
     token: CancellationToken,
 ) {
-    thread::spawn(move || loop {
-        if token.is_cancelled() {
-            break;
-        }
-
-        let result = match &socket {
-            MdnsSocket::V4(socket) => recv_v4_packet(socket.as_raw_fd()),
-            MdnsSocket::V6(socket) => recv_v6_packet(socket.as_raw_fd()),
-        };
-
-        match result {
-            Ok(packet) => match tx.try_send(Ok(packet)) {
-                Ok(()) | Err(TrySendError::Full(_)) => {}
-                Err(TrySendError::Closed(_)) => break,
-            },
-            Err(e) if is_temporary_recv_error(&e) => {}
-            Err(e) => {
-                let _ = tx.try_send(Err(e));
+    thread::spawn(move || {
+        loop {
+            if token.is_cancelled() {
                 break;
+            }
+
+            let result = match &socket {
+                MdnsSocket::V4(socket) => recv_v4_packet(socket.as_raw_fd()),
+                MdnsSocket::V6(socket) => recv_v6_packet(socket.as_raw_fd()),
+            };
+
+            match result {
+                Ok(packet) => match tx.try_send(Ok(packet)) {
+                    Ok(()) | Err(TrySendError::Full(_)) => {}
+                    Err(TrySendError::Closed(_)) => break,
+                },
+                Err(e) if is_temporary_recv_error(&e) => {}
+                Err(e) => {
+                    let _ = tx.try_send(Err(e));
+                    break;
+                }
             }
         }
     });
@@ -892,13 +890,15 @@ mod tests {
             ifindexed: HashMap::new(),
         };
 
-        assert!(build_response(
-            &query_packet("printer.local.", RecordType::A),
-            0,
-            Some(&provider),
-            MdnsResponseMode::MulticastMdns,
-        )
-        .is_none());
+        assert!(
+            build_response(
+                &query_packet("printer.local.", RecordType::A),
+                0,
+                Some(&provider),
+                MdnsResponseMode::MulticastMdns,
+            )
+            .is_none()
+        );
     }
 
     #[test]
@@ -908,13 +908,15 @@ mod tests {
             ifindexed: HashMap::new(),
         };
 
-        assert!(build_response(
-            &query_packet("landscape.local.", RecordType::AAAA),
-            0,
-            Some(&provider),
-            MdnsResponseMode::MulticastMdns,
-        )
-        .is_none());
+        assert!(
+            build_response(
+                &query_packet("landscape.local.", RecordType::AAAA),
+                0,
+                Some(&provider),
+                MdnsResponseMode::MulticastMdns,
+            )
+            .is_none()
+        );
     }
 
     #[test]
@@ -924,13 +926,15 @@ mod tests {
             ifindexed: HashMap::new(),
         };
 
-        assert!(build_response(
-            &query_packet_with_class("landscape.local.", RecordType::A, DNSClass::CH),
-            0,
-            Some(&provider),
-            MdnsResponseMode::MulticastMdns,
-        )
-        .is_none());
+        assert!(
+            build_response(
+                &query_packet_with_class("landscape.local.", RecordType::A, DNSClass::CH),
+                0,
+                Some(&provider),
+                MdnsResponseMode::MulticastMdns,
+            )
+            .is_none()
+        );
     }
 
     #[test]
@@ -960,13 +964,15 @@ mod tests {
             ifindexed: HashMap::new(),
         };
 
-        assert!(build_response(
-            &query_packet_with_known_answer("landscape.local.", MDNS_HOST_TTL_SECS / 2),
-            0,
-            Some(&provider),
-            MdnsResponseMode::MulticastMdns,
-        )
-        .is_none());
+        assert!(
+            build_response(
+                &query_packet_with_known_answer("landscape.local.", MDNS_HOST_TTL_SECS / 2),
+                0,
+                Some(&provider),
+                MdnsResponseMode::MulticastMdns,
+            )
+            .is_none()
+        );
     }
 
     #[test]

@@ -1,7 +1,7 @@
 use std::os::fd::{AsFd, AsRawFd};
 
 use landscape_common::flow::FlowMarkInfo;
-use libbpf_rs::{libbpf_sys, MapCore, MapFlags, MapHandle, MapType};
+use libbpf_rs::{MapCore, MapFlags, MapHandle, MapType, libbpf_sys};
 use zerocopy::{FromBytes, IntoBytes};
 
 use crate::maps::{

@@ -1,5 +1,5 @@
-use crate::net_proto::error::NetProtoError;
 use crate::net_proto::NetProtoCodec;
+use crate::net_proto::error::NetProtoError;
 use bytes::{Buf, BytesMut};
 
 pub mod v4_helpers;

@@ -49,9 +49,8 @@ pub async fn create_dump(iface_name: String) -> (Sender<Vec<u8>>, Receiver<Box<E
     // };
     // let time = Instant::now();
     let mac = interface.mac.map(|mac| mac.octets()).map(MacAddr::from);
-    spawn_named_thread(
-        short_thread_name(thread_name::prefix::DUMP_RX, &iface_name),
-        move || loop {
+    spawn_named_thread(short_thread_name(thread_name::prefix::DUMP_RX, &iface_name), move || {
+        loop {
             println!("loop 1");
             match rx.next() {
                 Ok(packet) => {
@@ -73,12 +72,11 @@ pub async fn create_dump(iface_name: String) -> (Sender<Vec<u8>>, Receiver<Box<E
                 }
                 Err(TryRecvError::Empty) => {}
             }
-        },
-    )
+        }
+    })
     .expect("failed to spawn dump rx thread");
-    spawn_named_thread(
-        short_thread_name(thread_name::prefix::DUMP_TX, &iface_name),
-        move || loop {
+    spawn_named_thread(short_thread_name(thread_name::prefix::DUMP_TX, &iface_name), move || {
+        loop {
             println!("loop 2");
             match in_rx.blocking_recv() {
                 Some(data) => {
@@ -90,8 +88,8 @@ pub async fn create_dump(iface_name: String) -> (Sender<Vec<u8>>, Receiver<Box<E
                     break;
                 }
             }
-        },
-    )
+        }
+    })
     .expect("failed to spawn dump tx thread");
     println!("create dump frunction end");
     (in_tx, out_rx)

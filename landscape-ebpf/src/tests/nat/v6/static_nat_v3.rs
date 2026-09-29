@@ -7,14 +7,14 @@ use std::{
 use etherparse::{PacketBuilder, PacketHeaders};
 use landscape_common::net::MacAddr;
 use libbpf_rs::{
-    skel::{OpenSkel, SkelBuilder as _},
     MapCore, MapFlags, ProgramInput,
+    skel::{OpenSkel, SkelBuilder as _},
 };
 use zerocopy::IntoBytes;
 
 use crate::{
-    maps::{nat::StaticNatMappingV6Item, wan::add_wan_ip},
     maps::{Nat6TimerKey, Nat6TimerValue},
+    maps::{nat::StaticNatMappingV6Item, wan::add_wan_ip},
     stages::nat::tc_nat_skel::TcNatSkelBuilder,
     tests::TestSkb,
 };

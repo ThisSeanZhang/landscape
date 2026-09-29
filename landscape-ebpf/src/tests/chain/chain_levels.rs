@@ -2,11 +2,11 @@ use std::os::fd::{AsFd, AsRawFd};
 use std::time::Duration;
 
 use libbpf_rs::{
-    skel::{OpenSkel, SkelBuilder as _},
     MapCore, MapFlags,
+    skel::{OpenSkel, SkelBuilder as _},
 };
 
-use crate::tests::net_utils::{send_raw_packet, wait_for, VethPair};
+use crate::tests::net_utils::{VethPair, send_raw_packet, wait_for};
 use crate::tests::test_xdp_chain_stage::TestXdpChainStageSkelBuilder;
 use crate::tests::test_xdp_root::TestXdpRootSkelBuilder;
 

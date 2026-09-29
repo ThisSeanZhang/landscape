@@ -3,7 +3,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use crate::{config::InitConfig, utils::time::get_f64_timestamp, INIT_FILE_NAME};
+use crate::{INIT_FILE_NAME, config::InitConfig, utils::time::get_f64_timestamp};
 
 use super::{ConfigCliArgs, ConfigCliError};
 
@@ -90,7 +90,7 @@ pub fn run_config_cli(args: &ConfigCliArgs) -> Result<Option<PathBuf>, ConfigCli
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{config::InitConfig, VERSION};
+    use crate::{VERSION, config::InitConfig};
 
     fn base_args() -> ConfigCliArgs {
         ConfigCliArgs {

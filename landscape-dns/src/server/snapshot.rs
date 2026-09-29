@@ -5,12 +5,12 @@ use arc_swap::{ArcSwap, Guard};
 use landscape_common::flow::{DnsResultSink, FlowMarkInfo};
 
 use crate::{
+    CacheDNSItem,
     domain::ParsedDomain,
     server::{
-        cache::CacheHandle, local::LocalResolver, redirect_engine::RedirectEngine,
-        resolve_engine::ResolveEngine, rule::DNSResolveRuntime, CacheRuntimeConfig,
+        CacheRuntimeConfig, cache::CacheHandle, local::LocalResolver,
+        redirect_engine::RedirectEngine, resolve_engine::ResolveEngine, rule::DNSResolveRuntime,
     },
-    CacheDNSItem,
 };
 
 /// Migrated cache entries keep a TTL at most this long when rules are
@@ -235,14 +235,12 @@ impl SnapshotStore {
         domain: &ParsedDomain,
         cache_item: &CacheDNSItem,
     ) -> Option<&'a DNSResolveRuntime> {
-        if let Some(rule_order) = cache_item.matched_rule_order {
-            if let Some(resolver) = resolves.get(rule_order) {
-                if cache_item.matched_rule_id == Some(resolver.get_config_id())
-                    && resolver.is_match(domain)
-                {
-                    return Some(resolver);
-                }
-            }
+        if let Some(rule_order) = cache_item.matched_rule_order
+            && let Some(resolver) = resolves.get(rule_order)
+            && cache_item.matched_rule_id == Some(resolver.get_config_id())
+            && resolver.is_match(domain)
+        {
+            return Some(resolver);
         }
 
         resolves.find_match(domain)

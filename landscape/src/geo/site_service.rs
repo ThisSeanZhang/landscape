@@ -8,7 +8,7 @@ use landscape_common::{
     dns::domain::normalize_domain_name,
     dns::rule::DomainMatchType,
     service::controller::ConfigController,
-    utils::time::{get_f64_timestamp, MILL_A_DAY},
+    utils::time::{MILL_A_DAY, get_f64_timestamp},
 };
 use uuid::Uuid;
 
@@ -20,11 +20,11 @@ use std::{
 };
 
 use landscape_common::{
+    LANDSCAPE_GEO_CACHE_TMP_DIR,
     args::LAND_HOME_PATH,
-    config_service::geo::{normalize_adguard_key, GeoSiteSourceConfig},
+    config_service::geo::{GeoSiteSourceConfig, normalize_adguard_key},
     event::dns::DnsEvent,
     geo_cache::file_store::GeoCacheStore,
-    LANDSCAPE_GEO_CACHE_TMP_DIR,
 };
 use landscape_database::{
     geo_site::repository::GeoSiteConfigRepository, provider::LandscapeDBServiceProvider,
@@ -32,7 +32,7 @@ use landscape_database::{
 use landscape_dns::server::domain_rule_matches_normalized;
 use reqwest::Client;
 use sha2::{Digest, Sha256};
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::{Mutex, mpsc};
 
 use super::raw_file::{raw_dat_path, remove_raw_dat, stream_to_tmp, write_bytes_to_tmp};
 
@@ -705,7 +705,7 @@ mod tests {
     use landscape_common::config_service::geo::GeoSiteFileConfig;
     use landscape_common::dns::rule::{DomainConfig, DomainMatchType};
 
-    use super::{domain_match_type_tag, geo_value_matches_lookup, geo_values_hash, GeoContentHash};
+    use super::{GeoContentHash, domain_match_type_tag, geo_value_matches_lookup, geo_values_hash};
 
     fn geo_value(value: &str, attributes: &[&str]) -> GeoSiteFileConfig {
         GeoSiteFileConfig {

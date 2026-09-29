@@ -224,10 +224,10 @@ impl DdnsJob {
 
     pub fn validate(&self) -> Result<(), String> {
         let zone_name = normalize_zone_name(&self.zone_name)?;
-        if let Some(ttl) = self.ttl {
-            if ttl == 0 {
-                return Err("ttl must be greater than 0 when provided".to_string());
-            }
+        if let Some(ttl) = self.ttl
+            && ttl == 0
+        {
+            return Err("ttl must be greater than 0 when provided".to_string());
         }
         if self.records.is_empty() {
             return Err("at least one DDNS record is required".to_string());
@@ -382,11 +382,7 @@ pub fn normalize_record_name(name: &str) -> Result<String, String> {
 pub fn fqdn_for_zone_record(zone_name: &str, record_name: &str) -> Result<String, String> {
     let zone_name = normalize_zone_name(zone_name)?;
     let record_name = normalize_record_name(record_name)?;
-    if record_name == "@" {
-        Ok(zone_name)
-    } else {
-        Ok(format!("{record_name}.{zone_name}"))
-    }
+    if record_name == "@" { Ok(zone_name) } else { Ok(format!("{record_name}.{zone_name}")) }
 }
 
 #[cfg(test)]

@@ -82,13 +82,12 @@ impl EnrolledDeviceService {
                 .find_by_hostname(data.hostname.clone().unwrap())
                 .await
                 .map_err(|e| e.to_string())?
+                && existing.id != data.id
             {
-                if existing.id != data.id {
-                    return Err(format!(
-                        "Hostname '{}' is already used by another device",
-                        data.hostname.as_ref().unwrap()
-                    ));
-                }
+                return Err(format!(
+                    "Hostname '{}' is already used by another device",
+                    data.hostname.as_ref().unwrap()
+                ));
             }
         }
 
@@ -109,10 +108,10 @@ impl EnrolledDeviceService {
             }
         }
 
-        if let Some(existing) = self.store.find_by_mac(data.mac.to_string()).await? {
-            if existing.id != data.id {
-                return Err(format!("MAC address {} already has an existing binding", data.mac));
-            }
+        if let Some(existing) = self.store.find_by_mac(data.mac.to_string()).await?
+            && existing.id != data.id
+        {
+            return Err(format!("MAC address {} already has an existing binding", data.mac));
         }
 
         // Validate IPv4 is not already assigned to another MAC
@@ -127,13 +126,12 @@ impl EnrolledDeviceService {
 
             if let Some(existing) =
                 self.store.find_by_ipv4(*ipv4).await.map_err(|e| e.to_string())?
+                && existing.id != data.id
             {
-                if existing.id != data.id {
-                    return Err(format!(
-                        "IPv4 address {} is already assigned to MAC {}",
-                        ipv4, existing.mac
-                    ));
-                }
+                return Err(format!(
+                    "IPv4 address {} is already assigned to MAC {}",
+                    ipv4, existing.mac
+                ));
             }
         }
 
@@ -150,13 +148,12 @@ impl EnrolledDeviceService {
 
             if let Some(existing) =
                 self.store.find_by_ipv6(*ipv6).await.map_err(|e| e.to_string())?
+                && existing.id != data.id
             {
-                if existing.id != data.id {
-                    return Err(format!(
-                        "IPv6 address {} is already assigned to MAC {}",
-                        ipv6, existing.mac
-                    ));
-                }
+                return Err(format!(
+                    "IPv6 address {} is already assigned to MAC {}",
+                    ipv6, existing.mac
+                ));
             }
         }
 

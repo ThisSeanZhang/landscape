@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use sea_orm_migration::{prelude::*, sea_orm::FromQueryResult};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use uuid::Uuid;
 
 use super::tables::{cert::Certs, dns_provider_profile::DnsProviderProfiles};
