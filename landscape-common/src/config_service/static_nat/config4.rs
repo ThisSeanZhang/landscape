@@ -6,6 +6,7 @@ use crate::database::repository::LandscapeDBStore;
 use crate::service::ServiceConfigError;
 use crate::utils::id::gen_database_uuid;
 use crate::utils::time::get_f64_timestamp;
+use crate::wan_service::nat::config::NatConfig;
 
 use super::config::StaticMapPair;
 
@@ -86,6 +87,14 @@ impl StaticNatMappingV4Config {
                     reason: format!("mapping_pair_ports[{i}].lan_port must not be 0"),
                 });
             }
+            if self.mapping_pair_ports[..i].iter().any(|prev| prev.wan_port == pair.wan_port) {
+                return Err(ServiceConfigError::InvalidConfig {
+                    reason: format!(
+                        "mapping_pair_ports[{i}].wan_port {} is duplicated",
+                        pair.wan_port
+                    ),
+                });
+            }
         }
 
         for (i, &proto) in self.l4_protocols.iter().enumerate() {
@@ -96,6 +105,36 @@ impl StaticNatMappingV4Config {
             }
         }
 
+        Ok(())
+    }
+
+    pub fn validate_no_dynamic_port_overlap(
+        &self,
+        nat_config: &NatConfig,
+    ) -> Result<(), ServiceConfigError> {
+        if !self.enable || self.mapping_pair_ports.is_empty() || self.l4_protocols.is_empty() {
+            return Ok(());
+        }
+        for proto in &self.l4_protocols {
+            let range = match *proto {
+                6 => &nat_config.tcp_range,
+                17 => &nat_config.udp_range,
+                _ => continue,
+            };
+            for pair in &self.mapping_pair_ports {
+                if pair.wan_port >= range.start && pair.wan_port <= range.end {
+                    return Err(ServiceConfigError::InvalidConfig {
+                        reason: format!(
+                            "wan_port {} ({}) overlaps the NAT dynamic port range {}..={}",
+                            pair.wan_port,
+                            if *proto == 6 { "TCP" } else { "UDP" },
+                            range.start,
+                            range.end
+                        ),
+                    });
+                }
+            }
+        }
         Ok(())
     }
 }
@@ -117,4 +156,96 @@ pub struct RuntimeStaticNatMappingV4Config {
     pub mapping_pair_ports: Vec<StaticMapPair>,
     pub lan_ipv4: Ipv4Addr,
     pub l4_protocols: Vec<u8>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn base_config() -> StaticNatMappingV4Config {
+        StaticNatMappingV4Config {
+            id: Uuid::nil(),
+            name: None,
+            enable: true,
+            remark: String::new(),
+            wan_iface_name: Some("eth0".to_string()),
+            mapping_pair_ports: vec![StaticMapPair { wan_port: 22, lan_port: 22 }],
+            lan_target: Some(StaticNatV4Target::Local),
+            l4_protocols: vec![6],
+            update_at: 0.0,
+        }
+    }
+
+    #[test]
+    fn duplicate_wan_port_within_a_mapping_is_rejected() {
+        let mut config = base_config();
+        config.mapping_pair_ports.push(StaticMapPair { wan_port: 22, lan_port: 8080 });
+
+        let err = config.validate().unwrap_err();
+        assert!(err.to_string().contains("is duplicated"));
+    }
+
+    #[test]
+    fn repeated_lan_port_across_pairs_is_allowed() {
+        let mut config = base_config();
+        config.mapping_pair_ports.push(StaticMapPair { wan_port: 8080, lan_port: 22 });
+
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn same_wan_port_across_mappings_is_out_of_scope() {
+        let mut config = base_config();
+        config.mapping_pair_ports = vec![
+            StaticMapPair { wan_port: 22, lan_port: 22 },
+            StaticMapPair { wan_port: 6443, lan_port: 16443 },
+        ];
+
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn wan_port_inside_nat_dynamic_range_is_rejected() {
+        let mut config = base_config();
+        config.mapping_pair_ports = vec![StaticMapPair { wan_port: 40000, lan_port: 22 }];
+
+        let err = config.validate_no_dynamic_port_overlap(&NatConfig::default()).unwrap_err();
+        assert!(err.to_string().contains("overlaps the NAT dynamic port range"));
+    }
+
+    #[test]
+    fn wan_port_below_dynamic_range_is_allowed() {
+        let config = base_config();
+
+        assert!(config.validate_no_dynamic_port_overlap(&NatConfig::default()).is_ok());
+    }
+
+    #[test]
+    fn dynamic_range_check_is_protocol_aware() {
+        let mut config = base_config();
+        config.l4_protocols = vec![17];
+        config.mapping_pair_ports = vec![StaticMapPair { wan_port: 40000, lan_port: 22 }];
+
+        let mut nat_config = NatConfig::default();
+        nat_config.tcp_range = 60000..65535;
+        nat_config.udp_range = 32768..65535;
+
+        assert!(config.validate_no_dynamic_port_overlap(&nat_config).is_err());
+
+        let mut nat_config = NatConfig::default();
+        nat_config.tcp_range = 32768..65535;
+        nat_config.udp_range = 40000..65535;
+        config.mapping_pair_ports = vec![StaticMapPair { wan_port: 33000, lan_port: 22 }];
+
+        assert!(config.validate_no_dynamic_port_overlap(&nat_config).is_ok());
+    }
+
+    #[test]
+    fn dynamic_range_check_skips_disabled_mappings() {
+        let mut config = base_config();
+        config.enable = false;
+        config.mapping_pair_ports = vec![StaticMapPair { wan_port: 40000, lan_port: 22 }];
+
+        assert!(config.validate_no_dynamic_port_overlap(&NatConfig::default()).is_ok());
+    }
 }

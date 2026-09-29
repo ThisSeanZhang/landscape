@@ -1,9 +1,5 @@
 #[derive(Debug, thiserror::Error)]
 pub enum ConfigCliError {
-    #[error("--wan-iface is required when --wan-mode is not 'none'")]
-    MissingWanIface,
-    #[error("at least one of --wan-iface or --lan-iface is required")]
-    MissingAnyIface,
     #[error("--{0} must not be empty when provided")]
     EmptyAdminCredential(&'static str),
     #[error("--wan-ip is required for --wan-mode static (format: <ip>/<prefix>)")]
@@ -26,16 +22,8 @@ pub enum ConfigCliError {
     UnknownService(String),
     #[error("service '{0}' appears in both --enable and --disable")]
     ConflictingService(String),
-    #[error("service '{0}' requires --wan-mode other than 'none'")]
-    WanServiceWithoutWan(String),
-    #[error("service '{0}' requires --lan-iface")]
-    LanServiceWithoutLan(String),
-    #[error("--{0} requires --lan-iface")]
-    LanFlagWithoutLan(&'static str),
     #[error("invalid static NAT mapping '{0}', expected <wan_port>:<lan_port>")]
     InvalidStaticNat(String),
-    #[error("--static-nat requires --wan-mode other than 'none'")]
-    StaticNatWithoutWan,
     #[error("invalid static NAT configuration: {0}")]
     InvalidStaticNatConfig(String),
     #[error("LAN member interface '{0}' must differ from --wan-iface and --lan-iface")]

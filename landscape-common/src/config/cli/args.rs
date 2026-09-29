@@ -50,8 +50,10 @@ impl From<PppdPluginArg> for PPPoEPlugin {
 ///
 /// Interface names are always explicit; no interface probing is performed.
 ///
-/// Supported topologies: WAN + LAN bridge (default), LAN-only
-/// (`--wan-mode none`) and WAN-only (omit `--lan-iface`).
+/// The topology is driven solely by which interface names are passed:
+/// WAN + LAN bridge (both given, the default), WAN-only (omit `--lan-iface`),
+/// LAN-only (omit `--wan-iface`) or empty (omit both). Flags belonging to an
+/// absent side are silently ignored.
 #[derive(Args, Debug, Clone)]
 pub struct ConfigCliArgs {
     /// Print the generated TOML to stdout instead of writing a file
@@ -76,11 +78,13 @@ pub struct ConfigCliArgs {
     pub admin_pass: Option<String>,
 
     // ── WAN ──────────────────────────────────────────────────────────────
-    /// WAN physical interface name (required unless --wan-mode none)
+    /// WAN physical interface name (omit to skip the WAN side entirely;
+    /// related flags are then ignored)
     #[arg(long, value_name = "NAME")]
     pub wan_iface: Option<String>,
 
-    /// WAN address acquisition mode
+    /// WAN address acquisition mode (`none` registers the interface without
+    /// configuring an address)
     #[arg(long, value_enum, default_value_t = WanMode::Dhcp)]
     pub wan_mode: WanMode,
 
@@ -126,16 +130,17 @@ pub struct ConfigCliArgs {
 
     // ── Static NAT ───────────────────────────────────────────────────────
     /// Static NAT port mapping to the router itself (TCP only, repeatable):
-    /// <wan_port>:<lan_port>, e.g. --static-nat 22:22
+    /// <wan_port>:<lan_port>, e.g. --static-nat 22:22 (ignored without --wan-iface)
     #[arg(long = "static-nat", value_name = "WAN_PORT:LAN_PORT")]
     pub static_nat: Vec<String>,
 
     // ── LAN ──────────────────────────────────────────────────────────────
-    /// LAN bridge interface name (omit for a WAN-only deployment)
+    /// LAN bridge interface name (omit to skip the LAN side entirely;
+    /// related flags are then ignored)
     #[arg(long, value_name = "NAME")]
     pub lan_iface: Option<String>,
 
-    /// LAN bridge address, e.g. 192.168.5.1/24 (unused without --lan-iface)
+    /// LAN bridge address, e.g. 192.168.5.1/24 (ignored without --lan-iface)
     #[arg(long, value_name = "CIDR", default_value = DEFAULT_LAN_IP)]
     pub lan_ip: String,
 

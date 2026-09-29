@@ -174,25 +174,41 @@ run "re-write without force" 1 --wan-iface eth0 --lan-iface br_lan --dir "$WORK"
 assert_has "re-write error message" "$OUT" "already exists" "--force"
 run "re-write with force" 0 --wan-iface eth0 --lan-iface br_lan --dir "$WORK" --force
 
+echo "== silent ignore (absent side) =="
+run "lan-only via omitted wan-iface" 0 --lan-iface br_lan --stdout
+assert_not_has "lan-only: no wan side" "$OUT" 'zone_type = "wan"' '[[nats]]' '[[route_wans]]' '[[ipconfigs]]'
+assert_has "lan-only: route-lan kept" "$OUT" '[[route_lans]]'
+run "empty config" 0 --stdout
+assert_has "empty: version kept" "$OUT" 'version ='
+assert_not_has "empty: nothing generated" "$OUT" '[[ifaces]]' '[[nats]]' '[[route_lans]]' '[[dhcpv4_services]]'
+run "wan-only with lan-member" 0 --wan-iface eth0 --lan-member eth1 --stdout
+assert_not_has "wan-only: lan-member ignored" "$OUT" 'name = "eth1"' 'controller_name'
+run "wan-only with lan dhcp range" 0 --wan-iface eth0 --lan-dhcp-range 192.168.5.10 --stdout
+assert_not_has "wan-only: dhcp flags ignored" "$OUT" '[[dhcpv4_services]]'
+run "lan service with wan-only" 0 --wan-iface eth0 --enable route-lan --stdout
+assert_not_has "wan-only: route-lan stripped" "$OUT" '[[route_lans]]'
+run "static-nat without wan" 0 --lan-iface br_lan --static-nat 22:22 --stdout
+assert_not_has "no wan: static-nat ignored" "$OUT" '[[static_nat_mappings_v4]]'
+run "wan service with lan-only" 0 --lan-iface br_lan --enable route-wan --stdout
+assert_not_has "lan-only: route-wan stripped" "$OUT" '[[route_wans]]'
+run "none with wan iface" 0 --wan-iface eth0 --wan-mode none --lan-iface br_lan --stdout
+assert_has "none+iface: wan registered" "$OUT" 'name = "eth0"' 'zone_type = "wan"' '[[nats]]' '[[route_wans]]'
+assert_not_has "none+iface: no address config" "$OUT" '[[ipconfigs]]'
+
 echo "== validation errors =="
-run "missing wan-iface" 1 --lan-iface br_lan
-assert_has "missing wan-iface msg" "$OUT" "--wan-iface is required"
-run "missing both ifaces" 1 --wan-mode none
-assert_has "missing both ifaces msg" "$OUT" "at least one of --wan-iface or --lan-iface"
 run "empty admin-user" 1 --wan-iface eth0 --lan-iface br_lan --admin-user ""
 assert_has "empty admin-user msg" "$OUT" "must not be empty"
-run "wan-only with lan-member" 1 --wan-iface eth0 --lan-member eth1
-assert_has "wan-only with lan-member msg" "$OUT" "--lan-member requires --lan-iface"
-run "wan-only with lan dhcp range" 1 --wan-iface eth0 --lan-dhcp-range 192.168.5.10
-assert_has "wan-only with lan dhcp range msg" "$OUT" "--lan-dhcp-range requires --lan-iface"
-run "lan service with wan-only" 1 --wan-iface eth0 --enable route-lan
-assert_has "lan service with wan-only msg" "$OUT" "requires --lan-iface"
-run "static-nat without wan" 1 --wan-mode none --lan-iface br_lan --static-nat 22:22
-assert_has "static-nat without wan msg" "$OUT" "--static-nat requires --wan-mode"
 run "invalid static-nat" 1 --wan-iface eth0 --static-nat 22
 assert_has "invalid static-nat msg" "$OUT" "invalid static NAT mapping"
 run "zero static-nat port" 1 --wan-iface eth0 --static-nat 0:22
 assert_has "zero static-nat port msg" "$OUT" "invalid static NAT configuration"
+run "duplicate static-nat port" 1 --wan-iface eth0 --static-nat 22:22 --static-nat 22:8080
+assert_has "duplicate static-nat port msg" "$OUT" "invalid static NAT configuration"
+run "static-nat in nat dynamic range" 1 --wan-iface eth0 --static-nat 40000:22
+assert_has "static-nat in nat dynamic range msg" "$OUT" "overlaps the NAT dynamic port range"
+run "static-nat dynamic range ok without nat service" 0 --wan-iface eth0 --disable nat --static-nat 40000:22 --stdout
+assert_has "no nat: mapping kept" "$OUT" '[[static_nat_mappings_v4]]' 'wan_port = 40000'
+assert_not_has "no nat: service absent" "$OUT" '[[nats]]'
 run "static missing ip" 1 --wan-iface eth0 --lan-iface br_lan --wan-mode static
 assert_has "static missing ip msg" "$OUT" "--wan-ip is required"
 run "static missing gateway" 1 --wan-iface eth0 --lan-iface br_lan --wan-mode static --wan-ip 1.2.3.4/24
@@ -203,8 +219,8 @@ run "unknown service" 1 --wan-iface eth0 --lan-iface br_lan --enable dns
 assert_has "unknown service msg" "$OUT" "unknown service 'dns'"
 run "conflicting service" 1 --wan-iface eth0 --lan-iface br_lan --enable nat --disable nat
 assert_has "conflicting service msg" "$OUT" "both --enable and --disable"
-run "wan service with none" 1 --wan-mode none --lan-iface br_lan --enable route-wan
-assert_has "wan service with none msg" "$OUT" "requires --wan-mode other than 'none'"
+run "wan service with lan-only mode none" 0 --wan-mode none --lan-iface br_lan --enable route-wan --stdout
+assert_not_has "mode none: route-wan stripped" "$OUT" '[[route_wans]]'
 run "member equals wan" 1 --wan-iface eth0 --lan-iface br_lan --lan-member eth0
 assert_has "member equals wan msg" "$OUT" "must differ from --wan-iface"
 run "invalid cidr" 1 --wan-iface eth0 --lan-iface br_lan --wan-mode static --wan-ip 1.2.3.4 --wan-gateway 1.2.3.1
