@@ -639,7 +639,7 @@ pub async fn start_ipv6_lan_server(
     slaac_verification_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let mut slaac_verifications = SlaacVerificationQueue::new(Instant::now());
 
-    let mut service_status_subscribe = service_status.subscribe();
+    let stop_token = service_status.stop_token();
 
     loop {
         tokio::select! {
@@ -865,18 +865,12 @@ pub async fn start_ipv6_lan_server(
                     );
                 }
             },
-            result = service_status_subscribe.changed() => {
+            // 停止信号(进入退出态即触发)
+            () = stop_token.cancelled() => {
                 tracing::debug!("LAN v6 Service change");
-                if result.is_err() {
-                    tracing::error!("get change result error. exit loop");
-                    service_status.just_change_status(ServiceStatus::Failed);
-                    break;
-                }
-                if service_status.is_exit() {
-                    service_status.just_change_status(ServiceStatus::Stop);
-                    tracing::info!("release send and stop");
-                    break;
-                }
+                service_status.just_change_status(ServiceStatus::Stop);
+                tracing::info!("release send and stop");
+                break;
             },
         }
     }

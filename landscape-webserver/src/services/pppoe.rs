@@ -3,8 +3,8 @@ use std::collections::HashMap;
 use axum::extract::{Path, State};
 use landscape_common::api_response::LandscapeApiResp as CommonApiResp;
 use landscape_common::database::LandscapeStore;
+use landscape_common::service::ServiceStatus;
 use landscape_common::service::controller::{ConfigController, ControllerService};
-use landscape_common::service::{ServiceStatus, WatchService};
 use landscape_common::wan_service::ip_config::IfaceIpModelConfig;
 use landscape_common::wan_service::pppd::{PPPDServiceConfig, validate_ppp_iface_name};
 use utoipa_axum::router::OpenApiRouter;
@@ -67,7 +67,7 @@ async fn validate_pppd_config(
     Ok(())
 }
 
-async fn delete_ppp_iface(state: &LandscapeApp, iface_name: &str) -> Option<WatchService> {
+async fn delete_ppp_iface(state: &LandscapeApp, iface_name: &str) -> Option<ServiceStatus> {
     state.remove_direct_iface_service(iface_name).await;
     state.iface_config_service.delete(iface_name.to_string()).await;
     state.pppd_service.delete_and_stop_pppd(iface_name.to_string()).await
@@ -116,7 +116,7 @@ async fn get_all_pppd_configs(
 )]
 async fn get_all_pppd_status(
     State(state): State<LandscapeApp>,
-) -> LandscapeApiResult<HashMap<String, WatchService>> {
+) -> LandscapeApiResult<HashMap<String, ServiceStatus>> {
     LandscapeApiResp::success(state.pppd_service.get_all_status().await)
 }
 
@@ -241,7 +241,7 @@ async fn delete_and_stop_iface_pppd_by_attach_iface_name(
 async fn delete_and_stop_iface_pppd(
     State(state): State<LandscapeApp>,
     Path(iface_name): Path<String>,
-) -> LandscapeApiResult<Option<WatchService>> {
+) -> LandscapeApiResult<Option<ServiceStatus>> {
     if let Some(config) = state.pppd_service.get_config_by_name(iface_name.clone()).await
         && config.enable
     {

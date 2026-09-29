@@ -63,7 +63,8 @@ impl LandscapeDockerService {
         let docker_client = self.docker_client.clone();
 
         scan_all_lan_net(&route_service, &docker_client).await;
-        spawn_task(task_label::task::DOCKER_EVENT_LISTENER, async move {
+        let spawn_status = status.clone();
+        spawn_status.spawn_task(task_label::task::DOCKER_EVENT_LISTENER, async move {
             status.just_change_status(ServiceStatus::Staring);
 
             let unix_socket = unix_sock::listen_unix_sock(path).await;
@@ -74,36 +75,34 @@ impl LandscapeDockerService {
             let unix_route_service = route_service.clone();
             let event_docker_client = docker_client.clone();
             let unix_docker_client = docker_client;
-            let unix_listener = spawn_task(task_label::task::DOCKER_EVENT_UNIX, async move {
-                run_unix_registration_listener(
-                    unix_status,
-                    unix_route_service,
-                    unix_socket,
-                    unix_docker_client,
-                )
-                .await;
-            });
+            let unix_spawn_status = status.clone();
+            let unix_listener =
+                unix_spawn_status.spawn_task(task_label::task::DOCKER_EVENT_UNIX, async move {
+                    run_unix_registration_listener(
+                        unix_status,
+                        unix_route_service,
+                        unix_socket,
+                        unix_docker_client,
+                    )
+                    .await;
+                });
 
             let docker_status = status.clone();
             let docker_route_service = route_service.clone();
-            let docker_event_listener =
-                spawn_task(task_label::task::DOCKER_EVENT_LISTENER, async move {
+            let docker_spawn_status = status.clone();
+            let docker_event_listener = docker_spawn_status.spawn_task(
+                task_label::task::DOCKER_EVENT_LISTENER,
+                async move {
                     run_docker_event_loop(docker_status, docker_route_service, event_docker_client)
                         .await;
-                });
+                },
+            );
 
-            let mut receiver = status.subscribe();
+            // token 为水平触发,先取后置 Running 不存在漏事件问题
+            let stop_token = status.stop_token();
             status.just_change_status(ServiceStatus::Running);
-            loop {
-                if receiver.changed().await.is_err() {
-                    tracing::error!("get change result error. exit loop");
-                    break;
-                }
-                if status.is_exit() {
-                    tracing::info!("docker service stopping");
-                    break;
-                }
-            }
+            stop_token.cancelled().await;
+            tracing::info!("docker service stopping");
 
             let _ = unix_listener.await;
             let _ = docker_event_listener.await;
@@ -119,7 +118,7 @@ async fn run_unix_registration_listener(
     unix_socket: UnixListener,
     docker_client: Arc<RwLock<Option<Docker>>>,
 ) {
-    let mut receiver = status.subscribe();
+    let stop_token = status.stop_token();
 
     loop {
         if status.is_exit() {
@@ -137,15 +136,9 @@ async fn run_unix_registration_listener(
                     }
                 }
             }
-            change_result = receiver.changed() => {
-                if change_result.is_err() {
-                    tracing::error!("docker registration listener status channel closed");
-                    break;
-                }
-                if status.is_exit() {
-                    tracing::info!("docker registration listener stopping");
-                    break;
-                }
+            () = stop_token.cancelled() => {
+                tracing::info!("docker registration listener stopping");
+                break;
             }
         }
     }
@@ -156,7 +149,7 @@ async fn run_docker_event_loop(
     route_service: IpRouteService,
     docker_client: Arc<RwLock<Option<Docker>>>,
 ) {
-    let mut receiver = status.subscribe();
+    let stop_token = status.stop_token();
     let retry_interval = tokio::time::Duration::from_secs(300);
 
     loop {
@@ -173,10 +166,8 @@ async fn run_docker_event_loop(
                 tracing::warn!("Docker Connect Fail, retrying in {:?}: {e:?}", retry_interval);
                 tokio::select! {
                     _ = tokio::time::sleep(retry_interval) => {}
-                    change_result = receiver.changed() => {
-                        if change_result.is_err() || status.is_exit() {
-                            break;
-                        }
+                    () = stop_token.cancelled() => {
+                        break;
                     }
                 }
                 continue;
@@ -190,10 +181,8 @@ async fn run_docker_event_loop(
             );
             tokio::select! {
                 _ = tokio::time::sleep(retry_interval) => {}
-                change_result = receiver.changed() => {
-                    if change_result.is_err() || status.is_exit() {
-                        break;
-                    }
+                () = stop_token.cancelled() => {
+                    break;
                 }
             }
             continue;
@@ -229,15 +218,9 @@ async fn run_docker_event_loop(
                         }
                     }
                 }
-                change_result = receiver.changed() => {
-                    if change_result.is_err() {
-                        tracing::error!("docker event listener status channel closed");
-                        return;
-                    }
-                    if status.is_exit() {
-                        tracing::info!("docker event listener stopping");
-                        return;
-                    }
+                () = stop_token.cancelled() => {
+                    tracing::info!("docker event listener stopping");
+                    return;
                 }
                 _ = interval.tick() => {
                     if status.is_running() {
@@ -265,10 +248,8 @@ async fn run_docker_event_loop(
 
         tokio::select! {
             _ = tokio::time::sleep(retry_interval) => {}
-            change_result = receiver.changed() => {
-                if change_result.is_err() || status.is_exit() {
-                    break;
-                }
+            () = stop_token.cancelled() => {
+                break;
             }
         }
     }

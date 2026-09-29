@@ -55,16 +55,18 @@ impl ServiceStarterTrait for IPConfigService {
 
         if config.enable {
             if let Some(iface) = get_iface_by_name(&config.iface_name).await {
-                let status_clone = service_status.clone();
-
+                // 契约例外:叶子函数(Static/PPPoE/DHCP 客户端)自持状态流并
+                // 自行进入 Staring,它们也被测试/bin 直接复用,故不在此预置
                 let route_service = self.route_service.clone();
                 let addr_binding = self.addr_binding.clone();
                 let pppoe_dataplane = self.pppoe_dataplane.clone();
-                spawn_task(task_label::task::WAN_IPCONFIG_OBSERVER, async move {
+                let spawn_status = service_status.clone();
+                let task_status = service_status.clone();
+                spawn_status.spawn_task(task_label::task::WAN_IPCONFIG_OBSERVER, async move {
                     init_service_from_config(
                         iface,
                         config.ip_model,
-                        status_clone,
+                        task_status,
                         route_service,
                         addr_binding,
                         pppoe_dataplane,
@@ -146,7 +148,7 @@ async fn init_service_from_config(
                 }
 
                 service_status.just_change_status(ServiceStatus::Running);
-                service_status.wait_to_stopping().await;
+                service_status.stop_token().cancelled().await;
                 let _ = std::process::Command::new("ip")
                     .args(["addr", "del", &format!("{}/{}", ipv4, ipv4_mask), "dev", &iface_name])
                     .output();

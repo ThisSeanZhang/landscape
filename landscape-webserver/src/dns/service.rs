@@ -1,7 +1,7 @@
 use axum::extract::{Query, State};
 use landscape_common::api_response::LandscapeApiResp as CommonApiResp;
 use landscape_common::dns::check::{CheckChainDnsResult, CheckDnsReq};
-use landscape_common::service::{ServiceStatus, WatchService};
+use landscape_common::service::ServiceStatus;
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 
@@ -24,7 +24,7 @@ pub fn get_dns_service_paths() -> OpenApiRouter<LandscapeApp> {
 )]
 async fn get_dns_service_status(
     State(state): State<LandscapeApp>,
-) -> LandscapeApiResult<WatchService> {
+) -> LandscapeApiResult<ServiceStatus> {
     LandscapeApiResp::success(state.dns_service.get_status().await)
 }
 

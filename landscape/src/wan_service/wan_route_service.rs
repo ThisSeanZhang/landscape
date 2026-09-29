@@ -5,7 +5,7 @@ use landscape_common::event::hub::IfaceEventReader;
 use landscape_common::wan_service::wan_route::RouteWanServiceConfig;
 use landscape_common::wan_service::wan_route::dataplane::WanRouteDataplane;
 use landscape_common::{
-    concurrency::{spawn_task, spawn_task_with_resource, task_label},
+    concurrency::{spawn_task, task_label},
     event::hub::iface::IfaceObserverAction,
     service::{
         ServiceStatus, WatchService,
@@ -39,10 +39,13 @@ impl ServiceStarterTrait for RouteWanService {
 
         if config.enable {
             if let Some(iface) = get_iface_by_name(&config.iface_name).await {
-                let status_clone = service_status.clone();
+                // 契约:返回前进入 Staring,任务内直接 Staring → Running/Failed
+                service_status.just_change_status(ServiceStatus::Staring);
                 let iface_name = config.iface_name.clone();
                 let dataplane = self.dataplane.clone();
-                spawn_task_with_resource(
+                let spawn_status = service_status.clone();
+                let task_status = service_status.clone();
+                spawn_status.spawn_task_with_resource(
                     task_label::task::ROUTE_WAN_RUN,
                     iface_name.clone(),
                     async move {
@@ -50,7 +53,7 @@ impl ServiceStarterTrait for RouteWanService {
                             iface_name,
                             iface.index,
                             iface.mac.is_some(),
-                            status_clone,
+                            task_status,
                             dataplane,
                         )
                         .await
@@ -72,7 +75,6 @@ pub async fn create_route_wan_service(
     service_status: WatchService,
     dataplane: Arc<dyn WanRouteDataplane>,
 ) {
-    service_status.just_change_status(ServiceStatus::Staring);
     tracing::info!("start route wan at ifindex: {ifindex}");
     dataplane.del_redirect_able(ifindex);
 
@@ -107,7 +109,7 @@ pub async fn create_route_wan_service(
 
     service_status.just_change_status(ServiceStatus::Running);
     tracing::info!("Waiting for external stop signal");
-    let _ = service_status.wait_to_stopping().await;
+    service_status.stop_token().cancelled().await;
     tracing::info!("Receiving external stop signal");
     drop(xdp_handle);
     dataplane.remove_xdp_roots(ifindex);

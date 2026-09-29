@@ -298,7 +298,7 @@ pub async fn dhcp_v6_pd_client(
     let time = tokio::time::Instant::now();
     let mut current_wan_addr: Option<Ipv6Addr> = None;
 
-    let mut service_status_subscribe = service_status.subscribe();
+    let stop_token = service_status.stop_token();
     loop {
         tokio::select! {
             // 超时激发重发
@@ -385,23 +385,18 @@ pub async fn dhcp_v6_pd_client(
                     None => break
                 }
             },
-            change_result = service_status_subscribe.changed() => {
-                if change_result.is_err() {
-                    tracing::error!("get change result error. exit loop");
-                    break;
+            // 停止信号(进入退出态即触发):发送 Release 后收尾
+            () = stop_token.cancelled() => {
+                if let Some(service_id) = status.into_release() {
+                    let mut send_msg = v6::Message::new(V6MessageType::Release);
+                    send_msg.opts_mut().insert(DhcpOption::ServerId(service_id));
+                    send_msg.opts_mut().insert(DhcpOption::ClientId(client_id));
+                    send_msg.opts_mut().insert(v6::DhcpOption::ElapsedTime(0));
+                    send_data(&send_msg, &send_socket, None).await;
                 }
-                if service_status.is_exit() {
-                    if let Some(service_id) = status.into_release() {
-                        let mut send_msg = v6::Message::new(V6MessageType::Release);
-                        send_msg.opts_mut().insert(DhcpOption::ServerId(service_id));
-                        send_msg.opts_mut().insert(DhcpOption::ClientId(client_id));
-                        send_msg.opts_mut().insert(v6::DhcpOption::ElapsedTime(0));
-                        send_data(&send_msg, &send_socket, None).await;
-                    }
-                    service_status.just_change_status(ServiceStatus::Stop);
-                    tracing::info!("release send and stop");
-                    break;
-                }
+                service_status.just_change_status(ServiceStatus::Stop);
+                tracing::info!("release send and stop");
+                break;
             }
         }
     }

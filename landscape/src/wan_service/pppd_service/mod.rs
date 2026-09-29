@@ -5,7 +5,7 @@ mod tests;
 
 use std::sync::Arc;
 
-use landscape_common::concurrency::{spawn_task_with_resource, task_label};
+use landscape_common::concurrency::task_label;
 use landscape_common::database::LandscapeStore;
 use landscape_common::service::ServiceStatus;
 use landscape_common::service::controller::ControllerService;
@@ -43,7 +43,7 @@ impl ServiceStarterTrait for PPPDService {
         let service_status = WatchService::new();
         if config.enable {
             if get_iface_by_name(&config.attach_iface_name).await.is_some() {
-                let status_clone = service_status.clone();
+                // 契约例外:create_pppd_thread 自持状态流(测试直接复用),自行进入 Staring
                 let iface_name = config.iface_name.clone();
                 let env: Arc<dyn PppdEnv> = Arc::new(SystemPppdEnv::new(
                     self.route_service.clone(),
@@ -51,7 +51,9 @@ impl ServiceStarterTrait for PPPDService {
                 ));
                 let config_store: Arc<dyn PppdConfigStore> = Arc::new(SystemPppdConfigStore);
 
-                spawn_task_with_resource(
+                let spawn_status = service_status.clone();
+                let task_status = service_status.clone();
+                spawn_status.spawn_task_with_resource(
                     task_label::task::PPPD_RUN,
                     iface_name.clone(),
                     async move {
@@ -59,7 +61,7 @@ impl ServiceStarterTrait for PPPDService {
                             config.attach_iface_name,
                             config.iface_name,
                             config.pppd_config,
-                            status_clone,
+                            task_status,
                             env,
                             config_store,
                         )
@@ -183,7 +185,7 @@ impl PPPDServiceConfigManagerService {
         self.store.get_pppd_configs_by_attach_iface_name(attach_name).await.unwrap()
     }
 
-    pub async fn delete_and_stop_pppd(&self, iface_name: String) -> Option<WatchService> {
+    pub async fn delete_and_stop_pppd(&self, iface_name: String) -> Option<ServiceStatus> {
         self.delete_and_stop_iface_service(iface_name).await
     }
 

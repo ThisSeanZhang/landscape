@@ -48,6 +48,7 @@ pub async fn run(
 
     let mut retry_count: u64 = 0;
     let mut session_handle: Option<SessionHandle> = None;
+    let stop_token = status_rx.stop_token();
 
     loop {
         if retry_count > 0 {
@@ -55,7 +56,7 @@ pub async fn run(
             let delay = Duration::from_secs((backoff_base * retry_count).min(30 * 60));
             tokio::select! {
                 _ = sleep(delay) => {},
-                _ = status_rx.wait_to_stopping() => {
+                _ = stop_token.cancelled() => {
                     shutdown_session(&mut session_handle, &route_service, dataplane.as_ref()).await;
                     status_rx.just_change_status(ServiceStatus::Stop);
                     break;
@@ -251,9 +252,11 @@ async fn keepalive(
     tokio::pin!(echo_sleep);
     echo_sleep.as_mut().reset(Instant::now() + Duration::from_secs(echo_interval));
 
+    let stop_token = status_rx.stop_token();
+
     loop {
         tokio::select! {
-            _ = status_rx.wait_to_stopping() => {
+            _ = stop_token.cancelled() => {
                 // Graceful hangup: tell the peer we are going away instead of
                 // vanishing silently, then wait (bounded) for the Terminate-Ack
                 // so the frame is actually flushed to the wire.

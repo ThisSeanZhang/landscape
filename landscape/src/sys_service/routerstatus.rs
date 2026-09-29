@@ -1,13 +1,16 @@
+use std::sync::Arc;
+
+use arc_swap::ArcSwap;
 use landscape_common::concurrency::{spawn_task, task_label};
-use landscape_common::sys_service::info::{
-    CpuUsage, LandscapeStatus, LoadAvg, MemUsage, WatchResource,
-};
+use landscape_common::sys_service::info::{CpuUsage, LandscapeStatus, LoadAvg, MemUsage};
 
 use std::time::Duration;
 use sysinfo::{Components, CpuRefreshKind, MemoryRefreshKind, RefreshKind, System};
 
-pub fn get_sys_running_status() -> WatchResource<LandscapeStatus> {
-    let status = WatchResource::new();
+/// Shared snapshot of the latest [`LandscapeStatus`] sample, refreshed at 1Hz
+/// by the sampler task. Readers load the current value without subscribing.
+pub fn get_sys_running_status() -> Arc<ArcSwap<LandscapeStatus>> {
+    let status = Arc::new(ArcSwap::from_pointee(LandscapeStatus::default()));
 
     let clone_status = status.clone();
     spawn_task(task_label::task::SYS_STATUS_SAMPLER, async move {
@@ -114,7 +117,7 @@ pub fn get_sys_running_status() -> WatchResource<LandscapeStatus> {
                 used_swap: sys.used_swap(),
             };
 
-            status.0.send_replace(ld_status);
+            status.store(Arc::new(ld_status));
             interval.tick().await;
         }
     });

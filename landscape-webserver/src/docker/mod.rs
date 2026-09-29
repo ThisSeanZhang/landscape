@@ -10,10 +10,7 @@ use bollard::{
 
 use image::get_docker_images_paths;
 use landscape_common::api_response::LandscapeApiResp as CommonApiResp;
-use landscape_common::{
-    docker::DockerCmd,
-    service::{ServiceStatus, WatchService},
-};
+use landscape_common::{docker::DockerCmd, service::ServiceStatus};
 use network::get_docker_networks_paths;
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
@@ -46,8 +43,8 @@ pub fn get_docker_paths() -> OpenApiRouter<LandscapeApp> {
     operation_id = "get_docker_status",
     responses((status = 200, description = "Success", body = CommonApiResp<ServiceStatus>))
 )]
-async fn get_docker_status(State(state): State<LandscapeApp>) -> LandscapeApiResult<WatchService> {
-    LandscapeApiResp::success(state.docker_service.status)
+async fn get_docker_status(State(state): State<LandscapeApp>) -> LandscapeApiResult<ServiceStatus> {
+    LandscapeApiResp::success(state.docker_service.status.current())
 }
 
 #[utoipa::path(
@@ -59,9 +56,9 @@ async fn get_docker_status(State(state): State<LandscapeApp>) -> LandscapeApiRes
 )]
 async fn start_docker_status(
     State(state): State<LandscapeApp>,
-) -> LandscapeApiResult<WatchService> {
+) -> LandscapeApiResult<ServiceStatus> {
     state.docker_service.start_to_listen_event().await;
-    LandscapeApiResp::success(state.docker_service.status)
+    LandscapeApiResp::success(state.docker_service.status.current())
 }
 
 #[utoipa::path(
@@ -71,9 +68,11 @@ async fn start_docker_status(
     operation_id = "stop_docker_status",
     responses((status = 200, description = "Success", body = CommonApiResp<ServiceStatus>))
 )]
-async fn stop_docker_status(State(state): State<LandscapeApp>) -> LandscapeApiResult<WatchService> {
+async fn stop_docker_status(
+    State(state): State<LandscapeApp>,
+) -> LandscapeApiResult<ServiceStatus> {
     state.docker_service.status.wait_stop().await;
-    LandscapeApiResp::success(state.docker_service.status)
+    LandscapeApiResp::success(state.docker_service.status.current())
 }
 
 #[utoipa::path(

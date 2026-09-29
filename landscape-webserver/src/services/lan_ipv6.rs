@@ -7,8 +7,8 @@ use landscape_common::lan_service::lan_ipv6::IPv6NAInfo;
 use landscape_common::lan_service::lan_ipv6::{
     LanIPv6ServiceConfigV2, validate_global_prefix_conflicts,
 };
+use landscape_common::service::ServiceStatus;
 use landscape_common::service::controller::ControllerService;
-use landscape_common::service::{ServiceStatus, WatchService};
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 
@@ -70,7 +70,7 @@ async fn get_assigned_ips_by_iface_name(
 )]
 async fn get_all_status(
     State(state): State<LandscapeApp>,
-) -> LandscapeApiResult<HashMap<String, WatchService>> {
+) -> LandscapeApiResult<HashMap<String, ServiceStatus>> {
     LandscapeApiResp::success(state.lan_ipv6_service.get_all_status().await)
 }
 
@@ -143,7 +143,7 @@ async fn handle_lan_ipv6(
 async fn delete_and_stop_lan_ipv6(
     State(state): State<LandscapeApp>,
     Path(iface_name): Path<String>,
-) -> LandscapeApiResult<Option<WatchService>> {
+) -> LandscapeApiResult<Option<ServiceStatus>> {
     let result = state.lan_ipv6_service.delete_and_stop_iface_service(iface_name).await;
     state.static_nat6_mapping_service.refresh_runtime_rules().await;
     LandscapeApiResp::success(result)

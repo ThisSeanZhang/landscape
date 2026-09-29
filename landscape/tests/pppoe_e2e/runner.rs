@@ -129,19 +129,9 @@ pub(super) async fn wait_for_running(
     status: &WatchService,
     timeout: Duration,
 ) -> Result<(), String> {
-    tokio::time::timeout(timeout, async {
-        let mut rx = status.subscribe();
-        loop {
-            if matches!(*rx.borrow(), ServiceStatus::Running) {
-                return Ok(());
-            }
-            if rx.changed().await.is_err() {
-                return Err("status channel closed".into());
-            }
-        }
-    })
-    .await
-    .map_err(|_| format!("client did not reach Running within {timeout:?}"))?
+    tokio::time::timeout(timeout, status.wait_for(|s| matches!(s, ServiceStatus::Running)))
+        .await
+        .map_err(|_| format!("client did not reach Running within {timeout:?}"))
 }
 
 /// Wait until the service reaches a terminal state (`Stop` or `Failed`).
@@ -150,21 +140,19 @@ pub(super) async fn wait_for_exit(
     timeout: Duration,
 ) -> Result<StatusOutcome, String> {
     tokio::time::timeout(timeout, async {
-        let mut rx = status.subscribe();
-        let mut ever_running = matches!(*rx.borrow(), ServiceStatus::Running);
+        let mut ever_running = false;
         loop {
-            let current = rx.borrow_and_update().clone();
-            if matches!(current, ServiceStatus::Running) {
-                ever_running = true;
+            let current = status.current();
+            match current {
+                ServiceStatus::Running => ever_running = true,
+                ServiceStatus::Stop | ServiceStatus::Failed => {
+                    return StatusOutcome { ever_running, final_status: current };
+                }
+                _ => {}
             }
-            if matches!(current, ServiceStatus::Stop | ServiceStatus::Failed) {
-                return Ok(StatusOutcome { ever_running, final_status: current });
-            }
-            if rx.changed().await.is_err() {
-                return Err("status channel closed".into());
-            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
         }
     })
     .await
-    .map_err(|_| format!("client did not reach a terminal state within {timeout:?}"))?
+    .map_err(|_| format!("client did not reach a terminal state within {timeout:?}"))
 }

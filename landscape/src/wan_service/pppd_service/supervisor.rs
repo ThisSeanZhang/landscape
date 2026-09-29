@@ -71,8 +71,9 @@ impl PppSessionHealth {
 async fn wait_backoff(service_status: &WatchService, backoff: Duration) -> BackoffOutcome {
     // Phase 2 will add an attach-iface `Up` branch here to interrupt the backoff
     // and redial immediately.
+    let stop_token = service_status.stop_token();
     tokio::select! {
-        _ = service_status.wait_to_stopping() => BackoffOutcome::Stop,
+        _ = stop_token.cancelled() => BackoffOutcome::Stop,
         _ = tokio::time::sleep(backoff) => BackoffOutcome::Elapsed,
     }
 }
@@ -204,6 +205,7 @@ async fn supervise_loop(
     let mut retry = PppdRetryController::new();
     let mut ticker = tokio::time::interval(timings.poll_interval);
     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    let stop_token = service_status.stop_token();
 
     'restart: loop {
         match service_status.current() {
@@ -238,7 +240,7 @@ async fn supervise_loop(
         let mut should_stop = false;
         loop {
             tokio::select! {
-                _ = service_status.wait_to_stopping() => {
+                _ = stop_token.cancelled() => {
                     tracing::info!("Received stop signal for PPPD");
                     should_stop = true;
                     break;

@@ -88,7 +88,8 @@ impl ServiceStarterTrait for IPV6PDService {
                     gateway_ip: IpAddr::V6(Ipv6Addr::UNSPECIFIED),
                 };
                 let status_clone = service_status.clone();
-                spawn_task(task_label::task::WAN_IPV6PD_OBSERVER, async move {
+                let spawn_status = service_status.clone();
+                spawn_status.spawn_task(task_label::task::WAN_IPV6PD_OBSERVER, async move {
                     crate::wan_service::ipv6pd_client::v6::dhcp_v6_pd_client(
                         config.iface_name,
                         iface.index,

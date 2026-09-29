@@ -63,6 +63,7 @@ pub(crate) async fn run(
 
     let mut discovery_retries: u8 = 0;
     let mut lcp_retries: u8 = 0;
+    let stop_token = status_rx.stop_token();
 
     let timeout_sleep = sleep(Duration::from_secs(0));
     tokio::pin!(timeout_sleep);
@@ -70,7 +71,7 @@ pub(crate) async fn run(
 
     loop {
         tokio::select! {
-            _ = status_rx.wait_to_stopping() => {
+            _ = stop_token.cancelled() => {
                 return Err(PppoeError::ServiceStopped);
             }
             received = rx.recv() => {

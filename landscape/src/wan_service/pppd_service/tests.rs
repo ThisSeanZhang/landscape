@@ -718,7 +718,6 @@ async fn lifecycle_normal_stop_sets_stop_and_deletes_config() {
     let env = Arc::new(FakeEnv::new(FakeConfig::default()));
     let store = Arc::new(FakeConfigStore::new(false));
     let status = WatchService::new();
-    let mut sub = status.subscribe();
 
     let env_dyn: Arc<dyn PppdEnv> = env.clone();
     let store_dyn: Arc<dyn PppdConfigStore> = store.clone();
@@ -733,11 +732,10 @@ async fn lifecycle_normal_stop_sets_stop_and_deletes_config() {
 
     tokio::time::timeout(
         Duration::from_secs(1),
-        sub.wait_for(|s| matches!(s, ServiceStatus::Running)),
+        status.wait_for(|s| matches!(s, ServiceStatus::Running)),
     )
     .await
-    .expect("service did not reach Running")
-    .unwrap();
+    .expect("service did not reach Running");
     assert_eq!(env.spawn_count(), 1);
 
     status.just_change_status(ServiceStatus::Stopping);

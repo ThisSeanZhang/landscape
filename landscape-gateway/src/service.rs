@@ -61,21 +61,20 @@ impl GatewayService {
     /// to exit cleanly, without blocking the async runtime.
     pub async fn shutdown_and_wait(&self, timeout: std::time::Duration) {
         self.manager.shutdown();
-        let mut status_rx = self.manager.watch_service().subscribe();
-        if matches!(*status_rx.borrow(), ServiceStatus::Stop) {
+        let status = self.manager.watch_service();
+        if matches!(status.current(), ServiceStatus::Stop) {
             tracing::info!("Gateway thread exited cleanly.");
             return;
         }
 
-        let wait_result = tokio::time::timeout(
-            timeout,
-            status_rx.wait_for(|status| matches!(status, ServiceStatus::Stop)),
-        )
-        .await;
+        // The gateway runs on a dedicated thread (not tracked tokio tasks), so
+        // poll the derived status until the thread reports Stop.
+        let wait_result =
+            tokio::time::timeout(timeout, status.wait_for(|s| matches!(s, ServiceStatus::Stop)))
+                .await;
 
         match wait_result {
-            Ok(Ok(_)) => tracing::info!("Gateway thread exited cleanly."),
-            Ok(Err(e)) => tracing::error!("Gateway status watch closed during shutdown: {:?}", e),
+            Ok(()) => tracing::info!("Gateway thread exited cleanly."),
             Err(_) => tracing::warn!(
                 "Gateway did not stop within {}s timeout, proceeding.",
                 timeout.as_secs()

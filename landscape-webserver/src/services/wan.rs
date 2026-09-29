@@ -2,8 +2,8 @@ use std::collections::HashMap;
 
 use axum::extract::{Path, State};
 use landscape_common::api_response::LandscapeApiResp as CommonApiResp;
+use landscape_common::service::ServiceStatus;
 use landscape_common::service::controller::ControllerService;
-use landscape_common::service::{ServiceStatus, WatchService};
 use landscape_common::wan_service::wan_route::RouteWanServiceConfig;
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
@@ -29,7 +29,7 @@ pub fn get_route_wan_paths() -> OpenApiRouter<LandscapeApp> {
 )]
 async fn get_all_route_wan_status(
     State(state): State<LandscapeApp>,
-) -> LandscapeApiResult<HashMap<String, WatchService>> {
+) -> LandscapeApiResult<HashMap<String, ServiceStatus>> {
     LandscapeApiResp::success(state.route_wan_service.get_all_status().await)
 }
 
@@ -80,7 +80,7 @@ async fn handle_route_wan_status(
 async fn delete_and_stop_route_wan(
     State(state): State<LandscapeApp>,
     Path(iface_name): Path<String>,
-) -> LandscapeApiResult<Option<WatchService>> {
+) -> LandscapeApiResult<Option<ServiceStatus>> {
     LandscapeApiResp::success(
         state.route_wan_service.delete_and_stop_iface_service(iface_name).await,
     )

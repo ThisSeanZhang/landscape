@@ -2,8 +2,8 @@ use std::{collections::HashMap, net::IpAddr};
 
 use axum::extract::{Path, State};
 use landscape_common::api_response::LandscapeApiResp as CommonApiResp;
+use landscape_common::service::ServiceStatus;
 use landscape_common::service::controller::ControllerService;
-use landscape_common::service::{ServiceStatus, WatchService};
 use landscape_common::wan_service::ip_config::{IfaceIpModelConfig, IfaceIpServiceConfig};
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
@@ -91,7 +91,7 @@ async fn get_runtime_ip_addresses(
 )]
 async fn get_all_ipconfig_status(
     State(state): State<LandscapeApp>,
-) -> LandscapeApiResult<HashMap<String, WatchService>> {
+) -> LandscapeApiResult<HashMap<String, ServiceStatus>> {
     LandscapeApiResp::success(state.wan_ip_service.get_all_status().await)
 }
 
@@ -145,6 +145,6 @@ async fn handle_iface_service_status(
 async fn delete_and_stop_iface_service(
     State(state): State<LandscapeApp>,
     Path(iface_name): Path<String>,
-) -> LandscapeApiResult<Option<WatchService>> {
+) -> LandscapeApiResult<Option<ServiceStatus>> {
     LandscapeApiResp::success(state.wan_ip_service.delete_and_stop_iface_service(iface_name).await)
 }

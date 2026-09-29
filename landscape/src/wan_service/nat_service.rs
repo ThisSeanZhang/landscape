@@ -12,7 +12,7 @@ use landscape_common::sys_service::route_service::RouteTargetInfo;
 use landscape_common::wan_service::nat::config::{NatConfig, NatServiceConfig};
 use landscape_common::wan_service::nat::dataplane::NatDataplane;
 use landscape_common::{
-    concurrency::{spawn_task, spawn_task_with_resource, task_label},
+    concurrency::{spawn_task, task_label},
     service::{ServiceStatus, WatchService, manager::ServiceStarterTrait},
 };
 use landscape_database::nat::repository::NatServiceRepository;
@@ -80,10 +80,13 @@ impl ServiceStarterTrait for NatService {
 
         if config.enable {
             if let Some(iface) = get_iface_by_name(&config.iface_name).await {
-                let status_clone = service_status.clone();
+                // 契约:返回前进入 Staring,任务内直接 Staring → Running/Failed
+                service_status.just_change_status(ServiceStatus::Staring);
                 let iface_name = config.iface_name.clone();
                 let dataplane = self.dataplane.clone();
-                spawn_task_with_resource(
+                let spawn_status = service_status.clone();
+                let task_status = service_status.clone();
+                spawn_status.spawn_task_with_resource(
                     task_label::task::NAT_RUN,
                     iface_name.clone(),
                     async move {
@@ -92,7 +95,7 @@ impl ServiceStarterTrait for NatService {
                             iface.index as i32,
                             iface.mac.is_some(),
                             config.nat_config,
-                            status_clone,
+                            task_status,
                             dataplane,
                         )
                         .await
@@ -115,8 +118,6 @@ pub async fn create_nat_service(
     service_status: WatchService,
     dataplane: Arc<dyn NatDataplane>,
 ) {
-    service_status.just_change_status(ServiceStatus::Staring);
-
     let nat = match dataplane.attach(ifindex as u32, has_mac, &nat_config) {
         Ok(handle) => handle,
         Err(err) => {
@@ -128,7 +129,7 @@ pub async fn create_nat_service(
 
     service_status.just_change_status(ServiceStatus::Running);
     tracing::info!("Waiting for external stop signal");
-    let _ = service_status.wait_to_stopping().await;
+    service_status.stop_token().cancelled().await;
     tracing::info!("Received external stop signal");
 
     drop(nat);

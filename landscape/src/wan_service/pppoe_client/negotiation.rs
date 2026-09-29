@@ -127,9 +127,11 @@ pub(crate) async fn run(
     tokio::pin!(echo_sleep);
     echo_sleep.as_mut().reset(Instant::now() + Duration::from_secs(echo_interval));
 
+    let stop_token = status_rx.stop_token();
+
     loop {
         tokio::select! {
-            _ = status_rx.wait_to_stopping() => {
+            _ = stop_token.cancelled() => {
                 return Err(PppoeError::ServiceStopped);
             }
             received = rx.recv() => {

@@ -12,7 +12,7 @@ use landscape_common::{
     event::{DnsMetricMessage, dns::DnsEvent},
     flow::{DnsResultSink, FlowSocketRegistrar},
     service::{
-        ServiceStatus, WatchService,
+        ServiceStatus,
         controller::{ConfigController, ConfigStoreFlowController, FlowConfigController},
     },
 };
@@ -214,8 +214,8 @@ impl LandscapeDnsService {
         dns_service
     }
 
-    pub async fn get_status(&self) -> WatchService {
-        self.dns_service.status.clone()
+    pub async fn get_status(&self) -> ServiceStatus {
+        self.dns_service.status.current()
     }
 
     pub async fn start_dns_service(&self) {

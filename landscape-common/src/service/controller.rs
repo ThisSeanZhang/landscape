@@ -8,7 +8,7 @@ use crate::database::store::{Change, ConfigStore};
 use crate::database::{LandscapeFlowStore, LandscapeStore};
 
 use super::{
-    WatchService,
+    ServiceStatus,
     manager::{ServiceKeyProvider, ServiceManager, ServiceStarterTrait},
 };
 
@@ -22,8 +22,8 @@ pub trait ControllerService {
     fn get_service(&self) -> &ServiceManager<Self::H>;
     fn get_repository(&self) -> &Self::DatabseAction;
 
-    /// 获得所有服务状态
-    async fn get_all_status(&self) -> HashMap<String, WatchService> {
+    /// 获得所有服务状态快照
+    async fn get_all_status(&self) -> HashMap<String, ServiceStatus> {
         self.get_service().get_all_status().await
     }
 
@@ -48,7 +48,7 @@ pub trait ControllerService {
         Ok(())
     }
 
-    async fn delete_and_stop_iface_service(&self, iface_name: Self::Id) -> Option<WatchService> {
+    async fn delete_and_stop_iface_service(&self, iface_name: Self::Id) -> Option<ServiceStatus> {
         self.get_repository().delete(iface_name.clone()).await.unwrap();
         self.get_service().stop_service(iface_name.to_string()).await
     }
@@ -266,6 +266,18 @@ where
 /// Every successful write notifies through the base trait's
 /// `notify_changed`/`notify_deleted` slots, which the legacy `ControllerService`
 /// never did.
+///
+/// # 未接线的预留(数据库回滚改造)
+///
+/// 当前"服务启动失败"不触发任何回滚:`update_service` 只表示配置已入队,
+/// 服务随后进入 Failed 时 DB 已持有新配置。改造接线时使用以下已预留原语:
+///
+/// - [`ServiceManager::update_service_and_wait`] / [`crate::service::StartOutcome`]:
+///   观测由本次更新触发的运行结果,支持两种顺序——
+///   - 验证后落库:Running 才 `checked_upsert`,失败时 DB 零写入;
+///   - 落库后验证:保持本 trait 顺序,追加观测;非 Running 时以
+///     `Change.old` 为前像做 DB 补偿写,并经 `notify_changed` 传播补偿变更。
+/// - Timeout 的策略(放行或中止)由各服务域按启动时长语义决定,原语不预设。
 #[async_trait::async_trait]
 pub trait ConfigStoreServiceController: ConfigStoreController
 where
@@ -311,7 +323,10 @@ where
 
     /// Delete from the store, stop the running service, then notify;
     /// `Ok(None)` if the id was missing (the store is left untouched).
-    async fn delete_and_stop_service(&self, id: Self::Id) -> Result<Option<WatchService>, DbError> {
+    async fn delete_and_stop_service(
+        &self,
+        id: Self::Id,
+    ) -> Result<Option<ServiceStatus>, DbError> {
         let old = self.get_store().delete_and_get(id).await?;
         let Some(old) = old else { return Ok(None) };
         let status = self.get_service().stop_service(old.service_key()).await;
@@ -319,8 +334,8 @@ where
         Ok(status)
     }
 
-    /// Status of every running service, keyed by service key.
-    async fn get_all_status(&self) -> HashMap<String, WatchService> {
+    /// Status snapshot of every running service, keyed by service key.
+    async fn get_all_status(&self) -> HashMap<String, ServiceStatus> {
         self.get_service().get_all_status().await
     }
 }
@@ -333,6 +348,7 @@ mod service_controller_tests {
 
     use super::*;
     use crate::database::repository::LandscapeDBStore;
+    use crate::service::{StartOutcome, WatchService};
 
     #[derive(Clone, Debug, PartialEq)]
     struct MockConfig {
@@ -439,10 +455,10 @@ mod service_controller_tests {
                 return Err(DbError::Conflict);
             }
             let old = self.get(&config.id);
-            if let Some(old) = &old {
-                if old.update_at != config.update_at {
-                    return Err(DbError::Conflict);
-                }
+            if let Some(old) = &old
+                && old.update_at != config.update_at
+            {
+                return Err(DbError::Conflict);
             }
             config.update_at = self.next_ts();
             self.rows.lock().unwrap().insert(config.id.clone(), config.clone());
@@ -483,10 +499,16 @@ mod service_controller_tests {
 
     /// Records every `start()` invocation as `(key, value)`; optionally blocks
     /// inside `start()` forever so the supervisor stops consuming its channel.
+    /// With `auto_start` the started handle follows the starter contract:
+    /// status enters `Staring` before return and a long-lived task is
+    /// registered in the tracker (setting `Failed` instead of `Running` when
+    /// `fail_start` is set).
     #[derive(Clone)]
     struct MockStarter {
         started: Arc<Mutex<Vec<(String, u32)>>>,
         block_start: Arc<AtomicBool>,
+        auto_start: Arc<AtomicBool>,
+        fail_start: Arc<AtomicBool>,
     }
 
     impl MockStarter {
@@ -494,6 +516,8 @@ mod service_controller_tests {
             Self {
                 started: Arc::new(Mutex::new(Vec::new())),
                 block_start: Arc::new(AtomicBool::new(false)),
+                auto_start: Arc::new(AtomicBool::new(false)),
+                fail_start: Arc::new(AtomicBool::new(false)),
             }
         }
     }
@@ -507,7 +531,25 @@ mod service_controller_tests {
             if self.block_start.load(Ordering::SeqCst) {
                 std::future::pending::<()>().await;
             }
-            WatchService::new()
+            let handle = WatchService::new();
+            if self.auto_start.load(Ordering::SeqCst) {
+                // 契约:返回前进入 Staring;长驻任务经 tracker 注册
+                handle.just_change_status(ServiceStatus::Staring);
+                let fail = self.fail_start.load(Ordering::SeqCst);
+                let inner = handle.clone();
+                handle.spawn_task("service.test.autostart", async move {
+                    tokio::time::sleep(Duration::from_millis(20)).await;
+                    if fail {
+                        inner.just_change_status(ServiceStatus::Failed);
+                        return;
+                    }
+                    inner.just_change_status(ServiceStatus::Running);
+                    // 模拟真实长驻服务:等待停止信号后收尾汇报
+                    inner.stop_token().cancelled().await;
+                    inner.just_change_status(ServiceStatus::Stop);
+                });
+            }
+            handle
         }
     }
 
@@ -667,7 +709,7 @@ mod service_controller_tests {
     async fn delete_and_stop_service_roundtrip() {
         let store = MockStore::default();
         let starter = MockStarter::new();
-        let controller = controller(store.clone(), starter.clone()).await;
+        let controller = controller(store.clone(), starter).await;
 
         let missing = controller.delete_and_stop_service("wan0".to_string()).await.unwrap();
         assert!(missing.is_none());
@@ -678,12 +720,67 @@ mod service_controller_tests {
             .unwrap();
 
         let deleted = controller.delete_and_stop_service("wan0".to_string()).await.unwrap();
-        assert!(deleted.is_some());
+        // 快照语义:返回被停服务的终态
+        assert!(matches!(deleted, Some(ServiceStatus::Stop)));
         assert!(store.get("wan0").is_none());
         assert_eq!(
             *controller.notify_log.lock().unwrap(),
             vec!["changed:3".to_string(), "deleted:3".to_string()]
         );
         assert!(controller.service.get_all_status().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn update_service_and_wait_reports_running() {
+        let store = MockStore::default();
+        let starter = MockStarter::new();
+        starter.auto_start.store(true, Ordering::SeqCst);
+        let controller = controller(store, starter).await;
+
+        // 新键:placeholder(generation 0)→ 首次真实启动(1)后观测
+        let outcome = controller
+            .service
+            .update_service_and_wait(
+                MockConfig { id: "wan0".to_string(), value: 1, update_at: 0.0 },
+                Duration::from_secs(5),
+            )
+            .await;
+        assert_eq!(outcome, StartOutcome::Running);
+        assert_eq!(
+            controller.service.get_all_status().await.get("wan0"),
+            Some(&ServiceStatus::Running)
+        );
+
+        // 既有键:更新触发的下一次运行(1 → 2)
+        let outcome = controller
+            .service
+            .update_service_and_wait(
+                MockConfig { id: "wan0".to_string(), value: 2, update_at: 0.0 },
+                Duration::from_secs(5),
+            )
+            .await;
+        assert_eq!(outcome, StartOutcome::Running);
+        assert_eq!(
+            controller.service.get_all_status().await.get("wan0"),
+            Some(&ServiceStatus::Running)
+        );
+    }
+
+    #[tokio::test]
+    async fn update_service_and_wait_reports_failure() {
+        let store = MockStore::default();
+        let starter = MockStarter::new();
+        starter.auto_start.store(true, Ordering::SeqCst);
+        starter.fail_start.store(true, Ordering::SeqCst);
+        let controller = controller(store, starter).await;
+
+        let outcome = controller
+            .service
+            .update_service_and_wait(
+                MockConfig { id: "wan0".to_string(), value: 1, update_at: 0.0 },
+                Duration::from_secs(5),
+            )
+            .await;
+        assert_eq!(outcome, StartOutcome::Failed);
     }
 }

@@ -13,6 +13,7 @@ use landscape_common::lan_service::lan_dhcpv4::config::DHCPv4ServiceConfig;
 use landscape_common::lan_service::lan_dhcpv4::status::ArpScanInfo;
 use landscape_common::lan_service::lan_dhcpv4::status::ArpScanStatus;
 use landscape_common::lan_service::lan_dhcpv4::status::DHCPv4OfferInfo;
+use landscape_common::service::ServiceStatus;
 use landscape_common::service::WatchService;
 use landscape_common::service::controller::ControllerService;
 use landscape_common::sys_service::client::{CallerLookupMatch, CallerLookupSource};
@@ -173,21 +174,25 @@ impl ServiceStarterTrait for DHCPv4ServerStarter {
             );
             let ipv4_sender = self.ipv4_assign_sender.clone();
             let mac_binding = self.mac_binding.clone();
-            spawn_task(task_label::task::DHCP_V4_SERVICE_OBSERVER, async move {
-                crate::lan_service::lan_dhcp4_server::server::dhcp_v4_server(
-                    config.iface_name,
-                    iface_ifindex,
-                    iface_mac,
-                    server_addr,
-                    network_mask,
-                    dhcp_server,
-                    svc_status,
-                    ipv4_sender,
-                    mac_binding,
-                )
-                .await;
-                stop_dhcp_server.cancel();
-            });
+            let server_spawn_status = service_status.clone();
+            server_spawn_status.spawn_task(
+                task_label::task::DHCP_V4_SERVICE_OBSERVER,
+                async move {
+                    crate::lan_service::lan_dhcp4_server::server::dhcp_v4_server(
+                        config.iface_name,
+                        iface_ifindex,
+                        iface_mac,
+                        server_addr,
+                        network_mask,
+                        dhcp_server,
+                        svc_status,
+                        ipv4_sender,
+                        mac_binding,
+                    )
+                    .await;
+                    stop_dhcp_server.cancel();
+                },
+            );
 
             if let Some(mac) = iface.mac {
                 // start arp scan
@@ -199,30 +204,34 @@ impl ServiceStarterTrait for DHCPv4ServerStarter {
                         .clone()
                 };
 
-                spawn_task(task_label::task::DHCP_V4_SERVICE_OBSERVER, async move {
-                    let mut scan_interval =
-                        tokio::time::interval(Duration::from_millis(LAND_ARP_SCAN_INTERVAL));
-                    loop {
-                        tokio::select! {
-                            _ = stop_dhcp_server_child.cancelled() => {
-                                break;
-                            }
-                            _ = scan_interval.tick() => {
-                                let result = crate::arp::scan::scan_ip_info(
-                                    iface.index,
-                                    mac,
-                                    server_addr,
-                                    network_mask,
-                                ).await;
+                let arp_spawn_status = service_status.clone();
+                arp_spawn_status.spawn_task(
+                    task_label::task::DHCP_V4_SERVICE_OBSERVER,
+                    async move {
+                        let mut scan_interval =
+                            tokio::time::interval(Duration::from_millis(LAND_ARP_SCAN_INTERVAL));
+                        loop {
+                            tokio::select! {
+                                _ = stop_dhcp_server_child.cancelled() => {
+                                    break;
+                                }
+                                _ = scan_interval.tick() => {
+                                    let result = crate::arp::scan::scan_ip_info(
+                                        iface.index,
+                                        mac,
+                                        server_addr,
+                                        network_mask,
+                                    ).await;
 
-                                let mut arp_infos = scand_arp_info.write().await;
-                                arp_infos.insert_new_info(ArpScanInfo::new(result));
+                                    let mut arp_infos = scand_arp_info.write().await;
+                                    arp_infos.insert_new_info(ArpScanInfo::new(result));
+                                }
                             }
                         }
-                    }
 
-                    tracing::info!("DHCPv4 Server ARP scan stop");
-                });
+                        tracing::info!("DHCPv4 Server ARP scan stop");
+                    },
+                );
             }
         } else {
             tracing::error!("Interface {} not found", config.iface_name);
@@ -259,7 +268,7 @@ impl ControllerService for DHCPv4ServerManagerService {
         &self.store
     }
 
-    async fn delete_and_stop_iface_service(&self, iface_name: Self::Id) -> Option<WatchService> {
+    async fn delete_and_stop_iface_service(&self, iface_name: Self::Id) -> Option<ServiceStatus> {
         self.get_repository().delete(iface_name.clone()).await.unwrap();
         let result = self.get_service().stop_service(iface_name.clone()).await;
         self.server_starter.route_service.remove_ipv4_lan_route(&iface_name).await;

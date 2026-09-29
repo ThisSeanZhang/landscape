@@ -4,7 +4,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use landscape_common::concurrency::{spawn_task, task_label};
+use landscape_common::concurrency::task_label;
 use landscape_common::net_proto::udp::dhcp::v4::{Flags, Opcode, OptionCode};
 use landscape_common::net_proto::udp::dhcp::{
     DhcpV4Message, DhcpV4MessageType, DhcpV4Option, Encodable, Encoder, try_decode_dhcpv4,
@@ -95,7 +95,7 @@ pub async fn dhcp_v4_server(
 
     let ip = server_ip;
     let link_name = iface_name.clone();
-    spawn_task(task_label::task::DHCP_V4_SERVER_HANDLER, async move {
+    service_status.spawn_task(task_label::task::DHCP_V4_SERVER_HANDLER, async move {
         let handle = match crate::netlink::handle::create_handle() {
             Ok(h) => h,
             Err(e) => {
@@ -132,7 +132,7 @@ pub async fn dhcp_v4_server(
 
     let (message_tx, mut message_rx) = tokio::sync::mpsc::channel::<(Vec<u8>, SocketAddr)>(1024);
 
-    spawn_task(task_label::task::DHCP_V4_SERVER_HANDLER, async move {
+    service_status.spawn_task(task_label::task::DHCP_V4_SERVER_HANDLER, async move {
         let mut buf = vec![0u8; 65535];
         loop {
             tokio::select! {
@@ -160,7 +160,7 @@ pub async fn dhcp_v4_server(
 
     service_status.just_change_status(ServiceStatus::Running);
 
-    let mut dhcp_server_service_status = service_status.subscribe();
+    let stop_token = service_status.stop_token();
     let timeout_timer = tokio::time::sleep(tokio::time::Duration::from_secs(IP_EXPIRE_INTERVAL));
     tokio::pin!(timeout_timer);
     let mut dhcp_server = dhcp_server;
@@ -206,16 +206,9 @@ pub async fn dhcp_v4_server(
                 }
                 timeout_timer.as_mut().reset(tokio::time::Instant::now() + tokio::time::Duration::from_secs(IP_EXPIRE_INTERVAL));
             }
-            // 处理外部关闭服务通知
-            change_result = dhcp_server_service_status.changed() => {
-                if change_result.is_err() {
-                    tracing::error!("get change result error. exit loop");
-                    break;
-                }
-
-                if service_status.is_exit() {
-                    break;
-                }
+            // 处理外部关闭服务通知(进入退出态即触发)
+            () = stop_token.cancelled() => {
+                break;
             }
         }
     }

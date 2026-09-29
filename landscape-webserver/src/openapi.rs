@@ -257,7 +257,7 @@ pub fn build_full_openapi_spec() -> utoipa::openapi::OpenApi {
     prefix_paths(&mut system_openapi, "/api/v1/system");
     spec.merge(system_openapi);
 
-    // /api/v1/system — sysinfo (special WatchResource state)
+    // /api/v1/system — sysinfo (special shared status snapshot state)
     let (_, mut sysinfo_openapi) =
         crate::system::info::build_sysinfo_openapi_router().split_for_parts();
     prefix_paths(&mut sysinfo_openapi, "/api/v1/system");

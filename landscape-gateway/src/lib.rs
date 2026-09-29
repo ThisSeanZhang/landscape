@@ -96,14 +96,7 @@ impl GatewayManager {
         let thread_cancel = cancel.clone();
 
         let thread = spawn_named_thread(thread_name::fixed::GATEWAY_MAIN, move || {
-            run_pingora_server(
-                rules,
-                http_port,
-                https_port,
-                tls_config,
-                status.clone(),
-                thread_cancel,
-            );
+            run_pingora_server(rules, http_port, https_port, tls_config, thread_cancel);
             status.just_change_status(ServiceStatus::Stop);
         })
         .expect("failed to spawn gateway main thread");
@@ -154,7 +147,7 @@ impl GatewayManager {
     }
 
     pub fn status(&self) -> ServiceStatus {
-        self.status.subscribe().borrow().clone()
+        self.status.current()
     }
 
     pub fn watch_service(&self) -> WatchService {
@@ -192,7 +185,6 @@ fn run_pingora_server(
     http_port: u16,
     https_port: u16,
     tls_config: Option<GatewayTlsConfig>,
-    status: WatchService,
     cancel: CancellationToken,
 ) {
     use pingora::server::Server;
@@ -209,16 +201,15 @@ fn run_pingora_server(
 
     let https_handle = tls_config.map(|tls_config| {
         let rules = rules.clone();
-        let status = status.clone();
         let cancel = cancel.child_token();
         spawn_named_thread(thread_name::fixed::GATEWAY_HTTPS_DRIVER, move || {
-            run_https_server(rules, https_port, tls_config, server_conf, status, cancel);
+            run_https_server(rules, https_port, tls_config, server_conf, cancel);
         })
         .expect("failed to spawn gateway https driver thread")
     });
 
     let run_args = pingora::server::RunArgs {
-        shutdown_signal: Box::new(ChannelShutdownWatch { status }),
+        shutdown_signal: Box::new(TokenShutdownWatch { token: cancel }),
     };
     server.run(run_args);
 
@@ -234,7 +225,6 @@ fn run_https_server(
     https_port: u16,
     tls_config: GatewayTlsConfig,
     server_conf: Arc<pingora::server::configuration::ServerConf>,
-    status: WatchService,
     cancel: CancellationToken,
 ) {
     let runtime = RuntimeBuilder::new_multi_thread()
@@ -245,7 +235,7 @@ fn run_https_server(
 
     runtime.block_on(async move {
         if let Err(error) =
-            run_https_server_inner(rules, https_port, tls_config, server_conf, status, cancel).await
+            run_https_server_inner(rules, https_port, tls_config, server_conf, cancel).await
             && !error.already_logged
         {
             tracing::error!(
@@ -274,7 +264,6 @@ async fn run_https_server_inner(
     https_port: u16,
     tls_config: GatewayTlsConfig,
     server_conf: Arc<pingora::server::configuration::ServerConf>,
-    status: WatchService,
     cancel: CancellationToken,
 ) -> Result<(), GatewayHttpsRunError> {
     use proxy_service::LandscapeReverseProxy;
@@ -313,7 +302,9 @@ async fn run_https_server_inner(
     let sni_proxy_router = Arc::new(SniProxyRouter::new(rules.clone()));
     let app = Arc::new(pingora::proxy::http_proxy(&server_conf, LandscapeReverseProxy::new(rules)));
 
-    let mut status_rx = status.subscribe();
+    // Pingora's `ServerApp::process_new` requires a `watch::Receiver<bool>` as the
+    // per-connection shutdown signal, so this channel is the token->watch bridge at
+    // the pingora boundary; it is flipped when the manager's stop token fires.
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
     let mut tasks = JoinSet::new();
 
@@ -327,12 +318,6 @@ async fn run_https_server_inner(
 
     loop {
         tokio::select! {
-            changed = status_rx.changed() => {
-                if changed.is_err() || matches!(*status_rx.borrow(), ServiceStatus::Stopping | ServiceStatus::Stop) {
-                    let _ = shutdown_tx.send(true);
-                    break;
-                }
-            }
             _ = cancel.cancelled() => {
                 let _ = shutdown_tx.send(true);
                 break;
@@ -564,25 +549,14 @@ impl Peek for GatewayTlsStream {
     }
 }
 
-struct ChannelShutdownWatch {
-    status: WatchService,
+struct TokenShutdownWatch {
+    token: CancellationToken,
 }
 
 #[async_trait::async_trait]
-impl pingora::server::ShutdownSignalWatch for ChannelShutdownWatch {
+impl pingora::server::ShutdownSignalWatch for TokenShutdownWatch {
     async fn recv(&self) -> pingora::server::ShutdownSignal {
-        if self.status.is_exit() {
-            return pingora::server::ShutdownSignal::FastShutdown;
-        }
-        let mut rx = self.status.subscribe();
-        loop {
-            if rx.changed().await.is_err() {
-                // Sender dropped, treat as fast shutdown
-                return pingora::server::ShutdownSignal::FastShutdown;
-            }
-            if matches!(*rx.borrow(), ServiceStatus::Stopping | ServiceStatus::Stop) {
-                return pingora::server::ShutdownSignal::FastShutdown;
-            }
-        }
+        self.token.cancelled().await;
+        pingora::server::ShutdownSignal::FastShutdown
     }
 }

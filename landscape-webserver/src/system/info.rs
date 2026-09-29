@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use arc_swap::ArcSwap;
 use axum::extract::Path;
 use axum::{Router, extract::State, routing::get};
 use landscape_ebpf::maps::LandscapeMapPath;
@@ -10,7 +11,7 @@ use landscape_common::dev::{LandscapeInterface, get_interface_index_by_name};
 use landscape_common::service::ServiceConfigError;
 use landscape_common::sys_service::capability::Capability;
 use landscape_common::sys_service::info::{
-    LAND_SYS_BASE_INFO, LandscapeStatus, LandscapeSystemInfo, WatchResource, XdpRedirectAbleInfo,
+    LAND_SYS_BASE_INFO, LandscapeStatus, LandscapeSystemInfo, XdpRedirectAbleInfo,
 };
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
@@ -19,7 +20,7 @@ use crate::{api::LandscapeApiResp, error::LandscapeApiResult};
 
 /// API state for the sysinfo router: live status snapshots plus the eBPF
 /// map paths (for redirect-able queries).
-type SysStatus = (WatchResource<LandscapeStatus>, Arc<LandscapeMapPath>);
+type SysStatus = (Arc<ArcSwap<LandscapeStatus>>, Arc<LandscapeMapPath>);
 
 /// Build the OpenApiRouter for spec generation only (no state applied).
 pub fn build_sysinfo_openapi_router() -> OpenApiRouter<SysStatus> {
@@ -33,7 +34,7 @@ pub fn build_sysinfo_openapi_router() -> OpenApiRouter<SysStatus> {
         .routes(routes!(get_xdp_redirect_able))
 }
 
-/// return SYS base info — actual router with WatchResource state
+/// return SYS base info — actual router with shared status state
 pub fn get_sys_info_route(ebpf_paths: Arc<LandscapeMapPath>) -> Router {
     let watchs = get_sys_running_status();
 
@@ -106,8 +107,8 @@ async fn basic_sys_info() -> LandscapeApiResult<LandscapeSystemInfo> {
 )]
 async fn interval_fetch_info(
     State(state): State<SysStatus>,
-) -> LandscapeApiResult<WatchResource<LandscapeStatus>> {
-    LandscapeApiResp::success(state.0)
+) -> LandscapeApiResult<LandscapeStatus> {
+    LandscapeApiResp::success(state.0.load_full().as_ref().clone())
 }
 
 #[utoipa::path(
@@ -118,7 +119,7 @@ async fn interval_fetch_info(
     responses((status = 200, description = "Success", body = CommonApiResp<usize>))
 )]
 async fn get_cpu_count(State(state): State<SysStatus>) -> LandscapeApiResult<usize> {
-    let cpu_count = state.0.0.borrow().cpus.len();
+    let cpu_count = state.0.load().cpus.len();
     LandscapeApiResp::success(cpu_count)
 }
 

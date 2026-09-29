@@ -4,8 +4,8 @@ use axum::extract::{Path, State};
 use landscape_common::api_response::LandscapeApiResp as CommonApiResp;
 use landscape_common::lan_service::lan_dhcpv4::config::DHCPv4ServiceConfig;
 use landscape_common::lan_service::lan_dhcpv4::status::{ArpScanInfo, DHCPv4OfferInfo};
+use landscape_common::service::ServiceStatus;
 use landscape_common::service::controller::ControllerService;
-use landscape_common::service::{ServiceStatus, WatchService};
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 
@@ -93,7 +93,7 @@ async fn get_arp_scan_info_by_iface_name(
 )]
 async fn get_all_iface_service_status(
     State(state): State<LandscapeApp>,
-) -> LandscapeApiResult<HashMap<String, WatchService>> {
+) -> LandscapeApiResult<HashMap<String, ServiceStatus>> {
     LandscapeApiResp::success(state.dhcp_v4_server_service.get_all_status().await)
 }
 
@@ -152,7 +152,7 @@ async fn handle_service_config(
 async fn delete_and_stop_iface_service(
     State(state): State<LandscapeApp>,
     Path(iface_name): Path<String>,
-) -> LandscapeApiResult<Option<WatchService>> {
+) -> LandscapeApiResult<Option<ServiceStatus>> {
     LandscapeApiResp::success(
         state.dhcp_v4_server_service.delete_and_stop_iface_service(iface_name).await,
     )

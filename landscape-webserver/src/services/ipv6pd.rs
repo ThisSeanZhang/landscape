@@ -2,8 +2,8 @@ use std::collections::HashMap;
 
 use axum::extract::{Path, State};
 use landscape_common::api_response::LandscapeApiResp as CommonApiResp;
+use landscape_common::service::ServiceStatus;
 use landscape_common::service::controller::{ConfigStoreController, ConfigStoreServiceController};
-use landscape_common::service::{ServiceStatus, WatchService};
 use landscape_common::wan_service::ipv6_pd::IPV6PDPrefixStatus;
 use landscape_common::wan_service::ipv6_pd::IPV6PDServiceConfig;
 use landscape_common::wan_service::ipv6_pd::LDIAPrefix;
@@ -73,7 +73,7 @@ async fn get_current_ip_prefix_info(
 )]
 async fn get_all_status(
     State(state): State<LandscapeApp>,
-) -> LandscapeApiResult<HashMap<String, WatchService>> {
+) -> LandscapeApiResult<HashMap<String, ServiceStatus>> {
     LandscapeApiResp::success(state.ipv6_pd_service.get_all_status().await)
 }
 
@@ -126,6 +126,6 @@ async fn handle_iface_pd(
 async fn delete_and_stop_iface_service(
     State(state): State<LandscapeApp>,
     Path(iface_name): Path<String>,
-) -> LandscapeApiResult<Option<WatchService>> {
+) -> LandscapeApiResult<Option<ServiceStatus>> {
     LandscapeApiResp::success(state.ipv6_pd_service.delete_and_stop_service(iface_name).await?)
 }

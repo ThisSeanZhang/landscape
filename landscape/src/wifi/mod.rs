@@ -2,9 +2,7 @@ use landscape_common::database::LandscapeStore;
 use landscape_common::{
     LANDSCAPE_HOSTAPD_TMP_DIR,
     args::LAND_HOME_PATH,
-    concurrency::{
-        short_thread_name, spawn_named_thread, spawn_task_with_resource, task_label, thread_name,
-    },
+    concurrency::{short_thread_name, spawn_named_thread, task_label, thread_name},
     lan_service::ap::WifiServiceConfig,
     service::{
         ServiceStatus, WatchService,
@@ -36,13 +34,14 @@ impl ServiceStarterTrait for WifiService {
 
         if config.enable {
             if get_iface_by_name(&config.iface_name).await.is_some() {
-                let status_clone = service_status.clone();
                 let iface_name = config.iface_name.clone();
-                spawn_task_with_resource(
+                let spawn_status = service_status.clone();
+                let task_status = service_status.clone();
+                spawn_status.spawn_task_with_resource(
                     task_label::task::WIFI_RUN,
                     iface_name.clone(),
                     async move {
-                        create_wifi_service(config.iface_name, config.config, status_clone).await
+                        create_wifi_service(config.iface_name, config.config, task_status).await
                     },
                 );
             } else {
@@ -61,15 +60,19 @@ pub async fn create_wifi_service(iface_name: String, config: String, service_sta
     let (other_tx, other_rx) = oneshot::channel::<()>();
 
     service_status.just_change_status(ServiceStatus::Running);
-    let clone_service_status = service_status.clone();
-    spawn_task_with_resource(task_label::task::WIFI_STOP, iface_name.clone(), async move {
-        let stop_wait = clone_service_status.wait_to_stopping();
-        tracing::info!("Waiting for external stop signal");
-        let _ = stop_wait.await;
-        tracing::info!("Received external stop signal");
-        let _ = tx.send(());
-        tracing::info!("Sent internal stop signal");
-    });
+    let stop_token = service_status.stop_token();
+    let spawn_status = service_status.clone();
+    spawn_status.spawn_task_with_resource(
+        task_label::task::WIFI_STOP,
+        iface_name.clone(),
+        async move {
+            tracing::info!("Waiting for external stop signal");
+            stop_token.cancelled().await;
+            tracing::info!("Received external stop signal");
+            let _ = tx.send(());
+            tracing::info!("Sent internal stop signal");
+        },
+    );
 
     let Ok(config_path) = write_config(&iface_name, &config) else {
         tracing::error!("hostapd 配置写入失败");

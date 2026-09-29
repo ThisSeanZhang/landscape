@@ -214,7 +214,7 @@ pub async fn dhcp_v4_client(
     let mut connect_failure_count: u32 = 0;
     let mut active_send = Box::pin(tokio::time::sleep(Duration::from_secs(0)));
     let mut ip_arg: Option<Vec<String>> = None;
-    let mut service_status_subscribe = service_status.subscribe();
+    let stop_token = service_status.stop_token();
 
     loop {
         // 自动管理 Socket 模式
@@ -273,15 +273,12 @@ pub async fn dhcp_v4_client(
                 }
             },
 
-            // 分支 3: 服务状态变更
-            change_result = service_status_subscribe.changed() => {
-                if change_result.is_err() { break; }
-                if service_status.is_exit() {
-                    if let Some(args) = ip_arg.take() {
-                        let _ = std::process::Command::new("ip").args(&args).output();
-                    }
-                    break;
+            // 分支 3: 停止信号(进入退出态即触发)
+            () = stop_token.cancelled() => {
+                if let Some(args) = ip_arg.take() {
+                    let _ = std::process::Command::new("ip").args(&args).output();
                 }
+                break;
             }
         }
     }

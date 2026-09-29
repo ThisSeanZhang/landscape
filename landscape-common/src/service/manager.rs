@@ -1,10 +1,13 @@
-use std::{collections::HashMap, sync::Arc};
+use std::collections::HashMap;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Duration;
 
 use tokio::sync::{RwLock, mpsc};
 
 use crate::concurrency::{spawn_task_with_resource, task_label};
 
-use super::WatchService;
+use super::{STATUS_POLL_INTERVAL, ServiceStatus, StartOutcome, WatchService};
 
 pub trait ServiceKeyProvider {
     fn service_key(&self) -> String;
@@ -14,14 +17,29 @@ pub trait ServiceKeyProvider {
 pub trait ServiceStarterTrait: Clone + Send + Sync + 'static {
     type Config: ServiceKeyProvider + Send + Sync + 'static;
 
-    /// 核心服务初始化逻辑
+    /// 核心服务初始化逻辑。
+    ///
+    /// 契约(由 ServiceHandle 的确定性等待与死亡监视依赖):
+    /// - 返回前句柄状态须已进入 `Staring` 或终态,不得停留在初始 `Stop`;
+    /// - 服务长驻任务必须经 `handle.spawn_task`/`spawn_task_with_resource`
+    ///   注册进 tracker,裸 `tokio::spawn` 的任务无法被 `wait_stop` 等待。
     async fn start(&self, config: Self::Config) -> WatchService;
 }
 
-// `H::Config` 关联类型要求 bound 才能编译，属于必要约束
+/// 服务注册表条目:状态句柄 + 配置管道 + 运行代数。
+///
+/// `generation` 在 supervisor 每次 `start()` 落表后递增,供
+/// [`ServiceManager::update_service_and_wait`] 识别"由本次更新触发的运行"。
+pub struct ServiceRegistryEntry<H: ServiceStarterTrait> {
+    pub status: WatchService,
+    pub config_tx: mpsc::Sender<H::Config>,
+    pub generation: Arc<AtomicU64>,
+}
+
+// `H::Config` 关联类型要求 bound 才能编译,属于必要约束
 #[allow(type_alias_bounds)]
 pub type ServiceRegistry<H: ServiceStarterTrait> =
-    Arc<RwLock<HashMap<String, (WatchService, mpsc::Sender<H::Config>)>>>;
+    Arc<RwLock<HashMap<String, ServiceRegistryEntry<H>>>>;
 
 #[derive(Clone)]
 pub struct ServiceManager<H: ServiceStarterTrait> {
@@ -48,7 +66,14 @@ impl<H: ServiceStarterTrait> ServiceManager<H> {
 
         // 插入到服务映射
         {
-            self.services.write().await.insert(key.clone(), (service_status.clone(), tx));
+            self.services.write().await.insert(
+                key.clone(),
+                ServiceRegistryEntry {
+                    status: service_status.clone(),
+                    config_tx: tx,
+                    generation: Arc::new(AtomicU64::new(0)),
+                },
+            );
         }
 
         let service_map = self.services.clone();
@@ -66,11 +91,15 @@ impl<H: ServiceStarterTrait> ServiceManager<H> {
 
                     let key = config.service_key();
                     let status = starter.clone().start(config).await;
+                    // OTP monitor:关闭 tracker 入口并挂死亡监视,
+                    // 静默死亡(任务全部退出但状态未到终态)收敛到 Failed
+                    status.supervise_lifecycle();
 
                     iface_status = Some(status.clone());
                     let mut write_lock = service_map.write().await;
-                    if let Some((target, _)) = write_lock.get_mut(&key) {
-                        *target = status;
+                    if let Some(entry) = write_lock.get_mut(&key) {
+                        entry.status = status;
+                        entry.generation.fetch_add(1, Ordering::SeqCst);
                     } else {
                         tracing::warn!(
                             "service '{key}' removed from map during restart, exiting loop"
@@ -88,12 +117,12 @@ impl<H: ServiceStarterTrait> ServiceManager<H> {
         );
     }
 
-    #[allow(clippy::result_unit_err)] // 内部 API：调用方只关心成功与否，无错误详情可传递
+    #[allow(clippy::result_unit_err)] // 内部 API:调用方只关心成功与否,无错误详情可传递
     pub async fn update_service(&self, config: H::Config) -> Result<(), ()> {
         let key = config.service_key();
         let read_lock = self.services.read().await;
-        if let Some((_, sender)) = read_lock.get(&key) {
-            let result = if let Err(e) = sender.try_send(config) {
+        if let Some(entry) = read_lock.get(&key) {
+            let result = if let Err(e) = entry.config_tx.try_send(config) {
                 match e {
                     mpsc::error::TrySendError::Full(_) => {
                         tracing::warn!(key, "config update already pending, dropping new config");
@@ -120,7 +149,7 @@ impl<H: ServiceStarterTrait> ServiceManager<H> {
         let key = config.service_key();
         let sender = {
             let read_lock = self.services.read().await;
-            read_lock.get(&key).map(|(_, sender)| sender.clone())
+            read_lock.get(&key).map(|entry| entry.config_tx.clone())
         };
 
         if let Some(sender) = sender {
@@ -133,21 +162,70 @@ impl<H: ServiceStarterTrait> ServiceManager<H> {
         }
     }
 
-    pub async fn get_all_status(&self) -> HashMap<String, WatchService> {
-        let read_lock = self.services.read().await;
-        let mut result = HashMap::new();
-        for (key, (iface_status, _)) in read_lock.iter() {
-            result.insert(key.clone(), iface_status.clone());
+    /// 发送配置并观测"由本次更新触发的运行"的启动结果。
+    ///
+    /// 为数据库配置回滚改造预留的原语:controller 层可据此实现"验证后落库"
+    /// (Running 才持久化)或"落库后验证"(非 Running 双回滚)。
+    ///
+    /// 通过注册表 `generation` 识别新运行:记录发送前的代数,等待代数前进后
+    /// 取新句柄观测启动结果。注意:同一 key 存在并发更新时,观测到的运行
+    /// 可能属于先于本配置入队的另一更新(队列容量 1,最终状态仍收敛到最后
+    /// 一份配置);单写者场景下语义精确。配置投递失败(通道满被去重或服务
+    /// 任务退出)同样不会产生新运行,映射为 [`StartOutcome::Stopped`]。
+    pub async fn update_service_and_wait(
+        &self,
+        config: H::Config,
+        timeout: Duration,
+    ) -> StartOutcome {
+        let key = config.service_key();
+        let captured_generation = {
+            let read_lock = self.services.read().await;
+            read_lock.get(&key).map(|entry| entry.generation.load(Ordering::SeqCst))
+        };
+        // None: 新键,等待首次真实启动(placeholder 的 generation 0 → 1)
+        // Some(n): 既有键,等待代数前进到 n+1
+        let target_generation = captured_generation.map_or(1, |current| current + 1);
+
+        if self.update_service(config).await.is_err() {
+            return StartOutcome::Stopped;
         }
-        result
+
+        let deadline = tokio::time::Instant::now() + timeout;
+        loop {
+            let (status, generation) = {
+                let read_lock = self.services.read().await;
+                match read_lock.get(&key) {
+                    Some(entry) => (entry.status.clone(), entry.generation.load(Ordering::SeqCst)),
+                    // 服务被并发删除:本次更新不会再产生运行
+                    None => return StartOutcome::Stopped,
+                }
+            };
+            if generation >= target_generation {
+                let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+                if remaining.is_zero() {
+                    return StartOutcome::Timeout;
+                }
+                return status.wait_start_outcome(remaining).await;
+            }
+            if tokio::time::Instant::now() >= deadline {
+                return StartOutcome::Timeout;
+            }
+            tokio::time::sleep(STATUS_POLL_INTERVAL).await;
+        }
     }
 
-    pub async fn stop_service(&self, name: String) -> Option<WatchService> {
+    /// 全部服务状态快照(REST 轮询语义:status 是数据,不是信号)
+    pub async fn get_all_status(&self) -> HashMap<String, ServiceStatus> {
+        let read_lock = self.services.read().await;
+        read_lock.iter().map(|(key, entry)| (key.clone(), entry.status.current())).collect()
+    }
+
+    pub async fn stop_service(&self, name: String) -> Option<ServiceStatus> {
         let mut write_lock = self.services.write().await;
-        if let Some((iface_status, _)) = write_lock.remove(&name) {
+        if let Some(entry) = write_lock.remove(&name) {
             drop(write_lock);
-            iface_status.wait_stop().await;
-            Some(iface_status)
+            entry.status.wait_stop().await;
+            Some(entry.status.current())
         } else {
             None
         }
@@ -156,7 +234,7 @@ impl<H: ServiceStarterTrait> ServiceManager<H> {
     pub async fn stop_all(&self) {
         let entries: Vec<(String, WatchService)> = {
             let mut write_lock = self.services.write().await;
-            write_lock.drain().map(|(key, (status, _sender))| (key, status)).collect()
+            write_lock.drain().map(|(key, entry)| (key, entry.status)).collect()
         };
 
         let mut handles = Vec::with_capacity(entries.len());

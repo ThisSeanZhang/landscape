@@ -806,11 +806,8 @@ mod integration {
             run(&config, &lcp, &mut client_tx, &mut client_rx, &status2).await
         });
 
-        // Trigger service stop
-        status.0.send_if_modified(|s| {
-            *s = ServiceStatus::Stopping;
-            true
-        });
+        // Trigger service stop(Running → Staring 合法转换,经唯一写入口触发取消信号)
+        status.just_change_status(ServiceStatus::Stopping);
 
         let result = tokio::time::timeout(Duration::from_secs(2), handle).await.unwrap().unwrap();
         assert!(matches!(result, Err(PppoeError::ServiceStopped)));
@@ -1083,14 +1080,15 @@ mod integration {
             elapsed += 2;
 
             while let Ok(raw) = from_client.try_recv() {
-                if let Some(ppp) = extract_ppp(&raw, sid) {
-                    if ppp.is_ipcp() && ppp.is_request() {
-                        send_session(
-                            &to_client,
-                            sid,
-                            ipcp_nak(ppp.id, Ipv4Addr::new(10, 0, 0, (elapsed as u8 % 100) + 1)),
-                        );
-                    }
+                if let Some(ppp) = extract_ppp(&raw, sid)
+                    && ppp.is_ipcp()
+                    && ppp.is_request()
+                {
+                    send_session(
+                        &to_client,
+                        sid,
+                        ipcp_nak(ppp.id, Ipv4Addr::new(10, 0, 0, (elapsed as u8 % 100) + 1)),
+                    );
                 }
             }
         }

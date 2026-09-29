@@ -62,6 +62,8 @@ pub mod task_label {
         pub const SERVICE_MANAGER_SPAWN: &str = "service.manager.spawn";
         /// Service manager task that waits for and reports service shutdown.
         pub const SERVICE_MANAGER_STOP: &str = "service.manager.stop";
+        /// Per-service death watcher: marks Failed when tasks exit without a terminal status.
+        pub const SERVICE_DEATH_WATCH: &str = "service.death_watch";
         /// Background redirect server that upgrades HTTP traffic to HTTPS.
         pub const WEB_REDIRECT_HTTPS: &str = "web.redirect_https";
         /// Long-lived PTY websocket session loop.

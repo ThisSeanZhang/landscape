@@ -1,7 +1,6 @@
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use sysinfo::System;
-use tokio::sync::watch;
 
 use crate::VERSION;
 
@@ -147,32 +146,4 @@ pub struct LandscapeStatus {
     pub uptime: u64,
     /// Load Average Information
     pub load_avg: LoadAvg,
-}
-
-pub trait WatchResourceTrait: Clone + Serialize + Default {}
-impl<T> WatchResourceTrait for T where T: Clone + Serialize + Default {}
-
-#[derive(Clone, Debug)]
-pub struct WatchResource<T: WatchResourceTrait>(pub watch::Sender<T>);
-
-impl<T: WatchResourceTrait> Default for WatchResource<T> {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl<T: WatchResourceTrait> WatchResource<T> {
-    pub fn new() -> Self {
-        let (sender, _) = watch::channel(T::default());
-        Self(sender)
-    }
-}
-
-impl<T: WatchResourceTrait> Serialize for WatchResource<T> {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        self.0.borrow().serialize(serializer)
-    }
 }

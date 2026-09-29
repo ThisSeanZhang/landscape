@@ -21,9 +21,10 @@ once_cell = { workspace = true }
 sysinfo = { workspace = true }
 thiserror = { workspace = true }
 dashmap = { workspace = true }
+arc-swap = { workspace = true }
 
 tokio = { workspace = true, features = ["full"] }
-tokio-util = { workspace = true }
+tokio-util = { workspace = true, features = ["rt"] }
 bytes = { workspace = true }
 zerocopy = { workspace = true, features = ["derive"] }
 homedir = { workspace = true }

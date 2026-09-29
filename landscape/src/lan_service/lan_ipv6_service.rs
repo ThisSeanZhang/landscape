@@ -268,7 +268,8 @@ impl ServiceStarterTrait for LanIPv6Service {
             self.dao_event_senders.insert(iface.index, dao_tx.clone());
             let dao_event_senders = self.dao_event_senders.clone();
             let ifindex = iface.index;
-            spawn_task(task_label::task::LAN_IPV6_SERVICE_OBSERVER, async move {
+            let spawn_status = service_status.clone();
+            spawn_status.spawn_task(task_label::task::LAN_IPV6_SERVICE_OBSERVER, async move {
                 let _ = start_ipv6_lan_server(
                     ifindex,
                     config.iface_name.clone(),
