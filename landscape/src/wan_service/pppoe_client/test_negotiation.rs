@@ -806,7 +806,7 @@ mod integration {
             run(&config, &lcp, &mut client_tx, &mut client_rx, &status2).await
         });
 
-        // Trigger service stop(Running → Staring 合法转换,经唯一写入口触发取消信号)
+        // Trigger service stop(Running → Stopping 合法转换,经唯一写入口触发取消信号)
         status.just_change_status(ServiceStatus::Stopping);
 
         let result = tokio::time::timeout(Duration::from_secs(2), handle).await.unwrap().unwrap();

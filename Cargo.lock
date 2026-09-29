@@ -3091,7 +3091,6 @@ name = "landscape-common"
 version = "0.25.0"
 dependencies = [
  "anyhow",
- "arc-swap",
  "async-trait",
  "bincode",
  "bytes",

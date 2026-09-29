@@ -277,6 +277,8 @@ where
 ///   - 验证后落库:Running 才 `checked_upsert`,失败时 DB 零写入;
 ///   - 落库后验证:保持本 trait 顺序,追加观测;非 Running 时以
 ///     `Change.old` 为前像做 DB 补偿写,并经 `notify_changed` 传播补偿变更。
+/// - [`crate::service::StartOutcome::NotDelivered`](配置未投递)按"请求被
+///   拒绝"处理(报错/不落库),不属于 DB 补偿范围:没有运行被触发。
 /// - Timeout 的策略(放行或中止)由各服务域按启动时长语义决定,原语不预设。
 #[async_trait::async_trait]
 pub trait ConfigStoreServiceController: ConfigStoreController
@@ -782,5 +784,45 @@ mod service_controller_tests {
             )
             .await;
         assert_eq!(outcome, StartOutcome::Failed);
+    }
+
+    #[tokio::test]
+    async fn update_service_and_wait_reports_not_delivered_when_channel_full() {
+        let store = MockStore::default();
+        let starter = MockStarter::new();
+        starter.block_start.store(true, Ordering::SeqCst);
+        let starter_probe = starter.clone();
+        let controller = controller(store, starter).await;
+
+        // 第一份:触发 spawn,supervisor 接收后进入 start() 并永久阻塞
+        controller
+            .service
+            .update_service(MockConfig { id: "wan0".to_string(), value: 1, update_at: 0.0 })
+            .await
+            .unwrap();
+
+        // 等 start() 真正进入(此时通道已腾空),消除与 supervisor 调度的竞态
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        while starter_probe.started.lock().unwrap().is_empty() {
+            assert!(tokio::time::Instant::now() < deadline, "starter did not enter start()");
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+
+        // 第二份:占满容量 1 的通道
+        controller
+            .service
+            .update_service(MockConfig { id: "wan0".to_string(), value: 2, update_at: 0.0 })
+            .await
+            .unwrap();
+
+        // 第三份:通道满被去重 → 未投递,须与真实停止(Stopped)区分
+        let outcome = controller
+            .service
+            .update_service_and_wait(
+                MockConfig { id: "wan0".to_string(), value: 3, update_at: 0.0 },
+                Duration::from_secs(1),
+            )
+            .await;
+        assert_eq!(outcome, StartOutcome::NotDelivered);
     }
 }

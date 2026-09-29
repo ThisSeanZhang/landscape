@@ -23,6 +23,11 @@ pub trait ServiceStarterTrait: Clone + Send + Sync + 'static {
     /// - 返回前句柄状态须已进入 `Staring` 或终态,不得停留在初始 `Stop`;
     /// - 服务长驻任务必须经 `handle.spawn_task`/`spawn_task_with_resource`
     ///   注册进 tracker,裸 `tokio::spawn` 的任务无法被 `wait_stop` 等待。
+    ///
+    /// TODO(service-contract): ipconfig / pppd / wifi / lan_dhcp4 / ipv6pd
+    /// 五个 starter 仍把 Staring 留在 spawn 出的任务里异步设置,暂不满足
+    /// 上述契约(叶子函数被测试/bin 复用所致);契约满足前,
+    /// update_service_and_wait 会把这些服务"即将启动"的窗口误报为 Stopped。
     async fn start(&self, config: Self::Config) -> WatchService;
 }
 
@@ -30,21 +35,21 @@ pub trait ServiceStarterTrait: Clone + Send + Sync + 'static {
 ///
 /// `generation` 在 supervisor 每次 `start()` 落表后递增,供
 /// [`ServiceManager::update_service_and_wait`] 识别"由本次更新触发的运行"。
-pub struct ServiceRegistryEntry<H: ServiceStarterTrait> {
-    pub status: WatchService,
-    pub config_tx: mpsc::Sender<H::Config>,
-    pub generation: Arc<AtomicU64>,
+pub(crate) struct ServiceRegistryEntry<H: ServiceStarterTrait> {
+    pub(crate) status: WatchService,
+    pub(crate) config_tx: mpsc::Sender<H::Config>,
+    pub(crate) generation: Arc<AtomicU64>,
 }
 
 // `H::Config` 关联类型要求 bound 才能编译,属于必要约束
 #[allow(type_alias_bounds)]
-pub type ServiceRegistry<H: ServiceStarterTrait> =
+pub(crate) type ServiceRegistry<H: ServiceStarterTrait> =
     Arc<RwLock<HashMap<String, ServiceRegistryEntry<H>>>>;
 
 #[derive(Clone)]
 pub struct ServiceManager<H: ServiceStarterTrait> {
-    pub services: ServiceRegistry<H>,
-    pub starter: H,
+    pub(crate) services: ServiceRegistry<H>,
+    pub(crate) starter: H,
 }
 
 impl<H: ServiceStarterTrait> ServiceManager<H> {
@@ -171,7 +176,8 @@ impl<H: ServiceStarterTrait> ServiceManager<H> {
     /// 取新句柄观测启动结果。注意:同一 key 存在并发更新时,观测到的运行
     /// 可能属于先于本配置入队的另一更新(队列容量 1,最终状态仍收敛到最后
     /// 一份配置);单写者场景下语义精确。配置投递失败(通道满被去重或服务
-    /// 任务退出)同样不会产生新运行,映射为 [`StartOutcome::Stopped`]。
+    /// 任务退出)不会产生新运行,映射为 [`StartOutcome::NotDelivered`],
+    /// 与 [`StartOutcome::Stopped`](真实经历过一次运行后停止)区分。
     pub async fn update_service_and_wait(
         &self,
         config: H::Config,
@@ -187,7 +193,7 @@ impl<H: ServiceStarterTrait> ServiceManager<H> {
         let target_generation = captured_generation.map_or(1, |current| current + 1);
 
         if self.update_service(config).await.is_err() {
-            return StartOutcome::Stopped;
+            return StartOutcome::NotDelivered;
         }
 
         let deadline = tokio::time::Instant::now() + timeout;

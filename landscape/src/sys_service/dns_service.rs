@@ -219,6 +219,8 @@ impl LandscapeDnsService {
     }
 
     pub async fn start_dns_service(&self) {
+        // FIXME(service-state): 在同一 handle 上 Stop → Staring 翻牌重启;token
+        // 在首次 stop 后已永久取消(本服务无人等待 handle token,暂无实际影响)。
         tracing::info!("starting DNS service");
         self.dns_service.status.just_change_status(ServiceStatus::Staring);
         self.dns_service.status.just_change_status(ServiceStatus::Running);

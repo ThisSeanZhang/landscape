@@ -55,7 +55,10 @@ impl LandscapeDockerService {
     }
 
     pub async fn start_to_listen_event(&self) {
-        // reset to stop
+        // FIXME(service-state): 已知故障——单例 handle 跨 start/stop 复用,而
+        // token 进入退出态后永久不可复活:此处 wait_stop 无条件取消本柄 token
+        // (request_stop 幂等设计),下方任务取到的 stop_token 已死,
+        // cancelled().await 立即返回,事件监听生命周期在启动瞬间塌缩。
         self.status.wait_stop().await;
         let status = self.status.clone();
         let route_service = self.route_service.clone();

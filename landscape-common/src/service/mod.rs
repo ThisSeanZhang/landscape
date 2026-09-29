@@ -99,6 +99,10 @@ pub enum StartOutcome {
     Stopped,
     /// 超时仍未离开 Staring/Stopping
     Timeout,
+    /// 配置未投递(通道满被去重或服务任务已退出):不会有运行被触发。
+    /// 与 [`StartOutcome::Stopped`](真实经历过一次运行后停止)区分;
+    /// 回滚接线按"请求被拒绝"处理,不进入 DB 补偿范围。
+    NotDelivered,
 }
 
 /// 轮询等待的采样间隔:仅测试与低频观测使用,10ms 对测试延迟无感知
@@ -194,6 +198,11 @@ impl ServiceStatusCell {
 /// - `stop_token()`:服务循环/子任务监听停止信号(`token.cancelled()`)
 /// - `wait_stop()`:请求停止并确定性等待全部被追踪任务结束;
 ///   结束后状态未到终态则兜底置 Failed(systemd 判活语义)
+///
+/// FIXME(service-state): 单例服务(docker/dns/metric/gateway)目前违反
+/// "实例间完全隔离"假设——复用同一 handle 跨 start/stop 周期,而 token
+/// 进入退出态后永久不可复活。docker 已因此出现实际故障(start_to_listen_event
+/// 的 wait_stop 先取消本柄 token,事件监听任务随即瞬间退出)。
 #[derive(Clone)]
 pub struct ServiceHandle {
     inner: Arc<HandleInner>,

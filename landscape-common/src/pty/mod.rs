@@ -3,16 +3,6 @@ use tokio::sync::{broadcast, mpsc};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
-#[serde(tag = "t")]
-#[serde(rename_all = "snake_case")]
-pub enum SessionStatus {
-    On,
-    Exited(u32),
-    Error(String),
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct LandscapePtySize {
     pub rows: u16,
     pub cols: u16,

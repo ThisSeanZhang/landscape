@@ -79,6 +79,9 @@ impl GatewayManager {
     }
 
     pub fn start(&self) {
+        // FIXME(service-state): 重启复用已退出 handle(Stop → Staring),其 token
+        // 已永久取消;gateway 停止用自有 cancel 字段,无人等待 handle token,
+        // 暂无实际影响。
         let mut state = self.state.lock().unwrap();
         if self.status.is_running() {
             tracing::warn!("Gateway is already running");

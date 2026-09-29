@@ -124,7 +124,6 @@ impl Modify for SecurityAddon {
         landscape_common::dns::rule::LandscapeDnsRecordType,
         // WebSocket types (no endpoint, registered for ORVAL codegen)
         landscape_common::docker::image::ImgPullEvent,
-        landscape_common::pty::SessionStatus,
         landscape_common::pty::LandscapePtySize,
         landscape_common::pty::LandscapePtyConfig,
         landscape_common::pty::PtyInMessage,

@@ -128,6 +128,8 @@ impl MetricService {
     /// 事件源构建失败(map 缺失等)立即落定 Failed 并返回 Err,由调用方决定
     /// 是否回滚,而非让任务 panic 后在停止时才被察觉。
     async fn start_service_locked(&self) -> Result<(), String> {
+        // FIXME(service-state): 单例 handle 跨 start/stop 复用,token 在首次
+        // stop 后已永久取消(事件源不经 handle 追踪,暂无实际影响)。
         if matches!(self.current_mode(), MetricMode::Off) {
             tracing::info!("Metric service disabled by mode=off");
             return Ok(());
