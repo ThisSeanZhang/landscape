@@ -16,8 +16,10 @@ use tokio::task::JoinSet;
 use tokio_rustls::TlsAcceptor;
 use tokio_util::sync::CancellationToken;
 
+use crate::listener::spawn_tracked;
 use crate::{listener::DohTimeouts, server::handler::DnsRequestHandler};
-use landscape_common::concurrency::{spawn_task, task_label};
+use landscape_common::concurrency::task_label;
+use tokio_util::task::TaskTracker;
 
 mod request;
 mod response;
@@ -43,6 +45,7 @@ pub(crate) fn spawn_doh_listener(
     config: DohListenerConfig,
     handler: DnsRequestHandler,
     shutdown: CancellationToken,
+    tracker: TaskTracker,
 ) {
     let tls_acceptor = match build_tls_acceptor(config.server_cert_resolver.clone()) {
         Ok(acceptor) => acceptor,
@@ -52,7 +55,7 @@ pub(crate) fn spawn_doh_listener(
         }
     };
 
-    spawn_task(task_label::task::DNS_DOH_HANDLER, async move {
+    spawn_tracked(&tracker, task_label::task::DNS_DOH_HANDLER, async move {
         let handler = Arc::new(handler);
         let mut connection_tasks = JoinSet::new();
         loop {
@@ -64,6 +67,8 @@ pub(crate) fn spawn_doh_listener(
                     Err(e) => {
                         tracing::debug!("[flow: {flow_id}]: accept DoH connection error: {e}");
                         if is_unrecoverable_socket_error(&e) {
+                            // 同生共死:DoH 监听不可恢复错误取消整个 flow
+                            // token(UDP 一并退出),由上层 refresh 整体重建
                             shutdown.cancel();
                             break;
                         }

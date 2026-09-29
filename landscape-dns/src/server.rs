@@ -7,12 +7,14 @@ use std::{
 
 use arc_swap::{ArcSwap, ArcSwapOption};
 use landscape_common::dns::error::DnsServiceError;
+use landscape_common::event::DnsMetricMessage;
 use landscape_common::flow::{DnsResultSink, FlowSocketRegistrar};
+use landscape_common::service::ServiceStatus;
 use landscape_common::sys_service::lan_hostname::LanHostnameConfig;
-use landscape_common::{event::DnsMetricMessage, service::WatchService};
 use landscape_core::lan_hostname::LanHostnameRegistry;
 use tokio::sync::{Mutex, mpsc};
 use tokio_util::sync::CancellationToken;
+use tokio_util::task::TaskTracker;
 
 use crate::{
     CheckChainDnsResult, CheckDnsReq, convert_record_type,
@@ -66,11 +68,22 @@ pub trait DohAdvertiseProvider: Send + Sync {
     fn advertise_domains(&self) -> Vec<String>;
 }
 
+/// DNS 服务的一次运行:父取消信号 + 任务追踪器。
+///
+/// token 为所有 per-flow 监听 token 的父:服务停止时取消一次,全体 flow
+/// 监听(UDP + DoH)一并终止;tracker 注册全部监听任务,供停止侧确定性
+/// 等待。每次 start 创建新运行,跨 start/stop 周期不复用。
+#[derive(Clone)]
+struct DnsServiceRun {
+    token: CancellationToken,
+    tracker: TaskTracker,
+}
+
 // system DNS service
 #[derive(Clone)]
 pub struct LandscapeDnsServer {
-    // service status
-    pub status: WatchService,
+    /// 当前运行(None = 已停止):flow 监听任务据此决定是否可以建立
+    run: Arc<ArcSwapOption<DnsServiceRun>>,
     // internal handlers
     flow_dns_server: Arc<Mutex<HashMap<u32, Arc<FlowServerEntry>>>>,
     // local answers (localhost / LAN hostname zone / PTR / DDR) shared by all flows
@@ -89,7 +102,9 @@ pub struct LandscapeDnsServer {
 
 struct FlowServerRuntime {
     handler: DnsRequestHandler,
-    _token: CancellationToken,
+    /// 本 flow 的监听 token(服务运行 token 的 child):bind 失败自我取消,
+    /// 服务停止随父取消;`has_live_flow_runtime`/`status_summary` 以其判活
+    token: CancellationToken,
 }
 
 struct FlowServerEntry {
@@ -126,7 +141,6 @@ impl LandscapeDnsServer {
         result_sink: Arc<dyn DnsResultSink>,
         socket_registrar: Arc<dyn FlowSocketRegistrar>,
     ) -> Self {
-        let status = WatchService::new();
         let mdns_service = if local_answer_provider.is_some() {
             MdnsService::spawn(local_answer_provider.clone())
         } else {
@@ -142,7 +156,10 @@ impl LandscapeDnsServer {
         ));
 
         Self {
-            status,
+            run: Arc::new(ArcSwapOption::from(Some(Arc::new(DnsServiceRun {
+                token: CancellationToken::new(),
+                tracker: TaskTracker::new(),
+            })))),
             flow_dns_server: Arc::new(Mutex::new(HashMap::new())),
             udp_listener_addr: SocketAddr::V6(SocketAddrV6::new(
                 Ipv6Addr::UNSPECIFIED,
@@ -161,8 +178,56 @@ impl LandscapeDnsServer {
         }
     }
 
-    pub fn get_status(&self) -> &WatchService {
-        &self.status
+    /// 当前运行快照(None = 服务已停止)
+    fn current_run(&self) -> Option<Arc<DnsServiceRun>> {
+        self.run.load_full()
+    }
+
+    /// 开始一次新的服务运行:创建全新的父 token 与 tracker。
+    /// 此后须由上层重新 refresh 各 flow(停止时已清空的 runtime 会重建)。
+    pub fn start_service(&self) {
+        self.run.store(Some(Arc::new(DnsServiceRun {
+            token: CancellationToken::new(),
+            tracker: TaskTracker::new(),
+        })));
+    }
+
+    /// 真停:取消父 token(全体 flow 监听一并终止)→ 确定性等待全部被
+    /// 追踪任务结束 → 清空各 flow 的已死 runtime,供下一轮 refresh 重建。
+    pub async fn stop_service(&self) {
+        let Some(run) = self.run.swap(None) else {
+            tracing::debug!("dns service not running, nothing to stop");
+            return;
+        };
+        run.token.cancel();
+        run.tracker.close();
+        run.tracker.wait().await;
+        let flow_server = self.flow_dns_server.lock().await;
+        for entry in flow_server.values() {
+            // 持 refresh_lock 清扫:与 refresh 的"检查 + store"临界区互斥,
+            // 消除"清扫完成后再落入死 runtime"的残留竞态
+            //(锁序 map → refresh;refresh 临界区内不取 map 锁,无死锁)
+            let _refresh_guard = entry.refresh_lock.lock().await;
+            entry.runtime.store(None);
+        }
+    }
+
+    /// 服务状态投影(无独立状态持有者,由运行资源派生):
+    /// - 无运行(未启动/已停止)或没有任何 flow → Stop
+    /// - 存在存活 flow 监听 → Running
+    /// - 配置过 flow 但全部死亡(bind 失败/监听退出)→ Failed
+    pub async fn status_summary(&self) -> ServiceStatus {
+        if self.current_run().is_none() {
+            return ServiceStatus::Stop;
+        }
+        let flow_server = self.flow_dns_server.lock().await;
+        if flow_server.is_empty() {
+            return ServiceStatus::Stop;
+        }
+        let live = flow_server.values().any(|entry| {
+            entry.runtime.load_full().is_some_and(|runtime| !runtime.token.is_cancelled())
+        });
+        if live { ServiceStatus::Running } else { ServiceStatus::Failed }
     }
 
     /// Returns whether at least one flow listener runtime is still serving.
@@ -171,7 +236,7 @@ impl LandscapeDnsServer {
     pub async fn has_live_flow_runtime(&self) -> bool {
         let flow_server = self.flow_dns_server.lock().await;
         flow_server.values().any(|entry| {
-            entry.runtime.load_full().is_some_and(|runtime| !runtime._token.is_cancelled())
+            entry.runtime.load_full().is_some_and(|runtime| !runtime.token.is_cancelled())
         })
     }
 
@@ -234,7 +299,11 @@ impl LandscapeDnsServer {
         let entry = self.get_or_create_entry(flow_id).await;
 
         let _refresh_guard = entry.refresh_lock.lock().await;
-        if let Some(runtime) = entry.runtime.load_full() {
+        // 仅存活 runtime 走就地更新;死 runtime(bind 失败/监听中途退出/
+        // 停止清扫残留)视同不存在,落入下方重建路径整体替换
+        if let Some(runtime) = entry.runtime.load_full()
+            && !runtime.token.is_cancelled()
+        {
             match kind {
                 FlowRuntimeRefreshKind::Full => {
                     runtime.handler.renew_engines(redirect_engine, resolve_engine).await;
@@ -258,7 +327,11 @@ impl LandscapeDnsServer {
             self.local_resolver.clone(),
             self.result_sink.clone(),
         );
-        let Some(runtime) = self.build_flow_runtime(flow_id, handler).await else {
+        let Some(run) = self.current_run() else {
+            tracing::debug!("[flow: {flow_id}]: dns service not running, skip listener build");
+            return;
+        };
+        let Some(runtime) = self.build_flow_runtime(flow_id, handler, &run).await else {
             tracing::error!("[flow: {flow_id}]: DNS server start failed, runtime not registered");
             return;
         };
@@ -333,19 +406,25 @@ impl LandscapeDnsServer {
         &self,
         flow_id: u32,
         handler: DnsRequestHandler,
+        run: &DnsServiceRun,
     ) -> Option<FlowServerRuntime> {
-        let token = self.start_runtime_listener(flow_id, handler.clone()).await;
-        if token.is_cancelled() {
+        let token = run.token.child_token();
+        let started = self
+            .start_runtime_listener(flow_id, handler.clone(), &token, run.tracker.clone())
+            .await;
+        if started.is_cancelled() {
             return None;
         }
 
-        Some(FlowServerRuntime { handler, _token: token })
+        Some(FlowServerRuntime { handler, token })
     }
 
     async fn start_runtime_listener(
         &self,
         flow_id: u32,
         handler: DnsRequestHandler,
+        token: &CancellationToken,
+        tracker: TaskTracker,
     ) -> CancellationToken {
         start_flow_dns_listener(
             flow_id,
@@ -353,6 +432,8 @@ impl LandscapeDnsServer {
             self.build_effective_doh_listener_config(),
             handler,
             self.socket_registrar.clone(),
+            token.clone(),
+            tracker,
         )
         .await
     }
@@ -367,7 +448,7 @@ mod tests {
     use super::*;
     use arc_swap::ArcSwap;
     use landscape_common::dns::CacheRuntimeConfig;
-    use landscape_common::flow::NoopDnsResultSink;
+    use landscape_common::flow::{NoopDnsResultSink, NoopFlowSocketRegistrar};
     use landscape_common::sys_service::lan_hostname::LanHostnameConfig;
     use landscape_core::lan_hostname::LanHostnameRegistry;
 
@@ -402,7 +483,7 @@ mod tests {
             );
             entry.runtime.store(Some(Arc::new(FlowServerRuntime {
                 handler,
-                _token: CancellationToken::new(),
+                token: CancellationToken::new(),
             })));
 
             let _guard = entry.refresh_lock.lock().await;
@@ -420,6 +501,104 @@ mod tests {
             let _guard = entry.refresh_lock.lock().await;
 
             assert!(entry.runtime.load_full().is_none());
+        });
+    }
+
+    fn test_dns_server() -> LandscapeDnsServer {
+        let mut server = LandscapeDnsServer::new(
+            53,
+            None,
+            test_cache_runtime_config(),
+            None,
+            None,
+            None,
+            test_lan_hostname_registry(),
+            Arc::new(NoopDnsResultSink),
+            Arc::new(NoopFlowSocketRegistrar),
+        );
+        // 避免测试环境绑定特权端口 53:改用内核分配的临时端口
+        server.udp_listener_addr = "[::]:0".parse().unwrap();
+        server
+    }
+
+    async fn refresh_full(server: &LandscapeDnsServer, flow_id: u32) {
+        server
+            .refresh_flow_runtime_kind(
+                flow_id,
+                RedirectEngine::default(),
+                ResolveEngine::default(),
+                FlowRuntimeRefreshKind::Full,
+            )
+            .await;
+    }
+
+    #[test]
+    fn refresh_rebuilds_dead_runtime() {
+        run_async_test(async {
+            let server = test_dns_server();
+            refresh_full(&server, 1).await;
+            let entry = server.get_entry(1).await.unwrap();
+            assert!(!entry.runtime.load_full().unwrap().token.is_cancelled());
+
+            // listener 死亡后,refresh 必须整体重建(新 token 存活)而非就地 renew
+            entry.runtime.load_full().unwrap().token.cancel();
+            assert!(!server.has_live_flow_runtime().await);
+
+            server
+                .refresh_flow_runtime_kind(
+                    1,
+                    RedirectEngine::default(),
+                    ResolveEngine::default(),
+                    FlowRuntimeRefreshKind::ResolveOnly,
+                )
+                .await;
+            let runtime = entry.runtime.load_full().unwrap();
+            assert!(!runtime.token.is_cancelled());
+            assert!(server.has_live_flow_runtime().await);
+        });
+    }
+
+    #[test]
+    fn status_summary_projection_phases() {
+        run_async_test(async {
+            let server = test_dns_server();
+
+            // 无任何 flow 条目 → Stop
+            assert_eq!(server.status_summary().await, ServiceStatus::Stop);
+
+            // 配置过 flow 但无存活 runtime → Failed
+            server.get_or_create_entry(1).await;
+            assert_eq!(server.status_summary().await, ServiceStatus::Failed);
+
+            // 建立成功 → Running;listener 死亡 → Failed
+            refresh_full(&server, 1).await;
+            assert_eq!(server.status_summary().await, ServiceStatus::Running);
+            server.get_entry(1).await.unwrap().runtime.load_full().unwrap().token.cancel();
+            assert_eq!(server.status_summary().await, ServiceStatus::Failed);
+
+            // 停止 → Stop
+            server.stop_service().await;
+            assert_eq!(server.status_summary().await, ServiceStatus::Stop);
+        });
+    }
+
+    #[test]
+    fn stop_then_start_rebuilds_listeners() {
+        run_async_test(async {
+            let server = test_dns_server();
+            refresh_full(&server, 1).await;
+            assert_eq!(server.status_summary().await, ServiceStatus::Running);
+
+            // 停止:runtime 被确定性清空
+            server.stop_service().await;
+            assert!(server.get_entry(1).await.unwrap().runtime.load_full().is_none());
+            assert_eq!(server.status_summary().await, ServiceStatus::Stop);
+
+            // 重启:refresh 重建 listener 后恢复 Running
+            server.start_service();
+            refresh_full(&server, 1).await;
+            assert_eq!(server.status_summary().await, ServiceStatus::Running);
+            assert!(server.has_live_flow_runtime().await);
         });
     }
 }

@@ -244,13 +244,13 @@ impl VethPair {
 
 impl Drop for VethPair {
     fn drop(&mut self) {
-        if let Some(host_ns_fd) = &self.host_ns_fd {
-            if let Ok(cur) = std::fs::File::open("/proc/thread-self/ns/net") {
-                let _ = setns(host_ns_fd, CloneFlags::CLONE_NEWNET);
-                let _ = Command::new("ip").args(["link", "del", &self.host]).output();
-                let _ = setns(&cur, CloneFlags::CLONE_NEWNET);
-                return;
-            }
+        if let Some(host_ns_fd) = &self.host_ns_fd
+            && let Ok(cur) = std::fs::File::open("/proc/thread-self/ns/net")
+        {
+            let _ = setns(host_ns_fd, CloneFlags::CLONE_NEWNET);
+            let _ = Command::new("ip").args(["link", "del", &self.host]).output();
+            let _ = setns(&cur, CloneFlags::CLONE_NEWNET);
+            return;
         }
         let _ = Command::new("ip").args(["link", "del", &self.host]).output();
     }

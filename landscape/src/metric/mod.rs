@@ -19,7 +19,7 @@ use landscape_common::{
     self_monitor::memory::{
         DEFAULT_MEM_METRIC_RETENTION_DAYS, MemHistoryQueryParams, MemHistoryResponse,
     },
-    service::{ServiceStatus, WatchService},
+    service::ServiceStatus,
 };
 use landscape_ebpf::metric::{EventSourceStopOutcome, MetricSourceFactory, MetricSourceHandle};
 use landscape_metric::MetricEngine;
@@ -29,6 +29,10 @@ use tokio::sync::mpsc;
 pub mod memory_store {
     pub use landscape_metric::MemoryMetricStore;
 }
+
+mod state;
+
+pub use state::MetricStatus;
 
 struct MetricRuntime {
     config: MetricRuntimeConfig,
@@ -48,7 +52,8 @@ struct MetricServiceInner {
 
 #[derive(Clone)]
 pub struct MetricService {
-    pub status: WatchService,
+    /// 运行状态(仅展示,无 token/tracker;停止语义由事件源自管)
+    pub status: MetricStatus,
     inner: Arc<MetricServiceInner>,
 }
 
@@ -86,7 +91,7 @@ impl MetricService {
         let engine = MetricEngine::new(metric_path, config.clone())
             .await
             .map_err(|error| format!("failed to initialize metric engine: {error}"))?;
-        let status = WatchService::new();
+        let status = MetricStatus::new();
 
         Ok(MetricService {
             status,
@@ -128,8 +133,6 @@ impl MetricService {
     /// 事件源构建失败(map 缺失等)立即落定 Failed 并返回 Err,由调用方决定
     /// 是否回滚,而非让任务 panic 后在停止时才被察觉。
     async fn start_service_locked(&self) -> Result<(), String> {
-        // FIXME(service-state): 单例 handle 跨 start/stop 复用,token 在首次
-        // stop 后已永久取消(事件源不经 handle 追踪,暂无实际影响)。
         if matches!(self.current_mode(), MetricMode::Off) {
             tracing::info!("Metric service disabled by mode=off");
             return Ok(());
@@ -215,9 +218,7 @@ impl MetricService {
                 ServiceStatus::Failed
             }
         };
-        if self.status.current() != final_status {
-            self.status.just_change_status(final_status);
-        }
+        self.status.just_change_status(final_status);
         // 停止内存指标记录(收尾写入当前分钟);store 保留供历史查询,
         // 下次 start_service 时 recorder 会被重新拉起。
         {

@@ -137,8 +137,7 @@ mod tests {
 
     #[test]
     fn resolve_output_honors_stdout_and_dir() {
-        let mut args = ConfigCliArgs::default();
-        args.stdout = true;
+        let mut args = ConfigCliArgs { stdout: true, ..Default::default() };
         assert_eq!(args.resolve_output(), ConfigOutput::Stdout);
 
         args.stdout = false;

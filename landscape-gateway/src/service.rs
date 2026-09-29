@@ -1,5 +1,5 @@
 use crate::{GatewayManager, GatewayTlsConfig};
-use landscape_common::service::{ServiceStatus, WatchService};
+use landscape_common::service::ServiceStatus;
 use landscape_common::sys_service::gateway::settings::GatewayRuntimeConfig;
 use landscape_database::gateway::repository::GatewayHttpUpstreamRepository;
 use landscape_database::repository::Repository;
@@ -57,24 +57,21 @@ impl GatewayService {
         self.manager.shutdown();
     }
 
-    /// Signal gateway to stop and wait up to `timeout` for the Pingora thread
-    /// to exit cleanly, without blocking the async runtime.
+    /// Signal gateway to stop and wait up to `timeout` for the gateway run to
+    /// report a terminal status. Awaits the run's completion watch instead of
+    /// polling; the blocking thread join still happens at manager drop.
     pub async fn shutdown_and_wait(&self, timeout: std::time::Duration) {
         self.manager.shutdown();
-        let status = self.manager.watch_service();
-        if matches!(status.current(), ServiceStatus::Stop) {
-            tracing::info!("Gateway thread exited cleanly.");
+        let Some(done_rx) = self.manager.done_receiver() else {
+            tracing::info!("Gateway not running.");
             return;
-        }
-
-        // The gateway runs on a dedicated thread (not tracked tokio tasks), so
-        // poll the derived status until the thread reports Stop.
-        let wait_result =
-            tokio::time::timeout(timeout, status.wait_for(|s| matches!(s, ServiceStatus::Stop)))
-                .await;
-
-        match wait_result {
-            Ok(()) => tracing::info!("Gateway thread exited cleanly."),
+        };
+        let mut done_rx = done_rx;
+        let terminal = done_rx
+            .wait_for(|status| matches!(status, ServiceStatus::Stop | ServiceStatus::Failed));
+        match tokio::time::timeout(timeout, terminal).await {
+            // 完成通道在极端路径下关闭(如 send 前线程即退出):以状态单元收尾
+            Ok(_) => tracing::info!("Gateway run finished: {:?}", self.status()),
             Err(_) => tracing::warn!(
                 "Gateway did not stop within {}s timeout, proceeding.",
                 timeout.as_secs()
@@ -88,10 +85,6 @@ impl GatewayService {
 
     pub fn status(&self) -> ServiceStatus {
         self.manager.status()
-    }
-
-    pub fn watch_service(&self) -> WatchService {
-        self.manager.watch_service()
     }
 
     pub async fn reload_rules(&self) {

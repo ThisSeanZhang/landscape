@@ -1,21 +1,22 @@
 use landscape_common::{NAMESPACE_REGISTER_SOCK, NAMESPACE_REGISTER_SOCK_PATH};
 use std::{
+    io,
     os::unix::fs::{MetadataExt as _, PermissionsExt as _},
     path::PathBuf,
 };
 use tokio::net::UnixListener;
 use tracing::{error, info};
 
-pub(crate) async fn listen_unix_sock(home_path: PathBuf) -> UnixListener {
+pub(crate) async fn listen_unix_sock(home_path: PathBuf) -> io::Result<UnixListener> {
     let dir_path = home_path.join(NAMESPACE_REGISTER_SOCK_PATH);
 
     // Check Directory Status
     if !dir_path.exists() {
         info!("Socket directory not found, creating: {:?}", dir_path);
-        std::fs::create_dir_all(&dir_path).unwrap_or_else(|e| {
+        if let Err(e) = std::fs::create_dir_all(&dir_path) {
             error!("Failed to create socket directory {:?}: {}", dir_path, e);
-            panic!("Cannot create socket directory");
-        });
+            return Err(e);
+        }
     } else {
         info!("Socket directory exists: {:?}", dir_path);
     }
@@ -27,7 +28,7 @@ pub(crate) async fn listen_unix_sock(home_path: PathBuf) -> UnixListener {
         info!("Old socket file found, removing: {:?}", socket_path);
         if let Err(e) = std::fs::remove_file(&socket_path) {
             error!("Failed to remove old socket {:?}: {}", socket_path, e);
-            panic!("Cannot remove old socket file");
+            return Err(e);
         }
     }
 
@@ -47,11 +48,11 @@ pub(crate) async fn listen_unix_sock(home_path: PathBuf) -> UnixListener {
     match UnixListener::bind(&socket_path) {
         Ok(listener) => {
             info!("UnixListener successfully bound on {:?}", socket_path);
-            listener
+            Ok(listener)
         }
         Err(e) => {
             error!("Failed to bind UnixListener on {:?}: {}", socket_path, e);
-            panic!("Listen failed: {}", e);
+            Err(e)
         }
     }
 }

@@ -11,6 +11,8 @@ use hickory_server::{
     zone_handler::MessageResponseBuilder,
 };
 
+#[cfg(test)]
+use crate::server::redirect_engine::RedirectAnswer;
 use crate::{
     CheckChainDnsResult,
     domain::ParsedDomain,
@@ -19,7 +21,7 @@ use crate::{
         answer::DnsQueryAnswer,
         chain::ResolveChain,
         local::LocalResolver,
-        redirect_engine::{RedirectAnswer, RedirectEngine},
+        redirect_engine::RedirectEngine,
         resolve_engine::ResolveEngine,
         snapshot::{RuntimeSnapshot, SnapshotPatch, SnapshotStore},
     },
@@ -85,6 +87,7 @@ impl DnsRequestHandler {
         }
     }
 
+    #[cfg(test)]
     pub fn lookup_redirects(
         &self,
         domain: &ParsedDomain,

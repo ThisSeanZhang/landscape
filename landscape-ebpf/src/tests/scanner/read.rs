@@ -57,8 +57,8 @@ mod tests {
 
     fn u32x4(bytes: &[u8; 16]) -> [u32; 4] {
         let mut out = [0u32; 4];
-        for (o, c) in out.iter_mut().zip(bytes.chunks_exact(4)) {
-            *o = u32::from_ne_bytes(c.try_into().unwrap());
+        for (o, c) in out.iter_mut().zip(bytes.as_chunks::<4>().0) {
+            *o = u32::from_ne_bytes(*c);
         }
         out
     }

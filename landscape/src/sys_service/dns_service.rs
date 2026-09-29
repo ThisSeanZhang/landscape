@@ -107,15 +107,11 @@ impl LandscapeDnsService {
             matcher_builder,
             flow_dependencies: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
         };
-        dns_service.dns_service.status.just_change_status(ServiceStatus::Staring);
+        // 创建即视为进入运行状态(server::new 已初始化运行):直接刷新各
+        // flow 监听;状态由 `status_summary` 从运行资源投影,无需另行汇报
         let flow_count = dns_service.refresh_all_flows().await;
         let live = dns_service.dns_service.has_live_flow_runtime().await;
-        let status =
-            if flow_count > 0 && !live { ServiceStatus::Failed } else { ServiceStatus::Running };
-        tracing::info!(
-            "DNS service started: flow_count: {flow_count}, live_runtime: {live}, status: {status:?}"
-        );
-        dns_service.dns_service.status.just_change_status(status);
+        tracing::info!("DNS service started: flow_count: {flow_count}, live_runtime: {live}");
         let dns_service_clone = dns_service.clone();
         spawn_task(task_label::task::DNS_SERVICE_OBSERVER, async move {
             while let Some(event) = receiver.recv().await {
@@ -215,23 +211,31 @@ impl LandscapeDnsService {
     }
 
     pub async fn get_status(&self) -> ServiceStatus {
-        self.dns_service.status.current()
+        self.dns_service.status_summary().await
     }
 
+    /// 真启动:开启新的服务运行 → 重建各 flow 监听(停止时清空的
+    /// runtime 会重新建立)→ 恢复系统解析器劫持。
     pub async fn start_dns_service(&self) {
-        // FIXME(service-state): 在同一 handle 上 Stop → Staring 翻牌重启;token
-        // 在首次 stop 后已永久取消(本服务无人等待 handle token,暂无实际影响)。
         tracing::info!("starting DNS service");
-        self.dns_service.status.just_change_status(ServiceStatus::Staring);
-        self.dns_service.status.just_change_status(ServiceStatus::Running);
-        tracing::info!("DNS service status set to running");
+        self.dns_service.start_service();
+
+        let flow_count = self.refresh_all_flows().await;
+        tracing::info!("DNS service run started: flow_count: {flow_count}");
+
+        if prepare_system_dns() {
+            tracing::info!("system DNS redirected to local DNS service");
+        } else {
+            tracing::error!("failed to redirect system DNS to local DNS service");
+        }
     }
 
+    /// 真停:先恢复系统解析器,再取消全部 flow 监听并确定性等待其结束。
+    /// 语义变更:此前 stop 仅恢复 resolv.conf,flow 监听继续运行。
     pub async fn stop(&self) {
         tracing::info!("stopping DNS service");
-        self.dns_service.status.just_change_status(ServiceStatus::Stopping);
         landscape_dns::restore_resolver_conf();
-        self.dns_service.status.just_change_status(ServiceStatus::Stop);
+        self.dns_service.stop_service().await;
         tracing::info!("DNS service stopped");
     }
 

@@ -9,10 +9,12 @@ use tokio::net::UdpSocket;
 use tokio_util::sync::CancellationToken;
 
 use crate::server::handler::DnsRequestHandler;
-use landscape_common::concurrency::{spawn_task, task_label};
+use landscape_common::concurrency::task_label;
 use landscape_common::dns::DohRuntimeConfig;
 use landscape_common::flow::FlowSocketRegistrar;
 use socket2::{Domain, Protocol, Socket, Type};
+use tokio_util::task::TaskTracker;
+use tracing::Instrument;
 
 mod doh;
 
@@ -140,16 +142,27 @@ pub fn create_tcp_listener(address: SocketAddr) -> std::io::Result<(tokio::net::
     Ok((listener, fd))
 }
 
-pub async fn start_flow_dns_listener(
+/// 启动单个 flow 的 DNS 监听(UDP + 可选 DoH)。
+///
+/// `token` 为服务运行 token 的 child:父 token 取消(服务停止)时本 flow
+/// 监听随之终止;自身 bind 失败时自我取消以向上游标记失败。两个顶级任务
+/// (UDP serve / DoH handler)均注册进 `tracker`,供停止侧确定性等待。
+///
+/// UDP 与 DoH 共用同一 token(同生共死):任一侧的致命错误都会取消整个
+/// flow token 使另一半一并退出,由上层 refresh 感知死亡并整体重建。
+pub(crate) async fn start_flow_dns_listener(
     flow_id: u32,
     addr: SocketAddr,
     doh: Option<EffectiveDohListenerConfig>,
     handler: DnsRequestHandler,
     socket_registrar: Arc<dyn FlowSocketRegistrar>,
+    token: CancellationToken,
+    tracker: TaskTracker,
 ) -> CancellationToken {
     let Ok((udp, sock_fd)) = create_udp_socket(addr).await else {
         tracing::error!("[flow: {flow_id}]: create udp socket error");
-        return cancelled_token();
+        token.cancel();
+        return token;
     };
 
     attach_dns_socket(socket_registrar.as_ref(), flow_id, sock_fd, false);
@@ -159,32 +172,65 @@ pub async fn start_flow_dns_listener(
     server.register_socket(udp);
 
     if let Some(doh) = doh {
-        register_doh_listener(&mut server, flow_id, doh, doh_handler, socket_registrar.clone());
+        register_doh_listener(
+            flow_id,
+            doh,
+            doh_handler,
+            socket_registrar.clone(),
+            token.clone(),
+            tracker.clone(),
+        );
     }
 
-    let token = server.shutdown_token().clone();
-    let shutdown = token.clone();
+    // hickory server 自身的关闭 token:父 token 触发时转发取消,
+    // 让 server 停止 accept 并使 block_until_done 返回
+    let server_shutdown = server.shutdown_token().clone();
+    let serve_token = token.clone();
 
-    spawn_task(task_label::task::DNS_LISTENER_SERVE, async move {
-        let result = server.block_until_done().await;
-        shutdown.cancel();
-
-        if let Err(e) = result {
-            tracing::error!("[flow: {flow_id}]: server down, error: {e:?}");
-        } else {
-            tracing::info!("[flow: {flow_id}]: server down");
+    spawn_tracked(&tracker, task_label::task::DNS_LISTENER_SERVE, async move {
+        tokio::select! {
+            result = server.block_until_done() => {
+                if let Err(e) = result {
+                    tracing::error!("[flow: {flow_id}]: server down, error: {e:?}");
+                } else {
+                    tracing::info!("[flow: {flow_id}]: server down");
+                }
+                // server 自身退出(如 socket 错误):标记本 flow 终止,
+                // 同 token 的 DoH 监听一并退出
+                serve_token.cancel();
+            }
+            () = serve_token.cancelled() => {
+                // 服务停止/flow 替换:转发取消并等待 server 收尾
+                server_shutdown.cancel();
+                let _ = server.block_until_done().await;
+            }
         }
     });
 
     token
 }
 
+/// 追踪式 spawn:与 [`landscape_common::concurrency::spawn_task`] 的
+/// memtrack/tracing 语义一致,但任务注册进指定 [`TaskTracker`]。
+pub(crate) fn spawn_tracked<Fut>(tracker: &TaskTracker, label: &'static str, future: Fut)
+where
+    Fut: std::future::Future + Send + 'static,
+    Fut::Output: Send + 'static,
+{
+    let tag = landscape_common::memtrack::subsystem_from_task_label(label);
+    tracker.spawn(
+        landscape_common::memtrack::TaggedFuture::new(tag, future)
+            .instrument(tracing::info_span!("task", task = label)),
+    );
+}
+
 fn register_doh_listener(
-    server: &mut Server<DnsRequestHandler>,
     flow_id: u32,
     doh: EffectiveDohListenerConfig,
     handler: DnsRequestHandler,
     socket_registrar: Arc<dyn FlowSocketRegistrar>,
+    token: CancellationToken,
+    tracker: TaskTracker,
 ) {
     match create_tcp_listener(doh.addr) {
         Ok((listener, sock_fd)) => {
@@ -199,7 +245,8 @@ fn register_doh_listener(
                     http_endpoint: doh.http_endpoint,
                 },
                 handler,
-                server.shutdown_token().clone(),
+                token,
+                tracker,
             );
         }
         Err(e) => {
@@ -215,10 +262,4 @@ fn attach_dns_socket(
     is_tcp: bool,
 ) {
     socket_registrar.register_dns_socket(flow_id, sock_fd, is_tcp)
-}
-
-fn cancelled_token() -> CancellationToken {
-    let token = CancellationToken::new();
-    token.cancel();
-    token
 }

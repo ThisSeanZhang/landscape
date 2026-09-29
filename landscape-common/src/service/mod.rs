@@ -208,10 +208,14 @@ impl ServiceStatusCell {
 /// - `wait_stop()`:请求停止并确定性等待全部被追踪任务结束;
 ///   结束后状态未到终态则兜底置 Failed(systemd 判活语义)
 ///
-/// FIXME(service-state): 单例服务(docker/dns/metric/gateway)目前违反
-/// "实例间完全隔离"假设——复用同一 handle 跨 start/stop 周期,而 token
-/// 进入退出态后永久不可复活。docker 已因此出现实际故障(start_to_listen_event
-/// 的 wait_stop 先取消本柄 token,事件监听任务随即瞬间退出)。
+/// 使用边界:本类型(及 `WatchService` 别名)仅适用于"一次运行 = 一棵
+/// tokio 任务树"的服务,即经 [`super::manager::ServiceManager`] 管理的
+/// 配置驱动服务。单例服务不在本层持有状态,各自拥有专属状态结构,
+/// 仅复用 [`ServiceStatus`] 枚举与转换矩阵:
+/// - docker:`DockerRun`(landscape/src/docker/run.rs,状态+token+tracker,per-run)
+/// - dns:无状态持有者,由 per-flow 运行时投影(landscape-dns/src/server.rs)
+/// - gateway:`GatewayRun`(landscape-gateway/src/lib.rs,专用线程 per-run)
+/// - metric:`MetricStatus`(landscape/src/metric/state.rs,纯展示状态)
 #[derive(Clone)]
 pub struct ServiceHandle {
     inner: Arc<HandleInner>,

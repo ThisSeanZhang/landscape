@@ -44,7 +44,7 @@ pub fn get_docker_paths() -> OpenApiRouter<LandscapeApp> {
     responses((status = 200, description = "Success", body = CommonApiResp<ServiceStatus>))
 )]
 async fn get_docker_status(State(state): State<LandscapeApp>) -> LandscapeApiResult<ServiceStatus> {
-    LandscapeApiResp::success(state.docker_service.status.current())
+    LandscapeApiResp::success(state.docker_service.status().await)
 }
 
 #[utoipa::path(
@@ -58,7 +58,7 @@ async fn start_docker_status(
     State(state): State<LandscapeApp>,
 ) -> LandscapeApiResult<ServiceStatus> {
     state.docker_service.start_to_listen_event().await;
-    LandscapeApiResp::success(state.docker_service.status.current())
+    LandscapeApiResp::success(state.docker_service.status().await)
 }
 
 #[utoipa::path(
@@ -71,8 +71,7 @@ async fn start_docker_status(
 async fn stop_docker_status(
     State(state): State<LandscapeApp>,
 ) -> LandscapeApiResult<ServiceStatus> {
-    state.docker_service.status.wait_stop().await;
-    LandscapeApiResp::success(state.docker_service.status.current())
+    LandscapeApiResp::success(state.docker_service.stop().await)
 }
 
 #[utoipa::path(

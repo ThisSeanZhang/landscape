@@ -226,15 +226,19 @@ mod tests {
         config.l4_protocols = vec![17];
         config.mapping_pair_ports = vec![StaticMapPair { wan_port: 40000, lan_port: 22 }];
 
-        let mut nat_config = NatConfig::default();
-        nat_config.tcp_range = 60000..65535;
-        nat_config.udp_range = 32768..65535;
+        let nat_config = NatConfig {
+            tcp_range: 60000..65535,
+            udp_range: 32768..65535,
+            ..Default::default()
+        };
 
         assert!(config.validate_no_dynamic_port_overlap(&nat_config).is_err());
 
-        let mut nat_config = NatConfig::default();
-        nat_config.tcp_range = 32768..65535;
-        nat_config.udp_range = 40000..65535;
+        let nat_config = NatConfig {
+            tcp_range: 32768..65535,
+            udp_range: 40000..65535,
+            ..Default::default()
+        };
         config.mapping_pair_ports = vec![StaticMapPair { wan_port: 33000, lan_port: 22 }];
 
         assert!(config.validate_no_dynamic_port_overlap(&nat_config).is_ok());

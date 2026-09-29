@@ -1,6 +1,8 @@
 use std::{collections::HashSet, sync::Arc};
 
-use arc_swap::{ArcSwap, Guard};
+use arc_swap::ArcSwap;
+#[cfg(test)]
+use arc_swap::Guard;
 
 use landscape_common::flow::{DnsResultSink, FlowMarkInfo};
 
@@ -90,6 +92,7 @@ impl SnapshotStore {
         &self.sink
     }
 
+    #[cfg(test)]
     pub fn load(&self) -> Guard<Arc<RuntimeSnapshot>> {
         self.runtime.load()
     }

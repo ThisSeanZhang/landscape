@@ -6,26 +6,30 @@ use bollard::{
 use landscape_common::concurrency::{spawn_task, task_label};
 use landscape_common::docker::DockerTargetEnroll;
 use landscape_common::docker::error::DockerError;
-use landscape_common::{
-    service::{ServiceStatus, WatchService},
-    sys_service::route_service::RouteTargetInfo,
-};
+use landscape_common::{service::ServiceStatus, sys_service::route_service::RouteTargetInfo};
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 use tokio::net::{UnixListener, UnixStream};
+use tokio::sync::Mutex;
 use tokio::{io::AsyncReadExt, net::unix::SocketAddr};
 use tokio_stream::StreamExt;
+use tokio_util::sync::CancellationToken;
 
 use crate::{docker::image::PullManager, sys_service::route::IpRouteService};
 
 pub mod image;
 pub mod network;
+mod run;
 pub mod unix_sock;
+
+use run::DockerRun;
 
 /// Docker Service
 #[derive(Clone)]
 pub struct LandscapeDockerService {
-    pub status: WatchService,
+    /// 当前运行实例:每次 start 创建全新 [`DockerRun`](状态/token/tracker
+    /// 与运行实例同生命周期,跨周期不复用),stop 后取出丢弃。
+    run: Arc<Mutex<Option<DockerRun>>>,
     route_service: IpRouteService,
     home_path: PathBuf,
     pub pull_manager: PullManager,
@@ -39,10 +43,9 @@ impl LandscapeDockerService {
                 .map_err(|e| tracing::warn!("Docker Connect Fail on init: {e:?}"))
                 .ok(),
         ));
-        let status = WatchService::new();
         let pull_manager = PullManager::new();
         LandscapeDockerService {
-            status,
+            run: Arc::new(Mutex::new(None)),
             route_service,
             home_path,
             pull_manager,
@@ -54,77 +57,186 @@ impl LandscapeDockerService {
         self.docker_client.read().unwrap().clone().ok_or(DockerError::DockerClientNotAvailable)
     }
 
+    /// 当前运行的状态快照(无运行实例时为 Stop)
+    pub async fn status(&self) -> ServiceStatus {
+        self.run.lock().await.as_ref().map(|run| run.current()).unwrap_or(ServiceStatus::Stop)
+    }
+
+    /// 请求停止并确定性等待当前运行的全部被追踪任务结束,返回终态。
+    ///
+    /// 持 run 锁跨 wait_stop(通常毫秒级,最长为单个 handle_event 的
+    /// Docker API 时长);与 start 的锁内 wait_stop 共同保证 unix socket
+    /// 的 unlink+rebind 不与新 run 重叠。
+    pub async fn stop(&self) -> ServiceStatus {
+        let mut run = self.run.lock().await;
+        match run.take() {
+            Some(current) => current.wait_stop().await,
+            None => ServiceStatus::Stop,
+        }
+    }
+
+    /// 启动 docker 事件监听:先确定性等待上一轮运行结束,再以全新运行
+    /// 实例开始新一轮监听。
     pub async fn start_to_listen_event(&self) {
-        // FIXME(service-state): 已知故障——单例 handle 跨 start/stop 复用,而
-        // token 进入退出态后永久不可复活:此处 wait_stop 无条件取消本柄 token
-        // (request_stop 幂等设计),下方任务取到的 stop_token 已死,
-        // cancelled().await 立即返回,事件监听生命周期在启动瞬间塌缩。
-        self.status.wait_stop().await;
-        let status = self.status.clone();
+        let mut run = self.run.lock().await;
+        if let Some(previous) = run.take() {
+            previous.wait_stop().await;
+        }
+
+        let current = DockerRun::new();
+        current.just_change_status(ServiceStatus::Staring);
+
         let route_service = self.route_service.clone();
         let path = self.home_path.clone();
         let docker_client = self.docker_client.clone();
+        let scan_route_service = route_service.clone();
+        let scan_docker_client = docker_client.clone();
 
-        scan_all_lan_net(&route_service, &docker_client).await;
-        let spawn_status = status.clone();
-        spawn_status.spawn_task(task_label::task::DOCKER_EVENT_LISTENER, async move {
-            status.just_change_status(ServiceStatus::Staring);
+        // supervisor 块持有自己的克隆,外层保留 `current` 供存回与死亡监视
+        let spawn_run = current.clone();
+        let spawn_handle = spawn_run.clone();
+        let supervisor =
+            spawn_handle.spawn_task(task_label::task::DOCKER_EVENT_LISTENER, async move {
+                let unix_socket = match unix_sock::listen_unix_sock(path).await {
+                    Ok(listener) => listener,
+                    Err(e) => {
+                        tracing::error!(
+                            "docker unix registration socket bind failed: {e:?}; marking service failed"
+                        );
+                        spawn_run.just_change_status(ServiceStatus::Failed);
+                        return;
+                    }
+                };
 
-            let unix_socket = unix_sock::listen_unix_sock(path).await;
+                route_service.remove_all_wan_docker().await;
 
-            route_service.remove_all_wan_docker().await;
-
-            let unix_status = status.clone();
-            let unix_route_service = route_service.clone();
-            let event_docker_client = docker_client.clone();
-            let unix_docker_client = docker_client;
-            let unix_spawn_status = status.clone();
-            let unix_listener =
-                unix_spawn_status.spawn_task(task_label::task::DOCKER_EVENT_UNIX, async move {
-                    run_unix_registration_listener(
-                        unix_status,
-                        unix_route_service,
-                        unix_socket,
-                        unix_docker_client,
-                    )
-                    .await;
-                });
-
-            let docker_status = status.clone();
-            let docker_route_service = route_service.clone();
-            let docker_spawn_status = status.clone();
-            let docker_event_listener = docker_spawn_status.spawn_task(
-                task_label::task::DOCKER_EVENT_LISTENER,
-                async move {
-                    run_docker_event_loop(docker_status, docker_route_service, event_docker_client)
+                let unix_run = spawn_run.clone();
+                let unix_route_service = route_service.clone();
+                let event_docker_client = docker_client.clone();
+                let unix_docker_client = docker_client;
+                let mut unix_listener =
+                    spawn_run.spawn_task(task_label::task::DOCKER_EVENT_UNIX, async move {
+                        run_unix_registration_listener(
+                            unix_run,
+                            unix_route_service,
+                            unix_socket,
+                            unix_docker_client,
+                        )
                         .await;
-                },
-            );
+                    });
 
-            // token 为水平触发,先取后置 Running 不存在漏事件问题
-            let stop_token = status.stop_token();
-            status.just_change_status(ServiceStatus::Running);
-            stop_token.cancelled().await;
-            tracing::info!("docker service stopping");
+                let event_run = spawn_run.clone();
+                let docker_route_service = route_service.clone();
+                let mut docker_event_listener =
+                    spawn_run.spawn_task(task_label::task::DOCKER_EVENT_LISTENER, async move {
+                        run_docker_event_loop(event_run, docker_route_service, event_docker_client)
+                            .await;
+                    });
 
+                // token 为水平触发,先取后置 Running 不存在漏事件问题;
+                // 已请求停止则跳过,避免 Stopping -> Running 的非法转换告警
+                let stop_token = spawn_run.stop_token();
+                if !stop_token.is_cancelled() {
+                    spawn_run.just_change_status(ServiceStatus::Running);
+                }
+
+                // 运行期同时监视两个子任务:任一在停止信号前退出(panic/意外
+                // 返回)即置 Failed,避免状态滞留 Running 而功能已死。
+                let failed = supervise_children(
+                    &stop_token,
+                    &mut unix_listener,
+                    &mut docker_event_listener,
+                )
+                .await;
+
+                tracing::info!("docker service stopping");
+                // failed 标志是唯一的异常判据:不能用 is_exit() 判断——
+                // wait_stop 已先行置 Stopping,会把干净停止误收敛为 Failed
+                if failed {
+                    spawn_run.just_change_status(ServiceStatus::Failed);
+                } else {
+                    spawn_run.just_change_status(ServiceStatus::Stop);
+                }
+            });
+
+        // 死亡监视:supervisor 意外 panic 时收敛到 Failed,避免状态滞留 Running
+        let watch_run = current.clone();
+        spawn_task(task_label::task::SERVICE_DEATH_WATCH, async move {
+            if let Err(panic) = supervisor.await {
+                tracing::error!("docker service supervisor panicked: {panic:?}");
+                watch_run.just_change_status(ServiceStatus::Failed);
+            }
+        });
+
+        // 先存回再扫描:scan(Docker API,秒级)在锁外执行,期间 status()/
+        // stop() 可正常响应;stop 并发时 tracker 已有任务,wait_stop 仍能
+        // 确定性收尾
+        let wait_run = current.clone();
+        *run = Some(current);
+        drop(run);
+
+        // start 返回前等待运行离开 Staring,使端点不再返回中间态;5s 上限
+        // 作为异常情况的安全网。
+        let _ =
+            tokio::time::timeout(std::time::Duration::from_secs(5), wait_run.wait_started()).await;
+
+        scan_all_lan_net(&scan_route_service, &scan_docker_client).await;
+    }
+}
+
+/// 监视两个长驻子任务,直到停止信号触发或任一子任务提前退出。
+///
+/// 返回 `true` 表示子任务在未收到停止信号时结束(panic/意外返回),调用方
+/// 应置 Failed;返回 `false` 表示停止信号驱动的正常收敛。函数返回时两个
+/// 子任务都已被等待结束(若为故障路径,会先取消运行 token 收敛另一侧)。
+async fn supervise_children(
+    stop_token: &CancellationToken,
+    unix_listener: &mut tokio::task::JoinHandle<()>,
+    docker_event_listener: &mut tokio::task::JoinHandle<()>,
+) -> bool {
+    let exited = tokio::select! {
+        () = stop_token.cancelled() => None,
+        result = &mut *unix_listener => Some((true, result)),
+        result = &mut *docker_event_listener => Some((false, result)),
+    };
+
+    match exited {
+        None => {
             let _ = unix_listener.await;
             let _ = docker_event_listener.await;
-
-            status.just_change_status(ServiceStatus::Stop);
-        });
+            false
+        }
+        Some((is_unix, result)) => {
+            let failed = !stop_token.is_cancelled();
+            if failed {
+                let name =
+                    if is_unix { "unix registration listener" } else { "docker event listener" };
+                tracing::error!(
+                    "docker {name} exited unexpectedly while running ({result:?}); marking service failed"
+                );
+                // 收敛另一侧:取消运行 token 使其一并退出
+                stop_token.cancel();
+            }
+            if is_unix {
+                let _ = docker_event_listener.await;
+            } else {
+                let _ = unix_listener.await;
+            }
+            failed
+        }
     }
 }
 
 async fn run_unix_registration_listener(
-    status: WatchService,
+    run: DockerRun,
     route_service: IpRouteService,
     unix_socket: UnixListener,
     docker_client: Arc<RwLock<Option<Docker>>>,
 ) {
-    let stop_token = status.stop_token();
+    let stop_token = run.stop_token();
 
     loop {
-        if status.is_exit() {
+        if run.is_exit() {
             tracing::info!("docker registration listener stopping");
             break;
         }
@@ -132,7 +244,16 @@ async fn run_unix_registration_listener(
         tokio::select! {
             info = unix_socket.accept() => {
                 match info {
-                    Ok(conn) => accept_docker_info(&route_service, conn, &docker_client).await,
+                    Ok(conn) => {
+                        let ip_route_service = route_service.clone();
+                        let registration_client = docker_client.clone();
+                        // 注册处理纳入 run tracker:wait_stop 可确定性等待
+                        // in-flight 注册(上限 5s 读超时)
+                        run.spawn_task(task_label::task::DOCKER_EVENT_UNIX, async move {
+                            accept_docker_info(&ip_route_service, conn, &registration_client)
+                                .await;
+                        });
+                    }
                     Err(e) => {
                         tracing::error!("failed to accept docker registration socket connection: {e:?}");
                         tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
@@ -148,15 +269,15 @@ async fn run_unix_registration_listener(
 }
 
 async fn run_docker_event_loop(
-    status: WatchService,
+    run: DockerRun,
     route_service: IpRouteService,
     docker_client: Arc<RwLock<Option<Docker>>>,
 ) {
-    let stop_token = status.stop_token();
+    let stop_token = run.stop_token();
     let retry_interval = tokio::time::Duration::from_secs(300);
 
     loop {
-        if status.is_exit() {
+        if run.is_exit() {
             break;
         }
 
@@ -226,7 +347,7 @@ async fn run_docker_event_loop(
                     return;
                 }
                 _ = interval.tick() => {
-                    if status.is_running() {
+                    if run.is_running() {
                         match docker.ping().await {
                             Ok(_) => {
                                 timeout_times = 0;
@@ -258,6 +379,7 @@ async fn run_docker_event_loop(
     }
 }
 
+/// 处理一次 docker 注册上报(由调用方负责以追踪式任务包裹)。
 pub async fn accept_docker_info(
     ip_route_service: &IpRouteService,
     (stream, _addr): (UnixStream, SocketAddr),
@@ -271,69 +393,66 @@ pub async fn accept_docker_info(
         }
     };
     let ip_route_service = ip_route_service.clone();
-    spawn_task(task_label::task::DOCKER_EVENT_UNIX, async move {
-        const MAX_REGISTRATION_BYTES: usize = 4096;
 
-        let mut buf = Vec::with_capacity(256);
-        let mut stream = stream.take((MAX_REGISTRATION_BYTES + 1) as u64);
-        let read_result =
-            tokio::time::timeout(tokio::time::Duration::from_secs(5), stream.read_to_end(&mut buf))
-                .await;
+    const MAX_REGISTRATION_BYTES: usize = 4096;
 
-        match read_result {
-            Ok(Ok(0)) => {
-                tracing::error!("Client disconnected");
-            }
-            Ok(Ok(n)) => {
-                if n > MAX_REGISTRATION_BYTES {
-                    tracing::error!(
-                        "docker registration info exceeded {MAX_REGISTRATION_BYTES} bytes"
-                    );
-                    return;
-                }
+    let mut buf = Vec::with_capacity(256);
+    let mut stream = stream.take((MAX_REGISTRATION_BYTES + 1) as u64);
+    let read_result =
+        tokio::time::timeout(tokio::time::Duration::from_secs(5), stream.read_to_end(&mut buf))
+            .await;
 
-                let result = serde_json::from_slice::<DockerTargetEnroll>(&buf);
-
-                tracing::info!("Receive info from sock: {:?}", result);
-                let Ok(DockerTargetEnroll { id, ifindex }) = result else {
-                    tracing::error!("failed to parse docker registration info");
-                    return;
-                };
-
-                let query: Option<InspectContainerOptions> = None;
-                let Ok(container_info) = docker.inspect_container(&id, query).await else {
-                    tracing::error!("can not inspect container id: {id}");
-                    return;
-                };
-
-                let mut container_name = if let Some(container_name) = container_info.name {
-                    container_name
-                } else {
-                    return;
-                };
-
-                if container_name.starts_with('/') {
-                    container_name = container_name
-                        .strip_prefix('/')
-                        .map(|n| n.to_string())
-                        .unwrap_or(container_name);
-                }
-                tracing::info!("container_name: {container_name:?}");
-
-                let (ipv4, ipv6) = RouteTargetInfo::docker_new(ifindex, &container_name);
-
-                ip_route_service.insert_ipv4_wan_route(&container_name, ipv4).await;
-                ip_route_service.insert_ipv6_wan_route(&container_name, ipv6).await;
-                ip_route_service.print_wan_ifaces().await;
-            }
-            Ok(Err(e)) => {
-                tracing::error!("Failed to read from socket: {:?}", e);
-            }
-            Err(_) => {
-                tracing::error!("Timed out reading from docker registration socket");
-            }
+    match read_result {
+        Ok(Ok(0)) => {
+            tracing::error!("Client disconnected");
         }
-    });
+        Ok(Ok(n)) => {
+            if n > MAX_REGISTRATION_BYTES {
+                tracing::error!("docker registration info exceeded {MAX_REGISTRATION_BYTES} bytes");
+                return;
+            }
+
+            let result = serde_json::from_slice::<DockerTargetEnroll>(&buf);
+
+            tracing::info!("Receive info from sock: {:?}", result);
+            let Ok(DockerTargetEnroll { id, ifindex }) = result else {
+                tracing::error!("failed to parse docker registration info");
+                return;
+            };
+
+            let query: Option<InspectContainerOptions> = None;
+            let Ok(container_info) = docker.inspect_container(&id, query).await else {
+                tracing::error!("can not inspect container id: {id}");
+                return;
+            };
+
+            let mut container_name = if let Some(container_name) = container_info.name {
+                container_name
+            } else {
+                return;
+            };
+
+            if container_name.starts_with('/') {
+                container_name = container_name
+                    .strip_prefix('/')
+                    .map(|n| n.to_string())
+                    .unwrap_or(container_name);
+            }
+            tracing::info!("container_name: {container_name:?}");
+
+            let (ipv4, ipv6) = RouteTargetInfo::docker_new(ifindex, &container_name);
+
+            ip_route_service.insert_ipv4_wan_route(&container_name, ipv4).await;
+            ip_route_service.insert_ipv6_wan_route(&container_name, ipv6).await;
+            ip_route_service.print_wan_ifaces().await;
+        }
+        Ok(Err(e)) => {
+            tracing::error!("Failed to read from socket: {:?}", e);
+        }
+        Err(_) => {
+            tracing::error!("Timed out reading from docker registration socket");
+        }
+    }
 }
 
 pub async fn handle_event(
@@ -434,5 +553,56 @@ async fn scan_all_lan_net(
         if let Some(info) = network_info.convert_to_lan_info() {
             ip_route_service.insert_ipv4_lan_route(&network_info.id, info).await;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio_util::sync::CancellationToken;
+
+    #[tokio::test]
+    async fn supervisor_reports_failure_when_child_exits_before_stop() {
+        let token = CancellationToken::new();
+        let event_token = token.clone();
+        let mut unix_listener = tokio::spawn(async {});
+        let mut docker_event_listener = tokio::spawn(async move {
+            event_token.cancelled().await;
+        });
+
+        assert!(supervise_children(&token, &mut unix_listener, &mut docker_event_listener).await);
+        // 故障路径会取消运行 token,使另一侧一并退出
+        assert!(token.is_cancelled());
+    }
+
+    #[tokio::test]
+    async fn supervisor_reports_failure_on_child_panic() {
+        let token = CancellationToken::new();
+        let event_token = token.clone();
+        let mut unix_listener = tokio::spawn(async {
+            panic!("unix registration listener died");
+        });
+        let mut docker_event_listener = tokio::spawn(async move {
+            event_token.cancelled().await;
+        });
+
+        assert!(supervise_children(&token, &mut unix_listener, &mut docker_event_listener).await);
+    }
+
+    #[tokio::test]
+    async fn supervisor_reports_clean_stop_on_token() {
+        let token = CancellationToken::new();
+        let unix_token = token.clone();
+        let event_token = token.clone();
+        let mut unix_listener = tokio::spawn(async move {
+            unix_token.cancelled().await;
+        });
+        let mut docker_event_listener = tokio::spawn(async move {
+            event_token.cancelled().await;
+        });
+
+        token.cancel();
+
+        assert!(!supervise_children(&token, &mut unix_listener, &mut docker_event_listener).await);
     }
 }
