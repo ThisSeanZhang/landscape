@@ -1,4 +1,4 @@
-//! 1 秒级 RAM 环形缓冲:最近 N 个快照,服务 `/api/v1/system/memory` 的
+//! 1 秒级 RAM 环形缓冲:最近 N 个快照,服务 `/api/v1/self-monitor/memory` 的
 //! 实时/近期查询;分钟级历史走 MetricEngine 的持久化链路,两条链路相互独立。
 
 use std::collections::VecDeque;

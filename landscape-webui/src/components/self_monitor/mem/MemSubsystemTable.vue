@@ -28,7 +28,7 @@ const sumLive = computed(() =>
 
 const columns = computed<DataTableColumns<ModuleMemStat>>(() => [
   {
-    title: t("metric.mem.subsystem"),
+    title: t("self_monitor.mem.subsystem"),
     key: "subsystem",
     width: 130,
     render(row) {
@@ -40,7 +40,7 @@ const columns = computed<DataTableColumns<ModuleMemStat>>(() => [
     },
   },
   {
-    title: t("metric.mem.live_bytes"),
+    title: t("self_monitor.mem.live_bytes"),
     key: "live_bytes",
     width: 130,
     sorter: "default",
@@ -58,7 +58,7 @@ const columns = computed<DataTableColumns<ModuleMemStat>>(() => [
         "div",
         { style: { display: "flex", alignItems: "center", gap: "4px" } },
         [
-          t("metric.mem.share"),
+          t("self_monitor.mem.share"),
           h(
             NTooltip,
             { trigger: "hover" },
@@ -71,7 +71,7 @@ const columns = computed<DataTableColumns<ModuleMemStat>>(() => [
                     default: () => h(HelpCircleOutline),
                   },
                 ),
-              default: () => t("metric.mem.share_tip"),
+              default: () => t("self_monitor.mem.share_tip"),
             },
           ),
         ],
@@ -105,28 +105,28 @@ const columns = computed<DataTableColumns<ModuleMemStat>>(() => [
     },
   },
   {
-    title: t("metric.mem.allocated"),
+    title: t("self_monitor.mem.allocated"),
     key: "allocated_bytes",
     width: 120,
     sorter: "default",
     render: (row) => formatSize(row.allocated_bytes),
   },
   {
-    title: t("metric.mem.freed"),
+    title: t("self_monitor.mem.freed"),
     key: "freed_bytes",
     width: 120,
     sorter: "default",
     render: (row) => formatSize(row.freed_bytes),
   },
   {
-    title: t("metric.mem.alloc_events"),
+    title: t("self_monitor.mem.alloc_events"),
     key: "alloc_events",
     width: 110,
     sorter: "default",
     render: (row) => formatCount(row.alloc_events),
   },
   {
-    title: t("metric.mem.free_events"),
+    title: t("self_monitor.mem.free_events"),
     key: "free_events",
     width: 110,
     sorter: "default",

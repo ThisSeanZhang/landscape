@@ -1,5 +1,5 @@
 export default {
-  title: "Memory Analytics",
+  title: "Self-Monitor - Memory",
   live: "Live",
   history: "History",
   precise: "Precise mode",

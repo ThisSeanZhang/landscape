@@ -209,8 +209,8 @@ const menuOptions = computed<MenuOption[]>(() =>
           key: "metrics/dns",
         },
         {
-          label: t("routes.mem-metric"),
-          key: "metrics/memory",
+          label: t("routes.self-monitor-memory"),
+          key: "self-monitor/memory",
         },
         {
           label: t("routes.connect-live"),

@@ -15,7 +15,7 @@ use landscape_common::{
         DnsHistoryQueryParams, DnsHistoryResponse, DnsLightweightSummaryResponse,
         DnsSummaryQueryParams, DnsSummaryResponse,
     },
-    metric::memory::{
+    self_monitor::memory::{
         MemHistoryQueryParams, MemHistoryResponse, DEFAULT_MEM_METRIC_RETENTION_DAYS,
     },
     service::{ServiceStatus, WatchService},
@@ -43,7 +43,7 @@ struct MetricServiceInner {
     source_factory: Arc<dyn MetricSourceFactory>,
     /// 内存指标记录。非 persistent 构建下是 no-op 实现(stub),恒为 None,
     /// 因此本文件无需任何 cfg。
-    mem_recording: Mutex<Option<landscape_metric::mem_store::MemRecording>>,
+    mem_recording: Mutex<Option<landscape_metric::self_monitor_store::MemRecording>>,
 }
 
 #[derive(Clone)]
@@ -174,7 +174,7 @@ impl MetricService {
             Some(recording) => recording.spawn_recorder(DEFAULT_MEM_METRIC_RETENTION_DAYS),
             None => {
                 let home_path = self.inner.home_path.clone();
-                *mem = landscape_metric::mem_store::start_memory_recording(
+                *mem = landscape_metric::self_monitor_store::start_memory_recording(
                     home_path,
                     DEFAULT_MEM_METRIC_RETENTION_DAYS,
                 )
@@ -373,7 +373,7 @@ impl MetricService {
     }
 
     /// 已持久化的内存指标分钟历史(persistent 构建;未启用/无数据返回空)。
-    /// 最近实时数据走 `/api/v1/system/memory` 的 RAM 环形缓冲,两条链路相互独立。
+    /// 最近实时数据走 `/api/v1/self-monitor/memory` 的 RAM 环形缓冲,两条链路相互独立。
     pub async fn query_memory_history(&self, params: MemHistoryQueryParams) -> MemHistoryResponse {
         let mem = self.inner.mem_recording.lock().await;
         match mem.as_ref() {

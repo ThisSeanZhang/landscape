@@ -9,7 +9,7 @@ import {
   getMemoryModules as _getMemoryModules,
   getMemoryModulesHistory as _getMemoryModulesHistory,
   getMemoryPersistedHistory as _getMemoryPersistedHistory,
-} from "@landscape-router/types/api/memory/memory";
+} from "@landscape-router/types/api/self-monitor/self-monitor";
 
 export type {
   GetMemoryModulesHistoryParams,

@@ -26,7 +26,7 @@ export default {
   "connect-history-src": "Src IP History",
   "connect-history-dst": "Dst IP History",
   "dns-metric": "DNS Metrics",
-  "mem-metric": "Memory",
+  "self-monitor-memory": "Self-Monitor - Memory",
   "ipv6-pd": "Upstream PD Prefix",
   "dhcp-v4": "DHCPv4 Leases",
   "ipv6-ra": "IPv6 Allocation Info",

@@ -181,12 +181,12 @@ const option = computed<ECOption>(() => ({
       dataZoom: {
         yAxisIndex: "none",
         title: {
-          zoom: t("metric.mem.chart.zoom"),
-          back: t("metric.mem.chart.zoom_back"),
+          zoom: t("self_monitor.mem.chart.zoom"),
+          back: t("self_monitor.mem.chart.zoom_back"),
         },
       },
       restore: {
-        title: t("metric.mem.chart.reset_zoom"),
+        title: t("self_monitor.mem.chart.reset_zoom"),
       },
     },
   },

@@ -21,7 +21,7 @@ use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
 pub(crate) mod agg;
-pub mod mem_store;
+pub mod self_monitor_store;
 pub(crate) mod sink;
 pub(crate) mod workers;
 

@@ -8,7 +8,7 @@ import {
   get_memory_modules,
   get_memory_modules_history,
   get_memory_history,
-} from "@/api/mem";
+} from "@/api/self_monitor";
 import type {
   MemorySnapshot,
   MemorySeriesResponse,
@@ -17,8 +17,8 @@ import type {
 import { formatSize } from "@/lib/util";
 import { useCapabilityStore } from "@/stores/capability";
 import { usePreferenceStore } from "@/stores/preference";
-import MemLineChart from "@/components/metric/mem/MemLineChart.vue";
-import MemSubsystemTable from "@/components/metric/mem/MemSubsystemTable.vue";
+import MemLineChart from "@/components/self_monitor/mem/MemLineChart.vue";
+import MemSubsystemTable from "@/components/self_monitor/mem/MemSubsystemTable.vue";
 
 const { t } = useI18n();
 const themeVars = useThemeVars();
@@ -39,10 +39,10 @@ const liveLoading = ref(false);
 
 const liveWindow = ref(300);
 const liveWindowOptions = computed(() => [
-  { label: t("metric.mem.last_5m"), value: 300 },
-  { label: t("metric.mem.last_15m"), value: 900 },
-  { label: t("metric.mem.last_30m"), value: 1800 },
-  { label: t("metric.mem.last_1h"), value: 3600 },
+  { label: t("self_monitor.mem.last_5m"), value: 300 },
+  { label: t("self_monitor.mem.last_15m"), value: 900 },
+  { label: t("self_monitor.mem.last_30m"), value: 1800 },
+  { label: t("self_monitor.mem.last_1h"), value: 3600 },
 ]);
 
 const fetchSnapshot = async () => {
@@ -99,7 +99,7 @@ const liveChartSeries = computed(() => {
       }
     });
     if (rss.length > 0) {
-      result.push({ name: t("metric.mem.process_rss"), data: rss });
+      result.push({ name: t("self_monitor.mem.process_rss"), data: rss });
     }
   }
   return result;
@@ -131,10 +131,10 @@ const customTimeRange = ref<[number, number] | null>(null);
 
 const metricMode = ref("live_avg");
 const metricModeOptions = computed(() => [
-  { label: t("metric.mem.mode_live_avg"), value: "live_avg" },
-  { label: t("metric.mem.mode_live_max"), value: "live_max" },
-  { label: t("metric.mem.mode_alloc"), value: "alloc" },
-  { label: t("metric.mem.mode_free"), value: "free" },
+  { label: t("self_monitor.mem.mode_live_avg"), value: "live_avg" },
+  { label: t("self_monitor.mem.mode_live_max"), value: "live_max" },
+  { label: t("self_monitor.mem.mode_alloc"), value: "alloc" },
+  { label: t("self_monitor.mem.mode_free"), value: "free" },
 ]);
 
 const METRIC_MODE_INDEX: Record<string, number> = {
@@ -145,11 +145,11 @@ const METRIC_MODE_INDEX: Record<string, number> = {
 };
 
 const timeRangeOptions = computed(() => [
-  { label: t("metric.mem.last_1h"), value: 3600 },
-  { label: t("metric.mem.last_6h"), value: 21600 },
-  { label: t("metric.mem.last_24h"), value: 86400 },
-  { label: t("metric.mem.last_3d"), value: 259200 },
-  { label: t("metric.mem.custom_range"), value: "custom" },
+  { label: t("self_monitor.mem.last_1h"), value: 3600 },
+  { label: t("self_monitor.mem.last_6h"), value: 21600 },
+  { label: t("self_monitor.mem.last_24h"), value: 86400 },
+  { label: t("self_monitor.mem.last_3d"), value: 259200 },
+  { label: t("self_monitor.mem.custom_range"), value: "custom" },
 ]);
 
 const selectedSubsystems = ref<string[]>([]);
@@ -157,7 +157,7 @@ const selectedSubsystems = ref<string[]>([]);
 const PROCESS_SUBSYSTEM = "(process)";
 
 const subsystemLabel = (name: string) =>
-  name === PROCESS_SUBSYSTEM ? t("metric.mem.process_rss") : name;
+  name === PROCESS_SUBSYSTEM ? t("self_monitor.mem.process_rss") : name;
 
 const subsystemOptions = computed(() =>
   (historyResp.value?.series ?? []).map((s) => ({
@@ -295,7 +295,9 @@ onUnmounted(() => {
     >
       <n-flex align="center" justify="space-between">
         <n-flex align="center" size="small">
-          <span style="font-weight: 600">{{ t("metric.mem.title") }}</span>
+          <span style="font-weight: 600">{{
+            t("self_monitor.mem.title")
+          }}</span>
           <n-tooltip trigger="hover">
             <template #trigger>
               <n-tag
@@ -305,19 +307,19 @@ onUnmounted(() => {
               >
                 {{
                   snapshot?.precise
-                    ? t("metric.mem.precise")
-                    : t("metric.mem.counting")
+                    ? t("self_monitor.mem.precise")
+                    : t("self_monitor.mem.counting")
                 }}
               </n-tag>
             </template>
-            {{ t("metric.mem.mode_tip") }}
+            {{ t("self_monitor.mem.mode_tip") }}
           </n-tooltip>
         </n-flex>
       </n-flex>
       <n-flex align="center" :wrap="true" size="large" style="margin-top: 8px">
         <n-flex align="center" size="small">
           <span style="color: #888; font-size: 13px">
-            {{ t("metric.mem.process_rss") }}:
+            {{ t("self_monitor.mem.process_rss") }}:
           </span>
           <span style="font-weight: bold">
             {{
@@ -330,7 +332,7 @@ onUnmounted(() => {
         <n-divider vertical />
         <n-flex align="center" size="small">
           <span style="color: #888; font-size: 13px">
-            {{ t("metric.mem.process_vsz") }}:
+            {{ t("self_monitor.mem.process_vsz") }}:
           </span>
           <span style="font-weight: bold">
             {{
@@ -343,7 +345,7 @@ onUnmounted(() => {
         <n-divider vertical />
         <n-flex align="center" size="small">
           <span style="color: #888; font-size: 13px">
-            {{ t("metric.mem.total_live") }}:
+            {{ t("self_monitor.mem.total_live") }}:
           </span>
           <span :style="{ fontWeight: 'bold', color: themeVars.successColor }">
             {{ formatSize(meta?.total_live_bytes ?? 0) }}
@@ -354,7 +356,7 @@ onUnmounted(() => {
           <template #trigger>
             <n-flex align="center" size="small" style="cursor: help">
               <span style="color: #888; font-size: 13px">
-                {{ t("metric.mem.untracked") }}:
+                {{ t("self_monitor.mem.untracked") }}:
               </span>
               <span
                 :style="{
@@ -372,7 +374,7 @@ onUnmounted(() => {
               </n-icon>
             </n-flex>
           </template>
-          {{ t("metric.mem.untracked_tip") }}
+          {{ t("self_monitor.mem.untracked_tip") }}
         </n-tooltip>
       </n-flex>
     </n-card>
@@ -391,7 +393,7 @@ onUnmounted(() => {
         flexDirection: 'column',
       }"
     >
-      <n-tab-pane name="live" :tab="t('metric.mem.live')">
+      <n-tab-pane name="live" :tab="t('self_monitor.mem.live')">
         <n-flex vertical :size="12" style="flex: 1; min-height: 0">
           <n-flex align="center" size="small">
             <n-select
@@ -405,7 +407,7 @@ onUnmounted(() => {
               <template #icon>
                 <n-icon><Renew /></n-icon>
               </template>
-              {{ t("metric.mem.refresh") }}
+              {{ t("self_monitor.mem.refresh") }}
             </n-button>
             <n-tooltip trigger="hover">
               <template #trigger>
@@ -413,7 +415,7 @@ onUnmounted(() => {
                   <HelpCircleOutline />
                 </n-icon>
               </template>
-              {{ t("metric.mem.legend_hint") }}
+              {{ t("self_monitor.mem.legend_hint") }}
             </n-tooltip>
           </n-flex>
 
@@ -426,15 +428,15 @@ onUnmounted(() => {
             <MemLineChart
               v-if="liveChartSeries.length > 0"
               :series="liveChartSeries"
-              :x-axis-title="t('metric.mem.time_window')"
-              :y-axis-title="t('metric.mem.live_bytes')"
+              :x-axis-title="t('self_monitor.mem.time_window')"
+              :y-axis-title="t('self_monitor.mem.live_bytes')"
               :value-formatter="formatSize"
               :hidden-by-default="liveHidden"
-              :dashed-names="[t('metric.mem.process_rss')]"
+              :dashed-names="[t('self_monitor.mem.process_rss')]"
             />
             <n-empty
               v-else
-              :description="t('metric.mem.no_data')"
+              :description="t('self_monitor.mem.no_data')"
               style="height: 320px; justify-content: center"
             />
           </n-card>
@@ -462,10 +464,10 @@ onUnmounted(() => {
         </n-flex>
       </n-tab-pane>
 
-      <n-tab-pane name="history" :tab="t('metric.mem.history')">
+      <n-tab-pane name="history" :tab="t('self_monitor.mem.history')">
         <n-empty
           v-if="!hasPersistent"
-          :description="t('metric.mem.need_persistent')"
+          :description="t('self_monitor.mem.need_persistent')"
           style="height: 360px; justify-content: center"
         />
         <n-flex v-else vertical :size="12" style="flex: 1; min-height: 0">
@@ -500,7 +502,7 @@ onUnmounted(() => {
               filterable
               max-tag-count="responsive"
               :options="subsystemOptions"
-              :placeholder="t('metric.mem.all_subsystems')"
+              :placeholder="t('self_monitor.mem.all_subsystems')"
               size="small"
               style="width: 260px"
             />
@@ -510,7 +512,7 @@ onUnmounted(() => {
               :loading="historyLoading"
               @click="fetchHistory"
             >
-              {{ t("metric.mem.query") }}
+              {{ t("self_monitor.mem.query") }}
             </n-button>
             <n-tooltip trigger="hover">
               <template #trigger>
@@ -518,8 +520,8 @@ onUnmounted(() => {
                   <HelpCircleOutline />
                 </n-icon>
               </template>
-              <div>{{ t("metric.mem.legend_hint") }}</div>
-              <div>{{ t("metric.mem.zero_fill_tip") }}</div>
+              <div>{{ t("self_monitor.mem.legend_hint") }}</div>
+              <div>{{ t("self_monitor.mem.zero_fill_tip") }}</div>
             </n-tooltip>
           </n-flex>
 
@@ -544,11 +546,11 @@ onUnmounted(() => {
             <MemLineChart
               v-if="historyChartSeries.length > 0"
               :series="historyChartSeries"
-              :x-axis-title="t('metric.mem.time_range')"
+              :x-axis-title="t('self_monitor.mem.time_range')"
               :y-axis-title="
                 metricMode === 'alloc' || metricMode === 'free'
-                  ? t('metric.mem.bytes_per_min')
-                  : t('metric.mem.live_bytes')
+                  ? t('self_monitor.mem.bytes_per_min')
+                  : t('self_monitor.mem.live_bytes')
               "
               :value-formatter="formatSize"
               :hidden-by-default="historyHidden"
@@ -556,12 +558,12 @@ onUnmounted(() => {
             />
             <n-empty
               v-else-if="historyError"
-              :description="t('metric.mem.query_failed')"
+              :description="t('self_monitor.mem.query_failed')"
               style="flex: 1; justify-content: center"
             />
             <n-empty
               v-else-if="historyLoaded"
-              :description="t('metric.mem.no_data')"
+              :description="t('self_monitor.mem.no_data')"
               style="flex: 1; justify-content: center"
             />
             <n-flex

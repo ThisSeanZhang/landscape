@@ -1,8 +1,10 @@
-//! 进程内存指标的分钟级持久化(`metrics_v{version}_memory.sqlite`)。
+//! 自监控(self-monitor)内存记录的分钟级持久化
+//! (`metrics_v{version}_memory.sqlite`)。
 //!
-//! 与 connect/dns 两条 writer 管线相互独立:内存指标由独立的采样记录任务
-//! 驱动(直接读 `landscape_common::memtrack` 全局注册表),每分钟每子系统
-//! 一行,行数小、无容量控制,仅按保留天数清理。
+//! 属于自监控域(进程自身资源占用,将来含 CPU),暂借宿于 metric 服务
+//! 共享持久化设施:与 connect/dns 两条 writer 管线相互独立,由独立的
+//! 采样记录任务驱动(直接读 `landscape_common::memtrack` 全局注册表),
+//! 每分钟每子系统一行,行数小、无容量控制,仅按保留天数清理。
 //!
 //! 文件组织(feature 门禁集中在本文件):
 //! - [`aggregate`] — 分钟聚合纯逻辑,两种构建均编译、可测试。

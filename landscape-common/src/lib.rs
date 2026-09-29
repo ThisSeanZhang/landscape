@@ -25,6 +25,8 @@ pub mod memtrack;
 pub mod metric;
 pub mod network;
 
+pub mod self_monitor;
+
 pub mod service;
 
 pub mod auth;

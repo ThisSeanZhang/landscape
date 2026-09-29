@@ -1,4 +1,4 @@
-//! `/api/v1/system/memory` — 进程内按子系统的内存占用。
+//! `/api/v1/self-monitor/memory` — 进程内按子系统的内存占用(自监控)。
 //!
 //! - `GET /memory/modules`:即时全量快照(计数器 + RSS 校准)。
 //! - `GET /memory/modules/history`:RAM 环形缓冲的最近快照(1s 粒度,
@@ -9,7 +9,7 @@
 use axum::extract::{Query, State};
 use landscape_common::api_response::LandscapeApiResp as CommonApiResp;
 use landscape_common::memtrack::{self, MemorySeriesResponse, MemorySnapshot};
-use landscape_common::metric::memory::{MemHistoryQueryParams, MemHistoryResponse};
+use landscape_common::self_monitor::memory::{MemHistoryQueryParams, MemHistoryResponse};
 use utoipa::IntoParams;
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
@@ -39,7 +39,7 @@ struct MemoryRecentParams {
 #[utoipa::path(
     get,
     path = "/memory/modules",
-    tag = "Memory",
+    tag = "Self-Monitor",
     operation_id = "get_memory_modules",
     responses((status = 200, description = "Success", body = CommonApiResp<MemorySnapshot>))
 )]
@@ -50,7 +50,7 @@ async fn get_memory_modules() -> LandscapeApiResult<MemorySnapshot> {
 #[utoipa::path(
     get,
     path = "/memory/modules/history",
-    tag = "Memory",
+    tag = "Self-Monitor",
     operation_id = "get_memory_modules_history",
     params(MemoryRecentParams),
     responses((status = 200, description = "Success", body = CommonApiResp<MemorySeriesResponse>))
@@ -70,7 +70,7 @@ async fn get_memory_modules_history(
 #[utoipa::path(
     get,
     path = "/memory/history",
-    tag = "Memory",
+    tag = "Self-Monitor",
     operation_id = "get_memory_persisted_history",
     params(MemHistoryQueryParams),
     responses((status = 200, description = "Success", body = CommonApiResp<MemHistoryResponse>))

@@ -7,7 +7,6 @@ import SrcIpMetric from "@/views/metric/conn/SrcIpMetric.vue";
 import DstIpMetric from "@/views/metric/conn/DstIpMetric.vue";
 import HistorySrcIpMetric from "@/views/metric/conn/HistorySrcIpMetric.vue";
 import HistoryDstIpMetric from "@/views/metric/conn/HistoryDstIpMetric.vue";
-import MemMetric from "@/views/metric/MemMetric.vue";
 
 const metric_route: Array<RouteRecordRaw> = [
   {
@@ -53,11 +52,6 @@ const metric_route: Array<RouteRecordRaw> = [
     name: "routes.dns-metric",
     component: DNSMetric,
     meta: { capability: "metric_persistent" },
-  },
-  {
-    path: "/metrics/memory",
-    name: "routes.mem-metric",
-    component: MemMetric,
   },
 ];
 

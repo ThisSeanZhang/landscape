@@ -6,7 +6,7 @@
 
 use std::path::PathBuf;
 
-use landscape_common::metric::memory::{MemHistoryQueryParams, MemHistoryResponse};
+use landscape_common::self_monitor::memory::{MemHistoryQueryParams, MemHistoryResponse};
 
 /// no-op 记录句柄。
 pub struct MemRecording;

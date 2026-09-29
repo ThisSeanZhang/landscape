@@ -24,6 +24,7 @@ use crate::interfaces::get_iface_paths;
 use crate::metrics::get_metric_paths;
 use crate::nat::static_nat4_mappings::get_static_nat_mapping_v4_paths;
 use crate::nat::static_nat6_mappings::get_static_nat_mapping_v6_paths;
+use crate::self_monitor::memory::get_memory_paths;
 use crate::services::client::get_client_paths;
 use crate::services::dhcp_v4::get_dhcp_v4_service_paths;
 use crate::services::firewall::get_firewall_service_paths;
@@ -38,7 +39,6 @@ use crate::services::routing::get_route_paths;
 use crate::services::wan::get_route_wan_paths;
 use crate::services::wifi::get_wifi_service_paths;
 use crate::system::config::get_sys_config_paths;
-use crate::system::memory::get_memory_paths;
 use crate::LandscapeApp;
 
 struct SecurityAddon;
@@ -73,7 +73,7 @@ impl Modify for SecurityAddon {
         (name = "Interfaces", description = "Network interface management"),
         (name = "System Config", description = "System configuration management"),
         (name = "System Info", description = "System information and status"),
-        (name = "Memory", description = "Per-subsystem process memory usage"),
+        (name = "Self-Monitor", description = "Router process self-monitoring (memory, CPU later)"),
         (name = "Route", description = "Route tracing and cache management"),
         (name = "Route WAN", description = "WAN route service management"),
         (name = "Route LAN", description = "LAN route service management"),
@@ -146,7 +146,12 @@ pub fn build_interfaces_openapi_router() -> OpenApiRouter<LandscapeApp> {
 
 /// /system — system info + global config (sysinfo has its own state type, handled separately)
 pub fn build_system_openapi_router() -> OpenApiRouter<LandscapeApp> {
-    OpenApiRouter::new().merge(get_sys_config_paths()).merge(get_memory_paths())
+    OpenApiRouter::new().merge(get_sys_config_paths())
+}
+
+/// /self-monitor — router process self-monitoring (memory now, CPU later)
+pub fn build_self_monitor_openapi_router() -> OpenApiRouter<LandscapeApp> {
+    OpenApiRouter::new().merge(get_memory_paths())
 }
 
 /// /services — per-interface network services
@@ -258,6 +263,11 @@ pub fn build_full_openapi_spec() -> utoipa::openapi::OpenApi {
     prefix_paths(&mut sysinfo_openapi, "/api/v1/system");
     spec.merge(sysinfo_openapi);
 
+    // /api/v1/self-monitor — process self-monitoring
+    let (_, mut self_monitor_openapi) = build_self_monitor_openapi_router().split_for_parts();
+    prefix_paths(&mut self_monitor_openapi, "/api/v1/self-monitor");
+    spec.merge(self_monitor_openapi);
+
     // /api/v1/interfaces
     let (_, mut interfaces_openapi) = build_interfaces_openapi_router().split_for_parts();
     prefix_paths(&mut interfaces_openapi, "/api/v1/interfaces");
@@ -328,9 +338,12 @@ pub fn build_full_openapi_spec() -> utoipa::openapi::OpenApi {
             "name": "System",
             "tags": [
                 "System Config",
-                "System Info",
-                "Memory"
+                "System Info"
             ]
+        },
+        {
+            "name": "Self-Monitor",
+            "tags": ["Self-Monitor"]
         },
         {
             "name": "Network Interfaces",

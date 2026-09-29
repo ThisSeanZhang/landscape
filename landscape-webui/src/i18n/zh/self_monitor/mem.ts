@@ -1,5 +1,5 @@
 export default {
-  title: "内存分析",
+  title: "自监控 - 内存",
   live: "实时",
   history: "历史",
   precise: "精确模式",

@@ -92,6 +92,7 @@ mod metrics;
 mod nat;
 mod openapi;
 mod redirect_https;
+mod self_monitor;
 mod services;
 mod system;
 mod websocket;
@@ -623,6 +624,7 @@ async fn run_system(
     let (cert_router, _) = openapi::build_cert_openapi_router().split_for_parts();
     let (docker_router, _) = openapi::build_docker_openapi_router().split_for_parts();
     let (metrics_router, _) = openapi::build_metrics_openapi_router().split_for_parts();
+    let (self_monitor_router, _) = openapi::build_self_monitor_openapi_router().split_for_parts();
     let (gateway_router, _) = openapi::build_gateway_openapi_router().split_for_parts();
     let openapi = openapi::build_full_openapi_spec();
 
@@ -646,6 +648,7 @@ async fn run_system(
         .nest("/cert", cert_router)
         .nest("/docker", docker_router)
         .nest("/metrics", metrics_router)
+        .nest("/self-monitor", self_monitor_router)
         .nest("/gateway", gateway_router)
         .with_state(landscape_app_status.clone())
         .nest("/system", system_combined)

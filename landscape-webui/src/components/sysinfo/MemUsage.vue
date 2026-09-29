@@ -58,14 +58,14 @@ const getUsageColor = (percentage: number) => {
                 quaternary
                 circle
                 size="tiny"
-                @click="router.push('/metrics/memory')"
+                @click="router.push('/self-monitor/memory')"
               >
                 <template #icon>
                   <n-icon><ChartLine /></n-icon>
                 </template>
               </n-button>
             </template>
-            {{ t("metric.mem.title") }}
+            {{ t("self_monitor.mem.title") }}
           </n-tooltip>
         </n-flex>
         <n-tag size="small" :bordered="false"> {{ memData.total }} GB </n-tag>

@@ -1,6 +1,6 @@
-//! 进程内存指标的共享类型:RAM 快照(见 `memtrack`)之外的分钟级持久化
-//! 记录与查询参数,由 landscape-metric 的 memory store 写入/查询,
-//! webserver 暴露为 `/api/v1/system/memory/history`。
+//! 进程内存自监控的分钟级持久化类型:RAM 快照(见 `memtrack`)之外的
+//! 分钟级持久化记录与查询参数,由 landscape-metric 的 memory store
+//! 写入/查询,webserver 暴露为 `/api/v1/self-monitor/memory/history`。
 
 /// 一个子系统在一分钟内的聚合值。`(process)` 保留行以 live 字段表示 RSS;
 /// 该行不采集分配器流量,因此 alloc/free 字段为 0。

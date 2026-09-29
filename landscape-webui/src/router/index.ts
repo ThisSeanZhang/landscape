@@ -28,6 +28,7 @@ import { useCapabilityStore } from "@/stores/capability";
 
 import service_status_route from "./service_status";
 import metric_route from "./metric";
+import self_monitor_route from "./self_monitor";
 
 const inner_zone: Array<RouteRecordRaw> = [
   {
@@ -72,6 +73,7 @@ const inner_zone: Array<RouteRecordRaw> = [
     component: Firewall,
   },
   ...metric_route,
+  ...self_monitor_route,
   {
     path: "/geo/domain",
     name: "routes.geo-domain",

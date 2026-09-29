@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use landscape_common::concurrency::{spawn_task, task_label};
 use landscape_common::memtrack;
-use landscape_common::metric::memory::{
+use landscape_common::self_monitor::memory::{
     MemHistoryQueryParams, MemHistoryResponse, MemMinuteRecord,
 };
 use landscape_common::utils::time::now_ms;
@@ -319,7 +319,7 @@ async fn run_memory_recorder(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use landscape_common::metric::memory::MinutePoint;
+    use landscape_common::self_monitor::memory::MinutePoint;
 
     #[test]
     fn normalized_range_defaults_and_clamps() {
@@ -364,7 +364,7 @@ mod tests {
             },
             MemMinuteRecord {
                 minute_ts: 600_000,
-                subsystem: landscape_common::metric::memory::PROCESS_SUBSYSTEM.to_string(),
+                subsystem: landscape_common::self_monitor::memory::PROCESS_SUBSYSTEM.to_string(),
                 live_avg_bytes: 9_000,
                 live_max_bytes: 9_500,
                 alloc_delta_bytes: 0,
