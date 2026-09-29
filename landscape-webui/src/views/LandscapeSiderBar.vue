@@ -34,6 +34,7 @@ const menu_capability: Record<string, string> = {
   gateway: "gateway",
   "metrics/conn/history": "metric_persistent",
   "metrics/dns": "metric_persistent",
+  "self-monitor/memory": "mem_track",
 };
 
 function applyCapability(options: MenuOption[]): MenuOption[] {

@@ -26,6 +26,7 @@ hdrhistogram = { workspace = true, optional = true }
 [features]
 default = []
 metric-persistent = ["dep:sqlx", "dep:futures-util", "dep:hdrhistogram"]
+mem-track = ["landscape-common/mem-track"]
 
 [dev-dependencies]
 tempfile = { workspace = true }

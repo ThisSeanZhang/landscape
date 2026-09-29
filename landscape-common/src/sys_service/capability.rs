@@ -13,4 +13,6 @@ pub enum Capability {
     Gateway,
     /// Persistent metric storage and history queries (cargo feature `metric-persistent`).
     MetricPersistent,
+    /// Per-subsystem memory self-monitoring (cargo feature `mem-track`).
+    MemTrack,
 }

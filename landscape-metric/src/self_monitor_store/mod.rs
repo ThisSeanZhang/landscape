@@ -8,7 +8,8 @@
 //!
 //! 文件组织(feature 门禁集中在本文件):
 //! - [`aggregate`] — 分钟聚合纯逻辑,两种构建均编译、可测试。
-//! - [`persistent`] — SQLite 存储与后台记录任务,仅 `metric-persistent` 构建。
+//! - [`persistent`] — SQLite 存储与后台记录任务,仅 `metric-persistent` 构建;
+//!   `mem-track` 未开启时 [`start_memory_recording`] 返回 None,链路整体停止。
 //! - [`stub`] — 非 persistent 构建的 no-op [`MemRecording`],与 persistent
 //!   版本 API 完全一致,调用方(MetricService)因此无需任何 cfg。
 

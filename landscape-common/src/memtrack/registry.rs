@@ -145,8 +145,6 @@ pub struct SnapshotMeta {
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct MemorySnapshot {
     pub timestamp_ms: u64,
-    /// 是否启用了内存跟踪(feature `mem-track`);false 时各子系统计数恒为零。
-    pub enabled: bool,
     pub meta: SnapshotMeta,
     pub modules: Vec<ModuleMemStat>,
 }
@@ -191,13 +189,13 @@ pub struct SubsystemSeries {
 }
 
 /// RAM 环形缓冲历史的批量响应:所有 series 共享一条 `timestamps` 轴,
-/// 缺失时刻按位置数组补零对齐。`enabled`/`meta` 为进程级信息(内存历史
-/// 恒有值;SQLite 分钟历史复用同一形状但置 `None`)。
+/// 缺失时刻按位置数组补零对齐。`meta` 为进程级信息(内存历史恒有值;
+/// SQLite 分钟历史复用同一形状但置 `None`)。是否启用内存跟踪由
+/// `/api/v1/info/capabilities` 的 `Capability::MemTrack` 上报。
 #[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct MemorySeriesResponse {
     pub timestamps: Vec<u64>,
-    pub enabled: Option<bool>,
     pub meta: Option<Vec<SnapshotMeta>>,
     pub series: Vec<SubsystemSeries>,
 }
@@ -207,7 +205,6 @@ pub struct MemorySeriesResponse {
 #[derive(Clone, Debug)]
 pub struct CompactSnapshot {
     pub timestamp_ms: u64,
-    pub enabled: bool,
     pub meta: SnapshotMeta,
     /// 顺序同 SUBSYSTEMS。
     pub(crate) stats: [SlotCounters; SUBSYSTEMS.len()],
@@ -218,7 +215,6 @@ impl CompactSnapshot {
     pub fn zeroed(timestamp_ms: u64) -> Self {
         CompactSnapshot {
             timestamp_ms,
-            enabled: false,
             meta: SnapshotMeta::default(),
             stats: [SlotCounters::default(); SUBSYSTEMS.len()],
         }
@@ -255,7 +251,6 @@ impl CompactSnapshot {
             .collect();
         MemorySnapshot {
             timestamp_ms: self.timestamp_ms,
-            enabled: self.enabled,
             meta: self.meta.clone(),
             modules,
         }

@@ -30,6 +30,7 @@ const LIVE_CHART_POLL_MS = 5000;
 const DEFAULT_TOP_N = 3;
 
 const hasPersistent = computed(() => capabilityStore.HAS("metric_persistent"));
+const hasMemTrack = computed(() => capabilityStore.HAS("mem_track"));
 
 const activeTab = ref("live");
 
@@ -72,9 +73,7 @@ const refreshLive = async () => {
 
 const meta = computed(() => snapshot.value?.meta);
 
-const trackingDisabled = computed(
-  () => snapshot.value !== null && snapshot.value.enabled === false,
-);
+const trackingDisabled = computed(() => !hasMemTrack.value);
 
 const untracked = computed(() => {
   const value = meta.value?.untracked_bytes;

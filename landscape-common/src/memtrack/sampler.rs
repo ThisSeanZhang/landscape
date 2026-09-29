@@ -1,5 +1,6 @@
 //! 1 秒级 RAM 环形缓冲:最近 N 个快照,服务 `/api/v1/self-monitor/memory` 的
 //! 实时/近期查询;分钟级历史走 MetricEngine 的持久化链路,两条链路相互独立。
+//! 未开启 feature `mem-track` 时两条链路均不启动(见 [`start_sampler_with`])。
 
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
@@ -68,8 +69,6 @@ impl MemoryHistory {
 fn build_series(samples: &[CompactSnapshot], subsystem: Option<&str>) -> MemorySeriesResponse {
     let timestamps: Vec<u64> = samples.iter().map(|snapshot| snapshot.timestamp_ms).collect();
     let meta: Vec<SnapshotMeta> = samples.iter().map(|snapshot| snapshot.meta.clone()).collect();
-    let enabled =
-        samples.first().map(|snapshot| snapshot.enabled).unwrap_or(cfg!(feature = "mem-track"));
 
     // 只输出窗口内曾经非零的槽位;从未使用的槽位整段为零,输出无信息。
     let mut used = [false; SUBSYSTEMS.len()];
@@ -97,15 +96,13 @@ fn build_series(samples: &[CompactSnapshot], subsystem: Option<&str>) -> MemoryS
         })
         .collect();
 
-    MemorySeriesResponse {
-        timestamps,
-        enabled: Some(enabled),
-        meta: Some(meta),
-        series,
-    }
+    MemorySeriesResponse { timestamps, meta: Some(meta), series }
 }
 
 /// 启动周期采样任务,返回共享环形缓冲。任务随运行时关闭而结束。
+///
+/// 未开启 feature `mem-track` 时返回不启动采样任务的空缓冲,实时历史
+/// 恒为空(能力开关由 `Capability::MemTrack` 上报)。
 pub fn start_sampler() -> MemoryHistory {
     start_sampler_with(DEFAULT_SAMPLE_INTERVAL, DEFAULT_CAPACITY)
 }
@@ -113,6 +110,9 @@ pub fn start_sampler() -> MemoryHistory {
 /// 自定义周期与容量的变体(测试用)。
 pub fn start_sampler_with(interval: Duration, capacity: usize) -> MemoryHistory {
     let history = MemoryHistory::new(capacity.max(1));
+    if !cfg!(feature = "mem-track") {
+        return history;
+    }
     let task_history = history.clone();
     let _sampler_handle = spawn_task(task_label::task::MEM_SAMPLE, async move {
         let mut ticker = tokio::time::interval(interval);
@@ -131,6 +131,7 @@ mod tests {
     use super::*;
 
     #[tokio::test]
+    #[cfg(feature = "mem-track")]
     async fn sampler_fills_ring_buffer() {
         let history = start_sampler_with(Duration::from_millis(5), 16);
         let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
@@ -141,7 +142,18 @@ mod tests {
         let series = history.recent_series(0, None);
         assert_eq!(series.timestamps.len(), history.len());
         assert_eq!(series.meta.as_ref().unwrap().len(), history.len());
-        assert!(series.enabled.is_some());
+    }
+
+    #[tokio::test]
+    #[cfg(not(feature = "mem-track"))]
+    async fn sampler_is_inert_without_mem_track() {
+        let history = start_sampler_with(Duration::from_millis(5), 16);
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert!(history.is_empty());
+        let series = history.recent_series(0, None);
+        assert!(series.timestamps.is_empty());
+        assert!(series.series.is_empty());
+        assert!(series.meta.as_ref().unwrap().is_empty());
     }
 
     #[tokio::test]

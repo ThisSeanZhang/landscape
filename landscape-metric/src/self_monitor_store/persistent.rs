@@ -1,5 +1,5 @@
-//! SQLite 存储与后台记录任务(整个文件由 `metric-persistent` feature 门禁,
-//! 内部零 cfg)。
+//! SQLite 存储与后台记录任务(整个文件由 `metric-persistent` feature 门禁)。
+//! `mem-track` 未开启时记录任务不启动(见 [`start_memory_recording`])。
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -267,10 +267,16 @@ impl MemRecorder {
 }
 
 /// 打开 store 并启动内存指标记录任务:采样 → 分钟聚合 → 入库,顺带按天清理。
+/// `mem-track` 未开启时直接返回 None:不建目录、不打开 SQLite、不启动任务,
+/// 内存自监控持久化整体停止(能力由 `Capability::MemTrack` 上报)。
 pub async fn start_memory_recording(
     base_path: PathBuf,
     retention_days: u64,
 ) -> Option<MemRecording> {
+    if !cfg!(feature = "mem-track") {
+        tracing::info!("mem-track disabled, memory history recording not started");
+        return None;
+    }
     let metric_dir = base_path.join(LANDSCAPE_METRIC_DIR_NAME);
     if let Err(error) = tokio::fs::create_dir_all(&metric_dir).await {
         tracing::warn!("failed to create metric directory for memory recording: {error}");
@@ -346,6 +352,16 @@ mod tests {
             ),
             (1_000, 1_000)
         );
+    }
+
+    #[tokio::test]
+    #[cfg(not(feature = "mem-track"))]
+    async fn memory_recording_skipped_without_mem_track() {
+        let temp = tempfile::tempdir().unwrap();
+        let recording = start_memory_recording(temp.path().to_path_buf(), 1).await;
+        assert!(recording.is_none());
+        // 不建目录、不创建 SQLite。
+        assert!(!temp.path().join(LANDSCAPE_METRIC_DIR_NAME).exists());
     }
 
     #[tokio::test]

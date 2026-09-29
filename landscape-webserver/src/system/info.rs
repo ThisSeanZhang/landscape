@@ -69,6 +69,9 @@ fn enabled_capabilities() -> Vec<Capability> {
     if cfg!(feature = "metric-persistent") {
         capabilities.push(Capability::MetricPersistent);
     }
+    if cfg!(feature = "mem-track") {
+        capabilities.push(Capability::MemTrack);
+    }
     capabilities
 }
 

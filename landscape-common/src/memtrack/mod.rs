@@ -6,7 +6,9 @@
 //!
 //! 仅在显式开启 feature `mem-track` 时统计:分配附加 32 字节头部记录
 //! owner,dealloc 按真实归属扣减,各子系统 live 精确。未开启时分配器为
-//! `System` 纯透传,零开销、不计数,各子系统计数恒为零。
+//! `System` 纯透传,零开销、不计数,各子系统计数恒为零,且 RAM 环形缓冲
+//! 采样与分钟级持久化记录整体不启动;能力开关由
+//! `/api/v1/info/capabilities` 的 `Capability::MemTrack` 上报。
 //!
 //! Σ(子系统 live) ≠ 进程 RSS(元数据/碎片/线程栈/C 库堆),差值在快照中
 //! 以 `untracked_bytes` 明示,其构成拆解见 [`composition`]。
@@ -58,7 +60,6 @@ pub fn capture_compact() -> CompactSnapshot {
 
     CompactSnapshot {
         timestamp_ms: crate::utils::time::now_ms(),
-        enabled: cfg!(feature = "mem-track"),
         meta: SnapshotMeta {
             process_rss_bytes: rss_bytes,
             process_virtual_bytes: virtual_bytes,
@@ -160,7 +161,6 @@ mod tests {
         let snap = snapshot();
         assert_eq!(snap.modules.len(), SUBSYSTEMS.len());
         assert_eq!(snap.modules[UNATTRIBUTED].subsystem, "unattributed");
-        assert_eq!(snap.enabled, cfg!(feature = "mem-track"));
         let slot0_after = registry().get(0).allocated_bytes.load(Relaxed);
         if cfg!(feature = "mem-track") {
             assert!(slot0_after > slot0_before);

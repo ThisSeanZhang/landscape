@@ -95,6 +95,7 @@ workspace = true
 [features]
 default = ["metric-persistent"]
 metric-persistent = ["landscape-metric/metric-persistent"]
+mem-track = ["landscape-common/mem-track", "landscape-metric/mem-track"]
 
 [dev-dependencies]
 axum = { workspace = true }
