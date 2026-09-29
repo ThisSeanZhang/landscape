@@ -124,6 +124,7 @@ impl ServiceStarterTrait for DHCPv4ServerStarter {
         }
 
         if let Some(iface) = get_iface_by_name(&config.iface_name).await {
+            service_status.just_change_status(ServiceStatus::Staring);
             let info = LanRouteInfo {
                 ifindex: iface.index,
                 iface_name: config.iface_name.clone(),

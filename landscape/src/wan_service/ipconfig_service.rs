@@ -55,8 +55,7 @@ impl ServiceStarterTrait for IPConfigService {
 
         if config.enable {
             if let Some(iface) = get_iface_by_name(&config.iface_name).await {
-                // 契约例外:叶子函数(Static/PPPoE/DHCP 客户端)自持状态流并
-                // 自行进入 Staring,它们也被测试/bin 直接复用,故不在此预置
+                service_status.just_change_status(ServiceStatus::Staring);
                 let route_service = self.route_service.clone();
                 let addr_binding = self.addr_binding.clone();
                 let pppoe_dataplane = self.pppoe_dataplane.clone();
@@ -82,6 +81,13 @@ impl ServiceStarterTrait for IPConfigService {
     }
 }
 
+/// 无 IP 模型时的占位运行:保持 `Running` 直到收到停止信号。
+async fn run_idle_until_stopped(service_status: WatchService) {
+    service_status.just_change_status(ServiceStatus::Running);
+    service_status.stop_token().cancelled().await;
+    service_status.just_change_status(ServiceStatus::Stop);
+}
+
 async fn init_service_from_config(
     iface: LandscapeInterface,
     service_config: IfaceIpModelConfig,
@@ -91,7 +97,9 @@ async fn init_service_from_config(
     pppoe_dataplane: Arc<dyn PppoeDataplane>,
 ) {
     match service_config {
-        IfaceIpModelConfig::Nothing => {}
+        IfaceIpModelConfig::Nothing => {
+            run_idle_until_stopped(service_status).await;
+        }
         IfaceIpModelConfig::Static {
             default_router, default_router_ip, ipv4, ipv4_mask, ..
         } => {
@@ -160,6 +168,8 @@ async fn init_service_from_config(
                 route_service.remove_ipv4_lan_route(&iface_name).await;
                 addr_binding.unbind_ipv4(iface.index);
                 service_status.just_change_status(ServiceStatus::Stop);
+            } else {
+                run_idle_until_stopped(service_status).await;
             }
         }
         IfaceIpModelConfig::PPPoE { default_router, username, password, mtu, ac_name } => {

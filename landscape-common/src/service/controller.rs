@@ -504,13 +504,14 @@ mod service_controller_tests {
     /// With `auto_start` the started handle follows the starter contract:
     /// status enters `Staring` before return and a long-lived task is
     /// registered in the tracker (setting `Failed` instead of `Running` when
-    /// `fail_start` is set).
+    /// `fail_start` is set). With `noop` it settles to `Stop` without Running.
     #[derive(Clone)]
     struct MockStarter {
         started: Arc<Mutex<Vec<(String, u32)>>>,
         block_start: Arc<AtomicBool>,
         auto_start: Arc<AtomicBool>,
         fail_start: Arc<AtomicBool>,
+        noop: Arc<AtomicBool>,
     }
 
     impl MockStarter {
@@ -520,6 +521,7 @@ mod service_controller_tests {
                 block_start: Arc::new(AtomicBool::new(false)),
                 auto_start: Arc::new(AtomicBool::new(false)),
                 fail_start: Arc::new(AtomicBool::new(false)),
+                noop: Arc::new(AtomicBool::new(false)),
             }
         }
     }
@@ -534,6 +536,14 @@ mod service_controller_tests {
                 std::future::pending::<()>().await;
             }
             let handle = WatchService::new();
+            if self.noop.load(Ordering::SeqCst) {
+                handle.just_change_status(ServiceStatus::Staring);
+                let inner = handle.clone();
+                handle.spawn_task("service.test.noop", async move {
+                    inner.just_change_status(ServiceStatus::Stop);
+                });
+                return handle;
+            }
             if self.auto_start.load(Ordering::SeqCst) {
                 // 契约:返回前进入 Staring;长驻任务经 tracker 注册
                 handle.just_change_status(ServiceStatus::Staring);
@@ -784,6 +794,24 @@ mod service_controller_tests {
             )
             .await;
         assert_eq!(outcome, StartOutcome::Failed);
+    }
+
+    #[tokio::test]
+    async fn update_service_and_wait_reports_stopped_when_start_settles_stop() {
+        // 启动后未经历 Running 即落 Stop,应观测到 Stopped
+        let store = MockStore::default();
+        let starter = MockStarter::new();
+        starter.noop.store(true, Ordering::SeqCst);
+        let controller = controller(store, starter).await;
+
+        let outcome = controller
+            .service
+            .update_service_and_wait(
+                MockConfig { id: "wan0".to_string(), value: 1, update_at: 0.0 },
+                Duration::from_secs(5),
+            )
+            .await;
+        assert_eq!(outcome, StartOutcome::Stopped);
     }
 
     #[tokio::test]

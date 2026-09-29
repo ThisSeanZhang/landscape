@@ -43,7 +43,7 @@ impl ServiceStarterTrait for PPPDService {
         let service_status = WatchService::new();
         if config.enable {
             if get_iface_by_name(&config.attach_iface_name).await.is_some() {
-                // 契约例外:create_pppd_thread 自持状态流(测试直接复用),自行进入 Staring
+                service_status.just_change_status(ServiceStatus::Staring);
                 let iface_name = config.iface_name.clone();
                 let env: Arc<dyn PppdEnv> = Arc::new(SystemPppdEnv::new(
                     self.route_service.clone(),

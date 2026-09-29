@@ -20,14 +20,10 @@ pub trait ServiceStarterTrait: Clone + Send + Sync + 'static {
     /// 核心服务初始化逻辑。
     ///
     /// 契约(由 ServiceHandle 的确定性等待与死亡监视依赖):
-    /// - 返回前句柄状态须已进入 `Staring` 或终态,不得停留在初始 `Stop`;
+    /// - 返回前句柄状态须已进入 `Staring` 或终态,不得停留在初始 `Stop`
+    ///   (否则 `update_service_and_wait` 会把"即将启动"误报为 Stopped);
     /// - 服务长驻任务必须经 `handle.spawn_task`/`spawn_task_with_resource`
     ///   注册进 tracker,裸 `tokio::spawn` 的任务无法被 `wait_stop` 等待。
-    ///
-    /// TODO(service-contract): ipconfig / pppd / wifi / lan_dhcp4 / ipv6pd
-    /// 五个 starter 仍把 Staring 留在 spawn 出的任务里异步设置,暂不满足
-    /// 上述契约(叶子函数被测试/bin 复用所致);契约满足前,
-    /// update_service_and_wait 会把这些服务"即将启动"的窗口误报为 Stopped。
     async fn start(&self, config: Self::Config) -> WatchService;
 }
 

@@ -159,9 +159,18 @@ impl ServiceStatusCell {
         self.stop.clone()
     }
 
-    /// 状态汇报(严格):非法转换 warn 并拒绝,保留状态机防呆
+    /// 状态汇报(严格):同状态视为幂等 no-op;非法转换 warn 并拒绝,保留状态机防呆
     fn just_change_status(&self, new_status: ServiceStatus) {
         let mut guard = self.write();
+        if *guard == new_status {
+            // 同态幂等:重复汇报不告警;退出态仍需确保取消。
+            let enters_exit_state = new_status.is_exit_state();
+            drop(guard);
+            if enters_exit_state {
+                self.stop.cancel();
+            }
+            return;
+        }
         if guard.can_transition_to(&new_status) {
             tracing::debug!("status changed to {new_status:?}");
             let enters_exit_state = new_status.is_exit_state();
@@ -410,6 +419,22 @@ mod tests {
         assert!(!ServiceStatus::Running.can_transition_to(&ServiceStatus::Staring));
         assert!(!ServiceStatus::Stopping.can_transition_to(&ServiceStatus::Running));
         assert!(!ServiceStatus::Stop.can_transition_to(&ServiceStatus::Failed));
+    }
+
+    #[tokio::test]
+    async fn same_state_report_is_noop() {
+        // start 预置 + 任务内重复置 Staring:须静默接受且不影响 token
+        let handle = handle_at(ServiceStatus::Staring);
+        let token = handle.stop_token();
+        handle.just_change_status(ServiceStatus::Staring);
+        assert_eq!(handle.current(), ServiceStatus::Staring);
+        assert!(!token.is_cancelled());
+        // 退出态重复汇报仍须保证取消信号已触发
+        let handle = handle_at(ServiceStatus::Running);
+        handle.just_change_status(ServiceStatus::Stop);
+        handle.just_change_status(ServiceStatus::Stop);
+        assert_eq!(handle.current(), ServiceStatus::Stop);
+        assert!(handle.stop_token().is_cancelled());
     }
 
     #[tokio::test]

@@ -19,7 +19,7 @@ use landscape_common::{
     LANDSCAPE_DEFAULE_DHCP_V6_CLIENT_PORT,
     event::hub::iface::IfaceObserverAction,
     service::{
-        WatchService,
+        ServiceStatus, WatchService,
         controller::{ConfigStoreController, ConfigStoreServiceController},
         manager::ServiceManager,
     },
@@ -77,6 +77,7 @@ impl ServiceStarterTrait for IPV6PDService {
             let prefix_sender = self.prefix_sender.clone();
             let expected_pd_len = config.config.expected_pd_len;
             if let Some(iface) = get_iface_by_name(&config.iface_name).await {
+                service_status.just_change_status(ServiceStatus::Staring);
                 let route_info = RouteTargetInfo {
                     ifindex: iface.index,
                     weight: 1,
