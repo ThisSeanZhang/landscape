@@ -66,7 +66,7 @@ pnpm install --frozen-lockfile
 
 ```bash
 cargo test --workspace
-pnpm --filter landscape-webui exec prettier --check "src/**/*.{vue,ts,js,json,css,scss}"
+pnpm --filter landscape-webui run format:check
 pnpm --filter landscape-webui build
 ```
 

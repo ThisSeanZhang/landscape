@@ -1,5 +1,8 @@
-#!/bin/bash
+#!/usr/bin/env bash
 set -e
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/scripts/pnpm_cmd.sh"
 
 usage() {
     echo "Usage: $0 [--all] [--rust] [--clippy] [--c] [--frontend]"
@@ -79,8 +82,8 @@ fi
 
 if $FORMAT_ALL || $FORMAT_FRONTEND; then
     echo "Formatting webui code (landscape-webui/)..."
-    if [ -d "landscape-webui" ]; then
-        (cd landscape-webui && npx prettier --write .)
+    if [ -d "$SCRIPT_DIR/landscape-webui" ]; then
+        pnpm_cmd --filter landscape-webui run format
     fi
 fi
 

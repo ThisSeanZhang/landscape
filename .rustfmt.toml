@@ -1,4 +1,3 @@
 reorder_modules = true
 use_small_heuristics = "Max"
 struct_lit_width = 50
-control_brace_style = "AlwaysSameLine"

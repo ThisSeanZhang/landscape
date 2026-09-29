@@ -16,7 +16,7 @@
 - Linux 内核 `6.9+`
 - 启用 BTF/BPF
 - Node.js `22+`
-- Rust 工具链
+- Rust 工具链（通过 [`rust-toolchain.toml`](./rust-toolchain.toml) 固定为 `1.98.0`）
 
 系统依赖按 CI 安装：
 

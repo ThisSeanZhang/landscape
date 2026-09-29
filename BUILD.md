@@ -16,7 +16,7 @@ Do not use `build.sh` for every edit. It rebuilds the frontend, ensures API bind
 - Linux kernel `6.9+`
 - BTF/BPF enabled
 - Node.js `22+`
-- Rust toolchain
+- Rust toolchain (pinned to `1.98.0` via [`rust-toolchain.toml`](./rust-toolchain.toml))
 
 Install the system packages used by CI:
 

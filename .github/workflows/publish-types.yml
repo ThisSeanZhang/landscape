@@ -38,6 +38,8 @@ jobs:
       - name: Setup Rust
         if: steps.cache-openapi.outputs.cache-hit != 'true'
         uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.98.0
 
       - name: Generate OpenAPI spec
         if: steps.cache-openapi.outputs.cache-hit != 'true'

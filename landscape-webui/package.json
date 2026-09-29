@@ -7,7 +7,9 @@
     "dev": "vite",
     "build": "vue-tsc && vite build",
     "test": "vitest run",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
   },
   "dependencies": {
     "@dagrejs/dagre": "^3.1.1",

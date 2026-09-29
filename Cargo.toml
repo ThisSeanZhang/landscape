@@ -1,6 +1,9 @@
 [workspace.package]
 version = "0.25.0"
 edition = "2021"
+license = "GPL-3.0-only"
+repository = "https://github.com/ThisSeanZhang/landscape"
+rust-version = "1.98"
 
 
 [workspace]
@@ -21,6 +24,10 @@ members = [
 
 resolver = "2"
 default-members = ["landscape-webserver"]
+
+
+[workspace.lints.clippy]
+dbg_macro = "deny"
 
 
 [workspace.dependencies]

@@ -56,7 +56,7 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: stable
+          toolchain: 1.98.0
           targets: ${{ matrix.target }}
 
       - name: Setup zig and cargo-zigbuild

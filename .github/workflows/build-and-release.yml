@@ -20,14 +20,14 @@ jobs:
           - host: ubuntu-22.04
             architecture: x86_64
             target: x86_64-unknown-linux-gnu
-            toolchain: stable
+            toolchain: 1.98.0
             bindgen: false
             gateway: true
 
           - host: ubuntu-22.04-arm
             architecture: aarch64
             target: aarch64-unknown-linux-gnu
-            toolchain: stable
+            toolchain: 1.98.0
             bindgen: false
             gateway: true
 
@@ -165,6 +165,7 @@ jobs:
       - name: Setup rust
         uses: dtolnay/rust-toolchain@stable
         with:
+          toolchain: 1.98.0
           targets: ${{ matrix.settings.target }}
 
       - name: Setup cache
