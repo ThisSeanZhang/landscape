@@ -197,7 +197,7 @@ impl ServiceStarterTrait for DHCPv4ServerStarter {
                 },
             );
 
-            if let Some(mac) = iface.mac {
+            if iface.mac.is_some() {
                 // start arp scan
                 let scand_arp_info = {
                     let mut write = self.iface_scan_map.write().await;
@@ -206,6 +206,7 @@ impl ServiceStarterTrait for DHCPv4ServerStarter {
                         .or_insert_with(|| Arc::new(RwLock::new(ArpScanStatus::new())))
                         .clone()
                 };
+                let scan_iface_name = iface.name.clone();
 
                 let arp_spawn_status = service_status.clone();
                 arp_spawn_status.spawn_task(
@@ -219,9 +220,25 @@ impl ServiceStarterTrait for DHCPv4ServerStarter {
                                     break;
                                 }
                                 _ = scan_interval.tick() => {
+                                    // The interface MAC and ifindex can change while the service is
+                                    // running (e.g. the bridge picks the lowest MAC of its ports, so
+                                    // adding/removing a bridge port changes the bridge MAC). Re-read
+                                    // them before every scan, otherwise the scan keeps announcing a
+                                    // stale MAC as the owner of `server_addr` and poisons the ARP
+                                    // caches of all LAN clients.
+                                    let Some(current) = get_iface_by_name(&scan_iface_name).await else {
+                                        tracing::warn!(
+                                            "Interface {} not found, skip ARP scan",
+                                            scan_iface_name
+                                        );
+                                        continue;
+                                    };
+                                    let Some(current_mac) = current.mac else {
+                                        continue;
+                                    };
                                     let result = crate::arp::scan::scan_ip_info(
-                                        iface.index,
-                                        mac,
+                                        current.index,
+                                        current_mac,
                                         server_addr,
                                         network_mask,
                                     ).await;
