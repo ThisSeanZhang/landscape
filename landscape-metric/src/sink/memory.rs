@@ -3,8 +3,6 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 
-#[cfg(feature = "metric-persistent")]
-use crate::agg::dns_bucket::{DnsBucketRow, DnsSummaryParts};
 use landscape_common::concurrency::{spawn_task, task_label};
 use landscape_common::config::MetricRuntimeConfig;
 use landscape_common::database::error::DbError;
@@ -13,10 +11,8 @@ use landscape_common::metric::connect::{
     ConnectMetricPoint, ConnectRealtimeStatus, IfaceRealtimeStat, IpHistoryStat, IpRealtimeStat,
     MetricResolution,
 };
-#[cfg(feature = "metric-persistent")]
-use landscape_common::metric::dns::DnsMetric;
 use landscape_common::metric::dns::{
-    DnsHistoryQueryParams, DnsHistoryResponse, DnsLightweightSummaryResponse,
+    DnsHistoryQueryParams, DnsHistoryResponse, DnsLightweightSummaryResponse, DnsMetric,
     DnsSummaryQueryParams, DnsSummaryResponse,
 };
 
@@ -26,6 +22,7 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 use super::MetricSink;
+use crate::agg::dns_bucket::{DnsBucketRow, DnsSummaryParts};
 use crate::agg::{self, Batch, FlowCache, IfaceRealtimeCache};
 
 /// 内存 sink:不落盘,丢弃聚合批次;历史查询返回空/默认值。
@@ -40,19 +37,16 @@ impl MetricSink for MemoryMetricSink {
         true
     }
 
-    #[cfg(feature = "metric-persistent")]
     async fn apply_dns_batch(&self, _metrics: Vec<DnsMetric>) -> bool {
         true
     }
 
-    #[cfg(feature = "metric-persistent")]
     async fn apply_dns_bucket_rows(&self, _rows: Vec<DnsBucketRow>) -> bool {
         true
     }
 
     async fn cleanup_connect(&self, _config: &MetricRuntimeConfig) {}
 
-    #[cfg(feature = "metric-persistent")]
     async fn cleanup_dns(&self, _config: &MetricRuntimeConfig) {}
 
     async fn close(&self) {}
@@ -99,7 +93,6 @@ impl MetricSink for MemoryMetricSink {
         DnsLightweightSummaryResponse::default()
     }
 
-    #[cfg(feature = "metric-persistent")]
     async fn get_dns_summary_parts(
         &self,
         _start_ms: u64,

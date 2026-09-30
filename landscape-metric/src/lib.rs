@@ -42,51 +42,41 @@ fn lock_or_recover<'a, T>(lock: &'a Mutex<T>, name: &str) -> MutexGuard<'a, T> {
     })
 }
 
-#[cfg(feature = "metric-persistent")]
 use agg::dns_bucket::{minute_end, minute_start};
-#[cfg(feature = "metric-persistent")]
 use agg::dns_window::{DNS_RECENT_WINDOW_SECS, DnsRecentWindow};
 
 /// 构建后端 sink:内存模式与 Off 模式挂 MemorySink;persistent 初始化失败时
 /// 回退内存 sink,保证 metric 数据不影响系统启动。
 /// 返回是否启用 DNS 实时窗口(persistent 后端成功初始化时为 true)。
-#[cfg(feature = "metric-persistent")]
 async fn build_sink(
-    base_path: PathBuf,
-    config: &MetricRuntimeConfig,
+    _base_path: PathBuf,
+    _config: &MetricRuntimeConfig,
     mode: &MetricMode,
 ) -> (Arc<dyn MetricSink>, bool) {
     match mode {
         MetricMode::Off | MetricMode::Memory => (Arc::new(MemoryMetricSink), false),
         MetricMode::Persistent => {
-            match PersistentMetricStore::new_with_config(base_path, config).await {
-                Ok(store) => (Arc::new(store), true),
-                Err(error) => {
-                    tracing::error!(
-                        "failed to initialize persistent metric backend, falling back to memory: {}",
-                        error
-                    );
-                    (Arc::new(MemoryMetricSink), false)
+            #[cfg(feature = "metric-persistent")]
+            {
+                match PersistentMetricStore::new_with_config(_base_path, _config).await {
+                    Ok(store) => (Arc::new(store), true),
+                    Err(error) => {
+                        tracing::error!(
+                            "failed to initialize persistent metric backend, falling back to memory: {}",
+                            error
+                        );
+                        (Arc::new(MemoryMetricSink), false)
+                    }
                 }
             }
-        }
-    }
-}
-
-#[cfg(not(feature = "metric-persistent"))]
-async fn build_sink(
-    _base_path: PathBuf,
-    _config: &MetricRuntimeConfig,
-    mode: &MetricMode,
-) -> Arc<dyn MetricSink> {
-    match mode {
-        MetricMode::Off | MetricMode::Memory => Arc::new(MemoryMetricSink),
-        MetricMode::Persistent => {
-            tracing::error!(
-                "metric mode 'persistent' requested, but landscape-metric was built \
-                 without the metric-persistent feature; falling back to memory"
-            );
-            Arc::new(MemoryMetricSink)
+            #[cfg(not(feature = "metric-persistent"))]
+            {
+                tracing::error!(
+                    "metric mode 'persistent' requested, but landscape-metric was built \
+                     without the metric-persistent feature; falling back to memory"
+                );
+                (Arc::new(MemoryMetricSink), false)
+            }
         }
     }
 }
@@ -103,25 +93,19 @@ pub struct MetricEngine {
     workers: Arc<Mutex<Vec<JoinHandle<()>>>>,
     connect_writer_tx: Arc<Mutex<Option<workers::ConnectBatchTx>>>,
     connect_writer_handle: Arc<Mutex<Option<JoinHandle<()>>>>,
-    #[cfg(feature = "metric-persistent")]
-    dns_writer_tx: Arc<Mutex<Option<workers::DnsBatchTx>>>,
-    #[cfg(feature = "metric-persistent")]
+    dns_writer_tx: Arc<Mutex<Option<workers::dns::DnsBatchTx>>>,
     dns_writer_handle: Arc<Mutex<Option<JoinHandle<()>>>>,
     writer_stats: workers::WriteQueueStats,
     flow_cache: agg::FlowCache,
     iface_realtime: agg::IfaceRealtimeCache,
     second_window_ms: u64,
-    #[cfg(feature = "metric-persistent")]
     dns_window: Option<DnsRecentWindow>,
 }
 
 impl MetricEngine {
     pub async fn new(base_path: PathBuf, config: MetricRuntimeConfig) -> Result<Self, String> {
         let mode = resolved_metric_mode(config.mode.clone());
-        #[cfg(feature = "metric-persistent")]
         let (sink, is_persistent) = build_sink(base_path, &config, &mode).await;
-        #[cfg(not(feature = "metric-persistent"))]
-        let sink = build_sink(base_path, &config, &mode).await;
 
         let flow_cache: agg::FlowCache = Arc::new(RwLock::new(HashMap::new()));
         let iface_realtime: agg::IfaceRealtimeCache = Arc::new(RwLock::new(HashMap::new()));
@@ -129,14 +113,11 @@ impl MetricEngine {
         let workers = Arc::new(Mutex::new(Vec::new()));
         let connect_writer_tx = Arc::new(Mutex::new(None));
         let connect_writer_handle = Arc::new(Mutex::new(None));
-        #[cfg(feature = "metric-persistent")]
         let dns_writer_tx = Arc::new(Mutex::new(None));
-        #[cfg(feature = "metric-persistent")]
         let dns_writer_handle = Arc::new(Mutex::new(None));
         let writer_stats = workers::WriteQueueStats::default();
         let second_window_ms = agg::second_window_ms(&config);
 
-        #[cfg(feature = "metric-persistent")]
         let dns_window = if is_persistent { Some(DnsRecentWindow::new()) } else { None };
 
         let (connect_tx, connect_rx) = mpsc::channel::<ConnectMessage>(agg::CHANNEL_CAPACITY);
@@ -146,8 +127,6 @@ impl MetricEngine {
             // connect/dns 各自的 sqlite 文件相互独立,拆成两条 writer 链路并行写;
             // cleanup 由各 writer 任务内的定时器执行,不再占用投递队列。
             let (connect_write_tx, connect_write_rx) = mpsc::channel::<Batch>(256);
-            #[cfg(feature = "metric-persistent")]
-            let (dns_write_tx, dns_write_rx) = mpsc::channel::<workers::DnsWriteMessage>(256);
             let queue_stats = writer_stats.clone();
             let connect_writer_sink = sink.clone();
             let connect_writer_config = config.clone();
@@ -166,13 +145,14 @@ impl MetricEngine {
             *lock_or_recover(&connect_writer_handle, "metric connect writer handle") =
                 Some(connect_writer);
 
-            #[cfg(feature = "metric-persistent")]
-            {
+            let dns_write_tx = if is_persistent {
+                let (dns_write_tx, dns_write_rx) =
+                    mpsc::channel::<workers::dns::DnsWriteMessage>(256);
                 let dns_writer_sink = sink.clone();
                 let dns_writer_config = config.clone();
                 let dns_writer_stats = queue_stats.clone();
                 let dns_writer = spawn_task(task_label::task::METRIC_DNS_WRITER, async move {
-                    workers::run_dns_writer(
+                    workers::dns::run_dns_writer(
                         dns_writer_sink,
                         dns_write_rx,
                         dns_writer_stats,
@@ -183,7 +163,10 @@ impl MetricEngine {
                 *lock_or_recover(&dns_writer_tx, "metric dns writer tx") =
                     Some(dns_write_tx.clone());
                 *lock_or_recover(&dns_writer_handle, "metric dns writer handle") = Some(dns_writer);
-            }
+                Some(dns_write_tx)
+            } else {
+                None
+            };
 
             // 行为决策:启动不回填 DNS 最近窗口(不读回磁盘),重启后状态卡展示 0,
             // 直到新的 DNS 指标到达。避免高 QPS 下启动时一次性读回 5 分钟原始行的开销。
@@ -208,37 +191,24 @@ impl MetricEngine {
             });
             lock_or_recover(&workers_clone, "metric workers").push(connect_handle);
 
-            #[cfg(feature = "metric-persistent")]
-            {
-                let config_clone = config.clone();
-                let shutdown_clone = shutdown.clone();
-                let workers_clone = workers.clone();
-                let dns_window_clone = dns_window.clone();
-                let write_tx_clone = dns_write_tx.clone();
-                let queue_stats_clone = queue_stats.clone();
-                let dns_handle = spawn_task(task_label::task::METRIC_DNS_WORKER, async move {
-                    workers::run_dns_worker(
-                        dns_rx,
-                        write_tx_clone,
-                        queue_stats_clone,
-                        config_clone,
-                        dns_window_clone,
-                        shutdown_clone,
-                    )
-                    .await;
-                });
-                lock_or_recover(&workers_clone, "metric workers").push(dns_handle);
-            }
-
-            #[cfg(not(feature = "metric-persistent"))]
-            {
-                let shutdown_clone = shutdown.clone();
-                let workers_clone = workers.clone();
-                let dns_handle = spawn_task(task_label::task::METRIC_DNS_WORKER, async move {
-                    workers::run_dns_worker(dns_rx, shutdown_clone).await;
-                });
-                lock_or_recover(&workers_clone, "metric workers").push(dns_handle);
-            }
+            let config_clone = config.clone();
+            let shutdown_clone = shutdown.clone();
+            let workers_clone = workers.clone();
+            let dns_window_clone = dns_window.clone();
+            let write_tx_clone = dns_write_tx.clone();
+            let queue_stats_clone = queue_stats.clone();
+            let dns_handle = spawn_task(task_label::task::METRIC_DNS_WORKER, async move {
+                workers::dns::run_dns_worker(
+                    dns_rx,
+                    write_tx_clone,
+                    queue_stats_clone,
+                    config_clone,
+                    dns_window_clone,
+                    shutdown_clone,
+                )
+                .await;
+            });
+            lock_or_recover(&workers_clone, "metric workers").push(dns_handle);
         }
 
         Ok(Self {
@@ -250,15 +220,12 @@ impl MetricEngine {
             workers,
             connect_writer_tx,
             connect_writer_handle,
-            #[cfg(feature = "metric-persistent")]
             dns_writer_tx,
-            #[cfg(feature = "metric-persistent")]
             dns_writer_handle,
             writer_stats,
             flow_cache,
             iface_realtime,
             second_window_ms,
-            #[cfg(feature = "metric-persistent")]
             dns_window,
         })
     }
@@ -299,15 +266,12 @@ impl MetricEngine {
         if let Some(handle) = connect_writer_handle {
             let _ = handle.await;
         }
-        #[cfg(feature = "metric-persistent")]
-        {
-            let dns_writer_tx = lock_or_recover(&self.dns_writer_tx, "metric dns writer tx").take();
-            drop(dns_writer_tx);
-            let dns_writer_handle =
-                lock_or_recover(&self.dns_writer_handle, "metric dns writer handle").take();
-            if let Some(handle) = dns_writer_handle {
-                let _ = handle.await;
-            }
+        let dns_writer_tx = lock_or_recover(&self.dns_writer_tx, "metric dns writer tx").take();
+        drop(dns_writer_tx);
+        let dns_writer_handle =
+            lock_or_recover(&self.dns_writer_handle, "metric dns writer handle").take();
+        if let Some(handle) = dns_writer_handle {
+            let _ = handle.await;
         }
         self.sink.close().await;
     }
@@ -385,7 +349,6 @@ impl MetricEngine {
         &self,
         params: DnsSummaryQueryParams,
     ) -> DnsLightweightSummaryResponse {
-        #[cfg(feature = "metric-persistent")]
         if let Some(window) = &self.dns_window {
             let now_ms = now_ms();
             let Some((start, end)) = normalized_dns_range(&params, now_ms) else {
@@ -404,7 +367,6 @@ impl MetricEngine {
     /// 保持子分钟精度。首页卡片走 `get_dns_lightweight_summary` 只读内存窗口,
     /// 与本函数无关。非 persistent 模式(内存 sink)走 `sink.get_dns_summary`。
     pub async fn get_dns_summary(&self, params: DnsSummaryQueryParams) -> DnsSummaryResponse {
-        #[cfg(feature = "metric-persistent")]
         if self.dns_window.is_some() {
             let now_ms = now_ms();
             if let Some((start, end)) = normalized_dns_range(&params, now_ms) {
@@ -421,7 +383,6 @@ impl MetricEngine {
 /// 将查询参数归一为分钟对齐的半开区间 [start, end)。
 /// 默认 (0,0) 补全为最近 5 分钟;归一后 start >= end(倒置区间)时返回 None,
 /// 由调用方处理:lightweight 返回空,summary 回退原始行。
-#[cfg(feature = "metric-persistent")]
 fn normalized_dns_range(params: &DnsSummaryQueryParams, now_ms: u64) -> Option<(u64, u64)> {
     let (mut start_time, mut end_time) = (params.start_time, params.end_time);
     if start_time == 0 && end_time == 0 {
@@ -457,8 +418,6 @@ pub fn resolved_metric_mode(mode: MetricMode) -> MetricMode {
 mod tests {
     use super::*;
     use landscape_common::metric::connect::{ConnectMetric, ConnectStatusType};
-    #[cfg(feature = "metric-persistent")]
-    use landscape_common::metric::dns::DnsOutcome;
     use std::net::{IpAddr, Ipv4Addr};
     use std::time::Duration;
 
@@ -506,21 +465,6 @@ mod tests {
             ingress_bytes / 5,
             ConnectStatusType::Active,
         )
-    }
-
-    #[cfg(feature = "metric-persistent")]
-    fn dns_metric(report_time: u64) -> DnsMetricMessage {
-        DnsMetricMessage::Metric(landscape_common::metric::dns::DnsMetric {
-            flow_id: 1,
-            domain: "example.com".to_string(),
-            query_type: "A".to_string(),
-            response_code: "NOERROR".to_string(),
-            status: DnsOutcome::Normal,
-            report_time,
-            duration_ms: 12,
-            src_ip: IpAddr::V4(Ipv4Addr::LOCALHOST),
-            answers: Vec::new(),
-        })
     }
 
     #[tokio::test]
@@ -651,6 +595,21 @@ mod tests {
     #[cfg(feature = "metric-persistent")]
     mod persistent {
         use super::*;
+        use landscape_common::metric::dns::DnsOutcome;
+
+        fn dns_metric(report_time: u64) -> DnsMetricMessage {
+            DnsMetricMessage::Metric(landscape_common::metric::dns::DnsMetric {
+                flow_id: 1,
+                domain: "example.com".to_string(),
+                query_type: "A".to_string(),
+                response_code: "NOERROR".to_string(),
+                status: DnsOutcome::Normal,
+                report_time,
+                duration_ms: 12,
+                src_ip: IpAddr::V4(Ipv4Addr::LOCALHOST),
+                answers: Vec::new(),
+            })
+        }
 
         #[tokio::test]
         async fn connect_pipeline_writes_summaries_buckets_and_global_stats() {

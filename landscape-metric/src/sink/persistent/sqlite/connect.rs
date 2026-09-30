@@ -10,7 +10,8 @@ use landscape_common::utils::time::now_ms;
 use sqlx::{QueryBuilder, Row, Sqlite, SqliteConnection, SqlitePool};
 
 use super::clean_ip_string;
-use crate::agg::{Batch, BucketKind, BucketWrite};
+use crate::agg::Batch;
+use crate::agg::batch::{BucketKind, BucketWrite};
 
 impl BucketKind {
     fn table_name(self) -> &'static str {

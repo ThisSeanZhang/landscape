@@ -48,6 +48,13 @@ jobs:
       - name: Run clippy
         run: cargo clippy --workspace --features metric-persistent -- -D warnings
 
+      - name: Run clippy (feature matrix)
+        run: |
+          cargo clippy -p landscape-metric --no-default-features -- -D warnings
+          cargo clippy -p landscape-webserver --no-default-features -- -D warnings
+          cargo clippy -p landscape-common --features mem-track -- -D warnings
+          cargo clippy -p landscape-common --features openapi -- -D warnings
+
   config-cli-e2e:
     runs-on: ubuntu-latest
 

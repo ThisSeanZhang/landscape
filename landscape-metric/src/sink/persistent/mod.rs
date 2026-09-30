@@ -20,8 +20,10 @@ use sqlx::SqlitePool;
 use tokio::task::JoinHandle;
 
 use super::MetricSink;
+use crate::agg::Batch;
+use crate::agg::batch::BucketKind;
 use crate::agg::dns_bucket::{DnsBucketRow, DnsSummaryParts};
-use crate::agg::{Batch, MS_PER_DAY};
+use crate::agg::flow::MS_PER_DAY;
 
 /// 全局统计缓存每日漂移校正间隔:超过该时长未重建则后台重建一次。
 const GLOBAL_STATS_REBUILD_INTERVAL_SECS: u64 = 24 * 3600;
@@ -366,15 +368,15 @@ impl MetricSink for PersistentMetricStore {
 
         let cutoffs = [
             (
-                crate::agg::BucketKind::Minute,
+                BucketKind::Minute,
                 now_ms.saturating_sub(config.connect_1m_retention_days.saturating_mul(MS_PER_DAY)),
             ),
             (
-                crate::agg::BucketKind::Hour,
+                BucketKind::Hour,
                 now_ms.saturating_sub(config.connect_1h_retention_days.saturating_mul(MS_PER_DAY)),
             ),
             (
-                crate::agg::BucketKind::Day,
+                BucketKind::Day,
                 now_ms.saturating_sub(config.connect_1d_retention_days.saturating_mul(MS_PER_DAY)),
             ),
         ];

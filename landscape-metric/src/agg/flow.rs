@@ -480,7 +480,6 @@ pub(crate) fn cleanup_flow_cache(
     (stats, batch)
 }
 
-#[cfg(feature = "metric-persistent")]
 pub(crate) fn finalize_all_flows(
     flow_cache: &FlowCache,
     iface_realtime: &IfaceRealtimeCache,
@@ -844,7 +843,6 @@ mod tests {
         assert_eq!(second_ring_capacity(&test_config(100_000)), 4096);
     }
 
-    #[cfg(feature = "metric-persistent")]
     #[test]
     fn finalize_all_flows_emits_disabled_batches_and_clears_realtime() {
         let (flow, iface_realtime) = test_caches();

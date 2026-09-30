@@ -180,6 +180,7 @@ fn avg_duration((count, sum): (u64, u64)) -> f64 {
 /// (SUM 计数 + 直方图合并 + top union);`report_time` 为批内最后一条 metric 的
 /// 完整时间,跨批次天然唯一,同键冲突直接忽略。
 #[derive(Debug, Clone)]
+#[cfg_attr(not(feature = "metric-persistent"), allow(dead_code))]
 pub(crate) struct DnsBucketRow {
     pub flow_id: u32,
     pub bucket_time: u64,

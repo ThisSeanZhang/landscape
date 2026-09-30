@@ -1,4 +1,6 @@
-use arc_swap::{ArcSwap, ArcSwapOption};
+use arc_swap::ArcSwap;
+#[cfg(feature = "gateway")]
+use arc_swap::ArcSwapOption;
 use std::sync::Arc;
 use std::time::Duration;
 

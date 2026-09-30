@@ -14,18 +14,23 @@ landscape-common = { path = "../landscape-common" }
 landscape-core = { path = "../landscape-core" }
 
 async-trait = { workspace = true }
-tokio = { workspace = true, features = ["sync", "time", "rt", "rt-multi-thread"] }
+tokio = { workspace = true, features = [
+    "sync",
+    "time",
+    "rt",
+    "rt-multi-thread",
+] }
 tokio-util = { workspace = true, features = ["rt"] }
 tracing = { workspace = true }
 serde_json = { workspace = true }
 
 sqlx = { workspace = true, optional = true }
 futures-util = { workspace = true, optional = true }
-hdrhistogram = { workspace = true, optional = true }
+hdrhistogram = { workspace = true }
 
 [features]
 default = []
-metric-persistent = ["dep:sqlx", "dep:futures-util", "dep:hdrhistogram"]
+metric-persistent = ["dep:sqlx", "dep:futures-util"]
 mem-track = ["landscape-common/mem-track"]
 
 [dev-dependencies]
