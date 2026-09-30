@@ -37,3 +37,5 @@ crate::impl_repository!(
     NetworkIfaceConfig,
     String
 );
+
+crate::impl_trivial_validator!(NetIfaceRepository, NetworkIfaceConfig);

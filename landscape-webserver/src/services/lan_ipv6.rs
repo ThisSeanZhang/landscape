@@ -118,7 +118,6 @@ async fn handle_lan_ipv6(
     State(state): State<LandscapeApp>,
     JsonBody(config): JsonBody<LanIPv6ServiceConfigV2>,
 ) -> LandscapeApiResult<()> {
-    state.validate_zone(&config).await?;
     let pd_contexts = state.ipv6_pd_service.get_pd_prefix_contexts().await;
     let existing_configs: Vec<LanIPv6ServiceConfigV2> =
         state.lan_ipv6_service.list().await.unwrap_or_default();

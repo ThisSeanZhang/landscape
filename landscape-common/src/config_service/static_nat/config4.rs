@@ -52,8 +52,8 @@ pub struct StaticNatMappingV4Config {
     pub update_at: f64,
 }
 
-impl StaticNatMappingV4Config {
-    pub fn validate(&self) -> Result<(), ServiceConfigError> {
+impl crate::database::validator::ValidatableConfig for StaticNatMappingV4Config {
+    fn validate(&self) -> Result<(), ServiceConfigError> {
         if self.enable && self.mapping_pair_ports.is_empty() {
             return Err(ServiceConfigError::InvalidConfig {
                 reason: "mapping_pair_ports must not be empty when enabled".to_string(),
@@ -107,7 +107,9 @@ impl StaticNatMappingV4Config {
 
         Ok(())
     }
+}
 
+impl StaticNatMappingV4Config {
     pub fn validate_no_dynamic_port_overlap(
         &self,
         nat_config: &NatConfig,
@@ -161,6 +163,7 @@ pub struct RuntimeStaticNatMappingV4Config {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::database::validator::ValidatableConfig as _;
 
     fn base_config() -> StaticNatMappingV4Config {
         StaticNatMappingV4Config {

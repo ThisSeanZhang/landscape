@@ -46,3 +46,5 @@ impl ZoneAwareConfig for RouteWanServiceConfig {
         ServiceKind::RouteWan
     }
 }
+
+crate::impl_trivial_validatable!(RouteWanServiceConfig);

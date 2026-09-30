@@ -135,8 +135,8 @@ impl RuntimeStaticNatMappingConfig {
     }
 }
 
-impl StaticNatMappingConfig {
-    pub fn validate(&self) -> Result<(), ServiceConfigError> {
+impl crate::database::validator::ValidatableConfig for StaticNatMappingConfig {
+    fn validate(&self) -> Result<(), ServiceConfigError> {
         if self.enable && self.mapping_pair_ports.is_empty() {
             return Err(ServiceConfigError::InvalidConfig {
                 reason: "mapping_pair_ports must not be empty when enabled".to_string(),
@@ -210,7 +210,9 @@ impl StaticNatMappingConfig {
 
         Ok(())
     }
+}
 
+impl StaticNatMappingConfig {
     pub fn convert_to_item(&self) -> Vec<StaticNatMappingItem> {
         let (lan_ipv4, lan_ipv6) = match &self.lan_target {
             Some(StaticNatTarget::Address { ipv4, ipv6 }) => (*ipv4, *ipv6),
@@ -262,6 +264,7 @@ impl LandscapeDBStore<Uuid> for StaticNatMappingConfig {
 #[cfg(test)]
 mod tests {
     use super::{StaticMapPair, StaticNatMappingConfig, StaticNatTarget};
+    use crate::database::validator::ValidatableConfig as _;
 
     fn base_config() -> StaticNatMappingConfig {
         StaticNatMappingConfig {

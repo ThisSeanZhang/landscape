@@ -2,7 +2,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use landscape::wan_service::mss_clamp_service::MssClampServiceManagerService;
+use landscape_common::config_service::iface::{IfaceZoneType, NetworkIfaceConfig};
 use landscape_common::database::error::DbError;
+use landscape_common::database::store::ConfigStore;
 use landscape_common::event::hub::EventHub;
 use landscape_common::service::ServiceStatus;
 use landscape_common::service::controller::{ConfigStoreController, ConfigStoreServiceController};
@@ -21,6 +23,11 @@ fn mss_clamp_config(iface: &str, enable: bool) -> MSSClampServiceConfig {
 
 async fn mss_clamp_service() -> MssClampServiceManagerService {
     let provider = LandscapeDBServiceProvider::mem_test_db().await;
+    provider
+        .iface_store()
+        .upsert(NetworkIfaceConfig::crate_bridge("wan0".to_string(), Some(IfaceZoneType::Wan)))
+        .await
+        .unwrap();
     let hub = EventHub::new();
     let event_handle = hub.spawn();
 

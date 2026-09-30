@@ -96,3 +96,5 @@ impl CertRepository {
 }
 
 crate::impl_repository!(CertRepository, CertModel, CertEntity, CertActiveModel, CertConfig, DBId);
+
+crate::impl_trivial_validator!(CertRepository, CertConfig);

@@ -79,3 +79,11 @@ impl LandscapeDBStore<Uuid> for CertAccountConfig {
         self.update_at = ts;
     }
 }
+
+impl crate::database::validator::ValidatableConfig for CertAccountConfig {
+    fn validate(&self) -> Result<(), crate::service::ServiceConfigError> {
+        CertAccountConfig::validate(self).map_err(|e| {
+            crate::service::ServiceConfigError::InvalidConfig { reason: e.to_string() }
+        })
+    }
+}

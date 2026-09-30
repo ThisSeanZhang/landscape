@@ -1,9 +1,9 @@
 use landscape_common::config_service::enrolled_device::EnrolledDevice;
+use landscape_common::database::store::ConfigStore;
 use landscape_common::event::hub::{EnrolledDeviceEvent, EnrolledDeviceEventSender};
 use landscape_common::lan_service::lan_ipv6::{ipv6_iid, is_lan_iid};
 use landscape_database::enrolled_device::repository::EnrolledDeviceRepository;
 use landscape_database::provider::LandscapeDBServiceProvider;
-use landscape_database::repository::Repository;
 use uuid::Uuid;
 
 #[derive(Clone)]
@@ -24,7 +24,7 @@ impl EnrolledDeviceService {
     }
 
     pub async fn list(&self) -> Vec<EnrolledDevice> {
-        match self.store.list_all().await {
+        match self.store.list().await {
             Ok(data) => data,
             Err(e) => {
                 tracing::error!("Failed to list mac bindings: {:?}", e);
@@ -157,15 +157,13 @@ impl EnrolledDeviceService {
             }
         }
 
-        let id = data.id;
-        self.store.set_or_update_model(id, data.clone()).await.map_err(|e| e.to_string())?;
+        self.store.upsert(data.clone()).await.map_err(|e| e.to_string())?;
         let _ = self.device_sender.send(EnrolledDeviceEvent::Updated { old, new: data }).await;
         Ok(())
     }
 
     pub async fn delete(&self, id: Uuid) -> Result<(), String> {
-        let old = self.store.find_by_id(id).await.map_err(|e| e.to_string())?;
-        self.store.delete_model(id).await.map_err(|e| e.to_string())?;
+        let old = self.store.delete_and_get(id).await.map_err(|e| e.to_string())?;
         if let Some(old) = old {
             let _ = self.device_sender.send(EnrolledDeviceEvent::Deleted { old }).await;
         }

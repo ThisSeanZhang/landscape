@@ -1,6 +1,7 @@
 use sea_orm::prelude::Uuid;
 
 pub mod repository;
+pub mod validator;
 pub mod writer;
 
 pub mod ddns;
@@ -51,6 +52,20 @@ pub(crate) type DBTimestamp = f64;
 
 /// Generates `impl Repository` + `impl ConfigStore` for a Repository struct.
 /// The struct itself is defined manually in each repository.rs for composition flexibility.
+///
+/// # 校验注入(用户写路径)
+///
+/// `checked_upsert`/`checked_upsert_many` 在写入前按固定顺序调用:
+///
+/// 1. `<$data as ValidatableConfig>::validate` — 纯内容校验,挂在 config 上
+/// 2. `StoreValidator::<$data>::check_zone` — zone 检查,挂在 repo 上
+/// 3. `StoreValidator::<$data>::validate_cross` — 跨域冲突,挂在 repo 上
+///
+/// 全限定调用:config 未实现 `ValidatableConfig` 或 repo 未实现
+/// `StoreValidator` 时宏展开直接编译失败 —— "入库必须实现校验"的
+/// 编译期强制。校验失败以 [`DbError::Validation`] 拒绝,零副作用。
+/// 盲写路径(`upsert`/`upsert_many`)不注入校验:可信系统路径(播种/
+/// ACME/geo/网关运行时/设备注册)。
 macro_rules! impl_repository {
     ($repo:ty, $model:ty, $entity:ty, $active:ty, $data:ty, $id:ty) => {
         #[async_trait::async_trait]
@@ -99,6 +114,31 @@ macro_rules! impl_repository {
                 landscape_common::database::store::Change<Self::Data>,
                 landscape_common::database::error::DbError,
             > {
+                if let Err(error) =
+                    <$data as landscape_common::database::validator::ValidatableConfig>::validate(
+                        &config,
+                    )
+                {
+                    return Err(landscape_common::database::error::DbError::Validation(error));
+                }
+                if let Err(error) =
+                    landscape_common::database::validator::StoreValidator::<$data>::check_zone(
+                        self,
+                        &config,
+                    )
+                    .await
+                {
+                    return Err(landscape_common::database::error::DbError::Validation(error));
+                }
+                if let Err(error) =
+                    landscape_common::database::validator::StoreValidator::<$data>::validate_cross(
+                        self,
+                        &config,
+                    )
+                    .await
+                {
+                    return Err(landscape_common::database::error::DbError::Validation(error));
+                }
                 crate::writer::StoreWriter::<$entity, $data>::new(self.db.clone())
                     .checked_upsert(config)
                     .await
@@ -121,6 +161,33 @@ macro_rules! impl_repository {
                 Vec<landscape_common::database::store::Change<Self::Data>>,
                 landscape_common::database::error::DbError,
             > {
+                for config in &configs {
+                    if let Err(error) =
+                        <$data as landscape_common::database::validator::ValidatableConfig>::validate(
+                            config,
+                        )
+                    {
+                        return Err(landscape_common::database::error::DbError::Validation(error));
+                    }
+                    if let Err(error) =
+                        landscape_common::database::validator::StoreValidator::<$data>::check_zone(
+                            self,
+                            config,
+                        )
+                        .await
+                    {
+                        return Err(landscape_common::database::error::DbError::Validation(error));
+                    }
+                    if let Err(error) =
+                        landscape_common::database::validator::StoreValidator::<$data>::validate_cross(
+                            self,
+                            config,
+                        )
+                        .await
+                    {
+                        return Err(landscape_common::database::error::DbError::Validation(error));
+                    }
+                }
                 crate::writer::StoreWriter::<$entity, $data>::new(self.db.clone())
                     .checked_upsert_many(configs)
                     .await
@@ -166,5 +233,52 @@ macro_rules! impl_flow_store {
     };
 }
 
+/// 显式"无 zone / 无跨域校验"声明:该域的 repo 侧校验两个方法均通过
+/// (纯内容校验在 config 侧的 `ValidatableConfig`)。一行宏只省样板,
+/// 不隐藏任何控制流 —— 写路径仍由 `impl_repository!` 锁定。
+macro_rules! impl_trivial_validator {
+    ($repo:ty, $data:ty) => {
+        #[async_trait::async_trait]
+        impl landscape_common::database::validator::StoreValidator<$data> for $repo {
+            async fn check_zone(
+                &self,
+                _config: &$data,
+            ) -> Result<(), landscape_common::service::ServiceConfigError> {
+                Ok(())
+            }
+            async fn validate_cross(
+                &self,
+                _config: &$data,
+            ) -> Result<(), landscape_common::service::ServiceConfigError> {
+                Ok(())
+            }
+        }
+    };
+}
+
+/// zone-only 服务域声明:`check_zone` 委托共享 `ZoneChecker`,
+/// 无跨域校验(`validate_cross` 显式通过)。
+macro_rules! impl_zone_validator {
+    ($repo:ty, $data:ty) => {
+        #[async_trait::async_trait]
+        impl landscape_common::database::validator::StoreValidator<$data> for $repo {
+            async fn check_zone(
+                &self,
+                config: &$data,
+            ) -> Result<(), landscape_common::service::ServiceConfigError> {
+                crate::validator::ZoneChecker::new(self.db.clone()).check(config).await
+            }
+            async fn validate_cross(
+                &self,
+                _config: &$data,
+            ) -> Result<(), landscape_common::service::ServiceConfigError> {
+                Ok(())
+            }
+        }
+    };
+}
+
 pub(crate) use impl_flow_store;
 pub(crate) use impl_repository;
+pub(crate) use impl_trivial_validator;
+pub(crate) use impl_zone_validator;

@@ -65,7 +65,6 @@ async fn handle_route_lan_status(
     State(state): State<LandscapeApp>,
     JsonBody(config): JsonBody<RouteLanServiceConfig>,
 ) -> LandscapeApiResult<()> {
-    state.validate_zone(&config).await?;
     state.route_lan_service.handle_service_config(config).await?;
     LandscapeApiResp::success(())
 }

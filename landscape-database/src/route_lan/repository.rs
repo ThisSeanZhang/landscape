@@ -24,3 +24,5 @@ crate::impl_repository!(
     RouteLanServiceConfig,
     String
 );
+
+crate::impl_zone_validator!(RouteLanServiceRepository, RouteLanServiceConfig);

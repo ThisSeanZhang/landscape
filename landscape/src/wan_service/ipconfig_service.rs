@@ -1,6 +1,5 @@
 use std::net::IpAddr;
 use std::sync::Arc;
-use std::time::Duration;
 
 use landscape_common::LANDSCAPE_DEFAULE_DHCP_V4_CLIENT_PORT;
 use landscape_common::concurrency::{spawn_task, task_label};
@@ -246,11 +245,6 @@ impl ConfigStoreServiceController for IfaceIpServiceManagerService {
 
     fn get_service(&self) -> &ServiceManager<Self::H> {
         &self.service
-    }
-
-    /// DHCP/PPPoE 客户端协商到 Running 可能超过默认窗口。
-    fn start_confirm_timeout(&self) -> Duration {
-        Duration::from_secs(30)
     }
 }
 

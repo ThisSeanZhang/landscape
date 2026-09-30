@@ -24,3 +24,5 @@ crate::impl_repository!(
     FlowWanServiceConfig,
     String
 );
+
+crate::impl_trivial_validator!(FlowWanServiceRepository, FlowWanServiceConfig);

@@ -24,3 +24,5 @@ crate::impl_repository!(
     WifiServiceConfig,
     String
 );
+
+crate::impl_zone_validator!(WifiServiceRepository, WifiServiceConfig);

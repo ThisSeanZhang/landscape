@@ -25,3 +25,5 @@ crate::impl_repository!(
     HttpUpstreamRuleConfig,
     DBId
 );
+
+crate::impl_trivial_validator!(GatewayHttpUpstreamRepository, HttpUpstreamRuleConfig);

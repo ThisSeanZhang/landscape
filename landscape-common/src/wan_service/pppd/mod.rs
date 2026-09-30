@@ -224,3 +224,16 @@ ifname {ppp_iface_name}
         Ok(())
     }
 }
+
+impl crate::database::validator::ValidatableConfig for PPPDServiceConfig {
+    fn validate(&self) -> Result<(), ServiceConfigError> {
+        validate_ppp_iface_name(&self.iface_name)?;
+        if self.iface_name == self.attach_iface_name {
+            return Err(ServiceConfigError::InvalidConfig {
+                reason: "PPPoE interface name cannot be the same as its attached interface"
+                    .to_string(),
+            });
+        }
+        self.pppd_config.validate()
+    }
+}

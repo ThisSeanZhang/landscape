@@ -3,6 +3,7 @@ use std::io;
 use sea_orm::DbErr;
 
 use crate::LdApiError;
+use crate::service::ServiceConfigError;
 
 /// Storage-layer error with HTTP semantics, ready to be exposed to the frontend.
 ///
@@ -22,11 +23,11 @@ pub enum DbError {
     #[api_error(id = "database.error", status = 500)]
     Database(#[from] DbErr),
 
-    /// Service-side failure while accepting a config: the service manager
-    /// rejected the update before anything was persisted.
-    #[error("Failed to start service: {0}")]
-    #[api_error(id = "service.start_failed", status = 500)]
-    ServiceStart(String),
+    /// Store-level validation rejected the config before any write happened;
+    /// mapping (id/status/args/public message) delegates to ServiceConfigError.
+    #[error(transparent)]
+    #[api_error(transparent)]
+    Validation(#[from] ServiceConfigError),
 
     #[error("I/O error occurred: {0}")]
     #[api_error(id = "internal.error", status = 500)]
@@ -48,13 +49,10 @@ impl DbError {
                 "Configuration has been modified by others. Please refresh and try again."
                     .to_string()
             }
+            DbError::Validation(e) => e.to_string(),
             DbError::Database(e) => {
                 tracing::error!("database error: {e:?}");
                 "Database operation failed, please try again later".to_string()
-            }
-            DbError::ServiceStart(service) => {
-                tracing::error!("service start failed: {service}");
-                "Internal error, please try again later".to_string()
             }
             DbError::Io(e) => {
                 tracing::error!("io error: {e:?}");

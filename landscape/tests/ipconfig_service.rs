@@ -3,7 +3,9 @@ use std::time::Duration;
 
 use landscape::sys_service::route::IpRouteService;
 use landscape::wan_service::ipconfig_service::IfaceIpServiceManagerService;
+use landscape_common::config_service::iface::{IfaceZoneType, NetworkIfaceConfig};
 use landscape_common::database::error::DbError;
+use landscape_common::database::store::ConfigStore;
 use landscape_common::event::hub::EventHub;
 use landscape_common::event::route::RouteEvent;
 use landscape_common::service::ServiceStatus;
@@ -25,8 +27,17 @@ fn ip_config(iface: &str, enable: bool) -> IfaceIpServiceConfig {
     }
 }
 
+async fn seed_wan_iface(provider: &LandscapeDBServiceProvider, name: &str) {
+    provider
+        .iface_store()
+        .upsert(NetworkIfaceConfig::crate_bridge(name.to_string(), Some(IfaceZoneType::Wan)))
+        .await
+        .unwrap();
+}
+
 async fn ip_service() -> IfaceIpServiceManagerService {
     let provider = LandscapeDBServiceProvider::mem_test_db().await;
+    seed_wan_iface(&provider, "wan0").await;
     let hub = EventHub::new();
     let event_handle = hub.spawn();
     let (_route_tx, route_rx) = mpsc::channel::<RouteEvent>(8);
@@ -70,15 +81,16 @@ async fn handle_service_config_persists_and_tracks_service() {
 }
 
 #[tokio::test]
-async fn missing_iface_fails_start_and_rejects_persist() {
+async fn failed_start_is_persisted_and_reported() {
     let service = ip_service().await;
 
     // enable: true with an iface that does not exist in the test namespace:
-    // the starter reports Failed, persist-after-verify rejects the write.
-    let result = service.handle_service_config(ip_config("wan0", true)).await;
+    // the write persists (latest intent) and the starter reports Failed.
+    let saved = service.handle_service_config(ip_config("wan0", true)).await.unwrap();
 
-    assert!(matches!(result, Err(DbError::ServiceStart(_))));
-    assert!(service.find_by_id("wan0".to_string()).await.unwrap().is_none());
+    assert!(saved.update_at > 0.0);
+    assert!(service.find_by_id("wan0".to_string()).await.unwrap().is_some());
+    assert_eq!(wait_for_status(&service, "wan0").await, ServiceStatus::Failed);
 }
 
 #[tokio::test]

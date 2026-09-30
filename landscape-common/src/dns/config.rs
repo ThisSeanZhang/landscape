@@ -74,3 +74,5 @@ impl Default for DnsUpstreamConfig {
         }
     }
 }
+
+crate::impl_trivial_validatable!(DnsUpstreamConfig);

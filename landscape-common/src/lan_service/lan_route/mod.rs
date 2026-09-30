@@ -74,3 +74,5 @@ impl StaticRouteConfig {
         }
     }
 }
+
+crate::impl_trivial_validatable!(RouteLanServiceConfig);

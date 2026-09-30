@@ -23,3 +23,5 @@ crate::impl_repository!(
     CertAccountConfig,
     DBId
 );
+
+crate::impl_trivial_validator!(CertAccountRepository, CertAccountConfig);

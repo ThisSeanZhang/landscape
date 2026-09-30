@@ -41,3 +41,5 @@ impl LandscapeDBStore<Uuid> for FirewallBlacklistConfig {
         self.update_at = ts;
     }
 }
+
+crate::impl_trivial_validatable!(FirewallBlacklistConfig);

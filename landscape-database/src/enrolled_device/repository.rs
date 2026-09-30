@@ -151,3 +151,5 @@ crate::impl_repository!(
     EnrolledDevice,
     DBId
 );
+
+crate::impl_trivial_validator!(EnrolledDeviceRepository, EnrolledDevice);

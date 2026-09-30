@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use landscape_common::config::FlowId;
 use landscape_common::database::error::DbError;
+use landscape_common::database::store::ConfigStore;
 use landscape_common::flow::config::FlowConfig;
 use landscape_common::flow::{
     FlowEntryMatchMode, FlowEntryRule, FlowRuleError, FlowTarget, ResolvedFlowEntryMatchMode,
@@ -13,7 +14,6 @@ use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter};
 use crate::DBId;
 use crate::enrolled_device::repository::EnrolledDeviceRepository;
 use crate::flow_rule::entity::Column;
-use crate::repository::Repository;
 
 use super::entity::{FlowConfigActiveModel, FlowConfigEntity, FlowConfigModel};
 
@@ -28,7 +28,7 @@ impl FlowConfigRepository {
     }
 
     pub async fn list_runtime_configs(&self) -> Result<Vec<RuntimeFlowConfig>, DbError> {
-        let configs = self.list_all().await?;
+        let configs = self.list().await?;
         let devices = self.load_devices_for_configs(&configs).await?;
         let mut result = Vec::new();
 
@@ -59,8 +59,8 @@ impl FlowConfigRepository {
         }
 
         let devices = EnrolledDeviceRepository::new(self.db.clone())
-            .find_by_ids(device_ids.into_iter().collect())
-            .await;
+            .find_ids(device_ids.into_iter().collect())
+            .await?;
         Ok(devices.into_iter().map(|device| (device.id, device)).collect())
     }
 
@@ -151,12 +151,13 @@ impl FlowConfigRepository {
         exclude_id: DBId,
         mode: &FlowEntryMatchMode,
     ) -> Result<Option<FlowConfig>, DbError> {
-        let configs = self.list_all().await?;
+        let configs = self.list().await?;
         let mut devices = self.load_devices_for_configs(&configs).await?;
         if let FlowEntryMatchMode::Device { device_id } = mode
             && !devices.contains_key(device_id)
             && let Some(device) =
-                EnrolledDeviceRepository::new(self.db.clone()).find_by_id(*device_id).await?
+                ConfigStore::find_by_id(&EnrolledDeviceRepository::new(self.db.clone()), *device_id)
+                    .await?
         {
             devices.insert(device.id, device);
         }
@@ -186,7 +187,7 @@ impl FlowConfigRepository {
         exclude_id: DBId,
         modes: &[FlowEntryMatchMode],
     ) -> Result<Option<(FlowEntryMatchMode, FlowConfig)>, FlowRuleError> {
-        let configs = self.list_all().await?;
+        let configs = self.list().await?;
         let mut devices = self.load_devices_for_configs(&configs).await?;
         devices.extend(self.load_devices_for_modes(modes).await?);
 
@@ -241,8 +242,8 @@ impl FlowConfigRepository {
     ) -> Result<DevicesById, DbError> {
         let device_ids = collect_device_ids(modes.iter());
         let devices = EnrolledDeviceRepository::new(self.db.clone())
-            .find_by_ids(device_ids.into_iter().collect())
-            .await;
+            .find_ids(device_ids.into_iter().collect())
+            .await?;
         Ok(devices.into_iter().map(|device| (device.id, device)).collect())
     }
 
@@ -421,3 +422,47 @@ crate::impl_repository!(
 );
 
 crate::impl_flow_store!(FlowConfigRepository, FlowConfigModel, FlowConfigEntity);
+
+#[async_trait::async_trait]
+impl landscape_common::database::validator::StoreValidator<FlowConfig> for FlowConfigRepository {
+    async fn check_zone(
+        &self,
+        _config: &FlowConfig,
+    ) -> Result<(), landscape_common::service::ServiceConfigError> {
+        Ok(())
+    }
+
+    async fn validate_cross(
+        &self,
+        config: &FlowConfig,
+    ) -> Result<(), landscape_common::service::ServiceConfigError> {
+        fn map_err(
+            e: landscape_common::flow::FlowRuleError,
+        ) -> landscape_common::service::ServiceConfigError {
+            landscape_common::service::ServiceConfigError::InvalidConfig { reason: e.to_string() }
+        }
+
+        let modes: Vec<_> = config.flow_match_rules.iter().map(|r| r.mode.clone()).collect();
+
+        self.validate_modes_resolvable(&modes).await.map_err(map_err)?;
+
+        let resolved_modes = self.resolve_modes(&modes).await.map_err(map_err)?;
+        if let Some(duplicate) = find_duplicate_resolved_modes(&resolved_modes) {
+            return Err(landscape_common::service::ServiceConfigError::InvalidConfig {
+                reason: format!("duplicate entry rule mode '{duplicate}' after resolution"),
+            });
+        }
+
+        if let Some((conflict_mode, conflict_config)) =
+            self.find_resolved_conflict_for_modes(config.id, &modes).await.map_err(map_err)?
+        {
+            return Err(landscape_common::service::ServiceConfigError::InvalidConfig {
+                reason: format!(
+                    "entry rule '{}' conflicts with flow '{}' (flow_id {})",
+                    conflict_mode, conflict_config.remark, conflict_config.flow_id
+                ),
+            });
+        }
+        Ok(())
+    }
+}

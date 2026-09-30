@@ -4,7 +4,7 @@ use axum::extract::{Path, State};
 use landscape_common::api_response::LandscapeApiResp as CommonApiResp;
 use landscape_common::service::ServiceStatus;
 use landscape_common::service::controller::ConfigStoreServiceController;
-use landscape_common::wan_service::ip_config::{IfaceIpModelConfig, IfaceIpServiceConfig};
+use landscape_common::wan_service::ip_config::IfaceIpServiceConfig;
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 
@@ -22,28 +22,6 @@ struct RuntimeIpAddress {
     address: IpAddr,
     prefix_length: u8,
     is_permanent: bool,
-}
-
-async fn validate_ip_config(
-    state: &LandscapeApp,
-    config: &IfaceIpServiceConfig,
-) -> Result<(), ServiceConfigError> {
-    if config.enable && matches!(&config.ip_model, IfaceIpModelConfig::PPPoE { .. }) {
-        let attached_pppds = state
-            .pppd_service
-            .get_pppd_configs_by_attach_iface_name(config.iface_name.clone())
-            .await;
-        if !attached_pppds.is_empty() {
-            return Err(ServiceConfigError::InvalidConfig {
-                reason: format!(
-                    "Interface '{}' already has PPPD-based PPPoE configured; remove it before enabling native PPPoE",
-                    config.iface_name
-                ),
-            });
-        }
-    }
-
-    Ok(())
 }
 
 pub fn get_iface_ipconfig_paths() -> OpenApiRouter<LandscapeApp> {
@@ -128,8 +106,6 @@ async fn handle_iface_service_status(
     State(state): State<LandscapeApp>,
     JsonBody(config): JsonBody<IfaceIpServiceConfig>,
 ) -> LandscapeApiResult<()> {
-    validate_ip_config(&state, &config).await?;
-    state.validate_zone(&config).await?;
     state.wan_ip_service.handle_service_config(config).await?;
     LandscapeApiResp::success(())
 }

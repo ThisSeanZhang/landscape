@@ -337,8 +337,6 @@ impl ConfigStoreServiceController for LanIPv6ManagerService {
 }
 
 impl LanIPv6ManagerService {
-    /// persist-after-verify:全局前缀冲突校验作为前置校验由 handler 完成
-    /// (带 PD 上下文),启动观测通过后由控制器原子落库并收敛。
     pub async fn save_config(
         &self,
         config: LanIPv6ServiceConfigV2,

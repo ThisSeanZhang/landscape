@@ -4,11 +4,11 @@ pub use landscape_common::dev::iface::{IfaceInfo, IfaceTopology, IfacesInfo, Raw
 use landscape_common::service::controller::ConfigStoreController;
 use landscape_common::{
     config_service::iface::{IfaceCpuSoftBalance, IfaceZoneType, NetworkIfaceConfig, WifiMode},
+    database::store::ConfigStore,
     dev::iface::{AddController, BridgeCreate, ChangeZone},
 };
 use landscape_database::iface::repository::NetIfaceRepository;
 use landscape_database::provider::LandscapeDBServiceProvider;
-use landscape_database::repository::Repository;
 
 use super::iface_config::from_phy_dev;
 use crate::get_iface_by_name;
@@ -26,7 +26,7 @@ pub struct IfaceManagerService {
 impl IfaceManagerService {
     pub async fn new(store_service: LandscapeDBServiceProvider) -> Self {
         let store = store_service.iface_store();
-        crate::init_devs(store.list_all().await.unwrap()).await;
+        crate::init_devs(store.list().await.unwrap()).await;
         Self { store, store_service }
     }
 
@@ -227,7 +227,7 @@ impl IfaceManagerService {
 
     async fn set_iface_config(&self, config: NetworkIfaceConfig) {
         let store = self.store_service.iface_store();
-        store.set_or_update_model(config.name.clone(), config).await.unwrap();
+        store.upsert(config).await.unwrap();
         drop(store);
     }
 

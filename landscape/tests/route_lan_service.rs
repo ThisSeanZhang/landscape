@@ -3,7 +3,9 @@ use std::time::Duration;
 
 use landscape::lan_service::lan_route_service::RouteLanServiceManagerService;
 use landscape::sys_service::route::IpRouteService;
+use landscape_common::config_service::iface::{IfaceZoneType, NetworkIfaceConfig};
 use landscape_common::database::error::DbError;
+use landscape_common::database::store::ConfigStore;
 use landscape_common::event::hub::EventHub;
 use landscape_common::event::route::RouteEvent;
 use landscape_common::lan_service::lan_route::RouteLanServiceConfig;
@@ -25,6 +27,11 @@ fn route_lan_config(iface: &str, enable: bool) -> RouteLanServiceConfig {
 
 async fn route_lan_service() -> RouteLanServiceManagerService {
     let provider = LandscapeDBServiceProvider::mem_test_db().await;
+    provider
+        .iface_store()
+        .upsert(NetworkIfaceConfig::crate_bridge("br0".to_string(), Some(IfaceZoneType::Lan)))
+        .await
+        .unwrap();
     let (_route_tx, route_rx) = mpsc::channel::<RouteEvent>(8);
     let route_service = IpRouteService::new(
         route_rx,

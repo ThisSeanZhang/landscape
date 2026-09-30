@@ -40,3 +40,5 @@ crate::impl_flow_store!(
     DNSRedirectRuleConfigModel,
     DNSRedirectRuleConfigEntity
 );
+
+crate::impl_trivial_validator!(DNSRedirectRuleRepository, DNSRedirectRule);

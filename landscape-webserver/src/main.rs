@@ -61,13 +61,13 @@ use landscape_common::{
     concurrency::{runtime_thread_name_fn, spawn_task, task_label, thread_name},
     config::RuntimeConfig,
     database::error::DbError,
+    database::store::ConfigStore,
     event::hub::EventHub,
     wan_service::ipv6_pd::IAPrefixMap,
 };
 use landscape_common::{config::InitConfig, lan_service::lan_dhcpv4::config::DHCPv4ServiceConfig};
 use landscape_core::{lan_hostname::LanHostnameRegistry, time::SyncTimeService};
 use landscape_database::provider::LandscapeDBServiceProvider;
-use landscape_database::repository::Repository;
 use tokio::runtime::Builder as RuntimeBuilder;
 use tokio::sync::mpsc;
 use tower_http::{compression::CompressionLayer, services::ServeDir, trace::TraceLayer};
@@ -333,12 +333,9 @@ async fn run_system(
         db_store_provider.flow_rule_store(),
         ebpf_rt.clone().route_table(),
     );
-    let enrolled_devices =
-        db_store_provider.enrolled_device_store().list_all().await.map_err(|e| {
-            StartupError::Database(DbError::Internal(format!(
-                "failed to list enrolled devices: {e}"
-            )))
-        })?;
+    let enrolled_devices = db_store_provider.enrolled_device_store().list().await.map_err(|e| {
+        StartupError::Database(DbError::Internal(format!("failed to list enrolled devices: {e}")))
+    })?;
     let lan_hostname_registry = startup_phase!("lan_hostname.new", {
         let initial_devices: Vec<(String, std::net::Ipv4Addr)> = enrolled_devices
             .iter()
@@ -869,7 +866,7 @@ async fn do_auto_init(home_path: &PathBuf, config: &RuntimeConfig) -> Result<(),
     let db_store_provider = LandscapeDBServiceProvider::new(&config.store).await?;
     let store = db_store_provider.iface_store();
     for cfg in default_configs {
-        store.set_or_update_model(cfg.name.clone(), cfg).await.unwrap();
+        store.upsert(cfg).await.unwrap();
     }
 
     // 创建 lock 文件 避免重复进行初始化
@@ -877,25 +874,16 @@ async fn do_auto_init(home_path: &PathBuf, config: &RuntimeConfig) -> Result<(),
 
     // 初始化 br_lan 的服务
     let dhcp_store = db_store_provider.dhcp_v4_server_store();
-    dhcp_store
-        .set_or_update_model(
-            landscape_common::LANDSCAPE_DEFAULT_LAN_NAME.to_string(),
-            DHCPv4ServiceConfig::default(),
-        )
-        .await
-        .unwrap();
+    dhcp_store.upsert(DHCPv4ServiceConfig::default()).await.unwrap();
 
     let route_lan_store = db_store_provider.route_lan_service_store();
     route_lan_store
-        .set_or_update_model(
-            landscape_common::LANDSCAPE_DEFAULT_LAN_NAME.to_string(),
-            RouteLanServiceConfig {
-                iface_name: landscape_common::LANDSCAPE_DEFAULT_LAN_NAME.to_string(),
-                enable: true,
-                update_at: landscape_common::utils::time::get_f64_timestamp(),
-                static_routes: None,
-            },
-        )
+        .upsert(RouteLanServiceConfig {
+            iface_name: landscape_common::LANDSCAPE_DEFAULT_LAN_NAME.to_string(),
+            enable: true,
+            update_at: landscape_common::utils::time::get_f64_timestamp(),
+            static_routes: None,
+        })
         .await
         .unwrap();
 

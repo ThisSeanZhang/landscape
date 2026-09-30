@@ -163,3 +163,5 @@ pub trait ZoneAwareConfig {
     fn zone_requirement() -> ZoneRequirement;
     fn service_kind() -> ServiceKind;
 }
+
+crate::impl_trivial_validatable!(NetworkIfaceConfig);

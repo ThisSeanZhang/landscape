@@ -25,3 +25,5 @@ crate::impl_repository!(
     FirewallRuleConfig,
     DBId
 );
+
+crate::impl_trivial_validator!(FirewallRuleRepository, FirewallRuleConfig);

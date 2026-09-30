@@ -66,8 +66,8 @@ pub struct StaticNatMappingV6Config {
     pub update_at: f64,
 }
 
-impl StaticNatMappingV6Config {
-    pub fn validate(&self) -> Result<(), ServiceConfigError> {
+impl crate::database::validator::ValidatableConfig for StaticNatMappingV6Config {
+    fn validate(&self) -> Result<(), ServiceConfigError> {
         if self.enable {
             match self.lan_target.as_ref() {
                 None => {
@@ -174,6 +174,7 @@ pub struct RuntimeStaticNatMappingV6Config {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::database::validator::ValidatableConfig as _;
 
     #[test]
     fn legacy_unspecified_address_uses_local_port_validation() {

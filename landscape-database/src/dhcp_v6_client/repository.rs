@@ -24,3 +24,5 @@ crate::impl_repository!(
     IPV6PDServiceConfig,
     String
 );
+
+crate::impl_zone_validator!(DHCPv6ClientRepository, IPV6PDServiceConfig);

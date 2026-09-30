@@ -7,6 +7,7 @@ use landscape_common::config_service::static_nat::config::{
 };
 use landscape_common::config_service::static_nat::error::StaticNatError;
 use landscape_common::database::error::DbError;
+use landscape_common::database::store::ConfigStore;
 use landscape_common::lan_service::lan_ipv6::{
     LanIPv6ServiceConfigV2, LanPrefixGroupConfig, PrefixParentSource,
 };
@@ -21,7 +22,6 @@ use super::entity::{
 use crate::DBId;
 use crate::enrolled_device::repository::EnrolledDeviceRepository;
 use crate::lan_ipv6_v2::repository::LanIPv6V2ServiceRepository;
-use crate::repository::Repository;
 
 #[derive(Clone)]
 pub struct StaticNatMappingConfigRepository {
@@ -36,7 +36,7 @@ impl StaticNatMappingConfigRepository {
     pub async fn list_runtime_configs(
         &self,
     ) -> Result<Vec<RuntimeStaticNatMappingConfig>, DbError> {
-        let configs = self.list_all().await?;
+        let configs = self.list().await?;
         let devices = self.load_devices_for_configs(&configs).await?;
 
         let has_device_target = configs.iter().any(|config| {
@@ -44,7 +44,7 @@ impl StaticNatMappingConfigRepository {
         });
         let lan_ipv6_configs = if has_device_target {
             LanIPv6V2ServiceRepository::new(self.db.clone())
-                .list_all()
+                .list()
                 .await?
                 .into_iter()
                 .map(|config| (config.iface_name.clone(), config))
@@ -72,8 +72,8 @@ impl StaticNatMappingConfigRepository {
         }
 
         let devices = EnrolledDeviceRepository::new(self.db.clone())
-            .find_by_ids(device_ids.into_iter().collect())
-            .await;
+            .find_ids(device_ids.into_iter().collect())
+            .await?;
         Ok(devices.into_iter().map(|device| (device.id, device)).collect())
     }
 
@@ -185,3 +185,5 @@ crate::impl_repository!(
     StaticNatMappingConfig,
     DBId
 );
+
+crate::impl_trivial_validator!(StaticNatMappingConfigRepository, StaticNatMappingConfig);

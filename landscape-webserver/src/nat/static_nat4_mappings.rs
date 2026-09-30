@@ -66,9 +66,6 @@ async fn add_static_nat_mapping_v4(
     State(state): State<LandscapeApp>,
     JsonBody(config): JsonBody<StaticNatMappingV4Config>,
 ) -> LandscapeApiResult<StaticNatMappingV4Config> {
-    config.validate()?;
-    state.static_nat4_mapping_service.validate_runtime_target(&config).await?;
-    state.static_nat4_mapping_service.validate_no_dynamic_port_conflict(&config).await?;
     let result = state.static_nat4_mapping_service.checked_set(config).await?;
     LandscapeApiResp::success(result)
 }
@@ -84,11 +81,6 @@ async fn add_many_static_nat_mappings_v4(
     State(state): State<LandscapeApp>,
     JsonBody(configs): JsonBody<Vec<StaticNatMappingV4Config>>,
 ) -> LandscapeApiResult<()> {
-    for m in &configs {
-        m.validate()?;
-        state.static_nat4_mapping_service.validate_runtime_target(m).await?;
-        state.static_nat4_mapping_service.validate_no_dynamic_port_conflict(m).await?;
-    }
     state.static_nat4_mapping_service.checked_set_list(configs).await?;
     LandscapeApiResp::success(())
 }

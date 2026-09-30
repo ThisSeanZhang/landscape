@@ -133,10 +133,6 @@ async fn handle_service_config(
     State(state): State<LandscapeApp>,
     JsonBody(config): JsonBody<DHCPv4ServiceConfig>,
 ) -> LandscapeApiResult<()> {
-    state.validate_zone(&config).await?;
-    config.config.validate()?;
-    state.dhcp_v4_server_service.check_ip_range_conflict(&config).await?;
-
     state.dhcp_v4_server_service.handle_service_config(config).await?;
     LandscapeApiResp::success(())
 }

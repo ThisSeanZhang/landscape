@@ -10,6 +10,7 @@ use crate::{
             config4::{StaticNatMappingV4Config, StaticNatV4Target},
         },
     },
+    database::validator::ValidatableConfig,
     lan_service::{
         lan_dhcpv4::config::{DHCPv4ServerConfig, DHCPv4ServiceConfig},
         lan_route::RouteLanServiceConfig,

@@ -6,6 +6,7 @@ use landscape_common::config_service::static_nat::config6::{
 };
 use landscape_common::config_service::static_nat::error::StaticNatError;
 use landscape_common::database::error::DbError;
+use landscape_common::database::store::ConfigStore;
 use landscape_common::lan_service::lan_ipv6::{
     LanIPv6ServiceConfigV2, LanPrefixGroupConfig, PrefixParentSource,
 };
@@ -21,7 +22,6 @@ use super::entity::{
 use crate::DBId;
 use crate::enrolled_device::repository::EnrolledDeviceRepository;
 use crate::lan_ipv6_v2::repository::LanIPv6V2ServiceRepository;
-use crate::repository::Repository;
 
 #[derive(Clone)]
 pub struct StaticNatMappingV6Repository {
@@ -38,7 +38,7 @@ impl StaticNatMappingV6Repository {
         wan_iid: u64,
         dynamic_device_ipv6s: &HashMap<DBId, HashSet<std::net::Ipv6Addr>>,
     ) -> Result<Vec<RuntimeStaticNatMappingV6Config>, DbError> {
-        let configs: Vec<StaticNatMappingV6Config> = self.list_all().await?;
+        let configs: Vec<StaticNatMappingV6Config> = self.list().await?;
         let devices = self.load_devices_for_configs(&configs).await?;
 
         let has_device_target = configs.iter().any(|config| {
@@ -46,7 +46,7 @@ impl StaticNatMappingV6Repository {
         });
         let lan_ipv6_configs = if has_device_target {
             LanIPv6V2ServiceRepository::new(self.db.clone())
-                .list_all()
+                .list()
                 .await?
                 .into_iter()
                 .map(|config| (config.iface_name.clone(), config))
@@ -83,8 +83,8 @@ impl StaticNatMappingV6Repository {
         }
 
         let devices = EnrolledDeviceRepository::new(self.db.clone())
-            .find_by_ids(device_ids.into_iter().collect())
-            .await;
+            .find_ids(device_ids.into_iter().collect())
+            .await?;
         Ok(devices.into_iter().map(|device| (device.id, device)).collect())
     }
 
@@ -465,5 +465,26 @@ mod tests {
             },
             update_at: 0.0,
         }
+    }
+}
+
+#[async_trait::async_trait]
+impl landscape_common::database::validator::StoreValidator<StaticNatMappingV6Config>
+    for StaticNatMappingV6Repository
+{
+    async fn check_zone(
+        &self,
+        _config: &StaticNatMappingV6Config,
+    ) -> Result<(), landscape_common::service::ServiceConfigError> {
+        Ok(())
+    }
+
+    async fn validate_cross(
+        &self,
+        config: &StaticNatMappingV6Config,
+    ) -> Result<(), landscape_common::service::ServiceConfigError> {
+        self.validate_runtime_target_v6(config).await.map_err(|e| {
+            landscape_common::service::ServiceConfigError::InvalidConfig { reason: e.to_string() }
+        })
     }
 }

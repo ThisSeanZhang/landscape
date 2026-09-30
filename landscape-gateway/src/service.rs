@@ -1,8 +1,8 @@
 use crate::{GatewayManager, GatewayTlsConfig};
+use landscape_common::database::store::ConfigStore;
 use landscape_common::service::ServiceStatus;
 use landscape_common::sys_service::gateway::settings::GatewayRuntimeConfig;
 use landscape_database::gateway::repository::GatewayHttpUpstreamRepository;
-use landscape_database::repository::Repository;
 use std::sync::Arc;
 
 #[derive(Clone)]
@@ -21,7 +21,7 @@ impl GatewayService {
         config: GatewayRuntimeConfig,
         tls_config: Option<GatewayTlsConfig>,
     ) -> Self {
-        let initial_rules = store.list_all().await.unwrap_or_default();
+        let initial_rules = store.list().await.unwrap_or_default();
         let manager = Arc::new(GatewayManager::new(initial_rules, config, tls_config));
 
         let service = Self::new(manager, store);
@@ -88,7 +88,7 @@ impl GatewayService {
     }
 
     pub async fn reload_rules(&self) {
-        let rules = self.store.list_all().await.unwrap_or_default();
+        let rules = self.store.list().await.unwrap_or_default();
         self.manager.reload_rules(rules);
     }
 }

@@ -24,3 +24,5 @@ crate::impl_repository!(
     FirewallServiceConfig,
     String
 );
+
+crate::impl_zone_validator!(FirewallServiceRepository, FirewallServiceConfig);

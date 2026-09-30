@@ -34,6 +34,21 @@ pub enum ServiceConfigError {
     #[error("Invalid service config: {reason}")]
     #[api_error(id = "service.invalid_config", status = 422)]
     InvalidConfig { reason: String },
+
+    /// Validation could not complete (e.g. a cross-domain read failed);
+    /// `reason` is logged server-side, never shown to the frontend.
+    #[error("Config validation failed with an internal error")]
+    #[api_error(id = "internal.error", status = 500)]
+    Internal { reason: String },
+}
+
+impl ServiceConfigError {
+    /// Log the internal reason server-side and return the redacted error.
+    pub fn internal(reason: impl std::fmt::Display) -> Self {
+        let reason = reason.to_string();
+        tracing::error!("validation internal error: {reason}");
+        Self::Internal { reason }
+    }
 }
 
 #[derive(Serialize, Debug, PartialEq, Clone, Default)]
@@ -91,30 +106,6 @@ impl ServiceStatus {
                 | ServiceStatus::Failed
         )
     }
-}
-
-/// 一次启动尝试的观测结果。
-///
-/// controller 层据此实现"验证后落库"(Running 才持久化)或"落库后验证"
-/// (非 Running 触发双回滚);Timeout 的策略语义(放行或中止)由调用方
-/// 按服务域决定,本类型不做判断。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum StartOutcome {
-    /// 启动成功,当前处于 Running
-    Running,
-    /// 启动失败(含启动过程panic/静默死亡,由死亡监视兜底)
-    Failed,
-    /// 启动尝试以 Stop 结束(未经历 Running,或启动过程中被请求停止)
-    Stopped,
-    /// 干净停止:starter 显式汇报 [`ServiceStatus::Disabled`](禁用配置),
-    /// 设计上就不运行。与 [`StartOutcome::Stopped`](真实经历过一次运行后停止)区分。
-    CleanStop,
-    /// 超时仍未离开 Staring/Stopping
-    Timeout,
-    /// 配置未投递(通道满被去重或服务任务已退出):不会有运行被触发。
-    /// 与 [`StartOutcome::Stopped`](真实经历过一次运行后停止)区分;
-    /// 回滚接线按"请求被拒绝"处理,不进入 DB 补偿范围。
-    NotDelivered,
 }
 
 /// 轮询等待的采样间隔:仅测试与低频观测使用,10ms 对测试延迟无感知
@@ -374,32 +365,11 @@ impl ServiceHandle {
     }
 
     /// 轮询等待状态满足谓词(测试辅助原语):谓词先查后睡,无丢失唤醒问题。
-    /// 生产代码应使用 `stop_token()` / `wait_start_outcome()` 的事件语义。
+    /// 生产代码应使用 `stop_token()` 的事件语义。
     pub async fn wait_for(&self, pred: impl Fn(&ServiceStatus) -> bool) {
         while !pred(&self.current()) {
             tokio::time::sleep(STATUS_POLL_INTERVAL).await;
         }
-    }
-
-    /// 观测一次启动尝试的结果:以首次到达的终态为准(Running 期间快速翻转到
-    /// Failed 的按 Failed 处理,对回滚语义是正确的);显式汇报的 `Disabled`
-    /// 观测为 [`StartOutcome::CleanStop`](禁用语义);Staring/Stopping 期间
-    /// 持续等待,超时返回 [`StartOutcome::Timeout`]。
-    pub async fn wait_start_outcome(&self, timeout: Duration) -> StartOutcome {
-        let observe = async {
-            loop {
-                match self.current() {
-                    ServiceStatus::Running => return StartOutcome::Running,
-                    ServiceStatus::Disabled => return StartOutcome::CleanStop,
-                    ServiceStatus::Stop => return StartOutcome::Stopped,
-                    ServiceStatus::Failed => return StartOutcome::Failed,
-                    // 启动进行中/正在收尾:等待其到达终态
-                    ServiceStatus::Staring | ServiceStatus::Stopping => {}
-                }
-                tokio::time::sleep(STATUS_POLL_INTERVAL).await;
-            }
-        };
-        tokio::time::timeout(timeout, observe).await.unwrap_or(StartOutcome::Timeout)
     }
 }
 
@@ -572,39 +542,6 @@ mod tests {
         });
         handle.wait_stop().await;
         assert_eq!(handle.current(), ServiceStatus::Stop);
-    }
-
-    #[tokio::test]
-    async fn wait_start_outcome_running() {
-        let handle = handle_at(ServiceStatus::Staring);
-        let inner = handle.clone();
-        tokio::spawn(async move {
-            tokio::time::sleep(Duration::from_millis(30)).await;
-            inner.just_change_status(ServiceStatus::Running);
-        });
-        assert_eq!(handle.wait_start_outcome(Duration::from_secs(5)).await, StartOutcome::Running);
-    }
-
-    #[tokio::test]
-    async fn wait_start_outcome_failed() {
-        let handle = handle_at(ServiceStatus::Staring);
-        let inner = handle.clone();
-        tokio::spawn(async move {
-            tokio::time::sleep(Duration::from_millis(30)).await;
-            inner.just_change_status(ServiceStatus::Failed);
-        });
-        assert_eq!(handle.wait_start_outcome(Duration::from_secs(5)).await, StartOutcome::Failed);
-    }
-
-    #[tokio::test]
-    async fn wait_start_outcome_timeout() {
-        let handle = handle_at(ServiceStatus::Staring);
-        assert_eq!(
-            handle.wait_start_outcome(Duration::from_millis(50)).await,
-            StartOutcome::Timeout
-        );
-        // 超时后状态不变,调用方保留决策权
-        assert_eq!(handle.current(), ServiceStatus::Staring);
     }
 
     #[tokio::test]

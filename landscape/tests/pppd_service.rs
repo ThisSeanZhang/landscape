@@ -3,7 +3,9 @@ use std::time::Duration;
 
 use landscape::sys_service::route::IpRouteService;
 use landscape::wan_service::pppd_service::PPPDServiceConfigManagerService;
+use landscape_common::config_service::iface::{IfaceZoneType, NetworkIfaceConfig};
 use landscape_common::database::error::DbError;
+use landscape_common::database::store::ConfigStore;
 use landscape_common::event::route::RouteEvent;
 use landscape_common::service::ServiceStatus;
 use landscape_common::service::controller::{ConfigStoreController, ConfigStoreServiceController};
@@ -29,8 +31,17 @@ fn pppd_config(iface: &str, enable: bool) -> PPPDServiceConfig {
     }
 }
 
+async fn seed_wan_iface(provider: &LandscapeDBServiceProvider, name: &str) {
+    provider
+        .iface_store()
+        .upsert(NetworkIfaceConfig::crate_bridge(name.to_string(), Some(IfaceZoneType::Wan)))
+        .await
+        .unwrap();
+}
+
 async fn pppd_manager() -> PPPDServiceConfigManagerService {
     let provider = LandscapeDBServiceProvider::mem_test_db().await;
+    seed_wan_iface(&provider, "wan9").await;
     let (_route_tx, route_rx) = mpsc::channel::<RouteEvent>(8);
     let route_service = IpRouteService::new(
         route_rx,
@@ -66,16 +77,17 @@ async fn handle_service_config_persists_disabled_service() {
 }
 
 #[tokio::test]
-async fn missing_attach_iface_fails_start_and_rejects_persist() {
+async fn failed_start_is_persisted_and_reported() {
     let service = pppd_manager().await;
 
     // enable: true with an attach iface that does not exist in the test
-    // namespace: the starter reports Failed, persist-after-verify rejects the
-    // write and converges (nothing was persisted, the leftover run is gone).
-    let result = service.handle_service_config(pppd_config("ppp0", true)).await;
+    // namespace: the write persists (latest intent) and the starter reports
+    // Failed.
+    let saved = service.handle_service_config(pppd_config("ppp0", true)).await.unwrap();
 
-    assert!(matches!(result, Err(DbError::ServiceStart(_))));
-    assert!(service.find_by_id("ppp0".to_string()).await.unwrap().is_none());
+    assert!(saved.update_at > 0.0);
+    assert!(service.find_by_id("ppp0".to_string()).await.unwrap().is_some());
+    assert_eq!(wait_for_status(&service, "ppp0").await, ServiceStatus::Failed);
 }
 
 #[tokio::test]

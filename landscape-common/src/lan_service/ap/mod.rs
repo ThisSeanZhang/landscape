@@ -35,8 +35,8 @@ impl LandscapeDBStore<String> for WifiServiceConfig {
     }
 }
 
-impl WifiServiceConfig {
-    pub fn validate(&self) -> Result<(), ServiceConfigError> {
+impl crate::database::validator::ValidatableConfig for WifiServiceConfig {
+    fn validate(&self) -> Result<(), ServiceConfigError> {
         if self.enable && self.config.trim().is_empty() {
             return Err(ServiceConfigError::InvalidConfig {
                 reason: "config must not be empty when enabled".to_string(),

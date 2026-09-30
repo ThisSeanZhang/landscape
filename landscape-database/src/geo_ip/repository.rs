@@ -38,3 +38,5 @@ crate::impl_repository!(
     GeoIpSourceConfig,
     DBId
 );
+
+crate::impl_trivial_validator!(GeoIpSourceConfigRepository, GeoIpSourceConfig);

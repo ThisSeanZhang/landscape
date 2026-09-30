@@ -97,3 +97,5 @@ pub struct ValidateIpPayload {
     pub iface_name: String,
     pub ipv4: String,
 }
+
+crate::impl_trivial_validatable!(EnrolledDevice);

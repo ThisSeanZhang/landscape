@@ -3,7 +3,9 @@ use std::time::Duration;
 
 use landscape::sys_service::route::IpRouteService;
 use landscape::wan_service::ipv6pd_service::DHCPv6ClientManagerService;
+use landscape_common::config_service::iface::{IfaceZoneType, NetworkIfaceConfig};
 use landscape_common::database::error::DbError;
+use landscape_common::database::store::ConfigStore;
 use landscape_common::event::hub::EventHub;
 use landscape_common::event::route::RouteEvent;
 use landscape_common::net::MacAddr;
@@ -30,6 +32,11 @@ fn pd_config(iface: &str) -> IPV6PDServiceConfig {
 
 async fn ipv6pd_service() -> DHCPv6ClientManagerService {
     let provider = LandscapeDBServiceProvider::mem_test_db().await;
+    provider
+        .iface_store()
+        .upsert(NetworkIfaceConfig::crate_bridge("wan0".to_string(), Some(IfaceZoneType::Wan)))
+        .await
+        .unwrap();
     let (_route_tx, route_rx) = mpsc::channel::<RouteEvent>(8);
     let route_service = IpRouteService::new(
         route_rx,

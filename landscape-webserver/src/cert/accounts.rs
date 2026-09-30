@@ -44,7 +44,6 @@ async fn create_cert_account(
     State(state): State<LandscapeApp>,
     JsonBody(account): JsonBody<CertAccountConfig>,
 ) -> LandscapeApiResult<CertAccountConfig> {
-    account.validate()?;
     if account.id != ConfigId::default() {
         state.cert_service.ensure_account_mutation_allowed(account.id).await?;
     }

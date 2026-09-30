@@ -66,3 +66,37 @@ crate::impl_repository!(
     DHCPv4ServiceConfig,
     String
 );
+
+#[async_trait::async_trait]
+impl landscape_common::database::validator::StoreValidator<DHCPv4ServiceConfig>
+    for DHCPv4ServerRepository
+{
+    async fn check_zone(
+        &self,
+        config: &DHCPv4ServiceConfig,
+    ) -> Result<(), landscape_common::service::ServiceConfigError> {
+        crate::validator::ZoneChecker::new(self.db.clone()).check(config).await
+    }
+
+    async fn validate_cross(
+        &self,
+        config: &DHCPv4ServiceConfig,
+    ) -> Result<(), landscape_common::service::ServiceConfigError> {
+        if let Some(conflict_iface) = self
+            .check_ip_range_conflict(
+                config.iface_name.clone(),
+                config.config.server_ip_addr,
+                config.config.network_mask,
+            )
+            .await
+            .map_err(landscape_common::service::ServiceConfigError::internal)?
+        {
+            return Err(landscape_common::service::ServiceConfigError::InvalidConfig {
+                reason: format!(
+                    "DHCP subnet on '{conflict_iface}' overlaps with this interface's subnet"
+                ),
+            });
+        }
+        Ok(())
+    }
+}

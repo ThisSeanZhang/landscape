@@ -30,3 +30,5 @@ crate::impl_repository!(
     DdnsJob,
     DBId
 );
+
+crate::impl_trivial_validator!(DdnsJobRepository, DdnsJob);

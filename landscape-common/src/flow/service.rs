@@ -24,3 +24,5 @@ impl LandscapeDBStore<String> for FlowWanServiceConfig {
         self.update_at = ts;
     }
 }
+
+crate::impl_trivial_validatable!(FlowWanServiceConfig);

@@ -25,3 +25,5 @@ crate::impl_repository!(
     FirewallBlacklistConfig,
     DBId
 );
+
+crate::impl_trivial_validator!(FirewallBlacklistRepository, FirewallBlacklistConfig);

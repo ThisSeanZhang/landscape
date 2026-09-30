@@ -107,3 +107,5 @@ impl IfaceIpModelConfig {
         }
     }
 }
+
+crate::impl_trivial_validatable!(IfaceIpServiceConfig);

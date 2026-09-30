@@ -191,3 +191,5 @@ pub fn insert_default_firewall_rule() -> Option<FirewallRuleConfig> {
         })
     }
 }
+
+crate::impl_trivial_validatable!(FirewallRuleConfig);

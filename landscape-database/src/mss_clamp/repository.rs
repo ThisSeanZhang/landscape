@@ -24,3 +24,5 @@ crate::impl_repository!(
     MSSClampServiceConfig,
     String
 );
+
+crate::impl_zone_validator!(MssClampServiceRepository, MSSClampServiceConfig);

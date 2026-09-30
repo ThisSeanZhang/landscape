@@ -44,3 +44,5 @@ impl ZoneAwareConfig for FirewallServiceConfig {
         ServiceKind::Firewall
     }
 }
+
+crate::impl_trivial_validatable!(FirewallServiceConfig);

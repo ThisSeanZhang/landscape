@@ -131,3 +131,5 @@ pub enum LandscapeDnsRecordType {
     AAAA,
     HTTPS,
 }
+
+crate::impl_trivial_validatable!(DNSRuleConfig);

@@ -6,6 +6,7 @@ use landscape_common::config_service::static_nat::config4::{
 };
 use landscape_common::config_service::static_nat::error::StaticNatError;
 use landscape_common::database::error::DbError;
+use landscape_common::database::store::ConfigStore;
 use migration::Expr;
 use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, Value};
 
@@ -16,7 +17,6 @@ use super::entity::{
 use crate::DBId;
 use crate::enrolled_device::repository::EnrolledDeviceRepository;
 use crate::nat::entity::{Column as NatCol, NatServiceConfigEntity};
-use crate::repository::Repository;
 
 #[derive(Clone)]
 pub struct StaticNatMappingV4Repository {
@@ -31,7 +31,7 @@ impl StaticNatMappingV4Repository {
     pub async fn list_runtime_configs_v4(
         &self,
     ) -> Result<Vec<RuntimeStaticNatMappingV4Config>, DbError> {
-        let configs: Vec<StaticNatMappingV4Config> = self.list_all().await?;
+        let configs: Vec<StaticNatMappingV4Config> = self.list().await?;
         let devices = self.load_devices_for_configs(&configs).await?;
 
         Ok(configs
@@ -53,8 +53,8 @@ impl StaticNatMappingV4Repository {
         }
 
         let devices = EnrolledDeviceRepository::new(self.db.clone())
-            .find_by_ids(device_ids.into_iter().collect())
-            .await;
+            .find_ids(device_ids.into_iter().collect())
+            .await?;
         Ok(devices.into_iter().map(|device| (device.id, device)).collect())
     }
 
@@ -311,5 +311,38 @@ mod tests {
         let repo = provider.static_nat_mapping_v4_store();
         let result = repo.has_dynamic_port_conflict(&config).await.unwrap();
         assert!(result, "port at range start should be detected");
+    }
+}
+
+#[async_trait::async_trait]
+impl landscape_common::database::validator::StoreValidator<StaticNatMappingV4Config>
+    for StaticNatMappingV4Repository
+{
+    async fn check_zone(
+        &self,
+        _config: &StaticNatMappingV4Config,
+    ) -> Result<(), landscape_common::service::ServiceConfigError> {
+        Ok(())
+    }
+
+    async fn validate_cross(
+        &self,
+        config: &StaticNatMappingV4Config,
+    ) -> Result<(), landscape_common::service::ServiceConfigError> {
+        self.validate_runtime_target_v4(config).await.map_err(|e| {
+            landscape_common::service::ServiceConfigError::InvalidConfig { reason: e.to_string() }
+        })?;
+        if let Some(nat_config) = crate::nat::repository::NatServiceRepository::new(self.db.clone())
+            .find_active_nat_config()
+            .await
+            .map_err(landscape_common::service::ServiceConfigError::internal)?
+        {
+            config.validate_no_dynamic_port_overlap(&nat_config.nat_config).map_err(|e| {
+                landscape_common::service::ServiceConfigError::InvalidConfig {
+                    reason: e.to_string(),
+                }
+            })?;
+        }
+        Ok(())
     }
 }

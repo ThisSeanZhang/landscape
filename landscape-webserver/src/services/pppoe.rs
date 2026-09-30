@@ -182,8 +182,6 @@ async fn handle_iface_pppd_config(
             ),
         })?;
     }
-    state.validate_zone(&config).await?;
-    config.pppd_config.validate()?;
     state.pppd_service.handle_service_config(config).await?;
     LandscapeApiResp::success(())
 }
@@ -215,8 +213,6 @@ async fn update_existing_iface_pppd_config(
     }
 
     validate_pppd_config(&state, &config).await?;
-    state.validate_zone(&config).await?;
-    config.pppd_config.validate()?;
     state.pppd_service.handle_service_config(config).await?;
     LandscapeApiResp::success(())
 }

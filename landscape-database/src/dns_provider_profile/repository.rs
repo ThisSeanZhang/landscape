@@ -33,3 +33,5 @@ crate::impl_repository!(
     DnsProviderProfile,
     DBId
 );
+
+crate::impl_trivial_validator!(DnsProviderProfileRepository, DnsProviderProfile);

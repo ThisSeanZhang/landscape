@@ -439,3 +439,10 @@ mod tests {
         assert!(err.contains("duplicate DDNS source"));
     }
 }
+
+impl crate::database::validator::ValidatableConfig for DdnsJob {
+    fn validate(&self) -> Result<(), crate::service::ServiceConfigError> {
+        DdnsJob::validate(self)
+            .map_err(|reason| crate::service::ServiceConfigError::InvalidConfig { reason })
+    }
+}

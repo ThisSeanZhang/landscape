@@ -101,3 +101,5 @@ pub struct IpMarkInfo {
     // pub override_dns: bool,
     pub priority: u16,
 }
+
+crate::impl_trivial_validatable!(WanIpRuleConfig);

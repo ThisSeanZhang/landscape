@@ -195,3 +195,5 @@ impl LandscapeDBStore<Uuid> for CertConfig {
         self.update_at = ts;
     }
 }
+
+crate::impl_trivial_validatable!(CertConfig);

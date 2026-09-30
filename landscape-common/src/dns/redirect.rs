@@ -196,3 +196,5 @@ impl Default for DNSRedirectRuntimeRule {
         }
     }
 }
+
+crate::impl_trivial_validatable!(DNSRedirectRule);

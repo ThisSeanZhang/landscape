@@ -260,3 +260,5 @@ impl<'de> Deserialize<'de> for HttpUpstreamRuleConfig {
         })
     }
 }
+
+crate::impl_trivial_validatable!(HttpUpstreamRuleConfig);

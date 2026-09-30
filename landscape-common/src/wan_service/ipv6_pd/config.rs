@@ -119,3 +119,9 @@ mod tests {
         }
     }
 }
+
+impl crate::database::validator::ValidatableConfig for IPV6PDServiceConfig {
+    fn validate(&self) -> Result<(), crate::service::ServiceConfigError> {
+        self.config.validate()
+    }
+}

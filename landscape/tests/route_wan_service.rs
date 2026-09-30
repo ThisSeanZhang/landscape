@@ -2,7 +2,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use landscape::wan_service::wan_route_service::RouteWanServiceManagerService;
+use landscape_common::config_service::iface::{IfaceZoneType, NetworkIfaceConfig};
 use landscape_common::database::error::DbError;
+use landscape_common::database::store::ConfigStore;
 use landscape_common::event::hub::EventHub;
 use landscape_common::service::ServiceStatus;
 use landscape_common::service::controller::{ConfigStoreController, ConfigStoreServiceController};
@@ -20,6 +22,11 @@ fn route_wan_config(iface: &str, enable: bool) -> RouteWanServiceConfig {
 
 async fn route_wan_service() -> RouteWanServiceManagerService {
     let provider = LandscapeDBServiceProvider::mem_test_db().await;
+    provider
+        .iface_store()
+        .upsert(NetworkIfaceConfig::crate_bridge("wan0".to_string(), Some(IfaceZoneType::Wan)))
+        .await
+        .unwrap();
     let hub = EventHub::new();
     let event_handle = hub.spawn();
 

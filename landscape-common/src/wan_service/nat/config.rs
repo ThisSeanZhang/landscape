@@ -93,3 +93,11 @@ impl Default for NatConfig {
         }
     }
 }
+
+impl crate::database::validator::ValidatableConfig for NatServiceConfig {
+    fn validate(&self) -> Result<(), crate::service::ServiceConfigError> {
+        self.nat_config.validate().map_err(|e| crate::service::ServiceConfigError::InvalidConfig {
+            reason: e.to_string(),
+        })
+    }
+}

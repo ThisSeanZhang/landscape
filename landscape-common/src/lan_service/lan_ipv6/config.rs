@@ -148,3 +148,5 @@ impl ZoneAwareConfig for LanIPv6ServiceConfigV2 {
         ServiceKind::LanIpv6
     }
 }
+
+crate::impl_trivial_validatable!(LanIPv6ServiceConfigV2);

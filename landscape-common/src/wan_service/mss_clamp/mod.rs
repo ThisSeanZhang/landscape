@@ -51,8 +51,8 @@ impl ZoneAwareConfig for MSSClampServiceConfig {
     }
 }
 
-impl MSSClampServiceConfig {
-    pub fn validate(&self) -> Result<(), ServiceConfigError> {
+impl crate::database::validator::ValidatableConfig for MSSClampServiceConfig {
+    fn validate(&self) -> Result<(), ServiceConfigError> {
         if self.clamp_size < 536 || self.clamp_size > 1500 {
             return Err(ServiceConfigError::InvalidConfig {
                 reason: format!("clamp_size ({}) must be between 536 and 1500", self.clamp_size),

@@ -47,10 +47,33 @@ impl LandscapeDBStore<Uuid> for FlowConfig {
     }
 }
 
-impl FlowConfig {
-    pub fn validate(&self) -> Result<(), ServiceConfigError> {
+/// Maximum number of targets a flow rule may reference.
+pub const MAX_FLOW_TARGETS: usize = 16;
+
+impl crate::database::validator::ValidatableConfig for FlowConfig {
+    fn validate(&self) -> Result<(), ServiceConfigError> {
         for rule in &self.flow_match_rules {
             rule.validate()?;
+        }
+
+        if !self.flow_targets.is_empty() && self.flow_targets.iter().all(|t| t.weight == 0) {
+            return Err(ServiceConfigError::InvalidConfig {
+                reason: "flow targets must not all have zero weight".to_string(),
+            });
+        }
+        if self.flow_targets.len() > MAX_FLOW_TARGETS {
+            return Err(ServiceConfigError::InvalidConfig {
+                reason: format!("too many flow targets (max {MAX_FLOW_TARGETS})"),
+            });
+        }
+
+        let mut seen = std::collections::HashSet::new();
+        for rule in &self.flow_match_rules {
+            if !seen.insert(&rule.mode) {
+                return Err(ServiceConfigError::InvalidConfig {
+                    reason: format!("duplicate entry rule mode '{}'", rule.mode),
+                });
+            }
         }
 
         Ok(())

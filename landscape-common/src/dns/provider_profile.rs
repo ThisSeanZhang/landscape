@@ -105,3 +105,10 @@ impl LandscapeDBStore<Uuid> for DnsProviderProfile {
         self.update_at = ts;
     }
 }
+
+impl crate::database::validator::ValidatableConfig for DnsProviderProfile {
+    fn validate(&self) -> Result<(), crate::service::ServiceConfigError> {
+        DnsProviderProfile::validate(self)
+            .map_err(|reason| crate::service::ServiceConfigError::InvalidConfig { reason })
+    }
+}

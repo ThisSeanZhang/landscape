@@ -364,3 +364,7 @@ pub struct QueryGeoIpConfig {
 pub struct QueryGeoIpAddress {
     pub ip: String,
 }
+
+crate::impl_trivial_validatable!(GeoIpSourceConfig);
+
+crate::impl_trivial_validatable!(GeoSiteSourceConfig);

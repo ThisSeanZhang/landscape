@@ -25,3 +25,5 @@ crate::impl_repository!(
     DnsUpstreamConfig,
     DBId
 );
+
+crate::impl_trivial_validator!(DnsUpstreamRepository, DnsUpstreamConfig);

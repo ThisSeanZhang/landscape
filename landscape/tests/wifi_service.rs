@@ -1,7 +1,9 @@
 use std::time::Duration;
 
 use landscape::wifi::WifiServiceManagerService;
+use landscape_common::config_service::iface::{IfaceZoneType, NetworkIfaceConfig};
 use landscape_common::database::error::DbError;
+use landscape_common::database::store::ConfigStore;
 use landscape_common::lan_service::ap::WifiServiceConfig;
 use landscape_common::service::ServiceStatus;
 use landscape_common::service::controller::{ConfigStoreController, ConfigStoreServiceController};
@@ -18,6 +20,11 @@ fn wifi_config(iface: &str, enable: bool) -> WifiServiceConfig {
 
 async fn wifi_service() -> WifiServiceManagerService {
     let provider = LandscapeDBServiceProvider::mem_test_db().await;
+    provider
+        .iface_store()
+        .upsert(NetworkIfaceConfig::crate_bridge("wlan0".to_string(), Some(IfaceZoneType::Lan)))
+        .await
+        .unwrap();
     WifiServiceManagerService::new(provider).await.unwrap()
 }
 

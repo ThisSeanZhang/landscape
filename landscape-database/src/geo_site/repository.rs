@@ -36,3 +36,5 @@ crate::impl_repository!(
     GeoSiteSourceConfig,
     DBId
 );
+
+crate::impl_trivial_validator!(GeoSiteConfigRepository, GeoSiteSourceConfig);

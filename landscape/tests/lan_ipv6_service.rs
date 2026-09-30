@@ -3,7 +3,9 @@ use std::time::Duration;
 
 use landscape::lan_service::lan_ipv6_service::LanIPv6ManagerService;
 use landscape::sys_service::route::IpRouteService;
+use landscape_common::config_service::iface::{IfaceZoneType, NetworkIfaceConfig};
 use landscape_common::database::error::DbError;
+use landscape_common::database::store::ConfigStore;
 use landscape_common::event::hub::EventHub;
 use landscape_common::event::route::RouteEvent;
 use landscape_common::lan_service::lan_ipv6::LanIPv6ServiceConfigV2;
@@ -30,6 +32,11 @@ fn lan_ipv6_config(iface: &str, enable: bool) -> LanIPv6ServiceConfigV2 {
 
 async fn lan_ipv6_service() -> LanIPv6ManagerService {
     let provider = LandscapeDBServiceProvider::mem_test_db().await;
+    provider
+        .iface_store()
+        .upsert(NetworkIfaceConfig::crate_bridge("lan0".to_string(), Some(IfaceZoneType::Lan)))
+        .await
+        .unwrap();
     let hub = EventHub::new();
     let ipv6_assign_sender = hub.ipv6_sender();
     let event_handle = hub.spawn();
@@ -78,15 +85,16 @@ async fn handle_service_config_persists_and_tracks_service() {
 }
 
 #[tokio::test]
-async fn missing_iface_fails_start_and_rejects_persist() {
+async fn failed_start_is_persisted_and_reported() {
     let service = lan_ipv6_service().await;
 
     // enable: true with an iface that does not exist in the test namespace:
-    // the starter reports Failed, persist-after-verify rejects the write.
-    let result = service.save_config(lan_ipv6_config("lan0", true)).await;
+    // the write persists (latest intent) and the starter reports Failed.
+    let saved = service.save_config(lan_ipv6_config("lan0", true)).await.unwrap();
 
-    assert!(result.is_err());
-    assert!(service.find_by_id("lan0".to_string()).await.unwrap().is_none());
+    assert!(saved.update_at > 0.0);
+    assert!(service.find_by_id("lan0".to_string()).await.unwrap().is_some());
+    assert_eq!(wait_for_status(&service, "lan0").await, ServiceStatus::Failed);
 }
 
 #[tokio::test]
