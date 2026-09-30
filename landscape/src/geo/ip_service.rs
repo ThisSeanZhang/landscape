@@ -519,12 +519,7 @@ impl ConfigStoreController for GeoIpService {
 #[cfg(test)]
 mod tests {
 
-    use landscape_common::{
-        LANDSCAPE_GEO_CACHE_TMP_DIR,
-        config_service::geo::{GeoFileCacheKey, GeoIpConfig},
-        geo_cache::file_store::GeoCacheStore,
-    };
-    use std::{net::IpAddr, path::PathBuf, str::FromStr};
+    use std::{net::IpAddr, str::FromStr};
 
     use super::cidr_contains;
 
@@ -535,17 +530,5 @@ mod tests {
         assert!(!cidr_contains(ip("10.0.0.0"), 8, ip("11.1.2.3")));
         assert!(cidr_contains(ip("2001:db8::"), 32, ip("2001:db8::1")));
         assert!(!cidr_contains(ip("2001:db8::"), 32, ip("2001:db9::1")));
-    }
-
-    // cargo test --package landscape --lib -- config_service::geo_ip_service::tests --show-output
-    #[test]
-    fn load_test() {
-        let file_cache: GeoCacheStore<GeoFileCacheKey, GeoIpConfig> = GeoCacheStore::new(
-            PathBuf::from("/root/.landscape-router").join(LANDSCAPE_GEO_CACHE_TMP_DIR),
-            "ip".to_string(),
-        );
-
-        let keys = file_cache.keys();
-        println!("keys: {:?}", keys.len())
     }
 }

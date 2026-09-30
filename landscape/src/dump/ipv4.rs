@@ -262,12 +262,3 @@ fn checksum(mut data: &[u8]) -> u16 {
     // One's complement
     !(sum as u16)
 }
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn test1() {
-        let a = crate::dump::ipv4::split_u8_by_index(16, 2);
-        println!("{a:?}")
-    }
-}

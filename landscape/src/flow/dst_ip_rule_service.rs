@@ -131,34 +131,3 @@ async fn update_flow_dst_ip_map(
     let result = geo_ip_service.convert_config_to_runtime_rule(rules).await;
     dataplane.set_dst_ip_marks(flow_id, result);
 }
-
-#[cfg(test)]
-mod tests {
-
-    use std::path::PathBuf;
-
-    use landscape_common::{
-        LANDSCAPE_GEO_CACHE_TMP_DIR,
-        config_service::geo::{GeoFileCacheKey, GeoIpConfig},
-        geo_cache::file_store::GeoCacheStore,
-    };
-
-    #[test]
-    pub fn load_ip_test() {
-        let mut ip_store: GeoCacheStore<GeoFileCacheKey, GeoIpConfig> = GeoCacheStore::new(
-            PathBuf::from("/root/.landscape-router").join(LANDSCAPE_GEO_CACHE_TMP_DIR),
-            "ip".to_string(),
-        );
-
-        let all = ip_store.list();
-
-        for config in all {
-            for c in config.values {
-                if c.ip.is_ipv6() {
-                    println!("key: {}, name: {}", config.key, config.name);
-                    break;
-                }
-            }
-        }
-    }
-}
