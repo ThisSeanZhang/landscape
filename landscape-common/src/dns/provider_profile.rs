@@ -1,44 +1,12 @@
-use landscape_macro::LdApiError;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::cert::order::DnsProviderConfig;
-use crate::database::error::DbError;
 use crate::database::repository::LandscapeDBStore;
 use crate::utils::id::gen_database_uuid;
 use crate::utils::time::get_f64_timestamp;
 
-#[derive(thiserror::Error, Debug, LdApiError)]
-#[api_error(crate_path = "crate")]
-pub enum DnsProviderProfileError {
-    #[error("Invalid DNS provider profile: {0}")]
-    #[api_error(id = "dns_provider_profile.invalid", status = 422)]
-    Invalid(String),
-
-    #[error("DNS provider profile name '{0}' already exists")]
-    #[api_error(id = "dns_provider_profile.name_conflict", status = 409)]
-    NameConflict(String),
-
-    #[error("Manual DNS provider cannot be used as a reusable DNS provider profile")]
-    #[api_error(id = "dns_provider_profile.manual_not_allowed", status = 422)]
-    ManualNotAllowed,
-
-    #[error("DNS provider profile is still used by DDNS jobs: {0}")]
-    #[api_error(id = "dns_provider_profile.in_use_by_ddns", status = 409)]
-    InUseByDdns(String),
-
-    #[error("DNS provider profile is still used by certificates: {0}")]
-    #[api_error(id = "dns_provider_profile.in_use_by_certs", status = 409)]
-    InUseByCerts(String),
-
-    #[error("Provider credential validation failed: {0}")]
-    #[api_error(id = "dns_provider_profile.credential_error", status = 422)]
-    CredentialError(String),
-
-    #[error(transparent)]
-    #[api_error(transparent)]
-    Internal(#[from] DbError),
-}
+pub use super::error::DnsProviderProfileError;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]

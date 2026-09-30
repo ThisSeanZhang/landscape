@@ -1,7 +1,7 @@
 pub mod api;
 pub mod cli;
+pub mod error;
 pub mod init;
-pub mod init_error;
 pub mod loader;
 pub mod runtime;
 pub mod settings;
@@ -14,8 +14,8 @@ pub use api::{
     UpdateMetricConfigRequest, UpdateTimeConfigRequest, UpdateUIConfigRequest,
 };
 pub use cli::{ConfigCliArgs, ConfigCliError, ConfigOutput};
+pub use error::InitConfigError;
 pub use init::InitConfig;
-pub use init_error::InitConfigError;
 pub use runtime::{
     AuthRuntimeConfig, DnsRuntimeConfig, LogRuntimeConfig, MetricRuntimeConfig, RuntimeConfig,
     StoreRuntimeConfig, TimeRuntimeConfig, WebRuntimeConfig,

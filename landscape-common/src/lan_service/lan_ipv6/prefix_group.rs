@@ -1,81 +1,13 @@
 use std::collections::{HashMap, HashSet};
 use std::net::Ipv6Addr;
 
-use serde::{Deserialize, Serialize};
-
 use super::config::{
-    IPv6ServiceMode, LanIPv6ConfigV2, LanIPv6ServiceConfigV2, PrefixGroupServiceKind,
+    IPv6ServiceMode, LanIPv6ConfigV2, LanIPv6ServiceConfigV2, LanPrefixGroupConfig,
+    PrefixGroupServiceKind, PrefixParentSource,
 };
 use super::error::{LanIPv6Error, PrefixSlotOverlapDetails, WanReservedPrefixConflictDetails};
 use crate::service::ServiceConfigError;
 use crate::wan_service::ipv6_pd::LDIAPrefix;
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
-#[serde(tag = "t", rename_all = "snake_case")]
-pub enum PrefixParentSource {
-    Static {
-        #[cfg_attr(feature = "openapi", schema(value_type = String))]
-        base_prefix: Ipv6Addr,
-        parent_prefix_len: u8,
-    },
-    Pd {
-        depend_iface: String,
-        #[serde(alias = "planned_parent_prefix_len")]
-        expected_pd_len_snapshot: u8,
-    },
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
-pub struct RaPrefixConfig {
-    pub pool_index: u32,
-    // Deprecated: kept only for backward-compatible deserialization.
-    // RA lifetimes are now derived globally from lifetime.
-    // Remove both fields and their default helpers together. Configs saved without them
-    // can roll back to this version through the 300/600 serde defaults below.
-    #[serde(default = "default_ra_preferred_lifetime")]
-    #[cfg_attr(feature = "openapi", schema(required = false))]
-    pub preferred_lifetime: u32,
-    #[serde(default = "default_ra_valid_lifetime")]
-    #[cfg_attr(feature = "openapi", schema(required = false))]
-    pub valid_lifetime: u32,
-}
-
-fn default_ra_preferred_lifetime() -> u32 {
-    300
-}
-
-fn default_ra_valid_lifetime() -> u32 {
-    600
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
-pub struct NaPrefixConfig {
-    pub pool_index: u32,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
-pub struct PdPrefixRangeConfig {
-    pub pool_len: u8,
-    pub start_index: u32,
-    pub end_index: u32,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
-pub struct LanPrefixGroupConfig {
-    pub group_id: String,
-    pub parent: PrefixParentSource,
-    #[serde(default)]
-    pub ra: Option<RaPrefixConfig>,
-    #[serde(default)]
-    pub na: Option<NaPrefixConfig>,
-    #[serde(default)]
-    pub pd: Option<PdPrefixRangeConfig>,
-}
 
 #[derive(Debug, Clone)]
 pub struct PdPrefixContext {
@@ -815,7 +747,8 @@ pub fn validate_global_prefix_conflicts(
 #[cfg(test)]
 mod tests {
     use super::super::config::{
-        LanIPv6ConfigV2, LanIPv6ServiceConfigV2, RouterFlags, ra_flag_default,
+        LanIPv6ConfigV2, LanIPv6ServiceConfigV2, LanPrefixGroupConfig, NaPrefixConfig,
+        PdPrefixRangeConfig, PrefixParentSource, RaPrefixConfig, RouterFlags, ra_flag_default,
     };
     use super::super::dhcpv6_config::DHCPv6ServerConfig;
     use super::*;

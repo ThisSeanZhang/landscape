@@ -1,7 +1,8 @@
 use hickory_proto::op::ResponseCode;
 use landscape_macro::LdApiError;
 
-use crate::config::FlowId;
+use crate::config::{ConfigId, FlowId};
+use crate::database::error::DbError;
 
 #[derive(thiserror::Error, Debug, LdApiError)]
 #[api_error(crate_path = "crate")]
@@ -48,3 +49,68 @@ pub enum DnsServiceError {
 }
 
 pub type DnsResult<T> = Result<T, DnsServiceError>;
+
+#[derive(thiserror::Error, Debug, LdApiError)]
+#[api_error(crate_path = "crate")]
+pub enum DnsProviderProfileError {
+    #[error("Invalid DNS provider profile: {0}")]
+    #[api_error(id = "dns_provider_profile.invalid", status = 422)]
+    Invalid(String),
+
+    #[error("DNS provider profile name '{0}' already exists")]
+    #[api_error(id = "dns_provider_profile.name_conflict", status = 409)]
+    NameConflict(String),
+
+    #[error("Manual DNS provider cannot be used as a reusable DNS provider profile")]
+    #[api_error(id = "dns_provider_profile.manual_not_allowed", status = 422)]
+    ManualNotAllowed,
+
+    #[error("DNS provider profile is still used by DDNS jobs: {0}")]
+    #[api_error(id = "dns_provider_profile.in_use_by_ddns", status = 409)]
+    InUseByDdns(String),
+
+    #[error("DNS provider profile is still used by certificates: {0}")]
+    #[api_error(id = "dns_provider_profile.in_use_by_certs", status = 409)]
+    InUseByCerts(String),
+
+    #[error("Provider credential validation failed: {0}")]
+    #[api_error(id = "dns_provider_profile.credential_error", status = 422)]
+    CredentialError(String),
+
+    #[error(transparent)]
+    #[api_error(transparent)]
+    Internal(#[from] DbError),
+}
+
+#[derive(thiserror::Error, Debug, LdApiError)]
+#[api_error(crate_path = "crate")]
+pub enum DnsRedirectError {
+    #[error("DNS redirect rule '{0}' not found")]
+    #[api_error(id = "dns_redirect.not_found", status = 404)]
+    NotFound(ConfigId),
+}
+
+#[derive(thiserror::Error, Debug, LdApiError)]
+#[api_error(crate_path = "crate")]
+pub enum DnsRuleError {
+    #[error("DNS rule '{0}' not found")]
+    #[api_error(id = "dns_rule.not_found", status = 404)]
+    NotFound(ConfigId),
+    #[error(
+        "DNS rule '{0}' cannot be moved to another flow; delete it and create a new rule in the target flow instead"
+    )]
+    #[api_error(id = "dns_rule.cannot_change_flow", status = 400)]
+    CannotChangeFlow(ConfigId),
+
+    #[error(transparent)]
+    #[api_error(transparent)]
+    Internal(#[from] DbError),
+}
+
+#[derive(thiserror::Error, Debug, LdApiError)]
+#[api_error(crate_path = "crate")]
+pub enum DnsUpstreamError {
+    #[error("DNS upstream config '{0}' not found")]
+    #[api_error(id = "dns_upstream.not_found", status = 404)]
+    NotFound(ConfigId),
+}

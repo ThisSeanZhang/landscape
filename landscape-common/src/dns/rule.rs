@@ -1,9 +1,6 @@
-use landscape_macro::LdApiError;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::config::ConfigId;
-use crate::database::error::DbError;
 use crate::database::repository::LandscapeDBStore;
 use crate::dns::config::DnsUpstreamConfig;
 use crate::flow::mark::FlowMark;
@@ -12,22 +9,7 @@ use crate::utils::time::get_f64_timestamp;
 
 use crate::config_service::geo::GeoConfigKey;
 
-#[derive(thiserror::Error, Debug, LdApiError)]
-#[api_error(crate_path = "crate")]
-pub enum DnsRuleError {
-    #[error("DNS rule '{0}' not found")]
-    #[api_error(id = "dns_rule.not_found", status = 404)]
-    NotFound(ConfigId),
-    #[error(
-        "DNS rule '{0}' cannot be moved to another flow; delete it and create a new rule in the target flow instead"
-    )]
-    #[api_error(id = "dns_rule.cannot_change_flow", status = 400)]
-    CannotChangeFlow(ConfigId),
-
-    #[error(transparent)]
-    #[api_error(transparent)]
-    Internal(#[from] DbError),
-}
+pub use super::error::DnsRuleError;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]

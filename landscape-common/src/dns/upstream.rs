@@ -1,15 +1,6 @@
-use landscape_macro::LdApiError;
 use serde::{Deserialize, Serialize};
 
-use crate::config::ConfigId;
-
-#[derive(thiserror::Error, Debug, LdApiError)]
-#[api_error(crate_path = "crate")]
-pub enum DnsUpstreamError {
-    #[error("DNS upstream config '{0}' not found")]
-    #[api_error(id = "dns_upstream.not_found", status = 404)]
-    NotFound(ConfigId),
-}
+pub use super::error::DnsUpstreamError;
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Eq)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]

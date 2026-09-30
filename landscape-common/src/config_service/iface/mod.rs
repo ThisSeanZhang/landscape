@@ -1,118 +1,8 @@
-use crate::LANDSCAPE_DEFAULT_LAN_NAME;
-use crate::database::repository::LandscapeDBStore;
-use crate::utils::time::get_f64_timestamp;
-use sea_orm::{DeriveActiveEnum, EnumIter, prelude::StringLen};
-use serde::{Deserialize, Serialize};
+pub mod config;
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
-#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
-pub struct NetworkIfaceConfig {
-    pub name: String,
-    #[serde(default)]
-    #[cfg_attr(feature = "openapi", schema(required = true))]
-    pub create_dev_type: CreateDevType,
-    pub controller_name: Option<String>,
-    #[serde(default)]
-    #[cfg_attr(feature = "openapi", schema(required = true))]
-    pub zone_type: IfaceZoneType,
-    #[serde(default = "yes")]
-    #[cfg_attr(feature = "openapi", schema(required = true))]
-    pub enable_in_boot: bool,
-    #[serde(default)]
-    #[cfg_attr(feature = "openapi", schema(required = true))]
-    pub wifi_mode: WifiMode,
-    #[serde(default)]
-    #[cfg_attr(feature = "openapi", schema(required = true, nullable = true))]
-    pub xps_rps: Option<IfaceCpuSoftBalance>,
-    #[serde(default = "get_f64_timestamp")]
-    #[cfg_attr(feature = "openapi", schema(required = false))]
-    pub update_at: f64,
-}
+use serde::Serialize;
 
-impl LandscapeDBStore<String> for NetworkIfaceConfig {
-    fn get_id(&self) -> String {
-        self.name.clone()
-    }
-    fn get_update_at(&self) -> f64 {
-        self.update_at
-    }
-    fn set_update_at(&mut self, ts: f64) {
-        self.update_at = ts;
-    }
-}
-
-fn yes() -> bool {
-    true
-}
-
-impl NetworkIfaceConfig {
-    pub fn get_iface_name(&self) -> String {
-        self.name.clone()
-    }
-
-    pub fn crate_default_br_lan() -> NetworkIfaceConfig {
-        NetworkIfaceConfig::crate_bridge(
-            LANDSCAPE_DEFAULT_LAN_NAME.into(),
-            Some(IfaceZoneType::Lan),
-        )
-    }
-
-    pub fn crate_bridge(name: String, zone_type: Option<IfaceZoneType>) -> NetworkIfaceConfig {
-        NetworkIfaceConfig {
-            name,
-            create_dev_type: CreateDevType::Bridge,
-            controller_name: None,
-            enable_in_boot: true,
-            zone_type: zone_type.unwrap_or_default(),
-            wifi_mode: WifiMode::default(),
-            xps_rps: None,
-            update_at: get_f64_timestamp(),
-        }
-    }
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash, Default)]
-#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
-#[serde(rename_all = "snake_case")]
-#[derive(EnumIter, DeriveActiveEnum)]
-#[sea_orm(rs_type = "String", db_type = "String(StringLen::N(100))", rename_all = "snake_case")]
-pub enum CreateDevType {
-    #[default]
-    NoNeedToCreate,
-    Bridge,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash, Default)]
-#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
-#[serde(rename_all = "snake_case")]
-#[derive(EnumIter, DeriveActiveEnum)]
-#[sea_orm(rs_type = "String", db_type = "String(StringLen::N(100))", rename_all = "snake_case")]
-pub enum WifiMode {
-    #[default]
-    Undefined,
-    Client,
-    #[serde(rename = "ap")]
-    AP,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash, Default)]
-#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
-#[serde(rename_all = "snake_case")]
-#[derive(EnumIter, DeriveActiveEnum)]
-#[sea_orm(rs_type = "String", db_type = "String(StringLen::N(100))", rename_all = "snake_case")]
-pub enum IfaceZoneType {
-    #[default]
-    Undefined,
-    Wan,
-    Lan,
-}
-
-#[derive(Debug, Serialize, Deserialize, Default, Clone)]
-#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
-pub struct IfaceCpuSoftBalance {
-    pub xps: String,
-    pub rps: String,
-}
+pub use config::*;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ZoneRequirement {
@@ -163,5 +53,3 @@ pub trait ZoneAwareConfig {
     fn zone_requirement() -> ZoneRequirement;
     fn service_kind() -> ServiceKind;
 }
-
-crate::impl_trivial_validatable!(NetworkIfaceConfig);
