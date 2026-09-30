@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use std::net::{Ipv4Addr, Ipv6Addr};
 use uuid::Uuid;
 
 use crate::database::repository::LandscapeDBStore;
@@ -7,21 +7,8 @@ use crate::service::ServiceConfigError;
 use crate::utils::id::gen_database_uuid;
 use crate::utils::time::get_f64_timestamp;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
-pub struct PortConflictCheckResponse {
-    pub conflict: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub port: Option<u16>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub protocol: Option<u8>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub iface_name: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub start: Option<u16>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub end: Option<u16>,
-}
+pub use super::api::PortConflictCheckResponse;
+pub use super::runtime::{RuntimeStaticNatMappingConfig, StaticNatMappingItem};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
@@ -85,54 +72,6 @@ pub struct StaticNatMappingConfig {
     #[serde(default = "get_f64_timestamp")]
     #[cfg_attr(feature = "openapi", schema(required = false))]
     pub update_at: f64,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RuntimeStaticNatMappingConfig {
-    pub mapping_pair_ports: Vec<StaticMapPair>,
-    pub lan_ipv4: Option<Ipv4Addr>,
-    pub lan_ipv6: Option<Ipv6Addr>,
-    pub ipv4_l4_protocol: Vec<u8>,
-    pub ipv6_l4_protocol: Vec<u8>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Hash, PartialEq, Eq)]
-pub struct StaticNatMappingItem {
-    pub wan_port: u16,
-    pub lan_port: u16,
-    pub lan_ip: IpAddr,
-    pub l4_protocol: u8,
-}
-
-impl RuntimeStaticNatMappingConfig {
-    pub fn convert_to_item(&self) -> Vec<StaticNatMappingItem> {
-        let mut result = Vec::with_capacity(4);
-        for l4_protocol in &self.ipv4_l4_protocol {
-            if let Some(ipv4) = self.lan_ipv4 {
-                let items = self.mapping_pair_ports.iter().map(|pair_port| StaticNatMappingItem {
-                    wan_port: pair_port.wan_port,
-                    lan_port: pair_port.lan_port,
-                    lan_ip: IpAddr::V4(ipv4),
-                    l4_protocol: *l4_protocol,
-                });
-                result.extend(items);
-            }
-        }
-
-        for l4_protocol in &self.ipv6_l4_protocol {
-            if let Some(ipv6) = self.lan_ipv6 {
-                let items = self.mapping_pair_ports.iter().map(|pair_port| StaticNatMappingItem {
-                    wan_port: pair_port.wan_port,
-                    lan_port: pair_port.lan_port,
-                    lan_ip: IpAddr::V6(ipv6),
-                    l4_protocol: *l4_protocol,
-                });
-
-                result.extend(items);
-            }
-        }
-        result
-    }
 }
 
 impl crate::database::validator::ValidatableConfig for StaticNatMappingConfig {

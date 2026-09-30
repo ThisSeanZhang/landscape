@@ -9,6 +9,7 @@ use crate::utils::time::get_f64_timestamp;
 use crate::wan_service::nat::config::NatConfig;
 
 use super::config::StaticMapPair;
+pub use super::runtime::RuntimeStaticNatMappingV4Config;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
@@ -151,13 +152,6 @@ impl LandscapeDBStore<Uuid> for StaticNatMappingV4Config {
     fn set_update_at(&mut self, ts: f64) {
         self.update_at = ts;
     }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RuntimeStaticNatMappingV4Config {
-    pub mapping_pair_ports: Vec<StaticMapPair>,
-    pub lan_ipv4: Ipv4Addr,
-    pub l4_protocols: Vec<u8>,
 }
 
 #[cfg(test)]

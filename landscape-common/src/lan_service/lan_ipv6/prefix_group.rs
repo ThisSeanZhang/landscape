@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::net::Ipv6Addr;
 
 use super::config::{
@@ -6,16 +6,8 @@ use super::config::{
     PrefixGroupServiceKind, PrefixParentSource,
 };
 use super::error::{LanIPv6Error, PrefixSlotOverlapDetails, WanReservedPrefixConflictDetails};
+use super::runtime::{ExpandedParentKey, ExpandedPrefixEntry, PdPrefixContextMap};
 use crate::service::ServiceConfigError;
-use crate::wan_service::ipv6_pd::LDIAPrefix;
-
-#[derive(Debug, Clone)]
-pub struct PdPrefixContext {
-    pub expected_pd_len: u8,
-    pub actual_prefix: Option<LDIAPrefix>,
-}
-
-pub type PdPrefixContextMap = HashMap<String, PdPrefixContext>;
 
 fn normalize_ipv6_prefix(addr: Ipv6Addr, prefix_len: u8) -> Ipv6Addr {
     let value = u128::from_be_bytes(addr.octets());
@@ -28,12 +20,6 @@ fn normalize_ipv6_prefix(addr: Ipv6Addr, prefix_len: u8) -> Ipv6Addr {
         value & mask
     };
     Ipv6Addr::from(masked.to_be_bytes())
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub enum ExpandedParentKey {
-    Resolved(Ipv6Addr),
-    PdFallback(String),
 }
 
 impl PrefixParentSource {
@@ -90,16 +76,6 @@ pub fn blocks_overlap(
     let start_b = idx_b * scale_b;
     let end_b = start_b + scale_b;
     start_a < end_b && start_b < end_a
-}
-
-#[derive(Debug, Clone)]
-pub struct ExpandedPrefixEntry {
-    pub parent: ExpandedParentKey,
-    pub parent_prefix_len: u8,
-    pub service_kind: PrefixGroupServiceKind,
-    pub start_index: u32,
-    pub end_index: u32,
-    pub pool_len: u8,
 }
 
 impl ExpandedPrefixEntry {
@@ -751,8 +727,11 @@ mod tests {
         PdPrefixRangeConfig, PrefixParentSource, RaPrefixConfig, RouterFlags, ra_flag_default,
     };
     use super::super::dhcpv6_config::DHCPv6ServerConfig;
+    use super::super::runtime::PdPrefixContext;
     use super::*;
     use crate::error::LdApiErrorInfo;
+    use crate::wan_service::ipv6_pd::LDIAPrefix;
+    use std::collections::HashMap;
 
     fn pd_context(
         iface_name: &str,

@@ -155,25 +155,6 @@ impl GeoConfigKey {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Hash, PartialEq, Eq)]
-#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
-pub struct QueryGeoKey {
-    pub name: Option<String>,
-    pub key: Option<String>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, Hash, PartialEq, Eq)]
-#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
-pub struct QueryGeoDomainConfig {
-    pub name: Option<String>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
-pub struct QueryGeoSiteDomain {
-    pub domain: String,
-}
-
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct GeoIpSourceConfig {
@@ -244,18 +225,6 @@ impl GeoStoreKeyProvider for GeoIpConfig {
     fn get_store_key(&self) -> GeoFileCacheKey {
         GeoFileCacheKey { name: self.name.clone(), key: self.key.clone() }
     }
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, Hash, PartialEq, Eq)]
-#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
-pub struct QueryGeoIpConfig {
-    pub name: Option<String>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
-pub struct QueryGeoIpAddress {
-    pub ip: String,
 }
 
 crate::impl_trivial_validatable!(GeoIpSourceConfig);

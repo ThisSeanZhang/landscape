@@ -2,7 +2,6 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::database::repository::LandscapeDBStore;
-use crate::dns::config::DnsUpstreamConfig;
 use crate::flow::mark::FlowMark;
 use crate::utils::id::gen_database_uuid;
 use crate::utils::time::get_f64_timestamp;
@@ -10,6 +9,7 @@ use crate::utils::time::get_f64_timestamp;
 use crate::config_service::geo::GeoConfigKey;
 
 pub use super::error::DnsRuleError;
+pub use super::runtime::DNSRuntimeRule;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
@@ -40,19 +40,6 @@ pub struct DNSRuleConfig {
 
 pub fn default_flow_id() -> u32 {
     0_u32
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, Default)]
-pub struct DNSRuntimeRule {
-    pub id: Uuid,
-    pub name: String,
-    pub index: u32,
-    pub enable: bool,
-    pub filter: FilterResult,
-    pub resolve_mode: DnsUpstreamConfig,
-    pub mark: FlowMark,
-    pub source: Vec<DomainConfig>,
-    pub flow_id: u32,
 }
 
 impl LandscapeDBStore<Uuid> for DNSRuleConfig {

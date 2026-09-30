@@ -125,6 +125,12 @@ cargo test --workspace
 - 为新逻辑编写测试。运行 `cargo test --workspace` 验证。
 - 新增 API 类型时，遵循 `landscape-common` 的序列化约定。
 - 如果修改了 OpenAPI 路由或 schema，运行 `./gen_ts_bindings.sh` 更新本地绑定。
+- `landscape-common` 中按域组织类型，同一域内按数据生命周期分文件：
+  - `config.rs`：静态入库配置（DB/文件真相，及嵌套序列化项与校验）。
+  - `runtime.rs`：由静态配置与环境解析后、服务实际消费的运行期形状。
+  - `api.rs`：HTTP/OpenAPI 边界 DTO（`*Request`/`*Response`/`Query*`/`*Payload`）。
+  - `status.rs` / `info.rs`：只上报 UI 的可观测状态，不作为配置消费。
+  - `dataplane.rs`：将运行期配置下发内核。`error.rs`：域内错误。`mod.rs` 只做模块声明与 `pub use` 再导出。
 
 ### C / eBPF
 

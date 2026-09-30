@@ -8,6 +8,8 @@ use crate::service::ServiceConfigError;
 use crate::utils::id::gen_database_uuid;
 use crate::utils::time::get_f64_timestamp;
 
+pub use super::runtime::RuntimeStaticNatMappingV6Config;
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[serde(tag = "t")]
@@ -162,13 +164,6 @@ impl LandscapeDBStore<Uuid> for StaticNatMappingV6Config {
     fn set_update_at(&mut self, ts: f64) {
         self.update_at = ts;
     }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RuntimeStaticNatMappingV6Config {
-    pub port_config: StaticNatV6PortConfig,
-    pub lan_ipv6: Ipv6Addr,
-    pub l4_protocols: Vec<u8>,
 }
 
 #[cfg(test)]

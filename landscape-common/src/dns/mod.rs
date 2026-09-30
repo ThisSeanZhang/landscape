@@ -3,6 +3,7 @@ use crate::dns::rule::{DNSRuleConfig, FilterResult, default_flow_id};
 use crate::utils::id::gen_database_uuid;
 use crate::utils::time::get_f64_timestamp;
 
+pub mod api;
 pub mod bind;
 pub mod check;
 pub mod config;

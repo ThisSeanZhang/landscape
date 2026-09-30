@@ -14,6 +14,7 @@
 //! 以 `untracked_bytes` 明示,其构成拆解见 [`composition`]。
 
 pub mod allocator;
+pub mod api;
 pub mod composition;
 pub mod mapping;
 pub mod registry;

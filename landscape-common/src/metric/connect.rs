@@ -3,6 +3,8 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use serde::{Deserialize, Serialize};
 use zerocopy::{FromBytes, IntoBytes, KnownLayout};
 
+pub use super::api::{ConnectHistoryResponse, MetricChartRequest};
+
 /// IP 协议类型编码,与 landscape-ebpf 的 LANDSCAPE_IPV4_TYPE 一致
 pub const LANDSCAPE_IPV4_TYPE: u8 = 0;
 pub const LANDSCAPE_IPV6_TYPE: u8 = 1;
@@ -387,13 +389,6 @@ pub struct ConnectHistoryStatus {
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
-pub struct ConnectHistoryResponse {
-    pub items: Vec<ConnectHistoryStatus>,
-    pub total: usize,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone, Default)]
-#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct IpAggregatedStats {
     pub ingress_bps: u64,
     pub egress_bps: u64,
@@ -429,12 +424,4 @@ pub struct IpHistoryStat {
     pub total_ingress_pkts: u64,
     pub total_egress_pkts: u64,
     pub connect_count: u32,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
-pub struct MetricChartRequest {
-    pub key: ConnectKey,
-    #[cfg_attr(feature = "openapi", schema(nullable = false))]
-    pub resolution: Option<MetricResolution>,
 }

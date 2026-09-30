@@ -4,6 +4,7 @@ pub mod dhcpv6_status;
 pub mod error;
 pub mod ipv6_na;
 pub mod prefix_group;
+pub mod runtime;
 
 pub use config::{
     IPv6ServiceMode, LanIPv6ConfigV2, LanIPv6ServiceConfigV2, LanPrefixGroupConfig, NaPrefixConfig,
@@ -18,10 +19,11 @@ pub use dhcpv6_status::{DHCPv6AddressItem, DHCPv6OfferInfo, DHCPv6PrefixItem};
 pub use error::LanIPv6Error;
 
 pub use prefix_group::{
-    ExpandedPrefixEntry, PdPrefixContext, PdPrefixContextMap, validate_cross_interface_v2,
-    validate_cross_interface_v2_with_pd_context, validate_global_prefix_conflicts,
-    validate_prefix_groups, validate_prefix_groups_with_pd_context,
+    validate_cross_interface_v2, validate_cross_interface_v2_with_pd_context,
+    validate_global_prefix_conflicts, validate_prefix_groups,
+    validate_prefix_groups_with_pd_context,
 };
+pub use runtime::{ExpandedPrefixEntry, PdPrefixContext, PdPrefixContextMap};
 
 pub use ipv6_na::{IPv6NAInfo, IPv6NAInfoItem};
 

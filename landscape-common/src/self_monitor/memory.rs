@@ -2,6 +2,8 @@
 //! 分钟级持久化记录与查询参数,由 landscape-metric 的 memory store
 //! 写入/查询,webserver 暴露为 `/api/v1/self-monitor/memory/history`。
 
+pub use super::api::MemHistoryResponse;
+
 /// 一个子系统在一分钟内的聚合值。`(process)` 保留行以 live 字段表示 RSS;
 /// 该行不采集分配器流量,因此 alloc/free 字段为 0。
 ///
@@ -65,51 +67,6 @@ pub struct MemSubsystemSeries {
     pub subsystem: String,
     #[cfg_attr(feature = "openapi", schema(value_type = Vec<Vec<u64>>))]
     pub points: Vec<MinutePoint>,
-}
-
-/// 分钟级持久化历史的批量响应。形状与 RAM 历史
-/// (`memtrack::MemorySeriesResponse`)统一:共享 `timestamps` 轴、各 series
-/// 按位置对齐;`precise`/`meta` 为 RAM 专有,此处恒为 `None`。
-///
-/// 缺失分钟以全零点补零对齐——**注意这会把“无数据”显示为“用量为 0”**。
-#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize)]
-#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
-pub struct MemHistoryResponse {
-    pub timestamps: Vec<u64>,
-    pub precise: Option<bool>,
-    pub meta: Option<Vec<crate::memtrack::SnapshotMeta>>,
-    pub series: Vec<MemSubsystemSeries>,
-}
-
-impl MemHistoryResponse {
-    /// 由分钟行与共享时间轴构建各子系统序列;缺失分钟补零对齐。
-    pub fn from_rows(rows: Vec<MemMinuteRecord>, timeline: Vec<u64>) -> Self {
-        use std::collections::{BTreeMap, HashMap};
-
-        let mut grouped: BTreeMap<String, HashMap<u64, MinutePoint>> = BTreeMap::new();
-        for row in rows {
-            let point = MinutePoint::from(&row);
-            grouped.entry(row.subsystem).or_default().insert(row.minute_ts, point);
-        }
-
-        let series = grouped
-            .into_iter()
-            .map(|(subsystem, by_ts)| MemSubsystemSeries {
-                subsystem,
-                points: timeline
-                    .iter()
-                    .map(|ts| by_ts.get(ts).copied().unwrap_or_default())
-                    .collect(),
-            })
-            .collect();
-
-        MemHistoryResponse {
-            timestamps: timeline,
-            precise: None,
-            meta: None,
-            series,
-        }
-    }
 }
 
 /// 内存指标默认保留天数(行数小:每分钟每子系统 1 行)。

@@ -1,4 +1,8 @@
+pub mod api;
+
 use serde::{Deserialize, Serialize};
+
+pub use api::ChangePasswordRequest;
 
 #[derive(Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
@@ -12,12 +16,4 @@ pub struct LoginInfo {
 pub struct LoginResult {
     pub success: bool,
     pub token: String,
-}
-
-#[derive(Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
-pub struct ChangePasswordRequest {
-    pub current_password: String,
-    pub new_password: String,
-    pub confirm_password: String,
 }
