@@ -66,6 +66,7 @@ Then run the full PR checklist:
 
 ```bash
 cargo test --workspace
+cargo test -p landscape-ebpf --features bpf-test   # eBPF integration tests (requires root)
 pnpm --filter landscape-webui run format:check
 pnpm --filter landscape-webui build
 ```
@@ -86,8 +87,13 @@ This exports `openapi.json` locally.
 
 ```bash
 cargo build --workspace
-cargo test --workspace
+cargo test --workspace                                          # unit tests, fast
+cargo test -p landscape-ebpf --features bpf-test                # eBPF integration tests (requires root)
 ```
+
+`cargo tt` and `cargo ttb` are aliases for the two test commands above.
+BPF skeletons are compiled in parallel and cached by content hash; set
+`BPF_BUILD_JOBS` to cap clang parallelism on memory-constrained machines.
 
 ### Frontend (TypeScript + Vue 3)
 

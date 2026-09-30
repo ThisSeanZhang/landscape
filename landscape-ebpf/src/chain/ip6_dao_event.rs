@@ -173,7 +173,7 @@ impl Ip6DaoEventSource {
         self.cancel.cancel();
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, feature = "bpf-test"))]
     pub(crate) fn test_new(
         paths: Arc<LandscapeMapPath>,
         cancel: CancellationToken,

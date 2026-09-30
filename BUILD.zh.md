@@ -5,6 +5,7 @@
 ## 该用什么命令
 
 - 日常 Rust 开发使用 `cargo build --workspace` 和 `cargo test --workspace`
+- eBPF 集成测试使用 `cargo test -p landscape-ebpf --features bpf-test`（需要 root）
 - 前端开发优先使用 `./web.sh`
 - 前端命令使用 `pnpm`。如果你没有全局安装 `pnpm`，再使用 `corepack pnpm`
 - 只有在整仓联调或发布式构建时才使用 `bash ./build.sh -t <arch>`
@@ -90,7 +91,8 @@ pnpm install --frozen-lockfile
 
 ```bash
 cargo build --workspace
-cargo test --workspace
+cargo test --workspace                              # 单元测试
+cargo test -p landscape-ebpf --features bpf-test    # eBPF 集成测试（需要 root）
 ```
 
 ### 前端
@@ -132,6 +134,7 @@ bash ./build.sh -t x86_64
 ```bash
 cargo fmt --all
 cargo test --workspace
+cargo test -p landscape-ebpf --features bpf-test
 pnpm --filter landscape-webui exec prettier --check "src/**/*.{vue,ts,js,json,css,scss}"
 pnpm --filter landscape-webui build
 ```

@@ -14,6 +14,9 @@ pub mod stages;
 pub mod tproxy;
 
 #[cfg(test)]
+mod test_support;
+
+#[cfg(all(test, feature = "bpf-test"))]
 mod tests;
 
 pub mod chain;

@@ -46,6 +46,9 @@ rustflags = ["-C", "target-feature=-crt-static"]
 
 [alias]
 release = "build --release"
+# unified test entry points; avoid mixed -p subsets which duplicate dep builds
+tt = "test --workspace"
+ttb = "test -p landscape-ebpf --features bpf-test"
 
 [env]
 TS_RS_EXPORT_DIR = { value = "./landscape-types/src", relative = true }

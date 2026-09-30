@@ -5,6 +5,7 @@ This is the canonical local development guide for the repository.
 ## What to use
 
 - Use `cargo build --workspace` and `cargo test --workspace` for normal Rust development.
+- Use `cargo test -p landscape-ebpf --features bpf-test` for the eBPF integration tests (requires root).
 - Use `./web.sh` for the frontend dev server.
 - Use `pnpm` for direct frontend commands. If you do not have a global `pnpm`, use `corepack pnpm`.
 - Use `bash ./build.sh -t <arch>` only for full integration or release-style builds.
@@ -90,7 +91,8 @@ This skips regeneration only when `landscape-types/openapi.json`, `landscape-typ
 
 ```bash
 cargo build --workspace
-cargo test --workspace
+cargo test --workspace                              # unit tests
+cargo test -p landscape-ebpf --features bpf-test    # eBPF integration tests (root required)
 ```
 
 ### Frontend
@@ -132,6 +134,7 @@ Use `sudo` only when running `landscape-webserver` on a real host, attaching eBP
 ```bash
 cargo fmt --all
 cargo test --workspace
+cargo test -p landscape-ebpf --features bpf-test
 pnpm --filter landscape-webui exec prettier --check "src/**/*.{vue,ts,js,json,css,scss}"
 pnpm --filter landscape-webui build
 ```

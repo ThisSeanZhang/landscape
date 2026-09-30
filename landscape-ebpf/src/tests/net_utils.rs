@@ -9,27 +9,6 @@ use nix::sched::{CloneFlags, setns};
 
 use crate::tests::test_id;
 
-/// Ensure the BPF filesystem is mounted at `/sys/fs/bpf`.
-///
-/// BPF pinning (LIBBPF_PIN_BY_NAME) requires it; mount it once if missing.
-pub(crate) fn ensure_bpffs() {
-    let mounts = std::fs::read_to_string("/proc/self/mounts").unwrap_or_default();
-    let mounted = mounts.lines().any(|l| l.split_whitespace().nth(1) == Some("/sys/fs/bpf"));
-    if mounted {
-        return;
-    }
-    let _ = std::fs::create_dir_all("/sys/fs/bpf");
-    let out = Command::new("mount")
-        .args(["-t", "bpf", "bpf", "/sys/fs/bpf"])
-        .output()
-        .expect("mount bpf fs");
-    assert!(
-        out.status.success(),
-        "mount bpf fs on /sys/fs/bpf failed: {}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-}
-
 /// A uniquely named network namespace (`lt{prefix}{pid}{n}`), removed on drop.
 ///
 /// A fresh netns restarts the ifindex counter at 1, so veth interfaces get

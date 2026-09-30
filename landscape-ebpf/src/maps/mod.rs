@@ -46,7 +46,7 @@ pub(crate) trait Inet6Bytes: AsRef<[u8]> + AsMut<[u8]> {
         self.as_mut()[..4].copy_from_slice(&addr.to_be_bytes());
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg_attr(not(all(test, feature = "bpf-test")), allow(dead_code))]
     fn ipv4(&self) -> u32 {
         u32::from_be_bytes(self.as_ref()[..4].try_into().unwrap())
     }
@@ -588,7 +588,7 @@ pub(crate) fn init_path(paths: &LandscapeMapPath) {
 /// expect under their `pin_root_path`). Integration tests use this to stand
 /// up the shared maps inside an isolated bpffs directory before loading the
 /// programs under test.
-#[cfg(test)]
+#[cfg(all(test, feature = "bpf-test"))]
 pub(crate) fn init_maps_for_test(paths: &LandscapeMapPath) {
     wan::init_wan_ip_binding_map(&paths.wan_ip).expect("test init wan_ip_binding");
     nat::init_nat6_static_map(&paths.nat6_static_map).expect("test init nat6_static_map");
@@ -686,7 +686,7 @@ mod tests {
     // skeleton-free map creation: create / compatible-reuse / recreate
     // ---------------------------------------------------------------------
 
-    use crate::tests::{ensure_bpffs, isolated_pin_root};
+    use crate::test_support::{ensure_bpffs, isolated_pin_root};
 
     const TEST_HASH_SPEC: MapCreateSpec = MapCreateSpec {
         map_type: MapType::Hash,

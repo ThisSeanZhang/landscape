@@ -4,6 +4,7 @@ output
 /static
 vmlinux.h
 landscape-ebpf/src/bpf/vmlinux.h
+*.skel.hash
 
 # docker build dir
 dockerfiles/redirect_prog/apps

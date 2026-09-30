@@ -66,6 +66,7 @@ pnpm install --frozen-lockfile
 
 ```bash
 cargo test --workspace
+cargo test -p landscape-ebpf --features bpf-test   # eBPF 集成测试（需要 root）
 pnpm --filter landscape-webui run format:check
 pnpm --filter landscape-webui build
 ```
@@ -86,8 +87,13 @@ pnpm --filter landscape-webui build
 
 ```bash
 cargo build --workspace
-cargo test --workspace
+cargo test --workspace                                          # 单元测试，速度快
+cargo test -p landscape-ebpf --features bpf-test                # eBPF 集成测试（需要 root）
 ```
+
+`cargo tt` 和 `cargo ttb` 是上述两条测试命令的别名。
+BPF skeleton 会并行编译并按内容哈希缓存；内存受限的机器可用
+`BPF_BUILD_JOBS` 限制 clang 并行度。
 
 ### 前端（TypeScript + Vue 3）
 
