@@ -186,19 +186,35 @@ impl LandscapeApp {
     }
 
     pub(crate) async fn remove_direct_iface_service(&self, iface_name: &str) {
-        self.mss_clamp_service.delete_and_stop_iface_service(iface_name.to_string()).await;
+        if let Err(error) =
+            self.mss_clamp_service.delete_and_stop_service(iface_name.to_string()).await
+        {
+            tracing::error!("failed to remove mss clamp service for {iface_name}: {error:?}");
+        }
         self.wan_ip_service.delete_and_stop_iface_service(iface_name.to_string()).await;
-        self.firewall_service.delete_and_stop_iface_service(iface_name.to_string()).await;
+        if let Err(error) =
+            self.firewall_service.delete_and_stop_service(iface_name.to_string()).await
+        {
+            tracing::error!("failed to remove firewall service for {iface_name}: {error:?}");
+        }
         self.nat_service.delete_and_stop_iface_service(iface_name.to_string()).await;
         if let Err(error) =
             self.ipv6_pd_service.delete_and_stop_service(iface_name.to_string()).await
         {
             tracing::error!("failed to remove IPv6PD service for {iface_name}: {error:?}");
         }
-        self.route_wan_service.delete_and_stop_iface_service(iface_name.to_string()).await;
+        if let Err(error) =
+            self.route_wan_service.delete_and_stop_service(iface_name.to_string()).await
+        {
+            tracing::error!("failed to remove route wan service for {iface_name}: {error:?}");
+        }
         self.dhcp_v4_server_service.delete_and_stop_iface_service(iface_name.to_string()).await;
         self.lan_ipv6_service.delete_and_stop_iface_service(iface_name.to_string()).await;
-        self.route_lan_service.delete_and_stop_iface_service(iface_name.to_string()).await;
+        if let Err(error) =
+            self.route_lan_service.delete_and_stop_service(iface_name.to_string()).await
+        {
+            tracing::error!("failed to remove route lan service for {iface_name}: {error:?}");
+        }
     }
 
     pub(crate) async fn remove_all_iface_service(&self, iface_name: &str) {

@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::fmt::Debug;
+use std::time::Duration;
 
 use crate::config::FlowId;
 use crate::database::error::DbError;
@@ -8,7 +9,7 @@ use crate::database::store::{Change, ConfigStore};
 use crate::database::{LandscapeFlowStore, LandscapeStore};
 
 use super::{
-    ServiceStatus,
+    ServiceStatus, StartOutcome,
     manager::{ServiceKeyProvider, ServiceManager, ServiceStarterTrait},
 };
 
@@ -247,39 +248,45 @@ where
 /// running service (through [`ServiceManager`]) around the transactional
 /// store. Successor of the legacy [`ControllerService`].
 ///
-/// # Write ordering (service-first, hardened)
+/// # Write ordering (persist-after-verify)
 ///
-/// 1. The previous config is loaded for rollback; DB errors surface before
-///    any service churn.
-/// 2. The service manager must accept the config (`update_service`) before
-///    anything is persisted; a rejected config fails fast with
-///    [`DbError::ServiceStart`] and leaves the store untouched (the legacy
-///    trait silently swallowed this failure).
+/// 1. The previous config is loaded as a fallback pre-image; DB errors
+///    surface before any service churn.
+/// 2. The run triggered by this update is observed through
+///    [`ServiceManager::update_service_and_wait`]:
+///    [`StartOutcome::Running`] and [`StartOutcome::CleanStop`] (the starter
+///    explicitly reported `Disabled`) proceed to the persist;
+///    [`StartOutcome::Timeout`] also proceeds under a warning (the start is
+///    treated as slow rather than broken; the policy lives here, the
+///    primitive stays neutral);
+///    [`StartOutcome::Failed`]/[`StartOutcome::Stopped`] (a broken or
+///    self-terminating start — this attempt already terminated the previous
+///    run) and [`StartOutcome::NotDelivered`] (the request was rejected, no
+///    run triggered) fail fast with [`DbError::ServiceStart`] and leave the
+///    store untouched.
 /// 3. The store write is a single atomic `checked_upsert` — no separate
 ///    pre-check, so no check-then-write race window.
-/// 4. If the store write fails, the service is rolled back: an existing
-///    config is restored with `update_service_wait` (which awaits channel
-///    capacity, so the rollback can never be dropped by a full queue), while
-///    a fresh insert is stopped with `stop_service` (which also covers the
-///    "queued but not yet started" case the legacy trait left running).
+/// 4. Every failure path that disturbed the service converges it back to the
+///    store (the authority) before the error surfaces: a failed start
+///    (step 2) and a failed persist (step 3) both re-read the store and
+///    restore the current value via
+///    [`ServiceManager::update_service_wait_and_observe`] (on a `Conflict`
+///    that is the concurrent winner's value, not necessarily the pre-image);
+///    a missing record stops the leftover run; an unreadable store falls
+///    back to the step-1 pre-image. Delivery is bounded best-effort: on
+///    timeout the convergence is not guaranteed and only warned about.
+///    [`StartOutcome::NotDelivered`] does not converge — nothing was
+///    disturbed by this request; the consistency of whatever is pending in
+///    the queue is owned by whoever queued it (channel capacity is 1, so
+///    concurrent updates may briefly run a value that is neither the
+///    store's nor this request's).
+///
+/// A failing request therefore takes at most two observation windows (start
+/// plus convergence) before its error surfaces.
 ///
 /// Every successful write notifies through the base trait's
 /// `notify_changed`/`notify_deleted` slots, which the legacy `ControllerService`
 /// never did.
-///
-/// # 未接线的预留(数据库回滚改造)
-///
-/// 当前"服务启动失败"不触发任何回滚:`update_service` 只表示配置已入队,
-/// 服务随后进入 Failed 时 DB 已持有新配置。改造接线时使用以下已预留原语:
-///
-/// - [`ServiceManager::update_service_and_wait`] / [`crate::service::StartOutcome`]:
-///   观测由本次更新触发的运行结果,支持两种顺序——
-///   - 验证后落库:Running 才 `checked_upsert`,失败时 DB 零写入;
-///   - 落库后验证:保持本 trait 顺序,追加观测;非 Running 时以
-///     `Change.old` 为前像做 DB 补偿写,并经 `notify_changed` 传播补偿变更。
-/// - [`crate::service::StartOutcome::NotDelivered`](配置未投递)按"请求被
-///   拒绝"处理(报错/不落库),不属于 DB 补偿范围:没有运行被触发。
-/// - Timeout 的策略(放行或中止)由各服务域按启动时长语义决定,原语不预设。
 #[async_trait::async_trait]
 pub trait ConfigStoreServiceController: ConfigStoreController
 where
@@ -289,16 +296,38 @@ where
 
     fn get_service(&self) -> &ServiceManager<Self::H>;
 
-    /// Start the service with the config, then persist it atomically.
+    /// Timeout for observing one start attempt in [`Self::handle_service_config`];
+    /// slow-setup domains may override.
+    fn start_confirm_timeout(&self) -> Duration {
+        Duration::from_secs(5)
+    }
+
+    /// Verify the service start with the config, then persist it atomically.
     async fn handle_service_config(&self, config: Self::Config) -> Result<Self::Config, DbError> {
         let service_key = config.service_key();
+        let id = config.get_id();
+        let old = self.get_store().find_by_id(id.clone()).await?;
 
-        let old = self.get_store().find_by_id(config.get_id()).await?;
-
-        if self.get_service().update_service(config.clone()).await.is_err() {
-            return Err(DbError::ServiceStart(format!(
-                "service manager rejected config for '{service_key}'"
-            )));
+        let timeout = self.start_confirm_timeout();
+        let outcome = self.get_service().update_service_and_wait(config.clone(), timeout).await;
+        match outcome {
+            StartOutcome::Failed | StartOutcome::Stopped => {
+                // 本次尝试已终止旧运行,以 store 为准恢复后再报错
+                let error = DbError::ServiceStart(format!(
+                    "service start for '{service_key}' observed {outcome:?}"
+                ));
+                self.converge_service_to_store(id, service_key, old, timeout).await;
+                return Err(error);
+            }
+            StartOutcome::NotDelivered => {
+                return Err(DbError::ServiceStart(format!(
+                    "service start for '{service_key}' observed {outcome:?}"
+                )));
+            }
+            StartOutcome::Timeout => {
+                tracing::warn!(service_key, "start confirmation timed out; persisting anyway");
+            }
+            StartOutcome::Running | StartOutcome::CleanStop => {}
         }
 
         match self.get_store().checked_upsert(config).await {
@@ -310,15 +339,49 @@ where
                 tracing::warn!(
                     service_key,
                     error = ?error,
-                    "persisting service config failed; rolling service back"
+                    "persisting the verified config failed; converging the service back to the store"
                 );
-                match &old {
-                    Some(prev) => self.get_service().update_service_wait(prev.clone()).await,
-                    None => {
-                        let _ = self.get_service().stop_service(service_key).await;
-                    }
-                }
+                self.converge_service_to_store(id, service_key, old, timeout).await;
                 Err(error)
+            }
+        }
+    }
+
+    /// 以 store 为准收敛服务:重读当前值(读取失败回退到调用方前像),
+    /// 有值则弹性投递并观测恢复,无值则停掉残留运行。
+    /// 投递为有界 best-effort:超时不保证收敛,仅告警。
+    async fn converge_service_to_store(
+        &self,
+        id: Self::Id,
+        service_key: String,
+        old: Option<Self::Config>,
+        timeout: Duration,
+    ) {
+        let target = match self.get_store().find_by_id(id).await {
+            Ok(current) => current,
+            Err(read_error) => {
+                tracing::warn!(
+                    service_key,
+                    error = ?read_error,
+                    "re-reading the store failed; falling back to the pre-image"
+                );
+                old
+            }
+        };
+        match target {
+            Some(prev) => {
+                let outcome =
+                    self.get_service().update_service_wait_and_observe(prev, timeout).await;
+                if !matches!(outcome, StartOutcome::Running | StartOutcome::CleanStop) {
+                    tracing::warn!(
+                        service_key,
+                        outcome = ?outcome,
+                        "convergence did not reach Running"
+                    );
+                }
+            }
+            None => {
+                let _ = self.get_service().stop_service(service_key).await;
             }
         }
     }
@@ -512,6 +575,8 @@ mod service_controller_tests {
         auto_start: Arc<AtomicBool>,
         fail_start: Arc<AtomicBool>,
         noop: Arc<AtomicBool>,
+        disabled: Arc<AtomicBool>,
+        fail_next: Arc<AtomicBool>,
     }
 
     impl MockStarter {
@@ -522,6 +587,8 @@ mod service_controller_tests {
                 auto_start: Arc::new(AtomicBool::new(false)),
                 fail_start: Arc::new(AtomicBool::new(false)),
                 noop: Arc::new(AtomicBool::new(false)),
+                disabled: Arc::new(AtomicBool::new(false)),
+                fail_next: Arc::new(AtomicBool::new(false)),
             }
         }
     }
@@ -536,6 +603,10 @@ mod service_controller_tests {
                 std::future::pending::<()>().await;
             }
             let handle = WatchService::new();
+            if self.disabled.load(Ordering::SeqCst) {
+                handle.just_change_status(ServiceStatus::Disabled);
+                return handle;
+            }
             if self.noop.load(Ordering::SeqCst) {
                 handle.just_change_status(ServiceStatus::Staring);
                 let inner = handle.clone();
@@ -547,7 +618,9 @@ mod service_controller_tests {
             if self.auto_start.load(Ordering::SeqCst) {
                 // 契约:返回前进入 Staring;长驻任务经 tracker 注册
                 handle.just_change_status(ServiceStatus::Staring);
-                let fail = self.fail_start.load(Ordering::SeqCst);
+                // fail_next 为一次性:只打掉下一次启动,收敛重启可恢复
+                let fail = self.fail_start.load(Ordering::SeqCst)
+                    || self.fail_next.swap(false, Ordering::SeqCst);
                 let inner = handle.clone();
                 handle.spawn_task("service.test.autostart", async move {
                     tokio::time::sleep(Duration::from_millis(20)).await;
@@ -606,6 +679,10 @@ mod service_controller_tests {
         fn get_service(&self) -> &ServiceManager<Self::H> {
             &self.service
         }
+
+        fn start_confirm_timeout(&self) -> Duration {
+            Duration::from_millis(500)
+        }
     }
 
     async fn wait_for(mut cond: impl FnMut() -> bool) {
@@ -622,6 +699,7 @@ mod service_controller_tests {
     async fn happy_path_persists_and_starts_service() {
         let store = MockStore::default();
         let starter = MockStarter::new();
+        starter.auto_start.store(true, Ordering::SeqCst);
         let controller = controller(store.clone(), starter.clone()).await;
 
         let config = MockConfig { id: "wan0".to_string(), value: 1, update_at: 0.0 };
@@ -629,9 +707,7 @@ mod service_controller_tests {
 
         assert!(saved.update_at > 0.0);
         assert_eq!(store.get("wan0").unwrap().value, 1);
-        // `update_service` returning Ok only means the config is queued; the
-        // actual `start()` runs in the spawned supervisor loop.
-        wait_for(|| !starter.started.lock().unwrap().is_empty()).await;
+        // Persist-after-verify: the start was observed Running before returning.
         assert_eq!(*starter.started.lock().unwrap(), vec![("wan0".to_string(), 1)]);
         assert_eq!(*controller.notify_log.lock().unwrap(), vec!["changed:1".to_string()]);
     }
@@ -672,11 +748,12 @@ mod service_controller_tests {
     }
 
     #[tokio::test]
-    async fn write_failure_rolls_back_to_previous_config() {
+    async fn persist_failure_converges_service_to_stored_config() {
         let store = MockStore::default();
         let old = MockConfig { id: "wan0".to_string(), value: 7, update_at: 0.0 };
         store.seed(old.clone());
         let starter = MockStarter::new();
+        starter.auto_start.store(true, Ordering::SeqCst);
         let controller = controller(store.clone(), starter.clone()).await;
 
         // Incoming config echoes the stored update_at, but the write fails.
@@ -690,9 +767,8 @@ mod service_controller_tests {
         let result = controller.handle_service_config(incoming).await;
         assert!(matches!(result, Err(DbError::Conflict)));
 
-        // The service was started with the new config, then rolled back to the
-        // previous one; the store still holds the previous value.
-        wait_for(|| starter.started.lock().unwrap().len() >= 2).await;
+        // The service ran the new config (observed Running), then was
+        // converged back to the stored config; the store keeps the old value.
         assert_eq!(
             *starter.started.lock().unwrap(),
             vec![("wan0".to_string(), 8), ("wan0".to_string(), 7)]
@@ -704,6 +780,7 @@ mod service_controller_tests {
     async fn write_failure_on_fresh_insert_stops_service() {
         let store = MockStore::default();
         let starter = MockStarter::new();
+        starter.auto_start.store(true, Ordering::SeqCst);
         let controller = controller(store.clone(), starter.clone()).await;
 
         store.fail_checked_upsert.store(true, Ordering::SeqCst);
@@ -712,15 +789,127 @@ mod service_controller_tests {
         let result = controller.handle_service_config(incoming).await;
         assert!(matches!(result, Err(DbError::Conflict)));
 
-        // The spawned service entry is stopped and removed, nothing persisted.
+        // The store re-read finds nothing, so the service entry is stopped
+        // and removed, nothing persisted.
         assert!(controller.service.get_all_status().await.is_empty());
         assert!(store.get("wan0").is_none());
+    }
+
+    #[tokio::test]
+    async fn failed_start_over_existing_config_converges_back_to_store() {
+        let store = MockStore::default();
+        let starter = MockStarter::new();
+        starter.auto_start.store(true, Ordering::SeqCst);
+        let controller = controller(store.clone(), starter.clone()).await;
+
+        controller
+            .handle_service_config(MockConfig { id: "wan0".to_string(), value: 1, update_at: 0.0 })
+            .await
+            .unwrap();
+
+        starter.fail_next.store(true, Ordering::SeqCst);
+
+        let result = controller
+            .handle_service_config(MockConfig { id: "wan0".to_string(), value: 2, update_at: 0.0 })
+            .await;
+        assert!(matches!(result, Err(DbError::ServiceStart(_))));
+
+        // The failed attempt killed the old run; convergence restarts the
+        // stored config and the service ends up Running again.
+        assert_eq!(
+            *starter.started.lock().unwrap(),
+            vec![("wan0".to_string(), 1), ("wan0".to_string(), 2), ("wan0".to_string(), 1)]
+        );
+        assert_eq!(store.get("wan0").unwrap().value, 1);
+        assert_eq!(
+            controller.service.get_all_status().await.get("wan0"),
+            Some(&ServiceStatus::Running)
+        );
+        assert_eq!(*controller.notify_log.lock().unwrap(), vec!["changed:1".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn start_failure_skips_persist_and_leaves_store_untouched() {
+        let store = MockStore::default();
+        let starter = MockStarter::new();
+        starter.auto_start.store(true, Ordering::SeqCst);
+        starter.fail_start.store(true, Ordering::SeqCst);
+        let controller = controller(store.clone(), starter.clone()).await;
+
+        let result = controller
+            .handle_service_config(MockConfig { id: "wan0".to_string(), value: 1, update_at: 0.0 })
+            .await;
+
+        assert!(matches!(result, Err(DbError::ServiceStart(_))));
+        assert!(store.get("wan0").is_none(), "failed start must not be persisted");
+        assert!(controller.notify_log.lock().unwrap().is_empty());
+        // 收敛目标为空:残留运行被停掉并移除
+        assert!(controller.service.get_all_status().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn stopped_outcome_skips_persist_and_leaves_store_untouched() {
+        let store = MockStore::default();
+        let starter = MockStarter::new();
+        starter.noop.store(true, Ordering::SeqCst);
+        let controller = controller(store.clone(), starter.clone()).await;
+
+        let result = controller
+            .handle_service_config(MockConfig { id: "wan0".to_string(), value: 1, update_at: 0.0 })
+            .await;
+
+        assert!(matches!(result, Err(DbError::ServiceStart(_))));
+        assert!(store.get("wan0").is_none(), "self-terminating start must not be persisted");
+        assert!(controller.notify_log.lock().unwrap().is_empty());
+        assert!(controller.service.get_all_status().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn disabled_config_persists_as_clean_stop() {
+        let store = MockStore::default();
+        let starter = MockStarter::new();
+        starter.disabled.store(true, Ordering::SeqCst);
+        let controller = controller(store.clone(), starter.clone()).await;
+
+        let saved = controller
+            .handle_service_config(MockConfig { id: "wan0".to_string(), value: 1, update_at: 0.0 })
+            .await
+            .unwrap();
+
+        assert!(saved.update_at > 0.0);
+        assert_eq!(store.get("wan0").unwrap().value, 1);
+        assert_eq!(
+            controller.service.get_all_status().await.get("wan0"),
+            Some(&ServiceStatus::Disabled)
+        );
+        assert_eq!(*controller.notify_log.lock().unwrap(), vec!["changed:1".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn start_timeout_persists_with_warning() {
+        let store = MockStore::default();
+        let starter = MockStarter::new();
+        starter.block_start.store(true, Ordering::SeqCst);
+        let controller = controller(store.clone(), starter.clone()).await;
+
+        // start() blocks before reporting any status, so the observation
+        // times out (500ms via the mock's start_confirm_timeout) and the
+        // persist proceeds anyway.
+        let saved = controller
+            .handle_service_config(MockConfig { id: "wan0".to_string(), value: 1, update_at: 0.0 })
+            .await
+            .unwrap();
+
+        assert!(saved.update_at > 0.0);
+        assert_eq!(store.get("wan0").unwrap().value, 1);
+        assert_eq!(*controller.notify_log.lock().unwrap(), vec!["changed:1".to_string()]);
     }
 
     #[tokio::test]
     async fn delete_and_stop_service_roundtrip() {
         let store = MockStore::default();
         let starter = MockStarter::new();
+        starter.auto_start.store(true, Ordering::SeqCst);
         let controller = controller(store.clone(), starter).await;
 
         let missing = controller.delete_and_stop_service("wan0".to_string()).await.unwrap();
@@ -852,5 +1041,83 @@ mod service_controller_tests {
             )
             .await;
         assert_eq!(outcome, StartOutcome::NotDelivered);
+    }
+
+    #[tokio::test]
+    async fn update_service_wait_and_observe_reports_running_on_fresh_and_existing_key() {
+        let store = MockStore::default();
+        let starter = MockStarter::new();
+        starter.auto_start.store(true, Ordering::SeqCst);
+        let controller = controller(store, starter).await;
+
+        // 无条目:重建(spawn)后观测首次运行
+        let outcome = controller
+            .service
+            .update_service_wait_and_observe(
+                MockConfig { id: "wan0".to_string(), value: 1, update_at: 0.0 },
+                Duration::from_secs(5),
+            )
+            .await;
+        assert_eq!(outcome, StartOutcome::Running);
+
+        // 既有条目:等容量投递后观测由本次更新触发的运行
+        let outcome = controller
+            .service
+            .update_service_wait_and_observe(
+                MockConfig { id: "wan0".to_string(), value: 2, update_at: 0.0 },
+                Duration::from_secs(5),
+            )
+            .await;
+        assert_eq!(outcome, StartOutcome::Running);
+        assert_eq!(
+            controller.service.get_all_status().await.get("wan0"),
+            Some(&ServiceStatus::Running)
+        );
+    }
+
+    #[tokio::test]
+    async fn update_service_wait_and_observe_delivery_timeout_is_bounded() {
+        let store = MockStore::default();
+        let starter = MockStarter::new();
+        starter.block_start.store(true, Ordering::SeqCst);
+        let starter_probe = starter.clone();
+        let controller = controller(store, starter).await;
+
+        // 第一份:supervisor 接收后在 start() 内永久阻塞
+        controller
+            .service
+            .update_service(MockConfig { id: "wan0".to_string(), value: 1, update_at: 0.0 })
+            .await
+            .unwrap();
+
+        // 等 start() 真正进入(此时通道已腾空),消除与 supervisor 调度的竞态
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        while starter_probe.started.lock().unwrap().is_empty() {
+            assert!(tokio::time::Instant::now() < deadline, "starter did not enter start()");
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+
+        // 第二份:占满容量 1 的通道,supervisor 卡死不再消费
+        controller
+            .service
+            .update_service(MockConfig { id: "wan0".to_string(), value: 2, update_at: 0.0 })
+            .await
+            .unwrap();
+
+        // 第三份:投递等待容量,须在单一 deadline 内以 Timeout 放弃,而非再等一轮观测
+        let started_at = tokio::time::Instant::now();
+        let outcome = controller
+            .service
+            .update_service_wait_and_observe(
+                MockConfig { id: "wan0".to_string(), value: 3, update_at: 0.0 },
+                Duration::from_millis(500),
+            )
+            .await;
+        let elapsed = started_at.elapsed();
+        assert_eq!(outcome, StartOutcome::Timeout);
+        assert!(
+            elapsed < Duration::from_secs(2),
+            "delivery timeout must be bounded by a single deadline, took {elapsed:?}"
+        );
     }
 }

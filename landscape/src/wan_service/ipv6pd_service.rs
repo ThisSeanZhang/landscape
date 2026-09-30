@@ -110,8 +110,11 @@ impl ServiceStarterTrait for IPV6PDService {
                 });
             } else {
                 tracing::error!("Interface {} not found", config.iface_name);
-                service_status.just_change_status(landscape_common::service::ServiceStatus::Failed);
+                service_status.just_change_status(ServiceStatus::Staring);
+                service_status.just_change_status(ServiceStatus::Failed);
             }
+        } else {
+            service_status.just_change_status(ServiceStatus::Disabled);
         }
 
         service_status

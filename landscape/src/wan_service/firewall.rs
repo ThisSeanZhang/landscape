@@ -1,12 +1,15 @@
 use std::sync::Arc;
 
 use landscape_common::database::LandscapeStore;
+use landscape_common::database::error::DbError;
 use landscape_common::service::manager::ServiceManager;
 use landscape_common::{
     concurrency::{spawn_task, task_label},
     event::hub::iface::IfaceObserverAction,
     service::{
-        ServiceStatus, WatchService, controller::ControllerService, manager::ServiceStarterTrait,
+        ServiceStatus, WatchService,
+        controller::{ConfigStoreController, ConfigStoreServiceController},
+        manager::ServiceStarterTrait,
     },
     wan_service::firewall::dataplane::FirewallDataplane,
     wan_service::firewall::service::FirewallServiceConfig,
@@ -55,7 +58,11 @@ impl ServiceStarterTrait for FirewallService {
                 );
             } else {
                 tracing::error!("Interface {} not found", config.iface_name);
+                service_status.just_change_status(ServiceStatus::Staring);
+                service_status.just_change_status(ServiceStatus::Failed);
             }
+        } else {
+            service_status.just_change_status(ServiceStatus::Disabled);
         }
 
         service_status
@@ -94,18 +101,22 @@ pub struct FirewallServiceManagerService {
     service: ServiceManager<FirewallService>,
 }
 
-impl ControllerService for FirewallServiceManagerService {
+#[async_trait::async_trait]
+impl ConfigStoreController for FirewallServiceManagerService {
     type Id = String;
     type Config = FirewallServiceConfig;
-    type DatabseAction = FirewallServiceRepository;
+    type Store = FirewallServiceRepository;
+
+    fn get_store(&self) -> &Self::Store {
+        &self.store
+    }
+}
+
+impl ConfigStoreServiceController for FirewallServiceManagerService {
     type H = FirewallService;
 
     fn get_service(&self) -> &ServiceManager<Self::H> {
         &self.service
-    }
-
-    fn get_repository(&self) -> &Self::DatabseAction {
-        &self.store
     }
 }
 
@@ -114,10 +125,10 @@ impl FirewallServiceManagerService {
         store_service: LandscapeDBServiceProvider,
         mut dev_observer: IfaceEventReader,
         dataplane: Arc<dyn FirewallDataplane>,
-    ) -> Self {
+    ) -> Result<Self, DbError> {
         let store = store_service.firewall_service_store();
         let service =
-            ServiceManager::init(store.list().await.unwrap(), FirewallService { dataplane }).await;
+            ServiceManager::init(store.list().await?, FirewallService { dataplane }).await;
 
         let service_clone = service.clone();
         spawn_task(task_label::task::FIREWALL_OBSERVER, async move {
@@ -141,6 +152,6 @@ impl FirewallServiceManagerService {
         });
 
         let store = store_service.firewall_service_store();
-        Self { service, store }
+        Ok(Self { service, store })
     }
 }

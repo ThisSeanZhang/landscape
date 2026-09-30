@@ -1,13 +1,14 @@
 use std::sync::Arc;
 
 use landscape_common::database::LandscapeStore;
+use landscape_common::database::error::DbError;
 use landscape_common::event::hub::IfaceEventReader;
 use landscape_common::{
     concurrency::{spawn_task, task_label},
     event::hub::iface::IfaceObserverAction,
     service::{
         ServiceStatus, WatchService,
-        controller::ControllerService,
+        controller::{ConfigStoreController, ConfigStoreServiceController},
         manager::{ServiceManager, ServiceStarterTrait},
     },
     wan_service::mss_clamp::MSSClampServiceConfig,
@@ -56,7 +57,11 @@ impl ServiceStarterTrait for MssClampService {
                 );
             } else {
                 tracing::error!("Interface {} not found", config.iface_name);
+                service_status.just_change_status(ServiceStatus::Staring);
+                service_status.just_change_status(ServiceStatus::Failed);
             }
+        } else {
+            service_status.just_change_status(ServiceStatus::Disabled);
         }
 
         service_status
@@ -96,18 +101,22 @@ pub struct MssClampServiceManagerService {
     service: ServiceManager<MssClampService>,
 }
 
-impl ControllerService for MssClampServiceManagerService {
+#[async_trait::async_trait]
+impl ConfigStoreController for MssClampServiceManagerService {
     type Id = String;
     type Config = MSSClampServiceConfig;
-    type DatabseAction = MssClampServiceRepository;
+    type Store = MssClampServiceRepository;
+
+    fn get_store(&self) -> &Self::Store {
+        &self.store
+    }
+}
+
+impl ConfigStoreServiceController for MssClampServiceManagerService {
     type H = MssClampService;
 
     fn get_service(&self) -> &ServiceManager<Self::H> {
         &self.service
-    }
-
-    fn get_repository(&self) -> &Self::DatabseAction {
-        &self.store
     }
 }
 
@@ -116,10 +125,10 @@ impl MssClampServiceManagerService {
         store_service: LandscapeDBServiceProvider,
         mut dev_observer: IfaceEventReader,
         dataplane: Arc<dyn MssClampDataplane>,
-    ) -> Self {
+    ) -> Result<Self, DbError> {
         let store = store_service.mss_clamp_service_store();
         let service =
-            ServiceManager::init(store.list().await.unwrap(), MssClampService { dataplane }).await;
+            ServiceManager::init(store.list().await?, MssClampService { dataplane }).await;
 
         let service_clone = service.clone();
         spawn_task(task_label::task::MSS_CLAMP_OBSERVER, async move {
@@ -143,6 +152,6 @@ impl MssClampServiceManagerService {
         });
 
         let store = store_service.mss_clamp_service_store();
-        Self { service, store }
+        Ok(Self { service, store })
     }
 }

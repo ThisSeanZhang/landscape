@@ -50,6 +50,8 @@ pub enum ServiceStatus {
     // 停止运行
     #[default]
     Stop,
+    // 设计上未运行(禁用配置显式汇报)
+    Disabled,
     // 异常停止
     Failed,
 }
@@ -60,6 +62,7 @@ impl ServiceStatus {
         let can = matches!(
             (self, target),
             (ServiceStatus::Stop, ServiceStatus::Staring)
+                | (ServiceStatus::Stop, ServiceStatus::Disabled)
                 | (ServiceStatus::Failed, ServiceStatus::Staring)
                 | (ServiceStatus::Staring, ServiceStatus::Running)
                 | (ServiceStatus::Staring, ServiceStatus::Stopping)
@@ -80,15 +83,21 @@ impl ServiceStatus {
 
     /// 是否为退出态:进入这些状态后服务不可继续运行,关联取消信号必须触发
     fn is_exit_state(&self) -> bool {
-        matches!(self, ServiceStatus::Stopping | ServiceStatus::Stop | ServiceStatus::Failed)
+        matches!(
+            self,
+            ServiceStatus::Stopping
+                | ServiceStatus::Stop
+                | ServiceStatus::Disabled
+                | ServiceStatus::Failed
+        )
     }
 }
 
 /// 一次启动尝试的观测结果。
 ///
-/// 为数据库配置回滚改造预留的原语:controller 层可据此决定"验证后落库"
-/// (Running 才持久化)或"落库后验证"(非 Running 触发双回滚);Timeout 的
-/// 策略语义(放行或中止)由调用方按服务域决定,本类型不做判断。
+/// controller 层据此实现"验证后落库"(Running 才持久化)或"落库后验证"
+/// (非 Running 触发双回滚);Timeout 的策略语义(放行或中止)由调用方
+/// 按服务域决定,本类型不做判断。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StartOutcome {
     /// 启动成功,当前处于 Running
@@ -97,6 +106,9 @@ pub enum StartOutcome {
     Failed,
     /// 启动尝试以 Stop 结束(未经历 Running,或启动过程中被请求停止)
     Stopped,
+    /// 干净停止:starter 显式汇报 [`ServiceStatus::Disabled`](禁用配置),
+    /// 设计上就不运行。与 [`StartOutcome::Stopped`](真实经历过一次运行后停止)区分。
+    CleanStop,
     /// 超时仍未离开 Staring/Stopping
     Timeout,
     /// 配置未投递(通道满被去重或服务任务已退出):不会有运行被触发。
@@ -144,7 +156,10 @@ impl ServiceStatusCell {
     }
 
     fn is_stop(&self) -> bool {
-        matches!(*self.read(), ServiceStatus::Stop | ServiceStatus::Failed)
+        matches!(
+            *self.read(),
+            ServiceStatus::Stop | ServiceStatus::Disabled | ServiceStatus::Failed
+        )
     }
 
     fn is_active(&self) -> bool {
@@ -367,13 +382,15 @@ impl ServiceHandle {
     }
 
     /// 观测一次启动尝试的结果:以首次到达的终态为准(Running 期间快速翻转到
-    /// Failed 的按 Failed 处理,对回滚语义是正确的);Staring/Stopping 期间
+    /// Failed 的按 Failed 处理,对回滚语义是正确的);显式汇报的 `Disabled`
+    /// 观测为 [`StartOutcome::CleanStop`](禁用语义);Staring/Stopping 期间
     /// 持续等待,超时返回 [`StartOutcome::Timeout`]。
     pub async fn wait_start_outcome(&self, timeout: Duration) -> StartOutcome {
         let observe = async {
             loop {
                 match self.current() {
                     ServiceStatus::Running => return StartOutcome::Running,
+                    ServiceStatus::Disabled => return StartOutcome::CleanStop,
                     ServiceStatus::Stop => return StartOutcome::Stopped,
                     ServiceStatus::Failed => return StartOutcome::Failed,
                     // 启动进行中/正在收尾:等待其到达终态

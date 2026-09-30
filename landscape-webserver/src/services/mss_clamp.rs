@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use axum::extract::{Path, State};
 use landscape_common::api_response::LandscapeApiResp as CommonApiResp;
 use landscape_common::service::ServiceStatus;
-use landscape_common::service::controller::ControllerService;
+use landscape_common::service::controller::{ConfigStoreController, ConfigStoreServiceController};
 use landscape_common::wan_service::mss_clamp::MSSClampServiceConfig;
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
@@ -49,7 +49,7 @@ async fn get_iface_service_config(
     State(state): State<LandscapeApp>,
     Path(iface_name): Path<String>,
 ) -> LandscapeApiResult<MSSClampServiceConfig> {
-    if let Some(iface_config) = state.mss_clamp_service.get_config_by_name(iface_name).await {
+    if let Some(iface_config) = state.mss_clamp_service.find_by_id(iface_name).await? {
         LandscapeApiResp::success(iface_config)
     } else {
         Err(ServiceConfigError::NotFound { service_name: "MSS Clamp" })?
@@ -86,7 +86,5 @@ async fn delete_and_stop_iface_service(
     State(state): State<LandscapeApp>,
     Path(iface_name): Path<String>,
 ) -> LandscapeApiResult<Option<ServiceStatus>> {
-    LandscapeApiResp::success(
-        state.mss_clamp_service.delete_and_stop_iface_service(iface_name).await,
-    )
+    LandscapeApiResp::success(state.mss_clamp_service.delete_and_stop_service(iface_name).await?)
 }

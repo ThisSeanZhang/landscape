@@ -11,6 +11,7 @@ export default {
   running: "Running",
   stopping: "Stopping",
   stopped: "Stopped",
+  disabled: "Disabled",
   failed: "Failed",
   confirm_stop: "Confirm stop?",
   created_at: "Created At",

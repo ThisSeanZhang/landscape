@@ -1,4 +1,5 @@
 use landscape_common::database::LandscapeStore;
+use landscape_common::database::error::DbError;
 use landscape_common::{
     LANDSCAPE_HOSTAPD_TMP_DIR,
     args::LAND_HOME_PATH,
@@ -6,7 +7,7 @@ use landscape_common::{
     lan_service::ap::WifiServiceConfig,
     service::{
         ServiceStatus, WatchService,
-        controller::ControllerService,
+        controller::{ConfigStoreController, ConfigStoreServiceController},
         manager::{ServiceManager, ServiceStarterTrait},
     },
 };
@@ -47,7 +48,11 @@ impl ServiceStarterTrait for WifiService {
                 );
             } else {
                 tracing::error!("Interface {} not found", config.iface_name);
+                service_status.just_change_status(ServiceStatus::Staring);
+                service_status.just_change_status(ServiceStatus::Failed);
             }
+        } else {
+            service_status.just_change_status(ServiceStatus::Disabled);
         }
 
         service_status
@@ -186,25 +191,29 @@ pub struct WifiServiceManagerService {
     service: ServiceManager<WifiService>,
 }
 
-impl ControllerService for WifiServiceManagerService {
+#[async_trait::async_trait]
+impl ConfigStoreController for WifiServiceManagerService {
     type Id = String;
     type Config = WifiServiceConfig;
-    type DatabseAction = WifiServiceRepository;
+    type Store = WifiServiceRepository;
+
+    fn get_store(&self) -> &Self::Store {
+        &self.store
+    }
+}
+
+impl ConfigStoreServiceController for WifiServiceManagerService {
     type H = WifiService;
 
     fn get_service(&self) -> &ServiceManager<Self::H> {
         &self.service
     }
-
-    fn get_repository(&self) -> &Self::DatabseAction {
-        &self.store
-    }
 }
 
 impl WifiServiceManagerService {
-    pub async fn new(store_service: LandscapeDBServiceProvider) -> Self {
+    pub async fn new(store_service: LandscapeDBServiceProvider) -> Result<Self, DbError> {
         let store = store_service.wifi_service_store();
-        let service = ServiceManager::init(store.list().await.unwrap(), Default::default()).await;
+        let service = ServiceManager::init(store.list().await?, Default::default()).await;
 
         // let service_clone = service.clone();
         // tokio::spawn(async move {
@@ -228,6 +237,6 @@ impl WifiServiceManagerService {
         // });
 
         let store = store_service.wifi_service_store();
-        Self { service, store }
+        Ok(Self { service, store })
     }
 }

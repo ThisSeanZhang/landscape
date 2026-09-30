@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use axum::extract::{Path, State};
 use landscape_common::api_response::LandscapeApiResp as CommonApiResp;
 use landscape_common::service::ServiceStatus;
-use landscape_common::service::controller::ControllerService;
+use landscape_common::service::controller::{ConfigStoreController, ConfigStoreServiceController};
 use landscape_common::wan_service::wan_route::RouteWanServiceConfig;
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
@@ -47,7 +47,7 @@ async fn get_route_wan_config(
     State(state): State<LandscapeApp>,
     Path(iface_name): Path<String>,
 ) -> LandscapeApiResult<RouteWanServiceConfig> {
-    if let Some(iface_config) = state.route_wan_service.get_config_by_name(iface_name).await {
+    if let Some(iface_config) = state.route_wan_service.find_by_id(iface_name).await? {
         LandscapeApiResp::success(iface_config)
     } else {
         Err(ServiceConfigError::NotFound { service_name: "Route Wan" })?
@@ -81,7 +81,5 @@ async fn delete_and_stop_route_wan(
     State(state): State<LandscapeApp>,
     Path(iface_name): Path<String>,
 ) -> LandscapeApiResult<Option<ServiceStatus>> {
-    LandscapeApiResp::success(
-        state.route_wan_service.delete_and_stop_iface_service(iface_name).await,
-    )
+    LandscapeApiResp::success(state.route_wan_service.delete_and_stop_service(iface_name).await?)
 }

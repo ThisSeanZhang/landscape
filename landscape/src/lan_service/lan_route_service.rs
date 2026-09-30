@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use landscape_common::database::LandscapeStore;
+use landscape_common::database::error::DbError;
 use landscape_common::event::hub::IfaceEventReader;
 use landscape_common::lan_service::lan_route::RouteLanServiceConfig;
 use landscape_common::lan_service::lan_route::dataplane::LanRouteDataplane;
@@ -9,7 +10,7 @@ use landscape_common::{
     event::hub::iface::IfaceObserverAction,
     service::{
         ServiceStatus, WatchService,
-        controller::ControllerService,
+        controller::{ConfigStoreController, ConfigStoreServiceController},
         manager::{ServiceManager, ServiceStarterTrait},
     },
 };
@@ -77,7 +78,11 @@ impl ServiceStarterTrait for RouteLanService {
                 );
             } else {
                 tracing::error!("Interface {} not found", config.iface_name);
+                service_status.just_change_status(ServiceStatus::Staring);
+                service_status.just_change_status(ServiceStatus::Failed);
             }
+        } else {
+            service_status.just_change_status(ServiceStatus::Disabled);
         }
 
         service_status
@@ -141,18 +146,22 @@ pub struct RouteLanServiceManagerService {
     service: ServiceManager<RouteLanService>,
 }
 
-impl ControllerService for RouteLanServiceManagerService {
+#[async_trait::async_trait]
+impl ConfigStoreController for RouteLanServiceManagerService {
     type Id = String;
     type Config = RouteLanServiceConfig;
-    type DatabseAction = RouteLanServiceRepository;
+    type Store = RouteLanServiceRepository;
+
+    fn get_store(&self) -> &Self::Store {
+        &self.store
+    }
+}
+
+impl ConfigStoreServiceController for RouteLanServiceManagerService {
     type H = RouteLanService;
 
     fn get_service(&self) -> &ServiceManager<Self::H> {
         &self.service
-    }
-
-    fn get_repository(&self) -> &Self::DatabseAction {
-        &self.store
     }
 }
 
@@ -162,11 +171,10 @@ impl RouteLanServiceManagerService {
         route_service: IpRouteService,
         mut dev_observer: IfaceEventReader,
         dataplane: Arc<dyn LanRouteDataplane>,
-    ) -> Self {
+    ) -> Result<Self, DbError> {
         let store = store_service.route_lan_service_store();
         let server_starter = RouteLanService::new(route_service, dataplane);
-        let service =
-            ServiceManager::init(store.list().await.unwrap(), server_starter.clone()).await;
+        let service = ServiceManager::init(store.list().await?, server_starter.clone()).await;
 
         let service_clone = service.clone();
         spawn_task(task_label::task::ROUTE_LAN_OBSERVER, async move {
@@ -190,6 +198,6 @@ impl RouteLanServiceManagerService {
         });
 
         let store = store_service.route_lan_service_store();
-        Self { service, store }
+        Ok(Self { service, store })
     }
 }

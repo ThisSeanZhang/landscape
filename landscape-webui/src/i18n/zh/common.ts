@@ -11,6 +11,7 @@ export default {
   running: "运行中",
   stopping: "停止中",
   stopped: "停止",
+  disabled: "已停用",
   failed: "异常停止",
   confirm_stop: "确定停止吗",
   created_at: "创建时间",

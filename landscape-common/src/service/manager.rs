@@ -20,8 +20,9 @@ pub trait ServiceStarterTrait: Clone + Send + Sync + 'static {
     /// 核心服务初始化逻辑。
     ///
     /// 契约(由 ServiceHandle 的确定性等待与死亡监视依赖):
-    /// - 返回前句柄状态须已进入 `Staring` 或终态,不得停留在初始 `Stop`
-    ///   (否则 `update_service_and_wait` 会把"即将启动"误报为 Stopped);
+    /// - 返回前句柄状态须已进入 `Staring` 或汇报过的终态:禁用配置显式
+    ///   汇报 `Disabled`(观测为 [`StartOutcome::CleanStop`]),不得返回
+    ///   未写入的初始 `Stop`(否则被误报为 [`StartOutcome::Stopped`]);
     /// - 服务长驻任务必须经 `handle.spawn_task`/`spawn_task_with_resource`
     ///   注册进 tracker,裸 `tokio::spawn` 的任务无法被 `wait_stop` 等待。
     async fn start(&self, config: Self::Config) -> WatchService;
@@ -165,8 +166,8 @@ impl<H: ServiceStarterTrait> ServiceManager<H> {
 
     /// 发送配置并观测"由本次更新触发的运行"的启动结果。
     ///
-    /// 为数据库配置回滚改造预留的原语:controller 层可据此实现"验证后落库"
-    /// (Running 才持久化)或"落库后验证"(非 Running 双回滚)。
+    /// 供 controller 层实现"验证后落库"(Running 才持久化)或"落库后验证"
+    /// (非 Running 双回滚)。
     ///
     /// 通过注册表 `generation` 识别新运行:记录发送前的代数,等待代数前进后
     /// 取新句柄观测启动结果。注意:同一 key 存在并发更新时,观测到的运行
@@ -192,11 +193,74 @@ impl<H: ServiceStarterTrait> ServiceManager<H> {
             return StartOutcome::NotDelivered;
         }
 
+        self.observe_start_outcome(&key, target_generation, tokio::time::Instant::now() + timeout)
+            .await
+    }
+
+    /// 等待容量地发送配置并观测启动结果(有界 best-effort 投递)。
+    ///
+    /// 与 [`ServiceManager::update_service`] 的 try_send(通道满即弃)不同,
+    /// 本方法等待通道容量;与 [`ServiceManager::update_service_wait`] 的无界
+    /// 等待不同,投递与观测共享同一个 deadline,超时即放弃并返回
+    /// [`StartOutcome::Timeout`] —— **不保证收敛,仅由调用方告警**。服务任务
+    /// 退出(通道关闭)时重建服务后继续观测。
+    ///
+    /// generation 语义与 [`ServiceManager::update_service_and_wait`] 相同:
+    /// 并发更新下先前进的代数可能属于队列中 pending 的前一更新,单写者
+    /// 场景下语义精确。
+    pub(crate) async fn update_service_wait_and_observe(
+        &self,
+        config: H::Config,
+        timeout: Duration,
+    ) -> StartOutcome {
+        let key = config.service_key();
         let deadline = tokio::time::Instant::now() + timeout;
+
+        // 先取发送端与代数再放锁:send 背压等待期间持读锁,
+        // 会与 spawn_service/观测循环的写锁互等
+        let existing = {
+            let read_lock = self.services.read().await;
+            read_lock
+                .get(&key)
+                .map(|entry| (entry.config_tx.clone(), entry.generation.load(Ordering::SeqCst)))
+        };
+
+        let target_generation = match existing {
+            Some((sender, captured)) => {
+                match tokio::time::timeout_at(deadline, sender.send(config)).await {
+                    Ok(Ok(())) => captured + 1,
+                    Ok(Err(error)) => {
+                        tracing::warn!(key, "service task exited; recreating it for convergence");
+                        self.spawn_service(error.0).await;
+                        // 重建条目从 generation 0 重新计数
+                        1
+                    }
+                    Err(_) => {
+                        tracing::warn!(key, "delivery timed out; giving up (bounded best-effort)");
+                        return StartOutcome::Timeout;
+                    }
+                }
+            }
+            None => {
+                self.spawn_service(config).await;
+                1
+            }
+        };
+
+        self.observe_start_outcome(&key, target_generation, deadline).await
+    }
+
+    /// 观测由一次已投递更新触发的运行:等待代数前进后取新句柄看启动结果。
+    async fn observe_start_outcome(
+        &self,
+        key: &str,
+        target_generation: u64,
+        deadline: tokio::time::Instant,
+    ) -> StartOutcome {
         loop {
             let (status, generation) = {
                 let read_lock = self.services.read().await;
-                match read_lock.get(&key) {
+                match read_lock.get(key) {
                     Some(entry) => (entry.status.clone(), entry.generation.load(Ordering::SeqCst)),
                     // 服务被并发删除:本次更新不会再产生运行
                     None => return StartOutcome::Stopped,

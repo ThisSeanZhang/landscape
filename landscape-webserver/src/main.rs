@@ -458,27 +458,27 @@ async fn run_system(
         event_handle.subscribe_iface(),
         ebpf_rt.clone().lan_route(),
     )
-    .await;
+    .await?;
     let route_wan_service = RouteWanServiceManagerService::new(
         db_store_provider.clone(),
         event_handle.subscribe_iface(),
         ebpf_rt.clone().wan_route(),
     )
-    .await;
+    .await?;
 
     let mss_clamp_service = MssClampServiceManagerService::new(
         db_store_provider.clone(),
         event_handle.subscribe_iface(),
         ebpf_rt.clone().mss_clamp(),
     )
-    .await;
+    .await?;
 
     let firewall_service = FirewallServiceManagerService::new(
         db_store_provider.clone(),
         event_handle.subscribe_iface(),
         ebpf_rt.clone().firewall(),
     )
-    .await;
+    .await?;
 
     let nat_service = NatServiceManagerService::new(
         db_store_provider.clone(),
@@ -488,7 +488,7 @@ async fn run_system(
     )
     .await;
 
-    let wifi_service = WifiServiceManagerService::new(db_store_provider.clone()).await;
+    let wifi_service = WifiServiceManagerService::new(db_store_provider.clone()).await?;
 
     let iface_config_service = IfaceManagerService::new(db_store_provider.clone()).await;
 
