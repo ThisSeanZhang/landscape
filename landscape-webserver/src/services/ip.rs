@@ -3,7 +3,7 @@ use std::{collections::HashMap, net::IpAddr};
 use axum::extract::{Path, State};
 use landscape_common::api_response::LandscapeApiResp as CommonApiResp;
 use landscape_common::service::ServiceStatus;
-use landscape_common::service::controller::ControllerService;
+use landscape_common::service::controller::ConfigStoreServiceController;
 use landscape_common::wan_service::ip_config::{IfaceIpModelConfig, IfaceIpServiceConfig};
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
@@ -146,5 +146,5 @@ async fn delete_and_stop_iface_service(
     State(state): State<LandscapeApp>,
     Path(iface_name): Path<String>,
 ) -> LandscapeApiResult<Option<ServiceStatus>> {
-    LandscapeApiResp::success(state.wan_ip_service.delete_and_stop_iface_service(iface_name).await)
+    LandscapeApiResp::success(state.wan_ip_service.delete_and_stop_iface_service(iface_name).await?)
 }

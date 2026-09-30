@@ -2,7 +2,8 @@ use base64::Engine;
 use instant_acme::{Account, ExternalAccountKey, LetsEncrypt, NewAccount, ZeroSsl};
 use landscape_common::cert::CertError;
 use landscape_common::cert::account::{AccountStatus, CertAccountConfig, ProviderConfig};
-use landscape_common::service::controller::ConfigController;
+use landscape_common::database::store::ConfigStore;
+use landscape_common::service::controller::ConfigStoreController;
 use landscape_database::cert_account::repository::CertAccountRepository;
 use landscape_database::provider::LandscapeDBServiceProvider;
 use tracing;
@@ -29,7 +30,10 @@ impl CertAccountService {
         let service = Self { store };
 
         // Startup cleanup: reset any accounts stuck in Registering back to Unregistered
-        let accounts = service.list().await;
+        let accounts = service.list().await.unwrap_or_else(|error| {
+            tracing::warn!(%error, "reading accounts for startup cleanup failed");
+            Vec::new()
+        });
         for mut account in accounts {
             if matches!(account.status, AccountStatus::Registering) {
                 tracing::warn!(
@@ -38,7 +42,7 @@ impl CertAccountService {
                 );
                 account.status = AccountStatus::Unregistered;
                 account.status_message = None;
-                let _ = service.set(account).await;
+                let _ = service.store.upsert(account).await;
             }
         }
 
@@ -46,7 +50,7 @@ impl CertAccountService {
     }
 
     pub async fn register_account(&self, id: Uuid) -> Result<CertAccountConfig, CertError> {
-        let mut config = self.find_by_id(id).await.ok_or(CertError::AccountNotFound(id))?;
+        let mut config = self.find_by_id(id).await?.ok_or(CertError::AccountNotFound(id))?;
 
         // Only allow registration from Unregistered or Error
         match config.status {
@@ -64,7 +68,7 @@ impl CertAccountService {
         // Set status to Registering
         config.status = AccountStatus::Registering;
         config.status_message = None;
-        let _ = self.set(config.clone()).await;
+        let _ = self.store.upsert(config.clone()).await;
 
         // Determine directory URL
         let directory_url = match &config.provider_config {
@@ -126,12 +130,12 @@ impl CertAccountService {
             }
         }
 
-        let saved = self.set(config).await;
+        let saved = self.store.upsert(config).await?.new;
         Ok(saved)
     }
 
     pub async fn verify_account(&self, id: Uuid) -> Result<CertAccountConfig, CertError> {
-        let mut config = self.find_by_id(id).await.ok_or(CertError::AccountNotFound(id))?;
+        let mut config = self.find_by_id(id).await?.ok_or(CertError::AccountNotFound(id))?;
 
         // Only allow verification when Registered
         if !matches!(config.status, AccountStatus::Registered) {
@@ -178,12 +182,12 @@ impl CertAccountService {
             }
         }
 
-        let saved = self.set(config).await;
+        let saved = self.store.upsert(config).await?.new;
         Ok(saved)
     }
 
     pub async fn deactivate_account(&self, id: Uuid) -> Result<CertAccountConfig, CertError> {
-        let mut config = self.find_by_id(id).await.ok_or(CertError::AccountNotFound(id))?;
+        let mut config = self.find_by_id(id).await?.ok_or(CertError::AccountNotFound(id))?;
 
         // Only allow deactivation when Registered
         if !matches!(config.status, AccountStatus::Registered) {
@@ -232,18 +236,18 @@ impl CertAccountService {
             }
         }
 
-        let saved = self.set(config).await;
+        let saved = self.store.upsert(config).await?.new;
         Ok(saved)
     }
 }
 
 #[async_trait::async_trait]
-impl ConfigController for CertAccountService {
+impl ConfigStoreController for CertAccountService {
     type Id = Uuid;
     type Config = CertAccountConfig;
-    type DatabseAction = CertAccountRepository;
+    type Store = CertAccountRepository;
 
-    fn get_repository(&self) -> &Self::DatabseAction {
+    fn get_store(&self) -> &Self::Store {
         &self.store
     }
 }

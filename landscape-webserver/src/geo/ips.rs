@@ -7,7 +7,7 @@ use landscape_common::config_service::geo::{
     GeoError, GeoFileCacheKey, GeoIpConfig, GeoIpLookupResult, GeoIpSourceConfig,
     QueryGeoIpAddress, QueryGeoIpConfig, QueryGeoKey, RawDatState,
 };
-use landscape_common::service::controller::ConfigController;
+use landscape_common::service::controller::ConfigStoreController;
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 
@@ -177,7 +177,7 @@ async fn get_geo_ip_rule(
     State(state): State<LandscapeApp>,
     Path(id): Path<ConfigId>,
 ) -> LandscapeApiResult<GeoIpSourceConfig> {
-    let result = state.geo_ip_service.find_by_id(id).await;
+    let result = state.geo_ip_service.find_by_id(id).await?;
     if let Some(config) = result {
         LandscapeApiResp::success(config)
     } else {
@@ -229,7 +229,7 @@ async fn del_geo_ip(
     State(state): State<LandscapeApp>,
     Path(id): Path<ConfigId>,
 ) -> LandscapeApiResult<()> {
-    state.geo_ip_service.delete(id).await;
+    state.geo_ip_service.delete(id).await?;
     LandscapeApiResp::success(())
 }
 

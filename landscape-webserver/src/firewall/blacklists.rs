@@ -1,7 +1,7 @@
 use axum::extract::{Path, State};
 use landscape_common::api_response::LandscapeApiResp as CommonApiResp;
 use landscape_common::config::ConfigId;
-use landscape_common::service::controller::ConfigController;
+use landscape_common::service::controller::ConfigStoreController;
 use landscape_common::wan_service::firewall::blacklist::FirewallBlacklistConfig;
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
@@ -27,7 +27,7 @@ pub fn get_firewall_blacklist_config_paths() -> OpenApiRouter<LandscapeApp> {
 async fn get_firewall_blacklists(
     State(state): State<LandscapeApp>,
 ) -> LandscapeApiResult<Vec<FirewallBlacklistConfig>> {
-    let result = state.firewall_blacklist_service.list().await;
+    let result = state.firewall_blacklist_service.list().await?;
     LandscapeApiResp::success(result)
 }
 
@@ -45,7 +45,7 @@ async fn get_firewall_blacklist(
     State(state): State<LandscapeApp>,
     Path(id): Path<ConfigId>,
 ) -> LandscapeApiResult<FirewallBlacklistConfig> {
-    let result = state.firewall_blacklist_service.find_by_id(id).await;
+    let result = state.firewall_blacklist_service.find_by_id(id).await?;
     if let Some(config) = result {
         LandscapeApiResp::success(config)
     } else {
@@ -82,6 +82,6 @@ async fn del_firewall_blacklist(
     State(state): State<LandscapeApp>,
     Path(id): Path<ConfigId>,
 ) -> LandscapeApiResult<()> {
-    state.firewall_blacklist_service.delete(id).await;
+    state.firewall_blacklist_service.delete(id).await?;
     LandscapeApiResp::success(())
 }

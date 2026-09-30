@@ -6,7 +6,7 @@ use landscape::sys_service::route::IpRouteService;
 use landscape::{get_iface_by_name, wan_service::ipv6pd_client::v6::dhcp_v6_pd_client};
 use landscape_common::{
     LANDSCAPE_DEFAULE_DHCP_V6_CLIENT_PORT,
-    service::{ServiceStatus, WatchService},
+    service::{ServiceHandle, ServiceStatus},
 };
 use landscape_common::{
     event::hub::IAPrefixEventSender, sys_service::route_service::RouteTargetInfo,
@@ -41,7 +41,7 @@ async fn main() {
         return;
     };
 
-    let service_status = WatchService::new();
+    let service_status = ServiceHandle::new();
     let db_store_provider = LandscapeDBServiceProvider::mem_test_db().await;
     let flow_repo = db_store_provider.flow_rule_store();
     let (_, route_rx) = mpsc::channel(1);

@@ -6,7 +6,7 @@ use std::time::Duration;
 use dashmap::DashMap;
 use landscape_common::cert::order::DnsProviderConfig;
 use landscape_common::concurrency::{spawn_task, task_label};
-use landscape_common::database::LandscapeStore;
+use landscape_common::database::store::ConfigStore;
 use landscape_common::ddns::{
     DdnsError, DdnsFamilyRuntime, DdnsJob, DdnsJobRuntime, DdnsJobStatus, DdnsRecordRuntime,
     DdnsRuntimeReason, DdnsSource, IpFamily, fqdn_for_zone_record,
@@ -17,7 +17,9 @@ use landscape_common::event::hub::{
 };
 use landscape_common::lan_service::lan_ipv6::{combine_ipv6_prefix_suffix, extract_ipv6_suffix};
 use landscape_common::wan_service::ipv6_pd::IAPrefixMap;
-use landscape_common::{database::error::DbError, service::controller::ConfigController};
+use landscape_common::{
+    database::error::DbError, database::store::Change, service::controller::ConfigStoreController,
+};
 use landscape_database::{
     ddns::repository::DdnsJobRepository,
     dns_provider_profile::repository::DnsProviderProfileRepository,
@@ -345,6 +347,16 @@ impl DdnsService {
     async fn refresh_runtime_from_store(&self) {
         let jobs = self.store.list().await.unwrap_or_default();
         self.refresh_runtime_with_jobs(jobs).await;
+    }
+
+    /// Incrementally fold write changes into the runtime map, reusing the
+    /// previous entry for an updated job like the full rebuild does.
+    async fn apply_changes_to_runtime(&self, changes: &[Change<DdnsJob>]) {
+        let mut runtime = self.runtime.write().await;
+        for change in changes {
+            let prev = runtime.remove(&change.new.id);
+            runtime.insert(change.new.id, build_job_runtime(&change.new, prev));
+        }
     }
 
     async fn refresh_runtime_with_jobs(&self, jobs: Vec<DdnsJob>) {
@@ -1114,22 +1126,23 @@ async fn reconcile_dns_records(
 }
 
 #[async_trait::async_trait]
-impl ConfigController for DdnsService {
+impl ConfigStoreController for DdnsService {
     type Id = Uuid;
     type Config = DdnsJob;
-    type DatabseAction = DdnsJobRepository;
+    type Store = DdnsJobRepository;
 
-    fn get_repository(&self) -> &Self::DatabseAction {
+    fn get_store(&self) -> &Self::Store {
         &self.store
     }
 
-    async fn after_update_config(
-        &self,
-        new_configs: Vec<Self::Config>,
-        _old_configs: Vec<Self::Config>,
-    ) {
-        self.refresh_runtime_with_jobs(new_configs.clone()).await;
-        self.on_config_changed_for_pd(&new_configs).await;
+    async fn notify_changed(&self, changes: Vec<Change<Self::Config>>) {
+        let jobs: Vec<DdnsJob> = changes.iter().map(|c| c.new.clone()).collect();
+        self.apply_changes_to_runtime(&changes).await;
+        self.on_config_changed_for_pd(&jobs).await;
+    }
+
+    async fn notify_deleted(&self, old: Self::Config) {
+        self.runtime.write().await.remove(&old.id);
     }
 }
 

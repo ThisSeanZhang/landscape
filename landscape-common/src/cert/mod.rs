@@ -4,6 +4,7 @@ pub mod order;
 use landscape_macro::LdApiError;
 
 use crate::config::ConfigId;
+use crate::database::error::DbError;
 
 #[derive(thiserror::Error, Debug, LdApiError)]
 #[api_error(crate_path = "crate")]
@@ -59,4 +60,8 @@ pub enum CertError {
     #[error("DNS challenge setup failed: {0}")]
     #[api_error(id = "cert.dns_challenge_failed", status = 500)]
     DnsChallengeSetupFailed(String),
+
+    #[error(transparent)]
+    #[api_error(transparent)]
+    Internal(#[from] DbError),
 }

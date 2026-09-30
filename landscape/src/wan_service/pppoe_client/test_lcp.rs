@@ -4,7 +4,7 @@ use tokio::time::Duration;
 use landscape_common::net::MacAddr;
 use landscape_common::net_proto::ppp::PointToPoint;
 use landscape_common::net_proto::pppoe::{PPPoEFrame, PPPoETag};
-use landscape_common::service::{ServiceStatus, WatchService};
+use landscape_common::service::{ServiceHandle, ServiceStatus};
 
 use super::PPPoEClientConfig;
 
@@ -208,7 +208,7 @@ mod integration {
         let (mut client_tx, mut from_client) = mpsc::channel::<Vec<u8>>(16);
         let (to_client, mut client_rx) = mpsc::channel::<Vec<u8>>(16);
         let config = test_config();
-        let status = WatchService::new();
+        let status = ServiceHandle::new();
         status.just_change_status(ServiceStatus::Staring);
         status.just_change_status(ServiceStatus::Running);
 
@@ -252,7 +252,7 @@ mod integration {
         let (mut client_tx, mut from_client) = mpsc::channel::<Vec<u8>>(16);
         let (to_client, mut client_rx) = mpsc::channel::<Vec<u8>>(16);
         let config = test_config();
-        let status = WatchService::new();
+        let status = ServiceHandle::new();
         status.just_change_status(ServiceStatus::Staring);
         status.just_change_status(ServiceStatus::Running);
 
@@ -290,7 +290,7 @@ mod integration {
         let (mut client_tx, _from_client) = mpsc::channel::<Vec<u8>>(16);
         let (_to_client, mut client_rx) = mpsc::channel::<Vec<u8>>(16);
         let config = test_config();
-        let status = WatchService::new();
+        let status = ServiceHandle::new();
         status.just_change_status(ServiceStatus::Staring);
         status.just_change_status(ServiceStatus::Running);
 
@@ -322,7 +322,7 @@ mod integration {
         let (mut client_tx, mut from_client) = mpsc::channel::<Vec<u8>>(16);
         let (to_client, mut client_rx) = mpsc::channel::<Vec<u8>>(16);
         let config = test_config();
-        let status = WatchService::new();
+        let status = ServiceHandle::new();
         status.just_change_status(ServiceStatus::Staring);
         status.just_change_status(ServiceStatus::Running);
 
@@ -397,7 +397,7 @@ mod integration {
         let (mut client_tx, mut from_client) = mpsc::channel::<Vec<u8>>(16);
         let (to_client, mut client_rx) = mpsc::channel::<Vec<u8>>(16);
         let config = test_config();
-        let status = WatchService::new();
+        let status = ServiceHandle::new();
         status.just_change_status(ServiceStatus::Staring);
         status.just_change_status(ServiceStatus::Running);
 
@@ -447,7 +447,7 @@ mod integration {
         let (mut client_tx, mut from_client) = mpsc::channel::<Vec<u8>>(16);
         let (to_client, mut client_rx) = mpsc::channel::<Vec<u8>>(16);
         let config = test_config();
-        let status = WatchService::new();
+        let status = ServiceHandle::new();
         status.just_change_status(ServiceStatus::Staring);
         status.just_change_status(ServiceStatus::Running);
 
@@ -495,7 +495,7 @@ mod integration {
         let (mut client_tx, mut from_client) = mpsc::channel::<Vec<u8>>(16);
         let (to_client, mut client_rx) = mpsc::channel::<Vec<u8>>(16);
         let config = test_config();
-        let status = WatchService::new();
+        let status = ServiceHandle::new();
         status.just_change_status(ServiceStatus::Staring);
         status.just_change_status(ServiceStatus::Running);
 
@@ -561,7 +561,7 @@ mod integration {
         let (mut client_tx, _from_client) = mpsc::channel::<Vec<u8>>(2);
         let (to_client, mut client_rx) = mpsc::channel::<Vec<u8>>(2);
         let config = test_config();
-        let status = WatchService::new();
+        let status = ServiceHandle::new();
         status.just_change_status(ServiceStatus::Staring);
         status.just_change_status(ServiceStatus::Running);
 
@@ -585,7 +585,7 @@ mod integration {
         let (mut client_tx, mut from_client) = mpsc::channel::<Vec<u8>>(16);
         let (_to_client, mut client_rx) = mpsc::channel::<Vec<u8>>(16);
         let config = test_config();
-        let status = WatchService::new();
+        let status = ServiceHandle::new();
         status.just_change_status(ServiceStatus::Staring);
         status.just_change_status(ServiceStatus::Running);
 
@@ -619,7 +619,7 @@ mod integration {
         let (mut client_tx, mut from_client) = mpsc::channel::<Vec<u8>>(16);
         let (to_client, mut client_rx) = mpsc::channel::<Vec<u8>>(16);
         let config = test_config();
-        let status = WatchService::new();
+        let status = ServiceHandle::new();
         status.just_change_status(ServiceStatus::Staring);
         status.just_change_status(ServiceStatus::Running);
 
@@ -653,7 +653,7 @@ mod integration {
         let (mut client_tx, mut from_client) = mpsc::channel::<Vec<u8>>(16);
         let (to_client, mut client_rx) = mpsc::channel::<Vec<u8>>(16);
         let config = test_config();
-        let status = WatchService::new();
+        let status = ServiceHandle::new();
         status.just_change_status(ServiceStatus::Staring);
         status.just_change_status(ServiceStatus::Running);
 
@@ -689,7 +689,7 @@ mod integration {
         let (mut client_tx, mut from_client) = mpsc::channel::<Vec<u8>>(16);
         let (to_client, mut client_rx) = mpsc::channel::<Vec<u8>>(16);
         let config = test_config();
-        let status = WatchService::new();
+        let status = ServiceHandle::new();
         status.just_change_status(ServiceStatus::Staring);
         status.just_change_status(ServiceStatus::Running);
 
@@ -736,7 +736,7 @@ mod integration {
         let (to_client, mut client_rx) = mpsc::channel::<Vec<u8>>(16);
         let mut config = test_config();
         config.ac_name = Some("desired-ac".into());
-        let status = WatchService::new();
+        let status = ServiceHandle::new();
         status.just_change_status(ServiceStatus::Staring);
         status.just_change_status(ServiceStatus::Running);
 
@@ -771,7 +771,7 @@ mod integration {
         let (to_client, mut client_rx) = mpsc::channel::<Vec<u8>>(16);
         let mut config = test_config();
         config.ac_name = Some("desired-ac".into());
-        let status = WatchService::new();
+        let status = ServiceHandle::new();
         status.just_change_status(ServiceStatus::Staring);
         status.just_change_status(ServiceStatus::Running);
 
@@ -813,7 +813,7 @@ mod integration {
         let (mut client_tx, mut from_client) = mpsc::channel::<Vec<u8>>(16);
         let (to_client, mut client_rx) = mpsc::channel::<Vec<u8>>(16);
         let config = test_config();
-        let status = WatchService::new();
+        let status = ServiceHandle::new();
         status.just_change_status(ServiceStatus::Staring);
         status.just_change_status(ServiceStatus::Running);
 

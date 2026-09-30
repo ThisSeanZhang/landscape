@@ -1,5 +1,6 @@
 use landscape_common::concurrency::{spawn_task, task_label};
-use landscape_common::database::LandscapeStore as LandscapeDBStore;
+use landscape_common::database::error::DbError;
+use landscape_common::database::store::ConfigStore as LandscapeDBStore;
 use landscape_common::event::hub::iface::IfaceObserverAction;
 use landscape_common::event::hub::{
     EnrolledDeviceEvent, EnrolledDeviceEventReader, IAPrefixEvent, IAPrefixEventReader,
@@ -9,10 +10,10 @@ use landscape_common::lan_service::lan_ipv6::DHCPv6OfferInfo;
 use landscape_common::lan_service::lan_ipv6::IPv6NAInfo;
 use landscape_common::lan_service::lan_ipv6::{IPv6ServiceMode, LanIPv6ServiceConfigV2};
 use landscape_common::net::MacAddr;
-use landscape_common::service::controller::ControllerService;
+use landscape_common::service::controller::{ConfigStoreController, ConfigStoreServiceController};
 use landscape_common::service::manager::ServiceManager;
 use landscape_common::service::manager::ServiceStarterTrait;
-use landscape_common::service::{ServiceStatus, WatchService};
+use landscape_common::service::{ServiceHandle, ServiceStatus};
 use landscape_common::sys_service::client::{CallerLookupMatch, CallerLookupSource};
 use landscape_common::wan_service::ipv6_pd::IAPrefixMap;
 use landscape_database::enrolled_device::repository::EnrolledDeviceRepository;
@@ -159,8 +160,8 @@ async fn supervise_dad_dispatcher(
 impl ServiceStarterTrait for LanIPv6Service {
     type Config = LanIPv6ServiceConfigV2;
 
-    async fn start(&self, config: LanIPv6ServiceConfigV2) -> WatchService {
-        let service_status = WatchService::new();
+    async fn start(&self, config: LanIPv6ServiceConfigV2) -> ServiceHandle {
+        let service_status = ServiceHandle::new();
         if config.enable {
             service_status.just_change_status(ServiceStatus::Staring);
 
@@ -295,6 +296,9 @@ impl ServiceStarterTrait for LanIPv6Service {
                 // deleting it would close the new server's DAD channel.
                 dao_event_senders.remove_if(&ifindex, |_, v| v.same_channel(&dao_tx));
             });
+        } else {
+            // 契约:禁用汇报 Disabled(CleanStop),允许持久化
+            service_status.just_change_status(ServiceStatus::Disabled);
         }
 
         service_status
@@ -313,29 +317,44 @@ pub struct LanIPv6ManagerService {
     dao_event_source: Option<Arc<Ip6DaoEventSource>>,
 }
 
-impl ControllerService for LanIPv6ManagerService {
+#[async_trait::async_trait]
+impl ConfigStoreController for LanIPv6ManagerService {
     type Id = String;
     type Config = LanIPv6ServiceConfigV2;
-    type DatabseAction = LanIPv6V2ServiceRepository;
+    type Store = LanIPv6V2ServiceRepository;
+
+    fn get_store(&self) -> &Self::Store {
+        &self.store
+    }
+}
+
+impl ConfigStoreServiceController for LanIPv6ManagerService {
     type H = LanIPv6Service;
 
     fn get_service(&self) -> &ServiceManager<Self::H> {
         &self.service
     }
-
-    fn get_repository(&self) -> &Self::DatabseAction {
-        &self.store
-    }
 }
 
 impl LanIPv6ManagerService {
+    /// persist-after-verify:全局前缀冲突校验作为前置校验由 handler 完成
+    /// (带 PD 上下文),启动观测通过后由控制器原子落库并收敛。
     pub async fn save_config(
         &self,
         config: LanIPv6ServiceConfigV2,
     ) -> Result<LanIPv6ServiceConfigV2, landscape_common::lan_service::lan_ipv6::LanIPv6Error> {
-        let saved = self.store.checked_set_with_global_validation(config).await?;
-        self.service.update_service_wait(saved.clone()).await;
-        Ok(saved)
+        Ok(self.handle_service_config(config).await?)
+    }
+
+    pub async fn get_config_by_name(&self, iface_name: String) -> Option<LanIPv6ServiceConfigV2> {
+        self.find_by_id(iface_name).await.ok().flatten()
+    }
+
+    pub async fn delete_and_stop_iface_service(
+        &self,
+        iface_name: String,
+    ) -> Result<Option<ServiceStatus>, DbError> {
+        self.delete_and_stop_service(iface_name).await
     }
 
     #[allow(clippy::too_many_arguments)]

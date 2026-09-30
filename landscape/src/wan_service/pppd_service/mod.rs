@@ -6,11 +6,12 @@ mod tests;
 use std::sync::Arc;
 
 use landscape_common::concurrency::task_label;
-use landscape_common::database::LandscapeStore;
+use landscape_common::database::error::DbError;
+use landscape_common::database::store::ConfigStore;
 use landscape_common::service::ServiceStatus;
-use landscape_common::service::controller::ControllerService;
+use landscape_common::service::controller::{ConfigStoreController, ConfigStoreServiceController};
 use landscape_common::service::manager::ServiceManager;
-use landscape_common::service::{WatchService, manager::ServiceStarterTrait};
+use landscape_common::service::{ServiceHandle, manager::ServiceStarterTrait};
 use landscape_common::wan_service::addr_binding::WanAddrBinding;
 use landscape_common::wan_service::pppd::PPPDConfig;
 use landscape_common::wan_service::pppd::PPPDServiceConfig;
@@ -39,8 +40,8 @@ impl PPPDService {
 impl ServiceStarterTrait for PPPDService {
     type Config = PPPDServiceConfig;
 
-    async fn start(&self, config: PPPDServiceConfig) -> WatchService {
-        let service_status = WatchService::new();
+    async fn start(&self, config: PPPDServiceConfig) -> ServiceHandle {
+        let service_status = ServiceHandle::new();
         if config.enable {
             if get_iface_by_name(&config.attach_iface_name).await.is_some() {
                 service_status.just_change_status(ServiceStatus::Staring);
@@ -70,7 +71,12 @@ impl ServiceStarterTrait for PPPDService {
                 );
             } else {
                 tracing::error!("Interface {} not found", config.iface_name);
+                // 契约:iface 缺失视为启动失败,拒绝持久化
+                service_status.just_change_status(ServiceStatus::Staring);
+                service_status.just_change_status(ServiceStatus::Failed);
             }
+        } else {
+            service_status.just_change_status(ServiceStatus::Disabled);
         }
 
         service_status
@@ -110,7 +116,7 @@ pub(crate) async fn create_pppd_thread(
     attach_iface_name: String,
     ppp_iface_name: String,
     pppd_conf: PPPDConfig,
-    service_status: WatchService,
+    service_status: ServiceHandle,
     env: Arc<dyn PppdEnv>,
     config_store: Arc<dyn PppdConfigStore>,
 ) {
@@ -150,18 +156,22 @@ pub struct PPPDServiceConfigManagerService {
     service: ServiceManager<PPPDService>,
 }
 
-impl ControllerService for PPPDServiceConfigManagerService {
+#[async_trait::async_trait]
+impl ConfigStoreController for PPPDServiceConfigManagerService {
     type Id = String;
     type Config = PPPDServiceConfig;
-    type DatabseAction = PPPDServiceRepository;
+    type Store = PPPDServiceRepository;
+
+    fn get_store(&self) -> &Self::Store {
+        &self.store
+    }
+}
+
+impl ConfigStoreServiceController for PPPDServiceConfigManagerService {
     type H = PPPDService;
 
     fn get_service(&self) -> &ServiceManager<Self::H> {
         &self.service
-    }
-
-    fn get_repository(&self) -> &Self::DatabseAction {
-        &self.store
     }
 }
 
@@ -185,14 +195,23 @@ impl PPPDServiceConfigManagerService {
         self.store.get_pppd_configs_by_attach_iface_name(attach_name).await.unwrap()
     }
 
-    pub async fn delete_and_stop_pppd(&self, iface_name: String) -> Option<ServiceStatus> {
-        self.delete_and_stop_iface_service(iface_name).await
+    pub async fn get_config_by_name(&self, iface_name: String) -> Option<PPPDServiceConfig> {
+        self.find_by_id(iface_name).await.ok().flatten()
+    }
+
+    pub async fn delete_and_stop_pppd(
+        &self,
+        iface_name: String,
+    ) -> Result<Option<ServiceStatus>, DbError> {
+        self.delete_and_stop_service(iface_name).await
     }
 
     pub async fn delete_and_stop_pppds_by_attach_iface_name(&self, attach_name: String) {
         let configs = self.get_pppd_configs_by_attach_iface_name(attach_name).await;
         for each in configs {
-            self.delete_and_stop_pppd(each.iface_name).await;
+            if let Err(error) = self.delete_and_stop_pppd(each.iface_name).await {
+                tracing::warn!(%error, "deleting pppd service by attach iface failed");
+            }
         }
     }
 }

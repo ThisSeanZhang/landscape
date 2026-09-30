@@ -30,7 +30,7 @@ use landscape_common::net::MacAddr;
 use landscape_common::sys_service::lan_hostname::LanHostnameConfig;
 
 use crate::lan_service::lan_dhcp4_server::status::DhcpV4AssignStatus;
-use landscape_common::service::{ServiceStatus, WatchService};
+use landscape_common::service::{ServiceHandle, ServiceStatus};
 use landscape_common::{
     LANDSCAPE_DEFAULE_DHCP_V4_SERVER_PORT, LANDSCAPE_DHCP_DEFAULT_ADDRESS_LEASE_TIME,
 };
@@ -87,7 +87,7 @@ pub async fn dhcp_v4_server(
     server_ip: Ipv4Addr,
     prefix_length: u8,
     dhcp_server: DHCPv4Server,
-    service_status: WatchService,
+    service_status: ServiceHandle,
     ipv4_assign_sender: IPv4AssignEventSender,
     dataplane: Arc<dyn MacBindingDataplane>,
 ) {

@@ -5,6 +5,7 @@ use serde::{Deserialize, Deserializer, Serialize};
 use uuid::Uuid;
 
 use crate::config::ConfigId;
+use crate::database::error::DbError;
 use crate::database::repository::LandscapeDBStore;
 use crate::dns::rule::{DomainConfig, DomainMatchType};
 use crate::flow::ip_mark::IpConfig;
@@ -94,6 +95,10 @@ pub enum GeoError {
     #[error("failed to read geo site cache '{name}:{key}'")]
     #[api_error(id = "geo_matcher.read_failed", status = 500)]
     MatcherReadFailed { name: String, key: String },
+
+    #[error(transparent)]
+    #[api_error(transparent)]
+    Internal(#[from] DbError),
 }
 
 #[derive(Debug)]

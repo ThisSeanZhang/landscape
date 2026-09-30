@@ -8,7 +8,6 @@ use landscape_common::config_service::static_nat::config4::{
     StaticNatMappingV4Config, StaticNatV4Target,
 };
 use landscape_common::config_service::static_nat::error::StaticNatError;
-use landscape_common::database::LandscapeStore;
 use landscape_common::database::error::DbError;
 use landscape_common::database::store::{Change, ConfigStore};
 use landscape_common::event::hub::EnrolledDeviceEventReader;

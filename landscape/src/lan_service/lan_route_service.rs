@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
-use landscape_common::database::LandscapeStore;
 use landscape_common::database::error::DbError;
+use landscape_common::database::store::ConfigStore;
 use landscape_common::event::hub::IfaceEventReader;
 use landscape_common::lan_service::lan_route::RouteLanServiceConfig;
 use landscape_common::lan_service::lan_route::dataplane::LanRouteDataplane;
@@ -9,7 +9,7 @@ use landscape_common::{
     concurrency::{spawn_task, task_label},
     event::hub::iface::IfaceObserverAction,
     service::{
-        ServiceStatus, WatchService,
+        ServiceHandle, ServiceStatus,
         controller::{ConfigStoreController, ConfigStoreServiceController},
         manager::{ServiceManager, ServiceStarterTrait},
     },
@@ -37,8 +37,8 @@ impl RouteLanService {
 impl ServiceStarterTrait for RouteLanService {
     type Config = RouteLanServiceConfig;
 
-    async fn start(&self, config: RouteLanServiceConfig) -> WatchService {
-        let service_status = WatchService::new();
+    async fn start(&self, config: RouteLanServiceConfig) -> ServiceHandle {
+        let service_status = ServiceHandle::new();
 
         if config.enable {
             if let Some(iface) = get_iface_by_name(&config.iface_name).await {
@@ -93,7 +93,7 @@ pub async fn create_route_lan_service(
     iface_name: String,
     ifindex: u32,
     has_mac: bool,
-    service_status: WatchService,
+    service_status: ServiceHandle,
     dataplane: Arc<dyn LanRouteDataplane>,
 ) {
     tracing::info!("start route lan at ifindex: {ifindex}");

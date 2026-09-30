@@ -5,9 +5,9 @@ use landscape_common::{
         GeoError, GeoFileCacheKey, GeoIpConfig, GeoIpLookupResult, GeoIpSource, GeoIpSourceConfig,
         RawDatState,
     },
-    database::LandscapeStore,
+    database::store::{Change, ConfigStore},
     flow::ip_mark::{IpMarkInfo, WanIPRuleSource, WanIpRuleConfig},
-    service::controller::ConfigController,
+    service::controller::ConfigStoreController,
     utils::time::{MILL_A_DAY, get_f64_timestamp},
 };
 use uuid::Uuid;
@@ -177,7 +177,7 @@ impl GeoIpService {
             *next_update_at = get_f64_timestamp() + MILL_A_DAY as f64;
         }
         self.store
-            .set(config.clone())
+            .upsert(config.clone())
             .await
             .map_err(|e| GeoError::IpConfigStoreFailed(e.to_string()))?;
 
@@ -216,7 +216,7 @@ impl GeoIpService {
             return Ok(RawDatState::Ready(bytes));
         }
 
-        let Some(config) = self.find_by_id(id).await else {
+        let Some(config) = self.find_by_id(id).await? else {
             return Err(GeoError::IpNotFound(id));
         };
         if !matches!(config.source, GeoIpSource::Url { .. }) {
@@ -297,7 +297,7 @@ impl GeoIpService {
             GeoIpSource::Direct { data } => {
                 self.write_direct_to_cache(&config.name, data).await;
                 self.store
-                    .set(config.clone())
+                    .upsert(config.clone())
                     .await
                     .map_err(|e| GeoError::IpConfigStoreFailed(e.to_string()))?;
                 self.notify_dst_ip_updated();
@@ -462,7 +462,10 @@ impl GeoIpService {
             tracing::warn!("persist raw geo ip file {:?} failed: {}", dat_path, e);
         }
         self.replace_cache_by_name(&name, result).await;
-        self.store.set(config).await.map_err(|e| GeoError::IpConfigStoreFailed(e.to_string()))?;
+        self.store
+            .upsert(config)
+            .await
+            .map_err(|e| GeoError::IpConfigStoreFailed(e.to_string()))?;
         self.notify_dst_ip_updated();
         Ok(())
     }
@@ -487,34 +490,29 @@ fn cidr_contains(network: IpAddr, prefix: u32, ip: IpAddr) -> bool {
 }
 
 #[async_trait::async_trait]
-impl ConfigController for GeoIpService {
+impl ConfigStoreController for GeoIpService {
     type Id = Uuid;
 
     type Config = GeoIpSourceConfig;
 
-    type DatabseAction = GeoIpSourceConfigRepository;
+    type Store = GeoIpSourceConfigRepository;
 
-    fn get_repository(&self) -> &Self::DatabseAction {
+    fn get_store(&self) -> &Self::Store {
         &self.store
     }
 
-    async fn after_update_config(
-        &self,
-        new_configs: Vec<Self::Config>,
-        _old_configs: Vec<Self::Config>,
-    ) {
+    async fn notify_changed(&self, changes: Vec<Change<Self::Config>>) {
         // Refresh Direct configs immediately when updated
-        for config in new_configs {
-            if let GeoIpSource::Direct { ref data } = config.source {
-                self.write_direct_to_cache(&config.name, data).await;
+        for change in changes {
+            if let GeoIpSource::Direct { ref data } = change.new.source {
+                self.write_direct_to_cache(&change.new.name, data).await;
                 self.notify_dst_ip_updated();
             }
         }
     }
 
-    async fn delete(&self, id: Self::Id) {
-        ConfigController::delete(self, id).await;
-        remove_raw_dat("ip", id);
+    async fn notify_deleted(&self, old: Self::Config) {
+        remove_raw_dat("ip", old.id);
     }
 }
 

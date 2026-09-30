@@ -147,7 +147,7 @@ mod tests {
     use landscape_common::config_service::static_nat::config4::{
         StaticNatMappingV4Config, StaticNatV4Target,
     };
-    use landscape_common::database::LandscapeStore;
+    use landscape_common::database::store::ConfigStore;
     use landscape_common::wan_service::nat::config::{NatConfig, NatServiceConfig};
     use sea_orm::prelude::Uuid;
 
@@ -171,7 +171,7 @@ mod tests {
     }
 
     async fn insert_nat_service(provider: &LandscapeDBServiceProvider, config: NatServiceConfig) {
-        provider.nat_service_store().set(config).await.unwrap();
+        provider.nat_service_store().upsert(config).await.unwrap();
     }
 
     #[tokio::test]

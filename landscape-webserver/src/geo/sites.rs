@@ -7,7 +7,7 @@ use landscape_common::config_service::geo::{
     GeoDomainConfig, GeoError, GeoFileCacheKey, GeoSiteLookupResult, GeoSiteSourceConfig,
     QueryGeoDomainConfig, QueryGeoKey, QueryGeoSiteDomain, RawDatState,
 };
-use landscape_common::service::controller::ConfigController;
+use landscape_common::service::controller::ConfigStoreController;
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 
@@ -165,7 +165,7 @@ async fn get_geo_rule(
     State(state): State<LandscapeApp>,
     Path(id): Path<ConfigId>,
 ) -> LandscapeApiResult<GeoSiteSourceConfig> {
-    let result = state.geo_site_service.find_by_id(id).await;
+    let result = state.geo_site_service.find_by_id(id).await?;
     if let Some(config) = result {
         LandscapeApiResp::success(config)
     } else {
@@ -217,7 +217,7 @@ async fn del_geo_site(
     State(state): State<LandscapeApp>,
     Path(id): Path<ConfigId>,
 ) -> LandscapeApiResult<()> {
-    state.geo_site_service.delete(id).await;
+    state.geo_site_service.delete(id).await?;
     LandscapeApiResp::success(())
 }
 

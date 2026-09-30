@@ -1,5 +1,7 @@
 use std::fmt::Debug;
 
+use crate::config::FlowId;
+
 use super::error::DbError;
 
 /// Values before and after a write operation; `old` is `None` for pure inserts.
@@ -21,12 +23,8 @@ impl<D> Change<D> {
     }
 }
 
-/// Next-generation storage interface: write operations return `Change` and batch
-/// writes are all-or-nothing in a single transaction.
-///
-/// Runs in parallel with the legacy `LandscapeStore` and will be removed once all
-/// domains are migrated. Read methods (`find_by_id`/`list`) are still provided by
-/// the legacy trait to avoid method-name ambiguity when both traits are in scope.
+/// Unified storage interface: write operations return `Change`, batch writes
+/// are all-or-nothing in a single transaction, and reads propagate `DbError`.
 ///
 /// # Semantics
 ///
@@ -44,6 +42,12 @@ impl<D> Change<D> {
 pub trait ConfigStore: Send + Sync {
     type Data: Send + Sync + Debug;
     type Id: Send + Sync + Debug;
+
+    /// Lists all rows.
+    async fn list(&self) -> Result<Vec<Self::Data>, DbError>;
+
+    /// Reads a single row; `Ok(None)` if the id is missing.
+    async fn find_by_id(&self, id: Self::Id) -> Result<Option<Self::Data>, DbError>;
 
     /// Blind upsert; `update_at` is refreshed server-side without conflict checking.
     async fn upsert(&self, config: Self::Data) -> Result<Change<Self::Data>, DbError>;
@@ -70,4 +74,10 @@ pub trait ConfigStore: Send + Sync {
     /// Batch read by id with a single `IN` query; preserves input order and
     /// duplicates, silently skips missing ids.
     async fn find_ids(&self, ids: Vec<Self::Id>) -> Result<Vec<Self::Data>, DbError>;
+}
+
+/// Flow-scoped reads for configs that belong to a [`FlowId`].
+#[async_trait::async_trait]
+pub trait ConfigFlowStore: ConfigStore {
+    async fn find_by_flow_id(&self, flow_id: FlowId) -> Result<Vec<Self::Data>, DbError>;
 }

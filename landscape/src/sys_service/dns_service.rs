@@ -13,7 +13,7 @@ use landscape_common::{
     flow::{DnsResultSink, FlowSocketRegistrar},
     service::{
         ServiceStatus,
-        controller::{ConfigController, ConfigStoreFlowController, FlowConfigController},
+        controller::{ConfigStoreController, ConfigStoreFlowController},
     },
 };
 use landscape_core::lan_hostname::LanHostnameRegistry;
@@ -293,6 +293,7 @@ impl LandscapeDnsService {
             .dns_redirect_rule_service
             .list()
             .await
+            .unwrap()
             .into_iter()
             .flat_map(|rule| rule.apply_flows)
             .collect::<HashSet<_>>();
@@ -347,8 +348,10 @@ impl LandscapeDnsService {
         tracing::info!("refresh dns rule: flow_id: {flow_id}");
         let time = Instant::now();
         let upstream_ids = flow_dns_rules.iter().map(|rule| rule.upstream_id).collect();
-        let upstream_configs = self.dns_upstream_service.find_by_ids(upstream_ids).await;
-        let dns_redirect_rules = self.dns_redirect_rule_service.list_flow_configs(flow_id).await;
+        let upstream_configs =
+            self.dns_upstream_service.find_ids(upstream_ids).await.unwrap_or_default();
+        let dns_redirect_rules =
+            self.dns_redirect_rule_service.list_flow_configs(flow_id).await.unwrap();
         let dynamic_dns_redirects =
             self.dns_redirect_rule_service.list_flow_dynamic_batches(flow_id).await;
         let (redirect_engine, resolve_engine, dependencies) = self

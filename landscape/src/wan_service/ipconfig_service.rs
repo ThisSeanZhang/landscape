@@ -1,9 +1,11 @@
 use std::net::IpAddr;
 use std::sync::Arc;
+use std::time::Duration;
 
 use landscape_common::LANDSCAPE_DEFAULE_DHCP_V4_CLIENT_PORT;
 use landscape_common::concurrency::{spawn_task, task_label};
-use landscape_common::database::LandscapeStore;
+use landscape_common::database::error::DbError;
+use landscape_common::database::store::ConfigStore;
 use landscape_common::event::hub::IfaceEventReader;
 use landscape_common::sys_service::route_service::{LanRouteInfo, LanRouteMode, RouteTargetInfo};
 use landscape_common::{
@@ -12,8 +14,8 @@ use landscape_common::{
     event::hub::iface::IfaceObserverAction,
     global_const::default_router::{LD_ALL_ROUTERS, RouteInfo, RouteType},
     service::{
-        ServiceStatus, WatchService,
-        controller::ControllerService,
+        ServiceHandle, ServiceStatus,
+        controller::{ConfigStoreController, ConfigStoreServiceController},
         manager::{ServiceManager, ServiceStarterTrait},
     },
     wan_service::addr_binding::WanAddrBinding,
@@ -50,8 +52,8 @@ impl IPConfigService {
 impl ServiceStarterTrait for IPConfigService {
     type Config = IfaceIpServiceConfig;
 
-    async fn start(&self, config: IfaceIpServiceConfig) -> WatchService {
-        let service_status = WatchService::new();
+    async fn start(&self, config: IfaceIpServiceConfig) -> ServiceHandle {
+        let service_status = ServiceHandle::new();
 
         if config.enable {
             if let Some(iface) = get_iface_by_name(&config.iface_name).await {
@@ -74,7 +76,12 @@ impl ServiceStarterTrait for IPConfigService {
                 });
             } else {
                 tracing::error!("Interface {} not found", config.iface_name);
+                // 契约:iface 缺失视为启动失败,拒绝持久化
+                service_status.just_change_status(ServiceStatus::Staring);
+                service_status.just_change_status(ServiceStatus::Failed);
             }
+        } else {
+            service_status.just_change_status(ServiceStatus::Disabled);
         }
 
         service_status
@@ -82,7 +89,7 @@ impl ServiceStarterTrait for IPConfigService {
 }
 
 /// 无 IP 模型时的占位运行:保持 `Running` 直到收到停止信号。
-async fn run_idle_until_stopped(service_status: WatchService) {
+async fn run_idle_until_stopped(service_status: ServiceHandle) {
     service_status.just_change_status(ServiceStatus::Running);
     service_status.stop_token().cancelled().await;
     service_status.just_change_status(ServiceStatus::Stop);
@@ -91,7 +98,7 @@ async fn run_idle_until_stopped(service_status: WatchService) {
 async fn init_service_from_config(
     iface: LandscapeInterface,
     service_config: IfaceIpModelConfig,
-    service_status: WatchService,
+    service_status: ServiceHandle,
     route_service: IpRouteService,
     addr_binding: Arc<dyn WanAddrBinding>,
     pppoe_dataplane: Arc<dyn PppoeDataplane>,
@@ -223,18 +230,40 @@ pub struct IfaceIpServiceManagerService {
     service: ServiceManager<IPConfigService>,
 }
 
-impl ControllerService for IfaceIpServiceManagerService {
+#[async_trait::async_trait]
+impl ConfigStoreController for IfaceIpServiceManagerService {
     type Id = String;
     type Config = IfaceIpServiceConfig;
-    type DatabseAction = IfaceIpServiceRepository;
+    type Store = IfaceIpServiceRepository;
+
+    fn get_store(&self) -> &Self::Store {
+        &self.store
+    }
+}
+
+impl ConfigStoreServiceController for IfaceIpServiceManagerService {
     type H = IPConfigService;
 
     fn get_service(&self) -> &ServiceManager<Self::H> {
         &self.service
     }
 
-    fn get_repository(&self) -> &Self::DatabseAction {
-        &self.store
+    /// DHCP/PPPoE 客户端协商到 Running 可能超过默认窗口。
+    fn start_confirm_timeout(&self) -> Duration {
+        Duration::from_secs(30)
+    }
+}
+
+impl IfaceIpServiceManagerService {
+    pub async fn get_config_by_name(&self, iface_name: String) -> Option<IfaceIpServiceConfig> {
+        self.find_by_id(iface_name).await.ok().flatten()
+    }
+
+    pub async fn delete_and_stop_iface_service(
+        &self,
+        iface_name: String,
+    ) -> Result<Option<ServiceStatus>, DbError> {
+        self.delete_and_stop_service(iface_name).await
     }
 }
 

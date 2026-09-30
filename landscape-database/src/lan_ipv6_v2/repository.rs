@@ -143,7 +143,7 @@ mod tests {
         let error = left.err().or_else(|| right.err()).unwrap();
         assert!(matches!(error, LanIPv6Error::PrefixSlotOverlap(_)));
 
-        use landscape_common::database::LandscapeStore;
+        use landscape_common::database::store::ConfigStore;
         let persisted = left_store.list().await.unwrap();
         assert_eq!(persisted.len(), 1);
     }

@@ -23,7 +23,7 @@ use landscape_database::flow_rule::repository::FlowConfigRepository;
 use landscape_dns::server::LocalDnsAnswerProvider;
 use tokio::sync::{RwLock, broadcast, mpsc};
 
-use landscape_common::database::LandscapeStore;
+use landscape_common::database::store::ConfigStore;
 
 type ShareRwLock<T> = Arc<RwLock<T>>;
 // One owner (interface / container) maps to one active WAN route target.

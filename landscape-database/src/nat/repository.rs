@@ -95,7 +95,7 @@ mod tests {
     use landscape_common::config_service::static_nat::config4::{
         StaticNatMappingV4Config, StaticNatV4Target,
     };
-    use landscape_common::database::LandscapeStore;
+    use landscape_common::database::store::ConfigStore;
     use sea_orm::prelude::Uuid;
 
     use crate::provider::LandscapeDBServiceProvider;
@@ -112,7 +112,7 @@ mod tests {
             l4_protocols: vec![proto],
             update_at: 0.0,
         };
-        provider.static_nat_mapping_v4_store().set(config).await.unwrap();
+        provider.static_nat_mapping_v4_store().upsert(config).await.unwrap();
     }
 
     #[tokio::test]
@@ -159,7 +159,7 @@ mod tests {
             l4_protocols: vec![6],
             update_at: 0.0,
         };
-        provider.static_nat_mapping_v4_store().set(config).await.unwrap();
+        provider.static_nat_mapping_v4_store().upsert(config).await.unwrap();
 
         let repo = provider.nat_service_store();
         let result = repo.has_static_port_in_dynamic_range(6, 8000, 9000).await.unwrap();
@@ -190,7 +190,7 @@ mod tests {
             l4_protocols: vec![6, 17],
             update_at: 0.0,
         };
-        provider.static_nat_mapping_v4_store().set(config).await.unwrap();
+        provider.static_nat_mapping_v4_store().upsert(config).await.unwrap();
 
         let repo = provider.nat_service_store();
         assert!(

@@ -4,7 +4,7 @@ use landscape::{
 };
 use landscape_common::{
     LANDSCAPE_DEFAULE_DHCP_V4_CLIENT_PORT,
-    service::{ServiceStatus, WatchService},
+    service::{ServiceHandle, ServiceStatus},
 };
 use landscape_ebpf::runtime::EbpfRuntime;
 
@@ -30,7 +30,7 @@ async fn main() {
     let db_store_provider = LandscapeDBServiceProvider::mem_test_db().await;
     let flow_repo = db_store_provider.flow_rule_store();
 
-    let service_status = WatchService::new();
+    let service_status = ServiceHandle::new();
 
     let status = service_status.clone();
 

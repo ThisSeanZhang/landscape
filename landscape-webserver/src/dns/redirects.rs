@@ -2,7 +2,7 @@ use axum::extract::{Path, State};
 use landscape_common::api_response::LandscapeApiResp as CommonApiResp;
 use landscape_common::config::ConfigId;
 use landscape_common::dns::redirect::{DNSRedirectRule, DynamicDnsRedirectBatch};
-use landscape_common::service::controller::ConfigController;
+use landscape_common::service::controller::ConfigStoreController;
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 
@@ -29,7 +29,7 @@ pub fn get_dns_redirect_config_paths() -> OpenApiRouter<LandscapeApp> {
 async fn get_dns_redirects(
     State(state): State<LandscapeApp>,
 ) -> LandscapeApiResult<Vec<DNSRedirectRule>> {
-    let result = state.dns_redirect_service.list().await;
+    let result = state.dns_redirect_service.list().await?;
     LandscapeApiResp::success(result)
 }
 
@@ -47,7 +47,7 @@ async fn get_dns_redirect(
     State(state): State<LandscapeApp>,
     Path(id): Path<ConfigId>,
 ) -> LandscapeApiResult<DNSRedirectRule> {
-    let result = state.dns_redirect_service.find_by_id(id).await;
+    let result = state.dns_redirect_service.find_by_id(id).await?;
     if let Some(config) = result {
         LandscapeApiResp::success(config)
     } else {
@@ -127,6 +127,6 @@ async fn del_dns_redirects(
     State(state): State<LandscapeApp>,
     Path(id): Path<ConfigId>,
 ) -> LandscapeApiResult<()> {
-    state.dns_redirect_service.delete(id).await;
+    state.dns_redirect_service.delete(id).await?;
     LandscapeApiResp::success(())
 }

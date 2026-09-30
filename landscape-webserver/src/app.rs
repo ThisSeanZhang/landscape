@@ -39,9 +39,8 @@ use landscape::{
 
 use landscape_common::{
     config::AuthRuntimeConfig,
-    database::LandscapeStore,
     memtrack::MemoryHistory,
-    service::controller::{ConfigStoreServiceController, ControllerService},
+    service::controller::{ConfigStoreController, ConfigStoreServiceController},
     wan_service::ip_config::IfaceIpModelConfig,
 };
 use landscape_core::time::SyncTimeService;
@@ -191,13 +190,21 @@ impl LandscapeApp {
         {
             tracing::error!("failed to remove mss clamp service for {iface_name}: {error:?}");
         }
-        self.wan_ip_service.delete_and_stop_iface_service(iface_name.to_string()).await;
+        if let Err(error) =
+            self.wan_ip_service.delete_and_stop_iface_service(iface_name.to_string()).await
+        {
+            tracing::error!(%error, "deleting IP config service for '{iface_name}' failed");
+        }
         if let Err(error) =
             self.firewall_service.delete_and_stop_service(iface_name.to_string()).await
         {
             tracing::error!("failed to remove firewall service for {iface_name}: {error:?}");
         }
-        self.nat_service.delete_and_stop_iface_service(iface_name.to_string()).await;
+        if let Err(error) =
+            self.nat_service.delete_and_stop_iface_service(iface_name.to_string()).await
+        {
+            tracing::error!(%error, "deleting NAT service for '{iface_name}' failed");
+        }
         if let Err(error) =
             self.ipv6_pd_service.delete_and_stop_service(iface_name.to_string()).await
         {
@@ -208,8 +215,16 @@ impl LandscapeApp {
         {
             tracing::error!("failed to remove route wan service for {iface_name}: {error:?}");
         }
-        self.dhcp_v4_server_service.delete_and_stop_iface_service(iface_name.to_string()).await;
-        self.lan_ipv6_service.delete_and_stop_iface_service(iface_name.to_string()).await;
+        if let Err(error) =
+            self.dhcp_v4_server_service.delete_and_stop_service(iface_name.to_string()).await
+        {
+            tracing::error!(%error, "deleting DHCPv4 service for '{iface_name}' failed");
+        }
+        if let Err(error) =
+            self.lan_ipv6_service.delete_and_stop_iface_service(iface_name.to_string()).await
+        {
+            tracing::error!(%error, "deleting LAN IPv6 service for '{iface_name}' failed");
+        }
         if let Err(error) =
             self.route_lan_service.delete_and_stop_service(iface_name.to_string()).await
         {
@@ -263,8 +278,7 @@ impl LandscapeApp {
     }
 
     async fn preserve_critical_ips(&self) {
-        let dhcp_configs =
-            self.dhcp_v4_server_service.get_repository().list().await.unwrap_or_default();
+        let dhcp_configs = self.dhcp_v4_server_service.list().await.unwrap_or_default();
 
         for config in &dhcp_configs {
             if config.enable {
@@ -278,7 +292,7 @@ impl LandscapeApp {
             }
         }
 
-        let ip_configs = self.wan_ip_service.get_repository().list().await.unwrap_or_default();
+        let ip_configs = self.wan_ip_service.list().await.unwrap_or_default();
 
         for config in &ip_configs {
             if config.enable

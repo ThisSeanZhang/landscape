@@ -4,10 +4,10 @@ use landscape_common::{
         GeoDomainConfig, GeoError, GeoFileCacheKey, GeoMatcherSource, GeoSiteFileConfig,
         GeoSiteLookupResult, GeoSiteSource, RawDatState,
     },
-    database::LandscapeStore,
+    database::store::{Change, ConfigStore},
     dns::domain::normalize_domain_name,
     dns::rule::DomainMatchType,
-    service::controller::ConfigController,
+    service::controller::ConfigStoreController,
     utils::time::{MILL_A_DAY, get_f64_timestamp},
 };
 use uuid::Uuid;
@@ -248,7 +248,7 @@ impl GeoSiteService {
                         if let GeoSiteSource::Url { next_update_at, .. } = &mut config.source {
                             *next_update_at = get_f64_timestamp() + MILL_A_DAY as f64;
                         }
-                        let _ = self.store.set(config.clone()).await;
+                        let _ = self.store.upsert(config.clone()).await;
 
                         tracing::debug!(
                             "handle file done: {}, time: {}ms changed_keys={} unchanged_keys={} deleted_keys={}",
@@ -331,7 +331,7 @@ impl GeoSiteService {
                     *next_update_at = get_f64_timestamp() + MILL_A_DAY as f64;
                     *key = normalize_adguard_key(key);
                 }
-                let _ = self.store.set(config.clone()).await;
+                let _ = self.store.upsert(config.clone()).await;
 
                 tracing::debug!(
                     "handle adguard rules done: {}, time: {}ms changed_keys={} unchanged_keys={} deleted_keys={}",
@@ -436,7 +436,7 @@ impl GeoSiteService {
             return Ok(RawDatState::Ready(bytes));
         }
 
-        let Some(config) = self.find_by_id(id).await else {
+        let Some(config) = self.find_by_id(id).await? else {
             return Err(GeoError::SiteNotFound(id));
         };
         if !matches!(config.source, GeoSiteSource::Url { .. } | GeoSiteSource::AdguardHome { .. }) {
@@ -658,31 +658,27 @@ impl GeoSiteService {
 }
 
 #[async_trait::async_trait]
-impl ConfigController for GeoSiteService {
+impl ConfigStoreController for GeoSiteService {
     type Id = Uuid;
 
     type Config = GeoSiteSourceConfig;
 
-    type DatabseAction = GeoSiteConfigRepository;
+    type Store = GeoSiteConfigRepository;
 
-    fn get_repository(&self) -> &Self::DatabseAction {
+    fn get_store(&self) -> &Self::Store {
         &self.store
     }
 
-    async fn after_update_config(
-        &self,
-        new_configs: Vec<Self::Config>,
-        _old_configs: Vec<Self::Config>,
-    ) {
+    async fn notify_changed(&self, changes: Vec<Change<Self::Config>>) {
         // Refresh Direct configs immediately when updated
-        for config in new_configs {
-            if let GeoSiteSource::Direct { ref data } = config.source {
-                let before_hashes = self.snapshot_key_hashes_for_name(&config.name).await;
+        for change in changes {
+            if let GeoSiteSource::Direct { ref data } = change.new.source {
+                let before_hashes = self.snapshot_key_hashes_for_name(&change.new.name).await;
                 let apply_result =
-                    self.write_direct_to_cache(&config.name, data, &before_hashes).await;
+                    self.write_direct_to_cache(&change.new.name, data, &before_hashes).await;
                 tracing::debug!(
                     "update direct geo: name={} changed_keys={} unchanged_keys={} deleted_keys={}",
-                    config.name,
+                    change.new.name,
                     apply_result.changed_keys.len(),
                     apply_result.unchanged_keys,
                     apply_result.deleted_keys,
@@ -692,9 +688,8 @@ impl ConfigController for GeoSiteService {
         }
     }
 
-    async fn delete(&self, id: Self::Id) {
-        ConfigController::delete(self, id).await;
-        remove_raw_dat("site", id);
+    async fn notify_deleted(&self, old: Self::Config) {
+        remove_raw_dat("site", old.id);
     }
 }
 

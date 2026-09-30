@@ -18,13 +18,13 @@ use landscape_common::cert::order::{
     AcmeCertConfig, CertConfig, CertParsedInfo, CertStatus, CertType, ChallengeType,
 };
 use landscape_common::concurrency::{spawn_task, task_label};
-use landscape_common::database::LandscapeStore;
+use landscape_common::database::store::{Change, ConfigStore};
 use landscape_common::dns::provider_profile::DnsProviderProfile;
 use landscape_common::dns::redirect::{
     DEFAULT_BLOCK_METADATA_QUERIES, DEFAULT_STATIC_DNS_REDIRECT_TTL_SECS, DnsRedirectAnswerMode,
     DynamicDnsMatch, DynamicDnsRedirectBatch, DynamicDnsRedirectRecord, DynamicDnsRedirectScope,
 };
-use landscape_common::service::controller::ConfigController;
+use landscape_common::service::controller::ConfigStoreController;
 use landscape_database::cert::repository::CertRepository;
 use landscape_database::dns_provider_profile::repository::DnsProviderProfileRepository;
 use landscape_database::provider::LandscapeDBServiceProvider;
@@ -90,7 +90,10 @@ impl CertService {
         };
 
         // Startup resume: re-trigger ACME certs stuck in Processing
-        let certs = service.list().await;
+        let certs = service.list().await.unwrap_or_else(|error| {
+            tracing::warn!(%error, "reading certs for startup resume failed");
+            Vec::new()
+        });
         for cert in certs {
             if matches!(cert.status, CertStatus::Processing)
                 && let CertType::Acme(_) = &cert.cert_type
@@ -142,25 +145,18 @@ impl CertService {
             .map_err(CertError::IssuanceFailed)
     }
 
-    async fn set_and_notify(&self, config: CertConfig) -> CertConfig {
-        let saved = self.set(config).await;
-        if let Err(e) = self.reload_api_tls_mapping().await {
-            tracing::warn!("Failed to reload API TLS mapping after cert update: {e}");
-        }
-        if let Err(e) = self.reload_gateway_tls_mapping().await {
-            tracing::warn!("Failed to reload Gateway TLS mapping after cert update: {e}");
-        }
-        saved
+    /// Server-authoritative persist (state-machine transitions) followed by the
+    /// same notification the controller trait dispatches on client writes.
+    async fn set_and_notify(&self, config: CertConfig) -> Result<CertConfig, CertError> {
+        let change = self.store.upsert(config).await?;
+        let saved = change.new.clone();
+        ConfigStoreController::notify_changed(self, vec![change]).await;
+        Ok(saved)
     }
 
-    pub async fn delete_with_notify(&self, id: Uuid) {
-        self.delete(id).await;
-        if let Err(e) = self.reload_api_tls_mapping().await {
-            tracing::warn!("Failed to reload API TLS mapping after cert delete: {e}");
-        }
-        if let Err(e) = self.reload_gateway_tls_mapping().await {
-            tracing::warn!("Failed to reload Gateway TLS mapping after cert delete: {e}");
-        }
+    pub async fn delete_with_notify(&self, id: Uuid) -> Result<(), CertError> {
+        self.delete(id).await?;
+        Ok(())
     }
 
     async fn sync_api_dynamic_dns_redirects(&self) {
@@ -168,13 +164,20 @@ impl CertService {
             return;
         };
 
-        let certs = self.list().await;
+        let Ok(certs) = self.list().await else {
+            // Keep the last pushed batch instead of clearing it on a read error.
+            tracing::warn!("reading certs for the API dynamic redirect batch failed");
+            return;
+        };
         let batch = build_api_dynamic_dns_redirect_batch(&certs);
         let _ = dns_redirect_service.set_dynamic_batch(batch).await;
     }
 
     async fn check_auto_renewals(&self) {
-        let certs = self.list().await;
+        let certs = self.list().await.unwrap_or_else(|error| {
+            tracing::warn!(%error, "reading certs for auto-renewal check failed");
+            Vec::new()
+        });
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
@@ -198,14 +201,18 @@ impl CertService {
                 let mut config = cert;
                 config.status = CertStatus::Processing;
                 config.status_message = None;
-                let saved = self.set_and_notify(config).await;
-                let svc = self.clone();
-                let id = saved.id;
-                spawn_task(task_label::task::CERT_ORDER_REFRESH, async move {
-                    if let Err(e) = svc.enqueue_issuance_task(id).await {
-                        tracing::error!("Auto-renewal failed for cert {id}: {e}");
+                match self.set_and_notify(config).await {
+                    Ok(saved) => {
+                        let svc = self.clone();
+                        let id = saved.id;
+                        spawn_task(task_label::task::CERT_ORDER_REFRESH, async move {
+                            if let Err(e) = svc.enqueue_issuance_task(id).await {
+                                tracing::error!("Auto-renewal failed for cert {id}: {e}");
+                            }
+                        });
                     }
-                });
+                    Err(e) => tracing::error!("Auto-renewal persist failed: {e}"),
+                }
             }
         }
     }
@@ -216,7 +223,7 @@ impl CertService {
         &self,
         mut config: CertConfig,
     ) -> Result<CertConfig, CertError> {
-        let existing = self.find_by_id(config.id).await;
+        let existing = self.find_by_id(config.id).await?;
 
         if let Some(existing) = existing.as_ref()
             && let (CertType::Acme(existing_acme), CertType::Acme(new_acme)) =
@@ -336,7 +343,7 @@ impl CertService {
 
         self.validate_for_api_domain_conflicts(&config).await?;
 
-        let saved = self.set_and_notify(config).await;
+        let saved = self.set_and_notify(config).await?;
         Ok(saved)
     }
 
@@ -359,7 +366,7 @@ impl CertService {
             return Ok(());
         }
 
-        let certs = self.list().await;
+        let certs = self.list().await?;
         let mut conflicts: HashSet<String> = HashSet::new();
         for cert in certs {
             if cert.id == config.id || !cert.for_api {
@@ -437,7 +444,7 @@ impl CertService {
     }
 
     pub async fn ensure_account_mutation_allowed(&self, account_id: Uuid) -> Result<(), CertError> {
-        let certs = self.list().await;
+        let certs = self.list().await?;
         let mut blockers = Vec::new();
 
         for cert in certs {
@@ -508,7 +515,7 @@ impl CertService {
     /// Validate, set status to Processing, enqueue to background worker.
     /// Returns immediately with the Processing config.
     pub async fn issue_cert(&self, id: Uuid) -> Result<CertConfig, CertError> {
-        let mut config = self.find_by_id(id).await.ok_or(CertError::CertNotFound(id))?;
+        let mut config = self.find_by_id(id).await?.ok_or(CertError::CertNotFound(id))?;
 
         // Guard: must be ACME type
         match &config.cert_type {
@@ -537,7 +544,7 @@ impl CertService {
         // Set to Processing and return immediately
         config.status = CertStatus::Processing;
         config.status_message = None;
-        let saved = self.set_and_notify(config).await;
+        let saved = self.set_and_notify(config).await?;
 
         self.enqueue_issuance_task(id).await?;
 
@@ -545,7 +552,7 @@ impl CertService {
     }
 
     pub async fn cancel_cert(&self, id: Uuid) -> Result<CertConfig, CertError> {
-        let mut config = self.find_by_id(id).await.ok_or(CertError::CertNotFound(id))?;
+        let mut config = self.find_by_id(id).await?.ok_or(CertError::CertNotFound(id))?;
         match &config.cert_type {
             CertType::Acme(_) => {}
             _ => {
@@ -567,13 +574,13 @@ impl CertService {
 
         config.status = CertStatus::Cancelled;
         config.status_message = Some("cancelled by user".to_string());
-        let saved = self.set_and_notify(config).await;
+        let saved = self.set_and_notify(config).await?;
         Ok(saved)
     }
 
     /// The actual ACME issuance logic (runs in background worker).
     async fn do_issue_cert(&self, id: Uuid, cancel: &CancellationToken) -> Result<(), CertError> {
-        let mut config = self.find_by_id(id).await.ok_or(CertError::CertNotFound(id))?;
+        let mut config = self.find_by_id(id).await?.ok_or(CertError::CertNotFound(id))?;
 
         let acme = match &config.cert_type {
             CertType::Acme(a) => a.clone(),
@@ -602,7 +609,7 @@ impl CertService {
             let account_config = self
                 .account_service
                 .find_by_id(acme.account_id)
-                .await
+                .await?
                 .ok_or(CertError::AccountNotFound(acme.account_id))?;
 
             if !matches!(account_config.status, AccountStatus::Registered) {
@@ -669,7 +676,7 @@ impl CertService {
             }
         }
 
-        self.set_and_notify(config).await;
+        self.set_and_notify(config).await?;
         Ok(())
     }
 
@@ -813,7 +820,7 @@ impl CertService {
     }
 
     pub async fn revoke_cert(&self, id: Uuid) -> Result<CertConfig, CertError> {
-        let mut config = self.find_by_id(id).await.ok_or(CertError::CertNotFound(id))?;
+        let mut config = self.find_by_id(id).await?.ok_or(CertError::CertNotFound(id))?;
 
         // Guard: must be ACME type
         let acme = match &config.cert_type {
@@ -838,7 +845,7 @@ impl CertService {
         let account_config = self
             .account_service
             .find_by_id(acme.account_id)
-            .await
+            .await?
             .ok_or(CertError::AccountNotFound(acme.account_id))?;
 
         let credentials_json = account_config
@@ -878,14 +885,14 @@ impl CertService {
             }
         }
 
-        let saved = self.set_and_notify(config).await;
+        let saved = self.set_and_notify(config).await?;
         Ok(saved)
     }
 
     /// Validate, set Processing, enqueue to background worker.
     /// Returns immediately with the Processing config.
     pub async fn renew_cert(&self, id: Uuid) -> Result<CertConfig, CertError> {
-        let mut config = self.find_by_id(id).await.ok_or(CertError::CertNotFound(id))?;
+        let mut config = self.find_by_id(id).await?.ok_or(CertError::CertNotFound(id))?;
 
         // Guard: must be ACME type
         match &config.cert_type {
@@ -908,7 +915,7 @@ impl CertService {
         // Set to Processing, keep current cert data until renewal succeeds
         config.status = CertStatus::Processing;
         config.status_message = None;
-        let saved = self.set_and_notify(config).await;
+        let saved = self.set_and_notify(config).await?;
 
         self.enqueue_issuance_task(id).await?;
 
@@ -916,7 +923,7 @@ impl CertService {
     }
 
     pub async fn get_cert_info(&self, id: Uuid) -> Result<CertParsedInfo, CertError> {
-        let config = self.find_by_id(id).await.ok_or(CertError::CertNotFound(id))?;
+        let config = self.find_by_id(id).await?.ok_or(CertError::CertNotFound(id))?;
         let cert_pem = config
             .certificate
             .as_ref()
@@ -975,13 +982,31 @@ fn dynamic_match_sort_key(value: &DynamicDnsMatch) -> (u8, &str) {
 }
 
 #[async_trait::async_trait]
-impl ConfigController for CertService {
+impl ConfigStoreController for CertService {
     type Id = Uuid;
     type Config = CertConfig;
-    type DatabseAction = CertRepository;
+    type Store = CertRepository;
 
-    fn get_repository(&self) -> &Self::DatabseAction {
+    fn get_store(&self) -> &Self::Store {
         &self.store
+    }
+
+    async fn notify_changed(&self, _changes: Vec<Change<Self::Config>>) {
+        if let Err(e) = self.reload_api_tls_mapping().await {
+            tracing::warn!("Failed to reload API TLS mapping after cert update: {e}");
+        }
+        if let Err(e) = self.reload_gateway_tls_mapping().await {
+            tracing::warn!("Failed to reload Gateway TLS mapping after cert update: {e}");
+        }
+    }
+
+    async fn notify_deleted(&self, _old: Self::Config) {
+        if let Err(e) = self.reload_api_tls_mapping().await {
+            tracing::warn!("Failed to reload API TLS mapping after cert delete: {e}");
+        }
+        if let Err(e) = self.reload_gateway_tls_mapping().await {
+            tracing::warn!("Failed to reload Gateway TLS mapping after cert delete: {e}");
+        }
     }
 }
 

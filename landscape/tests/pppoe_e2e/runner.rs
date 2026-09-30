@@ -3,7 +3,7 @@ use super::env::ClientIfaceInfo;
 use landscape::sys_service::route::IpRouteService;
 use landscape::wan_service::pppoe_client::{PPPoEClientConfig, run};
 use landscape_common::event::route::RouteEvent;
-use landscape_common::service::{ServiceStatus, WatchService};
+use landscape_common::service::{ServiceHandle, ServiceStatus};
 use landscape_database::provider::LandscapeDBServiceProvider;
 use landscape_ebpf::runtime::EbpfRuntime;
 use std::sync::Arc;
@@ -25,7 +25,7 @@ pub(super) struct ClientSpec {
 // ── client runner ────────────────────────────────────────────────────────────
 
 pub(super) struct ClientHandle {
-    pub(super) status: WatchService,
+    pub(super) status: ServiceHandle,
     done_rx: std::sync::mpsc::Receiver<()>,
     thread: Option<std::thread::JoinHandle<()>>,
 }
@@ -60,7 +60,7 @@ impl ClientHandle {
 /// client network namespace.  `setns(2)` only affects the calling thread, so
 /// the client runs on a dedicated OS thread with its own single-threaded
 /// tokio runtime; the returned handle lets the (host-side) test thread steer
-/// and observe the shared `WatchService`.  `scenario` selects the client's
+/// and observe the shared `ServiceHandle`.  `scenario` selects the client's
 /// isolated eBPF map space so parallel scenarios never share one.
 pub(super) fn start_client(
     client_ns: &str,
@@ -68,7 +68,7 @@ pub(super) fn start_client(
     info: &ClientIfaceInfo,
     spec: &ClientSpec,
 ) -> ClientHandle {
-    let status = WatchService::new();
+    let status = ServiceHandle::new();
     // Move to `Staring` synchronously before spawning so observers can never
     // mistake the watch channel's initial `Stop` value for a terminal state
     // (run() also sets `Staring`, which is then a harmless no-op warning).
@@ -126,7 +126,7 @@ pub(super) struct StatusOutcome {
 
 /// Wait until the service reaches `Running`.
 pub(super) async fn wait_for_running(
-    status: &WatchService,
+    status: &ServiceHandle,
     timeout: Duration,
 ) -> Result<(), String> {
     tokio::time::timeout(timeout, status.wait_for(|s| matches!(s, ServiceStatus::Running)))
@@ -136,7 +136,7 @@ pub(super) async fn wait_for_running(
 
 /// Wait until the service reaches a terminal state (`Stop` or `Failed`).
 pub(super) async fn wait_for_exit(
-    status: &WatchService,
+    status: &ServiceHandle,
     timeout: Duration,
 ) -> Result<StatusOutcome, String> {
     tokio::time::timeout(timeout, async {

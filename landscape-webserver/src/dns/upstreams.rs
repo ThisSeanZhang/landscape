@@ -2,7 +2,7 @@ use axum::extract::{Path, State};
 use landscape_common::api_response::LandscapeApiResp as CommonApiResp;
 use landscape_common::config::ConfigId;
 use landscape_common::dns::config::DnsUpstreamConfig;
-use landscape_common::service::controller::ConfigController;
+use landscape_common::service::controller::ConfigStoreController;
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 
@@ -28,7 +28,7 @@ pub fn get_dns_upstream_config_paths() -> OpenApiRouter<LandscapeApp> {
 async fn get_dns_upstreams(
     State(state): State<LandscapeApp>,
 ) -> LandscapeApiResult<Vec<DnsUpstreamConfig>> {
-    let result = state.dns_upstream_service.list().await;
+    let result = state.dns_upstream_service.list().await?;
     LandscapeApiResp::success(result)
 }
 
@@ -46,7 +46,7 @@ async fn get_dns_upstream(
     State(state): State<LandscapeApp>,
     Path(id): Path<ConfigId>,
 ) -> LandscapeApiResult<DnsUpstreamConfig> {
-    let result = state.dns_upstream_service.find_by_id(id).await;
+    let result = state.dns_upstream_service.find_by_id(id).await?;
     if let Some(config) = result {
         LandscapeApiResp::success(config)
     } else {
@@ -98,6 +98,6 @@ async fn del_dns_upstream(
     State(state): State<LandscapeApp>,
     Path(id): Path<ConfigId>,
 ) -> LandscapeApiResult<()> {
-    state.dns_upstream_service.delete(id).await;
+    state.dns_upstream_service.delete(id).await?;
     LandscapeApiResp::success(())
 }

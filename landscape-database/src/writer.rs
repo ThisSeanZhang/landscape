@@ -169,6 +169,18 @@ where
     IdTypeOf<E>: Clone + Eq + std::hash::Hash + Send + Sync,
     sea_orm::Value: From<IdTypeOf<E>>,
 {
+    /// Lists all rows.
+    pub async fn list(&self) -> Result<Vec<D>, DbError> {
+        let models = <E as EntityTrait>::find().all(&self.db).await?;
+        Ok(models.into_iter().map(Into::into).collect())
+    }
+
+    /// Reads a single row; `Ok(None)` if the id is missing.
+    pub async fn find_by_id(&self, id: IdTypeOf<E>) -> Result<Option<D>, DbError> {
+        let model = <E as EntityTrait>::find_by_id(id).one(&self.db).await?;
+        Ok(model.map(Into::into))
+    }
+
     /// Blind upsert; `update_at` is refreshed to now.
     pub async fn upsert(&self, config: D) -> Result<Change<D>, DbError> {
         txn_retry_loop!(self, |txn| self.upsert_inner(txn, config.clone(), false))
@@ -362,7 +374,6 @@ async fn rollback_txn(txn: DatabaseTransaction) {
 #[cfg(test)]
 mod tests {
     use landscape_common::config_service::iface::{IfaceZoneType, NetworkIfaceConfig};
-    use landscape_common::database::LandscapeStore;
     use landscape_common::database::error::DbError;
     use landscape_common::database::repository::LandscapeDBStore;
     use landscape_common::database::store::ConfigStore;

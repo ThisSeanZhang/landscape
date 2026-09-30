@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 pub use landscape_common::dev::iface::{IfaceInfo, IfaceTopology, IfacesInfo, RawIfaceInfo};
-use landscape_common::service::controller::ConfigController;
+use landscape_common::service::controller::ConfigStoreController;
 use landscape_common::{
     config_service::iface::{IfaceCpuSoftBalance, IfaceZoneType, NetworkIfaceConfig, WifiMode},
     dev::iface::{AddController, BridgeCreate, ChangeZone},
@@ -42,7 +42,7 @@ impl IfaceManagerService {
     pub async fn old_read_ifaces(&self) -> Vec<IfaceTopology> {
         let all_alive_devs = crate::get_all_devices().await;
         let add_wifi_dev = crate::get_all_wifi_devices().await;
-        let all_config = self.list().await;
+        let all_config = self.list().await.unwrap_or_default();
 
         let mut comfig_map: HashMap<String, NetworkIfaceConfig> = HashMap::new();
         for config in all_config.into_iter() {
@@ -70,7 +70,7 @@ impl IfaceManagerService {
     /// 读取所有的配置
     /// 返回已配置的网卡列表和未配置的网卡列表
     pub async fn read_ifaces(&self) -> IfacesInfo {
-        let all_config = self.list().await;
+        let all_config = self.list().await.unwrap_or_default();
         let all_alive_devs = crate::get_all_devices().await;
         let mut all_wifi_dev = crate::get_all_wifi_devices().await;
 
@@ -105,7 +105,7 @@ impl IfaceManagerService {
 
     pub async fn delete_bridge(&self, name: String) {
         if crate::delete_bridge(name.clone()).await {
-            self.delete(name).await;
+            let _ = self.delete(name).await;
         }
     }
 
@@ -242,14 +242,14 @@ impl IfaceManagerService {
 }
 
 #[async_trait::async_trait]
-impl ConfigController for IfaceManagerService {
+impl ConfigStoreController for IfaceManagerService {
     type Id = String;
 
     type Config = NetworkIfaceConfig;
 
-    type DatabseAction = NetIfaceRepository;
+    type Store = NetIfaceRepository;
 
-    fn get_repository(&self) -> &Self::DatabseAction {
+    fn get_store(&self) -> &Self::Store {
         &self.store
     }
 }

@@ -10,7 +10,7 @@ use crate::cert::order_service::CertService;
 use arc_swap::ArcSwap;
 use arc_swap::ArcSwapOption;
 use landscape_common::cert::order::{CertConfig, CertStatus, CertType};
-use landscape_common::service::controller::ConfigController;
+use landscape_common::service::controller::ConfigStoreController;
 use landscape_common::utils::time::get_f64_timestamp;
 use pem::parse_many;
 use rcgen::generate_simple_self_signed;
@@ -145,6 +145,7 @@ pub async fn reload_gateway_tls_resolver(
     let mut candidates: Vec<CertConfig> = cert_service
         .list()
         .await
+        .map_err(|e| e.to_string())?
         .into_iter()
         .filter(|c| {
             c.for_gateway
@@ -200,6 +201,7 @@ pub async fn reload_api_tls_resolver(
     let mut candidates: Vec<CertConfig> = cert_service
         .list()
         .await
+        .map_err(|e| e.to_string())?
         .into_iter()
         .filter(|c| {
             c.for_api
@@ -449,6 +451,7 @@ async fn ensure_auto_api_fallback_cert(cert_service: &CertService) -> Result<Cer
     let mut manual_for_api_certs: Vec<CertConfig> = cert_service
         .list()
         .await
+        .map_err(|e| e.to_string())?
         .into_iter()
         .filter(|c| c.for_api && matches!(c.cert_type, CertType::Manual))
         .collect();

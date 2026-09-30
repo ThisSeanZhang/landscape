@@ -6,7 +6,7 @@ use tokio::time::{Duration, Instant, sleep};
 use landscape_common::net::MacAddr;
 use landscape_common::net_proto::ppp::{PPPOption, PointToPoint};
 use landscape_common::net_proto::pppoe::PPPoEFrame;
-use landscape_common::service::WatchService;
+use landscape_common::service::ServiceHandle;
 
 use super::PPPoEClientConfig;
 use super::auth::{Authenticator, ChapAuthenticator, PapAuthenticator};
@@ -85,7 +85,7 @@ pub(crate) async fn run(
     lcp: &LcpPhaseResult,
     tx: &mut mpsc::Sender<Vec<u8>>,
     rx: &mut mpsc::Receiver<Vec<u8>>,
-    status_rx: &WatchService,
+    status_rx: &ServiceHandle,
 ) -> PppoeResult<NegotiationResult> {
     let mut auth: Option<Box<dyn Authenticator>> = match lcp.auth_type {
         0xc023 => Some(Box::new(PapAuthenticator::new(&config.peer_id, &config.password))),

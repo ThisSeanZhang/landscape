@@ -1,11 +1,11 @@
 use landscape_common::{
     cert::order::{CertType, ChallengeType, DnsProviderConfig},
-    database::LandscapeStore,
+    database::store::ConfigStore,
     dns::provider_profile::{
         DnsProviderCredentialCheckRequest, DnsProviderCredentialCheckResult, DnsProviderProfile,
         DnsProviderProfileError,
     },
-    service::controller::ConfigController,
+    service::controller::ConfigStoreController,
 };
 use landscape_database::{
     cert::repository::CertRepository, ddns::repository::DdnsJobRepository,
@@ -99,18 +99,18 @@ impl DnsProviderProfileService {
             return Err(DnsProviderProfileError::InUseByCerts(cert_refs.join(", ")));
         }
 
-        self.delete(id).await;
+        self.delete(id).await?;
         Ok(())
     }
 }
 
 #[async_trait::async_trait]
-impl ConfigController for DnsProviderProfileService {
+impl ConfigStoreController for DnsProviderProfileService {
     type Id = Uuid;
     type Config = DnsProviderProfile;
-    type DatabseAction = DnsProviderProfileRepository;
+    type Store = DnsProviderProfileRepository;
 
-    fn get_repository(&self) -> &Self::DatabseAction {
+    fn get_store(&self) -> &Self::Store {
         &self.store
     }
 }

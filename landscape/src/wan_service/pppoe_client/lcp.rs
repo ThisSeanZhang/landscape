@@ -6,7 +6,7 @@ use tokio::time::{Duration, Instant, sleep};
 use landscape_common::net::MacAddr;
 use landscape_common::net_proto::ppp::{PPPOption, PointToPoint};
 use landscape_common::net_proto::pppoe::{PPPoEFrame, PPPoETag};
-use landscape_common::service::WatchService;
+use landscape_common::service::ServiceHandle;
 
 use super::PPPoEClientConfig;
 
@@ -50,7 +50,7 @@ pub(crate) async fn run(
     config: &PPPoEClientConfig,
     tx: &mut mpsc::Sender<Vec<u8>>,
     rx: &mut mpsc::Receiver<Vec<u8>>,
-    status_rx: &WatchService,
+    status_rx: &ServiceHandle,
 ) -> PppoeResult<LcpPhaseResult> {
     let host_uniq = process::id().swap_bytes();
     let magic_number = std::time::SystemTime::now()

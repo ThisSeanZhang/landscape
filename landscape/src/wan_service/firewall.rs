@@ -1,13 +1,13 @@
 use std::sync::Arc;
 
-use landscape_common::database::LandscapeStore;
 use landscape_common::database::error::DbError;
+use landscape_common::database::store::ConfigStore;
 use landscape_common::service::manager::ServiceManager;
 use landscape_common::{
     concurrency::{spawn_task, task_label},
     event::hub::iface::IfaceObserverAction,
     service::{
-        ServiceStatus, WatchService,
+        ServiceHandle, ServiceStatus,
         controller::{ConfigStoreController, ConfigStoreServiceController},
         manager::ServiceStarterTrait,
     },
@@ -31,8 +31,8 @@ pub struct FirewallService {
 impl ServiceStarterTrait for FirewallService {
     type Config = FirewallServiceConfig;
 
-    async fn start(&self, config: FirewallServiceConfig) -> WatchService {
-        let service_status = WatchService::new();
+    async fn start(&self, config: FirewallServiceConfig) -> ServiceHandle {
+        let service_status = ServiceHandle::new();
 
         if config.enable {
             if let Some(iface) = get_iface_by_name(&config.iface_name).await {
@@ -73,7 +73,7 @@ pub async fn create_firewall_service(
     iface_name: String,
     ifindex: i32,
     has_mac: bool,
-    service_status: WatchService,
+    service_status: ServiceHandle,
     dataplane: Arc<dyn FirewallDataplane>,
 ) {
     let firewall = match dataplane.attach(ifindex as u32, has_mac) {

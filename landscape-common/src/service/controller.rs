@@ -5,160 +5,16 @@ use std::time::Duration;
 use crate::config::FlowId;
 use crate::database::error::DbError;
 use crate::database::repository::LandscapeDBStore;
-use crate::database::store::{Change, ConfigStore};
-use crate::database::{LandscapeFlowStore, LandscapeStore};
+use crate::database::store::{Change, ConfigFlowStore, ConfigStore};
 
 use super::{
     ServiceStatus, StartOutcome,
     manager::{ServiceKeyProvider, ServiceManager, ServiceStarterTrait},
 };
 
-#[async_trait::async_trait]
-pub trait ControllerService {
-    type Id: ToString + Clone + Send;
-    type Config: Send + Sync + Clone;
-    type DatabseAction: LandscapeStore<Data = Self::Config, Id = Self::Id> + Send;
-    type H: ServiceStarterTrait<Config = Self::Config>;
-
-    fn get_service(&self) -> &ServiceManager<Self::H>;
-    fn get_repository(&self) -> &Self::DatabseAction;
-
-    /// 获得所有服务状态快照
-    async fn get_all_status(&self) -> HashMap<String, ServiceStatus> {
-        self.get_service().get_all_status().await
-    }
-
-    async fn handle_service_config(&self, config: Self::Config) -> Result<(), DbError> {
-        // 1. 先检查冲突，获取旧配置用于回滚
-        let old_config = self.get_repository().check_conflict(&config).await?;
-
-        // 2. 启动/更新服务
-        if let Ok(()) = self.get_service().update_service(config.clone()).await {
-            // 3. 写入 DB（内部再次检查 update_at）
-            match self.get_repository().checked_set(config).await {
-                Ok(_) => {}
-                Err(e) => {
-                    // 4. 写入失败，用旧配置回滚服务
-                    if let Some(old) = old_config {
-                        let _ = self.get_service().update_service(old).await;
-                    }
-                    return Err(e);
-                }
-            }
-        }
-        Ok(())
-    }
-
-    async fn delete_and_stop_iface_service(&self, iface_name: Self::Id) -> Option<ServiceStatus> {
-        self.get_repository().delete(iface_name.clone()).await.unwrap();
-        self.get_service().stop_service(iface_name.to_string()).await
-    }
-
-    async fn get_config_by_name(&self, iface_name: Self::Id) -> Option<Self::Config> {
-        self.get_repository().find_by_id(iface_name).await.unwrap()
-    }
-}
-
-#[async_trait::async_trait]
-pub trait ConfigController {
-    type Id: Clone + Send;
-    type Config: Send + Sync + Clone;
-    type DatabseAction: LandscapeStore<Data = Self::Config, Id = Self::Id> + Send;
-
-    fn get_repository(&self) -> &Self::DatabseAction;
-
-    async fn after_update_config(
-        &self,
-        _new_configs: Vec<Self::Config>,
-        _old_configs: Vec<Self::Config>,
-    ) {
-    }
-
-    async fn update_one_config(&self, _config: Self::Config) {}
-    async fn delete_one_config(&self, _config: Self::Config) {}
-    async fn update_many_config(&self, _configs: Vec<Self::Config>) {}
-
-    async fn set(&self, config: Self::Config) -> Self::Config {
-        let old_configs = self.list().await;
-        let add_result = self.get_repository().set(config).await.unwrap();
-        let new_configs = self.list().await;
-        self.after_update_config(new_configs, old_configs).await;
-        self.update_one_config(add_result.clone()).await;
-        add_result
-    }
-
-    async fn checked_set(&self, config: Self::Config) -> Result<Self::Config, DbError> {
-        let old_configs = self.list().await;
-        let add_result = self.get_repository().checked_set(config).await?;
-        let new_configs = self.list().await;
-        self.after_update_config(new_configs, old_configs).await;
-        self.update_one_config(add_result.clone()).await;
-        Ok(add_result)
-    }
-
-    async fn set_list(&self, configs: Vec<Self::Config>) {
-        let old_configs = self.list().await;
-        for config in configs.clone() {
-            let _ = self.get_repository().set(config).await.unwrap();
-        }
-        let new_configs = self.list().await;
-        self.after_update_config(new_configs, old_configs).await;
-        self.update_many_config(configs).await;
-    }
-
-    async fn checked_set_list(&self, configs: Vec<Self::Config>) -> Result<(), DbError> {
-        // Phase 1: 预检查所有项的冲突
-        for config in &configs {
-            self.get_repository().check_conflict(config).await?;
-        }
-        // Phase 2: 逐个 checked_set（内部再次检查）
-        let old_configs = self.list().await;
-        for config in configs.clone() {
-            self.get_repository().checked_set(config).await?;
-        }
-        let new_configs = self.list().await;
-        self.after_update_config(new_configs, old_configs).await;
-        self.update_many_config(configs).await;
-        Ok(())
-    }
-
-    async fn list(&self) -> Vec<Self::Config> {
-        self.get_repository().list().await.unwrap()
-    }
-
-    async fn find_by_id(&self, id: Self::Id) -> Option<Self::Config> {
-        self.get_repository().find_by_id(id).await.ok()?
-    }
-
-    async fn find_by_ids(&self, ids: Vec<Self::Id>) -> Vec<Self::Config> {
-        self.get_repository().find_by_ids(ids).await
-    }
-
-    async fn delete(&self, id: Self::Id) {
-        if let Some(config) = self.find_by_id(id.clone()).await {
-            let old_configs = self.list().await;
-            self.get_repository().delete(id).await.unwrap();
-            let new_configs = self.list().await;
-            self.after_update_config(new_configs, old_configs).await;
-            self.update_one_config(config).await;
-        }
-    }
-}
-
-#[async_trait::async_trait]
-pub trait FlowConfigController: ConfigController
-where
-    Self::DatabseAction: LandscapeFlowStore,
-{
-    async fn list_flow_configs(&self, id: FlowId) -> Vec<Self::Config> {
-        self.get_repository().find_by_flow_id(id).await.unwrap()
-    }
-}
-
-/// Next-generation controller over [`ConfigStore`]: shared write orchestration
-/// (transactional, atomic optimistic lock, typed `DbError`) plus a minimal
-/// per-domain notification slot. Runs in parallel with the legacy
-/// [`ConfigController`] and will replace it once all domains are migrated.
+/// Controller over [`ConfigStore`]: shared write orchestration (transactional,
+/// atomic optimistic lock, typed `DbError`) plus a minimal per-domain
+/// notification slot.
 ///
 /// # Write semantics
 ///
@@ -174,8 +30,7 @@ where
 ///
 /// `notify_changed` receives the full before/after (`Change { old, new }`) per
 /// item, so a domain can scope its reaction precisely (e.g. DNS redirects
-/// refreshing only `old.apply_flows ∪ new.apply_flows`) instead of the legacy
-/// full-table `after_update_config` diff. Reads (`list`/`find_by_id`) live on
+/// refreshing only `old.apply_flows ∪ new.apply_flows`). Reads (`list`/`find_by_id`) live on
 /// this trait as well and return `Result` so DB errors propagate to the caller
 /// instead of being swallowed; flow-scoped reads are provided by the
 /// [`ConfigStoreFlowController`] subtrait.
@@ -183,10 +38,7 @@ where
 pub trait ConfigStoreController: Send + Sync {
     type Id: Clone + Send + Sync + Debug;
     type Config: Send + Sync + Clone + Debug;
-    type Store: ConfigStore<Data = Self::Config, Id = Self::Id>
-        + LandscapeStore<Data = Self::Config, Id = Self::Id>
-        + Send
-        + Sync;
+    type Store: ConfigStore<Data = Self::Config, Id = Self::Id> + Send + Sync;
 
     fn get_store(&self) -> &Self::Store;
 
@@ -237,7 +89,7 @@ pub trait ConfigStoreController: Send + Sync {
 #[async_trait::async_trait]
 pub trait ConfigStoreFlowController: ConfigStoreController
 where
-    Self::Store: LandscapeFlowStore,
+    Self::Store: ConfigFlowStore,
 {
     async fn list_flow_configs(&self, id: FlowId) -> Result<Vec<Self::Config>, DbError> {
         self.get_store().find_by_flow_id(id).await
@@ -246,7 +98,7 @@ where
 
 /// Service-managed controller over [`ConfigStoreController`]: orchestrates a
 /// running service (through [`ServiceManager`]) around the transactional
-/// store. Successor of the legacy [`ControllerService`].
+/// store.
 ///
 /// # Write ordering (persist-after-verify)
 ///
@@ -285,8 +137,7 @@ where
 /// plus convergence) before its error surfaces.
 ///
 /// Every successful write notifies through the base trait's
-/// `notify_changed`/`notify_deleted` slots, which the legacy `ControllerService`
-/// never did.
+/// `notify_changed`/`notify_deleted` slots.
 #[async_trait::async_trait]
 pub trait ConfigStoreServiceController: ConfigStoreController
 where
@@ -413,7 +264,7 @@ mod service_controller_tests {
 
     use super::*;
     use crate::database::repository::LandscapeDBStore;
-    use crate::service::{StartOutcome, WatchService};
+    use crate::service::{ServiceHandle, StartOutcome};
 
     #[derive(Clone, Debug, PartialEq)]
     struct MockConfig {
@@ -460,50 +311,17 @@ mod service_controller_tests {
     }
 
     #[async_trait::async_trait]
-    impl LandscapeStore for MockStore {
+    impl ConfigStore for MockStore {
         type Data = MockConfig;
         type Id = String;
-
-        async fn set(&self, mut config: MockConfig) -> Result<MockConfig, DbError> {
-            config.update_at = self.next_ts();
-            self.rows.lock().unwrap().insert(config.id.clone(), config.clone());
-            Ok(config)
-        }
 
         async fn list(&self) -> Result<Vec<MockConfig>, DbError> {
             Ok(self.rows.lock().unwrap().values().cloned().collect())
         }
 
-        async fn delete(&self, id: String) -> Result<(), DbError> {
-            self.rows.lock().unwrap().remove(&id);
-            Ok(())
-        }
-
         async fn find_by_id(&self, id: String) -> Result<Option<MockConfig>, DbError> {
             Ok(self.get(&id))
         }
-
-        async fn find_by_ids(&self, ids: Vec<String>) -> Vec<MockConfig> {
-            let rows = self.rows.lock().unwrap();
-            ids.into_iter().filter_map(|id| rows.get(&id).cloned()).collect()
-        }
-
-        async fn check_conflict(&self, config: &MockConfig) -> Result<Option<MockConfig>, DbError> {
-            match self.get(&config.id) {
-                Some(old) if old.update_at != config.update_at => Err(DbError::Conflict),
-                other => Ok(other),
-            }
-        }
-
-        async fn checked_set(&self, config: MockConfig) -> Result<MockConfig, DbError> {
-            self.checked_upsert(config).await.map(|c| c.new)
-        }
-    }
-
-    #[async_trait::async_trait]
-    impl ConfigStore for MockStore {
-        type Data = MockConfig;
-        type Id = String;
 
         async fn upsert(&self, mut config: MockConfig) -> Result<Change<MockConfig>, DbError> {
             let old = self.get(&config.id);
@@ -597,12 +415,12 @@ mod service_controller_tests {
     impl ServiceStarterTrait for MockStarter {
         type Config = MockConfig;
 
-        async fn start(&self, config: MockConfig) -> WatchService {
+        async fn start(&self, config: MockConfig) -> ServiceHandle {
             self.started.lock().unwrap().push((config.id.clone(), config.value));
             if self.block_start.load(Ordering::SeqCst) {
                 std::future::pending::<()>().await;
             }
-            let handle = WatchService::new();
+            let handle = ServiceHandle::new();
             if self.disabled.load(Ordering::SeqCst) {
                 handle.just_change_status(ServiceStatus::Disabled);
                 return handle;

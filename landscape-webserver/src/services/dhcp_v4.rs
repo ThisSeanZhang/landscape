@@ -5,7 +5,7 @@ use landscape_common::api_response::LandscapeApiResp as CommonApiResp;
 use landscape_common::lan_service::lan_dhcpv4::config::DHCPv4ServiceConfig;
 use landscape_common::lan_service::lan_dhcpv4::status::{ArpScanInfo, DHCPv4OfferInfo};
 use landscape_common::service::ServiceStatus;
-use landscape_common::service::controller::ControllerService;
+use landscape_common::service::controller::ConfigStoreServiceController;
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 
@@ -154,6 +154,6 @@ async fn delete_and_stop_iface_service(
     Path(iface_name): Path<String>,
 ) -> LandscapeApiResult<Option<ServiceStatus>> {
     LandscapeApiResp::success(
-        state.dhcp_v4_server_service.delete_and_stop_iface_service(iface_name).await,
+        state.dhcp_v4_server_service.delete_and_stop_service(iface_name).await?,
     )
 }

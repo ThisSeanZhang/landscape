@@ -2,9 +2,10 @@ use std::sync::Arc;
 
 use landscape_common::{
     concurrency::{spawn_task, task_label},
+    database::store::Change,
     event::dns::DstIpEvent,
     flow::ip_mark::IpConfig,
-    service::controller::ConfigController,
+    service::controller::ConfigStoreController,
     wan_service::firewall::blacklist::{FirewallBlacklistConfig, FirewallBlacklistSource},
     wan_service::firewall::dataplane::FirewallDataplane,
 };
@@ -35,7 +36,10 @@ impl FirewallBlacklistService {
         let service = Self { store, geo_ip_service, dataplane };
 
         // Initial full sync
-        let configs = service.list().await;
+        let configs = service.list().await.unwrap_or_else(|error| {
+            tracing::warn!(%error, "reading firewall blacklist configs for initial sync failed");
+            Vec::new()
+        });
         resolve_and_sync_blacklist(
             &service.geo_ip_service,
             configs,
@@ -51,7 +55,7 @@ impl FirewallBlacklistService {
                 match event {
                     DstIpEvent::GeoIpUpdated => {
                         tracing::info!("refresh firewall blacklist due to GeoIP update");
-                        let configs = service_clone.list().await;
+                        let configs = service_clone.list().await.unwrap_or_default();
                         resolve_and_sync_blacklist(
                             &service_clone.geo_ip_service,
                             configs,
@@ -69,24 +73,32 @@ impl FirewallBlacklistService {
 }
 
 #[async_trait::async_trait]
-impl ConfigController for FirewallBlacklistService {
+impl ConfigStoreController for FirewallBlacklistService {
     type Id = Uuid;
     type Config = FirewallBlacklistConfig;
-    type DatabseAction = FirewallBlacklistRepository;
+    type Store = FirewallBlacklistRepository;
 
-    fn get_repository(&self) -> &Self::DatabseAction {
+    fn get_store(&self) -> &Self::Store {
         &self.store
     }
 
-    async fn after_update_config(
-        &self,
-        new_configs: Vec<Self::Config>,
-        old_configs: Vec<Self::Config>,
-    ) {
+    async fn notify_changed(&self, changes: Vec<Change<Self::Config>>) {
+        let new_configs: Vec<_> = changes.iter().map(|c| c.new.clone()).collect();
+        let old_configs: Vec<_> = changes.iter().filter_map(|c| c.old.clone()).collect();
         resolve_and_sync_blacklist(
             &self.geo_ip_service,
             new_configs,
             old_configs,
+            self.dataplane.as_ref(),
+        )
+        .await;
+    }
+
+    async fn notify_deleted(&self, old: Self::Config) {
+        resolve_and_sync_blacklist(
+            &self.geo_ip_service,
+            vec![],
+            vec![old],
             self.dataplane.as_ref(),
         )
         .await;

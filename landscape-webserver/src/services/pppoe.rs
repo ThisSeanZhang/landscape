@@ -2,9 +2,8 @@ use std::collections::HashMap;
 
 use axum::extract::{Path, State};
 use landscape_common::api_response::LandscapeApiResp as CommonApiResp;
-use landscape_common::database::LandscapeStore;
 use landscape_common::service::ServiceStatus;
-use landscape_common::service::controller::{ConfigController, ControllerService};
+use landscape_common::service::controller::{ConfigStoreController, ConfigStoreServiceController};
 use landscape_common::wan_service::ip_config::IfaceIpModelConfig;
 use landscape_common::wan_service::pppd::{PPPDServiceConfig, validate_ppp_iface_name};
 use utoipa_axum::router::OpenApiRouter;
@@ -69,8 +68,14 @@ async fn validate_pppd_config(
 
 async fn delete_ppp_iface(state: &LandscapeApp, iface_name: &str) -> Option<ServiceStatus> {
     state.remove_direct_iface_service(iface_name).await;
-    state.iface_config_service.delete(iface_name.to_string()).await;
-    state.pppd_service.delete_and_stop_pppd(iface_name.to_string()).await
+    let _ = state.iface_config_service.delete(iface_name.to_string()).await;
+    match state.pppd_service.delete_and_stop_pppd(iface_name.to_string()).await {
+        Ok(status) => status,
+        Err(error) => {
+            tracing::error!(%error, "deleting pppd service for '{iface_name}' failed");
+            None
+        }
+    }
 }
 
 pub(crate) async fn delete_ppp_ifaces_by_attach_name(state: &LandscapeApp, attach_name: &str) {
@@ -105,7 +110,7 @@ pub fn get_iface_pppd_paths() -> OpenApiRouter<LandscapeApp> {
 async fn get_all_pppd_configs(
     State(state): State<LandscapeApp>,
 ) -> LandscapeApiResult<Vec<PPPDServiceConfig>> {
-    LandscapeApiResp::success(state.pppd_service.get_repository().list().await.unwrap_or_default())
+    LandscapeApiResp::success(state.pppd_service.list().await.unwrap_or_default())
 }
 
 #[utoipa::path(

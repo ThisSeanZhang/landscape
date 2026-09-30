@@ -49,7 +49,7 @@ pub(crate) type DBJson = serde_json::Value;
 /// Generic timestamp storage type, used for optimistic-lock checks.
 pub(crate) type DBTimestamp = f64;
 
-/// Generates `impl Repository` + `impl LandscapeStore` for a Repository struct.
+/// Generates `impl Repository` + `impl ConfigStore` for a Repository struct.
 /// The struct itself is defined manually in each repository.rs for composition flexibility.
 macro_rules! impl_repository {
     ($repo:ty, $model:ty, $entity:ty, $active:ty, $data:ty, $id:ty) => {
@@ -65,62 +65,22 @@ macro_rules! impl_repository {
             }
         }
         #[async_trait::async_trait]
-        impl landscape_common::database::LandscapeStore for $repo {
+        impl landscape_common::database::store::ConfigStore for $repo {
             type Data = $data;
             type Id = $id;
-            async fn set(
-                &self,
-                config: Self::Data,
-            ) -> Result<Self::Data, landscape_common::database::error::DbError> {
-                use crate::repository::Repository;
-                use landscape_common::database::repository::LandscapeDBStore;
-                self.set_or_update_model(config.get_id(), config).await
-            }
             async fn list(
                 &self,
             ) -> Result<Vec<Self::Data>, landscape_common::database::error::DbError> {
-                use crate::repository::Repository;
-                self.list_all().await
-            }
-            async fn delete(
-                &self,
-                id: Self::Id,
-            ) -> Result<(), landscape_common::database::error::DbError> {
-                use crate::repository::Repository;
-                self.delete_model(id).await
+                crate::writer::StoreWriter::<$entity, $data>::new(self.db.clone()).list().await
             }
             async fn find_by_id(
                 &self,
                 id: Self::Id,
             ) -> Result<Option<Self::Data>, landscape_common::database::error::DbError> {
-                use crate::repository::Repository;
-                Repository::find_by_id(self, id).await
+                crate::writer::StoreWriter::<$entity, $data>::new(self.db.clone())
+                    .find_by_id(id)
+                    .await
             }
-            async fn find_by_ids(&self, ids: Vec<Self::Id>) -> Vec<Self::Data> {
-                use crate::repository::Repository;
-                Repository::find_by_ids(self, ids).await
-            }
-            async fn check_conflict(
-                &self,
-                config: &Self::Data,
-            ) -> Result<Option<Self::Data>, landscape_common::database::error::DbError> {
-                use crate::repository::Repository;
-                use landscape_common::database::repository::LandscapeDBStore;
-                self.check_conflict_by_id(config.get_id(), config.get_update_at()).await
-            }
-            async fn checked_set(
-                &self,
-                config: Self::Data,
-            ) -> Result<Self::Data, landscape_common::database::error::DbError> {
-                use crate::repository::Repository;
-                use landscape_common::database::repository::LandscapeDBStore;
-                self.checked_set_or_update_model(config.get_id(), config).await
-            }
-        }
-        #[async_trait::async_trait]
-        impl landscape_common::database::store::ConfigStore for $repo {
-            type Data = $data;
-            type Id = $id;
             async fn upsert(
                 &self,
                 config: Self::Data,
@@ -185,11 +145,11 @@ macro_rules! impl_repository {
     };
 }
 
-/// Generates `impl LandscapeFlowStore` for a Repository whose Model implements FlowFilterExpr.
+/// Generates `impl ConfigFlowStore` for a Repository whose Model implements FlowFilterExpr.
 macro_rules! impl_flow_store {
     ($repo:ty, $model:ty, $entity:ty) => {
         #[async_trait::async_trait]
-        impl landscape_common::database::LandscapeFlowStore for $repo {
+        impl landscape_common::database::store::ConfigFlowStore for $repo {
             async fn find_by_flow_id(
                 &self,
                 flow_id: landscape_common::config::FlowId,

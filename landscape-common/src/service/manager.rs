@@ -7,7 +7,7 @@ use tokio::sync::{RwLock, mpsc};
 
 use crate::concurrency::{spawn_task_with_resource, task_label};
 
-use super::{STATUS_POLL_INTERVAL, ServiceStatus, StartOutcome, WatchService};
+use super::{STATUS_POLL_INTERVAL, ServiceHandle, ServiceStatus, StartOutcome};
 
 pub trait ServiceKeyProvider {
     fn service_key(&self) -> String;
@@ -25,7 +25,7 @@ pub trait ServiceStarterTrait: Clone + Send + Sync + 'static {
     ///   未写入的初始 `Stop`(否则被误报为 [`StartOutcome::Stopped`]);
     /// - 服务长驻任务必须经 `handle.spawn_task`/`spawn_task_with_resource`
     ///   注册进 tracker,裸 `tokio::spawn` 的任务无法被 `wait_stop` 等待。
-    async fn start(&self, config: Self::Config) -> WatchService;
+    async fn start(&self, config: Self::Config) -> ServiceHandle;
 }
 
 /// 服务注册表条目:状态句柄 + 配置管道 + 运行代数。
@@ -33,7 +33,7 @@ pub trait ServiceStarterTrait: Clone + Send + Sync + 'static {
 /// `generation` 在 supervisor 每次 `start()` 落表后递增,供
 /// [`ServiceManager::update_service_and_wait`] 识别"由本次更新触发的运行"。
 pub(crate) struct ServiceRegistryEntry<H: ServiceStarterTrait> {
-    pub(crate) status: WatchService,
+    pub(crate) status: ServiceHandle,
     pub(crate) config_tx: mpsc::Sender<H::Config>,
     pub(crate) generation: Arc<AtomicU64>,
 }
@@ -64,7 +64,7 @@ impl<H: ServiceStarterTrait> ServiceManager<H> {
         let key = service_config.service_key();
         let (tx, mut rx) = mpsc::channel(1);
         let _ = tx.send(service_config).await;
-        let service_status = WatchService::new();
+        let service_status = ServiceHandle::new();
 
         // 插入到服务映射
         {
@@ -84,7 +84,7 @@ impl<H: ServiceStarterTrait> ServiceManager<H> {
             task_label::task::SERVICE_MANAGER_SPAWN,
             key.clone(),
             async move {
-                let mut iface_status: Option<WatchService> = Some(service_status);
+                let mut iface_status: Option<ServiceHandle> = Some(service_status);
 
                 while let Some(config) = rx.recv().await {
                     if let Some(exist_status) = iface_status.take() {
@@ -298,7 +298,7 @@ impl<H: ServiceStarterTrait> ServiceManager<H> {
     }
 
     pub async fn stop_all(&self) {
-        let entries: Vec<(String, WatchService)> = {
+        let entries: Vec<(String, ServiceHandle)> = {
             let mut write_lock = self.services.write().await;
             write_lock.drain().map(|(key, entry)| (key, entry.status)).collect()
         };

@@ -4,7 +4,6 @@ use landscape_common::config::ConfigId;
 use landscape_common::config_service::enrolled_device::{
     EnrolledDevice, EnrolledDeviceError, ValidateIpPayload,
 };
-use landscape_common::service::controller::ControllerService;
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 

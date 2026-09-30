@@ -3,8 +3,8 @@ use landscape_common::config::{
     InitConfig, LandscapeConfig, LandscapeDnsConfig, LandscapeLanHostnameConfig,
     LandscapeMetricConfig, LandscapeTimeConfig, LandscapeUIConfig, RuntimeConfig,
 };
-use landscape_common::database::LandscapeStore;
 use landscape_common::database::error::DbError;
+use landscape_common::database::store::ConfigStore;
 use landscape_common::sys_service::gateway::settings::{
     GatewayRuntimeConfig, LandscapeGatewayConfig,
 };

@@ -223,7 +223,7 @@ impl ServiceStatusCell {
 /// - `wait_stop()`:请求停止并确定性等待全部被追踪任务结束;
 ///   结束后状态未到终态则兜底置 Failed(systemd 判活语义)
 ///
-/// 使用边界:本类型(及 `WatchService` 别名)仅适用于"一次运行 = 一棵
+/// 使用边界:本类型(及 `ServiceHandle` 别名)仅适用于"一次运行 = 一棵
 /// tokio 任务树"的服务,即经 [`super::manager::ServiceManager`] 管理的
 /// 配置驱动服务。单例服务不在本层持有状态,各自拥有专属状态结构,
 /// 仅复用 [`ServiceStatus`] 枚举与转换矩阵:
@@ -411,9 +411,6 @@ impl Serialize for ServiceHandle {
         self.current().serialize(serializer)
     }
 }
-
-/// 兼容别名:既有 40+ 调用点零改动;公共面为 [`ServiceHandle`] 的全量转发
-pub type WatchService = ServiceHandle;
 
 #[cfg(test)]
 mod tests {

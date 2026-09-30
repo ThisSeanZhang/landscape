@@ -4,7 +4,7 @@ use landscape_common::config::ConfigId;
 use landscape_common::dns::provider_profile::{
     DnsProviderCredentialCheckRequest, DnsProviderCredentialCheckResult, DnsProviderProfile,
 };
-use landscape_common::service::controller::ConfigController;
+use landscape_common::service::controller::ConfigStoreController;
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 
@@ -27,7 +27,7 @@ pub fn get_dns_provider_profile_paths() -> OpenApiRouter<LandscapeApp> {
 async fn list_provider_profiles(
     State(app): State<LandscapeApp>,
 ) -> LandscapeApiResult<Vec<DnsProviderProfile>> {
-    LandscapeApiResp::success(app.dns_provider_profile_service.list().await)
+    LandscapeApiResp::success(app.dns_provider_profile_service.list().await?)
 }
 
 #[utoipa::path(
@@ -41,7 +41,7 @@ async fn get_provider_profile(
     State(app): State<LandscapeApp>,
     Path(id): Path<ConfigId>,
 ) -> LandscapeApiResult<Option<DnsProviderProfile>> {
-    LandscapeApiResp::success(app.dns_provider_profile_service.find_by_id(id).await)
+    LandscapeApiResp::success(app.dns_provider_profile_service.find_by_id(id).await?)
 }
 
 #[utoipa::path(

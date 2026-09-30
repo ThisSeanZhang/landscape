@@ -6,7 +6,7 @@ use std::process::ExitStatus;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use landscape_common::service::{ServiceStatus, WatchService};
+use landscape_common::service::{ServiceHandle, ServiceStatus};
 use landscape_common::sys_service::route_service::LanRouteInfo;
 use landscape_common::sys_service::route_service::LanRouteMode;
 use landscape_common::sys_service::route_service::RouteTargetInfo;
@@ -22,8 +22,8 @@ use super::{PppdConfigStore, create_pppd_thread};
 const ATTACH: &str = "eth0";
 const PPP: &str = "ppp0";
 
-fn running_status() -> WatchService {
-    let status = WatchService::new();
+fn running_status() -> ServiceHandle {
+    let status = ServiceHandle::new();
     status.just_change_status(ServiceStatus::Staring);
     status.just_change_status(ServiceStatus::Running);
     status
@@ -230,7 +230,7 @@ impl PppdChild for FakeChild {
 
 fn spawn_supervisor(
     env: &Arc<FakeEnv>,
-    status: WatchService,
+    status: ServiceHandle,
     timings: PppdTimings,
 ) -> tokio::task::JoinHandle<bool> {
     let env_dyn: Arc<dyn PppdEnv> = env.clone();
@@ -717,7 +717,7 @@ async fn supervisor_panic_returns_false_and_cleans() {
 async fn lifecycle_normal_stop_sets_stop_and_deletes_config() {
     let env = Arc::new(FakeEnv::new(FakeConfig::default()));
     let store = Arc::new(FakeConfigStore::new(false));
-    let status = WatchService::new();
+    let status = ServiceHandle::new();
 
     let env_dyn: Arc<dyn PppdEnv> = env.clone();
     let store_dyn: Arc<dyn PppdConfigStore> = store.clone();
@@ -751,7 +751,7 @@ async fn lifecycle_normal_stop_sets_stop_and_deletes_config() {
 async fn config_write_failure_sets_failed_without_side_effects() {
     let env = Arc::new(FakeEnv::new(FakeConfig::default()));
     let store = Arc::new(FakeConfigStore::new(true));
-    let status = WatchService::new();
+    let status = ServiceHandle::new();
 
     let env_dyn: Arc<dyn PppdEnv> = env.clone();
     let store_dyn: Arc<dyn PppdConfigStore> = store.clone();
@@ -776,7 +776,7 @@ async fn config_write_failure_sets_failed_without_side_effects() {
 async fn supervisor_panic_sets_failed_and_cleans_up() {
     let env = Arc::new(FakeEnv::new(FakeConfig { panic_on_spawn: true, ..FakeConfig::default() }));
     let store = Arc::new(FakeConfigStore::new(false));
-    let status = WatchService::new();
+    let status = ServiceHandle::new();
 
     let env_dyn: Arc<dyn PppdEnv> = env.clone();
     let store_dyn: Arc<dyn PppdConfigStore> = store.clone();

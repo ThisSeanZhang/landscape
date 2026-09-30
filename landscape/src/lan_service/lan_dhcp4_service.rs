@@ -6,16 +6,16 @@ use std::time::Duration;
 
 use landscape_common::LAND_ARP_SCAN_INTERVAL;
 use landscape_common::concurrency::{spawn_task, task_label};
-use landscape_common::database::LandscapeStore;
+use landscape_common::database::store::ConfigStore;
 use landscape_common::event::hub::IfaceEventReader;
 use landscape_common::lan_service::lan_dhcpv4::DhcpError;
 use landscape_common::lan_service::lan_dhcpv4::config::DHCPv4ServiceConfig;
 use landscape_common::lan_service::lan_dhcpv4::status::ArpScanInfo;
 use landscape_common::lan_service::lan_dhcpv4::status::ArpScanStatus;
 use landscape_common::lan_service::lan_dhcpv4::status::DHCPv4OfferInfo;
+use landscape_common::service::ServiceHandle;
 use landscape_common::service::ServiceStatus;
-use landscape_common::service::WatchService;
-use landscape_common::service::controller::ControllerService;
+use landscape_common::service::controller::{ConfigStoreController, ConfigStoreServiceController};
 use landscape_common::sys_service::client::{CallerLookupMatch, CallerLookupSource};
 use landscape_common::sys_service::route_service::LanRouteInfo;
 use landscape_common::sys_service::route_service::LanRouteMode;
@@ -115,11 +115,13 @@ impl DHCPv4ServerStarter {
 impl ServiceStarterTrait for DHCPv4ServerStarter {
     type Config = DHCPv4ServiceConfig;
 
-    async fn start(&self, config: DHCPv4ServiceConfig) -> WatchService {
-        let service_status = WatchService::new();
+    async fn start(&self, config: DHCPv4ServiceConfig) -> ServiceHandle {
+        let service_status = ServiceHandle::new();
 
         if !config.enable {
             self.route_service.remove_ipv4_lan_route(&config.iface_name).await;
+            // 契约:禁用汇报 Disabled(CleanStop),允许持久化
+            service_status.just_change_status(ServiceStatus::Disabled);
             return service_status;
         }
 
@@ -236,7 +238,8 @@ impl ServiceStarterTrait for DHCPv4ServerStarter {
             }
         } else {
             tracing::error!("Interface {} not found", config.iface_name);
-            service_status.just_change_status(landscape_common::service::ServiceStatus::Failed);
+            service_status.just_change_status(ServiceStatus::Staring);
+            service_status.just_change_status(ServiceStatus::Failed);
         }
 
         service_status
@@ -252,28 +255,28 @@ pub struct DHCPv4ServerManagerService {
 }
 
 #[async_trait::async_trait]
-impl ControllerService for DHCPv4ServerManagerService {
+impl ConfigStoreController for DHCPv4ServerManagerService {
     type Id = String;
 
     type Config = DHCPv4ServiceConfig;
 
-    type DatabseAction = DHCPv4ServerRepository;
+    type Store = DHCPv4ServerRepository;
 
+    fn get_store(&self) -> &Self::Store {
+        &self.store
+    }
+
+    /// 删除服务时同步清理 starter 插入的 LAN 路由(原 legacy delete override 语义)。
+    async fn notify_deleted(&self, old: Self::Config) {
+        self.server_starter.route_service.remove_ipv4_lan_route(&old.iface_name).await;
+    }
+}
+
+impl ConfigStoreServiceController for DHCPv4ServerManagerService {
     type H = DHCPv4ServerStarter;
 
     fn get_service(&self) -> &ServiceManager<Self::H> {
         &self.service
-    }
-
-    fn get_repository(&self) -> &Self::DatabseAction {
-        &self.store
-    }
-
-    async fn delete_and_stop_iface_service(&self, iface_name: Self::Id) -> Option<ServiceStatus> {
-        self.get_repository().delete(iface_name.clone()).await.unwrap();
-        let result = self.get_service().stop_service(iface_name.clone()).await;
-        self.server_starter.route_service.remove_ipv4_lan_route(&iface_name).await;
-        result
     }
 }
 
@@ -370,7 +373,7 @@ impl DHCPv4ServerManagerService {
         new_config: &DHCPv4ServiceConfig,
     ) -> Result<(), DhcpError> {
         if let Some(conflict_iface) = self
-            .get_repository()
+            .store
             .check_ip_range_conflict(
                 new_config.iface_name.clone(),
                 new_config.config.server_ip_addr,
@@ -384,6 +387,10 @@ impl DHCPv4ServerManagerService {
         }
 
         Ok(())
+    }
+
+    pub async fn get_config_by_name(&self, iface_name: String) -> Option<DHCPv4ServiceConfig> {
+        self.find_by_id(iface_name).await.ok().flatten()
     }
 
     pub async fn refresh_iface_service(&self, iface_name: String) {

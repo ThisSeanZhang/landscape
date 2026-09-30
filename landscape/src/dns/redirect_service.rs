@@ -1,9 +1,10 @@
 use std::{collections::HashMap, sync::Arc};
 
 use landscape_common::{
+    database::store::Change,
     dns::redirect::{DNSRedirectRule, DynamicDnsRedirectBatch, DynamicDnsRedirectScope},
     event::dns::DnsEvent,
-    service::controller::{ConfigController, FlowConfigController},
+    service::controller::{ConfigStoreController, ConfigStoreFlowController},
 };
 use landscape_database::{
     dns_redirect::repository::DNSRedirectRuleRepository, provider::LandscapeDBServiceProvider,
@@ -114,38 +115,35 @@ fn scope_flow_id(scope: &DynamicDnsRedirectScope) -> u32 {
     }
 }
 
-impl FlowConfigController for DNSRedirectService {}
+#[async_trait::async_trait]
+impl ConfigStoreFlowController for DNSRedirectService {}
 
 #[async_trait::async_trait]
-impl ConfigController for DNSRedirectService {
+impl ConfigStoreController for DNSRedirectService {
     type Id = Uuid;
 
     type Config = DNSRedirectRule;
 
-    type DatabseAction = DNSRedirectRuleRepository;
+    type Store = DNSRedirectRuleRepository;
 
-    fn get_repository(&self) -> &Self::DatabseAction {
+    fn get_store(&self) -> &Self::Store {
         &self.store
     }
 
-    async fn update_one_config(&self, _: Self::Config) {
+    async fn notify_changed(&self, _changes: Vec<Change<Self::Config>>) {
         let _ = self.dns_events_tx.send(DnsEvent::RedirectsChanged { flow_id: None }).await;
     }
 
-    async fn delete_one_config(&self, config: Self::Config) {
-        if config.apply_flows.is_empty() {
+    async fn notify_deleted(&self, old: Self::Config) {
+        if old.apply_flows.is_empty() {
             let _ = self.dns_events_tx.send(DnsEvent::RedirectsChanged { flow_id: None }).await;
         } else {
-            for flow_id in config.apply_flows {
+            for flow_id in old.apply_flows {
                 let _ = self
                     .dns_events_tx
                     .send(DnsEvent::RedirectsChanged { flow_id: Some(flow_id) })
                     .await;
             }
         }
-    }
-
-    async fn update_many_config(&self, _configs: Vec<Self::Config>) {
-        let _ = self.dns_events_tx.send(DnsEvent::RedirectsChanged { flow_id: None }).await;
     }
 }

@@ -3,8 +3,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use futures::FutureExt;
+use landscape_common::service::ServiceHandle;
 use landscape_common::service::ServiceStatus;
-use landscape_common::service::WatchService;
 
 use super::env::{PppIpv4State, PppdChild, PppdEnv, PppdTimings};
 
@@ -68,7 +68,7 @@ impl PppSessionHealth {
     }
 }
 
-async fn wait_backoff(service_status: &WatchService, backoff: Duration) -> BackoffOutcome {
+async fn wait_backoff(service_status: &ServiceHandle, backoff: Duration) -> BackoffOutcome {
     // Phase 2 will add an attach-iface `Up` branch here to interrupt the backoff
     // and redial immediately.
     let stop_token = service_status.stop_token();
@@ -173,7 +173,7 @@ async fn stop_pppd_process_async(
 pub(crate) async fn run_pppd_supervisor(
     ppp_iface_name: String,
     as_router: bool,
-    service_status: WatchService,
+    service_status: ServiceHandle,
     env: Arc<dyn PppdEnv>,
     timings: PppdTimings,
 ) -> bool {
@@ -198,7 +198,7 @@ pub(crate) async fn run_pppd_supervisor(
 async fn supervise_loop(
     ppp_iface_name: String,
     as_router: bool,
-    service_status: WatchService,
+    service_status: ServiceHandle,
     env: Arc<dyn PppdEnv>,
     timings: PppdTimings,
 ) -> bool {

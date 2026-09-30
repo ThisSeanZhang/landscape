@@ -3,7 +3,7 @@ use landscape_common::api_response::LandscapeApiResp as CommonApiResp;
 use landscape_common::cert::CertError;
 use landscape_common::cert::order::{CertConfig, CertParsedInfo};
 use landscape_common::config::ConfigId;
-use landscape_common::service::controller::ConfigController;
+use landscape_common::service::controller::ConfigStoreController;
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 
@@ -29,7 +29,7 @@ pub fn get_cert_paths() -> OpenApiRouter<LandscapeApp> {
     responses((status = 200, description = "Success", body = CommonApiResp<Vec<CertConfig>>))
 )]
 async fn list_certs(State(state): State<LandscapeApp>) -> LandscapeApiResult<Vec<CertConfig>> {
-    let result = state.cert_service.list().await;
+    let result = state.cert_service.list().await?;
     LandscapeApiResp::success(result)
 }
 
@@ -62,7 +62,7 @@ async fn get_cert(
     State(state): State<LandscapeApp>,
     Path(id): Path<ConfigId>,
 ) -> LandscapeApiResult<CertConfig> {
-    let result = state.cert_service.find_by_id(id).await;
+    let result = state.cert_service.find_by_id(id).await?;
     if let Some(config) = result {
         LandscapeApiResp::success(config)
     } else {
@@ -103,7 +103,7 @@ async fn delete_cert(
     State(state): State<LandscapeApp>,
     Path(id): Path<ConfigId>,
 ) -> LandscapeApiResult<()> {
-    state.cert_service.delete_with_notify(id).await;
+    state.cert_service.delete_with_notify(id).await?;
     LandscapeApiResp::success(())
 }
 

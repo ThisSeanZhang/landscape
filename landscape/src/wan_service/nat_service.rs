@@ -2,18 +2,19 @@ use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr};
 use std::sync::Arc;
 
-use landscape_common::database::LandscapeStore;
+use landscape_common::database::error::DbError;
+use landscape_common::database::store::ConfigStore;
 use landscape_common::ddns::IpFamily;
 use landscape_common::event::hub::IfaceEventReader;
 use landscape_common::event::hub::iface::IfaceObserverAction;
-use landscape_common::service::controller::ControllerService;
+use landscape_common::service::controller::{ConfigStoreController, ConfigStoreServiceController};
 use landscape_common::service::manager::ServiceManager;
 use landscape_common::sys_service::route_service::RouteTargetInfo;
 use landscape_common::wan_service::nat::config::{NatConfig, NatServiceConfig};
 use landscape_common::wan_service::nat::dataplane::NatDataplane;
 use landscape_common::{
     concurrency::{spawn_task, task_label},
-    service::{ServiceStatus, WatchService, manager::ServiceStarterTrait},
+    service::{ServiceHandle, ServiceStatus, manager::ServiceStarterTrait},
 };
 use landscape_database::nat::repository::NatServiceRepository;
 use landscape_database::provider::LandscapeDBServiceProvider;
@@ -75,8 +76,8 @@ pub struct NatService {
 impl ServiceStarterTrait for NatService {
     type Config = NatServiceConfig;
 
-    async fn start(&self, config: NatServiceConfig) -> WatchService {
-        let service_status = WatchService::new();
+    async fn start(&self, config: NatServiceConfig) -> ServiceHandle {
+        let service_status = ServiceHandle::new();
 
         if config.enable {
             if let Some(iface) = get_iface_by_name(&config.iface_name).await {
@@ -103,7 +104,12 @@ impl ServiceStarterTrait for NatService {
                 );
             } else {
                 tracing::error!("Interface {} not found", config.iface_name);
+                // 契约:iface 缺失视为启动失败,拒绝持久化
+                service_status.just_change_status(ServiceStatus::Staring);
+                service_status.just_change_status(ServiceStatus::Failed);
             }
+        } else {
+            service_status.just_change_status(ServiceStatus::Disabled);
         }
 
         service_status
@@ -115,7 +121,7 @@ pub async fn create_nat_service(
     ifindex: i32,
     has_mac: bool,
     nat_config: NatConfig,
-    service_status: WatchService,
+    service_status: ServiceHandle,
     dataplane: Arc<dyn NatDataplane>,
 ) {
     let nat = match dataplane.attach(ifindex as u32, has_mac, &nat_config) {
@@ -143,18 +149,35 @@ pub struct NatServiceManagerService {
     service: ServiceManager<NatService>,
 }
 
-impl ControllerService for NatServiceManagerService {
+#[async_trait::async_trait]
+impl ConfigStoreController for NatServiceManagerService {
     type Id = String;
     type Config = NatServiceConfig;
-    type DatabseAction = NatServiceRepository;
+    type Store = NatServiceRepository;
+
+    fn get_store(&self) -> &Self::Store {
+        &self.store
+    }
+}
+
+impl ConfigStoreServiceController for NatServiceManagerService {
     type H = NatService;
 
     fn get_service(&self) -> &ServiceManager<Self::H> {
         &self.service
     }
+}
 
-    fn get_repository(&self) -> &Self::DatabseAction {
-        &self.store
+impl NatServiceManagerService {
+    pub async fn get_config_by_name(&self, iface_name: String) -> Option<NatServiceConfig> {
+        self.find_by_id(iface_name).await.ok().flatten()
+    }
+
+    pub async fn delete_and_stop_iface_service(
+        &self,
+        iface_name: String,
+    ) -> Result<Option<ServiceStatus>, DbError> {
+        self.delete_and_stop_service(iface_name).await
     }
 }
 

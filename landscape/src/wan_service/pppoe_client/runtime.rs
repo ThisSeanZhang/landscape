@@ -4,7 +4,7 @@ use tokio::time::{Duration, Instant, sleep};
 
 use landscape_common::net_proto::ppp::PointToPoint;
 use landscape_common::net_proto::pppoe::PPPoEFrame;
-use landscape_common::service::{ServiceStatus, WatchService};
+use landscape_common::service::{ServiceHandle, ServiceStatus};
 use landscape_common::wan_service::pppoe::PppoeDataplane;
 
 use super::PPPoEClientConfig;
@@ -26,7 +26,7 @@ async fn shutdown_session(
 
 pub async fn run(
     config: PPPoEClientConfig,
-    status_rx: WatchService,
+    status_rx: ServiceHandle,
     route_service: IpRouteService,
     dataplane: Arc<dyn PppoeDataplane>,
 ) {
@@ -234,7 +234,7 @@ async fn keepalive(
     initial_echo_id: u8,
     tx: &mut tokio::sync::mpsc::Sender<Vec<u8>>,
     rx: &mut tokio::sync::mpsc::Receiver<Vec<u8>>,
-    status_rx: &WatchService,
+    status_rx: &ServiceHandle,
 ) -> PppoeResult<()> {
     let mut echo_req_id: u8 = initial_echo_id;
     let mut echo_failures: u8 = 0;

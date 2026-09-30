@@ -2,7 +2,7 @@ use axum::extract::{Path, State};
 use landscape_common::api_response::LandscapeApiResp as CommonApiResp;
 use landscape_common::config::ConfigId;
 use landscape_common::ddns::{DdnsJob, DdnsJobRuntime};
-use landscape_common::service::controller::ConfigController;
+use landscape_common::service::controller::ConfigStoreController;
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 
@@ -27,7 +27,7 @@ pub fn get_ddns_paths() -> OpenApiRouter<LandscapeApp> {
     responses((status = 200, description = "Success", body = CommonApiResp<Vec<DdnsJob>>))
 )]
 async fn list_ddns_jobs(State(app): State<LandscapeApp>) -> LandscapeApiResult<Vec<DdnsJob>> {
-    LandscapeApiResp::success(app.ddns_service.list().await)
+    LandscapeApiResp::success(app.ddns_service.list().await?)
 }
 
 #[utoipa::path(
@@ -53,7 +53,7 @@ async fn get_ddns_job(
     State(app): State<LandscapeApp>,
     Path(id): Path<ConfigId>,
 ) -> LandscapeApiResult<Option<DdnsJob>> {
-    LandscapeApiResp::success(app.ddns_service.find_by_id(id).await)
+    LandscapeApiResp::success(app.ddns_service.find_by_id(id).await?)
 }
 
 #[utoipa::path(
@@ -112,6 +112,6 @@ async fn delete_ddns_job(
     State(app): State<LandscapeApp>,
     Path(id): Path<ConfigId>,
 ) -> LandscapeApiResult<()> {
-    app.ddns_service.delete(id).await;
+    app.ddns_service.delete(id).await?;
     LandscapeApiResp::success(())
 }

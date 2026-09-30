@@ -13,13 +13,13 @@ use landscape_common::wan_service::ipv6_pd::IAPrefixMap;
 use landscape_common::wan_service::ipv6_pd::IPV6PDPrefixStatus;
 use landscape_common::wan_service::ipv6_pd::LDIAPrefix;
 
-use landscape_common::database::LandscapeStore;
 use landscape_common::database::error::DbError;
+use landscape_common::database::store::ConfigStore;
 use landscape_common::{
     LANDSCAPE_DEFAULE_DHCP_V6_CLIENT_PORT,
     event::hub::iface::IfaceObserverAction,
     service::{
-        ServiceStatus, WatchService,
+        ServiceHandle, ServiceStatus,
         controller::{ConfigStoreController, ConfigStoreServiceController},
         manager::ServiceManager,
     },
@@ -67,8 +67,8 @@ impl IPV6PDService {
 impl ServiceStarterTrait for IPV6PDService {
     type Config = IPV6PDServiceConfig;
 
-    async fn start(&self, config: IPV6PDServiceConfig) -> WatchService {
-        let service_status = WatchService::new();
+    async fn start(&self, config: IPV6PDServiceConfig) -> ServiceHandle {
+        let service_status = ServiceHandle::new();
         if config.enable {
             let route_service = self.route_service.clone();
             let addr_binding = self.addr_binding.clone();

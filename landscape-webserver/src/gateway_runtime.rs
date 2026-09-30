@@ -3,8 +3,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use landscape_common::config::ConfigId;
-use landscape_common::database::LandscapeStore;
 use landscape_common::database::error::DbError;
+use landscape_common::database::store::ConfigStore;
 use landscape_common::service::ServiceStatus;
 use landscape_common::sys_service::gateway::HttpUpstreamRuleConfig;
 use landscape_common::sys_service::gateway::settings::GatewayRuntimeConfig;
@@ -102,7 +102,7 @@ impl GatewayService {
         &self,
         rule: HttpUpstreamRuleConfig,
     ) -> Result<HttpUpstreamRuleConfig, DbError> {
-        self.store.set(rule).await
+        self.store.upsert(rule).await.map(|change| change.new)
     }
 
     pub async fn find_rule(&self, id: ConfigId) -> Result<Option<HttpUpstreamRuleConfig>, DbError> {
@@ -110,7 +110,7 @@ impl GatewayService {
     }
 
     pub async fn delete_rule(&self, id: ConfigId) -> Result<(), DbError> {
-        self.store.delete(id).await
+        self.store.delete_and_get(id).await.map(|_| ())
     }
 
     pub async fn reload_rules(&self) {

@@ -8,11 +8,10 @@ use landscape_common::lan_service::lan_ipv6::{
     LanIPv6ServiceConfigV2, validate_global_prefix_conflicts,
 };
 use landscape_common::service::ServiceStatus;
-use landscape_common::service::controller::ControllerService;
+use landscape_common::service::controller::{ConfigStoreController, ConfigStoreServiceController};
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 
-use landscape_common::database::LandscapeStore as LandscapeDBStore;
 use landscape_common::service::ServiceConfigError;
 
 use crate::LandscapeApp;
@@ -84,9 +83,7 @@ async fn get_all_status(
 async fn get_all_lan_ipv6_configs(
     State(state): State<LandscapeApp>,
 ) -> LandscapeApiResult<Vec<LanIPv6ServiceConfigV2>> {
-    LandscapeApiResp::success(
-        state.lan_ipv6_service.get_repository().list().await.unwrap_or_default(),
-    )
+    LandscapeApiResp::success(state.lan_ipv6_service.list().await.unwrap_or_default())
 }
 
 #[utoipa::path(
@@ -124,7 +121,7 @@ async fn handle_lan_ipv6(
     state.validate_zone(&config).await?;
     let pd_contexts = state.ipv6_pd_service.get_pd_prefix_contexts().await;
     let existing_configs: Vec<LanIPv6ServiceConfigV2> =
-        state.lan_ipv6_service.get_repository().list().await.unwrap_or_default();
+        state.lan_ipv6_service.list().await.unwrap_or_default();
     validate_global_prefix_conflicts(&config, &existing_configs, Some(&pd_contexts))?;
     config.config.validate_with_pd_context(Some(&pd_contexts))?;
 
@@ -144,7 +141,7 @@ async fn delete_and_stop_lan_ipv6(
     State(state): State<LandscapeApp>,
     Path(iface_name): Path<String>,
 ) -> LandscapeApiResult<Option<ServiceStatus>> {
-    let result = state.lan_ipv6_service.delete_and_stop_iface_service(iface_name).await;
+    let result = state.lan_ipv6_service.delete_and_stop_iface_service(iface_name).await?;
     state.static_nat6_mapping_service.refresh_runtime_rules().await;
     LandscapeApiResp::success(result)
 }

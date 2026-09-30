@@ -17,7 +17,7 @@ use landscape_common::concurrency::{runtime_thread_name_fn, spawn_named_thread, 
 use landscape_common::sys_service::gateway::HttpUpstreamRuleConfig;
 use landscape_common::sys_service::gateway::settings::GatewayRuntimeConfig;
 
-use landscape_common::service::{ServiceStatus, WatchService};
+use landscape_common::service::{ServiceHandle, ServiceStatus};
 use pingora::apps::ServerApp;
 use pingora::protocols::{
     ALPN, GetProxyDigest, GetSocketDigest, GetTimingDigest, Peek, Shutdown, SocketDigest, Stream,
@@ -61,7 +61,7 @@ struct GatewayRun {
     /// 丢弃即 detach 线程。
     thread: Option<JoinHandle<()>>,
     cancel: CancellationToken,
-    status: WatchService,
+    status: ServiceHandle,
     done_rx: watch::Receiver<ServiceStatus>,
 }
 
@@ -111,7 +111,7 @@ impl GatewayManager {
         // 已终止的旧 run(线程已退出,JoinHandle drop 即 detach)直接覆盖
 
         // 每次启动创建全新运行实例:状态句柄跨周期不复用
-        let status = WatchService::new();
+        let status = ServiceHandle::new();
         status.just_change_status(ServiceStatus::Staring);
 
         let rules = self.rules.clone();
@@ -269,7 +269,7 @@ fn run_pingora_server(
     tls_config: Option<GatewayTlsConfig>,
     cancel: CancellationToken,
     rt: Option<tokio::runtime::Handle>,
-    status: WatchService,
+    status: ServiceHandle,
 ) -> Result<(), GatewayRunFailure> {
     use pingora::server::Server;
     use proxy_service::LandscapeReverseProxy;
@@ -316,7 +316,7 @@ fn run_pingora_server(
 /// 将 pingora 的 ExecutionPhase 广播转发为服务状态:真正进入服务态才置
 /// Running,进入关闭序列置 Stopping;状态到达退出态或广播关闭时结束。
 async fn forward_execution_phase(
-    forward_status: WatchService,
+    forward_status: ServiceHandle,
     mut phases: tokio::sync::broadcast::Receiver<pingora::server::ExecutionPhase>,
 ) {
     loop {
@@ -693,7 +693,7 @@ mod tests {
     use super::*;
 
     fn stopping_run() -> GatewayRun {
-        let status = WatchService::new();
+        let status = ServiceHandle::new();
         status.just_change_status(ServiceStatus::Staring);
         status.just_change_status(ServiceStatus::Running);
         status.just_change_status(ServiceStatus::Stopping);

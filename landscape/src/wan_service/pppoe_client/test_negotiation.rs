@@ -6,7 +6,7 @@ use tokio::time::Duration;
 use landscape_common::net::MacAddr;
 use landscape_common::net_proto::ppp::{PPPOption, PointToPoint};
 use landscape_common::net_proto::pppoe::PPPoEFrame;
-use landscape_common::service::{ServiceStatus, WatchService};
+use landscape_common::service::{ServiceHandle, ServiceStatus};
 
 use super::PPPoEClientConfig;
 
@@ -246,7 +246,7 @@ fn spawn_nego(
     lcp: LcpPhaseResult,
     mut client_tx: mpsc::Sender<Vec<u8>>,
     mut client_rx: mpsc::Receiver<Vec<u8>>,
-    status: &WatchService,
+    status: &ServiceHandle,
 ) -> tokio::task::JoinHandle<Result<NegotiationResult, PppoeError>> {
     let status_c = status.clone();
     tokio::spawn(async move { run(&config, &lcp, &mut client_tx, &mut client_rx, &status_c).await })
@@ -308,7 +308,7 @@ mod auth_tests {
         let (to_client, client_rx) = mpsc::channel(16);
         let config = test_config();
         let lcp = mock_lcp(0xc023);
-        let status = WatchService::new();
+        let status = ServiceHandle::new();
         status.just_change_status(ServiceStatus::Staring);
         status.just_change_status(ServiceStatus::Running);
 
@@ -338,7 +338,7 @@ mod auth_tests {
         let (to_client, client_rx) = mpsc::channel(16);
         let config = test_config();
         let lcp = mock_lcp(0xc023);
-        let status = WatchService::new();
+        let status = ServiceHandle::new();
         status.just_change_status(ServiceStatus::Staring);
         status.just_change_status(ServiceStatus::Running);
 
@@ -364,7 +364,7 @@ mod auth_tests {
         let (to_client, client_rx) = mpsc::channel(16);
         let config = test_config();
         let lcp = mock_lcp(0xc223);
-        let status = WatchService::new();
+        let status = ServiceHandle::new();
         status.just_change_status(ServiceStatus::Staring);
         status.just_change_status(ServiceStatus::Running);
 
@@ -409,7 +409,7 @@ mod auth_tests {
         let (to_client, client_rx) = mpsc::channel(16);
         let config = test_config();
         let lcp = mock_lcp(0xc223);
-        let status = WatchService::new();
+        let status = ServiceHandle::new();
         status.just_change_status(ServiceStatus::Staring);
         status.just_change_status(ServiceStatus::Running);
 
@@ -435,7 +435,7 @@ mod auth_tests {
         let (_to_client, mut client_rx) = mpsc::channel(2);
         let config = test_config();
         let lcp = mock_lcp(0x9999); // invalid
-        let status = WatchService::new();
+        let status = ServiceHandle::new();
         status.just_change_status(ServiceStatus::Staring);
         status.just_change_status(ServiceStatus::Running);
 
@@ -455,7 +455,7 @@ mod ipcp_tests {
         let (to_client, client_rx) = mpsc::channel(16);
         let config = test_config();
         let lcp = mock_lcp(0xc023);
-        let status = WatchService::new();
+        let status = ServiceHandle::new();
         status.just_change_status(ServiceStatus::Staring);
         status.just_change_status(ServiceStatus::Running);
 
@@ -532,7 +532,7 @@ mod ipcp_tests {
         let (to_client, client_rx) = mpsc::channel(16);
         let config = test_config();
         let lcp = mock_lcp(0xc023);
-        let status = WatchService::new();
+        let status = ServiceHandle::new();
         status.just_change_status(ServiceStatus::Staring);
         status.just_change_status(ServiceStatus::Running);
 
@@ -560,7 +560,7 @@ mod ipv6cp_tests {
         let (to_client, client_rx) = mpsc::channel(16);
         let config = test_config();
         let lcp = mock_lcp(0xc023);
-        let status = WatchService::new();
+        let status = ServiceHandle::new();
         status.just_change_status(ServiceStatus::Staring);
         status.just_change_status(ServiceStatus::Running);
 
@@ -608,7 +608,7 @@ mod integration {
         let (to_client, client_rx) = mpsc::channel(16);
         let config = test_config();
         let lcp = mock_lcp(0xc023);
-        let status = WatchService::new();
+        let status = ServiceHandle::new();
         status.just_change_status(ServiceStatus::Staring);
         status.just_change_status(ServiceStatus::Running);
 
@@ -663,7 +663,7 @@ mod integration {
         let (to_client, client_rx) = mpsc::channel(16);
         let config = test_config();
         let lcp = mock_lcp(0xc023);
-        let status = WatchService::new();
+        let status = ServiceHandle::new();
         status.just_change_status(ServiceStatus::Staring);
         status.just_change_status(ServiceStatus::Running);
 
@@ -701,7 +701,7 @@ mod integration {
         let (to_client, client_rx) = mpsc::channel(16);
         let config = test_config();
         let lcp = mock_lcp(0xc023);
-        let status = WatchService::new();
+        let status = ServiceHandle::new();
         status.just_change_status(ServiceStatus::Staring);
         status.just_change_status(ServiceStatus::Running);
 
@@ -735,7 +735,7 @@ mod integration {
         let (to_client, client_rx) = mpsc::channel(16);
         let config = test_config();
         let lcp = mock_lcp(0xc023);
-        let status = WatchService::new();
+        let status = ServiceHandle::new();
         status.just_change_status(ServiceStatus::Staring);
         status.just_change_status(ServiceStatus::Running);
 
@@ -772,7 +772,7 @@ mod integration {
         let (to_client, client_rx) = mpsc::channel(16);
         let config = test_config();
         let lcp = mock_lcp(0xc023);
-        let status = WatchService::new();
+        let status = ServiceHandle::new();
         status.just_change_status(ServiceStatus::Staring);
         status.just_change_status(ServiceStatus::Running);
 
@@ -797,7 +797,7 @@ mod integration {
         let (_to_client, mut client_rx) = mpsc::channel(16);
         let config = test_config();
         let lcp = mock_lcp(0xc023);
-        let status = WatchService::new();
+        let status = ServiceHandle::new();
         status.just_change_status(ServiceStatus::Staring);
         status.just_change_status(ServiceStatus::Running);
 
@@ -821,7 +821,7 @@ mod integration {
         let (to_client, mut client_rx) = mpsc::channel(2);
         let config = test_config();
         let lcp = mock_lcp(0xc023);
-        let status = WatchService::new();
+        let status = ServiceHandle::new();
         status.just_change_status(ServiceStatus::Staring);
         status.just_change_status(ServiceStatus::Running);
 
@@ -838,7 +838,7 @@ mod integration {
         let (to_client, client_rx) = mpsc::channel(16);
         let config = test_config();
         let lcp = mock_lcp(0xc023);
-        let status = WatchService::new();
+        let status = ServiceHandle::new();
         status.just_change_status(ServiceStatus::Staring);
         status.just_change_status(ServiceStatus::Running);
 
@@ -877,7 +877,7 @@ mod integration {
         let (to_client, client_rx) = mpsc::channel(16);
         let config = test_config();
         let lcp = mock_lcp(0xc023);
-        let status = WatchService::new();
+        let status = ServiceHandle::new();
         status.just_change_status(ServiceStatus::Staring);
         status.just_change_status(ServiceStatus::Running);
 
@@ -938,7 +938,7 @@ mod integration {
         let (to_client, client_rx) = mpsc::channel(16);
         let config = test_config();
         let lcp = mock_lcp(0xc023);
-        let status = WatchService::new();
+        let status = ServiceHandle::new();
         status.just_change_status(ServiceStatus::Staring);
         status.just_change_status(ServiceStatus::Running);
 
@@ -998,7 +998,7 @@ mod integration {
         let (to_client, client_rx) = mpsc::channel(16);
         let config = test_config();
         let lcp = mock_lcp(0xc023);
-        let status = WatchService::new();
+        let status = ServiceHandle::new();
         status.just_change_status(ServiceStatus::Staring);
         status.just_change_status(ServiceStatus::Running);
 
@@ -1050,7 +1050,7 @@ mod integration {
         let (to_client, client_rx) = mpsc::channel(16);
         let config = test_config();
         let lcp = mock_lcp(0xc023);
-        let status = WatchService::new();
+        let status = ServiceHandle::new();
         status.just_change_status(ServiceStatus::Staring);
         status.just_change_status(ServiceStatus::Running);
 
@@ -1107,7 +1107,7 @@ mod integration {
         let (_to_client, mut client_rx) = mpsc::channel(16);
         let config = test_config();
         let lcp = mock_lcp(0xc023);
-        let status = WatchService::new();
+        let status = ServiceHandle::new();
         status.just_change_status(ServiceStatus::Staring);
         status.just_change_status(ServiceStatus::Running);
 
@@ -1132,7 +1132,7 @@ mod integration {
         let (to_client, client_rx) = mpsc::channel(16);
         let config = test_config();
         let lcp = mock_lcp(0xc023);
-        let status = WatchService::new();
+        let status = ServiceHandle::new();
         status.just_change_status(ServiceStatus::Staring);
         status.just_change_status(ServiceStatus::Running);
 

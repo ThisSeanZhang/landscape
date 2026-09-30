@@ -1,12 +1,12 @@
-use landscape_common::database::LandscapeStore;
 use landscape_common::database::error::DbError;
+use landscape_common::database::store::ConfigStore;
 use landscape_common::{
     LANDSCAPE_HOSTAPD_TMP_DIR,
     args::LAND_HOME_PATH,
     concurrency::{short_thread_name, spawn_named_thread, task_label, thread_name},
     lan_service::ap::WifiServiceConfig,
     service::{
-        ServiceStatus, WatchService,
+        ServiceHandle, ServiceStatus,
         controller::{ConfigStoreController, ConfigStoreServiceController},
         manager::{ServiceManager, ServiceStarterTrait},
     },
@@ -30,8 +30,8 @@ pub struct WifiService;
 impl ServiceStarterTrait for WifiService {
     type Config = WifiServiceConfig;
 
-    async fn start(&self, config: WifiServiceConfig) -> WatchService {
-        let service_status = WatchService::new();
+    async fn start(&self, config: WifiServiceConfig) -> ServiceHandle {
+        let service_status = ServiceHandle::new();
 
         if config.enable {
             if get_iface_by_name(&config.iface_name).await.is_some() {
@@ -59,7 +59,11 @@ impl ServiceStarterTrait for WifiService {
     }
 }
 
-pub async fn create_wifi_service(iface_name: String, config: String, service_status: WatchService) {
+pub async fn create_wifi_service(
+    iface_name: String,
+    config: String,
+    service_status: ServiceHandle,
+) {
     service_status.just_change_status(ServiceStatus::Staring);
 
     let (tx, mut rx) = oneshot::channel::<()>();

@@ -1,9 +1,8 @@
 use axum::extract::{Path, State};
 use landscape::{get_existing_linklocal, get_iface_by_name, set_iface_ip_no_limit};
 use landscape_common::api_response::LandscapeApiResp as CommonApiResp;
-use landscape_common::database::LandscapeStore;
 use landscape_common::dev::iface::{IfaceTopology, IfacesInfo};
-use landscape_common::service::controller::ControllerService;
+use landscape_common::service::controller::ConfigStoreController;
 use landscape_common::{
     config_service::iface::{IfaceCpuSoftBalance, NetworkIfaceConfig},
     dev::iface::BridgeCreate,
@@ -93,7 +92,7 @@ async fn get_wan_candidates(State(state): State<LandscapeApp>) -> LandscapeApiRe
         .map(|c| c.name)
         .collect();
 
-    let pppd_configs = state.pppd_service.get_repository().list().await.unwrap_or_default();
+    let pppd_configs = state.pppd_service.list().await.unwrap_or_default();
 
     for cfg in pppd_configs {
         if !names.iter().any(|n| n == &cfg.iface_name) {

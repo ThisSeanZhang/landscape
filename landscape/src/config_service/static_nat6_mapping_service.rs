@@ -11,7 +11,6 @@ use landscape_common::config_service::static_nat::config6::{
     StaticNatMappingV6Config, StaticNatV6PortConfig, StaticNatV6Target,
 };
 use landscape_common::config_service::static_nat::error::StaticNatError;
-use landscape_common::database::LandscapeStore;
 use landscape_common::database::store::{Change, ConfigStore};
 use landscape_common::event::hub::{
     EnrolledDeviceEvent, EnrolledDeviceEventReader, IPv6AssignEvent, IPv6AssignEventReader,
