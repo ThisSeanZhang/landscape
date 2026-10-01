@@ -14,21 +14,17 @@ use landscape_common::service::controller::{ConfigStoreController, ConfigStoreSe
 use landscape_common::service::manager::ServiceManager;
 use landscape_common::service::manager::ServiceStarterTrait;
 use landscape_common::service::{ServiceHandle, ServiceStatus};
-use landscape_common::sys_service::client::{CallerLookupMatch, CallerLookupSource};
 use landscape_common::wan_service::ipv6_pd::IAPrefixMap;
 use landscape_database::enrolled_device::repository::EnrolledDeviceRepository;
 use landscape_database::lan_ipv6_v2::repository::LanIPv6V2ServiceRepository;
 use landscape_database::provider::LandscapeDBServiceProvider;
 use std::collections::HashMap;
-use std::net::Ipv6Addr;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{Mutex, mpsc, watch};
 use uuid::Uuid;
 
-use super::lan_ipv6_server::{
-    AddrSource, Ipv6LanReplyParams, Ipv6ServerStatus, server::start_ipv6_lan_server,
-};
+use super::lan_ipv6_server::{Ipv6LanReplyParams, Ipv6ServerStatus, server::start_ipv6_lan_server};
 use crate::get_iface_by_name;
 use crate::sys_service::route::IpRouteService;
 use dashmap::DashMap;
@@ -585,48 +581,6 @@ impl LanIPv6ManagerService {
         for (iface, status) in statuses {
             let lock = status.lock().await;
             result.insert(iface, lock.to_dhcpv6_offer_info());
-        }
-        result
-    }
-
-    pub async fn resolve_client_match_by_ipv6(&self, ip: Ipv6Addr) -> Option<CallerLookupMatch> {
-        let statuses: Vec<(String, _)> = self
-            .server_starter
-            .status_map
-            .iter()
-            .map(|e| (e.key().clone(), e.value().clone()))
-            .collect();
-        for (iface_name, status) in statuses {
-            let lock = status.lock().await;
-            if let Some(addr) = lock.lookup_by_ip(ip) {
-                return Some(CallerLookupMatch {
-                    iface_name,
-                    mac: addr.mac,
-                    hostname: addr.hostname,
-                    source: match addr.source {
-                        AddrSource::Slaac => CallerLookupSource::Ipv6Ra,
-                        AddrSource::Dhcpv6Na => CallerLookupSource::DhcpV6,
-                    },
-                });
-            }
-        }
-        None
-    }
-
-    pub async fn get_device_ipv6_map(&self) -> HashMap<Uuid, Ipv6Addr> {
-        let device_ids: Vec<(MacAddr, Uuid)> =
-            self.server_starter.device_id_map.iter().map(|e| (*e.key(), *e.value())).collect();
-        let statuses: Vec<_> =
-            self.server_starter.status_map.iter().map(|e| e.value().clone()).collect();
-        let mut result = HashMap::new();
-        for (mac, dev_id) in &device_ids {
-            for status_arc in &statuses {
-                let lock = status_arc.lock().await;
-                if let Some(ip) = lock.lookup_ip_by_mac(mac) {
-                    result.insert(*dev_id, ip);
-                    break;
-                }
-            }
         }
         result
     }

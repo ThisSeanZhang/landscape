@@ -7,6 +7,7 @@ use super::iface::IfaceEventReader;
 use super::iface::IfaceObserverAction;
 use super::ipv4::{IPv4AssignEvent, IPv4AssignEventReader};
 use super::ipv6::{IAPrefixEvent, IAPrefixEventReader, IPv6AssignEvent, IPv6AssignEventReader};
+use super::lan_device::{LanDeviceEvent, LanDeviceEventReader};
 
 pub struct EventHubHandle {
     iface_broadcast_tx: broadcast::Sender<IfaceObserverAction>,
@@ -16,6 +17,7 @@ pub struct EventHubHandle {
     ipv6_broadcast_tx: broadcast::Sender<IPv6AssignEvent>,
     ia_prefix_broadcast_tx: broadcast::Sender<IAPrefixEvent>,
     discovery_broadcast_tx: broadcast::Sender<LanDiscoveryEvent>,
+    lan_device_broadcast_tx: broadcast::Sender<LanDeviceEvent>,
     // Keep the initial receivers alive so the broadcast channels always have at
     // least one active receiver. This prevents dispatcher events from being
     // dropped due to zero receivers before services subscribe.
@@ -26,6 +28,7 @@ pub struct EventHubHandle {
     _ipv6_broadcast_rx: broadcast::Receiver<IPv6AssignEvent>,
     _ia_prefix_broadcast_rx: broadcast::Receiver<IAPrefixEvent>,
     _discovery_broadcast_rx: broadcast::Receiver<LanDiscoveryEvent>,
+    _lan_device_broadcast_rx: broadcast::Receiver<LanDeviceEvent>,
 }
 
 impl EventHubHandle {
@@ -45,6 +48,8 @@ impl EventHubHandle {
         ia_prefix_broadcast_rx: broadcast::Receiver<IAPrefixEvent>,
         discovery_broadcast_tx: broadcast::Sender<LanDiscoveryEvent>,
         discovery_broadcast_rx: broadcast::Receiver<LanDiscoveryEvent>,
+        lan_device_broadcast_tx: broadcast::Sender<LanDeviceEvent>,
+        lan_device_broadcast_rx: broadcast::Receiver<LanDeviceEvent>,
     ) -> Self {
         Self {
             iface_broadcast_tx,
@@ -54,6 +59,7 @@ impl EventHubHandle {
             ipv6_broadcast_tx,
             ia_prefix_broadcast_tx,
             discovery_broadcast_tx,
+            lan_device_broadcast_tx,
             _broadcast_rx: iface_broadcast_rx,
             _frontend_broadcast_rx: frontend_broadcast_rx,
             _device_broadcast_rx: device_broadcast_rx,
@@ -61,6 +67,7 @@ impl EventHubHandle {
             _ipv6_broadcast_rx: ipv6_broadcast_rx,
             _ia_prefix_broadcast_rx: ia_prefix_broadcast_rx,
             _discovery_broadcast_rx: discovery_broadcast_rx,
+            _lan_device_broadcast_rx: lan_device_broadcast_rx,
         }
     }
 
@@ -90,6 +97,10 @@ impl EventHubHandle {
 
     pub fn subscribe_lan_discovery(&self) -> LanDiscoveryEventReader {
         LanDiscoveryEventReader::new(self.discovery_broadcast_tx.subscribe())
+    }
+
+    pub fn subscribe_lan_device(&self) -> LanDeviceEventReader {
+        LanDeviceEventReader::new(self.lan_device_broadcast_tx.subscribe())
     }
 
     // TODO: Refactor LanIPv6Service to use subscribe_ipv6_prefix() instead of

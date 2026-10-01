@@ -1,6 +1,7 @@
 use std::{net::IpAddr, path::PathBuf, sync::Arc, time::Duration};
 
 use arc_swap::ArcSwap;
+use landscape_core::lan_device::LanDeviceDirectory;
 use landscape_ebpf::maps::LandscapeMapPath;
 
 use landscape::{
@@ -56,6 +57,9 @@ pub struct LandscapeApp {
     pub(crate) ebpf_paths: Arc<LandscapeMapPath>,
     pub dns_service: LandscapeDnsService,
     pub ddns_service: DdnsService,
+    /// LAN device directory: authoritative runtime view of LAN devices
+    /// (identity + addresses) for API point reads.
+    pub lan_device_directory: Arc<LanDeviceDirectory>,
     pub dns_provider_profile_service: DnsProviderProfileService,
     pub dns_rule_service: DNSRuleService,
     pub flow_rule_service: FlowRuleService,

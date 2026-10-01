@@ -219,6 +219,7 @@ async fn run_system(
     let ipv6_assign_sender = event_hub.ipv6_sender();
     let ipv6_prefix_sender = event_hub.ipv6_prefix_sender();
     let lan_discovery_sender = event_hub.lan_discovery_sender();
+    let lan_device_sender = event_hub.lan_device_sender();
     let event_handle = event_hub.spawn();
 
     startup_phase!(
@@ -340,6 +341,7 @@ async fn run_system(
     let lan_device_directory = startup_phase!("lan_device.new", {
         LanDeviceDirectory::new(
             enrolled_devices.clone(),
+            lan_device_sender,
             event_handle.subscribe_device(),
             event_handle.subscribe_ipv4_assign(),
             event_handle.subscribe_ipv6_assign(),
@@ -394,15 +396,13 @@ async fn run_system(
         dao_event_source,
     )
     .await;
-    let enrolled_ipv6_cache = lan_ipv6_service.get_device_ipv6_map().await;
-
     let ddns_service = DdnsService::new(
         db_store_provider.clone(),
         route_service.clone(),
         prefix_map.clone(),
-        event_handle.subscribe_ipv6_assign(),
+        lan_device_directory.clone(),
+        event_handle.subscribe_lan_device(),
         event_handle.subscribe_ipv6_prefix(),
-        enrolled_ipv6_cache,
     )
     .await;
 
@@ -438,8 +438,7 @@ async fn run_system(
     let shared_wan_iid = Arc::new(generate_wan_iid());
     let static_nat6_mapping_service = StaticNat6MappingService::new(
         db_store_provider.clone(),
-        event_handle.subscribe_device(),
-        event_handle.subscribe_ipv6_assign(),
+        lan_device_directory.clone(),
         shared_wan_iid.clone(),
         ebpf_rt.clone().nat(),
     )
@@ -547,6 +546,7 @@ async fn run_system(
         time_service,
         dns_service,
         ddns_service,
+        lan_device_directory,
         dns_provider_profile_service,
         dns_rule_service,
         flow_rule_service,

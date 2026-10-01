@@ -37,8 +37,8 @@ use arc_swap::ArcSwap;
 use dashmap::DashMap;
 use landscape_common::config_service::enrolled_device::EnrolledDevice;
 use landscape_common::event::hub::{
-    EnrolledDeviceEvent, EnrolledDeviceEventReader, IPv4AssignEvent, IPv4AssignEventReader,
-    IPv6AssignEvent, IPv6AssignEventReader, LanDiscoveryEventReader,
+    EnrolledDeviceEvent, EnrolledDeviceEventReader, IPv4AssignEventReader, IPv6AssignEvent,
+    IPv6AssignEventReader, LanDeviceEventSender, LanDiscoveryEventReader,
 };
 use landscape_common::net::MacAddr;
 use landscape_common::utils::time::get_f64_timestamp;
@@ -54,6 +54,12 @@ const SNAPSHOT_DEBOUNCE_MS: u64 = 150;
 const GC_INTERVAL_SECS: u64 = 60;
 /// Entries without a `device_id` are dropped after being idle this long.
 pub(super) const ANONYMOUS_TTL_SECS: f64 = 24.0 * 3600.0;
+/// How long the current `device_id` holder must be idle before a runtime
+/// identity claim (a DHCP-carried device_id) may re-anchor it to a newly
+/// observed entry. Identity semantics — deliberately independent of
+/// [`ANONYMOUS_TTL_SECS`] (GC semantics). Enrollment events are NOT gated
+/// by this: the user's explicit binding re-anchors immediately.
+pub(super) const DEVICE_ID_REANCHOR_IDLE_SECS: f64 = 600.0;
 /// `last_active` freshness window for the `online` heuristic. SLAAC-only
 /// addresses do not count as online on their own (a prefix Flush empties the
 /// set before devices re-register).
@@ -72,22 +78,30 @@ pub struct LanDeviceDirectory {
     // ── Derived read view ────────────────────────────────────────────────
     snapshot: ArcSwap<DirectorySnapshot>,
     watch_tx: watch::Sender<()>,
+    /// Change-notification outlet (EventHub `lan_device` domain). Emissions
+    /// happen strictly after the change is applied to the live tables
+    /// (single-writer apply-then-emit), so read-after-event is consistent.
+    pub(super) event_sender: Option<LanDeviceEventSender>,
 }
 
 impl LanDeviceDirectory {
     pub fn new(
         initial_devices: Vec<EnrolledDevice>,
+        event_sender: LanDeviceEventSender,
         device_reader: EnrolledDeviceEventReader,
         ipv4_reader: IPv4AssignEventReader,
         ipv6_reader: IPv6AssignEventReader,
         discovery_reader: LanDiscoveryEventReader,
     ) -> Arc<Self> {
-        let directory = Self::with_seed(&initial_devices);
+        let directory = Self::with_seed(&initial_devices, Some(event_sender));
         directory.spawn_projection(device_reader, ipv4_reader, ipv6_reader, discovery_reader);
         directory
     }
 
-    fn with_seed(initial_devices: &[EnrolledDevice]) -> Arc<Self> {
+    fn with_seed(
+        initial_devices: &[EnrolledDevice],
+        event_sender: Option<LanDeviceEventSender>,
+    ) -> Arc<Self> {
         let (watch_tx, _watch_rx) = watch::channel(());
         let directory = Arc::new(Self {
             entries: DashMap::new(),
@@ -98,6 +112,7 @@ impl LanDeviceDirectory {
             by_hostname: DashMap::new(),
             snapshot: ArcSwap::from_pointee(DirectorySnapshot::default()),
             watch_tx,
+            event_sender,
         });
         for device in initial_devices {
             directory.apply_device_event(EnrolledDeviceEvent::Updated {
@@ -222,13 +237,14 @@ impl LanDeviceDirectory {
     }
 
     // ── Test support ─────────────────────────────────────────────────────
-    // Deterministic construction for tests in other crates: no projection
-    // task is spawned, events are folded synchronously into the live tables.
-    // Not intended for production use.
+    // Cross-crate fixtures (landscape-dns unit tests and the test_dns_server
+    // bin): cfg(test) items are invisible to dependent crates, so these stay
+    // compiled unconditionally. Same-crate test helpers live in tests.rs
+    // (cfg(test)-only) instead. Not intended for production use.
 
     #[doc(hidden)]
     pub fn new_for_test() -> Arc<Self> {
-        Self::with_seed(&[])
+        Self::with_seed(&[], None)
     }
 
     /// Seeds enrolled devices through the same folding path as production
@@ -237,17 +253,7 @@ impl LanDeviceDirectory {
     #[doc(hidden)]
     pub fn new_seeded_for_test(devices: Vec<DirectorySeedDevice>) -> Arc<Self> {
         let devices: Vec<EnrolledDevice> = devices.into_iter().map(EnrolledDevice::from).collect();
-        Self::with_seed(&devices)
-    }
-
-    #[doc(hidden)]
-    pub fn apply_device_event_for_test(&self, event: EnrolledDeviceEvent) {
-        self.apply_device_event(event);
-    }
-
-    #[doc(hidden)]
-    pub fn apply_ipv4_event_for_test(&self, event: IPv4AssignEvent) {
-        self.apply_ipv4_event(event);
+        Self::with_seed(&devices, None)
     }
 
     #[doc(hidden)]

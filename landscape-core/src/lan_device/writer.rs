@@ -8,23 +8,103 @@ use std::sync::Arc;
 
 use dashmap::DashMap;
 use landscape_common::event::hub::{
-    EnrolledDeviceEvent, IPv4AssignEvent, IPv6AssignEvent, LanDiscoveryEvent,
+    EnrolledDeviceEvent, IPv4AssignEvent, IPv6AssignEvent, LanDeviceChange, LanDeviceEvent,
+    LanDiscoveryEvent,
 };
 use landscape_common::net::MacAddr;
 use landscape_common::utils::time::get_f64_timestamp;
 use uuid::Uuid;
 
-use super::ANONYMOUS_TTL_SECS;
-use super::LanDeviceDirectory;
 use super::entry::{AddressSourceV4, AddressSourceV6, LanDeviceEntry, ipv6_interface_id};
+use super::{ANONYMOUS_TTL_SECS, DEVICE_ID_REANCHOR_IDLE_SECS, LanDeviceDirectory};
 
 impl LanDeviceDirectory {
+    /// Single commit point for entry mutations. Diffs the observable fields
+    /// (addresses / identity) around the mutation and emits `lan_device`
+    /// change events for material changes; `last_active`-only refreshes
+    /// stay silent.
     pub(super) fn update_entry(&self, id: &Uuid, f: impl FnOnce(&mut LanDeviceEntry)) -> bool {
         let Some(mut slot) = self.entries.get_mut(id) else { return false };
-        let mut next = slot.value().as_ref().clone();
+        let before = slot.value().as_ref().clone();
+        let mut next = before.clone();
         f(&mut next);
+        let pending = self.change_events(&before, &next);
         *slot = Arc::new(next);
+        drop(slot);
+        self.emit_pending(pending);
         true
+    }
+
+    /// Collects the change events for the fields that actually moved (both
+    /// when an entry changed in both dimensions) without sending, so the
+    /// table write can finish first.
+    fn change_events(
+        &self,
+        before: &LanDeviceEntry,
+        after: &LanDeviceEntry,
+    ) -> Vec<LanDeviceEvent> {
+        if self.event_sender.is_none() {
+            return Vec::new();
+        }
+        let addresses_changed = before.ipv4 != after.ipv4 || before.ipv6_addrs != after.ipv6_addrs;
+        let identity_changed = before.mac != after.mac
+            || before.device_id != after.device_id
+            || before.display_name != after.display_name
+            || before.hostname != after.hostname;
+        let mut events = Vec::new();
+        if addresses_changed {
+            events.push(LanDeviceEvent {
+                entry_id: after.entry_id,
+                mac: after.mac,
+                device_id: after.device_id,
+                change: LanDeviceChange::Addresses,
+            });
+        }
+        if identity_changed {
+            events.push(LanDeviceEvent {
+                entry_id: after.entry_id,
+                mac: after.mac,
+                device_id: after.device_id,
+                change: LanDeviceChange::Identity,
+            });
+        }
+        events
+    }
+
+    fn emit_pending(&self, events: Vec<LanDeviceEvent>) {
+        let Some(sender) = &self.event_sender else { return };
+        for event in events {
+            if let Err(error) = sender.try_send(event) {
+                tracing::warn!("lan_device: change event outlet full or closed: {error:?}");
+            }
+        }
+    }
+
+    fn emit(&self, entry: &LanDeviceEntry, change: LanDeviceChange) {
+        let Some(sender) = &self.event_sender else { return };
+        let event = LanDeviceEvent {
+            entry_id: entry.entry_id,
+            mac: entry.mac,
+            device_id: entry.device_id,
+            change,
+        };
+        if let Err(error) = sender.try_send(event) {
+            tracing::warn!("lan_device: change event outlet full or closed: {error:?}");
+        }
+    }
+
+    /// Emits `Removed` for an entry that left the directory (anonymous GC).
+    fn emit_removed(&self, entry_id: Uuid, mac: Option<MacAddr>, device_id: Option<Uuid>) {
+        let Some(sender) = &self.event_sender else { return };
+        let event = LanDeviceEvent {
+            entry_id,
+            mac,
+            device_id,
+            change: LanDeviceChange::Removed,
+        };
+        if let Err(error) = sender.try_send(event) {
+            tracing::warn!("lan_device: change event outlet full or closed: {error:?}");
+        }
     }
 
     fn resolve_or_create_by_mac(&self, mac: MacAddr) -> Uuid {
@@ -32,8 +112,11 @@ impl LanDeviceDirectory {
             return id;
         }
         let id = Uuid::new_v4();
-        self.entries.insert(id, Arc::new(LanDeviceEntry::new(id, Some(mac), get_f64_timestamp())));
+        let entry = LanDeviceEntry::new(id, Some(mac), get_f64_timestamp());
+        self.entries.insert(id, Arc::new(entry.clone()));
         self.by_mac.insert(mac, id);
+        // A freshly materialized entry is observable: announce its identity.
+        self.emit(&entry, LanDeviceChange::Identity);
         id
     }
 
@@ -92,15 +175,70 @@ impl LanDeviceDirectory {
         true
     }
 
+    /// Runtime identity claims are subordinate to enrollment: a conflicting
+    /// claim only migrates the anchor when the current holder is provably
+    /// dead (idle past [`DEVICE_ID_REANCHOR_IDLE_SECS`]); two live claimants
+    /// is a pathological state the operator must resolve via the DB.
     fn set_device_id(&self, id: &Uuid, device_id: Uuid) {
-        let free = self
-            .by_device_id
-            .get(&device_id)
-            .map(|r| *r.value())
-            .is_none_or(|previous| previous == *id);
-        if free {
+        let owner = self.by_device_id.get(&device_id).map(|r| *r.value());
+        if owner.is_none_or(|previous| previous == *id) {
             self.by_device_id.insert(device_id, *id);
             self.update_entry(id, |e| e.device_id = Some(device_id));
+            return;
+        }
+        let previous = owner.expect("checked above");
+        // A missing entry behind the index is a stale anchor: treat it as
+        // fully idle so the claim recovers the device_id.
+        let idle_secs =
+            get_f64_timestamp() - self.entries.get(&previous).map_or(0.0, |e| e.last_active);
+        if idle_secs < DEVICE_ID_REANCHOR_IDLE_SECS {
+            tracing::warn!(
+                "lan_device: device_id {device_id} already anchored by active entry {previous} \
+                 (idle {idle_secs:.0}s); entry {id} stays anonymous"
+            );
+            return;
+        }
+        tracing::warn!(
+            "lan_device: device_id {device_id} re-anchored from idle entry {previous} \
+             (idle {idle_secs:.0}s) to entry {id}"
+        );
+        self.transfer_device_id(&previous, id, device_id);
+    }
+
+    /// Moves an enrolled identity — `device_id` plus its companions
+    /// (display_name, enrolled ipv6 suffix, enrolled hostname) — from one
+    /// entry to another. The source degrades to anonymous and is eventually
+    /// GC'd. Addresses are never moved: the destination keeps its own
+    /// observations, and evidence arbitration reclaims stragglers.
+    fn transfer_device_id(&self, from: &Uuid, to: &Uuid, device_id: Uuid) {
+        let (display_name, enrolled_ipv6_suffix, enrolled_hostname) = self
+            .entries
+            .get(from)
+            .map(|e| {
+                (
+                    e.display_name.clone(),
+                    e.enrolled_ipv6_suffix,
+                    e.hostname_from_enroll.then(|| e.hostname.clone()).flatten(),
+                )
+            })
+            .unwrap_or((None, None, None));
+
+        self.by_device_id.insert(device_id, *to);
+        self.update_entry(from, |e| {
+            e.device_id = None;
+            e.display_name = None;
+            e.enrolled_ipv6_suffix = None;
+        });
+        if enrolled_hostname.is_some() {
+            self.claim_hostname(from, None, false);
+        }
+        self.update_entry(to, |e| {
+            e.device_id = Some(device_id);
+            e.display_name = display_name;
+            e.enrolled_ipv6_suffix = enrolled_ipv6_suffix;
+        });
+        if let Some(hostname) = enrolled_hostname {
+            self.claim_hostname(to, Some(hostname), true);
         }
     }
 
@@ -161,15 +299,48 @@ impl LanDeviceDirectory {
     pub(super) fn apply_device_event(&self, event: EnrolledDeviceEvent) {
         match event {
             EnrolledDeviceEvent::Updated { old, new } => {
-                let id = self
-                    .by_device_id
-                    .get(&new.id)
-                    .map(|r| *r.value())
-                    .or_else(|| self.by_mac.get(&new.mac).map(|r| *r.value()))
-                    .or_else(|| {
-                        old.as_ref().and_then(|o| self.by_mac.get(&o.mac).map(|r| *r.value()))
-                    })
-                    .unwrap_or_else(|| self.resolve_or_create_by_mac(new.mac));
+                // The user's explicit binding is the highest authority: when
+                // the device_id holder and the new MAC's entry disagree (the
+                // DHCP stream bound the identity to a stale shell before this
+                // event arrived, or the MAC moved), move the identity onto
+                // the MAC's entry immediately — no idle gate.
+                let mac_owner = self.by_mac.get(&new.mac).map(|r| *r.value());
+                let holder = self.by_device_id.get(&new.id).map(|r| *r.value());
+                let id = match (holder, mac_owner) {
+                    (Some(holder), Some(mac_entry)) if holder != mac_entry => {
+                        let mac_enrolled_elsewhere = self
+                            .entries
+                            .get(&mac_entry)
+                            .is_some_and(|e| e.device_id.is_some_and(|other| other != new.id));
+                        if mac_enrolled_elsewhere {
+                            // Pathological DB state (one MAC, two enrolled
+                            // devices): keep the current holder; the operator
+                            // must resolve the contradiction.
+                            tracing::warn!(
+                                "lan_device: mac {} is already enrolled as another device; \
+                                 keeping device {} on entry {holder}",
+                                new.mac,
+                                new.id
+                            );
+                            holder
+                        } else {
+                            tracing::warn!(
+                                "lan_device: enrollment of device {} re-anchored identity from \
+                                 stale entry {holder} to entry {mac_entry} (mac {})",
+                                new.id,
+                                new.mac
+                            );
+                            self.transfer_device_id(&holder, &mac_entry, new.id);
+                            mac_entry
+                        }
+                    }
+                    (Some(holder), _) => holder,
+                    (None, Some(mac_entry)) => mac_entry,
+                    (None, None) => old
+                        .as_ref()
+                        .and_then(|o| self.by_mac.get(&o.mac).map(|r| *r.value()))
+                        .unwrap_or_else(|| self.resolve_or_create_by_mac(new.mac)),
+                };
 
                 if let Some(old) = &old
                     && old.mac != new.mac
@@ -266,6 +437,12 @@ impl LanDeviceDirectory {
         match event {
             IPv4AssignEvent::Allocated(info) => {
                 let id = self.resolve_or_create_by_mac(info.mac);
+                // Bind the enrolled identity before committing addresses, so
+                // the `Addresses` change event already carries the device_id
+                // (parity with the IPv6 path; DDNS filters on it).
+                if let Some(device_id) = info.device_id {
+                    self.set_device_id(&id, device_id);
+                }
                 // An enrolled static IPv4 wins over DHCP observations for the
                 // same device (parity with the old hostname registry).
                 let current = current_ipv4(&self.entries, &id);
@@ -287,9 +464,6 @@ impl LanDeviceDirectory {
                     });
                 } else {
                     self.update_entry(&id, |e| e.last_active = get_f64_timestamp());
-                }
-                if let Some(device_id) = info.device_id {
-                    self.set_device_id(&id, device_id);
                 }
                 if let Some(hostname) =
                     info.hostname.as_ref().and_then(|h| idna::domain_to_ascii(h).ok())
@@ -398,7 +572,9 @@ impl LanDeviceDirectory {
                     Some(id) => id,
                     None => {
                         let id = Uuid::new_v4();
-                        self.entries.insert(id, Arc::new(LanDeviceEntry::new(id, None, now)));
+                        let entry = LanDeviceEntry::new(id, None, now);
+                        self.entries.insert(id, Arc::new(entry.clone()));
+                        self.emit(&entry, LanDeviceChange::Identity);
                         id
                     }
                 }
@@ -442,22 +618,26 @@ impl LanDeviceDirectory {
     /// Drops anonymous entries idle beyond [`ANONYMOUS_TTL_SECS`]. Returns
     /// whether anything was removed.
     pub(super) fn sweep_expired(&self, now: f64) -> bool {
-        let mut removed: Vec<Uuid> = Vec::new();
+        let mut removed: Vec<(Uuid, Option<MacAddr>, Option<Uuid>)> = Vec::new();
         self.entries.retain(|id, entry| {
             let keep = entry.device_id.is_some() || now - entry.last_active <= ANONYMOUS_TTL_SECS;
             if !keep {
-                removed.push(*id);
+                removed.push((*id, entry.mac, entry.device_id));
             }
             keep
         });
         if removed.is_empty() {
             return false;
         }
-        self.by_mac.retain(|_, owner| !removed.contains(owner));
-        self.by_ipv4.retain(|_, owner| !removed.contains(owner));
-        self.by_ipv6.retain(|_, owner| !removed.contains(owner));
-        self.by_device_id.retain(|_, owner| !removed.contains(owner));
-        self.by_hostname.retain(|_, owner| !removed.contains(owner));
+        let removed_ids: Vec<Uuid> = removed.iter().map(|(id, _, _)| *id).collect();
+        for (id, mac, device_id) in &removed {
+            self.emit_removed(*id, *mac, *device_id);
+        }
+        self.by_mac.retain(|_, owner| !removed_ids.contains(owner));
+        self.by_ipv4.retain(|_, owner| !removed_ids.contains(owner));
+        self.by_ipv6.retain(|_, owner| !removed_ids.contains(owner));
+        self.by_device_id.retain(|_, owner| !removed_ids.contains(owner));
+        self.by_hostname.retain(|_, owner| !removed_ids.contains(owner));
         true
     }
 

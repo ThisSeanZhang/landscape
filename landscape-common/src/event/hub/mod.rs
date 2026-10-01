@@ -5,6 +5,7 @@ mod handle;
 pub mod iface;
 mod ipv4;
 mod ipv6;
+mod lan_device;
 
 pub use device::{EnrolledDeviceEvent, EnrolledDeviceEventReader, EnrolledDeviceEventSender};
 pub use discovery::{
@@ -19,6 +20,7 @@ pub use ipv6::{
     IPv6AssignEventReader, IPv6AssignEventSender, IPv6AssignInfo, IPv6AssignSource,
     Ipv6AssignAddress,
 };
+pub use lan_device::{LanDeviceChange, LanDeviceEvent, LanDeviceEventReader, LanDeviceEventSender};
 
 use tokio::sync::{broadcast, mpsc};
 
@@ -37,6 +39,10 @@ const IAPREFIX_MPSC_CAPACITY: usize = 32;
 const IAPREFIX_BROADCAST_CAPACITY: usize = 64;
 const DISCOVERY_MPSC_CAPACITY: usize = 256;
 const DISCOVERY_BROADCAST_CAPACITY: usize = 256;
+// The lan_device pipeline must absorb a full directory re-seed (enrollment
+// backfill plus first-scan discovery observations) without dropping events.
+const LAN_DEVICE_MPSC_CAPACITY: usize = 512;
+const LAN_DEVICE_BROADCAST_CAPACITY: usize = 512;
 
 pub struct EventHub {
     rx: mpsc::Receiver<IfaceObserverAction>,
@@ -70,6 +76,11 @@ pub struct EventHub {
     discovery_broadcast_tx: broadcast::Sender<LanDiscoveryEvent>,
     discovery_broadcast_rx: broadcast::Receiver<LanDiscoveryEvent>,
     discovery_mpsc_tx: mpsc::Sender<LanDiscoveryEvent>,
+
+    lan_device_rx: mpsc::Receiver<LanDeviceEvent>,
+    lan_device_broadcast_tx: broadcast::Sender<LanDeviceEvent>,
+    lan_device_broadcast_rx: broadcast::Receiver<LanDeviceEvent>,
+    lan_device_mpsc_tx: mpsc::Sender<LanDeviceEvent>,
 }
 
 impl Default for EventHub {
@@ -103,6 +114,10 @@ impl EventHub {
         let (discovery_broadcast_tx, discovery_broadcast_rx) =
             broadcast::channel(DISCOVERY_BROADCAST_CAPACITY);
 
+        let (lan_device_tx, lan_device_rx) = mpsc::channel(LAN_DEVICE_MPSC_CAPACITY);
+        let (lan_device_broadcast_tx, lan_device_broadcast_rx) =
+            broadcast::channel(LAN_DEVICE_BROADCAST_CAPACITY);
+
         Self {
             rx,
             broadcast_tx,
@@ -135,6 +150,11 @@ impl EventHub {
             discovery_broadcast_tx,
             discovery_broadcast_rx,
             discovery_mpsc_tx: discovery_tx,
+
+            lan_device_rx,
+            lan_device_broadcast_tx,
+            lan_device_broadcast_rx,
+            lan_device_mpsc_tx: lan_device_tx,
         }
     }
 
@@ -160,6 +180,10 @@ impl EventHub {
 
     pub fn lan_discovery_sender(&self) -> LanDiscoveryEventSender {
         LanDiscoveryEventSender::new(self.discovery_mpsc_tx.clone())
+    }
+
+    pub fn lan_device_sender(&self) -> LanDeviceEventSender {
+        LanDeviceEventSender::new(self.lan_device_mpsc_tx.clone())
     }
 
     pub fn spawn(self) -> EventHubHandle {
@@ -195,6 +219,11 @@ impl EventHub {
             discovery_broadcast_tx,
             discovery_broadcast_rx,
             discovery_mpsc_tx: _,
+
+            lan_device_rx,
+            lan_device_broadcast_tx,
+            lan_device_broadcast_rx,
+            lan_device_mpsc_tx: _,
         } = self;
 
         let handle = EventHubHandle::new(
@@ -212,6 +241,8 @@ impl EventHub {
             ia_prefix_broadcast_rx,
             discovery_broadcast_tx.clone(),
             discovery_broadcast_rx,
+            lan_device_broadcast_tx.clone(),
+            lan_device_broadcast_rx,
         );
         crate::concurrency::spawn_task(
             crate::concurrency::task_label::task::EVENT_HUB_DISPATCHER,
@@ -230,6 +261,8 @@ impl EventHub {
                     ia_prefix_broadcast_tx,
                     discovery_rx,
                     discovery_broadcast_tx,
+                    lan_device_rx,
+                    lan_device_broadcast_tx,
                 )
                 .await
             },
@@ -252,6 +285,8 @@ impl EventHub {
         ia_prefix_broadcast_tx: broadcast::Sender<IAPrefixEvent>,
         mut discovery_rx: mpsc::Receiver<LanDiscoveryEvent>,
         discovery_broadcast_tx: broadcast::Sender<LanDiscoveryEvent>,
+        mut lan_device_rx: mpsc::Receiver<LanDeviceEvent>,
+        lan_device_broadcast_tx: broadcast::Sender<LanDeviceEvent>,
     ) {
         loop {
             tokio::select! {
@@ -292,6 +327,12 @@ impl EventHub {
                     tracing::trace!(?event, "EventHub: dispatch Discovery event");
                     if let Err(e) = discovery_broadcast_tx.send(event) {
                         tracing::warn!("EventHub: discovery broadcast channel full, dropping event: {e:?}");
+                    }
+                }
+                Some(event) = lan_device_rx.recv() => {
+                    tracing::trace!(?event, "EventHub: dispatch LanDevice event");
+                    if let Err(e) = lan_device_broadcast_tx.send(event) {
+                        tracing::warn!("EventHub: lan_device broadcast channel full, dropping event: {e:?}");
                     }
                 }
                 else => break,

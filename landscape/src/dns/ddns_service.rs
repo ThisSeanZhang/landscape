@@ -3,7 +3,6 @@ use std::net::{IpAddr, Ipv6Addr};
 use std::sync::Arc;
 use std::time::Duration;
 
-use dashmap::DashMap;
 use landscape_common::cert::order::DnsProviderConfig;
 use landscape_common::concurrency::{spawn_task, task_label};
 use landscape_common::database::store::ConfigStore;
@@ -13,13 +12,14 @@ use landscape_common::ddns::{
 };
 use landscape_common::dns::provider_profile::DnsProviderProfile;
 use landscape_common::event::hub::{
-    IAPrefixEvent, IAPrefixEventReader, IPv6AssignEvent, IPv6AssignEventReader,
+    IAPrefixEvent, IAPrefixEventReader, LanDeviceChange, LanDeviceEventReader,
 };
 use landscape_common::lan_service::lan_ipv6::{combine_ipv6_prefix_suffix, extract_ipv6_suffix};
 use landscape_common::wan_service::ipv6_pd::IAPrefixMap;
 use landscape_common::{
     database::error::DbError, database::store::Change, service::controller::ConfigStoreController,
 };
+use landscape_core::lan_device::LanDeviceDirectory;
 use landscape_database::{
     ddns::repository::DdnsJobRepository,
     dns_provider_profile::repository::DnsProviderProfileRepository,
@@ -40,13 +40,6 @@ const DEFAULT_DDNS_RECORD_TTL: u32 = 120;
 type DdnsRuntimeMap = Arc<RwLock<HashMap<Uuid, DdnsJobRuntime>>>;
 type DdnsSyncLock = Arc<Mutex<()>>;
 
-#[derive(Default)]
-struct EnrolledDeviceCache {
-    raw_ips: HashSet<Ipv6Addr>,
-}
-
-type EnrolledCache = Arc<DashMap<Uuid, EnrolledDeviceCache>>;
-
 struct ResolveRecordIpError {
     status: DdnsJobStatus,
     reason: DdnsRuntimeReason,
@@ -63,7 +56,7 @@ pub struct DdnsService {
     runtime: DdnsRuntimeMap,
     sync_lock: DdnsSyncLock,
     prefix_map: IAPrefixMap,
-    enrolled_cache: EnrolledCache,
+    directory: Arc<LanDeviceDirectory>,
 }
 
 impl DdnsService {
@@ -71,9 +64,9 @@ impl DdnsService {
         store: LandscapeDBServiceProvider,
         route_service: IpRouteService,
         prefix_map: IAPrefixMap,
-        ipv6_reader: IPv6AssignEventReader,
+        directory: Arc<LanDeviceDirectory>,
+        lan_device_reader: LanDeviceEventReader,
         prefix_reader: IAPrefixEventReader,
-        enrolled_ipv6_cache: HashMap<Uuid, Ipv6Addr>,
     ) -> Self {
         let service = Self {
             store: store.ddns_job_store(),
@@ -82,18 +75,13 @@ impl DdnsService {
             runtime: Arc::new(RwLock::new(HashMap::new())),
             sync_lock: Arc::new(Mutex::new(())),
             prefix_map,
-            enrolled_cache: Arc::new(
-                enrolled_ipv6_cache
-                    .into_iter()
-                    .map(|(id, ip)| (id, EnrolledDeviceCache { raw_ips: HashSet::from([ip]) }))
-                    .collect(),
-            ),
+            directory,
         };
         service.refresh_runtime_from_store().await;
         service.spawn_sync_loop();
         service.spawn_retry_loop();
         service.spawn_wan_update_loop();
-        service.spawn_ipv6_assign_loop(ipv6_reader);
+        service.spawn_lan_device_loop(lan_device_reader);
         service.spawn_pd_prefix_loop(prefix_reader);
         service
     }
@@ -170,99 +158,53 @@ impl DdnsService {
         });
     }
 
-    fn spawn_ipv6_assign_loop(&self, mut reader: IPv6AssignEventReader) {
+    /// Trigger on directory change events: the directory already folded the
+    /// raw protocol events (DHCPv6/SLAAC/Flush, DHCPv4 leases, ARP), so a
+    /// single notification replaces the per-protocol diffing the old
+    /// ipv6-assign listener had to do itself. `Identity` also triggers: a
+    /// device that is enrolled after its addresses were observed changes no
+    /// address set, yet its jobs become resolvable.
+    fn spawn_lan_device_loop(&self, mut reader: LanDeviceEventReader) {
         let service = self.clone();
         spawn_task(task_label::task::DNS_DDNS_JOB, async move {
             loop {
                 match reader.recv().await {
-                    Ok(IPv6AssignEvent::Allocated(info)) => {
-                        if let Some(device_id) = info.device_id {
-                            for addr in &info.ips {
-                                if let Err(e) =
-                                    service.on_device_ipv6_allocated(device_id, addr.ip).await
-                                {
-                                    tracing::warn!("ddns lan ipv6 allocated handler failed: {e:?}");
-                                }
-                            }
+                    Ok(event) => {
+                        if !matches!(
+                            event.change,
+                            LanDeviceChange::Addresses | LanDeviceChange::Identity
+                        ) {
+                            continue;
                         }
-                    }
-                    Ok(IPv6AssignEvent::Expired(info)) => {
-                        if let Some(device_id) = info.device_id
-                            && let Some(mut entry) = service.enrolled_cache.get_mut(&device_id)
-                        {
-                            for addr in &info.ips {
-                                entry.raw_ips.remove(&addr.ip);
-                            }
-                            if entry.raw_ips.is_empty() {
-                                drop(entry);
-                                service.enrolled_cache.remove(&device_id);
-                            }
-                        }
-                    }
-                    Ok(IPv6AssignEvent::Flush(info)) => {
-                        if let Some(device_id) = info.device_id {
-                            if info.ips.is_empty() {
-                                service.enrolled_cache.remove(&device_id);
-                            } else {
-                                let new_ips: HashSet<Ipv6Addr> =
-                                    info.ips.into_iter().map(|addr| addr.ip).collect();
-                                let changed = {
-                                    let mut entry =
-                                        service.enrolled_cache.entry(device_id).or_default();
-                                    let old_ips = std::mem::take(&mut entry.raw_ips);
-                                    let changed = old_ips != new_ips;
-                                    entry.raw_ips = new_ips;
-                                    changed
-                                };
-
-                                if changed {
-                                    let jobs = match service.store.find_enabled().await {
-                                        Ok(j) => j,
-                                        Err(e) => {
-                                            tracing::warn!(
-                                                "ddns ipv6 flush: find_enabled error: {e:?}"
-                                            );
-                                            continue;
-                                        }
-                                    };
-                                    let matching: Vec<_> = jobs
-                                        .into_iter()
-                                        .filter(|job| {
-                                            job_has_enrolled_device_ipv6_for_device(job, device_id)
-                                        })
-                                        .collect();
-                                    if !matching.is_empty() {
-                                        service.sync_jobs_now(matching).await;
-                                    }
-                                }
-                            }
+                        let Some(device_id) = event.device_id else { continue };
+                        if let Err(e) = service.on_device_changed(device_id).await {
+                            tracing::warn!("ddns lan device handler failed: {e:?}");
                         }
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
+                        // Missed notifications are reconciled by the periodic
+                        // full sync (DDNS_SYNC_INTERVAL_SECS).
                         tracing::warn!(
-                            "ddns ipv6 assign listener lagged, skipped {skipped} events"
+                            "ddns lan device listener lagged, skipped {skipped} events; periodic full sync will reconcile"
                         );
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
                 }
             }
+            tracing::info!("ddns lan device loop stopped");
         });
     }
 
-    async fn on_device_ipv6_allocated(
-        &self,
-        device_id: Uuid,
-        ip: std::net::Ipv6Addr,
-    ) -> Result<(), DbError> {
-        let is_new = self.enrolled_cache.entry(device_id).or_default().raw_ips.insert(ip);
-
+    /// A device's addresses or identity moved in the directory: re-resolve
+    /// every enabled job anchored on it (both families).
+    async fn on_device_changed(&self, device_id: Uuid) -> Result<(), DbError> {
         let jobs = self.store.find_enabled().await?;
         let matching: Vec<_> = jobs
             .into_iter()
-            .filter(|job| job_has_enrolled_device_ipv6_for_device(job, device_id))
+            .filter(|job| job_has_enrolled_device_source_for_device(job, device_id))
             .collect();
 
-        if !matching.is_empty() && is_new {
+        if !matching.is_empty() {
             self.sync_jobs_now(matching).await;
         }
         Ok(())
@@ -569,8 +511,11 @@ impl DdnsService {
                 {
                     match (wanted_family, wan_pd_id) {
                         (IpFamily::Ipv6, Some(wan)) => {
-                            let entry = match self.enrolled_cache.get(device_id) {
-                                Some(e) => e,
+                            let raw_ips: Vec<Ipv6Addr> = match self
+                                .directory
+                                .entry_by_device_id(device_id)
+                            {
+                                Some(entry) => entry.ipv6_addrs.keys().copied().collect(),
                                 None => {
                                     last_error = Some(ResolveRecordIpError {
                                         status: DdnsJobStatus::Idle,
@@ -584,8 +529,6 @@ impl DdnsService {
                                     continue;
                                 }
                             };
-                            let raw_ips: Vec<Ipv6Addr> = entry.raw_ips.iter().copied().collect();
-                            drop(entry);
 
                             let pd = match self.prefix_map.load_actual(wan) {
                                 Some(p) => p,
@@ -637,11 +580,30 @@ impl DdnsService {
 
                             return Ok(result);
                         }
+                        (IpFamily::Ipv4, _) => {
+                            let ipv4 = self
+                                .directory
+                                .entry_by_device_id(device_id)
+                                .and_then(|entry| entry.ipv4);
+                            let Some(ipv4) = ipv4 else {
+                                last_error = Some(ResolveRecordIpError {
+                                    status: DdnsJobStatus::Idle,
+                                    reason: DdnsRuntimeReason::WaitingLanDeviceIp,
+                                    detail: format!(
+                                        "waiting for device {device_id} IPv4 address assignment"
+                                    ),
+                                    retryable: true,
+                                    next_retry_at: Some(ts + DDNS_RETRY_INTERVAL_SECS as f64),
+                                });
+                                continue;
+                            };
+                            return Ok(vec![IpAddr::V4(ipv4)]);
+                        }
                         _ => {
                             last_error = Some(ResolveRecordIpError {
                                 status: DdnsJobStatus::Error,
                                 reason: DdnsRuntimeReason::SourceNotImplemented,
-                                detail: "enrolled device DDNS source is not implemented yet"
+                                detail: "enrolled device IPv6 source requires a WAN PD prefix"
                                     .to_string(),
                                 retryable: false,
                                 next_retry_at: None,
@@ -834,16 +796,9 @@ fn job_has_matching_source(job: &DdnsJob, wanted_family: IpFamily) -> bool {
     })
 }
 
-fn job_has_enrolled_device_ipv6_for_device(job: &DdnsJob, device_id: Uuid) -> bool {
+fn job_has_enrolled_device_source_for_device(job: &DdnsJob, device_id: Uuid) -> bool {
     job.sources.iter().any(|source| {
-        matches!(
-            source,
-            DdnsSource::EnrolledDevice {
-                device_id: id,
-                wan_pd_id: Some(_),
-                family: IpFamily::Ipv6,
-            } if *id == device_id
-        )
+        matches!(source, DdnsSource::EnrolledDevice { device_id: id, .. } if *id == device_id)
     })
 }
 

@@ -18,7 +18,6 @@ use landscape_common::lan_service::lan_dhcpv4::status::DHCPv4OfferInfo;
 use landscape_common::service::ServiceHandle;
 use landscape_common::service::ServiceStatus;
 use landscape_common::service::controller::{ConfigStoreController, ConfigStoreServiceController};
-use landscape_common::sys_service::client::{CallerLookupMatch, CallerLookupSource};
 use landscape_common::sys_service::route_service::LanRouteInfo;
 use landscape_common::sys_service::route_service::LanRouteMode;
 use landscape_common::{
@@ -533,38 +532,6 @@ impl DHCPv4ServerManagerService {
 
         let data = offer_info.read().await.get_arp_info();
         Some(data)
-    }
-
-    pub async fn resolve_client_match_by_ipv4(&self, ip: Ipv4Addr) -> Option<CallerLookupMatch> {
-        for (iface_name, assigned_ips) in self.get_assigned_ips().await {
-            for item in assigned_ips.offered_ips {
-                if item.ip == ip {
-                    return Some(CallerLookupMatch {
-                        iface_name,
-                        mac: Some(item.mac),
-                        hostname: item.hostname,
-                        source: CallerLookupSource::DhcpV4,
-                    });
-                }
-            }
-        }
-
-        for (iface_name, scan_infos) in self.get_arp_scan_info().await {
-            for scan_info in scan_infos {
-                for item in scan_info.infos() {
-                    if item.ip == ip {
-                        return Some(CallerLookupMatch {
-                            iface_name,
-                            mac: Some(item.mac),
-                            hostname: None,
-                            source: CallerLookupSource::Arp,
-                        });
-                    }
-                }
-            }
-        }
-
-        None
     }
 }
 

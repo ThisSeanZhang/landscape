@@ -4,7 +4,8 @@ use std::sync::Arc;
 use landscape_common::config_service::enrolled_device::EnrolledDevice;
 use landscape_common::event::hub::{
     EnrolledDeviceEvent, IPv4AssignEvent, IPv4AssignInfo, IPv6AssignEvent, IPv6AssignInfo,
-    IPv6AssignSource, Ipv6AssignAddress, LanDiscoveryEvent, LanDiscoverySource,
+    IPv6AssignSource, Ipv6AssignAddress, LanDeviceChange, LanDeviceEvent, LanDeviceEventSender,
+    LanDiscoveryEvent, LanDiscoverySource,
 };
 use landscape_common::net::MacAddr;
 use landscape_common::utils::time::get_f64_timestamp;
@@ -36,7 +37,7 @@ fn enrolled(
 }
 
 fn directory(devices: &[EnrolledDevice]) -> Arc<LanDeviceDirectory> {
-    LanDeviceDirectory::with_seed(devices)
+    LanDeviceDirectory::with_seed(devices, None)
 }
 
 fn v4(mac: [u8; 6]) -> MacAddr {
@@ -507,4 +508,299 @@ fn is_online_requires_lease_dhcpv6_or_recent_activity() {
         e.ipv6_addrs.insert(ipv6("fd00::2"), AddressSourceV6::Dhcpv6);
     });
     assert!(dir.entry_by_mac(&v4(mac)).unwrap().is_online());
+}
+
+// ── change-event emission ────────────────────────────────────────────
+
+fn directory_with_outlet() -> (Arc<LanDeviceDirectory>, tokio::sync::mpsc::Receiver<LanDeviceEvent>)
+{
+    let (tx, rx) = tokio::sync::mpsc::channel(64);
+    let directory =
+        LanDeviceDirectory::with_seed(&[], Some(LanDeviceEventSender::new_for_test(tx)));
+    (directory, rx)
+}
+
+// Test-only extensions of the directory: helpers that exist purely for
+// tests live here (cfg(test)-gated file) instead of the production impl.
+impl LanDeviceDirectory {
+    /// Clock control: backdates an entry's liveness. `last_active`-only
+    /// changes emit no events.
+    fn backdate_last_active_for_test(&self, id: &Uuid, ts: f64) {
+        self.update_entry(id, |e| e.last_active = ts);
+    }
+}
+
+fn drain(rx: &mut tokio::sync::mpsc::Receiver<LanDeviceEvent>) -> Vec<LanDeviceEvent> {
+    let mut events = Vec::new();
+    while let Ok(event) = rx.try_recv() {
+        events.push(event);
+    }
+    events
+}
+
+#[test]
+fn emission_announces_creation_then_addresses_on_first_allocation() {
+    let (dir, mut rx) = directory_with_outlet();
+    let mac = [0, 0, 0, 0, 0, 9];
+
+    dir.apply_ipv4_event(ipv4_allocated(mac, ipv4("10.0.0.9"), None, None));
+
+    let events = drain(&mut rx);
+    assert_eq!(events.len(), 2, "creation + first address: {events:?}");
+    assert_eq!(events[0].change, LanDeviceChange::Identity);
+    assert_eq!(events[0].mac, Some(v4(mac)));
+    assert_eq!(events[1].change, LanDeviceChange::Addresses);
+    assert_eq!(events[1].mac, Some(v4(mac)));
+}
+
+#[test]
+fn emission_first_allocation_with_device_id_carries_it_on_addresses() {
+    let (dir, mut rx) = directory_with_outlet();
+    let mac = [0, 0, 0, 0, 0, 11];
+    let device_id = Uuid::new_v4();
+
+    // Regression: the enrolled identity must bind before the address commit,
+    // so the `Addresses` event already carries the device_id DDNS filters
+    // on (a `None` here would drop the first-allocation DDNS trigger until
+    // the periodic full sync bails it out).
+    dir.apply_ipv4_event(ipv4_allocated(mac, ipv4("10.0.0.11"), None, Some(device_id)));
+
+    let events = drain(&mut rx);
+    assert_eq!(events.len(), 3, "{events:?}");
+    assert_eq!(events[0].change, LanDeviceChange::Identity);
+    assert_eq!(events[0].device_id, None);
+    assert_eq!(events[1].change, LanDeviceChange::Identity);
+    assert_eq!(events[1].device_id, Some(device_id));
+    assert_eq!(events[2].change, LanDeviceChange::Addresses);
+    assert_eq!(events[2].device_id, Some(device_id));
+}
+
+#[test]
+fn emission_silent_on_repeat_allocation_and_last_active_only_refresh() {
+    let (dir, mut rx) = directory_with_outlet();
+    let mac = [0, 0, 0, 0, 0, 9];
+    let ip = ipv4("10.0.0.9");
+
+    dir.apply_ipv4_event(ipv4_allocated(mac, ip, None, None));
+    assert_eq!(drain(&mut rx).len(), 2);
+
+    // Same lease observed again: no observable field moved.
+    dir.apply_ipv4_event(ipv4_allocated(mac, ip, None, None));
+    assert!(drain(&mut rx).is_empty());
+}
+
+#[test]
+fn emission_identity_on_hostname_reclaim_without_address_change() {
+    let (dir, mut rx) = directory_with_outlet();
+    let mac = [0, 0, 0, 0, 0, 9];
+    let ip = ipv4("10.0.0.9");
+
+    dir.apply_ipv4_event(ipv4_allocated(mac, ip, Some("phone"), None));
+    drain(&mut rx);
+
+    // Same address, new DHCP hostname: only Identity moves.
+    dir.apply_ipv4_event(ipv4_allocated(mac, ip, Some("phone2"), None));
+    let events = drain(&mut rx);
+    assert_eq!(events.len(), 1, "{events:?}");
+    assert_eq!(events[0].change, LanDeviceChange::Identity);
+    assert_eq!(events[0].mac, Some(v4(mac)));
+}
+
+#[test]
+fn emission_addresses_on_ipv6_source_tag_upgrade() {
+    let (dir, mut rx) = directory_with_outlet();
+    let mac = [0, 0, 0, 0, 0, 9];
+    let addr = ipv6("fd00::1");
+
+    dir.apply_ipv6_event(ipv6_allocated(mac, vec![(addr, IPv6AssignSource::Slaac)], None));
+    drain(&mut rx);
+
+    // Same address re-observed as DHCPv6: the source tag (AAAA priority)
+    // is observable, so `Addresses` fires again.
+    dir.apply_ipv6_event(ipv6_allocated(mac, vec![(addr, IPv6AssignSource::Dhcpv6)], None));
+    let events = drain(&mut rx);
+    assert_eq!(events.len(), 1, "{events:?}");
+    assert_eq!(events[0].change, LanDeviceChange::Addresses);
+}
+
+#[test]
+fn emission_removed_on_anonymous_gc() {
+    let (dir, mut rx) = directory_with_outlet();
+    let mac = [0, 0, 0, 0, 0, 30];
+
+    dir.apply_discovery_event(discovery(Some(mac), IpAddr::V4(ipv4("10.0.0.30"))));
+    drain(&mut rx);
+
+    let future = get_f64_timestamp() + ANONYMOUS_TTL_SECS + 1.0;
+    assert!(dir.sweep_expired(future));
+
+    let events = drain(&mut rx);
+    assert_eq!(events.len(), 1, "{events:?}");
+    assert_eq!(events[0].change, LanDeviceChange::Removed);
+    assert_eq!(events[0].mac, Some(v4(mac)));
+    assert!(events[0].device_id.is_none());
+}
+
+// ── device_id anchor conflicts ──────────────────────────────────────
+
+/// Split fixture: an enrolled identity stranded on a stale shell, plus a
+/// live anonymous entry holding the new NIC's observations.
+fn anchor_conflict_fixture(
+    dir: &Arc<LanDeviceDirectory>,
+    device_id: Uuid,
+    mac1: [u8; 6],
+    mac2: [u8; 6],
+) {
+    dir.apply_device_event(EnrolledDeviceEvent::Updated {
+        old: None,
+        new: enrolled(device_id, mac1, Some("nas"), None),
+    });
+    dir.apply_discovery_event(discovery(Some(mac2), IpAddr::V4(ipv4("10.0.0.2"))));
+}
+
+#[test]
+fn runtime_claim_reanchors_device_id_from_idle_owner() {
+    let (dir, mut rx) = directory_with_outlet();
+    let device_id = Uuid::new_v4();
+    let mac1 = [0, 0, 0, 0, 0, 1];
+    let mac2 = [0, 0, 0, 0, 0, 2];
+    anchor_conflict_fixture(&dir, device_id, mac1, mac2);
+    drain(&mut rx);
+
+    let shell = dir.entry_by_mac(&v4(mac1)).unwrap();
+    dir.backdate_last_active_for_test(&shell.entry_id, get_f64_timestamp() - 700.0);
+
+    // DHCP on the new NIC carries the enrolled identity; the address set
+    // does not change (already observed), so only identity events fire.
+    dir.apply_ipv4_event(ipv4_allocated(mac2, ipv4("10.0.0.2"), Some("nas"), Some(device_id)));
+
+    let events = drain(&mut rx);
+    assert!(
+        events.iter().any(|e| e.change == LanDeviceChange::Identity && e.device_id.is_none()),
+        "shell strip: {events:?}"
+    );
+    assert!(
+        events
+            .iter()
+            .any(|e| e.change == LanDeviceChange::Identity && e.device_id == Some(device_id)),
+        "claimant bind: {events:?}"
+    );
+    assert!(!events.iter().any(|e| e.change == LanDeviceChange::Addresses), "{events:?}");
+
+    let entry = dir.entry_by_device_id(&device_id).unwrap();
+    assert_eq!(entry.mac, Some(v4(mac2)));
+    assert_eq!(entry.hostname.as_deref(), Some("nas"));
+    assert!(entry.hostname_from_enroll, "enrolled hostname follows the identity");
+    assert_eq!(dir.entry_by_hostname("nas").unwrap().entry_id, entry.entry_id);
+    assert_eq!(dir.entry_by_mac(&v4(mac1)).unwrap().device_id, None);
+}
+
+#[test]
+fn runtime_claim_keeps_active_owner() {
+    let (dir, mut rx) = directory_with_outlet();
+    let device_id = Uuid::new_v4();
+    let mac1 = [0, 0, 0, 0, 0, 1];
+    let mac2 = [0, 0, 0, 0, 0, 2];
+    anchor_conflict_fixture(&dir, device_id, mac1, mac2);
+    drain(&mut rx);
+
+    // Owner is fresh (just enrolled): first anchor wins.
+    dir.apply_ipv4_event(ipv4_allocated(mac2, ipv4("10.0.0.2"), None, Some(device_id)));
+
+    assert_eq!(dir.entry_by_device_id(&device_id).unwrap().mac, Some(v4(mac1)));
+    assert_eq!(dir.entry_by_mac(&v4(mac2)).unwrap().device_id, None);
+    assert!(drain(&mut rx).is_empty(), "no observable field moved");
+}
+
+#[test]
+fn enrollment_event_resolves_split_immediately() {
+    let (dir, mut rx) = directory_with_outlet();
+    let device_id = Uuid::new_v4();
+    let mac1 = [0, 0, 0, 0, 0, 1];
+    let mac2 = [0, 0, 0, 0, 0, 2];
+    anchor_conflict_fixture(&dir, device_id, mac1, mac2);
+    drain(&mut rx);
+
+    // DB re-bind MAC_1 -> MAC_2 while the MAC_2 entry already exists: the
+    // identity must land on the address-holding entry at once — no idle
+    // gate, the user's explicit setting is the highest authority.
+    dir.apply_device_event(EnrolledDeviceEvent::Updated {
+        old: Some(enrolled(device_id, mac1, Some("nas"), None)),
+        new: enrolled(device_id, mac2, Some("nas"), None),
+    });
+
+    let events = drain(&mut rx);
+    assert!(
+        events
+            .iter()
+            .any(|e| e.change == LanDeviceChange::Identity && e.device_id == Some(device_id)),
+        "{events:?}"
+    );
+
+    let entry = dir.entry_by_device_id(&device_id).unwrap();
+    assert_eq!(entry.mac, Some(v4(mac2)));
+    assert_eq!(
+        entry.ipv4,
+        Some(ipv4("10.0.0.2")),
+        "identity and observed addresses must share one entry"
+    );
+    assert_eq!(dir.entry_by_hostname("nas").unwrap().entry_id, entry.entry_id);
+    assert_eq!(dir.entry_by_mac(&v4(mac1)).unwrap().device_id, None);
+}
+
+#[test]
+fn enrollment_does_not_steal_mac_owned_by_another_device() {
+    let (dir, mut rx) = directory_with_outlet();
+    let device1 = Uuid::new_v4();
+    let device2 = Uuid::new_v4();
+    let mac1 = [0, 0, 0, 0, 0, 1];
+    let mac2 = [0, 0, 0, 0, 0, 2];
+
+    dir.apply_device_event(EnrolledDeviceEvent::Updated {
+        old: None,
+        new: enrolled(device1, mac1, None, None),
+    });
+    dir.apply_device_event(EnrolledDeviceEvent::Updated {
+        old: None,
+        new: enrolled(device2, mac2, None, None),
+    });
+    drain(&mut rx);
+
+    // Contradictory binding (device1 -> mac2, already device2's MAC): the
+    // second device's entry must not be disturbed.
+    dir.apply_device_event(EnrolledDeviceEvent::Updated {
+        old: Some(enrolled(device1, mac1, None, None)),
+        new: enrolled(device1, mac2, None, None),
+    });
+
+    assert_eq!(dir.entry_by_device_id(&device2).unwrap().mac, Some(v4(mac2)));
+    assert_eq!(dir.entry_by_device_id(&device1).unwrap().device_id, Some(device1));
+}
+
+#[test]
+fn stripped_shell_is_eventually_gc_ed() {
+    let (dir, mut rx) = directory_with_outlet();
+    let device_id = Uuid::new_v4();
+    let mac1 = [0, 0, 0, 0, 0, 1];
+    let mac2 = [0, 0, 0, 0, 0, 2];
+    anchor_conflict_fixture(&dir, device_id, mac1, mac2);
+    drain(&mut rx);
+
+    let shell = dir.entry_by_mac(&v4(mac1)).unwrap();
+    dir.backdate_last_active_for_test(&shell.entry_id, get_f64_timestamp() - 700.0);
+    dir.apply_ipv4_event(ipv4_allocated(mac2, ipv4("10.0.0.2"), None, Some(device_id)));
+    drain(&mut rx);
+
+    // The degraded shell is anonymous and idle: the sweep collects it, the
+    // identity-holding entry survives.
+    let future = get_f64_timestamp() + ANONYMOUS_TTL_SECS + 1.0;
+    assert!(dir.sweep_expired(future));
+    assert!(dir.entry_by_mac(&v4(mac1)).is_none());
+    assert!(dir.entry_by_device_id(&device_id).is_some());
+
+    let events = drain(&mut rx);
+    assert!(
+        events.iter().any(|e| e.change == LanDeviceChange::Removed && e.mac == Some(v4(mac1))),
+        "{events:?}"
+    );
 }

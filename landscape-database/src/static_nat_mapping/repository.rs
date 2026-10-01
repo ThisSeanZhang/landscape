@@ -5,7 +5,6 @@ use landscape_common::config_service::enrolled_device::EnrolledDevice;
 use landscape_common::config_service::static_nat::config::{
     RuntimeStaticNatMappingConfig, StaticNatMappingConfig, StaticNatTarget,
 };
-use landscape_common::config_service::static_nat::error::StaticNatError;
 use landscape_common::database::error::DbError;
 use landscape_common::database::store::ConfigStore;
 use landscape_common::lan_service::lan_ipv6::{
@@ -75,28 +74,6 @@ impl StaticNatMappingConfigRepository {
             .find_ids(device_ids.into_iter().collect())
             .await?;
         Ok(devices.into_iter().map(|device| (device.id, device)).collect())
-    }
-
-    pub async fn validate_runtime_target(
-        &self,
-        config: &StaticNatMappingConfig,
-    ) -> Result<(), StaticNatError> {
-        let devices = self.load_devices_for_configs(std::slice::from_ref(config)).await?;
-        if let Some(StaticNatTarget::Device { device_id }) = config.lan_target.as_ref()
-            && !device_id.is_nil()
-            && config.enable
-        {
-            let device =
-                devices.get(device_id).ok_or_else(|| StaticNatError::DeviceNotFound(*device_id))?;
-            if !config.ipv4_l4_protocol.is_empty() && device.ipv4.is_none() {
-                return Err(StaticNatError::DeviceMissingIpv4(*device_id));
-            }
-            if !config.ipv6_l4_protocol.is_empty() && device.ipv6.is_none() {
-                return Err(StaticNatError::DeviceMissingIpv6(*device_id));
-            }
-        }
-
-        Ok(())
     }
 }
 
