@@ -13,7 +13,6 @@ import deviceUi from "./device/index";
 import deviceErr from "./device/error";
 import dhcpV4Ui from "./dhcp_v4/index";
 import dhcpV4Err from "./dhcp_v4/error";
-import dhcpV6Ui from "./dhcp_v6/index";
 import dnsUi from "./dns/index";
 import dnsErr from "./dns/error";
 import dockerUi from "./docker/index";
@@ -29,6 +28,7 @@ import geoErr from "./geo/error";
 import interfaceUi from "./interface/index";
 import lanIpv6Ui from "./lan_ipv6/index";
 import lanIpv6Err from "./lan_ipv6/error";
+import lanDeviceUi from "./lan_device/index";
 import dnsMetrics from "./metrics/dns";
 import connectMetrics from "./metrics/connect";
 import selfMonitorUi from "./self_monitor/index";
@@ -58,7 +58,6 @@ export default {
   config: configUi,
   device: deviceUi,
   dhcp_v4: dhcpV4Ui,
-  dhcp_v6: dhcpV6Ui,
   dns: dnsUi,
   docker: dockerUi,
   firewall: firewallUi,
@@ -67,6 +66,7 @@ export default {
   geo: geoUi,
   interface: interfaceUi,
   lan_ipv6: lanIpv6Ui,
+  lan_device: lanDeviceUi,
   nat: natUi,
   network: networkUi,
   not_found: notFoundUi,

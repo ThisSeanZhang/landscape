@@ -1,4 +1,3 @@
-import type { DHCPv4OfferInfo } from "@/api/service_dhcp_v4";
 import { IPv4, IPv4CidrRange } from "ip-num";
 import type { CustomDhcpOption } from "@landscape-router/types/api/schemas";
 
@@ -64,32 +63,4 @@ export function get_dhcp_range(cidr: string): [string, string] {
   const nthIp = IPv4.fromNumber(nthIpValue);
 
   return [nthIp.toString(), range.getLast().toString()];
-}
-
-export type DHCPv4OfferInfoShow = {
-  mac: string;
-  ip: string;
-  time_left: number;
-};
-
-export function conver_to_show(
-  data: DHCPv4OfferInfo | null,
-): DHCPv4OfferInfoShow[] {
-  if (data) {
-    const result: DHCPv4OfferInfoShow[] = [];
-    let relative_boot_time = data.relative_boot_time;
-    for (const each of data.offered_ips) {
-      // console.log(each);
-      const time_left =
-        each.relative_active_time + each.expire_time - relative_boot_time;
-      result.push({
-        mac: each.mac as unknown as string,
-        ip: each.ip,
-        time_left: time_left,
-      });
-    }
-    return result;
-  } else {
-    return [];
-  }
 }

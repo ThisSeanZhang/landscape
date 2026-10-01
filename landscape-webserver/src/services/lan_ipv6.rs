@@ -2,8 +2,6 @@ use std::collections::HashMap;
 
 use axum::extract::{Path, State};
 use landscape_common::api_response::LandscapeApiResp as CommonApiResp;
-use landscape_common::lan_service::lan_ipv6::DHCPv6OfferInfo;
-use landscape_common::lan_service::lan_ipv6::IPv6NAInfo;
 use landscape_common::lan_service::lan_ipv6::{
     LanIPv6ServiceConfigV2, validate_global_prefix_conflicts,
 };
@@ -24,40 +22,6 @@ pub fn get_lan_ipv6_paths() -> OpenApiRouter<LandscapeApp> {
         .routes(routes!(get_all_lan_ipv6_configs))
         .routes(routes!(handle_lan_ipv6))
         .routes(routes!(get_lan_ipv6_config, delete_and_stop_lan_ipv6))
-        .routes(routes!(get_assigned_ips_by_iface_name))
-        .routes(routes!(get_all_iface_assigned_ips))
-        .routes(routes!(get_dhcpv6_assigned_by_iface_name))
-        .routes(routes!(get_all_dhcpv6_assigned))
-}
-
-#[utoipa::path(
-    get,
-    path = "/lan_ipv6/assigned_ips",
-    tag = "LAN IPv6",
-    operation_id = "get_all_lan_ipv6_assigned_ips",
-    responses((status = 200, description = "Success", body = CommonApiResp<HashMap<String, IPv6NAInfo>>))
-)]
-async fn get_all_iface_assigned_ips(
-    State(state): State<LandscapeApp>,
-) -> LandscapeApiResult<HashMap<String, IPv6NAInfo>> {
-    LandscapeApiResp::success(state.lan_ipv6_service.get_assigned_ips().await)
-}
-
-#[utoipa::path(
-    get,
-    path = "/lan_ipv6/{iface_name}/assigned_ips",
-    tag = "LAN IPv6",
-    operation_id = "get_lan_ipv6_assigned_ips_by_iface_name",
-    params(("iface_name" = String, Path, description = "Interface name")),
-    responses((status = 200, description = "Success", body = CommonApiResp<Option<IPv6NAInfo>>))
-)]
-async fn get_assigned_ips_by_iface_name(
-    State(state): State<LandscapeApp>,
-    Path(iface_name): Path<String>,
-) -> LandscapeApiResult<Option<IPv6NAInfo>> {
-    LandscapeApiResp::success(
-        state.lan_ipv6_service.get_assigned_ips_by_iface_name(iface_name).await,
-    )
 }
 
 #[utoipa::path(
@@ -143,34 +107,4 @@ async fn delete_and_stop_lan_ipv6(
     let result = state.lan_ipv6_service.delete_and_stop_iface_service(iface_name).await?;
     state.static_nat6_mapping_service.refresh_runtime_rules().await;
     LandscapeApiResp::success(result)
-}
-
-#[utoipa::path(
-    get,
-    path = "/lan_ipv6/{iface_name}/dhcpv6_assigned",
-    tag = "LAN IPv6",
-    operation_id = "get_lan_ipv6_dhcpv6_assigned_by_iface_name",
-    params(("iface_name" = String, Path, description = "Interface name")),
-    responses((status = 200, description = "Success", body = CommonApiResp<Option<DHCPv6OfferInfo>>))
-)]
-async fn get_dhcpv6_assigned_by_iface_name(
-    State(state): State<LandscapeApp>,
-    Path(iface_name): Path<String>,
-) -> LandscapeApiResult<Option<DHCPv6OfferInfo>> {
-    LandscapeApiResp::success(
-        state.lan_ipv6_service.get_dhcpv6_assigned_by_iface_name(iface_name).await,
-    )
-}
-
-#[utoipa::path(
-    get,
-    path = "/lan_ipv6/dhcpv6_assigned",
-    tag = "LAN IPv6",
-    operation_id = "get_all_lan_ipv6_dhcpv6_assigned",
-    responses((status = 200, description = "Success", body = CommonApiResp<HashMap<String, DHCPv6OfferInfo>>))
-)]
-async fn get_all_dhcpv6_assigned(
-    State(state): State<LandscapeApp>,
-) -> LandscapeApiResult<HashMap<String, DHCPv6OfferInfo>> {
-    LandscapeApiResp::success(state.lan_ipv6_service.get_dhcpv6_assigned().await)
 }

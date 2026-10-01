@@ -169,8 +169,6 @@ pub const SYSCTL_IPV4_ARP_IGNORE_PATTERN: &str = "net.ipv4.conf.{}.arp_ignore";
 // 2
 pub const SYSCTL_IPV4_ARP_ANNOUNCE_PATTERN: &str = "net.ipv4.conf.{}.arp_announce";
 
-pub const LAND_ARP_INFO_SIZE: usize = 24;
-
 #[cfg(debug_assertions)]
 pub const LAND_ARP_SCAN_INTERVAL: u64 = 1000 * 60 * 5;
 

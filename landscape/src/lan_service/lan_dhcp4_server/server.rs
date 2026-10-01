@@ -24,7 +24,6 @@ use landscape_common::event::hub::{IPv4AssignEvent, IPv4AssignEventSender, IPv4A
 use landscape_common::lan_service::lan_dhcpv4::config::{
     CustomDhcpOption, DHCPv4ServerConfig, DhcpV4DnrOptionConfig,
 };
-use landscape_common::lan_service::lan_dhcpv4::status::DHCPv4OfferInfo;
 use landscape_common::lan_service::mac_binding::MacBindingDataplane;
 use landscape_common::net::MacAddr;
 use landscape_common::sys_service::lan_hostname::LanHostnameConfig;
@@ -638,10 +637,6 @@ impl DHCPv4Server {
             hostname,
             self.address_lease_time,
         )
-    }
-
-    pub fn get_offered_info(&self) -> DHCPv4OfferInfo {
-        self.status.lock().unwrap().get_offered_info()
     }
 }
 

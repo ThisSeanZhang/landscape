@@ -18,7 +18,7 @@ use uuid::Uuid;
 use super::entry::{
     AddressSourceV4, AddressSourceV6, DhcpLeaseTimes, LanDeviceEntry, ipv6_interface_id,
 };
-use super::{ANONYMOUS_TTL_SECS, DEVICE_ID_REANCHOR_IDLE_SECS, LanDeviceDirectory};
+use super::{ANONYMOUS_TTL_MS, DEVICE_ID_REANCHOR_IDLE_MS, LanDeviceDirectory};
 
 impl LanDeviceDirectory {
     /// Single commit point for entry mutations. Diffs the observable fields
@@ -179,7 +179,7 @@ impl LanDeviceDirectory {
 
     /// Runtime identity claims are subordinate to enrollment: a conflicting
     /// claim only migrates the anchor when the current holder is provably
-    /// dead (idle past [`DEVICE_ID_REANCHOR_IDLE_SECS`]); two live claimants
+    /// dead (idle past [`super::DEVICE_ID_REANCHOR_IDLE_SECS`]); two live claimants
     /// is a pathological state the operator must resolve via the DB.
     fn set_device_id(&self, id: &Uuid, device_id: Uuid) {
         let owner = self.by_device_id.get(&device_id).map(|r| *r.value());
@@ -191,18 +191,20 @@ impl LanDeviceDirectory {
         let previous = owner.expect("checked above");
         // A missing entry behind the index is a stale anchor: treat it as
         // fully idle so the claim recovers the device_id.
-        let idle_secs =
+        let idle_ms =
             get_f64_timestamp() - self.entries.get(&previous).map_or(0.0, |e| e.last_active);
-        if idle_secs < DEVICE_ID_REANCHOR_IDLE_SECS {
+        if idle_ms < DEVICE_ID_REANCHOR_IDLE_MS {
             tracing::warn!(
                 "lan_device: device_id {device_id} already anchored by active entry {previous} \
-                 (idle {idle_secs:.0}s); entry {id} stays anonymous"
+                 (idle {:.0}s); entry {id} stays anonymous",
+                idle_ms / 1000.0
             );
             return;
         }
         tracing::warn!(
             "lan_device: device_id {device_id} re-anchored from idle entry {previous} \
-             (idle {idle_secs:.0}s) to entry {id}"
+             (idle {:.0}s) to entry {id}",
+            idle_ms / 1000.0
         );
         self.transfer_device_id(&previous, id, device_id);
     }
@@ -341,7 +343,14 @@ impl LanDeviceDirectory {
                     (None, None) => old
                         .as_ref()
                         .and_then(|o| self.by_mac.get(&o.mac).map(|r| *r.value()))
-                        .unwrap_or_else(|| self.resolve_or_create_by_mac(new.mac)),
+                        .unwrap_or_else(|| {
+                            let id = self.resolve_or_create_by_mac(new.mac);
+                            // Enrollment is configuration, not device
+                            // activity: a never-observed device carries no
+                            // liveness claim (`0.0` = never observed).
+                            self.update_entry(&id, |e| e.last_active = 0.0);
+                            id
+                        }),
                 };
 
                 if let Some(old) = &old
@@ -388,7 +397,6 @@ impl LanDeviceDirectory {
                         }
                     }
                     e.iface_name = new.iface_name.clone();
-                    e.last_active = get_f64_timestamp();
                 });
             }
             EnrolledDeviceEvent::Deleted { old } => {
@@ -429,7 +437,6 @@ impl LanDeviceDirectory {
                     e.device_id = None;
                     e.display_name = None;
                     e.enrolled_ipv6_suffix = None;
-                    e.last_active = get_f64_timestamp();
                 });
             }
         }
@@ -468,7 +475,7 @@ impl LanDeviceDirectory {
                             e.dhcp_lease = Some(DhcpLeaseTimes {
                                 ip: info.ip,
                                 last_request: now,
-                                expires: now + f64::from(secs),
+                                expires: now + f64::from(secs) * 1000.0,
                             });
                         }
                     });
@@ -482,7 +489,7 @@ impl LanDeviceDirectory {
                             e.dhcp_lease = Some(DhcpLeaseTimes {
                                 ip: info.ip,
                                 last_request: now,
-                                expires: now + f64::from(secs),
+                                expires: now + f64::from(secs) * 1000.0,
                             });
                         }
                     });
@@ -508,11 +515,11 @@ impl LanDeviceDirectory {
                         self.claim_hostname(&id, None, false);
                     }
                 }
-                let now = get_f64_timestamp();
                 self.update_entry(&id, |e| {
-                    e.last_active = now;
                     // Clear only the matching lease's clock: an `Expired` for
                     // an old address must not wipe a newer lease's timing.
+                    // Expiry is server-side bookkeeping — the device's last
+                    // contact stays in `dhcp_lease.last_request`.
                     if e.dhcp_lease.as_ref().is_some_and(|l| l.ip == info.ip) {
                         e.dhcp_lease = None;
                     }
@@ -551,7 +558,6 @@ impl LanDeviceDirectory {
                         e.ipv6_addrs.remove(&addr.ip);
                     });
                 }
-                self.update_entry(&id, |e| e.last_active = get_f64_timestamp());
             }
             IPv6AssignEvent::Flush(info) => {
                 let id = self.resolve_or_create_by_mac(info.mac);
@@ -579,7 +585,6 @@ impl LanDeviceDirectory {
                 self.update_entry(&id, |e| {
                     e.mac = Some(info.mac);
                     e.iface_name = Some(info.iface_name.clone());
-                    e.last_active = get_f64_timestamp();
                 });
             }
         }
@@ -651,12 +656,12 @@ impl LanDeviceDirectory {
         });
     }
 
-    /// Drops anonymous entries idle beyond [`ANONYMOUS_TTL_SECS`]. Returns
+    /// Drops anonymous entries idle beyond [`super::ANONYMOUS_TTL_SECS`]. Returns
     /// whether anything was removed.
     pub(super) fn sweep_expired(&self, now: f64) -> bool {
         let mut removed: Vec<(Uuid, Option<MacAddr>, Option<Uuid>)> = Vec::new();
         self.entries.retain(|id, entry| {
-            let keep = entry.device_id.is_some() || now - entry.last_active <= ANONYMOUS_TTL_SECS;
+            let keep = entry.device_id.is_some() || now - entry.last_active <= ANONYMOUS_TTL_MS;
             if !keep {
                 removed.push((*id, entry.mac, entry.device_id));
             }

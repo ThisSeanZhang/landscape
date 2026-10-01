@@ -3,10 +3,7 @@ use std::{collections::HashMap, net::Ipv4Addr, time::Instant};
 use cidr::Ipv4Inet;
 use landscape_common::{
     config_service::enrolled_device::EnrolledDevice,
-    lan_service::lan_dhcpv4::{
-        config::{CustomDhcpOption, DHCPv4ServerConfig},
-        status::{DHCPv4OfferInfo, DHCPv4OfferInfoItem},
-    },
+    lan_service::lan_dhcpv4::config::{CustomDhcpOption, DHCPv4ServerConfig},
     net::MacAddr,
     utils::time::get_f64_timestamp,
 };
@@ -434,38 +431,6 @@ impl DhcpV4AssignStatus {
         ip_u32 >= start && ip_u32 < end
     }
 
-    pub fn get_offered_info(&self) -> DHCPv4OfferInfo {
-        let mut offered_ips = Vec::with_capacity(self.offered_ip.len());
-        let relative_boot_time = self.relative_boot_time.elapsed().as_secs();
-        for (
-            mac,
-            DHCPv4ServerOfferedCache {
-                ip,
-                relative_offer_time,
-                valid_time,
-                is_static,
-                hostname,
-                prev_ip,
-            },
-        ) in self.offered_ip.iter()
-        {
-            offered_ips.push(DHCPv4OfferInfoItem {
-                hostname: hostname.clone(),
-                mac: *mac,
-                ip: *ip,
-                relative_active_time: *relative_offer_time,
-                expire_time: *valid_time,
-                is_static: *is_static,
-                prev_ip: *prev_ip,
-            });
-        }
-        DHCPv4OfferInfo {
-            boot_time: self.boot_time,
-            relative_boot_time,
-            offered_ips,
-        }
-    }
-
     #[cfg(test)]
     pub fn init_for_test(config: DHCPv4ServerConfig) -> Self {
         Self::from_config_and_devices(&config, vec![])
@@ -524,9 +489,7 @@ mod tests {
         assert_eq!(status.allocated_host.len(), 2);
         assert_eq!(status.static_bindings.get(&mac1).unwrap().ipv4, ip1);
         assert_eq!(status.static_bindings.get(&mac2).unwrap().ipv4, ip2);
-        let info = status.get_offered_info();
-        let static_items: Vec<_> = info.offered_ips.iter().filter(|i| i.is_static).collect();
-        assert_eq!(static_items.len(), 2);
+        assert_eq!(status.offered_ip.values().filter(|c| c.is_static).count(), 2);
     }
 
     #[test]
@@ -637,11 +600,10 @@ mod tests {
             },
         );
 
-        let info = status.get_offered_info();
-        let static_item = info.offered_ips.iter().find(|i| i.mac == mac).unwrap();
-        assert!(static_item.is_static);
-        assert_eq!(static_item.ip, ip);
-        assert_eq!(static_item.prev_ip, None);
+        let cache = status.offered_ip.get(&mac).unwrap();
+        assert!(cache.is_static);
+        assert_eq!(cache.ip, ip);
+        assert_eq!(cache.prev_ip, None);
         assert_eq!(status.allocated_host.get(&ip), Some(&IpAllocSource::Static(mac)));
     }
 
@@ -663,15 +625,14 @@ mod tests {
             },
         );
 
-        let info = status.get_offered_info();
-        let static_item = info.offered_ips.iter().find(|i| i.mac == mac_x).unwrap();
-        assert!(static_item.is_static);
-        assert_eq!(static_item.ip, ip_y);
+        let x_cache = status.offered_ip.get(&mac_x).unwrap();
+        assert!(x_cache.is_static);
+        assert_eq!(x_cache.ip, ip_y);
 
-        let z_item = info.offered_ips.iter().find(|i| i.mac == mac_z).unwrap();
-        assert!(!z_item.is_static);
-        assert_ne!(z_item.ip, ip_y);
-        assert_eq!(z_item.prev_ip, Some(ip_y));
+        let z_cache = status.offered_ip.get(&mac_z).unwrap();
+        assert!(!z_cache.is_static);
+        assert_ne!(z_cache.ip, ip_y);
+        assert_eq!(z_cache.prev_ip, Some(ip_y));
     }
 
     #[test]

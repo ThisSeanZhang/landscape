@@ -9,7 +9,7 @@ use landscape_common::net::MacAddr;
 use landscape_common::utils::time::get_f64_timestamp;
 use uuid::Uuid;
 
-use super::ONLINE_IDLE_SECS;
+use super::ONLINE_WINDOW_MS;
 
 /// Liveness trail: one bit per ARP scan interval ([`LAND_ARP_SCAN_INTERVAL`]),
 /// 24 slots — 24h in release builds, 2h in debug. A set bit means the device
@@ -27,8 +27,8 @@ pub struct ArpPresence {
 impl ArpPresence {
     const SLOTS: u64 = 24;
 
-    pub fn mark_seen(&mut self, now_secs: f64) {
-        let bucket = secs_to_bucket(now_secs);
+    pub fn mark_seen(&mut self, now_ms: f64) {
+        let bucket = ms_to_bucket(now_ms);
         if bucket <= self.last_bucket {
             // Same bucket (or backdated clock): idempotently set the bit.
             self.bits |= 1 << (self.last_bucket % Self::SLOTS);
@@ -51,10 +51,10 @@ impl ArpPresence {
         self.bits |= 1 << (bucket % Self::SLOTS);
     }
 
-    /// The 24 buckets ending at the bucket containing `now_secs`; index 0 is
+    /// The 24 buckets ending at the bucket containing `now_ms`; index 0 is
     /// the oldest. Unobserved buckets read as absent.
-    pub fn series(&self, now_secs: f64) -> Vec<bool> {
-        let current = secs_to_bucket(now_secs);
+    pub fn series(&self, now_ms: f64) -> Vec<bool> {
+        let current = ms_to_bucket(now_ms);
         (0..Self::SLOTS)
             .rev()
             .map(|k| {
@@ -68,8 +68,8 @@ impl ArpPresence {
     }
 }
 
-fn secs_to_bucket(secs: f64) -> u64 {
-    ((secs * 1000.0) as u64) / LAND_ARP_SCAN_INTERVAL
+fn ms_to_bucket(now_ms: f64) -> u64 {
+    (now_ms as u64) / LAND_ARP_SCAN_INTERVAL
 }
 
 /// DHCPv4 lease timing attached to an entry by `Allocated` events. `ip`
@@ -78,9 +78,9 @@ fn secs_to_bucket(secs: f64) -> u64 {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct DhcpLeaseTimes {
     pub ip: Ipv4Addr,
-    /// Epoch seconds of the last request/assignment/renewal.
+    /// Epoch milliseconds of the last request/assignment/renewal.
     pub last_request: f64,
-    /// Epoch seconds when the lease expires (`last_request + lease_time`).
+    /// Epoch milliseconds when the lease expires (`last_request + lease_time`).
     pub expires: f64,
 }
 
@@ -172,11 +172,15 @@ pub struct LanDeviceEntry {
     pub ipv4_source: Option<AddressSourceV4>,
     pub ipv6_addrs: HashMap<Ipv6Addr, AddressSourceV6>,
     pub iface_name: Option<String>,
+    /// Epoch milliseconds of the last device-side observation (ARP/ND
+    /// discovery, DHCP allocation). Configuration events (enrollment
+    /// pushes, expiry bookkeeping, PD flushes) never refresh it.
+    /// `0.0` = enrolled but never observed.
     pub last_active: f64,
     /// ARP liveness trail (strictly ARP-sourced observations; ND does not
     /// count). Silent field: changes never emit `LanDeviceChange`.
     pub arp_presence: ArpPresence,
-    /// Most recent ARP scan answer, epoch seconds.
+    /// Most recent ARP scan answer, epoch milliseconds.
     pub arp_last_seen: Option<f64>,
     /// DHCPv4 lease clock of the most recent `Allocated` event.
     /// Silent field: changes never emit `LanDeviceChange`.
@@ -204,12 +208,15 @@ impl LanDeviceEntry {
         }
     }
 
-    /// Online heuristic: an active IPv4 lease, a DHCPv6 address, or recent
-    /// activity. See [`ONLINE_IDLE_SECS`] for why SLAAC alone does not count.
+    /// Online heuristic: recent device contact, an unexpired DHCPv4
+    /// lease, or a server-tracked DHCPv6 address. A lingering
+    /// ARP-observed IPv4 is inventory, not liveness. See
+    /// [`super::ONLINE_WINDOW_MS`] for why SLAAC alone does not count.
     pub fn is_online(&self) -> bool {
-        self.ipv4.is_some()
+        let now = get_f64_timestamp();
+        now - self.last_active <= ONLINE_WINDOW_MS
+            || self.dhcp_lease.as_ref().is_some_and(|l| l.expires > now)
             || self.ipv6_addrs.values().any(|s| *s == AddressSourceV6::Dhcpv6)
-            || get_f64_timestamp() - self.last_active <= ONLINE_IDLE_SECS
     }
 
     /// AAAA answer policy: one address, preferring the most managed source

@@ -103,18 +103,13 @@ const menuOptions = computed<MenuOption[]>(() =>
       icon: renderIcon(Dashboard),
       children: [
         {
-          label: t("routes.dhcp-v4"),
-          key: "network/dhcp-v4",
+          label: t("routes.lan-devices"),
+          key: "network/lan-devices",
           disabled: false,
         },
         {
           label: t("routes.ipv6-pd"),
           key: "network/ipv6-pd",
-        },
-        {
-          label: t("routes.ipv6-ra"),
-          key: "network/ipv6-ra",
-          disabled: false,
         },
       ],
     },

@@ -1,77 +1,12 @@
-use std::{collections::VecDeque, net::Ipv4Addr};
+use std::net::Ipv4Addr;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{LAND_ARP_INFO_SIZE, net::MacAddr};
+use crate::net::MacAddr;
 
-#[derive(Debug, Serialize, Deserialize, Clone, Default)]
-#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
-pub struct DHCPv4OfferInfo {
-    pub boot_time: f64,
-    pub relative_boot_time: u64,
-    pub offered_ips: Vec<DHCPv4OfferInfoItem>,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
-pub struct DHCPv4OfferInfoItem {
-    #[cfg_attr(feature = "openapi", schema(nullable = false))]
-    pub hostname: Option<String>,
-    pub mac: MacAddr,
-    #[cfg_attr(feature = "openapi", schema(value_type = String))]
-    pub ip: Ipv4Addr,
-    pub relative_active_time: u64,
-    pub expire_time: u32,
-    pub is_static: bool,
-    #[serde(default)]
-    #[cfg_attr(feature = "openapi", schema(required = false, nullable = false, value_type = String))]
-    pub prev_ip: Option<Ipv4Addr>,
-}
-
-pub struct ArpScanStatus {
-    infos: VecDeque<ArpScanInfo>,
-}
-
-impl Default for ArpScanStatus {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl ArpScanStatus {
-    pub fn new() -> Self {
-        Self { infos: VecDeque::with_capacity(LAND_ARP_INFO_SIZE) }
-    }
-
-    pub fn insert_new_info(&mut self, value: ArpScanInfo) {
-        if self.infos.len() == LAND_ARP_INFO_SIZE {
-            self.infos.pop_front();
-        }
-
-        self.infos.push_back(value);
-    }
-
-    pub fn get_arp_info(&self) -> Vec<ArpScanInfo> {
-        self.infos.iter().cloned().collect()
-    }
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
-pub struct ArpScanInfo {
-    infos: Vec<ArpScanInfoItem>,
-}
-
-impl ArpScanInfo {
-    pub fn new(infos: Vec<ArpScanInfoItem>) -> Self {
-        Self { infos }
-    }
-
-    pub fn infos(&self) -> &[ArpScanInfoItem] {
-        &self.infos
-    }
-}
-
+/// One ARP scan answer: the observed (ip, mac) pair. Feeds the LAN device
+/// directory through `LanDiscoveryEvent`; per-device liveness lives in the
+/// directory entries, so no round history is kept here anymore.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct ArpScanInfoItem {

@@ -12,9 +12,6 @@ use landscape_common::event::hub::{
 };
 use landscape_common::lan_service::lan_dhcpv4::DhcpError;
 use landscape_common::lan_service::lan_dhcpv4::config::DHCPv4ServiceConfig;
-use landscape_common::lan_service::lan_dhcpv4::status::ArpScanInfo;
-use landscape_common::lan_service::lan_dhcpv4::status::ArpScanStatus;
-use landscape_common::lan_service::lan_dhcpv4::status::DHCPv4OfferInfo;
 use landscape_common::service::ServiceHandle;
 use landscape_common::service::ServiceStatus;
 use landscape_common::service::controller::{ConfigStoreController, ConfigStoreServiceController};
@@ -76,7 +73,6 @@ impl IfaceIpv4Cleanup {
 #[derive(Clone)]
 #[allow(dead_code)]
 pub struct DHCPv4ServerStarter {
-    iface_scan_map: Arc<RwLock<HashMap<String, Arc<RwLock<ArpScanStatus>>>>>,
     pub iface_status_map: Arc<RwLock<HashMap<String, Arc<Mutex<DhcpV4AssignStatus>>>>>,
     route_service: IpRouteService,
     db_provider: LandscapeDBServiceProvider,
@@ -108,7 +104,6 @@ impl DHCPv4ServerStarter {
             api_tls_resolver,
             dns_runtime_config,
             lan_domain_state,
-            iface_scan_map: Arc::new(RwLock::new(HashMap::new())),
             iface_status_map: Arc::new(RwLock::new(HashMap::new())),
             ipv4_assign_sender,
             lan_discovery_sender,
@@ -205,13 +200,6 @@ impl ServiceStarterTrait for DHCPv4ServerStarter {
 
             if iface.mac.is_some() {
                 // start arp scan
-                let scand_arp_info = {
-                    let mut write = self.iface_scan_map.write().await;
-                    write
-                        .entry(store_key)
-                        .or_insert_with(|| Arc::new(RwLock::new(ArpScanStatus::new())))
-                        .clone()
-                };
                 let scan_iface_name = iface.name.clone();
                 let lan_discovery_sender = self.lan_discovery_sender.clone();
 
@@ -252,7 +240,8 @@ impl ServiceStarterTrait for DHCPv4ServerStarter {
 
                                     // Feed the LAN device directory (best effort;
                                     // a full scan round is a burst and the directory
-                                    // coalesces it behind its debounce).
+                                    // coalesces it behind its debounce). The per-IP
+                                    // liveness trail lives in the directory entries.
                                     for item in &result {
                                         let _ = lan_discovery_sender.try_send(LanDiscoveryEvent {
                                             iface_name: scan_iface_name.clone(),
@@ -261,9 +250,6 @@ impl ServiceStarterTrait for DHCPv4ServerStarter {
                                             source: LanDiscoverySource::Arp,
                                         });
                                     }
-
-                                    let mut arp_infos = scand_arp_info.write().await;
-                                    arp_infos.insert_new_info(ArpScanInfo::new(result));
                                 }
                             }
                         }
@@ -478,60 +464,6 @@ impl DHCPv4ServerManagerService {
                 );
             }
         }
-    }
-
-    pub async fn get_assigned_ips(&self) -> HashMap<String, DHCPv4OfferInfo> {
-        let mut result = HashMap::new();
-        let guard = self.server_starter.iface_status_map.read().await;
-        for (iface_name, status_arc) in guard.iter() {
-            if let Ok(status) = status_arc.lock() {
-                result.insert(iface_name.clone(), status.get_offered_info());
-            }
-        }
-        result
-    }
-
-    pub async fn get_assigned_ips_by_iface_name(
-        &self,
-        iface_name: String,
-    ) -> Option<DHCPv4OfferInfo> {
-        let guard = self.server_starter.iface_status_map.read().await;
-        let status_arc = guard.get(&iface_name)?.clone();
-        drop(guard);
-        let status = status_arc.lock().ok()?;
-        Some(status.get_offered_info())
-    }
-
-    pub async fn get_arp_scan_info(&self) -> HashMap<String, Vec<ArpScanInfo>> {
-        let mut result = HashMap::new();
-
-        let map = {
-            let read_lock = self.server_starter.iface_scan_map.read().await;
-            read_lock.clone()
-        };
-
-        for (iface_name, assigned_ips) in map {
-            if let Ok(read) = assigned_ips.try_read() {
-                result.insert(iface_name, read.get_arp_info());
-            }
-        }
-
-        result
-    }
-
-    pub async fn get_arp_scan_ips_by_iface_name(
-        &self,
-        iface_name: String,
-    ) -> Option<Vec<ArpScanInfo>> {
-        let info = {
-            let read_lock = self.server_starter.iface_scan_map.read().await;
-            read_lock.get(&iface_name).map(Clone::clone)
-        };
-
-        let offer_info = info?;
-
-        let data = offer_info.read().await.get_arp_info();
-        Some(data)
     }
 }
 

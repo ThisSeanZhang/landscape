@@ -3,7 +3,6 @@ use std::collections::HashMap;
 use axum::extract::{Path, State};
 use landscape_common::api_response::LandscapeApiResp as CommonApiResp;
 use landscape_common::lan_service::lan_dhcpv4::config::DHCPv4ServiceConfig;
-use landscape_common::lan_service::lan_dhcpv4::status::{ArpScanInfo, DHCPv4OfferInfo};
 use landscape_common::service::ServiceStatus;
 use landscape_common::service::controller::ConfigStoreServiceController;
 use utoipa_axum::router::OpenApiRouter;
@@ -19,69 +18,7 @@ pub fn get_dhcp_v4_service_paths() -> OpenApiRouter<LandscapeApp> {
     OpenApiRouter::new()
         .routes(routes!(get_all_iface_service_status))
         .routes(routes!(handle_service_config))
-        .routes(routes!(get_all_iface_assigned_ips))
-        .routes(routes!(get_all_iface_arp_scan_info))
         .routes(routes!(get_iface_service_config, delete_and_stop_iface_service))
-        .routes(routes!(get_assigned_ips_by_iface_name))
-        .routes(routes!(get_arp_scan_info_by_iface_name))
-}
-
-#[utoipa::path(
-    get,
-    path = "/dhcp_v4/assigned_ips",
-    tag = "DHCPv4",
-    operation_id = "get_all_dhcp_v4_assigned_ips",
-    responses((status = 200, description = "Success", body = CommonApiResp<HashMap<String, DHCPv4OfferInfo>>))
-)]
-async fn get_all_iface_assigned_ips(
-    State(state): State<LandscapeApp>,
-) -> LandscapeApiResult<HashMap<String, DHCPv4OfferInfo>> {
-    LandscapeApiResp::success(state.dhcp_v4_server_service.get_assigned_ips().await)
-}
-
-#[utoipa::path(
-    get,
-    path = "/dhcp_v4/{iface_name}/assigned_ips",
-    tag = "DHCPv4",
-    operation_id = "get_dhcp_v4_assigned_ips_by_iface_name",
-    params(("iface_name" = String, Path, description = "Interface name")),
-    responses((status = 200, description = "Success", body = CommonApiResp<Option<DHCPv4OfferInfo>>))
-)]
-async fn get_assigned_ips_by_iface_name(
-    State(state): State<LandscapeApp>,
-    Path(iface_name): Path<String>,
-) -> LandscapeApiResult<Option<DHCPv4OfferInfo>> {
-    LandscapeApiResp::success(
-        state.dhcp_v4_server_service.get_assigned_ips_by_iface_name(iface_name).await,
-    )
-}
-
-#[utoipa::path(
-    get,
-    path = "/dhcp_v4/arp_scan_info",
-    tag = "DHCPv4",
-    responses((status = 200, description = "Success", body = CommonApiResp<HashMap<String, Vec<ArpScanInfo>>>))
-)]
-async fn get_all_iface_arp_scan_info(
-    State(state): State<LandscapeApp>,
-) -> LandscapeApiResult<HashMap<String, Vec<ArpScanInfo>>> {
-    LandscapeApiResp::success(state.dhcp_v4_server_service.get_arp_scan_info().await)
-}
-
-#[utoipa::path(
-    get,
-    path = "/dhcp_v4/{iface_name}/arp_scan_info",
-    tag = "DHCPv4",
-    params(("iface_name" = String, Path, description = "Interface name")),
-    responses((status = 200, description = "Success", body = CommonApiResp<Option<Vec<ArpScanInfo>>>))
-)]
-async fn get_arp_scan_info_by_iface_name(
-    State(state): State<LandscapeApp>,
-    Path(iface_name): Path<String>,
-) -> LandscapeApiResult<Option<Vec<ArpScanInfo>>> {
-    LandscapeApiResp::success(
-        state.dhcp_v4_server_service.get_arp_scan_ips_by_iface_name(iface_name).await,
-    )
 }
 
 #[utoipa::path(

@@ -293,7 +293,4 @@ export default {
   expected_pd_len: "Expected Upstream PD Prefix Length",
   expected_pd_len_invalid:
     "Expected upstream PD prefix length must be an integer from 56 to 64",
-
-  // LanIPv6ShowItem
-  neighbor_count_unknown: "IPv6 neighbor count unknown",
 };

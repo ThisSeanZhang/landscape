@@ -8,12 +8,10 @@ use landscape_common::{
     config_service::enrolled_device::EnrolledDevice,
     event::hub::Ipv6AssignAddress,
     lan_service::lan_ipv6::{
-        DEFAULT_IA_NA_POOL_SPAN, DHCPv6AddressItem, DHCPv6IANAConfig, DHCPv6IAPDConfig,
-        DHCPv6OfferInfo, DHCPv6PrefixItem, IPv6NAInfo, IPv6NAInfoItem, LanPrefixGroupConfig,
+        DEFAULT_IA_NA_POOL_SPAN, DHCPv6IANAConfig, DHCPv6IAPDConfig, LanPrefixGroupConfig,
         PrefixParentSource, checked_allocate_subnet,
     },
     net::MacAddr,
-    utils::time::get_f64_timestamp,
     wan_service::ipv6_pd::{IAPrefixMap, pd_expectation_fits_snapshot},
 };
 use tokio::sync::{mpsc, watch};
@@ -398,7 +396,6 @@ pub struct Ipv6ServerStatus {
 
     // ── Timing ──
     boot_time: Instant,
-    boot_time_f64: f64,
 
     // ── Lifetime (shared across RA / NA / PD) ──
     pub preferred_lifetime: u32,
@@ -441,7 +438,6 @@ impl Ipv6ServerStatus {
             reconfigure_keys: HashMap::new(),
             reconf_tx,
             boot_time: Instant::now(),
-            boot_time_f64: get_f64_timestamp(),
             preferred_lifetime: 300,
             valid_lifetime: 600,
         };
@@ -1280,72 +1276,6 @@ impl Ipv6ServerStatus {
             }
         }
         None
-    }
-
-    pub fn to_ipv6_na_info(&self) -> IPv6NAInfo {
-        IPv6NAInfo {
-            boot_time: self.boot_time_f64,
-            offered_ips: self
-                .slaac_entries
-                .iter()
-                .map(|(ip, entry)| {
-                    (
-                        *ip,
-                        IPv6NAInfoItem {
-                            mac: entry.mac,
-                            ip: *ip,
-                            relative_active_time: entry.relative_active_time,
-                        },
-                    )
-                })
-                .collect(),
-        }
-    }
-
-    pub fn to_dhcpv6_offer_info(&self) -> DHCPv6OfferInfo {
-        let relative_boot_time = self.boot_time.elapsed().as_secs();
-        let na_prefixes = self.qualifying_na_prefixes();
-
-        let offered_addresses = self
-            .na_leases_by_duid
-            .values()
-            .flat_map(|lease| {
-                na_prefixes.iter().map(|(prefix, prefix_len)| DHCPv6AddressItem {
-                    duid: Some(lease.duid_hex.clone()),
-                    mac: Some(lease.mac),
-                    ip: combine_prefix_suffix(*prefix, *prefix_len, lease.suffix),
-                    hostname: lease.hostname.clone(),
-                    relative_active_time: lease.relative_offer_time,
-                    preferred_lifetime: lease.preferred_time,
-                    valid_lifetime: lease.valid_time,
-                    is_static: lease.is_static,
-                    prev_suffix: lease.prev_suffix,
-                })
-            })
-            .collect();
-
-        let delegated_prefixes = self
-            .pd_leases_by_duid
-            .values()
-            .filter_map(|lease| {
-                let key = (lease.group_id.clone(), lease.sub_index);
-                self.resolve_pd_key(&key).map(|(prefix, prefix_len)| DHCPv6PrefixItem {
-                    duid: Some(lease.duid_hex.clone()),
-                    prefix,
-                    prefix_len,
-                    relative_active_time: lease.relative_offer_time,
-                    preferred_lifetime: lease.preferred_time,
-                    valid_lifetime: lease.valid_time,
-                })
-            })
-            .collect();
-
-        DHCPv6OfferInfo {
-            boot_time: self.boot_time_f64,
-            relative_boot_time,
-            offered_addresses,
-            delegated_prefixes,
-        }
     }
 
     /// Convert suffix → list of full addresses (one per qualifying prefix).

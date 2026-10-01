@@ -32,6 +32,7 @@ use crate::services::firewall::get_firewall_service_paths;
 use crate::services::ip::get_iface_ipconfig_paths;
 use crate::services::ipv6pd::get_iface_pdclient_paths;
 use crate::services::lan::get_route_lan_paths;
+use crate::services::lan_device::get_lan_device_paths;
 use crate::services::lan_ipv6::get_lan_ipv6_paths;
 use crate::services::mss_clamp::get_mss_clamp_service_paths;
 use crate::services::nat::get_iface_nat_paths;
@@ -167,6 +168,7 @@ pub fn build_services_openapi_router() -> OpenApiRouter<LandscapeApp> {
         .merge(get_iface_pppd_paths())
         .merge(get_wifi_service_paths())
         .merge(get_iface_pdclient_paths())
+        .merge(get_lan_device_paths())
         .merge(get_lan_ipv6_paths())
         .merge(get_iface_nat_paths())
 }

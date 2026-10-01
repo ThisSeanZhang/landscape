@@ -1,8 +1,6 @@
 pub mod config;
 pub mod dhcpv6_config;
-pub mod dhcpv6_status;
 pub mod error;
-pub mod ipv6_na;
 pub mod prefix_group;
 pub mod runtime;
 
@@ -14,8 +12,6 @@ pub use config::{
 pub use dhcpv6_config::{
     DEFAULT_IA_NA_POOL_SPAN, DHCPv6IANAConfig, DHCPv6IAPDConfig, DHCPv6ServerConfig,
 };
-
-pub use dhcpv6_status::{DHCPv6AddressItem, DHCPv6OfferInfo, DHCPv6PrefixItem};
 pub use error::LanIPv6Error;
 
 pub use prefix_group::{
@@ -24,8 +20,6 @@ pub use prefix_group::{
     validate_prefix_groups_with_pd_context,
 };
 pub use runtime::{ExpandedPrefixEntry, PdPrefixContext, PdPrefixContextMap};
-
-pub use ipv6_na::{IPv6NAInfo, IPv6NAInfoItem};
 
 use std::net::Ipv6Addr;
 

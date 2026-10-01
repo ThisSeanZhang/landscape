@@ -293,6 +293,53 @@ fn arp_observed_ip_moves_between_anonymous_devices() {
 }
 
 #[test]
+fn config_events_do_not_refresh_liveness() {
+    let (dir, mut rx) = directory_with_outlet();
+    let mac = [0, 0, 0, 0, 0, 50];
+    let device_id = Uuid::new_v4();
+
+    // A real observation creates liveness, then it goes idle.
+    dir.apply_discovery_event(discovery(Some(mac), IpAddr::V4(ipv4("10.0.0.50"))));
+    drain(&mut rx);
+    let id = *dir.by_mac.get(&v4(mac)).unwrap().value();
+    dir.backdate_last_active_for_test(&id, get_f64_timestamp() - ONLINE_WINDOW_MS - 1.0);
+
+    // Service restart replays every enrolled binding as `Updated`: this
+    // must NOT refresh liveness nor flip the online heuristic.
+    dir.apply_device_event(EnrolledDeviceEvent::Updated {
+        old: None,
+        new: enrolled(device_id, mac, Some("nas"), None),
+    });
+    drain(&mut rx);
+    let entry = dir.entry_by_mac(&v4(mac)).unwrap();
+    assert!(
+        get_f64_timestamp() - entry.last_active > ONLINE_WINDOW_MS,
+        "enrollment push must not refresh last_active"
+    );
+
+    // PD prefix flush is router-side bookkeeping, not device activity.
+    dir.backdate_last_active_for_test(&id, 0.0);
+    dir.apply_ipv6_event(IPv6AssignEvent::Flush(IPv6AssignInfo {
+        iface_name: "lan0".to_string(),
+        mac: v4(mac),
+        device_id: None,
+        ips: Vec::new(),
+    }));
+    drain(&mut rx);
+    assert_eq!(dir.entry_by_mac(&v4(mac)).unwrap().last_active, 0.0);
+
+    // A never-observed enrolled device carries no liveness claim at all.
+    let mac2 = [0, 0, 0, 0, 0, 51];
+    dir.apply_device_event(EnrolledDeviceEvent::Updated {
+        old: None,
+        new: enrolled(Uuid::new_v4(), mac2, None, None),
+    });
+    let entry2 = dir.entry_by_mac(&v4(mac2)).unwrap();
+    assert_eq!(entry2.last_active, 0.0);
+    assert!(!entry2.is_online());
+}
+
+#[test]
 fn enrolled_static_displaces_arp_owner() {
     let dir = directory(&[]);
     let ip = ipv4("10.0.0.9");
@@ -484,7 +531,7 @@ fn sweep_removes_idle_anonymous_entries_only() {
     // Age the anonymous entry past the TTL.
     let anon_mac = v4([0, 0, 0, 0, 0, 7]);
     let anon_id = *dir.by_mac.get(&anon_mac).unwrap().value();
-    dir.update_entry(&anon_id, |e| e.last_active -= ANONYMOUS_TTL_SECS + 1.0);
+    dir.update_entry(&anon_id, |e| e.last_active -= ANONYMOUS_TTL_MS + 1.0);
 
     assert!(dir.sweep_expired(get_f64_timestamp()));
     assert!(dir.entry_by_mac(&anon_mac).is_none());
@@ -520,7 +567,7 @@ fn is_online_requires_lease_dhcpv6_or_recent_activity() {
 
     // Stale last_active + SLAAC-only: offline.
     let id = *dir.by_mac.get(&v4(mac)).unwrap().value();
-    dir.update_entry(&id, |e| e.last_active -= ONLINE_IDLE_SECS + 1.0);
+    dir.update_entry(&id, |e| e.last_active -= ONLINE_WINDOW_MS + 1.0);
     assert!(!dir.entry_by_mac(&v4(mac)).unwrap().is_online());
 
     // A DHCPv6 address alone keeps it online.
@@ -528,6 +575,64 @@ fn is_online_requires_lease_dhcpv6_or_recent_activity() {
         e.ipv6_addrs.insert(ipv6("fd00::2"), AddressSourceV6::Dhcpv6);
     });
     assert!(dir.entry_by_mac(&v4(mac)).unwrap().is_online());
+}
+
+#[test]
+fn enrolled_static_config_never_observed_is_offline() {
+    let dir = directory(&[]);
+    let device_id = Uuid::new_v4();
+    let mac = [0, 0, 0, 0, 0, 13];
+    let ip = ipv4("10.0.0.13");
+
+    // A binding with a configured static IPv4 for a device that has never
+    // appeared on the LAN: the config is inventory, never liveness.
+    dir.apply_device_event(EnrolledDeviceEvent::Updated {
+        old: None,
+        new: enrolled(device_id, mac, Some("ghost"), Some(ip)),
+    });
+
+    let entry = dir.entry_by_mac(&v4(mac)).unwrap();
+    assert_eq!(entry.ipv4, Some(ip));
+    assert_eq!(entry.ipv4_source, Some(AddressSourceV4::Static));
+    assert_eq!(entry.last_active, 0.0, "never observed");
+    assert!(!entry.is_online(), "static config alone must not read online");
+}
+
+#[test]
+fn arp_address_alone_is_not_liveness() {
+    let dir = directory(&[]);
+    let mac = [0, 0, 0, 0, 0, 12];
+    let ip = ipv4("10.0.0.12");
+
+    // The device answered one ARP scan, then went silent: the observed
+    // address stays as inventory but must not keep it "online".
+    dir.apply_discovery_event(discovery(Some(mac), IpAddr::V4(ip)));
+    let id = *dir.by_mac.get(&v4(mac)).unwrap().value();
+    dir.backdate_last_active_for_test(&id, get_f64_timestamp() - ONLINE_WINDOW_MS - 1.0);
+
+    let entry = dir.entry_by_mac(&v4(mac)).unwrap();
+    assert_eq!(entry.ipv4, Some(ip));
+    assert!(!entry.is_online(), "lingering ARP IPv4 is not liveness");
+
+    // An unexpired DHCPv4 lease is a valid liveness signal.
+    dir.update_entry(&id, |e| {
+        e.dhcp_lease = Some(DhcpLeaseTimes {
+            ip,
+            last_request: get_f64_timestamp(),
+            expires: get_f64_timestamp() + 3_600_000.0,
+        })
+    });
+    assert!(dir.entry_by_mac(&v4(mac)).unwrap().is_online());
+
+    // ...an expired one is not.
+    dir.update_entry(&id, |e| {
+        e.dhcp_lease = Some(DhcpLeaseTimes {
+            ip,
+            last_request: get_f64_timestamp(),
+            expires: get_f64_timestamp() - 1.0,
+        })
+    });
+    assert!(!dir.entry_by_mac(&v4(mac)).unwrap().is_online());
 }
 
 // ── change-event emission ────────────────────────────────────────────
@@ -651,7 +756,7 @@ fn emission_removed_on_anonymous_gc() {
     dir.apply_discovery_event(discovery(Some(mac), IpAddr::V4(ipv4("10.0.0.30"))));
     drain(&mut rx);
 
-    let future = get_f64_timestamp() + ANONYMOUS_TTL_SECS + 1.0;
+    let future = get_f64_timestamp() + ANONYMOUS_TTL_MS + 1.0;
     assert!(dir.sweep_expired(future));
 
     let events = drain(&mut rx);
@@ -688,7 +793,10 @@ fn runtime_claim_reanchors_device_id_from_idle_owner() {
     drain(&mut rx);
 
     let shell = dir.entry_by_mac(&v4(mac1)).unwrap();
-    dir.backdate_last_active_for_test(&shell.entry_id, get_f64_timestamp() - 700.0);
+    dir.backdate_last_active_for_test(
+        &shell.entry_id,
+        get_f64_timestamp() - DEVICE_ID_REANCHOR_IDLE_MS - 100_000.0,
+    );
 
     // DHCP on the new NIC carries the enrolled identity; the address set
     // does not change (already observed), so only identity events fire.
@@ -722,9 +830,11 @@ fn runtime_claim_keeps_active_owner() {
     let mac1 = [0, 0, 0, 0, 0, 1];
     let mac2 = [0, 0, 0, 0, 0, 2];
     anchor_conflict_fixture(&dir, device_id, mac1, mac2);
+    // The owner is genuinely active via a fresh device-side observation
+    // (a config push no longer counts as liveness): first anchor wins.
+    dir.apply_discovery_event(discovery(Some(mac1), IpAddr::V4(ipv4("10.0.0.1"))));
     drain(&mut rx);
 
-    // Owner is fresh (just enrolled): first anchor wins.
     dir.apply_ipv4_event(ipv4_allocated(mac2, ipv4("10.0.0.2"), None, Some(device_id)));
 
     assert_eq!(dir.entry_by_device_id(&device_id).unwrap().mac, Some(v4(mac1)));
@@ -807,13 +917,16 @@ fn stripped_shell_is_eventually_gc_ed() {
     drain(&mut rx);
 
     let shell = dir.entry_by_mac(&v4(mac1)).unwrap();
-    dir.backdate_last_active_for_test(&shell.entry_id, get_f64_timestamp() - 700.0);
+    dir.backdate_last_active_for_test(
+        &shell.entry_id,
+        get_f64_timestamp() - DEVICE_ID_REANCHOR_IDLE_MS - 100_000.0,
+    );
     dir.apply_ipv4_event(ipv4_allocated(mac2, ipv4("10.0.0.2"), None, Some(device_id)));
     drain(&mut rx);
 
     // The degraded shell is anonymous and idle: the sweep collects it, the
     // identity-holding entry survives.
-    let future = get_f64_timestamp() + ANONYMOUS_TTL_SECS + 1.0;
+    let future = get_f64_timestamp() + ANONYMOUS_TTL_MS + 1.0;
     assert!(dir.sweep_expired(future));
     assert!(dir.entry_by_mac(&v4(mac1)).is_none());
     assert!(dir.entry_by_device_id(&device_id).is_some());
@@ -827,16 +940,16 @@ fn stripped_shell_is_eventually_gc_ed() {
 
 // ── ARP presence trail & DHCP lease clock ───────────────────────────
 
-/// One ARP scan interval in seconds (profile-dependent; tests reference
+/// One ARP scan interval in milliseconds (profile-dependent; tests reference
 /// the same constant the directory folds with).
-fn scan_interval_secs() -> f64 {
-    LAND_ARP_SCAN_INTERVAL as f64 / 1000.0
+fn scan_interval_ms() -> f64 {
+    LAND_ARP_SCAN_INTERVAL as f64
 }
 
 #[test]
 fn arp_presence_unit_bucketing() {
     let mut presence = ArpPresence::default();
-    let t0 = 1_000_000.0;
+    let t0 = 1_000_000_000_000.0;
 
     // Never seen: all absent.
     assert_eq!(presence.series(t0), vec![false; 24]);
@@ -848,14 +961,14 @@ fn arp_presence_unit_bucketing() {
     assert!(series[23], "newest bucket: {series:?}");
 
     // A gap of three buckets: two absent slots in between.
-    presence.mark_seen(t0 + scan_interval_secs() * 3.0);
-    let series = presence.series(t0 + scan_interval_secs() * 3.0);
+    presence.mark_seen(t0 + scan_interval_ms() * 3.0);
+    let series = presence.series(t0 + scan_interval_ms() * 3.0);
     assert_eq!(series.iter().filter(|&&b| b).count(), 2, "{series:?}");
     assert!(series[23] && series[20], "{series:?}");
 
     // Silence for ten buckets: the trail stays wall-clock aligned, the
     // newest slots read absent.
-    let series = presence.series(t0 + scan_interval_secs() * 13.0);
+    let series = presence.series(t0 + scan_interval_ms() * 13.0);
     assert!(series[10] && series[13], "{series:?}");
     assert!(!series[23], "{series:?}");
 }
@@ -863,12 +976,12 @@ fn arp_presence_unit_bucketing() {
 #[test]
 fn arp_presence_unit_full_window_reset() {
     let mut presence = ArpPresence::default();
-    let t0 = 2_000_000.0;
+    let t0 = 2_000_000_000_000.0;
     presence.mark_seen(t0);
 
     // More than a full window later: the old trail is gone entirely.
-    presence.mark_seen(t0 + scan_interval_secs() * 30.0);
-    let series = presence.series(t0 + scan_interval_secs() * 30.0);
+    presence.mark_seen(t0 + scan_interval_ms() * 30.0);
+    let series = presence.series(t0 + scan_interval_ms() * 30.0);
     assert_eq!(series.iter().filter(|&&b| b).count(), 1, "{series:?}");
     assert!(series[23]);
 }
@@ -903,7 +1016,7 @@ fn dhcp_lease_clock_recorded_and_renewed_silently() {
     let entry = dir.entry_by_ipv4(&ip).unwrap();
     let lease = entry.dhcp_lease.expect("lease clock recorded");
     assert_eq!(lease.ip, ip);
-    assert!((lease.expires - lease.last_request - 3600.0).abs() < 1e-6);
+    assert!((lease.expires - lease.last_request - 3_600_000.0).abs() < 1.0);
 
     // Renewal: same IP, no observable field moves → silent.
     std::thread::sleep(std::time::Duration::from_millis(20));

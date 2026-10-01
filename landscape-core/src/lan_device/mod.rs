@@ -35,6 +35,7 @@ use std::time::Duration;
 
 use arc_swap::ArcSwap;
 use dashmap::DashMap;
+use landscape_common::LAND_ARP_SCAN_INTERVAL;
 use landscape_common::config_service::enrolled_device::EnrolledDevice;
 use landscape_common::event::hub::{
     EnrolledDeviceEvent, EnrolledDeviceEventReader, IPv4AssignEventReader, IPv6AssignEvent,
@@ -54,16 +55,23 @@ const SNAPSHOT_DEBOUNCE_MS: u64 = 150;
 const GC_INTERVAL_SECS: u64 = 60;
 /// Entries without a `device_id` are dropped after being idle this long.
 pub(super) const ANONYMOUS_TTL_SECS: f64 = 24.0 * 3600.0;
+/// [`ANONYMOUS_TTL_SECS`] on the millisecond clock the entries use.
+pub(super) const ANONYMOUS_TTL_MS: f64 = ANONYMOUS_TTL_SECS * 1000.0;
 /// How long the current `device_id` holder must be idle before a runtime
 /// identity claim (a DHCP-carried device_id) may re-anchor it to a newly
 /// observed entry. Identity semantics — deliberately independent of
 /// [`ANONYMOUS_TTL_SECS`] (GC semantics). Enrollment events are NOT gated
 /// by this: the user's explicit binding re-anchors immediately.
 pub(super) const DEVICE_ID_REANCHOR_IDLE_SECS: f64 = 600.0;
-/// `last_active` freshness window for the `online` heuristic. SLAAC-only
-/// addresses do not count as online on their own (a prefix Flush empties the
-/// set before devices re-register).
-pub(super) const ONLINE_IDLE_SECS: f64 = 900.0;
+/// [`DEVICE_ID_REANCHOR_IDLE_SECS`] on the millisecond clock the entries use.
+pub(super) const DEVICE_ID_REANCHOR_IDLE_MS: f64 = DEVICE_ID_REANCHOR_IDLE_SECS * 1000.0;
+/// `last_active` freshness window for the `online` heuristic: two ARP scan
+/// intervals (debug 10 min, release 2 h) so periodic-scan-only devices do
+/// not flap offline between rounds. Active leases and server-tracked
+/// DHCPv6 addresses keep a device online independent of this window;
+/// SLAAC alone does not (a prefix Flush empties the set before devices
+/// re-register) and neither does a lingering ARP-observed IPv4.
+pub(super) const ONLINE_WINDOW_MS: f64 = (LAND_ARP_SCAN_INTERVAL * 2) as f64;
 
 pub struct LanDeviceDirectory {
     // ── Live tables: written only by the projection task (see writer.rs) ──

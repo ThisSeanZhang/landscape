@@ -14,22 +14,6 @@ export default {
   invalid_ipv4_check: "请输入有效的 IPv4 地址和掩码后再保存",
   duplicate_option_check: "存在重复的 Option 类型，请修改后再保存",
   invalid_option_check: "存在无效的 DHCP Option 值，请修改后再保存",
-  assigned: {
-    hostname: "主机名",
-    mac_addr: "Mac 地址",
-    mac_tip_1:
-      "ARP 扫描出的 IP 可能会出现 ARP 代应答，导致 IP 不同 Mac 却重复的情况",
-    assigned_ip: "分配 IP",
-    latest_request: "最近一次请求时间",
-    lease_left: "剩余租期时间 (s)",
-    expire_time: "到期时间",
-    online_24h: "24 小时在线情况",
-    online_24h_tip_1: "最后一个是最近一小时检查时是否在线",
-    online_24h_tip_2: "定期扫描, 所以新分配的 IP 可能最近一小时显示为不在线",
-    actions: "操作",
-    static_assigned: "静态分配",
-    unknown: "未知",
-  },
   option_dnr: {
     use_local: "使用本机 DoH",
     use_custom: "自定义 DoH",

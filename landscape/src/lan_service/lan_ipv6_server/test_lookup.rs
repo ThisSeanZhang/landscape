@@ -155,41 +155,6 @@ fn lookup_ip_by_mac_unknown_returns_none() {
     assert!(status.lookup_ip_by_mac(&mac).is_none());
 }
 
-// ── to_ipv6_na_info / to_dhcpv6_offer_info tests ────────────────────────────
-
-#[test]
-fn to_ipv6_na_info_includes_slaac_entries() {
-    let mut status = make_full_status();
-    let mac = MacAddr::from([0x00, 0x11, 0x22, 0x33, 0x44, 0x55]);
-    let ip = Ipv6Addr::new(0xfd00, 0, 0, 1, 0, 0, 0xFE, 0xED);
-    status.record_slaac_addr(mac, ip);
-
-    let info = status.to_ipv6_na_info();
-    assert!(info.offered_ips.contains_key(&ip));
-}
-
-#[test]
-fn to_ipv6_na_info_empty_without_slaac() {
-    let status = make_full_status();
-    let info = status.to_ipv6_na_info();
-    assert!(info.offered_ips.is_empty());
-}
-
-#[test]
-fn to_dhcpv6_offer_info_includes_na_and_pd() {
-    let mut status = make_full_status();
-    status.offer_na(
-        b"info-na-01",
-        MacAddr::from([0x00, 0x11, 0x22, 0x33, 0x44, 0x55]),
-        Some("host-info".into()),
-    );
-    status.offer_pd(b"info-pd-01");
-
-    let info = status.to_dhcpv6_offer_info();
-    assert!(!info.offered_addresses.is_empty());
-    assert!(!info.delegated_prefixes.is_empty());
-}
-
 // ── suffix_to_addrs tests ───────────────────────────────────────────────────
 
 #[test]

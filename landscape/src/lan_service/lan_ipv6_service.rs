@@ -6,8 +6,6 @@ use landscape_common::event::hub::{
     EnrolledDeviceEvent, EnrolledDeviceEventReader, IAPrefixEvent, IAPrefixEventReader,
     IPv6AssignEvent, IPv6AssignEventSender, IPv6AssignInfo, IfaceEventReader,
 };
-use landscape_common::lan_service::lan_ipv6::DHCPv6OfferInfo;
-use landscape_common::lan_service::lan_ipv6::IPv6NAInfo;
 use landscape_common::lan_service::lan_ipv6::{IPv6ServiceMode, LanIPv6ServiceConfigV2};
 use landscape_common::net::MacAddr;
 use landscape_common::service::controller::{ConfigStoreController, ConfigStoreServiceController};
@@ -18,7 +16,6 @@ use landscape_common::wan_service::ipv6_pd::IAPrefixMap;
 use landscape_database::enrolled_device::repository::EnrolledDeviceRepository;
 use landscape_database::lan_ipv6_v2::repository::LanIPv6V2ServiceRepository;
 use landscape_database::provider::LandscapeDBServiceProvider;
-use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{Mutex, mpsc, watch};
@@ -305,7 +302,6 @@ impl ServiceStarterTrait for LanIPv6Service {
 pub struct LanIPv6ManagerService {
     store: LanIPv6V2ServiceRepository,
     service: ServiceManager<LanIPv6Service>,
-    server_starter: LanIPv6Service,
     #[allow(dead_code)]
     mac_link_map_cache: Arc<MacLinkMapCache>,
     /// Keeps the global DAD ringbuf consumer alive (Arc refcount only).
@@ -527,7 +523,6 @@ impl LanIPv6ManagerService {
         Self {
             service,
             store,
-            server_starter,
             mac_link_map_cache,
             dao_event_source,
         }
@@ -538,51 +533,6 @@ impl LanIPv6ManagerService {
             return;
         };
         let _ = self.get_service().update_service(service_config).await;
-    }
-
-    pub async fn get_assigned_ips_by_iface_name(&self, iface_name: String) -> Option<IPv6NAInfo> {
-        let status = self.server_starter.status_map.get(&iface_name)?.value().clone();
-        let lock = status.lock().await;
-        Some(lock.to_ipv6_na_info())
-    }
-
-    pub async fn get_assigned_ips(&self) -> HashMap<String, IPv6NAInfo> {
-        let statuses: Vec<(String, _)> = self
-            .server_starter
-            .status_map
-            .iter()
-            .map(|e| (e.key().clone(), e.value().clone()))
-            .collect();
-        let mut result = HashMap::new();
-        for (iface, status) in statuses {
-            let lock = status.lock().await;
-            result.insert(iface, lock.to_ipv6_na_info());
-        }
-        result
-    }
-
-    pub async fn get_dhcpv6_assigned_by_iface_name(
-        &self,
-        iface_name: String,
-    ) -> Option<DHCPv6OfferInfo> {
-        let status = self.server_starter.status_map.get(&iface_name)?.value().clone();
-        let lock = status.lock().await;
-        Some(lock.to_dhcpv6_offer_info())
-    }
-
-    pub async fn get_dhcpv6_assigned(&self) -> HashMap<String, DHCPv6OfferInfo> {
-        let statuses: Vec<(String, _)> = self
-            .server_starter
-            .status_map
-            .iter()
-            .map(|e| (e.key().clone(), e.value().clone()))
-            .collect();
-        let mut result = HashMap::new();
-        for (iface, status) in statuses {
-            let lock = status.lock().await;
-            result.insert(iface, lock.to_dhcpv6_offer_info());
-        }
-        result
     }
 }
 
