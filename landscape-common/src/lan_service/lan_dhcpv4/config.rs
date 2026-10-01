@@ -573,6 +573,12 @@ impl Default for DHCPv4ServerConfig {
     }
 }
 
+impl crate::database::validator::ValidatableConfig for DHCPv4ServiceConfig {
+    fn validate(&self) -> Result<(), crate::service::ServiceConfigError> {
+        self.config.validate()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -748,11 +754,5 @@ mod tests {
         assert_eq!(parsed.custom_options.len(), 2);
         assert_eq!(parsed.custom_options[0].to_raw().unwrap().1, b"tftp.example.com");
         assert_eq!(parsed.custom_options[1].to_raw().unwrap().1, b"boot/pxelinux.0");
-    }
-}
-
-impl crate::database::validator::ValidatableConfig for DHCPv4ServiceConfig {
-    fn validate(&self) -> Result<(), crate::service::ServiceConfigError> {
-        self.config.validate()
     }
 }

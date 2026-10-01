@@ -79,6 +79,12 @@ impl crate::config_service::iface::ZoneAwareConfig for IPV6PDServiceConfig {
     }
 }
 
+impl crate::database::validator::ValidatableConfig for IPV6PDServiceConfig {
+    fn validate(&self) -> Result<(), crate::service::ServiceConfigError> {
+        self.config.validate()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::json;
@@ -117,11 +123,5 @@ mod tests {
         for expected_pd_len in [55, 65] {
             assert!(config_with_expected_len(expected_pd_len).validate().is_err());
         }
-    }
-}
-
-impl crate::database::validator::ValidatableConfig for IPV6PDServiceConfig {
-    fn validate(&self) -> Result<(), crate::service::ServiceConfigError> {
-        self.config.validate()
     }
 }
