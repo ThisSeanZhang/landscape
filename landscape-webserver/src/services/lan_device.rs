@@ -39,17 +39,24 @@ impl From<AddressSourceV4> for LanDeviceIpv4Source {
     }
 }
 
-/// How one of the device's IPv6 addresses came to be observed.
+/// How one of the device's IPv6 addresses came to be observed. Scope wins
+/// over provenance: link-local (fe80::/10) addresses are auto-generated on
+/// every interface and the directory files ND-discovered ones under
+/// `Slaac`, so they are classified by scope instead.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum LanDeviceIpv6Source {
     Static,
     Dhcpv6,
     Slaac,
+    LinkLocal,
 }
 
-impl From<AddressSourceV6> for LanDeviceIpv6Source {
-    fn from(source: AddressSourceV6) -> Self {
+impl LanDeviceIpv6Source {
+    fn classify(source: AddressSourceV6, ip: Ipv6Addr) -> Self {
+        if ip.is_unicast_link_local() {
+            return Self::LinkLocal;
+        }
         match source {
             AddressSourceV6::Static => Self::Static,
             AddressSourceV6::Dhcpv6 => Self::Dhcpv6,
@@ -131,7 +138,7 @@ fn to_view(entry: &LanDeviceEntry, now: f64) -> LanDeviceView {
         .iter()
         .map(|(ip, source)| LanDeviceIpv6View {
             ip: *ip,
-            source: LanDeviceIpv6Source::from(*source),
+            source: LanDeviceIpv6Source::classify(*source, *ip),
         })
         .collect();
     ipv6_addrs.sort_by_key(|view| view.ip);
@@ -214,7 +221,8 @@ mod tests {
             ipv6: Some(ipv6("fd00::9")),
         }]);
         // A SLAAC observation whose interface id matches the enrolled suffix
-        // upgrades to `static`; a foreign address stays `slaac`.
+        // upgrades to `static`; a foreign address stays `slaac`; a
+        // link-local address is classified by scope regardless of source.
         directory.apply_ipv6_event_for_test(IPv6AssignEvent::Allocated(IPv6AssignInfo {
             iface_name: "lan0".to_string(),
             mac: mac(9),
@@ -225,6 +233,10 @@ mod tests {
                 },
                 Ipv6AssignAddress {
                     ip: ipv6("fd00::1234"),
+                    source: IPv6AssignSource::Slaac,
+                },
+                Ipv6AssignAddress {
+                    ip: ipv6("fe80::1234"),
                     source: IPv6AssignSource::Slaac,
                 },
             ],
@@ -241,9 +253,14 @@ mod tests {
         assert_eq!(view.ipv4.as_ref().map(|v| v.ip.to_string()), Some("10.0.0.9".to_string()));
 
         let ips: Vec<String> = view.ipv6_addrs.iter().map(|v| v.ip.to_string()).collect();
-        assert_eq!(ips, vec!["fd00::9".to_string(), "fd00::1234".to_string()], "sorted by address");
+        assert_eq!(
+            ips,
+            vec!["fd00::9".to_string(), "fd00::1234".to_string(), "fe80::1234".to_string()],
+            "sorted by address"
+        );
         assert_eq!(view.ipv6_addrs[0].source, LanDeviceIpv6Source::Static);
         assert_eq!(view.ipv6_addrs[1].source, LanDeviceIpv6Source::Slaac);
+        assert_eq!(view.ipv6_addrs[2].source, LanDeviceIpv6Source::LinkLocal);
 
         assert_eq!(view.iface_name.as_deref(), Some("lan0"));
         assert!(view.online, "fresh observation (now == last_active) reads online");

@@ -22,9 +22,11 @@ export default {
   filter_iface: "Interface",
   filter_online: "Online",
   source_static: "Static",
+  source_static_suffix: "Static Suffix",
   source_lease: "DHCP",
   source_arp: "ARP",
   source_dhcpv6: "DHCPv6",
   source_slaac: "SLAAC",
+  source_link_local: "Link Local",
   empty: "No LAN devices observed yet",
 };

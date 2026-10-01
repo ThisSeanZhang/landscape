@@ -108,16 +108,17 @@ function device_name(device: LanDeviceView): string {
 
 // ── IPv6 display: one preferred address, the rest behind a tooltip ──
 // Source priority matches the directory's ownership semantics:
-// Static > DHCPv6 > SLAAC; link-local sorts last within a source.
+// Static > DHCPv6 > SLAAC > Link Local.
 function sort_ipv6(addrs: LanDeviceIpv6View[]): LanDeviceIpv6View[] {
   const rank = (source: string) =>
-    source === "static" ? 0 : source === "dhcpv6" ? 1 : 2;
-  const link_local = (ip: string) => ip.toLowerCase().startsWith("fe80:");
-  return [...addrs].sort(
-    (a, b) =>
-      rank(a.source) - rank(b.source) ||
-      Number(link_local(a.ip)) - Number(link_local(b.ip)),
-  );
+    source === "static"
+      ? 0
+      : source === "dhcpv6"
+        ? 1
+        : source === "slaac"
+          ? 2
+          : 3;
+  return [...addrs].sort((a, b) => rank(a.source) - rank(b.source));
 }
 
 function primary_ipv6(device: LanDeviceView): string {
@@ -130,6 +131,15 @@ function primary_ipv6_source(device: LanDeviceView): string {
 
 function rest_ipv6(device: LanDeviceView): LanDeviceIpv6View[] {
   return sort_ipv6(device.ipv6_addrs).slice(1);
+}
+
+// IPv6 'static' means the address is generated from the device's enrolled
+// static suffix; label it distinctly from an IPv4 static address.
+// 'link_local' is an API scope classification: fe80::/10 addresses are
+// auto-generated on every interface and carry no assignment semantics.
+function ipv6_source_label(source: string): string {
+  if (source === "static") return t("lan_device.source_static_suffix");
+  return t(`lan_device.source_${source}`);
 }
 
 // ── Lease countdown ──
@@ -186,7 +196,7 @@ function quickBind(device: LanDeviceView) {
 </script>
 
 <template>
-  <n-flex vertical style="flex: 1">
+  <n-flex vertical style="flex: 1; overflow: hidden; min-height: 0">
     <n-flex justify="space-between" align="center">
       <n-flex align="center" size="small">
         <span>{{ t("lan_device.filter_iface") }}</span>
@@ -209,197 +219,211 @@ function quickBind(device: LanDeviceView) {
       }}</n-button>
     </n-flex>
 
-    <n-table
-      v-if="show_devices.length > 0"
-      :bordered="true"
-      striped
-      size="small"
-    >
-      <thead>
-        <tr>
-          <th class="assign-head">{{ t("lan_device.name") }}</th>
-          <th class="assign-head">{{ t("lan_device.mac_addr") }}</th>
-          <th class="assign-head">{{ t("lan_device.ipv4") }}</th>
-          <th class="assign-head">{{ t("lan_device.ipv6") }}</th>
-          <th class="assign-head">{{ t("lan_device.iface") }}</th>
-          <th class="assign-head">{{ t("lan_device.online") }}</th>
-          <th class="assign-head">{{ t("lan_device.last_active") }}</th>
-          <th class="assign-head" style="width: 168px">
-            {{ t("lan_device.arp_presence") }}
-          </th>
-          <th class="assign-head">{{ t("lan_device.lease_left") }}</th>
-          <th class="assign-head" style="width: 60px">
-            {{ t("lan_device.actions") }}
-          </th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr v-for="device in show_devices" :key="device.entry_id">
-          <td class="assign-item">{{ device_name(device) }}</td>
-          <td class="assign-item">
-            <n-flex justify="center" align="center" size="small">
-              <span>{{
-                frontEndStore.MASK_INFO(mac_as_string(device.mac))
-              }}</span>
-              <n-tag
-                v-if="device.device_id"
-                size="tiny"
-                type="primary"
-                :bordered="false"
+    <n-scrollbar v-if="show_devices.length > 0" class="table-scroll">
+      <n-table :bordered="true" striped size="small">
+        <thead>
+          <tr>
+            <th class="assign-head">{{ t("lan_device.name") }}</th>
+            <th class="assign-head">{{ t("lan_device.mac_addr") }}</th>
+            <th class="assign-head">{{ t("lan_device.ipv4") }}</th>
+            <th class="assign-head">{{ t("lan_device.ipv6") }}</th>
+            <th class="assign-head">{{ t("lan_device.iface") }}</th>
+            <th class="assign-head">{{ t("lan_device.online") }}</th>
+            <th class="assign-head">{{ t("lan_device.last_active") }}</th>
+            <th class="assign-head" style="width: 168px">
+              {{ t("lan_device.arp_presence") }}
+            </th>
+            <th class="assign-head">{{ t("lan_device.lease_left") }}</th>
+            <th class="assign-head" style="width: 60px">
+              {{ t("lan_device.actions") }}
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="device in show_devices" :key="device.entry_id">
+            <td class="assign-item">{{ device_name(device) }}</td>
+            <td class="assign-item">
+              <n-flex justify="center" align="center" size="small">
+                <span>{{
+                  frontEndStore.MASK_INFO(mac_as_string(device.mac))
+                }}</span>
+                <n-tag
+                  v-if="device.device_id"
+                  size="tiny"
+                  type="primary"
+                  :bordered="false"
+                >
+                  {{ t("lan_device.enrolled") }}
+                </n-tag>
+              </n-flex>
+            </td>
+            <td class="assign-item">
+              <n-flex
+                v-if="device.ipv4"
+                justify="center"
+                align="center"
+                size="small"
               >
-                {{ t("lan_device.enrolled") }}
-              </n-tag>
-            </n-flex>
-          </td>
-          <td class="assign-item">
-            <n-flex
-              v-if="device.ipv4"
-              justify="center"
-              align="center"
-              size="small"
-            >
-              <span>{{ frontEndStore.MASK_INFO(device.ipv4.ip) }}</span>
-              <n-tag
-                size="tiny"
-                :bordered="false"
-                :type="device.ipv4.source === 'static' ? 'info' : 'default'"
-              >
-                {{ t(`lan_device.source_${device.ipv4.source}`) }}
-              </n-tag>
-              <n-tooltip
-                v-if="
-                  hasConfiguredIpv4Mismatch(
-                    device.ipv4.ip,
-                    mac_as_string(device.mac),
-                    device.iface_name,
-                  )
-                "
-                trigger="hover"
-              >
-                <template #trigger>
-                  <n-tag size="tiny" type="warning" :bordered="false">IP</n-tag>
-                </template>
-                <div>{{ t("device.lease_ip_mismatch") }}</div>
-                <div>
-                  {{ t("device.observed_ip") }}:
-                  {{ frontEndStore.MASK_INFO(device.ipv4.ip) }}
-                </div>
-                <div>
-                  {{ t("device.configured_ip") }}:
-                  {{
-                    frontEndStore.MASK_INFO(
-                      getConfiguredIpv4(mac_as_string(device.mac)) || "",
+                <span>{{ frontEndStore.MASK_INFO(device.ipv4.ip) }}</span>
+                <n-tag
+                  size="tiny"
+                  :bordered="false"
+                  :type="
+                    device.ipv4.source === 'static'
+                      ? 'info'
+                      : device.ipv4.source === 'arp'
+                        ? 'warning'
+                        : 'default'
+                  "
+                >
+                  {{ t(`lan_device.source_${device.ipv4.source}`) }}
+                </n-tag>
+                <n-tooltip
+                  v-if="
+                    hasConfiguredIpv4Mismatch(
+                      device.ipv4.ip,
+                      mac_as_string(device.mac),
+                      device.iface_name,
                     )
-                  }}
-                </div>
-              </n-tooltip>
-            </n-flex>
-            <span v-else>—</span>
-          </td>
-          <td class="assign-item">
-            <n-flex
-              v-if="device.ipv6_addrs.length > 0"
-              justify="center"
-              align="center"
-              size="small"
-            >
-              <span>{{ frontEndStore.MASK_INFO(primary_ipv6(device)) }}</span>
-              <n-tag
-                size="tiny"
-                :bordered="false"
-                :type="
-                  primary_ipv6_source(device) === 'slaac' ? 'default' : 'info'
-                "
-              >
-                {{ t(`lan_device.source_${primary_ipv6_source(device)}`) }}
-              </n-tag>
-              <n-tooltip v-if="rest_ipv6(device).length > 0" trigger="hover">
-                <template #trigger>
-                  <n-tag size="tiny" :bordered="false"
-                    >+{{ rest_ipv6(device).length }}</n-tag
-                  >
-                </template>
-                <div v-for="addr in rest_ipv6(device)" :key="addr.ip">
-                  {{ frontEndStore.MASK_INFO(addr.ip) }} ·
-                  {{ t(`lan_device.source_${addr.source}`) }}
-                </div>
-              </n-tooltip>
-            </n-flex>
-            <span v-else>—</span>
-          </td>
-          <td class="assign-item">
-            {{ device.iface_name ?? t("lan_device.unknown") }}
-          </td>
-          <td class="assign-item">
-            <n-tag
-              size="small"
-              :type="device.online ? 'success' : 'default'"
-              :bordered="false"
-            >
-              {{
-                device.online
-                  ? t("lan_device.online_yes")
-                  : t("lan_device.online_no")
-              }}
-            </n-tag>
-          </td>
-          <td class="assign-item">
-            <n-time
-              v-if="device.last_active > 0"
-              :time="device.last_active"
-              :time-zone="prefStore.timezone"
-            />
-            <span v-else>—</span>
-          </td>
-          <td class="assign-item">
-            <PresenceDots
-              :presence="device.arp_presence"
-              :last-seen="device.arp_last_seen"
-            />
-          </td>
-          <td class="assign-item">
-            <n-tooltip v-if="device.dhcp_lease" trigger="hover">
-              <template #trigger>
-                <n-countdown
-                  ref="countdownRefs"
-                  @finish="on_countdown_finish"
-                  :duration="lease_remaining_ms(device)"
-                  :active="true"
-                />
-              </template>
-              <div>
-                {{ t("lan_device.lease_ip") }}:
-                {{ frontEndStore.MASK_INFO(device.dhcp_lease.ip) }}
-              </div>
-              <div>
-                {{ t("lan_device.lease_last_request") }}:
-                <n-time
-                  :time="device.dhcp_lease.last_request"
-                  :time-zone="prefStore.timezone"
-                />
-              </div>
-            </n-tooltip>
-            <span v-else>—</span>
-          </td>
-          <td class="assign-item">
-            <n-button size="tiny" quaternary circle @click="quickBind(device)">
-              <template #icon>
-                <n-icon>
-                  <Edit
-                    v-if="
-                      enrolledDeviceStore.GET_BINDING_ID(
-                        mac_as_string(device.mac),
+                  "
+                  trigger="hover"
+                >
+                  <template #trigger>
+                    <n-tag size="tiny" type="warning" :bordered="false"
+                      >IP</n-tag
+                    >
+                  </template>
+                  <div>{{ t("device.lease_ip_mismatch") }}</div>
+                  <div>
+                    {{ t("device.observed_ip") }}:
+                    {{ frontEndStore.MASK_INFO(device.ipv4.ip) }}
+                  </div>
+                  <div>
+                    {{ t("device.configured_ip") }}:
+                    {{
+                      frontEndStore.MASK_INFO(
+                        getConfiguredIpv4(mac_as_string(device.mac)) || "",
                       )
-                    "
+                    }}
+                  </div>
+                </n-tooltip>
+              </n-flex>
+              <span v-else>—</span>
+            </td>
+            <td class="assign-item">
+              <n-flex
+                v-if="device.ipv6_addrs.length > 0"
+                justify="center"
+                align="center"
+                size="small"
+              >
+                <span>{{ frontEndStore.MASK_INFO(primary_ipv6(device)) }}</span>
+                <n-tag
+                  size="tiny"
+                  :bordered="false"
+                  :type="
+                    ['slaac', 'link_local'].includes(
+                      primary_ipv6_source(device),
+                    )
+                      ? 'default'
+                      : 'info'
+                  "
+                >
+                  {{ ipv6_source_label(primary_ipv6_source(device)) }}
+                </n-tag>
+                <n-tooltip v-if="rest_ipv6(device).length > 0" trigger="hover">
+                  <template #trigger>
+                    <n-tag size="tiny" :bordered="false"
+                      >+{{ rest_ipv6(device).length }}</n-tag
+                    >
+                  </template>
+                  <div v-for="addr in rest_ipv6(device)" :key="addr.ip">
+                    {{ frontEndStore.MASK_INFO(addr.ip) }} ·
+                    {{ ipv6_source_label(addr.source) }}
+                  </div>
+                </n-tooltip>
+              </n-flex>
+              <span v-else>—</span>
+            </td>
+            <td class="assign-item">
+              {{ device.iface_name ?? t("lan_device.unknown") }}
+            </td>
+            <td class="assign-item">
+              <n-tag
+                size="small"
+                :type="device.online ? 'success' : 'default'"
+                :bordered="false"
+              >
+                {{
+                  device.online
+                    ? t("lan_device.online_yes")
+                    : t("lan_device.online_no")
+                }}
+              </n-tag>
+            </td>
+            <td class="assign-item">
+              <n-time
+                v-if="device.last_active > 0"
+                :time="device.last_active"
+                :time-zone="prefStore.timezone"
+              />
+              <span v-else>—</span>
+            </td>
+            <td class="assign-item">
+              <PresenceDots
+                :presence="device.arp_presence"
+                :last-seen="device.arp_last_seen"
+              />
+            </td>
+            <td class="assign-item">
+              <n-tooltip v-if="device.dhcp_lease" trigger="hover">
+                <template #trigger>
+                  <n-countdown
+                    ref="countdownRefs"
+                    @finish="on_countdown_finish"
+                    :duration="lease_remaining_ms(device)"
+                    :active="true"
                   />
-                  <AddAlt v-else />
-                </n-icon>
-              </template>
-            </n-button>
-          </td>
-        </tr>
-      </tbody>
-    </n-table>
+                </template>
+                <div>
+                  {{ t("lan_device.lease_ip") }}:
+                  {{ frontEndStore.MASK_INFO(device.dhcp_lease.ip) }}
+                </div>
+                <div>
+                  {{ t("lan_device.lease_last_request") }}:
+                  <n-time
+                    :time="device.dhcp_lease.last_request"
+                    :time-zone="prefStore.timezone"
+                  />
+                </div>
+              </n-tooltip>
+              <span v-else>—</span>
+            </td>
+            <td class="assign-item">
+              <n-button
+                size="tiny"
+                quaternary
+                circle
+                @click="quickBind(device)"
+              >
+                <template #icon>
+                  <n-icon>
+                    <Edit
+                      v-if="
+                        enrolledDeviceStore.GET_BINDING_ID(
+                          mac_as_string(device.mac),
+                        )
+                      "
+                    />
+                    <AddAlt v-else />
+                  </n-icon>
+                </template>
+              </n-button>
+            </td>
+          </tr>
+        </tbody>
+      </n-table>
+    </n-scrollbar>
     <n-empty v-else style="flex: 1" :description="t('lan_device.empty')" />
   </n-flex>
 
@@ -412,8 +436,15 @@ function quickBind(device: LanDeviceView) {
 </template>
 
 <style scoped>
+.table-scroll {
+  flex: 1;
+  min-height: 0;
+}
 .assign-head {
   text-align: center;
+  position: sticky;
+  top: 0;
+  z-index: 1;
 }
 .assign-item {
   text-align: center;

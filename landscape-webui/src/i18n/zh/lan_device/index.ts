@@ -22,9 +22,11 @@ export default {
   filter_iface: "接口",
   filter_online: "在线状态",
   source_static: "静态",
+  source_static_suffix: "静态后缀",
   source_lease: "DHCP",
   source_arp: "ARP",
   source_dhcpv6: "DHCPv6",
   source_slaac: "SLAAC",
+  source_link_local: "链路本地",
   empty: "尚未观测到局域网设备",
 };
