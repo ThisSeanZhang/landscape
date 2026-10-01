@@ -9,13 +9,15 @@ use std::sync::Arc;
 use dashmap::DashMap;
 use landscape_common::event::hub::{
     EnrolledDeviceEvent, IPv4AssignEvent, IPv6AssignEvent, LanDeviceChange, LanDeviceEvent,
-    LanDiscoveryEvent,
+    LanDiscoveryEvent, LanDiscoverySource,
 };
 use landscape_common::net::MacAddr;
 use landscape_common::utils::time::get_f64_timestamp;
 use uuid::Uuid;
 
-use super::entry::{AddressSourceV4, AddressSourceV6, LanDeviceEntry, ipv6_interface_id};
+use super::entry::{
+    AddressSourceV4, AddressSourceV6, DhcpLeaseTimes, LanDeviceEntry, ipv6_interface_id,
+};
 use super::{ANONYMOUS_TTL_SECS, DEVICE_ID_REANCHOR_IDLE_SECS, LanDeviceDirectory};
 
 impl LanDeviceDirectory {
@@ -453,6 +455,7 @@ impl LanDeviceDirectory {
                     let keep_static = current.is_some_and(|(ip, source)| {
                         source == AddressSourceV4::Static && ip == info.ip
                     });
+                    let now = get_f64_timestamp();
                     self.update_entry(&id, |e| {
                         e.mac = Some(info.mac);
                         if claimed && !keep_static {
@@ -460,10 +463,29 @@ impl LanDeviceDirectory {
                             e.ipv4_source = Some(AddressSourceV4::Lease);
                         }
                         e.iface_name = Some(info.iface_name.clone());
-                        e.last_active = get_f64_timestamp();
+                        e.last_active = now;
+                        if let Some(secs) = info.lease_time_secs {
+                            e.dhcp_lease = Some(DhcpLeaseTimes {
+                                ip: info.ip,
+                                last_request: now,
+                                expires: now + f64::from(secs),
+                            });
+                        }
                     });
                 } else {
-                    self.update_entry(&id, |e| e.last_active = get_f64_timestamp());
+                    // The server still granted a lease: record its clock even
+                    // though the enrolled static IPv4 keeps address ownership.
+                    let now = get_f64_timestamp();
+                    self.update_entry(&id, |e| {
+                        e.last_active = now;
+                        if let Some(secs) = info.lease_time_secs {
+                            e.dhcp_lease = Some(DhcpLeaseTimes {
+                                ip: info.ip,
+                                last_request: now,
+                                expires: now + f64::from(secs),
+                            });
+                        }
+                    });
                 }
                 if let Some(hostname) =
                     info.hostname.as_ref().and_then(|h| idna::domain_to_ascii(h).ok())
@@ -486,7 +508,15 @@ impl LanDeviceDirectory {
                         self.claim_hostname(&id, None, false);
                     }
                 }
-                self.update_entry(&id, |e| e.last_active = get_f64_timestamp());
+                let now = get_f64_timestamp();
+                self.update_entry(&id, |e| {
+                    e.last_active = now;
+                    // Clear only the matching lease's clock: an `Expired` for
+                    // an old address must not wipe a newer lease's timing.
+                    if e.dhcp_lease.as_ref().is_some_and(|l| l.ip == info.ip) {
+                        e.dhcp_lease = None;
+                    }
+                });
             }
         }
     }
@@ -612,6 +642,12 @@ impl LanDeviceDirectory {
         self.update_entry(&id, |e| {
             e.iface_name = Some(event.iface_name.clone());
             e.last_active = now;
+            // Strictly ARP semantics: the liveness trail only counts
+            // answered scans; ND observations do not mark presence.
+            if event.source == LanDiscoverySource::Arp {
+                e.arp_presence.mark_seen(now);
+                e.arp_last_seen = Some(now);
+            }
         });
     }
 

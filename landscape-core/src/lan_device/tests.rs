@@ -1,6 +1,7 @@
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::sync::Arc;
 
+use landscape_common::LAND_ARP_SCAN_INTERVAL;
 use landscape_common::config_service::enrolled_device::EnrolledDevice;
 use landscape_common::event::hub::{
     EnrolledDeviceEvent, IPv4AssignEvent, IPv4AssignInfo, IPv6AssignEvent, IPv6AssignInfo,
@@ -56,6 +57,24 @@ fn ipv4_allocated(
         ip,
         hostname: hostname.map(str::to_string),
         device_id,
+        lease_time_secs: None,
+    })
+}
+
+fn ipv4_allocated_with_lease(
+    mac: [u8; 6],
+    ip: Ipv4Addr,
+    hostname: Option<&str>,
+    device_id: Option<Uuid>,
+    lease_time_secs: u32,
+) -> IPv4AssignEvent {
+    IPv4AssignEvent::Allocated(IPv4AssignInfo {
+        iface_name: "lan0".to_string(),
+        mac: v4(mac),
+        ip,
+        hostname: hostname.map(str::to_string),
+        device_id,
+        lease_time_secs: Some(lease_time_secs),
     })
 }
 
@@ -66,6 +85,7 @@ fn ipv4_expired(mac: [u8; 6], ip: Ipv4Addr, hostname: Option<&str>) -> IPv4Assig
         ip,
         hostname: hostname.map(str::to_string),
         device_id: None,
+        lease_time_secs: None,
     })
 }
 
@@ -803,4 +823,115 @@ fn stripped_shell_is_eventually_gc_ed() {
         events.iter().any(|e| e.change == LanDeviceChange::Removed && e.mac == Some(v4(mac1))),
         "{events:?}"
     );
+}
+
+// ── ARP presence trail & DHCP lease clock ───────────────────────────
+
+/// One ARP scan interval in seconds (profile-dependent; tests reference
+/// the same constant the directory folds with).
+fn scan_interval_secs() -> f64 {
+    LAND_ARP_SCAN_INTERVAL as f64 / 1000.0
+}
+
+#[test]
+fn arp_presence_unit_bucketing() {
+    let mut presence = ArpPresence::default();
+    let t0 = 1_000_000.0;
+
+    // Never seen: all absent.
+    assert_eq!(presence.series(t0), vec![false; 24]);
+
+    presence.mark_seen(t0);
+    presence.mark_seen(t0 + 1.0); // same bucket: idempotent
+    let series = presence.series(t0);
+    assert_eq!(series.iter().filter(|&&b| b).count(), 1);
+    assert!(series[23], "newest bucket: {series:?}");
+
+    // A gap of three buckets: two absent slots in between.
+    presence.mark_seen(t0 + scan_interval_secs() * 3.0);
+    let series = presence.series(t0 + scan_interval_secs() * 3.0);
+    assert_eq!(series.iter().filter(|&&b| b).count(), 2, "{series:?}");
+    assert!(series[23] && series[20], "{series:?}");
+
+    // Silence for ten buckets: the trail stays wall-clock aligned, the
+    // newest slots read absent.
+    let series = presence.series(t0 + scan_interval_secs() * 13.0);
+    assert!(series[10] && series[13], "{series:?}");
+    assert!(!series[23], "{series:?}");
+}
+
+#[test]
+fn arp_presence_unit_full_window_reset() {
+    let mut presence = ArpPresence::default();
+    let t0 = 2_000_000.0;
+    presence.mark_seen(t0);
+
+    // More than a full window later: the old trail is gone entirely.
+    presence.mark_seen(t0 + scan_interval_secs() * 30.0);
+    let series = presence.series(t0 + scan_interval_secs() * 30.0);
+    assert_eq!(series.iter().filter(|&&b| b).count(), 1, "{series:?}");
+    assert!(series[23]);
+}
+
+#[test]
+fn arp_presence_marked_only_by_arp_source() {
+    let dir = directory(&[]);
+    let mac = [0, 0, 0, 0, 0, 41];
+
+    // ND observation: creates the entry but must not mark ARP presence.
+    dir.apply_discovery_event(neighbor(Some(mac), ipv6("fd00::41")));
+    let entry = dir.entry_by_mac(&v4(mac)).unwrap();
+    assert_eq!(entry.arp_last_seen, None);
+    assert_eq!(entry.arp_presence.series(get_f64_timestamp()), vec![false; 24]);
+
+    // An ARP answer marks both.
+    dir.apply_discovery_event(discovery(Some(mac), IpAddr::V4(ipv4("10.0.0.41"))));
+    let entry = dir.entry_by_mac(&v4(mac)).unwrap();
+    assert!(entry.arp_last_seen.is_some());
+    assert!(entry.arp_presence.series(get_f64_timestamp())[23]);
+}
+
+#[test]
+fn dhcp_lease_clock_recorded_and_renewed_silently() {
+    let (dir, mut rx) = directory_with_outlet();
+    let mac = [0, 0, 0, 0, 0, 42];
+    let ip = ipv4("10.0.0.42");
+
+    dir.apply_ipv4_event(ipv4_allocated_with_lease(mac, ip, None, None, 3600));
+    drain(&mut rx); // creation + first address events
+
+    let entry = dir.entry_by_ipv4(&ip).unwrap();
+    let lease = entry.dhcp_lease.expect("lease clock recorded");
+    assert_eq!(lease.ip, ip);
+    assert!((lease.expires - lease.last_request - 3600.0).abs() < 1e-6);
+
+    // Renewal: same IP, no observable field moves → silent.
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    dir.apply_ipv4_event(ipv4_allocated_with_lease(mac, ip, None, None, 3600));
+    assert!(drain(&mut rx).is_empty(), "renewal must be silent");
+
+    let entry = dir.entry_by_ipv4(&ip).unwrap();
+    let renewed = entry.dhcp_lease.unwrap();
+    assert!(renewed.last_request >= lease.last_request);
+    assert!(renewed.expires >= lease.expires);
+}
+
+#[test]
+fn dhcp_lease_clock_cleared_only_for_matching_ip() {
+    let dir = directory(&[]);
+    let mac = [0, 0, 0, 0, 0, 43];
+    let ip1 = ipv4("10.0.0.43");
+    let ip2 = ipv4("10.0.0.44");
+
+    dir.apply_ipv4_event(ipv4_allocated_with_lease(mac, ip1, None, None, 3600));
+    // The device moves to a new address; the old lease then expires.
+    dir.apply_ipv4_event(ipv4_allocated_with_lease(mac, ip2, None, None, 3600));
+    dir.apply_ipv4_event(ipv4_expired(mac, ip1, None));
+    let entry = dir.entry_by_mac(&v4(mac)).unwrap();
+    assert_eq!(entry.dhcp_lease.map(|l| l.ip), Some(ip2), "newer clock survives");
+
+    // Expiry of the current address clears it.
+    dir.apply_ipv4_event(ipv4_expired(mac, ip2, None));
+    let entry = dir.entry_by_mac(&v4(mac)).unwrap();
+    assert_eq!(entry.dhcp_lease, None);
 }

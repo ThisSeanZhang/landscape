@@ -3,12 +3,86 @@
 use std::collections::HashMap;
 use std::net::{Ipv4Addr, Ipv6Addr};
 
+use landscape_common::LAND_ARP_SCAN_INTERVAL;
 use landscape_common::event::hub::IPv6AssignSource;
 use landscape_common::net::MacAddr;
 use landscape_common::utils::time::get_f64_timestamp;
 use uuid::Uuid;
 
 use super::ONLINE_IDLE_SECS;
+
+/// Liveness trail: one bit per ARP scan interval ([`LAND_ARP_SCAN_INTERVAL`]),
+/// 24 slots — 24h in release builds, 2h in debug. A set bit means the device
+/// answered the scan in that bucket; buckets between observations read as
+/// absent.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct ArpPresence {
+    /// Bucket index (`ts / LAND_ARP_SCAN_INTERVAL`) of the newest bucket
+    /// covered by `bits`. `0` means never seen.
+    last_bucket: u64,
+    /// 24-bit ring: bit `bucket % 24` is set when that bucket answered.
+    bits: u32,
+}
+
+impl ArpPresence {
+    const SLOTS: u64 = 24;
+
+    pub fn mark_seen(&mut self, now_secs: f64) {
+        let bucket = secs_to_bucket(now_secs);
+        if bucket <= self.last_bucket {
+            // Same bucket (or backdated clock): idempotently set the bit.
+            self.bits |= 1 << (self.last_bucket % Self::SLOTS);
+            return;
+        }
+        let delta = bucket - self.last_bucket;
+        if delta >= Self::SLOTS {
+            // The whole window aged out since the last observation.
+            self.bits = 0;
+        } else {
+            // The `delta` oldest slots leave the window; their positions are
+            // the `delta` consecutive slots ending at (and including) the new
+            // bucket's slot, which the new observation then reclaims.
+            let newest = bucket % Self::SLOTS;
+            for k in 0..delta {
+                self.bits &= !(1 << ((newest + Self::SLOTS - k) % Self::SLOTS));
+            }
+        }
+        self.last_bucket = bucket;
+        self.bits |= 1 << (bucket % Self::SLOTS);
+    }
+
+    /// The 24 buckets ending at the bucket containing `now_secs`; index 0 is
+    /// the oldest. Unobserved buckets read as absent.
+    pub fn series(&self, now_secs: f64) -> Vec<bool> {
+        let current = secs_to_bucket(now_secs);
+        (0..Self::SLOTS)
+            .rev()
+            .map(|k| {
+                let bucket = current.saturating_sub(k);
+                let in_window = bucket <= self.last_bucket
+                    && self.last_bucket - bucket < Self::SLOTS
+                    && self.last_bucket != 0;
+                in_window && (self.bits & (1 << (bucket % Self::SLOTS))) != 0
+            })
+            .collect()
+    }
+}
+
+fn secs_to_bucket(secs: f64) -> u64 {
+    ((secs * 1000.0) as u64) / LAND_ARP_SCAN_INTERVAL
+}
+
+/// DHCPv4 lease timing attached to an entry by `Allocated` events. `ip`
+/// identifies which lease the clock belongs to so an `Expired` for an old
+/// address cannot wipe a newer lease's timing.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DhcpLeaseTimes {
+    pub ip: Ipv4Addr,
+    /// Epoch seconds of the last request/assignment/renewal.
+    pub last_request: f64,
+    /// Epoch seconds when the lease expires (`last_request + lease_time`).
+    pub expires: f64,
+}
 
 /// How an IPv4 address came to be owned by a device.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -99,6 +173,14 @@ pub struct LanDeviceEntry {
     pub ipv6_addrs: HashMap<Ipv6Addr, AddressSourceV6>,
     pub iface_name: Option<String>,
     pub last_active: f64,
+    /// ARP liveness trail (strictly ARP-sourced observations; ND does not
+    /// count). Silent field: changes never emit `LanDeviceChange`.
+    pub arp_presence: ArpPresence,
+    /// Most recent ARP scan answer, epoch seconds.
+    pub arp_last_seen: Option<f64>,
+    /// DHCPv4 lease clock of the most recent `Allocated` event.
+    /// Silent field: changes never emit `LanDeviceChange`.
+    pub dhcp_lease: Option<DhcpLeaseTimes>,
 }
 
 impl LanDeviceEntry {
@@ -116,6 +198,9 @@ impl LanDeviceEntry {
             ipv6_addrs: HashMap::new(),
             iface_name: None,
             last_active: now,
+            arp_presence: ArpPresence::default(),
+            arp_last_seen: None,
+            dhcp_lease: None,
         }
     }
 

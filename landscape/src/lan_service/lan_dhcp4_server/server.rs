@@ -202,6 +202,7 @@ pub async fn dhcp_v4_server(
                         ip,
                         hostname,
                         device_id,
+                        lease_time_secs: None,
                     })).ok();
                 }
                 timeout_timer.as_mut().reset(tokio::time::Instant::now() + tokio::time::Duration::from_secs(IP_EXPIRE_INTERVAL));
@@ -290,6 +291,7 @@ async fn handle_dhcp_message(
                             ip: payload.yiaddr(),
                             hostname,
                             device_id,
+                            lease_time_secs: Some(dhcp_server.address_lease_time),
                         }))
                         .ok();
                 }
@@ -335,6 +337,7 @@ async fn handle_dhcp_message(
                             ip,
                             hostname,
                             device_id,
+                            lease_time_secs: None,
                         }))
                         .ok();
                 }
@@ -359,6 +362,7 @@ async fn handle_dhcp_message(
                             ip,
                             hostname,
                             device_id,
+                            lease_time_secs: None,
                         }))
                         .ok();
                 }

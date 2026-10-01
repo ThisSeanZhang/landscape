@@ -12,6 +12,9 @@ pub struct IPv4AssignInfo {
     pub ip: Ipv4Addr,
     pub hostname: Option<String>,
     pub device_id: Option<Uuid>,
+    /// DHCPv4 lease duration (option 51) in seconds, carried by `Allocated`
+    /// events so consumers can track lease expiry. `None` on `Expired`.
+    pub lease_time_secs: Option<u32>,
 }
 
 #[derive(Debug, Clone)]

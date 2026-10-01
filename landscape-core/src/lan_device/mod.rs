@@ -23,7 +23,7 @@ mod entry;
 mod snapshot;
 mod writer;
 
-pub use entry::{AddressSourceV4, AddressSourceV6, LanDeviceEntry};
+pub use entry::{AddressSourceV4, AddressSourceV6, ArpPresence, DhcpLeaseTimes, LanDeviceEntry};
 pub use snapshot::DirectorySnapshot;
 
 #[cfg(test)]
