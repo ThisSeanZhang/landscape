@@ -30,7 +30,6 @@ use arc_swap::ArcSwap;
 use landscape_common::sys_service::lan_hostname::LanHostnameConfig;
 
 use crate::LandscapeSingleIpInfo;
-use crate::cert::SharedSniResolver;
 use crate::get_iface_by_name;
 use crate::lan_service::lan_dhcp4_server::server::{DHCPv4Server, DhcpV4DnrRuntimeContext};
 use crate::lan_service::lan_dhcp4_server::status::{DhcpV4AssignStatus, StaticBindingEntry};
@@ -39,6 +38,7 @@ use landscape_common::event::hub::{
     EnrolledDeviceEvent, EnrolledDeviceEventReader, IPv4AssignEventSender,
 };
 use landscape_common::lan_service::mac_binding::MacBindingDataplane;
+use landscape_core::cert::SharedSniResolver;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct IfaceIpv4Cleanup {

@@ -1,11 +1,9 @@
 use std::collections::{HashMap, HashSet};
+use std::future::Future;
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::cert::{
-    SharedSniResolver, extract_cert_dns_names_from_pem, reload_api_tls_resolver,
-    reload_gateway_tls_resolver, validate_certified_key_from_pem,
-};
+use crate::cert::ensure_auto_api_fallback_cert;
 use crate::dns::redirect_service::DNSRedirectService;
 use chrono::{Datelike, Duration as ChronoDuration, Utc};
 use instant_acme::{
@@ -17,14 +15,19 @@ use landscape_common::cert::account::AccountStatus;
 use landscape_common::cert::order::{
     AcmeCertConfig, CertConfig, CertParsedInfo, CertStatus, CertType, ChallengeType,
 };
-use landscape_common::concurrency::{spawn_task, task_label};
+use landscape_common::concurrency::task_label;
 use landscape_common::database::store::{Change, ConfigStore};
 use landscape_common::dns::provider_profile::DnsProviderProfile;
 use landscape_common::dns::redirect::{
     DEFAULT_BLOCK_METADATA_QUERIES, DEFAULT_STATIC_DNS_REDIRECT_TTL_SECS, DnsRedirectAnswerMode,
     DynamicDnsMatch, DynamicDnsRedirectBatch, DynamicDnsRedirectRecord, DynamicDnsRedirectScope,
 };
+use landscape_common::memtrack::{TaggedFuture, subsystem_from_task_label};
 use landscape_common::service::controller::ConfigStoreController;
+use landscape_core::cert::{
+    CertSnapshotProvider, CertUsage, SharedSniResolver, build_certified_key_from_pem,
+    extract_cert_dns_names_from_pem, reload_tls_resolver, validate_certified_key_from_pem,
+};
 use landscape_database::cert::repository::CertRepository;
 use landscape_database::dns_provider_profile::repository::DnsProviderProfileRepository;
 use landscape_database::provider::LandscapeDBServiceProvider;
@@ -34,13 +37,18 @@ use rcgen::{
 use rustls_pki_types::CertificateDer;
 use sha2::{Digest, Sha256};
 use tokio::sync::Mutex;
+use tokio::task::JoinHandle as TokioJoinHandle;
+use tokio::time::MissedTickBehavior;
 use tokio_util::sync::CancellationToken;
+use tokio_util::task::TaskTracker;
+use tracing::Instrument;
 use uuid::Uuid;
 
 use super::account_service::CertAccountService;
 use super::dns_provider;
 
 const API_CERT_DYNAMIC_DNS_REDIRECT_SOURCE_ID: &str = "cert-api-local-ips";
+const CERT_RENEWAL_CHECK_INTERVAL_SECS: u64 = 3600;
 
 #[derive(Clone)]
 pub struct CertService {
@@ -51,6 +59,8 @@ pub struct CertService {
     gateway_tls_resolver: SharedSniResolver,
     api_dns_redirect_service: Option<DNSRedirectService>,
     tasks: Arc<Mutex<HashMap<Uuid, CertIssueTask>>>,
+    stop_token: CancellationToken,
+    tracker: TaskTracker,
 }
 
 #[derive(Clone)]
@@ -87,6 +97,8 @@ impl CertService {
             gateway_tls_resolver: SharedSniResolver::new(),
             api_dns_redirect_service,
             tasks: Arc::new(Mutex::new(HashMap::new())),
+            stop_token: CancellationToken::new(),
+            tracker: TaskTracker::new(),
         };
 
         // Startup resume: re-trigger ACME certs stuck in Processing
@@ -101,7 +113,7 @@ impl CertService {
                 let svc = service.clone();
                 let id = cert.id;
                 tracing::info!("Resuming issuance for cert {id}");
-                spawn_task(task_label::task::CERT_ORDER_REFRESH, async move {
+                service.spawn_tracked(task_label::task::CERT_ORDER_REFRESH, async move {
                     if let Err(e) = svc.enqueue_issuance_task(id).await {
                         tracing::error!("Failed to resume cert {id}: {e}");
                     }
@@ -112,11 +124,20 @@ impl CertService {
         // Auto-renewal background task: check every hour
         {
             let svc = service.clone();
-            spawn_task(task_label::task::CERT_ORDER_REFRESH, async move {
+            let token = service.stop_token.clone();
+            service.spawn_tracked(task_label::task::CERT_ORDER_REFRESH, async move {
+                let mut ticker =
+                    tokio::time::interval(Duration::from_secs(CERT_RENEWAL_CHECK_INTERVAL_SECS));
+                ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
                 loop {
-                    tokio::time::sleep(Duration::from_secs(3600)).await;
-                    svc.check_auto_renewals().await;
+                    tokio::select! {
+                        _ = token.cancelled() => break,
+                        _ = ticker.tick() => {
+                            svc.check_auto_renewals().await;
+                        }
+                    }
                 }
+                tracing::info!("cert auto-renewal check loop stopped");
             });
         }
 
@@ -131,16 +152,57 @@ impl CertService {
         self.gateway_tls_resolver.clone()
     }
 
+    fn spawn_tracked<Fut>(&self, label: &'static str, future: Fut) -> TokioJoinHandle<Fut::Output>
+    where
+        Fut: Future + Send + 'static,
+        Fut::Output: Send + 'static,
+    {
+        let tag = subsystem_from_task_label(label);
+        self.tracker.spawn(
+            TaggedFuture::new(tag, future).instrument(tracing::info_span!("task", task = label)),
+        )
+    }
+
+    pub async fn shutdown_and_wait(&self, timeout: Duration) {
+        self.stop_token.cancel();
+        let cancels: Vec<CancellationToken> = {
+            let tasks = self.tasks.lock().await;
+            tasks.values().map(|task| task.cancel.clone()).collect()
+        };
+        for cancel in cancels {
+            cancel.cancel();
+        }
+        self.tracker.close();
+        match tokio::time::timeout(timeout, self.tracker.wait()).await {
+            Ok(()) => tracing::info!("cert background tasks stopped"),
+            Err(_) => tracing::warn!(
+                "cert shutdown timed out after {timeout:?}; in-flight issuance may still be draining"
+            ),
+        }
+    }
+
     pub async fn reload_api_tls_mapping(&self) -> Result<usize, CertError> {
-        let inserted_count = reload_api_tls_resolver(self, &self.api_tls_resolver)
-            .await
-            .map_err(CertError::IssuanceFailed)?;
+        let fallback_cert =
+            ensure_auto_api_fallback_cert(self).await.map_err(CertError::IssuanceFailed)?;
+        let fallback_ck = build_certified_key_from_pem(
+            fallback_cert.certificate.as_deref().unwrap_or_default(),
+            fallback_cert.certificate_chain.as_deref(),
+            fallback_cert.private_key.as_deref().unwrap_or_default(),
+        )
+        .map_err(|e| {
+            CertError::IssuanceFailed(format!("failed to build fallback API TLS cert: {e}"))
+        })?;
+
+        let inserted_count =
+            reload_tls_resolver(self, &self.api_tls_resolver, CertUsage::Api, Some(fallback_ck))
+                .await
+                .map_err(CertError::IssuanceFailed)?;
         self.sync_api_dynamic_dns_redirects().await;
         Ok(inserted_count)
     }
 
     pub async fn reload_gateway_tls_mapping(&self) -> Result<usize, CertError> {
-        reload_gateway_tls_resolver(self, &self.gateway_tls_resolver)
+        reload_tls_resolver(self, &self.gateway_tls_resolver, CertUsage::Gateway, None)
             .await
             .map_err(CertError::IssuanceFailed)
     }
@@ -205,7 +267,7 @@ impl CertService {
                     Ok(saved) => {
                         let svc = self.clone();
                         let id = saved.id;
-                        spawn_task(task_label::task::CERT_ORDER_REFRESH, async move {
+                        self.spawn_tracked(task_label::task::CERT_ORDER_REFRESH, async move {
                             if let Err(e) = svc.enqueue_issuance_task(id).await {
                                 tracing::error!("Auto-renewal failed for cert {id}: {e}");
                             }
@@ -435,7 +497,7 @@ impl CertService {
         }
 
         let svc = self.clone();
-        spawn_task(task_label::task::CERT_ORDER_REFRESH, async move {
+        self.spawn_tracked(task_label::task::CERT_ORDER_REFRESH, async move {
             if let Err(e) = svc.run_issue_task(id, cancel).await {
                 tracing::error!("Issue task failed for cert {id}: {e}");
             }
@@ -978,6 +1040,13 @@ fn dynamic_match_sort_key(value: &DynamicDnsMatch) -> (u8, &str) {
     match value {
         DynamicDnsMatch::Full(value) => (0, value.as_str()),
         DynamicDnsMatch::Domain(value) => (1, value.as_str()),
+    }
+}
+
+#[async_trait::async_trait]
+impl CertSnapshotProvider for CertService {
+    async fn list_certs(&self) -> Result<Vec<CertConfig>, String> {
+        self.list().await.map_err(|e| e.to_string())
     }
 }
 

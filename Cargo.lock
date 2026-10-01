@@ -3134,10 +3134,15 @@ dependencies = [
  "idna",
  "landscape-common",
  "libc",
+ "pem 4.0.0",
+ "rcgen",
+ "rustls",
+ "rustls-pki-types",
  "tokio",
  "tokio-util",
  "tracing",
  "uuid",
+ "x509-parser 0.18.1",
 ]
 
 [[package]]

@@ -17,10 +17,15 @@ async-trait = { workspace = true }
 dashmap = { workspace = true }
 idna = { workspace = true }
 libc = { workspace = true }
+pem = { workspace = true }
+rustls = { workspace = true }
+rustls-pki-types = { workspace = true }
 tokio = { workspace = true, features = ["rt", "sync", "macros", "time", "net"] }
 tokio-util = { workspace = true }
 tracing = { workspace = true }
 uuid = { workspace = true }
+x509-parser = { workspace = true }
 
 [dev-dependencies]
+rcgen = { workspace = true }
 tokio = { workspace = true, features = ["rt", "macros", "test-util"] }

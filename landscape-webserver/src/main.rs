@@ -19,7 +19,6 @@ use landscape_ebpf::{chain::ip6_dao_event::Ip6DaoEventSource, runtime::EbpfRunti
 
 use landscape::{
     boot::{boot_check, log::init_logger, write_config_toml, write_init_lock},
-    cert::build_tls_server_config_with_shared_resolver,
     cert::{account_service::CertAccountService, order_service::CertService},
     config_service::enrolled_device_service::EnrolledDeviceService,
     config_service::firewall_blacklist_service::FirewallBlacklistService,
@@ -66,6 +65,7 @@ use landscape_common::{
     wan_service::ipv6_pd::IAPrefixMap,
 };
 use landscape_common::{config::InitConfig, lan_service::lan_dhcpv4::config::DHCPv4ServiceConfig};
+use landscape_core::cert::build_tls_server_config_with_shared_resolver;
 use landscape_core::{lan_device::LanDeviceDirectory, time::SyncTimeService};
 use landscape_database::provider::LandscapeDBServiceProvider;
 use tokio::runtime::Builder as RuntimeBuilder;

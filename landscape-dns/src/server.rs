@@ -68,6 +68,12 @@ pub trait DohAdvertiseProvider: Send + Sync {
     fn advertise_domains(&self) -> Vec<String>;
 }
 
+impl DohAdvertiseProvider for landscape_core::cert::SharedSniResolver {
+    fn advertise_domains(&self) -> Vec<String> {
+        self.advertised_domains()
+    }
+}
+
 /// DNS 服务的一次运行:父取消信号 + 任务追踪器。
 ///
 /// token 为所有 per-flow 监听 token 的父:服务停止时取消一次,全体 flow
