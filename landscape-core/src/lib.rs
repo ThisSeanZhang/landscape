@@ -1,2 +1,2 @@
-pub mod lan_hostname;
+pub mod lan_device;
 pub mod time;

@@ -5,11 +5,38 @@ use uuid::Uuid;
 
 use crate::net::MacAddr;
 
+/// How an IPv6 address was assigned/learned by the LAN IPv6 server.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IPv6AssignSource {
+    /// Learned from ND/RA observation (SLAAC).
+    Slaac,
+    /// Assigned through a DHCPv6 IA_NA exchange (incl. static bindings).
+    Dhcpv6,
+}
+
+/// A single assigned address together with how it was obtained. Flush events
+/// carry a device's full address set, which may mix sources.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Ipv6AssignAddress {
+    pub ip: Ipv6Addr,
+    pub source: IPv6AssignSource,
+}
+
+impl Ipv6AssignAddress {
+    pub fn slaac(ip: Ipv6Addr) -> Self {
+        Self { ip, source: IPv6AssignSource::Slaac }
+    }
+
+    pub fn dhcpv6(ip: Ipv6Addr) -> Self {
+        Self { ip, source: IPv6AssignSource::Dhcpv6 }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct IPv6AssignInfo {
     pub iface_name: String,
     pub mac: MacAddr,
-    pub ips: Vec<Ipv6Addr>,
+    pub ips: Vec<Ipv6AssignAddress>,
     pub device_id: Option<Uuid>,
 }
 

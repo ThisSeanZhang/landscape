@@ -7,7 +7,7 @@ use std::{
 
 use landscape_common::{
     database::error::DbError,
-    event::hub::{IPv6AssignEvent, IPv6AssignEventSender, IPv6AssignInfo},
+    event::hub::{IPv6AssignEvent, IPv6AssignEventSender, IPv6AssignInfo, Ipv6AssignAddress},
     lan_service::lan_ipv6::LanPrefixGroupConfig,
     net::MacAddr,
     net_proto::icmpv6::messages::Icmpv6Message,
@@ -256,7 +256,7 @@ async fn handle_icmp_msg(
                         ipv6_assign_sender.try_send(IPv6AssignEvent::Allocated(IPv6AssignInfo {
                             iface_name: iface_name.to_string(),
                             mac,
-                            ips: vec![ip],
+                            ips: vec![Ipv6AssignAddress::slaac(ip)],
                             device_id,
                         }))
                     {
@@ -356,11 +356,11 @@ async fn handle_dhcp_msg(
 
         // Emit allocation events — grouped by MAC
         if !result.allocated_ips.is_empty() {
-            let mut alloc_by_mac: std::collections::HashMap<MacAddr, Vec<Ipv6Addr>> =
+            let mut alloc_by_mac: std::collections::HashMap<MacAddr, Vec<Ipv6AssignAddress>> =
                 std::collections::HashMap::new();
             for (mac, ip) in &result.allocated_ips {
                 dataplane.learn_ipv6(link_ifindex, *ip, *mac, mac_addr);
-                alloc_by_mac.entry(*mac).or_default().push(*ip);
+                alloc_by_mac.entry(*mac).or_default().push(Ipv6AssignAddress::dhcpv6(*ip));
             }
             for (mac, grouped_ips) in alloc_by_mac {
                 let device_id = device_id_map.get(&mac).map(|r| *r.value());
@@ -379,10 +379,10 @@ async fn handle_dhcp_msg(
 
         // Emit expiry events — grouped by MAC
         if !result.expired_ips.is_empty() {
-            let mut exp_by_mac: std::collections::HashMap<MacAddr, Vec<Ipv6Addr>> =
+            let mut exp_by_mac: std::collections::HashMap<MacAddr, Vec<Ipv6AssignAddress>> =
                 std::collections::HashMap::new();
             for (mac, ip) in &result.expired_ips {
-                exp_by_mac.entry(*mac).or_default().push(*ip);
+                exp_by_mac.entry(*mac).or_default().push(Ipv6AssignAddress::dhcpv6(*ip));
             }
             for (mac, grouped_ips) in exp_by_mac {
                 let device_id = device_id_map.get(&mac).map(|r| *r.value());
@@ -449,7 +449,11 @@ async fn handle_expire_tick(
         let expired_na = status.clean_expired_na();
         for na in &expired_na {
             let device_id = device_id_map.get(&na.mac).map(|r| *r.value());
-            let ips = status.suffix_to_addrs(na.suffix);
+            let ips = status
+                .suffix_to_addrs(na.suffix)
+                .into_iter()
+                .map(Ipv6AssignAddress::dhcpv6)
+                .collect::<Vec<_>>();
             let _ = ipv6_assign_sender.try_send(IPv6AssignEvent::Expired(IPv6AssignInfo {
                 iface_name: iface_name.to_string(),
                 mac: na.mac,
@@ -470,7 +474,7 @@ async fn handle_expire_tick(
             let _ = ipv6_assign_sender.try_send(IPv6AssignEvent::Expired(IPv6AssignInfo {
                 iface_name: iface_name.to_string(),
                 mac: *mac,
-                ips: vec![*ip],
+                ips: vec![Ipv6AssignAddress::slaac(*ip)],
                 device_id,
             }));
         }
@@ -571,7 +575,7 @@ pub async fn start_ipv6_lan_server(
 
         let static_macs: Vec<MacAddr> = status.na_static_by_mac.keys().cloned().collect();
         for mac in &static_macs {
-            let ips = status.all_ips_for_mac(mac);
+            let ips = status.all_assigned_addrs_for_mac(mac);
             let device_id = device_id_map.get(mac).map(|r| *r.value());
             let _ = ipv6_assign_sender.try_send(IPv6AssignEvent::Flush(IPv6AssignInfo {
                 iface_name: iface_name.clone(),
@@ -765,7 +769,7 @@ pub async fn start_ipv6_lan_server(
                         .chain(status.slaac_entries.values().map(|e| e.mac))
                         .collect();
                     for mac in &macs {
-                        let ips = status.all_ips_for_mac(mac);
+                        let ips = status.all_assigned_addrs_for_mac(mac);
                         let device_id = device_id_map.get(mac).map(|r| *r.value());
                         let _ =
                             ipv6_assign_sender.try_send(IPv6AssignEvent::Flush(IPv6AssignInfo {

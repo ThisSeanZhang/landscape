@@ -1,6 +1,7 @@
 use tokio::sync::broadcast;
 
 use super::device::{EnrolledDeviceEvent, EnrolledDeviceEventReader};
+use super::discovery::{LanDiscoveryEvent, LanDiscoveryEventReader};
 use super::frontend_event::{FrontendEvent, FrontendEventReader};
 use super::iface::IfaceEventReader;
 use super::iface::IfaceObserverAction;
@@ -14,6 +15,7 @@ pub struct EventHubHandle {
     ipv4_broadcast_tx: broadcast::Sender<IPv4AssignEvent>,
     ipv6_broadcast_tx: broadcast::Sender<IPv6AssignEvent>,
     ia_prefix_broadcast_tx: broadcast::Sender<IAPrefixEvent>,
+    discovery_broadcast_tx: broadcast::Sender<LanDiscoveryEvent>,
     // Keep the initial receivers alive so the broadcast channels always have at
     // least one active receiver. This prevents dispatcher events from being
     // dropped due to zero receivers before services subscribe.
@@ -23,10 +25,11 @@ pub struct EventHubHandle {
     _ipv4_broadcast_rx: broadcast::Receiver<IPv4AssignEvent>,
     _ipv6_broadcast_rx: broadcast::Receiver<IPv6AssignEvent>,
     _ia_prefix_broadcast_rx: broadcast::Receiver<IAPrefixEvent>,
+    _discovery_broadcast_rx: broadcast::Receiver<LanDiscoveryEvent>,
 }
 
 impl EventHubHandle {
-    #[allow(clippy::too_many_arguments)] // 12 个广播 channel 的 tx/rx 成对传入，结构清晰
+    #[allow(clippy::too_many_arguments)] // 各事件域的广播 channel tx/rx 成对传入，结构清晰
     pub(super) fn new(
         iface_broadcast_tx: broadcast::Sender<IfaceObserverAction>,
         iface_broadcast_rx: broadcast::Receiver<IfaceObserverAction>,
@@ -40,6 +43,8 @@ impl EventHubHandle {
         ipv6_broadcast_rx: broadcast::Receiver<IPv6AssignEvent>,
         ia_prefix_broadcast_tx: broadcast::Sender<IAPrefixEvent>,
         ia_prefix_broadcast_rx: broadcast::Receiver<IAPrefixEvent>,
+        discovery_broadcast_tx: broadcast::Sender<LanDiscoveryEvent>,
+        discovery_broadcast_rx: broadcast::Receiver<LanDiscoveryEvent>,
     ) -> Self {
         Self {
             iface_broadcast_tx,
@@ -48,12 +53,14 @@ impl EventHubHandle {
             ipv4_broadcast_tx,
             ipv6_broadcast_tx,
             ia_prefix_broadcast_tx,
+            discovery_broadcast_tx,
             _broadcast_rx: iface_broadcast_rx,
             _frontend_broadcast_rx: frontend_broadcast_rx,
             _device_broadcast_rx: device_broadcast_rx,
             _ipv4_broadcast_rx: ipv4_broadcast_rx,
             _ipv6_broadcast_rx: ipv6_broadcast_rx,
             _ia_prefix_broadcast_rx: ia_prefix_broadcast_rx,
+            _discovery_broadcast_rx: discovery_broadcast_rx,
         }
     }
 
@@ -79,6 +86,10 @@ impl EventHubHandle {
 
     pub fn subscribe_ipv6_prefix(&self) -> IAPrefixEventReader {
         IAPrefixEventReader::new(self.ia_prefix_broadcast_tx.subscribe())
+    }
+
+    pub fn subscribe_lan_discovery(&self) -> LanDiscoveryEventReader {
+        LanDiscoveryEventReader::new(self.discovery_broadcast_tx.subscribe())
     }
 
     // TODO: Refactor LanIPv6Service to use subscribe_ipv6_prefix() instead of

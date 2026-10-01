@@ -1,13 +1,13 @@
 use std::sync::Arc;
 
+use arc_swap::ArcSwap;
 use landscape_common::config_service::geo::{
     GeoError, GeoFileCacheKey, GeoMatcherSource, GeoSiteFileConfig,
 };
 use landscape_common::dns::gen_default_dns_rule_and_upstream;
-use landscape_common::event::hub::{EnrolledDeviceEventReader, IPv4AssignEventReader};
 use landscape_common::flow::{NoopDnsResultSink, NoopFlowSocketRegistrar};
 use landscape_common::sys_service::lan_hostname::LanHostnameConfig;
-use landscape_core::lan_hostname::LanHostnameRegistry;
+use landscape_core::lan_device::LanDeviceDirectory;
 use landscape_dns::server::{CacheRuntimeConfig, LandscapeDnsServer, MatcherBuilder};
 
 struct EmptyGeoSource;
@@ -28,14 +28,6 @@ async fn main() -> std::io::Result<()> {
     landscape_common::init_tracing!();
 
     let listen_port = 54;
-    let (_tx, rx) = tokio::sync::broadcast::channel(64);
-    let (_tx2, rx2) = tokio::sync::broadcast::channel(64);
-    let lan_hostname_registry = LanHostnameRegistry::new(
-        LanHostnameConfig::default(),
-        vec![],
-        IPv4AssignEventReader::new(rx),
-        EnrolledDeviceEventReader::new(rx2),
-    );
     let server = LandscapeDnsServer::new(
         listen_port,
         None,
@@ -43,7 +35,8 @@ async fn main() -> std::io::Result<()> {
         None,
         None,
         None,
-        lan_hostname_registry,
+        LanDeviceDirectory::new_for_test(),
+        Arc::new(ArcSwap::from_pointee(LanHostnameConfig::default())),
         Arc::new(NoopDnsResultSink),
         Arc::new(NoopFlowSocketRegistrar),
     );

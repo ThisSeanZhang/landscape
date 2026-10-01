@@ -4,6 +4,7 @@ use std::{
     sync::Arc,
 };
 
+use arc_swap::ArcSwap;
 use hickory_proto::rr::{
     Name, RData, Record, RecordType,
     rdata::{
@@ -20,8 +21,9 @@ use landscape_common::{
         },
     },
     metric::dns::DnsOutcome,
+    sys_service::lan_hostname::LanHostnameConfig,
 };
-use landscape_core::lan_hostname::{LanHostnameRegistry, LocalZone, LocalZoneMatch};
+use landscape_core::lan_device::LanDeviceDirectory;
 
 use crate::{
     domain::ParsedDomain,
@@ -31,6 +33,68 @@ use crate::{
 const DDR_DISCOVERY_NAME: &str = "_dns.resolver.arpa.";
 const DDR_TTL_SECS: u32 = 60;
 const HOSTNAME_TTL: u32 = 60;
+
+/// mDNS zone, always answered locally regardless of the configured LAN suffix.
+const MDNS_LOCAL_ZONE: &str = "local";
+
+/// Which local zone a query landed in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LocalZone {
+    /// The operator-configured LAN suffix (`lan`, `home.arpa`, ...).
+    LanSuffix,
+    /// `local.`, reserved for mDNS.
+    MdnsLocal,
+}
+
+/// A query that falls inside one of the local zones.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LocalZoneMatch<'a> {
+    pub zone: LocalZone,
+    /// Labels left of the zone suffix, `None` for the zone apex itself.
+    pub hostname: Option<&'a str>,
+}
+
+/// Splits `name` at `suffix`, ASCII-case-insensitively. Returns `None` when
+/// `name` is outside the zone, `Some(None)` for the zone apex itself and
+/// `Some(Some(host))` for a name below it.
+fn strip_zone_suffix<'a>(name: &'a str, suffix: &str) -> Option<Option<&'a str>> {
+    if suffix.is_empty() || name.len() < suffix.len() {
+        return None;
+    }
+    let (rest, tail) = name.split_at(name.len() - suffix.len());
+    if !tail.eq_ignore_ascii_case(suffix) {
+        return None;
+    }
+    match rest {
+        "" => Some(None),
+        _ => rest.strip_suffix('.').filter(|host| !host.is_empty()).map(Some),
+    }
+}
+
+/// Reverse queries for these addresses are owned by the local resolver.
+fn is_managed_ptr_addr(addr: &IpAddr) -> bool {
+    match addr {
+        IpAddr::V4(ip) => {
+            ip.is_private()
+                || ip.is_loopback()
+                || ip.is_link_local()
+                || is_shared_ipv4(*ip)
+                || ip.is_unspecified()
+                || ip.is_broadcast()
+        }
+        IpAddr::V6(ip) => {
+            ip.is_unique_local()
+                || ip.is_loopback()
+                || ip.is_unicast_link_local()
+                || ip.is_unspecified()
+        }
+    }
+}
+
+fn is_shared_ipv4(ip: Ipv4Addr) -> bool {
+    let octets = ip.octets();
+    octets[0] == 100 && (octets[1] & 0b1100_0000) == 0b0100_0000
+}
 
 /// Result of the local classification stage. `Answered` carries a records
 /// field (possibly empty); `Empty` carries none. Which variant a name lands
@@ -60,9 +124,14 @@ impl LocalAnswer {
 /// configured LAN hostname zone, `local.` (mDNS), reverse PTR for managed
 /// addresses, special-use `.arpa` names and DoH Discovery of Resolvers (DDR)
 /// records.
+///
+/// Device identity and addresses come from the LAN device directory (point
+/// reads over the live tables); zone configuration is shared with the DHCPv4
+/// server (LAN suffix in options 15/119) through the same `ArcSwap` handle.
 #[derive(Clone)]
 pub struct LocalResolver {
-    lan_hostname_registry: Arc<LanHostnameRegistry>,
+    directory: Arc<LanDeviceDirectory>,
+    hostname_config: Arc<ArcSwap<LanHostnameConfig>>,
     local_answer_provider: Option<Arc<dyn LocalDnsAnswerProvider>>,
     doh_advertise_provider: Option<Arc<dyn DohAdvertiseProvider>>,
     doh_runtime: Option<DohRuntimeConfig>,
@@ -70,17 +139,37 @@ pub struct LocalResolver {
 
 impl LocalResolver {
     pub fn new(
-        lan_hostname_registry: Arc<LanHostnameRegistry>,
+        directory: Arc<LanDeviceDirectory>,
+        hostname_config: Arc<ArcSwap<LanHostnameConfig>>,
         local_answer_provider: Option<Arc<dyn LocalDnsAnswerProvider>>,
         doh_advertise_provider: Option<Arc<dyn DohAdvertiseProvider>>,
         doh_runtime: Option<DohRuntimeConfig>,
     ) -> Self {
         Self {
-            lan_hostname_registry,
+            directory,
+            hostname_config,
             local_answer_provider,
             doh_advertise_provider,
             doh_runtime,
         }
+    }
+
+    fn is_enabled(&self) -> bool {
+        self.hostname_config.load().enable
+    }
+
+    /// Matches `name` against the local zones this resolver is authoritative
+    /// for. A configured suffix may contain multiple labels.
+    pub fn match_local_zone<'a>(&self, name: &'a str) -> Option<LocalZoneMatch<'a>> {
+        let config = self.hostname_config.load();
+        if config.enable
+            && !config.lan_suffix.is_empty()
+            && let Some(hostname) = strip_zone_suffix(name, &config.lan_suffix)
+        {
+            return Some(LocalZoneMatch { zone: LocalZone::LanSuffix, hostname });
+        }
+        strip_zone_suffix(name, MDNS_LOCAL_ZONE)
+            .map(|hostname| LocalZoneMatch { zone: LocalZone::MdnsLocal, hostname })
     }
 
     /// Local interface addresses shared with the redirect engine
@@ -123,7 +212,7 @@ impl LocalResolver {
             let records = Self::lookup_localhost(domain, query_type);
             return Some(LocalAnswer::Answered { records, outcome: DnsOutcome::Local });
         }
-        // (2c) Local zone (configured LAN suffix or local.) → hostname registry
+        // (2c) Local zone (configured LAN suffix or local.) → device directory
         if let Some(zone) = self.matching_local_zone(domain) {
             return Some(self.resolve_local_domain(domain, zone, query_type));
         }
@@ -211,7 +300,7 @@ impl LocalResolver {
     /// queries, `.arpa` queries, config checks, and cache refreshes agree after
     /// a runtime config change.
     fn matching_local_zone<'a>(&self, domain: &'a ParsedDomain) -> Option<LocalZoneMatch<'a>> {
-        let mut zone = self.lan_hostname_registry.match_local_zone(domain.name())?;
+        let mut zone = self.match_local_zone(domain.name())?;
 
         // `.local` remains mDNS territory even if a legacy or hand-edited
         // config incorrectly chooses `local` as the LAN suffix.
@@ -246,42 +335,42 @@ impl LocalResolver {
         hostname: &str,
         query_type: RecordType,
     ) -> Vec<Record> {
+        if !self.is_enabled() || hostname.is_empty() {
+            return vec![];
+        }
+        let Some(entry) = self.directory.entry_by_hostname(hostname) else {
+            return vec![];
+        };
         let rname = domain.as_dns_name().clone();
 
         match query_type {
-            RecordType::A => {
-                if let Some(ip) = self.lan_hostname_registry.resolve_a_by_hostname(hostname) {
-                    let rdata = RData::A(A(ip));
-                    let record = Record::from_rdata(rname, HOSTNAME_TTL, rdata);
-                    vec![record]
-                } else {
-                    vec![]
-                }
-            }
-            RecordType::AAAA => {
-                if let Some(ip) = self.lan_hostname_registry.resolve_aaaa_by_hostname(hostname) {
-                    let rdata = RData::AAAA(AAAA(ip));
-                    let record = Record::from_rdata(rname, HOSTNAME_TTL, rdata);
-                    vec![record]
-                } else {
-                    vec![]
-                }
-            }
+            RecordType::A => entry
+                .ipv4
+                .map(|ip| Record::from_rdata(rname, HOSTNAME_TTL, RData::A(A(ip))))
+                .into_iter()
+                .collect(),
+            // One AAAA per name: the most managed address wins
+            // (`Static > Dhcpv6 > Slaac`).
+            RecordType::AAAA => entry
+                .preferred_ipv6()
+                .map(|ip| Record::from_rdata(rname, HOSTNAME_TTL, RData::AAAA(AAAA(ip))))
+                .into_iter()
+                .collect(),
             _ => vec![],
         }
     }
 
-    /// Reverse PTR answer for managed addresses. `None` means the address is
-    /// not owned locally and the query must continue to the cache/upstream
-    /// stage.
+    /// Reverse PTR answer for managed addresses, backed by the device
+    /// directory's address anchors. `None` means the address is not owned
+    /// locally and the query must continue to the cache/upstream stage.
     fn resolve_ptr_by_addr(&self, addr: &IpAddr, domain: &ParsedDomain) -> Option<LocalAnswer> {
         const PTR_TTL: u32 = 60;
 
-        if !LanHostnameRegistry::is_managed_ptr_addr(addr) {
+        if !is_managed_ptr_addr(addr) {
             return None;
         }
 
-        // localhost PTR is owned by the resolver, not the device registry.
+        // localhost PTR is owned by the resolver, not the device directory.
         if addr.is_loopback() {
             let Ok(target) = Name::from_utf8("localhost.") else {
                 return Some(LocalAnswer::Answered { records: vec![], outcome: DnsOutcome::Error });
@@ -294,24 +383,31 @@ impl LocalResolver {
             });
         }
 
-        if !self.lan_hostname_registry.is_enabled() {
+        if !self.is_enabled() {
             return None;
         }
 
-        match self.lan_hostname_registry.resolve_ptr_by_addr(addr) {
-            Some(fqdn) => {
-                let Ok(target) = Name::from_utf8(&fqdn) else {
-                    return Some(LocalAnswer::Answered {
-                        records: vec![],
-                        outcome: DnsOutcome::Error,
-                    });
-                };
-                let rdata = RData::PTR(PTR(target));
-                let record = Record::from_rdata(domain.as_dns_name().clone(), PTR_TTL, rdata);
-                Some(LocalAnswer::Answered { records: vec![record], outcome: DnsOutcome::Local })
-            }
-            None => Some(LocalAnswer::Answered { records: vec![], outcome: DnsOutcome::NxDomain }),
-        }
+        let entry = match addr {
+            IpAddr::V4(ip) => self.directory.entry_by_ipv4(ip),
+            IpAddr::V6(ip) => self.directory.entry_by_ipv6(ip),
+        };
+        let hostname = entry.and_then(|entry| entry.hostname.clone());
+        let Some(hostname) = hostname else {
+            return Some(LocalAnswer::Answered { records: vec![], outcome: DnsOutcome::NxDomain });
+        };
+
+        let suffix = self.hostname_config.load().lan_suffix.clone();
+        let fqdn = if suffix.is_empty() {
+            format!("{hostname}.")
+        } else {
+            format!("{hostname}.{suffix}.")
+        };
+        let Ok(target) = Name::from_utf8(&fqdn) else {
+            return Some(LocalAnswer::Answered { records: vec![], outcome: DnsOutcome::Error });
+        };
+        let rdata = RData::PTR(PTR(target));
+        let record = Record::from_rdata(domain.as_dns_name().clone(), PTR_TTL, rdata);
+        Some(LocalAnswer::Answered { records: vec![record], outcome: DnsOutcome::Local })
     }
 
     fn resolve_local_domain(
@@ -445,13 +541,16 @@ fn load_ipv6_hints(provider: Option<&dyn LocalDnsAnswerProvider>) -> Vec<AAAA> {
 
 #[cfg(test)]
 mod tests {
-    use std::net::Ipv4Addr;
+    use std::net::{Ipv4Addr, Ipv6Addr};
 
+    use arc_swap::ArcSwap;
     use hickory_proto::serialize::binary::BinEncodable;
     use landscape_common::{
-        event::hub::{EnrolledDeviceEventReader, IPv4AssignEventReader},
+        event::hub::{IPv6AssignEvent, Ipv6AssignAddress},
+        net::MacAddr,
         sys_service::lan_hostname::LanHostnameConfig,
     };
+    use landscape_core::lan_device::DirectorySeedDevice;
 
     use super::*;
 
@@ -476,27 +575,49 @@ mod tests {
         }
     }
 
-    fn registry(
-        enable: bool,
-        lan_suffix: &str,
-        devices: Vec<(String, Ipv4Addr)>,
-    ) -> Arc<LanHostnameRegistry> {
-        LanHostnameRegistry::new(
-            LanHostnameConfig { enable, lan_suffix: lan_suffix.to_string() },
-            devices,
-            {
-                let (_tx, rx) = tokio::sync::broadcast::channel(8);
-                IPv4AssignEventReader::new(rx)
-            },
-            {
-                let (_tx, rx) = tokio::sync::broadcast::channel(8);
-                EnrolledDeviceEventReader::new(rx)
-            },
-        )
+    fn seed(mac: [u8; 6], hostname: Option<&str>, ipv4: Option<Ipv4Addr>) -> DirectorySeedDevice {
+        DirectorySeedDevice {
+            mac: MacAddr(mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]),
+            hostname: hostname.map(str::to_string),
+            ipv4,
+            ipv6: None,
+        }
     }
 
-    fn make_resolver(reg: Arc<LanHostnameRegistry>) -> LocalResolver {
-        LocalResolver::new(reg, None, None, None)
+    fn hostname_config(enable: bool, lan_suffix: &str) -> Arc<ArcSwap<LanHostnameConfig>> {
+        Arc::new(ArcSwap::from_pointee(LanHostnameConfig {
+            enable,
+            lan_suffix: lan_suffix.to_string(),
+        }))
+    }
+
+    fn directory(devices: Vec<DirectorySeedDevice>) -> Arc<LanDeviceDirectory> {
+        LanDeviceDirectory::new_seeded_for_test(devices)
+    }
+
+    fn v6_allocated(mac: [u8; 6], addrs: Vec<(Ipv6Addr, bool)>) -> IPv6AssignEvent {
+        IPv6AssignEvent::Allocated(landscape_common::event::hub::IPv6AssignInfo {
+            iface_name: "eth0".to_string(),
+            mac: MacAddr(mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]),
+            ips: addrs
+                .into_iter()
+                .map(|(ip, dhcpv6)| {
+                    if dhcpv6 {
+                        Ipv6AssignAddress::dhcpv6(ip)
+                    } else {
+                        Ipv6AssignAddress::slaac(ip)
+                    }
+                })
+                .collect(),
+            device_id: None,
+        })
+    }
+
+    fn make_resolver(
+        directory: Arc<LanDeviceDirectory>,
+        config: Arc<ArcSwap<LanHostnameConfig>>,
+    ) -> LocalResolver {
+        LocalResolver::new(directory, config, None, None, None)
     }
 
     fn pd(name: &str) -> ParsedDomain {
@@ -505,8 +626,8 @@ mod tests {
 
     #[tokio::test]
     async fn resolve_local_handles_blocked_localhost_and_zone() {
-        let reg = registry(true, "lan", vec![("dev".to_string(), Ipv4Addr::new(10, 0, 0, 2))]);
-        let resolver = make_resolver(reg);
+        let dev = seed([0, 0, 0, 0, 0, 2], Some("dev"), Some(Ipv4Addr::new(10, 0, 0, 2)));
+        let resolver = make_resolver(directory(vec![dev]), hostname_config(true, "lan"));
 
         for domain in ["example.invalid.", "somewhere.onion.", "bar.test."] {
             assert!(matches!(
@@ -553,8 +674,8 @@ mod tests {
 
     #[tokio::test]
     async fn resolve_local_dispatches_arpa_locally() {
-        let reg = registry(true, "lan", vec![("dev".to_string(), Ipv4Addr::new(10, 0, 0, 2))]);
-        let resolver = make_resolver(reg);
+        let dev = seed([0, 0, 0, 0, 0, 2], Some("dev"), Some(Ipv4Addr::new(10, 0, 0, 2)));
+        let resolver = make_resolver(directory(vec![dev]), hostname_config(true, "lan"));
 
         match resolver.resolve_local(&pd("resolver.arpa."), RecordType::A).unwrap() {
             LocalAnswer::Answered { records, outcome } => {
@@ -611,9 +732,8 @@ mod tests {
         assert!(resolver.resolve_local(&pd("8.8.8.8.in-addr.arpa."), RecordType::PTR).is_none());
 
         // LAN zone under `.arpa` when the full suffix matches.
-        let reg =
-            registry(true, "home.arpa", vec![("nas".to_string(), Ipv4Addr::new(10, 0, 0, 3))]);
-        let resolver = make_resolver(reg);
+        let nas = seed([0, 0, 0, 0, 0, 3], Some("nas"), Some(Ipv4Addr::new(10, 0, 0, 3)));
+        let resolver = make_resolver(directory(vec![nas]), hostname_config(true, "home.arpa"));
         match resolver.resolve_local(&pd("nas.home.arpa."), RecordType::A).unwrap() {
             LocalAnswer::Answered { records, outcome } => {
                 assert_eq!(outcome, DnsOutcome::Local);
@@ -631,7 +751,7 @@ mod tests {
         let domain = pd(input);
         assert!(domain.name().is_ascii());
 
-        let resolver = make_resolver(registry(true, "lan", vec![]));
+        let resolver = make_resolver(directory(vec![]), hostname_config(true, "lan"));
         assert!(resolver.resolve_local(&domain, RecordType::A).is_none());
     }
 
@@ -647,8 +767,8 @@ mod tests {
 
     #[tokio::test]
     async fn resolve_local_ptr_returns_registered_lan_hostname() {
-        let reg = registry(true, "lan", vec![("nas".to_string(), Ipv4Addr::new(192, 168, 1, 50))]);
-        let resolver = make_resolver(reg);
+        let nas = seed([0, 0, 0, 0, 0, 50], Some("nas"), Some(Ipv4Addr::new(192, 168, 1, 50)));
+        let resolver = make_resolver(directory(vec![nas]), hostname_config(true, "lan"));
 
         match resolver.resolve_local(&pd("50.1.168.192.in-addr.arpa."), RecordType::PTR).unwrap() {
             LocalAnswer::Answered { records, outcome } => {
@@ -664,11 +784,29 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn resolve_local_ptr_returns_hostname_only_when_suffix_empty() {
+        let dev = seed([0, 0, 0, 0, 0, 5], Some("dev"), Some(Ipv4Addr::new(10, 0, 0, 5)));
+        let resolver = make_resolver(directory(vec![dev]), hostname_config(true, ""));
+
+        match resolver.resolve_local(&pd("5.0.0.10.in-addr.arpa."), RecordType::PTR).unwrap() {
+            LocalAnswer::Answered { records, outcome } => {
+                assert_eq!(outcome, DnsOutcome::Local);
+                match &records[0].data {
+                    RData::PTR(ptr) => assert_eq!(ptr.0.to_string(), "dev."),
+                    other => panic!("expected PTR record, got {:?}", other),
+                }
+            }
+            LocalAnswer::Empty { .. } => panic!("registered PTR must be answered"),
+        }
+    }
+
+    #[tokio::test]
     async fn resolve_local_ptr_ipv6_returns_registered_lan_hostname() {
         let ipv6 = Ipv6Addr::new(0xfd01, 0, 0, 0, 0, 0, 0, 99);
-        let reg = registry(true, "lan", vec![("srv".to_string(), Ipv4Addr::new(192, 168, 1, 1))]);
-        reg.set_ipv6("srv", ipv6);
-        let resolver = make_resolver(reg);
+        let mac = [0, 0, 0, 0, 0, 1];
+        let dir = directory(vec![seed(mac, Some("srv"), Some(Ipv4Addr::new(192, 168, 1, 1)))]);
+        dir.apply_ipv6_event_for_test(v6_allocated(mac, vec![(ipv6, true)]));
+        let resolver = make_resolver(dir, hostname_config(true, "lan"));
 
         let arpa_name = arpa_name_from_ipv6(ipv6);
         match resolver.resolve_local(&pd(&arpa_name), RecordType::PTR).unwrap() {
@@ -685,11 +823,32 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn resolve_local_ptr_returns_none_when_ipv6_not_matched() {
+        let mac = [0, 0, 0, 0, 0, 1];
+        let dir = directory(vec![seed(mac, Some("srv"), Some(Ipv4Addr::new(10, 0, 0, 10)))]);
+        dir.apply_ipv6_event_for_test(v6_allocated(
+            mac,
+            vec![(Ipv6Addr::new(0xfd00, 0, 0, 0, 0, 0, 0, 1), false)],
+        ));
+        let resolver = make_resolver(dir, hostname_config(true, "lan"));
+
+        let other = Ipv6Addr::new(0xfd00, 0, 0, 0, 0, 0, 0, 99);
+        match resolver.resolve_local(&pd(&arpa_name_from_ipv6(other)), RecordType::PTR).unwrap() {
+            LocalAnswer::Answered { records, outcome } => {
+                assert!(records.is_empty());
+                assert_eq!(outcome, DnsOutcome::NxDomain);
+            }
+            LocalAnswer::Empty { .. } => panic!("managed IPv6 PTR must be answered"),
+        }
+    }
+
+    #[tokio::test]
     async fn resolve_local_aaaa_returns_registered_ipv6() {
         let ipv6 = Ipv6Addr::new(0xfd00, 0, 0, 0, 0, 0, 0, 2);
-        let reg = registry(true, "lan", vec![("dev".to_string(), Ipv4Addr::new(192, 168, 1, 100))]);
-        reg.set_ipv6("dev", ipv6);
-        let resolver = make_resolver(reg);
+        let mac = [0, 0, 0, 0, 0, 100];
+        let dir = directory(vec![seed(mac, Some("dev"), Some(Ipv4Addr::new(192, 168, 1, 100)))]);
+        dir.apply_ipv6_event_for_test(v6_allocated(mac, vec![(ipv6, false)]));
+        let resolver = make_resolver(dir, hostname_config(true, "lan"));
 
         match resolver.resolve_local(&pd("dev.lan."), RecordType::AAAA).unwrap() {
             LocalAnswer::Answered { records, outcome } => {
@@ -705,9 +864,30 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn resolve_local_aaaa_prefers_dhcpv6_over_slaac() {
+        let slaac = Ipv6Addr::new(0xfd00, 0, 0, 0, 0, 0, 0, 1);
+        let dhcpv6 = Ipv6Addr::new(0xfd00, 0, 0, 0, 0, 0, 0, 2);
+        let mac = [0, 0, 0, 0, 0, 101];
+        let dir = directory(vec![seed(mac, Some("dev"), Some(Ipv4Addr::new(10, 0, 0, 2)))]);
+        dir.apply_ipv6_event_for_test(v6_allocated(mac, vec![(slaac, false), (dhcpv6, true)]));
+        let resolver = make_resolver(dir, hostname_config(true, "lan"));
+
+        match resolver.resolve_local(&pd("dev.lan."), RecordType::AAAA).unwrap() {
+            LocalAnswer::Answered { records, outcome } => {
+                assert_eq!(outcome, DnsOutcome::Local);
+                match &records[0].data {
+                    RData::AAAA(aaaa) => assert_eq!(aaaa.0, dhcpv6),
+                    other => panic!("expected AAAA record, got {:?}", other),
+                }
+            }
+            LocalAnswer::Empty { .. } => panic!("zone host must be answered"),
+        }
+    }
+
+    #[tokio::test]
     async fn resolve_local_aaaa_returns_nxdomain_when_no_ipv6() {
-        let reg = registry(true, "lan", vec![("dev".to_string(), Ipv4Addr::new(192, 168, 1, 100))]);
-        let resolver = make_resolver(reg);
+        let dev = seed([0, 0, 0, 0, 0, 100], Some("dev"), Some(Ipv4Addr::new(192, 168, 1, 100)));
+        let resolver = make_resolver(directory(vec![dev]), hostname_config(true, "lan"));
 
         match resolver.resolve_local(&pd("dev.lan."), RecordType::AAAA).unwrap() {
             LocalAnswer::Answered { records, outcome } => {
@@ -721,8 +901,8 @@ mod tests {
     #[tokio::test]
     async fn resolve_local_multi_label_suffix_resolves_host() {
         let ip = Ipv4Addr::new(192, 168, 1, 60);
-        let reg = registry(true, "home.lan", vec![("nas".to_string(), ip)]);
-        let resolver = make_resolver(reg);
+        let nas = seed([0, 0, 0, 0, 0, 60], Some("nas"), Some(ip));
+        let resolver = make_resolver(directory(vec![nas]), hostname_config(true, "home.lan"));
 
         match resolver.resolve_local(&pd("nas.home.lan."), RecordType::A).unwrap() {
             LocalAnswer::Answered { records, outcome } => {
@@ -740,19 +920,19 @@ mod tests {
     #[tokio::test]
     async fn resolve_local_multi_label_suffix_does_not_match_last_label_only() {
         let ip = Ipv4Addr::new(192, 168, 1, 61);
-        let reg = registry(true, "home.lan", vec![("nas".to_string(), ip)]);
-        let resolver = make_resolver(reg);
+        let nas = seed([0, 0, 0, 0, 0, 61], Some("nas"), Some(ip));
+        let resolver = make_resolver(directory(vec![nas]), hostname_config(true, "home.lan"));
 
         // `nas.lan` is outside the `home.lan` zone, so it must not be
-        // answered from the registry.
+        // answered from the directory.
         assert!(resolver.resolve_local(&pd("nas.lan."), RecordType::A).is_none());
     }
 
     #[tokio::test]
     async fn resolve_local_arpa_multi_label_suffix_resolves_host() {
         let ip = Ipv4Addr::new(192, 168, 1, 62);
-        let reg = registry(true, "mylan.arpa", vec![("nas".to_string(), ip)]);
-        let resolver = make_resolver(reg);
+        let nas = seed([0, 0, 0, 0, 0, 62], Some("nas"), Some(ip));
+        let resolver = make_resolver(directory(vec![nas]), hostname_config(true, "mylan.arpa"));
 
         // `.arpa` names used to answer NXDOMAIN for every suffix except the
         // hardcoded `home`.
@@ -772,9 +952,11 @@ mod tests {
     #[tokio::test]
     async fn resolve_local_home_arpa_suffix_resolves_only_when_enabled() {
         let ip = Ipv4Addr::new(192, 168, 1, 63);
+        let nas = seed([0, 0, 0, 0, 0, 63], Some("nas"), Some(ip));
         let domain = pd("nas.home.arpa.");
 
-        let enabled = make_resolver(registry(true, "home.arpa", vec![("nas".to_string(), ip)]));
+        let enabled =
+            make_resolver(directory(vec![nas.clone()]), hostname_config(true, "home.arpa"));
         match enabled.resolve_local(&domain, RecordType::A).unwrap() {
             LocalAnswer::Answered { records, outcome } => {
                 assert_eq!(outcome, DnsOutcome::Local);
@@ -784,7 +966,7 @@ mod tests {
             LocalAnswer::Empty { .. } => panic!("zone host under `.arpa` must be answered"),
         }
 
-        let disabled = make_resolver(registry(false, "home.arpa", vec![("nas".to_string(), ip)]));
+        let disabled = make_resolver(directory(vec![nas]), hostname_config(false, "home.arpa"));
         match disabled.resolve_local(&domain, RecordType::A).unwrap() {
             LocalAnswer::Answered { records, outcome } => {
                 assert!(records.is_empty());
@@ -796,7 +978,7 @@ mod tests {
 
     #[tokio::test]
     async fn resolve_local_loopback_ptr_returns_localhost() {
-        let resolver = make_resolver(registry(true, "lan", vec![]));
+        let resolver = make_resolver(directory(vec![]), hostname_config(true, "lan"));
 
         match resolver.resolve_local(&pd("1.0.0.127.in-addr.arpa."), RecordType::PTR).unwrap() {
             LocalAnswer::Answered { records, outcome } => {
@@ -808,6 +990,192 @@ mod tests {
                 }
             }
             LocalAnswer::Empty { .. } => panic!("loopback PTR must be answered"),
+        }
+    }
+
+    #[tokio::test]
+    async fn forward_lookup_has_no_builtin_localhost() {
+        let resolver = make_resolver(directory(vec![]), hostname_config(true, "lan"));
+
+        // `localhost.lan` falls into the LAN zone; the directory knows no
+        // such device, so the answer is negative rather than a builtin
+        // loopback record.
+        match resolver.resolve_local(&pd("localhost.lan."), RecordType::A).unwrap() {
+            LocalAnswer::Answered { records, outcome } => {
+                assert!(records.is_empty());
+                assert_eq!(outcome, DnsOutcome::NxDomain);
+            }
+            LocalAnswer::Empty { .. } => panic!("LAN zone host must be answered"),
+        }
+    }
+
+    // --- match_local_zone ---
+
+    #[test]
+    fn match_local_zone_matches_configured_suffix() {
+        let resolver = make_resolver(directory(vec![]), hostname_config(true, "lan"));
+        let m = resolver.match_local_zone("nas.lan").unwrap();
+        assert_eq!(m.zone, LocalZone::LanSuffix);
+        assert_eq!(m.hostname, Some("nas"));
+    }
+
+    #[test]
+    fn match_local_zone_matches_multi_label_suffix() {
+        let resolver = make_resolver(directory(vec![]), hostname_config(true, "home.arpa"));
+        let m = resolver.match_local_zone("nas.home.arpa").unwrap();
+        assert_eq!(m.zone, LocalZone::LanSuffix);
+        assert_eq!(m.hostname, Some("nas"));
+    }
+
+    #[test]
+    fn match_local_zone_keeps_sub_labels_in_hostname() {
+        let resolver = make_resolver(directory(vec![]), hostname_config(true, "lan"));
+        assert_eq!(resolver.match_local_zone("a.b.lan").unwrap().hostname, Some("a.b"));
+    }
+
+    #[test]
+    fn match_local_zone_reports_apex_without_hostname() {
+        let resolver = make_resolver(directory(vec![]), hostname_config(true, "lan"));
+        let m = resolver.match_local_zone("lan").unwrap();
+        assert_eq!(m.zone, LocalZone::LanSuffix);
+        assert_eq!(m.hostname, None);
+    }
+
+    #[test]
+    fn match_local_zone_always_matches_mdns_local() {
+        let resolver = make_resolver(directory(vec![]), hostname_config(true, ""));
+        let m = resolver.match_local_zone("printer.local").unwrap();
+        assert_eq!(m.zone, LocalZone::MdnsLocal);
+        assert_eq!(m.hostname, Some("printer"));
+
+        let resolver2 = make_resolver(directory(vec![]), hostname_config(true, "home.arpa"));
+        assert_eq!(resolver2.match_local_zone("printer.local").unwrap().zone, LocalZone::MdnsLocal);
+    }
+
+    #[test]
+    fn match_local_zone_is_case_insensitive() {
+        let resolver = make_resolver(directory(vec![]), hostname_config(true, "lan"));
+        assert_eq!(resolver.match_local_zone("NAS.LAN").unwrap().hostname, Some("NAS"));
+    }
+
+    #[test]
+    fn match_local_zone_rejects_unrelated_names() {
+        let resolver = make_resolver(directory(vec![]), hostname_config(true, "lan"));
+        assert!(resolver.match_local_zone("example.com").is_none());
+        assert!(resolver.match_local_zone("notlan").is_none());
+        assert!(resolver.match_local_zone("host.mylan").is_none());
+    }
+
+    #[test]
+    fn match_local_zone_ignores_empty_suffix() {
+        let resolver = make_resolver(directory(vec![]), hostname_config(true, ""));
+        assert!(resolver.match_local_zone("").is_none());
+        assert!(resolver.match_local_zone("nas.lan").is_none());
+    }
+
+    // --- is_managed_ptr_addr ---
+
+    #[test]
+    fn managed_ptr_addr_accepts_private_ipv4() {
+        assert!(is_managed_ptr_addr(&IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1))));
+        assert!(is_managed_ptr_addr(&IpAddr::V4(Ipv4Addr::new(172, 16, 0, 1))));
+        assert!(is_managed_ptr_addr(&IpAddr::V4(Ipv4Addr::new(192, 168, 0, 1))));
+    }
+
+    #[test]
+    fn managed_ptr_addr_accepts_loopback_and_link_local() {
+        assert!(is_managed_ptr_addr(&IpAddr::V4(Ipv4Addr::LOCALHOST)));
+        assert!(is_managed_ptr_addr(&IpAddr::V6(Ipv6Addr::LOCALHOST)));
+        assert!(is_managed_ptr_addr(&IpAddr::V4(Ipv4Addr::new(169, 254, 1, 1))));
+        assert!(is_managed_ptr_addr(&IpAddr::V6(Ipv6Addr::new(0xfe80, 0, 0, 0, 0, 0, 0, 1))));
+    }
+
+    #[test]
+    fn managed_ptr_addr_accepts_unique_local_ipv6() {
+        assert!(is_managed_ptr_addr(&IpAddr::V6(Ipv6Addr::new(0xfd00, 0, 0, 0, 0, 0, 0, 1))));
+        assert!(is_managed_ptr_addr(&IpAddr::V6(Ipv6Addr::new(0xfc00, 0, 0, 0, 0, 0, 0, 1))));
+    }
+
+    #[test]
+    fn managed_ptr_addr_accepts_shared_cgn_ipv4() {
+        assert!(is_managed_ptr_addr(&IpAddr::V4(Ipv4Addr::new(100, 64, 0, 1))));
+        assert!(is_managed_ptr_addr(&IpAddr::V4(Ipv4Addr::new(100, 127, 255, 254))));
+    }
+
+    #[test]
+    fn managed_ptr_addr_accepts_unspecified_and_broadcast() {
+        assert!(is_managed_ptr_addr(&IpAddr::V4(Ipv4Addr::UNSPECIFIED)));
+        assert!(is_managed_ptr_addr(&IpAddr::V4(Ipv4Addr::BROADCAST)));
+        assert!(is_managed_ptr_addr(&IpAddr::V6(Ipv6Addr::UNSPECIFIED)));
+    }
+
+    #[test]
+    fn managed_ptr_addr_rejects_public_ipv4() {
+        assert!(!is_managed_ptr_addr(&IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8))));
+        assert!(!is_managed_ptr_addr(&IpAddr::V4(Ipv4Addr::new(1, 1, 1, 1))));
+        assert!(!is_managed_ptr_addr(&IpAddr::V4(Ipv4Addr::new(203, 0, 113, 1))));
+    }
+
+    #[test]
+    fn managed_ptr_addr_rejects_global_unicast_ipv6() {
+        assert!(!is_managed_ptr_addr(&IpAddr::V6(Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 1))));
+        assert!(!is_managed_ptr_addr(&IpAddr::V6(Ipv6Addr::new(0x2606, 0x4700, 0, 0, 0, 0, 0, 1))));
+    }
+
+    // --- runtime config changes ---
+
+    #[tokio::test]
+    async fn config_update_applies_suffix_without_touching_directory() {
+        let ip = Ipv4Addr::new(192, 168, 1, 10);
+        let nas = seed([0, 0, 0, 0, 0, 10], Some("nas"), Some(ip));
+        let dir = directory(vec![nas]);
+        let config = hostname_config(true, "lan");
+        let resolver = make_resolver(dir.clone(), config.clone());
+
+        config.store(Arc::new(LanHostnameConfig { enable: true, lan_suffix: "home".to_string() }));
+
+        assert!(resolver.match_local_zone("nas.lan").is_none());
+        assert!(resolver.match_local_zone("nas.home").is_some());
+        match resolver.resolve_local(&pd("nas.home."), RecordType::A).unwrap() {
+            LocalAnswer::Answered { records, .. } => {
+                assert!(matches!(&records[0].data, RData::A(a) if a.0 == ip));
+            }
+            LocalAnswer::Empty { .. } => panic!("zone host must be answered"),
+        }
+        match resolver.resolve_local(&pd("10.1.168.192.in-addr.arpa."), RecordType::PTR).unwrap() {
+            LocalAnswer::Answered { records, .. } => {
+                assert!(
+                    matches!(&records[0].data, RData::PTR(ptr) if ptr.0.to_string() == "nas.home.")
+                );
+            }
+            LocalAnswer::Empty { .. } => panic!("registered PTR must be answered"),
+        }
+    }
+
+    #[tokio::test]
+    async fn disabled_config_stops_resolution_without_touching_directory() {
+        let ip = Ipv4Addr::new(192, 168, 1, 10);
+        let nas = seed([0, 0, 0, 0, 0, 11], Some("nas"), Some(ip));
+        let dir = directory(vec![nas]);
+        let config = hostname_config(true, "lan");
+        let resolver = make_resolver(dir.clone(), config.clone());
+
+        config.store(Arc::new(LanHostnameConfig { enable: false, lan_suffix: "lan".to_string() }));
+
+        assert!(resolver.match_local_zone("nas.lan").is_none());
+        assert!(resolver.match_local_zone("nas.local").is_some());
+        assert!(resolver.resolve_local(&pd("nas.lan."), RecordType::A).is_none());
+        // Disabled config does not own managed PTR: falls through upstream.
+        assert!(
+            resolver.resolve_local(&pd("10.1.168.192.in-addr.arpa."), RecordType::PTR).is_none()
+        );
+
+        config.store(Arc::new(LanHostnameConfig { enable: true, lan_suffix: "lan".to_string() }));
+        match resolver.resolve_local(&pd("nas.lan."), RecordType::A).unwrap() {
+            LocalAnswer::Answered { records, .. } => {
+                assert!(matches!(&records[0].data, RData::A(a) if a.0 == ip));
+            }
+            LocalAnswer::Empty { .. } => panic!("zone host must be answered"),
         }
     }
 

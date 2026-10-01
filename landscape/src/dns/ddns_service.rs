@@ -177,9 +177,9 @@ impl DdnsService {
                 match reader.recv().await {
                     Ok(IPv6AssignEvent::Allocated(info)) => {
                         if let Some(device_id) = info.device_id {
-                            for ip in &info.ips {
+                            for addr in &info.ips {
                                 if let Err(e) =
-                                    service.on_device_ipv6_allocated(device_id, *ip).await
+                                    service.on_device_ipv6_allocated(device_id, addr.ip).await
                                 {
                                     tracing::warn!("ddns lan ipv6 allocated handler failed: {e:?}");
                                 }
@@ -190,8 +190,8 @@ impl DdnsService {
                         if let Some(device_id) = info.device_id
                             && let Some(mut entry) = service.enrolled_cache.get_mut(&device_id)
                         {
-                            for ip in &info.ips {
-                                entry.raw_ips.remove(ip);
+                            for addr in &info.ips {
+                                entry.raw_ips.remove(&addr.ip);
                             }
                             if entry.raw_ips.is_empty() {
                                 drop(entry);
@@ -204,7 +204,8 @@ impl DdnsService {
                             if info.ips.is_empty() {
                                 service.enrolled_cache.remove(&device_id);
                             } else {
-                                let new_ips: HashSet<Ipv6Addr> = info.ips.into_iter().collect();
+                                let new_ips: HashSet<Ipv6Addr> =
+                                    info.ips.into_iter().map(|addr| addr.ip).collect();
                                 let changed = {
                                     let mut entry =
                                         service.enrolled_cache.entry(device_id).or_default();

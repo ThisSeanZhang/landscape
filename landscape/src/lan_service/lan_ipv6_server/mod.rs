@@ -6,6 +6,7 @@ use std::{
 
 use landscape_common::{
     config_service::enrolled_device::EnrolledDevice,
+    event::hub::Ipv6AssignAddress,
     lan_service::lan_ipv6::{
         DEFAULT_IA_NA_POOL_SPAN, DHCPv6AddressItem, DHCPv6IANAConfig, DHCPv6IAPDConfig,
         DHCPv6OfferInfo, DHCPv6PrefixItem, IPv6NAInfo, IPv6NAInfoItem, LanPrefixGroupConfig,
@@ -1148,26 +1149,35 @@ impl Ipv6ServerStatus {
         result
     }
 
-    pub fn all_ips_for_mac(&self, mac: &MacAddr) -> Vec<Ipv6Addr> {
-        let mut ips = Vec::new();
+    /// All addresses currently known for `mac`, each tagged with how it was
+    /// obtained, so Flush consumers can distinguish IA_NA leases from SLAAC
+    /// observations.
+    pub fn all_assigned_addrs_for_mac(&self, mac: &MacAddr) -> Vec<Ipv6AssignAddress> {
+        let mut addrs = Vec::new();
+
+        let push_na = |suffix: u64, addrs: &mut Vec<Ipv6AssignAddress>| {
+            for ip in self.suffix_to_addrs(suffix) {
+                addrs.push(Ipv6AssignAddress::dhcpv6(ip));
+            }
+        };
 
         if let Some(&suffix) = self.na_static_by_mac.get(mac) {
-            ips.extend(self.suffix_to_addrs(suffix));
+            push_na(suffix, &mut addrs);
         }
 
         for lease in self.na_leases_by_duid.values() {
             if lease.mac == *mac {
-                ips.extend(self.suffix_to_addrs(lease.suffix));
+                push_na(lease.suffix, &mut addrs);
             }
         }
 
         for (ip, entry) in &self.slaac_entries {
             if entry.mac == *mac {
-                ips.push(*ip);
+                addrs.push(Ipv6AssignAddress::slaac(*ip));
             }
         }
 
-        ips
+        addrs
     }
 
     /// All delegated prefixes.

@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Instant;
 
+use arc_swap::ArcSwap;
 use landscape_common::sys_service::lan_hostname::LanHostnameConfig;
 use landscape_common::{
     concurrency::{spawn_task, task_label},
@@ -16,7 +17,7 @@ use landscape_common::{
         controller::{ConfigStoreController, ConfigStoreFlowController},
     },
 };
-use landscape_core::lan_hostname::LanHostnameRegistry;
+use landscape_core::lan_device::LanDeviceDirectory;
 use landscape_dns::{
     CheckChainDnsResult, CheckDnsReq, prepare_system_dns,
     server::{
@@ -60,7 +61,8 @@ impl LandscapeDnsService {
         dns_config: DnsRuntimeConfig,
         cert_service: CertService,
         msg_tx: Option<mpsc::Sender<DnsMetricMessage>>,
-        lan_hostname_registry: Arc<LanHostnameRegistry>,
+        lan_device_directory: Arc<LanDeviceDirectory>,
+        lan_hostname_config: Arc<ArcSwap<LanHostnameConfig>>,
         dns_result_sink: Arc<dyn DnsResultSink>,
         flow_socket_registrar: Arc<dyn FlowSocketRegistrar>,
     ) -> Self {
@@ -90,7 +92,8 @@ impl LandscapeDnsService {
             doh,
             Some(Arc::new(route_service) as Arc<dyn LocalDnsAnswerProvider>),
             Some(Arc::new(api_tls_resolver) as Arc<dyn landscape_dns::server::DohAdvertiseProvider>),
-            lan_hostname_registry,
+            lan_device_directory,
+            lan_hostname_config,
             dns_result_sink,
             flow_socket_registrar,
         );

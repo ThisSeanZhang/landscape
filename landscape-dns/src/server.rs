@@ -11,7 +11,7 @@ use landscape_common::event::DnsMetricMessage;
 use landscape_common::flow::{DnsResultSink, FlowSocketRegistrar};
 use landscape_common::service::ServiceStatus;
 use landscape_common::sys_service::lan_hostname::LanHostnameConfig;
-use landscape_core::lan_hostname::LanHostnameRegistry;
+use landscape_core::lan_device::LanDeviceDirectory;
 use tokio::sync::{Mutex, mpsc};
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
@@ -88,7 +88,8 @@ pub struct LandscapeDnsServer {
     flow_dns_server: Arc<Mutex<HashMap<u32, Arc<FlowServerEntry>>>>,
     // local answers (localhost / LAN hostname zone / PTR / DDR) shared by all flows
     pub local_resolver: Arc<LocalResolver>,
-    pub lan_hostname_registry: Arc<LanHostnameRegistry>,
+    // shared LAN hostname config (DNS zone + DHCPv4 options 15/119)
+    lan_hostname_config: Arc<ArcSwap<LanHostnameConfig>>,
     // DNS events
     pub msg_tx: MetricSenderState,
     // bound UDP DNS listen address
@@ -137,7 +138,8 @@ impl LandscapeDnsServer {
         doh: Option<EffectiveDohListenerConfig>,
         local_answer_provider: Option<Arc<dyn LocalDnsAnswerProvider>>,
         doh_advertise_provider: Option<Arc<dyn DohAdvertiseProvider>>,
-        lan_hostname_registry: Arc<LanHostnameRegistry>,
+        lan_device_directory: Arc<LanDeviceDirectory>,
+        lan_hostname_config: Arc<ArcSwap<LanHostnameConfig>>,
         result_sink: Arc<dyn DnsResultSink>,
         socket_registrar: Arc<dyn FlowSocketRegistrar>,
     ) -> Self {
@@ -149,7 +151,8 @@ impl LandscapeDnsServer {
         let doh_listener = doh.map(DohListenerState::from_effective_config);
         let doh_runtime = doh_listener.as_ref().map(|doh_listener| doh_listener.runtime_config());
         let local_resolver = Arc::new(LocalResolver::new(
-            lan_hostname_registry.clone(),
+            lan_device_directory,
+            lan_hostname_config.clone(),
             local_answer_provider,
             doh_advertise_provider,
             doh_runtime,
@@ -171,7 +174,7 @@ impl LandscapeDnsServer {
             cache_live_config: Arc::new(ArcSwap::from_pointee(cache_runtime)),
             doh_listener,
             _mdns_service: mdns_service,
-            lan_hostname_registry,
+            lan_hostname_config,
             local_resolver,
             result_sink,
             socket_registrar,
@@ -263,7 +266,7 @@ impl LandscapeDnsServer {
     }
 
     pub fn update_lan_hostname_config(&self, config: LanHostnameConfig) {
-        self.lan_hostname_registry.update_config(config);
+        self.lan_hostname_config.store(Arc::new(config));
     }
 
     pub fn current_live_runtime_config(&self) -> (CacheRuntimeConfig, Option<DohRuntimeConfig>) {
@@ -450,7 +453,7 @@ mod tests {
     use landscape_common::dns::CacheRuntimeConfig;
     use landscape_common::flow::{NoopDnsResultSink, NoopFlowSocketRegistrar};
     use landscape_common::sys_service::lan_hostname::LanHostnameConfig;
-    use landscape_core::lan_hostname::LanHostnameRegistry;
+    use landscape_core::lan_device::LanDeviceDirectory;
 
     fn run_async_test(test: impl std::future::Future<Output = ()>) {
         tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(test);
@@ -464,8 +467,18 @@ mod tests {
         }
     }
 
-    fn test_lan_hostname_registry() -> Arc<LanHostnameRegistry> {
-        LanHostnameRegistry::new_for_test(LanHostnameConfig::default())
+    fn test_local_resolver() -> Arc<LocalResolver> {
+        Arc::new(LocalResolver::new(
+            LanDeviceDirectory::new_for_test(),
+            test_lan_hostname_config(),
+            None,
+            None,
+            None,
+        ))
+    }
+
+    fn test_lan_hostname_config() -> Arc<ArcSwap<LanHostnameConfig>> {
+        Arc::new(ArcSwap::from_pointee(LanHostnameConfig::default()))
     }
 
     #[test]
@@ -478,7 +491,7 @@ mod tests {
                 Arc::new(ArcSwap::from_pointee(test_cache_runtime_config())),
                 7,
                 Arc::new(ArcSwapOption::new(None)),
-                Arc::new(LocalResolver::new(test_lan_hostname_registry(), None, None, None)),
+                test_local_resolver(),
                 Arc::new(NoopDnsResultSink),
             );
             entry.runtime.store(Some(Arc::new(FlowServerRuntime {
@@ -512,7 +525,8 @@ mod tests {
             None,
             None,
             None,
-            test_lan_hostname_registry(),
+            LanDeviceDirectory::new_for_test(),
+            test_lan_hostname_config(),
             Arc::new(NoopDnsResultSink),
             Arc::new(NoopFlowSocketRegistrar),
         );

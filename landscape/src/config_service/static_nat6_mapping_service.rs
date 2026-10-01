@@ -195,7 +195,8 @@ fn apply_ipv6_assign_event(state: &mut DeviceIpv6State, event: IPv6AssignEvent) 
             let Some(device_id) = info.device_id else {
                 return false;
             };
-            let new_ips: Vec<_> = info.ips.into_iter().filter(is_usable_dynamic_ipv6).collect();
+            let new_ips: Vec<_> =
+                info.ips.into_iter().map(|addr| addr.ip).filter(is_usable_dynamic_ipv6).collect();
             if new_ips.is_empty() {
                 return false;
             }
@@ -212,8 +213,8 @@ fn apply_ipv6_assign_event(state: &mut DeviceIpv6State, event: IPv6AssignEvent) 
                 return false;
             };
             let mut changed = false;
-            for ip in info.ips {
-                changed |= entry.remove(&ip);
+            for addr in info.ips {
+                changed |= entry.remove(&addr.ip);
             }
             if entry.is_empty() {
                 state.addresses.remove(&device_id);
@@ -224,7 +225,8 @@ fn apply_ipv6_assign_event(state: &mut DeviceIpv6State, event: IPv6AssignEvent) 
             let Some(device_id) = info.device_id else {
                 return false;
             };
-            let new_ips: HashSet<_> = info.ips.into_iter().filter(is_usable_dynamic_ipv6).collect();
+            let new_ips: HashSet<_> =
+                info.ips.into_iter().map(|addr| addr.ip).filter(is_usable_dynamic_ipv6).collect();
             if new_ips.is_empty() {
                 state.addresses.remove(&device_id).is_some()
             } else if state.addresses.get(&device_id) == Some(&new_ips) {
@@ -267,14 +269,16 @@ fn default_static_mapping_v6_rules() -> Vec<StaticNatMappingV6Config> {
 mod tests {
     use super::*;
     use landscape_common::{
-        config_service::enrolled_device::EnrolledDevice, event::hub::IPv6AssignInfo, net::MacAddr,
+        config_service::enrolled_device::EnrolledDevice,
+        event::hub::{IPv6AssignInfo, Ipv6AssignAddress},
+        net::MacAddr,
     };
 
     fn assign_info(device_id: Option<Uuid>, ips: Vec<Ipv6Addr>) -> IPv6AssignInfo {
         IPv6AssignInfo {
             iface_name: "lan0".to_string(),
             mac: MacAddr::from([0, 1, 2, 3, 4, 5]),
-            ips,
+            ips: ips.into_iter().map(Ipv6AssignAddress::dhcpv6).collect(),
             device_id,
         }
     }

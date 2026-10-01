@@ -66,7 +66,7 @@ use landscape_common::{
     wan_service::ipv6_pd::IAPrefixMap,
 };
 use landscape_common::{config::InitConfig, lan_service::lan_dhcpv4::config::DHCPv4ServiceConfig};
-use landscape_core::{lan_hostname::LanHostnameRegistry, time::SyncTimeService};
+use landscape_core::{lan_device::LanDeviceDirectory, time::SyncTimeService};
 use landscape_database::provider::LandscapeDBServiceProvider;
 use tokio::runtime::Builder as RuntimeBuilder;
 use tokio::sync::mpsc;
@@ -218,6 +218,7 @@ async fn run_system(
     let ipv4_assign_sender = event_hub.ipv4_sender();
     let ipv6_assign_sender = event_hub.ipv6_sender();
     let ipv6_prefix_sender = event_hub.ipv6_prefix_sender();
+    let lan_discovery_sender = event_hub.lan_discovery_sender();
     let event_handle = event_hub.spawn();
 
     startup_phase!(
@@ -336,21 +337,18 @@ async fn run_system(
     let enrolled_devices = db_store_provider.enrolled_device_store().list().await.map_err(|e| {
         StartupError::Database(DbError::Internal(format!("failed to list enrolled devices: {e}")))
     })?;
-    let lan_hostname_registry = startup_phase!("lan_hostname.new", {
-        let initial_devices: Vec<(String, std::net::Ipv4Addr)> = enrolled_devices
-            .iter()
-            .filter_map(|d| {
-                d.hostname.as_ref().zip(d.ipv4.as_ref()).map(|(h, ip)| (h.clone(), *ip))
-            })
-            .collect();
-        LanHostnameRegistry::new(
-            config.lan_hostname.clone(),
-            initial_devices,
-            event_handle.subscribe_ipv4_assign(),
+    let lan_device_directory = startup_phase!("lan_device.new", {
+        LanDeviceDirectory::new(
+            enrolled_devices.clone(),
             event_handle.subscribe_device(),
+            event_handle.subscribe_ipv4_assign(),
+            event_handle.subscribe_ipv6_assign(),
+            event_handle.subscribe_lan_discovery(),
         )
     });
-    let lan_domain_state = lan_hostname_registry.config_state();
+    // Shared LAN hostname config: hot-reloaded by the config service and read
+    // by the DNS local resolver and the DHCPv4 server (options 15/119).
+    let lan_domain_state = Arc::new(ArcSwap::from_pointee(config.lan_hostname.clone()));
     let dns_service = startup_phase!(
         "dns_service.new",
         LandscapeDnsService::new(
@@ -363,7 +361,8 @@ async fn run_system(
             config.dns.clone(),
             cert_service.clone(),
             metric_service.get_dns_metric_channel(),
-            lan_hostname_registry,
+            lan_device_directory.clone(),
+            lan_domain_state.clone(),
             Arc::new(ebpf_rt.dns_result_sink()),
             Arc::new(ebpf_rt.flow_socket_registrar()),
         )
@@ -497,6 +496,7 @@ async fn run_system(
         lan_domain_state,
         event_handle.subscribe_iface(),
         ipv4_assign_sender,
+        lan_discovery_sender,
         event_handle.subscribe_device(),
         ebpf_rt.clone().mac_binding(),
     )

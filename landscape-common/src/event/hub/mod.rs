@@ -1,4 +1,5 @@
 mod device;
+mod discovery;
 mod frontend_event;
 mod handle;
 pub mod iface;
@@ -6,13 +7,17 @@ mod ipv4;
 mod ipv6;
 
 pub use device::{EnrolledDeviceEvent, EnrolledDeviceEventReader, EnrolledDeviceEventSender};
+pub use discovery::{
+    LanDiscoveryEvent, LanDiscoveryEventReader, LanDiscoveryEventSender, LanDiscoverySource,
+};
 pub use frontend_event::{FrontendEvent, FrontendEventReader};
 pub use handle::EventHubHandle;
 pub use iface::{IfaceEventReader, IfaceEventSender};
 pub use ipv4::{IPv4AssignEvent, IPv4AssignEventReader, IPv4AssignEventSender, IPv4AssignInfo};
 pub use ipv6::{
     IAPrefixEvent, IAPrefixEventReader, IAPrefixEventSender, IPv6AssignEvent,
-    IPv6AssignEventReader, IPv6AssignEventSender, IPv6AssignInfo,
+    IPv6AssignEventReader, IPv6AssignEventSender, IPv6AssignInfo, IPv6AssignSource,
+    Ipv6AssignAddress,
 };
 
 use tokio::sync::{broadcast, mpsc};
@@ -30,6 +35,8 @@ const IPV6_MPSC_CAPACITY: usize = 32;
 const IPV6_BROADCAST_CAPACITY: usize = 64;
 const IAPREFIX_MPSC_CAPACITY: usize = 32;
 const IAPREFIX_BROADCAST_CAPACITY: usize = 64;
+const DISCOVERY_MPSC_CAPACITY: usize = 256;
+const DISCOVERY_BROADCAST_CAPACITY: usize = 256;
 
 pub struct EventHub {
     rx: mpsc::Receiver<IfaceObserverAction>,
@@ -58,6 +65,11 @@ pub struct EventHub {
     ia_prefix_broadcast_tx: broadcast::Sender<IAPrefixEvent>,
     ia_prefix_broadcast_rx: broadcast::Receiver<IAPrefixEvent>,
     ia_prefix_mpsc_tx: mpsc::Sender<IAPrefixEvent>,
+
+    discovery_rx: mpsc::Receiver<LanDiscoveryEvent>,
+    discovery_broadcast_tx: broadcast::Sender<LanDiscoveryEvent>,
+    discovery_broadcast_rx: broadcast::Receiver<LanDiscoveryEvent>,
+    discovery_mpsc_tx: mpsc::Sender<LanDiscoveryEvent>,
 }
 
 impl Default for EventHub {
@@ -87,6 +99,10 @@ impl EventHub {
         let (ia_prefix_broadcast_tx, ia_prefix_broadcast_rx) =
             broadcast::channel(IAPREFIX_BROADCAST_CAPACITY);
 
+        let (discovery_tx, discovery_rx) = mpsc::channel(DISCOVERY_MPSC_CAPACITY);
+        let (discovery_broadcast_tx, discovery_broadcast_rx) =
+            broadcast::channel(DISCOVERY_BROADCAST_CAPACITY);
+
         Self {
             rx,
             broadcast_tx,
@@ -114,6 +130,11 @@ impl EventHub {
             ia_prefix_broadcast_tx,
             ia_prefix_broadcast_rx,
             ia_prefix_mpsc_tx: ia_prefix_tx,
+
+            discovery_rx,
+            discovery_broadcast_tx,
+            discovery_broadcast_rx,
+            discovery_mpsc_tx: discovery_tx,
         }
     }
 
@@ -135,6 +156,10 @@ impl EventHub {
 
     pub fn ipv6_prefix_sender(&self) -> IAPrefixEventSender {
         IAPrefixEventSender::new(self.ia_prefix_mpsc_tx.clone())
+    }
+
+    pub fn lan_discovery_sender(&self) -> LanDiscoveryEventSender {
+        LanDiscoveryEventSender::new(self.discovery_mpsc_tx.clone())
     }
 
     pub fn spawn(self) -> EventHubHandle {
@@ -165,6 +190,11 @@ impl EventHub {
             ia_prefix_broadcast_tx,
             ia_prefix_broadcast_rx,
             ia_prefix_mpsc_tx: _,
+
+            discovery_rx,
+            discovery_broadcast_tx,
+            discovery_broadcast_rx,
+            discovery_mpsc_tx: _,
         } = self;
 
         let handle = EventHubHandle::new(
@@ -180,6 +210,8 @@ impl EventHub {
             ipv6_broadcast_rx,
             ia_prefix_broadcast_tx.clone(),
             ia_prefix_broadcast_rx,
+            discovery_broadcast_tx.clone(),
+            discovery_broadcast_rx,
         );
         crate::concurrency::spawn_task(
             crate::concurrency::task_label::task::EVENT_HUB_DISPATCHER,
@@ -196,6 +228,8 @@ impl EventHub {
                     ipv6_broadcast_tx,
                     ia_prefix_rx,
                     ia_prefix_broadcast_tx,
+                    discovery_rx,
+                    discovery_broadcast_tx,
                 )
                 .await
             },
@@ -216,6 +250,8 @@ impl EventHub {
         ipv6_broadcast_tx: broadcast::Sender<IPv6AssignEvent>,
         mut ia_prefix_rx: mpsc::Receiver<IAPrefixEvent>,
         ia_prefix_broadcast_tx: broadcast::Sender<IAPrefixEvent>,
+        mut discovery_rx: mpsc::Receiver<LanDiscoveryEvent>,
+        discovery_broadcast_tx: broadcast::Sender<LanDiscoveryEvent>,
     ) {
         loop {
             tokio::select! {
@@ -250,6 +286,12 @@ impl EventHub {
                     tracing::debug!(?event, "EventHub: dispatch IAPrefix event");
                     if let Err(e) = ia_prefix_broadcast_tx.send(event) {
                         tracing::warn!("EventHub: ia_prefix broadcast channel full, dropping event: {e:?}");
+                    }
+                }
+                Some(event) = discovery_rx.recv() => {
+                    tracing::trace!(?event, "EventHub: dispatch Discovery event");
+                    if let Err(e) = discovery_broadcast_tx.send(event) {
+                        tracing::warn!("EventHub: discovery broadcast channel full, dropping event: {e:?}");
                     }
                 }
                 else => break,

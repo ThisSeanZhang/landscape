@@ -176,6 +176,8 @@ pub mod task_label {
         pub const WAN_IPV6PD_CLIENT_RENEW: &str = "wan.ipv6pd_client.rx";
         /// LAN hostname registry listener for device/DHCP events.
         pub const DNS_HOSTNAME_OBSERVER: &str = "dns.hostname.observer";
+        /// LAN device directory projection listener for device/DHCP/discovery events.
+        pub const LAN_DEVICE_DIRECTORY: &str = "lan.device.directory";
         /// ARP learning listener for address events.
         pub const ARP_LEARN: &str = "arp.learn";
         /// Periodic ARP scan task.

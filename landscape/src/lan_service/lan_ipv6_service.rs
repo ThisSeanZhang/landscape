@@ -466,7 +466,7 @@ impl LanIPv6ManagerService {
                                         let r = s.update_device_binding(d.mac, None);
                                         s.trigger_reconfigure_for_changes(&r);
                                         if !global {
-                                            let ips = s.all_ips_for_mac(&d.mac);
+                                            let ips = s.all_assigned_addrs_for_mac(&d.mac);
                                             let _ = ipv6_assign_sender.try_send(
                                                 IPv6AssignEvent::Flush(IPv6AssignInfo {
                                                     iface_name: name.clone(),
@@ -480,7 +480,7 @@ impl LanIPv6ManagerService {
                                     let r = s.update_device_binding(new.mac, new.ipv6);
                                     s.trigger_reconfigure_for_changes(&r);
                                     if !global {
-                                        let ips = s.all_ips_for_mac(&new.mac);
+                                        let ips = s.all_assigned_addrs_for_mac(&new.mac);
                                         let _ = ipv6_assign_sender.try_send(
                                             IPv6AssignEvent::Flush(IPv6AssignInfo {
                                                 iface_name: name.clone(),
@@ -507,7 +507,7 @@ impl LanIPv6ManagerService {
                                     let r = s.update_device_binding(old.mac, None);
                                     s.trigger_reconfigure_for_changes(&r);
                                     if !global {
-                                        let ips = s.all_ips_for_mac(&old.mac);
+                                        let ips = s.all_assigned_addrs_for_mac(&old.mac);
                                         let _ =
                                             ipv6_assign_sender.try_send(IPv6AssignEvent::Flush(
                                                 IPv6AssignInfo {

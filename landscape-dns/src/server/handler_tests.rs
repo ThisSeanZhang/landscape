@@ -1,9 +1,10 @@
 use super::*;
 use crate::server::LocalDnsAnswerProvider;
-use arc_swap::ArcSwapOption;
+use arc_swap::{ArcSwap, ArcSwapOption};
 use landscape_common::dns::rule::FilterResult;
 use landscape_common::flow::{DnsRuntimeMarkInfo, NoopDnsResultSink};
-use landscape_core::lan_hostname::LanHostnameRegistry;
+use landscape_common::sys_service::lan_hostname::LanHostnameConfig;
+use landscape_core::lan_device::LanDeviceDirectory;
 use uuid::Uuid;
 
 #[derive(Default, Debug)]
@@ -178,12 +179,12 @@ mod tests {
             shared_cache_runtime_config(5),
             1,
             Arc::new(ArcSwapOption::new(None)),
-            test_local_resolver(test_lan_hostname_registry()),
+            test_local_resolver(),
         )
     }
 
     fn test_handler_with_local(
-        registry: Arc<LanHostnameRegistry>,
+        hostname_config: Arc<ArcSwap<LanHostnameConfig>>,
         provider: Option<Arc<dyn LocalDnsAnswerProvider>>,
         dns_rules: Vec<DNSRuntimeRule>,
         redirect_rules: Vec<DNSRedirectRuntimeRule>,
@@ -193,7 +194,13 @@ mod tests {
             shared_cache_runtime_config(5),
             1,
             Arc::new(ArcSwapOption::new(None)),
-            Arc::new(LocalResolver::new(registry, provider, None, None)),
+            Arc::new(LocalResolver::new(
+                LanDeviceDirectory::new_for_test(),
+                hostname_config,
+                provider,
+                None,
+                None,
+            )),
         )
     }
 
@@ -208,18 +215,22 @@ mod tests {
             runtime_config,
             flow_id,
             Arc::new(ArcSwapOption::new(None)),
-            test_local_resolver(test_lan_hostname_registry()),
+            test_local_resolver(),
         )
     }
 
-    fn test_local_resolver(registry: Arc<LanHostnameRegistry>) -> Arc<LocalResolver> {
-        Arc::new(LocalResolver::new(registry, None, None, None))
+    fn test_local_resolver() -> Arc<LocalResolver> {
+        Arc::new(LocalResolver::new(
+            LanDeviceDirectory::new_for_test(),
+            test_lan_hostname_config(),
+            None,
+            None,
+            None,
+        ))
     }
 
-    fn test_lan_hostname_registry() -> Arc<LanHostnameRegistry> {
-        LanHostnameRegistry::new_for_test(
-            landscape_common::sys_service::lan_hostname::LanHostnameConfig::default(),
-        )
+    fn test_lan_hostname_config() -> Arc<ArcSwap<LanHostnameConfig>> {
+        Arc::new(ArcSwap::from_pointee(LanHostnameConfig::default()))
     }
 
     fn test_runtime_rule() -> DNSRuntimeRule {
@@ -323,18 +334,16 @@ mod tests {
     }
 
     #[test]
-    fn disabled_lan_hostname_registry_does_not_own_private_ptr_queries() {
+    fn disabled_lan_hostname_config_does_not_own_private_ptr_queries() {
         run_async_test(async {
-            let registry = LanHostnameRegistry::new_for_test(
-                landscape_common::sys_service::lan_hostname::LanHostnameConfig {
-                    enable: false,
-                    lan_suffix: "lan".to_string(),
-                },
-            );
-            let handler = test_handler_with_local(registry, None, vec![], vec![]);
+            let disabled_config = Arc::new(ArcSwap::from_pointee(LanHostnameConfig {
+                enable: false,
+                lan_suffix: "lan".to_string(),
+            }));
+            let handler = test_handler_with_local(disabled_config, None, vec![], vec![]);
             let domain = ParsedDomain::new("50.1.168.192.in-addr.arpa.").unwrap();
 
-            // A disabled registry does not own private PTR queries: they fall
+            // A disabled config does not own private PTR queries: they fall
             // through to the cache/upstream stage (no rules → NOERROR/empty).
             let answer = handler.resolve_query(&domain, RecordType::PTR).await;
             assert!(answer.records.is_empty());
@@ -879,7 +888,7 @@ mod tests {
     fn all_local_ips_redirect_uses_provider_records() {
         run_async_test(async {
             let handler = test_handler_with_local(
-                test_lan_hostname_registry(),
+                test_lan_hostname_config(),
                 Some(Arc::new(MockLocalAnswerProvider {
                     addrs: vec![
                         IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)),
@@ -910,7 +919,7 @@ mod tests {
     fn all_local_ips_redirect_without_family_candidates_falls_through() {
         run_async_test(async {
             let handler = test_handler_with_local(
-                test_lan_hostname_registry(),
+                test_lan_hostname_config(),
                 Some(Arc::new(MockLocalAnswerProvider {
                     addrs: vec![IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1))],
                 })),

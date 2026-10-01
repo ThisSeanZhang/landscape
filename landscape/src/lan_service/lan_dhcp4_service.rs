@@ -7,7 +7,9 @@ use std::time::Duration;
 use landscape_common::LAND_ARP_SCAN_INTERVAL;
 use landscape_common::concurrency::{spawn_task, task_label};
 use landscape_common::database::store::ConfigStore;
-use landscape_common::event::hub::IfaceEventReader;
+use landscape_common::event::hub::{
+    IfaceEventReader, LanDiscoveryEvent, LanDiscoveryEventSender, LanDiscoverySource,
+};
 use landscape_common::lan_service::lan_dhcpv4::DhcpError;
 use landscape_common::lan_service::lan_dhcpv4::config::DHCPv4ServiceConfig;
 use landscape_common::lan_service::lan_dhcpv4::status::ArpScanInfo;
@@ -84,10 +86,13 @@ pub struct DHCPv4ServerStarter {
     /// Live LAN suffix, advertised as DHCP option 15/119.
     lan_domain_state: Arc<ArcSwap<LanHostnameConfig>>,
     ipv4_assign_sender: IPv4AssignEventSender,
+    /// Feeds ARP scan observations into the LAN device directory.
+    lan_discovery_sender: LanDiscoveryEventSender,
     mac_binding: Arc<dyn MacBindingDataplane>,
 }
 
 impl DHCPv4ServerStarter {
+    #[allow(clippy::too_many_arguments)] // 服务依赖逐项注入，与 manager 构造器一致
     pub fn new(
         route_service: IpRouteService,
         db_provider: LandscapeDBServiceProvider,
@@ -95,6 +100,7 @@ impl DHCPv4ServerStarter {
         dns_runtime_config: landscape_common::config::DnsRuntimeConfig,
         lan_domain_state: Arc<ArcSwap<LanHostnameConfig>>,
         ipv4_assign_sender: IPv4AssignEventSender,
+        lan_discovery_sender: LanDiscoveryEventSender,
         mac_binding: Arc<dyn MacBindingDataplane>,
     ) -> DHCPv4ServerStarter {
         DHCPv4ServerStarter {
@@ -106,6 +112,7 @@ impl DHCPv4ServerStarter {
             iface_scan_map: Arc::new(RwLock::new(HashMap::new())),
             iface_status_map: Arc::new(RwLock::new(HashMap::new())),
             ipv4_assign_sender,
+            lan_discovery_sender,
             mac_binding,
         }
     }
@@ -207,6 +214,7 @@ impl ServiceStarterTrait for DHCPv4ServerStarter {
                         .clone()
                 };
                 let scan_iface_name = iface.name.clone();
+                let lan_discovery_sender = self.lan_discovery_sender.clone();
 
                 let arp_spawn_status = service_status.clone();
                 arp_spawn_status.spawn_task(
@@ -242,6 +250,18 @@ impl ServiceStarterTrait for DHCPv4ServerStarter {
                                         server_addr,
                                         network_mask,
                                     ).await;
+
+                                    // Feed the LAN device directory (best effort;
+                                    // a full scan round is a burst and the directory
+                                    // coalesces it behind its debounce).
+                                    for item in &result {
+                                        let _ = lan_discovery_sender.try_send(LanDiscoveryEvent {
+                                            iface_name: scan_iface_name.clone(),
+                                            mac: Some(item.mac),
+                                            ip: IpAddr::V4(item.ip),
+                                            source: LanDiscoverySource::Arp,
+                                        });
+                                    }
 
                                     let mut arp_infos = scand_arp_info.write().await;
                                     arp_infos.insert_new_info(ArpScanInfo::new(result));
@@ -307,6 +327,7 @@ impl DHCPv4ServerManagerService {
         lan_domain_state: Arc<ArcSwap<LanHostnameConfig>>,
         mut dev_observer: IfaceEventReader,
         ipv4_assign_sender: IPv4AssignEventSender,
+        lan_discovery_sender: LanDiscoveryEventSender,
         mut device_reader: EnrolledDeviceEventReader,
         mac_binding: Arc<dyn MacBindingDataplane>,
     ) -> Self {
@@ -318,6 +339,7 @@ impl DHCPv4ServerManagerService {
             dns_runtime_config,
             lan_domain_state,
             ipv4_assign_sender,
+            lan_discovery_sender,
             mac_binding,
         );
         let service =
