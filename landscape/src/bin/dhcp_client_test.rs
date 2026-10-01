@@ -9,9 +9,7 @@ use landscape_common::{
 use landscape_ebpf::runtime::EbpfRuntime;
 
 use clap::Parser;
-use landscape_database::provider::LandscapeDBServiceProvider;
 use std::sync::Arc;
-use tokio::sync::mpsc;
 
 #[derive(Parser, Debug, Clone)]
 pub struct Args {
@@ -27,14 +25,10 @@ async fn main() {
     let args = Args::parse();
     tracing::info!("using args is: {:#?}", args);
 
-    let db_store_provider = LandscapeDBServiceProvider::mem_test_db().await;
-    let flow_repo = db_store_provider.flow_rule_store();
-
     let service_status = ServiceHandle::new();
 
     let status = service_status.clone();
 
-    let (_, route_rx) = mpsc::channel(1);
     let rt = Arc::new(EbpfRuntime::init("dhcp_client_test", None).expect("init ebpf maps"));
     tokio::spawn(async move {
         if let Some(iface) = get_iface_by_name(&args.iface_name).await
@@ -48,7 +42,7 @@ async fn main() {
                 status,
                 "TEST-PC".to_string(),
                 false,
-                IpRouteService::new(route_rx, flow_repo, rt.clone().route_table()),
+                IpRouteService::new(rt.clone().route_table()),
                 rt.wan_addr_binding(),
             )
             .await;

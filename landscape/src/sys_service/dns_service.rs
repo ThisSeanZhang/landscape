@@ -3,6 +3,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use arc_swap::ArcSwap;
+use hickory_proto::rr::RecordType;
 use landscape_common::sys_service::lan_hostname::LanHostnameConfig;
 use landscape_common::{
     concurrency::{spawn_task, task_label},
@@ -26,7 +27,7 @@ use landscape_dns::{
     },
 };
 use rustls::server::ResolvesServerCert;
-use std::net::{Ipv6Addr, SocketAddr, SocketAddrV6};
+use std::net::{IpAddr, Ipv6Addr, SocketAddr, SocketAddrV6};
 use tokio::sync::mpsc;
 
 use crate::dns::{
@@ -34,9 +35,43 @@ use crate::dns::{
     upstream_service::DnsUpstreamService,
 };
 use crate::{
-    cert::order_service::CertService, geo::site_service::GeoSiteService,
-    sys_service::route::IpRouteService,
+    cert::order_service::CertService,
+    geo::site_service::GeoSiteService,
+    sys_service::route::{IpRouteService, LocalAddrView},
 };
+
+/// Bridges the route service's shared address snapshots into the DNS local
+/// answer provider port. Keeps the route service free of any DNS crate
+/// dependency: it only ever sees [`LocalAddrView`].
+struct RouteLocalAnswerProvider {
+    view: LocalAddrView,
+}
+
+impl LocalDnsAnswerProvider for RouteLocalAnswerProvider {
+    fn load_local_answer_addrs(&self, query_type: RecordType) -> Arc<Vec<IpAddr>> {
+        match query_type {
+            RecordType::A => self.view.load_ipv4_addrs(),
+            RecordType::AAAA => self.view.load_ipv6_addrs(),
+            _ => Arc::new(Vec::new()),
+        }
+    }
+
+    fn load_local_answer_addrs_for_ifindex(
+        &self,
+        query_type: RecordType,
+        ifindex: u32,
+    ) -> Arc<Vec<IpAddr>> {
+        if ifindex == 0 {
+            return self.load_local_answer_addrs(query_type);
+        }
+
+        match query_type {
+            RecordType::A => self.view.load_ipv4_addrs_for_ifindex(ifindex),
+            RecordType::AAAA => self.view.load_ipv6_addrs_for_ifindex(ifindex),
+            _ => Arc::new(Vec::new()),
+        }
+    }
+}
 
 #[derive(Clone)]
 #[allow(dead_code)]
@@ -90,7 +125,8 @@ impl LandscapeDnsService {
             msg_tx,
             cache_runtime.clone(),
             doh,
-            Some(Arc::new(route_service) as Arc<dyn LocalDnsAnswerProvider>),
+            Some(Arc::new(RouteLocalAnswerProvider { view: route_service.local_addr_view() })
+                as Arc<dyn LocalDnsAnswerProvider>),
             Some(Arc::new(api_tls_resolver) as Arc<dyn landscape_dns::server::DohAdvertiseProvider>),
             lan_device_directory,
             lan_hostname_config,

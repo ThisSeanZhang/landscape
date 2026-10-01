@@ -7,7 +7,6 @@ use crate::metric::dns::DnsMetric;
 pub mod dns;
 pub mod hub;
 pub mod nat;
-pub mod route;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub enum LandscapeEvent {

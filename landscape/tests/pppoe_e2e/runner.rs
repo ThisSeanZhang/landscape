@@ -2,9 +2,7 @@ use super::cmd::enter_netns;
 use super::env::ClientIfaceInfo;
 use landscape::sys_service::route::IpRouteService;
 use landscape::wan_service::pppoe_client::{PPPoEClientConfig, run};
-use landscape_common::event::route::RouteEvent;
 use landscape_common::service::{ServiceHandle, ServiceStatus};
-use landscape_database::provider::LandscapeDBServiceProvider;
 use landscape_ebpf::runtime::EbpfRuntime;
 use std::sync::Arc;
 use std::time::Duration;
@@ -98,15 +96,11 @@ pub(super) fn start_client(
             .build()
             .expect("tokio runtime in client ns");
         rt.block_on(async move {
-            let provider = LandscapeDBServiceProvider::mem_test_db().await;
-            let flow_repo = provider.flow_rule_store();
-            let (_evt_tx, evt_rx) = tokio::sync::mpsc::channel::<RouteEvent>(16);
             let ebpf_rt = Arc::new(
                 EbpfRuntime::init(&super::test_bpf_map_space(&scenario), None)
                     .expect("ebpf runtime in client ns"),
             );
-            let route_service =
-                IpRouteService::new(evt_rx, flow_repo, ebpf_rt.clone().route_table());
+            let route_service = IpRouteService::new(ebpf_rt.clone().route_table());
             run(cfg, status_for_task, route_service, ebpf_rt.pppoe_dataplane()).await;
         });
 

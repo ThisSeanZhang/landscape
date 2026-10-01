@@ -12,7 +12,6 @@ use landscape_common::{
     event::hub::IAPrefixEventSender, sys_service::route_service::RouteTargetInfo,
     wan_service::ipv6_pd::IAPrefixMap,
 };
-use landscape_database::provider::LandscapeDBServiceProvider;
 use landscape_ebpf::runtime::EbpfRuntime;
 use tokio::sync::mpsc;
 
@@ -42,11 +41,8 @@ async fn main() {
     };
 
     let service_status = ServiceHandle::new();
-    let db_store_provider = LandscapeDBServiceProvider::mem_test_db().await;
-    let flow_repo = db_store_provider.flow_rule_store();
-    let (_, route_rx) = mpsc::channel(1);
     let rt = Arc::new(EbpfRuntime::init("dhcp_v6_test", None).expect("init ebpf maps"));
-    let ip_route = IpRouteService::new(route_rx, flow_repo, rt.clone().route_table());
+    let ip_route = IpRouteService::new(rt.clone().route_table());
     let status = service_status.clone();
     let prefix_map = IAPrefixMap::new();
     let (prefix_tx, _prefix_rx) = mpsc::channel(1);

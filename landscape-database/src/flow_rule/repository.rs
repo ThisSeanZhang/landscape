@@ -5,7 +5,7 @@ use landscape_common::database::error::DbError;
 use landscape_common::database::store::ConfigStore;
 use landscape_common::flow::config::FlowConfig;
 use landscape_common::flow::{
-    FlowEntryMatchMode, FlowEntryRule, FlowRuleError, FlowTarget, ResolvedFlowEntryMatchMode,
+    FlowEntryMatchMode, FlowEntryRule, FlowRuleError, ResolvedFlowEntryMatchMode,
     ResolvedFlowEntryRule, RuntimeFlowConfig,
 };
 use migration::Expr;
@@ -112,38 +112,6 @@ impl FlowConfigRepository {
             .await?;
 
         Ok(result.map(From::from))
-    }
-
-    pub async fn find_by_target(&self, t: FlowTarget) -> Result<Vec<FlowConfig>, DbError> {
-        // 构造条件 SQL 和参数
-        let (condition_sql, param_value) = match t {
-            FlowTarget::Interface { name } => (
-                "json_extract(json_each.value, '$.target.t') = 'interface' AND json_extract(json_each.value, '$.target.name') = ?",
-                name,
-            ),
-            FlowTarget::Netns { container_name } => (
-                "json_extract(json_each.value, '$.target.t') = 'netns' AND json_extract(json_each.value, '$.target.container_name') = ?",
-                container_name,
-            ),
-        };
-
-        let full_sql = format!(
-            "EXISTS (
-            SELECT 1 FROM json_each(packet_handle_iface_name)
-            WHERE {}
-        )",
-            condition_sql
-        );
-
-        let expr = Expr::cust_with_values(
-            &full_sql,
-            vec![sea_orm::Value::String(Some(Box::new(param_value)))],
-        );
-
-        // 查询执行
-        let result = FlowConfigEntity::find().filter(expr).all(&self.db).await?;
-
-        Ok(result.into_iter().map(From::from).collect())
     }
 
     pub async fn find_resolved_conflict_by_entry_mode(

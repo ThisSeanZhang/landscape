@@ -152,10 +152,10 @@ pub mod task_label {
         pub const NAT_STATIC_V6_OBSERVER: &str = "nat.static_v6.observer";
         /// Flow rule listener reacting to DNS service events.
         pub const FLOW_RULE_OBSERVER: &str = "flow.rule.observer";
+        /// Flow rule listener recomputing WAN target slots on route changes.
+        pub const FLOW_WAN_ROUTE_OBSERVER: &str = "flow.wan_route.observer";
         /// Destination IP rule listener reacting to geo/DNS events.
         pub const FLOW_DST_IP_OBSERVER: &str = "flow.dst_ip.observer";
-        /// IP route service listener reacting to rule store changes.
-        pub const ROUTE_SERVICE_OBSERVER: &str = "route.service.observer";
         /// DNS resolver conf listener reacting to DNS config changes.
         pub const DNS_SERVICE_OBSERVER: &str = "dns.service.observer";
         /// 1s host status sampling loop (CPU/memory/temperature).

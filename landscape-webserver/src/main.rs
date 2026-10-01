@@ -104,7 +104,6 @@ use tracing::info;
 
 const DNS_EVENT_CHANNEL_SIZE: usize = 128;
 const DST_IP_EVENT_CHANNEL_SIZE: usize = 128;
-const ROUTE_EVENT_CHANNEL_SIZE: usize = 128;
 
 const UPLOAD_GEO_FILE_SIZE_LIMIT: usize = 100 * 1024 * 1024;
 
@@ -228,7 +227,6 @@ async fn run_system(
     );
 
     let (dns_service_tx, dns_service_rx) = mpsc::channel(DNS_EVENT_CHANNEL_SIZE);
-    let (route_service_tx, route_service_rx) = mpsc::channel(ROUTE_EVENT_CHANNEL_SIZE);
     let (dst_ip_service_tx, _) = tokio::sync::broadcast::channel(DST_IP_EVENT_CHANNEL_SIZE);
 
     let geo_site_service = startup_phase!(
@@ -251,12 +249,15 @@ async fn run_system(
         .await?
     );
 
+    let route_service =
+        startup_phase!("route_service.new", IpRouteService::new(ebpf_rt.clone().route_table()));
+
     let flow_rule_service = startup_phase!(
         "flow_rule_service.new",
         FlowRuleService::new(
             db_store_provider.clone(),
             dns_service_tx.clone(),
-            route_service_tx.clone(),
+            route_service.clone(),
             event_handle.subscribe_device(),
             ebpf_rt.clone().flow_rules(),
         )
@@ -330,11 +331,6 @@ async fn run_system(
             .await
     );
 
-    let route_service = IpRouteService::new(
-        route_service_rx,
-        db_store_provider.flow_rule_store(),
-        ebpf_rt.clone().route_table(),
-    );
     let enrolled_devices = db_store_provider.enrolled_device_store().list().await.map_err(|e| {
         StartupError::Database(DbError::Internal(format!("failed to list enrolled devices: {e}")))
     })?;

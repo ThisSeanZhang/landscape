@@ -2,9 +2,9 @@ use std::sync::Arc;
 
 use landscape_common::{
     concurrency::{spawn_task, task_label},
-    database::store::Change,
+    database::store::{Change, ConfigStore},
+    event::dns::DnsEvent,
     event::hub::EnrolledDeviceEventReader,
-    event::{dns::DnsEvent, route::RouteEvent},
     flow::{FlowEntryMatchMode, FlowRuleError, config::FlowConfig, dataplane::FlowRuleDataplane},
     service::controller::{ConfigStoreController, ConfigStoreFlowController},
 };
@@ -12,14 +12,16 @@ use landscape_database::{
     flow_rule::repository::{FlowConfigRepository, find_duplicate_resolved_modes},
     provider::LandscapeDBServiceProvider,
 };
-use tokio::sync::mpsc;
+use tokio::sync::{broadcast, mpsc};
 use uuid::Uuid;
+
+use crate::sys_service::route::IpRouteService;
 
 #[derive(Clone)]
 pub struct FlowRuleService {
     store: FlowConfigRepository,
     dns_events_tx: mpsc::Sender<DnsEvent>,
-    route_events_tx: mpsc::Sender<RouteEvent>,
+    route_service: IpRouteService,
     dataplane: Arc<dyn FlowRuleDataplane>,
 }
 
@@ -27,13 +29,18 @@ impl FlowRuleService {
     pub async fn new(
         store_provider: LandscapeDBServiceProvider,
         dns_events_tx: mpsc::Sender<DnsEvent>,
-        route_events_tx: mpsc::Sender<RouteEvent>,
+        route_service: IpRouteService,
         device_reader: EnrolledDeviceEventReader,
         dataplane: Arc<dyn FlowRuleDataplane>,
     ) -> Self {
         let store = store_provider.flow_rule_store();
-        let result = Self { store, dns_events_tx, route_events_tx, dataplane };
+        let result = Self { store, dns_events_tx, route_service, dataplane };
+        // Subscribe before the initial sync so no WanRouteEvent can slip in
+        // between the sync and the subscription; events arriving during the
+        // sync only trigger a redundant, idempotent resync.
+        let wan_route_events = result.route_service.subscribe_wan_route_events();
         result.refresh_flow_matches().await;
+        result.sync_all_flow_wan_targets().await;
 
         let this = result.clone();
         spawn_task(task_label::task::FLOW_RULE_OBSERVER, async move {
@@ -42,6 +49,25 @@ impl FlowRuleService {
                 this.refresh_flow_matches().await;
             }
         });
+
+        // Recompute the per-flow WAN target slots whenever the route service
+        // reports a WAN route change; the flow side owns the configs, so the
+        // join lives here instead of inside the route service.
+        let this = result.clone();
+        spawn_task(task_label::task::FLOW_WAN_ROUTE_OBSERVER, async move {
+            let mut events = wan_route_events;
+            loop {
+                match events.recv().await {
+                    Ok(_) => this.sync_all_flow_wan_targets().await,
+                    Err(broadcast::error::RecvError::Lagged(missed)) => {
+                        tracing::warn!("flow wan route observer missed {missed} events; resyncing");
+                        this.sync_all_flow_wan_targets().await;
+                    }
+                    Err(broadcast::error::RecvError::Closed) => break,
+                }
+            }
+        });
+
         result
     }
 
@@ -57,6 +83,16 @@ impl FlowRuleService {
         self.dataplane.sync_flow_matches(&runtime_configs);
 
         let _ = self.dns_events_tx.send(DnsEvent::FlowUpdated).await;
+    }
+
+    /// Recompute every flow's WAN target slots from the current store
+    /// contents against the route service's WAN state.
+    async fn sync_all_flow_wan_targets(&self) {
+        let configs = self.store.list().await.unwrap_or_else(|error| {
+            tracing::error!("failed to load flow configs for wan target sync: {error:?}");
+            Vec::new()
+        });
+        self.route_service.sync_flow_wan_targets(&configs).await;
     }
 }
 
@@ -99,15 +135,12 @@ impl ConfigStoreController for FlowRuleService {
 
     async fn notify_changed(&self, changes: Vec<Change<Self::Config>>) {
         self.refresh_flow_matches().await;
-        let flow_id = (changes.len() == 1).then(|| changes[0].new.flow_id);
-        let _ = self.route_events_tx.send(RouteEvent::FlowRuleUpdate { flow_id }).await;
+        let configs: Vec<FlowConfig> = changes.into_iter().map(|change| change.new).collect();
+        self.route_service.sync_flow_wan_targets(&configs).await;
     }
 
     async fn notify_deleted(&self, old: Self::Config) {
         self.refresh_flow_matches().await;
-        let _ = self
-            .route_events_tx
-            .send(RouteEvent::FlowRuleUpdate { flow_id: Some(old.flow_id) })
-            .await;
+        self.route_service.clear_flow_wan_targets(old.flow_id);
     }
 }
