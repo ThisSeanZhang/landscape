@@ -19,7 +19,7 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
 use super::common::{RecordStore, candidate_zones, relative_record_name, unquote_txt_value};
-use super::{DnsChallengeSolver, DnsRecordUpdater};
+use super::{DnsChallengeSolver, DnsRecordUpdater, provider_http_client};
 
 const TENCENT_API_BASE: &str = "https://dnspod.tencentcloudapi.com/";
 const TENCENT_API_HOST: &str = "dnspod.tencentcloudapi.com";
@@ -116,7 +116,7 @@ impl TencentSolver {
         base_url: impl Into<String>,
     ) -> Self {
         Self {
-            client: Client::new(),
+            client: provider_http_client(),
             secret_id,
             secret_key,
             base_url: base_url.into(),

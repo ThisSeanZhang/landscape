@@ -7,8 +7,8 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-use super::DnsChallengeSolver;
 use super::common::{RecordStore, candidate_zones, fqdn, record_name, unquote_txt_value};
+use super::{DnsChallengeSolver, provider_http_client};
 
 const GOOGLE_DNS_API_BASE: &str = "https://dns.googleapis.com/dns/v1";
 const GOOGLE_DNS_SCOPE: &str = "https://www.googleapis.com/auth/ndev.clouddns.readwrite";
@@ -130,7 +130,7 @@ impl GoogleSolver {
         }
 
         Ok(Self {
-            client: Client::new(),
+            client: provider_http_client(),
             account,
             base_url: base_url.into(),
             ttl,

@@ -1,10 +1,11 @@
 use std::collections::{HashMap, HashSet};
+use std::future::Future;
 use std::net::{IpAddr, Ipv6Addr};
 use std::sync::Arc;
 use std::time::Duration;
 
 use landscape_common::cert::order::DnsProviderConfig;
-use landscape_common::concurrency::{spawn_task, task_label};
+use landscape_common::concurrency::task_label;
 use landscape_common::database::store::ConfigStore;
 use landscape_common::ddns::{
     DdnsError, DdnsFamilyRuntime, DdnsJob, DdnsJobRuntime, DdnsJobStatus, DdnsRecordRuntime,
@@ -15,6 +16,7 @@ use landscape_common::event::hub::{
     IAPrefixEvent, IAPrefixEventReader, LanDeviceChange, LanDeviceEventReader,
 };
 use landscape_common::lan_service::lan_ipv6::{combine_ipv6_prefix_suffix, extract_ipv6_suffix};
+use landscape_common::memtrack::{TaggedFuture, subsystem_from_task_label};
 use landscape_common::wan_service::ipv6_pd::IAPrefixMap;
 use landscape_common::{
     database::error::DbError, database::store::Change, service::controller::ConfigStoreController,
@@ -27,7 +29,11 @@ use landscape_database::{
 };
 
 use tokio::sync::{Mutex, RwLock, broadcast};
+use tokio::task::JoinHandle as TokioJoinHandle;
 use tokio::time::MissedTickBehavior;
+use tokio_util::sync::CancellationToken;
+use tokio_util::task::TaskTracker;
+use tracing::Instrument;
 use uuid::Uuid;
 
 use crate::cert::dns_provider::{build_record_updater, validate_provider_zone_access};
@@ -57,6 +63,8 @@ pub struct DdnsService {
     sync_lock: DdnsSyncLock,
     prefix_map: IAPrefixMap,
     directory: Arc<LanDeviceDirectory>,
+    stop_token: CancellationToken,
+    tracker: TaskTracker,
 }
 
 impl DdnsService {
@@ -76,6 +84,8 @@ impl DdnsService {
             sync_lock: Arc::new(Mutex::new(())),
             prefix_map,
             directory,
+            stop_token: CancellationToken::new(),
+            tracker: TaskTracker::new(),
         };
         service.refresh_runtime_from_store().await;
         service.spawn_sync_loop();
@@ -88,6 +98,34 @@ impl DdnsService {
 
     pub async fn get_runtime_statuses(&self) -> HashMap<Uuid, DdnsJobRuntime> {
         self.runtime.read().await.clone()
+    }
+
+    /// Tracked spawn: registers the task into this service's tracker, keeping
+    /// the same memtrack/tracing semantics as the global `spawn_task`; the
+    /// stop side waits deterministically on it for all background loops.
+    fn spawn_tracked<Fut>(&self, label: &'static str, future: Fut) -> TokioJoinHandle<Fut::Output>
+    where
+        Fut: Future + Send + 'static,
+        Fut::Output: Send + 'static,
+    {
+        let tag = subsystem_from_task_label(label);
+        self.tracker.spawn(
+            TaggedFuture::new(tag, future).instrument(tracing::info_span!("task", task = label)),
+        )
+    }
+
+    /// Request stop and wait for all background loops to finish; `timeout`
+    /// bounds hung in-flight provider calls (the HTTP client already enforces
+    /// a 30s request timeout, this is the shutdown-side ceiling).
+    pub async fn shutdown_and_wait(&self, timeout: Duration) {
+        self.stop_token.cancel();
+        self.tracker.close();
+        match tokio::time::timeout(timeout, self.tracker.wait()).await {
+            Ok(()) => tracing::info!("ddns background loops stopped"),
+            Err(_) => tracing::warn!(
+                "ddns shutdown timed out after {timeout:?}; in-flight sync may still be draining"
+            ),
+        }
     }
 
     pub async fn sync_job_now(&self, job_id: Uuid) -> Result<DdnsJobRuntime, DdnsError> {
@@ -111,50 +149,71 @@ impl DdnsService {
 
     fn spawn_sync_loop(&self) {
         let service = self.clone();
-        spawn_task(task_label::task::DNS_DDNS_JOB, async move {
+        let token = self.stop_token.clone();
+        self.spawn_tracked(task_label::task::DNS_DDNS_JOB, async move {
             let mut ticker = tokio::time::interval(Duration::from_secs(DDNS_SYNC_INTERVAL_SECS));
             ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
             loop {
-                ticker.tick().await;
-                if let Err(e) = service.sync_all_enabled_jobs().await {
-                    tracing::warn!("ddns sync pass failed: {e:?}");
+                tokio::select! {
+                    _ = token.cancelled() => break,
+                    _ = ticker.tick() => {
+                        if let Err(e) = service.sync_all_enabled_jobs().await {
+                            tracing::warn!("ddns sync pass failed: {e:?}");
+                        }
+                    }
                 }
             }
+            tracing::info!("ddns sync loop stopped");
         });
     }
 
     fn spawn_retry_loop(&self) {
         let service = self.clone();
-        spawn_task(task_label::task::DNS_DDNS_JOB, async move {
+        let token = self.stop_token.clone();
+        self.spawn_tracked(task_label::task::DNS_DDNS_JOB, async move {
             let mut ticker = tokio::time::interval(Duration::from_secs(DDNS_RETRY_INTERVAL_SECS));
             ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
             ticker.tick().await;
             loop {
-                ticker.tick().await;
-                if let Err(e) = service.retry_pending_jobs().await {
-                    tracing::warn!("ddns retry pass failed: {e:?}");
+                tokio::select! {
+                    _ = token.cancelled() => break,
+                    _ = ticker.tick() => {
+                        if let Err(e) = service.retry_pending_jobs().await {
+                            tracing::warn!("ddns retry pass failed: {e:?}");
+                        }
+                    }
                 }
             }
+            tracing::info!("ddns retry loop stopped");
         });
     }
 
     fn spawn_wan_update_loop(&self) {
         let service = self.clone();
         let mut events = self.route_service.subscribe_wan_route_events();
-        spawn_task(task_label::task::DNS_DDNS_JOB, async move {
+        let token = self.stop_token.clone();
+        self.spawn_tracked(task_label::task::DNS_DDNS_JOB, async move {
             loop {
-                match events.recv().await {
-                    Ok(event) => {
-                        if let Err(e) = service.sync_jobs_for_wan_event(event).await {
-                            tracing::warn!("ddns wan-triggered sync failed: {e:?}");
+                tokio::select! {
+                    _ = token.cancelled() => break,
+                    result = events.recv() => {
+                        match result {
+                            Ok(event) => {
+                                if let Err(e) = service.sync_jobs_for_wan_event(event).await {
+                                    tracing::warn!("ddns wan-triggered sync failed: {e:?}");
+                                }
+                            }
+                            Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
+                                tracing::warn!(
+                                    "ddns wan event listener lagged, skipped {skipped} events"
+                                );
+                            }
+                            Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
                         }
                     }
-                    Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
-                        tracing::warn!("ddns wan event listener lagged, skipped {skipped} events");
-                    }
-                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
                 }
             }
+            tracing::info!("ddns wan event loop stopped");
         });
     }
 
@@ -166,29 +225,35 @@ impl DdnsService {
     /// address set, yet its jobs become resolvable.
     fn spawn_lan_device_loop(&self, mut reader: LanDeviceEventReader) {
         let service = self.clone();
-        spawn_task(task_label::task::DNS_DDNS_JOB, async move {
+        let token = self.stop_token.clone();
+        self.spawn_tracked(task_label::task::DNS_DDNS_JOB, async move {
             loop {
-                match reader.recv().await {
-                    Ok(event) => {
-                        if !matches!(
-                            event.change,
-                            LanDeviceChange::Addresses | LanDeviceChange::Identity
-                        ) {
-                            continue;
-                        }
-                        let Some(device_id) = event.device_id else { continue };
-                        if let Err(e) = service.on_device_changed(device_id).await {
-                            tracing::warn!("ddns lan device handler failed: {e:?}");
+                tokio::select! {
+                    _ = token.cancelled() => break,
+                    result = reader.recv() => {
+                        match result {
+                            Ok(event) => {
+                                if !matches!(
+                                    event.change,
+                                    LanDeviceChange::Addresses | LanDeviceChange::Identity
+                                ) {
+                                    continue;
+                                }
+                                let Some(device_id) = event.device_id else { continue };
+                                if let Err(e) = service.on_device_changed(device_id).await {
+                                    tracing::warn!("ddns lan device handler failed: {e:?}");
+                                }
+                            }
+                            Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
+                                // Missed notifications are reconciled by the periodic
+                                // full sync (DDNS_SYNC_INTERVAL_SECS).
+                                tracing::warn!(
+                                    "ddns lan device listener lagged, skipped {skipped} events; periodic full sync will reconcile"
+                                );
+                            }
+                            Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
                         }
                     }
-                    Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
-                        // Missed notifications are reconciled by the periodic
-                        // full sync (DDNS_SYNC_INTERVAL_SECS).
-                        tracing::warn!(
-                            "ddns lan device listener lagged, skipped {skipped} events; periodic full sync will reconcile"
-                        );
-                    }
-                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
                 }
             }
             tracing::info!("ddns lan device loop stopped");
@@ -212,30 +277,36 @@ impl DdnsService {
 
     fn spawn_pd_prefix_loop(&self, mut reader: IAPrefixEventReader) {
         let svc = self.clone();
-        spawn_task(task_label::task::DNS_DDNS_JOB, async move {
+        let token = self.stop_token.clone();
+        self.spawn_tracked(task_label::task::DNS_DDNS_JOB, async move {
             loop {
-                match reader.recv().await {
-                    Ok(IAPrefixEvent::Updated { iface_name })
-                    | Ok(IAPrefixEvent::Expired { iface_name }) => {
-                        let jobs = match svc.store.find_enabled().await {
-                            Ok(jobs) => jobs,
-                            Err(e) => {
-                                tracing::error!("ddns pd prefix loop: find_enabled error: {e:?}");
-                                continue;
+                tokio::select! {
+                    _ = token.cancelled() => break,
+                    result = reader.recv() => {
+                        match result {
+                            Ok(IAPrefixEvent::Updated { iface_name })
+                            | Ok(IAPrefixEvent::Expired { iface_name }) => {
+                                let jobs = match svc.store.find_enabled().await {
+                                    Ok(jobs) => jobs,
+                                    Err(e) => {
+                                        tracing::error!("ddns pd prefix loop: find_enabled error: {e:?}");
+                                        continue;
+                                    }
+                                };
+                                let matching: Vec<_> = jobs
+                                    .into_iter()
+                                    .filter(|job| job_has_enrolled_device_ipv6_for_wan(job, &iface_name))
+                                    .collect();
+                                if !matching.is_empty() {
+                                    svc.sync_jobs_now(matching).await;
+                                }
                             }
-                        };
-                        let matching: Vec<_> = jobs
-                            .into_iter()
-                            .filter(|job| job_has_enrolled_device_ipv6_for_wan(job, &iface_name))
-                            .collect();
-                        if !matching.is_empty() {
-                            svc.sync_jobs_now(matching).await;
+                            Err(broadcast::error::RecvError::Lagged(n)) => {
+                                tracing::warn!("ddns pd prefix loop: lagged by {n} messages");
+                            }
+                            Err(broadcast::error::RecvError::Closed) => break,
                         }
                     }
-                    Err(broadcast::error::RecvError::Lagged(n)) => {
-                        tracing::warn!("ddns pd prefix loop: lagged by {n} messages");
-                    }
-                    Err(broadcast::error::RecvError::Closed) => break,
                 }
             }
             tracing::info!("ddns pd prefix loop stopped");

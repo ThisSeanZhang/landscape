@@ -7,10 +7,10 @@ use reqwest::{Client, Method};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
-use super::DnsChallengeSolver;
 use super::common::{
     RecordStore, candidate_zones, fqdn, quote_txt_value, record_name, unquote_txt_value,
 };
+use super::{DnsChallengeSolver, provider_http_client};
 
 const AWS_ROUTE53_BASE: &str = "https://route53.amazonaws.com";
 const AWS_ROUTE53_CHINA_BASE: &str = "https://route53.amazonaws.com.cn";
@@ -135,7 +135,7 @@ impl AwsSolver {
         base_url: impl Into<String>,
     ) -> Self {
         Self {
-            client: Client::new(),
+            client: provider_http_client(),
             access_key_id,
             secret_access_key,
             signing_region,

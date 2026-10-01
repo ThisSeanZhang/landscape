@@ -13,7 +13,7 @@ use reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
 use serde::Deserialize;
 
 use super::common::{RecordStore, record_name};
-use super::{DnsChallengeSolver, DnsRecordUpdater};
+use super::{DnsChallengeSolver, DnsRecordUpdater, provider_http_client};
 
 const CF_API_BASE: &str = "https://api.cloudflare.com/client/v4";
 const DEFAULT_PROVIDER_TTL: u32 = 120;
@@ -57,7 +57,7 @@ impl CloudflareSolver {
 
     pub fn with_base_url(api_token: String, ttl: Option<u32>, base_url: impl Into<String>) -> Self {
         Self {
-            client: Client::new(),
+            client: provider_http_client(),
             api_token,
             base_url: base_url.into(),
             ttl,

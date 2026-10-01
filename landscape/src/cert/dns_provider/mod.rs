@@ -5,11 +5,26 @@ mod common;
 mod google;
 pub(crate) mod tencent;
 
+use std::time::Duration;
+
 use landscape_common::cert::CertError;
 use landscape_common::cert::order::DnsProviderConfig;
+use reqwest::Client;
 
 /// Fallback TTL (seconds) used when a provider does not define its own default.
 pub const GLOBAL_PROVIDER_TTL: u32 = 600;
+
+/// Total timeout for a single provider HTTP request: reqwest defaults to no
+/// total timeout, so a hung call would hold the DDNS sync indefinitely and
+/// block shutdown draining.
+pub(crate) const PROVIDER_HTTP_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Build the shared provider HTTP client with a total request timeout.
+/// Construction only fails on TLS backend init errors, which is unrecoverable
+/// at runtime (same behavior as the previous `Client::new()` call sites).
+pub(crate) fn provider_http_client() -> Client {
+    Client::builder().timeout(PROVIDER_HTTP_TIMEOUT).build().expect("provider http client")
+}
 
 #[async_trait::async_trait]
 pub trait DnsChallengeSolver: Send + Sync {

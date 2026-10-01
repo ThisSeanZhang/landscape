@@ -21,7 +21,7 @@ use sha1::Sha1;
 use uuid::Uuid;
 
 use super::common::{RecordStore, candidate_zones, relative_record_name};
-use super::{DnsChallengeSolver, DnsRecordUpdater};
+use super::{DnsChallengeSolver, DnsRecordUpdater, provider_http_client};
 
 const ALIYUN_API_BASE: &str = "https://alidns.aliyuncs.com/";
 const ALIYUN_API_VERSION: &str = "2015-01-09";
@@ -58,7 +58,7 @@ impl AliyunSolver {
         base_url: impl Into<String>,
     ) -> Self {
         Self {
-            client: Client::new(),
+            client: provider_http_client(),
             access_key_id,
             access_key_secret,
             base_url: base_url.into(),

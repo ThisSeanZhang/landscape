@@ -183,6 +183,9 @@ impl LandscapeApp {
         self.gateway_service.shutdown_and_wait(Duration::from_secs(10)).await;
         tracing::info!("Gateway service stopped");
 
+        self.ddns_service.shutdown_and_wait(Duration::from_secs(10)).await;
+        tracing::info!("DDNS service stopped");
+
         tokio::join!(
             self.mss_clamp_service.get_service().stop_all(),
             self.firewall_service.get_service().stop_all(),
