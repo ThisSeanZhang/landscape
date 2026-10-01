@@ -251,6 +251,27 @@ crate::impl_repository!(
     DBId
 );
 
+#[async_trait::async_trait]
+impl landscape_common::database::validator::StoreValidator<StaticNatMappingV6Config>
+    for StaticNatMappingV6Repository
+{
+    async fn check_zone(
+        &self,
+        _config: &StaticNatMappingV6Config,
+    ) -> Result<(), landscape_common::service::ServiceConfigError> {
+        Ok(())
+    }
+
+    async fn validate_cross(
+        &self,
+        config: &StaticNatMappingV6Config,
+    ) -> Result<(), landscape_common::service::ServiceConfigError> {
+        self.validate_runtime_target_v6(config).await.map_err(|e| {
+            landscape_common::service::ServiceConfigError::InvalidConfig { reason: e.to_string() }
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -465,26 +486,5 @@ mod tests {
             },
             update_at: 0.0,
         }
-    }
-}
-
-#[async_trait::async_trait]
-impl landscape_common::database::validator::StoreValidator<StaticNatMappingV6Config>
-    for StaticNatMappingV6Repository
-{
-    async fn check_zone(
-        &self,
-        _config: &StaticNatMappingV6Config,
-    ) -> Result<(), landscape_common::service::ServiceConfigError> {
-        Ok(())
-    }
-
-    async fn validate_cross(
-        &self,
-        config: &StaticNatMappingV6Config,
-    ) -> Result<(), landscape_common::service::ServiceConfigError> {
-        self.validate_runtime_target_v6(config).await.map_err(|e| {
-            landscape_common::service::ServiceConfigError::InvalidConfig { reason: e.to_string() }
-        })
     }
 }

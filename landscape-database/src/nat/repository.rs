@@ -90,6 +90,50 @@ crate::impl_repository!(
     String
 );
 
+#[async_trait::async_trait]
+impl landscape_common::database::validator::StoreValidator<NatServiceConfig>
+    for NatServiceRepository
+{
+    async fn check_zone(
+        &self,
+        config: &NatServiceConfig,
+    ) -> Result<(), landscape_common::service::ServiceConfigError> {
+        crate::validator::ZoneChecker::new(self.db.clone()).check(config).await
+    }
+
+    async fn validate_cross(
+        &self,
+        config: &NatServiceConfig,
+    ) -> Result<(), landscape_common::service::ServiceConfigError> {
+        let mappings = crate::static_nat_mapping_v4::repository::StaticNatMappingV4Repository::new(
+            self.db.clone(),
+        )
+        .list()
+        .await
+        .map_err(landscape_common::service::ServiceConfigError::internal)?;
+        for (proto, range) in
+            [(6u8, &config.nat_config.tcp_range), (17u8, &config.nat_config.udp_range)]
+        {
+            for mapping in &mappings {
+                if !mapping.enable || !mapping.l4_protocols.contains(&proto) {
+                    continue;
+                }
+                for pair in &mapping.mapping_pair_ports {
+                    if pair.wan_port >= range.start && pair.wan_port <= range.end {
+                        return Err(landscape_common::service::ServiceConfigError::InvalidConfig {
+                            reason: format!(
+                                "static NAT mapping {} port {} overlaps with dynamic {} range {}-{}",
+                                mapping.id, pair.wan_port, proto, range.start, range.end
+                            ),
+                        });
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use landscape_common::config_service::static_nat::config::StaticMapPair;
@@ -198,49 +242,5 @@ mod tests {
             repo.has_static_port_in_dynamic_range(17, 8000, 9000).await.unwrap(),
             "UDP check should match multi-protocol mapping"
         );
-    }
-}
-
-#[async_trait::async_trait]
-impl landscape_common::database::validator::StoreValidator<NatServiceConfig>
-    for NatServiceRepository
-{
-    async fn check_zone(
-        &self,
-        config: &NatServiceConfig,
-    ) -> Result<(), landscape_common::service::ServiceConfigError> {
-        crate::validator::ZoneChecker::new(self.db.clone()).check(config).await
-    }
-
-    async fn validate_cross(
-        &self,
-        config: &NatServiceConfig,
-    ) -> Result<(), landscape_common::service::ServiceConfigError> {
-        let mappings = crate::static_nat_mapping_v4::repository::StaticNatMappingV4Repository::new(
-            self.db.clone(),
-        )
-        .list()
-        .await
-        .map_err(landscape_common::service::ServiceConfigError::internal)?;
-        for (proto, range) in
-            [(6u8, &config.nat_config.tcp_range), (17u8, &config.nat_config.udp_range)]
-        {
-            for mapping in &mappings {
-                if !mapping.enable || !mapping.l4_protocols.contains(&proto) {
-                    continue;
-                }
-                for pair in &mapping.mapping_pair_ports {
-                    if pair.wan_port >= range.start && pair.wan_port <= range.end {
-                        return Err(landscape_common::service::ServiceConfigError::InvalidConfig {
-                            reason: format!(
-                                "static NAT mapping {} port {} overlaps with dynamic {} range {}-{}",
-                                mapping.id, pair.wan_port, proto, range.start, range.end
-                            ),
-                        });
-                    }
-                }
-            }
-        }
-        Ok(())
     }
 }
