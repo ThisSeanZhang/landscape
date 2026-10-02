@@ -1,8 +1,11 @@
 pub mod config;
+pub mod dataplane;
 pub mod dhcpv6_config;
 pub mod error;
 pub mod prefix_group;
 pub mod runtime;
+
+pub use dataplane::{Ip6DaoFilterDataplane, NoopIp6DaoFilterDataplane};
 
 pub use config::{
     IPv6ServiceMode, LanIPv6ConfigV2, LanIPv6ServiceConfigV2, LanPrefixGroupConfig, NaPrefixConfig,

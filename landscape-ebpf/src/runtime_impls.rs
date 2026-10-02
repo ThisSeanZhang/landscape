@@ -13,6 +13,7 @@ use crate::maps;
 use crate::runtime::EbpfRuntime;
 use landscape_common::ebpf::DataplaneGuard;
 use landscape_common::flow::dataplane::FlowRuleDataplane;
+use landscape_common::lan_service::lan_ipv6::dataplane::Ip6DaoFilterDataplane;
 use landscape_common::lan_service::lan_route::dataplane::LanRouteDataplane;
 use landscape_common::lan_service::mac_binding::MacBindingDataplane;
 use landscape_common::net::MacAddr;
@@ -35,6 +36,7 @@ impl DataplaneGuard for crate::stages::nat::NatHandle {}
 impl DataplaneGuard for crate::stages::mss::MssHandle {}
 impl DataplaneGuard for crate::pppoe::pppoe_handle::PppoeHandle {}
 impl DataplaneGuard for crate::chain::tc_lan_route::TcLanRouteHandle {}
+impl DataplaneGuard for crate::dao_ns::TcLanDaoHandle {}
 impl DataplaneGuard for crate::chain::xdp_lan_intro::XdpLanIntroHandle {}
 impl DataplaneGuard for crate::chain::tc_wan_route::TcWanRouteHandle {}
 impl DataplaneGuard for crate::chain::xdp_wan_route::XdpWanRouteHandle {}
@@ -307,6 +309,28 @@ impl LanRouteDataplane for EbpfLanRouteDataplane {
 
     fn del_redirect_able(&self, ifindex: u32) {
         maps::redirect_able::del_xdp_redirect_able(&self.rt.paths, ifindex);
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// LAN IPv6 DAD observer
+// ─────────────────────────────────────────────────────────────────────────
+
+pub struct EbpfIp6DaoFilterDataplane {
+    rt: Arc<EbpfRuntime>,
+}
+
+impl EbpfIp6DaoFilterDataplane {
+    pub(crate) fn new(rt: Arc<EbpfRuntime>) -> Self {
+        Self { rt }
+    }
+}
+
+impl Ip6DaoFilterDataplane for EbpfIp6DaoFilterDataplane {
+    fn install_tc_dao(&self, ifindex: u32) -> Result<Box<dyn DataplaneGuard>, String> {
+        crate::dao_ns::init_tc_lan_dao(&self.rt, ifindex)
+            .map(|handle| Box::new(handle) as Box<dyn DataplaneGuard>)
+            .map_err(|e| e.to_string())
     }
 }
 

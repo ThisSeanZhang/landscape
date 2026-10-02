@@ -6,6 +6,7 @@ use landscape_common::event::hub::{
     EnrolledDeviceEvent, EnrolledDeviceEventReader, IAPrefixEvent, IAPrefixEventReader,
     IPv6AssignEvent, IPv6AssignEventSender, IPv6AssignInfo, IfaceEventReader,
 };
+use landscape_common::lan_service::lan_ipv6::dataplane::Ip6DaoFilterDataplane;
 use landscape_common::lan_service::lan_ipv6::{IPv6ServiceMode, LanIPv6ServiceConfigV2};
 use landscape_common::net::MacAddr;
 use landscape_common::service::controller::{ConfigStoreController, ConfigStoreServiceController};
@@ -43,6 +44,9 @@ pub struct LanIPv6Service {
     per_iface_txs: Arc<DashMap<String, watch::Sender<()>>>,
     mac_link_map_cache: Arc<MacLinkMapCache>,
     mac_binding: Arc<dyn MacBindingDataplane>,
+    /// Standalone DAD observer filter; `None` when the ringbuf consumer is
+    /// not running (attaching the filter without a consumer is pure overhead).
+    dao_filter: Option<Arc<dyn Ip6DaoFilterDataplane>>,
     /// Per-ifindex channel to the DAD learning consumer of each running server.
     dao_event_senders: Arc<DashMap<u32, mpsc::Sender<Ip6DaoEvent>>>,
 }
@@ -55,6 +59,7 @@ impl LanIPv6Service {
         ipv6_assign_sender: IPv6AssignEventSender,
         mac_link_map_cache: Arc<MacLinkMapCache>,
         mac_binding: Arc<dyn MacBindingDataplane>,
+        dao_filter: Option<Arc<dyn Ip6DaoFilterDataplane>>,
     ) -> Self {
         Self {
             route_service,
@@ -66,6 +71,7 @@ impl LanIPv6Service {
             per_iface_txs: Arc::new(DashMap::new()),
             mac_link_map_cache,
             mac_binding,
+            dao_filter,
             dao_event_senders: Arc::new(DashMap::new()),
         }
     }
@@ -255,6 +261,40 @@ impl ServiceStarterTrait for LanIPv6Service {
             let device_id_map = self.device_id_map.clone();
             let mac_link_cache = self.mac_link_map_cache.clone();
             let mac_binding = self.mac_binding.clone();
+
+            // ── Standalone DAD observer filter ──
+            // Attached before the server task is spawned (the server sends its
+            // first Router Advertisement immediately) so early DAD NS from
+            // clients are observed. The guard moves into the task and detaches
+            // when the service stops. Degraded (warn-only) on failure, same as
+            // when the ringbuf consumer is not running.
+            let dao_guard = match self.dao_filter.as_ref() {
+                Some(filter) => match filter.install_tc_dao(iface.index) {
+                    Ok(guard) => {
+                        tracing::info!(
+                            "tc_lan_dao attached on {} (ifindex {})",
+                            config.iface_name,
+                            iface.index
+                        );
+                        Some(guard)
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            "tc_lan_dao attach failed on {}: {e}; SLAAC DAD learning degraded",
+                            config.iface_name
+                        );
+                        None
+                    }
+                },
+                None => {
+                    tracing::warn!(
+                        "DAD observer disabled on {}: ip6_dao_event ringbuf consumer not running",
+                        config.iface_name
+                    );
+                    None
+                }
+            };
+
             // Bounded: the server consumer is rate-limited (32 probes/s with
             // a 1024-entry probe queue), so under a DAD NS flood the channel
             // drops events (best-effort) instead of growing without bound.
@@ -264,6 +304,7 @@ impl ServiceStarterTrait for LanIPv6Service {
             let ifindex = iface.index;
             let spawn_status = service_status.clone();
             spawn_status.spawn_task(task_label::task::LAN_IPV6_SERVICE_OBSERVER, async move {
+                let _dao_guard = dao_guard;
                 let _ = start_ipv6_lan_server(
                     ifindex,
                     config.iface_name.clone(),
@@ -358,6 +399,7 @@ impl LanIPv6ManagerService {
         ipv6_assign_sender: IPv6AssignEventSender,
         mac_binding: Arc<dyn MacBindingDataplane>,
         dao_event_source: Option<Arc<Ip6DaoEventSource>>,
+        dao_filter: Arc<dyn Ip6DaoFilterDataplane>,
     ) -> Self {
         let store = store_service.lan_ipv6_v2_service_store();
         let enrolled_device_store = store_service.enrolled_device_store();
@@ -366,6 +408,11 @@ impl LanIPv6ManagerService {
         let mac_link_map_cache = Arc::new(MacLinkMapCache::new());
         start_periodic_scan(&mac_link_map_cache, 60);
 
+        // Attach the DAD observer filter only when the ringbuf consumer is
+        // running: without a consumer the filter burns per-packet parsing for
+        // events nobody reads (the ringbuf silently drops them when full).
+        let dao_filter = dao_event_source.clone().map(|_| dao_filter);
+
         let server_starter = LanIPv6Service::new(
             route_service,
             prefix_map_for_starter,
@@ -373,6 +420,7 @@ impl LanIPv6ManagerService {
             ipv6_assign_sender,
             mac_link_map_cache.clone(),
             mac_binding,
+            dao_filter,
         );
 
         // ── Global DAD NS learning consumer ──

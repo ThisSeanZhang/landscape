@@ -192,6 +192,13 @@ impl EbpfRuntime {
         Arc::new(crate::runtime_impls::EbpfMacBindingDataplane::new(self))
     }
 
+    /// LAN IPv6 DAD-NS observer capability (standalone `tc_lan_dao` filter).
+    pub fn ipv6_dao_filter(
+        self: Arc<Self>,
+    ) -> Arc<dyn landscape_common::lan_service::lan_ipv6::dataplane::Ip6DaoFilterDataplane> {
+        Arc::new(crate::runtime_impls::EbpfIp6DaoFilterDataplane::new(self))
+    }
+
     /// Spawn the periodic ARP / IPv6-neighbour → `ip_mac_*` map sync
     /// task for this runtime's map space.  Cancelling the returned token
     /// stops the task.

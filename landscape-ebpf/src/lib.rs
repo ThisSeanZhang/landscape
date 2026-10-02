@@ -2,6 +2,7 @@ use std::path::{Path, PathBuf};
 
 pub mod bpf_error;
 pub(crate) mod bpf_rs_shared;
+pub mod dao_ns;
 pub mod dns_result_sink;
 pub mod flow_socket_registrar;
 pub mod landscape;

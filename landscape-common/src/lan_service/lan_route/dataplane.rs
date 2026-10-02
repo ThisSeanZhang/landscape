@@ -13,8 +13,8 @@ pub trait LanRouteDataplane: Send + Sync {
         has_mac: bool,
     ) -> Result<Box<dyn DataplaneGuard>, String>;
 
-    /// Attach the TC ingress LAN-route intro/dao programs.  Dropping
-    /// the returned guard detaches them.
+    /// Attach the TC ingress LAN-route intro program.  Dropping
+    /// the returned guard detaches it.
     fn install_tc_route(
         &self,
         ifindex: u32,

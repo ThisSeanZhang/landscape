@@ -390,6 +390,7 @@ async fn run_system(
         ipv6_assign_sender.clone(),
         ebpf_rt.clone().mac_binding(),
         dao_event_source,
+        ebpf_rt.clone().ipv6_dao_filter(),
     )
     .await;
     let ddns_service = DdnsService::new(
