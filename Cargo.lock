@@ -3092,7 +3092,6 @@ version = "0.25.1"
 dependencies = [
  "anyhow",
  "async-trait",
- "bincode",
  "bytes",
  "clap 4.6.7",
  "dashmap 6.2.1",
@@ -3130,6 +3129,7 @@ version = "0.25.1"
 dependencies = [
  "arc-swap",
  "async-trait",
+ "bincode",
  "dashmap 6.2.1",
  "idna",
  "landscape-common",
@@ -3138,6 +3138,8 @@ dependencies = [
  "rcgen",
  "rustls",
  "rustls-pki-types",
+ "serde",
+ "tempfile",
  "tokio",
  "tokio-util",
  "tracing",

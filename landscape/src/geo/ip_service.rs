@@ -1,9 +1,8 @@
-use landscape_common::geo_cache::file_store::GeoStoreKeyProvider;
 use landscape_common::{
     concurrency::{spawn_task, task_label},
     config_service::geo::{
         GeoError, GeoFileCacheKey, GeoIpConfig, GeoIpLookupResult, GeoIpSource, GeoIpSourceConfig,
-        RawDatState,
+        GeoStoreKeyProvider, RawDatState,
     },
     database::store::{Change, ConfigStore},
     flow::ip_mark::{IpMarkInfo, WanIPRuleSource, WanIpRuleConfig},
@@ -21,10 +20,8 @@ use std::{
     time::{Duration, Instant},
 };
 
-use landscape_common::{
-    LANDSCAPE_GEO_CACHE_TMP_DIR, args::LAND_HOME_PATH, event::dns::DstIpEvent,
-    geo_cache::file_store::GeoCacheStore,
-};
+use landscape_common::{LANDSCAPE_GEO_CACHE_TMP_DIR, args::LAND_HOME_PATH, event::dns::DstIpEvent};
+use landscape_core::geo_cache::GeoCacheStore;
 use landscape_database::{
     geo_ip::repository::GeoIpSourceConfigRepository, provider::LandscapeDBServiceProvider,
 };

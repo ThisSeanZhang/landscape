@@ -6,7 +6,6 @@ use uuid::Uuid;
 use crate::database::repository::LandscapeDBStore;
 use crate::dns::rule::{DomainConfig, DomainMatchType};
 use crate::flow::ip_mark::IpConfig;
-use crate::geo_cache::file_store::GeoStoreKeyProvider;
 use crate::utils::id::gen_database_uuid;
 use crate::utils::time::get_f64_timestamp;
 
@@ -134,6 +133,15 @@ impl From<GeoSiteFileConfig> for DomainConfig {
 pub struct GeoFileCacheKey {
     pub name: String,
     pub key: String,
+}
+
+pub trait GeoStoreKeyProvider {
+    type K;
+    fn get_store_key(&self) -> Self::K;
+
+    fn get_query_key(&self) -> Self::K {
+        self.get_store_key()
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]

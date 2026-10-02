@@ -14,12 +14,14 @@ landscape-common = { path = "../landscape-common" }
 
 arc-swap = { workspace = true }
 async-trait = { workspace = true }
+bincode = { workspace = true }
 dashmap = { workspace = true }
 idna = { workspace = true }
 libc = { workspace = true }
 pem = { workspace = true }
 rustls = { workspace = true }
 rustls-pki-types = { workspace = true }
+serde = { workspace = true }
 tokio = { workspace = true, features = ["rt", "sync", "macros", "time", "net"] }
 tokio-util = { workspace = true }
 tracing = { workspace = true }
@@ -28,4 +30,5 @@ x509-parser = { workspace = true }
 
 [dev-dependencies]
 rcgen = { workspace = true }
+tempfile = { workspace = true }
 tokio = { workspace = true, features = ["rt", "macros", "test-util"] }

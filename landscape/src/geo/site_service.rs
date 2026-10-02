@@ -24,8 +24,8 @@ use landscape_common::{
     args::LAND_HOME_PATH,
     config_service::geo::{GeoSiteSourceConfig, normalize_adguard_key},
     event::dns::DnsEvent,
-    geo_cache::file_store::GeoCacheStore,
 };
+use landscape_core::geo_cache::GeoCacheStore;
 use landscape_database::{
     geo_site::repository::GeoSiteConfigRepository, provider::LandscapeDBServiceProvider,
 };

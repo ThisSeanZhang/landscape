@@ -1,3 +1,4 @@
+use landscape_common::config_service::geo::GeoStoreKeyProvider;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
@@ -10,15 +11,6 @@ use std::{
 
 // 最大垃圾空间阈值
 const JUNK_DATA_MAX_SIZE: u64 = 1024 * 1024 * 8;
-
-pub trait GeoStoreKeyProvider {
-    type K;
-    fn get_store_key(&self) -> Self::K;
-
-    fn get_query_key(&self) -> Self::K {
-        self.get_store_key()
-    }
-}
 
 #[derive(Serialize, Deserialize)]
 enum SaveUnit<K, V> {

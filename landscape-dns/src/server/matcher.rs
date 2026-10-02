@@ -242,8 +242,8 @@ mod tests {
         LANDSCAPE_GEO_CACHE_TMP_DIR,
         config_service::geo::{GeoDomainConfig, GeoFileCacheKey},
         dns::rule::{DomainConfig, DomainMatchType},
-        geo_cache::file_store::GeoCacheStore,
     };
+    use landscape_core::geo_cache::GeoCacheStore;
 
     use super::{DomainMatcher, RuntimeRuleMatcher};
     use crate::domain::ParsedDomain;
