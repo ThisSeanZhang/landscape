@@ -28,6 +28,7 @@ use landscape_dns::{
 };
 use rustls::server::ResolvesServerCert;
 use std::net::{IpAddr, Ipv6Addr, SocketAddr, SocketAddrV6};
+use tokio::sync::broadcast::error::RecvError;
 use tokio::sync::mpsc;
 
 use crate::dns::{
@@ -246,6 +247,41 @@ impl LandscapeDnsService {
                 }
             }
         });
+
+        // WAN interface/IP changes (PPPoE re-dial, DHCP renewals, docker
+        // egress add/remove, ...) can invalidate the established upstream
+        // connections held by pooled resolvers (including their source
+        // addresses). The event is only a trigger: drop every pooled
+        // resolver and rebuild the flows' resolve runtimes so subsequent
+        // queries establish upstream connections against the current
+        // network state.
+        let mut wan_route_events = route_service.subscribe_wan_route_events();
+        let dns_service_wan_clone = dns_service.clone();
+        spawn_task(task_label::task::DNS_SERVICE_WAN_OBSERVER, async move {
+            loop {
+                match wan_route_events.recv().await {
+                    Ok(event) => {
+                        tracing::info!(
+                            owner = %event.owner,
+                            family = ?event.family,
+                            kind = ?event.kind,
+                            "WAN route changed, rebuilding DNS upstream resolvers"
+                        );
+                        dns_service_wan_clone.invalidate_upstream_pool_for_wan_change().await;
+                    }
+                    Err(RecvError::Lagged(skipped)) => {
+                        // Lagging only means events were missed; the
+                        // invalidate + refresh pair is idempotent, so a
+                        // single full rebuild is a safe catch-up.
+                        tracing::warn!(
+                            "DNS WAN event listener lagged, skipped {skipped} events, rebuilding anyway"
+                        );
+                        dns_service_wan_clone.invalidate_upstream_pool_for_wan_change().await;
+                    }
+                    Err(RecvError::Closed) => break,
+                }
+            }
+        });
         dns_service
     }
 
@@ -428,6 +464,19 @@ impl LandscapeDnsService {
             .iter()
             .filter_map(|(flow_id, dependencies)| predicate(dependencies).then_some(*flow_id))
             .collect()
+    }
+
+    /// Upstream pool invalidation after a WAN change: first drop every
+    /// resolver in the [`MatcherBuilder`] pool, then refresh the flows'
+    /// resolve runtimes. Both steps are required — clearing the pool alone
+    /// does not replace the old resolvers already held by installed
+    /// runtimes (whose upstream connections may be bound to a WAN source
+    /// address that no longer exists). Mirrors the `UpstreamsChanged`
+    /// handling pattern.
+    async fn invalidate_upstream_pool_for_wan_change(&self) {
+        self.matcher_builder.invalidate_all_resolvers();
+        let flow_count = self.refresh_all_flows_kind(FlowRuntimeRefreshKind::ResolveOnly).await;
+        tracing::info!("DNS upstream resolvers rebuilt after WAN change: flow_count: {flow_count}");
     }
 }
 

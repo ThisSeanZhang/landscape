@@ -67,6 +67,14 @@ impl ResolvePool {
             .retain(|(_, upstream_id), _| !upstream_ids.contains(upstream_id));
     }
 
+    /// Drops every pooled resolver regardless of upstream. Used when the WAN
+    /// topology changes: source addresses baked into pooled resolvers (or
+    /// their upstream connections) may be stale, so the next flow refresh
+    /// must rebuild them unconditionally.
+    pub(crate) fn invalidate_all(&self) {
+        self.resolvers.write().unwrap_or_else(|e| e.into_inner()).clear();
+    }
+
     /// Test-only snapshot of the current pool keys.
     #[cfg(test)]
     pub(crate) fn keys(&self) -> Vec<(u32, Uuid)> {
@@ -132,5 +140,22 @@ mod tests {
 
         let second = pool.get_or_create(7, 0x8005, &upstream).unwrap();
         assert!(Arc::ptr_eq(&first, &second));
+    }
+
+    #[tokio::test]
+    async fn invalidate_all_drops_every_resolver() {
+        let pool = ResolvePool::default();
+        let upstream_a = upstream();
+        let upstream_b = upstream();
+        let a = pool.get_or_create(7, 0x8007, &upstream_a).unwrap();
+        let b = pool.get_or_create(5, 0x8005, &upstream_b).unwrap();
+
+        pool.invalidate_all();
+        assert!(pool.keys().is_empty());
+
+        let a_rebuilt = pool.get_or_create(7, 0x8007, &upstream_a).unwrap();
+        let b_rebuilt = pool.get_or_create(5, 0x8005, &upstream_b).unwrap();
+        assert!(!Arc::ptr_eq(&a, &a_rebuilt));
+        assert!(!Arc::ptr_eq(&b, &b_rebuilt));
     }
 }

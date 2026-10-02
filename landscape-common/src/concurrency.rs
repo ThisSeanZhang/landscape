@@ -158,6 +158,8 @@ pub mod task_label {
         pub const FLOW_DST_IP_OBSERVER: &str = "flow.dst_ip.observer";
         /// DNS resolver conf listener reacting to DNS config changes.
         pub const DNS_SERVICE_OBSERVER: &str = "dns.service.observer";
+        /// DNS upstream resolver pool listener invalidating pooled resolvers on WAN route changes.
+        pub const DNS_SERVICE_WAN_OBSERVER: &str = "dns.service.wan_observer";
         /// 1s host status sampling loop (CPU/memory/temperature).
         pub const SYS_STATUS_SAMPLER: &str = "sys.status.sampler";
         /// DDNS background job scheduler.

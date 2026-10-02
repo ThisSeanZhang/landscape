@@ -149,6 +149,14 @@ impl MatcherBuilder {
         self.resolvers.invalidate(upstream_ids);
     }
 
+    /// Drops every pooled resolver regardless of upstream. Called when the
+    /// WAN topology changes: resolvers (and their upstream connections) may
+    /// hold source addresses that no longer exist, so the following flow
+    /// refresh must rebuild them unconditionally.
+    pub fn invalidate_all_resolvers(&self) {
+        self.resolvers.invalidate_all();
+    }
+
     async fn build_rule_matcher(
         &self,
         sources: Vec<RuleSource>,
