@@ -180,6 +180,9 @@ impl LandscapeApp {
     pub async fn shutdown(&self) {
         tracing::info!("Shutting down all services...");
 
+        self.preserve_critical_ips().await;
+        tracing::info!("Critical IPs preserved");
+
         self.gateway_service.shutdown_and_wait(Duration::from_secs(10)).await;
         tracing::info!("Gateway service stopped");
 
@@ -214,9 +217,6 @@ impl LandscapeApp {
 
         self.dns_service.stop().await;
         tracing::info!("DNS resolver conf restored");
-
-        self.preserve_critical_ips().await;
-        tracing::info!("Critical IPs preserved");
 
         // Time sync keeps the clock sane for every other service, stop it last.
         self.time_service.stop().await;
