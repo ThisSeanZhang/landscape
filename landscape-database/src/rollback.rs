@@ -67,6 +67,22 @@ pub const RELEASE_BOUNDARIES: &[ReleaseBoundary] = &[
         version: "0.21.0",
         terminal_migration: "m20260620_000000_split_static_nat_v4_v6",
     },
+    ReleaseBoundary {
+        version: "0.21.5",
+        terminal_migration: "m20260625_000000_enrolled_device_hostname",
+    },
+    ReleaseBoundary {
+        version: "0.22.3",
+        terminal_migration: "m20260728_000000_add_name_in_flow",
+    },
+    ReleaseBoundary {
+        version: "0.24.3",
+        terminal_migration: "m20260815_000000_dns_upstream_bind",
+    },
+    ReleaseBoundary {
+        version: "0.25.1",
+        terminal_migration: "m20260927_000000_add_use_experimental_pool_to_dns_upstream",
+    },
 ];
 
 pub async fn interactive_rollback(config: &StoreRuntimeConfig) -> Result<(), DbError> {
@@ -430,11 +446,11 @@ mod tests {
         let targets =
             build_rollback_targets(&current_state, &all_migrations, RELEASE_BOUNDARIES).unwrap();
 
-        assert_eq!(targets.first().unwrap().version, "0.21.0");
-        assert_eq!(targets.first().unwrap().display_label, "current release boundary 0.21.0");
-        assert_eq!(targets.get(1).unwrap().display_label, "previous release 0.20.1");
-        assert_eq!(targets.get(2).unwrap().display_label, "older release 0.19.0");
-        assert_eq!(targets.first().unwrap().steps, 7);
+        assert_eq!(targets.first().unwrap().version, "0.24.3");
+        assert_eq!(targets.first().unwrap().display_label, "previous release 0.24.3");
+        assert_eq!(targets.get(1).unwrap().display_label, "older release 0.22.3");
+        assert_eq!(targets.get(2).unwrap().display_label, "older release 0.21.5");
+        assert_eq!(targets.first().unwrap().steps, 2);
     }
 
     #[test]
