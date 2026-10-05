@@ -1746,6 +1746,8 @@ fn hash_duid(duid: &[u8]) -> u64 {
 }
 
 #[cfg(test)]
+mod test_dhcpv6;
+#[cfg(test)]
 mod test_lookup;
 #[cfg(test)]
 mod test_na;

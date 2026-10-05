@@ -932,7 +932,7 @@ fn build_reconfigure_msg(server_duid: &[u8], client_duid: &[u8], reconf_key: &[u
     msg.opts_mut().insert(DhcpOption::ServerId(server_duid.to_vec()));
     msg.opts_mut().insert(DhcpOption::Authentication(Authentication {
         proto: 3,
-        algo: 0,
+        algo: 1,
         rdm: 0,
         replay_detection: 0,
         info: zero_info,
@@ -954,7 +954,7 @@ fn build_reconfigure_msg(server_duid: &[u8], client_duid: &[u8], reconf_key: &[u
     msg.opts_mut().remove(OptionCode::Authentication);
     msg.opts_mut().insert(DhcpOption::Authentication(Authentication {
         proto: 3,
-        algo: 0,
+        algo: 1,
         rdm: 0,
         replay_detection: 0,
         info: real_info,
