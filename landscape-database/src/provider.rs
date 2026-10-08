@@ -129,6 +129,11 @@ impl LandscapeDBServiceProvider {
         Self { database }
     }
 
+    #[cfg(test)]
+    pub(crate) fn database(&self) -> DatabaseConnection {
+        self.database.clone()
+    }
+
     /// File-backed test DB with a real multi-connection pool (WAL enabled).
     ///
     /// Unlike `mem_test_db`, each instance connects to the same file, so
@@ -164,7 +169,6 @@ macro_rules! define_store {
     ( $( $store_name:ident : ($repo_type:ty, $init_field:ident) ),* $(,)? ) => {
         impl LandscapeDBServiceProvider {
             $(
-                // Generates a getter
                 pub fn $store_name(&self) -> $repo_type {
                     <$repo_type>::new(self.database.clone())
                 }
