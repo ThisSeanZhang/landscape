@@ -261,9 +261,7 @@ fn validate_nat_range(name: &str, range: &Option<Range<u16>>) -> Result<(), Serv
 
 /// Section-level validation (cross-link rules live in
 /// `WanLinkRepository::validate_cross`, injected into the checked write
-/// path; they need store access). Mirrors the legacy per-service validators:
-/// `IPV6PDConfig::validate`, `MSSClampServiceConfig::validate`,
-/// `NatConfig::validate_range` and `PPPDConfig::validate`.
+/// path; they need store access).
 impl ValidatableConfig for WanLinkConfig {
     fn validate(&self) -> Result<(), ServiceConfigError> {
         if self.attach_iface_name.is_empty() {

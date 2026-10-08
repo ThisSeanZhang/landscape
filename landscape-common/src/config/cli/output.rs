@@ -110,7 +110,7 @@ mod tests {
 
         assert_eq!(parsed.version, VERSION);
         assert_eq!(parsed.ifaces.len(), 3);
-        assert_eq!(parsed.ipconfigs.len(), 1);
+        assert_eq!(parsed.wan_links.len(), 1);
         assert_eq!(parsed.dhcpv4_services.len(), 1);
     }
 

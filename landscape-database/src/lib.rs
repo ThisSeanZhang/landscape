@@ -6,16 +6,11 @@ pub mod writer;
 
 pub mod ddns;
 pub mod dhcp_v4_server;
-pub mod dhcp_v6_client;
 pub mod dns_provider_profile;
 pub mod enrolled_device;
-pub mod firewall;
 pub mod flow_wan;
 pub mod iface;
-pub mod iface_ip;
 pub mod lan_ipv6_v2;
-pub mod mss_clamp;
-pub mod pppd;
 pub mod provider;
 pub mod rollback;
 pub mod wan_link;
@@ -32,7 +27,6 @@ pub mod geo_site;
 pub mod route_lan;
 pub mod route_wan;
 
-pub mod nat;
 pub mod static_nat_mapping;
 pub mod static_nat_mapping_v4;
 pub mod static_nat_mapping_v6;

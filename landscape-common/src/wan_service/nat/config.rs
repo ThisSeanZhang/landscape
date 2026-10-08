@@ -1,54 +1,7 @@
 use core::ops::Range;
 use serde::{Deserialize, Serialize};
 
-use crate::config_service::iface::{ServiceKind, ZoneAwareConfig, ZoneRequirement};
-use crate::database::repository::LandscapeDBStore;
-use crate::service::manager::ServiceKeyProvider;
-use crate::utils::time::get_f64_timestamp;
 use crate::wan_service::nat::error::NatServiceError;
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
-pub struct NatServiceConfig {
-    pub iface_name: String,
-    pub enable: bool,
-    #[serde(default)]
-    #[cfg_attr(feature = "openapi", schema(required = true))]
-    pub nat_config: NatConfig,
-    #[serde(default = "get_f64_timestamp")]
-    #[cfg_attr(feature = "openapi", schema(required = false))]
-    pub update_at: f64,
-}
-
-impl ServiceKeyProvider for NatServiceConfig {
-    fn service_key(&self) -> String {
-        self.iface_name.clone()
-    }
-}
-
-impl LandscapeDBStore<String> for NatServiceConfig {
-    fn get_id(&self) -> String {
-        self.iface_name.clone()
-    }
-    fn get_update_at(&self) -> f64 {
-        self.update_at
-    }
-    fn set_update_at(&mut self, ts: f64) {
-        self.update_at = ts;
-    }
-}
-
-impl ZoneAwareConfig for NatServiceConfig {
-    fn iface_name(&self) -> &str {
-        &self.iface_name
-    }
-    fn zone_requirement() -> ZoneRequirement {
-        ZoneRequirement::WanOrPpp
-    }
-    fn service_kind() -> ServiceKind {
-        ServiceKind::NAT
-    }
-}
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
@@ -91,13 +44,5 @@ impl Default for NatConfig {
             udp_range: 32768..65535,
             icmp_in_range: 32768..65535,
         }
-    }
-}
-
-impl crate::database::validator::ValidatableConfig for NatServiceConfig {
-    fn validate(&self) -> Result<(), crate::service::ServiceConfigError> {
-        self.nat_config.validate().map_err(|e| crate::service::ServiceConfigError::InvalidConfig {
-            reason: e.to_string(),
-        })
     }
 }

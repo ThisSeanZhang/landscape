@@ -16,14 +16,11 @@ use crate::{
         lan_route::RouteLanServiceConfig,
     },
     utils::{id::gen_database_uuid, time::get_f64_timestamp},
-    wan_service::{
-        firewall::service::FirewallServiceConfig,
-        ip_config::{IfaceIpModelConfig, IfaceIpServiceConfig},
-        mss_clamp::MSSClampServiceConfig,
-        nat::config::{NatConfig, NatServiceConfig},
-        pppd::{PPPDConfig, PPPDServiceConfig},
-        wan_route::RouteWanServiceConfig,
+    wan_link::{
+        WanLinkConfig, WanLinkFirewallConfig, WanLinkKind, WanLinkMssConfig, WanLinkNatConfig,
+        WanLinkV4Config, WanLinkV4Model,
     },
+    wan_service::{nat::config::NatConfig, wan_route::RouteWanServiceConfig},
 };
 
 use super::{
@@ -135,79 +132,12 @@ impl ConfigCliArgs {
             }
         }
 
-        let mut ipconfigs = Vec::new();
-        let mut pppds = Vec::new();
-        if let Some(wan_iface) = &wan_iface {
-            match self.wan_mode {
-                WanMode::Dhcp => {
-                    ipconfigs.push(IfaceIpServiceConfig {
-                        iface_name: wan_iface.clone(),
-                        enable: true,
-                        ip_model: IfaceIpModelConfig::DhcpClient {
-                            default_router: self.default_route(),
-                            hostname: None,
-                            custome_opts: Vec::new(),
-                        },
-                        update_at: now,
-                    });
-                }
-                WanMode::Static => {
-                    let raw = self.wan_ip.as_ref().ok_or(ConfigCliError::MissingWanIp)?;
-                    let (ipv4, mask) = parse_ipv4_cidr(raw)?;
-                    let gateway = self.wan_gateway.ok_or(ConfigCliError::MissingWanGateway)?;
-                    ipconfigs.push(IfaceIpServiceConfig {
-                        iface_name: wan_iface.clone(),
-                        enable: true,
-                        ip_model: IfaceIpModelConfig::Static {
-                            default_router_ip: Some(gateway),
-                            default_router: self.default_route(),
-                            ipv4: Some(ipv4),
-                            ipv4_mask: mask,
-                            ipv6: self.wan_ipv6,
-                        },
-                        update_at: now,
-                    });
-                }
-                WanMode::Pppoe => {
-                    let (username, password) = self.pppoe_credentials("pppoe")?;
-                    ipconfigs.push(IfaceIpServiceConfig {
-                        iface_name: wan_iface.clone(),
-                        enable: true,
-                        ip_model: IfaceIpModelConfig::PPPoE {
-                            default_router: self.default_route(),
-                            username,
-                            password,
-                            mtu: self.pppoe_mtu,
-                            ac_name: self.pppoe_ac_name.clone(),
-                        },
-                        update_at: now,
-                    });
-                }
-                WanMode::Pppd => {
-                    let (peer_id, password) = self.pppoe_credentials("pppd")?;
-                    pppds.push(PPPDServiceConfig {
-                        attach_iface_name: wan_iface.clone(),
-                        iface_name: self.pppd_iface.clone(),
-                        enable: true,
-                        pppd_config: PPPDConfig {
-                            default_route: self.default_route(),
-                            peer_id,
-                            password,
-                            ac: self.pppoe_ac_name.clone(),
-                            plugin: self.pppd_plugin.into(),
-                        },
-                        update_at: now,
-                    });
-                }
-                WanMode::None => {}
-            }
-        }
-
-        // For pppd, the WAN-facing services attach to the PPP virtual interface.
-        let wan_service_iface = match (&wan_iface, self.wan_mode) {
-            (Some(_), WanMode::Pppd) => Some(self.pppd_iface.clone()),
-            _ => wan_iface.clone(),
-        };
+        let wan_link = wan_iface
+            .as_deref()
+            .map(|iface| self.build_wan_link(iface, &enabled, now))
+            .transpose()?;
+        // For pppd, the WAN-facing services bind to the PPP virtual interface.
+        let wan_service_iface = wan_link.as_ref().map(|link| link.section_iface_name().to_string());
 
         let mut config = LandscapeConfig::default();
         if let Some(user) = &self.admin_user {
@@ -227,19 +157,20 @@ impl ConfigCliArgs {
             version: VERSION.to_string(),
             config,
             ifaces,
-            ipconfigs,
-            pppds,
+            wan_links: wan_link.clone().map(|link| vec![link]).unwrap_or_default(),
             ..Default::default()
         };
 
-        if !static_nat_pairs.is_empty() {
+        if let (Some(link), Some(iface)) = (&wan_link, &wan_service_iface)
+            && !static_nat_pairs.is_empty()
+        {
             let mapping = StaticNatMappingV4Config {
                 id: gen_database_uuid(),
                 name: None,
                 enable: true,
                 remark: "generated by `landscape config`".to_string(),
-                wan_link_id: None,
-                wan_iface_name: wan_service_iface.clone(),
+                wan_link_id: Some(link.id),
+                wan_iface_name: Some(iface.clone()),
                 mapping_pair_ports: static_nat_pairs,
                 lan_target: Some(StaticNatV4Target::Local),
                 l4_protocols: vec![TCP_L4_PROTOCOL],
@@ -248,9 +179,9 @@ impl ConfigCliArgs {
             mapping
                 .validate()
                 .map_err(|e| ConfigCliError::InvalidStaticNatConfig(e.to_string()))?;
-            if enabled.contains(&"nat") {
+            if let Some(nat_config) = nat_ranges_of(link) {
                 mapping
-                    .validate_no_dynamic_port_overlap(&NatConfig::default())
+                    .validate_no_dynamic_port_overlap(&nat_config)
                     .map_err(|e| ConfigCliError::InvalidStaticNatConfig(e.to_string()))?;
             }
             init.static_nat_mappings_v4.push(mapping);
@@ -262,34 +193,14 @@ impl ConfigCliArgs {
             init.dhcpv4_services.push(self.build_dhcp_config(lan_iface, now)?);
         }
 
-        if let Some(iface) = &wan_service_iface {
-            for service in &enabled {
-                match *service {
-                    "nat" => init.nats.push(NatServiceConfig {
-                        iface_name: iface.clone(),
-                        enable: true,
-                        nat_config: NatConfig::default(),
-                        update_at: now,
-                    }),
-                    "firewall" => init.firewalls.push(FirewallServiceConfig {
-                        iface_name: iface.clone(),
-                        enable: true,
-                        update_at: now,
-                    }),
-                    "mss-clamp" => init.mss_clamps.push(MSSClampServiceConfig {
-                        iface_name: iface.clone(),
-                        enable: true,
-                        clamp_size: DEFAULT_MSS_CLAMP_SIZE,
-                        update_at: now,
-                    }),
-                    "route-wan" => init.route_wans.push(RouteWanServiceConfig {
-                        iface_name: iface.clone(),
-                        enable: true,
-                        update_at: now,
-                    }),
-                    _ => {}
-                }
-            }
+        if let Some(iface) = &wan_service_iface
+            && enabled.contains(&"route-wan")
+        {
+            init.route_wans.push(RouteWanServiceConfig {
+                iface_name: iface.clone(),
+                enable: true,
+                update_at: now,
+            });
         }
         if let Some(lan_iface) = lan_iface.as_deref()
             && enabled.contains(&"route-lan")
@@ -298,6 +209,107 @@ impl ConfigCliArgs {
         }
 
         Ok(init)
+    }
+
+    /// Build the single WAN link described by `--wan-mode`; the enabled WAN
+    /// services (`nat` / `firewall` / `mss-clamp`) become link sections.
+    fn build_wan_link(
+        &self,
+        wan_iface: &str,
+        enabled: &[&'static str],
+        now: f64,
+    ) -> Result<WanLinkConfig, ConfigCliError> {
+        let mut link = WanLinkConfig {
+            id: gen_database_uuid(),
+            name: wan_iface.to_string(),
+            attach_iface_name: wan_iface.to_string(),
+            kind: WanLinkKind::Ethernet,
+            v4: WanLinkV4Config::default(),
+            pd: Default::default(),
+            nat: WanLinkNatConfig::default(),
+            firewall: WanLinkFirewallConfig::default(),
+            mss: WanLinkMssConfig::default(),
+            update_at: now,
+        };
+
+        match self.wan_mode {
+            WanMode::Dhcp => {
+                link.v4 = WanLinkV4Config {
+                    enable: true,
+                    model: WanLinkV4Model::DhcpClient {
+                        hostname: None,
+                        default_router: self.default_route(),
+                        custome_opts: Vec::new(),
+                    },
+                };
+            }
+            WanMode::Static => {
+                let raw = self.wan_ip.as_deref().ok_or(ConfigCliError::MissingWanIp)?;
+                let (ipv4, mask) = parse_ipv4_cidr(raw)?;
+                let gateway = self.wan_gateway.ok_or(ConfigCliError::MissingWanGateway)?;
+                link.v4 = WanLinkV4Config {
+                    enable: true,
+                    model: WanLinkV4Model::Static {
+                        ipv4: Some(ipv4),
+                        ipv4_mask: Some(mask),
+                        ipv6: self.wan_ipv6,
+                        default_router: self.default_route(),
+                        default_router_ip: Some(gateway),
+                    },
+                };
+            }
+            WanMode::Pppoe => {
+                let (username, password) = self.pppoe_credentials("pppoe")?;
+                link.kind = WanLinkKind::PppoeNative {
+                    username,
+                    password,
+                    requested_mru: u16::try_from(self.pppoe_mtu).unwrap_or(1492),
+                    ac_name: self.pppoe_ac_name.clone(),
+                    lcp_echo_interval: None,
+                    redial_backoff_base_secs: None,
+                };
+                link.v4 = WanLinkV4Config {
+                    enable: true,
+                    model: WanLinkV4Model::Ipcp { default_router: self.default_route() },
+                };
+            }
+            WanMode::Pppd => {
+                let (peer_id, password) = self.pppoe_credentials("pppd")?;
+                link.kind = WanLinkKind::Pppd {
+                    ppp_iface_name: self.pppd_iface.clone(),
+                    peer_id,
+                    password,
+                    ac: self.pppoe_ac_name.clone(),
+                    plugin: self.pppd_plugin.into(),
+                };
+                link.v4 = WanLinkV4Config {
+                    enable: true,
+                    model: WanLinkV4Model::Ipcp { default_router: self.default_route() },
+                };
+            }
+            WanMode::None => {}
+        }
+
+        if enabled.contains(&"nat") {
+            let defaults = NatConfig::default();
+            link.nat = WanLinkNatConfig {
+                enable: true,
+                tcp_range: Some(defaults.tcp_range),
+                udp_range: Some(defaults.udp_range),
+                icmp_in_range: Some(defaults.icmp_in_range),
+            };
+        }
+        if enabled.contains(&"firewall") {
+            link.firewall = WanLinkFirewallConfig { enable: true };
+        }
+        if enabled.contains(&"mss-clamp") {
+            link.mss = WanLinkMssConfig {
+                enable: true,
+                clamp_size: Some(DEFAULT_MSS_CLAMP_SIZE),
+            };
+        }
+
+        Ok(link)
     }
 
     fn parse_static_nat_pairs(&self) -> Result<Vec<StaticMapPair>, ConfigCliError> {
@@ -341,6 +353,20 @@ impl ConfigCliArgs {
             update_at: now,
         })
     }
+}
+
+/// The link's NAT dynamic port ranges as a [`NatConfig`], when the NAT
+/// section is enabled with explicit ranges (None otherwise — no overlap
+/// check applies without NAT).
+fn nat_ranges_of(link: &WanLinkConfig) -> Option<NatConfig> {
+    if !link.nat.enable {
+        return None;
+    }
+    Some(NatConfig {
+        tcp_range: link.nat.tcp_range.clone()?,
+        udp_range: link.nat.udp_range.clone()?,
+        icmp_in_range: link.nat.icmp_in_range.clone()?,
+    })
 }
 
 fn parse_ipv4_cidr(raw: &str) -> Result<(Ipv4Addr, u8), ConfigCliError> {
@@ -436,11 +462,12 @@ mod tests {
         assert_eq!(init.ifaces[1].name, "br_lan");
         assert_eq!(init.ifaces[1].zone_type, IfaceZoneType::Lan);
 
-        assert_eq!(init.ipconfigs.len(), 1);
-        assert!(matches!(
-            &init.ipconfigs[0].ip_model,
-            IfaceIpModelConfig::DhcpClient { default_router: true, .. }
-        ));
+        assert_eq!(init.wan_links.len(), 1);
+        let link = &init.wan_links[0];
+        assert_eq!(link.attach_iface_name, "eth0");
+        assert!(matches!(link.kind, WanLinkKind::Ethernet));
+        assert!(link.v4.enable);
+        assert!(matches!(&link.v4.model, WanLinkV4Model::DhcpClient { default_router: true, .. }));
 
         assert_eq!(init.dhcpv4_services.len(), 1);
         let dhcp = &init.dhcpv4_services[0].config;
@@ -448,12 +475,11 @@ mod tests {
         assert_eq!(dhcp.network_mask, 24);
         assert_eq!(dhcp.ip_range_start, Ipv4Addr::new(192, 168, 5, 100));
 
-        assert_eq!(init.nats.len(), 1);
+        assert!(link.nat.enable);
         assert_eq!(init.route_wans.len(), 1);
         assert_eq!(init.route_lans.len(), 1);
-        assert!(init.mss_clamps.is_empty());
-        assert!(init.firewalls.is_empty());
-        assert!(init.pppds.is_empty());
+        assert!(!link.mss.enable);
+        assert!(!link.firewall.enable);
     }
 
     #[test]
@@ -466,8 +492,7 @@ mod tests {
         let init = args.build_init_config().unwrap();
 
         assert!(init.ifaces.iter().all(|iface| iface.zone_type != IfaceZoneType::Wan));
-        assert!(init.ipconfigs.is_empty());
-        assert!(init.nats.is_empty());
+        assert!(init.wan_links.is_empty());
         assert!(init.route_wans.is_empty());
         assert_eq!(init.route_lans.len(), 1);
         assert_eq!(init.dhcpv4_services.len(), 1);
@@ -479,9 +504,7 @@ mod tests {
         let init = args.build_init_config().unwrap();
 
         assert!(init.ifaces.is_empty());
-        assert!(init.ipconfigs.is_empty());
-        assert!(init.pppds.is_empty());
-        assert!(init.nats.is_empty());
+        assert!(init.wan_links.is_empty());
         assert!(init.route_wans.is_empty());
         assert!(init.route_lans.is_empty());
         assert!(init.dhcpv4_services.is_empty());
@@ -504,7 +527,7 @@ mod tests {
 
         assert_eq!(init.dhcpv4_services.len(), 0);
         assert_eq!(init.route_lans.len(), 0);
-        assert_eq!(init.nats.len(), 1);
+        assert!(init.wan_links[0].nat.enable);
         assert_eq!(init.route_wans.len(), 1);
         assert!(init.static_nat_mappings_v4.is_empty());
     }
@@ -555,7 +578,7 @@ mod tests {
         };
         let init = args.build_init_config().unwrap();
         assert!(init.route_lans.is_empty());
-        assert_eq!(init.nats.len(), 1);
+        assert!(init.wan_links[0].nat.enable);
         assert_eq!(init.route_wans.len(), 1);
     }
 
@@ -613,6 +636,7 @@ mod tests {
         let mapping = &init.static_nat_mappings_v4[0];
         assert!(mapping.enable);
         assert_eq!(mapping.wan_iface_name.as_deref(), Some("eth0"));
+        assert_eq!(mapping.wan_link_id, Some(init.wan_links[0].id));
         assert_eq!(
             mapping.mapping_pair_ports,
             vec![
@@ -682,7 +706,7 @@ mod tests {
         args.static_nat = vec!["40000:22".to_string()];
 
         let init = args.build_init_config().unwrap();
-        assert!(init.nats.is_empty());
+        assert!(!init.wan_links[0].nat.enable);
         assert_eq!(init.static_nat_mappings_v4.len(), 1);
         assert_eq!(init.static_nat_mappings_v4[0].mapping_pair_ports[0].wan_port, 40000);
     }
@@ -698,9 +722,7 @@ mod tests {
         let init = args.build_init_config().unwrap();
 
         assert!(init.ifaces.iter().all(|iface| iface.zone_type != IfaceZoneType::Wan));
-        assert!(init.ipconfigs.is_empty());
-        assert!(init.nats.is_empty());
-        assert!(init.mss_clamps.is_empty());
+        assert!(init.wan_links.is_empty());
         assert!(init.route_wans.is_empty());
         assert_eq!(init.route_lans.len(), 1);
     }
@@ -714,7 +736,7 @@ mod tests {
             ..Default::default()
         };
         let init = args.build_init_config().unwrap();
-        assert!(init.nats.is_empty());
+        assert!(init.wan_links.is_empty());
         assert_eq!(init.route_lans.len(), 1);
     }
 
@@ -743,11 +765,13 @@ mod tests {
 
         let wan = init.ifaces.iter().find(|iface| iface.name == "eth0").unwrap();
         assert_eq!(wan.zone_type, IfaceZoneType::Wan);
-        assert!(init.ipconfigs.is_empty());
-        assert!(init.pppds.is_empty());
-        assert_eq!(init.nats.len(), 1);
-        assert_eq!(init.nats[0].iface_name, "eth0");
+        assert_eq!(init.wan_links.len(), 1);
+        let link = &init.wan_links[0];
+        assert!(!link.v4.enable);
+        assert!(matches!(link.v4.model, WanLinkV4Model::Nothing));
+        assert!(link.nat.enable);
         assert_eq!(init.route_wans.len(), 1);
+        assert_eq!(init.route_wans[0].iface_name, "eth0");
         assert_eq!(init.route_lans.len(), 1);
         assert_eq!(init.dhcpv4_services.len(), 1);
     }
@@ -764,10 +788,8 @@ mod tests {
         };
         let init = args.build_init_config().unwrap();
 
-        assert!(init.pppds.is_empty());
-        assert!(init.nats.is_empty(), "no service may reference the uncreated ppp0");
+        assert!(init.wan_links.is_empty(), "no service may reference the uncreated ppp0");
         assert!(init.route_wans.is_empty());
-        assert!(init.mss_clamps.is_empty());
         assert_eq!(init.route_lans.len(), 1);
     }
 
@@ -782,18 +804,18 @@ mod tests {
 
         args.wan_gateway = Some(Ipv4Addr::new(203, 0, 113, 1));
         let init = args.build_init_config().unwrap();
-        match &init.ipconfigs[0].ip_model {
-            IfaceIpModelConfig::Static { ipv4, ipv4_mask, default_router_ip, .. } => {
+        match &init.wan_links[0].v4.model {
+            WanLinkV4Model::Static { ipv4, ipv4_mask, default_router_ip, .. } => {
                 assert_eq!(*ipv4, Some(Ipv4Addr::new(203, 0, 113, 2)));
-                assert_eq!(*ipv4_mask, 24);
+                assert_eq!(*ipv4_mask, Some(24));
                 assert_eq!(*default_router_ip, Some(Ipv4Addr::new(203, 0, 113, 1)));
             }
-            other => panic!("unexpected ip model: {other:?}"),
+            other => panic!("unexpected v4 model: {other:?}"),
         }
     }
 
     #[test]
-    fn pppoe_mode_builds_native_ip_config() {
+    fn pppoe_mode_builds_native_link() {
         let mut args = base_args();
         args.wan_mode = WanMode::Pppoe;
         args.pppoe_username = Some("user".to_string());
@@ -801,40 +823,48 @@ mod tests {
         args.pppoe_ac_name = Some("ac".to_string());
 
         let init = args.build_init_config().unwrap();
-        assert!(init.pppds.is_empty());
-        assert_eq!(init.mss_clamps.len(), 1, "pppoe defaults to mss-clamp");
-        match &init.ipconfigs[0].ip_model {
-            IfaceIpModelConfig::PPPoE { username, password, mtu, ac_name, .. } => {
+        assert_eq!(init.wan_links.len(), 1);
+        let link = &init.wan_links[0];
+        assert!(link.mss.enable, "pppoe defaults to mss-clamp");
+        assert!(link.v4.enable);
+        assert!(matches!(link.v4.model, WanLinkV4Model::Ipcp { default_router: true }));
+        match &link.kind {
+            WanLinkKind::PppoeNative { username, password, requested_mru, ac_name, .. } => {
                 assert_eq!(username, "user");
                 assert_eq!(password, "pass");
-                assert_eq!(*mtu, DEFAULT_PPPOE_MTU);
+                assert_eq!(*requested_mru as u32, DEFAULT_PPPOE_MTU);
                 assert_eq!(ac_name.as_deref(), Some("ac"));
             }
-            other => panic!("unexpected ip model: {other:?}"),
+            other => panic!("unexpected link kind: {other:?}"),
         }
     }
 
     #[test]
-    fn pppd_mode_builds_pppd_service_and_targets_ppp_iface() {
+    fn pppd_mode_builds_pppd_link_and_targets_ppp_iface() {
         let mut args = base_args();
         args.wan_mode = WanMode::Pppd;
         args.pppoe_username = Some("user".to_string());
         args.pppoe_password = Some("pass".to_string());
 
         let init = args.build_init_config().unwrap();
-        assert!(init.ipconfigs.is_empty());
-        assert_eq!(init.pppds.len(), 1);
-        let pppd = &init.pppds[0];
-        assert_eq!(pppd.attach_iface_name, "eth0");
-        assert_eq!(pppd.iface_name, DEFAULT_PPPD_IFACE);
-        assert_eq!(pppd.pppd_config.peer_id, "user");
-        assert_eq!(pppd.pppd_config.password, "pass");
-        assert!(matches!(pppd.pppd_config.plugin, PPPoEPlugin::RpPppoe));
+        assert_eq!(init.wan_links.len(), 1);
+        let link = &init.wan_links[0];
+        assert_eq!(link.attach_iface_name, "eth0");
+        assert!(link.v4.enable);
+        assert!(matches!(link.v4.model, WanLinkV4Model::Ipcp { default_router: true }));
+        match &link.kind {
+            WanLinkKind::Pppd { ppp_iface_name, peer_id, password, plugin, .. } => {
+                assert_eq!(ppp_iface_name, DEFAULT_PPPD_IFACE);
+                assert_eq!(peer_id, "user");
+                assert_eq!(password, "pass");
+                assert!(matches!(plugin, PPPoEPlugin::RpPppoe));
+            }
+            other => panic!("unexpected link kind: {other:?}"),
+        }
 
-        assert_eq!(init.nats[0].iface_name, DEFAULT_PPPD_IFACE);
+        assert!(link.nat.enable);
         assert_eq!(init.route_wans[0].iface_name, DEFAULT_PPPD_IFACE);
-        assert_eq!(init.mss_clamps.len(), 1, "pppd defaults to mss-clamp");
-        assert_eq!(init.mss_clamps[0].iface_name, DEFAULT_PPPD_IFACE);
+        assert!(link.mss.enable, "pppd defaults to mss-clamp");
     }
 
     #[test]
@@ -875,10 +905,10 @@ mod tests {
         args.enable = vec!["firewall".to_string()];
         let init = args.build_init_config().unwrap();
 
-        assert!(init.nats.is_empty());
+        assert!(!init.wan_links[0].nat.enable);
         assert!(init.route_lans.is_empty());
-        assert_eq!(init.firewalls.len(), 1);
-        assert!(init.mss_clamps.is_empty(), "dhcp does not default mss-clamp");
+        assert!(init.wan_links[0].firewall.enable);
+        assert!(!init.wan_links[0].mss.enable, "dhcp does not default mss-clamp");
     }
 
     #[test]
@@ -891,7 +921,7 @@ mod tests {
                 args.wan_gateway = Some(Ipv4Addr::new(203, 0, 113, 1));
             }
             let init = args.build_init_config().unwrap();
-            assert!(init.mss_clamps.is_empty(), "{mode:?} must not default mss-clamp");
+            assert!(!init.wan_links[0].mss.enable, "{mode:?} must not default mss-clamp");
         }
 
         for mode in [WanMode::Pppoe, WanMode::Pppd] {
@@ -900,7 +930,7 @@ mod tests {
             args.pppoe_username = Some("user".to_string());
             args.pppoe_password = Some("pass".to_string());
             let init = args.build_init_config().unwrap();
-            assert_eq!(init.mss_clamps.len(), 1, "{mode:?} must default mss-clamp");
+            assert!(init.wan_links[0].mss.enable, "{mode:?} must default mss-clamp");
         }
     }
 
@@ -909,7 +939,7 @@ mod tests {
         let mut args = base_args();
         args.enable = vec!["mss-clamp".to_string()];
         let init = args.build_init_config().unwrap();
-        assert_eq!(init.mss_clamps.len(), 1);
+        assert!(init.wan_links[0].mss.enable);
     }
 
     #[test]

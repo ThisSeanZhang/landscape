@@ -201,14 +201,16 @@ mod tests {
 
         let init = args.build_init_config().unwrap();
         let mut services = BTreeSet::new();
-        if !init.nats.is_empty() {
-            services.insert("nat");
-        }
-        if !init.firewalls.is_empty() {
-            services.insert("firewall");
-        }
-        if !init.mss_clamps.is_empty() {
-            services.insert("mss-clamp");
+        if let Some(link) = init.wan_links.first() {
+            if link.nat.enable {
+                services.insert("nat");
+            }
+            if link.firewall.enable {
+                services.insert("firewall");
+            }
+            if link.mss.enable {
+                services.insert("mss-clamp");
+            }
         }
         if !init.route_wans.is_empty() {
             services.insert("route-wan");
