@@ -210,7 +210,8 @@ async function refresh() {
     wanPdOptions.value = links.map((link) => ({
       label: link_label(links, link.id),
       value: link.id,
-      disabled: prefixInfos.get(link.section_iface_name()) == null,
+      // The backend keys prefix infos by the wan link uuid.
+      disabled: prefixInfos.get(link.id) == null,
     }));
   } finally {
     loading.value = false;

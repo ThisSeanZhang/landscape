@@ -65,7 +65,6 @@ export interface PlannerView {
     | "selection_out_of_range"
     | "target_more_specific_than_64"
     | "too_many_units";
-  dependIface?: string;
   targetPrefixLen?: number;
   parentPrefixLen?: number;
   actualPrefix?: string;
@@ -135,10 +134,10 @@ export interface BuildGroupPlannerOptions {
   otherConfigsV2: LanIPv6ServiceConfigV2[];
   editGroup?: LanPrefixGroupConfig;
   selectedKind: SourceKind;
+  // Both PD maps are keyed by the wan link uuid (the backend keys acquired
+  // prefixes by link id, and the WAN expectation comes from the link config).
   prefixInfos: Map<string, LDIAPrefix | null>;
   expectedPdLens?: Map<string, number>;
-  /** wan link id -> net iface, for deriving PD parents' depend iface. */
-  linkIfaceMap?: Map<string, string>;
   draftPdPoolLen?: number;
   maxRenderableUnits?: number;
 }
@@ -180,7 +179,7 @@ type GroupPlannerParent =
   | {
       t: "pd";
       key: string;
-      dependIface: string;
+      linkId: string;
       snapshotPrefixLen: number;
     };
 
@@ -213,7 +212,6 @@ interface GroupPlannerBaseResult {
   parentBasePrefix?: string;
   state: PlannerState;
   stateReason?: PlannerView["stateReason"];
-  dependIface?: string;
   saveError?: string;
 }
 
@@ -570,7 +568,6 @@ export function poolIndexFromPlannerUnitStart(
 
 function plannerParentFromGroup(
   group: LanPrefixGroupConfig,
-  linkIfaceMap?: Map<string, string>,
 ): GroupPlannerParent {
   if (group.parent.t === "static") {
     return {
@@ -585,7 +582,7 @@ function plannerParentFromGroup(
   return {
     t: "pd",
     key: `pd:${linkId}/${group.parent.expected_pd_len_snapshot}`,
-    dependIface: linkIfaceMap?.get(linkId) ?? "",
+    linkId,
     snapshotPrefixLen: group.parent.expected_pd_len_snapshot,
   };
 }
@@ -598,7 +595,8 @@ function occupancyParentKeyForParent(
     return parent.key;
   }
 
-  const actualPrefix = prefixInfos.get(parent.dependIface) ?? null;
+  // The backend keys acquired PD prefixes by the wan link uuid.
+  const actualPrefix = prefixInfos.get(parent.linkId) ?? null;
   if (actualPrefix) {
     const actualNetwork = normalizePrefix(
       actualPrefix.prefix_ip,
@@ -631,9 +629,8 @@ function entryActiveInMode(
 function buildEntriesForGroup(
   group: LanPrefixGroupConfig,
   mode: IPv6ServiceMode | undefined,
-  linkIfaceMap?: Map<string, string>,
 ): GroupPlannerEntry[] {
-  const parent = plannerParentFromGroup(group, linkIfaceMap);
+  const parent = plannerParentFromGroup(group);
   const result: GroupPlannerEntry[] = [];
 
   if (group.ra && entryActiveInMode(mode, "ra")) {
@@ -678,13 +675,12 @@ function buildEntriesForGroup(
 function defaultEntryForKind(
   group: LanPrefixGroupConfig | undefined,
   kind: SourceKind,
-  linkIfaceMap?: Map<string, string>,
 ): GroupPlannerEntry | undefined {
   if (!group) {
     return undefined;
   }
 
-  const parent = plannerParentFromGroup(group, linkIfaceMap);
+  const parent = plannerParentFromGroup(group);
   if (kind === "ra") {
     return {
       groupId: group.group_id,
@@ -723,11 +719,7 @@ function defaultEntryForKind(
 function selectedEntryForOptions(
   options: BuildGroupPlannerOptions,
 ): GroupPlannerEntry | undefined {
-  const entry = defaultEntryForKind(
-    options.editGroup,
-    options.selectedKind,
-    options.linkIfaceMap,
-  );
+  const entry = defaultEntryForKind(options.editGroup, options.selectedKind);
   if (!entry) {
     return undefined;
   }
@@ -816,7 +808,7 @@ function buildGroupOccupancyRecords(
   const currentRecords = options.currentGroups.flatMap((group) =>
     // Show all configured results for the current interface on the shared canvas,
     // even if the current service mode would not activate them right now.
-    buildEntriesForGroup(group, undefined, options.linkIfaceMap)
+    buildEntriesForGroup(group, undefined)
       .filter(
         (entry) =>
           !(
@@ -834,9 +826,7 @@ function buildGroupOccupancyRecords(
       // Match the current-interface canvas behavior: keep configured results visible
       // for other LANs as well, so users can see occupied positions even when a mode
       // would not currently activate that kind.
-      .flatMap((group) =>
-        buildEntriesForGroup(group, undefined, options.linkIfaceMap),
-      )
+      .flatMap((group) => buildEntriesForGroup(group, undefined))
       .map((entry) =>
         buildGroupOccupancyRecord(config.iface_name, "other", entry),
       ),
@@ -924,7 +914,7 @@ function buildGroupPlannerViewBase(
     };
   }
 
-  if (!selectedEntry.parent.dependIface) {
+  if (!selectedEntry.parent.linkId) {
     return {
       entry: selectedEntry,
       hasSelection: selectedEntry.hasSelection,
@@ -948,10 +938,10 @@ function buildGroupPlannerViewBase(
   }
 
   const actualPrefix =
-    options.prefixInfos.get(selectedEntry.parent.dependIface) ?? null;
+    options.prefixInfos.get(selectedEntry.parent.linkId) ?? null;
   const snapshotPrefixLen = selectedEntry.parent.snapshotPrefixLen;
   const expectedPrefixLen = options.expectedPdLens?.get(
-    selectedEntry.parent.dependIface,
+    selectedEntry.parent.linkId,
   );
   const wanCompatible = wanPrefixMeetsExpectation(
     actualPrefix?.prefix_len,
@@ -1011,7 +1001,6 @@ function buildGroupPlannerViewBase(
       : selectionOutOfRange
         ? "lan_ipv6.planner_save_error_selection_out_of_range"
         : undefined,
-    dependIface: selectedEntry.parent.dependIface,
   };
 }
 
@@ -1047,7 +1036,6 @@ function buildGroupPlannerView(
       ...runtimeFields(base),
       state: base.state,
       stateReason: base.stateReason,
-      dependIface: base.dependIface,
       targetPrefixLen: base.targetPrefixLen,
       parentPrefixLen: base.parentPrefixLen,
       actualPrefix: base.actualPrefix,
@@ -1072,7 +1060,6 @@ function buildGroupPlannerView(
       ...runtimeFields(base),
       state: base.actualPrefix ? base.state : "preview",
       stateReason: "target_shorter_than_parent",
-      dependIface: base.dependIface,
       targetPrefixLen: base.targetPrefixLen,
       parentPrefixLen: base.parentPrefixLen,
       actualPrefix: base.actualPrefix,
@@ -1112,7 +1099,6 @@ function buildGroupPlannerView(
       ...runtimeFields(base),
       state: base.state,
       stateReason: "target_more_specific_than_64",
-      dependIface: base.dependIface,
       targetPrefixLen: base.targetPrefixLen,
       parentPrefixLen: base.parentPrefixLen,
       actualPrefix: base.actualPrefix,
@@ -1141,7 +1127,6 @@ function buildGroupPlannerView(
       ...runtimeFields(base),
       state: base.state,
       stateReason: "too_many_units",
-      dependIface: base.dependIface,
       targetPrefixLen: base.targetPrefixLen,
       parentPrefixLen: base.parentPrefixLen,
       actualPrefix: base.actualPrefix,
@@ -1273,7 +1258,6 @@ function buildGroupPlannerView(
     ...runtimeFields(base),
     state: base.state,
     stateReason: base.stateReason,
-    dependIface: base.dependIface,
     targetPrefixLen: base.targetPrefixLen,
     parentPrefixLen: base.parentPrefixLen,
     actualPrefix: base.actualPrefix,

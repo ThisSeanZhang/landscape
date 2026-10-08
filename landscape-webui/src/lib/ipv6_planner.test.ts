@@ -60,6 +60,7 @@ function plannerOptions(
   selectedKind: "ra" | "na" | "pd",
   otherConfigsV2: LanIPv6ServiceConfigV2[] = [],
   currentGroups: LanPrefixGroupConfig[] = [editGroup],
+  overrides: Partial<BuildGroupPlannerOptions> = {},
 ): BuildGroupPlannerOptions {
   return {
     currentIfaceName: "lan-current",
@@ -71,6 +72,7 @@ function plannerOptions(
     prefixInfos: new Map(),
     expectedPdLens: new Map(),
     draftPdPoolLen: editGroup.pd?.pool_len ?? 64,
+    ...overrides,
   };
 }
 
@@ -277,4 +279,75 @@ describe("IPv6 prefix planner occupancy", () => {
       ).toBe(true);
     },
   );
+});
+
+describe("IPv6 prefix planner PD parents", () => {
+  const LINK_ID = "11111111-1111-1111-1111-111111111111";
+
+  function pdGroup(
+    groupId: string,
+    linkId: string | undefined,
+    entries: Pick<LanPrefixGroupConfig, "ra" | "na" | "pd">,
+  ): LanPrefixGroupConfig {
+    return {
+      group_id: groupId,
+      parent: {
+        t: "pd",
+        link_id: linkId,
+        expected_pd_len_snapshot: 60,
+      },
+      ra: entries.ra ?? null,
+      na: entries.na ?? null,
+      pd: entries.pd ?? null,
+    };
+  }
+
+  function acquiredPrefix(prefixLen: number) {
+    return {
+      last_update_time: 0,
+      preferred_lifetime: 1800,
+      prefix_ip: "2001:db8:1200::",
+      prefix_len: prefixLen,
+      valid_lifetime: 3600,
+    };
+  }
+
+  it("resolves runtime fields through link-id-keyed maps", () => {
+    const group = pdGroup("pd-link", LINK_ID, { ra: { pool_index: 1 } });
+    const options = plannerOptions(group, "ra", [], [group], {
+      prefixInfos: new Map([[LINK_ID, acquiredPrefix(56)]]),
+      expectedPdLens: new Map([[LINK_ID, 60]]),
+    });
+
+    const view = buildPrefixPlannerViewFromGroups(options);
+
+    expect(view.state).toBe("resolved");
+    expect(view.actualPrefix).toBe("2001:db8:1200::/56");
+    expect(view.runtimeReady).toBe(true);
+  });
+
+  it("stays in preview when maps are keyed by the legacy iface name", () => {
+    const group = pdGroup("pd-legacy", LINK_ID, { ra: { pool_index: 1 } });
+    const options = plannerOptions(group, "ra", [], [group], {
+      prefixInfos: new Map([["wan0", acquiredPrefix(56)]]),
+      expectedPdLens: new Map([[LINK_ID, 60]]),
+    });
+
+    const view = buildPrefixPlannerViewFromGroups(options);
+
+    expect(view.state).toBe("preview");
+    expect(view.actualPrefix).toBeUndefined();
+    expect(view.runtimeReady).toBe(false);
+  });
+
+  it("rejects a PD parent without a wan link reference", () => {
+    const group = pdGroup("pd-nolink", undefined, { ra: { pool_index: 1 } });
+
+    const view = buildPrefixPlannerViewFromGroups(plannerOptions(group, "ra"));
+
+    expect(view.state).toBe("idle");
+    expect(view.stateReason).toBe("no_parent_iface");
+    expect(view.canSave).toBe(false);
+    expect(view.saveError).toBe("lan_ipv6.planner_save_error_no_parent_iface");
+  });
 });

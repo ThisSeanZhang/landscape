@@ -102,9 +102,6 @@ const ipv6PdConfigs = ref<
   }>
 >([]);
 const expectedPdLens = ref<Map<string, number>>(new Map());
-const linkIfaceMap = computed(
-  () => new Map(pdLinks.value.map((l) => [l.id, l.section_iface_name()])),
-);
 const draftGroupState = ref<LanPrefixGroupConfig>();
 const staleSelectionsCleared = ref(false);
 const emptyDraftActionVisible = ref(false);
@@ -185,7 +182,6 @@ const commitSaveState = computed(() => {
       selectedKind: kind,
       prefixInfos: prefixInfos.value,
       expectedPdLens: expectedPdLens.value,
-      linkIfaceMap: linkIfaceMap.value,
       draftPdPoolLen: currentPdPoolLen.value,
     });
     if (!view.canSave) {
@@ -409,7 +405,6 @@ function validatePdInterval(
       selectedKind: "pd",
       prefixInfos: prefixInfos.value,
       expectedPdLens: expectedPdLens.value,
-      linkIfaceMap: linkIfaceMap.value,
       draftPdPoolLen: poolLen,
     },
     nextRange.unitStart,
@@ -441,17 +436,8 @@ function setPdInterval(startIndex: number, endIndex: number, poolLen: number) {
   };
 }
 
-/** Net iface of the selected link; "" when unset or the link is gone. */
-function dependNetIface(): string {
-  return (
-    pdLinks.value
-      .find((l) => l.id === dependLinkId.value)
-      ?.section_iface_name() ?? ""
-  );
-}
-
 function onDependLinkChange() {
-  snapshotPrefixLen.value = expectedPdLens.value.get(dependNetIface()) ?? 60;
+  snapshotPrefixLen.value = expectedPdLens.value.get(dependLinkId.value) ?? 60;
   syncParentIntoDraftGroup();
 }
 
@@ -556,7 +542,6 @@ function onPlannerInteract(payload: PlannerInteractionPayload) {
       selectedKind: "pd",
       prefixInfos: prefixInfos.value,
       expectedPdLens: expectedPdLens.value,
-      linkIfaceMap: linkIfaceMap.value,
       draftPdPoolLen: poolLen,
     },
     unitStart,
@@ -651,7 +636,7 @@ async function searchIpv6Pd() {
   );
   expectedPdLens.value = new Map(
     ipv6PdConfigs.value.map((config) => [
-      config.iface_name,
+      config.link_id,
       config.expected_pd_len,
     ]),
   );
@@ -690,11 +675,8 @@ function initDraftGroup() {
       staticPrefixLen.value = props.group.parent.parent_prefix_len;
     } else {
       dependLinkId.value = props.group.parent.link_id || "";
-      const netIface = pdLinks.value
-        .find((l) => l.id === dependLinkId.value)
-        ?.section_iface_name();
       snapshotPrefixLen.value =
-        (netIface ? expectedPdLens.value.get(netIface) : undefined) ??
+        expectedPdLens.value.get(dependLinkId.value) ??
         props.group.parent.expected_pd_len_snapshot;
     }
     pdPoolLenDraft.value = props.group.pd?.pool_len ?? 64;
@@ -730,7 +712,6 @@ function clearStaleSelectionsOnOpen() {
       selectedKind: kind,
       prefixInfos: prefixInfos.value,
       expectedPdLens: expectedPdLens.value,
-      linkIfaceMap: linkIfaceMap.value,
       draftPdPoolLen: currentPdPoolLen.value,
     });
     return shouldResetStalePlannerSelection(view);
@@ -939,7 +920,6 @@ function cancelEmptyDraftAction() {
                 :selected-kind="selectedKind"
                 :prefix-infos="prefixInfos"
                 :expected-pd-lens="expectedPdLens"
-                :link-iface-map="linkIfaceMap"
                 :draft-pd-pool-len="currentPdPoolLen"
                 @interact-pool-index="onPlannerInteract"
               />

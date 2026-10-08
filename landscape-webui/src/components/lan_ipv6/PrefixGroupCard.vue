@@ -60,10 +60,7 @@ const snapshotStatus = computed(() => {
   if (parent.t !== "pd") {
     return undefined;
   }
-  const netIface = wanLinkStore.links
-    .find((l) => l.id === parent.link_id)
-    ?.section_iface_name();
-  const expected = props.expectedPdLens.get(netIface ?? "");
+  const expected = props.expectedPdLens.get(parent.link_id ?? "");
   const snapshot = parent.expected_pd_len_snapshot;
   const compatibility = lanSnapshotCompatibility(expected, snapshot);
   if (compatibility === "unavailable") {

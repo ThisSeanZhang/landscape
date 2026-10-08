@@ -38,7 +38,6 @@ const props = defineProps<{
   selectedKind: SourceKind;
   prefixInfos: Map<string, LDIAPrefix | null>;
   expectedPdLens: Map<string, number>;
-  linkIfaceMap?: Map<string, string>;
   draftPdPoolLen?: number;
 }>();
 
@@ -76,7 +75,6 @@ const planner = computed(() =>
     selectedKind: props.selectedKind,
     prefixInfos: props.prefixInfos,
     expectedPdLens: props.expectedPdLens,
-    linkIfaceMap: props.linkIfaceMap,
     draftPdPoolLen: props.draftPdPoolLen,
   }),
 );
@@ -465,7 +463,6 @@ function onCanvasClick(event: MouseEvent) {
       selectedKind: props.selectedKind,
       prefixInfos: props.prefixInfos,
       expectedPdLens: props.expectedPdLens,
-      linkIfaceMap: props.linkIfaceMap,
       draftPdPoolLen: props.draftPdPoolLen,
     },
     nextPoolIndex,

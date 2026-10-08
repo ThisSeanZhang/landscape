@@ -97,7 +97,7 @@ async function on_modal_enter() {
   expectedPdLens.value = new Map(
     wanLinkStore.links
       .filter((each) => each.pd.enable)
-      .map((each) => [each.section_iface_name(), each.pd.expected_pd_len]),
+      .map((each) => [each.id, each.pd.expected_pd_len]),
   );
   try {
     let config = await get_lan_ipv6_config(iface_info.iface_name);
