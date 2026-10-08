@@ -41,6 +41,7 @@ pub mod net;
 pub mod sys_service;
 pub mod test;
 pub mod utils;
+pub mod wan_link;
 pub mod wan_service;
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

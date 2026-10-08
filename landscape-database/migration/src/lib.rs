@@ -55,6 +55,7 @@ mod m20260813_000000_dns_redirect_block_metadata;
 mod m20260815_000000_dns_upstream_bind;
 mod m20260914_000000_add_names_to_config_resources;
 mod m20260927_000000_add_use_experimental_pool_to_dns_upstream;
+mod m20261008_095616_wan_links;
 mod tables;
 
 pub struct Migrator;
@@ -116,6 +117,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260815_000000_dns_upstream_bind::Migration),
             Box::new(m20260914_000000_add_names_to_config_resources::Migration),
             Box::new(m20260927_000000_add_use_experimental_pool_to_dns_upstream::Migration),
+            Box::new(m20261008_095616_wan_links::Migration),
         ]
     }
 }

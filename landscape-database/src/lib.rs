@@ -18,6 +18,7 @@ pub mod mss_clamp;
 pub mod pppd;
 pub mod provider;
 pub mod rollback;
+pub mod wan_link;
 pub mod wifi;
 
 pub mod dst_ip_rule;

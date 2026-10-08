@@ -46,6 +46,7 @@ pub enum StaticNatMappingV4Configs {
     Enable,
     Remark,
     WanIfaceName,
+    WanLinkId,
     MappingPairPorts,
     LanTarget,
     #[sea_orm(iden = "lan_ipv4")]
@@ -64,6 +65,7 @@ pub enum StaticNatMappingV6Configs {
     Enable,
     Remark,
     WanIfaceName,
+    WanLinkId,
     PortConfig,
     LanTarget,
     #[sea_orm(iden = "lan_ipv6")]
