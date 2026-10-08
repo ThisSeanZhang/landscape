@@ -12,9 +12,9 @@ import {
   addManyStaticNatMappingsV6,
 } from "@landscape-router/types/api/static-nat-mappings/static-nat-mappings";
 import type {
+  ApiStaticNatMappingV4Config as StaticNatMappingV4Config,
+  ApiStaticNatMappingV6Config as StaticNatMappingV6Config,
   CheckStaticNatV4ConflictParams,
-  StaticNatMappingV4Config,
-  StaticNatMappingV6Config,
 } from "@landscape-router/types/api/schemas";
 import type { LandscapeApiRespPortConflictCheckResponseData } from "@landscape-router/types/api/schemas";
 

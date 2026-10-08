@@ -20,7 +20,7 @@ fn find_route_target<'a>(
     target: &FlowTarget,
 ) -> Option<&'a RouteTargetInfo> {
     match target {
-        FlowTarget::Interface { name } => wan_infos.get(name),
+        FlowTarget::Interface { name, .. } => wan_infos.get(name),
         FlowTarget::Netns { container_name } => wan_infos.get(container_name),
     }
 }

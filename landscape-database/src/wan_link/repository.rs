@@ -1,3 +1,6 @@
+use std::collections::HashMap;
+
+use landscape_common::database::error::DbError;
 use landscape_common::database::store::ConfigStore;
 use landscape_common::database::validator::StoreValidator;
 use landscape_common::service::ServiceConfigError;
@@ -15,6 +18,60 @@ pub struct WanLinkRepository {
 impl WanLinkRepository {
     pub fn new(db: DatabaseConnection) -> Self {
         Self { db }
+    }
+
+    /// Maps every stored link's uuid to its net iface name (see
+    /// [`WanLinkConfig::section_iface_name`]); callers resolve references
+    /// strictly through [`resolve_wan_link_name`].
+    pub async fn net_iface_map(&self) -> Result<HashMap<DBId, String>, DbError> {
+        Ok(self
+            .list()
+            .await?
+            .into_iter()
+            .map(|link| (link.id, link.section_iface_name().to_string()))
+            .collect())
+    }
+}
+
+/// Strict wan-link reference resolution: the link must exist, otherwise
+/// [`ServiceConfigError::InvalidConfig`] (healing already happened in the
+/// migration). Returns the net iface name to mirror back.
+pub(crate) fn resolve_wan_link_name<'a>(
+    map: &'a HashMap<DBId, String>,
+    link_id: DBId,
+    ref_desc: &str,
+) -> Result<&'a str, ServiceConfigError> {
+    map.get(&link_id).map(String::as_str).ok_or_else(|| ServiceConfigError::InvalidConfig {
+        reason: format!("{ref_desc} references unknown wan link {link_id}"),
+    })
+}
+
+/// Optional-binding variant for the static NAT mappings: resolves
+/// `wan_link_id` and dual-writes the `wan_iface_name` mirror;
+/// `None` = unbound and clears the mirror.
+pub(crate) async fn resolve_wan_link_binding(
+    db: sea_orm::DatabaseConnection,
+    wan_link_id: &mut Option<DBId>,
+    wan_iface_name: &mut Option<String>,
+) -> Result<(), ServiceConfigError> {
+    match *wan_link_id {
+        None => {
+            if wan_iface_name.is_some() {
+                *wan_iface_name = None;
+            }
+            Ok(())
+        }
+        Some(link_id) => {
+            let links = WanLinkRepository::new(db)
+                .net_iface_map()
+                .await
+                .map_err(ServiceConfigError::internal)?;
+            let iface = resolve_wan_link_name(&links, link_id, "static NAT mapping WAN binding")?;
+            if wan_iface_name.as_deref() != Some(iface) {
+                *wan_iface_name = Some(iface.to_string());
+            }
+            Ok(())
+        }
     }
 }
 

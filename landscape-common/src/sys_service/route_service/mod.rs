@@ -48,7 +48,11 @@ impl RouteTargetInfo {
         if self.is_docker {
             FlowTarget::Netns { container_name: self.iface_name.clone() }
         } else {
-            FlowTarget::Interface { name: self.iface_name.clone() }
+            // Runtime join is name-keyed; link_id is resolved on the store path.
+            FlowTarget::Interface {
+                link_id: uuid::Uuid::nil(),
+                name: self.iface_name.clone(),
+            }
         }
     }
 }

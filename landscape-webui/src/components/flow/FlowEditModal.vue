@@ -11,9 +11,9 @@ import ConfigModal from "@/components/common/ConfigModal.vue";
 import FlowMatchRule from "./match/FlowMatchRule.vue";
 import { flow_config_default } from "@/lib/default_value";
 import type {
-  FlowConfig,
+  ApiFlowConfig as FlowConfig,
   FlowEntryRule,
-  WeightedFlowTarget,
+  ApiWeightedFlowTarget as WeightedFlowTarget,
 } from "@landscape-router/types/api/schemas";
 import { useFrontEndStore } from "@/stores/front_end_config";
 interface Props {

@@ -2,7 +2,6 @@ use axum::extract::{Path, Query, State};
 use landscape_common::api_response::LandscapeApiResp as CommonApiResp;
 use landscape_common::config::ConfigId;
 use landscape_common::config_service::static_nat::config::PortConflictCheckResponse;
-use landscape_common::config_service::static_nat::config4::StaticNatMappingV4Config;
 use landscape_common::config_service::static_nat::error::StaticNatError;
 use landscape_common::service::controller::ConfigStoreController;
 use utoipa_axum::router::OpenApiRouter;
@@ -11,6 +10,8 @@ use utoipa_axum::routes;
 use crate::LandscapeApp;
 use crate::api::JsonBody;
 use crate::{api::LandscapeApiResp, error::LandscapeApiResult};
+
+use landscape_common::config_service::static_nat::api::ApiStaticNatMappingV4Config;
 
 pub fn get_static_nat_mapping_v4_paths() -> OpenApiRouter<LandscapeApp> {
     OpenApiRouter::new()
@@ -24,12 +25,13 @@ pub fn get_static_nat_mapping_v4_paths() -> OpenApiRouter<LandscapeApp> {
     get,
     path = "/static_mappings/v4",
     tag = "Static NAT Mappings",
-    responses((status = 200, description = "Success", body = CommonApiResp<Vec<StaticNatMappingV4Config>>))
+    responses((status = 200, description = "Success", body = CommonApiResp<Vec<ApiStaticNatMappingV4Config>>))
 )]
 async fn get_static_nat_mappings_v4(
     State(state): State<LandscapeApp>,
-) -> LandscapeApiResult<Vec<StaticNatMappingV4Config>> {
-    let result = state.static_nat4_mapping_service.list().await?;
+) -> LandscapeApiResult<Vec<ApiStaticNatMappingV4Config>> {
+    let result: Vec<ApiStaticNatMappingV4Config> =
+        state.static_nat4_mapping_service.list().await?.into_iter().map(Into::into).collect();
     LandscapeApiResp::success(result)
 }
 
@@ -39,17 +41,17 @@ async fn get_static_nat_mappings_v4(
     tag = "Static NAT Mappings",
     params(("id" = Uuid, Path, description = "Static NAT mapping v4 ID")),
     responses(
-        (status = 200, description = "Success", body = CommonApiResp<StaticNatMappingV4Config>),
+        (status = 200, description = "Success", body = CommonApiResp<ApiStaticNatMappingV4Config>),
         (status = 404, description = "Not found")
     )
 )]
 async fn get_static_nat_mapping_v4(
     State(state): State<LandscapeApp>,
     Path(id): Path<ConfigId>,
-) -> LandscapeApiResult<StaticNatMappingV4Config> {
+) -> LandscapeApiResult<ApiStaticNatMappingV4Config> {
     let result = state.static_nat4_mapping_service.find_by_id(id).await?;
     if let Some(config) = result {
-        LandscapeApiResp::success(config)
+        LandscapeApiResp::success(config.into())
     } else {
         Err(StaticNatError::NotFound(id))?
     }
@@ -59,28 +61,29 @@ async fn get_static_nat_mapping_v4(
     post,
     path = "/static_mappings/v4",
     tag = "Static NAT Mappings",
-    request_body = StaticNatMappingV4Config,
-    responses((status = 200, description = "Success", body = CommonApiResp<StaticNatMappingV4Config>))
+    request_body = ApiStaticNatMappingV4Config,
+    responses((status = 200, description = "Success", body = CommonApiResp<ApiStaticNatMappingV4Config>))
 )]
 async fn add_static_nat_mapping_v4(
     State(state): State<LandscapeApp>,
-    JsonBody(config): JsonBody<StaticNatMappingV4Config>,
-) -> LandscapeApiResult<StaticNatMappingV4Config> {
-    let result = state.static_nat4_mapping_service.checked_set(config).await?;
-    LandscapeApiResp::success(result)
+    JsonBody(config): JsonBody<ApiStaticNatMappingV4Config>,
+) -> LandscapeApiResult<ApiStaticNatMappingV4Config> {
+    let result = state.static_nat4_mapping_service.checked_set(config.into()).await?;
+    LandscapeApiResp::success(result.into())
 }
 
 #[utoipa::path(
     post,
     path = "/static_mappings/v4/batch",
     tag = "Static NAT Mappings",
-    request_body = Vec<StaticNatMappingV4Config>,
+    request_body = Vec<ApiStaticNatMappingV4Config>,
     responses((status = 200, description = "Success"))
 )]
 async fn add_many_static_nat_mappings_v4(
     State(state): State<LandscapeApp>,
-    JsonBody(configs): JsonBody<Vec<StaticNatMappingV4Config>>,
+    JsonBody(configs): JsonBody<Vec<ApiStaticNatMappingV4Config>>,
 ) -> LandscapeApiResult<()> {
+    let configs = configs.into_iter().map(Into::into).collect();
     state.static_nat4_mapping_service.checked_set_list(configs).await?;
     LandscapeApiResp::success(())
 }

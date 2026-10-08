@@ -83,6 +83,10 @@ pub const RELEASE_BOUNDARIES: &[ReleaseBoundary] = &[
         version: "0.25.1",
         terminal_migration: "m20260927_000000_add_use_experimental_pool_to_dns_upstream",
     },
+    ReleaseBoundary {
+        version: "0.25.3",
+        terminal_migration: "m20261008_095616_wan_links",
+    },
 ];
 
 pub async fn interactive_rollback(config: &StoreRuntimeConfig) -> Result<(), DbError> {
@@ -446,11 +450,11 @@ mod tests {
         let targets =
             build_rollback_targets(&current_state, &all_migrations, RELEASE_BOUNDARIES).unwrap();
 
-        assert_eq!(targets.first().unwrap().version, "0.24.3");
-        assert_eq!(targets.first().unwrap().display_label, "previous release 0.24.3");
-        assert_eq!(targets.get(1).unwrap().display_label, "older release 0.22.3");
-        assert_eq!(targets.get(2).unwrap().display_label, "older release 0.21.5");
-        assert_eq!(targets.first().unwrap().steps, 2);
+        assert_eq!(targets.first().unwrap().version, "0.25.1");
+        assert_eq!(targets.first().unwrap().display_label, "previous release 0.25.1");
+        assert_eq!(targets.get(1).unwrap().display_label, "older release 0.24.3");
+        assert_eq!(targets.get(2).unwrap().display_label, "older release 0.22.3");
+        assert_eq!(targets.first().unwrap().steps, 1);
     }
 
     #[test]
@@ -466,10 +470,11 @@ mod tests {
             .unwrap();
 
         let plan = build_rollback_plan(&current_state, &target, &all_migrations).unwrap();
-        assert_eq!(plan.steps, 10);
+        assert_eq!(plan.steps, 11);
         assert_eq!(
             plan.rollback_migrations,
             vec![
+                "m20261008_095616_wan_links".to_string(),
                 "m20260927_000000_add_use_experimental_pool_to_dns_upstream".to_string(),
                 "m20260914_000000_add_names_to_config_resources".to_string(),
                 "m20260815_000000_dns_upstream_bind".to_string(),

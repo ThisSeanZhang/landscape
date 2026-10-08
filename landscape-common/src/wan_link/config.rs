@@ -69,6 +69,15 @@ impl WanLinkConfig {
             WanLinkKind::Ethernet => self.v4.enable || self.pd.enable,
         }
     }
+
+    /// The net iface this link's references mirror: the ppp device for
+    /// pppd links, the attach iface otherwise.
+    pub fn section_iface_name(&self) -> &str {
+        match &self.kind {
+            WanLinkKind::Pppd { ppp_iface_name, .. } => ppp_iface_name,
+            WanLinkKind::Ethernet | WanLinkKind::PppoeNative { .. } => &self.attach_iface_name,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]

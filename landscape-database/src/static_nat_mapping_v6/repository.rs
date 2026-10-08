@@ -266,6 +266,12 @@ impl landscape_common::database::validator::StoreValidator<StaticNatMappingV6Con
         &self,
         config: &mut StaticNatMappingV6Config,
     ) -> Result<(), landscape_common::service::ServiceConfigError> {
+        crate::wan_link::repository::resolve_wan_link_binding(
+            self.db.clone(),
+            &mut config.wan_link_id,
+            &mut config.wan_iface_name,
+        )
+        .await?;
         self.validate_runtime_target_v6(config).await.map_err(|e| {
             landscape_common::service::ServiceConfigError::InvalidConfig { reason: e.to_string() }
         })
@@ -288,6 +294,7 @@ mod tests {
             name: None,
             enable: true,
             remark: String::new(),
+            wan_link_id: None,
             wan_iface_name: None,
             port_config: StaticNatV6PortConfig::Ports { ports: vec![53] },
             lan_target: Some(target),
@@ -380,6 +387,7 @@ mod tests {
                     group_id: "na".to_string(),
                     parent: PrefixParentSource::Pd {
                         depend_iface: "wan0".to_string(),
+                        link_id: Uuid::nil(),
                         expected_pd_len_snapshot: 56,
                     },
                     ra: None,
@@ -476,6 +484,7 @@ mod tests {
                     group_id: "na".to_string(),
                     parent: PrefixParentSource::Pd {
                         depend_iface: "wan0".to_string(),
+                        link_id: Uuid::nil(),
                         expected_pd_len_snapshot: 56,
                     },
                     ra: None,

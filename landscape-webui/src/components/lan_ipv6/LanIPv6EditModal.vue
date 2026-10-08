@@ -9,8 +9,8 @@ import {
   update_lan_ipv6_config,
 } from "@/api/service_lan_ipv6";
 import type {
-  LanIPv6ServiceConfigV2,
-  LanPrefixGroupConfig,
+  ApiLanIPv6ServiceConfigV2 as LanIPv6ServiceConfigV2,
+  ApiLanPrefixGroupConfig as LanPrefixGroupConfig,
   IPv6ServiceMode,
 } from "@landscape-router/types/api/schemas";
 import DHCPv6ServerCard from "@/components/dhcp_v6/DHCPv6ServerCard.vue";

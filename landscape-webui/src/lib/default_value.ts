@@ -1,4 +1,4 @@
-import type { FlowConfig } from "@landscape-router/types/api/schemas";
+import type { ApiFlowConfig as FlowConfig } from "@landscape-router/types/api/schemas";
 import i18n from "@/i18n";
 
 export function flow_config_default(): FlowConfig {

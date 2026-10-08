@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { useI18n } from "vue-i18n";
-import type { LanIPv6ServiceConfigV2 } from "@landscape-router/types/api/schemas";
+import type { ApiLanIPv6ServiceConfigV2 as LanIPv6ServiceConfigV2 } from "@landscape-router/types/api/schemas";
 
 const { t } = useI18n({ useScope: "global" });
 

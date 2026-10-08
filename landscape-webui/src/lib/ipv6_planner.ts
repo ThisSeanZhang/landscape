@@ -1,7 +1,7 @@
 import type {
+  ApiLanIPv6ServiceConfigV2 as LanIPv6ServiceConfigV2,
+  ApiLanPrefixGroupConfig as LanPrefixGroupConfig,
   IPv6ServiceMode,
-  LanIPv6ServiceConfigV2,
-  LanPrefixGroupConfig,
 } from "@landscape-router/types/api/schemas";
 import type { LDIAPrefix } from "@/api/service_ipv6pd";
 import {
@@ -137,6 +137,8 @@ export interface BuildGroupPlannerOptions {
   selectedKind: SourceKind;
   prefixInfos: Map<string, LDIAPrefix | null>;
   expectedPdLens?: Map<string, number>;
+  /** wan link id -> net iface, for deriving PD parents' depend iface. */
+  linkIfaceMap?: Map<string, string>;
   draftPdPoolLen?: number;
   maxRenderableUnits?: number;
 }
@@ -568,6 +570,7 @@ export function poolIndexFromPlannerUnitStart(
 
 function plannerParentFromGroup(
   group: LanPrefixGroupConfig,
+  linkIfaceMap?: Map<string, string>,
 ): GroupPlannerParent {
   if (group.parent.t === "static") {
     return {
@@ -578,10 +581,11 @@ function plannerParentFromGroup(
     };
   }
 
+  const linkId = group.parent.link_id ?? "";
   return {
     t: "pd",
-    key: `pd:${group.parent.depend_iface}/${group.parent.expected_pd_len_snapshot}`,
-    dependIface: group.parent.depend_iface,
+    key: `pd:${linkId}/${group.parent.expected_pd_len_snapshot}`,
+    dependIface: linkIfaceMap?.get(linkId) ?? "",
     snapshotPrefixLen: group.parent.expected_pd_len_snapshot,
   };
 }
@@ -627,8 +631,9 @@ function entryActiveInMode(
 function buildEntriesForGroup(
   group: LanPrefixGroupConfig,
   mode: IPv6ServiceMode | undefined,
+  linkIfaceMap?: Map<string, string>,
 ): GroupPlannerEntry[] {
-  const parent = plannerParentFromGroup(group);
+  const parent = plannerParentFromGroup(group, linkIfaceMap);
   const result: GroupPlannerEntry[] = [];
 
   if (group.ra && entryActiveInMode(mode, "ra")) {
@@ -673,12 +678,13 @@ function buildEntriesForGroup(
 function defaultEntryForKind(
   group: LanPrefixGroupConfig | undefined,
   kind: SourceKind,
+  linkIfaceMap?: Map<string, string>,
 ): GroupPlannerEntry | undefined {
   if (!group) {
     return undefined;
   }
 
-  const parent = plannerParentFromGroup(group);
+  const parent = plannerParentFromGroup(group, linkIfaceMap);
   if (kind === "ra") {
     return {
       groupId: group.group_id,
@@ -717,7 +723,11 @@ function defaultEntryForKind(
 function selectedEntryForOptions(
   options: BuildGroupPlannerOptions,
 ): GroupPlannerEntry | undefined {
-  const entry = defaultEntryForKind(options.editGroup, options.selectedKind);
+  const entry = defaultEntryForKind(
+    options.editGroup,
+    options.selectedKind,
+    options.linkIfaceMap,
+  );
   if (!entry) {
     return undefined;
   }
@@ -806,7 +816,7 @@ function buildGroupOccupancyRecords(
   const currentRecords = options.currentGroups.flatMap((group) =>
     // Show all configured results for the current interface on the shared canvas,
     // even if the current service mode would not activate them right now.
-    buildEntriesForGroup(group, undefined)
+    buildEntriesForGroup(group, undefined, options.linkIfaceMap)
       .filter(
         (entry) =>
           !(
@@ -824,7 +834,9 @@ function buildGroupOccupancyRecords(
       // Match the current-interface canvas behavior: keep configured results visible
       // for other LANs as well, so users can see occupied positions even when a mode
       // would not currently activate that kind.
-      .flatMap((group) => buildEntriesForGroup(group, undefined))
+      .flatMap((group) =>
+        buildEntriesForGroup(group, undefined, options.linkIfaceMap),
+      )
       .map((entry) =>
         buildGroupOccupancyRecord(config.iface_name, "other", entry),
       ),

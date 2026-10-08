@@ -83,6 +83,7 @@ export default {
   unknown: "未知",
   unnamed: "未命名",
   undefined: "未定义",
+  deleted_link: "已删除链路",
 
   enable_question: "是否启用",
   ip_format_invalid: "IP 格式不正确",

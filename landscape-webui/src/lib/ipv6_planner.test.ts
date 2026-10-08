@@ -10,8 +10,8 @@ import {
   type PlannerUnit,
 } from "@/lib/ipv6_planner";
 import type {
-  LanIPv6ServiceConfigV2,
-  LanPrefixGroupConfig,
+  ApiLanIPv6ServiceConfigV2 as LanIPv6ServiceConfigV2,
+  ApiLanPrefixGroupConfig as LanPrefixGroupConfig,
 } from "@landscape-router/types/api/schemas";
 import { describe, expect, it } from "vitest";
 

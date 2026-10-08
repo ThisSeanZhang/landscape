@@ -14,11 +14,13 @@ import {
   shouldResetStalePlannerSelection,
 } from "@/lib/ipv6_planner";
 import { ServiceStatus } from "@/lib/services";
+import { link_label } from "@/lib/wan_link";
+import type { WanLink } from "@/lib/wan_link";
 import { useWanLinkStore } from "@/stores/wan_link";
 import type {
+  ApiLanIPv6ServiceConfigV2 as LanIPv6ServiceConfigV2,
+  ApiLanPrefixGroupConfig as LanPrefixGroupConfig,
   IPv6ServiceMode,
-  LanIPv6ServiceConfigV2,
-  LanPrefixGroupConfig,
 } from "@landscape-router/types/api/schemas";
 import { computed, ref } from "vue";
 import { useI18n } from "vue-i18n";
@@ -83,7 +85,7 @@ const switchKinds: ServiceKind[] = ["ra", "na", "pd"];
 const selectedKind = ref<ServiceKind>("ra");
 const staticBasePrefix = ref(generateDefaultStaticBasePrefix());
 const staticPrefixLen = ref(56);
-const dependIface = ref("");
+const dependLinkId = ref("");
 const snapshotPrefixLen = ref(60);
 const pdPoolLenDraft = ref(64);
 const draftGroupId = ref("");
@@ -91,10 +93,18 @@ const draftGroupId = ref("");
 const otherLanConfigsV2 = ref<LanIPv6ServiceConfigV2[]>([]);
 const prefixInfos = ref<Map<string, LDIAPrefix | null>>(new Map());
 const ipv6PdIfaces = ref<Map<string, ServiceStatus>>(new Map());
+const pdLinks = ref<WanLink[]>([]);
 const ipv6PdConfigs = ref<
-  Array<{ iface_name: string; expected_pd_len: number }>
+  Array<{
+    link_id: string;
+    iface_name: string;
+    expected_pd_len: number;
+  }>
 >([]);
 const expectedPdLens = ref<Map<string, number>>(new Map());
+const linkIfaceMap = computed(
+  () => new Map(pdLinks.value.map((l) => [l.id, l.section_iface_name()])),
+);
 const draftGroupState = ref<LanPrefixGroupConfig>();
 const staleSelectionsCleared = ref(false);
 const emptyDraftActionVisible = ref(false);
@@ -112,9 +122,10 @@ const ipv6PdOptions = computed(() => {
   return ipv6PdConfigs.value.map((config) => {
     const status = ipv6PdIfaces.value.get(config.iface_name);
     const statusLabel = status ? ` - ${status.t}` : "";
+    const label = link_label(pdLinks.value, config.link_id);
     return {
-      value: config.iface_name,
-      label: `${config.iface_name} /${config.expected_pd_len}${statusLabel}`,
+      value: config.link_id,
+      label: `${label} /${config.expected_pd_len}${statusLabel}`,
     };
   });
 });
@@ -146,7 +157,9 @@ const displayParentLabel = computed(() => {
   if (group.parent.t === "static") {
     return `${group.parent.base_prefix}/${group.parent.parent_prefix_len}`;
   }
-  return group.parent.depend_iface || props.parentLabel;
+  return (
+    link_label(pdLinks.value, group.parent.link_id) || t("common.deleted_link")
+  );
 });
 
 const draftGroupHasResults = computed(
@@ -172,6 +185,7 @@ const commitSaveState = computed(() => {
       selectedKind: kind,
       prefixInfos: prefixInfos.value,
       expectedPdLens: expectedPdLens.value,
+      linkIfaceMap: linkIfaceMap.value,
       draftPdPoolLen: currentPdPoolLen.value,
     });
     if (!view.canSave) {
@@ -212,7 +226,7 @@ function createEmptyDraftGroup(): LanPrefixGroupConfig {
     group_id: draftGroupId.value,
     parent: {
       t: "pd",
-      depend_iface: dependIface.value,
+      link_id: dependLinkId.value,
       expected_pd_len_snapshot: snapshotPrefixLen.value,
     },
     ra: null,
@@ -240,7 +254,7 @@ function syncParentIntoDraftGroup() {
   }
   group.parent = {
     t: "pd",
-    depend_iface: dependIface.value,
+    link_id: dependLinkId.value,
     expected_pd_len_snapshot: snapshotPrefixLen.value,
   };
 }
@@ -395,6 +409,7 @@ function validatePdInterval(
       selectedKind: "pd",
       prefixInfos: prefixInfos.value,
       expectedPdLens: expectedPdLens.value,
+      linkIfaceMap: linkIfaceMap.value,
       draftPdPoolLen: poolLen,
     },
     nextRange.unitStart,
@@ -426,8 +441,17 @@ function setPdInterval(startIndex: number, endIndex: number, poolLen: number) {
   };
 }
 
-function onDependIfaceChange() {
-  snapshotPrefixLen.value = expectedPdLens.value.get(dependIface.value) ?? 60;
+/** Net iface of the selected link; "" when unset or the link is gone. */
+function dependNetIface(): string {
+  return (
+    pdLinks.value
+      .find((l) => l.id === dependLinkId.value)
+      ?.section_iface_name() ?? ""
+  );
+}
+
+function onDependLinkChange() {
+  snapshotPrefixLen.value = expectedPdLens.value.get(dependNetIface()) ?? 60;
   syncParentIntoDraftGroup();
 }
 
@@ -532,6 +556,7 @@ function onPlannerInteract(payload: PlannerInteractionPayload) {
       selectedKind: "pd",
       prefixInfos: prefixInfos.value,
       expectedPdLens: expectedPdLens.value,
+      linkIfaceMap: linkIfaceMap.value,
       draftPdPoolLen: poolLen,
     },
     unitStart,
@@ -604,7 +629,9 @@ async function searchIpv6Pd() {
   const wanLinkStore = useWanLinkStore();
   await wanLinkStore.UPDATE_INFO();
   const pd_links = wanLinkStore.links.filter((each) => each.pd.enable);
+  pdLinks.value = pd_links;
   ipv6PdConfigs.value = pd_links.map((link) => ({
+    link_id: link.id,
     iface_name: link.section_iface_name(),
     expected_pd_len: link.pd.expected_pd_len,
   }));
@@ -662,9 +689,12 @@ function initDraftGroup() {
       staticBasePrefix.value = props.group.parent.base_prefix;
       staticPrefixLen.value = props.group.parent.parent_prefix_len;
     } else {
-      dependIface.value = props.group.parent.depend_iface;
+      dependLinkId.value = props.group.parent.link_id || "";
+      const netIface = pdLinks.value
+        .find((l) => l.id === dependLinkId.value)
+        ?.section_iface_name();
       snapshotPrefixLen.value =
-        expectedPdLens.value.get(dependIface.value) ??
+        (netIface ? expectedPdLens.value.get(netIface) : undefined) ??
         props.group.parent.expected_pd_len_snapshot;
     }
     pdPoolLenDraft.value = props.group.pd?.pool_len ?? 64;
@@ -675,7 +705,6 @@ function initDraftGroup() {
     staticBasePrefix.value = generateDefaultStaticBasePrefix();
     staticPrefixLen.value = 56;
   } else {
-    dependIface.value = "";
     snapshotPrefixLen.value = 60;
   }
   pdPoolLenDraft.value = 64;
@@ -701,6 +730,7 @@ function clearStaleSelectionsOnOpen() {
       selectedKind: kind,
       prefixInfos: prefixInfos.value,
       expectedPdLens: expectedPdLens.value,
+      linkIfaceMap: linkIfaceMap.value,
       draftPdPoolLen: currentPdPoolLen.value,
     });
     return shouldResetStalePlannerSelection(view);
@@ -757,7 +787,7 @@ async function commit() {
       ? cloneValue(draftGroup.value)
       : undefined;
 
-  if (groupToCommit?.parent.t === "pd" && !groupToCommit.parent.depend_iface) {
+  if (groupToCommit?.parent.t === "pd" && !groupToCommit.parent.link_id) {
     window.$message.error(t("lan_ipv6.planner_save_error_no_parent_iface"));
     return;
   }
@@ -839,13 +869,13 @@ function cancelEmptyDraftAction() {
           </n-form-item>
           <n-form-item v-else :label="t('lan_ipv6.source_depend_iface')">
             <n-select
-              v-model:value="dependIface"
+              v-model:value="dependLinkId"
               filterable
               :options="ipv6PdOptions"
               :placeholder="t('lan_ipv6.source_depend_iface_placeholder')"
               clearable
               remote
-              @update:value="onDependIfaceChange"
+              @update:value="onDependLinkChange"
               @search="searchIpv6Pd"
             />
           </n-form-item>
@@ -909,6 +939,7 @@ function cancelEmptyDraftAction() {
                 :selected-kind="selectedKind"
                 :prefix-infos="prefixInfos"
                 :expected-pd-lens="expectedPdLens"
+                :link-iface-map="linkIfaceMap"
                 :draft-pd-pool-len="currentPdPoolLen"
                 @interact-pool-index="onPlannerInteract"
               />

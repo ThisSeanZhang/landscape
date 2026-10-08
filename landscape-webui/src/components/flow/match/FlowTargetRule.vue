@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import { get_docker_container_summarys } from "@/api/docker";
-import { get_wan_candidates } from "@/api/iface";
+import { get_all_wan_links } from "@/api/service_wan_link";
 import type {
-  FlowTarget,
-  WeightedFlowTarget,
+  ApiFlowTarget as FlowTarget,
+  ApiWeightedFlowTarget as WeightedFlowTarget,
 } from "@landscape-router/types/api/schemas";
+import { wan_link_options } from "@/lib/wan_link";
+import type { WanLink } from "@/lib/wan_link";
 import { computed, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 
@@ -14,21 +16,15 @@ const target_rules = defineModel<WeightedFlowTarget[]>("target_rules", {
   required: true,
 });
 
-const iface_wans = ref<string[]>([]);
+const wan_links = ref<WanLink[]>([]);
 const docker_containers = ref<any[]>([]);
 
 onMounted(async () => {
-  await refresh_wan_ifaces();
+  wan_links.value = await get_all_wan_links();
+  docker_containers.value = await get_docker_container_summarys();
 });
 
-async function refresh_wan_ifaces() {
-  iface_wans.value = await get_wan_candidates();
-  docker_containers.value = await get_docker_container_summarys();
-}
-
-const iface_wan_options = computed(() =>
-  iface_wans.value.map((name) => ({ label: name, value: name })),
-);
+const wan_link_opts = computed(() => wan_link_options(wan_links.value));
 
 const docker_options = computed(() =>
   docker_containers.value.map((e) => {
@@ -50,7 +46,10 @@ enum FlowTargetEnum {
 
 function onCreate(): WeightedFlowTarget {
   return {
-    target: { t: "interface", name: "" },
+    target: {
+      t: "interface",
+      link_id: wan_link_opts.value[0]?.value ?? "",
+    },
     weight: 1,
   };
 }
@@ -74,7 +73,7 @@ function handleUpdateValue(value: FlowTarget["t"], index: number) {
     target_rules.value[index] = {
       target: {
         t: FlowTargetEnum.Interface,
-        name: "",
+        link_id: wan_link_opts.value[0]?.value ?? "",
       },
       weight,
     };
@@ -113,9 +112,9 @@ function handleUpdateValue(value: FlowTarget["t"], index: number) {
 
         <n-select
           v-if="value.target.t == 'interface'"
-          v-model:value="value.target.name"
+          v-model:value="value.target.link_id"
           :style="{ width: '56%' }"
-          :options="iface_wan_options"
+          :options="wan_link_opts"
           :placeholder="t('flow.target_rule.iface_placeholder')"
         />
         <n-select

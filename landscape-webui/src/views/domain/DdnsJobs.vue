@@ -1,5 +1,4 @@
 <script lang="ts" setup>
-import { get_wan_candidates } from "@/api/iface";
 import { get_current_ip_prefix_info } from "@/api/service_ipv6pd";
 import {
   delete_ddns_job,
@@ -9,13 +8,14 @@ import {
   sync_ddns_job,
 } from "@/api/domain/ddns";
 import { get_dns_provider_profiles } from "@/api/domain/provider_profile";
+import { get_all_wan_links } from "@/api/service_wan_link";
 import { useWindowSize } from "@vueuse/core";
 import type {
+  ApiDdnsJob as DdnsJob,
+  ApiDdnsSource as DdnsSource,
   DdnsFamilyRuntime,
-  DdnsJob,
   DdnsJobRuntime,
   DdnsRecordConfig,
-  DdnsSource,
   DnsProviderProfile,
   IpFamily,
 } from "@landscape-router/types/api/schemas";
@@ -31,6 +31,8 @@ import {
 import ConfigModal from "@/components/common/ConfigModal.vue";
 import { useFrontEndStore } from "@/stores/front_end_config";
 import { useEnrolledDeviceStore } from "@/stores/enrolled_device";
+import { link_label, wan_link_options } from "@/lib/wan_link";
+import type { WanLink } from "@/lib/wan_link";
 import { useI18n } from "vue-i18n";
 
 const { t } = useI18n();
@@ -39,6 +41,7 @@ const frontEndStore = useFrontEndStore();
 const items = ref<DdnsJob[]>([]);
 const runtimeMap = ref<Map<string, DdnsJobRuntime>>(new Map());
 const providerProfiles = ref<DnsProviderProfile[]>([]);
+const wanLinks = ref<WanLink[]>([]);
 const ifaceOptions = ref<{ label: string; value: string }[]>([]);
 const wanPdOptions = ref<
   { label: string; value: string; disabled?: boolean }[]
@@ -48,7 +51,7 @@ type SourceInputItem =
   | {
       kind: "lan_device";
       target_id: string;
-      wan_pd_id: string;
+      wan_pd_link_id: string;
       family: "ipv6";
     };
 const loading = ref(false);
@@ -167,13 +170,13 @@ function resetForm(item?: DdnsJob) {
     source.t === "local_wan"
       ? {
           kind: "wan" as const,
-          target_id: source.iface_name,
+          target_id: source.link_id,
           family: source.family,
         }
       : {
           kind: "lan_device" as const,
           target_id: source.device_id,
-          wan_pd_id: source.wan_pd_id ?? "",
+          wan_pd_link_id: source.wan_pd_link_id,
           family: "ipv6" as const,
         },
   ) ?? [
@@ -189,12 +192,12 @@ function resetForm(item?: DdnsJob) {
 async function refresh() {
   loading.value = true;
   try {
-    const [jobs, runtimeStatuses, profiles, wanCandidates, prefixInfos] =
+    const [jobs, runtimeStatuses, profiles, links, prefixInfos] =
       await Promise.all([
         get_ddns_jobs(),
         get_ddns_job_status(),
         get_dns_provider_profiles(),
-        get_wan_candidates(),
+        get_all_wan_links(),
         get_current_ip_prefix_info(),
       ]);
     items.value = jobs;
@@ -202,17 +205,13 @@ async function refresh() {
       runtimeStatuses.map((item) => [item.job_id, item]),
     );
     providerProfiles.value = profiles;
-    ifaceOptions.value = wanCandidates.map((name: string) => ({
-      label: name,
-      value: name,
+    wanLinks.value = links;
+    ifaceOptions.value = wan_link_options(links);
+    wanPdOptions.value = links.map((link) => ({
+      label: link_label(links, link.id),
+      value: link.id,
+      disabled: prefixInfos.get(link.section_iface_name()) == null,
     }));
-    wanPdOptions.value = Array.from(prefixInfos.entries()).map(
-      ([key, value]) => ({
-        label: key,
-        value: key,
-        disabled: value === null,
-      }),
-    );
   } finally {
     loading.value = false;
   }
@@ -238,7 +237,7 @@ function sourceTags(job: DdnsJob | null) {
           { size: "small", type: "info" },
           {
             default: () =>
-              `${frontEndStore.MASK_INFO(source.iface_name)} / ${source.family.toUpperCase()}`,
+              `${frontEndStore.MASK_INFO(link_label(wanLinks.value, source.link_id) || t("common.deleted_link"))} / ${source.family.toUpperCase()}`,
           },
         )
       : h(
@@ -246,7 +245,7 @@ function sourceTags(job: DdnsJob | null) {
           { size: "small", type: "success" },
           {
             default: () =>
-              `${deviceName(source.device_id)}${source.wan_pd_id ? ` @${source.wan_pd_id}` : ""}`,
+              `${deviceName(source.device_id)} @${frontEndStore.MASK_INFO(link_label(wanLinks.value, source.wan_pd_link_id) || t("common.deleted_link"))}`,
           },
         ),
   );
@@ -397,8 +396,8 @@ function createSourceInputItem(): SourceInputItem {
 
 function ddnsSourceKey(item: DdnsSource) {
   return item.t === "local_wan"
-    ? `${item.t}:${item.iface_name}:${item.family}`
-    : `${item.t}:${item.device_id}:${item.wan_pd_id ?? "null"}:${item.family}`;
+    ? `${item.t}:${item.link_id}:${item.family}`
+    : `${item.t}:${item.device_id}:${item.wan_pd_link_id}:${item.family}`;
 }
 
 function updateSourceKind(index: number, value: "wan" | "lan_device") {
@@ -406,7 +405,8 @@ function updateSourceKind(index: number, value: "wan" | "lan_device") {
     sourceInputs.value[index] = {
       kind: "lan_device",
       target_id: "",
-      wan_pd_id: wanPdOptions.value[0]?.value ?? "",
+      wan_pd_link_id:
+        wanPdOptions.value.find((opt) => !opt.disabled)?.value ?? "",
       family: "ipv6",
     };
   } else {
@@ -429,7 +429,7 @@ function updateSourceWanPd(index: number, value: string) {
         SourceInputItem,
         { kind: "lan_device" }
       >
-    ).wan_pd_id = value;
+    ).wan_pd_link_id = value;
   }
 }
 
@@ -460,14 +460,14 @@ async function save() {
         if (item.kind === "wan") {
           return {
             t: "local_wan" as const,
-            iface_name: item.target_id,
+            link_id: item.target_id,
             family: item.family,
           };
         }
         return {
           t: "enrolled_device" as const,
           device_id: item.target_id,
-          wan_pd_id: item.wan_pd_id || undefined,
+          wan_pd_link_id: item.wan_pd_link_id,
           family: "ipv6" as const,
         };
       });
@@ -814,7 +814,7 @@ onMounted(async () => {
                 <template v-else>
                   <n-select
                     style="width: 120px"
-                    :value="(value as any).wan_pd_id"
+                    :value="(value as any).wan_pd_link_id"
                     :options="wanPdOptions"
                     :placeholder="t('ddns.select_wan_pd')"
                     @update:value="updateSourceWanPd(index, $event)"

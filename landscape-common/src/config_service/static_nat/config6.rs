@@ -56,6 +56,12 @@ pub struct StaticNatMappingV6Config {
     pub name: Option<String>,
     pub enable: bool,
     pub remark: String,
+    /// Reference key into `wan_links`; `None` = unbound.
+    #[serde(default)]
+    #[cfg_attr(feature = "openapi", schema(required = false, nullable = true, value_type = Option<String>))]
+    pub wan_link_id: Option<Uuid>,
+    /// Net-iface name mirror, re-derived from `wan_link_id` on every save.
+    /// CLEAN when 1.0.0 (dropped with the legacy name-keyed format).
     #[cfg_attr(feature = "openapi", schema(required = true, nullable = true))]
     pub wan_iface_name: Option<String>,
     pub port_config: StaticNatV6PortConfig,
@@ -178,6 +184,7 @@ mod tests {
             name: None,
             enable: true,
             remark: String::new(),
+            wan_link_id: None,
             wan_iface_name: None,
             port_config: StaticNatV6PortConfig::All,
             lan_target: Some(StaticNatV6Target::address(Ipv6Addr::UNSPECIFIED)),

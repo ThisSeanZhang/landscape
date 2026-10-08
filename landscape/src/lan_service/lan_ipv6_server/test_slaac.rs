@@ -8,6 +8,7 @@ use landscape_common::{
     net::MacAddr,
     wan_service::ipv6_pd::{IAPrefixMap, LDIAPrefix},
 };
+use uuid::Uuid;
 
 use super::*;
 
@@ -264,6 +265,7 @@ fn dynamic_ra_group(snapshot: u8, pool_index: u32) -> LanPrefixGroupConfig {
         group_id: "dynamic".into(),
         parent: PrefixParentSource::Pd {
             depend_iface: "wan0".into(),
+            link_id: Uuid::nil(),
             expected_pd_len_snapshot: snapshot,
         },
         ra: Some(RaPrefixConfig {

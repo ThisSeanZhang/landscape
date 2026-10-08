@@ -146,6 +146,7 @@ fn is_usable_dynamic_ipv6(ip: &Ipv6Addr) -> bool {
 fn default_static_mapping_v6_rules() -> Vec<StaticNatMappingV6Config> {
     vec![StaticNatMappingV6Config {
         name: None,
+        wan_link_id: None,
         wan_iface_name: None,
         lan_target: Some(StaticNatV6Target::Local),
         l4_protocols: vec![17],

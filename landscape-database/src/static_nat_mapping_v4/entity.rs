@@ -21,6 +21,7 @@ pub struct Model {
     pub name: Option<String>,
     pub enable: bool,
     pub remark: String,
+    pub wan_link_id: Option<DBId>,
     pub wan_iface_name: Option<String>,
     pub mapping_pair_ports: DBJson,
     pub lan_target: Option<DBJson>,
@@ -46,6 +47,7 @@ impl From<Model> for StaticNatMappingV4Config {
             enable: model.enable,
             remark: model.remark,
             mapping_pair_ports: serde_json::from_value(model.mapping_pair_ports).unwrap(),
+            wan_link_id: model.wan_link_id,
             wan_iface_name: model.wan_iface_name,
             lan_target: model
                 .lan_target
@@ -70,6 +72,7 @@ impl crate::repository::UpdateActiveModel<ActiveModel> for StaticNatMappingV4Con
         active.name = Set(self.name);
         active.enable = Set(self.enable);
         active.remark = Set(self.remark);
+        active.wan_link_id = Set(self.wan_link_id);
         active.wan_iface_name = Set(self.wan_iface_name);
         active.mapping_pair_ports = Set(serde_json::to_value(&self.mapping_pair_ports).unwrap());
         let (lan_ipv4, lan_target) = address_from_target(self.lan_target.as_ref());

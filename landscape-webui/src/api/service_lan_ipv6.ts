@@ -1,5 +1,5 @@
 import { ServiceStatus } from "@/lib/services";
-import type { LanIPv6ServiceConfigV2 } from "@landscape-router/types/api/schemas";
+import type { ApiLanIPv6ServiceConfigV2 as LanIPv6ServiceConfigV2 } from "@landscape-router/types/api/schemas";
 import {
   getAllLanIpv6Configs,
   getAllLanIpv6Status,

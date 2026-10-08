@@ -1,12 +1,14 @@
 <script setup lang="ts">
 import type {
+  ApiLanPrefixGroupConfig as LanPrefixGroupConfig,
   IPv6ServiceMode,
-  LanPrefixGroupConfig,
 } from "@landscape-router/types/api/schemas";
 import { computed, ref } from "vue";
 import { Edit, TrashCan } from "@vicons/carbon";
 import { useI18n } from "vue-i18n";
 import PrefixGroupEditorModal from "@/components/lan_ipv6/PrefixGroupEditorModal.vue";
+import { link_label } from "@/lib/wan_link";
+import { useWanLinkStore } from "@/stores/wan_link";
 import {
   groupParentLabel,
   lanSnapshotCompatibility,
@@ -14,6 +16,7 @@ import {
 } from "@/lib/lan_ipv6_v2_helpers";
 
 const { t } = useI18n({ useScope: "global" });
+const wanLinkStore = useWanLinkStore();
 
 type ServiceKind = "ra" | "na" | "pd";
 type SourceType = "static" | "pd";
@@ -40,16 +43,28 @@ const initialKind = ref<ServiceKind>("ra");
 const kinds: ServiceKind[] = ["ra", "na", "pd"];
 
 const sourceType = computed(() => sourceTypeFromParent(props.group.parent));
-const parentLabel = computed(() => groupParentLabel(props.group.parent));
+const parentLabel = computed(() => {
+  const parent = props.group.parent;
+  if (parent.t === "pd") {
+    return (
+      link_label(wanLinkStore.links, parent.link_id) || t("common.deleted_link")
+    );
+  }
+  return groupParentLabel(parent);
+});
 // This badge is deliberately LAN-scoped: compare the current WAN expectation with
 // the saved LAN snapshot only. The WAN PD status UI separately reports whether the
 // acquired prefix satisfies the WAN expectation.
 const snapshotStatus = computed(() => {
-  if (props.group.parent.t !== "pd") {
+  const parent = props.group.parent;
+  if (parent.t !== "pd") {
     return undefined;
   }
-  const expected = props.expectedPdLens.get(props.group.parent.depend_iface);
-  const snapshot = props.group.parent.expected_pd_len_snapshot;
+  const netIface = wanLinkStore.links
+    .find((l) => l.id === parent.link_id)
+    ?.section_iface_name();
+  const expected = props.expectedPdLens.get(netIface ?? "");
+  const snapshot = parent.expected_pd_len_snapshot;
   const compatibility = lanSnapshotCompatibility(expected, snapshot);
   if (compatibility === "unavailable") {
     return {

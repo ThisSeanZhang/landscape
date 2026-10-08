@@ -8,7 +8,7 @@ import {
   updateDdnsJob,
 } from "@landscape-router/types/api/ddns/ddns";
 import type {
-  DdnsJob,
+  ApiDdnsJob as DdnsJob,
   DdnsJobRuntime,
 } from "@landscape-router/types/api/schemas";
 

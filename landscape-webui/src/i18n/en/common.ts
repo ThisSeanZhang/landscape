@@ -85,6 +85,7 @@ export default {
   unknown: "Unknown",
   unnamed: "Unnamed",
   undefined: "Undefined",
+  deleted_link: "Deleted link",
 
   enable_question: "Enable?",
   ip_format_invalid: "Invalid IP format",

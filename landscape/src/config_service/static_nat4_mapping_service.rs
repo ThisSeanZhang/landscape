@@ -196,6 +196,7 @@ fn default_static_mapping_v4_rules() -> Vec<StaticNatMappingV4Config> {
     // DHCPv4 Client
     result.push(StaticNatMappingV4Config {
         name: None,
+        wan_link_id: None,
         wan_iface_name: None,
         lan_target: Some(StaticNatV4Target::address(Ipv4Addr::UNSPECIFIED)),
         l4_protocols: vec![17],
@@ -212,6 +213,7 @@ fn default_static_mapping_v4_rules() -> Vec<StaticNatMappingV4Config> {
     {
         result.push(StaticNatMappingV4Config {
             name: None,
+            wan_link_id: None,
             wan_iface_name: None,
             lan_target: Some(StaticNatV4Target::address(Ipv4Addr::UNSPECIFIED)),
             l4_protocols: vec![6, 17],
@@ -223,6 +225,7 @@ fn default_static_mapping_v4_rules() -> Vec<StaticNatMappingV4Config> {
         });
         result.push(StaticNatMappingV4Config {
             name: None,
+            wan_link_id: None,
             wan_iface_name: None,
             lan_target: Some(StaticNatV4Target::address(Ipv4Addr::UNSPECIFIED)),
             l4_protocols: vec![6],
@@ -234,6 +237,7 @@ fn default_static_mapping_v4_rules() -> Vec<StaticNatMappingV4Config> {
         });
         result.push(StaticNatMappingV4Config {
             name: None,
+            wan_link_id: None,
             wan_iface_name: None,
             lan_target: Some(StaticNatV4Target::address(Ipv4Addr::UNSPECIFIED)),
             l4_protocols: vec![6],

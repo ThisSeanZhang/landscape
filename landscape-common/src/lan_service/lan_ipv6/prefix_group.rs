@@ -38,7 +38,7 @@ impl PrefixParentSource {
             PrefixParentSource::Static { base_prefix, parent_prefix_len } => {
                 ExpandedParentKey::Resolved(normalize_ipv6_prefix(*base_prefix, *parent_prefix_len))
             }
-            PrefixParentSource::Pd { depend_iface, expected_pd_len_snapshot } => {
+            PrefixParentSource::Pd { depend_iface, expected_pd_len_snapshot, .. } => {
                 if let Some(prefix) = pd_contexts
                     .and_then(|contexts| contexts.get(depend_iface))
                     .and_then(|context| context.actual_prefix.as_ref())
@@ -146,7 +146,7 @@ impl LanPrefixGroupConfig {
                     });
                 }
             }
-            PrefixParentSource::Pd { depend_iface, expected_pd_len_snapshot } => {
+            PrefixParentSource::Pd { depend_iface, expected_pd_len_snapshot, .. } => {
                 if depend_iface.trim().is_empty() {
                     return Err(ServiceConfigError::InvalidConfig {
                         reason: "PD parent interface must not be empty".to_string(),
@@ -732,6 +732,7 @@ mod tests {
     use crate::error::LdApiErrorInfo;
     use crate::wan_service::ipv6_pd::LDIAPrefix;
     use std::collections::HashMap;
+    use uuid::Uuid;
 
     fn pd_context(
         iface_name: &str,
@@ -927,6 +928,7 @@ mod tests {
                     group_id: "ra-pd".to_string(),
                     parent: PrefixParentSource::Pd {
                         depend_iface: "eth0".to_string(),
+                        link_id: Uuid::nil(),
                         expected_pd_len_snapshot: 60,
                     },
                     ra: Some(RaPrefixConfig {
@@ -970,6 +972,7 @@ mod tests {
             group_id: "same-parent".to_string(),
             parent: PrefixParentSource::Pd {
                 depend_iface: "eth0".to_string(),
+                link_id: Uuid::nil(),
                 expected_pd_len_snapshot: 60,
             },
             ra: Some(RaPrefixConfig {
@@ -990,6 +993,7 @@ mod tests {
             group_id: "same-parent".to_string(),
             parent: PrefixParentSource::Pd {
                 depend_iface: "eth0".to_string(),
+                link_id: Uuid::nil(),
                 expected_pd_len_snapshot: 60,
             },
             ra: Some(RaPrefixConfig {
@@ -1010,6 +1014,7 @@ mod tests {
             group_id: "capacity-ok".to_string(),
             parent: PrefixParentSource::Pd {
                 depend_iface: "eth0".to_string(),
+                link_id: Uuid::nil(),
                 expected_pd_len_snapshot: 60,
             },
             ra: None,
@@ -1026,6 +1031,7 @@ mod tests {
             group_id: "capacity-bad".to_string(),
             parent: PrefixParentSource::Pd {
                 depend_iface: "eth0".to_string(),
+                link_id: Uuid::nil(),
                 expected_pd_len_snapshot: 60,
             },
             ra: None,
@@ -1042,6 +1048,7 @@ mod tests {
             group_id: "capacity-runtime".to_string(),
             parent: PrefixParentSource::Pd {
                 depend_iface: "eth0".to_string(),
+                link_id: Uuid::nil(),
                 expected_pd_len_snapshot: 60,
             },
             ra: None,
@@ -1060,6 +1067,7 @@ mod tests {
                 group_id: "group-a".to_string(),
                 parent: PrefixParentSource::Pd {
                     depend_iface: "eth0".to_string(),
+                    link_id: Uuid::nil(),
                     expected_pd_len_snapshot: 60,
                 },
                 ra: Some(RaPrefixConfig {
@@ -1074,6 +1082,7 @@ mod tests {
                 group_id: "group-b".to_string(),
                 parent: PrefixParentSource::Pd {
                     depend_iface: "eth0".to_string(),
+                    link_id: Uuid::nil(),
                     expected_pd_len_snapshot: 56,
                 },
                 ra: None,
@@ -1102,6 +1111,7 @@ mod tests {
                     group_id: "group-a".to_string(),
                     parent: PrefixParentSource::Pd {
                         depend_iface: "wan0".to_string(),
+                        link_id: Uuid::nil(),
                         expected_pd_len_snapshot: 60,
                     },
                     ra: Some(RaPrefixConfig {
@@ -1129,6 +1139,7 @@ mod tests {
                     group_id: "group-b".to_string(),
                     parent: PrefixParentSource::Pd {
                         depend_iface: "wan1".to_string(),
+                        link_id: Uuid::nil(),
                         expected_pd_len_snapshot: 56,
                     },
                     ra: None,
@@ -1194,6 +1205,7 @@ mod tests {
             parent,
             PrefixParentSource::Pd {
                 depend_iface: "wan0".to_string(),
+                link_id: Uuid::nil(),
                 expected_pd_len_snapshot: 60,
             }
         );
@@ -1323,6 +1335,7 @@ mod tests {
                     group_id: "pd-group".to_string(),
                     parent: PrefixParentSource::Pd {
                         depend_iface: depend_iface.to_string(),
+                        link_id: Uuid::nil(),
                         expected_pd_len_snapshot: snapshot_len,
                     },
                     ra: None,

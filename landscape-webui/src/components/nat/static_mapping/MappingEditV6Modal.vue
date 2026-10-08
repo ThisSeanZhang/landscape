@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { useMessage } from "naive-ui";
 import type {
-  StaticNatMappingV6Config,
+  ApiStaticNatMappingV6Config as StaticNatMappingV6Config,
   StaticNatV6Target,
 } from "@landscape-router/types/api/schemas";
 
@@ -157,7 +157,6 @@ async function enter() {
       name: null,
       enable: true,
       port_config: { mode: "ports", ports: [] },
-      wan_iface_name: null,
       lan_target: { t: "device", device_ids: [] },
       remark: "",
       l4_protocols: [6],

@@ -1,3 +1,4 @@
+pub mod api;
 pub mod config;
 pub mod dataplane;
 pub mod dhcpv6_config;

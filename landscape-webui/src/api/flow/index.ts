@@ -5,7 +5,7 @@ import {
   addFlowRule,
   delFlowRule,
 } from "@landscape-router/types/api/flow-rules/flow-rules";
-import type { FlowConfig } from "@landscape-router/types/api/schemas";
+import type { ApiFlowConfig as FlowConfig } from "@landscape-router/types/api/schemas";
 
 export async function get_flow_rules(): Promise<FlowConfig[]> {
   return getFlowRules();

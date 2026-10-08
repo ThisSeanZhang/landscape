@@ -1,8 +1,9 @@
 use axum::extract::{Path, State};
 use landscape_common::api_response::LandscapeApiResp as CommonApiResp;
 use landscape_common::service::controller::ConfigStoreFlowController;
-use landscape_common::{config::ConfigId, flow::config::FlowConfig};
-use landscape_common::{config::FlowId, service::controller::ConfigStoreController};
+use landscape_common::{
+    config::ConfigId, config::FlowId, service::controller::ConfigStoreController,
+};
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 
@@ -11,6 +12,8 @@ use landscape_common::flow::FlowRuleError;
 use crate::LandscapeApp;
 use crate::api::JsonBody;
 use crate::{api::LandscapeApiResp, error::LandscapeApiResult};
+
+use landscape_common::flow::api::ApiFlowConfig;
 
 pub fn get_flow_rule_config_paths() -> OpenApiRouter<LandscapeApp> {
     OpenApiRouter::new()
@@ -23,10 +26,13 @@ pub fn get_flow_rule_config_paths() -> OpenApiRouter<LandscapeApp> {
     get,
     path = "/rules",
     tag = "Flow Rules",
-    responses((status = 200, description = "Success", body = CommonApiResp<Vec<FlowConfig>>))
+    responses((status = 200, description = "Success", body = CommonApiResp<Vec<ApiFlowConfig>>))
 )]
-async fn get_flow_rules(State(state): State<LandscapeApp>) -> LandscapeApiResult<Vec<FlowConfig>> {
-    let mut result = state.flow_rule_service.list().await?;
+async fn get_flow_rules(
+    State(state): State<LandscapeApp>,
+) -> LandscapeApiResult<Vec<ApiFlowConfig>> {
+    let mut result: Vec<ApiFlowConfig> =
+        state.flow_rule_service.list().await?.into_iter().map(Into::into).collect();
     result.sort_by_key(|a| a.flow_id);
     LandscapeApiResp::success(result)
 }
@@ -37,17 +43,17 @@ async fn get_flow_rules(State(state): State<LandscapeApp>) -> LandscapeApiResult
     tag = "Flow Rules",
     params(("id" = u32, Path, description = "Flow ID")),
     responses(
-        (status = 200, description = "Success", body = CommonApiResp<FlowConfig>),
+        (status = 200, description = "Success", body = CommonApiResp<ApiFlowConfig>),
         (status = 404, description = "Not found")
     )
 )]
 async fn get_flow_rule_by_flow_id(
     State(state): State<LandscapeApp>,
     Path(id): Path<FlowId>,
-) -> LandscapeApiResult<FlowConfig> {
+) -> LandscapeApiResult<ApiFlowConfig> {
     let result = state.flow_rule_service.list_flow_configs(id).await?;
-    if !result.is_empty() {
-        LandscapeApiResp::success(result.first().cloned().unwrap())
+    if let Some(config) = result.into_iter().next() {
+        LandscapeApiResp::success(config.into())
     } else {
         Err(FlowRuleError::NotFound(Default::default()))?
     }
@@ -59,17 +65,17 @@ async fn get_flow_rule_by_flow_id(
     tag = "Flow Rules",
     params(("id" = Uuid, Path, description = "Flow rule config ID")),
     responses(
-        (status = 200, description = "Success", body = CommonApiResp<FlowConfig>),
+        (status = 200, description = "Success", body = CommonApiResp<ApiFlowConfig>),
         (status = 404, description = "Not found")
     )
 )]
 async fn get_flow_rule(
     State(state): State<LandscapeApp>,
     Path(id): Path<ConfigId>,
-) -> LandscapeApiResult<FlowConfig> {
+) -> LandscapeApiResult<ApiFlowConfig> {
     let result = state.flow_rule_service.find_by_id(id).await?;
     if let Some(config) = result {
-        LandscapeApiResp::success(config)
+        LandscapeApiResp::success(config.into())
     } else {
         Err(FlowRuleError::NotFound(id))?
     }
@@ -79,15 +85,15 @@ async fn get_flow_rule(
     post,
     path = "/rules",
     tag = "Flow Rules",
-    request_body = FlowConfig,
-    responses((status = 200, description = "Success", body = CommonApiResp<FlowConfig>))
+    request_body = ApiFlowConfig,
+    responses((status = 200, description = "Success", body = CommonApiResp<ApiFlowConfig>))
 )]
 async fn add_flow_rule(
     State(state): State<LandscapeApp>,
-    JsonBody(flow_rule): JsonBody<FlowConfig>,
-) -> LandscapeApiResult<FlowConfig> {
-    let result = state.flow_rule_service.checked_set(flow_rule).await?;
-    LandscapeApiResp::success(result)
+    JsonBody(flow_rule): JsonBody<ApiFlowConfig>,
+) -> LandscapeApiResult<ApiFlowConfig> {
+    let result = state.flow_rule_service.checked_set(flow_rule.into()).await?;
+    LandscapeApiResp::success(result.into())
 }
 
 #[utoipa::path(

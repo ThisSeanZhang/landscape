@@ -545,7 +545,7 @@ impl DdnsService {
         let mut last_error = None;
         for source in sources {
             match source {
-                DdnsSource::LocalWan { iface_name, family } if *family == wanted_family => {
+                DdnsSource::LocalWan { iface_name, family, .. } if *family == wanted_family => {
                     let route = match family {
                         IpFamily::Ipv4 => self.route_service.get_ipv4_wan_route(iface_name).await,
                         IpFamily::Ipv6 => self.route_service.get_ipv6_wan_route(iface_name).await,
@@ -577,7 +577,7 @@ impl DdnsService {
                         next_retry_at: Some(ts + DDNS_RETRY_INTERVAL_SECS as f64),
                     });
                 }
-                DdnsSource::EnrolledDevice { device_id, wan_pd_id, family }
+                DdnsSource::EnrolledDevice { device_id, wan_pd_id, family, .. }
                     if *family == wanted_family =>
                 {
                     match (wanted_family, wan_pd_id) {
@@ -843,7 +843,7 @@ fn effective_ttl_config_updated_at(job: &DdnsJob, profile: &DnsProviderProfile) 
 
 fn job_matches_wan_event(job: &DdnsJob, event: &WanRouteEvent) -> bool {
     job.sources.iter().any(|source| match source {
-        DdnsSource::LocalWan { iface_name, family }
+        DdnsSource::LocalWan { iface_name, family, .. }
             if iface_name == &event.owner && *family == event.family =>
         {
             true
@@ -1210,6 +1210,7 @@ mod tests {
     fn wan_event_only_matches_same_iface_and_family() {
         let job = test_job(vec![DdnsSource::LocalWan {
             iface_name: "wan0".to_string(),
+            link_id: Uuid::nil(),
             family: IpFamily::Ipv4,
         }]);
 
@@ -1243,6 +1244,7 @@ mod tests {
     fn fast_retry_only_applies_before_first_publish() {
         let job = test_job(vec![DdnsSource::LocalWan {
             iface_name: "wan0".to_string(),
+            link_id: Uuid::nil(),
             family: IpFamily::Ipv4,
         }]);
         let mut runtime = DdnsJobRuntime::from_config(&job);
@@ -1262,6 +1264,7 @@ mod tests {
     fn custom_job_ttl_overrides_profile_default() {
         let job = test_job(vec![DdnsSource::LocalWan {
             iface_name: "wan0".to_string(),
+            link_id: Uuid::nil(),
             family: IpFamily::Ipv4,
         }]);
 
@@ -1273,6 +1276,7 @@ mod tests {
     fn inherited_job_ttl_uses_profile_default() {
         let mut job = test_job(vec![DdnsSource::LocalWan {
             iface_name: "wan0".to_string(),
+            link_id: Uuid::nil(),
             family: IpFamily::Ipv4,
         }]);
         job.ttl = None;
@@ -1285,6 +1289,7 @@ mod tests {
     fn single_stack_job_summary_ignores_unconfigured_family() {
         let job = test_job(vec![DdnsSource::LocalWan {
             iface_name: "wan0".to_string(),
+            link_id: Uuid::nil(),
             family: IpFamily::Ipv6,
         }]);
         let mut runtime = DdnsJobRuntime::from_config(&job);
@@ -1305,6 +1310,7 @@ mod tests {
     fn wan_event_matches_enrolled_device_source() {
         let job = test_job(vec![DdnsSource::EnrolledDevice {
             device_id: Uuid::nil(),
+            wan_pd_link_id: Uuid::nil(),
             wan_pd_id: Some("wan0".to_string()),
             family: IpFamily::Ipv4,
         }]);
@@ -1339,6 +1345,7 @@ mod tests {
     fn wan_event_does_not_match_enrolled_device_without_wan_pd_id() {
         let job = test_job(vec![DdnsSource::EnrolledDevice {
             device_id: Uuid::nil(),
+            wan_pd_link_id: Uuid::nil(),
             wan_pd_id: None,
             family: IpFamily::Ipv4,
         }]);

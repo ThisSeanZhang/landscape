@@ -162,8 +162,17 @@ fn default_prefix_len() -> u8 {
 #[serde(tag = "t")]
 #[serde(rename_all = "snake_case")]
 pub enum FlowTarget {
-    Interface { name: String },
-    Netns { container_name: String },
+    Interface {
+        /// Reference key into `wan_links`.
+        #[cfg_attr(feature = "openapi", schema(value_type = String))]
+        link_id: Uuid,
+        /// Net-iface name mirror, re-derived from `link_id` on every save.
+        /// CLEAN when 1.0.0 (dropped with the legacy name-keyed format).
+        name: String,
+    },
+    Netns {
+        container_name: String,
+    },
 }
 
 fn default_flow_target_weight() -> u32 {
@@ -269,7 +278,7 @@ mod tests {
             "flow_match_rules": [],
             "flow_targets": [
                 {
-                    "target": { "t": "interface", "name": "wan0" },
+                    "target": { "t": "interface", "link_id": Uuid::nil(), "name": "wan0" },
                     "weight": 3
                 }
             ],
@@ -284,10 +293,21 @@ mod tests {
         assert_eq!(
             serde_json::to_value(&config.flow_targets[0]).unwrap(),
             serde_json::json!({
-                "target": { "t": "interface", "name": "wan0" },
+                "target": { "t": "interface", "link_id": Uuid::nil(), "name": "wan0" },
                 "weight": 3
             })
         );
+    }
+
+    #[test]
+    fn interface_target_requires_link_id() {
+        let json = serde_json::json!({
+            "t": "interface",
+            "name": "wan0"
+        });
+
+        let result: Result<FlowTarget, _> = serde_json::from_value(json);
+        assert!(result.is_err(), "link_id is mandatory on interface targets");
     }
 
     #[test]

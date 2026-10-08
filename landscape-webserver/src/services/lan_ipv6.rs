@@ -16,6 +16,10 @@ use crate::LandscapeApp;
 use crate::api::JsonBody;
 use crate::{api::LandscapeApiResp, error::LandscapeApiResult};
 
+use landscape_common::lan_service::lan_ipv6::api::{
+    ApiLanIPv6ServiceConfigV2, fill_pd_depend_ifaces,
+};
+
 pub fn get_lan_ipv6_paths() -> OpenApiRouter<LandscapeApp> {
     OpenApiRouter::new()
         .routes(routes!(get_all_status))
@@ -42,12 +46,21 @@ async fn get_all_status(
     path = "/lan_ipv6",
     tag = "LAN IPv6",
     operation_id = "get_all_lan_ipv6_configs",
-    responses((status = 200, description = "Success", body = CommonApiResp<Vec<LanIPv6ServiceConfigV2>>))
+    responses((status = 200, description = "Success", body = CommonApiResp<Vec<ApiLanIPv6ServiceConfigV2>>))
 )]
 async fn get_all_lan_ipv6_configs(
     State(state): State<LandscapeApp>,
-) -> LandscapeApiResult<Vec<LanIPv6ServiceConfigV2>> {
-    LandscapeApiResp::success(state.lan_ipv6_service.list().await.unwrap_or_default())
+) -> LandscapeApiResult<Vec<ApiLanIPv6ServiceConfigV2>> {
+    LandscapeApiResp::success(
+        state
+            .lan_ipv6_service
+            .list()
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .map(Into::into)
+            .collect(),
+    )
 }
 
 #[utoipa::path(
@@ -56,16 +69,16 @@ async fn get_all_lan_ipv6_configs(
     tag = "LAN IPv6",
     params(("iface_name" = String, Path, description = "Interface name")),
     responses(
-        (status = 200, description = "Success", body = CommonApiResp<LanIPv6ServiceConfigV2>),
+        (status = 200, description = "Success", body = CommonApiResp<ApiLanIPv6ServiceConfigV2>),
         (status = 404, description = "Not found")
     )
 )]
 async fn get_lan_ipv6_config(
     State(state): State<LandscapeApp>,
     Path(iface_name): Path<String>,
-) -> LandscapeApiResult<LanIPv6ServiceConfigV2> {
+) -> LandscapeApiResult<ApiLanIPv6ServiceConfigV2> {
     if let Some(iface_config) = state.lan_ipv6_service.get_config_by_name(iface_name).await {
-        LandscapeApiResp::success(iface_config)
+        LandscapeApiResp::success(iface_config.into())
     } else {
         Err(ServiceConfigError::NotFound { service_name: "LAN IPv6" })?
     }
@@ -75,13 +88,16 @@ async fn get_lan_ipv6_config(
     put,
     path = "/lan_ipv6",
     tag = "LAN IPv6",
-    request_body = LanIPv6ServiceConfigV2,
+    request_body = ApiLanIPv6ServiceConfigV2,
     responses((status = 200, description = "Success"))
 )]
 async fn handle_lan_ipv6(
     State(state): State<LandscapeApp>,
-    JsonBody(config): JsonBody<LanIPv6ServiceConfigV2>,
+    JsonBody(payload): JsonBody<ApiLanIPv6ServiceConfigV2>,
 ) -> LandscapeApiResult<()> {
+    let mut config: LanIPv6ServiceConfigV2 = payload.into();
+    let links = state.wan_link_service.get_store().net_iface_map().await?;
+    fill_pd_depend_ifaces(&mut config, &links)?;
     let pd_contexts = state.wan_link_service.get_pd_prefix_contexts().await;
     let existing_configs: Vec<LanIPv6ServiceConfigV2> =
         state.lan_ipv6_service.list().await.unwrap_or_default();

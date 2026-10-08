@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import type {
+  ApiLanIPv6ServiceConfigV2 as LanIPv6ServiceConfigV2,
+  ApiLanPrefixGroupConfig as LanPrefixGroupConfig,
   IPv6ServiceMode,
-  LanIPv6ServiceConfigV2,
-  LanPrefixGroupConfig,
 } from "@landscape-router/types/api/schemas";
 import type { LDIAPrefix } from "@/api/service_ipv6pd";
 import {
@@ -38,6 +38,7 @@ const props = defineProps<{
   selectedKind: SourceKind;
   prefixInfos: Map<string, LDIAPrefix | null>;
   expectedPdLens: Map<string, number>;
+  linkIfaceMap?: Map<string, string>;
   draftPdPoolLen?: number;
 }>();
 
@@ -75,6 +76,7 @@ const planner = computed(() =>
     selectedKind: props.selectedKind,
     prefixInfos: props.prefixInfos,
     expectedPdLens: props.expectedPdLens,
+    linkIfaceMap: props.linkIfaceMap,
     draftPdPoolLen: props.draftPdPoolLen,
   }),
 );
@@ -463,6 +465,7 @@ function onCanvasClick(event: MouseEvent) {
       selectedKind: props.selectedKind,
       prefixInfos: props.prefixInfos,
       expectedPdLens: props.expectedPdLens,
+      linkIfaceMap: props.linkIfaceMap,
       draftPdPoolLen: props.draftPdPoolLen,
     },
     nextPoolIndex,

@@ -1,6 +1,7 @@
 use std::net::Ipv6Addr;
 
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 use super::dhcpv6_config::DHCPv6ServerConfig;
 use crate::config_service::iface::{ServiceKind, ZoneAwareConfig, ZoneRequirement};
@@ -72,6 +73,14 @@ pub enum PrefixParentSource {
         parent_prefix_len: u8,
     },
     Pd {
+        /// Reference key into `wan_links`; serde-defaulted per the
+        /// migration contract, a nil value is rejected by the repo.
+        #[serde(default)]
+        #[cfg_attr(feature = "openapi", schema(value_type = String))]
+        link_id: Uuid,
+        /// Net-iface name mirror, re-derived from `link_id` on every save.
+        /// CLEAN when 1.0.0 (dropped with the legacy name-keyed format).
+        #[serde(default)]
         depend_iface: String,
         #[serde(alias = "planned_parent_prefix_len")]
         expected_pd_len_snapshot: u8,

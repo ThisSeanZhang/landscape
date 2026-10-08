@@ -1,12 +1,15 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
-import type { FlowConfig } from "@landscape-router/types/api/schemas";
+import type { ApiFlowConfig as FlowConfig } from "@landscape-router/types/api/schemas";
 import FlowEditModal from "@/components/flow/FlowEditModal.vue";
 import DnsRuleDrawer from "@/components/dns/DnsRuleDrawer.vue";
 import { useFrontEndStore } from "@/stores/front_end_config";
 import { delFlowRule } from "@landscape-router/types/api/flow-rules/flow-rules";
 import FlowEntryRuleExhibit from "@/components/flow/FlowEntryRuleExhibit.vue";
+import { get_all_wan_links } from "@/api/service_wan_link";
+import { link_label } from "@/lib/wan_link";
+import type { WanLink } from "@/lib/wan_link";
 
 import { Docker, NetworkWired } from "@vicons/fa";
 
@@ -27,6 +30,17 @@ const emit = defineEmits(["refresh"]);
 const show_edit = ref(false);
 const show_dns_rule = ref(false);
 const show_ip_rule = ref(false);
+const wan_links = ref<WanLink[]>([]);
+
+onMounted(async () => {
+  wan_links.value = await get_all_wan_links();
+});
+
+function target_label(target: FlowConfig["flow_targets"][number]["target"]) {
+  return target.t === "netns"
+    ? target.container_name
+    : link_label(wan_links.value, target.link_id) || t("common.deleted_link");
+}
 
 async function refresh() {
   emit("refresh");
@@ -165,11 +179,7 @@ const show_remark = computed(
     </n-flex>
     <template #action>
       <n-tag v-for="each in config.flow_targets" :bordered="false">
-        {{
-          each.target.t === "netns"
-            ? frontEndStore.MASK_INFO(each.target.container_name)
-            : frontEndStore.MASK_INFO(each.target.name)
-        }}
+        {{ frontEndStore.MASK_INFO(target_label(each.target)) }}
         <span v-if="(each.weight ?? 1) !== 1"> ×{{ each.weight ?? 1 }}</span>
         <template #icon>
           <n-icon

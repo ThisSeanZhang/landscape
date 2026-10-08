@@ -553,7 +553,10 @@ fn flow_config(flow_id: u32, enable: bool, targets: Vec<WeightedFlowTarget>) -> 
 }
 
 fn iface_target(name: &str, weight: u32) -> WeightedFlowTarget {
-    WeightedFlowTarget::new(FlowTarget::Interface { name: name.to_string() }, weight)
+    WeightedFlowTarget::new(
+        FlowTarget::Interface { link_id: uuid::Uuid::nil(), name: name.to_string() },
+        weight,
+    )
 }
 
 fn netns_target(container_name: &str, weight: u32) -> WeightedFlowTarget {

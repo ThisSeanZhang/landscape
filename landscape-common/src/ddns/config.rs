@@ -19,11 +19,21 @@ pub enum IpFamily {
 #[serde(tag = "t", rename_all = "snake_case")]
 pub enum DdnsSource {
     LocalWan {
+        /// Reference key into `wan_links`.
+        #[cfg_attr(feature = "openapi", schema(value_type = String))]
+        link_id: Uuid,
+        /// Net-iface name mirror, re-derived from `link_id` on every save.
+        /// CLEAN when 1.0.0 (dropped with the legacy name-keyed format).
         iface_name: String,
         family: IpFamily,
     },
     EnrolledDevice {
         device_id: Uuid,
+        /// Reference key into `wan_links` for the PD-providing link.
+        #[cfg_attr(feature = "openapi", schema(value_type = String))]
+        wan_pd_link_id: Uuid,
+        /// Net-iface name mirror, re-derived from `wan_pd_link_id`.
+        /// CLEAN when 1.0.0 (dropped with the legacy name-keyed format).
         #[serde(default)]
         #[serde(skip_serializing_if = "Option::is_none")]
         wan_pd_id: Option<String>,
@@ -110,30 +120,15 @@ impl DdnsJob {
             return Err("at least one DDNS source is required".to_string());
         }
 
-        for source in &self.sources {
-            match source {
-                DdnsSource::LocalWan { iface_name, .. } => {
-                    if iface_name.trim().is_empty() {
-                        return Err("DDNS source iface_name must not be empty".to_string());
-                    }
-                }
-                DdnsSource::EnrolledDevice { wan_pd_id, .. } => {
-                    let iface = wan_pd_id.as_ref().ok_or("DDNS source wan_pd_id is required")?;
-                    if iface.trim().is_empty() {
-                        return Err("DDNS source wan_pd_id must not be empty".to_string());
-                    }
-                }
-            }
-        }
-
         let mut seen_sources = HashSet::new();
         for source in &self.sources {
+            // Keyed by the wan-link reference, not the name mirror.
             let source_key = match source {
-                DdnsSource::LocalWan { iface_name, family } => {
-                    format!("local_wan:{}:{family:?}", iface_name.trim())
+                DdnsSource::LocalWan { link_id, family, .. } => {
+                    format!("local_wan:{link_id}:{family:?}")
                 }
-                DdnsSource::EnrolledDevice { device_id, wan_pd_id, family } => {
-                    format!("enrolled_device:{device_id}:{:?}:{family:?}", wan_pd_id)
+                DdnsSource::EnrolledDevice { device_id, wan_pd_link_id, family, .. } => {
+                    format!("enrolled_device:{device_id}:{wan_pd_link_id}:{family:?}")
                 }
             };
             if !seen_sources.insert(source_key) {
@@ -222,6 +217,7 @@ mod tests {
             name: "test".to_string(),
             enable: true,
             sources: vec![DdnsSource::LocalWan {
+                link_id: Uuid::nil(),
                 iface_name: "wan0".to_string(),
                 family: IpFamily::Ipv4,
             }],
@@ -246,10 +242,12 @@ mod tests {
             enable: true,
             sources: vec![
                 DdnsSource::LocalWan {
+                    link_id: Uuid::nil(),
                     iface_name: "wan0".to_string(),
                     family: IpFamily::Ipv4,
                 },
                 DdnsSource::LocalWan {
+                    link_id: Uuid::nil(),
                     iface_name: "wan0".to_string(),
                     family: IpFamily::Ipv4,
                 },
@@ -263,5 +261,18 @@ mod tests {
 
         let err = job.validate().unwrap_err();
         assert!(err.contains("duplicate DDNS source"));
+    }
+
+    #[test]
+    fn ddns_sources_require_link_ids() {
+        let local: Result<DdnsSource, _> = serde_json::from_value(
+            serde_json::json!({"t": "local_wan", "iface_name": "wan0", "family": "ipv4"}),
+        );
+        assert!(local.is_err(), "local_wan requires link_id");
+
+        let enrolled: Result<DdnsSource, _> = serde_json::from_value(serde_json::json!({
+            "t": "enrolled_device", "device_id": Uuid::nil(), "wan_pd_id": "ppp0", "family": "ipv6"
+        }));
+        assert!(enrolled.is_err(), "enrolled_device requires wan_pd_link_id");
     }
 }

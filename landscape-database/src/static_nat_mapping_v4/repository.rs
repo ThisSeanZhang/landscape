@@ -156,6 +156,12 @@ impl landscape_common::database::validator::StoreValidator<StaticNatMappingV4Con
         &self,
         config: &mut StaticNatMappingV4Config,
     ) -> Result<(), landscape_common::service::ServiceConfigError> {
+        crate::wan_link::repository::resolve_wan_link_binding(
+            self.db.clone(),
+            &mut config.wan_link_id,
+            &mut config.wan_iface_name,
+        )
+        .await?;
         self.validate_runtime_target_v4(config).await.map_err(|e| {
             landscape_common::service::ServiceConfigError::InvalidConfig { reason: e.to_string() }
         })?;
@@ -218,6 +224,7 @@ mod tests {
             name: None,
             enable: true,
             remark: String::new(),
+            wan_link_id: None,
             wan_iface_name: None,
             mapping_pair_ports: vec![StaticMapPair { wan_port: 40000, lan_port: 80 }],
             lan_target: Some(StaticNatV4Target::address(std::net::Ipv4Addr::new(192, 168, 1, 100))),
@@ -241,6 +248,7 @@ mod tests {
             name: None,
             enable: true,
             remark: String::new(),
+            wan_link_id: None,
             wan_iface_name: None,
             mapping_pair_ports: vec![StaticMapPair { wan_port: 80, lan_port: 80 }],
             lan_target: Some(StaticNatV4Target::address(std::net::Ipv4Addr::new(192, 168, 1, 100))),
@@ -265,6 +273,7 @@ mod tests {
             name: None,
             enable: true,
             remark: String::new(),
+            wan_link_id: None,
             wan_iface_name: None,
             mapping_pair_ports: vec![StaticMapPair { wan_port: 40000, lan_port: 80 }],
             lan_target: Some(StaticNatV4Target::address(std::net::Ipv4Addr::new(192, 168, 1, 100))),
@@ -288,6 +297,7 @@ mod tests {
             name: None,
             enable: true,
             remark: String::new(),
+            wan_link_id: None,
             wan_iface_name: None,
             mapping_pair_ports: vec![StaticMapPair { wan_port: 15000, lan_port: 80 }],
             lan_target: Some(StaticNatV4Target::address(std::net::Ipv4Addr::new(192, 168, 1, 100))),
@@ -311,6 +321,7 @@ mod tests {
             name: None,
             enable: true,
             remark: String::new(),
+            wan_link_id: None,
             wan_iface_name: None,
             mapping_pair_ports: vec![StaticMapPair { wan_port: 40000, lan_port: 80 }],
             lan_target: Some(StaticNatV4Target::address(std::net::Ipv4Addr::new(192, 168, 1, 100))),
@@ -334,6 +345,7 @@ mod tests {
             name: None,
             enable: true,
             remark: String::new(),
+            wan_link_id: None,
             wan_iface_name: None,
             mapping_pair_ports: vec![StaticMapPair { wan_port: 32768, lan_port: 80 }],
             lan_target: Some(StaticNatV4Target::address(std::net::Ipv4Addr::new(192, 168, 1, 100))),
@@ -344,5 +356,82 @@ mod tests {
         let repo = provider.static_nat_mapping_v4_store();
         let result = repo.has_dynamic_port_conflict(&config).await.unwrap();
         assert!(result, "port at range start should be detected");
+    }
+
+    fn mapping(
+        wan_link_id: Option<Uuid>,
+        wan_iface_name: Option<&str>,
+    ) -> StaticNatMappingV4Config {
+        StaticNatMappingV4Config {
+            id: Uuid::new_v4(),
+            name: None,
+            enable: true,
+            remark: String::new(),
+            wan_link_id,
+            wan_iface_name: wan_iface_name.map(str::to_string),
+            mapping_pair_ports: vec![StaticMapPair { wan_port: 80, lan_port: 80 }],
+            lan_target: Some(StaticNatV4Target::Local),
+            l4_protocols: vec![6],
+            update_at: 0.0,
+        }
+    }
+
+    async fn wan_link_setup() -> (LandscapeDBServiceProvider, Uuid) {
+        let provider = LandscapeDBServiceProvider::mem_test_db().await;
+        let id = Uuid::new_v4();
+        provider
+            .wan_link_store()
+            .upsert(landscape_common::wan_link::WanLinkConfig {
+                id,
+                name: String::new(),
+                attach_iface_name: "eth0".to_string(),
+                kind: landscape_common::wan_link::WanLinkKind::Ethernet,
+                v4: Default::default(),
+                pd: Default::default(),
+                nat: Default::default(),
+                firewall: Default::default(),
+                mss: Default::default(),
+                update_at: 0.0,
+            })
+            .await
+            .unwrap();
+        (provider, id)
+    }
+
+    #[tokio::test]
+    async fn wan_binding_mirror_is_rewritten_from_the_link() {
+        let (provider, link_id) = wan_link_setup().await;
+
+        let saved = provider
+            .static_nat_mapping_v4_store()
+            .checked_upsert(mapping(Some(link_id), Some("stale")))
+            .await
+            .unwrap()
+            .new;
+        assert_eq!(saved.wan_iface_name.as_deref(), Some("eth0"));
+    }
+
+    #[tokio::test]
+    async fn unbound_mapping_clears_the_wan_mirror() {
+        let (provider, _) = wan_link_setup().await;
+
+        let saved = provider
+            .static_nat_mapping_v4_store()
+            .checked_upsert(mapping(None, Some("eth0")))
+            .await
+            .unwrap()
+            .new;
+        assert_eq!(saved.wan_iface_name, None);
+    }
+
+    #[tokio::test]
+    async fn unknown_wan_link_binding_is_rejected() {
+        let (provider, _) = wan_link_setup().await;
+
+        let result = provider
+            .static_nat_mapping_v4_store()
+            .checked_upsert(mapping(Some(Uuid::new_v4()), Some("eth0")))
+            .await;
+        assert!(result.is_err(), "an unknown wan_link_id must be rejected");
     }
 }

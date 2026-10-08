@@ -5,7 +5,7 @@ use landscape_common::database::error::DbError;
 use landscape_common::database::store::ConfigStore;
 use landscape_common::flow::config::FlowConfig;
 use landscape_common::flow::{
-    FlowEntryMatchMode, FlowEntryRule, FlowRuleError, ResolvedFlowEntryMatchMode,
+    FlowEntryMatchMode, FlowEntryRule, FlowRuleError, FlowTarget, ResolvedFlowEntryMatchMode,
     ResolvedFlowEntryRule, RuntimeFlowConfig,
 };
 use migration::Expr;
@@ -410,6 +410,27 @@ impl landscape_common::database::validator::StoreValidator<FlowConfig> for FlowC
             landscape_common::service::ServiceConfigError::InvalidConfig { reason: e.to_string() }
         }
 
+        // Interface targets reference wan links by uuid; resolve strictly
+        // and refresh the net-iface name mirror.
+        if config.flow_targets.iter().any(|t| matches!(t.target, FlowTarget::Interface { .. })) {
+            let links = crate::wan_link::repository::WanLinkRepository::new(self.db.clone())
+                .net_iface_map()
+                .await
+                .map_err(landscape_common::service::ServiceConfigError::internal)?;
+            for target in &mut config.flow_targets {
+                if let FlowTarget::Interface { link_id, name } = &mut target.target {
+                    let iface = crate::wan_link::repository::resolve_wan_link_name(
+                        &links,
+                        *link_id,
+                        "flow target",
+                    )?;
+                    if name != iface {
+                        *name = iface.to_string();
+                    }
+                }
+            }
+        }
+
         let modes: Vec<_> = config.flow_match_rules.iter().map(|r| r.mode.clone()).collect();
 
         self.validate_modes_resolvable(&modes).await.map_err(map_err)?;
@@ -432,5 +453,88 @@ impl landscape_common::database::validator::StoreValidator<FlowConfig> for FlowC
             });
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod wan_link_ref_tests {
+    use landscape_common::database::store::ConfigStore;
+    use landscape_common::flow::{FlowTarget, WeightedFlowTarget, config::FlowConfig};
+    use landscape_common::wan_link::{WanLinkConfig, WanLinkKind};
+    use sea_orm::prelude::Uuid;
+
+    use crate::provider::LandscapeDBServiceProvider;
+
+    fn pppd(ppp: &str) -> WanLinkKind {
+        WanLinkKind::Pppd {
+            ppp_iface_name: ppp.to_string(),
+            peer_id: "peer".to_string(),
+            password: "pass".to_string(),
+            ac: None,
+            plugin: Default::default(),
+        }
+    }
+
+    fn link(id: Uuid, attach: &str, kind: WanLinkKind) -> WanLinkConfig {
+        WanLinkConfig {
+            id,
+            name: String::new(),
+            attach_iface_name: attach.to_string(),
+            kind,
+            v4: Default::default(),
+            pd: Default::default(),
+            nat: Default::default(),
+            firewall: Default::default(),
+            mss: Default::default(),
+            update_at: 0.0,
+        }
+    }
+
+    fn flow_config(link_id: Uuid, name: &str) -> FlowConfig {
+        FlowConfig {
+            id: Uuid::new_v4(),
+            enable: true,
+            flow_id: 1,
+            flow_match_rules: vec![],
+            flow_targets: vec![WeightedFlowTarget::new(
+                FlowTarget::Interface { link_id, name: name.to_string() },
+                1,
+            )],
+            name: String::new(),
+            remark: String::new(),
+            update_at: 0.0,
+        }
+    }
+
+    async fn setup() -> (LandscapeDBServiceProvider, Uuid) {
+        let provider = LandscapeDBServiceProvider::mem_test_db().await;
+        let id = Uuid::new_v4();
+        provider.wan_link_store().upsert(link(id, "eth1", pppd("ppp0"))).await.unwrap();
+        (provider, id)
+    }
+
+    #[tokio::test]
+    async fn interface_target_mirror_is_rewritten_from_the_link() {
+        let (provider, link_id) = setup().await;
+
+        let saved = provider
+            .flow_rule_store()
+            .checked_upsert(flow_config(link_id, "stale"))
+            .await
+            .unwrap()
+            .new;
+        match &saved.flow_targets[0].target {
+            FlowTarget::Interface { name, .. } => assert_eq!(name, "ppp0"),
+            other => panic!("expected interface target, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn interface_target_with_unknown_link_id_is_rejected() {
+        let (provider, _) = setup().await;
+
+        let result =
+            provider.flow_rule_store().checked_upsert(flow_config(Uuid::new_v4(), "ppp0")).await;
+        assert!(result.is_err(), "an unknown link_id must be rejected");
     }
 }

@@ -39,7 +39,7 @@ import { SearchLocate } from "@vicons/carbon";
 import { usePreferenceStore } from "@/stores/preference";
 import { getFlowRules } from "@landscape-router/types/api/flow-rules/flow-rules";
 import type {
-  FlowConfig,
+  ApiFlowConfig as FlowConfig,
   LandscapeDnsRecordType,
 } from "@landscape-router/types/api/schemas";
 const prefStore = usePreferenceStore();

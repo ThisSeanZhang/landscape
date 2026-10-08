@@ -83,6 +83,30 @@ export function default_ethernet_link(attach_iface_name: string): WanLink {
   return new WanLink({ attach_iface_name });
 }
 
+/**
+ * User-visible label: the link's remark name, falling back to its net iface.
+ * Returns "" when the referenced link no longer exists (deleted link).
+ */
+export function link_label(
+  links: WanLink[],
+  link_id: string | null | undefined,
+): string {
+  const link = links.find((l) => l.id === link_id);
+  if (link) {
+    return link.name || link.section_iface_name();
+  }
+  return "";
+}
+
+export function wan_link_options(
+  links: WanLink[],
+): { label: string; value: string }[] {
+  return links.map((l) => ({
+    label: l.name || l.section_iface_name(),
+    value: l.id,
+  }));
+}
+
 const ADAY = 60 * 60 * 24;
 
 /** Default pppd link (the "link icon" create flow). */
