@@ -59,10 +59,15 @@ impl LandscapeDBStore<Uuid> for WanLinkConfig {
 }
 
 impl WanLinkConfig {
-    /// True when the link has an acquisition/anchor intent. An inactive link
-    /// establishes no session and starts no sections.
+    /// True when the link has an acquisition/anchor intent.
+    /// - PPP kinds: gated by the service switch (`v4.enable`); PD cannot bring
+    ///   the session up on its own.
+    /// - Ethernet: v4 or PD (V6-only still anchors the attach iface).
     pub fn active(&self) -> bool {
-        self.v4.enable || self.pd.enable
+        match &self.kind {
+            WanLinkKind::Pppd { .. } | WanLinkKind::PppoeNative { .. } => self.v4.enable,
+            WanLinkKind::Ethernet => self.v4.enable || self.pd.enable,
+        }
     }
 }
 

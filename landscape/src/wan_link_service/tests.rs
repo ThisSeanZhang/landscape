@@ -85,6 +85,39 @@ fn pppd_disable_is_inactive_and_restarts_v4() {
 }
 
 #[test]
+fn pppd_pd_alone_is_inactive() {
+    // A pppd link whose service switch (v4) is off stays inactive even with PD
+    // enabled: PD cannot bring the PPP session up on its own.
+    let link: WanLinkConfig = serde_json::from_value(serde_json::json!({
+        "id": "0b6e4e88-0a85-4e1f-8e15-7d1d3d0d0000",
+        "attach_iface_name": "eth0",
+        "kind": {
+            "t": "pppd",
+            "ppp_iface_name": "ppp0",
+            "peer_id": "u",
+            "password": "p",
+            "ac": null,
+            "plugin": "rp_pppoe"
+        },
+        "v4": { "enable": false, "model": { "t": "nothing" } },
+        "pd": { "enable": true, "mac": "00:00:00:00:00:00", "expected_pd_len": 60 }
+    }))
+    .unwrap();
+
+    assert!(!link.active());
+
+    // The same shape on an ethernet link is active (V6-only anchor).
+    let eth: WanLinkConfig = serde_json::from_value(serde_json::json!({
+        "id": "0b6e4e88-0a85-4e1f-8e15-7d1d3d0d0000",
+        "attach_iface_name": "eth0",
+        "v4": { "enable": false, "model": { "t": "nothing" } },
+        "pd": { "enable": true, "mac": "00:00:00:00:00:00", "expected_pd_len": 60 }
+    }))
+    .unwrap();
+    assert!(eth.active());
+}
+
+#[test]
 fn normalized_nat_defaults_do_not_restart() {
     let applied: WanLinkConfig = serde_json::from_value(serde_json::json!({
         "id": "0b6e4e88-0a85-4e1f-8e15-7d1d3d0d0000",
