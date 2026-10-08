@@ -5,7 +5,7 @@ use tokio::time::{Duration, Instant, sleep};
 use landscape_common::net_proto::ppp::PointToPoint;
 use landscape_common::net_proto::pppoe::PPPoEFrame;
 use landscape_common::service::{ServiceHandle, ServiceStatus};
-use landscape_common::wan_link::{LinkStateHandle, SessionIface};
+use landscape_common::wan_link::{LinkStateHandle, SessionIface, WanV4Lease};
 use landscape_common::wan_service::pppoe::PppoeDataplane;
 
 use super::PPPoEClientConfig;
@@ -228,8 +228,8 @@ pub async fn run(
                             config.index,
                             config.iface_name.clone(),
                             Some(config.iface_mac),
-                        )
-                        .with_ip(Some(std::net::IpAddr::V4(nego_result.client_ip))),
+                        ),
+                        Some(WanV4Lease::new(config.index, nego_result.client_ip)),
                     );
                 }
                 if !status_rx.is_running() {

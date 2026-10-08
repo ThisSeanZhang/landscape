@@ -1,4 +1,3 @@
-use std::net::IpAddr;
 use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
 use std::time::Duration;
@@ -6,7 +5,7 @@ use std::time::Duration;
 use futures::FutureExt;
 use landscape_common::service::ServiceHandle;
 use landscape_common::service::ServiceStatus;
-use landscape_common::wan_link::{LinkStateHandle, SessionIface};
+use landscape_common::wan_link::{LinkStateHandle, SessionIface, WanV4Lease};
 
 use super::env::{PppIpv4State, PppdChild, PppdEnv, PppdTimings};
 
@@ -265,8 +264,8 @@ async fn supervise_loop(
                             (session.as_ref(), &state)
                         {
                             session.session_up(
-                                SessionIface::new(*ifindex, ppp_iface_name.clone(), None)
-                                    .with_ip(Some(IpAddr::V4(*local))),
+                                SessionIface::new(*ifindex, ppp_iface_name.clone(), None),
+                                Some(WanV4Lease::new(*ifindex, *local)),
                             );
                         }
                     }

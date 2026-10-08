@@ -25,7 +25,8 @@ use landscape_common::service::{
     manager::{ServiceManager, ServiceStarterTrait},
 };
 use landscape_common::wan_link::{
-    LinkState, LinkStateHandle, RuntimeWanLinkConfig, SessionIface, SessionPhase, WanLinkConfig,
+    LinkState, LinkStateHandle, RuntimeWanLinkConfig, SectionKind, SessionIface, SessionPhase,
+    SessionState, WanLinkConfig, WanLinkStatus, WanLinkStatusHandle, WanLinkStatusStore,
 };
 use landscape_common::wan_service::addr_binding::WanAddrBinding;
 use landscape_common::wan_service::firewall::dataplane::FirewallDataplane;
@@ -40,9 +41,13 @@ use landscape_database::wan_link::repository::WanLinkRepository;
 use crate::get_iface_by_name;
 use crate::sys_service::route::IpRouteService;
 
-/// Which section a config update affects; the environment task broadcasts
-/// only the changed tags, and each supervisor re-attaches on its own tag.
-/// `V4` changes cascade through the `SessionState` (Down → Up), not tags.
+/// Backoff before re-spawning a run that ended on its own.
+const DEFAULT_RESTART_BACKOFF: Duration = Duration::from_secs(5);
+/// Cadence at which a running section samples its status into the display board.
+const STATUS_POLL_INTERVAL: Duration = Duration::from_millis(200);
+
+/// Config-update fan-out tag. `V4` changes cascade to dependents through the
+/// `SessionState` rather than individual tags.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SectionTag {
     V4,
@@ -58,19 +63,14 @@ enum Step {
     Ended,
 }
 
+/// Attach a section for a given session iface/config, then hold until stopped.
 type SectionRunner =
     Arc<dyn Fn(SessionIface, WanLinkConfig, ServiceHandle) -> BoxFuture<'static, ()> + Send + Sync>;
 
-/// Keeps a run that keeps ending on its own without `Failed` (e.g. a panic)
-/// from spinning the restart loop hot.
-const ENDED_RESTART_PAUSE: Duration = Duration::from_secs(1);
-
-/// One WAN link = one service instance owning the full uplink lifecycle.
-///
-/// `start` spawns one supervisor per section: v4 acquisition produces the
-/// link's `SessionState`; nat / mss / firewall / pd wait for the session and
-/// re-attach when it is rebuilt or their config changes. A section terminal
-/// failure tears down the whole link (the link is healthy as a whole).
+/// One WAN link. The v4 section produces the link's `SessionState`; nat / mss /
+/// firewall / pd wait on it and re-attach when the session is rebuilt or their
+/// config changes. A dead run is retried after a backoff instead of failing the
+/// link; per-section status is published to the store.
 #[derive(Clone)]
 pub struct WanLinkService {
     route_service: IpRouteService,
@@ -84,6 +84,7 @@ pub struct WanLinkService {
     shared_wan_iid: Arc<u64>,
     iface_events: broadcast::Sender<IfaceObserverAction>,
     config_channels: Arc<Mutex<HashMap<Uuid, watch::Sender<WanLinkConfig>>>>,
+    status_store: WanLinkStatusStore,
 }
 
 impl WanLinkService {
@@ -100,6 +101,7 @@ impl WanLinkService {
         shared_wan_iid: Arc<u64>,
         iface_events: broadcast::Sender<IfaceObserverAction>,
         config_channels: Arc<Mutex<HashMap<Uuid, watch::Sender<WanLinkConfig>>>>,
+        status_store: WanLinkStatusStore,
     ) -> Self {
         Self {
             route_service,
@@ -113,6 +115,7 @@ impl WanLinkService {
             shared_wan_iid,
             iface_events,
             config_channels,
+            status_store,
         }
     }
 }
@@ -123,44 +126,36 @@ impl ServiceStarterTrait for WanLinkService {
 
     async fn start(&self, config: WanLinkConfig) -> ServiceHandle {
         let link_status = ServiceHandle::new();
-
-        // A missing attach iface is not fatal: the link waits for the
-        // carrier (hot plug).
-        let carrier = get_iface_by_name(&config.attach_iface_name).await;
-        if carrier.is_none() {
-            tracing::warn!(
-                "WAN link attach interface {} not found yet; waiting for carrier",
-                config.attach_iface_name
-            );
-        }
-
         link_status.just_change_status(ServiceStatus::Staring);
 
+        let active = config.active();
+
+        // Absent at boot (hotplug) is tolerated: the environment task
+        // establishes the carrier once the device appears.
+        let carrier = get_iface_by_name(&config.attach_iface_name).await;
+        if carrier.is_none() {
+            tracing::info!(
+                iface = %config.attach_iface_name,
+                "WAN link attach interface not present yet; waiting for it to appear"
+            );
+        }
         let (link_state, state_rx) = LinkStateHandle::new(carrier);
 
-        // Registered so `handle_service_config` can deliver updates without a
-        // full link restart.
+        // Per-link config watch, so `handle_service_config` can deliver updates
+        // without a full link restart.
         let (cfg_tx, cfg_rx) = watch::channel(config.clone());
         self.config_channels.lock().unwrap().insert(config.id, cfg_tx.clone());
 
-        // Deregister on exit so a stopped link falls back to
-        // `deliver_bounded`; `same_channel` avoids removing a restarted
-        // successor's entry.
-        {
-            let config_channels = self.config_channels.clone();
-            let id = config.id;
-            let registered = cfg_tx.clone();
-            let stop = link_status.stop_token();
-            spawn_task(task_label::task::WAN_LINK_CLEANUP, async move {
-                stop.cancelled().await;
-                let mut guard = config_channels.lock().unwrap();
-                if guard.get(&id).is_some_and(|current| current.same_channel(&registered)) {
-                    guard.remove(&id);
-                }
-            });
-        }
-
         let (reconfig_tx, _reconfig_rx) = broadcast::channel(32);
+
+        let board = WanLinkStatusHandle::new(config.id, self.status_store.clone(), active);
+        board
+            .set_session(if active { ServiceStatus::Staring } else { ServiceStatus::Disabled })
+            .await;
+        board.set_section(SectionKind::Pd, ServiceStatus::Stop).await;
+        board.set_section(SectionKind::Nat, ServiceStatus::Stop).await;
+        board.set_section(SectionKind::Firewall, ServiceStatus::Stop).await;
+        board.set_section(SectionKind::Mss, ServiceStatus::Stop).await;
 
         {
             let status = link_status.clone();
@@ -171,6 +166,7 @@ impl ServiceStarterTrait for WanLinkService {
             let reconfig_tx = reconfig_tx.clone();
             let attach_iface = config.attach_iface_name.clone();
             let env_config = config.clone();
+            let board = board.clone();
             status.spawn_task_with_resource(
                 task_label::task::WAN_LINK_ENV,
                 attach_iface.clone(),
@@ -181,6 +177,7 @@ impl ServiceStarterTrait for WanLinkService {
                         iface_rx,
                         env_cfg_rx,
                         reconfig_tx,
+                        board,
                         env_config,
                     )
                     .await;
@@ -188,7 +185,6 @@ impl ServiceStarterTrait for WanLinkService {
             );
         }
 
-        // v4 supervisor
         {
             let status = link_status.clone();
             let task_status = status.clone();
@@ -200,6 +196,7 @@ impl ServiceStarterTrait for WanLinkService {
             let addr_binding = self.addr_binding.clone();
             let pppoe_dataplane = self.pppoe_dataplane.clone();
             let attach = config.attach_iface_name.clone();
+            let board = board.clone();
             status.spawn_task_with_resource(
                 task_label::task::WAN_LINK_V4_SUPERVISOR,
                 attach.clone(),
@@ -207,27 +204,31 @@ impl ServiceStarterTrait for WanLinkService {
                     run_v4_supervisor(
                         task_status,
                         link_state,
+                        board,
                         state_rx,
                         cfg_rx,
                         reconfig_rx,
                         route_service,
                         addr_binding,
                         pppoe_dataplane,
+                        DEFAULT_RESTART_BACKOFF,
                     )
                     .await;
                 },
             );
         }
 
-        // dependent section supervisors
         self.spawn_section(
             &link_status,
+            &board,
             state_rx.clone(),
             cfg_rx.clone(),
             reconfig_tx.subscribe(),
             SectionTag::Nat,
+            SectionKind::Nat,
             task_label::task::NAT_RUN,
             |cfg| cfg.nat.enable,
+            |state| state.has_v4_lease(),
             {
                 let dataplane = self.nat_dataplane.clone();
                 Arc::new(move |iface, cfg, status| {
@@ -247,12 +248,15 @@ impl ServiceStarterTrait for WanLinkService {
 
         self.spawn_section(
             &link_status,
+            &board,
             state_rx.clone(),
             cfg_rx.clone(),
             reconfig_tx.subscribe(),
             SectionTag::Mss,
+            SectionKind::Mss,
             task_label::task::MSS_CLAMP_RUN,
             |cfg| cfg.mss.enable,
+            |state| state.is_up(),
             {
                 let dataplane = self.mss_dataplane.clone();
                 Arc::new(move |iface, cfg, status| {
@@ -272,12 +276,15 @@ impl ServiceStarterTrait for WanLinkService {
 
         self.spawn_section(
             &link_status,
+            &board,
             state_rx.clone(),
             cfg_rx.clone(),
             reconfig_tx.subscribe(),
             SectionTag::Firewall,
+            SectionKind::Firewall,
             task_label::task::FIREWALL_RUN,
             |cfg| cfg.firewall.enable,
+            |state| state.is_up(),
             {
                 let dataplane = self.firewall_dataplane.clone();
                 Arc::new(move |iface, cfg, status| {
@@ -297,12 +304,15 @@ impl ServiceStarterTrait for WanLinkService {
 
         self.spawn_section(
             &link_status,
+            &board,
             state_rx.clone(),
             cfg_rx.clone(),
             reconfig_tx.subscribe(),
             SectionTag::Pd,
+            SectionKind::Pd,
             task_label::task::WAN_IPV6PD_OBSERVER,
             |cfg| cfg.pd.enable,
+            |state| state.is_up(),
             {
                 let route_service = self.route_service.clone();
                 let addr_binding = self.addr_binding.clone();
@@ -333,8 +343,6 @@ impl ServiceStarterTrait for WanLinkService {
             },
         );
 
-        // The service tree is up; connectivity is expressed by the section
-        // state, not this status.
         link_status.just_change_status(ServiceStatus::Running);
 
         link_status
@@ -346,45 +354,58 @@ impl WanLinkService {
     fn spawn_section(
         &self,
         link_status: &ServiceHandle,
+        board: &WanLinkStatusHandle,
         state_rx: watch::Receiver<LinkState>,
         cfg_rx: watch::Receiver<WanLinkConfig>,
         reconfig_rx: broadcast::Receiver<SectionTag>,
         tag: SectionTag,
+        kind: SectionKind,
         label: &'static str,
         enabled: fn(&WanLinkConfig) -> bool,
+        ready: fn(&SessionState) -> bool,
         runner: SectionRunner,
     ) {
         let status = link_status.clone();
         let task_status = status.clone();
+        let board = board.clone();
         status.spawn_task(label, async move {
             run_dependent_section(
                 task_status,
+                board,
                 state_rx,
                 cfg_rx,
                 reconfig_rx,
                 tag,
+                kind,
                 label,
                 enabled,
+                ready,
                 runner,
+                DEFAULT_RESTART_BACKOFF,
             )
             .await;
         });
     }
 }
 
-/// Maintains the carrier from iface events; on config updates broadcasts the
-/// `SectionTag`s whose slice changed.
+/// Maintains the link's carrier and broadcasts `SectionTag`s on config change.
 async fn run_environment(
     link_status: ServiceHandle,
     link_state: LinkStateHandle,
     mut iface_rx: broadcast::Receiver<IfaceObserverAction>,
     mut cfg_rx: watch::Receiver<WanLinkConfig>,
     reconfig_tx: broadcast::Sender<SectionTag>,
+    board: WanLinkStatusHandle,
     initial_config: WanLinkConfig,
 ) {
     let stop = link_status.stop_token();
     let mut applied = initial_config.clone();
     let mut attach_iface = initial_config.attach_iface_name.clone();
+
+    // Cover an iface that appeared between `start`'s lookup and this subscription.
+    if let Some(iface) = get_iface_by_name(&attach_iface).await {
+        link_state.set_carrier(Some(iface));
+    }
 
     loop {
         tokio::select! {
@@ -424,28 +445,52 @@ async fn run_environment(
                     }
                 }
 
-                let structural = new.kind != applied.kind
-                    || new.attach_iface_name != applied.attach_iface_name
-                    || new.v4 != applied.v4;
-                if structural {
-                    let _ = reconfig_tx.send(SectionTag::V4);
+                if new.active() != applied.active() {
+                    board.set_active(new.active()).await;
                 }
-                if new.nat != applied.nat {
-                    let _ = reconfig_tx.send(SectionTag::Nat);
-                }
-                if new.mss != applied.mss {
-                    let _ = reconfig_tx.send(SectionTag::Mss);
-                }
-                if new.firewall != applied.firewall {
-                    let _ = reconfig_tx.send(SectionTag::Firewall);
-                }
-                if new.pd != applied.pd {
-                    let _ = reconfig_tx.send(SectionTag::Pd);
+
+                for tag in config_change_tags(&applied, &new) {
+                    let _ = reconfig_tx.send(tag);
                 }
                 applied = new;
             }
         }
     }
+}
+
+/// Section tags a config change requires.
+///
+/// `V4` covers an `active()` flip too: an ethernet link with v4 disabled anchors
+/// its session only while PD is enabled, so `pd.enable true -> false` must
+/// restart v4 to drop the lease-less anchor and its sections.
+fn config_change_tags(applied: &WanLinkConfig, new: &WanLinkConfig) -> Vec<SectionTag> {
+    let mut tags = Vec::new();
+
+    let v4_relevant = new.kind != applied.kind
+        || new.attach_iface_name != applied.attach_iface_name
+        || new.v4 != applied.v4
+        || new.active() != applied.active();
+    if v4_relevant {
+        tags.push(SectionTag::V4);
+    }
+
+    // Resolved-spec diff: normalized defaults must not respawn.
+    let new_rt = RuntimeWanLinkConfig::from_config(new);
+    let old_rt = RuntimeWanLinkConfig::from_config(applied);
+    if new_rt.nat != old_rt.nat {
+        tags.push(SectionTag::Nat);
+    }
+    if new_rt.mss != old_rt.mss {
+        tags.push(SectionTag::Mss);
+    }
+    if new_rt.firewall != old_rt.firewall {
+        tags.push(SectionTag::Firewall);
+    }
+    if new_rt.pd != old_rt.pd {
+        tags.push(SectionTag::Pd);
+    }
+
+    tags
 }
 
 async fn wait_carrier_up(
@@ -467,12 +512,29 @@ async fn wait_carrier_up(
     }
 }
 
-async fn wait_session_up(
+async fn wait_carrier_invalidated(state_rx: &mut watch::Receiver<LinkState>, ifindex: u32) {
+    loop {
+        {
+            let snapshot = state_rx.borrow_and_update();
+            match &snapshot.carrier {
+                None => return,
+                Some(carrier) if carrier.index != ifindex => return,
+                Some(_) => {}
+            }
+        }
+        if state_rx.changed().await.is_err() {
+            return;
+        }
+    }
+}
+
+async fn wait_session_ready(
     state_rx: &mut watch::Receiver<LinkState>,
     stop: &CancellationToken,
+    ready: fn(&SessionState) -> bool,
 ) -> bool {
     loop {
-        if state_rx.borrow_and_update().session.is_up() {
+        if ready(&state_rx.borrow_and_update().session) {
             return true;
         }
         tokio::select! {
@@ -486,18 +548,6 @@ async fn wait_session_up(
     }
 }
 
-async fn wait_carrier_down(state_rx: &mut watch::Receiver<LinkState>) {
-    loop {
-        if state_rx.borrow_and_update().carrier.is_none() {
-            return;
-        }
-        if state_rx.changed().await.is_err() {
-            return;
-        }
-    }
-}
-
-/// Resolves once the session is down or its epoch has moved past `epoch`.
 async fn wait_session_invalidated(state_rx: &mut watch::Receiver<LinkState>, epoch: u64) {
     loop {
         {
@@ -512,33 +562,48 @@ async fn wait_session_invalidated(state_rx: &mut watch::Receiver<LinkState>, epo
     }
 }
 
-/// The v4 acquisition supervisor: (re)starts the v4 driver whenever the
-/// carrier is up, and cancels it on carrier loss or v4-relevant config change.
 #[allow(clippy::too_many_arguments)]
 async fn run_v4_supervisor(
     link_status: ServiceHandle,
     link_state: LinkStateHandle,
+    board: WanLinkStatusHandle,
     mut state_rx: watch::Receiver<LinkState>,
     mut cfg_rx: watch::Receiver<WanLinkConfig>,
     mut reconfig_rx: broadcast::Receiver<SectionTag>,
     route_service: IpRouteService,
     addr_binding: Arc<dyn WanAddrBinding>,
     pppoe_dataplane: Arc<dyn PppoeDataplane>,
+    backoff: Duration,
 ) {
     let stop = link_status.stop_token();
 
     loop {
+        let cfg = cfg_rx.borrow_and_update().clone();
+        if !cfg.active() {
+            board.set_session(ServiceStatus::Disabled).await;
+            tokio::select! {
+                _ = stop.cancelled() => return,
+                event = reconfig_rx.recv() => {
+                    if matches!(event, Err(broadcast::error::RecvError::Closed)) {
+                        return;
+                    }
+                }
+            }
+            continue;
+        }
+
         if !wait_carrier_up(&mut state_rx, &stop).await {
             return;
         }
         let Some(iface) = state_rx.borrow_and_update().carrier.clone() else {
             continue;
         };
-        let cfg = cfg_rx.borrow_and_update().clone();
+        let run_ifindex = iface.index;
         let runtime = RuntimeWanLinkConfig::from_config(&cfg);
 
         let run = ServiceHandle::new();
         run.just_change_status(ServiceStatus::Staring);
+        board.set_session(run.current()).await;
         let run_child = run.clone();
         let session = Some(link_state.clone());
         let rs = route_service.clone();
@@ -554,11 +619,14 @@ async fn run_v4_supervisor(
         );
         tokio::pin!(join);
 
+        let mut status_ticker = tokio::time::interval(STATUS_POLL_INTERVAL);
+        let mut retry = false;
+
         loop {
             let mut step: Option<Step> = None;
             tokio::select! {
                 _ = stop.cancelled() => step = Some(Step::Stop),
-                _ = wait_carrier_down(&mut state_rx) => step = Some(Step::Restart),
+                _ = wait_carrier_invalidated(&mut state_rx, run_ifindex) => step = Some(Step::Restart),
                 event = reconfig_rx.recv() => match event {
                     Ok(SectionTag::V4) => step = Some(Step::Restart),
                     Ok(_) => {}
@@ -566,54 +634,63 @@ async fn run_v4_supervisor(
                     Err(broadcast::error::RecvError::Closed) => step = Some(Step::Stop),
                 },
                 _ = &mut join => step = Some(Step::Ended),
+                _ = status_ticker.tick() => {
+                    board.set_session(run.current()).await;
+                }
             }
 
             match step {
                 None => continue,
                 Some(Step::Stop) => {
                     run.wait_stop().await;
+                    board.set_session(run.current()).await;
                     return;
                 }
                 Some(Step::Restart) => {
                     link_state.session_down();
                     run.wait_stop().await;
+                    board.set_session(ServiceStatus::Stop).await;
                     break;
                 }
                 Some(Step::Ended) => {
                     link_state.session_down();
-                    if matches!(run.current(), ServiceStatus::Failed) {
-                        link_status.just_change_status(ServiceStatus::Failed);
-                        return;
-                    }
-                    tokio::select! {
-                        _ = stop.cancelled() => return,
-                        _ = tokio::time::sleep(ENDED_RESTART_PAUSE) => {}
-                    }
+                    board.set_session(run.current()).await;
+                    retry = true;
                     break;
                 }
+            }
+        }
+
+        if retry {
+            tokio::select! {
+                _ = stop.cancelled() => return,
+                _ = tokio::time::sleep(backoff) => {}
             }
         }
     }
 }
 
-/// Waits for the session, attaches the section, and re-attaches when the
-/// session is rebuilt or the section config changes.
 #[allow(clippy::too_many_arguments)]
 async fn run_dependent_section(
     link_status: ServiceHandle,
+    board: WanLinkStatusHandle,
     mut state_rx: watch::Receiver<LinkState>,
     mut cfg_rx: watch::Receiver<WanLinkConfig>,
     mut reconfig_rx: broadcast::Receiver<SectionTag>,
     my_tag: SectionTag,
+    kind: SectionKind,
     label: &'static str,
     enabled: fn(&WanLinkConfig) -> bool,
+    ready: fn(&SessionState) -> bool,
     runner: SectionRunner,
+    backoff: Duration,
 ) {
     let stop = link_status.stop_token();
 
     loop {
         let cfg = cfg_rx.borrow_and_update().clone();
         if !enabled(&cfg) {
+            board.set_section(kind, ServiceStatus::Stop).await;
             let mut stop_now = false;
             tokio::select! {
                 _ = stop.cancelled() => stop_now = true,
@@ -629,19 +706,21 @@ async fn run_dependent_section(
             continue;
         }
 
-        if !wait_session_up(&mut state_rx, &stop).await {
+        if !wait_session_ready(&mut state_rx, &stop, ready).await {
+            board.set_section(kind, ServiceStatus::Stop).await;
             return;
         }
         let (iface, epoch) = {
             let snapshot = state_rx.borrow_and_update();
             match &snapshot.session.phase {
-                SessionPhase::Up(iface) => (iface.clone(), snapshot.session.epoch),
+                SessionPhase::Up { iface, .. } => (iface.clone(), snapshot.session.epoch),
                 SessionPhase::Down => continue,
             }
         };
 
         let run = ServiceHandle::new();
         run.just_change_status(ServiceStatus::Staring);
+        board.set_section(kind, run.current()).await;
         let run_child = run.clone();
         let runner = runner.clone();
         let iface_child = iface.clone();
@@ -651,6 +730,9 @@ async fn run_dependent_section(
             runner(iface_child, cfg_child, run_child).await;
         });
         tokio::pin!(join);
+
+        let mut status_ticker = tokio::time::interval(STATUS_POLL_INTERVAL);
+        let mut retry = false;
 
         loop {
             let mut step: Option<Step> = None;
@@ -664,29 +746,35 @@ async fn run_dependent_section(
                     Err(broadcast::error::RecvError::Closed) => step = Some(Step::Stop),
                 },
                 _ = &mut join => step = Some(Step::Ended),
+                _ = status_ticker.tick() => {
+                    board.set_section(kind, run.current()).await;
+                }
             }
 
             match step {
                 None => continue,
                 Some(Step::Stop) => {
                     run.wait_stop().await;
+                    board.set_section(kind, run.current()).await;
                     return;
                 }
                 Some(Step::Restart) => {
                     run.wait_stop().await;
+                    board.set_section(kind, ServiceStatus::Stop).await;
                     break;
                 }
                 Some(Step::Ended) => {
-                    if matches!(run.current(), ServiceStatus::Failed) {
-                        link_status.just_change_status(ServiceStatus::Failed);
-                        return;
-                    }
-                    tokio::select! {
-                        _ = stop.cancelled() => return,
-                        _ = tokio::time::sleep(ENDED_RESTART_PAUSE) => {}
-                    }
+                    board.set_section(kind, run.current()).await;
+                    retry = true;
                     break;
                 }
+            }
+        }
+
+        if retry {
+            tokio::select! {
+                _ = stop.cancelled() => return,
+                _ = tokio::time::sleep(backoff) => {}
             }
         }
     }
@@ -698,6 +786,7 @@ pub struct WanLinkServiceManagerService {
     service: ServiceManager<WanLinkService>,
     prefix_map: IAPrefixMap,
     config_channels: Arc<Mutex<HashMap<Uuid, watch::Sender<WanLinkConfig>>>>,
+    status_store: WanLinkStatusStore,
 }
 
 #[async_trait::async_trait]
@@ -719,9 +808,8 @@ impl ConfigStoreServiceController for WanLinkServiceManagerService {
         &self.service
     }
 
-    /// Persist-first delivery with partial restart: a running link is
-    /// reconfigured over its per-link watch; a non-running link falls back
-    /// to the generic bounded delivery.
+    /// A running link receives the new config over its per-link watch (partial
+    /// reconfigure); a link that is not running is started via bounded delivery.
     async fn handle_service_config(&self, config: Self::Config) -> Result<Self::Config, DbError> {
         let change = self.get_store().checked_upsert(config).await?;
         self.notify_changed(vec![change.clone()]).await;
@@ -737,6 +825,19 @@ impl ConfigStoreServiceController for WanLinkServiceManagerService {
         }
 
         Ok(saved)
+    }
+
+    async fn delete_and_stop_service(
+        &self,
+        id: Self::Id,
+    ) -> Result<Option<ServiceStatus>, DbError> {
+        let old = self.get_store().delete_and_get(id).await?;
+        let Some(old) = old else { return Ok(None) };
+        let status = self.get_service().stop_service(id.to_string()).await;
+        self.status_store.write().await.remove(&id);
+        self.config_channels.lock().unwrap().remove(&id);
+        self.notify_deleted(old).await;
+        Ok(status)
     }
 }
 
@@ -757,10 +858,10 @@ impl WanLinkServiceManagerService {
     ) -> Self {
         let store = store_service.wan_link_store();
 
-        // Forwarded, not acted on: each link maintains its own carrier state.
         let (iface_events, _) = broadcast::channel(128);
         let config_channels: Arc<Mutex<HashMap<Uuid, watch::Sender<WanLinkConfig>>>> =
             Arc::new(Mutex::new(HashMap::new()));
+        let status_store: WanLinkStatusStore = Arc::default();
 
         let starter = WanLinkService::new(
             route_service,
@@ -774,6 +875,7 @@ impl WanLinkServiceManagerService {
             shared_wan_iid,
             iface_events.clone(),
             config_channels.clone(),
+            status_store.clone(),
         );
         let service = ServiceManager::init(store.list().await.unwrap(), starter).await;
 
@@ -790,22 +892,32 @@ impl WanLinkServiceManagerService {
             }
         });
 
-        Self { service, store, prefix_map, config_channels }
+        Self {
+            service,
+            store,
+            prefix_map,
+            config_channels,
+            status_store,
+        }
     }
 
-    /// Obtained IA-PD prefixes per section iface (read-only status view).
     pub fn get_ipv6_prefix_infos(&self) -> HashMap<String, Option<LDIAPrefix>> {
         self.prefix_map.get_info()
     }
 
-    /// IA-PD negotiation status per section iface (read-only status view).
     pub fn get_ipv6_prefix_statuses(&self) -> HashMap<String, IPV6PDPrefixStatus> {
         self.prefix_map.get_prefix_statuses()
     }
 
-    /// PD context of every link with an enabled PD section, keyed by the
-    /// iface the PD client runs on (the ppp device for pppd links). Used by
-    /// LAN IPv6 config validation for prefix capacity planning.
+    pub async fn get_link_statuses(&self) -> HashMap<String, WanLinkStatus> {
+        self.status_store
+            .read()
+            .await
+            .iter()
+            .map(|(id, status)| (id.to_string(), status.clone()))
+            .collect()
+    }
+
     pub async fn get_pd_prefix_contexts(&self) -> PdPrefixContextMap {
         self.store
             .list()

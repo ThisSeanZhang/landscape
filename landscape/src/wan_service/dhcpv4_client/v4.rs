@@ -20,7 +20,7 @@ use landscape_common::{
     service::{ServiceHandle, ServiceStatus},
     sys_service::route_service::RouteTargetInfo,
     sys_service::route_service::{LanRouteInfo, LanRouteMode},
-    wan_link::{LinkStateHandle, SessionIface},
+    wan_link::{LinkStateHandle, SessionIface, WanV4Lease},
     wan_service::addr_binding::WanAddrBinding,
 };
 
@@ -282,8 +282,8 @@ pub async fn dhcp_v4_client(
                         if let Some(session) = session.as_ref() {
                             match status.leased_ip() {
                                 Some(ip) => session.session_up(
-                                    SessionIface::new(ifindex, iface_name.clone(), Some(mac_addr))
-                                        .with_ip(Some(IpAddr::V4(ip))),
+                                    SessionIface::new(ifindex, iface_name.clone(), Some(mac_addr)),
+                                    Some(WanV4Lease::new(ifindex, ip)),
                                 ),
                                 None => session.session_down(),
                             }

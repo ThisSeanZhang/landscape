@@ -58,6 +58,14 @@ impl LandscapeDBStore<Uuid> for WanLinkConfig {
     }
 }
 
+impl WanLinkConfig {
+    /// True when the link has an acquisition/anchor intent. An inactive link
+    /// establishes no session and starts no sections.
+    pub fn active(&self) -> bool {
+        self.v4.enable || self.pd.enable
+    }
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[serde(tag = "t", rename_all = "snake_case")]

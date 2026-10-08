@@ -614,7 +614,7 @@ async function searchIpv6Pd() {
         (link) =>
           [
             link.section_iface_name(),
-            wanLinkStore.status.get(link.id),
+            wanLinkStore.status.get(link.id)?.pd,
           ] as const,
       )
       .filter(

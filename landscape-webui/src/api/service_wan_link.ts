@@ -1,6 +1,8 @@
 import { WanLink, wan_link_from_payload } from "@/lib/wan_link";
-import { ServiceStatus } from "@/lib/services";
-import type { WanLinkConfig } from "@landscape-router/types/api/schemas";
+import type {
+  WanLinkConfig,
+  WanLinkStatus,
+} from "@landscape-router/types/api/schemas";
 import {
   createWanLink,
   deleteWanLink,
@@ -17,12 +19,12 @@ export async function get_all_wan_links(): Promise<WanLink[]> {
 }
 
 export async function get_wan_link_status(): Promise<
-  Map<string, ServiceStatus>
+  Map<string, WanLinkStatus>
 > {
   const data = await getAllWanLinkStatus({ silent: true });
-  const map = new Map<string, ServiceStatus>();
+  const map = new Map<string, WanLinkStatus>();
   for (const [key, value] of Object.entries(data ?? {})) {
-    map.set(key, value as ServiceStatus);
+    map.set(key, value as WanLinkStatus);
   }
   return map;
 }

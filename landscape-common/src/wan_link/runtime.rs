@@ -144,14 +144,14 @@ pub struct RuntimeWanLinkV4Config {
     pub model: WanLinkV4Model,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuntimeWanLinkPdConfig {
     pub enable: bool,
     pub mac: MacAddr,
     pub expected_pd_len: u8,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuntimeWanLinkNatConfig {
     pub enable: bool,
     pub tcp_range: Range<u16>,
@@ -159,12 +159,12 @@ pub struct RuntimeWanLinkNatConfig {
     pub icmp_in_range: Range<u16>,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RuntimeWanLinkFirewallConfig {
     pub enable: bool,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RuntimeWanLinkMssConfig {
     pub enable: bool,
     pub clamp_size: u16,

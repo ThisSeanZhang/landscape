@@ -6,7 +6,7 @@ use landscape_common::config::ConfigId;
 use landscape_common::service::ServiceConfigError;
 use landscape_common::service::ServiceStatus;
 use landscape_common::service::controller::{ConfigStoreController, ConfigStoreServiceController};
-use landscape_common::wan_link::{WanLinkConfig, WanLinkKind};
+use landscape_common::wan_link::{WanLinkConfig, WanLinkKind, WanLinkStatus};
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 
@@ -40,12 +40,12 @@ async fn list_wan_links(
     path = "/wan-links/status",
     tag = "WAN Link",
     operation_id = "get_all_wan_link_status",
-    responses((status = 200, description = "Success", body = CommonApiResp<HashMap<String, ServiceStatus>>))
+    responses((status = 200, description = "Success", body = CommonApiResp<HashMap<String, WanLinkStatus>>))
 )]
 async fn get_all_wan_link_status(
     State(state): State<LandscapeApp>,
-) -> LandscapeApiResult<HashMap<String, ServiceStatus>> {
-    LandscapeApiResp::success(state.wan_link_service.get_all_status().await)
+) -> LandscapeApiResult<HashMap<String, WanLinkStatus>> {
+    LandscapeApiResp::success(state.wan_link_service.get_link_statuses().await)
 }
 
 #[utoipa::path(

@@ -87,19 +87,19 @@ const ip_config_status = computed(() => {
   if (link === undefined || !link.v4.enable || link.v4.model.t === "nothing") {
     return undefined;
   }
-  return link_status.value;
+  return link_status.value?.session;
 });
 const dhcp_v4_status = computed(
   () => dhcpv4ConfigStore.GET_STATUS_BY_IFACE_NAME(props.node.name).value,
 );
 const nat_status = computed(() =>
-  node_link.value?.nat.enable ? link_status.value : undefined,
+  node_link.value?.nat.enable ? link_status.value?.nat : undefined,
 );
 const firewall_status = computed(() =>
-  node_link.value?.firewall.enable ? link_status.value : undefined,
+  node_link.value?.firewall.enable ? link_status.value?.firewall : undefined,
 );
 const ipv6pd_status = computed(() =>
-  node_link.value?.pd.enable ? link_status.value : undefined,
+  node_link.value?.pd.enable ? link_status.value?.pd : undefined,
 );
 const lan_ipv6_status = computed(
   () => lanIpv6Store.GET_STATUS_BY_IFACE_NAME(props.node.name).value,
@@ -114,7 +114,7 @@ const route_wan_status = computed(
   () => routeWanConfigStore.GET_STATUS_BY_IFACE_NAME(props.node.name).value,
 );
 const mss_clamp_status = computed(() =>
-  node_link.value?.mss.enable ? link_status.value : undefined,
+  node_link.value?.mss.enable ? link_status.value?.mss : undefined,
 );
 
 const is_virtual_pppd = computed(() => props.node.virtual);

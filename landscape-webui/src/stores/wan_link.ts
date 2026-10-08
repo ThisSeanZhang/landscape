@@ -1,17 +1,17 @@
 import { get_all_wan_links, get_wan_link_status } from "@/api/service_wan_link";
-import { ServiceStatus } from "@/lib/services";
 import { WanLink } from "@/lib/wan_link";
+import type { WanLinkStatus } from "@landscape-router/types/api/schemas";
 import { defineStore } from "pinia";
 import { computed, ComputedRef, ref } from "vue";
 
 /**
- * The WAN link set + per-link service status. The topology stays
+ * The WAN link set + per-link per-section runtime status. The topology stays
  * iface-centric: nodes resolve their link through the two indexes below.
  */
 export const useWanLinkStore = defineStore("wan_link", () => {
   const links = ref<WanLink[]>([]);
-  const status = ref<Map<string, ServiceStatus>>(
-    new Map<string, ServiceStatus>(),
+  const status = ref<Map<string, WanLinkStatus>>(
+    new Map<string, WanLinkStatus>(),
   );
 
   async function UPDATE_INFO() {
@@ -73,7 +73,7 @@ export const useWanLinkStore = defineStore("wan_link", () => {
 
   function GET_STATUS_BY_ID(
     id: string | undefined,
-  ): ComputedRef<ServiceStatus | undefined> {
+  ): ComputedRef<WanLinkStatus | undefined> {
     return computed(() =>
       id === undefined ? undefined : status.value.get(id),
     );
