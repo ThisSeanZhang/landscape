@@ -13,9 +13,7 @@ use landscape_common::database::store::{Change, ConfigStore};
 use landscape_common::event::hub::EnrolledDeviceEventReader;
 use landscape_common::service::controller::ConfigStoreController;
 use landscape_common::utils::time::get_f64_timestamp;
-use landscape_common::wan_service::nat::config::NatConfig;
 use landscape_common::wan_service::nat::dataplane::NatDataplane;
-use landscape_database::nat::repository::NatServiceRepository;
 use landscape_database::provider::LandscapeDBServiceProvider;
 use landscape_database::static_nat_mapping_v4::repository::StaticNatMappingV4Repository;
 use uuid::Uuid;
@@ -23,7 +21,6 @@ use uuid::Uuid;
 #[derive(Clone)]
 pub struct StaticNat4MappingService {
     store: StaticNatMappingV4Repository,
-    nat_store: NatServiceRepository,
     dataplane: Arc<dyn NatDataplane>,
 }
 
@@ -35,7 +32,6 @@ impl StaticNat4MappingService {
     ) -> Self {
         let service = Self {
             store: store_provider.static_nat_mapping_v4_store(),
-            nat_store: store_provider.nat_service_store(),
             dataplane,
         };
 
@@ -72,89 +68,30 @@ impl StaticNat4MappingService {
         self.store.validate_runtime_target_v4(config).await
     }
 
-    pub async fn check_dynamic_range_overlap(
-        &self,
-        nat_config: &NatConfig,
-    ) -> Result<(), StaticNatError> {
-        let mappings = self.store.list().await.map_err(StaticNatError::Internal)?;
-        for (proto, range) in [(6u8, &nat_config.tcp_range), (17u8, &nat_config.udp_range)] {
-            for mapping in &mappings {
-                if !mapping.enable || !mapping.l4_protocols.contains(&proto) {
-                    continue;
-                }
-                for pair in &mapping.mapping_pair_ports {
-                    if pair.wan_port >= range.start && pair.wan_port <= range.end {
-                        return Err(StaticNatError::PortInDynamicRange {
-                            mapping_id: mapping.id,
-                            port: pair.wan_port,
-                            protocol: proto,
-                            start: range.start,
-                            end: range.end,
-                        });
-                    }
-                }
-            }
-        }
-        Ok(())
-    }
-
     pub async fn check_port_conflict(
         &self,
         wan_port: u16,
         protocols: &[u8],
     ) -> Result<Option<StaticNatError>, DbError> {
-        let Some(nat_config) = self.nat_store.find_active_nat_config().await? else {
-            return Ok(None);
-        };
-        for proto in protocols {
-            let range = match *proto {
-                6 => &nat_config.nat_config.tcp_range,
-                17 => &nat_config.nat_config.udp_range,
-                _ => continue,
-            };
-            if wan_port >= range.start && wan_port <= range.end {
-                return Ok(Some(StaticNatError::PortConflict {
-                    port: wan_port,
-                    iface_name: nat_config.iface_name.clone(),
-                    protocol: *proto,
-                    start: range.start,
-                    end: range.end,
-                }));
-            }
-        }
-        Ok(None)
-    }
-
-    pub async fn validate_no_dynamic_port_conflict(
-        &self,
-        config: &StaticNatMappingV4Config,
-    ) -> Result<(), StaticNatError> {
-        if !config.enable || config.mapping_pair_ports.is_empty() || config.l4_protocols.is_empty()
-        {
-            return Ok(());
-        }
-        let Some(nat_config) = self.nat_store.find_active_nat_config().await? else {
-            return Ok(());
-        };
-        for proto in &config.l4_protocols {
-            let range = match *proto {
-                6 => &nat_config.nat_config.tcp_range,
-                17 => &nat_config.nat_config.udp_range,
-                _ => continue,
-            };
-            for pair in &config.mapping_pair_ports {
-                if pair.wan_port >= range.start && pair.wan_port <= range.end {
-                    return Err(StaticNatError::PortConflict {
-                        port: pair.wan_port,
-                        iface_name: nat_config.iface_name.clone(),
+        for (iface_name, nat_config) in self.store.enabled_link_nats().await? {
+            for proto in protocols {
+                let range = match *proto {
+                    6 => &nat_config.tcp_range,
+                    17 => &nat_config.udp_range,
+                    _ => continue,
+                };
+                if wan_port >= range.start && wan_port <= range.end {
+                    return Ok(Some(StaticNatError::PortConflict {
+                        port: wan_port,
+                        iface_name,
                         protocol: *proto,
                         start: range.start,
                         end: range.end,
-                    });
+                    }));
                 }
             }
         }
-        Ok(())
+        Ok(None)
     }
 
     // --- Runtime ---

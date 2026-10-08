@@ -4,7 +4,7 @@ use landscape_common::database::error::DbError;
 use landscape_common::database::store::ConfigStore;
 use landscape_common::database::validator::StoreValidator;
 use landscape_common::service::ServiceConfigError;
-use landscape_common::wan_link::{WanLinkConfig, WanLinkKind};
+use landscape_common::wan_link::{RuntimeWanLinkConfig, WanLinkConfig, WanLinkKind};
 use sea_orm::DatabaseConnection;
 
 use super::entity::{WanLinkConfigActiveModel, WanLinkConfigEntity, WanLinkConfigModel};
@@ -186,6 +186,40 @@ impl StoreValidator<WanLinkConfig> for WanLinkRepository {
             }
         }
 
+        // Dynamic NAT ranges (None → runtime defaults) must not cover an
+        // enabled static mapping's wan_port.
+        if config.nat.enable {
+            let nat = RuntimeWanLinkConfig::from_config(config).nat;
+            let mappings =
+                crate::static_nat_mapping_v4::repository::StaticNatMappingV4Repository::new(
+                    self.db.clone(),
+                )
+                .list()
+                .await
+                .map_err(ServiceConfigError::internal)?
+                .into_iter()
+                .filter(|mapping| mapping.enable)
+                .collect::<Vec<_>>();
+            for (proto, range) in [(6u8, &nat.tcp_range), (17u8, &nat.udp_range)] {
+                let proto_name = if proto == 6 { "TCP" } else { "UDP" };
+                for mapping in &mappings {
+                    if !mapping.l4_protocols.contains(&proto) {
+                        continue;
+                    }
+                    for pair in &mapping.mapping_pair_ports {
+                        if pair.wan_port >= range.start && pair.wan_port <= range.end {
+                            return Err(ServiceConfigError::InvalidConfig {
+                                reason: format!(
+                                    "static NAT mapping {} wan_port {} ({proto_name}) overlaps this link's dynamic {proto_name} range {}..={}",
+                                    mapping.id, pair.wan_port, range.start, range.end
+                                ),
+                            });
+                        }
+                    }
+                }
+            }
+        }
+
         Ok(())
     }
 }
@@ -195,10 +229,14 @@ mod tests {
     use landscape_common::config_service::iface::{
         CreateDevType, IfaceZoneType, NetworkIfaceConfig, ServiceKind, WifiMode,
     };
+    use landscape_common::config_service::static_nat::config::StaticMapPair;
+    use landscape_common::config_service::static_nat::config4::{
+        StaticNatMappingV4Config, StaticNatV4Target,
+    };
     use landscape_common::database::error::DbError;
     use landscape_common::database::store::ConfigStore;
     use landscape_common::service::ServiceConfigError;
-    use landscape_common::wan_link::{WanLinkConfig, WanLinkKind};
+    use landscape_common::wan_link::{WanLinkConfig, WanLinkKind, WanLinkNatConfig};
     use sea_orm::prelude::Uuid;
 
     use crate::provider::LandscapeDBServiceProvider;
@@ -239,6 +277,47 @@ mod tests {
             mss: Default::default(),
             update_at: 0.0,
         }
+    }
+
+    fn nat_link(
+        id: Uuid,
+        nat_enable: bool,
+        tcp_range: Option<(u16, u16)>,
+        udp_range: Option<(u16, u16)>,
+    ) -> WanLinkConfig {
+        let mut config = link(id, "eth0", WanLinkKind::Ethernet);
+        config.nat = WanLinkNatConfig {
+            enable: nat_enable,
+            tcp_range: tcp_range.map(|(start, end)| start..end),
+            udp_range: udp_range.map(|(start, end)| start..end),
+            icmp_in_range: None,
+        };
+        config
+    }
+
+    async fn insert_enabled_mapping(
+        provider: &LandscapeDBServiceProvider,
+        wan_port: u16,
+        proto: u8,
+    ) {
+        provider
+            .static_nat_mapping_v4_store()
+            .upsert(StaticNatMappingV4Config {
+                id: Uuid::new_v4(),
+                name: None,
+                enable: true,
+                remark: String::new(),
+                wan_link_id: None,
+                wan_iface_name: None,
+                mapping_pair_ports: vec![StaticMapPair { wan_port, lan_port: 80 }],
+                lan_target: Some(StaticNatV4Target::address(std::net::Ipv4Addr::new(
+                    192, 168, 1, 100,
+                ))),
+                l4_protocols: vec![proto],
+                update_at: 0.0,
+            })
+            .await
+            .unwrap();
     }
 
     async fn setup() -> LandscapeDBServiceProvider {
@@ -370,5 +449,57 @@ mod tests {
         old.kind = pppd("eth1");
         let result = repo.checked_upsert(old).await;
         assert!(result.is_err(), "a renamed ppp device colliding with a managed iface is rejected");
+    }
+
+    #[tokio::test]
+    async fn nat_link_rejected_when_range_covers_enabled_mapping() {
+        let provider = setup().await;
+        insert_enabled_mapping(&provider, 40000, 6).await;
+
+        let result = provider
+            .wan_link_store()
+            .checked_upsert(nat_link(Uuid::new_v4(), true, Some((32768, 65535)), None))
+            .await;
+        let err = match result {
+            Err(DbError::Validation(err)) => err.to_string(),
+            other => panic!("expected validation error, got {other:?}"),
+        };
+        assert!(err.contains("static NAT mapping"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn nat_disabled_link_skips_mapping_overlap_check() {
+        let provider = setup().await;
+        insert_enabled_mapping(&provider, 40000, 6).await;
+
+        provider
+            .wan_link_store()
+            .checked_upsert(nat_link(Uuid::new_v4(), false, Some((32768, 65535)), None))
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn nat_link_range_avoiding_mapping_allowed() {
+        let provider = setup().await;
+        insert_enabled_mapping(&provider, 40000, 6).await;
+
+        provider
+            .wan_link_store()
+            .checked_upsert(nat_link(Uuid::new_v4(), true, Some((1024, 2048)), None))
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn nat_link_udp_range_overlap_rejected() {
+        let provider = setup().await;
+        insert_enabled_mapping(&provider, 15000, 17).await;
+
+        let result = provider
+            .wan_link_store()
+            .checked_upsert(nat_link(Uuid::new_v4(), true, None, Some((10000, 20000))))
+            .await;
+        assert!(result.is_err(), "UDP mapping port must not fall in the link's udp range");
     }
 }
