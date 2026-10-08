@@ -39,6 +39,8 @@ use uuid::Uuid;
 use crate::cert::dns_provider::{build_record_updater, validate_provider_zone_access};
 use crate::sys_service::route::{IpRouteService, WanRouteEvent};
 
+use landscape_common::sys_service::route_service::RouteOwner;
+
 const DDNS_SYNC_INTERVAL_SECS: u64 = 60;
 const DDNS_RETRY_INTERVAL_SECS: u64 = 5;
 const DEFAULT_DDNS_RECORD_TTL: u32 = 120;
@@ -534,10 +536,13 @@ impl DdnsService {
         let mut last_error = None;
         for source in sources {
             match source {
-                DdnsSource::LocalWan { iface_name, family, .. } if *family == wanted_family => {
+                DdnsSource::LocalWan { iface_name, link_id, family, .. }
+                    if *family == wanted_family =>
+                {
+                    let owner = RouteOwner::Link(*link_id);
                     let route = match family {
-                        IpFamily::Ipv4 => self.route_service.get_ipv4_wan_route(iface_name).await,
-                        IpFamily::Ipv6 => self.route_service.get_ipv6_wan_route(iface_name).await,
+                        IpFamily::Ipv4 => self.route_service.get_ipv4_wan_route(&owner).await,
+                        IpFamily::Ipv6 => self.route_service.get_ipv6_wan_route(&owner).await,
                     };
                     if let Some(route) = route {
                         if wanted_family == IpFamily::Ipv6
@@ -822,13 +827,13 @@ fn effective_ttl_config_updated_at(job: &DdnsJob, profile: &DnsProviderProfile) 
 
 fn job_matches_wan_event(job: &DdnsJob, event: &WanRouteEvent) -> bool {
     job.sources.iter().any(|source| match source {
-        DdnsSource::LocalWan { iface_name, family, .. }
-            if iface_name == &event.owner && *family == event.family =>
+        DdnsSource::LocalWan { link_id, family, .. }
+            if RouteOwner::Link(*link_id) == event.owner && *family == event.family =>
         {
             true
         }
-        DdnsSource::EnrolledDevice { wan_pd_id: Some(iface), family, .. }
-            if iface == &event.owner && *family == event.family =>
+        DdnsSource::EnrolledDevice { wan_pd_link_id, family, .. }
+            if RouteOwner::Link(*wan_pd_link_id) == event.owner && *family == event.family =>
         {
             true
         }
@@ -1197,16 +1202,18 @@ mod tests {
 
     #[test]
     fn wan_event_only_matches_same_iface_and_family() {
+        let wan0 = Uuid::nil();
+        let wan1 = Uuid::new_v4();
         let job = test_job(vec![DdnsSource::LocalWan {
             iface_name: "wan0".to_string(),
-            link_id: Uuid::nil(),
+            link_id: wan0,
             family: IpFamily::Ipv4,
         }]);
 
         assert!(job_matches_wan_event(
             &job,
             &WanRouteEvent {
-                owner: "wan0".to_string(),
+                owner: RouteOwner::Link(wan0),
                 family: IpFamily::Ipv4,
                 kind: WanRouteEventKind::Upserted,
             }
@@ -1214,7 +1221,7 @@ mod tests {
         assert!(!job_matches_wan_event(
             &job,
             &WanRouteEvent {
-                owner: "wan1".to_string(),
+                owner: RouteOwner::Link(wan1),
                 family: IpFamily::Ipv4,
                 kind: WanRouteEventKind::Upserted,
             }
@@ -1222,7 +1229,7 @@ mod tests {
         assert!(!job_matches_wan_event(
             &job,
             &WanRouteEvent {
-                owner: "wan0".to_string(),
+                owner: RouteOwner::Link(wan0),
                 family: IpFamily::Ipv6,
                 kind: WanRouteEventKind::Upserted,
             }
@@ -1297,9 +1304,11 @@ mod tests {
 
     #[test]
     fn wan_event_matches_enrolled_device_source() {
+        let wan0 = Uuid::nil();
+        let wan1 = Uuid::new_v4();
         let job = test_job(vec![DdnsSource::EnrolledDevice {
             device_id: Uuid::nil(),
-            wan_pd_link_id: Uuid::nil(),
+            wan_pd_link_id: wan0,
             wan_pd_id: Some("wan0".to_string()),
             family: IpFamily::Ipv4,
         }]);
@@ -1307,7 +1316,7 @@ mod tests {
         assert!(job_matches_wan_event(
             &job,
             &WanRouteEvent {
-                owner: "wan0".to_string(),
+                owner: RouteOwner::Link(wan0),
                 family: IpFamily::Ipv4,
                 kind: WanRouteEventKind::Upserted,
             }
@@ -1315,7 +1324,7 @@ mod tests {
         assert!(!job_matches_wan_event(
             &job,
             &WanRouteEvent {
-                owner: "wan0".to_string(),
+                owner: RouteOwner::Link(wan0),
                 family: IpFamily::Ipv6,
                 kind: WanRouteEventKind::Upserted,
             }
@@ -1323,7 +1332,7 @@ mod tests {
         assert!(!job_matches_wan_event(
             &job,
             &WanRouteEvent {
-                owner: "wan1".to_string(),
+                owner: RouteOwner::Link(wan1),
                 family: IpFamily::Ipv4,
                 kind: WanRouteEventKind::Upserted,
             }
@@ -1331,7 +1340,7 @@ mod tests {
     }
 
     #[test]
-    fn wan_event_does_not_match_enrolled_device_without_wan_pd_id() {
+    fn wan_event_does_not_match_netns_owner_for_enrolled_device() {
         let job = test_job(vec![DdnsSource::EnrolledDevice {
             device_id: Uuid::nil(),
             wan_pd_link_id: Uuid::nil(),
@@ -1342,7 +1351,7 @@ mod tests {
         assert!(!job_matches_wan_event(
             &job,
             &WanRouteEvent {
-                owner: "any".to_string(),
+                owner: RouteOwner::Netns("any".to_string()),
                 family: IpFamily::Ipv4,
                 kind: WanRouteEventKind::Upserted,
             }

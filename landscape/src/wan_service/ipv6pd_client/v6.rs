@@ -443,7 +443,7 @@ async fn clear_active_pd_prefix(
         remove_ip_route(&status.actual_prefix, iface_name);
     }
 
-    route_service.remove_ipv6_wan_route(iface_name).await;
+    route_service.remove_ipv6_link_route(link_id).await;
     addr_binding.unbind_ipv6(ifindex);
     if let Some(wan_addr) = current_wan_addr.take() {
         del_iface_ip(wan_addr, 128, iface_name);
@@ -844,7 +844,7 @@ async fn handle_packet(
                                 info.iface_ip = IpAddr::V6(wan_addr);
                             }
                             info.gateway_ip = IpAddr::V6(ipv6addr);
-                            route_service.insert_ipv6_wan_route(iface_name, info).await;
+                            route_service.insert_ipv6_link_route(link_id, info).await;
                             replace_ip_route(
                                 &ia_prefix,
                                 ipv6addr,

@@ -16,6 +16,8 @@ use landscape_common::wan_service::addr_binding::WanAddrBinding;
 
 use crate::sys_service::route::IpRouteService;
 
+use uuid::Uuid;
+
 const PPPD_RETRY_BASE_SECS: u64 = 4;
 const PPPD_RETRY_MAX_SECS: u64 = 10 * 60;
 const PPPD_STARTUP_TIMEOUT_SECS: u64 = 90;
@@ -111,14 +113,16 @@ pub(crate) trait PppRouteSink: Send + Sync {
 pub(crate) struct SystemRouteSink {
     route_service: IpRouteService,
     addr_binding: Arc<dyn WanAddrBinding>,
+    link_id: Uuid,
 }
 
 impl SystemRouteSink {
     pub(crate) fn new(
         route_service: IpRouteService,
         addr_binding: Arc<dyn WanAddrBinding>,
+        link_id: Uuid,
     ) -> Self {
-        Self { route_service, addr_binding }
+        Self { route_service, addr_binding, link_id }
     }
 }
 
@@ -128,8 +132,8 @@ impl PppRouteSink for SystemRouteSink {
         self.addr_binding.bind_ipv4(ifindex, local, Some(peer), mask, None);
     }
 
-    async fn insert_wan_route(&self, iface: &str, info: RouteTargetInfo) {
-        self.route_service.insert_ipv4_wan_route(iface, info).await;
+    async fn insert_wan_route(&self, _iface: &str, info: RouteTargetInfo) {
+        self.route_service.insert_ipv4_link_route(self.link_id, info).await;
     }
 
     async fn insert_lan_route(&self, iface: &str, info: LanRouteInfo) {
@@ -150,8 +154,8 @@ impl PppRouteSink for SystemRouteSink {
         LD_ALL_ROUTERS.del_route_by_iface(iface).await;
     }
 
-    async fn remove_wan_route(&self, iface: &str) {
-        self.route_service.remove_ipv4_wan_route(iface).await;
+    async fn remove_wan_route(&self, _iface: &str) {
+        self.route_service.remove_ipv4_link_route(self.link_id).await;
     }
 
     async fn remove_lan_route(&self, iface: &str) {
@@ -167,9 +171,10 @@ impl SystemPppdEnv {
     pub(crate) fn new(
         route_service: IpRouteService,
         addr_binding: Arc<dyn WanAddrBinding>,
+        link_id: Uuid,
     ) -> Self {
         Self {
-            sink: Arc::new(SystemRouteSink::new(route_service, addr_binding)),
+            sink: Arc::new(SystemRouteSink::new(route_service, addr_binding, link_id)),
         }
     }
 

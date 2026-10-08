@@ -6,6 +6,7 @@ use std::{
 };
 
 use tokio::time::Instant;
+use uuid::Uuid;
 
 use super::v4_raw_packet::AdaptiveDhcpV4Socket;
 use crate::sys_service::route::IpRouteService;
@@ -191,6 +192,7 @@ impl DhcpState {
     hostname,
     route_service,
     addr_binding,
+    link_id,
     session
 ))]
 #[allow(clippy::too_many_arguments)]
@@ -204,6 +206,7 @@ pub async fn dhcp_v4_client(
     default_router: bool,
     route_service: IpRouteService,
     addr_binding: Arc<dyn WanAddrBinding>,
+    link_id: Uuid,
     session: Option<LinkStateHandle>,
 ) {
     service_status.just_change_status(ServiceStatus::Staring);
@@ -273,7 +276,7 @@ pub async fn dhcp_v4_client(
                     Ok(packet) => {
                         let need_reset_time = handle_packet(&mut status, packet,
                             &mut ip_arg, default_router, &iface_name, ifindex, &route_service,
-                            addr_binding.as_ref(), &mac_addr).await;
+                            addr_binding.as_ref(), &mac_addr, link_id).await;
 
                         if matches!(status, DhcpState::Bound { .. }) {
                             connect_failure_count = 0;
@@ -315,7 +318,7 @@ pub async fn dhcp_v4_client(
     if default_router {
         LD_ALL_ROUTERS.del_route_by_iface(&iface_name).await;
     }
-    route_service.remove_ipv4_wan_route(&iface_name).await;
+    route_service.remove_ipv4_link_route(link_id).await;
     route_service.remove_ipv4_lan_route(&iface_name).await;
 
     if !service_status.is_stop() {
@@ -486,6 +489,7 @@ async fn handle_packet(
     route_service: &IpRouteService,
     addr_binding: &dyn WanAddrBinding,
     mac_addr: &MacAddr,
+    link_id: Uuid,
 ) -> bool {
     let (dhcp, _msg_addr) = packet;
     if dhcp.opcode() != DhcpV4OpCode::BootReply {
@@ -580,6 +584,7 @@ async fn handle_packet(
                             route_service,
                             addr_binding,
                             mac_addr,
+                            link_id,
                         )
                         .await;
 
@@ -625,6 +630,7 @@ async fn bind_ipv4(
     route_service: &IpRouteService,
     addr_binding: &dyn WanAddrBinding,
     mac_addr: &MacAddr,
+    link_id: Uuid,
 ) -> DhcpState {
     if let Some(args) = ip_arg.take()
         && let Err(result) = std::process::Command::new("ip").args(&args).output()
@@ -675,8 +681,8 @@ async fn bind_ipv4(
 
     if let Some(router_ip) = gateway_ip {
         route_service
-            .insert_ipv4_wan_route(
-                iface_name,
+            .insert_ipv4_link_route(
+                link_id,
                 RouteTargetInfo {
                     ifindex,
                     weight: 1,

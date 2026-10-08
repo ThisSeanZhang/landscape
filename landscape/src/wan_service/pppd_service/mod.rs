@@ -85,9 +85,6 @@ pub(crate) async fn create_pppd_thread(
     });
 }
 
-/// Start one pppd session on behalf of a WAN link service: builds the
-/// system env / config store (private to this module) and drives
-/// [`create_pppd_thread`].
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn run_pppd_for_link(
     attach_iface_name: String,
@@ -96,9 +93,10 @@ pub(crate) async fn run_pppd_for_link(
     service_status: ServiceHandle,
     route_service: IpRouteService,
     addr_binding: Arc<dyn WanAddrBinding>,
+    link_id: uuid::Uuid,
     session: Option<LinkStateHandle>,
 ) {
-    let env: Arc<dyn PppdEnv> = Arc::new(SystemPppdEnv::new(route_service, addr_binding));
+    let env: Arc<dyn PppdEnv> = Arc::new(SystemPppdEnv::new(route_service, addr_binding, link_id));
     let config_store: Arc<dyn PppdConfigStore> = Arc::new(SystemPppdConfigStore);
     create_pppd_thread(
         attach_iface_name,

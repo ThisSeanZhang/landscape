@@ -6,7 +6,9 @@ use std::{
 use landscape_common::{
     ddns::IpFamily,
     flow::{FlowTarget, WeightedFlowTarget, config::FlowConfig},
-    sys_service::route_service::{LanIPv6RouteKey, LanRouteInfo, LanRouteMode, RouteTargetInfo},
+    sys_service::route_service::{
+        LanIPv6RouteKey, LanRouteInfo, LanRouteMode, RouteOwner, RouteTargetInfo,
+    },
 };
 use uuid::Uuid;
 
@@ -72,25 +74,26 @@ fn wan_route_events_only_fire_on_real_changes() {
         let service = test_used_ip_route();
         let mut events = service.subscribe_wan_route_events();
         let route = ipv4_wan_route("wan0", Ipv4Addr::new(198, 51, 100, 10));
+        let owner = RouteOwner::Link(Uuid::nil());
 
-        service.insert_ipv4_wan_route("wan0", route.clone()).await;
+        service.insert_ipv4_wan_route(&owner, route.clone()).await;
         assert_eq!(
             events.recv().await.unwrap(),
             WanRouteEvent {
-                owner: "wan0".to_string(),
+                owner: owner.clone(),
                 family: IpFamily::Ipv4,
                 kind: WanRouteEventKind::Upserted,
             }
         );
 
-        service.insert_ipv4_wan_route("wan0", route).await;
+        service.insert_ipv4_wan_route(&owner, route).await;
         assert!(tokio::time::timeout(Duration::from_millis(50), events.recv()).await.is_err());
 
-        service.remove_ipv4_wan_route("wan0").await;
+        service.remove_ipv4_wan_route(&owner).await;
         assert_eq!(
             events.recv().await.unwrap(),
             WanRouteEvent {
-                owner: "wan0".to_string(),
+                owner,
                 family: IpFamily::Ipv4,
                 kind: WanRouteEventKind::Removed,
             }
@@ -104,12 +107,17 @@ fn remove_all_wan_docker_notifies_and_refreshes_default_router() {
         let service = test_used_ip_route();
         let mut events = service.subscribe_wan_route_events();
 
+        let docker_owner = RouteOwner::Netns("docker0".to_string());
+        let wan_owner = RouteOwner::Link(Uuid::nil());
         let mut docker_route = ipv4_wan_route("docker0", Ipv4Addr::new(172, 17, 0, 1));
         docker_route.is_docker = true;
         docker_route.default_route = false;
-        service.insert_ipv4_wan_route("docker0", docker_route).await;
+        service.insert_ipv4_wan_route(&docker_owner, docker_route).await;
         service
-            .insert_ipv4_wan_route("wan0", ipv4_wan_route("wan0", Ipv4Addr::new(198, 51, 100, 1)))
+            .insert_ipv4_wan_route(
+                &wan_owner,
+                ipv4_wan_route("wan0", Ipv4Addr::new(198, 51, 100, 1)),
+            )
             .await;
         let _ = events.recv().await; // docker0 upserted
         let _ = events.recv().await; // wan0 upserted
@@ -119,14 +127,14 @@ fn remove_all_wan_docker_notifies_and_refreshes_default_router() {
         assert_eq!(
             events.recv().await.unwrap(),
             WanRouteEvent {
-                owner: "docker0".to_string(),
+                owner: docker_owner.clone(),
                 family: IpFamily::Ipv4,
                 kind: WanRouteEventKind::Removed,
             }
         );
         assert!(tokio::time::timeout(Duration::from_millis(50), events.recv()).await.is_err());
-        assert!(service.get_ipv4_wan_route("docker0").await.is_none());
-        assert!(service.get_ipv4_wan_route("wan0").await.is_some());
+        assert!(service.get_ipv4_wan_route(&docker_owner).await.is_none());
+        assert!(service.get_ipv4_wan_route(&wan_owner).await.is_some());
     });
 }
 
@@ -552,11 +560,25 @@ fn flow_config(flow_id: u32, enable: bool, targets: Vec<WeightedFlowTarget>) -> 
     }
 }
 
+fn named_uuid(name: &str) -> Uuid {
+    let (mut h1, mut h2): (u64, u64) = (0xcbf29ce484222325, 0x9e3779b97f4a7c15);
+    for b in name.as_bytes() {
+        h1 ^= *b as u64;
+        h1 = h1.wrapping_mul(0x100000001b3);
+        h2 = h2.rotate_left(5) ^ (*b as u64);
+    }
+    Uuid::from_u64_pair(h1, h2)
+}
+
 fn iface_target(name: &str, weight: u32) -> WeightedFlowTarget {
     WeightedFlowTarget::new(
-        FlowTarget::Interface { link_id: uuid::Uuid::nil(), name: name.to_string() },
+        FlowTarget::Interface { name: name.to_string(), link_id: named_uuid(name) },
         weight,
     )
+}
+
+fn link_owner(name: &str) -> RouteOwner {
+    RouteOwner::Link(named_uuid(name))
 }
 
 fn netns_target(container_name: &str, weight: u32) -> WeightedFlowTarget {
@@ -569,8 +591,8 @@ fn netns_target(container_name: &str, weight: u32) -> WeightedFlowTarget {
 #[test]
 fn collect_refresh_enabled_flow_with_matching_targets() {
     let mut wan_infos = WanRoutesByOwner::new();
-    wan_infos.insert("wan0".to_string(), ipv4_wan_route("wan0", Ipv4Addr::new(198, 51, 100, 1)));
-    wan_infos.insert("wan1".to_string(), ipv4_wan_route("wan1", Ipv4Addr::new(203, 0, 113, 1)));
+    wan_infos.insert(link_owner("wan0"), ipv4_wan_route("wan0", Ipv4Addr::new(198, 51, 100, 1)));
+    wan_infos.insert(link_owner("wan1"), ipv4_wan_route("wan1", Ipv4Addr::new(203, 0, 113, 1)));
 
     let configs =
         vec![flow_config(5, true, vec![iface_target("wan0", 3), iface_target("wan1", 1)])];
@@ -588,7 +610,7 @@ fn collect_refresh_enabled_flow_with_matching_targets() {
 #[test]
 fn collect_refresh_disabled_flow_yields_empty() {
     let mut wan_infos = WanRoutesByOwner::new();
-    wan_infos.insert("wan0".to_string(), ipv4_wan_route("wan0", Ipv4Addr::new(198, 51, 100, 1)));
+    wan_infos.insert(link_owner("wan0"), ipv4_wan_route("wan0", Ipv4Addr::new(198, 51, 100, 1)));
 
     let configs = vec![flow_config(5, false, vec![iface_target("wan0", 1)])];
 
@@ -613,7 +635,7 @@ fn collect_refresh_enabled_flow_with_unresolved_targets_yields_empty() {
 #[test]
 fn collect_refresh_partial_match_keeps_only_resolved() {
     let mut wan_infos = WanRoutesByOwner::new();
-    wan_infos.insert("wan0".to_string(), ipv4_wan_route("wan0", Ipv4Addr::new(198, 51, 100, 1)));
+    wan_infos.insert(link_owner("wan0"), ipv4_wan_route("wan0", Ipv4Addr::new(198, 51, 100, 1)));
 
     let configs =
         vec![flow_config(5, true, vec![iface_target("wan0", 3), iface_target("missing_wan", 1)])];
@@ -627,9 +649,57 @@ fn collect_refresh_partial_match_keeps_only_resolved() {
 }
 
 #[test]
+fn collect_refresh_resolves_by_link_id_with_stale_name() {
+    let mut wan_infos = WanRoutesByOwner::new();
+    let uuid = named_uuid("wan0");
+    wan_infos
+        .insert(RouteOwner::Link(uuid), ipv4_wan_route("wan0", Ipv4Addr::new(198, 51, 100, 1)));
+
+    let stale_target = WeightedFlowTarget::new(
+        FlowTarget::Interface {
+            name: "stale-renamed-iface".to_string(),
+            link_id: uuid,
+        },
+        2,
+    );
+    let configs = vec![flow_config(7, true, vec![stale_target])];
+
+    let result = collect_target_refresh_result(&configs, &wan_infos);
+
+    let targets = result.get(&7).expect("flow_id 7 should be present");
+    assert_eq!(targets.len(), 1, "a correct link_id must resolve regardless of its stale name");
+    assert_eq!(
+        targets[0].0.iface_name, "wan0",
+        "the resolved iface comes from the registered route"
+    );
+}
+
+#[test]
+fn collect_refresh_netns_owner_does_not_satisfy_interface_target() {
+    let mut wan_infos = WanRoutesByOwner::new();
+    wan_infos.insert(
+        RouteOwner::Netns("wan0".to_string()),
+        ipv4_wan_route("wan0", Ipv4Addr::new(198, 51, 100, 1)),
+    );
+
+    let configs = vec![flow_config(9, true, vec![iface_target("wan0", 1)])];
+
+    let result = collect_target_refresh_result(&configs, &wan_infos);
+
+    let targets = result.get(&9).expect("flow_id 9 should be present");
+    assert!(
+        targets.is_empty(),
+        "an Interface target must not resolve through a Netns owner with the same display name"
+    );
+}
+
+#[test]
 fn collect_refresh_netns_target_resolves_by_container_name() {
     let mut wan_infos = WanRoutesByOwner::new();
-    wan_infos.insert("ns0".to_string(), ipv4_wan_route("ns0", Ipv4Addr::new(10, 0, 0, 1)));
+    wan_infos.insert(
+        RouteOwner::Netns("ns0".to_string()),
+        ipv4_wan_route("ns0", Ipv4Addr::new(10, 0, 0, 1)),
+    );
 
     let configs = vec![flow_config(3, true, vec![netns_target("ns0", 5)])];
 
@@ -644,7 +714,7 @@ fn collect_refresh_netns_target_resolves_by_container_name() {
 #[test]
 fn collect_refresh_multiple_flows_independent() {
     let mut wan_infos = WanRoutesByOwner::new();
-    wan_infos.insert("wan0".to_string(), ipv4_wan_route("wan0", Ipv4Addr::new(198, 51, 100, 1)));
+    wan_infos.insert(link_owner("wan0"), ipv4_wan_route("wan0", Ipv4Addr::new(198, 51, 100, 1)));
 
     let configs = vec![
         flow_config(1, true, vec![iface_target("wan0", 2)]),

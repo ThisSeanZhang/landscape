@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use landscape_common::{
     config::FlowId,
     flow::{FlowTarget, config::FlowConfig},
-    sys_service::route_service::{RouteTargetInfo, dataplane::RouteTableDataplane},
+    sys_service::route_service::{RouteOwner, RouteTargetInfo, dataplane::RouteTableDataplane},
 };
 
 use super::{IpRouteService, WanRoutesByOwner};
@@ -20,8 +20,10 @@ fn find_route_target<'a>(
     target: &FlowTarget,
 ) -> Option<&'a RouteTargetInfo> {
     match target {
-        FlowTarget::Interface { name, .. } => wan_infos.get(name),
-        FlowTarget::Netns { container_name } => wan_infos.get(container_name),
+        FlowTarget::Interface { link_id, .. } => wan_infos.get(&RouteOwner::Link(*link_id)),
+        FlowTarget::Netns { container_name } => {
+            wan_infos.get(&RouteOwner::Netns(container_name.clone()))
+        }
     }
 }
 
@@ -50,6 +52,27 @@ pub(super) fn collect_target_refresh_result(
     }
 
     result
+}
+
+fn warn_fully_unresolved_flows(
+    flow_configs: &[FlowConfig],
+    ipv4_result: &HashMap<FlowId, Vec<(RouteTargetInfo, u32)>>,
+    ipv6_result: &HashMap<FlowId, Vec<(RouteTargetInfo, u32)>>,
+) {
+    for flow_config in flow_configs {
+        if !flow_config.enable || flow_config.flow_targets.is_empty() {
+            continue;
+        }
+        let unresolved = |result: &HashMap<FlowId, Vec<_>>| {
+            result.get(&flow_config.flow_id).is_none_or(|t| t.is_empty())
+        };
+        if unresolved(ipv4_result) && unresolved(ipv6_result) {
+            tracing::warn!(
+                flow_id = flow_config.flow_id,
+                "flow targets resolve to no WAN route in either address family; the flow's traffic is dropped until its link returns"
+            );
+        }
+    }
 }
 
 fn apply_ipv4_target_refresh_result(
@@ -87,16 +110,15 @@ impl IpRouteService {
     /// current WAN route state and sync them into the eBPF maps.
     pub async fn sync_flow_wan_targets(&self, flow_configs: &[FlowConfig]) {
         let ipv4_wan_infos = self.clone_ipv4_wan_infos().await;
-        apply_ipv4_target_refresh_result(
-            &*self.dataplane,
-            collect_target_refresh_result(flow_configs, &ipv4_wan_infos),
-        );
+        let ipv4_result = collect_target_refresh_result(flow_configs, &ipv4_wan_infos);
 
         let ipv6_wan_infos = self.clone_ipv6_wan_infos().await;
-        apply_ipv6_target_refresh_result(
-            &*self.dataplane,
-            collect_target_refresh_result(flow_configs, &ipv6_wan_infos),
-        );
+        let ipv6_result = collect_target_refresh_result(flow_configs, &ipv6_wan_infos);
+
+        warn_fully_unresolved_flows(flow_configs, &ipv4_result, &ipv6_result);
+
+        apply_ipv4_target_refresh_result(&*self.dataplane, ipv4_result);
+        apply_ipv6_target_refresh_result(&*self.dataplane, ipv6_result);
 
         self.dataplane.invalidate_lan_cache();
     }

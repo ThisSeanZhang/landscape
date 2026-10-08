@@ -1,11 +1,12 @@
-//! WAN route state: one active [`RouteTargetInfo`] per owner (interface or
+//! WAN route state: one active [`RouteTargetInfo`] per owner (link or
 //! container), default-router resolution, and change broadcasting.
 
 use landscape_common::{
     ddns::IpFamily,
-    sys_service::route_service::{RouteTargetInfo, dataplane::RouteTableDataplane},
+    sys_service::route_service::{RouteOwner, RouteTargetInfo, dataplane::RouteTableDataplane},
 };
 use tokio::sync::broadcast;
+use uuid::Uuid;
 
 use super::{IpRouteService, WanRoutesByOwner, clone_locked_state};
 
@@ -22,21 +23,21 @@ pub enum WanRouteEventKind {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WanRouteEvent {
-    pub owner: String,
+    pub owner: RouteOwner,
     pub family: IpFamily,
     pub kind: WanRouteEventKind,
 }
 
 fn reconcile_wan_route(
     routes: &mut WanRoutesByOwner,
-    key: &str,
+    owner: &RouteOwner,
     info: RouteTargetInfo,
 ) -> WanRouteUpdate {
-    match routes.get(key) {
+    match routes.get(owner) {
         Some(old) if old == &info => WanRouteUpdate::Noop,
         _ => {
             let mut refresh_default_router = info.default_route;
-            if let Some(old_info) = routes.insert(key.to_string(), info) {
+            if let Some(old_info) = routes.insert(owner.clone(), info) {
                 refresh_default_router = refresh_default_router || old_info.default_route;
             }
             WanRouteUpdate::Changed { refresh_default_router }
@@ -79,9 +80,13 @@ impl IpRouteService {
         clone_locked_state(&self.ipv6_wan_ifaces).await
     }
 
-    fn notify_wan_route_change(&self, owner: &str, family: IpFamily, kind: WanRouteEventKind) {
-        let _ =
-            self.wan_route_events.send(WanRouteEvent { owner: owner.to_string(), family, kind });
+    fn notify_wan_route_change(
+        &self,
+        owner: &RouteOwner,
+        family: IpFamily,
+        kind: WanRouteEventKind,
+    ) {
+        let _ = self.wan_route_events.send(WanRouteEvent { owner: owner.clone(), family, kind });
     }
 
     async fn apply_ipv4_wan_route_update(&self, update: WanRouteUpdate) {
@@ -112,56 +117,72 @@ impl IpRouteService {
         }
     }
 
-    pub async fn insert_ipv4_wan_route(&self, key: &str, info: RouteTargetInfo) {
+    pub async fn insert_ipv4_wan_route(&self, owner: &RouteOwner, info: RouteTargetInfo) {
         let update = {
             let mut lock = self.ipv4_wan_ifaces.write().await;
-            reconcile_wan_route(&mut lock, key, info)
+            reconcile_wan_route(&mut lock, owner, info)
         };
         let changed = !matches!(update, WanRouteUpdate::Noop);
 
         self.apply_ipv4_wan_route_update(update).await;
         if changed {
-            self.notify_wan_route_change(key, IpFamily::Ipv4, WanRouteEventKind::Upserted);
+            self.notify_wan_route_change(owner, IpFamily::Ipv4, WanRouteEventKind::Upserted);
         }
     }
 
-    pub async fn insert_ipv6_wan_route(&self, key: &str, info: RouteTargetInfo) {
+    pub async fn insert_ipv6_wan_route(&self, owner: &RouteOwner, info: RouteTargetInfo) {
         let update = {
             let mut lock = self.ipv6_wan_ifaces.write().await;
-            reconcile_wan_route(&mut lock, key, info)
+            reconcile_wan_route(&mut lock, owner, info)
         };
         let changed = !matches!(update, WanRouteUpdate::Noop);
 
         self.apply_ipv6_wan_route_update(update).await;
         if changed {
-            self.notify_wan_route_change(key, IpFamily::Ipv6, WanRouteEventKind::Upserted);
+            self.notify_wan_route_change(owner, IpFamily::Ipv6, WanRouteEventKind::Upserted);
         }
     }
 
-    pub async fn remove_ipv4_wan_route(&self, key: &str) {
-        let removed = self.ipv4_wan_ifaces.write().await.remove(key);
+    pub async fn remove_ipv4_wan_route(&self, owner: &RouteOwner) {
+        let removed = self.ipv4_wan_ifaces.write().await.remove(owner);
         let had_removed = removed.is_some();
         self.apply_removed_ipv4_wan_route(removed).await;
         if had_removed {
-            self.notify_wan_route_change(key, IpFamily::Ipv4, WanRouteEventKind::Removed);
+            self.notify_wan_route_change(owner, IpFamily::Ipv4, WanRouteEventKind::Removed);
         }
     }
 
-    pub async fn remove_ipv6_wan_route(&self, key: &str) {
-        let removed = self.ipv6_wan_ifaces.write().await.remove(key);
+    pub async fn remove_ipv6_wan_route(&self, owner: &RouteOwner) {
+        let removed = self.ipv6_wan_ifaces.write().await.remove(owner);
         let had_removed = removed.is_some();
         self.apply_removed_ipv6_wan_route(removed).await;
         if had_removed {
-            self.notify_wan_route_change(key, IpFamily::Ipv6, WanRouteEventKind::Removed);
+            self.notify_wan_route_change(owner, IpFamily::Ipv6, WanRouteEventKind::Removed);
         }
     }
 
-    pub async fn get_ipv4_wan_route(&self, key: &str) -> Option<RouteTargetInfo> {
-        self.ipv4_wan_ifaces.read().await.get(key).cloned()
+    pub async fn insert_ipv4_link_route(&self, link_id: Uuid, info: RouteTargetInfo) {
+        self.insert_ipv4_wan_route(&RouteOwner::Link(link_id), info).await;
     }
 
-    pub async fn get_ipv6_wan_route(&self, key: &str) -> Option<RouteTargetInfo> {
-        self.ipv6_wan_ifaces.read().await.get(key).cloned()
+    pub async fn insert_ipv6_link_route(&self, link_id: Uuid, info: RouteTargetInfo) {
+        self.insert_ipv6_wan_route(&RouteOwner::Link(link_id), info).await;
+    }
+
+    pub async fn remove_ipv4_link_route(&self, link_id: Uuid) {
+        self.remove_ipv4_wan_route(&RouteOwner::Link(link_id)).await;
+    }
+
+    pub async fn remove_ipv6_link_route(&self, link_id: Uuid) {
+        self.remove_ipv6_wan_route(&RouteOwner::Link(link_id)).await;
+    }
+
+    pub async fn get_ipv4_wan_route(&self, owner: &RouteOwner) -> Option<RouteTargetInfo> {
+        self.ipv4_wan_ifaces.read().await.get(owner).cloned()
+    }
+
+    pub async fn get_ipv6_wan_route(&self, owner: &RouteOwner) -> Option<RouteTargetInfo> {
+        self.ipv6_wan_ifaces.read().await.get(owner).cloned()
     }
 
     pub async fn get_all_ipv4_wan_routes(&self) -> WanRoutesByOwner {

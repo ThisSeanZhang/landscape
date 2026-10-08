@@ -32,6 +32,7 @@ pub(super) async fn run(
     session: Option<LinkStateHandle>,
 ) {
     let attach_iface_name = runtime.attach_iface_name.clone();
+    let link_id = runtime.id;
     let v4_enable = runtime.v4.enable;
     let v4_model = runtime.v4.model.clone();
     let pd_enable = runtime.pd.enable;
@@ -56,6 +57,7 @@ pub(super) async fn run(
                 } => {
                     run_static_v4(
                         iface,
+                        link_id,
                         ipv4,
                         ipv4_mask,
                         default_router,
@@ -70,6 +72,7 @@ pub(super) async fn run(
                 WanLinkV4Model::DhcpClient { hostname, default_router, custome_opts: _ } => {
                     run_dhcp_v4(
                         iface,
+                        link_id,
                         hostname,
                         default_router,
                         service_status,
@@ -98,6 +101,7 @@ pub(super) async fn run(
                 service_status,
                 route_service,
                 addr_binding,
+                link_id,
                 session,
             )
             .await;
@@ -114,6 +118,7 @@ pub(super) async fn run(
                 v4_enable && matches!(v4_model, WanLinkV4Model::Ipcp { default_router: true });
             run_pppoe_native(
                 iface,
+                link_id,
                 username,
                 password,
                 requested_mru,
@@ -154,6 +159,7 @@ async fn run_idle_until_stopped(
 #[allow(clippy::too_many_arguments)]
 async fn run_static_v4(
     iface: LandscapeInterface,
+    link_id: uuid::Uuid,
     ipv4: Option<Ipv4Addr>,
     ipv4_mask: Option<u8>,
     default_router: bool,
@@ -215,7 +221,7 @@ async fn run_static_v4(
             default_route: default_router,
             gateway_ip: IpAddr::V4(default_router_ip),
         };
-        route_service.insert_ipv4_wan_route(&iface_name, info).await;
+        route_service.insert_ipv4_link_route(link_id, info).await;
     }
 
     if let Some(session) = session.as_ref() {
@@ -239,7 +245,7 @@ async fn run_static_v4(
     if default_router {
         LD_ALL_ROUTERS.del_route_by_iface(&iface_name).await;
     }
-    route_service.remove_ipv4_wan_route(&iface_name).await;
+    route_service.remove_ipv4_link_route(link_id).await;
     route_service.remove_ipv4_lan_route(&iface_name).await;
     addr_binding.unbind_ipv4(iface.index);
     service_status.just_change_status(ServiceStatus::Stop);
@@ -248,6 +254,7 @@ async fn run_static_v4(
 #[allow(clippy::too_many_arguments)]
 async fn run_dhcp_v4(
     iface: LandscapeInterface,
+    link_id: uuid::Uuid,
     hostname: Option<String>,
     default_router: bool,
     service_status: ServiceHandle,
@@ -267,6 +274,7 @@ async fn run_dhcp_v4(
             default_router,
             route_service,
             addr_binding,
+            link_id,
             session,
         )
         .await;
@@ -278,6 +286,7 @@ async fn run_dhcp_v4(
 #[allow(clippy::too_many_arguments)]
 async fn run_pppoe_native(
     iface: LandscapeInterface,
+    link_id: uuid::Uuid,
     username: String,
     password: String,
     requested_mru: u16,
@@ -292,6 +301,7 @@ async fn run_pppoe_native(
 ) {
     if let Some(mac_addr) = iface.mac {
         let mut config = crate::wan_service::pppoe_client::PPPoEClientConfig::new(
+            link_id,
             iface.index,
             iface.name,
             mac_addr,

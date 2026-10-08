@@ -24,7 +24,7 @@ use std::{collections::HashMap, net::IpAddr, sync::Arc};
 
 use arc_swap::ArcSwap;
 use landscape_common::sys_service::route_service::{
-    LanIPv6RouteKey, LanRouteInfo, RouteTargetInfo,
+    LanIPv6RouteKey, LanRouteInfo, RouteOwner, RouteTargetInfo,
     dataplane::{NoopRouteTableDataplane, RouteTableDataplane},
 };
 use tokio::sync::{RwLock, broadcast};
@@ -32,8 +32,8 @@ use tokio::sync::{RwLock, broadcast};
 pub(crate) type ShareRwLock<T> = Arc<RwLock<T>>;
 // Reachable local addresses grouped by interface index.
 pub(crate) type LocalAddrsByIfindex = HashMap<u32, Arc<Vec<IpAddr>>>;
-// One owner (interface / container) maps to one active WAN route target.
-pub(crate) type WanRoutesByOwner = HashMap<String, RouteTargetInfo>;
+// One owner (link / container) maps to one active WAN route target.
+pub(crate) type WanRoutesByOwner = HashMap<RouteOwner, RouteTargetInfo>;
 // One owner may publish multiple IPv4 LAN routes; same-subnet routes replace each other.
 pub(crate) type Ipv4LanRoutesByOwner = HashMap<String, Vec<LanRouteInfo>>;
 // Each IPv6 LAN route is keyed individually to support precise updates and removals.

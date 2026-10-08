@@ -6,7 +6,10 @@ use bollard::{
 use landscape_common::concurrency::{spawn_task, task_label};
 use landscape_common::docker::DockerTargetEnroll;
 use landscape_common::docker::error::DockerError;
-use landscape_common::{service::ServiceStatus, sys_service::route_service::RouteTargetInfo};
+use landscape_common::{
+    service::ServiceStatus,
+    sys_service::route_service::{RouteOwner, RouteTargetInfo},
+};
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 use tokio::net::{UnixListener, UnixStream};
@@ -441,9 +444,10 @@ pub async fn accept_docker_info(
             tracing::info!("container_name: {container_name:?}");
 
             let (ipv4, ipv6) = RouteTargetInfo::docker_new(ifindex, &container_name);
+            let owner = RouteOwner::Netns(container_name);
 
-            ip_route_service.insert_ipv4_wan_route(&container_name, ipv4).await;
-            ip_route_service.insert_ipv6_wan_route(&container_name, ipv6).await;
+            ip_route_service.insert_ipv4_wan_route(&owner, ipv4).await;
+            ip_route_service.insert_ipv6_wan_route(&owner, ipv6).await;
             ip_route_service.print_wan_ifaces().await;
         }
         Ok(Err(e)) => {
@@ -484,8 +488,9 @@ pub async fn handle_event(
                         //
                         if let Some(name) = attr.get("name") {
                             // tracing::info!("docker stop name: {name}");
-                            ip_route_service.remove_ipv4_wan_route(name).await;
-                            ip_route_service.remove_ipv6_wan_route(name).await;
+                            let owner = RouteOwner::Netns(name.clone());
+                            ip_route_service.remove_ipv4_wan_route(&owner).await;
+                            ip_route_service.remove_ipv6_wan_route(&owner).await;
                         }
                     }
                 }

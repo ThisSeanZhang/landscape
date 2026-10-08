@@ -44,6 +44,7 @@ async fn main() {
                 false,
                 IpRouteService::new(rt.clone().route_table()),
                 rt.wan_addr_binding(),
+                uuid::Uuid::new_v4(),
                 None,
             )
             .await;

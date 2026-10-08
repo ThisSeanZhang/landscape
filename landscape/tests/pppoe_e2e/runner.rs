@@ -76,6 +76,7 @@ pub(super) fn start_client(
     let ns = client_ns.to_string();
     let scenario = scenario.to_string();
     let cfg = PPPoEClientConfig {
+        link_id: uuid::Uuid::new_v4(),
         index: info.index,
         iface_name: info.name.clone(),
         iface_mac: info.mac,

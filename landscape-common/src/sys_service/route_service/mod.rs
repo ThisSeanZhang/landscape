@@ -2,7 +2,17 @@ pub mod dataplane;
 
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
-use crate::{flow::FlowTarget, net::MacAddr};
+use uuid::Uuid;
+
+use crate::net::MacAddr;
+
+/// Identity of a registered WAN route target: a managed WAN link (by
+/// permanent uuid) or a docker container network namespace (by name).
+#[derive(Eq, Hash, PartialEq, Debug, Clone)]
+pub enum RouteOwner {
+    Link(Uuid),
+    Netns(String),
+}
 
 #[derive(Eq, Hash, PartialEq, Debug, Clone)]
 pub struct RouteTargetInfo {
@@ -42,18 +52,6 @@ impl RouteTargetInfo {
                 gateway_ip: IpAddr::V6(Ipv6Addr::UNSPECIFIED),
             },
         )
-    }
-
-    pub fn get_flow_target(&self) -> FlowTarget {
-        if self.is_docker {
-            FlowTarget::Netns { container_name: self.iface_name.clone() }
-        } else {
-            // Runtime join is name-keyed; link_id is resolved on the store path.
-            FlowTarget::Interface {
-                link_id: uuid::Uuid::nil(),
-                name: self.iface_name.clone(),
-            }
-        }
     }
 }
 
