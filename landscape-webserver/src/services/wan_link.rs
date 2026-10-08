@@ -3,7 +3,6 @@ use std::collections::HashMap;
 use axum::extract::{Path, State};
 use landscape_common::api_response::LandscapeApiResp as CommonApiResp;
 use landscape_common::config::ConfigId;
-use landscape_common::config_service::iface::IfaceZoneType;
 use landscape_common::service::ServiceConfigError;
 use landscape_common::service::ServiceStatus;
 use landscape_common::service::controller::{ConfigStoreController, ConfigStoreServiceController};
@@ -85,7 +84,7 @@ async fn create_wan_link(
 ) -> LandscapeApiResult<WanLinkConfig> {
     // The id is always server-assigned; a client-supplied one is ignored.
     payload.id = ConfigId::new_v4();
-    validate_wan_link(&state, &payload, None).await?;
+    validate_wan_link(&payload, None).await?;
     LandscapeApiResp::success(state.wan_link_service.handle_service_config(payload).await?)
 }
 
@@ -106,11 +105,12 @@ async fn update_wan_link(
     Path(id): Path<ConfigId>,
     JsonBody(mut payload): JsonBody<WanLinkConfig>,
 ) -> LandscapeApiResult<WanLinkConfig> {
-    if state.wan_link_service.find_by_id(id).await?.is_none() {
-        Err(ServiceConfigError::NotFound { service_name: "WAN Link" })?
+    let old = state.wan_link_service.find_by_id(id).await?;
+    if old.is_none() {
+        Err(ServiceConfigError::NotFound { service_name: "WAN Link" })?;
     }
     payload.id = id;
-    validate_wan_link(&state, &payload, Some(id)).await?;
+    validate_wan_link(&payload, old.as_ref()).await?;
     LandscapeApiResp::success(state.wan_link_service.handle_service_config(payload).await?)
 }
 
@@ -138,14 +138,14 @@ async fn delete_wan_link(
     LandscapeApiResp::success(state.wan_link_service.delete_and_stop_service(id).await?)
 }
 
-/// Cross-link validation: section-level rules live in
-/// `ValidatableConfig for WanLinkConfig` (store write path); everything
-/// that needs the link set or the iface inventory is checked here.
-/// `exclude_id` skips the link being updated.
+/// Runtime-state (netlink) validation only. Cross-link rules and the WAN
+/// zone check live in `WanLinkRepository`'s `StoreValidator`, injected
+/// into the checked write path; section-level rules live in
+/// `ValidatableConfig for WanLinkConfig`. `old` is the stored config when
+/// updating.
 async fn validate_wan_link(
-    state: &LandscapeApp,
     config: &WanLinkConfig,
-    exclude_id: Option<ConfigId>,
+    old: Option<&WanLinkConfig>,
 ) -> Result<(), ServiceConfigError> {
     if landscape::get_iface_by_name(&config.attach_iface_name).await.is_none() {
         return Err(ServiceConfigError::InvalidConfig {
@@ -153,88 +153,14 @@ async fn validate_wan_link(
         });
     }
 
-    // Legacy ZoneAwareConfig (WanOnly) semantics: links only live on WAN
-    // ifaces; the zone-switch cascade deletes links, keeping both in sync.
-    match state.iface_config_service.get_iface_config(config.attach_iface_name.clone()).await {
-        Some(iface) if iface.zone_type == IfaceZoneType::Wan => {}
-        _ => {
-            return Err(ServiceConfigError::InvalidConfig {
-                reason: format!(
-                    "attach interface '{}' must be in the WAN zone",
-                    config.attach_iface_name
-                ),
-            });
-        }
-    }
-
-    let links = state.wan_link_service.list().await.unwrap_or_default();
-    let others: Vec<&WanLinkConfig> =
-        links.iter().filter(|link| Some(link.id) != exclude_id).collect();
-
-    fn is_ethernet_class(kind: &WanLinkKind) -> bool {
-        !matches!(kind, WanLinkKind::Pppd { .. })
-    }
-
-    for link in &others {
-        if link.attach_iface_name == config.attach_iface_name {
-            // At most one ethernet-class link (ethernet / pppoe_native) per
-            // attach iface; PPPD links may stack alongside.
-            if is_ethernet_class(&config.kind) && is_ethernet_class(&link.kind) {
-                return Err(ServiceConfigError::InvalidConfig {
-                    reason: format!(
-                        "attach interface '{}' already has an ethernet-class WAN link",
-                        config.attach_iface_name
-                    ),
-                });
-            }
-            // Native PPPoE and PPPD cannot share an attach iface (legacy rule).
-            if (matches!(config.kind, WanLinkKind::Pppd { .. })
-                && matches!(link.kind, WanLinkKind::PppoeNative { .. }))
-                || (matches!(config.kind, WanLinkKind::PppoeNative { .. })
-                    && matches!(link.kind, WanLinkKind::Pppd { .. }))
-            {
-                return Err(ServiceConfigError::InvalidConfig {
-                    reason: format!(
-                        "interface '{}' already uses native PPPoE; disable it before enabling PPPD-based PPPoE",
-                        config.attach_iface_name
-                    ),
-                });
-            }
-        }
-
-        if let (
-            WanLinkKind::Pppd { ppp_iface_name, .. },
-            WanLinkKind::Pppd { ppp_iface_name: existing, .. },
-        ) = (&config.kind, &link.kind)
-            && ppp_iface_name == existing
-        {
-            return Err(ServiceConfigError::InvalidConfig {
-                reason: format!("PPPoE interface name '{ppp_iface_name}' is already in use"),
-            });
-        }
-
-        // The attach iface itself must not be another link's ppp device.
-        if let WanLinkKind::Pppd { ppp_iface_name, .. } = &link.kind
-            && *ppp_iface_name == config.attach_iface_name
-        {
-            return Err(ServiceConfigError::InvalidConfig {
-                reason: format!(
-                    "attach interface '{}' cannot be an existing PPP interface",
-                    config.attach_iface_name
-                ),
-            });
-        }
-    }
-
-    // A new ppp device must not collide with a managed or live interface.
+    // A new ppp device must not collide with a live interface; an unchanged
+    // ppp_iface_name is skipped: the live interface is the link's own ppp
+    // device (created by its pppd).
     if let WanLinkKind::Pppd { ppp_iface_name, .. } = &config.kind {
-        let existing_pppd = others.iter().any(|link| {
-            matches!(&link.kind, WanLinkKind::Pppd { ppp_iface_name: n, .. } if n == ppp_iface_name)
+        let unchanged_name = old.is_some_and(|old| {
+            matches!(&old.kind, WanLinkKind::Pppd { ppp_iface_name: n, .. } if n == ppp_iface_name)
         });
-        let managed_iface_exists =
-            state.iface_config_service.get_iface_config(ppp_iface_name.clone()).await.is_some();
-        let live_iface_exists = landscape::get_iface_by_name(ppp_iface_name).await.is_some();
-        if !existing_pppd && (managed_iface_exists || live_iface_exists) {
+        if !unchanged_name && landscape::get_iface_by_name(ppp_iface_name).await.is_some() {
             return Err(ServiceConfigError::InvalidConfig {
                 reason: format!(
                     "PPPoE interface '{ppp_iface_name}' conflicts with an existing interface"

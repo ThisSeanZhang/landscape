@@ -28,6 +28,7 @@ pub enum ServiceKind {
     LanIpv6,
     RouteLan,
     WiFi,
+    WanLink,
 }
 
 impl std::fmt::Display for ServiceKind {
@@ -44,6 +45,7 @@ impl std::fmt::Display for ServiceKind {
             Self::LanIpv6 => write!(f, "LAN IPv6"),
             Self::RouteLan => write!(f, "Route LAN"),
             Self::WiFi => write!(f, "WiFi"),
+            Self::WanLink => write!(f, "WAN Link"),
         }
     }
 }

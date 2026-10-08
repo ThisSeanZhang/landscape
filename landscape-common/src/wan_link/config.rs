@@ -4,6 +4,7 @@ use std::ops::Range;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::config_service::iface::{ServiceKind, ZoneAwareConfig, ZoneRequirement};
 use crate::database::repository::LandscapeDBStore;
 use crate::database::validator::ValidatableConfig;
 use crate::net::MacAddr;
@@ -23,8 +24,10 @@ pub struct WanLinkConfig {
     /// Pure remark; the reference key is the uuid.
     #[serde(default)]
     pub name: String,
-    /// The kernel interface the link rides on (the attach iface for
-    /// ethernet / native PPPoE, the pppX device for pppd).
+    /// The kernel interface the link rides on. Always the underlying
+    /// physical attach iface; for pppd links the pppX device is carried in
+    /// the `Pppd` variant's `ppp_iface_name` (see
+    /// `RuntimeWanLinkConfig::section_iface_name`).
     pub attach_iface_name: String,
     #[serde(default)]
     pub kind: WanLinkKind,
@@ -197,6 +200,18 @@ pub struct WanLinkMssConfig {
     pub clamp_size: Option<u16>,
 }
 
+impl ZoneAwareConfig for WanLinkConfig {
+    fn iface_name(&self) -> &str {
+        &self.attach_iface_name
+    }
+    fn zone_requirement() -> ZoneRequirement {
+        ZoneRequirement::WanOnly
+    }
+    fn service_kind() -> ServiceKind {
+        ServiceKind::WanLink
+    }
+}
+
 impl ServiceKeyProvider for WanLinkConfig {
     fn service_key(&self) -> String {
         self.id.to_string()
@@ -225,8 +240,9 @@ fn validate_nat_range(
     Ok(())
 }
 
-/// Section-level validation (cross-link rules live in the REST handler,
-/// they need store access). Mirrors the legacy per-service validators:
+/// Section-level validation (cross-link rules live in
+/// `WanLinkRepository::validate_cross`, injected into the checked write
+/// path; they need store access). Mirrors the legacy per-service validators:
 /// `IPV6PDConfig::validate`, `MSSClampServiceConfig::validate`,
 /// `NatConfig::validate_range` and `PPPDConfig::validate`.
 impl ValidatableConfig for WanLinkConfig {
