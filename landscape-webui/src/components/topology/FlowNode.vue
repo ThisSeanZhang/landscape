@@ -18,7 +18,7 @@ import { changeColor } from "seemly";
 import { computed, ref } from "vue";
 import { useI18n } from "vue-i18n";
 
-import { stop_and_del_iface_pppd } from "@/api/service_pppd";
+import { stop_and_del_wan_link } from "@/api/service_wan_link";
 import { DevStateType, NetDev } from "@/lib/dev";
 import { IfaceZoneType } from "@landscape-router/types/api/schemas";
 import { formatPackets, formatRate } from "@/lib/util";
@@ -29,15 +29,11 @@ import {
   get_service_status_label,
 } from "@/lib/services";
 import { useDHCPv4ConfigStore } from "@/stores/status_dhcp_v4";
-import { useFirewallConfigStore } from "@/stores/status_firewall";
-import { useIpConfigStore } from "@/stores/status_ipconfig";
-import { useIPv6PDStore } from "@/stores/status_ipv6pd";
 import { useLanIPv6Store } from "@/stores/status_lan_ipv6";
-import { useMSSClampConfigStore } from "@/stores/status_mss_clamp";
-import { useNATConfigStore } from "@/stores/status_nats";
 import { useRouteLanConfigStore } from "@/stores/status_route_lan";
 import { useRouteWanConfigStore } from "@/stores/status_route_wan";
 import { useWifiConfigStore } from "@/stores/status_wifi";
+import { useWanLinkStore } from "@/stores/wan_link";
 import { useIfaceNodeStore } from "@/stores/iface_node";
 import type { IfaceRealtimeStat } from "@landscape-router/types/api/schemas";
 
@@ -71,31 +67,39 @@ const show_pppd_edit_modal = ref(false);
 const show_route_lan_drawer = ref(false);
 const show_route_wan_drawer = ref(false);
 
-const ipConfigStore = useIpConfigStore();
 const dhcpv4ConfigStore = useDHCPv4ConfigStore();
-const natConfigStore = useNATConfigStore();
-const firewallConfigStore = useFirewallConfigStore();
-const ipv6PDStore = useIPv6PDStore();
 const lanIpv6Store = useLanIPv6Store();
 const wifiConfigStore = useWifiConfigStore();
 const routeLanConfigStore = useRouteLanConfigStore();
 const routeWanConfigStore = useRouteWanConfigStore();
-const mssClampConfigStore = useMSSClampConfigStore();
+const wanLinkStore = useWanLinkStore();
 
-const ip_config_status = computed(
-  () => ipConfigStore.GET_STATUS_BY_IFACE_NAME(props.node.name).value,
-);
+// The WAN link backing this node: pppd links resolve by ppp iface name,
+// ethernet-class links by attach iface.
+const node_link = wanLinkStore.RESOLVE_NODE_LINK(props.node.name);
+const link_status = computed(() => {
+  const link = node_link.value;
+  return link === undefined ? undefined : wanLinkStore.status.get(link.id);
+});
+
+const ip_config_status = computed(() => {
+  const link = node_link.value;
+  if (link === undefined || !link.v4.enable || link.v4.model.t === "nothing") {
+    return undefined;
+  }
+  return link_status.value;
+});
 const dhcp_v4_status = computed(
   () => dhcpv4ConfigStore.GET_STATUS_BY_IFACE_NAME(props.node.name).value,
 );
-const nat_status = computed(
-  () => natConfigStore.GET_STATUS_BY_IFACE_NAME(props.node.name).value,
+const nat_status = computed(() =>
+  node_link.value?.nat.enable ? link_status.value : undefined,
 );
-const firewall_status = computed(
-  () => firewallConfigStore.GET_STATUS_BY_IFACE_NAME(props.node.name).value,
+const firewall_status = computed(() =>
+  node_link.value?.firewall.enable ? link_status.value : undefined,
 );
-const ipv6pd_status = computed(
-  () => ipv6PDStore.GET_STATUS_BY_IFACE_NAME(props.node.name).value,
+const ipv6pd_status = computed(() =>
+  node_link.value?.pd.enable ? link_status.value : undefined,
 );
 const lan_ipv6_status = computed(
   () => lanIpv6Store.GET_STATUS_BY_IFACE_NAME(props.node.name).value,
@@ -109,26 +113,29 @@ const route_lan_status = computed(
 const route_wan_status = computed(
   () => routeWanConfigStore.GET_STATUS_BY_IFACE_NAME(props.node.name).value,
 );
-const mss_clamp_status = computed(
-  () => mssClampConfigStore.GET_STATUS_BY_IFACE_NAME(props.node.name).value,
+const mss_clamp_status = computed(() =>
+  node_link.value?.mss.enable ? link_status.value : undefined,
 );
 
 const is_virtual_pppd = computed(() => props.node.virtual);
+const pppd_link = computed(() =>
+  props.node.wan_link?.kind.t === "pppd" ? props.node.wan_link : undefined,
+);
 const is_live_pppd = computed(
   () =>
     !props.node.virtual &&
     props.node.dev_type === "ppp" &&
-    props.node.pppd_config !== undefined,
+    pppd_link.value !== undefined,
 );
 const can_delete_pppd = computed(
   () =>
     (is_virtual_pppd.value || is_live_pppd.value) &&
-    props.node.pppd_config?.enable !== true,
+    pppd_link.value?.v4.enable !== true,
 );
 
 const status_type = computed(() => {
   if (is_virtual_pppd.value) {
-    return props.node.pppd_config?.enable ? "warning" : "default";
+    return pppd_link.value?.v4.enable ? "warning" : "default";
   }
   if (props.node.dev_status.t === DevStateType.Up) {
     return "success";
@@ -141,7 +148,7 @@ const status_type = computed(() => {
 
 const status_text = computed(() => {
   if (is_virtual_pppd.value) {
-    return props.node.pppd_config?.enable
+    return pppd_link.value?.v4.enable
       ? t("pppoe.status_not_dialed")
       : t("pppoe.status_disabled");
   }
@@ -149,10 +156,10 @@ const status_text = computed(() => {
 });
 
 async function delete_pppd_config() {
-  if (props.node.pppd_config === undefined) {
+  if (pppd_link.value === undefined) {
     return;
   }
-  await stop_and_del_iface_pppd(props.node.pppd_config.iface_name);
+  await stop_and_del_wan_link(pppd_link.value.id);
   await refreshGraph();
 }
 
@@ -489,14 +496,14 @@ const node_style = computed(() => ({
               {{ tag }}
             </n-tag>
             <n-tag
-              v-if="(is_virtual_pppd || is_live_pppd) && node.pppd_config"
+              v-if="(is_virtual_pppd || is_live_pppd) && pppd_link"
               size="tiny"
               :type="is_virtual_pppd ? 'warning' : 'default'"
               round
             >
               {{
                 t("pppoe.attach_to", {
-                  iface_name: node.pppd_config.attach_iface_name,
+                  iface_name: pppd_link.attach_iface_name,
                 })
               }}
             </n-tag>
@@ -574,10 +581,10 @@ const node_style = computed(() => ({
       @refresh="refreshGraph"
     />
     <PPPDCreateConfigModal
-      v-if="node.pppd_config !== undefined"
+      v-if="pppd_link !== undefined"
       v-model:show="show_pppd_edit_modal"
-      :attach_iface_name="node.pppd_config.attach_iface_name"
-      :origin_value="node.pppd_config"
+      :attach_iface_name="pppd_link.attach_iface_name"
+      :origin_value="pppd_link"
       @refresh="refreshGraph"
     />
     <IpConfigModal

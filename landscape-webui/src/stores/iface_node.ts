@@ -1,7 +1,7 @@
 import { ifaces } from "@/api/network";
-import { get_all_iface_pppd_config } from "@/api/service_pppd";
+import { get_all_wan_links } from "@/api/service_wan_link";
 import { DevStateType, NetDev } from "@/lib/dev";
-import type { PPPDServiceConfig } from "@/lib/pppd";
+import type { WanLink } from "@/lib/wan_link";
 import { IfaceZoneType } from "@landscape-router/types/api/schemas";
 import * as dagre from "@dagrejs/dagre";
 import { defineStore } from "pinia";
@@ -93,22 +93,26 @@ export function stable_negative_hash(name: string, used: Set<number>): number {
 
 export function merge_pppd_placeholders(
   devs: NetDev[],
-  pppd_configs: PPPDServiceConfig[],
+  wan_links: WanLink[],
 ): NetDev[] {
   const result = [...devs];
   const used_indices = new Set<number>(devs.map((each) => each.index));
 
-  for (const config of pppd_configs) {
-    const live_dev = devs.find((each) => each.name === config.iface_name);
+  for (const link of wan_links) {
+    const ppp_iface_name = link.ppp_iface_name;
+    if (ppp_iface_name === undefined) {
+      continue;
+    }
+    const live_dev = devs.find((each) => each.name === ppp_iface_name);
     if (live_dev !== undefined) {
-      live_dev.pppd_config = config;
+      live_dev.wan_link = link;
       continue;
     }
 
     result.push(
       new NetDev({
-        name: config.iface_name,
-        index: stable_negative_hash(config.iface_name, used_indices),
+        name: ppp_iface_name,
+        index: stable_negative_hash(ppp_iface_name, used_indices),
         mac: undefined,
         perm_mac: undefined,
         dev_type: "ppp",
@@ -119,7 +123,7 @@ export function merge_pppd_placeholders(
         zone_type: IfaceZoneType.wan,
         enable_in_boot: false,
         virtual: true,
-        pppd_config: config,
+        wan_link: link,
       }),
     );
   }
@@ -329,9 +333,14 @@ export const useIfaceNodeStore = defineStore(
   "iface_node",
   () => {
     const net_devs = ref<NetDev[]>([]);
-    const pppd_configs = ref<PPPDServiceConfig[]>([]);
-    const pppd_config_map = computed(
-      () => new Map(pppd_configs.value.map((each) => [each.iface_name, each])),
+    const pppd_links = ref<WanLink[]>([]);
+    const pppd_link_map = computed(
+      () =>
+        new Map(
+          pppd_links.value
+            .filter((each) => each.ppp_iface_name !== undefined)
+            .map((each) => [each.ppp_iface_name as string, each]),
+        ),
     );
 
     const hide_down_dev = ref(false);
@@ -472,12 +481,12 @@ export const useIfaceNodeStore = defineStore(
     );
 
     async function UPDATE_INFO() {
-      const [devs, pppd_configs_result] = await Promise.all([
+      const [devs, wan_links_result] = await Promise.all([
         ifaces(),
-        get_all_iface_pppd_config().catch(() => [] as PPPDServiceConfig[]),
+        get_all_wan_links().catch(() => [] as WanLink[]),
       ]);
-      pppd_configs.value = pppd_configs_result;
-      net_devs.value = merge_pppd_placeholders(devs, pppd_configs_result);
+      pppd_links.value = wan_links_result;
+      net_devs.value = merge_pppd_placeholders(devs, wan_links_result);
     }
 
     /** Merge measured heights; only real changes (> 0.5px) relayout. */
@@ -547,8 +556,8 @@ export const useIfaceNodeStore = defineStore(
 
     return {
       net_devs,
-      pppd_configs,
-      pppd_config_map,
+      pppd_links,
+      pppd_link_map,
       visible_net_devs,
       nodes,
       edges,

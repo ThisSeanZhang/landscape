@@ -9,3 +9,4 @@ pub mod wifi;
 pub mod lan;
 pub mod routing;
 pub mod wan;
+pub mod wan_link;

@@ -1,7 +1,5 @@
 <script setup lang="ts">
 import {
-  get_all_ipv6pd_configs,
-  get_all_ipv6pd_status,
   get_current_ip_prefix_info,
   type LDIAPrefix,
 } from "@/api/service_ipv6pd";
@@ -16,7 +14,7 @@ import {
   shouldResetStalePlannerSelection,
 } from "@/lib/ipv6_planner";
 import { ServiceStatus } from "@/lib/services";
-import type { IPV6PDServiceConfig } from "@/lib/ipv6pd";
+import { useWanLinkStore } from "@/stores/wan_link";
 import type {
   IPv6ServiceMode,
   LanIPv6ServiceConfigV2,
@@ -93,7 +91,9 @@ const draftGroupId = ref("");
 const otherLanConfigsV2 = ref<LanIPv6ServiceConfigV2[]>([]);
 const prefixInfos = ref<Map<string, LDIAPrefix | null>>(new Map());
 const ipv6PdIfaces = ref<Map<string, ServiceStatus>>(new Map());
-const ipv6PdConfigs = ref<IPV6PDServiceConfig[]>([]);
+const ipv6PdConfigs = ref<
+  Array<{ iface_name: string; expected_pd_len: number }>
+>([]);
 const expectedPdLens = ref<Map<string, number>>(new Map());
 const draftGroupState = ref<LanPrefixGroupConfig>();
 const staleSelectionsCleared = ref(false);
@@ -114,7 +114,7 @@ const ipv6PdOptions = computed(() => {
     const statusLabel = status ? ` - ${status.t}` : "";
     return {
       value: config.iface_name,
-      label: `${config.iface_name} /${config.config.expected_pd_len}${statusLabel}`,
+      label: `${config.iface_name} /${config.expected_pd_len}${statusLabel}`,
     };
   });
 });
@@ -601,14 +601,32 @@ function updatePdPoolLen(value: number | null) {
 }
 
 async function searchIpv6Pd() {
-  const [statuses, configs] = await Promise.all([
-    get_all_ipv6pd_status(),
-    get_all_ipv6pd_configs(),
-  ]);
-  ipv6PdIfaces.value = statuses;
-  ipv6PdConfigs.value = configs;
+  const wanLinkStore = useWanLinkStore();
+  await wanLinkStore.UPDATE_INFO();
+  const pd_links = wanLinkStore.links.filter((each) => each.pd.enable);
+  ipv6PdConfigs.value = pd_links.map((link) => ({
+    iface_name: link.section_iface_name(),
+    expected_pd_len: link.pd.expected_pd_len,
+  }));
+  ipv6PdIfaces.value = new Map(
+    pd_links
+      .map(
+        (link) =>
+          [
+            link.section_iface_name(),
+            wanLinkStore.status.get(link.id),
+          ] as const,
+      )
+      .filter(
+        (entry): entry is readonly [string, ServiceStatus] =>
+          entry[1] !== undefined,
+      ),
+  );
   expectedPdLens.value = new Map(
-    configs.map((config) => [config.iface_name, config.config.expected_pd_len]),
+    ipv6PdConfigs.value.map((config) => [
+      config.iface_name,
+      config.expected_pd_len,
+    ]),
   );
 }
 

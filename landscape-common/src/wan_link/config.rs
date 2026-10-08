@@ -5,11 +5,13 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::database::repository::LandscapeDBStore;
+use crate::database::validator::ValidatableConfig;
 use crate::net::MacAddr;
 use crate::net_proto::udp::dhcp::DhcpV4Options;
+use crate::service::ServiceConfigError;
 use crate::service::manager::ServiceKeyProvider;
 use crate::utils::time::get_f64_timestamp;
-use crate::wan_service::pppd::PPPoEPlugin;
+use crate::wan_service::pppd::{PPPDConfig, PPPoEPlugin};
 
 /// One WAN uplink: a link owns its addressing model and the per-link
 /// service sections that used to be separate per-iface config rows
@@ -201,4 +203,85 @@ impl ServiceKeyProvider for WanLinkConfig {
     }
 }
 
-crate::impl_trivial_validatable!(WanLinkConfig);
+fn validate_nat_range(
+    name: &str,
+    range: &Option<Range<u16>>,
+) -> Result<(), ServiceConfigError> {
+    if let Some(range) = range {
+        if range.start == 0 {
+            return Err(ServiceConfigError::InvalidConfig {
+                reason: format!("nat {name} start port must not be 0"),
+            });
+        }
+        if range.start >= range.end {
+            return Err(ServiceConfigError::InvalidConfig {
+                reason: format!(
+                    "nat {name} range invalid: start ({}) must be smaller than end ({})",
+                    range.start, range.end
+                ),
+            });
+        }
+    }
+    Ok(())
+}
+
+/// Section-level validation (cross-link rules live in the REST handler,
+/// they need store access). Mirrors the legacy per-service validators:
+/// `IPV6PDConfig::validate`, `MSSClampServiceConfig::validate`,
+/// `NatConfig::validate_range` and `PPPDConfig::validate`.
+impl ValidatableConfig for WanLinkConfig {
+    fn validate(&self) -> Result<(), ServiceConfigError> {
+        if self.attach_iface_name.is_empty() {
+            return Err(ServiceConfigError::InvalidConfig {
+                reason: "attach_iface_name must not be empty".to_string(),
+            });
+        }
+
+        match &self.kind {
+            WanLinkKind::Ethernet => {}
+            WanLinkKind::Pppd { ppp_iface_name, peer_id, password, ac, plugin } => {
+                crate::wan_service::pppd::validate_ppp_iface_name(ppp_iface_name)?;
+                if ppp_iface_name == &self.attach_iface_name {
+                    return Err(ServiceConfigError::InvalidConfig {
+                        reason: "PPPoE interface name cannot be the same as its attached interface"
+                            .to_string(),
+                    });
+                }
+                // Reuse the legacy pppd field checks (peer_id/password/ac).
+                PPPDConfig {
+                    default_route: false,
+                    peer_id: peer_id.clone(),
+                    password: password.clone(),
+                    ac: ac.clone(),
+                    plugin: plugin.clone(),
+                }
+                .validate()?;
+            }
+            WanLinkKind::PppoeNative { .. } => {}
+        }
+
+        if let Some(expected_pd_len) = self.pd.expected_pd_len
+            && !(56..=64).contains(&expected_pd_len)
+        {
+            return Err(ServiceConfigError::InvalidConfig {
+                reason: format!(
+                    "expected_pd_len ({expected_pd_len}) must be between 56 and 64"
+                ),
+            });
+        }
+
+        if let Some(clamp_size) = self.mss.clamp_size
+            && !(536..=1500).contains(&clamp_size)
+        {
+            return Err(ServiceConfigError::InvalidConfig {
+                reason: format!("clamp_size ({clamp_size}) must be between 536 and 1500"),
+            });
+        }
+
+        validate_nat_range("tcp_range", &self.nat.tcp_range)?;
+        validate_nat_range("udp_range", &self.nat.udp_range)?;
+        validate_nat_range("icmp_in_range", &self.nat.icmp_in_range)?;
+
+        Ok(())
+    }
+}

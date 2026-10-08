@@ -1,13 +1,5 @@
 <script setup lang="ts">
 import { change_zone } from "@/api/network";
-import { del_route_lans } from "@/api/route/lan";
-import { del_route_wans } from "@/api/route/wan";
-import { stop_and_del_iface_dhcp_v4 } from "@/api/service_dhcp_v4";
-import { stop_and_del_iface_firewall } from "@/api/service_firewall";
-import { stop_and_del_lan_ipv6 } from "@/api/service_lan_ipv6";
-import { stop_and_del_iface_config } from "@/api/service_ipconfig";
-import { stop_and_del_iface_ipv6pd } from "@/api/service_ipv6pd";
-import { stop_and_del_iface_nat } from "@/api/service_nat";
 import { IfaceZoneType } from "@landscape-router/types/api/schemas";
 import IfaceDisableGuardModal from "@/components/iface/IfaceDisableGuardModal.vue";
 import { ref } from "vue";

@@ -3,15 +3,12 @@ import { computed, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import ConfigModal from "@/components/common/ConfigModal.vue";
 import Range from "@/components/PortRange.vue";
-import { NatServiceConfig } from "@/lib/nat";
-import {
-  get_iface_nat_config,
-  update_iface_nat_config,
-} from "@/api/service_nat";
-import { useNATConfigStore } from "@/stores/status_nats";
+import { create_wan_link, update_wan_link } from "@/api/service_wan_link";
+import { default_ethernet_link, WanLink } from "@/lib/wan_link";
+import { useWanLinkStore } from "@/stores/wan_link";
 import { IfaceZoneType } from "@landscape-router/types/api/schemas";
 
-let natConfigStore = useNATConfigStore();
+const wanLinkStore = useWanLinkStore();
 const { t } = useI18n();
 const show_model = defineModel<boolean>("show", { required: true });
 const emit = defineEmits(["refresh"]);
@@ -21,28 +18,23 @@ const iface_info = defineProps<{
   zone: IfaceZoneType;
 }>();
 
-const nat_service_config = ref<NatServiceConfig>(
-  new NatServiceConfig({
-    iface_name: iface_info.iface_name,
-  }),
-);
+const link = ref<WanLink>(default_ethernet_link(iface_info.iface_name));
 
 async function on_modal_enter() {
-  try {
-    let config = await get_iface_nat_config(iface_info.iface_name);
-    console.log(config);
-    // iface_service_type.value = config.t;
-    nat_service_config.value = config;
-  } catch (e) {
-    nat_service_config.value = new NatServiceConfig({
-      iface_name: iface_info.iface_name,
-    });
-  }
+  await wanLinkStore.UPDATE_INFO();
+  link.value =
+    wanLinkStore.RESOLVE_NODE_LINK(iface_info.iface_name).value ??
+    default_ethernet_link(iface_info.iface_name);
 }
 
 async function save_config() {
-  let config = await update_iface_nat_config(nat_service_config.value);
-  await natConfigStore.UPDATE_INFO();
+  if (link.value.is_new()) {
+    await create_wan_link(link.value);
+  } else {
+    await update_wan_link(link.value);
+  }
+  await wanLinkStore.UPDATE_INFO();
+  emit("refresh");
   show_model.value = false;
 }
 </script>
@@ -50,21 +42,20 @@ async function save_config() {
 <template>
   <ConfigModal
     v-model:show="show_model"
-    v-model:enabled="nat_service_config.enable"
+    v-model:enabled="link.nat.enable"
     :title="t('nat.service_edit.title')"
     width="600px"
     @after-enter="on_modal_enter"
   >
-    <n-form :model="nat_service_config">
+    <n-form :model="link.nat">
       <n-form-item :label="t('nat.service_edit.tcp_port_range')">
-        <Range v-model:range="nat_service_config.nat_config.tcp_range"> </Range>
+        <Range v-model:range="link.nat.tcp_range"> </Range>
       </n-form-item>
       <n-form-item :label="t('nat.service_edit.udp_port_range')">
-        <Range v-model:range="nat_service_config.nat_config.udp_range"> </Range>
+        <Range v-model:range="link.nat.udp_range"> </Range>
       </n-form-item>
       <n-form-item :label="t('nat.service_edit.icmp_id_range')">
-        <Range v-model:range="nat_service_config.nat_config.icmp_in_range">
-        </Range>
+        <Range v-model:range="link.nat.icmp_in_range"> </Range>
       </n-form-item>
     </n-form>
 

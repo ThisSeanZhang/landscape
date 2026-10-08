@@ -1,105 +1,106 @@
 <script setup lang="ts">
+import { create_wan_link, update_wan_link } from "@/api/service_wan_link";
 import {
-  get_iface_server_config,
-  update_iface_server_config,
-} from "@/api/service_ipconfig";
-import { IfaceIpServiceConfig, IfaceIpMode } from "@/lib/service_ipconfig";
+  apply_ip_form,
+  default_ethernet_link,
+  IpConfigForm,
+  ip_form_from_link,
+  WanIpMode,
+} from "@/lib/wan_link";
 import { computed, ref } from "vue";
 import ConfigModal from "@/components/common/ConfigModal.vue";
 import IpEdit from "../IpEdit.vue";
 import { IfaceZoneType } from "@landscape-router/types/api/schemas";
+import { useWanLinkStore } from "@/stores/wan_link";
 import { useI18n } from "vue-i18n";
 
 const show_model = defineModel<boolean>("show", { required: true });
 const emit = defineEmits(["refresh"]);
 const { t } = useI18n();
+const wanLinkStore = useWanLinkStore();
 
 const iface_info = defineProps<{
   iface_name: string;
   zone: IfaceZoneType;
 }>();
 
-const iface_data = ref<IfaceIpServiceConfig>(
-  new IfaceIpServiceConfig({ iface_name: iface_info.iface_name }),
+const iface_data = ref<IpConfigForm>(
+  new IpConfigForm({ iface_name: iface_info.iface_name }),
 );
 
 const ip_config_options = computed(() => {
   let result = [
     {
       label: t("interface.mode_none"),
-      value: IfaceIpMode.Nothing,
+      value: WanIpMode.Nothing,
     },
     {
       label: t("interface.mode_static"),
-      value: IfaceIpMode.Static,
+      value: WanIpMode.Static,
     },
   ];
   if (iface_info.zone == IfaceZoneType.wan) {
     result.push({
       label: t("interface.mode_pppoe_native"),
-      value: IfaceIpMode.PPPoE,
+      value: WanIpMode.PPPoE,
     });
     result.push({
       label: t("interface.mode_dhcp_client"),
-      value: IfaceIpMode.DHCPClient,
+      value: WanIpMode.DHCPClient,
     });
   }
   return result;
 });
 
 async function on_modal_enter() {
-  try {
-    let config = await get_iface_server_config(iface_info.iface_name);
-    // console.log(config);
-    // iface_service_type.value = config.t;
-    iface_data.value = new IfaceIpServiceConfig(config);
-  } catch (e) {
-    iface_data.value = new IfaceIpServiceConfig({
-      iface_name: iface_info.iface_name,
-    });
-  }
+  await wanLinkStore.UPDATE_INFO();
+  const link = wanLinkStore.RESOLVE_NODE_LINK(iface_info.iface_name).value;
+  iface_data.value = link
+    ? ip_form_from_link(link)
+    : new IpConfigForm({ iface_name: iface_info.iface_name });
 }
 
 async function update_mode() {
-  if (iface_data.value !== undefined) {
-    try {
-      if (
-        iface_data.value.ip_model.t === IfaceIpMode.PPPoE &&
-        iface_data.value.ip_model.ac_name === ""
-      ) {
-        iface_data.value.ip_model.ac_name = null;
-      }
-      let config = await update_iface_server_config(iface_data.value);
-      emit("refresh");
-      show_model.value = false;
-    } catch (error) {}
-  }
+  try {
+    const link =
+      wanLinkStore.RESOLVE_NODE_LINK(iface_info.iface_name).value ??
+      default_ethernet_link(iface_info.iface_name);
+    apply_ip_form(link, iface_data.value);
+    if (link.is_new()) {
+      await create_wan_link(link);
+    } else {
+      await update_wan_link(link);
+    }
+    await wanLinkStore.UPDATE_INFO();
+    emit("refresh");
+    show_model.value = false;
+  } catch (error) {}
 }
 
-function select_ip_model(value: IfaceIpMode) {
-  if (value === IfaceIpMode.Nothing) {
-    iface_data.value.ip_model = { t: IfaceIpMode.Nothing };
-  } else if (value === IfaceIpMode.Static) {
+function select_ip_model(value: WanIpMode) {
+  if (value === WanIpMode.Nothing) {
+    iface_data.value.ip_model = { t: WanIpMode.Nothing };
+  } else if (value === WanIpMode.Static) {
     iface_data.value.ip_model = {
-      t: IfaceIpMode.Static,
+      t: WanIpMode.Static,
       default_router_ip: "0.0.0.0",
       default_router: false,
       ipv4: "0.0.0.0",
       ipv4_mask: 24,
       ipv6: null,
     };
-  } else if (value === IfaceIpMode.PPPoE) {
+  } else if (value === WanIpMode.PPPoE) {
     iface_data.value.ip_model = {
-      t: IfaceIpMode.PPPoE,
+      t: WanIpMode.PPPoE,
       default_router: false,
       username: "",
       password: "",
       mtu: 1492,
       ac_name: null,
     };
-  } else if (value === IfaceIpMode.DHCPClient) {
+  } else if (value === WanIpMode.DHCPClient) {
     iface_data.value.ip_model = {
-      t: IfaceIpMode.DHCPClient,
+      t: WanIpMode.DHCPClient,
       default_router: false,
       hostname: null,
       custome_opts: [],
@@ -128,7 +129,7 @@ function select_ip_model(value: IfaceIpMode) {
       <n-flex style="flex: 1">
         <n-flex
           style="flex: 1"
-          v-if="iface_data.ip_model.t === IfaceIpMode.Static"
+          v-if="iface_data.ip_model.t === WanIpMode.Static"
         >
           <n-form style="flex: 1" :model="iface_data.ip_model" :cols="5">
             <n-grid :cols="5">
@@ -167,7 +168,7 @@ function select_ip_model(value: IfaceIpMode) {
         <n-flex
           vertical
           style="flex: 1"
-          v-else-if="iface_data.ip_model.t === IfaceIpMode.PPPoE"
+          v-else-if="iface_data.ip_model.t === WanIpMode.PPPoE"
         >
           <n-form style="flex: 1" :model="iface_data.ip_model" :cols="5">
             <n-grid :cols="5">
@@ -227,7 +228,7 @@ function select_ip_model(value: IfaceIpMode) {
         <n-flex
           vertical
           style="flex: 1"
-          v-else-if="iface_data.ip_model.t === IfaceIpMode.DHCPClient"
+          v-else-if="iface_data.ip_model.t === WanIpMode.DHCPClient"
         >
           <n-alert type="warning">
             {{ t("interface.dhcp_warn") }}

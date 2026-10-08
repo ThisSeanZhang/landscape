@@ -35,6 +35,7 @@ use crate::services::lan_device::get_lan_device_paths;
 use crate::services::lan_ipv6::get_lan_ipv6_paths;
 use crate::services::routing::get_route_paths;
 use crate::services::wan::get_route_wan_paths;
+use crate::services::wan_link::get_wan_link_paths;
 use crate::services::wifi::get_wifi_service_paths;
 use crate::system::config::get_sys_config_paths;
 
@@ -74,6 +75,7 @@ impl Modify for SecurityAddon {
         (name = "Route", description = "Route tracing and cache management"),
         (name = "Route WAN", description = "WAN route service management"),
         (name = "Route LAN", description = "LAN route service management"),
+        (name = "WAN Link", description = "WAN link service (aggregated per-link WAN services)"),
         (name = "IP Config", description = "Interface IP configuration service"),
         (name = "Client", description = "Current API caller identity lookup"),
         (name = "DHCPv4", description = "DHCPv4 server service"),
@@ -152,6 +154,7 @@ pub fn build_services_openapi_router() -> OpenApiRouter<LandscapeApp> {
         .merge(get_route_paths())
         .merge(get_route_wan_paths())
         .merge(get_route_lan_paths())
+        .merge(get_wan_link_paths())
         .merge(get_client_paths())
         .merge(get_iface_ipconfig_paths())
         .merge(get_dhcp_v4_service_paths())
@@ -344,6 +347,7 @@ pub fn build_full_openapi_spec() -> utoipa::openapi::OpenApi {
                 "Route",
                 "Route WAN",
                 "Route LAN",
+                "WAN Link",
                 "Client",
                 "IP Config",
                 "DHCPv4",

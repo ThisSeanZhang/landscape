@@ -4,12 +4,10 @@ import { FormInst, useMessage } from "naive-ui";
 import { useI18n } from "vue-i18n";
 import { IfaceZoneType } from "@landscape-router/types/api/schemas";
 import ConfigModal from "@/components/common/ConfigModal.vue";
-import { useIPv6PDStore } from "@/stores/status_ipv6pd";
 import {
   get_lan_ipv6_config,
   update_lan_ipv6_config,
 } from "@/api/service_lan_ipv6";
-import { get_all_ipv6pd_configs } from "@/api/service_ipv6pd";
 import type {
   LanIPv6ServiceConfigV2,
   LanPrefixGroupConfig,
@@ -18,9 +16,9 @@ import type {
 import DHCPv6ServerCard from "@/components/dhcp_v6/DHCPv6ServerCard.vue";
 import PrefixGroupCard from "@/components/lan_ipv6/PrefixGroupCard.vue";
 import PrefixGroupEditorModal from "@/components/lan_ipv6/PrefixGroupEditorModal.vue";
+import { useWanLinkStore } from "@/stores/wan_link";
 
 const { t } = useI18n({ useScope: "global" });
-let ipv6PDStore = useIPv6PDStore();
 const message = useMessage();
 
 const show_model = defineModel<boolean>("show", { required: true });
@@ -94,12 +92,12 @@ function allowed_service_kinds_for_type(): ("ra" | "na" | "pd")[] {
 }
 
 async function on_modal_enter() {
-  const pdConfigs = await get_all_ipv6pd_configs().catch(() => []);
+  const wanLinkStore = useWanLinkStore();
+  await wanLinkStore.UPDATE_INFO();
   expectedPdLens.value = new Map(
-    pdConfigs.map((config) => [
-      config.iface_name,
-      config.config.expected_pd_len,
-    ]),
+    wanLinkStore.links
+      .filter((each) => each.pd.enable)
+      .map((each) => [each.section_iface_name(), each.pd.expected_pd_len]),
   );
   try {
     let config = await get_lan_ipv6_config(iface_info.iface_name);
@@ -193,7 +191,6 @@ async function save_config() {
   try {
     if (service_config.value) {
       await update_lan_ipv6_config(service_config.value);
-      await ipv6PDStore.UPDATE_INFO();
       show_model.value = false;
     }
   } catch (err: any) {

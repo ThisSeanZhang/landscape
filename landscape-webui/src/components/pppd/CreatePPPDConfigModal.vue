@@ -1,7 +1,13 @@
 <script setup lang="ts">
 import { new_ifaces } from "@/api/iface";
-import { update_iface_pppd_config } from "@/api/service_pppd";
-import { PPPDServiceConfig } from "@/lib/pppd";
+import { create_wan_link, update_wan_link } from "@/api/service_wan_link";
+import {
+  apply_pppd_form,
+  default_pppd_link,
+  PppdLinkForm,
+  pppd_form_from_link,
+  WanLink,
+} from "@/lib/wan_link";
 import { computed, ref } from "vue";
 import type { SelectOption } from "naive-ui";
 import ConfigModal from "@/components/common/ConfigModal.vue";
@@ -18,14 +24,12 @@ const { t } = useI18n();
 const show = defineModel<boolean>("show", { required: true });
 const props = defineProps<{
   attach_iface_name: string;
-  origin_value: PPPDServiceConfig | undefined;
+  origin_value: WanLink | undefined;
 }>();
 
 const emit = defineEmits(["refresh"]);
-const value = ref<PPPDServiceConfig>(
-  new PPPDServiceConfig({
-    attach_iface_name: props.attach_iface_name,
-  }),
+const value = ref<PppdLinkForm>(
+  pppd_form_from_link(default_pppd_link(props.attach_iface_name)),
 );
 const isEditing = computed(() => props.origin_value !== undefined);
 const existingIfaceNames = ref<string[]>([]);
@@ -45,12 +49,8 @@ async function init_conf_value() {
     ...iface_infos.managed.map((iface) => iface.config.name),
     ...iface_infos.unmanaged.map((iface) => iface.status.name),
   ];
-  value.value = new PPPDServiceConfig(
-    props.origin_value
-      ? props.origin_value
-      : {
-          attach_iface_name: props.attach_iface_name,
-        },
+  value.value = pppd_form_from_link(
+    props.origin_value ?? default_pppd_link(props.attach_iface_name),
   );
   initial_snapshot.value = JSON.stringify(value.value);
 }
@@ -80,13 +80,21 @@ async function confirm_config() {
     );
     if (
       hasIfaceConflict &&
-      value.value.iface_name !== props.origin_value?.iface_name
+      value.value.iface_name !== props.origin_value?.ppp_iface_name
     ) {
       window.$message.error(t("pppoe.editor.iface_conflict_existing"));
       return;
     }
 
-    await update_iface_pppd_config(value.value, props.origin_value?.iface_name);
+    const link = props.origin_value
+      ? new WanLink(props.origin_value)
+      : default_pppd_link(value.value.attach_iface_name);
+    apply_pppd_form(link, value.value);
+    if (link.is_new()) {
+      await create_wan_link(link);
+    } else {
+      await update_wan_link(link);
+    }
     show.value = false;
     emit("refresh");
   }

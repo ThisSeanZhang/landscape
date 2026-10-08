@@ -1,5 +1,5 @@
 import { IfaceZoneType } from "@landscape-router/types/api/schemas";
-import type { PPPDServiceConfig } from "@/lib/pppd";
+import type { WanLink } from "@/lib/wan_link";
 
 export class NetDev {
   name: string;
@@ -21,7 +21,8 @@ export class NetDev {
   wifi_info: WifiIface | undefined;
   wifi_mode: WifiMode | undefined;
 
-  pppd_config: PPPDServiceConfig | undefined;
+  /** pppd-type WAN link backing this (virtual or live) ppp card. */
+  wan_link: WanLink | undefined;
   virtual: boolean;
 
   constructor(obj: any) {
@@ -51,7 +52,7 @@ export class NetDev {
     this.wifi_info =
       obj.wifi_info != null ? new WifiIface(obj.wifi_info) : undefined;
     this.wifi_mode = obj.wifi_mode ?? WifiMode.Undefined;
-    this.pppd_config = obj.pppd_config;
+    this.wan_link = obj.wan_link;
     this.virtual = obj.virtual ?? false;
   }
   // left Handle

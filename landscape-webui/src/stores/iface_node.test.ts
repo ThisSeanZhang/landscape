@@ -1,5 +1,5 @@
 import { NetDev, DevStateType } from "@/lib/dev";
-import { PPPDServiceConfig } from "@/lib/pppd";
+import { default_pppd_link, WanLink } from "@/lib/wan_link";
 import { IfaceZoneType } from "@landscape-router/types/api/schemas";
 import { describe, expect, it, vi } from "vitest";
 
@@ -7,8 +7,8 @@ vi.mock("@/api/network", () => ({
   ifaces: async () => [],
 }));
 
-vi.mock("@/api/service_pppd", () => ({
-  get_all_iface_pppd_config: async () => [],
+vi.mock("@/api/service_wan_link", () => ({
+  get_all_wan_links: async () => [],
 }));
 
 vi.stubGlobal("localStorage", {
@@ -48,14 +48,23 @@ function net_dev(
   });
 }
 
-function pppd_config(iface_name: string, attach = "eth0"): PPPDServiceConfig {
-  return new PPPDServiceConfig({ attach_iface_name: attach, iface_name });
+function pppd_link(ppp_iface_name: string, attach = "eth0"): WanLink {
+  const link = default_pppd_link(attach);
+  link.kind = {
+    t: "pppd",
+    ppp_iface_name,
+    peer_id: "",
+    password: "",
+    ac: null,
+    plugin: "rp_pppoe",
+  };
+  return link;
 }
 
 describe("merge_pppd_placeholders", () => {
   it("为未拨通的配置生成虚拟占位网卡", () => {
     const devs = [net_dev({ name: "eth0", index: 2 })];
-    const config = pppd_config("ppp-eth0-abc");
+    const config = pppd_link("ppp-eth0-abc");
     const merged = merge_pppd_placeholders(devs, [config]);
 
     expect(merged).toHaveLength(2);
@@ -64,7 +73,7 @@ describe("merge_pppd_placeholders", () => {
     expect(placeholder!.virtual).toBe(true);
     expect(placeholder!.zone_type).toBe(IfaceZoneType.wan);
     expect(placeholder!.dev_type).toBe("ppp");
-    expect(placeholder!.pppd_config).toBe(config);
+    expect(placeholder!.wan_link).toBe(config);
     expect(placeholder!.index).toBeLessThan(0);
     expect(placeholder!.controller_id).toBeUndefined();
     expect(placeholder!.has_target_hook()).toBe(false);
@@ -73,17 +82,17 @@ describe("merge_pppd_placeholders", () => {
 
   it("拨通后的配置挂载到真实网卡且不生成占位卡", () => {
     const live = net_dev({ name: "ppp-eth0-abc", index: 5, dev_type: "ppp" });
-    const config = pppd_config("ppp-eth0-abc");
+    const config = pppd_link("ppp-eth0-abc");
     const merged = merge_pppd_placeholders([live], [config]);
 
     expect(merged).toHaveLength(1);
-    expect(merged[0].pppd_config).toBe(config);
+    expect(merged[0].wan_link).toBe(config);
     expect(merged[0].virtual).toBe(false);
   });
 
   it("占位卡 index 跨刷新保持稳定且不与真实 ifindex 冲突", () => {
     const devs = [net_dev({ name: "eth0", index: 1 })];
-    const config = pppd_config("ppp-eth0-abc");
+    const config = pppd_link("ppp-eth0-abc");
 
     const first = merge_pppd_placeholders(devs, [config]);
     const second = merge_pppd_placeholders(devs, [config]);
@@ -126,7 +135,7 @@ describe("get_visible_devices", () => {
     });
     const virtual_down = merge_pppd_placeholders(
       [],
-      [pppd_config("ppp-x", "eth1")],
+      [pppd_link("ppp-x", "eth1")],
     )[0];
     expect(virtual_down.dev_status.t).toBe(DevStateType.Down);
 
@@ -142,7 +151,7 @@ describe("get_visible_devices", () => {
     });
     const virtual_down = merge_pppd_placeholders(
       [],
-      [pppd_config("ppp-x", "eth1")],
+      [pppd_link("ppp-x", "eth1")],
     )[0];
 
     const visible = get_visible_devices([real_down, virtual_down], false);

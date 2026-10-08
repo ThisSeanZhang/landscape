@@ -1,16 +1,13 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
 import ConfigModal from "@/components/common/ConfigModal.vue";
-import { FirewallServiceConfig } from "@/lib/firewall";
-import { useFirewallConfigStore } from "@/stores/status_firewall";
-import {
-  get_iface_firewall_config,
-  update_firewall_config,
-} from "@/api/service_firewall";
+import { create_wan_link, update_wan_link } from "@/api/service_wan_link";
+import { default_ethernet_link, WanLink } from "@/lib/wan_link";
+import { useWanLinkStore } from "@/stores/wan_link";
 import { IfaceZoneType } from "@landscape-router/types/api/schemas";
 import { useI18n } from "vue-i18n";
 
-const firewallConfigStore = useFirewallConfigStore();
+const wanLinkStore = useWanLinkStore();
 const { t } = useI18n();
 const show_model = defineModel<boolean>("show", { required: true });
 const emit = defineEmits(["refresh"]);
@@ -20,28 +17,23 @@ const iface_info = defineProps<{
   zone: IfaceZoneType;
 }>();
 
-const service_config = ref<FirewallServiceConfig>(
-  new FirewallServiceConfig({
-    iface_name: iface_info.iface_name,
-  }),
-);
+const link = ref<WanLink>(default_ethernet_link(iface_info.iface_name));
 
 async function on_modal_enter() {
-  try {
-    let config = await get_iface_firewall_config(iface_info.iface_name);
-    console.log(config);
-    // iface_service_type.value = config.t;
-    service_config.value = config;
-  } catch (e) {
-    service_config.value = new FirewallServiceConfig({
-      iface_name: iface_info.iface_name,
-    });
-  }
+  await wanLinkStore.UPDATE_INFO();
+  link.value =
+    wanLinkStore.RESOLVE_NODE_LINK(iface_info.iface_name).value ??
+    default_ethernet_link(iface_info.iface_name);
 }
 
 async function save_config() {
-  let config = await update_firewall_config(service_config.value);
-  await firewallConfigStore.UPDATE_INFO();
+  if (link.value.is_new()) {
+    await create_wan_link(link.value);
+  } else {
+    await update_wan_link(link.value);
+  }
+  await wanLinkStore.UPDATE_INFO();
+  emit("refresh");
   show_model.value = false;
 }
 </script>
@@ -49,7 +41,7 @@ async function save_config() {
 <template>
   <ConfigModal
     v-model:show="show_model"
-    v-model:enabled="service_config.enable"
+    v-model:enabled="link.firewall.enable"
     :title="t('firewall.service_edit.title')"
     width="600px"
     @after-enter="on_modal_enter"
