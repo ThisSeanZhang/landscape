@@ -12,6 +12,7 @@ use landscape_common::net_proto::udp::dhcp::{
 
 use socket2::{Domain, Protocol, Type};
 use tokio::{net::UdpSocket, time::Instant};
+use uuid::Uuid;
 
 use crate::{
     netlink::ipv6::{del_iface_ip, set_iface_ip},
@@ -197,6 +198,7 @@ fn gen_client_id(config_mac: MacAddr) -> Vec<u8> {
 }
 #[allow(clippy::too_many_arguments)]
 pub async fn dhcp_v6_pd_client(
+    link_id: Uuid,
     iface_name: String,
     ifindex: u32,
     // for ebpf map setting
@@ -334,6 +336,7 @@ pub async fn dhcp_v6_pd_client(
                 let send_outcome = send_current_status_packet(&client_id, &send_socket, &mut status).await;
                 if send_outcome.prefix_expired {
                     clear_active_pd_prefix(
+                        link_id,
                         &iface_name,
                         ifindex,
                         &route_service,
@@ -356,6 +359,7 @@ pub async fn dhcp_v6_pd_client(
                 match message_result {
                     Some(data) => {
                         let need_reset_time = handle_packet(
+                            link_id,
                             &iface_name,
                             ifindex,
                             &client_id,
@@ -402,6 +406,7 @@ pub async fn dhcp_v6_pd_client(
     }
 
     clear_active_pd_prefix(
+        link_id,
         &iface_name,
         ifindex,
         &route_service,
@@ -422,7 +427,9 @@ pub async fn dhcp_v6_pd_client(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn clear_active_pd_prefix(
+    link_id: Uuid,
     iface_name: &str,
     ifindex: u32,
     route_service: &IpRouteService,
@@ -431,7 +438,7 @@ async fn clear_active_pd_prefix(
     prefix_sender: &IAPrefixEventSender,
     current_wan_addr: &mut Option<Ipv6Addr>,
 ) {
-    let removed = prefix_map.remove(iface_name);
+    let removed = prefix_map.remove(&link_id);
     if let Some(status) = removed.as_ref() {
         remove_ip_route(&status.actual_prefix, iface_name);
     }
@@ -443,8 +450,7 @@ async fn clear_active_pd_prefix(
     }
 
     if removed.is_some() {
-        let _ =
-            prefix_sender.send(IAPrefixEvent::Expired { iface_name: iface_name.to_string() }).await;
+        let _ = prefix_sender.send(IAPrefixEvent::Expired { link_id }).await;
     }
 }
 
@@ -672,6 +678,7 @@ fn status_timeout_duration(current_status: &IpV6PdState, prev_timeout_times: u64
 /// 返回值为是否要进行检查刷新超时时间
 #[allow(clippy::too_many_arguments)]
 async fn handle_packet(
+    link_id: Uuid,
     iface_name: &str,
     ifindex: u32,
     my_client_id: &[u8],
@@ -846,10 +853,8 @@ async fn handle_packet(
                                 mac_addr,
                                 addr_binding,
                             );
-                            prefix_map.store(iface_name, ia_prefix, expected_pd_len);
-                            let _ = prefix_sender
-                                .send(IAPrefixEvent::Updated { iface_name: iface_name.to_string() })
-                                .await;
+                            prefix_map.store(link_id, ia_prefix, expected_pd_len);
+                            let _ = prefix_sender.send(IAPrefixEvent::Updated { link_id }).await;
                             tracing::debug!("current status move to: {:#?}", current_status);
                             return true;
                         } else {

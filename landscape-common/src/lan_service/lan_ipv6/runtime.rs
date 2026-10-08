@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 use std::net::Ipv6Addr;
 
+use uuid::Uuid;
+
 use super::config::PrefixGroupServiceKind;
 use crate::wan_service::ipv6_pd::LDIAPrefix;
 
@@ -10,12 +12,13 @@ pub struct PdPrefixContext {
     pub actual_prefix: Option<LDIAPrefix>,
 }
 
-pub type PdPrefixContextMap = HashMap<String, PdPrefixContext>;
+/// Keyed by the wan link uuid (`wan_links.id`).
+pub type PdPrefixContextMap = HashMap<Uuid, PdPrefixContext>;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ExpandedParentKey {
     Resolved(Ipv6Addr),
-    PdFallback(String),
+    PdFallback(Uuid),
 }
 
 #[derive(Debug, Clone)]

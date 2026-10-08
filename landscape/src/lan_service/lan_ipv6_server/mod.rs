@@ -15,6 +15,7 @@ use landscape_common::{
     wan_service::ipv6_pd::{IAPrefixMap, pd_expectation_fits_snapshot},
 };
 use tokio::sync::{mpsc, watch};
+use uuid::Uuid;
 
 pub mod connection;
 pub mod dhcpv6;
@@ -230,7 +231,7 @@ impl SubnetState {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SubnetSource {
     Static,
-    Pd { depend_iface: String },
+    Pd { link_id: Uuid },
 }
 
 #[derive(Debug, Clone)]
@@ -1547,8 +1548,8 @@ pub fn compute_subnets(
             PrefixParentSource::Static { base_prefix, parent_prefix_len } => {
                 (pd::normalize_prefix(*base_prefix, *parent_prefix_len), *parent_prefix_len)
             }
-            PrefixParentSource::Pd { depend_iface, expected_pd_len_snapshot, .. } => {
-                match prefix_map.load_for_lan(depend_iface) {
+            PrefixParentSource::Pd { link_id, expected_pd_len_snapshot, .. } => {
+                match prefix_map.load_for_lan(link_id) {
                     Some((prefix, expected_pd_len))
                         if pd_expectation_fits_snapshot(
                             expected_pd_len,
@@ -1570,9 +1571,7 @@ pub fn compute_subnets(
 
         let source = match &group.parent {
             PrefixParentSource::Static { .. } => SubnetSource::Static,
-            PrefixParentSource::Pd { depend_iface, .. } => {
-                SubnetSource::Pd { depend_iface: depend_iface.clone() }
-            }
+            PrefixParentSource::Pd { link_id, .. } => SubnetSource::Pd { link_id: *link_id },
         };
 
         let valid_pd = group.pd.as_ref().filter(|pd| {

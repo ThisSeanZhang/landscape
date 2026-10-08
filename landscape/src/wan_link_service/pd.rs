@@ -1,6 +1,8 @@
 use std::net::{IpAddr, Ipv6Addr};
 use std::sync::Arc;
 
+use uuid::Uuid;
+
 use landscape_common::LANDSCAPE_DEFAULE_DHCP_V6_CLIENT_PORT;
 use landscape_common::event::hub::IAPrefixEventSender;
 use landscape_common::service::ServiceHandle;
@@ -13,6 +15,7 @@ use crate::sys_service::route::IpRouteService;
 
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn run(
+    link_id: Uuid,
     iface: SessionIface,
     config: RuntimeWanLinkPdConfig,
     service_status: ServiceHandle,
@@ -34,6 +37,7 @@ pub(super) async fn run(
     };
 
     crate::wan_service::ipv6pd_client::v6::dhcp_v6_pd_client(
+        link_id,
         iface.iface_name,
         iface.ifindex,
         iface.mac,

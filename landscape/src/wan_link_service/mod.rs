@@ -328,6 +328,7 @@ impl ServiceStarterTrait for WanLinkService {
                     let shared_wan_iid = shared_wan_iid.clone();
                     Box::pin(async move {
                         pd::run(
+                            runtime.id,
                             iface,
                             runtime.pd,
                             status,
@@ -901,12 +902,22 @@ impl WanLinkServiceManagerService {
         }
     }
 
+    /// Keyed by the wan link uuid (stringified for the REST view).
     pub fn get_ipv6_prefix_infos(&self) -> HashMap<String, Option<LDIAPrefix>> {
-        self.prefix_map.get_info()
+        self.prefix_map
+            .get_info()
+            .into_iter()
+            .map(|(id, prefix)| (id.to_string(), prefix))
+            .collect()
     }
 
+    /// Keyed by the wan link uuid (stringified for the REST view).
     pub fn get_ipv6_prefix_statuses(&self) -> HashMap<String, IPV6PDPrefixStatus> {
-        self.prefix_map.get_prefix_statuses()
+        self.prefix_map
+            .get_prefix_statuses()
+            .into_iter()
+            .map(|(id, status)| (id.to_string(), status))
+            .collect()
     }
 
     pub async fn get_link_statuses(&self) -> HashMap<String, WanLinkStatus> {
@@ -926,11 +937,9 @@ impl WanLinkServiceManagerService {
             .into_iter()
             .filter(|config| config.pd.enable)
             .map(|config| {
-                let iface_name =
-                    RuntimeWanLinkConfig::from_config(&config).section_iface_name().to_string();
-                let actual_prefix = self.prefix_map.load_actual(&iface_name);
+                let actual_prefix = self.prefix_map.load_actual(&config.id);
                 (
-                    iface_name,
+                    config.id,
                     PdPrefixContext {
                         expected_pd_len: config
                             .pd

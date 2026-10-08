@@ -281,25 +281,25 @@ fn dynamic_ra_group(snapshot: u8, pool_index: u32) -> LanPrefixGroupConfig {
 #[test]
 fn dynamic_subnets_use_snapshot_instead_of_actual_prefix_len() {
     let prefix_map = IAPrefixMap::new();
-    prefix_map.store("wan0", pd_prefix("2001:db8:1200::", 56), 60);
+    prefix_map.store(Uuid::nil(), pd_prefix("2001:db8:1200::", 56), 60);
 
     let subnets = compute_subnets(&[dynamic_ra_group(60, 15)], &prefix_map, 300);
     assert_eq!(subnets.len(), 1);
     assert_eq!(subnets[0].sub_prefix, "2001:db8:1200:f::".parse::<Ipv6Addr>().unwrap());
-    assert_eq!(prefix_map.load_actual("wan0").unwrap().prefix_len, 56);
+    assert_eq!(prefix_map.load_actual(&Uuid::nil()).unwrap().prefix_len, 56);
 }
 
 #[test]
 fn dynamic_subnets_require_both_wan_and_snapshot_compatibility() {
     let prefix_map = IAPrefixMap::new();
-    prefix_map.store("wan0", pd_prefix("2001:db8:1200::", 64), 60);
+    prefix_map.store(Uuid::nil(), pd_prefix("2001:db8:1200::", 64), 60);
     assert!(compute_subnets(&[dynamic_ra_group(60, 1)], &prefix_map, 300).is_empty());
-    assert!(prefix_map.load_actual("wan0").is_some());
+    assert!(prefix_map.load_actual(&Uuid::nil()).is_some());
 
-    prefix_map.store("wan0", pd_prefix("2001:db8:1200::", 56), 64);
+    prefix_map.store(Uuid::nil(), pd_prefix("2001:db8:1200::", 56), 64);
     assert!(compute_subnets(&[dynamic_ra_group(60, 1)], &prefix_map, 300).is_empty());
-    assert!(prefix_map.load_for_lan("wan0").is_some());
+    assert!(prefix_map.load_for_lan(&Uuid::nil()).is_some());
 
-    let _ = prefix_map.remove("wan0");
+    let _ = prefix_map.remove(&Uuid::nil());
     assert!(compute_subnets(&[dynamic_ra_group(60, 1)], &prefix_map, 300).is_empty());
 }

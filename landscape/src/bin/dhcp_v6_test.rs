@@ -60,6 +60,7 @@ async fn main() {
             gateway_ip: IpAddr::V6(Ipv6Addr::UNSPECIFIED),
         };
         dhcp_v6_pd_client(
+            uuid::Uuid::new_v4(),
             args.iface_name,
             iface.index,
             iface.mac,

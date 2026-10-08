@@ -38,9 +38,9 @@ impl PrefixParentSource {
             PrefixParentSource::Static { base_prefix, parent_prefix_len } => {
                 ExpandedParentKey::Resolved(normalize_ipv6_prefix(*base_prefix, *parent_prefix_len))
             }
-            PrefixParentSource::Pd { depend_iface, expected_pd_len_snapshot, .. } => {
+            PrefixParentSource::Pd { link_id, expected_pd_len_snapshot, .. } => {
                 if let Some(prefix) = pd_contexts
-                    .and_then(|contexts| contexts.get(depend_iface))
+                    .and_then(|contexts| contexts.get(link_id))
                     .and_then(|context| context.actual_prefix.as_ref())
                 {
                     let actual_network = normalize_ipv6_prefix(prefix.prefix_ip, prefix.prefix_len);
@@ -49,7 +49,7 @@ impl PrefixParentSource {
                         *expected_pd_len_snapshot,
                     ))
                 } else {
-                    ExpandedParentKey::PdFallback(depend_iface.clone())
+                    ExpandedParentKey::PdFallback(*link_id)
                 }
             }
         }
@@ -146,12 +146,7 @@ impl LanPrefixGroupConfig {
                     });
                 }
             }
-            PrefixParentSource::Pd { depend_iface, expected_pd_len_snapshot, .. } => {
-                if depend_iface.trim().is_empty() {
-                    return Err(ServiceConfigError::InvalidConfig {
-                        reason: "PD parent interface must not be empty".to_string(),
-                    });
-                }
+            PrefixParentSource::Pd { link_id, expected_pd_len_snapshot, .. } => {
                 if *expected_pd_len_snapshot == 0 || *expected_pd_len_snapshot > 127 {
                     return Err(ServiceConfigError::InvalidConfig {
                         reason: format!(
@@ -163,11 +158,11 @@ impl LanPrefixGroupConfig {
                 // A WAN-expectation/snapshot mismatch is an availability state, not an
                 // invalid LAN configuration. Keep the configuration saveable so either
                 // side can be changed later; runtime subnet activation applies that gate.
-                if pd_contexts.is_some_and(|contexts| !contexts.contains_key(depend_iface)) {
+                if pd_contexts.is_some_and(|contexts| !contexts.contains_key(link_id)) {
                     return Err(ServiceConfigError::InvalidConfig {
                         reason: format!(
-                            "PD parent interface '{}' has no IPv6 PD configuration",
-                            depend_iface
+                            "PD parent link '{}' has no IPv6 PD configuration",
+                            link_id
                         ),
                     });
                 }
@@ -735,12 +730,12 @@ mod tests {
     use uuid::Uuid;
 
     fn pd_context(
-        iface_name: &str,
+        link_id: Uuid,
         expected_pd_len: u8,
         actual_prefix_len: Option<u8>,
     ) -> PdPrefixContextMap {
         HashMap::from([(
-            iface_name.to_string(),
+            link_id,
             PdPrefixContext {
                 expected_pd_len,
                 actual_prefix: actual_prefix_len.map(|prefix_len| LDIAPrefix {
@@ -1056,7 +1051,7 @@ mod tests {
             pd: None,
         };
 
-        let contexts = pd_context("eth0", 60, Some(56));
+        let contexts = pd_context(Uuid::nil(), 60, Some(56));
         assert!(config.validate_with_pd_context(Some(&contexts)).is_err());
     }
 
@@ -1093,12 +1088,14 @@ mod tests {
 
         assert!(validate_prefix_groups(&groups).is_err());
 
-        let contexts = pd_context("eth0", 60, Some(56));
+        let contexts = pd_context(Uuid::nil(), 60, Some(56));
         assert!(validate_prefix_groups_with_pd_context(&groups, Some(&contexts)).is_err());
     }
 
     #[test]
     fn v2_cross_interface_conflicts_when_runtime_pd_prefix_matches_across_ifaces() {
+        let wan0_link = Uuid::new_v4();
+        let wan1_link = Uuid::new_v4();
         let new_config = LanIPv6ServiceConfigV2 {
             iface_name: "lan-a".to_string(),
             enable: true,
@@ -1111,7 +1108,7 @@ mod tests {
                     group_id: "group-a".to_string(),
                     parent: PrefixParentSource::Pd {
                         depend_iface: "wan0".to_string(),
-                        link_id: Uuid::nil(),
+                        link_id: wan0_link,
                         expected_pd_len_snapshot: 60,
                     },
                     ra: Some(RaPrefixConfig {
@@ -1139,7 +1136,7 @@ mod tests {
                     group_id: "group-b".to_string(),
                     parent: PrefixParentSource::Pd {
                         depend_iface: "wan1".to_string(),
-                        link_id: Uuid::nil(),
+                        link_id: wan1_link,
                         expected_pd_len_snapshot: 56,
                     },
                     ra: None,
@@ -1170,16 +1167,13 @@ mod tests {
         };
         let contexts = HashMap::from([
             (
-                "wan0".to_string(),
+                wan0_link,
                 PdPrefixContext {
                     expected_pd_len: 60,
                     actual_prefix: Some(prefix.clone()),
                 },
             ),
-            (
-                "wan1".to_string(),
-                PdPrefixContext { expected_pd_len: 56, actual_prefix: Some(prefix) },
-            ),
+            (wan1_link, PdPrefixContext { expected_pd_len: 56, actual_prefix: Some(prefix) }),
         ]);
 
         assert!(
@@ -1358,9 +1352,9 @@ mod tests {
         }
     }
 
-    fn make_pd_context(iface_name: &str, expected_len: u8, actual_len: u8) -> PdPrefixContextMap {
+    fn make_pd_context(link_id: Uuid, expected_len: u8, actual_len: u8) -> PdPrefixContextMap {
         HashMap::from([(
-            iface_name.to_string(),
+            link_id,
             PdPrefixContext {
                 expected_pd_len: expected_len,
                 actual_prefix: Some(LDIAPrefix {
@@ -1629,7 +1623,7 @@ mod tests {
     fn global_pd_runtime_context_uses_resolved_prefixes() {
         let pending = config_pd_range("lan-a", "wan0", 60, 64, 1, 1);
         let existing = config_pd_range("lan-b", "wan0", 60, 64, 1, 1);
-        let contexts = make_pd_context("wan0", 60, 56);
+        let contexts = make_pd_context(Uuid::nil(), 60, 56);
 
         assert!(
             validate_global_prefix_conflicts(

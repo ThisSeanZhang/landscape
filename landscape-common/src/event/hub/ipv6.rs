@@ -94,8 +94,8 @@ impl IPv6AssignEventReader {
 
 #[derive(Debug, Clone)]
 pub enum IAPrefixEvent {
-    Updated { iface_name: String },
-    Expired { iface_name: String },
+    Updated { link_id: Uuid },
+    Expired { link_id: Uuid },
 }
 
 #[derive(Clone)]

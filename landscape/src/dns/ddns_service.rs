@@ -284,8 +284,8 @@ impl DdnsService {
                     _ = token.cancelled() => break,
                     result = reader.recv() => {
                         match result {
-                            Ok(IAPrefixEvent::Updated { iface_name })
-                            | Ok(IAPrefixEvent::Expired { iface_name }) => {
+                            Ok(IAPrefixEvent::Updated { link_id })
+                            | Ok(IAPrefixEvent::Expired { link_id }) => {
                                 let jobs = match svc.store.find_enabled().await {
                                     Ok(jobs) => jobs,
                                     Err(e) => {
@@ -295,7 +295,7 @@ impl DdnsService {
                                 };
                                 let matching: Vec<_> = jobs
                                     .into_iter()
-                                    .filter(|job| job_has_enrolled_device_ipv6_for_wan(job, &iface_name))
+                                    .filter(|job| job_has_enrolled_device_ipv6_for_wan(job, &link_id))
                                     .collect();
                                 if !matching.is_empty() {
                                     svc.sync_jobs_now(matching).await;
@@ -317,18 +317,7 @@ impl DdnsService {
         let matching: Vec<_> = jobs
             .iter()
             .filter(|j| j.enable)
-            .filter(|job| {
-                job.sources.iter().any(|s| {
-                    matches!(
-                        s,
-                        DdnsSource::EnrolledDevice {
-                            wan_pd_id: Some(_),
-                            family: IpFamily::Ipv6,
-                            ..
-                        }
-                    )
-                })
-            })
+            .filter(|job| job_has_enrolled_device_ipv6(job))
             .cloned()
             .collect();
         if !matching.is_empty() {
@@ -577,11 +566,11 @@ impl DdnsService {
                         next_retry_at: Some(ts + DDNS_RETRY_INTERVAL_SECS as f64),
                     });
                 }
-                DdnsSource::EnrolledDevice { device_id, wan_pd_id, family, .. }
+                DdnsSource::EnrolledDevice { device_id, wan_pd_link_id, family, .. }
                     if *family == wanted_family =>
                 {
-                    match (wanted_family, wan_pd_id) {
-                        (IpFamily::Ipv6, Some(wan)) => {
+                    match wanted_family {
+                        IpFamily::Ipv6 => {
                             let raw_ips: Vec<Ipv6Addr> = match self
                                 .directory
                                 .entry_by_device_id(device_id)
@@ -601,14 +590,14 @@ impl DdnsService {
                                 }
                             };
 
-                            let pd = match self.prefix_map.load_actual(wan) {
+                            let pd = match self.prefix_map.load_actual(wan_pd_link_id) {
                                 Some(p) => p,
                                 None => {
                                     last_error = Some(ResolveRecordIpError {
                                         status: DdnsJobStatus::Idle,
                                         reason: DdnsRuntimeReason::WaitingWanPdPrefix,
                                         detail: format!(
-                                            "waiting for WAN {wan} PD prefix delegation"
+                                            "waiting for WAN link {wan_pd_link_id} PD prefix delegation"
                                         ),
                                         retryable: true,
                                         next_retry_at: Some(ts + DDNS_RETRY_INTERVAL_SECS as f64),
@@ -651,7 +640,7 @@ impl DdnsService {
 
                             return Ok(result);
                         }
-                        (IpFamily::Ipv4, _) => {
+                        IpFamily::Ipv4 => {
                             let ipv4 = self
                                 .directory
                                 .entry_by_device_id(device_id)
@@ -669,16 +658,6 @@ impl DdnsService {
                                 continue;
                             };
                             return Ok(vec![IpAddr::V4(ipv4)]);
-                        }
-                        _ => {
-                            last_error = Some(ResolveRecordIpError {
-                                status: DdnsJobStatus::Error,
-                                reason: DdnsRuntimeReason::SourceNotImplemented,
-                                detail: "enrolled device IPv6 source requires a WAN PD prefix"
-                                    .to_string(),
-                                retryable: false,
-                                next_retry_at: None,
-                            });
                         }
                     }
                 }
@@ -873,17 +852,27 @@ fn job_has_enrolled_device_source_for_device(job: &DdnsJob, device_id: Uuid) -> 
     })
 }
 
-fn job_has_enrolled_device_ipv6_for_wan(job: &DdnsJob, wan_pd_id: &str) -> bool {
-    job.sources.iter().any(|source| {
-        matches!(
-            source,
-            DdnsSource::EnrolledDevice {
-                wan_pd_id: Some(iface),
-                family: IpFamily::Ipv6,
-                ..
-            } if iface == wan_pd_id
-        )
-    })
+/// PD-prefix-dependent source detection is keyed by `wan_pd_link_id`; the
+/// `wan_pd_id` name mirror is server-internal and may be absent on
+/// API-saved jobs, so it must not gate immediate re-sync.
+fn job_has_enrolled_device_ipv6(job: &DdnsJob) -> bool {
+    job.sources
+        .iter()
+        .any(|source| matches!(source, DdnsSource::EnrolledDevice { family: IpFamily::Ipv6, .. }))
+}
+
+fn job_has_enrolled_device_ipv6_for_wan(job: &DdnsJob, wan_pd_link_id: &Uuid) -> bool {
+    job_has_enrolled_device_ipv6(job)
+        && job.sources.iter().any(|source| {
+            matches!(
+                source,
+                DdnsSource::EnrolledDevice {
+                    wan_pd_link_id: id,
+                    family: IpFamily::Ipv6,
+                    ..
+                } if id == wan_pd_link_id
+            )
+        })
 }
 
 fn family_needs_retry(
@@ -1358,6 +1347,28 @@ mod tests {
                 kind: WanRouteEventKind::Upserted,
             }
         ));
+    }
+
+    #[test]
+    fn config_change_pd_sync_ignores_missing_wan_pd_id_mirror() {
+        let job = test_job(vec![
+            DdnsSource::EnrolledDevice {
+                device_id: Uuid::nil(),
+                wan_pd_link_id: Uuid::nil(),
+                wan_pd_id: None,
+                family: IpFamily::Ipv6,
+            },
+            DdnsSource::EnrolledDevice {
+                device_id: Uuid::nil(),
+                wan_pd_link_id: Uuid::new_v4(),
+                wan_pd_id: None,
+                family: IpFamily::Ipv4,
+            },
+        ]);
+
+        assert!(job_has_enrolled_device_ipv6(&job));
+        assert!(job_has_enrolled_device_ipv6_for_wan(&job, &Uuid::nil()));
+        assert!(!job_has_enrolled_device_ipv6_for_wan(&job, &Uuid::new_v4()));
     }
 
     #[test]
