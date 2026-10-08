@@ -8,7 +8,7 @@ use crate::service::ServiceConfigError;
 use crate::service::manager::ServiceKeyProvider;
 use crate::utils::time::get_f64_timestamp;
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum PPPoEPlugin {

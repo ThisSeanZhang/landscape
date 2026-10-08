@@ -1,3 +1,4 @@
+use std::net::IpAddr;
 use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
 use std::time::Duration;
@@ -5,6 +6,7 @@ use std::time::Duration;
 use futures::FutureExt;
 use landscape_common::service::ServiceHandle;
 use landscape_common::service::ServiceStatus;
+use landscape_common::wan_link::{LinkStateHandle, SessionIface};
 
 use super::env::{PppIpv4State, PppdChild, PppdEnv, PppdTimings};
 
@@ -176,6 +178,7 @@ pub(crate) async fn run_pppd_supervisor(
     service_status: ServiceHandle,
     env: Arc<dyn PppdEnv>,
     timings: PppdTimings,
+    session: Option<LinkStateHandle>,
 ) -> bool {
     let graceful = AssertUnwindSafe(supervise_loop(
         ppp_iface_name.clone(),
@@ -183,6 +186,7 @@ pub(crate) async fn run_pppd_supervisor(
         service_status,
         env.clone(),
         timings,
+        session.clone(),
     ))
     .catch_unwind()
     .await
@@ -192,6 +196,9 @@ pub(crate) async fn run_pppd_supervisor(
     });
 
     env.cleanup(&ppp_iface_name, as_router).await;
+    if let Some(session) = session {
+        session.session_down();
+    }
     graceful
 }
 
@@ -201,6 +208,7 @@ async fn supervise_loop(
     service_status: ServiceHandle,
     env: Arc<dyn PppdEnv>,
     timings: PppdTimings,
+    session: Option<LinkStateHandle>,
 ) -> bool {
     let mut retry = PppdRetryController::new();
     let mut ticker = tokio::time::interval(timings.poll_interval);
@@ -253,6 +261,14 @@ async fn supervise_loop(
                     let state = env.poll_addr(&ppp_iface_name).await;
                     if state.is_ready() && state != last_state {
                         env.on_addr_ready(&state, as_router, &ppp_iface_name).await;
+                        if let (Some(session), PppIpv4State::Ready { ifindex, local, .. }) =
+                            (session.as_ref(), &state)
+                        {
+                            session.session_up(
+                                SessionIface::new(*ifindex, ppp_iface_name.clone(), None)
+                                    .with_ip(Some(IpAddr::V4(*local))),
+                            );
+                        }
                     }
 
                     if health.observe(&state) {
@@ -273,6 +289,10 @@ async fn supervise_loop(
         }
 
         stop_pppd_process_async(child.as_mut(), &ppp_iface_name, &timings).await;
+
+        if let Some(session) = session.as_ref() {
+            session.session_down();
+        }
 
         if should_stop {
             return true;

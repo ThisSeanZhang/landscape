@@ -44,6 +44,7 @@ async fn main() {
                 false,
                 IpRouteService::new(rt.clone().route_table()),
                 rt.wan_addr_binding(),
+                None,
             )
             .await;
         }

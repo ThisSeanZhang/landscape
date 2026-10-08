@@ -176,6 +176,14 @@ pub mod task_label {
         pub const WAN_IPV6PD_CLIENT_RENEW: &str = "wan.ipv6pd_client.rx";
         /// WAN link service listener reacting to attach-iface events.
         pub const WAN_LINK_OBSERVER: &str = "wan.link.observer";
+        /// WAN link environment supervisor (carrier + config fan-in).
+        pub const WAN_LINK_ENV: &str = "wan.link.env";
+        /// WAN link config watch deregistration on link exit.
+        pub const WAN_LINK_CLEANUP: &str = "wan.link.cleanup";
+        /// WAN link v4 acquisition supervisor (per-run restart driver).
+        pub const WAN_LINK_V4_SUPERVISOR: &str = "wan.link.v4.supervisor";
+        /// WAN link dependent section supervisor (nat/mss/firewall/pd).
+        pub const WAN_LINK_SECTION_SUPERVISOR: &str = "wan.link.section.supervisor";
         /// LAN hostname registry listener for device/DHCP events.
         pub const DNS_HOSTNAME_OBSERVER: &str = "dns.hostname.observer";
         /// LAN device directory projection listener for device/DHCP/discovery events.

@@ -43,7 +43,7 @@ use landscape::{
         ebpf_service::LandscapeEbpfService,
     },
     wan_link_service::WanLinkServiceManagerService,
-    wan_service::ipv6pd_service::generate_wan_iid,
+    wan_service::generate_wan_iid,
     wan_service::wan_route_service::RouteWanServiceManagerService,
     wifi::WifiServiceManagerService,
 };

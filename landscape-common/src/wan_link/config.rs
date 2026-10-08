@@ -17,7 +17,7 @@ use crate::wan_service::pppd::{PPPDConfig, PPPoEPlugin};
 /// One WAN uplink: a link owns its addressing model and the per-link
 /// service sections that used to be separate per-iface config rows
 /// (see migration `m20261008_095616_wan_links`).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct WanLinkConfig {
     pub id: Uuid,
@@ -58,7 +58,7 @@ impl LandscapeDBStore<Uuid> for WanLinkConfig {
     }
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[serde(tag = "t", rename_all = "snake_case")]
 pub enum WanLinkKind {
@@ -89,7 +89,7 @@ pub enum WanLinkKind {
 }
 
 /// IPv4 acquisition section of a link.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct WanLinkV4Config {
     #[serde(default)]
@@ -98,7 +98,7 @@ pub struct WanLinkV4Config {
     pub model: WanLinkV4Model,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[serde(tag = "t", rename_all = "snake_case")]
 pub enum WanLinkV4Model {
@@ -145,7 +145,7 @@ pub enum WanLinkV4Model {
 }
 
 /// DHCPv6 PD client section of a link.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct WanLinkPdConfig {
     #[serde(default)]
@@ -157,7 +157,7 @@ pub struct WanLinkPdConfig {
 }
 
 /// NAT section of a link.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct WanLinkNatConfig {
     #[serde(default)]
@@ -183,7 +183,7 @@ pub struct WanLinkNatConfig {
 }
 
 /// Firewall section of a link.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct WanLinkFirewallConfig {
     #[serde(default)]
@@ -191,7 +191,7 @@ pub struct WanLinkFirewallConfig {
 }
 
 /// MSS clamp section of a link.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct WanLinkMssConfig {
     #[serde(default)]

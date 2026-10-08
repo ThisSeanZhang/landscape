@@ -20,6 +20,7 @@ use landscape_common::{
     service::{ServiceHandle, ServiceStatus},
     sys_service::route_service::RouteTargetInfo,
     sys_service::route_service::{LanRouteInfo, LanRouteMode},
+    wan_link::{LinkStateHandle, SessionIface},
     wan_service::addr_binding::WanAddrBinding,
 };
 
@@ -117,6 +118,17 @@ impl DhcpState {
             DhcpState::Discovering { .. } | DhcpState::Requesting { .. } | DhcpState::Rebind { .. }
         )
     }
+
+    /// The IPv4 address currently held (lease present) for session reporting.
+    pub fn leased_ip(&self) -> Option<Ipv4Addr> {
+        match self {
+            DhcpState::Bound { yiaddr, .. }
+            | DhcpState::Renewing { yiaddr, .. }
+            | DhcpState::WaitToRebind { yiaddr, .. }
+            | DhcpState::Rebind { yiaddr, .. } => Some(*yiaddr),
+            _ => None,
+        }
+    }
 }
 
 fn get_new_ipv4_xid() -> u32 {
@@ -178,7 +190,8 @@ impl DhcpState {
     service_status,
     hostname,
     route_service,
-    addr_binding
+    addr_binding,
+    session
 ))]
 #[allow(clippy::too_many_arguments)]
 pub async fn dhcp_v4_client(
@@ -191,6 +204,7 @@ pub async fn dhcp_v4_client(
     default_router: bool,
     route_service: IpRouteService,
     addr_binding: Arc<dyn WanAddrBinding>,
+    session: Option<LinkStateHandle>,
 ) {
     service_status.just_change_status(ServiceStatus::Staring);
     tracing::info!("DHCP V4 Client Starting");
@@ -265,6 +279,16 @@ pub async fn dhcp_v4_client(
                             connect_failure_count = 0;
                         }
 
+                        if let Some(session) = session.as_ref() {
+                            match status.leased_ip() {
+                                Some(ip) => session.session_up(
+                                    SessionIface::new(ifindex, iface_name.clone(), Some(mac_addr))
+                                        .with_ip(Some(IpAddr::V4(ip))),
+                                ),
+                                None => session.session_down(),
+                            }
+                        }
+
                         if need_reset_time {
                             timeout_times = get_status_timeout_config(&status, 0, active_send.as_mut());
                         }
@@ -283,6 +307,10 @@ pub async fn dhcp_v4_client(
         }
     }
     tracing::info!("DHCPv4 Client Stop: {:#?}", service_status);
+
+    if let Some(session) = session.as_ref() {
+        session.session_down();
+    }
 
     if default_router {
         LD_ALL_ROUTERS.del_route_by_iface(&iface_name).await;

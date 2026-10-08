@@ -7,7 +7,9 @@ use landscape_common::dev::LandscapeInterface;
 use landscape_common::global_const::default_router::{LD_ALL_ROUTERS, RouteInfo, RouteType};
 use landscape_common::service::{ServiceHandle, ServiceStatus};
 use landscape_common::sys_service::route_service::{LanRouteInfo, LanRouteMode, RouteTargetInfo};
-use landscape_common::wan_link::{RuntimeWanLinkConfig, RuntimeWanLinkKind, WanLinkV4Model};
+use landscape_common::wan_link::{
+    LinkStateHandle, RuntimeWanLinkConfig, RuntimeWanLinkKind, SessionIface, WanLinkV4Model,
+};
 use landscape_common::wan_service::addr_binding::WanAddrBinding;
 use landscape_common::wan_service::pppd::PPPDConfig;
 use landscape_common::wan_service::pppoe::PppoeDataplane;
@@ -18,6 +20,7 @@ use crate::sys_service::route::IpRouteService;
 /// ethernet → static / dhcp client on the attach iface, pppd → supervised
 /// pppd session (address via IPCP), pppoe_native → eBPF PPPoE client
 /// (address via IPCP).
+#[allow(clippy::too_many_arguments)]
 pub(super) async fn run(
     iface: LandscapeInterface,
     runtime: RuntimeWanLinkConfig,
@@ -25,18 +28,19 @@ pub(super) async fn run(
     route_service: IpRouteService,
     addr_binding: Arc<dyn WanAddrBinding>,
     pppoe_dataplane: Arc<dyn PppoeDataplane>,
+    session: Option<LinkStateHandle>,
 ) {
     if !runtime.v4.enable {
         // Legacy semantics: `enable` gated the whole acquisition; the link
         // itself stays alive for its other sections.
-        run_idle_until_stopped(service_status).await;
+        run_idle_until_stopped(iface, service_status, session).await;
         return;
     }
 
     match (runtime.kind, runtime.v4.model) {
         (RuntimeWanLinkKind::Ethernet, model) => match model {
             WanLinkV4Model::Nothing | WanLinkV4Model::Ipcp { .. } => {
-                run_idle_until_stopped(service_status).await;
+                run_idle_until_stopped(iface, service_status, session).await;
             }
             WanLinkV4Model::Static {
                 ipv4,
@@ -54,6 +58,7 @@ pub(super) async fn run(
                     service_status,
                     route_service,
                     addr_binding,
+                    session,
                 )
                 .await;
             }
@@ -65,6 +70,7 @@ pub(super) async fn run(
                     service_status,
                     route_service,
                     addr_binding,
+                    session,
                 )
                 .await;
             }
@@ -86,12 +92,13 @@ pub(super) async fn run(
                         service_status,
                         route_service,
                         addr_binding,
+                        session,
                     )
                     .await;
                 }
                 other => {
                     tracing::warn!(?other, "pppd link only supports the ipcp v4 model");
-                    run_idle_until_stopped(service_status).await;
+                    run_idle_until_stopped(iface, service_status, session).await;
                 }
             }
         }
@@ -119,21 +126,32 @@ pub(super) async fn run(
                     service_status,
                     route_service,
                     pppoe_dataplane,
+                    session,
                 )
                 .await;
             }
             other => {
                 tracing::warn!(?other, "pppoe_native link only supports the ipcp v4 model");
-                run_idle_until_stopped(service_status).await;
+                run_idle_until_stopped(iface, service_status, session).await;
             }
         },
     }
 }
 
-/// 无 IP 模型时的占位运行:保持 `Running` 直到收到停止信号。
-async fn run_idle_until_stopped(service_status: ServiceHandle) {
+/// 无 IP 模型时的占位运行:物理接口即会话接口,保持 `Running` 直到收到停止信号。
+async fn run_idle_until_stopped(
+    iface: LandscapeInterface,
+    service_status: ServiceHandle,
+    session: Option<LinkStateHandle>,
+) {
+    if let Some(session) = session.as_ref() {
+        session.session_up(SessionIface::new(iface.index, iface.name.clone(), iface.mac));
+    }
     service_status.just_change_status(ServiceStatus::Running);
     service_status.stop_token().cancelled().await;
+    if let Some(session) = session.as_ref() {
+        session.session_down();
+    }
     service_status.just_change_status(ServiceStatus::Stop);
 }
 
@@ -147,11 +165,12 @@ async fn run_static_v4(
     service_status: ServiceHandle,
     route_service: IpRouteService,
     addr_binding: Arc<dyn WanAddrBinding>,
+    session: Option<LinkStateHandle>,
 ) {
     // TODO: IPV6 的设置
     let (Some(ipv4), Some(ipv4_mask)) = (ipv4, ipv4_mask) else {
         tracing::warn!("static v4 model without ipv4/ipv4_mask, running idle");
-        run_idle_until_stopped(service_status).await;
+        run_idle_until_stopped(iface, service_status, session).await;
         return;
     };
 
@@ -203,8 +222,20 @@ async fn run_static_v4(
         route_service.insert_ipv4_wan_route(&iface_name, info).await;
     }
 
+    if let Some(session) = session.as_ref() {
+        session.session_up(
+            SessionIface::new(iface.index, iface_name.clone(), iface.mac)
+                .with_ip(Some(IpAddr::V4(ipv4))),
+        );
+    }
+
     service_status.just_change_status(ServiceStatus::Running);
     service_status.stop_token().cancelled().await;
+
+    if let Some(session) = session.as_ref() {
+        session.session_down();
+    }
+
     let _ = std::process::Command::new("ip")
         .args(["addr", "del", &format!("{}/{}", ipv4, ipv4_mask), "dev", &iface_name])
         .output();
@@ -218,6 +249,7 @@ async fn run_static_v4(
     service_status.just_change_status(ServiceStatus::Stop);
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn run_dhcp_v4(
     iface: LandscapeInterface,
     hostname: Option<String>,
@@ -225,6 +257,7 @@ async fn run_dhcp_v4(
     service_status: ServiceHandle,
     route_service: IpRouteService,
     addr_binding: Arc<dyn WanAddrBinding>,
+    session: Option<LinkStateHandle>,
 ) {
     if let Some(mac_addr) = iface.mac {
         let hostname = hostname.filter(|h| !h.is_empty()).unwrap_or_else(|| LAND_HOSTNAME.clone());
@@ -238,6 +271,7 @@ async fn run_dhcp_v4(
             default_router,
             route_service,
             addr_binding,
+            session,
         )
         .await;
     } else {
@@ -258,6 +292,7 @@ async fn run_pppoe_native(
     service_status: ServiceHandle,
     route_service: IpRouteService,
     pppoe_dataplane: Arc<dyn PppoeDataplane>,
+    session: Option<LinkStateHandle>,
 ) {
     if let Some(mac_addr) = iface.mac {
         let mut config = crate::wan_service::pppoe_client::PPPoEClientConfig::new(
@@ -277,6 +312,7 @@ async fn run_pppoe_native(
             service_status,
             route_service,
             pppoe_dataplane,
+            session,
         )
         .await;
     } else {

@@ -1,17 +1,20 @@
 use std::path::PathBuf;
 
-use landscape_common::{config_service::iface::IfaceCpuSoftBalance, database::error::DbError};
+use landscape_common::{
+    config_service::iface::IfaceCpuSoftBalance, database::error::DbError,
+    lan_service::lan_ipv6::mark_wan_iid,
+};
 
 pub mod dhcpv4_client;
-pub mod firewall;
-pub mod ipconfig_service;
 pub mod ipv6pd_client;
-pub mod ipv6pd_service;
-pub mod mss_clamp_service;
-pub mod nat_service;
 pub mod pppd_service;
 pub mod pppoe_client;
 pub mod wan_route_service;
+
+/// Generate a WAN namespace IID for IPv6 PD / static NAT6 sharing.
+pub fn generate_wan_iid() -> u64 {
+    mark_wan_iid(rand::random::<u64>())
+}
 
 pub(crate) fn setting_iface_balance(
     iface_name: &str,
