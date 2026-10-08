@@ -406,10 +406,14 @@ async fn send_current_status_packet(
             let msg = gen_request(*xid, mac_addr, *ciaddr, *yiaddr, request_options, hostname);
             let res = io.send(msg, addr).await;
 
-            let lease_renew_time = (*rebinding_time - *renew_time).as_secs() / 6;
-            if Instant::now() >= *rebinding_time - Duration::from_secs(lease_renew_time) {
+            let lease_renew_time =
+                rebinding_time.saturating_duration_since(*renew_time).as_secs() / 6;
+            let rebind_early_at = rebinding_time
+                .checked_sub(Duration::from_secs(lease_renew_time))
+                .unwrap_or_else(Instant::now);
+            if Instant::now() >= rebind_early_at {
                 *current_status = DhcpState::WaitToRebind {
-                    xid: get_new_ipv4_xid(),
+                    xid: *xid,
                     ciaddr: *ciaddr,
                     yiaddr: *yiaddr,
                     siaddr: *siaddr,
@@ -421,10 +425,10 @@ async fn send_current_status_packet(
             }
             res
         }
-        DhcpState::WaitToRebind { yiaddr, siaddr, options, lease_time, .. } => {
+        DhcpState::WaitToRebind { ciaddr, siaddr, options, lease_time, .. } => {
             *current_status = DhcpState::Rebind {
                 xid: get_new_ipv4_xid(),
-                ciaddr: *yiaddr,
+                ciaddr: *ciaddr,
                 yiaddr: Ipv4Addr::UNSPECIFIED,
                 siaddr: *siaddr,
                 options: options.clone(),
@@ -458,14 +462,14 @@ fn get_status_timeout_config(
     let current_timeout_time = match current_status {
         // 绑定后的超时时间是
         DhcpState::Bound { renew_time, .. } => {
-            let wait_time = *renew_time - Instant::now();
+            let wait_time = renew_time.saturating_duration_since(Instant::now());
             let wait_time = wait_time.as_secs();
             tracing::info!("wait {wait_time}s to start renew...");
             wait_time
         }
         // 等待的时间是 t2 - bound_time
         DhcpState::WaitToRebind { rebinding_time, .. } => {
-            let wait_time = *rebinding_time - Instant::now();
+            let wait_time = rebinding_time.saturating_duration_since(Instant::now());
             let wait_time = wait_time.as_secs();
             tracing::info!("wait {wait_time}s to start rebind...");
             wait_time
@@ -533,7 +537,10 @@ async fn handle_packet(
             tracing::debug!("current status move to: {:#?}", current_status);
             return true;
         }
-        DhcpState::Requesting { yiaddr, .. } | DhcpState::Renewing { yiaddr, .. } => {
+        DhcpState::Requesting { yiaddr, .. }
+        | DhcpState::Renewing { yiaddr, .. }
+        | DhcpState::WaitToRebind { yiaddr, .. }
+        | DhcpState::Rebind { yiaddr, .. } => {
             match msg_type {
                 MessageType::Ack => {
                     if *yiaddr == Ipv4Addr::UNSPECIFIED || dhcp.yiaddr() == *yiaddr {
@@ -606,7 +613,7 @@ async fn handle_packet(
                 _ => {}
             }
         }
-        _ => {}
+        DhcpState::Bound { .. } | DhcpState::Stopping | DhcpState::Stop => {}
     }
 
     false
@@ -829,14 +836,129 @@ fn get_renew_times(options: &DhcpV4Options) -> Option<(u64, u64, u64)> {
         DhcpOption::AddressLeaseTime(t) => *t,
         _ => return None,
     };
-    let renew_time = match options.get(OptionCode::Renewal) {
-        Some(DhcpOption::Renewal(t)) => *t as u64,
-        _ => (lease_time / 2) as u64,
+    let lease = (lease_time as u64).max(2);
+    let default_renew = lease / 2;
+    let default_rebind = (lease * 7 / 8).max(default_renew + 1);
+
+    let explicit_renew = match options.get(OptionCode::Renewal) {
+        Some(DhcpOption::Renewal(t)) if *t > 0 => Some(*t as u64),
+        _ => None,
     };
-    let rebind_time = match options.get(OptionCode::Rebinding) {
-        Some(DhcpOption::Rebinding(t)) => *t as u64,
-        _ => (lease_time * 7 / 8) as u64,
+    let explicit_rebind = match options.get(OptionCode::Rebinding) {
+        Some(DhcpOption::Rebinding(t)) if *t > 0 => Some(*t as u64),
+        _ => None,
     };
 
-    Some((renew_time, rebind_time, lease_time as u64))
+    let renew_time = explicit_renew.unwrap_or(default_renew).clamp(1, lease - 1);
+    let rebind_time = explicit_rebind.unwrap_or(default_rebind).clamp(renew_time + 1, lease);
+
+    Some((renew_time, rebind_time, lease))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::net::Ipv4Addr;
+    use tokio::time::sleep;
+
+    fn lease_opts(lease: u32, t1: Option<u32>, t2: Option<u32>) -> DhcpV4Options {
+        let mut options = DhcpV4Options::default();
+        options.insert(DhcpOption::AddressLeaseTime(lease));
+        if let Some(t1) = t1 {
+            options.insert(DhcpOption::Renewal(t1));
+        }
+        if let Some(t2) = t2 {
+            options.insert(DhcpOption::Rebinding(t2));
+        }
+        options
+    }
+
+    fn bound() -> DhcpState {
+        let now = Instant::now();
+        DhcpState::Bound {
+            xid: 1,
+            ciaddr: Ipv4Addr::UNSPECIFIED,
+            yiaddr: Ipv4Addr::new(192, 0, 2, 10),
+            siaddr: Ipv4Addr::new(192, 0, 2, 1),
+            options: DhcpV4Options::default(),
+            renew_time: now + Duration::from_secs(50),
+            rebinding_time: now + Duration::from_secs(87),
+            lease_time: now + Duration::from_secs(100),
+        }
+    }
+
+    fn wait_to_rebind() -> DhcpState {
+        let now = Instant::now();
+        DhcpState::WaitToRebind {
+            xid: 1,
+            ciaddr: Ipv4Addr::new(192, 0, 2, 10),
+            yiaddr: Ipv4Addr::UNSPECIFIED,
+            siaddr: Ipv4Addr::new(192, 0, 2, 1),
+            options: DhcpV4Options::default(),
+            rebinding_time: now + Duration::from_secs(87),
+            lease_time: now + Duration::from_secs(100),
+        }
+    }
+
+    #[test]
+    fn malformed_lease_options_fall_back_to_rfc_defaults() {
+        assert_eq!(get_renew_times(&lease_opts(100, None, None)).unwrap(), (50, 87, 100));
+        assert_eq!(get_renew_times(&lease_opts(100, Some(0), Some(0))).unwrap(), (50, 87, 100));
+        assert_eq!(get_renew_times(&lease_opts(100, Some(10), Some(20))).unwrap(), (10, 20, 100));
+        assert_eq!(get_renew_times(&lease_opts(100, Some(90), Some(80))).unwrap(), (90, 91, 100));
+        assert_eq!(
+            get_renew_times(&lease_opts(u32::MAX, Some(1), Some(2))).unwrap(),
+            (1, 2, u32::MAX as u64)
+        );
+        assert!(get_renew_times(&DhcpV4Options::default()).is_none());
+        for (lease, t1, t2) in [
+            (0u32, None, None),
+            (0, Some(0), Some(0)),
+            (1, None, None),
+            (2, Some(1), Some(1)),
+            (100, Some(90), Some(80)),
+            (100, Some(120), Some(200)),
+            (100, Some(99), Some(99)),
+            (u32::MAX, Some(1), Some(2)),
+        ] {
+            let (renew, rebind, lease) =
+                get_renew_times(&lease_opts(lease, t1, t2)).expect("always resolvable");
+            assert!(renew >= 1, "renew must be >= 1s (lease={lease}, t1={t1:?}, t2={t2:?})");
+            assert!(
+                rebind > renew,
+                "rebind must exceed renew (lease={lease}, t1={t1:?}, t2={t2:?})"
+            );
+            assert!(rebind <= lease, "rebind must not exceed the lease (lease={lease})");
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn expired_bound_renew_deadline_renews_immediately_without_panicking() {
+        let mut state = bound();
+        if let DhcpState::Bound { renew_time, .. } = &mut state {
+            *renew_time = Instant::now() - Duration::from_secs(10);
+        }
+        let mut timer = Box::pin(sleep(Duration::from_secs(1)));
+        let prev = get_status_timeout_config(&state, 1, timer.as_mut());
+        assert_eq!(prev, 2);
+        assert!(
+            timer.deadline() <= Instant::now() + Duration::from_millis(50),
+            "an expired deadline must wait 0s (renew now), not panic"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn expired_wait_to_rebind_deadline_rebinds_immediately_without_panicking() {
+        let mut state = wait_to_rebind();
+        if let DhcpState::WaitToRebind { rebinding_time, .. } = &mut state {
+            *rebinding_time = Instant::now() - Duration::from_secs(10);
+        }
+        let mut timer = Box::pin(sleep(Duration::from_secs(1)));
+        let prev = get_status_timeout_config(&state, 1, timer.as_mut());
+        assert_eq!(prev, 2);
+        assert!(
+            timer.deadline() <= Instant::now() + Duration::from_millis(50),
+            "an expired rebind deadline must wait 0s, not panic"
+        );
+    }
 }
