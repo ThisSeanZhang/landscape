@@ -402,7 +402,7 @@ impl landscape_common::database::validator::StoreValidator<FlowConfig> for FlowC
 
     async fn validate_cross(
         &self,
-        config: &FlowConfig,
+        config: &mut FlowConfig,
     ) -> Result<(), landscape_common::service::ServiceConfigError> {
         fn map_err(
             e: landscape_common::flow::FlowRuleError,

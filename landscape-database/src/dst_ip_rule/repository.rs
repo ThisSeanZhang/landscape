@@ -40,7 +40,7 @@ impl landscape_common::database::validator::StoreValidator<WanIpRuleConfig>
 
     async fn validate_cross(
         &self,
-        config: &WanIpRuleConfig,
+        config: &mut WanIpRuleConfig,
     ) -> Result<(), landscape_common::service::ServiceConfigError> {
         if let Some(existing) = self
             .find_by_id(config.id)

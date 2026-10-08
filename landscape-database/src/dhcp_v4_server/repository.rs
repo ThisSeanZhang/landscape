@@ -80,7 +80,7 @@ impl landscape_common::database::validator::StoreValidator<DHCPv4ServiceConfig>
 
     async fn validate_cross(
         &self,
-        config: &DHCPv4ServiceConfig,
+        config: &mut DHCPv4ServiceConfig,
     ) -> Result<(), landscape_common::service::ServiceConfigError> {
         if let Some(conflict_iface) = self
             .check_ip_range_conflict(

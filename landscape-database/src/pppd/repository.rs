@@ -51,7 +51,7 @@ impl landscape_common::database::validator::StoreValidator<PPPDServiceConfig>
 
     async fn validate_cross(
         &self,
-        config: &PPPDServiceConfig,
+        config: &mut PPPDServiceConfig,
     ) -> Result<(), landscape_common::service::ServiceConfigError> {
         use landscape_common::wan_service::ip_config::IfaceIpModelConfig;
 

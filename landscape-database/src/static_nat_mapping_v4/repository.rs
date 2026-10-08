@@ -154,7 +154,7 @@ impl landscape_common::database::validator::StoreValidator<StaticNatMappingV4Con
 
     async fn validate_cross(
         &self,
-        config: &StaticNatMappingV4Config,
+        config: &mut StaticNatMappingV4Config,
     ) -> Result<(), landscape_common::service::ServiceConfigError> {
         self.validate_runtime_target_v4(config).await.map_err(|e| {
             landscape_common::service::ServiceConfigError::InvalidConfig { reason: e.to_string() }

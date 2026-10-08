@@ -40,7 +40,7 @@ impl StoreValidator<WanLinkConfig> for WanLinkRepository {
     /// Cross-link rules (same-table old rows + the iface table). The
     /// netlink-dependent checks (live attach iface / live ppp device) stay
     /// in the webserver handler; see `validate_wan_link` there.
-    async fn validate_cross(&self, config: &WanLinkConfig) -> Result<(), ServiceConfigError> {
+    async fn validate_cross(&self, config: &mut WanLinkConfig) -> Result<(), ServiceConfigError> {
         let others: Vec<WanLinkConfig> = self
             .list()
             .await

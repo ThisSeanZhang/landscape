@@ -61,6 +61,7 @@ pub(crate) type DBTimestamp = f64;
 /// 1. `<$data as ValidatableConfig>::validate` — 纯内容校验,挂在 config 上
 /// 2. `StoreValidator::<$data>::check_zone` — zone 检查,挂在 repo 上
 /// 3. `StoreValidator::<$data>::validate_cross` — 跨域冲突,挂在 repo 上
+///    (参数 `&mut`,规范化改动会落库)
 ///
 /// 全限定调用:config 未实现 `ValidatableConfig` 或 repo 未实现
 /// `StoreValidator` 时宏展开直接编译失败 —— "入库必须实现校验"的
@@ -110,7 +111,7 @@ macro_rules! impl_repository {
             }
             async fn checked_upsert(
                 &self,
-                config: Self::Data,
+                mut config: Self::Data,
             ) -> Result<
                 landscape_common::database::store::Change<Self::Data>,
                 landscape_common::database::error::DbError,
@@ -134,7 +135,7 @@ macro_rules! impl_repository {
                 if let Err(error) =
                     landscape_common::database::validator::StoreValidator::<$data>::validate_cross(
                         self,
-                        &config,
+                        &mut config,
                     )
                     .await
                 {
@@ -157,12 +158,12 @@ macro_rules! impl_repository {
             }
             async fn checked_upsert_many(
                 &self,
-                configs: Vec<Self::Data>,
+                mut configs: Vec<Self::Data>,
             ) -> Result<
                 Vec<landscape_common::database::store::Change<Self::Data>>,
                 landscape_common::database::error::DbError,
             > {
-                for config in &configs {
+                for config in &mut configs {
                     if let Err(error) =
                         <$data as landscape_common::database::validator::ValidatableConfig>::validate(
                             config,
@@ -249,7 +250,7 @@ macro_rules! impl_trivial_validator {
             }
             async fn validate_cross(
                 &self,
-                _config: &$data,
+                _config: &mut $data,
             ) -> Result<(), landscape_common::service::ServiceConfigError> {
                 Ok(())
             }
@@ -271,7 +272,7 @@ macro_rules! impl_zone_validator {
             }
             async fn validate_cross(
                 &self,
-                _config: &$data,
+                _config: &mut $data,
             ) -> Result<(), landscape_common::service::ServiceConfigError> {
                 Ok(())
             }

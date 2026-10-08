@@ -103,7 +103,7 @@ impl landscape_common::database::validator::StoreValidator<NatServiceConfig>
 
     async fn validate_cross(
         &self,
-        config: &NatServiceConfig,
+        config: &mut NatServiceConfig,
     ) -> Result<(), landscape_common::service::ServiceConfigError> {
         let mappings = crate::static_nat_mapping_v4::repository::StaticNatMappingV4Repository::new(
             self.db.clone(),

@@ -38,7 +38,7 @@ impl landscape_common::database::validator::StoreValidator<IfaceIpServiceConfig>
 
     async fn validate_cross(
         &self,
-        config: &IfaceIpServiceConfig,
+        config: &mut IfaceIpServiceConfig,
     ) -> Result<(), landscape_common::service::ServiceConfigError> {
         use landscape_common::wan_service::ip_config::IfaceIpModelConfig;
 

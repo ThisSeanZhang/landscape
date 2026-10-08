@@ -43,7 +43,7 @@ impl landscape_common::database::validator::StoreValidator<DNSRuleConfig> for DN
 
     async fn validate_cross(
         &self,
-        config: &DNSRuleConfig,
+        config: &mut DNSRuleConfig,
     ) -> Result<(), landscape_common::service::ServiceConfigError> {
         if let Some(existing) = self
             .find_by_id(config.id)
