@@ -196,6 +196,19 @@ fn gen_client_id(config_mac: MacAddr) -> Vec<u8> {
     result.extend_from_slice(&config_mac.octets());
     result
 }
+
+fn create_pd_socket(socket_addr: &SocketAddr, iface_name: &[u8]) -> std::io::Result<UdpSocket> {
+    let socket = socket2::Socket::new(Domain::IPV6, Type::DGRAM, Some(Protocol::UDP))?;
+    socket.set_only_v6(true)?;
+    socket.set_reuse_address(true)?;
+    if let Err(err) = socket.set_reuse_port(true) {
+        tracing::warn!("set_reuse_port failed (non-fatal): {err:?}");
+    }
+    socket.bind(&(*socket_addr).into())?;
+    socket.set_nonblocking(true)?;
+    socket.bind_device(Some(iface_name))?;
+    UdpSocket::from_std(socket.into())
+}
 #[allow(clippy::too_many_arguments)]
 pub async fn dhcp_v6_pd_client(
     link_id: Uuid,
@@ -229,22 +242,14 @@ pub async fn dhcp_v6_pd_client(
     // landscape_ebpf::maps::add_expose_port(client_port);
     let socket_addr = SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), client_port);
 
-    let socket2 = socket2::Socket::new(Domain::IPV6, Type::DGRAM, Some(Protocol::UDP)).unwrap();
-
-    socket2.set_only_v6(true).unwrap();
-    socket2.set_reuse_address(true).unwrap();
-    socket2.set_reuse_port(true).unwrap();
-    socket2.bind(&socket_addr.into()).unwrap();
-    socket2.set_nonblocking(true).unwrap();
-    if let Err(e) = socket2.bind_device(Some(iface_name.as_bytes())) {
-        tracing::error!("bind_device error: {e:?}");
-        service_status.just_change_status(ServiceStatus::Failed);
-        return;
-    }
-
-    // socket2.set_broadcast(true).unwrap();
-
-    let socket = UdpSocket::from_std(socket2.into()).unwrap();
+    let socket = match create_pd_socket(&socket_addr, iface_name.as_bytes()) {
+        Ok(socket) => socket,
+        Err(e) => {
+            tracing::error!("failed to create DHCPv6 PD socket on {}: {e:?}", iface_name);
+            service_status.just_change_status(ServiceStatus::Failed);
+            return;
+        }
+    };
 
     let send_socket = Arc::new(socket);
 
