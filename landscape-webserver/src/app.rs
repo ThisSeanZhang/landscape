@@ -132,8 +132,7 @@ impl LandscapeApp {
                         // behind: drop it with the link (the cleanup the old
                         // `delete_ppp_iface` cascade used to do).
                         if let WanLinkKind::Pppd { ppp_iface_name, .. } = &link.kind {
-                            let _ =
-                                self.iface_config_service.delete(ppp_iface_name.clone()).await;
+                            let _ = self.iface_config_service.delete(ppp_iface_name.clone()).await;
                         }
                     }
                 }
@@ -240,12 +239,8 @@ impl LandscapeApp {
                     "Re-applying WAN static IP: {ip}/{prefix_len} on {}",
                     link.attach_iface_name
                 );
-                landscape::netlink::address::set_iface_ip(
-                    &link.attach_iface_name,
-                    ip,
-                    *prefix_len,
-                )
-                .await;
+                landscape::netlink::address::set_iface_ip(&link.attach_iface_name, ip, *prefix_len)
+                    .await;
             }
         }
     }

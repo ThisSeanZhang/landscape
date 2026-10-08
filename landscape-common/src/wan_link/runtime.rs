@@ -76,7 +76,10 @@ impl RuntimeWanLinkConfig {
             name: config.name.clone(),
             attach_iface_name: config.attach_iface_name.clone(),
             kind,
-            v4: RuntimeWanLinkV4Config { enable: config.v4.enable, model: config.v4.model.clone() },
+            v4: RuntimeWanLinkV4Config {
+                enable: config.v4.enable,
+                model: config.v4.model.clone(),
+            },
             pd: RuntimeWanLinkPdConfig {
                 enable: config.pd.enable,
                 mac: config.pd.mac,

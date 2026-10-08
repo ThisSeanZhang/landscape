@@ -218,10 +218,7 @@ impl ServiceKeyProvider for WanLinkConfig {
     }
 }
 
-fn validate_nat_range(
-    name: &str,
-    range: &Option<Range<u16>>,
-) -> Result<(), ServiceConfigError> {
+fn validate_nat_range(name: &str, range: &Option<Range<u16>>) -> Result<(), ServiceConfigError> {
     if let Some(range) = range {
         if range.start == 0 {
             return Err(ServiceConfigError::InvalidConfig {
@@ -280,9 +277,7 @@ impl ValidatableConfig for WanLinkConfig {
             && !(56..=64).contains(&expected_pd_len)
         {
             return Err(ServiceConfigError::InvalidConfig {
-                reason: format!(
-                    "expected_pd_len ({expected_pd_len}) must be between 56 and 64"
-                ),
+                reason: format!("expected_pd_len ({expected_pd_len}) must be between 56 and 64"),
             });
         }
 

@@ -14,7 +14,7 @@ use landscape_common::wan_service::pppoe::PppoeDataplane;
 
 use crate::sys_service::route::IpRouteService;
 
-/// The v4 acquisition leg of a WAN link. Dispatches on the link kind:
+/// The v4 acquisition section of a WAN link. Dispatches on the link kind:
 /// ethernet → static / dhcp client on the attach iface, pppd → supervised
 /// pppd session (address via IPCP), pppoe_native → eBPF PPPoE client
 /// (address via IPCP).

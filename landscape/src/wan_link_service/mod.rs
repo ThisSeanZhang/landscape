@@ -26,7 +26,7 @@ use landscape_common::wan_link::{RuntimeWanLinkConfig, WanLinkConfig};
 use landscape_common::wan_service::addr_binding::WanAddrBinding;
 use landscape_common::wan_service::firewall::dataplane::FirewallDataplane;
 use landscape_common::wan_service::ipv6_pd::config::DEFAULT_EXPECTED_PD_LEN;
-use landscape_common::wan_service::ipv6_pd::{IPV6PDPrefixStatus, IAPrefixMap, LDIAPrefix};
+use landscape_common::wan_service::ipv6_pd::{IAPrefixMap, IPV6PDPrefixStatus, LDIAPrefix};
 use landscape_common::wan_service::mss_clamp::dataplane::MssClampDataplane;
 use landscape_common::wan_service::nat::dataplane::NatDataplane;
 use landscape_common::wan_service::pppoe::PppoeDataplane;
@@ -38,12 +38,12 @@ use crate::sys_service::route::IpRouteService;
 
 /// One WAN link = one service instance owning the full uplink lifecycle.
 ///
-/// `start` spawns the legs on a single [`ServiceHandle`], in a fixed order:
-/// the v4 acquisition class first (ethernet static/dhcp, pppd, native
-/// PPPoE), then nat → mss → firewall → pd. Every leg is independent and
-/// asynchronous; a leg reporting a terminal state cancels the link's stop
-/// token, which tears down all sibling legs (v1 semantics: the link is
-/// only healthy as a whole).
+/// `start` spawns the sections on a single [`ServiceHandle`], in a fixed
+/// order: the v4 acquisition first (ethernet static/dhcp, pppd, native
+/// PPPoE), then nat → mss → firewall → pd. Every section runs independently
+/// and asynchronously; a section reporting a terminal state cancels the
+/// link's stop token, which tears down all the other sections (v1 semantics:
+/// the link is only healthy as a whole).
 #[derive(Clone)]
 pub struct WanLinkService {
     route_service: IpRouteService,
@@ -284,7 +284,7 @@ impl WanLinkServiceManagerService {
 
         // Restart a link when its attach iface comes back (cable replug).
         // pppX devices of pppd links deliberately don't trigger a restart:
-        // the section legs wait for the device themselves and the pppd
+        // the sections wait for the device themselves and the pppd
         // supervisor redials on its own.
         let service_clone = service.clone();
         let obs_store = store_service.wan_link_store();

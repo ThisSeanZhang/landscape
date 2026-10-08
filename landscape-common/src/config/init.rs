@@ -21,6 +21,7 @@ use crate::lan_service::lan_dhcpv4::config::DHCPv4ServiceConfig;
 use crate::lan_service::lan_ipv6::LanIPv6ServiceConfigV2;
 use crate::lan_service::lan_route::RouteLanServiceConfig;
 use crate::sys_service::gateway::HttpUpstreamRuleConfig;
+use crate::wan_link::WanLinkConfig;
 use crate::wan_service::firewall::FirewallRuleConfig;
 use crate::wan_service::firewall::blacklist::FirewallBlacklistConfig;
 use crate::wan_service::firewall::service::FirewallServiceConfig;
@@ -30,7 +31,6 @@ use crate::wan_service::mss_clamp::MSSClampServiceConfig;
 use crate::wan_service::nat::config::NatServiceConfig;
 use crate::wan_service::pppd::PPPDServiceConfig;
 use crate::wan_service::wan_route::RouteWanServiceConfig;
-use crate::wan_link::WanLinkConfig;
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
 #[serde(default)]
