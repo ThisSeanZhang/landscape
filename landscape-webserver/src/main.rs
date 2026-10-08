@@ -42,15 +42,9 @@ use landscape::{
         config_service::LandscapeConfigService, dns_service::LandscapeDnsService,
         ebpf_service::LandscapeEbpfService,
     },
-    wan_service::firewall::FirewallServiceManagerService,
-    wan_service::{
-        ipconfig_service::IfaceIpServiceManagerService,
-        ipv6pd_service::{DHCPv6ClientManagerService, generate_wan_iid},
-        mss_clamp_service::MssClampServiceManagerService,
-        nat_service::NatServiceManagerService,
-        pppd_service::PPPDServiceConfigManagerService,
-        wan_route_service::RouteWanServiceManagerService,
-    },
+    wan_link_service::WanLinkServiceManagerService,
+    wan_service::ipv6pd_service::generate_wan_iid,
+    wan_service::wan_route_service::RouteWanServiceManagerService,
     wifi::WifiServiceManagerService,
 };
 use landscape_common::lan_service::lan_route::RouteLanServiceConfig;
@@ -458,25 +452,20 @@ async fn run_system(
     )
     .await?;
 
-    let mss_clamp_service = MssClampServiceManagerService::new(
-        db_store_provider.clone(),
-        event_handle.subscribe_iface(),
-        ebpf_rt.clone().mss_clamp(),
-    )
-    .await?;
-
-    let firewall_service = FirewallServiceManagerService::new(
-        db_store_provider.clone(),
-        event_handle.subscribe_iface(),
-        ebpf_rt.clone().firewall(),
-    )
-    .await?;
-
-    let nat_service = NatServiceManagerService::new(
+    // WAN link service: replaces the former per-iface WAN service managers
+    // (ipconfig / nat / mss clamp / firewall / ipv6-pd / pppd).
+    let wan_link_service = WanLinkServiceManagerService::new(
         db_store_provider.clone(),
         event_handle.subscribe_iface(),
         route_service.clone(),
+        ebpf_rt.clone().wan_addr_binding(),
+        ebpf_rt.clone().pppoe_dataplane(),
         ebpf_rt.clone().nat(),
+        ebpf_rt.clone().mss_clamp(),
+        ebpf_rt.clone().firewall(),
+        prefix_map.clone(),
+        ipv6_prefix_sender.clone(),
+        shared_wan_iid,
     )
     .await;
 
@@ -498,34 +487,7 @@ async fn run_system(
     )
     .await;
 
-    let wan_ip_service = IfaceIpServiceManagerService::new(
-        route_service.clone(),
-        ebpf_rt.clone().wan_addr_binding(),
-        ebpf_rt.clone().pppoe_dataplane(),
-        db_store_provider.clone(),
-        event_handle.subscribe_iface(),
-    )
-    .await;
-
     let docker_service = LandscapeDockerService::new(home_path.clone(), route_service.clone());
-
-    let pppd_service = PPPDServiceConfigManagerService::new(
-        db_store_provider.clone(),
-        route_service.clone(),
-        ebpf_rt.clone().wan_addr_binding(),
-    )
-    .await;
-
-    let ipv6_pd_service = DHCPv6ClientManagerService::new(
-        db_store_provider.clone(),
-        event_handle.subscribe_iface(),
-        route_service.clone(),
-        ebpf_rt.clone().wan_addr_binding(),
-        prefix_map.clone(),
-        ipv6_prefix_sender.clone(),
-        shared_wan_iid,
-    )
-    .await?;
 
     startup_phase!(
         "docker_service.start_to_listen_event",
@@ -556,27 +518,21 @@ async fn run_system(
         memory_history,
         route_service,
         dhcp_v4_server_service,
-        wan_ip_service,
+        wan_link_service,
 
         route_lan_service,
         route_wan_service,
 
         docker_service,
 
-        pppd_service,
-
         // IPV6
-        ipv6_pd_service,
         lan_ipv6_service,
         static_nat4_mapping_service,
         static_nat6_mapping_service,
         dns_redirect_service,
         dns_upstream_service,
         iface_config_service,
-        mss_clamp_service,
-        firewall_service,
         wifi_service,
-        nat_service,
         // ebpf
         ebpf_service,
         enrolled_device_service,

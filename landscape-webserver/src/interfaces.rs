@@ -92,11 +92,23 @@ async fn get_wan_candidates(State(state): State<LandscapeApp>) -> LandscapeApiRe
         .map(|c| c.name)
         .collect();
 
-    let pppd_configs = state.pppd_service.list().await.unwrap_or_default();
+    let pppd_ifaces: Vec<String> = state
+        .wan_link_service
+        .list()
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|link| match link.kind {
+            landscape_common::wan_link::WanLinkKind::Pppd { ppp_iface_name, .. } => {
+                Some(ppp_iface_name)
+            }
+            _ => None,
+        })
+        .collect();
 
-    for cfg in pppd_configs {
-        if !names.iter().any(|n| n == &cfg.iface_name) {
-            names.push(cfg.iface_name);
+    for ppp_iface_name in pppd_ifaces {
+        if !names.iter().any(|n| n == &ppp_iface_name) {
+            names.push(ppp_iface_name);
         }
     }
 

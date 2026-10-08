@@ -4,6 +4,7 @@ mod nat;
 mod pd;
 mod v4;
 
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -15,6 +16,7 @@ use landscape_common::database::store::ConfigStore;
 use landscape_common::dev::LandscapeInterface;
 use landscape_common::event::hub::iface::IfaceObserverAction;
 use landscape_common::event::hub::{IAPrefixEventSender, IfaceEventReader};
+use landscape_common::lan_service::lan_ipv6::{PdPrefixContext, PdPrefixContextMap};
 use landscape_common::service::{
     ServiceHandle, ServiceStatus,
     controller::{ConfigStoreController, ConfigStoreServiceController},
@@ -23,7 +25,8 @@ use landscape_common::service::{
 use landscape_common::wan_link::{RuntimeWanLinkConfig, WanLinkConfig};
 use landscape_common::wan_service::addr_binding::WanAddrBinding;
 use landscape_common::wan_service::firewall::dataplane::FirewallDataplane;
-use landscape_common::wan_service::ipv6_pd::IAPrefixMap;
+use landscape_common::wan_service::ipv6_pd::config::DEFAULT_EXPECTED_PD_LEN;
+use landscape_common::wan_service::ipv6_pd::{IPV6PDPrefixStatus, IAPrefixMap, LDIAPrefix};
 use landscape_common::wan_service::mss_clamp::dataplane::MssClampDataplane;
 use landscape_common::wan_service::nat::dataplane::NatDataplane;
 use landscape_common::wan_service::pppoe::PppoeDataplane;
@@ -228,6 +231,7 @@ async fn wait_section_iface(
 pub struct WanLinkServiceManagerService {
     store: WanLinkRepository,
     service: ServiceManager<WanLinkService>,
+    prefix_map: IAPrefixMap,
 }
 
 #[async_trait::async_trait]
@@ -272,7 +276,7 @@ impl WanLinkServiceManagerService {
             nat_dataplane,
             mss_dataplane,
             firewall_dataplane,
-            prefix_map,
+            prefix_map.clone(),
             prefix_sender,
             shared_wan_iid,
         );
@@ -308,6 +312,44 @@ impl WanLinkServiceManagerService {
         });
 
         let store = store_service.wan_link_store();
-        Self { service, store }
+        Self { service, store, prefix_map }
+    }
+
+    /// Obtained IA-PD prefixes per section iface (read-only status view).
+    pub fn get_ipv6_prefix_infos(&self) -> HashMap<String, Option<LDIAPrefix>> {
+        self.prefix_map.get_info()
+    }
+
+    /// IA-PD negotiation status per section iface (read-only status view).
+    pub fn get_ipv6_prefix_statuses(&self) -> HashMap<String, IPV6PDPrefixStatus> {
+        self.prefix_map.get_prefix_statuses()
+    }
+
+    /// PD context of every link with an enabled PD section, keyed by the
+    /// iface the PD client runs on (the ppp device for pppd links). Used by
+    /// LAN IPv6 config validation for prefix capacity planning.
+    pub async fn get_pd_prefix_contexts(&self) -> PdPrefixContextMap {
+        self.store
+            .list()
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|config| config.pd.enable)
+            .map(|config| {
+                let iface_name =
+                    RuntimeWanLinkConfig::from_config(&config).section_iface_name().to_string();
+                let actual_prefix = self.prefix_map.load_actual(&iface_name);
+                (
+                    iface_name,
+                    PdPrefixContext {
+                        expected_pd_len: config
+                            .pd
+                            .expected_pd_len
+                            .unwrap_or(DEFAULT_EXPECTED_PD_LEN),
+                        actual_prefix,
+                    },
+                )
+            })
+            .collect()
     }
 }

@@ -9,7 +9,12 @@ export const useNATConfigStore = defineStore("status_nat", () => {
   );
 
   async function UPDATE_INFO() {
-    status.value = await get_all_nat_status();
+    // WAN link 迁移:旧 per-service status 端点已下线,失败时保留旧值,
+    // 避免拖垮全局轮询循环。
+    const result = await get_all_nat_status().catch(() => undefined);
+    if (result !== undefined) {
+      status.value = result;
+    }
   }
 
   function GET_STATUS_BY_IFACE_NAME(

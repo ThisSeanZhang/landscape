@@ -28,13 +28,8 @@ use landscape::{
         config_service::LandscapeConfigService, dns_service::LandscapeDnsService,
         ebpf_service::LandscapeEbpfService,
     },
-    wan_service::firewall::FirewallServiceManagerService,
-    wan_service::{
-        ipconfig_service::IfaceIpServiceManagerService, ipv6pd_service::DHCPv6ClientManagerService,
-        mss_clamp_service::MssClampServiceManagerService, nat_service::NatServiceManagerService,
-        pppd_service::PPPDServiceConfigManagerService,
-        wan_route_service::RouteWanServiceManagerService,
-    },
+    wan_link_service::WanLinkServiceManagerService,
+    wan_service::wan_route_service::RouteWanServiceManagerService,
     wifi::WifiServiceManagerService,
 };
 
@@ -42,7 +37,7 @@ use landscape_common::{
     config::AuthRuntimeConfig,
     memtrack::MemoryHistory,
     service::controller::{ConfigStoreController, ConfigStoreServiceController},
-    wan_service::ip_config::IfaceIpModelConfig,
+    wan_link::{WanLinkKind, WanLinkV4Model},
 };
 use landscape_core::time::SyncTimeService;
 
@@ -87,15 +82,12 @@ pub struct LandscapeApp {
 
     /// Iface Config
     pub(crate) iface_config_service: IfaceManagerService,
-    /// Iface IP Service
-    pub(crate) wan_ip_service: IfaceIpServiceManagerService,
+    /// WAN Link Service: owns the per-link WAN service set (v4 / nat / mss /
+    /// firewall / pd) that replaced the per-iface service managers.
+    pub(crate) wan_link_service: WanLinkServiceManagerService,
     pub(crate) docker_service: LandscapeDockerService,
 
-    /// pppd service
-    pub(crate) pppd_service: PPPDServiceConfigManagerService,
-
     /// ipv6
-    pub(crate) ipv6_pd_service: DHCPv6ClientManagerService,
     pub(crate) lan_ipv6_service: LanIPv6ManagerService,
 
     // Static NAT Mapping
@@ -107,11 +99,7 @@ pub struct LandscapeApp {
 
     pub(crate) dns_upstream_service: DnsUpstreamService,
 
-    /// Mss Clamp Service
-    pub(crate) mss_clamp_service: MssClampServiceManagerService,
-    pub(crate) firewall_service: FirewallServiceManagerService,
     pub(crate) wifi_service: WifiServiceManagerService,
-    pub(crate) nat_service: NatServiceManagerService,
 
     pub(crate) ebpf_service: LandscapeEbpfService,
     pub(crate) enrolled_device_service: EnrolledDeviceService,
@@ -125,31 +113,36 @@ pub struct LandscapeApp {
 
 impl LandscapeApp {
     pub(crate) async fn remove_direct_iface_service(&self, iface_name: &str) {
-        if let Err(error) =
-            self.mss_clamp_service.delete_and_stop_service(iface_name.to_string()).await
-        {
-            tracing::error!("failed to remove mss clamp service for {iface_name}: {error:?}");
+        // The WAN link service owns the former per-iface WAN services
+        // (v4 / nat / mss / firewall / pd, incl. pppd links): any link
+        // attached to this iface goes away with the iface.
+        match self.wan_link_service.list().await {
+            Ok(links) => {
+                for link in links {
+                    if link.attach_iface_name == iface_name {
+                        if let Err(error) =
+                            self.wan_link_service.delete_and_stop_service(link.id).await
+                        {
+                            tracing::error!(
+                                "failed to remove WAN link {} for {iface_name}: {error:?}",
+                                link.id
+                            );
+                        }
+                        // A pppd link leaves its ppp device's iface config row
+                        // behind: drop it with the link (the cleanup the old
+                        // `delete_ppp_iface` cascade used to do).
+                        if let WanLinkKind::Pppd { ppp_iface_name, .. } = &link.kind {
+                            let _ =
+                                self.iface_config_service.delete(ppp_iface_name.clone()).await;
+                        }
+                    }
+                }
+            }
+            Err(error) => {
+                tracing::error!(%error, "listing WAN links for '{iface_name}' failed")
+            }
         }
-        if let Err(error) =
-            self.wan_ip_service.delete_and_stop_iface_service(iface_name.to_string()).await
-        {
-            tracing::error!(%error, "deleting IP config service for '{iface_name}' failed");
-        }
-        if let Err(error) =
-            self.firewall_service.delete_and_stop_service(iface_name.to_string()).await
-        {
-            tracing::error!("failed to remove firewall service for {iface_name}: {error:?}");
-        }
-        if let Err(error) =
-            self.nat_service.delete_and_stop_iface_service(iface_name.to_string()).await
-        {
-            tracing::error!(%error, "deleting NAT service for '{iface_name}' failed");
-        }
-        if let Err(error) =
-            self.ipv6_pd_service.delete_and_stop_service(iface_name.to_string()).await
-        {
-            tracing::error!("failed to remove IPv6PD service for {iface_name}: {error:?}");
-        }
+
         if let Err(error) =
             self.route_wan_service.delete_and_stop_service(iface_name.to_string()).await
         {
@@ -174,7 +167,6 @@ impl LandscapeApp {
 
     pub(crate) async fn remove_all_iface_service(&self, iface_name: &str) {
         self.remove_direct_iface_service(iface_name).await;
-        crate::services::pppoe::delete_ppp_ifaces_by_attach_name(self, iface_name).await;
     }
 
     pub async fn shutdown(&self) {
@@ -193,16 +185,11 @@ impl LandscapeApp {
         tracing::info!("Cert service stopped");
 
         tokio::join!(
-            self.mss_clamp_service.get_service().stop_all(),
-            self.firewall_service.get_service().stop_all(),
-            self.nat_service.get_service().stop_all(),
+            self.wan_link_service.get_service().stop_all(),
             self.route_wan_service.get_service().stop_all(),
             self.route_lan_service.get_service().stop_all(),
             self.dhcp_v4_server_service.get_service().stop_all(),
-            self.ipv6_pd_service.get_service().stop_all(),
             self.lan_ipv6_service.get_service().stop_all(),
-            self.wan_ip_service.get_service().stop_all(),
-            self.pppd_service.get_service().stop_all(),
             self.wifi_service.get_service().stop_all(),
         );
         tracing::info!("All service managers stopped");
@@ -238,20 +225,27 @@ impl LandscapeApp {
             }
         }
 
-        let ip_configs = self.wan_ip_service.list().await.unwrap_or_default();
+        let wan_links = self.wan_link_service.list().await.unwrap_or_default();
 
-        for config in &ip_configs {
-            if config.enable
-                && let IfaceIpModelConfig::Static { ipv4: Some(ipv4_addr), ipv4_mask, .. } =
-                    &config.ip_model
+        for link in &wan_links {
+            if link.v4.enable
+                && let WanLinkV4Model::Static {
+                    ipv4: Some(ipv4_addr),
+                    ipv4_mask: Some(prefix_len),
+                    ..
+                } = &link.v4.model
             {
                 let ip = IpAddr::V4(*ipv4_addr);
-                let prefix_len = *ipv4_mask;
                 tracing::info!(
                     "Re-applying WAN static IP: {ip}/{prefix_len} on {}",
-                    config.iface_name
+                    link.attach_iface_name
                 );
-                landscape::netlink::address::set_iface_ip(&config.iface_name, ip, prefix_len).await;
+                landscape::netlink::address::set_iface_ip(
+                    &link.attach_iface_name,
+                    ip,
+                    *prefix_len,
+                )
+                .await;
             }
         }
     }
