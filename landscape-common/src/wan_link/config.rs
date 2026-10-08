@@ -7,6 +7,7 @@ use uuid::Uuid;
 use crate::database::repository::LandscapeDBStore;
 use crate::net::MacAddr;
 use crate::net_proto::udp::dhcp::DhcpV4Options;
+use crate::service::manager::ServiceKeyProvider;
 use crate::utils::time::get_f64_timestamp;
 use crate::wan_service::pppd::PPPoEPlugin;
 
@@ -192,6 +193,12 @@ pub struct WanLinkMssConfig {
     pub enable: bool,
     #[serde(default)]
     pub clamp_size: Option<u16>,
+}
+
+impl ServiceKeyProvider for WanLinkConfig {
+    fn service_key(&self) -> String {
+        self.id.to_string()
+    }
 }
 
 crate::impl_trivial_validatable!(WanLinkConfig);

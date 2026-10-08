@@ -31,7 +31,7 @@ use crate::{
     route_wan::repository::RouteWanServiceRepository,
     static_nat_mapping_v4::repository::StaticNatMappingV4Repository,
     static_nat_mapping_v6::repository::StaticNatMappingV6Repository,
-    wifi::repository::WifiServiceRepository,
+    wan_link::repository::WanLinkRepository, wifi::repository::WifiServiceRepository,
 };
 
 pub async fn db_action(
@@ -240,6 +240,7 @@ define_store!(
     firewall_blacklist_store: (FirewallBlacklistRepository, firewall_blacklists),
     iface_ip_service_store: (IfaceIpServiceRepository, ipconfigs),
     nat_service_store: (NatServiceRepository, nats),
+    wan_link_store: (WanLinkRepository, wan_links),
     flow_rule_store: (FlowConfigRepository, flow_rules),
     flow_wan_service_store: (FlowWanServiceRepository, marks),
     dst_ip_rule_store: (DstIpRuleRepository, dst_ip_mark),

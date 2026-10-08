@@ -174,6 +174,8 @@ pub mod task_label {
         pub const WAN_IPV6PD_OBSERVER: &str = "wan.ipv6pd.observer";
         /// DHCPv6 PD client session receive loop.
         pub const WAN_IPV6PD_CLIENT_RENEW: &str = "wan.ipv6pd_client.rx";
+        /// WAN link service listener reacting to attach-iface events.
+        pub const WAN_LINK_OBSERVER: &str = "wan.link.observer";
         /// LAN hostname registry listener for device/DHCP events.
         pub const DNS_HOSTNAME_OBSERVER: &str = "dns.hostname.observer";
         /// LAN device directory projection listener for device/DHCP/discovery events.

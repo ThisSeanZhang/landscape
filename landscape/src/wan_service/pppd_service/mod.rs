@@ -150,6 +150,30 @@ pub(crate) async fn create_pppd_thread(
     });
 }
 
+/// Start one pppd session on behalf of a WAN link service: builds the
+/// system env / config store (private to this module) and drives
+/// [`create_pppd_thread`].
+pub(crate) async fn run_pppd_for_link(
+    attach_iface_name: String,
+    ppp_iface_name: String,
+    pppd_config: PPPDConfig,
+    service_status: ServiceHandle,
+    route_service: IpRouteService,
+    addr_binding: Arc<dyn WanAddrBinding>,
+) {
+    let env: Arc<dyn PppdEnv> = Arc::new(SystemPppdEnv::new(route_service, addr_binding));
+    let config_store: Arc<dyn PppdConfigStore> = Arc::new(SystemPppdConfigStore);
+    create_pppd_thread(
+        attach_iface_name,
+        ppp_iface_name,
+        pppd_config,
+        service_status,
+        env,
+        config_store,
+    )
+    .await
+}
+
 #[derive(Clone)]
 pub struct PPPDServiceConfigManagerService {
     store: PPPDServiceRepository,

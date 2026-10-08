@@ -158,6 +158,7 @@ impl LandscapeConfigService {
             nats: self.store.nat_service_store().list().await.unwrap(),
             marks: self.store.flow_wan_service_store().list().await.unwrap(),
             pppds: self.store.pppd_service_store().list().await.unwrap(),
+            wan_links: self.store.wan_link_store().list().await.unwrap(),
             flow_rules: self.store.flow_rule_store().list().await.unwrap(),
             dns_rules: self.store.dns_rule_store().list().await.unwrap(),
             dst_ip_mark: self.store.dst_ip_rule_store().list().await.unwrap(),

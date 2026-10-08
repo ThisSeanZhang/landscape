@@ -30,6 +30,7 @@ use crate::wan_service::mss_clamp::MSSClampServiceConfig;
 use crate::wan_service::nat::config::NatServiceConfig;
 use crate::wan_service::pppd::PPPDServiceConfig;
 use crate::wan_service::wan_route::RouteWanServiceConfig;
+use crate::wan_link::WanLinkConfig;
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
 #[serde(default)]
@@ -46,6 +47,8 @@ pub struct InitConfig {
     pub marks: Vec<FlowWanServiceConfig>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub pppds: Vec<PPPDServiceConfig>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub wan_links: Vec<WanLinkConfig>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub flow_rules: Vec<FlowConfig>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
