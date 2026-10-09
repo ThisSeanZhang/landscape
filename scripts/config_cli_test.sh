@@ -33,11 +33,14 @@ FAIL=0
 ok()  { PASS=$((PASS + 1)); printf 'PASS  %s\n' "$1"; }
 bad() { FAIL=$((FAIL + 1)); printf 'FAIL  %s\n      %s\n' "$1" "${2:-}"; }
 
+# Needles may contain newlines ($'...\n...') to match consecutive lines;
+# `grep -z` treats the whole output as a single record, so multi-line fixed
+# strings work. GNU grep is required (as elsewhere in this script).
 assert_has() {
   local name="$1" out="$2"; shift 2
   local missing=""
   for needle in "$@"; do
-    grep -qF -- "$needle" <<<"$out" || missing="$missing [$needle]"
+    grep -qFz -- "$needle" <<<"$out" || missing="$missing [${needle//$'\n'/\\n}]"
   done
   if [[ -z "$missing" ]]; then ok "$name"; else bad "$name" "missing:$missing"; fi
 }
@@ -46,7 +49,7 @@ assert_not_has() {
   local name="$1" out="$2"; shift 2
   local present=""
   for needle in "$@"; do
-    grep -qF -- "$needle" <<<"$out" && present="$present [$needle]"
+    grep -qFz -- "$needle" <<<"$out" && present="$present [${needle//$'\n'/\\n}]"
   done
   if [[ -z "$present" ]]; then ok "$name"; else bad "$name" "unexpected:$present"; fi
 }
@@ -75,35 +78,36 @@ echo "== generation =="
 run "dhcp" 0 --wan-iface eth0 --lan-iface br_lan --wan-mode dhcp --stdout
 assert_has "dhcp: wan iface" "$OUT" 'name = "eth0"' 'zone_type = "wan"'
 assert_has "dhcp: lan bridge" "$OUT" 'create_dev_type = "bridge"' 'zone_type = "lan"'
-assert_has "dhcp: client model" "$OUT" 't = "dhcpclient"'
+assert_has "dhcp: client model" "$OUT" 't = "dhcp_client"'
 assert_has "dhcp: dhcp server" "$OUT" '[[dhcpv4_services]]' 'server_ip_addr = "192.168.5.1"'
-assert_has "dhcp: base services" "$OUT" '[[nats]]' '[[route_wans]]' '[[route_lans]]'
-assert_not_has "dhcp: no mss-clamp" "$OUT" '[[mss_clamps]]'
+assert_has "dhcp: base services" "$OUT" '[wan_links.nat.tcp_range]' '[[route_wans]]' '[[route_lans]]'
+assert_not_has "dhcp: no mss-clamp" "$OUT" 'clamp_size'
 
 run "static" 0 --wan-iface eth0 --lan-iface br_lan --wan-mode static \
   --wan-ip 203.0.113.2/24 --wan-gateway 203.0.113.1 --wan-ipv6 2001:db8::2 --stdout
 assert_has "static: model" "$OUT" \
   't = "static"' 'ipv4 = "203.0.113.2"' 'ipv4_mask = 24' 'default_router_ip = "203.0.113.1"'
 assert_has "static: ipv6" "$OUT" 'ipv6 = "2001:db8::2"'
-assert_not_has "static: no mss-clamp" "$OUT" '[[mss_clamps]]'
+assert_not_has "static: no mss-clamp" "$OUT" 'clamp_size'
 
 run "pppoe" 0 --wan-iface eth0 --lan-iface br_lan --wan-mode pppoe \
   --pppoe-username u --pppoe-password p --pppoe-ac-name ac --stdout
 assert_has "pppoe: model" "$OUT" \
-  't = "pppoe"' 'username = "u"' 'password = "p"' 'ac_name = "ac"' 'mtu = 1492'
-assert_has "pppoe: mss-clamp on wan" "$OUT" '[[mss_clamps]]' 'clamp_size = 1492'
-assert_not_has "pppoe: no pppd block" "$OUT" '[[pppds]]'
+  't = "pppoe_native"' 'username = "u"' 'password = "p"' 'ac_name = "ac"' 'requested_mru = 1492'
+assert_has "pppoe: mss-clamp on wan" "$OUT" 'clamp_size = 1492'
+assert_not_has "pppoe: no pppd block" "$OUT" 't = "pppd"'
 
 run "pppd" 0 --wan-iface eth0 --lan-iface br_lan --wan-mode pppd \
   --pppoe-username u --pppoe-password p --pppd-iface ppp9 --pppd-plugin pppoe --stdout
 assert_has "pppd: service block" "$OUT" \
-  '[[pppds]]' 'attach_iface_name = "eth0"' 'iface_name = "ppp9"' 'peer_id = "u"' 'plugin = "pppoe"'
-assert_has "pppd: wan services bound to ppp iface" "$OUT" '[[mss_clamps]]' 'iface_name = "ppp9"'
-assert_not_has "pppd: no ipconfigs" "$OUT" '[[ipconfigs]]'
+  '[[wan_links]]' 't = "pppd"' 'attach_iface_name = "eth0"' 'ppp_iface_name = "ppp9"' 'peer_id = "u"' 'plugin = "pppoe"'
+assert_has "pppd: wan services bound to ppp iface" "$OUT" \
+  'clamp_size = 1492' $'[[route_wans]]\niface_name = "ppp9"'
+assert_not_has "pppd: no ipconfigs" "$OUT" 't = "static"' 't = "dhcp_client"'
 
 run "none" 0 --wan-mode none --lan-iface br_lan --stdout
 assert_not_has "none: no wan iface/services" "$OUT" \
-  'zone_type = "wan"' '[[ipconfigs]]' '[[nats]]' '[[route_wans]]' '[[mss_clamps]]'
+  'zone_type = "wan"' '[[wan_links]]' '[[route_wans]]'
 assert_has "none: route-lan kept" "$OUT" '[[route_lans]]'
 
 echo "== auth =="
@@ -122,26 +126,26 @@ assert_has "wan-only: wan iface" "$OUT" 'name = "eth0"' 'zone_type = "wan"'
 assert_has "wan-only: static model" "$OUT" 't = "static"' 'ipv4 = "203.0.113.2"'
 assert_not_has "wan-only: no lan bridge" "$OUT" 'create_dev_type = "bridge"' 'zone_type = "lan"'
 assert_not_has "wan-only: no lan services" "$OUT" '[[route_lans]]' '[[dhcpv4_services]]'
-assert_has "wan-only: wan services" "$OUT" '[[nats]]' '[[route_wans]]'
+assert_has "wan-only: wan services" "$OUT" '[wan_links.nat.tcp_range]' '[[route_wans]]'
 assert_has "wan-only: static nat" "$OUT" \
   '[[static_nat_mappings_v4]]' 't = "local"' 'wan_port = 22' 'lan_port = 22' \
   'wan_port = 6443' 'lan_port = 16443'
 
 run "wan-only dhcp" 0 --wan-iface eth0 --wan-mode dhcp --stdout
-assert_has "wan-only dhcp: client model" "$OUT" 't = "dhcpclient"' 'name = "eth0"'
+assert_has "wan-only dhcp: client model" "$OUT" 't = "dhcp_client"' 'name = "eth0"'
 assert_not_has "wan-only dhcp: no lan" "$OUT" '[[route_lans]]' '[[dhcpv4_services]]' '[[static_nat_mappings_v4]]'
 
 run "lan member" 0 --wan-iface eth0 --lan-iface br_lan --lan-member eth1 --lan-member eth2 --stdout
 assert_has "lan member: controller" "$OUT" 'name = "eth1"' 'name = "eth2"' 'controller_name = "br_lan"'
 
 run "dhcp explicit mss" 0 --wan-iface eth0 --lan-iface br_lan --enable mss-clamp --stdout
-assert_has "dhcp explicit mss-clamp" "$OUT" '[[mss_clamps]]'
+assert_has "dhcp explicit mss-clamp" "$OUT" 'clamp_size = 1492'
 
 run "disable defaults" 0 --wan-iface eth0 --lan-iface br_lan --disable nat,route-wan,route-lan --stdout
-assert_not_has "disable strips defaults" "$OUT" '[[nats]]' '[[route_wans]]' '[[route_lans]]'
+assert_not_has "disable strips defaults" "$OUT" '[wan_links.nat.tcp_range]' '[[route_wans]]' '[[route_lans]]'
 
 run "firewall enable" 0 --wan-iface eth0 --lan-iface br_lan --enable firewall --stdout
-assert_has "firewall enable" "$OUT" '[[firewalls]]'
+assert_has "firewall enable" "$OUT" $'[wan_links.firewall]\nenable = true'
 
 run "custom dhcp range+lease" 0 --wan-iface eth0 --lan-iface br_lan --lan-ip 10.0.0.1/24 \
   --lan-dhcp-range 10.0.0.50-10.0.0.90 --lan-dhcp-lease 7200 --stdout
@@ -176,11 +180,11 @@ run "re-write with force" 0 --wan-iface eth0 --lan-iface br_lan --dir "$WORK" --
 
 echo "== silent ignore (absent side) =="
 run "lan-only via omitted wan-iface" 0 --lan-iface br_lan --stdout
-assert_not_has "lan-only: no wan side" "$OUT" 'zone_type = "wan"' '[[nats]]' '[[route_wans]]' '[[ipconfigs]]'
+assert_not_has "lan-only: no wan side" "$OUT" 'zone_type = "wan"' '[[wan_links]]' '[[route_wans]]'
 assert_has "lan-only: route-lan kept" "$OUT" '[[route_lans]]'
 run "empty config" 0 --stdout
 assert_has "empty: version kept" "$OUT" 'version ='
-assert_not_has "empty: nothing generated" "$OUT" '[[ifaces]]' '[[nats]]' '[[route_lans]]' '[[dhcpv4_services]]'
+assert_not_has "empty: nothing generated" "$OUT" '[[ifaces]]' '[[wan_links]]' '[[route_lans]]' '[[dhcpv4_services]]'
 run "wan-only with lan-member" 0 --wan-iface eth0 --lan-member eth1 --stdout
 assert_not_has "wan-only: lan-member ignored" "$OUT" 'name = "eth1"' 'controller_name'
 run "wan-only with lan dhcp range" 0 --wan-iface eth0 --lan-dhcp-range 192.168.5.10 --stdout
@@ -192,8 +196,8 @@ assert_not_has "no wan: static-nat ignored" "$OUT" '[[static_nat_mappings_v4]]'
 run "wan service with lan-only" 0 --lan-iface br_lan --enable route-wan --stdout
 assert_not_has "lan-only: route-wan stripped" "$OUT" '[[route_wans]]'
 run "none with wan iface" 0 --wan-iface eth0 --wan-mode none --lan-iface br_lan --stdout
-assert_has "none+iface: wan registered" "$OUT" 'name = "eth0"' 'zone_type = "wan"' '[[nats]]' '[[route_wans]]'
-assert_not_has "none+iface: no address config" "$OUT" '[[ipconfigs]]'
+assert_has "none+iface: wan registered" "$OUT" 'name = "eth0"' 'zone_type = "wan"' '[wan_links.nat.tcp_range]' '[[route_wans]]'
+assert_not_has "none+iface: no address config" "$OUT" 't = "dhcp_client"' 't = "static"' 't = "ipcp"'
 
 echo "== validation errors =="
 run "empty admin-user" 1 --wan-iface eth0 --lan-iface br_lan --admin-user ""
@@ -208,7 +212,7 @@ run "static-nat in nat dynamic range" 1 --wan-iface eth0 --static-nat 40000:22
 assert_has "static-nat in nat dynamic range msg" "$OUT" "overlaps the NAT dynamic port range"
 run "static-nat dynamic range ok without nat service" 0 --wan-iface eth0 --disable nat --static-nat 40000:22 --stdout
 assert_has "no nat: mapping kept" "$OUT" '[[static_nat_mappings_v4]]' 'wan_port = 40000'
-assert_not_has "no nat: service absent" "$OUT" '[[nats]]'
+assert_not_has "no nat: service absent" "$OUT" '[wan_links.nat.tcp_range]'
 run "static missing ip" 1 --wan-iface eth0 --lan-iface br_lan --wan-mode static
 assert_has "static missing ip msg" "$OUT" "--wan-ip is required"
 run "static missing gateway" 1 --wan-iface eth0 --lan-iface br_lan --wan-mode static --wan-ip 1.2.3.4/24
