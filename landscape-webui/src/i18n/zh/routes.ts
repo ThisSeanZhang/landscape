@@ -29,6 +29,7 @@ export default {
   "self-monitor-memory": "自监控-内存",
   "ipv6-pd": "上游 PD 前缀",
   "lan-devices": "IP 分配情况",
+  routes: "路由表（实验性）",
   "mac-binding": "设备管理",
   domains: "域名与证书",
   ddns: "DDNS",

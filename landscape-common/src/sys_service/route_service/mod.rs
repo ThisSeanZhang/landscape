@@ -2,19 +2,22 @@ pub mod dataplane;
 
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::net::MacAddr;
 
 /// Identity of a registered WAN route target: a managed WAN link (by
 /// permanent uuid) or a docker container network namespace (by name).
-#[derive(Eq, Hash, PartialEq, Debug, Clone)]
+#[derive(Eq, Hash, PartialEq, Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub enum RouteOwner {
     Link(Uuid),
     Netns(String),
 }
 
-#[derive(Eq, Hash, PartialEq, Debug, Clone)]
+#[derive(Eq, Hash, PartialEq, Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct RouteTargetInfo {
     pub weight: u32,
     pub ifindex: u32,
@@ -24,7 +27,9 @@ pub struct RouteTargetInfo {
 
     pub iface_name: String,
 
+    #[cfg_attr(feature = "openapi", schema(value_type = String))]
     pub iface_ip: IpAddr,
+    #[cfg_attr(feature = "openapi", schema(value_type = String))]
     pub gateway_ip: IpAddr,
 }
 
@@ -55,21 +60,25 @@ impl RouteTargetInfo {
     }
 }
 
-#[derive(Eq, Hash, PartialEq, Debug, Default, Clone)]
+#[derive(Eq, Hash, PartialEq, Debug, Default, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub enum LanRouteMode {
     #[default]
     Reachable,
     NextHop {
+        #[cfg_attr(feature = "openapi", schema(value_type = String))]
         next_hop_ip: IpAddr,
     },
     WanReachable,
 }
 
-#[derive(Eq, Hash, PartialEq, Debug, Clone)]
+#[derive(Eq, Hash, PartialEq, Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct LanRouteInfo {
     pub ifindex: u32,
     pub iface_name: String,
 
+    #[cfg_attr(feature = "openapi", schema(value_type = String))]
     pub iface_ip: IpAddr,
     pub mac: Option<MacAddr>,
     pub prefix: u8,
@@ -119,11 +128,43 @@ impl LanRouteInfo {
     }
 }
 
-#[derive(Eq, Hash, PartialEq, Debug, Clone)]
+#[derive(Eq, Hash, PartialEq, Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct LanIPv6RouteKey {
     pub iface_name: String,
+    #[cfg_attr(feature = "openapi", schema(value_type = String))]
     pub subnet: Ipv6Addr,
     pub prefix_len: u8,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+pub struct WanRouteEntry {
+    pub owner: RouteOwner,
+    pub info: RouteTargetInfo,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+pub struct Ipv4LanRouteEntry {
+    pub owner: String,
+    pub info: LanRouteInfo,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+pub struct Ipv6LanRouteEntry {
+    pub key: LanIPv6RouteKey,
+    pub info: LanRouteInfo,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+pub struct RouteStatusView {
+    pub ipv4_wan: Vec<WanRouteEntry>,
+    pub ipv6_wan: Vec<WanRouteEntry>,
+    pub ipv4_lan: Vec<Ipv4LanRouteEntry>,
+    pub ipv6_lan: Vec<Ipv6LanRouteEntry>,
 }
 
 #[cfg(test)]

@@ -38,6 +38,7 @@ import networkUi from "./network/index";
 import notFoundUi from "./not_found/index";
 import unavailableUi from "./unavailable/index";
 import pppoeUi from "./pppoe/index";
+import routeStatusUi from "./route_status/index";
 import sysinfoUi from "./sysinfo/index";
 import terminalUi from "./terminal/index";
 import topologyUi from "./topology/index";
@@ -72,6 +73,7 @@ export default {
   not_found: notFoundUi,
   unavailable: unavailableUi,
   pppoe: pppoeUi,
+  route_status: routeStatusUi,
   sysinfo: sysinfoUi,
   terminal: terminalUi,
   topology: topologyUi,

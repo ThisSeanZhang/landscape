@@ -29,6 +29,7 @@ export default {
   "self-monitor-memory": "Self-Monitor - Memory",
   "ipv6-pd": "Upstream PD Prefix",
   "lan-devices": "IP Allocation",
+  routes: "Route Tables (Experimental)",
   "mac-binding": "Devices",
   domains: "Domains & Certificates",
   ddns: "DDNS",

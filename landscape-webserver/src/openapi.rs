@@ -127,6 +127,16 @@ impl Modify for SecurityAddon {
         landscape_common::config::LandscapeThemeStyleConfig,
         // System capabilities
         landscape_common::sys_service::capability::Capability,
+        // Route status view
+        landscape_common::sys_service::route_service::RouteStatusView,
+        landscape_common::sys_service::route_service::WanRouteEntry,
+        landscape_common::sys_service::route_service::Ipv4LanRouteEntry,
+        landscape_common::sys_service::route_service::Ipv6LanRouteEntry,
+        landscape_common::sys_service::route_service::RouteOwner,
+        landscape_common::sys_service::route_service::RouteTargetInfo,
+        landscape_common::sys_service::route_service::LanRouteInfo,
+        landscape_common::sys_service::route_service::LanRouteMode,
+        landscape_common::sys_service::route_service::LanIPv6RouteKey,
     ))
 )]
 pub struct ApiDoc;

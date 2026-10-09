@@ -108,6 +108,10 @@ const menuOptions = computed<MenuOption[]>(() =>
           disabled: false,
         },
         {
+          label: t("routes.routes"),
+          key: "network/routes",
+        },
+        {
           label: t("routes.ipv6-pd"),
           key: "network/ipv6-pd",
         },

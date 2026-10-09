@@ -5,7 +5,7 @@ use landscape_common::sys_service::route_service::{
     LanIPv6RouteKey, LanRouteInfo, dataplane::RouteTableDataplane,
 };
 
-use super::{IpRouteService, Ipv4LanRoutesByOwner, Ipv6LanRoutesByKey};
+use super::{IpRouteService, Ipv4LanRoutesByOwner, Ipv6LanRoutesByKey, clone_locked_state};
 
 pub(super) enum Ipv4LanBucketUpdate {
     Noop,
@@ -185,6 +185,14 @@ impl IpRouteService {
         };
 
         sync_removed_lan_routes(&*self.dataplane, removed);
+    }
+
+    pub async fn get_all_ipv4_lan_routes(&self) -> Ipv4LanRoutesByOwner {
+        clone_locked_state(&self.ipv4_lan_ifaces).await
+    }
+
+    pub async fn get_all_ipv6_lan_routes(&self) -> Ipv6LanRoutesByKey {
+        clone_locked_state(&self.ipv6_lan_ifaces).await
     }
 
     pub async fn print_lan_ifaces(&self) {
